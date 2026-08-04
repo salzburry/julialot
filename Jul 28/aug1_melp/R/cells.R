@@ -230,13 +230,24 @@ melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP",
                        < ", expo_days, " THEN 0 ELSE 1 END AS IS_NEW
       FROM mdose
     ),
-    mx AS (
+    mxe AS (
       SELECT PATID, min(DOSE_DT) AS EXPO_DT
       FROM (SELECT PATID, DOSE_DT,
                    sum(IS_NEW) OVER (PARTITION BY PATID ORDER BY DOSE_DT
                                      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS E
             FROM mrun) r
       GROUP BY PATID, E
+    ),
+    -- Each exposure with the one immediately before it. The engine judges
+    -- consecutive pairs (lead over the ordered exposures), so the pair has to
+    -- be consecutive here too. Joining to any earlier exposure in range counts
+    -- pairs the rule never judged: exposures on days 100, 160 and 250 give the
+    -- engine 100-160 and 160-250, and a range join would also match 100-250 and
+    -- report one line twice.
+    mx AS (
+      SELECT PATID, EXPO_DT,
+             lag(EXPO_DT) OVER (PARTITION BY PATID ORDER BY EXPO_DT) AS PREV_EXPO_DT
+      FROM mxe
     )"), "
     SELECT (SELECT count(*) FROM per_pat)                                   AS n_patients,
            (SELECT count(*) FROM ", final_tbl, ")                           AS n_lines,
@@ -282,30 +293,37 @@ melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP",
            -- has melphalan in the regimen\" without a B.2 pair anywhere.
            ", if (is.null(map_tbl)) "cast(NULL as bigint)" else paste0("(
              SELECT count(*)
-             FROM (SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT,
+             FROM (SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_START_TYPE,
                           lag(l.LOT_NUM)             OVER w AS PREV_LOT_NUM,
                           lag(l.LOT_START_DT)        OVER w AS PREV_START_DT,
                           lag(l.LOT_START_TYPE)      OVER w AS PREV_START_TYPE,
                           lag(l.LOT_BASE_END_REASON) OVER w AS PREV_REASON
                    FROM ", final_tbl, " l
                    WINDOW w AS (PARTITION BY l.PATID ORDER BY l.LOT_NUM)) x
-             -- 2. the line starts ON a melphalan exposure, so melphalan started it
-             INNER JOIN mx e2 ON e2.PATID = x.PATID AND e2.EXPO_DT = x.LOT_START_DT
-             -- 3. with an earlier melphalan exposure in the previous line...
-             INNER JOIN mx e1 ON e1.PATID = x.PATID
-                             AND e1.EXPO_DT >= x.PREV_START_DT
-                             AND e1.EXPO_DT <  x.LOT_START_DT
-             -- ...outside that line's own induction window, which is what makes
-             -- it a B branch rather than an A one
-                             AND datediff(e1.EXPO_DT, x.PREV_START_DT) > CASE
-                                   WHEN x.PREV_LOT_NUM = 1        THEN ", ind1 - 1L, "
-                                   WHEN x.PREV_START_TYPE = 'CART' THEN ", cart - 1L, "
-                                   ELSE ", indn - 1L, " END
-             -- 4. and the pair 60-179 days apart, which is B.2 and not B.1 or B.3
-                             AND datediff(x.LOT_START_DT, e1.EXPO_DT)
-                                   BETWEEN ", restart_days, " AND ", advance_days - 1L, "
+             -- The line starts on a melphalan exposure. One join, and the
+             -- exposure carries its own immediate predecessor, so the pair is
+             -- the one the engine judged and one line cannot be counted twice.
+             INNER JOIN mx e ON e.PATID = x.PATID AND e.EXPO_DT = x.LOT_START_DT
+             WHERE x.LOT_NUM > 1
              -- 1. the previous line ended by running out, not by melphalan
-             WHERE x.LOT_NUM > 1 AND x.PREV_REASON = 'DISCONTINUATION')"), "
+               AND x.PREV_REASON = 'DISCONTINUATION'
+             -- 2. and melphalan STARTED this line. Landing on the start date is
+             -- not enough: the same-day tie-break is SCT_ALLO > CART > SCT_AUTO
+             -- > MED, so an AUTO coded on the melphalan date takes the start and
+             -- the line is the transplant's, not the drug's.
+               AND x.LOT_START_TYPE = 'MED'
+             -- 3. the exposure before it sits in the previous line...
+               AND e.PREV_EXPO_DT IS NOT NULL
+               AND e.PREV_EXPO_DT >= x.PREV_START_DT
+               AND e.PREV_EXPO_DT <  x.LOT_START_DT
+             -- ...outside that line's own induction window, making it B not A
+               AND datediff(e.PREV_EXPO_DT, x.PREV_START_DT) > CASE
+                     WHEN x.PREV_LOT_NUM = 1         THEN ", ind1 - 1L, "
+                     WHEN x.PREV_START_TYPE = 'CART' THEN ", cart - 1L, "
+                     ELSE ", indn - 1L, " END
+             -- 4. and the pair 60-179 days apart, which is B.2 not B.1 or B.3
+               AND datediff(x.LOT_START_DT, e.PREV_EXPO_DT)
+                     BETWEEN ", restart_days, " AND ", advance_days - 1L, ")"), "
                                                                             AS n_b2_line_starts")
 }
 

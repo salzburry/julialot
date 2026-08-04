@@ -157,12 +157,27 @@ than a setting. It is a clinical decision, so it is open question 6 in
 
 `n_b2_line_starts` is what makes it decidable on a number, and it is the B.2
 population rather than a proxy for it. A line counts only when all four hold:
-the previous line ended by running out, this line starts on a melphalan
-exposure, an earlier melphalan exposure sits in the previous line outside that
-line's own induction window, and the two are 60 to 179 days apart. Any one of
-those alone lets in lines that have nothing to do with B.2 - a line DARA started
-with melphalan merely joining its induction window would satisfy "starts after a
-runout and has melphalan in the regimen" without a B.2 pair anywhere.
+
+1. the previous line ended by running out;
+2. melphalan started this line - the exposure is on the start date **and** the
+   start type is `MED`, because the same-day tie-break is
+   `SCT_ALLO > CART > SCT_AUTO > MED` and an AUTO coded on the melphalan date
+   makes the line the transplant's;
+3. the exposure **immediately before** it sits in the previous line, outside
+   that line's own induction window, which makes it a B branch and not an A;
+4. the two are 60 to 179 days apart.
+
+Any one of those alone lets in lines that have nothing to do with B.2 - a line
+DARA started, with melphalan merely joining its induction window, would satisfy
+"starts after a runout and has melphalan in the regimen" without a B.2 pair
+anywhere.
+
+The pair is the immediately preceding exposure because that is the pair the
+engine judged: it uses `lead()` over the ordered exposures, so it only ever
+looks at consecutive ones. Matching any earlier exposure in range would count
+pairs the rule never saw - exposures on days 100, 160 and 250 give the engine
+100-160 and 160-250, and a range join would also match 100-250 and report one
+line twice.
 
 Under the other reading those lines would not exist.
 

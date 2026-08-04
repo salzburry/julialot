@@ -238,10 +238,14 @@ these are still the study team's to settle, and changing one changes the counts.
      regimen means, not a setting.
 
    `n_b2_line_starts` counts the lines this decides, and it is the B.2
-   population rather than a proxy: the previous line ended by running out, this
-   line starts on a melphalan exposure, an earlier melphalan exposure sits in
-   the previous line outside that line's own induction window, and the two are
-   60 to 179 days apart. Under the second reading those lines would not exist.
+   population rather than a proxy: the previous line ended by running out;
+   melphalan started this line, which needs the start type to be `MED` as well
+   as the exposure to be on the start date, since a transplant coded the same
+   day takes the start; the exposure immediately before it sits in the previous
+   line outside that line's own induction window; and the two are 60 to 179 days
+   apart. Immediately before, because the engine judges consecutive pairs - any
+   earlier exposure in range would count pairs it never looked at. Under the
+   second reading those lines would not exist.
 
 Patient examples were offered with the request. Running them through the branch
 table is the fastest way to confirm the reading.
