@@ -47,8 +47,9 @@ ok(!melp_rule_on(off) && melp_rule_on(ask) && melp_rule_on(yld),
    "on and off are decided by the setting, not by a caller passing a flag")
 stops(melp_rule_mode(list(apply_melp_rule = "sometimes")),
       "an unknown mode stops rather than behaving like one of the two")
-# The port suite proves the same thing from the other side - the step files are
-# the source once these two hooks are undone - so this is the R half of it.
+# Where the hooks are, and that there are no others. The step files carry
+# exactly two in 06 and three in 10; anything else melphalan in them is a hook
+# nobody registered here.
 sf <- function(f) paste(readLines(file.path(LOT, "R", "steps", f), warn = FALSE),
                         collapse = "\n")
 ok(has(sf("06_lot1_end.R"), "FROM {melp_lot1_base_from(cfg)}") &&
