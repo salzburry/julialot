@@ -109,12 +109,12 @@ run. The default prints the grid, the predicted directions and the cell count so
 the cost is readable before anyone commits to it.
 
 The grid is **one at a time** from the shipped configuration: six parameters
-with two alternatives each is thirteen builds, not the seven hundred and
-twenty-nine a cross-product would be.
+with two alternatives each, plus a seventh that is on or off, is fourteen
+builds, not the thousand-odd a cross-product would be.
 
 ### The direction is stated before the run
 
-That ordering is the whole value. Thirteen builds produce thirteen different
+That ordering is the whole value. Fourteen builds produce fourteen different
 tables and a reader nods at all of them. Predicting the sign first turns it into
 a test — a metric that moves the other way is either a bug or a hole in our
 reading, and either is worth knowing.
@@ -142,7 +142,26 @@ so `pct_reaching_lot3` cannot move, and predicting that it rises would have
 produced the same false failure in every sweep forever. It is predicted `none`,
 and the test holds any future cap axis to the same rule.
 
-### Two of the ask's four axes cannot be swept
+### Continuous enrolment is two questions
+
+**CE eligibility** — who qualifies — is the cohort build's axis. `nndm` already
+reports it without rebuilding anything: `NDMM_FU_CE_COUNTS` gives the cohort at
+0/30/60/90 days from a single run. Sweeping it here would rebuild the cohort
+*and* the LOT per cell.
+
+**CE as censoring** — whether LOT stops observing at disenrolment — is a setting
+here, `censor_at_disenrollment`, and it is swept. It is the only axis that moves
+the **observation window** rather than a threshold inside it, which is why it is
+the only one predicting `n_patients` can fall: a patient whose first non-steroid
+agent lands after they disenrolled has no LOT1 at all, since `lot1_start` reads
+`map_stacked` and that is bounded by `OBS_END_DT`.
+
+It is also the only non-numeric axis, and that costs something. Cell values
+travel as **text**, because `as.integer(TRUE)` is `1` and the build reads that
+back through `as.logical("1")` as `NA` — the cell would then build with the
+shipped setting, report `no movement` on every metric, and read as a result.
+
+### One of the ask's axes cannot be swept
 
 **maintenance-as-LOT vs flag** is not a setting. Maintenance is a descriptive
 flag (`contains_mtx_reg`) and there is no maintenance period —
@@ -150,13 +169,8 @@ flag (`contains_mtx_reg`) and there is no maintenance period —
 a sensitivity of this one, so there is nothing here to vary. It is in the
 vignette catalogue as the divergence it is.
 
-**CE requirements** are the cohort build's axis. `nndm` already reports them
-without rebuilding anything — `NDMM_FU_CE_COUNTS` gives the cohort at 0/30/60/90
-days from a single run. Sweeping them here would rebuild the cohort *and* the
-LOT per cell.
-
-Both are named in the plan output rather than quietly dropped, since two of four
-axes silently missing would read as coverage.
+It is named in the plan output rather than quietly dropped, since an axis
+silently missing would read as coverage.
 
 ### A cell is not the contract build, and says so
 

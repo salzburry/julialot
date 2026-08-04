@@ -6,17 +6,26 @@
 #
 # One cell is one complete LOT build - the gap threshold changes how MAPs are
 # formed, which changes everything after them, and none of it is recoverable
-# from an existing LOT_LONG. Six parameters with two values each is thirteen
-# builds. A cross-product would be seven hundred and twenty-nine.
+# from an existing LOT_LONG. Six parameters with two values each, plus a
+# seventh that is on or off, is fourteen builds. A cross-product would be over
+# a thousand.
 #
-# Two of the four axes the ask named cannot be swept here:
+# Continuous enrolment is two different questions, and only one of them is the
+# cohort's:
+#
+#   CE eligibility               Who qualifies. The cohort build's axis, and
+#                                NDMM_FU_CE_COUNTS already reports 0/30/60/90
+#                                days from one run.
+#   CE as censoring              Whether LOT stops observing at disenrolment.
+#                                That IS a setting here - censor_at_disenrollment
+#                                - and it is swept below.
+#
+# One axis the ask named cannot be swept here:
 #
 #   maintenance-as-LOT vs flag   Not a setting. Maintenance is a descriptive
 #                                flag and there is no maintenance period
 #                                (05_sct.R:13), so a line would be a different
 #                                algorithm. It is in the vignettes instead.
-#   CE requirements              The cohort build's axis. NDMM_FU_CE_COUNTS
-#                                already reports 0/30/60/90 days from one run.
 
 # Each axis: the values to try beside the shipped one, and what should happen.
 #
@@ -73,6 +82,27 @@ SENS_AXES <- list(
        confidence = "derived",
        why = paste0("A longer tandem window makes more second transplants part of ",
                     "a pair rather than excess, and excess AUTO is what ends LOT1.")),
+
+  # The only axis that changes the OBSERVATION WINDOW rather than a threshold
+  # inside it, which is why n_patients is predicted to move here and nowhere
+  # else. On/off, so one cell rather than two.
+  list(param = "CENSOR_AT_DISENROLLMENT", cfg = "censor_at_disenrollment",
+       values = TRUE,
+       what = "whether observation also ends at disenrolment, not only at death or study end",
+       expect = list(n_lines = "down", median_lot1_length = "down",
+                     pct_reaching_lot2 = "down", pct_reaching_lot3 = "down",
+                     n_patients = "down"),
+       confidence = "derived",
+       why = paste0("OBS_END_DT becomes coalesce(ENDDATE_CE, ENDDATE) instead of ",
+                    "ENDDATE, so every claim window closes at or before where it ",
+                    "closed. Nothing can be found later than before: fewer ",
+                    "triggers, fewer lines, and LOT1 bounded earlier. n_patients ",
+                    "can fall too, which no other axis can do - a patient whose ",
+                    "first non-steroid agent falls after they disenrolled has no ",
+                    "LOT1 at all, since lot1_start reads map_stacked and that is ",
+                    "bounded by OBS_END_DT. Whether anyone in a given cohort is ",
+                    "that patient is the cohort's doing, so 'no movement' here is ",
+                    "not a contradiction.")),
 
   list(param = "MAX_LOT", cfg = "max_lot",
        values = c(3L, 8L),
@@ -141,13 +171,13 @@ sens_metric_sql <- function(final_tbl, attrition_tbl, run_id) {
 # prefix may have been built with settings that have since changed, and every
 # delta in the table leans on that one number.
 sens_plan <- function(axes = SENS_AXES, prefix_base = "sens_") {
-  cells <- list(list(id = "reference", param = NA_character_, value = NA_integer_,
+  cells <- list(list(id = "reference", param = NA_character_, value = NA_character_,
                      prefix = paste0(prefix_base, "ref_")))
   for (a in axes)
     for (v in a$values)
       cells[[length(cells) + 1L]] <- list(
         id     = paste0(tolower(a$param), "_", v),
-        param  = a$param, value = as.integer(v), axis = a,
+        param  = a$param, value = as.character(v), axis = a,
         prefix = paste0(prefix_base, tolower(sub("_DAYS$", "", a$param)), "_", v, "_"))
   cells
 }
@@ -174,6 +204,17 @@ check_sens_plan <- function(cells, study_prefix, cap = 24L) {
   invisible(TRUE)
 }
 
+# Values travel as text, so a switch survives the trip. as.integer(TRUE) is 1,
+# and the build reads as.logical("1") as NA - the cell would then be a silent
+# copy of the reference and every metric would read "no movement".
+#
+# Ranked numerically here only to say which side of the shipped value a cell
+# sits on, with FALSE below TRUE.
+sens_rank <- function(x) {
+  x <- toupper(trimws(as.character(x)))
+  ifelse(x == "TRUE", 1, ifelse(x == "FALSE", 0, suppressWarnings(as.numeric(x))))
+}
+
 # Which way a metric moved, against which way we said it would.
 #
 # The SIGN, not the size. How far a threshold moves a number depends on the
@@ -198,8 +239,8 @@ sens_compare <- function(results, axes = SENS_AXES, tol = 1e-9) {
     if (identical(r$cell, "reference")) next
     a <- by_param[[r$param]]
     if (is.null(a)) next
-    shipped <- as.numeric(r$shipped_value)
-    higher  <- as.numeric(r$value) > shipped
+    shipped <- sens_rank(r$shipped_value)
+    higher  <- sens_rank(r$value) > shipped
     for (m in names(a$expect)) {
       if (!m %in% names(results)) next
       got <- as.numeric(r[[m]]); base <- as.numeric(ref[[m]])
