@@ -21,7 +21,7 @@ NDMM_PRE_LOT1_DAYS       <- 365L  # 12-mo CE/baseline before 1L index date
 # rather than written into the SQL.
 NDMM_FU_CE_DAYS          <- 0L
 
-# Tumor groups that do NOT count as another cancer. These are the myeloma
+# Tumor groups that do not count as another cancer. These are the myeloma
 # itself or its precursor - plasma cell leukemia, the plasmacytomas, monoclonal
 # gammopathy. The exclusion is for a cancer distinct from the myeloma, so these
 # should not trigger it.

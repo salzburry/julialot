@@ -12,7 +12,7 @@
 # different result, so they are checked rather than defaulted. Change a value
 # here and in config.csv together, deliberately.
 #
-# The study window is deliberately NOT here. It follows the cohort being built,
+# The study window is deliberately not here. It follows the cohort being built,
 # and different cohorts have different windows, so pinning it would mean editing
 # this file to run the same algorithm against a different study. It is a per-run
 # argument, like the cohort table and the output prefix, checked by
@@ -296,7 +296,7 @@ COHORT_STATUS_TABLES <- c("NDMM_BUILD_STATUS", "build_status")
 # same - one study, one prefix - so it defaults to ours rather than being a
 # second thing to remember.
 #
-# This matters more than it looks. wrk() here does NOT add a prefix: the cohort
+# This matters more than it looks. wrk() here does not add a prefix: the cohort
 # table is named by the cohort build, so the caller passes the whole name. Only
 # lot_out() prefixes, and only for our own outputs. So a status table has to be
 # prefixed explicitly, and looking for a bare "NDMM_BUILD_STATUS" finds nothing
@@ -346,7 +346,7 @@ check_cohort_build <- function(con, cfg) {
       names_it = names_it, cohort = cohort_col)
   }
 
-  # A row that names a DIFFERENT cohort is not this cohort's status, whatever
+  # A row that names a different cohort is not this cohort's status, whatever
   # its state. Drop it rather than letting table order decide.
   wrong <- Filter(function(f) identical(f$names_it, FALSE), found)
   found <- Filter(function(f) !identical(f$names_it, FALSE), found)
@@ -369,7 +369,7 @@ check_cohort_build <- function(con, cfg) {
   # Prefer the one that names this cohort, if any does.
   ord <- order(!vapply(found, function(f) isTRUE(f$names_it), logical(1)))
   for (f in found[ord]) {
-    # The run id alone does not identify an ATTEMPT: a cohort re-run keeps its
+    # The run id alone does not identify an attempt: a cohort re-run keeps its
     # run id and rewrites its rows under it. UPDATED_AT moves every time, so
     # the pair is what says "this attempt", and it is the pair that gets
     # recorded and re-checked.
@@ -417,7 +417,7 @@ check_cohort_build <- function(con, cfg) {
 # that gap replaces the table, and the snapshot check compares only row and
 # patient counts - which a same-size rebuild passes.
 #
-# So it is asked again afterwards, and must be the same ATTEMPT: same run id
+# So it is asked again afterwards, and must be the same attempt: same run id
 # and same timestamp, because a re-run keeps its id.
 recheck_cohort_build <- function(con, cfg, before) {
   if (is.na(before$run_id)) return(invisible(TRUE))
@@ -470,7 +470,7 @@ check_cohort_window <- function(con, tbl, cfg) {
   invisible(TRUE)
 }
 
-# A build that is not the contract build is a DIFFERENT ALGORITHM, and it is
+# A build that is not the contract build is a different algorithm, and it is
 # refused. LOT_CONTRACT_OVERRIDE is the one way past, and it exists for one
 # caller: the sensitivity sweep, whose axes are all contract-pinned.
 #
@@ -583,7 +583,7 @@ build_lot <- function(here, cohort_table, prefix,
   check_no_active_run(con, cfg)
   write_build_status(con, cfg, "started")
   clear_run_rows(con, cfg)
-  # after = FALSE, or this fires after the disconnect above and writes to a
+  # After = FALSE, or this fires after the disconnect above and writes to a
   # closed connection. Registered here, not beside the connection, so a
   # preflight failure still leaves no status row at all.
   on.exit(if (!isTRUE(getOption("lot_complete", FALSE)))
@@ -819,7 +819,7 @@ check_claim_ndc <- function(con, cfg) {
 #
 # STUDY_END picks the quarterly CDM table this run read, and the quarterlies
 # are cumulative. Anything that reads these outputs and then goes back to the
-# raw CDM - the question scripts do - resolves that suffix from its OWN
+# raw CDM - the question scripts do - resolves that suffix from its own
 # setting, so a different STUDY_END pairs this run's patients with a later
 # vintage of their claims. Recording the date makes that checkable.
 #
@@ -1028,7 +1028,7 @@ check_lot1_invariants <- function(con, cfg) {
 # matched the wrong thing or a date rule that fired early, and nothing else
 # here would catch them.
 #
-# THE VALUE IS THE NUMBER, NOT THE VERDICT. Every check records what it found
+# The value is the number, not the verdict. Every check records what it found
 # whether or not it passed. The bands are wide on purpose - they catch gross
 # failure, not clinical nuance, and none is a published benchmark.
 #
@@ -1061,7 +1061,7 @@ FACE_VALIDITY <- list(
        # type is always 'MED', so a CAR-T given during or closing a first line
        # shows only in its end reason. Keying on the flags alone would drop the
        # first-line CAR-T this check exists to notice.
-       # Per PATIENT: one CAR-T is two rows - the line it closes and the line
+       # Per patient: one CAR-T is two rows - the line it closes and the line
        # it starts - so counting rows counts it twice and a single CAR-T at
        # LOT3 reads 50%. The line it STARTED wins; the closing reason is the
        # fallback for a CAR-T that opened no line.
@@ -1159,7 +1159,7 @@ run_face_validity <- function(con, cfg) {
     log_msg("  ", format(verdict, width = 8), fv$what, ": ",
             if (is.na(v)) "no rows" else format(v, big.mark = ","),
             "  (expect ", fv$lo, "-", fv$hi, ")")
-    # NO VALUE is not a pass. A query that errored, a column that moved and a
+    # No value is not a pass. A query that errored, a column that moved and a
     # genuinely empty denominator all land here and look identical, so it is
     # reported like any other check that did not come back clean.
     if (verdict %in% c("LOOK", "NO VALUE")) off <- c(off, fv$name)
@@ -1587,7 +1587,7 @@ report_line_criteria <- function(con, cfg, tbl = "lot_long_allflags") {
 # cohort indexed on a diagnosis instead has no such guarantee, and there the
 # same rows are a genuine narrowing, so the check below warns rather than stops.
 #
-# TWO counts per step: a truncating criterion drops the first failing line and
+# Two counts per step: a truncating criterion drops the first failing line and
 # every later one, so a patient can survive with fewer lines and a patient
 # count alone would show nothing.
 #
@@ -1620,7 +1620,7 @@ lot_attrition_counts <- function(con, cfg) {
     list(kind = "reconciliation", step = "With LOT1 built",
          n = cnt("lot_long", TRUE)))
 
-  # Cumulative, and through the build's OWN truncate SQL rather than a second
+  # Cumulative, and through the build's own truncate SQL rather than a second
   # version of it here: the rule that decides which lines go is the thing being
   # counted, so a copy of it would report on itself.
   on <- Filter(function(c_i) identical(c_i$on_fail, "truncate"),

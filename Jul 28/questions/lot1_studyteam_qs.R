@@ -21,15 +21,15 @@
 # to run any time. Anything needing a second cohort is in broad_studyteam_qs.R.
 #
 # Limits, surfaced in the output rather than hidden:
-#  - "Another cancer" and "clinical trial" are EXCLUSION criteria, so LOT_LONG
+#  - "Another cancer" and "clinical trial" are exclusion criteria, so LOT_LONG
 #    only exists for patients who survived them. For patients excluded on
 #    those, the 1L regimen cannot be reconstructed here at all - that is what
 #    the broad script is for.
 #  - Payer is never projected by the pipeline. member_enrollment is
 #    introspected at runtime and candidate columns are dumped for an analyst to
 #    map Medicare Advantage; no column name is guessed.
-#  - Cancer TYPE is not in the persisted flags. This is a guarded raw ICD-10
-#    C-code scan with C90* excluded - NOT the cohort's other_malig criterion,
+#  - Cancer type is not in the persisted flags. This is a guarded raw ICD-10
+#    C-code scan with C90* excluded - not the cohort's other_malig criterion,
 #    which uses the tumour-group code list and a 1-inpatient or 2-outpatient
 #    confirmation rule. Re-run that step for an authoritative breakdown.
 
@@ -133,7 +133,7 @@ main <- function() {
     paste(sprintf("'%s'", unique(poma$PATID)), collapse = ",") else "''"
 
   # ---- Q1c : trial evidence for the POMA-at-1L patients ---------------
-  # One cohort, one prefix: these patients ARE this run's patients, so there is
+  # One cohort, one prefix: these patients are this run's patients, so there is
   # no overlap to report and no second index to align. n_poma_with_flag_row
   # should equal n_poma, and a shortfall is a broken join rather than a
   # population difference.
@@ -169,7 +169,7 @@ main <- function() {
   # against zero. The raw scan below is what remains, and it says what it is.
 
   # ---- Q1a detail : best-effort RAW cancer-code scan ------------------
-  # NOT equivalent to the cohort's other_malig criterion, which uses the
+  # not equivalent to the cohort's other_malig criterion, which uses the
   # other_malig_codes tumor-group codelist + an inpatient-or-2-outpatient
   # confirmation rule (pipeline_steps.R). This is a raw ICD-10 C* scan
   # against the same quarterly diagnosis table the pipeline reads (via
@@ -345,7 +345,7 @@ main <- function() {
   # falls relative to those two dates, so the run's own value is quoted
   # rather than restated here: a comment naming a date goes stale silently
   # while the number beside it does not.
-  # This scans ALL lines, not just 1L. MAP_STACKED is
+  # This scans all lines, not just 1L. MAP_STACKED is
   # the per-medication exposure table (cohort-scoped); the belantamab
   # token is detected from the data (class like BCMA, abbr starting
   # BEL) rather than

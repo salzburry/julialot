@@ -44,7 +44,7 @@ DEF_SOURCE_REJECTED <- c(
 # to put to a protocol, worded so filling the cell is reading, not interpreting.
 LOT_DIMENSIONS <- list(
   # The LOT1 half alone reads as complete and is not. SCT_AUTO is one of the
-  # start types a LOT-N takes, so a later transplant IS a line of its own.
+  # start types a LOT-N takes, so a later transplant is a line of its own.
   list(id = "sct_auto_is_a_line",
        dimension = "Is an autologous transplant its own line, or part of induction?",
        ours = paste0("Both, depending on where it falls. Inside a line it is ",

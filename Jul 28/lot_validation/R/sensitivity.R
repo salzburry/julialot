@@ -1,31 +1,19 @@
 # Sensitivity of the LOT algorithm to its own thresholds.
 #
-# Vary one parameter at a time and record what moves. The direction is stated
-# BEFORE the run, so a metric that moves the other way is a finding rather than
-# a number a reader nods at.
+# One parameter at a time, direction predicted before the run - so a metric that
+# moves the other way is a finding, not a number to nod at.
 #
-# One cell is one complete LOT build - the gap threshold changes how MAPs are
-# formed, which changes everything after them, and none of it is recoverable
-# from an existing LOT_LONG. Six parameters with two values each, plus a
-# seventh that is on or off, is fourteen builds. A cross-product would be over
-# a thousand.
+# One cell is one full LOT build; none of it is recoverable from an existing
+# LOT_LONG. Six parameters at two values each plus one on/off is fourteen.
 #
-# Continuous enrolment is two different questions, and only one of them is the
-# cohort's:
+# Continuous enrolment is two questions. Eligibility - who qualifies - is the
+# cohort's axis, and NDMM_FU_CE_COUNTS already reports 0/30/60/90 days from one
+# run. Censoring - whether LOT stops observing at disenrolment - is a setting
+# here, and it is swept below.
 #
-#   CE eligibility               Who qualifies. The cohort build's axis, and
-#                                NDMM_FU_CE_COUNTS already reports 0/30/60/90
-#                                days from one run.
-#   CE as censoring              Whether LOT stops observing at disenrolment.
-#                                That IS a setting here - censor_at_disenrollment
-#                                - and it is swept below.
-#
-# One axis the ask named cannot be swept here:
-#
-#   maintenance-as-LOT vs flag   Not a setting. Maintenance is a descriptive
-#                                flag and there is no maintenance period
-#                                (05_sct.R:13), so a line would be a different
-#                                algorithm. It is in the vignettes instead.
+# Maintenance-as-LOT is not swept: it is not a setting. Maintenance is a flag
+# and there is no maintenance period (05_sct.R:13), so making it a line would be
+# a different algorithm. It is in the vignettes.
 
 # Each axis: the values to try beside the shipped one, and what should happen.
 #
@@ -52,11 +40,10 @@ SENS_AXES <- list(
        expect = list(n_lot1_regimens = "down", median_lot1_meds = "up",
                      n_lines = "unclear", n_patients = "none"),
        confidence = "to_confirm",
-       why = paste0("A longer window pulls more agents into LOT1's regimen, so ",
-                    "regimens get larger and the distinct set of them narrows. ",
-                    "Whether that changes the LINE count is genuinely unclear: ",
-                    "an agent absorbed into induction is one that did not start ",
-                    "a line, but the window does not by itself end anything.")),
+       why = paste0("A longer window pulls more agents into the regimen, so ",
+                    "regimens get larger and the distinct set narrows. The line ",
+                    "count is unclear: an absorbed agent did not start a line, ",
+                    "but the window ends nothing by itself.")),
 
   list(param = "INDUCTION_WINDOW_DAYS_LOT_N", cfg = "lot_n_induction_window_days",
        values = c(15L, 60L),
@@ -83,47 +70,32 @@ SENS_AXES <- list(
        why = paste0("A longer tandem window makes more second transplants part of ",
                     "a pair rather than excess, and excess AUTO is what ends LOT1.")),
 
-  # The only axis that changes the OBSERVATION WINDOW rather than a threshold
-  # inside it, and the only one whose metrics have no derivable direction. Every
-  # prediction here is "unclear", which the harness records and never scores -
-  # a wrong sign would be a false failure in every sweep forever.
+  # The only axis that moves the OBSERVATION WINDOW rather than a threshold
+  # inside it, and the only one with no derivable direction. Everything is
+  # "unclear", which the harness records and never scores.
   #
-  # Shortening observation pulls two ways at once:
+  # Shortening observation pulls both ways. Fewer triggers are reachable, and a
+  # patient whose first non-steroid agent lands after they disenrolled loses
+  # LOT1 entirely. But no_belantamab reads the same shortened window and
+  # truncates every line of a patient it catches, so a belantamab claim between
+  # ENDDATE_CE and ENDDATE is visible to the reference cell and invisible here -
+  # a patient the primary run removes is kept, and the counts rise.
   #
-  #   fewer, shorter    OBS_END_DT becomes coalesce(ENDDATE_CE, ENDDATE), so
-  #                     every claim window closes at or before where it closed.
-  #                     Nothing is found later than before, and a patient whose
-  #                     first non-steroid agent lands after they disenrolled has
-  #                     no LOT1 at all - lot1_start reads map_stacked, which is
-  #                     bounded by OBS_END_DT.
-  #   more, and MORE    the no_belantamab criterion reads the same bounded
-  #     patients        map_stacked (line_criteria.R) and truncates EVERY line of
-  #                     a patient who has one. A belantamab MAP between
-  #                     ENDDATE_CE and ENDDATE is visible to the reference cell
-  #                     and invisible to this one - so a patient the primary run
-  #                     removes entirely is kept here, and n_patients RISES.
-  #
-  # The ratios have no direction either: pct_reaching_lotN is patients reaching
-  # the line over patients with a LOT1, and both move. The median is over a set
-  # whose membership changes, so per-patient shortening does not carry to it.
+  # The ratios move on both sides, and the median is over a set whose membership
+  # changes. Nothing is predicted.
   list(param = "CENSOR_AT_DISENROLLMENT", cfg = "censor_at_disenrollment",
        values = TRUE,
-       what = "whether observation also ends at disenrolment, not only at death or study end",
+       what = "whether observation also ends at disenrolment",
        expect = list(n_lines = "unclear", median_lot1_length = "unclear",
                      pct_reaching_lot2 = "unclear", pct_reaching_lot3 = "unclear",
                      n_patients = "unclear"),
        confidence = "to_confirm",
-       why = paste0("Shortening observation pulls both ways. Fewer triggers are ",
-                    "reachable, so lines and lengths tend down - but the ",
-                    "no_belantamab criterion also reads the shortened window, ",
-                    "and it truncates every line of a patient it catches. A ",
-                    "belantamab claim between disenrolment and study end is ",
-                    "visible to the reference cell and invisible to this one, ",
-                    "so a patient the primary run removes outright is kept here ",
-                    "and the counts RISE. Which effect dominates is the cohort's ",
-                    "doing, not the algorithm's, so nothing is predicted: the ",
-                    "numbers are recorded and a mover is investigated, starting ",
-                    "with NO_BELANTAMAB_ANY_LOT.")),
+       why = paste0("Pulls both ways: fewer triggers are reachable, but ",
+                    "no_belantamab reads the shortened window too and truncates ",
+                    "every line of a patient it catches - so a patient the ",
+                    "primary run removes can be kept here and the counts rise. ",
+                    "Which wins is the cohort's doing. A mover starts with ",
+                    "NO_BELANTAMAB_ANY_LOT.")),
 
   list(param = "MAX_LOT", cfg = "max_lot",
        values = c(3L, 8L),
@@ -131,17 +103,14 @@ SENS_AXES <- list(
        expect = list(n_lines = "up", n_patients = "none",
                      pct_reaching_lot3 = "none"),
        confidence = "derived",
-       why = paste0("Purely a cap. Raising it builds lines that were being ",
-                    "discarded; it cannot change who has a LOT1 - the truncating ",
-                    "criterion is asked of the claims, not of the built lines ",
-                    "(line_criteria.R). Reaching LOT3 cannot move either: both ",
-                    "alternatives are at or above three, so LOT3 is built in ",
-                    "every cell and the same patients reach it. Only a value ",
-                    "below three would change that row, and then it would be ",
-                    "absent rather than lower."))
+       why = paste0("Purely a cap. It builds lines that were discarded, and ",
+                    "cannot change who has a LOT1 - the truncating criterion is ",
+                    "asked of the claims, not the built lines (line_criteria.R). ",
+                    "Both values are at or above three, so LOT3 is built in every ",
+                    "cell and reaching it cannot move."))
 )
 
-# What each cell is measured on, from the cell's OWN tables - so a failed cell
+# What each cell is measured on, from the cell's own tables - so a failed cell
 # contributes nothing rather than the previous cell's numbers.
 SENS_METRICS <- c(
   n_patients         = "patients with at least one line in LOT_LONG_FINAL",
@@ -246,7 +215,7 @@ sens_rank <- function(x) {
 #   as expected          moved the way we said
 #   AGAINST EXPECTATION  moved the other way, or moved when "none" was said.
 #                        This is the finding.
-#   no movement          a direction was predicted and nothing changed. Not the
+#   No movement          a direction was predicted and nothing changed. Not the
 #                        opposite finding: whether anyone sits near a threshold
 #                        is the cohort's doing, not the algorithm's.
 #   recorded / no data   "unclear" was predicted, or the cell gave nothing.
@@ -275,7 +244,7 @@ sens_compare <- function(results, axes = SENS_AXES, tol = 1e-9) {
         expected = want, moved = moved,
         # "unclear" is never a miss - scoring it would reward a lucky guess.
         # Nor is "no movement": a cell that moved nothing has contradicted
-        # nothing. Predicting "none" and getting movement IS a miss.
+        # nothing. Predicting "none" and getting movement is a miss.
         verdict = if (identical(want, "unclear")) "recorded"
                   else if (is.na(moved)) "no data"
                   else if (identical(moved, want)) "as expected"

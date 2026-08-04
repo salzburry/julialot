@@ -21,7 +21,7 @@
 #
 # Panels describe the study population, {lot_final}. {lot_long} is that table
 # before the line criteria, and a patient-level truncate criterion makes the
-# two hold different PATIENTS - so a panel on it describes people the study
+# two hold different patients - so a panel on it describes people the study
 # excluded, with nothing on the page saying so. It belongs on the Validation
 # tab, where the comparison is the point, and nowhere else.
 
@@ -30,11 +30,11 @@
 # JavaScript library or a plotting package - see render.R.
 RENDER_TYPES <- c("table", "kpi", "bar", "sankey")
 
-# What the percentage beside a bar is a percentage OF. There is no answer right
+# What the percentage beside a bar is a percentage of. There is no answer right
 # for every chart, and assuming one is how a number comes to mean something
 # nobody intended - a share of the first bar, on a chart whose first bar is
 # simply the largest category, is arithmetic without a claim behind it.
-#   first  of the first bar - a funnel, where row one IS the denominator
+#   first  of the first bar - a funnel, where row one is the denominator
 #   total  of all bars      - a partition, where the bars sum to the whole
 #   none   no percentage    - overlapping or merely ranked categories
 BAR_PCT <- c("first", "total", "none")
@@ -56,7 +56,7 @@ JOURNEY_CATEGORIES <- list(
   list(label = "Reached LOT4 or beyond",
        pred  = "max_lot >= 4"),
   # The CAR-T line itself, not a previous line ending because CAR-T began. A
-  # patient whose LOT1 IS the CAR-T has no preceding line to carry CART_INIT, so
+  # patient whose LOT1 is the CAR-T has no preceding line to carry CART_INIT, so
   # keying on that alone left them out of the examples while the transplant
   # panel counted them - two panels disagreeing about the same patients.
   list(label = "CAR-T",             pred = "any_cart = 1"),
@@ -118,7 +118,7 @@ JOURNEY_CATEGORIES <- list(
 # the panel could not show how many went on at all. They are a terminal node
 # now, and the ribbons leaving a regimen add up to that regimen's patients.
 #
-# A LINE decides whether the patient got there, not a regimen string. An
+# A line decides whether the patient got there, not a regimen string. An
 # SCT_ALLO line carries no regimen - 10_lot2_5_base.R suppresses its induction
 # rows - so filtering on a non-blank LOT_BASE_MEDS read those patients as "No
 # LOT{b}" when they had reached it, and dropped them entirely as a source. That
@@ -182,7 +182,7 @@ JOURNEY_CATEGORIES <- list(
 
 # ---- The cohort funnel, whatever shape the cohort build wrote it in --------
 #
-# ATTRITION_TABLE fixed the NAME, not the SHAPE, and the two cohort builds do
+# ATTRITION_TABLE fixed the name, not the shape, and the two cohort builds do
 # not agree on one:
 #
 #   nndm     NDMM_ATTRITION      RUN_ID, STEP_NUM, CRITERION, N_PATIENTS,
@@ -258,7 +258,7 @@ DASHBOARD_SECTIONS <- c(list(
        needs = "run_meta", render = "table",
        # The run that OWNS these tables, resolved before any panel runs - see
        # resolve_owner_run(). Not the latest metadata row, and not the latest
-       # COMPLETE one either.
+       # complete one either.
        #
        # LOT replaces LOT_LONG_FINAL early and validates it afterwards, so a
        # rerun that replaced the table and then died leaves ITS table on disk
@@ -285,7 +285,7 @@ DASHBOARD_SECTIONS <- c(list(
                 (SELECT count(DISTINCT PATID) FROM {lot_final})       AS `Patients after criteria`"),
 
   # The SQL here is a placeholder. Which query actually runs is decided at run
-  # time by resolve_attrition(), because the funnel's SHAPE differs by cohort
+  # time by resolve_attrition(), because the funnel's shape differs by cohort
   # build and not only its name - see ATTRITION_LAYOUTS below.
   list(name = "attrition", tab = "Overview",
        label = "Cohort attrition, as the cohort build recorded it",
@@ -397,7 +397,7 @@ DASHBOARD_SECTIONS <- c(list(
          FROM {patients}
          WHERE PATID IN (SELECT DISTINCT PATID FROM {lot_final})"),
 
-  # ---- LINES ---------------------------------------------------------------
+  # Lines.
 
   list(name = "lines_per_patient", tab = "Lines",
        label = "Highest line reached",
@@ -495,7 +495,7 @@ DASHBOARD_SECTIONS <- c(list(
   # Top N sources; the rest collapse to "Other", drawn at the bottom because it
   # is a bucket rather than a regimen. The stopped node is ranked out of that.
 
-  # ---- PATIENT EXAMPLES ----------------------------------------------------
+  # Patient examples.
 
   list(name = "patient_journeys", tab = "Patient examples",
        label = "Line-by-line journeys, a few patients per scenario",
@@ -566,7 +566,6 @@ DASHBOARD_SECTIONS <- c(list(
 ),
 .transition_sections())
 
-# ---------------------------------------------------------------------------
 FIELDS <- c("name", "tab", "label", "needs", "render", "sql")
 
 .is_str <- function(x) is.character(x) && length(x) == 1L && !is.na(x) && nzchar(trimws(x))

@@ -79,7 +79,7 @@ ok(identical(compare_benchmarks(obs, mkref(NA, ""))$verdict, "no reference suppl
    "a row nobody supplied says so rather than passing quietly")
 ok(identical(compare_benchmarks(obs, mkref(3, "no"))$verdict, "recorded, not comparable"),
    "a source marked not comparable is recorded and scored as nothing")
-# The default direction matters: an unmarked row must NOT become evidence.
+# The default direction matters: an unmarked row must not become evidence.
 ok(identical(compare_benchmarks(obs, mkref(3, NA))$verdict, "recorded, not comparable"),
    "...and an UNMARKED source defaults to not comparable, never to comparable")
 ok(identical(compare_benchmarks(obs, mkref(3, "caveat"))$verdict, "compared with caveat"),
@@ -122,7 +122,7 @@ ok(is.na(km_median(c(10, 20), c(0, 0))),
 cat("\n-- and the statement encodes that, not the naive version --\n")
 bn <- readLines(file.path(ROOT, "R", "benchmarks.R"), warn = FALSE)
 sql <- bench_ttnt_sql("F", "P", 1)
-# LEFT JOIN to the next line: an INNER JOIN here IS the naive version, and it
+# LEFT JOIN to the next line: an INNER JOIN here is the naive version, and it
 # is a one-word difference.
 ok(grepl("LEFT JOIN nxt n USING (PATID)", sql, fixed = TRUE),
    "patients without the next line are kept, not inner-joined away")
@@ -148,7 +148,7 @@ ok(any(grepl("LOT_BASE_LENGTH is inclusive", bn, fixed = TRUE)),
    "the inclusive length is stated, since an off-by-one here is a day per line")
 
 cat("\n-- a regimen percentage is out of everyone at that line --\n")
-# An allogeneic line carries NO regimen string by construction - induction rows
+# An allogeneic line carries no regimen string by construction - induction rows
 # are suppressed for it. Summing the named regimens to get the denominator
 # drops those patients, and every percentage comes out high under a heading
 # that says "% of line-n patients". Same mistake that made the transition

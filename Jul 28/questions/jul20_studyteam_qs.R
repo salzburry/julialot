@@ -1,63 +1,46 @@
 #!/usr/bin/env Rscript
-# July-20 study-team questions Q2 + Q3 -> CSVs, summaries and one Excel workbook.
+# July-20 study-team questions Q2 and Q3 -> CSVs, summaries and one workbook.
 #
 #   Rscript jul20_studyteam_qs.R
 #
-# Q1 (the dashboard refresh) is in jul20_refresh_dashboard.R. The workbook
-# needs openxlsx and degrades to CSV-only with a note if it is absent. Nothing
-# permanent is written - session temp views only, safe to run any time.
+# Q1 (the dashboard refresh) is in jul20_refresh_dashboard.R. The workbook needs
+# openxlsx; without it you get the CSVs and a note. Nothing is written to the
+# database - session temp views only.
 #
-# Population: LOT_LONG_FINAL, the study population, which is the cohort the
-# question names. LOT_POPULATION=PRECRITERIA gives the run before the line
-# criteria. Run the pair with the population stated:
-#   LOT_POPULATION=FINAL Rscript jul20_refresh_dashboard.R
-#   LOT_POPULATION=FINAL Rscript jul20_studyteam_qs.R
+# Population is LOT_LONG_FINAL. LOT_POPULATION=PRECRITERIA gives the run before
+# the line criteria; run the refresh and this script with the same setting.
 #
-# Q2 - 1L DARA+BORT dual therapy. EXACTLY those two agents in the LOT1
-#   regimen, no other MM agent. Steroids never enter the regimen strings, so
-#   they do not change the pairing; a context file counts the broader
-#   "contains both, possibly with others" group beside it.
+# Q2 - 1L DARA+BORT dual therapy: exactly those two MM agents in the LOT1
+#   regimen and nothing else. Steroids are not in the regimen strings, so they
+#   do not affect the pairing; a context file counts the looser "both, possibly
+#   with others" group beside it. Outputs a patient-level file, MAP files during
+#   and after LOT1, and summaries by 2L regimen, diagnosis year and region x
+#   payer. Protocol cycles are not in claims, so the measures are drug episodes,
+#   medical service dates and fill dates.
 #
-#   Outputs: one row per patient (diagnosis date, drug episodes, medical
-#   service dates, pharmacy fills, 2L regimen, region, payer), per-episode MAP
-#   files during and after LOT1, and summaries for 2L, diagnosis year and
-#   region x payer.
+#   Region needs an approved source (REGION_SOURCE_TABLE, REGION_SOURCE_COLUMN).
+#   Unset, it is reported unavailable and a candidate-columns file lists what
+#   could be approved. REGION_MAP=CENSUS rolls a STATE field up to the four US
+#   Census regions (DC in South); anything else stays visible as Other/Unmapped.
+#   Payer is the Optum line of business on the span covering the LOT1 start, the
+#   same anchor the dashboard uses: MCR Medicare, COM Commercial, blank Unknown.
 #
-#   Measures are named for what claims can show. Protocol CYCLES are not in
-#   claims, so these are drug episodes, medical service dates and fill dates.
+# Q3 - a preliminary screen of two candidate LOT-rule changes. It reads the
+#   persisted tables rather than re-running the engine, so the counts are not
+#   the exact impact: moving a boundary changes induction windows, regimens,
+#   discontinuation dates and every later line.
 #
-#   Region comes only from an approved source - REGION_SOURCE_TABLE and
-#   REGION_SOURCE_COLUMN. Unset, region is reported unavailable and a
-#   candidate-columns file lists geographic-looking columns to approve. Values
-#   pass through untouched unless REGION_MAP=CENSUS, which rolls a STATE field
-#   up to the four US Census regions (DC in South) as Optum does; anything
-#   else stays visible as Other/Unmapped.
+#   (a) MELP: line transitions attributable to melphalan, bucketed by timing
+#       against the line's first MELP MAP. The rule as written is ambiguous -
+#       both branches keep MELP inside the line - so the summary lists what the
+#       study team has to settle first.
+#   (b) CAR-T: patients whose first CAR-T falls inside the 60-day LOT1 induction
+#       window, classified by how the engine handled it. The fold-back merge is
+#       computed where LOT1 ended by the CAR-T and LOT2 is CART-started; the
+#       other groups stay visible and flagged.
 #
-#   Payer is the Optum line of business (member_enrollment.BUS) on the span
-#   covering the LOT1 start - the dashboard's anchor. MCR = Medicare, COM =
-#   Commercial, blank = Unknown. Payer at diagnosis or across LOT1 is a
-#   different anchor, and the definitions file says so.
-#
-# Q3 - PRELIMINARY screen of two candidate LOT-rule changes. Read-only over the
-#   persisted tables, NOT an engine re-run, so its counts are not the exact
-#   impact of either rule: moving a boundary changes induction windows,
-#   regimens, discontinuation dates, transplant classification and every later
-#   line. Only a scenario re-run can give exact numbers.
-#
-#   (a) MELP: the line transitions attributable to melphalan, bucketed by
-#       timing against the line's first MELP MAP. The rule as written is
-#       ambiguous - both branches keep MELP inside the line, so read literally
-#       no MELP ever advances a line. The summary lists what the study team has
-#       to settle first.
-#   (b) CAR-T: every patient whose first CAR-T falls inside the LOT1 induction
-#       window (60 days; an override is flagged as a gap because the rule names
-#       60), classified by how the engine handled it. The fold-back merge is
-#       computed for patients whose LOT1 ended by the CAR-T and whose LOT2 is
-#       CART-started; the other groups stay visible and flagged.
-#
-# Every run writes a validation summary (reconciliation checks, definition
-# audits, category sums, cross-tab totals) and a run-status file: either
-# TECHNICALLY COMPLETE - PENDING MANUAL REVIEW, or INCOMPLETE with reasons.
+# Every run writes a validation summary and a run-status file: TECHNICALLY
+# COMPLETE - PENDING MANUAL REVIEW, or INCOMPLETE with reasons.
 
 .script_dir <- local({
   args <- commandArgs(trailingOnly = FALSE)
@@ -94,12 +77,10 @@ best_effort <- function(expr, label) {
 is_status_table <- function(x)
   is.data.frame(x) && identical(names(x), "status")
 
-# ===========================================================================
 # Consolidated Excel writer (openxlsx). A "sheet" is a list of name, title,
 # optional subtitle, narrative lines, and named tables (each a data.frame).
 # Same writer as lot_followup_qs.R / poma_studyteam_qs.R. openxlsx must be
 # installed; the caller checks and degrades to CSV-only if it is missing.
-# ===========================================================================
 wbx_write_workbook <- function(sheets, xlsx_path) {
   ox <- function(f) getExportedValue("openxlsx", f)
   wb <- ox("createWorkbook")()
@@ -160,10 +141,8 @@ wbx_write_workbook <- function(sheets, xlsx_path) {
 num <- function(x) suppressWarnings(as.numeric(x))
 pct1 <- function(x, d) if (isTRUE(num(d) > 0)) round(100 * num(x) / num(d), 1) else NA_real_
 
-# ---------------------------------------------------------------------------
 # Drug tokens (DARA/BORT/MELP) resolved from cl_mma_codelist.csv by full drug
 # name; resolved = TRUE only when every code came from the codelist.
-# ---------------------------------------------------------------------------
 resolve_jul20_tokens <- function(con) {
   out <- list(dara = "DARA", bort = "BORT", melp = "MELP",
               notes = character(0), resolved = FALSE)
@@ -215,15 +194,13 @@ make_describe_cols <- function(con) {
   }
 }
 
-# ---------------------------------------------------------------------------
 # US Census Bureau state -> region rollup (opt-in via REGION_MAP=CENSUS), for
 # when the approved region source is a STATE field rather than a REGION field.
 # This reproduces Optum's own REGION derivation ("the US Census Region
 # associated with the member"). DC is in the South, per the Census Bureau.
-# The map is keyed on BOTH the 2-letter USPS code and the full state name, so
+# The map is keyed on both the 2-letter USPS code and the full state name, so
 # either encoding resolves; any value that is neither is left visible as
 # 'Other/Unmapped' (territories, military, junk) rather than silently bucketed.
-# ---------------------------------------------------------------------------
 CENSUS_REGIONS <- list(
   Northeast = c("CT","ME","MA","NH","RI","VT","NJ","NY","PA"),
   Midwest   = c("IL","IN","MI","OH","WI","IA","KS","MN","MO","NE","ND","SD"),
@@ -258,10 +235,8 @@ census_state_region_case <- function(val_expr) {
         END")
 }
 
-# ===========================================================================
 # Q2 setup - the 1L DARA+BORT exact-dual cohort as a temp view, plus the
 # exact-vs-contains-both context counts.
-# ===========================================================================
 q2_build_dual_view <- function(con, lot_long, dara, bort) {
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW _jul20_dual AS
@@ -330,8 +305,8 @@ q2_build_agent_views <- function(con, map_tbl, dara, bort) {
 
 # Per-patient-per-agent service-date counts inside LOT1. MMA_MED_PROCESSED is
 # deduplicated to one row per patient + agent + service date + claim type, so
-# these are counts of distinct medication service dates / fill dates - NOT
-# administrations and NOT cycles.
+# these are counts of distinct medication service dates / fill dates - not
+# administrations and not cycles.
 q2_build_claim_view <- function(con, mma_tbl, dara, bort) {
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW _jul20_dual_claims AS
@@ -347,9 +322,7 @@ q2_build_claim_view <- function(con, mma_tbl, dara, bort) {
   invisible(TRUE)
 }
 
-# ===========================================================================
 # Q2a - utilization per agent: episode (MAP) and service-date summaries.
-# ===========================================================================
 q2_utilization_summary <- function(con, have_claims) {
   summ <- db_q(con, "
     SELECT agent,
@@ -387,10 +360,8 @@ q2_utilization_summary <- function(con, have_claims) {
   out
 }
 
-# ===========================================================================
 # Q2b - what the DARA+BORT patients receive in 2L (all regimens, plus a
 # "(no 2L observed)" row so the denominator stays the full dual cohort).
-# ===========================================================================
 q2_lot2_regimens <- function(con, lot_long, n_dual) {
   d <- db_q(con, glue("
     WITH l2 AS (
@@ -413,11 +384,9 @@ q2_lot2_regimens <- function(con, lot_long, n_dual) {
              stringsAsFactors = FALSE)
 }
 
-# ===========================================================================
 # Q2c - diagnosis years: INDEX_DATE (the qualifying MM diagnosis date behind
 # the Part-1 cohort) by calendar year, with an NA row so the total stays the
 # full dual cohort.
-# ===========================================================================
 q2_diagnosis_years <- function(con, coh_tbl, n_dual) {
   d <- db_q(con, glue("
     SELECT year(cast(e.INDEX_DATE as date)) AS diagnosis_year,
@@ -443,10 +412,8 @@ q2_diagnosis_years <- function(con, coh_tbl, n_dual) {
   out
 }
 
-# ===========================================================================
 # Q2d setup - payer (production derivation, anchored at the LOT1 start) and
-# region (ONLY from the explicitly approved env-configured source).
-# ===========================================================================
+# region (only from the explicitly approved env-configured source).
 q2_build_payer_view <- function(con, enr) {
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW _jul20_payer AS
@@ -535,7 +502,7 @@ q2_region_candidates_report <- function(con, describe_cols) {
   out
 }
 
-# _jul20_region has TWO columns: region_raw (the source value, e.g. the state
+# _jul20_region has two columns: region_raw (the source value, e.g. the state
 # code) and region (what the crosstab uses). When map_census is TRUE the raw
 # value is rolled up to the 4 Census regions; otherwise region = the raw value
 # (blank -> 'Unknown'). Keeping both lets the value-counts file audit the map.
@@ -592,9 +559,7 @@ q2_region_values <- function(con) {
     FROM _jul20_region GROUP BY region_raw, region ORDER BY n_patients DESC")
 }
 
-# ===========================================================================
 # Q2d - region x payer cross-tab over the dual cohort.
-# ===========================================================================
 q2_region_payer_crosstab <- function(con, have_region, have_payer, n_dual) {
   reg_expr <- if (have_region) "coalesce(r.region, 'Unknown')" else "'(region unavailable)'"
   pay_expr <- if (have_payer)  "coalesce(p.payer, 'Unknown')"  else "'(payer unavailable)'"
@@ -633,9 +598,7 @@ q2_region_payer_crosstab <- function(con, have_region, have_payer, n_dual) {
   list(long = long, wide = wide)
 }
 
-# ===========================================================================
 # Q2 - patient-level roster (one row per dual patient).
-# ===========================================================================
 q2_roster <- function(con, lot_long, coh_tbl, dara, bort,
                       have_claims, have_payer, have_region) {
   claims_sel <- if (have_claims) "
@@ -696,7 +659,7 @@ q2_roster <- function(con, lot_long, coh_tbl, dara, bort,
 }
 
 # Per-MAP detail for the dual cohort: every DARA/BORT episode from the LOT1
-# start on. The caller splits it into DURING-LOT1 and AFTER-LOT1 files so 1L
+# start on. The caller splits it into DURING-LOT1 and after-LOT1 files so 1L
 # utilization is never mixed with later use.
 q2_map_detail <- function(con, map_tbl, dara, bort, w1) {
   db_q(con, glue("
@@ -720,14 +683,12 @@ q2_map_detail <- function(con, map_tbl, dara, bort, w1) {
     ORDER BY d.PATID, agent, m.MAP_CNT"))
 }
 
-# ===========================================================================
-# Q3b - CAR-T rule: PRELIMINARY affected-patient screen (not an engine
+# Q3b - CAR-T rule: preliminary affected-patient screen (not an engine
 # re-run). Affected = LOT1 rows ended by a CAR-T whose first CAR-T date falls
 # inside [LOT1 start, start + w1 - 1]. The screen shows what folding the
 # CART-started LOT2 back into LOT1 would look like; affected patients with no
 # LOT2 row are flagged (their merged LOT1 end is not derivable from the
 # existing outputs).
-# ===========================================================================
 q3_cart_screen <- function(con, lot_long, sct_tbl, w1) {
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW _jul20_cart AS
@@ -885,14 +846,12 @@ q3_cart_shift_table <- function(shift) {
              stringsAsFactors = FALSE)
 }
 
-# ===========================================================================
-# Q3a - MELP rule: PRELIMINARY boundary screen (not an engine re-run).
+# Q3a - MELP rule: preliminary boundary screen (not an engine re-run).
 # A "MELP boundary" is a line transition attributable to melphalan: the
 # earlier line ended MED_ADD with MELP as the added drug, and/or the next
 # line is MED-started on the date a MELP MAP begins. Each boundary is
 # bucketed by timing against the first MELP MAP of the line it follows,
 # because the rule text is ambiguous (see the summary file).
-# ===========================================================================
 q3_melp_screen <- function(con, lot_long, map_tbl, melp) {
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW _jul20_melp_maps AS
@@ -1106,7 +1065,6 @@ q3_melp_examples <- function(con, n = 10L) {
   list(lots = lots, maps = maps)
 }
 
-# ===========================================================================
 main <- function() {
   stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
 
@@ -1345,7 +1303,7 @@ main <- function() {
     if (have_agent) {
       # The exact-dual definition came from LOT_BASE_MEDS; the episodes come
       # from the separately persisted MAP_STACKED. Every exact-dual patient
-      # must have at least one LOT1 episode of EACH agent - a shortfall means
+      # must have at least one LOT1 episode of each agent - a shortfall means
       # the two persisted tables are out of sync (e.g. a stale MAP_STACKED).
       agt <- best_effort(db_q(con, glue("
         SELECT sum(CASE WHEN agent = '{tok$dara}' THEN 1 ELSE 0 END) AS n_dara_patients,
@@ -1459,7 +1417,7 @@ main <- function() {
   }
 
   # ======================================================================
-  # Q3 - PRELIMINARY rule screens
+  # Q3 - preliminary rule screens
   # ======================================================================
   cart <- if (have_sct)
     best_effort(q3_cart_screen(con, lot_long, sct_tbl, VQS_W1), "CAR-T rule screen")

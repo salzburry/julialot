@@ -4,7 +4,7 @@
 #
 #   DATABRICKS_PWD=... Rscript nndm/build_subsequent_cohorts.R <prefix_>
 #
-# Run this AFTER the LOT build over the same prefix: the 2L and 3L index dates
+# Run this after the LOT build over the same prefix: the 2L and 3L index dates
 # are line starts, and only lot knows them.
 #
 # Writes <prefix>NDMM_COHORT_2L, <prefix>NDMM_COHORT_3L and

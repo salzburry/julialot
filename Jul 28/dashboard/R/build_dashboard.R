@@ -167,7 +167,7 @@ fill_sql <- function(sql, inputs, cfg) {
 
 # Point the attrition section at the funnel the cohort build actually wrote.
 #
-# ATTRITION_TABLE makes the NAME configurable. The shape is not: it is whatever
+# ATTRITION_TABLE makes the name configurable. The shape is not: it is whatever
 # the cohort build chose, so the layout is DETECTED - DESCRIBE the table and
 # match its columns - rather than a second setting that can disagree with the
 # warehouse.
@@ -274,7 +274,7 @@ resolve_attrition <- function(secs, con, inputs, have, cfg, owner) {
 # max_lot in LOT_RUN_METADATA - not against how far patients got. Only one of
 # those is a problem. A run configured to LOT6 while this says 5 leaves LOT5 to
 # LOT6 on no panel. A run where nobody REACHED LOT5 is not a mismatch at all:
-# every patient flowing into "No LOT5" is the finding, and lowering MAX_LOT
+# Every patient flowing into "No LOT5" is the finding, and lowering MAX_LOT
 # would delete the panel carrying it.
 #
 # Nothing here stops the run: every other panel is still true.
@@ -451,7 +451,7 @@ build_dashboard_run <- function(here, cohort_table, lot_prefix,
   for (nm in names(inputs))
     log_msg("  ", if (have[[nm]]) "found  " else "MISSING", nm, ": ", inputs[[nm]])
   # LOT_LONG_FINAL is the one nothing works without. It is the study
-  # population, every clinical panel reads it, and it is written LAST - in the
+  # population, every clinical panel reads it, and it is written last - in the
   # line-criteria phase, after LOT_LONG. So a LOT run that died in between
   # leaves LOT_LONG behind and no final table, and requiring only LOT_LONG
   # would produce a file that looks like a finished dashboard while nearly

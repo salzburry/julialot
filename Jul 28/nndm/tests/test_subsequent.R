@@ -116,7 +116,7 @@ ok(!has(bs, 'Sys.getenv("GAP_DAYS'),
    "the gap allowance is not settable here - it belongs to the spans")
 
 cat("\n-- the lines have to come from a finished run over this cohort attempt --\n")
-# The fakes carry EXACTLY the columns lot/ declares, read out of its source.
+# The fakes carry exactly the columns lot/ declares, read out of its source.
 # The first version of this suite invented a LOT_BUILD_STATUS with
 # COHORT_RUN_ID on it; the real table has no such column, so the guard read NA,
 # decided it had nothing to compare, and waved every run through - and the
@@ -166,7 +166,7 @@ mk <- function(lot = STATUS, meta = META, nndm = NNDM) {
   f <- subseq_check_lot_run; environment(f) <- e
   f
 }
-# Refused FOR THE STATED REASON. A test that only asks "did it error" passes
+# Refused for the stated reason. A test that only asks "did it error" passes
 # on a typo in the checker as readily as on the check.
 refuses <- function(f, why, what) {
   m <- tryCatch({ f(NULL, "ndmm_"); "" }, error = conditionMessage)

@@ -153,7 +153,7 @@ ndmm_metastatic_sql <- function(col = "om.dx") {
 # into MET. This is the counterfactual the review table needs: plain
 # substr(dx, 1, 3) is not, because C800 would fall back to C80 and rejoin
 # C80.1 and C80.2 - codes deliberately kept out of the metastatic group. The
-# difference would then net a pair the collapse ADDS against a pair it REMOVES,
+# difference would then net a pair the collapse adds against a pair it removes,
 # and report the two as one number.
 ndmm_metastatic_own_group_sql <- function(col = "om.dx") {
   arms <- sprintf("WHEN %s LIKE '%s%%' THEN '%s'", col,

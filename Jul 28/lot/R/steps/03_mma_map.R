@@ -213,9 +213,9 @@ phase_mma_map <- function(con, ctx) {
   #     new rx_runout = DATE_SERVICE + DAY_SUPPLY - 1 + pushout
   #   - If new pharmacy claim DATE_SERVICE > current rx_runout
   #     (but still within MAP via med_runout):
-  #     rx_runout RESETS to DATE_SERVICE + DAY_SUPPLY - 1 (NO pushout)
+  #     rx_runout resets to DATE_SERVICE + DAY_SUPPLY - 1 (no pushout)
   #
-  # Medical: ALWAYS DATE_SERVICE + DAY_SUPPLY - 1 (no pushout ever)
+  # Medical: always DATE_SERVICE + DAY_SUPPLY - 1 (no pushout ever)
   #
   # MAP boundary: new MAP when DATE_SERVICE > max(rx_runout, med_runout)
   map_struct_type <- "array<struct<MAP_CNT:int,MAP_START_DT:date,MAP_RX_RUNOUT_DT:date,MAP_MED_RUNOUT_DT:date,MAP_END_DT:date>>"

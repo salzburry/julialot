@@ -37,7 +37,7 @@ find_base_cohort <- function(con) {
 # Readable is not the same as current. Re-running LOT leaves the 2L/3L tables on
 # disk untouched and perfectly readable, and eligibility from the old run would
 # then be stamped onto the new run's lines - with every output correctly carrying
-# THIS run's ids, so no stamp check could catch it. ALL_LINES would stay right
+# this run's ids, so no stamp check could catch it. ALL_LINES would stay right
 # and LINE_ELIGIBLE would be quietly wrong.
 #
 # The subsequent build records which LOT run it drew from. Ask, and drop a
@@ -122,7 +122,7 @@ check_lot_run <- function(con, prefix, cohort_table, study_end) {
   invisible(pick("RUN_ID"))
 }
 
-# The cohort table's NAME matching is not the same as its CONTENTS matching.
+# The cohort table's name matching is not the same as its contents matching.
 # Re-running the cohort build under the same prefix replaces the cohort, the
 # enrollment spans and NDMM_BASE_COHORT in place, and the name is unchanged - so
 # outcomes would measure lines built over attempt A using death, enrolment and

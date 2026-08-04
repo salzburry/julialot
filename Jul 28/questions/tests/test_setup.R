@@ -77,7 +77,7 @@ ok(identical(cfg$object_prefix, "ndmm_") && identical(cfg$work_schema, "usr00000
    "...with both pinned where the modules read them")
 # The whole point: these tables carry the build's prefix, and wrk() does not
 # add it. Asking for the unprefixed name usually finds nothing - but if an
-# older unprefixed table is in the schema it finds THAT, and answers about a
+# older unprefixed table is in the schema it finds that, and answers about a
 # different study with nothing saying so.
 ok(grepl("ndmm_LOT_LONG$", qs_tbl("LOT_LONG")),
    "qs_tbl() carries the prefix, so the table is that run's")
@@ -137,7 +137,7 @@ ok(!length(dbl),
    if (length(dbl)) paste0("prefixes the cohort table twice: ",
                            paste(basename(dbl), collapse = ", "))
    else "the cohort table goes through wrk(), not qs_tbl()")
-# NOT here. It is a governed production file, so a copy beside this script
+# Not here. It is a governed production file, so a copy beside this script
 # would be a second version of it, drifting from the one the study uses.
 ok(!file.exists(file.path(ROOT, "steroid_codes.csv")),
    "no local copy of the steroid code list to drift from production")
@@ -217,7 +217,7 @@ ok(any(grepl("the association is skipped", bdq, fixed = TRUE)),
 clear()
 
 cat("\n-- the trial flags come from the build that has them --\n")
-# The two builds write different tables, and they are NOT alternate names for
+# The two builds write different tables, and they are not alternate names for
 # one contract. NDMM_FLAGS_ALL is the exclusion audit on PATID alone; the
 # other-cancer and clinical-trial flags live in the broad build's
 # ELIG_COH_ALLFLAGS, with ELIG_COH_FINAL saying which candidate index each row
@@ -238,7 +238,7 @@ Sys.setenv(TRIAL_PREFIX = "overall_")
 tf <- qs_trial_flags()
 ok(grepl("overall_ELIG_COH_ALLFLAGS$", tf$flags) && tf$named,
    "...and another build's prefix can be named, since it is not this run's")
-# The two tables are NOT named the same way. ELIG_COH_ALLFLAGS is a checkpoint,
+# The two tables are not named the same way. ELIG_COH_ALLFLAGS is a checkpoint,
 # so it is written prefixed. The final cohort is persisted straight from that
 # build's FINAL_TABLE_NAME with no prefix at all - overall/config.csv sets it
 # to OVERALL_COH_FINAL. Deriving <prefix>ELIG_COH_FINAL asks for a table the
@@ -278,7 +278,7 @@ ov <- readLines(file.path(dirname(ROOT), "overall", "R", "steps", "08_assembly.R
 ok(any(grepl("OTHER_MALIGN_FLAG", ov, fixed = TRUE)) &&
    any(grepl("CLINTRIAL_BASELINE", ov, fixed = TRUE)),
    "...while ELIG_COH_ALLFLAGS does")
-# The diagnosis-anchored source is ONE script's business now. Every other
+# The diagnosis-anchored source is one script's business now. Every other
 # script is NDMM-only, so a second cohort's tables cannot reach a workbook
 # about this one.
 ok(any(grepl("qs_trial_flags_ready(con)", bdq, fixed = TRUE)),
@@ -318,7 +318,7 @@ ok(!any(grepl("HEADLINE on n_trial_baseline", pm, fixed = TRUE)),
    "...and baseline is no longer headlined as the prior-unobserved-therapy signal")
 
 cat("\n-- the questions bind to the run that last wrote the tables --\n")
-# Not the newest COMPLETE run. LOT replaces LOT_LONG_FINAL before validating
+# Not the newest complete run. LOT replaces LOT_LONG_FINAL before validating
 # it, so a rerun that replaced it and then failed leaves its table on disk
 # while the previous complete row still looks like the newest good one - which
 # is the case the guard exists for. The dashboard resolves ownership this way.
@@ -367,7 +367,7 @@ cat("\n-- and so does the broad run behind Q3's association --\n")
 # lines that read perfectly well and were never checked.
 ok(any(grepl("qs_lot_run_row(con, prefix)", st, fixed = TRUE)),
    "the two LOT status reads are one helper, so the broad prefix gets the same rule")
-# A sensitivity cell is a complete, well-formed LOT run of a DIFFERENT
+# A sensitivity cell is a complete, well-formed LOT run of a different
 # algorithm - the sweep builds twelve of them. A workbook answered off one
 # would read exactly like a workbook answered off the study.
 ok(any(grepl("CONTRACT_DEVIATIONS", st, fixed = TRUE)),
@@ -436,7 +436,7 @@ ok(!any(grepl("poma1l AS (SELECT DISTINCT cast(PATID as string) PATID FROM {broa
 cat("\n-- a run records the CDM vintage it read --\n")
 # STUDY_END picks the quarterly table and the quarterlies are cumulative. Q3
 # takes lines and index dates from the broad run, then scans the raw CDM itself
-# at THIS run's vintage - so a different STUDY_END pairs that run's patients
+# at this run's vintage - so a different STUDY_END pairs that run's patients
 # with a later version of their claims. Without the date recorded the mismatch
 # could only be declared, never detected.
 bl <- readLines(file.path(dirname(ROOT), "lot", "R", "build_lot.R"), warn = FALSE)
@@ -594,7 +594,7 @@ ok(!any(grepl("index_date FROM {final_tbl}", bdq, fixed = TRUE)),
 
 cat("\n-- Q5 does not claim an anchor its index date does not have --\n")
 # The cohort sets INDEX_DATE = LOT1_START_DT, so Q5's index-anchored columns
-# sit on the SAME date as its LOT1-anchored ones. Called a pre-diagnosis
+# sit on the same date as its LOT1-anchored ones. Called a pre-diagnosis
 # window they read as an independent second check, and two counts that look
 # independent get added together.
 nn <- readLines(file.path(dirname(ROOT), "nndm", "R", "build_nndm.R"), warn = FALSE)

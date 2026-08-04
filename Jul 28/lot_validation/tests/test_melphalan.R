@@ -142,7 +142,7 @@ ok(identical(a(200, 1, YIELD_NEXT = 0), "NEXT"),
 
 cat("\n-- the branch a dose lands in is not the one the build already gave it --\n")
 # A melphalan dose first seen outside the induction window is an add-med, and
-# the build ends the line the DAY BEFORE it - so the dose sits on day 0 of the
+# the build ends the line the DAY before it - so the dose sits on day 0 of the
 # line it created. Placing it by "which line contains this date" reads that as
 # inside induction and turns every B branch into an A.
 rl <- melp_rule_sql("L", "M", "A", mc, "r1")
@@ -156,8 +156,8 @@ ok(has(rl, "datediff(EXPO_DT, REF_START_DT) AS DAYS_INTO_LINE"),
    "...and the distance into the line is measured from it")
 # The merge is keyed on the exposure that made the boundary, not on a date join.
 ok(has(im0 <- melp_impact_sql("R", "L", mc, "r1"),
-       "CREATED_BOUNDARY = 1 AND ADVANCES = 'NO_ADVANCE'"),
-   "a removed boundary is one THIS exposure created, where the rule declines")
+       "CREATED_BOUNDARY = 1 AND ADVANCES IN ('NO_ADVANCE', 'NEXT')"),
+   "a removed boundary is one THIS exposure created, where the rule moves it")
 ok(!has(im0, "r.ADVANCE_DT = date_add"),
    "...not any boundary with no advance date, which NO_NEXT and YIELDED share")
 # No resulting line count is offered, because it is not recoverable.
@@ -194,8 +194,17 @@ ok(has(im, "AS N_SPLIT") && has(im, "AS N_MERGE"),
 rl2 <- melp_rule_sql("L", "M", "A", mc, "r1")
 ok(has(rl2, "PREV_REASON = 'MED_ADD'") && has(rl2, "PREV_ADD_MED = upper('MELP')"),
    "a removed boundary is an add-med line ended by THIS drug, not any drug")
-ok(has(im, "CREATED_BOUNDARY = 1 AND ADVANCES = 'NO_ADVANCE'"),
-   "...and only where the rule actively declines, not merely fails to advance")
+# B.3 MOVES a boundary: the rule declines at the first dose and puts one at the
+# later dose. Counting only NO_ADVANCE recorded the new boundary as a split and
+# left the old one standing, so B.3 came out as an addition with no removal.
+ok(has(im, "CREATED_BOUNDARY = 1 AND ADVANCES IN ('NO_ADVANCE', 'NEXT')"),
+   "a created boundary goes when the rule declines at it OR moves it later")
+ok(!has(im, "ADVANCES = 'NO_ADVANCE'"),
+   "...so B.3's move is a removal and an addition, not an addition alone")
+# First keeps it - that is B.1, where the rule and the build agree - and the
+# undecided reasons say nothing, so they cannot remove anything.
+ok(!has(im, "'FIRST'") && !has(im, "'NO_NEXT'") && !has(im, "'YIELDED'"),
+   "...while B.1 keeps its boundary and the undecided reasons remove none")
 # A split has to be inside a line, not on its start - a date that already
 # starts a line is already a boundary and would be counted twice.
 ok(has(im, "r.ADVANCE_DT >  l.LOT_START_DT"),

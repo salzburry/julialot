@@ -28,7 +28,7 @@ DASH  <- strrep("-", 70)
 }
 
 log_msg <- function(...) {
-  # cat() does NOT dispatch S3 methods, so a bit64::integer64 from the driver
+  # cat() does not dispatch S3 methods, so a bit64::integer64 from the driver
   # is written as its raw bit pattern - a count of 1780 came out of a real run
   # as 8.794368e-321. format() dispatches, so coerce first. db_q() converts on
   # the way out too; this catches anything that reaches a message another way.
@@ -62,26 +62,11 @@ lot_config <- function() {
   get("cfg", envir = globalenv())
 }
 
-# The claim side of an NDC join.
-#
-# A key only from a value that could BE an NDC: eleven digits, or ten under the
-# 4-4-2 assumption. Anything else gets no key and simply does not join, which
-# is what a join is for. Optum writes NONE or UNK where a medical claim has no
-# NDC - 1.2bn rows of them - and left-padding those to eleven zeros and hoping
-# nothing collided is what made a shape check feel necessary.
-ndc_key <- function(col) {
-  d <- paste0("regexp_replace(coalesce(cast(", col, " as string),''), '[^0-9]', '')")
-  paste0("CASE WHEN ", d, " RLIKE '^0+$' THEN NULL",
-         " WHEN length(", d, ") = 11 THEN ", d,
-         " WHEN length(", d, ") = 10 THEN concat('0', ", d, ") END")
-}
-
 full_name <- function(schema, object) {
   cfg <- lot_config()
   paste0(cfg$catalog, ".", schema, ".", object)
 }
 
-cdm <- function(tbl) full_name(lot_config()$cdm_schema, tbl)
 wrk <- function(tbl) full_name(lot_config()$work_schema, tbl)
 
 # LOT's own outputs carry the cohort's prefix, so two cohorts can be built into
@@ -91,53 +76,6 @@ out_tbl <- function(tbl) {
   cfg <- lot_config()
   prefix <- if (is.null(cfg$object_prefix)) "" else cfg$object_prefix
   full_name(cfg$work_schema, paste0(prefix, tbl))
-}
-
-get_quarter_suffix <- function(end_date) {
-  v  <- trimws(as.character(end_date))
-  # ISO first. tryCatch because as.Date errors, rather than returning NA, on a
-  # string matching none of its standard formats - which would skip the
-  # recovery below.
-  dt <- tryCatch(suppressWarnings(as.Date(v)), error = function(e) NA)
-  yr <- if (!is.na(dt)) as.integer(format(dt, "%Y")) else NA_integer_
-  # as.Date("30-06-2025") does NOT return NA - it yields year 0030.
-  # Treat an implausible year as a parse failure and retry the common
-  # non-ISO (Excel) layouts so a reformatted STUDY_END still works.
-  if (is.na(dt) || is.na(yr) || yr < 1900) {
-    cand <- Filter(Negate(is.na), lapply(
-      c("%d-%m-%Y", "%d/%m/%Y", "%m/%d/%Y", "%Y/%m/%d", "%m-%d-%Y"),
-      function(fmt) {
-        d2 <- tryCatch(as.Date(v, format = fmt), error = function(e) NA)
-        if (!is.na(d2) && as.integer(format(d2, "%Y")) >= 1900) d2 else NA
-      }))
-    # 03/04/2025 is 3 April day-first and 4 March month-first, and nothing in
-    # the string says which was meant. Taking the first format that parses
-    # picks one silently, and the two fall in different quarters - a different
-    # set of CDM tables for the whole study. Refuse instead.
-    if (length(unique(vapply(cand, format, character(1)))) > 1L)
-      stop("get_quarter_suffix: STUDY_END=\"", end_date, "\" is ambiguous - it ",
-           "reads as ", paste(unique(vapply(cand, format, character(1))),
-                              collapse = " or "),
-           ". Write it as YYYY-MM-DD.", call. = FALSE)
-    if (length(cand)) dt <- cand[[1]]
-    yr <- if (!is.na(dt)) as.integer(format(dt, "%Y")) else NA_integer_
-  }
-  if (is.na(dt) || is.na(yr) || yr < 1900) {
-    stop("get_quarter_suffix: cannot parse STUDY_END=\"", end_date,
-         "\". Use YYYY-MM-DD - Excel may have reformatted it in config.csv.")
-  }
-  qtr <- ceiling(as.integer(format(dt, "%m")) / 3)
-  sprintf("%dq%d", yr, qtr)
-}
-
-cdm_src <- function(base_tbl) {
-  cfg <- lot_config()
-  if (isTRUE(cfg$use_quarterly_tables)) {
-    qsuffix <- get_quarter_suffix(cfg$study_end)
-    cdm(paste0("t_", base_tbl, "_", qsuffix))
-  } else {
-    cdm(base_tbl)
-  }
 }
 
 with_retry <- function(fn, max_retries = lot_config()$max_retries,
@@ -179,14 +117,6 @@ db_exec <- function(con, sql) {
   with_retry(function() db_exec_once(con, sql))
 }
 
-# A count as plain digits. as.character(1e5) is "1e+05", and glue and paste0
-# both take that route - in LOT_LONG_BY_LINE that is recorded verbatim and
-# wrong. See the README for the numeric-column case.
-sql_count <- function(x) {
-  if (length(x) != 1L || is.na(x)) return("NULL")
-  format(x, scientific = FALSE, trim = TRUE)
-}
-
 # A string as a SQL literal: quoted, quotes doubled, and NULL rather than 'NA'
 # when there is nothing to write. sql_count's counterpart for text columns.
 sql_text <- function(x) {
@@ -194,18 +124,9 @@ sql_text <- function(x) {
   paste0("'", gsub("'", "''", as.character(x), fixed = TRUE), "'")
 }
 
-# Retry a DELETE and its INSERT together, so the write stays idempotent.
-# Retried apart, an INSERT whose answer was lost is sent twice and the DELETE
-# that would have cleared the first has already run.
-db_replace <- function(con, ...) {
-  sqls <- c(...)
-  with_retry(function() for (s in sqls) db_exec_once(con, s))
-  invisible(TRUE)
-}
-
 # A BIGINT comes back from the driver as bit64::integer64, which stores a
 # 64-bit integer inside a double's bit pattern. paste0() and log_msg() then
-# render the BITS, so a count of 1780 prints as 8.794368e-321 - and any
+# render the bits, so a count of 1780 prints as 8.794368e-321 - and any
 # arithmetic on it without bit64 attached is silently wrong.
 #
 # Converted once, here, rather than at each of the forty-odd call sites that
@@ -220,22 +141,4 @@ db_replace <- function(con, ...) {
 
 db_q <- function(con, sql) {
   .unint64(with_retry(function() DBI::dbGetQuery(con, sql)))
-}
-
-run_step <- function(con, name, sql, qc = NULL) {
-  log_msg(SEP)
-  log_msg("STEP ", name)
-  log_msg(SEP)
-  t0 <- proc.time()
-  db_exec(con, sql)
-  elapsed <- (proc.time() - t0)[["elapsed"]]
-  log_msg("  Completed in ", round(elapsed, 1), "s")
-  if (!is.null(qc) && nzchar(qc)) {
-    t1 <- proc.time()
-    out <- db_q(con, qc)
-    qc_elapsed <- (proc.time() - t1)[["elapsed"]]
-    log_msg("  QC completed in ", round(qc_elapsed, 1), "s")
-    print(out)
-  }
-  invisible(TRUE)
 }

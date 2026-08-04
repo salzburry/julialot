@@ -102,7 +102,7 @@ badmsg2(validate_line_criteria(list(modifyList(C_PAT, list(sql = "1 = 1")))),
 
 cat("\n-- a criterion has to be well formed --\n")
 runs(validate_line_criteria(list(C_ANY, C_L23)), "well-formed criteria pass")
-# Each of these must fail for its OWN reason, so assert the message too - a
+# Each of these must fail for its own reason, so assert the message too - a
 # test that accepts any error passes on an unrelated crash.
 badmsg <- function(expr, want, what) {
   e <- tryCatch(expr, error = function(e) e)

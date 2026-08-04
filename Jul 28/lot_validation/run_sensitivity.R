@@ -8,7 +8,7 @@
 #   DATABRICKS_PWD=... INPUT_COHORT_TABLE=ndmm_NDMM_COHORT COHORT_PREFIX=ndmm_ \
 #     SENS_EXECUTE=TRUE Rscript lot_validation/run_sensitivity.R
 #
-# EXECUTION IS OPT-IN because one cell is one complete LOT build. The default
+# EXECUTION is OPT-IN because one cell is one complete LOT build. The default
 # prints the grid, the directions and the cell count, and needs no connection.
 #
 # Every parameter here is pinned in the LOT contract and build_lot refuses a

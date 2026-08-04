@@ -61,7 +61,7 @@ render_kpi <- function(df) {
 
 # A bar per row, width proportional to the largest. Needs `label` and `n`.
 #
-# `pct` says what the percentage beside each bar is a percentage OF, and the
+# `pct` says what the percentage beside each bar is a percentage of, and the
 # section has to declare it - see BAR_PCT in sections.R. The
 # first row always, which is right for a funnel and wrong for everything else:
 # on a chart of overlapping scenarios it read "CAR-T 5%" where 5% was of the

@@ -6,7 +6,7 @@ phase_patient_input <- function(con) {
   # OBS_END_DT = observation end for all LOT/MAP logic.
   # Primary analysis (cfg$censor_at_disenrollment = FALSE):
   #   OBS_END_DT = ENDDATE = min(death_dt, study_end).
-  #   Disenrollment is NOT a censoring criterion.
+  #   Disenrollment is not a censoring criterion.
   # Sensitivity analysis (cfg$censor_at_disenrollment = TRUE):
   #   OBS_END_DT = coalesce(ENDDATE_CE, ENDDATE), so disenrollment also caps obs.
   # ENDDATE_CE is preserved as a column either way for ad-hoc analyses.

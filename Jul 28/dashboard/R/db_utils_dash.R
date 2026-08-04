@@ -22,7 +22,7 @@ with_retry <- function(fn, max_retries = dash_config()$max_retries,
 }
 
 # A BIGINT arrives as bit64::integer64 - a 64-bit int inside a double's bit
-# pattern - so paste0() renders the BITS: a count of 1780 prints as
+# pattern - so paste0() renders the bits: a count of 1780 prints as
 # 8.794368e-321. Converted once here rather than at each call site. Every
 # count here is far below 2^53, so nothing is lost.
 .unint64 <- function(d) {
@@ -99,7 +99,7 @@ table_cols <- function(con, tbl) {
 # Which run wrote the tables this dashboard is about to read.
 #
 # LOT_BUILD_STATUS is one row per run and its "complete" is written after every
-# other write in the build, so the LATEST row on the prefix is the run that
+# other write in the build, so the latest row on the prefix is the run that
 # last touched these tables - whatever state it reached. That is ownership, and
 # it is what the provenance panel needs. A completed metadata row is not:
 # LOT_LONG_FINAL is replaced early in the line-criteria phase and validated
@@ -139,7 +139,7 @@ resolve_owner_run <- function(con, inputs, have, cfg) {
   # No override on this one. It is not an inference from timestamps that could
   # be wrong; it is what the build wrote about itself. A dashboard drawn from a
   # sensitivity cell would render every panel exactly as it renders the study.
-  # By NAME, not by position. A frame that came back without the column is a
+  # By name, not by position. A frame that came back without the column is a
   # table that does not have it, and reading column one instead would turn a
   # run id into a deviation.
   deviations_of <- function(rid) tryCatch({

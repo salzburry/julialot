@@ -5,7 +5,7 @@
 # code-list loaders and the naming helpers.
 
 # Order matters. config_lot.R builds cfg_defaults out of environment variables
-# at the moment it is sourced, so config.csv has to be loaded FIRST or every
+# at the moment it is sourced, so config.csv has to be loaded first or every
 # setting silently falls back to its hardcoded default and these scripts
 # describe a run configured differently from the one they are reading. The
 # build loads them in this order for the same reason.
@@ -56,7 +56,7 @@ qs_setup <- function(script_dir) {
   # resolves to a name that is only the schema - so those sections would warn
   # and carry on with unbounded examples rather than stopping. Required here.
   #
-  # The WHOLE physical name, prefix included, because that is how LOT takes it:
+  # The whole physical name, prefix included, because that is how LOT takes it:
   # the cohort is named by whoever built it, so wrk() adds nothing.
   ct <- trimws(cfg$input_cohort_table %||% "")
   if (!nzchar(ct))
@@ -77,7 +77,7 @@ qs_setup <- function(script_dir) {
 # it: ICD9 for the ICD-9 spellings, ICD10 for the ICD-10 ones, NULL for
 # anything else - blank, missing, or a spelling nobody expected.
 #
-# NOT "not ICD-9, therefore ICD-10". That reads an ICD-9 claim with a missing
+# Not "not ICD-9, therefore ICD-10". That reads an ICD-9 claim with a missing
 # flag as ICD-10, fails the family join silently, and lets a question count a
 # diagnosis the cohort build did not. NULL matches neither family, which is the
 # honest answer for an unknown row.
@@ -99,9 +99,9 @@ qs_icd_family_sql <- function(col, nine = "ICD9", ten = "ICD10") {
 
 # A prefixed output table, from either build.
 #
-# NOT wrk(), which resolves the name with no prefix - that is for the cohort
+# Not wrk(), which resolves the name with no prefix - that is for the cohort
 # table, named by whoever built it. Everything these scripts read is a build's
-# own output and carries its prefix. A table from a DIFFERENT build is named
+# own output and carries its prefix. A table from a different build is named
 # for itself; see qs_trial_flags().
 #
 # wrk() here would ask for the unprefixed name. That usually finds nothing,
@@ -112,9 +112,9 @@ qs_tbl <- function(tbl) lot_out(tbl)
 # Which population a question runs over.
 #
 # The LOT run is over the NDMM cohort already, so its output under this prefix
-# IS the study population; a different cohort is a different prefix.
+# is the study population; a different cohort is a different prefix.
 #
-# The real choice is BEFORE or AFTER the line criteria within one run.
+# The real choice is before or after the line criteria within one run.
 # LOT_LONG_FINAL is the study population; LOT_LONG is the same run before a
 # truncating criterion removed anyone, which answers what a criterion cost.
 #
@@ -144,13 +144,13 @@ qs_population <- function() {
 # The other-cancer and clinical-trial flags, with the table that says which
 # index date each row belongs to.
 #
-# NOT the cohort build's NDMM_FLAGS_ALL. That is the exclusion audit, one row
+# Not the cohort build's NDMM_FLAGS_ALL. That is the exclusion audit, one row
 # per patient on PATID alone, with no INDEX_DATE, no OTHER_MALIGN_FLAG and no
 # CLINTRIAL_* column. Pointing a trial question at it is worse than a missing
-# table: it IS readable, so a readable() guard passes and the query then dies
+# table: it is readable, so a readable() guard passes and the query then dies
 # on an unresolved column part way through the workbook.
 #
-# Two tables, from ONE build. ELIG_COH_ALLFLAGS has a row per candidate index
+# Two tables, from one build. ELIG_COH_ALLFLAGS has a row per candidate index
 # date; the final cohort says which candidate that build selected, and the join
 # needs both. Aligning the flags to the NDMM cohort instead puts two different
 # index definitions either side of the join - a diagnosis-based candidate
@@ -206,7 +206,7 @@ QS_NDMM_TRIAL_COLS <- c("PATID", "LOT1_START_DT", "MM_DX_DT",
 #
 # The name is not enough, nor is the column list. The cohort build writes the
 # trial flag before its cohort table and its "complete" status, so a rerun can
-# replace it and then fail. And a rerun that DOES finish replaces it under the
+# replace it and then fail. And a rerun that does finish replaces it under the
 # same name, so the LOT run-binding check sees nothing change.
 #
 # LOT records which cohort run it read - COHORT_RUN_ID and COHORT_STAMP in
@@ -404,7 +404,7 @@ qs_trial_flags_ready <- function(con, src = qs_trial_flags()) {
 # would then bound this run's answers by a cohort it never saw. The LOT build
 # records what it was given, so ask it.
 #
-# The LATEST row, whatever state it reached - not the latest COMPLETE one.
+# The latest row, whatever state it reached - not the latest complete one.
 # "complete" is written last, so the latest row is the run that last touched
 # these tables. LOT replaces LOT_LONG_FINAL early and validates it afterwards,
 # so filtering to complete rows would credit a failed rerun's tables to the
@@ -604,7 +604,7 @@ qs_truncating_criteria <- function() {
   Filter(function(c_i) identical(c_i$on_fail, "truncate"), enabled_line_criteria())
 }
 
-# The same run's lines BEFORE the truncate, each carrying every criterion's
+# The same run's lines before the truncate, each carrying every criterion's
 # flag as a column. Built whether or not a criterion is enabled, so it answers
 # "who did this catch" even for a run that left it off.
 qs_allflags_lines <- function() qs_tbl("LOT_LONG_ALLFLAGS")

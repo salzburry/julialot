@@ -21,11 +21,11 @@ criterion_alias         <- function(c_i) paste0("p_", c_i$name)
 #
 # map_stacked is one row per patient, drug and treatment episode, already
 # bounded to the patient's observation. A belantamab MAP overlapping the
-# patient's LOT-covered span IS belantamab received in a line: inside a built
+# patient's LOT-covered span is belantamab received in a line: inside a built
 # line it is that line's, and after the last one it is a line the build would
 # have started. So the answer does not depend on max_lot.
 #
-# Patient-level, not line-level: the predicate is false on EVERY line of an
+# Patient-level, not line-level: the predicate is false on every line of an
 # affected patient, so the truncate below leaves them with none.
 #
 # The MED_ABBR test is a whole-value match, not a LIKE, so an abbreviation that

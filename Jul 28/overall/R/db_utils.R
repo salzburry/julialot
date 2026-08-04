@@ -53,7 +53,7 @@ DASH_60 <- strrep("-", 60)
 }
 
 log_msg <- function(...) {
-  # cat() does NOT dispatch S3 methods, so a bit64::integer64 from the driver
+  # cat() does not dispatch S3 methods, so a bit64::integer64 from the driver
   # is written as its raw bit pattern - a count of 1780 came out of a real run
   # as 8.794368e-321. format() dispatches, so coerce first. db_q() converts on
   # the way out too; this catches anything that reaches a message another way.
@@ -79,7 +79,7 @@ get_quarterly_table <- function(base_table, date_str) {
 }
 
 # A BIGINT arrives as bit64::integer64 - a 64-bit int inside a double's bit
-# pattern - so paste0() renders the BITS (a count of 1780 prints as
+# pattern - so paste0() renders the bits (a count of 1780 prints as
 # 8.794368e-321) and arithmetic on it is silently wrong. Every count here is
 # far below 2^53, so converting loses nothing.
 unint64 <- function(d) {
@@ -280,7 +280,7 @@ materialize_to_personal_schema <- function(con, view_name, cfg, mat_tables) {
             ", started ", format(t0, "%H:%M:%S"), ") ...")
     res <- tryCatch({
       try(DBI::dbExecute(con, glue("DROP TABLE IF EXISTS {stg}")), silent = TRUE)
-      # Heavy write to a NEW table (no replace-in-place => not exposed
+      # Heavy write to a new table (no replace-in-place => not exposed
       # to the concurrent-metadata failure during the long scan).
       DBI::dbExecute(con, glue(
         "CREATE TABLE {stg} AS SELECT * FROM `{view_name}`"))

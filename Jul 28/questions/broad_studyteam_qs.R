@@ -14,7 +14,7 @@
 #
 #   Trial     The broad build's diagnosis-anchored CLINTRIAL_BASELINE /
 #             CLINTRIAL_FOLLOWUP, and its OTHER_MALIGN_FLAG.
-#             NOT the answer to "did trial therapy precede LOT1" - that is
+#             Not the answer to "did trial therapy precede LOT1" - that is
 #             NDMM_CLINTRIAL_FLAGS, in poma_studyteam_qs.R, and this pair
 #             cannot answer it: baseline stops before that build's
 #             diagnosis-based index and follow-up runs past LOT1, so the
@@ -126,7 +126,7 @@ main <- function() {
 
   # The code list as the cohort build resolved it, with is_mm_adjacent_override
   # already applied - one derivation of that rule rather than two. Secondary
-  # neoplasm of bone is NOT MM-adjacent: C79.51, C79.52 and 198.5 are metastatic
+  # neoplasm of bone is not MM-adjacent: C79.51, C79.52 and 198.5 are metastatic
   # cancer and exclude (nndm/DECISIONS.md section 4).
   om_codes <- qs_tbl("NDMM_OTHER_MALIG_CODES")
 
@@ -171,7 +171,7 @@ main <- function() {
 
   # ---- the diagnosis-anchored flags -------------------------------------
   #
-  # Two tables from ONE build: ELIG_COH_ALLFLAGS has a row per candidate index
+  # Two tables from one build: ELIG_COH_ALLFLAGS has a row per candidate index
   # date, and that build's final cohort says which candidate it selected.
   trial <- qs_trial_flags_ready(con)
   if (!isTRUE(trial$ok)) {
@@ -208,7 +208,7 @@ main <- function() {
       "CASE WHEN p.PATID IS NOT NULL THEN 'POMA-1L' ELSE 'other' END" else "'all'"
     poma_join <- if (poma_split)
       "LEFT JOIN poma1l p ON p.PATID = cast(a.PATID as string)" else ""
-    # Over that build's OWN population, not the NDMM one. Restricting to the
+    # Over that build's own population, not the NDMM one. Restricting to the
     # NDMM patients was what made the old version an overlap of two cohorts
     # with a match rate to police; here the denominator is the population the
     # flags belong to, and the question is about that population.

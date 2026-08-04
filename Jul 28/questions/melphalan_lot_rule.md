@@ -3,68 +3,71 @@
 A study-team request to change how a melphalan (`MELP`) administration advances
 the line of therapy, and what the build does today.
 
-Nothing here is implemented. This records the rule as asked, sets it beside the
-current behaviour branch by branch, and gives the query that sizes it.
+The primary build is unchanged. This records the rule as asked, sets it beside
+the current behaviour branch by branch, and gives the query that sizes it. It is
+also available as a sensitivity on the NDMM cohort - `lot_validation`'s
+`run_melphalan_rule.R`, opt-in through `MELP_EXECUTE`, which reports the branch
+counts and which lines the rule would move without touching the LOT tables.
 
 ## The rule as asked
 
-An exposure is **one administration**; doses less than 30 days apart are the
+An exposure is one administration; doses less than 30 days apart are the
 same exposure.
 
-**If the first MELP dose is inside the induction window**
+If the first MELP dose is inside the induction window
 
 | next dose | proposed |
 |---|---|
 | < 180 days later | does not advance the LOT |
-| ≥ 180 days later | advances — the new LOT starts at that later dose |
+| >= 180 days later | advances - the new LOT starts at that later dose |
 
-**If the first MELP dose is outside the induction window**
+If the first MELP dose is outside the induction window
 
 | next dose | proposed |
 |---|---|
-| < 60 days later | advances, and the new LOT starts back at the **first** dose |
-| 60–179 days later | does not advance — both doses stay in the current line |
-| ≥ 180 days later | the first dose does not advance; the later dose starts a new LOT on its own date |
+| < 60 days later | advances, and the new LOT starts back at the first dose |
+| 60-179 days later | does not advance - both doses stay in the current line |
+| >= 180 days later | the first dose does not advance; the later dose starts a new LOT on its own date |
 
 ## Why melphalan is the drug this is asked about
 
 High-dose melphalan is the conditioning for autologous transplant, so a MELP
 claim is often the transplant rather than a drug in a regimen. The build already
-treats a transplant this way — `SCT_TANDEM_DAYS` is 180, and a second AUTO
+treats a transplant this way - `SCT_TANDEM_DAYS` is 180, and a second AUTO
 within 180 days is a planned tandem that does not end the line, while one beyond
 180 days is excess and does.
 
-The proposed rule is the same 180-day reasoning applied to the **drug claim**.
-That matters where the transplant procedure code is absent — a transplant billed
+The proposed rule is the same 180-day reasoning applied to the drug claim.
+That matters where the transplant procedure code is absent - a transplant billed
 elsewhere leaves the melphalan claim as the only evidence it happened.
 
-`lot_followup_qs.R` already asks the question underneath this (D1: *is
-melphalan-in-2L really transplant conditioning*). This rule is a proposed answer
+`lot_followup_qs.R` already asks the question underneath this (D1: is
+melphalan-in-2L really transplant conditioning). This rule is a proposed answer
 to it.
 
 ## What the build does today
 
-There is **no melphalan-specific rule**. MELP is an ordinary MM agent, and four
+There is no melphalan-specific rule. MELP is an ordinary MM agent, and four
 settings decide what happens to a repeat dose:
 
 | setting | value | what it does here |
 |---|---|---|
-| `MEDICAL_DAY_SUPPLY` | 28 | a medical MELP claim covers `dose … dose+27` |
+| `MEDICAL_DAY_SUPPLY` | 28 | a medical MELP claim covers `dose ... dose+27` |
 | `INDUCTION_WINDOW_DAYS` | 60 | a drug first seen within this of the 1L start joins the regimen |
 | `MAP_DISCON_GAP_DAYS` | 90 | gap after a MAP's cover ends that counts as discontinuation |
-| `SCT_TANDEM_DAYS` | 180 | tandem window — transplants only, not drug claims |
+| `SCT_TANDEM_DAYS` | 180 | tandem window - transplants only, not drug claims |
 
 Two consequences decide every branch below.
 
-**A repeat dose 28 or more days later is a separate MAP.** A claim beyond the
+A repeat dose 28 or more days later is a separate MAP. A claim beyond the
 current cover opens a new one (`03_mma_map.R`), and 28 days is the assumed
 supply. The proposed rule's 30-day exposure threshold is close to this but not
 the same number.
 
-**A repeat dose of a drug already in the regimen extends the line rather than
-advancing it.** `LOT1_BASE_DISCON_DT` is `max(MAP_END_DT)` across the base
+A repeat dose of a drug already in the regimen extends the line rather than
+advancing it. `LOT1_BASE_DISCON_DT` is `max(MAP_END_DT)` across the base
 agents with no upper bound on the date (`04_lot1_base.R:51-62`), so a second
-MELP dose — at any distance — pushes the line's discontinuation date out past
+MELP dose - at any distance - pushes the line's discontinuation date out past
 itself. Because the next line's trigger has to fall strictly after the previous
 line's end, that dose can then never start one.
 
@@ -72,29 +75,29 @@ line's end, that dose can then never start one.
 
 | | first dose | next dose | proposed | today | |
 |---|---|---|---|---|---|
-| A.1 | inside induction | < 180 d | does not advance | does not advance — the dose extends `DISCON` | **agrees** |
-| A.2 | inside induction | ≥ 180 d | advances at the later dose | does not advance — same extension, at any distance | **differs** |
-| B.1 | outside induction | < 60 d | advances, starting at the first dose | advances, starting at the first dose | **agrees, incidentally** |
-| B.2 | outside induction | 60–179 d | does not advance | advances at the first dose | **differs** |
-| B.3 | outside induction | ≥ 180 d | later dose starts a line on its own date | advances at the first dose | **differs** |
+| A.1 | inside induction | < 180 d | does not advance | does not advance - the dose extends `DISCON` | agrees |
+| A.2 | inside induction | >= 180 d | advances at the later dose | does not advance - same extension, at any distance | differs |
+| B.1 | outside induction | < 60 d | advances, starting at the first dose | advances, starting at the first dose | agrees, incidentally |
+| B.2 | outside induction | 60-179 d | does not advance | advances at the first dose | differs |
+| B.3 | outside induction | >= 180 d | later dose starts a line on its own date | advances at the first dose | differs |
 
-**B.1 agrees for a different reason.** Today a MELP dose first seen outside the
+B.1 agrees for a different reason. Today a MELP dose first seen outside the
 induction window is an added medication, so it ends the current line the day
-before itself and starts the next one on its own date — whatever the second dose
+before itself and starts the next one on its own date - whatever the second dose
 does, and whether or not there is one. The proposed rule reaches the same place
 in B.1 only because it happens to advance there too.
 
 ## What it would change
 
-The rule moves in **both directions**, so the net effect on line counts is not
-derivable — it depends on how many patients sit in each branch.
+The rule moves in both directions, so the net effect on line counts is not
+derivable - it depends on how many patients sit in each branch.
 
-- **A.2 makes more lines.** A late re-dose that is currently absorbed into the
+- A.2 makes more lines. A late re-dose that is currently absorbed into the
   first line would start a new one.
-- **B.2 and B.3 make fewer lines.** A melphalan add that currently advances the
+- B.2 and B.3 make fewer lines. A melphalan add that currently advances the
   line would stop doing so, or would advance later and at a different date.
 
-Every downstream figure follows from the line count and the line dates — lines
+Every downstream figure follows from the line count and the line dates - lines
 per patient, the share reaching 2L and 3L, line durations, TTNT, and the
 attrition table. This is a change to the algorithm, not a correction to it, so
 it belongs behind `LOT_CONTRACT_OVERRIDE` and its own sensitivity cell rather
@@ -103,7 +106,7 @@ than in the primary run.
 ## Sizing it without rebuilding
 
 Branch counts can be read off a finished run. This does not give the resulting
-line counts — that needs a build — but it says how many patients each branch
+line counts - that needs a build - but it says how many patients each branch
 touches, which is the first thing worth knowing.
 
 ```sql
@@ -170,24 +173,24 @@ LEFT JOIN <prefix>TX_AUTO_DATES a
 
 ## What has to be settled before it can be built
 
-1. **Does the rule apply to melphalan alone, or to any agent used as transplant
-   conditioning?** As written it is drug-specific, which is a first for this
-   algorithm — every other rule is about classes, windows and gaps.
+1. Does the rule apply to melphalan alone, or to any agent used as transplant
+   conditioning? As written it is drug-specific, which is a first for this
+   algorithm - every other rule is about classes, windows and gaps.
 
-2. **What happens when the transplant procedure code is also present?** The AUTO
+2. What happens when the transplant procedure code is also present? The AUTO
    rule and this rule would both fire on one clinical event. One of them has to
    yield, and which one is a clinical decision.
 
-3. **Is 30 days the exposure threshold, or 28?** The build's medical day supply
+3. Is 30 days the exposure threshold, or 28? The build's medical day supply
    is 28, so MAPs already merge on that boundary. Two thresholds one day apart
    would disagree on a dose at exactly 28 or 29 days.
 
-4. **Third and later exposures.** The rule is written for a first and a next
-   dose. A patient with three or more needs a stated rule — the transplant side
-   handles this explicitly (a tandem pair is allowed; a third transplant ends the
-   line).
+4. Third and later exposures. The rule is written for a first and a next dose.
+   A patient with three or more needs a stated rule - the transplant side
+   handles this explicitly (a tandem pair is allowed; a third transplant ends
+   the line).
 
-5. **Does it apply at every line, or only at 1L?** "The induction window" is 60
+5. Does it apply at every line, or only at 1L? "The induction window" is 60
    days at 1L and 30 at 2L and later, so the branches land differently.
 
 Patient examples were offered with the request; running them through the query
