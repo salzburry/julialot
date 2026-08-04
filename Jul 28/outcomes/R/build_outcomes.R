@@ -101,10 +101,12 @@ outcomes_base_sql <- function(lines_tbl, cohort_tbl, base_tbl = NULL) {
 # a median with no event flag beside it cannot be recomputed or checked, and
 # the study team fits the curves.
 #
-# An event date at or after the follow-up end is not an event - the patient
-# ran out of observation rather than reaching the outcome - so it censors.
+# An event date AFTER the follow-up end is not an event - the patient ran out of
+# observation rather than reaching the outcome - so it censors. One ON the
+# follow-up end is an event: death is the follow-up end for anyone who dies
+# inside the window, since the cohort clamps ENDDATE at the death date.
 # Written once, here, so all three treat the boundary the same way.
-outcomes_tte_sql <- function(base_sql, run_id) {
+outcomes_tte_sql <- function(base_sql, run_id, lot_run_id = NA_character_) {
   glue("
     WITH b AS ({base_sql}),
     ev AS (
@@ -149,8 +151,9 @@ outcomes_tte_sql <- function(base_sql, run_id) {
                  AND (DEATH_DT IS NULL
                       OR NEXT_LOT_START_DT <= DEATH_DT) THEN 'NEXT_LOT'
                 ELSE 'DEATH' END                        AS TTNT_REASON,
-           {sql_text(run_id)}  AS OUT_RUN_ID,
-           current_timestamp() AS BUILT_AT
+           {sql_text(run_id)}     AS OUT_RUN_ID,
+           {sql_text(lot_run_id)} AS LOT_RUN_ID,
+           current_timestamp()    AS BUILT_AT
     FROM ev
     WHERE FU_END_DT >= LOT_START_DT")
 }

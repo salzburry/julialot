@@ -67,9 +67,11 @@ print_plan <- function(cells) {
       "  maintenance-as-LOT   not a setting. Maintenance is a flag and there is\n",
       "                       no maintenance period (lot/R/steps/05_sct.R:13), so\n",
       "                       there is nothing to vary. It is in the vignettes.\n",
-      "  CE requirements      the cohort build's axis. nndm already reports it\n",
-      "                       from one run (NDMM_FU_CE_COUNTS); sweeping it here\n",
-      "                       would rebuild the cohort per cell.\n\n", sep = "")
+      "  CE ELIGIBILITY       who qualifies - the cohort build's axis. nndm\n",
+      "                       already reports it from one run (NDMM_FU_CE_COUNTS);\n",
+      "                       sweeping it here would rebuild the cohort per cell.\n",
+      "                       CE as CENSORING is a different question and IS swept:\n",
+      "                       see CENSOR_AT_DISENROLLMENT above.\n\n", sep = "")
   cat(length(cells), " cells. EACH ONE IS A COMPLETE LOT BUILD.\n", sep = "")
 }
 
@@ -152,9 +154,9 @@ main <- function() {
       paste0(md$cohort_run, " @ ", md$cohort_at)
     rows[[length(rows) + 1L]] <- cbind(
       data.frame(cell = c_i$id, param = if (is.na(c_i$param)) "" else c_i$param,
-                 value = if (is.na(c_i$value)) NA_integer_ else c_i$value,
-                 shipped_value = if (is.na(c_i$param)) NA_integer_
-                                 else as.integer(shipped[[c_i$axis$cfg]]),
+                 value = if (is.na(c_i$value)) NA_character_ else c_i$value,
+                 shipped_value = if (is.na(c_i$param)) NA_character_
+                                 else as.character(shipped[[c_i$axis$cfg]]),
                  prefix = c_i$prefix, stringsAsFactors = FALSE), m)
     if (env_flag("SENS_DROP_AFTER")) {
       for (t in c("LOT_LONG_FINAL", "LOT_LONG", "LOT_LONG_ALLFLAGS", "MAP_STACKED",

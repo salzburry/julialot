@@ -184,6 +184,34 @@ capped <- Filter(function(a) {
 ok(!length(capped),
    "no cap axis predicts movement in a line every one of its cells still builds")
 
+cat("\n-- a switch reaches the build as a switch --\n")
+# The one non-numeric axis. Values used to be carried as integers, and
+# as.integer(TRUE) is 1 - which config_lot.R reads back through as.logical("1")
+# as NA, so the cell would build with the shipped setting and every metric would
+# read "no movement". A silent copy of the reference is worse than a failed cell.
+ce <- Filter(function(a) identical(a$param, "CENSOR_AT_DISENROLLMENT"), SENS_AXES)
+ok(length(ce) == 1L, "continuous enrolment as censoring is an axis")
+cec <- Filter(function(c_i) identical(c_i$param, "CENSOR_AT_DISENROLLMENT"), sens_plan())
+ok(length(cec) == 1L, "...with one cell, because it is on or off")
+# Through the trip it actually takes: the value is pasted into an env string,
+# and config_lot.R reads that string back with as.logical(). as.logical(1L) is
+# TRUE and as.logical("1") is NA, so testing the value directly passes on the
+# very coercion this exists to catch.
+env <- sub("^[^=]+=", "", paste0(cec[[1]]$param, "=", cec[[1]]$value))
+ok(length(cec) == 1L && identical(as.logical(env), TRUE),
+   "...and survives the env-string round trip, so the cell is not the reference again")
+# The ordering used by sens_compare to decide which side of the shipped value a
+# cell sits on. as.numeric("TRUE") is NA, which would score nothing.
+ok(sens_rank("FALSE") == 0 && sens_rank("TRUE") == 1 && sens_rank("60") == 60,
+   "...and FALSE ranks below TRUE, beside the numeric axes")
+# It changes the observation window, not a threshold inside it, so it is the one
+# axis that can change who has a line at all.
+ok(length(ce) == 1L && identical(ce[[1]]$expect$n_patients, "down"),
+   "it is the only axis predicting n_patients can move")
+ok(all(vapply(Filter(function(a) !identical(a$param, "CENSOR_AT_DISENROLLMENT"), SENS_AXES),
+              function(a) identical(a$expect$n_patients, "none"), logical(1))),
+   "...and every threshold axis still says the cohort is fixed before LOT runs")
+
 cat("\n-- what the ask wanted that cannot be swept --\n")
 # Silently dropping two of the four axes would read as coverage.
 rs <- readLines(file.path(ROOT, "run_sensitivity.R"), warn = FALSE)
@@ -192,7 +220,9 @@ ok(any(grepl("maintenance-as-LOT", rs, fixed = TRUE)) &&
      any(grepl("maintenance-as-LOT", sn, fixed = TRUE)),
    "maintenance-as-LOT is named as not being a setting, not quietly dropped")
 ok(any(grepl("NDMM_FU_CE_COUNTS", rs, fixed = TRUE)),
-   "...and CE is pointed at the build that already reports it")
+   "...and CE ELIGIBILITY is pointed at the build that already reports it")
+ok(any(grepl("CENSOR_AT_DISENROLLMENT", rs, fixed = TRUE)),
+   "...while CE as censoring is named as one that IS swept, not lumped in with it")
 sct <- readLines(file.path(PARENT, "lot", "R", "steps", "05_sct.R"), warn = FALSE)
 ok(any(grepl("Maintenance is a descriptive flag only", sct, fixed = TRUE)),
    "...and that claim about maintenance is checked against the code, not asserted")
