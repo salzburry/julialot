@@ -138,6 +138,23 @@ SUBST <- list(
          to   = "AND lpad(regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', ''), 11, '0')",
          n = 1L)),
   "05_sct.R"       = list(list(from = "SELECT DISTINCT", to = "SELECT", n = 1L)),
+  # The melphalan line-advancing rule (aug1_melp), off unless APPLY_MELP_RULE
+  # names a mode. Both hooks emit nothing when it is unset, so the contract
+  # build's SQL is the source's - which is what these two entries pin: the
+  # substituted text is what the source has, and the port's is a call that
+  # returns it. LOT1 is corrected here rather than in 04 because yield_to_sct
+  # reads tx_auto_dates, and that view is built in 05.
+  "06_lot1_end.R"  = list(
+    list(from = "FROM {melp_lot1_base_from(cfg)}", to = "FROM lot1_base lb", n = 1L),
+    list(from = "WITH{melp_lot1_ctes(cfg)}",       to = "WITH",              n = 1L)),
+  "10_lot2_5_base.R" = list(
+    list(from = "),{melp_lotn_ctes(cfg, lot_num)}", to = "),", n = 1L),
+    list(from = paste0("AND NOT (ls.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND ",
+                       "{if (allo_lot_span == 'single_day') 1L else 0L} = 1)",
+                       "{melp_suppress_predicate(cfg)}"),
+         to   = paste0("AND NOT (ls.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND ",
+                       "{if (allo_lot_span == 'single_day') 1L else 0L} = 1)"),
+         n = 1L)),
   # An SCT on LOT1's own start date ended the line the day before it began.
   # Floored at the start, so the line is one day long and still ends SCT_CART
   # instead of losing the transplant. The source has this only as a QC counter.
@@ -183,7 +200,13 @@ ADDED <- list(
     list(run = "AND regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''", n = 1L)),
   # The line start, so the SCT end date can be floored at it.
   "05b_lot1_sct.R" = list(
-    list(run = "l.LOT1_START_DT,", n = 1L))
+    list(run = "l.LOT1_START_DT,", n = 1L)),
+  # The melphalan rule's injected add-med candidates, which the source has no
+  # place for. One line, and it returns "" unless APPLY_MELP_RULE is set.
+  "10_lot2_5_base.R" = list(
+    list(run = paste0("{melp_inject_arm(cfg, glue('lot{lot_num}_start'), ",
+                      "glue('LOT{lot_num}_START_DT'),"), n = 1L),
+    list(run = "glue('lot{lot_num}_start.OBS_END_DT'))}", n = 1L))
 )
 
 # Reported so a stale entry cannot hide a deleted guard.
@@ -339,7 +362,7 @@ code_only <- function(lines) {
 # is a silent false match, not a rule, so the port fixes it. Each guard is
 # asserted by name below; "differs" on its own would let one go missing.
 CHANGED <- c("01_codelists.R", "03_mma_map.R", "05_sct.R", "05b_lot1_sct.R",
-             "07_qc.R", "08_persist.R")
+             "06_lot1_end.R", "07_qc.R", "08_persist.R", "10_lot2_5_base.R")
 
 cat("\n-- every phase is the source, line for line --\n")
 for (p in PHASES) {
@@ -384,6 +407,12 @@ for (p in PHASES) {
   }
 }
 
+# The two files copied entire rather than cut into phases. Declared here
+# because the staleness check below covers them as well.
+WHOLE <- list(
+  list(file = "10_lot2_5_base.R",   src = "R/lot2_5_base.R")
+)
+
 cat("\n-- ...and the registry describing them is not stale --\n")
 sql_of <- function(f) paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE),
                             collapse = "\n")
@@ -396,7 +425,8 @@ sql_of <- function(f) paste(readLines(file.path(ROOT, "R", "steps", f), warn = F
 # A registry entry naming a file that is no longer a phase is a deviation nobody
 # is checking - the undo runs against nothing and the file it was meant for is
 # compared as if unchanged.
-phase_files <- vapply(PHASES, `[[`, character(1), "file")
+phase_files <- c(vapply(PHASES, `[[`, character(1), "file"),
+                 vapply(WHOLE, `[[`, character(1), "file"))
 stale <- setdiff(unique(c(names(SPLICE), names(CUT), names(RESTORE),
                           names(SUBST), names(ADDED), CHANGED)), phase_files)
 ok(!length(stale),
@@ -430,15 +460,20 @@ cat("\n-- LOT2-5 and LOT_LONG are whole-file copies --\n")
 # The source's lot2_5_inputs.R has no counterpart here: it rebuilt the code
 # lists and the cohort for a standalone LOT2-5 session, which is a path this
 # package does not offer. Its SQL lives in the phases, and is compared there.
-WHOLE <- list(
-  list(file = "10_lot2_5_base.R",   src = "R/lot2_5_base.R")
-)
 for (p in WHOLE) {
   f  <- file.path(ROOT, "R", "steps", p$file)
   sf <- file.path(dirname(SRC), p$src)
   if (!file.exists(f) || !file.exists(sf)) { ok(FALSE, paste0(p$file, ": missing")); next }
-  got  <- code_only(unport(readLines(f, warn = FALSE)))
+  raw  <- unport(readLines(f, warn = FALSE))
+  got  <- if (p$file %in% CHANGED) undeviate(raw, p$file) else code_only(raw)
   want <- code_only(readLines(sf, warn = FALSE))
+  if (p$file %in% CHANGED) {
+    short <- get(p$file, envir = undo_report)
+    if (length(short)) {
+      ok(FALSE, paste0(p$file, ": an approved deviation is missing -- ", short[1]))
+      next
+    }
+  }
   same <- identical(got, want)
   if (!same) {
     n <- max(length(got), length(want))

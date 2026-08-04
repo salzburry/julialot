@@ -23,6 +23,15 @@ CONTRACT <- list(
   codelist_dir                = "/mnt/code/codelist",
   use_quarterly_tables        = TRUE,
   censor_at_disenrollment     = FALSE,
+  # Blank is the algorithm this study is defined as. A mode builds a different
+  # one, which is why it is pinned here rather than left as a free setting - as
+  # are the thresholds that say what the rule means.
+  apply_melp_rule             = "",
+  melp_med_abbr               = "MELP",
+  melp_exposure_days          = 30L,
+  melp_restart_days           = 60L,
+  melp_advance_days           = 180L,
+  melp_sct_days               = 14L,
   induction_window_days       = 60L,
   lot_n_induction_window_days = 30L,
   map_discon_gap_days         = 90L,
@@ -530,7 +539,8 @@ check_lot_contract <- function(cfg) {
 load_lot_modules <- function(here) {
   source(file.path(here, "R", "load_inputs.R"))
   load_pipeline_inputs(here, "config.csv")
-  for (f in c("config_lot.R", "db_utils_lot.R", "codelists_lot.R", "line_criteria.R"))
+  for (f in c("config_lot.R", "db_utils_lot.R", "codelists_lot.R", "line_criteria.R",
+              "melp_rule.R"))
     source(file.path(here, "R", f))
   steps <- sort(list.files(file.path(here, "R", "steps"), "\\.R$", full.names = TRUE))
   for (f in steps) source(f)

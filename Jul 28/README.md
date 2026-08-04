@@ -58,6 +58,7 @@ one before running it.
 | `questions/` | scripts, not a build. Each reads one finished LOT run and writes CSVs or a workbook. They reuse `lot/`'s modules rather than a second copy. |
 | `outcomes/` | treatment patterns and treatment-related outcomes - TTNT, TTD, OS, attrition. `build.R <COHORT_TABLE> <lot_prefix_>`. Reads only. |
 | `lot_validation/` | checks the LOT rules. Needs a finished LOT run for some of it; the sensitivity sweep builds its own throwaway runs. Not part of a study run. |
+| `aug1_melp/` | builds the proposed melphalan line-advancing rule as three complete LOT runs and reports the difference. Opt-in, writes to its own throwaway prefixes. Not part of a study run. |
 | `tools/` | a utility that edits a production code list on request. Not a study stage. |
 
 ## Which names carry a prefix

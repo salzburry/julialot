@@ -23,3 +23,9 @@ COHORT_STATUS_TABLE,,What the cohort build calls its run-status table before the
 COHORT_PREFIX,,The cohort build's prefix for that table (blank = this run's own prefix)
 APPLY_NO_BELANTAMAB,TRUE,Drop patients with belantamab in any LOT
 BELANTAMAB_MED_ABBR,BELA,How belantamab is named in MED_ABBR
+APPLY_MELP_RULE,,The melphalan line-advancing rule: blank (contract build) or as_asked / yield_to_sct
+MELP_MED_ABBR,MELP,How melphalan is named in MED_ABBR
+MELP_EXPOSURE_DAYS,30,Doses closer together than this are one administration
+MELP_RESTART_DAYS,60,Outside induction: a next exposure sooner than this advances at the first dose
+MELP_ADVANCE_DAYS,180,A next exposure at or beyond this advances at its own date
+MELP_SCT_DAYS,14,An AUTO coded within this many days of an exposure (yield_to_sct)
