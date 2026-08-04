@@ -49,6 +49,18 @@ report_plan <- function(cells) {
       "for.\n", sep = "")
 }
 
+# The cell's own run id, from its own status row. Reading LOT_ATTRITION or
+# LOT_RUN_METADATA without it would take whichever run's rows came back first.
+cell_run_id <- function(con, c_i) {
+  st <- tryCatch(db_q(con, glue(
+    "SELECT RUN_ID FROM {wrk(paste0(c_i$prefix, 'LOT_BUILD_STATUS'))} ",
+    "ORDER BY UPDATED_AT DESC LIMIT 1")), error = function(e) NULL)
+  if (is.null(st) || !nrow(st))
+    stop("No LOT_BUILD_STATUS row under ", c_i$prefix, ", so there is no run ",
+         "to read ", c_i$id, "'s numbers from.", call. = FALSE)
+  st$RUN_ID[1]
+}
+
 run_cell <- function(c_i, cohort, cohort_pfx) {
   args <- c(file.path(LOT_ROOT, "build.R"), cohort, c_i$prefix)
   env  <- paste0("COHORT_PREFIX=", cohort_pfx)
@@ -105,31 +117,51 @@ main <- function() {
                     unset = Sys.getenv("DOMINO_USER_NAME", unset = "")))))
 
   built <- vapply(cells, function(c_i) run_cell(c_i, cohort, cohort_pfx), logical(1))
-  if (!built[1])
-    stop("The reference cell did not build. Every other number is read against ",
-         "it, so there is nothing to report.", call. = FALSE)
+  # All three, not "the reference plus whatever worked". The experiment is the
+  # three-way comparison: without one mode the transplant question is not
+  # answered at all, and a two-cell output would still read as a finished run.
+  if (!all(built))
+    stop("These cells did not build: ",
+         paste(vapply(cells[!built], function(c_i) c_i$id, character(1)),
+               collapse = ", "),
+         ". The result is the comparison between all three, so a partial run is ",
+         "not a smaller answer - it is no answer. See the logs in ", out_dir, ".",
+         call. = FALSE)
 
   con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
   abbr <- toupper(trimws(Sys.getenv("MELP_MED_ABBR", unset = "MELP")))
 
+  # What each cell was built over, before anything is read off it.
+  inputs <- list()
+  for (c_i in cells) {
+    r <- tryCatch(db_q(con, melp_inputs_sql(
+      wrk(paste0(c_i$prefix, "LOT_RUN_METADATA")),
+      wrk(paste0(c_i$prefix, "LOT_CODELIST_METADATA")),
+      cell_run_id(con, c_i))), error = function(e) NULL)
+    if (is.null(r) || !nrow(r))
+      stop("No LOT_RUN_METADATA row for ", c_i$id, ". Without it there is no ",
+           "record of which cohort attempt or code lists it was built over, and ",
+           "the comparison cannot be shown to be about the rule.", call. = FALSE)
+    inputs[[c_i$id]] <- r
+  }
+  melp_check_inputs(inputs)
+  melp_check_deviations(inputs, cells)
+  cat("\nAll three cells were built over cohort attempt ",
+      inputs[[1]]$COHORT_RUN_ID[1], " / ", inputs[[1]]$COHORT_STAMP[1],
+      ", the same code and the same code lists.\n", sep = "")
+
   rows <- list()
   for (i in seq_along(cells)) {
-    if (!built[i]) next
     c_i <- cells[[i]]
-    # The cell's own run id, from its own status row. Reading LOT_ATTRITION
-    # without it would take whichever run's progression rows came back first.
-    st <- tryCatch(db_q(con, glue(
-      "SELECT RUN_ID FROM {wrk(paste0(c_i$prefix, 'LOT_BUILD_STATUS'))} ",
-      "ORDER BY UPDATED_AT DESC LIMIT 1")), error = function(e) NULL)
-    if (is.null(st) || !nrow(st)) {
-      cat("  no status row for ", c_i$id, " - skipped\n", sep = ""); next
-    }
     m <- tryCatch(db_q(con, melp_metric_sql(
       wrk(paste0(c_i$prefix, "LOT_LONG_FINAL")),
-      wrk(paste0(c_i$prefix, "LOT_ATTRITION")), st$RUN_ID[1], abbr)),
+      wrk(paste0(c_i$prefix, "LOT_ATTRITION")), cell_run_id(con, c_i), abbr)),
       error = function(e) NULL)
-    if (is.null(m)) { cat("  metrics unavailable for ", c_i$id, "\n", sep = ""); next }
+    if (is.null(m))
+      stop("Metrics could not be read for ", c_i$id, ". The result is the ",
+           "comparison between all three, so this is a stop rather than a row ",
+           "left out of it.", call. = FALSE)
     rows[[length(rows) + 1L]] <- cbind(cell = c_i$id, mode = c_i$mode, m,
                                        stringsAsFactors = FALSE)
   }
@@ -148,13 +180,32 @@ main <- function() {
   ap <- melp_modes_apart(res)
   if (!is.null(ap)) {
     utils::write.csv(ap, file.path(out_dir, "melp_modes_apart.csv"), row.names = FALSE)
-    cat("\nThe two readings against each other. This is the open question in the\n",
-        "request - whether the melphalan rule or the transplant rule owns a\n",
-        "coded transplant - answered in patients:\n\n", sep = "")
+    cat("\nThe two readings against each other, in aggregate. This is the\n",
+        "downstream consequence of the two interpretations, not a count of the\n",
+        "events where both rules fired:\n\n", sep = "")
     for (i in seq_len(nrow(ap)))
       cat(sprintf("  %-19s as_asked %-10s yield_to_sct %-10s  %+s\n",
                   ap$metric[i], format(ap$as_asked[i]),
                   format(ap$yield_to_sct[i]), format(ap$difference[i])))
+  }
+  # And the same question patient by patient, which is the number the request
+  # actually turns on: how many patients the transplant reading moves.
+  pd <- tryCatch(db_q(con, melp_modes_patients_sql(
+    wrk(paste0("melp_as_asked_", "LOT_LONG_FINAL")),
+    wrk(paste0("melp_yield_to_sct_", "LOT_LONG_FINAL")))), error = function(e) NULL)
+  if (!is.null(pd) && nrow(pd)) {
+    utils::write.csv(pd, file.path(out_dir, "melp_modes_patients.csv"),
+                     row.names = FALSE)
+    cat("\nAnd patient by patient. A patient counts as differing when their line\n",
+        "count, or any line's start, end or end reason, is not the same under\n",
+        "both readings:\n\n", sep = "")
+    cat("  ", pd$N_PATIENTS[1], " patients in either build\n", sep = "")
+    cat("  ", pd$N_DIFFERENT[1], " whose lines differ between the two readings\n", sep = "")
+    cat("  ", pd$N_LINE_COUNT_DIFFERENT[1], " of those have a different NUMBER of lines\n", sep = "")
+    cat("  ", pd$N_SAME_COUNT_DIFFERENT_LINES[1],
+        " have the same number of lines in different places -\n",
+        "      which is why the aggregate above understates it\n", sep = "")
+    cat("  ", pd$N_ONLY_ONE_SIDE[1], " appear in one build and not the other\n", sep = "")
   }
   cat("\nWrote ", out_dir, ".\n", sep = "")
   cat("These are three algorithms' numbers, not three readings of one. Each ",

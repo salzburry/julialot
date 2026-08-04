@@ -44,6 +44,91 @@ check_melp_plan <- function(cells, study_prefix) {
   invisible(TRUE)
 }
 
+# What every cell has to agree on before any difference between them can be
+# called the rule's.
+#
+# The runner already requires one cohort table and one cohort prefix. That is
+# not enough: a table name is not a cohort attempt. Re-running the cohort build
+# under the same prefix replaces NDMM_COHORT in place, so a reference built over
+# attempt A and two cells built over attempt B all complete, all look right, and
+# the A-to-B difference is reported as the effect of melphalan. The same goes
+# for a production code list edited between cells, for the LOT code itself, and
+# for the study window.
+#
+# LOT records all of it: the cohort attempt it read in LOT_RUN_METADATA, the
+# code fingerprint and study window beside it, and every code list's md5 in
+# LOT_CODELIST_METADATA. So the check is to read it back rather than to trust
+# that three sequential builds saw the same world.
+MELP_INPUT_FIELDS <- c(
+  COHORT_RUN_ID = "the cohort build's run",
+  COHORT_STAMP  = "...and its attempt, since a re-run keeps the run id",
+  STUDY_START   = "the study window's start",
+  STUDY_END     = "...and its end",
+  CODE_MD5      = "the LOT code that built it",
+  CODELIST_MD5  = "every production code list it read")
+
+melp_inputs_sql <- function(meta_tbl, codelist_tbl, run_id) {
+  paste0("
+    SELECT m.COHORT_RUN_ID, m.COHORT_STAMP, m.STUDY_START, m.STUDY_END,
+           m.CODE_MD5, m.CONTRACT_DEVIATIONS,
+           (SELECT concat_ws('|', sort_array(collect_list(
+                     concat(c.CODELIST_FILE, ':', c.MD5))))
+            FROM ", codelist_tbl, " c WHERE c.RUN_ID = '", run_id, "')
+                                                            AS CODELIST_MD5
+    FROM ", meta_tbl, " m WHERE m.RUN_ID = '", run_id, "'")
+}
+
+# Every field the same across every cell, or the comparison is not about the
+# rule. Reported as a list rather than a first failure, because an operator
+# fixing one and re-running only to hit the next is how a sweep gets abandoned.
+melp_check_inputs <- function(rows) {
+  bad <- character(0)
+  for (f in names(MELP_INPUT_FIELDS)) {
+    v <- vapply(rows, function(r) {
+      x <- r[[f]]
+      if (is.null(x) || length(x) == 0 || is.na(x[1])) "<none>" else as.character(x[1])
+    }, character(1))
+    if (length(unique(v)) > 1L)
+      bad <- c(bad, paste0("  ", f, " (", MELP_INPUT_FIELDS[[f]], "):\n",
+                           paste0("    ", names(rows), " = ", v, collapse = "\n")))
+    else if (identical(unique(v), "<none>"))
+      bad <- c(bad, paste0("  ", f, " (", MELP_INPUT_FIELDS[[f]],
+                           "): not recorded by any cell, so it cannot be compared"))
+  }
+  if (length(bad))
+    stop("The three cells were not built over the same inputs, so the ",
+         "differences between them are not the rule's:\n",
+         paste(bad, collapse = "\n"),
+         "\nRebuild all three without touching the cohort or the code lists.",
+         call. = FALSE)
+  invisible(TRUE)
+}
+
+# And each cell has to be the algorithm it says it is. The reference must carry
+# no deviation - if it needed one it is not the contract build, and every delta
+# is measured against the wrong thing - and each mode must carry the melphalan
+# one and nothing else.
+melp_check_deviations <- function(rows, cells) {
+  mode_of <- setNames(lapply(cells, function(c_i) c_i$mode),
+                      vapply(cells, function(c_i) c_i$id, character(1)))
+  bad <- character(0)
+  for (id in names(rows)) {
+    dev <- rows[[id]]$CONTRACT_DEVIATIONS
+    dev <- if (is.null(dev) || length(dev) == 0 || is.na(dev[1])) "" else trimws(dev[1])
+    want_rule <- !is.na(mode_of[[id]])
+    if (!want_rule && nzchar(dev))
+      bad <- c(bad, paste0("  ", id, " is meant to be the contract build but ",
+                           "deviates on: ", dev))
+    if (want_rule && !grepl("apply_melp_rule", dev, fixed = TRUE))
+      bad <- c(bad, paste0("  ", id, " is meant to build the rule but records ",
+                           "no melphalan deviation (", if (nzchar(dev)) dev else "none", ")"))
+  }
+  if (length(bad))
+    stop("A cell is not the algorithm it claims:\n", paste(bad, collapse = "\n"),
+         call. = FALSE)
+  invisible(TRUE)
+}
+
 # What is read off each build. The same nine numbers the sensitivity harness
 # uses, so a melphalan cell and a threshold cell can be read side by side, plus
 # four that are about this rule in particular.
@@ -142,10 +227,42 @@ melp_compare <- function(results, cells = MELP_CELLS) {
   do.call(rbind, out)
 }
 
-# The one comparison that is not against the reference: the two readings against
-# each other. Their difference is the double-count - the events the transplant
-# rule and the melphalan rule both claimed - which is the open question the
-# request left, answered in patients rather than argued.
+# The two readings against each other, patient by patient rather than by
+# subtracting totals.
+#
+# Subtracting aggregates does not answer "how many patients does the transplant
+# question affect". A patient whose lines move can leave the totals where they
+# were - the SCT rule may win the end-reason priority anyway, one changed
+# boundary can shift several later lines, and two patients moving opposite ways
+# cancel. So the two LOT_LONG_FINAL tables are compared directly: a patient
+# counts as differing if their line count, or any line's start, end or end
+# reason, is not the same under both readings.
+melp_modes_patients_sql <- function(a_tbl, y_tbl) {
+  side <- function(t) paste0("
+      SELECT cast(PATID as string) AS PATID,
+             concat_ws('|', sort_array(collect_list(concat_ws(':',
+               cast(LOT_NUM as string), cast(LOT_START_DT as string),
+               cast(LOT_BASE_END_DT as string),
+               coalesce(LOT_BASE_END_REASON, ''))))) AS SHAPE,
+             count(*) AS N_LINES
+      FROM ", t, " GROUP BY PATID")
+  paste0("
+    WITH a AS (", side(a_tbl), "),
+    y AS (", side(y_tbl), ")
+    SELECT count(*)                                                AS N_PATIENTS,
+           sum(CASE WHEN a.PATID IS NULL OR y.PATID IS NULL THEN 1
+                    ELSE 0 END)                                    AS N_ONLY_ONE_SIDE,
+           sum(CASE WHEN a.SHAPE <=> y.SHAPE THEN 0 ELSE 1 END)    AS N_DIFFERENT,
+           sum(CASE WHEN a.N_LINES <=> y.N_LINES THEN 0 ELSE 1 END) AS N_LINE_COUNT_DIFFERENT,
+           sum(CASE WHEN NOT (a.SHAPE <=> y.SHAPE)
+                     AND (a.N_LINES <=> y.N_LINES) THEN 1 ELSE 0 END)
+                                                                   AS N_SAME_COUNT_DIFFERENT_LINES
+    FROM a FULL OUTER JOIN y ON a.PATID = y.PATID")
+}
+
+# The aggregate view of the same thing. Useful, and not the same claim: this is
+# the downstream consequence of the two readings, not a count of the events
+# where both rules fired.
 melp_modes_apart <- function(results) {
   a <- results[results$cell == "as_asked", , drop = FALSE]
   y <- results[results$cell == "yield_to_sct", , drop = FALSE]

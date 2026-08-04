@@ -40,7 +40,7 @@ cat("\n-- off is not a setting, it is the absence of the rule --\n")
 ok(identical(melp_lot1_ctes(off), ""), "LOT1 gets no extra CTEs")
 ok(identical(melp_lot1_base_from(off), "lot1_base lb"),
    "...and reads lot1_base exactly as the source does")
-ok(identical(melp_lotn_ctes(off, 2), ""), "LOT2-5 gets none either")
+ok(identical(melp_lotn_ctes(off, 2, 30L, 45L, "single_day"), ""), "LOT2-5 gets none either")
 ok(identical(melp_suppress_predicate(off), ""), "no predicate is added to the candidates")
 ok(identical(melp_inject_arm(off, "t", "c", "e"), ""), "and no rows are added to them")
 ok(!melp_rule_on(off) && melp_rule_on(ask) && melp_rule_on(yld),
@@ -56,7 +56,7 @@ ok(has(sf("06_lot1_end.R"), "FROM {melp_lot1_base_from(cfg)}") &&
    "LOT1 has exactly two hooks, both in 06")
 ok(!has(sf("04_lot1_base.R"), "melp_"),
    "...and none in 04, where tx_auto_dates does not exist yet")
-ok(has(sf("10_lot2_5_base.R"), "{melp_lotn_ctes(cfg, lot_num)}") &&
+ok(has(sf("10_lot2_5_base.R"), "{melp_lotn_ctes(cfg, lot_num, induction_window_days,") &&
      has(sf("10_lot2_5_base.R"), "{melp_suppress_predicate(cfg)}") &&
      has(sf("10_lot2_5_base.R"), "melp_inject_arm(cfg"),
    "LOT2-5 has its three, in the step that builds the line")
@@ -69,7 +69,8 @@ subst_off <- function(f) {
   txt <- sf(f)
   for (p in list(c("{melp_lot1_ctes(cfg)}",            melp_lot1_ctes(off)),
                  c("{melp_lot1_base_from(cfg)}",       melp_lot1_base_from(off)),
-                 c("{melp_lotn_ctes(cfg, lot_num)}",   melp_lotn_ctes(off, 2)),
+                 c("{melp_lotn_ctes(cfg, lot_num, induction_window_days, cart_consolidation_days, allo_lot_span)}",
+                   melp_lotn_ctes(off, 2, 30L, 45L, "single_day")),
                  c("{melp_suppress_predicate(cfg)}",   melp_suppress_predicate(off))))
     txt <- gsub(p[1], p[2], txt, fixed = TRUE)
   # The inject arm spans two lines in the step, so it is cut rather than swapped.
@@ -84,7 +85,7 @@ cat("\n-- the rule is the ask's, branch by branch --\n")
 # The decision is lifted out of the generated SQL rather than restated here. A
 # second copy would agree with whatever this file believes.
 decide <- function(cfg) {
-  s <- melp_decision_ctes(cfg, "L", "S", "E", "BM")
+  s <- melp_decision_ctes(cfg, "L", "S", "E", "L.IND_END")
   cut <- function(txt, cte) {
     i <- regexpr(paste0(cte, " AS \\("), txt)
     sub("(?s)\\).*$", "", substr(txt, i + attr(i, "match.length"), nchar(txt)), perl = TRUE)
@@ -99,25 +100,58 @@ ok(!has(d$suppress, "GAP >= 180") && has(d$inject, "GAP >= 180"),
    "...while a boundary is added only at 180 days or more")
 ok(has(d$inject, "NEXT_DT AS INJECT_DT") && has(d$suppress, "EXPO_DT AS SUPPRESS_DT"),
    "the added boundary is at the next exposure, the removed one at this exposure")
-# B.1 is the branch where the rule and the engine already agree, so it must
-# appear in neither list - suppressing it would delete a boundary both want.
 ok(has(d$suppress, "GAP IS NOT NULL"),
    "an exposure with nothing after it is in neither list")
+# B.1 - outside induction, next dose inside 60 days - has its own arm. The
+# engine opens that boundary itself only when melphalan is not a base agent.
+# Dosed on day 10, day 100 and day 140, melphalan is in the regimen from day 10,
+# so the engine makes no candidate at any melphalan date in that line - and
+# without this arm the day-100 boundary B.1 calls for is simply lost.
+ok(has(d$inject, "INSIDE = 0") && has(d$inject, "GAP < 60") &&
+     has(d$inject, "EXPO_DT AS INJECT_DT"),
+   "B.1 puts a boundary at this exposure, whatever the engine did with it")
+ok(length(gregexpr("INJECT_DT", d$inject)[[1]]) == 2L,
+   "...so there are two injected dates, not one: this exposure and the next")
+# And it is decided on this exposure's transplant flag, since that is where the
+# boundary falls - the >= 180 arm is the one that looks at the next exposure.
+b1 <- sub("^.*UNION", "", d$inject, perl = TRUE)
+ok(has(b1, "YIELD_THIS = 0") && !has(b1, "YIELD_NEXT"),
+   "...and yielded on the exposure it lands on, not the one after it")
 
-cat("\n-- inside induction is the base-meds join, not a second window --\n")
-# Writing datediff(EXPO_DT, LOT_START_DT) <= 59 here would be a second
-# definition of induction. It would also be wrong at LOT2-5, where the window is
-# 30, and at a CART-started line, where it is 45.
-s <- melp_decision_ctes(ask, "L", "S", "E", "BM")
-ok(has(s, "CASE WHEN bm.MED_ABBR IS NOT NULL THEN 1 ELSE 0 END AS INSIDE"),
-   "a melphalan that induction admitted is inside, by the join the engine uses")
-ok(!grepl("INSIDE", sub("(?s)AS INSIDE.*$", "", s, perl = TRUE)) &&
-     !has(s, "induction_window_days"),
-   "...and no window length is named a second time")
+cat("\n-- inside induction is THIS exposure's date, not the drug's membership --\n")
+# The two are the same only for the first dose. Dosed on day 10 and again on day
+# 100, melphalan is in the base regimen throughout - so reading INSIDE off the
+# regimen calls the day-100 dose an A branch, and B.1 or B.2 is lost. That was
+# the bug: the rule and the July measurement, which computes DAYS_INTO_LINE per
+# exposure, disagreed about the same patient.
+s <- melp_decision_ctes(ask, "L", "S", "E", "L.IND_END")
+ok(has(s, "CASE WHEN p.EXPO_DT <= L.IND_END THEN 1 ELSE 0 END AS INSIDE"),
+   "each exposure is judged on its own date against the line's induction end")
+ok(!has(s, "MED_ABBR IS NOT NULL") && !has(s, "base_meds"),
+   "...and not on whether the drug reached the regimen")
+# The window itself is the step's, handed in. Naming a number here would be a
+# second definition of induction, and wrong at LOT2-5 and on a CART line.
+ok(!has(s, "induction_window_days") && !has(s, "IND_DAYS"),
+   "...and no window length is written down a second time")
+# The LOT N expression has to be the step's own, character for character.
+norm <- function(x) gsub("\\s+", " ", trimws(x))
+step10 <- sf("10_lot2_5_base.R")
+# The step's expression, rendered with the same two numbers the rule is given,
+# so what is compared is the SQL each would emit rather than the source text.
+eng <- norm(regmatches(step10, regexpr(
+  "CASE\\s*\\n\\s*WHEN ls\\.LOT\\{lot_num\\}_START_TYPE = 'SCT_ALLO'(?s).*?\\n\\s*END",
+  step10, perl = TRUE)))
+eng <- gsub("{cart_consolidation_days - 1}", "44", eng, fixed = TRUE)
+eng <- gsub("{induction_window_days - 1}",   "29", eng, fixed = TRUE)
+rule <- melp_lotn_ctes(ask, "{lot_num}", 30L, 45L, "single_day")
+got <- norm(sub("(?s)^.*?p\\.EXPO_DT <= (CASE.*?END) THEN 1 ELSE 0 END AS INSIDE.*$",
+                "\\1", rule, perl = TRUE))
+ok(nzchar(eng) && identical(gsub("lot\\{lot_num\\}_start", "ls", got), eng),
+   "the LOT2-5 induction end is the one first_add_candidates uses, not a copy")
 
 cat("\n-- the two modes differ in exactly one thing --\n")
-a <- melp_decision_ctes(ask, "L", "S", "E", "BM")
-y <- melp_decision_ctes(yld, "L", "S", "E", "BM")
+a <- melp_decision_ctes(ask, "L", "S", "E", "L.IND_END")
+y <- melp_decision_ctes(yld, "L", "S", "E", "L.IND_END")
 ok(has(y, "p.HAS_AUTO AS YIELD_THIS") &&
      has(y, "coalesce(p.NEXT_HAS_AUTO, 0) AS YIELD_NEXT"),
    "yield_to_sct reads the coded transplant on this exposure and on the next")
@@ -158,6 +192,16 @@ ok(length(ref_guard) == 1L,
    "...and only the cells that change something, not the reference")
 ok(has(rs, "COHORT_PREFIX"),
    "every cell is built over the same cohort, named rather than inferred")
+# All three or none. Stopping only when the reference fails leaves a run that
+# built a reference and one mode looking like a finished experiment, when the
+# transplant question has not been looked at at all.
+ok(has(rs, "if (!all(built))") && !has(rs, "if (!built[1])"),
+   "a cell that did not build stops the run, whichever cell it was")
+ok(has(rs, "not a smaller answer"),
+   "...and says why, rather than reporting what it managed")
+# The same for a cell that built but whose numbers cannot be read.
+ok(has(rs, "this is a stop rather than a row"),
+   "...as does a cell whose metrics come back empty")
 
 cat("\n-- what is read off the builds --\n")
 sql <- melp_metric_sql("F", "A", "r1", "MELP")
@@ -192,6 +236,64 @@ ap <- melp_modes_apart(data.frame(
   n_pat_with_melp = c(55, 55, 55), stringsAsFactors = FALSE))
 ok(!is.null(ap) && identical(ap$difference[ap$metric == "n_melp_add"], 7),
    "the two readings are also compared with each other, which is the open question")
+
+cat("\n-- the three cells have to have seen the same world --\n")
+# A table name is not a cohort attempt. Re-running the cohort build under the
+# same prefix replaces NDMM_COHORT in place, so a reference over attempt A and
+# two cells over attempt B all complete and the A-to-B difference is reported as
+# the effect of melphalan. LOT records the attempt, the code and the code lists;
+# this reads them back rather than trusting three sequential builds.
+row <- function(...) { d <- list(...); as.data.frame(d, stringsAsFactors = FALSE) }
+same <- function() list(
+  reference    = row(COHORT_RUN_ID = "c1", COHORT_STAMP = "s1", STUDY_START = "2016-01-01",
+                     STUDY_END = "2026-03-31", CODE_MD5 = "m", CODELIST_MD5 = "k",
+                     CONTRACT_DEVIATIONS = NA_character_),
+  as_asked     = row(COHORT_RUN_ID = "c1", COHORT_STAMP = "s1", STUDY_START = "2016-01-01",
+                     STUDY_END = "2026-03-31", CODE_MD5 = "m", CODELIST_MD5 = "k",
+                     CONTRACT_DEVIATIONS = "apply_melp_rule=as_asked (contract )"),
+  yield_to_sct = row(COHORT_RUN_ID = "c1", COHORT_STAMP = "s1", STUDY_START = "2016-01-01",
+                     STUDY_END = "2026-03-31", CODE_MD5 = "m", CODELIST_MD5 = "k",
+                     CONTRACT_DEVIATIONS = "apply_melp_rule=yield_to_sct (contract )"))
+runs(melp_check_inputs(same()), "three cells over one cohort attempt are comparable")
+for (f in c("COHORT_RUN_ID", "COHORT_STAMP", "STUDY_END", "CODE_MD5", "CODELIST_MD5")) {
+  r <- same(); r$as_asked[[f]] <- "other"
+  stops(melp_check_inputs(r), paste0("...and a cell with a different ", f, " is refused"))
+}
+# The cohort attempt is the one that is easy to miss: the run id can be the same
+# across a re-run, so the stamp is checked too.
+r <- same(); r$yield_to_sct$COHORT_STAMP <- "s2"
+msg <- tryCatch(melp_check_inputs(r), error = conditionMessage)
+ok(grepl("COHORT_STAMP", msg, fixed = TRUE) && grepl("yield_to_sct", msg, fixed = TRUE),
+   "...naming the field and the cell, so it can be fixed in one go")
+r <- same(); for (n in names(r)) r[[n]]$COHORT_RUN_ID <- NA_character_
+stops(melp_check_inputs(r),
+      "a field no cell recorded is refused, not treated as agreement")
+
+cat("\n-- and each cell has to be the algorithm it says it is --\n")
+runs(melp_check_deviations(same(), melp_cell_plan()),
+     "the reference deviates on nothing and each mode records the rule")
+r <- same(); r$reference$CONTRACT_DEVIATIONS <- "max_lot=8 (contract 5)"
+stops(melp_check_deviations(r, melp_cell_plan()),
+      "a reference that deviates is refused - it is not the contract build")
+r <- same(); r$as_asked$CONTRACT_DEVIATIONS <- NA_character_
+stops(melp_check_deviations(r, melp_cell_plan()),
+      "...and a mode cell that recorded no melphalan deviation did not build the rule")
+
+cat("\n-- the modes are compared patient by patient, not only in totals --\n")
+# Subtracting totals does not answer "how many patients does this move". The
+# SCT rule may win the end-reason priority anyway, one boundary can shift
+# several later lines, and two patients moving opposite ways cancel.
+ps <- melp_modes_patients_sql("A", "Y")
+ok(has(ps, "FULL OUTER JOIN"),
+   "a patient in one build and not the other is counted, not dropped")
+ok(has(ps, "LOT_START_DT") && has(ps, "LOT_BASE_END_DT") && has(ps, "LOT_BASE_END_REASON"),
+   "a patient differs if any line's start, end or end reason differs")
+ok(has(ps, "AS N_SAME_COUNT_DIFFERENT_LINES"),
+   "...and the same-count-different-lines case is counted, which totals hide")
+ok(has(ps, "<=>"),
+   "the comparison is null-safe, or a patient in one build reads as no difference")
+ok(has(rs, "downstream consequence") && has(rs, "not a count of the"),
+   "the aggregate delta is described as a consequence, not as the overlap count")
 
 cat("\n-- and no direction is predicted, deliberately --\n")
 # The sensitivity sweep predicts a sign before the run and scores it. That works
