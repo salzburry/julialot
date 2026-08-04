@@ -151,10 +151,28 @@ reports it without rebuilding anything: `NDMM_FU_CE_COUNTS` gives the cohort at
 
 **CE as censoring** — whether LOT stops observing at disenrolment — is a setting
 here, `censor_at_disenrollment`, and it is swept. It is the only axis that moves
-the **observation window** rather than a threshold inside it, which is why it is
-the only one predicting `n_patients` can fall: a patient whose first non-steroid
-agent lands after they disenrolled has no LOT1 at all, since `lot1_start` reads
-`map_stacked` and that is bounded by `OBS_END_DT`.
+the **observation window** rather than a threshold inside it, and the only one
+that predicts nothing: all five of its metrics are `unclear`.
+
+That is not caution, it is the shape of the thing. Shortening observation pulls
+two ways:
+
+- **down** — fewer triggers are reachable, so lines and lengths tend to shrink,
+  and a patient whose first non-steroid agent lands after they disenrolled has
+  no LOT1 at all (`lot1_start` reads `map_stacked`, bounded by `OBS_END_DT`).
+- **up** — the `no_belantamab` criterion reads that *same* shortened window and
+  `on_fail = "truncate"` removes **every** line of a patient it catches. A
+  belantamab claim between disenrolment and study end is visible to the
+  reference cell and invisible to this one, so a patient the primary run removes
+  outright is **kept** here, and the counts rise.
+
+The ratios have no direction either — `pct_reaching_lotN` is patients reaching
+the line over patients with a LOT1, and both move — and the median is over a set
+whose membership changes, so per-patient shortening does not carry to it.
+Declaring `down` would score a valid result as `AGAINST EXPECTATION` in every
+sweep forever, which is exactly the false failure the rest of this section is
+built to avoid. The numbers are recorded; a mover is investigated, starting with
+`NO_BELANTAMAB_ANY_LOT`.
 
 It is also the only non-numeric axis, and that costs something. Cell values
 travel as **text**, because `as.integer(TRUE)` is `1` and the build reads that

@@ -185,10 +185,10 @@ ok(!length(capped),
    "no cap axis predicts movement in a line every one of its cells still builds")
 
 cat("\n-- a switch reaches the build as a switch --\n")
-# The one non-numeric axis. Values used to be carried as integers, and
-# as.integer(TRUE) is 1 - which config_lot.R reads back through as.logical("1")
-# as NA, so the cell would build with the shipped setting and every metric would
-# read "no movement". A silent copy of the reference is worse than a failed cell.
+# The one non-numeric axis, and the coercion is the hazard: as.integer(TRUE) is
+# 1, and config_lot.R reads that back through as.logical("1") as NA. A cell that
+# builds with the shipped setting reports "no movement" on every metric and
+# reads as a result - a silent copy of the reference is worse than a failed cell.
 ce <- Filter(function(a) identical(a$param, "CENSOR_AT_DISENROLLMENT"), SENS_AXES)
 ok(length(ce) == 1L, "continuous enrolment as censoring is an axis")
 cec <- Filter(function(c_i) identical(c_i$param, "CENSOR_AT_DISENROLLMENT"), sens_plan())
@@ -205,12 +205,28 @@ ok(length(cec) == 1L && identical(as.logical(env), TRUE),
 ok(sens_rank("FALSE") == 0 && sens_rank("TRUE") == 1 && sens_rank("60") == 60,
    "...and FALSE ranks below TRUE, beside the numeric axes")
 # It changes the observation window, not a threshold inside it, so it is the one
-# axis that can change who has a line at all.
-ok(length(ce) == 1L && identical(ce[[1]]$expect$n_patients, "down"),
-   "it is the only axis predicting n_patients can move")
+# axis that can change who has a line at all - and it can do so in EITHER
+# direction, so it predicts no direction. The no_belantamab criterion reads the
+# same shortened window and truncates every line of a patient it catches, so a
+# belantamab claim after disenrolment is visible to the reference cell and
+# invisible to this one: the patient the primary run removes is kept here.
+# Declaring "down" would score that valid result AGAINST EXPECTATION forever.
+ok(length(ce) == 1L && all(unlist(ce[[1]]$expect) == "unclear"),
+   "it predicts no direction, because the window moves the population both ways")
+ok(length(ce) == 1L && identical(ce[[1]]$confidence, "to_confirm"),
+   "...and says so rather than claiming the directions are derived")
+ok(any(grepl("no_belantamab", ce[[1]]$why, fixed = TRUE)),
+   "...naming the mechanism that can push the counts UP, so a riser is traceable")
+# That mechanism has to still be in the build this claims it about.
+lc <- readLines(file.path(PARENT, "lot", "R", "line_criteria.R"), warn = FALSE)
+ok(any(grepl('name    = "no_belantamab"', lc, fixed = TRUE)) &&
+     any(grepl('on_fail = "truncate"', lc, fixed = TRUE)) &&
+     any(grepl("m.MAP_START_DT <= p.OBS_END_DT", lc, fixed = TRUE)),
+   "...and that criterion still reads OBS_END_DT and still truncates the patient")
+# Every threshold axis leaves the population alone, and still says so.
 ok(all(vapply(Filter(function(a) !identical(a$param, "CENSOR_AT_DISENROLLMENT"), SENS_AXES),
               function(a) identical(a$expect$n_patients, "none"), logical(1))),
-   "...and every threshold axis still says the cohort is fixed before LOT runs")
+   "...while every threshold axis says the cohort is fixed before LOT runs")
 
 cat("\n-- what the ask wanted that cannot be swept --\n")
 # Silently dropping two of the four axes would read as coverage.
