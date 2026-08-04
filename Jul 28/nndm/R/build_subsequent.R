@@ -103,8 +103,9 @@ subseq_check_lot_run <- function(con, prefix) {
   log_msg("LOT run ", pick("RUN_ID"), " completed over ", pick("INPUT_COHORT_TABLE"))
   # Which cohort attempt it read is NOT in the status table - it is in
   # LOT_RUN_METADATA, on the row for this run.
-  subseq_check_cohort_attempt(con, pick("RUN_ID"))
-  invisible(TRUE)
+  att <- subseq_check_cohort_attempt(con, pick("RUN_ID"))
+  invisible(list(lot_run = pick("RUN_ID"), cohort_run = att$cohort_run,
+                 cohort_stamp = att$cohort_stamp))
 }
 
 # The name of the cohort table is not enough. A re-run under the same prefix
@@ -143,7 +144,7 @@ subseq_check_cohort_attempt <- function(con, lot_run_id) {
   d <- subseq_row(con, tbl, "1 = 1", "UPDATED_AT DESC")
   if (is.null(d)) {
     log_msg("  ", tbl, " has no row - the cohort attempt cannot be compared.")
-    return(invisible(FALSE))
+    return(invisible(list(cohort_run = NA_character_, cohort_stamp = NA_character_)))
   }
   pick <- function(nm) {
     i <- match(toupper(nm), toupper(names(d)))
@@ -156,7 +157,7 @@ subseq_check_cohort_attempt <- function(con, lot_run_id) {
   if (is.na(lot_cohort_id) || !nzchar(trimws(lot_cohort_id))) {
     log_msg("  ", meta, " records no cohort attempt for run ", lot_run_id,
             ", so it cannot be compared to NNDM run ", now_id, ".")
-    return(invisible(FALSE))
+    return(invisible(list(cohort_run = NA_character_, cohort_stamp = NA_character_)))
   }
   lot_run_id <- lot_cohort_id
   eq <- function(a, b) {
@@ -173,7 +174,9 @@ subseq_check_cohort_attempt <- function(con, lot_run_id) {
          "data that did not produce the population the lines are about. ",
          "Re-run the LOT build.", call. = FALSE)
   log_msg("  Cohort attempt ", now_id, " matches the one the LOT run read.")
-  invisible(TRUE)
+  # Returned, not just checked: these go onto the cohort tables so a later
+  # reader can tell whether they still belong beside the LOT tables on disk.
+  invisible(list(cohort_run = lot_run_id, cohort_stamp = lot_stamp))
 }
 
 # Criterion 2: 12 months of CE before that cohort's own index date, over the
@@ -200,7 +203,9 @@ subseq_fu_expr <- function(ix, fu_days, death = "g.DEATH_DT") {
 # Patients in the 1L cohort who reached LOT `lot_num`, indexed on that line's
 # start, with both CE flags.
 subseq_cohort_sql <- function(lot_num, from_tbl, out_tbl, pre_days, fu_days,
-                              lines_tbl, spans_tbl, spans_strict_tbl, run_id) {
+                              lines_tbl, spans_tbl, spans_strict_tbl, run_id,
+                              lot_run = NA_character_, coh_run = NA_character_,
+                              coh_stamp = NA_character_) {
   pre_days <- as.integer(pre_days); fu_days <- as.integer(fu_days)
   glue("
     CREATE OR REPLACE TABLE {out_tbl} AS
@@ -238,6 +243,13 @@ subseq_cohort_sql <- function(lot_num, from_tbl, out_tbl, pre_days, fu_days,
            {pre_days}                   AS CE_PRE_DAYS,
            {fu_days}                    AS CE_FU_DAYS,
            {sql_text(run_id)}           AS SUBSEQ_RUN_ID,
+           -- Which run's lines these were drawn from, and which cohort attempt
+           -- those lines were built over. Without them a reader of this table
+           -- cannot tell whether it still belongs beside the LOT tables on
+           -- disk, and a rebuilt LOT leaves it looking perfectly readable.
+           {sql_text(lot_run)}          AS SOURCE_LOT_RUN_ID,
+           {sql_text(coh_run)}          AS SOURCE_COHORT_RUN_ID,
+           {sql_text(coh_stamp)}        AS SOURCE_COHORT_STAMP,
            current_timestamp()          AS BUILT_AT
     FROM got g
     LEFT JOIN pre ON pre.PATID = g.PATID
@@ -322,7 +334,7 @@ build_subsequent <- function(here, prefix,
     log_msg("  (the 1L cohort used ", cfg$pre_lot1_days, " days)")
   log_msg("  run ", run_id)
   log_msg(SEP)
-  subseq_check_lot_run(con, prefix)
+  src <- subseq_check_lot_run(con, prefix)
 
   cohort <- wrk("NDMM_COHORT")
   lines  <- wrk("LOT_LONG_FINAL")
@@ -335,7 +347,9 @@ build_subsequent <- function(here, prefix,
       n, src, pre_days, fu_days, lines, spans, strict))
     f <- fun(from)
     db_exec(con, subseq_cohort_sql(n, from, out, pre_days, fu_days,
-                                   lines, spans, strict, run_id))
+                                   lines, spans, strict, run_id,
+                                   lot_run = src$lot_run, coh_run = src$cohort_run,
+                                   coh_stamp = src$cohort_stamp))
     log_msg(n, "L: ", f$n_from, " in the ", if (n == 2L) "1L" else paste0(n - 1L, "L"),
             " cohort -> ", f$n_reached, " reached ", n, "L -> ", f$n_ce_pre,
             " with ", pre_days, " days of CE before it -> ", f$n_final,

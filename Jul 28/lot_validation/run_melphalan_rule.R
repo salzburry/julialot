@@ -12,12 +12,13 @@
 # lot, builds no lines, and does not touch the run it measures - so it can be
 # run against the production tables without a rebuild.
 #
-# What it cannot do: give the line DATES the rule would produce. A boundary the
-# rule adds has an exact date, because that date is the rule's own. A boundary
-# it removes leaves two lines to be merged, and the merged line's regimen, end
-# reason and length come from claims rather than from the two lines - so they
-# need a build, and nothing here invents them. The counts are exact; the dates
-# of merged lines are not offered.
+# What it cannot do: give the resulting LINE COUNT or the line dates. Moving a
+# boundary changes which line an exposure falls in, whether an agent is inside
+# an induction window, regimen membership, discontinuation dates and every later
+# line number. None of that is recoverable from finished boundaries. It counts
+# BOUNDARIES - how many the rule adds and how many it removes - which is what
+# sizes the decision. An exact resulting line structure needs an alternate
+# build, once the clinical rule is settled.
 
 .script_dir <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -121,20 +122,18 @@ main <- function() {
                 b$N_EXPOSURES[i], b$N_PATIENTS[i]))
 
   s <- db_q(con, glue("
-    SELECT count(*) AS n_pat, sum(N_SPLIT) AS splits, sum(N_MERGE) AS merges,
-           sum(N_LINES_RULE) - sum(N_LINES_NOW) AS net
+    SELECT count(*) AS n_pat, sum(N_SPLIT) AS splits, sum(N_MERGE) AS merges
     FROM {im}"))
-  cat("\nWhat it would do to the line count:\n")
-  cat("  ", s$n_pat, " patients move at all.\n", sep = "")
-  cat("  +", s$splits, " lines from boundaries the rule adds.\n", sep = "")
-  cat("  -", s$merges, " lines from boundaries it removes.\n", sep = "")
-  cat("  net ", if (s$net >= 0) "+" else "", s$net, " lines.\n", sep = "")
-  cat("\nA net near zero is not 'no effect' - the two directions can be large ",
-      "and cancel.\nRead the two columns, not the net.\n", sep = "")
+  cat("\nWhat it would do to the line BOUNDARIES:\n")
+  cat("  ", s$n_pat, " patients have a boundary that moves.\n", sep = "")
+  cat("  +", s$splits, " boundaries the rule adds.\n", sep = "")
+  cat("  -", s$merges, " boundaries it removes.\n", sep = "")
+  cat("\nThese are boundaries, NOT a resulting line count, and subtracting one ",
+      "from the\nother does not give one. Moving a boundary changes which line ",
+      "an exposure falls\nin, whether an agent is inside an induction window, ",
+      "regimen membership and every\nlater line number. An exact line structure ",
+      "needs an alternate build.\n", sep = "")
   cat("\nWrote ", ex, ", ", br, " and ", im, ".\n", sep = "")
-  cat("No line was rebuilt. A boundary this adds has an exact date; a boundary ",
-      "it\nremoves leaves a merged line whose regimen and end reason need a ",
-      "build.\n", sep = "")
 }
 
 if (!interactive()) {

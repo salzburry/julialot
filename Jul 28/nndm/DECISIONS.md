@@ -28,10 +28,10 @@ lands on attrition step 5.
 **Measured:** `<prefix>NDMM_FU_CE_COUNTS` gives the cohort size at 0, 30, 60 and
 90 days and at three calendar months, with the applied row marked.
 
-**Status: pending sign-off.** The rule is the intended one and the code
-implements it. What is missing is a signed record, because three months is
-written elsewhere and anyone checking will find the difference. The table above
-gives both numbers on every run.
+**Status: signed off.** The one-day rule is the study team's decision for this
+cohort. Three months is written elsewhere and anyone checking will find the
+difference, so `NDMM_FU_CE_COUNTS` reports both numbers on every run and the
+applied row is marked — the divergence is visible rather than argued about.
 
 ---
 

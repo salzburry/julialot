@@ -427,18 +427,26 @@ move them.
 
 ### What it can and cannot say
 
-**Exact:** the line count. A boundary the rule adds has the rule's own date. A
-boundary it removes is a line the build ended by adding this drug, at a place
-the rule says does not advance — that is a count, not an estimate.
+**It counts BOUNDARIES, not lines.** How many the rule adds, and how many it
+removes. Subtracting one from the other does **not** give a resulting line
+count, and none is published: moving a boundary changes which line an exposure
+falls in, whether an agent is inside an induction window, regimen membership,
+discontinuation dates and every later line number. An exact line structure needs
+an alternate build, once the clinical rule is settled.
 
-**Not offered:** the line *dates* after a merge. Merging two lines leaves a line
-whose regimen, end reason and length come from claims, not from the two lines,
-so they need a build. Nothing here invents them.
+**The placement is not circular.** The finished lines already encode the current
+algorithm's decisions *about this drug*: a melphalan dose first seen outside the
+induction window is an add-med, and the build ends the line the day before it
+(`04_lot1_base.R:131`) — so that dose sits on **day 0 of the line it created**.
+Asking "which line contains this date" would read it as inside the induction
+window and turn every B branch into an A. The reference line is therefore the
+*previous* one wherever this drug created the boundary.
 
-**Read the two directions, not the net.** The rule adds boundaries where a late
-re-dose is currently absorbed and removes them where a melphalan add currently
-advances the line. A net near zero is two large numbers cancelling, not no
-effect.
+**Every exposure carries a reason, never a bare blank.** `UNPLACED`, `NO_NEXT`,
+`YIELDED`, `YIELDED_NEXT`, `NO_ADVANCE`, `FIRST`, `NEXT`. A boundary is removed
+only on `NO_ADVANCE` — the rule actively declining. Collapsing those into one
+"no advance" would remove the boundary of a lone exposure the rule says nothing
+about.
 
 ### The transplant question
 
@@ -454,3 +462,8 @@ and every output row records which produced it:
 
 `HAS_AUTO` is recorded under both, so the size of the overlap is readable
 without running it twice — though running it twice is the direct comparison.
+
+Yielding looks at **the exposure the boundary would fall on**, not the one being
+judged. The A.2 and B.3 boundaries land on the *next* exposure, so that is whose
+transplant code decides it; checking only the current one let a coded transplant
+open a melphalan boundary in yield mode.
