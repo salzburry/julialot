@@ -16,10 +16,23 @@
 # Applied to consecutive pairs, so a third exposure is judged against the second.
 #
 # This CHANGES NO CODE IN lot. It reads a finished run and counts the line
-# boundaries the rule would add and remove, which is what the sensitivity
-# question asks. It does not rebuild the lines, and it does not claim to: a
-# split's date is exact, a merge's resulting regimen and end reason are not, and
-# nothing here invents them.
+# BOUNDARIES the rule would add and remove. It does not rebuild the lines and it
+# does not produce a resulting line count, because that is not recoverable from
+# finished boundaries: moving one changes which line an exposure falls in,
+# whether an agent is inside an induction window, regimen membership,
+# discontinuation dates and every later line number. Those need a build.
+#
+# What is on offer is the boundary arithmetic and the branch table, which is
+# what sizes the decision. Read it as "this many boundaries move", not as
+# "the study then has this many lines".
+#
+# One trap the placement has to avoid. The finished lines already encode the
+# current algorithm's decisions ABOUT THIS DRUG: a melphalan dose first seen
+# outside the induction window is an add-med, and the build ends the line the
+# day before it (04_lot1_base.R:131) - so that dose sits on day 0 of the line it
+# created. Asking "which line contains this date" would read it as inside the
+# induction window and turn every B branch into an A branch. The reference line
+# is therefore the PREVIOUS one wherever this drug created the boundary.
 MELP_SETTINGS <- list(
   abbr          = list(env = "MELP_MED_ABBR",      default = "MELP",
                        what = "the medication abbreviation the rule is about"),
@@ -103,43 +116,89 @@ melp_rule_sql <- function(lines_tbl, map_tbl, auto_tbl, cfg, run_id) {
       SELECT PATID, E, min(DOSE_DT) AS EXPO_DT
       FROM expo_id GROUP BY PATID, E
     ),
-    -- The line each exposure falls in, and that line's induction window.
+    -- The line each exposure falls in - and, where THIS DRUG created that
+    -- line's boundary, the line before it. The build ends a line the day before
+    -- an added medication, so a melphalan dose first seen outside the induction
+    -- window lands on day 0 of the line it created. Measured against that line
+    -- it would read as inside induction, and every B branch would become an A.
     ln AS (
       SELECT cast(PATID as string) AS PATID,
              cast(LOT_NUM as int) AS LOT_NUM,
              cast(LOT_START_DT as date) AS LOT_START_DT,
              cast(LOT_BASE_END_DT as date) AS LOT_END_DT,
              LOT_BASE_END_REASON AS LOT_END_REASON,
-             LOT_BASE_1ST_ADD_MED AS ADD_MED
+             upper(trim(coalesce(LOT_BASE_1ST_ADD_MED, ''))) AS ADD_MED
       FROM {lines_tbl}
     ),
+    ln_prev AS (
+      SELECT l.*,
+             lag(LOT_NUM)      OVER (PARTITION BY PATID ORDER BY LOT_NUM) AS PREV_LOT_NUM,
+             lag(LOT_START_DT) OVER (PARTITION BY PATID ORDER BY LOT_NUM) AS PREV_START_DT,
+             lag(LOT_END_DT)   OVER (PARTITION BY PATID ORDER BY LOT_NUM) AS PREV_END_DT,
+             lag(LOT_END_REASON) OVER (PARTITION BY PATID ORDER BY LOT_NUM) AS PREV_REASON,
+             lag(ADD_MED)      OVER (PARTITION BY PATID ORDER BY LOT_NUM) AS PREV_ADD_MED
+      FROM ln l
+    ),
     placed AS (
-      SELECT e.PATID, e.E, e.EXPO_DT, l.LOT_NUM, l.LOT_START_DT,
-             CASE WHEN l.LOT_NUM = 1 THEN {cfg$induction_1l}
-                  ELSE {cfg$induction_n} END AS IND_DAYS
+      SELECT e.PATID, e.E, e.EXPO_DT,
+             -- Did the build open this line BECAUSE of this exposure?
+             CASE WHEN l.PATID IS NOT NULL
+                   AND e.EXPO_DT = l.LOT_START_DT
+                   AND l.PREV_REASON = 'MED_ADD'
+                   AND l.PREV_ADD_MED = upper('{cfg$abbr}')
+                  THEN 1 ELSE 0 END                        AS CREATED_BOUNDARY,
+             CASE WHEN l.PATID IS NOT NULL
+                   AND e.EXPO_DT = l.LOT_START_DT
+                   AND l.PREV_REASON = 'MED_ADD'
+                   AND l.PREV_ADD_MED = upper('{cfg$abbr}')
+                  THEN l.PREV_LOT_NUM ELSE l.LOT_NUM END   AS REF_LOT_NUM,
+             CASE WHEN l.PATID IS NOT NULL
+                   AND e.EXPO_DT = l.LOT_START_DT
+                   AND l.PREV_REASON = 'MED_ADD'
+                   AND l.PREV_ADD_MED = upper('{cfg$abbr}')
+                  THEN l.PREV_START_DT ELSE l.LOT_START_DT END AS REF_START_DT,
+             CASE WHEN l.PATID IS NOT NULL
+                   AND e.EXPO_DT = l.LOT_START_DT
+                   AND l.PREV_REASON = 'MED_ADD'
+                   AND l.PREV_ADD_MED = upper('{cfg$abbr}')
+                  THEN l.PREV_END_DT ELSE NULL END          AS BOUNDARY_END_DT,
+             l.LOT_NUM AS IN_LOT_NUM
       FROM expo e
-      LEFT JOIN ln l
+      LEFT JOIN ln_prev l
         ON l.PATID = e.PATID
        AND e.EXPO_DT >= l.LOT_START_DT AND e.EXPO_DT <= l.LOT_END_DT
+    ),
+    windowed AS (
+      SELECT p.*,
+             CASE WHEN REF_LOT_NUM = 1 THEN {cfg$induction_1l}
+                  WHEN REF_LOT_NUM IS NOT NULL THEN {cfg$induction_n} END AS IND_DAYS
+      FROM placed p
     ),
     -- An exposure with a coded transplant on it. Under yield_to_sct the pair it
     -- opens is left to the transplant rule; under as_asked the flag is recorded
     -- and ignored, so the double-count is visible either way.
     with_sct AS (
-      SELECT p.*,
-             CASE WHEN a.PATID IS NOT NULL THEN 1 ELSE 0 END AS HAS_AUTO
-      FROM placed p
+      SELECT w.PATID, w.E, w.EXPO_DT, w.CREATED_BOUNDARY, w.REF_LOT_NUM,
+             w.REF_START_DT, w.BOUNDARY_END_DT, w.IN_LOT_NUM, w.IND_DAYS,
+             max(CASE WHEN a.PATID IS NOT NULL THEN 1 ELSE 0 END) AS HAS_AUTO
+      FROM windowed w
       LEFT JOIN (SELECT DISTINCT cast(PATID as string) AS PATID,
                         cast(TX_DT as date) AS TX_DT FROM {auto_tbl}) a
-        ON a.PATID = p.PATID
-       AND abs(datediff(a.TX_DT, p.EXPO_DT)) <= {cfg$sct_days}
-      GROUP BY p.PATID, p.E, p.EXPO_DT, p.LOT_NUM, p.LOT_START_DT, p.IND_DAYS,
-               CASE WHEN a.PATID IS NOT NULL THEN 1 ELSE 0 END
+        ON a.PATID = w.PATID
+       AND abs(datediff(a.TX_DT, w.EXPO_DT)) <= {cfg$sct_days}
+      GROUP BY w.PATID, w.E, w.EXPO_DT, w.CREATED_BOUNDARY, w.REF_LOT_NUM,
+               w.REF_START_DT, w.BOUNDARY_END_DT, w.IN_LOT_NUM, w.IND_DAYS
     ),
+    -- The NEXT exposure's transplant flag as well as this one's. The A.2 and
+    -- B.3 boundaries fall on the next exposure, so that is the one yielding has
+    -- to look at; carrying only this exposure's flag would let a coded
+    -- transplant open a melphalan boundary in yield mode.
     pairs AS (
-      SELECT PATID, E, EXPO_DT, LOT_NUM, LOT_START_DT, IND_DAYS, HAS_AUTO,
-             lead(EXPO_DT) OVER (PARTITION BY PATID ORDER BY EXPO_DT) AS NEXT_DT,
-             datediff(EXPO_DT, LOT_START_DT) AS DAYS_INTO_LINE
+      SELECT PATID, E, EXPO_DT, CREATED_BOUNDARY, REF_LOT_NUM, REF_START_DT,
+             BOUNDARY_END_DT, IN_LOT_NUM, IND_DAYS, HAS_AUTO,
+             lead(EXPO_DT)  OVER (PARTITION BY PATID ORDER BY EXPO_DT) AS NEXT_DT,
+             lead(HAS_AUTO) OVER (PARTITION BY PATID ORDER BY EXPO_DT) AS NEXT_HAS_AUTO,
+             datediff(EXPO_DT, REF_START_DT) AS DAYS_INTO_LINE
       FROM with_sct
     ),
     judged AS (
@@ -148,25 +207,42 @@ melp_rule_sql <- function(lines_tbl, map_tbl, auto_tbl, cfg, run_id) {
                   ELSE datediff(NEXT_DT, EXPO_DT) END AS GAP,
              -- Inside the window is measured the way the build measures it:
              -- the window includes its first day, so the bound is IND_DAYS - 1.
-             CASE WHEN LOT_START_DT IS NULL THEN NULL
+             CASE WHEN REF_START_DT IS NULL THEN NULL
                   WHEN DAYS_INTO_LINE <= IND_DAYS - 1 THEN 1 ELSE 0 END AS INSIDE
       FROM pairs p
     ),
-    ruled AS (
+    -- One reason per exposure, never a bare NULL. Five different situations
+    -- used to collapse into one no-advance answer, and the impact query then
+    -- removed a boundary for an exposure the rule says nothing about.
+    -- Whether the boundary this pair would open falls on an exposure the
+    -- transplant rule already owns. Computed here so the decision below is
+    -- flat: a CASE nested inside a CASE arm reads as one rule and is two.
+    yielding AS (
       SELECT j.*,
-        CASE
-          WHEN GAP IS NULL OR INSIDE IS NULL THEN NULL
-          WHEN {if (identical(cfg$mode, 'yield_to_sct')) 'HAS_AUTO = 1' else '1 = 0'} THEN NULL
-          WHEN INSIDE = 1 AND GAP >= {cfg$advance_days} THEN 'NEXT'
-          WHEN INSIDE = 1                               THEN NULL
-          WHEN GAP <  {cfg$restart_days}                THEN 'FIRST'
-          WHEN GAP <  {cfg$advance_days}                THEN NULL
-          ELSE                                               'NEXT'
-        END AS ADVANCES
+             CASE WHEN {if (identical(cfg$mode, 'yield_to_sct')) 'HAS_AUTO = 1' else '1 = 0'} THEN 1 ELSE 0 END AS YIELD_THIS,
+             CASE WHEN {if (identical(cfg$mode, 'yield_to_sct')) 'coalesce(NEXT_HAS_AUTO, 0) = 1' else '1 = 0'} THEN 1 ELSE 0 END AS YIELD_NEXT
       FROM judged j
+    ),
+    ruled AS (
+      SELECT y.*,
+        CASE
+          WHEN INSIDE IS NULL                             THEN 'UNPLACED'
+          WHEN GAP IS NULL                                THEN 'NO_NEXT'
+          WHEN YIELD_THIS = 1                             THEN 'YIELDED'
+          WHEN INSIDE = 1 AND GAP >= {cfg$advance_days}
+                          AND YIELD_NEXT = 1              THEN 'YIELDED_NEXT'
+          WHEN INSIDE = 1 AND GAP >= {cfg$advance_days}   THEN 'NEXT'
+          WHEN INSIDE = 1                                 THEN 'NO_ADVANCE'
+          WHEN GAP <  {cfg$restart_days}                  THEN 'FIRST'
+          WHEN GAP <  {cfg$advance_days}                  THEN 'NO_ADVANCE'
+          WHEN YIELD_NEXT = 1                             THEN 'YIELDED_NEXT'
+          ELSE                                                 'NEXT'
+        END AS ADVANCES
+      FROM yielding y
     )
-    SELECT PATID, E AS EXPOSURE_NUM, EXPO_DT, NEXT_DT, GAP, LOT_NUM,
-           LOT_START_DT, DAYS_INTO_LINE, IND_DAYS, INSIDE, HAS_AUTO, ADVANCES,
+    SELECT PATID, E AS EXPOSURE_NUM, EXPO_DT, NEXT_DT, GAP, IN_LOT_NUM,
+           REF_LOT_NUM, REF_START_DT, DAYS_INTO_LINE, IND_DAYS, INSIDE,
+           CREATED_BOUNDARY, BOUNDARY_END_DT, HAS_AUTO, NEXT_HAS_AUTO, ADVANCES,
            CASE WHEN ADVANCES = 'FIRST' THEN EXPO_DT
                 WHEN ADVANCES = 'NEXT'  THEN NEXT_DT END AS ADVANCE_DT,
            {sql_text(cfg$mode)}   AS MELP_RULE_MODE,
@@ -175,30 +251,32 @@ melp_rule_sql <- function(lines_tbl, map_tbl, auto_tbl, cfg, run_id) {
     FROM ruled")
 }
 
-# What the rule does to the line COUNT, which is the sensitivity question.
+# What the rule does to the line BOUNDARIES. Not to the line count: moving a
+# boundary changes which line an exposure falls in, whether an agent is inside
+# an induction window, regimen membership, discontinuation dates and every later
+# line number. None of that is recoverable from finished boundaries, so no
+# resulting line count is offered and none should be inferred from these two
+# columns by subtraction.
 #
 # Two directions, counted separately because they are not the same claim:
 #
-#   splits   an advance date strictly inside a line. The line would be cut in
-#            two, so the patient gains a line. Exact - the date is the rule's.
-#   merges   a line the build ended MED_ADD on this drug, where the rule says
-#            that exposure does not advance. The boundary goes, so the patient
-#            loses one. Exact as a count; the merged line's regimen, end reason
-#            and length are NOT derived here, because they cannot be read off
-#            two finished lines - they come from claims and need a build.
+#   splits   an advance date strictly inside a line. The rule would cut there.
+#   merges   an exposure that CREATED a boundary - the build ended a line by
+#            adding this drug at it - where the rule says that exposure does not
+#            advance. Keyed on the exposure, not on a date join to the line end:
+#            a date join fires whenever no advance date matches, which includes
+#            an exposure with no next dose, one outside every line, and one the
+#            transplant rule was left to handle. The rule says nothing about
+#            those, so removing their boundary was unjustified.
 melp_impact_sql <- function(rule_tbl, lines_tbl, cfg, run_id) {
   glue("
     WITH ln AS (
       SELECT cast(PATID as string) AS PATID, cast(LOT_NUM as int) AS LOT_NUM,
              cast(LOT_START_DT as date) AS LOT_START_DT,
-             cast(LOT_BASE_END_DT as date) AS LOT_END_DT,
-             LOT_BASE_END_REASON AS LOT_END_REASON,
-             upper(trim(coalesce(LOT_BASE_1ST_ADD_MED, ''))) AS ADD_MED
+             cast(LOT_BASE_END_DT as date) AS LOT_END_DT
       FROM {lines_tbl}
     ),
     now AS (SELECT PATID, count(*) AS N_LINES_NOW FROM ln GROUP BY PATID),
-    -- A boundary the rule ADDS: an advance date inside a line but not on its
-    -- own start, since a date that already starts a line is already a boundary.
     splits AS (
       SELECT r.PATID, count(DISTINCT r.ADVANCE_DT) AS N_SPLIT
       FROM {rule_tbl} r
@@ -208,25 +286,16 @@ melp_impact_sql <- function(rule_tbl, lines_tbl, cfg, run_id) {
       WHERE r.ADVANCE_DT IS NOT NULL
       GROUP BY r.PATID
     ),
-    -- A boundary the rule REMOVES: the build ended this line by adding this
-    -- drug, and no exposure at that boundary advances under the rule.
     merges AS (
-      SELECT l.PATID, count(*) AS N_MERGE
-      FROM ln l
-      LEFT JOIN {rule_tbl} r
-             ON r.PATID = l.PATID
-            AND r.ADVANCE_DT = date_add(l.LOT_END_DT, 1)
-      WHERE l.LOT_END_REASON = 'MED_ADD'
-        AND l.ADD_MED = upper('{cfg$abbr}')
-        AND r.PATID IS NULL
-      GROUP BY l.PATID
+      SELECT PATID, count(*) AS N_MERGE
+      FROM {rule_tbl}
+      WHERE CREATED_BOUNDARY = 1 AND ADVANCES = 'NO_ADVANCE'
+      GROUP BY PATID
     )
     SELECT n.PATID,
            n.N_LINES_NOW,
            coalesce(s.N_SPLIT, 0)                          AS N_SPLIT,
            coalesce(m.N_MERGE, 0)                          AS N_MERGE,
-           n.N_LINES_NOW + coalesce(s.N_SPLIT, 0) - coalesce(m.N_MERGE, 0)
-                                                           AS N_LINES_RULE,
            {sql_text(cfg$mode)}   AS MELP_RULE_MODE,
            {sql_text(run_id)}     AS MELP_RUN_ID,
            current_timestamp()    AS BUILT_AT
@@ -247,10 +316,13 @@ melp_branch_sql <- function(rule_tbl) {
                 WHEN GAP <  60        THEN '< 60 days'
                 WHEN GAP <  180       THEN '60-179 days'
                 ELSE                       '>= 180 days' END                  AS NEXT_EXPOSURE,
-           coalesce(ADVANCES, 'no advance')                                   AS EFFECT,
+           ADVANCES                                                           AS EFFECT,
            sum(HAS_AUTO)                          AS N_WITH_CODED_TRANSPLANT,
            count(*)                               AS N_EXPOSURES,
-           count(DISTINCT PATID)                  AS N_PATIENTS
+           count(DISTINCT PATID)                  AS N_PATIENTS,
+           max(MELP_RULE_MODE)                    AS MELP_RULE_MODE,
+           max(MELP_RUN_ID)                       AS MELP_RUN_ID,
+           current_timestamp()                    AS BUILT_AT
     FROM {rule_tbl}
     GROUP BY 1, 2, 3 ORDER BY 1, 2, 3")
 }

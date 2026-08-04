@@ -31,24 +31,47 @@ find_base_cohort <- function(con) {
   t
 }
 
-# The line-specific eligibility cohorts, if the cohort build wrote them.
-# Probed rather than required: they are a separate build, and a run without them
-# still answers Table 4 - it just answers it one way instead of two.
-find_subsequent_cohorts <- function(con, lines = c(2L, 3L)) {
-  out <- list()
+# The line-specific eligibility cohorts, if the cohort build wrote them, and if
+# they still belong beside the lines being measured.
+#
+# Readable is not the same as current. Re-running LOT leaves the 2L/3L tables on
+# disk untouched and perfectly readable, and eligibility from the old run would
+# then be stamped onto the new run's lines - with every output correctly carrying
+# THIS run's ids, so no stamp check could catch it. ALL_LINES would stay right
+# and LINE_ELIGIBLE would be quietly wrong.
+#
+# The subsequent build records which LOT run it drew from. Ask, and drop a
+# cohort that names a different one rather than restricting on it.
+find_subsequent_cohorts <- function(con, lot_run, lines = c(2L, 3L)) {
+  out <- list(); stale <- character(0)
   for (n in lines) {
     t <- coh_tbl(paste0("NDMM_COHORT_", n, "L"))
-    ok <- tryCatch({ db_q(con, glue("SELECT PATID FROM {t} LIMIT 1")); TRUE },
-                   error = function(e) FALSE)
-    if (ok) out[[as.character(n)]] <- t
+    d <- tryCatch(db_q(con, glue("SELECT * FROM {t} LIMIT 1")), error = function(e) NULL)
+    if (is.null(d) || !nrow(d)) next
+    i <- match("SOURCE_LOT_RUN_ID", toupper(names(d)))
+    src <- if (is.na(i)) NA_character_ else trimws(as.character(d[[i]][1]))
+    # An older table predates the column. Not current by omission: it cannot
+    # say which run it came from, so it cannot be shown to belong to this one.
+    if (is.na(i) || is.na(src) || !nzchar(src) || !identical(src, trimws(lot_run))) {
+      stale <- c(stale, paste0(t, if (is.na(i)) " (records no source LOT run)"
+                                  else paste0(" (built from LOT run ", src, ")")))
+      next
+    }
+    out[[as.character(n)]] <- t
   }
-  if (!length(out)) {
+  if (length(stale))
+    stop("These line cohorts were not built from LOT run ", lot_run, ": ",
+         paste(stale, collapse = "; "), ". Their patients would set ",
+         "LINE_ELIGIBLE on lines they are not about, and every output would ",
+         "still carry this run's ids - so nothing downstream would catch it. ",
+         "Re-run nndm/build_subsequent_cohorts.R against this LOT run, or ",
+         "unset them to report ALL_LINES alone.", call. = FALSE)
+  if (!length(out))
     log_msg("  No line-specific cohorts (", coh_tbl("NDMM_COHORT_2L"),
             " and friends), so every result is over the 1L cohort's lines.")
-  } else {
-    log_msg("  Line-specific denominators from ",
-            paste(unlist(out), collapse = ", "))
-  }
+  else
+    log_msg("  Line-specific denominators from ", paste(unlist(out), collapse = ", "),
+            ", both built from LOT run ", lot_run, ".")
   out
 }
 
@@ -237,7 +260,7 @@ build_outcomes <- function(here, cohort_table, prefix) {
   lines  <- out_tbl("LOT_LONG_FINAL")
   cohort <- wrk(cfg$input_cohort_table)
   base   <- find_base_cohort(con)
-  subseq <- find_subsequent_cohorts(con)
+  subseq <- find_subsequent_cohorts(con, lot_run)
   both   <- length(subseq) > 0L
   tte    <- out_tbl("OUT_TTE")
 

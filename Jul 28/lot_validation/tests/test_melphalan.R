@@ -56,10 +56,11 @@ cat("\n-- the rule itself, lifted out of the SQL and run over cases --\n")
 # whatever this file believes. The CASE the warehouse runs is the one tested.
 rule_of <- function(cfg) {
   s <- melp_rule_sql("L", "M", "A", cfg, "r1")
-  x <- sub("(?s)^.*?CASE\n\\s*WHEN GAP IS NULL", "CASE WHEN GAP IS NULL", s, perl = TRUE)
-  x <- sub("(?s)\\s*END AS ADVANCES.*$", "", x, perl = TRUE)
+  # Cut at the alias, then back to the nearest CASE. Anchoring on the first arm
+  # by name breaks the moment an arm is added or reordered, which it was.
+  x <- strsplit(as.character(s), "END AS ADVANCES", fixed = TRUE)[[1]][1]
+  x <- sub("(?s)^.*\\bCASE\\b", "", x, perl = TRUE)
   x <- gsub("\n\\s*", " ", trimws(x))
-  x <- sub("^CASE\\s*", "", sub("\\s*$", "", x))
   els <- "NA"
   if (grepl("\\bELSE\\b", x)) {
     els <- trimws(sub("^.*\\bELSE\\b", "", x)); x <- sub("\\bELSE\\b.*$", "", x)
@@ -77,9 +78,11 @@ rule_of <- function(cfg) {
     kv <- strsplit(a, "\\bTHEN\\b")[[1]]
     paste0("if (isTRUE(", tr(kv[1]), ")) ", tr(kv[2]), " else ")
   }, character(1)), collapse = ""), tr(els))
-  function(GAP, INSIDE, HAS_AUTO = 0) {
-    e <- list2env(list(GAP = GAP, INSIDE = INSIDE, HAS_AUTO = HAS_AUTO),
-                  parent = environment())
+  # YIELD_THIS / YIELD_NEXT are computed a step earlier in the SQL, from the
+  # mode. Passed in here so the decision under test is the flat CASE itself.
+  function(GAP, INSIDE, YIELD_THIS = 0, YIELD_NEXT = 0) {
+    e <- list2env(list(GAP = GAP, INSIDE = INSIDE, YIELD_THIS = YIELD_THIS,
+                       YIELD_NEXT = YIELD_NEXT), parent = environment())
     tryCatch(eval(parse(text = body), envir = e), error = function(e) "PARSE-FAIL")
   }
 }
@@ -87,34 +90,79 @@ r <- rule_of(mc)
 ok(!identical(r(200, 1), "PARSE-FAIL"), "the branch decision lifts out of the SQL")
 
 # A. first exposure inside the induction window.
-ok(is.na(r(179, 1)), "A: inside induction, next under 180 days - no advance")
+ok(identical(r(179, 1), "NO_ADVANCE"), "A: inside induction, next under 180 days - no advance")
 ok(identical(r(180, 1), "NEXT"),
    "A: inside induction, next at 180 days - the NEXT exposure starts a line")
 ok(identical(r(400, 1), "NEXT"), "...and any later one likewise")
 # B. first exposure outside it.
 ok(identical(r(59, 0), "FIRST"),
    "B: outside induction, next under 60 days - the FIRST exposure starts a line")
-ok(is.na(r(60, 0)), "B: outside induction, next at 60 days - neither advances")
-ok(is.na(r(179, 0)), "...and at 179 days likewise")
+ok(identical(r(60, 0), "NO_ADVANCE"), "B: outside induction, next at 60 days - neither advances")
+ok(identical(r(179, 0), "NO_ADVANCE"), "...and at 179 days likewise")
 ok(identical(r(180, 0), "NEXT"),
    "B: outside induction, next at 180 days - the NEXT exposure starts a line")
 # The boundaries are where the ask puts them, not one day off.
-ok(is.na(r(179, 1)) && identical(r(180, 1), "NEXT"),
+ok(identical(r(179, 1), "NO_ADVANCE") && identical(r(180, 1), "NEXT"),
    "the 180-day boundary is inclusive, as '>= 180 days later' says")
-ok(identical(r(59, 0), "FIRST") && is.na(r(60, 0)),
+ok(identical(r(59, 0), "FIRST") && identical(r(60, 0), "NO_ADVANCE"),
    "the 60-day boundary is exclusive, as '< 60 days later' says")
 # A last exposure has nothing after it, so it decides nothing.
-ok(is.na(r(NA, 1)) && is.na(r(NA, 0)), "an exposure with no next one advances nothing")
+# NO_NEXT, not NO_ADVANCE. The rule says nothing about a lone exposure, and
+# collapsing the two let the impact query remove its boundary anyway.
+ok(identical(r(NA, 1), "NO_NEXT") && identical(r(NA, 0), "NO_NEXT"),
+   "an exposure with no next one is NO_NEXT, distinct from the rule declining")
+ok(identical(r(200, NA), "UNPLACED"),
+   "...and one outside every line is UNPLACED, also distinct")
 
 cat("\n-- the two readings of a coded transplant are both real --\n")
 y <- rule_of(modifyList(mc, list(mode = "yield_to_sct")))
 a <- rule_of(modifyList(mc, list(mode = "as_asked")))
-ok(is.na(y(200, 1, HAS_AUTO = 1)),
+ok(identical(y(200, 1, YIELD_THIS = 1), "YIELDED"),
    "yield_to_sct: an exposure with a coded transplant is left to the SCT rule")
-ok(identical(a(200, 1, HAS_AUTO = 1), "NEXT"),
+ok(identical(a(200, 1, YIELD_THIS = 0), "NEXT"),
    "as_asked: the same exposure advances, because the ask does not carve it out")
-ok(identical(y(200, 1, HAS_AUTO = 0), a(200, 1, HAS_AUTO = 0)),
+# And the mode is what sets those flags, not the caller.
+ok(grepl("HAS_AUTO = 1' THEN 1 ELSE 0 END AS YIELD_THIS|HAS_AUTO = 1 THEN 1 ELSE 0 END AS YIELD_THIS",
+         melp_rule_sql("L", "M", "A", modifyList(mc, list(mode = "yield_to_sct")), "r")),
+   "yield_to_sct sets YIELD_THIS from the coded transplant")
+ok(grepl("WHEN 1 = 0 THEN 1 ELSE 0 END AS YIELD_THIS",
+         melp_rule_sql("L", "M", "A", modifyList(mc, list(mode = "as_asked")), "r")),
+   "...and as_asked never sets it, whatever is coded")
+ok(identical(y(200, 1), a(200, 1)),
    "...and where no transplant is coded the two readings agree")
+# The A.2 and B.3 boundaries fall on the NEXT exposure, so that is the one
+# yielding has to look at. Carrying only this exposure's flag let a coded
+# transplant open a melphalan boundary in yield mode.
+ok(identical(y(200, 1, YIELD_NEXT = 1), "YIELDED_NEXT"),
+   "yield_to_sct looks at the exposure the boundary would fall on, not this one")
+ok(identical(y(200, 0, YIELD_NEXT = 1), "YIELDED_NEXT"),
+   "...in the outside-induction branch too, where the boundary is also the next one")
+ok(identical(a(200, 1, YIELD_NEXT = 0), "NEXT"),
+   "...and as_asked judges it anyway, because the ask carves out nothing")
+
+cat("\n-- the branch a dose lands in is not the one the build already gave it --\n")
+# A melphalan dose first seen outside the induction window is an add-med, and
+# the build ends the line the DAY BEFORE it - so the dose sits on day 0 of the
+# line it created. Placing it by "which line contains this date" reads that as
+# inside induction and turns every B branch into an A.
+rl <- melp_rule_sql("L", "M", "A", mc, "r1")
+ok(has(rl, "PREV_REASON = 'MED_ADD'") && has(rl, "PREV_ADD_MED = upper('MELP')"),
+   "an exposure on a line start this drug created is spotted")
+ok(has(rl, "THEN l.PREV_START_DT ELSE l.LOT_START_DT END AS REF_START_DT"),
+   "...and measured against the PREVIOUS line, not the one it opened")
+ok(has(rl, "THEN l.PREV_LOT_NUM ELSE l.LOT_NUM END   AS REF_LOT_NUM"),
+   "...so the induction window is that line's as well")
+ok(has(rl, "datediff(EXPO_DT, REF_START_DT) AS DAYS_INTO_LINE"),
+   "...and the distance into the line is measured from it")
+# The merge is keyed on the exposure that made the boundary, not on a date join.
+ok(has(im0 <- melp_impact_sql("R", "L", mc, "r1"),
+       "CREATED_BOUNDARY = 1 AND ADVANCES = 'NO_ADVANCE'"),
+   "a removed boundary is one THIS exposure created, where the rule declines")
+ok(!has(im0, "r.ADVANCE_DT = date_add"),
+   "...not any boundary with no advance date, which NO_NEXT and YIELDED share")
+# No resulting line count is offered, because it is not recoverable.
+ok(!has(im0, "N_LINES_RULE"),
+   "no resulting line count is published - boundaries are not lines")
 
 cat("\n-- it reads a finished run and rebuilds nothing --\n")
 rs <- paste(readLines(file.path(ROOT, "run_melphalan_rule.R"), warn = FALSE),
@@ -138,19 +186,22 @@ cat("\n-- the impact is counted in both directions, not netted --\n")
 im <- melp_impact_sql("R", "L", mc, "r1")
 ok(has(im, "AS N_SPLIT") && has(im, "AS N_MERGE"),
    "boundaries added and boundaries removed are separate columns")
-# A merge is a line the build ended by ADDING this drug, where the rule says
-# that exposure does not advance. Keying on the reason alone would count every
-# add-med line, whatever drug ended it.
-ok(has(im, "LOT_END_REASON = 'MED_ADD'") && has(im, "ADD_MED = upper('MELP')"),
+# A merge is an exposure that CREATED a boundary - the build ended a line by
+# adding this drug at it - where the rule declines. CREATED_BOUNDARY is set in
+# the exposure table from the previous line's end reason and added drug, so the
+# drug is already checked there; keying on the reason alone would count every
+# add-med line whatever ended it.
+rl2 <- melp_rule_sql("L", "M", "A", mc, "r1")
+ok(has(rl2, "PREV_REASON = 'MED_ADD'") && has(rl2, "PREV_ADD_MED = upper('MELP')"),
    "a removed boundary is an add-med line ended by THIS drug, not any drug")
-ok(has(im, "r.PATID IS NULL"),
-   "...and only where no exposure advances at that boundary")
+ok(has(im, "CREATED_BOUNDARY = 1 AND ADVANCES = 'NO_ADVANCE'"),
+   "...and only where the rule actively declines, not merely fails to advance")
 # A split has to be inside a line, not on its start - a date that already
 # starts a line is already a boundary and would be counted twice.
 ok(has(im, "r.ADVANCE_DT >  l.LOT_START_DT"),
    "an added boundary is strictly inside a line, so a line start is not doubled")
-ok(has(rs, "Read the two columns, not the net"),
-   "the run says the net can cancel, because the rule moves both ways")
+ok(has(rs, "NOT a resulting line count"),
+   "the run says these are boundaries, not the line count after a rebuild")
 
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))

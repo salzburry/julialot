@@ -276,6 +276,40 @@ ok(has(GAP, "(t.TTNT_EVENT = 1 AND t.TTNT_REASON = 'NEXT_LOT')") &&
    "the gap is measured only over next lines the study observed")
 ok(abs(365.25 / 30.4375 - 12) < 1e-9, "...which divides the year into twelve")
 
+cat("\n-- a line cohort has to belong to the run being measured --\n")
+# Readable is not current. Re-running LOT leaves the 2L/3L tables untouched and
+# perfectly readable, and eligibility from the old run would be stamped onto the
+# new run's lines - with every output correctly carrying THIS run's ids, so no
+# stamp check could catch it. ALL_LINES stays right; LINE_ELIGIBLE goes quietly
+# wrong. The subsequent build records its source LOT run; this asks.
+fsc <- function(row, lot_run = "L1") {
+  e <- new.env(parent = globalenv())
+  assign("coh_tbl", function(x) paste0("sch.ndmm_", x), envir = e)
+  assign("log_msg", function(...) invisible(NULL), envir = e)
+  assign("db_q", function(con, sql) {
+    if (is.null(row)) stop("TABLE_OR_VIEW_NOT_FOUND")
+    as.data.frame(row, stringsAsFactors = FALSE)
+  }, envir = e)
+  f <- find_subsequent_cohorts; environment(f) <- e
+  tryCatch(f(NULL, lot_run), error = conditionMessage)
+}
+ok(length(fsc(list(PATID = "p", SOURCE_LOT_RUN_ID = "L1"))) == 2L,
+   "a line cohort built from this LOT run is used")
+m <- fsc(list(PATID = "p", SOURCE_LOT_RUN_ID = "L0"))
+ok(is.character(m) && grepl("built from LOT run L0", m, fixed = TRUE),
+   "one built from another run stops the build, naming it")
+m2 <- fsc(list(PATID = "p"))
+ok(is.character(m2) && grepl("records no source LOT run", m2, fixed = TRUE),
+   "...and one that cannot say which run it came from is not current by omission")
+ok(is.list(fsc(NULL)) && !length(fsc(NULL)),
+   "no line cohort at all is fine - the run reports ALL_LINES alone")
+# The stamp it checks is the one the subsequent build actually writes.
+bs <- paste(readLines(file.path(dirname(ROOT), "nndm", "R", "build_subsequent.R"),
+                      warn = FALSE), collapse = "\n")
+ok(has(bs, "AS SOURCE_LOT_RUN_ID") && has(bs, "AS SOURCE_COHORT_RUN_ID") &&
+     has(bs, "AS SOURCE_COHORT_STAMP"),
+   "...and the cohort build writes that lineage rather than only its own run id")
+
 cat("\n-- Table 4 is answered over both denominators, not one chosen here --\n")
 # 2L can mean "of the patients we followed from 1L" or "of the patients we could
 # properly observe at 2L" - NDMM_COHORT_2L adds 365 days of enrolment before the
