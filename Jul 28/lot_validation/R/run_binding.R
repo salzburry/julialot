@@ -5,7 +5,7 @@
 # it and then failed leaves lines that read perfectly well and were never
 # checked. LOT_BUILD_STATUS is the only thing that can tell them apart.
 #
-# The LATEST row, whatever state it reached, not the latest COMPLETE one.
+# The latest row, whatever state it reached, not the latest complete one.
 # "complete" is written last, so the newest row is the run that last touched
 # the tables. Filtering to complete rows would credit a failed rerun's tables
 # to the previous good run. The questions and the dashboard do the same.

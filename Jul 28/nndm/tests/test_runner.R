@@ -356,7 +356,7 @@ ok(length(keys) == 9L, paste0("nine steps, one per criterion (", length(keys), "
 cat("\n-- the funnel adds the criteria in the study's order --\n")
 # ndmm_counts() decides the order the funnel reads in, and no comparison to
 # another file can hold that order. What holds it is this:
-# each step's SQL is read back and must be the
+# Each step's SQL is read back and must be the
 # step above it plus exactly one flag, in the order the criteria are listed:
 # inclusions first, then exclusions.
 FLAGS <- c("CE_pre_lot1_12mo", "CE_lot1_fu", "NO_PRIOR_MM_TX",
@@ -1200,7 +1200,7 @@ ok(any(grepl("least(date('", NSQL, fixed = TRUE)) &&
    "...or the start of the study if that is earlier, which the exclusion reaches back to")
 ok(all(grepl("trim(cast(t.NDC as string)) <> ''", NSQL[1:2], fixed = TRUE)),
    "and every non-blank value is counted, including ones that cannot join")
-# The CLAIM side is reported, never gated. What makes that safe is ndc_key():
+# The claim side is reported, never gated. What makes that safe is ndc_key():
 # a value that cannot be an NDC gets no key, so it cannot collide with a code.
 # Optum writes NONE and UNK where a medical claim has no NDC - 1.2bn rows - and
 # gating on that asked the operator to approve the vendor's word for null.
@@ -1223,7 +1223,7 @@ ok(grepl("= 10 THEN concat('0'", k, fixed = TRUE),
    "...ten padded on the 4-4-2 layout, which is the one real assumption left")
 ok(grepl("RLIKE '^0+$' THEN NULL", k, fixed = TRUE),
    "...and all zeros is not a product, so it gets no key either")
-# The CODE LIST side still stops the build. That one is fixable at source, and
+# The code-list side still stops the build. That one is fixable at source, and
 # a code nobody can match is a study asking a question it cannot answer.
 m <- drive_ndc(cl = row("codelist", n10 = 4L))
 ok(grepl("Ten-digit code list NDCs", m, fixed = TRUE) &&
@@ -1508,7 +1508,7 @@ ok(any(grepl("ELSE substr(om.dx, 1, 3) END AS primary_group", om, fixed = TRUE))
 # The counterfactual has to keep the metastatic codes apart by the prefix each
 # matched. Plain substr(dx,1,3) would put C800 back with C80.1 and C80.2 -
 # deliberately outside the group - so the difference would net a pair the
-# collapse ADDS against one it REMOVES and report them as one number.
+# collapse adds against one it removes and report them as one number.
 ok(any(grepl("{met_own} AS category_group", om, fixed = TRUE)),
    "the counterfactual keeps met codes apart by prefix, not by ICD category")
 own <- ndmm_metastatic_own_group_sql("om.dx")
@@ -1583,7 +1583,7 @@ ok(!any(grepl("ELSE 'ICD10' END", ct, fixed = TRUE)) &&
 
 cat("\n-- a statement built by concatenation still parses as SQL --\n")
 # glue() trims trailing newlines. So paste0(glue("... AS"), body) and
-# paste0(glue("... AS\\n"), body) BOTH produce "...ASSELECT", which Spark
+# paste0(glue("... AS\\n"), body) both produce "...ASSELECT", which Spark
 # rejects with a syntax error at the first line of the statement. Three
 # statements in 00b_lot1_index.R were built that way, and nothing caught it:
 # the tests grep the SQL for fragments, and every fragment was present and
@@ -1629,7 +1629,7 @@ ok(sum(grepl('AS"), "\\n"', ix, fixed = TRUE)) == 3L,
 
 cat("\n-- a BIGINT count is a number, not its bit pattern --\n")
 # The driver returns BIGINT as bit64::integer64: a 64-bit int stored inside a
-# double. paste0() then renders the BITS, so "1780 codes" logged as
+# double. paste0() then renders the bits, so "1780 codes" logged as
 # 8.794368e-321 - and arithmetic on it without bit64 attached is wrong, not
 # just ugly. Converted once in db_q() rather than at each of the call sites
 # that read a count.

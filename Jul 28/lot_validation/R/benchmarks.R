@@ -4,7 +4,7 @@
 # LOT counts per patient, regimen frequencies per line, durations and time to
 # next treatment, each against a published figure.
 #
-# The published numbers are NOT here and were not written from memory. They
+# The published numbers are not here and were not written from memory. They
 # live in benchmarks.csv, which ships with a row per metric and the value
 # blank, so an unfilled row reports itself instead of quietly comparing
 # nothing.

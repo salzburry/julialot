@@ -45,7 +45,7 @@ CONTRACT <- list(
 
 # Decisions a run may make differently, and what each may be set to.
 #
-# CONTRACT is what the cohort IS - change one and it is a different cohort, so
+# CONTRACT is what the cohort is - change one and it is a different cohort, so
 # those are rejected. These are the choices nobody has settled, or that only
 # the data can answer, and the build writes a review table for each.
 #
@@ -338,9 +338,9 @@ NDMM_CRITERIA <- list(
 # The belantamab exclusion - "in any LOT" - is split, because no one package
 # can see the whole of it.
 #
-# This half is belantamab BEFORE the 1L index. lot cannot see it: map_stacked
+# This half is belantamab before the 1L index. lot cannot see it: map_stacked
 # starts at the cohort's INDEX_DATE, so earlier treatment is not in the data it
-# reads. It is not a proxy either - a belantamab claim before the index IS
+# reads. It is not a proxy either - a belantamab claim before the index is
 # belantamab before the index.
 #
 # The other half is from the index onward, the no_belantamab line criterion in
@@ -356,7 +356,7 @@ NDMM_CRITERIA <- list(
 
 # The first n criteria as a WHERE body, in the funnel's order.
 #
-#   all of them          the cohort itself, which is what NDMM_PATIDS asks for
+#   All of them          the cohort itself, which is what NDMM_PATIDS asks for
 #   a prefix (n)         one row of the funnel, which is what ndmm_counts() asks
 #   one dropped (except) a sensitivity report, which recomputes that criterion
 #                        its own way and ANDs the rest - so the row it prints is
@@ -507,7 +507,7 @@ check_ndc_shape <- function(con, cfg) {
   bad    <- prof$n_ndc > 0 & (prof$n_alpha > 0 | prof$n_other > 0 | prof$n_zero > 0)
   ten    <- prof$n_ndc > 0 & prof$n_10 > 0
 
-  # The CLAIM side is reported, never gated. A value that cannot be an NDC now
+  # The claim side is reported, never gated. A value that cannot be an NDC now
   # gets no join key at all (ndc_key), so it cannot collide with anything - it
   # is a non-match, and non-matches are what a join produces. Optum writes NONE
   # or UNK where a medical claim has no NDC; stopping a build over that asked
@@ -525,7 +525,7 @@ check_ndc_shape <- function(con, cfg) {
             ". A 5-3-2 or 5-4-1 code pads to a different key; confirm with a ",
             "crosswalk if the count is material.")
 
-  # The CODE LIST side still stops the build. That one is fixable at source,
+  # The code-list side still stops the build. That one is fixable at source,
   # and a code nobody can match is a study asking a question it cannot answer.
   d <- prof[is_cl & bad, , drop = FALSE]
   decide(d, "codelist_ndc_shape",
@@ -975,7 +975,7 @@ build_nndm <- function(here, prefix) {
   # status at "started" for ever, and check_no_active_run() would then refuse
   # every later run on this prefix until someone overrode it by hand.
   #
-  # after = FALSE, or this fires after the disconnect above and writes to a
+  # After = FALSE, or this fires after the disconnect above and writes to a
   # closed connection.
   on.exit(if (!isTRUE(getOption("nndm_complete", FALSE)))
             try(write_build_status(con, cfg, "failed"), silent = TRUE),

@@ -142,7 +142,7 @@ ok(identical(a(200, 1, YIELD_NEXT = 0), "NEXT"),
 
 cat("\n-- the branch a dose lands in is not the one the build already gave it --\n")
 # A melphalan dose first seen outside the induction window is an add-med, and
-# the build ends the line the DAY BEFORE it - so the dose sits on day 0 of the
+# the build ends the line the DAY before it - so the dose sits on day 0 of the
 # line it created. Placing it by "which line contains this date" reads that as
 # inside induction and turns every B branch into an A.
 rl <- melp_rule_sql("L", "M", "A", mc, "r1")
@@ -201,7 +201,7 @@ ok(has(im, "CREATED_BOUNDARY = 1 AND ADVANCES IN ('NO_ADVANCE', 'NEXT')"),
    "a created boundary goes when the rule declines at it OR moves it later")
 ok(!has(im, "ADVANCES = 'NO_ADVANCE'"),
    "...so B.3's move is a removal and an addition, not an addition alone")
-# FIRST keeps it - that is B.1, where the rule and the build agree - and the
+# First keeps it - that is B.1, where the rule and the build agree - and the
 # undecided reasons say nothing, so they cannot remove anything.
 ok(!has(im, "'FIRST'") && !has(im, "'NO_NEXT'") && !has(im, "'YIELDED'"),
    "...while B.1 keeps its boundary and the undecided reasons remove none")

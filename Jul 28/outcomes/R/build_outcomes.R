@@ -1,35 +1,20 @@
 # Secondary Objective 1: treatment patterns and treatment-related outcomes.
+# Protocol Table 4.
 #
-# Protocol Table 4. Reads one finished LOT run and writes patient-per-line
-# tables. It computes no line and no cohort of its own - the lines are lot's
-# and the population is the cohort's, so a number here can always be traced
-# back to the run that produced it.
+# Reads one finished LOT run. Computes no line and no cohort of its own, so any
+# number here traces back to the run that produced it.
 #
-# The three time-to-event outcomes, in the protocol's words:
+#   TTNT  index LOT start to the next LOT or death, whichever is first
+#   TTD   the same, plus the current line's own end
+#   OS    index LOT start to death
 #
-#   TTNT  "Time from index LOT start date (excluded) to the earliest between
-#          the start of the next LOT or death (included). Patients without a
-#          subsequent LOT or date of death will be censored at their follow-up
-#          end date"
-#
-#   TTD   "Time from index LOT start date (excluded) to the date of treatment
-#          discontinuation (included). The discontinuation date is the earliest
-#          of the date of treatment discontinuation (end of current LOT),
-#          initiation of the next LOT, or death. Patients without treatment
-#          discontinuation, next LOT or death will be censored at their
-#          follow-up end date"
-#
-#   OS    "Time from LOT start date (excluded) to date of death (included).
-#          Patients without a recorded date of death will be censored at their
-#          follow-up end date"
-#
-# "Excluded" and "included" are the protocol's own: the index day does not
-# count and the event day does. That is a plain date difference, which is what
-# datediff gives.
+# All three censor at the follow-up end. The protocol excludes the start date
+# and includes the event date, so the index day does not count and the event day
+# does, which is a plain datediff.
 
-# The follow-up end, per protocol 6.1: "from the index date (i.e., excluding
-# index) until the end of continuous enrollment or end of study period or
-# death, whichever occurs first."
+# The follow-up end, per protocol 6.1: the day after the index date to whichever
+# comes first - the end of continuous enrollment, the end of the study period,
+# or death.
 #
 # The cohort carries both halves: ENDDATE is min(death, study end) and
 # ENDDATE_CE is where continuous enrolment stops. The earliest of the two is
@@ -51,7 +36,7 @@ FU_END_SQL <- "least(cast(c.ENDDATE as date),
 #
 # subseq_tbls names the line-specific eligibility cohorts, keyed by line number
 # ("2" -> <prefix>NDMM_COHORT_2L). Table 4's denominator for a later line is a
-# study-team question with two defensible answers, so BOTH are carried rather
+# study-team question with two defensible answers, so both are carried rather
 # than one being chosen here:
 #
 #   ALL_LINES       every line in the 1L cohort. A 2L result is then "of the
@@ -73,8 +58,8 @@ outcomes_base_sql <- function(lines_tbl, cohort_tbl, base_tbl = NULL,
   dx_cols <- if (is.null(base_tbl))
     "cast(NULL as date) AS MM_DX_DT, cast(NULL as int) AS DX_TO_LOT1_DAYS"
   else
-    # Table 4: "Time from diagnosis date (excluded) until index date
-    # (included)", and the cohort's INDEX_DATE is that 1L index.
+    # Table 4 measures diagnosis date (excluded) to index date (included), and
+    # the cohort's INDEX_DATE is that 1L index.
     "x.MM_DX_DT, datediff(c.INDEX_DATE, x.MM_DX_DT) AS DX_TO_LOT1_DAYS"
   # 1L is the cohort itself, so every 1L line is eligible by construction. A
   # line with no cohort of its own - 4L and beyond - is NULL rather than 0: not
@@ -146,7 +131,7 @@ outcomes_base_sql <- function(lines_tbl, cohort_tbl, base_tbl = NULL,
 # a median with no event flag beside it cannot be recomputed or checked, and
 # the study team fits the curves.
 #
-# An event date AFTER the follow-up end is not an event - the patient ran out of
+# An event date after the follow-up end is not an event - the patient ran out of
 # observation rather than reaching the outcome - so it censors. One ON the
 # follow-up end is an event: death is the follow-up end for anyone who dies
 # inside the window, since the cohort clamps ENDDATE at the death date.
@@ -227,9 +212,9 @@ DENOM_KEEP <- "(d.DENOM = 'ALL_LINES' OR t.LINE_ELIGIBLE = 1)"
 # unrestricted one, and a 2L-to-3L gap would be judged on 2L eligibility.
 DENOM_KEEP_NEXT <- "(d.DENOM = 'ALL_LINES' OR t.NEXT_LINE_ELIGIBLE = 1)"
 
-# Table 4, "Treatment attrition": "Number and percent of patients who received
-# each subsequent LOT, discontinued treatment and did not receive another, were
-# lost to follow-up, or died".
+# Table 4's treatment attrition: number and percent of patients who received
+# each subsequent LOT, discontinued and did not receive another, were lost to
+# follow-up, or died.
 #
 # Exclusive and ordered, because a patient can look like more than one: someone
 # who starts a next line and later dies is counted as receiving the next line,
@@ -237,7 +222,7 @@ DENOM_KEEP_NEXT <- "(d.DENOM = 'ALL_LINES' OR t.NEXT_LINE_ELIGIBLE = 1)"
 # there being no next line.
 #
 # The protocol names four but they are not exhaustive, and the gap matters.
-# A patient still on treatment when the data runs out has NOT been lost to
+# A patient still on treatment when the data runs out has not been lost to
 # follow-up - they were observed to the end of the study period and were still
 # being treated. Folding them into "lost to follow-up" would overstate loss and
 # hide the ongoing group entirely, so they get their own count and the five sum
@@ -283,10 +268,10 @@ outcomes_attrition_sql <- function(tte_tbl, study_end, run_id, lot_run_id,
     GROUP BY d.DENOM, t.LOT_NUM ORDER BY d.DENOM, t.LOT_NUM")
 }
 
-# Table 4, "Time from prior LOT to next LOT initiation": "among patients
-# initiating a subsequent LOT as time from prior LOT start date (excluded) to
-# next LOT start date (included)". Continuous months, so days / 30.4375 - the
-# mean Gregorian month, not 30, which drifts by six days a year.
+# Table 4's time from prior LOT to next LOT initiation: among patients starting
+# a subsequent LOT, prior start (excluded) to next start (included). Continuous
+# months, so days / 30.4375 - the mean Gregorian month, not 30, which drifts by
+# six days a year.
 outcomes_line_gap_sql <- function(tte_tbl, run_id, lot_run_id,
                                   both_denoms = FALSE) {
   glue("
@@ -315,10 +300,10 @@ outcomes_line_gap_sql <- function(tte_tbl, run_id, lot_run_id,
     ORDER BY d.DENOM, t.LOT_NUM, t.NEXT_LOT_NUM")
 }
 
-# Table 4, "Patients receiving each line": "Number and percent of patients
-# receiving each 1L, 2L, 3L, and 4L regimens". Regimen as lot recorded it -
-# the SOC categories in 6.2.2 are Annex 2's and are not applied here, so this
-# is the raw distribution a category map would be built against.
+# Table 4's patients receiving each line: number and percent on each 1L, 2L, 3L
+# and 4L regimen. Regimen as lot recorded it - the SOC categories in 6.2.2 are
+# Annex 2's and are not applied here, so this is the raw distribution a category
+# map would be built against.
 outcomes_regimen_sql <- function(tte_tbl, run_id, lot_run_id,
                                  both_denoms = FALSE) {
   glue("
@@ -335,8 +320,8 @@ outcomes_regimen_sql <- function(tte_tbl, run_id, lot_run_id,
     ORDER BY d.DENOM, t.LOT_NUM, N DESC")
 }
 
-# Table 4, "Time from diagnosis to 1L initiation": "Continuous (months); Time
-# from diagnosis date (excluded) until index date (included)", at the 1L index.
+# Table 4's time from diagnosis to 1L initiation, in months: diagnosis date
+# (excluded) to index date (included), at the 1L index.
 #
 # One row per patient, so the 1L rows only - the value is the same on every
 # line a patient has, and repeating it per line would weight patients by how

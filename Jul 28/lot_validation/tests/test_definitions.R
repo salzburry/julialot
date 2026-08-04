@@ -108,7 +108,7 @@ ok(!length(mviews),
    if (length(mviews)) paste0("a maintenance period is built after all: ", mviews[1])
    else "...and 'maintenance is never a line' is what the build actually does")
 # Single allowed, tandem allowed, excess ends it: the tandem arm yields the
-# THIRD transplant and the fallback the SECOND. Either one collapsing to NULL
+# third transplant and the fallback the second. Either one collapsing to NULL
 # is the rule gone.
 ok(grepl("THEN ap.AUTO_DT_3", sct1, fixed = TRUE) &&
      grepl("THEN ap.AUTO_DT_2", sct1, fixed = TRUE) &&
@@ -120,7 +120,7 @@ ok(grepl("n_allo_between", sct1, fixed = TRUE) &&
 
 cat("\n-- the transplant answer covers later lines, not LOT1 alone --\n")
 # 05_sct.R is the LOT1 rule and reads like the whole answer. It is not: at LOT2
-# and later SCT_AUTO is a START TYPE, so a transplant beyond what the previous
+# and later SCT_AUTO is a START type, so a transplant beyond what the previous
 # line allowed becomes a line of its own - with no drug beside it. An answer
 # stopping at LOT1 says "never a separate line", which is the opposite of what
 # a protocol comparison would conclude.

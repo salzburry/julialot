@@ -1,16 +1,15 @@
-# ---------------------------------------------------------------------------
 # Shared analysis module for the "MM LOT Validation next steps" questions.
 #
 # Data logic only - SQL to data.frame. Used by validation_qs.R and by the
 # dashboard's exploratory tables, so the two cannot drift apart. Builds nothing
-# persistent. Raw-claim pulls are GUARDED: if the CDM or the code lists are not
+# persistent. Raw-claim pulls are guarded: if the CDM or the code lists are not
 # reachable they return NULL and the caller falls back to the MAP view.
 #
 # The six questions:
 #   Q1  LOT1 patients on pomalidomide, elotuzumab or panobinostat - mono vs
 #       combination.
 #   Q2  Raw-claim examples, before MAPs, for pomalidomide in LOT1.
-#   Q3  Among LOT1 patients with NO steroid at LOT1, how many had one within
+#   Q3  Among LOT1 patients with no steroid at LOT1, how many had one within
 #       7/14/30 days before LOT1, and within 7/14/30 days after the induction
 #       window ends.
 #   Q4  The same for LOT2, with its 30-day window.
@@ -23,20 +22,19 @@
 #
 #  * Steroid signal: the codes in steroid_codes.csv, scanned against medical
 #    (HCPCS/CPT, NDC) and rx (NDC) - the same source the dashboard's steroid
-#    panel uses. There is NO STEROID class in cl_mma_codelist.csv, so scanning
+#    panel uses. There is no STEROID class in cl_mma_codelist.csv, so scanning
 #    MAP_STACKED for one returns nothing and would silently empty Q3/Q4/Q5.
 #  * "Steroid classified as part of LOTn", the Q3/Q4/Q5 denominator: a claim
-#    inside the CAPPED induction window [LOT_START_DT, LOT_INDUCTION_END_DT],
+#    inside the capped induction window [LOT_START_DT, LOT_INDUCTION_END_DT],
 #    where that end is least(LOT_BASE_END_DT, LOT_START_DT + W - 1) and W is 60
 #    for LOT1, 45 for a CART-started line, 30 otherwise. SCT_ALLO lines have no
 #    membership. Same as the panel's, so the denominators reconcile.
 #  * "Within N days prior / after": a claim in that window, anchored to the
-#    FIXED induction end (LOT_START + W - 1) the ask names, cumulative (<= N),
-#    and NOT capped at LOT_BASE_END_DT.
+#    fixed induction end (LOT_START + W - 1) the ask names, cumulative (<= N),
+#    and not capped at LOT_BASE_END_DT.
 #  * Steroid claims are scanned for all LOT_LONG patients and are not bounded
 #    to [INDEX_DATE, OBS_END_DT], so a pre-index steroid can legitimately fall
 #    in a LOT1 prior window.
-# ---------------------------------------------------------------------------
 
 # Default medication abbreviations (overridable via env). Panobinostat in
 # particular may not appear in this cohort at all (a 0 count is a valid
@@ -55,12 +53,12 @@ if (is.na(VQS_CART) || VQS_CART < 1) VQS_CART <- 45L
 
 # SQL for the induction-window END used to decide "steroid CLASSIFIED as part of
 # LOTn" (the denominator). Mirrors 05_regimen_dashboard.R augment_lot_long
-# (LOT_INDUCTION_END_DT) EXACTLY so Q3/Q4/Q5 reconcile with the Steroids panel:
+# (LOT_INDUCTION_END_DT) exactly so Q3/Q4/Q5 reconcile with the Steroids panel:
 #   - SCT_ALLO-started line -> NULL (no steroid membership; parent suppresses it)
 #   - else cap at LOT_BASE_END_DT, window = VQS_W1 d (LOT1) / VQS_CART d
 #     (CART-started LOTn, default 45) / VQS_W2 d (other LOTn); when
 #     LOT_BASE_END_DT is NULL use the full window.
-# The 7/14/30d before/after windows are NOT capped - they are anchored to the
+# The 7/14/30d before/after windows are not capped - they are anchored to the
 # fixed induction end (LOT_START + W - 1) the study team named ("their 60/30 day
 # induction window").
 vqs_induction_end_sql <- function(lot_num, w, start_expr = "cast(LOT_START_DT as date)") {
@@ -93,8 +91,8 @@ vqs_steroid_src <- function(ster_view) glue(
 # codes in steroid_codes.csv (mapped to DEX/PRED tokens). This is the same
 # source 05_regimen_dashboard.R uses (load_steroid_codes + augment_lot_long).
 #
-# IMPORTANT: do NOT use a MAP_STACKED MAP_MED_CLASS='STEROID' scan - steroids
-# are NOT a class in cl_mma_codelist.csv, so that scan returns zero rows and
+# Important: do not use a MAP_STACKED MAP_MED_CLASS='STEROID' scan - steroids
+# are not a class in cl_mma_codelist.csv, so that scan returns zero rows and
 # silently empties Q3/Q4/Q5 (every patient reads as "no steroid"). steroid_
 # codes.csv is the project's only steroid source.
 #
@@ -273,9 +271,7 @@ vqs_resolve_agent_tokens <- function(con) {
   out
 }
 
-# ===========================================================================
 # Q1 - LOT1 regimens including pomalidomide / elotuzumab / panobinostat
-# ===========================================================================
 vqs_q1_exclusion_agents <- function(con, lot_long, tokens) {
   p <- tokens$poma; e <- tokens$elot; a <- tokens$pano
   has <- function(tok) glue("array_contains(meds, '{tok}')")
@@ -321,11 +317,9 @@ vqs_q1_exclusion_agents <- function(con, lot_long, tokens) {
   df
 }
 
-# ===========================================================================
-# Q3 / Q4 - steroid timing for patients with NO steroid at the line
+# Q3 / Q4 - steroid timing for patients with no steroid at the line
 # Returns a tidy table: one row per (window). Reused for LOT1 (W=60) and
 # LOT2 (W=30).
-# ===========================================================================
 vqs_steroid_windows <- function(con, lot_long, ster_src, lot_num, w) {
   ind_end <- vqs_induction_end_sql(lot_num, w)
   r <- db_q(con, glue("
@@ -390,7 +384,7 @@ vqs_steroid_windows <- function(con, lot_long, ster_src, lot_num, w) {
 }
 
 # Patient-level companion to vqs_steroid_windows() - answers the study-team ask "can we
-# see WHO of these patients received a steroid within ..." (Q3/Q4). One row per
+# see who of these patients received a steroid within ..." (Q3/Q4). One row per
 # no-steroid-at-line patient who received a steroid in at least one prior/after
 # window, with per-window flags and the nearest steroid dates. `limit` caps the
 # rows for the dashboard (NULL = all, for the standalone CSV).
@@ -437,15 +431,13 @@ vqs_steroid_windows_patients <- function(con, lot_long, ster_src, lot_num, w, li
   "))
 }
 
-# ===========================================================================
 # Q5 - attribution. For patients with no steroid at LOT2 but one in the month
 # before it, is that steroid LOT1's?
 #
 # The headline test keeps the actual pre-LOT2 steroid dates and asks whether
-# one falls inside LOT1's span. Two weaker "had ANY steroid during LOT1" rows
+# one falls inside LOT1's span. Two weaker "had any steroid during LOT1" rows
 # are context only: they can be 1 for a patient whose pre-LOT2 steroid is
-# actually AFTER LOT1 ended, which is why they are not the headline.
-# ===========================================================================
+# actually after LOT1 ended, which is why they are not the headline.
 vqs_q5_lot2_attribution <- function(con, lot_long, ster_src, w1, w2) {
   r <- db_q(con, glue("
     WITH lot2 AS (
@@ -522,30 +514,28 @@ vqs_q5_lot2_attribution <- function(con, lot_long, ster_src, w1, w2) {
     stringsAsFactors = FALSE)
 }
 
-# ===========================================================================
 # Q6 - CAR-T prior to or during LOT1
 #
 # Two date sources, by necessity:
 #   * DURING or closing LOT1 uses LOT1_SCT.FIRST_CART_DT. The window is
-#     [L1_START, L1_END], extended by one day ONLY when the end reason is
+#     [L1_START, L1_END], extended by one day only when the end reason is
 #     SCT_CART or CART_INIT - a CAR-T-ending LOT1 sets its end to
 #     FIRST_CART_DT - 1, so the closing CAR-T lands one day past it. For any
 #     other end reason a CAR-T there is post-LOT1 and is not counted.
-#   * BEFORE LOT1 cannot come from LOT1_SCT, which filters to dates on or after
+#   * before LOT1 cannot come from LOT1_SCT, which filters to dates on or after
 #     the LOT1 start. It comes from the raw CAR-T claims instead; when that
 #     scan is unavailable those rows are NA with a note.
-# ===========================================================================
 vqs_q6_cart <- function(con, lot_long, sct_tbl, w1, cart_raw_tbl = NULL) {
   have_raw <- !is.null(cart_raw_tbl)
   # "During or closing LOT1" upper bound: the engine sets the LOT end to the
-  # CAR-T date - 1 ONLY when CAR-T closes LOT1 (END_REASON SCT_CART/CART_INIT),
+  # CAR-T date - 1 only when CAR-T closes LOT1 (END_REASON SCT_CART/CART_INIT),
   # so the +1 (to recover the closing CAR-T) applies in that case only. For any
   # other end reason a CAR-T at L1_END + 1 is genuinely post-LOT1, so the upper
   # bound stays at L1_END.
   during_ub <- "CASE WHEN END_REASON IN ('SCT_CART','CART_INIT') THEN date_add(L1_END, 1) ELSE L1_END END"
   during_expr <- glue("sum(CASE WHEN CART_DT IS NOT NULL
               AND CART_DT BETWEEN L1 AND ({during_ub}) THEN 1 ELSE 0 END)")
-  # before-LOT1 raw flag (only meaningful when have_raw). Expressions below
+  # Before-LOT1 raw flag (only meaningful when have_raw). Expressions below
   # read from the outer query's FROM j, where the raw flag is column has_before.
   before_expr <- if (have_raw)
     "sum(CASE WHEN has_before = 1 THEN 1 ELSE 0 END)" else "cast(NULL as bigint)"
@@ -620,10 +610,8 @@ vqs_q6_cart <- function(con, lot_long, sct_tbl, w1, cart_raw_tbl = NULL) {
   df
 }
 
-# ===========================================================================
 # Codelist views for the raw-claim examples (guarded; built only when needed).
 # Mirrors 02_lot1.R S01 (mma_codelist) and S11 (sct_codelist).
-# ===========================================================================
 .vqs_codelist_built <- new.env(parent = emptyenv())
 
 vqs_build_mma_codelist <- function(con) {
@@ -807,7 +795,7 @@ vqs_raw_sct_claims <- function(con, patids, bounds = NULL) {
 }
 
 # All raw CAR-T claim dates for the LOT1 cohort, observation-window-bounded
-# (needs ELIG_COH_FINAL bounds). This is what makes "CAR-T BEFORE LOT1 start"
+# (needs ELIG_COH_FINAL bounds). This is what makes "CAR-T before LOT1 start"
 # answerable: LOT1_SCT.FIRST_CART_DT only captures CAR-T on/after LOT1 start
 # (02_lot1.R first_cart CTE filters TX_DT >= LOT1_START_DT), so pre-LOT1 CAR-T
 # must come from the raw SCT claims. Creates/returns a temp view name, or NULL

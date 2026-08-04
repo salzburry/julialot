@@ -30,7 +30,7 @@ env <- new.env(parent = globalenv())
 for (f in c("R/config_dash.R", "R/db_utils_dash.R", "R/sections.R",
             "R/render.R", "R/build_dashboard.R"))
   sys.source(file.path(ROOT, f), envir = env)
-# all.names: the section generators are dotted helpers, and ls() hides those
+# All.names: the section generators are dotted helpers, and ls() hides those
 # by default - so the pieces that build the registry were the one part of
 # this file nothing could reach.
 for (nm in ls(env, all.names = TRUE)) assign(nm, get(nm, envir = env))
@@ -149,7 +149,7 @@ stops(check_settings(), "a top-N that will not parse")
 clear()
 
 cat("\n-- the run stops without the table the study numbers come from --\n")
-# LOT_LONG_FINAL is written LAST, in the line-criteria phase, after LOT_LONG.
+# LOT_LONG_FINAL is written last, in the line-criteria phase, after LOT_LONG.
 # So a LOT run that died in between leaves the one and not the other - and
 # requiring only LOT_LONG produced a file that looks like a finished dashboard
 # while nearly every panel on it says "not shown".
@@ -336,7 +336,7 @@ ok(!grepl("ORDER BY", psql, fixed = TRUE),
    "...so the panel has nothing left to sort or choose between")
 
 cat("\n-- which run owns the tables, not which run finished --\n")
-# LOT replaces LOT_LONG_FINAL early and validates it AFTER, so a rerun that
+# LOT replaces LOT_LONG_FINAL early and validates it after, so a rerun that
 # replaced the table and then died leaves its own table with an incomplete
 # metadata row - while the previous run's complete row is still the newest one
 # a completeness test accepts. Provenance from run A over numbers from run B.
@@ -375,7 +375,7 @@ stub(function(con, sql)
 stops(resolve_owner_run(NULL, oi, ohave, ocfg),
       "complete in the status table but not in the metadata is refused, not papered over")
 
-# A sensitivity cell is a complete, well-formed LOT run of a DIFFERENT
+# A sensitivity cell is a complete, well-formed LOT run of a different
 # algorithm. Every panel here would draw it exactly as it draws the study, so
 # ownership resolving is not enough - what it resolved to has to be the
 # contract build.
@@ -418,7 +418,7 @@ ok(any(grepl("N_LOT_FINAL_ROWS IS NOT NULL",
 
 cat("\n-- the funnel's shape differs by cohort build, not only its name --\n")
 # Making ATTRITION_TABLE a setting fixed the name. overall writes a different
-# SHAPE - row_order/step_id/description/n_30/n_60/n_90 against nndm's
+# Shape - row_order/step_id/description/n_30/n_60/n_90 against nndm's
 # STEP_NUM/CRITERION/N_PATIENTS - so one fixed query fails outright on it, and
 # the page reads as "this study has no funnel".
 NDMM_COLS <- c("RUN_ID", "STEP_NUM", "CRITERION", "N_PATIENTS", "PCT_OF_START",
@@ -601,7 +601,7 @@ ok(grepl("LEFT JOIN b ON a.PATID = b.PATID", tsql, fixed = TRUE) &&
      grepl("'No LOT2'", tsql, fixed = TRUE),
    "a left join, so those who stopped are drawn instead of vanishing")
 # An SCT_ALLO line carries no regimen - the induction rows are suppressed for
-# it - so filtering on a non-blank LOT_BASE_MEDS read a patient who DID reach
+# it - so filtering on a non-blank LOT_BASE_MEDS read a patient who did reach
 # LOT2 as having stopped, and removed them entirely when it was the source
 # line. Inventing attrition is worse than omitting it.
 ok(!grepl("AND trim(LOT_BASE_MEDS) <> ''", tsql, fixed = TRUE),
@@ -637,7 +637,7 @@ ok(any(grepl("on no panel", bd2, fixed = TRUE)),
    "...and a MAX_LOT below what that run built is a warning, not a silent gap")
 # Configured height and how far patients got are different questions, and only
 # one is a problem. Nobody reaching LOT5 is not a mismatch: the LOT4 to LOT5
-# panel with everyone flowing into "No LOT5" IS the finding, and lowering
+# panel with everyone flowing into "No LOT5" is the finding, and lowering
 # MAX_LOT to match would delete the panel carrying it.
 ok(any(grepl("would delete the", bd2, fixed = TRUE)),
    "...while a line nobody reached is not read as a misconfiguration")

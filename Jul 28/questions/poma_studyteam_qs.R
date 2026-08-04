@@ -1,52 +1,40 @@
 #!/usr/bin/env Rscript
-# Standalone POMA-in-1L study-team questions -> ONE Excel workbook.
+# Standalone POMA-in-1L study-team questions -> one Excel workbook.
 #
 #   Rscript poma_studyteam_qs.R
 #
-# Five follow-up questions on the NDMM 1L study cohort, written to one .xlsx -
-# a tab per question, plus patient journeys and the coverage note. Reuses the
-# definitions in R/validation_qs.R, so the CAR-T and raw-claim logic cannot
-# drift from the dashboard.
+# Five follow-up questions on the NDMM 1L study cohort, one tab per question
+# plus patient journeys and the coverage note. The CAR-T and raw-claim logic is
+# reused from R/validation_qs.R so it cannot drift from the dashboard.
 #
 # Questions, against patients whose 1L regimen contains POMA (pomalidomide):
 #   Q1  Trace a mix of patients from raw claims to their assigned lines.
-#   Q2  Who also received SCT or CAR-T, split by WHEN: autologous at 1L is
-#       normal first-line care; an allogeneic transplant or CAR-T that CLOSES
+#   Q2  Who also received SCT or CAR-T, split by when: autologous at 1L is
+#       normal first-line care; an allogeneic transplant or CAR-T that closes
 #       the first line is the "not treatment-naive" signal; the same therapy on
-#       a later line is expected progression, and is context only.
-#   Q3  An audit: the other-cancer rate MUST be 0, since the cohort excludes
-#       those patients, so a non-zero value is a build bug. The association is
-#       not here - it needs a population that still has them.
-#   Q4  Was there claims-based trial evidence before the POMA at 1L? From
-#       NDMM_CLINTRIAL_FLAGS, whose windows are cut at the 1L start. Evidence,
-#       not proof: a code identifies neither the study drug nor the condition.
+#       a later line is expected progression and is context only.
+#   Q3  An audit. The cohort excludes other cancers, so the rate has to be 0 and
+#       anything else is a build bug. The association needs a population that
+#       still has those patients, and is in broad_studyteam_qs.R.
+#   Q4  Claims-based trial evidence before the POMA at 1L, from
+#       NDMM_CLINTRIAL_FLAGS. Evidence, not proof - a code identifies neither
+#       the study drug nor the condition.
 #   Q5  Continuous pharmacy benefit: the 12-month pre-LOT1 check the study
-#       relies on, plus a longer look-back on INDEX_DATE - the same anchor,
-#       since the cohort sets INDEX_DATE to the 1L start.
+#       relies on, plus a longer look-back on INDEX_DATE. The cohort sets
+#       INDEX_DATE to the 1L start, so both are the same anchor.
 #
-# Runs on the NDMM 1L study cohort and only on it - every table is this run's
-# own. These questions are most meaningful here: the other-cancer and
-# prior-therapy confounders are already excluded, so an anomaly that survives
-# is a real one. Anything needing a second cohort is in broad_studyteam_qs.R.
+# Runs on this cohort only, and every table is this run's own. Anything needing
+# a second cohort is in broad_studyteam_qs.R. Builds nothing persistent -
+# session temp views over LOT_LONG_FINAL, MAP_STACKED, LOT1_SCT,
+# NDMM_CLINTRIAL_FLAGS, NDMM_FLAGS_ALL and the raw CDM.
 #
-# Builds nothing persistent - session temp views only. Reads LOT_LONG_FINAL,
-# MAP_STACKED, LOT1_SCT, NDMM_CLINTRIAL_FLAGS, NDMM_FLAGS_ALL and the raw CDM,
-# all under this run's prefix.
-#
-# Limits, surfaced in the workbook rather than hidden:
-#  - Q4 reads NDMM_CLINTRIAL_FLAGS, whose windows are cut at the 1L start. Q3
-#    is the audit only; the association and the broad build's
-#    OTHER_MALIGN_FLAG are in broad_studyteam_qs.R, because both need a
-#    population this cohort excluded.
-#  - Q2's summary uses LOT1's END REASON, which is authoritative for "allo or
-#    CAR-T closed LOT1"; the full breakdown, including CAR-T before LOT1,
-#    reuses vqs_q6_cart on a POMA-filtered view.
-#  - Q5 rebuilds continuous enrollment spans from member_enrollment (gaps of 30
-#    days or less) and keeps the span covering LOT1_START_DT and the one
-#    covering INDEX_DATE. It does not collapse to a min/max, which would bridge
-#    non-continuous coverage. The cohort sets INDEX_DATE to LOT1_START_DT, so
-#    the two anchors are the same date and the index columns are a longer
-#    look-back, not a second window.
+# Two limits, stated in the workbook rather than hidden:
+#  - Q2's summary uses LOT1's end reason, which is authoritative for "allo or
+#    CAR-T closed LOT1". The full breakdown, including CAR-T before LOT1, reuses
+#    vqs_q6_cart on a POMA-filtered view.
+#  - Q5 rebuilds enrollment spans from member_enrollment (gaps of 30 days or
+#    less) and keeps the span covering each anchor. It does not collapse to a
+#    min/max, which would bridge non-continuous coverage.
 
 .script_dir <- local({
   args <- commandArgs(trailingOnly = FALSE)
@@ -64,11 +52,9 @@ source(file.path(.script_dir, "_setup.R"))
 qs_setup(.script_dir)
 source(file.path(.script_dir, "validation_helpers.R"))        # vqs_* helpers (shared)
 
-# ===========================================================================
 # Ensure the Excel engine is present. Try to load openxlsx; if missing, try to
 # install it once; report whether it is now usable. The deliverable is an .xlsx,
 # so main() fails closed when this returns FALSE (unless ALLOW_CSV_FALLBACK).
-# ===========================================================================
 wbx_ensure_openxlsx <- function() {
   if (requireNamespace("openxlsx", quietly = TRUE)) return(TRUE)
   log_msg("openxlsx not installed - attempting install.packages('openxlsx')...")
@@ -77,13 +63,11 @@ wbx_ensure_openxlsx <- function() {
   requireNamespace("openxlsx", quietly = TRUE)
 }
 
-# ===========================================================================
-# Excel writer. Writes ONE .xlsx via openxlsx. If openxlsx is unavailable it
+# Excel writer. Writes one .xlsx via openxlsx. If openxlsx is unavailable it
 # fails closed (stop) unless allow_csv=TRUE, in which case it emits one CSV per
 # table as an explicit, opt-in degraded mode.
 # A "sheet" is list(name, title, subtitle=NULL, narrative=character(), tables=
 # named list of data.frames or list(caption, df)).
-# ===========================================================================
 wbx_write_workbook <- function(sheets, xlsx_path, csv_dir, stamp, allow_csv = FALSE) {
   san <- function(x) gsub("[^A-Za-z0-9]+", "_", x)
   if (!requireNamespace("openxlsx", quietly = TRUE)) {
@@ -163,7 +147,7 @@ wbx_write_workbook <- function(sheets, xlsx_path, csv_dir, stamp, allow_csv = FA
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
 # Best-effort optional table: return the data on success, else a one-row table
-# NAMING the failure. Assigning NULL into a list element would DELETE it (R
+# naming the failure. Assigning NULL into a list element would DELETE it (R
 # semantics), so an unavailable optional pull would vanish with no trace; this
 # keeps a visible "unavailable" row in the workbook (and logs the reason).
 best_effort <- function(expr, label) {
@@ -178,11 +162,10 @@ best_effort <- function(expr, label) {
   else r
 }
 
-# ===========================================================================
 main <- function() {
   stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
 
-  # Fail closed on the Excel engine BEFORE running any query, so a missing
+  # Fail closed on the Excel engine before running any query, so a missing
   # openxlsx does not waste warehouse time and cannot masquerade as success.
   allow_csv <- tolower(Sys.getenv("ALLOW_CSV_FALLBACK", unset = "")) %in% c("1", "true", "yes")
   have_xlsx <- wbx_ensure_openxlsx()
@@ -232,7 +215,7 @@ main <- function() {
                                      error = function(e) NULL) else NULL
 
   # POMA-at-1L patient set (NDMM study cohort, via LOT_LONG_FINAL). This is the
-  # denominator EVERY question depends on, so it runs fail-fast (no error swallow):
+  # denominator every question depends on, so it runs fail-fast (no error swallow):
   # if it errored we would report "0 POMA patients" and skip Q2/Q5, indistinguishable
   # from a true zero. lot_long readability is already checked above.
   poma_ids <- db_q(con, glue("
@@ -393,7 +376,7 @@ main <- function() {
       FROM poma1l p JOIN fl f USING (PATID) JOIN ctx c USING (PATID)"))
 
     # Authoritative CAR-T-relative-to-LOT1 for the POMA-1L subset (reuses vqs_q6_cart).
-    # Optional add-on: BOTH the temp-view creation and the query are inside the
+    # Optional add-on: both the temp-view creation and the query are inside the
     # guard, so a create-view or SCT-table hiccup leaves a visible "unavailable"
     # row rather than aborting the workbook.
     if (have_sct)
@@ -431,7 +414,7 @@ main <- function() {
   # by construction, so measured here it is zero against zero. It is in
   # broad_studyteam_qs.R, over a broad cohort.
   #
-  # What is left is the audit. Other cancer MUST be 0 - the cohort is filtered
+  # What is left is the audit. Other cancer must be 0 - the cohort is filtered
   # to NO_OTHER_CANCER_PRE_LOT1 = 1, so a non-zero value is a bug in the NDMM
   # build, not a signal. Reads NDMM's own flag from NDMM_FLAGS_ALL, not the
   # broad claim-presence method above, which uses a different window and would
@@ -453,7 +436,7 @@ main <- function() {
       FROM lot1 l LEFT JOIN poma1l p USING (PATID) LEFT JOIN fl ON fl.PATID = l.PATID
       GROUP BY 1 ORDER BY 1")), "NDMM other-cancer audit")
     else {
-      # NDMM_FLAGS_ALL unreadable: the "must be 0" audit could NOT run. Do not let
+      # NDMM_FLAGS_ALL unreadable: the "must be 0" audit could not run. Do not let
       # it fall through to the writer's bland "(no rows / not available)" - emit a
       # loud, explicit marker so a missing audit is never mistaken for a passing one.
       log_msg("  AUDIT UNAVAILABLE: ", ndmm_flags, " unreadable - Q3 NDMM audit did not run; output NOT shareable until rerun.")

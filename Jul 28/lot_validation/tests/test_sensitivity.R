@@ -152,7 +152,7 @@ ok(identical(c7$verdict[c7$metric == "n_lines"], "no movement"),
    "a predicted direction that produced no change at all is its own verdict")
 ok(!identical(c7$verdict[c7$metric == "n_lines"], "AGAINST EXPECTATION"),
    "...and specifically NOT against expectation, which would be a false failure")
-# The asymmetry is deliberate: predicting "none" and getting movement IS a miss.
+# The asymmetry is deliberate: predicting "none" and getting movement is a miss.
 ok(identical(c3$verdict[c3$metric == "n_patients"], "AGAINST EXPECTATION"),
    "...while movement where none was predicted stays a miss")
 # Both sides of the boundary still score, so nothing became unfalsifiable.
@@ -232,8 +232,10 @@ cat("\n-- what the ask wanted that cannot be swept --\n")
 # Silently dropping two of the four axes would read as coverage.
 rs <- readLines(file.path(ROOT, "run_sensitivity.R"), warn = FALSE)
 sn <- readLines(file.path(ROOT, "R", "sensitivity.R"), warn = FALSE)
-ok(any(grepl("maintenance-as-LOT", rs, fixed = TRUE)) &&
-     any(grepl("maintenance-as-LOT", sn, fixed = TRUE)),
+# Case-insensitive: the assertion is that the axis is named, not how a sentence
+# happens to start.
+ok(any(grepl("maintenance-as-lot", rs, ignore.case = TRUE)) &&
+     any(grepl("maintenance-as-lot", sn, ignore.case = TRUE)),
    "maintenance-as-LOT is named as not being a setting, not quietly dropped")
 ok(any(grepl("NDMM_FU_CE_COUNTS", rs, fixed = TRUE)),
    "...and CE ELIGIBILITY is pointed at the build that already reports it")

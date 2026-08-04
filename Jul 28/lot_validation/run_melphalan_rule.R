@@ -12,11 +12,11 @@
 # lot, builds no lines, and does not touch the run it measures - so it can be
 # run against the production tables without a rebuild.
 #
-# What it cannot do: give the resulting LINE COUNT or the line dates. Moving a
+# What it cannot do: give the resulting line count or the line dates. Moving a
 # boundary changes which line an exposure falls in, whether an agent is inside
 # an induction window, regimen membership, discontinuation dates and every later
 # line number. None of that is recoverable from finished boundaries. It counts
-# BOUNDARIES - how many the rule adds and how many it removes - which is what
+# boundaries - how many the rule adds and how many it removes - which is what
 # sizes the decision. An exact resulting line structure needs an alternate
 # build, once the clinical rule is settled.
 

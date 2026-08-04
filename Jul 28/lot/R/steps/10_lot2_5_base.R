@@ -10,7 +10,7 @@
 #   - mma_rollup           MED_ABBR -> maintenance flags
 #   - tx_auto_dates        per-patient AUTO SCT dates, post-grouping
 #   - tx_allo_cart_dates   per-patient ALLO/CART dates
-#   - lot1_base_end        LOT1 row with LOT1_BASE_END_DT, REASON, etc.
+#   - lot1_base_end        LOT1 row with LOT1_BASE_END_DT, end reason and so on
 #
 # Produces lot_long, one row per (PATID, LOT_NUM):
 #   PATID, LOT_NUM, LOT_START_DT, LOT_START_TYPE,
@@ -38,8 +38,8 @@
 
 # Staging table for the LOT_LONG build. The whole build (LOT1 init +
 # LOT2..N appends) writes here; build_lot2_5() only swaps the final
-# LOT_LONG into place AFTER every LOT appended successfully. This means a
-# mid-loop failure leaves a partial LOT_LONG_STAGE, NOT a partial
+# LOT_LONG into place after every LOT appended successfully. This means a
+# mid-loop failure leaves a partial LOT_LONG_STAGE, not a partial
 # LOT_LONG -- so the orchestrator's "LOT_LONG already exists" skip can
 # never be fooled by an incomplete build, and a previous good LOT_LONG
 # (if any) is preserved until a complete rebuild replaces it.
@@ -984,7 +984,7 @@ build_lot2_5 <- function(con,
   # match LOT1 output exactly. STEROID class excluded - LOT1 uses the same
   # filter, so persisted LOT1_MED_<DEXA>/<PRED> columns will not exist.
   #
-  # ORDER BY references the aliased name (MED_ABBR / MED_CLASS), NOT the
+  # ORDER BY references the aliased name (MED_ABBR / MED_CLASS), not the
   # underlying column. After SELECT DISTINCT col AS alias, the projection
   # only carries `alias`; strict Spark/Databricks runtimes reject
   # ORDER BY on the underlying name with UNRESOLVED_COLUMN. LOT1 (S00)
@@ -1022,7 +1022,7 @@ build_lot2_5 <- function(con,
 
   # Atomic publish: the staging table is only now promoted to the final
   # LOT_LONG. Every LOT (1..max_lot, or up to the natural break above)
-  # appended without error, so this is a COMPLETE build. If any append
+  # appended without error, so this is a complete build. If any append
   # had failed, build_lot_n() would have stop()ped before reaching here,
   # leaving LOT_LONG_STAGE partial and the prior LOT_LONG (if any)
   # untouched -- so the orchestrator never mistakes a partial build for

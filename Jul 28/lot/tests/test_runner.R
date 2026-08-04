@@ -593,7 +593,7 @@ for (prob in c("orphan", "uncoded", "type", "class", "code_to_med", "bad_ndc",
      paste0("'", prob, "' stops the build"))
 }
 # A waiver names one check. A medication deliberately left without extractable
-# codes is an expected condition a study may accept; waiving it must NOT also
+# codes is an expected condition a study may accept; waiving it must not also
 # waive a code naming two different drugs.
 Sys.setenv(CODELIST_WAIVERS = "uncoded_meds")
 assign("db_q", mk_db_q("uncoded"), envir = ce)
@@ -657,7 +657,7 @@ cat("\n-- an SCT on LOT1's start date does not end it the day before --\n")
 # end rule is "the day before the transplant". Unfloored, that is the day
 # before LOT1 began: check_lot_long refuses the row and the build stops.
 #
-# LOT2-5 cannot reach this - there an SCT on the start date IS the start
+# LOT2-5 cannot reach this - there an SCT on the start date is the start
 # (LOT_START_TYPE 'CART'/'SCT_ALLO'), which is why its windows read '>'. LOT1's
 # start type is hardcoded 'MED' in 10_lot2_5_base.R, so the transplant has
 # nowhere else to go and narrowing the window would drop it from the line
@@ -779,7 +779,7 @@ D <- function(x) as.Date(x)
 ok(is.na(ending_auto(a1 = "2025-03-01")),
    "a single AUTO does not end LOT1 - it is part of induction")
 # Two within 180 days with no ALLO between them is a planned tandem, also
-# allowed, so the line ends only if a THIRD arrives.
+# allowed, so the line ends only if a third arrives.
 ok(is.na(ending_auto(a1 = "2025-03-01", a2 = "2025-06-01")),
    "a tandem pair does not end LOT1 either")
 ok(identical(ending_auto(a1 = "2025-03-01", a2 = "2025-06-01", a3 = "2025-11-01"),
@@ -918,7 +918,7 @@ ok(pos("phase_patient_input") < pos("materialize_cohort_input") &&
    "pinned before the first phase that joins it")
 
 cat("\n-- the claim side of the NDC contract --\n")
-# ndc_shape and ndc_short constrain the code list; both joins pad the CLAIM the
+# ndc_shape and ndc_short constrain the code list; both joins pad the claim the
 # same way, so a ten-digit claim NDC has the same layout problem and a
 # canonical code then misses a real claim. phase_qc does not cover this: it
 # profiles rx only, measures a different normalization from the join, warns
@@ -1218,7 +1218,7 @@ ok(grepl("HCPC", run_sct(NULL, "HCPC"), fixed = TRUE),
    "and the message names the spelling to add or fix")
 ok(!is.null(run_sct(NULL, "<null>")), "a blank or null code type stops it too")
 # The accepted set is decided by the query, not by the stub above. Read both
-# sides out of the SQL and require them to be the SAME set: a new extraction
+# sides out of the SQL and require them to be the same set: a new extraction
 # branch, or a type quietly dropped from the whitelist, fails here. Checking
 # only that each read type appears somewhere in the file would not - the first
 # version of this did exactly that and passed a type the whitelist rejects.
@@ -1669,7 +1669,7 @@ ok(identical(RAN, c("DEL", "INS", "DEL", "INS")),
 
 
 cat("\n-- LOT will not build on a cohort whose own build did not finish --\n")
-# Both cohort builds publish the physical cohort table BEFORE they are marked
+# Both cohort builds publish the physical cohort table before they are marked
 # complete - they validate it, write attrition and record metadata afterwards.
 # So a failed cohort build leaves a readable, well-formed table that passes
 # every shape check below it, because those ask whether the table looks right,
@@ -1697,7 +1697,7 @@ ok(any(grepl("More than one cohort build-status table", cb, fixed = TRUE)),
    "...and two candidates that cannot be told apart stop the run")
 ok(any(grepl("LOT_IGNORE_COHORT_STATE", cb, fixed = TRUE)),
    "...with one named override, the way the other run-state guards have one")
-# wrk() here does NOT prefix - only lot_out() does, and only for our own
+# wrk() here does not prefix - only lot_out() does, and only for our own
 # outputs. The cohort build's tables carry the cohort build's prefix, so
 # looking for a bare "NDMM_BUILD_STATUS" finds nothing on any real run.
 ok(any(grepl("paste0(cp, nm)", cb, fixed = TRUE)) &&
@@ -1817,7 +1817,7 @@ ok(any(grepl("FROM lot_long_final GROUP BY LOT_NUM", src, fixed = TRUE)),
 # own cost, for a progression row the proportion going on to the next line.
 ok(any(grepl("pct_of(s$n$patients, prev)", src, fixed = TRUE)),
    "...with the share of the previous row, which is what line-to-line attrition means")
-# Not every row is attrition. NDMM's index IS a treatment qualifier - its step
+# Not every row is attrition. NDMM's index is a treatment qualifier - its step
 # 3 is "eligible 1L treatment", and that claim's date becomes INDEX_DATE - so
 # every member already has a qualifying claim on the same cl_mma_codelist.csv
 # that lot maps. "Has a mapped episode" and "has LOT1" therefore derive a fact
@@ -1887,7 +1887,7 @@ ok(!is.null(msg) && grepl("step 4", msg) && grepl("lines", msg),
 stops2(check_lot_attrition(mk(c(100, NA), c(90, NA), c(80, 200), c(70, 150), c(60, 140))),
        "a last step that disagrees with LOT_LONG_FINAL stops the build")
 
-# The progression rows sit AFTER the final row, so that comparison has to find
+# The progression rows sit after the final row, so that comparison has to find
 # it rather than take the last entry.
 runs2(check_lot_attrition(mk(c(100, NA), c(90, NA), c(80, 200), c(70, 150), c(70, 150),
                              c(70, 70), c(40, 40), c(15, 15), kinds = PROG)),

@@ -1,42 +1,32 @@
 # The 2L and 3L cohorts, per protocol 6.2.1.1 "Additional eligibility for 2L
 # and 3L RRMM Cohorts".
 #
-# Runs AFTER the LOT build, because the 2L and 3L index dates are line starts
-# and only lot knows them. Separate cohorts rather than flags on the lines:
-# 6.2.1.1 says the additional criteria "will be applied to the 1L cohort to
-# create the subset cohorts", which is membership.
+# Runs after the LOT build, because the 2L and 3L index dates are line starts
+# and only lot knows them. They are separate cohorts rather than flags on the
+# lines: 6.2.1.1 applies the extra criteria to the 1L cohort to create subset
+# cohorts, which is membership.
 #
-# "To be eligible for each 2L or 3L cohorts, patients must meet the following
-# criteria" - three, and no others:
+# Three criteria, and no others:
 #
-#   1. "Received a subsequent LOT required to qualify for a specific cohort
-#       (i.e., received a 2L treatment for 2L, 3L for 3L cohort)"
-#   2. "Continuous enrollment (CE) for each cohort: CE of at least 12-months
-#       with medical and pharmacy benefits before the cohort index date (2L or
-#       3L). Patients with gaps in enrolment of <= 30 days are considered to be
-#       continuously enrolled"
-#   3. "CE during follow-up for each cohort: CE of at least 3-months during
-#       follow-up or death with no gaps in enrollment" - counted as 90 days,
-#       see SUBSEQ_FU_CE_DAYS below
+#   1. Received the line that qualifies for the cohort - 2L for 2L, 3L for 3L.
+#   2. Continuous enrollment with medical and pharmacy benefits for at least 12
+#      months before that line's index date. Gaps of 30 days or less are still
+#      continuous.
+#   3. Continuous enrollment for at least 3 months of follow-up, or death, with
+#      no gaps. Counted as 90 days - see SUBSEQ_FU_CE_DAYS below.
 #
-# Death is the stated alternative to the follow-up window, and the only one.
-# The study end is not: a living patient whose window runs past the data has
-# not shown the enrolment, so the window is truncated at death and at nothing
-# else.
+# Death is the stated alternative to the follow-up window and the only one. The
+# study end is not: a living patient whose window runs past the data has not
+# shown the enrolment, so the window is truncated at death and nothing else.
 #
-# Each cohort is drawn from the one before it: 2L from the 1L cohort, 3L from
-# the 2L cohort. The study design note says "each subsequent line is a subset
-# of the prior line", and the study team reads that as a cohort rule - the
-# progression is 1L -> 2L -> 3L, so a patient who is not in the 2L cohort is
-# not in the 3L cohort.
-#
-# Receiving the lines in order is guaranteed anyway: lines are numbered
-# sequentially, so a LOT 3 row implies a LOT 2 row. What chaining adds is that
-# the 2L cohort's ENROLMENT windows must also have been met. Those are not the
-# same test - a patient can have a gap that fails the follow-up window after
-# 2L and still be fully enrolled for the 365 days before 3L and 90 after it.
-# N_EXCLUDED_BY_PRIOR counts them: patients who meet 3L's own three criteria
-# and are dropped only for not being in the 2L cohort.
+# Each cohort is drawn from the one before it, 2L from the 1L cohort and 3L from
+# the 2L cohort, because the study team reads "each subsequent line is a subset
+# of the prior line" as a cohort rule. Receiving the lines in order is
+# guaranteed anyway - lines are numbered sequentially, so a LOT 3 row implies a
+# LOT 2 row. What chaining adds is that the earlier cohort's enrolment windows
+# must also have been met, and that is not the same test: a patient can fail the
+# follow-up window after 2L and still be fully enrolled for the 365 days before
+# 3L and the 90 after it. N_EXCLUDED_BY_PRIOR counts them.
 #
 # Nothing here changes the 1L cohort or the LOT tables. It reads the spans the
 # 1L build already checkpointed, so no enrollment rule is written twice.
@@ -46,7 +36,7 @@ SUBSEQ_LINES <- c(2L, 3L)
 # The two windows, as settings of their own rather than the 1L cohort's.
 #
 # SUBSEQ_PRE_DAYS is days of CE before the cohort index date - 365 for the
-# protocol's 12 months. It is NOT PRE_LOT1_DAYS: that one is pinned by
+# protocol's 12 months. It is not PRE_LOT1_DAYS: that one is pinned by
 # CONTRACT to the value the 1L cohort was built with, so it cannot be moved
 # without redefining that cohort. These are a separate question.
 #
@@ -69,7 +59,7 @@ subseq_days <- function(v, default) {
 }
 
 # The lines come from a LOT run, so that run has to have finished, to have been
-# built over THIS cohort, and to have been built over the cohort attempt that
+# built over this cohort, and to have been built over the cohort attempt that
 # is on disk now. The latest status row, whatever state it reached: "complete"
 # is written last, so the newest row is the run that last wrote the tables - a
 # rerun that replaced them and then failed owns them.
@@ -101,7 +91,7 @@ subseq_check_lot_run <- function(con, prefix) {
     stop("That LOT run was built with LOT_CONTRACT_OVERRIDE (", dev,
          "), so its lines are an alternative algorithm's.", call. = FALSE)
   log_msg("LOT run ", pick("RUN_ID"), " completed over ", pick("INPUT_COHORT_TABLE"))
-  # Which cohort attempt it read is NOT in the status table - it is in
+  # Which cohort attempt it read is not in the status table - it is in
   # LOT_RUN_METADATA, on the row for this run.
   att <- subseq_check_cohort_attempt(con, pick("RUN_ID"))
   invisible(list(lot_run = pick("RUN_ID"), cohort_run = att$cohort_run,

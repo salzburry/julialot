@@ -41,11 +41,9 @@ source(file.path(.script_dir, "validation_helpers.R"))        # vqs_* helpers (s
 
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
-# ===========================================================================
 # Writes the workbook with openxlsx. A "sheet" is a list of name, title,
 # optional subtitle, narrative lines, and named tables (each a data.frame, or a
 # list of caption + df). openxlsx must be installed; main() checks that first.
-# ===========================================================================
 wbx_write_workbook <- function(sheets, xlsx_path) {
   ox <- function(f) getExportedValue("openxlsx", f)
   wb <- ox("createWorkbook")()
@@ -123,10 +121,8 @@ is_status_table <- function(x)
 num <- function(x) suppressWarnings(as.numeric(x))
 pct1 <- function(x, d) if (isTRUE(num(d) > 0)) round(100 * num(x) / num(d), 1) else NA_real_
 
-# ---------------------------------------------------------------------------
 # Look up the drug short-codes (DARA/BORT/LENA/MELP) from cl_mma_codelist.csv by
 # full drug name, so a code change in the codelist does not quietly break a count.
-# ---------------------------------------------------------------------------
 resolve_lot_tokens <- function(con) {
   # resolved = TRUE only when the codes came from the codelist. If we fall back to
   # the standard defaults, the caller flags it (any token-based answer - Q2/Q3/Q4
@@ -175,12 +171,10 @@ STEROID_TOKENS <- c("DEX", "DEXA", "DEXAMETHASONE", "DEXAMETH",
                     "PRED", "PREDNISONE", "PREDNISOLONE",
                     "METHYLPRED", "METHYLPREDNISOLONE", "MPRED")
 
-# ===========================================================================
 # Q1 - steroids are already left out of the LOT rules. Two tables:
 #   - audit: does any steroid code show up in a regimen? (should be 0)
 #   - token list: every drug code that does appear, so a reader can see the
 #     agents and confirm none is a steroid.
-# ===========================================================================
 q1_steroid_audit <- function(con, lot_long) {
   ster_arr <- paste(sprintf("'%s'", STEROID_TOKENS), collapse = ", ")
 
@@ -212,13 +206,11 @@ q1_steroid_audit <- function(con, lot_long) {
   list(audit = audit, vocab = vocab)
 }
 
-# ===========================================================================
 # Q2 - 1L DARA+BORT: how far apart are the two start dates?
 # We look at LOT1 patients whose regimen is just DARA and BORT. Each agent's
 # start is its first MAP segment inside the LOT1 induction window (the window
 # that decides the regimen). gap = BORT start - DARA start, in days:
 # >0 = DARA first, <0 = BORT first, 0 = same day.
-# ===========================================================================
 q2_dara_bort_gap <- function(con, lot_long, map_tbl, dara, bort, w1) {
   base_cte <- glue("
     WITH l1 AS (
@@ -321,10 +313,8 @@ q2_dara_bort_gap <- function(con, lot_long, map_tbl, dara, bort, w1) {
   list(overview = overview, distribution = dist, n_dual = n_dual, n_both = n_both)
 }
 
-# ===========================================================================
 # Q3 - share on LENA+DARA in 1L and 2L. "exact pair" = the regimen is just DARA
 # and LENA; "contains both" = both are there, maybe with other agents too.
-# ===========================================================================
 q3_lena_dara <- function(con, lot_long, dara, lena) {
   # Denominator = every patient reaching each line, including transplant-only
   # lines with an empty regimen, so it matches the Read Me's per-line counts. An
@@ -354,10 +344,8 @@ q3_lena_dara <- function(con, lot_long, dara, lena) {
     stringsAsFactors = FALSE)
 }
 
-# ===========================================================================
 # Q4 - Melphalan in 2L over time: MELP share by LOT2 start year, a before/after-
 # 2017 summary, and the most common MELP-containing 2L regimens.
-# ===========================================================================
 q4_melp_2l <- function(con, lot_long, melp) {
   # Denominator = all 2L lines that year (any start type, incl. transplant-only
   # lines with an empty regimen), so pct_melp is the share of all 2L patients on
@@ -421,12 +409,10 @@ q4_melp_2l <- function(con, lot_long, melp) {
   list(by_year = by_year, era = era_df, top_regimens = top_reg)
 }
 
-# ===========================================================================
 # Q5 - answers to the five CAR-T questions, using the first CAR-T date from
 # LOT1_SCT (always on/after LOT1 start) and the same during/closing window as
 # vqs_q6_cart (up to the LOT1 end, plus one day when a CAR-T closed LOT1).
 # w1 = LOT1 induction window.
-# ===========================================================================
 q5_cart_clarifications <- function(con, lot_long, sct_tbl, w1) {
   during_ub <- "CASE WHEN END_REASON IN ('SCT_CART','CART_INIT') THEN date_add(L1_END, 1) ELSE L1_END END"
 
@@ -519,16 +505,14 @@ q5_cart_clarifications <- function(con, lot_long, sct_tbl, w1) {
     stringsAsFactors = FALSE)
 }
 
-# ===========================================================================
 # D1 - Melphalan in 2L: is it transplant conditioning?
 # High-dose melphalan is the drug that conditions an autologous transplant. These
 # tables report signals consistent with conditioning - not proof: how many MELP-
 # in-2L lines carry an autologous transplant (LOT_TX_AUTO_FLG), how short the
 # melphalan-only lines are (LOT_BASE_LENGTH), and how many days from the melphalan
 # line start (LOT_START_DT, = the melphalan claim date for a MED-started line) to
-# the transplant (LOT_TX_AUTO_DT_1). Melphalan a few days BEFORE the transplant is
+# the transplant (LOT_TX_AUTO_DT_1). Melphalan a few days before the transplant is
 # the conditioning pattern.
-# ===========================================================================
 q_melp_conditioning <- function(con, lot_long, melp) {
   base <- glue("
     WITH l2 AS (
@@ -589,7 +573,7 @@ q_melp_conditioning <- function(con, lot_long, melp) {
     stringsAsFactors = FALSE)
 
   # Days from the melphalan line start to the autologous transplant. Restricted to
-  # MED-started lines (LOT_START_TYPE='MED'), where the line start IS the melphalan
+  # MED-started lines (LOT_START_TYPE='MED'), where the line start is the melphalan
   # claim date. SCT_AUTO-started lines are excluded, because there LOT_START_DT is
   # the transplant date itself (the gap would be ~0 by construction, not a real
   # melphalan-to-transplant measure). A small positive gap = melphalan a few days
@@ -626,10 +610,8 @@ q_melp_conditioning <- function(con, lot_long, melp) {
   list(signal = signal, length = length_tbl, timing = timing_tbl, by_type = by_type)
 }
 
-# ===========================================================================
 # D2 - Top regimens in 1L and 2L, so LENA+DARA can be seen in context. Ranked by
 # distinct patients on each regimen string (steroids excluded, as everywhere).
-# ===========================================================================
 q_top_regimens <- function(con, lot_long, dara, lena, n_lot1, n_lot2, topn = 15L) {
   top_one <- function(lnum, denom) {
     d <- db_q(con, glue("
@@ -653,13 +635,11 @@ q_top_regimens <- function(con, lot_long, dara, lena, n_lot1, n_lot2, topn = 15L
   list(lot1 = top_one(1L, n_lot1), lot2 = top_one(2L, n_lot2))
 }
 
-# ===========================================================================
 # D3 - DARA+BORT journeys: for a few same-day and a few staggered dual patients,
 # show each agent's MAP start dates and the DARA/BORT claims behind them, so the
 # same-service-date result can be checked against the source data. The raw-claim
 # pull is limited to DARA and BORT, and is written only when the observation
 # window is known (bounds_available) - never an unbounded full claim history.
-# ===========================================================================
 q_dara_bort_examples <- function(con, lot_long, map_tbl, dara, bort, w1, bounds, bounds_available, n_each = 4L) {
   picks <- db_q(con, glue("
     WITH l1 AS (
@@ -707,7 +687,6 @@ q_dara_bort_examples <- function(con, lot_long, map_tbl, dara, bort, w1, bounds,
   out
 }
 
-# ===========================================================================
 main <- function() {
   stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
 

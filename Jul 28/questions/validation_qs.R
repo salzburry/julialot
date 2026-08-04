@@ -11,12 +11,12 @@
 #       split into mono- vs combination-therapy.
 #   Q2  Raw-claim examples (before MAPs were derived) for patients with
 #       pomalidomide in their LOT1 regimen.
-#   Q3  LOT1 patients with NO steroid at LOT1: steroid receipt within 7/14/30d
+#   Q3  LOT1 patients with no steroid at LOT1: steroid receipt within 7/14/30d
 #       before LOT1 start, and within 7/14/30d after the 60-day induction
 #       window.
 #   Q4  Same as Q3 for LOT2 (30-day induction window).
 #   Q5  No-steroid-at-LOT2 patients with a steroid in the 30d before LOT2:
-#       did they have a steroid at LOT1? (attribution check).
+#       Did they have a steroid at LOT1? (attribution check).
 #   Q6  CAR-T prior to or during LOT1, with raw-claim journey examples.
 #
 # Builds nothing persistent; safe to run any time. Writes one CSV per result
@@ -98,7 +98,7 @@ main <- function() {
             "examples will NOT be observation-window bounded, and 'CAR-T before ",
             "LOT1' (Q6) cannot be computed (needs the raw, bounded SCT scan).")
   # Cohort-wide raw CAR-T claim dates (observation-bounded) - the only way to
-  # answer 'CAR-T BEFORE LOT1', which LOT1_SCT cannot express.
+  # answer 'CAR-T before LOT1', which LOT1_SCT cannot express.
   cart_raw <- if (have_sct) vqs_build_raw_cart_dates(con, lot_long, bounds$sql) else NULL
   if (have_sct && is.null(cart_raw))
     log_msg("NOTE: raw CAR-T date scan unavailable - Q6 'before LOT1' reported as NA.")

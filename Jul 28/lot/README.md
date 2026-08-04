@@ -49,7 +49,7 @@ sit side by side in one schema. The cohort table itself goes through `wrk()`
 unprefixed, because the cohort build already named it. A run with no prefix is
 rejected rather than allowed to overwrite another one.
 
-**One run per prefix at a time.** Two cohorts at once is fine; the same prefix
+One run per prefix at a time. Two cohorts at once is fine; the same prefix
 twice at once is not. No output name carries the run id, and several phases
 repoint a session view at a prefixed table they have just replaced -
 `LOT_PATIENT_INPUT`, the three SCT tables, the `LOT_LONG` stage. The second run
@@ -74,20 +74,20 @@ would multiply their claims and their lines. `ENDDATE_CE` may be null.
 
 It also checks that the cohort fits the window this run reads. Every claim scan
 here is bounded by the cohort's own `INDEX_DATE` and `OBS_END_DT`, not by a date
-in this package — so LOT will ask for follow-up the CDM tables it reads do not
+in this package - so LOT will ask for follow-up the CDM tables it reads do not
 contain, and get nothing back rather than an error. With `USE_QUARTERLY_TABLES`
 on, the read is pinned to one vintage: a cohort whose `ENDDATE` runs past
 `STUDY_END` finds no claims after it, and the run still finishes. It produces
 MAPs that end early, discontinuations that never happened, and LOT end reasons
-of `STUDY_END` — all wrong, all plausible, none visible in any count.
+of `STUDY_END` - all wrong, all plausible, none visible in any count.
 
 So `STUDY_START` and `STUDY_END` are the window this run is entitled to see, and
 a cohort outside them stops the build. They have to be the window the cohort was
 built to.
 
-The window is a **per-run argument**, not a pinned setting. `CONTRACT` fixes what
-a LOT run *means* — induction windows, gap days, transplant rules — and a
-different value there is a different algorithm. The study window is not that: the
+The window is a per-run argument, not a pinned setting. `CONTRACT` fixes what a
+LOT run means - induction windows, gap days, transplant rules - and a different
+value there is a different algorithm. The study window is not that: the
 algorithm is the same, the dates are the cohort's, and different cohorts have
 different ones. So it is passed like the cohort table and the prefix:
 
@@ -95,22 +95,23 @@ different ones. So it is passed like the cohort table and the prefix:
 Rscript build.R MY_COH_FINAL mystudy_ 2016-01-01 2026-03-31
 ```
 
-`config.csv` supplies the default when no argument is given — currently the NNDM
+`config.csv` supplies the default when no argument is given - currently the NNDM
 study period, 2016-01-01 to 2026-03-31, which resolves to the
 `2026q1` CDM tables. A cohort built to another window passes its own; nothing in
 this folder has to change. Both dates land in `LOT_RUN_METADATA`, so an output
 says which window and therefore which vintage produced it.
 
-**What the check can and cannot prove.** It proves containment: no patient is
-indexed before the start, none observed past the end. It cannot prove the window
-you passed is the one the cohort was *built* to, because nothing in a cohort
-table records that. A cohort built from `2025q2` passes against a `2026q1`
-window if its patient dates happen to fit, and the run then reads the newer
-cumulative delivery — the same claims plus three quarters, but also any claim
-restated in between. Passing the wrong-but-wider window is therefore possible
-and would not be caught here. What makes it recoverable is that the window used
-is on the run's own record: compare `STUDY_START`/`STUDY_END` in
-`LOT_RUN_METADATA` against the cohort build's, rather than trusting the invocation.
+What the check can and cannot prove. It proves containment: no patient is
+indexed before the start, none observed past the end. It cannot prove the
+window you passed is the one the cohort was built to, because nothing in a
+cohort table records that. A cohort built from `2025q2` passes against a
+`2026q1` window if its patient dates happen to fit, and the run then reads the
+newer cumulative delivery - the same claims plus three quarters, but also any
+claim restated in between. Passing the wrong-but-wider window is therefore
+possible and would not be caught here. What makes it recoverable is that the
+window used is on the run's own record: compare `STUDY_START`/`STUDY_END` in
+`LOT_RUN_METADATA` against the cohort build's, rather than trusting the
+invocation.
 
 ## Extra criteria on a line
 
@@ -136,15 +137,15 @@ criterion off.
 ### The shipped criterion is this study's, and it is on
 
 `APPLY_NO_BELANTAMAB` ships `TRUE`, and `no_belantamab` is a `truncate`
-criterion — it removes the whole patient. That is the NDMM cohort's belantamab
-exclusion, and it is correct for `NDMM_COHORT`. It is **not** automatically
+criterion - it removes the whole patient. That is the NDMM cohort's belantamab
+exclusion, and it is correct for `NDMM_COHORT`. It is not automatically
 correct for a broader MM cohort, a sensitivity cohort, or any other study whose
 cohort has no such exclusion, and passing a different cohort, prefix and window
 does not change it: the switch is `APPLY_NO_BELANTAMAB`, and it has to be set
 `FALSE` deliberately.
 
 So every run says what it applied. The log names each criterion, whether it was
-applied, and how many patients fail it — the disabled ones too, since
+applied, and how many patients fail it - the disabled ones too, since
 `LOT_LONG_ALLFLAGS` computes every criterion regardless:
 
 ```
@@ -185,51 +186,51 @@ one, and these are built from temp views.
 | 3 | `reconciliation` | with LOT1 built |
 | 4.. | `criterion` | one row per enabled `truncate` criterion, cumulative |
 | | `final` | the study population, `LOT_LONG_FINAL` |
-| last | `progression` | reached LOT1, LOT2, … to `MAX_LOT` |
+| last | `progression` | reached LOT1, LOT2, ... to `MAX_LOT` |
 
 Each row carries `PCT_OF_START` and `PCT_OF_PREV`. For most rows the second is
-the number being asked for: a criterion's own cost, and — for the progression
-rows — the share of one line's patients who go on to the next.
+the number being asked for: a criterion's own cost, and - for the progression
+rows - the share of one line's patients who go on to the next.
 
-**Not every row is attrition, and `KIND` says which is which.**
+Not every row is attrition, and `KIND` says which is which.
 
-A cohort whose index is a *treatment* qualifier has already found the claim
+A cohort whose index is a treatment qualifier has already found the claim
 `lot` is about to find again. NDMM's is: its funnel step 3 is "eligible 1L
-treatment on or after `LOT1_FROM`", and that claim's date **becomes**
+treatment on or after `LOT1_FROM`", and that claim's date becomes
 `INDEX_DATE`. So every member already has a qualifying MM therapy claim on
-`cl_mma_codelist.csv` — the same file `map_stacked` is built from.
+`cl_mma_codelist.csv` - the same file `map_stacked` is built from.
 
 Steps 2 and 3 therefore derive a fact the cohort build already established.
-They should equal step 1, and a drop is **the two scans disagreeing**, not
+They should equal step 1, and a drop is the two scans disagreeing, not
 patients the study lost. Shown as attrition they would read as expected loss,
-which is the one reading that lets a real discrepancy through — so they are
+which is the one reading that lets a real discrepancy through - so they are
 labelled for what they are and a drop is reported as a discrepancy.
 
-A cohort indexed on something else — a diagnosis, an enrolment date — carries
+A cohort indexed on something else - a diagnosis, an enrolment date - carries
 no such guarantee, and there the same rows are a genuine narrowing. That is why
-the check **warns rather than stops**: `lot` is meant to run over cohorts it did
+the check warns rather than stops: `lot` is meant to run over cohorts it did
 not build, and only the operator knows which kind this is.
 
-The `progression` rows are a third thing again. Nobody was removed there — a
+The `progression` rows are a third thing again. Nobody was removed there - a
 patient with no LOT3 did not progress, or their follow-up ended. Read as
 exclusions they would be the study losing people it never lost. They run over
 `LOT_LONG_FINAL`, the population that ships, and every line to `MAX_LOT` gets a
 row: "no patient reached LOT5" is an answer, and a missing row is not.
 
 Two of the rows are the same number reached two ways, which is deliberate. The
-`final` row must equal the last `criterion` row — both come from the same SQL
+`final` row must equal the last `criterion` row - both come from the same SQL
 over the same view. And `Reached LOT1` must equal `final`, since
 `check_lot_final()` has already established that each patient's lines run
 `1..n` there, so every patient has a LOT1. Either mismatch stops the build.
 
-**Two counts, because a `truncate` criterion need not remove a patient.** It
+Two counts, because a `truncate` criterion need not remove a patient. It
 drops the first failing line and every later one, so a patient can survive with
 fewer lines and a patient count alone would show nothing. `no_belantamab`
 happens to be patient-level, so today the two move together; the next criterion
 need not be.
 
-The criterion rows go through `line_criteria_final_sql()` — the build's own
-truncate SQL, given the first *i* criteria — rather than a second version of
+The criterion rows go through `line_criteria_final_sql()` - the build's own
+truncate SQL, given the first i criteria - rather than a second version of
 the rule here. The rule that decides which lines go is the thing being counted,
 so a copy of it would be reporting on itself.
 
@@ -240,7 +241,7 @@ same SQL over the same view, so a difference means the criteria counted are not
 the ones that built the table, which would make every row above it a
 description of some other run.
 
-A criterion that was **declared but left off** gets no row. A funnel is what
+A criterion that was declared but left off gets no row. A funnel is what
 narrowed the population, and a row showing a criterion costing nothing reads as
 evidence it was harmless rather than as evidence it never ran. Which criteria
 were on, and what each would have cost, is already in
@@ -261,9 +262,9 @@ criterion needs it.
 
 Two rules worth knowing:
 
-- A line the criterion is not asked of **passes**. It is not applicable, not a
+- A line the criterion is not asked of passes. It is not applicable, not a
   failure - otherwise a criterion aimed at L2 would fail every L1.
-- A predicate that evaluates to NULL **fails**. Unknown is not evidence the
+- A predicate that evaluates to NULL fails. Unknown is not evidence the
   line qualifies.
 
 Two mistakes a criterion can make that do not announce themselves, both now
@@ -277,8 +278,8 @@ refuses it.
 ### Patient-level facts: `patients`
 
 `lot_long` carries lines, not claims, so a criterion about a patient rather than
-a line has nothing to read. It can declare `patients` — SQL building one row per
-`PATID` — which is created before the flags view and `LEFT JOIN`ed into it:
+a line has nothing to read. It can declare `patients` - SQL building one row per
+`PATID` - which is created before the flags view and `LEFT JOIN`ed into it:
 
 ```r
 patients = "CREATE OR REPLACE TEMPORARY VIEW lc_<name>_patients AS ...",
@@ -288,20 +289,20 @@ sql      = "coalesce(p_<name>.SOME_COL, 0) = 0"
 Both names are built from the criterion's, and `validate_line_criteria()`
 checks the statement really creates `lc_<name>_patients` and the predicate
 really reads `p_<name>`. A rename that touches one and not the other would leave
-a predicate evaluating to NULL — which the framework reads as a failure, and
+a predicate evaluating to NULL - which the framework reads as a failure, and
 with `truncate` that silently removes every patient.
 
 This is how `no_belantamab` is exact. "Received belantamab in any LOT" cannot
 mean "in any of the lines the build got round to constructing", and reading
 `LOT_BASE_MEDS` / `LOT_BASE_1ST_ADD_MED` would mean
 exactly that: bounded by `MAX_LOT`, and bounded again by whether the drug was a
-base med or the *first* addition rather than the second. It asks `map_stacked`
+base med or the first addition rather than the second. It asks `map_stacked`
 instead, over the span from the patient's first line to the end of their
 observation:
 
 - Inside a built line, a belantamab MAP is that line's, whatever position it
   held in it.
-- After the last built line, it is a line the build *would* have started — a
+- After the last built line, it is a line the build would have started - a
   non-steroid drug that is not a permissible substitute of a prior line's drug
   triggers the next LOT.
 
@@ -318,9 +319,9 @@ Four files, read from `CODELIST_DIR`, named in `R/codelists_lot.R`:
 cl_mma_rollup.csv  cl_mma_codelist.csv  permissible_subs.csv  cl_sct_codelist.csv
 ```
 
-They live outside version control, so each is hashed before and after being read. A file
-that changes mid-read stops the build rather than being recorded under the
-wrong hash.
+They live outside version control, so each is hashed before and after being
+read. A file that changes mid-read stops the build rather than being recorded
+under the wrong hash.
 
 The hashes go in the run log and into `<prefix>LOT_CODELIST_METADATA` - one row
 per file per run, with the md5 and the row count. A log is a separate artefact:
@@ -388,9 +389,10 @@ upper(trim(coalesce(CL_MED_CLASS, ''))) <> 'STEROID'
 The `trim` matters: the projection trims the class but the raw column does
 not, so a padded `' STEROID '` would otherwise slip through.
 
-The file itself should not list them either. `tools/remove_steroids_from_rollup.R`
-makes that edit on the server. Run it without arguments first - it reports and
-changes nothing. The SQL filter stays afterwards as a defensive guard.
+The file itself should not list them either.
+`tools/remove_steroids_from_rollup.R` makes that edit on the server. Run it
+without arguments first - it reports and changes nothing. The SQL filter stays
+afterwards as a defensive guard.
 
 It is a governed file shared across builds, so the script is built to be
 boring about it. The file is handled as raw bytes and whole lines are sliced
@@ -413,8 +415,8 @@ rollup would be discarded by the replacement, and a change to the code list
 could make the premise untrue after it was checked. `tools/tests/`
 covers all of that, including the byte-for-byte claim and both mid-run edits.
 
-Without the filter the rollup lists medications whose codes are deliberately absent,
-`uncoded_meds` fires on every run, and LOT1 builds always-zero
+Without the filter the rollup lists medications whose codes are deliberately
+absent, `uncoded_meds` fires on every run, and LOT1 builds always-zero
 `LOT1_MED_<steroid>` columns that `LOT_LONG` does not carry. `build_lot2_5()`
 already filtered this way when discovering meds and classes and its comment
 claimed LOT1 did the same - now it does.
@@ -482,7 +484,7 @@ looks exactly like a drug with no claims. Both sides are checked against
 
 ### NDC shape
 
-**The code lists must carry canonical eleven-digit NDCs.** The join pads
+The code lists must carry canonical eleven-digit NDCs. The join pads
 whatever digits it finds to eleven:
 
 ```sql
@@ -499,7 +501,7 @@ than eleven digits, fewer than ten. Fix the code list.
 
 `ndc_short` is for ten-digit codes, and it is the subtle one. Ten digits is a
 real FDA form, but one of three layouts - 4-4-2, 5-3-2 or 5-4-1 - and the
-eleven-digit form is made by inserting the zero into the *short* segment, not
+eleven-digit form is made by inserting the zero into the short segment, not
 at the far left. `50242-040-62` is 5-3-2, so it becomes `50242004062`; the
 blanket left-pad produces `05024204062`, which is a different key. S01 strips
 the separators, so by the time anything can look at the code the layout is
@@ -511,11 +513,11 @@ The two are separate names so that accepting a documented short representation
 does not also accept `ABC123`.
 
 Both sides of the join need the contract, not just the code list. The claim
-preflight profiles the claim NDCs before any claim is read - `medical` and `rx`, scoped
-to the cohort and its observation window - and stops unless every one is
-eleven digits, letter-free and not all zeros. Every nonblank value is counted,
-including the ones that cannot join: a profile that skipped those would report
-"all eleven digits" without having looked at them.
+preflight profiles the claim NDCs before any claim is read - `medical` and
+`rx`, scoped to the cohort and its observation window - and stops unless every
+one is eleven digits, letter-free and not all zeros. Every nonblank value is
+counted, including the ones that cannot join: a profile that skipped those
+would report "all eleven digits" without having looked at them.
 
 Named apart the way the code side is. `claim_ndc_short` is a ten-digit claim -
 a real NDC in a layout the pad has to guess. `claim_ndc_shape` is everything
@@ -526,18 +528,19 @@ else: letters, another length, all zeros. Those cannot be an NDC at all, and
 `claim_ndc_shape` is reviewable where `ndc_shape` is fatal, and that is the one
 real difference: these are the CDM's tables, not ours, so there is no code list
 to correct and a check that could not be waived would leave no remedy short of
-changing the join. What the split buys is that accepting one does not accept the other -
-waiving the reviewed ten-digit case cannot let `ABC123` through with it, and
-each is recorded in `CODELIST_WAIVERS_APPLIED` under its own name. A ten-digit *claim* has exactly the layout problem a ten-digit
-*code* has, so a canonical code can miss a real claim.
+changing the join. What the split buys is that accepting one does not accept
+the other - waiving the reviewed ten-digit case cannot let `ABC123` through
+with it, and each is recorded in `CODELIST_WAIVERS_APPLIED` under its own name.
+A ten-digit claim has exactly the layout problem a ten-digit code has, so a
+canonical code can miss a real claim.
 
-`phase_qc` prints no NDC length distribution. That was removed rather
-than kept as background: it profiled `rx` only, compared raw code-list lengths
-against alnum-stripped claim lengths - neither being the length the join uses,
-so its one warning could fire on a code list that is fine and stay quiet on one
-that is not - warned only when the two length sets were wholly disjoint,
-swallowed its own errors, and ran after LOT1 was already built. `check_claim_ndc`
-asks the real question of both claim tables before LOT1 starts, and `ndc_shape`,
+`phase_qc` prints no NDC length distribution. That was removed rather than kept
+as background: it profiled `rx` only, compared raw code-list lengths against
+alnum-stripped claim lengths - neither being the length the join uses, so its
+one warning could fire on a code list that is fine and stay quiet on one that
+is not - warned only when the two length sets were wholly disjoint, swallowed
+its own errors, and ran after LOT1 was already built. `check_claim_ndc` asks
+the real question of both claim tables before LOT1 starts, and `ndc_shape`,
 `ndc_short` and `bad_ndc` cover the code-list side.
 
 Both are reviewable so that a first run reports the distribution instead of
@@ -551,8 +554,8 @@ a code that is not the drug it came from.
 
 `multi_class` looks inside the code list. The two files also have to agree with
 each other, and they disagree silently: every claim carries `CL_MED_CLASS` from
-the **code list**, while the `LOT1_CLASS_<x>` columns are named from the classes
-of the **rollup**. A medication the two spell differently gets a column named
+the code list, while the `LOT1_CLASS_<x>` columns are named from the classes
+of the rollup. A medication the two spell differently gets a column named
 for one spelling and values that only ever hold the other, so the column is
 always zero. `class_agreement` compares them on the medications both files
 carry - a medication in only one is `orphan_meds` or `uncoded_meds`, and
@@ -573,7 +576,7 @@ way. The claim joins read exactly `HCPCS`, `ICD10PROC`, `ICD9PROC`,
 MM code list filters out and this one does not - sits in the view matching
 nothing.
 
-Accepted is not the same as right. The `'%PROC%'` arm sits *after* the exact
+Accepted is not the same as right. The `'%PROC%'` arm sits after the exact
 `ICD9PROC` test, so `ICD9PROCEDURE`, `ICD-9-PROC` and `ICD9 PROC` all come out
 as `ICD10PROC` - which the check above accepts, because `ICD10PROC` is a real
 type - and the claim join then reads ICD-10 columns for an ICD-9 code. A third
@@ -600,24 +603,24 @@ build.
 
 ## Face validity
 
-The invariants ask whether the output is internally consistent. `LOT_FACE_VALIDITY`
-asks whether it looks like myeloma — a run can pass every structural check with
-transplants landing in late lines, CAR-T in first line, or a median line lasting
-three days, and nothing else here would notice.
+The invariants ask whether the output is internally consistent.
+`LOT_FACE_VALIDITY` asks whether it looks like myeloma - a run can pass every
+structural check with transplants landing in late lines, CAR-T in first line,
+or a median line lasting three days, and nothing else here would notice.
 
 | check | expects |
 |---|---|
-| autologous transplant lines that are LOT1–2 | ≥ 50% |
-| CAR-T lines at LOT3 or later | ≥ 50% |
-| patients with any allogeneic line | ≤ 5% |
-| LOT1 lines started by a medication | ≥ 80% |
-| median LOT1 length in days | 30–1500 |
-| LOT1 patients covered by the ten commonest regimens | ≥ 25% |
+| autologous transplant lines that are LOT1-2 | >= 50% |
+| CAR-T lines at LOT3 or later | >= 50% |
+| patients with any allogeneic line | <= 5% |
+| LOT1 lines started by a medication | >= 80% |
+| median LOT1 length in days | 30-1500 |
+| LOT1 patients covered by the ten commonest regimens | >= 25% |
 
-**The number is the point, not the verdict.** Every check records what it found
+The number is the point, not the verdict. Every check records what it found
 whether or not it passed. The bands are wide deliberately: they catch gross
-failure — an end-date rule firing on the start date, a code list matching the
-wrong thing — and none of them is a published benchmark. Narrow them once there
+failure - an end-date rule firing on the start date, a code list matching the
+wrong thing - and none of them is a published benchmark. Narrow them once there
 is a run to narrow them against.
 
 Reported, not fatal. An unusual cohort can legitimately fail one, and stopping a
@@ -692,7 +695,7 @@ row on its own only says LOT1 ran.
 `<prefix>LOT_CODELIST_METADATA`: `RUN_ID`, `CODELIST_FILE`, `MD5`, `N_ROWS`,
 `RECORDED_AT` - four rows per run, described above. The rows are written once
 the code lists have passed their checks and before any claim is read, so a run
-that fails later still records what it was reading; a run that fails *inside*
+that fails later still records what it was reading; a run that fails inside
 the code-list checks records nothing, and the hashes are in the run log only.
 `RECORDED_AT` is the warehouse clock when the row was written. A
 file whose hash cannot be taken stops the run rather than being recorded as
@@ -704,15 +707,15 @@ of tables.
 
 It also carries `STUDY_END`, because that picks the quarterly CDM table this
 run read and the quarterlies are cumulative. Anything that reads these outputs
-and then goes back to the raw CDM itself — the question scripts do, for
-baseline diagnosis windows — resolves that suffix from its own setting, so a
+and then goes back to the raw CDM itself - the question scripts do, for
+baseline diagnosis windows - resolves that suffix from its own setting, so a
 different `STUDY_END` pairs this run's patients and index dates with a later
 vintage of their claims. The table name alone cannot show that; the date makes
 it checkable.
 
 One declaration (`BUILD_STATUS_COLS`) drives the `CREATE`, the `ALTER` that
 adds a column an older table lacks, and the `INSERT`, with a `stopifnot` tying
-them together — so a column added to the list without a value stops the build
+them together - so a column added to the list without a value stops the build
 instead of reaching the warehouse. Readers should `SELECT *` rather than name
 columns: a table written before a column existed does not have it, and naming
 it turns an older run's status into an unreadable table.
@@ -729,8 +732,8 @@ nothing complaining - the certain case, and the reason the helper exists. In a
 numeric column it arrives as a floating point literal, and whether the
 warehouse stores, truncates or refuses it depends on its store-assignment
 policy; that has not been tested here, so nothing is claimed about it. Sending
-digits removes the question. `08_persist.R`'s four LOT1 counts and its QC values go
-through it too.
+digits removes the question. `08_persist.R`'s four LOT1 counts and its QC
+values go through it too.
 
 Every write that is a DELETE of this run's rows followed by an INSERT goes
 through `db_replace()`, which retries the pair rather than each statement.

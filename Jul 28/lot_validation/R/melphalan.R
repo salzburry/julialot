@@ -1,38 +1,28 @@
 # The melphalan line-advancing rule, measured against a finished run.
+# See questions/melphalan_lot_rule.md for the rule as asked.
 #
-# The rule, as the study team asked it (questions/melphalan_lot_rule.md). An
-# exposure is one administration; doses less than MELP_EXPOSURE_DAYS apart are
-# the same one. For a pair of consecutive exposures:
+# An exposure is one administration; doses under MELP_EXPOSURE_DAYS apart are the
+# same one. Consecutive pairs, so a third is judged against the second.
 #
-#   first exposure INSIDE its line's induction window
-#     next < 180 days    does not advance
-#     next >= 180 days   the next exposure starts a line, on its own date
+#   first exposure inside its line's induction window
+#     next < 180d    no advance
+#     next >= 180d   the next exposure starts a line
+#   first exposure outside it
+#     next < 60d     the first exposure starts a line
+#     next 60-179d   no advance
+#     next >= 180d   the next exposure starts a line
 #
-#   first exposure OUTSIDE the induction window
-#     next < 60 days     the FIRST exposure starts a line, on its own date
-#     next 60-179 days   neither advances
-#     next >= 180 days   the next exposure starts a line, on its own date
+# Changes nothing in lot. Counts the line boundaries the rule adds and removes -
+# not a resulting line count, which needs a build: moving a boundary changes
+# which line an exposure falls in, induction membership, regimens and every
+# later line number.
 #
-# Applied to consecutive pairs, so a third exposure is judged against the second.
-#
-# This CHANGES NO CODE IN lot. It reads a finished run and counts the line
-# BOUNDARIES the rule would add and remove. It does not rebuild the lines and it
-# does not produce a resulting line count, because that is not recoverable from
-# finished boundaries: moving one changes which line an exposure falls in,
-# whether an agent is inside an induction window, regimen membership,
-# discontinuation dates and every later line number. Those need a build.
-#
-# What is on offer is the boundary arithmetic and the branch table, which is
-# what sizes the decision. Read it as "this many boundaries move", not as
-# "the study then has this many lines".
-#
-# One trap the placement has to avoid. The finished lines already encode the
-# current algorithm's decisions ABOUT THIS DRUG: a melphalan dose first seen
-# outside the induction window is an add-med, and the build ends the line the
-# day before it (04_lot1_base.R:131) - so that dose sits on day 0 of the line it
-# created. Asking "which line contains this date" would read it as inside the
-# induction window and turn every B branch into an A branch. The reference line
-# is therefore the PREVIOUS one wherever this drug created the boundary.
+# Placement trap: the build ends a line the day before an added drug, so a
+# melphalan dose outside the induction window sits on day 0 of the line it
+# created. Measured against that line it reads as inside induction, turning
+# every B branch into an A. The reference line is the previous one wherever this
+# drug made the boundary.
+
 MELP_SETTINGS <- list(
   abbr          = list(env = "MELP_MED_ABBR",      default = "MELP",
                        what = "the medication abbreviation the rule is about"),
@@ -263,11 +253,11 @@ melp_rule_sql <- function(lines_tbl, map_tbl, auto_tbl, cfg, run_id) {
 #   splits   an advance date strictly inside a line. The rule would cut there.
 #   merges   an exposure that CREATED a boundary - the build ended a line by
 #            adding this drug at it - where the rule does not put a boundary at
-#            THAT exposure's own date. Two branches do that, not one:
+#            that exposure's own date. Two branches do that, not one:
 #              NO_ADVANCE  B.2, neither dose advances. The boundary goes.
 #              NEXT        B.3, the LATER dose advances. The boundary MOVES -
 #                          removed here, added at the later date as a split.
-#            Only FIRST keeps it, which is B.1 agreeing with the build.
+#            Only first keeps it, which is B.1 agreeing with the build.
 #            Keyed on the exposure, not on a date join to the line end: a date
 #            join fires whenever no advance date matches, which includes an
 #            exposure with no next dose, one outside every line, and one the

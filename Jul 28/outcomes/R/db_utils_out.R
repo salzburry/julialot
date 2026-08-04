@@ -28,7 +28,7 @@ DASH  <- strrep("-", 70)
 }
 
 log_msg <- function(...) {
-  # cat() does NOT dispatch S3 methods, so a bit64::integer64 from the driver
+  # cat() does not dispatch S3 methods, so a bit64::integer64 from the driver
   # is written as its raw bit pattern - a count of 1780 came out of a real run
   # as 8.794368e-321. format() dispatches, so coerce first. db_q() converts on
   # the way out too; this catches anything that reaches a message another way.
@@ -126,7 +126,7 @@ sql_text <- function(x) {
 
 # A BIGINT comes back from the driver as bit64::integer64, which stores a
 # 64-bit integer inside a double's bit pattern. paste0() and log_msg() then
-# render the BITS, so a count of 1780 prints as 8.794368e-321 - and any
+# render the bits, so a count of 1780 prints as 8.794368e-321 - and any
 # arithmetic on it without bit64 attached is silently wrong.
 #
 # Converted once, here, rather than at each of the forty-odd call sites that

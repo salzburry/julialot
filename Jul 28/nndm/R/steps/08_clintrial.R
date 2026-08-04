@@ -1,6 +1,6 @@
 # Clinical-trial evidence, anchored on the 1L index.
 #
-# NOT a criterion. Clinical trial does not filter this cohort and must not
+# Not a criterion. Clinical trial does not filter this cohort and must not
 # start: this is a descriptive flag the study team asked for, and the funnel is
 # built from NDMM_CRITERIA alone.
 #
