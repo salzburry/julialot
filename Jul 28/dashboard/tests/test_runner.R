@@ -608,6 +608,18 @@ ok(!grepl("AND trim(LOT_BASE_MEDS) <> ''", tsql, fixed = TRUE),
    "a line with no regimen string is still a line the patient reached")
 ok(grepl("concat(coalesce(LOT_START_TYPE, '?'), ' (no regimen)')", tsql, fixed = TRUE),
    "...labelled by what started it, so an ALLO line is a node and not a gap")
+# The regimen table needs the same label, and needs it more: the Sankey at
+# least draws the node, while this one is a row with an empty cell against a
+# count and no other column to explain it.
+rsql <- fill_sql(getsec("top_regimens")$sql, INPUTS, cfg)
+ok(grepl("concat(coalesce(LOT_START_TYPE, '?'), ' (no regimen)')", rsql, fixed = TRUE),
+   "the regimen table labels a blank regimen too, rather than showing a gap")
+# Grouped on the label, not on LOT_BASE_MEDS beside LOT_START_TYPE - grouping
+# by both would split one real regimen across the start types that reached it
+# and change every count in the table.
+ok(grepl("GROUP BY `Line`, `Regimen`", rsql, fixed = TRUE) &&
+     !grepl("GROUP BY LOT_NUM, LOT_BASE_MEDS", rsql, fixed = TRUE),
+   "...and grouping on it leaves a real regimen's count where it was")
 # Non-top-N sources were dropped outright, so "every LOT{a} patient" was not
 # true while the panel said it was.
 ok(grepl("coalesce(ts.src, 'Other') AS src", tsql, fixed = TRUE) &&
