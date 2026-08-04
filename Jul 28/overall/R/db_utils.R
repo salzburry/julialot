@@ -20,6 +20,36 @@ icd_family_sql <- function(col, nine = "ICD9", ten = "ICD10") {
          " WHEN upper(trim(", col, ")) IN (", q(RAW_ICD10), ") THEN '", ten, "'",
          " ELSE NULL END")
 }
+
+# The check the comment above promises, on the code list rather than the claim.
+#
+# The normalising SQL in 01_codelists.R names the ICD-9 spellings and takes
+# everything else as ICD-10, so a blank or misspelled family is silently ICD-10:
+# an ICD-9 MM code that then qualifies nobody, or an ICD-9 exclusion code that
+# stops excluding. The file is correctable, so this stops the build and names
+# the values rather than letting the run finish with plausible counts.
+#
+# Checked in R on the raw column, before the CASE has flattened it. The
+# normalised view holds only ICD9 and ICD10 by then, so checking there would
+# check nothing. CSV_ICD9 / CSV_ICD10 are the two accepted spellings plus the
+# DIAG suffix the production files use.
+CSV_ICD9  <- c("9", "ICD9", "ICD-9", "ICD9DIAG")
+CSV_ICD10 <- c("10", "ICD10", "ICD-10", "ICD10DIAG")
+check_icd_family <- function(df, csv_file) {
+  col <- names(df)[tolower(names(df)) == "icd_family"]
+  if (!length(col)) return(invisible(TRUE))
+  v <- trimws(as.character(df[[col[1]]]))
+  bad <- unique(v[is.na(v) | !toupper(v) %in% c(CSV_ICD9, CSV_ICD10)])
+  if (!length(bad)) return(invisible(TRUE))
+  shown <- ifelse(is.na(bad) | !nzchar(bad), "(blank)", bad)
+  stop(structure(class = c("codelist_content", "error", "condition"),
+    list(message = paste0(
+      csv_file, " has ", length(bad), " icd_family value(s) this build does ",
+      "not recognise: ", paste(shQuote(head(shown, 10)), collapse = ", "),
+      ". Anything that is not an ICD-9 spelling is read as ICD-10, so an ICD-9 ",
+      "code labelled this way would join nothing. Accepted: ",
+      paste(c(CSV_ICD9, CSV_ICD10), collapse = ", "), "."), call. = NULL)))
+}
 # Connection, retry, naming and materialization. No module-level state -
 # build_cohort() creates it and passes it by argument.
 
@@ -167,6 +197,7 @@ load_csv_codelists <- function(conn, cfg) {
       if (!identical(md5, unname(tools::md5sum(csv_path))))
         stop("file changed while it was being read", call. = FALSE)
       df[] <- lapply(df, trimws)
+      check_icd_family(df, csv_file)
       n <- nrow(df)
       cols <- names(df)
       col_list <- paste(cols, collapse = ", ")
@@ -198,6 +229,10 @@ load_csv_codelists <- function(conn, cfg) {
     }, error = function(e) {
       log_msg("  ERROR: Required codelist ", csv_file, " failed: ",
               conditionMessage(e))
+      # A file that is present but wrong is not a missing file. Re-raised as it
+      # was, so the operator is told which value to fix rather than being sent
+      # to look for a file that is already there.
+      if (inherits(e, "codelist_content")) stop(e)
       stop("Cannot proceed without required codelist: ", tbl_name,
            call. = FALSE)
     })

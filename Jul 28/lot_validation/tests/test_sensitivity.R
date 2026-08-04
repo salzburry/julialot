@@ -33,8 +33,8 @@ source(file.path(ROOT, "R", "sensitivity.R"))
 
 cat("\n-- the grid is one at a time, not a cross-product --\n")
 cells <- sens_plan()
-# Six axes with two values each is thirteen builds. The cross-product would be
-# 3^6 = 729, and nobody would run it.
+# Six axes with two values each, plus one that is on or off, is thirteen
+# alternatives and a reference. The cross-product would be 3^6 = 729.
 ok(length(cells) == 1L + sum(vapply(SENS_AXES, function(a) length(a$values), integer(1))),
    paste0("one cell per alternative plus a reference (", length(cells), ")"))
 ok(identical(cells[[1]]$id, "reference"),
@@ -57,7 +57,7 @@ ok(all(vapply(cells, function(c_i) grepl("^[A-Za-z][A-Za-z0-9_]*_$", c_i$prefix)
    "every cell prefix is a valid object prefix")
 
 cat("\n-- every axis is a setting the build actually reads --\n")
-# An axis naming a setting the build ignores would run thirteen builds that
+# An axis naming a setting the build ignores would run builds that
 # differ in nothing, and the table would show noise as signal.
 e <- new.env(parent = globalenv())
 sys.source(file.path(PARENT, "lot", "R", "load_inputs.R"), envir = e)
@@ -267,7 +267,7 @@ ok(any(grepl('env_flag("SENS_DROP_AFTER")', rs, fixed = TRUE)),
 cat("\n-- and a cell can actually be built, which is not a given --\n")
 # Every axis here varies a CONTRACT-pinned value, and build_lot refuses one -
 # correctly, because a different threshold is a different algorithm. Without
-# the override, twelve of thirteen cells stop at preflight and the sweep
+# the override every cell but the reference stops at preflight and the sweep
 # produces nothing. Nothing in the plan or the comparison logic would show it:
 # they never touch the LOT entry point.
 bl <- readLines(file.path(PARENT, "lot", "R", "build_lot.R"), warn = FALSE)
@@ -279,6 +279,13 @@ pinned <- Filter(function(a) a$cfg %in% contract_keys, SENS_AXES)
 ok(length(pinned) > 0,
    paste0("the axes really are contract-pinned (", length(pinned), " of ",
           length(SENS_AXES), "), so this is not hypothetical"))
+# How many cells that is, counted rather than written down. The README says the
+# number, and a number in prose goes stale the first time an axis is added.
+alt <- Filter(function(c_i) !is.na(c_i$param), cells)
+ok(length(pinned) == length(SENS_AXES) &&
+     all(vapply(alt, function(c_i) c_i$axis$cfg %in% contract_keys, logical(1))),
+   paste0("...every one of the ", length(alt), " alternative cells needs the ",
+          "override, and only the reference does not (", length(cells), " total)"))
 ok(any(grepl("LOT_CONTRACT_OVERRIDE=TRUE", rs, fixed = TRUE)),
    "so each alternative cell says it is building an alternative")
 ok(any(grepl("LOT_CONTRACT_OVERRIDE", bl, fixed = TRUE)),
@@ -297,7 +304,7 @@ for (f in c(file.path(ROOT, "R", "run_binding.R"),
   ok(any(grepl("CONTRACT_DEVIATIONS|deviations", readLines(f, warn = FALSE))),
      paste0("...and ", basename(f), " refuses a run carrying them"))
 
-cat("\n-- thirteen builds, one cohort, and it is checked rather than intended --\n")
+cat("\n-- one cohort across the sweep, checked rather than intended --\n")
 # COHORT_PREFIX defaults to the RUN's own prefix, which for a cell is a
 # throwaway. The build then looks for sens_max_lot_8_NDMM_BUILD_STATUS, finds
 # nothing, warns and carries on with no cohort run id at all - so nothing would

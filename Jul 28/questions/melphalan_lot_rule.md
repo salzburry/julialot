@@ -173,26 +173,48 @@ LEFT JOIN <prefix>TX_AUTO_DATES a
 
 ## What has to be settled before it can be built
 
+The measurement program had to pick an answer to some of these to run at all.
+Where it did, the assumption is named below. An assumption is not a decision -
+these are still the study team's to settle, and changing one changes the counts.
+
 1. Does the rule apply to melphalan alone, or to any agent used as transplant
    conditioning? As written it is drug-specific, which is a first for this
    algorithm - every other rule is about classes, windows and gaps.
+   *The program assumes melphalan alone, and takes the abbreviation from
+   `MELP_MED_ABBR` so a second agent is a setting rather than an edit.*
 
 2. What happens when the transplant procedure code is also present? The AUTO
    rule and this rule would both fire on one clinical event. One of them has to
    yield, and which one is a clinical decision.
+   *The program runs both readings - `MELP_RULE_MODE=as_asked` judges every
+   exposure, `yield_to_sct` leaves a coded one to the transplant rule - and
+   writes the mode onto every row. Neither is treated as the answer.*
 
 3. Is 30 days the exposure threshold, or 28? The build's medical day supply
    is 28, so MAPs already merge on that boundary. Two thresholds one day apart
    would disagree on a dose at exactly 28 or 29 days.
+   *The program uses 30, the number the request names, through
+   `MELP_EXPOSURE_DAYS`.*
 
 4. Third and later exposures. The rule is written for a first and a next dose.
    A patient with three or more needs a stated rule - the transplant side
    handles this explicitly (a tandem pair is allowed; a third transplant ends
    the line).
+   *The program judges consecutive pairs, so a third exposure is judged against
+   the second. That is the reading that generalises the two-dose rule without
+   adding one, but it is a choice: judging every later dose against the first
+   would give different branches.*
 
 5. Does it apply at every line, or only at 1L? "The induction window" is 60
    days at 1L and 30 at 2L and later, so the branches land differently.
+   *The program applies it at every line, using that line's own window. Anchoring
+   everything to LOT1 would put later-line doses in the wrong branch.*
 
-Patient examples were offered with the request; running them through the query
-above and the branch table is the fastest way to confirm the reading before any
-code is written.
+Patient examples were offered with the request. Running them through the branch
+table is the fastest way to confirm the reading.
+
+The sizing query above is the quick version: it looks at the first two exposures
+only and measures both against LOT1. `run_melphalan_rule.R` does the full thing -
+consecutive pairs at every line, each against its own induction window - so the
+two will not agree for a patient with three or more doses, or one whose
+melphalan is in a later line.
