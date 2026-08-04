@@ -237,9 +237,11 @@ these are still the study team's to settle, and changing one changes the counts.
      concept the algorithm does not have today - so it is a change to what a
      regimen means, not a setting.
 
-   `n_melp_after_runout` counts the lines this decides: lines melphalan started
-   after the previous one ran out. Under the second reading those lines would
-   not exist.
+   `n_b2_line_starts` counts the lines this decides, and it is the B.2
+   population rather than a proxy: the previous line ended by running out, this
+   line starts on a melphalan exposure, an earlier melphalan exposure sits in
+   the previous line outside that line's own induction window, and the two are
+   60 to 179 days apart. Under the second reading those lines would not exist.
 
 Patient examples were offered with the request. Running them through the branch
 table is the fastest way to confirm the reading.

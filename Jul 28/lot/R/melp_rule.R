@@ -40,8 +40,9 @@
 #             in the current line, which would need melphalan to join a regimen
 #             it never entered the induction window for - a concept this
 #             algorithm does not have, and a clinical decision rather than an
-#             implementation one. Open question 6 in
-#             questions/melphalan_lot_rule.md; n_melp_after_runout counts the
+#             implementation one. Both modes take this narrow reading, so
+#             neither is the request implemented to the letter. Open question 6
+#             in questions/melphalan_lot_rule.md; n_b2_line_starts counts the
 #             lines it decides.
 #   INJECT    an exposure the rule advances at and the engine has no candidate
 #             for. Two of them:
@@ -58,8 +59,9 @@
 # Modes, for the case the ask does not cover - a coded transplant on the same
 # event, where the SCT rule fires too:
 #
-#   as_asked      every exposure is judged. The rule exactly as written, and it
-#                 double-counts one clinical event with the transplant rule.
+#   as_asked      every exposure is judged, whatever is coded on it, so one
+#                 clinical event can end a line twice. Named for the transplant
+#                 reading - the ask carves nothing out - not for the whole rule.
 #   yield_to_sct  an exposure with an AUTO coded within melp_sct_days is left to
 #                 the transplant rule, which already allows a tandem inside 180
 #                 days and ends the line on an excess one. The melphalan rule

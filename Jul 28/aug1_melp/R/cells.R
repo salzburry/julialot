@@ -13,14 +13,25 @@ MELP_CELLS <- list(
   list(id = "reference", mode = NA_character_,
        what = "the contract build, unchanged - what the study has today"),
   list(id = "as_asked", mode = "as_asked",
-       what = paste0("the rule exactly as written. Every melphalan exposure is ",
-                     "judged, including one with a transplant coded on it, so ",
-                     "one clinical event can end a line twice")),
+       what = paste0("every melphalan exposure judged, including one with a ",
+                     "transplant coded on it - so one clinical event can end a ",
+                     "line twice. The transplant question answered the way the ",
+                     "request implies, since it carves nothing out")),
   list(id = "yield_to_sct", mode = "yield_to_sct",
-       what = paste0("the same rule, except that an exposure with an AUTO ",
-                     "coded within MELP_SCT_DAYS is left to the transplant ",
-                     "rule. The melphalan rule then fills only the gap where a ",
-                     "transplant left no procedure code")))
+       what = paste0("the same, except that an exposure with an AUTO coded ",
+                     "within MELP_SCT_DAYS is left to the transplant rule. The ",
+                     "melphalan rule then fills only the gap where a transplant ",
+                     "left no procedure code")))
+
+# Neither cell is the rule exactly as written, and the names do not say so: they
+# name the TRANSPLANT reading, which is what separates the two. On B.2 both take
+# the narrow reading - the melphalan boundary is removed, and the line is not
+# held open to the second dose, because that would need melphalan to join a
+# regimen whose induction window it never entered. Open question 6 in
+# questions/melphalan_lot_rule.md, and n_b2_line_starts counts what it decides.
+MELP_B2_READING <- paste0(
+  "B.2: the melphalan boundary is removed and the line is NOT held open to the ",
+  "second dose. Both cells take this reading - see open question 6.")
 
 melp_cell_plan <- function(cells = MELP_CELLS, prefix_base = "melp_") {
   lapply(cells, function(c_i)
@@ -176,7 +187,7 @@ MELP_METRICS <- c(
   n_melp_lines       = "lines whose regimen contains melphalan",
   n_sct_auto_end     = "lines ended by an autologous transplant",
   n_pat_with_melp    = "patients with any melphalan line",
-  n_melp_after_runout = "lines melphalan started after the previous line ran out")
+  n_b2_line_starts   = "lines a B.2 second dose started after the previous line ran out")
 
 # One statement per cell. The reaching-LOTn figures come from LOT_ATTRITION,
 # which already holds them, rather than being derived a second way.
@@ -185,7 +196,13 @@ MELP_METRICS <- c(
 # more lines by melphalan than yield_to_sct does, and the transplant ends fewer,
 # the two rules were firing on the same events - which is the question the two
 # cells exist to settle.
-melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP") {
+# ind1 / indn / cart are the build's own induction windows, needed to tell a
+# previous line's B exposure from an A one. map_tbl is the persisted MAP stack,
+# which is what makes the B.2 count exact rather than a proxy.
+melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP",
+                            map_tbl = NULL, expo_days = 30L, restart_days = 60L,
+                            advance_days = 180L, ind1 = 60L, indn = 30L,
+                            cart = 45L) {
   paste0("
     WITH per_pat AS (
       SELECT PATID, count(*) AS n_lines, max(LOT_NUM) AS max_lot
@@ -198,7 +215,29 @@ melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP") {
     melp AS (
       SELECT PATID, LOT_BASE_END_REASON, LOT_BASE_1ST_ADD_MED, LOT_BASE_MEDS
       FROM ", final_tbl, "
-    )
+    )", if (is.null(map_tbl)) "" else paste0(",
+    -- Melphalan exposures, chained the way lot/R/melp_rule.R chains them: doses
+    -- closer together than expo_days are one administration. Rebuilt here
+    -- because the engine's version is a CTE inside a build, not a table.
+    mdose AS (
+      SELECT PATID, MAP_START_DT AS DOSE_DT FROM ", map_tbl, "
+      WHERE upper(trim(MAP_MED_TYPE)) = '", abbr, "' GROUP BY PATID, MAP_START_DT
+    ),
+    mrun AS (
+      SELECT PATID, DOSE_DT,
+             CASE WHEN datediff(DOSE_DT,
+                    lag(DOSE_DT) OVER (PARTITION BY PATID ORDER BY DOSE_DT))
+                       < ", expo_days, " THEN 0 ELSE 1 END AS IS_NEW
+      FROM mdose
+    ),
+    mx AS (
+      SELECT PATID, min(DOSE_DT) AS EXPO_DT
+      FROM (SELECT PATID, DOSE_DT,
+                   sum(IS_NEW) OVER (PARTITION BY PATID ORDER BY DOSE_DT
+                                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS E
+            FROM mrun) r
+      GROUP BY PATID, E
+    )"), "
     SELECT (SELECT count(*) FROM per_pat)                                   AS n_patients,
            (SELECT count(*) FROM ", final_tbl, ")                           AS n_lines,
            (SELECT percentile_approx(n_lines, 0.5) FROM per_pat)            AS median_lines,
@@ -229,24 +268,45 @@ melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP") {
            (SELECT count(DISTINCT PATID) FROM melp
              WHERE array_contains(split(upper(coalesce(LOT_BASE_MEDS, '')), ' '), '", abbr, "'))
                                                                             AS n_pat_with_melp,
-           -- The B.2 group, made countable. Suppressing B.2's boundary stops
-           -- melphalan ENDING the line; it does not keep the line open, because
-           -- the line's discontinuation is its base agents' and melphalan is
-           -- not one of them. So where the base regimen runs out between the
-           -- two exposures, the line ends there and the second exposure starts
-           -- the next one under the ordinary new-therapy rule. These are the
-           -- lines that would not exist under the reading where both doses stay
-           -- in the current line - see the open question in
+           -- The B.2 group, counted rather than approximated. These are the
+           -- lines that exist only because suppressing B.2's boundary does not
+           -- hold the line open: the regimen ran out between the two exposures,
+           -- so the line ended there and the second dose started the next one.
+           -- Under the reading where both doses stay in the current line they
+           -- would not exist. Open question 6 in
            -- questions/melphalan_lot_rule.md.
-           (SELECT count(*) FROM (
-              SELECT z.LOT_NUM, z.LOT_START_TYPE, z.LOT_BASE_MEDS,
-                     lag(z.LOT_BASE_END_REASON)
-                       OVER (PARTITION BY z.PATID ORDER BY z.LOT_NUM) AS PREV_REASON
-              FROM ", final_tbl, " z) w
-             WHERE w.LOT_NUM > 1 AND w.LOT_START_TYPE = 'MED'
-               AND w.PREV_REASON = 'DISCONTINUATION'
-               AND array_contains(split(upper(coalesce(w.LOT_BASE_MEDS, '')), ' '), '", abbr, "'))
-                                                                            AS n_melp_after_runout")
+           --
+           -- All four conditions, because any one alone lets in lines that have
+           -- nothing to do with B.2: a line DARA started, with melphalan merely
+           -- joining its induction window, satisfies \"starts after a runout and
+           -- has melphalan in the regimen\" without a B.2 pair anywhere.
+           ", if (is.null(map_tbl)) "cast(NULL as bigint)" else paste0("(
+             SELECT count(*)
+             FROM (SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT,
+                          lag(l.LOT_NUM)             OVER w AS PREV_LOT_NUM,
+                          lag(l.LOT_START_DT)        OVER w AS PREV_START_DT,
+                          lag(l.LOT_START_TYPE)      OVER w AS PREV_START_TYPE,
+                          lag(l.LOT_BASE_END_REASON) OVER w AS PREV_REASON
+                   FROM ", final_tbl, " l
+                   WINDOW w AS (PARTITION BY l.PATID ORDER BY l.LOT_NUM)) x
+             -- 2. the line starts ON a melphalan exposure, so melphalan started it
+             INNER JOIN mx e2 ON e2.PATID = x.PATID AND e2.EXPO_DT = x.LOT_START_DT
+             -- 3. with an earlier melphalan exposure in the previous line...
+             INNER JOIN mx e1 ON e1.PATID = x.PATID
+                             AND e1.EXPO_DT >= x.PREV_START_DT
+                             AND e1.EXPO_DT <  x.LOT_START_DT
+             -- ...outside that line's own induction window, which is what makes
+             -- it a B branch rather than an A one
+                             AND datediff(e1.EXPO_DT, x.PREV_START_DT) > CASE
+                                   WHEN x.PREV_LOT_NUM = 1        THEN ", ind1 - 1L, "
+                                   WHEN x.PREV_START_TYPE = 'CART' THEN ", cart - 1L, "
+                                   ELSE ", indn - 1L, " END
+             -- 4. and the pair 60-179 days apart, which is B.2 and not B.1 or B.3
+                             AND datediff(x.LOT_START_DT, e1.EXPO_DT)
+                                   BETWEEN ", restart_days, " AND ", advance_days - 1L, "
+             -- 1. the previous line ended by running out, not by melphalan
+             WHERE x.LOT_NUM > 1 AND x.PREV_REASON = 'DISCONTINUATION')"), "
+                                                                            AS n_b2_line_starts")
 }
 
 # Each cell against the reference. No direction is predicted, and that is the

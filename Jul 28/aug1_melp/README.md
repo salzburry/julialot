@@ -34,8 +34,12 @@ So this program builds it.
 | cell | what it is |
 |---|---|
 | `reference` | the contract build, unchanged |
-| `as_asked` | the rule exactly as written |
-| `yield_to_sct` | the same rule, with a coded transplant left to the SCT rule |
+| `as_asked` | every exposure judged, including one with a transplant coded on it |
+| `yield_to_sct` | the same, with a coded transplant left to the SCT rule |
+
+The two mode names describe the **transplant** reading, which is what separates
+them. Neither is the request implemented to the letter: on B.2 both take the
+narrow reading described below.
 
 Two readings rather than one, because the request leaves a question open. High-
 dose melphalan is transplant conditioning, so a melphalan claim and an AUTO
@@ -62,6 +66,7 @@ cell can be read side by side, plus four about this rule:
 | `n_melp_lines` | lines whose regimen contains melphalan |
 | `n_sct_auto_end` | lines ended by an autologous transplant |
 | `n_pat_with_melp` | patients with any melphalan line |
+| `n_b2_line_starts` | lines a B.2 second dose started after the previous line ran out |
 
 Those four are where the double-count shows. If `as_asked` ends more lines by
 melphalan than `yield_to_sct` does and the transplant ends correspondingly
@@ -150,9 +155,16 @@ concept the algorithm does not have, and a change to what a regimen means rather
 than a setting. It is a clinical decision, so it is open question 6 in
 `questions/melphalan_lot_rule.md` rather than something decided here.
 
-`n_melp_after_runout` is what makes it decidable on a number: lines melphalan
-started after the previous line ran out. Under the other reading those lines
-would not exist.
+`n_b2_line_starts` is what makes it decidable on a number, and it is the B.2
+population rather than a proxy for it. A line counts only when all four hold:
+the previous line ended by running out, this line starts on a melphalan
+exposure, an earlier melphalan exposure sits in the previous line outside that
+line's own induction window, and the two are 60 to 179 days apart. Any one of
+those alone lets in lines that have nothing to do with B.2 - a line DARA started
+with melphalan merely joining its induction window would satisfy "starts after a
+runout and has melphalan in the regimen" without a B.2 pair anywhere.
+
+Under the other reading those lines would not exist.
 
 "Inside induction" is this exposure's date against this line's induction end -
 not whether melphalan is in the regimen. The two are the same thing only for the
