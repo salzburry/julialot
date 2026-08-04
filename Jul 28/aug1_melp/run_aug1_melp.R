@@ -135,11 +135,18 @@ main <- function() {
   # What each cell was built over, before anything is read off it.
   inputs <- list()
   for (c_i in cells) {
+    # The error is kept, not swallowed. A query that failed and a run with no
+    # metadata row are different problems, and reporting the first as the second
+    # sends the reader to look for a missing row that is there.
     r <- tryCatch(db_q(con, melp_inputs_sql(
       wrk(paste0(c_i$prefix, "LOT_RUN_METADATA")),
       wrk(paste0(c_i$prefix, "LOT_CODELIST_METADATA")),
-      cell_run_id(con, c_i))), error = function(e) NULL)
-    if (is.null(r) || !nrow(r))
+      wrk(paste0(c_i$prefix, "LOT_BUILD_STATUS")),
+      cell_run_id(con, c_i))), error = function(e) e)
+    if (inherits(r, "error"))
+      stop("Could not read what ", c_i$id, " was built over: ",
+           conditionMessage(r), call. = FALSE)
+    if (!nrow(r))
       stop("No LOT_RUN_METADATA row for ", c_i$id, ". Without it there is no ",
            "record of which cohort attempt or code lists it was built over, and ",
            "the comparison cannot be shown to be about the rule.", call. = FALSE)
@@ -190,10 +197,27 @@ main <- function() {
   }
   # And the same question patient by patient, which is the number the request
   # actually turns on: how many patients the transplant reading moves.
+  #
+  # The prefixes come from the plan, not from the default spelled out again.
+  # AUG1_PREFIX_BASE moves every cell, so a prefix written out here reads
+  # nothing under a custom base - or, worse, reads a previous experiment's
+  # tables that happen to still be there and reports them as this run's.
+  pfx_of <- function(id) {
+    hit <- Filter(function(c_i) identical(c_i$id, id), cells)
+    if (!length(hit)) stop("no ", id, " cell in the plan", call. = FALSE)
+    hit[[1]]$prefix
+  }
+  # And it is required, not best-effort. This is the comparison the two modes
+  # exist for, so a run that skipped it is not a finished experiment.
   pd <- tryCatch(db_q(con, melp_modes_patients_sql(
-    wrk(paste0("melp_as_asked_", "LOT_LONG_FINAL")),
-    wrk(paste0("melp_yield_to_sct_", "LOT_LONG_FINAL")))), error = function(e) NULL)
-  if (!is.null(pd) && nrow(pd)) {
+    wrk(paste0(pfx_of("as_asked"), "LOT_LONG_FINAL")),
+    wrk(paste0(pfx_of("yield_to_sct"), "LOT_LONG_FINAL")))), error = function(e) e)
+  if (inherits(pd, "error") || !nrow(pd))
+    stop("The two readings could not be compared patient by patient: ",
+         if (inherits(pd, "error")) conditionMessage(pd) else "no rows",
+         ". That comparison is what the two modes are for, so this is a stop ",
+         "rather than an output left out.", call. = FALSE)
+  {
     utils::write.csv(pd, file.path(out_dir, "melp_modes_patients.csv"),
                      row.names = FALSE)
     cat("\nAnd patient by patient. A patient counts as differing when their line\n",

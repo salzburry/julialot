@@ -85,15 +85,19 @@ over attempt B all complete, all look right, and the A-to-B difference is
 reported as the effect of melphalan. The same goes for a production code list
 edited between cells, for the LOT code itself, and for the study window.
 
-LOT already records all of it: `COHORT_RUN_ID` and `COHORT_STAMP` in
-`LOT_RUN_METADATA`, the code fingerprint and study window beside them, and every
-code list's md5 in `LOT_CODELIST_METADATA`. So it is read back rather than
-assumed, and a mismatch stops the run naming the field and the cell.
+LOT already records all of it, across three tables rather than one:
+`COHORT_RUN_ID` and `COHORT_STAMP` with the code fingerprint and study window in
+`LOT_RUN_METADATA`, every code list's md5 in `LOT_CODELIST_METADATA`, and
+`CONTRACT_DEVIATIONS` in `LOT_BUILD_STATUS` - which is deliberately not a
+metadata column, because the status row is the one every downstream reader uses
+to decide which run owns a prefix. It is read back rather than assumed, and a
+mismatch stops the run naming the field and the cell.
 
-Each cell is also held to being the algorithm it claims. The reference must
-record no contract deviation - if it needed one it is not the contract build,
-and every delta is measured against the wrong thing - and each mode must record
-the melphalan one.
+Each cell is also held to being the algorithm it claims: the reference recording
+no deviation at all, each mode recording `apply_melp_rule` set to the mode that
+cell is for, and neither recording anything else. Three separate processes, so a
+second setting reaching one of them would otherwise be read as the rule's
+effect.
 
 ## No direction is predicted
 
