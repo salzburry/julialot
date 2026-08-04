@@ -37,7 +37,7 @@ So this program builds it.
 | `as_asked` | every exposure judged, including one with a transplant coded on it |
 | `yield_to_sct` | the same, with a coded transplant left to the SCT rule |
 
-The two mode names describe the **transplant** reading, which is what separates
+The two mode names describe the transplant reading, which is what separates
 them. Neither is the request implemented to the letter: on B.2 both take the
 narrow reading described below.
 
@@ -160,11 +160,11 @@ than a setting. It is a clinical decision, so it is open question 6 in
 population rather than a proxy for it. A line counts only when all four hold:
 
 1. the previous line ended by running out;
-2. melphalan started this line - the exposure is on the start date **and** the
+2. melphalan started this line - the exposure is on the start date and the
    start type is `MED`, because the same-day tie-break is
    `SCT_ALLO > CART > SCT_AUTO > MED` and an AUTO coded on the melphalan date
    makes the line the transplant's;
-3. the exposure **immediately before** it sits in the previous line, outside
+3. the exposure immediately before it sits in the previous line, outside
    that line's own induction window, which makes it a B branch and not an A;
 4. the two are 60 to 179 days apart.
 

@@ -24,13 +24,13 @@ MELP_CELLS <- list(
                      "left no procedure code")))
 
 # Neither cell is the rule exactly as written, and the names do not say so: they
-# name the TRANSPLANT reading, which is what separates the two. On B.2 both take
+# name the transplant reading, which is what separates the two. On B.2 both take
 # the narrow reading - the melphalan boundary is removed, and the line is not
 # held open to the second dose, because that would need melphalan to join a
 # regimen whose induction window it never entered. Open question 6 in
 # questions/melphalan_lot_rule.md, and n_b2_line_starts counts what it decides.
 MELP_B2_READING <- paste0(
-  "B.2: the melphalan boundary is removed and the line is NOT held open to the ",
+  "B.2: the melphalan boundary is removed and the line is not held open to the ",
   "second dose. Both cells take this reading - see open question 6.")
 
 melp_cell_plan <- function(cells = MELP_CELLS, prefix_base = "melp_") {
@@ -280,18 +280,11 @@ melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP",
            (SELECT count(DISTINCT PATID) FROM melp
              WHERE array_contains(split(upper(coalesce(LOT_BASE_MEDS, '')), ' '), '", abbr, "'))
                                                                             AS n_pat_with_melp,
-           -- The B.2 group, counted rather than approximated. These are the
-           -- lines that exist only because suppressing B.2's boundary does not
-           -- hold the line open: the regimen ran out between the two exposures,
-           -- so the line ended there and the second dose started the next one.
-           -- Under the reading where both doses stay in the current line they
-           -- would not exist. Open question 6 in
+           -- The B.2 group. All four conditions, because any one alone lets in
+           -- lines with no B.2 pair at all - a line DARA started, melphalan
+           -- merely joining its induction window, satisfies \"after a runout,
+           -- melphalan in the regimen\". Open question 6 in
            -- questions/melphalan_lot_rule.md.
-           --
-           -- All four conditions, because any one alone lets in lines that have
-           -- nothing to do with B.2: a line DARA started, with melphalan merely
-           -- joining its induction window, satisfies \"starts after a runout and
-           -- has melphalan in the regimen\" without a B.2 pair anywhere.
            ", if (is.null(map_tbl)) "cast(NULL as bigint)" else paste0("(
              SELECT count(*)
              FROM (SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_START_TYPE,
@@ -328,18 +321,14 @@ melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP",
                                                                             AS n_b2_line_starts,
            -- The same lines, less the ones another agent would have started
            -- anyway. LOT_START_TYPE = 'MED' says a medication won the tie-break,
-           -- not WHICH medication: the engine takes d_MED as the earliest
-           -- qualifying non-steroid agent and does not keep the drug. So where
-           -- daratumumab also starts on the melphalan date, the line exists
-           -- under either B.2 reading and is not evidence for the choice.
+           -- not which one - d_MED is the earliest qualifying non-steroid agent
+           -- and the drug is not kept - so a line daratumumab also started that
+           -- day exists under either reading.
            --
-           -- A lower bound, deliberately. med_cand also excludes the previous
-           -- line's own agents expanded by permissible substitutes, and that
-           -- expansion is a session view inside the build rather than a table
-           -- this can read - so an agent that is only a substitute for a
-           -- previous-line drug is counted here as another starter when the
-           -- engine would have passed over it. That direction drops a line
-           -- rather than inventing one.
+           -- A lower bound, deliberately: med_cand also passes over the previous
+           -- line's agents expanded by permissible substitutes, and that
+           -- expansion is a session view rather than a table this can read. That
+           -- drops a line rather than inventing one.
            ", if (is.null(map_tbl)) "cast(NULL as bigint)" else paste0("(
              SELECT count(*)
              FROM (SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_START_TYPE,

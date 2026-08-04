@@ -1,10 +1,10 @@
 # The melphalan line-advancing rule, as an engine rule. Off unless
 # APPLY_MELP_RULE names a mode, and off emits the same SQL as not having it.
 #
-# The ask, the cells and the comparison live in aug1_melp/. The rule itself is
-# here because lot builds its own lines and reads nothing from a sibling
-# package, and because the rule needs each line's own induction window - which
-# only exists while that line is being built.
+# The ask, the cells and the comparison live in aug1_melp/. The rule is here
+# because lot builds its own lines and reads nothing from a sibling, and it
+# needs each line's induction window - which exists only while that line is
+# being built.
 #
 # It changes one thing: which melphalan MAP rows may be an added medication, and
 # on what date. Everything else follows, because an added medication is what
@@ -17,55 +17,41 @@
 #   outside, next >= 180d                     the next one advances, on its date
 #
 # "Inside induction" is this exposure's date against this line's induction end,
-# not whether the drug is in the regimen. Those are the same thing only for the
-# first dose. A patient dosed on day 10 and again on day 100 has melphalan in
-# the base regimen throughout, but the day-100 dose is outside the window and
-# starts a B branch - and reading it off the regimen would call it A and lose
-# the boundary. The induction end is the expression the step itself uses to
-# bound its candidates, passed in rather than restated, so the rule and the
-# engine cannot disagree about where the window closes.
+# not whether the drug is in the regimen. The two agree only for the first dose:
+# a patient dosed on day 10 and again on day 100 has melphalan in the regimen
+# throughout, but the day-100 dose is outside the window and starts a B branch.
+# The induction end is the expression the step itself uses to bound its
+# candidates, passed in rather than restated.
 #
 # So the rule is two edits to the add-med candidates:
 #
-#   SUPPRESS  an exposure the engine takes as an add and the rule does not:
-#             outside induction, next exposure 60 days or more away. B.2 and
-#             B.3, where the first dose does not advance.
+#   SUPPRESS  outside induction with the next exposure 60 days or more away -
+#             B.2 and B.3, where the first dose does not advance.
+#   INJECT    the later dose of a >= 180-day pair at its own date (A.2, B.3),
+#             and the first dose of a B.1 pair. B.1 needs it only where an
+#             earlier dose already put melphalan in the regimen: the engine then
+#             makes no candidate at any melphalan date in that line, and the
+#             boundary would be lost. Where it does open one, the injected row
+#             is the same tuple and the UNION folds them together.
 #
-#             This stops melphalan ENDING the line. It does not hold the line
-#             open: a line's discontinuation is its BASE agents' last cover, and
-#             a melphalan first seen outside induction is not one of them. So
-#             where the base regimen runs out between the two exposures, the
-#             line ends there and the second exposure starts the next one under
-#             the ordinary new-therapy rule. B.2 as written says both doses stay
-#             in the current line, which would need melphalan to join a regimen
-#             it never entered the induction window for - a concept this
-#             algorithm does not have, and a clinical decision rather than an
-#             implementation one. Both modes take this narrow reading, so
-#             neither is the request implemented to the letter. Open question 6
-#             in questions/melphalan_lot_rule.md; n_b2_line_starts counts the
-#             lines it decides.
-#   INJECT    an exposure the rule advances at and the engine has no candidate
-#             for. Two of them:
-#               the later dose of a >= 180-day pair, at its own date (A.2, B.3);
-#               the first dose of a B.1 pair, where an earlier dose already put
-#               melphalan in the regimen - so the engine makes no candidate at
-#               any melphalan date in that line, and B.1's boundary would
-#               otherwise be lost.
+# A.1 needs neither.
 #
-# A.1 needs neither. B.1 needs nothing where melphalan is not a base agent: the
-# engine already opens a boundary there, and the injected row is the same
-# (patient, date, drug) tuple, which the UNION folds together.
+# Suppressing B.2 stops melphalan ending the line. It does not hold the line
+# open to the second dose - a line's discontinuation is its base agents' cover,
+# and a melphalan first seen outside induction is not one of them. Both modes
+# take that narrow reading, so neither is the request implemented to the letter.
+# Open question 6 in questions/melphalan_lot_rule.md has both readings and the
+# number that decides between them.
 #
-# Modes, for the case the ask does not cover - a coded transplant on the same
+# The modes are the case the ask does not cover - a coded transplant on the same
 # event, where the SCT rule fires too:
 #
-#   as_asked      every exposure is judged, whatever is coded on it, so one
-#                 clinical event can end a line twice. Named for the transplant
-#                 reading - the ask carves nothing out - not for the whole rule.
+#   as_asked      every exposure judged, whatever is coded on it, so one clinical
+#                 event can end a line twice. Named for the transplant reading,
+#                 not for the whole rule.
 #   yield_to_sct  an exposure with an AUTO coded within melp_sct_days is left to
 #                 the transplant rule, which already allows a tandem inside 180
-#                 days and ends the line on an excess one. The melphalan rule
-#                 then fills only the gap where a transplant left no code.
+#                 days and ends the line on an excess one.
 #
 # Both are built as cells and compared. Neither is treated as the answer.
 MELP_RULE_MODES <- c("as_asked", "yield_to_sct")

@@ -1,10 +1,8 @@
 name,value,description
-# ---------------------------------------------------------------------------
 # Overall cohort. TRUE applies a criterion, FALSE drops it.
 # Step 1 (qualifying MM dx) has no switch -- without it there is no index date.
 # The only config for this build. An environment variable wins over it, so
 # build.R rechecks the settings that matter.
-# ---------------------------------------------------------------------------
 FINAL_TABLE_NAME,OVERALL_COH_FINAL,Cohort table this build writes
 # --- inclusions ---
 APPLY_AGE_INCL,TRUE,Step 2 - age >= MIN_AGE at index
