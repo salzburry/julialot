@@ -155,9 +155,9 @@ ok(has(rl, "THEN l.PREV_LOT_NUM ELSE l.LOT_NUM END   AS REF_LOT_NUM"),
 ok(has(rl, "datediff(EXPO_DT, REF_START_DT) AS DAYS_INTO_LINE"),
    "...and the distance into the line is measured from it")
 # The merge is keyed on the exposure that made the boundary, not on a date join.
-ok(has(im0 <- melp_impact_sql("R", "L", mc, "r1"),
-       "CREATED_BOUNDARY = 1 AND ADVANCES IN ('NO_ADVANCE', 'NEXT')"),
-   "a removed boundary is one THIS exposure created, where the rule moves it")
+ok(has(im0 <- melp_impact_sql("R", "L", mc, "r1"), "CREATED_BOUNDARY = 1") &&
+     has(im0, "ADVANCES IN ('NO_ADVANCE', 'NEXT', 'YIELDED_NEXT')"),
+   "a removed boundary is one this exposure created, where the rule moves it")
 ok(!has(im0, "r.ADVANCE_DT = date_add"),
    "...not any boundary with no advance date, which NO_NEXT and YIELDED share")
 # No resulting line count is offered, because it is not recoverable.
@@ -197,20 +197,57 @@ ok(has(rl2, "PREV_REASON = 'MED_ADD'") && has(rl2, "PREV_ADD_MED = upper('MELP')
 # B.3 MOVES a boundary: the rule declines at the first dose and puts one at the
 # later dose. Counting only NO_ADVANCE recorded the new boundary as a split and
 # left the old one standing, so B.3 came out as an addition with no removal.
-ok(has(im, "CREATED_BOUNDARY = 1 AND ADVANCES IN ('NO_ADVANCE', 'NEXT')"),
+ok(has(im, "ADVANCES IN ('NO_ADVANCE', 'NEXT', 'YIELDED_NEXT')"),
    "a created boundary goes when the rule declines at it OR moves it later")
 ok(!has(im, "ADVANCES = 'NO_ADVANCE'"),
    "...so B.3's move is a removal and an addition, not an addition alone")
+# B.3 with a transplant coded on the later dose. Yielding hands that later event
+# to the SCT rule, so there is no split - but the rule still declines at this
+# dose. Left out, the run kept a boundary the rule removed and yielded away the
+# event that was to replace it: a B.3 patient scored as no change at all.
+ok(has(im, "'YIELDED_NEXT'"),
+   "...and a yielded later dose still removes the boundary this one made")
 # First keeps it - that is B.1, where the rule and the build agree - and the
-# undecided reasons say nothing, so they cannot remove anything.
+# undecided reasons say nothing, so they cannot remove anything. YIELDED is one
+# of them: there the coded transplant is on THIS dose, so the rule was never
+# applied to it.
 ok(!has(im, "'FIRST'") && !has(im, "'NO_NEXT'") && !has(im, "'YIELDED'"),
    "...while B.1 keeps its boundary and the undecided reasons remove none")
+ok(!has(im, "'UNPLACED'"),
+   "...including an exposure that fell outside every line")
 # A split has to be inside a line, not on its start - a date that already
 # starts a line is already a boundary and would be counted twice.
 ok(has(im, "r.ADVANCE_DT >  l.LOT_START_DT"),
    "an added boundary is strictly inside a line, so a line start is not doubled")
 ok(has(rs, "NOT a resulting line count"),
    "the run says these are boundaries, not the line count after a rebuild")
+
+cat("\n-- the printed advance count is the exposures that advance --\n")
+# Every case the rule can meet, put through the lifted CASE. None comes back
+# NULL, so "ADVANCES IS NOT NULL" is the row count and printing it as the
+# advances reported every exposure as advancing a line.
+every <- list(r(NA, NA), r(NA, 1), r(NA, 0), r(200, NA), r(59, 0), r(100, 0),
+              r(200, 0), r(100, 1), r(200, 1), y(200, 1, YIELD_THIS = 1),
+              y(200, 0, YIELD_NEXT = 1))
+ok(!any(vapply(every, function(v) length(v) != 1L || is.na(v), logical(1))),
+   "every exposure gets a reason, so the reason column is never null")
+ok(has(rl, "CASE WHEN ADVANCES = 'FIRST' THEN EXPO_DT") &&
+     has(rl, "WHEN ADVANCES = 'NEXT'  THEN NEXT_DT END AS ADVANCE_DT"),
+   "...while ADVANCE_DT is set by FIRST and NEXT alone")
+ok(has(rs, "sum(CASE WHEN ADVANCE_DT IS NOT NULL THEN 1 ELSE 0 END) AS n_adv"),
+   "...so the run counts advances off ADVANCE_DT")
+ok(!has(rs, "WHEN ADVANCES IS NOT NULL THEN 1"),
+   "...and not off the reason, which would print the total as the advances")
+
+cat("\n-- the branch summary shows both exposures' transplant flags --\n")
+# A YIELDED_NEXT row has no transplant coded on the exposure itself: the arm is
+# only reached once YIELDED has declined it, and YIELDED is this dose's flag.
+ok(identical(y(200, 1, YIELD_THIS = 1, YIELD_NEXT = 1), "YIELDED"),
+   "a transplant on this dose is decided before the next dose is looked at")
+bs <- melp_branch_sql("R")
+ok(has(bs, "sum(HAS_AUTO)") && has(bs, "sum(coalesce(NEXT_HAS_AUTO, 0))"),
+   "...so the summary counts the next dose's transplant beside this one's")
+ok(has(rl, "NEXT_HAS_AUTO"), "...and the exposure table carries it to be counted")
 
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))

@@ -161,6 +161,44 @@ ok(length(hashes) == 2 && length(read_at) == 1 &&
      hashes[1] < read_at[1] && hashes[2] > read_at[1],
    "code lists are hashed before and after the read")
 
+cat("\n-- an icd_family the build does not know stops it, rather than becoming ICD-10 --\n")
+# Why the check has to exist, taken from the step file rather than restated:
+# the normalising CASE names the ICD-9 spellings and takes everything else as
+# ICD-10. So a blank or misspelled family on an ICD-9 code is silently ICD-10,
+# joins nothing, and the build finishes with plausible counts - an MM code that
+# qualifies nobody, or an exclusion code that stops excluding.
+cl_txt <- paste(readLines(file.path(ROOT, "R", "steps", "01_codelists.R"),
+                          warn = FALSE), collapse = "\n")
+fam <- regmatches(cl_txt, gregexpr("CASE WHEN upper\\(icd_family\\)[^\n]*", cl_txt))[[1]]
+ok(length(fam) == 2 && all(grepl("ELSE 'ICD10' END", fam, fixed = TRUE)),
+   "a family the CASE does not name is read as ICD-10, not refused")
+chk <- get("check_icd_family", envir = mod)
+fam_df <- function(...) data.frame(dx = rep("C9000", length(c(...))),
+                                   icd_family = c(...), stringsAsFactors = FALSE)
+runs(chk(fam_df("ICD9", "ICD10"), "mm_dx.csv"), "the two plain spellings pass")
+runs(chk(fam_df("icd-9", "ICD10DIAG", "9", "10"), "mm_dx.csv"),
+     "...as do the hyphenated, suffixed and bare-number ones, in any case")
+stops(chk(fam_df("ICD9", ""), "mm_dx.csv"),
+      "a blank family stops the build - that is the one that reads as ICD-10")
+stops(chk(fam_df("ICD-09"), "mm_dx.csv"), "...and a misspelled one")
+stops(chk(fam_df("ICD11"), "mm_dx.csv"), "...and one this build has no rule for")
+# The message has to say which value, or the operator cannot fix the file.
+msg <- tryCatch(chk(fam_df("ICD-09"), "mm_dx.csv"), error = conditionMessage)
+ok(grepl("ICD-09", msg, fixed = TRUE) && grepl("mm_dx.csv", msg, fixed = TRUE),
+   "...naming the value and the file it is in")
+ok(grepl("blank", tryCatch(chk(fam_df(""), "mm_dx.csv"), error = conditionMessage),
+         fixed = TRUE),
+   "...and a blank is printed as blank rather than as nothing at all")
+# The other three code lists have no such column and must not be held to one.
+runs(chk(data.frame(code = "J9999", code_type = "HCPCS", stringsAsFactors = FALSE),
+         "cl_mma_codelist.csv"),
+     "a code list without the column is not asked for one")
+# Wired into the read, and a present-but-wrong file is not reported as missing.
+ok(any(grepl("check_icd_family(df, csv_file)", du, fixed = TRUE)),
+   "the check runs on what was read, before the CASE flattens it")
+ok(any(grepl('inherits(e, "codelist_content")', du, fixed = TRUE)),
+   "...and its message survives, rather than becoming 'codelist missing'")
+
 cat("\n-- codelist checks name columns the views actually have --\n")
 # A wrong column here is an unresolved-column error at run time, several
 # minutes into a build. preg_codes and clintrial_codes carry code/code_type,

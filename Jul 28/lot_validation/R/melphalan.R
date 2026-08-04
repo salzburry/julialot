@@ -251,18 +251,25 @@ melp_rule_sql <- function(lines_tbl, map_tbl, auto_tbl, cfg, run_id) {
 # Two directions, counted separately because they are not the same claim:
 #
 #   splits   an advance date strictly inside a line. The rule would cut there.
-#   merges   an exposure that CREATED a boundary - the build ended a line by
+#   merges   an exposure that created a boundary - the build ended a line by
 #            adding this drug at it - where the rule does not put a boundary at
-#            that exposure's own date. Two branches do that, not one:
-#              NO_ADVANCE  B.2, neither dose advances. The boundary goes.
-#              NEXT        B.3, the LATER dose advances. The boundary MOVES -
-#                          removed here, added at the later date as a split.
-#            Only first keeps it, which is B.1 agreeing with the build.
+#            that exposure's own date. Three branches do that:
+#              NO_ADVANCE    B.2, neither dose advances. The boundary goes.
+#              NEXT          B.3, the later dose advances. The boundary moves -
+#                            removed here, added at the later date as a split.
+#              YIELDED_NEXT  B.3 again, with a transplant coded on the later
+#                            dose. Yielding hands that later event to the SCT
+#                            rule, so there is no split - but the rule still
+#                            declines at this dose, so this boundary still goes.
+#                            Leaving it out kept a boundary the rule removed and
+#                            yielded the event that was to replace it.
+#            FIRST keeps it, which is B.1 agreeing with the build.
 #            Keyed on the exposure, not on a date join to the line end: a date
 #            join fires whenever no advance date matches, which includes an
 #            exposure with no next dose, one outside every line, and one the
-#            transplant rule was left to handle. The rule says nothing about
-#            those, so removing their boundary would be unjustified.
+#            transplant rule was left to handle (YIELDED, where the coded
+#            transplant is on this dose). The rule says nothing about those, so
+#            removing their boundary would be unjustified.
 melp_impact_sql <- function(rule_tbl, lines_tbl, cfg, run_id) {
   glue("
     WITH ln AS (
@@ -284,7 +291,8 @@ melp_impact_sql <- function(rule_tbl, lines_tbl, cfg, run_id) {
     merges AS (
       SELECT PATID, count(*) AS N_MERGE
       FROM {rule_tbl}
-      WHERE CREATED_BOUNDARY = 1 AND ADVANCES IN ('NO_ADVANCE', 'NEXT')
+      WHERE CREATED_BOUNDARY = 1
+        AND ADVANCES IN ('NO_ADVANCE', 'NEXT', 'YIELDED_NEXT')
       GROUP BY PATID
     )
     SELECT n.PATID,
@@ -312,7 +320,13 @@ melp_branch_sql <- function(rule_tbl) {
                 WHEN GAP <  180       THEN '60-179 days'
                 ELSE                       '>= 180 days' END                  AS NEXT_EXPOSURE,
            ADVANCES                                                           AS EFFECT,
+           -- Both exposures' transplant flags. The boundary in A.2 and B.3 falls
+           -- on the NEXT exposure, so that is the one yielding looks at - and a
+           -- YIELDED_NEXT row has HAS_AUTO = 0 by construction. Reporting only
+           -- this exposure's flag showed no transplant overlap on exactly the
+           -- rows that were yielded because of one.
            sum(HAS_AUTO)                          AS N_WITH_CODED_TRANSPLANT,
+           sum(coalesce(NEXT_HAS_AUTO, 0))        AS N_NEXT_WITH_CODED_TRANSPLANT,
            count(*)                               AS N_EXPOSURES,
            count(DISTINCT PATID)                  AS N_PATIENTS,
            max(MELP_RULE_MODE)                    AS MELP_RULE_MODE,

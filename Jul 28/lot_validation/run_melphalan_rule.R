@@ -102,9 +102,13 @@ main <- function() {
   db_exec(con, glue("CREATE OR REPLACE TABLE {im} AS {
     melp_impact_sql(ex, lines, mc, run_id)}"))
 
+  # Counted off ADVANCE_DT, which is set only for FIRST and NEXT. ADVANCES is a
+  # reason on every row - NO_NEXT, UNPLACED, YIELDED and the rest - so counting
+  # it where it is not null counted every exposure and printed the total as the
+  # number that advance.
   n <- db_q(con, glue("
     SELECT count(*) AS n_expo, count(DISTINCT PATID) AS n_pat,
-           sum(CASE WHEN ADVANCES IS NOT NULL THEN 1 ELSE 0 END) AS n_adv,
+           sum(CASE WHEN ADVANCE_DT IS NOT NULL THEN 1 ELSE 0 END) AS n_adv,
            sum(HAS_AUTO) AS n_coded
     FROM {ex}"))
   cat("\n", n$n_expo, " exposures in ", n$n_pat, " patients. ", n$n_adv,

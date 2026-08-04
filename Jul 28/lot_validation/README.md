@@ -9,7 +9,7 @@ nothing here is an observed output.
 | | |
 |---|---|
 | Edge-case vignettes | complete as documentation. 21 cases with what the rules say, derived from this run's parameters. It is a specification, not a run. |
-| Sensitivity sweep | harness complete, unrun. Thirteen builds' worth of warehouse, opt-in, with the directions predicted first. Every cell is an explicit non-contract build, marked as one in the warehouse. |
+| Sensitivity sweep | harness complete, unrun. Fourteen builds' worth of warehouse, opt-in, with the directions predicted first. Every cell is an explicit non-contract build, marked as one in the warehouse. |
 | Distribution benchmarks | harness complete, pending sources. Every measurement is written and checked; `benchmarks.csv` ships with `published_value` blank, because the published figures are not this folder's to write. |
 | Definition comparison | our column complete, theirs pending sources. The consensus paper and the trial protocols are not in this folder, and nothing here stands in for them. |
 | Melphalan rule | complete as a measurement, unrun. A proposed line-advancing rule, counted against a finished run. It changes nothing in `lot` and rebuilds nothing. |
@@ -196,8 +196,9 @@ silently missing would read as coverage.
 Every parameter here is pinned in the LOT contract, and `build_lot` refuses a
 value that is not the contract's - correctly, because a different threshold is
 a different algorithm rather than a setting. That is exactly what a cell is, so
-each one is launched with `LOT_CONTRACT_OVERRIDE=TRUE`. Without it there is
-no executable path at all: twelve of the thirteen cells stop at preflight.
+each one is launched with `LOT_CONTRACT_OVERRIDE=TRUE`. Without it there is no
+executable path at all: thirteen of the fourteen cells stop at preflight, the
+reference being the one that is the contract build.
 
 The override is only safe because a cell cannot be picked up as the study. The
 build writes what it deviated on into `CONTRACT_DEVIATIONS` in that cell's
@@ -216,7 +217,7 @@ build that string is byte-identical to what it was before.
 `COHORT_PREFIX` is required to execute. The build resolves the cohort's
 status table under the run's own prefix unless told otherwise, and a cell's
 prefix is a throwaway like `sens_max_lot_8_` - so without it every cell finds no
-status, warns, and records no cohort run id. Thirteen sequential builds would
+status, warns, and records no cohort run id. Fourteen sequential builds would
 then have nothing showing they read one cohort, and a cohort rebuilt mid-sweep
 would appear in the table as the parameter's effect.
 

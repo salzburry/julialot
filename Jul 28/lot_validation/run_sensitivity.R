@@ -146,7 +146,7 @@ main <- function() {
       wrk(paste0(c_i$prefix, "LOT_ATTRITION")),
       st$run)), error = function(e) NULL)
     if (is.null(m)) { cat("    metrics unavailable for ", c_i$id, "\n", sep = ""); next }
-    # Which cohort attempt this cell read - a sweep is thirteen sequential
+    # Which cohort attempt this cell read - a sweep is a run of sequential
     # builds, and a cohort can be rebuilt while it runs.
     md <- lot_run_meta(con, c_i$prefix)
     attempts[[c_i$id]] <- if (is.null(md) || is.na(md$cohort_run) ||
