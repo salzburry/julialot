@@ -67,14 +67,22 @@ MELP_INPUT_FIELDS <- c(
   CODE_MD5      = "the LOT code that built it",
   CODELIST_MD5  = "every production code list it read")
 
-melp_inputs_sql <- function(meta_tbl, codelist_tbl, run_id) {
+# Three tables, because the run does not record all of this in one place.
+# CONTRACT_DEVIATIONS is a column of LOT_BUILD_STATUS and not of
+# LOT_RUN_METADATA - deliberately, since the status row is the one every
+# downstream reader uses to decide which run owns a prefix. Selecting it from
+# the metadata table is an unresolved column, and the whole query fails.
+melp_inputs_sql <- function(meta_tbl, codelist_tbl, status_tbl, run_id) {
   paste0("
     SELECT m.COHORT_RUN_ID, m.COHORT_STAMP, m.STUDY_START, m.STUDY_END,
-           m.CODE_MD5, m.CONTRACT_DEVIATIONS,
+           m.CODE_MD5, m.CONTRACT_SETTINGS,
            (SELECT concat_ws('|', sort_array(collect_list(
                      concat(c.CODELIST_FILE, ':', c.MD5))))
             FROM ", codelist_tbl, " c WHERE c.RUN_ID = '", run_id, "')
-                                                            AS CODELIST_MD5
+                                                            AS CODELIST_MD5,
+           (SELECT max(s.CONTRACT_DEVIATIONS)
+            FROM ", status_tbl, " s WHERE s.RUN_ID = '", run_id, "')
+                                                            AS CONTRACT_DEVIATIONS
     FROM ", meta_tbl, " m WHERE m.RUN_ID = '", run_id, "'")
 }
 
@@ -104,10 +112,18 @@ melp_check_inputs <- function(rows) {
   invisible(TRUE)
 }
 
-# And each cell has to be the algorithm it says it is. The reference must carry
-# no deviation - if it needed one it is not the contract build, and every delta
-# is measured against the wrong thing - and each mode must carry the melphalan
-# one and nothing else.
+# And each cell has to be the algorithm it says it is.
+#
+# The reference must carry no deviation: if it needed one it is not the contract
+# build, and every delta is measured against the wrong thing. Each mode must
+# carry the melphalan deviation, naming the mode that cell is supposed to be -
+# and nothing else, because the cells are three separate processes and a second
+# setting reaching one of them would be read as the rule's effect.
+#
+# check_lot_contract() writes one entry per wrong setting as
+# "key=value (contract value)", pipe-separated by write_build_status(). So the
+# entries are what is counted, and the mode is matched inside its own entry
+# rather than anywhere in the string.
 melp_check_deviations <- function(rows, cells) {
   mode_of <- setNames(lapply(cells, function(c_i) c_i$mode),
                       vapply(cells, function(c_i) c_i$id, character(1)))
@@ -115,13 +131,27 @@ melp_check_deviations <- function(rows, cells) {
   for (id in names(rows)) {
     dev <- rows[[id]]$CONTRACT_DEVIATIONS
     dev <- if (is.null(dev) || length(dev) == 0 || is.na(dev[1])) "" else trimws(dev[1])
-    want_rule <- !is.na(mode_of[[id]])
-    if (!want_rule && nzchar(dev))
-      bad <- c(bad, paste0("  ", id, " is meant to be the contract build but ",
-                           "deviates on: ", dev))
-    if (want_rule && !grepl("apply_melp_rule", dev, fixed = TRUE))
-      bad <- c(bad, paste0("  ", id, " is meant to build the rule but records ",
-                           "no melphalan deviation (", if (nzchar(dev)) dev else "none", ")"))
+    entries <- trimws(unlist(strsplit(dev, "|", fixed = TRUE)))
+    entries <- entries[nzchar(entries)]
+    want <- mode_of[[id]]
+    if (is.na(want)) {
+      if (length(entries))
+        bad <- c(bad, paste0("  ", id, " is meant to be the contract build but ",
+                             "deviates on: ", paste(entries, collapse = "; ")))
+      next
+    }
+    melp  <- grep("^apply_melp_rule=", entries)
+    other <- entries[-melp]
+    if (!length(melp))
+      bad <- c(bad, paste0("  ", id, " is meant to build the rule but records no ",
+                           "melphalan deviation (",
+                           if (length(entries)) paste(entries, collapse = "; ") else "none", ")"))
+    else if (!any(grepl(paste0("^apply_melp_rule=", want, "\\b"), entries[melp])))
+      bad <- c(bad, paste0("  ", id, " is meant to build ", want,
+                           " but records: ", paste(entries[melp], collapse = "; ")))
+    if (length(other))
+      bad <- c(bad, paste0("  ", id, " changed something other than the rule: ",
+                           paste(other, collapse = "; ")))
   }
   if (length(bad))
     stop("A cell is not the algorithm it claims:\n", paste(bad, collapse = "\n"),

@@ -255,6 +255,43 @@ same <- function() list(
                      STUDY_END = "2026-03-31", CODE_MD5 = "m", CODELIST_MD5 = "k",
                      CONTRACT_DEVIATIONS = "apply_melp_rule=yield_to_sct (contract )"))
 runs(melp_check_inputs(same()), "three cells over one cohort attempt are comparable")
+# Every column the query names has to be a column the build actually writes.
+# CONTRACT_DEVIATIONS is in LOT_BUILD_STATUS and not in LOT_RUN_METADATA, and
+# selecting it from the metadata table failed the whole query - which tryCatch
+# then reported as "no metadata row", sending the reader to look for a row that
+# was there. Checked against build_lot.R's own declarations rather than a list
+# repeated here, so a column moving between the two tables is caught.
+bl <- paste(readLines(file.path(LOT, "R", "build_lot.R"), warn = FALSE), collapse = "\n")
+cols_of <- function(decl) {
+  blk <- regmatches(bl, regexpr(paste0(decl, "\\s*<-\\s*c\\((?s).*?\\n\\n"), bl, perl = TRUE))
+  unique(unlist(regmatches(blk, gregexpr("[A-Z][A-Z0-9_]+(?=\\s*=\\s*\")", blk, perl = TRUE))))
+}
+meta_cols   <- cols_of("FINAL_METADATA_COLS")
+# RUN_ID is not in that vector - the metadata table is created with its settings
+# columns elsewhere - so it is taken from build_lot.R filtering the table on it,
+# which is the same evidence rather than a name written down here.
+if (grepl("FROM {meta_tbl} WHERE RUN_ID =", bl, fixed = TRUE))
+  meta_cols <- c(meta_cols, "RUN_ID")
+status_cols <- cols_of("BUILD_STATUS_COLS")
+cl_cols     <- cols_of("CODELIST_METADATA_COLS")
+ok(length(meta_cols) && length(status_cols) && length(cl_cols),
+   "the build's column declarations can be read, so this check means something")
+ok("CONTRACT_DEVIATIONS" %in% status_cols && !("CONTRACT_DEVIATIONS" %in% meta_cols),
+   "CONTRACT_DEVIATIONS is the status row's column, not the metadata row's")
+isql <- melp_inputs_sql("META", "CL", "ST", "r1")
+named <- function(alias) unique(unlist(regmatches(isql, gregexpr(
+  paste0("(?<=", alias, "\\.)[A-Z][A-Z0-9_]+"), isql, perl = TRUE))))
+ok(all(named("m") %in% meta_cols),
+   paste0("every column read off LOT_RUN_METADATA is one it has (",
+          paste(setdiff(named("m"), meta_cols), collapse = ", "), ")"))
+ok(all(named("s") %in% status_cols),
+   paste0("every column read off LOT_BUILD_STATUS is one it has (",
+          paste(setdiff(named("s"), status_cols), collapse = ", "), ")"))
+ok(all(named("c") %in% cl_cols),
+   paste0("every column read off LOT_CODELIST_METADATA is one it has (",
+          paste(setdiff(named("c"), cl_cols), collapse = ", "), ")"))
+ok(has(rs, "Could not read what ") && has(rs, "conditionMessage(r)"),
+   "a query that failed is reported as itself, not as a missing row")
 for (f in c("COHORT_RUN_ID", "COHORT_STAMP", "STUDY_END", "CODE_MD5", "CODELIST_MD5")) {
   r <- same(); r$as_asked[[f]] <- "other"
   stops(melp_check_inputs(r), paste0("...and a cell with a different ", f, " is refused"))
@@ -278,6 +315,24 @@ stops(melp_check_deviations(r, melp_cell_plan()),
 r <- same(); r$as_asked$CONTRACT_DEVIATIONS <- NA_character_
 stops(melp_check_deviations(r, melp_cell_plan()),
       "...and a mode cell that recorded no melphalan deviation did not build the rule")
+# The mode has to be the one that cell is for. Two cells that both built
+# as_asked would compare a build against itself and report no difference as the
+# answer to the transplant question.
+r <- same(); r$yield_to_sct$CONTRACT_DEVIATIONS <- "apply_melp_rule=as_asked (contract )"
+stops(melp_check_deviations(r, melp_cell_plan()),
+      "a cell that built the other mode is refused, not read as its own")
+# And nothing else may have moved. The cells are three separate processes, so a
+# second setting reaching one of them would be reported as the rule's effect.
+r <- same()
+r$as_asked$CONTRACT_DEVIATIONS <- "apply_melp_rule=as_asked (contract )|max_lot=8 (contract 5)"
+msg <- tryCatch(melp_check_deviations(r, melp_cell_plan()), error = conditionMessage)
+ok(grepl("other than the rule", msg, fixed = TRUE) && grepl("max_lot", msg, fixed = TRUE),
+   "...and a cell that changed a second setting is named for that setting")
+# Matched inside its own entry: a mode name appearing in some other deviation's
+# text must not stand in for the melphalan one.
+r <- same(); r$as_asked$CONTRACT_DEVIATIONS <- "codelist_dir=/x/as_asked (contract /mnt/code/codelist)"
+stops(melp_check_deviations(r, melp_cell_plan()),
+      "...and the mode is read from the melphalan entry, not from anywhere in the string")
 
 cat("\n-- the modes are compared patient by patient, not only in totals --\n")
 # Subtracting totals does not answer "how many patients does this move". The
@@ -294,6 +349,15 @@ ok(has(ps, "<=>"),
    "the comparison is null-safe, or a patient in one build reads as no difference")
 ok(has(rs, "downstream consequence") && has(rs, "not a count of the"),
    "the aggregate delta is described as a consequence, not as the overlap count")
+# The tables it compares come from the plan. AUG1_PREFIX_BASE moves every cell,
+# so a literal "melp_as_asked_" reads nothing under a custom base - or reads a
+# previous experiment's leftovers and reports them as this run's.
+ok(!has(rs, '"melp_as_asked_"') && !has(rs, '"melp_yield_to_sct_"'),
+   "the patient comparison names no prefix of its own")
+ok(has(rs, 'pfx_of("as_asked")') && has(rs, 'pfx_of("yield_to_sct")'),
+   "...it takes both from the cell plan, so a custom prefix base is honoured")
+ok(has(rs, "rather than an output left out"),
+   "...and a comparison that could not be made stops the run rather than being skipped")
 
 cat("\n-- and no direction is predicted, deliberately --\n")
 # The sensitivity sweep predicts a sign before the run and scores it. That works
