@@ -43,6 +43,10 @@ APPLY_CLINTRIAL_EXCL,FALSE,OFF at parent (Overall=Step6); not in the NDMM IE spe
 # APPLY_OTHER_MALIG_EXCL ships FALSE by design for the NDMM workflow: the parent leaves other-malig OFF so 06_ndmm_dashboard.R can re-apply it with the MM-adjacent override (keeps MGUS / solitary + extramedullary plasmacytoma / plasma-cell leukemia / secondary bone). TRUE drops those patients upstream and breaks the NDMM cohort. Caveat: with FALSE the Overall (non-NDMM) cohort has no other-malig exclusion.,,
 APPLY_OTHER_MALIG_EXCL,FALSE,Exclude other malignancies (FALSE by design - NDMM dashboard owns this via the MM-adjacent override; see comment above)
 APPLY_BASELINE_MM_EXCL,FALSE,OFF at parent (Overall=Step6); NDMM defines newly-diagnosed by treatment (no prior MM tx in 12-mo) not dx history
+# --- Project design guard (primary Overall + NDMM run) ---,,
+NDMM_PROJECT_MODE,TRUE,Enable strict pre/post verification that Overall is Step 6 and NDMM applies all six gates
+NDMM_LOT1_FROM,2017-01-01,Primary NDMM eligible-treatment cutoff from the protocol
+NDMM_FAIL_ON_SKIPPED_GATE,TRUE,Fail run_all when a required NDMM gate is warn-skipped instead of silently accepting a broader cohort
 # --- Orchestrator (run_pipeline.R): leave BLANK; set per-run on the command line ---,,
 FORCE_RERUN,,Blank = default FALSE. Set TRUE here only for a persistent override
 SKIP_COHORT,,Blank = default FALSE. Prefer the inline command for one-off skips

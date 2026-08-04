@@ -1,10 +1,10 @@
 #!/usr/bin/env Rscript
-# One Domino Job: full pipeline, then the combined dashboard. Runs
-# run_pipeline.R and, only if it exits 0, runs 07_combined_dashboard.R
-# (which produces the Overall + NDMM + Exploratory HTML, already
-# embedding the full LOT1-5 detail for each cohort). Either failure
-# fails the Job. pipeline_inputs.csv is loaded first so the combined
-# log lands in the OUTPUT_DIR the stages write to.
+# One Domino Job: full pipeline, strict cohort-design verification, then the
+# combined dashboard. Runs run_pipeline.R and, only if it exits 0, verifies that
+# the persisted Overall cohort is the parent Step-6 denominator. It then runs
+# 07_combined_dashboard.R (Summary + Overall + NDMM) and verifies that the
+# materialized NDMM output matches all six required gates. Any failure fails the
+# Job rather than silently publishing a broader/degraded cohort.
 #
 #   Domino Job command:  Rscript /mnt/code/.../run_all.R
 #   Set DATABRICKS_PWD as a Domino env var/secret. Run-control env
@@ -25,22 +25,18 @@ if (file.exists(file.path(.d, "R", "load_inputs.R"))) {
   load_pipeline_inputs(c(.d, dirname(.d)))
 }
 
+.env_bool <- function(name, default = "FALSE") {
+  x <- toupper(trimws(Sys.getenv(name, unset = default)))
+  x %in% c("TRUE", "T", "1")
+}
+
 # One combined log for the whole Job (pipeline stages + dashboard).
 if (!nzchar(Sys.getenv("PIPELINE_LOG_FILE"))) {
   od <- Sys.getenv("OUTPUT_DIR", unset = "/mnt/artifacts/results")
   try(dir.create(od, showWarnings = FALSE, recursive = TRUE), silent = TRUE)
-  # Verify the dir is usable; if a bad/unwritable OUTPUT_DIR was set
-  # (e.g. a typo in pipeline_inputs.csv) fall back to tempdir() so the
-  # combined log is never silently lost. Logging never fails the Job.
-  # NOTE: no on.exit() here - this is top-level script scope, not a
-  # function, so on.exit() would error, get caught, and force the
-  # tempdir() fallback even for a perfectly good OUTPUT_DIR. Do
-  # explicit create + check + cleanup instead (also leaves no
-  # .logprobe file behind).
   probe <- tryCatch({
     pf <- file.path(od, paste0(".logprobe_", Sys.getpid()))
-    ok <- isTRUE(file.create(pf))
-    ex <- file.exists(pf)
+    ok <- isTRUE(file.create(pf)); ex <- file.exists(pf)
     if (ex) unlink(pf)
     ok && ex
   }, error = function(e) FALSE)
@@ -54,14 +50,49 @@ if (!nzchar(Sys.getenv("PIPELINE_LOG_FILE"))) {
   cat(sprintf("[run_all] combined run log -> %s\n", lf))
 }
 
-rc1 <- system2("Rscript", file.path(.d, "run_pipeline.R"),
-                stdout = "", stderr = "")
-if (rc1 != 0) {
-  stop(sprintf("run_pipeline.R failed (exit %d); dashboard skipped.", rc1))
+run_child <- function(script, args = character(0), label = script) {
+  rc <- system2("Rscript", c(file.path(.d, script), args), stdout = "", stderr = "")
+  if (rc != 0) stop(sprintf("%s failed (exit %d).", label, rc))
+  invisible(rc)
 }
 
-rc2 <- system2("Rscript", file.path(.d, "07_combined_dashboard.R"),
-                stdout = "", stderr = "")
-if (rc2 != 0) {
-  stop(sprintf("07_combined_dashboard.R failed (exit %d).", rc2))
+# 1) Build/reuse parent + LOT outputs.
+run_child("run_pipeline.R", label = "run_pipeline.R")
+
+# 2) Before dashboard generation, fail if a stale Step-7/10 parent cohort was
+#    reused or if required NDMM inputs/codelists are unavailable.
+run_child("verify_ndmm_design.R", "--pre-dashboard",
+          label = "verify_ndmm_design.R --pre-dashboard")
+
+# 3) Build combined dashboard. Record the current log length so the strict
+#    skipped-gate scan examines only lines appended by this dashboard pass.
+log_file <- Sys.getenv("PIPELINE_LOG_FILE", unset = "")
+log_before <- if (nzchar(log_file) && file.exists(log_file))
+  length(readLines(log_file, warn = FALSE)) else 0L
+run_child("07_combined_dashboard.R", label = "07_combined_dashboard.R")
+
+if (.env_bool("NDMM_FAIL_ON_SKIPPED_GATE", "TRUE") &&
+    nzchar(log_file) && file.exists(log_file)) {
+  all_lines <- readLines(log_file, warn = FALSE)
+  new_lines <- if (length(all_lines) > log_before)
+    all_lines[(log_before + 1L):length(all_lines)] else character(0)
+  patterns <- c(
+    "belantamab exclusion skipped",
+    "MM-tx pre-LOT1 exclusion skipped",
+    "other-cancer pre-LOT1 exclusion skipped",
+    "pregnancy exclusion skipped"
+  )
+  hit <- vapply(patterns, function(p) any(grepl(p, new_lines, ignore.case = TRUE, fixed = TRUE)), logical(1))
+  if (any(hit)) {
+    stop("NDMM dashboard ran with required gate(s) skipped: ",
+         paste(patterns[hit], collapse = "; "),
+         ". Primary output is invalid; fix inputs and rerun.")
+  }
 }
+
+# 4) Verify the persisted NDMM flags/table: all six fields non-null, final
+#    patient count equals NDMM_LOT_LONG_FILT, and LOT1 starts respect 2017-01-01.
+run_child("verify_ndmm_design.R", "--post-dashboard",
+          label = "verify_ndmm_design.R --post-dashboard")
+
+cat("[run_all] Overall Step-6 and NDMM six-gate verification passed.\n")
