@@ -89,6 +89,17 @@ cfg_defaults <- list(
   # on lot_patient_input either way, so this flag is the only change needed.
   censor_at_disenrollment = as.logical(Sys.getenv("CENSOR_AT_DISENROLLMENT", unset = "FALSE")),
 
+  # ---- The melphalan line-advancing rule (aug1_melp) ----
+  # Blank is the contract build and the SQL is the same as without the rule.
+  # A mode is a different algorithm, so it is pinned in CONTRACT and needs
+  # LOT_CONTRACT_OVERRIDE - see R/melp_rule.R.
+  apply_melp_rule    = Sys.getenv("APPLY_MELP_RULE",    unset = ""),
+  melp_med_abbr      = Sys.getenv("MELP_MED_ABBR",      unset = "MELP"),
+  melp_exposure_days = as.integer(Sys.getenv("MELP_EXPOSURE_DAYS", unset = "30")),
+  melp_restart_days  = as.integer(Sys.getenv("MELP_RESTART_DAYS",  unset = "60")),
+  melp_advance_days  = as.integer(Sys.getenv("MELP_ADVANCE_DAYS",  unset = "180")),
+  melp_sct_days      = as.integer(Sys.getenv("MELP_SCT_DAYS",      unset = "14")),
+
   # ---- Code lists ----
   codelist_dir = Sys.getenv("CODELIST_DIR", unset = "/mnt/code/codelist"),
 

@@ -89,7 +89,7 @@ phase_lot1_end <- function(con, ctx) {
   # ends LOT1 on FIRST_CART_DT - 1, the day before the CAR-T infusion.
   run_step(con, "S16_lot1_base_end", glue("
     CREATE OR REPLACE TEMPORARY VIEW lot1_base_end AS
-    WITH
+    WITH{melp_lot1_ctes(cfg)}
     -- Post-runout guard: identify whether any LOT2-qualifying trigger
     -- exists strictly after LOT1_BASE_DISCON_DT and on/before OBS_END_DT.
     -- Prevents DEATH from preempting DISCONTINUATION when a patient ran out
@@ -187,7 +187,7 @@ phase_lot1_end <- function(con, ctx) {
           THEN 1
           ELSE 0
         END AS CART_INIT_FLG
-      FROM lot1_base lb
+      FROM {melp_lot1_base_from(cfg)}
       LEFT JOIN lot1_sct sct ON lb.PATID = sct.PATID
       LEFT JOIN lot1_contains_mtx_reg cmr ON lb.PATID = cmr.PATID
       LEFT JOIN post_runout_trigger   prt ON lb.PATID = prt.PATID

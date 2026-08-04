@@ -357,7 +357,7 @@ build_lot_n <- function(con, lot_num,
       SELECT im.PATID, ps.substitute_med AS MED_ABBR
       FROM lot{lot_num}_induction_meds im
       INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
-    ),
+    ),{melp_lotn_ctes(cfg, lot_num)}
     discon_raw AS (
       SELECT ms.PATID, max(ms.MAP_END_DT) AS RAW_DISCON_DT
       FROM map_stacked ms
@@ -415,7 +415,9 @@ build_lot_n <- function(con, lot_num,
             END
         AND ms.MAP_START_DT <= coalesce(d.LOT{lot_num}_BASE_DISCON_DT, ls.OBS_END_DT)
         -- ALLO single_day LOTs end on the ALLO date itself, so add-med is moot.
-        AND NOT (ls.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND {if (allo_lot_span == 'single_day') 1L else 0L} = 1)
+        AND NOT (ls.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND {if (allo_lot_span == 'single_day') 1L else 0L} = 1){melp_suppress_predicate(cfg)}
+      {melp_inject_arm(cfg, glue('lot{lot_num}_start'), glue('LOT{lot_num}_START_DT'),
+                       glue('lot{lot_num}_start.OBS_END_DT'))}
     ),
     first_add_pick AS (
       SELECT PATID, LOT{lot_num}_BASE_1ST_ADD_MED_DT, LOT{lot_num}_BASE_1ST_ADD_MED

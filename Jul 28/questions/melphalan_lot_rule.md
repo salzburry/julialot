@@ -9,6 +9,10 @@ also available as a sensitivity on the NDMM cohort - `lot_validation`'s
 `run_melphalan_rule.R`, opt-in through `MELP_EXECUTE`, which reports the branch
 counts and which lines the rule would move without touching the LOT tables.
 
+What that measurement cannot give is the resulting line structure, which needs a
+rebuild. `aug1_melp/` does that: three complete LOT runs - the contract build
+and both readings of the rule - and the difference between them.
+
 ## The rule as asked
 
 An exposure is one administration; doses less than 30 days apart are the
