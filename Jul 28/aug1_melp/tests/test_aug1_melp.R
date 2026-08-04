@@ -207,6 +207,16 @@ cat("\n-- what is read off the builds --\n")
 sql <- melp_metric_sql("F", "A", "r1", "MELP")
 ok(all(vapply(names(MELP_METRICS), function(m) has(sql, paste0("AS ", m)), logical(1))),
    paste0("all ", length(MELP_METRICS), " metrics are actually selected"))
+# And the other way. A column the query computes and MELP_METRICS does not name
+# is read off every build and then reported by nothing - the work is done and
+# the answer never reaches the output.
+# The final projection only. The CTEs above it alias working columns of their
+# own (per_pat.max_lot), and those are not outputs.
+proj <- sub("(?s)^.*\\n    \\)\\n    SELECT ", "", sql, perl = TRUE)
+selected <- unique(unlist(regmatches(proj, gregexpr("(?<=AS )[a-z][a-z0-9_]+", proj, perl = TRUE))))
+ok(setequal(selected, names(MELP_METRICS)),
+   paste0("...and nothing is selected that is never reported (",
+          paste(setdiff(selected, names(MELP_METRICS)), collapse = ", "), ")"))
 ok(has(sql, "RUN_ID = 'r1'"),
    "the progression rows are this cell's, not whichever run answered first")
 # The four melphalan figures are what makes the double-count visible.
@@ -220,11 +230,17 @@ cmp <- melp_compare(data.frame(
   median_lot1_meds = c(3, 3, 3), n_lot1_regimens = c(50, 50, 50),
   n_cart_init = c(10, 10, 10), n_melp_add = c(30, 45, 38),
   n_melp_lines = c(60, 70, 65), n_sct_auto_end = c(80, 80, 74),
-  n_pat_with_melp = c(55, 55, 55), stringsAsFactors = FALSE))
+  n_pat_with_melp = c(55, 55, 55), n_melp_after_runout = c(12, 12, 5),
+  stringsAsFactors = FALSE))
 ok(identical(cmp$change[cmp$cell == "as_asked" & cmp$metric == "n_lines"], 100),
    "a cell is reported as its difference from the reference")
 ok(nrow(cmp) == 2L * length(MELP_METRICS),
    "...for every metric and every cell, so nothing is quietly dropped")
+# A metric named in MELP_METRICS but not selected by the SQL used to fail deep
+# in the arithmetic, several lines from the cause.
+stops(melp_compare(data.frame(cell = c("reference", "as_asked"),
+                              n_lines = c(1000, 1100), stringsAsFactors = FALSE)),
+      "a metric the SQL does not select is named, not a crash in the arithmetic")
 ap <- melp_modes_apart(data.frame(
   cell = c("reference", "as_asked", "yield_to_sct"),
   n_patients = c(500, 500, 500), n_lines = c(1000, 1100, 1050),
@@ -233,7 +249,8 @@ ap <- melp_modes_apart(data.frame(
   median_lot1_meds = c(3, 3, 3), n_lot1_regimens = c(50, 50, 50),
   n_cart_init = c(10, 10, 10), n_melp_add = c(30, 45, 38),
   n_melp_lines = c(60, 70, 65), n_sct_auto_end = c(80, 80, 74),
-  n_pat_with_melp = c(55, 55, 55), stringsAsFactors = FALSE))
+  n_pat_with_melp = c(55, 55, 55), n_melp_after_runout = c(12, 12, 5),
+  stringsAsFactors = FALSE))
 ok(!is.null(ap) && identical(ap$difference[ap$metric == "n_melp_add"], 7),
    "the two readings are also compared with each other, which is the open question")
 
@@ -358,6 +375,37 @@ ok(has(rs, 'pfx_of("as_asked")') && has(rs, 'pfx_of("yield_to_sct")'),
    "...it takes both from the cell plan, so a custom prefix base is honoured")
 ok(has(rs, "rather than an output left out"),
    "...and a comparison that could not be made stops the run rather than being skipped")
+
+cat("\n-- B.2 removes a boundary; it does not hold the line open --\n")
+# The rule as written says both doses stay in the current line. Suppression
+# cannot deliver that: a line's discontinuation is its BASE agents' last cover,
+# and a melphalan first seen outside induction is not one of them. So where the
+# regimen runs out between the two doses, the line ends there and the second
+# dose starts the next one. Making melphalan a member of a regimen whose
+# induction window it never entered is a clinical decision, not an
+# implementation one - so it is recorded as open, and counted.
+ok(has(sql, "AS n_melp_after_runout"),
+   "the lines that decision governs are counted, not left to be argued about")
+mrs <- paste(readLines(file.path(LOT, "R", "melp_rule.R"), warn = FALSE), collapse = "\n")
+ok(has(mrs, "It does not hold the line") && has(mrs, "open question 6") |
+     has(mrs, "Open question 6"),
+   "...and the rule says so where it suppresses, rather than claiming the ask")
+doc <- paste(readLines(file.path(PARENT, "questions", "melphalan_lot_rule.md"),
+                       warn = FALSE), collapse = "\n")
+ok(grepl("^6\\.", doc, perl = TRUE) || has(doc, "\n6. In B.2"),
+   "...and it is on the study team's list with the other five")
+ok(has(doc, "n_melp_after_runout"),
+   "...pointing at the number that settles it")
+# The count is the group the reading decides: a line melphalan started straight
+# after the previous one ran out, rather than every melphalan line.
+ok(has(sql, "w.PREV_REASON = 'DISCONTINUATION'") && has(sql, "w.LOT_NUM > 1") &&
+     has(sql, "w.LOT_START_TYPE = 'MED'"),
+   "and it counts a line melphalan started after a runout, not any melphalan line")
+ok(!has(rd <- paste(readLines("README.md", warn = FALSE), collapse = "\n"),
+        "both doses stay in the current line - which is what this builds"),
+   "the README does not claim the reading the code does not implement")
+ok(has(rd, "It does not hold the line open"),
+   "...it says which of the two readings is built")
 
 cat("\n-- and no direction is predicted, deliberately --\n")
 # The sensitivity sweep predicts a sign before the run and scores it. That works

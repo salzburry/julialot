@@ -131,6 +131,29 @@ A.1 needs neither. Where the engine already opens B.1's boundary, the injected
 row is the same (patient, date, drug) tuple and the UNION folds the two
 together.
 
+### What B.2 does and does not do
+
+Suppressing B.2's boundary stops melphalan ending the line early.
+It does not hold the line open to the second dose.
+
+A line's discontinuation date is its base agents' last cover, and a melphalan
+first seen outside the induction window is not a base agent - so it does not
+extend that date. Take a line starting on day 0 whose base regimen runs out on
+day 120, with melphalan on day 100 and again on day 170. Not advancing at day
+100 removes the boundary melphalan would have made; the regimen still runs out
+on day 120 for reasons that have nothing to do with melphalan, and the day-170
+dose starts the next line under the ordinary new-therapy rule.
+
+The rule as written says both doses stay in the current line. Getting that would
+need melphalan to join a regimen whose induction window it never entered - a
+concept the algorithm does not have, and a change to what a regimen means rather
+than a setting. It is a clinical decision, so it is open question 6 in
+`questions/melphalan_lot_rule.md` rather than something decided here.
+
+`n_melp_after_runout` is what makes it decidable on a number: lines melphalan
+started after the previous line ran out. Under the other reading those lines
+would not exist.
+
 "Inside induction" is this exposure's date against this line's induction end -
 not whether melphalan is in the regimen. The two are the same thing only for the
 first dose. A patient dosed on day 10 and again on day 100 has melphalan in the

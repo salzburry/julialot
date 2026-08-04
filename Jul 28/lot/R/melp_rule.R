@@ -30,6 +30,19 @@
 #   SUPPRESS  an exposure the engine takes as an add and the rule does not:
 #             outside induction, next exposure 60 days or more away. B.2 and
 #             B.3, where the first dose does not advance.
+#
+#             This stops melphalan ENDING the line. It does not hold the line
+#             open: a line's discontinuation is its BASE agents' last cover, and
+#             a melphalan first seen outside induction is not one of them. So
+#             where the base regimen runs out between the two exposures, the
+#             line ends there and the second exposure starts the next one under
+#             the ordinary new-therapy rule. B.2 as written says both doses stay
+#             in the current line, which would need melphalan to join a regimen
+#             it never entered the induction window for - a concept this
+#             algorithm does not have, and a clinical decision rather than an
+#             implementation one. Open question 6 in
+#             questions/melphalan_lot_rule.md; n_melp_after_runout counts the
+#             lines it decides.
 #   INJECT    an exposure the rule advances at and the engine has no candidate
 #             for. Two of them:
 #               the later dose of a >= 180-day pair, at its own date (A.2, B.3);

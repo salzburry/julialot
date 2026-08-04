@@ -175,7 +175,8 @@ MELP_METRICS <- c(
   n_melp_add         = "lines ended by melphalan as an added medication",
   n_melp_lines       = "lines whose regimen contains melphalan",
   n_sct_auto_end     = "lines ended by an autologous transplant",
-  n_pat_with_melp    = "patients with any melphalan line")
+  n_pat_with_melp    = "patients with any melphalan line",
+  n_melp_after_runout = "lines melphalan started after the previous line ran out")
 
 # One statement per cell. The reaching-LOTn figures come from LOT_ATTRITION,
 # which already holds them, rather than being derived a second way.
@@ -227,7 +228,25 @@ melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP") {
              WHERE LOT_BASE_END_REASON = 'SCT_AUTO')                        AS n_sct_auto_end,
            (SELECT count(DISTINCT PATID) FROM melp
              WHERE array_contains(split(upper(coalesce(LOT_BASE_MEDS, '')), ' '), '", abbr, "'))
-                                                                            AS n_pat_with_melp")
+                                                                            AS n_pat_with_melp,
+           -- The B.2 group, made countable. Suppressing B.2's boundary stops
+           -- melphalan ENDING the line; it does not keep the line open, because
+           -- the line's discontinuation is its base agents' and melphalan is
+           -- not one of them. So where the base regimen runs out between the
+           -- two exposures, the line ends there and the second exposure starts
+           -- the next one under the ordinary new-therapy rule. These are the
+           -- lines that would not exist under the reading where both doses stay
+           -- in the current line - see the open question in
+           -- questions/melphalan_lot_rule.md.
+           (SELECT count(*) FROM (
+              SELECT z.LOT_NUM, z.LOT_START_TYPE, z.LOT_BASE_MEDS,
+                     lag(z.LOT_BASE_END_REASON)
+                       OVER (PARTITION BY z.PATID ORDER BY z.LOT_NUM) AS PREV_REASON
+              FROM ", final_tbl, " z) w
+             WHERE w.LOT_NUM > 1 AND w.LOT_START_TYPE = 'MED'
+               AND w.PREV_REASON = 'DISCONTINUATION'
+               AND array_contains(split(upper(coalesce(w.LOT_BASE_MEDS, '')), ' '), '", abbr, "'))
+                                                                            AS n_melp_after_runout")
 }
 
 # Each cell against the reference. No direction is predicted, and that is the
@@ -244,6 +263,12 @@ melp_compare <- function(results, cells = MELP_CELLS) {
     r <- results[i, , drop = FALSE]
     if (identical(r$cell, "reference")) next
     for (m in names(MELP_METRICS)) {
+      # A metric named here and not selected by melp_metric_sql() would
+      # otherwise come back as a zero-length column and fail inside the
+      # arithmetic, several lines from the cause.
+      if (is.null(ref[[m]]) || is.null(r[[m]]))
+        stop("Metric '", m, "' is named in MELP_METRICS but is not a column of ",
+             "the results, so melp_metric_sql() does not select it.", call. = FALSE)
       base <- suppressWarnings(as.numeric(ref[[m]][1]))
       got  <- suppressWarnings(as.numeric(r[[m]][1]))
       out[[length(out) + 1L]] <- data.frame(
