@@ -343,8 +343,8 @@ main <- function() {
   # and reapproved by FDA in Oct 2025 for RRMM after >=2 prior lines.
   # Whether a low count is expected depends on where this run's STUDY_END
   # falls relative to those two dates, so the run's own value is quoted
-  # rather than restated here - it moved once already, and a comment
-  # naming a date goes stale silently while the number beside it does not.
+  # rather than restated here: a comment naming a date goes stale silently
+  # while the number beside it does not.
   # This scans ALL lines, not just 1L. MAP_STACKED is
   # the per-medication exposure table (cohort-scoped); the belantamab
   # token is detected from the data (class like BCMA, abbr starting

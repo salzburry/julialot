@@ -120,8 +120,8 @@ ok(identical(p$object_prefix, "overall_"), "prefix carried onto cfg")
 clear()
 stops(pin_output_schema(list(catalog = "hive_metastore")),
       "stops when no schema resolves")
-# The defaults used to fall back to a shared schema name, which would have
-# written there instead of stopping. Blank is what makes the stop reachable.
+# A default falling back to a shared schema name would write there instead of
+# stopping. Blank is what makes the stop reachable.
 # Sourced with the environment cleared, which is the case that matters.
 cp <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "config_prompts.R"), envir = cp)

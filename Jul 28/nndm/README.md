@@ -397,7 +397,7 @@ ICD-9 never does, so the two families cannot land in one group.
 This makes the cohort **smaller**, because claims that never
 paired now do. `<prefix>NDMM_OTHER_MALIG_GROUPS` lists every category with its
 code and label counts, and `<prefix>NDMM_OTHER_MALIG_GRAIN` prices the category
-against the old per-label grain and against pairing on any label at all.
+against the per-label grain and against pairing on any label at all.
 
 Where the category over-groups: `C44` (skin), `C76` and `C80` (ill-defined and
 unspecified sites) are broad. In each case both claims are still the same broad

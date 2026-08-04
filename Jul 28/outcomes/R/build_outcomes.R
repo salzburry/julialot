@@ -125,15 +125,15 @@ outcomes_tte_sql <- function(base_sql, run_id) {
 
            -- ON the follow-up end, not before it. Death IS the follow-up end
            -- for anyone who dies inside the study window - the cohort clamps
-           -- ENDDATE at the death date - so a strict test made every death a
-           -- censoring and left OS with no events at all. An event after the
+           -- ENDDATE at the death date - so a strict test makes every death a
+           -- censoring and leaves OS with no events at all. An event after the
            -- follow-up end is still censoring: those dates are the 9999-12-31
            -- sentinel or a line the patient was never observed to reach.
            CASE WHEN TTNT_DT <= FU_END_DT THEN 1 ELSE 0 END AS TTNT_EVENT,
            datediff(least(TTNT_DT, FU_END_DT), LOT_START_DT) AS TTNT_DAYS,
 
-           -- Except here: a line whose own end IS the run-out did not end,
-           -- the observation did. That is censoring however the dates fall.
+           -- Except here: a line whose own end IS the run-out has not ended -
+           -- the observation has. That is censoring however the dates fall.
            CASE WHEN TTD_DT <= FU_END_DT
                  AND NOT (coalesce(LOT_END_REASON, '') = 'STUDY_END'
                           AND TTD_DT = LOT_END_DT)
@@ -175,8 +175,8 @@ outcomes_attrition_sql <- function(tte_tbl, study_end, run_id, lot_run_id) {
   # analysis ignores disenrolment, so LOT_LONG_FINAL carries lines that start
   # after a patient's protocol follow-up ended - NEXT_LOT_NUM is populated for
   # them and TTNT already censors them. Counting the column instead of the event
-  # credited the study with progressions nobody watched happen, and blocked
-  # those patients from every other category, all of which require no next line.
+  # credits the study with progressions nobody watched happen, and blocks those
+  # patients from every other category, all of which require no next line.
   nxt  <- "TTNT_EVENT = 1 AND TTNT_REASON = 'NEXT_LOT'"
   none <- glue("NOT ({nxt})")
   # No observed next line, no death, and the line never ended inside follow-up:

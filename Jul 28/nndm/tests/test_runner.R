@@ -833,12 +833,11 @@ ok(identical(be$NDMM_BELANTAMAB_ABBR, "BELA"),
    "and the default is BELA, which is what lot's CONTRACT pins")
 
 cat("\n-- the belantamab scan is the study period, both ends --\n")
-# The upper bound was always here; the lower one was not, and the CDM tables
-# are cumulative back well past 2016. So the raw view could return a claim from
-# outside the window every criterion in this build is scoped to. The pre-index
-# criterion never counted those - it reads NDMM_BELANTAMAB_PATIDS, which used to
-# carry its own bound - but the reconcile table joined the raw view and did,
-# which made "every patient listed is one lot removes" true only sometimes.
+# Both ends, on the raw scan itself. The CDM tables are cumulative back well
+# past 2016, so without a lower bound the scan returns claims from outside the
+# window every criterion in this build is scoped to - and the reconcile table
+# joins that view directly, which is what would make "every patient listed is
+# one lot removes" true only sometimes.
 for (nm in c("NDMM_BELANTAMAB_TX", "NDMM_BELANTAMAB_PATIDS", "NDMM_LOT1_STARTS"))
   assign(nm, nm, envir = be)
 assign("NDMM_STUDY_START", "2016-01-01", envir = be)

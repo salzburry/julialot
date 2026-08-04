@@ -724,11 +724,11 @@ ok(identical(enddate("2025-04-22", auto = "2025-06-01", cart = "2025-07-31"),
 
 
 cat("\n-- single AUTO allowed, tandem pair allowed, excess AUTO ends LOT1 --\n")
-# ENDING_AUTO_DT is where that rule lives, and nothing exercised it. The whole
-# CASE could be replaced with cast(NULL as date) - so no excess transplant ever
-# ends LOT1, affected patients get one long line instead of two, and LOT_LONG
-# row counts, LOT1 length and every downstream figure move - with all 14 suites
-# still green. The only other test touching it injects it as an input.
+# ENDING_AUTO_DT is where that rule lives. Without these cases the whole CASE
+# can be replaced with cast(NULL as date) and every suite stays green - no
+# excess transplant ends LOT1, affected patients get one long line instead of
+# two, and LOT_LONG row counts, LOT1 length and every downstream figure move.
+# The only other test touching it injects it as an input.
 #
 # The nearest CASE before the alias, as above: earlier CASEs in this view have
 # the same shape and matching forwards finds one of them.
@@ -861,7 +861,7 @@ ok("LOT_PATIENT_INPUT" %in% OUTPUTS,
 # Everything above reads the source. An early return leaves all of those lines
 # in place, so the whole function could be made a no-op - no snapshot written,
 # the view still on the live cohort table, the re-check never run - with every
-# assertion still passing. It was, and they did. Driven from here down, and
+# assertion still passing. Driven from here down, and
 # check_cohort_input is the real one so the re-validation actually happens.
 me <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "build_lot.R"), envir = me)

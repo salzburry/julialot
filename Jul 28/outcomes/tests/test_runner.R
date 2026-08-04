@@ -74,7 +74,7 @@ cat("\n-- the arithmetic, on cases rather than on the text --\n")
 sql_cond <- function(sql, flag) {
   # Cut at the flag, then back to the nearest CASE WHEN. Matching forwards from
   # "CASE WHEN" takes the first one in the whole statement, which is in the
-  # base subquery - the extracted text was then several clauses of unrelated SQL.
+  # base subquery, which is several clauses of unrelated SQL.
   head <- strsplit(sql, paste0("THEN 1 ELSE 0 END AS ", flag), fixed = TRUE)[[1]][1]
   stopifnot(!is.na(head), nchar(head) < nchar(sql))
   x <- sub("(?s)^.*CASE WHEN ", "", head, perl = TRUE)
@@ -90,8 +90,8 @@ ok(all(vapply(COND, nzchar, logical(1))), "all three event rules lift out of the
 
 # fu_end is DERIVED, not supplied. The cohort clamps ENDDATE at the death date
 # (build_nndm.R: least(study_end, coalesce(DEATH_DT, study_end))), so a case
-# pairing a death with a later follow-up end is a row the cohort cannot write -
-# and it was the case that hid a strict boundary making every death a censoring.
+# pairing a death with a later follow-up end is a row the cohort cannot write,
+# and a strict boundary is invisible to it.
 fu_end_of <- function(study_end, death, ce_end = NA) {
   as.Date(min(c(as.Date(study_end),
                 if (!is.na(death))  as.Date(death),
@@ -131,15 +131,15 @@ h <- tte("2020-01-01", NA, "2020-09-01", "2021-01-01", ce_end = "2020-06-30")
 ok(h$fu_end == as.Date("2020-06-30") && h$event == 0 && h$days == 181,
    "disenrolled before dying: censored at disenrolment, not an event")
 
-# OS and TTD, on their own lifted rules. OS was identically 0: a death IS the
-# follow-up end, so a strict test could never fire and the curve had no events.
+# OS and TTD, on their own lifted rules. A death IS the follow-up end, so a
+# strict test can never fire and the curve carries no events at all.
 dth <- as.Date("2020-04-10")
 ok(fire("OS", OS_DT = dth, FU_END_DT = dth), "OS: a death on the follow-up end is an event")
 ok(!fire("OS", OS_DT = SENT, FU_END_DT = as.Date("2021-01-01")),
    "OS: no death is not an event - the sentinel cannot reach the boundary")
 ok(!fire("OS", OS_DT = dth, FU_END_DT = as.Date("2020-01-31")),
    "OS: a death after observation ended is still censoring")
-# TTD is the exception: a line whose own end IS the run-out did not end.
+# TTD is the exception: a line whose own end IS the run-out has not ended.
 fu <- as.Date("2026-03-31")
 ok(!fire("TTD", TTD_DT = fu, FU_END_DT = fu, LOT_END_DT = fu,
          LOT_END_REASON = "STUDY_END"),
@@ -172,8 +172,8 @@ ok(has(DX, "FROM s.BASE") && has(DX, "LEFT JOIN"),
    "the base cohort is joined for MM_DX_DT")
 # glue() trims a template's leading blank line, so the fragment began at the
 # "L" of LEFT and interpolating it straight after n.PATID emitted
-# "n.PATIDLEFT JOIN". The substring test above passes on that - "LEFT JOIN" is
-# still in there - so the join has to be checked where it attaches.
+# "n.PATIDLEFT JOIN". A substring test passes on that - "LEFT JOIN" is still in
+# there - so the join has to be checked where it attaches.
 ok(!has(DX, "n.PATIDLEFT"),
    "...and the join is a separate token, not welded onto the column before it")
 ok(has(DX, "datediff(c.INDEX_DATE, x.MM_DX_DT) AS DX_TO_LOT1_DAYS"),
@@ -202,8 +202,8 @@ ok(has(ATT, "AS N_NEXT_LOT") && has(ATT, "AS N_DIED") &&
 #
 # "Received the next LOT" has to mean OBSERVED to receive it. lot ignores
 # disenrolment, so LOT_LONG_FINAL carries lines starting after a patient's
-# follow-up ended: keying on the COLUMN credited progressions nobody watched
-# and locked those patients out of every other category.
+# follow-up ended. Keying on the COLUMN credits progressions nobody watched and
+# locks those patients out of every other category.
 ok(!has(ATT, "NEXT_LOT_NUM IS NOT NULL") && !has(ATT, "NEXT_LOT_NUM IS NULL"),
    "no category keys on the next-line column, which ignores follow-up")
 ok(length(gregexpr("TTNT_REASON = 'NEXT_LOT'", ATT)[[1]]) >= 4,
@@ -215,17 +215,17 @@ ok(has(ATT, "AS N_ONGOING"),
 ok(grepl("FU_END_DT <\\s+date\\('2026-03-31'\\)", ATT) &&
      has(ATT, "FU_END_DT >= date('2026-03-31')"),
    "...and the two are separated by whether observation stopped before the study did")
-# Table 4 asks for number AND percent, and only the numbers were produced.
+# Table 4 asks for number AND percent, so each category carries both.
 ok(all(vapply(c("NEXT_LOT", "DIED", "DISCON_NO_NEXT", "LOST_TO_FU", "ONGOING"),
               function(k) has(ATT, paste0("AS PCT_", k)), logical(1))),
    "each category carries its percent, as Table 4 asks")
 # The five partition the line: every patient lands in exactly one. Driven off
-# the SQL's own predicates, not a second copy of them - the copy that used to
-# live here keyed on the next-line column and reproduced the defect above.
+# the SQL's own predicates, not a second copy of them. A copy keyed on the
+# next-line column agrees with an implementation that keys on it too.
 pred <- function(alias) {
   # Cut at the alias, then back to the NEAREST preceding "sum(CASE WHEN".
   # Matching forwards takes the first one in the statement and swallows every
-  # category between - the same trap as sql_cond above.
+  # category between - as in sql_cond above.
   head <- strsplit(ATT, paste0("THEN 1 ELSE 0 END)     AS ", alias), fixed = TRUE)[[1]][1]
   if (is.na(head) || nchar(head) == nchar(ATT))
     head <- strsplit(ATT, paste0("AS ", alias), fixed = TRUE)[[1]][1]
@@ -282,8 +282,9 @@ ro  <- paste(readLines(file.path(ROOT, "R", "run_outcomes.R"), warn = FALSE),
              collapse = "\n")
 # The README promises "a run that dies part-way leaves a mismatch rather than a
 # silent mix", and only OUT_TTE carried a run id. The summaries are written
-# sequentially with CREATE OR REPLACE, so a failure between them left this run's
-# OUT_TTE beside the last run's summaries with nothing on them to say so.
+# sequentially with CREATE OR REPLACE, so a failure between them leaves this
+# run's OUT_TTE beside the last run's summaries, and a run id on each is what
+# says so.
 for (o in list(c("OUT_TTE", "TTE"), c("OUT_ATTRITION", "ATT"),
                c("OUT_LINE_GAP", "GAP"), c("OUT_REGIMEN", "REG"),
                c("OUT_DX_TO_LOT1", "D1"))) {
@@ -292,7 +293,7 @@ for (o in list(c("OUT_TTE", "TTE"), c("OUT_ATTRITION", "ATT"),
      paste0(o[1], " carries the outcomes run id and a build time"))
 }
 # Which LOT run supplied the lines is not the same question as which outcomes
-# run wrote the table, and only the second was recorded.
+# run wrote the table.
 for (o in list(c("OUT_ATTRITION", "ATT"), c("OUT_LINE_GAP", "GAP"),
                c("OUT_REGIMEN", "REG"), c("OUT_DX_TO_LOT1", "D1")))
   ok(has(get(o[2]), "AS LOT_RUN_ID"),
@@ -321,8 +322,8 @@ mk <- function(lot = STATUS, meta = META, ndmm = NDMMS) {
   assign("out_tbl", function(t) paste0("sch.ndmm_", t), envir = e)
   assign("coh_tbl", function(t) paste0("sch.ndmm_", t), envir = e)
   assign("log_msg", function(...) invisible(NULL), envir = e)
-  # Routed by table name: one fixture answering every query is how a guard
-  # reading the wrong table passed its own test once already.
+  # Routed by table name: one fixture answering every query cannot tell a guard
+  # that reads the right table from one that reads the wrong one.
   assign("db_q", function(con, sql) {
     pick <- if (grepl("LOT_RUN_METADATA", sql, fixed = TRUE)) meta
             else if (grepl("NDMM_BUILD_STATUS", sql, fixed = TRUE)) ndmm

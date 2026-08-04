@@ -91,12 +91,10 @@ ok(!length(past_end) && !length(blank),
    else "...and a line that file actually has")
 # The two answers most likely to be wrong if the build changed under us.
 #
-# On the CODE, not the header comment. Both of these used to match strings that
-# occur only in 05_sct.R's "# SCT detection rules:" block - a file that
-# implements neither rule. The transplant rule is ENDING_AUTO_DT in
-# 05b_lot1_sct.R, and the whole derivation could be replaced with
-# cast(NULL as date) with every suite green. Comments are what a build says
-# about itself; these answers are about what it does.
+# On the code, not the header comment. 05_sct.R's "# SCT detection rules:"
+# block names both rules and implements neither: the transplant rule is
+# ENDING_AUTO_DT in 05b_lot1_sct.R. A comment is what a build says about
+# itself, and these answers are about what it does.
 code_of <- function(f) {
   l <- readLines(file.path(PARENT, "lot", "R", "steps", f), warn = FALSE)
   paste(l[!grepl("^\\s*(#|--)", l)], collapse = "\n")
