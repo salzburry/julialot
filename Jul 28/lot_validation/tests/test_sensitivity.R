@@ -110,22 +110,25 @@ row <- function(cell, param, value, shipped, ...) {
   for (nm in names(list(...))) d[[nm]] <- list(...)[[nm]]
   d
 }
-# Gap up, lines down: what MAP_DISCON_GAP_DAYS predicts.
-c1 <- sens_compare(mk(row("map_discon_gap_days_120", "MAP_DISCON_GAP_DAYS", 120, 90,
+# Window up, lines down: what SCT_TANDEM_DAYS predicts. The scoring tests ride
+# on a directional axis; MAP_DISCON_GAP_DAYS is no longer one - the parameter
+# only labels a descriptive flag, so its axis now expects nothing to move and
+# serves as the sweep's negative control.
+c1 <- sens_compare(mk(row("sct_tandem_days_365", "SCT_TANDEM_DAYS", 365, 180,
                           n_lines = 900)))
 ok(identical(c1$verdict[c1$metric == "n_lines"], "as expected"),
    "a larger gap producing fewer lines reads as expected")
 # The same movement with the parameter LOWERED is the opposite finding, which
 # is why the sign is taken relative to the parameter's direction.
-c2 <- sens_compare(mk(row("map_discon_gap_days_60", "MAP_DISCON_GAP_DAYS", 60, 90,
+c2 <- sens_compare(mk(row("sct_tandem_days_90", "SCT_TANDEM_DAYS", 90, 180,
                           n_lines = 900)))
 ok(identical(c2$verdict[c2$metric == "n_lines"], "AGAINST EXPECTATION"),
    "...and the same number from a SMALLER gap is against it, not for it")
-c3 <- sens_compare(mk(row("map_discon_gap_days_120", "MAP_DISCON_GAP_DAYS", 120, 90,
+c3 <- sens_compare(mk(row("sct_tandem_days_365", "SCT_TANDEM_DAYS", 365, 180,
                           n_patients = 480)))
 ok(identical(c3$verdict[c3$metric == "n_patients"], "AGAINST EXPECTATION"),
    "a metric predicted not to move at all is caught when it does")
-c4 <- sens_compare(mk(row("map_discon_gap_days_120", "MAP_DISCON_GAP_DAYS", 120, 90)))
+c4 <- sens_compare(mk(row("sct_tandem_days_365", "SCT_TANDEM_DAYS", 365, 180)))
 ok(all(c4$verdict[c4$metric == "n_patients"] == "as expected"),
    "...and passes when it does not")
 # "unclear" was recorded so the run could settle it. Scoring it as a hit or a
@@ -134,19 +137,31 @@ c5 <- sens_compare(mk(row("induction_window_days_90", "INDUCTION_WINDOW_DAYS", 9
                           n_lines = 900)))
 ok(identical(c5$verdict[c5$metric == "n_lines"], "recorded"),
    "an 'unclear' prediction is recorded, never scored")
-c6 <- sens_compare(mk(row("map_discon_gap_days_120", "MAP_DISCON_GAP_DAYS", 120, 90,
+c6 <- sens_compare(mk(row("sct_tandem_days_365", "SCT_TANDEM_DAYS", 365, 180,
                           n_lines = NA_real_)))
 ok(identical(c6$verdict[c6$metric == "n_lines"], "no data"),
    "a cell that produced no number says so rather than counting as agreement")
 stops(sens_compare(mk()[0, , drop = FALSE]),
       "a comparison with no reference cell stops rather than comparing to nothing")
 
+# The MAP-gap axis itself. The parameter reaches nothing the line build reads -
+# it only labels MAP_DISCON_FLG - so an axis predicting line movement from it
+# would score misses against a mechanism the code does not have. It is the
+# negative control now, and this pins it as one.
+mg <- Filter(function(a) identical(a$param, "MAP_DISCON_GAP_DAYS"), SENS_AXES)[[1]]
+ok(all(unlist(mg$expect) == "none"),
+   "the MAP-gap axis expects no metric to move - it is the negative control")
+c8 <- sens_compare(mk(row("map_discon_gap_days_120", "MAP_DISCON_GAP_DAYS", 120, 90,
+                          n_lines = 900)))
+ok(identical(c8$verdict[c8$metric == "n_lines"], "AGAINST EXPECTATION"),
+   "...so a metric moving under it is flagged, not read as the parameter's effect")
+
 cat("\n-- and a number that did not move is not the opposite finding --\n")
 # The prediction is about the ALGORITHM. Whether anyone in the cohort sits near
 # the threshold is not, and a window nobody's claims straddle moves nothing
 # however it is set. Scoring that as AGAINST EXPECTATION reports a valid result
 # as a failure, and a sweep full of them stops being read.
-c7 <- sens_compare(mk(row("map_discon_gap_days_120", "MAP_DISCON_GAP_DAYS", 120, 90,
+c7 <- sens_compare(mk(row("sct_tandem_days_365", "SCT_TANDEM_DAYS", 365, 180,
                           n_lines = 1000)))
 ok(identical(c7$verdict[c7$metric == "n_lines"], "no movement"),
    "a predicted direction that produced no change at all is its own verdict")

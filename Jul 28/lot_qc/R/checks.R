@@ -240,6 +240,45 @@ LOT_QC_CHECKS <- list(
       AND LOT_BASE_DISCON_DT < LOT_START_DT"),
     "concat(pid, ' LOT', LOT_NUM)")),
 
+  list(id = "B8", group = "End reason", severity = "info",
+       what = "discontinuations inside the confirmation window an older rule required",
+       why = paste0("The spec's LOT1_BASE tab still carries a rule nulling a ",
+                    "run-out within 90 days of observation end - not enough ",
+                    "follow-up to confirm the patient truly discontinued - while ",
+                    "its later end-date tabs re-derive the date with no such ",
+                    "condition, which is what the build does. Whether that rule ",
+                    "was demoted or forgotten, these are the lines it would have ",
+                    "censored instead, so this is what the difference is worth."),
+       needs = c("final", "cohort"),
+       sql = function(t, p) counted(paste0("
+    SELECT ", mask("l.PATID"), " AS pid, l.LOT_NUM,
+           datediff(", p$obs_end, ", l.LOT_BASE_END_DT) AS days_left
+    FROM ", t$final, " l
+    INNER JOIN ", t$cohort, " c ON cast(l.PATID as string) = cast(c.PATID as string)
+    WHERE l.LOT_BASE_END_REASON = 'DISCONTINUATION'
+      AND datediff(", p$obs_end, ", l.LOT_BASE_END_DT) < ", p$gap),
+    "concat(pid, ' LOT', LOT_NUM, ': ', days_left, ' days of follow-up after run-out')")),
+
+  list(id = "B9", group = "End reason", severity = "info",
+       what = "deaths outranking an earlier run-out",
+       why = paste0("The spec ends a line at the earliest of its ending events, ",
+                    "with the priority order only breaking same-day ties - and ",
+                    "in that tie-break death ranks below discontinuation. The ",
+                    "build instead lets a death outrank an earlier run-out when ",
+                    "nothing between the two would have started the next line. ",
+                    "These are the lines where the two readings give different ",
+                    "answers: under the spec's letter they end DISCONTINUATION ",
+                    "at the run-out date, here they end DEATH."),
+       needs = "final",
+       sql = function(t, p) counted(paste0("
+    SELECT ", mask("PATID"), " AS pid, LOT_NUM,
+           datediff(LOT_BASE_END_DT, LOT_BASE_DISCON_DT) AS days_apart
+    FROM ", t$final, "
+    WHERE LOT_BASE_END_REASON = 'DEATH'
+      AND LOT_BASE_DISCON_DT IS NOT NULL
+      AND LOT_BASE_DISCON_DT < LOT_BASE_END_DT"),
+    "concat(pid, ' LOT', LOT_NUM, ': death ', days_apart, ' days after run-out')")),
+
   # ---- C. Regimen against the claims ---------------------------------------
 
   list(id = "C1", group = "Regimen", severity = "fail",
@@ -341,15 +380,17 @@ LOT_QC_CHECKS <- list(
             coalesce(MAP_RX_RUNOUT_DT, cast('1900-01-01' as date)),
             coalesce(MAP_MED_RUNOUT_DT, cast('1900-01-01' as date)))"), "pid")),
 
-  list(id = "D3", group = "Episodes", severity = "fail",
-       what = "no episode carries a steroid",
-       why = paste0("Steroid codes are kept out of the medication code list, so ",
-                    "no steroid claim should reach an episode at all. This is ",
-                    "the check that says so against the data rather than against ",
-                    "the file. It matters because the program spec records the ",
-                    "opposite - steroids in the regimen, extending run-out - and ",
-                    "a reader reconciling to that spec needs the difference to ",
-                    "be a measured zero, not an assurance."),
+  list(id = "D3", group = "Episodes", severity = "warn",
+       what = "episodes carrying a steroid",
+       why = paste0("Two spec-consistent states, and this says which one the ",
+                    "run is in. The spec keeps steroid claims in the episode ",
+                    "data - its own worked example is DEXA - and excludes them ",
+                    "from every line decision by class, which the engine does at ",
+                    "each decision point. The lot README goes further: the code ",
+                    "list itself should not carry them, and ships a tool that ",
+                    "removes them. Zero means the list is clean; a count means ",
+                    "the tool has not run against the production list, and the ",
+                    "class filters are what the exclusion is resting on."),
        needs = "map",
        sql = function(t, p) counted(paste0("
     SELECT DISTINCT MAP_MED_TYPE AS v
@@ -399,12 +440,15 @@ LOT_QC_CHECKS <- list(
 
   list(id = "E3", group = "Transplant", severity = "info",
        what = "tandem pairs sitting exactly on the boundary",
-       why = paste0("The build tests datediff <= 180. The program spec's formula ",
-                    "is (date2 - date1 + 1) <= 180, which is one day tighter, and ",
-                    "the autologous windowing step still aims at the tighter ",
-                    "reading. A pair at exactly 180 days is tandem under one and ",
-                    "not the other, and a tandem pair does not end the line. ",
-                    "This is how many patients the disagreement is worth."),
+       why = paste0("The spec says both. Its prose and its LOT2-6 settings table ",
+                    "give the window as 60 to 180 days inclusive, no +1 - which ",
+                    "is what the build tests - while its SCT tab still carries ",
+                    "the older (date2 - date1 + 1) <= 180 formula, one day ",
+                    "tighter, and the autologous windowing step still aims at ",
+                    "that tighter reading. A pair at exactly 180 days is tandem ",
+                    "under one and not the other, and a tandem pair does not end ",
+                    "the line. This is how many patients the disagreement is ",
+                    "worth."),
        needs = "sct",
        sql = function(t, p) counted(paste0("
     SELECT ", mask("PATID"), " AS pid
@@ -552,6 +596,9 @@ qc_params <- function(settings, run_id) {
        cart     = qc_int(settings, "cart_consolidation_days"),
        tandem   = qc_int(settings, "sct_tandem_days"),
        auto_gap = qc_int(settings, "sct_auto_gap_days"),
+       # B8's confirmation window. The spec's line-level rule used the same 90
+       # days the per-drug gap uses, and the run records only the latter.
+       gap      = qc_int(settings, "map_discon_gap_days"),
        # The build derives this once, in a session view that is gone by the
        # time this package runs, so it is rebuilt the same way rather than
        # assumed to be ENDDATE.

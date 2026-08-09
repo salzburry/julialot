@@ -96,6 +96,7 @@ ok(P$ind1 == 60 && P$indn == 30 && P$cart == 45,
    "the three regimen windows come out of the recorded settings")
 ok(P$tandem == 180 && P$auto_gap == 60,
    "...and so do the transplant thresholds")
+ok(P$gap == 90, "...and B8's confirmation window comes from the recorded gap")
 # induction_window_days is a suffix of lot_n_induction_window_days. The real
 # string is sorted, so the short key happens to come first and would be found
 # correctly even by a search with no anchor on it - which means asking it of
@@ -128,9 +129,9 @@ ok(!prim$censor && prim$obs_end == "cast(c.ENDDATE as date)",
    "the primary run compares against ENDDATE")
 ok(sens$censor && has(sens$obs_end, "ENDDATE_CE"),
    "...and a censoring run against ENDDATE_CE")
-# B3, B4 and D4 all compare a date against observation end. Reading it off the
-# wrong column turns every one of them into a check of a different run.
-for (id in c("B3", "B4", "D4"))
+# B3, B4, B8 and D4 all compare a date against observation end. Reading it off
+# the wrong column turns every one of them into a check of a different run.
+for (id in c("B3", "B4", "B8", "D4"))
   ok(has(LOT_QC_CHECKS[[which(names(SQL) == id)]]$sql(TBL, sens), "ENDDATE_CE"),
      paste0(id, " follows the run's censoring setting"))
 
@@ -164,6 +165,29 @@ ok(has(SQL$C1, "LEFT JOIN s.TMAP") && has(SQL$C1, "WHERE ms.PATID IS NULL"),
    "...and finds the regimen drugs with no episode in that window")
 ok(has(SQL$D3, "= 'STEROID'"),
    "D3 looks for steroids in the episodes, where the spec says they should be")
+# The spec keeps steroid claims in the episode data - DEXA is its own worked
+# example - and excludes them from lines by class, which the engine does at
+# every decision point. So a steroid episode is a spec-consistent state, not a
+# defect, and a run over a production list still carrying dexamethasone must
+# not fail its QC for it.
+d3 <- Filter(function(c_i) identical(c_i$id, "D3"), LOT_QC_CHECKS)[[1]]
+ok(identical(d3$severity, "warn"),
+   "...and it reports rather than fails: the list's state, not a line defect")
+# B8: the confirmation window the spec's LOT1_BASE tab still requires and the
+# end-date tabs dropped. The count is only meaningful against this run's own
+# gap - a hardcoded 90 would misread a run built with a different one.
+gapped <- qc_params(sub("map_discon_gap_days=90", "map_discon_gap_days=77",
+                        SETTINGS, fixed = TRUE), "r")
+b8 <- Filter(function(c_i) identical(c_i$id, "B8"), LOT_QC_CHECKS)[[1]]
+ok(has(b8$sql(TBL, gapped), "< 77"),
+   "B8's confirmation window follows the run's recorded gap, not a constant")
+ok(has(SQL$B8, "= 'DISCONTINUATION'"),
+   "...and it counts only lines that ended by running out")
+ok(has(SQL$B9, "= 'DEATH'") && has(SQL$B9, "LOT_BASE_DISCON_DT < LOT_BASE_END_DT"),
+   "B9 counts deaths with a strictly earlier run-out - the spec-vs-build gap")
+for (id in c("B8", "B9"))
+  ok(identical(Filter(function(c_i) identical(c_i$id, id), LOT_QC_CHECKS)[[1]]$severity, "info"),
+     paste0(id, " reports a documented ambiguity, so it can never fail a run"))
 ok(has(SQL$E2, "< 60") && has(SQL$E2, "> 180"),
    "E2 holds a tandem pair to the recorded 60-to-180 band")
 ok(has(SQL$E3, "= 180"),
