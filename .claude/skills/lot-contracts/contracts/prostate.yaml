@@ -1,0 +1,71 @@
+# Prostate — DRAFT, unreviewed.
+# The beast: continuous ADT across disease states. ADT is a backbone - visible
+# in outputs, inert in line assembly - and lines are defined by the layer on top
+# (ARPI, chemo, radioligand). Without the backbone role, an ADT refill after a
+# line ends would fabricate a new line; that is the axis this contract exists
+# to pin down.
+
+tumor: prostate
+contract_version: 1
+status: draft
+
+provenance:
+  source: drafted from published LOT conventions; no study protocol read yet
+  reviewed_by: []
+  notes: v1 skeleton. Backbone class spellings are the critical unknowns.
+
+observation:
+  censor_at_disenrollment: false
+
+episodes:
+  medical_day_supply: 28
+  pharmacy_missing_day_supply: 28
+  map_discon_gap_days: 90
+
+drug_roles:
+  default_role: line_defining
+  supportive_classes:
+    - TBD: supportive care classes per this study's code list (bone agents, steroids as co-medication)
+  backbone_classes:
+    - TBD: ADT class spellings on the production code list (LHRH agonists, LHRH antagonists, first-generation antiandrogens if backbone here)
+  maintenance_classes: []
+
+equivalence:
+  source: TBD - this tumor's substitution file
+  pairs: []
+
+lines:
+  max_lot: 5
+  line1_start_events:
+    - MED
+  regimen_window_days_line1: 60
+  regimen_window_days_later: 30
+  same_day_tie:
+    - MED
+  end_priority:
+    - MED_ADD
+    - DEATH
+    - DISCONTINUATION
+    - STUDY_END
+
+advancement:
+  new_agent: true
+  same_regimen_gap_days: none
+  # TBD: whether an ARPI re-challenge after a gap should advance; some designs
+  # say yes - if so, set a threshold and record whose decision it was.
+  drop_based: false
+
+event_streams: {}
+# TBD: radiotherapy / radioligand events - Ra-223 and Lu-PSMA arrive as drug
+# claims on the code list, so they are drugs here unless the study wants them
+# as an event stream; confirm.
+
+boundary_labels: {}
+# TBD: a CRPC-transition proxy label (for example first ARPI/chemo layered on
+# established ADT) if the study reports by disease state; a proxy, and it must
+# not become a counting rule.
+
+criteria: {}
+
+expectations:
+  note: TBD - per-tumor face-validity bands

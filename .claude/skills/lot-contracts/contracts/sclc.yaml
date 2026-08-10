@@ -1,0 +1,77 @@
+# Small-cell lung cancer — DRAFT, unreviewed.
+# The beast: the treatment-free interval. Relapse ≥ 90 days after
+# platinum-etoposide is platinum-sensitive and commonly re-challenged with the
+# same doublet - which must count as a NEW line (the engine's default would
+# stretch the old one); < 90 days is resistant and switches drug. So SCLC needs
+# the gap-advancement shape as a counting rule and the TFI as a boundary label,
+# kept separate.
+
+tumor: sclc
+contract_version: 1
+status: draft
+
+provenance:
+  source: drafted from published LOT conventions; no study protocol read yet
+  reviewed_by: []
+  notes: v1 skeleton. The 90-day threshold is convention, not this study's decision yet.
+
+observation:
+  censor_at_disenrollment: false
+
+episodes:
+  medical_day_supply: 28
+  pharmacy_missing_day_supply: 28
+  map_discon_gap_days: 90
+
+drug_roles:
+  default_role: line_defining
+  supportive_classes:
+    - TBD: supportive care classes per this study's code list (antiemetics, G-CSF)
+  backbone_classes: []
+  maintenance_classes: []
+# TBD: whether first-line atezolizumab/durvalumab continuation counts as
+# maintenance (extends line 1) or as part of the induction regimen throughout;
+# affects role assignment for the PD-L1 class.
+
+equivalence:
+  source: TBD - this tumor's substitution file
+  pairs:
+    - TBD: CARBOPLATIN~CISPLATIN as one platinum, exact abbreviations unverified
+
+lines:
+  max_lot: 5
+  line1_start_events:
+    - MED
+  regimen_window_days_line1: 60
+  regimen_window_days_later: 30
+  same_day_tie:
+    - MED
+  end_priority:
+    - MED_ADD
+    - DEATH
+    - DISCONTINUATION
+    - STUDY_END
+
+advancement:
+  new_agent: true
+  # Doublet re-challenge after a treatment-free interval is a new line; 90 days
+  # is the sensitive/resistant convention, measured runout-to-restart.
+  same_regimen_gap_days: 90
+  drop_based: false
+
+event_streams: {}
+# TBD: concurrent chemoradiation in limited stage - if thoracic RT should mark
+# or bound line 1, it becomes an event stream here; convention varies.
+
+boundary_labels:
+  treatment_free_interval:
+    from_event: last episode end of the prior line
+    to_event: next line start
+    sensitive_min_days: 90
+    assumed: true
+    note: relapse is observable in claims only as re-treatment, so TFI is a proxy for platinum sensitivity
+
+criteria: {}
+
+expectations:
+  note: TBD - per-tumor face-validity bands
