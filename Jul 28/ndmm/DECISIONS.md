@@ -86,10 +86,16 @@ question by `MAX_LOT` and by position within a line.
 Downstream, and this matters:
 
 - `<prefix>NDMM_COHORT` is the cohort pending half of one exclusion, not the
-  final study population. Reading its count as the final N is wrong.
+  final study population. Reading its count as the final N is wrong. The final
+  population is the patients in `LOT_LONG_FINAL`, and the final count is the
+  last row of `LOT_ATTRITION`.
 - The attrition has nine steps and its last row is still not the study's N.
-- `NO_BELANTAMAB` ships on the cohort table as an advisory flag over the whole
-  study period. Nothing filters on it.
+  Its ninth step removes belantamab BEFORE the 1L index only - the row is
+  labelled that way in the table - because the index-onward half has no lines
+  to look at yet.
+- `NO_BELANTAMAB` is an advisory flag over the whole study period on
+  `<prefix>NDMM_FLAGS_ALL` - not on the cohort table, which carries only the
+  ten columns LOT reads. Nothing filters on it.
 - `<prefix>NDMM_BELANTAMAB_RECONCILE` lists every cohort member with a
   belantamab claim and its date. That is the handover list.
 - Belantamab cannot set the 1L index. Different rule, and it stays here,
@@ -240,6 +246,29 @@ something this package has checked.
 
 Status: decided and implemented; magnitude pending the first run.
 
+### The remission and relapse states stay in the override
+
+The override above says four labels - monoclonal gammopathy and the three
+plasma-cell disorders. The default adds six more: plasma cell leukemia,
+extramedullary plasmacytoma and solitary plasmacytoma, each "IN REMISSION" and
+"IN RELAPSE". A plasma-cell disorder coded in remission or relapse is still a
+manifestation of the index disease, not another cancer, so excluding a patient
+for it would exclude them for having the disease the study is about.
+
+Code: `NDMM_MM_ADJACENT_STATE_LABELS` in `R/standalone_constants.R`, folded in
+when `NDMM_MM_ADJACENT_STATES=override` (the default).
+`NDMM_MM_ADJACENT_STATES=exclude` keeps all six in the filter, for comparison,
+and `<prefix>NDMM_MM_ADJACENT_GROUPS` records every plasma-cell-looking group
+the code list carried and whether the override reached it.
+
+Effect: a larger cohort. Every patient it keeps has one of the six state codes
+in baseline and no other exclusion.
+
+Status: implemented as the default; the six states are PENDING SIGN-OFF. The
+four core labels were agreed; the states rest on the reasoning above and
+nobody has signed it. `NDMM_MM_ADJACENT_GROUPS` and attrition step 7 are where
+a reviewer sees what they cost.
+
 ---
 
 ## 5. Study window and data vintage
@@ -376,3 +405,52 @@ failure that matters - a code with no digits and a NULL `NDC` both pad to
 `LOC_CD` marks a facility versus non-facility claim. Used only as part of
 the claim key here; inpatient is classified from `POS`, `TOS_CD` and `CONF_ID`.
 Changing that would change who counts as inpatient.
+
+---
+
+## 7. Month windows are day counts
+
+Decided: every "months" window in this package is a fixed day count. Twelve
+months of baseline is 365 days - `[index - 365, index - 1]` - at 1L, 2L and
+3L alike. Three months of 2L/3L follow-up is 90 days.
+
+Why days: `add_months()` moves by calendar months, so the window's length
+would depend on which month the index fell in - 90 to 92 days for three
+months, 365 or 366 across a leap day. Two patients indexed a day apart would
+face different windows. A fixed count asks every patient for the same
+evidence. 90 is the shortest three calendar months, so it is the more
+permissive reading; the 1L build's own sensitivity table put 90 days and
+three calendar months seven patients apart.
+
+Code: `NDMM_PRE_LOT1_DAYS = 365` pinned in `CONTRACT`;
+`SUBSEQ_PRE_DAYS = 365` and `SUBSEQ_FU_CE_DAYS = 90` pinned by
+`subseq_check_windows()` in `R/build_subsequent.R`. Any other pair stops the
+2L/3L build unless `NDMM_SUBSEQ_OVERRIDE=TRUE` names it a sensitivity, and
+whatever was used is written into every output as `CE_PRE_DAYS` and
+`CE_FU_DAYS`.
+
+Status: implemented and pinned; the day-count reading is PENDING SIGN-OFF as
+a recorded interpretation of "12 months" and "3 months".
+
+---
+
+## 8. Death dates are constructed, not read
+
+The CDM records death as year and month (`YMDOD`), sometimes year alone. A
+date is built from it in `R/steps/00_mm_cohort.R`:
+
+- year and month: the 15th of that month - unless the qualifying diagnosis
+  falls later in that same month, in which case the last day of the month, so
+  death does not land before the diagnosis that put the patient in the study.
+- year only: July 15th - unless the diagnosis falls after it that year, in
+  which case December 31st.
+- either way, never before `MM_DX_DT`: a constructed date earlier than the
+  diagnosis is set to the diagnosis date.
+
+The protocol states only the 15th-of-month rule. The month-end, mid-year and
+clamping rules exist to keep a constructed date from contradicting an
+observed one, and they move follow-up and death-based eligibility for the
+patients they touch.
+
+Status: implemented; the construction rules beyond the 15th are PENDING
+SIGN-OFF as recorded data-construction conventions.

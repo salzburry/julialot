@@ -1211,11 +1211,38 @@ ok(identical(drive_ndc(med = row("medical", alpha = 2L)), ""),
 ok(identical(drive_ndc(med = row("medical", zero = 1L)), ""), "...and an all-zero one")
 ok(identical(drive_ndc(med = row("medical", oth = 5L)), ""),
    "...and an under- or over-length one")
-# The guarantee behind that: no key, so no join, whatever the value is.
-for (v in c("NONE", "UNK", "ABC123", "00000000000", "123", "PSYCHOTHERA"))
-  ok(grepl("CASE WHEN", ndc_key("t.NDC"), fixed = TRUE),
-     paste0("ndc_key() yields a key only from an NDC, so '", v, "' matches nothing"))
+# The guarantee behind that: no key, so no join. The CASE has no ELSE, so a
+# value neither branch takes falls through to NULL - that absence is the
+# guarantee, and it is what the per-value loop below leans on.
 k <- ndc_key("t.NDC")
+ok(!grepl("ELSE", k, fixed = TRUE),
+   "the key CASE has no ELSE, so an unmatched value gets NULL and joins nothing")
+# Each value judged the way the SQL judges it: strip to digits, then the only
+# keyed lengths are ten and eleven, and all zeros is refused by its own branch.
+# The earlier version of this loop never used the value it was iterating - six
+# copies of one structural assertion, reading as six semantic ones.
+for (v in c("NONE", "UNK", "ABC123", "00000000000", "123", "PSYCHOTHERA")) {
+  digits <- gsub("[^0-9]", "", v)
+  ok(grepl("^0*$", digits) || !nchar(digits) %in% c(10L, 11L),
+     paste0("'", v, "' strips to a value no branch keys, so it matches nothing"))
+}
+# The flip side of stripping first: letters do not disqualify a value whose
+# digits count ten or eleven. That is the contract, stated rather than implied
+# - the digits are the NDC, and what rides along with them is formatting.
+ok(nchar(gsub("[^0-9]", "", "NDC:12345678901")) == 11L,
+   "a value carrying eleven digits keys on them even with characters around")
+# One normalisation for every NDC arm - including belantamab. That scan built
+# its own claim-side key with a bare lpad, which pads a short digit string
+# into an eleven-digit key and truncates a long one to its first eleven, so a
+# junk value could collide with a real belantamab NDC and exclude the patient.
+# The code list side keeps lpad: it is curated, and padding it is the point.
+ix_txt <- paste(readLines(file.path(ROOT, "R", "steps", "00b_lot1_index.R"),
+                          warn = FALSE), collapse = "\n")
+ok(!grepl("lpad(regexp_replace(coalesce(cast(t.", ix_txt, fixed = TRUE),
+   "no NDC arm builds a claim-side key with a bare lpad")
+ok(sum(gregexpr('ndc_key("t.', ix_txt, fixed = TRUE)[[1]] > 0) >= 1 &&
+     grepl('ndc_key(paste0("t.", col))', ix_txt, fixed = TRUE),
+   "...the belantamab arms key claims through ndc_key like every other scan")
 ok(grepl("length(regexp_replace(coalesce(cast(t.NDC as string),''), '[^0-9]', '')) = 11",
          k, fixed = TRUE),
    "...eleven digits used as they are")
@@ -1242,6 +1269,32 @@ Sys.setenv(NDMM_WAIVERS = "check_upstream")
 ok(length(waivers()) == 0L,
    "and nothing outside the waivable set is ever honoured, whatever is set")
 Sys.unsetenv("NDMM_WAIVERS")
+
+# raw_icd_flag is waivable and wired, not just claimed. The check's header said
+# "waivable like the NDC shape checks" while the check only logged and the
+# waivable set did not carry the name - so the README promised a gate that did
+# not exist, and rows that move membership in both directions sailed past it.
+ok("raw_icd_flag" %in% WAIVABLE_CHECKS, "raw_icd_flag is in the waivable set")
+drive_icd <- function(n, waive = "") {
+  Sys.setenv(NDMM_WAIVERS = waive)
+  assign("db_q", function(con, sql)
+    data.frame(vals = "<blank>, 12", n = n, stringsAsFactors = FALSE),
+    envir = ne)
+  out <- tryCatch({ ne$check_icd_flag(NULL, cfg_defaults); "" },
+                  error = conditionMessage)
+  Sys.unsetenv("NDMM_WAIVERS")
+  out
+}
+ok(identical(drive_icd(0L), ""), "every flag naming a family lets the run go on")
+m <- drive_icd(7L)
+ok(grepl("names neither family", m, fixed = TRUE) &&
+     grepl("NDMM_WAIVERS=raw_icd_flag", m, fixed = TRUE),
+   "an unknown flag on a code this cohort reads stops the build, naming the waiver")
+ok(grepl("exclude a patient", m, fixed = TRUE) &&
+     grepl("keep one", m, fixed = TRUE),
+   "...and the stop says the miss cuts both ways, not that either way is safe")
+ok(identical(drive_icd(7L, waive = "raw_icd_flag"), ""),
+   "...and the named waiver, once the study team has looked, lets it proceed")
 
 cat("\n-- nothing is read before the step that builds it --\n")
 # check_ndc_shape() joined NDMM_LOT1_STARTS and was called before the step that

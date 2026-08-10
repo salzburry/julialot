@@ -64,11 +64,15 @@ ndmm_config <- function() {
 
 # The claim side of an NDC join.
 #
-# A key only from a value that could BE an NDC: eleven digits, or ten under the
-# 4-4-2 assumption. Anything else gets no key and simply does not join, which
-# is what a join is for. Optum writes NONE or UNK where a medical claim has no
-# NDC - 1.2bn rows of them - and left-padding those to eleven zeros and hoping
-# nothing collided is what made a shape check feel necessary.
+# The key is built from the value's DIGITS - separators and letters are
+# stripped first, because that is what claim systems do to an NDC - and only
+# ten or eleven of them get a key: eleven as they stand, ten padded under the
+# 4-4-2 assumption. Any other count gets no key and simply does not join, which
+# is what a join is for. So a value carrying exactly ten or eleven digits keys
+# on them even if letters ride along; a value with any other digit count never
+# keys, whatever else it contains. Optum writes NONE or UNK where a medical
+# claim has no NDC - 1.2bn rows of them - and left-padding those to eleven
+# zeros and hoping nothing collided is what made a shape check feel necessary.
 ndc_key <- function(col) {
   d <- paste0("regexp_replace(coalesce(cast(", col, " as string),''), '[^0-9]', '')")
   paste0("CASE WHEN ", d, " RLIKE '^0+$' THEN NULL",

@@ -473,11 +473,20 @@ start and twelve months before each patient's diagnosis, through the study end
 | `codelist_ndc_shape` | the same on the code list side - fixable at source |
 | `codelist_ndc_short` | a ten-digit code on the code list - write it as NDC11 |
 
-Each is accepted separately, and only once the study team has looked:
-`NDMM_WAIVERS=claim_ndc_short`. Nothing outside those four names can be waived,
-and a waiver naming something else stops the build as a typo. What was asked
-for and what actually fired are recorded apart in `NDMM_RUN_METADATA` - a run
-can ask for a waiver on a condition that never occurs.
+The claim-side rows are reported, never gated: a value that keys to nothing
+is a non-match, and `ndc_key()` gives no key to anything that is not ten or
+eleven digits. The two code-list rows stop the build, because that side is
+fixable at source. A third waivable condition sits beside them:
+`raw_icd_flag`, a claim whose `ICD_FLAG` names neither family while its code
+is on a list this cohort reads - those rows move membership in both
+directions, so the build stops until the study team looks.
+
+Each waiver is accepted separately:
+`NDMM_WAIVERS=codelist_ndc_short,raw_icd_flag`. Nothing outside those three
+names can be waived, and a waiver naming something else stops the build as a
+typo. What was asked for and what actually fired are recorded apart in
+`NDMM_RUN_METADATA` - a run can ask for a waiver on a condition that never
+occurs.
 
 Run the first production build with no waivers set and read the profile it
 prints. That is the point of it.
@@ -552,8 +561,15 @@ Both are counted in days, with `date_sub` and `date_add` - the same shape
 their number. "3 months" is applied as 90 days here for the same reason it is
 at 1L (see "3 months is applied as 90 days" below): `add_months(index, 3)` is
 the exact reading and lands 0-2 days later, so 90 is the more permissive of the
-two. Unlike the 1L window, this one can simply be set - 92 for a stricter
-reading - because it is a setting rather than a constant.
+two. See `DECISIONS.md` #7 - the day-count reading is a recorded
+interpretation.
+
+They are settings, but not free ones. 365 and 90 are pinned the way the 1L
+contract pins its windows: any other pair stops the build, because it makes a
+different cohort that still lands in `NDMM_COHORT_2L` and `NDMM_COHORT_3L` -
+the names everything downstream reads as the study's.
+`NDMM_SUBSEQ_OVERRIDE=TRUE` builds it anyway, marked in the log as a
+sensitivity.
 
 Whatever they are set to is written into all three outputs as `CE_PRE_DAYS` and
 `CE_FU_DAYS`, so a cohort always says which windows made it.
@@ -591,6 +607,14 @@ now. That last one matters because a re-run under one prefix replaces the
 cohort and both span tables in place: without it, lines from one attempt and
 enrollment from another carry the same names.
 
+Unprovable is refused too, not only mismatched. A missing `NDMM_BUILD_STATUS`,
+a metadata row recording no cohort attempt, a status row with no
+`INPUT_COHORT_TABLE` or too old to carry `CONTRACT_DEVIATIONS` - each means
+the proof is absent rather than failed, and a subset cohort over mixed
+vintages looks exactly like a right one. `NDMM_SUBSEQ_ALLOW_UNPROVEN=TRUE`
+accepts an unproven lineage by name, on the record; a proven mismatch still
+stops with it set.
+
 ## The attrition
 
 `<prefix>NDMM_ATTRITION`, one row per step, with the count and the percentage
@@ -611,7 +635,7 @@ conjunction either way, but the per-step counts are not.
 | 6 | + no MM oncology therapy in 12-month baseline | exclusion 1 |
 | 7 | + no other cancer in 12-month baseline | exclusion 2 |
 | 8 | + no pregnancy in study period | exclusion 3 |
-| 9 | + no belantamab in any LOT - the 1L NDMM cohort | exclusion 4 |
+| 9 | + no belantamab before the 1L index | exclusion 4, the half this build can see |
 
 Every step is this build's own. Nothing arrives pre-filtered, so each row
 of the funnel is a named criterion and the count beside it is
@@ -667,8 +691,9 @@ so it is not bounded by `MAX_LOT` or by where in a regimen the drug sat.
 Together the two halves are the study's sentence. See `DECISIONS.md` #2.
 
 What this build still does about belantamab. `NO_BELANTAMAB` is computed and
-ships on the cohort table as an advisory flag - nothing filters on it - over the
-whole study period, since its only job is to say who carries a claim at all.
+ships on `NDMM_FLAGS_ALL` as an advisory flag - nothing filters on it, and the
+cohort table itself carries only the ten columns LOT reads - over the whole
+study period, since its only job is to say who carries a claim at all.
 And `<prefix>NDMM_BELANTAMAB_RECONCILE` lists every cohort member with a
 belantamab claim and its dates, which is the handover.
 
@@ -678,8 +703,10 @@ anchored on, so that has to be settled before the LOT run. It is enforced by the
 anti-join in `00_lot1_index.R`.
 
 So read the two numbers correctly. `<prefix>NDMM_COHORT` is the NDMM cohort
-pending one exclusion, and the attrition's last row is not the study's N. The
-ninth step is in the LOT build.
+pending half of one exclusion, and the attrition's last row is not the study's
+N. The index-onward half of the exclusion runs in the LOT build, so the final
+study population is the patients in `LOT_LONG_FINAL` and the final count is
+the last row of `LOT_ATTRITION` - nowhere in this package's tables.
 
 ## The step files
 
@@ -796,7 +823,7 @@ is pinned to its default - the review tables exist to be acted on.
 | `NDMM_MM_ADJACENT_STATES` | `override` | `override`, `exclude` |
 | `NDMM_INDEX_EXCLUDED_ABBRS` | (empty) | comma-separated `CL_MED_ABBR` patterns |
 | `NDMM_INDEX_EXCLUDED_CODES` | (empty) | comma-separated `TYPE:CODE` or bare codes |
-| `NDMM_WAIVERS` | (empty) | the four NDC-shape checks and `raw_icd_flag`, by name |
+| `NDMM_WAIVERS` | (empty) | `codelist_ndc_shape`, `codelist_ndc_short`, `raw_icd_flag`, by name |
 
 ### One way out
 
