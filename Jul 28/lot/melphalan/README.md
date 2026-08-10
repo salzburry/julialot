@@ -5,6 +5,9 @@ The August-1 follow-up to the melphalan ask. The July request is recorded in
 `run_melphalan_rule.R`; neither is changed by anything here.
 
 ```
+# the study team's worked scenarios, through the rule; no connection
+Rscript lot/melphalan/run_melp_scenarios.R
+
 # print the plan; touches nothing, needs no connection
 INPUT_COHORT_TABLE=ndmm_NDMM_COHORT Rscript lot/melphalan/run_aug1_melp.R
 
@@ -12,6 +15,30 @@ INPUT_COHORT_TABLE=ndmm_NDMM_COHORT Rscript lot/melphalan/run_aug1_melp.R
 DATABRICKS_PWD=... INPUT_COHORT_TABLE=ndmm_NDMM_COHORT COHORT_PREFIX=ndmm_ \
   AUG1_EXECUTE=TRUE Rscript lot/melphalan/run_aug1_melp.R
 ```
+
+## The scenarios
+
+Four worked patients came with the restated ask, each drawn as the build
+classifies it today and as the rule should. They are held in `R/scenarios.R` as
+data and re-run rather than read once: `run_melp_scenarios.R` prints each one's
+exposures, gaps, branch and boundary beside where the drawing puts the line, and
+exits non-zero if any of them moves.
+
+The decision it prints is lifted out of the SQL `melp_decision_ctes()` generates
+- the same text the build runs - by cutting each arm's `WHERE` clause and
+evaluating it over the judged rows. A second copy of the rule would agree with
+whatever that file believed, which is the thing the scenarios exist to catch.
+Two things are re-expressed rather than lifted, and the run says so: the
+exposure chain, and what the engine does at a date the rule leaves alone. So an
+agreement means the branches line up, not that a warehouse run reproduces the
+drawing.
+
+Example 1 is the one that earned them. It is the only shape where the later dose
+of a B.2 pair is the patient's last exposure, and that dose was judged by
+nothing - the pair is judged from the row carrying the gap, and a trailing dose
+has none - so it fell through and started a line the rule says is absent. The
+other three reproduce without it. Three of four passing is what that looked
+like.
 
 ## What was asked, and what was missing
 

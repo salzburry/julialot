@@ -137,3 +137,10 @@ Rscript lot/validation/tests/test_vignettes.R    # and test_sensitivity.R,
                                                  # test_melphalan.R
 Rscript lot/melphalan/tests/test_aug1_melp.R
 ```
+
+The study team's worked melphalan scenarios run without a connection too, and
+exit non-zero if any of them moves:
+
+```
+Rscript lot/melphalan/run_melp_scenarios.R
+```

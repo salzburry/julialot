@@ -504,6 +504,40 @@ ok(!any(grepl("expect|predict", readLines(file.path(ROOT, "R", "cells.R"),
 ok(any(grepl("no direction is predicted", rs, ignore.case = TRUE)),
    "...and the run says so rather than leaving it looking like an omission")
 
+cat("\n-- the study team's worked scenarios land where they drew them --\n")
+# The four patients that came with the restated ask, as data rather than as a
+# reading of a picture. They are the only statement of the rule that names
+# dates, and one of them found a branch the other three cannot reach: the later
+# dose of a B.2 pair, when it is the patient's last exposure, was judged by
+# nothing and started a line the rule says is absent. Three of these passing is
+# what that defect looked like, so the count matters as much as the verdict.
+source(file.path(ROOT, "R", "scenarios.R"))
+ok(length(MELP_SCENARIOS) == 4L,
+   paste0("all four scenarios are here (", length(MELP_SCENARIOS), ")"))
+for (sc in MELP_SCENARIOS) {
+  r <- melp_scenario_run(ask, sc)
+  ok(identical(as.numeric(r$starts), as.numeric(sc$starts)),
+     paste0(sc$id, ": new line at ",
+            if (length(r$starts)) paste(r$starts, collapse = ", ") else "none",
+            " - drawn as ",
+            if (length(sc$starts)) paste(sc$starts, collapse = ", ") else "none"))
+}
+# The one that isolates it, held by name: if the later dose of that pair ever
+# stops being suppressed, this is the assertion that says so.
+e1 <- Filter(function(s) identical(s$id, "example_1"), MELP_SCENARIOS)[[1]]
+r1 <- melp_scenario_run(ask, e1)
+ok(all(e1$doses %in% r1$suppress),
+   "example 1: both doses of the B.2 pair have their boundary removed, not just the first")
+# And the settings the scenarios are judged against are the shipped ones, or
+# the branches move and the agreement above means nothing.
+sc_cfg <- utils::read.csv(file.path(LOT, "config.csv"), stringsAsFactors = FALSE,
+                          comment.char = "#")
+val <- function(nm) as.integer(trimws(sc_cfg[[2]][trimws(sc_cfg[[1]]) == nm][1]))
+ok(val("MELP_EXPOSURE_DAYS") == ask$melp_exposure_days &&
+     val("MELP_RESTART_DAYS") == ask$melp_restart_days &&
+     val("MELP_ADVANCE_DAYS") == ask$melp_advance_days,
+   "...against the thresholds the engine actually ships")
+
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))
 if (fail > 0L) quit(status = 1L)
