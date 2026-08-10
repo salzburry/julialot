@@ -168,8 +168,16 @@ ok(identical(strip(a), strip(y)),
 # that decides whether to yield it.
 ok(has(d$inject, "YIELD_THIS = 0 AND YIELD_NEXT = 0"),
    "an added boundary is yielded on the exposure it would fall on")
-ok(has(d$suppress, "YIELD_THIS = 0") && !has(d$suppress, "YIELD_NEXT"),
-   "...and a removed one on the exposure that made it")
+# Removal has two arms, and each is yielded on the exposure whose boundary it
+# takes away: the first dose of the pair by its own flag, and B.2's later dose
+# - which is NEXT from the row that judges the pair - by that row's next flag.
+# Guarding the second arm on YIELD_THIS alone would remove a boundary on an
+# exposure the transplant rule was left to decide.
+sup <- strsplit(d$suppress, "UNION", fixed = TRUE)[[1]]
+ok(length(sup) == 2L &&
+     has(sup[1], "YIELD_THIS = 0") && !has(sup[1], "YIELD_NEXT") &&
+     has(sup[2], "YIELD_THIS = 0 AND YIELD_NEXT = 0"),
+   "...and a removed one on whichever exposure it would have fallen on")
 
 cat("\n-- the cells, and what they cannot do --\n")
 cells <- melp_cell_plan()

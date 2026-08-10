@@ -218,19 +218,23 @@ these are still the study team's to settle, and changing one changes the counts.
    held open to the second dose? The two are not the same thing, and the build
    can only do the first without a further decision.
 
+   Half of this is settled. The worked examples say the second dose starts no
+   line, and `lot/melphalan` now removes its boundary too - see the scenarios
+   section below. What is left open is whether the line has to be held open to
+   reach it.
+
    A line's discontinuation date is its base agents' last cover. A melphalan
    first seen outside the induction window is not a base agent, so it does not
    extend that date. Take a line starting on day 0 whose base regimen runs out
    on day 120, with melphalan on day 100 and again on day 170 - a 70-day gap,
-   so B.2. Not advancing at day 100 removes the boundary melphalan would have
-   made. It does not keep the line alive past day 120: the regimen ran out
-   there for reasons that have nothing to do with melphalan, and the day-170
-   dose then starts the next line under the ordinary new-therapy rule.
+   so B.2. Neither dose ends the line now. That does not keep the line alive
+   past day 120: the regimen ran out there for reasons that have nothing to do
+   with melphalan, and the day-170 dose falls in whatever line follows.
 
    Two readings, and the difference is clinical:
 
    - The line ends when its regimen runs out, and B.2 only means melphalan does
-     not end it early. This is what `lot/melphalan` builds.
+     not end it - at either dose. This is what `lot/melphalan` builds.
    - Melphalan belongs to that line for the whole pair, so it should join the
      regimen and carry the line to the second dose. That needs a drug to be a
      member of a line whose induction window it never entered, which is a
@@ -252,8 +256,45 @@ these are still the study team's to settle, and changing one changes the counts.
    would have started anyway is no evidence either way. Those are the lines that
    would not exist under the second reading.
 
-Patient examples were offered with the request. Running them through the branch
-table is the fastest way to confirm the reading.
+## The worked examples, and what they settle
+
+Four patient examples came with the restated request, each drawn twice - as the
+build classifies it today and as the rule would. Run through the branch table
+they agree with the rule above in every branch, so the rule as recorded here is
+the rule as meant. What they add is the answers to questions the text left open.
+
+| | the pair | branch | reclassified as |
+|---|---|---|---|
+| 1 | first dose outside induction, next +90 d | B.2 | no new line at either dose |
+| 2 | ...then a third +210 d | B.3 | a new line at the third dose |
+| 3 | first dose inside induction, +50 d, +70 d | A.1 then B.2 | unchanged |
+| 4 | first dose inside induction, +50 d, then +190 d | A.1 then B.3 | a new line at the third dose |
+
+Three of the assumptions the measurement program had to make are now confirmed
+rather than assumed - 3, 4 and 5 above. Examples 3 and 4 judge consecutive
+pairs, not every dose against the first, and they judge a dose inside a *later*
+line's own 30-day window rather than against LOT1. The exposure threshold is
+restated as 30 days.
+
+Two are still open and neither example touches them: whether the rule is
+melphalan alone or any conditioning agent (1), and what happens when the
+transplant procedure code is on the same event (2). No example carries a coded
+transplant, so the mode split stands.
+
+Example 1 is the one that earns its place. It is the only shape in which the
+later dose of a B.2 pair is the patient's last exposure, and that dose was
+being judged by nothing: the pair is judged from the row that carries the gap,
+and a trailing dose has no gap of its own, so it fell through to the engine and
+started a line at exactly the boundary B.2 says is absent. Examples 2, 3 and 4
+all reproduce without it - in A.1 melphalan is already in the regimen and a
+repeat extends the line, and in B.3 the later dose is meant to advance. The
+rule now removes that boundary too.
+
+That settles the boundary half of question 6: the second dose starts no line.
+It does not settle the other half. In the example the base regimen is still
+covering when the second dose lands, so the line is alive for reasons of its
+own, and the drawing cannot say whether melphalan would have held it open. That
+is still the regimen-membership question, and still theirs to answer.
 
 The sizing query above is the quick version: it looks at the first two exposures
 only and measures both against LOT1. `run_melphalan_rule.R` does the full thing -

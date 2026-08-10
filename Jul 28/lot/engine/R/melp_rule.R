@@ -26,7 +26,8 @@
 # So the rule is two edits to the add-med candidates:
 #
 #   SUPPRESS  outside induction with the next exposure 60 days or more away -
-#             B.2 and B.3, where the first dose does not advance.
+#             B.2 and B.3, where the first dose does not advance - and the
+#             later dose of a B.2 pair, which does not advance either.
 #   INJECT    the later dose of a >= 180-day pair at its own date (A.2, B.3),
 #             and the first dose of a B.1 pair. B.1 needs it only where an
 #             earlier dose already put melphalan in the regimen: the engine then
@@ -36,12 +37,14 @@
 #
 # A.1 needs neither.
 #
-# Suppressing B.2 stops melphalan ending the line. It does not hold the line
-# open to the second dose - a line's discontinuation is its base agents' cover,
-# and a melphalan first seen outside induction is not one of them. Both modes
-# take that narrow reading, so neither is the request implemented to the letter.
-# Open question 6 in lot/questions/melphalan_lot_rule.md has both readings
-# and the number that decides between them.
+# Suppressing both doses of a B.2 pair stops melphalan ending the line at
+# either of them. It does not hold the line open to the second dose - a line's
+# discontinuation is its base agents' cover, and a melphalan first seen outside
+# induction is not one of them, so a line whose regimen has already run out
+# still ends there and the second dose falls in whatever line follows. That
+# half of open question 6 in lot/questions/melphalan_lot_rule.md is still open:
+# the worked examples settle that the second dose starts no line, not that
+# melphalan joins the regimen and carries the line to it.
 #
 # The modes are the case the ask does not cover - a coded transplant on the same
 # event, where the SCT rule fires too:
@@ -136,13 +139,34 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
       WHERE p.EXPO_DT >= {line_tbl}.{start_col}
         AND p.EXPO_DT <= {span_end}
     ),
-    -- Off the candidate list: the first dose of a B.2 or B.3 pair. A yielded
-    -- exposure is not judged at all, so it keeps whatever the engine did.
+    -- Off the candidate list: the first dose of a B.2 or B.3 pair, and the
+    -- later dose of a B.2 one. A yielded exposure is not judged at all, so it
+    -- keeps whatever the engine did.
     melp_suppress AS (
       SELECT DISTINCT PATID, EXPO_DT AS SUPPRESS_DT
       FROM melp_judged
       WHERE INSIDE = 0 AND YIELD_THIS = 0
         AND GAP IS NOT NULL AND GAP >= {cfg$melp_restart_days}
+      UNION
+      -- B.2 says both doses stay in the current line, and the arm above only
+      -- ever reaches the first of the pair. A trailing exposure has no next
+      -- one, so its GAP is NULL, it is judged by nothing and falls through to
+      -- the engine - which sees a melphalan MAP outside induction, calls it an
+      -- added medication and advances the line at it. That is precisely the
+      -- boundary B.2 says is not there, and it survived because every other
+      -- branch hides it: in A.1 melphalan is in the regimen and a repeat
+      -- extends the line instead, and in B.3 the later dose is meant to
+      -- advance. Only a B.2 pair whose second dose is the patient's last one
+      -- shows it.
+      --
+      -- B.3's later dose is excluded by the upper bound: that one does advance,
+      -- on its own date, and the inject arm puts it back.
+      SELECT DISTINCT PATID, NEXT_DT AS SUPPRESS_DT
+      FROM melp_judged
+      WHERE INSIDE = 0 AND YIELD_THIS = 0 AND YIELD_NEXT = 0
+        AND GAP IS NOT NULL
+        AND GAP >= {cfg$melp_restart_days}
+        AND GAP <  {cfg$melp_advance_days}
     ),
     -- On to it. Two arms, because the rule advances at two different dates and
     -- yielding looks at whichever exposure the boundary would fall on.

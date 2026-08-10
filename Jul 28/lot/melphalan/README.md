@@ -38,8 +38,9 @@ So this program builds it.
 | `yield_to_sct` | the same, with a coded transplant left to the SCT rule |
 
 The two mode names describe the transplant reading, which is what separates
-them. Neither is the request implemented to the letter: on B.2 both take the
-narrow reading described below.
+them. Neither is the request implemented to the letter: on B.2 both stop
+melphalan ending the line, at either dose, but neither holds the line open to
+the second - the narrow reading described below.
 
 Two readings rather than one, because the request leaves a question open. High-
 dose melphalan is transplant conditioning, so a melphalan claim and an AUTO
@@ -128,7 +129,8 @@ on what date:
 
 - SUPPRESS an exposure the engine takes as an add and the rule does not:
   outside induction, next exposure 60 days or more away. That is B.2 and B.3,
-  where the first dose does not advance.
+  where the first dose does not advance - and B.2's later dose, which does not
+  advance either.
 - INJECT the exposures the rule advances at and the engine has no candidate for:
   the later dose of a 180-day-or-more pair at its own date (A.2, B.3), and the
   first dose of a B.1 pair.
@@ -139,22 +141,33 @@ together.
 
 ### What B.2 does and does not do
 
-Suppressing B.2's boundary stops melphalan ending the line early.
+Suppressing B.2's boundaries stops melphalan ending the line at either dose.
 It does not hold the line open to the second dose.
 
-A line's discontinuation date is its base agents' last cover, and a melphalan
-first seen outside the induction window is not a base agent - so it does not
-extend that date. Take a line starting on day 0 whose base regimen runs out on
-day 120, with melphalan on day 100 and again on day 170. Not advancing at day
-100 removes the boundary melphalan would have made; the regimen still runs out
-on day 120 for reasons that have nothing to do with melphalan, and the day-170
-dose starts the next line under the ordinary new-therapy rule.
+Both doses, not one. The first version removed only the first dose's boundary,
+because the pair is judged from a row that carries the gap - and the later dose
+has no gap of its own, so it was judged by nothing, fell through to the engine
+and advanced the line at exactly the boundary B.2 says is not there. Every other
+branch hid it: in A.1 melphalan is already in the regimen and a repeat extends
+the line, and in B.3 the later dose is meant to advance. Only a B.2 pair whose
+second dose is the patient's last one shows it, which is the case the study
+team's Example 1 is.
 
-The rule as written says both doses stay in the current line. Getting that would
-need melphalan to join a regimen whose induction window it never entered - a
-concept the algorithm does not have, and a change to what a regimen means rather
-than a setting. It is a clinical decision, so it is open question 6 in
-`lot/questions/melphalan_lot_rule.md` rather than something decided here.
+What is still not done is holding the line open. A line's discontinuation date
+is its base agents' last cover, and a melphalan first seen outside the induction
+window is not a base agent - so it does not extend that date. Take a line
+starting on day 0 whose base regimen runs out on day 120, with melphalan on day
+100 and again on day 170. Neither dose ends the line now; the regimen still runs
+out on day 120 for reasons that have nothing to do with melphalan, and the
+day-170 dose falls in whatever line follows.
+
+The rule as written says both doses stay in the current line. The boundary half
+of that is built. The other half - melphalan belonging to that line for the
+whole pair - would need it to join a regimen whose induction window it never
+entered, a concept the algorithm does not have, and a change to what a regimen
+means rather than a setting. It is a clinical decision, so it remains open
+question 6 in `lot/questions/melphalan_lot_rule.md` rather than something
+decided here.
 
 `n_b2_line_starts` is what makes it decidable on a number, and it is the B.2
 population rather than a proxy for it. A line counts only when all four hold:

@@ -23,7 +23,8 @@ SHOW_FOLLOWUP,TRUE,Cohort - follow-up and death
 SHOW_LINES_PER_PATIENT,TRUE,Lines - highest line reached
 SHOW_START_TYPE,TRUE,Lines - how each line started
 SHOW_END_REASON,TRUE,Lines - why each line ended
-SHOW_LINE_LENGTH,TRUE,Lines - line length in days
+SHOW_LINE_LENGTH,TRUE,Lines - line length in days (completed lines)
+SHOW_LINE_LENGTH_DETAIL,TRUE,Lines - line length full distribution (completed lines)
 SHOW_MED_COUNT,TRUE,Lines - drugs in the base regimen
 SHOW_TOP_REGIMENS,TRUE,Regimens - most common base regimens by line
 SHOW_FIRST_ADDED_MED,TRUE,Regimens - first drug added after the base regimen
