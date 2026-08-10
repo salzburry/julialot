@@ -137,9 +137,14 @@ phase_mma_map <- function(con, ctx) {
       sum(case when CLAIM_SOURCE='rx_ndc' then 1 else 0 end) AS n_from_rx_ndc
     FROM mma_med_raw")
 
-  # Enrich + dedup
-  run_step(con, "S05_mma_med_processed", glue("
-    CREATE OR REPLACE TEMPORARY VIEW mma_med_processed AS
+  # Enrich + dedup.
+  #
+  # Written to a table rather than left as a view. mma_med_raw beneath it is
+  # the four-arm scan of `medical` and `rx` above, and this is read six times
+  # over the run - map_med, the imputation check below, phase_qc's coverage
+  # table, and the two counts in phase_persist. Left lazy that is six passes
+  # over the raw claim tables for one extraction.
+  materialize(con, "S05_mma_med_processed", view = "mma_med_processed", name = "MMA_MED_PROCESSED", body = glue("
     WITH enriched AS (
       SELECT
         r.PATID,
@@ -223,6 +228,8 @@ phase_mma_map <- function(con, ctx) {
 
   run_step(con, "S06_map_med", glue("
     CREATE OR REPLACE TEMPORARY VIEW map_med AS
+    -- Stays a view: map_stacked below is its only reader, and that one is
+    -- written to a table, so this plan runs once either way.
     WITH claims AS (
       SELECT
         PATID,
@@ -406,8 +413,12 @@ phase_mma_map <- function(con, ctx) {
     FROM map_med")
 
   # STEP 4: MAP_STACKED
-  run_step(con, "S07_map_stacked", "
-    CREATE OR REPLACE TEMPORARY VIEW map_stacked AS
+  #
+  # The table every later phase reads. Written here rather than in
+  # phase_lot1_end, which is where it used to be: by then phase_lot1_base has
+  # already read it four times, and each of those re-ran the MAP aggregate
+  # over the whole claim set. It is read twenty-nine times over a run.
+  materialize(con, "S07_map_stacked", view = "map_stacked", name = "MAP_STACKED", body = "
     SELECT * FROM map_med
   ", qc = "SELECT count(*) AS n_rows FROM map_stacked")
 

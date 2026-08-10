@@ -100,7 +100,7 @@ VIGNETTES <- list(
   # ---- CAR-T bridging, the idea's named 45-day case -----------------------
   list(id = "cart_bridge_within", title = "CAR-T inside the consolidation window",
        param = "cart_consolidation_days", pair = "within", confidence = "derived",
-       where = "lot/R/steps/06_lot1_end.R:186 - datediff BETWEEN 0 AND cart_consolidation_days",
+       where = "lot/R/steps/06_lot1_end.R:176 - datediff BETWEEN 0 AND cart_consolidation_days",
        events = function(p) rbind(
          ev(0,  "MED",     "1L regimen starts"),
          ev(20, "MED_ADD", "bridging agent added"),
@@ -113,7 +113,7 @@ VIGNETTES <- list(
 
   list(id = "cart_bridge_beyond", title = "CAR-T past the consolidation window",
        param = "cart_consolidation_days", pair = "beyond", confidence = "to_confirm",
-       where = "lot/R/steps/06_lot1_end.R:186",
+       where = "lot/R/steps/06_lot1_end.R:176",
        events = function(p) rbind(
          ev(0,  "MED",     "1L regimen starts"),
          ev(20, "MED_ADD", "agent added"),
@@ -126,7 +126,7 @@ VIGNETTES <- list(
   # ---- administrative gaps, the idea's named case -------------------------
   list(id = "map_gap_within", title = "Treatment gap below the discontinuation threshold",
        param = "map_discon_gap_days", pair = "within", confidence = "derived",
-       where = "lot/R/steps/03_mma_map.R:391 - datediff(next_start, map_end) >= map_discon_gap_days",
+       where = "lot/R/steps/03_mma_map.R:396 - datediff(next_start, map_end) >= map_discon_gap_days",
        events = function(p) rbind(
          ev(0,   "MED", "1L regimen starts"),
          ev(60,  "GAP_START", "administrative hold - no claims"),
@@ -137,7 +137,7 @@ VIGNETTES <- list(
 
   list(id = "map_gap_beyond", title = "Treatment gap at the discontinuation threshold",
        param = "map_discon_gap_days", pair = "beyond", confidence = "derived",
-       where = "lot/R/steps/03_mma_map.R:391",
+       where = "lot/R/steps/03_mma_map.R:396",
        events = function(p) rbind(
          ev(0,  "MED", "1L regimen starts"),
          ev(60, "GAP_START", "no claims"),
@@ -150,7 +150,7 @@ VIGNETTES <- list(
   # ---- induction windows ---------------------------------------------------
   list(id = "induction_lot1_within", title = "Agent added on the last day of LOT1 induction",
        param = "induction_window_days", pair = "within", confidence = "derived",
-       where = "lot/R/steps/10_lot2_5_base.R:341 - MAP_START <= date_add(LOT_START, window - 1)",
+       where = "lot/R/steps/10_lot2_5_base.R:362 - MAP_START <= date_add(LOT_START, window - 1)",
        events = function(p) rbind(
          ev(0, "MED", "1L regimen starts"),
          ev(p$induction_window_days - 1L, "MED_ADD", "agent added on the last day inside the window")),
@@ -161,7 +161,7 @@ VIGNETTES <- list(
 
   list(id = "induction_lot1_beyond", title = "Agent added the day after LOT1 induction closes",
        param = "induction_window_days", pair = "beyond", confidence = "derived",
-       where = "lot/R/steps/10_lot2_5_base.R:341",
+       where = "lot/R/steps/10_lot2_5_base.R:362",
        events = function(p) rbind(
          ev(0, "MED", "1L regimen starts"),
          ev(p$induction_window_days, "MED_ADD", "agent added one day outside")),
@@ -170,7 +170,7 @@ VIGNETTES <- list(
 
   list(id = "induction_lotn_within", title = "Agent added on the last day of a later line's induction",
        param = "lot_n_induction_window_days", pair = "within", confidence = "derived",
-       where = "lot/R/steps/10_lot2_5_base.R:341 - LOT2+ uses the shorter window",
+       where = "lot/R/steps/10_lot2_5_base.R:362 - LOT2+ uses the shorter window",
        events = function(p) rbind(
          ev(0, "MED", "LOT2 starts"),
          ev(p$lot_n_induction_window_days - 1L, "MED_ADD", "agent added on the last day inside")),
@@ -181,7 +181,7 @@ VIGNETTES <- list(
 
   list(id = "induction_lotn_beyond", title = "Agent added the day after a later line's induction closes",
        param = "lot_n_induction_window_days", pair = "beyond", confidence = "derived",
-       where = "lot/R/steps/10_lot2_5_base.R:341",
+       where = "lot/R/steps/10_lot2_5_base.R:362",
        events = function(p) rbind(
          ev(0, "MED", "LOT2 starts"),
          ev(p$lot_n_induction_window_days, "MED_ADD", "agent added one day outside")),
@@ -191,7 +191,7 @@ VIGNETTES <- list(
   # ---- cases with no boundary, but a rule worth stating -------------------
   list(id = "allo_single_day", title = "Allogeneic transplant line spans one day",
        param = NA_character_, confidence = "derived",
-       where = "lot/R/steps/10_lot2_5_base.R:658 - allo_lot_span single_day",
+       where = "lot/R/steps/10_lot2_5_base.R:681 - allo_lot_span single_day",
        events = function(p) rbind(
          ev(0,   "MED",      "LOT1 starts"),
          ev(200, "ALLO",     "allogeneic transplant"),
@@ -246,7 +246,7 @@ VIGNETTES <- list(
 
   list(id = "steroid_only_interval", title = "Steroid-only stretch between regimens",
        param = NA_character_, confidence = "derived",
-       where = "lot/R/steps/10_lot2_5_base.R:346 - MAP_MED_CLASS <> 'STEROID'",
+       where = "lot/R/steps/10_lot2_5_base.R:367 - MAP_MED_CLASS <> 'STEROID'",
        events = function(p) rbind(
          ev(0,   "MED",     "1L regimen starts"),
          ev(150, "STEROID", "dexamethasone alone for several weeks"),

@@ -1299,6 +1299,39 @@ ok(length(too_early) == 0,
                                  paste(too_early, collapse = "; "))
    else "every view a called step reads is built by an earlier call")
 
+cat("\n-- every view read more than once is checkpointed --\n")
+# The claim the runner and the README both make, held here for the first time:
+# a temporary view is a query, not a result, so a second read re-runs it, and
+# these views sit on each other - the reads of NDMM_LOT1_STARTS each re-run
+# the MM-diagnosis chain beneath it. checkpoint() writes the view once and
+# repoints it; anything read more than once has to go through it.
+#
+# Counted the way the SQL reads them - FROM {CONST} or JOIN {CONST} - over the
+# step files and the runner. A view that reaches a step as a parameter is
+# read under the parameter's name, so this can undercount; undercounting can
+# only miss a needed checkpoint, never demand a needless one, and the two
+# known cases (BASE_COHORT, BELANTAMAB_PATIDS) are checkpointed anyway.
+all_txt <- paste(unlist(lapply(c(step_files, file.path(ROOT, "R", "build_ndmm.R")),
+                               readLines, warn = FALSE)), collapse = "\n")
+n_reads <- vapply(view_consts, function(k) {
+  hits <- gregexpr(paste0("(FROM|JOIN) \\{", k, "\\}"), all_txt)[[1]]
+  if (hits[1] == -1L) 0L else length(hits)
+}, integer(1))
+names(n_reads) <- view_consts
+multi <- names(n_reads)[n_reads > 1L]
+# The case that motivated this: three reads - the flags join and both arms of
+# the ICD-flag check - and no checkpoint, so the VALUES literal was inlined
+# into all three plans. If the count cannot see those reads it proves nothing.
+ok("NDMM_CLINTRIAL_CODES" %in% multi,
+   "the count sees NDMM_CLINTRIAL_CODES's reads, so it is not vacuous")
+uncheckpointed <- setdiff(multi, CHECKPOINTS)
+ok(length(uncheckpointed) == 0,
+   if (length(uncheckpointed))
+     paste0("read more than once but not checkpointed: ",
+            paste(sort(uncheckpointed), collapse = ", "))
+   else paste0("all ", length(multi), " views read more than once are in ",
+               "CHECKPOINTS"))
+
 cat("\n-- the outputs are all prefixed, and all declared --\n")
 assign("cfg", pin_prefix(base, "p_"), envir = globalenv())
 for (t in OUTPUTS)

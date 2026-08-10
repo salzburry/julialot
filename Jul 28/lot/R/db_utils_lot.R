@@ -222,12 +222,16 @@ db_q <- function(con, sql) {
   .unint64(with_retry(function() DBI::dbGetQuery(con, sql)))
 }
 
+# sql may be more than one statement, run in order and timed as one step.
+# materialize() uses that to write a table and repoint its view before the QC
+# below reads it - the QC names the view, so repointing afterwards would have
+# it read the query the table was just written to replace.
 run_step <- function(con, name, sql, qc = NULL) {
   log_msg(SEP)
   log_msg("STEP ", name)
   log_msg(SEP)
   t0 <- proc.time()
-  db_exec(con, sql)
+  for (s in sql) db_exec(con, s)
   elapsed <- (proc.time() - t0)[["elapsed"]]
   log_msg("  Completed in ", round(elapsed, 1), "s")
   if (!is.null(qc) && nzchar(qc)) {
@@ -238,4 +242,32 @@ run_step <- function(con, name, sql, qc = NULL) {
     print(out)
   }
   invisible(TRUE)
+}
+
+# Write a query's rows to a work-schema table, then point the session view at
+# the table. Nothing that reads it has to know: the name is unchanged, and
+# every later read is a scan rather than a re-run of the query.
+#
+# A Spark temporary view is a query, not a result. These views sit on each
+# other, so the cost of leaving one lazy is multiplicative rather than
+# additive: a view read four times by a view read four times is planned
+# sixteen times, and at the bottom of the LOT chain sits a four-arm scan of
+# `medical` and `rx`.
+#
+# The table is written from the query directly, rather than the view being
+# created, counted by its QC, and copied to a table afterwards - that
+# spelling, which this replaces, runs the query once for the count and again
+# for the copy.
+#
+# No fallback. Carrying on with the view would give the same numbers and turn
+# minutes into hours without saying so, and a table the run declares as an
+# output would not be there.
+materialize <- function(con, step, view, name, body, qc = NULL) {
+  tbl <- lot_out(name)
+  run_step(con, step,
+           c(paste0("CREATE OR REPLACE TABLE ", tbl, " AS\n", body),
+             paste0("CREATE OR REPLACE TEMPORARY VIEW ", view,
+                    " AS SELECT * FROM ", tbl)),
+           qc = qc)
+  invisible(tbl)
 }

@@ -182,6 +182,49 @@ ok(!any(a %in% b), "a second cohort writes none of the first cohort's tables")
 ok(all(grepl(paste0("\\.", PFX_B), b)), "every output of the second cohort is prefixed")
 assign("cfg", cfg, envir = globalenv())
 
+cat("\n-- what a run writes is declared, both directions --\n")
+# LOT_TABLES is the declaration and this scan is the code; held together so a
+# table added to a step without being declared - or declared and then removed
+# from a step - fails here rather than surfacing as a surprise in a schema.
+# LOT_LONG_STAGE is allowed on the written side without being declared:
+# build_lot2_5 drops it after the publish, so a finished run does not have it.
+lotn_env <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "steps", "10_lot2_5_base.R"), envir = lotn_env)
+undeclared <- setdiff(OUTPUTS, c(get("LOT_TABLES", envir = env), lotn_env$.LOT_LONG_STAGE))
+ok(length(undeclared) == 0,
+   if (length(undeclared)) paste0("steps write tables the declaration misses: ",
+                                  paste(undeclared, collapse = ", "))
+   else "every fixed name a step writes is declared in LOT_TABLES")
+unwritten <- setdiff(get("LOT_TABLES", envir = env), OUTPUTS)
+ok(length(unwritten) == 0,
+   if (length(unwritten)) paste0("declared but nothing writes it: ",
+                                 paste(unwritten, collapse = ", "))
+   else "and nothing is declared that no step writes")
+# The per-line stage tables have dynamic names the scan above cannot see.
+# Their declaration is .LOTN_STAGES; hold it to the lotn_table() calls the
+# loop actually makes, both directions again.
+l25_txt <- paste(readLines(file.path(ROOT, "R", "steps", "10_lot2_5_base.R"),
+                           warn = FALSE), collapse = "\n")
+staged <- unique(unlist(regmatches(l25_txt,
+  gregexpr('(?<=lotn_table\\(lot_num, ")[A-Z_0-9]+(?=")', l25_txt, perl = TRUE))))
+ok(setequal(staged, lotn_env$.LOTN_STAGES),
+   paste0("the seven per-line stages the loop writes are the seven declared (",
+          paste(sort(staged), collapse = ", "), ")"))
+# And lot_run_outputs() renders both parts: the fixed names always, the
+# per-line names for the lines the loop reports having built. Rebound into
+# the env holding .LOTN_STAGES and lotn_table, with the declaration beside
+# them - which is also what the run itself requires: the loader sources the
+# step files before build_lot() runs.
+lro <- get("lot_run_outputs", envir = env)
+assign("LOT_TABLES", get("LOT_TABLES", envir = env), envir = lotn_env)
+environment(lro) <- lotn_env
+ok(setequal(lro(integer(0)), get("LOT_TABLES", envir = env)),
+   "with no lines built, the outputs are the fixed names alone")
+with_lines <- lro(c(2L, 3L))
+ok(all(c("LOT2_BASE", "LOT3_START_CANDIDATES", "LOT3_BASE_END") %in% with_lines) &&
+     !any(grepl("^LOT[45]_", setdiff(with_lines, get("LOT_TABLES", envir = env)))),
+   "with LOT2-3 built, their stage tables are declared and LOT4-5's are not")
+
 cat("\n-- the cohort table is checked before any work --\n")
 # A missing column would otherwise surface deep into the build.
 fake_con <- structure(list(), class = "fakecon")
@@ -329,6 +372,11 @@ assign("lot_out", function(x) paste0("wk.p_", x), envir = pe)
 PSQL <- character(0)
 assign("run_step", function(con, name, sql, qc = NULL) {
   PSQL <<- c(PSQL, sql); invisible(TRUE) }, envir = pe)
+# The real materialize(), rebound so its statements land in PSQL through the
+# stubs above - the chain below asserts what actually reaches the warehouse.
+pmat <- get("materialize", envir = globalenv())
+environment(pmat) <- pe
+assign("materialize", pmat, envir = pe)
 LL_COLS <- c("PATID", "LOT_NUM", "LOT_START_DT", "LOT_BASE_END_DT",
              "LOT_START_TYPE", "END_REASON")
 drive_plc <- function(crit = list(), cfg = list(max_lot = 5L), cols = LL_COLS) {
@@ -343,24 +391,38 @@ has_sql <- function(x) any(grepl(x, PSQL, fixed = TRUE))
 # source. It did, until this was exact.
 is_sql <- function(x) any(trimws(PSQL) == x)
 src_of <- function(v) any(grepl(paste0("FROM ", v, "$"), trimws(PSQL)))
-ok(is.null(drive_plc()) && length(PSQL) == 4L,
-   paste0("four statements: two views and the two tables (", length(PSQL), ")"))
+ok(is.null(drive_plc()) && length(PSQL) == 6L,
+   paste0("six statements: two views, two tables, two repoints (", length(PSQL), ")"))
 # The chain: each stage reads the one before it. A stage pointed at the wrong
 # source would still build something, and it would be wrong quietly.
 ok(is_sql("CREATE OR REPLACE TEMPORARY VIEW lot_long_allflags AS SELECT * FROM lot_long"),
    "allflags is built from lot_long")
 ok(is_sql("CREATE OR REPLACE TEMPORARY VIEW lot_long_final AS SELECT * FROM lot_long_allflags"),
    "final is built from allflags, not from lot_long again")
-ok(is_sql("CREATE OR REPLACE TABLE wk.p_LOT_LONG_ALLFLAGS AS SELECT * FROM lot_long_allflags") &&
-     is_sql("CREATE OR REPLACE TABLE wk.p_LOT_LONG_FINAL AS SELECT * FROM lot_long_final"),
+ok(is_sql("CREATE OR REPLACE TABLE wk.p_LOT_LONG_ALLFLAGS AS\nSELECT * FROM lot_long_allflags") &&
+     is_sql("CREATE OR REPLACE TABLE wk.p_LOT_LONG_FINAL AS\nSELECT * FROM lot_long_final"),
    "and each table is written from its own view, both prefixed")
+# ...and each view is then repointed at its table, so every later read - the
+# reporter, the attrition, the progression rows - scans the table rather than
+# re-running the criteria SQL.
+ok(is_sql("CREATE OR REPLACE TEMPORARY VIEW lot_long_allflags AS SELECT * FROM wk.p_LOT_LONG_ALLFLAGS") &&
+     is_sql("CREATE OR REPLACE TEMPORARY VIEW lot_long_final AS SELECT * FROM wk.p_LOT_LONG_FINAL"),
+   "each view is repointed at the table it was written to")
 # TABLE, not VIEW: Spark refuses a persistent view over a temporary one.
 ok(!any(grepl("CREATE OR REPLACE VIEW", PSQL, fixed = TRUE)),
    "persisted as tables - a persistent view over a temp view is refused")
-i_v <- which(grepl("TEMPORARY VIEW lot_long_final", PSQL, fixed = TRUE))[1]
+i_v <- which(grepl("VIEW lot_long_final AS SELECT * FROM lot_long_allflags", PSQL, fixed = TRUE))[1]
 i_t <- which(grepl("TABLE wk.p_LOT_LONG_FINAL", PSQL, fixed = TRUE))[1]
 ok(!is.na(i_v) && !is.na(i_t) && i_v < i_t,
    "the view exists before the table that selects from it")
+# Spark inlines a temporary view's plan when the view is created, so the final
+# view has to be defined after allflags is repointed - defined before, it
+# would carry the flags query for ever, and the repoint would change nothing
+# it reads.
+i_ar <- which(grepl("VIEW lot_long_allflags AS SELECT * FROM wk.p_LOT_LONG_ALLFLAGS",
+                    PSQL, fixed = TRUE))[1]
+ok(!is.na(i_ar) && !is.na(i_v) && i_ar < i_v,
+   "and after allflags is repointed, so it reads the table, not the query")
 
 # With a criterion declared, so the chain is carrying something. Empty is the
 # shipped state and every stage is SELECT * there - a mis-wired source would
@@ -373,7 +435,7 @@ ok(is.null(drive_plc(CRIT)) && has_sql("AS T_FLAG") && src_of("lot_long"),
    "a declared criterion becomes a flag column on the allflags view")
 ok(has_sql("first_failed_lot") && has_sql("T_FLAG = 0"),
    "...and an enabled truncate reaches the final view as a removal")
-ok(is_sql("CREATE OR REPLACE TABLE wk.p_LOT_LONG_FINAL AS SELECT * FROM lot_long_final"),
+ok(is_sql("CREATE OR REPLACE TABLE wk.p_LOT_LONG_FINAL AS\nSELECT * FROM lot_long_final"),
    "with the persisted table still written from it")
 
 # A flag that names a column LOT_LONG already has does not fail - the view ends
@@ -671,6 +733,11 @@ assign("cfg", list(sct_tandem_days = 180L), envir = sctenv)
 SSQL <- character(0)
 assign("run_step", function(con, name, sql, qc = NULL) {
   SSQL <<- c(SSQL, sql); invisible(TRUE) }, envir = sctenv)
+# The step writes lot1_sct through materialize() now. Captured as the view
+# spelling so the extraction below stays about the emitted SQL body.
+assign("materialize", function(con, step, view, name, body, qc = NULL) {
+  SSQL <<- c(SSQL, paste0("CREATE OR REPLACE TEMPORARY VIEW ", view, " AS", body))
+  invisible(NULL) }, envir = sctenv)
 sys.source(file.path(ROOT, "R", "steps", "05b_lot1_sct.R"), envir = sctenv)
 sctenv$phase_lot1_sct(NULL, NULL)
 s15 <- SSQL[grepl("VIEW lot1_sct", SSQL, fixed = TRUE)][1]
@@ -871,6 +938,12 @@ MSQL <- character(0); MQRY <- character(0)
 assign("run_step", function(con, name, sql, qc = NULL) {
   MSQL <<- c(MSQL, sql); invisible(TRUE) }, envir = me)
 assign("db_exec", function(con, sql) { MSQL <<- c(MSQL, sql); invisible(TRUE) }, envir = me)
+# The real materialize(), rebound so its run_step and lot_out are the stubs
+# above - the pinning below then exercises the statements it actually emits,
+# not a paraphrase of them.
+mat_real <- get("materialize", envir = globalenv())
+environment(mat_real) <- me
+assign("materialize", mat_real, envir = me)
 MGOOD <- list(n_rows = 10, n_patients = 10, n_null_patid = 0, n_null_index = 0,
               n_null_end = 0, n_end_before_index = 0)
 drive_mci <- function(before = list(n_rows = 10, n_patients = 10), shape = list()) {
@@ -885,7 +958,7 @@ drive_mci <- function(before = list(n_rows = 10, n_patients = 10), shape = list(
   tryCatch({ me$materialize_cohort_input(NULL, before); NULL }, error = conditionMessage)
 }
 ok(is.null(drive_mci()), "a cohort that has not moved is pinned and passes")
-i_tbl <- which(grepl("CREATE OR REPLACE TABLE wk.p_LOT_PATIENT_INPUT AS SELECT * FROM lot_patient_input",
+i_tbl <- which(grepl("CREATE OR REPLACE TABLE wk.p_LOT_PATIENT_INPUT AS\nSELECT * FROM lot_patient_input",
                      MSQL, fixed = TRUE))[1]
 i_vw  <- which(grepl("CREATE OR REPLACE TEMPORARY VIEW lot_patient_input AS SELECT * FROM wk.p_LOT_PATIENT_INPUT",
                      MSQL, fixed = TRUE))[1]
@@ -1389,8 +1462,14 @@ ok(setequal(selcols, REQUIRED_COHORT_COLS),
 L25_FILE   <- file.path(ROOT, "R", "steps", "10_lot2_5_base.R")
 lot1_files <- setdiff(list.files(file.path(ROOT, "R", "steps"), "\\.R$", full.names = TRUE),
                       L25_FILE)
-views_in <- function(x) unique(unlist(regmatches(x,
-  gregexpr("(?<=CREATE OR REPLACE TEMPORARY VIEW )[a-z_0-9]+", x, perl = TRUE))))
+# A session name is created two ways now: CREATE VIEW directly, or
+# materialize(view = ...), which writes the table and repoints the view at it.
+# Both leave the name readable, so both count as creating it.
+views_in <- function(x) unique(unlist(c(
+  regmatches(x, gregexpr("(?<=CREATE OR REPLACE TEMPORARY VIEW )[a-z_0-9]+",
+                         x, perl = TRUE)),
+  regmatches(x, gregexpr("(?<=view = \")[a-z_0-9]+", x, perl = TRUE)),
+  regmatches(x, gregexpr("(?<=view = glue\\(\")[a-z_0-9]+", x, perl = TRUE)))))
 src_25   <- readLines(L25_FILE, warn = FALSE)
 made_1   <- views_in(unlist(lapply(lot1_files, readLines, warn = FALSE)))
 made_25  <- views_in(src_25)

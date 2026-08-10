@@ -589,7 +589,7 @@ build_lot <- function(here, cohort_table, prefix,
   # LOT1 is written before LOT_LONG, so track partial runs.
   # Cleared first, or a second run in one session inherits the first's.
   options(lot_waivers_applied = character(0), lot_codelist_md5 = list(),
-          lot_line_criteria = "")
+          lot_line_criteria = "", lot_lines_built = integer(0))
   check_no_active_run(con, cfg)
   write_build_status(con, cfg, "started")
   clear_run_rows(con, cfg)
@@ -663,6 +663,9 @@ build_lot <- function(here, cohort_table, prefix,
 
   log_msg(SEP)
   log_msg("LOT complete for ", cfg$input_cohort_table, " -> ", cfg$object_prefix, "*")
+  written <- lot_run_outputs()
+  log_msg("Wrote ", length(written), " tables: ",
+          paste(sort(written), collapse = ", "))
   log_msg(SEP)
   invisible(TRUE)
 }
@@ -672,6 +675,40 @@ LOT2_5_INPUT_VIEWS <- c("lot_patient_input", "mma_rollup", "permissible_subs",
                         "sct_codelist", "sct_claims_raw", "tx_auto_dates",
                         "tx_allo_cart_dates", "map_stacked", "lot1_sct",
                         "lot1_base_end")
+
+# What a run writes, all prefixed. Two groups, because they answer different
+# questions and are named differently.
+#
+# The fixed names are here as a list rather than derived: this is the
+# declaration, and tests/test_runner.R holds it to the names the steps
+# actually pass to lot_out(), so a table added to a step without being
+# declared fails there rather than appearing unannounced in a schema.
+LOT_TABLES <- c(
+  # the deliverables
+  "LOT_LONG", "LOT_LONG_ALLFLAGS", "LOT_LONG_FINAL", "LOT_ATTRITION",
+  "LOT_FACE_VALIDITY",
+  # the run's own record
+  "LOT_RUN_METADATA", "LOT_CODELIST_METADATA", "LOT_QC_SUMMARY",
+  "LOT_BUILD_STATUS",
+  # the pinned inputs and the LOT1 working, each written where it is built so
+  # that every later read is a scan rather than a re-run of its query
+  "LOT_PATIENT_INPUT", "MMA_MED_PROCESSED", "MAP_STACKED",
+  "SCT_CLAIMS_RAW", "TX_AUTO_DATES", "TX_ALLO_CART_DATES",
+  "LOT1_INDUCTION_MEDS", "LOT1_BASE", "LOT1_SCT", "LOT1_CONTAINS_MTX_REG",
+  "LOT1_BASE_END"
+)
+
+# Everything a run wrote, fixed names and per-line stage tables together.
+# `lines` is the lines LOT2-5 actually built, which build_lot2_5() records -
+# the loop stops at the first line with no patients to roll forward, so a run
+# configured for five lines need not have written five lines' worth of tables.
+lot_run_outputs <- function(lines = getOption("lot_lines_built", integer(0))) {
+  perline <- if (length(lines))
+    unlist(lapply(lines, function(n)
+      vapply(.LOTN_STAGES, function(s) lotn_table(n, s), character(1))),
+      use.names = FALSE) else character(0)
+  unique(c(LOT_TABLES, perline))
+}
 
 # Ask the catalogue, not the data. "SELECT 1 FROM v LIMIT 1" on a lazy view
 # runs the view - and three of these are raw CDM scans, so the existence check
@@ -693,13 +730,11 @@ lot_inputs_present <- function(con) {
 # one fixed snapshot rather than a view that re-runs against a live table.
 # Then validate the snapshot itself, not just the table it came from.
 materialize_cohort_input <- function(con, before) {
-  tbl <- lot_out("LOT_PATIENT_INPUT")
-  run_step(con, "S03b_materialize_cohort_input", glue("
-    CREATE OR REPLACE TABLE {tbl} AS SELECT * FROM lot_patient_input"),
-    qc = glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients
-               FROM {tbl}"))
-  db_exec(con, glue("
-    CREATE OR REPLACE TEMPORARY VIEW lot_patient_input AS SELECT * FROM {tbl}"))
+  tbl <- materialize(con, "S03b_materialize_cohort_input",
+                     view = "lot_patient_input", name = "LOT_PATIENT_INPUT",
+                     body = "SELECT * FROM lot_patient_input",
+                     qc = "SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients
+                           FROM lot_patient_input")
 
   after <- check_cohort_input(con, tbl)
   # A count change, not proof of identity - a same-size swap passes. The
@@ -725,12 +760,11 @@ SCT_MATERIALIZE <- list(
 materialize_sct_views <- function(con) {
   for (mv in SCT_MATERIALIZE) {
     t0 <- Sys.time()
-    run_step(con, paste0("L20_materialize_", tolower(mv$name)),
-             glue("CREATE OR REPLACE TABLE {lot_out(mv$name)} AS SELECT * FROM {mv$view}"),
-             qc = glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients
-                        FROM {lot_out(mv$name)}"))
-    db_exec(con, glue(
-      "CREATE OR REPLACE TEMPORARY VIEW {mv$view} AS SELECT * FROM {lot_out(mv$name)}"))
+    materialize(con, paste0("L20_materialize_", tolower(mv$name)),
+                view = mv$view, name = mv$name,
+                body = glue("SELECT * FROM {mv$view}"),
+                qc = glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients
+                           FROM {mv$view}"))
     log_msg("  ", mv$name, " materialized in ",
             round(as.numeric(difftime(Sys.time(), t0, units = "secs")), 1), " s")
   }
@@ -1818,18 +1852,26 @@ phase_line_criteria <- function(con, cfg) {
              qc = glue("SELECT count(*) AS n_patients FROM {pv$name}"))
   run_step(con, "L40_lot_long_allflags",
            line_criteria_flags_sql(cfg, "lot_long", "lot_long_allflags"))
+  # Written before anything reads it, and before the final view is defined
+  # over it - Spark inlines a temporary view's plan at creation, so a final
+  # view created first would keep the flags query even after the repoint.
+  # The tables are tables, not persistent views, because both sit on
+  # temporary views and Spark refuses a persistent view over one of those.
+  # And the views are repointed at them, so the reporter below and every
+  # attrition read after it scans the table instead of re-running the
+  # criteria SQL.
+  materialize(con, "L40b_persist_lot_long_allflags",
+              view = "lot_long_allflags", name = "LOT_LONG_ALLFLAGS",
+              body = "SELECT * FROM lot_long_allflags",
+              qc = "SELECT count(*) AS n_rows FROM lot_long_allflags")
   # Before the truncate: allflags still has every line, so the counts are of
   # patients the criteria catch rather than of the ones that survived them.
   report_line_criteria(con, cfg)
   run_step(con, "L41_lot_long_final",
            line_criteria_final_sql(cfg, "lot_long_allflags", "lot_long_final"))
-  # Persisted, not views: both are built from temporary views, and Spark
-  # refuses a persistent view over one of those.
-  for (v in list(list(view = "lot_long_allflags", name = "LOT_LONG_ALLFLAGS"),
-                 list(view = "lot_long_final",    name = "LOT_LONG_FINAL"))) {
-    run_step(con, paste0("L42_persist_", tolower(v$name)),
-             glue("CREATE OR REPLACE TABLE {lot_out(v$name)} AS SELECT * FROM {v$view}"),
-             qc = glue("SELECT count(*) AS n_rows FROM {lot_out(v$name)}"))
-  }
+  materialize(con, "L41b_persist_lot_long_final",
+              view = "lot_long_final", name = "LOT_LONG_FINAL",
+              body = "SELECT * FROM lot_long_final",
+              qc = "SELECT count(*) AS n_rows FROM lot_long_final")
   invisible(TRUE)
 }

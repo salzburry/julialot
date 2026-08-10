@@ -54,6 +54,29 @@
   sprintf("least(%s)", paste(parts, collapse = ", "))
 }
 
+# The per-line stages, in build order. Each is written to <prefix>LOT<n>_<NAME>
+# and its session view repointed, so the next stage reads a table.
+#
+# They used to be temporary views, and that is what made this loop the slowest
+# part of a run. A view is a query: Spark inlines its plan at every reference
+# and re-runs it. These sit on each other, so the cost compounds - lotN_base
+# reads lotN_induction_meds three times and is itself read six times, and
+# lotN_base_end reads lotN_base four more. Counting the references through the
+# chain, the start-candidate query - four aggregates and a window function over
+# every patient - is planned about a hundred times per line, and the whole
+# structure is rebuilt for each of LOT2..LOT5.
+#
+# Written to tables each stage is planned once, and every later reference is a
+# scan. The SQL is unchanged; only where its rows live is.
+.LOTN_STAGES <- c("START_CANDIDATES", "START", "INDUCTION_MEDS", "BASE",
+                  "SCT", "CONTAINS_MTX_REG", "BASE_END")
+
+# lot3_base is a different table from lot2_base: a line's stages are named for
+# the line, so nothing overwrites the line before it and each stays readable
+# after the run. lot_run_outputs() in build_lot.R builds the declared list
+# from these two names.
+lotn_table <- function(lot_num, stage) sprintf("LOT%d_%s", lot_num, stage)
+
 # ---- Initialize lot_long from lot1_base_end (no LOT1 rewrite) ----
 
 init_lot_long_from_lot1 <- function(con, meds, classes) {
@@ -69,8 +92,10 @@ init_lot_long_from_lot1 <- function(con, meds, classes) {
     sprintf("lbe.LOT1_CLASS_%s AS LOT_CLASS_%s", sc, sc)
   }, character(1)), collapse = ",\n      ")
 
-  run_step(con, "L25_init_lot_long", glue("
-    CREATE OR REPLACE TEMPORARY VIEW lot_long_v AS
+  # Straight into the staging table. This used to build a lot_long_v view,
+  # count it, then copy the view into the table - which planned the projection
+  # twice for one result.
+  materialize(con, "L25_init_lot_long", view = "lot_long", name = .LOT_LONG_STAGE, body = glue("
     SELECT
       lbe.PATID,
       cast(1 as int)                        AS LOT_NUM,
@@ -136,14 +161,7 @@ init_lot_long_from_lot1 <- function(con, meds, classes) {
     FROM lot1_base_end lbe
     INNER JOIN lot_patient_input p ON lbe.PATID = p.PATID
     LEFT JOIN lot1_sct sct          ON lbe.PATID = sct.PATID
-  "), qc = "SELECT count(*) AS n_lot1_rows FROM lot_long_v")
-
-  # Materialize so iterative LOT N builders can self-join cheaply.
-  # Writes the STAGING table, not the final LOT_LONG (see .LOT_LONG_STAGE).
-  run_step(con, "L26_materialize_lot_long",
-    glue("CREATE OR REPLACE TABLE {lot_out(.LOT_LONG_STAGE)} AS SELECT * FROM lot_long_v"),
-    qc = glue("SELECT count(*) AS n_rows FROM {lot_out(.LOT_LONG_STAGE)}"))
-  db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW lot_long AS SELECT * FROM {lot_out(.LOT_LONG_STAGE)}"))
+  "), qc = glue("SELECT count(*) AS n_lot1_rows FROM {lot_out(.LOT_LONG_STAGE)}"))
 }
 
 # ---- Build a single LOT_N (N >= 2) ----
@@ -166,8 +184,9 @@ build_lot_n <- function(con, lot_num,
   pfx  <- sprintf("L%02d", 30 + (lot_num - 2) * 6)  # step prefix per LOT iteration
 
   # ---- Step N.1: compute candidate trigger dates ----
-  run_step(con, paste0(pfx, "_lot", lot_num, "_start_candidates"), glue("
-    CREATE OR REPLACE TEMPORARY VIEW lot{lot_num}_start_candidates AS
+  materialize(con, paste0(pfx, "_lot", lot_num, "_start_candidates"),
+              view = glue("lot{lot_num}_start_candidates"),
+              name = lotn_table(lot_num, "START_CANDIDATES"), body = glue("
     WITH
     prev_end AS (
       SELECT ll.PATID,
@@ -295,8 +314,9 @@ build_lot_n <- function(con, lot_num,
 
   # ---- Step N.2: pick LOT_N_START_DT and LOT_N_START_TYPE ----
   least_expr <- .least_coalesce(c("d_MED", "d_ALLO", "d_CART", "d_AUTO"))
-  run_step(con, paste0(pfx, "_lot", lot_num, "_start"), glue("
-    CREATE OR REPLACE TEMPORARY VIEW lot{lot_num}_start AS
+  materialize(con, paste0(pfx, "_lot", lot_num, "_start"),
+              view = glue("lot{lot_num}_start"),
+              name = lotn_table(lot_num, "START"), body = glue("
     SELECT
       sc.PATID,
       sc.PREV_END_DT, sc.OBS_END_DT, sc.DEATH_DT, sc.ENDDATE, sc.ENDDATE_CE,
@@ -325,8 +345,9 @@ build_lot_n <- function(con, lot_num,
     glue("max(case when im.MED_CLASS = '{cl}' then 1 else 0 end) as LOT{lot_num}_CLASS_{.lot_sanitize_col(cl)}"),
     character(1)), collapse = ",\n        ")
 
-  run_step(con, paste0(pfx, "_lot", lot_num, "_induction_meds"), glue("
-    CREATE OR REPLACE TEMPORARY VIEW lot{lot_num}_induction_meds AS
+  materialize(con, paste0(pfx, "_lot", lot_num, "_induction_meds"),
+              view = glue("lot{lot_num}_induction_meds"),
+              name = lotn_table(lot_num, "INDUCTION_MEDS"), body = glue("
     SELECT DISTINCT
       ms.PATID,
       ls.LOT{lot_num}_START_DT,
@@ -349,8 +370,9 @@ build_lot_n <- function(con, lot_num,
   "), qc = glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_pats
                  FROM lot{lot_num}_induction_meds"))
 
-  run_step(con, paste0(pfx, "_lot", lot_num, "_base"), glue("
-    CREATE OR REPLACE TEMPORARY VIEW lot{lot_num}_base AS
+  materialize(con, paste0(pfx, "_lot", lot_num, "_base"),
+              view = glue("lot{lot_num}_base"),
+              name = lotn_table(lot_num, "BASE"), body = glue("
     WITH base_meds AS (
       SELECT PATID, MED_ABBR FROM lot{lot_num}_induction_meds
       UNION
@@ -464,8 +486,9 @@ build_lot_n <- function(con, lot_num,
 
   # ---- Step N.4: LOT_N SCT events scoped to this LOT ----
   # AUTO/ALLO/CART occurring within [LOT_N_START_DT, OBS_END_DT].
-  run_step(con, paste0(pfx, "_lot", lot_num, "_sct"), glue("
-    CREATE OR REPLACE TEMPORARY VIEW lot{lot_num}_sct AS
+  materialize(con, paste0(pfx, "_lot", lot_num, "_sct"),
+              view = glue("lot{lot_num}_sct"),
+              name = lotn_table(lot_num, "SCT"), body = glue("
     WITH lb AS (
       -- LOT_WINDOW_DAYS = the applicable window for this LOT's in-LOT AUTO
       -- definition (30d MED/AUTO-started, 1d ALLO-started, 45d CART-started).
@@ -619,8 +642,9 @@ build_lot_n <- function(con, lot_num,
                  FROM lot{lot_num}_sct"))
 
   # ---- Step N.5: contains_mtx_reg ----
-  run_step(con, paste0(pfx, "_lot", lot_num, "_contains_mtx_reg"), glue("
-    CREATE OR REPLACE TEMPORARY VIEW lot{lot_num}_contains_mtx_reg AS
+  materialize(con, paste0(pfx, "_lot", lot_num, "_contains_mtx_reg"),
+              view = glue("lot{lot_num}_contains_mtx_reg"),
+              name = lotn_table(lot_num, "CONTAINS_MTX_REG"), body = glue("
     WITH valid_maint_regimens AS (
       SELECT DISTINCT im.PATID, im.MED_ABBR AS REGIMEN_KEY
       FROM lot{lot_num}_induction_meds im
@@ -662,8 +686,9 @@ build_lot_n <- function(con, lot_num,
   # the natural end reason (MED_ADD / DISCONTINUATION / DEATH / STUDY_END).
   allo_single_day <- (allo_lot_span == "single_day")
 
-  run_step(con, paste0(pfx, "_lot", lot_num, "_base_end"), glue("
-    CREATE OR REPLACE TEMPORARY VIEW lot{lot_num}_base_end AS
+  materialize(con, paste0(pfx, "_lot", lot_num, "_base_end"),
+              view = glue("lot{lot_num}_base_end"),
+              name = lotn_table(lot_num, "BASE_END"), body = glue("
     WITH
     -- Post-runout guard: identify whether any LOT_(N+1)-qualifying
     -- trigger exists strictly after LOT_BASE_DISCON_DT and on/before
@@ -1007,6 +1032,11 @@ build_lot2_5 <- function(con,
 
   init_lot_long_from_lot1(con, meds = meds, classes = classes)
 
+  # Which lines were actually built. The loop stops at the first line with no
+  # patients to roll forward, so a run need not reach max_lot - and the
+  # per-line stage tables exist only for the lines it did reach. Recorded so
+  # the run can say what it wrote rather than what it was configured to write.
+  built <- integer(0)
   for (n in 2:max_lot) {
     log_msg("--- LOT", n, " ---")
     nrows_before <- db_q(con, glue("SELECT count(*) AS n FROM {lot_out(.LOT_LONG_STAGE)} WHERE LOT_NUM = {n - 1}"))$n
@@ -1020,7 +1050,9 @@ build_lot2_5 <- function(con,
                 sct_tandem_days         = sct_tandem_days,
                 allo_lot_span           = allo_lot_span,
                 meds = meds, classes = classes)
+    built <- c(built, n)
   }
+  options(lot_lines_built = built)
 
   # Atomic publish: the staging table is only now promoted to the final
   # LOT_LONG. Every LOT (1..max_lot, or up to the natural break above)
@@ -1044,6 +1076,16 @@ build_lot2_5 <- function(con,
   "))
   log_msg("LOT_LONG summary (LOT_NUM x START_TYPE x END_REASON):")
   print(summary)
+
+  # The per-line stage tables stay behind. They are the working of each line -
+  # its start candidates, its regimen, its transplants, its end reason - and
+  # reading one answers "why did this patient's LOT3 end there" without a
+  # re-run. LOT_LONG_STAGE is the exception and was dropped above: it is a
+  # half-built LOT_LONG, and leaving it would put a table beside the real one
+  # that looks like it and is not.
+  if (length(built))
+    log_msg("Per-line stage tables written: LOT", paste(built, collapse = "/LOT"),
+            " x {", paste(.LOTN_STAGES, collapse = ", "), "}")
 
   invisible(lot_out("LOT_LONG"))
 }

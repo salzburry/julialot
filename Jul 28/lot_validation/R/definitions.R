@@ -55,7 +55,7 @@ LOT_DIMENSIONS <- list(
                      "and SCT_AUTO is one of the start types the next line can ",
                      "take, so a further transplant becomes a line of its own ",
                      "even with no drug beside it."),
-       where = "lot/R/steps/05_sct.R:11, lot/R/steps/10_lot2_5_base.R:239, :309",
+       where = "lot/R/steps/05_sct.R:11, lot/R/steps/10_lot2_5_base.R:258, :329",
        question = paste0("Does the definition count ASCT as a separate prior ",
                          "line, or as part of the induction line it follows? ",
                          "Does the answer change for a transplant at second ",
@@ -66,7 +66,7 @@ LOT_DIMENSIONS <- list(
        ours = paste0("Yes, and it spans a single day - start and end are the ",
                      "transplant date. It carries no regimen string, because ",
                      "induction rows are suppressed for it."),
-       where = "lot/R/steps/10_lot2_5_base.R:348, :658",
+       where = "lot/R/steps/10_lot2_5_base.R:369, :681",
        question = "Is alloSCT counted as a prior line in its own right?"),
 
   list(id = "cart_is_a_line",
@@ -74,7 +74,7 @@ LOT_DIMENSIONS <- list(
        ours = paste0("CAR-T starts a line of its own. An agent added within ",
                      "the consolidation window before it is read as bridging ",
                      "and stays in the prior line, which ends CART_INIT."),
-       where = "lot/R/steps/06_lot1_end.R:186",
+       where = "lot/R/steps/06_lot1_end.R:176",
        question = paste0("Is CAR-T a prior line? Is bridging therapy counted ",
                          "separately from it?")),
 
@@ -93,7 +93,7 @@ LOT_DIMENSIONS <- list(
                      "of a drug in the current line, or a transplant or CAR-T ",
                      "event. There is no requirement that progression be ",
                      "documented - claims do not carry it."),
-       where = "lot/R/steps/10_lot2_5_base.R:204, :239",
+       where = "lot/R/steps/10_lot2_5_base.R:223, :258",
        question = paste0("Does a new line require documented progression or ",
                          "relapse, or is any regimen change enough?")),
 
@@ -102,7 +102,7 @@ LOT_DIMENSIONS <- list(
        ours = paste0("A gap of MAP_DISCON_GAP_DAYS or more after an agent's ",
                      "exposure ends discontinues it. The predicate is >=, so ",
                      "the threshold day itself counts as a gap."),
-       where = "lot/R/steps/03_mma_map.R:391",
+       where = "lot/R/steps/03_mma_map.R:396",
        question = paste0("Does the definition end a line on a treatment gap, ",
                          "and at what length? Are holds for toxicity excluded?")),
 
@@ -111,7 +111,7 @@ LOT_DIMENSIONS <- list(
        ours = paste0("Day 0 through INDUCTION_WINDOW_DAYS - 1 for LOT1, and ",
                      "the shorter LOT-N window for later lines. An agent after ",
                      "that is an addition, not part of the regimen."),
-       where = "lot/R/steps/10_lot2_5_base.R:341",
+       where = "lot/R/steps/10_lot2_5_base.R:362",
        question = paste0("Is there a window within which added agents belong to ",
                          "the same regimen, and how long?")),
 
@@ -129,7 +129,7 @@ LOT_DIMENSIONS <- list(
        ours = paste0("No. Steroids are dropped from the code list, so they ",
                      "never start a line, never join a regimen and never keep ",
                      "one alive."),
-       where = "lot/R/steps/10_lot2_5_base.R:346",
+       where = "lot/R/steps/10_lot2_5_base.R:367",
        question = paste0("Are corticosteroids counted as agents in the regimen, ",
                          "or disregarded?")),
 
@@ -138,14 +138,14 @@ LOT_DIMENSIONS <- list(
        ours = paste0("No. Neither is visible as a regimen change: the agent ",
                      "set is unchanged, and a hold shorter than the ",
                      "discontinuation gap does not end exposure."),
-       where = "lot/R/steps/03_mma_map.R:391",
+       where = "lot/R/steps/03_mma_map.R:396",
        question = "Does the definition exclude dose modification and holds?"),
 
   list(id = "line_cap",
        dimension = "Is there a cap on how many lines are counted?",
        ours = paste0("Yes - MAX_LOT. Nothing above it is built, so a capped ",
                      "patient is indistinguishable from a completed one."),
-       where = "lot/R/steps/10_lot2_5_base.R:1008, lot/R/build_lot.R:1404",
+       where = "lot/R/steps/10_lot2_5_base.R:1040, lot/R/build_lot.R:1439",
        question = paste0("Does the source cap the line count, or report the ",
                          "full distribution?")),
 

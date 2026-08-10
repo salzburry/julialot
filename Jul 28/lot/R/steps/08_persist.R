@@ -3,18 +3,17 @@
 
 phase_persist <- function(con, ctx) {
   if (isTRUE(cfg$persist_to_schema)) {
-    # MAP_STACKED, LOT1_BASE, LOT1_SCT already materialized before S16.
-    # Only persist the remaining outputs here.
-    persist_tables <- list(
-      list(step = "S20", name = "LOT1_BASE_END",     view = "lot1_base_end"),
-      list(step = "S21", name = "MMA_MED_PROCESSED", view = "mma_med_processed")
-    )
-    for (pt in persist_tables) {
-      run_step(con, paste0(pt$step, "_persist_", tolower(pt$name)), glue("
-        CREATE OR REPLACE TABLE {lot_out(pt$name)} AS
-        SELECT * FROM {pt$view}
-      "), qc = glue("SELECT count(*) AS n_rows FROM {lot_out(pt$name)}"))
-    }
+    # Nothing is copied to a table here any more. LOT1_BASE_END and
+    # MMA_MED_PROCESSED were written at this point, along with MAP_STACKED,
+    # LOT1_BASE and LOT1_SCT before them; all five are now written by the step
+    # that builds them, and their views repointed at the tables. Copying them
+    # here was the wrong end of the run to do it: every read before this phase
+    # - phase_lot1_base, phase_lot1_sct, phase_qc, the LOT1 invariants - had
+    # already re-run the query, and the copy repointed nothing, so the reads
+    # after it did too.
+    #
+    # The counts below therefore read tables. They are still counts of what
+    # this run built, which is what the metadata row is for.
 
     # Persist run metadata - parameters + key counts for rerun comparison
     tryCatch({
