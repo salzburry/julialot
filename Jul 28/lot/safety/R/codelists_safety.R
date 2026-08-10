@@ -56,26 +56,32 @@ SAFETY_COLS <- c("domain", "condition", "acute_chronic", "code_type", "code",
                  "icd_family", "source_note")
 HCRU_COLS   <- c("event", "measure", "code_type", "code", "source_note")
 
-# What a code_type may say, and which Optum CDM field it lands on. Taken from
-# the fields this study already queries rather than from the data dictionary at
-# large: a code_type nothing joins to is a row that matches nothing, which is
-# the same failure as an empty code and just as invisible.
+# What a code_type may say, and which Optum CDM table it lands on. Checked
+# against docs/optum data dict.pdf and docs/optum business rules.pdf rather than
+# assumed: a code_type with no table behind it is a row that matches nothing,
+# which is the same failure as an empty code and just as invisible.
 #
-#   ICD_DIAG      the diagnosis table's code, paired with icd_family
-#   POS           medical claim POS        - place of service
-#   TOS_CD        medical claim TOS_CD     - type of service
-#   CONFINEMENT   the confinement table itself: CONF_ID is an admission, and
-#                 ADMIT_DATE / DISCH_DATE are the stay
-#   REV_CD        revenue code. PENDING: this study does not read a revenue
-#                 code field today, so its presence has to be confirmed against
-#                 the data dictionary before a row using it can be trusted.
-#   PROC          CPT/HCPCS procedure. PENDING for the same reason.
-SAFETY_CODE_TYPES <- c("ICD_DIAG")
-HCRU_CODE_TYPES   <- c("POS", "TOS_CD", "CONFINEMENT", "REV_CD", "PROC")
-# Not read by anything this study runs today. A row carrying one is accepted so
-# the list can be drafted, and named by the runner so it is not mistaken for a
-# definition that already works.
-UNVERIFIED_CODE_TYPES <- c("REV_CD", "PROC")
+#   ICD_DIAG      MED_DIAGNOSIS. Paired with icd_family, because ICD_FLAG is
+#                 what distinguishes ICD-9 from ICD-10 on the claim.
+#   PROC          MED_PROCEDURE. CPT/HCPCS - PROC_CD, or BILL_PROC_CD where the
+#                 client supplied it for billing.
+#   POS           MEDICAL POS    - the place the service was performed.
+#   TOS_CD        MEDICAL TOS_CD - type of service. TOS_EXT is the same thing at
+#                 its most specific, if a finer split is ever wanted.
+#   CONFINEMENT   CONFINEMENT, which carries one unduplicated row per
+#                 hospitalisation - so a row is an admission, and LOS is a
+#                 column rather than a subtraction.
+#
+# REV_CD is deliberately absent. Optum derives ICU_IND, MATERNITY_IND and
+# NEWBORN_IND from revenue codes, so the codes exist upstream - but no table in
+# the dictionary surfaces a revenue-code column to join on, so a list written
+# against one could not be run. It needs an answer, not a placeholder.
+SAFETY_CODE_TYPES <- c("ICD_DIAG", "PROC")
+HCRU_CODE_TYPES   <- c("POS", "TOS_CD", "CONFINEMENT", "PROC")
+# Available in the dictionary but not read by anything this study runs today.
+# A row carrying one is accepted so the list can be drafted, and named by the
+# runner so it is not mistaken for a definition that already works.
+UNVERIFIED_CODE_TYPES <- c("PROC")
 
 # The spellings the cohort build accepts on a code list's icd_family column.
 # Repeated here rather than imported because this package does not read the

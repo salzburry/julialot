@@ -57,23 +57,50 @@ code type nothing joins to is the silent-zero above wearing a different hat.
 
 | `code_type` | lands on |
 |---|---|
-| `ICD_DIAG` | the diagnosis table's code, with `icd_family` |
-| `POS` | medical claim `POS` |
-| `TOS_CD` | medical claim `TOS_CD` |
-| `CONFINEMENT` | the confinement table - `CONF_ID` is an admission, `ADMIT_DATE`/`DISCH_DATE` the stay |
-| `REV_CD` | revenue code. **Not read by this study today** |
-| `PROC` | CPT/HCPCS. **Not read by this study today** |
+| `ICD_DIAG` | `MED_DIAGNOSIS`, with `icd_family` - `ICD_FLAG` is what separates ICD-9 from ICD-10 |
+| `PROC` | `MED_PROCEDURE` - CPT/HCPCS `PROC_CD`, or `BILL_PROC_CD` where the client supplied it |
+| `POS` | `MEDICAL.POS` - where the service was performed |
+| `TOS_CD` | `MEDICAL.TOS_CD` - type of service. `TOS_EXT` is the same at its most specific |
+| `CONFINEMENT` | `CONFINEMENT` - one unduplicated row per hospitalisation, and `LOS` is a column |
 
-`hcru_events.csv` ships filled for all-cause inpatient admission, and the codes
-in it are not new: `POS` 21/51/61, `TOS_CD` `FAC_IP.ACUTE` / `FAC_IP.REHSNF` /
-`FAC_IP.SNF` / `PROF.INPVIS`, or a valid `CONF_ID`. That is the same rule
-`ndmm/R/steps/00_mm_cohort.R` uses for `line_inpatient`, copied rather than
-re-derived, so the study cannot end up with two definitions of an inpatient stay
-- one for the cohort and another for the utilisation outcome.
+There is no `REV_CD`. Optum derives `ICU_IND`, `MATERNITY_IND` and
+`NEWBORN_IND` from revenue codes, so the codes exist upstream, but no table in
+the dictionary surfaces a revenue-code column to join on. A list written against
+one could not be run, so it is not offered as a placeholder - it needs an
+answer.
 
-Length of stay is `ADMIT_DATE` to `DISCH_DATE` from the confinement table, per
-visit, assigned to the period the admit falls in. The protocol asks for exactly
-that, including a stay that begins before 1L baseline and overlaps into it.
+The tables, and how they join, from the business rules: `MEDICAL` to
+`MED_DIAGNOSIS` and `MED_PROCEDURE` on `PATID`/`PAT_PLANID` + `CLMID` +
+`FST_DT` + `LOC_CD`; `MEDICAL` to `CONFINEMENT` on `PAT_PLANID` + `CONF_ID`;
+enrolment on `FST_DT` between `ELIGEFF` and `ELIGEND`. Continuous enrolment
+joins on `PATID` and member enrolment on `PAT_PLANID` - not interchangeable.
+
+`hcru_events.csv` ships filled for all-cause inpatient admission. `CONFINEMENT`
+is the count: the dictionary describes it as a unique record for every
+hospitalisation, with the facility detail bundled into one unduplicated row, so
+a row is an admission and no de-duplication of claims is needed to get there.
+
+The claim-level `POS` 21/51/61 and `TOS_CD` `FAC_IP.ACUTE` / `FAC_IP.REHSNF` /
+`FAC_IP.SNF` / `PROF.INPVIS` are carried beside it as the fallback, and they are
+not new: that is the rule `ndmm/R/steps/00_mm_cohort.R` already uses for
+`line_inpatient`, copied rather than re-derived, so the study cannot end up with
+one definition of an inpatient stay for the cohort and another for the outcome.
+A test reads those codes back out of that step and fails if they drift.
+
+Length of stay is the `LOS` column, which the table already carries -
+`ADMIT_DATE` to `DISCH_DATE` is the same span computed by hand. Per visit,
+assigned to the period the admit falls in, which is what the protocol asks for,
+including a stay that begins before 1L baseline and overlaps into it.
+
+Two other things worth knowing before the safety work starts. The protocol
+allows some events to be defined on lab values; `LABRESULT` exists, but the
+dictionary says it holds only tests performed within certain laboratory
+networks, so a lab-based definition has incomplete capture in a way an
+ICD-based one does not - that is a study decision, not a coding one. And
+`MEMBER_CONTINUOUS_ENROLLMENT` is already a rollup of spans with less than a
+30-day break, which is the protocol's own 30-day gap rule and the build's
+`GAP_DAYS`; the three agree, so continuous enrolment needs no separate
+treatment here.
 
 ## What is outstanding, and what it needs
 
@@ -82,7 +109,7 @@ that, including a stay that begins before 1L baseline and overlaps into it.
 | the twenty-three conditions' codes | the protocol's Annex 3 / Annex 5 |
 | MM-related inpatient stay | a decision on which diagnosis position makes a stay MM-related |
 | ER visit | the `POS` / `TOS_CD` / revenue codes that identify one |
-| `REV_CD`, `PROC` | confirmation from the data dictionary that the fields are available, and which table carries them |
+| a revenue-code field | the dictionary surfaces none, but Optum derives ICU/maternity/newborn flags from revenue codes upstream - is one exposed anywhere we can join to? |
 
 The last three are business-rule questions rather than code-list questions: they
 decide what counts, not which codes spell it.
