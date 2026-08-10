@@ -5,7 +5,7 @@ be. They are **not part of the deliverable** — only `Jul 28/` is deployed — 
 that is the whole reason they live here.
 
 ```
-Rscript validation/run_all.R                      all four suites, one summary
+Rscript validation/run_all.R                      every suite, one summary
 ```
 
 ## Why they are outside the packages
@@ -24,7 +24,8 @@ baseline, and the equivalence check still runs on every change.
 | `port/overall.R` | the overall build's steps against the baseline, line for line |
 | `port/ndmm.R` | every ported NDMM file against its range in the baseline |
 | `port/lot.R` | the LOT1 phases and `10_lot2_5_base.R` against the baseline |
-| `hygiene/lot_selfcontained.R` | the LOT package resolves no path outside itself |
+| `hygiene/lot_selfcontained.R` | the LOT engine resolves no path outside itself |
+| `hygiene/study_folder_standalone.R` | the study folder names no other delivery |
 
 ## Paths
 
@@ -36,6 +37,11 @@ checkout laid out differently or at a renamed package folder:
 PKG_BASE=/some/checkout/pkgs BASELINE_DIR=/some/checkout/baseline \
   Rscript validation/run_all.R
 ```
+
+A suite names the package it checks and where it sits, because that is the
+suite's business rather than `_common.R`'s: `pkg_dir` takes path segments, so
+the LOT engine is `pkg_dir("lot", "engine")` under the `lot/` group and a
+cohort build is still `pkg_dir("ndmm")`.
 
 A suite whose package or baseline is missing exits **3** and reports SKIP.
 `run_all.R` counts skips separately and exits non-zero on any, because a

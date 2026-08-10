@@ -2,7 +2,7 @@
 name: lot-contracts
 description: >
   Author, review, validate, and apply per-tumor lines-of-therapy (LOT) contracts —
-  the governed rule sets that make the claims-based LOT algorithm in `Jul 28/lot/`
+  the governed rule sets that make the claims-based LOT algorithm in `Jul 28/lot/engine/`
   portable across tumors. Use this skill whenever the user mentions lines of therapy,
   LOT rules, or line counting for ANY tumor (myeloma, ovarian, prostate, SCLC, or a
   new indication); asks how the LOT algorithm would handle a tumor-specific concept
@@ -20,7 +20,7 @@ nothing defaults silently.
 
 ## Current engine status — read this first
 
-The engine in `Jul 28/lot/` does **not** read these contract files yet. It reads
+The engine in `Jul 28/lot/engine/` does **not** read these contract files yet. It reads
 `config.csv`/environment settings, and its rule *shapes* are partly hardcoded for
 myeloma. The contracts are the governed specification of what each tumor's run
 means — today they drive design, review, and Q&A; the planned refactor makes the
@@ -76,7 +76,7 @@ signed off. Run the validator.
 ### Supporting the engine refactor
 
 When implementing engine support for a shape, read `rule-shapes.md` for where the
-shape's prototype lives in `Jul 28/lot/` (the melphalan rule is the gap-advancement
+shape's prototype lives in `Jul 28/lot/engine/` (the melphalan rule is the gap-advancement
 prototype; the SCT machinery is the event-stream prototype). The myeloma-baseline
 acceptance rule applies to every kernel change.
 

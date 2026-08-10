@@ -1,5 +1,5 @@
 # Multiple myeloma — the baseline contract.
-# Extracted from Jul 28/lot as shipped; the validator pins every value here to
+# Extracted from Jul 28/lot/engine as shipped; the validator pins every value here to
 # the engine's defaults, so this file and the code cannot drift apart silently.
 # Change the engine, and this file (and the pin table) change in the same commit.
 
@@ -8,7 +8,7 @@ contract_version: 1
 status: baseline_extracted
 
 provenance:
-  source: extracted from Jul 28/lot (config_lot.R defaults and step files)
+  source: extracted from Jul 28/lot/engine (config_lot.R defaults and step files)
   reviewed_by: []
   notes: v1 written at the materialization pass; values are the NDMM study run
 
