@@ -24,32 +24,58 @@
 # than repeated on twenty-three rows where it could drift.
 SAFETY_DOMAINS <- c("hepatologic", "renal", "ocular", "cardiovascular",
                     "neurologic")
+# condition = acute/chronic, because Table 2 states both and a condition filed
+# under the wrong domain or relabelled acute is not a code-list error - it is a
+# different measurement, and it looks exactly like the right one. Holding all
+# three together is what lets the CSV be checked rather than merely parsed.
 SAFETY_CONDITIONS <- list(
-  hepatologic    = c("abnormal_liver_function", "toxic_liver_disease",
-                     "hepatic_failure", "chronic_hepatitis", "acute_hepatitis",
-                     "fibrosis_and_cirrhosis", "non_alcoholic_steatohepatitis"),
-  renal          = c("acute_kidney_injury_or_acute_kidney_disease",
-                     "chronic_kidney_disease",
-                     "moderate_to_severe_renal_impairment_or_esrd"),
-  ocular         = c("corneal_ulcer", "keratopathies"),
-  cardiovascular = c("myocardial_infarction_or_unstable_angina", "valvopathy",
-                     "pulmonary_hypertension",
-                     "cerebrovascular_event_stroke_or_tia",
-                     "peripheral_arterial_thromboembolism",
-                     "deep_venous_thrombosis_or_pulmonary_embolism"),
-  neurologic     = c("peripheral_neuropathy", "parkinsons_disease",
-                     "cognitive_impairment_or_dementia",
-                     "other_movement_disorders", "seizures")
+  hepatologic    = c(abnormal_liver_function       = "acute_or_chronic",
+                     toxic_liver_disease           = "acute_or_chronic",
+                     hepatic_failure               = "acute_or_chronic",
+                     chronic_hepatitis             = "chronic",
+                     acute_hepatitis               = "acute",
+                     fibrosis_and_cirrhosis        = "chronic",
+                     non_alcoholic_steatohepatitis = "chronic"),
+  renal          = c(acute_kidney_injury_or_acute_kidney_disease = "acute",
+                     chronic_kidney_disease                      = "chronic",
+                     moderate_to_severe_renal_impairment_or_esrd = "chronic"),
+  ocular         = c(corneal_ulcer = "acute",
+                     keratopathies = "acute"),
+  cardiovascular = c(myocardial_infarction_or_unstable_angina     = "acute",
+                     valvopathy                                   = "chronic",
+                     pulmonary_hypertension                       = "chronic",
+                     cerebrovascular_event_stroke_or_tia          = "acute",
+                     peripheral_arterial_thromboembolism          = "acute",
+                     deep_venous_thrombosis_or_pulmonary_embolism = "acute"),
+  neurologic     = c(peripheral_neuropathy            = "chronic",
+                     parkinsons_disease               = "chronic",
+                     cognitive_impairment_or_dementia = "chronic",
+                     other_movement_disorders         = "chronic",
+                     seizures                         = "chronic")
 )
 SAFETY_TIMING <- "baseline and follow-up, at 1L, 2L and 3L"
+
+# The domain and acute/chronic each condition belongs to, flattened, so a row
+# can be checked against the roster rather than against itself.
+safety_roster <- function() {
+  do.call(rbind, lapply(SAFETY_DOMAINS, function(d)
+    data.frame(domain = d, condition = names(SAFETY_CONDITIONS[[d]]),
+               acute_chronic = unname(SAFETY_CONDITIONS[[d]]),
+               stringsAsFactors = FALSE)))
+}
 
 # Table 3's utilisation rows. Identified by evidence of a claim rather than by
 # diagnosis, so these carry revenue, place-of-service or claim-type codes and
 # not ICD - which is why they are a separate file with a separate shape.
-HCRU_EVENTS <- c("inpatient_hospitalisation_all_cause",
-                 "inpatient_hospitalisation_mm_related",
-                 "inpatient_length_of_stay_all_cause",
-                 "er_visit")
+# event = the measure Table 3 asks for it. The protocol counts hospitalisations
+# and ER visits (0, 1, 2, 3, 4+) and measures length of stay separately for
+# all-cause and MM-related stays - so there are two length-of-stay events and
+# no MM-related count, which is what the table asks for rather than what the
+# symmetry suggests.
+HCRU_EVENTS <- c(inpatient_hospitalisation_all_cause = "count_and_category",
+                 inpatient_length_of_stay_all_cause  = "length_of_stay",
+                 inpatient_length_of_stay_mm_related = "length_of_stay",
+                 er_visit                            = "count_and_category")
 
 SAFETY_CODELIST_FILES <- c("safety_events.csv", "hcru_events.csv")
 SAFETY_COLS <- c("domain", "condition", "acute_chronic", "code_type", "code",
@@ -134,14 +160,14 @@ safety_read_csv <- function(csv_name, col_spec, codelist_dir) {
 # What the roster says against what the file carries. Returned rather than
 # printed, so the runner can report it and the loader can refuse on it.
 safety_fill_status <- function(codelist_dir) {
-  want <- unlist(unname(SAFETY_CONDITIONS), use.names = FALSE)
+  want <- safety_roster()$condition
   s <- safety_read_csv("safety_events.csv", SAFETY_COLS, codelist_dir)
   h <- safety_read_csv("hcru_events.csv",   HCRU_COLS,   codelist_dir)
 
   filled <- function(x) !is.na(x) & nzchar(trimws(x))
   n_codes <- vapply(want, function(c_i)
     sum(s$df$condition == c_i & filled(s$df$code)), integer(1))
-  n_hcru <- vapply(HCRU_EVENTS, function(e)
+  n_hcru <- vapply(names(HCRU_EVENTS), function(e)
     sum(h$df$event == e & filled(h$df$code)), integer(1))
 
   # A filled row whose code_type nothing joins to, or whose icd_family is
@@ -149,8 +175,28 @@ safety_fill_status <- function(codelist_dir) {
   # neither errors downstream - the exact silent-zero this file exists to stop.
   sf <- s$df[filled(s$df$code), , drop = FALSE]
   hf <- h$df[filled(h$df$code), , drop = FALSE]
-  bad_type <- unique(c(sf$code_type[!sf$code_type %in% SAFETY_CODE_TYPES],
-                       hf$code_type[!hf$code_type %in% HCRU_CODE_TYPES]))
+  # A blank code_type reads as NA, and NA is not in any vocabulary - so it
+  # lands in bad_type and would then be dropped by the is.na() filter below,
+  # letting a code with nowhere to join count as a finished definition. That is
+  # the silent zero this file exists to stop, arriving through the check meant
+  # to stop it. Counted separately, before anything can discard it.
+  no_type <- sum(!filled(sf$code_type)) + sum(!filled(hf$code_type))
+  bad_type <- unique(c(sf$code_type[filled(sf$code_type) &
+                                      !sf$code_type %in% SAFETY_CODE_TYPES],
+                       hf$code_type[filled(hf$code_type) &
+                                      !hf$code_type %in% HCRU_CODE_TYPES]))
+  # The roster, held against the file. A condition filed under another domain
+  # or relabelled acute still has codes and still parses; it measures something
+  # the protocol did not ask for, under a name that says it did.
+  ros <- safety_roster()
+  m <- merge(s$df[, c("domain", "condition", "acute_chronic")], ros,
+             by = "condition", all.x = TRUE, suffixes = c("", "_want"))
+  wrong_domain <- unique(m$condition[!is.na(m$domain_want) &
+                                       m$domain != m$domain_want])
+  wrong_ac <- unique(m$condition[!is.na(m$acute_chronic_want) &
+                                   m$acute_chronic != m$acute_chronic_want])
+  wrong_measure <- unique(h$df$event[h$df$event %in% names(HCRU_EVENTS) &
+                                       h$df$measure != HCRU_EVENTS[h$df$event]])
   bad_family <- unique(sf$icd_family[filled(sf$icd_family) &
                                        !sf$icd_family %in% SAFETY_ICD_FAMILY])
   # ICD_DIAG is joined on family as well as code, so a blank family is not a
@@ -161,6 +207,10 @@ safety_fill_status <- function(codelist_dir) {
     safety_md5 = s$md5, hcru_md5 = h$md5,
     safety_path = s$path, hcru_path = h$path,
     bad_type = bad_type[!is.na(bad_type)],
+    no_type = no_type,
+    wrong_domain = wrong_domain[!is.na(wrong_domain)],
+    wrong_ac = wrong_ac[!is.na(wrong_ac)],
+    wrong_measure = wrong_measure[!is.na(wrong_measure)],
     bad_family = bad_family[!is.na(bad_family)],
     no_family = no_family,
     # Filled rows only. An empty placeholder row carrying one of these is the
@@ -200,10 +250,26 @@ safety_codelist <- function(codelist_dir) {
   if (length(st$bad_domain))
     stop("CODELIST ERROR: safety_events.csv has domain(s) outside Table 2: ",
          paste(st$bad_domain, collapse = ", "), call. = FALSE)
+  if (st$no_type > 0L)
+    stop("CODELIST ERROR: ", st$no_type, " row(s) have a code and no ",
+         "code_type. The code has nowhere to join, so it matches nothing and ",
+         "reports zero rather than failing.", call. = FALSE)
   if (length(st$bad_type))
     stop("CODELIST ERROR: code_type(s) nothing joins to: ",
          paste(st$bad_type, collapse = ", "), ". A row carrying one matches no ",
          "claim and reports zero rather than failing.", call. = FALSE)
+  if (length(st$wrong_domain))
+    stop("CODELIST ERROR: condition(s) filed under a domain the protocol does ",
+         "not put them in: ", paste(st$wrong_domain, collapse = ", "),
+         ". The codes may be right and the measurement would still be ",
+         "reported under the wrong heading.", call. = FALSE)
+  if (length(st$wrong_ac))
+    stop("CODELIST ERROR: condition(s) whose acute_chronic differs from ",
+         "Table 2: ", paste(st$wrong_ac, collapse = ", "), call. = FALSE)
+  if (length(st$wrong_measure))
+    stop("CODELIST ERROR: utilisation event(s) whose measure is not the one ",
+         "Table 3 asks for: ", paste(st$wrong_measure, collapse = ", "),
+         call. = FALSE)
   if (length(st$bad_family))
     stop("CODELIST ERROR: icd_family spelled a way the family join does not ",
          "recognise: ", paste(st$bad_family, collapse = ", "), ". Accepted: ",

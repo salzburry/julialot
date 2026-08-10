@@ -33,7 +33,7 @@ IS_TEMPLATE <- identical(normalizePath(DIR, mustWork = FALSE),
                                        mustWork = FALSE))
 
 st <- safety_fill_status(DIR)
-total <- length(unlist(unname(SAFETY_CONDITIONS)))
+total <- nrow(safety_roster())
 
 cat("\n", strrep("=", 70), "\n", sep = "")
 cat("  KEY SAFETY AND UTILISATION CODE LISTS\n")
@@ -46,7 +46,7 @@ cat("  hcru_events.csv    md5 ", st$hcru_md5, "\n", sep = "")
 cat("\n  Timing for every condition below: ", SAFETY_TIMING, ".\n", sep = "")
 
 for (d in SAFETY_DOMAINS) {
-  cs <- SAFETY_CONDITIONS[[d]]
+  cs <- names(SAFETY_CONDITIONS[[d]])
   cat("\n  ", toupper(d), "\n", sep = "")
   for (c_i in cs) {
     n <- st$n_codes[[c_i]]
@@ -59,7 +59,7 @@ for (d in SAFETY_DOMAINS) {
 cat("\n  HEALTHCARE UTILISATION\n")
 h <- read.csv(file.path(DIR, "hcru_events.csv"), stringsAsFactors = FALSE,
               colClasses = "character")
-for (e in HCRU_EVENTS) {
+for (e in names(HCRU_EVENTS)) {
   n <- st$n_hcru[[e]]
   # Which fields the placeholder rows are drafted against. An event with no
   # codes is not featureless - it already says where its codes would go, and

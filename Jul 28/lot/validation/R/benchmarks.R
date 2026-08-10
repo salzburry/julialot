@@ -263,8 +263,13 @@ compare_benchmarks <- function(observed, refs) {
                            ifelse(is.null(d$regimen) | is.na(d$regimen), "", d$regimen),
                            sep = "|")
   refs$.k <- key(refs); observed$.k <- key(observed)
+  # The three context columns travel with the verdict. Requiring them on the
+  # way in and dropping them on the way out puts the basis for a comparison in
+  # a file nobody reads and the verdict in the one they do - which is the
+  # traceability the guard was added to get, lost at the last step.
   out <- merge(observed, refs[, c(".k", "published_value", "unit", "source",
-                                  "comparable", "notes")],
+                                  "source_population", "source_followup",
+                                  "source_algorithm", "comparable", "notes")],
                by = ".k", all.x = TRUE)
   cmp <- tolower(trimws(ifelse(is.na(out$comparable), "no", out$comparable)))
   out$verdict <- ifelse(

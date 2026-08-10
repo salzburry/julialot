@@ -232,15 +232,22 @@ compare_definitions <- function(sources, dims = LOT_DIMENSIONS) {
       return(data.frame(dimension_id = d$dimension_id, dimension = d$dimension,
                         ours = d$ours, source_id = NA_character_,
                         source_type = NA_character_, citation = NA_character_,
+                        retrieved = NA_character_,
                         answer = NA_character_, concordance = "not yet sourced",
+                        notes = NA_character_,
                         stringsAsFactors = FALSE))
     data.frame(dimension_id = d$dimension_id, dimension = d$dimension,
                ours = d$ours, source_id = rows$source_id,
                source_type = rows$source_type, citation = rows$citation,
+               retrieved = rows$retrieved,
                answer = rows$answer,
                concordance = ifelse(is.na(rows$concordance) |
                                       !nzchar(trimws(rows$concordance)),
                                     "unclear", tolower(trimws(rows$concordance))),
+               # "differs" is only useful with how. Dropping notes here left the
+               # verdict in the rendered file and the explanation in the source
+               # CSV, which is the wrong way round for the one a reader opens.
+               notes = rows$notes,
                stringsAsFactors = FALSE)
   })
   do.call(rbind, out)
