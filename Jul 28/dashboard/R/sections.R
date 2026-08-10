@@ -447,13 +447,25 @@ DASHBOARD_SECTIONS <- c(list(
        label = "Most common base regimens, by line",
        needs = "lot_final", render = "table",
        # Ranked within line, so line 1's long tail does not crowd out line 4.
+       #
+       # Blank regimens are labelled by what started the line, the same way the
+       # transitions panel does it. An ALLO line carries no regimen string, and
+       # on this table there is no other column to say so - the row came out as
+       # an empty cell against a count, which the reader has to guess at. The
+       # label is built in the innermost select and grouped on, so a real
+       # regimen still groups exactly as before.
        sql = "
          SELECT `Line`, `Regimen`, `Patients` FROM (
-           SELECT LOT_NUM AS `Line`, LOT_BASE_MEDS AS `Regimen`,
-                  count(DISTINCT PATID) AS `Patients`,
-                  row_number() OVER (PARTITION BY LOT_NUM
+           SELECT `Line`, `Regimen`, count(DISTINCT PATID) AS `Patients`,
+                  row_number() OVER (PARTITION BY `Line`
                                      ORDER BY count(DISTINCT PATID) DESC) AS rn
-           FROM {lot_final} GROUP BY LOT_NUM, LOT_BASE_MEDS)
+           FROM (
+             SELECT LOT_NUM AS `Line`, PATID,
+                    coalesce(nullif(trim(LOT_BASE_MEDS), ''),
+                             concat(coalesce(LOT_START_TYPE, '?'), ' (no regimen)'))
+                      AS `Regimen`
+             FROM {lot_final})
+           GROUP BY `Line`, `Regimen`)
          WHERE rn <= {top_n} ORDER BY `Line`, `Patients` DESC"),
 
   list(name = "first_added_med", tab = "Regimens",

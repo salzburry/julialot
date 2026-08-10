@@ -58,6 +58,54 @@ subseq_days <- function(v, default) {
   as.integer(x)
 }
 
+# The windows the cohorts are DEFINED by, pinned the way the 1L build pins its
+# own contract. Settable was not the same as free: any other pair builds a
+# different cohort that still lands in NDMM_COHORT_2L and NDMM_COHORT_3L, the
+# names everything downstream reads as the study's. So a non-contract pair
+# stops unless asked for by name - and an overridden run is still readable as
+# one, because the values go onto every output as CE_PRE_DAYS and CE_FU_DAYS.
+SUBSEQ_CONTRACT_PRE_DAYS <- 365L
+SUBSEQ_CONTRACT_FU_DAYS  <- 90L
+subseq_check_windows <- function(pre_days, fu_days) {
+  off <- c(
+    if (pre_days != SUBSEQ_CONTRACT_PRE_DAYS)
+      paste0("SUBSEQ_PRE_DAYS=", pre_days,
+             " (contract ", SUBSEQ_CONTRACT_PRE_DAYS, ")"),
+    if (fu_days != SUBSEQ_CONTRACT_FU_DAYS)
+      paste0("SUBSEQ_FU_CE_DAYS=", fu_days,
+             " (contract ", SUBSEQ_CONTRACT_FU_DAYS, ")"))
+  if (!length(off)) return(invisible(FALSE))
+  if (!identical(toupper(trimws(Sys.getenv("NDMM_SUBSEQ_OVERRIDE", unset = ""))),
+                 "TRUE"))
+    stop("The 2L/3L windows are not the protocol's: ",
+         paste(off, collapse = ", "), ". Cohorts built under other windows are ",
+         "different cohorts wearing the study's table names. ",
+         "NDMM_SUBSEQ_OVERRIDE=TRUE builds them anyway, as a named ",
+         "sensitivity; the values are written into every output either way.",
+         call. = FALSE)
+  log_msg("NON-CONTRACT 2L/3L WINDOWS: ", paste(off, collapse = ", "),
+          ". These cohorts are a sensitivity, not the study's.")
+  invisible(TRUE)
+}
+
+# Mismatched lineage always stops. These are the cases where the proof is
+# MISSING rather than failed - a status table that is not there, a metadata row
+# recording no cohort attempt, a status row from a build too old to carry the
+# column. They used to log and carry on, which let a damaged or older-vintage
+# warehouse build cohorts nothing could tie to their lines. Now the operator
+# accepts an unproven lineage by name or does not get the cohorts.
+subseq_unproven <- function(what) {
+  if (identical(toupper(trimws(Sys.getenv("NDMM_SUBSEQ_ALLOW_UNPROVEN",
+                                          unset = ""))), "TRUE")) {
+    log_msg("UNPROVEN LINEAGE ACCEPTED: ", what)
+    return(invisible(TRUE))
+  }
+  stop(what, " The lines' lineage cannot be proven, and a subset cohort built ",
+       "over mixed vintages looks exactly like a right one. ",
+       "NDMM_SUBSEQ_ALLOW_UNPROVEN=TRUE accepts that, on the record.",
+       call. = FALSE)
+}
+
 # The lines come from a LOT run, so that run has to have finished, to have been
 # built over this cohort, and to have been built over the cohort attempt that
 # is on disk now. The latest status row, whatever state it reached: "complete"
@@ -82,12 +130,20 @@ subseq_check_lot_run <- function(con, prefix) {
          call. = FALSE)
   want <- toupper(trimws(paste0(prefix, "NDMM_COHORT")))
   got  <- sub("^.*\\.", "", toupper(trimws(pick("INPUT_COHORT_TABLE"))))
-  if (!is.na(got) && nzchar(got) && !identical(got, want))
+  if (is.na(got) || !nzchar(got))
+    subseq_unproven(paste0(tbl, " records no INPUT_COHORT_TABLE for run ",
+                           pick("RUN_ID"), ", so there is no proof the lines ",
+                           "are about ", prefix, "NDMM_COHORT."))
+  else if (!identical(got, want))
     stop("That LOT run was built from '", pick("INPUT_COHORT_TABLE"),
          "', not from ", prefix, "NDMM_COHORT. These cohorts would be a subset ",
          "of a population the lines are not about.", call. = FALSE)
   dev <- pick("CONTRACT_DEVIATIONS")
-  if (!is.na(dev) && nzchar(trimws(dev)))
+  if (is.na(dev))
+    subseq_unproven(paste0(tbl, " has no CONTRACT_DEVIATIONS column, so ",
+                           "whether run ", pick("RUN_ID"), " was the contract ",
+                           "algorithm is not recorded."))
+  else if (nzchar(trimws(dev)))
     stop("That LOT run was built with LOT_CONTRACT_OVERRIDE (", dev,
          "), so its lines are an alternative algorithm's.", call. = FALSE)
   log_msg("LOT run ", pick("RUN_ID"), " completed over ", pick("INPUT_COHORT_TABLE"))
@@ -133,7 +189,9 @@ subseq_check_cohort_attempt <- function(con, lot_run_id) {
   tbl <- wrk("NDMM_BUILD_STATUS")
   d <- subseq_row(con, tbl, "1 = 1", "UPDATED_AT DESC")
   if (is.null(d)) {
-    log_msg("  ", tbl, " has no row - the cohort attempt cannot be compared.")
+    subseq_unproven(paste0(tbl, " has no row, so the cohort attempt the lines ",
+                           "were built over cannot be compared to what is on ",
+                           "disk now."))
     return(invisible(list(cohort_run = NA_character_, cohort_stamp = NA_character_)))
   }
   pick <- function(nm) {
@@ -142,11 +200,12 @@ subseq_check_cohort_attempt <- function(con, lot_run_id) {
   }
   now_id <- pick("RUN_ID"); now_stamp <- pick("UPDATED_AT")
   # LOT writes NULL here when it could not find a cohort status table at all.
-  # Nothing recorded is nothing to compare, and saying so is honest; inventing
-  # a match would not be.
+  # Nothing recorded is nothing to compare - and a comparison that cannot be
+  # made is not a comparison that passed.
   if (is.na(lot_cohort_id) || !nzchar(trimws(lot_cohort_id))) {
-    log_msg("  ", meta, " records no cohort attempt for run ", lot_run_id,
-            ", so it cannot be compared to NDMM run ", now_id, ".")
+    subseq_unproven(paste0(meta, " records no cohort attempt for run ",
+                           lot_run_id, ", so it cannot be compared to NDMM ",
+                           "run ", now_id, "."))
     return(invisible(list(cohort_run = NA_character_, cohort_stamp = NA_character_)))
   }
   lot_run_id <- lot_cohort_id
@@ -295,6 +354,10 @@ subseq_funnel_sql <- function(lot_num, from_tbl, pre_days, fu_days, lines_tbl,
 build_subsequent <- function(here, prefix,
                              pre_days = subseq_days("SUBSEQ_PRE_DAYS", 365L),
                              fu_days  = subseq_days("SUBSEQ_FU_CE_DAYS", 90L)) {
+  # Before anything else: a non-contract window pair is a different cohort
+  # under the study's table names, so it is refused here rather than after a
+  # connection has been spent on it.
+  subseq_check_windows(pre_days, fu_days)
   # The same gates the 1L build runs. These cohorts are a subset of that one,
   # so they have to be built under the settings that defined it - a different
   # gap allowance or baseline window here would be a different study.

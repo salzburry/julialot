@@ -160,7 +160,7 @@ mk <- function(lot = STATUS, meta = META, ndmm = NDMM) {
     if (is.null(d)) stop("TABLE_OR_VIEW_NOT_FOUND")
     as.data.frame(d, stringsAsFactors = FALSE)
   }, envir = e)
-  for (fn in c("subseq_check_cohort_attempt", "subseq_row")) {
+  for (fn in c("subseq_check_cohort_attempt", "subseq_row", "subseq_unproven")) {
     g <- get(fn); environment(g) <- e; assign(fn, g, envir = e)
   }
   f <- subseq_check_lot_run; environment(f) <- e
@@ -191,10 +191,51 @@ refuses(mk(ndmm = list(RUN_ID = "N1", UPDATED_AT = "s2")), "now holds run N1",
 # wrong with what is on disk, not that this is an older run.
 refuses(mk(meta = NULL), "has no row in",
         "a complete run with no metadata row is refused, not waved through")
-runs(mk(meta = modifyList(META, list(COHORT_RUN_ID = "")))(NULL, "ndmm_"),
-     "a LOT run that recorded no attempt is reported, not failed on a blank")
-runs(mk(ndmm = NULL)(NULL, "ndmm_"),
-     "no NDMM status table is reported, not treated as a mismatch")
+
+# The unprovable cases stop too. They used to log and carry on, which let a
+# damaged or older-vintage warehouse build cohorts nothing could tie to their
+# lines - a subset cohort over mixed vintages looks exactly like a right one.
+# Accepting an unproven lineage is now an operator's named decision.
+refuses(mk(meta = modifyList(META, list(COHORT_RUN_ID = ""))),
+        "NDMM_SUBSEQ_ALLOW_UNPROVEN",
+        "a LOT run that recorded no cohort attempt is refused, naming the override")
+refuses(mk(ndmm = NULL), "NDMM_SUBSEQ_ALLOW_UNPROVEN",
+        "no NDMM status table is refused - the attempt cannot be compared")
+refuses(mk(modifyList(STATUS, list(INPUT_COHORT_TABLE = ""))),
+        "NDMM_SUBSEQ_ALLOW_UNPROVEN",
+        "a blank INPUT_COHORT_TABLE is refused - no proof the lines are this cohort's")
+refuses(mk(STATUS[setdiff(names(STATUS), "CONTRACT_DEVIATIONS")]),
+        "NDMM_SUBSEQ_ALLOW_UNPROVEN",
+        "a status row too old to say whether the run was contract is refused")
+# The override accepts every unprovable case by name, on the record - and only
+# those: a proven MISMATCH still stops with it set.
+withr("NDMM_SUBSEQ_ALLOW_UNPROVEN", "TRUE", function() {
+  runs(mk(meta = modifyList(META, list(COHORT_RUN_ID = "")))(NULL, "ndmm_"),
+       "the override accepts a recorded-nothing lineage, on the record")
+  runs(mk(ndmm = NULL)(NULL, "ndmm_"),
+       "...and a missing NDMM status table")
+  refuses(mk(ndmm = list(RUN_ID = "N2", UPDATED_AT = "s2")), "now holds run N2",
+          "...but a PROVEN mismatch still stops - the override is not a skip")
+})
+
+# The window pins. Any pair but the protocol's builds a different cohort into
+# the study's table names, so it stops unless asked for as a sensitivity.
+runs(subseq_check_windows(365L, 90L), "the contract windows pass silently")
+m <- tryCatch({ subseq_check_windows(180L, 90L); "" }, error = conditionMessage)
+ok(grepl("SUBSEQ_PRE_DAYS=180", m, fixed = TRUE) &&
+     grepl("NDMM_SUBSEQ_OVERRIDE", m, fixed = TRUE),
+   "a non-contract baseline window stops, naming the value and the override")
+m <- tryCatch({ subseq_check_windows(365L, 30L); "" }, error = conditionMessage)
+ok(grepl("SUBSEQ_FU_CE_DAYS=30", m, fixed = TRUE),
+   "...and so does a non-contract follow-up window")
+withr("NDMM_SUBSEQ_OVERRIDE", "TRUE", function()
+  runs(subseq_check_windows(180L, 30L),
+       "overridden windows build, marked as a sensitivity in the log"))
+# And the build actually asks. A guard nothing calls is a guard that exists
+# only in its tests.
+ok(any(grepl("subseq_check_windows(pre_days, fu_days)",
+             deparse(body(build_subsequent)), fixed = TRUE)),
+   "build_subsequent() calls the window check before it does anything else")
 
 cat("\n-- it can actually run --\n")
 # Every function called has to exist, or the first thing a production run

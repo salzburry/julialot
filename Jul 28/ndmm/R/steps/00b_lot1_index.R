@@ -266,11 +266,17 @@ build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl, med_proc_tbl)
     "c.code_type IN (", types, ")",
     "\n       AND upper(regexp_replace(coalesce(cast(t.", col, " as string),''), '[^A-Za-z0-9]', '')) = c.code",
     "\n       AND regexp_replace(coalesce(cast(t.", col, " as string),''), '[^A-Za-z0-9]', '') <> ''")
+  # ndc_key on the claim side, the same contract as the index and prior-therapy
+  # scans - not a bare lpad. lpad takes any digit string: it pads a short one
+  # into an eleven-digit key and truncates a long one to its first eleven, so a
+  # junk value could collide with a real belantamab NDC and exclude the
+  # patient. ndc_key keys only ten or eleven digits and refuses all zeros. One
+  # normalisation for every NDC arm in the package, so the answer to "is this
+  # value an NDC" cannot depend on which scan is asking.
   ndc_match <- function(col) paste0(
     "c.code_type = 'NDC'",
-    "\n       AND lpad(regexp_replace(coalesce(cast(t.", col, " as string),''), '[^0-9]', ''), 11, '0')",
-    "\n         = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')",
-    "\n       AND regexp_replace(coalesce(cast(t.", col, " as string),''), '[^0-9]', '') <> ''")
+    "\n       AND ", ndc_key(paste0("t.", col)),
+    "\n         = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')")
   # Both ends of the study period. The upper bound was always here; the lower
   # one was not, and the CDM tables reach back well before the study start of
   # 2016-01-01 - so this view could return a claim from outside the window every

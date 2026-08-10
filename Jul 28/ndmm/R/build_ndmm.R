@@ -123,9 +123,13 @@ OUTPUTS <- c(DELIVERABLES, CHECKPOINTS)
 
 # Conditions the study team can accept for a given data set. Nothing else can
 # be waived, and a waiver naming something not here is a typo, not a decision.
-# Only the code list side. The claim side and the ICD flags are reported: a
-# source value that matches nothing is a non-match, not a decision.
-WAIVABLE_CHECKS <- c("codelist_ndc_shape", "codelist_ndc_short")
+# The code list side plus one claim-side condition. Claim-side NDC shape stays
+# report-only - a value that keys to nothing is a non-match, not a decision.
+# raw_icd_flag is different in kind: it fires only on rows whose CODE is on a
+# list this cohort reads, where the flag alone stopped the match - and there a
+# non-match is a decision, one that can drop an MM diagnosis or keep a patient
+# an exclusion code would have removed.
+WAIVABLE_CHECKS <- c("codelist_ndc_shape", "codelist_ndc_short", "raw_icd_flag")
 
 waivers_named <- function() {
   v <- trimws(strsplit(Sys.getenv("NDMM_WAIVERS", unset = ""), "[,|]")[[1]])
@@ -807,17 +811,23 @@ write_build_status <- function(con, cfg, state, n = NA) {
 
 # Claims whose ICD_FLAG names neither family, restricted to ones that could
 # matter. icd_family_sql() yields NULL for an unrecognised flag, so the claim
-# matches no code list entry instead of being mis-classed as ICD-10. That is
-# the safe direction, but silent - this makes it visible.
+# matches no code list entry instead of being mis-classed as ICD-10.
+#
+# Not matching is not a safe direction here - it misses both ways. On an MM
+# inclusion code the lost match can wrongly exclude a patient; on an
+# other-cancer or pregnancy code it can wrongly keep one. What the NULL buys is
+# only that the guess is not dressed up as a match.
 #
 # Relevant means the normalised code is on one of the three diagnosis lists or
 # the pregnancy procedure list. The CDM is full of claims this cohort never
 # reads.
 #
-# Waivable like the NDC shape checks: the values are the CDM's and cannot be
-# corrected here. A waiver accepts that those rows match nothing. It does not
-# reclassify them - putting the ICD-10 guess back would suppress the report and
-# keep the error.
+# Waivable like the NDC shape checks, and wired the same way: found and not
+# waived stops the build, because the affected rows change who is in the
+# cohort and somebody has to look before accepting that. The values are the
+# CDM's and cannot be corrected here; a waiver accepts that those rows match
+# nothing. It does not reclassify them - putting the ICD-10 guess back would
+# suppress the report and keep the error.
 check_icd_flag <- function(con, cfg) {
   fam <- icd_family_sql("t.ICD_FLAG")
   probe <- function(tbl, code_col, lists) glue("
@@ -849,12 +859,19 @@ check_icd_flag <- function(con, cfg) {
     log_msg("  ICD_FLAG: every claim carrying a code this cohort reads names a family")
     return(invisible(FALSE))
   }
-  # Reported, never a stop. An unrecognised flag yields NULL from
-  # icd_family_sql(), NULL matches neither family, and the row does not join.
-  # That is the safe direction and it is ordinary join behaviour - there is no
-  # decision here for anyone to make.
-  log_msg("  ICD_FLAG names neither family on: ", paste(found, collapse = "; "),
-          ". Those rows match no code list entry; nothing reclassifies them.")
+  # A stop unless waived, not a report. These rows carry a code this cohort
+  # reads and only the flag stopped the match, so they move membership in both
+  # directions - a dropped MM diagnosis excludes, a dropped exclusion code
+  # retains. That is a decision, and it belongs to the study team.
+  msg <- paste0("ICD_FLAG names neither family on: ", paste(found, collapse = "; "),
+                ". Those rows match no code list entry; nothing reclassifies ",
+                "them. A dropped MM code can exclude a patient and a dropped ",
+                "exclusion code can keep one, so accepting this is a decision: ",
+                "NDMM_WAIVERS=raw_icd_flag once the study team has looked.")
+  if (!("raw_icd_flag" %in% waivers())) stop(msg, call. = FALSE)
+  log_msg("WAIVED (raw_icd_flag): ", msg)
+  options(ndmm_waivers_applied = union(getOption("ndmm_waivers_applied",
+                                                 character(0)), "raw_icd_flag"))
   invisible(TRUE)
 }
 
