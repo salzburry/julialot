@@ -229,6 +229,25 @@ read_benchmarks <- function(path) {
   if (any(badcmp))
     bad <- c(bad, paste0("comparable must be yes/caveat/no on row(s): ",
                          paste(which(badcmp), collapse = ", ")))
+  # Claiming comparability is a claim about three things, and blank is not one
+  # of them. A published median means nothing against ours without the
+  # population it was measured on, how long they were followed, and which LOT
+  # algorithm produced it - two studies can differ entirely because one counted
+  # maintenance as a line. A blank `comparable` already falls back to "no", so
+  # nothing is lost by staying silent; what is refused is saying yes or caveat
+  # without saying on what basis.
+  claims <- supplied & tolower(trimws(ifelse(is.na(df$comparable), "", df$comparable))) %in%
+    c("yes", "caveat")
+  ctx <- c(source_population = "the population it was measured on",
+           source_followup   = "how long they were followed",
+           source_algorithm  = "which LOT algorithm produced it")
+  for (nm in names(ctx)) {
+    blank <- claims & (is.na(df[[nm]]) | !nzchar(trimws(df[[nm]])))
+    if (any(blank))
+      bad <- c(bad, paste0("comparable is yes/caveat but ", nm, " is blank - ",
+                           ctx[[nm]], " is what makes it comparable. Row(s): ",
+                           paste(which(blank), collapse = ", ")))
+  }
   if (length(bad))
     stop("benchmarks.csv does not load:\n  ", paste(bad, collapse = "\n  "),
          call. = FALSE)

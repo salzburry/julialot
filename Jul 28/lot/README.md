@@ -17,6 +17,7 @@ from a finished run rather than a second account of it.
 | `lot/qc/` | the slower checks on a finished run, asked after the fact. `run_lot_qc.R`. |
 | `lot/validation/` | whether the rules are the right rules - vignettes, benchmarks, definitions, a sensitivity sweep. |
 | `lot/melphalan/` | a proposed line-advancing rule, built as three complete runs and differenced. Opt-in. |
+| `lot/safety/` | code lists for the protocol's key safety and utilisation events. Roster only - the codes are outstanding. |
 | `lot/tools/` | edits a production code list on request. Not a study stage. |
 
 Paths above are written from the study folder, so `lot/engine/` is what you type

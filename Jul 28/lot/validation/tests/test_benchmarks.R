@@ -59,12 +59,36 @@ b <- base; b$published_value <- "about two"; b$source <- "Someone 2024"
 stops(read_benchmarks(wr(b)), "...and a value that is not a number")
 b <- base; b$metric <- "not_a_metric"
 stops(read_benchmarks(wr(b)), "...and a metric the harness does not measure")
+# Comparability is a claim about three things, and a blank is not one of them.
+# Two studies can differ entirely because one counted maintenance as a line, so
+# a median quoted as comparable without saying which algorithm produced it is
+# the number most likely to be repeated and least able to be checked.
+cited <- function(x) { x$published_value <- "2"; x$source <- "Someone 2024"
+                       x$source_population <- "NDMM, US claims"
+                       x$source_followup <- "median 36 months"
+                       x$source_algorithm <- "IMWG-based, maintenance not a line"
+                       x }
+for (col in c("source_population", "source_followup", "source_algorithm")) {
+  b <- cited(base); b$comparable <- "yes"; b[[col]] <- ""
+  stops(read_benchmarks(wr(b)),
+        paste0("claiming comparable with no ", col, " is refused"))
+}
+b <- cited(base); b$comparable <- "caveat"; b$source_algorithm <- ""
+stops(read_benchmarks(wr(b)), "...and 'caveat' is a claim too, so it is held to the same")
+# Staying silent is always allowed: blank comparable already falls back to "no".
+b <- cited(base); b$comparable <- ""
+b$source_population <- ""; b$source_followup <- ""; b$source_algorithm <- ""
+runs(read_benchmarks(wr(b)),
+     "...but a value recorded without claiming comparability needs none of it")
+b <- cited(base); b$comparable <- "yes"
+runs(read_benchmarks(wr(b)), "...and a fully described comparison loads")
 b <- base; b$published_value <- "2"; b$source <- "Someone 2024"; b$comparable <- "maybe"
 stops(read_benchmarks(wr(b)), "...and a comparability that is not yes/caveat/no")
 b <- base[, setdiff(names(base), "source_algorithm")]
 stops(read_benchmarks(wr(b)), "...and a file missing a column")
-b <- base; b$published_value <- "2"; b$source <- "Someone 2024"; b$comparable <- "yes"
-runs(read_benchmarks(wr(b)), "a complete row loads")
+b <- cited(base); b$comparable <- "no"
+runs(read_benchmarks(wr(b)),
+     "a complete row loads - including one recorded as not comparable, which is a finding")
 
 cat("\n-- a difference is two studies differing until somebody says otherwise --\n")
 obs <- data.frame(metric = "median_lines_per_patient", line = NA_integer_,

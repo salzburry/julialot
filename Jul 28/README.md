@@ -74,6 +74,7 @@ in that folder is which.
 | `lot/qc/` | the slower checks on a finished LOT run, asked after the fact. Reads only, writes a report to `out/`. |
 | `lot/validation/` | checks the LOT rules. Needs a finished LOT run for some of it; the sensitivity sweep builds its own throwaway runs. Not part of a study run. |
 | `lot/melphalan/` | builds the proposed melphalan line-advancing rule as three complete LOT runs and reports the difference. Opt-in, writes to its own throwaway prefixes. Not part of a study run. |
+| `lot/safety/` | code lists for the protocol's key safety events and healthcare utilisation events. The roster is complete; the codes are outstanding. |
 | `lot/tools/` | a utility that edits a production code list on request. Not a study stage. |
 
 ## Which names carry a prefix
@@ -136,6 +137,7 @@ Rscript lot/validation/tests/test_vignettes.R    # and test_sensitivity.R,
                                                  # test_definitions.R,
                                                  # test_melphalan.R
 Rscript lot/melphalan/tests/test_aug1_melp.R
+Rscript lot/safety/tests/test_safety_codelists.R
 ```
 
 The study team's worked melphalan scenarios run without a connection too, and
