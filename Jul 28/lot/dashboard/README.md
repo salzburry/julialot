@@ -199,7 +199,7 @@ build still gets a dashboard, minus the funnel.
 
 ```r
 list(name  = "line_length", tab = "Lines",
-     label = "Line length in days",
+     label = "Line length in days (completed lines)",
      needs = "lot_long", render = "table",
      sql   = "SELECT LOT_NUM AS `Line`, ... FROM {lot_long} GROUP BY 1")
 ```
@@ -212,6 +212,16 @@ gap from the output.
 
 `render` is one of `table`, `kpi` (one row of big numbers, one tile per column),
 `bar` (needs `label` and `n`) or `sankey` (needs `source`, `target` and `n`).
+
+Read a column the build stores rather than recomputing one beside it. A line's
+length is `LOT_BASE_LENGTH`, which the engine defines inclusively -
+`datediff(end, start) + 1` - so a panel that computes its own `datediff` reports
+every percentile a day short of the number the rest of the study quotes. Both
+length panels here also drop lines whose `LOT_BASE_END_REASON` is `STUDY_END`
+and count them separately: a line still running at study end has no length yet,
+and folding it in reads a censored line as a short one. That is the definition
+`run_benchmarks.R` uses, so the dashboard and the benchmarks answer the same
+question.
 
 A `bar` must also declare `pct` - what the percentage beside each bar is a
 percentage of. There is no answer right for every chart:

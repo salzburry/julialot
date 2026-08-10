@@ -423,16 +423,69 @@ DASHBOARD_SECTIONS <- c(list(
                 count(*) AS `Lines`
          FROM {lot_final} GROUP BY 1, 2 ORDER BY 1, 2"),
 
+  # LOT_BASE_LENGTH, not datediff. The engine defines a line's length
+  # inclusively - datediff(end, start) + 1 - and stores it, so recomputing it
+  # here without the +1 reported every percentile one day short of the column
+  # sitting beside it. build_lot.R's own lot1_duration_is_plausible check
+  # carries the same warning; this section was the thing it warns about.
+  #
+  # Completed lines only. A line still running at study end has not finished,
+  # and its length so far is not a length: folding those in counts a censored
+  # line as a short one and drags the median down. They are counted in their
+  # own column instead, because how many there are is what says whether the
+  # median can be read at all. This is the definition run_benchmarks.R uses for
+  # median_line_duration_days, so the two now agree rather than differing by
+  # the censoring and a day.
   list(name = "line_length", tab = "Lines",
-       label = "Line length in days",
+       label = "Line length in days (completed lines)",
        needs = "lot_final", render = "table",
        sql = "
-         SELECT LOT_NUM                                               AS `Line`,
-                count(*)                                              AS `Lines`,
-                percentile_approx(datediff(LOT_BASE_END_DT, LOT_START_DT), 0.25) AS `P25`,
-                percentile_approx(datediff(LOT_BASE_END_DT, LOT_START_DT), 0.5)  AS `Median`,
-                percentile_approx(datediff(LOT_BASE_END_DT, LOT_START_DT), 0.75) AS `P75`
-         FROM {lot_final} GROUP BY 1 ORDER BY 1"),
+         SELECT LOT_NUM                                                   AS `Line`,
+                sum(CASE WHEN coalesce(LOT_BASE_END_REASON, '') <> 'STUDY_END'
+                         THEN 1 ELSE 0 END)                               AS `Completed`,
+                sum(CASE WHEN LOT_BASE_END_REASON = 'STUDY_END'
+                         THEN 1 ELSE 0 END)                               AS `Still open`,
+                percentile_approx(CASE WHEN coalesce(LOT_BASE_END_REASON, '') <> 'STUDY_END'
+                                       THEN LOT_BASE_LENGTH END, 0.25)    AS `P25`,
+                percentile_approx(CASE WHEN coalesce(LOT_BASE_END_REASON, '') <> 'STUDY_END'
+                                       THEN LOT_BASE_LENGTH END, 0.5)     AS `Median`,
+                percentile_approx(CASE WHEN coalesce(LOT_BASE_END_REASON, '') <> 'STUDY_END'
+                                       THEN LOT_BASE_LENGTH END, 0.75)    AS `P75`
+         FROM {lot_final} WHERE LOT_BASE_LENGTH IS NOT NULL
+         GROUP BY 1 ORDER BY 1"),
+
+  # The review table. The headline above is three percentiles; this is the
+  # shape of the distribution behind them, per line, so a median can be read
+  # with the tail it came from rather than on its own. Same definition as the
+  # section above - completed lines, LOT_BASE_LENGTH - so the two cannot
+  # disagree, and the censored count travels with it for the same reason.
+  list(name = "line_length_detail", tab = "Lines",
+       label = "Line length in days - full distribution (completed lines)",
+       needs = "lot_final", render = "table",
+       sql = "
+         SELECT LOT_NUM                                                   AS `Line`,
+                sum(CASE WHEN coalesce(LOT_BASE_END_REASON, '') <> 'STUDY_END'
+                         THEN 1 ELSE 0 END)                               AS `Completed`,
+                sum(CASE WHEN LOT_BASE_END_REASON = 'STUDY_END'
+                         THEN 1 ELSE 0 END)                               AS `Still open`,
+                min(CASE WHEN coalesce(LOT_BASE_END_REASON, '') <> 'STUDY_END'
+                         THEN LOT_BASE_LENGTH END)                        AS `Min`,
+                percentile_approx(CASE WHEN coalesce(LOT_BASE_END_REASON, '') <> 'STUDY_END'
+                                       THEN LOT_BASE_LENGTH END, 0.10)    AS `P10`,
+                percentile_approx(CASE WHEN coalesce(LOT_BASE_END_REASON, '') <> 'STUDY_END'
+                                       THEN LOT_BASE_LENGTH END, 0.25)    AS `P25`,
+                percentile_approx(CASE WHEN coalesce(LOT_BASE_END_REASON, '') <> 'STUDY_END'
+                                       THEN LOT_BASE_LENGTH END, 0.5)     AS `Median`,
+                percentile_approx(CASE WHEN coalesce(LOT_BASE_END_REASON, '') <> 'STUDY_END'
+                                       THEN LOT_BASE_LENGTH END, 0.75)    AS `P75`,
+                percentile_approx(CASE WHEN coalesce(LOT_BASE_END_REASON, '') <> 'STUDY_END'
+                                       THEN LOT_BASE_LENGTH END, 0.90)    AS `P90`,
+                max(CASE WHEN coalesce(LOT_BASE_END_REASON, '') <> 'STUDY_END'
+                         THEN LOT_BASE_LENGTH END)                        AS `Max`,
+                round(avg(CASE WHEN coalesce(LOT_BASE_END_REASON, '') <> 'STUDY_END'
+                               THEN LOT_BASE_LENGTH END), 1)              AS `Mean`
+         FROM {lot_final} WHERE LOT_BASE_LENGTH IS NOT NULL
+         GROUP BY 1 ORDER BY 1"),
 
   list(name = "med_count", tab = "Lines",
        label = "Drugs in the base regimen",
