@@ -105,7 +105,7 @@ CHECKPOINTS <- c("NDMM_FLAGS_ALL", "NDMM_CLINTRIAL_FLAGS", "NDMM_MM_DX_CODES",
                  "NDMM_MMA_CODELIST",
                  "NDMM_BELANTAMAB_CODES", "NDMM_LOT1_STARTS",
                  "NDMM_OTHER_MALIG_CODES", "NDMM_OTHER_MALIG_EVENTS",
-                 "NDMM_PREG_CODES",
+                 "NDMM_PREG_CODES", "NDMM_CLINTRIAL_CODES",
                  "NDMM_BELANTAMAB_PATIDS",
                  "NDMM_INDEX_TX", "NDMM_BELANTAMAB_TX", "NDMM_PATIDS",
                  "NDMM_INDEX_INELIGIBLE")
@@ -1067,6 +1067,10 @@ build_ndmm <- function(here, prefix) {
   # CSV, so it can be built here; the flag itself needs LOT1 and the base
   # cohort and stays where it is.
   build_ndmm_clintrial_codes(con)
+  # Read three times - the flags join and both arms of the ICD-flag check -
+  # and it is a VALUES literal, which would otherwise be inlined whole into
+  # each of those plans.
+  checkpoint(con, "NDMM_CLINTRIAL_CODES")
   check_icd_flag(con, cfg)
   build_ndmm_pregnancy_patids(con, cdm_src(cfg$tbl_med_diag),
                               cdm_src(cfg$tbl_medical), cdm_src(cfg$tbl_med_proc))

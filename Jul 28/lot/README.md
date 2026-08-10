@@ -50,9 +50,12 @@ unprefixed, because the cohort build already named it. A run with no prefix is
 rejected rather than allowed to overwrite another one.
 
 One run per prefix at a time. Two cohorts at once is fine; the same prefix
-twice at once is not. No output name carries the run id, and several phases
-repoint a session view at a prefixed table they have just replaced -
-`LOT_PATIENT_INPUT`, the three SCT tables, the `LOT_LONG` stage. The second run
+twice at once is not. No output name carries the run id, and nearly every
+phase repoints a session view at a prefixed table it has just replaced -
+the cohort snapshot, the claim extraction, `MAP_STACKED`, each LOT1 stage,
+the three SCT tables, every LOT2-5 per-line stage, the `LOT_LONG` stage and
+the criteria tables (see "Views read again are written where they are
+built"). The second run
 replaces a table the first has already pointed a view at, and the first reads
 the second's rows from there on; both can still reach `complete` with the
 outputs mixed. `check_no_active_run()` refuses to start when another run is
@@ -647,16 +650,58 @@ phase reads has passed the checks - not merely the table it came from. The row
 and patient counts are compared with the first check too; that catches a cohort
 that changed size, not one swapped for another of the same size.
 
-## Why the run materializes the SCT views
+## Views read again are written where they are built
 
-LOT1 leaves `sct_claims_raw`, `tx_auto_dates` and `tx_allo_cart_dates` as views
-over raw medical, procedure and diagnosis. LOT2-5 reads them once per line, so
-left alone Spark re-runs those scans every time - roughly
-8 AUTO aggregates and 20 SCT scans across LOT2..LOT5.
+A Spark temporary view is a query, not a result - every read re-runs it, and
+these views sit on each other, so the cost is multiplicative rather than
+additive: a view read four times by a view read four times is planned sixteen
+times, and at the bottom of the chain sits a four-arm scan of `medical` and
+`rx`. (`CACHE TABLE` is not supported on SQL warehouses, so a table is the
+only way to keep a result.)
 
-LOT1 has already built them, so the run materializes what is there and
-repoints the views at the tables. `sct_claims_raw` goes first, so the other two
-write from a table instead of re-running the CDM scan.
+So everything read more than once is written to a prefixed work-schema table
+by the step that builds it, and the session view repointed at the table -
+`materialize()` in `db_utils_lot.R`, one spelling for all of it. The steps
+after it are untouched and still name the view, and every later read is a
+scan. Written where it is built, not copied at the end of LOT1 as an earlier
+version did: that copy came after `phase_qc` and the invariants had already
+re-run the query, and it never repointed the views, so the reads after it
+re-ran it too.
+
+The LOT2-5 loop is where this matters most. Its seven per-line stages - start
+candidates, start, induction meds, base, SCT, contains_mtx_reg, base end -
+were lazy views, and each stage reads the ones before it, so the
+start-candidate query - four aggregates and a window function over every
+patient - was reached on the order of a hundred times per line through the
+paths above it, and the whole structure was rebuilt for each of LOT2..LOT5.
+Each stage is now the table `<prefix>LOT<n>_<STAGE>`, planned once.
+
+The per-line stage tables stay behind after the run. They are the working of
+each line - why a patient's LOT3 ended where it did is a read, not a re-run.
+`LOT_LONG_STAGE` is the exception and is dropped after the publish: it is a
+half-built `LOT_LONG`, and leaving it would put a table beside the real one
+that looks like it and is not.
+
+What a run writes is declared, and held to what the steps actually write:
+`LOT_TABLES` in `build_lot.R` for the fixed names, `.LOTN_STAGES` in
+`10_lot2_5_base.R` for the per-line stages, and `lot_run_outputs()` renders
+the two into the list the run logs on completion - only the lines the loop
+actually built, since it stops early when a line has no patients.
+`tests/test_runner.R` compares the declaration against the step sources in
+both directions.
+
+A write that fails stops the build. Falling back to the view would give the
+same numbers and turn minutes into hours with nothing said, and a table the
+run declares as an output would not be there.
+
+### The SCT views, materialized between LOT1 and LOT2-5
+
+`sct_claims_raw`, `tx_auto_dates` and `tx_allo_cart_dates` are the one group
+not written where they are built: LOT1 reads each once, so as long as only
+LOT1 runs they are correctly lazy. LOT2-5 reads them once per line - roughly
+8 AUTO aggregates and 20 SCT scans across LOT2..LOT5 - so the run
+materializes them after LOT1 finishes, `sct_claims_raw` first so the other
+two write from a table instead of re-running the CDM scan.
 
 Whether the views exist is asked of the catalogue (`SHOW VIEWS`), not by
 selecting from them: a `SELECT 1` on a lazy view runs the view, which is the

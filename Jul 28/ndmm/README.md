@@ -72,9 +72,10 @@ read (`2026q1`).
 A temporary view is a query, not a result - Spark re-runs it on every read, and
 these views sit on each other, so a second read of `NDMM_LOT1_STARTS` re-runs
 the whole MM-diagnosis chain beneath it across the raw claim tables. It is read
-thirteen times. Every view read more than once is written to the work schema
+twenty-one times. Every view read more than once is written to the work schema
 once and the view repointed at the table; the steps are untouched and still
-name the view.
+name the view. `tests/test_runner.R` counts the reads the way the SQL makes
+them and fails if a view read more than once is missing from `CHECKPOINTS`.
 
 A checkpoint that cannot be written stops the build. Falling back to the view
 would still give the right numbers, but it turns minutes into hours with nothing

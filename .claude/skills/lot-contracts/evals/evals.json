@@ -1,0 +1,23 @@
+{
+  "skill_name": "lot-contracts",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "We're standing up a LOT analysis for metastatic bladder cancer on the same Optum claims setup as the myeloma study. Can you set up the rules for it? Platinum-based first line is standard, and there's maintenance avelumab after platinum. I don't have the code list in front of me.",
+      "expected_output": "A contracts/bladder.yaml drafted through the interview: status draft, avelumab-style maintenance role with TBD class spellings, platinum equivalence TBD, an explicit decision request (not a silent assumption) on gap-based re-challenge, validator run and passing. No invented sign-off; TBDs name who must answer.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "Quick question - in our ovarian LOT setup, if a patient gets carboplatin, stops for 8 months, then restarts carboplatin, is that a new line or the same line? And would PARP maintenance in between change the answer?",
+      "expected_output": "Answered from contracts/ovarian.yaml citing advancement.same_regimen_gap_days (183, assumed, draft/unreviewed) => new line under the drafted rule, with the caveat that the threshold is a convention pending sign-off; PARP is maintenance_classes (TBD spellings) so it never advances and does not change the answer; notes the engine cannot run this yet (gap shape is prototype-only).",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "Study team decided the SCLC treatment-free interval cutoff should be 120 days not 90. Update our rules.",
+      "expected_output": "sclc.yaml updated in BOTH places coherently (advancement.same_regimen_gap_days and the TFI boundary label) or the distinction surfaced and confirmed; contract_version bumped to 2; provenance.notes records the change and its source; assumed flag cleared or kept honestly; validator re-run and passing.",
+      "files": []
+    }
+  ]
+}

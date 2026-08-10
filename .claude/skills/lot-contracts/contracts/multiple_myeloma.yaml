@@ -1,0 +1,86 @@
+# Multiple myeloma — the baseline contract.
+# Extracted from Jul 28/lot as shipped; the validator pins every value here to
+# the engine's defaults, so this file and the code cannot drift apart silently.
+# Change the engine, and this file (and the pin table) change in the same commit.
+
+tumor: multiple_myeloma
+contract_version: 1
+status: baseline_extracted
+
+provenance:
+  source: extracted from Jul 28/lot (config_lot.R defaults and step files)
+  reviewed_by: []
+  notes: v1 written at the materialization pass; values are the NDMM study run
+
+observation:
+  censor_at_disenrollment: false
+
+episodes:
+  medical_day_supply: 28
+  pharmacy_missing_day_supply: 28
+  map_discon_gap_days: 90
+
+drug_roles:
+  default_role: line_defining
+  supportive_classes:
+    - STEROID
+  backbone_classes: []
+  maintenance_classes: []
+
+equivalence:
+  source: permissible_subs.csv
+  pairs: []
+
+lines:
+  max_lot: 5
+  line1_start_events:
+    - MED
+  regimen_window_days_line1: 60
+  regimen_window_days_later: 30
+  same_day_tie:
+    - SCT_ALLO
+    - SCT_CART
+    - SCT_AUTO
+    - MED
+  end_priority:
+    - SCT_ALLO
+    - SCT_CART
+    - SCT_AUTO
+    - CART_INIT
+    - MED_ADD
+    - DEATH
+    - DISCONTINUATION
+    - STUDY_END
+
+advancement:
+  new_agent: true
+  same_regimen_gap_days: none
+  drop_based: false
+
+event_streams:
+  AUTO:
+    claim_window_days: 13
+    merge_gap_days: 60
+    tandem_max_gap_days: 180
+    line_span: regimen
+    may_start_line1: false
+    may_start_later_lines: true
+  ALLO:
+    line_span: single_day
+    may_start_line1: false
+    may_start_later_lines: true
+  CART:
+    consolidation_days: 45
+    bridging_med_add_days: 45
+    line_span: regimen
+    may_start_line1: false
+    may_start_later_lines: true
+
+boundary_labels: {}
+
+criteria:
+  no_belantamab:
+    enabled: true
+
+expectations:
+  note: face-validity bands live in build_lot.R (LOT_FACE_VALIDITY); move here in phase 2

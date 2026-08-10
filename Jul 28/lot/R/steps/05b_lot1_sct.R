@@ -8,8 +8,11 @@ phase_lot1_sct <- function(con, ctx) {
   # S15: LOT1 SCT variables
   # Derives: LOT1_TX_AUTO_DT_1/2, TAND_FLG, SING_FLG,
   #          LOT1_TX_ENDDATE, LOT1_TX_ENDDATE_REASON, LOT1_1ST_SCT_DT
-  run_step(con, "S15_lot1_sct", glue("
-    CREATE OR REPLACE TEMPORARY VIEW lot1_sct AS
+  # Written to a table rather than left for phase_lot1_end to copy: five
+  # aggregates and a window function over the SCT dates, read twelve times
+  # over the run - S16, phase_qc, phase_persist's QC row, and the LOT1
+  # projection LOT2-5 starts from.
+  materialize(con, "S15_lot1_sct", view = "lot1_sct", name = "LOT1_SCT", body = glue("
     WITH lot1 AS (
       SELECT PATID, LOT1_START_DT, OBS_END_DT FROM lot1_base
     ),

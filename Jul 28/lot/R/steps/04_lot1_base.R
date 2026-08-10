@@ -6,6 +6,9 @@ phase_lot1_base <- function(con, ctx) {
   med_flag_exprs <- ctx$med_flag_exprs; class_flag_exprs <- ctx$class_flag_exprs
 
   # STEP 5 (6): LOT1_BASE
+  # Stays a view: one aggregate over map_stacked, which is a table by now, and
+  # both its readers below are written to tables - so it is planned three
+  # times and each is a grouped scan rather than a re-run of the extraction.
   run_step(con, "S08_lot1_start", "
     CREATE OR REPLACE TEMPORARY VIEW lot1_start AS
     SELECT
@@ -16,8 +19,10 @@ phase_lot1_base <- function(con, ctx) {
     GROUP BY ms.PATID
   ", qc = "SELECT count(*) AS n_patients_with_lot1, min(LOT1_START_DT) AS min_lot1_start, max(LOT1_START_DT) AS max_lot1_start FROM lot1_start")
 
-  run_step(con, "S09_lot1_induction_meds", glue("
-    CREATE OR REPLACE TEMPORARY VIEW lot1_induction_meds AS
+  # Written to a table: S10 below reads it three times (twice through
+  # base_meds, once through med_summary) and S16b four more, and each read
+  # would otherwise re-run the join against map_stacked. Thirteen over a run.
+  materialize(con, "S09_lot1_induction_meds", view = "lot1_induction_meds", name = "LOT1_INDUCTION_MEDS", body = glue("
     SELECT DISTINCT
       ms.PATID,
       l1.LOT1_START_DT,
@@ -33,9 +38,10 @@ phase_lot1_base <- function(con, ctx) {
     SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients, avg(cnt) AS avg_induction_meds
     FROM (SELECT PATID, count(DISTINCT MED_ABBR) AS cnt FROM lot1_induction_meds GROUP BY PATID)")
 
-  # LOT1 BASE: induction meds + permissible subs, discon, first add
-  run_step(con, "S10_lot1_base", glue("
-    CREATE OR REPLACE TEMPORARY VIEW lot1_base AS
+  # LOT1 BASE: induction meds + permissible subs, discon, first add.
+  # Written here rather than in phase_lot1_end: S15 reads it twice before that
+  # phase is reached. Sixteen reads over a run.
+  materialize(con, "S10_lot1_base", view = "lot1_base", name = "LOT1_BASE", body = glue("
     WITH base_meds AS (
       SELECT PATID, MED_ABBR
       FROM lot1_induction_meds

@@ -1,36 +1,22 @@
-# Materialize what the rest reads, then the LOT1 end date and reason.
+# The LOT1 end date and reason.
+#
+# map_stacked, lot1_base and lot1_sct used to be copied to tables here, at the
+# top of this phase. Each is now written where it is built - S07, S10 and S15 -
+# because every one of them is read before this phase is reached, and a copy
+# taken afterwards leaves those earlier reads re-running the query. There is
+# nothing left to materialize here. (CACHE TABLE is not supported on SQL
+# warehouses, so a table is the only way to hold a result.)
 
 phase_lot1_end <- function(con, ctx) {
   meds <- ctx$meds
-
-  # map_stacked, lot1_base and lot1_sct are temporary views over deep CTE
-  # chains back to the CDM. S16 reads each once; the pay-off is downstream,
-  # where descriptives, MAP validation QC and the run-metadata counts read them
-  # many times over. Write them to work-schema tables and repoint the views.
-  # (CACHE TABLE is not supported on SQL warehouses.)
-  log_msg("Materializing intermediate views for downstream reporting/QC...")
-  for (mv in list(
-    list(name = "MAP_STACKED", view = "map_stacked"),
-    list(name = "LOT1_BASE",   view = "lot1_base"),
-    list(name = "LOT1_SCT",    view = "lot1_sct")
-  )) {
-    run_step(con, paste0("S16_materialize_", tolower(mv$name)), glue("
-      CREATE OR REPLACE TABLE {lot_out(mv$name)} AS
-      SELECT * FROM {mv$view}
-    "), qc = glue("SELECT count(*) AS n_rows FROM {lot_out(mv$name)}"))
-    db_exec(con, glue("
-      CREATE OR REPLACE TEMPORARY VIEW {mv$view} AS
-      SELECT * FROM {lot_out(mv$name)}
-    "))
-  }
-
 
   # S16b: contains_mtx_reg - flag-only maintenance concept.
   # Does the LOT1 induction regimen contain a valid maintenance-approved subset
   # (mono or dual) PLUS an anchor agent (any additional induction drug outside
   # that subset)? The anchor may itself be maintenance-eligible in another context.
-  run_step(con, "S16b_lot1_contains_mtx_reg", glue("
-    CREATE OR REPLACE TEMPORARY VIEW lot1_contains_mtx_reg AS
+  # A table: it self-joins lot1_induction_meds four times, and S16 below reads
+  # it again. One row per patient, so the write is small either way.
+  materialize(con, "S16b_lot1_contains_mtx_reg", view = "lot1_contains_mtx_reg", name = "LOT1_CONTAINS_MTX_REG", body = glue("
     WITH
     -- Valid maintenance regimens from actual induction drugs only (NOT substitution-
     -- expanded base_meds). Permissible subs can create phantom regimen members whose
@@ -87,8 +73,13 @@ phase_lot1_end <- function(con, ctx) {
   # route by their earliest applicable event.
   # CART_INIT (MED_ADD followed by CART within cart_consolidation_days)
   # ends LOT1 on FIRST_CART_DT - 1, the day before the CAR-T infusion.
-  run_step(con, "S16_lot1_base_end", glue("
-    CREATE OR REPLACE TEMPORARY VIEW lot1_base_end AS
+  # Written here rather than copied to a table by phase_persist, which is
+  # where it used to be: that copy came after phase_qc and the LOT1
+  # invariants had already read the view, and it never repointed the view, so
+  # LOT2-5 started from the query as well. It is read nine times downstream,
+  # and each read re-ran the post-runout guard below, which scans map_stacked
+  # twice on its own.
+  materialize(con, "S16_lot1_base_end", view = "lot1_base_end", name = "LOT1_BASE_END", body = glue("
     WITH{melp_lot1_ctes(cfg)}
     -- Post-runout guard: identify whether any LOT2-qualifying trigger
     -- exists strictly after LOT1_BASE_DISCON_DT and on/before OBS_END_DT.

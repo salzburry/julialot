@@ -1,0 +1,73 @@
+# Ovarian — DRAFT, unreviewed.
+# The beast: platinum backbone chemotherapy, recurrence counted by re-treatment,
+# and the platinum-free interval (PFI) classifying sensitivity. Conventional
+# values are proposals marked assumed; TBDs are the open questions list.
+
+tumor: ovarian
+contract_version: 1
+status: draft
+
+provenance:
+  source: drafted from published LOT conventions; no study protocol read yet
+  reviewed_by: []
+  notes: v1 skeleton. Every assumed value needs study-team sign-off.
+
+observation:
+  censor_at_disenrollment: false
+
+episodes:
+  medical_day_supply: 28
+  pharmacy_missing_day_supply: 28
+  map_discon_gap_days: 90
+
+drug_roles:
+  default_role: line_defining
+  supportive_classes:
+    - TBD: supportive care classes per this study's code list (antiemetics, G-CSF, bone agents)
+  backbone_classes: []
+  maintenance_classes:
+    - TBD: PARP inhibitor class spelling on the production code list
+    - TBD: bevacizumab / VEGF class spelling on the production code list
+
+equivalence:
+  source: TBD - this tumor's substitution file
+  pairs:
+    - TBD: CARBOPLATIN~CISPLATIN as one platinum, exact abbreviations unverified
+
+lines:
+  max_lot: 5
+  line1_start_events:
+    - MED
+  regimen_window_days_line1: 60
+  regimen_window_days_later: 30
+  same_day_tie:
+    - MED
+  end_priority:
+    - MED_ADD
+    - DEATH
+    - DISCONTINUATION
+    - STUDY_END
+
+advancement:
+  new_agent: true
+  # Platinum re-challenge after a treatment-free gap is a new line. 183 days is
+  # the 6-month PFI convention, measured runout-to-restart.
+  same_regimen_gap_days: 183
+  drop_based: false
+
+event_streams: {}
+# TBD: whether debulking surgery should be an event stream at all; convention is
+# that surgery does not advance a line, which {} states - confirm.
+
+boundary_labels:
+  platinum_free_interval:
+    from_event: last platinum episode end
+    to_event: next platinum episode start
+    sensitive_min_days: 183
+    assumed: true
+    note: recurrence is observable in claims only as re-treatment, so PFI is a proxy; refractory (progression on platinum) is not directly observable - TBD how to report it
+
+criteria: {}
+
+expectations:
+  note: TBD - per-tumor face-validity bands
