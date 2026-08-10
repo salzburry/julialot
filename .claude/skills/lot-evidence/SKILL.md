@@ -101,6 +101,13 @@ Both readers stop on the first structural problem and name the row. A run that
 loads is not a run that is right — it means every filled cell carries what it
 needs to be checked by someone else.
 
+## Starting from scratch
+
+`references/starting-prompt.md` is a ready-to-run prompt for the trial
+comparison, one source at a time. Run it per source rather than for all six at
+once: a single pass over IMWG and five trials produces six answers of the
+quality of the worst one, and nothing afterwards says which was which.
+
 ## What this skill does not do
 
 * It does not change the algorithm. A source that differs is recorded as
