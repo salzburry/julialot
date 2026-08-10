@@ -1,0 +1,12 @@
+event,measure,code_type,code,source_note
+inpatient_hospitalisation_all_cause,count_and_category,POS,21,matches 00_mm_cohort.R line_inpatient
+inpatient_hospitalisation_all_cause,count_and_category,POS,51,matches 00_mm_cohort.R line_inpatient
+inpatient_hospitalisation_all_cause,count_and_category,POS,61,matches 00_mm_cohort.R line_inpatient
+inpatient_hospitalisation_all_cause,count_and_category,TOS_CD,FAC_IP.ACUTE,matches 00_mm_cohort.R line_inpatient
+inpatient_hospitalisation_all_cause,count_and_category,TOS_CD,FAC_IP.REHSNF,matches 00_mm_cohort.R line_inpatient
+inpatient_hospitalisation_all_cause,count_and_category,TOS_CD,FAC_IP.SNF,matches 00_mm_cohort.R line_inpatient
+inpatient_hospitalisation_all_cause,count_and_category,TOS_CD,PROF.INPVIS,matches 00_mm_cohort.R line_inpatient
+inpatient_hospitalisation_all_cause,count_and_category,CONFINEMENT,CONF_ID,a row in the confinement table is an admission
+inpatient_length_of_stay_all_cause,length_of_stay,CONFINEMENT,ADMIT_DATE:DISCH_DATE,per visit; assigned to the period the admit falls in
+inpatient_hospitalisation_mm_related,length_of_stay,,,CONFIRM: which diagnosis position makes a stay MM-related
+er_visit,count_and_category,,,CONFIRM: POS / TOS_CD / revenue codes for an ER visit
