@@ -57,10 +57,20 @@ for (d in SAFETY_DOMAINS) {
   }
 }
 cat("\n  HEALTHCARE UTILISATION\n")
+h <- read.csv(file.path(DIR, "hcru_events.csv"), stringsAsFactors = FALSE,
+              colClasses = "character")
 for (e in HCRU_EVENTS) {
   n <- st$n_hcru[[e]]
+  # Which fields the placeholder rows are drafted against. An event with no
+  # codes is not featureless - it already says where its codes would go, and
+  # that is most of the question when the value list has not arrived.
+  want <- unique(h$code_type[h$event == e & nzchar(h$code_type)])
   cat(sprintf("    %-46s %s\n", e,
-              if (n == 0L) "no codes yet"
+              if (n == 0L)
+                paste0("no codes yet",
+                       if (length(want))
+                         paste0("  (placeholder on ", paste(want, collapse = ", "), ")")
+                       else "")
               else paste0(n, " code", if (n == 1L) "" else "s")))
 }
 
@@ -84,12 +94,17 @@ if (length(st$bad_family))
 if (st$no_family > 0L)
   cat("  ", st$no_family, " ICD_DIAG row(s) with no icd_family, which join to ",
       "nothing\n", sep = "")
-# Drafted against a field this study does not read today. Not an error - the
-# list has to be writable before it is verified - but it must not pass for a
-# definition that already works.
+# Drafted against a field that has not been confirmed queryable. Empty is fine
+# and expected - that is what a placeholder is. Filled is not: the codes may be
+# right and there is still nowhere to join them, so it must not pass for a
+# definition that works.
+if (length(st$drafted))
+  cat("  placeholder(s) drafted on field(s) not confirmed queryable: ",
+      paste(st$drafted, collapse = ", "), "\n", sep = "")
 if (length(st$unverified))
-  cat("  using field(s) not yet confirmed against the data dictionary: ",
-      paste(st$unverified, collapse = ", "), "\n", sep = "")
+  cat("  *** FILLED against an unconfirmed field: ",
+      paste(st$unverified, collapse = ", "),
+      " - confirm the column exists before trusting these\n", sep = "")
 
 if (filled < total || length(st$hcru_unfilled) || length(st$absent) ||
     length(st$unknown)) {

@@ -72,16 +72,23 @@ HCRU_COLS   <- c("event", "measure", "code_type", "code", "source_note")
 #                 hospitalisation - so a row is an admission, and LOS is a
 #                 column rather than a subtraction.
 #
-# REV_CD is deliberately absent. Optum derives ICU_IND, MATERNITY_IND and
-# NEWBORN_IND from revenue codes, so the codes exist upstream - but no table in
-# the dictionary surfaces a revenue-code column to join on, so a list written
-# against one could not be run. It needs an answer, not a placeholder.
+#   REV_CD        a revenue code. Optum derives ICU_IND, MATERNITY_IND and
+#                 NEWBORN_IND from revenue codes, so they exist upstream, but
+#                 no table in the dictionary surfaces a column to join on.
+#                 Draftable, not runnable - see UNVERIFIED_CODE_TYPES.
 SAFETY_CODE_TYPES <- c("ICD_DIAG", "PROC")
-HCRU_CODE_TYPES   <- c("POS", "TOS_CD", "CONFINEMENT", "PROC")
-# Available in the dictionary but not read by anything this study runs today.
-# A row carrying one is accepted so the list can be drafted, and named by the
-# runner so it is not mistaken for a definition that already works.
-UNVERIFIED_CODE_TYPES <- c("PROC")
+HCRU_CODE_TYPES   <- c("POS", "TOS_CD", "CONFINEMENT", "PROC", "REV_CD")
+
+# In the vocabulary so a list can be drafted against them, but not confirmed to
+# be queryable: PROC is a real column nothing in this study reads yet, and
+# REV_CD is a field the dictionary never surfaces at all.
+#
+# Draftable and runnable are different states, and the gap between them is
+# where this would go wrong quietly. A drafted row looks exactly like a finished
+# one - it has codes in it - so left alone it would read as ready and then match
+# nothing. An EMPTY row carrying one of these is fine and expected; a FILLED one
+# stops the read until the field is confirmed, and the runner says which.
+UNVERIFIED_CODE_TYPES <- c("PROC", "REV_CD")
 
 # The spellings the cohort build accepts on a code list's icd_family column.
 # Repeated here rather than imported because this package does not read the
@@ -156,7 +163,14 @@ safety_fill_status <- function(codelist_dir) {
     bad_type = bad_type[!is.na(bad_type)],
     bad_family = bad_family[!is.na(bad_family)],
     no_family = no_family,
-    unverified = intersect(unique(hf$code_type), UNVERIFIED_CODE_TYPES),
+    # Filled rows only. An empty placeholder row carrying one of these is the
+    # point of the placeholder; a filled one is a definition that cannot run.
+    unverified = intersect(unique(c(sf$code_type, hf$code_type)),
+                           UNVERIFIED_CODE_TYPES),
+    # Every code type the file draws on, filled or not, so the runner can show
+    # a placeholder's intended shape rather than an empty line.
+    drafted = intersect(unique(c(s$df$code_type, h$df$code_type)),
+                        UNVERIFIED_CODE_TYPES),
     # A condition the roster names and the file does not mention at all. Worse
     # than an unfilled one: unfilled is visibly not done, absent is invisible.
     absent  = setdiff(want, s$df$condition),
@@ -198,6 +212,14 @@ safety_codelist <- function(codelist_dir) {
     stop("CODELIST ERROR: ", st$no_family, " ICD_DIAG row(s) have no ",
          "icd_family. The join is on family as well as code, so those match ",
          "nothing.", call. = FALSE)
+  # Drafted against a field that has not been confirmed queryable. The codes may
+  # be right; there is nowhere to join them, so a rate built on them would be
+  # zero for want of a column.
+  if (length(st$unverified))
+    stop("CODELIST ERROR: filled row(s) use code type(s) not confirmed against ",
+         "the data dictionary: ", paste(st$unverified, collapse = ", "),
+         ". Confirm the field is exposed and on which table, or leave the rows ",
+         "empty as placeholders.", call. = FALSE)
   if (length(st$unfilled))
     stop("CODELIST ERROR: ", length(st$unfilled), " of ",
          length(unlist(unname(SAFETY_CONDITIONS))),

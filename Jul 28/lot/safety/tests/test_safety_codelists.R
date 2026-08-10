@@ -92,8 +92,13 @@ fill <- function(mut) {
   # every case below would stop for the wrong reason.
   h2 <- read.csv(file.path(tmp, "hcru_events.csv"), stringsAsFactors = FALSE,
                  colClasses = "character")
-  h2$code[!nzchar(h2$code)] <- "21"
+  # A filled list is one where the open questions were answered, so the ER
+  # placeholders resolve onto a confirmed field rather than being filled where
+  # they stand - filling the REV_CD row would be the very thing the read
+  # refuses, and this case is about the ones it should accept.
+  h2 <- h2[!h2$code_type %in% UNVERIFIED_CODE_TYPES, , drop = FALSE]
   h2$code_type[!nzchar(h2$code_type)] <- "POS"
+  h2$code[!nzchar(h2$code)] <- "21"
   write.csv(h2, file.path(tmp, "hcru_events.csv"), row.names = FALSE, na = "")
   tmp
 }
@@ -109,6 +114,29 @@ stops(safety_codelist(fill(function(s) { s$condition[1] <- "liver_things"; s }))
       "...nor a condition renamed out of the protocol's roster")
 stops(safety_codelist(fill(function(s) s[-1, ])),
       "...nor a condition deleted from the file altogether")
+
+cat("\n-- a placeholder on an unconfirmed field may be drafted, not run --\n")
+# The gap between draftable and runnable is where this goes wrong quietly: a
+# filled row looks exactly like a finished one, so REV_CD codes would read as
+# ready and then join to nothing, because no CDM table surfaces the column.
+ok(all(c("PROC", "REV_CD") %in% UNVERIFIED_CODE_TYPES),
+   "PROC and REV_CD are draftable")
+ok("REV_CD" %in% HCRU_CODE_TYPES,
+   "...so an empty REV_CD placeholder row is a legal row")
+tpl_h <- read.csv(file.path(TPL, "hcru_events.csv"), stringsAsFactors = FALSE,
+                  colClasses = "character")
+er <- tpl_h[tpl_h$event == "er_visit", ]
+ok(nrow(er) >= 2 && all(!nzchar(er$code)) &&
+     all(c("POS", "TOS_CD") %in% er$code_type),
+   paste0("the ER placeholder says where its codes go before it has any (",
+          paste(er$code_type, collapse = ", "), ")"))
+ok(!length(safety_fill_status(TPL)$unverified),
+   "an empty placeholder is not flagged as an unconfirmed definition")
+ok("REV_CD" %in% safety_fill_status(TPL)$drafted,
+   "...but it is reported as drafted on one, so it is not invisible")
+# And the moment it carries a code it stops being a placeholder.
+stops(safety_codelist(fill(function(s) { s$code_type[1] <- "PROC"; s })),
+      "a FILLED row on an unconfirmed field stops the read")
 
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))

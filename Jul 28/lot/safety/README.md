@@ -63,11 +63,19 @@ code type nothing joins to is the silent-zero above wearing a different hat.
 | `TOS_CD` | `MEDICAL.TOS_CD` - type of service. `TOS_EXT` is the same at its most specific |
 | `CONFINEMENT` | `CONFINEMENT` - one unduplicated row per hospitalisation, and `LOS` is a column |
 
-There is no `REV_CD`. Optum derives `ICU_IND`, `MATERNITY_IND` and
-`NEWBORN_IND` from revenue codes, so the codes exist upstream, but no table in
-the dictionary surfaces a revenue-code column to join on. A list written against
-one could not be run, so it is not offered as a placeholder - it needs an
-answer.
+`REV_CD` is in the vocabulary but is not confirmed queryable. Optum derives
+`ICU_IND`, `MATERNITY_IND` and `NEWBORN_IND` from revenue codes, so they exist
+upstream, but no table in the dictionary surfaces a column to join on.
+
+Draftable and runnable are different states, and the gap is where this would go
+wrong quietly. An **empty** row on such a field is a placeholder and is fine -
+it records where the codes will go. A **filled** one is not: it looks exactly
+like a finished definition, because it has codes in it, and would read as ready
+and then join to nothing. So a filled row on an unconfirmed field stops the
+read, and the runner reports the two states separately - `placeholder(s)
+drafted on ...` while empty, `*** FILLED against an unconfirmed field` after.
+`PROC` is in the same position: a real column, but nothing in this study reads
+it yet.
 
 The tables, and how they join, from the business rules: `MEDICAL` to
 `MED_DIAGNOSIS` and `MED_PROCEDURE` on `PATID`/`PAT_PLANID` + `CLMID` +
@@ -108,8 +116,8 @@ treatment here.
 |---|---|
 | the twenty-three conditions' codes | the protocol's Annex 3 / Annex 5 |
 | MM-related inpatient stay | a decision on which diagnosis position makes a stay MM-related |
-| ER visit | the `POS` / `TOS_CD` / revenue codes that identify one |
-| a revenue-code field | the dictionary surfaces none, but Optum derives ICU/maternity/newborn flags from revenue codes upstream - is one exposed anywhere we can join to? |
+| ER visit | the values on the `POS` and `TOS` tabs of the data dictionary workbook. Those tabs are referenced by the field descriptions but were not in the captured PDF, so the rows are placeholders on `POS` and `TOS_CD`. |
+| a revenue-code field | the dictionary surfaces none, but Optum derives ICU/maternity/newborn flags from revenue codes upstream - is one exposed anywhere we can join to? Until then the `REV_CD` row stays empty. |
 
 The last three are business-rule questions rather than code-list questions: they
 decide what counts, not which codes spell it.
