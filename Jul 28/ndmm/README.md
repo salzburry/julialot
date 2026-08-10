@@ -685,7 +685,7 @@ its data at all. It is not a proxy for anything either - a belantamab claim
 before the index is a belantamab line before the index.
 
 The half applied in `lot` is belantamab from the index onward:
-`lot/R/line_criteria.R`, criterion `no_belantamab`, switched on by
+`lot/engine/R/line_criteria.R`, criterion `no_belantamab`, switched on by
 `APPLY_NO_BELANTAMAB`. It reads `map_stacked` over the patient's whole LOT span,
 so it is not bounded by `MAX_LOT` or by where in a regimen the drug sat.
 

@@ -1,6 +1,6 @@
 # The kernel: what the engine does, tumor-free
 
-The engine (`Jul 28/lot/`) never reasons about a disease. It reasons about
+The engine (`Jul 28/lot/engine/`) never reasons about a disease. It reasons about
 **per-drug coverage intervals** and **typed dated events**, and assembles lines by
 date arithmetic over them. This file is the condensed mechanism; the full
 reference with worked diagrams is the "How LOT works" document, and the code

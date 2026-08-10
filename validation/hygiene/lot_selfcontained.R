@@ -13,7 +13,7 @@ COMMON <- local({
   file.path(dirname(d), "_common.R")
 })
 source(COMMON)
-ROOT <- pkg_dir("lot")
+ROOT <- pkg_dir("lot", "engine")
 need_dirs(ROOT)
 source(file.path(ROOT, "tests", "testutil.R"))
 

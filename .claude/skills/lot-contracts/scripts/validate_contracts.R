@@ -193,7 +193,7 @@ check_contract <- function(doc, raw_text, fname) {
 }
 
 # The myeloma pin: this contract IS the engine's shipped behavior, so these
-# values must match Jul 28/lot's defaults. Change the engine and this table in
+# values must match Jul 28/lot/engine's defaults. Change the engine and this table in
 # the same commit, or the validator - correctly - refuses.
 MYELOMA_PIN <- list(
   c("observation", "censor_at_disenrollment") , FALSE,

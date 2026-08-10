@@ -1009,7 +1009,7 @@ cat("\n-- the cohort is a cohort the LOT build can be pointed at --\n")
 # NDMM_COHORT was PATID alone - that build would have stopped at its own input
 # check before doing anything.
 lot_req <- local({
-  f <- file.path(dirname(ROOT), "lot", "R", "build_lot.R")
+  f <- file.path(dirname(ROOT), "lot", "engine", "R", "build_lot.R")
   if (!file.exists(f)) return(NULL)
   e <- new.env(); eval(parse(text = paste(
     grep("^REQUIRED_COHORT_COLS", readLines(f, warn = FALSE)), collapse = "")), e)

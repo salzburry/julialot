@@ -50,14 +50,31 @@ ok(length(siblings) > 0, paste0("there are sibling folders to check against (",
                                 length(siblings), ")"))
 
 # Some sibling names are also ordinary words - "validation" is one, and this
-# folder has a lot_validation package and writes validation summaries. Those are
+# folder has a lot/validation package and writes validation summaries. Those are
 # matched only as a path segment. A name carrying a digit or an underscore is
 # distinctive enough that any mention of it is a reference, so those are matched
 # bare - which is the case that matters, since a delivery is dated.
-# ...and the path form needs a boundary in front of it, or "validation/" is
-# found inside this folder's own lot_validation/.
+#
+# One of those names is now also one of this folder's own packages:
+# lot/validation/ is not the delivery beside it. What separates the two is not
+# the character in front of the match - excusing everything after a "/" would
+# excuse "./validation/" and an absolute path just as readily - but whether the
+# path the match sits in resolves inside this folder. So the boundary stays as
+# loose as it was, and a hit is dropped only when it is demonstrably ours.
 distinctive <- grepl("[0-9_]", siblings)
 esc <- function(s) gsub("([^A-Za-z0-9_])", "\\\\\\1", s)
+# Resolved against the folder, so ".." disqualifies a token however it resolves
+# on this disk: a path that hops out and back is reaching outside by any
+# reading, and an absolute path was never ours to begin with.
+inside <- function(tok)
+  !startsWith(tok, "/") &&
+  !any(strsplit(tok, "/", fixed = TRUE)[[1]] == "..") &&
+  file.exists(file.path(ROOT, tok))
+ours_own <- function(line, s) {
+  toks <- regmatches(line, gregexpr("[A-Za-z0-9_.~/-]+", line))[[1]]
+  toks <- grep(paste0("(^|/)", esc(s), "/"), toks, value = TRUE)
+  length(toks) > 0L && all(vapply(toks, inside, logical(1)))
+}
 hits <- unlist(lapply(names(text), function(nm) {
   ls <- text[[nm]]
   unlist(lapply(seq_along(siblings), function(k) {
@@ -65,6 +82,8 @@ hits <- unlist(lapply(names(text), function(nm) {
     pat <- if (distinctive[k]) esc(s)
            else paste0("(^|[^A-Za-z0-9_])", esc(s), "/")
     i <- grep(pat, ls, perl = TRUE)
+    if (!distinctive[k] && length(i))
+      i <- i[!vapply(ls[i], ours_own, logical(1), s = s)]
     if (length(i)) paste0(nm, ":", min(i), "  names '", s, "'") else NULL
   }))
 }))
@@ -88,18 +107,38 @@ ok(!length(hits),
 # A path leaving the folder reaches something that is not being delivered,
 # whatever it is called. Intra-folder hops are how the packages read each
 # other's config, so the test is where the path lands, not that it uses "..".
-path_lines <- unlist(lapply(names(text), function(nm) {
+# How many hops a file can afford is how deep its PACKAGE sits, which is not how
+# deep the file sits. A file under R/ or tests/ is sourced, and builds its paths
+# from the package root it is handed rather than from its own directory - so
+# counting its own depth would hand a step file two hops it could never
+# legitimately spend, and one of those leaves the folder. Counted per file
+# rather than assumed at one flat level, because the packages stopped sitting at
+# one when the LOT ones moved under lot/: lot/qc/ is two directories down, so
+# two hops land on the folder itself and a third leaves it.
+hops <- function(l) {
+  # A parent hop is ".." exactly; R's own "..." is three dots and not a path.
+  m <- gregexpr("(?<!\\.)\\.\\.(?!\\.)", l, perl = TRUE)[[1]]
+  if (m[1] == -1L) 0L else length(m)
+}
+pkg_depth <- function(nm) {
+  seg <- strsplit(nm, "/", fixed = TRUE)[[1]]
+  d <- length(seg) - 1L
+  while (d > 0L && seg[d] %in% c("R", "steps", "tests")) d <- d - 1L
+  d
+}
+checked <- 0L
+escapes <- unlist(lapply(names(text), function(nm) {
+  depth <- pkg_depth(nm)
   ls <- grep("file\\.path\\(|normalizePath\\(|source\\(", text[[nm]], value = TRUE)
   ls <- grep("\\.\\.", ls, value = TRUE)
+  checked <<- checked + length(ls)
+  ls <- ls[vapply(ls, hops, integer(1)) > depth]
   if (length(ls)) paste0(nm, ": ", trimws(ls)) else NULL
 }))
-# Each package sits one level down, so a single ".." lands in the folder itself
-# and two leaves it.
-escapes <- grep('\\.\\..*\\.\\.|"\\.\\./\\.\\.', path_lines, value = TRUE)
 ok(!length(escapes),
    if (length(escapes)) paste0("a path leaves the folder: ", escapes[1])
    else paste0("every relative path stays inside the folder (",
-               length(path_lines), " checked)"))
+               checked, " checked)"))
 
 # The folder's own name in a path is the same problem from the other side: it
 # only resolves from outside, so a reader who moved the folder is broken.

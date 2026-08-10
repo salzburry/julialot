@@ -16,7 +16,7 @@ COMMON <- local({
   file.path(dirname(d), "_common.R")
 })
 source(COMMON)
-ROOT <- pkg_dir("lot")
+ROOT <- pkg_dir("lot", "engine")
 need_dirs(ROOT)
 source(file.path(ROOT, "tests", "testutil.R"))
 
@@ -138,7 +138,7 @@ SUBST <- list(
          to   = "AND lpad(regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', ''), 11, '0')",
          n = 1L)),
   "05_sct.R"       = list(list(from = "SELECT DISTINCT", to = "SELECT", n = 1L)),
-  # The melphalan line-advancing rule (aug1_melp), off unless APPLY_MELP_RULE
+  # The melphalan line-advancing rule (lot/melphalan), off unless APPLY_MELP_RULE
   # names a mode. Both hooks emit nothing when it is unset, so the contract
   # build's SQL is the source's - which is what these two entries pin: the
   # substituted text is what the source has, and the port's is a call that

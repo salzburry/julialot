@@ -23,7 +23,11 @@ REPO      <- validation_root()
 PKG_BASE  <- Sys.getenv("PKG_BASE",  unset = file.path(REPO, "Jul 28"))
 BASELINE  <- Sys.getenv("BASELINE_DIR", unset = file.path(REPO, "apr_30_2026"))
 
-pkg_dir <- function(name) file.path(PKG_BASE, name)
+# Path segments rather than one name: the LOT packages sit in a lot/ group now,
+# so the engine is pkg_dir("lot", "engine") and a cohort build is still
+# pkg_dir("ndmm"). The suites name the package they check; where it sits is
+# theirs to say, not this file's.
+pkg_dir <- function(...) file.path(PKG_BASE, ...)
 
 # A suite whose package or baseline is not there says so and exits 0. It is not
 # a failure - a checkout may hold one and not the other - but it must not read
