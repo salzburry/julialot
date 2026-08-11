@@ -19,7 +19,10 @@ SHOW_LOT_ATTRITION_DETAIL,TRUE,Overview - the same funnel with lines and step-to
 SHOW_DEMOGRAPHICS,TRUE,Cohort - age band by sex
 SHOW_AGE_STATS,TRUE,Cohort - age distribution
 SHOW_INDEX_BY_YEAR,TRUE,Cohort - index dates by year
-SHOW_FOLLOWUP,TRUE,Cohort - follow-up and death
+SHOW_FOLLOWUP,TRUE,Cohort - follow-up days on both definitions
+SHOW_FOLLOWUP_END_REASON,TRUE,Cohort - what ended follow-up
+SHOW_FOLLOWUP_BY_INDEX_YEAR,TRUE,Cohort - follow-up days by index year
+SHOW_FOLLOWUP_BY_MAX_LOT,TRUE,Cohort - follow-up days by highest line reached
 SHOW_LINES_PER_PATIENT,TRUE,Lines - highest line reached
 SHOW_START_TYPE,TRUE,Lines - how each line started
 SHOW_END_REASON,TRUE,Lines - why each line ended

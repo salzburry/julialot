@@ -556,6 +556,40 @@ ok(!length(mism),
                             paste(vapply(mism, `[[`, character(1), "name"), collapse = ", "))
    else "every section declares the inputs its SQL actually reads")
 
+cat("\n-- the follow-up panels agree with each other --\n")
+# The cohort carries two follow-up lengths and they answer different questions:
+# FU_DAYS runs to death or the study end, FU_DAYS_CE is also capped at
+# disenrolment - the protocol's follow-up period and what outcomes censors on.
+# Showing one picks a side without saying so.
+fu <- Filter(function(s) grepl("^followup", s$name), DASHBOARD_SECTIONS)
+ok(length(fu) >= 4L, paste0("follow-up gets more than one panel (", length(fu), ")"))
+# The panels that report days. followup_end_reason is not one - it partitions
+# on what ended follow-up and reports no length at all.
+days <- Filter(function(s) grepl("FU_DAYS", s$sql, fixed = TRUE), fu)
+ok(length(days) >= 3L &&
+     all(vapply(days, function(s) grepl("FU_DAYS_CE", s$sql, fixed = TRUE), logical(1))),
+   paste0("every panel reporting follow-up days carries the CE-bounded one too (",
+          length(days), ")"))
+ok(grepl("FU_DAYS,", getsec("followup")$sql, fixed = TRUE) &&
+     grepl("FU_DAYS_CE", getsec("followup")$sql, fixed = TRUE),
+   "the headline panel shows both definitions rather than choosing one")
+# Two numbers on one page both called "died", differing by the patients who
+# disenrolled and died afterwards, is a discrepancy nobody can reconcile from
+# the page. One predicate: the death that ended follow-up. Aliases differ
+# between panels, so they are compared with the alias stripped.
+norm <- function(x) gsub("\\s+", " ", gsub("p\\.", "", x))
+WANT <- "DEATH_DT IS NOT NULL AND DEATH_DT <= ENDDATE_CE"
+dead <- Filter(function(s) grepl("DEATH_DT", s$sql, fixed = TRUE), fu)
+ok(length(dead) >= 3L,
+   paste0("the follow-up panels that read a death (", length(dead), ")"))
+ok(all(vapply(dead, function(s) grepl(WANT, norm(s$sql), fixed = TRUE), logical(1))),
+   "...all bound it the same way, so no two of them disagree about who died")
+# An ELSE, or a patient matching neither arm vanishes from a chart whose
+# percentages are of the total - a partition that silently is not one.
+er <- getsec("followup_end_reason")$sql
+ok(grepl("ELSE", er, fixed = TRUE) && identical(getsec("followup_end_reason")$pct, "total"),
+   "what ended follow-up is an exhaustive partition, drawn as a share of all of it")
+
 cat("\n-- a bar says what its percentage is of --\n")
 bars <- Filter(function(s) identical(s$render, "bar"), DASHBOARD_SECTIONS)
 ok(all(vapply(bars, function(s) !is.null(s$pct) && s$pct %in% BAR_PCT, logical(1))),

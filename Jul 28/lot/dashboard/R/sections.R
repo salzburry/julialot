@@ -384,18 +384,126 @@ DASHBOARD_SECTIONS <- c(list(
          WHERE PATID IN (SELECT DISTINCT PATID FROM {lot_final})
          GROUP BY 1 ORDER BY 1"),
 
+  # Two definitions, two rows. The cohort carries both and they answer
+  # different questions: FU_DAYS runs to death or the study end and ignores
+  # disenrolment, which is LOT's primary analysis; FU_DAYS_CE is also capped
+  # where continuous enrolment stops, which is the protocol's follow-up period
+  # and what the outcomes build censors on. Showing one silently picks a side.
+  #
+  # Rows rather than one wide line, because side-by-side percentiles of two
+  # different definitions invite reading across a row as though the columns
+  # were a distribution. Both are counted over the same patients, so the two
+  # Patients cells agreeing is part of the panel.
   list(name = "followup", tab = "Cohort",
-       label = "Follow-up and death",
+       label = "Follow-up days, on both definitions",
        needs = c("patients", "lot_final"), render = "table",
        sql = "
-         SELECT count(*)                                              AS `Patients`,
-                sum(CASE WHEN DEATH_DT IS NOT NULL THEN 1 ELSE 0 END) AS `Died in window`,
-                round(avg(FU_DAYS), 1)                                AS `Mean FU days`,
-                percentile_approx(FU_DAYS, 0.5)                       AS `Median FU days`,
-                percentile_approx(FU_DAYS, 0.25)                      AS `P25`,
-                percentile_approx(FU_DAYS, 0.75)                      AS `P75`
+         SELECT `Follow-up ends at`, `Patients`, `Mean`, `Min`, `P25`,
+                `Median`, `P75`, `Max`
+         FROM (
+           SELECT 1 AS ord,
+                  'Death or study end'                       AS `Follow-up ends at`,
+                  count(*)                                   AS `Patients`,
+                  round(avg(FU_DAYS), 1)                     AS `Mean`,
+                  min(FU_DAYS)                               AS `Min`,
+                  percentile_approx(FU_DAYS, 0.25)           AS `P25`,
+                  percentile_approx(FU_DAYS, 0.5)            AS `Median`,
+                  percentile_approx(FU_DAYS, 0.75)           AS `P75`,
+                  max(FU_DAYS)                               AS `Max`
+           FROM {patients}
+           WHERE PATID IN (SELECT DISTINCT PATID FROM {lot_final})
+           UNION ALL
+           SELECT 2,
+                  '...or disenrolment, whichever is first',
+                  count(*),
+                  round(avg(FU_DAYS_CE), 1),
+                  min(FU_DAYS_CE),
+                  percentile_approx(FU_DAYS_CE, 0.25),
+                  percentile_approx(FU_DAYS_CE, 0.5),
+                  percentile_approx(FU_DAYS_CE, 0.75),
+                  max(FU_DAYS_CE)
+           FROM {patients}
+           WHERE PATID IN (SELECT DISTINCT PATID FROM {lot_final})
+         ) fu ORDER BY ord"),
+
+  # What ended it, which is what makes the days above readable. A short median
+  # because people died and a short median because they left the data are the
+  # same number and different findings.
+  #
+  # Partitioned on what ended the CE-bounded follow-up, in that order: a
+  # patient who disenrolled and died later counts as disenrolled, because the
+  # death is outside the window this cohort can see. The three are mutually
+  # exclusive and cover everyone. Same split the outcomes build reports as
+  # N_LOST_TO_FU against N_ONGOING.
+  list(name = "followup_end_reason", tab = "Cohort",
+       label = "What ended follow-up",
+       needs = c("patients", "lot_final"), render = "bar", pct = "total",
+       sql = "
+         SELECT CASE
+                  WHEN DEATH_DT IS NOT NULL AND DEATH_DT <= ENDDATE_CE
+                    THEN 'Died'
+                  WHEN ENDDATE_CE < ENDDATE
+                    THEN 'Disenrolled'
+                  ELSE 'Followed to study end'
+                END                     AS label,
+                count(*)                AS n
          FROM {patients}
-         WHERE PATID IN (SELECT DISTINCT PATID FROM {lot_final})"),
+         WHERE PATID IN (SELECT DISTINCT PATID FROM {lot_final})
+         GROUP BY 1 ORDER BY 2 DESC"),
+
+  # Follow-up falls with the index year by construction - the study end is
+  # fixed, so a 2025 index has less room than a 2017 one. Anything read off
+  # the whole cohort's median is an average over that accrual, so this is the
+  # panel that says whether a trend elsewhere is a finding or the calendar.
+  #
+  # `Died in FU` is the death that ENDED follow-up, the same predicate the
+  # panel above partitions on - not every recorded death. A patient who
+  # disenrolled and died afterwards is counted as disenrolled in both, because
+  # that death is outside the window this cohort observes. Two columns on one
+  # page both called "died", differing by those patients, is the number nobody
+  # can reconcile later.
+  list(name = "followup_by_index_year", tab = "Cohort",
+       label = "Follow-up days by index year",
+       needs = c("patients", "lot_final"), render = "table",
+       sql = "
+         SELECT cast(year(INDEX_DATE) as string)                      AS `Index year`,
+                count(*)                                              AS `Patients`,
+                percentile_approx(FU_DAYS, 0.5)                       AS `Median`,
+                percentile_approx(FU_DAYS_CE, 0.5)                    AS `Median (CE)`,
+                percentile_approx(FU_DAYS_CE, 0.25)                   AS `P25 (CE)`,
+                percentile_approx(FU_DAYS_CE, 0.75)                   AS `P75 (CE)`,
+                sum(CASE WHEN DEATH_DT IS NOT NULL AND DEATH_DT <= ENDDATE_CE
+                         THEN 1 ELSE 0 END)                           AS `Died in FU`
+         FROM {patients}
+         WHERE PATID IN (SELECT DISTINCT PATID FROM {lot_final})
+         GROUP BY 1 ORDER BY 1"),
+
+  # The same confounder one layer in. Reaching a later line takes time, so the
+  # patients who got there are the ones who had the time - reading the line
+  # distribution without this reads accrual as treatment.
+  #
+  # The restriction is stated even though the inner join already applies it.
+  # Every cohort panel here says which population it is on in its own SQL,
+  # rather than leaving a reader to work out that a join is inner.
+  list(name = "followup_by_max_lot", tab = "Cohort",
+       label = "Follow-up days by highest line reached",
+       needs = c("patients", "lot_final"), render = "table",
+       sql = "
+         SELECT concat('LOT', cast(m.max_lot as string))                 AS `Highest line`,
+                count(*)                                                 AS `Patients`,
+                percentile_approx(p.FU_DAYS, 0.5)                        AS `Median`,
+                percentile_approx(p.FU_DAYS_CE, 0.5)                     AS `Median (CE)`,
+                percentile_approx(p.FU_DAYS_CE, 0.25)                    AS `P25 (CE)`,
+                percentile_approx(p.FU_DAYS_CE, 0.75)                    AS `P75 (CE)`,
+                sum(CASE WHEN p.DEATH_DT IS NOT NULL
+                              AND p.DEATH_DT <= p.ENDDATE_CE
+                         THEN 1 ELSE 0 END)                          AS `Died in FU`
+         FROM {patients} p
+         INNER JOIN (SELECT PATID, max(LOT_NUM) AS max_lot
+                     FROM {lot_final} GROUP BY PATID) m
+                 ON m.PATID = p.PATID
+         WHERE p.PATID IN (SELECT DISTINCT PATID FROM {lot_final})
+         GROUP BY 1 ORDER BY 1"),
 
   # Lines.
 
