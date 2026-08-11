@@ -20,11 +20,11 @@ an attempt recorded without a stamp. The stamp matters because two attempts can
 reuse a run id, which is the one case an id alone cannot separate.
 
 Carrying on wrote outcomes measured over an unproven lineage into tables that
-look ordinary and carry this run's . Nothing downstream could tell
+look ordinary and carry this run's `OUT_RUN_ID`. Nothing downstream could tell
 them from proven ones, because nothing downstream was told - so "we could not
 check" and "we checked and it matched" were the same outcome.
 
- accepts it deliberately, and the log records
+`OUT_ALLOW_UNPROVEN_LINEAGE=TRUE` accepts it deliberately, and the log records
 that it was accepted. A lineage shown to be WRONG still stops with it set: the
 override is for what could not be checked, never for what failed.
 
