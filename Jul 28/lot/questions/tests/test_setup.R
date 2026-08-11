@@ -690,18 +690,43 @@ ok(grepl("q6_grp <- ", q6, fixed = TRUE) &&
 ok(grepl("missing_cohort_rows", q6, fixed = TRUE) &&
      grepl("no cohort row (broken join)", q6, fixed = TRUE),
    "...and a patient with no cohort row is counted, not dropped into the median")
-# Two deliverables now report what ended follow-up. If they use different
+# Three things now report what ended follow-up: this workbook, the dashboard,
+# and the paste-and-run script beside the cohort build. If they use different
 # predicates they will disagree about who died, and nobody reading one of them
-# can tell. Aliases differ, so they are compared with the alias stripped.
-dash <- paste(readLines(file.path(GROUP, "dashboard", "R", "sections.R"),
-                        warn = FALSE), collapse = "\n")
-nm <- function(x) gsub("\\s+", " ", gsub("[fp]\\.", "", x))
-WANT <- "DEATH_DT IS NOT NULL AND DEATH_DT <= ENDDATE_CE"
-ok(grepl(WANT, nm(q6), fixed = TRUE) && grepl(WANT, nm(dash), fixed = TRUE),
-   "the workbook and the dashboard bound a death in follow-up identically")
-ok(grepl("ENDDATE_CE < ENDDATE", nm(q6), fixed = TRUE) &&
-     grepl("ENDDATE_CE < ENDDATE", nm(dash), fixed = TRUE),
-   "...and read disenrolment identically too")
+# can tell. Aliases differ between them, so they are compared with the alias
+# stripped.
+FU_SRC <- list(
+  workbook  = file.path(ROOT, "poma_studyteam_qs.R"),
+  dashboard = file.path(GROUP, "dashboard", "R", "sections.R"),
+  sql       = file.path(STUDY, "ndmm", "followup_days.sql"))
+nm <- function(f) gsub("\\s+", " ",
+                       gsub("[fp]\\.", "",
+                            paste(readLines(f, warn = FALSE), collapse = "\n")))
+ok(all(vapply(FU_SRC, file.exists, logical(1))),
+   paste0("every place that reports what ended follow-up is present (",
+          length(FU_SRC), ")"))
+txt <- lapply(FU_SRC, nm)
+# Every death test bounded, not merely one of them somewhere in the file. A
+# file with two and only one bounded still contains the right string, which is
+# exactly the half-drift this is here to catch.
+cnt <- function(pat, s) {
+  g <- gregexpr(pat, s, fixed = TRUE)[[1]]
+  if (length(g) == 1L && g[1] == -1L) 0L else length(g)
+}
+BOUND <- "DEATH_DT IS NOT NULL AND DEATH_DT <= ENDDATE_CE"
+ok(all(vapply(txt, function(x) {
+       n <- cnt("DEATH_DT IS NOT NULL", x)
+       n > 0L && identical(n, cnt(BOUND, x))
+     }, logical(1))),
+   "...and every death test in all three is bounded by the CE follow-up end")
+ok(all(vapply(txt, function(x) grepl("ENDDATE_CE < ENDDATE", x, fixed = TRUE),
+              logical(1))),
+   "...and all three read disenrolment the same way")
+# The quick script exists so nobody has to wait for a build to see these
+# numbers. That is only worth anything if they are the same numbers.
+ok(grepl("FU_DAYS_CE", txt$sql, fixed = TRUE) &&
+     grepl("percentile_approx(FU_DAYS, 0.5)", txt$sql, fixed = TRUE),
+   "the quick script reports both follow-up lengths, as the other two do")
 
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))

@@ -416,6 +416,13 @@ rather than written into the SQL. Other cohorts keep three months.
 It rests on a request rather than a signed record - the only setting here that
 does. `DECISIONS.md` section 1 says what is still needed.
 
+`followup_days.sql` is the follow-up numbers themselves, as a paste-and-run
+script: the distribution on both of the cohort's definitions, what ended
+follow-up, and the same by index year. It reads this build's own output, so it
+works before the LOT build has run - only its last statement needs one. The
+dashboard and the POMA workbook report the same figures over the LOT
+population, using the same predicates, and a test compares all three.
+
 So the run produces the number the decision should be made against. Every
 run writes `<prefix>NDMM_FU_CE_COUNTS`: the cohort size at 0, 30, 60 and 90
 days and at exactly three calendar months, with the applied row marked.
