@@ -91,9 +91,9 @@ subseq_check_windows <- function(pre_days, fu_days) {
 # Mismatched lineage always stops. These are the cases where the proof is
 # MISSING rather than failed - a status table that is not there, a metadata row
 # recording no cohort attempt, a status row from a build too old to carry the
-# column. They used to log and carry on, which let a damaged or older-vintage
-# warehouse build cohorts nothing could tie to their lines. Now the operator
-# accepts an unproven lineage by name or does not get the cohorts.
+# column. Logging and carrying on lets a damaged or older-vintage warehouse
+# build cohorts nothing can tie to their lines, so the operator accepts an
+# unproven lineage by name or does not get the cohorts.
 subseq_unproven <- function(what) {
   if (identical(toupper(trimws(Sys.getenv("NDMM_SUBSEQ_ALLOW_UNPROVEN",
                                           unset = ""))), "TRUE")) {
@@ -213,9 +213,8 @@ subseq_check_cohort_attempt <- function(con, lot_run_id) {
     a <- trimws(as.character(a)); b <- trimws(as.character(b))
     length(a) == 1L && length(b) == 1L && !is.na(a) && !is.na(b) && identical(a, b)
   }
-  # A blank stamp used to count as a match. The stamp exists precisely because
-  # two attempts can reuse a run id, so a blank one does not prove the attempt -
-  # it declines to speak about it, and "could not check" is not "checked".
+  # The stamp exists because two attempts can reuse a run id, so a blank one
+  # does not prove the attempt. "Could not check" is not "checked".
   if (eq(lot_run_id, now_id) && (is.na(lot_stamp) || !nzchar(trimws(lot_stamp)))) {
     subseq_unproven(paste0(meta, " records cohort run ", lot_run_id,
                            " with no stamp, so a second attempt under the same ",

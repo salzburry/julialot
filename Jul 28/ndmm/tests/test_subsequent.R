@@ -192,7 +192,7 @@ refuses(mk(ndmm = list(RUN_ID = "N1", UPDATED_AT = "s2")), "now holds run N1",
 refuses(mk(meta = NULL), "has no row in",
         "a complete run with no metadata row is refused, not waved through")
 
-# The unprovable cases stop too. They used to log and carry on, which let a
+# The unprovable cases stop too. Logging and carrying on lets a
 # damaged or older-vintage warehouse build cohorts nothing could tie to their
 # lines - a subset cohort over mixed vintages looks exactly like a right one.
 # Accepting an unproven lineage is now an operator's named decision.

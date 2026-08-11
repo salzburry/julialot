@@ -57,8 +57,8 @@
 # The per-line stages, in build order. Each is written to <prefix>LOT<n>_<NAME>
 # and its session view repointed, so the next stage reads a table.
 #
-# They used to be temporary views, and that is what made this loop the slowest
-# part of a run. A view is a query: Spark inlines its plan at every reference
+# As temporary views this loop was the slowest part of a run. A view is a
+# query: Spark inlines its plan at every reference
 # and re-runs it. These sit on each other, so the cost compounds - lotN_base
 # reads lotN_induction_meds three times and is itself read six times, and
 # lotN_base_end reads lotN_base four more. Counting the references through the

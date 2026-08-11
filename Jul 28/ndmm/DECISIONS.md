@@ -488,16 +488,14 @@ Two authorities say different things and neither had been recorded as winning:
 | the current protocol, 6.2.1.2 Exclusion Criteria | "Evidence of pregnancy: ... indicating pregnancy or childbirth **during the study period**" |
 | the validated program spec, citing an earlier protocol 4.2 Exclusion 3 | ">=1 medical claim ... **during the baseline or follow-up period**", and "Spans baseline + follow-up period" |
 
-The code follows the current protocol. That is the deliberate reading - a
-later protocol version supersedes a spec sheet built against an earlier one -
-and it is written here because the two are not reconcilable and the spec sheet
-is still on disk saying otherwise.
+The code follows the protocol: a later version supersedes a spec sheet built
+against an earlier one. Recorded here because the spec sheet is still on disk
+saying otherwise.
 
-It is the wider of the two, so it EXCLUDES MORE. The study period is about ten
-years and a patient's own baseline and follow-up is a fraction of it, so a
-pregnancy claim years away from a patient's index date excludes them under this
-reading and would not under the other. That is a cohort-size effect and it goes
-one way.
+It is the wider window, so it EXCLUDES MORE. The study period is about ten years
+and a patient's own baseline and follow-up is a fraction of it, so a pregnancy
+claim years from a patient's index date drops them under this reading and would
+not under the other.
 
 Measured: `<prefix>NDMM_PREG_WINDOW_COUNTS`, one row per reading with the
 applied one marked - the same shape `NDMM_FU_CE_COUNTS` uses for the follow-up
@@ -516,21 +514,27 @@ the containment (the narrower window can only leave a larger cohort and can
 only find fewer claims) and against `NDMM_PATIDS`: the applied row recomputes
 the conjunction the published cohort count comes from, so it has to equal it.
 
-**What the alternative row is, exactly.** It varies one thing - the window -
-and nothing else. It uses this build's 365-day baseline, not calendar months,
-and its follow-up runs to death or the study end. **It does not stop at
-disenrolment.** The program spec says "baseline or follow-up period" without
-defining follow-up's end, and if the study team means it to stop where
-continuous enrolment stops then this row is an upper bound on the narrower
-reading rather than the narrower reading itself. That is the question to settle
-at sign-off, and it is the reason this row is a sensitivity rather than a
-re-creation of the older pipeline.
+**What the alternative row is, exactly.** It varies the window and nothing else:
+this build's 365-day baseline, not calendar months, and follow-up running to
+death or the study end. **It does not stop at disenrolment.**
 
-One scan serves both. The claim scan writes `NDMM_PREGNANCY_EVENTS` with dates,
-the exclusion takes distinct patients of it over the study period exactly as
-before, and the review table filters the same events to
-`[index - 365, follow-up end]`. A second scan is how the criterion and the
-table pricing it would come to disagree about what a pregnancy claim is.
+The program spec says "baseline or follow-up period" without defining where
+follow-up ends. If the study team means it to stop where continuous enrolment
+stops, this row bounds the narrower reading rather than being it - and in which
+direction depends on the column:
+
+| | if follow-up should stop at disenrolment |
+|---|---|
+| `N_WITH_PREG_CLAIM`, `N_EXCL_INCREMENTAL` | this row is an **upper** bound |
+| `N_COHORT`, and the patients recovered against the study-period rule | this row is a **lower** bound |
+
+So the true alternative cohort is at least as large as this row says. That is
+the question to settle at sign-off, and the reason this is a sensitivity rather
+than a re-creation of the older pipeline.
+
+One scan serves both: the claim scan writes `NDMM_PREGNANCY_EVENTS` with dates,
+the exclusion takes distinct patients of it over the study period, and the
+review table filters the same events to `[index - 365, follow-up end]`.
 
 Status: implemented as the current protocol says. PENDING SIGN-OFF on the
 precedence itself - if the study team means the patient-specific window, it is
@@ -547,15 +551,13 @@ other agents are discontinued; and named valid mono and dual regimens.
 
 **None of that is built.** The engine derives `contains_mtx_reg`, a descriptive
 0/1 on the line, and constructs no maintenance period, start, end, type or end
-reason. `maintenance_validated.csv` records every row of the definition as "Not
-yet implemented", and `lot/validation/R/definitions.R` states the resulting
-behaviour as this build's answer - that maintenance is never a line.
+reason. The validation sheet records every row of the definition as not yet
+implemented, and `lot/validation/R/definitions.R` states the resulting behaviour
+as this build's answer - that maintenance is never a line.
 
-The distinction that matters for anyone reading a LOT count: this is not a
-decision that maintenance should not be a line. It is that the period the
-protocol defines does not exist here, so the question the protocol asks has not
-been put. A line whose regimen reduces to a single maintenance agent continues
-as the same line, which is what "maintenance is never a line" describes.
+That is not a decision that maintenance should not be a line. The period the
+protocol defines does not exist here, so the question has not been put. A line
+whose regimen reduces to a single maintenance agent continues as the same line.
 
 Status: NOT IMPLEMENTED. This is the largest single gap between the protocol and
 the build outside safety and HCRU, and it changes line counts wherever the
