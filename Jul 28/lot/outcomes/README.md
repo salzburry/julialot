@@ -98,6 +98,17 @@ This is not the LOT run's observation window. LOT's primary analysis
 ignores disenrolment (`OBS_END_DT = ENDDATE`); the protocol's follow-up period
 does not. The two are different questions and the difference is deliberate.
 
+`followup_outcomes.sql` reads it back off a finished run, paste-and-run:
+observed follow-up per line on both denominators, how many events each endpoint
+got, the attrition categories, and the check that the five sum to `N_ON_LINE`.
+
+It is a row per patient-**line**, from that line's own start. `ndmm/followup_days.sql`
+and the dashboard's Cohort tab are a row per **patient**, from the index date.
+They do not reconcile, and neither does `N_LOST_TO_FU` / `N_ONGOING` against
+the cohort's died/disenrolled/study-end split - those two are only what is left
+after the next line, death and discontinuation have been taken out. What all of
+them share is this boundary.
+
 ### The next line
 
 `lead()` over the patient's ordered lines, not `LOT_NUM + 1`. A gap in the

@@ -69,11 +69,20 @@ ok(setequal(shows, want),
                      collapse = ", ")))
 
 cat("\n-- a section names only the inputs that exist --\n")
-INPUTS <- list(cohort = "wk.COH", patients = "wk.p_LOT_PATIENT_INPUT",
-               lot_long = "wk.p_LOT_LONG", lot_final = "wk.p_LOT_LONG_FINAL",
-               run_meta = "wk.p_LOT_RUN_METADATA", build_st = "wk.p_LOT_BUILD_STATUS",
-               attrition = "wk.c_NDMM_ATTRITION",
-               lot_attrition = "wk.p_LOT_ATTRITION")
+# Asked of the code rather than kept as a copy here. A hand-written list goes
+# stale the moment an input is added, and it goes stale as three panels
+# failing to resolve a name the run resolves perfectly well - which reads as a
+# bug in the panels.
+INPUTS <- local({
+  set_dash_config(list(catalog = "", work_schema = "wk", lot_prefix = "p_",
+                       cohort_prefix = "c_", input_cohort_table = "COH",
+                       attrition_table = "NDMM_ATTRITION",
+                       fu_ce_counts_table = "NDMM_FU_CE_COUNTS"))
+  dashboard_inputs(dash_config())
+})
+ok(all(c("cohort", "patients", "lot_long", "lot_final", "run_meta", "build_st",
+         "attrition", "lot_attrition") %in% names(INPUTS)),
+   paste0("the run resolves every input a section may name (", length(INPUTS), ")"))
 runs(validate_sections(DASHBOARD_SECTIONS, INPUTS),
      "every section's `needs` is an input the run resolves")
 stops(validate_sections(list(modifyList(DASHBOARD_SECTIONS[[1]],
@@ -545,10 +554,12 @@ ok(length(coh) > 0 && all(vapply(coh, function(s)
           length(coh), ")"))
 # needs has to name what the SQL reads, or probe_inputs cannot skip the panel
 # when its table is missing and the query fails instead.
+# Over every input the run resolves, not a list written out here. The written
+# one had already gone stale at lot_attrition: those panels declare it
+# correctly, but nothing here was checking that they did.
+in_re <- paste0("\\{(", paste(names(INPUTS), collapse = "|"), ")\\}")
 mism <- Filter(function(s) {
-  u <- gsub("[{}]", "", unique(regmatches(s$sql,
-         gregexpr("\\{(lot_long|lot_final|patients|attrition|run_meta|cohort)\\}",
-                  s$sql))[[1]]))
+  u <- gsub("[{}]", "", unique(regmatches(s$sql, gregexpr(in_re, s$sql))[[1]]))
   !all(u %in% s$needs)
 }, DASHBOARD_SECTIONS)
 ok(!length(mism),
@@ -589,6 +600,22 @@ ok(all(vapply(dead, function(s) grepl(WANT, norm(s$sql), fixed = TRUE), logical(
 er <- getsec("followup_end_reason")$sql
 ok(grepl("ELSE", er, fixed = TRUE) && identical(getsec("followup_end_reason")$pct, "total"),
    "what ended follow-up is an exhaustive partition, drawn as a share of all of it")
+
+cat("\n-- and they are not confused with the outcomes build's --\n")
+# This panel is one row per PATIENT over the study population. outcomes'
+# N_LOST_TO_FU / N_ONGOING are one row per patient-LINE, over what is left
+# after the next line, death and discontinuation are taken out - so this
+# panel's "Died" has no counterpart there. Calling them the same split, which
+# the README did, sends a reader to reconcile two numbers that cannot.
+dsrc <- c(paste(readLines(file.path(ROOT, "R", "sections.R"), warn = FALSE),
+                collapse = "\n"),
+          paste(readLines(file.path(ROOT, "README.md"), warn = FALSE),
+                collapse = "\n"))
+ok(!any(grepl("same split", dsrc, fixed = TRUE)),
+   "nothing here calls the end-reason panel the same split as outcomes")
+ok(all(grepl("N_LOST_TO_FU", dsrc, fixed = TRUE)) &&
+     all(grepl("does not reconcile|do not reconcile", dsrc)),
+   "...both name it and say plainly that the two do not reconcile")
 
 cat("\n-- a bar says what its percentage is of --\n")
 bars <- Filter(function(s) identical(s$render, "bar"), DASHBOARD_SECTIONS)

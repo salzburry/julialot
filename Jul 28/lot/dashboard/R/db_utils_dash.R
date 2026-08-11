@@ -67,7 +67,15 @@ dashboard_inputs <- function(cfg) {
     # The LOT build's own funnel, which is a different thing from the cohort
     # build's above: it starts where that one ends. Its name is this package's
     # to know, not configurable, because the LOT build writes it.
-    lot_attrition = wrk(paste0(lp, "LOT_ATTRITION"))
+    lot_attrition = wrk(paste0(lp, "LOT_ATTRITION")),
+    # The cohort build's follow-up-CE sensitivity, so configurable for the same
+    # reason the attrition table is: ndmm writes it, another cohort build may
+    # not. Absent is a panel to skip, not a run to fail.
+    fu_ce_counts  = wrk(paste0(cp, cfg$fu_ce_counts_table)),
+    # The outcomes build's per-line table. Written under the LOT prefix - the
+    # outcomes build is pointed at the same one - so this package can name it.
+    # Absent whenever outcomes has not been run, which is most of the time.
+    out_tte       = wrk(paste0(lp, "OUT_TTE"))
   )
 }
 

@@ -623,27 +623,20 @@ main <- function() {
     narrative = q5_notes, tables = q5_tables)
 
   # ---- Q6: follow-up, POMA-1L against other-1L ----------------------------
-  # The tab that says whether the rest of the workbook compares like with like.
-  # Q2 and Q4 are rates over a window, and the window is not the same length
-  # for everybody: a fixed study end means a later index has less room. If the
-  # two groups accrued differently - and POMA at 1L is unusual enough in a
-  # newly-diagnosed cohort that they may well have - then a lower rate on one
-  # side is the calendar rather than the treatment, and nothing else here says
-  # so.
+  # Whether the rest of the workbook compares like with like. Q2 and Q4 are
+  # rates over a window, and the study end is fixed, so a group that indexed
+  # later has less room - a lower rate on one side can be the calendar.
   #
-  # Both follow-up lengths, because the cohort carries two and they answer
-  # different questions: FU_DAYS runs to death or the study end and ignores
-  # disenrolment, FU_DAYS_CE is also capped where continuous enrolment stops -
-  # the protocol's follow-up period. Same pair the dashboard shows.
+  # Both follow-up lengths, because the cohort carries two: FU_DAYS to death or
+  # the study end, FU_DAYS_CE also capped at disenrolment. The dashboard shows
+  # the same pair.
   q6_tables <- list(); q6_notes <- character(0)
-  # One CASE, used by all three tables. A second spelling of the grouping is a
-  # second definition of who is a POMA patient.
+  # One CASE for all three tables, or they stop being about the same people.
   q6_grp <- "CASE WHEN p.PATID IS NOT NULL THEN 'POMA-1L' ELSE 'other-1L' END"
-  # The follow-up columns are the cohort's own. LEFT JOIN, so a LOT1 patient
-  # with no cohort row is counted as a broken join rather than dropped - the
-  # percentiles ignore NULLs, so a dropped patient would quietly shrink a
-  # denominator the group size still reports in full. Same treatment Q3 gives
-  # missing_flag_rows.
+  # LEFT JOIN, so a LOT1 patient with no cohort row is counted rather than
+  # dropped: percentile_approx ignores NULLs, so a drop shrinks the median's
+  # denominator while n_pts still reports the whole group. Q3 does the same
+  # with missing_flag_rows.
   q6_ctes <- glue("
       WITH poma1l AS (SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long}
                       WHERE LOT_NUM=1 AND array_contains(split(LOT_BASE_MEDS,' '),'{poma}')),
@@ -664,9 +657,15 @@ main <- function() {
       SELECT {q6_grp}                                    AS grp,
              count(*)                                    AS n_pts,
              sum(CASE WHEN f.PATID IS NULL THEN 1 ELSE 0 END) AS missing_cohort_rows,
+             round(avg(f.FU_DAYS), 1)                    AS mean_fu_days,
+             round(stddev_samp(f.FU_DAYS), 1)            AS sd_fu_days,
+             percentile_approx(f.FU_DAYS, 0.25)          AS p25_fu_days,
              percentile_approx(f.FU_DAYS, 0.5)           AS median_fu_days,
-             percentile_approx(f.FU_DAYS_CE, 0.5)        AS median_fu_days_ce,
+             percentile_approx(f.FU_DAYS, 0.75)          AS p75_fu_days,
+             round(avg(f.FU_DAYS_CE), 1)                 AS mean_fu_days_ce,
+             round(stddev_samp(f.FU_DAYS_CE), 1)         AS sd_fu_days_ce,
              percentile_approx(f.FU_DAYS_CE, 0.25)       AS p25_fu_days_ce,
+             percentile_approx(f.FU_DAYS_CE, 0.5)        AS median_fu_days_ce,
              percentile_approx(f.FU_DAYS_CE, 0.75)       AS p75_fu_days_ce,
              min(f.FU_DAYS_CE)                           AS min_fu_days_ce,
              max(f.FU_DAYS_CE)                           AS max_fu_days_ce
@@ -708,19 +707,18 @@ main <- function() {
       GROUP BY 1, 2 ORDER BY 1, 2")), "POMA-1L vs other-1L index year")
 
     q6_notes <- c(
-      "READ THIS BEFORE Q2 AND Q4. Both are rates over a follow-up window, and the window is not the same length for every patient:",
-      "the study end is fixed, so a patient indexed later has less room. If POMA-1L and other-1L accrued differently, a lower rate on",
-      "one side is the calendar rather than the treatment. This tab is what rules that out - or does not.",
-      "TWO DEFINITIONS, both from the cohort build. median_fu_days runs from the day after the index date to death or the study end and",
-      "ignores disenrolment - the LOT run's primary analysis. median_fu_days_ce is also capped where continuous enrolment stops, which",
-      "is the protocol's follow-up period and what the outcomes build censors on. Where the two differ, the difference is disenrolment.",
-      "WHAT ENDED IT is the same partition, in that order: a patient who disenrolled and died afterwards counts as disenrolled, because",
-      "that death is outside the window this cohort observes. The categories are mutually exclusive and cover the whole group.",
-      "missing_cohort_rows / 'no cohort row' counts LOT1 patients with NO row in the cohort table - a broken join, not a clean patient.",
-      "It must be 0. The percentiles ignore NULLs, so a dropped patient would shrink the median's denominator while n_pts still counted them.",
-      "INDEX YEAR is the mechanism to check first if the medians differ. Groups that accrued in different years have different follow-up",
-      "by construction, and that is not a finding about POMA. Its n_pts excludes any patient with no cohort row, since they have no index",
-      "date to sit under - so it is short of the group size above by exactly missing_cohort_rows, and matches once that is 0.")
+      "READ THIS BEFORE Q2 AND Q4. Both are rates over a follow-up window, and the study end is fixed - so a group that indexed later",
+      "has less room, and a lower rate on one side can be the calendar rather than the treatment.",
+      "TWO DEFINITIONS. *_fu_days runs from the day after the index date to death or the study end and ignores disenrolment - the LOT",
+      "run's primary analysis. *_fu_days_ce is also capped where continuous enrolment stops, which is the protocol's follow-up period",
+      "and what the outcomes build censors on. Where the two differ, the difference is disenrolment.",
+      "WHAT ENDED IT is in that order: a patient who disenrolled and died afterwards counts as disenrolled, because that death is",
+      "outside the window this cohort observes. The categories are exclusive and cover the group. They are NOT the outcomes build's",
+      "N_LOST_TO_FU / N_ONGOING, which are per-LINE and only over what is left after the next line, death and discontinuation.",
+      "missing_cohort_rows / 'no cohort row' counts LOT1 patients with no row in the cohort table - a broken join, and it must be 0.",
+      "The percentiles ignore NULLs, so a dropped patient would shrink the median's denominator while n_pts still counted them.",
+      "INDEX YEAR is what to check first if the medians differ. Its n_pts excludes patients with no cohort row - they have no index",
+      "date - so it is short by exactly missing_cohort_rows and matches once that is 0.")
   } else {
     q6_notes <- paste0("Q6 needs ", final_tbl,
                        ", which is unreadable this run - the follow-up columns are the cohort build's.")

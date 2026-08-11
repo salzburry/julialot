@@ -861,23 +861,40 @@ check_icd_flag <- function(con, cfg) {
   # moves nothing. The normalised code is projected, so it has to stay a plain
   # scalar: fold the list membership into it and the column is a boolean, and
   # in Spark an IN-subquery is not projectable at all.
+  # Which list the code is on, which is what sizes the decision. A miss on an
+  # MM code can drop a patient out and a miss on an exclusion code can keep one
+  # in; a miss on a trial code moves nobody, because trial evidence is
+  # descriptive and filters nothing. The stop is the same either way - it
+  # cannot tell them apart before somebody looks - but the operator can, and
+  # this is what they look at.
+  #
+  # Folded to one row per code before the join, so a code on two lists names
+  # both rather than counting its claims twice.
   probe_detail <- function(tbl, code_col, lists) glue("
+    WITH src AS (SELECT code, concat_ws(' + ', sort_array(collect_set(src))) AS on_list
+                 FROM ({lists}) GROUP BY code)
     SELECT {flag_val}              AS icd_flag_value,
            {norm_code(code_col)}   AS matched_code,
+           max(s.on_list)          AS on_list,
            count(*)                AS n_rows,
            count(DISTINCT t.PATID) AS n_pat
     FROM {tbl} t
+    LEFT JOIN src s ON s.code = {norm_code(code_col)}
     WHERE {hits(fam, code_col, lists)}
     GROUP BY {flag_val}, {norm_code(code_col)}
     ORDER BY n_rows DESC, matched_code")
   dx_lists <- glue("
-        SELECT dx AS code FROM {NDMM_MM_DX_CODES}
-        UNION SELECT dx FROM {NDMM_OTHER_MALIG_CODES}
-        UNION SELECT code FROM {NDMM_PREG_CODES} WHERE code_type LIKE '%DIAG'
-        UNION SELECT code FROM {NDMM_CLINTRIAL_CODES} WHERE code_type LIKE '%DIAG'")
+        SELECT dx AS code, 'MM diagnosis' AS src FROM {NDMM_MM_DX_CODES}
+        UNION SELECT dx, 'other malignancy' FROM {NDMM_OTHER_MALIG_CODES}
+        UNION SELECT code, 'pregnancy' FROM {NDMM_PREG_CODES}
+              WHERE code_type LIKE '%DIAG'
+        UNION SELECT code, 'clinical trial' FROM {NDMM_CLINTRIAL_CODES}
+              WHERE code_type LIKE '%DIAG'")
   pr_lists <- glue("
-        SELECT code FROM {NDMM_PREG_CODES} WHERE code_type LIKE '%PROC'
-        UNION SELECT code FROM {NDMM_CLINTRIAL_CODES} WHERE code_type LIKE '%PROC'")
+        SELECT code, 'pregnancy' AS src FROM {NDMM_PREG_CODES}
+              WHERE code_type LIKE '%PROC'
+        UNION SELECT code, 'clinical trial' FROM {NDMM_CLINTRIAL_CODES}
+              WHERE code_type LIKE '%PROC'")
   # Enough to name the problem without turning a stop into a data dump. A cut
   # says so and says how many it cut - a silent top-N reads as the whole story.
   DETAIL_MAX <- 20L
@@ -890,6 +907,8 @@ check_icd_flag <- function(con, cfg) {
     s <- head(d, DETAIL_MAX)
     out <- paste0(", codes: ",
                   paste0(s$matched_code, " (", s$icd_flag_value, ", ",
+                         ifelse(is.na(s$on_list) | !nzchar(s$on_list),
+                                "list unknown", s$on_list), ", ",
                          num(s$n_rows), " row(s), ", num(s$n_pat),
                          " patient(s))", collapse = ", "))
     if (nrow(d) > DETAIL_MAX)

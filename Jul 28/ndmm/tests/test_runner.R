@@ -1287,7 +1287,8 @@ drive_icd <- function(n, waive = "", detail = NULL) {
   ICDQ <<- character(0)
   if (is.null(detail))
     detail <- data.frame(icd_flag_value = "<blank>", matched_code = "C9000",
-                         n_rows = n, n_pat = n, stringsAsFactors = FALSE)
+                         on_list = "MM diagnosis", n_rows = n, n_pat = n,
+                         stringsAsFactors = FALSE)
   assign("db_q", function(con, sql) {
     ICDQ <<- c(ICDQ, sql)
     if (!grepl("matched_code", sql, fixed = TRUE))
@@ -1322,9 +1323,18 @@ ok(identical(drive_icd(7L, waive = "raw_icd_flag"), ""),
 # actually stopped the build somewhere inside them. It read as an explanation
 # of the stop and was not one.
 m <- drive_icd(7L)
-where_of <- function(s) trimws(sub("(?s)\\s*GROUP BY.*", "",
-                                   sub("(?s).*?WHERE", "", s, perl = TRUE), perl = TRUE))
-sel_of   <- function(s) sub("(?s)WHERE.*", "", s, perl = TRUE)
+# Anchored on the outer FROM, not on the first WHERE in the text: the code
+# lists carry their own WHERE, and the breakdown now wraps them in a CTE, so
+# "the first WHERE" stopped being the outer one and these read the wrong slice.
+where_of <- function(s) {
+  x <- sub("(?s)^.*?FROM cdm\\.\\S+ t", "", s, perl = TRUE)
+  x <- sub("(?s)^.*?WHERE", "", x, perl = TRUE)
+  trimws(sub("(?s)\\s*GROUP BY.*", "", x, perl = TRUE))
+}
+sel_of <- function(s) {
+  x <- sub("(?s)\\s*FROM cdm\\..*", "", s, perl = TRUE)
+  sub("(?s).*(SELECT)", "\\1", x, perl = TRUE)
+}
 sumq <- ICDQ[1]; detq <- ICDQ[2]
 ok(!grepl("matched_code", sumq, fixed = TRUE) &&
      grepl("matched_code", detq, fixed = TRUE),
@@ -1353,13 +1363,27 @@ ok(n_of("regexp_replace", icd_src) == 1L && n_of("IS NULL", icd_src) == 1L,
    "...because each half of the predicate is written exactly once")
 ok(grepl("codes: C9000", m, fixed = TRUE),
    "the stop names the codes, not just how many rows carried them")
+# And which list each is on. That is what sizes the decision: an MM code can
+# drop a patient, an exclusion code can keep one, a trial code moves nobody.
+# The stop cannot tell them apart, but the operator reading it can.
+ok(grepl("MM diagnosis", m, fixed = TRUE),
+   "...and which list it is on, which is what sizes the decision")
+ok(grepl("'MM diagnosis' AS src", detq, fixed = TRUE) ||
+     grepl("'MM diagnosis' AS src", ICDQ[1], fixed = TRUE),
+   "...labelled where the lists are built, not restated in the message")
+# Folded to one row per code before the join, or a code on two lists counts
+# its claims twice and the breakdown stops summing to the count.
+ok(grepl("GROUP BY code", detq, fixed = TRUE) &&
+     grepl("LEFT JOIN src", detq, fixed = TRUE),
+   "...joined one row per code, so a code on two lists is named once not counted twice")
 
 # The predicate is shared, so the breakdown has to sum to the count it breaks
 # down. Checked at run time as well as here: sharing holds only while both
 # probes actually call it, and a future edit that stops sharing would otherwise
 # be silent until someone read two numbers that no longer meant the same thing.
 m <- drive_icd(7L, detail = data.frame(icd_flag_value = "<blank>",
-                                       matched_code = "C9000", n_rows = 3L,
+                                       matched_code = "C9000",
+                                       on_list = "MM diagnosis", n_rows = 3L,
                                        n_pat = 3L, stringsAsFactors = FALSE))
 ok(grepl("not describing the same rows", m, fixed = TRUE) &&
      grepl("sums to 3 row(s), not 7", m, fixed = TRUE),
@@ -1367,6 +1391,7 @@ ok(grepl("not describing the same rows", m, fixed = TRUE) &&
 # A cut that does not say it cut reads as the whole list.
 m <- drive_icd(25L, detail = data.frame(icd_flag_value = "<blank>",
                                         matched_code = sprintf("C%04d", 1:25),
+                                        on_list = "MM diagnosis",
                                         n_rows = 1L, n_pat = 1L,
                                         stringsAsFactors = FALSE))
 ok(grepl("C0001", m, fixed = TRUE) && !grepl("C0025", m, fixed = TRUE) &&

@@ -97,29 +97,25 @@ removed.
 
 ## Follow-up length is a condition on reading the rates
 
-`poma_studyteam_qs.R` Q6 sets follow-up for POMA-1L against other-1L. It is
-there because Q2 and Q4 are rates over a follow-up window and the window is not
-the same length for every patient: the study end is fixed, so a patient indexed
-later has less room. If the two groups accrued differently, a lower rate on one
-side is the calendar and not the treatment, and nothing else in the workbook
-says so.
+Q2 and Q4 are rates over a follow-up window, and the study end is fixed - so a
+group that indexed later has less room, and a lower rate on one side can be the
+calendar. Q6 is what rules that out, or does not.
 
-Three tables. The days on both of the cohort's definitions - `FU_DAYS` to death
-or the study end, `FU_DAYS_CE` also capped at disenrolment, which is the
-protocol's follow-up period. What ended follow-up, partitioned in that order,
-so a patient who disenrolled and died afterwards counts as disenrolled: that
-death is outside the window this cohort observes. And index year, which is the
-mechanism to rule out first if the medians differ.
+Three tables: the days on both of the cohort's definitions, what ended
+follow-up, and index year. A LOT1 patient with no cohort row is counted rather
+than dropped - `percentile_approx` ignores NULLs, so a drop shrinks the median's
+denominator while `n_pts` still reports the group. Q3 treats a broken join the
+same way. It must be 0.
 
-A LOT1 patient with no cohort row is counted rather than dropped.
-`percentile_approx` ignores NULLs, so a silent drop would shrink the median's
-denominator while `n_pts` still reported the whole group - the same reason Q3
-counts `missing_flag_rows`. It must be 0.
+The dashboard shows the same three-way split over the whole cohort, and
+`ndmm/followup_days.sql` over the cohort table alone. All three use one
+predicate for a death inside follow-up, and `tests/test_setup.R` requires every
+death test in every one of them to carry it - two deliverables disagreeing about
+who died is not something a reader of either could detect.
 
-The dashboard reports the same split for the whole cohort. Both use one
-predicate for a death inside follow-up, and `tests/test_setup.R` compares the
-two files with the alias stripped - two deliverables disagreeing about who died
-is not something a reader of either could detect.
+None of the three is the outcomes build's `N_LOST_TO_FU` / `N_ONGOING`, which
+are per-line and only over what is left after the next line, death and
+discontinuation. `lot/outcomes/followup_outcomes.sql` is that side.
 
 ## What NDMM cannot answer, and where it went
 
