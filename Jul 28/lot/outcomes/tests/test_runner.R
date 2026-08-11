@@ -548,6 +548,35 @@ refuses <- function(f, why, what, se = SE) {
 }
 runs(mk()(NULL, "ndmm_", "ndmm_NDMM_COHORT", SE),
      "a complete run over this cohort is accepted")
+# What check_lot_run() hands to find_subsequent_cohorts(), joined for real.
+# These two were tested apart and the seam between them was where the bug sat:
+# the run id came back as a character carrying an `attempt` attribute, trimws()
+# is sub() and sub() returns "the same attributes as x", and identical()
+# compares attributes - so identical(src, trimws(lot_run)) was FALSE for the
+# same eight characters and EVERY valid 2L/3L cohort was reported as built from
+# another run. The no-line path worked; the ordinary path stopped.
+#
+# Two assertions, deliberately independent. The first is about the shape
+# check_lot_run() returns; the second is about find_subsequent_cohorts()
+# surviving an attributed run id whatever the shape, because this function is
+# handed a run id by a caller it does not control. Tying the second to the
+# first would leave the behaviour untested the moment the shape changed.
+ok(!identical("L1", trimws(structure("L1", attempt = "x"))),
+   "an attributed string is not identical() to its own text - the trap")
+FULL_N7 <- modifyList(FULL, list(SOURCE_COHORT_RUN_ID = META$COHORT_RUN_ID,
+                                 SOURCE_COHORT_STAMP  = META$COHORT_STAMP))
+ATT <- c(run = META$COHORT_RUN_ID, stamp = META$COHORT_STAMP)
+sc_attr <- fsc(FULL_N7, lot_run = structure("L1", attempt = ATT), attempt = ATT)
+ok(is.list(sc_attr) && length(sc_attr$tables) == 2L,
+   "a run id wearing an attribute still matches the cohorts built from it")
+lr <- mk()(NULL, "ndmm_", "ndmm_NDMM_COHORT", SE)
+ok(is.list(lr) && identical(names(lr), c("run", "attempt")),
+   "...and check_lot_run returns named fields rather than a string with cargo")
+ok(is.list(lr) && is.null(attributes(lr$run)),
+   "...whose run id is a plain character, so a text comparison is a text comparison")
+sc_real <- if (is.list(lr)) fsc(FULL_N7, lot_run = lr$run, attempt = lr$attempt) else NULL
+ok(is.list(sc_real) && length(sc_real$tables) == 2L,
+   "...and the two joined give the line cohorts, not a stale report")
 refuses(mk(modifyList(STATUS, list(STATE = "running"))), "is marked 'running'",
         "an unfinished LOT run is refused")
 refuses(mk(modifyList(STATUS, list(INPUT_COHORT_TABLE = "sch.other_COH"))),

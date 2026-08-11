@@ -21,7 +21,7 @@
 
 # The protocol's Table 2, as a roster. Timing is the same for all of them -
 # baseline and follow-up, at 1L, 2L and 3L - so it is stated once here rather
-# than repeated on twenty-three rows where it could drift.
+# than repeated on twenty-six rows where it could drift.
 SAFETY_DOMAINS <- c("hepatologic", "renal", "ocular", "cardiovascular",
                     "neurologic", "infectious", "other")
 # condition = acute/chronic, because Table 2 states both and a condition filed
@@ -294,6 +294,16 @@ safety_fill_status <- function(codelist_dir) {
   # one event is two definitions again, with the column that was meant to
   # settle it saying both.
   hp <- h$df[!is.na(h$df$precedence) & h$df$precedence == "primary", , drop = FALSE]
+  # An event whose codes are in, but whose PRIMARY row is still a placeholder.
+  # no_primary below only asks that a row labelled primary EXISTS, so a filled
+  # fallback beside an empty primary passed as ready - and the fallback then
+  # silently becomes the definition, which is the arrangement precedence exists
+  # to prevent. Asked only of events that have any codes at all, so a wholly
+  # empty event is still a placeholder rather than an error.
+  live_ev <- unique(hf$event[!is.na(hf$event)])
+  filled_primary <- unique(hf$event[!is.na(hf$precedence) &
+                                      hf$precedence == "primary"])
+  empty_primary <- setdiff(live_ev, filled_primary)
   # Two primary CODE TYPES for one event - two methods, not two codes. Several
   # POS values are one method; a POS primary beside a CONFINEMENT primary is
   # two, and a reader with no rule for choosing unions them.
@@ -340,6 +350,7 @@ safety_fill_status <- function(codelist_dir) {
     no_source = no_source,
     dup_codes = dup_codes[!is.na(dup_codes)],
     two_primary = two_primary[!is.na(two_primary)],
+    empty_primary = empty_primary[!is.na(empty_primary)],
     bad_family = bad_family[!is.na(bad_family)],
     no_family = no_family,
     # Filled rows only. An empty placeholder row carrying one of these is the
@@ -440,6 +451,12 @@ safety_refuse <- function(st) {
         ". Precedence exists so a reader knows which rows are the definition; ",
         "two primaries is two definitions, said by the column meant to settle ",
         "it. Several codes of one type are one method - two types are two.")
+  if (length(st$empty_primary))
+    add("utilisation event(s) whose codes are in but whose primary row is ",
+        "still empty: ", lst(st$empty_primary),
+        ". The fallback would silently become the definition, which is the ",
+        "arrangement precedence exists to prevent. Fill the primary, or mark ",
+        "the row that IS the definition as primary.")
   if (length(st$no_primary))
     add("utilisation event(s) with fallback rows and no primary: ",
         lst(st$no_primary),

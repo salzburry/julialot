@@ -61,7 +61,12 @@ find_subsequent_cohorts <- function(con, lot_run, lines = c(2L, 3L),
     src <- at("SOURCE_LOT_RUN_ID")
     # An older table predates the column. Not current by omission: it cannot
     # say which run it came from, so it cannot be shown to belong to this one.
-    if (is.na(src) || !nzchar(src) || !identical(src, trimws(lot_run))) {
+    # as.character() strips anything riding along on either side. identical()
+    # is the right comparison for text and the wrong one for text wearing an
+    # attribute, and this function is handed a run id from a caller it does not
+    # control.
+    want <- as.character(trimws(lot_run))
+    if (is.na(src) || !nzchar(src) || !identical(src, want)) {
       stale <- c(stale, paste0(t, if (is.na(src)) " (records no source LOT run)"
                                   else paste0(" (built from LOT run ", src, ")")))
       next
@@ -232,7 +237,13 @@ check_lot_run <- function(con, prefix, cohort_table, study_end) {
   log_msg("LOT run ", pick("RUN_ID"), " completed over ",
           pick("INPUT_COHORT_TABLE"))
   attempt <- check_cohort_attempt(con, pick("RUN_ID"))
-  structure(pick("RUN_ID"), attempt = attempt)
+  # Two named fields, not a run id with something hidden on it. An attributed
+  # character is not the string it prints as: trimws() is sub(), sub() returns
+  # "the same attributes as x", and identical() compares attributes - so
+  # identical("L1", trimws(lot_run)) was FALSE for the same eight characters,
+  # and every valid 2L/3L cohort was reported as built from another run. The
+  # runner unpacks this into a plain character before anything compares it.
+  list(run = as.character(pick("RUN_ID")), attempt = attempt)
 }
 
 # The cohort table's name matching is not the same as its contents matching.
@@ -398,8 +409,9 @@ build_outcomes <- function(here, cohort_table, prefix) {
   log_msg("  cohort ", cfg$input_cohort_table, ", LOT prefix ", cfg$object_prefix)
   log_msg("  run ", run_id)
   log_msg(SEP)
-  lot_run <- check_lot_run(con, cfg$object_prefix, cfg$input_cohort_table,
+  lr      <- check_lot_run(con, cfg$object_prefix, cfg$input_cohort_table,
                            cfg$study_end)
+  lot_run <- lr$run
 
   lines  <- out_tbl("LOT_LONG_FINAL")
   cohort <- wrk(cfg$input_cohort_table)
@@ -412,7 +424,7 @@ build_outcomes <- function(here, cohort_table, prefix) {
   # first table. The empty case was tested and the use of the empty case was
   # tested; nothing tested the two together, and the attribute is what let them
   # be written apart.
-  sc     <- find_subsequent_cohorts(con, lot_run, attempt = attr(lot_run, "attempt"))
+  sc     <- find_subsequent_cohorts(con, lot_run, attempt = lr$attempt)
   subseq <- sc$tables
   both   <- length(subseq) > 0L
   # The 2L/3L build's provenance, carried onto every table that has a DENOM or
