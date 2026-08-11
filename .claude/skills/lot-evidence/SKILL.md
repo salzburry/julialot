@@ -64,7 +64,19 @@ counts prior lines without defining a line is telling you something about the
 field. Record it rather than forcing agreement.
 
 Where a source `differs`, say how in `notes`, concretely: "counts tandem
-transplant as one line; we count the second as excess beyond 180 days".
+transplant as one line; we count the second as excess beyond 180 days". This is
+required, not encouraged: `differs` with an empty `notes` stops the load. It is
+the finding the grid exists to produce and the one verdict that means nothing
+on its own.
+
+Leaving `concordance` blank is allowed and renders as `sourced, not judged` —
+distinct from `unclear`, which is a judgement somebody made. Do not use one for
+the other.
+
+**A trial slot names its trial.** Every answered row on `trial_1`..`trial_5`
+must carry an `NCT########` in its citation. One slot is one trial, and without
+the id on each row the slot can be a different protocol on every line while
+looking like one column. `IMWG_consensus` is not a trial and is exempt.
 
 ## Filling `benchmarks.csv`
 
@@ -76,7 +88,9 @@ stops the load.
 
 **Claiming comparability is a claim about three things.** If you set
 `comparable` to `yes` or `caveat`, then `source_population`, `source_followup`
-and `source_algorithm` must all be filled, and the reader enforces it. Two
+and `source_algorithm` must all be filled, and the reader enforces it. A
+`caveat` also needs the `caveat` column filled with what the caveat is — not
+`notes`, which ships pre-filled with the definition each figure has to match. Two
 studies can differ entirely because one counted maintenance as a line — a
 median quoted as comparable without saying which algorithm produced it is the
 number most likely to be repeated and least able to be checked.
@@ -92,6 +106,7 @@ validating or invalidating the other.
 ## Check your work before handing it back
 
 ```
+Rscript .claude/skills/lot-evidence/scripts/check_grids.R   # both grids, one status
 Rscript "Jul 28/lot/validation/tests/test_definitions.R"
 Rscript "Jul 28/lot/validation/tests/test_benchmarks.R"
 Rscript "Jul 28/lot/validation/run_definitions.R"     # renders both sides
@@ -100,6 +115,14 @@ Rscript "Jul 28/lot/validation/run_definitions.R"     # renders both sides
 Both readers stop on the first structural problem and name the row. A run that
 loads is not a run that is right — it means every filled cell carries what it
 needs to be checked by someone else.
+
+**Filling these files correctly keeps the build green.** The suites assert that
+whatever is filled is sourced, not that the grids are empty — those were the
+same statement while the grids shipped blank, and for a while they were written
+the second way, which meant the first honestly sourced answer turned the merge
+gate red. A case now fills the whole grid and runs `check_grids.R` against it,
+so that cannot come back. If a correctly filled grid ever fails CI, that is a
+bug in the suite, not a reason to blank the cell.
 
 ## Starting from scratch
 

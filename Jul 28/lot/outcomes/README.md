@@ -19,6 +19,14 @@ on: no cohort build status table, a LOT run that recorded no cohort attempt, or
 an attempt recorded without a stamp. The stamp matters because two attempts can
 reuse a run id, which is the one case an id alone cannot separate.
 
+The same now holds for the run's own description of itself. Three checks were
+written as "if it says something and what it says is wrong, stop", which passes
+when it says nothing - so a status row that recorded no input cohort, no study
+end, or no contract column proved all three by omission. Blank and absent are
+told apart where the difference means something: a blank `CONTRACT_DEVIATIONS`
+is a positive statement, the contract algorithm, and is what every production
+run writes; a missing column is not that statement and is not read as it.
+
 Carrying on wrote outcomes measured over an unproven lineage into tables that
 look ordinary and carry this run's `OUT_RUN_ID`. Nothing downstream could tell
 them from proven ones, because nothing downstream was told - so "we could not
@@ -173,6 +181,22 @@ the new run's lines - with every output correctly carrying this run's ids, so
 no stamp check could catch it. The subsequent build records
 `SOURCE_LOT_RUN_ID`; a cohort naming another run, or too old to name any, stops
 the build rather than restricting on it.
+
+Naming the same LOT run is not the same as being the same build, and only that
+one field of the five the subsequent build stamps was being read. That left two
+ways to a wrong `LINE_ELIGIBLE` denominator with every id on the output
+correct:
+
+* a **partial re-run** - 2L from one subsequent build and 3L from another, both
+  pointing at this LOT run, so the flag means one thing on one line and
+  something else on the next;
+* a **sensitivity build** - the same tables under overridden continuous
+  enrolment windows, quietly becoming the ordinary denominator.
+
+So `SUBSEQ_RUN_ID`, `CE_PRE_DAYS`, `CE_FU_DAYS`, `SOURCE_COHORT_RUN_ID` and
+`SOURCE_COHORT_STAMP` all have to be present and to agree across the line
+cohorts. A non-default window is not refused - that is the sweep's business -
+but it is read and logged, so it is visible rather than silent.
 
 ## What it does not do
 

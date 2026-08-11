@@ -286,20 +286,33 @@ cat("\n-- a line cohort has to belong to the run being measured --\n")
 # new run's lines - with every output correctly carrying this run's ids, so no
 # stamp check could catch it. ALL_LINES stays right; LINE_ELIGIBLE goes quietly
 # wrong. The subsequent build records its source LOT run; this asks.
-fsc <- function(row, lot_run = "L1") {
+#
+# Naming the same LOT run is not the same as being the same build, so all five
+# stamps the subsequent build writes are read, not one of them.
+#
+# `rows` is one row per probed line cohort, in order, so 2L and 3L can differ -
+# which is the partial-rerun case and cannot be modelled with a single row.
+FULL <- list(PATID = "p", SOURCE_LOT_RUN_ID = "L1", SUBSEQ_RUN_ID = "S1",
+             CE_PRE_DAYS = "365", CE_FU_DAYS = "90",
+             SOURCE_COHORT_RUN_ID = "C1", SOURCE_COHORT_STAMP = "2026-01-01")
+fsc <- function(rows, lot_run = "L1") {
+  if (is.null(rows) || !is.null(names(rows))) rows <- list(rows, rows)
+  i <- 0L
   e <- new.env(parent = globalenv())
   assign("coh_tbl", function(x) paste0("sch.ndmm_", x), envir = e)
   assign("log_msg", function(...) invisible(NULL), envir = e)
   assign("db_q", function(con, sql) {
-    if (is.null(row)) stop("TABLE_OR_VIEW_NOT_FOUND")
-    as.data.frame(row, stringsAsFactors = FALSE)
+    i <<- i + 1L
+    r <- rows[[min(i, length(rows))]]
+    if (is.null(r)) stop("TABLE_OR_VIEW_NOT_FOUND")
+    as.data.frame(r, stringsAsFactors = FALSE)
   }, envir = e)
   f <- find_subsequent_cohorts; environment(f) <- e
   tryCatch(f(NULL, lot_run), error = conditionMessage)
 }
-ok(length(fsc(list(PATID = "p", SOURCE_LOT_RUN_ID = "L1"))) == 2L,
-   "a line cohort built from this LOT run is used")
-m <- fsc(list(PATID = "p", SOURCE_LOT_RUN_ID = "L0"))
+without <- function(k) { r <- FULL; r[[k]] <- NULL; r }
+ok(length(fsc(FULL)) == 2L, "a line cohort built from this LOT run is used")
+m <- fsc(modifyList(FULL, list(SOURCE_LOT_RUN_ID = "L0")))
 ok(is.character(m) && grepl("built from LOT run L0", m, fixed = TRUE),
    "one built from another run stops the build, naming it")
 m2 <- fsc(list(PATID = "p"))
@@ -307,12 +320,40 @@ ok(is.character(m2) && grepl("records no source LOT run", m2, fixed = TRUE),
    "...and one that cannot say which run it came from is not current by omission")
 ok(is.list(fsc(NULL)) && !length(fsc(NULL)),
    "no line cohort at all is fine - the run reports ALL_LINES alone")
-# The stamp it checks is the one the subsequent build actually writes.
+
+# The two ways to get a wrong denominator with every id correct on the output.
+m3 <- fsc(list(FULL, modifyList(FULL, list(SUBSEQ_RUN_ID = "S2"))))
+ok(is.character(m3) && grepl("disagree on which subsequent-cohort run", m3),
+   "2L and 3L from different subsequent runs are not one build, even on one LOT run")
+m4 <- fsc(list(FULL, modifyList(FULL, list(CE_PRE_DAYS = "180"))))
+ok(is.character(m4) && grepl("disagree on the continuous-enrolment window", m4),
+   "...nor are two built to different continuous-enrolment windows")
+m5 <- fsc(list(FULL, modifyList(FULL, list(SOURCE_COHORT_STAMP = "2026-06-01"))))
+ok(is.character(m5) && grepl("disagree on the stamp", m5),
+   "...nor two built over different attempts of the same cohort")
+# A sensitivity build under overridden windows is the case that matters, and it
+# is caught by the pair being read at all rather than by judging the numbers:
+# whatever they are, they are logged and they have to agree.
+ok(length(fsc(modifyList(FULL, list(CE_PRE_DAYS = "180", CE_FU_DAYS = "30")))) == 2L,
+   "a non-default window is not refused - it is read, and the run says so")
+# Absent columns are 'cannot check', which is the override's business, not a
+# silent pass.
+for (k in c("SUBSEQ_RUN_ID", "CE_PRE_DAYS", "CE_FU_DAYS",
+            "SOURCE_COHORT_RUN_ID", "SOURCE_COHORT_STAMP")) {
+  r <- fsc(without(k))
+  ok(is.character(r) && grepl("record no", r, fixed = TRUE),
+     paste0("a line cohort with no ", k, " cannot be shown to be this build's"))
+}
+# The stamp it checks is the one the subsequent build actually writes. All five,
+# now that all five are read - a check against a column nothing writes would
+# stop every run, and one nothing reads is the gap this closed.
 bs <- paste(readLines(file.path(STUDY, "ndmm", "R", "build_subsequent.R"),
                       warn = FALSE), collapse = "\n")
-ok(has(bs, "AS SOURCE_LOT_RUN_ID") && has(bs, "AS SOURCE_COHORT_RUN_ID") &&
-     has(bs, "AS SOURCE_COHORT_STAMP"),
-   "...and the cohort build writes that lineage rather than only its own run id")
+ok(all(vapply(c("SOURCE_LOT_RUN_ID", "SOURCE_COHORT_RUN_ID",
+                "SOURCE_COHORT_STAMP", "SUBSEQ_RUN_ID", "CE_PRE_DAYS",
+                "CE_FU_DAYS"),
+              function(k) has(bs, paste0("AS ", k)), logical(1))),
+   "...and the cohort build writes every stamp this reads")
 
 cat("\n-- Table 4 is answered over both denominators, not one chosen here --\n")
 # 2L can mean "of the patients we followed from 1L" or "of the patients we could
@@ -485,6 +526,27 @@ refuses(mk(ndmm = NULL), "No cohort build status",
 refuses(mk(meta = modifyList(META, list(COHORT_STAMP = ""))),
         "with no stamp",
         "...and a recorded attempt with no stamp, which cannot tell two apart")
+# The three that were written as `!is.na(x) && nzchar(x) && x != want`, which
+# passes when x is missing - so a status row that recorded nothing proved
+# everything, and outcomes ran with no evidence the lines were this
+# population's, this algorithm's, or this window's.
+refuses(mk(modifyList(STATUS, list(INPUT_COHORT_TABLE = ""))),
+        "records no INPUT_COHORT_TABLE",
+        "a run that recorded no input cohort cannot be shown to be this population's")
+refuses(mk(STATUS[setdiff(names(STATUS), "INPUT_COHORT_TABLE")]),
+        "records no INPUT_COHORT_TABLE", "...whether the value is blank or the column absent")
+refuses(mk(modifyList(STATUS, list(STUDY_END = ""))),
+        "records no STUDY_END",
+        "a run that recorded no study end cannot be shown to share this window")
+# Blank and absent are different here, and the difference IS the check. Blank
+# is a positive statement - the contract algorithm - and is what every
+# production run writes; a missing column says nothing and was read as blank.
+refuses(mk(STATUS[setdiff(names(STATUS), "CONTRACT_DEVIATIONS")]),
+        "no CONTRACT_DEVIATIONS column",
+        "a status table with no contract column cannot be shown to be a contract build")
+runs(mk(modifyList(STATUS, list(CONTRACT_DEVIATIONS = "")))(
+       NULL, "ndmm_", "ndmm_NDMM_COHORT", SE),
+     "...while a blank one is a contract build, which is every production run")
 # Named, on the record, and only then.
 Sys.setenv(OUT_ALLOW_UNPROVEN_LINEAGE = "TRUE")
 runs(mk(ndmm = NULL)(NULL, "ndmm_", "ndmm_NDMM_COHORT", SE),
