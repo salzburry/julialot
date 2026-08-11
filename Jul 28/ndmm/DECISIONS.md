@@ -474,3 +474,56 @@ patients they touch.
 
 Status: implemented; the construction rules beyond the 15th are PENDING
 SIGN-OFF as recorded data-construction conventions.
+
+## 9. Pregnancy - which window, when two documents disagree
+
+The exclusion is applied over the **whole study period**, `NDMM_STUDY_START` to
+`STUDY_END`. `05_pregnancy.R` bounds all three claim sources - diagnosis,
+procedure and revenue - on that window.
+
+Two authorities say different things and neither had been recorded as winning:
+
+| | says |
+|---|---|
+| the current protocol, 6.2.1.2 Exclusion Criteria | "Evidence of pregnancy: ... indicating pregnancy or childbirth **during the study period**" |
+| the validated program spec, citing an earlier protocol 4.2 Exclusion 3 | ">=1 medical claim ... **during the baseline or follow-up period**", and "Spans baseline + follow-up period" |
+
+The code follows the current protocol. That is the deliberate reading - a
+later protocol version supersedes a spec sheet built against an earlier one -
+and it is written here because the two are not reconcilable and the spec sheet
+is still on disk saying otherwise.
+
+It is the wider of the two, so it EXCLUDES MORE. The study period is about ten
+years and a patient's own baseline and follow-up is a fraction of it, so a
+pregnancy claim years away from a patient's index date excludes them under this
+reading and would not under the other. That is a cohort-size effect and it goes
+one way.
+
+Status: implemented as the current protocol says. PENDING SIGN-OFF on the
+precedence itself - if the study team means the patient-specific window, this
+is a one-line change to the three bounds and the cohort gets larger.
+
+## 10. Maintenance is a flag, not a period
+
+The protocol (5.1.1, and `maintenance_validated.csv`) defines a maintenance
+regimen: a period of 120 days or longer during which only a valid maintenance
+therapy is available; 30 days instead of 120 following an autologous SCT, or
+after the second of a tandem pair, with whatever days are available where
+follow-up ends first; the initial regimen transitioning into maintenance as
+other agents are discontinued; and named valid mono and dual regimens.
+
+**None of that is built.** The engine derives `contains_mtx_reg`, a descriptive
+0/1 on the line, and constructs no maintenance period, start, end, type or end
+reason. `maintenance_validated.csv` records every row of the definition as "Not
+yet implemented", and `lot/validation/R/definitions.R` states the resulting
+behaviour as this build's answer - that maintenance is never a line.
+
+The distinction that matters for anyone reading a LOT count: this is not a
+decision that maintenance should not be a line. It is that the period the
+protocol defines does not exist here, so the question the protocol asks has not
+been put. A line whose regimen reduces to a single maintenance agent continues
+as the same line, which is what "maintenance is never a line" describes.
+
+Status: NOT IMPLEMENTED. This is the largest single gap between the protocol and
+the build outside safety and HCRU, and it changes line counts wherever the
+protocol would have opened a maintenance period.

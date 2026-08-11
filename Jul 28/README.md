@@ -116,6 +116,8 @@ README, next to the thing decided.
 | | where |
 |---|---|
 | NDMM cohort | `ndmm/DECISIONS.md` - numbered, with the reasoning and what was measured |
+| maintenance | `ndmm/DECISIONS.md` #10 - **not implemented**; the protocol defines a period, the build carries a flag |
+| pregnancy window | `ndmm/DECISIONS.md` #9 - the protocol and the validated program spec disagree; which wins is recorded there |
 | lines of therapy | `lot/engine/README.md`. The rules the protocol summarises come from prior internal work not in this repository, so `SCT_TANDEM_DAYS` and `CART_CONSOLIDATION_DAYS` cannot be checked against the protocol text - only against that document. |
 | outcomes | `lot/outcomes/README.md` - the `STUDY_END` censoring rule for TTD, the fifth attrition category, both denominators |
 | safety and utilisation | `lot/safety/README.md` - the acute/chronic counting rules, event attribution, and the protocol's own `>30` / `>=30` ambiguity |

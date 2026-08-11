@@ -123,7 +123,19 @@ main <- function() {
   res$run_id <- run$run
   res$input_cohort_table <- run$cohort
   if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
-  f <- file.path(out_dir, "benchmarks_observed_vs_published.csv")
+  # The canonical name is for a complete run. A run that lost a TTNT line is
+  # not one, and it used to write this file anyway - so the artifact on disk
+  # looked finished and only the exit status and the log said otherwise, which
+  # is exactly the state a file outlives. A partial run writes a differently
+  # named file that cannot be mistaken for the deliverable, and carries the
+  # reason in a column so it travels with the rows rather than in a terminal.
+  if (length(failed)) {
+    res$incomplete <- paste0("TTNT failed for line(s) ",
+                             paste(failed, collapse = ", "))
+    f <- file.path(out_dir, "benchmarks_observed_vs_published.PARTIAL.csv")
+  } else {
+    f <- file.path(out_dir, "benchmarks_observed_vs_published.csv")
+  }
   write.csv(res, f, row.names = FALSE)
 
   cat("\n", nrow(res), " measurements.\n", sep = "")
@@ -147,7 +159,9 @@ main <- function() {
     cat("\nINCOMPLETE: TTNT failed for line(s) ", paste(failed, collapse = ", "),
         ". Those rows carry no observation, and a reference sitting on one ",
         "reads 'no observation' - the same words as a metric nobody ran. ",
-        "This is not a complete benchmark run.\n", sep = "")
+        "This is not a complete benchmark run, so it was written as ",
+        basename(f), " rather than under the canonical name, and every row ",
+        "carries an `incomplete` column saying why.\n", sep = "")
     return(invisible(structure(f, incomplete = failed)))
   }
   invisible(f)

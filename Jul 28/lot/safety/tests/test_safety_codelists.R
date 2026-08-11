@@ -269,6 +269,21 @@ agrees(both(hmut = function(h2) { h2$precedence[h2$event == "er_visit"] <- ""; h
        "filled rows that do not say which is the definition")
 agrees(both(hmut = function(h2) { h2$precedence[h2$event == "er_visit"] <- "fallback"; h2 }),
        "an event with fallbacks and no primary")
+# The way round that check: keep a primary ROW and leave it empty. no_primary
+# only asks that one exists, so a filled fallback beside an empty primary read
+# as ready - and the fallback then silently became the definition, which is the
+# arrangement precedence exists to prevent.
+agrees(both(hmut = function(h2) {
+         h2 <- h2[h2$event != "er_visit", , drop = FALSE]
+         rbind(h2,
+           data.frame(event = "er_visit", measure = "count_and_category",
+                      precedence = "primary", code_type = "POS", code = "",
+                      source_note = "PLACEHOLDER", stringsAsFactors = FALSE),
+           data.frame(event = "er_visit", measure = "count_and_category",
+                      precedence = "fallback", code_type = "TOS_CD",
+                      code = "99281", source_note = "filled",
+                      stringsAsFactors = FALSE)) }),
+       "a filled fallback beside an EMPTY primary")
 agrees(both(hmut = function(h2) {
          h2$code_type[h2$event == "er_visit"] <- "CONFINEMENT"; h2 }),
        "an ER visit counted off the hospitalisation table")
