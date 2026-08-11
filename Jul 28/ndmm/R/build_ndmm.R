@@ -832,14 +832,44 @@ write_build_status <- function(con, cfg, state, n = NA) {
 # suppress the report and keep the error.
 check_icd_flag <- function(con, cfg) {
   fam <- icd_family_sql("t.ICD_FLAG")
-  probe <- function(tbl, code_col, lists) glue("
-    SELECT concat_ws(', ', collect_set(
-             coalesce(nullif(trim(t.ICD_FLAG), ''), '<blank>'))) AS vals,
+  # The flag as it is reported and the code as the join sees it, each written
+  # once. The summary reports the flag; the detail reports and groups on both.
+  # A second spelling of either is a second definition of the same thing.
+  flag_val  <- "coalesce(nullif(trim(t.ICD_FLAG), ''), '<blank>')"
+  norm_code <- function(code_col)
+    glue("upper(regexp_replace(t.{code_col}, '[^A-Za-z0-9]', ''))")
+  # The exact condition this check stops on, written once and used by both
+  # probes, so the breakdown cannot describe a different set of rows than the
+  # count it breaks down. That is the whole reason the breakdown can be read as
+  # an explanation of the stop rather than as a separate question.
+  #
+  # fam, the code column and the lists are the three things that vary per call,
+  # so all three are arguments. fam especially: taken from the enclosing frame
+  # it works here and stops working the moment either function is lifted out,
+  # because glue() resolves names lexically from where the function is defined.
+  hits <- function(fam, code_col, lists) glue(
+    "({fam}) IS NULL
+      AND {norm_code(code_col)} IN (SELECT code FROM ({lists}))")
+  probe_summary <- function(tbl, code_col, lists) glue("
+    SELECT concat_ws(', ', collect_set({flag_val})) AS vals,
            count(*) AS n
     FROM {tbl} t
-    WHERE ({fam}) IS NULL
-      AND upper(regexp_replace(t.{code_col}, '[^A-Za-z0-9]', '')) IN (
-        SELECT code FROM ({lists}))")
+    WHERE {hits(fam, code_col, lists)}")
+  # Which codes, on the same rows. The count says how many; the question the
+  # stop leaves behind is which - an MM code that stops matching excludes a
+  # patient, an exclusion code that stops matching keeps one, a trial code
+  # moves nothing. The normalised code is projected, so it has to stay a plain
+  # scalar: fold the list membership into it and the column is a boolean, and
+  # in Spark an IN-subquery is not projectable at all.
+  probe_detail <- function(tbl, code_col, lists) glue("
+    SELECT {flag_val}              AS icd_flag_value,
+           {norm_code(code_col)}   AS matched_code,
+           count(*)                AS n_rows,
+           count(DISTINCT t.PATID) AS n_pat
+    FROM {tbl} t
+    WHERE {hits(fam, code_col, lists)}
+    GROUP BY {flag_val}, {norm_code(code_col)}
+    ORDER BY n_rows DESC, matched_code")
   dx_lists <- glue("
         SELECT dx AS code FROM {NDMM_MM_DX_CODES}
         UNION SELECT dx FROM {NDMM_OTHER_MALIG_CODES}
@@ -848,14 +878,42 @@ check_icd_flag <- function(con, cfg) {
   pr_lists <- glue("
         SELECT code FROM {NDMM_PREG_CODES} WHERE code_type LIKE '%PROC'
         UNION SELECT code FROM {NDMM_CLINTRIAL_CODES} WHERE code_type LIKE '%PROC'")
+  # Enough to name the problem without turning a stop into a data dump. A cut
+  # says so and says how many it cut - a silent top-N reads as the whole story.
+  DETAIL_MAX <- 20L
+  # An aid to a stop that is already happening, so a driver failure reading it
+  # must not replace the stop with a driver error.
+  codes_line <- function(sql, n) {
+    d <- tryCatch(db_q(con, sql), error = function(e) NULL)
+    if (is.null(d) || !nrow(d)) return("")
+    num <- function(x) format(x, big.mark = ",", trim = TRUE, scientific = FALSE)
+    s <- head(d, DETAIL_MAX)
+    out <- paste0(", codes: ",
+                  paste0(s$matched_code, " (", s$icd_flag_value, ", ",
+                         num(s$n_rows), " row(s), ", num(s$n_pat),
+                         " patient(s))", collapse = ", "))
+    if (nrow(d) > DETAIL_MAX)
+      out <- paste0(out, ", and ", num(nrow(d) - DETAIL_MAX), " more code(s)")
+    # One predicate, so these have to sum to the count they break down. If they
+    # ever stop agreeing the two queries have come apart again and the
+    # breakdown is describing rows the check did not stop on - which is the
+    # failure this shape exists to prevent, so it is reported, not trusted.
+    tot <- suppressWarnings(sum(as.numeric(d$n_rows)))
+    if (!isTRUE(all.equal(tot, as.numeric(n))))
+      out <- paste0(out, " [WARNING: the breakdown sums to ", num(tot),
+                    " row(s), not ", num(n), " - the count and the breakdown ",
+                    "are not describing the same rows]")
+    out
+  }
   found <- character(0)
   for (p in list(list(t = cdm_src(cfg$tbl_med_diag), c = "DIAG", l = dx_lists),
                  list(t = cdm_src(cfg$tbl_med_proc), c = "PROC", l = pr_lists))) {
-    r <- db_q(con, probe(p$t, p$c, p$l))
+    r <- db_q(con, probe_summary(p$t, p$c, p$l))
     n <- suppressWarnings(as.integer(r$n))
     if (length(n) == 1L && !is.na(n) && n > 0)
       found <- c(found, paste0(p$t, ": ", format(n, big.mark = ","),
-                               " row(s), ICD_FLAG in {", r$vals, "}"))
+                               " row(s), ICD_FLAG in {", r$vals, "}",
+                               codes_line(probe_detail(p$t, p$c, p$l), n)))
   }
   if (!length(found)) {
     log_msg("  ICD_FLAG: every claim carrying a code this cohort reads names a family")

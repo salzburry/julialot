@@ -482,6 +482,15 @@ fixable at source. A third waivable condition sits beside them:
 is on a list this cohort reads - those rows move membership in both
 directions, so the build stops until the study team looks.
 
+That stop names the codes, not just the row count, because which codes they
+are is the decision: an MM code that stops matching excludes a patient, an
+exclusion code that stops matching keeps one, a trial code moves nothing. The
+count and the per-code breakdown are two statements built from one predicate,
+so the breakdown is of the rows that stopped the build and not of some wider
+set - and they are checked against each other at run time, because sharing the
+predicate only holds while both still use it. Long lists are cut at twenty
+codes and say how many were left out.
+
 Each waiver is accepted separately:
 `NDMM_WAIVERS=codelist_ndc_short,raw_icd_flag`. Nothing outside those three
 names can be waived, and a waiver naming something else stops the build as a
