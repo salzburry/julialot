@@ -1791,11 +1791,15 @@ we <- new.env(parent = globalenv())
 assign("wrk", function(x) paste0("sch.", x), envir = we)
 WSQL <- character(0)
 assign("db_exec", function(con, sql) { WSQL <<- c(WSQL, sql); invisible(TRUE) }, envir = we)
-assign("db_q", function(con, sql)
+# Routed by what is asked for: the table read, and the cohort count the applied
+# row is held against. One fixture answering both cannot tell them apart.
+assign("db_q", function(con, sql) {
+  if (grepl("_ndmm_patids", sql, fixed = TRUE)) return(data.frame(n = 1L))
   data.frame(PREG_WINDOW_RULE = c("study period (this run)", "baseline + follow-up"),
              N_WITH_PREG_CLAIM = c(3L, 2L), N_EXCL_INCREMENTAL = c(2L, 1L),
              N_COHORT = c(1L, 2L), IS_THIS_RUN = c(1L, 0L),
-             stringsAsFactors = FALSE), envir = we)
+             stringsAsFactors = FALSE)
+}, envir = we)
 assign("log_msg", function(...) invisible(NULL), envir = we)
 sys.source(file.path(ROOT, "R", "steps", "05b_preg_window.R"), envir = we)
 we$build_ndmm_preg_window_counts(NULL, cfg_defaults)
@@ -1838,5 +1842,18 @@ more <- data.frame(N_WITH_PREG_CLAIM = c(2L, 3L), N_EXCL_INCREMENTAL = c(1L, 1L)
                    N_COHORT = c(2L, 2L), IS_THIS_RUN = c(1L, 0L))
 ok(inherits(tryCatch(we$check_preg_window_counts(more), error = function(e) e), "error"),
    "...and more claims inside the contained window than in the one containing it")
+# The tie-back to the number the study actually publishes. The applied row
+# recomputes the same conjunction NDMM_PATIDS is defined on - same base
+# population, and no pregnancy event is the same condition as NO_PREGNANCY = 1 -
+# so a gap means one of the two is wrong. This runs against the warehouse,
+# which is where the synthetic cases above cannot reach.
+ok(isTRUE(we$check_preg_window_counts(good, 1L)),
+   "the applied cohort matching NDMM_PATIDS passes")
+ok(inherits(tryCatch(we$check_preg_window_counts(good, 2L), error = function(e) e), "error"),
+   "...and a cohort that disagrees with the published count is refused")
+ok(isTRUE(we$check_preg_window_counts(good, NULL)),
+   "...while no count supplied leaves the other invariants doing the work")
+ok(!has(WSQL[1], "_ndmm_patids"),
+   "the cohort count is read separately, not folded into the table's own SQL")
 
 report()

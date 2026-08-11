@@ -513,7 +513,18 @@ The gap between the two `N_COHORT` rows is what this decision costs. Kept plus
 excluded is the cohort with the criterion removed and does not depend on the
 window, so the two rows have to agree on it - checked on every run, along with
 the containment (the narrower window can only leave a larger cohort and can
-only find fewer claims).
+only find fewer claims) and against `NDMM_PATIDS`: the applied row recomputes
+the conjunction the published cohort count comes from, so it has to equal it.
+
+**What the alternative row is, exactly.** It varies one thing - the window -
+and nothing else. It uses this build's 365-day baseline, not calendar months,
+and its follow-up runs to death or the study end. **It does not stop at
+disenrolment.** The program spec says "baseline or follow-up period" without
+defining follow-up's end, and if the study team means it to stop where
+continuous enrolment stops then this row is an upper bound on the narrower
+reading rather than the narrower reading itself. That is the question to settle
+at sign-off, and it is the reason this row is a sensitivity rather than a
+re-creation of the older pipeline.
 
 One scan serves both. The claim scan writes `NDMM_PREGNANCY_EVENTS` with dates,
 the exclusion takes distinct patients of it over the study period exactly as

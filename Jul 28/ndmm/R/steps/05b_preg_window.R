@@ -7,13 +7,16 @@
 # so excludes strictly more - a childbirth claim years from a patient's index
 # date drops them here and would not there. See DECISIONS.md #9.
 #
-# Its own file, beside the criterion it prices. It lived in 00b_lot1_index.R
-# for a while because that file is outside the April port comparison, which is
-# a reason about tooling and not about where pregnancy logic belongs.
-#
 # One scan serves both windows, because the study period contains the
 # patient-relative one: the narrower rule is a filter on the same matched
 # events, not a second pass over the claims.
+#
+# What the alternative row is, exactly, because it is a one-variable
+# sensitivity and not a re-creation of the older pipeline: the same 365-day
+# baseline this build uses, and follow-up running to death or the study end.
+# It does NOT stop at disenrolment. Whether the program spec's "follow-up"
+# meant that is open, and is the thing to settle at sign-off - see
+# DECISIONS.md #9.
 
 # Whether a patient's claim falls in the window the row is about. One
 # definition, used by all three columns: the kept count is the negation of the
@@ -34,16 +37,12 @@ build_ndmm_preg_window_counts <- function(con, cfg) {
       FROM {NDMM_LOT1_STARTS} l1
       INNER JOIN {NDMM_BASE_COHORT} b ON b.PATID = l1.PATID
     ),
-    -- Every indexed patient gets a row, whether or not they have an event.
-    --
-    -- The LEFT JOIN is INSIDE this aggregate for that reason, and it is the
-    -- whole correctness of the table. Built the other way round - events
-    -- grouped first, then left-joined to patients - the flags are NULL for a
-    -- patient with no pregnancy claim, NOT(NULL) is NULL, and
-    -- CASE WHEN NULL THEN PATID END counts nobody. Every patient without a
-    -- pregnancy claim then vanished from both cohort columns and the applied
-    -- row reported a cohort of zero, which is the one number nobody would read
-    -- as a bug in the table rather than a finding about the study.
+    -- Every indexed patient gets a row, with 0 rather than NULL where there is
+    -- no event. The LEFT JOIN belongs INSIDE this aggregate for that reason:
+    -- group the events first and the flags are NULL for a patient with no
+    -- claim, NOT(NULL) is NULL, and CASE WHEN NULL THEN PATID END counts
+    -- nobody - so the cohort columns silently lose everyone without a
+    -- pregnancy claim.
     ev AS (
       SELECT idx.PATID,
              max(CASE WHEN e.PATID IS NOT NULL THEN 1 ELSE 0 END) AS w_study,
@@ -97,17 +96,24 @@ build_ndmm_preg_window_counts <- function(con, cfg) {
             format(got$N_EXCL_INCREMENTAL[i], big.mark = ","),
             " of them are excluded by it alone, cohort ",
             format(got$N_COHORT[i], big.mark = ","))
-  check_preg_window_counts(got)
+  # The applied row is a recomputation of the cohort, so it has to equal the
+  # cohort. NDMM_PATIDS is the conjunction the published count is taken from,
+  # and this table rebuilds the same conjunction with the pregnancy criterion
+  # recomputed per window - so the study-period row is the same population by
+  # construction, and any gap means one of the two is wrong. Checked against
+  # the warehouse, which is where the synthetic invariants below cannot reach.
+  n_real <- db_q(con, glue(
+    "SELECT count(DISTINCT PATID) AS n FROM {NDMM_PATIDS}"))$n
+  check_preg_window_counts(got, as.integer(n_real))
   log_msg("  The gap between the two cohort figures is what the wider reading ",
           "costs. See DECISIONS.md #9 - the window is pending sign-off.")
   invisible(got)
 }
 
-# Invariants the numbers have to satisfy whatever the data says. The defect
-# this catches produced a cohort of zero on the applied row while every other
-# column looked sane, so it is checked on the values rather than only on the
-# SQL that made them.
-check_preg_window_counts <- function(got) {
+# Invariants the numbers have to satisfy whatever the data says. Checked on the
+# values, not only on the SQL that made them: the failure mode here is a table
+# that parses, runs, and reports a wrong number in the column somebody quotes.
+check_preg_window_counts <- function(got, n_real = NULL) {
   bad <- character(0)
   if (nrow(got) != 2L)
     bad <- c(bad, paste0("expected one row per window, got ", nrow(got)))
@@ -137,6 +143,14 @@ check_preg_window_counts <- function(got) {
         bad <- c(bad, paste0("more claims inside the patient window (",
                              pt$N_WITH_PREG_CLAIM, ") than in the study period (",
                              st$N_WITH_PREG_CLAIM, "), which contains it."))
+      if (length(n_real) == 1L && !is.na(n_real) && st$N_COHORT != n_real)
+        bad <- c(bad, paste0("the applied row says the cohort is ", st$N_COHORT,
+                             " and NDMM_PATIDS holds ", n_real,
+                             ". This row recomputes the same conjunction the ",
+                             "published count comes from, so they are the same ",
+                             "population by construction. The one way they may ",
+                             "differ is a flags table built with the pregnancy ",
+                             "criterion off, which no production run does."))
     }
   }
   if (length(bad))
