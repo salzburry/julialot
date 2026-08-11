@@ -105,6 +105,25 @@ that did not finish. The latest row wins, finished or not, because a build
 replaces its tables before it validates them - so a rerun that replaced them
 and then failed owns them, and the previous good row does not.
 
+## Where the decisions are written down
+
+A decision is anywhere this build had to choose something the protocol does not
+settle, or chose to differ from it. There is no single register, and that is
+worth knowing before looking for one: `ndmm/DECISIONS.md` is a real register and
+it covers the NDMM cohort only. Everything else records its decisions in its own
+README, next to the thing decided.
+
+| | where |
+|---|---|
+| NDMM cohort | `ndmm/DECISIONS.md` - numbered, with the reasoning and what was measured |
+| lines of therapy | `lot/engine/README.md`. The rules the protocol summarises come from prior internal work not in this repository, so `SCT_TANDEM_DAYS` and `CART_CONSOLIDATION_DAYS` cannot be checked against the protocol text - only against that document. |
+| outcomes | `lot/outcomes/README.md` - the `STUDY_END` censoring rule for TTD, the fifth attrition category, both denominators |
+| safety and utilisation | `lot/safety/README.md` - the acute/chronic counting rules, event attribution, and the protocol's own `>30` / `>=30` ambiguity |
+| the melphalan proposal | `lot/melphalan/README.md`, and the open questions printed by `run_melp_scenarios.R` |
+
+Where a package's README and this table disagree, the README is the record and
+this table is the index.
+
 ## Settings
 
 `config.csv` in each package holds the defaults. The environment wins over it.

@@ -23,7 +23,7 @@
 # baseline and follow-up, at 1L, 2L and 3L - so it is stated once here rather
 # than repeated on twenty-three rows where it could drift.
 SAFETY_DOMAINS <- c("hepatologic", "renal", "ocular", "cardiovascular",
-                    "neurologic")
+                    "neurologic", "infectious", "other")
 # condition = acute/chronic, because Table 2 states both and a condition filed
 # under the wrong domain or relabelled acute is not a code-list error - it is a
 # different measurement, and it looks exactly like the right one. Holding all
@@ -51,7 +51,21 @@ SAFETY_CONDITIONS <- list(
                      parkinsons_disease               = "chronic",
                      cognitive_impairment_or_dementia = "chronic",
                      other_movement_disorders         = "chronic",
-                     seizures                         = "chronic")
+                     seizures                         = "chronic"),
+  # These two domains were missing, and their absence is the failure this file
+  # was written to prevent: a condition leaving the study by leaving a list.
+  # Table 2 carries twenty-six conditions in seven domains and the roster held
+  # twenty-three in five, with a test pinning the number 23 - so the shortfall
+  # was not merely unnoticed, it was locked in. Table 3's category list names
+  # the same seven independently: hepatologic, renal, serious infection,
+  # ocular, cardiovascular, neurologic, and other conditions.
+  infectious     = c(severe_infection_with_hospitalisation = "acute"),
+  # Table 2 heads this group "Other (dependent on data availability)". The
+  # dependency is on the data, not on whether the study wants them, so they are
+  # rostered like every other condition and the availability question is
+  # recorded in the README beside the codes they are waiting on.
+  other          = c(thrombocytopenia = "chronic",
+                     anemia           = "chronic")
 )
 SAFETY_TIMING <- "baseline and follow-up, at 1L, 2L and 3L"
 
