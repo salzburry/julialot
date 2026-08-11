@@ -292,7 +292,7 @@ and the operator's judgement in `comparable`:
 | | |
 |---|---|
 | `yes` | close enough to compare |
-| `caveat` | usable, with the difference named in `notes` |
+| `caveat` | usable, with the difference named in the `caveat` column |
 | `no` | recorded for context; scored as nothing |
 
 An unmarked row defaults to `no`. Defaulting the other way would let a

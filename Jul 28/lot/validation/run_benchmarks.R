@@ -102,10 +102,17 @@ main <- function() {
     add(db_q(con, bench_regimen_sql(final, top_n))))
   # One statement per line: the risk set changes with the line. A loop is
   # clearer than a curve per group, and a line that fails costs only itself.
+  # A line that fails costs only itself - but it must cost that visibly. This
+  # used to print the error, contribute nothing, and let the run write the CSV
+  # and exit 0: a measurement that was attempted and failed came out
+  # indistinguishable from one nobody asked for, in a file whose whole purpose
+  # is to say what was measured against what.
+  failed <- integer(0)
   for (l in seq_len(max(1L, max_lot - 1L))) {
     r <- tryCatch(db_q(con, bench_ttnt_sql(final, patients, l)),
                   error = function(e) { cat("  TTNT line ", l, " failed: ",
-                                            conditionMessage(e), "\n", sep = ""); NULL })
+                                            conditionMessage(e), "\n", sep = "")
+                                        failed <<- c(failed, l); NULL })
     obs[[length(obs) + 1L]] <- add(r)
   }
   obs <- do.call(rbind, Filter(Negate(is.null), obs))
@@ -132,6 +139,18 @@ main <- function() {
   cat("\nWrote ", f, "\n", sep = "")
   cat("No row here is a pass or a fail. A difference is two studies differing ",
       "until the `comparable` column says otherwise.\n", sep = "")
+  # The run is incomplete, and the file it just wrote does not say so - every
+  # verdict in it is about the metrics that DID measure. Saying it here and in
+  # the exit status is what keeps "we did not measure this" from being read as
+  # "there was nothing to measure".
+  if (length(failed)) {
+    cat("\nINCOMPLETE: TTNT failed for line(s) ", paste(failed, collapse = ", "),
+        ". Those rows carry no observation, and a reference sitting on one ",
+        "reads 'no observation' - the same words as a metric nobody ran. ",
+        "This is not a complete benchmark run.\n", sep = "")
+    return(invisible(structure(f, incomplete = failed)))
+  }
+  invisible(f)
 }
 
 if (!interactive()) {
@@ -146,5 +165,7 @@ if (!interactive()) {
                       unset = Sys.getenv("DOMINO_USER_NAME", unset = "")),
       object_prefix = Sys.getenv("OBJECT_PREFIX", unset = ""))))
   }
-  main()
+  r <- main()
+  # Non-zero, so a scheduled run cannot report success on a partial measurement.
+  if (length(attr(r, "incomplete"))) quit(status = 1L)
 }

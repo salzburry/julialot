@@ -295,7 +295,8 @@ cat("\n-- a line cohort has to belong to the run being measured --\n")
 FULL <- list(PATID = "p", SOURCE_LOT_RUN_ID = "L1", SUBSEQ_RUN_ID = "S1",
              CE_PRE_DAYS = "365", CE_FU_DAYS = "90",
              SOURCE_COHORT_RUN_ID = "C1", SOURCE_COHORT_STAMP = "2026-01-01")
-fsc <- function(rows, lot_run = "L1") {
+ATTEMPT <- c(run = "C1", stamp = "2026-01-01")
+fsc <- function(rows, lot_run = "L1", attempt = ATTEMPT) {
   if (is.null(rows) || !is.null(names(rows))) rows <- list(rows, rows)
   i <- 0L
   e <- new.env(parent = globalenv())
@@ -308,7 +309,7 @@ fsc <- function(rows, lot_run = "L1") {
     as.data.frame(r, stringsAsFactors = FALSE)
   }, envir = e)
   f <- find_subsequent_cohorts; environment(f) <- e
-  tryCatch(f(NULL, lot_run), error = conditionMessage)
+  tryCatch(f(NULL, lot_run, attempt = attempt), error = conditionMessage)
 }
 without <- function(k) { r <- FULL; r[[k]] <- NULL; r }
 ok(length(fsc(FULL)) == 2L, "a line cohort built from this LOT run is used")
@@ -344,6 +345,18 @@ for (k in c("SUBSEQ_RUN_ID", "CE_PRE_DAYS", "CE_FU_DAYS",
   ok(is.character(r) && grepl("record no", r, fixed = TRUE),
      paste0("a line cohort with no ", k, " cannot be shown to be this build's"))
 }
+# Agreeing with each other is not the same as belonging to the lines: both
+# tables can consistently describe cohort attempt B while the lines were built
+# over attempt A, and nothing compared the two chains.
+m6 <- fsc(FULL, attempt = c(run = "C2", stamp = "2026-06-01"))
+ok(is.character(m6) && grepl("were built over cohort attempt C1", m6),
+   "line cohorts agreeing on an attempt the LOT lines were NOT built over")
+m7 <- fsc(FULL, attempt = NULL)
+ok(is.character(m7) && grepl("was not established", m7),
+   "...and where the LOT attempt could not be established, that is said, not assumed")
+ok(length(fsc(FULL, attempt = ATTEMPT)) == 2L,
+   "...while the matching pair is what an ordinary run looks like")
+
 # The stamp it checks is the one the subsequent build actually writes. All five,
 # now that all five are read - a check against a column nothing writes would
 # stop every run, and one nothing reads is the gap this closed.
@@ -354,6 +367,36 @@ ok(all(vapply(c("SOURCE_LOT_RUN_ID", "SOURCE_COHORT_RUN_ID",
                 "CE_FU_DAYS"),
               function(k) has(bs, paste0("AS ", k)), logical(1))),
    "...and the cohort build writes every stamp this reads")
+
+cat("\n-- and the meaning of LINE_ELIGIBLE travels with it --\n")
+# LINE_ELIGIBLE is a restriction whose meaning is set by the continuous
+# enrolment windows the 2L/3L build used, and the label is the same whatever
+# they were. A sensitivity build under 180/30 is accepted deliberately - that
+# is the sweep's business - but it said so only in the run log, which does not
+# outlive the session, while the table it produced looked exactly like a
+# 365/90 one. A reader opening OUT_TTE a month later had no way to ask.
+SP <- c(subseq = "S1", pre = "180", fu = "30")
+tte_p <- outcomes_tte_sql(BASE, "r1", "L1", SP)
+for (col in c("SUBSEQ_RUN_ID", "CE_PRE_DAYS", "CE_FU_DAYS"))
+  ok(has(tte_p, paste0("AS ", col)),
+     paste0("OUT_TTE carries ", col, ", not only the log"))
+ok(has(tte_p, "'180' AS CE_PRE_DAYS") && has(tte_p, "'30' AS CE_FU_DAYS"),
+   "...with the windows the build actually used")
+# Every table with a DENOM or a LINE_ELIGIBLE, so provenance cannot land on one
+# output and not the next.
+for (nm in c("OUT_ATTRITION", "OUT_LINE_GAP", "OUT_REGIMEN")) {
+  q <- switch(nm,
+    OUT_ATTRITION = outcomes_attrition_sql("t", "2026-03-31", "r1", "L1", TRUE, SP),
+    OUT_LINE_GAP  = outcomes_line_gap_sql("t", "r1", "L1", TRUE, SP),
+    OUT_REGIMEN   = outcomes_regimen_sql("t", "r1", "L1", TRUE, SP))
+  ok(has(q, "AS SUBSEQ_RUN_ID") && has(q, "AS CE_PRE_DAYS") && has(q, "AS CE_FU_DAYS"),
+     paste0("...and so does ", nm))
+}
+# No line cohorts: the flag is NULL and so is its provenance. A blank there
+# would read as a window somebody chose.
+tte_n <- outcomes_tte_sql(BASE, "r1", "L1", NULL)
+ok(has(tte_n, "NULL AS SUBSEQ_RUN_ID") && has(tte_n, "NULL AS CE_PRE_DAYS"),
+   "with no line cohorts the provenance is NULL, as LINE_ELIGIBLE is")
 
 cat("\n-- Table 4 is answered over both denominators, not one chosen here --\n")
 # 2L can mean "of the patients we followed from 1L" or "of the patients we could
@@ -547,6 +590,14 @@ refuses(mk(STATUS[setdiff(names(STATUS), "CONTRACT_DEVIATIONS")]),
 runs(mk(modifyList(STATUS, list(CONTRACT_DEVIATIONS = "")))(
        NULL, "ndmm_", "ndmm_NDMM_COHORT", SE),
      "...while a blank one is a contract build, which is every production run")
+# Three states, and NULL was being read as the blank. The engine always writes
+# this column as a quoted string, so '' comes from a build and NULL does not -
+# NULL is what the in-place column upgrade leaves on rows that predate the
+# column, which converts "the column is missing" into "the column is present
+# and says nothing" and walks past the check written for that case.
+refuses(mk(modifyList(STATUS, list(CONTRACT_DEVIATIONS = NA_character_))),
+        "CONTRACT_DEVIATIONS column that is NULL",
+        "...and a NULL is the absence of a statement, not the blank one")
 # Named, on the record, and only then.
 Sys.setenv(OUT_ALLOW_UNPROVEN_LINEAGE = "TRUE")
 runs(mk(ndmm = NULL)(NULL, "ndmm_", "ndmm_NDMM_COHORT", SE),

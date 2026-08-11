@@ -238,6 +238,27 @@ agrees(both(hmut = function(h2) { h2$precedence[h2$event == "er_visit"] <- "fall
 agrees(both(hmut = function(h2) {
          h2$code_type[h2$event == "er_visit"] <- "CONFINEMENT"; h2 }),
        "an ER visit counted off the hospitalisation table")
+# A code list is joined to claims, so a duplicated code returns the matching
+# claim once per copy. It is also how two people answering the same row
+# separately shows up, which is worth seeing rather than silently merging.
+agrees(both(function(s) rbind(s, s[1, ])), "the same safety code listed twice")
+agrees(both(hmut = function(h2) rbind(h2, h2[1, ])),
+       "...and the same utilisation code listed twice")
+# Precedence exists so a reader knows which rows are the definition. Two
+# primaries on one event is two definitions, said by the column meant to settle
+# it - and a reader with no rule for choosing unions them.
+agrees(both(hmut = function(h2) rbind(h2, data.frame(
+         event = "er_visit", measure = "count_and_category",
+         precedence = "primary", code_type = "TOS_CD", code = "99281",
+         source_note = "fixture", stringsAsFactors = FALSE))),
+       "two primary identification methods for one event")
+# Several codes of ONE type are one method, which is what a POS list is.
+d <- both(hmut = function(h2) rbind(h2, data.frame(
+       event = "er_visit", measure = "count_and_category", precedence = "primary",
+       code_type = "POS", code = "24", source_note = "fixture",
+       stringsAsFactors = FALSE)))
+ok(!inherits(tryCatch(safety_codelist(d), error = function(e) e), "error"),
+   "...while several codes of one type are one method, not two")
 
 cat("\n-- and a blank cell is a blank cell everywhere --\n")
 # The NA trap these all share: a blank makes `!=` return NA, NA subscripts an

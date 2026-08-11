@@ -47,7 +47,8 @@ find_base_cohort <- function(con) {
 #
 # The subsequent build records which LOT run it drew from. Ask, and drop a
 # cohort that names a different one rather than restricting on it.
-find_subsequent_cohorts <- function(con, lot_run, lines = c(2L, 3L)) {
+find_subsequent_cohorts <- function(con, lot_run, lines = c(2L, 3L),
+                                    attempt = NULL) {
   out <- list(); stale <- character(0); prov <- list()
   for (n in lines) {
     t <- coh_tbl(paste0("NDMM_COHORT_", n, "L"))
@@ -109,10 +110,31 @@ find_subsequent_cohorts <- function(con, lot_run, lines = c(2L, 3L)) {
       invisible(v[[1]])
     }
     agree("subseq", "which subsequent-cohort run built them")
-    agree("coh",    "which cohort attempt they were built over")
-    agree("stamp",  "the stamp of that cohort attempt")
+    coh   <- agree("coh",   "which cohort attempt they were built over")
+    stamp <- agree("stamp", "the stamp of that cohort attempt")
     agree("pre",    "the continuous-enrolment window before the line")
     agree("fu",     "the continuous-enrolment window after it")
+    # Agreeing with each other is not the same as belonging to the lines. Both
+    # tables can consistently describe cohort attempt B while the lines were
+    # built over attempt A, and this package reads the tables it is given
+    # rather than assuming how they were made - so the agreed value is held
+    # against the attempt the LOT run actually read.
+    if (!is.null(attempt) && length(attempt) == 2L && !any(is.na(attempt))) {
+      if (!identical(coh, attempt[["run"]]) ||
+          !identical(stamp, attempt[["stamp"]]))
+        stop("The line cohorts were built over cohort attempt ", coh, " (",
+             stamp, "), and the LOT lines over ", attempt[["run"]], " (",
+             attempt[["stamp"]], "). LINE_ELIGIBLE would restrict this run's ",
+             "lines by a population from another attempt of the cohort - and ",
+             "every output would still carry this run's ids, so nothing ",
+             "downstream would catch it. Re-run ",
+             "ndmm/build_subsequent_cohorts.R against this LOT run.",
+             call. = FALSE)
+    } else {
+      out_unproven(paste0("The cohort attempt behind the LOT run was not ",
+                          "established, so the line cohorts' attempt ", coh,
+                          " cannot be shown to be the same one."))
+    }
     p1 <- prov[[1]]
     log_msg("  Line cohorts from subsequent run ", p1[["subseq"]],
             ", continuous enrolment ", p1[["pre"]], "d before and ",
@@ -169,12 +191,24 @@ check_lot_run <- function(con, prefix, cohort_table, study_end) {
   # CONTRACT_DEVIATIONS is a positive statement - the run used the contract
   # algorithm - and is what every production run writes. A MISSING column says
   # nothing, and was being read as the blank.
+  # Three states, and the third was being read as the second. The engine always
+  # writes CONTRACT_DEVIATIONS as a quoted string, so a contract build writes
+  # '' - NULL is not something a build produces. It is what the in-place column
+  # upgrade leaves on rows that predate the column, which turns "the column is
+  # missing" into "the column is present and says nothing" and walks past the
+  # check written for exactly that case. An empty string is a statement; a NULL
+  # is the absence of one, and only the first proves a contract build.
   dev <- pick("CONTRACT_DEVIATIONS")
   if (!has("CONTRACT_DEVIATIONS"))
     out_unproven(paste0(tbl, " has no CONTRACT_DEVIATIONS column, so this run ",
                         "cannot be shown to have used the contract algorithm ",
                         "rather than a sensitivity sweep's."))
-  else if (!is.na(dev) && nzchar(trimws(dev)))
+  else if (is.na(dev))
+    out_unproven(paste0(tbl, " has a CONTRACT_DEVIATIONS column that is NULL ",
+                        "for run ", pick("RUN_ID"), ". Every build writes it, ",
+                        "so a NULL is a row from before the column existed - ",
+                        "it does not say the contract algorithm was used."))
+  else if (nzchar(trimws(dev)))
     stop("That LOT run was built with LOT_CONTRACT_OVERRIDE (", dev,
          "), so its lines are an alternative algorithm's.", call. = FALSE)
   # The attrition split is decided by the study end, and this package holds its
@@ -194,8 +228,8 @@ check_lot_run <- function(con, prefix, cohort_table, study_end) {
          "the two have to be the same window.", call. = FALSE)
   log_msg("LOT run ", pick("RUN_ID"), " completed over ",
           pick("INPUT_COHORT_TABLE"))
-  check_cohort_attempt(con, pick("RUN_ID"))
-  invisible(pick("RUN_ID"))
+  attempt <- check_cohort_attempt(con, pick("RUN_ID"))
+  structure(pick("RUN_ID"), attempt = attempt)
 }
 
 # The cohort table's name matching is not the same as its contents matching.
@@ -285,7 +319,12 @@ check_cohort_attempt <- function(con, lot_run_id) {
          "against a population the lines are not about. Re-run the LOT build.",
          call. = FALSE)
   log_msg("  Cohort attempt ", now_id, " matches the one the LOT run read.")
-  invisible(TRUE)
+  # Returned, not just checked. The 2L/3L tables record which cohort attempt
+  # THEY were built over, and holding those against each other proves they are
+  # one build without proving either belongs to the lines. This is the attempt
+  # the lines were built over, so find_subsequent_cohorts() can close that.
+  invisible(c(run = trimws(as.character(now_id)),
+              stamp = trimws(as.character(now_stamp))))
 }
 
 # Two reasons a line in LOT_LONG_FINAL can be absent from OUT_TTE, and they
@@ -362,21 +401,26 @@ build_outcomes <- function(here, cohort_table, prefix) {
   lines  <- out_tbl("LOT_LONG_FINAL")
   cohort <- wrk(cfg$input_cohort_table)
   base   <- find_base_cohort(con)
-  subseq <- find_subsequent_cohorts(con, lot_run)
+  subseq <- find_subsequent_cohorts(con, lot_run, attempt = attr(lot_run, "attempt"))
   both   <- length(subseq) > 0L
+  # The 2L/3L build's provenance, carried onto every table that has a DENOM or
+  # a LINE_ELIGIBLE. It travelled only in the log before, which does not
+  # outlive the session - so a run under non-default continuous-enrolment
+  # windows produced tables indistinguishable from a standard one.
+  sprov  <- attr(subseq, "provenance")[[1]]
   tte    <- out_tbl("OUT_TTE")
 
   log_msg("Building ", tte, " - one row per patient per line")
   db_exec(con, glue("CREATE OR REPLACE TABLE {tte} AS {
     outcomes_tte_sql(outcomes_base_sql(lines, cohort, base, subseq),
-                     run_id, lot_run)}"))
+                     run_id, lot_run, sprov)}"))
   check_lines_in_followup(con, tte, lines, cohort)
 
   tables <- list(
     list("OUT_ATTRITION", function(t) outcomes_attrition_sql(
-                            t, cfg$study_end, run_id, lot_run, both)),
-    list("OUT_LINE_GAP",  function(t) outcomes_line_gap_sql(t, run_id, lot_run, both)),
-    list("OUT_REGIMEN",   function(t) outcomes_regimen_sql(t, run_id, lot_run, both)))
+                            t, cfg$study_end, run_id, lot_run, both, sprov)),
+    list("OUT_LINE_GAP",  function(t) outcomes_line_gap_sql(t, run_id, lot_run, both, sprov)),
+    list("OUT_REGIMEN",   function(t) outcomes_regimen_sql(t, run_id, lot_run, both, sprov)))
   if (!is.null(base))
     tables <- c(tables, list(list("OUT_DX_TO_LOT1",
       function(t) outcomes_dx_to_lot1_sql(t, run_id, lot_run))))
