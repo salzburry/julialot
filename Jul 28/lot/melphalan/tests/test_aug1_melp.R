@@ -61,6 +61,40 @@ ok(has(sf("10_lot2_5_base.R"), "{melp_lotn_ctes(cfg, lot_num, induction_window_d
      has(sf("10_lot2_5_base.R"), "{melp_suppress_predicate(cfg)}") &&
      has(sf("10_lot2_5_base.R"), "melp_inject_arm(cfg"),
    "LOT2-5 has its three, in the step that builds the line")
+cat("\n-- and every fragment opens with its own newline --\n")
+# Each one splices straight after a {} in the step template, and glue() trims a
+# template's leading blank line - so a fragment that does not open with one
+# welds onto the text before it.
+#
+# Not a formatting nit. melp_allo_guard was the one without, and every
+# melphalan cell died in Spark on
+#   AND i.INJECT_DT <= lot2_start.OBS_END_DTAND lot2_start.LOT2_START_TYPE ...
+# which parses as an identifier OBS_END_DTAND followed by a table name. The
+# off-path tests above all passed, because off emits nothing and nothing is
+# what they check.
+#
+# Checked for all of them, not for that one: the next fragment added has the
+# same choice to get wrong.
+FRAGMENTS <- list(
+  melp_lot1_ctes          = list(yld),
+  melp_lotn_ctes          = list(yld, 2, 30L, 45L, "single_day"),
+  melp_suppress_predicate = list(yld),
+  melp_inject_arm         = list(yld, "lot2_start", "LOT2_START_DT",
+                                 "lot2_start.OBS_END_DT"),
+  melp_allo_guard         = list(2L, "single_day"))
+for (nm in names(FRAGMENTS)) {
+  v <- as.character(do.call(nm, FRAGMENTS[[nm]]))
+  ok(nzchar(v) && startsWith(v, "\n"),
+     paste0(nm, "() emits something and opens it with a newline"))
+}
+# The splice that broke, assembled rather than described.
+arm <- melp_inject_arm(yld, "lot2_start", "LOT2_START_DT", "lot2_start.OBS_END_DT",
+                       melp_allo_guard(2L, "single_day"))
+ok(has(arm, "<= lot2_start.OBS_END_DT\n"),
+   "the ALLO guard lands on its own line, not onto the column before it")
+ok(!has(arm, "OBS_END_DTAND"),
+   "...so the text that stopped every cell in Spark cannot be produced")
+
 # The property both halves are really about, asserted directly: put each hook's
 # off value back into the step text and nothing melphalan is left. The port
 # suite pins the same thing from the source's side - it undoes the hooks as

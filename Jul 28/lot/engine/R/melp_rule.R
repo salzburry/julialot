@@ -220,8 +220,12 @@ melp_suppress_predicate <- function(cfg, alias = "ms") {
 # open a boundary the engine has no concept of.
 melp_allo_guard <- function(lot_num, allo_lot_span) {
   if (!identical(allo_lot_span, "single_day")) return("")
-  glue("
-        AND lot{lot_num}_start.LOT{lot_num}_START_TYPE <> 'SCT_ALLO'")
+  # Its own newline, like every other fragment here. It splices straight after
+  # {span_end}, and glue() trims a template's leading blank line - so without
+  # this the guard welds onto the column before it and the statement becomes
+  # "... <= lot2_start.OBS_END_DTAND lot2_start.LOT2_START_TYPE <> ...".
+  paste0("\n", glue("
+        AND lot{lot_num}_start.LOT{lot_num}_START_TYPE <> 'SCT_ALLO'"))
 }
 
 melp_inject_arm <- function(cfg, line_tbl, start_col, span_end, extra = "") {
