@@ -1144,6 +1144,12 @@ ok(length(unbounded) == 0,
    else "and the join requires both of them to fall in the 12-month baseline")
 ok(grepl("op.diff_days <= 30", join, fixed = TRUE),
    "within 30 days of each other, as the rule is written")
+# It is a cohort-changing deviation from the source - it makes the cohort
+# larger - so it is a decision, and a decision nobody wrote down is one nobody
+# can review. The register is held to carrying it.
+dec <- paste(readLines(file.path(ROOT, "DECISIONS.md"), warn = FALSE), collapse = "\n")
+ok(grepl("Both claims inside baseline", dec, fixed = TRUE),
+   "...and the decision register records that both claims are bounded, not just the first")
 # The inpatient arm is one claim, so it has one date and it is bounded too.
 ipj <- sub(".*LEFT JOIN inpatient_flag ip", "", sql); ipj <- sub("LEFT JOIN outpatient_pairs.*", "", ipj)
 ok(grepl("ip.event_dt BETWEEN l1.pre_lot1_start AND l1.pre_lot1_end", ipj, fixed = TRUE),

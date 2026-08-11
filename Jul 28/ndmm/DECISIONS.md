@@ -154,6 +154,26 @@ Measured: `<prefix>NDMM_OTHER_MALIG_GROUPS` lists every category with its
 code and label counts; `<prefix>NDMM_OTHER_MALIG_GRAIN` prices the change
 against the per-label grain.
 
+### Both claims inside baseline, not just the first
+
+The pair has to fall inside the 1L baseline window. The source bounded only the
+first claim, so a claim the day before the index and its confirmation a month
+*after* it excluded the patient - on one baseline claim, from a pair the
+baseline never contained. The criterion is another cancer **in** the 1L
+baseline, so both `first_dt` and `next_dt` are bounded to
+`[index - 365, index - 1]`.
+
+This makes the cohort larger, and it is the one change in this section that
+moves it that way. A pair straddling the index no longer excludes anyone, so
+patients the source dropped are now in. Two claims 30 days apart still confirm,
+and the 30-day pairing rule is unchanged - what changed is where the pair has
+to sit.
+
+Code: `04_other_malig.R`, the join to `outpatient_pairs`. `next_dt` is always
+after `first_dt`, so its lower bound is arithmetically redundant; it is written
+out anyway so the condition reads as one statement about a pair rather than two
+unrelated ones.
+
 ### Bone metastasis excludes
 
 The rule excludes on the same primary tumour type or metastatic cancer, and

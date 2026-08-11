@@ -1,14 +1,14 @@
-event,measure,code_type,code,source_note
-inpatient_hospitalisation_all_cause,count_and_category,CONFINEMENT,CONF_ID,one unduplicated row per hospitalisation
-inpatient_hospitalisation_all_cause,count_and_category,POS,21,claim-level fallback; matches 00_mm_cohort.R line_inpatient
-inpatient_hospitalisation_all_cause,count_and_category,POS,51,claim-level fallback; matches 00_mm_cohort.R line_inpatient
-inpatient_hospitalisation_all_cause,count_and_category,POS,61,claim-level fallback; matches 00_mm_cohort.R line_inpatient
-inpatient_hospitalisation_all_cause,count_and_category,TOS_CD,FAC_IP.ACUTE,claim-level fallback; matches 00_mm_cohort.R line_inpatient
-inpatient_hospitalisation_all_cause,count_and_category,TOS_CD,FAC_IP.REHSNF,claim-level fallback; matches 00_mm_cohort.R line_inpatient
-inpatient_hospitalisation_all_cause,count_and_category,TOS_CD,FAC_IP.SNF,claim-level fallback; matches 00_mm_cohort.R line_inpatient
-inpatient_hospitalisation_all_cause,count_and_category,TOS_CD,PROF.INPVIS,claim-level fallback; matches 00_mm_cohort.R line_inpatient
-inpatient_length_of_stay_all_cause,length_of_stay,CONFINEMENT,LOS,a column on the table; ADMIT_DATE:DISCH_DATE is the same span
-inpatient_length_of_stay_mm_related,length_of_stay,CONFINEMENT,,PLACEHOLDER: which diagnosis position on the confinement makes a stay MM-related
-er_visit,count_and_category,POS,,PLACEHOLDER: the POS value(s) for an ER visit - the POS tab of the data dictionary
-er_visit,count_and_category,TOS_CD,,PLACEHOLDER: the TOS_CD value(s) for an ER visit - the TOS tab; TOS_EXT if a finer split is wanted
-er_visit,count_and_category,REV_CD,,PLACEHOLDER AND UNCONFIRMED: revenue codes identify an ER visit in most claims data - but see the README; no CDM table surfaces a revenue-code column to join on
+event,measure,precedence,code_type,code,source_note
+inpatient_hospitalisation_all_cause,count_and_category,primary,CONFINEMENT,CONF_ID,one unduplicated row per hospitalisation
+inpatient_hospitalisation_all_cause,count_and_category,fallback,POS,21,claim-level fallback; matches 00_mm_cohort.R line_inpatient
+inpatient_hospitalisation_all_cause,count_and_category,fallback,POS,51,claim-level fallback; matches 00_mm_cohort.R line_inpatient
+inpatient_hospitalisation_all_cause,count_and_category,fallback,POS,61,claim-level fallback; matches 00_mm_cohort.R line_inpatient
+inpatient_hospitalisation_all_cause,count_and_category,fallback,TOS_CD,FAC_IP.ACUTE,claim-level fallback; matches 00_mm_cohort.R line_inpatient
+inpatient_hospitalisation_all_cause,count_and_category,fallback,TOS_CD,FAC_IP.REHSNF,claim-level fallback; matches 00_mm_cohort.R line_inpatient
+inpatient_hospitalisation_all_cause,count_and_category,fallback,TOS_CD,FAC_IP.SNF,claim-level fallback; matches 00_mm_cohort.R line_inpatient
+inpatient_hospitalisation_all_cause,count_and_category,fallback,TOS_CD,PROF.INPVIS,claim-level fallback; matches 00_mm_cohort.R line_inpatient
+inpatient_length_of_stay_all_cause,length_of_stay,primary,CONFINEMENT,LOS,a column on the table; ADMIT_DATE:DISCH_DATE is the same span
+inpatient_length_of_stay_mm_related,length_of_stay,primary,CONFINEMENT,,PLACEHOLDER: which diagnosis position on the confinement makes a stay MM-related
+er_visit,count_and_category,primary,POS,,PLACEHOLDER: the POS value(s) for an ER visit - the POS tab of the data dictionary
+er_visit,count_and_category,fallback,TOS_CD,,PLACEHOLDER: the TOS_CD value(s) for an ER visit - the TOS tab; TOS_EXT if a finer split is wanted
+er_visit,count_and_category,fallback,REV_CD,,PLACEHOLDER AND UNCONFIRMED: revenue codes identify an ER visit in most claims data - but see the README; no CDM table surfaces a revenue-code column to join on

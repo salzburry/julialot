@@ -55,7 +55,7 @@ LOT_DIMENSIONS <- list(
                      "and SCT_AUTO is one of the start types the next line can ",
                      "take, so a further transplant becomes a line of its own ",
                      "even with no drug beside it."),
-       where = "lot/engine/R/steps/05_sct.R:11, lot/engine/R/steps/10_lot2_5_base.R:258, :329",
+       where = "lot/engine/R/steps/05b_lot1_sct.R:113, lot/engine/R/steps/10_lot2_5_base.R:275, :329",
        question = paste0("Does the definition count ASCT as a separate prior ",
                          "line, or as part of the induction line it follows? ",
                          "Does the answer change for a transplant at second ",
@@ -66,7 +66,7 @@ LOT_DIMENSIONS <- list(
        ours = paste0("Yes, and it spans a single day - start and end are the ",
                      "transplant date. It carries no regimen string, because ",
                      "induction rows are suppressed for it."),
-       where = "lot/engine/R/steps/10_lot2_5_base.R:369, :681",
+       where = "lot/engine/R/steps/10_lot2_5_base.R:327, :440",
        question = "Is alloSCT counted as a prior line in its own right?"),
 
   list(id = "cart_is_a_line",
@@ -83,7 +83,7 @@ LOT_DIMENSIONS <- list(
        ours = paste0("No. Maintenance is a descriptive flag (contains_mtx_reg) ",
                      "and there is no maintenance period at all. A regimen ",
                      "reduced to a single agent continues the same line."),
-       where = "lot/engine/R/steps/05_sct.R:13",
+       where = "lot/engine/R/steps/06_lot1_end.R:53",
        question = paste0("Does the definition count maintenance as part of the ",
                          "preceding line, or as a line of its own?")),
 
@@ -93,7 +93,7 @@ LOT_DIMENSIONS <- list(
                      "of a drug in the current line, or a transplant or CAR-T ",
                      "event. There is no requirement that progression be ",
                      "documented - claims do not carry it."),
-       where = "lot/engine/R/steps/10_lot2_5_base.R:223, :258",
+       where = "lot/engine/R/steps/10_lot2_5_base.R:227, :275, :329",
        question = paste0("Does a new line require documented progression or ",
                          "relapse, or is any regimen change enough?")),
 
@@ -199,6 +199,27 @@ read_definition_sources <- function(path) {
                          ". A correction replaces the row; two rows render as ",
                          "two answers from one source."))
   filled <- !is.na(df$answer) & nzchar(trimws(df$answer))
+  # An answered row that does not say which dimension it answers, or which
+  # source answered it. Both were unchecked, and both are worse than a blank
+  # row rather than equivalent to one.
+  #
+  # A blank dimension_id is the NA-subscript trap: the comparison selects rows
+  # with `filled$dimension_id == d$dimension_id`, NA == anything is NA, and an
+  # NA subscript returns an all-NA row - so ONE malformed row appears against
+  # EVERY dimension, each rendered with an answer nobody wrote.
+  nodim <- filled & (is.na(df$dimension_id) | !nzchar(trimws(df$dimension_id)))
+  if (any(nodim))
+    bad <- c(bad, paste0("an answer with no dimension_id on row(s): ",
+                         paste(which(nodim), collapse = ", "),
+                         ". It matches no dimension, and a row that matches no ",
+                         "dimension is selected against all of them."))
+  nosid <- filled & !nzchar(sid)
+  if (any(nosid))
+    bad <- c(bad, paste0("an answer with no source_id on row(s): ",
+                         paste(which(nosid), collapse = ", "),
+                         ". Every check on this grid - one row per slot, one ",
+                         "trial per slot - is keyed on the source, so a blank ",
+                         "one is an answer nothing holds to anything."))
   # One trial per slot. The identity lives in the citation, so a slot whose
   # answered rows cite two different NCT ids is two trials in one column.
   nct <- regmatches(ifelse(is.na(df$citation), "", df$citation),
@@ -212,6 +233,20 @@ read_definition_sources <- function(path) {
       bad <- c(bad, paste0(s, " cites more than one trial: ",
                            paste(ids, collapse = ", "),
                            ". One slot is one trial, or the column is a blend."))
+    # The check above only bites once a citation carries an NCT id, so a slot
+    # citing "the protocol, section 5.2" on every row passed it while being a
+    # different protocol each time - twelve trials wearing one name, and the
+    # check written to stop exactly that was the thing being walked around.
+    # A trial slot has to be identifiable, so every answered row in one names
+    # its trial. IMWG_consensus is not a trial and is not asked to.
+    if (grepl("^trial_", s)) {
+      un <- filled & sid == s & !has_nct
+      if (any(un))
+        bad <- c(bad, paste0(s, " has answered row(s) whose citation names no ",
+                             "NCT id: ", paste(which(un), collapse = ", "),
+                             ". Without one the slot cannot be shown to be a ",
+                             "single trial, which is what the column claims."))
+    }
   }
   nocite <- filled & (is.na(df$citation) | !nzchar(trimws(df$citation)))
   if (any(nocite))
@@ -235,10 +270,22 @@ read_definition_sources <- function(path) {
                          "or guideline citation - records change. Row(s): ",
                          paste(which(norel), collapse = ", ")))
   okc <- c("agrees", "differs", "unclear", "")
-  badc <- filled & !tolower(trimws(ifelse(is.na(df$concordance), "", df$concordance))) %in% okc
+  cc <- tolower(trimws(ifelse(is.na(df$concordance), "", df$concordance)))
+  badc <- filled & !cc %in% okc
   if (any(badc))
     bad <- c(bad, paste0("concordance must be agrees/differs/unclear on row(s): ",
                          paste(which(badc), collapse = ", ")))
+  # "differs" is the finding this grid exists to produce, and it is the one
+  # verdict that means nothing without HOW. Recorded alone it says the source
+  # and the build disagree somewhere, which is not something anyone can act on
+  # or check.
+  nodiff <- filled & cc == "differs" &
+    (is.na(df$notes) | !nzchar(trimws(df$notes)))
+  if (any(nodiff))
+    bad <- c(bad, paste0("concordance is 'differs' with no note saying how, on ",
+                         "row(s): ", paste(which(nodiff), collapse = ", "),
+                         ". A disagreement nobody can locate cannot be acted ",
+                         "on or checked."))
   if (length(bad))
     stop("The definition source grid does not load:\n  ",
          paste(bad, collapse = "\n  "), call. = FALSE)
@@ -275,9 +322,16 @@ compare_definitions <- function(sources, dims = LOT_DIMENSIONS) {
                source_type = rows$source_type, citation = rows$citation,
                retrieved = rows$retrieved,
                answer = rows$answer,
+               # Three states, not two. "unclear" is a judgement somebody made -
+               # they read the source and could not tell - and a blank cell is
+               # nobody having looked. Rendering the second as the first
+               # retired the question by describing it as answered ambiguously,
+               # which is the same failure as rendering it "agrees", one step
+               # quieter. Neither ever becomes agreement.
                concordance = ifelse(is.na(rows$concordance) |
                                       !nzchar(trimws(rows$concordance)),
-                                    "unclear", tolower(trimws(rows$concordance))),
+                                    "sourced, not judged",
+                                    tolower(trimws(rows$concordance))),
                # "differs" is only useful with how. Dropping notes here left the
                # verdict in the rendered file and the explanation in the source
                # CSV, which is the wrong way round for the one a reader opens.

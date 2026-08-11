@@ -93,6 +93,25 @@ ok(!length(past_end) && !length(blank),
      paste0("cites a line the file does not have, or a blank one: ",
             paste(unique(c(past_end, blank)), collapse = ", "))
    else "...and a line that file actually has")
+# And a line of CODE. Six of these cited a comment - which is what the build
+# says about itself, and the whole point of a citation here is to show what it
+# DOES. A comment can be true, stale, or aspirational and reads the same in all
+# three states, so a comparison against a protocol rested on prose either way.
+commented <- character(0)
+for (i in seq_len(nrow(ours))) {
+  p <- cite_parts(ours$ours_at[i]); if (is.null(p)) next
+  for (c_i in p) {
+    f <- file.path(STUDY, c_i$file); if (!file.exists(f)) next
+    txt <- readLines(f, warn = FALSE)
+    if (c_i$line <= length(txt) && grepl("^\\s*(#|--)", txt[c_i$line]))
+      commented <- c(commented, paste0(ours$dimension_id[i], " -> ",
+                                       basename(c_i$file), ":", c_i$line))
+  }
+}
+ok(!length(commented),
+   if (length(commented)) paste0("cites a comment rather than code: ",
+                                 paste(unique(commented), collapse = ", "))
+   else "...and a line of code rather than a comment about it")
 # The two answers most likely to be wrong if the build changed under us.
 #
 # On the code, not the header comment. 05_sct.R's "# SCT detection rules:"
@@ -141,20 +160,34 @@ ok(any(vapply(cited, function(c_i)
          grepl("SCT_AUTO|d_AUTO", l25[c_i$line]), logical(1))),
    "...citing the later-line code that decides it, not only the LOT1 comment")
 
-cat("\n-- the grid ships empty, and empty does not read as agreement --\n")
+cat("\n-- an unsourced cell does not read as agreement --\n")
+# What is asserted here is that nothing was invented, NOT that the grid is
+# empty. Those were the same statement while the grid shipped blank, and
+# writing it the second way pinned it that way: the first honestly sourced
+# answer would have turned this suite red and the merge gate with it, so the
+# skill that exists to fill these files could not have filled them through a
+# green build. Every assertion below holds at zero filled cells and at all of
+# them.
 runs(read_definition_sources(SRC), "the source grid loads")
 src <- read_definition_sources(SRC)
-ok(all(is.na(src$answer)), "no answer is filled in - none was invented")
 ok(nrow(src) == nrow(ours) * length(unique(src$source_id)),
-   "...with a cell for every dimension against every source slot")
+   "a cell for every dimension against every source slot")
 ok(sum(unique(src$source_id) != "IMWG_consensus") >= 5,
    "...and room for the five pivotal trials the ask asked for, beside IMWG")
+answered <- !is.na(src$answer) & nzchar(trimws(src$answer))
+cat("      (", sum(answered), " of ", nrow(src), " cells are sourced)\n", sep = "")
+ok(all(!is.na(src$citation[answered]) & nzchar(trimws(src$citation[answered]))),
+   "every answer that is filled in cites where it came from")
+ok(all(src$source_type[answered] %in% names(DEF_SOURCE_TYPES)),
+   "...from a source type this grid accepts")
 cmp <- compare_definitions(src)
-ok(all(cmp$concordance == "not yet sourced"),
-   "an unfilled dimension is 'not yet sourced'")
+unsourced <- cmp$dimension_id[!cmp$dimension_id %in%
+                                src$dimension_id[answered]]
+ok(all(cmp$concordance[cmp$dimension_id %in% unsourced] == "not yet sourced"),
+   "a dimension nobody sourced is 'not yet sourced'")
 # The default has to fall this way. An empty comparison reading as agreement
 # retires the question instead of answering it.
-ok(!any(cmp$concordance == "agrees"),
+ok(!any(cmp$concordance[cmp$dimension_id %in% unsourced] == "agrees"),
    "...never 'agrees', which would retire the question rather than answer it")
 
 cat("\n-- a cell that reads like a citation has to be one --\n")
@@ -197,6 +230,7 @@ i <- which(b$dimension_id == "maintenance_is_a_line" & b$source_id == "IMWG_cons
 b$answer[i] <- "Induction, ASCT and maintenance are one line."
 b$source_type[i] <- "publication"; b$citation[i] <- "Author 2015, section 2"
 b$retrieved[i] <- "2026-08-03"; b$concordance[i] <- "differs"
+b$notes[i] <- "the paper folds maintenance into the induction line"
 c2 <- compare_definitions(read_definition_sources(wr(b)))
 row <- c2[c2$dimension_id == "maintenance_is_a_line", , drop = FALSE]
 ok(nrow(row) == 1 && identical(row$concordance, "differs"),
@@ -205,8 +239,63 @@ ok(all(c2$concordance[c2$dimension_id != "maintenance_is_a_line"] == "not yet so
    "...and one sourced dimension does not make the others look answered")
 b$concordance[i] <- ""
 c3 <- compare_definitions(read_definition_sources(wr(b)))
-ok(identical(c3$concordance[c3$dimension_id == "maintenance_is_a_line"], "unclear"),
-   "a sourced answer with no judgement is 'unclear', not agreement")
+# Three states, not two. "unclear" is a judgement somebody made - they read the
+# source and could not tell - and a blank cell is nobody having looked.
+# Rendering the second as the first retired the question by describing it as
+# answered ambiguously, which is "agrees" one step quieter.
+ok(identical(c3$concordance[c3$dimension_id == "maintenance_is_a_line"],
+             "sourced, not judged"),
+   "a sourced answer with no judgement says so, rather than borrowing 'unclear'")
+ok(!any(c3$concordance == "agrees"), "...and it is still never agreement")
+
+cat("\n-- a properly filled grid passes, end to end --\n")
+# The thing the suite above could not previously say. Both grids are filled the
+# way the skill is meant to fill them, and the command that checks them - the
+# one a contributor runs before handing work back, and the one the reader
+# behind it is shared with - is run in a real process against the result. If
+# filling these files correctly cannot produce an exit 0, the whole evidence
+# workflow is a scaffold that can only stay empty.
+VD <- file.path(tempdir(), "vfilled")
+dir.create(file.path(VD, "R"), recursive = TRUE, showWarnings = FALSE)
+invisible(file.copy(list.files(file.path(ROOT, "R"), full.names = TRUE),
+                    file.path(VD, "R"), overwrite = TRUE))
+full <- src
+# One NCT id per trial slot, and none on IMWG, which is not a trial. That is
+# what a properly filled grid looks like, so the fixture has to look like it -
+# a fixture that fills every cell identically would be exercising a file the
+# reader is right to refuse.
+nct <- c(trial_1 = "NCT01001001", trial_2 = "NCT01001002", trial_3 = "NCT01001003",
+         trial_4 = "NCT01001004", trial_5 = "NCT01001005")
+for (k in seq_len(nrow(full))) {
+  s <- full$source_id[k]
+  full$answer[k]      <- "The trial counts this as a separate line."
+  full$source_type[k] <- if (s %in% names(nct)) "registry" else "guideline"
+  full$citation[k]    <- if (s %in% names(nct))
+    paste(nct[[s]], "eligibility") else "IMWG 2016 consensus, section 3"
+  full$retrieved[k]   <- "2026-08-03"
+  full$concordance[k] <- c("agrees", "differs", "unclear")[1 + (k %% 3)]
+  full$notes[k]       <- "explained: the trial's wording differs on maintenance"
+}
+write.csv(full, file.path(VD, "definitions_sources.csv"), row.names = FALSE, na = "")
+invisible(file.copy(file.path(ROOT, "benchmarks.csv"), VD, overwrite = TRUE))
+runs(read_definition_sources(file.path(VD, "definitions_sources.csv")),
+     "a grid with every one of its cells sourced loads")
+cf <- compare_definitions(read_definition_sources(file.path(VD, "definitions_sources.csv")))
+ok(!any(cf$concordance == "not yet sourced"),
+   "...and no dimension is still reported as unsourced")
+ok(all(cf$concordance %in% c("agrees", "differs", "unclear")),
+   "...every one carries a judgement instead")
+CHK <- file.path(dirname(STUDY), ".claude", "skills", "lot-evidence", "scripts",
+                 "check_grids.R")
+if (file.exists(CHK)) {
+  rc <- suppressWarnings(system2(file.path(R.home("bin"), "Rscript"),
+                                 c(shQuote(CHK), shQuote(VD)),
+                                 stdout = NULL, stderr = NULL))
+  ok(identical(rc, 0L),
+     paste0("the documented check command exits 0 on a filled grid (got ", rc, ")"))
+} else {
+  ok(TRUE, "no check command in this checkout to run against it")
+}
 
 cat("\n-- why the columns are empty is recorded, not left to be guessed --\n")
 dn <- readLines(file.path(ROOT, "R", "definitions.R"), warn = FALSE)
@@ -228,7 +317,11 @@ g <- read.csv(file.path(ROOT, "definitions_sources.csv"), stringsAsFactors = FAL
 answered <- function(x, n = 1L) {
   x$source_type[n] <- "registry"; x$citation[n] <- "NCT04000000 eligibility"
   x$retrieved[n] <- "2026-08-11"; x$answer[n] <- "transplant is not a line"
-  x$concordance[n] <- "differs"; x
+  # 'differs' carries how. It is the finding this grid exists to produce and
+  # the one verdict that means nothing on its own.
+  x$concordance[n] <- "differs"
+  x$notes[n] <- "the trial counts the transplant within the induction line"
+  x
 }
 runs(read_definition_sources(dwr(answered(g))), "a governed answered row loads")
 b <- g; b$source_id[1] <- "trail_1"
@@ -241,6 +334,37 @@ b$source_id[2] <- b$source_id[1]
 b$citation[2] <- "NCT09999999 eligibility"
 stops(read_definition_sources(dwr(b)),
       "one slot citing two NCT ids - that is two trials in one column")
+# ...and the way round that check: cite no NCT at all and it never bites, so a
+# trial slot could be a different protocol on every row while passing the check
+# written to stop exactly that.
+b <- answered(g); b$source_id[1] <- "trial_1"
+b$source_type[1] <- "protocol"; b$citation[1] <- "Protocol v3.0 section 5.2"
+b$retrieved[1] <- ""
+stops(read_definition_sources(dwr(b)),
+      "...and a trial slot answered without naming its trial at all")
+b <- answered(g); b$source_id[1] <- "IMWG_consensus"
+b$source_type[1] <- "guideline"; b$citation[1] <- "IMWG 2016 consensus, section 3"
+runs(read_definition_sources(dwr(b)),
+     "...while IMWG is not a trial and is not asked for an NCT id")
+
+cat("\n-- an answered row that says nothing about itself --\n")
+# Both of these were unchecked, and both are worse than a blank row rather than
+# equivalent to one.
+b <- answered(g); b$dimension_id[1] <- ""
+stops(read_definition_sources(dwr(b)),
+      "an answer with no dimension_id, which matches no dimension")
+# The reason it matters: `filled$dimension_id == d$dimension_id` is NA for a
+# blank, an NA subscript returns an all-NA row, and ONE malformed row is then
+# selected against EVERY dimension - each rendered with an answer nobody wrote.
+b <- answered(g); b$source_id[1] <- ""
+stops(read_definition_sources(dwr(b)),
+      "...and an answer with no source_id, which every other check is keyed on")
+b <- answered(g); b$notes[1] <- ""
+stops(read_definition_sources(dwr(b)),
+      "'differs' with no note saying how - the one verdict that needs one")
+b <- answered(g); b$concordance[1] <- "agrees"; b$notes[1] <- ""
+runs(read_definition_sources(dwr(b)),
+     "...while 'agrees' stands on its own, since the answer beside it is the how")
 
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))

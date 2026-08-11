@@ -14,12 +14,21 @@ CODELIST_DIR=/mnt/code/codelist Rscript lot/safety/run_safety_codelists.R
 Exits non-zero while anything is a placeholder, so it can gate the analysis
 rather than let it run on a half-filled list.
 
+Its exit status is `safety_codelist()`'s verdict, not a second opinion. The two
+used to be decided separately - the loader on everything below, the command on
+completeness alone - so the command could print `*** FILLED against an
+unconfirmed field` and `Ready.` two lines apart and exit 0 on a list the
+analysis could not then read. There is now one function that says why a list is
+not fit to measure with; the loader stops on its first line, the command prints
+all of them, and a test runs the real command in a real process and fails if the
+two ever disagree.
+
 ## What is here and what is not
 
 | | |
 |---|---|
 | the roster | `R/codelists_safety.R`. Which conditions the protocol measures - Table 2's twenty-three, in five domains - and Table 3's utilisation events. |
-| the shape | `codelists/*.csv`. Column names, the controlled vocabularies, and one row per condition with the code cell empty. |
+| the shape | `codelists/*.csv`. Column names, the controlled vocabularies, precedence, and one row per condition with the code cell empty. |
 | the codes | not here, and not in this repository. |
 
 The split is deliberate. The protocol says WHICH conditions are measured and
@@ -39,15 +48,47 @@ rate is a finding, not an error, so nothing downstream can tell it from a real
 one. That is the failure this package exists to prevent, so an unfilled
 condition stops the read and names itself rather than returning no rows.
 
-The same reasoning covers three quieter versions of it, all checked:
+The same reasoning covers the quieter versions of it, all checked:
 
-* a `code_type` nothing joins to;
+* a `code_type` nothing joins to, or none at all;
 * an `icd_family` spelled a way the family join does not recognise - the join is
   on family as well as code, so `ICD-10` and `ICD10` are not interchangeable
   unless both are named, and the cohort build names both;
-* an `ICD_DIAG` row with no family at all.
+* an `ICD_DIAG` row with no family at all;
+* a code padded with a space, which is filled by every test and joins to
+  nothing - so cells are trimmed on the way in and a cell left empty by
+  trimming is empty everywhere, not blank in one check and present in the next;
+* a condition or event that parses and measures the wrong thing: filed under
+  another domain, relabelled acute, given a measure Table 3 does not ask of it,
+  or - the one with no value at all - left blank. A blank makes `!=` return NA
+  and NA drops out of the check silently, which is how an unlabelled row came
+  to pass a check written to catch a mislabelled one;
+* an event name Table 3 does not have. Its rows count towards nothing, so a
+  misspelling empties the event it was meant to fill;
+* a filled code with no `source_note`, which cannot be checked back against the
+  annex - the only way anyone confirms it is right.
 
-Each matches nothing and none of them errors on its own.
+Each matches nothing, or matches the wrong thing, and none of them errors on
+its own.
+
+## Which rows are the definition, and which the alternative
+
+An event can be identified more than one way, and the ways are not additive. An
+admission is a `CONFINEMENT` row or, failing that, a claim carrying an inpatient
+`POS` - union them and every admission is counted twice.
+
+So `hcru_events.csv` carries a `precedence` column, `primary` or `fallback`,
+required on every filled row. An event with fallback rows and no primary is
+refused: a fallback with nothing to fall back from is a second definition of the
+event wearing a label that hides it.
+
+Code types are governed per event as well as per file, because a type can be
+valid for the file and wrong for the row. `LOS` is a column on `CONFINEMENT` and
+on no other table, so a length of stay drafted on `POS` has nothing to measure;
+and an ER visit counted off `CONFINEMENT` counts admissions, since a confinement
+row is a hospitalisation - the ER visits that became one are in there and the
+ones that did not are not. Both parse, both join, and both answer a different
+question than the one asked.
 
 ## Matched to the Optum fields this study already reads
 
@@ -97,8 +138,16 @@ A test reads those codes back out of that step and fails if they drift.
 
 Length of stay is the `LOS` column, which the table already carries -
 `ADMIT_DATE` to `DISCH_DATE` is the same span computed by hand. Per visit,
-assigned to the period the admit falls in, which is what the protocol asks for,
-including a stay that begins before 1L baseline and overlaps into it.
+assigned to the period the admit date falls in.
+
+Assigned by admit date, and only by admit date. A stay that begins before 1L
+baseline and runs into it belongs to the earlier period on that rule - it is not
+also counted in baseline, and it is not split across the two. That is a choice
+rather than a reading of the protocol, and it is the one place this differs from
+what an overlap rule would give, so it is written down here rather than left to
+whoever implements the extraction. If the study wants overlapping stays counted
+in both periods, or apportioned, that is a different rule and this note is where
+it changes.
 
 Two other things worth knowing before the safety work starts. The protocol
 allows some events to be defined on lab values; `LABRESULT` exists, but the

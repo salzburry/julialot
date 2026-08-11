@@ -48,21 +48,27 @@ find_base_cohort <- function(con) {
 # The subsequent build records which LOT run it drew from. Ask, and drop a
 # cohort that names a different one rather than restricting on it.
 find_subsequent_cohorts <- function(con, lot_run, lines = c(2L, 3L)) {
-  out <- list(); stale <- character(0)
+  out <- list(); stale <- character(0); prov <- list()
   for (n in lines) {
     t <- coh_tbl(paste0("NDMM_COHORT_", n, "L"))
     d <- tryCatch(db_q(con, glue("SELECT * FROM {t} LIMIT 1")), error = function(e) NULL)
     if (is.null(d) || !nrow(d)) next
-    i <- match("SOURCE_LOT_RUN_ID", toupper(names(d)))
-    src <- if (is.na(i)) NA_character_ else trimws(as.character(d[[i]][1]))
+    at <- function(nm) {
+      i <- match(toupper(nm), toupper(names(d)))
+      if (is.na(i)) NA_character_ else trimws(as.character(d[[i]][1]))
+    }
+    src <- at("SOURCE_LOT_RUN_ID")
     # An older table predates the column. Not current by omission: it cannot
     # say which run it came from, so it cannot be shown to belong to this one.
-    if (is.na(i) || is.na(src) || !nzchar(src) || !identical(src, trimws(lot_run))) {
-      stale <- c(stale, paste0(t, if (is.na(i)) " (records no source LOT run)"
+    if (is.na(src) || !nzchar(src) || !identical(src, trimws(lot_run))) {
+      stale <- c(stale, paste0(t, if (is.na(src)) " (records no source LOT run)"
                                   else paste0(" (built from LOT run ", src, ")")))
       next
     }
     out[[as.character(n)]] <- t
+    prov[[as.character(n)]] <- c(
+      subseq = at("SUBSEQ_RUN_ID"), pre = at("CE_PRE_DAYS"), fu = at("CE_FU_DAYS"),
+      coh = at("SOURCE_COHORT_RUN_ID"), stamp = at("SOURCE_COHORT_STAMP"))
   }
   if (length(stale))
     stop("These line cohorts were not built from LOT run ", lot_run, ": ",
@@ -71,12 +77,55 @@ find_subsequent_cohorts <- function(con, lot_run, lines = c(2L, 3L)) {
          "still carry this run's ids - so nothing downstream would catch it. ",
          "Re-run ndmm/build_subsequent_cohorts.R against this LOT run, or ",
          "unset them to report ALL_LINES alone.", call. = FALSE)
+  # Naming the same LOT run is not the same as being the same build. The
+  # subsequent build stamps five things onto these tables and only one of them
+  # was read, which left two ways to get a wrong denominator that carried every
+  # id correctly:
+  #
+  #   a partial re-run - 2L from one subsequent build and 3L from another, both
+  #   pointing at this LOT run, so LINE_ELIGIBLE means one thing on one line
+  #   and another on the next;
+  #
+  #   a sensitivity build - the same tables under overridden continuous
+  #   enrolment windows, which become the ordinary LINE_ELIGIBLE denominator
+  #   with nothing in the output to say the window moved.
+  #
+  # Both are checked here, and the windows are logged rather than assumed, so a
+  # non-default one is visible instead of silent.
+  if (length(prov)) {
+    agree <- function(k, what) {
+      v <- vapply(prov, function(p) p[[k]], character(1))
+      if (any(is.na(v) | !nzchar(v)))
+        return(out_unproven(paste0("Line cohort(s) ",
+                                   paste(names(prov)[is.na(v) | !nzchar(v)],
+                                         collapse = ", "),
+                                   "L record no ", what, ".")))
+      if (length(unique(v)) > 1L)
+        stop("The line cohorts disagree on ", what, ": ",
+             paste0(names(prov), "L=", v, collapse = ", "),
+             ". They are not one build, so LINE_ELIGIBLE means a different ",
+             "thing on each line and every output would still carry this ",
+             "run's ids. Re-run ndmm/build_subsequent_cohorts.R.", call. = FALSE)
+      invisible(v[[1]])
+    }
+    agree("subseq", "which subsequent-cohort run built them")
+    agree("coh",    "which cohort attempt they were built over")
+    agree("stamp",  "the stamp of that cohort attempt")
+    agree("pre",    "the continuous-enrolment window before the line")
+    agree("fu",     "the continuous-enrolment window after it")
+    p1 <- prov[[1]]
+    log_msg("  Line cohorts from subsequent run ", p1[["subseq"]],
+            ", continuous enrolment ", p1[["pre"]], "d before and ",
+            p1[["fu"]], "d after the line, over cohort attempt ",
+            p1[["coh"]], " (", p1[["stamp"]], ").")
+  }
   if (!length(out))
     log_msg("  No line-specific cohorts (", coh_tbl("NDMM_COHORT_2L"),
             " and friends), so every result is over the 1L cohort's lines.")
   else
     log_msg("  Line-specific denominators from ", paste(unlist(out), collapse = ", "),
             ", both built from LOT run ", lot_run, ".")
+  attr(out, "provenance") <- prov
   out
 }
 
@@ -94,6 +143,12 @@ check_lot_run <- function(con, prefix, cohort_table, study_end) {
     i <- match(toupper(nm), toupper(names(d)))
     if (is.na(i)) NA_character_ else as.character(d[[i]][1])
   }
+  # Whether the column is there at all, which is a different question from what
+  # it says. Every check below used to read a blank the same way it read a
+  # match - `!is.na(x) && nzchar(x) && x != want` passes when x is missing - so
+  # a status row that recorded nothing proved everything.
+  has <- function(nm) !is.na(match(toupper(nm), toupper(names(d))))
+  said <- function(nm) { v <- pick(nm); !is.na(v) && nzchar(trimws(v)) }
   st <- tolower(trimws(pick("STATE")))
   if (!identical(st, "complete"))
     stop("The last LOT run on prefix '", prefix, "' (", pick("RUN_ID"),
@@ -102,12 +157,24 @@ check_lot_run <- function(con, prefix, cohort_table, study_end) {
          call. = FALSE)
   want <- toupper(trimws(cohort_table))
   got  <- sub("^.*\\.", "", toupper(trimws(pick("INPUT_COHORT_TABLE"))))
-  if (!is.na(got) && nzchar(got) && !identical(got, want))
+  if (!said("INPUT_COHORT_TABLE"))
+    out_unproven(paste0(tbl, " records no INPUT_COHORT_TABLE for run ",
+                        pick("RUN_ID"), ", so the lines cannot be shown to ",
+                        "belong to ", cohort_table, "."))
+  else if (!identical(got, want))
     stop("That LOT run was built from '", pick("INPUT_COHORT_TABLE"),
          "', not from ", cohort_table, ". The outcomes would be measured on ",
          "lines belonging to another population.", call. = FALSE)
+  # Blank and absent differ here and the difference is the whole check. A blank
+  # CONTRACT_DEVIATIONS is a positive statement - the run used the contract
+  # algorithm - and is what every production run writes. A MISSING column says
+  # nothing, and was being read as the blank.
   dev <- pick("CONTRACT_DEVIATIONS")
-  if (!is.na(dev) && nzchar(trimws(dev)))
+  if (!has("CONTRACT_DEVIATIONS"))
+    out_unproven(paste0(tbl, " has no CONTRACT_DEVIATIONS column, so this run ",
+                        "cannot be shown to have used the contract algorithm ",
+                        "rather than a sensitivity sweep's."))
+  else if (!is.na(dev) && nzchar(trimws(dev)))
     stop("That LOT run was built with LOT_CONTRACT_OVERRIDE (", dev,
          "), so its lines are an alternative algorithm's.", call. = FALSE)
   # The attrition split is decided by the study end, and this package holds its
@@ -116,7 +183,11 @@ check_lot_run <- function(con, prefix, cohort_table, study_end) {
   # scores every still-treated patient as lost to follow-up when it runs long.
   se  <- trimws(pick("STUDY_END"))
   ask <- trimws(as.character(study_end))
-  if (!is.na(se) && nzchar(se) && !identical(se, ask))
+  if (!said("STUDY_END"))
+    out_unproven(paste0(tbl, " records no STUDY_END for run ", pick("RUN_ID"),
+                        ", so this package's ", ask, " cannot be shown to be ",
+                        "the window the lines were built to."))
+  else if (!identical(se, ask))
     stop("That LOT run was built to STUDY_END ", se, " and this package is ",
          "set to ", ask, ". The attrition split reads the study end to tell a ",
          "patient who disenrolled from one the study stopped observing, so ",

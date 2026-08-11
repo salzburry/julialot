@@ -85,6 +85,9 @@ fill <- function(mut) {
   s <- read.csv(file.path(TPL, "safety_events.csv"), stringsAsFactors = FALSE,
                 colClasses = "character")
   s$code_type <- "ICD_DIAG"; s$code <- "C90.0"; s$icd_family <- "ICD10"
+  # A filled list is one somebody answered, and an answer says where it came
+  # from - so the fixture carries a source_note as a filled row has to.
+  s$source_note <- "test fixture, not a real code list"
   s <- mut(s)
   write.csv(s, file.path(tmp, "safety_events.csv"), row.names = FALSE, na = "")
   file.copy(file.path(TPL, "hcru_events.csv"), tmp, overwrite = TRUE)
@@ -159,6 +162,94 @@ ok("REV_CD" %in% safety_fill_status(TPL)$drafted,
 # And the moment it carries a code it stops being a placeholder.
 stops(safety_codelist(fill(function(s) { s$code_type[1] <- "PROC"; s })),
       "a FILLED row on an unconfirmed field stops the read")
+
+cat("\n-- the documented command agrees with the read it is gating --\n")
+# Everything above tests safety_codelist(). What anyone actually runs is
+# run_safety_codelists.R, and for a while the two decided readiness separately:
+# the runner on completeness alone. It would print "*** FILLED against an
+# unconfirmed field" and "Ready." two lines apart and exit 0 on a list the
+# analysis could not then read. A unit test on the loader cannot see that, so
+# this battery runs the real command in a real process and compares its exit
+# status against the loader's verdict on the same directory.
+#
+# The assertion is agreement, not a list of exit codes, so a check added to the
+# loader later is covered here the day it lands rather than the day someone
+# remembers to add a case for it.
+RSCRIPT <- file.path(R.home("bin"), "Rscript")
+CLI <- file.path(ROOT, "run_safety_codelists.R")
+cli_exit <- function(dir)
+  # shQuote on the env value as well as the script: system2() prefixes the
+  # command with `env NAME=VALUE` verbatim, so an unquoted path with a space in
+  # it splits and the shell reports 127 - which is nonzero, and would have read
+  # as this test passing.
+  suppressWarnings(system2(RSCRIPT, shQuote(CLI), stdout = NULL, stderr = NULL,
+                           env = paste0("CODELIST_DIR=", shQuote(dir))))
+agrees <- function(dir, what) {
+  refused <- inherits(tryCatch(safety_codelist(dir), error = function(e) e), "error")
+  rc <- cli_exit(dir)
+  ok(refused == (rc != 0L),
+     paste0(what, " - loader ", if (refused) "refuses" else "reads",
+            ", command exits ", rc))
+}
+both <- function(smut = identity, hmut = identity) {
+  d <- fill(smut)
+  h2 <- read.csv(file.path(d, "hcru_events.csv"), stringsAsFactors = FALSE,
+                 colClasses = "character")
+  write.csv(hmut(h2), file.path(d, "hcru_events.csv"), row.names = FALSE, na = "")
+  d
+}
+ok(file.exists(CLI), "the command the README documents is where it says it is")
+agrees(TPL, "the shipped template, which is a placeholder")
+agrees(both(), "a fully filled list")
+agrees(both(function(s) { s$code_type[1] <- "REV_CD"; s }),
+       "a FILLED row on an unconfirmed field")
+agrees(both(function(s) { s$code_type[1] <- "SNOMED"; s }),
+       "a code_type nothing joins to")
+agrees(both(function(s) { s$code_type[1] <- ""; s }),
+       "a code with no code_type at all")
+agrees(both(function(s) { s$icd_family[1] <- "ICD_10"; s }),
+       "an icd_family the family join would not recognise")
+agrees(both(function(s) { s$icd_family[1] <- ""; s }),
+       "an ICD_DIAG row with no family")
+agrees(both(function(s) {
+         s$domain[s$condition == "chronic_kidney_disease"] <- "cardiovascular"; s }),
+       "a condition filed under the wrong domain")
+agrees(both(function(s) {
+         s$acute_chronic[s$condition == "chronic_kidney_disease"] <- "acute"; s }),
+       "a condition relabelled acute")
+agrees(both(function(s) {
+         s$acute_chronic[s$condition == "chronic_kidney_disease"] <- ""; s }),
+       "a condition with no acute_chronic at all")
+agrees(both(function(s) { s$source_note <- ""; s }),
+       "filled codes with no stated source")
+agrees(both(function(s) s[-1, ]), "a condition missing from the file")
+agrees(both(function(s) { s$condition[1] <- "liver_things"; s }),
+       "a condition the protocol does not name")
+agrees(both(hmut = function(h2) { h2$measure[h2$event == "er_visit"] <- "count"; h2 }),
+       "a utilisation event measuring the wrong thing")
+agrees(both(hmut = function(h2) { h2$measure[h2$event == "er_visit"] <- ""; h2 }),
+       "a utilisation event with no measure")
+agrees(both(hmut = function(h2) { h2$event[nrow(h2)] <- "er_visits"; h2 }),
+       "a utilisation event Table 3 does not have")
+agrees(both(hmut = function(h2) { h2$precedence[h2$event == "er_visit"] <- ""; h2 }),
+       "filled rows that do not say which is the definition")
+agrees(both(hmut = function(h2) { h2$precedence[h2$event == "er_visit"] <- "fallback"; h2 }),
+       "an event with fallbacks and no primary")
+agrees(both(hmut = function(h2) {
+         h2$code_type[h2$event == "er_visit"] <- "CONFINEMENT"; h2 }),
+       "an ER visit counted off the hospitalisation table")
+
+cat("\n-- and a blank cell is a blank cell everywhere --\n")
+# The NA trap these all share: a blank makes `!=` return NA, NA subscripts an
+# NA element out, and the !is.na() on the way out drops it - so the check meant
+# to catch a mislabelled row lets an unlabelled one through.
+d <- both(function(s) { s$acute_chronic[2] <- "  "; s })
+ok(length(safety_fill_status(d)$no_ac) == 1L,
+   "whitespace in acute_chronic is blank, not a value that happens to differ")
+d <- both(function(s) { s$code[3] <- " C90.0 "; s })
+sd <- safety_read_csv("safety_events.csv", SAFETY_COLS, d)
+ok(identical(sd$df$code[3], "C90.0"),
+   "a padded code is trimmed on the way in, so it joins to what it names")
 
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))
