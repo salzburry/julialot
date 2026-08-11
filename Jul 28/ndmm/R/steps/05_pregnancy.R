@@ -71,9 +71,10 @@ build_ndmm_pregnancy_patids <- function(con, med_diag_tbl, medical_tbl, med_proc
   #      and a blank code never matches a real pregnancy code, so the matched
   #      PATIDs are unchanged.
   db_exec(con, glue("
-    CREATE OR REPLACE TEMPORARY VIEW {NDMM_PREGNANCY_PATIDS} AS
+    CREATE OR REPLACE TEMPORARY VIEW {NDMM_PREGNANCY_EVENTS} AS
     WITH dx AS (
       SELECT cast(d.PATID as string) AS PATID,
+             cast(d.FST_DT as date) AS event_dt,
              {icd_family_sql('d.ICD_FLAG', 'ICD9DIAG', 'ICD10DIAG')} AS code_type,
              upper(regexp_replace(d.DIAG, '[^A-Za-z0-9]', '')) AS code
       FROM {med_diag_tbl} d
@@ -82,9 +83,10 @@ build_ndmm_pregnancy_patids <- function(con, med_diag_tbl, medical_tbl, med_proc
         AND cast(d.FST_DT as date) BETWEEN date('{NDMM_STUDY_START}') AND date('{cfg$study_end}')
     ),
     med AS (
-      SELECT s.PATID, t.code_type, t.code
+      SELECT s.PATID, s.event_dt, t.code_type, t.code
       FROM (
-        SELECT cast(m.PATID as string) AS PATID, m.PROC_CD, m.BILL_PROC_CD, m.RVNU_CD
+        SELECT cast(m.PATID as string) AS PATID, cast(m.FST_DT as date) AS event_dt,
+               m.PROC_CD, m.BILL_PROC_CD, m.RVNU_CD
         FROM {medical_tbl} m
         INNER JOIN {NDMM_LOT1_STARTS} l1 ON cast(m.PATID as string) = l1.PATID
         WHERE cast(m.FST_DT as date) BETWEEN date('{NDMM_STUDY_START}') AND date('{cfg$study_end}')
@@ -106,6 +108,7 @@ build_ndmm_pregnancy_patids <- function(con, med_diag_tbl, medical_tbl, med_proc
     ),
     icd_proc AS (
       SELECT cast(p.PATID as string) AS PATID,
+             cast(p.FST_DT as date) AS event_dt,
              {icd_family_sql('p.ICD_FLAG', 'ICD9PROC', 'ICD10PROC')} AS code_type,
              upper(regexp_replace(p.PROC, '[^A-Za-z0-9]', '')) AS code
       FROM {med_proc_tbl} p
@@ -119,13 +122,22 @@ build_ndmm_pregnancy_patids <- function(con, med_diag_tbl, medical_tbl, med_proc
       UNION ALL SELECT * FROM icd_proc
     ),
     matched AS (
-      SELECT DISTINCT e.PATID
+      SELECT DISTINCT e.PATID, e.event_dt
       FROM events e
       INNER JOIN {NDMM_PREG_CODES} p
               ON e.code_type = p.code_type AND e.code = p.code
     )
-    SELECT DISTINCT m.PATID
+    SELECT m.PATID, m.event_dt
     FROM matched m
     INNER JOIN {NDMM_LOT1_STARTS} l1 ON m.PATID = l1.PATID
   "))
+  # Two readers now - the exclusion below and the window counter - so it is
+  # materialised rather than left a view, or Spark rescans the three claim
+  # sources once per reader.
+  checkpoint(con, "NDMM_PREGNANCY_EVENTS")
+  # The exclusion, unchanged: distinct patients with a matched claim anywhere in
+  # the study period. It reads the dated view rather than repeating the scan, so
+  # the window this criterion applies and the window the review table prices
+  # cannot drift - which is the failure a second copy of this scan would invite.
+  db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW {NDMM_PREGNANCY_PATIDS} AS SELECT DISTINCT PATID FROM {NDMM_PREGNANCY_EVENTS}"))
 }

@@ -63,6 +63,8 @@ SUBST <- list(
   # build. Both defaults are the protocol's date now, and a config.csv that
   # goes missing no longer widens the pregnancy and MM-diagnosis scans.
   "R/ndmm_constants.R" = list(
+    # The dated events view the pregnancy scan now writes. A new name, not a
+    # changed rule.
     list(from = "NDMM_STUDY_START         <- Sys.getenv(\"STUDY_START\", unset = \"2016-01-01\")",
          to   = "NDMM_STUDY_START         <- Sys.getenv(\"STUDY_START\", unset = \"2015-07-01\")", n = 1L)),
   # The sixth clinical change, and it is a fail-open rather than a rule: the
@@ -89,8 +91,19 @@ SUBST <- list(
     list(from = "build_ndmm_therapy_pre_lot1 <- function(con, medical_tbl, rx_tbl, med_proc_tbl) {",
          to   = "build_ndmm_therapy_pre_lot1 <- function(con, medical_tbl, rx_tbl) {", n = 1L)),
   "R/steps/05_pregnancy.R" = list(
-    list(from = "SELECT cast(m.PATID as string) AS PATID, m.PROC_CD, m.BILL_PROC_CD, m.RVNU_CD",
+    # The medical arm now projects the claim date as well, because the events
+    # view is dated - NDMM_PREG_WINDOW_COUNTS prices the study-period window
+    # against the program spec's baseline+follow-up reading, and cannot without
+    # dates. The EXCLUSION is unchanged: still every patient with a matched
+    # claim anywhere in the study period. See DECISIONS.md #9.
+    list(from = "SELECT cast(m.PATID as string) AS PATID, cast(m.FST_DT as date) AS event_dt,",
          to   = "SELECT cast(m.PATID as string) AS PATID, m.PROC_CD, m.RVNU_CD", n = 1L),
+    list(from = "SELECT s.PATID, s.event_dt, t.code_type, t.code",
+         to   = "SELECT s.PATID, t.code_type, t.code", n = 1L),
+    list(from = "SELECT DISTINCT e.PATID, e.event_dt", to = "SELECT DISTINCT e.PATID", n = 1L),
+    list(from = "SELECT m.PATID, m.event_dt", to = "SELECT DISTINCT m.PATID", n = 1L),
+    list(from = "CREATE OR REPLACE TEMPORARY VIEW {NDMM_PREGNANCY_EVENTS} AS",
+         to   = "CREATE OR REPLACE TEMPORARY VIEW {NDMM_PREGNANCY_PATIDS} AS", n = 1L),
     list(from = "LATERAL VIEW stack(3,", to = "LATERAL VIEW stack(2,", n = 1L),
     list(from = "{icd_family_sql('d.ICD_FLAG', 'ICD9DIAG', 'ICD10DIAG')} AS code_type,",
          to   = "CASE WHEN upper(d.ICD_FLAG) IN ('9','ICD9','ICD-9') THEN 'ICD9DIAG' ELSE 'ICD10DIAG' END AS code_type,", n = 1L),
@@ -148,7 +161,10 @@ SUBST <- list(
 # strength of a claim with no code in it. These add the check on the normalised
 # value; they can only ever remove matches the source should not have made.
 ADDED <- list(
-  "R/ndmm_constants.R" = c("NDMM_FU_CE_DAYS          <- 0L" = 1L),
+  "R/ndmm_constants.R" = c("NDMM_FU_CE_DAYS          <- 0L" = 1L,
+    # The dated events view the pregnancy scan writes. A new name, not a new
+    # rule - see DECISIONS.md #9 and the pregnancy entry below.
+    "NDMM_PREGNANCY_EVENTS    <- \"_ndmm_pregnancy_events\"" = 1L),
   "R/steps/03_prior_therapy.R" = c(
     "AND regexp_replace(trim(CL_CODE), '[^A-Za-z0-9]', '') <> ''" = 1L,
     "AND (upper(trim(CL_CODE_TYPE)) <> 'NDC'" = 1L,
@@ -220,7 +236,16 @@ ADDED <- list(
     # already read this column - pregnancy did not, so a code populated only
     # there kept the patient. It can only add exclusions.
     "'HCPCS', CASE WHEN s.BILL_PROC_CD IS NOT NULL" = 1L,
-    "THEN upper(regexp_replace(s.BILL_PROC_CD, '[^A-Za-z0-9]', '')) END," = 1L),
+    "THEN upper(regexp_replace(s.BILL_PROC_CD, '[^A-Za-z0-9]', '')) END," = 1L,
+    # The scan carries the claim date now, so NDMM_PREG_WINDOW_COUNTS can price
+    # the study-period window against the program spec's baseline+follow-up
+    # reading. The EXCLUSION is unchanged - still every patient with a matched
+    # claim anywhere in the study period. See DECISIONS.md #9.
+    "cast(d.FST_DT as date) AS event_dt," = 1L,
+    "m.PROC_CD, m.BILL_PROC_CD, m.RVNU_CD" = 1L,
+    "cast(p.FST_DT as date) AS event_dt," = 1L,
+    "checkpoint(con, \"NDMM_PREGNANCY_EVENTS\")" = 1L,
+    "db_exec(con, glue(\"CREATE OR REPLACE TEMPORARY VIEW {NDMM_PREGNANCY_PATIDS} AS SELECT DISTINCT PATID FROM {NDMM_PREGNANCY_EVENTS}\"))" = 1L),
   # The funnel's last row, read by key rather than named literally in the
   # runner. Added because the last criterion is no longer ndmm_final:
   # S6.2.1.2's belantamab exclusion moved to the lot package, so this package's
@@ -438,6 +463,19 @@ body_of <- function(lines) {
   i <- which(!grepl("^\\s*#", lines) & nzchar(trimws(lines)))
   if (!length(i)) return(character(0))
   lines[seq(min(i), length(lines))]
+}
+
+# One entry per file in each list. R returns the FIRST match for a duplicated
+# name, so a second entry for a file silently disables the first - which is how
+# an approved deviation stops being applied while the list still appears to name
+# it. Caught here rather than by the comparison failing somewhere unrelated.
+for (nm in c("SPLICE", "ADDED", "DROPPED")) {
+  k <- names(get(nm))
+  d <- unique(k[duplicated(k)])
+  ok(!length(d),
+     if (length(d)) paste0(nm, " names a file twice, so the first entry is dead: ",
+                           paste(d, collapse = ", "))
+     else paste0(nm, " names each file once, so no entry shadows another"))
 }
 
 cat("\n-- every ported file is the source, line for line --\n")

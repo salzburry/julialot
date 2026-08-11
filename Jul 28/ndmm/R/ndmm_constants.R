@@ -12,6 +12,7 @@ NDMM_OTHER_MALIG_PATIDS  <- "_ndmm_other_malig_patids"
 NDMM_FLAGS_ALL           <- "_ndmm_flags_all"   # per-PATID filter flags (for attrition)
 NDMM_PATIDS       <- "_ndmm_patids"
 NDMM_PREG_CODES          <- "_ndmm_preg_codes"
+NDMM_PREGNANCY_EVENTS    <- "_ndmm_pregnancy_events"
 NDMM_PREGNANCY_PATIDS    <- "_ndmm_pregnancy_patids"
 NDMM_STUDY_START         <- Sys.getenv("STUDY_START", unset = "2016-01-01")
 NDMM_PRE_LOT1_DAYS       <- 365L  # 12-mo CE/baseline before 1L index date

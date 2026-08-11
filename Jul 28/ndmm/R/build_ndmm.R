@@ -105,7 +105,8 @@ CHECKPOINTS <- c("NDMM_FLAGS_ALL", "NDMM_CLINTRIAL_FLAGS", "NDMM_MM_DX_CODES",
                  "NDMM_MMA_CODELIST",
                  "NDMM_BELANTAMAB_CODES", "NDMM_LOT1_STARTS",
                  "NDMM_OTHER_MALIG_CODES", "NDMM_OTHER_MALIG_EVENTS",
-                 "NDMM_PREG_CODES", "NDMM_CLINTRIAL_CODES",
+                 "NDMM_PREG_CODES", "NDMM_PREGNANCY_EVENTS",
+                 "NDMM_CLINTRIAL_CODES",
                  "NDMM_BELANTAMAB_PATIDS",
                  "NDMM_INDEX_TX", "NDMM_BELANTAMAB_TX", "NDMM_PATIDS",
                  "NDMM_INDEX_INELIGIBLE")
@@ -115,6 +116,7 @@ DELIVERABLES <- c("NDMM_COHORT", "NDMM_ATTRITION", "NDMM_INDEX_AGENTS",
                   "NDMM_MM_ADJACENT_GROUPS",
                   "NDMM_MM_ADJACENT_CODES", "NDMM_FU_CE_COUNTS",
                   "NDMM_OTHER_MALIG_GROUPS", "NDMM_OTHER_MALIG_GRAIN",
+                  "NDMM_PREG_WINDOW_COUNTS",
                   "NDMM_OTHER_MALIG_CODES",
                   "NDMM_BELANTAMAB_RECONCILE",
                   "NDMM_CODELIST_METADATA", "NDMM_RUN_METADATA",
@@ -1100,6 +1102,9 @@ build_ndmm <- function(here, prefix) {
   # After the flags: each scope is costed against the whole conjunction, so it
   # needs every other criterion already decided.
   build_ndmm_fu_ce_counts(con, cfg)
+  # Prices the pregnancy window against the reading the program spec gives.
+  # After the flags, because the cohort column needs them.
+  build_ndmm_preg_window_counts(con, cfg)
   # build_lot_long_filtered() is not called. It joins LOT_LONG to the cohort
   # for reporting views, and neither the cohort nor the attrition reads it.
   # Left in 07_cohort.R for anyone who wants it.
