@@ -1281,17 +1281,28 @@ Sys.unsetenv("NDMM_WAIVERS")
 # waivable set did not carry the name - so the README promised a gate that did
 # not exist, and rows that move membership in both directions sailed past it.
 ok("raw_icd_flag" %in% WAIVABLE_CHECKS, "raw_icd_flag is in the waivable set")
-drive_icd <- function(n, waive = "") {
+ICDQ <- character(0)
+drive_icd <- function(n, waive = "", detail = NULL) {
   Sys.setenv(NDMM_WAIVERS = waive)
-  assign("db_q", function(con, sql)
-    data.frame(vals = "<blank>, 12", n = n, stringsAsFactors = FALSE),
-    envir = ne)
+  ICDQ <<- character(0)
+  if (is.null(detail))
+    detail <- data.frame(icd_flag_value = "<blank>", matched_code = "C9000",
+                         n_rows = n, n_pat = n, stringsAsFactors = FALSE)
+  assign("db_q", function(con, sql) {
+    ICDQ <<- c(ICDQ, sql)
+    if (!grepl("matched_code", sql, fixed = TRUE))
+      return(data.frame(vals = "<blank>, 12", n = n, stringsAsFactors = FALSE))
+    if (identical(detail, "error")) stop("driver went away")
+    detail
+  }, envir = ne)
   out <- tryCatch({ ne$check_icd_flag(NULL, cfg_defaults); "" },
                   error = conditionMessage)
   Sys.unsetenv("NDMM_WAIVERS")
   out
 }
 ok(identical(drive_icd(0L), ""), "every flag naming a family lets the run go on")
+ok(!any(grepl("matched_code", ICDQ, fixed = TRUE)),
+   "...and nothing pays for a breakdown of a stop that is not happening")
 m <- drive_icd(7L)
 ok(grepl("names neither family", m, fixed = TRUE) &&
      grepl("NDMM_WAIVERS=raw_icd_flag", m, fixed = TRUE),
@@ -1301,6 +1312,72 @@ ok(grepl("exclude a patient", m, fixed = TRUE) &&
    "...and the stop says the miss cuts both ways, not that either way is safe")
 ok(identical(drive_icd(7L, waive = "raw_icd_flag"), ""),
    "...and the named waiver, once the study team has looked, lets it proceed")
+
+# The count says how many rows stopped the build. Which codes they carry is the
+# question it leaves behind, and it is asked of the same rows.
+#
+# Spelled twice, the two came apart: the breakdown kept the code-list arm and
+# lost the fam-IS-NULL arm, so it returned every claim carrying a list code -
+# hundreds of thousands of correctly flagged rows, with the handful that
+# actually stopped the build somewhere inside them. It read as an explanation
+# of the stop and was not one.
+m <- drive_icd(7L)
+where_of <- function(s) trimws(sub("(?s)\\s*GROUP BY.*", "",
+                                   sub("(?s).*?WHERE", "", s, perl = TRUE), perl = TRUE))
+sel_of   <- function(s) sub("(?s)WHERE.*", "", s, perl = TRUE)
+sumq <- ICDQ[1]; detq <- ICDQ[2]
+ok(!grepl("matched_code", sumq, fixed = TRUE) &&
+     grepl("matched_code", detq, fixed = TRUE),
+   "the count and the per-code breakdown are two statements, in that order")
+ok(nzchar(where_of(detq)) && identical(where_of(sumq), where_of(detq)),
+   "...filtering on one predicate, character for character")
+ok(grepl("IS NULL", where_of(detq), fixed = TRUE),
+   "...so a claim whose flag names a family cannot reach the breakdown")
+# The normalised code is projected and grouped on, so it has to stay a scalar.
+# Folding the membership test into it makes the column a boolean - and Spark
+# rejects an IN-subquery in a SELECT list outright, so it would not run at all.
+ok(grepl("regexp_replace", sel_of(detq), fixed = TRUE) &&
+     !grepl("IN (SELECT", sel_of(detq), fixed = TRUE),
+   "...and it projects the normalised code itself, not a membership test")
+ok(grepl("GROUP BY", detq, fixed = TRUE) &&
+     grepl("regexp_replace", sub("(?s).*GROUP BY", "", detq, perl = TRUE), fixed = TRUE),
+   "...grouped on that code, which is what makes the answer readable")
+# Written once, so there is nothing left to drift. deparse() drops comments, so
+# this counts the code and not the prose about it.
+icd_src <- paste(deparse(ne$check_icd_flag), collapse = "\n")
+n_of <- function(pat, s) {
+  g <- gregexpr(pat, s, fixed = TRUE)[[1]]
+  if (length(g) == 1L && g[1] == -1L) 0L else length(g)
+}
+ok(n_of("regexp_replace", icd_src) == 1L && n_of("IS NULL", icd_src) == 1L,
+   "...because each half of the predicate is written exactly once")
+ok(grepl("codes: C9000", m, fixed = TRUE),
+   "the stop names the codes, not just how many rows carried them")
+
+# The predicate is shared, so the breakdown has to sum to the count it breaks
+# down. Checked at run time as well as here: sharing holds only while both
+# probes actually call it, and a future edit that stops sharing would otherwise
+# be silent until someone read two numbers that no longer meant the same thing.
+m <- drive_icd(7L, detail = data.frame(icd_flag_value = "<blank>",
+                                       matched_code = "C9000", n_rows = 3L,
+                                       n_pat = 3L, stringsAsFactors = FALSE))
+ok(grepl("not describing the same rows", m, fixed = TRUE) &&
+     grepl("sums to 3 row(s), not 7", m, fixed = TRUE),
+   "a breakdown that does not sum to the count says so, naming both numbers")
+# A cut that does not say it cut reads as the whole list.
+m <- drive_icd(25L, detail = data.frame(icd_flag_value = "<blank>",
+                                        matched_code = sprintf("C%04d", 1:25),
+                                        n_rows = 1L, n_pat = 1L,
+                                        stringsAsFactors = FALSE))
+ok(grepl("C0001", m, fixed = TRUE) && !grepl("C0025", m, fixed = TRUE) &&
+     grepl("and 5 more code(s)", m, fixed = TRUE),
+   "...and one longer than the cap says how many codes it left out")
+# The breakdown is an aid to a stop that is already happening. Losing it must
+# not turn the stop into a driver error, which names nothing and waives nothing.
+m <- drive_icd(7L, detail = "error")
+ok(grepl("names neither family", m, fixed = TRUE) &&
+     grepl("NDMM_WAIVERS=raw_icd_flag", m, fixed = TRUE),
+   "...and a breakdown that cannot be read leaves the stop itself intact")
 
 cat("\n-- nothing is read before the step that builds it --\n")
 # check_ndc_shape() joined NDMM_LOT1_STARTS and was called before the step that
