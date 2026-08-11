@@ -207,6 +207,12 @@ refuses(mk(modifyList(STATUS, list(INPUT_COHORT_TABLE = ""))),
 refuses(mk(STATUS[setdiff(names(STATUS), "CONTRACT_DEVIATIONS")]),
         "NDMM_SUBSEQ_ALLOW_UNPROVEN",
         "a status row too old to say whether the run was contract is refused")
+# The stamp exists because two attempts can reuse a run id. A blank one used to
+# count as a match, which is the one case the run id alone cannot separate -
+# so it proved nothing exactly where proof was needed.
+refuses(mk(meta = modifyList(META, list(COHORT_STAMP = ""))),
+        "NDMM_SUBSEQ_ALLOW_UNPROVEN",
+        "a recorded attempt with no stamp is refused - it cannot tell two apart")
 # The override accepts every unprovable case by name, on the record - and only
 # those: a proven MISMATCH still stops with it set.
 withr("NDMM_SUBSEQ_ALLOW_UNPROVEN", "TRUE", function() {

@@ -11,6 +11,23 @@ DATABRICKS_PWD=... Rscript build.R ndmm_NDMM_COHORT ndmm_
 Reads only. It writes no cohort table and no LOT table, so it can be re-run
 against a finished run as often as needed.
 
+## When it refuses
+
+It refuses a run it cannot identify, and that is not new. What is new is that
+it also refuses a lineage it cannot **prove**, rather than logging and carrying
+on: no cohort build status table, a LOT run that recorded no cohort attempt, or
+an attempt recorded without a stamp. The stamp matters because two attempts can
+reuse a run id, which is the one case an id alone cannot separate.
+
+Carrying on wrote outcomes measured over an unproven lineage into tables that
+look ordinary and carry this run's . Nothing downstream could tell
+them from proven ones, because nothing downstream was told - so "we could not
+check" and "we checked and it matched" were the same outcome.
+
+ accepts it deliberately, and the log records
+that it was accepted. A lineage shown to be WRONG still stops with it set: the
+override is for what could not be checked, never for what failed.
+
 ## What it writes
 
 | table | one row per |

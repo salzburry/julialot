@@ -1,9 +1,14 @@
 # The runner. Resolves which LOT run owns the tables, refuses anything it
 # cannot vouch for, then writes the five tables.
 #
-# Nothing here is waivable. This package reads a finished run and does
-# arithmetic on it; if the run cannot be identified there is no reading of
-# these numbers that is worth having.
+# Nothing here is waivable except by name. This package reads a finished run
+# and does arithmetic on it; if the run cannot be identified there is no
+# reading of these numbers that is worth having. Where the lineage cannot be
+# PROVEN rather than shown wrong - no cohort status table, no recorded attempt,
+# an attempt recorded without a stamp - the run stops and names
+# OUT_ALLOW_UNPROVEN_LINEAGE, so an operator accepts it deliberately and the log
+# records that they did. It used to carry on and log, which made "we could not
+# check" and "we checked and it matched" the same outcome.
 
 # The cohort build's own prefix. One study is one prefix, so it defaults to
 # this run's - set it only when the cohort was built under a different one.
@@ -128,7 +133,28 @@ check_lot_run <- function(con, prefix, cohort_table, study_end) {
 # outcomes would measure lines built over attempt A using death, enrolment and
 # diagnosis dates from attempt B. LOT records which attempt it read, so ask.
 #
-# The same shape as ndmm/R/build_subsequent.R, and for the same reason.
+# The same shape as ndmm/R/build_subsequent.R, and for the same reason - now
+# including how it ends. This used to log the three cases below and carry on,
+# which is the failure the header of this file says it refuses: outcomes
+# measured against a population the lines are not about, written into tables
+# that look ordinary and carry this run's OUT_RUN_ID. Nothing downstream could
+# tell them from proven ones, because nothing downstream is told.
+#
+# So an unproven lineage is now accepted by name or not at all. The name is on
+# the record in the log, which is the point: "we could not check" and "we
+# checked and it matched" stop being the same outcome.
+out_unproven <- function(what) {
+  if (identical(toupper(trimws(Sys.getenv("OUT_ALLOW_UNPROVEN_LINEAGE",
+                                          unset = ""))), "TRUE")) {
+    log_msg("UNPROVEN LINEAGE ACCEPTED: ", what)
+    return(invisible(FALSE))
+  }
+  stop(what, " The lines' lineage cannot be proven, and outcomes measured over ",
+       "mixed vintages look exactly like right ones. ",
+       "OUT_ALLOW_UNPROVEN_LINEAGE=TRUE accepts that, on the record.",
+       call. = FALSE)
+}
+
 check_cohort_attempt <- function(con, lot_run_id) {
   meta <- out_tbl("LOT_RUN_METADATA")
   m <- tryCatch(db_q(con, glue(
@@ -158,24 +184,29 @@ check_cohort_attempt <- function(con, lot_run_id) {
   }
   # Nothing recorded is nothing to compare, and saying so is honest. A cohort
   # built by another package has no such table.
-  if (is.null(d)) {
-    log_msg("  No cohort build status under ", coh_tbl("NDMM_BUILD_STATUS"),
-            " or ", coh_tbl("build_status"),
-            " - the cohort attempt cannot be compared.")
-    return(invisible(FALSE))
-  }
+  if (is.null(d))
+    return(out_unproven(paste0("No cohort build status under ",
+                               coh_tbl("NDMM_BUILD_STATUS"), " or ",
+                               coh_tbl("build_status"),
+                               " - the cohort attempt cannot be compared.")))
   now_id <- at(d, "RUN_ID"); now_stamp <- at(d, "UPDATED_AT")
-  if (is.na(lot_cohort) || !nzchar(trimws(lot_cohort))) {
-    log_msg("  ", meta, " records no cohort attempt for run ", lot_run_id,
-            ", so it cannot be compared to cohort run ", now_id, ".")
-    return(invisible(FALSE))
-  }
+  if (is.na(lot_cohort) || !nzchar(trimws(lot_cohort)))
+    return(out_unproven(paste0(meta, " records no cohort attempt for run ",
+                               lot_run_id, ", so it cannot be compared to ",
+                               "cohort run ", now_id, ".")))
   eq <- function(a, b) {
     a <- trimws(as.character(a)); b <- trimws(as.character(b))
     length(a) == 1L && length(b) == 1L && !is.na(a) && !is.na(b) && identical(a, b)
   }
-  if (!(eq(lot_cohort, now_id) &&
-        (is.na(lot_stamp) || !nzchar(trimws(lot_stamp)) || eq(lot_stamp, now_stamp))))
+  # A blank stamp used to count as a match. Two attempts can reuse a run id -
+  # that is exactly what the stamp is for - so a blank one does not prove the
+  # attempt, it fails to speak about it.
+  if (eq(lot_cohort, now_id) && (is.na(lot_stamp) || !nzchar(trimws(lot_stamp))))
+    return(out_unproven(paste0(meta, " records cohort run ", lot_cohort,
+                               " with no stamp, so a second attempt under the ",
+                               "same run id cannot be told from the one the ",
+                               "lines were built over.")))
+  if (!(eq(lot_cohort, now_id) && eq(lot_stamp, now_stamp)))
     stop("The LOT lines were built over cohort run ", lot_cohort, " (", lot_stamp,
          "), but ", tbl, " now holds run ", now_id, " (", now_stamp,
          "). The follow-up ends, death dates and diagnosis dates on disk are a ",
