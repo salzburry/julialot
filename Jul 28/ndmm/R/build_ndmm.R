@@ -580,6 +580,7 @@ RUN_METADATA_COLS <- c(RUN_ID = "STRING", OBJECT_PREFIX = "STRING",
                        CODE_MD5 = "STRING",
                        CONTRACT_SETTINGS = "STRING",
                        WAIVERS_REQUESTED = "STRING", WAIVERS_APPLIED = "STRING",
+                       FINDINGS = "STRING",
                        N_NDMM = "BIGINT", RECORDED_AT = "TIMESTAMP")
 
 # What made this cohort, beside the cohort. NDMM_BUILD_STATUS says a run
@@ -603,6 +604,8 @@ write_run_metadata <- function(con, cfg, here, n) {
          "{sql_text(contract_settings())}, ",
          "{sql_text(paste(sort(waivers_named(), method = 'radix'), collapse = ','))}, ",
          "{sql_text(paste(sort(getOption('ndmm_waivers_applied', character(0)), ",
+         "method = 'radix'), collapse = ','))}, ",
+         "{sql_text(paste(sort(getOption('ndmm_findings', character(0)), ",
          "method = 'radix'), collapse = ','))}, ",
          "{sql_count(n)}, current_timestamp())"))
   log_msg("Run recorded in ", tbl)
@@ -824,12 +827,23 @@ write_build_status <- function(con, cfg, state, n = NA) {
 # the pregnancy procedure list. The CDM is full of claims this cohort never
 # reads.
 #
-# Waivable like the NDC shape checks, and wired the same way: found and not
-# waived stops the build, because the affected rows change who is in the
-# cohort and somebody has to look before accepting that. The values are the
-# CDM's and cannot be corrected here; a waiver accepts that those rows match
-# nothing. It does not reclassify them - putting the ICD-10 guess back would
-# suppress the report and keep the error.
+# Reports, and does not stop. It stopped until the first production run, where
+# it found sixteen rows across two tables and halted a build that was otherwise
+# fine. The study team's call, and a reasonable one: the values are the CDM's,
+# nothing here can correct them, and the rows are a handful against a cohort in
+# the thousands.
+#
+# So it has to stay legible after the run instead. It names the codes and which
+# list each is on, both counts go to the log, and the finding is written to
+# NDMM_RUN_METADATA.FINDINGS - a run that carried it says so from its own row,
+# rather than from a log somebody has to still have.
+#
+# NDMM_WAIVERS=raw_icd_flag is still accepted so existing commands keep working,
+# and now does nothing: an unrecognised waiver name stops the build as a typo,
+# so removing it would break the very invocations that were told to use it.
+#
+# What it never does is reclassify. Putting the ICD-10 guess back would suppress
+# the report and keep the error.
 check_icd_flag <- function(con, cfg) {
   fam <- icd_family_sql("t.ICD_FLAG")
   # The flag as it is reported and the code as the join sees it, each written
@@ -938,19 +952,24 @@ check_icd_flag <- function(con, cfg) {
     log_msg("  ICD_FLAG: every claim carrying a code this cohort reads names a family")
     return(invisible(FALSE))
   }
-  # A stop unless waived, not a report. These rows carry a code this cohort
-  # reads and only the flag stopped the match, so they move membership in both
-  # directions - a dropped MM diagnosis excludes, a dropped exclusion code
-  # retains. That is a decision, and it belongs to the study team.
+  # These rows carry a code this cohort reads and only the flag stopped the
+  # match, so they move membership in both directions - a dropped MM diagnosis
+  # excludes a patient, a dropped exclusion code retains one. Which of those is
+  # in play is what the code list column says, so read it.
   msg <- paste0("ICD_FLAG names neither family on: ", paste(found, collapse = "; "),
-                ". Those rows match no code list entry; nothing reclassifies ",
-                "them. A dropped MM code can exclude a patient and a dropped ",
-                "exclusion code can keep one, so accepting this is a decision: ",
-                "NDMM_WAIVERS=raw_icd_flag once the study team has looked.")
-  if (!("raw_icd_flag" %in% waivers())) stop(msg, call. = FALSE)
-  log_msg("WAIVED (raw_icd_flag): ", msg)
-  options(ndmm_waivers_applied = union(getOption("ndmm_waivers_applied",
-                                                 character(0)), "raw_icd_flag"))
+                ". Those rows match no code list entry and nothing reclassifies ",
+                "them. On an MM code the lost match can exclude a patient; on an ",
+                "other-cancer or pregnancy code it can keep one; on a trial code ",
+                "it moves nobody, because trial evidence filters nothing.")
+  log_msg("WARNING (raw_icd_flag): ", msg)
+  # On the run's own row, so a cohort found months later carries the finding
+  # rather than depending on somebody still having the log.
+  options(ndmm_findings = union(getOption("ndmm_findings", character(0)),
+                                "raw_icd_flag"))
+  if ("raw_icd_flag" %in% waivers())
+    log_msg("  (NDMM_WAIVERS=raw_icd_flag is no longer needed - this reports ",
+            "rather than stops. The name is still accepted so existing commands ",
+            "keep working.)")
   invisible(TRUE)
 }
 
@@ -1077,7 +1096,7 @@ build_ndmm <- function(here, prefix) {
             try(write_build_status(con, cfg, "failed"), silent = TRUE),
           add = TRUE, after = FALSE)
   options(ndmm_complete = FALSE, ndmm_codelist_md5 = list(),
-          ndmm_waivers_applied = character(0))
+          ndmm_waivers_applied = character(0), ndmm_findings = character(0))
   # After the status row, so a run is marked started whatever this does, and
   # before the first step, so no writer can be reached with the previous
   # attempt's rows still under this run's id.

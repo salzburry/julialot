@@ -1276,19 +1276,22 @@ ok(length(waivers()) == 0L,
    "and nothing outside the waivable set is ever honoured, whatever is set")
 Sys.unsetenv("NDMM_WAIVERS")
 
-# raw_icd_flag is waivable and wired, not just claimed. The check's header said
-# "waivable like the NDC shape checks" while the check only logged and the
-# waivable set did not carry the name - so the README promised a gate that did
-# not exist, and rows that move membership in both directions sailed past it.
-ok("raw_icd_flag" %in% WAIVABLE_CHECKS, "raw_icd_flag is in the waivable set")
-ICDQ <- character(0)
+# raw_icd_flag reports and does not stop - the study team's call after it
+# halted the first production run over sixteen rows. The name stays waivable
+# because check_settings() stops on a waiver it does not recognise, so dropping
+# it would break the very commands that were told to pass it.
+ok("raw_icd_flag" %in% WAIVABLE_CHECKS,
+   "raw_icd_flag is still a recognised waiver name, so old commands still run")
+ICDQ <- character(0); ICDLOG <- character(0)
 drive_icd <- function(n, waive = "", detail = NULL) {
   Sys.setenv(NDMM_WAIVERS = waive)
-  ICDQ <<- character(0)
+  ICDQ <<- character(0); ICDLOG <<- character(0)
+  options(ndmm_findings = character(0))
   if (is.null(detail))
     detail <- data.frame(icd_flag_value = "<blank>", matched_code = "C9000",
                          on_list = "MM diagnosis", n_rows = n, n_pat = n,
                          stringsAsFactors = FALSE)
+  assign("log_msg", function(...) ICDLOG <<- c(ICDLOG, paste0(...)), envir = ne)
   assign("db_q", function(con, sql) {
     ICDQ <<- c(ICDQ, sql)
     if (!grepl("matched_code", sql, fixed = TRUE))
@@ -1296,23 +1299,37 @@ drive_icd <- function(n, waive = "", detail = NULL) {
     if (identical(detail, "error")) stop("driver went away")
     detail
   }, envir = ne)
-  out <- tryCatch({ ne$check_icd_flag(NULL, cfg_defaults); "" },
-                  error = conditionMessage)
+  # The error message if it ever raises, so a stop cannot pass as a warning.
+  err <- tryCatch({ ne$check_icd_flag(NULL, cfg_defaults); "" }, error = conditionMessage)
   Sys.unsetenv("NDMM_WAIVERS")
-  out
+  list(err = err, log = paste(ICDLOG, collapse = "\n"),
+       findings = getOption("ndmm_findings", character(0)))
 }
-ok(identical(drive_icd(0L), ""), "every flag naming a family lets the run go on")
+r <- drive_icd(0L)
+ok(identical(r$err, "") && !length(r$findings),
+   "every flag naming a family leaves nothing to report")
 ok(!any(grepl("matched_code", ICDQ, fixed = TRUE)),
-   "...and nothing pays for a breakdown of a stop that is not happening")
-m <- drive_icd(7L)
-ok(grepl("names neither family", m, fixed = TRUE) &&
-     grepl("NDMM_WAIVERS=raw_icd_flag", m, fixed = TRUE),
-   "an unknown flag on a code this cohort reads stops the build, naming the waiver")
+   "...and nothing pays for a breakdown of a finding that is not there")
+r <- drive_icd(7L)
+ok(identical(r$err, ""),
+   "an unknown flag on a code this cohort reads no longer stops the build")
+m <- r$log
+ok(grepl("WARNING (raw_icd_flag)", m, fixed = TRUE) &&
+     grepl("names neither family", m, fixed = TRUE),
+   "...it warns instead, named so the log can be grepped for it")
 ok(grepl("exclude a patient", m, fixed = TRUE) &&
-     grepl("keep one", m, fixed = TRUE),
-   "...and the stop says the miss cuts both ways, not that either way is safe")
-ok(identical(drive_icd(7L, waive = "raw_icd_flag"), ""),
-   "...and the named waiver, once the study team has looked, lets it proceed")
+     grepl("keep one", m, fixed = TRUE) &&
+     grepl("moves nobody", m, fixed = TRUE),
+   "...and says which way each kind of code cuts, trial codes included")
+# A warning nobody kept the log for is a warning nobody has. The run's own row
+# carries it, so a cohort found later says what it was built over.
+ok(identical(r$findings, "raw_icd_flag"),
+   "...and the finding goes on the run's metadata row, not only into the log")
+ok("FINDINGS" %in% names(RUN_METADATA_COLS),
+   "...which is a column NDMM_RUN_METADATA actually has")
+r <- drive_icd(7L, waive = "raw_icd_flag")
+ok(identical(r$err, "") && grepl("no longer needed", r$log, fixed = TRUE),
+   "the old waiver is accepted and says it is now a no-op")
 
 # The count says how many rows stopped the build. Which codes they carry is the
 # question it leaves behind, and it is asked of the same rows.
@@ -1322,7 +1339,7 @@ ok(identical(drive_icd(7L, waive = "raw_icd_flag"), ""),
 # hundreds of thousands of correctly flagged rows, with the handful that
 # actually stopped the build somewhere inside them. It read as an explanation
 # of the stop and was not one.
-m <- drive_icd(7L)
+m <- drive_icd(7L)$log
 # Anchored on the outer FROM, not on the first WHERE in the text: the code
 # lists carry their own WHERE, and the breakdown now wraps them in a CTE, so
 # "the first WHERE" stopped being the outer one and these read the wrong slice.
@@ -1362,7 +1379,7 @@ n_of <- function(pat, s) {
 ok(n_of("regexp_replace", icd_src) == 1L && n_of("IS NULL", icd_src) == 1L,
    "...because each half of the predicate is written exactly once")
 ok(grepl("codes: C9000", m, fixed = TRUE),
-   "the stop names the codes, not just how many rows carried them")
+   "the warning names the codes, not just how many rows carried them")
 # And which list each is on. That is what sizes the decision: an MM code can
 # drop a patient, an exclusion code can keep one, a trial code moves nobody.
 # The stop cannot tell them apart, but the operator reading it can.
@@ -1384,7 +1401,7 @@ ok(grepl("GROUP BY code", detq, fixed = TRUE) &&
 m <- drive_icd(7L, detail = data.frame(icd_flag_value = "<blank>",
                                        matched_code = "C9000",
                                        on_list = "MM diagnosis", n_rows = 3L,
-                                       n_pat = 3L, stringsAsFactors = FALSE))
+                                       n_pat = 3L, stringsAsFactors = FALSE))$log
 ok(grepl("not describing the same rows", m, fixed = TRUE) &&
      grepl("sums to 3 row(s), not 7", m, fixed = TRUE),
    "a breakdown that does not sum to the count says so, naming both numbers")
@@ -1393,16 +1410,18 @@ m <- drive_icd(25L, detail = data.frame(icd_flag_value = "<blank>",
                                         matched_code = sprintf("C%04d", 1:25),
                                         on_list = "MM diagnosis",
                                         n_rows = 1L, n_pat = 1L,
-                                        stringsAsFactors = FALSE))
+                                        stringsAsFactors = FALSE))$log
 ok(grepl("C0001", m, fixed = TRUE) && !grepl("C0025", m, fixed = TRUE) &&
      grepl("and 5 more code(s)", m, fixed = TRUE),
    "...and one longer than the cap says how many codes it left out")
-# The breakdown is an aid to a stop that is already happening. Losing it must
-# not turn the stop into a driver error, which names nothing and waives nothing.
-m <- drive_icd(7L, detail = "error")
-ok(grepl("names neither family", m, fixed = TRUE) &&
-     grepl("NDMM_WAIVERS=raw_icd_flag", m, fixed = TRUE),
-   "...and a breakdown that cannot be read leaves the stop itself intact")
+# The breakdown is an aid to a warning that is already being raised. Losing it
+# must not take the warning with it, or a driver hiccup silently turns a
+# reported finding into a clean run.
+r <- drive_icd(7L, detail = "error")
+ok(grepl("WARNING (raw_icd_flag)", r$log, fixed = TRUE) &&
+     grepl("names neither family", r$log, fixed = TRUE) &&
+     identical(r$findings, "raw_icd_flag"),
+   "...and a breakdown that cannot be read leaves the warning and the finding intact")
 
 cat("\n-- nothing is read before the step that builds it --\n")
 # check_ndc_shape() joined NDMM_LOT1_STARTS and was called before the step that
