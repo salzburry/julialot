@@ -83,9 +83,9 @@ SAFETY_COLS <- c("domain", "condition", "acute_chronic", "code_type", "code",
 HCRU_COLS   <- c("event", "measure", "code_type", "code", "source_note")
 
 # What a code_type may say, and which Optum CDM table it lands on. Checked
-# against docs/optum data dict.pdf and docs/optum business rules.pdf rather than
-# assumed: a code_type with no table behind it is a row that matches nothing,
-# which is the same failure as an empty code and just as invisible.
+# against the Optum data dictionary and business rules rather than assumed: a
+# code_type with no table behind it is a row that matches nothing, which is the
+# same failure as an empty code and just as invisible.
 #
 #   ICD_DIAG      MED_DIAGNOSIS. Paired with icd_family, because ICD_FLAG is
 #                 what distinguishes ICD-9 from ICD-10 on the claim.
