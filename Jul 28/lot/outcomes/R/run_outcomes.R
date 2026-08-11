@@ -7,7 +7,7 @@
 # PROVEN rather than shown wrong - no cohort status table, no recorded attempt,
 # an attempt recorded without a stamp - the run stops and names
 # OUT_ALLOW_UNPROVEN_LINEAGE, so an operator accepts it deliberately and the log
-# records that they did. It used to carry on and log, which made "we could not
+# records that they did. Logging and carrying on would make "we could not
 # check" and "we checked and it matched" the same outcome.
 
 # The cohort build's own prefix. One study is one prefix, so it defaults to
@@ -61,9 +61,8 @@ find_subsequent_cohorts <- function(con, lot_run, lines = c(2L, 3L),
     src <- at("SOURCE_LOT_RUN_ID")
     # An older table predates the column. Not current by omission: it cannot
     # say which run it came from, so it cannot be shown to belong to this one.
-    # as.character() strips anything riding along on either side. identical()
-    # is the right comparison for text and the wrong one for text wearing an
-    # attribute, and this function is handed a run id from a caller it does not
+    # as.character() strips anything riding along. identical() compares
+    # attributes, and this function takes a run id from a caller it does not
     # control.
     want <- as.character(trimws(lot_run))
     if (is.na(src) || !nzchar(src) || !identical(src, want)) {
@@ -152,10 +151,8 @@ find_subsequent_cohorts <- function(con, lot_run, lines = c(2L, 3L),
   else
     log_msg("  Line-specific denominators from ", paste(unlist(out), collapse = ", "),
             ", both built from LOT run ", lot_run, ".")
-  # Named, not attached. The provenance is one row - every line cohort agrees
-  # on it by the time we get here - or NULL when there are no line cohorts at
-  # all, which the SQL builders read as "no LINE_ELIGIBLE, so no window to
-  # record".
+  # Named, not attached. One row - the line cohorts agree on it by now - or
+  # NULL where there are none, which the SQL builders render as NULL columns.
   list(tables = out, provenance = if (length(prov)) prov[[1]] else NULL)
 }
 
@@ -174,9 +171,8 @@ check_lot_run <- function(con, prefix, cohort_table, study_end) {
     if (is.na(i)) NA_character_ else as.character(d[[i]][1])
   }
   # Whether the column is there at all, which is a different question from what
-  # it says. Every check below used to read a blank the same way it read a
-  # match - `!is.na(x) && nzchar(x) && x != want` passes when x is missing - so
-  # a status row that recorded nothing proved everything.
+  # it says. `!is.na(x) && nzchar(x) && x != want` passes when x is missing, so
+  # a status row that records nothing would prove everything.
   has <- function(nm) !is.na(match(toupper(nm), toupper(names(d))))
   said <- function(nm) { v <- pick(nm); !is.na(v) && nzchar(trimws(v)) }
   st <- tolower(trimws(pick("STATE")))
@@ -199,13 +195,10 @@ check_lot_run <- function(con, prefix, cohort_table, study_end) {
   # CONTRACT_DEVIATIONS is a positive statement - the run used the contract
   # algorithm - and is what every production run writes. A MISSING column says
   # nothing, and was being read as the blank.
-  # Three states, and the third was being read as the second. The engine always
-  # writes CONTRACT_DEVIATIONS as a quoted string, so a contract build writes
-  # '' - NULL is not something a build produces. It is what the in-place column
-  # upgrade leaves on rows that predate the column, which turns "the column is
-  # missing" into "the column is present and says nothing" and walks past the
-  # check written for exactly that case. An empty string is a statement; a NULL
-  # is the absence of one, and only the first proves a contract build.
+  # Three states, not two. The engine always writes this as a quoted string, so
+  # a contract build writes '' and NULL never comes from a build - it is what
+  # the in-place column upgrade leaves on older rows. An empty string is a
+  # statement; a NULL is the absence of one.
   dev <- pick("CONTRACT_DEVIATIONS")
   if (!has("CONTRACT_DEVIATIONS"))
     out_unproven(paste0(tbl, " has no CONTRACT_DEVIATIONS column, so this run ",
@@ -237,12 +230,10 @@ check_lot_run <- function(con, prefix, cohort_table, study_end) {
   log_msg("LOT run ", pick("RUN_ID"), " completed over ",
           pick("INPUT_COHORT_TABLE"))
   attempt <- check_cohort_attempt(con, pick("RUN_ID"))
-  # Two named fields, not a run id with something hidden on it. An attributed
-  # character is not the string it prints as: trimws() is sub(), sub() returns
-  # "the same attributes as x", and identical() compares attributes - so
-  # identical("L1", trimws(lot_run)) was FALSE for the same eight characters,
-  # and every valid 2L/3L cohort was reported as built from another run. The
-  # runner unpacks this into a plain character before anything compares it.
+  # Two named fields, not a run id with something hidden on it. trimws() is
+  # sub(), sub() keeps attributes, and identical() compares them - so an
+  # attributed run id is not identical() to its own text, and every valid 2L/3L
+  # cohort reads as built from another run.
   list(run = as.character(pick("RUN_ID")), attempt = attempt)
 }
 
@@ -252,12 +243,10 @@ check_lot_run <- function(con, prefix, cohort_table, study_end) {
 # outcomes would measure lines built over attempt A using death, enrolment and
 # diagnosis dates from attempt B. LOT records which attempt it read, so ask.
 #
-# The same shape as ndmm/R/build_subsequent.R, and for the same reason - now
-# including how it ends. This used to log the three cases below and carry on,
-# which is the failure the header of this file says it refuses: outcomes
-# measured against a population the lines are not about, written into tables
-# that look ordinary and carry this run's OUT_RUN_ID. Nothing downstream could
-# tell them from proven ones, because nothing downstream is told.
+# The same shape as ndmm/R/build_subsequent.R, and for the same reason. The
+# three cases below stop rather than log: outcomes measured against a
+# population the lines are not about would land in ordinary-looking tables
+# carrying this run's OUT_RUN_ID, and nothing downstream would be told.
 #
 # So an unproven lineage is now accepted by name or not at all. The name is on
 # the record in the log, which is the point: "we could not check" and "we
@@ -317,9 +306,8 @@ check_cohort_attempt <- function(con, lot_run_id) {
     a <- trimws(as.character(a)); b <- trimws(as.character(b))
     length(a) == 1L && length(b) == 1L && !is.na(a) && !is.na(b) && identical(a, b)
   }
-  # A blank stamp used to count as a match. Two attempts can reuse a run id -
-  # that is exactly what the stamp is for - so a blank one does not prove the
-  # attempt, it fails to speak about it.
+  # Two attempts can reuse a run id, which is what the stamp is for - so a
+  # blank stamp does not prove the attempt, it declines to speak about it.
   if (eq(lot_cohort, now_id) && (is.na(lot_stamp) || !nzchar(trimws(lot_stamp))))
     return(out_unproven(paste0(meta, " records cohort run ", lot_cohort,
                                " with no stamp, so a second attempt under the ",
@@ -416,14 +404,10 @@ build_outcomes <- function(here, cohort_table, prefix) {
   lines  <- out_tbl("LOT_LONG_FINAL")
   cohort <- wrk(cfg$input_cohort_table)
   base   <- find_base_cohort(con)
-  # Two values, returned as two values. This used to come back as one list with
-  # the provenance smuggled on an attribute, and the runner then took [[1]] of
-  # it unconditionally - so a run with no line cohorts, which is the documented
-  # behaviour for the overall cohort and for any NDMM run before
-  # build_subsequent_cohorts.R, died with "subscript out of bounds" at the
-  # first table. The empty case was tested and the use of the empty case was
-  # tested; nothing tested the two together, and the attribute is what let them
-  # be written apart.
+  # Two values, returned as two values. Smuggled on an attribute instead, the
+  # runner takes [[1]] of an empty list and a run with no line cohorts - the
+  # overall cohort, or any NDMM run before build_subsequent_cohorts.R - dies
+  # with "subscript out of bounds" at the first table.
   sc     <- find_subsequent_cohorts(con, lot_run, attempt = lr$attempt)
   subseq <- sc$tables
   both   <- length(subseq) > 0L

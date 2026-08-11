@@ -52,18 +52,12 @@ SAFETY_CONDITIONS <- list(
                      cognitive_impairment_or_dementia = "chronic",
                      other_movement_disorders         = "chronic",
                      seizures                         = "chronic"),
-  # These two domains were missing, and their absence is the failure this file
-  # was written to prevent: a condition leaving the study by leaving a list.
-  # Table 2 carries twenty-six conditions in seven domains and the roster held
-  # twenty-three in five, with a test pinning the number 23 - so the shortfall
-  # was not merely unnoticed, it was locked in. Table 3's category list names
-  # the same seven independently: hepatologic, renal, serious infection,
-  # ocular, cardiovascular, neurologic, and other conditions.
+  # Table 3's category list names the same seven independently: hepatologic,
+  # renal, serious infection, ocular, cardiovascular, neurologic, other.
   infectious     = c(severe_infection_with_hospitalisation = "acute"),
   # Table 2 heads this group "Other (dependent on data availability)". The
-  # dependency is on the data, not on whether the study wants them, so they are
-  # rostered like every other condition and the availability question is
-  # recorded in the README beside the codes they are waiting on.
+  # dependency is on the data, so they are rostered like the rest and
+  # availability is answered by running the codes.
   other          = c(thrombocytopenia = "chronic",
                      anemia           = "chronic")
 )
@@ -294,12 +288,10 @@ safety_fill_status <- function(codelist_dir) {
   # one event is two definitions again, with the column that was meant to
   # settle it saying both.
   hp <- h$df[!is.na(h$df$precedence) & h$df$precedence == "primary", , drop = FALSE]
-  # An event whose codes are in, but whose PRIMARY row is still a placeholder.
-  # no_primary below only asks that a row labelled primary EXISTS, so a filled
-  # fallback beside an empty primary passed as ready - and the fallback then
-  # silently becomes the definition, which is the arrangement precedence exists
-  # to prevent. Asked only of events that have any codes at all, so a wholly
-  # empty event is still a placeholder rather than an error.
+  # An event whose codes are in but whose PRIMARY row is still empty: the
+  # fallback becomes the definition by default, which is what precedence exists
+  # to prevent. Asked only of events with any codes, so a wholly empty event is
+  # still a placeholder.
   live_ev <- unique(hf$event[!is.na(hf$event)])
   filled_primary <- unique(hf$event[!is.na(hf$precedence) &
                                       hf$precedence == "primary"])

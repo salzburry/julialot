@@ -39,10 +39,8 @@ ok(all(BENCHMARK_COLS %in% names(refs)),
 # exactly which figures are wanted, and a row nobody filled reports itself.
 #
 # What is asserted is that no figure was invented, NOT that the file is empty.
-# Those were the same statement while it shipped blank, and asserting the
-# second pinned it that way - the first genuinely published figure would have
-# turned this suite red and the merge gate with it, so the skill that exists to
-# fill this file could not have filled it through a green build.
+# The two coincide while it ships blank, and asserting the second would turn
+# the suite red on the first genuinely published figure.
 pub <- !is.na(refs$published_value)
 cat("      (", sum(pub), " of ", nrow(refs), " rows carry a published value)\n",
     sep = "")
@@ -156,7 +154,7 @@ runs(read_benchmarks(wr(b)),
      "a complete row loads - including one recorded as not comparable, which is a finding")
 
 cat("\n-- a reference this run did not produce is reported, not dropped --\n")
-# The join used to be observed-left, which lost silently in the one direction
+# An observed-left join loses silently in the one direction
 # that matters: a published figure whose key this run has no observation for -
 # a regimen outside the observed top N, a line the cohort never reached - fell
 # out of the output entirely. The reader saw every figure that HAD been

@@ -13,24 +13,21 @@ against a finished run as often as needed.
 
 ## When it refuses
 
-It refuses a run it cannot identify, and that is not new. What is new is that
-it also refuses a lineage it cannot **prove**, rather than logging and carrying
-on: no cohort build status table, a LOT run that recorded no cohort attempt, or
-an attempt recorded without a stamp. The stamp matters because two attempts can
+It refuses a run it cannot identify, and a lineage it cannot **prove**: no
+cohort build status table, a LOT run that recorded no cohort attempt, or an
+attempt recorded without a stamp. The stamp matters because two attempts can
 reuse a run id, which is the one case an id alone cannot separate.
 
-The same now holds for the run's own description of itself. Three checks were
-written as "if it says something and what it says is wrong, stop", which passes
-when it says nothing - so a status row that recorded no input cohort, no study
-end, or no contract column proved all three by omission. Blank and absent are
-told apart where the difference means something: a blank `CONTRACT_DEVIATIONS`
-is a positive statement, the contract algorithm, and is what every production
-run writes; a missing column is not that statement and is not read as it.
+The same holds for the run's own description of itself. A status row recording
+no input cohort, no study end, or no `CONTRACT_DEVIATIONS` column proves
+nothing, and is not read as proof. Blank and absent differ where it matters: a
+blank `CONTRACT_DEVIATIONS` is a positive statement - the contract algorithm,
+what every production run writes - and a missing column is not.
 
-Carrying on wrote outcomes measured over an unproven lineage into tables that
-look ordinary and carry this run's `OUT_RUN_ID`. Nothing downstream could tell
-them from proven ones, because nothing downstream was told - so "we could not
-check" and "we checked and it matched" were the same outcome.
+Carrying on regardless would write outcomes measured over an unproven lineage
+into tables carrying this run's `OUT_RUN_ID`, indistinguishable from proven
+ones. "We could not check" and "we checked and it matched" would be the same
+outcome.
 
 `OUT_ALLOW_UNPROVEN_LINEAGE=TRUE` accepts it deliberately, and the log records
 that it was accepted. A lineage shown to be WRONG still stops with it set: the
@@ -182,9 +179,11 @@ no stamp check could catch it. The subsequent build records
 `SOURCE_LOT_RUN_ID`; a cohort naming another run, or too old to name any, stops
 the build rather than restricting on it.
 
-Naming the same LOT run is not the same as being the same build, and only that
-one field of the five the subsequent build stamps was being read. That left two
-ways to a wrong `LINE_ELIGIBLE` denominator with every id on the output
+Naming the same LOT run is not the same as being the same build. All five
+stamps - `SUBSEQ_RUN_ID`, `CE_PRE_DAYS`, `CE_FU_DAYS`, `SOURCE_COHORT_RUN_ID`,
+`SOURCE_COHORT_STAMP` - have to be present and to agree across the line
+cohorts, and the cohort attempt they name has to be the one the LOT run read.
+Two ways to a wrong `LINE_ELIGIBLE` denominator with every id on the output
 correct:
 
 * a **partial re-run** - 2L from one subsequent build and 3L from another, both
@@ -193,10 +192,9 @@ correct:
 * a **sensitivity build** - the same tables under overridden continuous
   enrolment windows, quietly becoming the ordinary denominator.
 
-So `SUBSEQ_RUN_ID`, `CE_PRE_DAYS`, `CE_FU_DAYS`, `SOURCE_COHORT_RUN_ID` and
-`SOURCE_COHORT_STAMP` all have to be present and to agree across the line
-cohorts. A non-default window is not refused - that is the sweep's business -
-but it is read and logged, so it is visible rather than silent.
+A non-default window is not refused; that is the sweep's business. It is carried
+onto `OUT_TTE` and every summary with a `DENOM`, so a table built under 180/30
+cannot be read a month later as a standard one.
 
 ## What it does not do
 

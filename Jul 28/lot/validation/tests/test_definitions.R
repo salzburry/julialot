@@ -112,19 +112,14 @@ ok(!length(commented),
    if (length(commented)) paste0("cites a comment rather than code: ",
                                  paste(unique(commented), collapse = ", "))
    else "...and a line of code rather than a comment about it")
-# And a line of code that carries the claim. "Not a comment" is a weaker
-# statement than it reads as, and it was measuring the wrong property:
-# first_line_start cited a function DECLARATION, substitution cited the line
-# that CREATES the substitution view rather than the exclusion built on it, and
-# steroids cited one later-line filter while claiming steroids never start,
-# join or sustain any line. All four are code. None of them proved the sentence
-# beside them.
+# And a line of code that carries the claim. "Not a comment" is weaker than it
+# reads: a function declaration is code, and so is the line that creates a view
+# rather than the exclusion built on it. Neither proves the sentence beside it.
 #
-# So each dimension names the tokens its answer turns on, and the cited lines
-# have to carry all of them between them. It cannot certify that a citation
-# supports a claim in general - nothing mechanical can - but it does catch the
-# failure that actually happened: a citation narrowing to one clause of a
-# multi-part answer, and staying green while the rest went unevidenced.
+# So each dimension names the tokens its answer turns on and the cited lines
+# have to carry them between them. Nothing mechanical can certify that a
+# citation supports a claim, but this catches a citation narrowing to one
+# clause of a multi-part answer.
 unproven <- character(0)
 for (i in seq_len(nrow(ours))) {
   want <- LOT_DIMENSIONS[[i]]$proves
@@ -196,13 +191,10 @@ ok(any(vapply(cited, function(c_i)
    "...citing the later-line code that decides it, not only the LOT1 comment")
 
 cat("\n-- an unsourced cell does not read as agreement --\n")
-# What is asserted here is that nothing was invented, NOT that the grid is
-# empty. Those were the same statement while the grid shipped blank, and
-# writing it the second way pinned it that way: the first honestly sourced
-# answer would have turned this suite red and the merge gate with it, so the
-# skill that exists to fill these files could not have filled them through a
-# green build. Every assertion below holds at zero filled cells and at all of
-# them.
+# What is asserted is that nothing was invented, NOT that the grid is empty.
+# The two coincide while it ships blank, and asserting the second would turn
+# the suite red on the first honestly sourced answer. Every assertion below
+# holds at zero filled cells and at all of them.
 runs(read_definition_sources(SRC), "the source grid loads")
 src <- read_definition_sources(SRC)
 ok(nrow(src) == nrow(ours) * length(unique(src$source_id)),
@@ -320,17 +312,17 @@ ok(!any(cf$concordance == "not yet sourced"),
    "...and no dimension is still reported as unsourced")
 ok(all(cf$concordance %in% c("agrees", "differs", "unclear")),
    "...every one carries a judgement instead")
-CHK <- file.path(dirname(STUDY), ".claude", "skills", "lot-evidence", "scripts",
-                 "check_grids.R")
-if (file.exists(CHK)) {
-  rc <- suppressWarnings(system2(file.path(R.home("bin"), "Rscript"),
-                                 c(shQuote(CHK), shQuote(VD)),
-                                 stdout = NULL, stderr = NULL))
-  ok(identical(rc, 0L),
-     paste0("the documented check command exits 0 on a filled grid (got ", rc, ")"))
-} else {
-  ok(TRUE, "no check command in this checkout to run against it")
-}
+# Both readers over the filled copy, in a fresh process, so a grid somebody
+# fills correctly is provably loadable rather than only loadable here.
+rc <- suppressWarnings(system2(file.path(R.home("bin"), "Rscript"),
+  c("-e", shQuote(paste0(
+      "source('", file.path(VD, "R", "definitions.R"), "');",
+      "source('", file.path(VD, "R", "benchmarks.R"), "');",
+      "invisible(read_definition_sources('", file.path(VD, "definitions_sources.csv"), "'));",
+      "invisible(read_benchmarks('", file.path(VD, "benchmarks.csv"), "'))"))),
+  stdout = NULL, stderr = NULL))
+ok(identical(rc, 0L),
+   paste0("a filled grid loads through both readers in a clean session (", rc, ")"))
 
 cat("\n-- why the columns are empty is recorded, not left to be guessed --\n")
 dn <- readLines(file.path(ROOT, "R", "definitions.R"), warn = FALSE)

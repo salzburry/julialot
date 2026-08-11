@@ -24,12 +24,10 @@ source(file.path(ROOT, "R", "codelists_safety.R"))
 TPL <- file.path(ROOT, "codelists")
 
 cat("\n-- the roster is the protocol's, not a subset of it --\n")
-# Table 2, transcribed. A COUNT is not a roster: this suite used to assert
-# `length(all_c) == 23L` and the roster was three conditions and two domains
-# short of Table 2 - so the number pinned the shortfall rather than catching
-# it, and adding the missing conditions would have turned the suite red. The
-# expectation is now the list itself, so a condition can only enter or leave by
-# someone editing what the protocol is asserted to say.
+# Table 2, transcribed. A count is not a roster: `length(all_c) == 26L` passes
+# on any twenty-six names and pins a shortfall as readily as it catches one.
+# The expectation is the list, so a condition enters or leaves only by someone
+# editing what the protocol is asserted to say.
 TABLE_2 <- list(
   hepatologic    = c("abnormal_liver_function", "toxic_liver_disease",
                      "hepatic_failure", "chronic_hepatitis", "acute_hepatitis",
@@ -199,7 +197,7 @@ stops(safety_codelist(fill(function(s) { s$code_type[1] <- "PROC"; s })),
 
 cat("\n-- the documented command agrees with the read it is gating --\n")
 # Everything above tests safety_codelist(). What anyone actually runs is
-# run_safety_codelists.R, and for a while the two decided readiness separately:
+# run_safety_codelists.R. Decided separately, the two disagree:
 # the runner on completeness alone. It would print "*** FILLED against an
 # unconfirmed field" and "Ready." two lines apart and exit 0 on a list the
 # analysis could not then read. A unit test on the loader cannot see that, so

@@ -222,13 +222,10 @@ read_definition_sources <- function(path) {
                          "two answers from one source."))
   filled <- !is.na(df$answer) & nzchar(trimws(df$answer))
   # An answered row that does not say which dimension it answers, or which
-  # source answered it. Both were unchecked, and both are worse than a blank
-  # row rather than equivalent to one.
-  #
-  # A blank dimension_id is the NA-subscript trap: the comparison selects rows
-  # with `filled$dimension_id == d$dimension_id`, NA == anything is NA, and an
-  # NA subscript returns an all-NA row - so ONE malformed row appears against
-  # EVERY dimension, each rendered with an answer nobody wrote.
+  # source answered it. A blank dimension_id is the NA-subscript trap: the
+  # comparison selects on `filled$dimension_id == d$dimension_id`, NA == anything
+  # is NA, and an NA subscript returns an all-NA row - so one malformed row
+  # appears against every dimension with an answer nobody wrote.
   nodim <- filled & (is.na(df$dimension_id) | !nzchar(trimws(df$dimension_id)))
   if (any(nodim))
     bad <- c(bad, paste0("an answer with no dimension_id on row(s): ",
@@ -268,11 +265,9 @@ read_definition_sources <- function(path) {
                            paste(ids, collapse = ", "),
                            ". One slot is one trial, or the column is a blend."))
     # The check above only bites once a citation carries an NCT id, so a slot
-    # citing "the protocol, section 5.2" on every row passed it while being a
-    # different protocol each time - twelve trials wearing one name, and the
-    # check written to stop exactly that was the thing being walked around.
-    # A trial slot has to be identifiable, so every answered row in one names
-    # its trial. IMWG_consensus is not a trial and is not asked to.
+    # citing "the protocol, section 5.2" on every row could be a different
+    # protocol each time. A trial slot has to be identifiable, so every answered
+    # row names its trial. IMWG_consensus is not a trial and is not asked to.
     if (grepl("^trial_", s)) {
       un <- filled & sid == s & !has_nct
       if (any(un))
@@ -369,12 +364,10 @@ compare_definitions <- function(sources, dims = LOT_DIMENSIONS) {
                source_type = rows$source_type, citation = rows$citation,
                retrieved = rows$retrieved,
                answer = rows$answer,
-               # Three states, not two. "unclear" is a judgement somebody made -
-               # they read the source and could not tell - and a blank cell is
-               # nobody having looked. Rendering the second as the first
-               # retired the question by describing it as answered ambiguously,
-               # which is the same failure as rendering it "agrees", one step
-               # quieter. Neither ever becomes agreement.
+               # Three states, not two. "unclear" is a judgement somebody made;
+               # a blank cell is nobody having looked. Rendering the second as
+               # the first retires the question by calling it answered
+               # ambiguously. Neither ever becomes agreement.
                concordance = ifelse(is.na(rows$concordance) |
                                       !nzchar(trimws(rows$concordance)),
                                     "sourced, not judged",
