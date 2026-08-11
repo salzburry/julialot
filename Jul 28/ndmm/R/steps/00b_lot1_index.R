@@ -597,3 +597,73 @@ build_ndmm_mm_adjacent_groups <- function(con, cfg) {
             paste(still, collapse = "; "))
   invisible(got)
 }
+
+# What the narrower reading would cost, as a number rather than an argument.
+#
+# The protocol says "during the study period" and the validated program spec,
+# citing an earlier section of it, says "during the baseline or follow-up
+# period". This build applies the protocol's, which is the wider of the two and
+# so excludes strictly more - a childbirth claim years from a patient's index
+# date drops them here and would not there. See DECISIONS.md #9.
+#
+# One scan serves both, because the study period contains the patient-relative
+# window: the narrower rule is a filter on the same matched events, not a
+# second pass over the claims.
+build_ndmm_preg_window_counts <- function(con, cfg) {
+  db_exec(con, glue("
+    CREATE OR REPLACE TABLE {wrk('NDMM_PREG_WINDOW_COUNTS')} AS
+    WITH idx AS (
+      SELECT l1.PATID, l1.LOT1_START_DT,
+             -- Follow-up ends at the study end or death, whichever comes
+             -- first, the same way the cohort clamps ENDDATE.
+             least(date('{cfg$study_end}'),
+                   coalesce(b.DEATH_DT, date('{cfg$study_end}'))) AS fu_end
+      FROM {NDMM_LOT1_STARTS} l1
+      INNER JOIN {NDMM_BASE_COHORT} b ON b.PATID = l1.PATID
+    ),
+    hit AS (
+      SELECT idx.PATID,
+             max(1)                                                AS w_study,
+             max(CASE WHEN e.event_dt >= date_sub(idx.LOT1_START_DT,
+                                                  {NDMM_PRE_LOT1_DAYS})
+                       AND e.event_dt <= idx.fu_end
+                      THEN 1 ELSE 0 END)                           AS w_patient
+      FROM idx
+      INNER JOIN {NDMM_PREGNANCY_EVENTS} e ON e.PATID = idx.PATID
+      GROUP BY idx.PATID
+    ),
+    w AS (SELECT * FROM (VALUES
+      (1, 'study period (this run)', 'study'),
+      (2, 'baseline + follow-up',    'patient')
+    ) AS t(sort_key, rule, which))
+    SELECT w.rule                                          AS PREG_WINDOW_RULE,
+           count(DISTINCT CASE WHEN (w.which = 'study'   AND hit.w_study   = 1)
+                                 OR (w.which = 'patient' AND hit.w_patient = 1)
+                               THEN hit.PATID END)         AS N_WITH_PREG_CLAIM,
+           -- The whole conjunction with this criterion recomputed per window,
+           -- so the row is a cohort size rather than one criterion's count -
+           -- the same shape NDMM_FU_CE_COUNTS uses.
+           count(DISTINCT CASE WHEN NOT ((w.which = 'study'   AND hit.w_study   = 1)
+                                      OR (w.which = 'patient' AND hit.w_patient = 1))
+                                AND {ndmm_criteria_where(except = 'NO_PREGNANCY', alias = 'f.')}
+                               THEN idx.PATID END)         AS N_COHORT,
+           max(CASE WHEN w.which = 'study' THEN 1 ELSE 0 END)
+                                                           AS IS_THIS_RUN
+    FROM idx
+    CROSS JOIN w
+    LEFT JOIN hit ON hit.PATID = idx.PATID
+    INNER JOIN {NDMM_FLAGS_ALL} f ON f.PATID = idx.PATID
+    GROUP BY w.rule, w.sort_key
+    ORDER BY w.sort_key"))
+  got <- db_q(con, glue("SELECT * FROM {wrk('NDMM_PREG_WINDOW_COUNTS')}"))
+  log_msg("Pregnancy (criterion 8), by window. This run applies the protocol's ",
+          "study period; the program spec says baseline + follow-up.")
+  for (i in seq_len(nrow(got)))
+    log_msg("    ", if (got$IS_THIS_RUN[i] == 1L) "->" else "  ", " ",
+            got$PREG_WINDOW_RULE[i], ": ",
+            format(got$N_WITH_PREG_CLAIM[i], big.mark = ","), " excluded, cohort ",
+            format(got$N_COHORT[i], big.mark = ","))
+  log_msg("  The gap is what the wider reading costs. See DECISIONS.md #9 - ",
+          "the window is pending sign-off, not settled.")
+  invisible(got)
+}

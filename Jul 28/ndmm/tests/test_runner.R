@@ -70,7 +70,7 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_prefix",
            "build_ndmm_pregnancy_patids", "build_ndmm_belantamab_patids",
            "build_ndmm_flags",
            "build_ndmm_clintrial_flags", "report_ndmm_clintrial",
-           "build_ndmm_fu_ce_counts",
+           "build_ndmm_fu_ce_counts", "build_ndmm_preg_window_counts",
            "ndmm_counts",
            "check_attrition_monotonic", "build_ndmm_cohort_table",
            "check_ndmm_cohort", "build_ndmm_belantamab_reconcile",
@@ -1489,6 +1489,28 @@ ok(grepl("stack(3,", px, fixed = TRUE),
    "...as a third arm of the one medical pass, not a second scan")
 ok(length(gregexpr("'HCPCS',", px, fixed = TRUE)[[1]]) == 2L,
    "...typed HCPCS, the way the therapy scan treats that column")
+
+# The events view carries dates now, so the window question can be priced. What
+# must NOT have moved is the exclusion: it is still every patient with a matched
+# claim anywhere in the study period, which is what the protocol says and what
+# every earlier run applied. DECISIONS.md #9 records why that is the wider of
+# two readings; this pins that recording it changed nothing.
+ok(grepl("BETWEEN date('2016-01-01') AND date('", px, fixed = TRUE),
+   "the scan is still bounded to the study period, not a patient window")
+ok(length(gregexpr("BETWEEN date('2016-01-01')", px, fixed = TRUE)[[1]]) == 3L,
+   "...on all three sources - diagnosis, medical and procedure")
+ok(!grepl("date_sub", px, fixed = TRUE),
+   "...and nothing in the exclusion scan is relative to the index date")
+pat <- PSQL[2]
+ok(grepl("SELECT DISTINCT PATID FROM", pat, fixed = TRUE) &&
+     grepl(pe$NDMM_PREGNANCY_EVENTS, pat, fixed = TRUE),
+   "the excluded set is distinct patients of those same events, as before")
+# One scan, two readers. A second copy of this scan is how the criterion and
+# the table pricing it would come to disagree about what a pregnancy claim is.
+ok(sum(grepl("stack(3,", PSQL, fixed = TRUE)) == 1L,
+   "...and the claims are scanned once, not once per window")
+ok("NDMM_PREGNANCY_EVENTS" %in% CHECKPOINTS,
+   "...with the shared view materialised, since two readers now hit it")
 
 cat("\n-- a pregnancy code type nothing reads stops the run --\n")
 # Every other named thing here stops when it matches nothing. This code list was

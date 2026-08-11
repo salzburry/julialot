@@ -499,9 +499,21 @@ pregnancy claim years away from a patient's index date excludes them under this
 reading and would not under the other. That is a cohort-size effect and it goes
 one way.
 
+Measured: `<prefix>NDMM_PREG_WINDOW_COUNTS` gives the number excluded and the
+cohort size under both readings, with the applied row marked - the same shape
+`NDMM_FU_CE_COUNTS` uses for the follow-up window. The gap between the two rows
+is what this decision costs, so it is a number on the first run rather than an
+argument.
+
+One scan serves both. The claim scan writes `NDMM_PREGNANCY_EVENTS` with dates,
+the exclusion takes distinct patients of it over the study period exactly as
+before, and the review table filters the same events to
+`[index - 365, follow-up end]`. A second scan is how the criterion and the
+table pricing it would come to disagree about what a pregnancy claim is.
+
 Status: implemented as the current protocol says. PENDING SIGN-OFF on the
-precedence itself - if the study team means the patient-specific window, this
-is a one-line change to the three bounds and the cohort gets larger.
+precedence itself - if the study team means the patient-specific window, it is
+the three `BETWEEN` bounds in `05_pregnancy.R` and the cohort gets larger.
 
 ## 10. Maintenance is a flag, not a period
 
