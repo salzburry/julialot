@@ -384,16 +384,15 @@ DASHBOARD_SECTIONS <- c(list(
          WHERE PATID IN (SELECT DISTINCT PATID FROM {lot_final})
          GROUP BY 1 ORDER BY 1"),
 
-  # Two definitions, two rows. The cohort carries both and they answer
-  # different questions: FU_DAYS runs to death or the study end and ignores
-  # disenrolment, which is LOT's primary analysis; FU_DAYS_CE is also capped
-  # where continuous enrolment stops, which is the protocol's follow-up period
-  # and what the outcomes build censors on. Showing one silently picks a side.
+  # Two definitions, two rows. FU_DAYS runs to death or the study end and
+  # ignores disenrolment - LOT's primary analysis. FU_DAYS_CE is also capped
+  # where enrolment stops - the protocol's follow-up period, and what outcomes
+  # censors on. Showing one picks a side silently.
   #
-  # Rows rather than one wide line, because side-by-side percentiles of two
-  # different definitions invite reading across a row as though the columns
-  # were a distribution. Both are counted over the same patients, so the two
-  # Patients cells agreeing is part of the panel.
+  # Rows rather than one wide line: side-by-side percentiles of two different
+  # definitions invite reading across as though the columns were a
+  # distribution. Same patients both times, so the two Patients cells agreeing
+  # is part of the panel.
   list(name = "followup", tab = "Cohort",
        label = "Follow-up days, on both definitions",
        needs = c("patients", "lot_final"), render = "table",
@@ -426,15 +425,19 @@ DASHBOARD_SECTIONS <- c(list(
            WHERE PATID IN (SELECT DISTINCT PATID FROM {lot_final})
          ) fu ORDER BY ord"),
 
-  # What ended it, which is what makes the days above readable. A short median
-  # because people died and a short median because they left the data are the
-  # same number and different findings.
+  # What ended it. A short median because people died and a short median
+  # because they left the data are the same number and different findings.
   #
-  # Partitioned on what ended the CE-bounded follow-up, in that order: a
-  # patient who disenrolled and died later counts as disenrolled, because the
-  # death is outside the window this cohort can see. The three are mutually
-  # exclusive and cover everyone. Same split the outcomes build reports as
-  # N_LOST_TO_FU against N_ONGOING.
+  # In that order, so a patient who disenrolled and died later counts as
+  # disenrolled - the death is outside the window this cohort can see. The
+  # three are exclusive and cover everyone.
+  #
+  # Not outcomes' N_LOST_TO_FU / N_ONGOING, and does not reconcile with them.
+  # This is one row per PATIENT over the whole study population. Those are one
+  # row per patient-LINE, and only over the residual after the next line, death
+  # and discontinuation have been taken out - so this panel's "Died" has no
+  # counterpart there at all. What the two share is the boundary: follow-up
+  # ending before the study end rather than at it.
   list(name = "followup_end_reason", tab = "Cohort",
        label = "What ended follow-up",
        needs = c("patients", "lot_final"), render = "bar", pct = "total",
@@ -451,17 +454,14 @@ DASHBOARD_SECTIONS <- c(list(
          WHERE PATID IN (SELECT DISTINCT PATID FROM {lot_final})
          GROUP BY 1 ORDER BY 2 DESC"),
 
-  # Follow-up falls with the index year by construction - the study end is
-  # fixed, so a 2025 index has less room than a 2017 one. Anything read off
-  # the whole cohort's median is an average over that accrual, so this is the
-  # panel that says whether a trend elsewhere is a finding or the calendar.
+  # The study end is fixed, so a 2025 index has less room than a 2017 one. Any
+  # median over the whole cohort averages across that, which is what makes a
+  # trend elsewhere hard to read as a finding.
   #
-  # `Died in FU` is the death that ENDED follow-up, the same predicate the
-  # panel above partitions on - not every recorded death. A patient who
-  # disenrolled and died afterwards is counted as disenrolled in both, because
-  # that death is outside the window this cohort observes. Two columns on one
-  # page both called "died", differing by those patients, is the number nobody
-  # can reconcile later.
+  # `Died in FU` is the death that ENDED follow-up - the predicate the panel
+  # above partitions on, not every recorded death. Two columns on one page both
+  # called "died", differing by the patients who left before dying, is the
+  # discrepancy nobody can reconcile later.
   list(name = "followup_by_index_year", tab = "Cohort",
        label = "Follow-up days by index year",
        needs = c("patients", "lot_final"), render = "table",
@@ -478,9 +478,10 @@ DASHBOARD_SECTIONS <- c(list(
          WHERE PATID IN (SELECT DISTINCT PATID FROM {lot_final})
          GROUP BY 1 ORDER BY 1"),
 
-  # The same confounder one layer in. Reaching a later line takes time, so the
-  # patients who got there are the ones who had the time - reading the line
-  # distribution without this reads accrual as treatment.
+  # Not a confounder - the other direction. Highest line reached is a
+  # post-index outcome, so grouping by it selects on having survived and stayed
+  # enrolled long enough to get there. Later-line groups have longer follow-up
+  # by construction, which is what this panel is for saying out loud.
   #
   # The restriction is stated even though the inner join already applies it.
   # Every cohort panel here says which population it is on in its own SQL,
@@ -505,7 +506,49 @@ DASHBOARD_SECTIONS <- c(list(
          WHERE p.PATID IN (SELECT DISTINCT PATID FROM {lot_final})
          GROUP BY 1 ORDER BY 1"),
 
+  # What the cohort's own follow-up-CE window costs, read off the table the
+  # cohort build writes for exactly this. Not a sensitivity anyone has to run:
+  # every build produces it, and the gap between the applied row and the
+  # 90-day row is the deviation priced in patients. DECISIONS.md #1.
+  #
+  # N_COHORT is the whole conjunction at that window, so it is the cohort you
+  # would ship rather than one criterion's count.
+  list(name = "fu_ce_window", tab = "Cohort",
+       label = "What the follow-up-enrolment window costs",
+       needs = "fu_ce_counts", render = "table",
+       sql = "
+         SELECT FU_CE_RULE                                            AS `Window`,
+                N_PASSING_CRITERION_5                                 AS `Passing the CE criterion`,
+                N_COHORT                                              AS `Cohort at this window`,
+                CASE WHEN IS_THIS_RUN = 1 THEN 'this run' ELSE '' END AS `Applied`
+         FROM {fu_ce_counts}
+         ORDER BY N_COHORT DESC, FU_CE_RULE"),
+
   # Lines.
+
+  # Follow-up as the outcomes build sees it, which is not what the Cohort tab
+  # shows. One row per patient-LINE, measured from that line's start rather
+  # than from the index date - so it is the window each TTNT, TTD and OS was
+  # actually observed over.
+  #
+  # The event counts are the point. A median TTNT is only readable if enough
+  # lines reached the event; a line where almost everything is censored has a
+  # median the data cannot support, and nothing else on the page says so.
+  list(name = "outcomes_followup", tab = "Lines",
+       label = "Observed follow-up per line, from the outcomes build",
+       needs = "out_tte", render = "table",
+       sql = "
+         SELECT LOT_NUM                                                AS `Line`,
+                count(*)                                               AS `Lines`,
+                sum(CASE WHEN LINE_ELIGIBLE = 1 THEN 1 ELSE 0 END)     AS `Line-eligible`,
+                percentile_approx(datediff(FU_END_DT, LOT_START_DT), 0.25) AS `P25 days`,
+                percentile_approx(datediff(FU_END_DT, LOT_START_DT), 0.5)  AS `Median days`,
+                percentile_approx(datediff(FU_END_DT, LOT_START_DT), 0.75) AS `P75 days`,
+                sum(TTNT_EVENT)                                        AS `TTNT events`,
+                sum(TTD_EVENT)                                         AS `TTD events`,
+                sum(OS_EVENT)                                          AS `Deaths`
+         FROM {out_tte}
+         GROUP BY LOT_NUM ORDER BY LOT_NUM"),
 
   list(name = "lines_per_patient", tab = "Lines",
        label = "Highest line reached",

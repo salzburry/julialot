@@ -103,7 +103,7 @@ All prefixed, so two cohorts sit side by side in one schema.
 | `NDMM_ATTRITION` | the nine-step funnel, with counts and percentages. Belantamab from the index onward is applied in the LOT build |
 | `NDMM_FLAGS_ALL` | one row per 1L candidate with every filter's verdict (also a checkpoint) |
 | `NDMM_CLINTRIAL_FLAGS` | one row per 1L patient with trial evidence cut at the 1L start - descriptive, not a filter |
-| `NDMM_RUN_METADATA` | the md5 of every R file, the contract as one string, the run choices, the waivers asked for and the waivers that fired |
+| `NDMM_RUN_METADATA` | the md5 of every R file, the contract as one string, the run choices, the waivers asked for and the waivers that fired, and any findings the run reported |
 | `NDMM_CODELIST_METADATA` | the md5 and row count of every code list read |
 | `NDMM_BUILD_STATUS` | started / complete / failed, per run and prefix - what `check_no_active_run()` reads |
 
@@ -416,6 +416,12 @@ rather than written into the SQL. Other cohorts keep three months.
 It rests on a request rather than a signed record - the only setting here that
 does. `DECISIONS.md` section 1 says what is still needed.
 
+`followup_days.sql` is the follow-up numbers themselves, paste-and-run: the
+distribution on both definitions, what ended follow-up, and the same by index
+year. It reads this build's own output, so only its last statement needs a LOT
+run. The dashboard and the POMA workbook report the same figures over the LOT
+population with the same predicates, and a test compares all three.
+
 So the run produces the number the decision should be made against. Every
 run writes `<prefix>NDMM_FU_CE_COUNTS`: the cohort size at 0, 30, 60 and 90
 days and at exactly three calendar months, with the applied row marked.
@@ -477,26 +483,39 @@ start and twelve months before each patient's diagnosis, through the study end
 The claim-side rows are reported, never gated: a value that keys to nothing
 is a non-match, and `ndc_key()` gives no key to anything that is not ten or
 eleven digits. The two code-list rows stop the build, because that side is
-fixable at source. A third waivable condition sits beside them:
-`raw_icd_flag`, a claim whose `ICD_FLAG` names neither family while its code
-is on a list this cohort reads - those rows move membership in both
-directions, so the build stops until the study team looks.
+fixable at source.
 
-That stop names the codes, not just the row count, because which codes they
-are is the decision: an MM code that stops matching excludes a patient, an
-exclusion code that stops matching keeps one, a trial code moves nothing. The
-count and the per-code breakdown are two statements built from one predicate,
-so the breakdown is of the rows that stopped the build and not of some wider
-set - and they are checked against each other at run time, because sharing the
-predicate only holds while both still use it. Long lists are cut at twenty
-codes and say how many were left out.
+### `raw_icd_flag` reports, and does not stop
+
+A claim whose `ICD_FLAG` names neither family while its code is on a list this
+cohort reads. It stopped the build until the first production run, where it
+found sixteen rows across two CDM tables and halted a build that was otherwise
+fine. It now warns.
+
+So the report has to carry the decision instead. It names the codes and which
+list each is on, because that is what says how far it reaches: an MM code that
+stops matching can exclude a patient, an other-cancer or pregnancy code can
+keep one, a trial code moves nobody - trial evidence is descriptive and filters
+nothing.
+
+The count and the per-code breakdown are two statements built from one
+predicate, so the breakdown is of the rows that were found and not of some
+wider set, and they are checked against each other at run time. Long lists are
+cut at twenty codes and say how many were left out.
+
+The finding goes on the run's own row as `NDMM_RUN_METADATA.FINDINGS`, so a
+cohort found months later says what it was built over without anyone having
+kept the log. `NDMM_WAIVERS=raw_icd_flag` is still accepted and now does
+nothing - an unrecognised waiver name stops the build as a typo, so removing it
+would break the commands that were told to pass it.
 
 Each waiver is accepted separately:
-`NDMM_WAIVERS=codelist_ndc_short,raw_icd_flag`. Nothing outside those three
-names can be waived, and a waiver naming something else stops the build as a
-typo. What was asked for and what actually fired are recorded apart in
-`NDMM_RUN_METADATA` - a run can ask for a waiver on a condition that never
-occurs.
+`NDMM_WAIVERS=codelist_ndc_shape,codelist_ndc_short`. Those two are the only
+ones that still gate anything; `raw_icd_flag` is accepted and inert. Nothing
+outside the three names can be waived, and a waiver naming something else stops
+the build as a typo. What was asked for and what actually fired are recorded
+apart in `NDMM_RUN_METADATA` - a run can ask for a waiver on a condition that
+never occurs.
 
 Run the first production build with no waivers set and read the profile it
 prints. That is the point of it.

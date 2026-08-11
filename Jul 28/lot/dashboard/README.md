@@ -239,39 +239,44 @@ declares no `pct`.
 
 ## Follow-up
 
-Four panels on the Cohort tab, because one number cannot carry it.
-
-The cohort writes two follow-up lengths and they are different questions.
+The cohort writes two follow-up lengths, and they are different questions.
 `FU_DAYS` runs from the day after the index date to death or the study end and
 ignores disenrolment - LOT's primary analysis. `FU_DAYS_CE` is also capped
-where continuous enrolment stops, which is the protocol's follow-up period and
-what `outcomes` censors on. Reporting one silently picks a side, so the panels
-carry both and a test fails if one drops out.
+where enrolment stops, which is the protocol's follow-up period and what
+`outcomes` censors on. Every panel that reports days carries both, and a test
+fails if one drops out.
 
 | panel | what |
 |---|---|
-| `followup` | the distribution on both definitions, one row each - mean, min, P25, median, P75, max |
-| `followup_end_reason` | what ended follow-up: died, disenrolled, ran to the study end |
-| `followup_by_index_year` | the same days, cut by index year |
-| `followup_by_max_lot` | and by the highest line the patient reached |
+| `followup` | the distribution on both definitions, one row each |
+| `followup_end_reason` | died, disenrolled, or ran to the study end |
+| `followup_by_index_year` | the same days by index year |
+| `followup_by_max_lot` | and by the highest line reached |
+| `fu_ce_window` | what the follow-up-CE window costs, from the cohort build |
+| `outcomes_followup` | observed follow-up per line, from `OUT_TTE` |
 
-The two cuts are there because both are confounders anyone reading a line
-distribution will otherwise walk into. The study end is fixed, so a later index
-has less room; and reaching a later line takes time, so the patients who got
-there are the ones who had it. Neither is a finding, and both look like one.
+The two cuts guard against different mistakes. Index year is calendar: the
+study end is fixed, so a later index has less room, and a trend across years
+can be accrual rather than practice. Highest line reached is not a confounder -
+it is a post-index outcome, so conditioning on it selects on having survived
+and stayed enrolled long enough to get there. Both look like findings.
 
-`followup_end_reason` partitions on what ended the CE-bounded follow-up, in
-that order - a patient who disenrolled and died afterwards counts as
-disenrolled, because that death is outside the window this cohort observes.
-The three categories are mutually exclusive and cover everyone, which is what
-lets the bar be a share of the total. It is the same split `outcomes` reports
-as `N_LOST_TO_FU` against `N_ONGOING`.
+`Died in FU` is the death that ended follow-up, not every recorded death. Two
+columns on a page both called "died", differing by the patients who left before
+dying, is a discrepancy nobody can reconcile from the page - so one predicate
+is used throughout and a test compares the files with the alias stripped.
 
-`Died in FU` in the two cut panels is that same death - the one that ended
-follow-up, not every recorded death. Two columns on one page both called
-"died", differing by the patients who left before dying, is a discrepancy
-nobody can reconcile from the page, so one predicate is used throughout and a
-test compares them with the alias stripped.
+### It does not reconcile with `outcomes`
+
+`followup_end_reason` is one row per **patient**, over the whole study
+population. `outcomes`' `N_LOST_TO_FU` and `N_ONGOING` are one row per
+**patient-line**, and only over what is left after the next line, death and
+discontinuation have been taken out - so this panel's "Died" has no counterpart
+there at all.
+
+What the two share is the boundary, and only that: follow-up ending before the
+study end rather than at it. `outcomes_followup` is the panel to read beside
+`OUT_ATTRITION`; this one is not.
 
 ## Transitions
 

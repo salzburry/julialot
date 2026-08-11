@@ -666,6 +666,68 @@ ok(any(grepl("identical(ster_md5, ster_hash())", vh, fixed = TRUE)),
    "...and it is hashed again after the read, so a file re-issued mid-run is caught")
 clear()
 
+cat("\n-- Q6 asks the follow-up question the same way the dashboard does --\n")
+# Q2 and Q4 are rates over a follow-up window, and the window is not the same
+# length for every patient. Q6 is what says whether the two sides are
+# comparable - so it has to carry both of the cohort's follow-up lengths, not
+# whichever one is shorter to write.
+q6 <- paste(pm, collapse = "\n")
+ok(grepl("Q6 POMA & follow-up", q6, fixed = TRUE),
+   "the POMA workbook has a follow-up tab")
+ok(grepl("FU_DAYS", q6, fixed = TRUE) && grepl("FU_DAYS_CE", q6, fixed = TRUE),
+   "...on both definitions - to death or study end, and capped at disenrolment")
+# One grouping, used by all three of Q6's tables. A second spelling of the CASE
+# on one tab is a second definition of who counts as a POMA patient, and the
+# three tables would no longer be about the same people. Counted as uses of the
+# binding, not of the CASE text: other questions spell their own group label,
+# and that is theirs to spell.
+ok(grepl("q6_grp <- ", q6, fixed = TRUE) &&
+     length(gregexpr("{q6_grp}", q6, fixed = TRUE)[[1]]) == 3L,
+   "...with the POMA/other split written once and used by all three tables")
+# A LOT1 patient with no cohort row has no follow-up columns, and
+# percentile_approx ignores NULLs - so a silent drop shrinks the median's
+# denominator while n_pts still reports the whole group.
+ok(grepl("missing_cohort_rows", q6, fixed = TRUE) &&
+     grepl("no cohort row (broken join)", q6, fixed = TRUE),
+   "...and a patient with no cohort row is counted, not dropped into the median")
+# Three things now report what ended follow-up: this workbook, the dashboard,
+# and the paste-and-run script beside the cohort build. If they use different
+# predicates they will disagree about who died, and nobody reading one of them
+# can tell. Aliases differ between them, so they are compared with the alias
+# stripped.
+FU_SRC <- list(
+  workbook  = file.path(ROOT, "poma_studyteam_qs.R"),
+  dashboard = file.path(GROUP, "dashboard", "R", "sections.R"),
+  sql       = file.path(STUDY, "ndmm", "followup_days.sql"))
+nm <- function(f) gsub("\\s+", " ",
+                       gsub("[fp]\\.", "",
+                            paste(readLines(f, warn = FALSE), collapse = "\n")))
+ok(all(vapply(FU_SRC, file.exists, logical(1))),
+   paste0("every place that reports what ended follow-up is present (",
+          length(FU_SRC), ")"))
+txt <- lapply(FU_SRC, nm)
+# Every death test bounded, not merely one of them somewhere in the file. A
+# file with two and only one bounded still contains the right string, which is
+# exactly the half-drift this is here to catch.
+cnt <- function(pat, s) {
+  g <- gregexpr(pat, s, fixed = TRUE)[[1]]
+  if (length(g) == 1L && g[1] == -1L) 0L else length(g)
+}
+BOUND <- "DEATH_DT IS NOT NULL AND DEATH_DT <= ENDDATE_CE"
+ok(all(vapply(txt, function(x) {
+       n <- cnt("DEATH_DT IS NOT NULL", x)
+       n > 0L && identical(n, cnt(BOUND, x))
+     }, logical(1))),
+   "...and every death test in all three is bounded by the CE follow-up end")
+ok(all(vapply(txt, function(x) grepl("ENDDATE_CE < ENDDATE", x, fixed = TRUE),
+              logical(1))),
+   "...and all three read disenrolment the same way")
+# The quick script exists so nobody has to wait for a build to see these
+# numbers. That is only worth anything if they are the same numbers.
+ok(grepl("FU_DAYS_CE", txt$sql, fixed = TRUE) &&
+     grepl("percentile_approx(FU_DAYS, 0.5)", txt$sql, fixed = TRUE),
+   "the quick script reports both follow-up lengths, as the other two do")
+
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))
 if (fail > 0L) quit(status = 1L)

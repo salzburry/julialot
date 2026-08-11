@@ -106,11 +106,14 @@ pin_target <- function(cfg, cohort_table, lot_prefix, cohort_prefix = NULL) {
   # the one configurable name that was not, which would have turned a space or a
   # dotted name into a malformed identifier and a panel that says the query
   # failed, while every other bad name is refused up front.
-  at <- trimws(as.character(cfg$attrition_table %||% ""))
-  if (!nzchar(at) || !grepl("^[A-Za-z_][A-Za-z0-9_]*$", at))
-    stop("ATTRITION_TABLE '", at, "' is not a table name. Give the table only, ",
-         "without a schema - the prefix and schema are added for you.",
-         call. = FALSE)
+  for (v in list(c("ATTRITION_TABLE", "attrition_table"),
+                 c("FU_CE_COUNTS_TABLE", "fu_ce_counts_table"))) {
+    at <- trimws(as.character(cfg[[v[2]]] %||% ""))
+    if (!nzchar(at) || !grepl("^[A-Za-z_][A-Za-z0-9_]*$", at))
+      stop(v[1], " '", at, "' is not a table name. Give the table only, ",
+           "without a schema - the prefix and schema are added for you.",
+           call. = FALSE)
+  }
   cfg$input_cohort_table <- cohort_table
   cfg$lot_prefix         <- lot_prefix
   cfg$cohort_prefix      <- cohort_prefix

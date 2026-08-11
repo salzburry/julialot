@@ -32,6 +32,8 @@ cfg_defaults <- list(
   # none - in which case the panel is skipped and says so. The columns it must
   # carry are RUN_ID, STEP_NUM, CRITERION, N_PATIENTS and RECORDED_AT.
   attrition_table = Sys.getenv("ATTRITION_TABLE", unset = "NDMM_ATTRITION"),
+  fu_ce_counts_table = Sys.getenv("FU_CE_COUNTS_TABLE",
+                                  unset = "NDMM_FU_CE_COUNTS"),
 
   # Only for a funnel in the "overall" layout, which carries all three
   # outpatient-window counts side by side and no record of which one the build

@@ -95,6 +95,28 @@ Pre-criteria is worth asking for when the question is what a criterion cost. It
 is not a cohort, and a denominator taken from it counts patients the study
 removed.
 
+## Follow-up length is a condition on reading the rates
+
+Q2 and Q4 are rates over a follow-up window, and the study end is fixed - so a
+group that indexed later has less room, and a lower rate on one side can be the
+calendar. Q6 is what rules that out, or does not.
+
+Three tables: the days on both of the cohort's definitions, what ended
+follow-up, and index year. A LOT1 patient with no cohort row is counted rather
+than dropped - `percentile_approx` ignores NULLs, so a drop shrinks the median's
+denominator while `n_pts` still reports the group. Q3 treats a broken join the
+same way. It must be 0.
+
+The dashboard shows the same three-way split over the whole cohort, and
+`ndmm/followup_days.sql` over the cohort table alone. All three use one
+predicate for a death inside follow-up, and `tests/test_setup.R` requires every
+death test in every one of them to carry it - two deliverables disagreeing about
+who died is not something a reader of either could detect.
+
+None of the three is the outcomes build's `N_LOST_TO_FU` / `N_ONGOING`, which
+are per-line and only over what is left after the next line, death and
+discontinuation. `lot/outcomes/followup_outcomes.sql` is that side.
+
 ## What NDMM cannot answer, and where it went
 
 Two of the asks need a population this cohort does not have. They are in
