@@ -78,4 +78,6 @@ Each package has a `README.md` with its own settings, outputs and checks, and a
 header.
 
 The tests need no connection. The study folder's `README.md` lists them all in
-one block.
+one block, and `validation/run_gate.R` runs every one of them with a single
+exit status - which is what the merge gate runs, so "all suites pass" is
+recorded against a commit rather than reported by whoever ran them.

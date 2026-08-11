@@ -82,6 +82,23 @@ runs(read_benchmarks(wr(b)),
      "...but a value recorded without claiming comparability needs none of it")
 b <- cited(base); b$comparable <- "yes"
 runs(read_benchmarks(wr(b)), "...and a fully described comparison loads")
+# Semantic states that parse. Each has a number and a source and is wrong about
+# what the number is, which no amount of column checking would catch.
+b <- cited(base); b$comparable <- "caveat"; b$notes <- ""
+stops(read_benchmarks(wr(b)), "'caveat' with no caveat is 'yes' with a hedge on it")
+b <- cited(base); b$unit <- "count"; b$metric <- "pct_reaching_line"; b$line <- "2"
+stops(read_benchmarks(wr(b)), "a percentage filed as a count")
+b <- cited(base); b$metric <- "pct_reaching_line"; b$line <- "2"; b$unit <- "pct"
+b$published_value <- "140"
+stops(read_benchmarks(wr(b)), "...and a percentage outside 0-100")
+b <- cited(base); b$metric <- "pct_reaching_line"; b$unit <- "pct"; b$line <- ""
+stops(read_benchmarks(wr(b)), "a per-line metric with no line, which keys on a blank")
+b <- cited(base); b$metric <- "pct_regimen_at_line"; b$unit <- "pct"; b$line <- "1"
+b$regimen <- ""
+stops(read_benchmarks(wr(b)), "...and a regimen benchmark with no regimen")
+b2 <- rbind(cited(base), cited(base))
+stops(read_benchmarks(wr(b2)),
+      "two references on one key, which merge into one observation twice")
 b <- base; b$published_value <- "2"; b$source <- "Someone 2024"; b$comparable <- "maybe"
 stops(read_benchmarks(wr(b)), "...and a comparability that is not yes/caveat/no")
 b <- base[, setdiff(names(base), "source_algorithm")]
