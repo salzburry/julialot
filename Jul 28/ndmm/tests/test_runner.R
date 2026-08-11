@@ -1777,4 +1777,66 @@ if (requireNamespace("bit64", quietly = TRUE)) {
 # Every count in this build is far below 2^53, so the conversion is lossless.
 ok(2^53 > 1e15, "counts here are orders below the double's exact-integer limit")
 
+cat("\n-- the pregnancy window comparison counts the right people --\n")
+# The defect this replaces: `hit` held only patients WITH a pregnancy event and
+# was left-joined to all of them, so the window flags were NULL for everyone
+# else, NOT(NULL) is NULL, and CASE WHEN NULL THEN PATID END counted nobody.
+# Every patient without a pregnancy claim vanished from both cohort columns and
+# the applied row reported a cohort of zero. Nothing failed; the table simply
+# said something untrue about the study.
+#
+# The suite could not see it because it checked the scan's bounds, the distinct
+# exclusion, the checkpoint and the orchestration - never the number.
+we <- new.env(parent = globalenv())
+assign("wrk", function(x) paste0("sch.", x), envir = we)
+WSQL <- character(0)
+assign("db_exec", function(con, sql) { WSQL <<- c(WSQL, sql); invisible(TRUE) }, envir = we)
+assign("db_q", function(con, sql)
+  data.frame(PREG_WINDOW_RULE = c("study period (this run)", "baseline + follow-up"),
+             N_WITH_PREG_CLAIM = c(3L, 2L), N_EXCL_INCREMENTAL = c(2L, 1L),
+             N_COHORT = c(1L, 2L), IS_THIS_RUN = c(1L, 0L),
+             stringsAsFactors = FALSE), envir = we)
+assign("log_msg", function(...) invisible(NULL), envir = we)
+sys.source(file.path(ROOT, "R", "steps", "05b_preg_window.R"), envir = we)
+we$build_ndmm_preg_window_counts(NULL, cfg_defaults)
+wq <- WSQL[1]
+# glue() strips the common indent, so these match on normalised whitespace
+# rather than on the layout of the source.
+wn <- gsub("[ \t]+", " ", gsub("\n", " ", wq))
+
+# The flags are computed over EVERY indexed patient, not over the events. That
+# is the whole fix, and it is a property of where the LEFT JOIN sits.
+ok(has(wn, "FROM idx LEFT JOIN"),
+   "the window flags are built by left-joining events ONTO the patients")
+ok(has(wn, "ELSE 0 END) AS w_study") && has(wn, "ELSE 0 END) AS w_patient"),
+   "...so a patient with no pregnancy claim gets 0, never NULL")
+ok(!has(wn, "LEFT JOIN hit"),
+   "...and nothing left-joins a hit-only table back to the patients")
+ok(has(wn, "FROM ev CROSS JOIN w"),
+   "...the counting reads the per-patient table, so every patient is in scope")
+# One definition of the predicate, used by all three columns. Three hand-copies
+# is how the kept count stops being the negation of the excluded count.
+hits <- length(gregexpr(gsub("[ \t]+", " ", we$preg_hit_sql()), wn, fixed = TRUE)[[1]])
+ok(hits == 3L,
+   paste0("the window predicate is one definition used by all three columns (",
+          hits, ")"))
+
+cat("\n-- and the numbers are checked against invariants, not just produced --\n")
+good <- data.frame(N_WITH_PREG_CLAIM = c(3L, 2L), N_EXCL_INCREMENTAL = c(2L, 1L),
+                   N_COHORT = c(1L, 2L), IS_THIS_RUN = c(1L, 0L))
+ok(isTRUE(we$check_preg_window_counts(good)), "a consistent pair passes")
+# Exactly the shape the defect produced: applied row zero, the rest plausible.
+bug <- data.frame(N_WITH_PREG_CLAIM = c(3L, 2L), N_EXCL_INCREMENTAL = c(0L, 0L),
+                  N_COHORT = c(0L, 1L), IS_THIS_RUN = c(1L, 0L))
+ok(inherits(tryCatch(we$check_preg_window_counts(bug), error = function(e) e), "error"),
+   "...and the shape the defect produced - applied cohort zero - is refused")
+worse <- data.frame(N_WITH_PREG_CLAIM = c(3L, 2L), N_EXCL_INCREMENTAL = c(2L, 1L),
+                    N_COHORT = c(2L, 1L), IS_THIS_RUN = c(1L, 0L))
+ok(inherits(tryCatch(we$check_preg_window_counts(worse), error = function(e) e), "error"),
+   "...as is the narrower window leaving a smaller cohort, which containment forbids")
+more <- data.frame(N_WITH_PREG_CLAIM = c(2L, 3L), N_EXCL_INCREMENTAL = c(1L, 1L),
+                   N_COHORT = c(2L, 2L), IS_THIS_RUN = c(1L, 0L))
+ok(inherits(tryCatch(we$check_preg_window_counts(more), error = function(e) e), "error"),
+   "...and more claims inside the contained window than in the one containing it")
+
 report()

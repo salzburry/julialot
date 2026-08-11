@@ -499,11 +499,21 @@ pregnancy claim years away from a patient's index date excludes them under this
 reading and would not under the other. That is a cohort-size effect and it goes
 one way.
 
-Measured: `<prefix>NDMM_PREG_WINDOW_COUNTS` gives the number excluded and the
-cohort size under both readings, with the applied row marked - the same shape
-`NDMM_FU_CE_COUNTS` uses for the follow-up window. The gap between the two rows
-is what this decision costs, so it is a number on the first run rather than an
-argument.
+Measured: `<prefix>NDMM_PREG_WINDOW_COUNTS`, one row per reading with the
+applied one marked - the same shape `NDMM_FU_CE_COUNTS` uses for the follow-up
+window. Three counts, and the distinction between them matters:
+
+| column | what it is |
+|---|---|
+| `N_WITH_PREG_CLAIM` | indexed candidates carrying a claim in that window. NOT the number excluded - a patient already failing continuous enrolment or prior therapy is not additionally excluded by pregnancy. |
+| `N_EXCL_INCREMENTAL` | those the criterion actually removes: carrying a claim AND passing every other criterion. This is the incremental effect. |
+| `N_COHORT` | the cohort under that window, the whole conjunction with this criterion recomputed. |
+
+The gap between the two `N_COHORT` rows is what this decision costs. Kept plus
+excluded is the cohort with the criterion removed and does not depend on the
+window, so the two rows have to agree on it - checked on every run, along with
+the containment (the narrower window can only leave a larger cohort and can
+only find fewer claims).
 
 One scan serves both. The claim scan writes `NDMM_PREGNANCY_EVENTS` with dates,
 the exclusion takes distinct patients of it over the study period exactly as
