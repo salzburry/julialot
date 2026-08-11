@@ -141,20 +141,34 @@ ok(any(vapply(cited, function(c_i)
          grepl("SCT_AUTO|d_AUTO", l25[c_i$line]), logical(1))),
    "...citing the later-line code that decides it, not only the LOT1 comment")
 
-cat("\n-- the grid ships empty, and empty does not read as agreement --\n")
+cat("\n-- an unsourced cell does not read as agreement --\n")
+# What is asserted here is that nothing was invented, NOT that the grid is
+# empty. Those were the same statement while the grid shipped blank, and
+# writing it the second way pinned it that way: the first honestly sourced
+# answer would have turned this suite red and the merge gate with it, so the
+# skill that exists to fill these files could not have filled them through a
+# green build. Every assertion below holds at zero filled cells and at all of
+# them.
 runs(read_definition_sources(SRC), "the source grid loads")
 src <- read_definition_sources(SRC)
-ok(all(is.na(src$answer)), "no answer is filled in - none was invented")
 ok(nrow(src) == nrow(ours) * length(unique(src$source_id)),
-   "...with a cell for every dimension against every source slot")
+   "a cell for every dimension against every source slot")
 ok(sum(unique(src$source_id) != "IMWG_consensus") >= 5,
    "...and room for the five pivotal trials the ask asked for, beside IMWG")
+answered <- !is.na(src$answer) & nzchar(trimws(src$answer))
+cat("      (", sum(answered), " of ", nrow(src), " cells are sourced)\n", sep = "")
+ok(all(!is.na(src$citation[answered]) & nzchar(trimws(src$citation[answered]))),
+   "every answer that is filled in cites where it came from")
+ok(all(src$source_type[answered] %in% names(DEF_SOURCE_TYPES)),
+   "...from a source type this grid accepts")
 cmp <- compare_definitions(src)
-ok(all(cmp$concordance == "not yet sourced"),
-   "an unfilled dimension is 'not yet sourced'")
+unsourced <- cmp$dimension_id[!cmp$dimension_id %in%
+                                src$dimension_id[answered]]
+ok(all(cmp$concordance[cmp$dimension_id %in% unsourced] == "not yet sourced"),
+   "a dimension nobody sourced is 'not yet sourced'")
 # The default has to fall this way. An empty comparison reading as agreement
 # retires the question instead of answering it.
-ok(!any(cmp$concordance == "agrees"),
+ok(!any(cmp$concordance[cmp$dimension_id %in% unsourced] == "agrees"),
    "...never 'agrees', which would retire the question rather than answer it")
 
 cat("\n-- a cell that reads like a citation has to be one --\n")
@@ -207,6 +221,47 @@ b$concordance[i] <- ""
 c3 <- compare_definitions(read_definition_sources(wr(b)))
 ok(identical(c3$concordance[c3$dimension_id == "maintenance_is_a_line"], "unclear"),
    "a sourced answer with no judgement is 'unclear', not agreement")
+
+cat("\n-- a properly filled grid passes, end to end --\n")
+# The thing the suite above could not previously say. Both grids are filled the
+# way the skill is meant to fill them, and the command that checks them - the
+# one a contributor runs before handing work back, and the one the reader
+# behind it is shared with - is run in a real process against the result. If
+# filling these files correctly cannot produce an exit 0, the whole evidence
+# workflow is a scaffold that can only stay empty.
+VD <- file.path(tempdir(), "vfilled")
+dir.create(file.path(VD, "R"), recursive = TRUE, showWarnings = FALSE)
+invisible(file.copy(list.files(file.path(ROOT, "R"), full.names = TRUE),
+                    file.path(VD, "R"), overwrite = TRUE))
+full <- src
+for (k in seq_len(nrow(full))) {
+  full$answer[k]      <- "The trial counts this as a separate line."
+  full$source_type[k] <- "protocol"
+  full$citation[k]    <- "Protocol v3.0 section 5.2"
+  full$retrieved[k]   <- "2026-08-03"
+  full$concordance[k] <- c("agrees", "differs", "unclear")[1 + (k %% 3)]
+  full$notes[k]       <- "explained: the trial's wording differs on maintenance"
+}
+write.csv(full, file.path(VD, "definitions_sources.csv"), row.names = FALSE, na = "")
+invisible(file.copy(file.path(ROOT, "benchmarks.csv"), VD, overwrite = TRUE))
+runs(read_definition_sources(file.path(VD, "definitions_sources.csv")),
+     "a grid with every one of its cells sourced loads")
+cf <- compare_definitions(read_definition_sources(file.path(VD, "definitions_sources.csv")))
+ok(!any(cf$concordance == "not yet sourced"),
+   "...and no dimension is still reported as unsourced")
+ok(all(cf$concordance %in% c("agrees", "differs", "unclear")),
+   "...every one carries a judgement instead")
+CHK <- file.path(dirname(STUDY), ".claude", "skills", "lot-evidence", "scripts",
+                 "check_grids.R")
+if (file.exists(CHK)) {
+  rc <- suppressWarnings(system2(file.path(R.home("bin"), "Rscript"),
+                                 c(shQuote(CHK), shQuote(VD)),
+                                 stdout = NULL, stderr = NULL))
+  ok(identical(rc, 0L),
+     paste0("the documented check command exits 0 on a filled grid (got ", rc, ")"))
+} else {
+  ok(TRUE, "no check command in this checkout to run against it")
+}
 
 cat("\n-- why the columns are empty is recorded, not left to be guessed --\n")
 dn <- readLines(file.path(ROOT, "R", "definitions.R"), warn = FALSE)

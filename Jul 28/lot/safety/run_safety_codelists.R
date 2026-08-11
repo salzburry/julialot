@@ -79,36 +79,29 @@ cat("\n", strrep("-", 70), "\n", sep = "")
 cat(sprintf("  %d of %d conditions carry codes; %d of %d utilisation events\n",
             filled, total, length(HCRU_EVENTS) - length(st$hcru_unfilled),
             length(HCRU_EVENTS)))
-if (length(st$absent))
-  cat("  ", length(st$absent), " condition(s) the protocol names are not in the ",
-      "file at all\n", sep = "")
-if (length(st$unknown))
-  cat("  ", length(st$unknown), " condition(s) in the file are not in the ",
-      "protocol: ", paste(st$unknown, collapse = ", "), "\n", sep = "")
-if (length(st$bad_type))
-  cat("  code_type(s) nothing joins to: ", paste(st$bad_type, collapse = ", "),
-      "\n", sep = "")
-if (length(st$bad_family))
-  cat("  icd_family spelled unrecognisably: ",
-      paste(st$bad_family, collapse = ", "), "\n", sep = "")
-if (st$no_family > 0L)
-  cat("  ", st$no_family, " ICD_DIAG row(s) with no icd_family, which join to ",
-      "nothing\n", sep = "")
+
 # Drafted against a field that has not been confirmed queryable. Empty is fine
-# and expected - that is what a placeholder is. Filled is not: the codes may be
-# right and there is still nowhere to join them, so it must not pass for a
-# definition that works.
+# and expected - that is what a placeholder is, and it is not a reason to
+# refuse, so it is reported here rather than by safety_refuse().
 if (length(st$drafted))
   cat("  placeholder(s) drafted on field(s) not confirmed queryable: ",
       paste(st$drafted, collapse = ", "), "\n", sep = "")
-if (length(st$unverified))
-  cat("  *** FILLED against an unconfirmed field: ",
-      paste(st$unverified, collapse = ", "),
-      " - confirm the column exists before trusting these\n", sep = "")
 
-if (filled < total || length(st$hcru_unfilled) || length(st$absent) ||
-    length(st$unknown)) {
-  cat("\n  Not ready. The codes come from the protocol's annex and the Optum\n")
+# The verdict is safety_codelist()'s, not this script's. Everything the strict
+# read would refuse on is listed, in its words, and the exit status is whether
+# there was anything - so this command cannot report ready on a list the
+# analysis would then be unable to read. It used to decide for itself, on
+# completeness alone, and would print a warning about a filled unconfirmed
+# field and "Ready." two lines apart.
+bad <- safety_refuse(st)
+if (length(bad)) {
+  cat("\n  Not ready - ", length(bad),
+      if (length(bad) == 1L) " reason:\n" else " reasons:\n", sep = "")
+  for (b in bad) {
+    w <- strwrap(b, width = 66, prefix = "      ", initial = "    * ")
+    cat(paste(w, collapse = "\n"), "\n", sep = "")
+  }
+  cat("\n  The codes come from the protocol's annex and the Optum\n")
   cat("  documentation; the roster of conditions is already fixed here, so\n")
   cat("  filling one is adding rows to the CSV, not deciding what to measure.\n")
   cat("  One row per code, repeating the condition name.\n\n")

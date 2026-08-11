@@ -17,9 +17,17 @@
 # against the delivery they were ported from and has six failures that predate
 # this folder's current state. Excluding it would hide a real comparison;
 # letting it fail would make the gate permanently red and therefore ignored. So
-# its failure count is PINNED below, and the gate fails if the number moves in
-# either direction - more is a regression, fewer means someone fixed something
-# and the baseline is now a lie.
+# they are PINNED below - BY IDENTITY, not by count.
+#
+# By count was the first version and it was a false green waiting to happen:
+# fix one of the six, introduce one regression, and the count is still six. What
+# is pinned is which comparisons fail, so a failure appearing is caught even
+# when a failure disappears in the same commit. Both directions fail the gate -
+# a new one is a regression, a missing one means this baseline is now a lie.
+#
+# The pin drops the trailing source line number, which moves whenever anything
+# above it is edited. What identifies a failure is which step differs and how,
+# not where in the file the differing line happens to sit.
 
 HERE <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -30,14 +38,33 @@ HERE <- local({
 REPO   <- dirname(HERE)
 STUDY  <- Sys.getenv("STUDY_FOLDER", unset = file.path(REPO, "Jul 28"))
 
-# suite -> expected failures. Absent means zero.
-EXPECTED_FAILURES <- list("validation/port/lot.R" = 6L)
+# suite -> the failures it is allowed to have, by identity. Absent means none.
+EXPECTED_FAILURES <- list(
+  "validation/port/lot.R" = c(
+    "03_mma_map.R: differs beyond the approved deviations",
+    "04_lot1_base.R: differs from 02_lot1.R",
+    "05b_lot1_sct.R: differs beyond the approved deviations",
+    "06_lot1_end.R: differs beyond the approved deviations",
+    "08_persist.R: differs beyond the approved deviations",
+    "10_lot2_5_base.R: differs from R/lot2_5_base.R")
+)
+
+# How one suite's output is read. Its own suite is validation/hygiene/
+# gate_semantics.R, which holds it to failing on each of the three greens it
+# used to give wrongly.
+source(file.path(HERE, "_gate_logic.R"))
 
 suites <- c(
   sort(list.files(STUDY, pattern = "\\.R$", recursive = TRUE, full.names = TRUE)),
   sort(list.files(HERE, pattern = "\\.R$", recursive = TRUE, full.names = TRUE))
 )
-suites <- suites[grepl("/tests/", suites) | grepl("/validation/(port|hygiene)/", suites)]
+suites <- suites[grepl("/tests/", suites) |
+                 grepl("/validation/(port|hygiene)/", suites) |
+                 # Not under tests/, and advertised in the study README as a
+                 # check that exits non-zero if any of the study team's worked
+                 # scenarios moves. A check nothing runs is a check in name
+                 # only, so it is named here rather than left to be remembered.
+                 grepl("/run_melp_scenarios\\.R$", suites)]
 suites <- suites[!grepl("testutil\\.R$|/_|run_gate\\.R$|run_all\\.R$", suites)]
 rel <- sub(paste0("^", REPO, "/"), "", suites)
 
@@ -50,29 +77,19 @@ for (i in seq_along(suites)) {
   out <- suppressWarnings(system2("Rscript", shQuote(suites[i]),
                                   stdout = TRUE, stderr = TRUE))
   st <- attr(out, "status"); st <- if (is.null(st)) 0L else st
-  line <- grep("[0-9]+ passed, [0-9]+ failed", out, value = TRUE)
-  want <- EXPECTED_FAILURES[[rel[i]]]; want <- if (is.null(want)) 0L else want
-  if (identical(st, 3L)) {
-    skipped <- skipped + 1L
-    cat(sprintf("  %-52s SKIP\n", rel[i])); next
-  }
-  if (!length(line)) {
-    bad <- bad + 1L
-    cat(sprintf("  %-52s NO SUMMARY (exit %s)\n", rel[i], st))
-    for (l in utils::tail(out, 8)) cat("        ", l, "\n")
-    next
-  }
-  last <- line[length(line)]
-  p <- as.integer(sub("^\\D*([0-9]+) passed.*", "\\1", last))
-  f <- as.integer(sub(".*passed, ([0-9]+) failed.*", "\\1", last))
-  total <- total + p
-  if (identical(f, want)) {
-    cat(sprintf("  %-52s ok    %4d assertions%s\n", rel[i], p,
-                if (want > 0L) sprintf("  (%d expected failures)", want) else ""))
+  want <- EXPECTED_FAILURES[[rel[i]]]; want <- if (is.null(want)) character(0) else want
+  v <- gate_verdict(out, st, want)
+  total <- total + v$passed
+  if (v$skipped) skipped <- skipped + 1L
+  if (v$ok) {
+    cat(sprintf("  %-52s ok    %4d assertions%s\n", rel[i], v$passed,
+                if (v$pinned) sprintf("  (%d pinned failures)", v$pinned) else ""))
   } else {
     bad <- bad + 1L
-    cat(sprintf("  %-52s FAIL  %d failed, expected %d\n", rel[i], f, want))
-    for (l in grep("FAIL", out, value = TRUE)) cat("        ", l, "\n")
+    cat(sprintf("  %-52s FAIL\n", rel[i]))
+    for (r in v$reasons) cat("         ", r, "\n")
+    if (any(grepl("^no summary", v$reasons)))
+      for (l in utils::tail(out, 8)) cat("           ", l, "\n")
   }
 }
 
@@ -80,10 +97,11 @@ cat(strrep("-", 74), "\n", sep = "")
 cat(sprintf("  %d suites, %d assertions, %d skipped, %d not as expected\n",
             length(suites), total, skipped, bad))
 if (skipped > 0L)
-  cat("  A skipped suite proved nothing.\n")
+  cat("  A skipped suite proved nothing, so it counts against the gate.\n")
 if (bad > 0L) {
-  cat("\n  Not green. A suite whose failure count MOVED is as much a problem as\n")
-  cat("  a new failure: the pinned baseline in this file is then wrong.\n\n")
+  cat("\n  Not green. A pinned failure that STOPPED failing is as much a problem\n")
+  cat("  as a new one: the baseline in this file is then wrong, and the next\n")
+  cat("  regression would land in the space it left.\n\n")
   quit(status = 1L)
 }
 cat("\n  Green.\n\n")

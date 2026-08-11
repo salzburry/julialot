@@ -80,7 +80,32 @@ HCRU_EVENTS <- c(inpatient_hospitalisation_all_cause = "count_and_category",
 SAFETY_CODELIST_FILES <- c("safety_events.csv", "hcru_events.csv")
 SAFETY_COLS <- c("domain", "condition", "acute_chronic", "code_type", "code",
                  "icd_family", "source_note")
-HCRU_COLS   <- c("event", "measure", "code_type", "code", "source_note")
+HCRU_COLS   <- c("event", "measure", "precedence", "code_type", "code",
+                 "source_note")
+
+# Which rows are the definition and which are the alternative. A utilisation
+# event can be identified more than one way - an admission is a CONFINEMENT row
+# or, failing that, a claim carrying an inpatient POS - and the two are not
+# additive. Unmarked, a reader has no way to tell a second definition from a
+# second code, so the obvious read is to union them and count every admission
+# twice. Marking it is the difference between a list that says what it means and
+# one that happens to be read correctly.
+HCRU_PRECEDENCE <- c("primary", "fallback")
+
+# Which code types each event may be identified on. A type can be valid for the
+# file and wrong for the row: LOS is a column on CONFINEMENT and on no other
+# table, so a length of stay drafted on POS has nothing to measure; and an ER
+# visit counted off CONFINEMENT counts admissions, because a confinement row is
+# a hospitalisation - an ER visit that became one is in there and an ER visit
+# that did not is not. Both parse, both join, and both answer a different
+# question than the one Table 3 asks.
+HCRU_EVENT_CODE_TYPES <- list(
+  inpatient_hospitalisation_all_cause = c("CONFINEMENT", "POS", "TOS_CD",
+                                          "REV_CD"),
+  inpatient_length_of_stay_all_cause  = "CONFINEMENT",
+  inpatient_length_of_stay_mm_related = "CONFINEMENT",
+  er_visit                            = c("POS", "TOS_CD", "REV_CD")
+)
 
 # What a code_type may say, and which Optum CDM table it lands on. Checked
 # against the Optum data dictionary and business rules rather than assumed: a
@@ -146,6 +171,17 @@ safety_read_csv <- function(csv_name, col_spec, codelist_dir) {
   # colClasses: an ICD or revenue code read as a number loses its leading zeros.
   df <- read.csv(csv_path, stringsAsFactors = FALSE,
                  na.strings = c("", "NA", "NaN"), colClasses = "character")
+  # Trimmed on the way in, and a cell left empty by trimming is empty. A code
+  # cell of " C90.00" is filled by every test below and joins to nothing, which
+  # is this file's own failure mode arriving through a stray keystroke; and a
+  # cell of "   " has to read as blank everywhere, not as blank in one check and
+  # present in the next. The file on disk is unchanged and its md5 is recorded,
+  # so what was read is still recoverable.
+  df[] <- lapply(df, function(x) {
+    x <- trimws(x)
+    x[!is.na(x) & !nzchar(x)] <- NA_character_
+    x
+  })
   if (!identical(md5, unname(tools::md5sum(csv_path))))
     stop("CODELIST ERROR: ", csv_name, " changed while it was being read",
          call. = FALSE)
@@ -188,15 +224,61 @@ safety_fill_status <- function(codelist_dir) {
   # The roster, held against the file. A condition filed under another domain
   # or relabelled acute still has codes and still parses; it measures something
   # the protocol did not ask for, under a name that says it did.
+  #
+  # Every comparison here is NA-safe, and that is not defensive tidying. A blank
+  # cell makes `!=` return NA, NA used as a subscript yields an NA element, and
+  # the !is.na() on the way out drops it - so the check that exists to catch a
+  # mislabelled condition passes an unlabelled one, which is strictly worse.
+  # differs() reads a blank as different, and the blank is then named on its own.
+  differs <- function(got, want) !is.na(want) & (is.na(got) | got != want)
+  blank_on <- function(got, want) !is.na(want) & is.na(got)
   ros <- safety_roster()
   m <- merge(s$df[, c("domain", "condition", "acute_chronic")], ros,
              by = "condition", all.x = TRUE, suffixes = c("", "_want"))
-  wrong_domain <- unique(m$condition[!is.na(m$domain_want) &
-                                       m$domain != m$domain_want])
-  wrong_ac <- unique(m$condition[!is.na(m$acute_chronic_want) &
-                                   m$acute_chronic != m$acute_chronic_want])
-  wrong_measure <- unique(h$df$event[h$df$event %in% names(HCRU_EVENTS) &
-                                       h$df$measure != HCRU_EVENTS[h$df$event]])
+  wrong_domain <- unique(m$condition[differs(m$domain, m$domain_want)])
+  wrong_ac  <- unique(m$condition[differs(m$acute_chronic, m$acute_chronic_want)])
+  no_ac     <- unique(m$condition[blank_on(m$acute_chronic, m$acute_chronic_want)])
+  # Named separately from wrong_ac: "labelled acute where Table 2 says chronic"
+  # and "not labelled at all" need different corrections, and rolling the second
+  # into the first would report a value the row does not have.
+  wrong_ac  <- setdiff(wrong_ac, no_ac)
+  know <- HCRU_EVENTS[h$df$event]
+  wrong_measure <- unique(h$df$event[differs(h$df$measure, know)])
+  no_measure    <- unique(h$df$event[blank_on(h$df$measure, know)])
+  wrong_measure <- setdiff(wrong_measure, no_measure)
+  # An event name the protocol's Table 3 does not have. Its rows are counted
+  # towards nothing, so a misspelling silently removes codes from the event it
+  # was meant to fill - the same asymmetry safety_events.csv already checks for
+  # with `unknown`.
+  unknown_hcru <- setdiff(unique(h$df$event), names(HCRU_EVENTS))
+  # Which rows are the definition and which the alternative, on filled rows -
+  # an empty placeholder can carry it and should, but cannot be required to.
+  bad_prec <- unique(c(h$df$precedence[filled(h$df$precedence) &
+                                         !h$df$precedence %in% HCRU_PRECEDENCE]))
+  no_prec  <- unique(hf$event[!filled(hf$precedence)])
+  # A fallback with nothing to fall back from is not a fallback; it is a second
+  # definition of the event with a label that hides it.
+  no_primary <- setdiff(
+    unique(h$df$event[!is.na(h$df$precedence) & h$df$precedence == "fallback"]),
+    unique(h$df$event[!is.na(h$df$precedence) & h$df$precedence == "primary"]))
+  # A filled code with no stated source cannot be checked back against the annex
+  # or the dictionary, which is the only way anyone confirms it is right.
+  no_source <- sum(!filled(sf$source_note)) + sum(!filled(hf$source_note))
+  # A code type this file allows, on an event that cannot be identified that
+  # way. Checked over every row rather than filled ones: a placeholder drafted
+  # on the wrong field is a wrong definition already, and it is cheaper to say
+  # so before the codes arrive than after.
+  ok_here <- vapply(seq_len(nrow(h$df)), function(i) {
+    e <- h$df$event[i]; ct <- h$df$code_type[i]
+    if (is.na(e) || !e %in% names(HCRU_EVENT_CODE_TYPES) || is.na(ct)) TRUE
+    else ct %in% HCRU_EVENT_CODE_TYPES[[e]]
+  }, logical(1))
+  # Guarded: paste0() recycles a length-1 separator against a length-0 vector
+  # and returns " on " rather than nothing, which would report a violation on
+  # every clean file.
+  wrong_event_type <- if (any(!ok_here))
+    unique(paste0(h$df$event[!ok_here], " on ", h$df$code_type[!ok_here]))
+  else character(0)
   bad_family <- unique(sf$icd_family[filled(sf$icd_family) &
                                        !sf$icd_family %in% SAFETY_ICD_FAMILY])
   # ICD_DIAG is joined on family as well as code, so a blank family is not a
@@ -210,7 +292,15 @@ safety_fill_status <- function(codelist_dir) {
     no_type = no_type,
     wrong_domain = wrong_domain[!is.na(wrong_domain)],
     wrong_ac = wrong_ac[!is.na(wrong_ac)],
+    no_ac = no_ac[!is.na(no_ac)],
     wrong_measure = wrong_measure[!is.na(wrong_measure)],
+    no_measure = no_measure[!is.na(no_measure)],
+    unknown_hcru = unknown_hcru[!is.na(unknown_hcru)],
+    wrong_event_type = wrong_event_type[!is.na(wrong_event_type)],
+    bad_precedence = bad_prec[!is.na(bad_prec)],
+    no_precedence = no_prec[!is.na(no_prec)],
+    no_primary = no_primary[!is.na(no_primary)],
+    no_source = no_source,
     bad_family = bad_family[!is.na(bad_family)],
     no_family = no_family,
     # Filled rows only. An empty placeholder row carrying one of these is the
@@ -225,11 +315,110 @@ safety_fill_status <- function(codelist_dir) {
     # than an unfilled one: unfilled is visibly not done, absent is invisible.
     absent  = setdiff(want, s$df$condition),
     unknown = setdiff(unique(s$df$condition), want),
-    bad_domain = unique(s$df$domain[!s$df$domain %in% SAFETY_DOMAINS]),
+    # A blank domain is NA here, and an NA pasted into a message reads as the
+    # literal "NA" - a value no file contains. Named for what it is instead.
+    bad_domain = unique(ifelse(is.na(s$df$domain), "(blank)", s$df$domain)[
+      !s$df$domain %in% SAFETY_DOMAINS]),
     n_codes = n_codes, n_hcru = n_hcru,
     unfilled = names(n_codes)[n_codes == 0L],
     hcru_unfilled = names(n_hcru)[n_hcru == 0L]
   )
+}
+
+# Every reason this list is not fit to measure with, as text, in the order they
+# are worth reading. Empty means ready.
+#
+# It is a function of the status and nothing else, so the loader and the runner
+# cannot disagree about what ready means: safety_codelist() refuses on the first
+# line this returns, and run_safety_codelists.R prints all of them and exits on
+# whether there were any. Deciding it twice is how a runner comes to print
+# "*** FILLED against an unconfirmed field" and "Ready." on consecutive lines.
+safety_refuse <- function(st) {
+  n_all <- length(unlist(unname(SAFETY_CONDITIONS)))
+  msg <- character(0)
+  add <- function(...) msg <<- c(msg, paste0(...))
+  lst <- function(x) paste(x, collapse = ", ")
+
+  if (length(st$absent))
+    add("safety_events.csv does not mention ", length(st$absent),
+        " condition(s) the protocol names: ", lst(st$absent))
+  if (length(st$unknown))
+    add("safety_events.csv names ", length(st$unknown),
+        " condition(s) the protocol does not: ", lst(st$unknown),
+        ". Add it to the roster deliberately or correct the spelling.")
+  if (length(st$unknown_hcru))
+    add("hcru_events.csv names ", length(st$unknown_hcru),
+        " event(s) Table 3 does not: ", lst(st$unknown_hcru),
+        ". Their codes count towards no event, so a misspelling empties the ",
+        "event it was meant to fill.")
+  if (length(st$bad_domain))
+    add("safety_events.csv has domain(s) outside Table 2: ", lst(st$bad_domain))
+  if (st$no_type > 0L)
+    add(st$no_type, " row(s) have a code and no code_type. The code has ",
+        "nowhere to join, so it matches nothing and reports zero rather than ",
+        "failing.")
+  if (length(st$bad_type))
+    add("code_type(s) nothing joins to: ", lst(st$bad_type),
+        ". A row carrying one matches no claim and reports zero rather than ",
+        "failing.")
+  if (length(st$wrong_domain))
+    add("condition(s) filed under a domain the protocol does not put them in: ",
+        lst(st$wrong_domain), ". The codes may be right and the measurement ",
+        "would still be reported under the wrong heading.")
+  if (length(st$wrong_ac))
+    add("condition(s) whose acute_chronic differs from Table 2: ",
+        lst(st$wrong_ac))
+  if (length(st$no_ac))
+    add("condition(s) with no acute_chronic at all: ", lst(st$no_ac),
+        ". Table 2 states it for every one, and blank is not one of its values.")
+  if (length(st$wrong_measure))
+    add("utilisation event(s) whose measure is not the one Table 3 asks for: ",
+        lst(st$wrong_measure))
+  if (length(st$no_measure))
+    add("utilisation event(s) with no measure at all: ", lst(st$no_measure),
+        ". A count and a length of stay are different numbers.")
+  if (length(st$wrong_event_type))
+    add("utilisation event(s) drafted on a code type they cannot be identified ",
+        "on: ", lst(st$wrong_event_type),
+        ". The type is valid for this file and wrong for that row - it joins, ",
+        "and answers a different question than Table 3 asks.")
+  if (length(st$bad_precedence))
+    add("precedence value(s) outside ", lst(HCRU_PRECEDENCE), ": ",
+        lst(st$bad_precedence))
+  if (length(st$no_precedence))
+    add("utilisation event(s) with filled rows that do not say whether they ",
+        "are the definition or the alternative: ", lst(st$no_precedence),
+        ". Unmarked, the rows read as one list and every event is counted once ",
+        "per way of identifying it.")
+  if (length(st$no_primary))
+    add("utilisation event(s) with fallback rows and no primary: ",
+        lst(st$no_primary),
+        ". A fallback with nothing to fall back from is a second definition.")
+  if (length(st$bad_family))
+    add("icd_family spelled a way the family join does not recognise: ",
+        lst(st$bad_family), ". Accepted: ", lst(SAFETY_ICD_FAMILY))
+  if (st$no_family > 0L)
+    add(st$no_family, " ICD_DIAG row(s) have no icd_family. The join is on ",
+        "family as well as code, so those match nothing.")
+  if (st$no_source > 0L)
+    add(st$no_source, " filled row(s) have no source_note. A code with no ",
+        "stated source cannot be checked back against the annex or the ",
+        "dictionary, which is the only way anyone confirms it is right.")
+  # Drafted against a field that has not been confirmed queryable. The codes may
+  # be right; there is nowhere to join them, so a rate built on them would be
+  # zero for want of a column.
+  if (length(st$unverified))
+    add("filled row(s) use code type(s) not confirmed against the data ",
+        "dictionary: ", lst(st$unverified), ". Confirm the field is exposed ",
+        "and on which table, or leave the rows empty as placeholders.")
+  if (length(st$unfilled))
+    add(length(st$unfilled), " of ", n_all, " conditions still have no codes, ",
+        "so a rate for them would be zero for want of a code list rather than ",
+        "for want of events: ", lst(st$unfilled))
+  if (length(st$hcru_unfilled))
+    add(length(st$hcru_unfilled), " utilisation event(s) still have no codes: ",
+        lst(st$hcru_unfilled))
+  msg
 }
 
 # The read the analysis would do. It refuses while anything is a placeholder,
@@ -237,64 +426,12 @@ safety_fill_status <- function(codelist_dir) {
 # reason to hold the roster in code is to be able to say which twenty-three.
 safety_codelist <- function(codelist_dir) {
   st <- safety_fill_status(codelist_dir)
-  if (length(st$absent))
-    stop("CODELIST ERROR: safety_events.csv does not mention ",
-         length(st$absent), " condition(s) the protocol names: ",
-         paste(st$absent, collapse = ", "), call. = FALSE)
-  if (length(st$unknown))
-    stop("CODELIST ERROR: safety_events.csv names ", length(st$unknown),
-         " condition(s) the protocol does not: ",
-         paste(st$unknown, collapse = ", "),
-         ". Add it to the roster deliberately or correct the spelling.",
+  bad <- safety_refuse(st)
+  if (length(bad))
+    stop("CODELIST ERROR: ", bad[1],
+         if (length(bad) > 1L)
+           paste0(" (and ", length(bad) - 1L, " more - run ",
+                  "run_safety_codelists.R for all of them)"),
          call. = FALSE)
-  if (length(st$bad_domain))
-    stop("CODELIST ERROR: safety_events.csv has domain(s) outside Table 2: ",
-         paste(st$bad_domain, collapse = ", "), call. = FALSE)
-  if (st$no_type > 0L)
-    stop("CODELIST ERROR: ", st$no_type, " row(s) have a code and no ",
-         "code_type. The code has nowhere to join, so it matches nothing and ",
-         "reports zero rather than failing.", call. = FALSE)
-  if (length(st$bad_type))
-    stop("CODELIST ERROR: code_type(s) nothing joins to: ",
-         paste(st$bad_type, collapse = ", "), ". A row carrying one matches no ",
-         "claim and reports zero rather than failing.", call. = FALSE)
-  if (length(st$wrong_domain))
-    stop("CODELIST ERROR: condition(s) filed under a domain the protocol does ",
-         "not put them in: ", paste(st$wrong_domain, collapse = ", "),
-         ". The codes may be right and the measurement would still be ",
-         "reported under the wrong heading.", call. = FALSE)
-  if (length(st$wrong_ac))
-    stop("CODELIST ERROR: condition(s) whose acute_chronic differs from ",
-         "Table 2: ", paste(st$wrong_ac, collapse = ", "), call. = FALSE)
-  if (length(st$wrong_measure))
-    stop("CODELIST ERROR: utilisation event(s) whose measure is not the one ",
-         "Table 3 asks for: ", paste(st$wrong_measure, collapse = ", "),
-         call. = FALSE)
-  if (length(st$bad_family))
-    stop("CODELIST ERROR: icd_family spelled a way the family join does not ",
-         "recognise: ", paste(st$bad_family, collapse = ", "), ". Accepted: ",
-         paste(SAFETY_ICD_FAMILY, collapse = ", "), call. = FALSE)
-  if (st$no_family > 0L)
-    stop("CODELIST ERROR: ", st$no_family, " ICD_DIAG row(s) have no ",
-         "icd_family. The join is on family as well as code, so those match ",
-         "nothing.", call. = FALSE)
-  # Drafted against a field that has not been confirmed queryable. The codes may
-  # be right; there is nowhere to join them, so a rate built on them would be
-  # zero for want of a column.
-  if (length(st$unverified))
-    stop("CODELIST ERROR: filled row(s) use code type(s) not confirmed against ",
-         "the data dictionary: ", paste(st$unverified, collapse = ", "),
-         ". Confirm the field is exposed and on which table, or leave the rows ",
-         "empty as placeholders.", call. = FALSE)
-  if (length(st$unfilled))
-    stop("CODELIST ERROR: ", length(st$unfilled), " of ",
-         length(unlist(unname(SAFETY_CONDITIONS))),
-         " conditions still have no codes, so a rate for them would be zero ",
-         "for want of a code list rather than for want of events: ",
-         paste(st$unfilled, collapse = ", "), call. = FALSE)
-  if (length(st$hcru_unfilled))
-    stop("CODELIST ERROR: ", length(st$hcru_unfilled),
-         " utilisation event(s) still have no codes: ",
-         paste(st$hcru_unfilled, collapse = ", "), call. = FALSE)
   st
 }

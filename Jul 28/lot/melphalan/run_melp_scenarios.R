@@ -115,6 +115,10 @@ for (sc in MELP_SCENARIOS) {
 cat("\n", strrep("=", 74), "\n", sep = "")
 cat(sprintf("  %d of %d scenarios land where the drawing puts them\n",
             length(MELP_SCENARIOS) - fails, length(MELP_SCENARIOS)))
+# In the shape every other suite reports, so the merge gate can read this one
+# too. It is a check the study README advertises, and a check nothing runs is
+# a check in name only.
+cat(sprintf("  %d passed, %d failed\n", length(MELP_SCENARIOS) - fails, fails))
 cat(strrep("=", 74), "\n", sep = "")
 cat("\n  What this does and does not say. The branch and the boundary are the\n")
 cat("  build's own, lifted from its SQL. Where a boundary is left to the\n")

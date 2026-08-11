@@ -34,6 +34,12 @@ BENCHMARK_COLS <- c(
   "source_followup",   # median or minimum follow-up in the source
   "source_algorithm",  # the line algorithm the source used
   "comparable",        # yes | caveat | no
+  # What the caveat IS. Its own column rather than a sentence in `notes`,
+  # because `notes` ships pre-filled with the definition each figure has to
+  # match - so a check that only asked for `notes` to be non-blank was
+  # satisfied by the scaffold before anyone wrote a caveat, which is a guard
+  # that reports itself satisfied by the thing it was guarding against.
+  "caveat",
   "notes")
 
 # What the harness measures. Each one names its own definition, because that is
@@ -206,6 +212,14 @@ read_benchmarks <- function(path) {
          call. = FALSE)
   df <- read.csv(path, stringsAsFactors = FALSE, colClasses = "character",
                  na.strings = c("", "NA"))
+  # Trimmed on the way in. A regimen of " VRd" is a different merge key from
+  # "VRd" and looks identical in the file, so the reference silently matches
+  # nothing and is reported as unobserved. A cell left empty by trimming is
+  # empty, so blank means blank in every check below.
+  df[] <- lapply(df, function(x) {
+    if (!is.character(x)) return(x)
+    x <- trimws(x); x[!is.na(x) & !nzchar(x)] <- NA_character_; x
+  })
   miss <- setdiff(BENCHMARK_COLS, names(df))
   if (length(miss))
     stop("benchmarks.csv is missing: ", paste(miss, collapse = ", "), call. = FALSE)
@@ -223,13 +237,25 @@ read_benchmarks <- function(path) {
   # multiply anything. The moment a value goes in, the regimen has to as well,
   # which the per-metric check below requires.
   supplied <- !is.na(df$published_value) & nzchar(trimws(df$published_value))
-  kk <- paste(ifelse(is.na(df$metric), "", df$metric),
-              ifelse(is.na(df$line), "", df$line),
-              ifelse(is.na(df$regimen), "", df$regimen), sep = "|")[supplied]
-  if (any(duplicated(kk)))
-    bad <- c(bad, paste0("more than one reference for the same ",
-                         "(metric, line, regimen): ",
-                         paste(unique(kk[duplicated(kk)]), collapse = "; "),
+  allk <- paste(ifelse(is.na(df$metric), "", df$metric),
+                ifelse(is.na(df$line), "", df$line),
+                ifelse(is.na(df$regimen), "", df$regimen), sep = "|")
+  # Every row on the key, not only the supplied ones. The merge is on the key
+  # and does not know which rows carry a value, so a supplied row sitting on
+  # the same key as a blank one still returns the observation twice - once
+  # compared and once as "no reference supplied". Checking only the supplied
+  # rows missed exactly that pair.
+  #
+  # A key held only by blanks is fine and is what the shipped grid is: the
+  # top-five regimens per line are five rows waiting for a regimen, and an
+  # empty slot cannot multiply anything. So a key is required to be unique the
+  # moment ANY row on it carries a value.
+  live <- unique(allk[supplied])
+  dup <- unique(allk[allk %in% live & duplicated(allk)])
+  if (length(dup))
+    bad <- c(bad, paste0("more than one row for the same ",
+                         "(metric, line, regimen), at least one of them ",
+                         "carrying a value: ", paste(dup, collapse = "; "),
                          ". The comparison merges on that key, so a duplicate ",
                          "returns one observation twice."))
   nonnum <- supplied & is.na(suppressWarnings(as.numeric(df$published_value)))
@@ -268,11 +294,21 @@ read_benchmarks <- function(path) {
   # "caveat" without the caveat is just "yes" with a hedge on it, and it is
   # rendered as a different verdict, so the reader is owed the difference.
   cav <- supplied & tolower(trimws(ifelse(is.na(df$comparable), "", df$comparable))) == "caveat" &
-    (is.na(df$notes) | !nzchar(trimws(df$notes)))
+    (is.na(df$caveat) | !nzchar(trimws(df$caveat)))
   if (any(cav))
-    bad <- c(bad, paste0("comparable is 'caveat' with no note saying what the ",
-                         "caveat is, on row(s): ",
-                         paste(which(cav), collapse = ", ")))
+    bad <- c(bad, paste0("comparable is 'caveat' with nothing in the caveat ",
+                         "column saying what the caveat is, on row(s): ",
+                         paste(which(cav), collapse = ", "),
+                         ". `notes` does not answer this - it ships pre-filled ",
+                         "with the definition the figure has to match."))
+  # A caveat on a row claiming full comparability is two answers to one
+  # question, and the verdict rendered is the one that hides the caveat.
+  nocav <- !is.na(df$caveat) & nzchar(trimws(df$caveat)) &
+    tolower(trimws(ifelse(is.na(df$comparable), "", df$comparable))) == "yes"
+  if (any(nocav))
+    bad <- c(bad, paste0("a caveat recorded on a row marked comparable 'yes', ",
+                         "on row(s): ", paste(which(nocav), collapse = ", "),
+                         ". Mark it 'caveat' or remove the caveat."))
   # A number is only a number in its unit, and the unit is per metric, not per
   # row - a percentage filed as a count compares to the wrong observation.
   want_unit <- vapply(df$metric, function(m)
@@ -283,6 +319,36 @@ read_benchmarks <- function(path) {
     bad <- c(bad, paste0("unit does not match the metric's on row(s): ",
                          paste(which(wu), collapse = ", "), " - expected ",
                          paste(unique(want_unit[wu]), collapse = "/")))
+  # A figure with no unit is not a figure. The check above compares a stated
+  # unit and passes a blank one, so a supplied value with no unit went through
+  # and was then differenced against an observation in whatever unit that was.
+  nou <- supplied & !is.na(want_unit) & is.na(df$unit)
+  if (any(nou))
+    bad <- c(bad, paste0("a published_value with no unit on row(s): ",
+                         paste(which(nou), collapse = ", "), " - expected ",
+                         paste(unique(want_unit[nou]), collapse = "/")))
+  # A line number that is not one keys against nothing: the merge is on the
+  # literal text, so "2L" or "two" silently matches no observation and the
+  # reference reports itself unobserved rather than mis-entered.
+  hasline <- !is.na(df$line)
+  badline <- hasline & !grepl("^[0-9]+$", df$line)
+  if (any(badline))
+    bad <- c(bad, paste0("line is not a plain line number on row(s): ",
+                         paste(which(badline), collapse = ", ")))
+  zeroline <- hasline & !badline & as.integer(df$line) < 1L
+  if (any(zeroline))
+    bad <- c(bad, paste0("line is below 1 on row(s): ",
+                         paste(which(zeroline), collapse = ", "),
+                         " - lines are numbered from 1"))
+  # A count of lines or a duration in days cannot be negative, and a negative
+  # difference against a real observation reads as a large disagreement rather
+  # than as a typo.
+  neg <- supplied & !is.na(want_unit) & want_unit %in% c("count", "days") &
+    suppressWarnings(as.numeric(df$published_value)) < 0
+  if (any(neg, na.rm = TRUE))
+    bad <- c(bad, paste0("a negative ", paste(unique(want_unit[which(neg)]),
+                                              collapse = "/"),
+                         " on row(s): ", paste(which(neg), collapse = ", ")))
   pct <- supplied & !is.na(want_unit) & want_unit == "pct"
   oob <- pct & (suppressWarnings(as.numeric(df$published_value)) < 0 |
                   suppressWarnings(as.numeric(df$published_value)) > 100)
@@ -321,10 +387,28 @@ compare_benchmarks <- function(observed, refs) {
   # way in and dropping them on the way out puts the basis for a comparison in
   # a file nobody reads and the verdict in the one they do - which is the
   # traceability the guard was added to get, lost at the last step.
-  out <- merge(observed, refs[, c(".k", "published_value", "unit", "source",
-                                  "source_population", "source_followup",
-                                  "source_algorithm", "comparable", "notes")],
-               by = ".k", all.x = TRUE)
+  #
+  # A FULL join, not observed-left. Left was silent loss in the direction that
+  # matters most: a published figure whose key this run did not produce - a
+  # regimen outside the observed top N, a line the cohort never reached -
+  # vanished from the output entirely. The reader saw every published figure
+  # they had compared and no sign of the ones that went missing, which reads as
+  # full coverage. The "no observation" verdict below existed for exactly this
+  # case and could never fire, because a row with no observation had no row.
+  rk <- refs[, c(".k", "metric", "line", "regimen", "published_value", "unit",
+                 "source", "source_population", "source_followup",
+                 "source_algorithm", "comparable", "caveat", "notes")]
+  names(rk)[2:4] <- c(".metric", ".line", ".regimen")
+  out <- merge(observed, rk, by = ".k", all = TRUE)
+  # A reference-only row has no observed side to name it, so its identity comes
+  # from the reference. Coalesced rather than assigned: an observed row keeps
+  # its own.
+  for (v in c("metric", "line", "regimen")) {
+    src <- out[[paste0(".", v)]]
+    if (is.null(out[[v]])) out[[v]] <- src
+    else out[[v]][is.na(out[[v]])] <- src[is.na(out[[v]])]
+    out[[paste0(".", v)]] <- NULL
+  }
   cmp <- tolower(trimws(ifelse(is.na(out$comparable), "no", out$comparable)))
   out$verdict <- ifelse(
     is.na(out$published_value), "no reference supplied",

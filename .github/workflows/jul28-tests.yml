@@ -7,11 +7,20 @@ name: Jul 28 tests
 #
 # Scoped to changes that can affect it: the study folder, the checks that hold
 # it to its claims, and this file.
+#
+# apr_30_2026/** is in the list because the port suites compare the study
+# folder against it. A change there changes what they are comparing to, so
+# leaving it out meant an edit to the baseline could move the comparison
+# without the gate that watches the comparison ever running.
 on:
   push:
-    paths: ['Jul 28/**', 'validation/**', '.github/workflows/jul28-tests.yml']
+    paths: &paths
+      - 'Jul 28/**'
+      - 'validation/**'
+      - 'apr_30_2026/**'
+      - '.github/workflows/jul28-tests.yml'
   pull_request:
-    paths: ['Jul 28/**', 'validation/**', '.github/workflows/jul28-tests.yml']
+    paths: *paths
 
 jobs:
   suites:
@@ -28,7 +37,9 @@ jobs:
       - name: Install R dependencies
         run: Rscript -e 'install.packages("glue")'
       # One entry point, one exit status. It pins the port suite's six known
-      # failures and fails if that number moves in either direction - fewer
-      # means the pin is stale, which is as much a problem as more.
+      # failures BY IDENTITY and fails if the set moves in either direction -
+      # one fixed and one introduced leaves the count at six, which is why the
+      # count is not what is pinned. A skipped suite and a suite that exits
+      # non-zero after printing a clean summary both fail it too.
       - name: Every suite (exits non-zero if any is not as expected)
         run: Rscript validation/run_gate.R

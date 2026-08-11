@@ -30,15 +30,24 @@ stops <- function(expr, what) ok(!is.null(tryCatch({ expr; NULL },
 source(file.path(ROOT, "R", "benchmarks.R"))
 REF <- file.path(ROOT, "benchmarks.csv")
 
-cat("\n-- the reference file ships empty, with every row already in it --\n")
+cat("\n-- every row is already in it, filled or not --\n")
 runs(read_benchmarks(REF), "benchmarks.csv loads")
 refs <- read_benchmarks(REF)
 ok(all(BENCHMARK_COLS %in% names(refs)),
    "it carries every column the comparison needs")
 # Blank rows rather than an empty file: whoever has the literature can see
 # exactly which figures are wanted, and a row nobody filled reports itself.
-ok(all(is.na(refs$published_value)),
-   "no published value is filled in - none was invented")
+#
+# What is asserted is that no figure was invented, NOT that the file is empty.
+# Those were the same statement while it shipped blank, and asserting the
+# second pinned it that way - the first genuinely published figure would have
+# turned this suite red and the merge gate with it, so the skill that exists to
+# fill this file could not have filled it through a green build.
+pub <- !is.na(refs$published_value)
+cat("      (", sum(pub), " of ", nrow(refs), " rows carry a published value)\n",
+    sep = "")
+ok(all(nzchar(trimws(refs$source[pub]))),
+   "every published value that is filled in says where it came from")
 ok(setequal(unique(refs$metric), names(BENCHMARK_METRICS)),
    "...and there is a row for every metric the harness measures")
 ok(all(nzchar(refs$notes)),
@@ -84,8 +93,20 @@ b <- cited(base); b$comparable <- "yes"
 runs(read_benchmarks(wr(b)), "...and a fully described comparison loads")
 # Semantic states that parse. Each has a number and a source and is wrong about
 # what the number is, which no amount of column checking would catch.
-b <- cited(base); b$comparable <- "caveat"; b$notes <- ""
+b <- cited(base); b$comparable <- "caveat"; b$caveat <- ""
 stops(read_benchmarks(wr(b)), "'caveat' with no caveat is 'yes' with a hedge on it")
+# The caveat has its own column because `notes` ships pre-filled with the
+# definition each figure has to match - so asking only that `notes` be
+# non-blank was a check the scaffold satisfied before anyone wrote a caveat.
+b <- cited(base); b$comparable <- "caveat"; b$caveat <- ""
+ok(nzchar(b$notes) &&
+     inherits(tryCatch(read_benchmarks(wr(b)), error = function(e) e), "error"),
+   "...and the shipped note does not satisfy it, which is why it is not notes")
+b <- cited(base); b$comparable <- "caveat"; b$caveat <- "different follow-up"
+runs(read_benchmarks(wr(b)), "...a stated caveat loads")
+b <- cited(base); b$comparable <- "yes"; b$caveat <- "different follow-up"
+stops(read_benchmarks(wr(b)),
+      "...and a caveat on a row claiming full comparability is two answers")
 b <- cited(base); b$unit <- "count"; b$metric <- "pct_reaching_line"; b$line <- "2"
 stops(read_benchmarks(wr(b)), "a percentage filed as a count")
 b <- cited(base); b$metric <- "pct_reaching_line"; b$line <- "2"; b$unit <- "pct"
@@ -96,9 +117,36 @@ stops(read_benchmarks(wr(b)), "a per-line metric with no line, which keys on a b
 b <- cited(base); b$metric <- "pct_regimen_at_line"; b$unit <- "pct"; b$line <- "1"
 b$regimen <- ""
 stops(read_benchmarks(wr(b)), "...and a regimen benchmark with no regimen")
+b <- cited(base); b$unit <- ""
+stops(read_benchmarks(wr(b)),
+      "a figure with no unit at all, which was differenced against whatever the observation was in")
+b <- cited(base); b$metric <- "pct_reaching_line"; b$unit <- "pct"; b$line <- "2L"
+stops(read_benchmarks(wr(b)),
+      "a line written '2L', which keys on the literal text and matches nothing")
+b <- cited(base); b$metric <- "pct_reaching_line"; b$unit <- "pct"; b$line <- "0"
+stops(read_benchmarks(wr(b)), "...and a line numbered below 1")
+b <- cited(base); b$published_value <- "-3"
+stops(read_benchmarks(wr(b)),
+      "a negative count, which reads as a large disagreement rather than a typo")
+b <- cited(base); b$metric <- "pct_regimen_at_line"; b$unit <- "pct"; b$line <- "1"
+b$regimen <- "  VRd  "
+r1 <- read_benchmarks(wr(b))
+ok(identical(r1$regimen[1], "VRd"),
+   "a padded regimen is trimmed, so it keys to the regimen it names")
 b2 <- rbind(cited(base), cited(base))
 stops(read_benchmarks(wr(b2)),
       "two references on one key, which merge into one observation twice")
+# The pair the supplied-rows-only check could not see: one row with a value and
+# one blank row on the same key still returns the observation twice - once
+# compared and once as "no reference supplied".
+b2 <- rbind(cited(base), base)
+stops(read_benchmarks(wr(b2)),
+      "...and a value sitting on the same key as a blank row, which does it too")
+# ...while a key held only by blanks is the shipped grid: five regimen slots
+# per line, waiting for a regimen. An empty slot multiplies nothing.
+b2 <- rbind(base, base)
+runs(read_benchmarks(wr(b2)),
+     "...but two blank rows on one key are the empty slots this grid ships with")
 b <- base; b$published_value <- "2"; b$source <- "Someone 2024"; b$comparable <- "maybe"
 stops(read_benchmarks(wr(b)), "...and a comparability that is not yes/caveat/no")
 b <- base[, setdiff(names(base), "source_algorithm")]
@@ -106,6 +154,33 @@ stops(read_benchmarks(wr(b)), "...and a file missing a column")
 b <- cited(base); b$comparable <- "no"
 runs(read_benchmarks(wr(b)),
      "a complete row loads - including one recorded as not comparable, which is a finding")
+
+cat("\n-- a reference this run did not produce is reported, not dropped --\n")
+# The join used to be observed-left, which lost silently in the one direction
+# that matters: a published figure whose key this run has no observation for -
+# a regimen outside the observed top N, a line the cohort never reached - fell
+# out of the output entirely. The reader saw every figure that HAD been
+# compared and no trace of the ones that had not, which reads as full coverage.
+# The "no observation" verdict existed for this case and could never fire,
+# because a row with no observation had no row.
+o1 <- data.frame(metric = "pct_regimen_at_line", line = 1L, regimen = "VRd",
+                 observed = 40, denom = 100, censored = NA_integer_,
+                 events = NA_integer_, stringsAsFactors = FALSE)
+r2 <- refs[refs$metric == "pct_regimen_at_line", , drop = FALSE][1:2, , drop = FALSE]
+r2$line <- c("1", "1"); r2$regimen <- c("VRd", "KRd")
+r2$published_value <- c(38, 12); r2$unit <- "pct"; r2$source <- "Someone 2024"
+r2$comparable <- "yes"; r2$source_population <- "NDMM"
+r2$source_followup <- "5y"; r2$source_algorithm <- "IMWG-like"; r2$caveat <- NA
+cb <- compare_benchmarks(o1, r2)
+ok(nrow(cb) == 2L, paste0("both published regimens appear (", nrow(cb), " rows)"))
+ok("KRd" %in% cb$regimen,
+   "...including the one this run produced no observation for")
+ok(identical(cb$verdict[cb$regimen == "KRd"], "no observation"),
+   "...and it is reported as unobserved rather than as absent")
+ok(identical(cb$verdict[cb$regimen == "VRd"], "compared"),
+   "...while the one that was observed is still compared")
+ok(is.na(cb$difference[cb$regimen == "KRd"]),
+   "...with no difference invented for it")
 
 cat("\n-- a difference is two studies differing until somebody says otherwise --\n")
 obs <- data.frame(metric = "median_lines_per_patient", line = NA_integer_,
