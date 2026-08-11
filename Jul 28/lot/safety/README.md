@@ -27,7 +27,7 @@ two ever disagree.
 
 | | |
 |---|---|
-| the roster | `R/codelists_safety.R`. Which conditions the protocol measures - Table 2's twenty-three, in five domains - and Table 3's utilisation events. |
+| the roster | `R/codelists_safety.R`. Which conditions the protocol measures - Table 2's twenty-six, in seven domains - and Table 3's utilisation events. |
 | the shape | `codelists/*.csv`. Column names, the controlled vocabularies, precedence, and one row per condition with the code cell empty. |
 | the codes | not here, and not in this repository. |
 
@@ -140,14 +140,24 @@ Length of stay is the `LOS` column, which the table already carries -
 `ADMIT_DATE` to `DISCH_DATE` is the same span computed by hand. Per visit,
 assigned to the period the admit date falls in.
 
-Assigned by admit date, and only by admit date. A stay that begins before 1L
-baseline and runs into it belongs to the earlier period on that rule - it is not
-also counted in baseline, and it is not split across the two. That is a choice
-rather than a reading of the protocol, and it is the one place this differs from
-what an overlap rule would give, so it is written down here rather than left to
-whoever implements the extraction. If the study wants overlapping stays counted
-in both periods, or apportioned, that is a different rule and this note is where
-it changes.
+Assigned by admit date, **with one exception the protocol states outright**: a
+stay whose admit falls before 1L baseline but which overlaps 1L baseline is
+considered. Table 3, on inpatient length of stay:
+
+> LOS will be calculated per visit, and assigned to the study period in which
+> the admit occurred (or if admit occurred prior to 1L baseline but overlapped
+> with 1L baseline, it will be considered)
+
+This paragraph previously said the opposite - that such a stay belongs to the
+earlier period only - and recorded it as a deliberate choice. It was neither:
+the rule has a stated exception and reads as a contradiction only until the
+exception is read as one. A wrong rule written down as decided is worse than an
+unwritten one, so the wording is corrected here rather than carried as a
+divergence.
+
+A stay can extend over several lines; the exception is about 1L baseline
+specifically, which is where a patient's first observed stay is most likely to
+have begun before the window opened.
 
 Two other things worth knowing before the safety work starts. The protocol
 allows some events to be defined on lab values; `LABRESULT` exists, but the
@@ -159,11 +169,46 @@ ICD-based one does not - that is a study decision, not a coding one. And
 `GAP_DAYS`; the three agree, so continuous enrolment needs no separate
 treatment here.
 
+## Acute and chronic are how a condition is counted, not a label
+
+Table 2 gives every condition an acute/chronic classification, and the protocol
+makes it operational rather than descriptive:
+
+* a **chronic** condition counts at its FIRST occurrence only, and stops
+  contributing person-time at that point;
+* an **acute** condition may occur more than once, and two events of the same
+  type have to be separated by a washout.
+
+So `acute_chronic` is not a tidy-up column - it decides both the numerator and
+the denominator, and a condition filed under the wrong one is a different
+measurement. That is why the roster holds it beside the condition and the read
+refuses a row that disagrees with Table 2 or leaves it blank.
+
+**The washout length is an open question, and it is the protocol's own.**
+Table 2's footnote says a `>30 day` washout is required; the Objective 2 text
+says events of the same type should be separated by `>=30 days`. Those differ
+on exactly one day - two events 30 days apart are one event under the first
+reading and two under the second. Nobody here should pick; it needs the study
+team.
+
+## Which line an event belongs to
+
+Also the protocol's, and also not implemented here yet - recorded so the
+extraction is written against it rather than against a reasonable guess:
+
+an event is attributed to a LOT if it falls between that LOT's start date and
+the earlier of the next LOT's start date, or the prior LOT's discontinuation
+date plus 30 days. An event more than 30 days after discontinuation is **not
+counted for that LOT even if the patient later started a subsequent one**.
+
 ## What is outstanding, and what it needs
 
 | | needs |
 |---|---|
-| the twenty-three conditions' codes | the protocol's Annex 3 / Annex 5 |
+| the twenty-six conditions' codes | the protocol's Annex 3 / Annex 5 |
+| `severe_infection_with_hospitalisation` | it is a diagnosis AND a hospitalisation, and `code_type` currently offers only `ICD_DIAG` and `PROC` on the safety file. Which of the two carries the hospitalisation qualifier is a definition question, not a code-list one. |
+| `thrombocytopenia`, `anemia` | Table 2 heads these "Other (dependent on data availability)". They are rostered like the rest; whether the data supports them is answered when the codes are run, not by leaving them out. |
+| the acute/chronic washout | the protocol says `>30 days` in one place and `>=30 days` in another - see above |
 | MM-related inpatient stay | a decision on which diagnosis position makes a stay MM-related |
 | ER visit | the values on the `POS` and `TOS` tabs of the data dictionary. The field descriptions point at those tabs, but the tabs were not in the copy available when these rows were written, so they are placeholders on `POS` and `TOS_CD`. |
 | a revenue-code field | the dictionary surfaces none, but Optum derives ICU/maternity/newborn flags from revenue codes upstream - is one exposed anywhere we can join to? Until then the `REV_CD` row stays empty. |

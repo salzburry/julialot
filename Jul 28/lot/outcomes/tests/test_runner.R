@@ -312,15 +312,32 @@ fsc <- function(rows, lot_run = "L1", attempt = ATTEMPT) {
   tryCatch(f(NULL, lot_run, attempt = attempt), error = conditionMessage)
 }
 without <- function(k) { r <- FULL; r[[k]] <- NULL; r }
-ok(length(fsc(FULL)) == 2L, "a line cohort built from this LOT run is used")
+ok(length(fsc(FULL)$tables) == 2L, "a line cohort built from this LOT run is used")
 m <- fsc(modifyList(FULL, list(SOURCE_LOT_RUN_ID = "L0")))
 ok(is.character(m) && grepl("built from LOT run L0", m, fixed = TRUE),
    "one built from another run stops the build, naming it")
 m2 <- fsc(list(PATID = "p"))
 ok(is.character(m2) && grepl("records no source LOT run", m2, fixed = TRUE),
    "...and one that cannot say which run it came from is not current by omission")
-ok(is.list(fsc(NULL)) && !length(fsc(NULL)),
+ok(is.list(fsc(NULL)) && !length(fsc(NULL)$tables),
    "no line cohort at all is fine - the run reports ALL_LINES alone")
+# The join the suite did not make. It checked that this returns nothing, and
+# separately that the SQL builder accepts NULL, and never fed one to the other
+# - so the runner's `attr(subseq, "provenance")[[1]]` sat between two green
+# assertions and died with "subscript out of bounds" on every run without line
+# cohorts: the overall cohort, and any NDMM run before the 2L/3L build.
+sc0 <- fsc(NULL)
+ok(is.null(sc0$provenance),
+   "...with no provenance at all, rather than an empty list for the runner to subscript")
+runs(outcomes_tte_sql(BASE, "r1", "L1", sc0$provenance),
+     "...and that is exactly the value the runner hands the SQL builder")
+runs(outcomes_attrition_sql("t", "2026-03-31", "r1", "L1", FALSE, sc0$provenance),
+     "...and the summaries take it too")
+sc1 <- fsc(FULL)
+ok(is.character(sc1$provenance) && identical(sc1$provenance[["pre"]], "365"),
+   "...while a run WITH line cohorts hands over the windows they were built to")
+runs(outcomes_tte_sql(BASE, "r1", "L1", sc1$provenance),
+     "...which the SQL builder takes in the same call")
 
 # The two ways to get a wrong denominator with every id correct on the output.
 m3 <- fsc(list(FULL, modifyList(FULL, list(SUBSEQ_RUN_ID = "S2"))))
@@ -335,7 +352,7 @@ ok(is.character(m5) && grepl("disagree on the stamp", m5),
 # A sensitivity build under overridden windows is the case that matters, and it
 # is caught by the pair being read at all rather than by judging the numbers:
 # whatever they are, they are logged and they have to agree.
-ok(length(fsc(modifyList(FULL, list(CE_PRE_DAYS = "180", CE_FU_DAYS = "30")))) == 2L,
+ok(length(fsc(modifyList(FULL, list(CE_PRE_DAYS = "180", CE_FU_DAYS = "30")))$tables) == 2L,
    "a non-default window is not refused - it is read, and the run says so")
 # Absent columns are 'cannot check', which is the override's business, not a
 # silent pass.
@@ -354,7 +371,7 @@ ok(is.character(m6) && grepl("were built over cohort attempt C1", m6),
 m7 <- fsc(FULL, attempt = NULL)
 ok(is.character(m7) && grepl("was not established", m7),
    "...and where the LOT attempt could not be established, that is said, not assumed")
-ok(length(fsc(FULL, attempt = ATTEMPT)) == 2L,
+ok(length(fsc(FULL, attempt = ATTEMPT)$tables) == 2L,
    "...while the matching pair is what an ordinary run looks like")
 
 # The stamp it checks is the one the subsequent build actually writes. All five,

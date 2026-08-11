@@ -147,8 +147,11 @@ find_subsequent_cohorts <- function(con, lot_run, lines = c(2L, 3L),
   else
     log_msg("  Line-specific denominators from ", paste(unlist(out), collapse = ", "),
             ", both built from LOT run ", lot_run, ".")
-  attr(out, "provenance") <- prov
-  out
+  # Named, not attached. The provenance is one row - every line cohort agrees
+  # on it by the time we get here - or NULL when there are no line cohorts at
+  # all, which the SQL builders read as "no LINE_ELIGIBLE, so no window to
+  # record".
+  list(tables = out, provenance = if (length(prov)) prov[[1]] else NULL)
 }
 
 # The LOT run that last wrote the tables, whatever state it reached - the same
@@ -401,13 +404,23 @@ build_outcomes <- function(here, cohort_table, prefix) {
   lines  <- out_tbl("LOT_LONG_FINAL")
   cohort <- wrk(cfg$input_cohort_table)
   base   <- find_base_cohort(con)
-  subseq <- find_subsequent_cohorts(con, lot_run, attempt = attr(lot_run, "attempt"))
+  # Two values, returned as two values. This used to come back as one list with
+  # the provenance smuggled on an attribute, and the runner then took [[1]] of
+  # it unconditionally - so a run with no line cohorts, which is the documented
+  # behaviour for the overall cohort and for any NDMM run before
+  # build_subsequent_cohorts.R, died with "subscript out of bounds" at the
+  # first table. The empty case was tested and the use of the empty case was
+  # tested; nothing tested the two together, and the attribute is what let them
+  # be written apart.
+  sc     <- find_subsequent_cohorts(con, lot_run, attempt = attr(lot_run, "attempt"))
+  subseq <- sc$tables
   both   <- length(subseq) > 0L
   # The 2L/3L build's provenance, carried onto every table that has a DENOM or
   # a LINE_ELIGIBLE. It travelled only in the log before, which does not
   # outlive the session - so a run under non-default continuous-enrolment
-  # windows produced tables indistinguishable from a standard one.
-  sprov  <- attr(subseq, "provenance")[[1]]
+  # windows produced tables indistinguishable from a standard one. NULL where
+  # there are no line cohorts, which is what the SQL builders expect.
+  sprov  <- sc$provenance
   tte    <- out_tbl("OUT_TTE")
 
   log_msg("Building ", tte, " - one row per patient per line")

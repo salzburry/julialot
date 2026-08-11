@@ -24,10 +24,44 @@ source(file.path(ROOT, "R", "codelists_safety.R"))
 TPL <- file.path(ROOT, "codelists")
 
 cat("\n-- the roster is the protocol's, not a subset of it --\n")
+# Table 2, transcribed. A COUNT is not a roster: this suite used to assert
+# `length(all_c) == 23L` and the roster was three conditions and two domains
+# short of Table 2 - so the number pinned the shortfall rather than catching
+# it, and adding the missing conditions would have turned the suite red. The
+# expectation is now the list itself, so a condition can only enter or leave by
+# someone editing what the protocol is asserted to say.
+TABLE_2 <- list(
+  hepatologic    = c("abnormal_liver_function", "toxic_liver_disease",
+                     "hepatic_failure", "chronic_hepatitis", "acute_hepatitis",
+                     "fibrosis_and_cirrhosis", "non_alcoholic_steatohepatitis"),
+  renal          = c("acute_kidney_injury_or_acute_kidney_disease",
+                     "chronic_kidney_disease",
+                     "moderate_to_severe_renal_impairment_or_esrd"),
+  ocular         = c("corneal_ulcer", "keratopathies"),
+  cardiovascular = c("myocardial_infarction_or_unstable_angina", "valvopathy",
+                     "pulmonary_hypertension",
+                     "cerebrovascular_event_stroke_or_tia",
+                     "peripheral_arterial_thromboembolism",
+                     "deep_venous_thrombosis_or_pulmonary_embolism"),
+  neurologic     = c("peripheral_neuropathy", "parkinsons_disease",
+                     "cognitive_impairment_or_dementia",
+                     "other_movement_disorders", "seizures"),
+  infectious     = c("severe_infection_with_hospitalisation"),
+  other          = c("thrombocytopenia", "anemia")
+)
 all_c <- safety_roster()$condition
-ok(length(all_c) == 23L, paste0("Table 2's twenty-three conditions (", length(all_c), ")"))
-ok(identical(sort(names(SAFETY_CONDITIONS)), sort(SAFETY_DOMAINS)),
-   "...in the five domains it groups them under")
+ok(setequal(names(SAFETY_CONDITIONS), names(TABLE_2)),
+   paste0("Table 2's seven domains, and only those (", length(SAFETY_DOMAINS), ")"))
+for (d in names(TABLE_2)) {
+  got <- if (is.null(SAFETY_CONDITIONS[[d]])) character(0) else names(SAFETY_CONDITIONS[[d]])
+  ok(setequal(got, TABLE_2[[d]]),
+     if (setequal(got, TABLE_2[[d]])) paste0("...", d, ": all ", length(TABLE_2[[d]]), " of them")
+     else paste0("...", d, " differs from Table 2 - missing: ",
+                 paste(setdiff(TABLE_2[[d]], got), collapse = ", "), "; extra: ",
+                 paste(setdiff(got, TABLE_2[[d]]), collapse = ", ")))
+}
+ok(length(all_c) == length(unlist(TABLE_2)),
+   paste0("...", length(unlist(TABLE_2)), " conditions in total (", length(all_c), ")"))
 ok(!any(duplicated(all_c)), "no condition is listed twice")
 ok(length(HCRU_EVENTS) == 4L, "Table 3's four utilisation events")
 
@@ -42,8 +76,8 @@ ok(!length(st$unknown),
 ok(!length(st$bad_domain), "every row's domain is one of Table 2's")
 
 cat("\n-- and it is a placeholder, which is not a state it can be read in --\n")
-ok(length(st$unfilled) == 23L,
-   paste0("all twenty-three are still unfilled (", length(st$unfilled), ")"))
+ok(length(st$unfilled) == nrow(safety_roster()),
+   paste0("every one of them is still unfilled (", length(st$unfilled), ")"))
 # The whole point. Zero rows would be indistinguishable from zero events.
 stops(safety_codelist(TPL),
       "reading it stops rather than returning an empty list")
