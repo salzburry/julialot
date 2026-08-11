@@ -55,7 +55,8 @@ LOT_DIMENSIONS <- list(
                      "and SCT_AUTO is one of the start types the next line can ",
                      "take, so a further transplant becomes a line of its own ",
                      "even with no drug beside it."),
-       where = "lot/engine/R/steps/05b_lot1_sct.R:113, lot/engine/R/steps/10_lot2_5_base.R:275, :329",
+       where = "lot/engine/R/steps/05b_lot1_sct.R:91, :113, lot/engine/R/steps/10_lot2_5_base.R:275, :329",
+       proves = c("sct_tandem_days", "ENDING_AUTO_DT", "d_AUTO", "SCT_AUTO"),
        question = paste0("Does the definition count ASCT as a separate prior ",
                          "line, or as part of the induction line it follows? ",
                          "Does the answer change for a transplant at second ",
@@ -67,6 +68,7 @@ LOT_DIMENSIONS <- list(
                      "transplant date. It carries no regimen string, because ",
                      "induction rows are suppressed for it."),
        where = "lot/engine/R/steps/10_lot2_5_base.R:327, :440",
+       proves = c("SCT_ALLO", "allo_lot_span"),
        question = "Is alloSCT counted as a prior line in its own right?"),
 
   list(id = "cart_is_a_line",
@@ -74,7 +76,8 @@ LOT_DIMENSIONS <- list(
        ours = paste0("CAR-T starts a line of its own. An agent added within ",
                      "the consolidation window before it is read as bridging ",
                      "and stays in the prior line, which ends CART_INIT."),
-       where = "lot/engine/R/steps/06_lot1_end.R:176",
+       where = "lot/engine/R/steps/06_lot1_end.R:176, lot/engine/R/steps/10_lot2_5_base.R:253, :328",
+       proves = c("LOT1_BASE_1ST_ADD_MED_DT", "CART"),
        question = paste0("Is CAR-T a prior line? Is bridging therapy counted ",
                          "separately from it?")),
 
@@ -83,7 +86,8 @@ LOT_DIMENSIONS <- list(
        ours = paste0("No. Maintenance is a descriptive flag (contains_mtx_reg) ",
                      "and there is no maintenance period at all. A regimen ",
                      "reduced to a single agent continues the same line."),
-       where = "lot/engine/R/steps/06_lot1_end.R:53",
+       where = "lot/engine/R/steps/06_lot1_end.R:19, :53",
+       proves = c("contains_mtx_reg"),
        question = paste0("Does the definition count maintenance as part of the ",
                          "preceding line, or as a line of its own?")),
 
@@ -93,7 +97,8 @@ LOT_DIMENSIONS <- list(
                      "of a drug in the current line, or a transplant or CAR-T ",
                      "event. There is no requirement that progression be ",
                      "documented - claims do not carry it."),
-       where = "lot/engine/R/steps/10_lot2_5_base.R:227, :275, :329",
+       where = "lot/engine/R/steps/10_lot2_5_base.R:227, :253, :275, :328, :329, :367, :381",
+       proves = c("d_MED", "d_AUTO", "CART", "STEROID", "permissible_subs"),
        question = paste0("Does a new line require documented progression or ",
                          "relapse, or is any regimen change enough?")),
 
@@ -103,6 +108,7 @@ LOT_DIMENSIONS <- list(
                      "exposure ends discontinues it. The predicate is >=, so ",
                      "the threshold day itself counts as a gap."),
        where = "lot/engine/R/steps/03_mma_map.R:396",
+       proves = c("map_discon_gap_days", ">="),
        question = paste0("Does the definition end a line on a treatment gap, ",
                          "and at what length? Are holds for toxicity excluded?")),
 
@@ -111,7 +117,8 @@ LOT_DIMENSIONS <- list(
        ours = paste0("Day 0 through INDUCTION_WINDOW_DAYS - 1 for LOT1, and ",
                      "the shorter LOT-N window for later lines. An agent after ",
                      "that is an addition, not part of the regimen."),
-       where = "lot/engine/R/steps/10_lot2_5_base.R:362",
+       where = "lot/engine/R/steps/10_lot2_5_base.R:285, :362",
+       proves = c("MAP_START_DT", "date_add", "cart_consolidation_days"),
        question = paste0("Is there a window within which added agents belong to ",
                          "the same regimen, and how long?")),
 
@@ -120,7 +127,8 @@ LOT_DIMENSIONS <- list(
        ours = paste0("No, where the pair is declared in permissible_subs.csv. ",
                      "A substitution the code list does not know about looks ",
                      "like a regimen change and starts a line."),
-       where = "lot/engine/R/steps/01_codelists.R:66",
+       where = "lot/engine/R/steps/10_lot2_5_base.R:221, :381",
+       proves = c("permissible_subs", "original_med"),
        question = paste0("Are biosimilars, route changes or generic swaps ",
                          "treated as the same agent?")),
 
@@ -129,7 +137,8 @@ LOT_DIMENSIONS <- list(
        ours = paste0("No. Steroids are dropped from the code list, so they ",
                      "never start a line, never join a regimen and never keep ",
                      "one alive."),
-       where = "lot/engine/R/steps/10_lot2_5_base.R:367",
+       where = "lot/engine/R/steps/01_codelists.R:43, lot/engine/R/steps/10_lot2_5_base.R:367",
+       proves = c("CL_MED_CLASS", "STEROID"),
        question = paste0("Are corticosteroids counted as agents in the regimen, ",
                          "or disregarded?")),
 
@@ -139,13 +148,15 @@ LOT_DIMENSIONS <- list(
                      "set is unchanged, and a hold shorter than the ",
                      "discontinuation gap does not end exposure."),
        where = "lot/engine/R/steps/03_mma_map.R:396",
+       proves = c("map_discon_gap_days"),
        question = "Does the definition exclude dose modification and holds?"),
 
   list(id = "line_cap",
        dimension = "Is there a cap on how many lines are counted?",
        ours = paste0("Yes - MAX_LOT. Nothing above it is built, so a capped ",
                      "patient is indistinguishable from a completed one."),
-       where = "lot/engine/R/steps/10_lot2_5_base.R:1040, lot/engine/R/build_lot.R:1439",
+       where = "lot/engine/R/steps/10_lot2_5_base.R:1040, lot/engine/R/build_lot.R:1467",
+       proves = c("max_lot"),
        question = paste0("Does the source cap the line count, or report the ",
                          "full distribution?")),
 
@@ -154,7 +165,8 @@ LOT_DIMENSIONS <- list(
        ours = paste0("The first eligible MM therapy claim on or after the MM ",
                      "diagnosis and on or after LOT1_FROM. Belantamab and ",
                      "steroids cannot set it. That date is the cohort index."),
-       where = "ndmm/R/steps/00b_lot1_index.R:147",
+       where = "ndmm/R/steps/00b_lot1_index.R:160, :161, :162, :196",
+       proves = c("bl.code IS NULL", "MM_DX_DT", "NDMM_LOT1_FROM", "min(tx_dt)"),
        question = paste0("How is the start of first-line therapy defined, and ",
                          "may any agent set it?")))
 
@@ -191,6 +203,16 @@ read_definition_sources <- function(path) {
     bad <- c(bad, paste0("source_id must be one of ",
                          paste(DEF_SOURCE_IDS, collapse = "/"), " - found: ",
                          paste(unk, collapse = ", ")))
+  # The IMWG slot is required, not merely permitted. The ask names IMWG
+  # consensus by name and it is the one source that is not a trial, so deleting
+  # the block outright left a grid that loaded, satisfied a row count of
+  # dimensions x sources, and answered a different question - the trials
+  # without the consensus they are usually read against.
+  if (!"IMWG_consensus" %in% sid)
+    bad <- c(bad, paste0("no IMWG_consensus rows. The ask names IMWG by name ",
+                         "and it is the only non-trial source here, so a grid ",
+                         "without it is a different comparison that still ",
+                         "loads and still looks complete."))
   k <- paste(ifelse(is.na(df$dimension_id), "", df$dimension_id), sid, sep = "|")
   dup <- unique(k[duplicated(k) & nzchar(sid)])
   if (length(dup))
@@ -222,13 +244,25 @@ read_definition_sources <- function(path) {
                          "one is an answer nothing holds to anything."))
   # One trial per slot. The identity lives in the citation, so a slot whose
   # answered rows cite two different NCT ids is two trials in one column.
-  nct <- regmatches(ifelse(is.na(df$citation), "", df$citation),
-                    regexpr("NCT[0-9]{8}", ifelse(is.na(df$citation), "", df$citation)))
-  has_nct <- grepl("NCT[0-9]{8}", ifelse(is.na(df$citation), "", df$citation))
+  cit <- ifelse(is.na(df$citation), "", df$citation)
+  has_nct <- grepl("NCT[0-9]{8}", cit)
+  # One id per CELL as well as one per slot. The slot check reads the first
+  # match, so a cell citing "NCT-A and NCT-B" passed it while naming two
+  # trials - and a slot could then hold "NCT-A and NCT-B" on one row and
+  # "NCT-A and NCT-C" on the next, agreeing on their first matches and being
+  # three trials. A cell that names two trials cannot say which one answered.
+  n_per_cell <- vapply(regmatches(cit, gregexpr("NCT[0-9]{8}", cit)),
+                       function(x) length(unique(x)), integer(1))
+  multi <- filled & n_per_cell > 1L
+  if (any(multi))
+    bad <- c(bad, paste0("citation(s) naming more than one trial on row(s): ",
+                         paste(which(multi), collapse = ", "),
+                         ". One cell is one source answering one dimension; ",
+                         "only the first id is read, so the rest are invisible."))
   for (s in setdiff(unique(sid[filled & nzchar(sid)]), "")) {
-    ids <- unique(regmatches(df$citation[filled & sid == s & has_nct],
-                             regexpr("NCT[0-9]{8}",
-                                     df$citation[filled & sid == s & has_nct])))
+    ids <- unique(unlist(regmatches(cit[filled & sid == s & has_nct],
+                                    gregexpr("NCT[0-9]{8}",
+                                             cit[filled & sid == s & has_nct]))))
     if (length(ids) > 1L)
       bad <- c(bad, paste0(s, " cites more than one trial: ",
                            paste(ids, collapse = ", "),
@@ -246,6 +280,19 @@ read_definition_sources <- function(path) {
                              "NCT id: ", paste(which(un), collapse = ", "),
                              ". Without one the slot cannot be shown to be a ",
                              "single trial, which is what the column claims."))
+    } else {
+      # IMWG is not a trial and has no NCT id, so identity comes from the
+      # document. Unchecked, one slot could answer from the IMWG consensus on
+      # one dimension and a different guideline on the next, rendered as one
+      # column headed IMWG. The check is that the answered rows agree on which
+      # document they are quoting, taken as the citation up to the section.
+      docs <- unique(sub("[,;].*$", "", trimws(cit[filled & sid == s])))
+      docs <- docs[nzchar(docs)]
+      if (length(docs) > 1L)
+        bad <- c(bad, paste0(s, " quotes more than one document: ",
+                             paste(docs, collapse = " | "),
+                             ". One slot is one source, or the column is a ",
+                             "blend under a single heading."))
     }
   }
   nocite <- filled & (is.na(df$citation) | !nzchar(trimws(df$citation)))

@@ -136,7 +136,31 @@ outcomes_base_sql <- function(lines_tbl, cohort_tbl, base_tbl = NULL,
 # follow-up end is an event: death is the follow-up end for anyone who dies
 # inside the window, since the cohort clamps ENDDATE at the death date.
 # Written once, here, so all three treat the boundary the same way.
-outcomes_tte_sql <- function(base_sql, run_id, lot_run_id = NA_character_) {
+# The 2L/3L build's provenance as three constant columns. One definition, used
+# by every table that carries a DENOM or a LINE_ELIGIBLE, so the provenance
+# cannot land on one output and not the next.
+prov_cols <- function(subseq) {
+  g <- function(k) {
+    v <- if (is.null(subseq)) NULL else subseq[[k]]
+    sql_text(if (is.null(v) || is.na(v)) NA_character_ else as.character(v))
+  }
+  paste0("           ", g("subseq"), " AS SUBSEQ_RUN_ID,\n",
+         "           ", g("pre"),    " AS CE_PRE_DAYS,\n",
+         "           ", g("fu"),     " AS CE_FU_DAYS,\n")
+}
+
+# `subseq` is the 2L/3L build's provenance - which subsequent run, over which
+# cohort attempt, under which continuous-enrolment windows - or NULL where
+# there are no line cohorts. It goes ON the table.
+#
+# LINE_ELIGIBLE is a restriction whose meaning is set by those windows, and the
+# label is the same whatever they were. A sensitivity build under 180/30 is
+# accepted deliberately - that is the sweep's business - but the run said so
+# only in its log, which does not outlive the session, while the table it
+# produced looked exactly like a 365/90 one. A reader opening OUT_TTE a month
+# later had no way to ask.
+outcomes_tte_sql <- function(base_sql, run_id, lot_run_id = NA_character_,
+                             subseq = NULL) {
   glue("
     WITH b AS ({base_sql}),
     ev AS (
@@ -187,7 +211,9 @@ outcomes_tte_sql <- function(base_sql, run_id, lot_run_id = NA_character_) {
                 ELSE 'DEATH' END                        AS TTNT_REASON,
            {sql_text(run_id)}     AS OUT_RUN_ID,
            {sql_text(lot_run_id)} AS LOT_RUN_ID,
-           current_timestamp()    AS BUILT_AT
+           -- The provenance of LINE_ELIGIBLE, beside LINE_ELIGIBLE. NULL where
+           -- there are no line cohorts and the flag is NULL too.
+{prov_cols(subseq)}           current_timestamp()    AS BUILT_AT
     FROM ev
     WHERE FU_END_DT >= LOT_START_DT")
 }
@@ -228,7 +254,7 @@ DENOM_KEEP_NEXT <- "(d.DENOM = 'ALL_LINES' OR t.NEXT_LINE_ELIGIBLE = 1)"
 # hide the ongoing group entirely, so they get their own count and the five sum
 # to N_ON_LINE.
 outcomes_attrition_sql <- function(tte_tbl, study_end, run_id, lot_run_id,
-                                   both_denoms = FALSE) {
+                                   both_denoms = FALSE, subseq = NULL) {
   # "Received the next LOT" has to mean OBSERVED to receive it. lot's primary
   # analysis ignores disenrolment, so LOT_LONG_FINAL carries lines that start
   # after a patient's protocol follow-up ended - NEXT_LOT_NUM is populated for
@@ -260,6 +286,7 @@ outcomes_attrition_sql <- function(tte_tbl, study_end, run_id, lot_run_id,
            -- Observation ran to the end of the study period and they were
            -- still on treatment. Not a loss - the study stopped, not them.
            {n(going)}    AS N_ONGOING,         {pct(going)} AS PCT_ONGOING,
+{prov_cols(subseq)}
            {sql_text(run_id)}     AS OUT_RUN_ID,
            {sql_text(lot_run_id)} AS LOT_RUN_ID,
            current_timestamp()    AS BUILT_AT
@@ -273,7 +300,7 @@ outcomes_attrition_sql <- function(tte_tbl, study_end, run_id, lot_run_id,
 # months, so days / 30.4375 - the mean Gregorian month, not 30, which drifts by
 # six days a year.
 outcomes_line_gap_sql <- function(tte_tbl, run_id, lot_run_id,
-                                  both_denoms = FALSE) {
+                                  both_denoms = FALSE, subseq = NULL) {
   glue("
     SELECT d.DENOM,
            t.LOT_NUM                            AS FROM_LOT,
@@ -286,6 +313,7 @@ outcomes_line_gap_sql <- function(tte_tbl, run_id, lot_run_id,
                                                 AS MEDIAN_MONTHS,
            min(datediff(NEXT_LOT_START_DT, LOT_START_DT)) AS MIN_DAYS,
            max(datediff(NEXT_LOT_START_DT, LOT_START_DT)) AS MAX_DAYS,
+{prov_cols(subseq)}
            {sql_text(run_id)}     AS OUT_RUN_ID,
            {sql_text(lot_run_id)} AS LOT_RUN_ID,
            current_timestamp()    AS BUILT_AT
@@ -305,12 +333,13 @@ outcomes_line_gap_sql <- function(tte_tbl, run_id, lot_run_id,
 # Annex 2's and are not applied here, so this is the raw distribution a category
 # map would be built against.
 outcomes_regimen_sql <- function(tte_tbl, run_id, lot_run_id,
-                                 both_denoms = FALSE) {
+                                 both_denoms = FALSE, subseq = NULL) {
   glue("
     SELECT d.DENOM, t.LOT_NUM, t.REGIMEN, count(*) AS N,
            round(100.0 * count(*)
                  / sum(count(*)) OVER (PARTITION BY d.DENOM, t.LOT_NUM), 2)
              AS PCT_OF_LINE,
+{prov_cols(subseq)}
            {sql_text(run_id)}     AS OUT_RUN_ID,
            {sql_text(lot_run_id)} AS LOT_RUN_ID,
            current_timestamp()    AS BUILT_AT

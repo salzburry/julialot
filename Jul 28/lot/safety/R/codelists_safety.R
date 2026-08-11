@@ -264,6 +264,29 @@ safety_fill_status <- function(codelist_dir) {
   # A filled code with no stated source cannot be checked back against the annex
   # or the dictionary, which is the only way anyone confirms it is right.
   no_source <- sum(!filled(sf$source_note)) + sum(!filled(hf$source_note))
+  # The same code twice for the same condition on the same field. Harmless to a
+  # DISTINCT read and not harmless to a count: a code list is joined to claims,
+  # and a duplicated code returns the matching claim once per copy. It is also
+  # how two people answering the same row separately shows up, which is worth
+  # seeing rather than merging.
+  dup_key <- function(d, cols)
+    paste(do.call(paste, c(lapply(cols, function(k) ifelse(is.na(d[[k]]), "", d[[k]])),
+                           sep = "|")))
+  sk <- dup_key(sf, c("condition", "code_type", "code", "icd_family"))
+  hk <- dup_key(hf, c("event", "code_type", "code"))
+  dup_codes <- unique(c(sk[duplicated(sk)], hk[duplicated(hk)]))
+  # More than one way marked as THE way. Precedence exists so a reader knows
+  # which rows are the definition and which the alternative; two primaries on
+  # one event is two definitions again, with the column that was meant to
+  # settle it saying both.
+  hp <- h$df[!is.na(h$df$precedence) & h$df$precedence == "primary", , drop = FALSE]
+  # Two primary CODE TYPES for one event - two methods, not two codes. Several
+  # POS values are one method; a POS primary beside a CONFINEMENT primary is
+  # two, and a reader with no rule for choosing unions them.
+  two_primary <- unique(unlist(lapply(unique(hp$event), function(e) {
+    ct <- unique(hp$code_type[hp$event %in% e])
+    if (length(ct) > 1L) paste0(e, " (", paste(ct, collapse = ", "), ")") else NULL
+  })))
   # A code type this file allows, on an event that cannot be identified that
   # way. Checked over every row rather than filled ones: a placeholder drafted
   # on the wrong field is a wrong definition already, and it is cheaper to say
@@ -301,6 +324,8 @@ safety_fill_status <- function(codelist_dir) {
     no_precedence = no_prec[!is.na(no_prec)],
     no_primary = no_primary[!is.na(no_primary)],
     no_source = no_source,
+    dup_codes = dup_codes[!is.na(dup_codes)],
+    two_primary = two_primary[!is.na(two_primary)],
     bad_family = bad_family[!is.na(bad_family)],
     no_family = no_family,
     # Filled rows only. An empty placeholder row carrying one of these is the
@@ -390,6 +415,17 @@ safety_refuse <- function(st) {
         "are the definition or the alternative: ", lst(st$no_precedence),
         ". Unmarked, the rows read as one list and every event is counted once ",
         "per way of identifying it.")
+  if (length(st$dup_codes))
+    add("the same code listed more than once for the same condition or event: ",
+        lst(st$dup_codes),
+        ". A code list is joined to claims, so a duplicated code returns the ",
+        "matching claim once per copy.")
+  if (length(st$two_primary))
+    add("utilisation event(s) with more than one primary identification ",
+        "method: ", lst(st$two_primary),
+        ". Precedence exists so a reader knows which rows are the definition; ",
+        "two primaries is two definitions, said by the column meant to settle ",
+        "it. Several codes of one type are one method - two types are two.")
   if (length(st$no_primary))
     add("utilisation event(s) with fallback rows and no primary: ",
         lst(st$no_primary),

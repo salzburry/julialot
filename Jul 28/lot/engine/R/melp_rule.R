@@ -168,8 +168,26 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
         AND GAP >= {cfg$melp_restart_days}
         AND GAP <  {cfg$melp_advance_days}
     ),
-    -- On to it. Two arms, because the rule advances at two different dates and
-    -- yielding looks at whichever exposure the boundary would fall on.
+    -- On to it. Two arms, because the rule advances at two different dates.
+    --
+    -- UNRESOLVED, and deliberately left as it stands. An arm acting on EXPO_DT
+    -- requires YIELD_THIS = 0; an arm acting on NEXT_DT requires BOTH flags.
+    -- Read as: yielding looks at whichever exposure the boundary falls on,
+    -- the NEXT_DT arms should ask only about YIELD_NEXT - and then a pair
+    -- whose FIRST dose sat beside a transplant, with no transplant at the
+    -- second, would advance at the second where today it does not.
+    --
+    -- The other reading is that a yielded exposure is not judged at all, so
+    -- the pair it heads is not a pair this rule owns, and the later dose falls
+    -- through to the engine. That is what the code does.
+    --
+    -- Which is right is a clinical question - whether a dose given as
+    -- transplant conditioning still starts the 180-day clock for the next one
+    -- - and none of the study team's four worked scenarios carries a coded
+    -- transplant, so none of them distinguishes the two. It is listed with the
+    -- rest of the melphalan scope questions rather than settled here, and
+    -- tests/test_aug1_melp.R pins the current behaviour so that whichever way
+    -- it is answered, the answer is a visible change.
     melp_inject AS (
       -- A.2 and B.3: the later dose of a >= 180-day pair, at its own date.
       SELECT DISTINCT PATID, NEXT_DT AS INJECT_DT

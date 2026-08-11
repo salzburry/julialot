@@ -538,6 +538,39 @@ ok(val("MELP_EXPOSURE_DAYS") == ask$melp_exposure_days &&
      val("MELP_ADVANCE_DAYS") == ask$melp_advance_days,
    "...against the thresholds the engine actually ships")
 
+
+cat("\n-- the mixed-yield case, pinned because it is not decided --\n")
+# yield_to_sct is optional and off by default, so nothing below touches a
+# contract run. What it pins is a behaviour nobody has chosen.
+#
+# An arm acting on EXPO_DT asks YIELD_THIS; an arm acting on NEXT_DT asks BOTH.
+# So a pair whose FIRST dose sat beside a transplant and whose second did not
+# is not advanced at the second - the first dose's flag suppresses a boundary
+# that would fall on the second. Read as "yielding looks at whichever exposure
+# the boundary falls on", it would advance. Read as "a yielded exposure is not
+# judged, so the pair it heads is not this rule's", it does not.
+#
+# Neither reading is implemented by accident and neither has been chosen. None
+# of the four worked scenarios carries a coded transplant, so none of them can
+# tell the two apart. This pins what the build does today, so that answering
+# the question is a visible change to a test rather than a silent one.
+melp <- paste(readLines(file.path(ROOT, "..", "engine", "R", "melp_rule.R"),
+                        warn = FALSE), collapse = "\n")
+inj <- sub("(?s).*melp_inject AS \\(", "", melp, perl = TRUE)
+inj <- sub("(?s)UNION.*", "", inj, perl = TRUE)
+ok(grepl("YIELD_THIS = 0 AND YIELD_NEXT = 0", inj, fixed = TRUE),
+   "the later-dose inject arm requires BOTH yield flags, not only the later one")
+ok(grepl("UNRESOLVED", melp, fixed = TRUE),
+   "...and the file says so, rather than reading as a settled rule")
+# The scenarios cannot speak to it, and say so rather than appearing to cover it.
+sc <- paste(readLines(file.path(ROOT, "R", "scenarios.R"), warn = FALSE),
+            collapse = "\n")
+ok(grepl("YIELD_THIS <- 0L", sc, fixed = TRUE) &&
+     grepl("YIELD_NEXT <- 0L", sc, fixed = TRUE),
+   "the worked scenarios hold both flags at zero, so none of them distinguishes them")
+ok(grepl("No coded transplant in any scenario", sc, fixed = TRUE),
+   "...and that is stated in the scenarios rather than left to be noticed")
+
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))
 if (fail > 0L) quit(status = 1L)

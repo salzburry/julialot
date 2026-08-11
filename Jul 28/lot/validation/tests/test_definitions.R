@@ -112,6 +112,41 @@ ok(!length(commented),
    if (length(commented)) paste0("cites a comment rather than code: ",
                                  paste(unique(commented), collapse = ", "))
    else "...and a line of code rather than a comment about it")
+# And a line of code that carries the claim. "Not a comment" is a weaker
+# statement than it reads as, and it was measuring the wrong property:
+# first_line_start cited a function DECLARATION, substitution cited the line
+# that CREATES the substitution view rather than the exclusion built on it, and
+# steroids cited one later-line filter while claiming steroids never start,
+# join or sustain any line. All four are code. None of them proved the sentence
+# beside them.
+#
+# So each dimension names the tokens its answer turns on, and the cited lines
+# have to carry all of them between them. It cannot certify that a citation
+# supports a claim in general - nothing mechanical can - but it does catch the
+# failure that actually happened: a citation narrowing to one clause of a
+# multi-part answer, and staying green while the rest went unevidenced.
+unproven <- character(0)
+for (i in seq_len(nrow(ours))) {
+  want <- LOT_DIMENSIONS[[i]]$proves
+  if (is.null(want)) { unproven <- c(unproven, paste0(ours$dimension_id[i],
+                                                      " (names no tokens)")); next }
+  p <- cite_parts(ours$ours_at[i]); if (is.null(p)) next
+  txt <- paste(vapply(p, function(c_i) {
+    f <- file.path(STUDY, c_i$file)
+    if (!file.exists(f)) return("")
+    l <- readLines(f, warn = FALSE)
+    if (c_i$line > length(l)) "" else l[c_i$line]
+  }, character(1)), collapse = "\n")
+  miss <- want[!vapply(want, function(w) grepl(w, txt, fixed = TRUE), logical(1))]
+  if (length(miss))
+    unproven <- c(unproven, paste0(ours$dimension_id[i], " (",
+                                   paste(miss, collapse = ", "), ")"))
+}
+ok(!length(unproven),
+   if (length(unproven))
+     paste0("cited lines do not carry what the answer turns on: ",
+            paste(unproven, collapse = "; "))
+   else "...and between them the cited lines carry every term the answer turns on")
 # The two answers most likely to be wrong if the build changed under us.
 #
 # On the code, not the header comment. 05_sct.R's "# SCT detection rules:"
@@ -346,6 +381,32 @@ b <- answered(g); b$source_id[1] <- "IMWG_consensus"
 b$source_type[1] <- "guideline"; b$citation[1] <- "IMWG 2016 consensus, section 3"
 runs(read_definition_sources(dwr(b)),
      "...while IMWG is not a trial and is not asked for an NCT id")
+# One id per CELL as well as per slot. The slot check reads the first match, so
+# "NCT-A and NCT-B" passed it while naming two trials - and two such cells
+# agreeing on their first match are three trials in one column.
+b <- answered(g); b$source_id[1] <- "trial_1"
+b$citation[1] <- "NCT04000000 and NCT05000000 eligibility"
+stops(read_definition_sources(dwr(b)),
+      "...and one citation naming two trials, of which only the first is read")
+# IMWG has no NCT id, so its identity is the document. Unchecked, one slot
+# could quote the consensus on one dimension and another guideline on the next,
+# rendered as one column headed IMWG.
+# Two IMWG rows on DIFFERENT dimensions - the same slot answering twice, which
+# is what the slot is for.
+iw <- which(g$source_id == "IMWG_consensus")[1:2]
+b <- answered(answered(g, iw[1]), iw[2])
+b$source_type[iw] <- "guideline"
+b$citation[iw[1]] <- "IMWG 2016 consensus, section 3"
+b$citation[iw[2]] <- "NCCN v2.2025, section MM-4"
+stops(read_definition_sources(dwr(b)),
+      "the IMWG slot quoting two different documents")
+b$citation[iw[2]] <- "IMWG 2016 consensus, section 5"
+runs(read_definition_sources(dwr(b)),
+     "...while two sections of the one document are one source")
+# The slot itself is required. Deleting it left a grid that loaded, satisfied a
+# dimensions-by-sources row count, and answered a different question.
+stops(read_definition_sources(dwr(g[g$source_id != "IMWG_consensus", ])),
+      "a grid with the IMWG block deleted entirely")
 
 cat("\n-- an answered row that says nothing about itself --\n")
 # Both of these were unchecked, and both are worse than a blank row rather than
