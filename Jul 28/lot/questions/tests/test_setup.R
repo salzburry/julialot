@@ -666,6 +666,43 @@ ok(any(grepl("identical(ster_md5, ster_hash())", vh, fixed = TRUE)),
    "...and it is hashed again after the read, so a file re-issued mid-run is caught")
 clear()
 
+cat("\n-- Q6 asks the follow-up question the same way the dashboard does --\n")
+# Q2 and Q4 are rates over a follow-up window, and the window is not the same
+# length for every patient. Q6 is what says whether the two sides are
+# comparable - so it has to carry both of the cohort's follow-up lengths, not
+# whichever one is shorter to write.
+q6 <- paste(pm, collapse = "\n")
+ok(grepl("Q6 POMA & follow-up", q6, fixed = TRUE),
+   "the POMA workbook has a follow-up tab")
+ok(grepl("FU_DAYS", q6, fixed = TRUE) && grepl("FU_DAYS_CE", q6, fixed = TRUE),
+   "...on both definitions - to death or study end, and capped at disenrolment")
+# One grouping, used by all three of Q6's tables. A second spelling of the CASE
+# on one tab is a second definition of who counts as a POMA patient, and the
+# three tables would no longer be about the same people. Counted as uses of the
+# binding, not of the CASE text: other questions spell their own group label,
+# and that is theirs to spell.
+ok(grepl("q6_grp <- ", q6, fixed = TRUE) &&
+     length(gregexpr("{q6_grp}", q6, fixed = TRUE)[[1]]) == 3L,
+   "...with the POMA/other split written once and used by all three tables")
+# A LOT1 patient with no cohort row has no follow-up columns, and
+# percentile_approx ignores NULLs - so a silent drop shrinks the median's
+# denominator while n_pts still reports the whole group.
+ok(grepl("missing_cohort_rows", q6, fixed = TRUE) &&
+     grepl("no cohort row (broken join)", q6, fixed = TRUE),
+   "...and a patient with no cohort row is counted, not dropped into the median")
+# Two deliverables now report what ended follow-up. If they use different
+# predicates they will disagree about who died, and nobody reading one of them
+# can tell. Aliases differ, so they are compared with the alias stripped.
+dash <- paste(readLines(file.path(GROUP, "dashboard", "R", "sections.R"),
+                        warn = FALSE), collapse = "\n")
+nm <- function(x) gsub("\\s+", " ", gsub("[fp]\\.", "", x))
+WANT <- "DEATH_DT IS NOT NULL AND DEATH_DT <= ENDDATE_CE"
+ok(grepl(WANT, nm(q6), fixed = TRUE) && grepl(WANT, nm(dash), fixed = TRUE),
+   "the workbook and the dashboard bound a death in follow-up identically")
+ok(grepl("ENDDATE_CE < ENDDATE", nm(q6), fixed = TRUE) &&
+     grepl("ENDDATE_CE < ENDDATE", nm(dash), fixed = TRUE),
+   "...and read disenrolment identically too")
+
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))
 if (fail > 0L) quit(status = 1L)

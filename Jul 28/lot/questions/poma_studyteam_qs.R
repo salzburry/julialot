@@ -22,6 +22,10 @@
 #   Q5  Continuous pharmacy benefit: the 12-month pre-LOT1 check the study
 #       relies on, plus a longer look-back on INDEX_DATE. The cohort sets
 #       INDEX_DATE to the 1L start, so both are the same anchor.
+#   Q6  Follow-up length, POMA-1L against other-1L, on both of the cohort's
+#       definitions - with what ended it and the index-year accrual behind it.
+#       Q2 and Q4 are rates over that window, so this is what says whether
+#       their two sides are comparable.
 #
 # Runs on this cohort only, and every table is this run's own. Anything needing
 # a second cohort is in broad_studyteam_qs.R. Builds nothing persistent -
@@ -242,6 +246,7 @@ main <- function() {
       "Q3 = an NDMM audit: other-cancer rate must be 0, since NDMM excludes those patients by construction. The POMA-vs-other association needs a broad cohort and is in broad_studyteam_qs.R.",
       "Q4 = was there trial evidence before the 1L POMA? Windows cut at this cohort's own 1L start, with diagnosis-to-1L as its own column. Claims-based evidence, not proof of therapy.",
       "Q5 = LOT1-anchored NDMM proof (ce_ge_12mo_pre_lot1 / len_thal_in_12mo_pre_lot1, the 12-mo pre-LOT1 check) PLUS a longer LEN/THAL look-back on the cohort's INDEX_DATE, which is the same date (the cohort sets INDEX_DATE = LOT1_START_DT).",
+      "Q6 = follow-up length, POMA-1L against other-1L, on both of the cohort's definitions, with what ended it and the index-year accrual behind it. Q2 and Q4 are rates over that window, so read Q6 before treating their two sides as comparable.",
       "Operational definitions are shared with R/validation_qs.R (single source of truth)."),
     tables = list())
 
@@ -616,6 +621,114 @@ main <- function() {
                       "the index-anchored columns are a longer look-back on the SAME anchor, not a second window. ",
                       "See the 'Optum coverage' tab for the coverage validation."),
     narrative = q5_notes, tables = q5_tables)
+
+  # ---- Q6: follow-up, POMA-1L against other-1L ----------------------------
+  # The tab that says whether the rest of the workbook compares like with like.
+  # Q2 and Q4 are rates over a window, and the window is not the same length
+  # for everybody: a fixed study end means a later index has less room. If the
+  # two groups accrued differently - and POMA at 1L is unusual enough in a
+  # newly-diagnosed cohort that they may well have - then a lower rate on one
+  # side is the calendar rather than the treatment, and nothing else here says
+  # so.
+  #
+  # Both follow-up lengths, because the cohort carries two and they answer
+  # different questions: FU_DAYS runs to death or the study end and ignores
+  # disenrolment, FU_DAYS_CE is also capped where continuous enrolment stops -
+  # the protocol's follow-up period. Same pair the dashboard shows.
+  q6_tables <- list(); q6_notes <- character(0)
+  # One CASE, used by all three tables. A second spelling of the grouping is a
+  # second definition of who is a POMA patient.
+  q6_grp <- "CASE WHEN p.PATID IS NOT NULL THEN 'POMA-1L' ELSE 'other-1L' END"
+  # The follow-up columns are the cohort's own. LEFT JOIN, so a LOT1 patient
+  # with no cohort row is counted as a broken join rather than dropped - the
+  # percentiles ignore NULLs, so a dropped patient would quietly shrink a
+  # denominator the group size still reports in full. Same treatment Q3 gives
+  # missing_flag_rows.
+  q6_ctes <- glue("
+      WITH poma1l AS (SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long}
+                      WHERE LOT_NUM=1 AND array_contains(split(LOT_BASE_MEDS,' '),'{poma}')),
+      lot1 AS (SELECT DISTINCT cast(PATID as string) PATID FROM {lot_long} WHERE LOT_NUM=1),
+      fu AS (SELECT cast(PATID as string) PATID,
+                    cast(INDEX_DATE as date) INDEX_DATE,
+                    cast(ENDDATE as date)    ENDDATE,
+                    cast(ENDDATE_CE as date) ENDDATE_CE,
+                    cast(DEATH_DT as date)   DEATH_DT,
+                    cast(FU_DAYS as int)     FU_DAYS,
+                    cast(FU_DAYS_CE as int)  FU_DAYS_CE
+             FROM {final_tbl})")
+  q6_from <- "
+      FROM lot1 l LEFT JOIN poma1l p USING (PATID) LEFT JOIN fu f ON f.PATID = l.PATID"
+  if (have_final) {
+    q6_tables[["Follow-up days by group (both definitions)"]] <- best_effort(
+      db_q(con, glue("{q6_ctes}
+      SELECT {q6_grp}                                    AS grp,
+             count(*)                                    AS n_pts,
+             sum(CASE WHEN f.PATID IS NULL THEN 1 ELSE 0 END) AS missing_cohort_rows,
+             percentile_approx(f.FU_DAYS, 0.5)           AS median_fu_days,
+             percentile_approx(f.FU_DAYS_CE, 0.5)        AS median_fu_days_ce,
+             percentile_approx(f.FU_DAYS_CE, 0.25)       AS p25_fu_days_ce,
+             percentile_approx(f.FU_DAYS_CE, 0.75)       AS p75_fu_days_ce,
+             min(f.FU_DAYS_CE)                           AS min_fu_days_ce,
+             max(f.FU_DAYS_CE)                           AS max_fu_days_ce
+      {q6_from}
+      GROUP BY 1 ORDER BY 1")), "POMA-1L vs other-1L follow-up days")
+
+    # What ended it. A short median because people died and a short median
+    # because they left the data are the same number and different findings.
+    # "no cohort row" is a category rather than a silent drop, so the four
+    # always sum to the group.
+    q6_tables[["What ended follow-up, by group"]] <- best_effort(
+      db_q(con, glue("{q6_ctes}
+      SELECT grp, fu_ended_by, n_pts,
+             round(100.0 * n_pts / sum(n_pts) OVER (PARTITION BY grp), 1) AS pct_of_grp
+      FROM (
+        SELECT {q6_grp} AS grp,
+               CASE WHEN f.PATID IS NULL
+                      THEN 'no cohort row (broken join)'
+                    WHEN f.DEATH_DT IS NOT NULL AND f.DEATH_DT <= f.ENDDATE_CE
+                      THEN 'died'
+                    WHEN f.ENDDATE_CE < f.ENDDATE
+                      THEN 'disenrolled'
+                    ELSE 'followed to study end' END AS fu_ended_by,
+               count(*) AS n_pts
+        {q6_from}
+        GROUP BY 1, 2
+      ) e ORDER BY grp, fu_ended_by")), "POMA-1L vs other-1L follow-up end reason")
+
+    # The mechanism, if the two medians differ. Accrual is the first thing to
+    # rule out, and it is the one this cohort can rule out on its own.
+    q6_tables[["Index year by group, with follow-up"]] <- best_effort(
+      db_q(con, glue("{q6_ctes}
+      SELECT {q6_grp}                             AS grp,
+             cast(year(f.INDEX_DATE) as string)   AS index_year,
+             count(*)                             AS n_pts,
+             percentile_approx(f.FU_DAYS_CE, 0.5) AS median_fu_days_ce
+      {q6_from}
+      WHERE f.INDEX_DATE IS NOT NULL
+      GROUP BY 1, 2 ORDER BY 1, 2")), "POMA-1L vs other-1L index year")
+
+    q6_notes <- c(
+      "READ THIS BEFORE Q2 AND Q4. Both are rates over a follow-up window, and the window is not the same length for every patient:",
+      "the study end is fixed, so a patient indexed later has less room. If POMA-1L and other-1L accrued differently, a lower rate on",
+      "one side is the calendar rather than the treatment. This tab is what rules that out - or does not.",
+      "TWO DEFINITIONS, both from the cohort build. median_fu_days runs from the day after the index date to death or the study end and",
+      "ignores disenrolment - the LOT run's primary analysis. median_fu_days_ce is also capped where continuous enrolment stops, which",
+      "is the protocol's follow-up period and what the outcomes build censors on. Where the two differ, the difference is disenrolment.",
+      "WHAT ENDED IT is the same partition, in that order: a patient who disenrolled and died afterwards counts as disenrolled, because",
+      "that death is outside the window this cohort observes. The categories are mutually exclusive and cover the whole group.",
+      "missing_cohort_rows / 'no cohort row' counts LOT1 patients with NO row in the cohort table - a broken join, not a clean patient.",
+      "It must be 0. The percentiles ignore NULLs, so a dropped patient would shrink the median's denominator while n_pts still counted them.",
+      "INDEX YEAR is the mechanism to check first if the medians differ. Groups that accrued in different years have different follow-up",
+      "by construction, and that is not a finding about POMA. Its n_pts excludes any patient with no cohort row, since they have no index",
+      "date to sit under - so it is short of the group size above by exactly missing_cohort_rows, and matches once that is 0.")
+  } else {
+    q6_notes <- paste0("Q6 needs ", final_tbl,
+                       ", which is unreadable this run - the follow-up columns are the cohort build's.")
+  }
+  add_sheet(name = "Q6 POMA & follow-up", title = "Q6 - follow-up length, POMA-1L against other-1L",
+    subtitle = paste0("Whether the rates on the other tabs are measured over comparable windows. ",
+                      "Cohort: ", cohort_label, "."),
+    narrative = q6_notes, tables = q6_tables)
 
   # ---- write --------------------------------------------------------------
   xlsx <- file.path(out_dir, paste0("poma_studyteam_qs_ndmm_", stamp, ".xlsx"))
