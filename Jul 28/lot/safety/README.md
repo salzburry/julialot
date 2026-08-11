@@ -116,7 +116,7 @@ treatment here.
 |---|---|
 | the twenty-three conditions' codes | the protocol's Annex 3 / Annex 5 |
 | MM-related inpatient stay | a decision on which diagnosis position makes a stay MM-related |
-| ER visit | the values on the `POS` and `TOS` tabs of the data dictionary workbook. Those tabs are referenced by the field descriptions but were not in the captured PDF, so the rows are placeholders on `POS` and `TOS_CD`. |
+| ER visit | the values on the `POS` and `TOS` tabs of the data dictionary. The field descriptions point at those tabs, but the tabs were not in the copy available when these rows were written, so they are placeholders on `POS` and `TOS_CD`. |
 | a revenue-code field | the dictionary surfaces none, but Optum derives ICU/maternity/newborn flags from revenue codes upstream - is one exposed anywhere we can join to? Until then the `REV_CD` row stays empty. |
 
 The last three are business-rule questions rather than code-list questions: they

@@ -24,7 +24,7 @@ source(file.path(ROOT, "R", "codelists_safety.R"))
 TPL <- file.path(ROOT, "codelists")
 
 cat("\n-- the roster is the protocol's, not a subset of it --\n")
-all_c <- unlist(unname(SAFETY_CONDITIONS))
+all_c <- safety_roster()$condition
 ok(length(all_c) == 23L, paste0("Table 2's twenty-three conditions (", length(all_c), ")"))
 ok(identical(sort(names(SAFETY_CONDITIONS)), sort(SAFETY_DOMAINS)),
    "...in the five domains it groups them under")
@@ -114,6 +114,28 @@ stops(safety_codelist(fill(function(s) { s$condition[1] <- "liver_things"; s }))
       "...nor a condition renamed out of the protocol's roster")
 stops(safety_codelist(fill(function(s) s[-1, ])),
       "...nor a condition deleted from the file altogether")
+
+cat("\n-- ...and for the semantic ones, which parse perfectly --\n")
+# Every case here has codes in it and would load as a finished definition.
+# What is wrong is what it measures, not whether it can be read.
+stops(safety_codelist(fill(function(s) { s$code_type[1] <- ""; s })),
+      "a code with no code_type: the code has nowhere to join")
+stops(safety_codelist(fill(function(s) {
+        s$domain[s$condition == "chronic_kidney_disease"] <- "cardiovascular"; s })),
+      "a condition filed under a domain the protocol does not put it in")
+stops(safety_codelist(fill(function(s) {
+        s$acute_chronic[s$condition == "chronic_kidney_disease"] <- "acute"; s })),
+      "a condition relabelled acute when Table 2 calls it chronic")
+mfill <- function(mut) {
+  d <- fill(identity)
+  h2 <- read.csv(file.path(d, "hcru_events.csv"), stringsAsFactors = FALSE,
+                 colClasses = "character")
+  write.csv(mut(h2), file.path(d, "hcru_events.csv"), row.names = FALSE, na = "")
+  d
+}
+stops(safety_codelist(mfill(function(h2) {
+        h2$measure[h2$event == "er_visit"] <- "length_of_stay"; h2 })),
+      "a utilisation event measuring something Table 3 does not ask of it")
 
 cat("\n-- a placeholder on an unconfirmed field may be drafted, not run --\n")
 # The gap between draftable and runnable is where this goes wrong quietly: a

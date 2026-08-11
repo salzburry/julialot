@@ -217,6 +217,31 @@ ok(any(grepl("are not in this folder", dn, fixed = TRUE)) &&
 ok(any(grepl("summary of a document", dn, fixed = TRUE)),
    "...and so is why a summary of one was not used instead")
 
+cat("\n-- the grid is one row per (dimension, source), and says so --\n")
+# Nothing checked the source side of the key, so a typo was a new source, a
+# second row was an addition rather than a correction, and one slot could hold
+# a different trial on every row - twelve trials rendered as one column.
+dtmp <- file.path(tempdir(), "defsrc.csv")
+dwr <- function(rows) { write.csv(rows, dtmp, row.names = FALSE, na = ""); dtmp }
+g <- read.csv(file.path(ROOT, "definitions_sources.csv"), stringsAsFactors = FALSE,
+              colClasses = "character")
+answered <- function(x, n = 1L) {
+  x$source_type[n] <- "registry"; x$citation[n] <- "NCT04000000 eligibility"
+  x$retrieved[n] <- "2026-08-11"; x$answer[n] <- "transplant is not a line"
+  x$concordance[n] <- "differs"; x
+}
+runs(read_definition_sources(dwr(answered(g))), "a governed answered row loads")
+b <- g; b$source_id[1] <- "trail_1"
+stops(read_definition_sources(dwr(b)), "a mistyped source_id is not a new source")
+b <- answered(g); b <- rbind(b, b[1, ])
+stops(read_definition_sources(dwr(b)),
+      "two rows for one (dimension, source) - a correction replaces, it does not add")
+b <- answered(answered(g, 1L), 2L)
+b$source_id[2] <- b$source_id[1]
+b$citation[2] <- "NCT09999999 eligibility"
+stops(read_definition_sources(dwr(b)),
+      "one slot citing two NCT ids - that is two trials in one column")
+
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))
 if (fail > 0L) quit(status = 1L)

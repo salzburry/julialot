@@ -469,12 +469,27 @@ refuses(mk(ndmm = list(RUN_ID = "N8", UPDATED_AT = "2026-04-02 11:00:00")),
 refuses(mk(ndmm = modifyList(NDMMS, list(UPDATED_AT = "2026-04-02 11:00:00"))),
         "cohort run N7", "...and so is the same run id with a later stamp")
 refuses(mk(meta = NULL), "has no row in", "a complete run with no metadata row is refused")
-# Nothing recorded is nothing to compare. Saying so beats inventing a match.
-runs(mk(meta = modifyList(META, list(COHORT_RUN_ID = "")))(
-       NULL, "ndmm_", "ndmm_NDMM_COHORT", SE),
-     "a run that recorded no cohort attempt is reported, not refused")
+# Nothing recorded is nothing to compare - and a comparison that could not be
+# made is not one that passed. These three used to log and carry on, which put
+# outcomes measured over an unproven lineage into tables carrying this run's
+# OUT_RUN_ID, indistinguishable from proven ones because nothing downstream was
+# told. They stop now, and an operator who wants them accepts that by name.
+Sys.unsetenv("OUT_ALLOW_UNPROVEN_LINEAGE")
+refuses(mk(meta = modifyList(META, list(COHORT_RUN_ID = ""))),
+        "records no cohort attempt",
+        "a run that recorded no cohort attempt is refused, not reported")
+refuses(mk(ndmm = NULL), "No cohort build status",
+        "...and so is a cohort with no build status at all")
+# The stamp exists because two attempts can reuse a run id, so a blank one
+# proves nothing. It used to count as a match.
+refuses(mk(meta = modifyList(META, list(COHORT_STAMP = ""))),
+        "with no stamp",
+        "...and a recorded attempt with no stamp, which cannot tell two apart")
+# Named, on the record, and only then.
+Sys.setenv(OUT_ALLOW_UNPROVEN_LINEAGE = "TRUE")
 runs(mk(ndmm = NULL)(NULL, "ndmm_", "ndmm_NDMM_COHORT", SE),
-     "...and so is a cohort with no build status at all")
+     "OUT_ALLOW_UNPROVEN_LINEAGE=TRUE accepts an unproven lineage deliberately")
+Sys.unsetenv("OUT_ALLOW_UNPROVEN_LINEAGE")
 
 cat("\n-- the arguments are pinned the way the other packages pin them --\n")
 stops(pin_cohort(cfg_defaults, "", "ndmm_"), "a missing cohort table stops it")

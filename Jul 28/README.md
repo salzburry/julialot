@@ -120,7 +120,9 @@ and after each read, so a run records which version it used.
 
 ## Tests
 
-No connection needed. They check the SQL, the settings and the guards.
+No connection needed. They check the SQL, the settings and the guards. The
+merge gate runs every one of them with a single exit status, so the counts
+below are recorded against a commit rather than reported by whoever ran them.
 
 ```
 Rscript overall/tests/test_runner.R

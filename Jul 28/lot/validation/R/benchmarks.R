@@ -214,7 +214,24 @@ read_benchmarks <- function(path) {
   if (length(unknown))
     bad <- c(bad, paste0("names metrics the harness does not measure: ",
                          paste(unknown, collapse = ", ")))
+  # The grid is keyed on (metric, line, regimen) and merged on it, so a
+  # duplicate key does not overwrite - it multiplies, and one observation comes
+  # back as two rows with two verdicts.
+  # Only where a value was supplied. The shipped grid carries several blank
+  # slots on one key on purpose - the top-five regimens per line are five rows
+  # waiting for a regimen - and an empty slot is not a reference, so it cannot
+  # multiply anything. The moment a value goes in, the regimen has to as well,
+  # which the per-metric check below requires.
   supplied <- !is.na(df$published_value) & nzchar(trimws(df$published_value))
+  kk <- paste(ifelse(is.na(df$metric), "", df$metric),
+              ifelse(is.na(df$line), "", df$line),
+              ifelse(is.na(df$regimen), "", df$regimen), sep = "|")[supplied]
+  if (any(duplicated(kk)))
+    bad <- c(bad, paste0("more than one reference for the same ",
+                         "(metric, line, regimen): ",
+                         paste(unique(kk[duplicated(kk)]), collapse = "; "),
+                         ". The comparison merges on that key, so a duplicate ",
+                         "returns one observation twice."))
   nonnum <- supplied & is.na(suppressWarnings(as.numeric(df$published_value)))
   if (any(nonnum))
     bad <- c(bad, paste0("published_value is not a number on row(s): ",
@@ -248,6 +265,43 @@ read_benchmarks <- function(path) {
                            ctx[[nm]], " is what makes it comparable. Row(s): ",
                            paste(which(blank), collapse = ", ")))
   }
+  # "caveat" without the caveat is just "yes" with a hedge on it, and it is
+  # rendered as a different verdict, so the reader is owed the difference.
+  cav <- supplied & tolower(trimws(ifelse(is.na(df$comparable), "", df$comparable))) == "caveat" &
+    (is.na(df$notes) | !nzchar(trimws(df$notes)))
+  if (any(cav))
+    bad <- c(bad, paste0("comparable is 'caveat' with no note saying what the ",
+                         "caveat is, on row(s): ",
+                         paste(which(cav), collapse = ", ")))
+  # A number is only a number in its unit, and the unit is per metric, not per
+  # row - a percentage filed as a count compares to the wrong observation.
+  want_unit <- vapply(df$metric, function(m)
+    if (is.null(BENCHMARK_METRICS[[m]]$unit)) NA_character_
+    else BENCHMARK_METRICS[[m]]$unit, character(1), USE.NAMES = FALSE)
+  wu <- !is.na(want_unit) & !is.na(df$unit) & trimws(df$unit) != want_unit
+  if (any(wu))
+    bad <- c(bad, paste0("unit does not match the metric's on row(s): ",
+                         paste(which(wu), collapse = ", "), " - expected ",
+                         paste(unique(want_unit[wu]), collapse = "/")))
+  pct <- supplied & !is.na(want_unit) & want_unit == "pct"
+  oob <- pct & (suppressWarnings(as.numeric(df$published_value)) < 0 |
+                  suppressWarnings(as.numeric(df$published_value)) > 100)
+  if (any(oob, na.rm = TRUE))
+    bad <- c(bad, paste0("a percentage outside 0-100 on row(s): ",
+                         paste(which(oob), collapse = ", ")))
+  # A per-line metric with no line, or a regimen metric with no regimen, keys
+  # on a blank and merges against whatever else is blank.
+  per_line <- vapply(df$metric, function(m) isTRUE(BENCHMARK_METRICS[[m]]$per_line),
+                     logical(1), USE.NAMES = FALSE)
+  noline <- supplied & per_line & (is.na(df$line) | !nzchar(trimws(df$line)))
+  if (any(noline))
+    bad <- c(bad, paste0("a per-line metric with no line on row(s): ",
+                         paste(which(noline), collapse = ", ")))
+  noreg <- supplied & df$metric == "pct_regimen_at_line" &
+    (is.na(df$regimen) | !nzchar(trimws(df$regimen)))
+  if (any(noreg))
+    bad <- c(bad, paste0("a regimen-frequency benchmark with no regimen on ",
+                         "row(s): ", paste(which(noreg), collapse = ", ")))
   if (length(bad))
     stop("benchmarks.csv does not load:\n  ", paste(bad, collapse = "\n  "),
          call. = FALSE)
@@ -263,8 +317,13 @@ compare_benchmarks <- function(observed, refs) {
                            ifelse(is.null(d$regimen) | is.na(d$regimen), "", d$regimen),
                            sep = "|")
   refs$.k <- key(refs); observed$.k <- key(observed)
+  # The three context columns travel with the verdict. Requiring them on the
+  # way in and dropping them on the way out puts the basis for a comparison in
+  # a file nobody reads and the verdict in the one they do - which is the
+  # traceability the guard was added to get, lost at the last step.
   out <- merge(observed, refs[, c(".k", "published_value", "unit", "source",
-                                  "comparable", "notes")],
+                                  "source_population", "source_followup",
+                                  "source_algorithm", "comparable", "notes")],
                by = ".k", all.x = TRUE)
   cmp <- tolower(trimws(ifelse(is.na(out$comparable), "no", out$comparable)))
   out$verdict <- ifelse(

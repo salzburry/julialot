@@ -178,7 +178,41 @@ read_definition_sources <- function(path) {
   if (length(unknown))
     bad <- c(bad, paste0("names dimensions that do not exist: ",
                          paste(unknown, collapse = ", ")))
+  # The grid is one row per (dimension, source), and that is the whole of its
+  # arithmetic: twelve dimensions against six sources. Nothing checked the
+  # source side of it, so trail_1 was a source, a second row for the same cell
+  # was an addition rather than a correction, and trial_1 could be a different
+  # protocol on every row - twelve trials wearing one name, rendered as one
+  # column. None of it would have failed to load.
+  DEF_SOURCE_IDS <- c("IMWG_consensus", paste0("trial_", 1:5))
+  sid <- ifelse(is.na(df$source_id), "", trimws(df$source_id))
+  unk <- setdiff(unique(sid[nzchar(sid)]), DEF_SOURCE_IDS)
+  if (length(unk))
+    bad <- c(bad, paste0("source_id must be one of ",
+                         paste(DEF_SOURCE_IDS, collapse = "/"), " - found: ",
+                         paste(unk, collapse = ", ")))
+  k <- paste(ifelse(is.na(df$dimension_id), "", df$dimension_id), sid, sep = "|")
+  dup <- unique(k[duplicated(k) & nzchar(sid)])
+  if (length(dup))
+    bad <- c(bad, paste0("more than one row for the same (dimension, source): ",
+                         paste(sub("\\|", " / ", dup), collapse = "; "),
+                         ". A correction replaces the row; two rows render as ",
+                         "two answers from one source."))
   filled <- !is.na(df$answer) & nzchar(trimws(df$answer))
+  # One trial per slot. The identity lives in the citation, so a slot whose
+  # answered rows cite two different NCT ids is two trials in one column.
+  nct <- regmatches(ifelse(is.na(df$citation), "", df$citation),
+                    regexpr("NCT[0-9]{8}", ifelse(is.na(df$citation), "", df$citation)))
+  has_nct <- grepl("NCT[0-9]{8}", ifelse(is.na(df$citation), "", df$citation))
+  for (s in setdiff(unique(sid[filled & nzchar(sid)]), "")) {
+    ids <- unique(regmatches(df$citation[filled & sid == s & has_nct],
+                             regexpr("NCT[0-9]{8}",
+                                     df$citation[filled & sid == s & has_nct])))
+    if (length(ids) > 1L)
+      bad <- c(bad, paste0(s, " cites more than one trial: ",
+                           paste(ids, collapse = ", "),
+                           ". One slot is one trial, or the column is a blend."))
+  }
   nocite <- filled & (is.na(df$citation) | !nzchar(trimws(df$citation)))
   if (any(nocite))
     bad <- c(bad, paste0("an answer with no citation on row(s): ",
@@ -232,15 +266,22 @@ compare_definitions <- function(sources, dims = LOT_DIMENSIONS) {
       return(data.frame(dimension_id = d$dimension_id, dimension = d$dimension,
                         ours = d$ours, source_id = NA_character_,
                         source_type = NA_character_, citation = NA_character_,
+                        retrieved = NA_character_,
                         answer = NA_character_, concordance = "not yet sourced",
+                        notes = NA_character_,
                         stringsAsFactors = FALSE))
     data.frame(dimension_id = d$dimension_id, dimension = d$dimension,
                ours = d$ours, source_id = rows$source_id,
                source_type = rows$source_type, citation = rows$citation,
+               retrieved = rows$retrieved,
                answer = rows$answer,
                concordance = ifelse(is.na(rows$concordance) |
                                       !nzchar(trimws(rows$concordance)),
                                     "unclear", tolower(trimws(rows$concordance))),
+               # "differs" is only useful with how. Dropping notes here left the
+               # verdict in the rendered file and the explanation in the source
+               # CSV, which is the wrong way round for the one a reader opens.
+               notes = rows$notes,
                stringsAsFactors = FALSE)
   })
   do.call(rbind, out)

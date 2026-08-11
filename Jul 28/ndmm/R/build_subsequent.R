@@ -213,8 +213,17 @@ subseq_check_cohort_attempt <- function(con, lot_run_id) {
     a <- trimws(as.character(a)); b <- trimws(as.character(b))
     length(a) == 1L && length(b) == 1L && !is.na(a) && !is.na(b) && identical(a, b)
   }
-  same <- eq(lot_run_id, now_id) &&
-    (is.na(lot_stamp) || !nzchar(trimws(lot_stamp)) || eq(lot_stamp, now_stamp))
+  # A blank stamp used to count as a match. The stamp exists precisely because
+  # two attempts can reuse a run id, so a blank one does not prove the attempt -
+  # it declines to speak about it, and "could not check" is not "checked".
+  if (eq(lot_run_id, now_id) && (is.na(lot_stamp) || !nzchar(trimws(lot_stamp)))) {
+    subseq_unproven(paste0(meta, " records cohort run ", lot_run_id,
+                           " with no stamp, so a second attempt under the same ",
+                           "run id cannot be told from the one the lines were ",
+                           "built over."))
+    return(invisible(list(cohort_run = lot_run_id, cohort_stamp = NA_character_)))
+  }
+  same <- eq(lot_run_id, now_id) && eq(lot_stamp, now_stamp)
   if (!same)
     stop("The LOT lines were built over NDMM run ", lot_run_id, " (", lot_stamp,
          "), but ", tbl, " now holds run ", now_id, " (", now_stamp,
