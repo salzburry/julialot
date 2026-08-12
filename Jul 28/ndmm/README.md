@@ -504,12 +504,14 @@ wider set, and they are checked against each other at run time. Long lists are
 cut at twenty codes and say how many were left out.
 
 The finding goes on the run's own row as `NDMM_RUN_METADATA.FINDINGS`, with
-its row count and codes - `raw_icd_flag(16 rows; C9000 V5811)` - so a cohort
-found months later says what it was built over, and how much of it, without
-anyone having kept the log. There is no ceiling: sixteen rows and sixteen
-million report the same way and both let the build finish. That acceptance was
-made against one data delivery and is recorded in `DECISIONS.md` #11 to be
-re-read on each refresh. `NDMM_WAIVERS=raw_icd_flag` is still accepted and now does
+its magnitude - `raw_icd_flag(16 rows, 15 patients, 2 codes; C9000[MM
+diagnosis,12r,11p] ...)` - so a cohort found months later says what it was
+built over and how much of it, without anyone having kept the log.
+
+`NDMM_ICD_FLAG_MAX_ROWS` stops the build above a row count. It ships empty, so
+the build reports at any volume until the study team sets one, and every run
+names which of the two it was under. It bounds volume, not composition -
+`DECISIONS.md` #11. `NDMM_WAIVERS=raw_icd_flag` is still accepted and now does
 nothing - an unrecognised waiver name stops the build as a typo, so removing it
 would break the commands that were told to pass it.
 

@@ -15,30 +15,39 @@
 
 
 -- 1. The one place to edit. Point these at the run you want.
-CREATE OR REPLACE TEMPORARY VIEW tte  AS
-SELECT * FROM hive_metastore.osk02156.ndmm_OUT_TTE;
+--
+--    Both views are pinned to the LATEST outcomes run in OUT_TTE, and
+--    OUT_ATTRITION is pinned to that same run rather than to its own latest.
+--    The two are separate writes, so a run that died between them leaves one
+--    from this attempt and one from the last - and every statement below would
+--    otherwise mix them and look ordinary doing it. Pinned, a mismatch empties
+--    `attr` instead, which no reader can mistake for an answer.
+CREATE OR REPLACE TEMPORARY VIEW tte AS
+SELECT * FROM hive_metastore.osk02156.ndmm_OUT_TTE
+WHERE OUT_RUN_ID = (SELECT max(OUT_RUN_ID)
+                    FROM hive_metastore.osk02156.ndmm_OUT_TTE);
 
 CREATE OR REPLACE TEMPORARY VIEW attr AS
-SELECT * FROM hive_metastore.osk02156.ndmm_OUT_ATTRITION;
+SELECT * FROM hive_metastore.osk02156.ndmm_OUT_ATTRITION
+WHERE OUT_RUN_ID = (SELECT max(OUT_RUN_ID)
+                    FROM hive_metastore.osk02156.ndmm_OUT_TTE);
 
 
--- 1b. RUN THIS FIRST. The two tables are separate writes, so a run that died
---     between them leaves one from this attempt and one from the last. Both
---     stay readable, and nothing further down would notice.
+-- 1b. What the views pinned to, and whether the second table had it.
 --
---     One row, and `Same run` must be `yes`. LOT_RUN_ID says which LOT run
---     outcomes read: if it does not match the LOT build you think you are
---     describing, these numbers are about a different set of lines.
-SELECT (SELECT count(DISTINCT OUT_RUN_ID) FROM tte)             AS `Runs in OUT_TTE`,
-       (SELECT count(DISTINCT OUT_RUN_ID) FROM attr)            AS `Runs in OUT_ATTRITION`,
-       (SELECT max(OUT_RUN_ID) FROM tte)                        AS `Outcomes run`,
+--     `Attrition rows` of 0 means OUT_ATTRITION holds nothing for the run
+--     OUT_TTE is on - the pair is torn, and statements 5 and 6 will be empty
+--     rather than wrong. `LOT run it read` is the LOT build these lines came
+--     from: if that is not the run you think you are describing, these numbers
+--     are about a different set of lines and no statement below will say so.
+SELECT (SELECT max(OUT_RUN_ID) FROM tte)                        AS `Outcomes run`,
        (SELECT max(LOT_RUN_ID) FROM tte)                        AS `LOT run it read`,
-       CASE WHEN (SELECT count(DISTINCT OUT_RUN_ID) FROM tte)  = 1
-             AND (SELECT count(DISTINCT OUT_RUN_ID) FROM attr) = 1
-             AND (SELECT max(OUT_RUN_ID) FROM tte)
-                 = (SELECT max(OUT_RUN_ID) FROM attr)
-            THEN 'yes' ELSE 'NO - the two tables are from different runs'
-       END                                                      AS `Same run`;
+       (SELECT count(*) FROM tte)                               AS `TTE rows`,
+       (SELECT count(*) FROM attr)                              AS `Attrition rows`,
+       CASE WHEN (SELECT count(*) FROM attr) > 0
+            THEN 'yes'
+            ELSE 'NO - OUT_ATTRITION has no rows for this outcomes run'
+       END                                                      AS `Pair intact`;
 
 
 -- 2. Observed follow-up per line, and how many events each endpoint got.

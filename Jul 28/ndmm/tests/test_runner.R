@@ -1327,14 +1327,73 @@ ok(grepl("exclude a patient", m, fixed = TRUE) &&
 # read identically as "raw_icd_flag", and there is no ceiling above which this
 # stops the build - so the magnitude has to be on the row somebody reads later.
 ok(length(r$findings) == 1L && grepl("^raw_icd_flag\\(", r$findings) &&
-     grepl("14 rows", r$findings, fixed = TRUE) &&
-     grepl("C9000", r$findings, fixed = TRUE),
-   "...and the finding carries its row count and codes onto the metadata row")
+     grepl("14 rows, 14 patients, 1 codes", r$findings, fixed = TRUE) &&
+     grepl("C9000[MM diagnosis,14r,14p]", r$findings, fixed = TRUE),
+   "...and the finding carries rows, patients, code count and each code's list")
+# A finding longer than the cap says how many codes it left out, or the row
+# reads as the whole story - the same rule the log line follows.
+big <- drive_icd(25L, detail = data.frame(
+  icd_flag_value = "<blank>", matched_code = sprintf("C%04d", 1:25),
+  on_list = "MM diagnosis", n_rows = 1L, n_pat = 1L, stringsAsFactors = FALSE))
+ok(grepl("25 codes", big$findings, fixed = TRUE) &&
+     grepl("+15 more code(s)", big$findings, fixed = TRUE),
+   "...and says how many codes it left off the row, not only off the log")
 ok("FINDINGS" %in% names(RUN_METADATA_COLS),
    "...which is a column NDMM_RUN_METADATA actually has")
 r <- drive_icd(7L, waive = "raw_icd_flag")
 ok(identical(r$err, "") && grepl("no longer needed", r$log, fixed = TRUE),
    "the old waiver is accepted and says it is now a no-op")
+
+# The breakdown is folded in R, not by aggregate(): its formula method defaults
+# to na.omit, so one unreadable count would drop that code from the row - the
+# largest one vanishing while the total still counts it - and an all-NA frame
+# would error out of the function whose job is to report.
+r <- drive_icd(7L, detail = data.frame(
+  icd_flag_value = "<blank>", matched_code = c("C901", "C902"),
+  on_list = "MM diagnosis", n_rows = c(5, 2), n_pat = c(NA, 2),
+  stringsAsFactors = FALSE))
+ok(identical(r$err, "") && grepl("2 codes", r$findings, fixed = TRUE) &&
+     grepl("C901", r$findings, fixed = TRUE),
+   "a code with an unreadable patient count stays on the row rather than vanishing")
+r <- drive_icd(7L, detail = data.frame(
+  icd_flag_value = "<blank>", matched_code = "C901", on_list = "MM diagnosis",
+  n_rows = NA_real_, n_pat = NA_real_, stringsAsFactors = FALSE))
+ok(identical(r$err, "") && grepl("^raw_icd_flag\\(", r$findings),
+   "...and a breakdown that is entirely unreadable still reports, rather than erroring")
+# A code on two lists is one entry naming both. Grouping by code AND list would
+# count its claims twice in the code count somebody reads as "how many codes".
+r <- drive_icd(7L, detail = data.frame(
+  icd_flag_value = "<blank>", matched_code = c("C901", "C901"),
+  on_list = c("MM diagnosis", "other malignancy"), n_rows = c(3, 4),
+  n_pat = c(3, 4), stringsAsFactors = FALSE))
+ok(grepl("1 codes", r$findings, fixed = TRUE) &&
+     grepl("MM diagnosis+other malignancy", r$findings, fixed = TRUE),
+   "...and a code on two lists is one entry naming both, not two entries")
+
+# A ceiling, settable without a code change and unset by default. Unset is the
+# decision as it stands - report whatever the volume - and the run says so, so
+# nobody reads a clean log as a governed one.
+ok(!nzchar(Sys.getenv("NDMM_ICD_FLAG_MAX_ROWS", unset = "")),
+   "no ceiling is set by default, so the shipped behaviour is unchanged")
+r <- drive_icd(7L)
+ok(grepl("no volume stops this build", r$log, fixed = TRUE),
+   "...and the warning says out loud that nothing bounds it")
+Sys.setenv(NDMM_ICD_FLAG_MAX_ROWS = "100")
+r <- drive_icd(7L)
+ok(identical(r$err, "") && grepl("NDMM_ICD_FLAG_MAX_ROWS=100", r$log, fixed = TRUE),
+   "a run under the ceiling reports, naming the ceiling it was under")
+Sys.setenv(NDMM_ICD_FLAG_MAX_ROWS = "5")
+r <- drive_icd(7L)
+ok(grepl("over that ceiling", r$err, fixed = TRUE) &&
+     grepl("found 14 such row(s)", r$err, fixed = TRUE) &&
+     grepl("NDMM_ICD_FLAG_MAX_ROWS=5", r$err, fixed = TRUE),
+   "...and one over it stops, naming both what it found and the ceiling")
+Sys.unsetenv("NDMM_ICD_FLAG_MAX_ROWS")
+Sys.setenv(NDMM_ICD_FLAG_MAX_ROWS = "lots")
+m <- tryCatch({ check_settings(); "" }, error = conditionMessage)
+ok(grepl("NDMM_ICD_FLAG_MAX_ROWS", m, fixed = TRUE),
+   "...and a ceiling that is not a number is a typo, caught before the run")
+Sys.unsetenv("NDMM_ICD_FLAG_MAX_ROWS")
 
 # The count says how many rows stopped the build. Which codes they carry is the
 # question it leaves behind, and it is asked of the same rows.
@@ -1427,6 +1486,18 @@ ok(grepl("WARNING (raw_icd_flag)", r$log, fixed = TRUE) &&
      grepl("names neither family", r$log, fixed = TRUE) &&
      length(r$findings) == 1L && grepl("^raw_icd_flag\\(", r$findings),
    "...and a breakdown that cannot be read leaves the warning and the finding intact")
+
+# A claim count above 2^31-1 makes as.integer() NA, the found-anything guard
+# then reads it as nothing, and two such probes make the build log "every claim
+# names a family" - a clean all-clear on the largest failure there could be.
+r <- drive_icd(3e9)
+ok(grepl("WARNING (raw_icd_flag)", r$log, fixed = TRUE) &&
+     grepl("6,000,000,000 rows", r$findings, fixed = TRUE),
+   "a count past the integer limit is still counted, not read as none")
+# And a count that genuinely cannot be read is not a clean one.
+r <- drive_icd(NA_integer_)
+ok(grepl("Could not read the ICD_FLAG count", r$err, fixed = TRUE),
+   "...while an unreadable count stops, rather than passing as nothing found")
 
 cat("\n-- nothing is read before the step that builds it --\n")
 # check_ndc_shape() joined NDMM_LOT1_STARTS and was called before the step that
@@ -1717,13 +1788,24 @@ ok(length(e2) == 1L && grepl("ADD COLUMNS (C STRING)", e2[1], fixed = TRUE),
    "...one that is missing a column has it added, with its declared type")
 ok(length(drive_cols(NULL)) == 0L,
    "...and a DESCRIBE that cannot be read adds nothing, rather than adding all of them")
-# Every table this build writes through a column list, not just the one that
-# prompted it - the next column goes on whichever table needs it.
-bt <- paste(bl, collapse = "\n")
-for (s in c("ATTRITION_COLS", "RUN_METADATA_COLS", "CODELIST_METADATA_COLS",
-            "BUILD_STATUS_COLS"))
-  ok(grepl(paste0("ensure_cols(con, tbl, ", s, ")"), bt, fixed = TRUE),
-     paste0("...and ", s, " is applied to its table, not only declared"))
+# DERIVED, not a list written out here. A whitelist of four passes the moment a
+# fifth CREATE TABLE IF NOT EXISTS is added, which is exactly how the two in
+# lot/engine went years without one - so the set comes from the file.
+bt   <- paste(bl, collapse = "\n")
+made <- unique(regmatches(bt, gregexpr(
+  "CREATE TABLE IF NOT EXISTS \\{tbl\\} \\(\",\n\\s*paste\\(cols, [A-Z_]+",
+  bt))[[1]])
+made <- sub(".*paste\\(cols, ", "", made)
+ok(length(made) >= 4L,
+   paste0("every table created from a column list is found (", length(made), ")"))
+missing <- Filter(function(sp)
+  !grepl(paste0("ensure_cols(con, tbl, ", sp, ")"), bt, fixed = TRUE), made)
+ok(!length(missing),
+   if (length(missing))
+     paste0("created from a column list but never brought up to it: ",
+            paste(missing, collapse = ", "))
+   else paste0("...and every one of them is brought up to its list (",
+               length(made), ")"))
 
 cat("\n-- every setting config.csv ships is one the code reads --\n")
 # NDMM_BELANTAMAB_SCOPE outlived the code that read it - the proxy moved to the

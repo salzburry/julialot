@@ -179,6 +179,52 @@ fill_sql <- function(sql, inputs, cfg) {
 # records COHORT_RUN_ID, so this is an exact comparison against the funnel's
 # own RUN_ID. Timestamps could not answer it: a cohort rebuilt WHILE LOT was
 # running is newer than the cohort LOT read but older than LOT's finish.
+# The CE-window panel, tied to the cohort LOT read, the same way the funnel is.
+#
+# Its table is CREATE OR REPLACE, so a cohort rebuilt under this prefix takes
+# it with it - and the panel would then price a window against a cohort that is
+# not the one the lines below it came from.
+#
+# The stamp is new, so a cohort built before it has no RUN_ID column and
+# selecting one would fail the panel outright. DESCRIBE decides: stamped and
+# tied, stamped and gone, or unstamped and labelled as untied.
+resolve_fu_ce_window <- function(secs, con, inputs, have, owner) {
+  i <- which(vapply(secs, function(s) identical(s$name, "fu_ce_window"), logical(1)))
+  if (!length(i) || !isTRUE(have[["fu_ce_counts"]])) return(secs)
+  sec  <- secs[[i]]
+  cols <- table_cols(con, inputs$fu_ce_counts)
+  untied <- function(why) {
+    sec$label <- paste0(sec$label, " - not tied to the LOT run below it")
+    log_msg("  Note: ", why, " so the CE-window panel cannot be tied to the ",
+            "cohort behind the numbers.")
+    secs[[i]] <- sec; secs
+  }
+  if (!length(cols))
+    return(untied(paste0("the columns of ", inputs$fu_ce_counts, " could not be read,")))
+  if (!("RUN_ID" %in% cols))
+    return(untied(paste0(inputs$fu_ce_counts, " predates the run stamp,")))
+  cr <- owner$cohort_run
+  if (is.null(cr) || is.na(cr) || !nzchar(cr))
+    return(untied("no cohort run id was recorded by the LOT build,"))
+  n <- tryCatch(db_q(con, paste0("SELECT count(*) AS n FROM ", inputs$fu_ce_counts,
+                                 " WHERE RUN_ID = '", cr, "'"))$n,
+                error = function(e) NA)
+  if (is.na(n) || n < 1) {
+    sec$skip <- paste0(
+      "the follow-up-enrolment windows for cohort run ", cr, " - the cohort LOT ",
+      "read - are not in ", inputs$fu_ce_counts, " any more. What is there ",
+      "prices a window against a different cohort refresh.")
+    log_msg("  skip  fu_ce_window - no rows for cohort run ", cr)
+    secs[[i]] <- sec; return(secs)
+  }
+  sec$sql <- sub("FROM {fu_ce_counts}",
+                 "FROM {fu_ce_counts}\n         WHERE RUN_ID = '{cohort_run}'",
+                 sec$sql, fixed = TRUE)
+  sec$label <- paste0(sec$label, " - cohort run ", cr)
+  secs[[i]] <- sec
+  secs
+}
+
 resolve_attrition <- function(secs, con, inputs, have, cfg, owner) {
   i <- which(vapply(secs, function(s) identical(s$name, "attrition"), logical(1)))
   if (!length(i) || !isTRUE(have[["attrition"]])) return(secs)
@@ -478,6 +524,7 @@ build_dashboard_run <- function(here, cohort_table, lot_prefix,
                       " tables)"))
 
   secs <- resolve_attrition(secs, con, inputs, have, cfg, owner)
+  secs <- resolve_fu_ce_window(secs, con, inputs, have, owner)
   secs <- resolve_lot_attrition(secs, con, inputs, have, cfg)
   check_max_lot(con, inputs, have, cfg)
   panels <- lapply(secs, build_panel, con = con, inputs = inputs,
