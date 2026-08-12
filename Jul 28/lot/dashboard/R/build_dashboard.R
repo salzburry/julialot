@@ -191,21 +191,17 @@ fill_sql <- function(sql, inputs, cfg) {
 
 # Was this table written after the moment LOT recorded reading that cohort?
 #
-# Three answers, not two. Besides "yes" and "no" there is "the comparison did
-# not happen": the query can be refused, the table can carry no stamp column,
-# LOT can have recorded no stamp of its own, and a timestamp can come back in a
-# shape as.POSIXct() will not take. Every one of those used to collapse into
-# FALSE, which reads as "not a later attempt" - the single thing none of them
-# established. The panel then went out labelled "cohort run X" as though the
-# attempt behind it had been checked, and a check that cannot run is exactly
-# when it is worth saying so.
+# Three answers, not two. A refused query, a missing stamp column, a LOT run
+# that recorded no stamp and a timestamp as.POSIXct() will not take all used to
+# collapse into FALSE - "not a later attempt", the one thing none of them
+# established - and the panel went out labelled as though it had been checked.
 #
 #   TRUE  written after the stamp - a later attempt under the same run id
 #   FALSE written at or before it - the attempt LOT read
 #   NA    could not tell
 #
-# The first column by position rather than by name: the alias is ours, but the
-# case it comes back in belongs to the driver.
+# First column by position: the alias is ours, the case it comes back in is the
+# driver's.
 stamp_is_newer <- function(con, sql, st) {
   when <- function(x) {
     x <- suppressWarnings(as.character(x))
@@ -274,9 +270,8 @@ resolve_fu_ce_window <- function(secs, con, inputs, have, owner) {
   sec$sql <- sub("FROM {fu_ce_counts}",
                  "FROM {fu_ce_counts}\n         WHERE RUN_ID = '{cohort_run}'",
                  sec$sql, fixed = TRUE)
-  # The run id is pinned either way - it is the rows that are there. What the
-  # label stops short of claiming is that they are the ATTEMPT LOT read, when
-  # nothing was able to compare the two.
+  # The run id is pinned either way - those are the rows that are there. The
+  # label stops short of calling them the ATTEMPT LOT read.
   sec$label <- paste0(sec$label, " - cohort run ", cr,
                       if (is.na(newer)) UNVERIFIED_ATTEMPT else "")
   if (is.na(newer))
@@ -366,8 +361,7 @@ resolve_attrition <- function(secs, con, inputs, have, cfg, owner) {
     secs[[i]] <- sec; return(secs)
   }
   sec$sql   <- L$sql_run
-  # Pinned to the run id, which is what the rows say. Whether they are the
-  # attempt LOT read is a second question, and one this could not put.
+  # Same three-way label as the CE-window panel above.
   sec$label <- paste0(sec$label, " - cohort run ", cr,
                       if (is.na(newer)) UNVERIFIED_ATTEMPT else "")
   if (is.na(newer))

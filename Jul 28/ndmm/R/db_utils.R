@@ -173,27 +173,17 @@ with_retry <- function(fn, max_retries = ndmm_config()$max_retries,
   }
 }
 
-# "It is not there yet" and "it could not be read" are different answers.
+# Is this error "the table is not there", as opposed to "it could not be read"?
 #
-# Several checks fall back to a first-run default when a status or metadata
-# table is absent, which is right on a fresh prefix and wrong on everything
-# else: a permission failure, an expired connection, a schema the query no
-# longer matches or a transient warehouse error would all take that same path,
-# and the fallback would fire against a table that is full of rows. The check
-# then reports the one thing it did not establish.
-#
-# Narrow on purpose. Only the object-missing wording qualifies - not the wider
-# permanent-error list above, which includes syntax and column errors that mean
-# the query is wrong rather than the table absent.
-#
-# It is not airtight: a warehouse may answer TABLE_OR_VIEW_NOT_FOUND for an
-# object the caller cannot see, so a permission failure can still read as a
-# first run. It is the signal the warehouse gives, and the same one
-# clear_run_rows() has always used.
+# Checks that fall back to a first-run default need the first only; the second
+# fires that fallback against a table full of rows. Narrower than the permanent
+# list above, which includes syntax and column errors - a wrong query, not an
+# absent table. Not airtight: a warehouse may answer TABLE_OR_VIEW_NOT_FOUND
+# for an object the caller cannot see.
 missing_object_error <- function(err) {
   msg <- if (inherits(err, "condition")) conditionMessage(err) else as.character(err)
   length(msg) == 1L && !is.na(msg) &&
-    grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found", msg, ignore.case = TRUE)
+    grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found|no such table|does not exist", msg, ignore.case = TRUE)
 }
 
 # The retry wraps the whole call, so what it retries must be safe to run twice.

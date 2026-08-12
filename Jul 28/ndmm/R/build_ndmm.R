@@ -830,17 +830,11 @@ BUILD_STATUS_COLS <- c(RUN_ID = "STRING", OBJECT_PREFIX = "STRING",
                        FINDINGS = "STRING",
                        UPDATED_AT = "TIMESTAMP")
 
-# FINDINGS here as well as on NDMM_RUN_METADATA, because these two tables
-# survive different things. The metadata row is written at the very end and its
-# previous attempt is cleared up front, so a run that STOPS records nothing
-# there at all - and the run most worth reading later is the one that stopped.
-# NDMM_ICD_FLAG_MAX_ROWS is precisely that case: a ceiling fires mid-build, and
-# what it found and which ceiling it was weighed against would go no further
-# than a console.
-#
-# This row is rewritten on every state change and on failure through on.exit,
-# so it is the one durable place a stopped run can say what it saw. On a
-# completed run the two agree; on a stopped one only this exists.
+# FINDINGS here as well as on NDMM_RUN_METADATA, because the two survive
+# different things. The metadata row is written at the end and its previous
+# attempt cleared up front, so a run that STOPS records nothing there - and a
+# stopped run is the one worth reading. This row is rewritten on every state
+# change and on failure through on.exit, so it is where a ceiling stop lands.
 write_build_status <- function(con, cfg, state, n = NA) {
   tbl <- wrk("NDMM_BUILD_STATUS")
   cols <- names(BUILD_STATUS_COLS)
@@ -1122,34 +1116,24 @@ check_icd_flag <- function(con, cfg) {
 
 
 check_no_active_run <- function(con, cfg) {
-  # Not excluding this run's own id, which is the hole that used to be here.
-  # run_id comes from DOMINO_RUN_ID, and a second attempt inside one Domino
-  # execution carries the same one - so `RUN_ID <> run_id` hid exactly the
-  # collision worth catching: a live sibling under this id, replacing the same
-  # prefixed tables.
-  #
-  # Nothing is lost by dropping it. This runs BEFORE write_build_status marks
-  # this attempt started, so a 'started' row under this id is always another
-  # attempt's. A normally-failing one leaves 'failed' through on.exit, so a
-  # 'started' row means still running, or killed - and a killed process cannot
-  # be the same session, which is what would have shared the id anyway.
+  # Not excluding this run's own id. run_id comes from DOMINO_RUN_ID, so a
+  # second attempt in one Domino execution shares it - and excluding it hid the
+  # collision most worth catching. Safe because this runs before
+  # write_build_status marks this attempt started, so a 'started' row under
+  # this id is always another attempt's.
   d <- tryCatch(db_q(con, glue("
     SELECT RUN_ID, UPDATED_AT FROM {wrk('NDMM_BUILD_STATUS')}
     WHERE OBJECT_PREFIX = '{cfg$object_prefix}'
       AND STATE = 'started'")), error = function(e) e)
-  # A table that is not there yet is the first run on this prefix, and there is
-  # nothing to collide with. Every other failure is a check that did not run,
-  # which is not the same as a check that passed - the same distinction
-  # clear_run_rows() makes a few lines down. Reading them alike is how a
-  # permission failure or a dropped connection turns the concurrency guard off
-  # for the length of a build, and two runs on one prefix replace each other's
-  # tables while the other is still reading them.
+  # No table is the first run on this prefix. Any other failure is this check
+  # not running, which is not this check passing - clear_run_rows() below draws
+  # the same line.
   ignoring <- identical(toupper(Sys.getenv("NDMM_IGNORE_ACTIVE_RUN", unset = "")),
                         "TRUE")
   if (inherits(d, "condition")) {
     if (missing_object_error(d)) return(invisible(TRUE))
     # The same override the found-a-run branch takes, or the message below
-    # would name a way out that does not exist.
+    # names a way out that does not exist.
     if (ignoring) {
       log_msg("WARNING: ", wrk("NDMM_BUILD_STATUS"), " could not be read (",
               conditionMessage(d), ") and NDMM_IGNORE_ACTIVE_RUN is set, so ",
@@ -1181,9 +1165,8 @@ check_no_active_run <- function(con, cfg) {
        "could still finish. Use a different prefix, or wait. If those runs are ",
        "not actually running - a killed process leaves 'started' behind - set ",
        "NDMM_IGNORE_ACTIVE_RUN=TRUE.",
-       # The id can be this run's: a second attempt in one Domino execution
-       # shares DOMINO_RUN_ID. Worth saying, or the message reads as though the
-       # run were blocking itself.
+       # Said out loud, or a shared DOMINO_RUN_ID reads as the run blocking
+       # itself.
        if (any(as.character(d$RUN_ID) == run_id))
          paste0("\nOne of those is this run's own id (", run_id, "), which a ",
                 "second attempt in the same Domino execution shares. This ",
@@ -1278,10 +1261,9 @@ build_ndmm <- function(here, prefix) {
   # attempt started or the run would find itself.
   check_no_active_run(con, cfg)
   check_upstream(con, cfg)
-  # Before the first status row, not after it. The row now carries this run's
-  # findings, and run_id is fixed when config.R is sourced - so a second attempt
-  # in one session would otherwise open by writing the FIRST attempt's findings
-  # under the same id, against a build that has not looked at anything yet.
+  # Before the first status row, which now carries findings: run_id is fixed at
+  # config load, so a second attempt in one session would otherwise open by
+  # writing the first attempt's findings under the same id.
   options(ndmm_complete = FALSE, ndmm_codelist_md5 = list(),
           ndmm_waivers_applied = character(0), ndmm_findings = character(0))
   write_build_status(con, cfg, "started")
