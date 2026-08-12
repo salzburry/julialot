@@ -120,11 +120,10 @@ table_cols <- function(con, tbl) {
 # old behaviour, kept so a study built by an older LOT still renders, and
 # reported as the weaker claim it is.
 resolve_owner_run <- function(con, inputs, have, cfg) {
-  # FALSE feeds a stop that says the two tables have been "edited or partly
-  # restored". That diagnosis is right for a run row that is missing and wrong
-  # for a metadata table too old to have N_LOT_FINAL_ROWS at all - the query
-  # cannot resolve the column, errors, and the operator is sent looking for
-  # tampering. NA says which it was, so the caller can say so too.
+  # FALSE feeds a stop that says the tables were "edited or partly restored" -
+  # right for a missing run row, wrong for a metadata table too old to have
+  # N_LOT_FINAL_ROWS, which errors and sends the operator hunting tampering.
+  # NA says which it was.
   meta_complete <- function(rid)
     tryCatch(nrow(db_q(con, paste0(
       "SELECT 1 FROM ", inputs$run_meta, " WHERE RUN_ID = '", rid,
@@ -156,16 +155,14 @@ resolve_owner_run <- function(con, inputs, have, cfg) {
   # By name, not by position. A frame that came back without the column is a
   # table that does not have it, and reading column one instead would turn a
   # run id into a deviation.
-  # "" means no deviation, and refuse_if_deviating() renders the page on it. So
-  # "" has to mean the question was ASKED and answered no. A table or column
-  # that is not there is the documented legacy case and does answer no - a run
-  # built before the override existed cannot have used it. Anything else is the
-  # question not being asked, and returning "" for it is how a permission
-  # failure or a dropped connection draws a sensitivity cell as the study,
-  # which is the single thing the comment above says must not happen.
+  # "" means no deviation and the page renders on it, so "" has to mean the
+  # question was ASKED and answered no. A missing table or column does answer
+  # no - a run built before the override existed cannot have used it. A refused
+  # read answers nothing, and returning "" for it draws a sensitivity cell as
+  # the study.
   #
-  # Both the Spark class name and the driver wordings, the same way with_retry
-  # lists both: which one comes back depends on how the ODBC layer surfaces it.
+  # Class name and driver wordings both, as with_retry lists them: which comes
+  # back depends on how the ODBC layer surfaces it.
   legacy_gap <- function(msg)
     grepl(paste0("TABLE_OR_VIEW_NOT_FOUND|Table or view not found|",
                  "UNRESOLVED_COLUMN|Unresolved column|cannot resolve|",
@@ -200,11 +197,10 @@ resolve_owner_run <- function(con, inputs, have, cfg) {
     invisible(TRUE)
   }
 
-  # Read, then classify - rather than trusting probe_inputs(), which answers
-  # FALSE both for a table that is absent and for one it could not read. Only
-  # the first justifies the fallback at the end of this function, and taking
-  # the second there hands run A's completed provenance to run B's unvalidated
-  # tables: exactly the swap this status table was introduced to stop.
+  # Read and classify rather than trust probe_inputs(), which answers FALSE for
+  # a table that is absent and for one it could not read alike. Only the first
+  # justifies the fallback below; the second takes it and hands run A's
+  # provenance to run B's unvalidated tables.
   st <- tryCatch(db_q(con, paste0(
     "SELECT RUN_ID, STATE, UPDATED_AT FROM ", inputs$build_st,
     " ORDER BY UPDATED_AT DESC LIMIT 1")), error = function(e) e)
