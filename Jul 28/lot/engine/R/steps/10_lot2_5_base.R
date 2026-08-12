@@ -178,10 +178,27 @@ build_lot_n <- function(con, lot_num,
                         cart_consolidation_days,
                         sct_tandem_days,
                         allo_lot_span,
-                        meds, classes) {
+                        meds, classes,
+                        apply_cart_induction_rule   = FALSE,
+                        lot1_induction_window_days  = 60) {
   stopifnot(lot_num >= 2)
   prev <- lot_num - 1
   pfx  <- sprintf("L%02d", 30 + (lot_num - 2) * 6)  # step prefix per LOT iteration
+
+  # The CAR-T induction rule reaches LOT2 only: at LOT2 the previous line IS
+  # LOT1, so PREV_START_DT is LOT1's start and the window is LOT1's own. At
+  # LOT3+ the previous line is not LOT1 and the rule says nothing.
+  #
+  # Needed here as well as in the LOT1 end logic. Stopping the infusion ending
+  # LOT1 without stopping it starting LOT2 leaves the same two lines, moved by
+  # a day - see R/cart_rule.R.
+  cart_on <- isTRUE(apply_cart_induction_rule) && lot_num == 2L
+  cart_excl <- cart_exclude_predicate(cart_on, "ac.TX_DT", "pe.PREV_START_DT",
+                                      lot1_induction_window_days)
+  cart_note <- if (cart_on)
+    "A CAR-T inside LOT1's induction window is part of LOT1 and starts nothing."
+  else "No CAR-T exclusion at this line."
+
 
   # ---- Step N.1: compute candidate trigger dates ----
   materialize(con, paste0(pfx, "_lot", lot_num, "_start_candidates"),
@@ -246,13 +263,14 @@ build_lot_n <- function(con, lot_num,
       GROUP BY pe.PATID
     ),
     -- d_CART: earliest CAR-T strictly after PREV_END_DT.
+    -- {cart_note}
     cart_cand AS (
       SELECT pe.PATID, min(ac.TX_DT) AS d_CART
       FROM prev_end pe
       INNER JOIN tx_allo_cart_dates ac ON pe.PATID = ac.PATID
       WHERE ac.SCT_TYPE = 'CART'
         AND ac.TX_DT > pe.PREV_END_DT
-        AND ac.TX_DT <= pe.OBS_END_DT
+        AND ac.TX_DT <= pe.OBS_END_DT{cart_excl}
       GROUP BY pe.PATID
     ),
     -- d_AUTO: earliest AUTO after PREV_END_DT that triggers a new LOT.
@@ -997,7 +1015,12 @@ build_lot2_5 <- function(con,
                         cart_consolidation_days = 45,
                         sct_tandem_days         = 180,
                         allo_lot_span           = "single_day",
-                        max_lot                 = 5) {
+                        max_lot                 = 5,
+                        # LOT1's window, not this file's - the CAR-T rule is
+                        # about LOT1's 60 days. Off by default so a caller that
+                        # does not ask for it gets the algorithm unchanged.
+                        apply_cart_induction_rule  = FALSE,
+                        lot1_induction_window_days = 60) {
   stopifnot(allo_lot_span %in% c("single_day", "extend_to_next"))
   stopifnot(max_lot >= 2L && max_lot <= 9L)
 
@@ -1006,6 +1029,9 @@ build_lot2_5 <- function(con,
   log_msg("  cart_consolidation_days = ", cart_consolidation_days)
   log_msg("  sct_tandem_days         = ", sct_tandem_days)
   log_msg("  allo_lot_span           = ", allo_lot_span)
+  log_msg("  cart induction rule     = ",
+          if (isTRUE(apply_cart_induction_rule))
+            paste0("on (LOT1 window ", lot1_induction_window_days, "d)") else "off")
 
   # Discover med + class universes from the rollup so dynamic flag columns
   # match LOT1 output exactly. STEROID class excluded - LOT1 uses the same
@@ -1049,7 +1075,9 @@ build_lot2_5 <- function(con,
                 cart_consolidation_days = cart_consolidation_days,
                 sct_tandem_days         = sct_tandem_days,
                 allo_lot_span           = allo_lot_span,
-                meds = meds, classes = classes)
+                meds = meds, classes = classes,
+                apply_cart_induction_rule  = apply_cart_induction_rule,
+                lot1_induction_window_days = lot1_induction_window_days)
     built <- c(built, n)
   }
   options(lot_lines_built = built)

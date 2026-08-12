@@ -79,6 +79,9 @@ phase_lot1_end <- function(con, ctx) {
   # LOT2-5 started from the query as well. It is read nine times downstream,
   # and each read re-ran the post-runout guard below, which scans map_stacked
   # twice on its own.
+  cart_init_dt <- cart_line_dt(cfg$apply_cart_induction_rule,
+                               "sct.FIRST_CART_DT", "lb.LOT1_START_DT",
+                               cfg$induction_window_days)
   materialize(con, "S16_lot1_base_end", view = "lot1_base_end", name = "LOT1_BASE_END", body = glue("
     WITH{melp_lot1_ctes(cfg)}
     -- Post-runout guard: identify whether any LOT2-qualifying trigger
@@ -96,7 +99,9 @@ phase_lot1_end <- function(con, ctx) {
     --     regardless of LOT1's own 60d induction window) AND not within
     --     sct_tandem_days (180d) of the immediately prior AUTO in patient
     --     history (planned tandem).
-    --   - ALLO/CART: any after runout (no window check; always trigger).
+    --   - ALLO/CART: any after runout (no window check; always trigger),
+    --     except a CAR-T inside LOT1 induction, which under the CAR-T rule is
+    --     part of LOT1 and starts nothing - so LOT2 would not act on it.
     post_runout_excluded_meds AS (
       SELECT im.PATID, ps.substitute_med AS MED_ABBR
       FROM lot1_induction_meds im
@@ -140,7 +145,7 @@ phase_lot1_end <- function(con, ctx) {
           WHEN lb.LOT1_BASE_DISCON_DT IS NULL THEN 0
           WHEN prm.PATID IS NOT NULL THEN 1
           WHEN sct.FIRST_ALLO_DT IS NOT NULL AND sct.FIRST_ALLO_DT > lb.LOT1_BASE_DISCON_DT THEN 1
-          WHEN sct.FIRST_CART_DT IS NOT NULL AND sct.FIRST_CART_DT > lb.LOT1_BASE_DISCON_DT THEN 1
+          WHEN {cart_init_dt} IS NOT NULL AND {cart_init_dt} > lb.LOT1_BASE_DISCON_DT THEN 1
           WHEN pra.PATID IS NOT NULL THEN 1
           ELSE 0
         END AS POST_RUNOUT_TRIGGER_FLG
@@ -171,10 +176,15 @@ phase_lot1_end <- function(con, ctx) {
         -- CAR-T initiation, not the medication add.
         -- datediff(A, B) = A - B in Databricks; CART_DT - ADD_START_DT BETWEEN 0 AND 45
         -- Note: LOT1_BASE_1ST_ADD_MED_DT is date_sub(ADD_START_DT, 1), so add 1 back
+        -- ...unless that CAR-T is inside LOT1's induction window, in which case
+        -- it is part of LOT1 and ends nothing. Gated here as well as in
+        -- lot1_sct because this branch reads FIRST_CART_DT directly, and left
+        -- alone it would end LOT1 at FIRST_CART_DT - 1 after the SCT branch had
+        -- already been told not to. See R/cart_rule.R.
         CASE
-          WHEN sct.FIRST_CART_DT IS NOT NULL
+          WHEN {cart_init_dt} IS NOT NULL
            AND lb.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
-           AND datediff(sct.FIRST_CART_DT, date_add(lb.LOT1_BASE_1ST_ADD_MED_DT, 1)) BETWEEN 0 AND {cfg$cart_consolidation_days}
+           AND datediff({cart_init_dt}, date_add(lb.LOT1_BASE_1ST_ADD_MED_DT, 1)) BETWEEN 0 AND {cfg$cart_consolidation_days}
           THEN 1
           ELSE 0
         END AS CART_INIT_FLG

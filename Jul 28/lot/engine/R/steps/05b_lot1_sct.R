@@ -12,6 +12,16 @@ phase_lot1_sct <- function(con, ctx) {
   # aggregates and a window function over the SCT dates, read twelve times
   # over the run - S16, phase_qc, phase_persist's QC row, and the LOT1
   # projection LOT2-5 starts from.
+  # A CAR-T inside LOT1's induction window does not end LOT1 - see R/cart_rule.R.
+  # FIRST_CART_DT itself is left alone: LOT1_1ST_SCT_DT below is descriptive,
+  # and under this rule that infusion genuinely is the first SCT during LOT1.
+  # Only the line-ending arithmetic is gated.
+  cart_dt   <- cart_line_dt(cfg$apply_cart_induction_rule,
+                            "sd.FIRST_CART_DT", "sd.LOT1_START_DT",
+                            cfg$induction_window_days)
+  cart_note <- if (isTRUE(cfg$apply_cart_induction_rule))
+    "A CAR-T inside induction is part of LOT1 and cannot end it (cart_rule.R)."
+  else "CAR-T induction rule off: any CAR-T can end LOT1."
   materialize(con, "S15_lot1_sct", view = "lot1_sct", name = "LOT1_SCT", body = glue("
     WITH lot1 AS (
       SELECT PATID, LOT1_START_DT, OBS_END_DT FROM lot1_base
@@ -135,26 +145,27 @@ phase_lot1_sct <- function(con, ctx) {
       -- line start. The windows above take an SCT on the start date itself, and
       -- the day before that is earlier than the line - which check_lot_long
       -- refuses. Floored, the line is one day long and still ends SCT_CART.
+      -- {cart_note}
       CASE
-        WHEN coalesce(sd.ENDING_AUTO_DT, sd.FIRST_ALLO_DT, sd.FIRST_CART_DT) IS NOT NULL
+        WHEN coalesce(sd.ENDING_AUTO_DT, sd.FIRST_ALLO_DT, {cart_dt}) IS NOT NULL
         THEN greatest(sd.LOT1_START_DT, date_sub(
           least(
             coalesce(sd.ENDING_AUTO_DT, cast('9999-12-31' as date)),
             coalesce(sd.FIRST_ALLO_DT,  cast('9999-12-31' as date)),
-            coalesce(sd.FIRST_CART_DT,   cast('9999-12-31' as date))
+            coalesce({cart_dt},   cast('9999-12-31' as date))
           ), 1))
         ELSE NULL
       END AS LOT1_TX_ENDDATE,
       -- LOT1_TX_ENDDATE_REASON: 1=AUTO, 2=ALLO, 3=CART (whichever is earliest)
       CASE
-        WHEN coalesce(sd.ENDING_AUTO_DT, sd.FIRST_ALLO_DT, sd.FIRST_CART_DT) IS NULL THEN NULL
+        WHEN coalesce(sd.ENDING_AUTO_DT, sd.FIRST_ALLO_DT, {cart_dt}) IS NULL THEN NULL
         WHEN coalesce(sd.ENDING_AUTO_DT, cast('9999-12-31' as date))
              <= coalesce(sd.FIRST_ALLO_DT, cast('9999-12-31' as date))
          AND coalesce(sd.ENDING_AUTO_DT, cast('9999-12-31' as date))
-             <= coalesce(sd.FIRST_CART_DT, cast('9999-12-31' as date))
+             <= coalesce({cart_dt}, cast('9999-12-31' as date))
         THEN 1
         WHEN coalesce(sd.FIRST_ALLO_DT, cast('9999-12-31' as date))
-             <= coalesce(sd.FIRST_CART_DT, cast('9999-12-31' as date))
+             <= coalesce({cart_dt}, cast('9999-12-31' as date))
         THEN 2
         ELSE 3
       END AS LOT1_TX_ENDDATE_REASON,

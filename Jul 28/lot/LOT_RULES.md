@@ -4,9 +4,9 @@ Every rule the line-of-therapy build applies, with the setting that governs it
 and the file it lives in. Written from the code, not from the spec — where the
 two differ, this follows the code and says so.
 
-Two things are **not** in the contract build and are marked as such throughout:
-the melphalan line-advancing rule (§9) and the CAR-T 60-day induction rule
-(§10). Neither is applied to the study's numbers today.
+The melphalan line-advancing rule (§9) is **not** in the contract build and is
+marked as such throughout. The CAR-T 60-day induction rule (§10) **is**, as of
+2026-08-13.
 
 ---
 
@@ -31,6 +31,7 @@ as the study's numbers.
 | `max_lot` | 5 | lines built per patient |
 | `belantamab_med_abbr` | `BELA` | how belantamab is spelled on the code list |
 | `apply_melp_rule` | *(blank)* | the melphalan rule is **off** — see §9 |
+| `apply_cart_induction_rule` | `TRUE` | a CAR-T inside LOT1 induction is part of LOT1 — see §10 |
 | `melp_med_abbr` | `MELP` | |
 | `melp_exposure_days` | 30 | |
 | `melp_restart_days` | 60 | |
@@ -108,7 +109,7 @@ previous line's end and on or before the end of observation
 |---|---|
 | `d_MED` | earliest non-steroid MM agent. **Permissible biosimilar substitutes of the previous line's drugs do not trigger.** A restart of the same drug **does** — the previous line ended by running out, and a fresh fill is a new line. |
 | `d_ALLO` | earliest ALLO |
-| `d_CART` | earliest CAR-T |
+| `d_CART` | earliest CAR-T. At LOT2, one inside LOT1's 60-day induction window is excluded — §10 |
 | `d_AUTO` | earliest AUTO that is (i) outside the previous line's applicable window measured from that line's **start** — 0 days if ALLO-started, 44 if CAR-T-started, 29 otherwise — and (ii) not within 180 days of the immediately preceding AUTO (planned tandem) |
 
 Unlike LOT1, a **first-ever AUTO can open a line** here.
@@ -131,9 +132,9 @@ or before the runout.
 | Priority | Reason | Meaning |
 |---|---|---|
 | 1 | `SCT_ALLO` | allogeneic transplant |
-| 2 | `SCT_CART` | CAR-T-started line with no consolidation agent — spans one day |
+| 2 | `SCT_CART` | CAR-T-started line with no consolidation agent — spans one day. Not for a CAR-T inside LOT1 induction — §10 |
 | 3 | `SCT_AUTO` | an AUTO outside the line's window |
-| 4 | `CART_INIT` | an added medication followed by CAR-T within 45 days. **The line ends the day before the infusion** (`FIRST_CART_DT − 1`) |
+| 4 | `CART_INIT` | an added medication followed by CAR-T within 45 days. **The line ends the day before the infusion** (`FIRST_CART_DT − 1`). Not for a CAR-T inside LOT1 induction — §10 |
 | 5 | `MED_ADD` | a non-steroid agent added outside the induction window |
 | 6 | `DEATH` | |
 | 7 | `DISCONTINUATION` | ran out — 90-day gap |
@@ -214,34 +215,62 @@ tells the two apart.
 
 ---
 
-## 10. The CAR-T 60-day induction rule — **proposed, not applied**
+## 10. The CAR-T 60-day induction rule — **applied**
 
-**Today a CAR-T always ends LOT1.** `CART_INIT` closes the line the day before
-the infusion, and LOT2 opens as a CAR-T-started line. A patient whose CAR-T
-falls three weeks into 1L induction comes out as **two lines**.
+`apply_cart_induction_rule` is `TRUE` in `CONTRACT`, so this **is** the study's
+behaviour. Confirmed by the study team on 2026-08-13. Implementation in
+`lot/engine/R/cart_rule.R`.
 
-**The rule asks that it not.** When the first CAR-T falls inside LOT1's 60-day
-induction window, it should count as part of LOT1 rather than a LOT2 start —
-the CAR-T-started LOT2 folds back into LOT1.
+**A CAR-T inside LOT1's induction window is part of LOT1.** It does not end the
+line, and it does not start one.
 
-**Status: screened, never implemented.** `q3_cart_screen()` in
-`lot/questions/jul20_studyteam_qs.R` counts the affected patients and shows what
-folding would look like; it describes itself as "not an engine re-run". There is
-no fold-back anywhere in `lot/engine/`.
+Before the rule, a CAR-T three weeks into first-line induction came out as
+**two lines** — `CART_INIT` closed LOT1 the day before the infusion and LOT2
+opened as a CAR-T-started line. A CAR-T that soon after 1L started is not a
+second line; it is the same treatment episode, or an index date in the wrong
+place.
 
-Two things need settling before it can be built:
+**LOT1 and 60 days only.** LOT2 onward keep their own windows, and a CAR-T
+there behaves as it always has.
 
-1. Affected patients with **no LOT2 row** have no derivable merged LOT1 end
-   date from the current outputs.
-2. Folding moves the LOT1 end date, which changes the induction window content,
-   the discontinuation date, and every later line for those patients.
+A CAR-T acts on a line boundary in three places, and the rule reaches all three
+— stopping only one moves the problem rather than fixing it:
+
+| Where | Without the rule | With it |
+|---|---|---|
+| `lot1_sct` | `FIRST_CART_DT` feeds `LOT1_TX_ENDDATE`, ending LOT1 as `SCT_CART` | the in-induction CAR-T is not a line-ending SCT |
+| `lot1_base_end` | `CART_INIT_FLG` ends LOT1 at `FIRST_CART_DT − 1` | the flag cannot be set by an in-induction CAR-T |
+| LOT2 `d_CART` | the same infusion opens LOT2 | it is excluded as a start candidate |
+
+The post-runout guard is gated the same way, since it is documented as
+mirroring LOT2's start candidates.
+
+**What it deliberately does not do.** It does not extend LOT1 to swallow a
+CAR-T that arrived after LOT1 had already ended for some other reason. If a
+runout or an added medication closed the line on day 30 and the CAR-T is on day
+40, the line ended on day 30 — the rule stops that CAR-T starting a line, it
+does not reopen a closed one. `q3_cart_screen()` in
+`lot/questions/jul20_studyteam_qs.R` counts those patients.
+
+**Turning it off** needs `LOT_CONTRACT_OVERRIDE=TRUE` and
+`APPLY_CART_INDUCTION_RULE=FALSE`, and is recorded as a deviation like any other
+contract change. With it off, the generated SQL is unchanged from before the
+rule existed.
+
+**Effect on `SCT_CART` and `CART_INIT` counts.** Both fall, by exactly the
+patients whose first CAR-T was inside first-line induction. Numbers from any
+run before 2026-08-13 are not comparable on those two end reasons, on LOT1
+length, or on line counts for those patients.
 
 ---
 
 ## 11. Where this differs from the written protocol
 
-- **The melphalan rule and the CAR-T rule are not in the numbers.** Both are
-  requested; neither is applied. §9, §10.
+- **The melphalan rule is not in the numbers.** It is requested and built, but
+  only in the melphalan cells. §9.
+- **The CAR-T induction rule is in the numbers** as of 2026-08-13, so runs
+  before that date differ on `SCT_CART`, `CART_INIT`, LOT1 length and line
+  counts for the patients it touches. §10.
 - **B.2 removes a boundary without holding the line open.** §9.
 - **Disenrollment is not censoring** in the primary analysis. §7.
 - **Maintenance is not implemented.** There is no maintenance concept in the
@@ -264,4 +293,5 @@ Two things need settling before it can be built:
 | LOT2-5 start, regimen, end | `lot/engine/R/steps/10_lot2_5_base.R` |
 | Line criteria, truncation | `lot/engine/R/line_criteria.R` |
 | Melphalan rule | `lot/engine/R/melp_rule.R`, `lot/melphalan/` |
-| CAR-T screen | `lot/questions/jul20_studyteam_qs.R` |
+| CAR-T induction rule | `lot/engine/R/cart_rule.R` |
+| CAR-T affected-patient screen | `lot/questions/jul20_studyteam_qs.R` |
