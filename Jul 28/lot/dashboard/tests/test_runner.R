@@ -629,14 +629,17 @@ FSEC <- Filter(function(s) identical(s$name, "fu_ce_window"), DASHBOARD_SECTIONS
 # copied out, so it keeps env as its enclosure and finds the real table_cols()
 # there whatever globalenv holds - which made every case take the
 # "columns could not be read" path and three of these pass for the wrong reason.
-drive_fu <- function(cols, cohort_run = "C1", n = 1L) {
+drive_fu <- function(cols, cohort_run = "C1", n = 1L,
+                     stamp = NULL, written = NULL) {
   assign("table_cols", function(con, tbl) cols, envir = env)
-  assign("db_q", function(con, sql) data.frame(n = n), envir = env)
+  assign("db_q", function(con, sql)
+    if (grepl("max(RECORDED_AT)", sql, fixed = TRUE)) data.frame(T = written)
+    else data.frame(n = n), envir = env)
   assign("log_msg", function(...) invisible(NULL), envir = env)
   out <- env$resolve_fu_ce_window(FSEC, NULL,
                               list(fu_ce_counts = "wk.c_NDMM_FU_CE_COUNTS"),
                               c(fu_ce_counts = TRUE),
-                              list(cohort_run = cohort_run))
+                              list(cohort_run = cohort_run, cohort_stamp = stamp))
   out[[1]]
 }
 s1 <- drive_fu(c("FU_CE_RULE", "N_COHORT", "RUN_ID", "RECORDED_AT"))
@@ -656,6 +659,21 @@ ok(is.null(s4$skip) && grepl("not tied", s4$label, fixed = TRUE),
 s5 <- drive_fu(c("FU_CE_RULE", "N_COHORT", "RUN_ID"), cohort_run = "")
 ok(is.null(s5$skip) && grepl("not tied", s5$label, fixed = TRUE),
    "...as is a LOT run that recorded no cohort id")
+# Same run id is not the same attempt. A cohort re-run keeps its id and
+# replaces this table under it, so matching the id is not enough - the funnel
+# panel already compares the stamp LOT recorded, and this one now does too.
+STAMPED <- c("FU_CE_RULE", "N_COHORT", "RUN_ID", "RECORDED_AT")
+s6 <- drive_fu(STAMPED, stamp = "2026-08-01 10:00:00",
+               written = "2026-08-02 09:00:00")
+ok(!is.null(s6$skip) && grepl("later attempt under the same run id", s6$skip, fixed = TRUE),
+   "a table rewritten after LOT read that cohort is a later attempt, and is skipped")
+s7 <- drive_fu(STAMPED, stamp = "2026-08-03 10:00:00",
+               written = "2026-08-02 09:00:00")
+ok(is.null(s7$skip) && grepl("cohort run C1", s7$label, fixed = TRUE),
+   "...one written before it is the attempt LOT read, and is shown")
+s8 <- drive_fu(STAMPED, stamp = "2026-08-01 10:00:00", written = NA)
+ok(is.null(s8$skip) && grepl("cohort run C1", s8$label, fixed = TRUE),
+   "...and an unreadable stamp falls back to the run id rather than skipping")
 clear()
 
 cat("\n-- and they are not confused with the outcomes build's --\n")

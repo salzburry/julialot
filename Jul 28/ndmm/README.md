@@ -504,14 +504,21 @@ wider set, and they are checked against each other at run time. Long lists are
 cut at twenty codes and say how many were left out.
 
 The finding goes on the run's own row as `NDMM_RUN_METADATA.FINDINGS`, with
-its magnitude - `raw_icd_flag(16 rows, 15 patients, 2 codes; C9000[MM
-diagnosis,12r,11p] ...)` - so a cohort found months later says what it was
-built over and how much of it, without anyone having kept the log.
+its magnitude - `raw_icd_flag(16 rows, 15 patient-hits (summed, >= distinct),
+2 codes; C9000[MM diagnosis,12r,11p] ...)` - so a cohort found months later
+says what it was built over and how much of it, without anyone having kept the
+log. The patient figure is a sum over codes and over both CDM tables, so a
+patient with two affected codes counts twice; it bounds distinct patients from
+above rather than counting them.
 
 `NDMM_ICD_FLAG_MAX_ROWS` stops the build above a row count. It ships empty, so
-the build reports at any volume until the study team sets one, and every run
-names which of the two it was under. It bounds volume, not composition -
-`DECISIONS.md` #11. `NDMM_WAIVERS=raw_icd_flag` is still accepted and now does
+the build reports at any volume until the study team sets one. Whichever it
+was is recorded on every run as `icd_ceiling(...)` in the same column, found or
+not. It bounds volume, not composition - `DECISIONS.md` #11.
+
+A count that cannot be read stops, from either CDM source independently: one
+source unreadable and the other reporting rows makes the total a partial, and a
+ceiling weighed against a partial passes on a volume nobody measured. `NDMM_WAIVERS=raw_icd_flag` is still accepted and now does
 nothing - an unrecognised waiver name stops the build as a typo, so removing it
 would break the commands that were told to pass it.
 

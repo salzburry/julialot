@@ -1306,8 +1306,11 @@ drive_icd <- function(n, waive = "", detail = NULL) {
        findings = getOption("ndmm_findings", character(0)))
 }
 r <- drive_icd(0L)
-ok(identical(r$err, "") && !length(r$findings),
-   "every flag naming a family leaves nothing to report")
+# The ceiling is recorded whatever happens, so a cohort read later says which
+# governance it was built under - "no finding" and "no ceiling" would otherwise
+# look alike on the row.
+ok(identical(r$err, "") && identical(r$findings, "icd_ceiling(none)"),
+   "every flag naming a family leaves only the ceiling on the record")
 ok(!any(grepl("matched_code", ICDQ, fixed = TRUE)),
    "...and nothing pays for a breakdown of a finding that is not there")
 r <- drive_icd(7L)
@@ -1326,17 +1329,24 @@ ok(grepl("exclude a patient", m, fixed = TRUE) &&
 # With its size, not just its name. Sixteen rows and a data-quality failure
 # read identically as "raw_icd_flag", and there is no ceiling above which this
 # stops the build - so the magnitude has to be on the row somebody reads later.
-ok(length(r$findings) == 1L && grepl("^raw_icd_flag\\(", r$findings) &&
-     grepl("14 rows, 14 patients, 1 codes", r$findings, fixed = TRUE) &&
-     grepl("C9000[MM diagnosis,14r,14p]", r$findings, fixed = TRUE),
-   "...and the finding carries rows, patients, code count and each code's list")
+f <- grep("^raw_icd_flag", r$findings, value = TRUE)
+ok(length(f) == 1L &&
+     grepl("14 rows, 14 patient-hits (summed, >= distinct), 1 codes", f, fixed = TRUE) &&
+     grepl("C9000[MM diagnosis,14r,14p]", f, fixed = TRUE),
+   "...and the finding carries rows, patient-hits, code count and each code's list")
+# Summed over codes and over both CDM tables, so a patient with two affected
+# codes counts twice. It is an upper bound and the row has to say so, or
+# somebody quotes it as a patient count.
+ok(grepl(">= distinct", f, fixed = TRUE),
+   "...labelled as a sum rather than as a distinct-patient count")
 # A finding longer than the cap says how many codes it left out, or the row
 # reads as the whole story - the same rule the log line follows.
 big <- drive_icd(25L, detail = data.frame(
   icd_flag_value = "<blank>", matched_code = sprintf("C%04d", 1:25),
   on_list = "MM diagnosis", n_rows = 1L, n_pat = 1L, stringsAsFactors = FALSE))
-ok(grepl("25 codes", big$findings, fixed = TRUE) &&
-     grepl("+15 more code(s)", big$findings, fixed = TRUE),
+bf <- grep("^raw_icd_flag", big$findings, value = TRUE)
+ok(length(bf) == 1L && grepl("25 codes", bf, fixed = TRUE) &&
+     grepl("+15 more code(s)", bf, fixed = TRUE),
    "...and says how many codes it left off the row, not only off the log")
 ok("FINDINGS" %in% names(RUN_METADATA_COLS),
    "...which is a column NDMM_RUN_METADATA actually has")
@@ -1352,13 +1362,13 @@ r <- drive_icd(7L, detail = data.frame(
   icd_flag_value = "<blank>", matched_code = c("C901", "C902"),
   on_list = "MM diagnosis", n_rows = c(5, 2), n_pat = c(NA, 2),
   stringsAsFactors = FALSE))
-ok(identical(r$err, "") && grepl("2 codes", r$findings, fixed = TRUE) &&
-     grepl("C901", r$findings, fixed = TRUE),
+ok(identical(r$err, "") && any(grepl("2 codes", r$findings, fixed = TRUE)) &&
+     any(grepl("C901", r$findings, fixed = TRUE)),
    "a code with an unreadable patient count stays on the row rather than vanishing")
 r <- drive_icd(7L, detail = data.frame(
   icd_flag_value = "<blank>", matched_code = "C901", on_list = "MM diagnosis",
   n_rows = NA_real_, n_pat = NA_real_, stringsAsFactors = FALSE))
-ok(identical(r$err, "") && grepl("^raw_icd_flag\\(", r$findings),
+ok(identical(r$err, "") && any(grepl("^raw_icd_flag\\(", r$findings)),
    "...and a breakdown that is entirely unreadable still reports, rather than erroring")
 # A code on two lists is one entry naming both. Grouping by code AND list would
 # count its claims twice in the code count somebody reads as "how many codes".
@@ -1366,8 +1376,8 @@ r <- drive_icd(7L, detail = data.frame(
   icd_flag_value = "<blank>", matched_code = c("C901", "C901"),
   on_list = c("MM diagnosis", "other malignancy"), n_rows = c(3, 4),
   n_pat = c(3, 4), stringsAsFactors = FALSE))
-ok(grepl("1 codes", r$findings, fixed = TRUE) &&
-     grepl("MM diagnosis+other malignancy", r$findings, fixed = TRUE),
+ok(any(grepl("1 codes", r$findings, fixed = TRUE)) &&
+     any(grepl("MM diagnosis+other malignancy", r$findings, fixed = TRUE)),
    "...and a code on two lists is one entry naming both, not two entries")
 
 # A ceiling, settable without a code change and unset by default. Unset is the
@@ -1484,7 +1494,7 @@ ok(grepl("C0001", m, fixed = TRUE) && !grepl("C0025", m, fixed = TRUE) &&
 r <- drive_icd(7L, detail = "error")
 ok(grepl("WARNING (raw_icd_flag)", r$log, fixed = TRUE) &&
      grepl("names neither family", r$log, fixed = TRUE) &&
-     length(r$findings) == 1L && grepl("^raw_icd_flag\\(", r$findings),
+     any(grepl("^raw_icd_flag\\(", r$findings)),
    "...and a breakdown that cannot be read leaves the warning and the finding intact")
 
 # A claim count above 2^31-1 makes as.integer() NA, the found-anything guard
@@ -1492,7 +1502,7 @@ ok(grepl("WARNING (raw_icd_flag)", r$log, fixed = TRUE) &&
 # names a family" - a clean all-clear on the largest failure there could be.
 r <- drive_icd(3e9)
 ok(grepl("WARNING (raw_icd_flag)", r$log, fixed = TRUE) &&
-     grepl("6,000,000,000 rows", r$findings, fixed = TRUE),
+     any(grepl("6,000,000,000 rows", r$findings, fixed = TRUE)),
    "a count past the integer limit is still counted, not read as none")
 # And a count that genuinely cannot be read is not a clean one.
 r <- drive_icd(NA_integer_)

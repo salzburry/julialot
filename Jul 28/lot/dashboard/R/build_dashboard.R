@@ -217,6 +217,30 @@ resolve_fu_ce_window <- function(secs, con, inputs, have, owner) {
     log_msg("  skip  fu_ce_window - no rows for cohort run ", cr)
     secs[[i]] <- sec; return(secs)
   }
+  # Same run id is not the same attempt. A cohort re-run keeps its run id and
+  # replaces this table under it, so rows matching cr can belong to a LATER
+  # attempt than the one LOT read. The stamp LOT recorded is the status row's
+  # timestamp at that moment; a table written after it is a later attempt,
+  # whatever its run id says. Same test the funnel makes, on the column the
+  # cohort build now writes for it.
+  st <- owner$cohort_stamp
+  if (!is.null(st) && !is.na(st) && nzchar(st) && "RECORDED_AT" %in% cols) {
+    a <- tryCatch(db_q(con, paste0("SELECT max(RECORDED_AT) AS T FROM ",
+                                   inputs$fu_ce_counts, " WHERE RUN_ID = '", cr, "'")),
+                  error = function(e) NULL)
+    newer <- isTRUE(tryCatch(
+      as.POSIXct(as.character(a$T[1]), tz = "UTC") >
+        as.POSIXct(as.character(st), tz = "UTC"),
+      error = function(e) FALSE, warning = function(w) FALSE))
+    if (newer) {
+      sec$skip <- paste0(
+        "the follow-up-enrolment windows under cohort run ", cr, " were ",
+        "rewritten after LOT read that cohort, so they are a later attempt ",
+        "under the same run id.")
+      log_msg("  skip  fu_ce_window - run ", cr, " rewritten after LOT read it")
+      secs[[i]] <- sec; return(secs)
+    }
+  }
   sec$sql <- sub("FROM {fu_ce_counts}",
                  "FROM {fu_ce_counts}\n         WHERE RUN_ID = '{cohort_run}'",
                  sec$sql, fixed = TRUE)

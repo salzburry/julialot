@@ -1014,13 +1014,25 @@ check_icd_flag <- function(con, cfg) {
     if (!(length(n) == 1L && !is.na(n)))
       unreadable <- c(unreadable, p$t)
   }
+  # The ceiling goes on the run's row whether or not anything was found, so a
+  # cohort read later says which governance it was built under rather than
+  # leaving "no finding" and "no ceiling" looking alike.
+  ceiling <- trimws(Sys.getenv("NDMM_ICD_FLAG_MAX_ROWS", unset = ""))
+  options(ndmm_findings = union(
+    getOption("ndmm_findings", character(0)),
+    paste0("icd_ceiling(", if (nzchar(ceiling)) ceiling else "none", ")")))
+  # Before the found-anything test, not inside it. One source unreadable and
+  # the other reporting rows is the case that matters: the total is then a
+  # partial, and a ceiling weighed against a partial passes on a volume nobody
+  # measured.
+  if (length(unreadable))
+    stop("Could not read the ICD_FLAG count on: ",
+         paste(unreadable, collapse = ", "),
+         ". An unreadable count is not a clean one, and it cannot be weighed ",
+         "against a ceiling either - whatever the other source returned is a ",
+         "partial total. This check is the only thing that would report claims ",
+         "matching no code list entry.", call. = FALSE)
   if (!length(found)) {
-    if (length(unreadable))
-      stop("Could not read the ICD_FLAG count on: ",
-           paste(unreadable, collapse = ", "),
-           ". An unreadable count is not a clean one, and this check is the ",
-           "only thing that would report claims matching no code list entry.",
-           call. = FALSE)
     log_msg("  ICD_FLAG: every claim carrying a code this cohort reads names a family")
     return(invisible(FALSE))
   }
@@ -1033,37 +1045,17 @@ check_icd_flag <- function(con, cfg) {
                 "them. On an MM code the lost match can exclude a patient; on an ",
                 "other-cancer or pregnancy code it can keep one; on a trial code ",
                 "it moves nobody, because trial evidence filters nothing.")
-  # A ceiling, if the study team set one. Empty by default, which is the
-  # decision as it stands: report and continue whatever the volume. What a
-  # number buys is that the next refresh cannot quietly be a different size -
-  # sixteen claims and a source-data failure stop reading the same. It does not
-  # bound COMPOSITION: the same count on different codes still passes, and
-  # that is what reading the finding is for. DECISIONS.md #11.
-  ceiling <- trimws(Sys.getenv("NDMM_ICD_FLAG_MAX_ROWS", unset = ""))
-  over <- nzchar(ceiling) && tally > as.numeric(ceiling)
-  msg <- paste0(msg, " Ceiling: ",
-                if (nzchar(ceiling)) paste0("NDMM_ICD_FLAG_MAX_ROWS=", ceiling)
-                else "none set, so no volume stops this build.")
-  if (over)
-    stop(msg, " This run found ", num(tally), " such row(s), over that ceiling, ",
-         "so it stops rather than reporting. Raise NDMM_ICD_FLAG_MAX_ROWS once ",
-         "the study team has looked at what changed.", call. = FALSE)
-  log_msg("WARNING (raw_icd_flag): ", msg)
-  # On the run's own row with its size, so a cohort found months later carries
-  # the finding rather than depending on somebody still having the log - and
-  # carries enough of it to tell sixteen rows from a data-quality failure.
-  # The name alone would read the same either way, and a ceiling is optional
-  # (DECISIONS.md #11).
-  # One row per distinct CODE, so a code on two lists is one entry naming both
-  # rather than two entries counted twice. Patients are summed, not
-  # distinct-counted: the two probes read different CDM tables and a patient in
-  # both is counted once per table. That over-states, which is the safe
-  # direction for a magnitude, and the log carries the per-table figures.
+  # The breakdown, folded to one row per distinct CODE - a code on two lists is
+  # one entry naming both, not two counted twice. Patient numbers are SUMMED,
+  # over codes and over the two CDM tables, so a patient with two affected
+  # codes counts twice: it is an upper bound on distinct patients and is
+  # labelled as one. A distinct count would need its own query over both
+  # sources, and the log carries the exact per-table figures either way.
   #
   # Not aggregate(): its formula method defaults to na.omit, so one unreadable
   # count would drop that code from the row entirely - the largest code
-  # vanishing from the record while the total still names it - and an all-NA
-  # frame would error out of a function whose whole job is to report.
+  # vanishing while the total still names it - and an all-NA frame would error
+  # out of a function whose whole job is to report.
   by_code <- if (nrow(seen_codes)) {
     z <- function(x) { x <- suppressWarnings(as.numeric(x)); x[is.na(x)] <- 0; x }
     split_by <- factor(seen_codes$code, levels = unique(seen_codes$code))
@@ -1077,17 +1069,36 @@ check_icd_flag <- function(con, cfg) {
   } else seen_codes
   by_code <- by_code[order(-by_code$n_rows, by_code$code), , drop = FALSE]
   shown   <- head(by_code, 10L)
+  # Recorded before the ceiling is weighed, so the finding is on the run's row
+  # whichever way that goes. No breakdown at all means the detail query could
+  # not be read, not that the rows carried no codes - "0 codes" beside a
+  # positive row count would read as the second.
   options(ndmm_findings = union(
     getOption("ndmm_findings", character(0)),
-    paste0("raw_icd_flag(", num(tally), " rows, ",
-           num(sum(by_code$n_pat)), " patients, ", nrow(by_code), " codes",
-           if (nrow(shown)) paste0("; ", paste0(shown$code, "[", shown$on_list, ",",
-                                                num(shown$n_rows), "r,",
-                                                num(shown$n_pat), "p]",
-                                                collapse = " ")) else "",
-           if (nrow(by_code) > nrow(shown))
-             paste0("; +", nrow(by_code) - nrow(shown), " more code(s)") else "",
-           ")")))
+    if (!nrow(by_code))
+      paste0("raw_icd_flag(", num(tally), " rows, breakdown unavailable)")
+    else
+      paste0("raw_icd_flag(", num(tally), " rows, ",
+             num(sum(by_code$n_pat)), " patient-hits (summed, >= distinct), ",
+             nrow(by_code), " codes; ",
+             paste0(shown$code, "[", shown$on_list, ",", num(shown$n_rows), "r,",
+                    num(shown$n_pat), "p]", collapse = " "),
+             if (nrow(by_code) > nrow(shown))
+               paste0("; +", nrow(by_code) - nrow(shown), " more code(s)") else "",
+             ")")))
+  # A ceiling, if the study team set one. Empty by default, which is the
+  # decision as it stands: report and continue whatever the volume. A number
+  # buys only that the next refresh cannot quietly be a different SIZE - the
+  # same count on different codes still passes, which is what reading the
+  # finding is for. DECISIONS.md #11.
+  msg <- paste0(msg, " Ceiling: ",
+                if (nzchar(ceiling)) paste0("NDMM_ICD_FLAG_MAX_ROWS=", ceiling)
+                else "none set, so no volume stops this build.")
+  if (nzchar(ceiling) && tally > as.numeric(ceiling))
+    stop(msg, " This run found ", num(tally), " such row(s), over that ceiling, ",
+         "so it stops rather than reporting. Raise NDMM_ICD_FLAG_MAX_ROWS once ",
+         "the study team has looked at what changed.", call. = FALSE)
+  log_msg("WARNING (raw_icd_flag): ", msg)
   if ("raw_icd_flag" %in% waivers())
     log_msg("  (NDMM_WAIVERS=raw_icd_flag is no longer needed - this reports ",
             "rather than stops. The name is still accepted so existing commands ",
