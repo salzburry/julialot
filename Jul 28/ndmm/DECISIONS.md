@@ -596,9 +596,23 @@ two it was under.
 
 A ceiling bounds volume, not composition: the same count on different codes,
 or on codes that moved from the trial list to the MM list, still passes. That
-is what reading the finding is for. `FINDINGS` carries the row count, the
-patient count, the number of distinct codes and each code's list, so the
-re-read is possible from the run's own row rather than from a log.
+is what reading the finding is for. `FINDINGS` carries the row count, a patient
+figure, the number of distinct codes and each code's list, so the re-read is
+possible from the run's own row rather than from a log.
+
+The patient figure is summed over codes and over both CDM tables, so a patient
+with two affected codes counts twice. It bounds distinct patients from above
+rather than counting them, and the row says so - `15 patient-hits (summed, >=
+distinct)`. A distinct count would need its own query across both sources; the
+number that governs the ceiling is the row count either way.
+
+Where the record lands depends on whether the run finished. A completed run
+writes `NDMM_RUN_METADATA.FINDINGS`. A run the ceiling STOPS never reaches that
+write - and its previous attempt's row was cleared at the start - so it would
+otherwise leave nothing at all, which is the run most worth reading later. So
+the same string is written to `NDMM_BUILD_STATUS.FINDINGS`, on the row that
+records the run failed. A stopped run is legible from the warehouse rather than
+from whoever still has the console.
 
 Status: ACCEPTED for 2026q1, unbounded by default. Re-read on each refresh.
 Setting `NDMM_ICD_FLAG_MAX_ROWS` is the study team's call and the number is

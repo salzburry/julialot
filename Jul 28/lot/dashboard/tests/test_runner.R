@@ -516,8 +516,24 @@ s <- lay2(NDMM_COLS, own, 8L, funnel_at = "2026-02-01 09:00:00")
 ok(!is.null(s$skip) && grepl("later attempt", s$skip, fixed = TRUE),
    "a funnel rewritten under the same run id after LOT read it is skipped")
 s <- lay2(NDMM_COLS, own, 8L, funnel_at = "2026-01-01 09:00:00")
-ok(is.null(s$skip),
+ok(is.null(s$skip) && !grepl("not verified", s$label, fixed = TRUE),
    "...and the attempt LOT actually read is shown")
+# The same three-valued answer the CE-window panel gives. A comparison that
+# could not be made was collapsing into "not a later attempt", which is the one
+# thing it did not establish, and the funnel then went out labelled with a
+# cohort run as though the attempt had been checked.
+for (case in list(list(at = NA, why = "a funnel stamp that comes back NULL"),
+                  list(at = "sometime", why = "one in a shape no date parser takes"),
+                  list(at = "", why = "one that is present but empty"))) {
+  s <- lay2(NDMM_COLS, own, 8L, funnel_at = case$at)
+  ok(is.null(s$skip) && grepl("cohort run coh-a", s$label, fixed = TRUE) &&
+       grepl("attempt not verified", s$label, fixed = TRUE),
+     paste0("...while ", case$why, " is shown, and says the attempt is unverified"))
+}
+s <- lay2(NDMM_COLS, list(run_id = "lot-1", ts = "2026-01-02 10:00:00", exact = TRUE,
+                          cohort_run = "coh-a", cohort_stamp = NA_character_), 8L)
+ok(is.null(s$skip) && grepl("attempt not verified", s$label, fixed = TRUE),
+   "...and so is a LOT run that recorded a cohort id but no stamp")
 
 cat("\n-- the panels name no study, in their labels either --\n")
 # The attrition table belongs to whichever cohort build wrote it, so the panel
@@ -630,11 +646,13 @@ FSEC <- Filter(function(s) identical(s$name, "fu_ce_window"), DASHBOARD_SECTIONS
 # there whatever globalenv holds - which made every case take the
 # "columns could not be read" path and three of these pass for the wrong reason.
 drive_fu <- function(cols, cohort_run = "C1", n = 1L,
-                     stamp = NULL, written = NULL) {
+                     stamp = NULL, written = NULL, boom = FALSE) {
   assign("table_cols", function(con, tbl) cols, envir = env)
   assign("db_q", function(con, sql)
-    if (grepl("max(RECORDED_AT)", sql, fixed = TRUE)) data.frame(T = written)
-    else data.frame(n = n), envir = env)
+    if (grepl("max(RECORDED_AT)", sql, fixed = TRUE)) {
+      if (boom) stop("driver refused the stamp query")
+      data.frame(T = written)
+    } else data.frame(n = n), envir = env)
   assign("log_msg", function(...) invisible(NULL), envir = env)
   out <- env$resolve_fu_ce_window(FSEC, NULL,
                               list(fu_ce_counts = "wk.c_NDMM_FU_CE_COUNTS"),
@@ -642,9 +660,11 @@ drive_fu <- function(cols, cohort_run = "C1", n = 1L,
                               list(cohort_run = cohort_run, cohort_stamp = stamp))
   out[[1]]
 }
-s1 <- drive_fu(c("FU_CE_RULE", "N_COHORT", "RUN_ID", "RECORDED_AT"))
+s1 <- drive_fu(c("FU_CE_RULE", "N_COHORT", "RUN_ID", "RECORDED_AT"),
+               stamp = "2026-08-01 10:00:00", written = "2026-08-01 10:00:00")
 ok(is.null(s1$skip) && grepl("WHERE RUN_ID = '{cohort_run}'", s1$sql, fixed = TRUE) &&
-     grepl("cohort run C1", s1$label, fixed = TRUE),
+     grepl("cohort run C1", s1$label, fixed = TRUE) &&
+     !grepl("not verified", s1$label, fixed = TRUE),
    "a stamped table with the cohort's rows is pinned to that run, and says so")
 s2 <- drive_fu(c("FU_CE_RULE", "N_COHORT", "RUN_ID"), n = 0L)
 ok(!is.null(s2$skip) && grepl("different cohort refresh", s2$skip, fixed = TRUE),
@@ -669,11 +689,32 @@ ok(!is.null(s6$skip) && grepl("later attempt under the same run id", s6$skip, fi
    "a table rewritten after LOT read that cohort is a later attempt, and is skipped")
 s7 <- drive_fu(STAMPED, stamp = "2026-08-03 10:00:00",
                written = "2026-08-02 09:00:00")
-ok(is.null(s7$skip) && grepl("cohort run C1", s7$label, fixed = TRUE),
+ok(is.null(s7$skip) && grepl("cohort run C1", s7$label, fixed = TRUE) &&
+     !grepl("not verified", s7$label, fixed = TRUE),
    "...one written before it is the attempt LOT read, and is shown")
-s8 <- drive_fu(STAMPED, stamp = "2026-08-01 10:00:00", written = NA)
-ok(is.null(s8$skip) && grepl("cohort run C1", s8$label, fixed = TRUE),
-   "...and an unreadable stamp falls back to the run id rather than skipping")
+
+# A comparison that did not happen is not a comparison that came back "no".
+# Both of those used to reach the same line, so an unreadable timestamp, an
+# absent stamp column and a refused query all put "cohort run C1" on the panel
+# with nothing to say the attempt behind it was never checked. The rows are
+# still shown - the run id is real, and they are the only rows there - but the
+# label stops short of the claim nothing established.
+unverified <- function(s, what) {
+  ok(is.null(s$skip) && grepl("cohort run C1", s$label, fixed = TRUE) &&
+       grepl("attempt not verified", s$label, fixed = TRUE), what)
+}
+unverified(drive_fu(STAMPED, stamp = "2026-08-01 10:00:00", written = NA),
+           "...a stamp that came back NULL is pinned, and says the attempt is unverified")
+unverified(drive_fu(STAMPED, stamp = "2026-08-01 10:00:00", written = "last Tuesday"),
+           "...as is one in a shape no date parser takes")
+unverified(drive_fu(STAMPED, stamp = "not a timestamp", written = "2026-08-01 10:00:00"),
+           "...and one where it is LOT's own stamp that will not parse")
+unverified(drive_fu(STAMPED, stamp = "2026-08-01 10:00:00", boom = TRUE),
+           "...and a stamp query the driver refuses outright")
+unverified(drive_fu(c("FU_CE_RULE", "N_COHORT", "RUN_ID"), stamp = "2026-08-01 10:00:00"),
+           "...and a table carrying run ids but no stamp column to compare")
+unverified(drive_fu(STAMPED, stamp = NULL, written = "2026-08-01 10:00:00"),
+           "...and a LOT run that recorded no stamp of its own")
 clear()
 
 cat("\n-- and they are not confused with the outcomes build's --\n")

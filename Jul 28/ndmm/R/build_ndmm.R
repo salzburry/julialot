@@ -827,8 +827,20 @@ write_codelist_metadata <- function(con, cfg) {
 
 BUILD_STATUS_COLS <- c(RUN_ID = "STRING", OBJECT_PREFIX = "STRING",
                        STATE = "STRING", N_NDMM = "BIGINT",
+                       FINDINGS = "STRING",
                        UPDATED_AT = "TIMESTAMP")
 
+# FINDINGS here as well as on NDMM_RUN_METADATA, because these two tables
+# survive different things. The metadata row is written at the very end and its
+# previous attempt is cleared up front, so a run that STOPS records nothing
+# there at all - and the run most worth reading later is the one that stopped.
+# NDMM_ICD_FLAG_MAX_ROWS is precisely that case: a ceiling fires mid-build, and
+# what it found and which ceiling it was weighed against would go no further
+# than a console.
+#
+# This row is rewritten on every state change and on failure through on.exit,
+# so it is the one durable place a stopped run can say what it saw. On a
+# completed run the two agree; on a stopped one only this exists.
 write_build_status <- function(con, cfg, state, n = NA) {
   tbl <- wrk("NDMM_BUILD_STATUS")
   cols <- names(BUILD_STATUS_COLS)
@@ -839,6 +851,8 @@ write_build_status <- function(con, cfg, state, n = NA) {
     glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"),
     glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) VALUES (",
          "'{run_id}', '{cfg$object_prefix}', '{state}', {sql_count(n)}, ",
+         "{sql_text(paste(sort(getOption('ndmm_findings', character(0)), ",
+         "method = 'radix'), collapse = ','))}, ",
          "current_timestamp())"))
   log_msg("Build status: ", state, " (run ", run_id, ")")
   invisible(TRUE)
@@ -1217,6 +1231,12 @@ build_ndmm <- function(here, prefix) {
   # nothing had been written, nor that nothing had been waited for.
   check_no_active_run(con, cfg)
   check_upstream(con, cfg)
+  # Before the first status row, not after it. The row now carries this run's
+  # findings, and run_id is fixed when config.R is sourced - so a second attempt
+  # in one session would otherwise open by writing the FIRST attempt's findings
+  # under the same id, against a build that has not looked at anything yet.
+  options(ndmm_complete = FALSE, ndmm_codelist_md5 = list(),
+          ndmm_waivers_applied = character(0), ndmm_findings = character(0))
   write_build_status(con, cfg, "started")
   # Registered the moment the run is marked started, and before anything that
   # can stop - clear_run_rows() does. A stop between the two would leave the
@@ -1228,8 +1248,6 @@ build_ndmm <- function(here, prefix) {
   on.exit(if (!isTRUE(getOption("ndmm_complete", FALSE)))
             try(write_build_status(con, cfg, "failed"), silent = TRUE),
           add = TRUE, after = FALSE)
-  options(ndmm_complete = FALSE, ndmm_codelist_md5 = list(),
-          ndmm_waivers_applied = character(0), ndmm_findings = character(0))
   # After the status row, so a run is marked started whatever this does, and
   # before the first step, so no writer can be reached with the previous
   # attempt's rows still under this run's id.

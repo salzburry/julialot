@@ -148,27 +148,39 @@ reads it before any panel runs and:
   completeness predicate. The log says this is the weaker claim: it establishes
   that a run finished, not that it wrote these tables.
 
-### What is not established: cohort <-> LOT alignment
+### Cohort <-> LOT alignment, and what is still not established
 
-Nothing keys a cohort run to a LOT run. They share a prefix, not a run id, and
-neither table records the other's - so a cohort rebuilt after LOT ran, with LOT
-not re-run, leaves the newest funnel describing a cohort the clinical panels
-were not built from.
+`lot` records the cohort run it pinned its input to - `COHORT_RUN_ID`, and
+`COHORT_STAMP`, the moment it read that cohort's status row. Both cohort-facing
+panels put two questions to the table in front of them:
 
-The dashboard cannot close that; it can only detect one direction of it. A
-funnel recorded after the owning LOT run's timestamp cannot be the funnel of
-the cohort LOT read, and the panel label says so when it happens. A funnel
-recorded earlier is not thereby proved to be the right one - it is a detector,
-not a link. Closing it properly needs the cohort build to stamp a run id that
-`lot` captures, which is a change to those two packages rather than to this one.
+* are the rows under that run id still there? Gone means the cohort was rebuilt
+  and its funnel replaced, so the panel is skipped rather than shown. What is
+  there describes a different refresh, and a funnel is read as the funnel for
+  the study beside it.
+* were they written after LOT read them? A cohort re-run keeps its run id and
+  rewrites its rows under it, so matching ids is not matching attempts. Written
+  later is a later attempt, and that panel is skipped too.
 
-`fu_ce_window` sits on the same footing and has no detector at all. Its table
-is `CREATE OR REPLACE`, so a cohort rebuild replaces it while the LOT run on
-this page still describes the previous attempt. The cohort build now stamps
-`RUN_ID` and `RECORDED_AT` onto it, which is what makes that resolvable by
-hand - the panel does not read them, because a cohort built before the stamp
-existed has no such column and the panel would fail rather than degrade. Read
-it against the funnel panel's run.
+The second question has three answers, and the third is the one worth naming.
+The table may carry no timestamp column, `lot` may have recorded no stamp of
+its own, the query may be refused, the value may come back in a shape no date
+parser takes. None of those establishes that the rows are the attempt LOT read,
+and all of them used to be reported as though they had - the comparison
+collapsed into "not newer" and the panel went out labelled `cohort run X`
+either way. It now reads `cohort run X (attempt not verified)`, and the log
+names the check that could not run.
+
+Rows written at or before the stamp are still not *proved* to be the ones LOT
+read. This is a detector, not a link: what it buys is that the case it can see
+is not shown as though nobody looked.
+
+`fu_ce_window` is on the same footing and reads the same two stamps. Its table
+is `CREATE OR REPLACE`, so a cohort rebuild takes it with it while the LOT run
+on this page still describes the previous attempt. The columns are found by
+DESCRIBE rather than assumed: a cohort built before the stamp existed has
+neither, and that panel is labelled `not tied to the LOT run below it` rather
+than failing outright.
 
 The two outcomes-facing readers are keyed, because they can be. `OUT_TTE`
 records the LOT run it was built over, so `outcomes_followup` filters on it

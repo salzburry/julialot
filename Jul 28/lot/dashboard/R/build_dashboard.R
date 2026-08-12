@@ -188,6 +188,42 @@ fill_sql <- function(sql, inputs, cfg) {
 # The stamp is new, so a cohort built before it has no RUN_ID column and
 # selecting one would fail the panel outright. DESCRIBE decides: stamped and
 # tied, stamped and gone, or unstamped and labelled as untied.
+
+# Was this table written after the moment LOT recorded reading that cohort?
+#
+# Three answers, not two. Besides "yes" and "no" there is "the comparison did
+# not happen": the query can be refused, the table can carry no stamp column,
+# LOT can have recorded no stamp of its own, and a timestamp can come back in a
+# shape as.POSIXct() will not take. Every one of those used to collapse into
+# FALSE, which reads as "not a later attempt" - the single thing none of them
+# established. The panel then went out labelled "cohort run X" as though the
+# attempt behind it had been checked, and a check that cannot run is exactly
+# when it is worth saying so.
+#
+#   TRUE  written after the stamp - a later attempt under the same run id
+#   FALSE written at or before it - the attempt LOT read
+#   NA    could not tell
+#
+# The first column by position rather than by name: the alias is ours, but the
+# case it comes back in belongs to the driver.
+stamp_is_newer <- function(con, sql, st) {
+  when <- function(x) {
+    x <- suppressWarnings(as.character(x))
+    if (!length(x) || is.na(x[1]) || !nzchar(trimws(x[1]))) return(NA_real_)
+    t <- suppressWarnings(tryCatch(as.POSIXct(x[1], tz = "UTC"),
+                                   error = function(e) NULL))
+    if (!length(t) || is.na(t[1])) NA_real_ else as.numeric(t[1])
+  }
+  d <- tryCatch(db_q(con, sql), error = function(e) NULL)
+  got <- if (is.null(d) || !is.data.frame(d) || !nrow(d) || !ncol(d)) NULL else d[[1]][1]
+  a <- when(got); b <- when(st)
+  if (is.na(a) || is.na(b)) return(NA)
+  a > b
+}
+
+# What a panel pinned to a run id may claim about the attempt behind it.
+UNVERIFIED_ATTEMPT <- " (attempt not verified)"
+
 resolve_fu_ce_window <- function(secs, con, inputs, have, owner) {
   i <- which(vapply(secs, function(s) identical(s$name, "fu_ce_window"), logical(1)))
   if (!length(i) || !isTRUE(have[["fu_ce_counts"]])) return(secs)
@@ -223,28 +259,30 @@ resolve_fu_ce_window <- function(secs, con, inputs, have, owner) {
   # timestamp at that moment; a table written after it is a later attempt,
   # whatever its run id says. Same test the funnel makes, on the column the
   # cohort build now writes for it.
-  st <- owner$cohort_stamp
-  if (!is.null(st) && !is.na(st) && nzchar(st) && "RECORDED_AT" %in% cols) {
-    a <- tryCatch(db_q(con, paste0("SELECT max(RECORDED_AT) AS T FROM ",
-                                   inputs$fu_ce_counts, " WHERE RUN_ID = '", cr, "'")),
-                  error = function(e) NULL)
-    newer <- isTRUE(tryCatch(
-      as.POSIXct(as.character(a$T[1]), tz = "UTC") >
-        as.POSIXct(as.character(st), tz = "UTC"),
-      error = function(e) FALSE, warning = function(w) FALSE))
-    if (newer) {
-      sec$skip <- paste0(
-        "the follow-up-enrolment windows under cohort run ", cr, " were ",
-        "rewritten after LOT read that cohort, so they are a later attempt ",
-        "under the same run id.")
-      log_msg("  skip  fu_ce_window - run ", cr, " rewritten after LOT read it")
-      secs[[i]] <- sec; return(secs)
-    }
+  newer <- if (!("RECORDED_AT" %in% cols)) NA else
+    stamp_is_newer(con, paste0("SELECT max(RECORDED_AT) AS T FROM ",
+                               inputs$fu_ce_counts, " WHERE RUN_ID = '", cr, "'"),
+                   owner$cohort_stamp)
+  if (isTRUE(newer)) {
+    sec$skip <- paste0(
+      "the follow-up-enrolment windows under cohort run ", cr, " were ",
+      "rewritten after LOT read that cohort, so they are a later attempt ",
+      "under the same run id.")
+    log_msg("  skip  fu_ce_window - run ", cr, " rewritten after LOT read it")
+    secs[[i]] <- sec; return(secs)
   }
   sec$sql <- sub("FROM {fu_ce_counts}",
                  "FROM {fu_ce_counts}\n         WHERE RUN_ID = '{cohort_run}'",
                  sec$sql, fixed = TRUE)
-  sec$label <- paste0(sec$label, " - cohort run ", cr)
+  # The run id is pinned either way - it is the rows that are there. What the
+  # label stops short of claiming is that they are the ATTEMPT LOT read, when
+  # nothing was able to compare the two.
+  sec$label <- paste0(sec$label, " - cohort run ", cr,
+                      if (is.na(newer)) UNVERIFIED_ATTEMPT else "")
+  if (is.na(newer))
+    log_msg("  Note: fu_ce_window is pinned to cohort run ", cr, ", but which ",
+            "ATTEMPT under that id wrote these rows could not be compared ",
+            "against the moment LOT read the cohort. A re-run keeps the id.")
   secs[[i]] <- sec
   secs
 }
@@ -316,26 +354,26 @@ resolve_attrition <- function(secs, con, inputs, have, cfg, owner) {
   # LATER attempt than the one LOT read. The stamp LOT recorded is the status
   # row's timestamp at that moment; a funnel written after it is a later
   # attempt, whatever its run id says.
-  st <- owner$cohort_stamp
-  if (!is.null(st) && !is.na(st) && nzchar(st)) {
-    a <- tryCatch(db_q(con, paste0("SELECT max(", L$stamp, ") AS T FROM ",
-                                   inputs$attrition, " WHERE ", L$run_col,
-                                   " = '", cr, "'")), error = function(e) NULL)
-    newer <- isTRUE(tryCatch(
-      as.POSIXct(as.character(a$T[1]), tz = "UTC") >
-        as.POSIXct(as.character(st), tz = "UTC"),
-      error = function(e) FALSE, warning = function(w) FALSE))
-    if (newer) {
-      sec$skip <- paste0(
-        "the funnel under cohort run ", cr, " was rewritten after LOT read it, ",
-        "so it is a later attempt under the same run id. The cohort behind ",
-        "these lines no longer has a funnel in ", inputs$attrition, ".")
-      log_msg("  skip  attrition - run ", cr, " rewritten after LOT read it")
-      secs[[i]] <- sec; return(secs)
-    }
+  newer <- stamp_is_newer(con, paste0("SELECT max(", L$stamp, ") AS T FROM ",
+                                      inputs$attrition, " WHERE ", L$run_col,
+                                      " = '", cr, "'"), owner$cohort_stamp)
+  if (isTRUE(newer)) {
+    sec$skip <- paste0(
+      "the funnel under cohort run ", cr, " was rewritten after LOT read it, ",
+      "so it is a later attempt under the same run id. The cohort behind ",
+      "these lines no longer has a funnel in ", inputs$attrition, ".")
+    log_msg("  skip  attrition - run ", cr, " rewritten after LOT read it")
+    secs[[i]] <- sec; return(secs)
   }
   sec$sql   <- L$sql_run
-  sec$label <- paste0(sec$label, " - cohort run ", cr)
+  # Pinned to the run id, which is what the rows say. Whether they are the
+  # attempt LOT read is a second question, and one this could not put.
+  sec$label <- paste0(sec$label, " - cohort run ", cr,
+                      if (is.na(newer)) UNVERIFIED_ATTEMPT else "")
+  if (is.na(newer))
+    log_msg("  Note: the funnel is pinned to cohort run ", cr, ", but which ",
+            "ATTEMPT under that id wrote it could not be compared against the ",
+            "moment LOT read the cohort. A re-run keeps the id.")
   secs[[i]] <- sec
   secs
 }

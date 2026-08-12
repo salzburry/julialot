@@ -584,9 +584,22 @@ ok(i_cr > 0 && i_p1 > 0 && i_bs < i_cr && i_cr < i_p1,
 # And the failed-status handler is registered before it, or a stop in the clear
 # would leave the status at "started" for ever and check_no_active_run() would
 # refuse every later run on the prefix.
-i_oe <- regexpr("ndmm_complete", body, fixed = TRUE)
+#
+# Anchored on the handler's own write, not on the first mention of
+# ndmm_complete: the option is reset ahead of the "started" row now - the row
+# carries this run's findings, and a second attempt in one session shares its
+# run id - so that mention moved to before i_bs and this passed on the position
+# of a line that arms nothing.
+i_oe <- regexpr('"failed"', body, fixed = TRUE)
 ok(i_oe > 0 && i_bs < i_oe && i_oe < i_cr,
    "...with the failed-status handler armed before the clear can stop")
+# The findings the status row reports are this run's. run_id is fixed when
+# config.R is sourced, so a retry in one session writes under the first
+# attempt's id, and a "started" row opening with the previous attempt's findings
+# would attribute them to a build that has not looked at anything yet.
+i_rs <- regexpr("ndmm_findings = character(0)", body, fixed = TRUE)
+ok(i_rs > 0 && i_rs < i_bs,
+   "...and the findings are cleared before the first status row, not after it")
 
 cat("\n-- a retried write does not double the rows --\n")
 # write_attrition and write_build_status both clear and rewrite their run's
@@ -1398,12 +1411,78 @@ ok(grepl("over that ceiling", r$err, fixed = TRUE) &&
      grepl("found 14 such row(s)", r$err, fixed = TRUE) &&
      grepl("NDMM_ICD_FLAG_MAX_ROWS=5", r$err, fixed = TRUE),
    "...and one over it stops, naming both what it found and the ceiling")
+ok(any(grepl("^icd_ceiling\\(5\\)$", r$findings)) &&
+     any(grepl("^raw_icd_flag\\(", r$findings)),
+   "...having recorded what it found and which ceiling it was weighed against")
 Sys.unsetenv("NDMM_ICD_FLAG_MAX_ROWS")
 Sys.setenv(NDMM_ICD_FLAG_MAX_ROWS = "lots")
 m <- tryCatch({ check_settings(); "" }, error = conditionMessage)
 ok(grepl("NDMM_ICD_FLAG_MAX_ROWS", m, fixed = TRUE),
    "...and a ceiling that is not a number is a typo, caught before the run")
 Sys.unsetenv("NDMM_ICD_FLAG_MAX_ROWS")
+
+cat("\n-- and a run the ceiling stopped still says so somewhere durable --\n")
+# The finding is recorded the moment it is made, but the metadata row that used
+# to be its only home is written at the very END of a run - and clear_run_rows()
+# has already deleted the previous attempt's. So a run the ceiling stops wrote
+# nothing to NDMM_RUN_METADATA at all, and the run most worth reading later is
+# exactly the one that stopped.
+#
+# NDMM_BUILD_STATUS is the row that survives: rewritten on every state change
+# and again on failure through on.exit. Driven rather than grepped, so it is
+# the SQL that is held and not the presence of a column name in the file.
+ok("FINDINGS" %in% names(BUILD_STATUS_COLS),
+   "NDMM_BUILD_STATUS carries a FINDINGS column of its own")
+bs <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_ndmm.R"), envir = bs)
+drive_status <- function(findings, state = "failed") {
+  BSQL <<- character(0)
+  options(ndmm_findings = findings)
+  assign("run_id", "R1", envir = bs)
+  assign("log_msg", function(...) invisible(NULL), envir = bs)
+  assign("wrk", function(x) paste0("wk.p_", x), envir = bs)
+  assign("db_q", function(con, sql) data.frame(col_name = names(BUILD_STATUS_COLS)),
+         envir = bs)
+  assign("db_exec", function(con, sql) { BSQL <<- c(BSQL, sql); TRUE }, envir = bs)
+  assign("db_replace", function(con, del, ins) { BSQL <<- c(BSQL, del, ins); TRUE },
+         envir = bs)
+  bs$write_build_status(NULL, cfg_defaults, state)
+  paste(BSQL, collapse = "\n")
+}
+s_fail <- drive_status(c("icd_ceiling(5)", "raw_icd_flag(16 rows, 2 codes)"))
+ok(grepl("icd_ceiling(5)", s_fail, fixed = TRUE) &&
+     grepl("raw_icd_flag(16 rows, 2 codes)", s_fail, fixed = TRUE),
+   "...and a failed run writes the findings it had made into it")
+ok(grepl("'failed'", s_fail, fixed = TRUE),
+   "...on a row that says the run failed, so it is not read as a built cohort")
+# Sorted and comma-joined, the same shape NDMM_RUN_METADATA uses, or the two
+# columns would need reading two different ways.
+ok(grepl("'icd_ceiling(5),raw_icd_flag(16 rows, 2 codes)'", s_fail, fixed = TRUE),
+   "...in the same sorted, comma-joined shape the metadata column uses")
+ok(grepl("NULL", drive_status(character(0)), fixed = TRUE),
+   "...and a run with nothing to report leaves the column NULL rather than empty")
+# One value per column. The findings value was added to a list that already had
+# one INSERT naming every column, and a mismatch is a SQL error at the moment a
+# run is trying to record that it failed - which would lose the record twice.
+#
+# Counted off a finding carrying no comma of its own: the real ones do, and
+# splitting the VALUES list on ", " counts those as separators too.
+ins <- grep("^INSERT INTO", strsplit(drive_status("icd_ceiling(5)"), "\n")[[1]],
+            value = TRUE)
+ok(length(ins) == 1L &&
+     length(strsplit(sub(".*VALUES \\(", "", ins), ", ")[[1]]) ==
+       length(BUILD_STATUS_COLS),
+   paste0("...supplying one value per column (", length(BUILD_STATUS_COLS), ")"))
+# CREATE TABLE IF NOT EXISTS does nothing to a table an earlier run left, so
+# without the migration this column reaches a fresh prefix and no other - and
+# the INSERT names it and fails, on every established prefix at once.
+BSQL <<- character(0)
+assign("db_q", function(con, sql)
+  data.frame(col_name = setdiff(names(BUILD_STATUS_COLS), "FINDINGS")), envir = bs)
+bs$write_build_status(NULL, cfg_defaults, "failed")
+ok(any(grepl("ADD COLUMNS (FINDINGS STRING)", BSQL, fixed = TRUE)),
+   "...and an established prefix has the column added rather than insert into it")
+options(ndmm_findings = character(0))
 
 # The count says how many rows stopped the build. Which codes they carry is the
 # question it leaves behind, and it is asked of the same rows.
