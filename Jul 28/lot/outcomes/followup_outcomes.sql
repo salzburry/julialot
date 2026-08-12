@@ -16,21 +16,27 @@
 
 -- 1. The one place to edit. Point these at the run you want.
 --
---    Both views are pinned to the LATEST outcomes run in OUT_TTE, and
---    OUT_ATTRITION is pinned to that same run rather than to its own latest.
---    The two are separate writes, so a run that died between them leaves one
---    from this attempt and one from the last - and every statement below would
---    otherwise mix them and look ordinary doing it. Pinned, a mismatch empties
---    `attr` instead, which no reader can mistake for an answer.
+--    Both views are pinned to the newest attempt in OUT_TTE, and OUT_ATTRITION
+--    is pinned to that same attempt rather than to its own newest. The two are
+--    separate writes, so a run that died between them leaves one from this
+--    attempt and one from the last, and every statement below would otherwise
+--    mix them and look ordinary doing it.
+--
+--    On BUILT_AT as well as OUT_RUN_ID, because a run id is not an attempt: it
+--    is fixed when the outcomes config is sourced, so a same-session retry
+--    reuses it. Retry B replacing OUT_TTE and then dying leaves A's attrition
+--    under the same id, and matching on the id alone would call that pair
+--    intact. Matching on the timestamp too empties `attr` instead.
 CREATE OR REPLACE TEMPORARY VIEW tte AS
 SELECT * FROM hive_metastore.osk02156.ndmm_OUT_TTE
-WHERE OUT_RUN_ID = (SELECT max(OUT_RUN_ID)
-                    FROM hive_metastore.osk02156.ndmm_OUT_TTE);
+WHERE BUILT_AT = (SELECT max(BUILT_AT)
+                  FROM hive_metastore.osk02156.ndmm_OUT_TTE);
 
 CREATE OR REPLACE TEMPORARY VIEW attr AS
-SELECT * FROM hive_metastore.osk02156.ndmm_OUT_ATTRITION
-WHERE OUT_RUN_ID = (SELECT max(OUT_RUN_ID)
-                    FROM hive_metastore.osk02156.ndmm_OUT_TTE);
+SELECT a.* FROM hive_metastore.osk02156.ndmm_OUT_ATTRITION a
+INNER JOIN (SELECT max(OUT_RUN_ID) AS r, max(BUILT_AT) AS b
+            FROM hive_metastore.osk02156.ndmm_OUT_TTE) t
+        ON a.OUT_RUN_ID = t.r AND a.BUILT_AT >= t.b;
 
 
 -- 1b. What the views pinned to, and whether the second table had it.
@@ -41,12 +47,16 @@ WHERE OUT_RUN_ID = (SELECT max(OUT_RUN_ID)
 --     from: if that is not the run you think you are describing, these numbers
 --     are about a different set of lines and no statement below will say so.
 SELECT (SELECT max(OUT_RUN_ID) FROM tte)                        AS `Outcomes run`,
-       (SELECT max(LOT_RUN_ID) FROM tte)                        AS `LOT run it read`,
+       (SELECT max(BUILT_AT)    FROM tte)                       AS `Written at`,
+       (SELECT max(LOT_RUN_ID)  FROM tte)                       AS `LOT run it read`,
+       (SELECT count(DISTINCT LOT_RUN_ID) FROM tte)             AS `LOT runs in TTE`,
        (SELECT count(*) FROM tte)                               AS `TTE rows`,
        (SELECT count(*) FROM attr)                              AS `Attrition rows`,
-       CASE WHEN (SELECT count(*) FROM attr) > 0
-            THEN 'yes'
-            ELSE 'NO - OUT_ATTRITION has no rows for this outcomes run'
+       CASE WHEN (SELECT count(*) FROM attr) = 0
+              THEN 'NO - no attrition from this attempt'
+            WHEN (SELECT count(DISTINCT LOT_RUN_ID) FROM tte) <> 1
+              THEN 'NO - OUT_TTE spans more than one LOT run'
+            ELSE 'yes'
        END                                                      AS `Pair intact`;
 
 

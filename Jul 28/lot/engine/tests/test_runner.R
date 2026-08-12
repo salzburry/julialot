@@ -1890,9 +1890,9 @@ cat("\n-- every table made from a column list is brought up to it --\n")
 # INSERT naming it fails - for LOT_ATTRITION at the very end of the run, after
 # the lines are built.
 #
-# LOT_FACE_VALIDITY and LOT_ATTRITION had no migration at all, and the comment
-# above the codelist one counted three such tables when there are five. So this
-# is DERIVED from the file: a whitelist would have passed on both of them.
+# LOT_FACE_VALIDITY and LOT_ATTRITION had no migration at all. So this is
+# DERIVED from the file rather than a list written here - a whitelist would
+# have passed on both of them, which is how they went uncounted.
 made <- unique(regmatches(bl, gregexpr(
   "CREATE TABLE IF NOT EXISTS \\{tbl\\} \\(\",\n\\s*paste\\(cols, [A-Z_]+", bl))[[1]])
 made <- sub(".*paste\\(cols, ", "", made)
