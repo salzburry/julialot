@@ -90,7 +90,13 @@ BOOL_SETTINGS <- c("USE_QUARTERLY_TABLES", "CENSOR_AT_DISENROLLMENT",
 INT_SETTINGS  <- c("INDUCTION_WINDOW_DAYS", "INDUCTION_WINDOW_DAYS_LOT_N",
                    "MAP_DISCON_GAP_DAYS", "MEDICAL_DAY_SUPPLY",
                    "SCT_AUTO_WINDOW_DAYS", "SCT_AUTO_GAP_DAYS",
-                   "SCT_TANDEM_DAYS", "CART_CONSOLIDATION_DAYS", "MAX_LOT")
+                   "SCT_TANDEM_DAYS", "CART_CONSOLIDATION_DAYS", "MAX_LOT",
+                   # The melphalan windows are in CONTRACT and config_lot.R
+                   # coerces them the same way, but they were not checked here:
+                   # MELP_EXPOSURE_DAYS=30.5 became 30, matched the contract
+                   # value, and recorded no deviation.
+                   "MELP_EXPOSURE_DAYS", "MELP_RESTART_DAYS",
+                   "MELP_ADVANCE_DAYS", "MELP_SCT_DAYS")
 
 check_settings <- function() {
   bad <- character(0)

@@ -34,7 +34,9 @@ source(file.path(.script_dir, "R", "cells.R"))
 
 LOT_ROOT <- normalizePath(file.path(.script_dir, "..", "engine"), mustWork = TRUE)
 env_flag <- function(nm) identical(toupper(trimws(Sys.getenv(nm, unset = ""))), "TRUE")
-out_dir  <- file.path(.script_dir, "out")
+# The same resolver read_melp_metrics.R uses, so a recovery publishes where the
+# build did instead of beside it.
+out_dir  <- melp_out_dir(.script_dir)
 
 report_plan <- function(cells) {
   cat("\nThe melphalan line-advancing rule, as three builds.\n\n")

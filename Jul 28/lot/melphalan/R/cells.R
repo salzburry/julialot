@@ -34,19 +34,81 @@ MELP_B2_READING <- paste0(
   "B.2: the melphalan boundary is removed and the line is not held open to the ",
   "second dose. Both cells take this reading - see open question 6.")
 
-# The cell's own run id, from its own status row. Reading LOT_ATTRITION or
-# LOT_RUN_METADATA without it would take whichever run's rows came back first.
-cell_run_id <- function(con, c_i) {
+# The cell's own status row: which run owns the prefix, whether it finished,
+# and when it last moved.
+#
+# Read once per cell and carried, rather than asked again each time a run id is
+# needed. LOT_LONG_FINAL and MAP_STACKED are CREATE OR REPLACE tables under a
+# bare prefix with no run column, so a rebuild landing between two questions
+# gives run A's provenance, run B's attrition and whatever the final tables hold
+# now - published as one consistent set. The snapshot is what makes that
+# detectable, and melp_status_unchanged() is where it gets detected.
+#
+# STATE has to be complete. A prefix whose last status row is 'started' is being
+# rebuilt right now and its tables are mid-flight; 'failed' means they are
+# whatever the build got to before it died. Neither is a cell.
+cell_status <- function(con, c_i) {
   # paste0, not glue. Everything else in this file builds SQL that way, and a
   # lone glue() call makes the package an attach dependency of every script that
   # sources it - read_melp_metrics.R does not attach it and died here.
+  tbl <- wrk(paste0(c_i$prefix, "LOT_BUILD_STATUS"))
   st <- tryCatch(db_q(con, paste0(
-    "SELECT RUN_ID FROM ", wrk(paste0(c_i$prefix, "LOT_BUILD_STATUS")),
-    " ORDER BY UPDATED_AT DESC LIMIT 1")), error = function(e) NULL)
-  if (is.null(st) || !nrow(st))
+    "SELECT RUN_ID, STATE, cast(UPDATED_AT as string) AS UPDATED_AT FROM ", tbl,
+    " ORDER BY UPDATED_AT DESC LIMIT 1")), error = function(e) e)
+  # Not swallowed to NULL. A table that cannot be read and a prefix nothing has
+  # ever built are different problems, and the second is the one an operator
+  # would act on.
+  if (inherits(st, "error"))
+    stop("Could not read ", tbl, ", so there is no way to tell which run ",
+         c_i$id, "'s tables belong to: ", conditionMessage(st), call. = FALSE)
+  if (!nrow(st))
     stop("No LOT_BUILD_STATUS row under ", c_i$prefix, ", so there is no run ",
          "to read ", c_i$id, "'s numbers from.", call. = FALSE)
-  st$RUN_ID[1]
+  state <- tolower(trimws(as.character(st$STATE[1])))
+  if (!identical(state, "complete"))
+    stop("The last run under ", c_i$prefix, " is '", state, "', not complete. ",
+         c_i$id, "'s tables are either mid-rebuild or as far as a failed build ",
+         "got, so the numbers read off them are not that cell's.", call. = FALSE)
+  list(id = c_i$id, run_id = as.character(st$RUN_ID[1]), state = state,
+       updated_at = as.character(st$UPDATED_AT[1]))
+}
+
+# The same rows again, immediately before anything is published. Everything read
+# so far came off tables a concurrent build can replace, so this is the only
+# thing standing between "these three cells agreed when we started" and "they
+# still describe the same three builds now".
+#
+# Not a lock - a rebuild finishing inside the read still goes undetected if it
+# also finishes before this runs. It closes the window rather than the door,
+# which is why a cell rebuild beside a read is still not something to do.
+melp_status_unchanged <- function(con, cells, before) {
+  moved <- character(0)
+  for (c_i in cells) {
+    was <- before[[c_i$id]]
+    now <- cell_status(con, c_i)
+    if (!identical(was$run_id, now$run_id) ||
+        !identical(was$updated_at, now$updated_at))
+      moved <- c(moved, paste0("  ", c_i$id, ": was run ", was$run_id, " at ",
+                               was$updated_at, ", now run ", now$run_id, " at ",
+                               now$updated_at))
+  }
+  if (length(moved))
+    stop("A cell was rebuilt while it was being read, so the numbers are a ",
+         "mix of two builds:\n", paste(moved, collapse = "\n"),
+         "\nNothing was written. Re-run the read once the rebuild has finished.",
+         call. = FALSE)
+  invisible(TRUE)
+}
+
+# Where both scripts publish.
+#
+# One resolver, because they had two: the runner wrote beside its build logs and
+# the recovery read wrote to the artifacts directory, so a recovery could
+# succeed while the stale CSVs it replaced sat next to the logs, still looking
+# current.
+melp_out_dir <- function(script_dir) {
+  d <- trimws(Sys.getenv("OUTPUT_DIR", unset = ""))
+  if (nzchar(d)) d else file.path(script_dir, "out")
 }
 
 melp_cell_plan <- function(cells = MELP_CELLS, prefix_base = "melp_") {
@@ -255,11 +317,15 @@ melp_settings <- function(rows) {
 
   out <- lapply(MELP_SETTING_KEYS, function(k) first[[k]])
   for (nm in setdiff(names(out), "abbr")) {
-    v <- suppressWarnings(as.integer(out[[nm]]))
-    if (is.na(v))
+    # The text, not what coercion makes of it: as.integer("30.5") is 30 and
+    # as.integer("3e1") is 30, so both would pass a check on the result while
+    # the message claimed a whole number was required. Same rule as
+    # check_settings() in build_lot.R, on the stored value rather than the env.
+    raw <- trimws(out[[nm]])
+    if (!grepl("^[0-9]+$", raw))
       stop("The cells recorded ", MELP_SETTING_KEYS[[nm]], "='", out[[nm]],
            "', which is not a whole number of days.", call. = FALSE)
-    out[[nm]] <- v
+    out[[nm]] <- as.integer(raw)
   }
   out$abbr <- toupper(trimws(out$abbr))
   if (!nzchar(out$abbr))
@@ -549,7 +615,7 @@ melp_modes_apart <- function(results) {
 #
 # The runner already requires one cohort table and one cohort prefix, and that
 # is not the same thing - see MELP_INPUT_FIELDS.
-melp_read_inputs <- function(con, cells) {
+melp_read_inputs <- function(con, cells, status) {
   inputs <- list()
   for (c_i in cells) {
     # The error is kept, not swallowed. A query that failed and a run with no
@@ -559,7 +625,7 @@ melp_read_inputs <- function(con, cells) {
       wrk(paste0(c_i$prefix, "LOT_RUN_METADATA")),
       wrk(paste0(c_i$prefix, "LOT_CODELIST_METADATA")),
       wrk(paste0(c_i$prefix, "LOT_BUILD_STATUS")),
-      cell_run_id(con, c_i))), error = function(e) e)
+      status[[c_i$id]]$run_id)), error = function(e) e)
     if (inherits(r, "error"))
       stop("Could not read what ", c_i$id, " was built over: ",
            conditionMessage(r), call. = FALSE)
@@ -582,9 +648,14 @@ melp_read_inputs <- function(con, cells) {
 # script wrote two of the four files and left the other two as whichever run
 # wrote them last - four files with one timestamp, describing two different runs.
 #
-# So everything is computed first and written afterwards. A run that cannot
+# So everything is computed first and written afterwards. A read that cannot
 # produce all four writes none of them, and the previous set stays whole.
-melp_report <- function(con, cells, out_dir, inputs = melp_read_inputs(con, cells)) {
+melp_report <- function(con, cells, out_dir) {
+  # Once per cell, then carried. Asking again for each run id is what lets a
+  # rebuild land between two questions - see cell_status().
+  status <- setNames(lapply(cells, function(c_i) cell_status(con, c_i)),
+                     vapply(cells, function(c_i) c_i$id, character(1)))
+  inputs <- melp_read_inputs(con, cells, status)
   st <- melp_settings(inputs)
   cat("\nAll three cells were built over cohort attempt ",
       inputs[[1]]$COHORT_RUN_ID[1], " / ", inputs[[1]]$COHORT_STAMP[1],
@@ -597,7 +668,7 @@ melp_report <- function(con, cells, out_dir, inputs = melp_read_inputs(con, cell
     # The MAP stack and the build's own windows, so the B.2 count is that
     # population rather than every line melphalan happens to appear in.
     m <- melp_metrics(con, final,
-      wrk(paste0(c_i$prefix, "LOT_ATTRITION")), cell_run_id(con, c_i), st$abbr,
+      wrk(paste0(c_i$prefix, "LOT_ATTRITION")), status[[c_i$id]]$run_id, st$abbr,
       map_tbl      = wrk(paste0(c_i$prefix, "MAP_STACKED")),
       expo_days    = st$expo_days,
       restart_days = st$restart_days,
@@ -641,11 +712,32 @@ melp_report <- function(con, cells, out_dir, inputs = melp_read_inputs(con, cell
          ". That comparison is what the two modes are for, so this is a stop ",
          "rather than an output left out.", call. = FALSE)
 
+  # Everything above came off tables a concurrent build can replace. This is the
+  # last point where saying so costs nothing.
+  melp_status_unchanged(con, cells, status)
+
+  # Written aside, then moved into place. Writing the four names directly meant
+  # a failure on the second left the first already replaced and the other three
+  # from the previous read - the mixed set this whole function exists to avoid,
+  # arrived at a different way.
+  #
+  # Four renames is not one commit: a process killed between them still tears
+  # the set. It narrows the window from the length of four queries and a write
+  # to the length of a rename, which is the cheap part of the fix; a truly
+  # atomic swap needs a run-stamped directory, which changes where the outputs
+  # live.
   dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
-  for (f in list(list("melp_cells.csv", res), list("melp_vs_reference.csv", cmp),
-                 list("melp_modes_apart.csv", ap),
-                 list("melp_modes_patients.csv", pd)))
-    utils::write.csv(f[[2]], file.path(out_dir, f[[1]]), row.names = FALSE)
+  out <- list(melp_cells.csv = res, melp_vs_reference.csv = cmp,
+              melp_modes_apart.csv = ap, melp_modes_patients.csv = pd)
+  tmp <- file.path(out_dir, paste0(".", names(out), ".part"))
+  on.exit(unlink(tmp[file.exists(tmp)]), add = TRUE)
+  for (i in seq_along(out))
+    utils::write.csv(out[[i]], tmp[i], row.names = FALSE)
+  for (i in seq_along(out))
+    if (!file.rename(tmp[i], file.path(out_dir, names(out)[i])))
+      stop("Could not move ", names(out)[i], " into ", out_dir, ". The outputs ",
+           "there are now part this read and part the one before it - delete ",
+           "them and re-run rather than reading what is left.", call. = FALSE)
 
   cat("\nAgainst the contract build:\n\n")
   for (i in seq_len(nrow(cmp)))
