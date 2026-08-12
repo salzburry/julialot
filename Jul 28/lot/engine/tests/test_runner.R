@@ -189,6 +189,7 @@ cat("\n-- what a run writes is declared, both directions --\n")
 # LOT_LONG_STAGE is allowed on the written side without being declared:
 # build_lot2_5 drops it after the publish, so a finished run does not have it.
 lotn_env <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "cart_rule.R"), envir = lotn_env)
 sys.source(file.path(ROOT, "R", "steps", "10_lot2_5_base.R"), envir = lotn_env)
 undeclared <- setdiff(OUTPUTS, c(get("LOT_TABLES", envir = env), lotn_env$.LOT_LONG_STAGE))
 ok(length(undeclared) == 0,
@@ -729,6 +730,7 @@ cat("\n-- an SCT on LOT1's start date does not end it the day before --\n")
 # not grepped for: a test that matched the text would pass on an expression that
 # no longer computes anything.
 sctenv <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "cart_rule.R"), envir = sctenv)
 assign("cfg", list(sct_tandem_days = 180L), envir = sctenv)
 SSQL <- character(0)
 assign("run_step", function(con, name, sql, qc = NULL) {

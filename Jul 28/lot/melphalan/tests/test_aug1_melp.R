@@ -275,16 +275,22 @@ ok(has(sql, "RUN_ID = 'r1'"),
 # The four melphalan figures are what makes the double-count visible.
 ok(has(sql, "AS n_melp_add") && has(sql, "AS n_sct_auto_end"),
    "lines ended by melphalan and by transplant are counted separately")
-cmp <- melp_compare(data.frame(
-  cell = c("reference", "as_asked", "yield_to_sct"),
-  n_patients = c(500, 500, 500), n_lines = c(1000, 1100, 1050),
-  median_lines = c(2, 2, 2), pct_reaching_lot2 = c(40, 44, 42),
-  pct_reaching_lot3 = c(20, 21, 20), median_lot1_length = c(100, 90, 95),
-  median_lot1_meds = c(3, 3, 3), n_lot1_regimens = c(50, 50, 50),
-  n_cart_init = c(10, 10, 10), n_melp_add = c(30, 45, 38),
-  n_melp_lines = c(60, 70, 65), n_sct_auto_end = c(80, 80, 74),
-  n_pat_with_melp = c(55, 55, 55), n_b2_line_starts = c(12, 12, 5), n_b2_melp_only = c(9, 9, 4),
-  stringsAsFactors = FALSE))
+# Built from MELP_METRICS rather than listed out again. Spelled out, the
+# fixture had to be edited every time a metric was added, and until it was,
+# melp_compare()'s own "named but not selected" guard fired on the fixture
+# instead of on the SQL - a real check failing for a fake reason.
+three_cells <- function(...) {
+  d <- as.data.frame(as.list(stats::setNames(
+         rep(list(c(1, 1, 1)), length(MELP_METRICS)), names(MELP_METRICS))),
+       stringsAsFactors = FALSE)
+  d <- cbind(cell = c("reference", "as_asked", "yield_to_sct"), d,
+             stringsAsFactors = FALSE)
+  v <- list(...)
+  for (nm in names(v)) d[[nm]] <- v[[nm]]
+  d
+}
+cmp <- melp_compare(three_cells(n_lines = c(1000, 1100, 1050),
+                                n_melp_add = c(30, 45, 38)))
 ok(identical(cmp$change[cmp$cell == "as_asked" & cmp$metric == "n_lines"], 100),
    "a cell is reported as its difference from the reference")
 ok(nrow(cmp) == 2L * length(MELP_METRICS),
@@ -294,16 +300,8 @@ ok(nrow(cmp) == 2L * length(MELP_METRICS),
 stops(melp_compare(data.frame(cell = c("reference", "as_asked"),
                               n_lines = c(1000, 1100), stringsAsFactors = FALSE)),
       "a metric the SQL does not select is named, not a crash in the arithmetic")
-ap <- melp_modes_apart(data.frame(
-  cell = c("reference", "as_asked", "yield_to_sct"),
-  n_patients = c(500, 500, 500), n_lines = c(1000, 1100, 1050),
-  median_lines = c(2, 2, 2), pct_reaching_lot2 = c(40, 44, 42),
-  pct_reaching_lot3 = c(20, 21, 20), median_lot1_length = c(100, 90, 95),
-  median_lot1_meds = c(3, 3, 3), n_lot1_regimens = c(50, 50, 50),
-  n_cart_init = c(10, 10, 10), n_melp_add = c(30, 45, 38),
-  n_melp_lines = c(60, 70, 65), n_sct_auto_end = c(80, 80, 74),
-  n_pat_with_melp = c(55, 55, 55), n_b2_line_starts = c(12, 12, 5), n_b2_melp_only = c(9, 9, 4),
-  stringsAsFactors = FALSE))
+ap <- melp_modes_apart(three_cells(n_lines = c(1000, 1100, 1050),
+                                   n_melp_add = c(30, 45, 38)))
 ok(!is.null(ap) && identical(ap$difference[ap$metric == "n_melp_add"], 7),
    "the two readings are also compared with each other, which is the open question")
 

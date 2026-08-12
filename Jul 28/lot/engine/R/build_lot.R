@@ -27,6 +27,10 @@ CONTRACT <- list(
   # one, which is why it is pinned here rather than left as a free setting - as
   # are the thresholds that say what the rule means.
   apply_melp_rule             = "",
+  # A CAR-T inside LOT1's induction window is part of LOT1 - it neither ends
+  # the line nor starts one. Confirmed by the study team on 2026-08-13; see
+  # R/cart_rule.R and lot/LOT_RULES.md section 10.
+  apply_cart_induction_rule   = TRUE,
   melp_med_abbr               = "MELP",
   melp_exposure_days          = 30L,
   melp_restart_days           = 60L,
@@ -86,11 +90,17 @@ REQUIRED_COHORT_COLS <- c("PATID", "INDEX_DATE", "ENDDATE", "ENDDATE_CE",
 # Bad values fail open: as.logical("Y") is NA, which reads as FALSE. An
 # integer setting that will not parse becomes NA and silently widens a window.
 BOOL_SETTINGS <- c("USE_QUARTERLY_TABLES", "CENSOR_AT_DISENROLLMENT",
-                   "PERSIST_TO_SCHEMA")
+                   "PERSIST_TO_SCHEMA", "APPLY_CART_INDUCTION_RULE")
 INT_SETTINGS  <- c("INDUCTION_WINDOW_DAYS", "INDUCTION_WINDOW_DAYS_LOT_N",
                    "MAP_DISCON_GAP_DAYS", "MEDICAL_DAY_SUPPLY",
                    "SCT_AUTO_WINDOW_DAYS", "SCT_AUTO_GAP_DAYS",
-                   "SCT_TANDEM_DAYS", "CART_CONSOLIDATION_DAYS", "MAX_LOT")
+                   "SCT_TANDEM_DAYS", "CART_CONSOLIDATION_DAYS", "MAX_LOT",
+                   # The melphalan windows are in CONTRACT and config_lot.R
+                   # coerces them the same way, but they were not checked here:
+                   # MELP_EXPOSURE_DAYS=30.5 became 30, matched the contract
+                   # value, and recorded no deviation.
+                   "MELP_EXPOSURE_DAYS", "MELP_RESTART_DAYS",
+                   "MELP_ADVANCE_DAYS", "MELP_SCT_DAYS")
 
 check_settings <- function() {
   bad <- character(0)
@@ -537,7 +547,7 @@ load_lot_modules <- function(here) {
   source(file.path(here, "R", "load_inputs.R"))
   load_pipeline_inputs(here, "config.csv")
   for (f in c("config_lot.R", "db_utils_lot.R", "codelists_lot.R", "line_criteria.R",
-              "melp_rule.R"))
+              "melp_rule.R", "cart_rule.R"))
     source(file.path(here, "R", f))
   steps <- sort(list.files(file.path(here, "R", "steps"), "\\.R$", full.names = TRUE))
   for (f in steps) source(f)
@@ -635,7 +645,9 @@ build_lot <- function(here, cohort_table, prefix,
                cart_consolidation_days = cfg$cart_consolidation_days,
                sct_tandem_days         = cfg$sct_tandem_days,
                allo_lot_span           = cfg$allo_lot_span,
-               max_lot                 = cfg$max_lot)
+               max_lot                 = cfg$max_lot,
+               apply_cart_induction_rule  = cfg$apply_cart_induction_rule,
+               lot1_induction_window_days = cfg$induction_window_days)
 
   # Validate before deriving: publishing the criteria tables first would leave
   # them behind, built from a LOT_LONG that then failed its checks. Two

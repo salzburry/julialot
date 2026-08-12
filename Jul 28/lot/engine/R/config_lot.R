@@ -94,6 +94,10 @@ cfg_defaults <- list(
   # A mode is a different algorithm, so it is pinned in CONTRACT and needs
   # LOT_CONTRACT_OVERRIDE - see R/melp_rule.R.
   apply_melp_rule    = Sys.getenv("APPLY_MELP_RULE",    unset = ""),
+  # Pinned TRUE in CONTRACT. Turning it off is a different algorithm and needs
+  # LOT_CONTRACT_OVERRIDE, the same as any other contract setting.
+  apply_cart_induction_rule =
+    as.logical(Sys.getenv("APPLY_CART_INDUCTION_RULE", unset = "TRUE")),
   melp_med_abbr      = Sys.getenv("MELP_MED_ABBR",      unset = "MELP"),
   melp_exposure_days = as.integer(Sys.getenv("MELP_EXPOSURE_DAYS", unset = "30")),
   melp_restart_days  = as.integer(Sys.getenv("MELP_RESTART_DAYS",  unset = "60")),

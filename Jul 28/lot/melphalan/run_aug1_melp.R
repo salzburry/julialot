@@ -34,7 +34,9 @@ source(file.path(.script_dir, "R", "cells.R"))
 
 LOT_ROOT <- normalizePath(file.path(.script_dir, "..", "engine"), mustWork = TRUE)
 env_flag <- function(nm) identical(toupper(trimws(Sys.getenv(nm, unset = ""))), "TRUE")
-out_dir  <- file.path(.script_dir, "out")
+# The same resolver read_melp_metrics.R uses, so a recovery publishes where the
+# build did instead of beside it.
+out_dir  <- melp_out_dir(.script_dir)
 
 report_plan <- function(cells) {
   cat("\nThe melphalan line-advancing rule, as three builds.\n\n")
@@ -124,7 +126,7 @@ main <- function() {
 
   # The reading half is melp_report(), in cells.R, because read_melp_metrics.R
   # runs the same half on its own when this one dies after the builds land.
-  melp_report(con, cells, out_dir)
+  melp_report(con, cells, out_dir, lot_root = LOT_ROOT)
   cat("These are three algorithms' numbers, not three readings of one. Each ",
       "cell's\ntables carry CONTRACT_DEVIATIONS, and every reader in this ",
       "folder refuses them\nas the study's.\n", sep = "")
