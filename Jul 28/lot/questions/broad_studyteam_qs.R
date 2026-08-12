@@ -200,6 +200,26 @@ main <- function() {
       log_msg("  NOTE: ", pair$why, ", so the POMA split below is unverified.")
       poma_split <- TRUE
     }
+    # ...and that caveat rides on the rows rather than in the console alone.
+    # The CSV is what gets read: it is mailed on, pasted into a deck and opened
+    # months later by someone who never saw this log. A grp column holding
+    # 'POMA-1L' and 'other' with nothing beside it is a comparison the reader
+    # cannot know was never tied to one cohort, and the numbers look no
+    # different when it was not.
+    lineage <- if (!poma_split)
+      "no POMA split - one row over this flag build's whole population"
+    else if (isTRUE(pair$bound))
+      "POMA split, lineage verified - both broad sources name the same cohort"
+    else
+      paste0("POMA split, LINEAGE UNVERIFIED - nothing records which cohort ",
+             "one of the two broad sources came from, so these two groups are ",
+             "not established to be one population. Read each row on its own; ",
+             "do not read POMA-1L against other until BROAD_PREFIX and ",
+             "TRIAL_PREFIX are confirmed to name the same study.")
+    # Doubled, because this is prose and prose has apostrophes. One of them
+    # unescaped ends the literal, and the query dies inside best_effort() -
+    # a caveat that takes the numbers it qualifies down with it.
+    lineage_lit <- gsub("'", "''", lineage, fixed = TRUE)
     poma_cte <- if (poma_split) glue("
       , poma1l AS (SELECT DISTINCT cast(PATID as string) PATID FROM {broad_lot}
                    WHERE LOT_NUM=1 AND array_contains(split(LOT_BASE_MEDS,' '),'{POMA_TOKEN}'))")
@@ -216,6 +236,7 @@ main <- function() {
       WITH f AS (SELECT cast(PATID as string) PATID, INDEX_DATE FROM {trial_idx})
       {poma_cte}
       SELECT {grp_expr}                                                         AS grp,
+             '{lineage_lit}'                                                    AS lineage,
              count(DISTINCT a.PATID)                                            AS n_pts,
              count(DISTINCT CASE WHEN a.OTHER_MALIGN_FLAG = 1 THEN a.PATID END) AS n_other_malig,
              count(DISTINCT CASE WHEN a.CLINTRIAL_BASELINE = 1 THEN a.PATID END)  AS n_trial_baseline,
@@ -235,6 +256,8 @@ main <- function() {
             "baseline ends the day before it, follow-up starts on it and runs ",
             "past LOT1, so NEITHER isolates 'before LOT1'. For that, read ",
             "NDMM_CLINTRIAL_FLAGS in poma_studyteam_qs.R.")
+    log_msg("  Lineage: ", lineage, " (also the CSV's `lineage` column, so it ",
+            "stays with the numbers when this log does not.)")
     if (!poma_split)
       log_msg("  NOTE: one row, grp='all', with no POMA split - ",
               if (!nzchar(broad_pfx))

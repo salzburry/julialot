@@ -512,9 +512,15 @@ patient with two affected codes counts twice; it bounds distinct patients from
 above rather than counting them.
 
 `NDMM_ICD_FLAG_MAX_ROWS` stops the build above a row count. It ships empty, so
-the build reports at any volume until the study team sets one. Whichever it
-was is recorded on every run as `icd_ceiling(...)` in the same column, found or
-not. It bounds volume, not composition - `DECISIONS.md` #11.
+the build reports at any volume until the study team sets one. Whichever it was
+is recorded as `icd_ceiling(...)` in the same column, found or not. It bounds
+volume, not composition - `DECISIONS.md` #11.
+
+A run the ceiling stops never reaches the metadata write, and the previous
+attempt's row was cleared when it started, so that column would be empty for
+exactly the run worth reading. The findings are therefore written to
+`NDMM_BUILD_STATUS.FINDINGS` as well, on the row recording the failure. On a
+completed run the two agree; on a stopped one only the status row exists.
 
 A count that cannot be read stops, from either CDM source independently: one
 source unreadable and the other reporting rows makes the total a partial, and a

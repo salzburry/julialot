@@ -149,6 +149,25 @@ Without `BROAD_PREFIX` the association says so and skips; the rest of that
 script still runs. `tests/test_setup.R` fails if any other script reads the
 broad flags.
 
+`BROAD_PREFIX` and `TRIAL_PREFIX` are two settings and nothing makes them one
+study. The POMA split in `diagnosis_anchored_flags` crosses them - it labels
+flag-build patients from the LOT run's 1L regimens - so the LOT run's recorded
+`INPUT_COHORT_TABLE` is compared against the flag build's own index table.
+Three outcomes, and the CSV carries which one it was in a `lineage` column:
+
+* they match -> `lineage verified`, and the split runs.
+* they disagree -> the split is dropped. Lines from one cohort cannot label
+  patients of another: everyone the LOT run lacks would read as not having had
+  POMA rather than as not being in it. One row, `grp='all'`.
+* neither side recorded a cohort -> `LINEAGE UNVERIFIED`. Nothing said they
+  differ, so the split still runs, but the row says it was never tied and says
+  not to read `POMA-1L` against `other`. Older runs predate the status table,
+  and refusing on an absent record would take the answer away from all of them.
+
+The status is a column rather than a log line because the CSV is what gets
+read - three groups of counts look identical whether or not anything tied them
+to one population.
+
 ## The trial flags are not the cohort build's flags
 
 The two builds write different tables, and they are not alternate names for

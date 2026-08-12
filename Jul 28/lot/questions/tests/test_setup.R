@@ -440,6 +440,51 @@ ok(!any(grepl("poma1l AS (SELECT DISTINCT cast(PATID as string) PATID FROM {broa
               paste(bdq, collapse = "\n"), fixed = TRUE)),
    "...and no longer names the broad table in a query that runs without it")
 
+cat("\n-- and the lineage status rides on the rows, not on the log --\n")
+# An unrecorded cohort is unverified, not wrong, so the split still runs. But
+# the thing that gets read is the CSV: it is mailed on and opened months later
+# by someone who never saw the console. Three groups of counts with no lineage
+# field look identical whether or not anything tied them to one population.
+#
+# The block is pulled out of the file and EVALUATED rather than grepped, so
+# this tests the three strings that ship. Braced, or parse() would split it at
+# the first top-level `else`.
+lin_a <- grep("^    lineage <- if \\(!poma_split\\)", bdq)
+lin_b <- grep("^    lineage_lit <- gsub", bdq)
+ok(length(lin_a) == 1L && length(lin_b) == 1L && lin_b > lin_a,
+   "the flags section decides a lineage string before it builds the query")
+lin_of <- function(split, bound) {
+  e <- new.env()
+  assign("poma_split", split, envir = e)
+  assign("pair", list(bound = bound), envir = e)
+  eval(parse(text = paste(c("{", bdq[lin_a:(lin_b - 1L)], "}"), collapse = "\n")),
+       envir = e)
+  get("lineage", envir = e)
+}
+l_none <- lin_of(FALSE, FALSE); l_ok <- lin_of(TRUE, TRUE); l_un <- lin_of(TRUE, FALSE)
+ok(grepl("LINEAGE UNVERIFIED", l_un, fixed = TRUE) &&
+     !grepl("UNVERIFIED", l_ok, fixed = TRUE),
+   "...saying UNVERIFIED on the split it could not tie, and not on the one it could")
+ok(length(unique(c(l_none, l_ok, l_un))) == 3L,
+   "...and the three cases are three different strings, so none reads as another")
+# Naming the split is not enough. A reader with two rows in front of them will
+# compare them unless told not to, which is the whole failure being fixed.
+ok(grepl("do not read POMA-1L against other", l_un, fixed = TRUE),
+   "...and the unverified one says not to read the two groups against each other")
+ok(any(grepl("AS lineage", bdq, fixed = TRUE)),
+   "...and it is a column of the flags CSV rather than a log line only")
+# The prose has an apostrophe in it. Interpolated raw, that closes the SQL
+# literal early: the query dies inside best_effort() and the caveat takes the
+# numbers it qualifies down with it.
+ok(any(grepl("gsub(\"'\", \"''\", lineage, fixed = TRUE)", bdq, fixed = TRUE)) &&
+     any(grepl("'{lineage_lit}'", bdq, fixed = TRUE)) &&
+     !any(grepl("'{lineage}'", bdq, fixed = TRUE)),
+   "...escaped on its way into the query, not interpolated raw")
+ok(!any(vapply(list(l_none, l_ok, l_un), function(s)
+          nchar(gsub("[^']", "", gsub("'", "''", s, fixed = TRUE))) %% 2L != 0L,
+        logical(1))),
+   "...which leaves every one of the three balanced as a SQL literal")
+
 cat("\n-- a run records the CDM vintage it read --\n")
 # STUDY_END picks the quarterly table and the quarterlies are cumulative. Q3
 # takes lines and index dates from the broad run, then scans the raw CDM itself
