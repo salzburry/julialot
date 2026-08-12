@@ -172,6 +172,13 @@ check_settings <- function() {
     if (nzchar(x) && !grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", x))
       bad <- c(bad, paste0(v, "='", x, "' (want YYYY-MM-DD)"))
   }
+  # Empty means no ceiling, which is the shipped default. A value has to be a
+  # whole number, because "500 rows" or "5e2" would silently become something
+  # else and the ceiling is the whole point of setting it.
+  x <- trimws(Sys.getenv("NDMM_ICD_FLAG_MAX_ROWS", unset = ""))
+  if (nzchar(x) && !grepl("^[0-9]+$", x))
+    bad <- c(bad, paste0("NDMM_ICD_FLAG_MAX_ROWS='", x, "' (want a whole number, ",
+                         "or empty for no ceiling)"))
   for (v in c("PRE_LOT1_DAYS", "FU_CE_DAYS", "GAP_DAYS")) {
     x <- trimws(Sys.getenv(v, unset = ""))
     # The text, not what coercion makes of it: as.integer("60.5") is 60.
@@ -396,20 +403,14 @@ ATTRITION_COLS <- c(RUN_ID = "STRING", STEP_NUM = "INT", CRITERION = "STRING",
                     N_PATIENTS = "BIGINT", PCT_OF_START = "DOUBLE",
                     RECORDED_AT = "TIMESTAMP")
 
-# CREATE TABLE IF NOT EXISTS does nothing to a table an earlier run left
-# behind, so a column added to a *_COLS list here reaches a fresh prefix and no
-# other. Naming the columns in the INSERT stops a positional mis-fill; it
-# cannot supply a column the table does not have, and the INSERT then fails -
-# at the end of the run, after the cohort is built and validated.
+# CREATE TABLE IF NOT EXISTS does nothing to a table an earlier run left, so a
+# column added to a *_COLS list reaches a fresh prefix and no other, and the
+# INSERT naming it fails at the end of the run. Each table is created and then
+# brought up to its column list.
 #
-# That is what FINDINGS would have done to every established prefix. So each of
-# these tables is created and then brought up to its column list, the way
-# lot/engine's build status already does it.
-#
-# Look before adding: ADD COLUMNS on a column that exists is an error. And an
-# unreadable DESCRIBE means no answer, not a table with no columns - acting on
-# the second reading would try to add every column to a table that has them
-# all.
+# Look before adding - ADD COLUMNS on a column that exists is an error - and
+# treat an unreadable DESCRIBE as no answer rather than as a table with no
+# columns, or this would try to add every column to a table that has them all.
 ensure_cols <- function(con, tbl, spec) {
   have <- tryCatch({
     d  <- db_q(con, glue("DESCRIBE {tbl}"))
@@ -887,6 +888,7 @@ write_build_status <- function(con, cfg, state, n = NA) {
 # the report and keep the error.
 check_icd_flag <- function(con, cfg) {
   fam <- icd_family_sql("t.ICD_FLAG")
+  num <- function(x) format(x, big.mark = ",", trim = TRUE, scientific = FALSE)
   # The flag as it is reported and the code as the join sees it, each written
   # once. The summary reports the flag; the detail reports and groups on both.
   # A second spelling of either is a second definition of the same thing.
@@ -953,13 +955,22 @@ check_icd_flag <- function(con, cfg) {
   # Enough to name the problem without turning a stop into a data dump. A cut
   # says so and says how many it cut - a silent top-N reads as the whole story.
   DETAIL_MAX <- 20L
-  # An aid to a stop that is already happening, so a driver failure reading it
-  # must not replace the stop with a driver error.
+  # An aid to a warning that is already being raised, so a driver failure
+  # reading it must not take the warning with it.
   codes_line <- function(sql, n) {
     d <- tryCatch(db_q(con, sql), error = function(e) NULL)
     if (is.null(d) || !nrow(d)) return("")
-    codes <<- c(codes, as.character(d$matched_code))
-    num <- function(x) format(x, big.mark = ",", trim = TRUE, scientific = FALSE)
+    # Kept for the metadata row as well as the log. The magnitude is the whole
+    # point of recording this - there is no ceiling above which the build
+    # stops, so the row somebody reads later has to carry enough to tell
+    # sixteen claims from a data-quality failure.
+    seen_codes <<- rbind(seen_codes, data.frame(
+      code    = as.character(d$matched_code),
+      on_list = as.character(ifelse(is.na(d$on_list) | !nzchar(d$on_list),
+                                    "list unknown", d$on_list)),
+      n_rows  = suppressWarnings(as.numeric(d$n_rows)),
+      n_pat   = suppressWarnings(as.numeric(d$n_pat)),
+      stringsAsFactors = FALSE))
     s <- head(d, DETAIL_MAX)
     out <- paste0(", codes: ",
                   paste0(s$matched_code, " (", s$icd_flag_value, ", ",
@@ -980,7 +991,10 @@ check_icd_flag <- function(con, cfg) {
                     "are not describing the same rows]")
     out
   }
-  found <- character(0); tally <- 0L; codes <- character(0)
+  found <- character(0); tally <- 0L
+  seen_codes <- data.frame(code = character(0), on_list = character(0),
+                           n_rows = numeric(0), n_pat = numeric(0),
+                           stringsAsFactors = FALSE)
   for (p in list(list(t = cdm_src(cfg$tbl_med_diag), c = "DIAG", l = dx_lists),
                  list(t = cdm_src(cfg$tbl_med_proc), c = "PROC", l = pr_lists))) {
     r <- db_q(con, probe_summary(p$t, p$c, p$l))
@@ -1004,19 +1018,47 @@ check_icd_flag <- function(con, cfg) {
                 "them. On an MM code the lost match can exclude a patient; on an ",
                 "other-cancer or pregnancy code it can keep one; on a trial code ",
                 "it moves nobody, because trial evidence filters nothing.")
+  # A ceiling, if the study team set one. Empty by default, which is the
+  # decision as it stands: report and continue whatever the volume. What a
+  # number buys is that the next refresh cannot quietly be a different size -
+  # sixteen claims and a source-data failure stop reading the same. It does not
+  # bound COMPOSITION: the same count on different codes still passes, and
+  # that is what reading the finding is for. DECISIONS.md #11.
+  ceiling <- trimws(Sys.getenv("NDMM_ICD_FLAG_MAX_ROWS", unset = ""))
+  over <- nzchar(ceiling) && tally > as.numeric(ceiling)
+  msg <- paste0(msg, " Ceiling: ",
+                if (nzchar(ceiling)) paste0("NDMM_ICD_FLAG_MAX_ROWS=", ceiling)
+                else "none set, so no volume stops this build.")
+  if (over)
+    stop(msg, " This run found ", num(tally), " such row(s), over that ceiling, ",
+         "so it stops rather than reporting. Raise NDMM_ICD_FLAG_MAX_ROWS once ",
+         "the study team has looked at what changed.", call. = FALSE)
   log_msg("WARNING (raw_icd_flag): ", msg)
   # On the run's own row with its size, so a cohort found months later carries
   # the finding rather than depending on somebody still having the log - and
   # carries enough of it to tell sixteen rows from a data-quality failure.
   # The name alone would read the same either way, and there is no ceiling
   # above which this stops the build (DECISIONS.md #11).
+  # One row per distinct code across both tables, so a code on both is one
+  # entry. Patients are summed rather than distinct-counted: the two probes are
+  # over different CDM tables and a patient in both would be counted twice.
+  # That direction over-states, which is the safe way for a magnitude to be
+  # wrong, and the log carries the per-table figures exactly.
+  by_code <- if (nrow(seen_codes))
+    aggregate(cbind(n_rows, n_pat) ~ code + on_list, seen_codes, sum) else seen_codes
+  by_code <- by_code[order(-by_code$n_rows, by_code$code), , drop = FALSE]
+  shown   <- head(by_code, 10L)
   options(ndmm_findings = union(
     getOption("ndmm_findings", character(0)),
-    paste0("raw_icd_flag(", format(tally, big.mark = ",", trim = TRUE,
-                                   scientific = FALSE), " rows",
-           if (length(codes)) paste0("; ", paste(head(sort(unique(codes)), 10L),
-                                                 collapse = " ")) else "",
-           if (length(unique(codes)) > 10L) " ..." else "", ")")))
+    paste0("raw_icd_flag(", num(tally), " rows, ",
+           num(sum(by_code$n_pat)), " patients, ", nrow(by_code), " codes",
+           if (nrow(shown)) paste0("; ", paste0(shown$code, "[", shown$on_list, ",",
+                                                num(shown$n_rows), "r,",
+                                                num(shown$n_pat), "p]",
+                                                collapse = " ")) else "",
+           if (nrow(by_code) > nrow(shown))
+             paste0("; +", nrow(by_code) - nrow(shown), " more code(s)") else "",
+           ")")))
   if ("raw_icd_flag" %in% waivers())
     log_msg("  (NDMM_WAIVERS=raw_icd_flag is no longer needed - this reports ",
             "rather than stops. The name is still accepted so existing commands ",

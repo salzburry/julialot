@@ -1327,14 +1327,47 @@ ok(grepl("exclude a patient", m, fixed = TRUE) &&
 # read identically as "raw_icd_flag", and there is no ceiling above which this
 # stops the build - so the magnitude has to be on the row somebody reads later.
 ok(length(r$findings) == 1L && grepl("^raw_icd_flag\\(", r$findings) &&
-     grepl("14 rows", r$findings, fixed = TRUE) &&
-     grepl("C9000", r$findings, fixed = TRUE),
-   "...and the finding carries its row count and codes onto the metadata row")
+     grepl("14 rows, 14 patients, 1 codes", r$findings, fixed = TRUE) &&
+     grepl("C9000[MM diagnosis,14r,14p]", r$findings, fixed = TRUE),
+   "...and the finding carries rows, patients, code count and each code's list")
+# A finding longer than the cap says how many codes it left out, or the row
+# reads as the whole story - the same rule the log line follows.
+big <- drive_icd(25L, detail = data.frame(
+  icd_flag_value = "<blank>", matched_code = sprintf("C%04d", 1:25),
+  on_list = "MM diagnosis", n_rows = 1L, n_pat = 1L, stringsAsFactors = FALSE))
+ok(grepl("25 codes", big$findings, fixed = TRUE) &&
+     grepl("+15 more code(s)", big$findings, fixed = TRUE),
+   "...and says how many codes it left off the row, not only off the log")
 ok("FINDINGS" %in% names(RUN_METADATA_COLS),
    "...which is a column NDMM_RUN_METADATA actually has")
 r <- drive_icd(7L, waive = "raw_icd_flag")
 ok(identical(r$err, "") && grepl("no longer needed", r$log, fixed = TRUE),
    "the old waiver is accepted and says it is now a no-op")
+
+# A ceiling, settable without a code change and unset by default. Unset is the
+# decision as it stands - report whatever the volume - and the run says so, so
+# nobody reads a clean log as a governed one.
+ok(!nzchar(Sys.getenv("NDMM_ICD_FLAG_MAX_ROWS", unset = "")),
+   "no ceiling is set by default, so the shipped behaviour is unchanged")
+r <- drive_icd(7L)
+ok(grepl("no volume stops this build", r$log, fixed = TRUE),
+   "...and the warning says out loud that nothing bounds it")
+Sys.setenv(NDMM_ICD_FLAG_MAX_ROWS = "100")
+r <- drive_icd(7L)
+ok(identical(r$err, "") && grepl("NDMM_ICD_FLAG_MAX_ROWS=100", r$log, fixed = TRUE),
+   "a run under the ceiling reports, naming the ceiling it was under")
+Sys.setenv(NDMM_ICD_FLAG_MAX_ROWS = "5")
+r <- drive_icd(7L)
+ok(grepl("over that ceiling", r$err, fixed = TRUE) &&
+     grepl("found 14 such row(s)", r$err, fixed = TRUE) &&
+     grepl("NDMM_ICD_FLAG_MAX_ROWS=5", r$err, fixed = TRUE),
+   "...and one over it stops, naming both what it found and the ceiling")
+Sys.unsetenv("NDMM_ICD_FLAG_MAX_ROWS")
+Sys.setenv(NDMM_ICD_FLAG_MAX_ROWS = "lots")
+m <- tryCatch({ check_settings(); "" }, error = conditionMessage)
+ok(grepl("NDMM_ICD_FLAG_MAX_ROWS", m, fixed = TRUE),
+   "...and a ceiling that is not a number is a typo, caught before the run")
+Sys.unsetenv("NDMM_ICD_FLAG_MAX_ROWS")
 
 # The count says how many rows stopped the build. Which codes they carry is the
 # question it leaves behind, and it is asked of the same rows.

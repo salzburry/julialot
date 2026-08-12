@@ -18,3 +18,4 @@ TBL_DOD,dod,Date of death
 OUTPATIENT_WINDOW,90,Two outpatient MM claims within this many days confirm a diagnosis
 MIN_AGE,18,Minimum age in the MM-diagnosis year
 CODELIST_DIR,/mnt/code/codelist,Where the production code lists live
+NDMM_ICD_FLAG_MAX_ROWS,,Stop if more than this many claims name neither ICD family (empty = report and continue)

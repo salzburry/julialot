@@ -588,13 +588,19 @@ or pregnancy code it can keep one who should be out. On a clinical-trial code
 it moves nobody, because trial evidence is descriptive and filters nothing.
 Which of those applies is what the code list column says.
 
-**The acceptance is not bounded, and that is the open part.** There is no
-threshold: 16 rows and 16 million report the same way and both let the build
-finish. The judgement that 16 rows against a cohort in the thousands is
-immaterial was made against the 2026q1 delivery, and it does not carry to the
-next one on its own. `FINDINGS` records the row and patient counts so the
-magnitude is on the run's row rather than in a log, but nothing acts on them.
+**The acceptance is bounded only if somebody bounds it.**
+`NDMM_ICD_FLAG_MAX_ROWS` stops the build above a row count and ships empty, so
+today the build reports at any volume - the decision as it stands. Setting it
+is one config line and needs no code change, and every run says which of the
+two it was under.
 
-Status: ACCEPTED for 2026q1. Re-read on each refresh. If the study team wants a
-ceiling, it belongs here as a number and in `check_icd_flag()` as a stop above
-it - it is a governance decision, not a coding one.
+A ceiling bounds volume, not composition: the same count on different codes,
+or on codes that moved from the trial list to the MM list, still passes. That
+is what reading the finding is for. `FINDINGS` carries the row count, the
+patient count, the number of distinct codes and each code's list, so the
+re-read is possible from the run's own row rather than from a log.
+
+Status: ACCEPTED for 2026q1, unbounded by default. Re-read on each refresh.
+Setting `NDMM_ICD_FLAG_MAX_ROWS` is the study team's call and the number is
+theirs - it is a governance decision, not a coding one, which is why the code
+ships with none.

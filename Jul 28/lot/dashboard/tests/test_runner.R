@@ -618,6 +618,46 @@ ok(!grepl("LINE_ELIGIBLE = 1 THEN 1 ELSE 0", of$sql, fixed = TRUE) &&
      grepl("WHEN LINE_ELIGIBLE = 0 THEN 0 END", of$sql, fixed = TRUE),
    "...and it leaves an unassessed line NULL rather than counting it as zero")
 
+cat("\n-- the CE-window panel is tied to the cohort the lines came from --\n")
+# NDMM_FU_CE_COUNTS is CREATE OR REPLACE, so a cohort rebuilt under this prefix
+# takes it with it, and the panel would price a window against a cohort that is
+# not the one below it. The cohort build stamps RUN_ID; provenance nothing
+# reads is provenance that does not help, so the panel is pinned to it - or
+# says it could not be.
+FSEC <- Filter(function(s) identical(s$name, "fu_ce_window"), DASHBOARD_SECTIONS)
+# Into env, not globalenv. resolve_fu_ce_window() was sourced into env and only
+# copied out, so it keeps env as its enclosure and finds the real table_cols()
+# there whatever globalenv holds - which made every case take the
+# "columns could not be read" path and three of these pass for the wrong reason.
+drive_fu <- function(cols, cohort_run = "C1", n = 1L) {
+  assign("table_cols", function(con, tbl) cols, envir = env)
+  assign("db_q", function(con, sql) data.frame(n = n), envir = env)
+  assign("log_msg", function(...) invisible(NULL), envir = env)
+  out <- env$resolve_fu_ce_window(FSEC, NULL,
+                              list(fu_ce_counts = "wk.c_NDMM_FU_CE_COUNTS"),
+                              c(fu_ce_counts = TRUE),
+                              list(cohort_run = cohort_run))
+  out[[1]]
+}
+s1 <- drive_fu(c("FU_CE_RULE", "N_COHORT", "RUN_ID", "RECORDED_AT"))
+ok(is.null(s1$skip) && grepl("WHERE RUN_ID = '{cohort_run}'", s1$sql, fixed = TRUE) &&
+     grepl("cohort run C1", s1$label, fixed = TRUE),
+   "a stamped table with the cohort's rows is pinned to that run, and says so")
+s2 <- drive_fu(c("FU_CE_RULE", "N_COHORT", "RUN_ID"), n = 0L)
+ok(!is.null(s2$skip) && grepl("different cohort refresh", s2$skip, fixed = TRUE),
+   "...one whose rows are gone is skipped rather than shown")
+s3 <- drive_fu(c("FU_CE_RULE", "N_COHORT"))
+ok(is.null(s3$skip) && !grepl("RUN_ID", s3$sql, fixed = TRUE) &&
+     grepl("not tied to the LOT run below it", s3$label, fixed = TRUE),
+   "...a table built before the stamp still renders, labelled as untied")
+s4 <- drive_fu(character(0))
+ok(is.null(s4$skip) && grepl("not tied", s4$label, fixed = TRUE),
+   "...and an unreadable DESCRIBE is untied, not a panel that fails")
+s5 <- drive_fu(c("FU_CE_RULE", "N_COHORT", "RUN_ID"), cohort_run = "")
+ok(is.null(s5$skip) && grepl("not tied", s5$label, fixed = TRUE),
+   "...as is a LOT run that recorded no cohort id")
+clear()
+
 cat("\n-- and they are not confused with the outcomes build's --\n")
 # This panel is one row per PATIENT over the study population. outcomes'
 # N_LOST_TO_FU / N_ONGOING are one row per patient-LINE, over what is left

@@ -532,12 +532,9 @@ DASHBOARD_SECTIONS <- c(list(
   # actually observed over.
   #
   # Scoped to the LOT run the rest of the page is about. outcomes is a separate
-  # build over a finished LOT run and is not re-run when LOT is: rebuild LOT
-  # and leave outcomes alone, and OUT_TTE is still readable, still full of the
-  # previous run's rows, and would sit beside this run's line panels saying
-  # nothing. OUT_TTE records the LOT run it read, so the panel asks.
-  # Empty means outcomes has not been run against this one, which is a panel
-  # with no rows rather than a panel with the wrong ones.
+  # build and is not re-run when LOT is, so a rebuilt LOT leaves OUT_TTE
+  # readable and full of the previous run's rows. Empty is a panel with no
+  # rows, which beats a panel with the wrong ones.
   #
   # The event counts are the point. A median TTNT is only readable if enough
   # lines reached the event; a line where almost everything is censored has a
