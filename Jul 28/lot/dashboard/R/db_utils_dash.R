@@ -200,10 +200,23 @@ resolve_owner_run <- function(con, inputs, have, cfg) {
     invisible(TRUE)
   }
 
-  if (isTRUE(have[["build_st"]])) {
-    d <- tryCatch(db_q(con, paste0(
-      "SELECT RUN_ID, STATE, UPDATED_AT FROM ", inputs$build_st,
-      " ORDER BY UPDATED_AT DESC LIMIT 1")), error = function(e) NULL)
+  # Read, then classify - rather than trusting probe_inputs(), which answers
+  # FALSE both for a table that is absent and for one it could not read. Only
+  # the first justifies the fallback at the end of this function, and taking
+  # the second there hands run A's completed provenance to run B's unvalidated
+  # tables: exactly the swap this status table was introduced to stop.
+  st <- tryCatch(db_q(con, paste0(
+    "SELECT RUN_ID, STATE, UPDATED_AT FROM ", inputs$build_st,
+    " ORDER BY UPDATED_AT DESC LIMIT 1")), error = function(e) e)
+  if (inherits(st, "condition") && !legacy_gap(conditionMessage(st)))
+    stop("Could not read ", inputs$build_st, ": ", conditionMessage(st),
+         "\nThat table is what says which run wrote the tables on this page. ",
+         "A study built by an older lot has no such table and says so ",
+         "specifically; this did not, so falling back to the newest completed ",
+         "metadata row would risk drawing one run's numbers under another ",
+         "run's provenance. Fix the read and re-run.", call. = FALSE)
+  {
+    d <- if (inherits(st, "condition")) NULL else st
     if (!is.null(d) && nrow(d) == 1L) {
       rid   <- as.character(d$RUN_ID[1])
       state <- tolower(trimws(as.character(d$STATE[1])))

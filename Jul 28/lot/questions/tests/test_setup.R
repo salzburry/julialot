@@ -357,6 +357,28 @@ ok(any(grepl("qs_trial_build_state(con, src)", st, fixed = TRUE)),
    "so the trial source is asked for that before its columns are trusted")
 ok(any(grepl("QS_IGNORE_TRIAL_BUILD_STATE", st, fixed = TRUE)),
    "...with an override for a build known to have failed before writing either")
+# That check guards a real pair: the flags and the final cohort are written
+# separately, so a build that stopped between them leaves two readable,
+# correctly shaped tables from different attempts, and the column checks
+# downstream pass on both. So an unreadable status table cannot take the
+# older-build path - it is this check not running, not a build that predates it.
+drive_tbs <- function(x) {
+  assign("db_q", function(con, sql) if (is.character(x)) stop(x) else x,
+         envir = globalenv())
+  qs_trial_build_state(NULL, list(prefix = "t_", index = "wk.T_FINAL"))
+}
+ok(isTRUE(drive_tbs("TABLE_OR_VIEW_NOT_FOUND: wk.t_build_status")$ok),
+   "a build old enough to have written no status table is allowed through")
+ok(isTRUE(drive_tbs(data.frame())$ok),
+   "...as is one that wrote the table and left it empty")
+for (case in list(list(m = "HTTP 403: permission denied", w = "a refused read"),
+                  list(m = "Connection reset by peer",    w = "a dropped connection"))) {
+  r <- drive_tbs(case$m)
+  ok(!isTRUE(r$ok) && grepl("could not be read", r$why, fixed = TRUE) &&
+       grepl(case$m, r$why, fixed = TRUE),
+     paste0("...while ", case$w, " skips the trial sections rather than answering"))
+}
+rm("db_q", envir = globalenv())
 # TRIAL_INDEX_TABLE defaults to a name from a config file this package does not
 # read. The build's own record of what it wrote settles it.
 ok(any(grepl('"TRIAL_INDEX_TABLE resolves to "', st, fixed = TRUE)),

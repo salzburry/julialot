@@ -337,7 +337,22 @@ qs_col <- function(d, name) {
 # No status table is a warning, not a refusal - an older build predates it.
 qs_trial_build_state <- function(con, src) {
   tbl <- wrk(paste0(tolower(src$prefix), "build_status"))
-  d <- tryCatch(db_q(con, glue("SELECT * FROM {tbl}")), error = function(e) NULL)
+  d <- tryCatch(db_q(con, glue("SELECT * FROM {tbl}")), error = function(e) e)
+  # A table that is not there is an older build, and those answers are allowed
+  # through on a warning. A table that could not be READ is this check not
+  # running, and it guards a real pair: the flags and the final cohort are
+  # written separately, so two readable, correctly shaped tables can come from
+  # different attempts. The column checks downstream pass on both.
+  if (inherits(d, "condition")) {
+    if (!grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found",
+               conditionMessage(d), ignore.case = TRUE))
+      return(list(ok = FALSE, why = paste0(
+        tbl, " could not be read (", conditionMessage(d), "), so whether the ",
+        "build behind the trial flags finished could not be asked. A build ",
+        "old enough to have written no status table says so specifically; ",
+        "this did not.")))
+    d <- NULL
+  }
   if (is.null(d) || nrow(d) == 0) {
     log_msg("WARNING: no ", tbl, ", so the build behind the trial flags is ",
             "unverified - these answers assume it finished and wrote both ",

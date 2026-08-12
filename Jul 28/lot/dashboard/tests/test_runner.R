@@ -431,10 +431,26 @@ stub(function(con, sql)
 runs(resolve_owner_run(NULL, oi, ohave, ocfg),
      "...and the deviation column is read by name, never by position")
 # No status table at all - an older LOT build. Fall back, and say it is weaker.
-stub(function(con, sql) data.frame(RUN_ID = "run-a", RUN_TIMESTAMP = "2026-01-01 10:00:00"))
+# The stub REFUSES the status read the way a warehouse does, rather than
+# answering it with metadata rows: the absence is the thing under test, and a
+# stub that answers every query cannot express it.
+stub(function(con, sql)
+  if (grepl("wk.ST", sql, fixed = TRUE)) stop("TABLE_OR_VIEW_NOT_FOUND: wk.ST")
+  else data.frame(RUN_ID = "run-a", RUN_TIMESTAMP = "2026-01-01 10:00:00"))
 o <- resolve_owner_run(NULL, oi, c(run_meta = TRUE, build_st = FALSE), ocfg)
 ok(identical(o$run_id, "run-a") && !isTRUE(o$exact),
    "with no build status table it falls back to the newest completed run, flagged as the weaker claim")
+# But only a table that is genuinely absent. A status table that exists and
+# could not be read takes the same fallback unless this says otherwise, and
+# then run B's unvalidated tables are drawn under run A's completed row.
+stub(function(con, sql)
+  if (grepl("wk.ST", sql, fixed = TRUE)) stop("Connection reset by peer")
+  else data.frame(RUN_ID = "run-a", RUN_TIMESTAMP = "2026-01-01 10:00:00"))
+m <- tryCatch({ resolve_owner_run(NULL, oi, c(run_meta = TRUE, build_st = FALSE),
+                                  ocfg); "" }, error = conditionMessage)
+ok(grepl("Could not read", m, fixed = TRUE) &&
+     grepl("Connection reset", m, fixed = TRUE),
+   "...while one that could not be read stops, rather than falling back to it")
 ok(any(grepl("N_LOT_FINAL_ROWS IS NOT NULL",
              deparse(get("resolve_owner_run", envir = env)), fixed = TRUE)),
    "...and that fallback still uses lot's own completeness predicate")

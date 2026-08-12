@@ -479,7 +479,15 @@ assign("run_id", "R2", envir = na)
 NAQ <- character(0)
 drive_na <- function(rows) {
   NAQ <<- character(0)
-  assign("db_q", function(con, s) { NAQ <<- c(NAQ, s); rows }, envir = na)
+  # The warehouse applies the WHERE clause, so this has to as well - at least
+  # the part under test. A stub that hands back the same rows whatever it is
+  # asked cannot tell a query that excludes this run's id from one that does
+  # not, and the same-id assertions below would pass either way.
+  assign("db_q", function(con, s) {
+    NAQ <<- c(NAQ, s)
+    if (grepl("RUN_ID <> 'R2'", s, fixed = TRUE))
+      rows[as.character(rows$RUN_ID) != "R2", , drop = FALSE] else rows
+  }, envir = na)
   tryCatch({ na$check_no_active_run(NULL, list(object_prefix = "p_")); NULL },
            error = conditionMessage)
 }
@@ -487,9 +495,19 @@ ok(is.null(drive_na(data.frame(RUN_ID = character(0), UPDATED_AT = character(0))
    "a prefix nobody else is building is fine")
 ok(any(grepl("STATE = 'started'", NAQ, fixed = TRUE)) &&
      any(grepl("OBJECT_PREFIX = 'p_'", NAQ, fixed = TRUE)) &&
-     any(grepl("RUN_ID <> 'R2'", NAQ, fixed = TRUE)) &&
      any(grepl("wk.p_NDMM_BUILD_STATUS", NAQ, fixed = TRUE)),
-   "...asked of started runs on this prefix, excluding this one")
+   "...asked of started runs on this prefix")
+# Including this run's own id, which it used to exclude - and that exclusion
+# was asserted here, so the hole was pinned as expected behaviour. run_id comes
+# from DOMINO_RUN_ID, and a second attempt inside one Domino execution carries
+# the same one, which is the collision most worth catching.
+ok(!any(grepl("RUN_ID <>", NAQ, fixed = TRUE)),
+   "...and not excluding this run's id, which a retry shares with a live sibling")
+msg <- drive_na(data.frame(RUN_ID = "R2", UPDATED_AT = "2026-07-30 09:00:00"))
+ok(!is.null(msg) && grepl("R2", msg, fixed = TRUE),
+   "a second attempt under this run's own id is refused, not waved through")
+ok(!is.null(msg) && grepl("this run's own id", msg, fixed = TRUE),
+   "...and the message says so, or it reads as the run blocking itself")
 msg <- drive_na(data.frame(RUN_ID = "R1", UPDATED_AT = "2026-07-30 09:00:00"))
 ok(!is.null(msg) && grepl("R1", msg, fixed = TRUE) &&
      grepl("NDMM_IGNORE_ACTIVE_RUN", msg, fixed = TRUE),

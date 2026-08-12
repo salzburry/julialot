@@ -1122,10 +1122,21 @@ check_icd_flag <- function(con, cfg) {
 
 
 check_no_active_run <- function(con, cfg) {
+  # Not excluding this run's own id, which is the hole that used to be here.
+  # run_id comes from DOMINO_RUN_ID, and a second attempt inside one Domino
+  # execution carries the same one - so `RUN_ID <> run_id` hid exactly the
+  # collision worth catching: a live sibling under this id, replacing the same
+  # prefixed tables.
+  #
+  # Nothing is lost by dropping it. This runs BEFORE write_build_status marks
+  # this attempt started, so a 'started' row under this id is always another
+  # attempt's. A normally-failing one leaves 'failed' through on.exit, so a
+  # 'started' row means still running, or killed - and a killed process cannot
+  # be the same session, which is what would have shared the id anyway.
   d <- tryCatch(db_q(con, glue("
     SELECT RUN_ID, UPDATED_AT FROM {wrk('NDMM_BUILD_STATUS')}
-    WHERE OBJECT_PREFIX = '{cfg$object_prefix}' AND STATE = 'started'
-      AND RUN_ID <> '{run_id}'")), error = function(e) e)
+    WHERE OBJECT_PREFIX = '{cfg$object_prefix}'
+      AND STATE = 'started'")), error = function(e) e)
   # A table that is not there yet is the first run on this prefix, and there is
   # nothing to collide with. Every other failure is a check that did not run,
   # which is not the same as a check that passed - the same distinction
@@ -1169,7 +1180,16 @@ check_no_active_run <- function(con, cfg) {
        "replace each other's tables while the other is reading them, and both ",
        "could still finish. Use a different prefix, or wait. If those runs are ",
        "not actually running - a killed process leaves 'started' behind - set ",
-       "NDMM_IGNORE_ACTIVE_RUN=TRUE.", call. = FALSE)
+       "NDMM_IGNORE_ACTIVE_RUN=TRUE.",
+       # The id can be this run's: a second attempt in one Domino execution
+       # shares DOMINO_RUN_ID. Worth saying, or the message reads as though the
+       # run were blocking itself.
+       if (any(as.character(d$RUN_ID) == run_id))
+         paste0("\nOne of those is this run's own id (", run_id, "), which a ",
+                "second attempt in the same Domino execution shares. This ",
+                "attempt has not written its own row yet, so that one is ",
+                "another attempt still marked started.") else "",
+       call. = FALSE)
 }
 
 # A re-run keeps run_id, so a second attempt writes under the first's id. Each
@@ -1253,9 +1273,9 @@ build_ndmm <- function(here, prefix) {
 
   # First, and before this run writes anything at all: one query, against a
   # table check_upstream does not look at, and a refused run leaves the prefix
-  # exactly as it found it. The query excludes this run's own id, so it would
-  # give the same answer later - it just would not be true any more that
-  # nothing had been written, nor that nothing had been waited for.
+  # exactly as it found it. Order matters now - the query no longer excludes
+  # this run's id, so it has to run before write_build_status marks this
+  # attempt started or the run would find itself.
   check_no_active_run(con, cfg)
   check_upstream(con, cfg)
   # Before the first status row, not after it. The row now carries this run's
