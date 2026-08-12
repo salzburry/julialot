@@ -37,9 +37,12 @@ MELP_B2_READING <- paste0(
 # The cell's own run id, from its own status row. Reading LOT_ATTRITION or
 # LOT_RUN_METADATA without it would take whichever run's rows came back first.
 cell_run_id <- function(con, c_i) {
-  st <- tryCatch(db_q(con, glue(
-    "SELECT RUN_ID FROM {wrk(paste0(c_i$prefix, 'LOT_BUILD_STATUS'))} ",
-    "ORDER BY UPDATED_AT DESC LIMIT 1")), error = function(e) NULL)
+  # paste0, not glue. Everything else in this file builds SQL that way, and a
+  # lone glue() call makes the package an attach dependency of every script that
+  # sources it - read_melp_metrics.R does not attach it and died here.
+  st <- tryCatch(db_q(con, paste0(
+    "SELECT RUN_ID FROM ", wrk(paste0(c_i$prefix, "LOT_BUILD_STATUS")),
+    " ORDER BY UPDATED_AT DESC LIMIT 1")), error = function(e) NULL)
   if (is.null(st) || !nrow(st))
     stop("No LOT_BUILD_STATUS row under ", c_i$prefix, ", so there is no run ",
          "to read ", c_i$id, "'s numbers from.", call. = FALSE)
