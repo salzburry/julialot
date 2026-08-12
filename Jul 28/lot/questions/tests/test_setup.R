@@ -390,6 +390,28 @@ ok(length(dev_line) == 1L &&
    "...with no way past it, because it is recorded fact rather than inference")
 ok(!any(grepl("qs_tbl(\"LOT_BUILD_STATUS\")", st, fixed = TRUE)),
    "...rather than the binding check being hardcoded to this run's prefix")
+# NULL from that helper means "no run is recorded", and the callers take it as
+# a legacy build they can only warn about. So an unreadable status table must
+# not return NULL: it would carry BOTH stops out with it - the refusal to
+# answer off a sensitivity cell and the refusal to pair one run's lines with
+# another's cohort - and still write a workbook that reads like the study's.
+drive_row <- function(x) {
+  assign("db_q", function(con, sql) if (is.character(x)) stop(x) else x,
+         envir = globalenv())
+  tryCatch(list(v = qs_lot_run_row(NULL, "p_")), error = conditionMessage)
+}
+ok(is.null(drive_row("TABLE_OR_VIEW_NOT_FOUND: wk.p_LOT_BUILD_STATUS")$v),
+   "a status table that is not there is a legacy build, and returns no row")
+ok(is.null(drive_row(data.frame())$v),
+   "...as does one that is there with nothing in it")
+for (case in list(list(m = "HTTP 403: permission denied", w = "a refused read"),
+                  list(m = "Connection reset by peer",    w = "a dropped connection"))) {
+  e <- drive_row(case$m)
+  ok(is.character(e) && grepl("Could not read", e, fixed = TRUE) &&
+       grepl("LOT_CONTRACT_OVERRIDE", e, fixed = TRUE),
+     paste0("...while ", case$w, " stops, naming the stop it would have skipped"))
+}
+rm("db_q", envir = globalenv())
 ok(any(grepl("qs_broad_run_state(con, broad_pfx)", bdq, fixed = TRUE)),
    "the broad script asks whether that run finished before reading its lines")
 ok(any(grepl("QS_IGNORE_BROAD_BUILD_STATE", st, fixed = TRUE)),
@@ -440,39 +462,57 @@ ok(!any(grepl("poma1l AS (SELECT DISTINCT cast(PATID as string) PATID FROM {broa
               paste(bdq, collapse = "\n"), fixed = TRUE)),
    "...and no longer names the broad table in a query that runs without it")
 
-cat("\n-- and the lineage status rides on the rows, not on the log --\n")
-# An unrecorded cohort is unverified, not wrong, so the split still runs. But
-# the thing that gets read is the CSV: it is mailed on and opened months later
-# by someone who never saw the console. Three groups of counts with no lineage
-# field look identical whether or not anything tied them to one population.
+cat("\n-- an unverified pairing leaves the split off, and says why on the rows --\n")
+# 'other' is not a group unless the two populations are one. It is the
+# complement of a POMA set drawn from the LOT run, so a flag-build patient that
+# run never held falls into it and is counted as not having had POMA rather
+# than as not being in the run - the same arithmetic the known-mismatch case is
+# dropped for. Disclosure does not make the denominator mean anything else, so
+# an unverified pairing now leaves the split off too.
 #
 # The block is pulled out of the file and EVALUATED rather than grepped, so
-# this tests the three strings that ship. Braced, or parse() would split it at
-# the first top-level `else`.
-lin_a <- grep("^    lineage <- if \\(!poma_split\\)", bdq)
+# this tests the strings that ship. Braced, or parse() would split it at the
+# first top-level `else`.
+lin_a <- grep("^    split_off <-$", bdq)
 lin_b <- grep("^    lineage_lit <- gsub", bdq)
 ok(length(lin_a) == 1L && length(lin_b) == 1L && lin_b > lin_a,
-   "the flags section decides a lineage string before it builds the query")
-lin_of <- function(split, bound) {
+   "the flags section decides one reason, then the lineage string from it")
+run_lin <- function(pfx, ok_broad, pair) {
   e <- new.env()
-  assign("poma_split", split, envir = e)
-  assign("pair", list(bound = bound), envir = e)
+  assign("broad_pfx", pfx, envir = e)
+  assign("broad", list(ok = ok_broad), envir = e)
+  assign("pair", pair, envir = e)
   eval(parse(text = paste(c("{", bdq[lin_a:(lin_b - 1L)], "}"), collapse = "\n")),
        envir = e)
-  get("lineage", envir = e)
+  list(split = get("poma_split", envir = e), lineage = get("lineage", envir = e))
 }
-l_none <- lin_of(FALSE, FALSE); l_ok <- lin_of(TRUE, TRUE); l_un <- lin_of(TRUE, FALSE)
-ok(grepl("LINEAGE UNVERIFIED", l_un, fixed = TRUE) &&
-     !grepl("UNVERIFIED", l_ok, fixed = TRUE),
-   "...saying UNVERIFIED on the split it could not tie, and not on the one it could")
-ok(length(unique(c(l_none, l_ok, l_un))) == 3L,
-   "...and the three cases are three different strings, so none reads as another")
-# Naming the split is not enough. A reader with two rows in front of them will
-# compare them unless told not to, which is the whole failure being fixed.
-ok(grepl("do not read POMA-1L against other", l_un, fixed = TRUE),
-   "...and the unverified one says not to read the two groups against each other")
+BOUND <- list(bound = TRUE,  verified = TRUE,  why = NULL)
+UNVER <- list(bound = FALSE, verified = FALSE, why = "nothing records which cohort")
+DIFFR <- list(bound = FALSE, verified = TRUE,  why = "two different broad cohorts")
+r_ok <- run_lin("b_", TRUE, BOUND)
+r_un <- run_lin("b_", TRUE, UNVER)
+r_df <- run_lin("b_", TRUE, DIFFR)
+r_np <- run_lin("",   TRUE, BOUND)
+r_nb <- run_lin("b_", FALSE, BOUND)
+ok(isTRUE(r_ok$split), "a verified pairing splits")
+ok(!isTRUE(r_un$split),
+   "...an unverified one does not, so nothing lands in an 'other' nobody defined")
+ok(!isTRUE(r_df$split), "...nor does a pairing known to disagree")
+ok(!isTRUE(r_np$split) && !isTRUE(r_nb$split),
+   "...nor an unset BROAD_PREFIX or an unusable broad run")
+# The reason has to survive to the CSV. One row of counts says nothing about
+# why it is one row, and the log reaches only whoever ran the script.
+ok(all(vapply(list(r_un, r_df, r_np, r_nb),
+              function(r) grepl("^no POMA split - .", r$lineage), logical(1))),
+   "...and every suppressed case says on the row that there is no split, and why")
+ok(length(unique(vapply(list(r_ok, r_un, r_df, r_np, r_nb),
+                        function(r) r$lineage, character(1)))) == 5L,
+   "...with a different reason each time, so none reads as another")
+ok(grepl("nothing records which cohort", r_un$lineage, fixed = TRUE) &&
+     grepl("two different broad cohorts", r_df$lineage, fixed = TRUE),
+   "...carrying the pairing's own words rather than restating them")
 ok(any(grepl("AS lineage", bdq, fixed = TRUE)),
-   "...and it is a column of the flags CSV rather than a log line only")
+   "...as a column of the flags CSV rather than a log line only")
 # The prose has an apostrophe in it. Interpolated raw, that closes the SQL
 # literal early: the query dies inside best_effort() and the caveat takes the
 # numbers it qualifies down with it.
@@ -480,10 +520,15 @@ ok(any(grepl("gsub(\"'\", \"''\", lineage, fixed = TRUE)", bdq, fixed = TRUE)) &
      any(grepl("'{lineage_lit}'", bdq, fixed = TRUE)) &&
      !any(grepl("'{lineage}'", bdq, fixed = TRUE)),
    "...escaped on its way into the query, not interpolated raw")
-ok(!any(vapply(list(l_none, l_ok, l_un), function(s)
-          nchar(gsub("[^']", "", gsub("'", "''", s, fixed = TRUE))) %% 2L != 0L,
+ok(!any(vapply(list(r_ok, r_un, r_df, r_np, r_nb), function(r)
+          nchar(gsub("[^']", "", gsub("'", "''", r$lineage, fixed = TRUE))) %% 2L != 0L,
         logical(1))),
-   "...which leaves every one of the three balanced as a SQL literal")
+   "...which leaves every one of them balanced as a SQL literal")
+# One reason, not two that can drift. The log used to rebuild the same if/else
+# chain by hand beside the query that reported it.
+ok(any(grepl('log_msg("  NOTE: one row, grp=\'all\', with no POMA split - ", split_off)',
+             bdq, fixed = TRUE)),
+   "...and the log prints that same reason rather than deriving its own")
 
 cat("\n-- a run records the CDM vintage it read --\n")
 # STUDY_END picks the quarterly table and the quarterlies are cumulative. Q3

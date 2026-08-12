@@ -25,6 +25,13 @@ pass it. A killed process leaves its `started` row behind for ever;
 `NDMM_IGNORE_ACTIVE_RUN=TRUE` gets past one, and should be used only once the
 named run is known to be dead.
 
+A status table that is not there is the first run on a prefix and passes. Any
+other failure to read it - a refused SELECT, a dropped connection, a table of
+another shape - stops the run instead. Those used to take the first-run path
+too, which turned this check off for the length of a build at exactly the
+moments the warehouse was misbehaving. `NDMM_IGNORE_ACTIVE_RUN=TRUE` gets past
+that as well, with the reason logged.
+
 A re-run keeps its run id, so `NDMM_ATTRITION`, `NDMM_RUN_METADATA` and
 `NDMM_CODELIST_METADATA` are cleared of this run's rows before the first step -
 otherwise a failed attempt leaves a row naming the code that built a cohort

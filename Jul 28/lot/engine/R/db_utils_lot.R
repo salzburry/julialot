@@ -140,6 +140,28 @@ cdm_src <- function(base_tbl) {
   }
 }
 
+# "It is not there yet" and "it could not be read" are different answers.
+#
+# A check that falls back to a first-run default when its table is absent is
+# right on a fresh prefix and wrong on everything else: a permission failure,
+# an expired connection, a schema the query no longer matches or a transient
+# warehouse error all take that same path, and the fallback then fires against
+# a table that is full of rows - reporting the one thing it did not establish.
+#
+# Narrow on purpose. Only the object-missing wording qualifies, not the wider
+# permanent-error list below, which includes syntax and column errors that mean
+# the query is wrong rather than the table absent.
+#
+# It is not airtight: a warehouse may answer TABLE_OR_VIEW_NOT_FOUND for an
+# object the caller cannot see, so a permission failure can still read as a
+# first run. It is the signal the warehouse gives, and the same one
+# clear_run_rows() has always used.
+missing_object_error <- function(err) {
+  msg <- if (inherits(err, "condition")) conditionMessage(err) else as.character(err)
+  length(msg) == 1L && !is.na(msg) &&
+    grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found", msg, ignore.case = TRUE)
+}
+
 with_retry <- function(fn, max_retries = lot_config()$max_retries,
                        base_sleep = lot_config()$base_sleep) {
   # Errors worth no retry. Both the Spark class name and the ODBC wording

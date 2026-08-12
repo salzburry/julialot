@@ -156,17 +156,22 @@ flag-build patients from the LOT run's 1L regimens - so the LOT run's recorded
 Three outcomes, and the CSV carries which one it was in a `lineage` column:
 
 * they match -> `lineage verified`, and the split runs.
-* they disagree -> the split is dropped. Lines from one cohort cannot label
-  patients of another: everyone the LOT run lacks would read as not having had
-  POMA rather than as not being in it. One row, `grp='all'`.
-* neither side recorded a cohort -> `LINEAGE UNVERIFIED`. Nothing said they
-  differ, so the split still runs, but the row says it was never tied and says
-  not to read `POMA-1L` against `other`. Older runs predate the status table,
-  and refusing on an absent record would take the answer away from all of them.
+* they disagree -> the split is dropped. One row, `grp='all'`.
+* neither side recorded a cohort -> the split is dropped, and the row says it
+  was never tied.
 
-The status is a column rather than a log line because the CSV is what gets
-read - three groups of counts look identical whether or not anything tied them
-to one population.
+The last two land in the same place, because the arithmetic is the same either
+way. `other` is not a group on its own: it is the *complement* of a POMA set
+drawn from the LOT run, so a flag-build patient that run never held falls into
+it and is counted as not having had POMA rather than as not being in the run.
+Whether anyone can see that happening is the only thing verification changes,
+and a disclosure does not make the denominator mean anything else. Only the
+split is dropped - the flags still report, over the population they belong to.
+
+That costs the split on a broad LOT build old enough not to record
+`INPUT_COHORT_TABLE`. The reason is a column rather than a log line because the
+CSV is what gets read: one row of counts says nothing about why it is one row,
+and the log reaches only whoever ran the script.
 
 ## The trial flags are not the cohort build's flags
 

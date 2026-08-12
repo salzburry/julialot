@@ -173,6 +173,29 @@ with_retry <- function(fn, max_retries = ndmm_config()$max_retries,
   }
 }
 
+# "It is not there yet" and "it could not be read" are different answers.
+#
+# Several checks fall back to a first-run default when a status or metadata
+# table is absent, which is right on a fresh prefix and wrong on everything
+# else: a permission failure, an expired connection, a schema the query no
+# longer matches or a transient warehouse error would all take that same path,
+# and the fallback would fire against a table that is full of rows. The check
+# then reports the one thing it did not establish.
+#
+# Narrow on purpose. Only the object-missing wording qualifies - not the wider
+# permanent-error list above, which includes syntax and column errors that mean
+# the query is wrong rather than the table absent.
+#
+# It is not airtight: a warehouse may answer TABLE_OR_VIEW_NOT_FOUND for an
+# object the caller cannot see, so a permission failure can still read as a
+# first run. It is the signal the warehouse gives, and the same one
+# clear_run_rows() has always used.
+missing_object_error <- function(err) {
+  msg <- if (inherits(err, "condition")) conditionMessage(err) else as.character(err)
+  length(msg) == 1L && !is.na(msg) &&
+    grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found", msg, ignore.case = TRUE)
+}
+
 # The retry wraps the whole call, so what it retries must be safe to run twice.
 # One CREATE OR REPLACE or DELETE is; an INSERT on its own is not.
 db_exec_once <- function(con, sql) DBI::dbExecute(con, sql)

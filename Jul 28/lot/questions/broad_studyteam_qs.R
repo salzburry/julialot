@@ -190,32 +190,40 @@ main <- function() {
     # is about that build's OTHER_MALIGN_FLAG and its trial windows, which do
     # not need the LOT run. Only the split does.
     pair <- qs_broad_pair_bound(broad$cohort, trial_idx)
-    poma_split <- nzchar(broad_pfx) && isTRUE(broad$ok) && isTRUE(pair$bound)
-    # Unverified is not the same as wrong: nothing said the two differ, so the
-    # split still runs and says it was not checked. A positive disagreement
-    # drops it - that one is known-wrong, and it is reported below beside the
-    # output it changed rather than here.
-    if (nzchar(broad_pfx) && isTRUE(broad$ok) && !isTRUE(pair$bound) &&
-        !isTRUE(pair$verified)) {
-      log_msg("  NOTE: ", pair$why, ", so the POMA split below is unverified.")
-      poma_split <- TRUE
-    }
-    # ...and that caveat rides on the rows rather than in the console alone.
-    # The CSV is what gets read: it is mailed on, pasted into a deck and opened
-    # months later by someone who never saw this log. A grp column holding
-    # 'POMA-1L' and 'other' with nothing beside it is a comparison the reader
-    # cannot know was never tied to one cohort, and the numbers look no
-    # different when it was not.
-    lineage <- if (!poma_split)
-      "no POMA split - one row over this flag build's whole population"
-    else if (isTRUE(pair$bound))
+    # Why the split is off, or NULL when it runs. One reason, decided once, and
+    # read by both the log and the CSV's lineage column - they used to be able
+    # to disagree.
+    #
+    # Unverified lineage leaves it off, alongside a known mismatch. It was on:
+    # nothing said the two builds differ, so the split ran and disclosed that
+    # it had not been checked. But 'other' is not a group unless the two
+    # populations are one. It is the COMPLEMENT of a POMA set drawn from the
+    # LOT run, so a flag-build patient the LOT run never held lands in it -
+    # counted as not having had POMA rather than as not being in that run at
+    # all. That is the same arithmetic the known-mismatch case is dropped for;
+    # the only difference is whether anybody can see it happening, and a
+    # disclosure does not make the denominator mean anything else.
+    #
+    # It costs the split on runs where the broad LOT build recorded no
+    # INPUT_COHORT_TABLE, which is a build old enough to predate the status
+    # row. The flags themselves still report, over the population they belong
+    # to, which is what most of this section is.
+    split_off <-
+      if (!nzchar(broad_pfx))
+        paste0("BROAD_PREFIX is unset, and the 1L regimen that splits these ",
+               "patients comes from a LOT run over this build's own cohort.")
+      else if (!isTRUE(broad$ok))
+        "the broad LOT run behind that regimen is not usable this run."
+      else if (!isTRUE(pair$bound)) pair$why
+      else NULL
+    poma_split <- is.null(split_off)
+    # The reason rides on the rows, not in the console alone. The CSV is what
+    # gets read: it is mailed on, pasted into a deck and opened months later by
+    # someone who never saw this log, and one row of counts says nothing about
+    # why it is one row.
+    lineage <- if (poma_split)
       "POMA split, lineage verified - both broad sources name the same cohort"
-    else
-      paste0("POMA split, LINEAGE UNVERIFIED - nothing records which cohort ",
-             "one of the two broad sources came from, so these two groups are ",
-             "not established to be one population. Read each row on its own; ",
-             "do not read POMA-1L against other until BROAD_PREFIX and ",
-             "TRIAL_PREFIX are confirmed to name the same study.")
+    else paste0("no POMA split - ", split_off)
     # Doubled, because this is prose and prose has apostrophes. One of them
     # unescaped ends the literal, and the query dies inside best_effort() -
     # a caveat that takes the numbers it qualifies down with it.
@@ -259,14 +267,7 @@ main <- function() {
     log_msg("  Lineage: ", lineage, " (also the CSV's `lineage` column, so it ",
             "stays with the numbers when this log does not.)")
     if (!poma_split)
-      log_msg("  NOTE: one row, grp='all', with no POMA split - ",
-              if (!nzchar(broad_pfx))
-                paste0("BROAD_PREFIX is unset, and the 1L regimen that splits ",
-                       "these patients comes from a LOT run over this build's ",
-                       "own cohort.")
-              else if (!isTRUE(broad$ok))
-                "the broad LOT run behind that regimen is not usable this run."
-              else pair$why)
+      log_msg("  NOTE: one row, grp='all', with no POMA split - ", split_off)
   }
 
   log_msg("Broad-cohort questions complete. CSVs in ", out_dir)

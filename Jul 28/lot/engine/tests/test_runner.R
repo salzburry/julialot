@@ -1831,6 +1831,41 @@ ok(any(grepl("^\\s*stop\\(", cr)),
 ok(sum(grepl("bad <- c\\(bad", cr)) >= 1 && any(grepl("collapse", cr)),
    "...naming every table it could not clear, not just the first")
 
+cat("\n-- and the active-run check draws that same line --\n")
+# It did not. Every read failure took the "no table yet on a first run" path,
+# so a permission failure or a dropped connection turned the concurrency guard
+# off for the length of a build - two runs on one prefix replacing each other's
+# tables while the other reads them, both finishing. Driven, not grepped: what
+# matters is what the function does with what comes back.
+ar <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "db_utils_lot.R"), envir = ar)
+sys.source(file.path(ROOT, "R", "build_lot.R"), envir = ar)
+assign("log_msg", function(...) invisible(NULL), envir = ar)
+assign("lot_out", function(x) paste0("wk.p_", x), envir = ar)
+assign("run_id", "R2", envir = ar)
+drive_ar <- function(x) {
+  assign("db_q", function(con, s) if (is.character(x)) stop(x) else x, envir = ar)
+  tryCatch({ ar$check_no_active_run(NULL, list(object_prefix = "p_")); NULL },
+           error = conditionMessage)
+}
+ok(is.null(drive_ar(data.frame(RUN_ID = character(0), UPDATED_AT = character(0)))),
+   "a prefix nobody else is building is fine")
+ok(!is.null(drive_ar(data.frame(RUN_ID = "R1", UPDATED_AT = "x"))),
+   "...another run on it stops this one")
+ok(is.null(drive_ar("TABLE_OR_VIEW_NOT_FOUND")),
+   "...a first run, with no status table yet, is not blocked by its absence")
+for (case in list(list(m = "HTTP 403: permission denied", w = "a refused read"),
+                  list(m = "Connection reset by peer",    w = "a dropped connection"))) {
+  e <- drive_ar(case$m)
+  ok(!is.null(e) && grepl("Could not read", e, fixed = TRUE) &&
+       grepl(case$m, e, fixed = TRUE),
+     paste0("...while ", case$w, " stops, rather than passing as a first run"))
+}
+Sys.setenv(LOT_IGNORE_ACTIVE_RUN = "TRUE")
+ok(is.null(drive_ar("HTTP 403: permission denied")),
+   "...and the override the message names lets an operator past an unreadable one")
+Sys.unsetenv("LOT_IGNORE_ACTIVE_RUN")
+
 cat("\n-- face validity: does the output look like myeloma --\n")
 # The invariants ask whether the output is internally consistent. These ask
 # whether it is clinically plausible - a run can pass every structural check

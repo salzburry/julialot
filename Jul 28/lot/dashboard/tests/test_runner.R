@@ -408,6 +408,20 @@ stub(function(con, sql)
   else data.frame(x = 1))
 ok(identical(resolve_owner_run(NULL, oi, ohave, ocfg)$run_id, "run-b"),
    "...while a status table predating that column still resolves, as it must")
+# "" means the question was asked and answered no, and the page renders on it.
+# A permission failure or a dropped connection is the question not being asked,
+# and returning "" for it draws a sensitivity cell exactly as it draws the
+# study - the one outcome the refusal above exists to prevent.
+stub(function(con, sql)
+  if (grepl("CONTRACT_DEVIATIONS", sql, fixed = TRUE))
+    stop("HTTP 403: user does not have SELECT on this table")
+  else if (grepl("wk.ST", sql, fixed = TRUE))
+    data.frame(RUN_ID = "run-b", STATE = "complete", UPDATED_AT = "2026-01-02 10:00:00")
+  else data.frame(x = 1))
+m <- tryCatch({ resolve_owner_run(NULL, oi, ohave, ocfg); "" }, error = conditionMessage)
+ok(grepl("Could not read CONTRACT_DEVIATIONS", m, fixed = TRUE) &&
+     grepl("403", m, fixed = TRUE),
+   "...but a read that FAILED is not an answer of no, and stops rather than rendering")
 # And a frame that came back without the column is a table that has not got
 # it. Reading column one instead would turn a run id into a deviation.
 stub(function(con, sql)

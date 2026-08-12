@@ -142,11 +142,21 @@ reads it before any panel runs and:
   who knows the run failed before it wrote anything;
 * `complete` but with no completed metadata row -> stops. Those two are written
   seconds apart at the end of the same build, so disagreeing means one has been
-  edited or partly restored;
+  edited or partly restored. If that question could not be *asked* - a metadata
+  table older than `N_LOT_FINAL_ROWS`, or one that could not be read - it stops
+  saying so instead, rather than reporting tampering it did not find;
 * no `LOT_BUILD_STATUS` at all (a study built by an older `lot`) -> falls back
   to the newest row with `N_LOT_FINAL_ROWS IS NOT NULL`, which is `lot`'s own
   completeness predicate. The log says this is the weaker claim: it establishes
   that a run finished, not that it wrote these tables.
+
+The owning run is also refused outright if it recorded `CONTRACT_DEVIATIONS` -
+a `LOT_CONTRACT_OVERRIDE` build is a sensitivity cell, and every panel here
+would draw it exactly as it draws the study. There is no override on that one:
+it is what the build wrote about itself rather than an inference. A status
+table written before that column existed answers "no deviations", correctly -
+a run built before the override existed cannot have used it. A read that
+*fails* answers nothing, and now stops rather than rendering.
 
 ### Cohort <-> LOT alignment, and what is still not established
 
