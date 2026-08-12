@@ -13,8 +13,23 @@
 #      join matches nothing and the label list is the whole mechanism.
 #   2. Which plasma-cell labels are on the list, with their codes - including
 #      what sits under MONOCLONAL GAMMOPATHY, which the repo never names.
-#   3. Which of the ten configured labels match, and which plasma-cell-looking
+#   3. Which of the configured labels match, and which plasma-cell-looking
 #      labels are left excluding.
+#
+# NDMM_MM_ADJACENT_STATES chooses the set, so it is honoured here too:
+#
+#   NDMM_MM_ADJACENT_STATES=none Rscript "ndmm/other_malig_overlap.R"
+
+.script_dir <- local({
+  a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
+  if (length(a)) dirname(normalizePath(gsub("~+~", " ", sub("^--file=", "", a[1]),
+                                            fixed = TRUE))) else getwd()
+})
+# The build's own constants, not a copy of them - a list written out again here
+# would keep answering for a setting the build no longer uses. Neither file
+# opens a connection.
+for (f in c("ndmm_constants.R", "standalone_constants.R"))
+  source(file.path(.script_dir, "R", f))
 
 DIR <- Sys.getenv("CODELIST_DIR", unset = "/mnt/code/codelist")
 cat("codelist dir: ", DIR, "\n\n", sep = "")
@@ -81,18 +96,20 @@ if (!nrow(pc)) line("  none - nothing on this list looks plasma-cell at all") el
 
 # ---- 3. the configured labels --------------------------------------------
 line(""); rule()
-line("3. The ten configured labels - matched, or a silent no-op")
+line("3. What NDMM_MM_ADJACENT_STATES='", NDMM_MM_ADJACENT_STATES,
+     "' overrides - matched, or a silent no-op")
 rule()
-CORE <- c("MONOCLONAL GAMMOPATHY",
-          "SOLITARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION",
-          "PLASMA CELL LEUKEMIA NOT HAVING ACHIEVED REMISSION",
-          "EXTRAMEDULLARY PLASMACYTOMA NOT HAVING ACHIEVED REMISSION")
-STATES <- c("PLASMA CELL LEUKEMIA IN REMISSION", "PLASMA CELL LEUKEMIA IN RELAPSE",
-            "EXTRAMEDULLARY PLASMACYTOMA IN REMISSION",
-            "EXTRAMEDULLARY PLASMACYTOMA IN RELAPSE",
-            "SOLITARY PLASMACYTOMA IN REMISSION", "SOLITARY PLASMACYTOMA IN RELAPSE")
+GROUPS <- ndmm_mm_adjacent_groups()
+# The build stops on a missing one only where the setting asks for it, which is
+# what 04_other_malig.R validates.
+CORE   <- intersect(NDMM_MM_ADJACENT_OVERRIDE, GROUPS)
+STATES <- setdiff(GROUPS, CORE)
+if (!length(GROUPS))
+  line("  Nothing. Every label on the other-cancer list excludes, and only ",
+       "codes\n  that are also on mm_dx.csv survive it.")
 for (nm in list(list("required (build stops if missing)", CORE),
                 list("states (reported only)", STATES))) {
+  if (!length(nm[[2]])) next
   line("  ", nm[[1]], ":")
   for (l in nm[[2]])
     line("    ", if (l %in% om$g) "on the list " else "NOT ON LIST",
@@ -103,7 +120,7 @@ for (nm in list(list("required (build stops if missing)", CORE),
 # reach. Both halves matter: a label off the list is still overridden if its
 # codes are on mm_dx.csv, and reporting those as excluding would send an SME
 # after codes the build already keeps.
-uncovered <- pc[!(pc$g %in% c(CORE, STATES)) & !(pc$k %in% mm$k), ]
+uncovered <- pc[!(pc$g %in% GROUPS) & !(pc$k %in% mm$k), ]
 line("")
 if (!nrow(uncovered)) {
   line("  Nothing plasma-cell-looking is left excluding.")
