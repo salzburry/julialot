@@ -288,9 +288,15 @@ or >=2 outpatient codes for the same primary tumour type. No states, no
 exemptions.
 
 The override is not a departure from that criterion - it is what makes it mean
-what it says. `other_malig.csv` is the study's generic other-cancer code
-list and it carries myeloma's own codes, so without an override every NDMM
-patient would be excluded for having the disease that put them in the cohort.
+what it says. `other_malig.csv` is the study's generic other-cancer code list,
+so it can carry codes that ARE the index disease, and excluding on those would
+remove patients for having the disease that put them in the cohort.
+
+How far that reaches is unverified: the file is not in this repo, and whether
+it carries myeloma's own codes as well as the plasma-cell ones has never been
+checked. `NDMM_MM_ADJACENT_GROUPS` selects on `tumor_group LIKE '%MYELOMA%'`,
+so the first run says. If they are there, the derived override below is doing
+real work; if not, the four labels are the whole mechanism.
 
 So the question is never "is this in remission?" but "is this the index
 disease?", and it is answered two ways:

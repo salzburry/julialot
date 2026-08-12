@@ -7,6 +7,21 @@ A decision here is only as good as the person who made it. Pending sign-off
 means the code is written and the number is reported, but nobody has signed the
 record.
 
+**What kind of pending.** These are not the same thing, and reading them alike
+has repeatedly turned an interpretation into a reported protocol gap. Each
+status below says which it is:
+
+| kind | what it means |
+|---|---|
+| PROTOCOL GAP | the protocol defines something and the build does not do it. Only #10 is one. |
+| DOCUMENT CONFLICT | two written authorities disagree and the code follows one. #9. |
+| INTERPRETATION | the protocol states a rule; turning it into claims logic needed a choice the protocol does not make. #4, #7, #8. Needs an SME, not a protocol reading. |
+| MEASUREMENT | no decision outstanding - the number arrives with the first warehouse run. The magnitude half of #4. |
+
+Only a PROTOCOL GAP makes the build incomplete against the protocol. An
+INTERPRETATION is a question about how a rule was operationalised, and the
+answer is a code list and a count, not a missing requirement.
+
 ---
 
 ## 1. Follow-up enrolment - one day, this cohort only
@@ -264,7 +279,9 @@ extract, most metastatic patients are already reachable through their primary
 code and this group adds little. Whether it holds in Optum claims is not
 something this package has checked.
 
-Status: decided and implemented; magnitude pending the first run.
+Status: MEASUREMENT. Decided and implemented; the magnitude arrives with the
+first warehouse run. Nothing to sign - read `NDMM_OTHER_MALIG_GRAIN` and see
+whether the watch tiers did real work.
 
 ### The remission and relapse states stay in the override
 
@@ -284,10 +301,44 @@ the code list carried and whether the override reached it.
 Effect: a larger cohort. Every patient it keeps has one of the six state codes
 in baseline and no other exclusion.
 
-Status: implemented as the default; the six states are PENDING SIGN-OFF. The
-four core labels were agreed; the states rest on the reasoning above and
-nobody has signed it. `NDMM_MM_ADJACENT_GROUPS` and attrition step 7 are where
-a reviewer sees what they cost.
+Status: INTERPRETATION, pending SME sign-off. Not a protocol gap: the protocol
+says to exclude another malignancy and stops there. It names no codes, so
+somebody had to decide what "another" means against the code list supplied.
+
+And the question is not the six states. All nine labels sit in C90 - the ICD
+block for multiple myeloma and malignant plasma cell neoplasms - where the
+fourth digit is the disease STATE, not the disease:
+
+| condition | not achieved remission | in remission | in relapse |
+|---|---|---|---|
+| Plasma cell leukemia | `C90.10` | `C90.11` | `C90.12` |
+| Extramedullary plasmacytoma | `C90.20` | `C90.21` | `C90.22` |
+| Solitary plasmacytoma | `C90.30` | `C90.31` | `C90.32` |
+
+Overriding four of the nine split each triple: a patient was excluded for
+another cancer because their plasma cell leukemia was in remission, while an
+identical patient whose leukemia had not achieved remission was kept. The six
+were added to stop that, not on a separate clinical claim.
+
+One question decides all nine: **is a patient with solitary plasmacytoma,
+extramedullary plasmacytoma or plasma cell leukemia carrying a second
+plasma-cell neoplasm, or one disease?** A haematologist can answer it, and it
+does not turn on remission status. Monoclonal gammopathy is separate and
+easier - MGUS is premalignant, and reaches a malignancy list only because the
+list is generic.
+
+If the nine are one disease, all nine should be required rather than four; if
+they are separate cancers, none should be overridden and the four come out.
+`NDMM_MM_ADJACENT_GROUPS` and attrition step 7 show what the override costs.
+
+**Unverified, and it changes the argument.** The comment in `04_other_malig.R`
+and the README both say `other_malig.csv` carries myeloma's own codes, so that
+without an override the criterion would exclude the whole cohort. Nothing
+checks it - the file is not in this repo, and the `mm_dx.csv` join that would
+handle it is silent when it matches nothing. If those codes ARE on the list the
+override is partly forced; if they are NOT, the label list is the whole
+mechanism and all of it is judgement. `NDMM_MM_ADJACENT_GROUPS` selects on
+`tumor_group LIKE '%MYELOMA%'`, so the first run answers this.
 
 ---
 
@@ -452,8 +503,9 @@ Code: `NDMM_PRE_LOT1_DAYS = 365` pinned in `CONTRACT`;
 whatever was used is written into every output as `CE_PRE_DAYS` and
 `CE_FU_DAYS`.
 
-Status: implemented and pinned; the day-count reading is PENDING SIGN-OFF as
-a recorded interpretation of "12 months" and "3 months".
+Status: INTERPRETATION, pending SME sign-off. The protocol says months and
+does not say calendar or fixed; both readings are faithful to it. The 1L
+sensitivity put them seven patients apart.
 
 ---
 
@@ -475,8 +527,10 @@ clamping rules exist to keep a constructed date from contradicting an
 observed one, and they move follow-up and death-based eligibility for the
 patients they touch.
 
-Status: implemented; the construction rules beyond the 15th are PENDING
-SIGN-OFF as recorded data-construction conventions.
+Status: INTERPRETATION, pending SME sign-off. The protocol gives the
+15th-of-month rule and does not cover a year-only record, or a diagnosis
+falling after the constructed date. Both occur in the CDM and needed a
+convention.
 
 ## 9. Pregnancy - which window, when two documents disagree
 
@@ -539,9 +593,10 @@ One scan serves both: the claim scan writes `NDMM_PREGNANCY_EVENTS` with dates,
 the exclusion takes distinct patients of it over the study period, and the
 review table filters the same events to `[index - 365, follow-up end]`.
 
-Status: implemented as the current protocol says. PENDING SIGN-OFF on the
-precedence itself - if the study team means the patient-specific window, it is
-the three `BETWEEN` bounds in `05_pregnancy.R` and the cohort gets larger.
+Status: DOCUMENT CONFLICT, pending sign-off on precedence. Both readings are
+written down and they disagree; the code follows the current protocol. If the
+study team means the patient-specific window it is the three `BETWEEN` bounds
+in `05_pregnancy.R`, and the cohort gets larger.
 
 ## 10. Maintenance is a flag, not a period
 
@@ -562,9 +617,12 @@ That is not a decision that maintenance should not be a line. The period the
 protocol defines does not exist here, so the question has not been put. A line
 whose regimen reduces to a single maintenance agent continues as the same line.
 
-Status: NOT IMPLEMENTED. This is the largest single gap between the protocol and
-the build outside safety and HCRU, and it changes line counts wherever the
-protocol would have opened a maintenance period.
+Status: PROTOCOL GAP, NOT IMPLEMENTED. The protocol defines the period and the
+build does not construct it - the only item in this register of that kind, and
+the only one that makes the build incomplete against the protocol rather than
+unratified against an SME. It changes line counts wherever the protocol would
+have opened a maintenance period. Safety and HCRU are the others, outside this
+register.
 
 ---
 

@@ -33,8 +33,10 @@ build_ndmm_other_malig_codes <- function(con) {
            om.icd_family,
            om.dx,
            -- The criterion is another cancer, meaning other than the index MM,
-           -- and this code list is the study's generic one: it carries MM's
-           -- own codes. Anything on the diagnosis code list is the index
+           -- and this code list is the study's generic one - which is why it
+           -- may carry MM's own codes. Nothing here checks that it does; if it
+           -- does not, the join below is silent and the label list is the
+           -- whole mechanism. Anything on the diagnosis code list is the index
            -- disease by definition - the same file decides who is an MM
            -- patient - so it cannot also make them an other-cancer patient,
            -- whatever its wording says about remission or relapse. The label
