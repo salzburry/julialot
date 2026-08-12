@@ -121,6 +121,11 @@ SUBST <- list(
     list(from = "ovr_in <- paste(sprintf(\"'%s'\", gsub(\"'\", \"''\", ndmm_mm_adjacent_groups())),",
          to   = "ovr_in <- paste(sprintf(\"'%s'\", gsub(\"'\", \"''\", NDMM_MM_ADJACENT_OVERRIDE)),",
          n = 1L),
+    # The required-label count is derived from the active mode now. A fixed four
+    # made mgus_only and none impossible to pass: they apply one core label and
+    # none, so the check failed exactly when the mode worked.
+    list(from = "n_exp     <- length(req_labels)",
+         to   = "n_exp     <- length(NDMM_MM_ADJACENT_OVERRIDE)", n = 1L),
     # Path B pairs on the mapped primary group instead of the raw label. Both
     # DISTINCT lines were identical in the source; the outpatient one is
     # renamed so this can name it without touching the inpatient one.
@@ -199,12 +204,13 @@ ADDED <- list(
     # An empty override list is reachable now - NDMM_MM_ADJACENT_STATES=none,
     # or mgus_only where the label is absent - and IN () is a syntax error.
     "if (!nzchar(ovr_in)) ovr_in <- \"NULL\"" = 1L,
+    "req_labels <- intersect(NDMM_MM_ADJACENT_OVERRIDE, ndmm_mm_adjacent_groups())" = 1L,
     "if (!nzchar(req_in)) req_in <- \"NULL\"" = 1L,
     "report_metastatic_group(con)" = 1L,
     # The required-match count is now against the five labels the code list
     # must carry, not against every group the override reaches - the remission
     # variants are a proposal and their absence is reported, not fatal.
-    "req    <- gsub(\"'\", \"''\", NDMM_MM_ADJACENT_OVERRIDE)" = 1L,
+    "req    <- gsub(\"'\", \"''\", req_labels)" = 1L,
     "req_in <- paste(sprintf(\"'%s'\", req), collapse = \", \")" = 1L,
     "AND upper(trim(tumor_group)) IN ({req_in})" = 1L,
     # The third clinical change. The other-cancer rule is >=1 inpatient claim

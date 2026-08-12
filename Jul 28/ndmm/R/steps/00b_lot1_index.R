@@ -575,9 +575,11 @@ build_ndmm_mm_adjacent_groups <- function(con, cfg) {
            max(is_mm_adjacent_override)   AS OVERRIDDEN,
            count(*)                       AS N_CODES
     FROM {NDMM_OTHER_MALIG_CODES}
+    -- Plasma-cell wording only. REMISSION and RELAPSE were standalone terms
+    -- here, and they are a disease STATE that any leukemia or lymphoma label
+    -- carries too - so this reported unrelated cancers as MM-adjacent. The
+    -- states that matter are already covered by the three disorder names.
     WHERE is_mm_adjacent_override = 1
-       OR upper(tumor_group) LIKE '%REMISSION%'
-       OR upper(tumor_group) LIKE '%RELAPSE%'
        OR upper(tumor_group) LIKE '%PLASMACYTOMA%'
        OR upper(tumor_group) LIKE '%PLASMA CELL%'
        OR upper(tumor_group) LIKE '%GAMMOPATHY%'

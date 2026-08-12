@@ -65,7 +65,10 @@ if (nrow(both)) {
 line(""); rule()
 line("2. Plasma-cell and myeloma labels on the other-cancer list")
 rule()
-pat <- "MYELOMA|PLASMA CELL|PLASMACYTOMA|GAMMOPATHY|REMISSION|RELAPSE"
+# Plasma-cell wording only. REMISSION and RELAPSE are a disease state, not a
+# disease - as standalone terms they pulled in every leukemia and lymphoma
+# label carrying the word and reported it as MM-adjacent.
+pat <- "MYELOMA|PLASMA CELL|PLASMACYTOMA|GAMMOPATHY"
 pc  <- om[grepl(pat, om$g), ]
 if (!nrow(pc)) line("  none - nothing on this list looks plasma-cell at all") else
   for (g in sort(unique(pc$g))) {

@@ -90,13 +90,19 @@ build_ndmm_other_malig_codes <- function(con) {
   "))
   report_metastatic_group(con)
 
-  # Only the five required labels are counted. The remission variants are a
-  # proposal, not a contract with the code list, so their absence is reported
-  # rather than fatal - see build_ndmm_mm_adjacent_groups().
-  req    <- gsub("'", "''", NDMM_MM_ADJACENT_OVERRIDE)
+  # The core labels THIS MODE applies, not all four of them. The remission
+  # variants are a proposal rather than a contract with the code list, so their
+  # absence is reported rather than fatal.
+  #
+  # Derived from the mode, or the two narrow modes can never pass: mgus_only
+  # overrides one core label and none overrides zero, so a fixed expectation of
+  # four fails exactly when the mode is doing what it was asked to do. An empty
+  # requirement is the right answer for none - there is no label to go missing.
+  req_labels <- intersect(NDMM_MM_ADJACENT_OVERRIDE, ndmm_mm_adjacent_groups())
+  req    <- gsub("'", "''", req_labels)
   req_in <- paste(sprintf("'%s'", req), collapse = ", ")
   if (!nzchar(req_in)) req_in <- "NULL"
-  n_exp     <- length(NDMM_MM_ADJACENT_OVERRIDE)
+  n_exp     <- length(req_labels)
   n_matched <- tryCatch(as.integer(db_q(con, glue("
     SELECT count(DISTINCT tumor_group) AS n
     FROM {NDMM_OTHER_MALIG_CODES}
@@ -111,7 +117,9 @@ build_ndmm_other_malig_codes <- function(con) {
   if (is.na(n_matched) || n_matched < n_exp)
     stop("NDMM other-cancer override: matched ",
          if (is.na(n_matched)) "no" else n_matched, " of ", n_exp,
-         " expected MM-adjacent tumor_group labels. The unmatched ones are ",
+         " expected MM-adjacent tumor_group labels under ",
+         "NDMM_MM_ADJACENT_STATES=", NDMM_MM_ADJACENT_STATES,
+         ". The unmatched ones are ",
          "not overridden, so patients would be excluded for an MM-adjacent ",
          "condition. Run 'SELECT DISTINCT tumor_group FROM ",
          NDMM_OTHER_MALIG_CODES, "' on the warehouse and align ",
