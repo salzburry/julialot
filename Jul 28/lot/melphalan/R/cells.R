@@ -34,6 +34,21 @@ MELP_B2_READING <- paste0(
   "B.2: the melphalan boundary is removed and the line is not held open to the ",
   "second dose. Both cells take this reading - see open question 6.")
 
+# The cell's own run id, from its own status row. Reading LOT_ATTRITION or
+# LOT_RUN_METADATA without it would take whichever run's rows came back first.
+cell_run_id <- function(con, c_i) {
+  # paste0, not glue. Everything else in this file builds SQL that way, and a
+  # lone glue() call makes the package an attach dependency of every script that
+  # sources it - read_melp_metrics.R does not attach it and died here.
+  st <- tryCatch(db_q(con, paste0(
+    "SELECT RUN_ID FROM ", wrk(paste0(c_i$prefix, "LOT_BUILD_STATUS")),
+    " ORDER BY UPDATED_AT DESC LIMIT 1")), error = function(e) NULL)
+  if (is.null(st) || !nrow(st))
+    stop("No LOT_BUILD_STATUS row under ", c_i$prefix, ", so there is no run ",
+         "to read ", c_i$id, "'s numbers from.", call. = FALSE)
+  st$RUN_ID[1]
+}
+
 melp_cell_plan <- function(cells = MELP_CELLS, prefix_base = "melp_") {
   lapply(cells, function(c_i)
     c(c_i, list(prefix = paste0(prefix_base, c_i$id, "_"))))
@@ -201,28 +216,30 @@ MELP_METRICS <- c(
 # ind1 / indn / cart are the build's own induction windows, needed to tell a
 # previous line's B exposure from an A one. map_tbl is the persisted MAP stack,
 # which is what makes the B.2 count exact rather than a proxy.
+# Several statements, not one.
+#
+# It was one SELECT with nineteen scalar subqueries over seven CTEs, two of
+# them window queries. Spark turns each scalar subquery into a join, and the
+# 2026-08-12 reference run died in the optimizer - "The Spark SQL phase
+# optimization failed with an internal error" - before executing anything, so
+# all four retries failed the same way. Split, each plan is ordinary.
+#
+# Same numbers: these are independent aggregates that never needed one plan.
+# The counts that shared a scan now share a CASE instead.
+#
+# Returns one statement per name. melp_metrics() runs them and cbinds the row.
 melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP",
                             map_tbl = NULL, expo_days = 30L, restart_days = 60L,
                             advance_days = 180L, ind1 = 60L, indn = 30L,
                             cart = 45L) {
-  paste0("
-    WITH per_pat AS (
-      SELECT PATID, count(*) AS n_lines, max(LOT_NUM) AS max_lot
-      FROM ", final_tbl, " GROUP BY PATID
-    ),
-    prog AS (
-      SELECT STEP, N_PATIENTS FROM ", attrition_tbl, "
-      WHERE RUN_ID = '", run_id, "' AND KIND = 'progression'
-    ),
-    melp AS (
-      SELECT PATID, LOT_BASE_END_REASON, LOT_BASE_1ST_ADD_MED, LOT_BASE_MEDS
-      FROM ", final_tbl, "
-    )", if (is.null(map_tbl)) "" else paste0(",
-    -- Melphalan exposures, chained the way lot/engine/R/melp_rule.R chains
-    -- them: doses closer together than expo_days are one administration.
-    -- Rebuilt here because the engine's version is a CTE inside a build, not
-    -- a table.
-    mdose AS (
+  in_melp <- paste0("array_contains(split(upper(coalesce(LOT_BASE_MEDS, '')), ' '), '", abbr, "')")
+
+  # The melphalan exposure chain, the way lot/engine/R/melp_rule.R chains it:
+  # doses closer together than expo_days are one administration. Rebuilt here
+  # because the engine's version is a CTE inside a build, not a table. Both B.2
+  # statements need it, and it is small enough to derive twice.
+  mx_with <- paste0("
+    WITH mdose AS (
       SELECT PATID, MAP_START_DT AS DOSE_DT FROM ", map_tbl, "
       WHERE upper(trim(MAP_MED_TYPE)) = '", abbr, "' GROUP BY PATID, MAP_START_DT
     ),
@@ -242,123 +259,126 @@ melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP",
       GROUP BY PATID, E
     ),
     -- Each exposure with the one immediately before it. The engine judges
-    -- consecutive pairs (lead over the ordered exposures), so the pair has to
-    -- be consecutive here too. Joining to any earlier exposure in range counts
-    -- pairs the rule never judged: exposures on days 100, 160 and 250 give the
-    -- engine 100-160 and 160-250, and a range join would also match 100-250 and
-    -- report one line twice.
+    -- consecutive pairs, so the pair has to be consecutive here too: exposures
+    -- on days 100, 160 and 250 give the engine 100-160 and 160-250, and a range
+    -- join would also match 100-250 and report one line twice.
     mx AS (
       SELECT PATID, EXPO_DT,
              lag(EXPO_DT) OVER (PARTITION BY PATID ORDER BY EXPO_DT) AS PREV_EXPO_DT
       FROM mxe
-    )"), "
-    SELECT (SELECT count(*) FROM per_pat)                                   AS n_patients,
-           (SELECT count(*) FROM ", final_tbl, ")                           AS n_lines,
-           (SELECT percentile_approx(n_lines, 0.5) FROM per_pat)            AS median_lines,
-           round(100.0 * (SELECT N_PATIENTS FROM prog WHERE STEP = 'Reached LOT2')
-                 / nullif((SELECT N_PATIENTS FROM prog WHERE STEP = 'Reached LOT1'), 0), 2)
-                                                                            AS pct_reaching_lot2,
-           round(100.0 * (SELECT N_PATIENTS FROM prog WHERE STEP = 'Reached LOT3')
-                 / nullif((SELECT N_PATIENTS FROM prog WHERE STEP = 'Reached LOT1'), 0), 2)
-                                                                            AS pct_reaching_lot3,
-           (SELECT percentile_approx(LOT_BASE_LENGTH, 0.5) FROM ", final_tbl, "
-             WHERE LOT_NUM = 1 AND LOT_BASE_LENGTH IS NOT NULL)             AS median_lot1_length,
-           (SELECT percentile_approx(LOT_MED_CNT, 0.5) FROM ", final_tbl, "
-             WHERE LOT_NUM = 1)                                             AS median_lot1_meds,
-           (SELECT count(DISTINCT LOT_BASE_MEDS) FROM ", final_tbl, "
-             WHERE LOT_NUM = 1 AND LOT_BASE_MEDS IS NOT NULL
-               AND trim(LOT_BASE_MEDS) <> '')                               AS n_lot1_regimens,
-           (SELECT count(*) FROM ", final_tbl, "
-             WHERE LOT_BASE_END_REASON = 'CART_INIT')                       AS n_cart_init,
-           (SELECT count(*) FROM melp
-             WHERE LOT_BASE_END_REASON = 'MED_ADD'
-               AND upper(trim(coalesce(LOT_BASE_1ST_ADD_MED, ''))) = '", abbr, "')
-                                                                            AS n_melp_add,
-           (SELECT count(*) FROM melp
-             WHERE array_contains(split(upper(coalesce(LOT_BASE_MEDS, '')), ' '), '", abbr, "'))
-                                                                            AS n_melp_lines,
-           (SELECT count(*) FROM ", final_tbl, "
-             WHERE LOT_BASE_END_REASON = 'SCT_AUTO')                        AS n_sct_auto_end,
-           (SELECT count(DISTINCT PATID) FROM melp
-             WHERE array_contains(split(upper(coalesce(LOT_BASE_MEDS, '')), ' '), '", abbr, "'))
-                                                                            AS n_pat_with_melp,
-           -- The B.2 group. All four conditions, because any one alone lets in
-           -- lines with no B.2 pair at all - a line DARA started, melphalan
-           -- merely joining its induction window, satisfies \"after a runout,
-           -- melphalan in the regimen\". Open question 6 in
-           -- lot/questions/melphalan_lot_rule.md.
-           ", if (is.null(map_tbl)) "cast(NULL as bigint)" else paste0("(
-             SELECT count(*)
-             FROM (SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_START_TYPE,
-                          lag(l.LOT_NUM)             OVER w AS PREV_LOT_NUM,
-                          lag(l.LOT_START_DT)        OVER w AS PREV_START_DT,
-                          lag(l.LOT_START_TYPE)      OVER w AS PREV_START_TYPE,
-                          lag(l.LOT_BASE_END_REASON) OVER w AS PREV_REASON
-                   FROM ", final_tbl, " l
-                   WINDOW w AS (PARTITION BY l.PATID ORDER BY l.LOT_NUM)) x
-             -- The line starts on a melphalan exposure. One join, and the
-             -- exposure carries its own immediate predecessor, so the pair is
-             -- the one the engine judged and one line cannot be counted twice.
-             INNER JOIN mx e ON e.PATID = x.PATID AND e.EXPO_DT = x.LOT_START_DT
-             WHERE x.LOT_NUM > 1
-             -- 1. the previous line ended by running out, not by melphalan
-               AND x.PREV_REASON = 'DISCONTINUATION'
-             -- 2. and melphalan STARTED this line. Landing on the start date is
-             -- not enough: the same-day tie-break is SCT_ALLO > CART > SCT_AUTO
-             -- > MED, so an AUTO coded on the melphalan date takes the start and
-             -- the line is the transplant's, not the drug's.
-               AND x.LOT_START_TYPE = 'MED'
-             -- 3. the exposure before it sits in the previous line...
-               AND e.PREV_EXPO_DT IS NOT NULL
-               AND e.PREV_EXPO_DT >= x.PREV_START_DT
-               AND e.PREV_EXPO_DT <  x.LOT_START_DT
-             -- ...outside that line's own induction window, making it B not A
-               AND datediff(e.PREV_EXPO_DT, x.PREV_START_DT) > CASE
-                     WHEN x.PREV_LOT_NUM = 1         THEN ", ind1 - 1L, "
-                     WHEN x.PREV_START_TYPE = 'CART' THEN ", cart - 1L, "
-                     ELSE ", indn - 1L, " END
-             -- 4. and the pair 60-179 days apart, which is B.2 not B.1 or B.3
-               AND datediff(x.LOT_START_DT, e.PREV_EXPO_DT)
-                     BETWEEN ", restart_days, " AND ", advance_days - 1L, ")"), "
-                                                                            AS n_b2_line_starts,
-           -- The same lines, less the ones another agent would have started
-           -- anyway. LOT_START_TYPE = 'MED' says a medication won the tie-break,
-           -- not which one - d_MED is the earliest qualifying non-steroid agent
-           -- and the drug is not kept - so a line daratumumab also started that
-           -- day exists under either reading.
-           --
-           -- A lower bound, deliberately: med_cand also passes over the previous
-           -- line's agents expanded by permissible substitutes, and that
-           -- expansion is a session view rather than a table this can read. That
-           -- drops a line rather than inventing one.
-           ", if (is.null(map_tbl)) "cast(NULL as bigint)" else paste0("(
-             SELECT count(*)
-             FROM (SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_START_TYPE,
-                          lag(l.LOT_NUM)             OVER w AS PREV_LOT_NUM,
-                          lag(l.LOT_START_DT)        OVER w AS PREV_START_DT,
-                          lag(l.LOT_START_TYPE)      OVER w AS PREV_START_TYPE,
-                          lag(l.LOT_BASE_END_REASON) OVER w AS PREV_REASON
-                   FROM ", final_tbl, " l
-                   WINDOW w AS (PARTITION BY l.PATID ORDER BY l.LOT_NUM)) x
-             INNER JOIN mx e ON e.PATID = x.PATID AND e.EXPO_DT = x.LOT_START_DT
-             WHERE x.LOT_NUM > 1
-               AND x.PREV_REASON = 'DISCONTINUATION'
-               AND x.LOT_START_TYPE = 'MED'
-               AND e.PREV_EXPO_DT IS NOT NULL
-               AND e.PREV_EXPO_DT >= x.PREV_START_DT
-               AND e.PREV_EXPO_DT <  x.LOT_START_DT
-               AND datediff(e.PREV_EXPO_DT, x.PREV_START_DT) > CASE
-                     WHEN x.PREV_LOT_NUM = 1         THEN ", ind1 - 1L, "
-                     WHEN x.PREV_START_TYPE = 'CART' THEN ", cart - 1L, "
-                     ELSE ", indn - 1L, " END
-               AND datediff(x.LOT_START_DT, e.PREV_EXPO_DT)
-                     BETWEEN ", restart_days, " AND ", advance_days - 1L, "
-               AND NOT EXISTS (SELECT 1 FROM ", map_tbl, " o
-                               WHERE o.PATID = x.PATID
-                                 AND o.MAP_START_DT = x.LOT_START_DT
-                                 AND o.MAP_MED_CLASS <> 'STEROID'
-                                 AND upper(trim(o.MAP_MED_TYPE)) <> '", abbr, "'))"), "
-                                                                            AS n_b2_melp_only")
+    )")
+
+  # The B.2 group. All four conditions, because any one alone lets in lines with
+  # no B.2 pair at all - a line DARA started, melphalan merely joining its
+  # induction window, satisfies "after a runout, melphalan in the regimen".
+  # Open question 6 in lot/questions/melphalan_lot_rule.md.
+  b2 <- function(extra, alias) paste0(mx_with, "
+    SELECT count(*) AS ", alias, "
+    FROM (SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_START_TYPE,
+                 lag(l.LOT_NUM)             OVER w AS PREV_LOT_NUM,
+                 lag(l.LOT_START_DT)        OVER w AS PREV_START_DT,
+                 lag(l.LOT_START_TYPE)      OVER w AS PREV_START_TYPE,
+                 lag(l.LOT_BASE_END_REASON) OVER w AS PREV_REASON
+          FROM ", final_tbl, " l
+          WINDOW w AS (PARTITION BY l.PATID ORDER BY l.LOT_NUM)) x
+    -- One join, and the exposure carries its own immediate predecessor, so the
+    -- pair is the one the engine judged and one line cannot be counted twice.
+    INNER JOIN mx e ON e.PATID = x.PATID AND e.EXPO_DT = x.LOT_START_DT
+    WHERE x.LOT_NUM > 1
+    -- 1. the previous line ended by running out, not by melphalan
+      AND x.PREV_REASON = 'DISCONTINUATION'
+    -- 2. and melphalan STARTED this line. Landing on the start date is not
+    -- enough: the same-day tie-break is SCT_ALLO > CART > SCT_AUTO > MED, so an
+    -- AUTO coded on the melphalan date takes the start and the line is the
+    -- transplant's, not the drug's.
+      AND x.LOT_START_TYPE = 'MED'
+    -- 3. the exposure before it sits in the previous line...
+      AND e.PREV_EXPO_DT IS NOT NULL
+      AND e.PREV_EXPO_DT >= x.PREV_START_DT
+      AND e.PREV_EXPO_DT <  x.LOT_START_DT
+    -- ...outside that line's own induction window, making it B not A
+      AND datediff(e.PREV_EXPO_DT, x.PREV_START_DT) > CASE
+            WHEN x.PREV_LOT_NUM = 1         THEN ", ind1 - 1L, "
+            WHEN x.PREV_START_TYPE = 'CART' THEN ", cart - 1L, "
+            ELSE ", indn - 1L, " END
+    -- 4. and the pair 60-179 days apart, which is B.2 not B.1 or B.3
+      AND datediff(x.LOT_START_DT, e.PREV_EXPO_DT)
+            BETWEEN ", restart_days, " AND ", advance_days - 1L, extra)
+
+  # The same lines, less the ones another agent would have started anyway.
+  # LOT_START_TYPE = 'MED' says a medication won the tie-break, not which one,
+  # so a line daratumumab also started that day exists under either reading.
+  #
+  # A lower bound, deliberately: med_cand also passes over the previous line's
+  # agents expanded by permissible substitutes, and that expansion is a session
+  # view rather than a table this can read. That drops a line, not invents one.
+  melp_only <- paste0("
+      AND NOT EXISTS (SELECT 1 FROM ", map_tbl, " o
+                      WHERE o.PATID = x.PATID
+                        AND o.MAP_START_DT = x.LOT_START_DT
+                        AND o.MAP_MED_CLASS <> 'STEROID'
+                        AND upper(trim(o.MAP_MED_TYPE)) <> '", abbr, "')")
+
+  no_map <- function(alias) paste0("SELECT cast(NULL as bigint) AS ", alias)
+
+  c(core = paste0("
+    WITH per_pat AS (
+      SELECT PATID, count(*) AS n_lines FROM ", final_tbl, " GROUP BY PATID
+    )
+    SELECT count(*)                              AS n_patients,
+           sum(n_lines)                          AS n_lines,
+           percentile_approx(n_lines, 0.5)       AS median_lines
+    FROM per_pat"),
+
+    prog = paste0("
+    SELECT round(100.0 * max(CASE WHEN STEP = 'Reached LOT2' THEN N_PATIENTS END)
+                 / nullif(max(CASE WHEN STEP = 'Reached LOT1' THEN N_PATIENTS END), 0), 2)
+                                                 AS pct_reaching_lot2,
+           round(100.0 * max(CASE WHEN STEP = 'Reached LOT3' THEN N_PATIENTS END)
+                 / nullif(max(CASE WHEN STEP = 'Reached LOT1' THEN N_PATIENTS END), 0), 2)
+                                                 AS pct_reaching_lot3
+    FROM ", attrition_tbl, "
+    WHERE RUN_ID = '", run_id, "' AND KIND = 'progression'"),
+
+    # One scan of the lines. Every count that used to be its own subquery is a
+    # CASE over the same rows, which is what the scalar subqueries cost most.
+    lines = paste0("
+    SELECT percentile_approx(CASE WHEN LOT_NUM = 1 AND LOT_BASE_LENGTH IS NOT NULL
+                                  THEN LOT_BASE_LENGTH END, 0.5)   AS median_lot1_length,
+           percentile_approx(CASE WHEN LOT_NUM = 1
+                                  THEN LOT_MED_CNT END, 0.5)       AS median_lot1_meds,
+           count(DISTINCT CASE WHEN LOT_NUM = 1 AND LOT_BASE_MEDS IS NOT NULL
+                                 AND trim(LOT_BASE_MEDS) <> ''
+                               THEN LOT_BASE_MEDS END)             AS n_lot1_regimens,
+           sum(CASE WHEN LOT_BASE_END_REASON = 'CART_INIT' THEN 1 ELSE 0 END)
+                                                                   AS n_cart_init,
+           sum(CASE WHEN LOT_BASE_END_REASON = 'SCT_AUTO' THEN 1 ELSE 0 END)
+                                                                   AS n_sct_auto_end,
+           sum(CASE WHEN LOT_BASE_END_REASON = 'MED_ADD'
+                     AND upper(trim(coalesce(LOT_BASE_1ST_ADD_MED, ''))) = '", abbr, "'
+                    THEN 1 ELSE 0 END)                             AS n_melp_add,
+           sum(CASE WHEN ", in_melp, " THEN 1 ELSE 0 END)          AS n_melp_lines,
+           count(DISTINCT CASE WHEN ", in_melp, " THEN PATID END)  AS n_pat_with_melp
+    FROM ", final_tbl),
+
+    b2      = if (is.null(map_tbl)) no_map("n_b2_line_starts")
+              else b2("", "n_b2_line_starts"),
+    b2_only = if (is.null(map_tbl)) no_map("n_b2_melp_only")
+              else b2(melp_only, "n_b2_melp_only"))
+}
+
+# One row, from however many statements it takes. A statement that comes back
+# empty or unreadable is a NULL here, and the caller stops on it - the result is
+# the comparison between all three cells, not a best effort at one.
+melp_metrics <- function(con, ...) {
+  qs <- melp_metric_sql(...)
+  out <- list()
+  for (nm in names(qs)) {
+    d <- tryCatch(db_q(con, qs[[nm]]), error = function(e) NULL)
+    if (is.null(d) || !is.data.frame(d) || nrow(d) != 1L) return(NULL)
+    out[[nm]] <- d
+  }
+  do.call(cbind, unname(out))
 }
 
 # Each cell against the reference. No direction is predicted, and that is the

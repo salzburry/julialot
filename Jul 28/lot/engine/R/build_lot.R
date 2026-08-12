@@ -290,14 +290,14 @@ check_cohort_input <- function(con, tbl) {
 
 # The cohort has to fit inside the window this build reads.
 #
-# Every claim scan is bounded by the cohort's own INDEX_DATE and OBS_END_DT, so
-# LOT will ask for follow-up the CDM tables it reads do not hold. A cohort whose
-# ENDDATE runs past study_end finds no claims after it and does not fail: it
-# produces MAPs that end early, discontinuations that never happened and
-# STUDY_END reasons - all wrong, all plausible, none visible in a count.
+# Every claim scan is bounded by the cohort's INDEX_DATE and OBS_END_DT, so a
+# cohort whose ENDDATE runs past study_end asks for follow-up the CDM tables do
+# not hold. It does not fail - it gives MAPs that end early, discontinuations
+# that never happened and STUDY_END reasons. All wrong, all plausible, none
+# visible in a count.
 #
-# Not hypothetical: the NDMM cohort's window ends 2026-03-31 while this build
-# defaults to 2025-06-30, a different quarterly vintage.
+# Not hypothetical: the NDMM cohort ends 2026-03-31 and this build defaults to
+# 2025-06-30, a different quarterly vintage.
 # Table names the cohort builds use for their run status, before the prefix.
 COHORT_STATUS_TABLES <- c("NDMM_BUILD_STATUS", "build_status")
 
@@ -483,15 +483,12 @@ check_cohort_window <- function(con, tbl, cfg) {
 # refused. LOT_CONTRACT_OVERRIDE is the one way past, and it exists for one
 # caller: the sensitivity sweep, whose axes are all contract-pinned.
 #
-# It is safe only because a deviating run cannot be taken for the study's:
+# Safe only because a deviating run cannot pass for the study's: the deviations
+# go into LOT_BUILD_STATUS and every reader refuses them, CONTRACT_SETTINGS
+# records what the run used rather than what CONTRACT pins, and the sweep will
+# not write to the study's prefix.
 #
-#   * the deviations go into LOT_BUILD_STATUS, the row every reader already
-#     uses to resolve which run owns a prefix's tables, and they refuse it;
-#   * CONTRACT_SETTINGS records what the run actually used, not what CONTRACT
-#     pins, so the two cannot silently agree;
-#   * the sweep refuses to write to the study's own prefix.
-#
-# Left unset - every production run - nothing here behaves differently.
+# Unset - every production run - nothing here changes.
 check_lot_contract <- function(cfg) {
   options(lot_contract_deviations = character(0))
   wrong <- unlist(Filter(Negate(is.null), lapply(names(CONTRACT), function(k) {
@@ -857,19 +854,17 @@ check_claim_ndc <- function(con, cfg) {
 
 # One row per run saying whether its outputs belong together. Without it a
 # failed run leaves tables that look complete.
-# REQUESTED is what the run was given; APPLIED is what actually fired and was
-# waived, which is the one that says something about the code lists. A run can
-# request a waiver for a condition that never occurs.
+# REQUESTED is what the run was given, APPLIED what actually fired - a run can
+# ask for a waiver on a condition that never occurs.
 #
-# STUDY_END picks the quarterly CDM table this run read, and the quarterlies
-# are cumulative. Anything that reads these outputs and then goes back to the
-# raw CDM - the question scripts do - resolves that suffix from its own
-# setting, so a different STUDY_END pairs this run's patients with a later
-# vintage of their claims. Recording the date makes that checkable.
+# STUDY_END picks the quarterly CDM table, and the quarterlies are cumulative.
+# Anything that reads these outputs and then goes back to the raw CDM - the
+# question scripts do - resolves that suffix from its own setting, so a
+# different STUDY_END pairs this run's patients with later claims.
 #
-# CONTRACT_DEVIATIONS is empty on every contract build. It is here rather than
-# only in LOT_RUN_METADATA because this is the row everyone downstream reads to
-# decide which run owns a prefix's tables.
+# CONTRACT_DEVIATIONS is empty on every contract build. It is here as well as
+# in LOT_RUN_METADATA because this is the row downstream reads to decide which
+# run owns a prefix's tables.
 BUILD_STATUS_COLS <- c(
   RUN_ID = "STRING", INPUT_COHORT_TABLE = "STRING", OBJECT_PREFIX = "STRING",
   STATE = "STRING", STUDY_END = "STRING", CODELIST_WAIVERS_REQUESTED = "STRING",
@@ -1105,22 +1100,17 @@ check_lot1_invariants <- function(con, cfg) {
 # with no record of how it was configured cannot be validated later.
 # ---- Face validity ----------------------------------------------------------
 #
-# The invariants ask whether the output is internally consistent. These ask
-# whether it looks like myeloma.
+# The invariants ask whether the output is consistent. These ask whether it
+# looks like myeloma - transplants in late lines, CAR-T in first line, a median
+# line of three days. Those come from a code list matching the wrong thing or a
+# date rule firing early, and nothing else here would catch them.
 #
-# A run can pass every structural check and still be wrong in a way only a
-# clinician would notice - transplants in late lines, CAR-T in first
-# line, a median line lasting three days. Those come from a code list that
-# matched the wrong thing or a date rule that fired early, and nothing else
-# here would catch them.
+# The number is the point, not the verdict: every check records what it found
+# either way. The bands are wide, catching gross failure rather than nuance,
+# and none is a published benchmark.
 #
-# The value is the number, not the verdict. Every check records what it found
-# whether or not it passed. The bands are wide on purpose - they catch gross
-# failure, not clinical nuance, and none is a published benchmark.
-#
-# Reported, not fatal: an unusual cohort can legitimately fail one, and
-# stopping on a plausibility judgement would be wrong. FACE_VALIDITY_FATAL=TRUE
-# makes them stop.
+# Reported, not fatal - an unusual cohort can fail one honestly.
+# FACE_VALIDITY_FATAL=TRUE makes them stop.
 FACE_VALIDITY <- list(
   list(name = "auto_sct_is_early",
        what = "% of lines containing an autologous transplant that are LOT1 or LOT2",
@@ -1143,14 +1133,12 @@ FACE_VALIDITY <- list(
        # CAR-T is a later-line therapy. In a first-line cohort it should be
        # uncommon and late; CAR-T in LOT1 means the trigger fired on the wrong
        # claim.
-       # LOT_CART_LOT_FLG is projected 0 for every LOT1 row, and LOT1's start
-       # type is always 'MED', so a CAR-T given during or closing a first line
-       # shows only in its end reason. Keying on the flags alone would drop the
-       # first-line CAR-T this check exists to notice.
-       # Per patient: one CAR-T is two rows - the line it closes and the line
-       # it starts - so counting rows counts it twice and a single CAR-T at
-       # LOT3 reads 50%. The line it STARTED wins; the closing reason is the
-       # fallback for a CAR-T that opened no line.
+       # LOT_CART_LOT_FLG is 0 on every LOT1 row and LOT1 always starts 'MED',
+       # so a CAR-T during or closing a first line shows only in its end
+       # reason. The flags alone would miss it.
+       # Per patient, because one CAR-T is two rows - the line it closes and
+       # the line it starts - and counting rows makes a single CAR-T at LOT3
+       # read 50%. The line it STARTED wins.
        lo = 50, hi = 100,
        sql = "WITH cart AS (
                 SELECT PATID,
@@ -1611,14 +1599,14 @@ check_belantamab_abbr <- function(con, cfg) {
 
 # Which line criteria this run applied, and what each one costs.
 #
-# Everything else consequential is recorded - code lists and hashes, waivers,
-# the contract, the window - but the criteria were not, and they are the only
-# thing here that removes patients. "No patient had belantamab", "the criterion
-# was off" and "wrong cohort" all give the same LOT_LONG_FINAL.
+# Everything else is recorded - code lists, waivers, the contract, the window -
+# but not the criteria, and they are the only thing here that removes patients.
+# "Nobody had belantamab", "the criterion was off" and "wrong cohort" all leave
+# the same LOT_LONG_FINAL.
 #
-# LOT_LONG_ALLFLAGS carries every criterion as a column whether it is enabled
-# or not, so the disabled ones are counted too. That makes leaving one off a
-# decision someone can review rather than a silence.
+# LOT_LONG_ALLFLAGS carries every criterion as a column, enabled or not, so the
+# disabled ones are counted too - leaving one off becomes reviewable rather
+# than silent.
 # One integer or NA. These are diagnostics: an unreadable count is worth
 # reporting as unknown, never worth failing a sound build. A bare d[[col]] on a
 # frame without that column gives integer(0), and is.na(integer(0)) errors.
@@ -1661,24 +1649,24 @@ report_line_criteria <- function(con, cfg, tbl = "lot_long_allflags") {
 # The LOT funnel: how many patients the cohort handed over, and how many are
 # left. Not every row is attrition, and KIND says which is which.
 #
-# NDMM's index is a TREATMENT qualifier, so every member already has a
-# qualifying MM therapy claim. lot derives that fact a second time, from the
-# same code list, when it builds map_stacked and LOT1. So "has a mapped
-# episode" and "has LOT1" are RECONCILIATION rows: they should equal the row
-# above, and a drop is the two derivations disagreeing, not patients lost.
-# Shown as attrition they read as expected loss, which would hide a real one.
+# NDMM indexes on TREATMENT, so every member already has a qualifying MM
+# therapy claim, and lot derives that fact again from the same code list. So
+# "has a mapped episode" and "has LOT1" are RECONCILIATION rows - they should
+# equal the row above, and a drop means the two derivations disagree rather
+# than that patients were lost. As attrition they would read as expected loss
+# and hide a real one.
 #
-# The criterion rows are the attrition - they remove patients on purpose. A
-# cohort indexed on a diagnosis instead has no such guarantee, and there the
-# same rows are a genuine narrowing, so the check below warns rather than stops.
+# The criterion rows are the attrition. A diagnosis-indexed cohort has no such
+# guarantee and there the same rows are a real narrowing, so the check below
+# warns rather than stops.
 #
 # Two counts per step: a truncating criterion drops the first failing line and
 # every later one, so a patient can survive with fewer lines and a patient
 # count alone would show nothing.
 #
 # PCT_OF_PREV as well as PCT_OF_START, because the share of the row above is
-# usually the number being asked for - a criterion's own cost, or for the
-# progression rows the share of a line's patients who reach the next one.
+# usually what is being asked - a criterion's own cost, or for the progression
+# rows how many of a line's patients reach the next.
 LOT_ATTRITION_COLS <- c(RUN_ID = "STRING", STEP_NUM = "INT", KIND = "STRING",
                         STEP = "STRING", N_PATIENTS = "BIGINT",
                         N_LINES = "BIGINT", PCT_OF_START = "DOUBLE",
@@ -1723,12 +1711,12 @@ lot_attrition_counts <- function(con, cfg) {
 
   # How far patients get: LOT1, then LOT2, and so on to max_lot.
   #
-  # Its own KIND, because nobody was removed here - a patient with no LOT3 did
-  # not progress, or their follow-up ended. Read as exclusions they would be
-  # the study losing people it never lost.
+  # Its own KIND, because nobody was removed here - a patient with no LOT3
+  # either did not progress or ran out of follow-up. As exclusions they would
+  # read as the study losing people it never lost.
   #
-  # Over LOT_LONG_FINAL. check_lot_final() has established that each patient's
-  # lines run 1..n, so reaching LOT n implies every line below it.
+  # Over LOT_LONG_FINAL, where check_lot_final() has established lines run
+  # 1..n, so reaching LOT n implies every line below.
   #
   # Every line to max_lot gets a row, including ones nobody reached: "no
   # patient got to LOT5" is an answer, a missing row is not.

@@ -1,0 +1,159 @@
+# LOT edge-case vignettes
+
+Resolved against: induction_window_days=60, lot_n_induction_window_days=30, map_discon_gap_days=90, medical_day_supply=28, sct_auto_window_days=13, sct_auto_gap_days=60, sct_tandem_days=180, cart_consolidation_days=45, max_lot=5
+
+`derived` follows from the rule quoted beside it. `to_confirm` is our
+reading of how the rules interact, and the first warehouse run settles it.
+
+| id | case | parameter | expected under this algorithm | confidence |
+|---|---|---|---|---|
+| `tandem_within` | Second AUTO inside the tandem window | `sct_tandem_days = 180` | The two AUTOs are one tandem pair. A tandem is allowed, so LOT1 is not ended by the second one. | to_confirm |
+| `tandem_beyond` | Second AUTO past the tandem window | `sct_tandem_days = 180` | Not a tandem. The second AUTO is excess, and excess AUTO ends LOT1. | to_confirm |
+| `auto_window_within` | Two AUTO codes inside the grouping window | `sct_auto_window_days = 13` | One transplant, not two. The predicate is <=, so the window is 14 calendar days inclusive of the first. | derived |
+| `auto_window_beyond` | Two AUTO codes past the grouping window | `sct_auto_window_days = 13` | Two separate AUTO events, subject to the gap and tandem rules. | derived |
+| `cart_bridge_within` | CAR-T inside the consolidation window | `cart_consolidation_days = 45` | LOT1 ends with reason CART_INIT. The bridging agent stays part of LOT1 rather than starting a line of its own. | derived |
+| `cart_bridge_beyond` | CAR-T past the consolidation window | `cart_consolidation_days = 45` | Not CART_INIT. The addition is an ordinary regimen change and the CAR-T is handled by the ordinary rules for a CAR-T event. | to_confirm |
+| `map_gap_within` | Treatment gap below the discontinuation threshold | `map_discon_gap_days = 90` | No discontinuation. The agent's exposure continues across the gap. | derived |
+| `map_gap_beyond` | Treatment gap at the discontinuation threshold | `map_discon_gap_days = 90` | Discontinuation. The predicate is >=, so the threshold day itself counts as a gap. | derived |
+| `induction_lot1_within` | Agent added on the last day of LOT1 induction | `induction_window_days = 60` | The agent joins LOT1's regimen. The window is day 0 through day 59 - 60 days inclusive. | derived |
+| `induction_lot1_beyond` | Agent added the day after LOT1 induction closes | `induction_window_days = 60` | Not part of LOT1's regimen. It is an addition, not an induction agent. | derived |
+| `induction_lotn_within` | Agent added on the last day of a later line's induction | `lot_n_induction_window_days = 30` | Joins LOT2's regimen. Later lines use 30 days, not LOT1's 60. | derived |
+| `induction_lotn_beyond` | Agent added the day after a later line's induction closes | `lot_n_induction_window_days = 30` | Not part of LOT2's regimen. | derived |
+| `allo_single_day` | Allogeneic transplant line spans one day | - | The ALLO line starts and ends on the transplant date. The next day's medication starts the line after it. The ALLO line carries NO regimen string - induction rows are suppressed for it - which is why anything reading LOT_BASE_MEDS to decide a line exists will miss it. | derived |
+| `allo_after_failed_auto` | Allogeneic transplant after a failed autologous | - | The AUTO sits inside LOT1. The ALLO ends the line it falls in and opens a one-day SCT_ALLO line. | to_confirm |
+| `biosimilar_switch` | Biosimilar substituted mid-line | - | No new line. A permissible substitute is the same agent for line purposes, and the pair is declared in permissible_subs.csv - so whether this holds depends on that file, not on this rule. | to_confirm |
+| `maintenance_to_relapse` | Maintenance running into relapse | - | Maintenance is NOT a line of its own here - contains_mtx_reg is a flag and there is no maintenance period. The relapse is handled by the ordinary rules, so the line count does not include a maintenance line. | derived |
+| `steroid_only_interval` | Steroid-only stretch between regimens | - | The steroid stretch neither starts nor continues a line. | derived |
+| `belantamab_any_line` | Belantamab anywhere in the patient's lines | - | The criterion is patient-level, so the patient loses EVERY line, not just LOT3 onward. They are absent from LOT_LONG_FINAL entirely and present in LOT_LONG. | derived |
+| `excess_auto` | A third autologous transplant | - | The first two are a tandem inside LOT1; the third is excess and ends LOT1. | to_confirm |
+| `overlapping_oral_refills` | Overlapping oral refills | `medical_day_supply = 28` | Exposure runs to the accumulated run-out, not to the last fill date plus one supply. Early refills push the end of the MAP later, which moves the gap that would otherwise end the line. A medical-claim administration is assumed to cover 28 days. | to_confirm |
+| `line_beyond_max` | A patient who would reach a line above MAX_LOT | `max_lot = 5` | No line above 5 is built. The patient's later therapy is not represented, so a count of lines is a count of lines BUILT, not of lines received. | derived |
+
+## Timelines
+
+**tandem_within** - Second AUTO inside the tandem window
+
+- timeline: d+0 MED (1L regimen starts); d+30 AUTO (first autologous transplant); d+209 AUTO (second AUTO, one day inside the tandem window)
+- why it is hard: Planned tandem and unplanned second transplant look identical in claims. The only thing separating them is the gap, and a patient sitting on it goes either way.
+- rule: lot/engine/R/steps/05_sct.R - 14-day window grouping + 60-day gap + 180-day tandem
+
+**tandem_beyond** - Second AUTO past the tandem window
+
+- timeline: d+0 MED (1L regimen starts); d+30 AUTO (first autologous transplant); d+211 AUTO (second AUTO, one day past the tandem window)
+- why it is hard: The same two claims, one day apart, land in different lines.
+- rule: lot/engine/R/steps/05_sct.R - single AUTO allowed; tandem pair allowed; excess AUTO ends LOT1
+
+**auto_window_within** - Two AUTO codes inside the grouping window
+
+- timeline: d+0 MED (1L regimen starts); d+40 AUTO (transplant code); d+53 AUTO (second code, still inside the window)
+- why it is hard: A single admission often bills more than one code. The inclusive <= is the part that is easy to get wrong by one day.
+- rule: lot/engine/R/steps/05_sct.R:323 - datediff(x, cur_start) <= sct_auto_window_days
+
+**auto_window_beyond** - Two AUTO codes past the grouping window
+
+- timeline: d+0 MED (1L regimen starts); d+40 AUTO (transplant code); d+54 AUTO (second code, one day outside)
+- why it is hard: The boundary between one billing episode and two transplants.
+- rule: lot/engine/R/steps/05_sct.R:323
+
+**cart_bridge_within** - CAR-T inside the consolidation window
+
+- timeline: d+0 MED (1L regimen starts); d+20 MED_ADD (bridging agent added); d+65 CART (CAR-T inside the window from the day after the addition)
+- why it is hard: Bridging therapy is given to hold a patient until CAR-T. Counted as its own line it inflates every downstream line number.
+- rule: lot/engine/R/steps/06_lot1_end.R:176 - datediff BETWEEN 0 AND cart_consolidation_days
+
+**cart_bridge_beyond** - CAR-T past the consolidation window
+
+- timeline: d+0 MED (1L regimen starts); d+20 MED_ADD (agent added); d+67 CART (CAR-T one day outside the window)
+- why it is hard: Whether the added agent reads as bridging or as a new regimen.
+- rule: lot/engine/R/steps/06_lot1_end.R:176
+
+**map_gap_within** - Treatment gap below the discontinuation threshold
+
+- timeline: d+0 MED (1L regimen starts); d+60 GAP_START (administrative hold - no claims); d+149 MED (same agent resumes, one day inside the threshold)
+- why it is hard: Prior-authorisation holds and hospitalisations both produce silence in claims. Neither is a clinical decision to stop.
+- rule: lot/engine/R/steps/03_mma_map.R:396 - datediff(next_start, map_end) >= map_discon_gap_days
+
+**map_gap_beyond** - Treatment gap at the discontinuation threshold
+
+- timeline: d+0 MED (1L regimen starts); d+60 GAP_START (no claims); d+150 MED (same agent resumes, exactly at the threshold)
+- why it is hard: The inclusive >= puts the boundary day on the discontinuation side.
+- rule: lot/engine/R/steps/03_mma_map.R:396
+
+**induction_lot1_within** - Agent added on the last day of LOT1 induction
+
+- timeline: d+0 MED (1L regimen starts); d+59 MED_ADD (agent added on the last day inside the window)
+- why it is hard: The -1 is the difference between a regimen of four drugs and one of three.
+- rule: lot/engine/R/steps/10_lot2_5_base.R:362 - MAP_START <= date_add(LOT_START, window - 1)
+
+**induction_lot1_beyond** - Agent added the day after LOT1 induction closes
+
+- timeline: d+0 MED (1L regimen starts); d+60 MED_ADD (agent added one day outside)
+- why it is hard: Same claim, one day later, changes what LOT1 is called.
+- rule: lot/engine/R/steps/10_lot2_5_base.R:362
+
+**induction_lotn_within** - Agent added on the last day of a later line's induction
+
+- timeline: d+0 MED (LOT2 starts); d+29 MED_ADD (agent added on the last day inside)
+- why it is hard: Two different windows in one algorithm is a standing source of error.
+- rule: lot/engine/R/steps/10_lot2_5_base.R:362 - LOT2+ uses the shorter window
+
+**induction_lotn_beyond** - Agent added the day after a later line's induction closes
+
+- timeline: d+0 MED (LOT2 starts); d+30 MED_ADD (agent added one day outside)
+- why it is hard: The later-line window closes sooner than a reader expects.
+- rule: lot/engine/R/steps/10_lot2_5_base.R:362
+
+**allo_single_day** - Allogeneic transplant line spans one day
+
+- timeline: d+0 MED (LOT1 starts); d+200 ALLO (allogeneic transplant); d+201 MED (medication the following day)
+- why it is hard: A one-day line with no regimen is the shape that broke the transition Sankeys: they read a blank regimen as no line.
+- rule: lot/engine/R/steps/10_lot2_5_base.R:681 - allo_lot_span single_day
+
+**allo_after_failed_auto** - Allogeneic transplant after a failed autologous
+
+- timeline: d+0 MED (1L regimen starts); d+40 AUTO (autologous transplant); d+240 ALLO (allogeneic transplant after relapse)
+- why it is hard: Salvage allo after a failed auto is a different clinical event from a planned tandem.
+- rule: lot/engine/R/steps/05_sct.R - ALLO immediately ends LOT1
+
+**biosimilar_switch** - Biosimilar substituted mid-line
+
+- timeline: d+0 MED (1L regimen starts with the reference product); d+70 MED (biosimilar of the same agent dispensed instead)
+- why it is hard: A substitution the code list does not know about looks like a regimen change, which starts a line that did not happen.
+- rule: lot/engine/R/steps/01_codelists.R:66 - permissible_subs
+
+**maintenance_to_relapse** - Maintenance running into relapse
+
+- timeline: d+0 MED (1L regimen starts); d+120 MED (reduced to a single maintenance agent); d+400 MED (new agents added at relapse)
+- why it is hard: This is a deliberate divergence from algorithms that count maintenance separately, and it shifts every later line number by one against them.
+- rule: lot/engine/R/steps/05_sct.R:13 - maintenance is a descriptive flag only
+
+**steroid_only_interval** - Steroid-only stretch between regimens
+
+- timeline: d+0 MED (1L regimen starts); d+150 STEROID (dexamethasone alone for several weeks); d+220 MED (next regimen begins)
+- why it is hard: Steroids accompany almost every MM regimen; counted, they would start lines everywhere.
+- rule: lot/engine/R/steps/10_lot2_5_base.R:367 - MAP_MED_CLASS <> 'STEROID'
+
+**belantamab_any_line** - Belantamab anywhere in the patient's lines
+
+- timeline: d+0 MED (1L regimen starts); d+300 MED (LOT2 starts); d+500 BELA (belantamab given at LOT3)
+- why it is hard: A criterion that removes a patient rather than a line is the one shape that makes two tables hold different PATIENTS.
+- rule: lot/engine/R/line_criteria.R:39 - no_belantamab, on_fail = truncate
+
+**excess_auto** - A third autologous transplant
+
+- timeline: d+0 MED (1L regimen starts); d+30 AUTO (first transplant); d+209 AUTO (tandem partner); d+400 AUTO (third transplant)
+- why it is hard: Three transplants is rare enough that the rule is rarely exercised.
+- rule: lot/engine/R/steps/05_sct.R:11 - excess AUTO ends LOT1
+
+**overlapping_oral_refills** - Overlapping oral refills
+
+- timeline: d+0 RX (oral agent dispensed, 30-day supply); d+20 RX (refilled early, before the first has run out); d+40 RX (refilled early again)
+- why it is hard: Stockpiling is common with oral agents and quietly extends a line.
+- rule: lot/engine/R/steps/03_mma_map.R - run-out from day supply
+
+**line_beyond_max** - A patient who would reach a line above MAX_LOT
+
+- timeline: d+0 MED (1L starts); d+1000 MED (a regimen change that would be LOT6)
+- why it is hard: The cap is invisible in the output: a capped patient looks like a completed one.
+- rule: lot/engine/R/build_lot.R - lines outside 1..max_lot are refused by check_lot_long
+

@@ -1,15 +1,12 @@
 # What the dashboard shows. This file is the dashboard.
 #
-# Every panel is one entry below: a name, a label, the tab it lands on, the SQL
-# that produces it and how to draw the answer. Adding a panel is adding an
-# entry; removing one is deleting an entry or setting its switch to FALSE. No
-# other file has to change, and nothing here knows which cohort it is running
-# for - the table names arrive as {curly} placeholders and are filled in from
-# the run's arguments.
+# Every panel is one entry below: a name, a label, its tab, the SQL, and how to
+# draw the answer. Adding a panel is adding an entry. Nothing here knows which
+# cohort it runs for - table names arrive as {curly} placeholders.
 #
-# The switch is SHOW_<NAME> in config.csv. Anything that is not TRUE or FALSE
-# stops the build: a typo that quietly drops a panel is worse than a halt,
-# because the page still renders and nobody can see what is missing.
+# The switch is SHOW_<NAME> in config.csv. Anything but TRUE or FALSE stops the
+# build: a typo that drops a panel silently is worse than a halt, since the
+# page still renders and nobody can see what is missing.
 #
 # Placeholders a section may use:
 #   {lot_final}     <prefix>LOT_LONG_FINAL  after the line criteria
@@ -19,11 +16,10 @@
 #   {run_meta}      <prefix>LOT_RUN_METADATA
 #   {cohort}        the cohort table the run was pointed at
 #
-# Panels describe the study population, {lot_final}. {lot_long} is that table
-# before the line criteria, and a patient-level truncate criterion makes the
-# two hold different patients - so a panel on it describes people the study
-# excluded, with nothing on the page saying so. It belongs on the Validation
-# tab, where the comparison is the point, and nowhere else.
+# Panels describe the study population, {lot_final}. {lot_long} is the same
+# table before the line criteria, and a truncate criterion makes the two hold
+# different patients - a panel on it describes people the study excluded, with
+# nothing on the page saying so. Validation tab only.
 
 # How a section's rows are drawn. Deliberately few: a dashboard nobody can read
 # is not better than a table, and every one of these renders without a
@@ -115,18 +111,17 @@ JOURNEY_CATEGORIES <- list(
 # query are places for a fix to be applied to some of them.
 #
 # LEFT JOIN, not INNER: a patient who stopped after LOT{a} used to vanish, so
-# the panel could not show how many went on at all. They are a terminal node
-# now, and the ribbons leaving a regimen add up to that regimen's patients.
+# the panel could not show how many went on. They are a terminal node now, and
+# the ribbons leaving a regimen sum to that regimen's patients.
 #
-# A line decides whether the patient got there, not a regimen string. An
-# SCT_ALLO line carries no regimen - 10_lot2_5_base.R suppresses its induction
-# rows - so filtering on a non-blank LOT_BASE_MEDS read those patients as "No
-# LOT{b}" when they had reached it, and dropped them entirely as a source. That
-# invents attrition. Blank regimens are labelled by what started the line.
+# A line says whether the patient got there, not a regimen string. An SCT_ALLO
+# line carries no regimen, so filtering on a non-blank LOT_BASE_MEDS read those
+# patients as "No LOT{b}" when they had reached it - invented attrition. Blank
+# regimens are labelled by what started the line.
 #
-# Non-top-N sources become "Other" rather than being dropped, so the chart
-# really is every LOT{a} patient. The stopped node is ranked out of the top-N,
-# or the largest single answer could be folded into "Other".
+# Non-top-N sources become "Other" rather than vanishing, so the chart is every
+# LOT{a} patient. The stopped node is ranked out of the top-N, or the largest
+# single answer could end up inside "Other".
 .transition_section <- function(a, b) {
   line <- function(n) paste0("
       SELECT cast(PATID as string) AS PATID,
@@ -193,12 +188,11 @@ JOURNEY_CATEGORIES <- list(
 #                                n_30, n_60, n_90
 #
 # A query against the ndmm columns fails outright on an overall-built cohort,
-# and the panel is replaced by a notice that reads as "this study has no
-# funnel" rather than "this dashboard cannot read it".
+# and the panel becomes a notice reading "this study has no funnel" rather than
+# "this dashboard cannot read it".
 #
-# One spec per shape. `cols` identifies the layout, matched against DESCRIBE;
-# `stamp` says when the funnel was recorded, used to catch a funnel newer than
-# the LOT run. Add a shape by adding an entry.
+# One spec per shape. `cols` identifies the layout against DESCRIBE; `stamp`
+# says when the funnel was written, used to catch one newer than the LOT run.
 ATTRITION_LAYOUTS <- list(
   list(name  = "ndmm",
        cols  = c("RUN_ID", "STEP_NUM", "CRITERION", "N_PATIENTS", "RECORDED_AT"),
@@ -293,19 +287,16 @@ DASHBOARD_SECTIONS <- c(list(
        layouts = "ATTRITION_LAYOUTS",
        sql = ATTRITION_LAYOUTS[[1]]$sql),
 
-  # The LOT funnel starts where the cohort funnel ends. Its own panels, not
-  # rows appended: that one counts patients into the cohort, this one counts
-  # what happened afterwards, and one chart running from one into the other
-  # would read as a single narrowing.
+  # The LOT funnel starts where the cohort funnel ends, and gets its own
+  # panels: that one counts patients into the cohort, this one what happened
+  # after. One chart across both would read as a single narrowing.
   #
-  # Progression is split off again. Nobody is removed there - a patient with no
-  # LOT3 did not progress, or their follow-up ended - so it sits beside the
-  # funnel, not inside it. Split by KIND, which the LOT build writes for this.
+  # Progression is split off - nobody is removed there. Split by KIND, which
+  # the LOT build writes for this.
   #
-  # The label carries KIND, because the bar cannot. Two rows are not attrition
-  # at all: for a treatment-indexed cohort they re-derive a fact the cohort
-  # build already established, so a drop is the two scans disagreeing. Under a
-  # heading saying "attrition" it would read as expected loss.
+  # The label carries KIND because the bar cannot. Two rows are not attrition:
+  # on a treatment-indexed cohort they re-derive what the cohort build already
+  # established, so a drop means the two scans disagree.
   list(name = "lot_attrition", tab = "Overview",
        label = "LOT: cohort to study population - [check] rows are not attrition",
        needs = "lot_attrition", render = "bar", pct = "first",
@@ -428,16 +419,14 @@ DASHBOARD_SECTIONS <- c(list(
   # What ended it. A short median because people died and a short median
   # because they left the data are the same number and different findings.
   #
-  # In that order, so a patient who disenrolled and died later counts as
-  # disenrolled - the death is outside the window this cohort can see. The
-  # three are exclusive and cover everyone.
+  # In that order, so someone who disenrolled and died later counts as
+  # disenrolled - the death is outside what this cohort can see. The three are
+  # exclusive and cover everyone.
   #
-  # Not outcomes' N_LOST_TO_FU / N_ONGOING, and does not reconcile with them.
-  # This is one row per PATIENT over the whole study population. Those are one
-  # row per patient-LINE, and only over the residual after the next line, death
-  # and discontinuation have been taken out - so this panel's "Died" has no
-  # counterpart there at all. What the two share is the boundary: follow-up
-  # ending before the study end rather than at it.
+  # Not outcomes' N_LOST_TO_FU / N_ONGOING, and does not reconcile with them:
+  # this is one row per PATIENT, those are one row per patient-LINE and only
+  # over what is left after the next line, death and discontinuation. This
+  # panel's "Died" has no counterpart there. They share only the boundary.
   list(name = "followup_end_reason", tab = "Cohort",
        label = "What ended follow-up",
        needs = c("patients", "lot_final"), render = "bar", pct = "total",
@@ -531,21 +520,18 @@ DASHBOARD_SECTIONS <- c(list(
   # than from the index date - so it is the window each TTNT, TTD and OS was
   # actually observed over.
   #
-  # Scoped to the LOT run the rest of the page is about. outcomes is a separate
-  # build and is not re-run when LOT is, so a rebuilt LOT leaves OUT_TTE
-  # readable and full of the previous run's rows. Empty is a panel with no
-  # rows, which beats a panel with the wrong ones.
+  # Scoped to the LOT run the page is about. outcomes is a separate build and
+  # is not re-run with LOT, so a rebuilt LOT leaves OUT_TTE readable and full
+  # of the previous run's rows. An empty panel beats a wrong one.
   #
-  # The event counts are the point. A median TTNT is only readable if enough
-  # lines reached the event; a line where almost everything is censored has a
-  # median the data cannot support, and nothing else on the page says so.
+  # The event counts are the point: a median TTNT is only readable if enough
+  # lines reached the event, and the median alone does not say so.
   #
   # LINE_ELIGIBLE is NULL where no line-specific cohort exists, and outcomes
-  # means it: not eligible and not asked are different answers. Counting it as
-  # "= 1 THEN 1 ELSE 0" turns every NULL into a zero, and the column then reads
-  # as "nobody qualified" for a line where nobody was assessed. Scoring 1 and 0
-  # and leaving NULL alone keeps it - sum() skips NULLs, and a line that is all
-  # NULL sums to NULL rather than to 0.
+  # means it - not eligible and not asked are different answers. "= 1 THEN 1
+  # ELSE 0" would turn every NULL into a zero, reading as "nobody qualified"
+  # for a line nobody assessed. Scoring 1 and 0 and leaving NULL alone keeps
+  # it: sum() skips NULLs, so an all-NULL line sums to NULL.
   list(name = "outcomes_followup", tab = "Lines",
        label = "Observed follow-up per line, from the outcomes build",
        needs = "out_tte", render = "table",
@@ -589,18 +575,13 @@ DASHBOARD_SECTIONS <- c(list(
          FROM {lot_final} GROUP BY 1, 2 ORDER BY 1, 2"),
 
   # LOT_BASE_LENGTH, not datediff. The engine defines a line's length
-  # inclusively - datediff(end, start) + 1 - and stores it, so recomputing it
-  # here without the +1 reported every percentile one day short of the column
-  # sitting beside it. build_lot.R's own lot1_duration_is_plausible check
-  # carries the same warning; this section was the thing it warns about.
+  # inclusively and stores it, so recomputing without the +1 put every
+  # percentile a day short of the column beside it.
   #
   # Completed lines only. A line still running at study end has not finished,
-  # and its length so far is not a length: folding those in counts a censored
-  # line as a short one and drags the median down. They are counted in their
-  # own column instead, because how many there are is what says whether the
-  # median can be read at all. This is the definition run_benchmarks.R uses for
-  # median_line_duration_days, so the two now agree rather than differing by
-  # the censoring and a day.
+  # and folding it in counts a censored line as a short one. They get their own
+  # column, since how many there are is what says whether the median can be
+  # read. Same definition run_benchmarks.R uses, so the two now agree.
   list(name = "line_length", tab = "Lines",
        label = "Line length in days (completed lines)",
        needs = "lot_final", render = "table",

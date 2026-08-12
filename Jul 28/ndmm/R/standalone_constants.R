@@ -107,12 +107,26 @@ NDMM_MM_ADJACENT_STATE_LABELS <- c(
 
 # Every tumour group the override covers. The step reads this rather than the
 # constant, so both lists stay in one place.
+#
+# Four settings, not two, because the question underneath them is not the
+# remission states. All nine plasma-cell labels are C90 - the block for
+# multiple myeloma and malignant plasma cell neoplasms - and the fourth digit
+# is the disease state, not the disease. Monoclonal gammopathy is separate:
+# D47.2 is "uncertain behaviour", not a malignancy, so the criterion does not
+# reach it whatever anyone decides about the C90 codes.
+#
+#   override   the nine C90 labels and MGUS      (default)
+#   exclude    the three C90 "not in remission" labels and MGUS
+#   mgus_only  MGUS alone - every C90 code excludes
+#   none       nothing; only codes on mm_dx.csv are kept
 ndmm_mm_adjacent_groups <- function() {
   switch(NDMM_MM_ADJACENT_STATES,
-    override = c(NDMM_MM_ADJACENT_OVERRIDE, NDMM_MM_ADJACENT_STATE_LABELS),
-    exclude  = NDMM_MM_ADJACENT_OVERRIDE,
+    override  = c(NDMM_MM_ADJACENT_OVERRIDE, NDMM_MM_ADJACENT_STATE_LABELS),
+    exclude   = NDMM_MM_ADJACENT_OVERRIDE,
+    mgus_only = grep("GAMMOPATHY", NDMM_MM_ADJACENT_OVERRIDE, value = TRUE),
+    none      = character(0),
     stop("NDMM_MM_ADJACENT_STATES='", NDMM_MM_ADJACENT_STATES,
-         "' is not a setting. Use override or exclude; see ",
+         "' is not a setting. Use override, exclude, mgus_only or none; see ",
          "standalone_constants.R.", call. = FALSE))
 }
 

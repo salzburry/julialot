@@ -9,6 +9,9 @@ build_ndmm_other_malig_codes <- function(con) {
   met_own  <- ndmm_metastatic_own_group_sql("om.dx")
   ovr_in <- paste(sprintf("'%s'", gsub("'", "''", ndmm_mm_adjacent_groups())),
                   collapse = ", ")
+  # An empty override list is a choice, not a bug - only mm_dx.csv keeps a code
+  # then. IN () is a syntax error and IN (NULL) is never true, so it stands in.
+  if (!nzchar(ovr_in)) ovr_in <- "NULL"
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_OTHER_MALIG_CODES} AS
     -- Normalised first, then joined. Every column reference below is
@@ -33,8 +36,10 @@ build_ndmm_other_malig_codes <- function(con) {
            om.icd_family,
            om.dx,
            -- The criterion is another cancer, meaning other than the index MM,
-           -- and this code list is the study's generic one: it carries MM's
-           -- own codes. Anything on the diagnosis code list is the index
+           -- and this code list is the study's generic one - which is why it
+           -- may carry MM's own codes. Nothing here checks that it does; if it
+           -- does not, the join below is silent and the label list is the
+           -- whole mechanism. Anything on the diagnosis code list is the index
            -- disease by definition - the same file decides who is an MM
            -- patient - so it cannot also make them an other-cancer patient,
            -- whatever its wording says about remission or relapse. The label
@@ -90,6 +95,7 @@ build_ndmm_other_malig_codes <- function(con) {
   # rather than fatal - see build_ndmm_mm_adjacent_groups().
   req    <- gsub("'", "''", NDMM_MM_ADJACENT_OVERRIDE)
   req_in <- paste(sprintf("'%s'", req), collapse = ", ")
+  if (!nzchar(req_in)) req_in <- "NULL"
   n_exp     <- length(NDMM_MM_ADJACENT_OVERRIDE)
   n_matched <- tryCatch(as.integer(db_q(con, glue("
     SELECT count(DISTINCT tumor_group) AS n
