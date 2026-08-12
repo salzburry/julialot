@@ -999,11 +999,37 @@ check_no_active_run <- function(con, cfg) {
   d <- tryCatch(db_q(con, glue("
     SELECT RUN_ID, UPDATED_AT FROM {lot_out('LOT_BUILD_STATUS')}
     WHERE OBJECT_PREFIX = '{cfg$object_prefix}' AND STATE = 'started'
-      AND RUN_ID <> '{run_id}'")), error = function(e) NULL)
-  # No table yet on a first run, and nothing to collide with.
-  if (is.null(d) || !nrow(d)) return(invisible(TRUE))
+      AND RUN_ID <> '{run_id}'")), error = function(e) e)
+  ignoring <- identical(toupper(Sys.getenv("LOT_IGNORE_ACTIVE_RUN", unset = "")),
+                        "TRUE")
+  # A table that is not there yet is the first run on this prefix, and there is
+  # nothing to collide with. Every other failure is a check that did not run,
+  # which is not a check that passed - the same distinction clear_run_rows()
+  # makes below. Reading them alike is how a permission failure or a dropped
+  # connection turns the concurrency guard off for a whole build, and two runs
+  # on one prefix replace each other's tables while the other reads them.
+  if (inherits(d, "condition")) {
+    if (missing_object_error(d)) return(invisible(TRUE))
+    # The same override the found-a-run branch takes, or the message below
+    # would name a way out that does not exist.
+    if (ignoring) {
+      log_msg("WARNING: ", lot_out("LOT_BUILD_STATUS"), " could not be read (",
+              conditionMessage(d), ") and LOT_IGNORE_ACTIVE_RUN is set, so ",
+              "nothing checked whether another run is building this prefix.")
+      return(invisible(TRUE))
+    }
+    stop("Could not read ", lot_out("LOT_BUILD_STATUS"), " to check for a run ",
+         "already building prefix ", cfg$object_prefix, ": ",
+         conditionMessage(d),
+         "\nThis is the check that stops two runs sharing one prefix, and it ",
+         "did not run. It is not a first run - a missing table says so ",
+         "specifically, and this did not. Fix the read and start again, or set ",
+         "LOT_IGNORE_ACTIVE_RUN=TRUE if you know no other run is going.",
+         call. = FALSE)
+  }
+  if (!nrow(d)) return(invisible(TRUE))
   who <- paste(d$RUN_ID, collapse = ", ")
-  if (identical(toupper(Sys.getenv("LOT_IGNORE_ACTIVE_RUN", unset = "")), "TRUE")) {
+  if (ignoring) {
     log_msg("WARNING: run(s) ", who, " are marked started on prefix ",
             cfg$object_prefix, " and LOT_IGNORE_ACTIVE_RUN is set. If they are ",
             "still running, both sets of outputs will be wrong.")

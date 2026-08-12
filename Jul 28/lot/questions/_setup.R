@@ -251,10 +251,23 @@ qs_ndmm_trial_flags <- function(con) {
   # whole query inside its own tryCatch, which returned NULL, which took the
   # "an older lot did not record it" path and passed. A guard that cannot run
   # is worse than no guard: the code and the README both claimed the check.
+  #
+  # And the same rule for the read itself, which is the half that fix left in
+  # place: a missing table is an older lot, and every other failure is this
+  # guard not running. Both used to land on the take-it-on-trust path.
   lot <- tryCatch(db_q(con, glue(
     "SELECT * FROM {qs_tbl('LOT_RUN_METADATA')}
      WHERE COHORT_RUN_ID IS NOT NULL ORDER BY RUN_TIMESTAMP DESC LIMIT 1")),
-    error = function(e) NULL)
+    error = function(e) e)
+  if (inherits(lot, "condition") &&
+      !grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found",
+             conditionMessage(lot), ignore.case = TRUE))
+    return(gap(paste0(
+      qs_tbl("LOT_RUN_METADATA"), " could not be read (", conditionMessage(lot),
+      "), so which cohort run these LOT lines were built from could not be ",
+      "asked. A table an older lot never wrote would say so specifically; this ",
+      "did not, so it is not that.")))
+  if (inherits(lot, "condition")) lot <- NULL
   want <- if (is.null(lot) || nrow(lot) == 0) NA_character_ else
     trimws(as.character(qs_col(lot, "COHORT_RUN_ID")[1]))
   if (is.na(want) || !nzchar(want)) {
@@ -419,8 +432,30 @@ qs_lot_run_row <- function(con, prefix) {
   tbl <- wrk(paste0(prefix, "LOT_BUILD_STATUS"))
   d <- tryCatch(db_q(con, glue(
     "SELECT * FROM {tbl} ORDER BY UPDATED_AT DESC LIMIT 1")),
-    error = function(e) NULL)
-  if (is.null(d) || nrow(d) == 0) return(NULL)
+    error = function(e) e)
+  # NULL means "no run is recorded", and the caller treats that as a legacy
+  # build it can only warn about. An unreadable table is not that: it is the
+  # check not running, and it takes the two STOPS with it - the refusal to
+  # answer off a LOT_CONTRACT_OVERRIDE sensitivity cell, and the refusal to
+  # pair one run's lines with another run's cohort. A permission failure or a
+  # dropped connection would turn both into a warning and still write a
+  # workbook that reads exactly like the study's.
+  #
+  # Only a missing table is the legacy case. A table that predates the status
+  # table simply is not there, and says so specifically.
+  if (inherits(d, "condition")) {
+    if (grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found",
+              conditionMessage(d), ignore.case = TRUE))
+      return(NULL)
+    stop("Could not read ", tbl, ": ", conditionMessage(d),
+         "\nThat table is what says which cohort this LOT run was built from ",
+         "and whether it was built with LOT_CONTRACT_OVERRIDE. Both of those ",
+         "stop these answers when they are wrong, and neither could be asked. ",
+         "A missing table would say so specifically; this did not, so it is ",
+         "not a build that predates the status table. Fix the read and re-run.",
+         call. = FALSE)
+  }
+  if (nrow(d) == 0) return(NULL)
   one <- function(nm) {
     v <- qs_col(d, nm)
     if (is.null(v)) NA_character_ else as.character(v[1])
@@ -572,14 +607,21 @@ qs_same_table <- function(a, b) {
 # cohort the flag build wrote. So it is asked rather than assumed.
 #
 # `bound` is TRUE only when both were recorded and match. Neither recorded is
-# `unverified` - older runs predate the status table. A positive disagreement
-# is known-wrong, and stops the join rather than warning.
+# `unverified` - older runs predate the status table - and a positive
+# disagreement is known-wrong. Both leave the join off: `verified` says which
+# of the two it was, so the output can name the right reason, not so that one
+# of them proceeds.
 qs_broad_pair_bound <- function(broad_cohort, trial_index) {
   has <- function(x) length(x) && !is.na(x[1]) && nzchar(trimws(as.character(x[1])))
   if (!has(broad_cohort) || !has(trial_index))
     return(list(bound = FALSE, verified = FALSE, why = paste0(
-      "nothing records which cohort one of them came from, so the two broad ",
-      "sources are taken on trust to be the same population")))
+      "nothing records which cohort one of the two broad sources came from. ",
+      "The split labels flag-build patients from the LOT run's regimens, so a ",
+      "patient the LOT run never held would land in 'other' - read as not ",
+      "having had POMA rather than as not being in that run. An unrecorded ",
+      "cohort cannot be shown to be the same one, so the split is left off ",
+      "rather than taken on trust. Set BROAD_PREFIX and TRIAL_PREFIX to the ",
+      "same study on a LOT run that records INPUT_COHORT_TABLE")))
   if (!qs_same_table(broad_cohort, trial_index))
     return(list(bound = FALSE, verified = TRUE, why = paste0(
       "the broad LOT run was built from '", trimws(as.character(broad_cohort)[1]),

@@ -509,6 +509,29 @@ assign("db_q", function(con, s) stop("TABLE_OR_VIEW_NOT_FOUND"), envir = na)
 ok(!inherits(tryCatch(na$check_no_active_run(NULL, list(object_prefix = "p_")),
                       error = function(e) e), "error"),
    "and a first run, with no status table yet, is not blocked by its absence")
+# But only that. Every other failure is this check not running, which is not
+# the same as it passing - and it used to take the same path, so a permission
+# failure or a dropped connection turned the concurrency guard off for the
+# length of a build. clear_run_rows() a few lines down has always drawn the
+# line here; this did not.
+boom <- function(msg) {
+  assign("db_q", function(con, s) stop(msg), envir = na)
+  tryCatch({ na$check_no_active_run(NULL, list(object_prefix = "p_")); NULL },
+           error = conditionMessage)
+}
+for (case in list(list(m = "HTTP 403: permission denied", w = "a refused read"),
+                  list(m = "Connection reset by peer",    w = "a dropped connection"),
+                  list(m = "UNRESOLVED_COLUMN: STATE",    w = "a status table of another shape"))) {
+  e <- boom(case$m)
+  ok(!is.null(e) && grepl("Could not read", e, fixed = TRUE) &&
+       grepl(case$m, e, fixed = TRUE),
+     paste0("...while ", case$w, " stops, rather than passing as a first run"))
+}
+# The stop names NDMM_IGNORE_ACTIVE_RUN as the way out, so that has to be one.
+Sys.setenv(NDMM_IGNORE_ACTIVE_RUN = "TRUE")
+ok(is.null(boom("HTTP 403: permission denied")),
+   "...and the override it names lets an operator past an unreadable one")
+Sys.unsetenv("NDMM_IGNORE_ACTIVE_RUN")
 # The first thing the run asks the warehouse, and so before it writes its own
 # row: a refused run leaves the prefix as it found it, and does not sit through
 # twenty input probes first. Against the parsed body rather than ORDER, so
