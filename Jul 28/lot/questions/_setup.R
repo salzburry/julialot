@@ -15,6 +15,17 @@ qs_setup <- function(script_dir) {
   lot_root <- normalizePath(file.path(script_dir, "..", "engine"), mustWork = TRUE)
   lot_r    <- file.path(lot_root, "R")
 
+  # Every entry point in this repo attaches glue itself - ndmm/build.R,
+  # lot/engine/build.R, the run_*.R scripts. The question scripts did not, and
+  # they build SQL with bare glue() calls, from three of them in
+  # broad_studyteam_qs.R to thirty-five in jul20_studyteam_qs.R. Nothing in the
+  # source chain attached it either.
+  #
+  # The suite could not see it: tests/testutil.R attaches glue, so every driven
+  # function found it in the test process and nowhere else. Attached here rather
+  # than in six scripts, because _setup.R and validation_helpers.R use it too.
+  library(glue)
+
   source(file.path(lot_r, "load_inputs.R"))
   load_pipeline_inputs(lot_root, "config.csv")
   for (f in c("config_lot.R", "db_utils_lot.R", "codelists_lot.R",
