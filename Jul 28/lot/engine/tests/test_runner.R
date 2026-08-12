@@ -1844,7 +1844,14 @@ assign("log_msg", function(...) invisible(NULL), envir = ar)
 assign("lot_out", function(x) paste0("wk.p_", x), envir = ar)
 assign("run_id", "R2", envir = ar)
 drive_ar <- function(x) {
-  assign("db_q", function(con, s) if (is.character(x)) stop(x) else x, envir = ar)
+  # Applying the part of the WHERE clause under test, because the warehouse
+  # would. A stub that returns the same rows whatever it is asked cannot tell a
+  # query that excludes this run's id from one that does not.
+  assign("db_q", function(con, s) {
+    if (is.character(x)) stop(x)
+    if (grepl("RUN_ID <> 'R2'", s, fixed = TRUE))
+      x[as.character(x$RUN_ID) != "R2", , drop = FALSE] else x
+  }, envir = ar)
   tryCatch({ ar$check_no_active_run(NULL, list(object_prefix = "p_")); NULL },
            error = conditionMessage)
 }
@@ -1852,6 +1859,12 @@ ok(is.null(drive_ar(data.frame(RUN_ID = character(0), UPDATED_AT = character(0))
    "a prefix nobody else is building is fine")
 ok(!is.null(drive_ar(data.frame(RUN_ID = "R1", UPDATED_AT = "x"))),
    "...another run on it stops this one")
+# Including one carrying this run's own id. The query used to exclude it, and
+# run_id comes from DOMINO_RUN_ID - so a second attempt in one Domino execution
+# shared the id and walked straight past the live first attempt.
+same <- drive_ar(data.frame(RUN_ID = "R2", UPDATED_AT = "x"))
+ok(!is.null(same) && grepl("this run's own id", same, fixed = TRUE),
+   "...as does a second attempt under this run's own id, saying which it is")
 ok(is.null(drive_ar("TABLE_OR_VIEW_NOT_FOUND")),
    "...a first run, with no status table yet, is not blocked by its absence")
 for (case in list(list(m = "HTTP 403: permission denied", w = "a refused read"),

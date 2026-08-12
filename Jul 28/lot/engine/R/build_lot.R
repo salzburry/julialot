@@ -996,10 +996,19 @@ clear_run_rows <- function(con, cfg) {
 # A check, not a lock: two runs starting at the same moment both pass it. It
 # catches the case worth catching - starting a second run while one is going.
 check_no_active_run <- function(con, cfg) {
+  # Not excluding this run's own id, which is the hole that used to be here.
+  # run_id comes from DOMINO_RUN_ID, and a second attempt inside one Domino
+  # execution carries the same one - so `RUN_ID <> run_id` hid exactly the
+  # collision worth catching: a live sibling under this id, replacing the same
+  # prefixed tables.
+  #
+  # Safe to drop because this runs before write_build_status marks this attempt
+  # started, so a 'started' row under this id is always another attempt's - and
+  # a normally-failing attempt leaves 'failed' behind through on.exit.
   d <- tryCatch(db_q(con, glue("
     SELECT RUN_ID, UPDATED_AT FROM {lot_out('LOT_BUILD_STATUS')}
-    WHERE OBJECT_PREFIX = '{cfg$object_prefix}' AND STATE = 'started'
-      AND RUN_ID <> '{run_id}'")), error = function(e) e)
+    WHERE OBJECT_PREFIX = '{cfg$object_prefix}'
+      AND STATE = 'started'")), error = function(e) e)
   ignoring <- identical(toupper(Sys.getenv("LOT_IGNORE_ACTIVE_RUN", unset = "")),
                         "TRUE")
   # A table that is not there yet is the first run on this prefix, and there is
@@ -1040,7 +1049,15 @@ check_no_active_run <- function(con, cfg) {
        "replace each other's tables while the other is reading them, and both ",
        "could still finish. Use a different prefix, or wait. If those runs are ",
        "not actually running - a killed process leaves 'started' behind - set ",
-       "LOT_IGNORE_ACTIVE_RUN=TRUE.", call. = FALSE)
+       "LOT_IGNORE_ACTIVE_RUN=TRUE.",
+       # The id can be this run's: a second attempt in one Domino execution
+       # shares DOMINO_RUN_ID. Worth saying, or it reads as self-blocking.
+       if (any(as.character(d$RUN_ID) == run_id))
+         paste0("\nOne of those is this run's own id (", run_id, "), which a ",
+                "second attempt in the same Domino execution shares. This ",
+                "attempt has not written its own row yet, so that one is ",
+                "another attempt still marked started.") else "",
+       call. = FALSE)
 }
 
 # The QC phase reports these and carries on - it prints "** BUG **" and the run
