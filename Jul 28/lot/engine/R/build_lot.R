@@ -876,36 +876,43 @@ BUILD_STATUS_COLS <- c(
   CODELIST_WAIVERS_APPLIED = "STRING", CONTRACT_DEVIATIONS = "STRING",
   UPDATED_AT = "TIMESTAMP")
 
+# CREATE TABLE IF NOT EXISTS does nothing to a table an earlier run left, so a
+# column added to a *_COLS list reaches a fresh prefix and no other, and the
+# INSERT naming it fails. Each table is created and then brought up to its list.
+#
+# Look before adding - ADD COLUMNS on a column that exists is an error - and
+# treat an unreadable DESCRIBE as no answer rather than as a table with no
+# columns, or this would try to add every column to a table that has them all.
+lot_ensure_cols <- function(con, tbl, spec) {
+  have <- tryCatch({
+    d  <- db_q(con, glue("DESCRIBE {tbl}"))
+    cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
+    if (length(cn)) toupper(trimws(as.character(d[[cn[1]]]))) else character(0)
+  }, error = function(e) character(0))
+  if (!length(have)) return(invisible(FALSE))
+  for (m in setdiff(names(spec), have)) {
+    tryCatch({
+      db_exec(con, glue("ALTER TABLE {tbl} ADD COLUMNS ({m} {spec[[m]]})"))
+      log_msg("  schema evolution on ", tbl, ": added ", m)
+    }, error = function(e) {
+      # Every column here is named in the INSERT that follows, so one that
+      # could not be added is a failure now rather than a surprise later.
+      if (!grepl("already exists|AlreadyExists|FIELD_ALREADY_EXISTS",
+                 conditionMessage(e), ignore.case = TRUE))
+        stop("Could not add column ", m, " to ", tbl, ": ", conditionMessage(e),
+             call. = FALSE)
+    })
+  }
+  invisible(TRUE)
+}
+
 write_build_status <- function(con, cfg, state) {
   tbl  <- lot_out("LOT_BUILD_STATUS")
   cols <- names(BUILD_STATUS_COLS)
   db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
                     paste(cols, BUILD_STATUS_COLS, collapse = ", "), ")"))
 
-  # CREATE TABLE IF NOT EXISTS does nothing to a table an earlier run left
-  # behind, so add any column it lacks: naming the columns in the INSERT stops
-  # a positional mis-fill but cannot supply a missing one. Look before adding -
-  # adding a column that already exists is an error.
-  have <- tryCatch({
-    d  <- db_q(con, glue("DESCRIBE {tbl}"))
-    cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
-    if (length(cn)) toupper(trimws(as.character(d[[cn[1]]]))) else character(0)
-  }, error = function(e) character(0))
-  # No answer means DESCRIBE failed, not that the table has no columns. Acting
-  # on that would try to add every column to a table that already has them.
-  for (m in if (length(have)) setdiff(cols, have) else character(0)) {
-    tryCatch({
-      db_exec(con, glue("ALTER TABLE {tbl} ADD COLUMNS ({m} {BUILD_STATUS_COLS[[m]]})"))
-      log_msg("  Build status schema evolution: added ", m)
-    }, error = function(e) {
-      msg <- conditionMessage(e)
-      # Unlike the metadata table, every one of these is in the INSERT, so a
-      # column we could not add is a failure now rather than a warning.
-      if (!grepl("already exists|AlreadyExists|FIELD_ALREADY_EXISTS",
-                 msg, ignore.case = TRUE))
-        stop("Cannot add ", m, " to ", tbl, ": ", msg, call. = FALSE)
-    })
-  }
+  lot_ensure_cols(con, tbl, BUILD_STATUS_COLS)
 
   requested <- paste(codelist_waivers(), collapse = "|")
   # Set by phase_codelists when it waives something. Empty at "started", and on
@@ -1190,6 +1197,7 @@ run_face_validity <- function(con, cfg) {
   cols <- names(FACE_VALIDITY_COLS)
   db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
                     paste(cols, FACE_VALIDITY_COLS, collapse = ", "), ")"))
+  lot_ensure_cols(con, tbl, FACE_VALIDITY_COLS)
   final <- lot_out("LOT_LONG_FINAL")
   rows <- character(0)
   off  <- character(0)
@@ -1315,23 +1323,21 @@ record_codelist_hashes <- function(con, cfg) {
 
   # CREATE TABLE IF NOT EXISTS does nothing to a table an earlier run left
   # behind, and the INSERT below names its columns - so one this table lacks
-  # fails the run rather than being filled positionally. The other two metadata
-  # tables already migrate; this one did not, and the first column to be renamed
-  # or added would have stopped every schema that had run the older version.
-  have <- tryCatch({
-    d  <- db_q(con, glue("DESCRIBE {tbl}"))
-    cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
-    if (length(cn)) toupper(trimws(as.character(d[[cn[1]]]))) else character(0)
-  }, error = function(e) character(0))
-  if (!length(have))
+  # fails the run rather than being filled positionally.
+  #
+  # Stricter than the shared helper on one point, deliberately: this table is
+  # the record of WHICH code lists a cohort was built from, so a DESCRIBE that
+  # cannot be read stops rather than carrying on unmigrated. lot_ensure_cols()
+  # treats the same silence as "leave it alone", which is right for a status
+  # row and not for this.
+  if (!length(tryCatch({
+        d  <- db_q(con, glue("DESCRIBE {tbl}"))
+        cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
+        if (length(cn)) as.character(d[[cn[1]]]) else character(0)
+      }, error = function(e) character(0))))
     stop("Cannot read the columns of ", tbl, ", so the code list hashes cannot ",
          "be recorded.", call. = FALSE)
-  add <- setdiff(cols, have)
-  if (length(add)) {
-    db_exec(con, glue("ALTER TABLE {tbl} ADD COLUMNS (",
-                      paste(add, CODELIST_METADATA_COLS[add], collapse = ", "), ")"))
-    log_msg("  Codelist metadata schema evolution: added ", paste(add, collapse = ", "))
-  }
+  lot_ensure_cols(con, tbl, CODELIST_METADATA_COLS)
 
   vals <- vapply(CODELIST_FILES, function(f) glue(
     "('{run_id}', '{f}', '{seen[[f]]$md5}', {seen[[f]]$n_rows}, current_timestamp())"),
@@ -1783,6 +1789,7 @@ write_lot_attrition <- function(con, cfg, steps) {
   cols <- names(LOT_ATTRITION_COLS)
   db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
                     paste(cols, LOT_ATTRITION_COLS, collapse = ", "), ")"))
+  lot_ensure_cols(con, tbl, LOT_ATTRITION_COLS)
   start <- steps[[1]]$n$patients
   pct_of <- function(num, den)
     if (is.na(den) || den == 0 || is.na(num)) "NULL"

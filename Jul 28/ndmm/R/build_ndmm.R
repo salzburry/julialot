@@ -961,9 +961,9 @@ check_icd_flag <- function(con, cfg) {
     d <- tryCatch(db_q(con, sql), error = function(e) NULL)
     if (is.null(d) || !nrow(d)) return("")
     # Kept for the metadata row as well as the log. The magnitude is the whole
-    # point of recording this - there is no ceiling above which the build
-    # stops, so the row somebody reads later has to carry enough to tell
-    # sixteen claims from a data-quality failure.
+    # point of recording this: NDMM_ICD_FLAG_MAX_ROWS ships empty, so unless
+    # somebody sets it the row read later is all there is to tell sixteen
+    # claims from a data-quality failure.
     seen_codes <<- rbind(seen_codes, data.frame(
       code    = as.character(d$matched_code),
       on_list = as.character(ifelse(is.na(d$on_list) | !nzchar(d$on_list),
@@ -991,21 +991,36 @@ check_icd_flag <- function(con, cfg) {
                     "are not describing the same rows]")
     out
   }
-  found <- character(0); tally <- 0L
+  found <- character(0); tally <- 0; unreadable <- character(0)
   seen_codes <- data.frame(code = character(0), on_list = character(0),
                            n_rows = numeric(0), n_pat = numeric(0),
                            stringsAsFactors = FALSE)
   for (p in list(list(t = cdm_src(cfg$tbl_med_diag), c = "DIAG", l = dx_lists),
                  list(t = cdm_src(cfg$tbl_med_proc), c = "PROC", l = pr_lists))) {
     r <- db_q(con, probe_summary(p$t, p$c, p$l))
-    n <- suppressWarnings(as.integer(r$n))
+    # Numeric, not integer. as.integer() returns NA above 2^31-1, the guard
+    # below then reads that as "nothing found", and two overflowing probes make
+    # the build log "every claim names a family" - a clean all-clear on the
+    # largest failure there could be. A double is exact to 2^53, which is
+    # further than any claim count reaches.
+    n <- suppressWarnings(as.numeric(r$n))
     if (length(n) == 1L && !is.na(n) && n > 0)
       found <- c(found, paste0(p$t, ": ", format(n, big.mark = ","),
                                " row(s), ICD_FLAG in {", r$vals, "}",
                                codes_line(probe_detail(p$t, p$c, p$l), n)))
     if (length(n) == 1L && !is.na(n) && n > 0) tally <- tally + n
+    # A count that came back unreadable is not a count of zero. Saying so is
+    # the difference between "nothing to report" and "we could not tell".
+    if (!(length(n) == 1L && !is.na(n)))
+      unreadable <- c(unreadable, p$t)
   }
   if (!length(found)) {
+    if (length(unreadable))
+      stop("Could not read the ICD_FLAG count on: ",
+           paste(unreadable, collapse = ", "),
+           ". An unreadable count is not a clean one, and this check is the ",
+           "only thing that would report claims matching no code list entry.",
+           call. = FALSE)
     log_msg("  ICD_FLAG: every claim carrying a code this cohort reads names a family")
     return(invisible(FALSE))
   }
@@ -1037,15 +1052,29 @@ check_icd_flag <- function(con, cfg) {
   # On the run's own row with its size, so a cohort found months later carries
   # the finding rather than depending on somebody still having the log - and
   # carries enough of it to tell sixteen rows from a data-quality failure.
-  # The name alone would read the same either way, and there is no ceiling
-  # above which this stops the build (DECISIONS.md #11).
-  # One row per distinct code across both tables, so a code on both is one
-  # entry. Patients are summed rather than distinct-counted: the two probes are
-  # over different CDM tables and a patient in both would be counted twice.
-  # That direction over-states, which is the safe way for a magnitude to be
-  # wrong, and the log carries the per-table figures exactly.
-  by_code <- if (nrow(seen_codes))
-    aggregate(cbind(n_rows, n_pat) ~ code + on_list, seen_codes, sum) else seen_codes
+  # The name alone would read the same either way, and a ceiling is optional
+  # (DECISIONS.md #11).
+  # One row per distinct CODE, so a code on two lists is one entry naming both
+  # rather than two entries counted twice. Patients are summed, not
+  # distinct-counted: the two probes read different CDM tables and a patient in
+  # both is counted once per table. That over-states, which is the safe
+  # direction for a magnitude, and the log carries the per-table figures.
+  #
+  # Not aggregate(): its formula method defaults to na.omit, so one unreadable
+  # count would drop that code from the row entirely - the largest code
+  # vanishing from the record while the total still names it - and an all-NA
+  # frame would error out of a function whose whole job is to report.
+  by_code <- if (nrow(seen_codes)) {
+    z <- function(x) { x <- suppressWarnings(as.numeric(x)); x[is.na(x)] <- 0; x }
+    split_by <- factor(seen_codes$code, levels = unique(seen_codes$code))
+    data.frame(
+      code    = levels(split_by),
+      on_list = vapply(split(seen_codes$on_list, split_by),
+                       function(v) paste(sort(unique(v)), collapse = "+"), character(1)),
+      n_rows  = vapply(split(z(seen_codes$n_rows), split_by), sum, numeric(1)),
+      n_pat   = vapply(split(z(seen_codes$n_pat),  split_by), sum, numeric(1)),
+      stringsAsFactors = FALSE)
+  } else seen_codes
   by_code <- by_code[order(-by_code$n_rows, by_code$code), , drop = FALSE]
   shown   <- head(by_code, 10L)
   options(ndmm_findings = union(

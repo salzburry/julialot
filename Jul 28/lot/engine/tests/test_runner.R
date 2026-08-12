@@ -1883,6 +1883,28 @@ cat("\n-- the LOT funnel, and the two ways it can lie --\n")
 ok(all(c("RUN_ID", "STEP_NUM", "KIND", "STEP", "N_PATIENTS", "N_LINES",
          "PCT_OF_START", "PCT_OF_PREV", "RECORDED_AT") %in% names(LOT_ATTRITION_COLS)),
    "the funnel records patients AND lines per step")
+
+cat("\n-- every table made from a column list is brought up to it --\n")
+# CREATE TABLE IF NOT EXISTS does nothing to a table an earlier run left, so a
+# column added to a *_COLS list reaches a fresh prefix and no other, and the
+# INSERT naming it fails - for LOT_ATTRITION at the very end of the run, after
+# the lines are built.
+#
+# LOT_FACE_VALIDITY and LOT_ATTRITION had no migration at all, and the comment
+# above the codelist one counted three such tables when there are five. So this
+# is DERIVED from the file: a whitelist would have passed on both of them.
+made <- unique(regmatches(bl, gregexpr(
+  "CREATE TABLE IF NOT EXISTS \\{tbl\\} \\(\",\n\\s*paste\\(cols, [A-Z_]+", bl))[[1]])
+made <- sub(".*paste\\(cols, ", "", made)
+ok(length(made) >= 4L,
+   paste0("every table created from a column list is found (", length(made), ")"))
+missing <- Filter(function(sp)
+  !grepl(paste0("lot_ensure_cols(con, tbl, ", sp, ")"), bl, fixed = TRUE), made)
+ok(!length(missing),
+   if (length(missing))
+     paste0("created from a column list but never brought up to it: ",
+            paste(missing, collapse = ", "))
+   else paste0("...and every one is brought up to its list (", length(made), ")"))
 # How far patients get - LOT1, then LOT2, and so on. Nobody was removed there:
 # a patient with no LOT3 did not progress, or their follow-up ended. Read as
 # exclusions those would be the study losing people it never lost.

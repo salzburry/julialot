@@ -1344,6 +1344,32 @@ r <- drive_icd(7L, waive = "raw_icd_flag")
 ok(identical(r$err, "") && grepl("no longer needed", r$log, fixed = TRUE),
    "the old waiver is accepted and says it is now a no-op")
 
+# The breakdown is folded in R, not by aggregate(): its formula method defaults
+# to na.omit, so one unreadable count would drop that code from the row - the
+# largest one vanishing while the total still counts it - and an all-NA frame
+# would error out of the function whose job is to report.
+r <- drive_icd(7L, detail = data.frame(
+  icd_flag_value = "<blank>", matched_code = c("C901", "C902"),
+  on_list = "MM diagnosis", n_rows = c(5, 2), n_pat = c(NA, 2),
+  stringsAsFactors = FALSE))
+ok(identical(r$err, "") && grepl("2 codes", r$findings, fixed = TRUE) &&
+     grepl("C901", r$findings, fixed = TRUE),
+   "a code with an unreadable patient count stays on the row rather than vanishing")
+r <- drive_icd(7L, detail = data.frame(
+  icd_flag_value = "<blank>", matched_code = "C901", on_list = "MM diagnosis",
+  n_rows = NA_real_, n_pat = NA_real_, stringsAsFactors = FALSE))
+ok(identical(r$err, "") && grepl("^raw_icd_flag\\(", r$findings),
+   "...and a breakdown that is entirely unreadable still reports, rather than erroring")
+# A code on two lists is one entry naming both. Grouping by code AND list would
+# count its claims twice in the code count somebody reads as "how many codes".
+r <- drive_icd(7L, detail = data.frame(
+  icd_flag_value = "<blank>", matched_code = c("C901", "C901"),
+  on_list = c("MM diagnosis", "other malignancy"), n_rows = c(3, 4),
+  n_pat = c(3, 4), stringsAsFactors = FALSE))
+ok(grepl("1 codes", r$findings, fixed = TRUE) &&
+     grepl("MM diagnosis+other malignancy", r$findings, fixed = TRUE),
+   "...and a code on two lists is one entry naming both, not two entries")
+
 # A ceiling, settable without a code change and unset by default. Unset is the
 # decision as it stands - report whatever the volume - and the run says so, so
 # nobody reads a clean log as a governed one.
@@ -1460,6 +1486,18 @@ ok(grepl("WARNING (raw_icd_flag)", r$log, fixed = TRUE) &&
      grepl("names neither family", r$log, fixed = TRUE) &&
      length(r$findings) == 1L && grepl("^raw_icd_flag\\(", r$findings),
    "...and a breakdown that cannot be read leaves the warning and the finding intact")
+
+# A claim count above 2^31-1 makes as.integer() NA, the found-anything guard
+# then reads it as nothing, and two such probes make the build log "every claim
+# names a family" - a clean all-clear on the largest failure there could be.
+r <- drive_icd(3e9)
+ok(grepl("WARNING (raw_icd_flag)", r$log, fixed = TRUE) &&
+     grepl("6,000,000,000 rows", r$findings, fixed = TRUE),
+   "a count past the integer limit is still counted, not read as none")
+# And a count that genuinely cannot be read is not a clean one.
+r <- drive_icd(NA_integer_)
+ok(grepl("Could not read the ICD_FLAG count", r$err, fixed = TRUE),
+   "...while an unreadable count stops, rather than passing as nothing found")
 
 cat("\n-- nothing is read before the step that builds it --\n")
 # check_ndc_shape() joined NDMM_LOT1_STARTS and was called before the step that
@@ -1750,13 +1788,24 @@ ok(length(e2) == 1L && grepl("ADD COLUMNS (C STRING)", e2[1], fixed = TRUE),
    "...one that is missing a column has it added, with its declared type")
 ok(length(drive_cols(NULL)) == 0L,
    "...and a DESCRIBE that cannot be read adds nothing, rather than adding all of them")
-# Every table this build writes through a column list, not just the one that
-# prompted it - the next column goes on whichever table needs it.
-bt <- paste(bl, collapse = "\n")
-for (s in c("ATTRITION_COLS", "RUN_METADATA_COLS", "CODELIST_METADATA_COLS",
-            "BUILD_STATUS_COLS"))
-  ok(grepl(paste0("ensure_cols(con, tbl, ", s, ")"), bt, fixed = TRUE),
-     paste0("...and ", s, " is applied to its table, not only declared"))
+# DERIVED, not a list written out here. A whitelist of four passes the moment a
+# fifth CREATE TABLE IF NOT EXISTS is added, which is exactly how the two in
+# lot/engine went years without one - so the set comes from the file.
+bt   <- paste(bl, collapse = "\n")
+made <- unique(regmatches(bt, gregexpr(
+  "CREATE TABLE IF NOT EXISTS \\{tbl\\} \\(\",\n\\s*paste\\(cols, [A-Z_]+",
+  bt))[[1]])
+made <- sub(".*paste\\(cols, ", "", made)
+ok(length(made) >= 4L,
+   paste0("every table created from a column list is found (", length(made), ")"))
+missing <- Filter(function(sp)
+  !grepl(paste0("ensure_cols(con, tbl, ", sp, ")"), bt, fixed = TRUE), made)
+ok(!length(missing),
+   if (length(missing))
+     paste0("created from a column list but never brought up to it: ",
+            paste(missing, collapse = ", "))
+   else paste0("...and every one of them is brought up to its list (",
+               length(made), ")"))
 
 cat("\n-- every setting config.csv ships is one the code reads --\n")
 # NDMM_BELANTAMAB_SCOPE outlived the code that read it - the proxy moved to the
