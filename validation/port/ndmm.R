@@ -196,6 +196,10 @@ ADDED <- list(
     # it is inside the spliced view; these two lines sit outside it.
     "met_pred <- ndmm_metastatic_sql(\"om.dx\")" = 1L,
     "met_own  <- ndmm_metastatic_own_group_sql(\"om.dx\")" = 1L,
+    # An empty override list is reachable now - NDMM_MM_ADJACENT_STATES=none,
+    # or mgus_only where the label is absent - and IN () is a syntax error.
+    "if (!nzchar(ovr_in)) ovr_in <- \"NULL\"" = 1L,
+    "if (!nzchar(req_in)) req_in <- \"NULL\"" = 1L,
     "report_metastatic_group(con)" = 1L,
     # The required-match count is now against the five labels the code list
     # must carry, not against every group the override reaches - the remission

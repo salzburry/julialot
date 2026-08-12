@@ -51,7 +51,7 @@ CONTRACT <- list(
 # Still guarded: each is checked against its allowed values, and all go into
 # NDMM_RUN_METADATA, so a cohort says which choices made it.
 CHOICES <- list(
-  mm_adjacent_states   = c("override", "exclude"),
+  mm_adjacent_states   = c("override", "exclude", "mgus_only", "none"),
   # Free text: names and codes, validated against the code list at run time by
   # build_ndmm_index_ineligible_codes(), which stops on one that matches
   # nothing. Shape only here.
@@ -309,6 +309,9 @@ check_constants <- function(cfg) {
       stop("Module constant ", s$const, " is not loaded; the modules must be ",
            "sourced before the settings can be checked.", call. = FALSE)
     got <- get(s$const, envir = globalenv())
+    # A list-valued constant is compared as the joined string cfg holds, or a
+    # four-element vector never equals the one setting that produced it.
+    if (!is.null(s$collapse)) got <- paste(got, collapse = s$collapse)
     if (!isTRUE(all.equal(as.character(got), as.character(cfg[[s$cfg]]))))
       wrong <- c(wrong, paste0(s$const, " = ", format(got), " but ", s$cfg,
                                " = ", format(cfg[[s$cfg]]),
@@ -603,6 +606,7 @@ RUN_METADATA_COLS <- c(RUN_ID = "STRING", OBJECT_PREFIX = "STRING",
                        BELANTAMAB_ABBR = "STRING", INDEX_EXCLUDED = "STRING",
                        INDEX_EXCLUDED_CODES = "STRING",
                        MM_ADJACENT_STATES = "STRING",
+                       MM_ADJACENT_LABELS = "STRING",
                        CODE_MD5 = "STRING",
                        CONTRACT_SETTINGS = "STRING",
                        WAIVERS_REQUESTED = "STRING", WAIVERS_APPLIED = "STRING",
@@ -627,6 +631,9 @@ write_run_metadata <- function(con, cfg, here, n) {
          "{sql_text(NDMM_BELANTAMAB_ABBR)}, {sql_text(NDMM_INDEX_EXCLUDED_ABBRS)}, ",
          "{sql_text(NDMM_INDEX_EXCLUDED_CODES)}, ",
          "{sql_text(NDMM_MM_ADJACENT_STATES)}, ",
+         # The labels themselves, not just the mode - the list is settable now,
+         # so the mode alone no longer says which codes were kept.
+         "{sql_text(paste(ndmm_mm_adjacent_groups(), collapse = '|'))}, ",
          "{sql_text(code_fingerprint(here))}, ",
          "{sql_text(contract_settings())}, ",
          "{sql_text(paste(sort(waivers_named(), method = 'radix'), collapse = ','))}, ",

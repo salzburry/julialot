@@ -9,6 +9,9 @@ build_ndmm_other_malig_codes <- function(con) {
   met_own  <- ndmm_metastatic_own_group_sql("om.dx")
   ovr_in <- paste(sprintf("'%s'", gsub("'", "''", ndmm_mm_adjacent_groups())),
                   collapse = ", ")
+  # An empty override list is a choice, not a bug - only mm_dx.csv keeps a code
+  # then. IN () is a syntax error and IN (NULL) is never true, so it stands in.
+  if (!nzchar(ovr_in)) ovr_in <- "NULL"
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_OTHER_MALIG_CODES} AS
     -- Normalised first, then joined. Every column reference below is
@@ -92,6 +95,7 @@ build_ndmm_other_malig_codes <- function(con) {
   # rather than fatal - see build_ndmm_mm_adjacent_groups().
   req    <- gsub("'", "''", NDMM_MM_ADJACENT_OVERRIDE)
   req_in <- paste(sprintf("'%s'", req), collapse = ", ")
+  if (!nzchar(req_in)) req_in <- "NULL"
   n_exp     <- length(NDMM_MM_ADJACENT_OVERRIDE)
   n_matched <- tryCatch(as.integer(db_q(con, glue("
     SELECT count(DISTINCT tumor_group) AS n

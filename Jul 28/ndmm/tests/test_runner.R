@@ -830,7 +830,8 @@ for (v in CHOICES$mm_adjacent_states) {
   # error = conditionMessage would hand back a character string too, which is
   # how this assertion first passed for a value the switch rejects.
   got <- tryCatch(se$ndmm_mm_adjacent_groups(), error = function(e) e)
-  ok(!inherits(got, "error") && length(got) >= length(se$NDMM_MM_ADJACENT_OVERRIDE),
+  ok(!inherits(got, "error") &&
+       all(got %in% c(se$NDMM_MM_ADJACENT_OVERRIDE, se$NDMM_MM_ADJACENT_STATE_LABELS)),
      paste0("mm_adjacent_states='", v, "' is one the code actually handles"))
 }
 assign("NDMM_MM_ADJACENT_STATES", "override", envir = se)
