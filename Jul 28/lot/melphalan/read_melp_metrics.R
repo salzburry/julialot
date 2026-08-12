@@ -53,7 +53,7 @@ on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 # the STUDY's table rather than a cell's.
 cells <- melp_cell_plan(MELP_CELLS,
                         trimws(Sys.getenv("AUG1_PREFIX_BASE", unset = "melp_")))
-# The same reading the runner does, from the same function - all four files,
+# The same reading the runner does, from the same function - every output,
 # and every provenance check, including the one that reads the windows off the
 # cells rather than off this run's environment.
 #
