@@ -224,6 +224,11 @@ runs(check_melp_plan(cells, "ndmm_"), "the plan is safe to run beside the study"
 stops(check_melp_plan(cells, "melp_reference_"),
       "a cell that would write over the study's own prefix is refused")
 rs <- paste(readLines(file.path(ROOT, "run_aug1_melp.R"), warn = FALSE), collapse = "\n")
+# The building half is the runner's; the reading half is melp_report() in
+# cells.R, because read_melp_metrics.R runs that half on its own. Checks about
+# the reading look at both files, so moving it between them cannot lose one.
+rr <- paste(rs, paste(readLines(file.path(ROOT, "R", "cells.R"), warn = FALSE),
+                      collapse = "\n"), sep = "\n")
 ok(has(rs, 'env_flag("AUG1_EXECUTE")'),
    "execution is opt-in - three complete builds is not a default")
 ok(has(rs, "LOT_CONTRACT_OVERRIDE=TRUE"),
@@ -243,7 +248,7 @@ ok(has(rs, "if (!all(built))") && !has(rs, "if (!built[1])"),
 ok(has(rs, "not a smaller answer"),
    "...and says why, rather than reporting what it managed")
 # The same for a cell that built but whose numbers cannot be read.
-ok(has(rs, "this is a stop rather than a row"),
+ok(has(rr, "this is a stop rather than a row"),
    "...as does a cell whose metrics come back empty")
 
 cat("\n-- what is read off the builds --\n")
@@ -355,7 +360,7 @@ ok(all(named("s") %in% status_cols),
 ok(all(named("c") %in% cl_cols),
    paste0("every column read off LOT_CODELIST_METADATA is one it has (",
           paste(setdiff(named("c"), cl_cols), collapse = ", "), ")"))
-ok(has(rs, "Could not read what ") && has(rs, "conditionMessage(r)"),
+ok(has(rr, "Could not read what ") && has(rr, "conditionMessage(r)"),
    "a query that failed is reported as itself, not as a missing row")
 for (f in c("COHORT_RUN_ID", "COHORT_STAMP", "STUDY_END", "CODE_MD5", "CODELIST_MD5")) {
   r <- same(); r$as_asked[[f]] <- "other"
@@ -412,16 +417,16 @@ ok(has(ps, "AS N_SAME_COUNT_DIFFERENT_LINES"),
    "...and the same-count-different-lines case is counted, which totals hide")
 ok(has(ps, "<=>"),
    "the comparison is null-safe, or a patient in one build reads as no difference")
-ok(has(rs, "downstream consequence") && has(rs, "not a count of the"),
+ok(has(rr, "downstream consequence") && has(rr, "not a count of the"),
    "the aggregate delta is described as a consequence, not as the overlap count")
 # The tables it compares come from the plan. AUG1_PREFIX_BASE moves every cell,
 # so a literal "melp_as_asked_" reads nothing under a custom base - or reads a
 # previous experiment's leftovers and reports them as this run's.
-ok(!has(rs, '"melp_as_asked_"') && !has(rs, '"melp_yield_to_sct_"'),
+ok(!has(rr, '"melp_as_asked_"') && !has(rr, '"melp_yield_to_sct_"'),
    "the patient comparison names no prefix of its own")
-ok(has(rs, 'pfx_of("as_asked")') && has(rs, 'pfx_of("yield_to_sct")'),
+ok(has(rr, 'pfx_of("as_asked")') && has(rr, 'pfx_of("yield_to_sct")'),
    "...it takes both from the cell plan, so a custom prefix base is honoured")
-ok(has(rs, "rather than an output left out"),
+ok(has(rr, "rather than an output left out"),
    "...and a comparison that could not be made stops the run rather than being skipped")
 
 cat("\n-- B.2 removes a boundary; it does not hold the line open --\n")

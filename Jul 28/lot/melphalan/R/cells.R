@@ -86,6 +86,11 @@ check_melp_plan <- function(cells, study_prefix) {
 # code fingerprint and study window beside it, and every code list's md5 in
 # LOT_CODELIST_METADATA. So the check is to read it back rather than to trust
 # that three sequential builds saw the same world.
+#
+# CONTRACT_SETTINGS is not here, and is checked all the same - by
+# melp_settings(), which compares it key by key. It cannot be compared as one
+# value: apply_melp_rule is inside it, and that is the one thing the cells are
+# built to differ on.
 MELP_INPUT_FIELDS <- c(
   COHORT_RUN_ID = "the cohort build's run",
   COHORT_STAMP  = "...and its attempt, since a re-run keeps the run id",
@@ -184,6 +189,83 @@ melp_check_deviations <- function(rows, cells) {
     stop("A cell is not the algorithm it claims:\n", paste(bad, collapse = "\n"),
          call. = FALSE)
   invisible(TRUE)
+}
+
+# The windows the numbers are read under, taken from the cells themselves.
+#
+# melp_metric_sql() rebuilds the exposure chain to count B.2, so it needs the
+# same windows the build used. Reading them from the ambient config is right
+# only while the two agree. They stop agreeing the moment the read happens
+# separately from the build: a recovery run a week later with
+# MELP_EXPOSURE_DAYS=31 in the environment recounts B.2 under a rule no cell was
+# built with, and every provenance check still passes, because the three cells
+# do agree with each other.
+#
+# So the values come off CONTRACT_SETTINGS, which is the run's own record of
+# what it used.
+MELP_SETTING_KEYS <- c(abbr         = "melp_med_abbr",
+                       expo_days    = "melp_exposure_days",
+                       restart_days = "melp_restart_days",
+                       advance_days = "melp_advance_days",
+                       ind1         = "induction_window_days",
+                       indn         = "lot_n_induction_window_days",
+                       cart         = "cart_consolidation_days")
+
+# "a=1|b=2" to a named list. Split on the first "=" only, so a value with one
+# in it survives.
+melp_parse_settings <- function(s) {
+  s  <- if (is.null(s) || length(s) == 0 || is.na(s[1])) "" else as.character(s[1])
+  kv <- trimws(unlist(strsplit(s, "|", fixed = TRUE)))
+  kv <- kv[grepl("=", kv, fixed = TRUE)]
+  setNames(as.list(sub("^[^=]*=", "", kv)), sub("=.*$", "", kv))
+}
+
+melp_settings <- function(rows) {
+  s <- lapply(rows, function(r) melp_parse_settings(r$CONTRACT_SETTINGS))
+  empty <- names(s)[vapply(s, function(x) !length(x), logical(1))]
+  if (length(empty))
+    stop("These cells recorded no CONTRACT_SETTINGS: ", paste(empty, collapse = ", "),
+         ". Without them there is no record of the windows the lines were built ",
+         "under, so the numbers read off them cannot be shown to be the build's.",
+         call. = FALSE)
+
+  # apply_melp_rule aside - that is what the cells are - every setting has to
+  # match, including ones no metric reads. A cell built with a different
+  # max_lot is not the same experiment.
+  bad <- character(0)
+  keys <- setdiff(sort(unique(unlist(lapply(s, names)))), "apply_melp_rule")
+  for (k in keys) {
+    v <- vapply(s, function(x) if (is.null(x[[k]])) "<none>" else x[[k]], character(1))
+    if (length(unique(v)) > 1L)
+      bad <- c(bad, paste0("  ", k, ": ",
+                           paste0(names(s), "=", v, collapse = ", ")))
+  }
+  if (length(bad))
+    stop("The cells were built under different settings, so the differences ",
+         "between them are not the rule's:\n", paste(bad, collapse = "\n"),
+         call. = FALSE)
+
+  first <- s[[1]]
+  gone  <- MELP_SETTING_KEYS[!(MELP_SETTING_KEYS %in% names(first))]
+  if (length(gone))
+    stop("The cells' CONTRACT_SETTINGS does not carry ",
+         paste(gone, collapse = ", "), ", so what the B.2 count should be read ",
+         "under is unknown. They were built by a version that recorded a ",
+         "different set.", call. = FALSE)
+
+  out <- lapply(MELP_SETTING_KEYS, function(k) first[[k]])
+  for (nm in setdiff(names(out), "abbr")) {
+    v <- suppressWarnings(as.integer(out[[nm]]))
+    if (is.na(v))
+      stop("The cells recorded ", MELP_SETTING_KEYS[[nm]], "='", out[[nm]],
+           "', which is not a whole number of days.", call. = FALSE)
+    out[[nm]] <- v
+  }
+  out$abbr <- toupper(trimws(out$abbr))
+  if (!nzchar(out$abbr))
+    stop("The cells recorded an empty melp_med_abbr, so no line can be told to ",
+         "contain melphalan.", call. = FALSE)
+  out
 }
 
 # What is read off each build. The same nine numbers the sensitivity harness
@@ -460,4 +542,136 @@ melp_modes_apart <- function(results) {
     yield_to_sct = suppressWarnings(as.numeric(y[[m]][1])),
     difference = suppressWarnings(as.numeric(a[[m]][1]) - as.numeric(y[[m]][1])),
     stringsAsFactors = FALSE)))
+}
+
+# ---- The read ---------------------------------------------------------------
+# What every cell was built over, before any number is read off it.
+#
+# The runner already requires one cohort table and one cohort prefix, and that
+# is not the same thing - see MELP_INPUT_FIELDS.
+melp_read_inputs <- function(con, cells) {
+  inputs <- list()
+  for (c_i in cells) {
+    # The error is kept, not swallowed. A query that failed and a run with no
+    # metadata row are different problems, and reporting the first as the
+    # second sends the reader after a missing row that is there.
+    r <- tryCatch(db_q(con, melp_inputs_sql(
+      wrk(paste0(c_i$prefix, "LOT_RUN_METADATA")),
+      wrk(paste0(c_i$prefix, "LOT_CODELIST_METADATA")),
+      wrk(paste0(c_i$prefix, "LOT_BUILD_STATUS")),
+      cell_run_id(con, c_i))), error = function(e) e)
+    if (inherits(r, "error"))
+      stop("Could not read what ", c_i$id, " was built over: ",
+           conditionMessage(r), call. = FALSE)
+    if (!nrow(r))
+      stop("No LOT_RUN_METADATA row for ", c_i$id, ". Without it there is no ",
+           "record of which cohort attempt or code lists it was built over, and ",
+           "the comparison cannot be shown to be about the rule.", call. = FALSE)
+    inputs[[c_i$id]] <- r
+  }
+  melp_check_inputs(inputs)
+  melp_check_deviations(inputs, cells)
+  inputs
+}
+
+# Three built cells in, four files out.
+#
+# One function rather than a copy in each script. run_aug1_melp.R builds and
+# then reads; read_melp_metrics.R only reads, which is what a Spark failure in
+# the reading half leaves to do. When each carried its own reading, the recovery
+# script wrote two of the four files and left the other two as whichever run
+# wrote them last - four files with one timestamp, describing two different runs.
+#
+# So everything is computed first and written afterwards. A run that cannot
+# produce all four writes none of them, and the previous set stays whole.
+melp_report <- function(con, cells, out_dir, inputs = melp_read_inputs(con, cells)) {
+  st <- melp_settings(inputs)
+  cat("\nAll three cells were built over cohort attempt ",
+      inputs[[1]]$COHORT_RUN_ID[1], " / ", inputs[[1]]$COHORT_STAMP[1],
+      ", the same code, the same code lists and the same settings.\n", sep = "")
+
+  rows <- list()
+  for (c_i in cells) {
+    final <- wrk(paste0(c_i$prefix, "LOT_LONG_FINAL"))
+    cat("  reading ", c_i$id, " from ", final, "\n", sep = "")
+    # The MAP stack and the build's own windows, so the B.2 count is that
+    # population rather than every line melphalan happens to appear in.
+    m <- melp_metrics(con, final,
+      wrk(paste0(c_i$prefix, "LOT_ATTRITION")), cell_run_id(con, c_i), st$abbr,
+      map_tbl      = wrk(paste0(c_i$prefix, "MAP_STACKED")),
+      expo_days    = st$expo_days,
+      restart_days = st$restart_days,
+      advance_days = st$advance_days,
+      ind1         = st$ind1,
+      indn         = st$indn,
+      cart         = st$cart)
+    if (is.null(m))
+      stop("Metrics could not be read for ", c_i$id, " (", final, "). Either ",
+           "that cell was never built, or one of its statements failed. The result ",
+           "is the comparison between all three, so this is a stop rather than a row ",
+           "left out of it.", call. = FALSE)
+    rows[[length(rows) + 1L]] <- cbind(cell = c_i$id, mode = c_i$mode, m,
+                                       stringsAsFactors = FALSE)
+  }
+  res <- do.call(rbind, rows)
+  cmp <- melp_compare(res)
+
+  ap <- melp_modes_apart(res)
+  if (is.null(ap))
+    stop("The plan has no as_asked and yield_to_sct pair, so the transplant ",
+         "question is not answered and this is not the experiment.", call. = FALSE)
+
+  # The prefixes come from the plan, not from the default spelled out again.
+  # AUG1_PREFIX_BASE moves every cell, so a prefix written out here reads
+  # nothing under a custom base - or, worse, reads a previous experiment's
+  # tables that happen to still be there and reports them as this run's.
+  pfx_of <- function(id) {
+    hit <- Filter(function(c_i) identical(c_i$id, id), cells)
+    if (!length(hit)) stop("no ", id, " cell in the plan", call. = FALSE)
+    hit[[1]]$prefix
+  }
+  # Required, not best-effort. This is the comparison the two modes exist for,
+  # so a run that skipped it is not a finished experiment.
+  pd <- tryCatch(db_q(con, melp_modes_patients_sql(
+    wrk(paste0(pfx_of("as_asked"), "LOT_LONG_FINAL")),
+    wrk(paste0(pfx_of("yield_to_sct"), "LOT_LONG_FINAL")))), error = function(e) e)
+  if (inherits(pd, "error") || !nrow(pd))
+    stop("The two readings could not be compared patient by patient: ",
+         if (inherits(pd, "error")) conditionMessage(pd) else "no rows",
+         ". That comparison is what the two modes are for, so this is a stop ",
+         "rather than an output left out.", call. = FALSE)
+
+  dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+  for (f in list(list("melp_cells.csv", res), list("melp_vs_reference.csv", cmp),
+                 list("melp_modes_apart.csv", ap),
+                 list("melp_modes_patients.csv", pd)))
+    utils::write.csv(f[[2]], file.path(out_dir, f[[1]]), row.names = FALSE)
+
+  cat("\nAgainst the contract build:\n\n")
+  for (i in seq_len(nrow(cmp)))
+    cat(sprintf("  %-13s %-19s %10s -> %-10s %+8s  %s\n",
+                cmp$cell[i], cmp$metric[i], format(cmp$reference[i]),
+                format(cmp$observed[i]), format(cmp$change[i]),
+                if (is.na(cmp$pct_change[i])) "" else paste0(cmp$pct_change[i], "%")))
+
+  cat("\nThe two readings against each other, in aggregate. This is the\n",
+      "downstream consequence of the two interpretations, not a count of the\n",
+      "events where both rules fired:\n\n", sep = "")
+  for (i in seq_len(nrow(ap)))
+    cat(sprintf("  %-19s as_asked %-10s yield_to_sct %-10s  %+s\n",
+                ap$metric[i], format(ap$as_asked[i]),
+                format(ap$yield_to_sct[i]), format(ap$difference[i])))
+
+  cat("\nAnd patient by patient. A patient counts as differing when their line\n",
+      "count, or any line's start, end or end reason, is not the same under\n",
+      "both readings:\n\n", sep = "")
+  cat("  ", pd$N_PATIENTS[1], " patients in either build\n", sep = "")
+  cat("  ", pd$N_DIFFERENT[1], " whose lines differ between the two readings\n", sep = "")
+  cat("  ", pd$N_LINE_COUNT_DIFFERENT[1], " of those have a different NUMBER of lines\n", sep = "")
+  cat("  ", pd$N_SAME_COUNT_DIFFERENT_LINES[1],
+      " have the same number of lines in different places -\n",
+      "      which is why the aggregate above understates it\n", sep = "")
+  cat("  ", pd$N_ONLY_ONE_SIDE[1], " appear in one build and not the other\n", sep = "")
+  cat("\nWrote ", out_dir, ".\n", sep = "")
+  invisible(list(cells = res, compare = cmp, apart = ap, patients = pd))
 }
