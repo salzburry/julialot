@@ -34,6 +34,18 @@ MELP_B2_READING <- paste0(
   "B.2: the melphalan boundary is removed and the line is not held open to the ",
   "second dose. Both cells take this reading - see open question 6.")
 
+# The cell's own run id, from its own status row. Reading LOT_ATTRITION or
+# LOT_RUN_METADATA without it would take whichever run's rows came back first.
+cell_run_id <- function(con, c_i) {
+  st <- tryCatch(db_q(con, glue(
+    "SELECT RUN_ID FROM {wrk(paste0(c_i$prefix, 'LOT_BUILD_STATUS'))} ",
+    "ORDER BY UPDATED_AT DESC LIMIT 1")), error = function(e) NULL)
+  if (is.null(st) || !nrow(st))
+    stop("No LOT_BUILD_STATUS row under ", c_i$prefix, ", so there is no run ",
+         "to read ", c_i$id, "'s numbers from.", call. = FALSE)
+  st$RUN_ID[1]
+}
+
 melp_cell_plan <- function(cells = MELP_CELLS, prefix_base = "melp_") {
   lapply(cells, function(c_i)
     c(c_i, list(prefix = paste0(prefix_base, c_i$id, "_"))))

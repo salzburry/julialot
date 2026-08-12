@@ -45,9 +45,14 @@ stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
 con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
 on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
-abbr <- Sys.getenv("MELP_ABBR", unset = "MELP")
+abbr <- toupper(trimws(Sys.getenv("MELP_MED_ABBR", unset = "MELP")))
+# Through melp_cell_plan(), not MELP_CELLS directly - the prefix is attached
+# there, and iterating the bare list reads <schema>.LOT_LONG_FINAL, which is
+# the STUDY's table rather than a cell's.
+cells <- melp_cell_plan(MELP_CELLS,
+                        trimws(Sys.getenv("AUG1_PREFIX_BASE", unset = "melp_")))
 rows <- list()
-for (c_i in MELP_CELLS) {
+for (c_i in cells) {
   final <- wrk(paste0(c_i$prefix, "LOT_LONG_FINAL"))
   log_msg("Reading ", c_i$id, " from ", final)
   m <- melp_metrics(con, final,
