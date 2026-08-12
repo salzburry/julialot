@@ -980,8 +980,18 @@ assign("NDMM_MM_ADJACENT_STATES", "override", envir = se)
 oc <- paste(readLines(file.path(ROOT, "R", "steps", "04_other_malig.R"), warn = FALSE),
             collapse = "\n")
 ok(grepl("IN ({req_in})", oc, fixed = TRUE) &&
-     grepl("req    <- gsub(\"'\", \"''\", NDMM_MM_ADJACENT_OVERRIDE)", oc, fixed = TRUE),
-   "the fail-loud count is against the five required labels, not the proposal")
+     grepl("intersect(NDMM_MM_ADJACENT_OVERRIDE, ndmm_mm_adjacent_groups())",
+           oc, fixed = TRUE),
+   "the fail-loud count is against the core labels THIS MODE applies")
+# A fixed expectation of four fails precisely when a narrow mode is doing what
+# it was asked to: mgus_only applies one core label and none applies zero.
+for (md in c("override", "exclude", "mgus_only", "none")) {
+  assign("NDMM_MM_ADJACENT_STATES", md, envir = se)
+  n <- length(intersect(se$NDMM_MM_ADJACENT_OVERRIDE, se$ndmm_mm_adjacent_groups()))
+  ok(n == switch(md, override = 4L, exclude = 4L, mgus_only = 1L, none = 0L),
+     paste0("...which is ", n, " under NDMM_MM_ADJACENT_STATES=", md))
+}
+assign("NDMM_MM_ADJACENT_STATES", "override", envir = se)
 # The list the study team has to look at.
 SSQL <- character(0)
 assign("db_q", function(con, sql) data.frame(
@@ -991,9 +1001,13 @@ se$build_ndmm_mm_adjacent_groups(NULL, cfg_defaults)
 g <- SSQL[1]
 ok(grepl("NDMM_MM_ADJACENT_GROUPS", g, fixed = TRUE),
    "every plasma-cell-looking group on the code list is written out for review")
-for (k in c("%REMISSION%", "%RELAPSE%", "%PLASMACYTOMA%", "%PLASMA CELL%",
-            "%GAMMOPATHY%", "%MYELOMA%"))
+for (k in c("%PLASMACYTOMA%", "%PLASMA CELL%", "%GAMMOPATHY%", "%MYELOMA%"))
   ok(grepl(k, g, fixed = TRUE), paste0("...including anything matching ", k))
+# Not on the disease STATE. Every leukemia and lymphoma label carries those
+# words too, and they were reported as MM-adjacent groups.
+for (k in c("%REMISSION%", "%RELAPSE%"))
+  ok(!grepl(k, g, fixed = TRUE),
+     paste0("...but not on ", k, ", which is a state and not a disease"))
 ok(grepl("max(is_mm_adjacent_override)", g, fixed = TRUE),
    "with whether the override reaches it, which is the question being asked")
 
