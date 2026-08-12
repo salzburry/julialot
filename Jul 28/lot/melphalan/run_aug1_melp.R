@@ -126,7 +126,7 @@ main <- function() {
 
   # The reading half is melp_report(), in cells.R, because read_melp_metrics.R
   # runs the same half on its own when this one dies after the builds land.
-  melp_report(con, cells, out_dir)
+  melp_report(con, cells, out_dir, lot_root = LOT_ROOT)
   cat("These are three algorithms' numbers, not three readings of one. Each ",
       "cell's\ntables carry CONTRACT_DEVIATIONS, and every reader in this ",
       "folder refuses them\nas the study's.\n", sep = "")

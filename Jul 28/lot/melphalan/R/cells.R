@@ -791,6 +791,66 @@ melp_modes_apart <- function(results) {
 #
 # The runner already requires one cohort table and one cohort prefix, and that
 # is not the same thing - see MELP_INPUT_FIELDS.
+# ...and that the engine which built them is the engine reading them.
+#
+# MELP_INPUT_FIELDS compares CODE_MD5 across the three cells, which catches a
+# cell built from different code than its siblings. It cannot catch all three
+# being built from code that has since changed: they agree with each other
+# perfectly, every check passes, and the numbers describe an engine that no
+# longer exists. That is not hypothetical - the CAR-T induction rule landed on
+# 2026-08-13 and every cell built before it answers under the old algorithm.
+#
+# So the recorded hash is compared against the code actually running. Same
+# fingerprint the build writes: every .R under the engine's R/ plus build.R,
+# concatenated in radix order and hashed.
+#
+# A warning rather than a stop, unlike the sibling check. A cell built by other
+# code is a broken experiment; a cell built by older code is a stale one, and
+# whether that matters is the reader's call - re-reading last month's cells to
+# reproduce last month's numbers is a legitimate thing to do, and stopping it
+# would make the rebuild the only option.
+melp_check_code <- function(inputs, lot_root) {
+  # The build's own function, not a second implementation of it - a hash that
+  # has to equal the one in the metadata cannot be computed a different way.
+  # Neither script sources build_lot.R, so it is loaded into a private env
+  # rather than left to a tryCatch that would report "cannot fingerprint" for
+  # a function that is simply not in scope.
+  fp <- if (exists("code_fingerprint", mode = "function"))
+          get("code_fingerprint", mode = "function")
+        else {
+          e <- new.env(parent = globalenv())
+          ok <- tryCatch({
+            sys.source(file.path(lot_root, "R", "build_lot.R"), envir = e); TRUE
+          }, error = function(err) FALSE)
+          if (ok && exists("code_fingerprint", envir = e, mode = "function"))
+            get("code_fingerprint", envir = e, mode = "function") else NULL
+        }
+  if (is.null(fp)) {
+    warning("code_fingerprint() could not be loaded from ", lot_root,
+            ", so there is no check that these cells were built by the code ",
+            "reading them.", call. = FALSE)
+    return(invisible(NA))
+  }
+  now <- tryCatch(fp(lot_root), error = function(e) NA_character_)
+  if (is.na(now)) {
+    warning("The engine's code could not be fingerprinted, so there is no ",
+            "check that these cells were built by the code reading them.",
+            call. = FALSE)
+    return(invisible(NA))
+  }
+  was <- unique(vapply(inputs, function(r) {
+    x <- r$CODE_MD5
+    if (is.null(x) || length(x) == 0 || is.na(x[1])) "<none>" else as.character(x[1])
+  }, character(1)))
+  if (identical(was, now)) return(invisible(TRUE))
+  warning("These cells were built by LOT code with fingerprint ",
+          paste(was, collapse = "/"), ", and the code reading them is ",
+          now, ". The numbers below describe the engine as it was when the ",
+          "cells were built, not as it is now. Rebuild the cells if the ",
+          "answer is meant to be about the current algorithm.", call. = FALSE)
+  invisible(FALSE)
+}
+
 melp_read_inputs <- function(con, cells, status) {
   inputs <- list()
   for (c_i in cells) {
@@ -826,12 +886,13 @@ melp_read_inputs <- function(con, cells, status) {
 #
 # So everything is computed first and written afterwards. A read that cannot
 # produce the whole set writes none of it, and the previous set stays whole.
-melp_report <- function(con, cells, out_dir) {
+melp_report <- function(con, cells, out_dir, lot_root = NULL) {
   # Once per cell, then carried. Asking again for each run id is what lets a
   # rebuild land between two questions - see cell_status().
   status <- setNames(lapply(cells, function(c_i) cell_status(con, c_i)),
                      vapply(cells, function(c_i) c_i$id, character(1)))
   inputs <- melp_read_inputs(con, cells, status)
+  if (!is.null(lot_root)) melp_check_code(inputs, lot_root)
   st <- melp_settings(inputs)
   cat("\nAll three cells were built over cohort attempt ",
       inputs[[1]]$COHORT_RUN_ID[1], " / ", inputs[[1]]$COHORT_STAMP[1],

@@ -59,4 +59,4 @@ cells <- melp_cell_plan(MELP_CELLS,
 #
 # check_melp_plan() is not here and does not need to be: it refuses a plan that
 # would WRITE over the study's tables, and this writes nothing.
-melp_report(con, cells, out_dir)
+melp_report(con, cells, out_dir, lot_root = LOT_ROOT)
