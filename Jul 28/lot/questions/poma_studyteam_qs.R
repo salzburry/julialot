@@ -3,7 +3,7 @@
 #
 #   Rscript poma_studyteam_qs.R
 #
-# Five follow-up questions on the NDMM 1L study cohort, one tab per question
+# Six follow-up questions on the NDMM 1L study cohort, one tab per question
 # plus patient journeys and the coverage note. The CAR-T and raw-claim logic is
 # reused from R/validation_qs.R so it cannot drift from the dashboard.
 #

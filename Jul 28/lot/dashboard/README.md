@@ -162,6 +162,19 @@ recorded earlier is not thereby proved to be the right one - it is a detector,
 not a link. Closing it properly needs the cohort build to stamp a run id that
 `lot` captures, which is a change to those two packages rather than to this one.
 
+`fu_ce_window` sits on the same footing and has no detector at all. Its table
+is `CREATE OR REPLACE`, so a cohort rebuild replaces it while the LOT run on
+this page still describes the previous attempt. The cohort build now stamps
+`RUN_ID` and `RECORDED_AT` onto it, which is what makes that resolvable by
+hand - the panel does not read them, because a cohort built before the stamp
+existed has no such column and the panel would fail rather than degrade. Read
+it against the funnel panel's run.
+
+The two outcomes-facing readers are keyed, because they can be. `OUT_TTE`
+records the LOT run it was built over, so `outcomes_followup` filters on it
+and comes back empty rather than showing a previous run's follow-up beside
+this one's lines.
+
 ### Which population a panel describes
 
 `LOT_LONG_FINAL`, everywhere it is a study number. `LOT_LONG` is the same table

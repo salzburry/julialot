@@ -531,16 +531,32 @@ DASHBOARD_SECTIONS <- c(list(
   # than from the index date - so it is the window each TTNT, TTD and OS was
   # actually observed over.
   #
+  # Scoped to the LOT run the rest of the page is about. outcomes is a separate
+  # build over a finished LOT run and is not re-run when LOT is: rebuild LOT
+  # and leave outcomes alone, and OUT_TTE is still readable, still full of the
+  # previous run's rows, and would sit beside this run's line panels saying
+  # nothing. OUT_TTE records the LOT run it read, so the panel asks.
+  # Empty means outcomes has not been run against this one, which is a panel
+  # with no rows rather than a panel with the wrong ones.
+  #
   # The event counts are the point. A median TTNT is only readable if enough
   # lines reached the event; a line where almost everything is censored has a
   # median the data cannot support, and nothing else on the page says so.
+  #
+  # LINE_ELIGIBLE is NULL where no line-specific cohort exists, and outcomes
+  # means it: not eligible and not asked are different answers. Counting it as
+  # "= 1 THEN 1 ELSE 0" turns every NULL into a zero, and the column then reads
+  # as "nobody qualified" for a line where nobody was assessed. Scoring 1 and 0
+  # and leaving NULL alone keeps it - sum() skips NULLs, and a line that is all
+  # NULL sums to NULL rather than to 0.
   list(name = "outcomes_followup", tab = "Lines",
        label = "Observed follow-up per line, from the outcomes build",
        needs = "out_tte", render = "table",
        sql = "
          SELECT LOT_NUM                                                AS `Line`,
                 count(*)                                               AS `Lines`,
-                sum(CASE WHEN LINE_ELIGIBLE = 1 THEN 1 ELSE 0 END)     AS `Line-eligible`,
+                sum(CASE WHEN LINE_ELIGIBLE = 1 THEN 1
+                         WHEN LINE_ELIGIBLE = 0 THEN 0 END)            AS `Line-eligible`,
                 percentile_approx(datediff(FU_END_DT, LOT_START_DT), 0.25) AS `P25 days`,
                 percentile_approx(datediff(FU_END_DT, LOT_START_DT), 0.5)  AS `Median days`,
                 percentile_approx(datediff(FU_END_DT, LOT_START_DT), 0.75) AS `P75 days`,
@@ -548,6 +564,7 @@ DASHBOARD_SECTIONS <- c(list(
                 sum(TTD_EVENT)                                         AS `TTD events`,
                 sum(OS_EVENT)                                          AS `Deaths`
          FROM {out_tte}
+         WHERE LOT_RUN_ID = '{owner_run}'
          GROUP BY LOT_NUM ORDER BY LOT_NUM"),
 
   list(name = "lines_per_patient", tab = "Lines",

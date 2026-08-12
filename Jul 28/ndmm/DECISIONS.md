@@ -342,10 +342,13 @@ Status: decided and implemented.
 Assumptions this build makes, and what the vendor documentation says about
 them. Check here before asking the warehouse.
 
-`ICD_FLAG` is `'9'` or `'10'` and nothing else. The column is `VARCHAR(2)`,
-so longer spellings cannot appear. Both real values are covered and anything
-else yields NULL, which matches no code list. Reading every non-ICD-9 spelling
-as ICD-10 would mis-class a blank flag on a genuine ICD-9 claim.
+`ICD_FLAG` is `'9'` or `'10'` **or blank** - the 2026q1 delivery disproved the
+first reading of this. The column is `VARCHAR(2)`, so longer spellings cannot
+appear. Both real values are covered and anything else yields NULL, which
+matches no code list. Reading every non-ICD-9 spelling as ICD-10 would
+mis-class a blank flag on a genuine ICD-9 claim, which is why it does not.
+
+What a blank costs, and the policy for it, is section 11.
 
 Diagnosis position is not filtered, and should not be. `DIAG_POSITION` runs
 1 to 25. An MM diagnosis counts in any position, so no step reads the column.
@@ -562,3 +565,36 @@ whose regimen reduces to a single maintenance agent continues as the same line.
 Status: NOT IMPLEMENTED. This is the largest single gap between the protocol and
 the build outside safety and HCRU, and it changes line counts wherever the
 protocol would have opened a maintenance period.
+
+---
+
+## 11. An ICD_FLAG naming neither family - reported, not gated
+
+Decided: the build reports and continues. It stopped, and the first production
+run halted on 16 rows across two CDM tables - 15 diagnosis, 1 procedure, every
+one with a blank flag.
+
+Code: `check_icd_flag()` in `R/build_ndmm.R`. It finds claims whose `ICD_FLAG`
+names neither ICD-9 nor ICD-10 **and** whose normalised code is on a list this
+cohort reads, names each code and which list it is on, and writes the finding
+to `NDMM_RUN_METADATA.FINDINGS` with its counts.
+
+Effect on the cohort: none. Those rows matched no code list entry before this
+change and match none after it. What changed is whether the build stops.
+
+Why it is worth reporting at all: the miss cuts both ways. On an MM diagnosis
+code the lost match can exclude a patient who should be in; on an other-cancer
+or pregnancy code it can keep one who should be out. On a clinical-trial code
+it moves nobody, because trial evidence is descriptive and filters nothing.
+Which of those applies is what the code list column says.
+
+**The acceptance is not bounded, and that is the open part.** There is no
+threshold: 16 rows and 16 million report the same way and both let the build
+finish. The judgement that 16 rows against a cohort in the thousands is
+immaterial was made against the 2026q1 delivery, and it does not carry to the
+next one on its own. `FINDINGS` records the row and patient counts so the
+magnitude is on the run's row rather than in a log, but nothing acts on them.
+
+Status: ACCEPTED for 2026q1. Re-read on each refresh. If the study team wants a
+ceiling, it belongs here as a number and in `check_icd_flag()` as a stop above
+it - it is a governance decision, not a coding one.

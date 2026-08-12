@@ -601,6 +601,23 @@ er <- getsec("followup_end_reason")$sql
 ok(grepl("ELSE", er, fixed = TRUE) && identical(getsec("followup_end_reason")$pct, "total"),
    "what ended follow-up is an exhaustive partition, drawn as a share of all of it")
 
+cat("\n-- the outcomes panel is about the run the page is about --\n")
+# outcomes is a separate build over a finished LOT run, and is not re-run when
+# LOT is. Rebuild LOT and leave outcomes alone, and OUT_TTE is still readable
+# and still full of the previous run's rows - so an unscoped panel shows one
+# run's follow-up beside another run's lines, and probe_inputs cannot skip it
+# because the table is there.
+of <- getsec("outcomes_followup")
+ok(grepl("LOT_RUN_ID = '{owner_run}'", of$sql, fixed = TRUE),
+   "it filters OUT_TTE on the LOT run that owns the tables on this page")
+# LINE_ELIGIBLE is NULL where outcomes asked no eligibility question. "= 1 THEN
+# 1 ELSE 0" turns that into a zero, and the column reads as "nobody qualified"
+# for a line where nobody was assessed. Scoring 1 and 0 and leaving NULL alone
+# keeps the distinction: sum() skips NULLs and an all-NULL line sums to NULL.
+ok(!grepl("LINE_ELIGIBLE = 1 THEN 1 ELSE 0", of$sql, fixed = TRUE) &&
+     grepl("WHEN LINE_ELIGIBLE = 0 THEN 0 END", of$sql, fixed = TRUE),
+   "...and it leaves an unassessed line NULL rather than counting it as zero")
+
 cat("\n-- and they are not confused with the outcomes build's --\n")
 # This panel is one row per PATIENT over the study population. outcomes'
 # N_LOST_TO_FU / N_ONGOING are one row per patient-LINE, over what is left

@@ -396,6 +396,43 @@ ATTRITION_COLS <- c(RUN_ID = "STRING", STEP_NUM = "INT", CRITERION = "STRING",
                     N_PATIENTS = "BIGINT", PCT_OF_START = "DOUBLE",
                     RECORDED_AT = "TIMESTAMP")
 
+# CREATE TABLE IF NOT EXISTS does nothing to a table an earlier run left
+# behind, so a column added to a *_COLS list here reaches a fresh prefix and no
+# other. Naming the columns in the INSERT stops a positional mis-fill; it
+# cannot supply a column the table does not have, and the INSERT then fails -
+# at the end of the run, after the cohort is built and validated.
+#
+# That is what FINDINGS would have done to every established prefix. So each of
+# these tables is created and then brought up to its column list, the way
+# lot/engine's build status already does it.
+#
+# Look before adding: ADD COLUMNS on a column that exists is an error. And an
+# unreadable DESCRIBE means no answer, not a table with no columns - acting on
+# the second reading would try to add every column to a table that has them
+# all.
+ensure_cols <- function(con, tbl, spec) {
+  have <- tryCatch({
+    d  <- db_q(con, glue("DESCRIBE {tbl}"))
+    cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
+    if (length(cn)) toupper(trimws(as.character(d[[cn[1]]]))) else character(0)
+  }, error = function(e) character(0))
+  if (!length(have)) return(invisible(FALSE))
+  for (m in setdiff(names(spec), have)) {
+    tryCatch({
+      db_exec(con, glue("ALTER TABLE {tbl} ADD COLUMNS ({m} {spec[[m]]})"))
+      log_msg("  schema evolution on ", tbl, ": added ", m)
+    }, error = function(e) {
+      # Every column here is named in the INSERT that follows, so one that
+      # could not be added is a failure now rather than a surprise later.
+      if (!grepl("already exists|AlreadyExists|FIELD_ALREADY_EXISTS",
+                 conditionMessage(e), ignore.case = TRUE))
+        stop("Could not add column ", m, " to ", tbl, ": ", conditionMessage(e),
+             call. = FALSE)
+    })
+  }
+  invisible(TRUE)
+}
+
 # The attrition as a table, not only a log line. It is the deliverable here -
 # the request was the count and the funnel that reaches it.
 write_attrition <- function(con, cfg, counts) {
@@ -403,6 +440,7 @@ write_attrition <- function(con, cfg, counts) {
   cols <- names(ATTRITION_COLS)
   db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
                     paste(cols, ATTRITION_COLS, collapse = ", "), ")"))
+  ensure_cols(con, tbl, ATTRITION_COLS)
   start <- counts[[ATTRITION_STEPS[[1]]$key]]
   vals <- vapply(seq_along(ATTRITION_STEPS), function(i) {
     s <- ATTRITION_STEPS[[i]]
@@ -593,6 +631,7 @@ write_run_metadata <- function(con, cfg, here, n) {
   cols <- names(RUN_METADATA_COLS)
   db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
                     paste(cols, RUN_METADATA_COLS, collapse = ", "), ")"))
+  ensure_cols(con, tbl, RUN_METADATA_COLS)
   db_replace(con,
     glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"),
     glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) VALUES (",
@@ -772,6 +811,7 @@ write_codelist_metadata <- function(con, cfg) {
   cols <- names(CODELIST_METADATA_COLS)
   db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
                     paste(cols, CODELIST_METADATA_COLS, collapse = ", "), ")"))
+  ensure_cols(con, tbl, CODELIST_METADATA_COLS)
   vals <- vapply(names(seen), function(nm)
     glue("('{run_id}', {sql_text(nm)}, {sql_text(seen[[nm]]$md5)}, ",
          "{sql_count(seen[[nm]]$n_rows)}, current_timestamp())"),
@@ -793,6 +833,7 @@ write_build_status <- function(con, cfg, state, n = NA) {
   cols <- names(BUILD_STATUS_COLS)
   db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
                     paste(cols, BUILD_STATUS_COLS, collapse = ", "), ")"))
+  ensure_cols(con, tbl, BUILD_STATUS_COLS)
   db_replace(con,
     glue("DELETE FROM {tbl} WHERE RUN_ID = '{run_id}'"),
     glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) VALUES (",
@@ -917,6 +958,7 @@ check_icd_flag <- function(con, cfg) {
   codes_line <- function(sql, n) {
     d <- tryCatch(db_q(con, sql), error = function(e) NULL)
     if (is.null(d) || !nrow(d)) return("")
+    codes <<- c(codes, as.character(d$matched_code))
     num <- function(x) format(x, big.mark = ",", trim = TRUE, scientific = FALSE)
     s <- head(d, DETAIL_MAX)
     out <- paste0(", codes: ",
@@ -938,7 +980,7 @@ check_icd_flag <- function(con, cfg) {
                     "are not describing the same rows]")
     out
   }
-  found <- character(0)
+  found <- character(0); tally <- 0L; codes <- character(0)
   for (p in list(list(t = cdm_src(cfg$tbl_med_diag), c = "DIAG", l = dx_lists),
                  list(t = cdm_src(cfg$tbl_med_proc), c = "PROC", l = pr_lists))) {
     r <- db_q(con, probe_summary(p$t, p$c, p$l))
@@ -947,6 +989,7 @@ check_icd_flag <- function(con, cfg) {
       found <- c(found, paste0(p$t, ": ", format(n, big.mark = ","),
                                " row(s), ICD_FLAG in {", r$vals, "}",
                                codes_line(probe_detail(p$t, p$c, p$l), n)))
+    if (length(n) == 1L && !is.na(n) && n > 0) tally <- tally + n
   }
   if (!length(found)) {
     log_msg("  ICD_FLAG: every claim carrying a code this cohort reads names a family")
@@ -962,10 +1005,18 @@ check_icd_flag <- function(con, cfg) {
                 "other-cancer or pregnancy code it can keep one; on a trial code ",
                 "it moves nobody, because trial evidence filters nothing.")
   log_msg("WARNING (raw_icd_flag): ", msg)
-  # On the run's own row, so a cohort found months later carries the finding
-  # rather than depending on somebody still having the log.
-  options(ndmm_findings = union(getOption("ndmm_findings", character(0)),
-                                "raw_icd_flag"))
+  # On the run's own row with its size, so a cohort found months later carries
+  # the finding rather than depending on somebody still having the log - and
+  # carries enough of it to tell sixteen rows from a data-quality failure.
+  # The name alone would read the same either way, and there is no ceiling
+  # above which this stops the build (DECISIONS.md #11).
+  options(ndmm_findings = union(
+    getOption("ndmm_findings", character(0)),
+    paste0("raw_icd_flag(", format(tally, big.mark = ",", trim = TRUE,
+                                   scientific = FALSE), " rows",
+           if (length(codes)) paste0("; ", paste(head(sort(unique(codes)), 10L),
+                                                 collapse = " ")) else "",
+           if (length(unique(codes)) > 10L) " ..." else "", ")")))
   if ("raw_icd_flag" %in% waivers())
     log_msg("  (NDMM_WAIVERS=raw_icd_flag is no longer needed - this reports ",
             "rather than stops. The name is still accepted so existing commands ",
