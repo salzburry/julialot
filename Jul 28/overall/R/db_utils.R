@@ -253,6 +253,17 @@ db_ping <- function(con) {
            error = function(e) FALSE)
 }
 
+# Is this error "the table is not there", as opposed to "it could not be read"?
+#
+# Checks that fall back to a first-run default need the first only; the second
+# fires that fallback against a table full of rows. Not airtight: a warehouse
+# may answer TABLE_OR_VIEW_NOT_FOUND for an object the caller cannot see.
+missing_object_error <- function(err) {
+  msg <- if (inherits(err, "condition")) conditionMessage(err) else as.character(err)
+  length(msg) == 1L && !is.na(msg) &&
+    grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found|no such table|does not exist", msg, ignore.case = TRUE)
+}
+
 with_retry <- function(fn, max_retries = 3L, base_sleep = 5) {
   attempt <- 1
   repeat {

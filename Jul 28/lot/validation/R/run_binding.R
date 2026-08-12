@@ -53,8 +53,21 @@ lot_run_meta <- function(con, prefix) {
   tbl <- wrk(paste0(prefix, "LOT_RUN_METADATA"))
   d <- tryCatch(db_q(con, paste0(
     "SELECT * FROM ", tbl, " ORDER BY RUN_TIMESTAMP DESC LIMIT 1")),
-    error = function(e) NULL)
-  if (is.null(d) || nrow(d) == 0) return(NULL)
+    error = function(e) e)
+  # NULL means "no run recorded", and callers take that as a build too old to
+  # have written one. A table that could not be READ is this check not running,
+  # and returning NULL for it lets a comparison artefact out with its cohort
+  # attempt unestablished.
+  if (inherits(d, "condition")) {
+    if (!grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found|no such table|does not exist",
+               conditionMessage(d), ignore.case = TRUE))
+      stop("Could not read ", tbl, ": ", conditionMessage(d),
+           "\nThat table is what ties these outputs to the cohort attempt they ",
+           "were built over. A build old enough to have written none says so ",
+           "specifically; this did not.", call. = FALSE)
+    return(NULL)
+  }
+  if (nrow(d) == 0) return(NULL)
   one <- function(nm) {
     v <- .bind_col(d, nm)
     if (is.null(v)) NA_character_ else as.character(v[1])

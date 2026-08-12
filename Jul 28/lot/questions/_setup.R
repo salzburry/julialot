@@ -259,7 +259,7 @@ qs_ndmm_trial_flags <- function(con) {
      WHERE COHORT_RUN_ID IS NOT NULL ORDER BY RUN_TIMESTAMP DESC LIMIT 1")),
     error = function(e) e)
   if (inherits(lot, "condition") &&
-      !grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found",
+      !grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found|no such table|does not exist",
              conditionMessage(lot), ignore.case = TRUE))
     return(gap(paste0(
       qs_tbl("LOT_RUN_METADATA"), " could not be read (", conditionMessage(lot),
@@ -343,7 +343,7 @@ qs_trial_build_state <- function(con, src) {
   # correctly shaped tables can come from different attempts, and the column
   # checks downstream pass on both.
   if (inherits(d, "condition")) {
-    if (!grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found",
+    if (!grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found|no such table|does not exist",
                conditionMessage(d), ignore.case = TRUE))
       return(list(ok = FALSE, why = paste0(
         tbl, " could not be read (", conditionMessage(d), "), so whether the ",
@@ -352,12 +352,22 @@ qs_trial_build_state <- function(con, src) {
         "this did not.")))
     d <- NULL
   }
-  if (is.null(d) || nrow(d) == 0) {
+  if (is.null(d)) {
     log_msg("WARNING: no ", tbl, ", so the build behind the trial flags is ",
             "unverified - these answers assume it finished and wrote both ",
             "tables in the same run.")
     return(list(ok = TRUE, why = NULL))
   }
+  # An empty one is not the same as an absent one. That builder writes this
+  # table with CREATE OR REPLACE TABLE ... AS SELECT, one row, so a build old
+  # enough to predate it has no table at all. A table with no row is a state
+  # nothing here writes.
+  if (nrow(d) == 0)
+    return(list(ok = FALSE, why = paste0(
+      tbl, " exists but holds no row. That build writes it as a single-row ",
+      "CREATE OR REPLACE, so an empty one is not a build that predates the ",
+      "status table - it is a state nothing writes, and it says nothing about ",
+      "whether the flags and the final cohort came from one run.")))
   state <- tolower(trimws(as.character(qs_col(d, "state")[1])))
   run   <- as.character(qs_col(d, "run_id")[1])
   wrote <- qs_col(d, "final_table_name")
@@ -453,7 +463,7 @@ qs_lot_run_row <- function(con, prefix) {
   # cohort-mismatch refusal - and still writes a workbook. So only a missing
   # table takes that path.
   if (inherits(d, "condition")) {
-    if (grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found",
+    if (grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found|no such table|does not exist",
               conditionMessage(d), ignore.case = TRUE))
       return(NULL)
     stop("Could not read ", tbl, ": ", conditionMessage(d),

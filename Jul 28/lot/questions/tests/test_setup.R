@@ -369,8 +369,8 @@ drive_tbs <- function(x) {
 }
 ok(isTRUE(drive_tbs("TABLE_OR_VIEW_NOT_FOUND: wk.t_build_status")$ok),
    "a build old enough to have written no status table is allowed through")
-ok(isTRUE(drive_tbs(data.frame())$ok),
-   "...as is one that wrote the table and left it empty")
+ok(!isTRUE(drive_tbs(data.frame())$ok),
+   "...but an existing table with no row is not, since that build writes one")
 for (case in list(list(m = "HTTP 403: permission denied", w = "a refused read"),
                   list(m = "Connection reset by peer",    w = "a dropped connection"))) {
   r <- drive_tbs(case$m)

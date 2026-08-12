@@ -247,14 +247,39 @@ check_no_active_run_overall <- function(conn, cfg) {
   tbl <- build_status_table(cfg)
   d <- tryCatch(DBI::dbGetQuery(conn$con, paste0(
          "SELECT run_id, state, updated_at FROM ", tbl)),
-       error = function(e) NULL)
-  # No table yet on a first run, and nothing to collide with.
-  if (is.null(d) || !nrow(d)) return(invisible(TRUE))
+       error = function(e) e)
+  ignoring <- identical(toupper(Sys.getenv("OVERALL_IGNORE_ACTIVE_RUN",
+                                           unset = "")), "TRUE")
+  # No table is the first run on this prefix. Any other failure is this check
+  # not running, which is not this check passing - the same line ndmm and lot
+  # draw in their own copies of this guard.
+  if (inherits(d, "condition")) {
+    if (missing_object_error(d)) return(invisible(TRUE))
+    if (ignoring) {
+      log_msg("WARNING: ", tbl, " could not be read (", conditionMessage(d),
+              ") and OVERALL_IGNORE_ACTIVE_RUN is set, so nothing checked ",
+              "whether another run is building this prefix.")
+      return(invisible(TRUE))
+    }
+    stop("Could not read ", tbl, " to check for a run already building prefix '",
+         cfg$object_prefix, "': ", conditionMessage(d),
+         "\nThis is the check that stops two runs sharing one prefix, and it ",
+         "did not run. It is not a first run - a missing table says so ",
+         "specifically, and this did not. Fix the read and start again, or set ",
+         "OVERALL_IGNORE_ACTIVE_RUN=TRUE if you know no other run is going.",
+         call. = FALSE)
+  }
+  if (!nrow(d)) return(invisible(TRUE))
   me    <- get0("run_id", ifnotfound = "")
   state <- tolower(trimws(as.character(d$state[1])))
   who   <- as.character(d$run_id[1])
-  if (!identical(state, "started") || identical(who, me)) return(invisible(TRUE))
-  if (identical(toupper(Sys.getenv("OVERALL_IGNORE_ACTIVE_RUN", unset = "")), "TRUE")) {
+  # Not `|| identical(who, me)`. run_id comes from DOMINO_RUN_ID, so a second
+  # attempt in one Domino execution shares it - and skipping on a match hid the
+  # collision most worth catching. Safe because this runs before
+  # write_build_status marks this attempt started, so a 'started' row under
+  # this id is always another attempt's.
+  if (!identical(state, "started")) return(invisible(TRUE))
+  if (ignoring) {
     log_msg("WARNING: run ", who, " is marked started on prefix '",
             cfg$object_prefix, "' and OVERALL_IGNORE_ACTIVE_RUN is set. If it ",
             "is still running, both sets of outputs will be wrong.")
@@ -265,7 +290,14 @@ check_no_active_run_overall <- function(conn, cfg) {
        "plus the table, so two runs would replace each other's tables while ",
        "the other is reading them, and both could still finish. Use a ",
        "different OBJECT_PREFIX, or wait. If that run is known to be dead, ",
-       "set OVERALL_IGNORE_ACTIVE_RUN=TRUE.", call. = FALSE)
+       "set OVERALL_IGNORE_ACTIVE_RUN=TRUE.",
+       # Said out loud, or a shared DOMINO_RUN_ID reads as self-blocking.
+       if (identical(who, me))
+         paste0("\nThat is this run's own id (", who, "), which a second ",
+                "attempt in the same Domino execution shares. This attempt has ",
+                "not written its own row yet, so that one is another attempt ",
+                "still marked started.") else "",
+       call. = FALSE)
 }
 
 build_status_table <- function(cfg) {

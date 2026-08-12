@@ -163,10 +163,19 @@ resolve_owner_run <- function(con, inputs, have, cfg) {
   #
   # Class name and driver wordings both, as with_retry lists them: which comes
   # back depends on how the ODBC layer surfaces it.
+  #
+  # Two predicates, because the two reads below ask different questions. A
+  # column error is legacy for CONTRACT_DEVIATIONS, which was added later - but
+  # not for the ownership read, whose RUN_ID, STATE and UPDATED_AT have been
+  # there from the start. A status table missing one of those is malformed, and
+  # falling back to the newest completed metadata row would put run A's
+  # provenance over run B's tables. Only an absent table is legacy there.
+  missing_table <- function(msg)
+    grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found|does not exist",
+          msg, ignore.case = TRUE)
   legacy_gap <- function(msg)
-    grepl(paste0("TABLE_OR_VIEW_NOT_FOUND|Table or view not found|",
-                 "UNRESOLVED_COLUMN|Unresolved column|cannot resolve|",
-                 "no such column|does not exist"),
+    missing_table(msg) ||
+    grepl("UNRESOLVED_COLUMN|Unresolved column|cannot resolve|no such column",
           msg, ignore.case = TRUE)
   deviations_of <- function(rid) tryCatch({
     d <- db_q(con, paste0("SELECT CONTRACT_DEVIATIONS FROM ", inputs$build_st,
@@ -204,7 +213,7 @@ resolve_owner_run <- function(con, inputs, have, cfg) {
   st <- tryCatch(db_q(con, paste0(
     "SELECT RUN_ID, STATE, UPDATED_AT FROM ", inputs$build_st,
     " ORDER BY UPDATED_AT DESC LIMIT 1")), error = function(e) e)
-  if (inherits(st, "condition") && !legacy_gap(conditionMessage(st)))
+  if (inherits(st, "condition") && !missing_table(conditionMessage(st)))
     stop("Could not read ", inputs$build_st, ": ", conditionMessage(st),
          "\nThat table is what says which run wrote the tables on this page. ",
          "A study built by an older lot has no such table and says so ",

@@ -183,7 +183,7 @@ with_retry <- function(fn, max_retries = ndmm_config()$max_retries,
 missing_object_error <- function(err) {
   msg <- if (inherits(err, "condition")) conditionMessage(err) else as.character(err)
   length(msg) == 1L && !is.na(msg) &&
-    grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found", msg, ignore.case = TRUE)
+    grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found|no such table|does not exist", msg, ignore.case = TRUE)
 }
 
 # The retry wraps the whole call, so what it retries must be safe to run twice.
