@@ -102,6 +102,16 @@ does not. The two are different questions and the difference is deliberate.
 observed follow-up per line on both denominators, how many events each endpoint
 got, the attrition categories, and the check that the five sum to `N_ON_LINE`.
 
+Run its statement 1b first. `OUT_TTE` and `OUT_ATTRITION` are separate writes,
+so a run that died between them leaves one from this attempt and one from the
+last, both readable and nothing further down noticing. It compares their
+`OUT_RUN_ID` and names the LOT run they were built over.
+
+`Line-eligible` comes back NULL, not 0, where no line-specific cohort exists.
+Not eligible and not asked are different answers, and the restricted figures
+are reported by conditional aggregation rather than a `WHERE`, so a line nobody
+assessed still gets a row.
+
 It is a row per patient-**line**, from that line's own start. `ndmm/followup_days.sql`
 and the dashboard's Cohort tab are a row per **patient**, from the index date.
 They do not reconcile, and neither does `N_LOST_TO_FU` / `N_ONGOING` against

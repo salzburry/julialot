@@ -1323,8 +1323,13 @@ ok(grepl("exclude a patient", m, fixed = TRUE) &&
    "...and says which way each kind of code cuts, trial codes included")
 # A warning nobody kept the log for is a warning nobody has. The run's own row
 # carries it, so a cohort found later says what it was built over.
-ok(identical(r$findings, "raw_icd_flag"),
-   "...and the finding goes on the run's metadata row, not only into the log")
+# With its size, not just its name. Sixteen rows and a data-quality failure
+# read identically as "raw_icd_flag", and there is no ceiling above which this
+# stops the build - so the magnitude has to be on the row somebody reads later.
+ok(length(r$findings) == 1L && grepl("^raw_icd_flag\\(", r$findings) &&
+     grepl("14 rows", r$findings, fixed = TRUE) &&
+     grepl("C9000", r$findings, fixed = TRUE),
+   "...and the finding carries its row count and codes onto the metadata row")
 ok("FINDINGS" %in% names(RUN_METADATA_COLS),
    "...which is a column NDMM_RUN_METADATA actually has")
 r <- drive_icd(7L, waive = "raw_icd_flag")
@@ -1420,7 +1425,7 @@ ok(grepl("C0001", m, fixed = TRUE) && !grepl("C0025", m, fixed = TRUE) &&
 r <- drive_icd(7L, detail = "error")
 ok(grepl("WARNING (raw_icd_flag)", r$log, fixed = TRUE) &&
      grepl("names neither family", r$log, fixed = TRUE) &&
-     identical(r$findings, "raw_icd_flag"),
+     length(r$findings) == 1L && grepl("^raw_icd_flag\\(", r$findings),
    "...and a breakdown that cannot be read leaves the warning and the finding intact")
 
 cat("\n-- nothing is read before the step that builds it --\n")
@@ -1682,6 +1687,43 @@ ok(length(me$RUN_METADATA_COLS) == length(vals) + 1L,
           length(me$RUN_METADATA_COLS), " columns)"))
 ok(!any(grepl("BELANTAMAB_SCOPE", names(me$RUN_METADATA_COLS), fixed = TRUE)),
    "and the scope column went with the setting that fed it")
+
+cat("\n-- and the table is brought up to that column list, not just created --\n")
+# CREATE TABLE IF NOT EXISTS does nothing to a table an earlier run left, so a
+# column added to a *_COLS list reaches a fresh prefix and no other. The INSERT
+# names it, and fails - at the very end of the run, after the cohort is built
+# and validated and the intermediate tables replaced.
+#
+# FINDINGS would have done exactly that to every established prefix. Driven
+# against a DESCRIBE that is missing a column, so it is the behaviour that is
+# held and not the presence of an ALTER somewhere in the file.
+ee <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_ndmm.R"), envir = ee)
+EXEC <- character(0)
+drive_cols <- function(have, spec = c(A = "STRING", B = "BIGINT", C = "STRING")) {
+  EXEC <<- character(0)
+  assign("log_msg", function(...) invisible(NULL), envir = ee)
+  assign("db_q", function(con, sql)
+    if (is.null(have)) stop("no DESCRIBE here") else data.frame(col_name = have),
+    envir = ee)
+  assign("db_exec", function(con, sql) { EXEC <<- c(EXEC, sql); TRUE }, envir = ee)
+  ee$ensure_cols(NULL, "wk.T", spec)
+  EXEC
+}
+ok(length(drive_cols(c("A", "B", "C"))) == 0L,
+   "a table that already has every column is left alone")
+e2 <- drive_cols(c("A", "B"))
+ok(length(e2) == 1L && grepl("ADD COLUMNS (C STRING)", e2[1], fixed = TRUE),
+   "...one that is missing a column has it added, with its declared type")
+ok(length(drive_cols(NULL)) == 0L,
+   "...and a DESCRIBE that cannot be read adds nothing, rather than adding all of them")
+# Every table this build writes through a column list, not just the one that
+# prompted it - the next column goes on whichever table needs it.
+bt <- paste(bl, collapse = "\n")
+for (s in c("ATTRITION_COLS", "RUN_METADATA_COLS", "CODELIST_METADATA_COLS",
+            "BUILD_STATUS_COLS"))
+  ok(grepl(paste0("ensure_cols(con, tbl, ", s, ")"), bt, fixed = TRUE),
+     paste0("...and ", s, " is applied to its table, not only declared"))
 
 cat("\n-- every setting config.csv ships is one the code reads --\n")
 # NDMM_BELANTAMAB_SCOPE outlived the code that read it - the proxy moved to the

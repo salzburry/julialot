@@ -503,9 +503,13 @@ predicate, so the breakdown is of the rows that were found and not of some
 wider set, and they are checked against each other at run time. Long lists are
 cut at twenty codes and say how many were left out.
 
-The finding goes on the run's own row as `NDMM_RUN_METADATA.FINDINGS`, so a
-cohort found months later says what it was built over without anyone having
-kept the log. `NDMM_WAIVERS=raw_icd_flag` is still accepted and now does
+The finding goes on the run's own row as `NDMM_RUN_METADATA.FINDINGS`, with
+its row count and codes - `raw_icd_flag(16 rows; C9000 V5811)` - so a cohort
+found months later says what it was built over, and how much of it, without
+anyone having kept the log. There is no ceiling: sixteen rows and sixteen
+million report the same way and both let the build finish. That acceptance was
+made against one data delivery and is recorded in `DECISIONS.md` #11 to be
+re-read on each refresh. `NDMM_WAIVERS=raw_icd_flag` is still accepted and now does
 nothing - an unrecognised waiver name stops the build as a typo, so removing it
 would break the commands that were told to pass it.
 

@@ -472,7 +472,13 @@ build_ndmm_fu_ce_counts <- function(con, cfg) {
                                 AND {ndmm_criteria_where(except = 'CE_lot1_fu', alias = 'f.')}
                                THEN cov.PATID END)         AS N_COHORT,
            max(CASE WHEN cov.sort_key = {NDMM_FU_CE_DAYS} THEN 1 ELSE 0 END)
-                                                           AS IS_THIS_RUN
+                                                           AS IS_THIS_RUN,
+           -- Which cohort attempt these are. The table is CREATE OR REPLACE,
+           -- so a rebuild silently replaces it - and anything reading it
+           -- beside an older attempt's cohort had no way to tell. Every other
+           -- run-scoped table here carries this; this one did not.
+           {sql_text(run_id)}                              AS RUN_ID,
+           current_timestamp()                             AS RECORDED_AT
     FROM cov
     INNER JOIN {NDMM_FLAGS_ALL} f ON f.PATID = cov.PATID
     GROUP BY cov.rule, cov.sort_key

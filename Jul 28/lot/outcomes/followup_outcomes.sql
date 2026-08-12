@@ -22,13 +22,38 @@ CREATE OR REPLACE TEMPORARY VIEW attr AS
 SELECT * FROM hive_metastore.osk02156.ndmm_OUT_ATTRITION;
 
 
+-- 1b. RUN THIS FIRST. The two tables are separate writes, so a run that died
+--     between them leaves one from this attempt and one from the last. Both
+--     stay readable, and nothing further down would notice.
+--
+--     One row, and `Same run` must be `yes`. LOT_RUN_ID says which LOT run
+--     outcomes read: if it does not match the LOT build you think you are
+--     describing, these numbers are about a different set of lines.
+SELECT (SELECT count(DISTINCT OUT_RUN_ID) FROM tte)             AS `Runs in OUT_TTE`,
+       (SELECT count(DISTINCT OUT_RUN_ID) FROM attr)            AS `Runs in OUT_ATTRITION`,
+       (SELECT max(OUT_RUN_ID) FROM tte)                        AS `Outcomes run`,
+       (SELECT max(LOT_RUN_ID) FROM tte)                        AS `LOT run it read`,
+       CASE WHEN (SELECT count(DISTINCT OUT_RUN_ID) FROM tte)  = 1
+             AND (SELECT count(DISTINCT OUT_RUN_ID) FROM attr) = 1
+             AND (SELECT max(OUT_RUN_ID) FROM tte)
+                 = (SELECT max(OUT_RUN_ID) FROM attr)
+            THEN 'yes' ELSE 'NO - the two tables are from different runs'
+       END                                                      AS `Same run`;
+
+
 -- 2. Observed follow-up per line, and how many events each endpoint got.
 --    The event counts are the point: a median TTNT is only readable if enough
 --    lines reached the event. A line that is almost all censored has a median
 --    the data cannot support, and the median alone does not say so.
+--
+--    `Line-eligible` is NULL, not 0, where no line-specific cohort exists.
+--    outcomes means the difference: not eligible and not asked are different
+--    answers, and a 0 there would read as "nobody qualified" for a line where
+--    nobody was assessed.
 SELECT LOT_NUM                                                     AS `Line`,
        count(*)                                                    AS `Lines`,
-       sum(CASE WHEN LINE_ELIGIBLE = 1 THEN 1 ELSE 0 END)          AS `Line-eligible`,
+       sum(CASE WHEN LINE_ELIGIBLE = 1 THEN 1
+                WHEN LINE_ELIGIBLE = 0 THEN 0 END)                 AS `Line-eligible`,
        percentile_approx(datediff(FU_END_DT, LOT_START_DT), 0.25)  AS `P25 days`,
        percentile_approx(datediff(FU_END_DT, LOT_START_DT), 0.5)   AS `Median days`,
        percentile_approx(datediff(FU_END_DT, LOT_START_DT), 0.75)  AS `P75 days`,
@@ -44,13 +69,20 @@ GROUP BY LOT_NUM ORDER BY LOT_NUM;
 --    Both denominators are reported by the build and neither is the study's
 --    answer on its own - see lot/outcomes/README.md. Run 2 and 3 together or
 --    neither. Quoting one is picking a denominator silently.
+--
+--    Conditional aggregation rather than WHERE LINE_ELIGIBLE = 1, so a line
+--    with no eligibility cohort still gets a row, with NULLs. Filtered, it
+--    would return no row at all, and a missing row reads as a line that does
+--    not exist rather than one nobody asked the question of.
 SELECT LOT_NUM                                                     AS `Line`,
-       count(*)                                                    AS `Lines`,
-       percentile_approx(datediff(FU_END_DT, LOT_START_DT), 0.5)   AS `Median days`,
-       sum(TTNT_EVENT)                                             AS `TTNT events`,
-       sum(OS_EVENT)                                               AS `Deaths`
+       sum(CASE WHEN LINE_ELIGIBLE = 1 THEN 1
+                WHEN LINE_ELIGIBLE = 0 THEN 0 END)                 AS `Line-eligible`,
+       percentile_approx(CASE WHEN LINE_ELIGIBLE = 1
+                              THEN datediff(FU_END_DT, LOT_START_DT) END, 0.5)
+                                                                   AS `Median days`,
+       sum(CASE WHEN LINE_ELIGIBLE = 1 THEN TTNT_EVENT END)        AS `TTNT events`,
+       sum(CASE WHEN LINE_ELIGIBLE = 1 THEN OS_EVENT END)          AS `Deaths`
 FROM tte
-WHERE LINE_ELIGIBLE = 1
 GROUP BY LOT_NUM ORDER BY LOT_NUM;
 
 
