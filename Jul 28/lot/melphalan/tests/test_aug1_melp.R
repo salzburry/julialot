@@ -247,16 +247,21 @@ ok(has(rs, "this is a stop rather than a row"),
    "...as does a cell whose metrics come back empty")
 
 cat("\n-- what is read off the builds --\n")
-sql <- melp_metric_sql("F", "A", "r1", "MELP", map_tbl = "M")
+# Several statements now, one plan each - Spark's optimizer died on the single
+# nineteen-subquery one. Joined for the text checks, which are about what the
+# set of them selects rather than about any one.
+sqls <- melp_metric_sql("F", "A", "r1", "MELP", map_tbl = "M")
+sql  <- paste(sqls, collapse = "\n")
 ok(all(vapply(names(MELP_METRICS), function(m) has(sql, paste0("AS ", m)), logical(1))),
    paste0("all ", length(MELP_METRICS), " metrics are actually selected"))
 # And the other way. A column the query computes and MELP_METRICS does not name
 # is read off every build and then reported by nothing - the work is done and
 # the answer never reaches the output.
-# The final projection only. The CTEs above it alias working columns of their
-# own (per_pat.max_lot), and those are not outputs.
-proj <- sub("(?s)^.*\\n    \\)\\n    SELECT ", "", sql, perl = TRUE)
-selected <- unique(unlist(regmatches(proj, gregexpr("(?<=AS )[a-z][a-z0-9_]+", proj, perl = TRUE))))
+# By the naming rule rather than by position: every metric is n_/median_/pct_,
+# and the CTEs alias working columns of their own (EXPO_DT, IS_NEW) which are
+# not outputs and never carry those prefixes.
+selected <- unique(unlist(regmatches(sql,
+  gregexpr("(?<=AS )(n_|median_|pct_)[a-z0-9_]+", sql, perl = TRUE))))
 ok(setequal(selected, names(MELP_METRICS)),
    paste0("...and nothing is selected that is never reported (",
           paste(setdiff(selected, names(MELP_METRICS)), collapse = ", "), ")"))
@@ -484,8 +489,8 @@ ok(has(sql, "< 30 THEN 0 ELSE 1 END AS IS_NEW"),
 # no-MAP fallback is two conditional slots in one projection, and getting the
 # arity wrong there emits an alias with nothing in front of it - which parses
 # nowhere and would only be found by running it.
-for (v in list(list("no MAP",   melp_metric_sql("F", "A", "r1", "MELP")),
-               list("with MAP", melp_metric_sql("F", "A", "r1", "MELP", map_tbl = "M")))) {
+for (v in list(list("no MAP",   paste(melp_metric_sql("F", "A", "r1", "MELP"), collapse = "\n")),
+               list("with MAP", paste(melp_metric_sql("F", "A", "r1", "MELP", map_tbl = "M"), collapse = "\n")))) {
   ok(!grepl(",\\s*AS [a-z]", v[[2]]),
      paste0(v[[1]], ": no alias is left with no expression in front of it"))
   ok(!grepl("^\\s*AS [a-z]", v[[2]], perl = TRUE) &&
@@ -494,7 +499,7 @@ for (v in list(list("no MAP",   melp_metric_sql("F", "A", "r1", "MELP")),
   ok(length(gregexpr("AS n_b2", v[[2]])[[1]]) == 2L,
      paste0("...", v[[1]], ": and both B.2 columns are aliased once each"))
 }
-ok(has(melp_metric_sql("F", "A", "r1", "MELP"), "cast(NULL as bigint)"),
+ok(has(paste(melp_metric_sql("F", "A", "r1", "MELP"), collapse = "\n"), "cast(NULL as bigint)"),
    "with no MAP table to read, the B.2 columns are NULL rather than wrong")
 mrs <- paste(readLines(file.path(LOT, "R", "melp_rule.R"), warn = FALSE), collapse = "\n")
 ok(has(mrs, "It does not hold the line") && grepl("[Oo]pen question 6", mrs),

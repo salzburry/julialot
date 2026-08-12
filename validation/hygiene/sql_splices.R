@@ -103,7 +103,12 @@ defs <- list(); defs2 <- list()
 for (f in files) {
   exprs <- tryCatch(parse(f, keep.source = FALSE), error = function(e) NULL)
   for (e in exprs) {
-    if (!is.call(e) || !as.character(e[[1]]) %in% c("<-", "=")) next
+    # length() first: a top-level `pkg::fn(...)` has a call, not a symbol, in
+    # e[[1]], and as.character() of that is three elements - which turns the
+    # %in% into a length-3 condition and errors out of the whole scan rather
+    # than skipping one expression.
+    if (!is.call(e) || length(e[[1]]) != 1L ||
+        !as.character(e[[1]]) %in% c("<-", "=")) next
     nm <- tryCatch(as.character(e[[2]]), error = function(x) "")
     if (length(nm) == 1L && nm %in% want) {
       src1 <- paste(deparse(e[[3]]), collapse = "\n")

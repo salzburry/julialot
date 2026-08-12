@@ -166,7 +166,7 @@ main <- function() {
     c_i <- cells[[i]]
     # The MAP stack and the build's own windows, so the B.2 count is that
     # population rather than every line melphalan happens to appear in.
-    m <- tryCatch(db_q(con, melp_metric_sql(
+    m <- melp_metrics(con,
       wrk(paste0(c_i$prefix, "LOT_LONG_FINAL")),
       wrk(paste0(c_i$prefix, "LOT_ATTRITION")), cell_run_id(con, c_i), abbr,
       map_tbl      = wrk(paste0(c_i$prefix, "MAP_STACKED")),
@@ -175,8 +175,7 @@ main <- function() {
       advance_days = cfg$melp_advance_days,
       ind1         = cfg$induction_window_days,
       indn         = cfg$lot_n_induction_window_days,
-      cart         = cfg$cart_consolidation_days)),
-      error = function(e) NULL)
+      cart         = cfg$cart_consolidation_days)
     if (is.null(m))
       stop("Metrics could not be read for ", c_i$id, ". The result is the ",
            "comparison between all three, so this is a stop rather than a row ",
