@@ -250,10 +250,14 @@ subseq_pre_expr <- function(ix, pre_days) {
 # difference is the rule. "or death": the window is cut short at the death
 # date, and at nothing else. The study end does not truncate it, so a patient
 # whose window runs past the data does not qualify on the data's account.
+# Floored at the index date, for the same reason as the 1L flag: a death date
+# carried from the cohort can precede a later line's start - it was imputed
+# against the MM diagnosis - and without the floor the window collapses behind
+# the index and enrolment that stops before the line begins passes.
 subseq_fu_expr <- function(ix, fu_days, death = "g.DEATH_DT") {
   end <- glue("date_add({ix}, {as.integer(fu_days)})")
   glue("max(CASE WHEN s.cov_start <= {ix}",
-       " AND s.cov_end >= least({end}, coalesce({death}, {end}))",
+       " AND s.cov_end >= greatest({ix}, least({end}, coalesce({death}, {end})))",
        " THEN 1 ELSE 0 END)")
 }
 

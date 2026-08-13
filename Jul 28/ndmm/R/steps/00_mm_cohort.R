@@ -148,7 +148,17 @@ build_ndmm_demographics <- function(con, member_elig_tbl, dod_tbl) {
       SELECT PATID, GDR_CD, cast(YRDOB as int) AS YRDOB,
              row_number() OVER (PARTITION BY PATID
                ORDER BY CASE WHEN upper(GDR_CD) NOT IN ('U','') THEN 0 ELSE 1 END,
-                        cast(ELIGEND as date) DESC) AS rn
+                        -- A usable birth year outranks a missing or unparseable
+                        -- one, whatever the row's date. A newer row carrying a
+                        -- null YRDOB used to win and take the age with it.
+                        CASE WHEN cast(YRDOB as int) IS NOT NULL THEN 0 ELSE 1 END,
+                        cast(ELIGEND as date) DESC,
+                        -- Ties broken by the values themselves, so the same input
+                        -- always gives the same patient. Two rows sharing one
+                        -- ELIGEND with YRDOB 1980 and 2010 could otherwise make
+                        -- the same person 40 and eligible on one run, 10 and
+                        -- excluded on the next.
+                        cast(YRDOB as int), GDR_CD) AS rn
       FROM {member_elig_tbl}
     )
     SELECT PATID, GDR_CD, YRDOB FROM ranked WHERE rn = 1

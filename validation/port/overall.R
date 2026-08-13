@@ -162,6 +162,18 @@ EVENTS_PORT <- paste0("events AS (SELECT * FROM dx UNION ALL SELECT * FROM ",
                       "SELECT * FROM icd_proc UNION ALL SELECT * FROM rev),")
 
 DEVIATIONS <- list(
+  # Demographic selection was nondeterministic: one row per patient was picked
+  # by known-sex then newest ELIGEND, and nothing broke a tie beyond that. Two
+  # rows sharing an ELIGEND with YRDOB 1980 and 2010 could make the same
+  # patient 40 and eligible on one run and 10 and excluded on the next, and a
+  # newer row carrying a null YRDOB won and took the age with it. The added
+  # keys prefer a usable birth year and then order by the values themselves,
+  # so the same input always yields the same patient.
+  "15_member_demo" = list(
+    list(port = c("CASE WHEN cast(YRDOB as int) IS NOT NULL THEN 0 ELSE 1 END,",
+                  "cast(ELIGEND as date) DESC,",
+                  "cast(YRDOB as int), GDR_CD) AS rn"),
+         src  = "cast(ELIGEND as date) DESC) AS rn")),
   # Every code list is read DISTINCT, and every one drops codes that normalize
   # to blank. A code that is only punctuation normalizes to the empty string and
   # then equals the normalized form of any claim whose code is missing - the

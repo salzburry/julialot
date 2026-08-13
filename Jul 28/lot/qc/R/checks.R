@@ -240,24 +240,36 @@ LOT_QC_CHECKS <- list(
       AND LOT_BASE_DISCON_DT < LOT_START_DT"),
     "concat(pid, ' LOT', LOT_NUM)")),
 
-  list(id = "B8", group = "End reason", severity = "info",
-       what = "discontinuations inside the confirmation window an older rule required",
-       why = paste0("The spec's LOT1_BASE tab still carries a rule nulling a ",
-                    "run-out within 90 days of observation end - not enough ",
-                    "follow-up to confirm the patient truly discontinued - while ",
-                    "its later end-date tabs re-derive the date with no such ",
-                    "condition, which is what the build does. Whether that rule ",
-                    "was demoted or forgotten, these are the lines it would have ",
-                    "censored instead, so this is what the difference is worth."),
+  list(id = "B8", group = "End reason", severity = "fail",
+       what = "unconfirmed discontinuations, which should be none",
+       why = paste0("A run-out counts as a discontinuation only once it is ",
+                    "confirmed: either LOT_DISCON_CONFIRM_DAYS of observation ",
+                    "follow it, or the patient came back and opened the next ",
+                    "line. Anything else is censored at observation end, ",
+                    "because in a real-world claims study a patient we stop ",
+                    "seeing fills for has not necessarily stopped treatment. ",
+                    "So a DISCONTINUATION inside the window is fine when a ",
+                    "later line exists, and a defect when none does - the ",
+                    "buffer should have censored that one. Lines at the ",
+                    "max_lot cap are exempt: the build stops there, so the ",
+                    "confirming line would not have been built either way."),
        needs = c("final", "cohort"),
        sql = function(t, p) counted(paste0("
-    SELECT ", mask("l.PATID"), " AS pid, l.LOT_NUM,
-           datediff(", p$obs_end, ", l.LOT_BASE_END_DT) AS days_left
-    FROM ", t$final, " l
-    INNER JOIN ", t$cohort, " c ON cast(l.PATID as string) = cast(c.PATID as string)
-    WHERE l.LOT_BASE_END_REASON = 'DISCONTINUATION'
-      AND datediff(", p$obs_end, ", l.LOT_BASE_END_DT) < ", p$gap),
-    "concat(pid, ' LOT', LOT_NUM, ': ', days_left, ' days of follow-up after run-out')")),
+    SELECT pid, LOT_NUM, days_left
+    FROM (
+      SELECT ", mask("l.PATID"), " AS pid,
+             l.LOT_NUM,
+             l.LOT_BASE_END_REASON AS reason,
+             datediff(", p$obs_end, ", l.LOT_BASE_END_DT) AS days_left,
+             max(l.LOT_NUM) OVER (PARTITION BY l.PATID) AS LAST_LOT_NUM
+      FROM ", t$final, " l
+      INNER JOIN ", t$cohort, " c ON cast(l.PATID as string) = cast(c.PATID as string)
+    ) x
+    WHERE reason = 'DISCONTINUATION'
+      AND days_left < ", p$confirm, "
+      AND LOT_NUM = LAST_LOT_NUM
+      AND LOT_NUM < ", p$max_lot),
+    "concat(pid, ' LOT', LOT_NUM, ': ', days_left, ' days of follow-up after run-out, and no later line')")),
 
   list(id = "B9", group = "End reason", severity = "info",
        what = "deaths outranking an earlier run-out",
@@ -596,9 +608,11 @@ qc_params <- function(settings, run_id) {
        cart     = qc_int(settings, "cart_consolidation_days"),
        tandem   = qc_int(settings, "sct_tandem_days"),
        auto_gap = qc_int(settings, "sct_auto_gap_days"),
-       # B8's confirmation window. The spec's line-level rule used the same 90
-       # days the per-drug gap uses, and the run records only the latter.
-       gap      = qc_int(settings, "map_discon_gap_days"),
+       # B8's confirmation window, and the line cap it needs to know where
+       # the build stops looking for a next line. Both are recorded now; the
+       # window used to be read off map_discon_gap_days because it was not.
+       confirm  = qc_int(settings, "lot_discon_confirm_days"),
+       max_lot  = qc_int(settings, "max_lot"),
        # The build derives this once, in a session view that is gone by the
        # time this package runs, so it is rebuilt the same way rather than
        # assumed to be ENDDATE.

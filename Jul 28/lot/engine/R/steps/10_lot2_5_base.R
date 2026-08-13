@@ -211,6 +211,10 @@ build_lot_n <- function(con, lot_num,
              ll.LOT_BASE_MEDS    AS PREV_BASE_MEDS,
              ll.LOT_START_DT     AS PREV_START_DT,
              ll.LOT_START_TYPE   AS PREV_START_TYPE,
+             -- Needed by auto_cand: an AUTO that ENDED the previous line has
+             -- already been judged excess there and must not be re-judged as a
+             -- tandem partner here.
+             ll.LOT_BASE_END_REASON AS PREV_END_REASON,
              p.OBS_END_DT,
              p.DEATH_DT,
              p.ENDDATE,
@@ -306,8 +310,19 @@ build_lot_n <- function(con, lot_num,
         -- (ii) not a planned tandem. tx_auto_dates has already grouped AUTO
         -- claims < 60 d apart into one event, so only the sct_tandem_days
         -- upper bound is left to test here, as in LOT1.
+        --
+        -- ...except for the AUTO that ended the previous line. That one has
+        -- already been adjudicated EXCESS by the previous line's own rule -
+        -- LOT1 allows a single AUTO and a tandem pair, and ends the line on
+        -- the one beyond them - so re-testing it as a tandem partner of the
+        -- transplant before it orphans the event: AUTO 1 Mar, AUTO 2 Jun
+        -- (tandem), AUTO 3 Nov ends LOT1 on 31 Oct and was then rejected here
+        -- as within 180 days of AUTO 2, so LOT2 never opened. The line-ending
+        -- SCT sits one day after the end date, which is where that AUTO is.
         AND NOT (awp.PREV_AUTO_DT IS NOT NULL
-                 AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {sct_tandem_days})
+                 AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {sct_tandem_days}
+                 AND NOT (pe.PREV_END_REASON = 'SCT_AUTO'
+                          AND awp.TX_DT = date_add(pe.PREV_END_DT, 1)))
       GROUP BY pe.PATID
     )
     SELECT
@@ -398,26 +413,49 @@ build_lot_n <- function(con, lot_num,
       FROM lot{lot_num}_induction_meds im
       INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
     ),{melp_lotn_ctes(cfg, lot_num, induction_window_days, cart_consolidation_days, allo_lot_span)}
-    discon_raw AS (
-      SELECT ms.PATID, max(ms.MAP_END_DT) AS RAW_DISCON_DT
+    -- Per drug, the end of ITS cover in this line: the FIRST episode flagged
+    -- discontinued. A later episode of the same drug is a restart, and a
+    -- restart opens the next line rather than extending this one.
+    --
+    -- max(MAP_END_DT) over every episode quietly undid that. Drug A dosed
+    -- days 0-27, discontinued at 27 by the 90-day gap, restarting 117-144 gave
+    -- a line-level runout of 144: the restart was swallowed, and LOT2 never
+    -- opened because its trigger has to fall strictly after the previous end.
+    -- MAP_DISCON_FLG had been computed correctly all along and read by nothing
+    -- but a QC count.
+    discon_per_med AS (
+      SELECT ms.PATID, ms.MAP_MED_TYPE,
+             coalesce(min(CASE WHEN ms.MAP_DISCON_FLG = 1 THEN ms.MAP_END_DT END),
+                      max(ms.MAP_END_DT)) AS MED_END_DT
       FROM map_stacked ms
       INNER JOIN lot{lot_num}_start ls ON ms.PATID = ls.PATID
       INNER JOIN base_meds bm ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
       WHERE ms.MAP_START_DT >= ls.LOT{lot_num}_START_DT
-      GROUP BY ms.PATID
+      GROUP BY ms.PATID, ms.MAP_MED_TYPE
+    ),
+    -- The regimen has run out when its LAST base agent has.
+    discon_raw AS (
+      SELECT PATID, max(MED_END_DT) AS RAW_DISCON_DT
+      FROM discon_per_med
+      GROUP BY PATID
     ),
     discon AS (
       SELECT
         ls.PATID,
-        -- No LOT-level 90d confirmation buffer. LOT{lot_num}_BASE_DISCON_DT is
-        -- the last med date (max MAP_END_DT) whenever a runout exists and falls
-        -- on or before OBS_END_DT. Capping at OBS_END_DT keeps days-supply tails
-        -- past death/study_end from extending the LOT (applies to all LOT types).
+        -- Where the regimen ran out, whenever that falls on or before
+        -- OBS_END_DT. Capping at OBS_END_DT keeps days-supply tails past
+        -- death/study_end from extending the LOT (applies to all LOT types).
+        --
+        -- The run-out, not yet a discontinuation - the confirmation buffer and
+        -- the post-runout trigger are applied in the end statement below,
+        -- where POST_RUNOUT_TRIGGER_FLG exists. The add-med window below wants
+        -- this raw date: an agent added after the regimen ran out opens the
+        -- next line rather than ending this one.
         CASE
           WHEN d.RAW_DISCON_DT IS NOT NULL AND d.RAW_DISCON_DT <= ls.OBS_END_DT
             THEN d.RAW_DISCON_DT
           ELSE NULL
-        END AS LOT{lot_num}_BASE_DISCON_DT
+        END AS LOT{lot_num}_BASE_RUNOUT_DT
       FROM lot{lot_num}_start ls
       LEFT JOIN discon_raw d ON ls.PATID = d.PATID
     ),
@@ -453,7 +491,7 @@ build_lot_n <- function(con, lot_num,
                 THEN date_add(ls.LOT{lot_num}_START_DT, {cart_consolidation_days - 1})
               ELSE date_add(ls.LOT{lot_num}_START_DT, {induction_window_days - 1})
             END
-        AND ms.MAP_START_DT <= coalesce(d.LOT{lot_num}_BASE_DISCON_DT, ls.OBS_END_DT)
+        AND ms.MAP_START_DT <= coalesce(d.LOT{lot_num}_BASE_RUNOUT_DT, ls.OBS_END_DT)
         -- ALLO single_day LOTs end on the ALLO date itself, so add-med is moot.
         AND NOT (ls.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND {if (allo_lot_span == 'single_day') 1L else 0L} = 1){melp_suppress_predicate(cfg)}
       {melp_inject_arm(cfg, glue('lot{lot_num}_start'), glue('LOT{lot_num}_START_DT'),
@@ -481,7 +519,7 @@ build_lot_n <- function(con, lot_num,
       ls.ENDDATE_CE,
       coalesce(ms.LOT{lot_num}_MED_CNT, 0)   AS LOT{lot_num}_MED_CNT,
       coalesce(ms.LOT{lot_num}_BASE_MEDS, '') AS LOT{lot_num}_BASE_MEDS,
-      d.LOT{lot_num}_BASE_DISCON_DT,
+      d.LOT{lot_num}_BASE_RUNOUT_DT,
       fa.LOT{lot_num}_BASE_1ST_ADD_MED_DT,
       fa.LOT{lot_num}_BASE_1ST_ADD_MED,
       -- Dynamic per-MED and per-CLASS flags (mirror LOT1). NULL -> 0 for
@@ -498,7 +536,7 @@ build_lot_n <- function(con, lot_num,
     LEFT JOIN first_add_pick fa ON ls.PATID = fa.PATID
   "), qc = glue("SELECT count(*) AS n_pats,
                         avg(LOT{lot_num}_MED_CNT) AS avg_meds,
-                        sum(CASE WHEN LOT{lot_num}_BASE_DISCON_DT IS NOT NULL THEN 1 ELSE 0 END) AS n_discon,
+                        sum(CASE WHEN LOT{lot_num}_BASE_RUNOUT_DT IS NOT NULL THEN 1 ELSE 0 END) AS n_runout,
                         sum(CASE WHEN LOT{lot_num}_BASE_1ST_ADD_MED_DT IS NOT NULL THEN 1 ELSE 0 END) AS n_add_med
                  FROM lot{lot_num}_base"))
 
@@ -709,7 +747,7 @@ build_lot_n <- function(con, lot_num,
               name = lotn_table(lot_num, "BASE_END"), body = glue("
     WITH
     -- Post-runout guard: identify whether any LOT_(N+1)-qualifying
-    -- trigger exists strictly after LOT_BASE_DISCON_DT and on/before
+    -- trigger exists strictly after LOT_BASE_RUNOUT_DT and on/before
     -- OBS_END_DT. This is used to prevent DEATH from preempting
     -- DISCONTINUATION when a patient ran out and then started new therapy
     -- (or had an SCT) before dying. Without this gate, the post-runout
@@ -727,7 +765,7 @@ build_lot_n <- function(con, lot_num,
     --     CART-started) AND not within sct_tandem_days (180d) of the
     --     immediately prior AUTO in patient history (planned tandem).
     --     Mirrors auto_cand exactly with PREV_END_DT swapped for
-    --     LOT_BASE_DISCON_DT.
+    --     LOT_BASE_RUNOUT_DT.
     --   - ALLO/CART: any after runout (no window check; ALLO and CART
     --     always trigger a new LOT).
     post_runout_excluded_meds AS (
@@ -741,8 +779,8 @@ build_lot_n <- function(con, lot_num,
       INNER JOIN lot{lot_num}_base lb ON ms.PATID = lb.PATID
       LEFT JOIN post_runout_excluded_meds prem
         ON ms.PATID = prem.PATID AND ms.MAP_MED_TYPE = prem.MED_ABBR
-      WHERE lb.LOT{lot_num}_BASE_DISCON_DT IS NOT NULL
-        AND ms.MAP_START_DT > lb.LOT{lot_num}_BASE_DISCON_DT
+      WHERE lb.LOT{lot_num}_BASE_RUNOUT_DT IS NOT NULL
+        AND ms.MAP_START_DT > lb.LOT{lot_num}_BASE_RUNOUT_DT
         AND ms.MAP_START_DT <= lb.OBS_END_DT
         AND ms.MAP_MED_CLASS <> 'STEROID'
         AND prem.MED_ABBR IS NULL
@@ -756,8 +794,8 @@ build_lot_n <- function(con, lot_num,
       SELECT DISTINCT lb.PATID
       FROM lot{lot_num}_base lb
       INNER JOIN post_runout_autos awp ON lb.PATID = awp.PATID
-      WHERE lb.LOT{lot_num}_BASE_DISCON_DT IS NOT NULL
-        AND awp.TX_DT > lb.LOT{lot_num}_BASE_DISCON_DT
+      WHERE lb.LOT{lot_num}_BASE_RUNOUT_DT IS NOT NULL
+        AND awp.TX_DT > lb.LOT{lot_num}_BASE_RUNOUT_DT
         AND awp.TX_DT <= lb.OBS_END_DT
         AND awp.TX_DT > date_add(
               lb.LOT{lot_num}_START_DT,
@@ -772,10 +810,10 @@ build_lot_n <- function(con, lot_num,
     post_runout_trigger AS (
       SELECT lb.PATID,
         CASE
-          WHEN lb.LOT{lot_num}_BASE_DISCON_DT IS NULL THEN 0
+          WHEN lb.LOT{lot_num}_BASE_RUNOUT_DT IS NULL THEN 0
           WHEN prm.PATID IS NOT NULL THEN 1
-          WHEN sct.FIRST_ALLO_DT IS NOT NULL AND sct.FIRST_ALLO_DT > lb.LOT{lot_num}_BASE_DISCON_DT THEN 1
-          WHEN sct.FIRST_CART_DT IS NOT NULL AND sct.FIRST_CART_DT > lb.LOT{lot_num}_BASE_DISCON_DT THEN 1
+          WHEN sct.FIRST_ALLO_DT IS NOT NULL AND sct.FIRST_ALLO_DT > lb.LOT{lot_num}_BASE_RUNOUT_DT THEN 1
+          WHEN sct.FIRST_CART_DT IS NOT NULL AND sct.FIRST_CART_DT > lb.LOT{lot_num}_BASE_RUNOUT_DT THEN 1
           WHEN pra.PATID IS NOT NULL THEN 1
           ELSE 0
         END AS POST_RUNOUT_TRIGGER_FLG
@@ -788,6 +826,21 @@ build_lot_n <- function(con, lot_num,
       SELECT
         lb.*,
         coalesce(prt.POST_RUNOUT_TRIGGER_FLG, 0) AS POST_RUNOUT_TRIGGER_FLG,
+        -- The run-out becomes a discontinuation here, where
+        -- POST_RUNOUT_TRIGGER_FLG first exists. Confirmed either by
+        -- observation ({cfg$lot_discon_confirm_days} days of data follow it
+        -- with no restart in them) or by the patient (a LOT-start trigger
+        -- appears after it, settling the question directly). Unconfirmed
+        -- leaves it NULL and the cascade censors the line at OBS_END_DT.
+        -- See 06_lot1_end.R for the full reasoning; this mirrors it.
+        CASE
+          WHEN lb.LOT{lot_num}_BASE_RUNOUT_DT IS NOT NULL
+           AND (coalesce(prt.POST_RUNOUT_TRIGGER_FLG, 0) = 1
+                OR datediff(lb.OBS_END_DT, lb.LOT{lot_num}_BASE_RUNOUT_DT)
+                     >= {cfg$lot_discon_confirm_days})
+            THEN lb.LOT{lot_num}_BASE_RUNOUT_DT
+          ELSE NULL
+        END AS LOT{lot_num}_BASE_DISCON_DT,
         sct.LOT{lot_num}_TX_AUTO_DT_1, sct.LOT{lot_num}_TX_AUTO_DT_2,
         sct.LOT{lot_num}_SCT_AUTO_TAND_FLG, sct.LOT{lot_num}_SCT_AUTO_SING_FLG,
         sct.ENDING_AUTO_DT, sct.FIRST_ALLO_DT, sct.FIRST_CART_DT,

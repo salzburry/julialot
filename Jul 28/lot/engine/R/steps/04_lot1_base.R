@@ -54,30 +54,58 @@ phase_lot1_base <- function(con, ctx) {
     -- Steroids are excluded from base_meds by the lot1_induction_meds filter.
     -- because corticosteroids are not oncology agents and should
     -- not drive regimen membership, discontinuation, or add-med logic.
-    discon_raw AS (
+    -- Per drug, the end of ITS cover in this line: the FIRST episode flagged
+    -- discontinued. A later episode of the same drug is a restart, and a
+    -- restart opens the next line rather than extending this one.
+    --
+    -- max(MAP_END_DT) over every episode quietly undid that. Drug A dosed
+    -- days 0-27, discontinued at 27 by the 90-day gap, restarting 117-144 gave
+    -- a line-level runout of 144: the restart was swallowed, and LOT2 never
+    -- opened because its trigger has to fall strictly after the previous end.
+    -- MAP_DISCON_FLG had been computed correctly all along and read by nothing
+    -- but a QC count.
+    discon_per_med AS (
       SELECT
         ms.PATID,
-        max(ms.MAP_END_DT) AS RAW_DISCON_DT
+        ms.MAP_MED_TYPE,
+        coalesce(min(CASE WHEN ms.MAP_DISCON_FLG = 1 THEN ms.MAP_END_DT END),
+                 max(ms.MAP_END_DT)) AS MED_END_DT
       FROM map_stacked ms
       INNER JOIN lot1_start l1 ON ms.PATID = l1.PATID
       INNER JOIN base_meds bm
         ON ms.PATID = bm.PATID
        AND ms.MAP_MED_TYPE = bm.MED_ABBR
       WHERE ms.MAP_START_DT >= l1.LOT1_START_DT
-      GROUP BY ms.PATID
+      GROUP BY ms.PATID, ms.MAP_MED_TYPE
+    ),
+    -- The regimen has run out when its LAST base agent has.
+    discon_raw AS (
+      SELECT PATID, max(MED_END_DT) AS RAW_DISCON_DT
+      FROM discon_per_med
+      GROUP BY PATID
     ),
     discon AS (
       SELECT
         p.PATID,
-        -- No LOT-level 90d confirmation buffer. LOT1_BASE_DISCON_DT
-        -- is the last med date (max MAP_END_DT across induction agents) whenever
-        -- a runout exists and falls on or before OBS_END_DT. Capping at OBS_END_DT
-        -- prevents days-supply tails past death/study_end from extending the LOT.
+        -- Where the regimen ran out, whenever that falls on or before
+        -- OBS_END_DT. Capping at OBS_END_DT prevents days-supply tails past
+        -- death/study_end from extending the LOT.
+        --
+        -- This is the run-out, not yet a discontinuation. Whether it counts as
+        -- one depends on the confirmation buffer and on whether the patient
+        -- was seen again afterwards, and neither can be decided here: the
+        -- post-runout trigger needs lot1_sct, which step 05b has not built
+        -- yet. 06_lot1_end.R derives LOT1_BASE_DISCON_DT from this column.
+        --
+        -- Everything in this step that bounds itself at the run-out - the
+        -- add-med window below - wants this raw date and not the confirmed
+        -- one, because an agent added after the regimen ran out opens the
+        -- next line rather than ending this one.
         CASE
           WHEN d.RAW_DISCON_DT IS NOT NULL AND d.RAW_DISCON_DT <= p.OBS_END_DT
             THEN d.RAW_DISCON_DT
           ELSE NULL
-        END AS LOT1_BASE_DISCON_DT
+        END AS LOT1_BASE_RUNOUT_DT
       FROM lot_patient_input p
       LEFT JOIN discon_raw d ON p.PATID = d.PATID
     ),
@@ -105,7 +133,7 @@ phase_lot1_base <- function(con, ctx) {
         ms.LOT1_START_DT,
         ms.LOT1_MED_CNT,
         ms.LOT1_BASE_MEDS,
-        d.LOT1_BASE_DISCON_DT,
+        d.LOT1_BASE_RUNOUT_DT,
         {paste0('ms.', paste(c(paste0('LOT1_MED_', vapply(meds, sanitize_col, character(1))), paste0('LOT1_CLASS_', vapply(classes, sanitize_col, character(1)))), collapse = ', ms.'))}
       FROM lot_patient_input p
       INNER JOIN med_summary ms ON p.PATID = ms.PATID
@@ -123,7 +151,7 @@ phase_lot1_base <- function(con, ctx) {
       WHERE bm.MED_ABBR IS NULL
         AND ms.MAP_MED_CLASS <> 'STEROID'  -- a steroid cannot trigger an add-med
         AND ms.MAP_START_DT >= bc.LOT1_START_DT
-        AND ms.MAP_START_DT <= coalesce(bc.LOT1_BASE_DISCON_DT, bc.OBS_END_DT)
+        AND ms.MAP_START_DT <= coalesce(bc.LOT1_BASE_RUNOUT_DT, bc.OBS_END_DT)
     ),
     first_add_pick AS (
       -- When multiple non-induction drugs share the earliest add date,
@@ -148,7 +176,7 @@ phase_lot1_base <- function(con, ctx) {
       bc.PATID, bc.INDEX_DATE, bc.ENDDATE, bc.OBS_END_DT, bc.DEATH_DT,
       bc.GDR_CD, bc.YRDOB, bc.AGE_INDEX_YR,
       bc.LOT1_START_DT, bc.LOT1_MED_CNT, bc.LOT1_BASE_MEDS,
-      bc.LOT1_BASE_DISCON_DT,
+      bc.LOT1_BASE_RUNOUT_DT,
       -- LOT1_BASE_LENGTH is set in S16, where LOT1_BASE_END_DT is final.
       -- This uses the 2-way formula on the derived end date.
       {paste0('bc.', paste(c(paste0('LOT1_MED_', vapply(meds, sanitize_col, character(1))), paste0('LOT1_CLASS_', vapply(classes, sanitize_col, character(1)))), collapse = ', bc.'))},
@@ -161,7 +189,7 @@ phase_lot1_base <- function(con, ctx) {
     SELECT
       count(*) AS n_patients,
       avg(LOT1_MED_CNT) AS avg_induction_meds,
-      sum(case when LOT1_BASE_DISCON_DT is not null then 1 else 0 end) as n_with_discon_dt,
+      sum(case when LOT1_BASE_RUNOUT_DT is not null then 1 else 0 end) as n_with_runout_dt,
       sum(case when LOT1_BASE_1ST_ADD_MED_DT is not null then 1 else 0 end) as n_with_add_med
     FROM lot1_base")
 

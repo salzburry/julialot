@@ -235,6 +235,12 @@ ADDED <- list(
   # expression that builds them is undone by the SPLICE above. See the comment
   # there for why the criterion exists.
   "R/steps/06_flags.R" = c(
+    # The follow-up span must reach the 1L index itself, which the April
+    # least() did not require: a death imputed before the index pulled the
+    # target back behind it and enrolment ending the day before passed. Written
+    # as its own predicate because cov_end >= greatest(a, b) is exactly
+    # cov_end >= a AND cov_end >= b, so the ported line is untouched.
+    "AND s.cov_end   >= ec_l1.LOT1_START_DT" = 1L,
     "bela_pre AS ({bela_pre_expr})," = 1L,
     "CASE WHEN bela_pre.PATID     IS NULL THEN 1 ELSE 0 END AS NO_BELANTAMAB_PRE_LOT1," = 1L,
     "LEFT JOIN bela_pre     ON ec_l1.PATID = bela_pre.PATID" = 1L),
