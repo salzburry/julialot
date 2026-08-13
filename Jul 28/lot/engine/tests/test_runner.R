@@ -1883,6 +1883,22 @@ ok(any(grepl("^\\s*stop\\(", cr)),
    "...and anything else stops the run")
 ok(sum(grepl("bad <- c\\(bad", cr)) >= 1 && any(grepl("collapse", cr)),
    "...naming every table it could not clear, not just the first")
+# ...and because it stops, the failed-status handler has to be armed BEFORE it.
+# It was armed after: a DELETE that raised left the "started" row written with
+# no handler registered, so nothing wrote "failed" and check_no_active_run()
+# refused every later run on the prefix until someone cleared it by hand. The
+# NDMM runner has this assertion (ndmm/tests/test_runner.R) and this one did
+# not, which is how the ordering drifted.
+bl_body <- sub(".*build_lot <- function\\([^)]*\\) \\{", "",
+               paste(readLines(file.path(ROOT, "R", "build_lot.R"), warn = FALSE),
+                     collapse = "\n"))
+i_bs <- regexpr('write_build_status(con, cfg, "started")', bl_body, fixed = TRUE)
+i_oe <- regexpr('"failed"', bl_body, fixed = TRUE)
+i_cr <- regexpr("clear_run_rows(con, cfg)", bl_body, fixed = TRUE)
+ok(i_bs > 0 && i_oe > 0 && i_cr > 0 && i_bs < i_oe,
+   "the failed-status handler is armed after the started row is written")
+ok(i_oe < i_cr,
+   "...and before clear_run_rows, whose stop would otherwise strand the prefix")
 
 cat("\n-- and the active-run check draws that same line --\n")
 # It did not. Every read failure took the "no table yet on a first run" path,

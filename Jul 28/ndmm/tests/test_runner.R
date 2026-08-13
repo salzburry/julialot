@@ -43,7 +43,8 @@ body <- local({
 
 SETTINGS <- c("STUDY_END", "LOT1_FROM", "STUDY_START", "PRE_LOT1_DAYS",
               "FU_CE_DAYS", "GAP_DAYS", "DOMINO_RUN_ID", "PROJECT_WORK_SCHEMA",
-              "DOMINO_USER_NAME", "OBJECT_PREFIX")
+              "DOMINO_USER_NAME", "OBJECT_PREFIX",
+              "OUTPATIENT_WINDOW", "MIN_AGE")
 clear <- function() for (v in SETTINGS) Sys.unsetenv(v)
 clear()
 
@@ -111,6 +112,16 @@ for (bad in c("365.5", "3e2", "-1")) {
   ok(grepl("want a whole number",
            tryCatch({ check_settings(); "" }, error = conditionMessage), fixed = TRUE),
      paste0("PRE_LOT1_DAYS='", bad, "' is refused, not truncated"))
+  clear()
+}
+# Both reach the cohort - the outpatient qualification window and the age floor
+# - and both were coerced with as.integer() and never checked, so MIN_AGE=18.5
+# became 18L, matched the contract, and filtered at 18 with nothing recorded.
+for (v in c("OUTPATIENT_WINDOW", "MIN_AGE")) {
+  do.call(Sys.setenv, setNames(list("18.5"), v))
+  ok(grepl("want a whole number",
+           tryCatch({ check_settings(); "" }, error = conditionMessage), fixed = TRUE),
+     paste0(v, "='18.5' is refused rather than silently truncated"))
   clear()
 }
 Sys.setenv(DOMINO_RUN_ID = "R1'; DROP TABLE x; --")

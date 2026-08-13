@@ -74,7 +74,7 @@ find_subsequent_cohorts <- function(con, lot_run, lines = c(2L, 3L),
     prov[[as.character(n)]] <- c(
       subseq = at("SUBSEQ_RUN_ID"), pre = at("CE_PRE_DAYS"), fu = at("CE_FU_DAYS"),
       coh = at("SOURCE_COHORT_RUN_ID"), stamp = at("SOURCE_COHORT_STAMP"),
-      lotstamp = at("SOURCE_LOT_STAMP"))
+      lotstamp = at("SOURCE_LOT_STAMP"), attempt = at("SUBSEQ_ATTEMPT"))
   }
   if (length(stale))
     stop("These line cohorts were not built from LOT run ", lot_run, ": ",
@@ -115,6 +115,15 @@ find_subsequent_cohorts <- function(con, lot_run, lines = c(2L, 3L),
       invisible(v[[1]])
     }
     agree("subseq", "which subsequent-cohort run built them")
+    # ...and which ATTEMPT of it, which is the only column that separates a
+    # table this build wrote from one the attempt before it left behind. The
+    # subsequent build replaces 2L, then 3L, then attrition, with no
+    # transaction; a retry that dies between them leaves a new 2L beside a
+    # stale 3L. Both name the same SUBSEQ_RUN_ID when the retry is inside one
+    # Domino execution, and every other stamp - source LOT run, its stamp, the
+    # cohort attempt, both windows - is a property of upstream tables that did
+    # not change, so all of them matched and the mix was invisible.
+    agree("attempt", "which attempt of that run built them")
     coh   <- agree("coh",   "which cohort attempt they were built over")
     stamp <- agree("stamp", "the stamp of that cohort attempt")
     agree("pre",    "the continuous-enrolment window before the line")
@@ -127,8 +136,18 @@ find_subsequent_cohorts <- function(con, lot_run, lines = c(2L, 3L),
     # status row's UPDATED_AT moves on every attempt, so it is what separates
     # them.
     lotstamp <- agree("lotstamp", "the stamp of the LOT run they were built from")
-    if (!is.null(lot_stamp) && !is.na(lot_stamp) && nzchar(lot_stamp) &&
-        !is.null(lotstamp) && !identical(lotstamp, lot_stamp))
+    # An absent live stamp is not a pass. The first version of this guard was a
+    # single condition, so a status table with no UPDATED_AT - hand-migrated,
+    # restored from a snapshot, or written by anything other than
+    # write_build_status() - short-circuited it and the re-run went unchecked
+    # with nothing said. Its sibling below has always had this else; this one
+    # did not.
+    if (is.null(lot_stamp) || is.na(lot_stamp) || !nzchar(trimws(lot_stamp))) {
+      out_unproven(paste0("The LOT status row for run ", lot_run, " carries no ",
+                          "stamp, so a re-run of it under the same id cannot be ",
+                          "told from the build these line cohorts were made ",
+                          "from."))
+    } else if (!is.null(lotstamp) && !identical(lotstamp, lot_stamp)) {
       stop("The line cohorts were built from LOT run ", lot_run, " as it stood ",
            "at ", lotstamp, ", and that run has since been rebuilt - it now ",
            "stands at ", lot_stamp, ". Same run id, different lines, so ",
@@ -136,6 +155,7 @@ find_subsequent_cohorts <- function(con, lot_run, lines = c(2L, 3L),
            "drawn from the previous attempt's. Re-run ",
            "ndmm/build_subsequent_cohorts.R against this LOT run.",
            call. = FALSE)
+    }
     # Agreeing with each other is not the same as belonging to the lines. Both
     # tables can consistently describe cohort attempt B while the lines were
     # built over attempt A, and this package reads the tables it is given

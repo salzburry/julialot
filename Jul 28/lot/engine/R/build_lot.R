@@ -656,14 +656,24 @@ build_lot <- function(here, cohort_table, prefix,
           lot_line_criteria = "", lot_lines_built = integer(0))
   check_no_active_run(con, cfg)
   write_build_status(con, cfg, "started")
-  clear_run_rows(con, cfg)
   # After = FALSE, or this fires after the disconnect above and writes to a
   # closed connection. Registered here, not beside the connection, so a
   # preflight failure still leaves no status row at all.
+  #
+  # And armed BEFORE clear_run_rows(), not after it. A DELETE that failed - a
+  # permission, a lock, a dropped connection - raised with the 'started' row
+  # already written and no handler yet registered, so nothing ever wrote
+  # 'failed'. The prefix was then held by a run that had ended: every later
+  # run refused by check_no_active_run() until someone cleared the row by
+  # hand. build_ndmm.R:1247 arms it in this order for the same reason.
   on.exit(if (!isTRUE(getOption("lot_complete", FALSE)))
             try(write_build_status(con, cfg, "failed"), silent = TRUE),
           add = TRUE, after = FALSE)
   options(lot_complete = FALSE)
+  # After the status row and after the handler, so a run is marked started
+  # whatever this does, and before the first step, so no writer can be reached
+  # with the previous attempt's rows still under this run's id.
+  clear_run_rows(con, cfg)
 
   ctx <- phase_codelists(con)
   record_codelist_hashes(con, cfg)
