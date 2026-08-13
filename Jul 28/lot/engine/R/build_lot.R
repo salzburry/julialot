@@ -31,6 +31,14 @@ CONTRACT <- list(
   # the line nor starts one. Confirmed by the study team on 2026-08-13; see
   # R/cart_rule.R and lot/LOT_RULES.md section 10.
   apply_cart_induction_rule   = TRUE,
+  # The protocol's belantamab exclusion. It was a line criterion and nothing
+  # else, so APPLY_NO_BELANTAMAB defaulted to FALSE when unset: a config.csv
+  # that lost the row, or an environment that never set it, produced a
+  # STATE=complete run with the exclusion silently off and nothing in
+  # CONTRACT_DEVIATIONS to say so. Pinned here, so the default is on and
+  # turning it off needs LOT_CONTRACT_OVERRIDE and is recorded like any other
+  # contract change. criterion_enabled() reads this, not a bare env default.
+  apply_no_belantamab         = TRUE,
   melp_med_abbr               = "MELP",
   melp_exposure_days          = 30L,
   melp_restart_days           = 60L,
@@ -98,7 +106,8 @@ REQUIRED_COHORT_COLS <- c("PATID", "INDEX_DATE", "ENDDATE", "ENDDATE_CE",
 # Bad values fail open: as.logical("Y") is NA, which reads as FALSE. An
 # integer setting that will not parse becomes NA and silently widens a window.
 BOOL_SETTINGS <- c("USE_QUARTERLY_TABLES", "CENSOR_AT_DISENROLLMENT",
-                   "PERSIST_TO_SCHEMA", "APPLY_CART_INDUCTION_RULE")
+                   "PERSIST_TO_SCHEMA", "APPLY_CART_INDUCTION_RULE",
+                   "APPLY_NO_BELANTAMAB")
 INT_SETTINGS  <- c("INDUCTION_WINDOW_DAYS", "INDUCTION_WINDOW_DAYS_LOT_N",
                    "MAP_DISCON_GAP_DAYS", "MEDICAL_DAY_SUPPLY",
                    "SCT_AUTO_WINDOW_DAYS", "SCT_AUTO_GAP_DAYS",

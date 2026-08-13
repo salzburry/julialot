@@ -48,7 +48,7 @@ find_base_cohort <- function(con) {
 # The subsequent build records which LOT run it drew from. Ask, and drop a
 # cohort that names a different one rather than restricting on it.
 find_subsequent_cohorts <- function(con, lot_run, lines = c(2L, 3L),
-                                    attempt = NULL) {
+                                    attempt = NULL, lot_stamp = NULL) {
   out <- list(); stale <- character(0); prov <- list()
   for (n in lines) {
     t <- coh_tbl(paste0("NDMM_COHORT_", n, "L"))
@@ -73,7 +73,8 @@ find_subsequent_cohorts <- function(con, lot_run, lines = c(2L, 3L),
     out[[as.character(n)]] <- t
     prov[[as.character(n)]] <- c(
       subseq = at("SUBSEQ_RUN_ID"), pre = at("CE_PRE_DAYS"), fu = at("CE_FU_DAYS"),
-      coh = at("SOURCE_COHORT_RUN_ID"), stamp = at("SOURCE_COHORT_STAMP"))
+      coh = at("SOURCE_COHORT_RUN_ID"), stamp = at("SOURCE_COHORT_STAMP"),
+      lotstamp = at("SOURCE_LOT_STAMP"))
   }
   if (length(stale))
     stop("These line cohorts were not built from LOT run ", lot_run, ": ",
@@ -118,6 +119,23 @@ find_subsequent_cohorts <- function(con, lot_run, lines = c(2L, 3L),
     stamp <- agree("stamp", "the stamp of that cohort attempt")
     agree("pre",    "the continuous-enrolment window before the line")
     agree("fu",     "the continuous-enrolment window after it")
+    # Naming this LOT run is not the same as being built from the build that
+    # is on disk now. A LOT re-run under the same RUN_ID replaces the lines in
+    # place, and cohorts built from the earlier attempt still name the run id
+    # correctly - so the id matches, every downstream check passes, and
+    # LINE_ELIGIBLE is a denominator over lines that no longer exist. The
+    # status row's UPDATED_AT moves on every attempt, so it is what separates
+    # them.
+    lotstamp <- agree("lotstamp", "the stamp of the LOT run they were built from")
+    if (!is.null(lot_stamp) && !is.na(lot_stamp) && nzchar(lot_stamp) &&
+        !is.null(lotstamp) && !identical(lotstamp, lot_stamp))
+      stop("The line cohorts were built from LOT run ", lot_run, " as it stood ",
+           "at ", lotstamp, ", and that run has since been rebuilt - it now ",
+           "stands at ", lot_stamp, ". Same run id, different lines, so ",
+           "LINE_ELIGIBLE would restrict this run's lines by a population ",
+           "drawn from the previous attempt's. Re-run ",
+           "ndmm/build_subsequent_cohorts.R against this LOT run.",
+           call. = FALSE)
     # Agreeing with each other is not the same as belonging to the lines. Both
     # tables can consistently describe cohort attempt B while the lines were
     # built over attempt A, and this package reads the tables it is given
@@ -234,7 +252,8 @@ check_lot_run <- function(con, prefix, cohort_table, study_end) {
   # sub(), sub() keeps attributes, and identical() compares them - so an
   # attributed run id is not identical() to its own text, and every valid 2L/3L
   # cohort reads as built from another run.
-  list(run = as.character(pick("RUN_ID")), attempt = attempt)
+  list(run = as.character(pick("RUN_ID")),
+       stamp = as.character(trimws(pick("UPDATED_AT"))), attempt = attempt)
 }
 
 # The cohort table's name matching is not the same as its contents matching.
@@ -408,7 +427,8 @@ build_outcomes <- function(here, cohort_table, prefix) {
   # runner takes [[1]] of an empty list and a run with no line cohorts - the
   # overall cohort, or any NDMM run before build_subsequent_cohorts.R - dies
   # with "subscript out of bounds" at the first table.
-  sc     <- find_subsequent_cohorts(con, lot_run, attempt = lr$attempt)
+  sc     <- find_subsequent_cohorts(con, lot_run, attempt = lr$attempt,
+                                    lot_stamp = lr$stamp)
   subseq <- sc$tables
   both   <- length(subseq) > 0L
   # The 2L/3L build's provenance, carried onto every table that has a DENOM or

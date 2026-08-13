@@ -111,9 +111,9 @@ row <- function(cell, param, value, shipped, ...) {
   d
 }
 # Window up, lines down: what SCT_TANDEM_DAYS predicts. The scoring tests ride
-# on a directional axis; MAP_DISCON_GAP_DAYS is no longer one - the parameter
-# only labels a descriptive flag, so its axis now expects nothing to move and
-# serves as the sweep's negative control.
+# on a directional axis, and MAP_DISCON_GAP_DAYS is one again - discon_per_med
+# reads MAP_DISCON_FLG to place a run-out, so the gap moves line length and
+# line counts. n_patients is the control instead.
 c1 <- sens_compare(mk(row("sct_tandem_days_365", "SCT_TANDEM_DAYS", 365, 180,
                           n_lines = 900)))
 ok(identical(c1$verdict[c1$metric == "n_lines"], "as expected"),
@@ -144,17 +144,20 @@ ok(identical(c6$verdict[c6$metric == "n_lines"], "no data"),
 stops(sens_compare(mk()[0, , drop = FALSE]),
       "a comparison with no reference cell stops rather than comparing to nothing")
 
-# The MAP-gap axis itself. The parameter reaches nothing the line build reads -
-# it only labels MAP_DISCON_FLG - so an axis predicting line movement from it
-# would score misses against a mechanism the code does not have. It is the
-# negative control now, and this pins it as one.
+# The MAP-gap axis itself. It was the negative control while MAP_DISCON_FLG was
+# descriptive. discon_per_med in 04_lot1_base.R reads that flag to place a
+# drug's run-out, so the parameter now reaches the line build directly and an
+# axis predicting stillness would flag its real effect as a build difference.
 mg <- Filter(function(a) identical(a$param, "MAP_DISCON_GAP_DAYS"), SENS_AXES)[[1]]
-ok(all(unlist(mg$expect) == "none"),
-   "the MAP-gap axis expects no metric to move - it is the negative control")
+ok(identical(mg$expect$median_lot1_length, "up") &&
+     identical(mg$expect$n_lines, "down"),
+   "raising the gap flags fewer episodes, so run-outs move later and lines get longer")
+ok(identical(mg$expect$n_patients, "none"),
+   "...and cohort membership is the control here, since it never reads the gap")
 c8 <- sens_compare(mk(row("map_discon_gap_days_120", "MAP_DISCON_GAP_DAYS", 120, 90,
                           n_lines = 900)))
-ok(identical(c8$verdict[c8$metric == "n_lines"], "AGAINST EXPECTATION"),
-   "...so a metric moving under it is flagged, not read as the parameter's effect")
+ok(identical(c8$verdict[c8$metric == "n_lines"], "as expected"),
+   "...so fewer lines at a wider gap is the predicted direction, not a finding")
 
 cat("\n-- and a number that did not move is not the opposite finding --\n")
 # The prediction is about the ALGORITHM. Whether anyone in the cohort sits near

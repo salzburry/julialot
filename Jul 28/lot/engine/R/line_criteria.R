@@ -156,8 +156,19 @@ validate_line_criteria <- function(crit = LINE_CRITERIA, max_lot = NULL) {
 
 # APPLY_<NAME> in config.csv. Anything that is not TRUE or FALSE stops the
 # build: a typo that quietly drops an intended criterion is worse than a halt.
+#
+# The default when it is unset is the criterion's own, not FALSE for everything.
+# no_belantamab is the protocol's exclusion and is pinned TRUE in CONTRACT, so
+# an unset variable leaves it on and an explicit FALSE is a contract deviation
+# that check_contract() records. A blanket FALSE default meant a config.csv
+# that lost the row produced a complete run with the exclusion off and nothing
+# saying so. A criterion that is not in CONTRACT still defaults off.
+CRITERION_DEFAULT <- c(no_belantamab = "TRUE")
+
 criterion_enabled <- function(c_i) {
-  v <- Sys.getenv(paste0("APPLY_", toupper(c_i$name)), unset = "FALSE")
+  dflt <- unname(CRITERION_DEFAULT[c_i$name])
+  if (is.na(dflt)) dflt <- "FALSE"
+  v <- Sys.getenv(paste0("APPLY_", toupper(c_i$name)), unset = dflt)
   if (!toupper(trimws(v)) %in% c("TRUE", "FALSE"))
     stop("APPLY_", toupper(c_i$name), "='", v, "' (want TRUE or FALSE)",
          call. = FALSE)

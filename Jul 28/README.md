@@ -37,12 +37,16 @@ questions are about patients the NDMM cohort excluded.
 DATABRICKS_PWD=... Rscript ndmm/build.R                    ndmm_
 DATABRICKS_PWD=... Rscript lot/engine/build.R              ndmm_NDMM_COHORT ndmm_
 DATABRICKS_PWD=... Rscript lot/dashboard/build.R           ndmm_NDMM_COHORT ndmm_
-DATABRICKS_PWD=... Rscript lot/outcomes/build.R            ndmm_NDMM_COHORT ndmm_
 DATABRICKS_PWD=... Rscript ndmm/build_subsequent_cohorts.R ndmm_
+DATABRICKS_PWD=... Rscript lot/outcomes/build.R            ndmm_NDMM_COHORT ndmm_
 ```
 
-The 2L and 3L cohorts come last on the NDMM path: their index dates are line
-starts, so the lines have to exist first.
+The 2L and 3L cohorts sit between the lines and the outcomes, and both sides of
+that matter. They come after LOT because their index dates are line starts, so
+the lines have to exist first. They come before outcomes because outcomes reads
+them for LINE_ELIGIBLE: run it first on a clean prefix and it quietly reports
+ALL_LINES alone, and run it first on a re-run and it reads the previous
+attempt's cohorts.
 
 Read a package's own README before running it - or the entry script's header
 where it has none (`overall/`, `lot/tools/`).

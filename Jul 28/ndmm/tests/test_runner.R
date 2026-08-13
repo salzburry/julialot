@@ -1859,12 +1859,26 @@ cat("\n-- a pregnancy code type nothing reads stops the run --\n")
 # the exemption: a CPT-typed delivery code would load, join, and match zero.
 assign("load_codelist_csv", function(...) "(SELECT 1) src", envir = pe)
 assign("log_msg", function(...) invisible(NULL), envir = pe)
-drive_pc <- function(rows) {
-  assign("db_q", function(con, sql) rows, envir = pe)
+# Two questions are asked of the view now - how many codes survived normalising,
+# and whether any carries a type nothing reads - so the driver answers each.
+drive_pc <- function(rows, n_codes = 6L) {
+  assign("db_q", function(con, sql) {
+    if (grepl("count(*) AS N", sql, fixed = TRUE))
+      return(data.frame(N = n_codes))
+    rows
+  }, envir = pe)
   tryCatch({ pe$build_ndmm_preg_codes(NULL); "" }, error = conditionMessage)
 }
 ok(identical(drive_pc(data.frame(code_type = character(0), n = integer(0))), ""),
    "a file whose types the scan all emits passes")
+# load_codelist_csv counts raw rows, so 'HCPCS,---' is a nonempty file. The
+# view drops it as punctuation-only and the type check below reads that same
+# view, where an empty result looks exactly like a clean one.
+m0 <- drive_pc(data.frame(code_type = character(0), n = integer(0)), n_codes = 0L)
+ok(grepl("no usable codes", m0, fixed = TRUE),
+   "a file with rows but no code that survives normalising stops the run")
+ok(grepl("every candidate would pass it", m0, fixed = TRUE),
+   "...and says the exclusion would match nothing, which is the failure")
 m <- drive_pc(data.frame(code_type = "CPT", n = 12L))
 ok(grepl("code type(s) no claim source produces", m, fixed = TRUE) &&
      grepl("CPT", m, fixed = TRUE) && grepl("12", m, fixed = TRUE),

@@ -150,8 +150,12 @@ subseq_check_lot_run <- function(con, prefix) {
   # Which cohort attempt it read is not in the status table - it is in
   # LOT_RUN_METADATA, on the row for this run.
   att <- subseq_check_cohort_attempt(con, pick("RUN_ID"))
-  invisible(list(lot_run = pick("RUN_ID"), cohort_run = att$cohort_run,
-                 cohort_stamp = att$cohort_stamp))
+  # The run id alone does not identify the build. A re-run under the same
+  # RUN_ID replaces LOT_LONG_FINAL in place, so cohorts built from attempt A
+  # keep naming a run id that now means attempt B and read as current. The
+  # status row's UPDATED_AT is what separates them, so it travels with the id.
+  invisible(list(lot_run = pick("RUN_ID"), lot_stamp = pick("UPDATED_AT"),
+                 cohort_run = att$cohort_run, cohort_stamp = att$cohort_stamp))
 }
 
 # The name of the cohort table is not enough. A re-run under the same prefix
@@ -266,7 +270,8 @@ subseq_fu_expr <- function(ix, fu_days, death = "g.DEATH_DT") {
 subseq_cohort_sql <- function(lot_num, from_tbl, out_tbl, pre_days, fu_days,
                               lines_tbl, spans_tbl, spans_strict_tbl, run_id,
                               lot_run = NA_character_, coh_run = NA_character_,
-                              coh_stamp = NA_character_) {
+                              coh_stamp = NA_character_,
+                              lot_stamp = NA_character_) {
   pre_days <- as.integer(pre_days); fu_days <- as.integer(fu_days)
   glue("
     CREATE OR REPLACE TABLE {out_tbl} AS
@@ -309,6 +314,7 @@ subseq_cohort_sql <- function(lot_num, from_tbl, out_tbl, pre_days, fu_days,
            -- cannot tell whether it still belongs beside the LOT tables on
            -- disk, and a rebuilt LOT leaves it looking perfectly readable.
            {sql_text(lot_run)}          AS SOURCE_LOT_RUN_ID,
+           {sql_text(lot_stamp)}        AS SOURCE_LOT_STAMP,
            {sql_text(coh_run)}          AS SOURCE_COHORT_RUN_ID,
            {sql_text(coh_stamp)}        AS SOURCE_COHORT_STAMP,
            current_timestamp()          AS BUILT_AT
@@ -414,7 +420,8 @@ build_subsequent <- function(here, prefix,
     db_exec(con, subseq_cohort_sql(n, from, out, pre_days, fu_days,
                                    lines, spans, strict, run_id,
                                    lot_run = src$lot_run, coh_run = src$cohort_run,
-                                   coh_stamp = src$cohort_stamp))
+                                   coh_stamp = src$cohort_stamp,
+                                   lot_stamp = src$lot_stamp))
     log_msg(n, "L: ", f$n_from, " in the ", if (n == 2L) "1L" else paste0(n - 1L, "L"),
             " cohort -> ", f$n_reached, " reached ", n, "L -> ", f$n_ce_pre,
             " with ", pre_days, " days of CE before it -> ", f$n_final,

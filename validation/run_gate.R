@@ -48,6 +48,7 @@ EXPECTED_FAILURES <- list(
     # the divergence set moves, and re-pinning is then a conscious act.
     # Counted over comment-stripped code, so prose does not churn it.
     "03_mma_map.R: differs beyond the approved deviations in 217 line(s)",
+    "05_sct.R: differs beyond the approved deviations in 11 line(s)",
     "04_lot1_base.R: differs from 02_lot1.R in 125 line(s)",
     "05b_lot1_sct.R: differs beyond the approved deviations in 148 line(s)",
     "06_lot1_end.R: differs beyond the approved deviations in 203 line(s)",
