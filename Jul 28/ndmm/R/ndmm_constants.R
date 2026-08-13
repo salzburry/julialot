@@ -48,7 +48,7 @@ NDMM_MM_ADJACENT_OVERRIDE <- c(
 # Override for sensitivity runs.
 NDMM_LOT1_FROM <- Sys.getenv("NDMM_LOT1_FROM", unset = "2017-01-01")
 
-# Raw CDM confinement table, used to tell inpatient from outpatient in the
+# Raw CDM confinement table, which tells inpatient from outpatient in the
 # other-cancer check. Set here because nothing else defines it.
 NDMM_TBL_CONFINEMENT <- Sys.getenv("TBL_CONFINEMENT", unset = "confinement")
 

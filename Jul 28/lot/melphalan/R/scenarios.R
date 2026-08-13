@@ -1,4 +1,5 @@
-# The study team's worked scenarios, and the rule run over them.
+# The study team's worked scenarios, the induction-window variants they do not
+# cover, and the rule run over both.
 #
 # Four patients came with the restated ask, each drawn twice - as the build
 # classifies them today, and as the study team says the rule should. They are
@@ -60,6 +61,44 @@ MELP_SCENARIOS <- list(
        doses = c(10, 60, 250), induction_end = 30,
        starts = 250,
        drawn = "a new line at the third dose, on its own date")
+)
+
+# "Inside induction" is the line's own window, and the line's own window is not
+# always 30 days: a CAR-T-started line closes at the 45-day consolidation window
+# and LOT1 at 60. The same two doses are therefore a different branch on a
+# CAR-T-started line than on a drug-started one, and the study team's four
+# examples never vary it - all of them are drawn on a 60-day or 30-day line.
+#
+# `starts` here is read off the branch table in
+# lot/questions/melphalan_lot_rule.md, not off a run.
+MELP_WINDOW_CASES <- list(
+  list(id = "window_cart_45_a1",
+       what = paste0("CAR-T-started line, so induction runs to day 45. A dose ",
+                     "on day 40 is inside it, and the next is 40 days later."),
+       doses = c(40, 80), induction_end = 45,
+       starts = numeric(0),
+       drawn = "A.1 - no advance"),
+
+  list(id = "window_med_30_b1",
+       what = paste0("The same two doses on a drug-started line, where ",
+                     "induction runs to day 30. Day 40 is now outside it."),
+       doses = c(40, 80), induction_end = 30,
+       starts = 40,
+       drawn = "B.1 - advances, and the line starts back at the first dose"),
+
+  list(id = "window_cart_45_a2",
+       what = paste0("CAR-T-started line again, with the next dose 200 days ",
+                     "on. Inside induction, so A.2."),
+       doses = c(40, 240), induction_end = 45,
+       starts = 240,
+       drawn = "A.2 - advances at the later dose"),
+
+  list(id = "window_med_30_b3",
+       what = paste0("The same doses on a drug-started line. Outside ",
+                     "induction, so B.3 - which lands in the same place."),
+       doses = c(40, 240), induction_end = 30,
+       starts = 240,
+       drawn = "B.3 - advances at the later dose, on its own date")
 )
 
 # ---- the decision, lifted ---------------------------------------------------
@@ -134,9 +173,22 @@ melp_scenario_run <- function(cfg, sc) {
 
   # What the engine does with what the rule left it. See the header: this is a
   # model of the engine, from the recorded behaviour, not the engine itself.
+  #
+  # Walked in order, because a boundary changes what comes after it. The line a
+  # boundary opens is started by melphalan, so melphalan is one of that line's
+  # base agents and no later dose can be an added medication in it. Only an
+  # injected date opens a boundary after that: the inject arm is a UNION onto
+  # first_add_candidates and does not pass through its base-med exclusion.
   in_regimen <- nrow(rows) > 0L && rows$INSIDE[1] == 1L
-  engine <- if (in_regimen) numeric(0)
-            else setdiff(rows$EXPO_DT[rows$INSIDE == 0L], suppress)
+  base <- in_regimen
+  engine <- numeric(0)
+  for (i in seq_len(nrow(rows))) {
+    x <- rows$EXPO_DT[i]
+    if (x %in% inject) { base <- TRUE; next }
+    if (!base && rows$INSIDE[i] == 0L && !(x %in% suppress)) {
+      engine <- c(engine, x); base <- TRUE
+    }
+  }
 
   list(rows = rows, suppress = suppress, inject = inject,
        in_regimen = in_regimen,

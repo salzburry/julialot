@@ -26,7 +26,6 @@ gate_verdict <- function(out, status, want = character(0)) {
 
   # A skipped suite proved nothing, and nothing in this gate needs a warehouse
   # connection - so a skip here is a suite that should have run and did not.
-  # It used to increment a counter the exit status never read.
   if (identical(status, 3L))
     return(list(ok = FALSE, passed = 0L, skipped = TRUE,
                 reasons = "SKIP - nothing in this gate needs a connection"))

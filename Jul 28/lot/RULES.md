@@ -1,107 +1,111 @@
-# Lines of therapy — the rules, in short
+# Line of therapy rules
 
-How a patient's treatment is cut into lines. `LOT_RULES.md` is the full
-reference with every branch; this is the one-page version.
+The short version. `LOT_RULES.md` carries every branch.
 
-## The shape of it
+## Starting and ending a line
 
-**A line starts** with the first non-steroid MM agent. Anything else that
-starts within the induction window joins the same line rather than opening a
-new one — **60 days** for line 1, **30 days** for later lines.
+A line starts at the patient's first non-steroid myeloma agent. Any other agent
+that starts within the induction window joins that line rather than opening a
+new one. The window is 60 days for line 1 and 30 days for lines 2 to 5.
 
-**A line ends** at the first of these, in this order:
+A line ends at the first of these events, in this order:
 
-| Priority | Ends because | |
+| Priority | Reason | End date |
 |---|---|---|
-| 1 | a transplant or CAR-T | line ends the day before it |
-| 2 | `CART_INIT` | an agent added, then CAR-T within 45 days — bridging |
-| 3 | `MED_ADD` | a new agent added outside the induction window |
-| 4 | `DEATH` | |
-| 5 | `DISCONTINUATION` | the drugs ran out, and it was confirmed |
-| 6 | `STUDY_END` | nothing else happened |
+| 1 | transplant or CAR-T | day before the procedure |
+| 2 | `CART_INIT` | day before a CAR-T that follows an added agent within 45 days |
+| 3 | `MED_ADD` | day before an agent added outside the induction window |
+| 4 | `DEATH` | date of death |
+| 5 | `DISCONTINUATION` | the date the regimen ran out |
+| 6 | `STUDY_END` | end of observation |
 
-**Running out** is per drug: a gap of **90 days or more** to the next fill.
-The line has run out when its last agent has.
+Running out is measured per drug. A drug has run out when the gap from the end
+of its supply to its next fill is 90 days or more. The line has run out when
+its last remaining agent has.
 
-**Confirmed** means one of two things — **90 days** of data follow the run-out
-with nothing in them, or the patient came back (a restart, a transplant). Below
-that, with no return, the line is censored at end of observation instead.
+A run-out becomes a discontinuation only once confirmed. Either 90 days of
+observation follow it with nothing in them, or the patient turns up again with
+a restart, a new agent or a transplant. If neither happens the line is censored
+at the end of observation and ends `STUDY_END` or `DEATH` instead.
 
-**Up to 5 lines** are built per patient.
+Five lines are built per patient.
 
-## Assumptions worth knowing
+## Assumptions
 
-**Steroids are invisible.** They never start a line, join a regimen, end a line,
-or trigger an added-medication end. Corticosteroids are not treated as oncology
-agents.
+Steroids are excluded throughout. They do not start a line, join a regimen, end
+a line, or count as an added medication. Corticosteroids are not treated as
+oncology agents.
 
-**A medical claim gets 28 days of supply**, because the claim does not carry
-one.
+Medical claims carry no day supply, so 28 days is assumed for each.
 
-**Disenrollment is not censoring.** A patient who leaves the plan keeps
-contributing follow-up; the line ends `STUDY_END`. The `*_CE_SENS` columns
-carry the alternative reading.
+Disenrollment does not censor. A patient who leaves the plan keeps contributing
+follow-up and the line ends `STUDY_END`. The `*_CE_SENS` columns hold the
+alternative reading.
 
-**A second transplant within 180 days is a planned tandem**, not a new line.
+Line 1's first autologous transplant is part of induction and does not end the
+line. A second one ends it, unless it falls within 180 days of the first — that
+is a planned tandem, and then it takes a third. Lines 2 to 5 do not keep this
+convention: there the first transplant after the induction window ends the line.
 
-**An allogeneic transplant is a one-day line** and carries no regimen.
+That is about which transplant *ends* a line. One falling after a line has
+already ended opens the next line whatever the line number.
 
-**Maintenance is not implemented.** There is no maintenance period; those cases
-end by whichever rule above applies first.
+An allogeneic transplant occupies a single day and carries no regimen string.
 
-**Line 5 is a cap, not a finding.** A patient at line 5 may have had more.
+Maintenance is not implemented. Patients on maintenance therapy end by
+whichever of the rules above applies first.
 
-**Belantamab removes the patient entirely** — every line of anyone who received
-it at any point is dropped.
+Five lines is a cap, not a finding. A patient recorded at line 5 may have had
+more.
 
-## CAR-T — applied
+Belantamab removes the patient rather than the line. Every line belonging to
+anyone who received it at any point is dropped.
 
-**Inside line 1's 60-day induction window, a CAR-T is part of line 1.** It does
-not end the line and it does not start one. Confirmed by the study team on
-2026-08-13; runs before that date differ.
+## CAR-T
 
-**Outside that window it does both** — the line ends the day before the
-infusion, and the CAR-T opens the next line.
+A CAR-T inside line 1's 60-day induction window belongs to line 1. It does not
+end that line and it does not start one. Outside the window it does both: the
+line ends the day before the infusion and the CAR-T opens the next line.
 
-**Bridging.** An agent added and then a CAR-T within **45 days** is bridging,
-not a new regimen. The line ends `CART_INIT` the day before the infusion and
-the bridging agent stays in it.
+An agent added and then followed by a CAR-T within 45 days is bridging therapy.
+The line ends `CART_INIT` the day before the infusion, and the bridging agent
+stays in that line rather than starting a regimen of its own.
 
-**It does not reopen a closed line.** If the line already ended on day 30 for
-some other reason and the CAR-T is on day 40, the line still ended on day 30 —
-the rule stops that CAR-T starting a line, it does not extend the previous one.
+The rule does not reopen a closed line. If line 1 ended on day 30 for some
+other reason and the CAR-T falls on day 40, line 1 still ends on day 30. The
+rule stops that infusion starting a line; it does not extend the one before it.
 
-## Melphalan — built, not applied
+## Melphalan
 
-**The study's numbers do not use this rule.** It is built as three complete
-runs in `melphalan/`, each recording the deviation, so the effect can be
-measured before anyone decides. What follows is what those runs apply.
+Not applied: the study's numbers do not include this rule. It is built as three
+complete runs under `melphalan/`, each recording the deviation. What follows
+describes those runs, not the study cohort.
 
-Doses less than **30 days** apart are one *exposure*. Consecutive exposures are
-then judged as a pair — by the gap between them, and by whether the first sits
-inside the line's induction window:
+Doses less than 30 days apart form one exposure. Consecutive exposures are then
+judged as a pair, on the gap between them and on whether the first falls inside
+the line's induction window.
 
-| Where the first dose sits | Gap | Effect |
+| First dose | Gap to the next exposure | Effect |
 |---|---|---|
-| inside induction | < 180 days | nothing |
-| inside induction | ≥ 180 days | the later dose advances the line |
-| outside induction | < 60 days | this dose starts a line |
-| outside induction | 60–179 days | nothing |
-| outside induction | ≥ 180 days | the later dose advances the line |
+| inside induction | under 180 days | none |
+| inside induction | 180 days or more | the later dose advances the line |
+| outside induction | under 60 days | this dose starts a line |
+| outside induction | 60 to 179 days | none |
+| outside induction | 180 days or more | the later dose advances the line |
 
-**A coded transplant is read two ways**, which is why three runs exist rather
-than two. High-dose melphalan is transplant conditioning, so a melphalan claim
-and an AUTO code are often the same event and the transplant rule already fires
-on it. `as_asked` judges every exposure anyway; `yield_to_sct` leaves an
-exposure with an AUTO within **14 days** to the transplant rule.
+High-dose melphalan is transplant conditioning, so a melphalan claim and an
+AUTO code often describe the same event, which the transplant rule has already
+acted on. Two readings are built. `as_asked` judges every exposure regardless.
+`yield_to_sct` leaves any exposure with an AUTO within 14 days to the
+transplant rule.
 
-**Two things are still open.** The 60–179 day case removes the boundary but
-does not hold the line open, so a regimen that runs out between the two doses
-still ends there. And a pair whose first dose sits beside a transplant but whose
-second does not currently does not advance. Both are with the study team.
+Two cases are unresolved. In the 60 to 179 day case the boundary is removed but
+the line is not held open, so a regimen that runs out between the two doses
+still ends there. And a pair whose first dose sits beside a transplant while the
+second does not will not advance the line.
 
 ## What stops a run
 
-A cohort whose own build did not finish, a setting that differs from the pinned
-contract without an explicit override, a code list that cannot be read, or a
-line that ends in a way the rules above cannot produce.
+A cohort whose own build did not finish. A setting that differs from the pinned
+contract without an explicit override. A code list that cannot be read. A line
+that ends in a way these rules cannot produce.

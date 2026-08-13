@@ -2,8 +2,8 @@
 
 Builds the 1L NDMM cohort and its attrition for one cohort prefix.
 
-**`RULES.md`** is the one-page version of who gets into this cohort and what it
-assumes. `DECISIONS.md` is the long form, with the reasoning.
+`RULES.md` gives the criteria for this cohort and what it assumes.
+`DECISIONS.md` records the reasoning behind each one.
 
 ```
 DATABRICKS_PWD=... Rscript build.R <prefix_>
@@ -30,10 +30,9 @@ named run is known to be dead.
 
 A status table that is not there is the first run on a prefix and passes. Any
 other failure to read it - a refused SELECT, a dropped connection, a table of
-another shape - stops the run instead. Those used to take the first-run path
-too, which turned this check off for the length of a build at exactly the
-moments the warehouse was misbehaving. `NDMM_IGNORE_ACTIVE_RUN=TRUE` gets past
-that as well, with the reason logged.
+another shape - stops the run instead, so a misbehaving warehouse cannot turn
+the check off for the length of a build. `NDMM_IGNORE_ACTIVE_RUN=TRUE` gets
+past that as well, with the reason logged.
 
 A re-run keeps its run id, so `NDMM_ATTRITION`, `NDMM_RUN_METADATA` and
 `NDMM_CODELIST_METADATA` are cleared of this run's rows before the first step -

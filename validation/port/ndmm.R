@@ -365,10 +365,9 @@ SPLICE <- list(
   # The codelist statement. Two changes: the blank-after-normalising guard, and
   # the join that marks a code as the index disease when it is on mm_dx.csv.
   # It is a rewrite rather than added lines because the whole statement moved
-  # to a CTE - the first version put that test in a correlated EXISTS whose
-  # inner relation has columns called dx and icd_family too, so the unqualified
-  # names bound to the inner ones and every other-cancer code came back
-  # overridden. Normalise, then join, and qualify everything.
+  # to a CTE: a correlated EXISTS would have an inner relation with columns
+  # called dx and icd_family too, binding the unqualified names to the wrong
+  # side. Normalise, then join, and qualify everything.
   "R/steps/04_other_malig.R" = list(
     # Ends at the mm_dx join, which is the last line of the statement.
     # The fourth clinical change is inside it. S6.2.1.2 pairs two outpatient

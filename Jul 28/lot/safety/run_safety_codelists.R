@@ -87,12 +87,10 @@ if (length(st$drafted))
   cat("  placeholder(s) drafted on field(s) not confirmed queryable: ",
       paste(st$drafted, collapse = ", "), "\n", sep = "")
 
-# The verdict is safety_codelist()'s, not this script's. Everything the strict
-# read would refuse on is listed, in its words, and the exit status is whether
-# there was anything - so this command cannot report ready on a list the
-# analysis would then be unable to read. It used to decide for itself, on
-# completeness alone, and would print a warning about a filled unconfirmed
-# field and "Ready." two lines apart.
+# The verdict is safety_codelist()'s, not this script's: everything the strict
+# read would refuse on is listed in its words, and the exit status is whether
+# there was anything, so this cannot report ready on a list the analysis would
+# then be unable to read.
 bad <- safety_refuse(st)
 if (length(bad)) {
   cat("\n  Not ready - ", length(bad),

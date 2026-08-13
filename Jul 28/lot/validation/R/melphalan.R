@@ -201,9 +201,6 @@ melp_rule_sql <- function(lines_tbl, map_tbl, auto_tbl, cfg, run_id) {
                   WHEN DAYS_INTO_LINE <= IND_DAYS - 1 THEN 1 ELSE 0 END AS INSIDE
       FROM pairs p
     ),
-    -- One reason per exposure, never a bare NULL. Five different situations
-    -- used to collapse into one no-advance answer, and the impact query then
-    -- removed a boundary for an exposure the rule says nothing about.
     -- Whether the boundary this pair would open falls on an exposure the
     -- transplant rule already owns. Computed here so the decision below is
     -- flat: a CASE nested inside a CASE arm reads as one rule and is two.

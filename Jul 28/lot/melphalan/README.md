@@ -171,13 +171,14 @@ together.
 Suppressing B.2's boundaries stops melphalan ending the line at either dose.
 It does not hold the line open to the second dose.
 
-Both doses, not one. The first version removed only the first dose's boundary,
-because the pair is judged from a row that carries the gap - and the later dose
-has no gap of its own, so it was judged by nothing, fell through to the engine
-and advanced the line at exactly the boundary B.2 says is not there. Every other
-branch hid it: in A.1 melphalan is already in the regimen and a repeat extends
-the line, and in B.3 the later dose is meant to advance. Only a B.2 pair whose
-second dose is the patient's last one shows it, which is the case the study
+Both doses, not one. The pair is judged from the row that carries the gap, and
+the later dose has no gap of its own - so removing only the first dose's
+boundary would leave the later one judged by nothing, falling through to the
+engine and advancing the line at exactly the boundary B.2 says is not there.
+Every other branch hides that: in A.1 melphalan is already in the regimen and a
+repeat extends the line, and in B.3 the later dose is meant to advance. Only a
+B.2 pair whose second dose is the patient's last one shows it, which is the case
+the study
 team's Example 1 is.
 
 What is still not done is holding the line open. A line's discontinuation date

@@ -110,14 +110,12 @@ JOURNEY_CATEGORIES <- list(
 # than written out per pair: they differ only in two numbers, and copies of a
 # query are places for a fix to be applied to some of them.
 #
-# LEFT JOIN, not INNER: a patient who stopped after LOT{a} used to vanish, so
-# the panel could not show how many went on. They are a terminal node now, and
-# the ribbons leaving a regimen sum to that regimen's patients.
+# LEFT JOIN, not INNER: a patient who stopped after LOT{a} is a terminal node,
+# so the ribbons leaving a regimen sum to that regimen's patients.
 #
 # A line says whether the patient got there, not a regimen string. An SCT_ALLO
-# line carries no regimen, so filtering on a non-blank LOT_BASE_MEDS read those
-# patients as "No LOT{b}" when they had reached it - invented attrition. Blank
-# regimens are labelled by what started the line.
+# line carries no regimen, so blank regimens are labelled by what started the
+# line rather than counted as "No LOT{b}".
 #
 # Non-top-N sources become "Other" rather than vanishing, so the chart is every
 # LOT{a} patient. The stopped node is ranked out of the top-N, or the largest

@@ -637,8 +637,8 @@ write_run_metadata <- function(con, cfg, here, n) {
          "{sql_text(NDMM_BELANTAMAB_ABBR)}, {sql_text(NDMM_INDEX_EXCLUDED_ABBRS)}, ",
          "{sql_text(NDMM_INDEX_EXCLUDED_CODES)}, ",
          "{sql_text(NDMM_MM_ADJACENT_STATES)}, ",
-         # The labels themselves, not just the mode - the list is settable now,
-         # so the mode alone no longer says which codes were kept.
+         # The labels themselves, not just the mode: the list is settable, so
+         # the mode alone does not say which codes were kept.
          "{sql_text(paste(ndmm_mm_adjacent_groups(), collapse = '|'))}, ",
          "{sql_text(code_fingerprint(here))}, ",
          "{sql_text(contract_settings())}, ",
@@ -1088,9 +1088,9 @@ check_icd_flag <- function(con, cfg) {
          "the study team has looked at what changed.", call. = FALSE)
   log_msg("WARNING (raw_icd_flag): ", msg)
   if ("raw_icd_flag" %in% waivers())
-    log_msg("  (NDMM_WAIVERS=raw_icd_flag is no longer needed - this reports ",
-            "rather than stops. The name is still accepted so existing commands ",
-            "keep working.)")
+    log_msg("  (NDMM_WAIVERS=raw_icd_flag has no effect - this reports rather ",
+            "than stops. The name is accepted so existing commands keep ",
+            "working.)")
   invisible(TRUE)
 }
 
@@ -1230,11 +1230,9 @@ build_ndmm <- function(here, prefix) {
   log_msg("  Follow-up CE: ", cfg$fu_ce_days, " day(s) after index")
   log_msg(SEP)
 
-  # First, and before this run writes anything at all: one query, against a
-  # table check_upstream does not look at, and a refused run leaves the prefix
-  # exactly as it found it. Order matters now - the query no longer excludes
-  # this run's id, so it has to run before write_build_status marks this
-  # attempt started or the run would find itself.
+  # Before this run writes anything, so a refused run leaves the prefix as it
+  # found it. The query does not exclude this run's id, so it has to run before
+  # write_build_status marks the attempt started or the run finds itself.
   check_no_active_run(con, cfg)
   check_upstream(con, cfg)
   # Before the first status row, which now carries findings: run_id is fixed at

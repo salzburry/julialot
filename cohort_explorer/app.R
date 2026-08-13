@@ -292,8 +292,8 @@ server <- function(input, output, session) {
 
   # ----- Patient Characteristics -----
   # capture the cohort + label at Apply time so the header N, safety table, and
-  # cat/cont tables ALL describe the same snapshot (they used to disagree: the
-  # header/safety read selected() live while the tables were gated on Apply).
+  # cat/cont tables ALL describe the same snapshot -- reading selected() live
+  # in one place and gating on Apply in another makes them disagree.
   pc <- eventReactive(input$pc_apply, {
     list(df = selected()$data, vars = input$pc_vars, strata = input$pc_strata,
          label = COHORTS[[cohort_choice()]]$label)

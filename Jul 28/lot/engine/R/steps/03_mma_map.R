@@ -414,10 +414,8 @@ phase_mma_map <- function(con, ctx) {
 
   # STEP 4: MAP_STACKED
   #
-  # The table every later phase reads. Written here rather than in
-  # phase_lot1_end, which is where it used to be: by then phase_lot1_base has
-  # already read it four times, and each of those re-ran the MAP aggregate
-  # over the whole claim set. It is read twenty-nine times over a run.
+  # The table every later phase reads, written here because phase_lot1_base
+  # reads it four times before phase_lot1_end. Twenty-nine reads over a run.
   materialize(con, "S07_map_stacked", view = "map_stacked", name = "MAP_STACKED", body = "
     SELECT * FROM map_med
   ", qc = "SELECT count(*) AS n_rows FROM map_stacked")

@@ -282,10 +282,10 @@ ok(abs(365.25 / 30.4375 - 12) < 1e-9, "...which divides the year into twelve")
 
 cat("\n-- a line cohort has to belong to the run being measured --\n")
 # Readable is not current. Re-running LOT leaves the 2L/3L tables untouched and
-# perfectly readable, and eligibility from the old run would be stamped onto the
-# new run's lines - with every output correctly carrying this run's ids, so no
-# stamp check could catch it. ALL_LINES stays right; LINE_ELIGIBLE goes quietly
-# wrong. The subsequent build records its source LOT run; this asks.
+# perfectly readable, so eligibility from an earlier run would be stamped onto
+# the new run's lines with every output correctly carrying this run's ids:
+# ALL_LINES right, LINE_ELIGIBLE quietly wrong. The subsequent build records
+# its source LOT run; this asks.
 #
 # Naming the same LOT run is not the same as being the same build, so all five
 # stamps the subsequent build writes are read, not one of them.
@@ -362,11 +362,10 @@ ok(is.list(fsc(FULL, lot_stamp = LOT_STAMP)),
 m7 <- fsc(without("SOURCE_LOT_STAMP"))
 ok(is.character(m7) && grepl("record no the stamp of the LOT run", m7, fixed = TRUE),
    "a cohort predating the stamp column is unproven, not silently accepted")
-# The other side of it, and the one that was open: the LIVE status row carrying
-# no stamp. The first version of this guard was a single condition, so a
-# missing lot_stamp short-circuited the whole comparison and a re-run under the
-# same id passed unremarked. Unprovable is not provable, so it stops - the same
-# way the cohort-attempt guard beside it does.
+# The other side of it: the LIVE status row carrying no stamp. As a single
+# condition, a missing lot_stamp would short-circuit the whole comparison and
+# let a re-run under the same id pass unremarked. Unprovable is not provable,
+# so it stops - the same way the cohort-attempt guard beside it does.
 for (miss in list(NA_character_, "", "   ")) {
   mm <- fsc(FULL, lot_stamp = miss)
   ok(is.character(mm) && grepl("carries no stamp", mm, fixed = TRUE),

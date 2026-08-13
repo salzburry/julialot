@@ -97,9 +97,8 @@ main <- function() {
   qs_check_run_binding(con)
   # Q1c's trial answer comes from the cohort build's own 1L-anchored flag. The
   # diagnosis-anchored pair cannot answer what Q1c is asked - its baseline stops
-  # before that index and its follow-up runs past 1L - and it belongs to a
-  # different cohort, which this script no longer reads. broad_studyteam_qs.R
-  # has it.
+  # before that index and its follow-up runs past 1L - and belongs to a
+  # different cohort, which broad_studyteam_qs.R reads instead.
   ndmm_trial <- qs_ndmm_trial_flags(con)
   if (!isTRUE(ndmm_trial$ok))
     log_msg("  Q1c: ", ndmm_trial$why, " The trial breakdown is skipped.")

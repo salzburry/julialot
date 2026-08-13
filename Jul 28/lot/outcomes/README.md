@@ -193,12 +193,11 @@ The line cohorts are probed, not required. Where they are not readable the flag
 is NULL throughout and only `ALL_LINES` is reported - an empty second
 denominator would read as "nobody qualified".
 
-Readable is not current. Re-running LOT leaves the 2L/3L tables untouched
-and perfectly readable, and eligibility from the old run would be stamped onto
-the new run's lines - with every output correctly carrying this run's ids, so
-no stamp check could catch it. The subsequent build records
-`SOURCE_LOT_RUN_ID`; a cohort naming another run, or too old to name any, stops
-the build rather than restricting on it.
+Readable is not current. Re-running LOT leaves the 2L/3L tables untouched and
+perfectly readable, so eligibility from an earlier run would be stamped onto
+the new run's lines with every output correctly carrying this run's ids. The
+subsequent build records `SOURCE_LOT_RUN_ID`; a cohort naming another run, or
+too old to name any, stops the build rather than restricting on it.
 
 Naming the same LOT run is not the same as being the same build. All five
 stamps - `SUBSEQ_RUN_ID`, `CE_PRE_DAYS`, `CE_FU_DAYS`, `SOURCE_COHORT_RUN_ID`,

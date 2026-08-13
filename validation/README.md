@@ -10,14 +10,10 @@ Rscript validation/run_all.R                      every suite, one summary
 
 ## Why they are outside the packages
 
-They used to sit in `Jul 28/<pkg>/tests/`. They name the baseline the packages
-were migrated from and cite line ranges inside it, so a package that shipped
-with them shipped that name too. Deleting them instead removed the only thing
-that keeps proving the migration still holds — git history says what was true
-at one commit, not what is true now.
-
-Outside the deployable folder, both hold: `Jul 28/` carries no reference to the
-baseline, and the equivalence check still runs on every change.
+They name the baseline the packages were migrated from and cite line ranges
+inside it, so a package shipping with them would ship that name too. Keeping
+them outside the deployable folder holds both: `Jul 28/` carries no reference
+to the baseline, and the equivalence check still runs on every change.
 
 | | |
 |---|---|
@@ -56,7 +52,7 @@ change survives the undo and breaks equality. A registered deviation that is
 deleted leaves an entry with nothing to undo, which is reported rather than
 reading as a perfect match.
 
-`hygiene/lot_selfcontained.R` now runs with **no exclusions**. It used to carve
-out two files — itself, and the port comparison that reads the baseline on
-purpose. Both are here now, so every file left inside the package is held to
-the rule.
+`hygiene/lot_selfcontained.R` runs with **no exclusions**. The two files that
+would need carving out — itself, and the port comparison that reads the
+baseline on purpose — both live here, so every file left inside the package is
+held to the rule.

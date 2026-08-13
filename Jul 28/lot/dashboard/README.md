@@ -55,9 +55,8 @@ A bar has no `KIND` column, so the funnel panel puts it in the label:
 those rows are not attrition - for a treatment-indexed cohort such as NDMM they
 re-derive a fact the cohort build already established, so a drop is the two
 scans disagreeing rather than patients the study lost. Under a heading saying
-"attrition", with nothing on the chart to tell them apart, a drop there reads as
-expected loss: the exact misreading the LOT build was changed to prevent,
-reintroduced one layer up.
+"attrition", with nothing on the chart to tell them apart, a drop there would
+read as expected loss, so the two kinds are labelled apart.
 
 Each panel's percentages are of its own first row, which is what
 `pct = "first"` over `ORDER BY STEP_NUM` gives: the funnel's base is the
@@ -176,10 +175,8 @@ The second question has three answers, and the third is the one worth naming.
 The table may carry no timestamp column, `lot` may have recorded no stamp of
 its own, the query may be refused, the value may come back in a shape no date
 parser takes. None of those establishes that the rows are the attempt LOT read,
-and all of them used to be reported as though they had - the comparison
-collapsed into "not newer" and the panel went out labelled `cohort run X`
-either way. It now reads `cohort run X (attempt not verified)`, and the log
-names the check that could not run.
+so none of them collapses into "not newer": the panel reads `cohort run X
+(attempt not verified)` and the log names the check that could not run.
 
 Rows written at or before the stamp are still not *proved* to be the ones LOT
 read. This is a detector, not a link: what it buys is that the case it can see
@@ -347,11 +344,10 @@ Two more things are needed before that claim holds.
 A line decides whether the patient got there, not a regimen string. An
 `SCT_ALLO` line carries no regimen at all - `10_lot2_5_base.R` suppresses the
 induction rows for it, because an allogeneic singleton LOT contains no MM
-therapy - so filtering on a non-blank `LOT_BASE_MEDS` threw those lines away and
-the patient read as `No LOT{b}` when they had reached `LOT{b}`. As the source
-line it removed them from the chart entirely. That is worse than the old inner
-join: it invents attrition rather than omitting it. A blank regimen is now
-labelled by what started the line - `SCT_ALLO (no regimen)`.
+therapy. Filtering on a non-blank `LOT_BASE_MEDS` would throw those lines away
+and read the patient as `No LOT{b}` when they had reached `LOT{b}` - invented
+attrition. A blank regimen is labelled by what started the line instead -
+`SCT_ALLO (no regimen)`.
 
 Sources outside `TOP_N` become an `Other` source rather than being dropped.
 Filtering them out would make "every patient" false while the panel said it.

@@ -109,7 +109,7 @@ badmsg <- function(expr, want, what) {
   ok(inherits(e, "error") && grepl(want, conditionMessage(e), fixed = TRUE), what)
 }
 badmsg(validate_line_criteria(list(crit(on_fail = "drop_line"))),
-       "on_fail must be one of", "drop_line is no longer a mode")
+       "on_fail must be one of", "drop_line is not a mode")
 badmsg(validate_line_criteria(list(crit(on_fail = "delete"))),
        "on_fail must be one of", "an unknown on_fail")
 badmsg(validate_line_criteria(list(crit(lines = 0L))),
@@ -166,8 +166,8 @@ e <- line_criteria_flags_sql(cfg, "lot_long", "X", list())
 ok(has(e, "SELECT * FROM lot_long"), "no criteria means a straight copy, not a broken view")
 
 cat("\n-- a mistyped switch stops the build, it does not disable quietly --\n")
-# The old behaviour treated APPLY_C1=Y as FALSE, so an intended criterion
-# could go missing with no error at all.
+# Reading APPLY_C1=Y as FALSE would let an intended criterion go missing with
+# no error at all.
 clear(); Sys.setenv(APPLY_C1 = "Y")
 stops(enabled_line_criteria(list(C_ANY)), "'Y' is rejected, not read as off")
 Sys.setenv(APPLY_C1 = "TURE")

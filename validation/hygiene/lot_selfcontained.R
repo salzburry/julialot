@@ -19,11 +19,10 @@ source(file.path(ROOT, "tests", "testutil.R"))
 
 files <- list.files(ROOT, pattern = "\\.R$", recursive = TRUE, full.names = TRUE)
 rel   <- sub(paste0("^", ROOT, "/"), "", files)
-# No exclusions. This check used to carve out two files: itself, because it
-# names the things it forbids, and the port comparison, which reads the
-# baseline on purpose. Both now live outside the package, so every file left
-# inside it is held to the rule with no exceptions - which is the claim the
-# package makes about itself.
+# No exclusions. The two files that would need carving out - this check, which
+# names the things it forbids, and the port comparison, which reads the baseline
+# on purpose - both live outside the package, so every file inside it is held to
+# the rule.
 code  <- setNames(lapply(files, readLines, warn = FALSE), rel)
 # Only code matters. Strip R comments and the SQL "--" comments inside the
 # glue strings - those discuss other files by name and are not dependencies.
@@ -90,9 +89,9 @@ ok(any(grepl("commandArgs\\(trailingOnly = TRUE\\)", bd)) &&
    "the entry point takes them from the caller or the environment")
 
 cat("\n-- and no file inside it looks outside at all --\n")
-# There is nothing left to carve out. The port comparison used to be the one
-# exception; it is in validation/ now, and skips on its own when the baseline
-# is absent, so the package itself has no outside reference of any kind.
+# Nothing to carve out: the port comparison lives in validation/ and skips on
+# its own when the baseline is absent, so the package holds no outside
+# reference of any kind.
 outside <- grep("apr_30_2026|\\.\\./", unlist(code), value = TRUE)
 outside <- outside[!grepl("^\\s*#", outside)]
 ok(length(outside) == 0,
@@ -107,10 +106,9 @@ for (f in NEED)
   ok(file.exists(file.path(ROOT, f)), paste0(f, " is in the folder"))
 
 cat("\n-- one definition per step, not two --\n")
-# The fresh-session path used to carry its own copies of the code-list,
-# cohort and SCT SQL. They drifted: guards added to the LOT1 code lists never
-# reached them, and its cohort view ignored censor_at_disenrollment. It calls
-# the LOT1 phases now, so a step must be defined exactly once.
+# The fresh-session path calls the LOT1 phases rather than carrying its own
+# code-list, cohort and SCT SQL, so a step must be defined exactly once. A
+# second copy drifts: a guard added to one never reaches the other.
 defs <- list()
 for (f in list.files(file.path(ROOT, "R", "steps"), "\\.R$", full.names = TRUE)) {
   for (n in unlist(regmatches(readLines(f, warn = FALSE),
@@ -121,9 +119,9 @@ dup <- names(defs)[vapply(defs, length, integer(1)) > 1]
 ok(length(dup) == 0,
    if (length(dup)) paste0("step defined more than once: ", paste(dup, collapse = ", "))
    else paste0("all ", length(defs), " steps are defined exactly once"))
-# One code-list and cohort definition, in the phases. The fresh-session
-# rebuild used to hold a second, drifting copy; it is gone, and so is the path
-# that could pair a re-read code list with LOT1 tables built from another.
+# One code-list and cohort definition, in the phases. A second copy in the
+# fresh-session rebuild could pair a re-read code list with LOT1 tables built
+# from another.
 step_paths <- list.files(file.path(ROOT, "R", "steps"), "\\.R$", full.names = TRUE)
 defs_of <- function(pat) Filter(function(f)
   any(grepl(pat, readLines(f, warn = FALSE))), step_paths)
@@ -175,13 +173,10 @@ for (f in PKG_R) {
 }
 
 # ...and every function any of them calls has to exist. Read from the parse
-# tree, not from the text. The old scanner collapsed quoted spans and stripped
-# comments so that SQL would not read as R, and it could be defeated from
-# either side: an apostrophe in a comment shifts every quote pair after it, and
-# so does a '#' inside a string - load_inputs.R tests startsWith(nm, "#"), and
-# cutting the line there drops the closing quote. Either way a span of real
-# code is blanked out, or a page of SQL stops being quoted and its function
-# names come out as undefined calls. The parser has neither problem.
+# tree, not from the text: a scanner that collapses quoted spans and strips
+# comments to keep SQL from reading as R is defeated from either side - an
+# apostrophe in a comment shifts every quote pair after it, and so does a '#'
+# inside a string. The parser has neither problem.
 scan_r <- function(f) {
   calls <- character(0); formals_seen <- character(0); defs <- character(0)
   walk <- function(e) {

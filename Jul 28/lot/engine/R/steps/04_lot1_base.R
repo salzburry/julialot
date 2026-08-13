@@ -87,20 +87,11 @@ phase_lot1_base <- function(con, ctx) {
     discon AS (
       SELECT
         p.PATID,
-        -- Where the regimen ran out, whenever that falls on or before
-        -- OBS_END_DT. Capping at OBS_END_DT prevents days-supply tails past
-        -- death/study_end from extending the LOT.
-        --
-        -- This is the run-out, not yet a discontinuation. Whether it counts as
-        -- one depends on the confirmation buffer and on whether the patient
-        -- was seen again afterwards, and neither can be decided here: the
-        -- post-runout trigger needs lot1_sct, which step 05b has not built
-        -- yet. 06_lot1_end.R derives LOT1_BASE_DISCON_DT from this column.
-        --
-        -- Everything in this step that bounds itself at the run-out - the
-        -- add-med window below - wants this raw date and not the confirmed
-        -- one, because an agent added after the regimen ran out opens the
-        -- next line rather than ending this one.
+        -- Where the regimen ran out, capped at OBS_END_DT so days-supply
+        -- tails past death or study end do not extend the line. This is the
+        -- run-out, not yet a discontinuation: 06_lot1_end.R confirms it, once
+        -- the post-runout trigger exists. The add-med window below wants this
+        -- raw date.
         CASE
           WHEN d.RAW_DISCON_DT IS NOT NULL AND d.RAW_DISCON_DT <= p.OBS_END_DT
             THEN d.RAW_DISCON_DT

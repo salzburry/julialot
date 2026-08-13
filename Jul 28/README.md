@@ -21,9 +21,9 @@ A cohort is what LOT is pointed at. It is not part of LOT and does not read it.
 | `lot/safety/` | code lists for the protocol's safety and utilisation events. Roster only. |
 | `lot/tools/` | edits a production code list on request. Not a study stage. |
 
-Each of the three has a **`RULES.md`** — the rules that build applies and the
-assumptions behind them, on one page. `lot/LOT_RULES.md` is the long form for
-lines; `ndmm/DECISIONS.md` is the long form for the cohort.
+Each of the three has a `RULES.md` giving the rules that build applies and the
+assumptions behind them. `lot/LOT_RULES.md` is the long form for the lines and
+`ndmm/DECISIONS.md` is the long form for the cohort.
 
 `ndmm/` and `overall/` are independent - neither reads the other, and each goes
 to the raw CDM and the production code lists on its own. `lot/engine/` takes a

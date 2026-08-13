@@ -90,7 +90,7 @@ Sys.setenv(CHECKPOINT_STEPS = "mm_dx_events_all")
 stops(check_output_contract(good, "OVERALL_COH_FINAL", "overall_"),
       "rejects a narrowed CHECKPOINT_STEPS")
 
-cat("\n-- check_settings: the ones that used to fail open --\n")
+cat("\n-- check_settings: the ones that could fail open --\n")
 clear()
 runs(check_settings(), "unset is fine")
 Sys.setenv(APPLY_AGE_INCL = "Y")

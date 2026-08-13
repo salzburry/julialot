@@ -122,16 +122,8 @@ main <- function() {
 
   # Definitions sidecar so every CSV batch travels with its operational
   # definitions (counts alone are easy to misread).
-  # Cohort passes: Overall always; NDMM when the persisted NDMM cohort table
-  # (materialized by the combined dashboard's NDMM pass) is present. The NDMM
-  # table is LOT_LONG INNER JOINed to the NDMM patient set - a strict subset
-  # of the parent - so the shared signal views built above on the parent
-  # patient list (steroid claims, raw CAR-T dates) cover both cohorts; each
-  # per-question query joins back to its own cohort lot_long.
-  # One population, not two. The old arrangement ran a "parent" LOT_LONG and an
-  # NDMM-filtered subset of it side by side; the LOT run under this prefix is
-  # over the cohort already, so there is no subset to compare against - a
-  # different cohort is a different prefix and a separate run of this script.
+  # One population, not two: the LOT run under this prefix is over the cohort
+  # already. A different cohort is a different prefix and a separate run.
   cohorts <- list(list(tag = "cohort", label = .pop_label, lot_long = lot_long))
 
   defs <- data.frame(item = c(

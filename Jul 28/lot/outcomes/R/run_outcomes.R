@@ -77,16 +77,9 @@ check_subseq_status <- function(con) {
 }
 
 # The line-specific eligibility cohorts, if the cohort build wrote them, and if
-# they still belong beside the lines being measured.
-#
-# Readable is not the same as current. Re-running LOT leaves the 2L/3L tables on
-# disk untouched and perfectly readable, and eligibility from the old run would
-# then be stamped onto the new run's lines - with every output correctly carrying
-# this run's ids, so no stamp check could catch it. ALL_LINES would stay right
-# and LINE_ELIGIBLE would be quietly wrong.
-#
-# The subsequent build records which LOT run it drew from. Ask, and drop a
-# cohort that names a different one rather than restricting on it.
+# they still belong beside the lines being measured. Readable is not the same as
+# current: re-running LOT leaves these tables on disk intact, so a cohort that
+# names a different LOT run is dropped rather than restricted on.
 find_subsequent_cohorts <- function(con, lot_run, lines = c(2L, 3L),
                                     attempt = NULL, lot_stamp = NULL,
                                     subseq_attempt = NULL) {
@@ -139,10 +132,9 @@ find_subsequent_cohorts <- function(con, lot_run, lines = c(2L, 3L),
          "still carry this run's ids - so nothing downstream would catch it. ",
          "Re-run ndmm/build_subsequent_cohorts.R against this LOT run, or ",
          "unset them to report ALL_LINES alone.", call. = FALSE)
-  # Naming the same LOT run is not the same as being the same build. The
-  # subsequent build stamps five things onto these tables and only one of them
-  # was read, which left two ways to get a wrong denominator that carried every
-  # id correctly:
+  # Naming the same LOT run is not the same as being the same build. Every
+  # stamp the subsequent build writes is read here, because two things give a
+  # wrong denominator while carrying every id correctly:
   #
   #   a partial re-run - 2L from one subsequent build and 3L from another, both
   #   pointing at this LOT run, so LINE_ELIGIBLE means one thing on one line
@@ -194,20 +186,14 @@ find_subsequent_cohorts <- function(con, lot_run, lines = c(2L, 3L),
     stamp <- agree("stamp", "the stamp of that cohort attempt")
     agree("pre",    "the continuous-enrolment window before the line")
     agree("fu",     "the continuous-enrolment window after it")
-    # Naming this LOT run is not the same as being built from the build that
-    # is on disk now. A LOT re-run under the same RUN_ID replaces the lines in
-    # place, and cohorts built from the earlier attempt still name the run id
-    # correctly - so the id matches, every downstream check passes, and
-    # LINE_ELIGIBLE is a denominator over lines that no longer exist. The
-    # status row's UPDATED_AT moves on every attempt, so it is what separates
+    # Naming this LOT run is not the same as being built from the lines on disk
+    # now: a re-run under the same RUN_ID replaces them in place, and the id
+    # still matches. UPDATED_AT moves on every attempt, so it is what separates
     # them.
     lotstamp <- agree("lotstamp", "the stamp of the LOT run they were built from")
-    # An absent live stamp is not a pass. The first version of this guard was a
-    # single condition, so a status table with no UPDATED_AT - hand-migrated,
-    # restored from a snapshot, or written by anything other than
-    # write_build_status() - short-circuited it and the re-run went unchecked
-    # with nothing said. Its sibling below has always had this else; this one
-    # did not.
+    # An absent live stamp is not a pass. A status table with no UPDATED_AT -
+    # hand-migrated, restored, or written by anything other than
+    # write_build_status() - cannot show whether the run was rebuilt.
     if (is.null(lot_stamp) || is.na(lot_stamp) || !nzchar(trimws(lot_stamp))) {
       out_unproven(paste0("The LOT status row for run ", lot_run, " carries no ",
                           "stamp, so a re-run of it under the same id cannot be ",
