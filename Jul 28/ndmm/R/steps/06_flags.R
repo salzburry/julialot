@@ -60,7 +60,16 @@ build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
       GROUP BY ec_l1.PATID
     ),
     -- Follow-up CE re-derived ANCHORED AT LOT1 (the NDMM index): a span must
-    -- cover [LOT1_START, least(LOT1_START + NDMM_FU_CE_DAYS, study_end, death)].
+    -- cover [LOT1_START, least(LOT1_START + NDMM_FU_CE_DAYS, study_end, death)]
+    -- and must reach LOT1_START itself - the second condition, which is the
+    -- floor written as its own predicate.
+    --
+    -- The floor is the signed rule (DECISIONS.md #1: the span must cover the
+    -- 1L index date). Without it a death IMPUTED before the index pulled the
+    -- target back behind it - a month-only death on 10 Jan imputing to 15 Jan
+    -- with a 20 Jan index let enrolment ending 19 Jan pass, covering no part
+    -- of the index day. DEATH_DT is re-clamped to the index later, in
+    -- NDMM_COHORT, which is after eligibility has already been decided.
     -- Uses NDMM_ENROLL_SPANS_STRICT (no-gap spans, gap_days=0):
     -- 'no gaps in enrollment' for the follow-up CE, vs <30-day gaps allowed
     -- for the 12-mo pre-LOT1 CE. Plus the carried-forward DEATH_DT.
@@ -70,6 +79,7 @@ build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
                        AND s.cov_end   >= least(date_add(ec_l1.LOT1_START_DT, {NDMM_FU_CE_DAYS}),
                                                 date('{cfg$study_end}'),
                                                 coalesce(ec_l1.DEATH_DT, date('{cfg$study_end}')))
+                       AND s.cov_end   >= ec_l1.LOT1_START_DT
                       THEN 1 ELSE 0 END) AS CE_fu
       FROM ec_l1
       LEFT JOIN {NDMM_ENROLL_SPANS_STRICT} s ON s.PATID = ec_l1.PATID

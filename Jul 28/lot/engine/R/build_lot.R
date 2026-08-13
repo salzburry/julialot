@@ -344,10 +344,20 @@ check_cohort_build <- function(con, cfg) {
   for (nm in cands) {
     tbl <- wrk(paste0(cp, nm))
     tried <- c(tried, tbl)
+    # Absent and unreadable are different answers. A permissions failure, a
+    # dropped connection or a malformed table all used to read as "no status
+    # here", and the run carried on with no cohort provenance at all.
     d <- tryCatch(db_q(con, glue(
            "SELECT * FROM {tbl} ORDER BY UPDATED_AT DESC LIMIT 1")),
-         error = function(e) NULL)
-    if (is.null(d) || !nrow(d)) next
+         error = function(e) e)
+    if (inherits(d, "error")) {
+      if (missing_object_error(d)) next
+      stop("Could not read the cohort build-status table ", tbl, ": ",
+           conditionMessage(d), ". That is not the same as its being absent, ",
+           "so this run will not treat the cohort as unverified and carry on.",
+           call. = FALSE)
+    }
+    if (!nrow(d)) next
     # Column case differs between the builds. Spark does not care; R does.
     pick <- function(w) {
       i <- match(tolower(w), tolower(names(d)))
@@ -372,6 +382,16 @@ check_cohort_build <- function(con, cfg) {
   for (w in wrong)
     log_msg("  Ignoring ", w$table, ": it is the status of ", w$cohort,
             ", not of ", cfg$input_cohort_table, ".")
+  # Every candidate named a DIFFERENT cohort. That is not "no status found" -
+  # it is positive evidence that the status under this prefix belongs to
+  # something else, and the cohort handed to LOT has none of its own.
+  if (length(wrong) && !length(found))
+    stop("The build-status table(s) under prefix '", cp, "' record ",
+         paste(unique(vapply(wrong, function(w) w$cohort, character(1))),
+               collapse = ", "), ", not ", cfg$input_cohort_table,
+         ". Nothing here says that cohort was ever built, let alone that it ",
+         "finished. Name its status table with COHORT_STATUS_TABLE, or give ",
+         "the cohort its own COHORT_PREFIX.", call. = FALSE)
 
   # More than one left and none of them says which cohort it built. Picking by
   # the order they are listed in would be guessing, and a reused prefix is
@@ -421,11 +441,23 @@ check_cohort_build <- function(con, cfg) {
          "Give the table name without the schema and without the cohort ",
          "prefix - COHORT_PREFIX is added for you, and defaults to this run's ",
          "own prefix.", call. = FALSE)
-  log_msg("WARNING: no cohort build-status table found (looked for ",
-          paste(tried, collapse = ", "), "). Nothing here can say whether the ",
-          "build that wrote ", wrk(cfg$input_cohort_table), " finished. Set ",
-          "COHORT_STATUS_TABLE, and COHORT_PREFIX if the cohort build used a ",
-          "different one.")
+  # No status anywhere. This used to warn and carry on, which meant the normal
+  # path - COHORT_STATUS_TABLE unset - could build a whole study off a cohort
+  # whose own build may have failed, and record NULL provenance for it. The
+  # explicit path already stopped; the default now does too.
+  msg <- paste0("No cohort build-status table found (looked for ",
+                paste(tried, collapse = ", "), "). Nothing here can say ",
+                "whether the build that wrote ", wrk(cfg$input_cohort_table),
+                " finished, so these lines would be built on an unverified ",
+                "cohort and recorded with no provenance. Set ",
+                "COHORT_STATUS_TABLE, and COHORT_PREFIX if the cohort build ",
+                "used a different one.")
+  if (!identical(toupper(Sys.getenv("LOT_ALLOW_UNVERIFIED_COHORT", unset = "")),
+                 "TRUE"))
+    stop(msg, " If the cohort is known good and has no status table, set ",
+         "LOT_ALLOW_UNVERIFIED_COHORT=TRUE.", call. = FALSE)
+  log_msg("WARNING: ", msg, " LOT_ALLOW_UNVERIFIED_COHORT is set, so the run ",
+          "continues with no cohort provenance.")
   list(run_id = NA_character_, stamp = NA_character_, table = NA_character_)
 }
 
@@ -439,7 +471,14 @@ check_cohort_build <- function(con, cfg) {
 # So it is asked again afterwards, and must be the same attempt: same run id
 # and same timestamp, because a re-run keeps its id.
 recheck_cohort_build <- function(con, cfg, before) {
-  if (is.na(before$run_id)) return(invisible(TRUE))
+  # No run id means check_cohort_build() found no status - only reachable now
+  # under LOT_ALLOW_UNVERIFIED_COHORT. Skipping in silence made an unverified
+  # cohort look re-checked; say what is not being checked.
+  if (is.na(before$run_id)) {
+    log_msg("WARNING: no cohort attempt was recorded before the copy, so ",
+            "whether the cohort was rebuilt during it cannot be checked.")
+    return(invisible(TRUE))
+  }
   after <- tryCatch(check_cohort_build(con, cfg), error = function(e) e)
   if (inherits(after, "error"))
     stop("The cohort build's status changed while LOT was reading it: ",

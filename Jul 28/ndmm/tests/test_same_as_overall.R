@@ -117,7 +117,9 @@ RULES <- list(
   list(name = "which eligibility row gives sex and birth year",
        file = "05_demographics.R",
        from = "row_number() OVER (PARTITION BY PATID",
-       to   = "cast(ELIGEND as date) DESC) AS rn"),
+       # The block now ends on the deterministic tie-break, which both builds
+       # gained together - the point of this check is that they still agree.
+       to   = "cast(YRDOB as int), GDR_CD) AS rn"),
   list(name = "how a partial death date is read",
        file = "05_demographics.R",
        from = "cast(SUBSTR(YMDOD, 1, 4) as int) AS death_yr",

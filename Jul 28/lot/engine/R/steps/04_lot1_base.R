@@ -54,17 +54,35 @@ phase_lot1_base <- function(con, ctx) {
     -- Steroids are excluded from base_meds by the lot1_induction_meds filter.
     -- because corticosteroids are not oncology agents and should
     -- not drive regimen membership, discontinuation, or add-med logic.
-    discon_raw AS (
+    -- Per drug, the end of ITS cover in this line: the FIRST episode flagged
+    -- discontinued. A later episode of the same drug is a restart, and a
+    -- restart opens the next line rather than extending this one.
+    --
+    -- max(MAP_END_DT) over every episode quietly undid that. Drug A dosed
+    -- days 0-27, discontinued at 27 by the 90-day gap, restarting 117-144 gave
+    -- a line-level runout of 144: the restart was swallowed, and LOT2 never
+    -- opened because its trigger has to fall strictly after the previous end.
+    -- MAP_DISCON_FLG had been computed correctly all along and read by nothing
+    -- but a QC count.
+    discon_per_med AS (
       SELECT
         ms.PATID,
-        max(ms.MAP_END_DT) AS RAW_DISCON_DT
+        ms.MAP_MED_TYPE,
+        coalesce(min(CASE WHEN ms.MAP_DISCON_FLG = 1 THEN ms.MAP_END_DT END),
+                 max(ms.MAP_END_DT)) AS MED_END_DT
       FROM map_stacked ms
       INNER JOIN lot1_start l1 ON ms.PATID = l1.PATID
       INNER JOIN base_meds bm
         ON ms.PATID = bm.PATID
        AND ms.MAP_MED_TYPE = bm.MED_ABBR
       WHERE ms.MAP_START_DT >= l1.LOT1_START_DT
-      GROUP BY ms.PATID
+      GROUP BY ms.PATID, ms.MAP_MED_TYPE
+    ),
+    -- The regimen has run out when its LAST base agent has.
+    discon_raw AS (
+      SELECT PATID, max(MED_END_DT) AS RAW_DISCON_DT
+      FROM discon_per_med
+      GROUP BY PATID
     ),
     discon AS (
       SELECT

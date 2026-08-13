@@ -211,6 +211,10 @@ build_lot_n <- function(con, lot_num,
              ll.LOT_BASE_MEDS    AS PREV_BASE_MEDS,
              ll.LOT_START_DT     AS PREV_START_DT,
              ll.LOT_START_TYPE   AS PREV_START_TYPE,
+             -- Needed by auto_cand: an AUTO that ENDED the previous line has
+             -- already been judged excess there and must not be re-judged as a
+             -- tandem partner here.
+             ll.LOT_BASE_END_REASON AS PREV_END_REASON,
              p.OBS_END_DT,
              p.DEATH_DT,
              p.ENDDATE,
@@ -306,8 +310,19 @@ build_lot_n <- function(con, lot_num,
         -- (ii) not a planned tandem. tx_auto_dates has already grouped AUTO
         -- claims < 60 d apart into one event, so only the sct_tandem_days
         -- upper bound is left to test here, as in LOT1.
+        --
+        -- ...except for the AUTO that ended the previous line. That one has
+        -- already been adjudicated EXCESS by the previous line's own rule -
+        -- LOT1 allows a single AUTO and a tandem pair, and ends the line on
+        -- the one beyond them - so re-testing it as a tandem partner of the
+        -- transplant before it orphans the event: AUTO 1 Mar, AUTO 2 Jun
+        -- (tandem), AUTO 3 Nov ends LOT1 on 31 Oct and was then rejected here
+        -- as within 180 days of AUTO 2, so LOT2 never opened. The line-ending
+        -- SCT sits one day after the end date, which is where that AUTO is.
         AND NOT (awp.PREV_AUTO_DT IS NOT NULL
-                 AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {sct_tandem_days})
+                 AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {sct_tandem_days}
+                 AND NOT (pe.PREV_END_REASON = 'SCT_AUTO'
+                          AND awp.TX_DT = date_add(pe.PREV_END_DT, 1)))
       GROUP BY pe.PATID
     )
     SELECT
@@ -398,13 +413,31 @@ build_lot_n <- function(con, lot_num,
       FROM lot{lot_num}_induction_meds im
       INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
     ),{melp_lotn_ctes(cfg, lot_num, induction_window_days, cart_consolidation_days, allo_lot_span)}
-    discon_raw AS (
-      SELECT ms.PATID, max(ms.MAP_END_DT) AS RAW_DISCON_DT
+    -- Per drug, the end of ITS cover in this line: the FIRST episode flagged
+    -- discontinued. A later episode of the same drug is a restart, and a
+    -- restart opens the next line rather than extending this one.
+    --
+    -- max(MAP_END_DT) over every episode quietly undid that. Drug A dosed
+    -- days 0-27, discontinued at 27 by the 90-day gap, restarting 117-144 gave
+    -- a line-level runout of 144: the restart was swallowed, and LOT2 never
+    -- opened because its trigger has to fall strictly after the previous end.
+    -- MAP_DISCON_FLG had been computed correctly all along and read by nothing
+    -- but a QC count.
+    discon_per_med AS (
+      SELECT ms.PATID, ms.MAP_MED_TYPE,
+             coalesce(min(CASE WHEN ms.MAP_DISCON_FLG = 1 THEN ms.MAP_END_DT END),
+                      max(ms.MAP_END_DT)) AS MED_END_DT
       FROM map_stacked ms
       INNER JOIN lot{lot_num}_start ls ON ms.PATID = ls.PATID
       INNER JOIN base_meds bm ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
       WHERE ms.MAP_START_DT >= ls.LOT{lot_num}_START_DT
-      GROUP BY ms.PATID
+      GROUP BY ms.PATID, ms.MAP_MED_TYPE
+    ),
+    -- The regimen has run out when its LAST base agent has.
+    discon_raw AS (
+      SELECT PATID, max(MED_END_DT) AS RAW_DISCON_DT
+      FROM discon_per_med
+      GROUP BY PATID
     ),
     discon AS (
       SELECT
