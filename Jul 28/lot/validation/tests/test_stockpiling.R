@@ -1,0 +1,119 @@
+#!/usr/bin/env Rscript
+# The stockpiling sensitivity, held to what it claims to measure. No warehouse:
+# the SQL is built as a string and read.
+#
+#   Rscript "lot/validation/tests/test_stockpiling.R"
+
+ROOT <- local({
+  a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
+  d <- if (length(a)) dirname(normalizePath(gsub("~+~", " ", sub("^--file=", "", a[1]),
+                                                 fixed = TRUE))) else getwd()
+  dirname(d)
+})
+PARENT <- dirname(ROOT)
+pass <- 0L; fail <- 0L
+ok <- function(cond, what) {
+  if (isTRUE(cond)) { pass <<- pass + 1L; cat("  ok    ", what, "\n") }
+  else { fail <<- fail + 1L; cat("  FAIL  ", what, "\n") }
+}
+has <- function(x, s) grepl(s, x, fixed = TRUE)
+if (requireNamespace("glue", quietly = TRUE)) library(glue) else
+  glue <- function(..., .envir = parent.frame()) {
+    t <- paste0(..., collapse = "")
+    m <- gregexpr("\\{[^{}]+\\}", t)[[1]]
+    if (m[1] == -1L) return(t)
+    len <- attr(m, "match.length"); out <- character(0); pos <- 1L
+    for (i in seq_along(m)) {
+      out <- c(out, substr(t, pos, m[i] - 1L),
+               paste(as.character(eval(parse(
+                 text = substr(t, m[i] + 1L, m[i] + len[i] - 2L)), .envir)), collapse = ""))
+      pos <- m[i] + len[i]
+    }
+    paste0(c(out, substr(t, pos, nchar(t))), collapse = "")
+  }
+sql_text <- function(x) paste0("'", gsub("'", "''", as.character(x)), "'")
+source(file.path(ROOT, "R", "stockpiling.R"))
+
+cat("\n-- the windows are the build's own, and a junk one falls back --\n")
+Sys.unsetenv(c("INDUCTION_WINDOW_DAYS", "INDUCTION_WINDOW_DAYS_LOT_N",
+               "CART_CONSOLIDATION_DAYS"))
+sc <- stock_cfg()
+ok(identical(sc$ind1, 60L) && identical(sc$indn, 30L) && identical(sc$cart, 45L),
+   "60 / 30 / 45 are the defaults, matching the engine's config")
+cfgcsv <- readLines(file.path(PARENT, "engine", "config.csv"), warn = FALSE)
+ok(any(grepl("^INDUCTION_WINDOW_DAYS,60", cfgcsv)) &&
+     any(grepl("^INDUCTION_WINDOW_DAYS_LOT_N,30", cfgcsv)) &&
+     any(grepl("^CART_CONSOLIDATION_DAYS,45", cfgcsv)),
+   "...and those are the numbers the engine ships, not a second copy")
+# A run's own contract wins over this environment: a line has to be judged by
+# the window it was built under.
+ok(identical(stock_cfg(list(INDUCTION_WINDOW_DAYS_LOT_N = "45"))$indn, 45L),
+   "the run's recorded window is preferred over the environment")
+ok(identical(stock_cfg(list(INDUCTION_WINDOW_DAYS_LOT_N = "nope"))$indn, 30L),
+   "a window that is not a number falls back rather than becoming NA")
+
+cat("\n-- the window expression is per start type, like the step's own --\n")
+w <- stock_window_sql(sc)
+ok(has(w, "cast(LOT_NUM as int) = 1") && has(w, "59"),
+   "LOT1 gets its own 60-day window, inclusive of the first day")
+ok(has(w, "LOT_START_TYPE = 'CART'") && has(w, "44"),
+   "a CAR-T-started line closes at the 45-day consolidation window")
+ok(has(w, "29"), "every other line gets 30")
+
+cat("\n-- what it counts is an agent covered in but never filled in --\n")
+ag <- stock_agents_sql("lines", "maps", sc, "r1")
+ok(has(ag, "cast(m.MAP_START_DT as date) <  l.LOT_START_DT") &&
+     has(ag, "cast(m.MAP_END_DT as date)   >= l.LOT_START_DT"),
+   "carried means the episode opened before the line and still covers its start")
+ok(has(ag, "cast(m.MAP_START_DT as date) >= l.LOT_START_DT") &&
+     has(ag, "cast(m.MAP_START_DT as date) <= l.IND_END_DT"),
+   "...and an agent with a fill inside the window is excluded as already in")
+ok(has(ag, "WHERE f.MED_ABBR IS NULL"),
+   "...by an anti-join, so only the agents a coverage rule would ADD come out")
+# The regimen column is a formatted string, so matching agents inside it would
+# make LEN match LENA. The exclusion is built from fills for that reason.
+ok(!has(ag, "LOT_BASE_MEDS"),
+   "membership is decided from fills, never by matching inside LOT_BASE_MEDS")
+ok(has(ag, "m.MAP_MED_CLASS <> 'STEROID'"),
+   "steroids are not agents here, the same way they are not in a regimen")
+ok(has(ag, "WHERE LOT_START_TYPE <> 'SCT_ALLO'"),
+   "ALLO lines are excluded - they carry no regimen for an agent to join")
+
+cat("\n-- and the two boundary effects that follow from it --\n")
+ok(has(ag, "c.EPISODE_END_DT > c.LOT_DISCON_DT") && has(ag, "WOULD_EXTEND_RUNOUT"),
+   "an agent outlasting the line's run-out is flagged: as a base agent it extends it")
+ok(has(ag, "c.LOT_BASE_END_REASON = 'MED_ADD' AND c.ADD_MED = c.MED_ABBR") &&
+     has(ag, "WOULD_REMOVE_ADD_MED"),
+   "an agent that ended the line as an addition is flagged: in the regimen it could not")
+ok(has(ag, "min(cast(m.MAP_START_DT as date))") &&
+     has(ag, "max(cast(m.MAP_END_DT as date))"),
+   "several overlapping episodes of one drug are one carried exposure, not several")
+
+cat("\n-- the rollups do not turn a missing answer into a zero --\n")
+im <- stock_impact_sql("agents")
+ok(has(im, "GROUP BY PATID, LOT_NUM"),
+   "impact is per line, so a line gaining two agents counts once")
+ok(has(im, "LOT_MED_CNT + count(*)"), "...and carries the regimen size before and after")
+bl <- stock_by_lot_sql("impact", "lines")
+ok(has(bl, "FROM {lines_tbl}") || has(bl, "FROM lines"),
+   "the denominator is every line at that LOT, not the affected ones")
+ok(has(bl, "LEFT JOIN hit"),
+   "...so a LOT with no affected lines is a zero row rather than a missing one")
+ok(has(bl, "nullif(a.N_LINES, 0)"),
+   "the share divides by nullif, so an empty LOT is NULL and not a divide by zero")
+
+cat("\n-- the program says what it cannot answer --\n")
+run <- paste(readLines(file.path(ROOT, "run_stockpiling_rule.R"), warn = FALSE),
+             collapse = "\n")
+ok(has(run, "STOCK_EXECUTE"),
+   "measuring is opt-in, so a dry run cannot write to a warehouse")
+ok(has(run, "require_lot_run"),
+   "it refuses a run whose own build did not finish, like its siblings")
+ok(has(run, "needs an alternate build"),
+   "...and says the resulting line structure is not what it reports")
+ok(has(run, "WARNING: LOT1 shows"),
+   "a non-zero LOT1 is reported rather than filtered, since it falsifies the premise")
+
+cat("\n", strrep("-", 52), "\n", sep = "")
+cat(sprintf("%d passed, %d failed\n", pass, fail))
+if (fail > 0L) quit(status = 1L)

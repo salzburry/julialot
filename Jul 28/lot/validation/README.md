@@ -401,6 +401,47 @@ The definition comparison above is the same limit at protocol scale: the
 framework and our column are built; the source documents are not here.
 
 
+## Regimen membership: stockpiling
+
+Optum supplies no treatment end date. Cover is `FILL_DT` plus `DAYS_SUP`, and an
+overlapping refill pushes it out rather than opening a new episode, so an agent
+can be covered across the whole of the next line's induction window while still
+carrying the earlier line's `MAP_START_DT`. The build tests `MAP_START_DT`, so
+that agent does not join the next line's regimen.
+
+The protocol reads wider — "all MM therapies identified during the first 30 days
+of the LOT" — and the LOT2-5 spec's worked example A assumes a continuing agent
+lands in LOT2. The study team settled it as built: a patient who has switched is
+no longer filling the old agent, so residual cover is a dispensing artefact. This
+sizes what the other reading would have cost.
+
+```
+Rscript lot/validation/run_stockpiling_rule.R                       # the rule, no connection
+
+DATABRICKS_PWD=... DOMINO_USER_NAME=usr00000 OBJECT_PREFIX=ndmm_ \
+  STOCK_EXECUTE=TRUE Rscript lot/validation/run_stockpiling_rule.R  # measure it
+```
+
+| table | one row per |
+|---|---|
+| `<prefix>STOCKPILE_AGENTS` | line and agent a coverage rule would add, with the episode that carries it |
+| `<prefix>STOCKPILE_IMPACT` | affected line - agents gained, regimen size before and after |
+| `<prefix>STOCKPILE_BY_LOT` | line number - affected against every line at that number |
+| `<prefix>STOCKPILE_BY_MED` | agent - how often it carries, and for how long |
+
+### What it can and cannot say
+
+It counts regimen changes, and the two boundary effects that follow from a
+finished run: an added agent is a base agent, so it enters the run-out
+calculation (`WOULD_EXTEND_RUNOUT`) and leaves the added-medication candidate
+list (`WOULD_REMOVE_ADD_MED`). It is not a resulting line count — the lines
+that follow a moved boundary are not recoverable from finished lines.
+
+LOT1 cannot be affected: it starts at the patient's first non-steroid MM agent,
+so no such episode precedes it. A non-zero LOT1 is printed as a warning rather
+than filtered away, because it would mean the line table is not what this
+assumes. ALLO-started lines are excluded — they carry no regimen at all.
+
 ## The melphalan rule
 
 A study-team proposal: a melphalan administration should advance the line on

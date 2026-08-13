@@ -126,12 +126,19 @@ main <- function() {
                 b$N_EXPOSURES[i], b$N_PATIENTS[i]))
 
   s <- db_q(con, glue("
-    SELECT count(*) AS n_pat, sum(N_SPLIT) AS splits, sum(N_MERGE) AS merges
+    SELECT count(*) AS n_pat, sum(N_SPLIT) AS splits, sum(N_MERGE) AS merges,
+           sum(N_LINES_NOW) AS n_lines
     FROM {im}"))
   cat("\nWhat it would do to the line BOUNDARIES:\n")
   cat("  ", s$n_pat, " patients have a boundary that moves.\n", sep = "")
   cat("  +", s$splits, " boundaries the rule adds.\n", sep = "")
   cat("  -", s$merges, " boundaries it removes.\n", sep = "")
+  # A moved boundary changes the line it falls in and renumbers every line after
+  # it, so the lines in scope are those patients' whole line sets rather than one
+  # line per boundary. An upper bound on lines touched, and the honest one.
+  cat("  ", s$n_lines, " lines belong to those patients, and a moved boundary ",
+      "changes\n      the line it falls in and every later line for that patient.\n",
+      sep = "")
   cat("\nThese are boundaries, NOT a resulting line count, and subtracting one ",
       "from the\nother does not give one. Moving a boundary changes which line ",
       "an exposure falls\nin, whether an agent is inside an induction window, ",
