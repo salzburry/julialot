@@ -38,6 +38,14 @@ oncology agents.
 
 Medical claims carry no day supply, so 28 days is assumed for each.
 
+An agent joins a line's regimen by being filled inside the induction window, not
+by still being covered across it. Optum supplies no treatment end date: coverage
+is derived from the fill date and the days supplied, and overlapping refills
+stockpile it forward. A supply dispensed during the previous line and stockpiled
+into this one therefore does not join this one — a patient who has switched is
+no longer filling the old agent, so the leftover cover is a dispensing artefact
+rather than treatment.
+
 Disenrollment does not censor. A patient who leaves the plan keeps contributing
 follow-up and the line ends `STUDY_END`. The `*_CE_SENS` columns hold the
 alternative reading.

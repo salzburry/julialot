@@ -2138,4 +2138,27 @@ ok(any(grepl("A funnel is what", src, fixed = TRUE)) &&
      any(grepl("report_line_criteria", src, fixed = TRUE)),
    "criteria that were left off stay out of the funnel and in the run metadata")
 
+cat("\n-- an agent joins a regimen by being filled in the window, not by cover --\n")
+# Optum supplies no treatment end date. Cover is FILL_DT plus DAYS_SUP, pushed
+# out by overlapping refills, so an episode opened in the previous line can still
+# be covered across the whole of this line's induction window. Membership tests
+# MAP_START_DT, so that episode does not join: a patient who has switched is no
+# longer filling the old agent, and the residual cover is a dispensing artefact.
+#
+# Pinned because the protocol reads wider - "all MM therapies identified during
+# the first 30 days of the LOT" - and the study team settled it this way. Anyone
+# widening it to cover has to bring MAP_END_DT into this block, which fails here.
+ind_block <- local({
+  i <- regexpr('_induction_meds"', l25_txt, fixed = TRUE)
+  rest <- substring(l25_txt, i)
+  j <- regexpr("\n  materialize\\(|\n  run_step\\(", rest, perl = TRUE)
+  substring(rest, 1, if (j > 0) j else nchar(rest))
+})
+ok(grepl("ms.MAP_START_DT >= ls.LOT{lot_num}_START_DT", ind_block, fixed = TRUE),
+   "regimen membership is bounded below by the line's own start date")
+ok(grepl("ms.MAP_START_DT <= date_add(", ind_block, fixed = TRUE),
+   "...and above by the induction window, on the same column")
+ok(!grepl("MAP_END_DT", ind_block, fixed = TRUE),
+   "...and never on MAP_END_DT, so stockpiled cover cannot carry an agent in")
+
 report()
