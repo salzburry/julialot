@@ -11,6 +11,7 @@ CENSOR_AT_DISENROLLMENT,FALSE,Primary analysis - disenrollment does not cap foll
 INDUCTION_WINDOW_DAYS,60,LOT1 induction window
 INDUCTION_WINDOW_DAYS_LOT_N,30,Induction window for LOT2 and later
 MAP_DISCON_GAP_DAYS,90,MAP-level discontinuation gap
+LOT_DISCON_CONFIRM_DAYS,90,Observation required after a run-out before it is a discontinuation
 MEDICAL_DAY_SUPPLY,28,Day supply assumed for medical claims
 SCT_AUTO_WINDOW_DAYS,13,AUTO transplant detection window
 SCT_AUTO_GAP_DAYS,60,AUTO transplant gap
@@ -22,6 +23,7 @@ FACE_VALIDITY_FATAL,FALSE,Stop the build when a face-validity check falls outsid
 COHORT_STATUS_TABLE,,What the cohort build calls its run-status table before the prefix (blank = try the usual names)
 COHORT_PREFIX,,The cohort build's prefix for that table (blank = this run's own prefix)
 APPLY_NO_BELANTAMAB,TRUE,Drop patients with belantamab in any LOT
+APPLY_CART_INDUCTION_RULE,TRUE,A CAR-T inside LOT1's induction window belongs to LOT1
 BELANTAMAB_MED_ABBR,BELA,How belantamab is named in MED_ABBR
 APPLY_MELP_RULE,,The melphalan line-advancing rule: blank (contract build) or as_asked / yield_to_sct
 MELP_MED_ABBR,MELP,How melphalan is named in MED_ABBR

@@ -108,15 +108,17 @@ main <- function() {
   # reached - the same answer every other reader in this folder resolves, and
   # for the same reason: the build replaces its tables before it validates
   # them, so a rerun that replaced them and then failed still owns them.
+  # STATE and UPDATED_AT are this table's columns. RUN_TIMESTAMP belongs to
+  # LOT_RUN_METADATA, and naming it here failed the query outright.
   st <- db_q(con, glue("
-    SELECT RUN_ID, STATUS, CONTRACT_DEVIATIONS
+    SELECT RUN_ID, STATE, CONTRACT_DEVIATIONS
     FROM {lot_out('LOT_BUILD_STATUS')}
-    ORDER BY RUN_TIMESTAMP DESC LIMIT 1"))
+    ORDER BY UPDATED_AT DESC LIMIT 1"))
   if (!nrow(st))
     stop("No row in ", lot_out("LOT_BUILD_STATUS"), ", so there is no run to ",
          "check under prefix '", pfx, "'.", call. = FALSE)
   run_id <- as.character(st$RUN_ID[1])
-  status <- as.character(st$STATUS[1])
+  status <- as.character(st$STATE[1])
   devs   <- trimws(as.character(st$CONTRACT_DEVIATIONS[1] %||% ""))
 
   if (!identical(status, "complete"))
@@ -206,8 +208,8 @@ main <- function() {
       n_fail, " failed, ", n_error, " errored, ", n_skip, " skipped.\n", sep = "")
   cat("Wrote ", out_dir, ".\n", sep = "")
   # An error is a check that did not run, and a QC pass that skipped checks is
-  # not a pass. Both count against the exit status.
-  if (n_fail + n_error > 0) quit(status = 1L)
+  # not a pass. All three count against the exit status.
+  if (n_fail + n_error + n_skip > 0) quit(status = 1L)
 }
 
 if (!interactive()) main()

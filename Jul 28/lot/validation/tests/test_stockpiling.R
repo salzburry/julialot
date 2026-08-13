@@ -61,7 +61,7 @@ ok(has(w, "LOT_START_TYPE = 'CART'") && has(w, "44"),
 ok(has(w, "29"), "every other line gets 30")
 
 cat("\n-- what it counts is an agent covered in but never filled in --\n")
-ag <- stock_agents_sql("lines", "maps", sc, "r1")
+ag <- stock_agents_sql("lines", "maps", "claims", sc, "r1")
 ok(has(ag, "cast(m.MAP_START_DT as date) <  l.LOT_START_DT") &&
      has(ag, "cast(m.MAP_END_DT as date)   >= l.LOT_START_DT"),
    "carried means the episode opened before the line and still covers its start")
@@ -88,6 +88,33 @@ ok(has(ag, "c.LOT_BASE_END_REASON = 'MED_ADD' AND c.ADD_MED = c.MED_ABBR") &&
 ok(has(ag, "min(cast(m.MAP_START_DT as date))") &&
      has(ag, "max(cast(m.MAP_END_DT as date))"),
    "several overlapping episodes of one drug are one carried exposure, not several")
+
+cat("\n-- and it separates a real absorbed refill from leftover cover --\n")
+# The one the study team settled is leftover cover. A claim that landed inside
+# the window and was swallowed by an already-open episode is a different case:
+# the patient was still filling the drug. MAP_START_DT cannot see it, so the
+# split has to come off the claim dates.
+ok(has(ag, "cast(c.DATE_SERVICE as date) >= l.LOT_START_DT") &&
+     has(ag, "cast(c.DATE_SERVICE as date) <= l.IND_END_DT"),
+   "a real fill is a claim date inside the window, not an episode start")
+ok(has(ag, "FROM ln l\n      INNER JOIN {claims_tbl} c") ||
+     has(ag, "INNER JOIN claims c"),
+   "...read from the claims table, which is the only place it survives")
+ok(has(ag, "HAS_REAL_FILL_IN_WINDOW"),
+   "...and carried as its own column rather than folded into the total")
+ok(has(ag, "c.MED_CLASS <> 'STEROID'"),
+   "steroid claims are not agents here either")
+im0 <- stock_impact_sql("agents")
+ok(has(im0, "max(HAS_REAL_FILL_IN_WINDOW)"),
+   "the split survives the per-line rollup")
+ok(has(stock_by_lot_sql("impact", "lines"), "N_WITH_REAL_FILL"),
+   "...and reaches the by-LOT table, where the decision gets read")
+run0 <- paste(readLines(file.path(ROOT, "run_stockpiling_rule.R"), warn = FALSE),
+              collapse = "\n")
+ok(has(run0, "MMA_MED_PROCESSED"),
+   "the runner reads the claim table by name")
+ok(has(run0, "would be reported as passive"),
+   "...and stops when it cannot, rather than calling every carried agent passive")
 
 cat("\n-- the rollups do not turn a missing answer into a zero --\n")
 im <- stock_impact_sql("agents")
