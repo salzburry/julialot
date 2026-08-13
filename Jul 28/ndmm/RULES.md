@@ -86,14 +86,13 @@ The window is truncated at death and at nothing else.
 after it allow **no gap at all**. Both windows are tested against a single
 span, so a gap the span builder did not collapse excludes the patient.
 
-**A death recorded before the line starts weakens the rule to one day.** The
-follow-up window ends at `greatest(index, least(index+90, death))`, so a death
-date earlier than the line's start leaves only the index date to cover. It is
-reachable: a partial death date is coarsened to the 15th of its month, and the
-clamp that stops it preceding the anchor uses the *diagnosis* date, which is
-years before a 2L or 3L start. Such a patient enters the cohort on one day of
-enrolment where 90 were intended. Open with the study team - the fix is a
-membership decision, not a code one.
+**Death dates are always coarsened.** The source carries year and month only,
+so every death is placed on the 15th of its month - or the month's last day
+where that would put it before the diagnosis. Treatment in the second half of
+the month therefore sits *after* the recorded death date, and observation ends
+there: `ENDDATE = least(study_end, DEATH_DT)`. A real fill on the 20th of a
+month whose death is recorded as the 15th is not observed at all, so it cannot
+open a line and cannot be one of these cohorts' index dates.
 
 **The follow-up window is 90 days here, and one day for the 1L cohort.** They
 are different rules on purpose, so the two are not comparable on that axis.
