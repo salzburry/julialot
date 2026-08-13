@@ -39,6 +39,14 @@ CONTRACT <- list(
   induction_window_days       = 60L,
   lot_n_induction_window_days = 30L,
   map_discon_gap_days         = 90L,
+  # Follow-up required AFTER a line's run-out before it counts as a
+  # discontinuation. The spec's LOT1_BASE tab carries this and its later
+  # end-date tabs do not; the study team adjudicated in favour of the tab that
+  # has it, because in a real-world claims study "we stopped seeing fills" and
+  # "the patient discontinued" are different claims when the data simply runs
+  # out. A run-out with less than this much observation left is not confirmed,
+  # so the line is censored at study end instead. 0 restores the old behaviour.
+  lot_discon_confirm_days     = 90L,
   medical_day_supply          = 28L,
   sct_auto_window_days        = 13L,
   sct_auto_gap_days           = 60L,
@@ -95,6 +103,7 @@ INT_SETTINGS  <- c("INDUCTION_WINDOW_DAYS", "INDUCTION_WINDOW_DAYS_LOT_N",
                    "MAP_DISCON_GAP_DAYS", "MEDICAL_DAY_SUPPLY",
                    "SCT_AUTO_WINDOW_DAYS", "SCT_AUTO_GAP_DAYS",
                    "SCT_TANDEM_DAYS", "CART_CONSOLIDATION_DAYS", "MAX_LOT",
+                   "LOT_DISCON_CONFIRM_DAYS",
                    # The melphalan windows are in CONTRACT and config_lot.R
                    # coerces them the same way, but they were not checked here:
                    # MELP_EXPOSURE_DAYS=30.5 became 30, matched the contract

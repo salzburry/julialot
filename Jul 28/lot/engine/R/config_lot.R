@@ -50,6 +50,7 @@ cfg_defaults <- list(
   induction_window_days       = as.integer(Sys.getenv("INDUCTION_WINDOW_DAYS", unset = "60")),
   lot_n_induction_window_days = as.integer(Sys.getenv("INDUCTION_WINDOW_DAYS_LOT_N", unset = "30")),
   map_discon_gap_days         = as.integer(Sys.getenv("MAP_DISCON_GAP_DAYS", unset = "90")),
+  lot_discon_confirm_days     = as.integer(Sys.getenv("LOT_DISCON_CONFIRM_DAYS", unset = "90")),
   medical_day_supply          = as.integer(Sys.getenv("MEDICAL_DAY_SUPPLY", unset = "28")),
 
   # ---- SCT parameters ----

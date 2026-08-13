@@ -185,9 +185,14 @@ ok(has(SQL$B8, "= 'DISCONTINUATION'"),
    "...and it counts only lines that ended by running out")
 ok(has(SQL$B9, "= 'DEATH'") && has(SQL$B9, "LOT_BASE_DISCON_DT < LOT_BASE_END_DT"),
    "B9 counts deaths with a strictly earlier run-out - the spec-vs-build gap")
-for (id in c("B8", "B9"))
-  ok(identical(Filter(function(c_i) identical(c_i$id, id), LOT_QC_CHECKS)[[1]]$severity, "info"),
-     paste0(id, " reports a documented ambiguity, so it can never fail a run"))
+# B8 was info while the confirmation buffer was an unresolved ambiguity between
+# the spec's own tabs. The study team adjudicated in favour of the tab that has
+# it and the build applies it, so the count is now an invariant: a
+# DISCONTINUATION inside the window is a line the buffer should have censored.
+ok(identical(Filter(function(c_i) identical(c_i$id, "B8"), LOT_QC_CHECKS)[[1]]$severity, "fail"),
+   "B8 is an invariant now the buffer is applied, so a row in it fails the run")
+ok(identical(Filter(function(c_i) identical(c_i$id, "B9"), LOT_QC_CHECKS)[[1]]$severity, "info"),
+   "B9 reports a documented ambiguity, so it can never fail a run")
 ok(has(SQL$E2, "< 60") && has(SQL$E2, "> 180"),
    "E2 holds a tandem pair to the recorded 60-to-180 band")
 ok(has(SQL$E3, "= 180"),

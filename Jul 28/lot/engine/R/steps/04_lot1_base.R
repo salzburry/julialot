@@ -87,12 +87,20 @@ phase_lot1_base <- function(con, ctx) {
     discon AS (
       SELECT
         p.PATID,
-        -- No LOT-level 90d confirmation buffer. LOT1_BASE_DISCON_DT
-        -- is the last med date (max MAP_END_DT across induction agents) whenever
-        -- a runout exists and falls on or before OBS_END_DT. Capping at OBS_END_DT
-        -- prevents days-supply tails past death/study_end from extending the LOT.
+        -- LOT1_BASE_DISCON_DT is where the regimen ran out, whenever that
+        -- falls on or before OBS_END_DT and enough observation follows it to
+        -- call it a discontinuation. Capping at OBS_END_DT prevents
+        -- days-supply tails past death/study_end from extending the LOT.
+        --
+        -- The confirmation buffer (lot_discon_confirm_days): a run-out with
+        -- less than that much data left after it is not a discontinuation we
+        -- can see - the patient may simply not have refilled yet - so the line
+        -- is censored at study end instead. This also catches an agent still
+        -- covered at OBS_END: it is never flagged discontinued, yet its last
+        -- fill date used to become the line's run-out.
         CASE
           WHEN d.RAW_DISCON_DT IS NOT NULL AND d.RAW_DISCON_DT <= p.OBS_END_DT
+           AND datediff(p.OBS_END_DT, d.RAW_DISCON_DT) >= {cfg$lot_discon_confirm_days}
             THEN d.RAW_DISCON_DT
           ELSE NULL
         END AS LOT1_BASE_DISCON_DT

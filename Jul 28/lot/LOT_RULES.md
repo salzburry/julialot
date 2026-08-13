@@ -23,6 +23,7 @@ as the study's numbers.
 | `lot_n_induction_window_days` | 30 | LOT2+ induction window |
 | `cart_consolidation_days` | 45 | consolidation window on a CAR-T-started line |
 | `map_discon_gap_days` | 90 | gap that counts as running out of treatment |
+| `lot_discon_confirm_days` | 90 | observation required after a run-out before it counts as a discontinuation |
 | `medical_day_supply` | 28 | assumed day supply for a medical claim |
 | `sct_auto_window_days` | 13 | AUTO claims this many days apart are one transplant |
 | `sct_auto_gap_days` | 60 | AUTO events closer than this merge into one |
@@ -58,12 +59,33 @@ in `steps/03_mma_map.R` from rx and medical claims against
 
 ## 3. Running out of treatment
 
-A patient has **run out** when the gap from `MAP_END_DT` to the next
-`MAP_START_DT` is **90 days or more** (`map_discon_gap_days`). A gap of 90+ days
-from the last `MAP_END_DT` to the end of observation counts too.
+**Two different 90-day rules.** They are easy to conflate because both are 90
+days, and they do different things.
 
-This is per drug, not per line. The line's runout date is the last cover of its
-base agents.
+**The gap** (`map_discon_gap_days` = 90). A patient has **run out** of a drug
+when the gap from `MAP_END_DT` to the next `MAP_START_DT` is **90 days or
+more**. A gap of 90+ days from the last `MAP_END_DT` to the end of observation
+counts too.
+
+Per drug, not per line. A drug's cover in a line ends at its **first** run-out —
+a later fill of the same drug is a restart, and a restart opens the next line
+(§6). The line has run out when its last base agent has.
+
+**The confirmation buffer** (`lot_discon_confirm_days` = 90). A line's run-out
+only counts as a discontinuation if at least that much observation follows it.
+Below that, the line is censored at study end instead.
+
+This is a real-world-data rule: no longer seeing fills and having stopped
+treatment are different claims, and near the end of the data they cannot be
+told apart. It also catches an agent still covered at the end of observation,
+which is never flagged as run out yet whose last fill date previously became
+the line's discontinuation.
+
+The spec is inconsistent here — its `LOT1_BASE` tab carries this rule and its
+later end-date tabs re-derive the end date without it. The study team
+adjudicated in favour of the tab that has it. QC check **B8** counts any
+`DISCONTINUATION` inside the window and now fails the run, since there should
+be none.
 
 ---
 
@@ -137,7 +159,7 @@ runout.
 | 2 | `CART_INIT` | an added medication followed by CAR-T within 45 days. **The line ends the day before the infusion** (`ENDING_CART_DT − 1`) |
 | 3 | `MED_ADD` | a non-steroid agent added outside the induction window |
 | 4 | `DEATH` | |
-| 5 | `DISCONTINUATION` | ran out — 90-day gap |
+| 5 | `DISCONTINUATION` | ran out — 90-day gap, with 90 days of observation after it to confirm — §3 |
 | 6 | `STUDY_END` | |
 
 **Then, within the SCT branch, the earliest date wins** and the reason names
