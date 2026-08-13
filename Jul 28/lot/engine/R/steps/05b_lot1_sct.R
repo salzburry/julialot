@@ -16,9 +16,13 @@ phase_lot1_sct <- function(con, ctx) {
   # FIRST_CART_DT itself is left alone: LOT1_1ST_SCT_DT below is descriptive,
   # and under this rule that infusion genuinely is the first SCT during LOT1.
   # Only the line-ending arithmetic is gated.
-  cart_dt   <- cart_line_dt(cfg$apply_cart_induction_rule,
-                            "sd.FIRST_CART_DT", "sd.LOT1_START_DT",
-                            cfg$induction_window_days)
+  cart_elig <- cart_eligible_dt(cfg$apply_cart_induction_rule,
+                                "ac.TX_DT", "l.LOT1_START_DT",
+                                cfg$induction_window_days)
+  cart_censor <- cart_censor_predicate(cfg$apply_cart_induction_rule,
+                                       "ac.SCT_TYPE", "ac.TX_DT",
+                                       "l.LOT1_START_DT",
+                                       cfg$induction_window_days)
   cart_note <- if (isTRUE(cfg$apply_cart_induction_rule))
     "A CAR-T inside induction is part of LOT1 and cannot end it (cart_rule.R)."
   else "CAR-T induction rule off: any CAR-T can end LOT1."
@@ -28,14 +32,17 @@ phase_lot1_sct <- function(con, ctx) {
     ),
     -- AUTO dates within LOT1 observation window
     -- Censored at earliest ALLO/CART: ALLO and CART immediately end LOT1,
-    -- so AUTO events after an ALLO/CART are not relevant to LOT1.
+    -- so AUTO events after an ALLO/CART are not relevant to LOT1. The
+    -- predicate is strict (<), so an AUTO ON the ALLO/CART date is dropped
+    -- too - the line has ended the day before, and that AUTO belongs to
+    -- whatever follows.
     earliest_non_auto AS (
       SELECT ac.PATID, min(ac.TX_DT) AS FIRST_NON_AUTO_DT
       FROM tx_allo_cart_dates ac
       INNER JOIN lot1 l ON ac.PATID = l.PATID
       WHERE ac.SCT_TYPE IN ('ALLO', 'CART')
         AND ac.TX_DT >= l.LOT1_START_DT
-        AND ac.TX_DT <= l.OBS_END_DT
+        AND ac.TX_DT <= l.OBS_END_DT{cart_censor}
       GROUP BY ac.PATID
     ),
     auto_in_lot1 AS (
@@ -67,8 +74,14 @@ phase_lot1_sct <- function(con, ctx) {
       GROUP BY ac.PATID
     ),
     -- First CART date within LOT1
+    -- Two dates, because a CAR-T is either descriptive or a boundary and which
+    -- one is a property of the row. CART_DT is the earliest of any kind and
+    -- feeds LOT1_1ST_SCT_DT; ENDING_CART_DT is the earliest eligible to end the
+    -- line. Taking min() first and nulling it afterwards lost every later
+    -- CAR-T behind an in-induction one. See R/cart_rule.R.
     first_cart AS (
-      SELECT ac.PATID, min(ac.TX_DT) AS CART_DT
+      SELECT ac.PATID, min(ac.TX_DT) AS CART_DT,
+             min({cart_elig}) AS ENDING_CART_DT
       FROM tx_allo_cart_dates ac
       INNER JOIN lot1 l ON ac.PATID = l.PATID
       WHERE ac.SCT_TYPE = 'CART'
@@ -78,6 +91,10 @@ phase_lot1_sct <- function(con, ctx) {
     ),
     -- Check for ALLO between AUTO_DT_1 and AUTO_DT_2 (inclusive)
     -- Tandem disqualified if ALLO exists such that AUTO_DT_1 <= ALLO <= AUTO_DT_2
+    -- Belt and braces: the censor above already drops any AUTO at or past the
+    -- first ALLO, so AUTO_DT_2 with an ALLO at or before it cannot survive to
+    -- here and this branch is not reachable from LOT1's own inputs. Kept
+    -- because it is cheap and the two guards fail safe independently.
     allo_between AS (
       SELECT ap.PATID,
         sum(CASE WHEN ac.TX_DT >= ap.AUTO_DT_1 AND ac.TX_DT <= ap.AUTO_DT_2
@@ -123,6 +140,7 @@ phase_lot1_sct <- function(con, ctx) {
         END AS ENDING_AUTO_DT,
         fa.ALLO_DT AS FIRST_ALLO_DT,
         fc.CART_DT AS FIRST_CART_DT,
+        fc.ENDING_CART_DT,
         -- LOT1_TX_AUTO_FLG: binary flag for any valid autologous HSCT
         CASE WHEN ap.AUTO_DT_1 IS NOT NULL THEN 1 ELSE 0 END AS LOT1_TX_AUTO_FLG,
         -- LOT1_TX_AUTO_MAX_DT: date of 2nd tandem AUTO if tandem, else single AUTO date
@@ -147,25 +165,25 @@ phase_lot1_sct <- function(con, ctx) {
       -- refuses. Floored, the line is one day long and still ends SCT_CART.
       -- {cart_note}
       CASE
-        WHEN coalesce(sd.ENDING_AUTO_DT, sd.FIRST_ALLO_DT, {cart_dt}) IS NOT NULL
+        WHEN coalesce(sd.ENDING_AUTO_DT, sd.FIRST_ALLO_DT, sd.ENDING_CART_DT) IS NOT NULL
         THEN greatest(sd.LOT1_START_DT, date_sub(
           least(
             coalesce(sd.ENDING_AUTO_DT, cast('9999-12-31' as date)),
             coalesce(sd.FIRST_ALLO_DT,  cast('9999-12-31' as date)),
-            coalesce({cart_dt},   cast('9999-12-31' as date))
+            coalesce(sd.ENDING_CART_DT,   cast('9999-12-31' as date))
           ), 1))
         ELSE NULL
       END AS LOT1_TX_ENDDATE,
       -- LOT1_TX_ENDDATE_REASON: 1=AUTO, 2=ALLO, 3=CART (whichever is earliest)
       CASE
-        WHEN coalesce(sd.ENDING_AUTO_DT, sd.FIRST_ALLO_DT, {cart_dt}) IS NULL THEN NULL
+        WHEN coalesce(sd.ENDING_AUTO_DT, sd.FIRST_ALLO_DT, sd.ENDING_CART_DT) IS NULL THEN NULL
         WHEN coalesce(sd.ENDING_AUTO_DT, cast('9999-12-31' as date))
              <= coalesce(sd.FIRST_ALLO_DT, cast('9999-12-31' as date))
          AND coalesce(sd.ENDING_AUTO_DT, cast('9999-12-31' as date))
-             <= coalesce({cart_dt}, cast('9999-12-31' as date))
+             <= coalesce(sd.ENDING_CART_DT, cast('9999-12-31' as date))
         THEN 1
         WHEN coalesce(sd.FIRST_ALLO_DT, cast('9999-12-31' as date))
-             <= coalesce({cart_dt}, cast('9999-12-31' as date))
+             <= coalesce(sd.ENDING_CART_DT, cast('9999-12-31' as date))
         THEN 2
         ELSE 3
       END AS LOT1_TX_ENDDATE_REASON,

@@ -361,7 +361,7 @@ MELP_METRICS <- c(
   # should not advance a line. These count the lines where it did.
   n_melp_mono_lines    = "lines whose whole regimen is melphalan",
   n_pat_melp_mono      = "patients with at least one melphalan-only line",
-  n_melp_mono_adv      = "...of those lines, the ones after LOT1 - melphalan alone advanced a line",
+  n_melp_mono_adv      = "...of those, MED-started lines after LOT1 - melphalan alone advanced a line",
   n_melp_mono_adv_auto = "...and of those, the ones with a transplant inside the line",
   median_melp_mono_len = "median melphalan-only line length in days (inclusive)",
   n_pat_melp_fu        = "patients given melphalan at any point in follow-up - the by-line denominator")
@@ -561,12 +561,17 @@ melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP",
            -- that are only melphalan, which is what the rule is questioned on.
            sum(CASE WHEN ", mono, " THEN 1 ELSE 0 END)             AS n_melp_mono_lines,
            count(DISTINCT CASE WHEN ", mono, " THEN PATID END)     AS n_pat_melp_mono,
-           sum(CASE WHEN ", mono, " AND LOT_NUM > 1 THEN 1 ELSE 0 END)
-                                                                   AS n_melp_mono_adv,
+           -- LOT_START_TYPE = 'MED' is the discriminator, not LOT_NUM alone. A
+           -- LOT2 started by SCT_AUTO or CART can carry melphalan as its only
+           -- agent - that is conditioning, and counting it here would report
+           -- the transplant's boundary as the drug's.
+           sum(CASE WHEN ", mono, " AND LOT_NUM > 1 AND LOT_START_TYPE = 'MED'
+                    THEN 1 ELSE 0 END)                             AS n_melp_mono_adv,
            -- With an autologous transplant inside the line. High-dose
            -- melphalan is conditioning, so these are the ones most likely to
            -- be a transplant wearing a line rather than a new therapy.
-           sum(CASE WHEN ", mono, " AND LOT_NUM > 1 AND LOT_TX_AUTO_FLG = 1
+           sum(CASE WHEN ", mono, " AND LOT_NUM > 1 AND LOT_START_TYPE = 'MED'
+                     AND LOT_TX_AUTO_FLG = 1
                     THEN 1 ELSE 0 END)                             AS n_melp_mono_adv_auto,
            percentile_approx(CASE WHEN ", mono, " THEN LOT_BASE_LENGTH END, 0.5)
                                                                    AS median_melp_mono_len
@@ -661,9 +666,29 @@ melp_by_line_sql <- function(final_tbl, map_tbl, abbr = "MELP") {
   pat <- function(w) paste0("count(DISTINCT CASE WHEN ", w, " THEN PATID END)")
   paste0("
     WITH exposed AS (", melp_exposed_sql(map_tbl, abbr), "),
-    lines AS (
+    lines0 AS (
       SELECT f.* FROM ", final_tbl, " f
       INNER JOIN exposed e ON cast(f.PATID as string) = e.PATID
+    ),
+    -- Melphalan actually given inside the line, from MAP_STACKED.
+    --
+    -- The regimen cannot answer this on its own. An ALLO-started line carries
+    -- no regimen rows at all - 10_lot2_5_base.R suppresses them - so a
+    -- melphalan-conditioned allograft has a blank LOT_BASE_MEDS and is
+    -- invisible to any test on it. A count of melphalan-plus-ALLO built from
+    -- the regimen is structurally zero, which reads as evidence of absence.
+    melp_in_line AS (
+      SELECT DISTINCT l.PATID, l.LOT_NUM
+      FROM lines0 l
+      INNER JOIN ", map_tbl, " m
+              ON cast(m.PATID as string) = cast(l.PATID as string)
+      WHERE upper(trim(m.MAP_MED_TYPE)) = '", abbr, "'
+        AND m.MAP_START_DT BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT
+    ),
+    lines AS (
+      SELECT l.*, CASE WHEN d.PATID IS NOT NULL THEN 1 ELSE 0 END AS HAS_MELP_DOSE
+      FROM lines0 l
+      LEFT JOIN melp_in_line d ON d.PATID = l.PATID AND d.LOT_NUM = l.LOT_NUM
     )
     SELECT LOT_NUM,
            count(*)                                          AS N_LINES,
@@ -693,13 +718,19 @@ melp_by_line_sql <- function(final_tbl, map_tbl, abbr = "MELP") {
                     THEN 1 ELSE 0 END)                       AS N_MONO_END_MED_ADD,
            sum(CASE WHEN ", mono, " AND LOT_BASE_END_REASON = 'SCT_AUTO'
                     THEN 1 ELSE 0 END)                       AS N_MONO_END_SCT_AUTO,
-           -- 3. a transplant inside a melphalan-containing line. AUTO and ALLO
-           -- are separate columns because they are found different ways - see
-           -- melp_sct_sql() - and adding them would hide that.
-           ", pat(paste0(any_melp, " AND ", sct)), "         AS N_PAT_MELP_SCT,
-           ", pat(paste0(any_melp, " AND LOT_TX_AUTO_FLG = 1")), "
+           -- Melphalan given inside the line, whether or not it reached the
+           -- regimen. Wider than N_MELP_ANY and the honest denominator for the
+           -- transplant question below.
+           sum(HAS_MELP_DOSE)                                AS N_MELP_DOSE,
+           ", pat("HAS_MELP_DOSE = 1"), "                    AS N_PAT_MELP_DOSE,
+           -- 3. a transplant inside a line melphalan was given in. Dose-based,
+           -- not regimen-based, or every ALLO line drops out by construction.
+           -- AUTO and ALLO stay separate columns because they are found
+           -- different ways - see melp_sct_sql() - and adding them hides that.
+           ", pat(paste0("HAS_MELP_DOSE = 1 AND ", sct)), "  AS N_PAT_MELP_SCT,
+           ", pat("HAS_MELP_DOSE = 1 AND LOT_TX_AUTO_FLG = 1"), "
                                                              AS N_PAT_MELP_AUTO,
-           ", pat(paste0(any_melp, " AND LOT_START_TYPE = 'SCT_ALLO'")), "
+           ", pat("HAS_MELP_DOSE = 1 AND LOT_START_TYPE = 'SCT_ALLO'"), "
                                                              AS N_PAT_MELP_ALLO,
            ", pat(paste0(mono, " AND ", sct)), "             AS N_PAT_MONO_SCT
     FROM lines
@@ -719,9 +750,29 @@ melp_regimens_by_line_sql <- function(final_tbl, map_tbl, abbr = "MELP") {
                      abbr, "')")
   paste0("
     WITH exposed AS (", melp_exposed_sql(map_tbl, abbr), "),
-    lines AS (
+    lines0 AS (
       SELECT f.* FROM ", final_tbl, " f
       INNER JOIN exposed e ON cast(f.PATID as string) = e.PATID
+    ),
+    -- Melphalan actually given inside the line, from MAP_STACKED.
+    --
+    -- The regimen cannot answer this on its own. An ALLO-started line carries
+    -- no regimen rows at all - 10_lot2_5_base.R suppresses them - so a
+    -- melphalan-conditioned allograft has a blank LOT_BASE_MEDS and is
+    -- invisible to any test on it. A count of melphalan-plus-ALLO built from
+    -- the regimen is structurally zero, which reads as evidence of absence.
+    melp_in_line AS (
+      SELECT DISTINCT l.PATID, l.LOT_NUM
+      FROM lines0 l
+      INNER JOIN ", map_tbl, " m
+              ON cast(m.PATID as string) = cast(l.PATID as string)
+      WHERE upper(trim(m.MAP_MED_TYPE)) = '", abbr, "'
+        AND m.MAP_START_DT BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT
+    ),
+    lines AS (
+      SELECT l.*, CASE WHEN d.PATID IS NOT NULL THEN 1 ELSE 0 END AS HAS_MELP_DOSE
+      FROM lines0 l
+      LEFT JOIN melp_in_line d ON d.PATID = l.PATID AND d.LOT_NUM = l.LOT_NUM
     )
     SELECT LOT_NUM,
            -- A transplant- or CART-started line can carry no agents at all.

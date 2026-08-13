@@ -259,8 +259,9 @@ phase_sct <- function(con, ctx) {
 
   # S13: AUTO SCT date processing
   #
-  # Step 1: Group AUTO claims into 14-day windows (claims within 14 days of
-  #         window start are in same window). Select the last (max)
+  # Step 1: Group AUTO claims into 14-day windows - claims 0..13 days after
+  #         the window's first claim (datediff <= sct_auto_window_days = 13,
+  #         a 14-day window counting its first day). Select the last (max)
   #         date in each window, not the first -- first claims are workup
   #         activity, last claim is the actual transplant.
   #

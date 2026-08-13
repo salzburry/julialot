@@ -125,20 +125,35 @@ all.
 
 ## 7. How a line ends
 
-One cascade, highest priority first. This is a priority order, not a tie-break
-on equal dates — but each branch is gated so it only fires when its event is at
-or before the runout.
+Two stages, not one flat list.
 
-| Priority | Reason | Meaning |
+**First, which kind of event.** A priority order, not a tie-break on equal
+dates. Each branch is gated so it only fires when its event is at or before the
+runout.
+
+| Priority | Branch | Meaning |
 |---|---|---|
-| 1 | `SCT_ALLO` | allogeneic transplant |
-| 2 | `SCT_CART` | CAR-T-started line with no consolidation agent — spans one day. Not for a CAR-T inside LOT1 induction — §10 |
-| 3 | `SCT_AUTO` | an AUTO outside the line's window |
-| 4 | `CART_INIT` | an added medication followed by CAR-T within 45 days. **The line ends the day before the infusion** (`FIRST_CART_DT − 1`). Not for a CAR-T inside LOT1 induction — §10 |
-| 5 | `MED_ADD` | a non-steroid agent added outside the induction window |
-| 6 | `DEATH` | |
-| 7 | `DISCONTINUATION` | ran out — 90-day gap |
-| 8 | `STUDY_END` | |
+| 1 | a transplant or CAR-T | the earliest line-ending SCT of any type — see below |
+| 2 | `CART_INIT` | an added medication followed by CAR-T within 45 days. **The line ends the day before the infusion** (`ENDING_CART_DT − 1`) |
+| 3 | `MED_ADD` | a non-steroid agent added outside the induction window |
+| 4 | `DEATH` | |
+| 5 | `DISCONTINUATION` | ran out — 90-day gap |
+| 6 | `STUDY_END` | |
+
+**Then, within the SCT branch, the earliest date wins** and the reason names
+which type it was — `SCT_AUTO`, `SCT_ALLO` or `SCT_CART`. There is no priority
+between the three; an ALLO does not outrank an earlier AUTO.
+
+`SCT_CART` therefore arises two ways: a line that ends at a CAR-T (ending the
+day before the infusion), and a CAR-T-started line with no consolidation agent,
+which spans a single day. Neither applies to a CAR-T inside LOT1's induction
+window — §10.
+
+**`CART_INIT` vs `MED_ADD` is a taxonomy, not a fall-through.** An added
+medication followed by a CAR-T within 45 days is bridging and belongs to
+`CART_INIT`; it is never re-read as a `MED_ADD` event. So when the CAR-T lands
+after the runout, the line ends `DISCONTINUATION` at the runout - not `MED_ADD`
+at the bridging agent - and the CAR-T opens the next line.
 
 **The post-runout guard.** `DEATH` outranks `DISCONTINUATION`, but only when no
 line-opening trigger sits between the runout and the death. A patient who ran
@@ -257,10 +272,15 @@ does not reopen a closed one. `q3_cart_screen()` in
 contract change. With it off, the generated SQL is unchanged from before the
 rule existed.
 
-**Effect on `SCT_CART` and `CART_INIT` counts.** Both fall, by exactly the
-patients whose first CAR-T was inside first-line induction. Numbers from any
-run before 2026-08-13 are not comparable on those two end reasons, on LOT1
-length, or on line counts for those patients.
+**Effect on `SCT_CART` and `CART_INIT` counts.** Both fall. Not by the same
+patients and not by the full affected population: the two reasons are mutually
+exclusive, and a patient whose LOT1 already ended earlier for a competing
+reason carried neither of them before the rule, so loses neither now. The
+affected group is patients whose LOT1 end was **set by** a CAR-T inside
+induction. `q3_cart_screen()` counts them.
+
+Numbers from any run before 2026-08-13 are not comparable on those two end
+reasons, on LOT1 length, or on line counts for those patients.
 
 ---
 
@@ -276,8 +296,10 @@ length, or on line counts for those patients.
 - **Maintenance is not implemented.** There is no maintenance concept in the
   build; `MAINTENANCE_END` and `SCT_NO_MAINT` are not final end reasons and
   those cases route by their earliest applicable event.
-- **`max_lot` is 5.** A patient capped at 5 lines is indistinguishable from one
-  who completed 5.
+- **`max_lot` is 5.** Nothing above line 5 is built. A capped patient is
+  indistinguishable from a completed one **where line 5 ends by runout or study
+  end**; where it ends by a transplant, an added medication or CAR-T, the end
+  reason itself shows a further line-opening trigger existed.
 
 ---
 

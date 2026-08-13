@@ -29,7 +29,9 @@
 # says the branches line up, not that a warehouse run would.
 
 # Day numbers are relative to the line the melphalan falls in, which is what the
-# induction window is measured from. `starts` is where the study team's drawing
+# induction window is measured from - and they are 1-BASED: day 1 is the line's
+# start, so a 60-day window is days 1..60 and INSIDE tests <= induction_end.
+# (The build's SQL says the same thing 0-based: start + window - 1.) `starts` is where the study team's drawing
 # puts a new line - empty when the reclassified picture has none.
 MELP_SCENARIOS <- list(
   list(id = "example_1",
