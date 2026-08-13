@@ -83,7 +83,17 @@ a living patient whose 90 days run past the data has not shown the enrolment.
 The window is truncated at death and at nothing else.
 
 **Gaps of 30 days or fewer are still continuous** before the line. The 90 days
-after it allow **no gap at all**.
+after it allow **no gap at all**. Both windows are tested against a single
+span, so a gap the span builder did not collapse excludes the patient.
+
+**A death recorded before the line starts weakens the rule to one day.** The
+follow-up window ends at `greatest(index, least(index+90, death))`, so a death
+date earlier than the line's start leaves only the index date to cover. It is
+reachable: a partial death date is coarsened to the 15th of its month, and the
+clamp that stops it preceding the anchor uses the *diagnosis* date, which is
+years before a 2L or 3L start. Such a patient enters the cohort on one day of
+enrolment where 90 were intended. Open with the study team - the fix is a
+membership decision, not a code one.
 
 **The follow-up window is 90 days here, and one day for the 1L cohort.** They
 are different rules on purpose, so the two are not comparable on that axis.
