@@ -300,7 +300,8 @@ FULL <- list(PATID = "p", SOURCE_LOT_RUN_ID = "L1", SUBSEQ_RUN_ID = "S1",
 ATTEMPT <- c(run = "C1", stamp = "2026-01-01")
 LOT_STAMP <- "2026-02-01"
 fsc <- function(rows, lot_run = "L1", attempt = ATTEMPT,
-                lot_stamp = LOT_STAMP) {
+                lot_stamp = LOT_STAMP,
+                subseq_attempt = "20260813120000.000-111") {
   if (is.null(rows) || !is.null(names(rows))) rows <- list(rows, rows)
   i <- 0L
   e <- new.env(parent = globalenv())
@@ -313,7 +314,8 @@ fsc <- function(rows, lot_run = "L1", attempt = ATTEMPT,
     as.data.frame(r, stringsAsFactors = FALSE)
   }, envir = e)
   f <- find_subsequent_cohorts; environment(f) <- e
-  tryCatch(f(NULL, lot_run, attempt = attempt, lot_stamp = lot_stamp),
+  tryCatch(f(NULL, lot_run, attempt = attempt, lot_stamp = lot_stamp,
+             subseq_attempt = subseq_attempt),
            error = conditionMessage)
 }
 without <- function(k) { r <- FULL; r[[k]] <- NULL; r }
@@ -324,14 +326,18 @@ ok(is.character(m) && grepl("built from LOT run L0", m, fixed = TRUE),
 m2 <- fsc(list(PATID = "p"))
 ok(is.character(m2) && grepl("records no source LOT run", m2, fixed = TRUE),
    "...and one that cannot say which run it came from is not current by omission")
-ok(is.list(fsc(NULL)) && !length(fsc(NULL)$tables),
+# No subsequent build has ever run on this prefix, which is the overall cohort
+# and any NDMM run before the 2L/3L build. Absent tables are then absent, not
+# missing outputs - so subseq_attempt is NULL and nothing is expected.
+ok(is.list(fsc(NULL, subseq_attempt = NULL)) &&
+     !length(fsc(NULL, subseq_attempt = NULL)$tables),
    "no line cohort at all is fine - the run reports ALL_LINES alone")
 # The join the suite did not make. It checked that this returns nothing, and
 # separately that the SQL builder accepts NULL, and never fed one to the other
 # - so the runner's `attr(subseq, "provenance")[[1]]` sat between two green
 # assertions and died with "subscript out of bounds" on every run without line
 # cohorts: the overall cohort, and any NDMM run before the 2L/3L build.
-sc0 <- fsc(NULL)
+sc0 <- fsc(NULL, subseq_attempt = NULL)
 ok(is.null(sc0$provenance),
    "...with no provenance at all, rather than an empty list for the runner to subscript")
 runs(outcomes_tte_sql(BASE, "r1", "L1", sc0$provenance),
@@ -388,6 +394,40 @@ ok(is.character(m10) && !grepl("SUBSEQ_RUN_ID", m10, fixed = TRUE),
 m11 <- fsc(without("SUBSEQ_ATTEMPT"))
 ok(is.character(m11) && grepl("record no which attempt", m11, fixed = TRUE),
    "...while a table predating the column cannot prove it, so it is unproven")
+
+cat("\n-- and the build has to say it finished --\n")
+# Three states the tables alone cannot tell apart, all of which published
+# LINE_ELIGIBLE before the status row was read.
+#
+# 1. Wrote 2L, died before 3L. 2L is readable and probing one table at a time
+#    took it; the missing 3L looked like a cohort nobody asked for.
+m12 <- fsc(list(FULL, NULL))
+ok(is.character(m12) && grepl("absent or empty", m12, fixed = TRUE),
+   "a table the completed build should have written and did not stops the run")
+ok(is.character(m12) && grepl("LINE_ELIGIBLE would come out false", m12, fixed = TRUE),
+   "...and says what it would have done to that line's denominator")
+# 2. A later attempt failed before replacing anything, so the older complete
+#    pair is on disk and every id on it reads as current.
+m13 <- fsc(FULL, subseq_attempt = "20260813130000.000-222")
+ok(is.character(m13) && grepl("previous attempt's tables", m13, fixed = TRUE),
+   "cohorts from an earlier attempt are refused, though they agree with each other")
+# 3. Nothing to compare against is not a pass either.
+sfe <- function(rows) {
+  e <- new.env(parent = globalenv())
+  assign("coh_tbl", function(x) paste0("sch.ndmm_", x), envir = e)
+  assign("log_msg", function(...) invisible(NULL), envir = e)
+  assign("db_q", function(con, sql) if (is.null(rows)) stop("nope")
+                                    else as.data.frame(rows, stringsAsFactors = FALSE), envir = e)
+  f <- check_subseq_status; environment(f) <- e
+  tryCatch(f(NULL), error = conditionMessage)
+}
+ok(is.character(sfe(NULL)) && grepl("not readable", sfe(NULL), fixed = TRUE),
+   "no status table at all is unproven, not a pass")
+ok(is.character(sfe(list(STATE = "failed", ATTEMPT = "A9"))) &&
+     grepl("marked 'failed'", sfe(list(STATE = "failed", ATTEMPT = "A9")), fixed = TRUE),
+   "...and a newest attempt that failed stops the run, naming it")
+ok(identical(sfe(list(STATE = "complete", ATTEMPT = "A9")), "A9"),
+   "...while a completed one hands back the attempt every output must carry")
 
 # The two ways to get a wrong denominator with every id correct on the output.
 m3 <- fsc(list(FULL, modifyList(FULL, list(SUBSEQ_RUN_ID = "S2"))))

@@ -14,11 +14,14 @@ phase_demographics <- function(cfg, h, ctx) {
         WITH ranked AS (
           SELECT PATID, GDR_CD, cast(YRDOB as int) AS YRDOB,
                  row_number() OVER (PARTITION BY PATID
-                   ORDER BY CASE WHEN upper(GDR_CD) NOT IN ('U','') THEN 0 ELSE 1 END,
-                            -- A usable birth year outranks a missing or unparseable
-                            -- one, whatever the row's date. A newer row carrying a
-                            -- null YRDOB used to win and take the age with it.
-                            CASE WHEN cast(YRDOB as int) IS NOT NULL THEN 0 ELSE 1 END,
+                   -- A usable birth year first, ahead of a known sex. Age decides
+                   -- membership and sex does not, so ranking sex above it lost
+                   -- patients: an 'M' row with no YRDOB outranked a 'U' row carrying
+                   -- 1980, the patient came out with no birth year, and the age
+                   -- filter then dropped someone eligible. Whatever the row's date,
+                   -- and now whatever its sex.
+                   ORDER BY CASE WHEN cast(YRDOB as int) IS NOT NULL THEN 0 ELSE 1 END,
+                            CASE WHEN upper(GDR_CD) NOT IN ('U','') THEN 0 ELSE 1 END,
                             cast(ELIGEND as date) DESC,
                             -- Ties broken by the values themselves, so the same input
                             -- always gives the same patient. Two rows sharing one

@@ -36,6 +36,46 @@ find_base_cohort <- function(con) {
   t
 }
 
+# What the subsequent build says about its own last attempt.
+#
+# The tables alone cannot answer three questions. A build that wrote 2L and
+# died before 3L leaves a readable 2L, and probing the tables one at a time
+# accepts it. A later attempt that failed before replacing anything leaves the
+# older complete pair, which reads as current. And a build that legitimately
+# produced an empty 2L is indistinguishable from one that never ran.
+#
+# The status row answers all three: it names the newest attempt, whether it
+# finished, and which attempt every output should therefore carry.
+check_subseq_status <- function(con) {
+  t <- coh_tbl("NDMM_SUBSEQ_BUILD_STATUS")
+  d <- tryCatch(db_q(con, glue(
+    "SELECT * FROM {t} ORDER BY UPDATED_AT DESC LIMIT 1")), error = function(e) NULL)
+  if (is.null(d) || !nrow(d)) {
+    out_unproven(paste0(t, " is not readable, so whether the line cohorts on ",
+                        "disk are a finished build cannot be established."))
+    return(NULL)
+  }
+  pick <- function(nm) {
+    i <- match(toupper(nm), toupper(names(d)))
+    if (is.na(i)) NA_character_ else trimws(as.character(d[[i]][1]))
+  }
+  st <- tolower(pick("STATE"))
+  if (!identical(st, "complete"))
+    stop("The newest subsequent-cohort build on this prefix (attempt ",
+         pick("ATTEMPT"), ") is marked '", st, "'. It replaces 2L, then 3L, ",
+         "then the attrition, one table at a time - so a run that stopped ",
+         "part-way leaves some of them this attempt's and the rest the ",
+         "previous one's, and every id on them still reads as current. ",
+         "Re-run ndmm/build_subsequent_cohorts.R.", call. = FALSE)
+  a <- pick("ATTEMPT")
+  if (is.na(a) || !nzchar(a)) {
+    out_unproven(paste0(t, " records no ATTEMPT for its newest row, so the ",
+                        "line cohorts cannot be shown to be that build's."))
+    return(NULL)
+  }
+  a
+}
+
 # The line-specific eligibility cohorts, if the cohort build wrote them, and if
 # they still belong beside the lines being measured.
 #
@@ -48,12 +88,20 @@ find_base_cohort <- function(con) {
 # The subsequent build records which LOT run it drew from. Ask, and drop a
 # cohort that names a different one rather than restricting on it.
 find_subsequent_cohorts <- function(con, lot_run, lines = c(2L, 3L),
-                                    attempt = NULL, lot_stamp = NULL) {
-  out <- list(); stale <- character(0); prov <- list()
+                                    attempt = NULL, lot_stamp = NULL,
+                                    subseq_attempt = NULL) {
+  out <- list(); stale <- character(0); prov <- list(); missing <- character(0)
   for (n in lines) {
     t <- coh_tbl(paste0("NDMM_COHORT_", n, "L"))
     d <- tryCatch(db_q(con, glue("SELECT * FROM {t} LIMIT 1")), error = function(e) NULL)
-    if (is.null(d) || !nrow(d)) next
+    # Absent or empty. Skipping quietly was right while nothing said whether a
+    # build had run; with a completed status row on disk it is not - the build
+    # says it finished, so a table it should have written and did not is a
+    # missing output rather than a cohort nobody asked for.
+    if (is.null(d) || !nrow(d)) {
+      if (!is.null(subseq_attempt)) missing <- c(missing, t)
+      next
+    }
     at <- function(nm) {
       i <- match(toupper(nm), toupper(names(d)))
       if (is.na(i)) NA_character_ else trimws(as.character(d[[i]][1]))
@@ -76,6 +124,14 @@ find_subsequent_cohorts <- function(con, lot_run, lines = c(2L, 3L),
       coh = at("SOURCE_COHORT_RUN_ID"), stamp = at("SOURCE_COHORT_STAMP"),
       lotstamp = at("SOURCE_LOT_STAMP"), attempt = at("SUBSEQ_ATTEMPT"))
   }
+  if (length(missing))
+    stop("The subsequent-cohort build says it completed as attempt ",
+         subseq_attempt, ", but these tables are absent or empty: ",
+         paste(missing, collapse = ", "), ". A finished build writes both line ",
+         "cohorts, so this is an output that went missing rather than a cohort ",
+         "that was never asked for - and LINE_ELIGIBLE would come out false for ",
+         "every line of the missing one. Re-run ",
+         "ndmm/build_subsequent_cohorts.R.", call. = FALSE)
   if (length(stale))
     stop("These line cohorts were not built from LOT run ", lot_run, ": ",
          paste(stale, collapse = "; "), ". Their patients would set ",
@@ -123,7 +179,17 @@ find_subsequent_cohorts <- function(con, lot_run, lines = c(2L, 3L),
     # Domino execution, and every other stamp - source LOT run, its stamp, the
     # cohort attempt, both windows - is a property of upstream tables that did
     # not change, so all of them matched and the mix was invisible.
-    agree("attempt", "which attempt of that run built them")
+    subs <- agree("attempt", "which attempt of that run built them")
+    # Agreeing with each other is not the same as being the attempt that
+    # finished. Both tables can consistently carry an earlier attempt while a
+    # later one has since run and failed.
+    if (!is.null(subseq_attempt) && !is.null(subs) &&
+        !identical(subs, subseq_attempt))
+      stop("The line cohorts carry subsequent-build attempt ", subs,
+           ", and the newest completed build on this prefix is attempt ",
+           subseq_attempt, ". They are a previous attempt's tables, left on ",
+           "disk by a build that replaced neither. Re-run ",
+           "ndmm/build_subsequent_cohorts.R.", call. = FALSE)
     coh   <- agree("coh",   "which cohort attempt they were built over")
     stamp <- agree("stamp", "the stamp of that cohort attempt")
     agree("pre",    "the continuous-enrolment window before the line")
@@ -447,8 +513,9 @@ build_outcomes <- function(here, cohort_table, prefix) {
   # runner takes [[1]] of an empty list and a run with no line cohorts - the
   # overall cohort, or any NDMM run before build_subsequent_cohorts.R - dies
   # with "subscript out of bounds" at the first table.
+  sa     <- check_subseq_status(con)
   sc     <- find_subsequent_cohorts(con, lot_run, attempt = lr$attempt,
-                                    lot_stamp = lr$stamp)
+                                    lot_stamp = lr$stamp, subseq_attempt = sa)
   subseq <- sc$tables
   both   <- length(subseq) > 0L
   # The 2L/3L build's provenance, carried onto every table that has a DENOM or

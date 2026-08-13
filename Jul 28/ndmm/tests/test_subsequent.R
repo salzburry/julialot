@@ -276,4 +276,39 @@ ok(!length(missing),
                                paste(missing, collapse = ", "))
    else "every function it calls exists")
 
+cat("\n-- two subsequent builds on one prefix --\n")
+# The three outputs carry no run id in their names, so two of these at once
+# interleave and both reach complete having published a pair that is partly the
+# other's. The 1L build has had this check; this one had none.
+sc <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_subsequent.R"), sc)
+assign("wrk", function(x) paste0("sch.p_", x), envir = sc)
+assign("log_msg", function(...) invisible(NULL), envir = sc)
+assign("sql_text", function(x) paste0("'", x, "'"), envir = sc)
+assign("missing_object_error", function(e)
+  grepl("TABLE_OR_VIEW_NOT_FOUND", conditionMessage(e), fixed = TRUE), envir = sc)
+drive_ar <- function(rows) {
+  assign("db_q", function(con, sql) if (inherits(rows, "condition")) stop(rows) else rows,
+         envir = sc)
+  tryCatch({ sc$subseq_check_no_active_run(NULL, list(object_prefix = "p_")); "" },
+           error = conditionMessage)
+}
+none <- data.frame(ATTEMPT = character(0), UPDATED_AT = character(0))
+ok(identical(drive_ar(none), ""), "nothing started on the prefix is fine")
+m <- drive_ar(data.frame(ATTEMPT = "A1", UPDATED_AT = "2026-08-13"))
+ok(grepl("Another subsequent build is marked started", m, fixed = TRUE) &&
+     grepl("A1", m, fixed = TRUE),
+   "a build already started stops this one, naming the attempt")
+ok(identical(drive_ar(simpleError("TABLE_OR_VIEW_NOT_FOUND: p_x")), ""),
+   "no status table yet is the first run, not a failure")
+m2 <- drive_ar(simpleError("permission denied"))
+ok(grepl("is unknown", m2, fixed = TRUE),
+   "...but any other read failure is the check not running, which is not a pass")
+was <- Sys.getenv("NDMM_SUBSEQ_IGNORE_ACTIVE_RUN", unset = NA)
+Sys.setenv(NDMM_SUBSEQ_IGNORE_ACTIVE_RUN = "TRUE")
+ok(identical(drive_ar(data.frame(ATTEMPT = "A1", UPDATED_AT = "x")), ""),
+   "...and the override named in the message is the way past")
+if (is.na(was)) Sys.unsetenv("NDMM_SUBSEQ_IGNORE_ACTIVE_RUN") else
+  Sys.setenv(NDMM_SUBSEQ_IGNORE_ACTIVE_RUN = was)
+
 report()
