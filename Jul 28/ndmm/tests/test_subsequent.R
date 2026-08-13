@@ -117,10 +117,8 @@ ok(!has(bs, 'Sys.getenv("GAP_DAYS'),
 
 cat("\n-- the lines have to come from a finished run over this cohort attempt --\n")
 # The fakes carry exactly the columns lot/engine declares, read out of its source.
-# The first version of this suite invented a LOT_BUILD_STATUS with
-# COHORT_RUN_ID on it; the real table has no such column, so the guard read NA,
-# decided it had nothing to compare, and waved every run through - and the
-# tests all passed.
+# An invented LOT_BUILD_STATUS column would make the guard read NA, decide it
+# had nothing to compare, and wave every run through while the tests passed.
 LOTCOLS <- local({
   bl <- readLines(file.path(dirname(ROOT), "lot", "engine", "R", "build_lot.R"), warn = FALSE)
   grab <- function(first) {

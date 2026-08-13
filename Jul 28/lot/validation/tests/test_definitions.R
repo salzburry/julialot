@@ -276,7 +276,7 @@ ok(identical(c3$concordance[c3$dimension_id == "maintenance_is_a_line"],
 ok(!any(c3$concordance == "agrees"), "...and it is still never agreement")
 
 cat("\n-- a properly filled grid passes, end to end --\n")
-# The thing the suite above could not previously say. Both grids are filled the
+# What the suite above cannot say on its own. Both grids are filled the
 # way the skill is meant to fill them, and the command that checks them - the
 # one a contributor runs before handing work back, and the one the reader
 # behind it is shared with - is run in a real process against the result. If

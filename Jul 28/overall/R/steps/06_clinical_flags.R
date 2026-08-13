@@ -6,10 +6,8 @@ phase_clinical_flags <- function(cfg, h, ctx) {
 
   list(
     # ---- Phase 7: baseline MM evidence (Step 7 gate) ----
-    # Step 7 needs >=1 strict MM dx (203.0x / C90.0x) in baseline. We
-    # follow the attrition table, which does not
-    # also require a non-diagnostic claim, so the old claim_nondiagnostic
-    # view was dropped as unused.
+    # Step 7 needs >=1 strict MM dx (203.0x / C90.0x) in baseline. Follows the
+    # attrition table, which does not also require a non-diagnostic claim.
     list(
       name = "17_mm_baseline_evidence_flag",
       description = "Checking for any STRICT MM dx (203.0x/C90.0x) claim in baseline period",

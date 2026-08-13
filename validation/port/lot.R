@@ -432,11 +432,10 @@ WHOLE <- list(
 cat("\n-- ...and the registry describing them is not stale --\n")
 sql_of <- function(f) paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE),
                             collapse = "\n")
-# A run of greps used to sit here, asserting each guard was present and each
-# unchanged file was free of it. Every one of those is now decided by the
-# comparison above: an entry counted exactly and then undone proves the guard is
-# there, in the registered number, and identity proves nothing else moved. What
-# a grep still buys is the two cases the comparison cannot see.
+# Whether each guard is present is decided by the comparison above: an entry
+# counted exactly and then undone proves the guard is there, in the registered
+# number, and identity proves nothing else moved. These two greps cover what
+# that comparison cannot see.
 #
 # A registry entry naming a file that is no longer a phase is a deviation nobody
 # is checking - the undo runs against nothing and the file it was meant for is

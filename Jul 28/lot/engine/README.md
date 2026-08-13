@@ -67,9 +67,8 @@ and says in the log what it is ignoring.
 
 A status table that is not there is the first run on a prefix and passes. Any
 other failure to read it - a refused SELECT, a dropped connection - stops the
-run. Those used to take the first-run path too, so the check switched itself
-off exactly when the warehouse was misbehaving. The override covers this case
-as well, with the reason logged.
+run, so the check cannot switch itself off exactly when the warehouse is
+misbehaving. The override covers this case as well, with the reason logged.
 
 ### What a cohort table has to provide
 

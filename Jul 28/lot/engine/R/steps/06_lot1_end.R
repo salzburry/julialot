@@ -1,11 +1,9 @@
 # The LOT1 end date and reason.
 #
-# map_stacked, lot1_base and lot1_sct used to be copied to tables here, at the
-# top of this phase. Each is now written where it is built - S07, S10 and S15 -
-# because every one of them is read before this phase is reached, and a copy
-# taken afterwards leaves those earlier reads re-running the query. There is
-# nothing left to materialize here. (CACHE TABLE is not supported on SQL
-# warehouses, so a table is the only way to hold a result.)
+# map_stacked, lot1_base and lot1_sct are each written to a table where they are
+# built - S07, S10 and S15 - because all three are read before this phase runs.
+# (CACHE TABLE is unsupported on SQL warehouses, so a table is the only way to
+# hold a result.)
 
 phase_lot1_end <- function(con, ctx) {
   meds <- ctx$meds
@@ -73,12 +71,8 @@ phase_lot1_end <- function(con, ctx) {
   # route by their earliest applicable event.
   # CART_INIT (MED_ADD followed by CART within cart_consolidation_days)
   # ends LOT1 on ENDING_CART_DT - 1, the day before the CAR-T infusion.
-  # Written here rather than copied to a table by phase_persist, which is
-  # where it used to be: that copy came after phase_qc and the LOT1
-  # invariants had already read the view, and it never repointed the view, so
-  # LOT2-5 started from the query as well. It is read nine times downstream,
-  # and each read re-ran the post-runout guard below, which scans map_stacked
-  # twice on its own.
+  # A table: it is read nine times downstream and each read would otherwise
+  # re-run the post-runout guard below, which scans map_stacked twice.
   materialize(con, "S16_lot1_base_end", view = "lot1_base_end", name = "LOT1_BASE_END", body = glue("
     WITH{melp_lot1_ctes(cfg)}
     -- Post-runout guard: identify whether any LOT2-qualifying trigger
@@ -155,22 +149,13 @@ phase_lot1_end <- function(con, ctx) {
       SELECT
         lb.*,
         coalesce(prt.POST_RUNOUT_TRIGGER_FLG, 0) AS POST_RUNOUT_TRIGGER_FLG,
-        -- The run-out becomes a discontinuation here, not in 04_lot1_base.R,
-        -- because that is where POST_RUNOUT_TRIGGER_FLG first exists.
-        --
-        -- Confirmed one of two ways, and either is enough:
-        --   by observation - {cfg$lot_discon_confirm_days} days of data follow
-        --     the run-out and no restart appears in them;
-        --   by the patient  - a LOT2-qualifying trigger appears after the
-        --     run-out, which settles the question directly. The buffer exists
-        --     because absent data is not evidence of stopping; a patient who
-        --     comes back has replaced that absence with evidence, so waiting
-        --     out the window adds nothing.
-        --
-        -- Unconfirmed leaves it NULL and the cascade censors the line at
-        -- OBS_END_DT. Gating on elapsed time alone would swallow the restart:
-        -- LOT2 starts strictly after LOT1 ends, so a line censored to
-        -- OBS_END_DT leaves nothing after it for the next line to start on.
+        -- The run-out becomes a discontinuation here rather than in
+        -- 04_lot1_base.R, because POST_RUNOUT_TRIGGER_FLG only exists at this
+        -- point. Either confirms it: {cfg$lot_discon_confirm_days} days of
+        -- observation after it, or a LOT2-qualifying trigger. Unconfirmed
+        -- leaves it NULL and the cascade censors at OBS_END_DT - which would
+        -- swallow the restart if elapsed time were the only test, since LOT2
+        -- has to start after LOT1 ends.
         CASE
           WHEN lb.LOT1_BASE_RUNOUT_DT IS NOT NULL
            AND (coalesce(prt.POST_RUNOUT_TRIGGER_FLG, 0) = 1

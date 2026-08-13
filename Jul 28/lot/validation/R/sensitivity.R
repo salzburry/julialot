@@ -166,9 +166,8 @@ sens_metric_sql <- function(final_tbl, attrition_tbl, run_id) {
 
 # The grid, one at a time from the shipped configuration.
 #
-# The reference cell is built, not assumed. A run already under the study
-# prefix may have been built with settings that have since changed, and every
-# delta in the table leans on that one number.
+# The reference cell is built, not assumed: a run already under the study
+# prefix may carry different settings, and every delta leans on that number.
 sens_plan <- function(axes = SENS_AXES, prefix_base = "sens_") {
   cells <- list(list(id = "reference", param = NA_character_, value = NA_character_,
                      prefix = paste0(prefix_base, "ref_")))

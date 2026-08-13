@@ -127,8 +127,7 @@ out on day 200, observation ending day 250 unless stated:
 *(verified against the shipped step 04/06 SQL)*
 
 It also catches an agent still covered at the end of observation, which is
-never flagged as run out yet whose last fill date previously became the line's
-discontinuation.
+never flagged as run out and so cannot give the line a discontinuation date.
 
 The spec is inconsistent here — its `LOT1_BASE` tab carries this rule and its
 later end-date tabs re-derive the end date without it. The study team

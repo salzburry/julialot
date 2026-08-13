@@ -76,7 +76,7 @@ ok(grepl("365", render_vignettes(P2)[render_vignettes(P2)$id == "tandem_within",
 
 cat("\n-- and fails rather than describing a rule that is gone --\n")
 # A renamed setting is the failure this is built to catch: the prose would
-# still read fine while naming something the build no longer has.
+# still read fine while naming a setting the build does not have.
 stops(check_vignettes(modifyList(P, list(sct_tandem_days = NA_integer_))),
       "a parameter missing from the config stops the catalogue")
 bogus <- c(VIGNETTES, list(list(id = "x", title = "x", param = "no_such_setting",

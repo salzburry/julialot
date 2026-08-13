@@ -26,9 +26,8 @@ or fewer still count as continuous.
 
 ## Assumptions
 
-Follow-up enrolment is one day, not three months. The protocol asks for three
-and the study team confirmed one day for this cohort; the subsequent-line
-cohorts use 90. `fu_ce_days = 0` means the index date itself.
+Follow-up enrolment is one day. `fu_ce_days = 0` means the index date itself.
+The subsequent-line cohorts use 90 days.
 
 For the other-cancer exclusion, both claims of a confirming pair must fall
 inside the 365-day baseline, not only the first.
@@ -96,8 +95,8 @@ already ended: `ENDDATE = least(study_end, DEATH_DT)`. A fill on the 20th of a
 month whose death is recorded as the 15th is not observed at all, so it cannot
 open a line and cannot be one of these cohorts' index dates.
 
-The follow-up window is 90 days here and one day for the 1L cohort. The two are
-different rules by design and the cohorts are not comparable on that axis.
+The follow-up window is 90 days here and one day for the 1L cohort, so the two
+cohorts are not comparable on that axis.
 
 These are cohorts rather than flags. A patient outside the 2L cohort still has
 a 2L line in the LOT tables; they are excluded from `LINE_ELIGIBLE`

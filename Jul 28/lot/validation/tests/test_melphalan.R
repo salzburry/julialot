@@ -195,8 +195,8 @@ rl2 <- melp_rule_sql("L", "M", "A", mc, "r1")
 ok(has(rl2, "PREV_REASON = 'MED_ADD'") && has(rl2, "PREV_ADD_MED = upper('MELP')"),
    "a removed boundary is an add-med line ended by THIS drug, not any drug")
 # B.3 MOVES a boundary: the rule declines at the first dose and puts one at the
-# later dose. Counting only NO_ADVANCE recorded the new boundary as a split and
-# left the old one standing, so B.3 came out as an addition with no removal.
+# later dose. Counting only NO_ADVANCE would record the new boundary as a split
+# and leave the first standing - an addition with no removal.
 ok(has(im, "ADVANCES IN ('NO_ADVANCE', 'NEXT', 'YIELDED_NEXT')"),
    "a created boundary goes when the rule declines at it OR moves it later")
 ok(!has(im, "ADVANCES = 'NO_ADVANCE'"),

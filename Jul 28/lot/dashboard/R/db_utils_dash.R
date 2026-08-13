@@ -116,9 +116,8 @@ table_cols <- function(con, tbl) {
 # previous run's complete row still looks like the newest good one.
 #
 # Returns list(run_id, ts, exact). exact = FALSE means the status table was
-# not there to ask and the answer is the newest completed metadata row - the
-# old behaviour, kept so a study built by an older LOT still renders, and
-# reported as the weaker claim it is.
+# not there to ask and the answer is the newest completed metadata row, so a
+# study built by an older LOT still renders - reported as the weaker claim it is.
 resolve_owner_run <- function(con, inputs, have, cfg) {
   # FALSE feeds a stop that says the tables were "edited or partly restored" -
   # right for a missing run row, wrong for a metadata table too old to have

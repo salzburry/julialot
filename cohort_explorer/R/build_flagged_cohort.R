@@ -387,7 +387,7 @@ synth_lot_long <- function(cohort, seed = 43L) {
 # ---- LOT-long contract + validation -----------------------------------------
 # Required set = EVERY column the downstream views (KM per-LOT, regimen freq,
 # transition/Sankey) actually consume -- incl. payer_type and next_soc, whose
-# absence used to pass validation and then crash the transition tab.
+# absence would pass validation and then crash the transition tab.
 LOT_LONG_REQUIRED_COLS <- c(
   "patient_id", "lot_num", "lot_start_dt", "lot_soc", "next_soc", "payer_type",
   "os_time", "os_event", "ttd_time", "ttd_event",

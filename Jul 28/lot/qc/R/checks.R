@@ -597,8 +597,7 @@ qc_int <- function(settings, key) {
 }
 
 # The windows every check judges by, read from the run rather than from
-# config.csv. A window edited since the build would otherwise be used to judge
-# lines built under the old one.
+# config.csv, so an edited config cannot judge lines built under the old value.
 qc_params <- function(settings, run_id) {
   censor <- toupper(trimws(qc_setting(settings, "censor_at_disenrollment")))
   list(run_id   = run_id,
@@ -608,9 +607,8 @@ qc_params <- function(settings, run_id) {
        cart     = qc_int(settings, "cart_consolidation_days"),
        tandem   = qc_int(settings, "sct_tandem_days"),
        auto_gap = qc_int(settings, "sct_auto_gap_days"),
-       # B8's confirmation window, and the line cap it needs to know where
-       # the build stops looking for a next line. Both are recorded now; the
-       # window used to be read off map_discon_gap_days because it was not.
+       # B8's confirmation window, and the line cap that tells it where the
+       # build stops looking for a next line.
        confirm  = qc_int(settings, "lot_discon_confirm_days"),
        max_lot  = qc_int(settings, "max_lot"),
        # The build derives this once, in a session view that is gone by the

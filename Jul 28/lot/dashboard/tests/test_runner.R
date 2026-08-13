@@ -51,7 +51,7 @@ nms <- vapply(DASHBOARD_SECTIONS, `[[`, character(1), "name")
 ok(!anyDuplicated(toupper(nms)),
    "no two sections share a name - the switch is SHOW_<NAME>, one per section")
 # Every switch the file ships has to name a section, and every section has to
-# have a switch. A switch for a section that no longer exists turns nothing off;
+# have a switch. A switch naming no section turns nothing off;
 # a section with no switch cannot be turned off at all, which is the thing the
 # user asked for.
 cnames <- local({
@@ -480,7 +480,7 @@ ok(grepl("a.CRITERION AS label", s$sql, fixed = TRUE) && is.null(s$skip),
    "an ndmm-shaped funnel gets the ndmm query")
 s <- lay(OVERALL_COLS)
 ok(grepl("description AS label", s$sql, fixed = TRUE) && is.null(s$skip),
-   "an overall-shaped funnel gets the overall query - the panel that used to fail outright")
+   "an overall-shaped funnel gets the overall query rather than failing outright")
 ok(grepl("n_60 AS n", fill_sql(s$sql, ai, acfg), fixed = TRUE),
    "...reading the window the build was configured with, not whichever column came first")
 ok(grepl("60-day", s$label, fixed = TRUE),
@@ -724,11 +724,10 @@ ok(is.null(s7$skip) && grepl("cohort run C1", s7$label, fixed = TRUE) &&
    "...one written before it is the attempt LOT read, and is shown")
 
 # A comparison that did not happen is not a comparison that came back "no".
-# Both of those used to reach the same line, so an unreadable timestamp, an
-# absent stamp column and a refused query all put "cohort run C1" on the panel
-# with nothing to say the attempt behind it was never checked. The rows are
-# still shown - the run id is real, and they are the only rows there - but the
-# label stops short of the claim nothing established.
+# An unreadable timestamp, an absent stamp column and a refused query must not
+# put a bare "cohort run C1" on the panel. The rows are still shown - the run id
+# is real, and they are the only rows there - but the label stops short of the
+# claim nothing established.
 unverified <- function(s, what) {
   ok(is.null(s$skip) && grepl("cohort run C1", s$label, fixed = TRUE) &&
        grepl("attempt not verified", s$label, fixed = TRUE), what)

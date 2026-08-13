@@ -13,23 +13,19 @@
 #             it is zero against zero. It needs the broad cohort's own LOT run.
 #
 #   Trial     The broad build's diagnosis-anchored CLINTRIAL_BASELINE /
-#             CLINTRIAL_FOLLOWUP, and its OTHER_MALIGN_FLAG.
-#             Not the answer to "did trial therapy precede LOT1" - that is
-#             NDMM_CLINTRIAL_FLAGS, in poma_studyteam_qs.R, and this pair
+#             CLINTRIAL_FOLLOWUP, and its OTHER_MALIGN_FLAG. This pair is not
+#             the answer to "did trial therapy precede LOT1" and
 #             cannot answer it: baseline stops before that build's
 #             diagnosis-based index and follow-up runs past LOT1, so the
-#             stretch between is in neither. Kept because OTHER_MALIGN_FLAG has
-#             no 1L-anchored equivalent, and because the comparison around that
-#             index is worth having on the population it belongs to.
+#             stretch between is in neither. poma_studyteam_qs.R answers that
+#             from NDMM_CLINTRIAL_FLAGS.
 #
-# BROAD_PREFIX and TRIAL_PREFIX are two names for what should be one study, and
-# the second question crosses them: it splits the flag build's patients by the
-# 1L regimen from the LOT run. So they are checked against each other - the LOT
-# run records the cohort it was built from, and that has to be the cohort the
-# flag build wrote. Two different broad populations would put every patient the
-# LOT run does not have into 'other', which reads the same as not having had
-# POMA. When they cannot be tied together the flags are still reported, over
-# their own population, with no split.
+# BROAD_PREFIX and TRIAL_PREFIX are two names for one study, and the second
+# question crosses them, so they are checked against each other: the cohort the
+# LOT run records must be the cohort the flag build wrote. Two different broad
+# populations would put every patient the LOT run does not have into 'other',
+# which reads the same as not having had POMA. When they cannot be tied
+# together the flags are reported over their own population, with no split.
 #
 # Nothing here writes to the warehouse.
 
@@ -191,8 +187,7 @@ main <- function() {
     # not need the LOT run. Only the split does.
     pair <- qs_broad_pair_bound(broad$cohort, trial_idx)
     # Why the split is off, or NULL when it runs. One reason, decided once and
-    # read by both the log and the CSV column, which used to be able to
-    # disagree.
+    # read by both the log and the CSV column so they cannot disagree.
     #
     # Unverified lineage leaves it off, alongside a known mismatch: 'other' is
     # the complement of a POMA set drawn from the LOT run, so a flag-build
@@ -225,10 +220,8 @@ main <- function() {
       "CASE WHEN p.PATID IS NOT NULL THEN 'POMA-1L' ELSE 'other' END" else "'all'"
     poma_join <- if (poma_split)
       "LEFT JOIN poma1l p ON p.PATID = cast(a.PATID as string)" else ""
-    # Over that build's own population, not the NDMM one. Restricting to the
-    # NDMM patients was what made the old version an overlap of two cohorts
-    # with a match rate to police; here the denominator is the population the
-    # flags belong to, and the question is about that population.
+    # Over that build's own population, not the NDMM one: the denominator is
+    # the population the flags belong to, which is what the question asks.
     flg <- best_effort(db_q(con, glue("
       WITH f AS (SELECT cast(PATID as string) PATID, INDEX_DATE FROM {trial_idx})
       {poma_cte}

@@ -176,12 +176,12 @@ Sys.unsetenv("LOT_POPULATION")
 Sys.setenv(LOT_POPULATION = "SOMETHING")
 stops(qs_population(), "an unrecognised population is refused")
 Sys.unsetenv("LOT_POPULATION")
-# The old switch chose between two cohorts, one of which is not produced any
-# more. Silently reinterpreting it would be worse than stopping.
+# LOT_COHORT names a cohort this script does not produce. Silently
+# reinterpreting it would be worse than stopping.
 Sys.setenv(LOT_COHORT = "NDMM")
 stops(qs_population(), "the retired LOT_COHORT stops the run and names what replaced it")
 Sys.unsetenv("LOT_COHORT")
-# The table the old switch pointed at is gone from the code entirely.
+# The table that switch named appears nowhere in the code.
 gone <- Filter(function(f) any(grepl("NDMM_LOT_LONG_FILT|LOT_COHORT",
                                      readLines(f, warn = FALSE))), qs)
 ok(!length(gone),
@@ -212,13 +212,13 @@ ok(!any(grepl("load_codelist_csv", c(poma, bdq), fixed = TRUE)),
 # reader the opposite. A workbook is read for its words, so that is a wrong
 # answer shipped in the deliverable.
 ok(!any(grepl("secondary bone - MM-spectrum", c(poma, bdq), fixed = TRUE)),
-   "...and the narrative no longer calls secondary bone MM-spectrum")
+   "...and the narrative does not call secondary bone MM-spectrum")
 # Q3's association is a BROAD-cohort question. One prefix is one cohort, and
 # this cohort already excluded patients with a qualifying other cancer - so
 # answering it from this run would be near-zero by construction.
 ok(any(grepl("BROAD_PREFIX", bdq, fixed = TRUE)) &&
      !any(grepl("BROAD_PREFIX", poma, fixed = TRUE)),
-   "the broad association names the broad run, and poma no longer mentions it")
+   "the broad association names the broad run, and poma does not mention it")
 ok(any(grepl("the association is skipped", bdq, fixed = TRUE)),
    "...and says it is skipped rather than answering from the study population")
 clear()
@@ -322,7 +322,7 @@ ok(any(grepl("count(DISTINCT a.PATID)", bdq, fixed = TRUE)),
 # Neither flag brackets the pre-LOT1 window: baseline ends before that build's
 # diagnosis index, follow-up starts there and runs past LOT1.
 ok(!any(grepl("HEADLINE on n_trial_baseline", pm, fixed = TRUE)),
-   "...and baseline is no longer headlined as the prior-unobserved-therapy signal")
+   "...and baseline is not headlined as the prior-unobserved-therapy signal")
 
 cat("\n-- the questions bind to the run that last wrote the tables --\n")
 # Not the newest complete run. LOT replaces LOT_LONG_FINAL before validating
@@ -477,12 +477,11 @@ ok(any(grepl("qs_broad_pair_bound(broad$cohort, trial_idx)", bdq, fixed = TRUE))
 ok(any(grepl("grp_expr <- if (poma_split)", bdq, fixed = TRUE)) &&
      any(grepl("'all'", bdq, fixed = TRUE)),
    "...and reports the flags ungrouped when it cannot, rather than not at all")
-# The old version interpolated an NA table name into the SQL whenever
-# BROAD_PREFIX was unset, so the query died inside best_effort() while the log
-# beside it said the split had defaulted to 'other' for everyone.
+# An unset BROAD_PREFIX must not interpolate an NA table name into the SQL,
+# which would die inside best_effort() while the log claimed a clean split.
 ok(!any(grepl("poma1l AS (SELECT DISTINCT cast(PATID as string) PATID FROM {broad_lot}\n                 WHERE",
               paste(bdq, collapse = "\n"), fixed = TRUE)),
-   "...and no longer names the broad table in a query that runs without it")
+   "...and does not name the broad table in a query that runs without it")
 
 cat("\n-- an unverified pairing leaves the split off, and says why on the rows --\n")
 # 'other' is not a group unless the two populations are one. It is the
@@ -546,8 +545,8 @@ ok(!any(vapply(list(r_ok, r_un, r_df, r_np, r_nb), function(r)
           nchar(gsub("[^']", "", gsub("'", "''", r$lineage, fixed = TRUE))) %% 2L != 0L,
         logical(1))),
    "...which leaves every one of them balanced as a SQL literal")
-# One reason, not two that can drift. The log used to rebuild the same if/else
-# chain by hand beside the query that reported it.
+# One reason, not two that can drift: the log reads the same value the query
+# reports rather than rebuilding the if/else chain beside it.
 ok(any(grepl('log_msg("  NOTE: one row, grp=\'all\', with no POMA split - ", split_off)',
              bdq, fixed = TRUE)),
    "...and the log prints that same reason rather than deriving its own")
@@ -626,7 +625,7 @@ ok(any(grepl("NDMM_BUILD_STATUS", st, fixed = TRUE)),
 # On the documented command the broad flags are usually absent while this one
 # is present, so a bare "Q4 skipped" would sit directly above the answer.
 ok(!any(grepl('paste0("Q4 skipped. ", trial$why)', pm, fixed = TRUE)),
-   "an absent diagnosis-anchored table no longer reports the whole of Q4 as skipped")
+   "an absent diagnosis-anchored table does not report the whole of Q4 as skipped")
 # A trial code identifies neither the study drug nor the condition treated.
 ok(any(grepl("not proof of therapy", pm, fixed = TRUE)) &&
    any(grepl("a zero does not establish", pm, fixed = TRUE)),
@@ -644,7 +643,7 @@ ok(any(grepl("AS missing_flag_rows", pm, fixed = TRUE)),
 # The overlapping window must not be added to the partition.
 ok(any(grepl("NOT add it to n_pre_dx or n_dx_to_lot1", pm, fixed = TRUE)),
    "...with the 12-month window marked as spanning two of the others")
-# The old view stays, as context, and says what it cannot answer.
+# The diagnosis-anchored view stays, as context, and says what it cannot answer.
 ok(any(grepl("cannot answer it: baseline stops before", bdq, fixed = TRUE)),
    "the diagnosis-anchored view says what it cannot answer")
 ok(any(grepl("Clinical trial does NOT filter this cohort", pm, fixed = TRUE)),
@@ -667,7 +666,7 @@ cat("\n-- an unknown ICD family matches neither, the way the builds decide it --
 # silently - so the workbook can count a diagnosis the cohort build did not.
 # raw_icd_flag is WAIVABLE, so a run can legitimately carry such flags.
 ok(!any(grepl("THEN 'ICD9' ELSE 'ICD10' END", c(pm, bdq), fixed = TRUE)),
-   "Q3 no longer defaults an unrecognised claim flag to ICD10")
+   "Q3 does not default an unrecognised claim flag to ICD10")
 ok(any(grepl("qs_icd_family_sql('d.ICD_FLAG')", bdq, fixed = TRUE)),
    "...it uses the same three-way rule, with NULL for unknown")
 ok(grepl("ELSE NULL END$", qs_icd_family_sql("x")),
@@ -697,9 +696,9 @@ cat("\n-- no workbook tells anyone to edit a production code list --\n")
 lf <- readLines(file.path(ROOT, "lot_followup_qs.R"), warn = FALSE)
 ok(!any(grepl("empty steroid_codes.csv", lf, fixed = TRUE) &
         !grepl("Do NOT empty steroid_codes.csv", lf, fixed = TRUE)),
-   "the follow-up workbook no longer says to empty the production steroid list")
+   "the follow-up workbook does not say to empty the production steroid list")
 ok(any(grepl("Do NOT empty steroid_codes.csv", lf, fixed = TRUE)),
-   "...and says why not, since the old instruction may already have been followed")
+   "...and says why not, since that instruction may already have been followed")
 
 cat("\n-- Q3 takes its lines and its index dates from the same run --\n")
 # Index dates from the NDMM cohort would drop every broad patient the NDMM
@@ -721,13 +720,13 @@ ok(any(grepl("LOT1_START_DT AS INDEX_DATE", nn, fixed = TRUE)),
    "the cohort's INDEX_DATE is the 1L start, which is what makes the two anchors one")
 ok(!any(grepl("parent-index", poma, fixed = TRUE)) &&
    !any(grepl("PARENT-INDEX", poma, fixed = TRUE)),
-   "Q5 no longer labels those columns as a separate parent anchor")
+   "Q5 does not label those columns as a separate parent anchor")
 ok(any(grepl("AS ce_gt_6mo_pre_index", poma, fixed = TRUE)) &&
    any(grepl("AS len_thal_gt_6mo_pre_index", poma, fixed = TRUE)),
    "...they are named for the window they measure and the anchor they measure it from")
 ok(!any(grepl("obs_history_gt_6mo", poma, fixed = TRUE)) &&
    !any(grepl("early_len_thal_pre_baseline", poma, fixed = TRUE)),
-   "...and the old names, which implied a window before the diagnosis, are gone")
+   "...and no name implies a window before the diagnosis")
 
 cat("\n-- an empty Blenrep line table says which of the two things it is --\n")
 # MAP_STACKED is built before the line criteria, so it still holds belantamab
@@ -757,7 +756,7 @@ ok(any(grepl("qs_truncating_criteria()", l1, fixed = TRUE)) &&
    any(grepl("qs_allflags_lines()", l1, fixed = TRUE)),
    "the Blenrep question asks what was removed, then reads the run before it was")
 ok(!any(grepl("does not surface in any LOT_BASE_MEDS regimen string", l1, fixed = TRUE)),
-   "...so it no longer reports a deliberate exclusion as an absent regimen")
+   "...so it does not report a deliberate exclusion as an absent regimen")
 
 cat("\n-- a steroid count says which version of the list produced it --\n")
 # The LOT build refuses a code-list hash it cannot take: a count gets quoted
@@ -790,7 +789,7 @@ ok(grepl("FU_DAYS", q6, fixed = TRUE) && grepl("FU_DAYS_CE", q6, fixed = TRUE),
    "...on both definitions - to death or study end, and capped at disenrolment")
 # One grouping, used by all three of Q6's tables. A second spelling of the CASE
 # on one tab is a second definition of who counts as a POMA patient, and the
-# three tables would no longer be about the same people. Counted as uses of the
+# three tables would stop being about the same people. Counted as uses of the
 # binding, not of the CASE text: other questions spell their own group label,
 # and that is theirs to spell.
 ok(grepl("q6_grp <- ", q6, fixed = TRUE) &&

@@ -92,9 +92,7 @@ init_lot_long_from_lot1 <- function(con, meds, classes) {
     sprintf("lbe.LOT1_CLASS_%s AS LOT_CLASS_%s", sc, sc)
   }, character(1)), collapse = ",\n      ")
 
-  # Straight into the staging table. This used to build a lot_long_v view,
-  # count it, then copy the view into the table - which planned the projection
-  # twice for one result.
+  # Straight into the staging table, so the projection is planned once.
   materialize(con, "L25_init_lot_long", view = "lot_long", name = .LOT_LONG_STAGE, body = glue("
     SELECT
       lbe.PATID,
@@ -442,15 +440,10 @@ build_lot_n <- function(con, lot_num,
     discon AS (
       SELECT
         ls.PATID,
-        -- Where the regimen ran out, whenever that falls on or before
-        -- OBS_END_DT. Capping at OBS_END_DT keeps days-supply tails past
-        -- death/study_end from extending the LOT (applies to all LOT types).
-        --
-        -- The run-out, not yet a discontinuation - the confirmation buffer and
-        -- the post-runout trigger are applied in the end statement below,
-        -- where POST_RUNOUT_TRIGGER_FLG exists. The add-med window below wants
-        -- this raw date: an agent added after the regimen ran out opens the
-        -- next line rather than ending this one.
+        -- Where the regimen ran out, capped at OBS_END_DT so days-supply
+        -- tails past death or study end do not extend the line. Still the
+        -- run-out, not a discontinuation: the end statement below confirms it,
+        -- where POST_RUNOUT_TRIGGER_FLG exists.
         CASE
           WHEN d.RAW_DISCON_DT IS NOT NULL AND d.RAW_DISCON_DT <= ls.OBS_END_DT
             THEN d.RAW_DISCON_DT
@@ -826,13 +819,9 @@ build_lot_n <- function(con, lot_num,
       SELECT
         lb.*,
         coalesce(prt.POST_RUNOUT_TRIGGER_FLG, 0) AS POST_RUNOUT_TRIGGER_FLG,
-        -- The run-out becomes a discontinuation here, where
-        -- POST_RUNOUT_TRIGGER_FLG first exists. Confirmed either by
-        -- observation ({cfg$lot_discon_confirm_days} days of data follow it
-        -- with no restart in them) or by the patient (a LOT-start trigger
-        -- appears after it, settling the question directly). Unconfirmed
-        -- leaves it NULL and the cascade censors the line at OBS_END_DT.
-        -- See 06_lot1_end.R for the full reasoning; this mirrors it.
+        -- The run-out becomes a discontinuation here. Either confirms it:
+        -- {cfg$lot_discon_confirm_days} days of observation after it, or a
+        -- LOT-start trigger. Mirrors 06_lot1_end.R.
         CASE
           WHEN lb.LOT{lot_num}_BASE_RUNOUT_DT IS NOT NULL
            AND (coalesce(prt.POST_RUNOUT_TRIGGER_FLG, 0) = 1

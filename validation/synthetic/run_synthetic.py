@@ -14,10 +14,9 @@ break surfaces without anyone having to predict it.
 Two things it will tell you that a green suite will not:
 
   COVERAGE. "Every invariant holds" over a population that never reaches a rule
-  proves nothing about that rule. The first version of this harness ran 7,200
-  patients clean, and then turning the discontinuation buffer off changed not
-  one row - because only 26 of 1,905 lines ended anywhere near the cutoff. The
-  coverage block exists so that cannot pass unnoticed again.
+  proves nothing about that rule. The coverage block counts how many patients
+  reached each rule, and calls out a bucket reading zero as a green that tested
+  nothing.
 
   REGRESSION. --snap writes a canonical snapshot; --base diffs against one.
   Run it before a change and after, and every row that moved has to be a row

@@ -1,4 +1,4 @@
-# Step 2: age at index. Also the death date used to cap follow-up.
+# Step 2: age at index, and the death date that caps follow-up.
 
 phase_demographics <- function(cfg, h, ctx) {
   work <- h$work; cdm_src <- h$cdm_src

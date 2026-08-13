@@ -3,8 +3,7 @@
 The broad myeloma cohort: everyone treated for myeloma in the window, without
 the newly-diagnosed restrictions. It writes `OVERALL_COH_FINAL`.
 
-It exists because two of the study team's questions concern patients the NDMM
-cohort excludes.
+It covers patients the NDMM cohort excludes.
 
 ## Who gets in
 

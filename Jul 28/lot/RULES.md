@@ -58,9 +58,6 @@ anyone who received it at any point is dropped.
 
 ## CAR-T
 
-Applied since 13 August 2026, on the study team's instruction. Runs before that
-date differ on `SCT_CART`, `CART_INIT`, line 1 length and line counts.
-
 A CAR-T inside line 1's 60-day induction window belongs to line 1. It does not
 end that line and it does not start one. Outside the window it does both: the
 line ends the day before the infusion and the CAR-T opens the next line.
@@ -75,10 +72,9 @@ rule stops that infusion starting a line; it does not extend the one before it.
 
 ## Melphalan
 
-Not applied. The study's numbers do not include this rule. It is built as three
-complete runs under `melphalan/`, each recording the deviation, so its effect
-can be measured before the study team decides. What follows describes those
-runs, not the study cohort.
+Not applied: the study's numbers do not include this rule. It is built as three
+complete runs under `melphalan/`, each recording the deviation. What follows
+describes those runs, not the study cohort.
 
 Doses less than 30 days apart form one exposure. Consecutive exposures are then
 judged as a pair, on the gap between them and on whether the first falls inside
@@ -98,10 +94,10 @@ acted on. Two readings are built. `as_asked` judges every exposure regardless.
 `yield_to_sct` leaves any exposure with an AUTO within 14 days to the
 transplant rule.
 
-Two questions are open with the study team. In the 60 to 179 day case the
-boundary is removed but the line is not held open, so a regimen that runs out
-between the two doses still ends there. And a pair whose first dose sits beside
-a transplant while the second does not will not advance the line.
+Two cases are unresolved. In the 60 to 179 day case the boundary is removed but
+the line is not held open, so a regimen that runs out between the two doses
+still ends there. And a pair whose first dose sits beside a transplant while the
+second does not will not advance the line.
 
 ## What stops a run
 

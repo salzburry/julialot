@@ -4,26 +4,20 @@
 #
 # It lives here rather than in the study folder for the reason everything else
 # here does: it names the port and hygiene suites, and the study folder may not.
-# The first version of this file sat inside it and was caught by the very check
-# it was written to run - which is the check working.
 #
 #   Rscript validation/run_gate.R           # from the repository root
 #
-# No warehouse, no connection. This is what the merge gate runs, and it exists
-# so that "all suites pass" is a thing a machine says rather than a thing an
-# author reports.
+# No warehouse, no connection. This is what the merge gate runs, so that "all
+# suites pass" is a thing a machine says rather than a thing an author reports.
 #
 # One suite is expected to fail. validation/port/lot.R compares the LOT steps
-# against the delivery they were ported from and has six failures that predate
-# this folder's current state. Excluding it would hide a real comparison;
-# letting it fail would make the gate permanently red and therefore ignored. So
-# they are PINNED below - BY IDENTITY, not by count.
-#
-# By count was the first version and it was a false green waiting to happen:
-# fix one of the six, introduce one regression, and the count is still six. What
-# is pinned is which comparisons fail, so a failure appearing is caught even
-# when a failure disappears in the same commit. Both directions fail the gate -
-# a new one is a regression, a missing one means this baseline is now a lie.
+# against the delivery they were ported from and carries known differences.
+# Excluding it would hide a real comparison; letting it fail would make the gate
+# permanently red and therefore ignored. So they are PINNED below - BY IDENTITY,
+# not by count. What is pinned is which comparisons fail, so a failure appearing
+# is caught even when a failure disappears in the same commit. Both directions
+# fail the gate: a new one is a regression, a missing one means this baseline no
+# longer describes the code.
 #
 # The pin drops the trailing source line number, which moves whenever anything
 # above it is edited. What identifies a failure is which step differs and how,
@@ -41,11 +35,10 @@ STUDY  <- Sys.getenv("STUDY_FOLDER", unset = file.path(REPO, "Jul 28"))
 # suite -> the failures it is allowed to have, by identity. Absent means none.
 EXPECTED_FAILURES <- list(
   "validation/port/lot.R" = c(
-    # The line COUNT is part of the identity, not decoration. Without it the
-    # pin was "this file differs", which stayed true however much more of it
-    # diverged - and every file the CAR-T and melphalan work touched was
-    # already pinned, so those changes rode in unexamined. A count moves when
-    # the divergence set moves, and re-pinning is then a conscious act.
+    # The line COUNT is part of the identity, not decoration. Without it a pin
+    # reads "this file differs", which stays true however much more of it
+    # diverges, so edits to an already-pinned file ride in unexamined. A count
+    # moves when the divergence set moves, and re-pinning is a conscious act.
     # Counted over comment-stripped code, so prose does not churn it.
     "03_mma_map.R: differs beyond the approved deviations in 217 line(s)",
     "05_sct.R: differs beyond the approved deviations in 11 line(s)",
@@ -57,8 +50,7 @@ EXPECTED_FAILURES <- list(
 )
 
 # How one suite's output is read. Its own suite is validation/hygiene/
-# gate_semantics.R, which holds it to failing on each of the three greens it
-# used to give wrongly.
+# gate_semantics.R, which holds it to failing on each green it must not give.
 source(file.path(HERE, "_gate_logic.R"))
 
 suites <- c(

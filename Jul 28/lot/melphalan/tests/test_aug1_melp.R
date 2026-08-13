@@ -295,8 +295,8 @@ ok(identical(cmp$change[cmp$cell == "as_asked" & cmp$metric == "n_lines"], 100),
    "a cell is reported as its difference from the reference")
 ok(nrow(cmp) == 2L * length(MELP_METRICS),
    "...for every metric and every cell, so nothing is quietly dropped")
-# A metric named in MELP_METRICS but not selected by the SQL used to fail deep
-# in the arithmetic, several lines from the cause.
+# A metric named in MELP_METRICS but not selected by the SQL is named as such,
+# rather than failing deep in the arithmetic several lines from the cause.
 stops(melp_compare(data.frame(cell = c("reference", "as_asked"),
                               n_lines = c(1000, 1100), stringsAsFactors = FALSE)),
       "a metric the SQL does not select is named, not a crash in the arithmetic")

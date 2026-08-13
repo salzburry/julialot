@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# The merge gate, held to failing on the greens it used to give wrongly.
+# The merge gate, held to failing on every green it must not give.
 #
 #   Rscript validation/hygiene/gate_semantics.R
 #
@@ -44,7 +44,7 @@ cat("\n-- a clean summary is not the same as a clean exit --\n")
 ok(!gate_verdict(clean, 1L)$ok,
    "zero failures and a nonzero exit: the suite died after its last assertion")
 ok(!gate_verdict(one, 0L, "step_a.R: differs")$ok,
-   "a pinned failure and exit 0: the suite is no longer reporting it")
+   "a pinned failure and exit 0: the suite is not reporting it")
 ok(isTRUE(gate_verdict(one, 1L, "step_a.R: differs")$ok),
    "...and the honest pair - one pinned failure, exit 1 - passes")
 

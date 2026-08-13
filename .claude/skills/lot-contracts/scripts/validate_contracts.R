@@ -210,12 +210,9 @@ check_contract <- function(doc, raw_text, fname) {
 # ---- The engine binding --------------------------------------------------
 #
 # The myeloma contract IS the engine's shipped behavior, so the pin has to be a
-# COMPARISON against the engine, not a copy of it. It used to be a copy: a
-# hand-written table of the values the engine was believed to ship. A copy
-# cannot notice the engine moving - three settings were added to CONTRACT
-# (apply_cart_induction_rule, apply_no_belantamab, lot_discon_confirm_days)
-# and this validator went on passing, because nothing here had ever read
-# build_lot.R.
+# COMPARISON against the engine, not a copy of it. A hand-written table of the
+# values the engine is believed to ship cannot notice the engine moving: it
+# validates clean against itself while settings are added to CONTRACT.
 #
 # So: read CONTRACT out of the engine, bind each rule-bearing key to the
 # contract field that carries it, and require every key to be accounted for.

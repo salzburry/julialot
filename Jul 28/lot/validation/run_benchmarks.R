@@ -100,13 +100,8 @@ main <- function() {
     add(db_q(con, bench_reaching_sql(final, max_lot))),
     add(db_q(con, bench_duration_sql(final))),
     add(db_q(con, bench_regimen_sql(final, top_n))))
-  # One statement per line: the risk set changes with the line. A loop is
-  # clearer than a curve per group, and a line that fails costs only itself.
-  # A line that fails costs only itself - but it must cost that visibly. This
-  # used to print the error, contribute nothing, and let the run write the CSV
-  # and exit 0: a measurement that was attempted and failed came out
-  # indistinguishable from one nobody asked for, in a file whose whole purpose
-  # is to say what was measured against what.
+  # One statement per line: the risk set changes with the line. A line that
+  # fails costs only itself, and lands in `failed` so the run can say so.
   failed <- integer(0)
   for (l in seq_len(max(1L, max_lot - 1L))) {
     r <- tryCatch(db_q(con, bench_ttnt_sql(final, patients, l)),
@@ -123,12 +118,9 @@ main <- function() {
   res$run_id <- run$run
   res$input_cohort_table <- run$cohort
   if (!dir.exists(out_dir)) dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
-  # The canonical name is for a complete run. A run that lost a TTNT line is
-  # not one, and it used to write this file anyway - so the artifact on disk
-  # looked finished and only the exit status and the log said otherwise, which
-  # is exactly the state a file outlives. A partial run writes a differently
-  # named file that cannot be mistaken for the deliverable, and carries the
-  # reason in a column so it travels with the rows rather than in a terminal.
+  # The canonical name is for a complete run. A run that lost a TTNT line
+  # writes a differently named file and carries the reason in a column, so the
+  # artifact on disk cannot be mistaken for the deliverable.
   if (length(failed)) {
     res$incomplete <- paste0("TTNT failed for line(s) ",
                              paste(failed, collapse = ", "))

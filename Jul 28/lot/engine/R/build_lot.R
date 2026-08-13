@@ -31,13 +31,9 @@ CONTRACT <- list(
   # the line nor starts one. Confirmed by the study team on 2026-08-13; see
   # R/cart_rule.R and lot/LOT_RULES.md section 10.
   apply_cart_induction_rule   = TRUE,
-  # The protocol's belantamab exclusion. It was a line criterion and nothing
-  # else, so APPLY_NO_BELANTAMAB defaulted to FALSE when unset: a config.csv
-  # that lost the row, or an environment that never set it, produced a
-  # STATE=complete run with the exclusion silently off and nothing in
-  # CONTRACT_DEVIATIONS to say so. Pinned here, so the default is on and
-  # turning it off needs LOT_CONTRACT_OVERRIDE and is recorded like any other
-  # contract change. criterion_enabled() reads this, not a bare env default.
+  # The protocol's belantamab exclusion. Pinned here so an unset
+  # APPLY_NO_BELANTAMAB leaves it on rather than silently off, and turning it
+  # off is a recorded contract change. criterion_enabled() reads this.
   apply_no_belantamab         = TRUE,
   melp_med_abbr               = "MELP",
   melp_exposure_days          = 30L,
@@ -47,13 +43,9 @@ CONTRACT <- list(
   induction_window_days       = 60L,
   lot_n_induction_window_days = 30L,
   map_discon_gap_days         = 90L,
-  # Follow-up required AFTER a line's run-out before it counts as a
-  # discontinuation. The spec's LOT1_BASE tab carries this and its later
-  # end-date tabs do not; the study team adjudicated in favour of the tab that
-  # has it, because in a real-world claims study "we stopped seeing fills" and
-  # "the patient discontinued" are different claims when the data simply runs
-  # out. A run-out with less than this much observation left is not confirmed,
-  # so the line is censored at study end instead. 0 restores the old behaviour.
+  # Observation required after a run-out before it counts as a discontinuation.
+  # The spec's LOT1_BASE tab carries this and its later end-date tabs do not;
+  # the study team chose the tab that has it. 0 confirms a run-out immediately.
   lot_discon_confirm_days     = 90L,
   medical_day_supply          = 28L,
   sct_auto_window_days        = 13L,
@@ -108,10 +100,8 @@ REQUIRED_COHORT_COLS <- c("PATID", "INDEX_DATE", "ENDDATE", "ENDDATE_CE",
 BOOL_SETTINGS <- c("USE_QUARTERLY_TABLES", "CENSOR_AT_DISENROLLMENT",
                    "PERSIST_TO_SCHEMA", "APPLY_CART_INDUCTION_RULE",
                    "APPLY_NO_BELANTAMAB",
-                   # config_lot.R coerces this with as.logical() like the rest
-                   # and it was not checked here, so FACE_VALIDITY_FATAL=Ture
-                   # became NA, isTRUE(NA) is FALSE, and the run carried on
-                   # past a band it had been told to stop for.
+                   # Coerced with as.logical() like the rest, so a typo would
+                   # otherwise become NA and read as off.
                    "FACE_VALIDITY_FATAL")
 INT_SETTINGS  <- c("INDUCTION_WINDOW_DAYS", "INDUCTION_WINDOW_DAYS_LOT_N",
                    "MAP_DISCON_GAP_DAYS", "MEDICAL_DAY_SUPPLY",
@@ -367,9 +357,8 @@ check_cohort_build <- function(con, cfg) {
   for (nm in cands) {
     tbl <- wrk(paste0(cp, nm))
     tried <- c(tried, tbl)
-    # Absent and unreadable are different answers. A permissions failure, a
-    # dropped connection or a malformed table all used to read as "no status
-    # here", and the run carried on with no cohort provenance at all.
+    # Absent and unreadable are different answers: a permissions failure, a
+    # dropped connection or a malformed table is not "no status here".
     d <- tryCatch(db_q(con, glue(
            "SELECT * FROM {tbl} ORDER BY UPDATED_AT DESC LIMIT 1")),
          error = function(e) e)
@@ -457,17 +446,15 @@ check_cohort_build <- function(con, cfg) {
          call. = FALSE)
   }
 
-  # Named but unreadable is a mistake, not an absence. Carrying on would give
-  # the run no cohort provenance while looking like it had been checked.
+  # Named but unreadable is a mistake, not an absence. Carrying on would leave
+  # the run no cohort provenance while looking checked.
   if (nzchar(named))
     stop("COHORT_STATUS_TABLE names ", tried[1], ", which could not be read. ",
          "Give the table name without the schema and without the cohort ",
          "prefix - COHORT_PREFIX is added for you, and defaults to this run's ",
          "own prefix.", call. = FALSE)
-  # No status anywhere. This used to warn and carry on, which meant the normal
-  # path - COHORT_STATUS_TABLE unset - could build a whole study off a cohort
-  # whose own build may have failed, and record NULL provenance for it. The
-  # explicit path already stopped; the default now does too.
+  # No status anywhere. Stops rather than warns: without it a study can be
+  # built off a cohort whose own build failed, with NULL provenance recorded.
   msg <- paste0("No cohort build-status table found (looked for ",
                 paste(tried, collapse = ", "), "). Nothing here can say ",
                 "whether the build that wrote ", wrk(cfg$input_cohort_table),
@@ -1499,10 +1486,9 @@ contract_settings <- function(cfg) {
   paste(paste0(k, "=", vapply(k, val, character(1))), collapse = "|")
 }
 
-# STUDY_START and STUDY_END are columns of their own because they are no longer
-# in CONTRACT, so CONTRACT_SETTINGS does not carry them - and the window decides
-# which quarterly tables the run read, which is the first thing anyone comparing
-# two runs needs to know.
+# STUDY_START and STUDY_END are columns of their own: they are not in CONTRACT,
+# so CONTRACT_SETTINGS does not carry them, and the window decides which
+# quarterly tables the run read.
 FINAL_METADATA_COLS <- c(N_LOT_LONG_ROWS = "BIGINT",
                          N_LOT_LONG_PATIENTS = "BIGINT",
                          LOT_LONG_BY_LINE = "STRING",

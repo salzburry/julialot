@@ -302,7 +302,7 @@ writeLines(c("dx,icd_family,tumor_group", "C349,ICD10,LUNG"),
 got <- tryCatch(load_codelist_csv("other_malig.csv", c("dx", "icd_family", "tumor_group")),
                 error = conditionMessage)
 ok(is.character(got) && grepl("VALUES", got, fixed = TRUE),
-   "the other-cancer codelist loads - the allowlist no longer rejects it")
+   "the other-cancer codelist loads - the allowlist accepts it")
 ok(grepl("'C349'", got, fixed = TRUE), "...with its rows in the SQL fragment")
 writeLines("x,y", file.path(tmp, "not_a_codelist.csv"))
 m <- tryCatch({ load_codelist_csv("not_a_codelist.csv", c("x", "y")); "" },
@@ -508,10 +508,9 @@ ok(any(grepl("STATE = 'started'", NAQ, fixed = TRUE)) &&
      any(grepl("OBJECT_PREFIX = 'p_'", NAQ, fixed = TRUE)) &&
      any(grepl("wk.p_NDMM_BUILD_STATUS", NAQ, fixed = TRUE)),
    "...asked of started runs on this prefix")
-# Including this run's own id, which it used to exclude - and that exclusion
-# was asserted here, so the hole was pinned as expected behaviour. run_id comes
-# from DOMINO_RUN_ID, and a second attempt inside one Domino execution carries
-# the same one, which is the collision most worth catching.
+# Including this run's own id. run_id comes from DOMINO_RUN_ID, so a second
+# attempt inside one Domino execution carries the same one - the collision most
+# worth catching, and the one an id exclusion would hide.
 ok(!any(grepl("RUN_ID <>", NAQ, fixed = TRUE)),
    "...and not excluding this run's id, which a retry shares with a live sibling")
 msg <- drive_na(data.frame(RUN_ID = "R2", UPDATED_AT = "2026-07-30 09:00:00"))
@@ -539,10 +538,8 @@ ok(!inherits(tryCatch(na$check_no_active_run(NULL, list(object_prefix = "p_")),
                       error = function(e) e), "error"),
    "and a first run, with no status table yet, is not blocked by its absence")
 # But only that. Every other failure is this check not running, which is not
-# the same as it passing - and it used to take the same path, so a permission
-# failure or a dropped connection turned the concurrency guard off for the
-# length of a build. clear_run_rows() a few lines down has always drawn the
-# line here; this did not.
+# the same as it passing: a permission failure or a dropped connection must not
+# turn the concurrency guard off for the length of a build.
 boom <- function(msg) {
   assign("db_q", function(con, s) stop(msg), envir = na)
   tryCatch({ na$check_no_active_run(NULL, list(object_prefix = "p_")); NULL },
@@ -564,7 +561,7 @@ Sys.unsetenv("NDMM_IGNORE_ACTIVE_RUN")
 # The first thing the run asks the warehouse, and so before it writes its own
 # row: a refused run leaves the prefix as it found it, and does not sit through
 # twenty input probes first. Against the parsed body rather than ORDER, so
-# it holds even if ORDER is reordered to match a runner that no longer does
+# it holds even if ORDER is reordered to match a runner that does not do
 # this, and against the parsed body rather than the file text, so a mention in
 # a comment is not read as a call.
 i_na <- regexpr("check_no_active_run(con, cfg)", body, fixed = TRUE)
@@ -770,9 +767,9 @@ ok(grepl("LEFT JOIN {NDMM_MM_DX_CODES} m", oc0, fixed = TRUE) &&
      grepl("ON m.dx = om.dx AND m.icd_family = om.icd_family", oc0, fixed = TRUE),
    "a code on the MM diagnosis list is never also another cancer")
 # Not which SQL construct is used, but that no column name can bind to the
-# wrong relation. The first version used a correlated EXISTS whose inner
-# relation also has dx and icd_family; unqualified, they bound to the inner
-# ones, every code compared to itself, and the exclusion switched off entirely.
+# wrong relation. A correlated EXISTS has an inner relation with dx and
+# icd_family too; unqualified, they bind to the inner ones, every code compares
+# to itself, and the exclusion switches off entirely.
 #
 # So from the point both relations are in scope, every shared name is aliased.
 shared <- c("dx", "icd_family", "tumor_group")
@@ -937,8 +934,8 @@ ok(grepl("b.bel_dt <= c.ENDDATE", rec, fixed = TRUE),
    "the claim has to fall on or before the patient's ENDDATE")
 ok(grepl("FROM wk.NDMM_COHORT c", rec, fixed = TRUE),
    "...which it gets from the cohort table, already carrying its own dates")
-# The old shape: flags plus a written-out criteria conjunction. NDMM_COHORT is
-# that set with the dates on it, so the join does the same work with less.
+# NDMM_COHORT is the criteria set with the dates already on it, so the join
+# does the work that flags plus a written-out conjunction would.
 ok(!grepl("EXCLUDED_BY_PROXY", rec, fixed = TRUE) &&
      !grepl("NDMM_FLAGS_ALL", rec, fixed = TRUE),
    "and the proxy column and the flags join are both gone")
@@ -1305,8 +1302,8 @@ ok(!grepl("ELSE", k, fixed = TRUE),
    "the key CASE has no ELSE, so an unmatched value gets NULL and joins nothing")
 # Each value judged the way the SQL judges it: strip to digits, then the only
 # keyed lengths are ten and eleven, and all zeros is refused by its own branch.
-# The earlier version of this loop never used the value it was iterating - six
-# copies of one structural assertion, reading as six semantic ones.
+# Each iteration uses the value it is given, so these are six semantic
+# assertions rather than six copies of one structural one.
 for (v in c("NONE", "UNK", "ABC123", "00000000000", "123", "PSYCHOTHERA")) {
   digits <- gsub("[^0-9]", "", v)
   ok(grepl("^0*$", digits) || !nchar(digits) %in% c(10L, 11L),
@@ -1395,7 +1392,7 @@ ok(!any(grepl("matched_code", ICDQ, fixed = TRUE)),
    "...and nothing pays for a breakdown of a finding that is not there")
 r <- drive_icd(7L)
 ok(identical(r$err, ""),
-   "an unknown flag on a code this cohort reads no longer stops the build")
+   "an unknown flag on a code this cohort reads does not stop the build")
 m <- r$log
 ok(grepl("WARNING (raw_icd_flag)", m, fixed = TRUE) &&
      grepl("names neither family", m, fixed = TRUE),
@@ -1431,8 +1428,8 @@ ok(length(bf) == 1L && grepl("25 codes", bf, fixed = TRUE) &&
 ok("FINDINGS" %in% names(RUN_METADATA_COLS),
    "...which is a column NDMM_RUN_METADATA actually has")
 r <- drive_icd(7L, waive = "raw_icd_flag")
-ok(identical(r$err, "") && grepl("no longer needed", r$log, fixed = TRUE),
-   "the old waiver is accepted and says it is now a no-op")
+ok(identical(r$err, "") && grepl("has no effect", r$log, fixed = TRUE),
+   "the raw_icd_flag waiver is accepted and says it is a no-op")
 
 # The breakdown is folded in R, not by aggregate(): its formula method defaults
 # to na.omit, so one unreadable count would drop that code from the row - the
@@ -1617,7 +1614,7 @@ ok(grepl("GROUP BY code", detq, fixed = TRUE) &&
 # The predicate is shared, so the breakdown has to sum to the count it breaks
 # down. Checked at run time as well as here: sharing holds only while both
 # probes actually call it, and a future edit that stops sharing would otherwise
-# be silent until someone read two numbers that no longer meant the same thing.
+# be silent until someone read two numbers that had stopped meaning the same.
 m <- drive_icd(7L, detail = data.frame(icd_flag_value = "<blank>",
                                        matched_code = "C9000",
                                        on_list = "MM diagnosis", n_rows = 3L,
@@ -1751,7 +1748,7 @@ for (t in OUTPUTS)
      paste0(t, " is written under the cohort prefix"))
 # Every table the run names, whether written as a literal or through a
 # constant - and only from code the run reaches. 07_cohort.R still carries
-# build_lot_long_filtered(), which the runner no longer calls; scanning the
+# build_lot_long_filtered(), which the runner does not call; scanning the
 # whole file would credit this package with a table nothing writes.
 consts <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "ndmm_constants.R"), envir = consts)

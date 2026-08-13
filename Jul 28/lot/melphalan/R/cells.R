@@ -537,8 +537,8 @@ melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP",
     FROM ", attrition_tbl, "
     WHERE RUN_ID = '", run_id, "' AND KIND = 'progression'"),
 
-    # One scan of the lines. Every count that used to be its own subquery is a
-    # CASE over the same rows, which is what the scalar subqueries cost most.
+    # One scan of the lines: every count is a CASE over the same rows rather
+    # than a scalar subquery of its own.
     lines = paste0("
     SELECT percentile_approx(CASE WHEN LOT_NUM = 1 AND LOT_BASE_LENGTH IS NOT NULL
                                   THEN LOT_BASE_LENGTH END, 0.5)   AS median_lot1_length,
@@ -840,18 +840,11 @@ melp_modes_apart <- function(results) {
 # ---- The read ---------------------------------------------------------------
 # What every cell was built over, before any number is read off it.
 #
-# The runner already requires one cohort table and one cohort prefix, and that
-# is not the same thing - see MELP_INPUT_FIELDS.
-# ...and that the engine which built them is the engine reading them.
-#
 # MELP_INPUT_FIELDS compares CODE_MD5 across the three cells, which catches a
-# cell built from different code than its siblings. It cannot catch all three
-# being built from code that has since changed: they agree with each other
-# perfectly, every check passes, and the numbers describe an engine that no
-# longer exists. That is not hypothetical - the CAR-T induction rule landed on
-# 2026-08-13 and every cell built before it answers under the old algorithm.
+# cell built from different code than its siblings but not all three built from
+# an engine that has since changed - they agree with each other perfectly.
 #
-# So the recorded hash is compared against the code actually running. Same
+# So the recorded hash is also compared against the code actually running. Same
 # fingerprint the build writes: every .R under the engine's R/ plus build.R,
 # concatenated in radix order and hashed.
 #

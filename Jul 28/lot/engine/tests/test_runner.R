@@ -128,8 +128,8 @@ ok(setequal(set_cols, names(FINAL_METADATA_COLS)),
                                setdiff(names(FINAL_METADATA_COLS), set_cols)),
                          collapse = ", ")) else ""))
 ok(all(c("STUDY_START", "STUDY_END") %in% names(FINAL_METADATA_COLS)),
-   paste0("and the window is among them - it left CONTRACT, so ",
-          "CONTRACT_SETTINGS no longer carries it"))
+   paste0("and the window is among them - it is not in CONTRACT, so ",
+          "CONTRACT_SETTINGS does not carry it"))
 
 cat("\n-- two cohorts cannot collide --\n")
 # The point of the module: same rules, different output names.
@@ -152,8 +152,8 @@ ok(identical(wrk(cfg$input_cohort_table), paste0("hive_metastore.usr00000.", TBL
 # Read the real output names out of the steps rather than listing them
 # by hand - a hand list goes stale the moment a step adds a table, which is
 # exactly when a collision would slip through.
-# build_lot.R too: the SCT materialization names live there now that the
-# fresh-session path no longer carries its own copy.
+# build_lot.R too: the SCT materialization names live there rather than in the
+# fresh-session path.
 step_src <- unlist(lapply(c(list.files(file.path(ROOT, "R", "steps"), "\\.R$",
                                        full.names = TRUE),
                             file.path(ROOT, "R", "build_lot.R")),
@@ -728,8 +728,8 @@ cat("\n-- an SCT on LOT1's start date does not end it the day before --\n")
 # structure entirely - and out of cart_is_late, which exists to notice it.
 #
 # The expression is lifted out of the SQL the step actually emits and evaluated,
-# not grepped for: a test that matched the text would pass on an expression that
-# no longer computes anything.
+# not grepped for: a test that matched the text would pass on an expression
+# that computes nothing.
 sctenv <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "cart_rule.R"), envir = sctenv)
 assign("cfg", list(sct_tandem_days = 180L), envir = sctenv)
@@ -1101,7 +1101,7 @@ ok(all(c("orphan_meds", "uncoded_meds", "ndc_short") %in% WAIVABLE_CHECKS),
 # the WHERE stopped excluding it - assert that on the SQL.
 ok(!any(grepl("AND regexp_replace(cast(t.NDC as string), \'[^0-9]\', \'\') <> \'\'",
               NSQL, fixed = TRUE)),
-   "the profile no longer drops the values it is meant to report")
+   "the profile keeps the values it is meant to report")
 for (b in c("AS n_nodigit", "AS n_zero"))
   ok(all(grepl(b, NSQL, fixed = TRUE)), paste0("the profile counts ", b))
 # Waivable, so a first run reports the distribution rather than blocking on a
@@ -1457,7 +1457,7 @@ clear()
 # Same coercion, and it was not in the list: a typo made this NA, isTRUE(NA) is
 # FALSE, and a run told to stop on a face-validity band carried on instead.
 Sys.setenv(FACE_VALIDITY_FATAL = "Ture")
-stops(check_settings(), "a mistyped FACE_VALIDITY_FATAL, which used to read as off")
+stops(check_settings(), "a mistyped FACE_VALIDITY_FATAL is rejected, not read as off")
 clear()
 Sys.setenv(MAP_DISCON_GAP_DAYS = "ninety")
 stops(check_settings(), "a window that will not parse")
@@ -1934,9 +1934,9 @@ ok(is.null(drive_ar(data.frame(RUN_ID = character(0), UPDATED_AT = character(0))
    "a prefix nobody else is building is fine")
 ok(!is.null(drive_ar(data.frame(RUN_ID = "R1", UPDATED_AT = "x"))),
    "...another run on it stops this one")
-# Including one carrying this run's own id. The query used to exclude it, and
-# run_id comes from DOMINO_RUN_ID - so a second attempt in one Domino execution
-# shared the id and walked straight past the live first attempt.
+# Including one carrying this run's own id. run_id comes from DOMINO_RUN_ID, so
+# a second attempt in one Domino execution shares it, and excluding that id
+# would walk straight past a live first attempt.
 same <- drive_ar(data.frame(RUN_ID = "R2", UPDATED_AT = "x"))
 ok(!is.null(same) && grepl("this run's own id", same, fixed = TRUE),
    "...as does a second attempt under this run's own id, saying which it is")

@@ -98,10 +98,9 @@ reviewer), and pins the myeloma contract to the engine's shipped defaults.
 **The pin reads the engine.** It parses `CONTRACT` out of `build_lot.R` and
 compares field by field, and every engine setting must be either bound to a
 contract field or named in `NOT_AN_AXIS` with a reason — so a setting added to
-the engine with no decision recorded fails this script. It used to be a
-hand-written copy of the engine's values, which is a different thing: three
-settings were added to `CONTRACT` and the contract validated clean throughout,
-because nothing here had ever read the engine.
+the engine with no decision recorded fails this script. A hand-written copy of
+the engine's values could not do that: it would validate clean against itself
+while the engine drifted.
 
 The repository's merge gate runs both this and `--selftest`, via
 `validation/hygiene/lot_contract_binding.R`. Before that suite existed the

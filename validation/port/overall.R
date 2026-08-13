@@ -4,13 +4,12 @@
 #
 #   Rscript validation/port/overall.R
 #
-# This suite used to assert that a changed step "differs from source", which is
-# satisfied by any difference at all - so once a step was listed as changed,
-# every later edit to it was invisible here. It now works the way port/ndmm.R
-# does: each deviation is written out, both sides of it, and undone before the
-# comparison. What is left must match the source exactly. A deviation that stops
-# matching is reported rather than skipped, so deleting one from the shipping
-# code does not read as a pass either.
+# Each deviation is written out, both sides of it, and undone before the
+# comparison; what is left must match the source exactly. Asserting only that a
+# changed step "differs from source" would be satisfied by any difference at
+# all, hiding every later edit. A deviation that stops matching is reported
+# rather than skipped, so deleting one from the shipping code is not a pass
+# either.
 
 COMMON <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)

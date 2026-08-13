@@ -31,11 +31,9 @@ hold whatever the rules are.
 ## Two things it tells you that a green suite will not
 
 **Coverage.** "Every invariant holds" over a population that never reaches a
-rule proves nothing about that rule. The first version of this harness ran
-7,200 patients clean — and then turning the discontinuation buffer off changed
-not one row, because only 26 of 1,905 lines ended anywhere near the cutoff. The
-coverage block exists so that cannot pass unnoticed again; a bucket reading
-zero is called out as a green that tested nothing.
+rule proves nothing about that rule. The coverage block counts how many
+patients reached each rule, and a bucket reading zero is called out as a green
+that tested nothing.
 
 **Regression.** `--snap` writes a canonical snapshot, `--base` diffs against
 one. That is the check to run around a fix:
@@ -80,10 +78,9 @@ expected it contained is the signal to stop.
 
 `05_sct.R` is absent from the chain: it builds the AUTO transplant dates with
 Spark's `aggregate()` over a `named_struct` accumulator, which `sqlglot` cannot
-parse. The harness takes `tx_auto_dates` as an input instead. That gap is not
-theoretical — an off-by-one in that file's tandem boundary survived an earlier
-edge-case sweep for exactly this reason, and only a Spark-backed run can close
-it.
+parse. The harness takes `tx_auto_dates` as an input instead, so nothing in
+that file's tandem and gap arithmetic is exercised here. Only a Spark-backed
+run can cover it.
 
 duckdb is also not Spark. The dialect probe at the top of each run checks the
 one semantic this code leans on hardest (`datediff(a, b)` is `a - b`), but it
