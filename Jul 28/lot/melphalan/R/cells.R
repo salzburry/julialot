@@ -364,6 +364,10 @@ MELP_METRICS <- c(
   n_melp_mono_adv      = "...of those, MED-started lines after LOT1 - melphalan alone advanced a line",
   n_melp_mono_adv_auto = "...and of those, the ones with a transplant inside the line",
   median_melp_mono_len = "median melphalan-only line length in days (inclusive)",
+  # Modifying a line without advancing it: melphalan's own cover is what the
+  # line ran out on, so the line is longer and no boundary moved.
+  n_melp_sets_runout   = "lines whose run-out date is melphalan's own last cover",
+  n_melp_holds_multi   = "...of those, the ones with another agent in the regimen - melphalan outlasted it",
   n_pat_melp_fu        = "patients given melphalan at any point in follow-up - the by-line denominator")
 
 # What counts as melphalan on its own.
@@ -587,7 +591,40 @@ melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP",
     b2      = if (is.null(map_tbl)) no_map("n_b2_line_starts")
               else b2("", "n_b2_line_starts"),
     b2_only = if (is.null(map_tbl)) no_map("n_b2_melp_only")
-              else b2(melp_only, "n_b2_melp_only"))
+              else b2(melp_only, "n_b2_melp_only"),
+
+    # Melphalan modifying a line without advancing it.
+    #
+    # A line runs out when its last remaining base agent does, so a melphalan
+    # dose late in a line can be the agent that sets the run-out date - the
+    # line is longer than it would have been, and no boundary moved. The
+    # advance counts above cannot see this, and neither can a line-length
+    # median, which reports the effect without attributing it.
+    #
+    # Melphalan's cover is read from MAP_STACKED and bounded to the line, so a
+    # dose in a neighbouring line cannot claim this one's date. The multi-agent
+    # split is the one worth reading: on a melphalan-only line melphalan sets
+    # the date by construction, and only where another agent is in the regimen
+    # does this say melphalan outlasted it.
+    hold    = if (is.null(map_tbl)) no_map("n_melp_sets_runout")
+              else paste0("
+    WITH melp_cover AS (
+      SELECT cast(l.PATID as string) AS PATID, l.LOT_NUM, l.LOT_MED_CNT,
+             l.LOT_BASE_DISCON_DT,
+             max(m.MAP_END_DT) AS MELP_COVER_END
+      FROM ", final_tbl, " l
+      INNER JOIN ", map_tbl, " m
+              ON cast(m.PATID as string) = cast(l.PATID as string)
+             AND upper(trim(m.MAP_MED_TYPE)) = '", abbr, "'
+             AND m.MAP_START_DT BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT
+      WHERE l.LOT_BASE_DISCON_DT IS NOT NULL AND ", in_melp, "
+      GROUP BY 1, 2, 3, 4
+    )
+    SELECT sum(CASE WHEN MELP_COVER_END = LOT_BASE_DISCON_DT
+                    THEN 1 ELSE 0 END)                AS n_melp_sets_runout,
+           sum(CASE WHEN MELP_COVER_END = LOT_BASE_DISCON_DT AND LOT_MED_CNT > 1
+                    THEN 1 ELSE 0 END)                AS n_melp_holds_multi
+    FROM melp_cover"))
 }
 
 # One row, from however many statements it takes. A statement that comes back

@@ -180,19 +180,30 @@ melp_scenario_run <- function(cfg, sc) {
   # injected date opens a boundary after that: the inject arm is a UNION onto
   # first_add_candidates and does not pass through its base-med exclusion.
   in_regimen <- nrow(rows) > 0L && rows$INSIDE[1] == 1L
-  base <- in_regimen
-  engine <- numeric(0)
-  for (i in seq_len(nrow(rows))) {
-    x <- rows$EXPO_DT[i]
-    if (x %in% inject) { base <- TRUE; next }
-    if (!base && rows$INSIDE[i] == 0L && !(x %in% suppress)) {
-      engine <- c(engine, x); base <- TRUE
+  walk <- function(sup, inj) {
+    base <- in_regimen
+    out <- numeric(0)
+    for (i in seq_len(nrow(rows))) {
+      x <- rows$EXPO_DT[i]
+      if (x %in% inj) { base <- TRUE; next }
+      if (!base && rows$INSIDE[i] == 0L && !(x %in% sup)) {
+        out <- c(out, x); base <- TRUE
+      }
     }
+    out
   }
+  engine <- walk(suppress, inject)
+  # The same walk with the rule taken out, so each case can say what melphalan
+  # does rather than only where a line lands. Every line either walk produces is
+  # melphalan's own: these cases carry no other agent, so a boundary here is a
+  # melphalan-only line, which is the population MELP_METRICS counts as
+  # n_melp_mono_adv.
+  engine_off <- walk(numeric(0), numeric(0))
 
   list(rows = rows, suppress = suppress, inject = inject,
        in_regimen = in_regimen,
-       starts = sort(unique(c(inject, engine))))
+       starts = sort(unique(c(inject, engine))),
+       starts_off = sort(unique(engine_off)))
 }
 
 # Which branch of the ask a row is in, for the report. Read off the same

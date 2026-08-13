@@ -117,7 +117,15 @@ for (sc in ALL) {
   }
   cat(sprintf("\n  melphalan in the regimen   %s\n",
               if (r$in_regimen) "yes - a repeat extends the line" else "no"))
+  cat(sprintf("  without the rule           %s\n", fmt(r$starts_off)))
   cat(sprintf("  new line at                %s\n", fmt(r$starts)))
+  add <- setdiff(r$starts, r$starts_off)
+  rem <- setdiff(r$starts_off, r$starts)
+  cat(sprintf("  so melphalan               %s\n",
+      if (!length(add) && !length(rem)) "changes nothing - the same lines either way"
+      else paste(c(if (length(rem)) paste0("no longer advances at ", fmt(rem)),
+                   if (length(add)) paste0("advances at ", fmt(add))),
+                 collapse = ", and ")))
   cat(sprintf("  the study team's drawing   %s\n", sc$drawn))
   cat(sprintf("  %s\n", if (agrees) "  AGREES" else "  *** DISAGREES ***"))
 }
