@@ -822,6 +822,16 @@ write_codelist_metadata <- function(con, cfg) {
 BUILD_STATUS_COLS <- c(RUN_ID = "STRING", OBJECT_PREFIX = "STRING",
                        STATE = "STRING", N_NDMM = "BIGINT",
                        FINDINGS = "STRING",
+                       # Which cohort table this row is the status OF.
+                       #
+                       # Without it, LOT's check_cohort_build() can read a
+                       # status row here and still not know whether it belongs
+                       # to the cohort table it was handed - its ownership test
+                       # is "yes / no / it does not say", and this build only
+                       # ever answered "it does not say". A stale or mismatched
+                       # cohort then passed as verified. ensure_cols() adds the
+                       # column to a table written by an earlier run.
+                       FINAL_TABLE_NAME = "STRING",
                        UPDATED_AT = "TIMESTAMP")
 
 # FINDINGS here as well as on NDMM_RUN_METADATA, because the two survive
@@ -841,6 +851,9 @@ write_build_status <- function(con, cfg, state, n = NA) {
          "'{run_id}', '{cfg$object_prefix}', '{state}', {sql_count(n)}, ",
          "{sql_text(paste(sort(getOption('ndmm_findings', character(0)), ",
          "method = 'radix'), collapse = ','))}, ",
+         # The prefixed name, which is what LOT is given and what it compares
+         # against - not the bare NDMM_COHORT.
+         "{sql_text(paste0(cfg$object_prefix, 'NDMM_COHORT'))}, ",
          "current_timestamp())"))
   log_msg("Build status: ", state, " (run ", run_id, ")")
   invisible(TRUE)
