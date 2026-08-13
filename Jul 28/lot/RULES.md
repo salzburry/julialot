@@ -42,8 +42,13 @@ Disenrollment does not censor. A patient who leaves the plan keeps contributing
 follow-up and the line ends `STUDY_END`. The `*_CE_SENS` columns hold the
 alternative reading.
 
-A second autologous transplant within 180 days of the first is a planned tandem
-and does not start a line.
+Line 1's first autologous transplant is part of induction and does not end the
+line. A second one ends it, unless it falls within 180 days of the first — that
+is a planned tandem, and then it takes a third. Lines 2 to 5 do not keep this
+convention: there the first transplant after the induction window ends the line.
+
+That is about which transplant *ends* a line. One falling after a line has
+already ended opens the next line whatever the line number.
 
 An allogeneic transplant occupies a single day and carries no regimen string.
 

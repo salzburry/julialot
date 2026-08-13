@@ -1,19 +1,20 @@
 #!/usr/bin/env Rscript
-# The study team's worked melphalan scenarios, run through the shipped rule.
+# The study team's worked melphalan scenarios, and the induction-window
+# variants they do not cover, run through the shipped rule.
 #
 #   Rscript lot/melphalan/run_melp_scenarios.R
 #
 # No warehouse, no connection, no run: the branch decision is a function of the
 # dose dates and the settings, so it can be shown on its own. Exit status is 0
-# when every scenario lands where the study team's drawing puts it and 1 when
-# one does not, so this can gate a handover the same way the QC does.
+# when every case lands where the branch table puts it and 1 when one does not,
+# so this can gate a handover the same way the QC does.
 #
-# What it is for. The scenarios are the only statement of the rule that names
-# dates rather than branches, and one of them - example 1 - is the only shape in
-# which the later dose of a B.2 pair is a patient's last exposure. That dose was
-# being judged by nothing and started a line the rule says is not there. Every
-# other example reproduced without it, so nothing short of running all four
-# would have found it. Re-running them is how it stays found.
+# What it is for. The study team's drawings are the only statement of the rule
+# that names dates rather than branches, and each shape is its own test: example
+# 1 is the only one in which the later dose of a B.2 pair is a patient's last
+# exposure, which is a dose no branch judges. The window cases carry the other
+# axis - "inside induction" is the line's own window, and the drawings only ever
+# use a 60-day or 30-day line.
 
 .script_dir <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -77,7 +78,16 @@ cat("\n  Day 0 is the start of the line the melphalan falls in. The branch and\n
 cat("  the decision are lifted from the SQL the build runs, not restated.\n")
 
 fails <- 0L
-for (sc in MELP_SCENARIOS) {
+ALL <- c(MELP_SCENARIOS, MELP_WINDOW_CASES)
+for (sc in ALL) {
+  if (identical(sc$id, MELP_WINDOW_CASES[[1]]$id)) {
+    cat("\n", strrep("=", 74), "\n", sep = "")
+    cat("  AND THE SAME DOSES ON A LINE WITH A DIFFERENT INDUCTION WINDOW\n")
+    cat(strrep("=", 74), "\n", sep = "")
+    cat("\n  Not the study team's drawings. \"Inside induction\" is the line's\n")
+    cat("  own window - 45 days on a CAR-T-started line, 30 on a drug-started\n")
+    cat("  one - so the same pair of doses is a different branch on each.\n")
+  }
   r <- melp_scenario_run(CFG, sc)
   agrees <- identical(as.numeric(r$starts), as.numeric(sc$starts))
   if (!agrees) fails <- fails + 1L
@@ -113,12 +123,14 @@ for (sc in MELP_SCENARIOS) {
 }
 
 cat("\n", strrep("=", 74), "\n", sep = "")
-cat(sprintf("  %d of %d scenarios land where the drawing puts them\n",
-            length(MELP_SCENARIOS) - fails, length(MELP_SCENARIOS)))
+cat(sprintf("  %d of %d cases land where the branch table puts them\n",
+            length(ALL) - fails, length(ALL)))
+cat(sprintf("  (%d of them are the study team's worked drawings)\n",
+            length(MELP_SCENARIOS)))
 # In the shape every other suite reports, so the merge gate can read this one
 # too. It is a check the study README advertises, and a check nothing runs is
 # a check in name only.
-cat(sprintf("  %d passed, %d failed\n", length(MELP_SCENARIOS) - fails, fails))
+cat(sprintf("  %d passed, %d failed\n", length(ALL) - fails, fails))
 cat(strrep("=", 74), "\n", sep = "")
 cat("\n  What this does and does not say. The branch and the boundary are the\n")
 cat("  build's own, lifted from its SQL. Where a boundary is left to the\n")

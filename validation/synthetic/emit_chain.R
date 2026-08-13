@@ -46,7 +46,9 @@ assign("cfg", list(
   sct_auto_gap_days = 60L, sct_tandem_days = 180L, max_lot = 5L,
   apply_cart_induction_rule =
     as.logical(Sys.getenv("CART_RULE", unset = "TRUE")),
-  apply_melp_rule = "", melp_med_abbr = "MELP",
+  apply_melp_rule = Sys.getenv("MELP_RULE", unset = ""), melp_med_abbr = "MELP",
+  melp_exposure_days = 30L, melp_restart_days = 60L,
+  melp_advance_days = 180L, melp_sct_days = 14L,
   study_end = "2026-03-31"), e)
 
 assign("materialize", function(con, step, view, name, body, qc = NULL) {
