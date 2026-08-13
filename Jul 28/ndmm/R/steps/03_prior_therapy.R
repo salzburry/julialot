@@ -26,6 +26,55 @@ build_ndmm_mma_codelist <- function() {
   ")
 }
 
+# The code types the MM-therapy scan joins on: HCPCS and CPT against
+# medical.PROC_CD and med_procedure.PROC, HCPCS against BILL_PROC_CD, NDC
+# against medical.NDC and rx.NDC. Its own list rather than shared with the
+# trial or pregnancy scans - those read different arms, and one dropping an arm
+# must not quietly loosen this guard.
+NDMM_MMA_CODE_TYPES <- c("HCPCS", "CPT", "NDC")
+
+# Every code type in cl_mma_codelist.csv has to be one the scan below joins on.
+#
+# The join is equality against a type this file names itself, so a row typed
+# something no arm reads loads cleanly, passes every blank check, and matches no
+# claim. Prior therapy EXCLUDES, so a rule that cannot fire does not surface as
+# a missing exclusion - it surfaces as a patient in the cohort who had MM
+# therapy in the baseline. The same guard 08_clintrial.R carries, over this
+# scan's types.
+#
+# A blank medication is checked here too, the way LOT's blank_keys does. It
+# still matches claims, so it does not weaken the exclusion, but it reaches
+# NDMM_INDEX_AGENTS as an agent with no name.
+check_ndmm_mma_code_types <- function(con) {
+  want <- paste(sprintf("'%s'", NDMM_MMA_CODE_TYPES), collapse = ", ")
+  bad <- tryCatch(db_q(con, glue("
+    SELECT code_type, count(*) AS n
+    FROM {NDMM_MMA_CODELIST}
+    WHERE code_type NOT IN ({want})
+    GROUP BY code_type ORDER BY code_type")), error = function(e) NULL)
+  if (is.null(bad))
+    stop("Could not check the code types in cl_mma_codelist.csv, so this run ",
+         "cannot say whether every MM therapy code is reachable.", call. = FALSE)
+  if (nrow(bad))
+    stop("cl_mma_codelist.csv carries code type(s) no claim source produces: ",
+         paste0(bad$code_type, " (", bad$n, " code(s))", collapse = ", "),
+         ".\nThey would match nothing, so a patient treated under those codes ",
+         "would read as untreated in the baseline and stay in the cohort. The ",
+         "scan joins on ", paste(NDMM_MMA_CODE_TYPES, collapse = ", "),
+         "; either retype the rows or add the source that reads them.",
+         call. = FALSE)
+  blank <- tryCatch(db_q(con, glue("
+    SELECT count(*) AS n FROM {NDMM_MMA_CODELIST}
+    WHERE med_abbr IS NULL OR trim(med_abbr) = ''")), error = function(e) NULL)
+  if (is.null(blank))
+    stop("Could not check cl_mma_codelist.csv for blank medications.", call. = FALSE)
+  if (blank$n[1] > 0)
+    stop("cl_mma_codelist.csv has ", blank$n[1], " row(s) with a blank ",
+         "CL_MED_ABBR. They match claims but name no agent, so they reach ",
+         "NDMM_INDEX_AGENTS unnamed.", call. = FALSE)
+  invisible(TRUE)
+}
+
 # Distinct PATIDs with any MM oncology therapy claim in
 # Window is [LOT1_START - NDMM_PRE_LOT1_DAYS, LOT1_START - 1], per patient.
 # Five sources: medical PROC_CD, medical BILL_PROC_CD, medical NDC, rx NDC and
