@@ -776,7 +776,7 @@ enddate <- function(start, auto = NA, allo = NA, cart = NA) {
   assign("LOT1_START_DT", as.Date(start), envir = e)
   assign("ENDING_AUTO_DT", as.Date(auto),  envir = e)
   assign("FIRST_ALLO_DT",  as.Date(allo),  envir = e)
-  assign("FIRST_CART_DT",  as.Date(cart),  envir = e)
+  assign("ENDING_CART_DT", as.Date(cart),  envir = e)
   eval(parse(text = r), envir = e)
 }
 ok(identical(enddate("2025-04-22", cart = "2025-04-22"), as.Date("2025-04-22")),
@@ -790,6 +790,57 @@ ok(identical(enddate("2025-04-22", cart = "2025-07-31"), as.Date("2025-07-30")),
 ok(identical(enddate("2025-04-22", auto = "2025-06-01", cart = "2025-07-31"),
              as.Date("2025-05-31")),
    "and the earliest of the three still wins")
+
+cat("\n-- the CAR-T induction rule --\n")
+# Two defects shipped here, and both were the same mistake: the induction test
+# was applied to min(TX_DT) instead of to the rows going into it. A patient with
+# a CAR-T on day 20 and another on day 90 had the min taken first and nulled, so
+# the day-90 infusion ended nothing and started nothing; and the day-20 one went
+# on censoring later AUTOs out of LOT1 while being declared part of it.
+#
+# The suite could not have caught either: the fixture above sets no
+# apply_cart_induction_rule, so every assertion ran the rule-off path.
+sys.source(file.path(ROOT, "R", "cart_rule.R"), envir = globalenv())
+ok(identical(cart_eligible_dt(FALSE, "X", "Y", 60), "X") &&
+     identical(cart_exclude_predicate(FALSE, "X", "Y", 60), "") &&
+     identical(cart_censor_predicate(FALSE, "T", "X", "Y", 60), ""),
+   "rule off is a passthrough in all three helpers, so the SQL is unchanged")
+ok(has(cart_eligible_dt(TRUE, "X", "Y", 60), "date_add(Y, 59)"),
+   "the window is 60 days inclusive - day 0 through day 59")
+
+# Generated with the rule ON, which the fixture above never does.
+cenv <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "cart_rule.R"), envir = cenv)
+assign("cfg", list(sct_tandem_days = 180L, induction_window_days = 60L,
+                   apply_cart_induction_rule = TRUE), envir = cenv)
+CSQL <- character(0)
+assign("run_step", function(con, name, sql, qc = NULL) {
+  CSQL <<- c(CSQL, sql); invisible(TRUE) }, envir = cenv)
+assign("materialize", function(con, step, view, name, body, qc = NULL) {
+  CSQL <<- c(CSQL, paste0("CREATE OR REPLACE TEMPORARY VIEW ", view, " AS", body))
+  invisible(NULL) }, envir = cenv)
+sys.source(file.path(ROOT, "R", "steps", "05b_lot1_sct.R"), envir = cenv)
+cenv$phase_lot1_sct(NULL, NULL)
+c15 <- CSQL[grepl("VIEW lot1_sct", CSQL, fixed = TRUE)][1]
+# The filter has to sit INSIDE the aggregate. min() over a gated column is the
+# earliest eligible CAR-T; gating min() is the earliest CAR-T, deleted.
+ok(has(c15, "min(CASE WHEN NOT ("),
+   "the induction test is applied per row, inside min(), not to its result")
+ok(has(c15, "AS ENDING_CART_DT") && has(c15, "min(ac.TX_DT) AS CART_DT"),
+   "...so both dates exist: the earliest CAR-T, and the earliest that can end a line")
+# The boundary reads the eligible one; LOT1_1ST_SCT_DT keeps the descriptive one.
+end_arm <- substr(c15, regexpr("LOT1_TX_ENDDATE: earliest", c15),
+                  regexpr("AS LOT1_TX_ENDDATE_REASON", c15))
+ok(has(end_arm, "ENDING_CART_DT") && !has(end_arm, "FIRST_CART_DT"),
+   "the LOT1 end date is built from the eligible CAR-T, not the first one")
+ok(has(c15, "sd.FIRST_CART_DT,"),
+   "...and the first CAR-T is still carried, because LOT1_1ST_SCT_DT is descriptive")
+# The censor. An in-induction CAR-T is part of LOT1, so it cannot remove the
+# AUTOs that follow it from LOT1.
+ena <- substr(c15, regexpr("earliest_non_auto AS", c15),
+              regexpr("auto_in_lot1 AS", c15))
+ok(has(ena, "AND NOT (ac.SCT_TYPE = 'CART'"),
+   "an in-induction CAR-T stops censoring the AUTOs after it")
 
 
 cat("\n-- single AUTO allowed, tandem pair allowed, excess AUTO ends LOT1 --\n")

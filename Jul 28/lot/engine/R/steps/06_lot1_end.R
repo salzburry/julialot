@@ -72,16 +72,13 @@ phase_lot1_end <- function(con, ctx) {
   # MAINTENANCE_END and SCT_NO_MAINT are not final values; those cases
   # route by their earliest applicable event.
   # CART_INIT (MED_ADD followed by CART within cart_consolidation_days)
-  # ends LOT1 on FIRST_CART_DT - 1, the day before the CAR-T infusion.
+  # ends LOT1 on ENDING_CART_DT - 1, the day before the CAR-T infusion.
   # Written here rather than copied to a table by phase_persist, which is
   # where it used to be: that copy came after phase_qc and the LOT1
   # invariants had already read the view, and it never repointed the view, so
   # LOT2-5 started from the query as well. It is read nine times downstream,
   # and each read re-ran the post-runout guard below, which scans map_stacked
   # twice on its own.
-  cart_init_dt <- cart_line_dt(cfg$apply_cart_induction_rule,
-                               "sct.FIRST_CART_DT", "lb.LOT1_START_DT",
-                               cfg$induction_window_days)
   materialize(con, "S16_lot1_base_end", view = "lot1_base_end", name = "LOT1_BASE_END", body = glue("
     WITH{melp_lot1_ctes(cfg)}
     -- Post-runout guard: identify whether any LOT2-qualifying trigger
@@ -145,7 +142,7 @@ phase_lot1_end <- function(con, ctx) {
           WHEN lb.LOT1_BASE_DISCON_DT IS NULL THEN 0
           WHEN prm.PATID IS NOT NULL THEN 1
           WHEN sct.FIRST_ALLO_DT IS NOT NULL AND sct.FIRST_ALLO_DT > lb.LOT1_BASE_DISCON_DT THEN 1
-          WHEN {cart_init_dt} IS NOT NULL AND {cart_init_dt} > lb.LOT1_BASE_DISCON_DT THEN 1
+          WHEN sct.ENDING_CART_DT IS NOT NULL AND sct.ENDING_CART_DT > lb.LOT1_BASE_DISCON_DT THEN 1
           WHEN pra.PATID IS NOT NULL THEN 1
           ELSE 0
         END AS POST_RUNOUT_TRIGGER_FLG
@@ -167,6 +164,7 @@ phase_lot1_end <- function(con, ctx) {
         sct.LOT1_1ST_SCT_DT,
         sct.FIRST_ALLO_DT,
         sct.FIRST_CART_DT,
+        sct.ENDING_CART_DT,
         -- contains_mtx_reg flag (descriptive only; does not drive end-reason
         -- routing or create a standalone maintenance period)
         COALESCE(cmr.contains_mtx_reg, 0) AS contains_mtx_reg,
@@ -176,15 +174,13 @@ phase_lot1_end <- function(con, ctx) {
         -- CAR-T initiation, not the medication add.
         -- datediff(A, B) = A - B in Databricks; CART_DT - ADD_START_DT BETWEEN 0 AND 45
         -- Note: LOT1_BASE_1ST_ADD_MED_DT is date_sub(ADD_START_DT, 1), so add 1 back
-        -- ...unless that CAR-T is inside LOT1's induction window, in which case
-        -- it is part of LOT1 and ends nothing. Gated here as well as in
-        -- lot1_sct because this branch reads FIRST_CART_DT directly, and left
-        -- alone it would end LOT1 at FIRST_CART_DT - 1 after the SCT branch had
-        -- already been told not to. See R/cart_rule.R.
+        -- ENDING_CART_DT, not FIRST_CART_DT: the earliest CAR-T eligible to
+        -- end the line, which is NULL only when the patient has no such
+        -- infusion at all. lot1_sct computes it per row - see R/cart_rule.R.
         CASE
-          WHEN {cart_init_dt} IS NOT NULL
+          WHEN sct.ENDING_CART_DT IS NOT NULL
            AND lb.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
-           AND datediff({cart_init_dt}, date_add(lb.LOT1_BASE_1ST_ADD_MED_DT, 1)) BETWEEN 0 AND {cfg$cart_consolidation_days}
+           AND datediff(sct.ENDING_CART_DT, date_add(lb.LOT1_BASE_1ST_ADD_MED_DT, 1)) BETWEEN 0 AND {cfg$cart_consolidation_days}
           THEN 1
           ELSE 0
         END AS CART_INIT_FLG
@@ -207,18 +203,18 @@ phase_lot1_end <- function(con, ctx) {
       -- Disenrollment is not a censoring criterion, so a period that ends
       -- at disenrollment is STUDY_END. MAINTENANCE_END and SCT_NO_MAINT
       -- are not final values; those cases route by earliest applicable
-      -- event. CART_INIT ends LOT1 on FIRST_CART_DT - 1 (day before infusion).
+      -- event. CART_INIT ends LOT1 on ENDING_CART_DT - 1 (day before infusion).
       CASE
         -- Rule 2: SCT (ALLO, CART, or excess AUTO)
         -- When CART_INIT_FLG=1 and the SCT IS the CART (reason=3), skip this branch
         -- so CART_INIT can handle it. Otherwise CART events always route to SCT_CART
         -- before CART_INIT is ever reached.
-        -- Tie-break vs CART_INIT uses FIRST_CART_DT - 1 (CART_INIT's end date),
+        -- Tie-break vs CART_INIT uses ENDING_CART_DT - 1 (CART_INIT's end date),
         -- so SCT only wins on ties when its end is <= CART_INIT's end.
         WHEN ec.LOT1_TX_ENDDATE IS NOT NULL
          AND NOT (ec.CART_INIT_FLG = 1 AND ec.LOT1_TX_ENDDATE_REASON = 3)
          AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL
-              OR (ec.CART_INIT_FLG = 1 AND ec.LOT1_TX_ENDDATE <= date_sub(ec.FIRST_CART_DT, 1))
+              OR (ec.CART_INIT_FLG = 1 AND ec.LOT1_TX_ENDDATE <= date_sub(ec.ENDING_CART_DT, 1))
               OR (ec.CART_INIT_FLG = 0 AND ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_1ST_ADD_MED_DT))
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_DISCON_DT)
         THEN CASE ec.LOT1_TX_ENDDATE_REASON
@@ -228,9 +224,9 @@ phase_lot1_end <- function(con, ctx) {
                ELSE 'SCT'
              END
         -- CART_INIT: MED_ADD followed by CART within {cfg$cart_consolidation_days} days.
-        -- The end date is FIRST_CART_DT - 1, so gate against discon uses that.
+        -- The end date is ENDING_CART_DT - 1, so gate against discon uses that.
         WHEN ec.CART_INIT_FLG = 1
-         AND (ec.LOT1_BASE_DISCON_DT IS NULL OR date_sub(ec.FIRST_CART_DT, 1) <= ec.LOT1_BASE_DISCON_DT)
+         AND (ec.LOT1_BASE_DISCON_DT IS NULL OR date_sub(ec.ENDING_CART_DT, 1) <= ec.LOT1_BASE_DISCON_DT)
         THEN 'CART_INIT'
         -- MED_ADD: new non-base drug added (not followed by CART within 45 days)
         WHEN ec.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
@@ -250,18 +246,18 @@ phase_lot1_end <- function(con, ctx) {
         ELSE 'STUDY_END'
       END AS LOT1_BASE_END_REASON,
       -- Corresponding end date (mirrors end-reason priority).
-      -- CART_INIT ends LOT1 on FIRST_CART_DT - 1.
+      -- CART_INIT ends LOT1 on ENDING_CART_DT - 1.
       CASE
         WHEN ec.LOT1_TX_ENDDATE IS NOT NULL
          AND NOT (ec.CART_INIT_FLG = 1 AND ec.LOT1_TX_ENDDATE_REASON = 3)
          AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL
-              OR (ec.CART_INIT_FLG = 1 AND ec.LOT1_TX_ENDDATE <= date_sub(ec.FIRST_CART_DT, 1))
+              OR (ec.CART_INIT_FLG = 1 AND ec.LOT1_TX_ENDDATE <= date_sub(ec.ENDING_CART_DT, 1))
               OR (ec.CART_INIT_FLG = 0 AND ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_1ST_ADD_MED_DT))
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_DISCON_DT)
         THEN ec.LOT1_TX_ENDDATE
         WHEN ec.CART_INIT_FLG = 1
-         AND (ec.LOT1_BASE_DISCON_DT IS NULL OR date_sub(ec.FIRST_CART_DT, 1) <= ec.LOT1_BASE_DISCON_DT)
-        THEN date_sub(ec.FIRST_CART_DT, 1)
+         AND (ec.LOT1_BASE_DISCON_DT IS NULL OR date_sub(ec.ENDING_CART_DT, 1) <= ec.LOT1_BASE_DISCON_DT)
+        THEN date_sub(ec.ENDING_CART_DT, 1)
         WHEN ec.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
          AND ec.CART_INIT_FLG = 0
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_BASE_1ST_ADD_MED_DT <= ec.LOT1_BASE_DISCON_DT)
@@ -279,13 +275,13 @@ phase_lot1_end <- function(con, ctx) {
         WHEN ec.LOT1_TX_ENDDATE IS NOT NULL
          AND NOT (ec.CART_INIT_FLG = 1 AND ec.LOT1_TX_ENDDATE_REASON = 3)
          AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL
-              OR (ec.CART_INIT_FLG = 1 AND ec.LOT1_TX_ENDDATE <= date_sub(ec.FIRST_CART_DT, 1))
+              OR (ec.CART_INIT_FLG = 1 AND ec.LOT1_TX_ENDDATE <= date_sub(ec.ENDING_CART_DT, 1))
               OR (ec.CART_INIT_FLG = 0 AND ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_1ST_ADD_MED_DT))
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_TX_ENDDATE <= ec.LOT1_BASE_DISCON_DT)
         THEN datediff(ec.LOT1_TX_ENDDATE, ec.LOT1_START_DT) + 1
         WHEN ec.CART_INIT_FLG = 1
-         AND (ec.LOT1_BASE_DISCON_DT IS NULL OR date_sub(ec.FIRST_CART_DT, 1) <= ec.LOT1_BASE_DISCON_DT)
-        THEN datediff(date_sub(ec.FIRST_CART_DT, 1), ec.LOT1_START_DT) + 1
+         AND (ec.LOT1_BASE_DISCON_DT IS NULL OR date_sub(ec.ENDING_CART_DT, 1) <= ec.LOT1_BASE_DISCON_DT)
+        THEN datediff(date_sub(ec.ENDING_CART_DT, 1), ec.LOT1_START_DT) + 1
         WHEN ec.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
          AND ec.CART_INIT_FLG = 0
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_BASE_1ST_ADD_MED_DT <= ec.LOT1_BASE_DISCON_DT)
