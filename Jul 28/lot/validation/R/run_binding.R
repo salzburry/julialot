@@ -34,6 +34,10 @@ lot_run_row <- function(con, prefix) {
   dev <- one("CONTRACT_DEVIATIONS")
   list(tbl        = tbl,
        run        = one("RUN_ID"),
+       # The attempt, not just the run. A re-run keeps its RUN_ID and replaces
+       # the tables in place, so the id alone cannot say which attempt a reader
+       # measured. UPDATED_AT moves every time.
+       stamp      = one("UPDATED_AT"),
        state      = state,
        complete   = identical(state, "complete"),
        cohort     = one("INPUT_COHORT_TABLE"),

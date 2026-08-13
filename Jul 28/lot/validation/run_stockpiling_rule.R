@@ -35,6 +35,35 @@
 source(file.path(.script_dir, "R", "stockpiling.R"))
 source(file.path(.script_dir, "R", "run_binding.R"))
 
+# The status row is read once before the tables are written and once after.
+# Each program replaces its outputs one statement at a time, so a LOT rebuild
+# landing in the middle leaves some tables measured against the old attempt and
+# some against the new - all stamped with the attempt that was current when the
+# run started. Comparing the stamp is what turns that into a message instead of
+# a number nobody can trace.
+recheck_lot_attempt <- function(con, prefix, before, what) {
+  after <- tryCatch(lot_run_row(con, prefix), error = function(e) NULL)
+  if (is.null(after)) {
+    cat("\nWARNING: the LOT status row could not be re-read, so this run cannot\n",
+        "  confirm the tables it measured are still the attempt it started on.\n",
+        sep = "")
+    return(invisible(FALSE))
+  }
+  if (!identical(after$run, before$run) || !identical(after$stamp, before$stamp)) {
+    cat("\nWARNING: the LOT run moved while this was measuring.\n")
+    cat("  started on ", before$run, " / ", before$stamp, "\n", sep = "")
+    cat("  now        ", after$run,  " / ", after$stamp,  "\n", sep = "")
+    cat("  The ", what, " tables are part one attempt and part the other. Their\n",
+        "  SOURCE_LOT_STAMP says which attempt each row was measured against;\n",
+        "  re-run against a settled build before reading them.\n", sep = "")
+    return(invisible(FALSE))
+  }
+  cat("\nStill the attempt this started on: ", after$run, " / ", after$stamp,
+      ".\n", sep = "")
+  invisible(TRUE)
+}
+
+
 env_flag <- function(nm) identical(toupper(trimws(Sys.getenv(nm, unset = ""))), "TRUE")
 # A count that came back NULL is not a zero - it is a question that did not run.
 num0 <- function(x) if (!length(x) || is.na(x[1])) "-" else format(x[1], big.mark = ",")
@@ -103,11 +132,11 @@ main <- function() {
   bl    <- wrk(paste0(prefix, "STOCKPILE_BY_LOT"))
   bm    <- wrk(paste0(prefix, "STOCKPILE_BY_MED"))
 
-  cat("\nMeasuring against LOT run ", run$run_id, " on ", lines, "\n", sep = "")
+  cat("\nMeasuring against LOT run ", run$run, " on ", lines, "\n", sep = "")
   cat("Windows from the run: LOT1 ", sc$ind1, "d, CAR-T ", sc$cart, "d, other ",
       sc$indn, "d.\n", sep = "")
   db_exec(con, glue("CREATE OR REPLACE TABLE {ag} AS {
-    stock_agents_sql(lines, maps, claims, sc, run_id)}"))
+    stock_agents_sql(lines, maps, claims, sc, run_id, run$run, run$stamp)}"))
   db_exec(con, glue("CREATE OR REPLACE TABLE {im} AS {stock_impact_sql(ag)}"))
   db_exec(con, glue("CREATE OR REPLACE TABLE {bl} AS {stock_by_lot_sql(im, lines)}"))
   db_exec(con, glue("CREATE OR REPLACE TABLE {bm} AS {stock_by_med_sql(ag)}"))
@@ -173,6 +202,7 @@ main <- function() {
       "so it changes when the line runs out and what may end it, and every later\n",
       "line moves with that. An exact line structure needs an alternate build.\n",
       sep = "")
+  recheck_lot_attempt(con, prefix, run, "STOCKPILE")
   cat("\nWrote ", ag, ", ", im, ", ", bl, " and ", bm, ".\n", sep = "")
 }
 

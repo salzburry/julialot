@@ -84,7 +84,8 @@ stock_window_sql <- function(cfg) {
 # The exclusion is a fill in the window, not membership in LOT_BASE_MEDS. The
 # two agree, but LOT_BASE_MEDS is a formatted string and matching agents inside
 # it would turn a substring into a match - LEN inside LENA.
-stock_agents_sql <- function(lines_tbl, map_tbl, claims_tbl, cfg, run_id) {
+stock_agents_sql <- function(lines_tbl, map_tbl, claims_tbl, cfg, run_id,
+                             lot_run = NA_character_, lot_stamp = NA_character_) {
   glue("
     WITH ln AS (
       SELECT cast(PATID as string)         AS PATID,
@@ -167,7 +168,11 @@ stock_agents_sql <- function(lines_tbl, map_tbl, claims_tbl, cfg, run_id) {
            CASE WHEN rf.MED_ABBR IS NOT NULL THEN 1 ELSE 0 END
                                                         AS HAS_REAL_FILL_IN_WINDOW,
            {sql_text(run_id)}  AS STOCK_RUN_ID,
-           current_timestamp() AS BUILT_AT
+           -- The attempt these rows describe. Without it a reader cannot prove
+           -- which build the numbers came off once the LOT tables move on.
+           {sql_text(lot_run)}   AS SOURCE_LOT_RUN_ID,
+           {sql_text(lot_stamp)} AS SOURCE_LOT_STAMP,
+           current_timestamp()   AS BUILT_AT
     FROM carried c
     LEFT JOIN filled f
            ON f.PATID = c.PATID AND f.LOT_NUM = c.LOT_NUM
@@ -191,6 +196,8 @@ stock_impact_sql <- function(agents_tbl) {
            max(WOULD_REMOVE_ADD_MED)                  AS WOULD_REMOVE_ADD_MED,
            max(HAS_REAL_FILL_IN_WINDOW)               AS HAS_REAL_FILL_IN_WINDOW,
            max(STOCK_RUN_ID)                          AS STOCK_RUN_ID,
+           max(SOURCE_LOT_RUN_ID)                     AS SOURCE_LOT_RUN_ID,
+           max(SOURCE_LOT_STAMP)                      AS SOURCE_LOT_STAMP,
            max(BUILT_AT)                              AS BUILT_AT
     FROM {agents_tbl}
     GROUP BY PATID, LOT_NUM, LOT_START_DT, LOT_MED_CNT")
