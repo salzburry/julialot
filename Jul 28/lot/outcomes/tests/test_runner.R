@@ -294,9 +294,13 @@ cat("\n-- a line cohort has to belong to the run being measured --\n")
 # which is the partial-rerun case and cannot be modelled with a single row.
 FULL <- list(PATID = "p", SOURCE_LOT_RUN_ID = "L1", SUBSEQ_RUN_ID = "S1",
              CE_PRE_DAYS = "365", CE_FU_DAYS = "90",
-             SOURCE_COHORT_RUN_ID = "C1", SOURCE_COHORT_STAMP = "2026-01-01")
+             SOURCE_COHORT_RUN_ID = "C1", SOURCE_COHORT_STAMP = "2026-01-01",
+             SOURCE_LOT_STAMP = "2026-02-01",
+             SUBSEQ_ATTEMPT = "20260813120000.000-111")
 ATTEMPT <- c(run = "C1", stamp = "2026-01-01")
-fsc <- function(rows, lot_run = "L1", attempt = ATTEMPT) {
+LOT_STAMP <- "2026-02-01"
+fsc <- function(rows, lot_run = "L1", attempt = ATTEMPT,
+                lot_stamp = LOT_STAMP) {
   if (is.null(rows) || !is.null(names(rows))) rows <- list(rows, rows)
   i <- 0L
   e <- new.env(parent = globalenv())
@@ -309,7 +313,8 @@ fsc <- function(rows, lot_run = "L1", attempt = ATTEMPT) {
     as.data.frame(r, stringsAsFactors = FALSE)
   }, envir = e)
   f <- find_subsequent_cohorts; environment(f) <- e
-  tryCatch(f(NULL, lot_run, attempt = attempt), error = conditionMessage)
+  tryCatch(f(NULL, lot_run, attempt = attempt, lot_stamp = lot_stamp),
+           error = conditionMessage)
 }
 without <- function(k) { r <- FULL; r[[k]] <- NULL; r }
 ok(length(fsc(FULL)$tables) == 2L, "a line cohort built from this LOT run is used")
@@ -338,6 +343,51 @@ ok(is.character(sc1$provenance) && identical(sc1$provenance[["pre"]], "365"),
    "...while a run WITH line cohorts hands over the windows they were built to")
 runs(outcomes_tte_sql(BASE, "r1", "L1", sc1$provenance),
      "...which the SQL builder takes in the same call")
+
+# The third way, and the one no id can show: LOT re-run under the SAME RUN_ID.
+# The cohorts still name run L1 correctly, so every check above passes, while
+# the lines they were drawn from have been replaced on disk. Only the status
+# row's UPDATED_AT moves, so that is what is held against them.
+m6 <- fsc(FULL, lot_stamp = "2026-02-02")
+ok(is.character(m6) && grepl("has since been rebuilt", m6, fixed = TRUE),
+   "a LOT re-run under the same id is caught by the stamp, not by the id")
+ok(is.list(fsc(FULL, lot_stamp = LOT_STAMP)),
+   "...and the same run unchanged still reads as current")
+m7 <- fsc(without("SOURCE_LOT_STAMP"))
+ok(is.character(m7) && grepl("record no the stamp of the LOT run", m7, fixed = TRUE),
+   "a cohort predating the stamp column is unproven, not silently accepted")
+# The other side of it, and the one that was open: the LIVE status row carrying
+# no stamp. The first version of this guard was a single condition, so a
+# missing lot_stamp short-circuited the whole comparison and a re-run under the
+# same id passed unremarked. Unprovable is not provable, so it stops - the same
+# way the cohort-attempt guard beside it does.
+for (miss in list(NA_character_, "", "   ")) {
+  mm <- fsc(FULL, lot_stamp = miss)
+  ok(is.character(mm) && grepl("carries no stamp", mm, fixed = TRUE),
+     paste0("a live status stamp of '", trimws(as.character(miss)),
+            "' is unproven, not a pass"))
+}
+was <- Sys.getenv("OUT_ALLOW_UNPROVEN_LINEAGE", unset = NA)
+Sys.setenv(OUT_ALLOW_UNPROVEN_LINEAGE = "TRUE")
+ok(is.list(fsc(FULL, lot_stamp = NA_character_)),
+   "...and accepting it on the record is the only way past")
+if (is.na(was)) Sys.unsetenv("OUT_ALLOW_UNPROVEN_LINEAGE") else
+  Sys.setenv(OUT_ALLOW_UNPROVEN_LINEAGE = was)
+
+# THE case the run id could not see: a retry inside one Domino execution, which
+# reuses DOMINO_RUN_ID. 2L is rewritten, the build dies before 3L, and the two
+# tables agree on SUBSEQ_RUN_ID, both windows, the source LOT run and its stamp,
+# and the cohort attempt - because every one of those is a property of upstream
+# tables that did not change. Only the attempt differs.
+m10 <- fsc(list(FULL, modifyList(FULL,
+                 list(SUBSEQ_ATTEMPT = "20260813115900.000-110"))))
+ok(is.character(m10) && grepl("disagree on which attempt", m10, fixed = TRUE),
+   "a new 2L beside a stale 3L is caught, though every other stamp matches")
+ok(is.character(m10) && !grepl("SUBSEQ_RUN_ID", m10, fixed = TRUE),
+   "...and it is the attempt that catches it, not the run id they share")
+m11 <- fsc(without("SUBSEQ_ATTEMPT"))
+ok(is.character(m11) && grepl("record no which attempt", m11, fixed = TRUE),
+   "...while a table predating the column cannot prove it, so it is unproven")
 
 # The two ways to get a wrong denominator with every id correct on the output.
 m3 <- fsc(list(FULL, modifyList(FULL, list(SUBSEQ_RUN_ID = "S2"))))
@@ -570,8 +620,10 @@ sc_attr <- fsc(FULL_N7, lot_run = structure("L1", attempt = ATT), attempt = ATT)
 ok(is.list(sc_attr) && length(sc_attr$tables) == 2L,
    "a run id wearing an attribute still matches the cohorts built from it")
 lr <- mk()(NULL, "ndmm_", "ndmm_NDMM_COHORT", SE)
-ok(is.list(lr) && identical(names(lr), c("run", "attempt")),
+ok(is.list(lr) && identical(names(lr), c("run", "stamp", "attempt")),
    "...and check_lot_run returns named fields rather than a string with cargo")
+ok(is.character(lr$stamp) && length(lr$stamp) == 1L,
+   "...including the attempt stamp, which is what a same-id re-run moves")
 ok(is.list(lr) && is.null(attributes(lr$run)),
    "...whose run id is a plain character, so a text comparison is a text comparison")
 sc_real <- if (is.list(lr)) fsc(FULL_N7, lot_run = lr$run, attempt = lr$attempt) else NULL

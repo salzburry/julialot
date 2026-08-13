@@ -272,6 +272,15 @@ phase_sct <- function(con, ctx) {
   # in the window. (Worked example: TX_AUTO1=09MAY2018, 180-day mark
   # ~05NOV2018, window 06NOV-20NOV picks 07NOV instead of 20NOV.)
   #
+  # The boundary is prev + sct_tandem_days, the last day that still counts as
+  # a tandem. It has to be the same day the classification uses, and every
+  # classification site tests datediff(AUTO_DT_2, AUTO_DT_1) <= sct_tandem_days
+  # - see 05b_lot1_sct.R and 10_lot2_5_base.R. This target was prev + 179 while
+  # they tested <= 180, so a window straddling the seam was pulled to the wrong
+  # side of it: with claims on day 178 and day 181, aiming at 179 selects 178
+  # and calls it a tandem, aiming at 180 selects 181 and opens a new line. The
+  # worked example above says 180 too - 09MAY2018 + 180 is 05NOV2018.
+  #
   # Step 2: Apply 60-day minimum gap between events (merge if < 60 days apart).
   # Result: finalized TX dates for AUTO SCT per patient.
   run_step(con, "S13_tx_auto_dates", glue("
@@ -332,10 +341,10 @@ phase_sct <- function(con, ctx) {
                 -- cur_boundary_dt stays NULL so coalesce() falls back to max.
                 'cur_boundary_dt', CASE
                   WHEN s.last_tx_dt IS NULL THEN NULL
-                  WHEN abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days} - 1)))
+                  WHEN abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days})))
                        <= {cfg$sct_auto_window_days}
                    AND (s.cur_boundary_dist IS NULL
-                        OR abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days} - 1)))
+                        OR abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days})))
                            < s.cur_boundary_dist)
                     THEN x
                   WHEN s.cur_boundary_dt IS NOT NULL THEN s.cur_boundary_dt
@@ -343,12 +352,12 @@ phase_sct <- function(con, ctx) {
                 END,
                 'cur_boundary_dist', CASE
                   WHEN s.last_tx_dt IS NULL THEN NULL
-                  WHEN abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days} - 1)))
+                  WHEN abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days})))
                        <= {cfg$sct_auto_window_days}
                    AND (s.cur_boundary_dist IS NULL
-                        OR abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days} - 1)))
+                        OR abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days})))
                            < s.cur_boundary_dist)
-                    THEN abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days} - 1)))
+                    THEN abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days})))
                   WHEN s.cur_boundary_dist IS NOT NULL THEN s.cur_boundary_dist
                   ELSE NULL
                 END,
@@ -373,16 +382,16 @@ phase_sct <- function(con, ctx) {
                     -- Only init boundary tracking if x is near the boundary
                     'cur_boundary_dt', CASE
                       WHEN s.last_tx_dt IS NOT NULL
-                       AND abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days} - 1)))
+                       AND abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days})))
                            <= {cfg$sct_auto_window_days}
                       THEN x
                       ELSE NULL
                     END,
                     'cur_boundary_dist', CASE
                       WHEN s.last_tx_dt IS NOT NULL
-                       AND abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days} - 1)))
+                       AND abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days})))
                            <= {cfg$sct_auto_window_days}
-                      THEN abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days} - 1)))
+                      THEN abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days})))
                       ELSE NULL
                     END,
                     'last_tx_dt', s.last_tx_dt
@@ -400,7 +409,7 @@ phase_sct <- function(con, ctx) {
                     'cur_boundary_dt', CASE
                       WHEN abs(datediff(
                              x,
-                             date_add(coalesce(s.cur_boundary_dt, s.cur_max_dt), {cfg$sct_tandem_days} - 1)
+                             date_add(coalesce(s.cur_boundary_dt, s.cur_max_dt), {cfg$sct_tandem_days})
                            )) <= {cfg$sct_auto_window_days}
                       THEN x
                       ELSE NULL
@@ -408,11 +417,11 @@ phase_sct <- function(con, ctx) {
                     'cur_boundary_dist', CASE
                       WHEN abs(datediff(
                              x,
-                             date_add(coalesce(s.cur_boundary_dt, s.cur_max_dt), {cfg$sct_tandem_days} - 1)
+                             date_add(coalesce(s.cur_boundary_dt, s.cur_max_dt), {cfg$sct_tandem_days})
                            )) <= {cfg$sct_auto_window_days}
                       THEN abs(datediff(
                              x,
-                             date_add(coalesce(s.cur_boundary_dt, s.cur_max_dt), {cfg$sct_tandem_days} - 1)
+                             date_add(coalesce(s.cur_boundary_dt, s.cur_max_dt), {cfg$sct_tandem_days})
                            ))
                       ELSE NULL
                     END,

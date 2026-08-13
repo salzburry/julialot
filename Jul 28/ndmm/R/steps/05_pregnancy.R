@@ -27,6 +27,23 @@ build_ndmm_preg_codes <- function(con) {
   # carries only the six below, so this passes; it is here because the file is
   # production and can be re-issued, and a CPT-typed delivery code would
   # otherwise be silent.
+  # Before the code types: whether any code survived normalising at all.
+  # load_codelist_csv counts raw rows, and the view above drops rows whose code
+  # is blank or punctuation-only - so a file carrying one row of 'HCPCS,---'
+  # is a nonempty file and an empty code list. Every candidate would then get
+  # NO_PREGNANCY = 1 and the exclusion would be off with nothing to show for
+  # it. The type check below cannot catch that: it reads this same view, and
+  # an empty view has no wrong types in it.
+  n <- tryCatch(db_q(con, glue("SELECT count(*) AS N FROM {NDMM_PREG_CODES}")),
+                error = function(e) NULL)
+  if (is.null(n) || !nrow(n))
+    stop("Could not count the codes in pregnancy.csv, so this run cannot say ",
+         "whether the pregnancy exclusion has anything to match.", call. = FALSE)
+  if (as.numeric(n[[1]][1]) == 0)
+    stop("pregnancy.csv has rows but no usable codes: every one is blank or ",
+         "punctuation-only once non-alphanumerics are stripped. The exclusion ",
+         "would match nothing and every candidate would pass it.", call. = FALSE)
+
   want <- paste(sprintf("'%s'", NDMM_PREG_CODE_TYPES), collapse = ", ")
   bad <- tryCatch(db_q(con, glue("
     SELECT code_type, count(*) AS n

@@ -85,7 +85,7 @@ cat("\n-- the pins in run_gate.R are the ones port/lot.R actually has --\n")
 g <- paste(readLines(file.path(VAL, "run_gate.R"), warn = FALSE), collapse = "\n")
 pinned <- regmatches(g, gregexpr('"[^"]+: differs[^"]*"', g))[[1]]
 pinned <- gsub('"', "", pinned)
-ok(length(pinned) == 6L, paste0("six failures are pinned (", length(pinned), ")"))
+ok(length(pinned) == 7L, paste0("seven failures are pinned (", length(pinned), ")"))
 ok(!any(duplicated(pinned)), "...and none is pinned twice")
 ok(all(fail_id(paste0("  FAIL   ", pinned, ", at source line 1")) == pinned),
    "...and each is written in the form a FAIL line reduces to")

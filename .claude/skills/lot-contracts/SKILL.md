@@ -90,9 +90,23 @@ Rscript .claude/skills/lot-contracts/scripts/validate_contracts.R
 
 Base R only. It checks structure and coherence (roles are from the taxonomy and
 disjoint; a gap threshold only with the gap rule on; the end ladder is a
-permutation of known reasons; drafts carry their TBDs; reviewed contracts carry a
+permutation of known reasons; a return cannot confirm a discontinuation where
+every run-out already counts; drafts carry their TBDs; reviewed contracts carry a
 reviewer), and pins the myeloma contract to the engine's shipped defaults.
 `--selftest` proves the checks can fail.
+
+**The pin reads the engine.** It parses `CONTRACT` out of `build_lot.R` and
+compares field by field, and every engine setting must be either bound to a
+contract field or named in `NOT_AN_AXIS` with a reason — so a setting added to
+the engine with no decision recorded fails this script. It used to be a
+hand-written copy of the engine's values, which is a different thing: three
+settings were added to `CONTRACT` and the contract validated clean throughout,
+because nothing here had ever read the engine.
+
+The repository's merge gate runs both this and `--selftest`, via
+`validation/hygiene/lot_contract_binding.R`. Before that suite existed the
+validator was not run by anything, so a live pin would still have sat there
+unexecuted.
 
 ## House rules
 

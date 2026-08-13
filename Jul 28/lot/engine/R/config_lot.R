@@ -99,6 +99,11 @@ cfg_defaults <- list(
   # LOT_CONTRACT_OVERRIDE, the same as any other contract setting.
   apply_cart_induction_rule =
     as.logical(Sys.getenv("APPLY_CART_INDUCTION_RULE", unset = "TRUE")),
+  # Pinned TRUE in CONTRACT for the same reason. This is the value
+  # criterion_enabled() applies, so the criterion and the recorded contract
+  # cannot disagree about whether the exclusion ran.
+  apply_no_belantamab =
+    as.logical(Sys.getenv("APPLY_NO_BELANTAMAB", unset = "TRUE")),
   melp_med_abbr      = Sys.getenv("MELP_MED_ABBR",      unset = "MELP"),
   melp_exposure_days = as.integer(Sys.getenv("MELP_EXPOSURE_DAYS", unset = "30")),
   melp_restart_days  = as.integer(Sys.getenv("MELP_RESTART_DAYS",  unset = "60")),

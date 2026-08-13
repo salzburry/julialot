@@ -21,6 +21,10 @@ A cohort is what LOT is pointed at. It is not part of LOT and does not read it.
 | `lot/safety/` | code lists for the protocol's safety and utilisation events. Roster only. |
 | `lot/tools/` | edits a production code list on request. Not a study stage. |
 
+Each of the three has a **`RULES.md`** — the rules that build applies and the
+assumptions behind them, on one page. `lot/LOT_RULES.md` is the long form for
+lines; `ndmm/DECISIONS.md` is the long form for the cohort.
+
 `ndmm/` and `overall/` are independent - neither reads the other, and each goes
 to the raw CDM and the production code lists on its own. `lot/engine/` takes a
 cohort table by name, so it runs over either:
@@ -37,12 +41,16 @@ questions are about patients the NDMM cohort excluded.
 DATABRICKS_PWD=... Rscript ndmm/build.R                    ndmm_
 DATABRICKS_PWD=... Rscript lot/engine/build.R              ndmm_NDMM_COHORT ndmm_
 DATABRICKS_PWD=... Rscript lot/dashboard/build.R           ndmm_NDMM_COHORT ndmm_
-DATABRICKS_PWD=... Rscript lot/outcomes/build.R            ndmm_NDMM_COHORT ndmm_
 DATABRICKS_PWD=... Rscript ndmm/build_subsequent_cohorts.R ndmm_
+DATABRICKS_PWD=... Rscript lot/outcomes/build.R            ndmm_NDMM_COHORT ndmm_
 ```
 
-The 2L and 3L cohorts come last on the NDMM path: their index dates are line
-starts, so the lines have to exist first.
+The 2L and 3L cohorts sit between the lines and the outcomes, and both sides of
+that matter. They come after LOT because their index dates are line starts, so
+the lines have to exist first. They come before outcomes because outcomes reads
+them for LINE_ELIGIBLE: run it first on a clean prefix and it quietly reports
+ALL_LINES alone, and run it first on a re-run and it reads the previous
+attempt's cohorts.
 
 Read a package's own README before running it - or the entry script's header
 where it has none (`overall/`, `lot/tools/`).

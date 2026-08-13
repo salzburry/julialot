@@ -2,6 +2,9 @@
 
 Builds the 1L NDMM cohort and its attrition for one cohort prefix.
 
+**`RULES.md`** is the one-page version of who gets into this cohort and what it
+assumes. `DECISIONS.md` is the long form, with the reasoning.
+
 ```
 DATABRICKS_PWD=... Rscript build.R <prefix_>
 DATABRICKS_PWD=... Rscript build.R mystudy_
@@ -657,9 +660,13 @@ than inferred.
 
 Writes `<prefix>NDMM_COHORT_2L`, `<prefix>NDMM_COHORT_3L` and
 `<prefix>NDMM_SUBSEQUENT_ATTRITION` - a funnel per cohort, so what each
-criterion cost is on the record. All three carry `SUBSEQ_RUN_ID`, so a run that
-died between them leaves a mismatch rather than a silent mix. It changes
-nothing else.
+criterion cost is on the record. All three carry `SUBSEQ_RUN_ID` and
+`SUBSEQ_ATTEMPT`, so a run that died between them leaves a mismatch rather than
+a silent mix. The attempt is what does the work: the run id comes from
+`DOMINO_RUN_ID` and a retry inside one execution reuses it, so two attempts
+were indistinguishable until the attempt was minted per call.
+`<prefix>NDMM_SUBSEQ_BUILD_STATUS` records each attempt as started, complete or
+failed. It changes nothing else.
 
 It refuses to run unless the newest `LOT_BUILD_STATUS` row is `complete`, was
 built from this cohort, carries no `CONTRACT_DEVIATIONS`, and names the same

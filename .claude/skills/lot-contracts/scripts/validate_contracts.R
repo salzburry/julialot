@@ -134,6 +134,21 @@ check_contract <- function(doc, raw_text, fname) {
   if (!is_posint(ln$max_lot) || ln$max_lot > 9L) say("lines.max_lot must be 1..9")
   for (f in c("regimen_window_days_line1", "regimen_window_days_later"))
     if (!is_posint(ln[[f]])) say("lines.", f, " must be a positive integer")
+  # How much observation has to follow a run-out before it counts as a
+  # discontinuation, and whether seeing the patient again counts instead. Both
+  # are axes, not defaults: a tumor whose treatment is continuous and one dosed
+  # every three weeks do not wait the same length of time to call a stop a stop.
+  # `none` is the explicit off - any run-out is a discontinuation.
+  d <- ln$discon_confirm_days
+  if (!(identical(d, "none") || is_posint(d) || (is.character(d) && grepl("^TBD", d))))
+    say("lines.discon_confirm_days must be 'none', a positive integer, or a TBD")
+  r <- ln$discon_confirmed_by_return
+  if (!(is.logical(r) || (is.character(r) && grepl("^TBD", r))))
+    say("lines.discon_confirmed_by_return must be true, false, or a TBD")
+  if (identical(d, "none") && isTRUE(r))
+    say("lines.discon_confirmed_by_return is set with no confirmation window - ",
+        "with discon_confirm_days 'none' every run-out already counts, so a ",
+        "return confirms nothing")
   ep <- ln$end_priority
   if (!is.character(ep) || !length(ep)) say("lines.end_priority is missing")
   else {
@@ -192,39 +207,161 @@ check_contract <- function(doc, raw_text, fname) {
   bad
 }
 
-# The myeloma pin: this contract IS the engine's shipped behavior, so these
-# values must match Jul 28/lot/engine's defaults. Change the engine and this table in
-# the same commit, or the validator - correctly - refuses.
-MYELOMA_PIN <- list(
-  c("observation", "censor_at_disenrollment") , FALSE,
-  c("episodes", "medical_day_supply")         , 28L,
-  c("episodes", "pharmacy_missing_day_supply"), 28L,
-  c("episodes", "map_discon_gap_days")        , 90L,
-  c("lines", "max_lot")                       , 5L,
-  c("lines", "regimen_window_days_line1")     , 60L,
-  c("lines", "regimen_window_days_later")     , 30L,
-  c("advancement", "same_regimen_gap_days")   , "none",
-  c("event_streams", "AUTO", "claim_window_days")   , 13L,
-  c("event_streams", "AUTO", "merge_gap_days")      , 60L,
-  c("event_streams", "AUTO", "tandem_max_gap_days") , 180L,
-  c("event_streams", "CART", "consolidation_days")  , 45L,
-  c("event_streams", "CART", "bridging_med_add_days"), 45L,
-  c("event_streams", "ALLO", "line_span")     , "single_day",
-  c("drug_roles", "supportive_classes")       , "STEROID",
-  c("lines", "end_priority") ,
-    c("SCT_ALLO", "SCT_CART", "SCT_AUTO", "CART_INIT", "MED_ADD",
-      "DEATH", "DISCONTINUATION", "STUDY_END")
+# ---- The engine binding --------------------------------------------------
+#
+# The myeloma contract IS the engine's shipped behavior, so the pin has to be a
+# COMPARISON against the engine, not a copy of it. It used to be a copy: a
+# hand-written table of the values the engine was believed to ship. A copy
+# cannot notice the engine moving - three settings were added to CONTRACT
+# (apply_cart_induction_rule, apply_no_belantamab, lot_discon_confirm_days)
+# and this validator went on passing, because nothing here had ever read
+# build_lot.R.
+#
+# So: read CONTRACT out of the engine, bind each rule-bearing key to the
+# contract field that carries it, and require every key to be accounted for.
+# A new engine setting fails this file until someone decides whether it is a
+# contract axis - which is the point.
+
+# STUDY_FOLDER so this tracks the folder the gate is pointed at, rather than
+# only ever the one that happens to be checked in under that name today.
+ENGINE_FILE <- normalizePath(
+  file.path(SELF, "..", "..", "..", "..",
+            Sys.getenv("STUDY_FOLDER", unset = "Jul 28"),
+            "lot", "engine", "R", "build_lot.R"), mustWork = FALSE)
+
+# CONTRACT is a flat `key = value,` list of scalars, so a small reader is exact.
+engine_contract <- function(path = ENGINE_FILE) {
+  if (!file.exists(path))
+    stop("cannot read the engine at ", path,
+         " - the pin compares against it and cannot be skipped")
+  src <- readLines(path, warn = FALSE)
+  i <- grep("^CONTRACT <- list\\(", src)
+  if (length(i) != 1L)
+    stop("expected exactly one `CONTRACT <- list(` in ", path,
+         ", found ", length(i))
+  j <- grep("^\\)\\s*$", src); j <- j[j > i[1]][1]
+  if (is.na(j)) stop("CONTRACT list in ", path, " is not closed")
+  blk <- src[(i[1] + 1):(j - 1)]
+  blk <- blk[!grepl("^\\s*#", blk)]
+  blk <- blk[nzchar(trimws(blk))]
+  out <- structure(list(), names = character(0))
+  for (l in blk) {
+    m <- regmatches(l, regexec("^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*(.*?),?\\s*$", l))[[1]]
+    if (length(m) != 3L)
+      stop("cannot read this CONTRACT line: ", trimws(l))
+    k <- m[[2]]; v <- trimws(m[[3]])
+    out[[k]] <-
+      if (identical(v, "TRUE")) TRUE
+      else if (identical(v, "FALSE")) FALSE
+      else if (grepl("^-?[0-9]+L$", v)) as.integer(sub("L$", "", v))
+      else if (grepl("^-?[0-9]+$", v)) as.integer(v)
+      else if (grepl('^".*"$', v)) substr(v, 2, nchar(v) - 1)
+      else stop("cannot read the value of CONTRACT$", k, ": ", v)
+  }
+  out
+}
+
+# contract path  <-  engine key, with an optional transform of the engine value.
+# `to` turns what the engine ships into what the contract writes.
+BINDING <- list(
+  list(path = c("observation", "censor_at_disenrollment"), key = "censor_at_disenrollment"),
+  list(path = c("episodes", "medical_day_supply"),         key = "medical_day_supply"),
+  list(path = c("episodes", "map_discon_gap_days"),        key = "map_discon_gap_days"),
+  list(path = c("lines", "max_lot"),                       key = "max_lot"),
+  list(path = c("lines", "regimen_window_days_line1"),     key = "induction_window_days"),
+  list(path = c("lines", "regimen_window_days_later"),     key = "lot_n_induction_window_days"),
+  list(path = c("lines", "discon_confirm_days"),           key = "lot_discon_confirm_days"),
+  list(path = c("event_streams", "AUTO", "claim_window_days"),    key = "sct_auto_window_days"),
+  list(path = c("event_streams", "AUTO", "merge_gap_days"),       key = "sct_auto_gap_days"),
+  list(path = c("event_streams", "AUTO", "tandem_max_gap_days"),  key = "sct_tandem_days"),
+  list(path = c("event_streams", "CART", "consolidation_days"),   key = "cart_consolidation_days"),
+  list(path = c("event_streams", "CART", "bridging_med_add_days"), key = "cart_consolidation_days"),
+  list(path = c("event_streams", "CART", "induction_absorbed"),   key = "apply_cart_induction_rule"),
+  list(path = c("event_streams", "ALLO", "line_span"),            key = "allo_lot_span"),
+  list(path = c("criteria", "no_belantamab", "enabled"),          key = "apply_no_belantamab"),
+  # Blank is the contract algorithm - the gap-advancement rule is off - which
+  # the contract writes as `none` on the advancement axis.
+  list(path = c("advancement", "same_regimen_gap_days"), key = "apply_melp_rule",
+       to = function(v) if (identical(v, "")) "none" else NULL)
 )
 
-check_myeloma_pin <- function(doc) {
+# Engine settings that are deliberately NOT contract axes, each with the reason.
+# Anything not here and not in BINDING fails the completeness check below.
+NOT_AN_AXIS <- c(
+  catalog = "deployment: which catalog the run reads",
+  cdm_schema = "deployment: which CDM schema the run reads",
+  codelist_dir = "deployment: where the code lists are mounted",
+  dsn = "deployment: the ODBC data source",
+  tbl_medical = "deployment: CDM table name",
+  tbl_med_proc = "deployment: CDM table name",
+  tbl_med_diag = "deployment: CDM table name",
+  tbl_rx = "deployment: CDM table name",
+  use_quarterly_tables = "deployment: which physical CDM tables the vintage offers",
+  belantamab_med_abbr = "code-list spelling of the criterion drug, not a rule",
+  melp_med_abbr = "parameter of the gap-advancement prototype, inert while it is off",
+  melp_exposure_days = "parameter of the gap-advancement prototype, inert while it is off",
+  melp_restart_days = "parameter of the gap-advancement prototype, inert while it is off",
+  melp_advance_days = "parameter of the gap-advancement prototype, inert while it is off",
+  melp_sct_days = "parameter of the gap-advancement prototype, inert while it is off"
+)
+
+# Every engine setting is either bound to a contract field or explicitly not an
+# axis. This is the check that was missing: a setting added to CONTRACT with no
+# decision recorded here stops the validator instead of passing unnoticed.
+check_binding_complete <- function(eng = engine_contract()) {
+  bound <- vapply(BINDING, function(b) b$key, character(1))
+  known <- unique(c(bound, names(NOT_AN_AXIS)))
+  new <- setdiff(names(eng), known)
+  gone <- setdiff(known, names(eng))
   bad <- character(0)
-  for (i in seq(1, length(MYELOMA_PIN), by = 2)) {
-    path <- MYELOMA_PIN[[i]]; want <- MYELOMA_PIN[[i + 1]]
-    got <- get_path(doc, path)
+  if (length(new))
+    bad <- c(bad, paste0("the engine ships CONTRACT setting(s) this skill does not ",
+                         "account for: ", paste(new, collapse = ", "),
+                         ". Bind each to a contract field in BINDING, or record ",
+                         "why it is not a contract axis in NOT_AN_AXIS."))
+  if (length(gone))
+    bad <- c(bad, paste0("this skill binds engine setting(s) the engine no longer ",
+                         "ships: ", paste(gone, collapse = ", "),
+                         ". Remove them, or the pin is checking nothing."))
+  bad
+}
+
+check_myeloma_pin <- function(doc, eng = engine_contract()) {
+  bad <- character(0)
+  for (b in BINDING) {
+    if (is.null(eng[[b$key]])) {
+      bad <- c(bad, paste0(paste(b$path, collapse = "."),
+                           ": bound to CONTRACT$", b$key, ", which the engine does not ship"))
+      next
+    }
+    want <- if (is.null(b$to)) eng[[b$key]] else b$to(eng[[b$key]])
+    if (is.null(want)) {
+      bad <- c(bad, paste0(paste(b$path, collapse = "."), ": CONTRACT$", b$key,
+                           " is '", eng[[b$key]], "', which this binding cannot ",
+                           "express as a contract value"))
+      next
+    }
+    got <- get_path(doc, b$path)
     if (!identical(got, want))
-      bad <- c(bad, paste0(paste(path, collapse = "."), ": contract says '",
+      bad <- c(bad, paste0(paste(b$path, collapse = "."), ": contract says '",
                            paste(got, collapse = " "), "', engine ships '",
                            paste(want, collapse = " "), "'"))
+  }
+  # Not bound to a single setting, but still the engine's shipped behavior.
+  fixed <- list(
+    list(path = c("episodes", "pharmacy_missing_day_supply"), want = 28L),
+    list(path = c("drug_roles", "supportive_classes"), want = "STEROID"),
+    list(path = c("lines", "end_priority"),
+         want = c("SCT_ALLO", "SCT_CART", "SCT_AUTO", "CART_INIT", "MED_ADD",
+                  "DEATH", "DISCONTINUATION", "STUDY_END")),
+    list(path = c("lines", "discon_confirmed_by_return"), want = TRUE)
+  )
+  for (f in fixed) {
+    got <- get_path(doc, f$path)
+    if (!identical(got, f$want))
+      bad <- c(bad, paste0(paste(f$path, collapse = "."), ": contract says '",
+                           paste(got, collapse = " "), "', engine ships '",
+                           paste(f$want, collapse = " "), "'"))
   }
   bad
 }
@@ -237,7 +374,7 @@ validate_file <- function(f) {
     return(paste0("does not parse: ", unclass(doc)))
   bad <- check_contract(doc, raw, basename(f))
   if (identical(doc$tumor, "multiple_myeloma"))
-    bad <- c(bad, check_myeloma_pin(doc))
+    bad <- c(bad, check_binding_complete(), check_myeloma_pin(doc))
   bad
 }
 
@@ -250,6 +387,11 @@ selftest <- function() {
          text = base[!grepl("^    - DEATH$", base)]),
     list(name = "a drifted engine value is refused by the pin",
          text = sub("regimen_window_days_line1: 60", "regimen_window_days_line1: 42", base)),
+    list(name = "an axis the engine gained and the contract lacks is refused",
+         text = base[!grepl("^  discon_confirm_days: ", base)]),
+    list(name = "...and so is one the contract states differently",
+         text = sub("discon_confirmed_by_return: true",
+                    "discon_confirmed_by_return: false", base)),
     list(name = "reviewed status with TBD content is refused",
          text = sub("^status: draft$", "status: reviewed",
                     readLines(file.path(CONTRACT_DIR, "ovarian.yaml"), warn = FALSE)))
@@ -263,6 +405,24 @@ selftest <- function() {
     cat(sprintf("  %s %s\n", if (ok) "ok   " else "FAIL ", cs$name))
     if (!ok) fails <- fails + 1L
   }
+  # The completeness check answers to the engine rather than to a contract
+  # file, so it is planted against a stand-in engine rather than a stand-in
+  # contract: a CONTRACT that ships a setting no binding mentions.
+  tmp <- tempfile(fileext = ".R")
+  writeLines(c("CONTRACT <- list(", "  max_lot = 5L,",
+               "  a_setting_nobody_decided_about = 7L", ")"), tmp)
+  planted <- tryCatch(check_binding_complete(engine_contract(tmp)),
+                      error = function(e) conditionMessage(e))
+  hit <- any(grepl("a_setting_nobody_decided_about", planted, fixed = TRUE))
+  cat(sprintf("  %s %s\n", if (hit) "ok   " else "FAIL ",
+              "an engine setting bound to nothing is refused"))
+  if (!hit) fails <- fails + 1L
+  # ...and the mirror: a binding pointing at a setting the engine dropped.
+  gone <- any(grepl("no longer", planted, fixed = TRUE))
+  cat(sprintf("  %s %s\n", if (gone) "ok   " else "FAIL ",
+              "...as is a binding the engine no longer ships"))
+  if (!gone) fails <- fails + 1L
+  unlink(tmp)
   if (fails) { cat(fails, "self-test case(s) did not fail as they must\n"); quit(status = 1L) }
   cat("self-test: every planted violation was caught\n")
 }

@@ -43,7 +43,8 @@ body <- local({
 
 SETTINGS <- c("STUDY_END", "LOT1_FROM", "STUDY_START", "PRE_LOT1_DAYS",
               "FU_CE_DAYS", "GAP_DAYS", "DOMINO_RUN_ID", "PROJECT_WORK_SCHEMA",
-              "DOMINO_USER_NAME", "OBJECT_PREFIX")
+              "DOMINO_USER_NAME", "OBJECT_PREFIX",
+              "OUTPATIENT_WINDOW", "MIN_AGE")
 clear <- function() for (v in SETTINGS) Sys.unsetenv(v)
 clear()
 
@@ -111,6 +112,16 @@ for (bad in c("365.5", "3e2", "-1")) {
   ok(grepl("want a whole number",
            tryCatch({ check_settings(); "" }, error = conditionMessage), fixed = TRUE),
      paste0("PRE_LOT1_DAYS='", bad, "' is refused, not truncated"))
+  clear()
+}
+# Both reach the cohort - the outpatient qualification window and the age floor
+# - and both were coerced with as.integer() and never checked, so MIN_AGE=18.5
+# became 18L, matched the contract, and filtered at 18 with nothing recorded.
+for (v in c("OUTPATIENT_WINDOW", "MIN_AGE")) {
+  do.call(Sys.setenv, setNames(list("18.5"), v))
+  ok(grepl("want a whole number",
+           tryCatch({ check_settings(); "" }, error = conditionMessage), fixed = TRUE),
+     paste0(v, "='18.5' is refused rather than silently truncated"))
   clear()
 }
 Sys.setenv(DOMINO_RUN_ID = "R1'; DROP TABLE x; --")
@@ -1859,12 +1870,26 @@ cat("\n-- a pregnancy code type nothing reads stops the run --\n")
 # the exemption: a CPT-typed delivery code would load, join, and match zero.
 assign("load_codelist_csv", function(...) "(SELECT 1) src", envir = pe)
 assign("log_msg", function(...) invisible(NULL), envir = pe)
-drive_pc <- function(rows) {
-  assign("db_q", function(con, sql) rows, envir = pe)
+# Two questions are asked of the view now - how many codes survived normalising,
+# and whether any carries a type nothing reads - so the driver answers each.
+drive_pc <- function(rows, n_codes = 6L) {
+  assign("db_q", function(con, sql) {
+    if (grepl("count(*) AS N", sql, fixed = TRUE))
+      return(data.frame(N = n_codes))
+    rows
+  }, envir = pe)
   tryCatch({ pe$build_ndmm_preg_codes(NULL); "" }, error = conditionMessage)
 }
 ok(identical(drive_pc(data.frame(code_type = character(0), n = integer(0))), ""),
    "a file whose types the scan all emits passes")
+# load_codelist_csv counts raw rows, so 'HCPCS,---' is a nonempty file. The
+# view drops it as punctuation-only and the type check below reads that same
+# view, where an empty result looks exactly like a clean one.
+m0 <- drive_pc(data.frame(code_type = character(0), n = integer(0)), n_codes = 0L)
+ok(grepl("no usable codes", m0, fixed = TRUE),
+   "a file with rows but no code that survives normalising stops the run")
+ok(grepl("every candidate would pass it", m0, fixed = TRUE),
+   "...and says the exclusion would match nothing, which is the failure")
 m <- drive_pc(data.frame(code_type = "CPT", n = 12L))
 ok(grepl("code type(s) no claim source produces", m, fixed = TRUE) &&
      grepl("CPT", m, fixed = TRUE) && grepl("12", m, fixed = TRUE),
@@ -2034,6 +2059,63 @@ ok(any(grepl("collapse without C77/196", li, fixed = TRUE)) &&
 ok(any(grepl("grp_wo_nodal", om, fixed = TRUE)) &&
      any(grepl("grp_wo_dissem", om, fixed = TRUE)),
    "...off columns carried for the purpose, so no extra scan of the claims")
+
+cat("\n-- a clintrial list with no usable code stops the run --\n")
+# Descriptive is not the same as unchecked. An empty list inner-joins to
+# nothing, so every patient reads CLINTRIAL = 0 - which looks like an answer
+# and means the scan had nothing to look for. Same shape as pregnancy: the
+# loader counts raw rows, the view drops codes that normalise to nothing.
+ce <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "steps", "08_clintrial.R"), ce)
+assign("load_codelist_csv", function(...) "(SELECT 1) src", envir = ce)
+assign("db_exec", function(...) invisible(NULL), envir = ce)
+assign("log_msg", function(...) invisible(NULL), envir = ce)
+assign("NDMM_CLINTRIAL_CODES", "v_ct", envir = ce)
+# Two questions of the view: how many codes survived, and whether any carries
+# a type no arm of the scan emits.
+drive_ct <- function(n_codes, types = data.frame(code_type = character(0),
+                                                 n = integer(0))) {
+  assign("db_q", function(con, sql) {
+    if (grepl("count(*) AS N", sql, fixed = TRUE)) return(data.frame(N = n_codes))
+    types
+  }, envir = ce)
+  tryCatch({ ce$build_ndmm_clintrial_codes(NULL); "" }, error = conditionMessage)
+}
+ok(identical(drive_ct(6L), ""), "a list with usable codes passes")
+mct <- drive_ct(0L)
+ok(grepl("no usable codes", mct, fixed = TRUE),
+   "a file with rows but nothing that survives normalising stops the run")
+ok(grepl("flagged as not in a trial", mct, fixed = TRUE),
+   "...and says every patient would read as not in a trial, which is the failure")
+assign("db_q", function(con, sql) stop("no such view"), envir = ce)
+ok(grepl("cannot say", tryCatch({ ce$build_ndmm_clintrial_codes(NULL); "" },
+                                error = conditionMessage), fixed = TRUE),
+   "and a check that could not run is not read as a pass")
+# Codes that cannot be reached are the other way a full-looking list does
+# nothing: a CPT-typed row loads, joins on a type no arm emits, and matches
+# zero, so a patient in a trial by that code reads as not in one.
+mct2 <- drive_ct(6L, data.frame(code_type = "CPT", n = 4L))
+ok(grepl("code type(s) no claim source produces", mct2, fixed = TRUE) &&
+     grepl("CPT", mct2, fixed = TRUE) && grepl("4", mct2, fixed = TRUE),
+   "a type no arm of the scan emits stops the run, naming it and the count")
+ok(grepl("would read as not in one", mct2, fixed = TRUE),
+   "...and says what it would do to those patients, which is the failure")
+ok(setequal(ce$NDMM_CLINTRIAL_CODE_TYPES,
+            c("ICD9DIAG", "ICD10DIAG", "ICD9PROC", "ICD10PROC", "HCPCS", "REV")),
+   "the six types the guard allows are the six arms of the scan emit")
+# Two scans, two constants. Sharing one would let an arm dropped from either
+# scan quietly loosen the other's guard.
+ct_code <- grep("^\\s*#", readLines(file.path(ROOT, "R", "steps", "08_clintrial.R"),
+                                    warn = FALSE), value = TRUE, invert = TRUE)
+ok(!any(grepl("NDMM_PREG_CODE_TYPES", ct_code, fixed = TRUE)),
+   "...and it is this scan's own list, not the pregnancy scan's borrowed")
+
+# The count has to be over rows that could actually join. The scan derives its
+# own code_type and joins on equality, so a row with no type meets nothing.
+ok(grepl("AND code_type IS NOT NULL AND trim(code_type) <> ''",
+         paste(readLines(file.path(ROOT, "R", "steps", "08_clintrial.R"), warn = FALSE),
+               collapse = "\n"), fixed = TRUE),
+   "...so untyped rows are dropped before the count, not left to pad it")
 
 cat("\n-- clinical-trial evidence is descriptive, and stays that way --\n")
 ct <- readLines(file.path(ROOT, "R", "steps", "08_clintrial.R"), warn = FALSE)

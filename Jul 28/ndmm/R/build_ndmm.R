@@ -177,7 +177,13 @@ check_settings <- function() {
   if (nzchar(x) && !grepl("^[0-9]+$", x))
     bad <- c(bad, paste0("NDMM_ICD_FLAG_MAX_ROWS='", x, "' (want a whole number, ",
                          "or empty for no ceiling)"))
-  for (v in c("PRE_LOT1_DAYS", "FU_CE_DAYS", "GAP_DAYS")) {
+  # OUTPATIENT_WINDOW and MIN_AGE were not here, and both reach the cohort:
+  # config.R and standalone_constants.R coerce them the same way, so MIN_AGE=18.5
+  # became 18L, matched CONTRACT$min_age and check_constants(), and the run
+  # filtered at 18 while the operator had asked for 18.5 - with nothing recorded
+  # to say so.
+  for (v in c("PRE_LOT1_DAYS", "FU_CE_DAYS", "GAP_DAYS",
+              "OUTPATIENT_WINDOW", "MIN_AGE")) {
     x <- trimws(Sys.getenv(v, unset = ""))
     # The text, not what coercion makes of it: as.integer("60.5") is 60.
     if (nzchar(x) && !grepl("^[0-9]+$", x))

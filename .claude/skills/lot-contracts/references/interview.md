@@ -52,6 +52,22 @@ Two framing rules before asking anything:
     choice; a capped patient is indistinguishable from a completed one)
 14. Day supply for medical administrations; per-drug discontinuation gap — keep
     the engine defaults (28 / 90) unless the tumor has a reason.
+15. When the drugs run out, how much observation has to follow before you would
+    call it a discontinuation rather than the data running out? →
+    `lines.discon_confirm_days` (`none` = any run-out counts). Ask it as a
+    cadence question: how long after a missed dose would this tumor's clinic
+    still expect to see the patient? Myeloma waits 90 days. Do not carry that
+    number across — continuous oral therapy and three-weekly infusions leave
+    different footprints when a patient stops.
+16. If the patient turns up again after the run-out — a restart, a transplant —
+    does that settle it on its own, or does the window still have to elapse? →
+    `lines.discon_confirmed_by_return`. Worth spelling out what "no" costs: the
+    next line starts after the previous one ends, so a line censored to end of
+    observation absorbs the restart and the patient loses a line.
+17. Does any event stream land inside first-line treatment as planned
+    consolidation — a transplant or cell therapy given as part of induction
+    rather than after it? → `event_streams.<NAME>.induction_absorbed`. Without
+    it, first-line consolidation reads as a second line.
 
 ## Boundary labels → `boundary_labels.*`
 

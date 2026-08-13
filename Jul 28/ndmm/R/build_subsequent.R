@@ -33,6 +33,53 @@
 
 SUBSEQ_LINES <- c(2L, 3L)
 
+# What separates two runs of this build from each other.
+#
+# run_id is not enough. It comes from DOMINO_RUN_ID, so a second attempt inside
+# one Domino execution shares it - build_ndmm.R says so where it resets the
+# findings option. The three outputs are replaced one at a time with no
+# transaction, so an attempt that rewrote 2L and then died left a NEW 2L beside
+# a STALE 3L carrying the same run id, the same source LOT run and stamp, the
+# same cohort attempt and the same windows. Every column outcomes compares
+# matched, and LINE_ELIGIBLE meant one thing on 2L and another on 3L.
+#
+# Minted fresh per call, so two attempts differ whatever the run id says.
+# Timestamp to the millisecond for readability, process id because two Rscript
+# invocations in the same millisecond are still two processes.
+subseq_attempt_id <- function() {
+  paste0(format(Sys.time(), "%Y%m%d%H%M%OS3"), "-", Sys.getpid())
+}
+
+SUBSEQ_STATUS_COLS <- c(
+  RUN_ID = "STRING", ATTEMPT = "STRING", STATE = "STRING",
+  OBJECT_PREFIX = "STRING", CE_PRE_DAYS = "INT", CE_FU_DAYS = "INT",
+  SOURCE_LOT_RUN_ID = "STRING", SOURCE_LOT_STAMP = "STRING",
+  UPDATED_AT = "TIMESTAMP")
+
+# One row per attempt, not per run id: a retry has to be visible beside the
+# attempt it is replacing, or "it died part-way" is not recorded anywhere.
+# started before the first table is replaced, complete after the last one,
+# failed from an on.exit if neither is reached.
+write_subseq_status <- function(con, cfg, attempt, state, pre_days, fu_days,
+                                src = NULL) {
+  tbl  <- wrk("NDMM_SUBSEQ_BUILD_STATUS")
+  cols <- names(SUBSEQ_STATUS_COLS)
+  db_exec(con, glue("CREATE TABLE IF NOT EXISTS {tbl} (",
+                    paste(cols, SUBSEQ_STATUS_COLS, collapse = ", "), ")"))
+  ensure_cols(con, tbl, SUBSEQ_STATUS_COLS)
+  db_replace(con,
+    glue("DELETE FROM {tbl} WHERE ATTEMPT = {sql_text(attempt)}"),
+    glue("INSERT INTO {tbl} ({paste(cols, collapse = ', ')}) VALUES (",
+         "{sql_text(run_id)}, {sql_text(attempt)}, {sql_text(state)}, ",
+         "{sql_text(cfg$object_prefix)}, {sql_count(pre_days)}, ",
+         "{sql_count(fu_days)}, ",
+         "{sql_text(if (is.null(src)) NA_character_ else src$lot_run)}, ",
+         "{sql_text(if (is.null(src)) NA_character_ else src$lot_stamp)}, ",
+         "current_timestamp())"))
+  log_msg("Subsequent-build status: ", state, " (attempt ", attempt, ")")
+  invisible(TRUE)
+}
+
 # The two windows, as settings of their own rather than the 1L cohort's.
 #
 # SUBSEQ_PRE_DAYS is days of CE before the cohort index date - 365 for the
@@ -150,8 +197,12 @@ subseq_check_lot_run <- function(con, prefix) {
   # Which cohort attempt it read is not in the status table - it is in
   # LOT_RUN_METADATA, on the row for this run.
   att <- subseq_check_cohort_attempt(con, pick("RUN_ID"))
-  invisible(list(lot_run = pick("RUN_ID"), cohort_run = att$cohort_run,
-                 cohort_stamp = att$cohort_stamp))
+  # The run id alone does not identify the build. A re-run under the same
+  # RUN_ID replaces LOT_LONG_FINAL in place, so cohorts built from attempt A
+  # keep naming a run id that now means attempt B and read as current. The
+  # status row's UPDATED_AT is what separates them, so it travels with the id.
+  invisible(list(lot_run = pick("RUN_ID"), lot_stamp = pick("UPDATED_AT"),
+                 cohort_run = att$cohort_run, cohort_stamp = att$cohort_stamp))
 }
 
 # The name of the cohort table is not enough. A re-run under the same prefix
@@ -266,7 +317,9 @@ subseq_fu_expr <- function(ix, fu_days, death = "g.DEATH_DT") {
 subseq_cohort_sql <- function(lot_num, from_tbl, out_tbl, pre_days, fu_days,
                               lines_tbl, spans_tbl, spans_strict_tbl, run_id,
                               lot_run = NA_character_, coh_run = NA_character_,
-                              coh_stamp = NA_character_) {
+                              coh_stamp = NA_character_,
+                              lot_stamp = NA_character_,
+                              attempt = NA_character_) {
   pre_days <- as.integer(pre_days); fu_days <- as.integer(fu_days)
   glue("
     CREATE OR REPLACE TABLE {out_tbl} AS
@@ -304,11 +357,18 @@ subseq_cohort_sql <- function(lot_num, from_tbl, out_tbl, pre_days, fu_days,
            {pre_days}                   AS CE_PRE_DAYS,
            {fu_days}                    AS CE_FU_DAYS,
            {sql_text(run_id)}           AS SUBSEQ_RUN_ID,
+           -- Which ATTEMPT of that run id, because the run id does not say.
+           -- Two attempts in one Domino execution share it, and the three
+           -- outputs are replaced one at a time - so this is the only column
+           -- that differs between a table this attempt wrote and one left by
+           -- the attempt before it.
+           {sql_text(attempt)}          AS SUBSEQ_ATTEMPT,
            -- Which run's lines these were drawn from, and which cohort attempt
            -- those lines were built over. Without them a reader of this table
            -- cannot tell whether it still belongs beside the LOT tables on
            -- disk, and a rebuilt LOT leaves it looking perfectly readable.
            {sql_text(lot_run)}          AS SOURCE_LOT_RUN_ID,
+           {sql_text(lot_stamp)}        AS SOURCE_LOT_STAMP,
            {sql_text(coh_run)}          AS SOURCE_COHORT_RUN_ID,
            {sql_text(coh_stamp)}        AS SOURCE_COHORT_STAMP,
            current_timestamp()          AS BUILT_AT
@@ -401,6 +461,21 @@ build_subsequent <- function(here, prefix,
   log_msg(SEP)
   src <- subseq_check_lot_run(con, prefix)
 
+  # Minted here, once, and written into all three outputs below. Everything
+  # after this point can leave the warehouse half-written, so from here the
+  # attempt is recorded before anything is replaced and the handler that marks
+  # it failed is armed before the first replace - the same order build_lot.R
+  # and build_ndmm.R use, and for the same reason: a run that dies with a
+  # 'started' row and no handler leaves nothing saying it ended.
+  attempt <- subseq_attempt_id()
+  options(subseq_complete = FALSE)
+  write_subseq_status(con, cfg, attempt, "started", pre_days, fu_days, src)
+  on.exit(if (!isTRUE(getOption("subseq_complete", FALSE)))
+            try(write_subseq_status(con, cfg, attempt, "failed",
+                                    pre_days, fu_days, src), silent = TRUE),
+          add = TRUE, after = FALSE)
+  log_msg("  attempt ", attempt)
+
   cohort <- wrk("NDMM_COHORT")
   lines  <- wrk("LOT_LONG_FINAL")
   spans  <- wrk("NDMM_ENROLL_SPANS")
@@ -414,7 +489,9 @@ build_subsequent <- function(here, prefix,
     db_exec(con, subseq_cohort_sql(n, from, out, pre_days, fu_days,
                                    lines, spans, strict, run_id,
                                    lot_run = src$lot_run, coh_run = src$cohort_run,
-                                   coh_stamp = src$cohort_stamp))
+                                   coh_stamp = src$cohort_stamp,
+                                   lot_stamp = src$lot_stamp,
+                                   attempt = attempt))
     log_msg(n, "L: ", f$n_from, " in the ", if (n == 2L) "1L" else paste0(n - 1L, "L"),
             " cohort -> ", f$n_reached, " reached ", n, "L -> ", f$n_ce_pre,
             " with ", pre_days, " days of CE before it -> ", f$n_final,
@@ -437,23 +514,28 @@ build_subsequent <- function(here, prefix,
 
   att  <- do.call(rbind, rows)
   num  <- function(x) vapply(x, sql_count, "")
-  vals <- paste(sprintf("(%s, %s, %s, %s, %s, %s, %s, %s, %s, current_timestamp())",
+  vals <- paste(sprintf("(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, current_timestamp())",
                         vapply(att$COHORT, sql_text, ""), num(att$N_FROM),
                         num(att$N_REACHED_LOT), num(att$N_CE_PRE),
                         num(att$N_FINAL), num(att$N_EXCLUDED_BY_PRIOR),
                         sql_count(pre_days), sql_count(fu_days),
-                        sql_text(run_id)),
+                        sql_text(run_id), sql_text(attempt)),
                 collapse = ", ")
   db_exec(con, glue("
     CREATE OR REPLACE TABLE {wrk('NDMM_SUBSEQUENT_ATTRITION')} AS
     SELECT * FROM (VALUES {vals})
       AS t(COHORT, N_FROM, N_REACHED_LOT, N_CE_PRE, N_FINAL, N_EXCLUDED_BY_PRIOR,
-           CE_PRE_DAYS, CE_FU_DAYS, SUBSEQ_RUN_ID, BUILT_AT)"))
+           CE_PRE_DAYS, CE_FU_DAYS, SUBSEQ_RUN_ID, SUBSEQ_ATTEMPT, BUILT_AT)"))
   log_msg("Wrote ", wrk("NDMM_SUBSEQUENT_ATTRITION"))
-  # All three outputs carry this run id. A run that died between them leaves
-  # one table stamped with an older one, and the mismatch is the evidence.
-  log_msg("All three tables are stamped SUBSEQ_RUN_ID = ", run_id,
-          ", CE_PRE_DAYS = ", pre_days, ", CE_FU_DAYS = ", fu_days)
+  # All three outputs carry this attempt. The run id alone did not distinguish
+  # them - a retry inside one Domino execution reuses it - so a run that died
+  # between the tables left a mismatch in nothing a reader compared. The
+  # attempt is minted per call, so now it does.
+  write_subseq_status(con, cfg, attempt, "complete", pre_days, fu_days, src)
+  options(subseq_complete = TRUE)
+  log_msg("All three tables are stamped SUBSEQ_ATTEMPT = ", attempt,
+          " (run ", run_id, "), CE_PRE_DAYS = ", pre_days,
+          ", CE_FU_DAYS = ", fu_days)
   log_msg(SEP)
   invisible(TRUE)
 }

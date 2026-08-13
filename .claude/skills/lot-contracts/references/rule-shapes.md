@@ -64,7 +64,45 @@ biosimilar pairs via `permissible_subs.csv`; carboplatin ↔ cisplatin as "the
 same platinum" is the identical shape. Contract fields: `equivalence.source`,
 `equivalence.pairs` (additions beyond the file, as `A~B` strings).
 
-## 5. Boundary labels — status: specified only
+## 5. Discontinuation confirmation — status: implemented
+
+When a line's drugs run out, whether that counts as the patient *stopping*.
+Claims cannot tell "they stopped" from "we stopped seeing them", so a run-out is
+only a discontinuation once confirmed, and there are two ways to confirm one:
+
+- **By observation** — at least `lines.discon_confirm_days` of follow-up remain
+  after the run-out and nothing appears in them. Below that the line is censored
+  at end of observation instead, and ends `STUDY_END` or `DEATH`.
+- **By the patient** — a line-opening event appears after the run-out, which
+  settles the question directly. `lines.discon_confirmed_by_return`.
+
+The second is not optional decoration. The next line starts strictly after the
+previous one ends, so censoring a line to end of observation swallows anything
+that follows the run-out: without the return clause, a patient who restarts
+inside the window loses a line. Myeloma runs 90 days with the return clause on.
+
+Contract fields: `lines.discon_confirm_days` (`none` = every run-out counts),
+`lines.discon_confirmed_by_return`. Both are pinned to the engine.
+
+Why it matters per tumor: the wait is a cadence question. Continuous oral
+therapy and three-weekly infusions do not leave the same footprint when a
+patient stops, so a window borrowed from another tumor is a guess.
+
+## 6. Induction absorption — status: implemented for CAR-T
+
+An event of a typed stream that lands inside line 1's regimen window is part of
+line 1: it neither ends the line nor starts one. Without it, a transplant or
+cell therapy given as planned first-line consolidation reads as a second line.
+
+Contract field: `event_streams.<NAME>.induction_absorbed`. Myeloma sets it on
+CART, so a CAR-T inside the 60-day line-1 window is first-line therapy; the same
+infusion a day later ends the line and opens the next.
+
+The window it is measured against is line 1's own
+(`lines.regimen_window_days_line1`), not the stream's consolidation window —
+they are different questions and myeloma's values differ, 60 against 45.
+
+## 7. Boundary labels — status: specified only
 
 Classifications computed *between* assembled lines, after assembly:
 platinum-free interval, treatment-free interval, sensitive/resistant categories.
@@ -75,12 +113,19 @@ proxies and every deliverable says so.
 Contract fields: `boundary_labels.<name>.{from_event, to_event, *_min_days,
 assumed, note}`.
 
-## 6. Windows, caps, ladder — status: implemented
+## 8. Windows, caps, ladder — status: implemented
 
 `lines.regimen_window_days_*`, `lines.max_lot`, `lines.end_priority`,
 `episodes.*`, `observation.censor_at_disenrollment` — all real settings today,
 governed by the engine's CONTRACT mechanism. A tumor's parameter set is a
 contract in exactly that sense.
+
+The myeloma contract is held to those settings by reading them: the validator
+parses `CONTRACT` out of `build_lot.R` and compares field by field. It used to
+restate them instead, and a restatement cannot notice the engine moving — three
+settings were added and the contract validated clean throughout. Every engine
+setting is now either bound to a contract field or listed as deliberately not an
+axis, so a setting added with no decision recorded fails the check.
 
 ## Applying the library — the three worked cases
 

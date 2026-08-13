@@ -45,6 +45,8 @@ lines:
     - MED
   regimen_window_days_line1: <days>
   regimen_window_days_later: <days>
+  discon_confirm_days: <days | none>     # observation required AFTER a run-out
+  discon_confirmed_by_return: <true | false>
   same_day_tie:             # event-type order when triggers share a day
     - <TYPE>
   end_priority:             # full ladder; must include DEATH, DISCONTINUATION, STUDY_END
@@ -62,6 +64,9 @@ event_streams: {}           # or one map per stream:
 #    tandem_max_gap_days: <days>     (optional)
 #    consolidation_days: <days>      (optional; regimen window when this type starts a line)
 #    bridging_med_add_days: <days>   (optional)
+#    induction_absorbed: <true|false> (optional; an event inside line 1's
+#                                      regimen window belongs to line 1 and
+#                                      neither ends it nor starts a line)
 #    line_span: <regimen | single_day>
 #    may_start_line1: <true | false>
 #    may_start_later_lines: <true | false>
@@ -81,6 +86,15 @@ criteria: {}                # or one map per criterion:
 expectations:
   note: <where this tumor's face-validity bands live, or TBD>
 ```
+
+`lines.discon_confirm_days` is the wait before a run-out counts as a
+discontinuation, and `none` is the explicit off — every run-out counts. Below
+the window the line is censored at end of observation instead, so the two
+values a tumor picks here decide how many of its lines end `DISCONTINUATION`
+rather than `STUDY_END`. `discon_confirmed_by_return: true` says an observed
+line-opening event after the run-out confirms it on its own, without waiting
+out the window; it is meaningless with `discon_confirm_days: none` and the
+validator refuses that pair.
 
 Status semantics: `baseline_extracted` is reserved for contracts pinned to
 shipped engine behavior (myeloma). `draft` means unreviewed — it must contain at
