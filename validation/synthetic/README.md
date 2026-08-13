@@ -58,9 +58,23 @@ so:
 CONFIRM_DAYS=0 python3 validation/synthetic/run_synthetic.py --base /tmp/before.json
 ```
 
-answers "what does rule B actually do to the numbers" by measurement. On 600
-patients it moves 87 lines, every one `STUDY_END` → `DISCONTINUATION`, with no
-line-count and no cohort-membership change.
+answers "what does rule B actually do to the numbers" by measurement.
+
+The two settings give opposite signatures, which is the point of looking:
+
+| | rule B off | CAR-T rule off |
+|---|---|---|
+| lines in one run only | **0** | **51** |
+| transition types | **1** | 24 |
+| 2L / 3L membership | unchanged | 19 / 16 patients |
+
+Rule B moves `STUDY_END` → `DISCONTINUATION` and nothing else — a contained
+change, and the same shape on every seed tried. Turning the CAR-T induction
+rule off creates and destroys lines, shifts every later line for those
+patients, and moves cohort membership with them. Both match what
+`lot/LOT_RULES.md` says they do; the first is what a safe fix looks like and
+the second is what a rule change looks like. A diff that sprawls when you
+expected it contained is the signal to stop.
 
 ## What it cannot do
 
