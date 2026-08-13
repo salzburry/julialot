@@ -2060,8 +2060,14 @@ assign("load_codelist_csv", function(...) "(SELECT 1) src", envir = ce)
 assign("db_exec", function(...) invisible(NULL), envir = ce)
 assign("log_msg", function(...) invisible(NULL), envir = ce)
 assign("NDMM_CLINTRIAL_CODES", "v_ct", envir = ce)
-drive_ct <- function(n_codes) {
-  assign("db_q", function(con, sql) data.frame(N = n_codes), envir = ce)
+# Two questions of the view: how many codes survived, and whether any carries
+# a type no arm of the scan emits.
+drive_ct <- function(n_codes, types = data.frame(code_type = character(0),
+                                                 n = integer(0))) {
+  assign("db_q", function(con, sql) {
+    if (grepl("count(*) AS N", sql, fixed = TRUE)) return(data.frame(N = n_codes))
+    types
+  }, envir = ce)
   tryCatch({ ce$build_ndmm_clintrial_codes(NULL); "" }, error = conditionMessage)
 }
 ok(identical(drive_ct(6L), ""), "a list with usable codes passes")
@@ -2074,6 +2080,25 @@ assign("db_q", function(con, sql) stop("no such view"), envir = ce)
 ok(grepl("cannot say", tryCatch({ ce$build_ndmm_clintrial_codes(NULL); "" },
                                 error = conditionMessage), fixed = TRUE),
    "and a check that could not run is not read as a pass")
+# Codes that cannot be reached are the other way a full-looking list does
+# nothing: a CPT-typed row loads, joins on a type no arm emits, and matches
+# zero, so a patient in a trial by that code reads as not in one.
+mct2 <- drive_ct(6L, data.frame(code_type = "CPT", n = 4L))
+ok(grepl("code type(s) no claim source produces", mct2, fixed = TRUE) &&
+     grepl("CPT", mct2, fixed = TRUE) && grepl("4", mct2, fixed = TRUE),
+   "a type no arm of the scan emits stops the run, naming it and the count")
+ok(grepl("would read as not in one", mct2, fixed = TRUE),
+   "...and says what it would do to those patients, which is the failure")
+ok(setequal(ce$NDMM_CLINTRIAL_CODE_TYPES,
+            c("ICD9DIAG", "ICD10DIAG", "ICD9PROC", "ICD10PROC", "HCPCS", "REV")),
+   "the six types the guard allows are the six arms of the scan emit")
+# Two scans, two constants. Sharing one would let an arm dropped from either
+# scan quietly loosen the other's guard.
+ct_code <- grep("^\\s*#", readLines(file.path(ROOT, "R", "steps", "08_clintrial.R"),
+                                    warn = FALSE), value = TRUE, invert = TRUE)
+ok(!any(grepl("NDMM_PREG_CODE_TYPES", ct_code, fixed = TRUE)),
+   "...and it is this scan's own list, not the pregnancy scan's borrowed")
+
 # The count has to be over rows that could actually join. The scan derives its
 # own code_type and joins on equality, so a row with no type meets nothing.
 ok(grepl("AND code_type IS NOT NULL AND trim(code_type) <> ''",

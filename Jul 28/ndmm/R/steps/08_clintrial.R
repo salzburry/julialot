@@ -47,6 +47,19 @@
 # normalisation the broad build uses, so "a trial claim" means one thing across
 # the two cohorts and a difference between them is about the window, not about
 # the codes.
+# Every code_type the claim scan in build_ndmm_clintrial_flags() can emit: the
+# two ICD families off med_diagnosis, the two off med_procedure, and HCPCS and
+# REV off the medical stack(3). A clintrial.csv row typed anything else - CPT,
+# say - is loaded, joined on equality, and matches nothing, so the flag reads 0
+# and no error is raised. Named here, beside the scan that emits them, so the
+# guard and the scan cannot drift apart.
+#
+# The same six as NDMM_PREG_CODE_TYPES today, and deliberately not shared with
+# it: these are two scans over different arms, and one dropping an arm must not
+# quietly loosen the other's guard.
+NDMM_CLINTRIAL_CODE_TYPES <- c("ICD9DIAG", "ICD10DIAG", "ICD9PROC", "ICD10PROC",
+                               "HCPCS", "REV")
+
 build_ndmm_clintrial_codes <- function(con) {
   src <- load_codelist_csv("clintrial.csv", c("code", "code_type"))
   db_exec(con, glue("
@@ -78,6 +91,29 @@ build_ndmm_clintrial_codes <- function(con) {
          "punctuation-only once non-alphanumerics are stripped, or carries no ",
          "code type. The scan would match nothing and every patient would be ",
          "flagged as not in a trial.", call. = FALSE)
+
+  # Having codes is not the same as having reachable ones. The join is on
+  # code_type equality against a type the scan derives itself, so a row typed
+  # something no arm emits loads cleanly and matches nothing - a rule that
+  # cannot fire, and the count above cannot see it because the row is present
+  # and well formed. Same guard 05_pregnancy.R carries, over this scan's types.
+  want <- paste(sprintf("'%s'", NDMM_CLINTRIAL_CODE_TYPES), collapse = ", ")
+  bad <- tryCatch(db_q(con, glue("
+    SELECT code_type, count(*) AS n
+    FROM {NDMM_CLINTRIAL_CODES}
+    WHERE code_type NOT IN ({want})
+    GROUP BY code_type ORDER BY code_type")), error = function(e) NULL)
+  if (is.null(bad))
+    stop("Could not check the code types in clintrial.csv, so this run cannot ",
+         "say whether every clinical-trial code is reachable.", call. = FALSE)
+  if (nrow(bad))
+    stop("clintrial.csv carries code type(s) no claim source produces: ",
+         paste0(bad$code_type, " (", bad$n, " code(s))", collapse = ", "),
+         ".\nThey would match nothing, so patients in a trial by those codes ",
+         "would read as not in one. The scan emits ",
+         paste(NDMM_CLINTRIAL_CODE_TYPES, collapse = ", "),
+         "; either retype the rows or add the source that reads them.",
+         call. = FALSE)
   invisible(TRUE)
 }
 
