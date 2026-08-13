@@ -55,7 +55,7 @@ LOT_DIMENSIONS <- list(
                      "and SCT_AUTO is one of the start types the next line can ",
                      "take, so a further transplant becomes a line of its own ",
                      "even with no drug beside it."),
-       where = "lot/engine/R/steps/05b_lot1_sct.R:111, :133, lot/engine/R/steps/10_lot2_5_base.R:293, :347",
+       where = "lot/engine/R/steps/05b_lot1_sct.R:118, :140, lot/engine/R/steps/10_lot2_5_base.R:293, :347",
        proves = c("sct_tandem_days", "ENDING_AUTO_DT", "d_AUTO", "SCT_AUTO"),
        question = paste0("Does the definition count ASCT as a separate prior ",
                          "line, or as part of the induction line it follows? ",

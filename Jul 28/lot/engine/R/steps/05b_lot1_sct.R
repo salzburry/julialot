@@ -32,7 +32,10 @@ phase_lot1_sct <- function(con, ctx) {
     ),
     -- AUTO dates within LOT1 observation window
     -- Censored at earliest ALLO/CART: ALLO and CART immediately end LOT1,
-    -- so AUTO events after an ALLO/CART are not relevant to LOT1.
+    -- so AUTO events after an ALLO/CART are not relevant to LOT1. The
+    -- predicate is strict (<), so an AUTO ON the ALLO/CART date is dropped
+    -- too - the line has ended the day before, and that AUTO belongs to
+    -- whatever follows.
     earliest_non_auto AS (
       SELECT ac.PATID, min(ac.TX_DT) AS FIRST_NON_AUTO_DT
       FROM tx_allo_cart_dates ac
@@ -88,6 +91,10 @@ phase_lot1_sct <- function(con, ctx) {
     ),
     -- Check for ALLO between AUTO_DT_1 and AUTO_DT_2 (inclusive)
     -- Tandem disqualified if ALLO exists such that AUTO_DT_1 <= ALLO <= AUTO_DT_2
+    -- Belt and braces: the censor above already drops any AUTO at or past the
+    -- first ALLO, so AUTO_DT_2 with an ALLO at or before it cannot survive to
+    -- here and this branch is not reachable from LOT1's own inputs. Kept
+    -- because it is cheap and the two guards fail safe independently.
     allo_between AS (
       SELECT ap.PATID,
         sum(CASE WHEN ac.TX_DT >= ap.AUTO_DT_1 AND ac.TX_DT <= ap.AUTO_DT_2

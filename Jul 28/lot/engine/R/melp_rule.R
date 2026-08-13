@@ -105,13 +105,21 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
                   THEN 0 ELSE 1 END AS IS_NEW
       FROM melp_doses
     ),
-    melp_expo AS (
-      SELECT PATID, min(DOSE_DT) AS EXPO_DT
+    -- Every dose with its exposure's first date. The suppress list has to
+    -- reach the LATER doses of a suppressed exposure too: a B.2 exposure made
+    -- of doses on days 70 and 98 is one administration, and suppressing only
+    -- day 70 left day 98 on the candidate list - the boundary B.2 says is not
+    -- there, opened by the second half of the same administration.
+    melp_dose_expo AS (
+      SELECT PATID, DOSE_DT,
+             min(DOSE_DT) OVER (PARTITION BY PATID, E) AS EXPO_DT
       FROM (SELECT PATID, DOSE_DT,
                    sum(IS_NEW) OVER (PARTITION BY PATID ORDER BY DOSE_DT
                                      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS E
             FROM melp_runs) r
-      GROUP BY PATID, E
+    ),
+    melp_expo AS (
+      SELECT DISTINCT PATID, EXPO_DT FROM melp_dose_expo
     ),
     melp_expo_sct AS (
       SELECT e.PATID, e.EXPO_DT,
@@ -168,6 +176,17 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
         AND GAP >= {cfg$melp_restart_days}
         AND GAP <  {cfg$melp_advance_days}
     ),
+    -- The suppressed EXPOSURES, expanded to every dose in them. The decision is
+    -- per exposure; the candidate list is per dose. Suppressing only the
+    -- exposure's first date left its later doses as candidates - see
+    -- melp_dose_expo. Kept apart from melp_suppress so the decision CTE stays
+    -- readable as the branch table (and the test harnesses read its arms).
+    melp_suppress_dates AS (
+      SELECT DISTINCT d.PATID, d.DOSE_DT AS SUPPRESS_DT
+      FROM melp_dose_expo d
+      INNER JOIN melp_suppress s
+        ON s.PATID = d.PATID AND s.SUPPRESS_DT = d.EXPO_DT
+    ),
     -- On to it. Two arms, because the rule advances at two different dates.
     --
     -- UNRESOLVED, left as it stands. An arm acting on EXPO_DT requires
@@ -200,14 +219,21 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
     ),"))
 }
 
-# Takes a suppressed date off the engine's own candidate list. Empty when off,
-# so the predicate chain it sits in is unchanged.
+# Takes a suppressed MELPHALAN row off the engine's own candidate list. Empty
+# when off, so the predicate chain it sits in is unchanged.
+#
+# Melphalan rows only, and dose dates rather than exposure dates. The rule's
+# whole contract is that it changes which melphalan rows may be an added
+# medication and nothing else - a date-only match also removed any OTHER agent
+# starting on a suppressed date, so a same-day switch to a new drug lost its
+# boundary and the line never ended.
 melp_suppress_predicate <- function(cfg, alias = "ms") {
   if (!melp_rule_on(cfg)) return("")
   paste0("\n", glue("
-        AND NOT EXISTS (SELECT 1 FROM melp_suppress s
-                        WHERE s.PATID = {alias}.PATID
-                          AND s.SUPPRESS_DT = {alias}.MAP_START_DT)"))
+        AND NOT (upper(trim({alias}.MAP_MED_TYPE)) = '{melp_abbr(cfg)}'
+                 AND EXISTS (SELECT 1 FROM melp_suppress_dates s
+                             WHERE s.PATID = {alias}.PATID
+                               AND s.SUPPRESS_DT = {alias}.MAP_START_DT))"))
 }
 
 # The rows the rule adds, as a UNION arm on first_add_candidates. Bounded to the

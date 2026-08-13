@@ -149,6 +149,12 @@ day before the infusion), and a CAR-T-started line with no consolidation agent,
 which spans a single day. Neither applies to a CAR-T inside LOT1's induction
 window — §10.
 
+**`CART_INIT` vs `MED_ADD` is a taxonomy, not a fall-through.** An added
+medication followed by a CAR-T within 45 days is bridging and belongs to
+`CART_INIT`; it is never re-read as a `MED_ADD` event. So when the CAR-T lands
+after the runout, the line ends `DISCONTINUATION` at the runout - not `MED_ADD`
+at the bridging agent - and the CAR-T opens the next line.
+
 **The post-runout guard.** `DEATH` outranks `DISCONTINUATION`, but only when no
 line-opening trigger sits between the runout and the death. A patient who ran
 out, started something new, then died ends that line at the runout — the new
