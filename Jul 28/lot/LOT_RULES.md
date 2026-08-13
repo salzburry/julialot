@@ -5,8 +5,9 @@ and the file it lives in. Written from the code, not from the spec — where the
 two differ, this follows the code and says so.
 
 The melphalan line-advancing rule (§9) is **not** in the contract build and is
-marked as such throughout. The CAR-T 60-day induction rule (§10) **is**, as of
-2026-08-13.
+marked as such throughout. Two rules **are**, both as of 2026-08-13: the CAR-T
+60-day induction rule (§10) and the discontinuation confirmation buffer (§3).
+Runs before that date differ from this document.
 
 ---
 
@@ -72,14 +73,58 @@ a later fill of the same drug is a restart, and a restart opens the next line
 (§6). The line has run out when its last base agent has.
 
 **The confirmation buffer** (`lot_discon_confirm_days` = 90). A line's run-out
-only counts as a discontinuation if at least that much observation follows it.
-Below that, the line is censored at study end instead.
+only counts as a discontinuation if at least that much observation follows it:
+
+```
+datediff(OBS_END_DT, run-out) >= lot_discon_confirm_days
+```
+
+Below that, the run-out date is dropped and the line falls through the cascade
+(§7) to `DEATH` or `STUDY_END` — so it is censored at the end of observation
+rather than closed at the last fill.
 
 This is a real-world-data rule: no longer seeing fills and having stopped
-treatment are different claims, and near the end of the data they cannot be
-told apart. It also catches an agent still covered at the end of observation,
-which is never flagged as run out yet whose last fill date previously became
-the line's discontinuation.
+treatment are different claims, and near the end of the data they cannot be told
+apart. It also catches an agent still covered at the end of observation, which
+is never flagged as run out yet whose last fill date previously became the
+line's discontinuation.
+
+**Scope.** Every line, LOT1 through LOT5, and every LOT type. It runs against
+`OBS_END_DT`, so the buffer is measured to death or study end, whichever bounds
+that patient — a patient who dies 30 days after running out is censored by this
+rule, then classified `DEATH` by the cascade.
+
+**What it moves.** End reasons, and for the censored lines their end dates and
+`LOT_BASE_LENGTH`. The effect concentrates in the lines closest to the data
+cutoff, so later lines shift more than LOT1.
+
+**It can also remove a line.** The next line starts strictly after the previous
+line's end date (§6), so censoring a line to the end of observation absorbs
+anything that follows the unconfirmed run-out. A patient whose line runs out
+inside the buffer and who then restarts a **base** agent gets one long censored
+line instead of two:
+
+| | run-out | restart | LOT1 ends | lines |
+|---|---|---|---|---|
+| buffer off | day 200 | day 210 | `DISCONTINUATION` day 200 | 2 |
+| buffer on | day 200 | day 210 | `STUDY_END` day 250 | 1 |
+
+*(verified against the shipped step 04/06 SQL; observation ends day 250, so
+only 50 days follow the run-out)*
+
+A **non-base** agent behaves differently: dropping the run-out widens the
+add-med window, so the new agent becomes the added medication, ends the line
+the day before itself, and still opens the next line. Line count is preserved
+on that path.
+
+This is the buffer's known edge: its rationale is that absent data is not
+evidence of stopping, but a patient who returns has resolved that absence with
+evidence. See §11.
+
+**Turning it off.** `LOT_DISCON_CONFIRM_DAYS=0` restores the previous behaviour
+exactly, which is how a pre-2026-08-13 cohort is reproduced. It is a `CONTRACT`
+setting, so a run that changes it is recorded in `CONTRACT_DEVIATIONS` and is
+not the study's numbers.
 
 The spec is inconsistent here — its `LOT1_BASE` tab carries this rule and its
 later end-date tabs re-derive the end date without it. The study team
@@ -313,6 +358,21 @@ reasons, on LOT1 length, or on line counts for those patients.
 - **The CAR-T induction rule is in the numbers** as of 2026-08-13, so runs
   before that date differ on `SCT_CART`, `CART_INIT`, LOT1 length and line
   counts for the patients it touches. §10.
+- **The discontinuation confirmation buffer is in the numbers** as of
+  2026-08-13, resolving a contradiction inside the spec rather than departing
+  from it: the `LOT1_BASE` tab requires 90 days of observation after a run-out
+  and the later end-date tabs do not. The build follows the tab that has it, on
+  every line. Runs before that date differ on end reasons, end dates and
+  `LOT_BASE_LENGTH` for lines running out near the cutoff. §3.
+- **The buffer is unconditional, and the spec does not say whether it should
+  be.** It censors a run-out on elapsed observation alone, so it also censors
+  run-outs the patient themselves confirmed by restarting a base agent, and
+  that restart is then absorbed into the censored line rather than opening the
+  next one (§3). The build already carries the opposite convention one branch
+  away — `POST_RUNOUT_TRIGGER_FLG` stops `DEATH` outranking `DISCONTINUATION`
+  when a line-opening trigger sits after the run-out (§7) — so exempting a
+  confirmed return from the buffer would be consistent with it. **Open with the
+  study team.**
 - **B.2 removes a boundary without holding the line open.** §9.
 - **Disenrollment is not censoring** in the primary analysis. §7.
 - **Maintenance is not implemented.** There is no maintenance concept in the
@@ -331,10 +391,10 @@ reasons, on LOT1 length, or on line counts for those patients.
 |---|---|
 | Settings, contract, metadata | `lot/engine/R/build_lot.R` |
 | MAP stacking, day supply, runout | `lot/engine/R/steps/03_mma_map.R` |
-| LOT1 start, regimen | `lot/engine/R/steps/04_lot1_base.R` |
+| LOT1 start, regimen, confirmation buffer | `lot/engine/R/steps/04_lot1_base.R` |
 | Transplant events, tandem | `lot/engine/R/steps/05_sct.R` |
 | LOT1 end cascade | `lot/engine/R/steps/06_lot1_end.R` |
-| LOT2-5 start, regimen, end | `lot/engine/R/steps/10_lot2_5_base.R` |
+| LOT2-5 start, regimen, end, confirmation buffer | `lot/engine/R/steps/10_lot2_5_base.R` |
 | Line criteria, truncation | `lot/engine/R/line_criteria.R` |
 | Melphalan rule | `lot/engine/R/melp_rule.R`, `lot/melphalan/` |
 | CAR-T induction rule | `lot/engine/R/cart_rule.R` |
