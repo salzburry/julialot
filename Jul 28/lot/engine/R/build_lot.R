@@ -107,7 +107,12 @@ REQUIRED_COHORT_COLS <- c("PATID", "INDEX_DATE", "ENDDATE", "ENDDATE_CE",
 # integer setting that will not parse becomes NA and silently widens a window.
 BOOL_SETTINGS <- c("USE_QUARTERLY_TABLES", "CENSOR_AT_DISENROLLMENT",
                    "PERSIST_TO_SCHEMA", "APPLY_CART_INDUCTION_RULE",
-                   "APPLY_NO_BELANTAMAB")
+                   "APPLY_NO_BELANTAMAB",
+                   # config_lot.R coerces this with as.logical() like the rest
+                   # and it was not checked here, so FACE_VALIDITY_FATAL=Ture
+                   # became NA, isTRUE(NA) is FALSE, and the run carried on
+                   # past a band it had been told to stop for.
+                   "FACE_VALIDITY_FATAL")
 INT_SETTINGS  <- c("INDUCTION_WINDOW_DAYS", "INDUCTION_WINDOW_DAYS_LOT_N",
                    "MAP_DISCON_GAP_DAYS", "MEDICAL_DAY_SUPPLY",
                    "SCT_AUTO_WINDOW_DAYS", "SCT_AUTO_GAP_DAYS",

@@ -25,6 +25,7 @@ SETTINGS <- c("USE_QUARTERLY_TABLES", "CENSOR_AT_DISENROLLMENT", "PERSIST_TO_SCH
               "PROJECT_WORK_SCHEMA", "DOMINO_USER_NAME", "DOMINO_STARTING_USERNAME",
               "STUDY_END", "INPUT_COHORT_TABLE", "OBJECT_PREFIX",
               "ALLO_LOT_SPAN", "MAX_LOT", "CODELIST_WAIVERS",
+              "FACE_VALIDITY_FATAL",
               # Not a setting - the one way past the contract check. Cleared
               # with the rest, or a stray value in the environment turns the
               # loop below into thirteen assertions that pass for the wrong
@@ -1452,6 +1453,11 @@ clear()
 runs(check_settings(), "unset is fine")
 Sys.setenv(CENSOR_AT_DISENROLLMENT = "Y")
 stops(check_settings(), "as.logical('Y') is NA, not FALSE")
+clear()
+# Same coercion, and it was not in the list: a typo made this NA, isTRUE(NA) is
+# FALSE, and a run told to stop on a face-validity band carried on instead.
+Sys.setenv(FACE_VALIDITY_FATAL = "Ture")
+stops(check_settings(), "a mistyped FACE_VALIDITY_FATAL, which used to read as off")
 clear()
 Sys.setenv(MAP_DISCON_GAP_DAYS = "ninety")
 stops(check_settings(), "a window that will not parse")

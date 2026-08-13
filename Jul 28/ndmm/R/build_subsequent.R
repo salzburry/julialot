@@ -56,6 +56,45 @@ SUBSEQ_STATUS_COLS <- c(
   SOURCE_LOT_RUN_ID = "STRING", SOURCE_LOT_STAMP = "STRING",
   UPDATED_AT = "TIMESTAMP")
 
+# Another attempt of this build already going on this prefix.
+#
+# Reads its own status table rather than the 1L build's: those are different
+# builds writing different tables, and a 1L run in progress is not a reason to
+# refuse this one. An unreadable table is this check not running, which is not
+# this check passing - the same line every other status reader here draws.
+subseq_check_no_active_run <- function(con, cfg) {
+  tbl <- wrk("NDMM_SUBSEQ_BUILD_STATUS")
+  d <- tryCatch(db_q(con, glue("
+    SELECT ATTEMPT, UPDATED_AT FROM {tbl}
+    WHERE OBJECT_PREFIX = {sql_text(cfg$object_prefix)}
+      AND STATE = 'started'")), error = function(e) e)
+  ignoring <- identical(toupper(trimws(Sys.getenv("NDMM_SUBSEQ_IGNORE_ACTIVE_RUN",
+                                                  unset = ""))), "TRUE")
+  if (inherits(d, "condition")) {
+    if (missing_object_error(d)) return(invisible(TRUE))
+    if (ignoring) {
+      log_msg("WARNING: ", tbl, " could not be read (", conditionMessage(d),
+              ") and NDMM_SUBSEQ_IGNORE_ACTIVE_RUN is set, so nothing checked ",
+              "whether another subsequent build is running on this prefix.")
+      return(invisible(TRUE))
+    }
+    stop("Could not read ", tbl, " (", conditionMessage(d), "), so whether ",
+         "another subsequent build is already running on prefix '",
+         cfg$object_prefix, "' is unknown. Two of them interleave 2L, 3L and ",
+         "the attrition and both reach complete. ",
+         "NDMM_SUBSEQ_IGNORE_ACTIVE_RUN=TRUE proceeds anyway.", call. = FALSE)
+  }
+  if (nrow(d)) {
+    msg <- paste0("Another subsequent build is marked started on prefix '",
+                  cfg$object_prefix, "' (attempt ", d[[1]][1], ", ", d[[2]][1],
+                  "). They write the same three tables under the same names, ",
+                  "so running both leaves a pair that is partly each. Wait for ",
+                  "it, or NDMM_SUBSEQ_IGNORE_ACTIVE_RUN=TRUE if it died.")
+    if (ignoring) log_msg("WARNING: ", msg) else stop(msg, call. = FALSE)
+  }
+  invisible(TRUE)
+}
+
 # One row per attempt, not per run id: a retry has to be visible beside the
 # attempt it is replacing, or "it died part-way" is not recorded anywhere.
 # started before the first table is replaced, complete after the last one,
@@ -468,6 +507,13 @@ build_subsequent <- function(here, prefix,
   # and build_ndmm.R use, and for the same reason: a run that dies with a
   # 'started' row and no handler leaves nothing saying it ended.
   attempt <- subseq_attempt_id()
+  # Same check the 1L build runs, over this build's own status table. The three
+  # outputs carry no run id in their names, so two of these running at once on
+  # one prefix interleave and both reach complete having published a pair that
+  # is partly the other's. A check, not a lock: two starting at the same instant
+  # both pass it. It catches the case worth catching - starting a second while
+  # one is going - and NDMM_SUBSEQ_IGNORE_ACTIVE_RUN=TRUE is the way past.
+  subseq_check_no_active_run(con, cfg)
   options(subseq_complete = FALSE)
   write_subseq_status(con, cfg, attempt, "started", pre_days, fu_days, src)
   on.exit(if (!isTRUE(getOption("subseq_complete", FALSE)))

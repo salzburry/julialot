@@ -169,11 +169,17 @@ DEVIATIONS <- list(
   # newer row carrying a null YRDOB won and took the age with it. The added
   # keys prefer a usable birth year and then order by the values themselves,
   # so the same input always yields the same patient.
+  # The two sort keys also swapped: a usable birth year now outranks a known
+  # sex. Ranking sex first lost patients - an 'M' row with no YRDOB beat a 'U'
+  # row carrying 1980, and the age filter then dropped someone eligible. So the
+  # whole ORDER BY is registered rather than the added lines alone.
   "15_member_demo" = list(
-    list(port = c("CASE WHEN cast(YRDOB as int) IS NOT NULL THEN 0 ELSE 1 END,",
+    list(port = c("ORDER BY CASE WHEN cast(YRDOB as int) IS NOT NULL THEN 0 ELSE 1 END,",
+                  "CASE WHEN upper(GDR_CD) NOT IN ('U','') THEN 0 ELSE 1 END,",
                   "cast(ELIGEND as date) DESC,",
                   "cast(YRDOB as int), GDR_CD) AS rn"),
-         src  = "cast(ELIGEND as date) DESC) AS rn")),
+         src  = c("ORDER BY CASE WHEN upper(GDR_CD) NOT IN ('U','') THEN 0 ELSE 1 END,",
+                  "cast(ELIGEND as date) DESC) AS rn"))),
   # Every code list is read DISTINCT, and every one drops codes that normalize
   # to blank. A code that is only punctuation normalizes to the empty string and
   # then equals the normalized form of any claim whose code is missing - the
