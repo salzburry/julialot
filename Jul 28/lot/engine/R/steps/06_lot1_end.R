@@ -82,7 +82,7 @@ phase_lot1_end <- function(con, ctx) {
   materialize(con, "S16_lot1_base_end", view = "lot1_base_end", name = "LOT1_BASE_END", body = glue("
     WITH{melp_lot1_ctes(cfg)}
     -- Post-runout guard: identify whether any LOT2-qualifying trigger
-    -- exists strictly after LOT1_BASE_DISCON_DT and on/before OBS_END_DT.
+    -- exists strictly after LOT1_BASE_RUNOUT_DT and on/before OBS_END_DT.
     -- Prevents DEATH from preempting DISCONTINUATION when a patient ran out
     -- and then started new therapy (or had an SCT) before dying.
     --
@@ -110,8 +110,8 @@ phase_lot1_end <- function(con, ctx) {
       INNER JOIN lot1_base lb ON ms.PATID = lb.PATID
       LEFT JOIN post_runout_excluded_meds prem
         ON ms.PATID = prem.PATID AND ms.MAP_MED_TYPE = prem.MED_ABBR
-      WHERE lb.LOT1_BASE_DISCON_DT IS NOT NULL
-        AND ms.MAP_START_DT > lb.LOT1_BASE_DISCON_DT
+      WHERE lb.LOT1_BASE_RUNOUT_DT IS NOT NULL
+        AND ms.MAP_START_DT > lb.LOT1_BASE_RUNOUT_DT
         AND ms.MAP_START_DT <= lb.OBS_END_DT
         AND ms.MAP_MED_CLASS <> 'STEROID'
         AND prem.MED_ABBR IS NULL
@@ -129,8 +129,8 @@ phase_lot1_end <- function(con, ctx) {
       SELECT DISTINCT lb.PATID
       FROM lot1_base lb
       INNER JOIN post_runout_autos awp ON lb.PATID = awp.PATID
-      WHERE lb.LOT1_BASE_DISCON_DT IS NOT NULL
-        AND awp.TX_DT > lb.LOT1_BASE_DISCON_DT
+      WHERE lb.LOT1_BASE_RUNOUT_DT IS NOT NULL
+        AND awp.TX_DT > lb.LOT1_BASE_RUNOUT_DT
         AND awp.TX_DT <= lb.OBS_END_DT
         AND awp.TX_DT > date_add(lb.LOT1_START_DT, {cfg$lot_n_induction_window_days} - 1)
         AND NOT (awp.PREV_AUTO_DT IS NOT NULL
@@ -139,10 +139,10 @@ phase_lot1_end <- function(con, ctx) {
     post_runout_trigger AS (
       SELECT lb.PATID,
         CASE
-          WHEN lb.LOT1_BASE_DISCON_DT IS NULL THEN 0
+          WHEN lb.LOT1_BASE_RUNOUT_DT IS NULL THEN 0
           WHEN prm.PATID IS NOT NULL THEN 1
-          WHEN sct.FIRST_ALLO_DT IS NOT NULL AND sct.FIRST_ALLO_DT > lb.LOT1_BASE_DISCON_DT THEN 1
-          WHEN sct.ENDING_CART_DT IS NOT NULL AND sct.ENDING_CART_DT > lb.LOT1_BASE_DISCON_DT THEN 1
+          WHEN sct.FIRST_ALLO_DT IS NOT NULL AND sct.FIRST_ALLO_DT > lb.LOT1_BASE_RUNOUT_DT THEN 1
+          WHEN sct.ENDING_CART_DT IS NOT NULL AND sct.ENDING_CART_DT > lb.LOT1_BASE_RUNOUT_DT THEN 1
           WHEN pra.PATID IS NOT NULL THEN 1
           ELSE 0
         END AS POST_RUNOUT_TRIGGER_FLG
@@ -155,6 +155,30 @@ phase_lot1_end <- function(con, ctx) {
       SELECT
         lb.*,
         coalesce(prt.POST_RUNOUT_TRIGGER_FLG, 0) AS POST_RUNOUT_TRIGGER_FLG,
+        -- The run-out becomes a discontinuation here, not in 04_lot1_base.R,
+        -- because that is where POST_RUNOUT_TRIGGER_FLG first exists.
+        --
+        -- Confirmed one of two ways, and either is enough:
+        --   by observation - {cfg$lot_discon_confirm_days} days of data follow
+        --     the run-out and no restart appears in them;
+        --   by the patient  - a LOT2-qualifying trigger appears after the
+        --     run-out, which settles the question directly. The buffer exists
+        --     because absent data is not evidence of stopping; a patient who
+        --     comes back has replaced that absence with evidence, so waiting
+        --     out the window adds nothing.
+        --
+        -- Unconfirmed leaves it NULL and the cascade censors the line at
+        -- OBS_END_DT. Gating on elapsed time alone would swallow the restart:
+        -- LOT2 starts strictly after LOT1 ends, so a line censored to
+        -- OBS_END_DT leaves nothing after it for the next line to start on.
+        CASE
+          WHEN lb.LOT1_BASE_RUNOUT_DT IS NOT NULL
+           AND (coalesce(prt.POST_RUNOUT_TRIGGER_FLG, 0) = 1
+                OR datediff(lb.OBS_END_DT, lb.LOT1_BASE_RUNOUT_DT)
+                     >= {cfg$lot_discon_confirm_days})
+            THEN lb.LOT1_BASE_RUNOUT_DT
+          ELSE NULL
+        END AS LOT1_BASE_DISCON_DT,
         sct.LOT1_TX_AUTO_DT_1,
         sct.LOT1_TX_AUTO_DT_2,
         sct.LOT1_SCT_AUTO_TAND_FLG,

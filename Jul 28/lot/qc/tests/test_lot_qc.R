@@ -34,7 +34,8 @@ SETTINGS <- paste0(
   "allo_lot_span=single_day|belantamab_med_abbr=BELA|cart_consolidation_days=45|",
   "catalog=hive_metastore|cdm_schema=clnprw_optum|censor_at_disenrollment=FALSE|",
   "codelist_dir=/mnt/code/codelist|dsn=RWDE|induction_window_days=60|",
-  "lot_n_induction_window_days=30|map_discon_gap_days=90|max_lot=5|",
+  "lot_discon_confirm_days=90|lot_n_induction_window_days=30|",
+  "map_discon_gap_days=90|max_lot=5|",
   "medical_day_supply=28|melp_advance_days=180|melp_exposure_days=30|",
   "melp_med_abbr=MELP|melp_restart_days=60|melp_sct_days=14|",
   "sct_auto_gap_days=60|sct_auto_window_days=13|sct_tandem_days=180|",
@@ -96,7 +97,8 @@ ok(P$ind1 == 60 && P$indn == 30 && P$cart == 45,
    "the three regimen windows come out of the recorded settings")
 ok(P$tandem == 180 && P$auto_gap == 60,
    "...and so do the transplant thresholds")
-ok(P$gap == 90, "...and B8's confirmation window comes from the recorded gap")
+ok(P$confirm == 90 && P$max_lot == 5,
+   "...and so do B8's confirmation window and the line cap it stops at")
 # induction_window_days is a suffix of lot_n_induction_window_days. The real
 # string is sorted, so the short key happens to come first and would be found
 # correctly even by a search with no anchor on it - which means asking it of
@@ -173,22 +175,33 @@ ok(has(SQL$D3, "= 'STEROID'"),
 d3 <- Filter(function(c_i) identical(c_i$id, "D3"), LOT_QC_CHECKS)[[1]]
 ok(identical(d3$severity, "warn"),
    "...and it reports rather than fails: the list's state, not a line defect")
-# B8: the confirmation window the spec's LOT1_BASE tab still requires and the
-# end-date tabs dropped. The count is only meaningful against this run's own
-# gap - a hardcoded 90 would misread a run built with a different one.
-gapped <- qc_params(sub("map_discon_gap_days=90", "map_discon_gap_days=77",
+# B8: the confirmation window. The count is only meaningful against this run's
+# own window - a hardcoded 90 would misread a run built with a different one,
+# and it reads lot_discon_confirm_days now that the run records it rather than
+# borrowing the per-drug gap.
+gapped <- qc_params(sub("lot_discon_confirm_days=90", "lot_discon_confirm_days=77",
                         SETTINGS, fixed = TRUE), "r")
 b8 <- Filter(function(c_i) identical(c_i$id, "B8"), LOT_QC_CHECKS)[[1]]
 ok(has(b8$sql(TBL, gapped), "< 77"),
-   "B8's confirmation window follows the run's recorded gap, not a constant")
+   "B8's confirmation window follows the run's recorded window, not a constant")
+ok(!has(b8$sql(TBL, qc_params(sub("map_discon_gap_days=90", "map_discon_gap_days=77",
+                                  SETTINGS, fixed = TRUE), "r")), "< 77"),
+   "...and not the per-drug gap, which is a different 90-day rule")
 ok(has(SQL$B8, "= 'DISCONTINUATION'"),
    "...and it counts only lines that ended by running out")
+# A run-out inside the window is legitimate when the patient came back: the
+# return confirms it, so the line keeps DISCONTINUATION and the next line opens.
+# B8 has to exempt those or it would fail every confirmed-by-return line.
+ok(has(SQL$B8, "LOT_NUM = LAST_LOT_NUM"),
+   "B8 fires only where no later line exists - a return confirms the run-out")
+ok(has(SQL$B8, "LOT_NUM < 5"),
+   "...and exempts the max_lot cap, where no later line would be built anyway")
 ok(has(SQL$B9, "= 'DEATH'") && has(SQL$B9, "LOT_BASE_DISCON_DT < LOT_BASE_END_DT"),
    "B9 counts deaths with a strictly earlier run-out - the spec-vs-build gap")
 # B8 was info while the confirmation buffer was an unresolved ambiguity between
 # the spec's own tabs. The study team adjudicated in favour of the tab that has
-# it and the build applies it, so the count is now an invariant: a
-# DISCONTINUATION inside the window is a line the buffer should have censored.
+# it and the build applies it, so the count is now an invariant: an unconfirmed
+# DISCONTINUATION is a line the buffer should have censored.
 ok(identical(Filter(function(c_i) identical(c_i$id, "B8"), LOT_QC_CHECKS)[[1]]$severity, "fail"),
    "B8 is an invariant now the buffer is applied, so a row in it fails the run")
 ok(identical(Filter(function(c_i) identical(c_i$id, "B9"), LOT_QC_CHECKS)[[1]]$severity, "info"),

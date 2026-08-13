@@ -87,23 +87,25 @@ phase_lot1_base <- function(con, ctx) {
     discon AS (
       SELECT
         p.PATID,
-        -- LOT1_BASE_DISCON_DT is where the regimen ran out, whenever that
-        -- falls on or before OBS_END_DT and enough observation follows it to
-        -- call it a discontinuation. Capping at OBS_END_DT prevents
-        -- days-supply tails past death/study_end from extending the LOT.
+        -- Where the regimen ran out, whenever that falls on or before
+        -- OBS_END_DT. Capping at OBS_END_DT prevents days-supply tails past
+        -- death/study_end from extending the LOT.
         --
-        -- The confirmation buffer (lot_discon_confirm_days): a run-out with
-        -- less than that much data left after it is not a discontinuation we
-        -- can see - the patient may simply not have refilled yet - so the line
-        -- is censored at study end instead. This also catches an agent still
-        -- covered at OBS_END: it is never flagged discontinued, yet its last
-        -- fill date used to become the line's run-out.
+        -- This is the run-out, not yet a discontinuation. Whether it counts as
+        -- one depends on the confirmation buffer and on whether the patient
+        -- was seen again afterwards, and neither can be decided here: the
+        -- post-runout trigger needs lot1_sct, which step 05b has not built
+        -- yet. 06_lot1_end.R derives LOT1_BASE_DISCON_DT from this column.
+        --
+        -- Everything in this step that bounds itself at the run-out - the
+        -- add-med window below - wants this raw date and not the confirmed
+        -- one, because an agent added after the regimen ran out opens the
+        -- next line rather than ending this one.
         CASE
           WHEN d.RAW_DISCON_DT IS NOT NULL AND d.RAW_DISCON_DT <= p.OBS_END_DT
-           AND datediff(p.OBS_END_DT, d.RAW_DISCON_DT) >= {cfg$lot_discon_confirm_days}
             THEN d.RAW_DISCON_DT
           ELSE NULL
-        END AS LOT1_BASE_DISCON_DT
+        END AS LOT1_BASE_RUNOUT_DT
       FROM lot_patient_input p
       LEFT JOIN discon_raw d ON p.PATID = d.PATID
     ),
@@ -131,7 +133,7 @@ phase_lot1_base <- function(con, ctx) {
         ms.LOT1_START_DT,
         ms.LOT1_MED_CNT,
         ms.LOT1_BASE_MEDS,
-        d.LOT1_BASE_DISCON_DT,
+        d.LOT1_BASE_RUNOUT_DT,
         {paste0('ms.', paste(c(paste0('LOT1_MED_', vapply(meds, sanitize_col, character(1))), paste0('LOT1_CLASS_', vapply(classes, sanitize_col, character(1)))), collapse = ', ms.'))}
       FROM lot_patient_input p
       INNER JOIN med_summary ms ON p.PATID = ms.PATID
@@ -149,7 +151,7 @@ phase_lot1_base <- function(con, ctx) {
       WHERE bm.MED_ABBR IS NULL
         AND ms.MAP_MED_CLASS <> 'STEROID'  -- a steroid cannot trigger an add-med
         AND ms.MAP_START_DT >= bc.LOT1_START_DT
-        AND ms.MAP_START_DT <= coalesce(bc.LOT1_BASE_DISCON_DT, bc.OBS_END_DT)
+        AND ms.MAP_START_DT <= coalesce(bc.LOT1_BASE_RUNOUT_DT, bc.OBS_END_DT)
     ),
     first_add_pick AS (
       -- When multiple non-induction drugs share the earliest add date,
@@ -174,7 +176,7 @@ phase_lot1_base <- function(con, ctx) {
       bc.PATID, bc.INDEX_DATE, bc.ENDDATE, bc.OBS_END_DT, bc.DEATH_DT,
       bc.GDR_CD, bc.YRDOB, bc.AGE_INDEX_YR,
       bc.LOT1_START_DT, bc.LOT1_MED_CNT, bc.LOT1_BASE_MEDS,
-      bc.LOT1_BASE_DISCON_DT,
+      bc.LOT1_BASE_RUNOUT_DT,
       -- LOT1_BASE_LENGTH is set in S16, where LOT1_BASE_END_DT is final.
       -- This uses the 2-way formula on the derived end date.
       {paste0('bc.', paste(c(paste0('LOT1_MED_', vapply(meds, sanitize_col, character(1))), paste0('LOT1_CLASS_', vapply(classes, sanitize_col, character(1)))), collapse = ', bc.'))},
@@ -187,7 +189,7 @@ phase_lot1_base <- function(con, ctx) {
     SELECT
       count(*) AS n_patients,
       avg(LOT1_MED_CNT) AS avg_induction_meds,
-      sum(case when LOT1_BASE_DISCON_DT is not null then 1 else 0 end) as n_with_discon_dt,
+      sum(case when LOT1_BASE_RUNOUT_DT is not null then 1 else 0 end) as n_with_runout_dt,
       sum(case when LOT1_BASE_1ST_ADD_MED_DT is not null then 1 else 0 end) as n_with_add_med
     FROM lot1_base")
 

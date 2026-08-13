@@ -24,7 +24,7 @@ as the study's numbers.
 | `lot_n_induction_window_days` | 30 | LOT2+ induction window |
 | `cart_consolidation_days` | 45 | consolidation window on a CAR-T-started line |
 | `map_discon_gap_days` | 90 | gap that counts as running out of treatment |
-| `lot_discon_confirm_days` | 90 | observation required after a run-out before it counts as a discontinuation |
+| `lot_discon_confirm_days` | 90 | observation required after a run-out to confirm it, unless the patient restarts |
 | `medical_day_supply` | 28 | assumed day supply for a medical claim |
 | `sct_auto_window_days` | 13 | AUTO claims this many days apart are one transplant |
 | `sct_auto_gap_days` | 60 | AUTO events closer than this merge into one |
@@ -72,65 +72,70 @@ Per drug, not per line. A drug's cover in a line ends at its **first** run-out �
 a later fill of the same drug is a restart, and a restart opens the next line
 (§6). The line has run out when its last base agent has.
 
-**The confirmation buffer** (`lot_discon_confirm_days` = 90). A line's run-out
-only counts as a discontinuation if at least that much observation follows it:
+**The confirmation buffer** (`lot_discon_confirm_days` = 90). A run-out is not
+a discontinuation until it is confirmed, and there are two ways to confirm it.
+Either is enough:
 
-```
-datediff(OBS_END_DT, run-out) >= lot_discon_confirm_days
-```
+- **By observation** — at least `lot_discon_confirm_days` of follow-up remain
+  after the run-out, i.e. `datediff(OBS_END_DT, run-out) >= 90`, and nothing
+  appears in them.
+- **By the patient** — a line-opening trigger appears after the run-out and on
+  or before `OBS_END_DT`: a restarted or new non-steroid agent, an ALLO, a
+  CAR-T, or a qualifying AUTO. `POST_RUNOUT_TRIGGER_FLG`.
 
-Below that, the run-out date is dropped and the line falls through the cascade
-(§7) to `DEATH` or `STUDY_END` — so it is censored at the end of observation
-rather than closed at the last fill.
+Unconfirmed on both counts, the run-out date is dropped and the line falls
+through the cascade (§7) to `DEATH` or `STUDY_END` — censored at the end of
+observation rather than closed at the last fill.
 
-This is a real-world-data rule: no longer seeing fills and having stopped
-treatment are different claims, and near the end of the data they cannot be told
-apart. It also catches an agent still covered at the end of observation, which
-is never flagged as run out yet whose last fill date previously became the
-line's discontinuation.
+The rule is a real-world-data one: no longer seeing fills and having stopped
+treatment are different claims, and near the end of the data they cannot be
+told apart. That is also exactly why a return confirms. The buffer waits
+because the data is absent; a patient who comes back has replaced the absence
+with evidence, and there is nothing left to wait for. Waiting anyway would
+swallow their next line, since a line censored to `OBS_END_DT` leaves nothing
+after it for the next one to start on.
+
+The build takes the same position one branch away: `DEATH` does not outrank
+`DISCONTINUATION` when a line-opening trigger sits between the run-out and the
+death (§7). Same trigger, same reasoning.
+
+**Where it is applied.** In the end step (`06_lot1_end.R`, and the LOT2-5
+equivalent), not where the run-out is computed — `POST_RUNOUT_TRIGGER_FLG`
+needs the transplant events, which are not built yet at `04_lot1_base.R`. So
+`LOT*_BASE_RUNOUT_DT` is the raw run-out and `LOT*_BASE_DISCON_DT` is the
+confirmed one. Anything bounding itself at the run-out — the add-med window —
+reads the raw date, because an agent added after the regimen ran out opens the
+next line rather than ending this one.
 
 **Scope.** Every line, LOT1 through LOT5, and every LOT type. It runs against
 `OBS_END_DT`, so the buffer is measured to death or study end, whichever bounds
-that patient — a patient who dies 30 days after running out is censored by this
-rule, then classified `DEATH` by the cascade.
+that patient — a patient who dies 30 days after running out and never restarts
+is censored by this rule, then classified `DEATH` by the cascade.
 
 **What it moves.** End reasons, and for the censored lines their end dates and
-`LOT_BASE_LENGTH`. The effect concentrates in the lines closest to the data
-cutoff, so later lines shift more than LOT1.
+`LOT_BASE_LENGTH`. Only patients who were never seen again are affected, so
+line counts are unchanged. The effect concentrates in the lines closest to the
+data cutoff, so later lines shift more than LOT1. Three patients, all running
+out on day 200, observation ending day 250 unless stated:
 
-**It can also remove a line.** The next line starts strictly after the previous
-line's end date (§6), so censoring a line to the end of observation absorbs
-anything that follows the unconfirmed run-out. A patient whose line runs out
-inside the buffer and who then restarts a **base** agent gets one long censored
-line instead of two:
-
-| | run-out | restart | LOT1 ends | lines |
+| | follows the run-out | `DISCON_DT` | line ends | lines |
 |---|---|---|---|---|
-| buffer off | day 200 | day 210 | `DISCONTINUATION` day 200 | 2 |
-| buffer on | day 200 | day 210 | `STUDY_END` day 250 | 1 |
+| restarts on day 210 | a base agent | day 200 | `DISCONTINUATION` day 200 | 2 |
+| never returns | nothing | *null* | `STUDY_END` day 250 | 1 |
+| never returns, observed to day 545 | nothing, but 345 days of it | day 200 | `DISCONTINUATION` day 200 | 1 |
 
-*(verified against the shipped step 04/06 SQL; observation ends day 250, so
-only 50 days follow the run-out)*
+*(verified against the shipped step 04/06 SQL)*
 
-A **non-base** agent behaves differently: dropping the run-out widens the
-add-med window, so the new agent becomes the added medication, ends the line
-the day before itself, and still opens the next line. Line count is preserved
-on that path.
-
-This is the buffer's known edge: its rationale is that absent data is not
-evidence of stopping, but a patient who returns has resolved that absence with
-evidence. See §11.
-
-**Turning it off.** `LOT_DISCON_CONFIRM_DAYS=0` restores the previous behaviour
-exactly, which is how a pre-2026-08-13 cohort is reproduced. It is a `CONTRACT`
-setting, so a run that changes it is recorded in `CONTRACT_DEVIATIONS` and is
-not the study's numbers.
+It also catches an agent still covered at the end of observation, which is
+never flagged as run out yet whose last fill date previously became the line's
+discontinuation.
 
 The spec is inconsistent here — its `LOT1_BASE` tab carries this rule and its
 later end-date tabs re-derive the end date without it. The study team
-adjudicated in favour of the tab that has it. QC check **B8** counts any
-`DISCONTINUATION` inside the window and now fails the run, since there should
-be none.
+adjudicated in favour of the tab that has it. QC check **B8** fails the run on
+any `DISCONTINUATION` inside the window with no later line to confirm it;
+confirmed-by-return lines are legitimate, and lines at the `max_lot` cap are
+exempt because no later line would be built there anyway.
 
 ---
 
@@ -204,7 +209,7 @@ runout.
 | 2 | `CART_INIT` | an added medication followed by CAR-T within 45 days. **The line ends the day before the infusion** (`ENDING_CART_DT − 1`) |
 | 3 | `MED_ADD` | a non-steroid agent added outside the induction window |
 | 4 | `DEATH` | |
-| 5 | `DISCONTINUATION` | ran out — 90-day gap, with 90 days of observation after it to confirm — §3 |
+| 5 | `DISCONTINUATION` | ran out — 90-day gap, confirmed by 90 days of observation after it or by the patient restarting — §3 |
 | 6 | `STUDY_END` | |
 
 **Then, within the SCT branch, the earliest date wins** and the reason names
@@ -364,15 +369,13 @@ reasons, on LOT1 length, or on line counts for those patients.
   and the later end-date tabs do not. The build follows the tab that has it, on
   every line. Runs before that date differ on end reasons, end dates and
   `LOT_BASE_LENGTH` for lines running out near the cutoff. §3.
-- **The buffer is unconditional, and the spec does not say whether it should
-  be.** It censors a run-out on elapsed observation alone, so it also censors
-  run-outs the patient themselves confirmed by restarting a base agent, and
-  that restart is then absorbed into the censored line rather than opening the
-  next one (§3). The build already carries the opposite convention one branch
-  away — `POST_RUNOUT_TRIGGER_FLG` stops `DEATH` outranking `DISCONTINUATION`
-  when a line-opening trigger sits after the run-out (§7) — so exempting a
-  confirmed return from the buffer would be consistent with it. **Open with the
-  study team.**
+- **The buffer is confirmed two ways, and the spec names only one.** The
+  `LOT1_BASE` tab requires observation after a run-out; it says nothing about a
+  patient who restarts inside that window. The build treats the restart as
+  confirmation in its own right, so the run-out stands and the next line opens
+  (§3). Gating on elapsed observation alone would have merged those two lines
+  into one. §7's `POST_RUNOUT_TRIGGER_FLG` already takes that position against
+  `DEATH`.
 - **B.2 removes a boundary without holding the line open.** §9.
 - **Disenrollment is not censoring** in the primary analysis. §7.
 - **Maintenance is not implemented.** There is no maintenance concept in the
@@ -391,9 +394,9 @@ reasons, on LOT1 length, or on line counts for those patients.
 |---|---|
 | Settings, contract, metadata | `lot/engine/R/build_lot.R` |
 | MAP stacking, day supply, runout | `lot/engine/R/steps/03_mma_map.R` |
-| LOT1 start, regimen, confirmation buffer | `lot/engine/R/steps/04_lot1_base.R` |
+| LOT1 start, regimen, run-out | `lot/engine/R/steps/04_lot1_base.R` |
 | Transplant events, tandem | `lot/engine/R/steps/05_sct.R` |
-| LOT1 end cascade | `lot/engine/R/steps/06_lot1_end.R` |
+| LOT1 end cascade, confirmation buffer | `lot/engine/R/steps/06_lot1_end.R` |
 | LOT2-5 start, regimen, end, confirmation buffer | `lot/engine/R/steps/10_lot2_5_base.R` |
 | Line criteria, truncation | `lot/engine/R/line_criteria.R` |
 | Melphalan rule | `lot/engine/R/melp_rule.R`, `lot/melphalan/` |

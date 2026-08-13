@@ -288,7 +288,7 @@ melp_lot1_ctes <- function(cfg) {
     melp_line AS (
       SELECT PATID, LOT1_START_DT, OBS_END_DT,
              date_add(LOT1_START_DT, {cfg$induction_window_days - 1}) AS IND_END_DT,
-             coalesce(LOT1_BASE_DISCON_DT, OBS_END_DT) AS SPAN_END_DT
+             coalesce(LOT1_BASE_RUNOUT_DT, OBS_END_DT) AS SPAN_END_DT
       FROM lot1_base
     ),"),
     # The decision runs over the line's observation, and the candidate list
