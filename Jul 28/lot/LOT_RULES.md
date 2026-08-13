@@ -165,6 +165,16 @@ are those observed agents. Permissible biosimilar substitutes are added to the
 set used for discontinuation and added-medication logic, but are **not** counted
 in `LOT_MED_CNT` or listed in `LOT_BASE_MEDS`.
 
+**Membership is a fill in the window, not cover across it.** The test is
+`MAP_START_DT` inside the window, so an episode that opened in the previous line
+and is still stockpiled into this one does not join it, however much cover it
+carries. Optum supplies no treatment end date — cover is `FILL_DT` plus
+`DAYS_SUP`, pushed out by overlapping refills — and a patient who has switched is
+no longer filling the old agent, so residual cover is a dispensing artefact
+rather than treatment. This bites at LOT2-5, where a continuing oral can span the
+whole 30-day window; the protocol's "all MM therapies identified during the first
+30 days" reads wider, and the study team settled it this way.
+
 **The first AUTO is part of induction.** LOT1 keeps that convention: a
 first-ever transplant does not open LOT2. (LOT2-5 do not — see §6.)
 

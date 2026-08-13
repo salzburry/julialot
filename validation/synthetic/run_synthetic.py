@@ -30,6 +30,7 @@ import datetime, json, os, random, subprocess, sys, tempfile
 
 try:
     import duckdb, sqlglot
+    from sqlglot import exp
 except ImportError as ex:
     sys.exit(f"SKIP: {ex.name} is not installed; this harness needs duckdb and sqlglot")
 
@@ -170,6 +171,24 @@ def load(con, pats):
             con.execute("INSERT INTO spans_strict VALUES (?,?,?)", [p['pid'], d(a), d(b)])
 
 
+def _fix_concat_ws(node):
+    """Spark's concat_ws flattens an array argument; duckdb's stringifies it.
+
+    Left alone, concat_ws(' ', sort_array(collect_set(x))) comes back as the
+    literal "[LEN, MELP]" rather than "LEN MELP", so every regimen-string
+    predicate downstream silently matches nothing. Every concat_ws in the build
+    takes a list, so the rewrite is unconditional here.
+    """
+    if isinstance(node, exp.ConcatWs) and len(node.expressions) == 2:
+        sep, lst = node.expressions
+        return exp.Anonymous(this="array_to_string", expressions=[lst, sep])
+    return node
+
+
+def to_duckdb(sql):
+    return sqlglot.parse_one(sql, read='spark').transform(_fix_concat_ws).sql(dialect='duckdb')
+
+
 def run_chain(con, sqldir):
     for i, st in enumerate(open(os.path.join(sqldir, 'full_chain.sql')).read().split('\n;;;\n')):
         if not st.strip(): continue
@@ -178,15 +197,13 @@ def run_chain(con, sqldir):
         # reproducible. Dates and line counts do not depend on it.
         st = st.replace('rand(42)', '0')
         try:
-            con.execute(sqlglot.transpile(st, read='spark', write='duckdb')[0])
+            con.execute(to_duckdb(st))
         except Exception as ex:
             raise RuntimeError(f"statement {i} failed: {str(ex)[:400]}\n{st[:300]}")
     # LOT_LONG_FINAL is LOT_LONG after the line criteria; none is enabled here.
     con.execute("CREATE OR REPLACE VIEW lot_long_final AS SELECT * FROM lot_long")
     for n in (2, 3):
-        con.execute(sqlglot.transpile(
-            open(os.path.join(sqldir, f'sub_{n}l.sql')).read(),
-            read='spark', write='duckdb')[0])
+        con.execute(to_duckdb(open(os.path.join(sqldir, f'sub_{n}l.sql')).read()))
 
 
 REASONS = ('SCT_ALLO','SCT_CART','SCT_AUTO','SCT','CART_INIT','MED_ADD',

@@ -32,7 +32,10 @@
   args <- commandArgs(trailingOnly = FALSE)
   file_arg <- grep("^--file=", args, value = TRUE)
   if (length(file_arg) > 0)
-    return(dirname(normalizePath(sub("^--file=", "", file_arg[1]))))
+    # Rscript renders a space in the path as ~+~, so a folder with one in its
+    # name resolves to nothing without this.
+    return(dirname(normalizePath(gsub("~+~", " ", sub("^--file=", "", file_arg[1]),
+                                      fixed = TRUE))))
   for (i in seq_len(sys.nframe())) {
     ofile <- tryCatch(sys.frame(i)$ofile, error = function(e) NULL)
     if (!is.null(ofile)) return(dirname(normalizePath(ofile)))

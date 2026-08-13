@@ -76,16 +76,27 @@ expected it contained is the signal to stop.
 
 ## What it cannot do
 
-`05_sct.R` is absent from the chain: it builds the AUTO transplant dates with
-Spark's `aggregate()` over a `named_struct` accumulator, which `sqlglot` cannot
-parse. The harness takes `tx_auto_dates` as an input instead, so nothing in
-that file's tandem and gap arithmetic is exercised here. Only a Spark-backed
-run can cover it.
+Two steps are absent from the chain, and for the same reason. `05_sct.R` builds
+the AUTO transplant dates and `03_mma_map.R` builds the medication episodes, and
+both do it with Spark's `aggregate()` folding a sorted array into a
+`named_struct` accumulator. `sqlglot` translates that to duckdb's `list_reduce`
+happily — the blocker is duckdb, whose `list_reduce` requires the accumulator to
+be the list's own element type, so a fold from `DATE[]` into a struct will not
+bind. `tx_auto_dates` and `map_stacked` are inputs to the harness instead.
+
+So none of `05_sct.R`'s 13-day claim windowing, tandem-boundary date selection
+or 60-day gap merging is exercised here, and neither is `03_mma_map.R`'s
+stockpiling pushout. Running the shipped SQL on Spark would cover both; pyspark
+is not installable in this environment, so it is not a route today.
 
 duckdb is also not Spark. The dialect probe at the top of each run checks the
-one semantic this code leans on hardest (`datediff(a, b)` is `a - b`), but it
-is a translation, and a translation can be faithful on the cases you thought to
-write and not on the ones you did not.
+one semantic this code leans on hardest (`datediff(a, b)` is `a - b`). One
+divergence is corrected rather than probed: Spark's `concat_ws` flattens an
+array argument and duckdb's stringifies it, so `concat_ws(' ', sort_array(...))`
+came back as `[LEN, MELP]` and every regimen-string predicate downstream matched
+nothing. `to_duckdb()` rewrites it to `array_to_string`. Beyond those, it is a
+translation, and a translation can be faithful on the cases you thought to write
+and not on the ones you did not.
 
 Nothing here has seen a warehouse row. No count, no attrition figure and no
 execution plan is verified by it.
