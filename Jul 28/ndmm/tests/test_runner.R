@@ -2049,6 +2049,38 @@ ok(any(grepl("grp_wo_nodal", om, fixed = TRUE)) &&
      any(grepl("grp_wo_dissem", om, fixed = TRUE)),
    "...off columns carried for the purpose, so no extra scan of the claims")
 
+cat("\n-- a clintrial list with no usable code stops the run --\n")
+# Descriptive is not the same as unchecked. An empty list inner-joins to
+# nothing, so every patient reads CLINTRIAL = 0 - which looks like an answer
+# and means the scan had nothing to look for. Same shape as pregnancy: the
+# loader counts raw rows, the view drops codes that normalise to nothing.
+ce <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "steps", "08_clintrial.R"), ce)
+assign("load_codelist_csv", function(...) "(SELECT 1) src", envir = ce)
+assign("db_exec", function(...) invisible(NULL), envir = ce)
+assign("log_msg", function(...) invisible(NULL), envir = ce)
+assign("NDMM_CLINTRIAL_CODES", "v_ct", envir = ce)
+drive_ct <- function(n_codes) {
+  assign("db_q", function(con, sql) data.frame(N = n_codes), envir = ce)
+  tryCatch({ ce$build_ndmm_clintrial_codes(NULL); "" }, error = conditionMessage)
+}
+ok(identical(drive_ct(6L), ""), "a list with usable codes passes")
+mct <- drive_ct(0L)
+ok(grepl("no usable codes", mct, fixed = TRUE),
+   "a file with rows but nothing that survives normalising stops the run")
+ok(grepl("flagged as not in a trial", mct, fixed = TRUE),
+   "...and says every patient would read as not in a trial, which is the failure")
+assign("db_q", function(con, sql) stop("no such view"), envir = ce)
+ok(grepl("cannot say", tryCatch({ ce$build_ndmm_clintrial_codes(NULL); "" },
+                                error = conditionMessage), fixed = TRUE),
+   "and a check that could not run is not read as a pass")
+# The count has to be over rows that could actually join. The scan derives its
+# own code_type and joins on equality, so a row with no type meets nothing.
+ok(grepl("AND code_type IS NOT NULL AND trim(code_type) <> ''",
+         paste(readLines(file.path(ROOT, "R", "steps", "08_clintrial.R"), warn = FALSE),
+               collapse = "\n"), fixed = TRUE),
+   "...so untyped rows are dropped before the count, not left to pad it")
+
 cat("\n-- clinical-trial evidence is descriptive, and stays that way --\n")
 ct <- readLines(file.path(ROOT, "R", "steps", "08_clintrial.R"), warn = FALSE)
 fl <- readLines(file.path(ROOT, "R", "steps", "06_flags.R"), warn = FALSE)

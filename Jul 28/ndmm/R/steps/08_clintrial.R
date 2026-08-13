@@ -55,7 +55,30 @@ build_ndmm_clintrial_codes <- function(con) {
            upper(regexp_replace(trim(code), '[^A-Za-z0-9]', '')) AS code
     FROM {src}
     WHERE code IS NOT NULL AND regexp_replace(code, '[^A-Za-z0-9]', '') <> ''
+      -- A blank type joins nothing: the scan derives its own code_type and the
+      -- join below is on equality, so a row typed '' can only meet a claim
+      -- whose family came back NULL, and NULL is not ''. Dropped here so it
+      -- cannot pad the count that decides whether this list is usable.
+      AND code_type IS NOT NULL AND trim(code_type) <> ''
   "))
+  # The same hole 05_pregnancy.R had. load_codelist_csv stops on a file with no
+  # rows, but it counts the rows as read - and the filters above drop codes that
+  # are blank or punctuation-only once normalised. So a file carrying one row of
+  # 'HCPCS,---' is a nonempty file and an empty code list, and nothing else here
+  # would notice: the flags builder inner-joins this view, an empty view yields
+  # no rows, and every patient gets CLINTRIAL = 0 - a clean-looking answer that
+  # means the scan had nothing to look for.
+  n <- tryCatch(db_q(con, glue("SELECT count(*) AS N FROM {NDMM_CLINTRIAL_CODES}")),
+                error = function(e) NULL)
+  if (is.null(n) || !nrow(n))
+    stop("Could not count the codes in clintrial.csv, so this run cannot say ",
+         "whether the clinical-trial scan has anything to match.", call. = FALSE)
+  if (as.numeric(n[[1]][1]) == 0)
+    stop("clintrial.csv has rows but no usable codes: every one is blank or ",
+         "punctuation-only once non-alphanumerics are stripped, or carries no ",
+         "code type. The scan would match nothing and every patient would be ",
+         "flagged as not in a trial.", call. = FALSE)
+  invisible(TRUE)
 }
 
 # One row per cohort patient with a 1L start.
