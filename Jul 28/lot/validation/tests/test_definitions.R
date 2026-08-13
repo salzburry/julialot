@@ -142,6 +142,37 @@ ok(!length(unproven),
      paste0("cited lines do not carry what the answer turns on: ",
             paste(unproven, collapse = "; "))
    else "...and between them the cited lines carry every term the answer turns on")
+
+# Between them is not each of them. The check above concatenates the cited
+# lines, so a citation carrying nothing is invisible while its siblings cover
+# the tokens - which is how a citation drifts off its target unnoticed when
+# lines are added or removed above it.
+#
+# So every citation has to land near something its dimension turns on. A window
+# rather than the line itself: a statement spans lines, and permissible_subs on
+# the JOIN proves the SELECT two lines above it.
+CITE_WINDOW <- 3L
+adrift <- character(0)
+for (i in seq_len(nrow(ours))) {
+  want <- LOT_DIMENSIONS[[i]]$proves
+  if (is.null(want)) next
+  p <- cite_parts(ours$ours_at[i]); if (is.null(p)) next
+  for (c_i in p) {
+    f <- file.path(STUDY, c_i$file)
+    if (!file.exists(f)) next
+    l <- readLines(f, warn = FALSE)
+    near <- paste(l[max(1L, c_i$line - CITE_WINDOW):min(length(l), c_i$line + CITE_WINDOW)],
+                  collapse = "\n")
+    if (!any(vapply(want, function(w) grepl(w, near, fixed = TRUE), logical(1))))
+      adrift <- c(adrift, paste0(ours$dimension_id[i], " -> ", basename(c_i$file),
+                                 ":", c_i$line))
+  }
+}
+ok(!length(adrift),
+   if (length(adrift))
+     paste0("citation lands nowhere near what its dimension turns on: ",
+            paste(adrift, collapse = "; "))
+   else "...and each citation on its own lands within 3 lines of one of them")
 # The two answers most likely to be wrong if the build changed under us.
 #
 # On the code, not the header comment. 05_sct.R's "# SCT detection rules:"

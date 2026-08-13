@@ -28,7 +28,10 @@
 
 .script_dir <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
-  if (length(a)) dirname(normalizePath(sub("^--file=", "", a[1]))) else getwd()
+  # Rscript renders a space in the path as ~+~, so a folder with one in its
+  # name resolves to nothing without this.
+  if (length(a)) dirname(normalizePath(gsub("~+~", " ", sub("^--file=", "", a[1]),
+                                            fixed = TRUE))) else getwd()
 })
 source(file.path(.script_dir, "R", "sensitivity.R"))
 source(file.path(.script_dir, "R", "run_binding.R"))

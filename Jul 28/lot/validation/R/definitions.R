@@ -163,7 +163,7 @@ LOT_DIMENSIONS <- list(
        dimension = "Is there a cap on how many lines are counted?",
        ours = paste0("Yes - MAX_LOT. Nothing above it is built, so a capped ",
                      "patient is indistinguishable from a completed one."),
-       where = "lot/engine/R/steps/10_lot2_5_base.R:1088, lot/engine/R/build_lot.R:1796",
+       where = "lot/engine/R/build_lot.R:1796",
        proves = c("max_lot"),
        question = paste0("Does the source cap the line count, or report the ",
                          "full distribution?")),
