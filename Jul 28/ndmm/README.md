@@ -2,6 +2,9 @@
 
 Builds the 1L NDMM cohort and its attrition for one cohort prefix.
 
+**`RULES.md`** is the one-page version of who gets into this cohort and what it
+assumes. `DECISIONS.md` is the long form, with the reasoning.
+
 ```
 DATABRICKS_PWD=... Rscript build.R <prefix_>
 DATABRICKS_PWD=... Rscript build.R mystudy_
