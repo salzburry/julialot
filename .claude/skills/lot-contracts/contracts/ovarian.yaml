@@ -40,6 +40,8 @@ lines:
     - MED
   regimen_window_days_line1: 60
   regimen_window_days_later: 30
+  discon_confirm_days: TBD: days of observation after a run-out before it counts as a discontinuation - the myeloma engine waits 90; ovarian's 3-weekly platinum cycles may want less, needs the study team
+  discon_confirmed_by_return: TBD: whether an observed return confirms the run-out on its own, as the myeloma engine does, or only elapsed observation counts
   same_day_tie:
     - MED
   end_priority:
