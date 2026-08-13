@@ -2,8 +2,8 @@
 
 The lines-of-therapy engine, and everything that depends on it.
 
-**`RULES.md`** is the one-page version of what the engine does and what it
-assumes. `LOT_RULES.md` is the full reference, rule by rule.
+`RULES.md` gives the rules the engine applies and what it assumes.
+`LOT_RULES.md` is the full reference, rule by rule.
 
 One package here writes a study run's LOT tables, and only that one: everything
 else reads that run, derives from it, or rebuilds it under a changed rule into a
