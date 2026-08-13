@@ -41,12 +41,18 @@ STUDY  <- Sys.getenv("STUDY_FOLDER", unset = file.path(REPO, "Jul 28"))
 # suite -> the failures it is allowed to have, by identity. Absent means none.
 EXPECTED_FAILURES <- list(
   "validation/port/lot.R" = c(
-    "03_mma_map.R: differs beyond the approved deviations",
-    "04_lot1_base.R: differs from 02_lot1.R",
-    "05b_lot1_sct.R: differs beyond the approved deviations",
-    "06_lot1_end.R: differs beyond the approved deviations",
-    "08_persist.R: differs beyond the approved deviations",
-    "10_lot2_5_base.R: differs from R/lot2_5_base.R")
+    # The line COUNT is part of the identity, not decoration. Without it the
+    # pin was "this file differs", which stayed true however much more of it
+    # diverged - and every file the CAR-T and melphalan work touched was
+    # already pinned, so those changes rode in unexamined. A count moves when
+    # the divergence set moves, and re-pinning is then a conscious act.
+    # Counted over comment-stripped code, so prose does not churn it.
+    "03_mma_map.R: differs beyond the approved deviations in 217 line(s)",
+    "04_lot1_base.R: differs from 02_lot1.R in 127 line(s)",
+    "05b_lot1_sct.R: differs beyond the approved deviations in 148 line(s)",
+    "06_lot1_end.R: differs beyond the approved deviations in 204 line(s)",
+    "08_persist.R: differs beyond the approved deviations in 111 line(s)",
+    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 818 line(s)")
 )
 
 # How one suite's output is read. Its own suite is validation/hygiene/
