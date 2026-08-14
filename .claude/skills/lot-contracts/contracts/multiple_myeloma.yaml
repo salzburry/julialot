@@ -57,6 +57,7 @@ lines:
 advancement:
   new_agent: true
   same_regimen_gap_days: none
+  returning_agent_requires_discontinuation: false
   drop_based: false
 
 event_streams:

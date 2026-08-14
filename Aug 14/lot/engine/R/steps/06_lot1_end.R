@@ -111,7 +111,7 @@ phase_lot1_end <- function(con, ctx) {
         AND prem.MED_ABBR IS NULL
         -- Consistent with the added-medication and line-start gates: a return
         -- counts only where the patient had stopped the agent, or never had it.
-        AND {prev_discon_gate_sql('ms')}
+        {prev_discon_gate_sql('ms', cfg$returning_agent_requires_discontinuation)}
     ),
     post_runout_autos AS (
       SELECT a.PATID, a.TX_DT,

@@ -136,7 +136,7 @@ phase_lot1_base <- function(con, ctx) {
         AND ms.MAP_MED_CLASS <> 'STEROID'  -- a steroid cannot trigger an add-med
         -- A return counts as an initiation only where the patient had stopped
         -- the agent, or had never had it before.
-        AND {prev_discon_gate_sql('ms')}
+        {prev_discon_gate_sql('ms', cfg$returning_agent_requires_discontinuation)}
         AND ms.MAP_START_DT >= bc.LOT1_START_DT
         AND ms.MAP_START_DT <= coalesce(bc.LOT1_BASE_RUNOUT_DT, bc.OBS_END_DT)
     ),

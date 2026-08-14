@@ -254,7 +254,7 @@ build_lot_n <- function(con, lot_num,
         AND pme.MED_ABBR IS NULL
         -- A return opens a line only where the patient had stopped the agent,
         -- or had never had it before. Same test the added-medication query uses.
-        AND {prev_discon_gate_sql('ms')}
+        {prev_discon_gate_sql('ms', cfg$returning_agent_requires_discontinuation)}
       GROUP BY pe.PATID
     ),
     -- d_ALLO: earliest ALLO strictly after PREV_END_DT.
@@ -469,7 +469,7 @@ build_lot_n <- function(con, lot_num,
         AND ms.MAP_MED_CLASS <> 'STEROID'
         -- A return counts as an initiation only where the patient had stopped
         -- the agent, or had never had it before.
-        AND {prev_discon_gate_sql('ms')}
+        {prev_discon_gate_sql('ms', cfg$returning_agent_requires_discontinuation)}
         -- Per-start-type lookback gate:
         --   MED  / SCT_AUTO -> any agent after the 30-day induction window
         --   CART             -> any agent after the 45-day consolidation window
@@ -778,7 +778,7 @@ build_lot_n <- function(con, lot_num,
         AND prem.MED_ABBR IS NULL
         -- Consistent with the added-medication and line-start gates: a return
         -- counts only where the patient had stopped the agent, or never had it.
-        AND {prev_discon_gate_sql('ms')}
+        {prev_discon_gate_sql('ms', cfg$returning_agent_requires_discontinuation)}
     ),
     post_runout_autos AS (
       SELECT a.PATID, a.TX_DT,
