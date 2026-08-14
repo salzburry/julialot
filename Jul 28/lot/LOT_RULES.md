@@ -165,15 +165,27 @@ are those observed agents. Permissible biosimilar substitutes are added to the
 set used for discontinuation and added-medication logic, but are **not** counted
 in `LOT_MED_CNT` or listed in `LOT_BASE_MEDS`.
 
-**Membership is a fill in the window, not cover across it.** The test is
-`MAP_START_DT` inside the window, so an episode that opened in the previous line
-and is still stockpiled into this one does not join it, however much cover it
-carries. Optum supplies no treatment end date — cover is `FILL_DT` plus
-`DAYS_SUP`, pushed out by overlapping refills — and a patient who has switched is
-no longer filling the old agent, so residual cover is a dispensing artefact
-rather than treatment. This bites at LOT2-5, where a continuing oral can span the
-whole 30-day window; the protocol's "all MM therapies identified during the first
-30 days" reads wider, and the study team settled it this way.
+**Membership is an episode start in the window, not a fill in it.** The test is
+`MAP_START_DT` inside the window (`steps/04_lot1_base.R`,
+`steps/10_lot2_5_base.R`), and a refill landing while an earlier episode still
+has cover is absorbed into that episode instead of opening a new one. That has
+two consequences, and they are not the same thing:
+
+- Cover carried over from the previous line does not join this one, however much
+  of the window it spans. Optum supplies no treatment end date — cover is
+  `FILL_DT` plus `DAYS_SUP`, pushed out by overlapping refills — so residual
+  cover on an agent the patient has stopped filling is a dispensing artefact
+  rather than treatment. The study team settled it this way.
+- A real fill inside the window is dropped too, when the same agent's earlier
+  episode is still open. The protocol counts "all MM therapies received within
+  30 days on and following the LOT start date" (July 30 cohort protocol, p.19),
+  and the LOT2-5 spec carries that wording in `LOTN_REGIMEN_WINDOW` before
+  translating it to `MAP_START_DT` in `LOTN_MED_[MED]`
+  (`docs/Part 3/Program Spec/lot2plus_validated.csv`). An episode start is
+  narrower than a therapy received.
+
+`lot/validation/run_stockpiling_rule.R` sizes the second case against a finished
+run.
 
 **The first AUTO is part of induction.** LOT1 keeps that convention: a
 first-ever transplant does not open LOT2. (LOT2-5 do not — see §6.)
