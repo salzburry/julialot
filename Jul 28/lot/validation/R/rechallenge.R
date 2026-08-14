@@ -137,12 +137,32 @@ rechall_events_sql <- function(lines_tbl, map_tbl, claims_tbl, absorbed_tbl,
              AND lm.MED_ABBR = e.MED_ABBR
       WHERE lm.MED_ABBR IS NULL
     ),
+    -- One boundary opportunity per (line, agent): the FIRST return. An agent
+    -- absorbed once and then opening an episode later in the same line is one
+    -- clinical event the build reacted to late, not two events. Counting both
+    -- would double the event total and the patients in it.
+    ranked AS (
+      SELECT r.*,
+             row_number() OVER (PARTITION BY r.PATID, r.LOT_NUM, r.MED_ABBR
+                                ORDER BY r.RETURN_DT, r.BOUNDARY)
+                                                        AS rn,
+             count(*) OVER (PARTITION BY r.PATID, r.LOT_NUM, r.MED_ABBR)
+                                                        AS N_RETURNS_IN_LINE,
+             min(CASE WHEN r.BOUNDARY = 'FIRED' THEN r.RETURN_DT END)
+               OVER (PARTITION BY r.PATID, r.LOT_NUM, r.MED_ABBR)
+                                                        AS FIRST_FIRED_DT
+      FROM rechall r
+    ),
+    ev1 AS (SELECT * FROM ranked WHERE rn = 1),
     -- The previous claim for the SAME agent. The whole measure: how long the
     -- patient had been off the drug, read off claims rather than off cover.
+    -- Keyed on RETURN_DT as well: the same agent can return more than once in a
+    -- line, and pairing an event with another return's previous claim gives a
+    -- gap measured between two unrelated dates.
     prev_claim AS (
       SELECT r.PATID, r.LOT_NUM, r.MED_ABBR, r.RETURN_DT,
              max(cast(c.DATE_SERVICE as date)) AS PREV_CLAIM_DT
-      FROM rechall r
+      FROM ev1 r
       INNER JOIN {claims_tbl} c
               ON cast(c.PATID as string) = r.PATID
              AND upper(trim(c.MED_ABBR))  = r.MED_ABBR
@@ -150,11 +170,12 @@ rechall_events_sql <- function(lines_tbl, map_tbl, claims_tbl, absorbed_tbl,
       GROUP BY r.PATID, r.LOT_NUM, r.MED_ABBR, r.RETURN_DT
     ),
     -- Agents starting alongside the return. A drug coming back on its own reads
-    -- as continuation, and with a new partner as a new regimen.
+    -- as continuation, and with a new partner as a new regimen. Keyed on
+    -- RETURN_DT for the same reason: the window is measured around it.
     partners AS (
-      SELECT r.PATID, r.LOT_NUM, r.MED_ABBR,
+      SELECT r.PATID, r.LOT_NUM, r.MED_ABBR, r.RETURN_DT,
              count(DISTINCT upper(trim(m.MAP_MED_TYPE))) AS N_NEW_PARTNERS
-      FROM rechall r
+      FROM ev1 r
       INNER JOIN {map_tbl} m
               ON cast(m.PATID as string) = r.PATID
              AND m.MAP_MED_CLASS <> 'STEROID'
@@ -162,11 +183,17 @@ rechall_events_sql <- function(lines_tbl, map_tbl, claims_tbl, absorbed_tbl,
              AND cast(m.MAP_START_DT as date)
                    BETWEEN date_sub(r.RETURN_DT, {cfg$partner})
                        AND date_add(r.RETURN_DT, {cfg$partner})
-      GROUP BY r.PATID, r.LOT_NUM, r.MED_ABBR
+      GROUP BY r.PATID, r.LOT_NUM, r.MED_ABBR, r.RETURN_DT
     )
     SELECT r.PATID, r.LOT_NUM, r.MED_ABBR, r.BOUNDARY,
            r.FIRST_SEEN_LOT, r.LOT_START_DT, r.LOT_END_DT,
            r.LOT_BASE_END_REASON, r.RETURN_DT,
+           r.N_RETURNS_IN_LINE,
+           -- Where the build did act, but on a later return than this one, how
+           -- much later. The boundary was made in the wrong place, not missed.
+           CASE WHEN r.BOUNDARY = 'SUPPRESSED'
+                THEN datediff(r.FIRST_FIRED_DT, r.RETURN_DT) END
+                                                    AS DAYS_BUILD_LATE,
            pc.PREV_CLAIM_DT,
            datediff(r.RETURN_DT, pc.PREV_CLAIM_DT)  AS GAP_DAYS,
            datediff(r.RETURN_DT, r.LOT_START_DT)    AS DAYS_INTO_LOT,
@@ -176,13 +203,13 @@ rechall_events_sql <- function(lines_tbl, map_tbl, claims_tbl, absorbed_tbl,
            {sql_text(lot_run)}   AS SOURCE_LOT_RUN_ID,
            {sql_text(lot_stamp)} AS SOURCE_LOT_STAMP,
            current_timestamp()   AS BUILT_AT
-    FROM rechall r
+    FROM ev1 r
     LEFT JOIN prev_claim pc
            ON pc.PATID = r.PATID AND pc.LOT_NUM = r.LOT_NUM
-          AND pc.MED_ABBR = r.MED_ABBR
+          AND pc.MED_ABBR = r.MED_ABBR AND pc.RETURN_DT = r.RETURN_DT
     LEFT JOIN partners p
            ON p.PATID = r.PATID AND p.LOT_NUM = r.LOT_NUM
-          AND p.MED_ABBR = r.MED_ABBR")
+          AND p.MED_ABBR = r.MED_ABBR AND p.RETURN_DT = r.RETURN_DT")
 }
 
 # The distribution the decision turns on, with the two populations side by side.

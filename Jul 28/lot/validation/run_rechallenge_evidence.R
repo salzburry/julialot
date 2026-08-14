@@ -102,6 +102,21 @@ main <- function() {
   db_exec(con, glue("CREATE OR REPLACE TABLE {bg} AS {rechall_gap_sql(ev)}"))
   db_exec(con, glue("CREATE OR REPLACE TABLE {bm} AS {rechall_by_med_sql(ev)}"))
 
+  # A gap is measured from a claim strictly BEFORE the return, so it cannot be
+  # negative. One that is means an event was paired with another return's
+  # previous claim, and every gap in the table is then suspect - which is the
+  # whole measure. Stop rather than report it.
+  neg <- db_q(con, glue("
+    SELECT sum(CASE WHEN GAP_DAYS < 0 THEN 1 ELSE 0 END) AS n_neg,
+           count(*) AS n_all,
+           sum(CASE WHEN GAP_DAYS IS NULL THEN 1 ELSE 0 END) AS n_null
+    FROM {ev}"))
+  if (length(neg$n_neg) && !is.na(neg$n_neg[1]) && neg$n_neg[1] > 0)
+    stop(neg$n_neg[1], " of ", neg$n_all[1], " events have a negative GAP_DAYS. ",
+         "The gap is taken from a claim strictly before the return, so it cannot ",
+         "be negative: an event has been joined to another return's previous ",
+         "claim. Every gap in ", ev, " is suspect.", call. = FALSE)
+
   t <- db_q(con, glue("
     SELECT count(*) AS n_ev, count(DISTINCT PATID) AS n_pat,
            sum(CASE WHEN BOUNDARY = 'SUPPRESSED' THEN 1 ELSE 0 END) AS n_sup,

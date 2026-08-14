@@ -33,6 +33,7 @@ if (requireNamespace("glue", quietly = TRUE)) library(glue) else
   }
 sql_text <- function(x) paste0("'", gsub("'", "''", as.character(x)), "'")
 source(file.path(ROOT, "R", "stockpiling.R"))
+source(file.path(ROOT, "R", "rechallenge.R"))
 
 cat("\n-- the windows are the build's own, and a junk one falls back --\n")
 Sys.unsetenv(c("INDUCTION_WINDOW_DAYS", "INDUCTION_WINDOW_DAYS_LOT_N",
@@ -152,6 +153,30 @@ ok(has(abl, "LEFT JOIN hit") && has(abl, "nullif(a.N_LINES, 0)"),
    "the by-LOT rollup zero-fills and divides safely, like its sibling")
 ok(has(abl, "GROUP BY PATID, LOT_NUM"),
    "a line absorbing two agents counts once, not twice")
+
+cat("\n-- re-challenge: the gap, and the joins that make it mean anything --\n")
+rc <- rechall_cfg()
+re <- rechall_events_sql("lines", "maps", "claims", "absorbed", rc, "r1", "run", "stamp")
+ok(has(re, "cast(c.DATE_SERVICE as date) < r.RETURN_DT"),
+   "the gap runs from a claim strictly BEFORE the return, so it cannot be negative")
+ok(has(re, "AND pc.MED_ABBR = r.MED_ABBR AND pc.RETURN_DT = r.RETURN_DT"),
+   "prev_claim is joined on RETURN_DT, not just the agent - a line can hold two returns")
+ok(has(re, "AND p.MED_ABBR = r.MED_ABBR AND p.RETURN_DT = r.RETURN_DT"),
+   "...and so is the partner count, whose window is measured around that date")
+ok(has(re, "GROUP BY r.PATID, r.LOT_NUM, r.MED_ABBR, r.RETURN_DT"),
+   "both are grouped on the same key they are joined on")
+ok(has(re, "row_number() OVER (PARTITION BY r.PATID, r.LOT_NUM, r.MED_ABBR"),
+   "one boundary opportunity per line and agent: the earliest return")
+ok(has(re, "fs.FIRST_SEEN_LOT < e.LOT_NUM") && has(re, "lm.MED_ABBR IS NULL"),
+   "an event is an agent from an EARLIER line that is absent from this one")
+ok(has(re, "DAYS_BUILD_LATE"),
+   "a boundary the build made on a later return is late, not missing")
+run2 <- paste(readLines(file.path(ROOT, "run_rechallenge_evidence.R"), warn = FALSE),
+              collapse = "\n")
+ok(has(run2, "GAP_DAYS < 0 THEN 1 ELSE 0 END) AS n_neg"),
+   "the runner stops on a negative gap rather than reporting it")
+ok(has(run2, "STOCKPILE_ABSORBED_ADD"),
+   "...and refuses to run without the absorbed table, which is half the events")
 
 cat("\n-- the program says what it cannot answer --\n")
 run <- paste(readLines(file.path(ROOT, "run_stockpiling_rule.R"), warn = FALSE),
