@@ -159,7 +159,8 @@ init_lot_long_from_lot1 <- function(con, meds, classes) {
       {class_select}
     FROM lot1_base_end lbe
     INNER JOIN lot_patient_input p ON lbe.PATID = p.PATID
-    LEFT JOIN lot1_sct sct          ON lbe.PATID = sct.PATID{continuing_meds_join_sql('lot1_base_end', 'lbe', 'LOT1_START_DT', 'LOT1_BASE_END_DT', 'LOT1_BASE_MEDS')}
+    LEFT JOIN lot1_sct sct          ON lbe.PATID = sct.PATID
+{continuing_meds_join_sql('lot1_base_end', 'lbe', 'LOT1_START_DT', 'LOT1_BASE_END_DT', 'LOT1_BASE_MEDS')}
   "), qc = glue("SELECT count(*) AS n_lot1_rows FROM {lot_out(.LOT_LONG_STAGE)}"))
 }
 
@@ -1060,7 +1061,8 @@ build_lot_n <- function(con, lot_num,
       END                                             AS LOT_TX_AUTO_MAX_DT,
       {med_insert},
       {class_insert}
-    FROM lot{lot_num}_base_end lbe{continuing_meds_join_sql(glue('lot{lot_num}_base_end'), 'lbe', glue('LOT{lot_num}_START_DT'), glue('LOT{lot_num}_BASE_END_DT'), glue('LOT{lot_num}_BASE_MEDS'))}
+    FROM lot{lot_num}_base_end lbe
+{continuing_meds_join_sql(glue('lot{lot_num}_base_end'), 'lbe', glue('LOT{lot_num}_START_DT'), glue('LOT{lot_num}_BASE_END_DT'), glue('LOT{lot_num}_BASE_MEDS'))}
   "), qc = glue("SELECT count(*) AS n_appended FROM {lot_out(.LOT_LONG_STAGE)} WHERE LOT_NUM = {lot_num}"))
 
   # Refresh lot_long view to include the newly inserted rows.

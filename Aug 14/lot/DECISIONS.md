@@ -1,7 +1,7 @@
 # LOT - recorded decisions
 
-`Jul 28` is the contract build. This folder is `Jul 28` plus one rule, and this
-file is what that rule is, what it changed, and what is still open.
+This folder is the contract build plus one rule. This file is what that rule
+is, what it changed, and what is still open.
 
 ---
 
@@ -11,14 +11,14 @@ Three questions the build answers. Only the third moved.
 
 | | question | answered by | changed here |
 |---|---|---|---|
-| 1 | when does a drug's supply run? | MAP episodes, `steps/03_mma_map.R` | **no** - byte-identical to `Jul 28` |
+| 1 | when does a drug's supply run? | MAP episodes, `steps/03_mma_map.R` | **no** - unchanged from the contract |
 | 2 | did the patient stop the drug? | `MAP_DISCON_FLG`, set at `MAP_DISCON_GAP_DAYS` (90) | **no** |
 | 3 | does a drug coming back start a line? | the returning-agent gate | **yes** |
 
 The 90-day threshold has never merged anything. A new MAP opens the moment a
 claim lands beyond every runout - one day's gap or five hundred - and the
 threshold is applied afterwards, as a label on the *earlier* episode. Two
-episodes stay two episodes. `map_stacked` comes out identical in both folders.
+episodes stay two episodes. `map_stacked` is unchanged.
 
 So the gate reads a label. It moves no date and merges no episode. It decides
 one thing: whether a returning agent's new episode counts as *starting* a
@@ -52,7 +52,7 @@ describes the gap that *follows* it, so a returning episode's own flag is about
 its future.
 
 **The setting.** `RETURNING_AGENT_REQUIRES_DISCONTINUATION` in `engine/config.csv`,
-TRUE here. Off, the gate emits nothing at all and this folder reproduces `Jul 28`
+TRUE here. Off, the gate emits nothing at all and the build is the contract's,
 line for line - checked over 1,500 patients, zero lines differing. There is no
 second gap parameter: the threshold is still `MAP_DISCON_GAP_DAYS`.
 
@@ -101,7 +101,7 @@ Run through both engines, actual output.
 May, LENA 1-30 May. LENA's gap is 34 days.
 
 ```
-                                              Jul 28              Aug 14
+                                              contract            with the rule
 LOT1  Jan 01 -> Mar 14  base LEN              MED_ADD (POMA)      same
 LOT2  Mar 15 -> Apr 30  base POMA             MED_ADD (LEN)       -
 LOT3  May 01 -> May 30  base LEN              DISCONTINUATION     -
@@ -219,7 +219,7 @@ repo.
 
 ## What has been measured, and what has not
 
-**Against the production `Jul 28` run**, by
+**Against the production contract run**, by
 `lot/validation/run_stockpiling_rule.R` and `run_rechallenge_evidence.R`:
 
 - **898 boundaries in 624 patients** sit on a prior episode with
