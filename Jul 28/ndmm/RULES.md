@@ -34,8 +34,10 @@ inside the 365-day baseline, not only the first.
 
 Other cancers are paired on the ICD category rather than the exact code, so two
 claims for the same cancer written slightly differently still count once. Bone
-metastasis excludes. Metastatic codes group together. Plasma-cell disorders in
-remission remain excluded.
+metastasis excludes. Metastatic codes group together. Plasma-cell disorders do
+not exclude, including those coded in remission or in relapse - they are the
+index disease showing itself, not another cancer. `NDMM_MM_ADJACENT_STATES=exact`
+drops the six state-coded labels from that override.
 
 Months are day counts. Twelve months is 365 days and three months is 90. There
 is no calendar arithmetic anywhere in the build.

@@ -11,6 +11,21 @@
 # identified during the first 30 days of the LOT") and the LOT2-5 spec's worked
 # example A assumes a continuing agent lands in LOT2. This sizes the difference.
 #
+# Two populations, not one, and they are not the same question:
+#
+#   passive    covered into the line by leftover days-supply, with no claim of
+#              its own inside the window. The study team settled this: a patient
+#              who has switched is no longer filling the old agent.
+#   absorbed   a REAL claim inside the window, which landed while the earlier
+#              episode was still open. 03_mma_map.R pushes the runout out and
+#              keeps the old MAP_START_DT, so the fill leaves no episode of its
+#              own and the agent is absent from the regimen anyway. Nothing the
+#              study team decided covers this one - the patient is still filling
+#              the drug.
+#
+# The split is drawn off MMA_MED_PROCESSED.DATE_SERVICE, the claim dates, since
+# MAP_START_DT cannot see a fill it absorbed.
+#
 # It counts the agents a coverage rule would ADD to a regimen, and the three
 # consequences that follow from a finished run. It does NOT give the resulting
 # line structure: an added agent is a base agent, so it enters the run-out
@@ -69,7 +84,8 @@ stock_window_sql <- function(cfg) {
 # The exclusion is a fill in the window, not membership in LOT_BASE_MEDS. The
 # two agree, but LOT_BASE_MEDS is a formatted string and matching agents inside
 # it would turn a substring into a match - LEN inside LENA.
-stock_agents_sql <- function(lines_tbl, map_tbl, cfg, run_id) {
+stock_agents_sql <- function(lines_tbl, map_tbl, claims_tbl, cfg, run_id,
+                             lot_run = NA_character_, lot_stamp = NA_character_) {
   glue("
     WITH ln AS (
       SELECT cast(PATID as string)         AS PATID,
@@ -85,8 +101,22 @@ stock_agents_sql <- function(lines_tbl, map_tbl, cfg, run_id) {
       FROM {lines_tbl}
       WHERE LOT_START_TYPE <> 'SCT_ALLO'
     ),
-    -- Agents with a fill inside the window: already in the regimen, so they are
-    -- not what this measures.
+    -- A real claim inside the window, from the claim dates rather than the
+    -- episode dates. An episode that was already open absorbs the fill and
+    -- keeps its old MAP_START_DT, so this is the only place the fill is
+    -- visible at all.
+    real_fills AS (
+      SELECT DISTINCT l.PATID, l.LOT_NUM,
+             upper(trim(c.MED_ABBR)) AS MED_ABBR
+      FROM ln l
+      INNER JOIN {claims_tbl} c
+              ON cast(c.PATID as string) = l.PATID
+             AND c.MED_CLASS <> 'STEROID'
+             AND cast(c.DATE_SERVICE as date) >= l.LOT_START_DT
+             AND cast(c.DATE_SERVICE as date) <= l.IND_END_DT
+    ),
+    -- Agents that OPENED an episode inside the window: already in the regimen,
+    -- so they are not what this measures.
     filled AS (
       SELECT DISTINCT l.PATID, l.LOT_NUM,
              upper(trim(m.MAP_MED_TYPE)) AS MED_ABBR
@@ -133,12 +163,23 @@ stock_agents_sql <- function(lines_tbl, map_tbl, cfg, run_id) {
            -- regimen it could not be an addition, so that boundary would go.
            CASE WHEN c.LOT_BASE_END_REASON = 'MED_ADD' AND c.ADD_MED = c.MED_ABBR
                 THEN 1 ELSE 0 END                       AS WOULD_REMOVE_ADD_MED,
+           -- The split that matters. 1 = a real claim inside the window that an
+           -- open episode absorbed; 0 = leftover cover and nothing else.
+           CASE WHEN rf.MED_ABBR IS NOT NULL THEN 1 ELSE 0 END
+                                                        AS HAS_REAL_FILL_IN_WINDOW,
            {sql_text(run_id)}  AS STOCK_RUN_ID,
-           current_timestamp() AS BUILT_AT
+           -- The attempt these rows describe. Without it a reader cannot prove
+           -- which build the numbers came off once the LOT tables move on.
+           {sql_text(lot_run)}   AS SOURCE_LOT_RUN_ID,
+           {sql_text(lot_stamp)} AS SOURCE_LOT_STAMP,
+           current_timestamp()   AS BUILT_AT
     FROM carried c
     LEFT JOIN filled f
            ON f.PATID = c.PATID AND f.LOT_NUM = c.LOT_NUM
           AND f.MED_ABBR = c.MED_ABBR
+    LEFT JOIN real_fills rf
+           ON rf.PATID = c.PATID AND rf.LOT_NUM = c.LOT_NUM
+          AND rf.MED_ABBR = c.MED_ABBR
     WHERE f.MED_ABBR IS NULL")
 }
 
@@ -153,7 +194,10 @@ stock_impact_sql <- function(agents_tbl) {
            max(COVERS_WHOLE_WINDOW)                   AS ANY_COVERS_WHOLE_WINDOW,
            max(WOULD_EXTEND_RUNOUT)                   AS WOULD_EXTEND_RUNOUT,
            max(WOULD_REMOVE_ADD_MED)                  AS WOULD_REMOVE_ADD_MED,
+           max(HAS_REAL_FILL_IN_WINDOW)               AS HAS_REAL_FILL_IN_WINDOW,
            max(STOCK_RUN_ID)                          AS STOCK_RUN_ID,
+           max(SOURCE_LOT_RUN_ID)                     AS SOURCE_LOT_RUN_ID,
+           max(SOURCE_LOT_STAMP)                      AS SOURCE_LOT_STAMP,
            max(BUILT_AT)                              AS BUILT_AT
     FROM {agents_tbl}
     GROUP BY PATID, LOT_NUM, LOT_START_DT, LOT_MED_CNT")
@@ -176,7 +220,8 @@ stock_by_lot_sql <- function(impact_tbl, lines_tbl) {
              count(DISTINCT PATID)    AS N_PATIENTS_AFFECTED,
              sum(N_AGENTS_ADDED)      AS N_AGENTS_ADDED,
              sum(WOULD_EXTEND_RUNOUT) AS N_WOULD_EXTEND,
-             sum(WOULD_REMOVE_ADD_MED) AS N_WOULD_REMOVE_ADD
+             sum(WOULD_REMOVE_ADD_MED) AS N_WOULD_REMOVE_ADD,
+             sum(HAS_REAL_FILL_IN_WINDOW) AS N_WITH_REAL_FILL
       FROM {impact_tbl}
       GROUP BY LOT_NUM
     )
@@ -186,6 +231,7 @@ stock_by_lot_sql <- function(impact_tbl, lines_tbl) {
            coalesce(h.N_AGENTS_ADDED, 0)      AS N_AGENTS_ADDED,
            coalesce(h.N_WOULD_EXTEND, 0)      AS N_WOULD_EXTEND,
            coalesce(h.N_WOULD_REMOVE_ADD, 0)  AS N_WOULD_REMOVE_ADD,
+           coalesce(h.N_WITH_REAL_FILL, 0)    AS N_WITH_REAL_FILL,
            round(100.0 * coalesce(h.N_LINES_AFFECTED, 0) / nullif(a.N_LINES, 0), 2)
                                               AS PCT_LINES_AFFECTED
     FROM all_lines a
@@ -204,6 +250,7 @@ stock_by_med_sql <- function(agents_tbl) {
            sum(COVERS_WHOLE_WINDOW)     AS N_COVERS_WHOLE_WINDOW,
            sum(WOULD_EXTEND_RUNOUT)     AS N_WOULD_EXTEND,
            sum(WOULD_REMOVE_ADD_MED)    AS N_WOULD_REMOVE_ADD,
+           sum(HAS_REAL_FILL_IN_WINDOW) AS N_WITH_REAL_FILL,
            percentile_approx(DAYS_COVERED_IN_WINDOW, 0.5) AS MEDIAN_DAYS_COVERED
     FROM {agents_tbl}
     GROUP BY MED_ABBR

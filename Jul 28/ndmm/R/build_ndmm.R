@@ -1277,6 +1277,7 @@ build_ndmm <- function(here, prefix) {
 
   log_msg("MM therapy code list, and the belantamab rows of it")
   db_exec(con, build_ndmm_mma_codelist())
+  check_ndmm_mma_code_types(con)
   checkpoint(con, "NDMM_MMA_CODELIST")
   check_ndc_shape(con, cfg)
   build_ndmm_belantamab_codes(con)

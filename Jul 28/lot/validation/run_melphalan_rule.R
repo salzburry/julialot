@@ -30,6 +30,35 @@
 source(file.path(.script_dir, "R", "melphalan.R"))
 source(file.path(.script_dir, "R", "run_binding.R"))
 
+# The status row is read once before the tables are written and once after.
+# Each program replaces its outputs one statement at a time, so a LOT rebuild
+# landing in the middle leaves some tables measured against the old attempt and
+# some against the new - all stamped with the attempt that was current when the
+# run started. Comparing the stamp is what turns that into a message instead of
+# a number nobody can trace.
+recheck_lot_attempt <- function(con, prefix, before, what) {
+  after <- tryCatch(lot_run_row(con, prefix), error = function(e) NULL)
+  if (is.null(after)) {
+    cat("\nWARNING: the LOT status row could not be re-read, so this run cannot\n",
+        "  confirm the tables it measured are still the attempt it started on.\n",
+        sep = "")
+    return(invisible(FALSE))
+  }
+  if (!identical(after$run, before$run) || !identical(after$stamp, before$stamp)) {
+    cat("\nWARNING: the LOT run moved while this was measuring.\n")
+    cat("  started on ", before$run, " / ", before$stamp, "\n", sep = "")
+    cat("  now        ", after$run,  " / ", after$stamp,  "\n", sep = "")
+    cat("  The ", what, " tables are part one attempt and part the other. Their\n",
+        "  SOURCE_LOT_STAMP says which attempt each row was measured against;\n",
+        "  re-run against a settled build before reading them.\n", sep = "")
+    return(invisible(FALSE))
+  }
+  cat("\nStill the attempt this started on: ", after$run, " / ", after$stamp,
+      ".\n", sep = "")
+  invisible(TRUE)
+}
+
+
 LOT_ROOT <- normalizePath(file.path(.script_dir, "..", "engine"), mustWork = TRUE)
 env_flag <- function(nm) identical(toupper(trimws(Sys.getenv(nm, unset = ""))), "TRUE")
 
@@ -95,7 +124,7 @@ main <- function() {
   br    <- wrk(paste0(prefix, "MELP_RULE_BRANCHES"))
   im    <- wrk(paste0(prefix, "MELP_RULE_IMPACT"))
 
-  cat("\nMeasuring against LOT run ", run$run_id, " on ", lines, "\n", sep = "")
+  cat("\nMeasuring against LOT run ", run$run, " on ", lines, "\n", sep = "")
   db_exec(con, glue("CREATE OR REPLACE TABLE {ex} AS {
     melp_rule_sql(lines, maps, autos, mc, run_id)}"))
   db_exec(con, glue("CREATE OR REPLACE TABLE {br} AS {melp_branch_sql(ex)}"))
@@ -144,6 +173,7 @@ main <- function() {
       "an exposure falls\nin, whether an agent is inside an induction window, ",
       "regimen membership and every\nlater line number. An exact line structure ",
       "needs an alternate build.\n", sep = "")
+  recheck_lot_attempt(con, prefix, run, "MELP_RULE")
   cat("\nWrote ", ex, ", ", br, " and ", im, ".\n", sep = "")
 }
 

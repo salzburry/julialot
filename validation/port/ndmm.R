@@ -165,6 +165,22 @@ SUBST <- list(
 # patient excluded as previously treated, or as having another cancer, on the
 # strength of a claim with no code in it. These add the check on the normalised
 # value; they can only ever remove matches the source should not have made.
+# Definitions the port ADDS, dropped from the PORT side before the comparison -
+# the mirror of DROPPED, and of ADDED for a whole definition rather than a line
+# at a time. A guard is thirty code lines that mean one thing; registering each
+# of them separately buries the reason it exists in its own transcript.
+#
+# A name that is not found is reported, so an entry cannot quietly rot.
+ADDED_DEFS <- list(
+  # cl_mma_codelist.csv is joined on code_type equality, so a row typed
+  # something no arm reads matches nothing - and prior therapy EXCLUDES, so the
+  # patient stays in the cohort instead. 08_clintrial.R carries the same guard
+  # over its own scan's types; that file is not a port of anything, so it needed
+  # no entry here. This one is.
+  "R/steps/03_prior_therapy.R" = c("NDMM_MMA_CODE_TYPES",
+                                   "check_ndmm_mma_code_types")
+)
+
 ADDED <- list(
   "R/ndmm_constants.R" = c("NDMM_FU_CE_DAYS          <- 0L" = 1L,
     # The dated events view the pregnancy scan writes. A new name, not a new
@@ -419,6 +435,17 @@ undeviate <- function(lines, file) {
     if (length(hit) < want)
       short <- c(short, paste0(nm, " (expected ", want, ", found ", length(hit), ")"))
     if (length(hit)) lines <- lines[-hit[seq_len(min(want, length(hit)))]]
+  }
+  for (nm in ADDED_DEFS[[file]]) {
+    i <- grep(paste0("^", nm, "\\s*<-"), lines)
+    if (!length(i)) { short <- c(short, paste0(nm, " (not in the port)")); next }
+    i <- i[1]; j <- i
+    if (grepl("function", lines[i], fixed = TRUE)) {
+      k <- which(lines[(i + 1L):length(lines)] == "}")
+      if (!length(k)) { short <- c(short, paste0(nm, " (no closing brace)")); next }
+      j <- i + k[1]
+    }
+    lines <- lines[-(i:j)]
   }
   assign(file, short, envir = undo_report)
   lines

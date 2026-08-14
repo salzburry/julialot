@@ -242,6 +242,38 @@ piped <- res; piped$detail[1] <- "a|b"
 ok(any(grepl("a/b", qc_markdown(piped, "r", "p_", P, ""), fixed = TRUE)),
    "a pipe in a detail cannot break the table")
 
+cat("\n-- the runner binds to the status table the engine actually writes --\n")
+# Read off BUILD_STATUS_COLS rather than restated here: a column renamed in the
+# engine has to move this test, not pass it. The runner asked for STATUS and
+# ordered by RUN_TIMESTAMP, which are not columns of this table - RUN_TIMESTAMP
+# belongs to LOT_RUN_METADATA - so QC against a fresh build died on the query.
+RUNNER <- paste(readLines(file.path(ROOT, "run_lot_qc.R"), warn = FALSE), collapse = "\n")
+BL <- paste(readLines(file.path(dirname(ROOT), "engine", "R", "build_lot.R"),
+                      warn = FALSE), collapse = "\n")
+status_cols <- local({
+  b <- regmatches(BL, regexpr("BUILD_STATUS_COLS <- c\\((?s).*?\\)", BL, perl = TRUE))
+  unique(unlist(regmatches(b, gregexpr("[A-Z][A-Z0-9_]+(?= = \")", b, perl = TRUE))))
+})
+ok(all(c("STATE", "UPDATED_AT", "RUN_ID") %in% status_cols),
+   paste0("LOT_BUILD_STATUS declares STATE and UPDATED_AT (", length(status_cols),
+          " columns read from the engine)"))
+ok(!("STATUS" %in% status_cols) && !("RUN_TIMESTAMP" %in% status_cols),
+   "...and declares neither STATUS nor RUN_TIMESTAMP")
+qcq <- regmatches(RUNNER, regexpr("SELECT RUN_ID(?s).*?LIMIT 1", RUNNER, perl = TRUE))
+ok(length(qcq) == 1L && has(qcq, "STATE") && has(qcq, "ORDER BY UPDATED_AT"),
+   "so the runner selects STATE and orders by UPDATED_AT")
+ok(length(qcq) == 1L && !has(qcq, "STATUS,") && !has(qcq, "RUN_TIMESTAMP"),
+   "...and names neither of the two columns that are not there")
+ok(all(vapply(c("STATE", "CONTRACT_DEVIATIONS", "RUN_ID"),
+              function(cl) cl %in% status_cols, logical(1))),
+   "...and every column it selects is one the engine writes")
+
+cat("\n-- a check that did not run counts against the exit status --\n")
+# The comment beside it promises all three do. n_skip was computed and then
+# left out of the sum, so a QC run that skipped every check exited 0.
+ok(has(RUNNER, "if (n_fail + n_error + n_skip > 0) quit(status = 1L)"),
+   "failures, errors AND skips decide the exit status")
+
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))
 if (fail > 0L) quit(status = 1L)

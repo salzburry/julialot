@@ -611,12 +611,17 @@ melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP",
     WITH melp_cover AS (
       SELECT cast(l.PATID as string) AS PATID, l.LOT_NUM, l.LOT_MED_CNT,
              l.LOT_BASE_DISCON_DT,
-             max(m.MAP_END_DT) AS MELP_COVER_END
+             -- The engine's own per-drug run-out (discon_per_med): the FIRST
+             -- episode flagged discontinued, and only the last cover when none
+             -- is. A plain max would credit a later restart with setting a
+             -- run-out the build read off the earlier episode.
+             coalesce(min(CASE WHEN m.MAP_DISCON_FLG = 1 THEN m.MAP_END_DT END),
+                      max(m.MAP_END_DT)) AS MELP_COVER_END
       FROM ", final_tbl, " l
       INNER JOIN ", map_tbl, " m
               ON cast(m.PATID as string) = cast(l.PATID as string)
              AND upper(trim(m.MAP_MED_TYPE)) = '", abbr, "'
-             AND m.MAP_START_DT BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT
+             AND m.MAP_START_DT >= l.LOT_START_DT
       WHERE l.LOT_BASE_DISCON_DT IS NOT NULL AND ", in_melp, "
       GROUP BY 1, 2, 3, 4
     )
