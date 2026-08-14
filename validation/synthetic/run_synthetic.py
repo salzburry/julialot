@@ -116,16 +116,28 @@ def generate(seed, n):
     return pats
 
 
-def discon_flags(maps):
-    """MAP_DISCON_FLG per drug: set when the gap to that drug's next start is
-    90+ days, or nothing follows. Mirrors what 03_mma_map computes."""
+def discon_gap_days():
+    """The gap 03_mma_map treats as a discontinuation. Same variable the engine
+    reads, so a fixture and the build cannot disagree about it."""
+    return int(os.environ.get("MAP_DISCON_GAP_DAYS", "90"))
+
+
+def discon_flags(maps, gap=None):
+    """MAP_DISCON_FLG per drug: set when the gap to that drug's next start
+    reaches the threshold, or nothing follows. Mirrors what 03_mma_map computes.
+
+    The threshold is a setting, not a constant - hardcoding it here made a
+    fixture built at another value silently come back at 90."""
+    if gap is None:
+        gap = discon_gap_days()
     out, by_med = [], {}
     for m in maps: by_med.setdefault(m[0], []).append(m)
     for rows in by_med.values():
         rows.sort(key=lambda r: r[2])
         for j, (mm, cls, s, e, _) in enumerate(rows):
             nxt = rows[j + 1][2] if j + 1 < len(rows) else None
-            out.append((mm, cls, s, e, 1 if (nxt is None or nxt - e >= 90) else 0))
+            out.append((mm, cls, s, e,
+                        1 if (nxt is None or nxt - e >= gap) else 0))
     return out
 
 
