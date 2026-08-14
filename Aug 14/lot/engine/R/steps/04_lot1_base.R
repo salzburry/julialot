@@ -54,9 +54,9 @@ phase_lot1_base <- function(con, ctx) {
     -- Steroids are excluded from base_meds by the lot1_induction_meds filter.
     -- because corticosteroids are not oncology agents and should
     -- not drive regimen membership, discontinuation, or add-med logic.
-    -- Per drug, the end of ITS cover in this line: the FIRST episode flagged
-    -- discontinued. A later episode of the same drug is a restart, and a
-    -- restart opens the next line rather than extending this one.
+    -- Per drug, the end of ITS cover in this line. A later episode of the same
+    -- drug extends it rather than opening a line, unless an agent that would
+    -- end the line arrives in between.
     discon_per_med AS (
 {discon_per_med_sql('lot1_start', 'LOT1_START_DT')}
     ),
@@ -117,15 +117,12 @@ phase_lot1_base <- function(con, ctx) {
         ms.PATID,
         ms.MAP_START_DT,
         ms.MAP_MED_TYPE
-      FROM map_prev ms
+      FROM map_stacked ms
       INNER JOIN base_core bc ON ms.PATID = bc.PATID
       LEFT JOIN base_meds bm
         ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
       WHERE bm.MED_ABBR IS NULL
         AND ms.MAP_MED_CLASS <> 'STEROID'  -- a steroid cannot trigger an add-med
-        -- A return counts as an initiation only where the patient had stopped
-        -- the agent, or had never had it before.
-        {prev_discon_gate_sql('ms', cfg$returning_agent_requires_discontinuation)}
         AND ms.MAP_START_DT >= bc.LOT1_START_DT
         AND ms.MAP_START_DT <= coalesce(bc.LOT1_BASE_RUNOUT_DT, bc.OBS_END_DT)
     ),

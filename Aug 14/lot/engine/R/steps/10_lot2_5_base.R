@@ -224,25 +224,12 @@ build_lot_n <- function(con, lot_num,
       WHERE ll.LOT_NUM = {prev}
         AND ll.LOT_BASE_END_DT IS NOT NULL
     ),
-    -- Permissible biosimilar substitutes of prior-LOT drugs.
-    -- A biosimilar of a prior-LOT drug does NOT trigger LOT_N.
+    -- The prior-LOT regimen and its permissible biosimilar substitutes. Neither
+    -- starts LOT_N: a substitute continues the drug it replaces, and the drug
+    -- itself was part of the previous regimen.
     --
-    -- A same-drug restart - the original prior-LOT drug itself - DOES trigger,
-    -- as a rechallenge line. Only the substitutes are excluded here, never the
-    -- drugs, and that is deliberate rather than an omission.
-    --
-    -- It cannot fire on a short gap, and the condition is not in this query.
-    -- discon_per_med takes min(MAP_END_DT WHERE MAP_DISCON_FLG = 1) before
-    -- falling back to the last episode, so where the agent's gap was under the
-    -- threshold the prior line already runs past the later episode and its
-    -- start never clears PREV_END_DT. A rechallenge line therefore only exists
-    -- where the build had called the agent discontinued.
-    --
-    -- The returning-agent gate below is the same condition stated where it can
-    -- be read: for a drug already in the prior regimen the first-exposure branch
-    -- is unreachable, so the gate reduces to PREV_DISCON_FLG = 1.
-    -- Note: explicit JOIN avoids the implicit cross join + correlated
-    -- subquery pattern, which would fail under spark.sql.crossJoin.enabled=false.
+    -- Explicit JOIN rather than a correlated subquery, which would fail under
+    -- spark.sql.crossJoin.enabled=false.
     prev_meds_array AS (
       SELECT pe.PATID, m AS MED_ABBR
       FROM prev_end pe
@@ -261,16 +248,13 @@ build_lot_n <- function(con, lot_num,
     med_cand AS (
       SELECT pe.PATID, min(ms.MAP_START_DT) AS d_MED
       FROM prev_end pe
-      INNER JOIN map_prev ms ON pe.PATID = ms.PATID
+      INNER JOIN map_stacked ms ON pe.PATID = ms.PATID
       LEFT JOIN prev_meds_expanded pme
         ON pe.PATID = pme.PATID AND ms.MAP_MED_TYPE = pme.MED_ABBR
       WHERE ms.MAP_START_DT > pe.PREV_END_DT
         AND ms.MAP_START_DT <= pe.OBS_END_DT
         AND ms.MAP_MED_CLASS <> 'STEROID'
         AND pme.MED_ABBR IS NULL
-        -- A return opens a line only where the patient had stopped the agent,
-        -- or had never had it before. Same test the added-medication query uses.
-        {prev_discon_gate_sql('ms', cfg$returning_agent_requires_discontinuation)}
       GROUP BY pe.PATID
     ),
     -- d_ALLO: earliest ALLO strictly after PREV_END_DT.
@@ -434,7 +418,8 @@ build_lot_n <- function(con, lot_num,
     -- discontinued. A later episode of the same drug is a restart, and a
     -- restart opens the next line rather than extending this one.
     discon_per_med AS (
-{discon_per_med_sql(glue('lot{lot_num}_start'), glue('LOT{lot_num}_START_DT'))}
+{discon_per_med_sql(glue('lot{lot_num}_start'), glue('LOT{lot_num}_START_DT'),
+                    )}
     ),
     -- The regimen has run out when its LAST base agent has.
     discon_raw AS (
@@ -469,16 +454,13 @@ build_lot_n <- function(con, lot_num,
     ),
     first_add_candidates AS (
       SELECT ms.PATID, ms.MAP_START_DT, ms.MAP_MED_TYPE
-      FROM map_prev ms
+      FROM map_stacked ms
       INNER JOIN lot{lot_num}_start ls ON ms.PATID = ls.PATID
       LEFT JOIN base_meds bm
         ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
       LEFT JOIN discon d ON ls.PATID = d.PATID
       WHERE bm.MED_ABBR IS NULL
         AND ms.MAP_MED_CLASS <> 'STEROID'
-        -- A return counts as an initiation only where the patient had stopped
-        -- the agent, or had never had it before.
-        {prev_discon_gate_sql('ms', cfg$returning_agent_requires_discontinuation)}
         -- Per-start-type lookback gate:
         --   MED  / SCT_AUTO -> any agent after the 30-day induction window
         --   CART             -> any agent after the 45-day consolidation window
@@ -757,10 +739,8 @@ build_lot_n <- function(con, lot_num,
     -- The post_runout CTEs MIRROR the actual LOT_(N+1) start-candidate
     -- logic (med_cand / auto_cand) so the guard fires exactly when LOT
     -- (N+1) would actually have a valid start trigger:
-    --   - MED: any non-steroid MM agent NOT in the prior LOT's permissible
-    --     biosimilar substitutes. Same-drug restarts DO qualify, matching
-    --     med_cand (lot2_5_base.R::med_cand) which only excludes
-    --     prev_meds_expanded (substitutes), not the base meds themselves.
+    --   - MED: any non-steroid MM agent outside this LOT's regimen and its
+    --     permissible substitutes, matching med_cand.
     --   - AUTO: any AUTO outside LOT N's applicable window from
     --     LOT_START_DT (30d MED/AUTO-started, 1d ALLO-started, 45d
     --     CART-started) AND not within sct_tandem_days (180d) of the
@@ -769,14 +749,21 @@ build_lot_n <- function(con, lot_num,
     --     LOT_BASE_RUNOUT_DT.
     --   - ALLO/CART: any after runout (no window check; ALLO and CART
     --     always trigger a new LOT).
+    -- What cannot confirm this line's run-out, because it cannot start the next
+    -- line either: this line's own regimen agents and their permissible
+    -- substitutes. med_cand excludes both, so accepting one here would confirm a
+    -- discontinuation on an event no next line is allowed to open on.
     post_runout_excluded_meds AS (
+      SELECT im.PATID, im.MED_ABBR
+      FROM lot{lot_num}_induction_meds im
+      UNION
       SELECT im.PATID, ps.substitute_med AS MED_ABBR
       FROM lot{lot_num}_induction_meds im
       INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
     ),
     post_runout_med AS (
       SELECT DISTINCT ms.PATID
-      FROM map_prev ms
+      FROM map_stacked ms
       INNER JOIN lot{lot_num}_base lb ON ms.PATID = lb.PATID
       LEFT JOIN post_runout_excluded_meds prem
         ON ms.PATID = prem.PATID AND ms.MAP_MED_TYPE = prem.MED_ABBR
@@ -785,9 +772,11 @@ build_lot_n <- function(con, lot_num,
         AND ms.MAP_START_DT <= lb.OBS_END_DT
         AND ms.MAP_MED_CLASS <> 'STEROID'
         AND prem.MED_ABBR IS NULL
-        -- Consistent with the added-medication and line-start gates: a return
-        -- counts only where the patient had stopped the agent, or never had it.
-        {prev_discon_gate_sql('ms', cfg$returning_agent_requires_discontinuation)}
+        -- Deliberately NOT gated on the returning agent. Confirming that a
+        -- run-out really was the end is a weaker claim than starting a line: a
+        -- patient turning up again is evidence the line stopped, whether or not
+        -- that agent is allowed to open the next one. Gating it reported real
+        -- discontinuations as censoring.
     ),
     post_runout_autos AS (
       SELECT a.PATID, a.TX_DT,
