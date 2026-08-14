@@ -1,26 +1,10 @@
-# An agent already in the previous line's regimen cannot start the next one.
-#
-# The protocol starts a subsequent LOT at "the first administration for a new MM
-# agent that was not part of the previous LOT regimen". A drug that WAS that
-# regimen is not such an agent, so it cannot open a line - however long it has
-# been gone.
-#
-# "Previous regimen" is the immediately preceding line's, not every drug the
-# patient has ever had. An agent from an older line that is absent from the one
-# just ended still opens the next.
-#
-# Two halves, and they only work together:
-#
-#   1. the exclusion - a prior-regimen drug is not a line-start candidate
-#   2. the run-out  - that drug's later episodes belong to the line it is in
-#
-# Without 2, prohibiting the restart leaves the returning episode owned by
-# nothing: no boundary, no regimen, no next line. The treatment would be in
-# map_stacked and in no row of LOT_LONG.
+# An agent in the previous line's regimen cannot start the next one: the protocol
+# starts a later LOT on "a new MM agent that was not part of the previous LOT
+# regimen". Its later episodes therefore belong to the line it is already in, so
+# that line's run-out chains forward over them.
 
-# The drugs themselves, added to the set med_cand already excludes - which
-# otherwise holds only their permissible biosimilar substitutes, so the drug
-# itself would open a line on itself.
+# The prior-LOT drugs themselves, added to the set med_cand excludes - which
+# otherwise holds only their permissible biosimilar substitutes.
 prior_regimen_excl_sql <- function() {
   "
       UNION
@@ -28,23 +12,14 @@ prior_regimen_excl_sql <- function() {
       FROM prev_meds_array pma"
 }
 
-# Where a line's cover ends, per drug: the body of discon_per_med.
+# Where a line's cover ends, per drug: the body of discon_per_med. A drug's
+# episodes chain forward from the line's start, and the run-out is the end of the
+# last one reached; the chain breaks at any episode with another non-steroid
+# agent starting between it and the one before, which is what keeps a line that
+# another agent ended where that agent put it.
 #
-# The drug's episodes are chained forward from the line's start and the run-out
-# is the end of the last one reached - but the chain BREAKS at any episode with
-# another non-steroid agent starting between it and the one before.
-#
-# The bound is the point. max(MAP_END_DT) on its own reaches every later episode
-# of the drug, including ones belonging to a line built months afterwards: LENA
-# in January and again in September would drag January's line forward to
-# September even where an agent in March had already ended it, turning a real
-# DISCONTINUATION into a MED_ADD. Chaining only while nothing intervenes is the
-# "no agent in the middle" condition stated literally, and it leaves a line that
-# another agent ended exactly where that agent put it.
-#
-# LEFT JOIN and an aggregate rather than EXISTS: a correlated subquery here
-# fails under spark.sql.crossJoin.enabled=false, the same reason med_cand joins
-# its exclusion set explicitly.
+# LEFT JOIN and an aggregate rather than EXISTS: a correlated subquery fails
+# under spark.sql.crossJoin.enabled=false.
 discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked") {
   paste0("
       WITH ep AS (
