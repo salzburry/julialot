@@ -88,8 +88,11 @@ def generate(seed, n):
             sct_auto.append(a1)
             if rnd.random() < 0.35:
                 sct_auto.append(a1 + rnd.choice([120, 179, 180, 181, 300]))
+        # Never on the index date. A line ends the day BEFORE its allograft, so
+        # an index-date ALLO would end LOT1 before it starts and leave the ALLO
+        # line nowhere to begin - a shape the CDM does not produce either.
         if rnd.random() < 0.12:
-            sct_ac.append(('ALLO', index + rnd.choice([0, 200, 500, 900])))
+            sct_ac.append(('ALLO', index + rnd.choice([45, 200, 500, 900])))
         if rnd.random() < 0.18:
             sct_ac.append(('CART', index + rnd.choice([20, 59, 60, 61, 300, 800])))
 
