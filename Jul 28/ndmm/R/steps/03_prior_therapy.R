@@ -63,6 +63,27 @@ check_ndmm_mma_code_types <- function(con) {
          "scan joins on ", paste(NDMM_MMA_CODE_TYPES, collapse = ", "),
          "; either retype the rows or add the source that reads them.",
          call. = FALSE)
+  # One normalised (code_type, code) naming more than one medication. The scan
+  # joins on the pair alone, so a colliding code multiplies a single claim into
+  # one row per agent it names - and NDMM_INDEX_AGENTS then reports agents the
+  # patient may never have had. Where one of the names is index-ineligible the
+  # claim is dropped entirely and the index date moves or disappears. LOT stops
+  # on the same collision in 01_codelists.R.
+  dup <- tryCatch(db_q(con, glue("
+    SELECT code_type, code, count(DISTINCT med_abbr) AS n_meds
+    FROM {NDMM_MMA_CODELIST}
+    GROUP BY code_type, code
+    HAVING count(DISTINCT med_abbr) > 1
+    ORDER BY code_type, code")), error = function(e) NULL)
+  if (is.null(dup))
+    stop("Could not check cl_mma_codelist.csv for one code naming several ",
+         "medications.", call. = FALSE)
+  if (nrow(dup))
+    stop("cl_mma_codelist.csv has ", nrow(dup), " code(s) naming more than one ",
+         "medication, e.g. ", dup$code_type[1], " ", dup$code[1], " (",
+         dup$n_meds[1], " agents).\nThe scan joins on (code_type, code) alone, ",
+         "so one claim becomes one row per agent named and the index can move ",
+         "or vanish where one of them is index-ineligible.", call. = FALSE)
   blank <- tryCatch(db_q(con, glue("
     SELECT count(*) AS n FROM {NDMM_MMA_CODELIST}
     WHERE med_abbr IS NULL OR trim(med_abbr) = ''")), error = function(e) NULL)

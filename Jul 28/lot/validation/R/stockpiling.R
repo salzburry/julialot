@@ -221,7 +221,9 @@ stock_by_lot_sql <- function(impact_tbl, lines_tbl) {
              sum(N_AGENTS_ADDED)      AS N_AGENTS_ADDED,
              sum(WOULD_EXTEND_RUNOUT) AS N_WOULD_EXTEND,
              sum(WOULD_REMOVE_ADD_MED) AS N_WOULD_REMOVE_ADD,
-             sum(HAS_REAL_FILL_IN_WINDOW) AS N_WITH_REAL_FILL
+             sum(HAS_REAL_FILL_IN_WINDOW) AS N_WITH_REAL_FILL,
+             max(SOURCE_LOT_RUN_ID)   AS SOURCE_LOT_RUN_ID,
+             max(SOURCE_LOT_STAMP)    AS SOURCE_LOT_STAMP
       FROM {impact_tbl}
       GROUP BY LOT_NUM
     )
@@ -232,6 +234,7 @@ stock_by_lot_sql <- function(impact_tbl, lines_tbl) {
            coalesce(h.N_WOULD_EXTEND, 0)      AS N_WOULD_EXTEND,
            coalesce(h.N_WOULD_REMOVE_ADD, 0)  AS N_WOULD_REMOVE_ADD,
            coalesce(h.N_WITH_REAL_FILL, 0)    AS N_WITH_REAL_FILL,
+           h.SOURCE_LOT_RUN_ID, h.SOURCE_LOT_STAMP,
            round(100.0 * coalesce(h.N_LINES_AFFECTED, 0) / nullif(a.N_LINES, 0), 2)
                                               AS PCT_LINES_AFFECTED
     FROM all_lines a
@@ -251,7 +254,9 @@ stock_by_med_sql <- function(agents_tbl) {
            sum(WOULD_EXTEND_RUNOUT)     AS N_WOULD_EXTEND,
            sum(WOULD_REMOVE_ADD_MED)    AS N_WOULD_REMOVE_ADD,
            sum(HAS_REAL_FILL_IN_WINDOW) AS N_WITH_REAL_FILL,
-           percentile_approx(DAYS_COVERED_IN_WINDOW, 0.5) AS MEDIAN_DAYS_COVERED
+           percentile_approx(DAYS_COVERED_IN_WINDOW, 0.5) AS MEDIAN_DAYS_COVERED,
+           max(SOURCE_LOT_RUN_ID)       AS SOURCE_LOT_RUN_ID,
+           max(SOURCE_LOT_STAMP)        AS SOURCE_LOT_STAMP
     FROM {agents_tbl}
     GROUP BY MED_ABBR
     ORDER BY count(*) DESC")

@@ -442,11 +442,19 @@ build_ndmm_fu_ce_counts <- function(con, cfg) {
     ) AS t(sort_key, rule, months)),
     want AS (
       SELECT idx.PATID, w.sort_key, w.rule,
-             least(CASE WHEN w.months IS NULL
-                        THEN date_add(idx.LOT1_START_DT, w.sort_key)
-                        ELSE add_months(idx.LOT1_START_DT, w.months) END,
-                   date('{cfg$study_end}'),
-                   coalesce(idx.DEATH_DT, date('{cfg$study_end}'))) AS want_end,
+             -- Floored at the index. Death dates are imputed to the 15th of
+             -- their month and the index scan does not bound on them, so a 1L
+             -- start CAN fall after a recorded death. Unfloored, want_end then
+             -- lands before the window starts and cov_end >= want_end is
+             -- satisfied by a span that ended before the index - the 0-day row
+             -- counts patients who were not enrolled at 1L at all.
+             greatest(
+               least(CASE WHEN w.months IS NULL
+                          THEN date_add(idx.LOT1_START_DT, w.sort_key)
+                          ELSE add_months(idx.LOT1_START_DT, w.months) END,
+                     date('{cfg$study_end}'),
+                     coalesce(idx.DEATH_DT, date('{cfg$study_end}'))),
+               idx.LOT1_START_DT)                        AS want_end,
              idx.LOT1_START_DT
       FROM idx CROSS JOIN w
     ),
