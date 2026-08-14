@@ -134,11 +134,21 @@ out by 28 days:
 
     LOT1  2016-01-01 -> 2016-03-28   LEN
 
-**A drug returning after a real break starts a line, on itself.** LEN 1 Jan
-ds60, nothing else, LEN 1 Sep - 185 days after cover ran out:
+**A drug returning does not start a line on itself.** The protocol starts a
+later line at "the first administration for a new MM agent that was not part of
+the previous LOT regimen", and a drug that *was* that regimen is not such an
+agent - however long it has been gone. LEN 1 Jan ds60, nothing else, LEN 1 Sep,
+185 days after cover ran out:
 
-    LOT1  2016-01-01 -> 2016-02-29   LEN
-    LOT2  2016-09-01 -> 2016-09-30   LEN
+    LOT1  2016-01-01 -> 2016-09-30   LEN
+
+One line, spanning the seven months with no cover. The line extends over the
+return rather than a second line opening on it, because the alternative leaves
+the September treatment belonging to nothing at all.
+
+The extension stops at any other agent. Where one arrives in between it ends the
+line in the ordinary way, and the drug's later episode is judged against the
+next line's regimen instead - see the example below.
 
 **A drug returning while another agent runs.** LEN 1 Jan-28 Mar, POMA 15 Mar-20
 May, LEN again 1 May - 34 days after LEN's own cover ended, so LEN never

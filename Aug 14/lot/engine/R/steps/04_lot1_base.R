@@ -58,18 +58,7 @@ phase_lot1_base <- function(con, ctx) {
     -- discontinued. A later episode of the same drug is a restart, and a
     -- restart opens the next line rather than extending this one.
     discon_per_med AS (
-      SELECT
-        ms.PATID,
-        ms.MAP_MED_TYPE,
-        coalesce(min(CASE WHEN ms.MAP_DISCON_FLG = 1 THEN ms.MAP_END_DT END),
-                 max(ms.MAP_END_DT)) AS MED_END_DT
-      FROM map_stacked ms
-      INNER JOIN lot1_start l1 ON ms.PATID = l1.PATID
-      INNER JOIN base_meds bm
-        ON ms.PATID = bm.PATID
-       AND ms.MAP_MED_TYPE = bm.MED_ABBR
-      WHERE ms.MAP_START_DT >= l1.LOT1_START_DT
-      GROUP BY ms.PATID, ms.MAP_MED_TYPE
+{discon_per_med_sql('lot1_start', 'LOT1_START_DT')}
     ),
     -- The regimen has run out when its LAST base agent has.
     discon_raw AS (

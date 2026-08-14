@@ -1,24 +1,24 @@
 # LOT - recorded decisions
 
-This folder is the contract build plus one rule. This file is what that rule
-is, what it changed, and what is still open.
+The rules this build applies where a written authority left a choice open, what
+each one does, and which questions are still unanswered.
 
 ---
 
 ## The whole change in one frame
 
-Three questions the build answers. Only the third moved.
+Three questions the build answers. Only the third is decided by the rule below.
 
 | | question | answered by | changed here |
 |---|---|---|---|
-| 1 | when does a drug's supply run? | MAP episodes, `steps/03_mma_map.R` | **no** - unchanged from the contract |
+| 1 | when does a drug's supply run? | MAP episodes, `steps/03_mma_map.R` | **no** |
 | 2 | did the patient stop the drug? | `MAP_DISCON_FLG`, set at `MAP_DISCON_GAP_DAYS` (90) | **no** |
 | 3 | does a drug coming back start a line? | the returning-agent gate | **yes** |
 
 The 90-day threshold has never merged anything. A new MAP opens the moment a
 claim lands beyond every runout - one day's gap or five hundred - and the
 threshold is applied afterwards, as a label on the *earlier* episode. Two
-episodes stay two episodes. `map_stacked` is unchanged.
+episodes stay two episodes. This rule changes no MAP row.
 
 So the gate reads a label. It moves no date and merges no episode. It decides
 one thing: whether a returning agent's new episode counts as *starting* a
@@ -52,14 +52,14 @@ describes the gap that *follows* it, so a returning episode's own flag is about
 its future.
 
 **The setting.** `RETURNING_AGENT_REQUIRES_DISCONTINUATION` in `engine/config.csv`,
-TRUE here. Off, the gate emits nothing at all and the build is the contract's,
-line for line - checked over 1,500 patients, zero lines differing. There is no
-second gap parameter: the threshold is still `MAP_DISCON_GAP_DAYS`.
+TRUE here. Off, the gate emits nothing at all and the build is as it would be
+without this rule - checked over 1,500 patients, zero lines differing. There is
+no second gap parameter: the threshold is still `MAP_DISCON_GAP_DAYS`.
 
-It is deliberately **not** in `CONTRACT`. Pinning it would make every run here a
-recorded deviation needing `LOT_CONTRACT_OVERRIDE`, which is machinery a test
-folder does not want. It has to go into `CONTRACT` before any of this reaches
-the study build.
+It is deliberately **not** in `CONTRACT`, so a run here needs no override. The
+cost is that a finished run records nothing about which of the two algorithms
+built its lines, and two runs on one code hash can disagree. That has to close
+before a run whose numbers are kept.
 
 ---
 
@@ -101,18 +101,18 @@ Two consequences worth knowing:
 
 ## Worked cases
 
-Run through both engines, actual output.
+Actual output, with the rule off and on.
 
 **A drug returning without having stopped.** LENA 1 Jan-28 Mar, POMA 15 Mar-20
 May, LENA 1-30 May. LENA's gap is 34 days.
 
 ```
-                                              contract            with the rule
-LOT1  Jan 01 -> Mar 14  base LEN              MED_ADD (POMA)      same
-LOT2  Mar 15 -> Apr 30  base POMA             MED_ADD (LEN)       -
-LOT3  May 01 -> May 30  base LEN              DISCONTINUATION     -
-LOT2  Mar 15 -> May 20  base POMA                                 DISCONTINUATION
-                        continuing LEN
+                              rule off                  rule on
+LOT1  Jan 01 -> Mar 14        base LEN   MED_ADD        same
+LOT2  Mar 15 -> Apr 30        base POMA  MED_ADD        -
+LOT3  May 01 -> May 30        base LEN   DISCON         -
+LOT2  Mar 15 -> May 20        -                         base POMA  DISCON
+                                                        continuing LEN
 ```
 
 POMA starts while LENA is still covered and still advances the line - it is
@@ -131,12 +131,12 @@ on LENA. Its preceding episode is flagged, and it is not in LOT2's
 **A same-drug restart.** LENA 1 Jan ds60, nothing else, LENA 1 Sep:
 
 ```
-LOT1  2016-01-01 -> 2016-02-29  meds LEN  DISCONTINUATION
-LOT2  2016-09-01 -> 2016-09-30  meds LEN  DISCONTINUATION
+LOT1  2016-01-01 -> 2016-09-30  meds LEN  DISCONTINUATION
 ```
 
-Identical in both folders - the gate does not touch it, because a 184-day gap
-flags the first episode. See decision 2.
+One line. The prior-regimen rule decides this, not the returning-agent gate -
+a 185-day gap flags the first episode, so the gate would let it through. The two
+are independent and this case is the other one's.
 
 ---
 
@@ -149,6 +149,14 @@ flags the first episode. See decision 2.
   line.
 - **A returning agent that never stopped does not advance the line** - the rule
   above, this folder.
+- **An agent in the previous regimen cannot start the next line.** The protocol
+  starts a later line at "the first administration for a new MM agent **that was
+  not part of the previous LOT regimen**", and a drug that was that regimen is
+  not such an agent. The line it belongs to extends over its later episodes
+  instead, stopping at any other agent that arrives in between.
+  The cost is a line that can span a treatment-free interval - LENA in January
+  and September becomes one nine-month LOT1 with seven months uncovered. That is
+  the price of the return belonging to a line rather than to nothing.
 - **A return inside a line is recorded rather than dropped** -
   `LOT_CONTINUING_MEDS`, descriptive. A return after the line ended is not; see
   the open defect.
@@ -165,13 +173,14 @@ is bounded by the line's own span so it cannot reach it either.
     POMA 15-31 Mar         LOT2  Mar 15 -> Mar 31  base POMA  DISCONTINUATION
     LEN  20 Apr (81d gap)  -- in no line at all
 
-The contract build gives LOT3 on LEN from 20 April. Here the episode exists in
+With the rule off the 20 April episode opens LOT3 on LEN. With it on the
+episode exists in
 `map_stacked` and appears in no row of `LOT_LONG`. A month of dispensed therapy
 is absent from the output.
 
 This has to be settled before the rule is used for anything but sensitivity.
 Three shapes: extend the prior line to own the return, let it open a line after
-all - which is the contract's answer and defeats the rule - or record it outside
+all, which is what the rule exists to prevent - or record it outside
 the line structure. Each moves different downstream numbers.
 
 ---
@@ -208,29 +217,6 @@ Today: no. `LOT_CONTINUING_MEDS` is descriptive and does not reach
 dispensed to the 30th, so 21-30 May sits in no line. Making it affect run-out
 changes line duration, TTNT, when the next line starts, and 2L/3L membership.
 
-**2. A same-drug restart after a confirmed discontinuation - resume, or a new
-line?**
-Today: a new line. `med_cand` excludes `prev_meds_expanded`, which is only the
-*permissible substitutes* of prior-LOT drugs, never the drugs themselves
-(`steps/10_lot2_5_base.R:246-250`). So LENA restarting after 184 days gives two
-lines, both LENA.
-
-The protocol says a subsequent LOT starts at "the first administration for a new
-MM agent **that was not part of the previous LOT regimen**", which a strict
-reading says LENA is not. `maintenance_validated.csv`'s
-`MAINT_REINTRODUCTION_RULE` points the same way but is scoped to maintenance,
-which the engine does not implement.
-
-Note the condition already in force: a restart only opens a line where the
-previous episode was flagged. Under the threshold, `discon_per_med`'s
-`min(end WHERE flag=1)` pulls the line's end past the second episode and no new
-line opens. Whichever way this is decided, that part is not in question.
-
-Resuming the line needs a narrower mechanism than taking the last episode's end
-in `discon_per_med`: that also drags a run-out forward whenever any regimen
-agent has a later episode, turning DISCONTINUATION endings into MED_ADD ones in
-cases with nothing to do with the gap.
-
 **3. Should a real in-window fill absorbed into an older MAP join the regimen?**
 Today: no - regimen membership is an episode start inside the window, not a fill
 inside it. `lot1baseend_validated.csv` row 34 carries both readings: "first
@@ -260,8 +246,8 @@ repo.
   an unapproved rule that nobody has ruled on or measured.
   It also costs nothing to leave off: `APPLY_MELP_RULE` is blank, so the arm
   emits nothing at all and a gate on it is inert. Leaving it ungated keeps
-  `engine/R/melp_rule.R` identical to the contract's, so melphalan means the
-  same thing in either folder and a melphalan run answers one question.
+  `engine/R/melp_rule.R` free of this rule, so a melphalan run answers one
+  question rather than two.
   **Required before promotion.** Rule 9 of the continuity draft says every path
   that injects or suppresses a medication boundary must share this predicate.
   That binds when this rule becomes contract, not while it is a sensitivity.

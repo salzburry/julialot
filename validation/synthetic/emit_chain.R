@@ -48,6 +48,8 @@ assign("cfg", list(
     as.logical(Sys.getenv("CART_RULE", unset = "TRUE")),
   returning_agent_requires_discontinuation =
     as.logical(Sys.getenv("RETURNING_GATE", unset = "TRUE")),
+  same_agent_cannot_advance =
+    as.logical(Sys.getenv("SAME_AGENT", unset = "TRUE")),
   apply_melp_rule = Sys.getenv("MELP_RULE", unset = ""), melp_med_abbr = "MELP",
   melp_exposure_days = 30L, melp_restart_days = 60L,
   melp_advance_days = 180L, melp_sct_days = 14L,
@@ -76,6 +78,8 @@ assign("db_q", function(con, sql) {
 
 sys.source(file.path(ENGINE, "melp_rule.R"), e)
 sys.source(file.path(ENGINE, "cart_rule.R"), e)
+if (file.exists(file.path(ENGINE, "prior_regimen.R")))
+  sys.source(file.path(ENGINE, "prior_regimen.R"), e)
 # map_stacked is a fixture here, so step 03 never runs and the view it
 # materialises never exists. Emit it from the engine's own definition rather
 # than restating it - a copy in this file could drift from what ships. Folders

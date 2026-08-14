@@ -602,7 +602,7 @@ load_lot_modules <- function(here) {
   load_pipeline_inputs(here, "config.csv")
   for (f in c("config_lot.R", "db_utils_lot.R", "codelists_lot.R", "line_criteria.R",
               "melp_rule.R", "cart_rule.R", "map_prev.R",
-              "continuing_meds.R"))
+              "continuing_meds.R", "prior_regimen.R"))
     source(file.path(here, "R", f))
   steps <- sort(list.files(file.path(here, "R", "steps"), "\\.R$", full.names = TRUE))
   for (f in steps) source(f)
@@ -1483,8 +1483,18 @@ code_fingerprint <- function(here) {
 # between recording what the run did and recording what it was supposed to do,
 # and a metadata row that says the second is worse than none: the dashboard
 # reads max_lot out of this string to decide how many panels a run has.
+# Settings that decide which lines a run builds but are not contract axes, so
+# CONTRACT_SETTINGS carries them and a finished run says which rule produced it.
+# Recorded, not governed: no deviation, no override, no refusal - the value is
+# simply written down beside the run.
+#
+# Without this a run leaves no trace of them at all. CODE_MD5 hashes R/ and
+# build.R and not config.csv, so flipping one of these gives two runs the same
+# fingerprint, the same CONTRACT_SETTINGS, and materially different lines.
+RECORDED_SETTINGS <- c("returning_agent_requires_discontinuation")
+
 contract_settings <- function(cfg) {
-  k <- sort(names(CONTRACT), method = "radix")
+  k <- sort(unique(c(names(CONTRACT), RECORDED_SETTINGS)), method = "radix")
   val <- function(key) {
     v <- if (!is.null(cfg[[key]])) cfg[[key]] else CONTRACT[[key]]
     as.character(v)[1]
