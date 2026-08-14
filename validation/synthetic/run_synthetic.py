@@ -100,8 +100,10 @@ def generate(seed, n):
         # generator that ignores that is testing a table the build cannot
         # produce - the first run of this harness did, and both invariant
         # breaks it reported were that and not the code.
-        maps = [(m, c, s, min(e, obs_end), f) for (m, c, s, e, f) in maps
+        maps = [(m, c, s, e, f) for (m, c, s, e, f) in maps
                 if index <= s <= obs_end]
+        maps = coalesce_same_drug(maps)
+        maps = [(m, c, s, min(e, obs_end), f) for (m, c, s, e, f) in maps]
         if not maps:
             maps = [(MEDS[0][0], MEDS[0][1], index, min(index + 27, obs_end), 0)]
         sct_ac   = [(t_, x) for (t_, x) in sct_ac if index <= x <= obs_end]
@@ -116,16 +118,66 @@ def generate(seed, n):
     return pats
 
 
-def discon_flags(maps):
-    """MAP_DISCON_FLG per drug: set when the gap to that drug's next start is
-    90+ days, or nothing follows. Mirrors what 03_mma_map computes."""
+def coalesce_same_drug(maps):
+    """One drug cannot have two supply episodes running at once.
+
+    03_mma_map opens a new MAP only for a claim landing beyond every runout
+    (CASE 2); a claim arriving while cover is still active pushes the runout
+    out instead (CASE 3, `rx_runout + ds`). So within a drug the episodes it
+    emits are strictly disjoint, and the next MAP_START_DT is always past the
+    previous MAP_END_DT.
+
+    Drawing episodes independently breaks that - the same agent gets picked
+    twice with windows that overlap - and produces a table no build can. It
+    also makes `lag(...) ORDER BY MAP_START_DT` and "the latest episode ending
+    before this date" name different rows as the previous episode, which is
+    the very thing the added-medication rules turn on. Fold an overlap the way
+    CASE 3 does rather than dropping it, so the draw is kept.
+    """
+    out, by_med = [], {}
+    for m in maps:
+        by_med.setdefault(m[0], []).append(m)
+    for rows in by_med.values():
+        cur = None
+        for med, cls, s, e, flg in sorted(rows, key=lambda r: (r[2], r[3])):
+            if cur is not None and s <= cur[3]:
+                cur[3] += e - s + 1              # CASE 3: pushout by days supply
+                continue
+            cur = [med, cls, s, e, flg]          # CASE 1 / CASE 2: new episode
+            out.append(cur)
+    return [tuple(r) for r in sorted(out, key=lambda r: (r[2], r[0]))]
+
+
+def discon_gap_days():
+    """The gap 03_mma_map treats as a discontinuation. Same variable the engine
+    reads, so a fixture and the build cannot disagree about it."""
+    return int(os.environ.get("MAP_DISCON_GAP_DAYS", "90"))
+
+
+def discon_flags(maps, obs_end, gap=None):
+    """MAP_DISCON_FLG per drug: set when the gap to that drug's next start
+    reaches the threshold. Mirrors what 03_mma_map computes.
+
+    The threshold is a setting, not a constant - hardcoding it here made a
+    fixture built at another value silently come back at 90.
+
+    The last episode of a drug is discontinued only when observation still runs
+    that many days past its end, which is the engine's second branch,
+    `datediff(OBS_END_DT, MAP_END_DT) >= gap`. Flagging every terminal episode
+    instead - what this did until now - marks a drug discontinued in a patient
+    whose data simply stops, so a fixture claims a discontinuation the build
+    would not.
+    """
+    if gap is None:
+        gap = discon_gap_days()
     out, by_med = [], {}
     for m in maps: by_med.setdefault(m[0], []).append(m)
     for rows in by_med.values():
         rows.sort(key=lambda r: r[2])
         for j, (mm, cls, s, e, _) in enumerate(rows):
             nxt = rows[j + 1][2] if j + 1 < len(rows) else None
-            out.append((mm, cls, s, e, 1 if (nxt is None or nxt - e >= 90) else 0))
+            reach = (nxt if nxt is not None else obs_end) - e
+            out.append((mm, cls, s, e, 1 if reach >= gap else 0))
     return out
 
 
@@ -134,7 +186,7 @@ CREATE TABLE lot_patient_input (PATID VARCHAR, INDEX_DATE DATE, ENDDATE DATE,
   ENDDATE_CE DATE, OBS_END_DT DATE, DEATH_DT DATE, GDR_CD VARCHAR, YRDOB INT,
   AGE_INDEX_YR INT);
 CREATE TABLE map_stacked (PATID VARCHAR, MAP_MED_TYPE VARCHAR, MAP_MED_CLASS VARCHAR,
-  MAP_START_DT DATE, MAP_END_DT DATE, MAP_DISCON_FLG INT);
+  MAP_CNT INT, MAP_START_DT DATE, MAP_END_DT DATE, MAP_DISCON_FLG INT);
 CREATE TABLE mma_rollup (CL_MED_ABBR VARCHAR, CL_MED_CLASS VARCHAR,
   MONOMAINTENANCE VARCHAR, DUALMAINTENANCEWITH VARCHAR);
 CREATE TABLE permissible_subs (original_med VARCHAR, substitute_med VARCHAR);
@@ -157,9 +209,13 @@ def load(con, pats):
                     [p['pid'], d(p['index']), d(p['obs_end']), d(p['obs_end']),
                      d(p['obs_end']), dd, 'M', 1955, 61])
         con.execute("INSERT INTO coh_1l VALUES (?,?)", [p['pid'], dd])
-        for med, cls, s, e, flg in discon_flags(p['maps']):
-            con.execute("INSERT INTO map_stacked VALUES (?,?,?,?,?,?)",
-                        [p['pid'], med, cls, d(s), d(e), flg])
+        cnt = {}
+        for med, cls, s, e, flg in discon_flags(p['maps'], p['obs_end']):
+            # MAP_CNT is 1-based per patient and drug, in claim order - what the
+            # aggregate in 03_mma_map assigns as it opens each episode.
+            cnt[med] = cnt.get(med, 0) + 1
+            con.execute("INSERT INTO map_stacked VALUES (?,?,?,?,?,?,?)",
+                        [p['pid'], med, cls, cnt[med], d(s), d(e), flg])
         for day in p['sct_auto']:
             con.execute("INSERT INTO tx_auto_dates VALUES (?,?)", [p['pid'], d(day)])
         for typ, day in p['sct_ac']:
@@ -244,6 +300,10 @@ CHECKS = [
   "                AND n.LOT_NUM = l.LOT_NUM + 1)"),
  ("more lines than the cap",
   "SELECT PATID FROM lot_long WHERE LOT_NUM > 5"),
+ ("two supply episodes of one drug overlapping - no build can emit this",
+  "SELECT a.PATID, a.MAP_MED_TYPE FROM map_stacked a JOIN map_stacked b "
+  "ON b.PATID = a.PATID AND b.MAP_MED_TYPE = a.MAP_MED_TYPE "
+  "AND b.MAP_START_DT > a.MAP_START_DT AND b.MAP_START_DT <= a.MAP_END_DT"),
  ("a line for a patient with no MAP row",
   "SELECT DISTINCT l.PATID FROM lot_long l LEFT JOIN map_stacked m "
   "ON m.PATID = l.PATID WHERE m.PATID IS NULL"),

@@ -1,0 +1,4 @@
+name,value,description
+DATABRICKS_DSN,RWDE,ODBC DSN
+DATABRICKS_CATALOG,hive_metastore,Catalog for all reads and writes
+STUDY_END,2026-03-31,Study period end
