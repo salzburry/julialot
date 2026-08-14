@@ -102,7 +102,12 @@ BOOL_SETTINGS <- c("USE_QUARTERLY_TABLES", "CENSOR_AT_DISENROLLMENT",
                    "APPLY_NO_BELANTAMAB",
                    # Coerced with as.logical() like the rest, so a typo would
                    # otherwise become NA and read as off.
-                   "FACE_VALIDITY_FATAL")
+                   "FACE_VALIDITY_FATAL",
+                   # Same coercion, and this one decides which algorithm the
+                   # run is. Unchecked, RETURNING_AGENT_REQUIRES_DISCONTINUATION=Ture
+                   # parses to NA, the gate emits nothing, and the run silently
+                   # produces contract lines while claiming to be this folder.
+                   "RETURNING_AGENT_REQUIRES_DISCONTINUATION")
 INT_SETTINGS  <- c("INDUCTION_WINDOW_DAYS", "INDUCTION_WINDOW_DAYS_LOT_N",
                    "MAP_DISCON_GAP_DAYS", "MEDICAL_DAY_SUPPLY",
                    "SCT_AUTO_WINDOW_DAYS", "SCT_AUTO_GAP_DAYS",

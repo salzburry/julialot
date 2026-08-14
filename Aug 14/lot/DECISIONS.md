@@ -69,7 +69,9 @@ A rejected agent used to land nowhere: not in `LOT_BASE_MEDS`, which is fixed at
 induction; not a boundary, because the rule rejected it; not in the next line.
 Dispensed therapy simply vanished.
 
-`LOT_CONTINUING_MEDS` carries it - beside the regimen, not inside it.
+`LOT_CONTINUING_MEDS` carries it - beside the regimen, not inside it - **but
+only where the return starts inside a line.** See the open defect below: it does
+not close the hole, it narrows it.
 
 Beside rather than inside because `discon_per_med` joins `base_meds`: **the
 regimen set is also the run-out set**. Putting an agent in `LOT_BASE_MEDS` would
@@ -81,6 +83,10 @@ The membership test is "an episode starting inside the line, non-steroid, not in
 rule *accepted* ends the line the day before its own start, so it falls outside
 the span. The column is therefore consistent whether the rule is on or off, and
 empty when off.
+
+That same bound is the defect. A return the rule suppresses which arrives
+*after* the line has ended starts outside every line's span, so this column
+cannot reach it by construction.
 
 Two consequences worth knowing:
 
@@ -143,7 +149,30 @@ flags the first episode. See decision 2.
   line.
 - **A returning agent that never stopped does not advance the line** - the rule
   above, this folder.
-- **It is recorded rather than dropped** - `LOT_CONTINUING_MEDS`, descriptive.
+- **A return inside a line is recorded rather than dropped** -
+  `LOT_CONTINUING_MEDS`, descriptive. A return after the line ended is not; see
+  the open defect.
+
+---
+
+## Open defect - treatment assigned to no line
+
+The rule can suppress a return that arrives after the prior line has already
+ended. Nothing then owns it: no boundary, no regimen, and `LOT_CONTINUING_MEDS`
+is bounded by the line's own span so it cannot reach it either.
+
+    LEN  1-30 Jan          LOT1  Jan 01 -> Mar 14  base LEN   MED_ADD
+    POMA 15-31 Mar         LOT2  Mar 15 -> Mar 31  base POMA  DISCONTINUATION
+    LEN  20 Apr (81d gap)  -- in no line at all
+
+The contract build gives LOT3 on LEN from 20 April. Here the episode exists in
+`map_stacked` and appears in no row of `LOT_LONG`. A month of dispensed therapy
+is absent from the output.
+
+This has to be settled before the rule is used for anything but sensitivity.
+Three shapes: extend the prior line to own the return, let it open a line after
+all - which is the contract's answer and defeats the rule - or record it outside
+the line structure. Each moves different downstream numbers.
 
 ---
 
