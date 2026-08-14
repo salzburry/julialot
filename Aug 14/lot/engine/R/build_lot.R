@@ -107,7 +107,8 @@ BOOL_SETTINGS <- c("USE_QUARTERLY_TABLES", "CENSOR_AT_DISENROLLMENT",
                    # run is. Unchecked, RETURNING_AGENT_REQUIRES_DISCONTINUATION=Ture
                    # parses to NA, the gate emits nothing, and the run silently
                    # produces contract lines while claiming to be this folder.
-                   "RETURNING_AGENT_REQUIRES_DISCONTINUATION")
+                   "RETURNING_AGENT_REQUIRES_DISCONTINUATION",
+                   "SAME_AGENT_CANNOT_ADVANCE")
 INT_SETTINGS  <- c("INDUCTION_WINDOW_DAYS", "INDUCTION_WINDOW_DAYS_LOT_N",
                    "MAP_DISCON_GAP_DAYS", "MEDICAL_DAY_SUPPLY",
                    "SCT_AUTO_WINDOW_DAYS", "SCT_AUTO_GAP_DAYS",
@@ -602,7 +603,7 @@ load_lot_modules <- function(here) {
   load_pipeline_inputs(here, "config.csv")
   for (f in c("config_lot.R", "db_utils_lot.R", "codelists_lot.R", "line_criteria.R",
               "melp_rule.R", "cart_rule.R", "map_prev.R",
-              "continuing_meds.R"))
+              "continuing_meds.R", "prior_regimen.R"))
     source(file.path(here, "R", f))
   steps <- sort(list.files(file.path(here, "R", "steps"), "\\.R$", full.names = TRUE))
   for (f in steps) source(f)

@@ -102,7 +102,10 @@ BOOL_SETTINGS <- c("USE_QUARTERLY_TABLES", "CENSOR_AT_DISENROLLMENT",
                    "APPLY_NO_BELANTAMAB",
                    # Coerced with as.logical() like the rest, so a typo would
                    # otherwise become NA and read as off.
-                   "FACE_VALIDITY_FATAL")
+                   "FACE_VALIDITY_FATAL",
+                   # Decides which lines the build produces, so a typo must not
+                   # parse to NA and read as off.
+                   "SAME_AGENT_CANNOT_ADVANCE")
 INT_SETTINGS  <- c("INDUCTION_WINDOW_DAYS", "INDUCTION_WINDOW_DAYS_LOT_N",
                    "MAP_DISCON_GAP_DAYS", "MEDICAL_DAY_SUPPLY",
                    "SCT_AUTO_WINDOW_DAYS", "SCT_AUTO_GAP_DAYS",
@@ -596,7 +599,7 @@ load_lot_modules <- function(here) {
   source(file.path(here, "R", "load_inputs.R"))
   load_pipeline_inputs(here, "config.csv")
   for (f in c("config_lot.R", "db_utils_lot.R", "codelists_lot.R", "line_criteria.R",
-              "melp_rule.R", "cart_rule.R"))
+              "melp_rule.R", "cart_rule.R", "prior_regimen.R"))
     source(file.path(here, "R", f))
   steps <- sort(list.files(file.path(here, "R", "steps"), "\\.R$", full.names = TRUE))
   for (f in steps) source(f)

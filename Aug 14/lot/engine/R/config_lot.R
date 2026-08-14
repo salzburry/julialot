@@ -109,6 +109,11 @@ cfg_defaults <- list(
   returning_agent_requires_discontinuation =
     as.logical(Sys.getenv("RETURNING_AGENT_REQUIRES_DISCONTINUATION",
                           unset = "TRUE")),
+  # The protocol's "not part of the previous LOT regimen", read strictly. Its
+  # own switch rather than folded into the rule above: the two are independent
+  # readings and a comparison has to be able to isolate either.
+  same_agent_cannot_advance =
+    as.logical(Sys.getenv("SAME_AGENT_CANNOT_ADVANCE", unset = "TRUE")),
   # Pinned TRUE in CONTRACT for the same reason. This is the value
   # criterion_enabled() applies, so the criterion and the recorded contract
   # cannot disagree about whether the exclusion ran.

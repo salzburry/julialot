@@ -65,18 +65,7 @@ phase_lot1_base <- function(con, ctx) {
     -- MAP_DISCON_FLG had been computed correctly all along and read by nothing
     -- but a QC count.
     discon_per_med AS (
-      SELECT
-        ms.PATID,
-        ms.MAP_MED_TYPE,
-        coalesce(min(CASE WHEN ms.MAP_DISCON_FLG = 1 THEN ms.MAP_END_DT END),
-                 max(ms.MAP_END_DT)) AS MED_END_DT
-      FROM map_stacked ms
-      INNER JOIN lot1_start l1 ON ms.PATID = l1.PATID
-      INNER JOIN base_meds bm
-        ON ms.PATID = bm.PATID
-       AND ms.MAP_MED_TYPE = bm.MED_ABBR
-      WHERE ms.MAP_START_DT >= l1.LOT1_START_DT
-      GROUP BY ms.PATID, ms.MAP_MED_TYPE
+{discon_per_med_sql(cfg$same_agent_cannot_advance, 'lot1_start', 'LOT1_START_DT')}
     ),
     -- The regimen has run out when its LAST base agent has.
     discon_raw AS (
