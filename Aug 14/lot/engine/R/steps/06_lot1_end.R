@@ -75,16 +75,6 @@ phase_lot1_end <- function(con, ctx) {
   # re-run the post-runout guard below, which scans map_stacked twice.
   materialize(con, "S16_lot1_base_end", view = "lot1_base_end", name = "LOT1_BASE_END", body = glue("
     WITH{melp_lot1_ctes(cfg)}
-    -- The agent's immediately preceding episode, and whether the build had
-    -- called it discontinued. An episode start on its own does not say the
-    -- patient started the drug: cover lapsing by a day opens one.
-    map_prev AS (
-      SELECT ms.*,
-             lag(ms.MAP_DISCON_FLG) OVER (PARTITION BY ms.PATID, ms.MAP_MED_TYPE
-                                          ORDER BY ms.MAP_START_DT)
-                                                        AS PREV_DISCON_FLG
-      FROM map_stacked ms
-    ),
     -- Post-runout guard: identify whether any LOT2-qualifying trigger
     -- exists strictly after LOT1_BASE_RUNOUT_DT and on/before OBS_END_DT.
     -- Prevents DEATH from preempting DISCONTINUATION when a patient ran out
@@ -121,7 +111,7 @@ phase_lot1_end <- function(con, ctx) {
         AND prem.MED_ABBR IS NULL
         -- Consistent with the added-medication and line-start gates: a return
         -- counts only where the patient had stopped the agent, or never had it.
-        AND (ms.PREV_DISCON_FLG IS NULL OR ms.PREV_DISCON_FLG = 1)
+        AND {prev_discon_gate_sql('ms')}
     ),
     post_runout_autos AS (
       SELECT a.PATID, a.TX_DT,

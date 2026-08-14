@@ -74,6 +74,15 @@ assign("db_q", function(con, sql) {
 
 sys.source(file.path(ENGINE, "melp_rule.R"), e)
 sys.source(file.path(ENGINE, "cart_rule.R"), e)
+# map_stacked is a fixture here, so step 03 never runs and the view it
+# materialises never exists. Emit it from the engine's own definition rather
+# than restating it - a copy in this file could drift from what ships. Folders
+# without the file build the lag inline and need nothing.
+if (file.exists(file.path(ENGINE, "map_prev.R"))) {
+  sys.source(file.path(ENGINE, "map_prev.R"), e)
+  SQL <- c(SQL, paste0("CREATE OR REPLACE VIEW map_prev AS ",
+                       e$map_prev_sql("map_stacked")))
+}
 for (f in c("04_lot1_base.R", "05b_lot1_sct.R", "06_lot1_end.R", "10_lot2_5_base.R"))
   sys.source(file.path(ENGINE, "steps", f), e)
 

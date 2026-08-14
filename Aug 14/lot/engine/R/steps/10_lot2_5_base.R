@@ -203,16 +203,6 @@ build_lot_n <- function(con, lot_num,
               view = glue("lot{lot_num}_start_candidates"),
               name = lotn_table(lot_num, "START_CANDIDATES"), body = glue("
     WITH
-    -- The agent's immediately preceding episode, and whether the build had
-    -- called it discontinued. An episode start on its own does not say the
-    -- patient started the drug: cover lapsing by a day opens one.
-    map_prev AS (
-      SELECT ms.*,
-             lag(ms.MAP_DISCON_FLG) OVER (PARTITION BY ms.PATID, ms.MAP_MED_TYPE
-                                          ORDER BY ms.MAP_START_DT)
-                                                        AS PREV_DISCON_FLG
-      FROM map_stacked ms
-    ),
     prev_end AS (
       SELECT ll.PATID,
              ll.LOT_BASE_END_DT  AS PREV_END_DT,
@@ -264,7 +254,7 @@ build_lot_n <- function(con, lot_num,
         AND pme.MED_ABBR IS NULL
         -- A return opens a line only where the patient had stopped the agent,
         -- or had never had it before. Same test the added-medication query uses.
-        AND (ms.PREV_DISCON_FLG IS NULL OR ms.PREV_DISCON_FLG = 1)
+        AND {prev_discon_gate_sql('ms')}
       GROUP BY pe.PATID
     ),
     -- d_ALLO: earliest ALLO strictly after PREV_END_DT.
@@ -427,17 +417,6 @@ build_lot_n <- function(con, lot_num,
     -- Per drug, the end of ITS cover in this line: the FIRST episode flagged
     -- discontinued. A later episode of the same drug is a restart, and a
     -- restart opens the next line rather than extending this one.
-    -- The agent's immediately preceding episode, and whether the build had
-    -- called it discontinued. A supply episode reopens whenever cover lapses by
-    -- a day, so an episode start on its own does not say the patient started
-    -- the drug.
-    map_prev AS (
-      SELECT ms.*,
-             lag(ms.MAP_DISCON_FLG) OVER (PARTITION BY ms.PATID, ms.MAP_MED_TYPE
-                                          ORDER BY ms.MAP_START_DT)
-                                                        AS PREV_DISCON_FLG
-      FROM map_stacked ms
-    ),
     discon_per_med AS (
       SELECT ms.PATID, ms.MAP_MED_TYPE,
              coalesce(min(CASE WHEN ms.MAP_DISCON_FLG = 1 THEN ms.MAP_END_DT END),
@@ -490,7 +469,7 @@ build_lot_n <- function(con, lot_num,
         AND ms.MAP_MED_CLASS <> 'STEROID'
         -- A return counts as an initiation only where the patient had stopped
         -- the agent, or had never had it before.
-        AND (ms.PREV_DISCON_FLG IS NULL OR ms.PREV_DISCON_FLG = 1)
+        AND {prev_discon_gate_sql('ms')}
         -- Per-start-type lookback gate:
         --   MED  / SCT_AUTO -> any agent after the 30-day induction window
         --   CART             -> any agent after the 45-day consolidation window
@@ -759,16 +738,6 @@ build_lot_n <- function(con, lot_num,
               view = glue("lot{lot_num}_base_end"),
               name = lotn_table(lot_num, "BASE_END"), body = glue("
     WITH
-    -- The agent's immediately preceding episode, and whether the build had
-    -- called it discontinued. An episode start on its own does not say the
-    -- patient started the drug: cover lapsing by a day opens one.
-    map_prev AS (
-      SELECT ms.*,
-             lag(ms.MAP_DISCON_FLG) OVER (PARTITION BY ms.PATID, ms.MAP_MED_TYPE
-                                          ORDER BY ms.MAP_START_DT)
-                                                        AS PREV_DISCON_FLG
-      FROM map_stacked ms
-    ),
     -- Post-runout guard: identify whether any LOT_(N+1)-qualifying
     -- trigger exists strictly after LOT_BASE_RUNOUT_DT and on/before
     -- OBS_END_DT. This is used to prevent DEATH from preempting
@@ -809,7 +778,7 @@ build_lot_n <- function(con, lot_num,
         AND prem.MED_ABBR IS NULL
         -- Consistent with the added-medication and line-start gates: a return
         -- counts only where the patient had stopped the agent, or never had it.
-        AND (ms.PREV_DISCON_FLG IS NULL OR ms.PREV_DISCON_FLG = 1)
+        AND {prev_discon_gate_sql('ms')}
     ),
     post_runout_autos AS (
       SELECT a.PATID, a.TX_DT,

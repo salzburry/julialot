@@ -57,17 +57,6 @@ phase_lot1_base <- function(con, ctx) {
     -- Per drug, the end of ITS cover in this line: the FIRST episode flagged
     -- discontinued. A later episode of the same drug is a restart, and a
     -- restart opens the next line rather than extending this one.
-    -- The agent's immediately preceding episode, and whether the build had
-    -- called it discontinued. A supply episode reopens whenever cover lapses by
-    -- a day, so an episode start on its own does not say the patient started
-    -- the drug.
-    map_prev AS (
-      SELECT ms.*,
-             lag(ms.MAP_DISCON_FLG) OVER (PARTITION BY ms.PATID, ms.MAP_MED_TYPE
-                                          ORDER BY ms.MAP_START_DT)
-                                                        AS PREV_DISCON_FLG
-      FROM map_stacked ms
-    ),
     discon_per_med AS (
       SELECT
         ms.PATID,
@@ -147,7 +136,7 @@ phase_lot1_base <- function(con, ctx) {
         AND ms.MAP_MED_CLASS <> 'STEROID'  -- a steroid cannot trigger an add-med
         -- A return counts as an initiation only where the patient had stopped
         -- the agent, or had never had it before.
-        AND (ms.PREV_DISCON_FLG IS NULL OR ms.PREV_DISCON_FLG = 1)
+        AND {prev_discon_gate_sql('ms')}
         AND ms.MAP_START_DT >= bc.LOT1_START_DT
         AND ms.MAP_START_DT <= coalesce(bc.LOT1_BASE_RUNOUT_DT, bc.OBS_END_DT)
     ),
