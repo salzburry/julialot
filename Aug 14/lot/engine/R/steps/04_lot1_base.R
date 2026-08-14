@@ -54,14 +54,9 @@ phase_lot1_base <- function(con, ctx) {
     -- Steroids are excluded from base_meds by the lot1_induction_meds filter.
     -- because corticosteroids are not oncology agents and should
     -- not drive regimen membership, discontinuation, or add-med logic.
-    -- Per drug, the end of ITS cover in this line: the LAST episode's end. A
-    -- later episode of the same drug is a restart of the same treatment, so the
-    -- line spans the gap rather than closing and reopening as a new line. The
-    -- protocol start rule reaches only a new MM agent that was not part of the
-    -- previous LOT regimen, which a restart of the same agent is not.
-    --
-    -- The cost is that a line covers an interval where the patient held no
-    -- drug, and that interval is what LOT length and TTD are measured over.
+    -- Per drug, the end of ITS cover in this line: the FIRST episode flagged
+    -- discontinued. A later episode of the same drug is a restart, and a
+    -- restart opens the next line rather than extending this one.
     -- The agent's immediately preceding episode, and whether the build had
     -- called it discontinued. A supply episode reopens whenever cover lapses by
     -- a day, so an episode start on its own does not say the patient started
@@ -77,7 +72,8 @@ phase_lot1_base <- function(con, ctx) {
       SELECT
         ms.PATID,
         ms.MAP_MED_TYPE,
-        max(ms.MAP_END_DT) AS MED_END_DT
+        coalesce(min(CASE WHEN ms.MAP_DISCON_FLG = 1 THEN ms.MAP_END_DT END),
+                 max(ms.MAP_END_DT)) AS MED_END_DT
       FROM map_stacked ms
       INNER JOIN lot1_start l1 ON ms.PATID = l1.PATID
       INNER JOIN base_meds bm

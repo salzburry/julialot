@@ -424,14 +424,9 @@ build_lot_n <- function(con, lot_num,
       FROM lot{lot_num}_induction_meds im
       INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
     ),{melp_lotn_ctes(cfg, lot_num, induction_window_days, cart_consolidation_days, allo_lot_span)}
-    -- Per drug, the end of ITS cover in this line: the LAST episode's end. A
-    -- later episode of the same drug is a restart of the same treatment, so the
-    -- line spans the gap rather than closing and reopening as a new line. The
-    -- protocol start rule reaches only a new MM agent that was not part of the
-    -- previous LOT regimen, which a restart of the same agent is not.
-    --
-    -- The cost is that a line covers an interval where the patient held no
-    -- drug, and that interval is what LOT length and TTD are measured over.
+    -- Per drug, the end of ITS cover in this line: the FIRST episode flagged
+    -- discontinued. A later episode of the same drug is a restart, and a
+    -- restart opens the next line rather than extending this one.
     -- The agent's immediately preceding episode, and whether the build had
     -- called it discontinued. A supply episode reopens whenever cover lapses by
     -- a day, so an episode start on its own does not say the patient started
@@ -445,7 +440,8 @@ build_lot_n <- function(con, lot_num,
     ),
     discon_per_med AS (
       SELECT ms.PATID, ms.MAP_MED_TYPE,
-             max(ms.MAP_END_DT) AS MED_END_DT
+             coalesce(min(CASE WHEN ms.MAP_DISCON_FLG = 1 THEN ms.MAP_END_DT END),
+                      max(ms.MAP_END_DT)) AS MED_END_DT
       FROM map_stacked ms
       INNER JOIN lot{lot_num}_start ls ON ms.PATID = ls.PATID
       INNER JOIN base_meds bm ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
@@ -763,6 +759,16 @@ build_lot_n <- function(con, lot_num,
               view = glue("lot{lot_num}_base_end"),
               name = lotn_table(lot_num, "BASE_END"), body = glue("
     WITH
+    -- The agent's immediately preceding episode, and whether the build had
+    -- called it discontinued. An episode start on its own does not say the
+    -- patient started the drug: cover lapsing by a day opens one.
+    map_prev AS (
+      SELECT ms.*,
+             lag(ms.MAP_DISCON_FLG) OVER (PARTITION BY ms.PATID, ms.MAP_MED_TYPE
+                                          ORDER BY ms.MAP_START_DT)
+                                                        AS PREV_DISCON_FLG
+      FROM map_stacked ms
+    ),
     -- Post-runout guard: identify whether any LOT_(N+1)-qualifying
     -- trigger exists strictly after LOT_BASE_RUNOUT_DT and on/before
     -- OBS_END_DT. This is used to prevent DEATH from preempting
@@ -792,7 +798,7 @@ build_lot_n <- function(con, lot_num,
     ),
     post_runout_med AS (
       SELECT DISTINCT ms.PATID
-      FROM map_stacked ms
+      FROM map_prev ms
       INNER JOIN lot{lot_num}_base lb ON ms.PATID = lb.PATID
       LEFT JOIN post_runout_excluded_meds prem
         ON ms.PATID = prem.PATID AND ms.MAP_MED_TYPE = prem.MED_ABBR
@@ -801,6 +807,9 @@ build_lot_n <- function(con, lot_num,
         AND ms.MAP_START_DT <= lb.OBS_END_DT
         AND ms.MAP_MED_CLASS <> 'STEROID'
         AND prem.MED_ABBR IS NULL
+        -- Consistent with the added-medication and line-start gates: a return
+        -- counts only where the patient had stopped the agent, or never had it.
+        AND (ms.PREV_DISCON_FLG IS NULL OR ms.PREV_DISCON_FLG = 1)
     ),
     post_runout_autos AS (
       SELECT a.PATID, a.TX_DT,

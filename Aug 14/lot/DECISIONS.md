@@ -1,8 +1,26 @@
 # LOT - recorded decisions
 
-This folder carries the changed rule. A same-drug restart continues its line
-instead of opening a new one, and a returning agent opens or ends a line only
-where the patient had discontinued it. `Jul 28` carries the contract build.
+This folder carries the changed rule. `Jul 28` carries the contract build.
+
+**The rule.** An agent returning to a line opens or ends one only when both hold:
+
+    the agent is absent from that line's regimen
+    AND (it is a first exposure OR its preceding episode has MAP_DISCON_FLG = 1)
+
+| the agent returns | result |
+|---|---|
+| first exposure, never had it | can advance the LOT |
+| preceding gap under the threshold | continuation - no new line |
+| preceding gap at or over it | reintroduction - can start a line |
+| already in this line's regimen | cannot advance it |
+
+Applied at four gates so line-ending and next-line-starting agree:
+`first_add_candidates` (`steps/04_lot1_base.R`, `steps/10_lot2_5_base.R`),
+`med_cand` and `post_runout_med` (`steps/10_lot2_5_base.R`), and
+`post_runout_med` (`steps/06_lot1_end.R`).
+
+`discon_per_med` is unchanged from the contract: a restart after a real
+discontinuation still opens the next line, which is the third row above.
 
 
 Choices that change where a line begins or ends. Each says what the code does,
@@ -36,11 +54,15 @@ therapies that were part of the original regimen does not advance the LOT** but
 ends the maintenance period." That rule is scoped to maintenance, which the
 engine does not implement, so it is indicative rather than binding.
 
-**Status here.** Changed. `discon_per_med` takes the LAST episode's end, so the
-line spans the gap and the restart opens nothing. The cost is that a line covers
-an interval where the patient held no drug, and that interval is what LOT length
-and TTD are measured over: LENA 1-30 Jan then 3-30 Sep is one line of 273 days
-on 58 days of drug.
+**Status here.** Unchanged from the contract. A restart after a discontinuation
+still opens the next line.
+
+Whether it should - LENA 1-30 Jan then 3-30 Sep, with nothing in between, as one
+reopened LOT1 rather than two lines - is a separate question and still open.
+Taking the last episode's end in `discon_per_med` would do it, but not only
+there: it also drags a line's run-out forward whenever a regimen agent has a
+later episode, turning a DISCONTINUATION ending into a MED_ADD one in cases that
+have nothing to do with the gap. That case needs a narrower mechanism.
 
 ---
 
@@ -70,9 +92,15 @@ substitutions ... 'do not advance the LOT'" - so the concept of an appearance
 that must not advance the line exists in the spec. It was never extended to a
 drug returning after a break that is not a discontinuation.
 
-**Status here.** Changed. `first_add_candidates` and `med_cand` both require the
-agent's preceding episode to carry `MAP_DISCON_FLG = 1`, or for there to be no
-preceding episode. An agent the patient never had still opens a line at once.
+**Status here.** Changed - see the rule at the top of this file. An agent the
+patient never had still opens a line at once, and a return after a real
+discontinuation still does.
+
+**Still to document.** When an under-threshold return does not open a line, the
+agent is recorded nowhere: it does not join the line's regimen and does not
+extend its run-out. Row 2 of the rule gives LOT2 = `POMA` ending on POMA's
+run-out while the patient is still taking LENA. The gate settles the boundary
+and not that output assignment.
 
 ---
 
