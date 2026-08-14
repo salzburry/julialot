@@ -202,8 +202,13 @@ main <- function() {
       "so it changes when the line runs out and what may end it, and every later\n",
       "line moves with that. An exact line structure needs an alternate build.\n",
       sep = "")
-  recheck_lot_attempt(con, prefix, run, "STOCKPILE")
+  settled <- recheck_lot_attempt(con, prefix, run, "STOCKPILE")
   cat("\nWrote ", ag, ", ", im, ", ", bl, " and ", bm, ".\n", sep = "")
+  # Exit non-zero when the attempt moved. The tables are written either way -
+  # SOURCE_LOT_STAMP says which attempt each row belongs to, and throwing them
+  # away would lose that - but a mixed result is not a successful measurement,
+  # and exit 0 is what a caller reads as one.
+  if (!isTRUE(settled)) quit(status = 1L)
 }
 
 main()

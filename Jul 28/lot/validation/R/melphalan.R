@@ -76,7 +76,8 @@ melp_cfg <- function(env = Sys.getenv) {
 # One statement, so every count comes off the same reading of the doses. The
 # lines table supplies both the line a dose falls in and the induction window
 # that applies to it, which differs at LOT1 and later.
-melp_rule_sql <- function(lines_tbl, map_tbl, auto_tbl, cfg, run_id) {
+melp_rule_sql <- function(lines_tbl, map_tbl, auto_tbl, cfg, run_id,
+                          lot_run = NA_character_, lot_stamp = NA_character_) {
   # Chained, not pairwise: three doses 20 days apart are one exposure, which is
   # what "one administration" means. A plain lag() gap would make the third a
   # new exposure because it is 40 days from the first.
@@ -234,6 +235,11 @@ melp_rule_sql <- function(lines_tbl, map_tbl, auto_tbl, cfg, run_id) {
                 WHEN ADVANCES = 'NEXT'  THEN NEXT_DT END AS ADVANCE_DT,
            {sql_text(cfg$mode)}   AS MELP_RULE_MODE,
            {sql_text(run_id)}     AS MELP_RUN_ID,
+           -- The LOT attempt these rows were measured against. A re-run keeps
+           -- its RUN_ID and replaces the lines in place, so the id alone cannot
+           -- say which attempt this is.
+           {sql_text(lot_run)}    AS SOURCE_LOT_RUN_ID,
+           {sql_text(lot_stamp)}  AS SOURCE_LOT_STAMP,
            current_timestamp()    AS BUILT_AT
     FROM ruled")
 }
@@ -267,7 +273,8 @@ melp_rule_sql <- function(lines_tbl, map_tbl, auto_tbl, cfg, run_id) {
 #            transplant rule was left to handle (YIELDED, where the coded
 #            transplant is on this dose). The rule says nothing about those, so
 #            removing their boundary would be unjustified.
-melp_impact_sql <- function(rule_tbl, lines_tbl, cfg, run_id) {
+melp_impact_sql <- function(rule_tbl, lines_tbl, cfg, run_id,
+                            lot_run = NA_character_, lot_stamp = NA_character_) {
   glue("
     WITH ln AS (
       SELECT cast(PATID as string) AS PATID, cast(LOT_NUM as int) AS LOT_NUM,
@@ -298,6 +305,11 @@ melp_impact_sql <- function(rule_tbl, lines_tbl, cfg, run_id) {
            coalesce(m.N_MERGE, 0)                          AS N_MERGE,
            {sql_text(cfg$mode)}   AS MELP_RULE_MODE,
            {sql_text(run_id)}     AS MELP_RUN_ID,
+           -- The LOT attempt these rows were measured against. A re-run keeps
+           -- its RUN_ID and replaces the lines in place, so the id alone cannot
+           -- say which attempt this is.
+           {sql_text(lot_run)}    AS SOURCE_LOT_RUN_ID,
+           {sql_text(lot_stamp)}  AS SOURCE_LOT_STAMP,
            current_timestamp()    AS BUILT_AT
     FROM now n
     LEFT JOIN splits s ON s.PATID = n.PATID
@@ -328,6 +340,8 @@ melp_branch_sql <- function(rule_tbl) {
            count(DISTINCT PATID)                  AS N_PATIENTS,
            max(MELP_RULE_MODE)                    AS MELP_RULE_MODE,
            max(MELP_RUN_ID)                       AS MELP_RUN_ID,
+           max(SOURCE_LOT_RUN_ID)                 AS SOURCE_LOT_RUN_ID,
+           max(SOURCE_LOT_STAMP)                  AS SOURCE_LOT_STAMP,
            current_timestamp()                    AS BUILT_AT
     FROM {rule_tbl}
     GROUP BY 1, 2, 3 ORDER BY 1, 2, 3")

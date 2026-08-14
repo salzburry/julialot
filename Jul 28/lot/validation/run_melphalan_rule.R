@@ -126,10 +126,10 @@ main <- function() {
 
   cat("\nMeasuring against LOT run ", run$run, " on ", lines, "\n", sep = "")
   db_exec(con, glue("CREATE OR REPLACE TABLE {ex} AS {
-    melp_rule_sql(lines, maps, autos, mc, run_id)}"))
+    melp_rule_sql(lines, maps, autos, mc, run_id, run$run, run$stamp)}"))
   db_exec(con, glue("CREATE OR REPLACE TABLE {br} AS {melp_branch_sql(ex)}"))
   db_exec(con, glue("CREATE OR REPLACE TABLE {im} AS {
-    melp_impact_sql(ex, lines, mc, run_id)}"))
+    melp_impact_sql(ex, lines, mc, run_id, run$run, run$stamp)}"))
 
   # Counted off ADVANCE_DT, which is set only for FIRST and NEXT. ADVANCES is a
   # reason on every row - NO_NEXT, UNPLACED, YIELDED and the rest - so counting
@@ -173,8 +173,13 @@ main <- function() {
       "an exposure falls\nin, whether an agent is inside an induction window, ",
       "regimen membership and every\nlater line number. An exact line structure ",
       "needs an alternate build.\n", sep = "")
-  recheck_lot_attempt(con, prefix, run, "MELP_RULE")
+  settled <- recheck_lot_attempt(con, prefix, run, "MELP_RULE")
   cat("\nWrote ", ex, ", ", br, " and ", im, ".\n", sep = "")
+  # Exit non-zero when the attempt moved. The tables are written either way -
+  # SOURCE_LOT_STAMP says which attempt each row belongs to, and throwing them
+  # away would lose that - but a mixed result is not a successful measurement,
+  # and exit 0 is what a caller reads as one.
+  if (!isTRUE(settled)) quit(status = 1L)
 }
 
 if (!interactive()) {
