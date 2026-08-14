@@ -197,11 +197,19 @@ repo.
 
 ## Known gaps
 
-- **The melphalan inject arm bypasses this rule.** `melp_inject_arm()`
-  (`engine/R/melp_rule.R:228`) is a `UNION` arm off `melp_inject`, separate from
-  the gated SELECT, so an injected melphalan boundary is not tested against the
-  returning-agent predicate. Inert while `APPLY_MELP_RULE` is blank - a defect
-  the moment a mode is set here.
+- **The melphalan rule and this one have different clocks.**
+  `melp_inject_arm()` now carries the same predicate as the main arm, so an
+  injected melphalan boundary meets the returning-agent test - five gates with
+  `APPLY_MELP_RULE` set, none without. But the melphalan rule reasons in 60- and
+  180-day gaps between *doses* and this one in 90 days between *episodes*. The
+  A.2/B.3 arm injects at a gap of 180 days or more, which at 28 days of medical
+  supply is a 152-day episode gap and passes. The B.1 arm injects a dose whose
+  *next* dose is inside 60 days and says nothing about what came before it, so a
+  B.1 injection shortly after an earlier melphalan episode is now rejected where
+  it used to be admitted. Coherent - a dose 30 days after the last is not an
+  initiation - but the two rules compose rather than one deferring to the other,
+  and how many boundaries that costs is unknown until a melphalan build runs.
+  The scenarios cannot say: none of them carries a transplant.
 - **Nothing downstream reads `LOT_CONTINUING_MEDS`.**
 - **`RETURNING_AGENT_REQUIRES_DISCONTINUATION` is not in `CONTRACT`**, so a run
   here records no deviation. Deliberate for a test folder; must change before
