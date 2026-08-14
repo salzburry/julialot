@@ -250,19 +250,21 @@ repo.
 
 ## Known gaps
 
-- **The melphalan rule and this one have different clocks.**
-  `melp_inject_arm()` now carries the same predicate as the main arm, so an
-  injected melphalan boundary meets the returning-agent test - five gates with
-  `APPLY_MELP_RULE` set, none without. But the melphalan rule reasons in 60- and
-  180-day gaps between *doses* and this one in 90 days between *episodes*. The
-  A.2/B.3 arm injects at a gap of 180 days or more, which at 28 days of medical
-  supply is a 152-day episode gap and passes. The B.1 arm injects a dose whose
-  *next* dose is inside 60 days and says nothing about what came before it, so a
-  B.1 injection shortly after an earlier melphalan episode is now rejected where
-  it used to be admitted. Coherent - a dose 30 days after the last is not an
-  initiation - but the two rules compose rather than one deferring to the other,
-  and how many boundaries that costs is unknown until a melphalan build runs.
-  The scenarios cannot say: none of them carries a transplant.
+- **The melphalan inject arm does not carry this rule, on purpose.**
+  A sensitivity folder should differ from the contract by one decision, and
+  gating `melp_inject_arm()` would make it two: melphalan reasons in 60- and
+  180-day gaps between *doses*, this rule in 90 days between *episodes*, so the
+  two compose rather than one deferring to the other. The B.1 arm injects a dose
+  whose *next* dose is inside 60 days and says nothing about what came before
+  it, so a gate would reject injections the melphalan rule intends - a change to
+  an unapproved rule that nobody has ruled on or measured.
+  It also costs nothing to leave off: `APPLY_MELP_RULE` is blank, so the arm
+  emits nothing at all and a gate on it is inert. Leaving it ungated keeps
+  `engine/R/melp_rule.R` identical to the contract's, so melphalan means the
+  same thing in either folder and a melphalan run answers one question.
+  **Required before promotion.** Rule 9 of the continuity draft says every path
+  that injects or suppresses a medication boundary must share this predicate.
+  That binds when this rule becomes contract, not while it is a sensitivity.
 - **Nothing downstream reads `LOT_CONTINUING_MEDS`.**
 - **`RETURNING_AGENT_REQUIRES_DISCONTINUATION` is not in `CONTRACT`**, so a run
   here records no deviation. Deliberate for a test folder; must change before

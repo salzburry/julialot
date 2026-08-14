@@ -225,32 +225,15 @@ melp_allo_guard <- function(lot_num, allo_lot_span) {
         AND lot{lot_num}_start.LOT{lot_num}_START_TYPE <> 'SCT_ALLO'"))
 }
 
-# The injected rows are candidates like any other, so they meet the same
-# returning-agent test the main arm does - Rule 9: post-runout and line-start
-# logic must not accept an event the added-medication query would reject.
-# Without it an injected melphalan boundary was the one way past that gate.
-#
-# The episode is resolved by the injected date falling inside it, and the join
-# is INNER on purpose. An INJECT_DT is a melphalan exposure date, so a MELP
-# episode always contains it; if that ever stops being true the boundary is
-# dropped rather than admitted on a NULL flag reading as a first exposure.
 melp_inject_arm <- function(cfg, line_tbl, start_col, span_end, extra = "") {
   if (!melp_rule_on(cfg)) return("")
-  gate <- if (exists("prev_discon_gate_sql"))
-    paste0("\n        ",
-           prev_discon_gate_sql("mp", cfg$returning_agent_requires_discontinuation))
-  else ""
   paste0("\n", glue("
       UNION
       SELECT i.PATID, i.INJECT_DT AS MAP_START_DT, '{melp_abbr(cfg)}' AS MAP_MED_TYPE
       FROM melp_inject i
       INNER JOIN {line_tbl} ON {line_tbl}.PATID = i.PATID
-      INNER JOIN map_prev mp
-        ON mp.PATID = i.PATID
-       AND mp.MAP_MED_TYPE = '{melp_abbr(cfg)}'
-       AND i.INJECT_DT BETWEEN mp.MAP_START_DT AND mp.MAP_END_DT
       WHERE i.INJECT_DT >  {line_tbl}.{start_col}
-        AND i.INJECT_DT <= {span_end}{extra}{gate}"))
+        AND i.INJECT_DT <= {span_end}{extra}"))
 }
 
 # LOT1 is corrected in 06_lot1_end.R rather than in 04, because yield_to_sct
