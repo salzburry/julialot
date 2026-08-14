@@ -3,9 +3,9 @@
 # The protocol starts a subsequent LOT at "the first administration for a new MM
 # agent that was not part of the previous LOT regimen". A drug that WAS that
 # regimen is not such an agent, so on the written rule it cannot open a line -
-# however long it has been gone. The contract build excludes only the permissible
-# biosimilar substitutes of prior-LOT drugs and lets the drugs themselves
-# through, which is where the two part company.
+# however long it has been gone. Without this rule med_cand excludes only the
+# permissible biosimilar substitutes of prior-LOT drugs and lets the drugs
+# themselves through, so the same drug opens a line on itself.
 #
 # "Previous regimen" is the immediately preceding line's, not every drug the
 # patient has ever had. An agent from an older line that is absent from the one
@@ -33,8 +33,8 @@ prior_regimen_excl_sql <- function(on) {
 
 # Where a line's cover ends, per drug: the body of discon_per_med.
 #
-# Off, the contract's: the FIRST episode flagged discontinued, falling back to
-# the last episode end where none is flagged. A later episode is a restart and
+# Off: the FIRST episode flagged discontinued, falling back to the last episode
+# end where none is flagged. A later episode is a restart and
 # opens the next line.
 #
 # On, the drug's episodes are chained forward from the line's start and the
@@ -47,7 +47,7 @@ prior_regimen_excl_sql <- function(on) {
 # September even where an agent in March had already ended it, turning a real
 # DISCONTINUATION into a MED_ADD. Chaining only while nothing intervenes is the
 # "no agent in the middle" condition stated literally, and it leaves a line that
-# another agent ended exactly where the contract puts it.
+# another agent ended exactly where it would end without this rule.
 #
 # LEFT JOIN and an aggregate rather than EXISTS: a correlated subquery here
 # fails under spark.sql.crossJoin.enabled=false, the same reason med_cand joins

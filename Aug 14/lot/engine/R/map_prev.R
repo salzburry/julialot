@@ -35,15 +35,18 @@ map_prev_sql <- function(map_tbl = "map_stacked") {
 # The NULL branch is load-bearing. No preceding episode means a first exposure,
 # and a bare PREV_DISCON_FLG = 1 would delete every one of them.
 #
-# Off, this returns nothing at all and the queries are the contract's, letting
-# any agent whose cover lapsed advance a line. It reads
-# returning_agent_requires_discontinuation, which is pinned FALSE - the rule is
-# not signed off - so a build with it on is a recorded deviation. The threshold
-# it tests is MAP_DISCON_GAP_DAYS, already set on the row; there is no second
-# gap setting here and there must not be one.
+# Off, this returns nothing at all and the queries are left as they would be
+# written without it, letting any agent whose cover lapsed advance a line. It
+# reads returning_agent_requires_discontinuation. The threshold it tests is
+# MAP_DISCON_GAP_DAYS, already set on the row; there is no second gap setting
+# here and there must not be one.
 #
-# The whole clause including the AND, so an off build emits the contract's SQL
-# rather than a no-op predicate standing in for it.
+# The setting is not in CONTRACT, so a run does not record which of the two
+# algorithms produced its lines. That has to close before a run whose numbers
+# are kept.
+#
+# The whole clause including the AND, so an off build emits the query without
+# this test at all rather than a no-op predicate standing in for it.
 prev_discon_gate_sql <- function(alias = "ms", on = TRUE) {
   if (!isTRUE(on)) return("")
   paste0("AND (", alias, ".PREV_DISCON_FLG IS NULL OR ",
