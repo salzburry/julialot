@@ -150,7 +150,7 @@ rechall_events_sql <- function(lines_tbl, map_tbl, claims_tbl, absorbed_tbl,
       GROUP BY r.PATID, r.LOT_NUM, r.MED_ABBR, r.RETURN_DT
     ),
     -- Agents starting alongside the return. A drug coming back on its own reads
-    -- as continuation; coming back with a new partner reads as a new regimen.
+    -- as continuation, and with a new partner as a new regimen.
     partners AS (
       SELECT r.PATID, r.LOT_NUM, r.MED_ABBR,
              count(DISTINCT upper(trim(m.MAP_MED_TYPE))) AS N_NEW_PARTNERS
