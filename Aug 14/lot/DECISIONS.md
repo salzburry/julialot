@@ -131,12 +131,12 @@ on LENA. Its preceding episode is flagged, and it is not in LOT2's
 **A same-drug restart.** LENA 1 Jan ds60, nothing else, LENA 1 Sep:
 
 ```
-LOT1  2016-01-01 -> 2016-02-29  meds LEN  DISCONTINUATION
-LOT2  2016-09-01 -> 2016-09-30  meds LEN  DISCONTINUATION
+LOT1  2016-01-01 -> 2016-09-30  meds LEN  DISCONTINUATION
 ```
 
-Identical in both folders - the gate does not touch it, because a 184-day gap
-flags the first episode. See decision 2.
+One line. `SAME_AGENT_CANNOT_ADVANCE` decides this, not the returning-agent
+gate - a 185-day gap flags the first episode, so the gate would let it through.
+The two rules are independent and this case is the other one's.
 
 ---
 
@@ -149,6 +149,15 @@ flags the first episode. See decision 2.
   line.
 - **A returning agent that never stopped does not advance the line** - the rule
   above, this folder.
+- **An agent in the previous regimen cannot start the next line.** The protocol
+  starts a later line at "the first administration for a new MM agent **that was
+  not part of the previous LOT regimen**", and a drug that was that regimen is
+  not such an agent. The line it belongs to extends over its later episodes
+  instead, stopping at any other agent that arrives in between.
+  `SAME_AGENT_CANNOT_ADVANCE`, TRUE in this folder and in the contract build.
+  The cost is a line that can span a treatment-free interval - LENA in January
+  and September becomes one nine-month LOT1 with seven months uncovered. That is
+  the price of the return belonging to a line rather than to nothing.
 - **A return inside a line is recorded rather than dropped** -
   `LOT_CONTINUING_MEDS`, descriptive. A return after the line ended is not; see
   the open defect.
@@ -207,29 +216,6 @@ Today: no. `LOT_CONTINUING_MEDS` is descriptive and does not reach
 `discon_per_med`. In case A, LOT2 ends 20 May on POMA's run-out while LENA was
 dispensed to the 30th, so 21-30 May sits in no line. Making it affect run-out
 changes line duration, TTNT, when the next line starts, and 2L/3L membership.
-
-**2. A same-drug restart after a confirmed discontinuation - resume, or a new
-line?**
-Today: a new line. `med_cand` excludes `prev_meds_expanded`, which is only the
-*permissible substitutes* of prior-LOT drugs, never the drugs themselves
-(`steps/10_lot2_5_base.R:246-250`). So LENA restarting after 184 days gives two
-lines, both LENA.
-
-The protocol says a subsequent LOT starts at "the first administration for a new
-MM agent **that was not part of the previous LOT regimen**", which a strict
-reading says LENA is not. `maintenance_validated.csv`'s
-`MAINT_REINTRODUCTION_RULE` points the same way but is scoped to maintenance,
-which the engine does not implement.
-
-Note the condition already in force: a restart only opens a line where the
-previous episode was flagged. Under the threshold, `discon_per_med`'s
-`min(end WHERE flag=1)` pulls the line's end past the second episode and no new
-line opens. Whichever way this is decided, that part is not in question.
-
-Resuming the line needs a narrower mechanism than taking the last episode's end
-in `discon_per_med`: that also drags a run-out forward whenever any regimen
-agent has a later episode, turning DISCONTINUATION endings into MED_ADD ones in
-cases with nothing to do with the gap.
 
 **3. Should a real in-window fill absorbed into an older MAP join the regimen?**
 Today: no - regimen membership is an episode start inside the window, not a fill
