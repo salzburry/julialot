@@ -33,6 +33,16 @@
 # calculation and leaves the added-medication candidate list, and both move
 # boundaries. An exact structure needs an alternate build.
 #
+# Absorption bites a second time, AFTER the induction window. 10_lot2_5_base.R
+# reads MAP_START_DT again for the added-medication query, so a claim for an
+# agent outside this line's regimen that lands while an episode of that agent is
+# still open opens nothing and ends nothing. The LOT protocol's rule 2 ends a LOT
+# on "initiation of a new MM agent that was not present in the induction
+# regimen", so that is a boundary the protocol asks for and the build does not
+# make. stock_absorbed_add_sql() counts those, and they are a separate question
+# from regimen membership: one is an agent missing from a regimen string, the
+# other is a line that never ended.
+#
 # LOT1 is structurally exempt - it starts at the patient's first non-steroid MM
 # agent, so no such episode can precede it. LOT1 coming back non-zero means the
 # window or the line table is not what this assumes, and is reported rather than
@@ -202,6 +212,171 @@ stock_impact_sql <- function(agents_tbl) {
            max(BUILT_AT)                              AS BUILT_AT
     FROM {agents_tbl}
     GROUP BY PATID, LOT_NUM, LOT_START_DT, LOT_MED_CNT")
+}
+
+# One row per (line, agent) whose added-medication boundary absorption swallowed.
+#
+# The build's added-medication query (10_lot2_5_base.R) takes agents outside this
+# line's regimen whose MAP_START_DT falls after the induction window and on or
+# before the line's end, and ends the line the day before the earliest. A claim
+# landing while an episode of that same agent is still open opens no episode, so
+# it is not a candidate and the boundary is never made.
+#
+# A claim opened an episode exactly when an episode of that agent starts on the
+# claim's own date - episode starts are a subset of claim dates, so no start on
+# that date means an open episode took it.
+#
+# WAS_IN_PREV_REGIMEN splits re-challenge from a first exposure. It does not
+# decide correctness: rule 2 measures "new" against THIS line's induction
+# regimen, so both are boundaries the protocol asks for. It is there because a
+# returning agent and a never-seen one are different clinically.
+stock_absorbed_add_sql <- function(lines_tbl, map_tbl, claims_tbl, cfg, run_id,
+                                   lot_run = NA_character_,
+                                   lot_stamp = NA_character_) {
+  glue("
+    WITH ln AS (
+      SELECT cast(PATID as string)         AS PATID,
+             cast(LOT_NUM as int)          AS LOT_NUM,
+             cast(LOT_START_DT as date)    AS LOT_START_DT,
+             LOT_START_TYPE,
+             cast(LOT_BASE_END_DT as date) AS LOT_END_DT,
+             LOT_BASE_END_REASON,
+             {stock_window_sql(cfg)}       AS IND_END_DT
+      FROM {lines_tbl}
+      WHERE LOT_START_TYPE <> 'SCT_ALLO'
+    ),
+    -- The previous line's regimen, exploded to whole tokens. LOT_BASE_MEDS is a
+    -- space-separated string and matching inside it would make LEN match LENA.
+    prev_regimen AS (
+      SELECT cast(PATID as string)   AS PATID,
+             cast(LOT_NUM as int) + 1 AS LOT_NUM,
+             m                        AS MED_ABBR
+      FROM {lines_tbl}
+      LATERAL VIEW explode(split(coalesce(LOT_BASE_MEDS, ''), ' ')) e AS m
+      WHERE m <> ''
+    ),
+    -- This line's regimen: an episode that OPENED inside the window. The same
+    -- test 10_lot2_5_base.R joins base_meds on.
+    filled AS (
+      SELECT DISTINCT l.PATID, l.LOT_NUM,
+             upper(trim(m.MAP_MED_TYPE)) AS MED_ABBR
+      FROM ln l
+      INNER JOIN {map_tbl} m
+              ON cast(m.PATID as string) = l.PATID
+             AND m.MAP_MED_CLASS <> 'STEROID'
+             AND cast(m.MAP_START_DT as date) >= l.LOT_START_DT
+             AND cast(m.MAP_START_DT as date) <= l.IND_END_DT
+    ),
+    -- Claims after the window and on or before the line ended. A claim after the
+    -- line ended belongs to the next line, not to this one's add-med search.
+    cand AS (
+      SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.IND_END_DT, l.LOT_END_DT,
+             l.LOT_BASE_END_REASON,
+             upper(trim(c.MED_ABBR))      AS MED_ABBR,
+             cast(c.DATE_SERVICE as date) AS CLAIM_DT
+      FROM ln l
+      INNER JOIN {claims_tbl} c
+              ON cast(c.PATID as string) = l.PATID
+             AND c.MED_CLASS <> 'STEROID'
+             AND cast(c.DATE_SERVICE as date) >  l.IND_END_DT
+             AND cast(c.DATE_SERVICE as date) <= l.LOT_END_DT
+    ),
+    opened AS (
+      SELECT DISTINCT cast(PATID as string)  AS PATID,
+             upper(trim(MAP_MED_TYPE))       AS MED_ABBR,
+             cast(MAP_START_DT as date)      AS CLAIM_DT
+      FROM {map_tbl}
+      WHERE MAP_MED_CLASS <> 'STEROID'
+    ),
+    ep AS (
+      SELECT cast(PATID as string)       AS PATID,
+             upper(trim(MAP_MED_TYPE))   AS MED_ABBR,
+             cast(MAP_START_DT as date)  AS EPISODE_START_DT,
+             cast(MAP_END_DT as date)    AS EPISODE_END_DT
+      FROM {map_tbl}
+      WHERE MAP_MED_CLASS <> 'STEROID'
+    ),
+    absorbed AS (
+      SELECT c.PATID, c.LOT_NUM, c.LOT_START_DT, c.IND_END_DT, c.LOT_END_DT,
+             c.LOT_BASE_END_REASON, c.MED_ABBR,
+             min(c.CLAIM_DT) AS FIRST_ABSORBED_DT,
+             count(*)        AS N_ABSORBED_CLAIMS
+      FROM cand c
+      LEFT JOIN filled f
+             ON f.PATID = c.PATID AND f.LOT_NUM = c.LOT_NUM
+            AND f.MED_ABBR = c.MED_ABBR
+      LEFT JOIN opened o
+             ON o.PATID = c.PATID AND o.MED_ABBR = c.MED_ABBR
+            AND o.CLAIM_DT = c.CLAIM_DT
+      WHERE f.MED_ABBR IS NULL AND o.MED_ABBR IS NULL
+      GROUP BY c.PATID, c.LOT_NUM, c.LOT_START_DT, c.IND_END_DT, c.LOT_END_DT,
+               c.LOT_BASE_END_REASON, c.MED_ABBR
+    )
+    SELECT a.PATID, a.LOT_NUM, a.MED_ABBR,
+           a.LOT_START_DT, a.IND_END_DT, a.LOT_END_DT, a.LOT_BASE_END_REASON,
+           a.FIRST_ABSORBED_DT, a.N_ABSORBED_CLAIMS,
+           datediff(a.FIRST_ABSORBED_DT, a.LOT_START_DT) AS DAYS_INTO_LOT,
+           -- The line would have ended the day before this claim, so this is how
+           -- much of the line the missing boundary would have cut off.
+           datediff(a.LOT_END_DT, a.FIRST_ABSORBED_DT) + 1 AS DAYS_LINE_WOULD_LOSE,
+           min(ep.EPISODE_START_DT) AS EPISODE_START_DT,
+           max(ep.EPISODE_END_DT)   AS EPISODE_END_DT,
+           max(CASE WHEN p.MED_ABBR IS NOT NULL THEN 1 ELSE 0 END)
+                                                        AS WAS_IN_PREV_REGIMEN,
+           {sql_text(run_id)}    AS STOCK_RUN_ID,
+           {sql_text(lot_run)}   AS SOURCE_LOT_RUN_ID,
+           {sql_text(lot_stamp)} AS SOURCE_LOT_STAMP,
+           max(current_timestamp()) AS BUILT_AT
+    FROM absorbed a
+    LEFT JOIN ep
+           ON ep.PATID = a.PATID AND ep.MED_ABBR = a.MED_ABBR
+          AND ep.EPISODE_START_DT <= a.FIRST_ABSORBED_DT
+          AND ep.EPISODE_END_DT   >= a.FIRST_ABSORBED_DT
+    LEFT JOIN prev_regimen p
+           ON p.PATID = a.PATID AND p.LOT_NUM = a.LOT_NUM
+          AND p.MED_ABBR = a.MED_ABBR
+    GROUP BY a.PATID, a.LOT_NUM, a.MED_ABBR, a.LOT_START_DT, a.IND_END_DT,
+             a.LOT_END_DT, a.LOT_BASE_END_REASON, a.FIRST_ABSORBED_DT,
+             a.N_ABSORBED_CLAIMS")
+}
+
+# By line number, one row per line however many agents it absorbed.
+stock_absorbed_by_lot_sql <- function(absorbed_tbl, lines_tbl) {
+  glue("
+    WITH all_lines AS (
+      SELECT cast(LOT_NUM as int) AS LOT_NUM, count(*) AS N_LINES
+      FROM {lines_tbl}
+      GROUP BY cast(LOT_NUM as int)
+    ),
+    per_line AS (
+      SELECT PATID, LOT_NUM,
+             max(WAS_IN_PREV_REGIMEN)     AS ANY_RECHALLENGE,
+             max(1 - WAS_IN_PREV_REGIMEN) AS ANY_FIRST_EXPOSURE,
+             min(DAYS_INTO_LOT)           AS DAYS_INTO_LOT
+      FROM {absorbed_tbl}
+      GROUP BY PATID, LOT_NUM
+    ),
+    hit AS (
+      SELECT LOT_NUM,
+             count(*)                  AS N_LINES_AFFECTED,
+             count(DISTINCT PATID)     AS N_PATIENTS_AFFECTED,
+             sum(ANY_RECHALLENGE)      AS N_RECHALLENGE,
+             sum(ANY_FIRST_EXPOSURE)   AS N_FIRST_EXPOSURE,
+             percentile_approx(DAYS_INTO_LOT, 0.5) AS MEDIAN_DAYS_INTO_LOT
+      FROM per_line
+      GROUP BY LOT_NUM
+    )
+    SELECT a.LOT_NUM, a.N_LINES,
+           coalesce(h.N_LINES_AFFECTED, 0)    AS N_ABSORBED_ADD_MED,
+           coalesce(h.N_PATIENTS_AFFECTED, 0) AS N_PATIENTS_AFFECTED,
+           coalesce(h.N_RECHALLENGE, 0)       AS N_RECHALLENGE,
+           coalesce(h.N_FIRST_EXPOSURE, 0)    AS N_FIRST_EXPOSURE,
+           h.MEDIAN_DAYS_INTO_LOT,
+           round(100.0 * coalesce(h.N_LINES_AFFECTED, 0) / nullif(a.N_LINES, 0), 2)
+                                              AS PCT_LINES_AFFECTED
+    FROM all_lines a
+    LEFT JOIN hit h ON h.LOT_NUM = a.LOT_NUM
+    ORDER BY a.LOT_NUM")
 }
 
 # By line number, against every line at that number - so the share is a share of

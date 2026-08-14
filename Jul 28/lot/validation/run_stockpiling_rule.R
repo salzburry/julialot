@@ -16,7 +16,12 @@
 # MAP_START_DT, and does not join. This counts the patients and lines the two
 # wider tests would change.
 #
-# Reads a finished run and writes four tables of its own. It changes nothing in
+# Absorption bites a second time after the window: the added-medication query
+# reads MAP_START_DT as well, so a claim for an agent outside the line's regimen
+# that lands while an episode of it is still open ends nothing. STOCKPILE_
+# ABSORBED_ADD counts those boundaries.
+#
+# Reads a finished run and writes five tables of its own. It changes nothing in
 # lot, builds no lines, and does not touch the run it measures, so it can run
 # against production without a rebuild.
 #
@@ -94,10 +99,16 @@ report_rule <- function(sc) {
   cat("              episode swallowed, so it opened no episode and the agent\n")
   cat("              is absent from the regimen anyway. Nothing settled covers\n")
   cat("              this: the patient is still filling the drug.\n")
+  cat("\n  And a second question, outside the window entirely: the added-\n")
+  cat("  medication query reads MAP_START_DT too, so a claim for an agent\n")
+  cat("  outside the line's regimen that lands while an episode of it is still\n")
+  cat("  open opens nothing and ends nothing. The LOT protocol's rule 2 ends a\n")
+  cat("  LOT on a new agent 'not present in the induction regimen', so that is\n")
+  cat("  a boundary asked for and not made. Counted separately.\n")
   cat("\nWrites <prefix>STOCKPILE_AGENTS, <prefix>STOCKPILE_IMPACT,\n",
-      "<prefix>STOCKPILE_BY_LOT and <prefix>STOCKPILE_BY_MED. It reads\n",
-      "<prefix>MMA_MED_PROCESSED for the claim dates. It writes no LOT table\n",
-      "and rebuilds nothing.\n", sep = "")
+      "<prefix>STOCKPILE_BY_LOT, <prefix>STOCKPILE_BY_MED and\n",
+      "<prefix>STOCKPILE_ABSORBED_ADD. It reads <prefix>MMA_MED_PROCESSED for\n",
+      "the claim dates. It writes no LOT table and rebuilds nothing.\n", sep = "")
 }
 
 main <- function() {
@@ -137,6 +148,7 @@ main <- function() {
   im    <- wrk(paste0(prefix, "STOCKPILE_IMPACT"))
   bl    <- wrk(paste0(prefix, "STOCKPILE_BY_LOT"))
   bm    <- wrk(paste0(prefix, "STOCKPILE_BY_MED"))
+  ab    <- wrk(paste0(prefix, "STOCKPILE_ABSORBED_ADD"))
 
   cat("\nMeasuring against LOT run ", run$run, " on ", lines, "\n", sep = "")
   cat("Windows from the run: LOT1 ", sc$ind1, "d, CAR-T ", sc$cart, "d, other ",
@@ -146,6 +158,8 @@ main <- function() {
   db_exec(con, glue("CREATE OR REPLACE TABLE {im} AS {stock_impact_sql(ag)}"))
   db_exec(con, glue("CREATE OR REPLACE TABLE {bl} AS {stock_by_lot_sql(im, lines)}"))
   db_exec(con, glue("CREATE OR REPLACE TABLE {bm} AS {stock_by_med_sql(ag)}"))
+  db_exec(con, glue("CREATE OR REPLACE TABLE {ab} AS {
+    stock_absorbed_add_sql(lines, maps, claims, sc, run_id, run$run, run$stamp)}"))
 
   tot <- db_q(con, glue("
     SELECT count(*) AS n_lines, count(DISTINCT PATID) AS n_pat,
@@ -202,6 +216,31 @@ main <- function() {
                   num0(m$N_COVERS_WHOLE_WINDOW[i]), format(m$MEDIAN_DAYS_COVERED[i])))
     if (nrow(m) > 15L) cat("  ... ", nrow(m) - 15L, " more in ", bm, "\n", sep = "")
   }
+
+  # The second question, and a different one. Membership is an agent missing
+  # from a regimen string; this is a line that never ended.
+  a <- db_q(con, glue("
+    SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_pat,
+           sum(WAS_IN_PREV_REGIMEN) AS n_re,
+           percentile_approx(DAYS_LINE_WOULD_LOSE, 0.5) AS med_lost
+    FROM {ab}"))
+  cat("\nAdded-medication boundaries absorption swallowed, AFTER the window:\n")
+  cat("  ", num0(a$n_rows), " agent-line pairs where a claim for an agent outside the\n",
+      "      line's regimen landed while an episode of it was still open, so it\n",
+      "      opened nothing and ended nothing.\n", sep = "")
+  cat("  ", num0(a$n_pat), " patients. Median ", format(a$med_lost[1]),
+      " days of line that the missing boundary\n      would have cut off.\n", sep = "")
+  cat("  ", num0(a$n_re), " are an agent returning from the previous line, the rest a\n",
+      "      first exposure. Rule 2 measures 'new' against THIS line's induction\n",
+      "      regimen, so both are boundaries the protocol asks for.\n", sep = "")
+  ab_l <- db_q(con, stock_absorbed_by_lot_sql(ab, lines))
+  cat(sprintf("  %-5s %9s %11s %9s %13s %9s\n",
+              "LOT", "lines", "absorbed", "patients", "re-challenge", "% lines"))
+  for (i in seq_len(nrow(ab_l)))
+    cat(sprintf("  %-5s %9s %11s %9s %13s %8s%%\n",
+                ab_l$LOT_NUM[i], num0(ab_l$N_LINES[i]),
+                num0(ab_l$N_ABSORBED_ADD_MED[i]), num0(ab_l$N_PATIENTS_AFFECTED[i]),
+                num0(ab_l$N_RECHALLENGE[i]), format(ab_l$PCT_LINES_AFFECTED[i])))
 
   cat("\nThese are regimen changes and the two boundary effects that follow from\n",
       "them. They are NOT a resulting line count. An added agent is a base agent,\n",

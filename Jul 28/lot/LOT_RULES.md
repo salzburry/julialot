@@ -242,6 +242,18 @@ day before the infusion), and a CAR-T-started line with no consolidation agent,
 which spans a single day. Neither applies to a CAR-T inside LOT1's induction
 window — §10.
 
+**An added medication is an episode start, so absorption hides it.** The
+candidate test is `MAP_START_DT` after the induction window
+(`steps/10_lot2_5_base.R`), against agents absent from **this** line's regimen —
+which matches the protocol's rule 2, "initiation of a new MM agent that was not
+present in the induction regimen". But a claim landing while an episode of that
+agent is still open opens no episode, so it is never a candidate and the line
+does not end. Two patients with the same refill get different line counts
+depending on how much days-supply was left. `MED` line starts use a different
+comparison — against the *previous* line's regimen, per the start rule — and are
+unaffected. `lot/validation/run_stockpiling_rule.R` counts the hidden boundaries
+in `STOCKPILE_ABSORBED_ADD`.
+
 **`CART_INIT` vs `MED_ADD` is a taxonomy, not a fall-through.** An added
 medication followed by a CAR-T within 45 days is bridging and belongs to
 `CART_INIT`; it is never re-read as a `MED_ADD` event. So when the CAR-T lands

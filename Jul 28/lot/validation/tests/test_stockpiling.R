@@ -129,6 +129,30 @@ ok(has(bl, "LEFT JOIN hit"),
 ok(has(bl, "nullif(a.N_LINES, 0)"),
    "the share divides by nullif, so an empty LOT is NULL and not a divide by zero")
 
+cat("\n-- the boundaries absorption swallowed after the window --\n")
+aa <- stock_absorbed_add_sql("lines", "maps", "claims", sc, "r1", "run", "stamp")
+ok(has(aa, "cast(c.DATE_SERVICE as date) >  l.IND_END_DT"),
+   "it looks strictly AFTER the induction window, where add-med candidates live")
+ok(has(aa, "cast(c.DATE_SERVICE as date) <= l.LOT_END_DT"),
+   "...and no further than the line's end, since a later claim is the next line's")
+ok(has(aa, "INNER JOIN claims c") && has(aa, "c.DATE_SERVICE"),
+   "the claim dates are the source; MAP_START_DT cannot see a fill it absorbed")
+ok(has(aa, "o.CLAIM_DT = c.CLAIM_DT") && has(aa, "o.MED_ABBR IS NULL"),
+   "absorbed = no episode starts on the claim's own date")
+ok(has(aa, "f.MED_ABBR IS NULL"),
+   "only agents outside this line's regimen, the way 10_lot2_5_base.R joins base_meds")
+ok(has(aa, "LATERAL VIEW explode(split(coalesce(LOT_BASE_MEDS, ''), ' '))"),
+   "the previous regimen splits to whole tokens, so LEN cannot match LENA")
+ok(has(aa, "cast(LOT_NUM as int) + 1 AS LOT_NUM"),
+   "...and it is the PREVIOUS line's regimen that the re-challenge flag reads")
+ok(has(aa, "LOT_START_TYPE <> 'SCT_ALLO'"),
+   "ALLO lines carry no regimen, so they are excluded here too")
+abl <- stock_absorbed_by_lot_sql("absorbed", "lines")
+ok(has(abl, "LEFT JOIN hit") && has(abl, "nullif(a.N_LINES, 0)"),
+   "the by-LOT rollup zero-fills and divides safely, like its sibling")
+ok(has(abl, "GROUP BY PATID, LOT_NUM"),
+   "a line absorbing two agents counts once, not twice")
+
 cat("\n-- the program says what it cannot answer --\n")
 run <- paste(readLines(file.path(ROOT, "run_stockpiling_rule.R"), warn = FALSE),
              collapse = "\n")
