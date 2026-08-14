@@ -421,7 +421,9 @@ build_lot_n <- function(con, lot_num,
     -- discontinued. A later episode of the same drug is a restart, and a
     -- restart opens the next line rather than extending this one.
     discon_per_med AS (
-{discon_per_med_sql(glue('lot{lot_num}_start'), glue('LOT{lot_num}_START_DT'))}
+{discon_per_med_sql(glue('lot{lot_num}_start'), glue('LOT{lot_num}_START_DT'),
+                     boundary_tbl = 'map_prev',
+                     boundary_gate = prev_discon_gate_sql('o', cfg$returning_agent_requires_discontinuation))}
     ),
     -- The regimen has run out when its LAST base agent has.
     discon_raw AS (
@@ -744,10 +746,8 @@ build_lot_n <- function(con, lot_num,
     -- The post_runout CTEs MIRROR the actual LOT_(N+1) start-candidate
     -- logic (med_cand / auto_cand) so the guard fires exactly when LOT
     -- (N+1) would actually have a valid start trigger:
-    --   - MED: any non-steroid MM agent NOT in the prior LOT's permissible
-    --     biosimilar substitutes. Same-drug restarts DO qualify, matching
-    --     med_cand (lot2_5_base.R::med_cand) which only excludes
-    --     prev_meds_expanded (substitutes), not the base meds themselves.
+    --   - MED: any non-steroid MM agent outside this LOT's regimen and its
+    --     permissible substitutes, matching med_cand.
     --   - AUTO: any AUTO outside LOT N's applicable window from
     --     LOT_START_DT (30d MED/AUTO-started, 1d ALLO-started, 45d
     --     CART-started) AND not within sct_tandem_days (180d) of the
@@ -756,7 +756,14 @@ build_lot_n <- function(con, lot_num,
     --     LOT_BASE_RUNOUT_DT.
     --   - ALLO/CART: any after runout (no window check; ALLO and CART
     --     always trigger a new LOT).
+    -- What cannot confirm this line's run-out, because it cannot start the next
+    -- line either: this line's own regimen agents and their permissible
+    -- substitutes. med_cand excludes both, so accepting one here would confirm a
+    -- discontinuation on an event no next line is allowed to open on.
     post_runout_excluded_meds AS (
+      SELECT im.PATID, im.MED_ABBR
+      FROM lot{lot_num}_induction_meds im
+      UNION
       SELECT im.PATID, ps.substitute_med AS MED_ABBR
       FROM lot{lot_num}_induction_meds im
       INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med

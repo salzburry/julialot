@@ -67,7 +67,7 @@ LOT_DIMENSIONS <- list(
        ours = paste0("Yes, and it spans a single day - start and end are the ",
                      "transplant date. It carries no regimen string, because ",
                      "induction rows are suppressed for it."),
-       where = "lot/engine/R/steps/10_lot2_5_base.R:364, :484",
+       where = "lot/engine/R/steps/10_lot2_5_base.R:364, :486",
        proves = c("SCT_ALLO", "allo_lot_span"),
        question = "Is alloSCT counted as a prior line in its own right?"),
 
@@ -79,7 +79,7 @@ LOT_DIMENSIONS <- list(
                      "a line of its own, and an agent added within the ",
                      "consolidation window before it is read as bridging and ",
                      "stays in the prior line, which ends CART_INIT."),
-       where = "lot/engine/R/cart_rule.R:27, lot/engine/R/steps/06_lot1_end.R:194, lot/engine/R/steps/10_lot2_5_base.R:279, :367",
+       where = "lot/engine/R/cart_rule.R:27, lot/engine/R/steps/06_lot1_end.R:201, lot/engine/R/steps/10_lot2_5_base.R:279, :367",
        proves = c("LOT1_BASE_1ST_ADD_MED_DT", "CART", "cart_eligible_dt"),
        question = paste0("Is CAR-T a prior line? Is bridging therapy counted ",
                          "separately from it? Does a CAR-T during first-line ",

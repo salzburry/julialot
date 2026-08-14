@@ -54,11 +54,12 @@ phase_lot1_base <- function(con, ctx) {
     -- Steroids are excluded from base_meds by the lot1_induction_meds filter.
     -- because corticosteroids are not oncology agents and should
     -- not drive regimen membership, discontinuation, or add-med logic.
-    -- Per drug, the end of ITS cover in this line: the FIRST episode flagged
-    -- discontinued. A later episode of the same drug is a restart, and a
-    -- restart opens the next line rather than extending this one.
+    -- Per drug, the end of ITS cover in this line. A later episode of the same
+    -- drug extends it rather than opening a line, unless an agent that would
+    -- end the line arrives in between.
     discon_per_med AS (
-{discon_per_med_sql('lot1_start', 'LOT1_START_DT')}
+{discon_per_med_sql('lot1_start', 'LOT1_START_DT', boundary_tbl = 'map_prev',
+                     boundary_gate = prev_discon_gate_sql('o', cfg$returning_agent_requires_discontinuation))}
     ),
     -- The regimen has run out when its LAST base agent has.
     discon_raw AS (

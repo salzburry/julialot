@@ -14,13 +14,23 @@ prior_regimen_excl_sql <- function() {
 
 # Where a line's cover ends, per drug: the body of discon_per_med. A drug's
 # episodes chain forward from the line's start, and the run-out is the end of the
-# last one reached; the chain breaks at any episode with another non-steroid
-# agent starting between it and the one before, which is what keeps a line that
-# another agent ended where that agent put it.
+# last one reached; the chain breaks only at an agent that would actually end the
+# line, so a line another agent ended stays where that agent put it.
 #
-# LEFT JOIN and an aggregate rather than EXISTS: a correlated subquery fails
-# under spark.sql.crossJoin.enabled=false.
-discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked") {
+# What breaks it is deliberately narrow. A drug in this line's own regimen does
+# not - base_meds carries the induction agents AND their permissible substitutes,
+# and neither is a boundary, so a second regimen agent refilling mid-line cannot
+# truncate the first one's cover. Steroids never do. `boundary_gate` lets a
+# caller narrow it further to agents its own rules would accept as a line start.
+#
+# Transplant and CAR-T are NOT read here: they live in their own event tables and
+# whether one ends a line depends on per-line window and tandem rules this query
+# has no access to. A same-drug episode after a procedure therefore still chains.
+#
+# LEFT JOIN and aggregates rather than EXISTS: a correlated subquery fails under
+# spark.sql.crossJoin.enabled=false.
+discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
+                               boundary_tbl = "map_stacked", boundary_gate = "") {
   paste0("
       WITH ep AS (
         SELECT ms.PATID, ms.MAP_MED_TYPE, ms.MAP_START_DT, ms.MAP_END_DT,
@@ -31,26 +41,33 @@ discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked") {
         INNER JOIN base_meds bm ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
         WHERE ms.MAP_START_DT >= ls.", start_col, "
       ),
-      broke AS (
-        SELECT e.PATID, e.MAP_MED_TYPE, e.MAP_START_DT, e.MAP_END_DT,
-               max(CASE WHEN o.PATID IS NOT NULL THEN 1 ELSE 0 END) AS BREAKS
+      interrupts AS (
+        SELECT e.PATID, e.MAP_MED_TYPE, e.MAP_START_DT,
+               max(CASE WHEN o.PATID IS NOT NULL AND obm.MED_ABBR IS NULL
+                        THEN 1 ELSE 0 END) AS BREAKS
         FROM ep e
-        LEFT JOIN ", map_tbl, " o
+        LEFT JOIN ", boundary_tbl, " o
                ON o.PATID = e.PATID
               AND o.MAP_MED_TYPE <> e.MAP_MED_TYPE
               AND o.MAP_MED_CLASS <> 'STEROID'
               AND e.PREV_END IS NOT NULL
               AND o.MAP_START_DT >  e.PREV_END
               AND o.MAP_START_DT <  e.MAP_START_DT
-        GROUP BY e.PATID, e.MAP_MED_TYPE, e.MAP_START_DT, e.MAP_END_DT
+              ", boundary_gate, "
+        LEFT JOIN base_meds obm
+               ON obm.PATID = o.PATID AND obm.MED_ABBR = o.MAP_MED_TYPE
+        GROUP BY e.PATID, e.MAP_MED_TYPE, e.MAP_START_DT
       ),
       reached AS (
-        SELECT b.*,
-               sum(b.BREAKS) OVER (PARTITION BY b.PATID, b.MAP_MED_TYPE
-                                   ORDER BY b.MAP_START_DT
+        SELECT e.PATID, e.MAP_MED_TYPE, e.MAP_END_DT,
+               sum(i.BREAKS) OVER (PARTITION BY e.PATID, e.MAP_MED_TYPE
+                                   ORDER BY e.MAP_START_DT
                                    ROWS BETWEEN UNBOUNDED PRECEDING
                                             AND CURRENT ROW) AS BROKEN_BY_HERE
-        FROM broke b
+        FROM ep e
+        INNER JOIN interrupts i
+                ON i.PATID = e.PATID AND i.MAP_MED_TYPE = e.MAP_MED_TYPE
+               AND i.MAP_START_DT = e.MAP_START_DT
       )
       SELECT PATID, MAP_MED_TYPE, max(MAP_END_DT) AS MED_END_DT
       FROM reached

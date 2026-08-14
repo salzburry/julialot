@@ -93,7 +93,14 @@ phase_lot1_end <- function(con, ctx) {
     --   - ALLO/CART: any after runout (no window check; always trigger),
     --     except a CAR-T inside LOT1 induction, which under the CAR-T rule is
     --     part of LOT1 and starts nothing - so LOT2 would not act on it.
+    -- What cannot confirm this line's run-out, because it cannot start the next
+    -- line either: this line's own regimen agents and their permissible
+    -- substitutes. med_cand excludes both, so accepting one here would confirm a
+    -- discontinuation on an event no next line is allowed to open on.
     post_runout_excluded_meds AS (
+      SELECT im.PATID, im.MED_ABBR
+      FROM lot1_induction_meds im
+      UNION
       SELECT im.PATID, ps.substitute_med AS MED_ABBR
       FROM lot1_induction_meds im
       INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med

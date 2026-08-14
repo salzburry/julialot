@@ -17,8 +17,8 @@ what the written authorities say, and which kind of open question it is.
 `prev_meds_expanded` from the previous line's regimen and excludes only its
 **permissible biosimilar substitutes**, not the drugs themselves:
 
-> `-- A same-drug restart (the original prior-LOT drug itself) DOES trigger;`
-> `-- the prior LOT ended by run-out and a fresh fill is a new line.`
+> `-- The prior-LOT regimen and its permissible biosimilar substitutes. Neither`
+> `-- starts LOT_N.`
 
 **The protocol** says a subsequent LOT starts at "the first administration for a
 new MM agent **that was not part of the previous LOT regimen**". A drug that

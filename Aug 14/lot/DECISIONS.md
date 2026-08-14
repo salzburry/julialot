@@ -56,10 +56,11 @@ TRUE here. Off, the gate emits nothing at all and the build is as it would be
 without this rule - checked over 1,500 patients, zero lines differing. There is
 no second gap parameter: the threshold is still `MAP_DISCON_GAP_DAYS`.
 
-It is deliberately **not** in `CONTRACT`, so a run here needs no override. The
-cost is that a finished run records nothing about which of the two algorithms
-built its lines, and two runs on one code hash can disagree. That has to close
-before a run whose numbers are kept.
+It is deliberately **not** in `CONTRACT`, so a run here needs no override and
+records no deviation. The value IS written into `CONTRACT_SETTINGS` through
+`RECORDED_SETTINGS`, so a finished run says which algorithm built its lines.
+What is missing is governance, not provenance: TRUE and FALSE are both accepted
+silently, and a downstream reader cannot tell a sensitivity from the study.
 
 ---
 
