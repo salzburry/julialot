@@ -176,6 +176,30 @@ the line structure. Each moves different downstream numbers.
 
 ---
 
+## Open defect - a real discontinuation reported as censoring
+
+The gate sits on `post_runout_med` as well, so a suppressed return stops being
+evidence of anything - not only of a new line. Where it was the sole trigger
+after the run-out and observation ends inside the confirm window, the run-out
+cannot be confirmed and the line is censored instead.
+
+    LEN  1 Jan - 29 Feb     contract                    with the rule
+    POMA 11 Mar - 9 Apr     LOT2 Mar 11 -> Apr 09       LOT2 Mar 11 -> May 30
+    LEN  10 May (71d gap)   DISCONTINUATION  len 30     STUDY_END  len 81
+                            LOT3 May 10 -> May 30       (no LOT3)
+
+POMA ran out on 9 April and never returned: the discontinuation is real in the
+claims. No treatment is lost - LEN is carried in `LOT_CONTINUING_MEDS` - but the
+line around it is misdescribed. The end reason is downgraded, the line is 2.7x
+too long, and the patient no longer reaches a third line.
+
+This is the same root as the defect above. Whatever settles that one has to say
+what a suppressed return is still allowed to be evidence *of*: confirming a
+run-out is a weaker claim than starting a line, and the two need not share an
+answer.
+
+---
+
 ## Open
 
 **1. Does a continuing medication hold the line open?**
