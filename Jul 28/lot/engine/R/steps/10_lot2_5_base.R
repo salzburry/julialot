@@ -224,8 +224,17 @@ build_lot_n <- function(con, lot_num,
     ),
     -- Permissible biosimilar substitutes of prior-LOT drugs.
     -- A biosimilar of a prior-LOT drug does NOT trigger LOT_N.
-    -- A same-drug restart (the original prior-LOT drug itself) DOES trigger;
-    -- the prior LOT ended by run-out and a fresh fill is a new line.
+    --
+    -- A same-drug restart - the original prior-LOT drug itself - DOES trigger,
+    -- as a rechallenge line. Only the substitutes are excluded here, never the
+    -- drugs, and that is deliberate rather than an omission.
+    --
+    -- It cannot fire on a short gap, and the condition is not in this query.
+    -- discon_per_med takes min(MAP_END_DT WHERE MAP_DISCON_FLG = 1) before
+    -- falling back to the last episode, so where the agent's gap was under the
+    -- threshold the prior line already runs past the later episode and its
+    -- start never clears PREV_END_DT. A rechallenge line therefore only exists
+    -- where the build had called the agent discontinued.
     -- Note: explicit JOIN avoids the implicit cross join + correlated
     -- subquery pattern, which would fail under spark.sql.crossJoin.enabled=false.
     prev_meds_array AS (
