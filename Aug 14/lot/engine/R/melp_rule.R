@@ -236,6 +236,16 @@ melp_inject_arm <- function(cfg, line_tbl, start_col, span_end, extra = "") {
         AND i.INJECT_DT <= {span_end}{extra}"))
 }
 
+# Melphalan's line-advancing decisions belong to this rule while it is on, so
+# the prior-regimen exclusion must not veto them: melphalan already in the
+# previous line's regimen was barred from med_cand, and an injected boundary
+# then ended a line without opening the next one, orphaning the exposure.
+# Empty when the rule is off, leaving the contract build's candidates untouched.
+melp_prior_regimen_exempt <- function(cfg, alias = "ms") {
+  if (!melp_rule_on(cfg)) return("")
+  glue(" OR upper(trim({alias}.MAP_MED_TYPE)) = '{melp_abbr(cfg)}'")
+}
+
 # LOT1 is corrected in 06_lot1_end.R rather than in 04, because yield_to_sct
 # needs tx_auto_dates and that view is built in 05. Nothing between the two
 # reads the add-med columns - 05b takes only LOT1_START_DT and OBS_END_DT - so
