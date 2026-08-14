@@ -22,6 +22,7 @@ measures it, `lot/dashboard/` renders it, `lot/outcomes/` derives Table 4 from i
 | `lot/engine/R/line_criteria.R` | Extra criteria on finished lines. Every one is computed into an all-flags table; only the enabled ones are applied to the final one. |
 | `lot/engine/R/cart_rule.R` | The CAR-T induction rule: an infusion inside line 1's window belongs to line 1 and neither ends nor starts a line. |
 | `lot/engine/R/melp_rule.R` | The melphalan rule. Off unless a mode is named, and off emits the same SQL as not having the file. It lives here because it needs each line's own induction window. |
+| `lot/engine/R/prior_regimen.R` | The prior-regimen rule and each line's run-out. A drug in the previous regimen cannot start the next line; the line it belongs to extends over its later episodes instead, stopping at any other agent arriving in between. |
 | `lot/engine/R/steps/01_codelists.R` | Code lists into views, then the consistency checks between them. |
 | `lot/engine/R/steps/02_patient_input.R` | The cohort as the build reads it. Sets the observation end date every later gap and window is measured against. |
 | `lot/engine/R/steps/03_mma_map.R` | Claims into medication available periods. A new period opens only for a claim beyond every runout; one arriving while cover is live pushes the runout out instead. |

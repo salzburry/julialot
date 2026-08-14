@@ -71,40 +71,12 @@ more.
 Belantamab removes the patient rather than the line. Every line belonging to
 anyone who received it at any point is dropped.
 
-## A returning agent
-
-An agent already seen opens or ends a line only where the patient had stopped
-it. Formally, both must hold:
-
-    the agent is absent from that line's regimen
-    AND (it is a first exposure OR its preceding episode was discontinued)
-
-| the agent returns | result |
-|---|---|
-| never had it before | opens or ends a line |
-| its previous supply ended under 90 days ago | continuation - no boundary |
-| its previous supply ended 90 days ago or more | reintroduction - opens a line |
-| already in this line's regimen | no boundary |
-
-Discontinued means the same `MAP_DISCON_GAP_DAYS` used everywhere else, so
-there is one threshold in the build and not two. The test reads the *preceding*
-episode, never the returning one - an episode's own flag describes the gap that
-follows it.
-
-A supply episode reopens whenever cover lapses by a single day, so an episode
-starting is not on its own evidence that the patient started the drug. That is
-what this rule separates.
-
-The setting is `RETURNING_AGENT_REQUIRES_DISCONTINUATION` in
-`engine/config.csv`. Turned off, the build behaves as though this section were
-absent.
-
 ## Treatment that does not advance a line
 
-An agent this rule declines still happened, so it is recorded. `LOT_BASE_MEDS`
-stays the induction regimen the protocol defines, and `LOT_CONTINUING_MEDS`
-carries anything else dispensed while the line ran - an episode starting inside
-the line, not a steroid, not already in the regimen.
+An agent dispensed inside a line but outside its regimen still happened, so it
+is recorded. `LOT_BASE_MEDS` stays the induction regimen the protocol defines,
+and `LOT_CONTINUING_MEDS` carries anything else dispensed while the line ran -
+an episode starting inside the line, not a steroid, not already in the regimen.
 
 It is descriptive. A continuing agent does not hold the line open: run-out is
 still measured on the induction regimen alone.
