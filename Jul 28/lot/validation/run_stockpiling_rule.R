@@ -8,12 +8,13 @@
 #   DATABRICKS_PWD=... DOMINO_USER_NAME=usr00000 OBJECT_PREFIX=ndmm_ \
 #     STOCK_EXECUTE=TRUE Rscript lot/validation/run_stockpiling_rule.R
 #
-# The build puts an agent in a line's regimen when it is FILLED inside the
-# induction window. Optum supplies no treatment end date, so cover is FILL_DT
-# plus DAYS_SUP and an overlapping refill pushes it out instead of opening a new
-# episode - which means an agent can be covered across the whole of the next
-# line's window while carrying the earlier line's MAP_START_DT, and does not
-# join. This counts the patients and lines a coverage rule would change.
+# The build puts an agent in a line's regimen when its supply EPISODE STARTS
+# inside the induction window. Optum supplies no treatment end date, so cover is
+# FILL_DT plus DAYS_SUP and an overlapping refill pushes it out instead of
+# opening a new episode - so an agent can be covered across the whole of the next
+# line's window, or refilled inside it, while still carrying the earlier line's
+# MAP_START_DT, and does not join. This counts the patients and lines the two
+# wider tests would change.
 #
 # Reads a finished run and writes four tables of its own. It changes nothing in
 # lot, builds no lines, and does not touch the run it measures, so it can run
@@ -64,16 +65,21 @@ recheck_lot_attempt <- function(con, prefix, before, what) {
 }
 
 
+LOT_ROOT <- normalizePath(file.path(.script_dir, "..", "engine"), mustWork = TRUE)
 env_flag <- function(nm) identical(toupper(trimws(Sys.getenv(nm, unset = ""))), "TRUE")
 # A count that came back NULL is not a zero - it is a question that did not run.
 num0 <- function(x) if (!length(x) || is.na(x[1])) "-" else format(x[1], big.mark = ",")
 
 report_rule <- function(sc) {
-  cat("\nRegimen membership, as built and as the alternative.\n\n")
-  cat("  built        an agent joins a line's regimen when it is FILLED inside\n")
-  cat("               the induction window (MAP_START_DT in the window).\n")
-  cat("  alternative  it joins when the patient is COVERED, so an episode that\n")
-  cat("               opened in an earlier line and is still running joins too.\n\n")
+  cat("\nRegimen membership: the test as built, and the two wider ones.\n\n")
+  cat("  A  built     MAP_START_DT inside the window - the agent's supply\n")
+  cat("               EPISODE began there. Not the same as being on the drug.\n")
+  cat("  B  covered   the episode overlaps the window at all. What a MAP means\n")
+  cat("               on its face, and the reading the study team rejected.\n")
+  cat("  C  received  a claim DATE_SERVICE inside the window. The protocol's\n")
+  cat("               wording: 'all MM therapies received within 30 days on and\n")
+  cat("               following the LOT start date'.\n\n")
+  cat("  The headline counts B against A. The real-fill split below is C.\n\n")
   cat("  Induction windows judged: LOT1 ", sc$ind1, "d, CAR-T-started ", sc$cart,
       "d, other ", sc$indn, "d.\n", sep = "")
   cat("  ALLO-started lines are excluded - they carry no regimen at all.\n")
@@ -211,4 +217,19 @@ main <- function() {
   if (!isTRUE(settled)) quit(status = 1L)
 }
 
-main()
+if (!interactive()) {
+  # cfg, wrk(), db_exec() and db_q() come from the engine. The dry run needs
+  # none of them, so they are loaded only on the path that connects.
+  if (env_flag("STOCK_EXECUTE")) {
+    library(DBI); library(odbc); library(glue)
+    e <- new.env(parent = globalenv())
+    sys.source(file.path(LOT_ROOT, "R", "load_inputs.R"), envir = e)
+    e$load_pipeline_inputs(LOT_ROOT, "config.csv")
+    for (f in c("config_lot.R", "db_utils_lot.R")) source(file.path(LOT_ROOT, "R", f))
+    set_lot_config(modifyList(cfg_defaults, list(
+      work_schema = Sys.getenv("PROJECT_WORK_SCHEMA",
+                      unset = Sys.getenv("DOMINO_USER_NAME", unset = "")),
+      object_prefix = Sys.getenv("OBJECT_PREFIX", unset = ""))))
+  }
+  main()
+}

@@ -8,8 +8,9 @@
 #
 # The build tests MAP_START_DT, so such an agent does not join the next line's
 # regimen - see lot/RULES.md. The protocol reads wider ("all MM therapies
-# identified during the first 30 days of the LOT") and the LOT2-5 spec's worked
-# example A assumes a continuing agent lands in LOT2. This sizes the difference.
+# received within 30 days on and following the LOT start date", July 30 cohort
+# protocol p.19) and the LOT2-5 spec's worked example A assumes a continuing
+# agent lands in LOT2. This sizes the difference.
 #
 # Two populations, not one, and they are not the same question:
 #
