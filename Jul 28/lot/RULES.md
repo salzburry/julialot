@@ -71,6 +71,44 @@ more.
 Belantamab removes the patient rather than the line. Every line belonging to
 anyone who received it at any point is dropped.
 
+## Worked examples
+
+Every line below is the engine's own output. Days supply of 60 for the first
+LEN fill unless stated; a medical claim carries 28.
+
+**A second agent inside line 1's window joins it.** LEN 1 Jan, POMA 1 Feb:
+
+    LOT1  2016-01-01 -> 2016-02-29   LEN POMA
+
+**Outside the window it starts a line.** LEN 1 Jan, POMA 2 Mar - day 61, past
+the 60-day window:
+
+    LOT1  2016-01-01 -> 2016-02-29   LEN
+    LOT2  2016-03-02 -> 2016-03-29   POMA
+
+**A refill inside cover extends the line by its own days supply**, rather than
+moving the end to the refill's own runout. LEN 1 Jan ds60 covers to 29 Feb; a
+LEN refill on 1 Feb ds28 arrives while cover is live, so the runout is pushed
+out by 28 days:
+
+    LOT1  2016-01-01 -> 2016-03-28   LEN
+
+**A drug returning after a real break starts a line, on itself.** LEN 1 Jan
+ds60, nothing else, LEN 1 Sep - 185 days after cover ran out:
+
+    LOT1  2016-01-01 -> 2016-02-29   LEN
+    LOT2  2016-09-01 -> 2016-09-30   LEN
+
+**A drug returning while another agent runs.** LEN 1 Jan-28 Mar, POMA 15 Mar-20
+May, LEN again 1 May - 34 days after LEN's own cover ended:
+
+    LOT1  2016-01-01 -> 2016-03-14   LEN
+    LOT2  2016-03-15 -> 2016-04-30   POMA
+    LOT3  2016-05-01 -> 2016-05-30   LEN
+
+POMA starts while LEN is still covered and still opens a line: it is outside
+line 1's window and in no regimen. LEN's own reappearance opens another.
+
 ## CAR-T
 
 A CAR-T inside line 1's 60-day induction window belongs to line 1. It does not
@@ -119,3 +157,7 @@ second does not will not advance the line.
 A cohort whose own build did not finish. A setting that differs from the pinned
 contract without an explicit override. A code list that cannot be read. A line
 that ends in a way these rules cannot produce.
+
+---
+
+The files themselves are listed in `FILES.md`.

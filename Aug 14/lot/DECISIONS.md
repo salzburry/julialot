@@ -1,7 +1,7 @@
 # LOT - recorded decisions
 
-`Jul 28` is the contract build. This folder is `Jul 28` plus one rule, and this
-file is what that rule is, what it changed, and what is still open.
+This folder is the contract build plus one rule. This file is what that rule
+is, what it changed, and what is still open.
 
 ---
 
@@ -11,14 +11,14 @@ Three questions the build answers. Only the third moved.
 
 | | question | answered by | changed here |
 |---|---|---|---|
-| 1 | when does a drug's supply run? | MAP episodes, `steps/03_mma_map.R` | **no** - byte-identical to `Jul 28` |
+| 1 | when does a drug's supply run? | MAP episodes, `steps/03_mma_map.R` | **no** - unchanged from the contract |
 | 2 | did the patient stop the drug? | `MAP_DISCON_FLG`, set at `MAP_DISCON_GAP_DAYS` (90) | **no** |
 | 3 | does a drug coming back start a line? | the returning-agent gate | **yes** |
 
 The 90-day threshold has never merged anything. A new MAP opens the moment a
 claim lands beyond every runout - one day's gap or five hundred - and the
 threshold is applied afterwards, as a label on the *earlier* episode. Two
-episodes stay two episodes. `map_stacked` comes out identical in both folders.
+episodes stay two episodes. `map_stacked` is unchanged.
 
 So the gate reads a label. It moves no date and merges no episode. It decides
 one thing: whether a returning agent's new episode counts as *starting* a
@@ -52,7 +52,7 @@ describes the gap that *follows* it, so a returning episode's own flag is about
 its future.
 
 **The setting.** `RETURNING_AGENT_REQUIRES_DISCONTINUATION` in `engine/config.csv`,
-TRUE here. Off, the gate emits nothing at all and this folder reproduces `Jul 28`
+TRUE here. Off, the gate emits nothing at all and the build is the contract's,
 line for line - checked over 1,500 patients, zero lines differing. There is no
 second gap parameter: the threshold is still `MAP_DISCON_GAP_DAYS`.
 
@@ -69,7 +69,9 @@ A rejected agent used to land nowhere: not in `LOT_BASE_MEDS`, which is fixed at
 induction; not a boundary, because the rule rejected it; not in the next line.
 Dispensed therapy simply vanished.
 
-`LOT_CONTINUING_MEDS` carries it - beside the regimen, not inside it.
+`LOT_CONTINUING_MEDS` carries it - beside the regimen, not inside it - **but
+only where the return starts inside a line.** See the open defect below: it does
+not close the hole, it narrows it.
 
 Beside rather than inside because `discon_per_med` joins `base_meds`: **the
 regimen set is also the run-out set**. Putting an agent in `LOT_BASE_MEDS` would
@@ -81,6 +83,10 @@ The membership test is "an episode starting inside the line, non-steroid, not in
 rule *accepted* ends the line the day before its own start, so it falls outside
 the span. The column is therefore consistent whether the rule is on or off, and
 empty when off.
+
+That same bound is the defect. A return the rule suppresses which arrives
+*after* the line has ended starts outside every line's span, so this column
+cannot reach it by construction.
 
 Two consequences worth knowing:
 
@@ -101,7 +107,7 @@ Run through both engines, actual output.
 May, LENA 1-30 May. LENA's gap is 34 days.
 
 ```
-                                              Jul 28              Aug 14
+                                              contract            with the rule
 LOT1  Jan 01 -> Mar 14  base LEN              MED_ADD (POMA)      same
 LOT2  Mar 15 -> Apr 30  base POMA             MED_ADD (LEN)       -
 LOT3  May 01 -> May 30  base LEN              DISCONTINUATION     -
@@ -143,7 +149,54 @@ flags the first episode. See decision 2.
   line.
 - **A returning agent that never stopped does not advance the line** - the rule
   above, this folder.
-- **It is recorded rather than dropped** - `LOT_CONTINUING_MEDS`, descriptive.
+- **A return inside a line is recorded rather than dropped** -
+  `LOT_CONTINUING_MEDS`, descriptive. A return after the line ended is not; see
+  the open defect.
+
+---
+
+## Open defect - treatment assigned to no line
+
+The rule can suppress a return that arrives after the prior line has already
+ended. Nothing then owns it: no boundary, no regimen, and `LOT_CONTINUING_MEDS`
+is bounded by the line's own span so it cannot reach it either.
+
+    LEN  1-30 Jan          LOT1  Jan 01 -> Mar 14  base LEN   MED_ADD
+    POMA 15-31 Mar         LOT2  Mar 15 -> Mar 31  base POMA  DISCONTINUATION
+    LEN  20 Apr (81d gap)  -- in no line at all
+
+The contract build gives LOT3 on LEN from 20 April. Here the episode exists in
+`map_stacked` and appears in no row of `LOT_LONG`. A month of dispensed therapy
+is absent from the output.
+
+This has to be settled before the rule is used for anything but sensitivity.
+Three shapes: extend the prior line to own the return, let it open a line after
+all - which is the contract's answer and defeats the rule - or record it outside
+the line structure. Each moves different downstream numbers.
+
+---
+
+## Open defect - a real discontinuation reported as censoring
+
+The gate sits on `post_runout_med` as well, so a suppressed return stops being
+evidence of anything - not only of a new line. Where it was the sole trigger
+after the run-out and observation ends inside the confirm window, the run-out
+cannot be confirmed and the line is censored instead.
+
+    LEN  1 Jan - 29 Feb     contract                    with the rule
+    POMA 11 Mar - 9 Apr     LOT2 Mar 11 -> Apr 09       LOT2 Mar 11 -> May 30
+    LEN  10 May (71d gap)   DISCONTINUATION  len 30     STUDY_END  len 81
+                            LOT3 May 10 -> May 30       (no LOT3)
+
+POMA ran out on 9 April and never returned: the discontinuation is real in the
+claims. No treatment is lost - LEN is carried in `LOT_CONTINUING_MEDS` - but the
+line around it is misdescribed. The end reason is downgraded, the line is 2.7x
+too long, and the patient no longer reaches a third line.
+
+This is the same root as the defect above. Whatever settles that one has to say
+what a suppressed return is still allowed to be evidence *of*: confirming a
+run-out is a weaker claim than starting a line, and the two need not share an
+answer.
 
 ---
 
@@ -219,7 +272,7 @@ repo.
 
 ## What has been measured, and what has not
 
-**Against the production `Jul 28` run**, by
+**Against the production contract run**, by
 `lot/validation/run_stockpiling_rule.R` and `run_rechallenge_evidence.R`:
 
 - **898 boundaries in 624 patients** sit on a prior episode with

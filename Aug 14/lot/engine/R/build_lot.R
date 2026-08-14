@@ -102,7 +102,12 @@ BOOL_SETTINGS <- c("USE_QUARTERLY_TABLES", "CENSOR_AT_DISENROLLMENT",
                    "APPLY_NO_BELANTAMAB",
                    # Coerced with as.logical() like the rest, so a typo would
                    # otherwise become NA and read as off.
-                   "FACE_VALIDITY_FATAL")
+                   "FACE_VALIDITY_FATAL",
+                   # Same coercion, and this one decides which algorithm the
+                   # run is. Unchecked, RETURNING_AGENT_REQUIRES_DISCONTINUATION=Ture
+                   # parses to NA, the gate emits nothing, and the run silently
+                   # produces contract lines while claiming to be this folder.
+                   "RETURNING_AGENT_REQUIRES_DISCONTINUATION")
 INT_SETTINGS  <- c("INDUCTION_WINDOW_DAYS", "INDUCTION_WINDOW_DAYS_LOT_N",
                    "MAP_DISCON_GAP_DAYS", "MEDICAL_DAY_SUPPLY",
                    "SCT_AUTO_WINDOW_DAYS", "SCT_AUTO_GAP_DAYS",
@@ -742,8 +747,8 @@ build_lot <- function(here, cohort_table, prefix,
 # The views LOT2-5 reads. All present means LOT1 ran in this session.
 LOT2_5_INPUT_VIEWS <- c("lot_patient_input", "mma_rollup", "permissible_subs",
                         "sct_codelist", "sct_claims_raw", "tx_auto_dates",
-                        "tx_allo_cart_dates", "map_stacked", "lot1_sct",
-                        "lot1_base_end")
+                        "tx_allo_cart_dates", "map_stacked", "map_prev",
+                        "lot1_sct", "lot1_base_end")
 
 # What a run writes, all prefixed. Two groups, because they answer different
 # questions and are named differently.
@@ -761,7 +766,7 @@ LOT_TABLES <- c(
   "LOT_BUILD_STATUS",
   # the pinned inputs and the LOT1 working, each written where it is built so
   # that every later read is a scan rather than a re-run of its query
-  "LOT_PATIENT_INPUT", "MMA_MED_PROCESSED", "MAP_STACKED",
+  "LOT_PATIENT_INPUT", "MMA_MED_PROCESSED", "MAP_STACKED", "MAP_PREV",
   "SCT_CLAIMS_RAW", "TX_AUTO_DATES", "TX_ALLO_CART_DATES",
   "LOT1_INDUCTION_MEDS", "LOT1_BASE", "LOT1_SCT", "LOT1_CONTAINS_MTX_REG",
   "LOT1_BASE_END"
