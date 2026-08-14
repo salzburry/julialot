@@ -1,0 +1,21 @@
+name,value,description
+DATABRICKS_DSN,RWDE,ODBC DSN
+DATABRICKS_CATALOG,hive_metastore,Catalog for all reads and writes
+OPTUM_CDM_SCHEMA,clnprw_optum,Optum CDM schema
+USE_QUARTERLY_TABLES,TRUE,Read the cumulative quarterly CDM tables
+STUDY_START,2016-01-01,Study period start
+STUDY_END,2026-03-31,Study period end; picks the quarterly table suffix
+LOT1_FROM,2017-01-01,1L eligible-treatment period opens here
+PRE_LOT1_DAYS,365,CE and baseline window before the 1L index date
+FU_CE_DAYS,0,Days after index the follow-up CE must cover; 0 is one day
+GAP_DAYS,30,Enrollment gaps of this many days or fewer are still continuous
+SUBSEQ_PRE_DAYS,365,2L/3L only: days of CE before the cohort index date
+SUBSEQ_FU_CE_DAYS,90,2L/3L only: days of CE after it (or death) with no gaps
+TBL_CONFINEMENT,confinement,Inpatient confinement table
+TBL_MEMBER_ENROLLMENT,member_enrollment,Enrollment spans table
+TBL_MEMBER_ELIG,member_cont_enrollment,Sex and birth year
+TBL_DOD,dod,Date of death
+OUTPATIENT_WINDOW,90,Two outpatient MM claims within this many days confirm a diagnosis
+MIN_AGE,18,Minimum age in the MM-diagnosis year
+CODELIST_DIR,/mnt/code/codelist,Where the production code lists live
+NDMM_ICD_FLAG_MAX_ROWS,,Stop if more than this many claims name neither ICD family (empty = report and continue)

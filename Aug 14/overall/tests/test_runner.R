@@ -1,0 +1,319 @@
+#!/usr/bin/env Rscript
+# The wrapper around the IE SQL - what gets written, and where.
+# The SQL itself is covered by the step-level checks below. Runs offline.
+#
+#   Rscript "overall/tests/test_runner.R"
+
+here <- local({
+  a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
+  if (!length(a)) getwd()
+  else dirname(normalizePath(gsub("~+~", " ", sub("^--file=", "", a[1]), fixed = TRUE)))
+})
+ROOT <- dirname(here)
+
+pass <- 0L; fail <- 0L
+ok <- function(cond, what) {
+  if (isTRUE(cond)) { pass <<- pass + 1L; cat("  ok   ", what, "\n") }
+  else              { fail <<- fail + 1L; cat("  FAIL ", what, "\n") }
+}
+stops <- function(expr, what) {
+  ok(inherits(tryCatch(expr, error = function(e) e), "error"), what)
+}
+runs <- function(expr, what) {
+  ok(!inherits(tryCatch(expr, error = function(e) e), "error"), what)
+}
+
+env <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "build_cohort.R"), envir = env)
+CHECKPOINT_STEPS <- c("mm_dx_events_all", "mm_qualifying", "ELIG_COH_ALLFLAGS")
+assign("CHECKPOINT_STEPS", CHECKPOINT_STEPS, envir = env)
+for (f in c("step_view_name", "is_checkpoint", "check_output_contract",
+            "check_settings", "resolve_checkpoints", "pin_output_schema",
+            "NORMALIZED_CODELISTS", "CODELIST_FILES"))
+  assign(f, get(f, envir = env), envir = globalenv())
+
+restore <- Sys.getenv(c("CHECKPOINT_STEPS", "OBJECT_PREFIX", "PROJECT_WORK_SCHEMA",
+                        "DOMINO_USER_NAME", "APPLY_AGE_INCL", "OUTPATIENT_WINDOW",
+                        "MIN_AGE", "STUDY_END"), unset = NA)
+on.exit({
+  for (n in names(restore)) {
+    if (is.na(restore[[n]])) Sys.unsetenv(n)
+    else do.call(Sys.setenv, setNames(list(restore[[n]]), n))
+  }
+}, add = TRUE)
+clear <- function() Sys.unsetenv(names(restore))
+
+cat("\n-- step_view_name: the view a step creates --\n")
+ok(identical(step_view_name("CREATE OR REPLACE TEMPORARY VIEW ce_flags AS SELECT 1"),
+             "ce_flags"), "reads the view name out of the SQL")
+ok(identical(step_view_name("  CREATE OR REPLACE TEMPORARY VIEW  rvnu_cd_check  AS x"),
+             "rvnu_cd_check"), "tolerates leading and repeated spaces")
+ok(is.na(step_view_name("CREATE OR REPLACE TABLE x.y.z AS SELECT 1")),
+   "NA when the step writes a table, not a view")
+
+cat("\n-- is_checkpoint: what gets materialized --\n")
+cfg <- list(final_table_name = "OVERALL_COH_FINAL")
+ok(is_checkpoint("mm_qualifying", "*", cfg), "'*' materializes an ordinary step")
+ok(!is_checkpoint("OVERALL_COH_FINAL", "*", cfg),
+   "never the final cohort view (24b writes that table)")
+ok(!is_checkpoint(NA_character_, "*", cfg), "never a step that writes a table")
+ok(is_checkpoint("mm_qualifying", c("mm_qualifying", "ce_flags"), cfg),
+   "an explicit list still works")
+ok(!is_checkpoint("ce_flags", c("mm_qualifying"), cfg),
+   "a step outside an explicit list is skipped")
+
+cat("\n-- resolve_checkpoints --\n")
+clear()
+ok(identical(resolve_checkpoints(), CHECKPOINT_STEPS), "unset falls back to the default three")
+Sys.setenv(CHECKPOINT_STEPS = "*")
+ok(identical(resolve_checkpoints(), "*"), "'*' passes through")
+Sys.setenv(CHECKPOINT_STEPS = "a|b , c")
+ok(identical(resolve_checkpoints(), c("a", "b", "c")), "splits and trims a list")
+
+cat("\n-- check_output_contract --\n")
+Sys.setenv(CHECKPOINT_STEPS = "*")
+good <- modifyList(list(final_table_name = "OVERALL_COH_FINAL",
+                        object_prefix = "overall_", persist_to_schema = TRUE,
+                        codelist_csv_map = CODELIST_FILES),
+                   get("CONTRACT", envir = env))
+runs(check_output_contract(good, "OVERALL_COH_FINAL", "overall_"), "accepts the declared contract")
+stops(check_output_contract(modifyList(good, list(final_table_name = "ELIG_COH_FINAL")),
+                            "OVERALL_COH_FINAL", "overall_"),
+      "rejects an ambient FINAL_TABLE_NAME")
+stops(check_output_contract(modifyList(good, list(object_prefix = "other_")),
+                            "OVERALL_COH_FINAL", "overall_"),
+      "rejects a prefix other than the declared one")
+stops(check_output_contract(modifyList(good, list(persist_to_schema = FALSE)),
+                            "OVERALL_COH_FINAL", "overall_"),
+      "rejects PERSIST_TO_SCHEMA=FALSE")
+Sys.setenv(CHECKPOINT_STEPS = "mm_dx_events_all")
+stops(check_output_contract(good, "OVERALL_COH_FINAL", "overall_"),
+      "rejects a narrowed CHECKPOINT_STEPS")
+
+cat("\n-- check_settings: the ones that could fail open --\n")
+clear()
+runs(check_settings(), "unset is fine")
+Sys.setenv(APPLY_AGE_INCL = "Y")
+stops(check_settings(), "APPLY_AGE_INCL=Y (as.logical gives NA, read as off)")
+Sys.setenv(APPLY_AGE_INCL = "false")
+runs(check_settings(), "lowercase true/false accepted")
+clear()
+Sys.setenv(OUTPATIENT_WINDOW = "45")
+stops(check_settings(), "OUTPATIENT_WINDOW=45 (silently became 90)")
+clear()
+Sys.setenv(MIN_AGE = "eighteen")
+stops(check_settings(), "MIN_AGE that isn't a number")
+clear()
+Sys.setenv(STUDY_END = "30-06-2025")
+stops(check_settings(), "STUDY_END set at all - the window is fixed")
+clear()
+Sys.setenv(PROJECT_WORK_SCHEMA = "hive_metastore.usr00000")
+stops(check_settings(), "catalog.schema where a schema name belongs")
+
+cat("\n-- pin_output_schema --\n")
+clear()
+Sys.setenv(DOMINO_USER_NAME = "usr00000", OBJECT_PREFIX = "overall_")
+p <- pin_output_schema(list(catalog = "hive_metastore"))
+ok(identical(p$work_schema, "usr00000") && identical(p$personal_schema, "usr00000"),
+   "work and personal schema pinned to the same value")
+ok(identical(p$object_prefix, "overall_"), "prefix carried onto cfg")
+clear()
+stops(pin_output_schema(list(catalog = "hive_metastore")),
+      "stops when no schema resolves")
+# A default falling back to a shared schema name would write there instead of
+# stopping. Blank is what makes the stop reachable.
+# Sourced with the environment cleared, which is the case that matters.
+cp <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "config_prompts.R"), envir = cp)
+cd <- get("cfg_defaults", envir = cp)
+ok(identical(cd$work_schema, "") && identical(cd$personal_schema, ""),
+   "schema defaults are blank, not a shared fallback")
+
+cat("\n-- every function build_cohort.R calls actually exists --\n")
+# A missed edit once left write_build_status() and check_normalized_codelist()
+# called but never defined. Nothing caught it: the SQL tests don't run the
+# runner, and R only resolves a function when the call is reached.
+mod <- new.env(parent = globalenv())
+for (f in c("load_inputs.R", "config_prompts.R", "db_utils.R",
+            "criteria_attrition.R", "pipeline_steps.R", "build_cohort.R"))
+  sys.source(file.path(ROOT, "R", f), envir = mod)
+
+src <- paste(readLines(file.path(ROOT, "R", "build_cohort.R"), warn = FALSE),
+             collapse = "\n")
+src <- gsub('"[^"]*"', '""', src)          # string literals hold SQL, not calls
+src <- gsub("'[^']*'", "''", src)
+src <- gsub("#[^\n]*", "", src)           # comments
+# skip pkg::fn and list$fn - only bare names have to resolve here
+called <- unique(sub("\\($", "", regmatches(src,
+  gregexpr("(?<![$:\\w.])[A-Za-z_][A-Za-z0-9_.]*\\(", src, perl = TRUE))[[1]]))
+missing <- Filter(function(f) !exists(f, envir = mod), called)
+ok(length(missing) == 0,
+   if (length(missing)) paste("undefined:", paste(missing, collapse = ", "))
+   else paste0("all ", length(called), " calls resolve"))
+
+cat("\n-- the code-list checksum describes the file that was read --\n")
+# Hashing only after the read would log a version the build never loaded.
+# The order is easy to lose in a tidy-up, so pin it.
+du <- readLines(file.path(ROOT, "R", "db_utils.R"), warn = FALSE)
+hashes <- grep("tools::md5sum(csv_path)", du, fixed = TRUE)
+read_at <- grep("read.csv(csv_path", du, fixed = TRUE)
+ok(length(hashes) == 2 && length(read_at) == 1 &&
+     hashes[1] < read_at[1] && hashes[2] > read_at[1],
+   "code lists are hashed before and after the read")
+
+cat("\n-- an icd_family the build does not know stops it, rather than becoming ICD-10 --\n")
+# Why the check has to exist, taken from the step file rather than restated:
+# the normalising CASE names the ICD-9 spellings and takes everything else as
+# ICD-10. So a blank or misspelled family on an ICD-9 code is silently ICD-10,
+# joins nothing, and the build finishes with plausible counts - an MM code that
+# qualifies nobody, or an exclusion code that stops excluding.
+cl_txt <- paste(readLines(file.path(ROOT, "R", "steps", "01_codelists.R"),
+                          warn = FALSE), collapse = "\n")
+fam <- regmatches(cl_txt, gregexpr("CASE WHEN upper\\(icd_family\\)[^\n]*", cl_txt))[[1]]
+ok(length(fam) == 2 && all(grepl("ELSE 'ICD10' END", fam, fixed = TRUE)),
+   "a family the CASE does not name is read as ICD-10, not refused")
+chk <- get("check_icd_family", envir = mod)
+fam_df <- function(...) data.frame(dx = rep("C9000", length(c(...))),
+                                   icd_family = c(...), stringsAsFactors = FALSE)
+runs(chk(fam_df("ICD9", "ICD10"), "mm_dx.csv"), "the two plain spellings pass")
+runs(chk(fam_df("icd-9", "ICD10DIAG", "9", "10"), "mm_dx.csv"),
+     "...as do the hyphenated, suffixed and bare-number ones, in any case")
+stops(chk(fam_df("ICD9", ""), "mm_dx.csv"),
+      "a blank family stops the build - that is the one that reads as ICD-10")
+stops(chk(fam_df("ICD-09"), "mm_dx.csv"), "...and a misspelled one")
+stops(chk(fam_df("ICD11"), "mm_dx.csv"), "...and one this build has no rule for")
+# The message has to say which value, or the operator cannot fix the file.
+msg <- tryCatch(chk(fam_df("ICD-09"), "mm_dx.csv"), error = conditionMessage)
+ok(grepl("ICD-09", msg, fixed = TRUE) && grepl("mm_dx.csv", msg, fixed = TRUE),
+   "...naming the value and the file it is in")
+ok(grepl("blank", tryCatch(chk(fam_df(""), "mm_dx.csv"), error = conditionMessage),
+         fixed = TRUE),
+   "...and a blank is printed as blank rather than as nothing at all")
+# The other three code lists have no such column and must not be held to one.
+runs(chk(data.frame(code = "J9999", code_type = "HCPCS", stringsAsFactors = FALSE),
+         "cl_mma_codelist.csv"),
+     "a code list without the column is not asked for one")
+# Wired into the read, and a present-but-wrong file is not reported as missing.
+ok(any(grepl("check_icd_family(df, csv_file)", du, fixed = TRUE)),
+   "the check runs on what was read, before the CASE flattens it")
+ok(any(grepl('inherits(e, "codelist_content")', du, fixed = TRUE)),
+   "...and its message survives, rather than becoming 'codelist missing'")
+
+cat("\n-- codelist checks name columns the views actually have --\n")
+# A wrong column here is an unresolved-column error at run time, several
+# minutes into a build. preg_codes and clintrial_codes carry code/code_type,
+# not dx; guessing from the view name gets them wrong.
+cl_src <- paste(readLines(file.path(ROOT, "R", "steps", "01_codelists.R"),
+                          warn = FALSE), collapse = "\n")
+view_cols <- function(view) {
+  i <- regexpr(paste0("TEMPORARY VIEW \\{work\\('", view, "'\\)\\}"), cl_src)
+  if (i < 0) return(character(0))
+  blk <- substr(cl_src, i, i + attr(i, "match.length") + 900)
+  blk <- substr(blk, 1, regexpr('"\\)', blk))
+  unlist(regmatches(blk, gregexpr("AS +[A-Za-z_][A-Za-z0-9_]*", blk))) |>
+    sub(pattern = "AS +", replacement = "")
+}
+for (v in names(NORMALIZED_CODELISTS)) {
+  have <- view_cols(v)
+  want <- NORMALIZED_CODELISTS[[v]]
+  ok(length(have) > 0 && all(want %in% have),
+     paste0(v, ": ", paste(want, collapse = "+"), " in (",
+            paste(have, collapse = ", "), ")"))
+}
+
+cat("\n-- the clinical contract is pinned, not just defaulted --\n")
+# An ambient APPLY_AGE_INCL=FALSE or OUTPATIENT_WINDOW=30 is a valid value that
+# would quietly build a different cohort. Every setting that moves the cohort
+# has to be checked.
+CONTRACT <- get("CONTRACT", envir = env)
+Sys.setenv(CHECKPOINT_STEPS = "*")
+base <- modifyList(list(final_table_name = "OVERALL_COH_FINAL",
+                        object_prefix = "overall_", persist_to_schema = TRUE,
+                        codelist_csv_map = CODELIST_FILES),
+                   CONTRACT)
+runs(check_output_contract(base, "OVERALL_COH_FINAL", "overall_"),
+     "accepts the declared contract")
+for (k in names(CONTRACT)) {
+  v <- CONTRACT[[k]]
+  other <- if (is.logical(v)) !v else if (is.numeric(v)) v + 1 else paste0(v, "x")
+  stops(check_output_contract(modifyList(base, setNames(list(other), k)),
+                              "OVERALL_COH_FINAL", "overall_"),
+        paste0("rejects ", k, " = ", format(other)))
+}
+bad_files <- modifyList(base, list(codelist_csv_map =
+  modifyList(CODELIST_FILES, list(cl_mm_dx = "some_other_file.csv"))))
+stops(check_output_contract(bad_files, "OVERALL_COH_FINAL", "overall_"),
+      "rejects a renamed code-list file")
+# The five declared entries are untouched here; only the whole-map check
+# catches it, and cl_mm_dx is pinned so nothing could select the new key.
+extra_key <- modifyList(base, list(codelist_csv_map =
+  c(CODELIST_FILES, list(cl_mm_dx_v2 = "some_other_file.csv"))))
+stops(check_output_contract(extra_key, "OVERALL_COH_FINAL", "overall_"),
+      "rejects an extra code-list mapping")
+clear()
+
+cat("\n-- the shipped config.csv, not a sample --\n")
+# The checks above build their cfg from a literal, so someone could flip a
+# criterion in config.csv and none of them would notice. This reads the file
+# that ships.
+cfg_rows <- read.csv(file.path(ROOT, "config.csv"), stringsAsFactors = FALSE,
+                     comment.char = "#")
+shipped <- setNames(trimws(as.character(cfg_rows$value)), trimws(cfg_rows$name))
+EXPECT <- c(FINAL_TABLE_NAME = "OVERALL_COH_FINAL", OBJECT_PREFIX = "overall_",
+            CHECKPOINT_STEPS = "*", USE_CSV_CODELISTS = "TRUE",
+            CODELIST_DIR = "/mnt/code/codelist", PERSIST_TO_SCHEMA = "TRUE",
+            MIN_AGE = "18", OUTPATIENT_WINDOW = "90",
+            APPLY_AGE_INCL = "TRUE", APPLY_CE_B_INCL = "TRUE",
+            APPLY_CE_F_INCL = "TRUE", APPLY_NO_BL_AGENTS_INCL = "TRUE",
+            APPLY_FU_AGENTS_INCL = "TRUE", APPLY_BASELINE_MM_EXCL = "FALSE",
+            APPLY_OTHER_MALIG_EXCL = "FALSE", APPLY_PREGNANCY_EXCL = "FALSE",
+            APPLY_CLINTRIAL_EXCL = "FALSE",
+            DATABRICKS_DSN = "RWDE",
+            DATABRICKS_CATALOG = "hive_metastore",
+            OPTUM_CDM_SCHEMA = "clnprw_optum",
+            USE_QUARTERLY_TABLES = "TRUE",
+            CENSOR_AT_DISENROLLMENT = "FALSE")
+for (k in names(EXPECT))
+  ok(identical(shipped[[k]], EXPECT[[k]]),
+     paste0("config.csv ", k, " = ", EXPECT[[k]],
+            if (!identical(shipped[[k]], EXPECT[[k]]))
+              paste0(" (is ", shipped[[k]], ")") else ""))
+ok(all(names(EXPECT) %in% names(shipped)),
+   "config.csv still declares every setting the build is pinned to")
+
+cat("\n-- two runs on one prefix would overwrite each other --\n")
+# Every output name is the prefix plus the table, with no run id in it, so two
+# runs on one prefix replace each other's checkpoints while the other is still
+# reading them - and both can reach "complete" with the final cohort and the
+# attrition built from different executions. ndmm and lot both refuse this.
+bc <- readLines(file.path(ROOT, "R", "build_cohort.R"), warn = FALSE)
+ok(any(grepl("check_no_active_run_overall", bc, fixed = TRUE)),
+   "a run already building this prefix is refused")
+gi <- grep("check_no_active_run_overall(conn", bc, fixed = TRUE)
+wi <- grep('write_build_status(conn, cfg, "started")', bc, fixed = TRUE)
+ok(length(gi) && length(wi) && min(gi) < min(wi),
+   "...checked BEFORE the status row is written, which would overwrite it")
+ok(any(grepl("OVERALL_IGNORE_ACTIVE_RUN", bc, fixed = TRUE)),
+   "...with one named override for a run known to be dead")
+
+cat("\n-- settings that would change the cohort are refused, not coerced --\n")
+# as.integer("18.5") is 18, so checking the coerced value lets a decimal
+# through and the build quietly uses an age nobody asked for.
+Sys.setenv(MIN_AGE = "18.5")
+stops(check_settings(), "a fractional MIN_AGE is refused, not rounded")
+Sys.setenv(MIN_AGE = "18")
+runs(check_settings(), "...and a whole one is fine")
+Sys.unsetenv("MIN_AGE")
+# A schema name reaches every statement this build writes. "no dot" was not
+# enough - a space or a hyphen passed and failed later, less clearly.
+for (v in c("PROJECT_WORK_SCHEMA", "DOMINO_USER_NAME", "DOMINO_STARTING_USERNAME")) {
+  do.call(Sys.setenv, setNames(list("my schema"), v))
+  stops(check_settings(), paste0(v, " with a space is refused"))
+  Sys.unsetenv(v)
+}
+ok(any(grepl("^[A-Za-z_][A-Za-z0-9_]*$", bc, fixed = TRUE)),
+   "...and the schema is held to an identifier where it is pinned, too")
+
+cat("\n", strrep("-", 52), "\n", sep = "")
+cat(sprintf("%d passed, %d failed\n", pass, fail))
+if (fail > 0L) quit(status = 1L)
