@@ -82,6 +82,7 @@ sys.source(file.path(ENGINE, "cart_rule.R"), e)
 # without the file build the lag inline and need nothing.
 if (file.exists(file.path(ENGINE, "map_prev.R"))) {
   sys.source(file.path(ENGINE, "map_prev.R"), e)
+  sys.source(file.path(ENGINE, "continuing_meds.R"), e)
   SQL <- c(SQL, paste0("CREATE OR REPLACE VIEW map_prev AS ",
                        e$map_prev_sql("map_stacked")))
 }

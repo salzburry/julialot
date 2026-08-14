@@ -100,6 +100,7 @@ init_lot_long_from_lot1 <- function(con, meds, classes) {
       lbe.LOT1_START_DT                     AS LOT_START_DT,
       cast('MED' as string)                 AS LOT_START_TYPE,
       lbe.LOT1_BASE_MEDS                    AS LOT_BASE_MEDS,
+      coalesce(cm.LOT_CONTINUING_MEDS, '')  AS LOT_CONTINUING_MEDS,
       lbe.LOT1_MED_CNT                      AS LOT_MED_CNT,
       lbe.LOT1_BASE_DISCON_DT               AS LOT_BASE_DISCON_DT,
       lbe.LOT1_BASE_1ST_ADD_MED_DT          AS LOT_BASE_1ST_ADD_MED_DT,
@@ -158,7 +159,7 @@ init_lot_long_from_lot1 <- function(con, meds, classes) {
       {class_select}
     FROM lot1_base_end lbe
     INNER JOIN lot_patient_input p ON lbe.PATID = p.PATID
-    LEFT JOIN lot1_sct sct          ON lbe.PATID = sct.PATID
+    LEFT JOIN lot1_sct sct          ON lbe.PATID = sct.PATID{continuing_meds_join_sql('lot1_base_end', 'lbe', 'LOT1_START_DT', 'LOT1_BASE_END_DT', 'LOT1_BASE_MEDS')}
   "), qc = glue("SELECT count(*) AS n_lot1_rows FROM {lot_out(.LOT_LONG_STAGE)}"))
 }
 
@@ -979,6 +980,7 @@ build_lot_n <- function(con, lot_num,
       lbe.LOT{lot_num}_START_DT            AS LOT_START_DT,
       lbe.LOT{lot_num}_START_TYPE          AS LOT_START_TYPE,
       lbe.LOT{lot_num}_BASE_MEDS           AS LOT_BASE_MEDS,
+      coalesce(cm.LOT_CONTINUING_MEDS, '') AS LOT_CONTINUING_MEDS,
       lbe.LOT{lot_num}_MED_CNT             AS LOT_MED_CNT,
       lbe.LOT{lot_num}_BASE_DISCON_DT      AS LOT_BASE_DISCON_DT,
       lbe.LOT{lot_num}_BASE_1ST_ADD_MED_DT AS LOT_BASE_1ST_ADD_MED_DT,
@@ -1045,7 +1047,7 @@ build_lot_n <- function(con, lot_num,
       END                                             AS LOT_TX_AUTO_MAX_DT,
       {med_insert},
       {class_insert}
-    FROM lot{lot_num}_base_end lbe
+    FROM lot{lot_num}_base_end lbe{continuing_meds_join_sql(glue('lot{lot_num}_base_end'), 'lbe', glue('LOT{lot_num}_START_DT'), glue('LOT{lot_num}_BASE_END_DT'), glue('LOT{lot_num}_BASE_MEDS'))}
   "), qc = glue("SELECT count(*) AS n_appended FROM {lot_out(.LOT_LONG_STAGE)} WHERE LOT_NUM = {lot_num}"))
 
   # Refresh lot_long view to include the newly inserted rows.
