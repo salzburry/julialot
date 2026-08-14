@@ -75,6 +75,33 @@ stock_cfg <- function(from_run = NULL) {
 # An ALLO line carries no regimen at all, so it is excluded rather than given a
 # window of zero - a zero-length window would report every ALLO line as unable
 # to gain an agent, which is true but is not a finding.
+# The engine's regimen is the induction meds AND their permissible substitutes
+# (10_lot2_5_base.R: base_meds), so a biosimilar of a regimen agent is inside the
+# regimen and can never be an addition. permissible_subs is a temporary view
+# built from a code list, not a warehouse table, so a program measuring a
+# finished run has to be handed the pairs.
+#
+# NULL renders a zero-row relation, which makes every substitute look like an
+# outside agent and overstates what is counted. Callers that cannot supply the
+# pairs should say so rather than pass NULL quietly.
+subs_cte_sql <- function(pairs = NULL, tbl = NULL) {
+  # A warehouse table wins where the code list is published there; otherwise the
+  # pairs are inlined from the CSV the engine itself reads.
+  if (!is.null(tbl) && nzchar(tbl))
+    return(glue("SELECT upper(trim(original_med))   AS original_med,
+                   upper(trim(substitute_med)) AS substitute_med
+            FROM {tbl}"))
+  if (is.null(pairs) || !nrow(pairs))
+    return("SELECT cast(null as string) AS original_med,
+                   cast(null as string) AS substitute_med
+            WHERE 1 = 0")
+  vals <- paste(sprintf("(%s, %s)",
+                        sql_text(toupper(trimws(pairs$original_med))),
+                        sql_text(toupper(trimws(pairs$substitute_med)))),
+                collapse = ",\n                   ")
+  glue("SELECT * FROM (VALUES\n                   {vals}\n                 ) AS s(original_med, substitute_med)")
+}
+
 stock_window_sql <- function(cfg) {
   glue("CASE
           WHEN cast(LOT_NUM as int) = 1
@@ -232,7 +259,8 @@ stock_impact_sql <- function(agents_tbl) {
 # returning agent and a never-seen one are different clinically.
 stock_absorbed_add_sql <- function(lines_tbl, map_tbl, claims_tbl, cfg, run_id,
                                    lot_run = NA_character_,
-                                   lot_stamp = NA_character_) {
+                                   lot_stamp = NA_character_, subs = NULL,
+                                   subs_tbl = NULL) {
   glue("
     WITH ln AS (
       SELECT cast(PATID as string)         AS PATID,
@@ -257,7 +285,10 @@ stock_absorbed_add_sql <- function(lines_tbl, map_tbl, claims_tbl, cfg, run_id,
     ),
     -- This line's regimen: an episode that OPENED inside the window. The same
     -- test 10_lot2_5_base.R joins base_meds on.
-    filled AS (
+    subs AS (
+      {subs_cte_sql(subs, subs_tbl)}
+    ),
+    filled_raw AS (
       SELECT DISTINCT l.PATID, l.LOT_NUM,
              upper(trim(m.MAP_MED_TYPE)) AS MED_ABBR
       FROM ln l
@@ -266,6 +297,15 @@ stock_absorbed_add_sql <- function(lines_tbl, map_tbl, claims_tbl, cfg, run_id,
              AND m.MAP_MED_CLASS <> 'STEROID'
              AND cast(m.MAP_START_DT as date) >= l.LOT_START_DT
              AND cast(m.MAP_START_DT as date) <= l.IND_END_DT
+    ),
+    -- The engine's base_meds: the regimen agents AND their permissible
+    -- substitutes. A biosimilar of a regimen agent is inside the regimen and
+    -- can never be an addition.
+    filled AS (
+      SELECT PATID, LOT_NUM, MED_ABBR FROM filled_raw
+      UNION
+      SELECT f.PATID, f.LOT_NUM, s.substitute_med AS MED_ABBR
+      FROM filled_raw f INNER JOIN subs s ON f.MED_ABBR = s.original_med
     ),
     -- Claims after the window and on or before the line ended. A claim after the
     -- line ended belongs to the next line, not to this one's add-med search.

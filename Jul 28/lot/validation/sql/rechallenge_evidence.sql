@@ -1,6 +1,10 @@
 -- Re-challenge evidence for the LOT2+ line-boundary question.
 --
 -- Replace ${schema} with your work schema (e.g. osk02156) and ${prefix} with
+-- the run's OBJECT_PREFIX. Set ${subs_table} to the permissible-substitution
+-- table (SHOW TABLES IN hive_metastore.clnprw_codelists). Without it a
+-- biosimilar of a regimen agent counts as an outside agent and the suppressed
+-- numbers are an UPPER BOUND.
 -- the run's OBJECT_PREFIX (e.g. ndmm_), or set them as notebook widgets.
 --
 -- Reads three tables from a FINISHED LOT run and writes nothing. Run the
@@ -44,7 +48,12 @@ prev_regimen AS (
 ),
 -- This line's regimen: an episode that OPENED inside the window. The same
 -- test 10_lot2_5_base.R joins base_meds on.
-filled AS (
+subs AS (
+  SELECT upper(trim(original_med))   AS original_med,
+       upper(trim(substitute_med)) AS substitute_med
+FROM ${subs_table}
+),
+filled_raw AS (
   SELECT DISTINCT l.PATID, l.LOT_NUM,
          upper(trim(m.MAP_MED_TYPE)) AS MED_ABBR
   FROM ln l
@@ -53,6 +62,15 @@ filled AS (
          AND m.MAP_MED_CLASS <> 'STEROID'
          AND cast(m.MAP_START_DT as date) >= l.LOT_START_DT
          AND cast(m.MAP_START_DT as date) <= l.IND_END_DT
+),
+-- The engine's base_meds: the regimen agents AND their permissible
+-- substitutes. A biosimilar of a regimen agent is inside the regimen and
+-- can never be an addition.
+filled AS (
+  SELECT PATID, LOT_NUM, MED_ABBR FROM filled_raw
+  UNION
+  SELECT f.PATID, f.LOT_NUM, s.substitute_med AS MED_ABBR
+  FROM filled_raw f INNER JOIN subs s ON f.MED_ABBR = s.original_med
 ),
 -- Claims after the window and on or before the line ended. A claim after the
 -- line ended belongs to the next line, not to this one's add-med search.
@@ -155,13 +173,28 @@ END       AS IND_END_DT
 ),
 -- Every agent in every line, as whole tokens. Matching inside the string
 -- would make LEN match LENA.
-line_meds AS (
+subs AS (
+  SELECT upper(trim(original_med))   AS original_med,
+       upper(trim(substitute_med)) AS substitute_med
+FROM ${subs_table}
+),
+line_meds_raw AS (
   SELECT cast(PATID as string) AS PATID,
          cast(LOT_NUM as int)  AS LOT_NUM,
          m                     AS MED_ABBR
   FROM hive_metastore.${schema}.${prefix}LOT_LONG_FINAL
   LATERAL VIEW explode(split(coalesce(LOT_BASE_MEDS, ''), ' ')) e AS m
   WHERE m <> ''
+),
+-- The engine's base_meds is the regimen AND its permissible substitutes, so
+-- a biosimilar of a regimen agent is inside the regimen and never an
+-- addition. Without the pairs this is wider than the engine and counts
+-- substitutions as returns.
+line_meds AS (
+  SELECT PATID, LOT_NUM, MED_ABBR FROM line_meds_raw
+  UNION
+  SELECT r.PATID, r.LOT_NUM, s.substitute_med AS MED_ABBR
+  FROM line_meds_raw r INNER JOIN subs s ON r.MED_ABBR = s.original_med
 ),
 -- The earliest line each agent appeared in, per patient.
 first_seen AS (
@@ -269,10 +302,10 @@ SELECT r.PATID, r.LOT_NUM, r.MED_ABBR, r.BOUNDARY,
        datediff(r.RETURN_DT, r.LOT_START_DT)    AS DAYS_INTO_LOT,
        coalesce(p.N_NEW_PARTNERS, 0)            AS N_NEW_PARTNERS,
        CASE WHEN datediff(r.RETURN_DT, pc.PREV_CLAIM_DT) IS NULL     THEN 'unknown'
-WHEN datediff(r.RETURN_DT, pc.PREV_CLAIM_DT) <= 45       THEN '1: <=45d  continuous'
-WHEN datediff(r.RETURN_DT, pc.PREV_CLAIM_DT) <= 90       THEN '2: 46-90d  lapse'
-WHEN datediff(r.RETURN_DT, pc.PREV_CLAIM_DT) <= 180      THEN '3: 91-180d stopped'
-ELSE                        '4: >180d   restart' END AS GAP_BAND,
+WHEN datediff(r.RETURN_DT, pc.PREV_CLAIM_DT) <= 45       THEN '1: claim gap <=45d'
+WHEN datediff(r.RETURN_DT, pc.PREV_CLAIM_DT) <= 90       THEN '2: claim gap 46-90d'
+WHEN datediff(r.RETURN_DT, pc.PREV_CLAIM_DT) <= 180      THEN '3: claim gap 91-180d'
+ELSE                        '4: claim gap >180d' END AS GAP_BAND,
        'dbx'    AS RECHALL_RUN_ID,
        'manual'   AS SOURCE_LOT_RUN_ID,
        'manual' AS SOURCE_LOT_STAMP,
@@ -403,20 +436,20 @@ j AS (
         AND p.MED_ABBR = l.MED_ABBR AND p.FIRED_DT = l.FIRED_DT
 )
 SELECT CASE WHEN FIRED_GAP_DAYS IS NULL     THEN 'unknown'
-WHEN FIRED_GAP_DAYS <= 45       THEN '1: <=45d  continuous'
-WHEN FIRED_GAP_DAYS <= 90       THEN '2: 46-90d  lapse'
-WHEN FIRED_GAP_DAYS <= 180      THEN '3: 91-180d stopped'
-ELSE                        '4: >180d   restart' END AS GAP_BAND_AT_THE_BOUNDARY,
+WHEN FIRED_GAP_DAYS <= 45       THEN '1: claim gap <=45d'
+WHEN FIRED_GAP_DAYS <= 90       THEN '2: claim gap 46-90d'
+WHEN FIRED_GAP_DAYS <= 180      THEN '3: claim gap 91-180d'
+ELSE                        '4: claim gap >180d' END AS GAP_BAND_AT_THE_BOUNDARY,
        count(*)                             AS N_EVENTS,
        count(DISTINCT PATID)                AS N_PATIENTS,
        percentile_approx(FIRED_GAP_DAYS, 0.5) AS MEDIAN_GAP_AT_BOUNDARY,
        percentile_approx(FIRST_GAP_DAYS, 0.5) AS MEDIAN_GAP_AT_FIRST_RETURN
 FROM j
 GROUP BY CASE WHEN FIRED_GAP_DAYS IS NULL     THEN 'unknown'
-WHEN FIRED_GAP_DAYS <= 45       THEN '1: <=45d  continuous'
-WHEN FIRED_GAP_DAYS <= 90       THEN '2: 46-90d  lapse'
-WHEN FIRED_GAP_DAYS <= 180      THEN '3: 91-180d stopped'
-ELSE                        '4: >180d   restart' END
+WHEN FIRED_GAP_DAYS <= 45       THEN '1: claim gap <=45d'
+WHEN FIRED_GAP_DAYS <= 90       THEN '2: claim gap 46-90d'
+WHEN FIRED_GAP_DAYS <= 180      THEN '3: claim gap 91-180d'
+ELSE                        '4: claim gap >180d' END
 ORDER BY GAP_BAND_AT_THE_BOUNDARY
 ;
 
@@ -456,10 +489,10 @@ ranked AS (
 )
 SELECT CASE
          WHEN DISCON_FLG IS NULL
-           THEN '1: no prior episode - a first exposure, keep'
+           THEN '1: no prior episode for this agent'
          WHEN DISCON_FLG = 1
-           THEN '2: prior episode DISCONTINUED - a restart, keep'
-         ELSE '3: prior episode CONTINUED - the build contradicts itself, drop'
+           THEN '2: prior episode MAP_DISCON_FLG = 1'
+         ELSE '3: prior episode MAP_DISCON_FLG = 0'
        END                                        AS THE_BUILDS_OWN_VERDICT,
        count(*)                                   AS N_BOUNDARIES,
        count(DISTINCT PATID)                      AS N_PATIENTS,
@@ -470,10 +503,10 @@ FROM ranked
 WHERE rn = 1
 GROUP BY CASE
          WHEN DISCON_FLG IS NULL
-           THEN '1: no prior episode - a first exposure, keep'
+           THEN '1: no prior episode for this agent'
          WHEN DISCON_FLG = 1
-           THEN '2: prior episode DISCONTINUED - a restart, keep'
-         ELSE '3: prior episode CONTINUED - the build contradicts itself, drop'
+           THEN '2: prior episode MAP_DISCON_FLG = 1'
+         ELSE '3: prior episode MAP_DISCON_FLG = 0'
        END
 ORDER BY THE_BUILDS_OWN_VERDICT
 ;

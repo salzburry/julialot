@@ -91,6 +91,22 @@ main <- function() {
          "the returns an open episode absorbed, which are half the events and ",
          "the half the build cannot see.", call. = FALSE)
 
+  # The engine's regimen includes permissible substitutes, so without the pairs
+  # a biosimilar of a regimen agent reads as an outside agent and every count
+  # below is an over-count. permissible_subs is a temporary view built from a
+  # code list, so it has to be read from the code list here too.
+  subs <- tryCatch(
+    load_codelist_csv("permissible_subs.csv",
+                      c("original_med", "substitute_med")),
+    error = function(e) NULL)
+  if (is.null(subs) || !nrow(subs))
+    stop("Cannot read permissible_subs.csv from CODELIST_DIR. The engine's ",
+         "regimen is the induction meds AND their permissible substitutes, so ",
+         "without the pairs a biosimilar of a regimen agent counts as an ",
+         "outside agent and every number here is an over-count. Set ",
+         "CODELIST_DIR to the run's code list.", call. = FALSE)
+  cat("Substitution pairs loaded: ", nrow(subs), ".\n", sep = "")
+
   ev <- wrk(paste0(prefix, "RECHALL_EVENTS"))
   bg <- wrk(paste0(prefix, "RECHALL_BY_GAP"))
   bm <- wrk(paste0(prefix, "RECHALL_BY_MED"))
@@ -98,7 +114,7 @@ main <- function() {
   cat("\nMeasuring against LOT run ", run$run, " on ", lines, "\n", sep = "")
   db_exec(con, glue("CREATE OR REPLACE TABLE {ev} AS {
     rechall_events_sql(lines, maps, claims, absorb, rc, run_id,
-                       run$run, run$stamp)}"))
+                       run$run, run$stamp, subs)}"))
   db_exec(con, glue("CREATE OR REPLACE TABLE {bg} AS {rechall_gap_sql(ev)}"))
   db_exec(con, glue("CREATE OR REPLACE TABLE {bm} AS {rechall_by_med_sql(ev)}"))
 

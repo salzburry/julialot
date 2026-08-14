@@ -49,16 +49,15 @@ rechall_cfg <- function(from_run = NULL) {
 }
 
 # Gap bands, chosen to separate the readings rather than to be round numbers.
-#   <= 45    inside one dispense of the last fill: continuous therapy
-#   46-90    a lapse, but shorter than the run-out gap the build already uses
-#   91-180   longer than the discontinuation gap: the patient had stopped
-#   > 180    a restart after months off
+# Bands of the CLAIM-to-claim interval. That is not time off treatment: days
+# supplied, schedule and route all sit between the two. The labels say what was
+# measured and nothing more.
 rechall_band_sql <- function(col = "GAP_DAYS") {
   glue("CASE WHEN {col} IS NULL     THEN 'unknown'
-             WHEN {col} <= 45       THEN '1: <=45d  continuous'
-             WHEN {col} <= 90       THEN '2: 46-90d  lapse'
-             WHEN {col} <= 180      THEN '3: 91-180d stopped'
-             ELSE                        '4: >180d   restart' END")
+             WHEN {col} <= 45       THEN '1: claim gap <=45d'
+             WHEN {col} <= 90       THEN '2: claim gap 46-90d'
+             WHEN {col} <= 180      THEN '3: claim gap 91-180d'
+             ELSE                        '4: claim gap >180d' END")
 }
 
 # One row per re-challenge event.
@@ -69,7 +68,8 @@ rechall_band_sql <- function(col = "GAP_DAYS") {
 # event.
 rechall_events_sql <- function(lines_tbl, map_tbl, claims_tbl, absorbed_tbl,
                                cfg, run_id, lot_run = NA_character_,
-                               lot_stamp = NA_character_) {
+                               lot_stamp = NA_character_, subs = NULL,
+                               subs_tbl = NULL) {
   glue("
     WITH ln AS (
       SELECT cast(PATID as string)         AS PATID,
@@ -85,13 +85,26 @@ rechall_events_sql <- function(lines_tbl, map_tbl, claims_tbl, absorbed_tbl,
     ),
     -- Every agent in every line, as whole tokens. Matching inside the string
     -- would make LEN match LENA.
-    line_meds AS (
+    subs AS (
+      {subs_cte_sql(subs, subs_tbl)}
+    ),
+    line_meds_raw AS (
       SELECT cast(PATID as string) AS PATID,
              cast(LOT_NUM as int)  AS LOT_NUM,
              m                     AS MED_ABBR
       FROM {lines_tbl}
       LATERAL VIEW explode(split(coalesce(LOT_BASE_MEDS, ''), ' ')) e AS m
       WHERE m <> ''
+    ),
+    -- The engine's base_meds is the regimen AND its permissible substitutes, so
+    -- a biosimilar of a regimen agent is inside the regimen and never an
+    -- addition. Without the pairs this is wider than the engine and counts
+    -- substitutions as returns.
+    line_meds AS (
+      SELECT PATID, LOT_NUM, MED_ABBR FROM line_meds_raw
+      UNION
+      SELECT r.PATID, r.LOT_NUM, s.substitute_med AS MED_ABBR
+      FROM line_meds_raw r INNER JOIN subs s ON r.MED_ABBR = s.original_med
     ),
     -- The earliest line each agent appeared in, per patient.
     first_seen AS (
@@ -344,10 +357,10 @@ rechall_discon_flag_sql <- function(events_tbl, map_tbl) {
     )
     SELECT CASE
              WHEN DISCON_FLG IS NULL
-               THEN '1: no prior episode - a first exposure, keep'
+               THEN '1: no prior episode for this agent'
              WHEN DISCON_FLG = 1
-               THEN '2: prior episode DISCONTINUED - a restart, keep'
-             ELSE '3: prior episode CONTINUED - the build contradicts itself, drop'
+               THEN '2: prior episode MAP_DISCON_FLG = 1'
+             ELSE '3: prior episode MAP_DISCON_FLG = 0'
            END                                        AS THE_BUILDS_OWN_VERDICT,
            count(*)                                   AS N_BOUNDARIES,
            count(DISTINCT PATID)                      AS N_PATIENTS,
@@ -358,10 +371,10 @@ rechall_discon_flag_sql <- function(events_tbl, map_tbl) {
     WHERE rn = 1
     GROUP BY CASE
              WHEN DISCON_FLG IS NULL
-               THEN '1: no prior episode - a first exposure, keep'
+               THEN '1: no prior episode for this agent'
              WHEN DISCON_FLG = 1
-               THEN '2: prior episode DISCONTINUED - a restart, keep'
-             ELSE '3: prior episode CONTINUED - the build contradicts itself, drop'
+               THEN '2: prior episode MAP_DISCON_FLG = 1'
+             ELSE '3: prior episode MAP_DISCON_FLG = 0'
            END
     ORDER BY THE_BUILDS_OWN_VERDICT")
 }

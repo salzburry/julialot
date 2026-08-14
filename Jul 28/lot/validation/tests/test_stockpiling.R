@@ -174,7 +174,7 @@ ok(has(df, "cast(MAP_DISCON_FLG as int) AS DISCON_FLG"),
    "it reads the build's own discontinuation flag, not a threshold of its own")
 ok(has(df, "e.EP_END_DT < b.BOUNDARY_DT") && has(df, "ORDER BY e.EP_END_DT DESC"),
    "...on the episode immediately before the boundary, which is the one that ended")
-ok(has(df, "WHEN DISCON_FLG IS NULL") && has(df, "a first exposure, keep"),
+ok(has(df, "WHEN DISCON_FLG IS NULL") && has(df, "no prior episode for this agent"),
    "an agent with no prior episode is a first exposure, not a contradiction")
 ok(has(df, "BOUNDARY = 'FIRED' OR DAYS_BUILD_LATE IS NOT NULL"),
    "every boundary counts, whether made on the first return or a later one")
@@ -200,6 +200,27 @@ ok(has(run2, "GAP_DAYS < 0 THEN 1 ELSE 0 END) AS n_neg"),
    "the runner stops on a negative gap rather than reporting it")
 ok(has(run2, "STOCKPILE_ABSORBED_ADD"),
    "...and refuses to run without the absorbed table, which is half the events")
+
+cat("\n-- the regimen is the induction meds AND their permissible substitutes --\n")
+ok(grepl("WHERE 1 = 0", subs_cte_sql(NULL), fixed = TRUE),
+   "no pairs renders an empty relation rather than inventing one")
+sp <- data.frame(original_med = "RITU", substitute_med = "RITU-ABBS")
+ok(has(subs_cte_sql(sp), "'RITU'") && has(subs_cte_sql(sp), "'RITU-ABBS'"),
+   "pairs are inlined uppercased and quoted")
+ok(has(subs_cte_sql(tbl = "cl.subs"), "FROM cl.subs"),
+   "...or read from a warehouse table where the code list is published there")
+aa2 <- stock_absorbed_add_sql("lines", "maps", "claims", sc, "r1", "run", "stamp", sp)
+ok(has(aa2, "INNER JOIN subs s ON f.MED_ABBR = s.original_med"),
+   "a biosimilar of a regimen agent is inside the regimen, as base_meds has it")
+re2 <- rechall_events_sql("lines", "maps", "claims", "absorbed", rc, "r1",
+                          "run", "stamp", sp)
+ok(has(re2, "INNER JOIN subs s ON r.MED_ABBR = s.original_med"),
+   "...and the same in the re-challenge population")
+for (rf in c("run_stockpiling_rule.R", "run_rechallenge_evidence.R")) {
+  txt <- paste(readLines(file.path(ROOT, rf), warn = FALSE), collapse = "\n")
+  ok(has(txt, "Cannot read permissible_subs.csv"),
+     paste0(rf, " refuses to measure without the pairs rather than over-count"))
+}
 
 cat("\n-- the program says what it cannot answer --\n")
 run <- paste(readLines(file.path(ROOT, "run_stockpiling_rule.R"), warn = FALSE),
