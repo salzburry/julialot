@@ -23,9 +23,10 @@ prior_regimen_excl_sql <- function() {
 # truncate the first one's cover. Steroids never do. `boundary_gate` lets a
 # caller narrow it further to agents its own rules would accept as a line start.
 #
-# Transplant and CAR-T are NOT read here: they live in their own event tables and
-# whether one ends a line depends on per-line window and tandem rules this query
-# has no access to. A same-drug episode after a procedure therefore still chains.
+# Transplant and CAR-T are deliberately not read here. One that ends a line does
+# so at a higher priority than DISCONTINUATION, so a run-out chained past it
+# never surfaces; one that does not end a line - LOT1's induction AUTO, a tandem
+# inside 180 days, CAR-T inside LOT1's window - must not break the chain anyway.
 #
 # LEFT JOIN and aggregates rather than EXISTS: a correlated subquery fails under
 # spark.sql.crossJoin.enabled=false.
