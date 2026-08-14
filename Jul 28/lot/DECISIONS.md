@@ -11,29 +11,31 @@ what the written authorities say, and which kind of open question it is.
 
 ---
 
-## 1. A drug returning after its line has already ended - DEVIATION
+## 1. A drug returning after its line has already ended - INTERPRETATION
 
-**The code** opens a new line on it. `steps/10_lot2_5_base.R` builds
-`prev_meds_expanded` from the previous line's regimen and excludes only its
-**permissible biosimilar substitutes**, not the drugs themselves:
-
-> `-- The prior-LOT regimen and its permissible biosimilar substitutes. Neither`
-> `-- starts LOT_N.`
+**The code** does not open a new line on it. `engine/R/prior_regimen.R` excludes
+the previous line's regimen *and* its permissible biosimilar substitutes from
+the agents that can start the next line. The line that owns the drug extends
+over its later episodes instead, stopping at any *other* agent arriving in
+between.
 
 **The protocol** says a subsequent LOT starts at "the first administration for a
 new MM agent **that was not part of the previous LOT regimen**". A drug that
-*was* the previous regimen is not such an agent, so on a strict reading it
-cannot start the next line.
+*was* the previous regimen is not such an agent, so it cannot start the next
+line. The code follows this reading.
 
-**The spec** touches it once, in `maintenance_validated.csv`,
+**The spec** agrees in the one place it touches this, `maintenance_validated.csv`
 `MAINT_REINTRODUCTION_RULE`: "The introduction of any MM therapies **including
 therapies that were part of the original regimen does not advance the LOT** but
 ends the maintenance period." That rule is scoped to maintenance, which the
 engine does not implement, so it is indicative rather than binding.
 
-**Status.** Deliberate, recorded only in code comments until now. Clinically
-defensible - a patient off treatment for months who restarts has begun something
-new - but not what either document says. Not adjudicated.
+**The cost.** A line can span a treatment-free interval. LENA in January and
+again in September is one nine-month LOT1 with seven months uncovered, ending
+`DISCONTINUATION`. That is the price of the return belonging to a line rather
+than to nothing.
+
+**Status.** Applied unconditionally, in both deliveries. No switch.
 
 ---
 
@@ -90,11 +92,8 @@ it:
 Three predicates that do not consult a flag already on the row. That is the
 size of it - not a missing parameter and not a missing concept.
 
-**Where it came from.** Before the three-folder split the flag was computed and
-read by nothing but a QC count and the dashboard, with no `discon_per_med` at
-all. The split is where the flag first entered line logic. The added-medication and line-start gates have never
-read it, in any version, and `overall/` holds no line-building code to have
-sorted it out in. So this is original behaviour, not something a refactor lost.
+The added-medication and line-start queries have never read the flag. This is
+original behaviour, not something a refactor lost.
 
 ---
 
@@ -110,11 +109,13 @@ one.
 | LENA 1 Jan ds60, POMA 2 Mar, LENA 12 Mar | LOT1 ends 1 Mar; LOT2 from 2 Mar, regimen `LENA POMA` |
 | LENA 1 Jan ds60, LENA 1 Feb ds30 | LOT1 only - the refill is inside cover and pushes the run-out out |
 | LENA 1 Jan ds60, LENA 1 Mar ds30 | LOT1 only - 1 Mar is the last covered day, so still inside |
-| LENA 1 Jan ds60, LENA 1 Sep ds30 | LOT1 ends 1 Mar; **LOT2 from 1 Sep on LENA** - decision 1 |
+| LENA 1 Jan ds60, LENA 1 Sep ds30 | **LOT1 only**, 1 Jan -> 30 Sep, `DISCONTINUATION` - LENA was LOT1's regimen, so its return cannot open LOT2 - decision 1 |
 | LENA 1 Jan ds30, LENA 1 Feb ds90, POMA 15 Mar ds90, LENA 3 May | LOT1, LOT2, **LOT3 from 3 May on LENA** - decision 2, opened by a two-day gap in cover |
 
-The last two differ only in the length of the gap: 184 days against 2. The code
-treats them the same because both open a supply episode.
+The last two are decided by regimen membership, not by the length of the gap. In
+the first, LENA returns to a line whose regimen is LENA, so it cannot open a new
+one however long it was away. In the second the previous line's regimen is POMA,
+so LENA is a new agent against it and LOT3 opens on a two-day lapse in cover.
 
 ---
 

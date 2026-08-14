@@ -418,8 +418,7 @@ build_lot_n <- function(con, lot_num,
     -- discontinued. A later episode of the same drug is a restart, and a
     -- restart opens the next line rather than extending this one.
     discon_per_med AS (
-{discon_per_med_sql(glue('lot{lot_num}_start'), glue('LOT{lot_num}_START_DT'),
-                    )}
+{discon_per_med_sql(glue('lot{lot_num}_start'), glue('LOT{lot_num}_START_DT'))}
     ),
     -- The regimen has run out when its LAST base agent has.
     discon_raw AS (
@@ -772,11 +771,6 @@ build_lot_n <- function(con, lot_num,
         AND ms.MAP_START_DT <= lb.OBS_END_DT
         AND ms.MAP_MED_CLASS <> 'STEROID'
         AND prem.MED_ABBR IS NULL
-        -- Deliberately NOT gated on the returning agent. Confirming that a
-        -- run-out really was the end is a weaker claim than starting a line: a
-        -- patient turning up again is evidence the line stopped, whether or not
-        -- that agent is allowed to open the next one. Gating it reported real
-        -- discontinuations as censoring.
     ),
     post_runout_autos AS (
       SELECT a.PATID, a.TX_DT,
