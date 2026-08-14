@@ -169,6 +169,13 @@ ok(has(re, "row_number() OVER (PARTITION BY r.PATID, r.LOT_NUM, r.MED_ABBR"),
    "one boundary opportunity per line and agent: the earliest return")
 ok(has(re, "fs.FIRST_SEEN_LOT < e.LOT_NUM") && has(re, "lm.MED_ABBR IS NULL"),
    "an event is an agent from an EARLIER line that is absent from this one")
+lg <- rechall_late_gap_sql("events", "claims")
+ok(has(lg, "date_add(RETURN_DT, DAYS_BUILD_LATE) AS FIRED_DT"),
+   "the later boundary's date is recovered from the event table, needing no rebuild")
+ok(has(lg, "BOUNDARY = 'SUPPRESSED' AND DAYS_BUILD_LATE IS NOT NULL"),
+   "...only for returns the build acted on later, which is what 'late' means")
+ok(has(lg, "cast(c.DATE_SERVICE as date) < l.FIRED_DT"),
+   "the gap at that boundary runs from a claim before it, like the first one")
 lt <- rechall_late_sql("events")
 ok(has(lt, "WHEN DAYS_BUILD_LATE IS NOT NULL   THEN 'on a later return'"),
    "a suppressed return the build acted on later is not a missing boundary")

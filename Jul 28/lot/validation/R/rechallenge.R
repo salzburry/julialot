@@ -252,6 +252,53 @@ rechall_late_sql <- function(events_tbl) {
     ORDER BY GAP_BAND, WHAT_THE_BUILD_DID")
 }
 
+# Where the build made the boundary on a LATER return, the gap at that later
+# return - which the event table does not carry, since it keeps the first one.
+#
+# It decides whether "84 days late" is a defect. If the later return follows a
+# long gap, the build put the boundary in the right place and the first return
+# was never a candidate. If it follows another short one, the build made a
+# second boundary out of dosing rhythm, and those events belong with the ones
+# that fired on a short gap rather than apart from them.
+#
+# FIRST_FIRED_DT is recovered as RETURN_DT + DAYS_BUILD_LATE, so this reads the
+# finished event table and the claims, and needs no rebuild.
+rechall_late_gap_sql <- function(events_tbl, claims_tbl) {
+  glue("
+    WITH late AS (
+      SELECT PATID, LOT_NUM, MED_ABBR, GAP_DAYS AS FIRST_GAP_DAYS,
+             date_add(RETURN_DT, DAYS_BUILD_LATE) AS FIRED_DT
+      FROM {events_tbl}
+      WHERE BOUNDARY = 'SUPPRESSED' AND DAYS_BUILD_LATE IS NOT NULL
+    ),
+    prev AS (
+      SELECT l.PATID, l.LOT_NUM, l.MED_ABBR, l.FIRED_DT,
+             max(cast(c.DATE_SERVICE as date)) AS PREV_BEFORE_FIRED
+      FROM late l
+      INNER JOIN {claims_tbl} c
+              ON cast(c.PATID as string) = l.PATID
+             AND upper(trim(c.MED_ABBR))  = l.MED_ABBR
+             AND cast(c.DATE_SERVICE as date) < l.FIRED_DT
+      GROUP BY l.PATID, l.LOT_NUM, l.MED_ABBR, l.FIRED_DT
+    ),
+    j AS (
+      SELECT l.PATID, l.FIRST_GAP_DAYS,
+             datediff(l.FIRED_DT, p.PREV_BEFORE_FIRED) AS FIRED_GAP_DAYS
+      FROM late l
+      LEFT JOIN prev p
+             ON p.PATID = l.PATID AND p.LOT_NUM = l.LOT_NUM
+            AND p.MED_ABBR = l.MED_ABBR AND p.FIRED_DT = l.FIRED_DT
+    )
+    SELECT {rechall_band_sql('FIRED_GAP_DAYS')} AS GAP_BAND_AT_THE_BOUNDARY,
+           count(*)                             AS N_EVENTS,
+           count(DISTINCT PATID)                AS N_PATIENTS,
+           percentile_approx(FIRED_GAP_DAYS, 0.5) AS MEDIAN_GAP_AT_BOUNDARY,
+           percentile_approx(FIRST_GAP_DAYS, 0.5) AS MEDIAN_GAP_AT_FIRST_RETURN
+    FROM j
+    GROUP BY {rechall_band_sql('FIRED_GAP_DAYS')}
+    ORDER BY GAP_BAND_AT_THE_BOUNDARY")
+}
+
 # Per agent: which drugs return, and after how long. A rule change concentrated
 # in continuing orals is a different conversation from one spread across agents.
 rechall_by_med_sql <- function(events_tbl) {

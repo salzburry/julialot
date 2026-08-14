@@ -372,6 +372,55 @@ ORDER BY GAP_BAND, WHAT_THE_BUILD_DID
 ;
 
 -- ===========================================================================
+-- 8. For the boundaries the build made on a LATER return, the gap AT that
+--    later return. This decides whether 'late' is a defect: a long gap there
+--    means the boundary is in the right place and the first return was never
+--    a candidate, and another short one a second boundary made out of
+--    dosing rhythm.
+-- ===========================================================================
+WITH late AS (
+  SELECT PATID, LOT_NUM, MED_ABBR, GAP_DAYS AS FIRST_GAP_DAYS,
+         date_add(RETURN_DT, DAYS_BUILD_LATE) AS FIRED_DT
+  FROM rechall_events
+  WHERE BOUNDARY = 'SUPPRESSED' AND DAYS_BUILD_LATE IS NOT NULL
+),
+prev AS (
+  SELECT l.PATID, l.LOT_NUM, l.MED_ABBR, l.FIRED_DT,
+         max(cast(c.DATE_SERVICE as date)) AS PREV_BEFORE_FIRED
+  FROM late l
+  INNER JOIN hive_metastore.${schema}.${prefix}MMA_MED_PROCESSED c
+          ON cast(c.PATID as string) = l.PATID
+         AND upper(trim(c.MED_ABBR))  = l.MED_ABBR
+         AND cast(c.DATE_SERVICE as date) < l.FIRED_DT
+  GROUP BY l.PATID, l.LOT_NUM, l.MED_ABBR, l.FIRED_DT
+),
+j AS (
+  SELECT l.PATID, l.FIRST_GAP_DAYS,
+         datediff(l.FIRED_DT, p.PREV_BEFORE_FIRED) AS FIRED_GAP_DAYS
+  FROM late l
+  LEFT JOIN prev p
+         ON p.PATID = l.PATID AND p.LOT_NUM = l.LOT_NUM
+        AND p.MED_ABBR = l.MED_ABBR AND p.FIRED_DT = l.FIRED_DT
+)
+SELECT CASE WHEN FIRED_GAP_DAYS IS NULL     THEN 'unknown'
+WHEN FIRED_GAP_DAYS <= 45       THEN '1: <=45d  continuous'
+WHEN FIRED_GAP_DAYS <= 90       THEN '2: 46-90d  lapse'
+WHEN FIRED_GAP_DAYS <= 180      THEN '3: 91-180d stopped'
+ELSE                        '4: >180d   restart' END AS GAP_BAND_AT_THE_BOUNDARY,
+       count(*)                             AS N_EVENTS,
+       count(DISTINCT PATID)                AS N_PATIENTS,
+       percentile_approx(FIRED_GAP_DAYS, 0.5) AS MEDIAN_GAP_AT_BOUNDARY,
+       percentile_approx(FIRST_GAP_DAYS, 0.5) AS MEDIAN_GAP_AT_FIRST_RETURN
+FROM j
+GROUP BY CASE WHEN FIRED_GAP_DAYS IS NULL     THEN 'unknown'
+WHEN FIRED_GAP_DAYS <= 45       THEN '1: <=45d  continuous'
+WHEN FIRED_GAP_DAYS <= 90       THEN '2: 46-90d  lapse'
+WHEN FIRED_GAP_DAYS <= 180      THEN '3: 91-180d stopped'
+ELSE                        '4: >180d   restart' END
+ORDER BY GAP_BAND_AT_THE_BOUNDARY
+;
+
+-- ===========================================================================
 -- 6. Line counts under each threshold, for scale. This is events, NOT a
 --    resulting line structure: keeping or dropping a boundary renumbers every
 --    later line for that patient. An exact structure needs an alternate build.
