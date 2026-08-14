@@ -111,3 +111,7 @@ the run.
 Outcomes will not read these tables unless the build recorded that it finished.
 The three outputs are replaced one at a time, so a run that stopped part-way
 leaves some of them from this attempt and the rest from the one before.
+
+---
+
+The files themselves are listed in `FILES.md`.

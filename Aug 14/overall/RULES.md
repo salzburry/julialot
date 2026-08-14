@@ -51,3 +51,7 @@ date.
 A setting that disagrees with the pinned contract. A code list that is missing
 or cannot be read. An output table name that is not the one this build is meant
 to write.
+
+---
+
+The files themselves are listed in `FILES.md`.

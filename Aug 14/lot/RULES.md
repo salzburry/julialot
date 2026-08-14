@@ -199,3 +199,7 @@ second does not will not advance the line.
 A cohort whose own build did not finish. A setting that differs from the pinned
 contract without an explicit override. A code list that cannot be read. A line
 that ends in a way these rules cannot produce.
+
+---
+
+The files themselves are listed in `FILES.md`.
