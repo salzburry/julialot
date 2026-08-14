@@ -169,6 +169,11 @@ ok(has(re, "row_number() OVER (PARTITION BY r.PATID, r.LOT_NUM, r.MED_ABBR"),
    "one boundary opportunity per line and agent: the earliest return")
 ok(has(re, "fs.FIRST_SEEN_LOT < e.LOT_NUM") && has(re, "lm.MED_ABBR IS NULL"),
    "an event is an agent from an EARLIER line that is absent from this one")
+lt <- rechall_late_sql("events")
+ok(has(lt, "WHEN DAYS_BUILD_LATE IS NOT NULL   THEN 'on a later return'"),
+   "a suppressed return the build acted on later is not a missing boundary")
+ok(has(lt, "'never in this line'"),
+   "...and one it never acted on in that line is reported apart from it")
 ok(has(re, "DAYS_BUILD_LATE"),
    "a boundary the build made on a later return is late, not missing")
 run2 <- paste(readLines(file.path(ROOT, "run_rechallenge_evidence.R"), warn = FALSE),

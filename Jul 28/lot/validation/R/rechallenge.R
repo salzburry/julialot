@@ -228,6 +228,30 @@ rechall_gap_sql <- function(events_tbl) {
     ORDER BY GAP_BAND, BOUNDARY")
 }
 
+# A suppressed return is not always a boundary that never happened. The agent
+# can return again later in the same line and open an episode then, so the build
+# makes the boundary in the wrong place rather than not at all. The two are
+# different findings and the totals hide it.
+rechall_late_sql <- function(events_tbl) {
+  glue("
+    SELECT GAP_BAND,
+           CASE WHEN BOUNDARY = 'FIRED'            THEN 'on the first return'
+                WHEN DAYS_BUILD_LATE IS NOT NULL   THEN 'on a later return'
+                ELSE                                    'never in this line' END
+                                                   AS WHAT_THE_BUILD_DID,
+           count(*)              AS N_EVENTS,
+           count(DISTINCT PATID) AS N_PATIENTS,
+           percentile_approx(GAP_DAYS, 0.5)        AS MEDIAN_GAP_DAYS,
+           percentile_approx(DAYS_BUILD_LATE, 0.5) AS MEDIAN_DAYS_LATE,
+           max(N_RETURNS_IN_LINE)                  AS MAX_RETURNS_IN_LINE
+    FROM {events_tbl}
+    GROUP BY GAP_BAND,
+             CASE WHEN BOUNDARY = 'FIRED'          THEN 'on the first return'
+                  WHEN DAYS_BUILD_LATE IS NOT NULL THEN 'on a later return'
+                  ELSE                                  'never in this line' END
+    ORDER BY GAP_BAND, WHAT_THE_BUILD_DID")
+}
+
 # Per agent: which drugs return, and after how long. A rule change concentrated
 # in continuing orals is a different conversation from one spread across agents.
 rechall_by_med_sql <- function(events_tbl) {

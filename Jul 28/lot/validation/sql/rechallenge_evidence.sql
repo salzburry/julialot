@@ -348,6 +348,30 @@ ORDER BY count(*) DESC
 ;
 
 -- ===========================================================================
+-- 7. What the build actually did. A suppressed return is not always a missing
+--    boundary: the agent can return again later in the same line and open an
+--    episode then, so the boundary exists but in the wrong place. Read this
+--    before calling any suppressed count a missed boundary.
+-- ===========================================================================
+SELECT GAP_BAND,
+       CASE WHEN BOUNDARY = 'FIRED'            THEN 'on the first return'
+            WHEN DAYS_BUILD_LATE IS NOT NULL   THEN 'on a later return'
+            ELSE                                    'never in this line' END
+                                               AS WHAT_THE_BUILD_DID,
+       count(*)              AS N_EVENTS,
+       count(DISTINCT PATID) AS N_PATIENTS,
+       percentile_approx(GAP_DAYS, 0.5)        AS MEDIAN_GAP_DAYS,
+       percentile_approx(DAYS_BUILD_LATE, 0.5) AS MEDIAN_DAYS_LATE,
+       max(N_RETURNS_IN_LINE)                  AS MAX_RETURNS_IN_LINE
+FROM rechall_events
+GROUP BY GAP_BAND,
+         CASE WHEN BOUNDARY = 'FIRED'          THEN 'on the first return'
+              WHEN DAYS_BUILD_LATE IS NOT NULL THEN 'on a later return'
+              ELSE                                  'never in this line' END
+ORDER BY GAP_BAND, WHAT_THE_BUILD_DID
+;
+
+-- ===========================================================================
 -- 6. Line counts under each threshold, for scale. This is events, NOT a
 --    resulting line structure: keeping or dropping a boundary renumbers every
 --    later line for that patient. An exact structure needs an alternate build.

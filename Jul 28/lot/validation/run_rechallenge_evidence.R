@@ -155,6 +155,18 @@ main <- function() {
                 num0(th$KEEP_AT_46D[i]), num0(th$KEEP_AT_91D[i]),
                 num0(th$KEEP_AT_181D[i])))
 
+  lt <- db_q(con, rechall_late_sql(ev))
+  cat("\nAnd what the build actually did - a suppressed return is not always a\n",
+      "boundary that never happened:\n", sep = "")
+  cat(sprintf("  %-24s %-21s %8s %9s %11s %11s\n",
+              "band", "the build acted", "events", "patients", "median gap",
+              "days late"))
+  for (i in seq_len(nrow(lt)))
+    cat(sprintf("  %-24s %-21s %8s %9s %11s %11s\n",
+                lt$GAP_BAND[i], lt$WHAT_THE_BUILD_DID[i], num0(lt$N_EVENTS[i]),
+                num0(lt$N_PATIENTS[i]), format(lt$MEDIAN_GAP_DAYS[i]),
+                format(lt$MEDIAN_DAYS_LATE[i])))
+
   m <- db_q(con, glue("SELECT * FROM {bm}"))
   if (nrow(m)) {
     cat("\nBy agent:\n")
