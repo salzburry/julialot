@@ -312,6 +312,17 @@ rechall_late_gap_sql <- function(events_tbl, claims_tbl) {
     ORDER BY GAP_BAND_AT_THE_BOUNDARY")
 }
 
+# Bands of the COVER gap: days between the end of the agent's prior episode and
+# the boundary the build made. This is time with no drug in hand, which is what
+# MAP_DISCON_FLG is computed from - not the claim-to-claim interval.
+rechall_cover_band_sql <- function(col = "COVER_GAP_DAYS") {
+  glue("CASE WHEN {col} IS NULL THEN '0: no prior episode'
+             WHEN {col} <=  7    THEN '1: 1-7d'
+             WHEN {col} <= 30    THEN '2: 8-30d'
+             WHEN {col} <= 89    THEN '3: 31-89d'
+             ELSE                     '4: 90d+' END")
+}
+
 # Every boundary these events produced, against the build's OWN verdict on
 # whether the agent had been stopped.
 #
@@ -327,7 +338,15 @@ rechall_late_gap_sql <- function(events_tbl, claims_tbl) {
 #
 # The boundary date is RETURN_DT where the build acted on the first return, and
 # RETURN_DT + DAYS_BUILD_LATE where it acted on a later one.
-rechall_discon_flag_sql <- function(events_tbl, map_tbl) {
+# `by` is a named vector of extra grouping columns: the name becomes the output
+# alias, the value the expression. The alias cannot be reused in GROUP BY, so the
+# expression goes in both places.
+rechall_discon_flag_sql <- function(events_tbl, map_tbl, by = NULL) {
+  extra <- if (length(by))
+    paste0(paste(sprintf("%s AS %s", by, names(by)), collapse = ",\n           "),
+           ",\n           ") else ""
+  extra_g <- if (length(by)) paste0(paste(by, collapse = ",\n             "),
+                                    ",\n             ") else ""
   glue("
     WITH ep AS (
       SELECT cast(PATID as string)      AS PATID,
@@ -347,6 +366,7 @@ rechall_discon_flag_sql <- function(events_tbl, map_tbl) {
     ranked AS (
       SELECT b.PATID, b.LOT_NUM, b.MED_ABBR, b.BOUNDARY_DT, b.GAP_DAYS,
              e.DISCON_FLG, e.EP_END_DT,
+             datediff(b.BOUNDARY_DT, e.EP_END_DT) AS COVER_GAP_DAYS,
              row_number() OVER (PARTITION BY b.PATID, b.LOT_NUM, b.MED_ABBR,
                                              b.BOUNDARY_DT
                                 ORDER BY e.EP_END_DT DESC) AS rn
@@ -355,7 +375,7 @@ rechall_discon_flag_sql <- function(events_tbl, map_tbl) {
              ON e.PATID = b.PATID AND e.MED_ABBR = b.MED_ABBR
             AND e.EP_END_DT < b.BOUNDARY_DT
     )
-    SELECT CASE
+    SELECT {extra}CASE
              WHEN DISCON_FLG IS NULL
                THEN '1: no prior episode for this agent'
              WHEN DISCON_FLG = 1
@@ -369,14 +389,14 @@ rechall_discon_flag_sql <- function(events_tbl, map_tbl) {
                                                       AS MEDIAN_COVER_GAP_DAYS
     FROM ranked
     WHERE rn = 1
-    GROUP BY CASE
+    GROUP BY {extra_g}CASE
              WHEN DISCON_FLG IS NULL
                THEN '1: no prior episode for this agent'
              WHEN DISCON_FLG = 1
                THEN '2: prior episode MAP_DISCON_FLG = 1'
              ELSE '3: prior episode MAP_DISCON_FLG = 0'
            END
-    ORDER BY THE_BUILDS_OWN_VERDICT")
+    ORDER BY {extra_g}THE_BUILDS_OWN_VERDICT")
 }
 
 # Per agent: which drugs return, and after how long. A rule change concentrated

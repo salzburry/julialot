@@ -479,6 +479,7 @@ bnd AS (
 ranked AS (
   SELECT b.PATID, b.LOT_NUM, b.MED_ABBR, b.BOUNDARY_DT, b.GAP_DAYS,
          e.DISCON_FLG, e.EP_END_DT,
+         datediff(b.BOUNDARY_DT, e.EP_END_DT) AS COVER_GAP_DAYS,
          row_number() OVER (PARTITION BY b.PATID, b.LOT_NUM, b.MED_ABBR,
                                          b.BOUNDARY_DT
                             ORDER BY e.EP_END_DT DESC) AS rn
@@ -509,6 +510,132 @@ GROUP BY CASE
          ELSE '3: prior episode MAP_DISCON_FLG = 0'
        END
 ORDER BY THE_BUILDS_OWN_VERDICT
+;
+
+-- ===========================================================================
+-- 10. The same three-way split, broken down. First by how long the agent had
+--     been without cover before the boundary, then by which line it fell in.
+--     Row 3 of each is the population where the build ended a line on a drug
+--     its own data says was still running.
+-- ===========================================================================
+WITH ep AS (
+  SELECT cast(PATID as string)      AS PATID,
+         upper(trim(MAP_MED_TYPE))  AS MED_ABBR,
+         cast(MAP_END_DT as date)   AS EP_END_DT,
+         cast(MAP_DISCON_FLG as int) AS DISCON_FLG
+  FROM hive_metastore.${schema}.${prefix}MAP_STACKED
+  WHERE MAP_MED_CLASS <> 'STEROID'
+),
+bnd AS (
+  SELECT PATID, LOT_NUM, MED_ABBR, GAP_DAYS,
+         CASE WHEN BOUNDARY = 'FIRED' THEN RETURN_DT
+              ELSE date_add(RETURN_DT, DAYS_BUILD_LATE) END AS BOUNDARY_DT
+  FROM rechall_events
+  WHERE BOUNDARY = 'FIRED' OR DAYS_BUILD_LATE IS NOT NULL
+),
+ranked AS (
+  SELECT b.PATID, b.LOT_NUM, b.MED_ABBR, b.BOUNDARY_DT, b.GAP_DAYS,
+         e.DISCON_FLG, e.EP_END_DT,
+         datediff(b.BOUNDARY_DT, e.EP_END_DT) AS COVER_GAP_DAYS,
+         row_number() OVER (PARTITION BY b.PATID, b.LOT_NUM, b.MED_ABBR,
+                                         b.BOUNDARY_DT
+                            ORDER BY e.EP_END_DT DESC) AS rn
+  FROM bnd b
+  LEFT JOIN ep e
+         ON e.PATID = b.PATID AND e.MED_ABBR = b.MED_ABBR
+        AND e.EP_END_DT < b.BOUNDARY_DT
+)
+SELECT CASE WHEN COVER_GAP_DAYS IS NULL THEN '0: no prior episode'
+WHEN COVER_GAP_DAYS <=  7    THEN '1: 1-7d'
+WHEN COVER_GAP_DAYS <= 30    THEN '2: 8-30d'
+WHEN COVER_GAP_DAYS <= 89    THEN '3: 31-89d'
+ELSE                     '4: 90d+' END AS COVER_GAP_BAND,
+           CASE
+         WHEN DISCON_FLG IS NULL
+           THEN '1: no prior episode for this agent'
+         WHEN DISCON_FLG = 1
+           THEN '2: prior episode MAP_DISCON_FLG = 1'
+         ELSE '3: prior episode MAP_DISCON_FLG = 0'
+       END                                        AS THE_BUILDS_OWN_VERDICT,
+       count(*)                                   AS N_BOUNDARIES,
+       count(DISTINCT PATID)                      AS N_PATIENTS,
+       percentile_approx(GAP_DAYS, 0.5)           AS MEDIAN_CLAIM_GAP_DAYS,
+       percentile_approx(datediff(BOUNDARY_DT, EP_END_DT), 0.5)
+                                                  AS MEDIAN_COVER_GAP_DAYS
+FROM ranked
+WHERE rn = 1
+GROUP BY CASE WHEN COVER_GAP_DAYS IS NULL THEN '0: no prior episode'
+WHEN COVER_GAP_DAYS <=  7    THEN '1: 1-7d'
+WHEN COVER_GAP_DAYS <= 30    THEN '2: 8-30d'
+WHEN COVER_GAP_DAYS <= 89    THEN '3: 31-89d'
+ELSE                     '4: 90d+' END,
+             CASE
+         WHEN DISCON_FLG IS NULL
+           THEN '1: no prior episode for this agent'
+         WHEN DISCON_FLG = 1
+           THEN '2: prior episode MAP_DISCON_FLG = 1'
+         ELSE '3: prior episode MAP_DISCON_FLG = 0'
+       END
+ORDER BY CASE WHEN COVER_GAP_DAYS IS NULL THEN '0: no prior episode'
+WHEN COVER_GAP_DAYS <=  7    THEN '1: 1-7d'
+WHEN COVER_GAP_DAYS <= 30    THEN '2: 8-30d'
+WHEN COVER_GAP_DAYS <= 89    THEN '3: 31-89d'
+ELSE                     '4: 90d+' END,
+             THE_BUILDS_OWN_VERDICT
+;
+
+WITH ep AS (
+  SELECT cast(PATID as string)      AS PATID,
+         upper(trim(MAP_MED_TYPE))  AS MED_ABBR,
+         cast(MAP_END_DT as date)   AS EP_END_DT,
+         cast(MAP_DISCON_FLG as int) AS DISCON_FLG
+  FROM hive_metastore.${schema}.${prefix}MAP_STACKED
+  WHERE MAP_MED_CLASS <> 'STEROID'
+),
+bnd AS (
+  SELECT PATID, LOT_NUM, MED_ABBR, GAP_DAYS,
+         CASE WHEN BOUNDARY = 'FIRED' THEN RETURN_DT
+              ELSE date_add(RETURN_DT, DAYS_BUILD_LATE) END AS BOUNDARY_DT
+  FROM rechall_events
+  WHERE BOUNDARY = 'FIRED' OR DAYS_BUILD_LATE IS NOT NULL
+),
+ranked AS (
+  SELECT b.PATID, b.LOT_NUM, b.MED_ABBR, b.BOUNDARY_DT, b.GAP_DAYS,
+         e.DISCON_FLG, e.EP_END_DT,
+         datediff(b.BOUNDARY_DT, e.EP_END_DT) AS COVER_GAP_DAYS,
+         row_number() OVER (PARTITION BY b.PATID, b.LOT_NUM, b.MED_ABBR,
+                                         b.BOUNDARY_DT
+                            ORDER BY e.EP_END_DT DESC) AS rn
+  FROM bnd b
+  LEFT JOIN ep e
+         ON e.PATID = b.PATID AND e.MED_ABBR = b.MED_ABBR
+        AND e.EP_END_DT < b.BOUNDARY_DT
+)
+SELECT LOT_NUM AS LOT_NUM,
+           CASE
+         WHEN DISCON_FLG IS NULL
+           THEN '1: no prior episode for this agent'
+         WHEN DISCON_FLG = 1
+           THEN '2: prior episode MAP_DISCON_FLG = 1'
+         ELSE '3: prior episode MAP_DISCON_FLG = 0'
+       END                                        AS THE_BUILDS_OWN_VERDICT,
+       count(*)                                   AS N_BOUNDARIES,
+       count(DISTINCT PATID)                      AS N_PATIENTS,
+       percentile_approx(GAP_DAYS, 0.5)           AS MEDIAN_CLAIM_GAP_DAYS,
+       percentile_approx(datediff(BOUNDARY_DT, EP_END_DT), 0.5)
+                                                  AS MEDIAN_COVER_GAP_DAYS
+FROM ranked
+WHERE rn = 1
+GROUP BY LOT_NUM,
+             CASE
+         WHEN DISCON_FLG IS NULL
+           THEN '1: no prior episode for this agent'
+         WHEN DISCON_FLG = 1
+           THEN '2: prior episode MAP_DISCON_FLG = 1'
+         ELSE '3: prior episode MAP_DISCON_FLG = 0'
+       END
+ORDER BY LOT_NUM,
+             THE_BUILDS_OWN_VERDICT
 ;
 
 -- ===========================================================================

@@ -180,6 +180,11 @@ ok(has(df, "BOUNDARY = 'FIRED' OR DAYS_BUILD_LATE IS NOT NULL"),
    "every boundary counts, whether made on the first return or a later one")
 ok(has(df, "MEDIAN_COVER_GAP_DAYS"),
    "cover gap is reported beside claim gap; they are not the same measure")
+ok(has(rechall_cover_band_sql(), "COVER_GAP_DAYS <=  7"),
+   "the distribution bands the COVER gap, which is what the flag is built from")
+db <- rechall_discon_flag_sql("events", "maps", by = c(LOT_NUM = "LOT_NUM"))
+ok(has(db, "SELECT LOT_NUM AS LOT_NUM") && has(db, "GROUP BY LOT_NUM"),
+   "a grouping column is aliased in SELECT and repeated as an expression in GROUP BY")
 lg <- rechall_late_gap_sql("events", "claims")
 ok(has(lg, "date_add(RETURN_DT, DAYS_BUILD_LATE) AS FIRED_DT"),
    "the later boundary's date is recovered from the event table, needing no rebuild")
