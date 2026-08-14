@@ -71,6 +71,86 @@ more.
 Belantamab removes the patient rather than the line. Every line belonging to
 anyone who received it at any point is dropped.
 
+## A returning agent
+
+An agent already seen opens or ends a line only where the patient had stopped
+it. Formally, both must hold:
+
+    the agent is absent from that line's regimen
+    AND (it is a first exposure OR its preceding episode was discontinued)
+
+| the agent returns | result |
+|---|---|
+| never had it before | opens or ends a line |
+| its previous supply ended under 90 days ago | continuation - no boundary |
+| its previous supply ended 90 days ago or more | reintroduction - opens a line |
+| already in this line's regimen | no boundary |
+
+Discontinued means the same `MAP_DISCON_GAP_DAYS` used everywhere else, so
+there is one threshold in the build and not two. The test reads the *preceding*
+episode, never the returning one - an episode's own flag describes the gap that
+follows it.
+
+A supply episode reopens whenever cover lapses by a single day, so an episode
+starting is not on its own evidence that the patient started the drug. That is
+what this rule separates.
+
+The setting is `RETURNING_AGENT_REQUIRES_DISCONTINUATION` in
+`engine/config.csv`. Turned off, the build behaves as though this section were
+absent.
+
+## Treatment that does not advance a line
+
+An agent this rule declines still happened, so it is recorded. `LOT_BASE_MEDS`
+stays the induction regimen the protocol defines, and `LOT_CONTINUING_MEDS`
+carries anything else dispensed while the line ran - an episode starting inside
+the line, not a steroid, not already in the regimen.
+
+It is descriptive. A continuing agent does not hold the line open: run-out is
+still measured on the induction regimen alone.
+
+An agent can be continuing in one line and part of the next line's regimen, so
+a tally of exposure by line has to read both columns.
+
+## Worked examples
+
+Every line below is the engine's own output. Days supply of 60 for the first
+LEN fill unless stated; a medical claim carries 28.
+
+**A second agent inside line 1's window joins it.** LEN 1 Jan, POMA 1 Feb:
+
+    LOT1  2016-01-01 -> 2016-02-29   LEN POMA
+
+**Outside the window it starts a line.** LEN 1 Jan, POMA 2 Mar - day 61, past
+the 60-day window:
+
+    LOT1  2016-01-01 -> 2016-02-29   LEN
+    LOT2  2016-03-02 -> 2016-03-29   POMA
+
+**A refill inside cover extends the line by its own days supply**, rather than
+moving the end to the refill's own runout. LEN 1 Jan ds60 covers to 29 Feb; a
+LEN refill on 1 Feb ds28 arrives while cover is live, so the runout is pushed
+out by 28 days:
+
+    LOT1  2016-01-01 -> 2016-03-28   LEN
+
+**A drug returning after a real break starts a line, on itself.** LEN 1 Jan
+ds60, nothing else, LEN 1 Sep - 185 days after cover ran out:
+
+    LOT1  2016-01-01 -> 2016-02-29   LEN
+    LOT2  2016-09-01 -> 2016-09-30   LEN
+
+**A drug returning while another agent runs.** LEN 1 Jan-28 Mar, POMA 15 Mar-20
+May, LEN again 1 May - 34 days after LEN's own cover ended, so LEN never
+stopped:
+
+    LOT1  2016-01-01 -> 2016-03-14   LEN
+    LOT2  2016-03-15 -> 2016-05-20   POMA    continuing LEN
+
+POMA starts while LEN is still covered and still opens a line: it is outside
+line 1's window and in no regimen. LEN's reappearance opens nothing, and is
+recorded against line 2 instead. Line 2 ends on POMA's run-out.
+
 ## CAR-T
 
 A CAR-T inside line 1's 60-day induction window belongs to line 1. It does not
