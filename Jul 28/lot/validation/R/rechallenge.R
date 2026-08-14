@@ -299,6 +299,73 @@ rechall_late_gap_sql <- function(events_tbl, claims_tbl) {
     ORDER BY GAP_BAND_AT_THE_BOUNDARY")
 }
 
+# Every boundary these events produced, against the build's OWN verdict on
+# whether the agent had been stopped.
+#
+# 03_mma_map.R sets MAP_DISCON_FLG on an episode when the gap to the next supply
+# reaches map_discon_gap_days: 1 is a discontinuation, 0 is the drug carrying on.
+# The added-medication query reads map_stacked and never looks at it, so the same
+# rows say "this agent continued" and "a new agent appeared" at once. This counts
+# the boundaries where they disagree, in the build's own terms rather than a
+# threshold of this program's choosing.
+#
+# A suppressed return needs no lookup: the claim landed inside a running episode,
+# so there is no gap and the agent was continuing by construction.
+#
+# The boundary date is RETURN_DT where the build acted on the first return, and
+# RETURN_DT + DAYS_BUILD_LATE where it acted on a later one.
+rechall_discon_flag_sql <- function(events_tbl, map_tbl) {
+  glue("
+    WITH ep AS (
+      SELECT cast(PATID as string)      AS PATID,
+             upper(trim(MAP_MED_TYPE))  AS MED_ABBR,
+             cast(MAP_END_DT as date)   AS EP_END_DT,
+             cast(MAP_DISCON_FLG as int) AS DISCON_FLG
+      FROM {map_tbl}
+      WHERE MAP_MED_CLASS <> 'STEROID'
+    ),
+    bnd AS (
+      SELECT PATID, LOT_NUM, MED_ABBR, GAP_DAYS,
+             CASE WHEN BOUNDARY = 'FIRED' THEN RETURN_DT
+                  ELSE date_add(RETURN_DT, DAYS_BUILD_LATE) END AS BOUNDARY_DT
+      FROM {events_tbl}
+      WHERE BOUNDARY = 'FIRED' OR DAYS_BUILD_LATE IS NOT NULL
+    ),
+    ranked AS (
+      SELECT b.PATID, b.LOT_NUM, b.MED_ABBR, b.BOUNDARY_DT, b.GAP_DAYS,
+             e.DISCON_FLG, e.EP_END_DT,
+             row_number() OVER (PARTITION BY b.PATID, b.LOT_NUM, b.MED_ABBR,
+                                             b.BOUNDARY_DT
+                                ORDER BY e.EP_END_DT DESC) AS rn
+      FROM bnd b
+      LEFT JOIN ep e
+             ON e.PATID = b.PATID AND e.MED_ABBR = b.MED_ABBR
+            AND e.EP_END_DT < b.BOUNDARY_DT
+    )
+    SELECT CASE
+             WHEN DISCON_FLG IS NULL
+               THEN '1: no prior episode - a first exposure, keep'
+             WHEN DISCON_FLG = 1
+               THEN '2: prior episode DISCONTINUED - a restart, keep'
+             ELSE '3: prior episode CONTINUED - the build contradicts itself, drop'
+           END                                        AS THE_BUILDS_OWN_VERDICT,
+           count(*)                                   AS N_BOUNDARIES,
+           count(DISTINCT PATID)                      AS N_PATIENTS,
+           percentile_approx(GAP_DAYS, 0.5)           AS MEDIAN_CLAIM_GAP_DAYS,
+           percentile_approx(datediff(BOUNDARY_DT, EP_END_DT), 0.5)
+                                                      AS MEDIAN_COVER_GAP_DAYS
+    FROM ranked
+    WHERE rn = 1
+    GROUP BY CASE
+             WHEN DISCON_FLG IS NULL
+               THEN '1: no prior episode - a first exposure, keep'
+             WHEN DISCON_FLG = 1
+               THEN '2: prior episode DISCONTINUED - a restart, keep'
+             ELSE '3: prior episode CONTINUED - the build contradicts itself, drop'
+           END
+    ORDER BY THE_BUILDS_OWN_VERDICT")
+}
+
 # Per agent: which drugs return, and after how long. A rule change concentrated
 # in continuing orals is a different conversation from one spread across agents.
 rechall_by_med_sql <- function(events_tbl) {

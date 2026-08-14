@@ -421,6 +421,64 @@ ORDER BY GAP_BAND_AT_THE_BOUNDARY
 ;
 
 -- ===========================================================================
+-- 9. THE ONE THAT MATTERS. Every boundary these events produced, against the
+--    build's OWN verdict on whether the agent had been stopped.
+--    03_mma_map.R sets MAP_DISCON_FLG per episode: 1 = discontinued, 0 = the
+--    drug carried on. The added-medication query reads the same table and
+--    never looks at it. Row 3 is where MAP_STACKED says the agent continued
+--    and the line was ended anyway. No threshold of this script's choosing.
+-- ===========================================================================
+WITH ep AS (
+  SELECT cast(PATID as string)      AS PATID,
+         upper(trim(MAP_MED_TYPE))  AS MED_ABBR,
+         cast(MAP_END_DT as date)   AS EP_END_DT,
+         cast(MAP_DISCON_FLG as int) AS DISCON_FLG
+  FROM hive_metastore.${schema}.${prefix}MAP_STACKED
+  WHERE MAP_MED_CLASS <> 'STEROID'
+),
+bnd AS (
+  SELECT PATID, LOT_NUM, MED_ABBR, GAP_DAYS,
+         CASE WHEN BOUNDARY = 'FIRED' THEN RETURN_DT
+              ELSE date_add(RETURN_DT, DAYS_BUILD_LATE) END AS BOUNDARY_DT
+  FROM rechall_events
+  WHERE BOUNDARY = 'FIRED' OR DAYS_BUILD_LATE IS NOT NULL
+),
+ranked AS (
+  SELECT b.PATID, b.LOT_NUM, b.MED_ABBR, b.BOUNDARY_DT, b.GAP_DAYS,
+         e.DISCON_FLG, e.EP_END_DT,
+         row_number() OVER (PARTITION BY b.PATID, b.LOT_NUM, b.MED_ABBR,
+                                         b.BOUNDARY_DT
+                            ORDER BY e.EP_END_DT DESC) AS rn
+  FROM bnd b
+  LEFT JOIN ep e
+         ON e.PATID = b.PATID AND e.MED_ABBR = b.MED_ABBR
+        AND e.EP_END_DT < b.BOUNDARY_DT
+)
+SELECT CASE
+         WHEN DISCON_FLG IS NULL
+           THEN '1: no prior episode - a first exposure, keep'
+         WHEN DISCON_FLG = 1
+           THEN '2: prior episode DISCONTINUED - a restart, keep'
+         ELSE '3: prior episode CONTINUED - the build contradicts itself, drop'
+       END                                        AS THE_BUILDS_OWN_VERDICT,
+       count(*)                                   AS N_BOUNDARIES,
+       count(DISTINCT PATID)                      AS N_PATIENTS,
+       percentile_approx(GAP_DAYS, 0.5)           AS MEDIAN_CLAIM_GAP_DAYS,
+       percentile_approx(datediff(BOUNDARY_DT, EP_END_DT), 0.5)
+                                                  AS MEDIAN_COVER_GAP_DAYS
+FROM ranked
+WHERE rn = 1
+GROUP BY CASE
+         WHEN DISCON_FLG IS NULL
+           THEN '1: no prior episode - a first exposure, keep'
+         WHEN DISCON_FLG = 1
+           THEN '2: prior episode DISCONTINUED - a restart, keep'
+         ELSE '3: prior episode CONTINUED - the build contradicts itself, drop'
+       END
+ORDER BY THE_BUILDS_OWN_VERDICT
+;
+
+-- ===========================================================================
 -- 6. Line counts under each threshold, for scale. This is events, NOT a
 --    resulting line structure: keeping or dropping a boundary renumbers every
 --    later line for that patient. An exact structure needs an alternate build.

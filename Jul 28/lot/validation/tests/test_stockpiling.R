@@ -169,6 +169,17 @@ ok(has(re, "row_number() OVER (PARTITION BY r.PATID, r.LOT_NUM, r.MED_ABBR"),
    "one boundary opportunity per line and agent: the earliest return")
 ok(has(re, "fs.FIRST_SEEN_LOT < e.LOT_NUM") && has(re, "lm.MED_ABBR IS NULL"),
    "an event is an agent from an EARLIER line that is absent from this one")
+df <- rechall_discon_flag_sql("events", "maps")
+ok(has(df, "cast(MAP_DISCON_FLG as int) AS DISCON_FLG"),
+   "it reads the build's own discontinuation flag, not a threshold of its own")
+ok(has(df, "e.EP_END_DT < b.BOUNDARY_DT") && has(df, "ORDER BY e.EP_END_DT DESC"),
+   "...on the episode immediately before the boundary, which is the one that ended")
+ok(has(df, "WHEN DISCON_FLG IS NULL") && has(df, "a first exposure, keep"),
+   "an agent with no prior episode is a first exposure, not a contradiction")
+ok(has(df, "BOUNDARY = 'FIRED' OR DAYS_BUILD_LATE IS NOT NULL"),
+   "every boundary counts, whether made on the first return or a later one")
+ok(has(df, "MEDIAN_COVER_GAP_DAYS"),
+   "cover gap is reported beside claim gap; they are not the same measure")
 lg <- rechall_late_gap_sql("events", "claims")
 ok(has(lg, "date_add(RETURN_DT, DAYS_BUILD_LATE) AS FIRED_DT"),
    "the later boundary's date is recovered from the event table, needing no rebuild")
