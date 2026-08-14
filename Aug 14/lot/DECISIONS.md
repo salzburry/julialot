@@ -76,15 +76,34 @@ preceding episode. An agent the patient never had still opens a line at once.
 
 ---
 
-## 3. The measure that separates the two
+## 3. The measure both rules already have
 
-`mapmedpage_validated.csv` defines `MAP_DISCON_FLG`: set when at least
-`MAP_DISCON_GAP_DAYS` (90) elapse between an episode's `MAP_END_DT` and the next
-episode's `MAP_START_DT`. `steps/03_mma_map.R` computes it on every episode.
+`MAP_DISCON_GAP_DAYS,90` has been in `engine/config.csv` since that file's first
+commit, and `steps/03_mma_map.R` sets `MAP_DISCON_FLG` from it on every episode:
+1 where at least that many days separate an episode's `MAP_END_DT` from the next
+episode's `MAP_START_DT`. It is a setting, not a constant - 30 or 60 is a config
+value and a rebuild, with no code change.
 
-The added-medication query and the line-start query both read it here, through
-the preceding episode. `discon_per_med` no longer does: it takes the last
-episode's end whatever the flag says.
+So nothing is absent. The flag sits on the same `map_stacked` rows the line rules
+already select from. What decisions 1 and 2 come down to is which queries read
+it:
+
+| query | what it decides | reads the flag |
+|---|---|---|
+| `discon_per_med` | when the line's cover runs out | no - takes the last episode's end |
+| `first_add_candidates` (`steps/04_lot1_base.R`, `steps/10_lot2_5_base.R`) | whether a returning agent ends the line | **yes** |
+| `med_cand` (`steps/10_lot2_5_base.R`) | whether a returning agent starts the next line | **yes** |
+
+Three predicates changed, all reading a flag that was already on the row. No
+parameter was added and no threshold is written into any rule - change
+`MAP_DISCON_GAP_DAYS` and all three follow.
+
+**Where it came from.** In `apr_30_2026`, before the three-folder split, the flag
+is computed (`02_lot1.R:656`) and read by nothing but a QC count and the
+dashboard - there is no `discon_per_med` at all. The split is where the flag
+first entered line logic. The added-medication and line-start gates have never
+read it, in any version, and `overall/` holds no line-building code to have
+sorted it out in. So this is original behaviour, not something a refactor lost.
 
 ---
 
