@@ -241,8 +241,9 @@ build_lot_n <- function(con, lot_num,
 {prior_regimen_excl_sql()}
     ),
     -- d_MED: earliest non-steroid MM agent strictly after PREV_END_DT,
-    -- excluding permissible biosimilar subs of prior-LOT drugs.
-    -- Same-drug restarts are allowed and DO trigger LOT_N.
+    -- excluding the prior-LOT regimen and its permissible biosimilar subs.
+    -- A drug that was the previous regimen does NOT trigger LOT_N; the line it
+    -- belongs to extends over it instead - see R/prior_regimen.R.
     med_cand AS (
       SELECT pe.PATID, min(ms.MAP_START_DT) AS d_MED
       FROM prev_end pe
@@ -252,7 +253,7 @@ build_lot_n <- function(con, lot_num,
       WHERE ms.MAP_START_DT > pe.PREV_END_DT
         AND ms.MAP_START_DT <= pe.OBS_END_DT
         AND ms.MAP_MED_CLASS <> 'STEROID'
-        AND pme.MED_ABBR IS NULL
+        AND (pme.MED_ABBR IS NULL{melp_prior_regimen_exempt(cfg)})
       GROUP BY pe.PATID
     ),
     -- d_ALLO: earliest ALLO strictly after PREV_END_DT.

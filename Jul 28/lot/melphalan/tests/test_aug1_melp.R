@@ -106,7 +106,8 @@ subst_off <- function(f) {
                  c("{melp_lot1_base_from(cfg)}",       melp_lot1_base_from(off)),
                  c("{melp_lotn_ctes(cfg, lot_num, induction_window_days, cart_consolidation_days, allo_lot_span)}",
                    melp_lotn_ctes(off, 2, 30L, 45L, "single_day")),
-                 c("{melp_suppress_predicate(cfg)}",   melp_suppress_predicate(off))))
+                 c("{melp_suppress_predicate(cfg)}",   melp_suppress_predicate(off)),
+                 c("{melp_prior_regimen_exempt(cfg)}", melp_prior_regimen_exempt(off))))
     txt <- gsub(p[1], p[2], txt, fixed = TRUE)
   # The inject arm spans two lines in the step, so it is cut rather than swapped.
   sub("(?s)\\{melp_inject_arm\\(cfg,.*?\\)\\}", melp_inject_arm(off, "t", "c", "e"),
