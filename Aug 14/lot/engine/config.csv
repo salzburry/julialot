@@ -25,7 +25,6 @@ COHORT_PREFIX,,The cohort build's prefix for that table (blank = this run's own 
 APPLY_NO_BELANTAMAB,TRUE,Drop patients with belantamab in any LOT
 APPLY_CART_INDUCTION_RULE,TRUE,A CAR-T inside LOT1's induction window belongs to LOT1
 RETURNING_AGENT_REQUIRES_DISCONTINUATION,TRUE,A returning agent advances a line only where its previous episode was discontinued
-SAME_AGENT_CANNOT_ADVANCE,TRUE,An agent in the previous LOT regimen cannot start the next line; the line it belongs to extends over its later episodes
 BELANTAMAB_MED_ABBR,BELA,How belantamab is named in MED_ABBR
 APPLY_MELP_RULE,,The melphalan line-advancing rule: blank (contract build) or as_asked / yield_to_sct
 MELP_MED_ABBR,MELP,How melphalan is named in MED_ABBR

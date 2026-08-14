@@ -65,7 +65,7 @@ phase_lot1_base <- function(con, ctx) {
     -- MAP_DISCON_FLG had been computed correctly all along and read by nothing
     -- but a QC count.
     discon_per_med AS (
-{discon_per_med_sql(cfg$same_agent_cannot_advance, 'lot1_start', 'LOT1_START_DT')}
+{discon_per_med_sql('lot1_start', 'LOT1_START_DT')}
     ),
     -- The regimen has run out when its LAST base agent has.
     discon_raw AS (

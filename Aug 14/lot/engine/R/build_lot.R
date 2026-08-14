@@ -107,8 +107,7 @@ BOOL_SETTINGS <- c("USE_QUARTERLY_TABLES", "CENSOR_AT_DISENROLLMENT",
                    # run is. Unchecked, RETURNING_AGENT_REQUIRES_DISCONTINUATION=Ture
                    # parses to NA, the gate emits nothing, and the run silently
                    # produces contract lines while claiming to be this folder.
-                   "RETURNING_AGENT_REQUIRES_DISCONTINUATION",
-                   "SAME_AGENT_CANNOT_ADVANCE")
+                   "RETURNING_AGENT_REQUIRES_DISCONTINUATION")
 INT_SETTINGS  <- c("INDUCTION_WINDOW_DAYS", "INDUCTION_WINDOW_DAYS_LOT_N",
                    "MAP_DISCON_GAP_DAYS", "MEDICAL_DAY_SUPPLY",
                    "SCT_AUTO_WINDOW_DAYS", "SCT_AUTO_GAP_DAYS",
@@ -1484,8 +1483,18 @@ code_fingerprint <- function(here) {
 # between recording what the run did and recording what it was supposed to do,
 # and a metadata row that says the second is worse than none: the dashboard
 # reads max_lot out of this string to decide how many panels a run has.
+# Settings that decide which lines a run builds but are not contract axes, so
+# CONTRACT_SETTINGS carries them and a finished run says which rule produced it.
+# Recorded, not governed: no deviation, no override, no refusal - the value is
+# simply written down beside the run.
+#
+# Without this a run leaves no trace of them at all. CODE_MD5 hashes R/ and
+# build.R and not config.csv, so flipping one of these gives two runs the same
+# fingerprint, the same CONTRACT_SETTINGS, and materially different lines.
+RECORDED_SETTINGS <- c("returning_agent_requires_discontinuation")
+
 contract_settings <- function(cfg) {
-  k <- sort(names(CONTRACT), method = "radix")
+  k <- sort(unique(c(names(CONTRACT), RECORDED_SETTINGS)), method = "radix")
   val <- function(key) {
     v <- if (!is.null(cfg[[key]])) cfg[[key]] else CONTRACT[[key]]
     as.character(v)[1]

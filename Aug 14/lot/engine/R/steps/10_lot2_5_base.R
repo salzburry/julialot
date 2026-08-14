@@ -253,7 +253,7 @@ build_lot_n <- function(con, lot_num,
       SELECT pma.PATID, ps.substitute_med AS MED_ABBR
       FROM prev_meds_array pma
       INNER JOIN permissible_subs ps ON pma.MED_ABBR = ps.original_med
-{prior_regimen_excl_sql(cfg$same_agent_cannot_advance)}
+{prior_regimen_excl_sql()}
     ),
     -- d_MED: earliest non-steroid MM agent strictly after PREV_END_DT,
     -- excluding permissible biosimilar subs of prior-LOT drugs.
@@ -434,7 +434,7 @@ build_lot_n <- function(con, lot_num,
     -- discontinued. A later episode of the same drug is a restart, and a
     -- restart opens the next line rather than extending this one.
     discon_per_med AS (
-{discon_per_med_sql(cfg$same_agent_cannot_advance, glue('lot{lot_num}_start'), glue('LOT{lot_num}_START_DT'))}
+{discon_per_med_sql(glue('lot{lot_num}_start'), glue('LOT{lot_num}_START_DT'))}
     ),
     -- The regimen has run out when its LAST base agent has.
     discon_raw AS (

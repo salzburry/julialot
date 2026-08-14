@@ -99,12 +99,6 @@ cfg_defaults <- list(
   # LOT_CONTRACT_OVERRIDE, the same as any other contract setting.
   apply_cart_induction_rule =
     as.logical(Sys.getenv("APPLY_CART_INDUCTION_RULE", unset = "TRUE")),
-  # The protocol's "not part of the previous LOT regimen", read strictly: an
-  # agent already in the previous line's regimen cannot start the next one, and
-  # the line it belongs to extends over its later episodes while nothing else
-  # intervenes. See R/prior_regimen.R.
-  same_agent_cannot_advance =
-    as.logical(Sys.getenv("SAME_AGENT_CANNOT_ADVANCE", unset = "TRUE")),
   # Pinned TRUE in CONTRACT for the same reason. This is the value
   # criterion_enabled() applies, so the criterion and the recorded contract
   # cannot disagree about whether the exclusion ran.

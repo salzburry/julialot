@@ -134,9 +134,9 @@ on LENA. Its preceding episode is flagged, and it is not in LOT2's
 LOT1  2016-01-01 -> 2016-09-30  meds LEN  DISCONTINUATION
 ```
 
-One line. `SAME_AGENT_CANNOT_ADVANCE` decides this, not the returning-agent
-gate - a 185-day gap flags the first episode, so the gate would let it through.
-The two rules are independent and this case is the other one's.
+One line. The prior-regimen rule decides this, not the returning-agent gate -
+a 185-day gap flags the first episode, so the gate would let it through. The two
+are independent and this case is the other one's.
 
 ---
 
@@ -154,7 +154,6 @@ The two rules are independent and this case is the other one's.
   not part of the previous LOT regimen**", and a drug that was that regimen is
   not such an agent. The line it belongs to extends over its later episodes
   instead, stopping at any other agent that arrives in between.
-  `SAME_AGENT_CANNOT_ADVANCE`, TRUE here.
   The cost is a line that can span a treatment-free interval - LENA in January
   and September becomes one nine-month LOT1 with seven months uncovered. That is
   the price of the return belonging to a line rather than to nothing.
