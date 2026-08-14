@@ -100,8 +100,10 @@ def generate(seed, n):
         # generator that ignores that is testing a table the build cannot
         # produce - the first run of this harness did, and both invariant
         # breaks it reported were that and not the code.
-        maps = [(m, c, s, min(e, obs_end), f) for (m, c, s, e, f) in maps
+        maps = [(m, c, s, e, f) for (m, c, s, e, f) in maps
                 if index <= s <= obs_end]
+        maps = coalesce_same_drug(maps)
+        maps = [(m, c, s, min(e, obs_end), f) for (m, c, s, e, f) in maps]
         if not maps:
             maps = [(MEDS[0][0], MEDS[0][1], index, min(index + 27, obs_end), 0)]
         sct_ac   = [(t_, x) for (t_, x) in sct_ac if index <= x <= obs_end]
@@ -114,6 +116,36 @@ def generate(seed, n):
                          strict=[(index - rnd.choice([100, 365]),
                                   obs_end - rnd.choice([0, 0, 50, 200]))]))
     return pats
+
+
+def coalesce_same_drug(maps):
+    """One drug cannot have two supply episodes running at once.
+
+    03_mma_map opens a new MAP only for a claim landing beyond every runout
+    (CASE 2); a claim arriving while cover is still active pushes the runout
+    out instead (CASE 3, `rx_runout + ds`). So within a drug the episodes it
+    emits are strictly disjoint, and the next MAP_START_DT is always past the
+    previous MAP_END_DT.
+
+    Drawing episodes independently breaks that - the same agent gets picked
+    twice with windows that overlap - and produces a table no build can. It
+    also makes `lag(...) ORDER BY MAP_START_DT` and "the latest episode ending
+    before this date" name different rows as the previous episode, which is
+    the very thing the added-medication rules turn on. Fold an overlap the way
+    CASE 3 does rather than dropping it, so the draw is kept.
+    """
+    out, by_med = [], {}
+    for m in maps:
+        by_med.setdefault(m[0], []).append(m)
+    for rows in by_med.values():
+        cur = None
+        for med, cls, s, e, flg in sorted(rows, key=lambda r: (r[2], r[3])):
+            if cur is not None and s <= cur[3]:
+                cur[3] += e - s + 1              # CASE 3: pushout by days supply
+                continue
+            cur = [med, cls, s, e, flg]          # CASE 1 / CASE 2: new episode
+            out.append(cur)
+    return [tuple(r) for r in sorted(out, key=lambda r: (r[2], r[0]))]
 
 
 def discon_gap_days():
@@ -256,6 +288,10 @@ CHECKS = [
   "                AND n.LOT_NUM = l.LOT_NUM + 1)"),
  ("more lines than the cap",
   "SELECT PATID FROM lot_long WHERE LOT_NUM > 5"),
+ ("two supply episodes of one drug overlapping - no build can emit this",
+  "SELECT a.PATID, a.MAP_MED_TYPE FROM map_stacked a JOIN map_stacked b "
+  "ON b.PATID = a.PATID AND b.MAP_MED_TYPE = a.MAP_MED_TYPE "
+  "AND b.MAP_START_DT > a.MAP_START_DT AND b.MAP_START_DT <= a.MAP_END_DT"),
  ("a line for a patient with no MAP row",
   "SELECT DISTINCT l.PATID FROM lot_long l LEFT JOIN map_stacked m "
   "ON m.PATID = l.PATID WHERE m.PATID IS NULL"),
