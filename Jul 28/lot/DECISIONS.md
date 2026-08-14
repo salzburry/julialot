@@ -90,10 +90,9 @@ it:
 Three predicates that do not consult a flag already on the row. That is the
 size of it - not a missing parameter and not a missing concept.
 
-**Where it came from.** In `apr_30_2026`, before the three-folder split, the flag
-is computed (`02_lot1.R:656`) and read by nothing but a QC count and the
-dashboard - there is no `discon_per_med` at all. The split is where the flag
-first entered line logic. The added-medication and line-start gates have never
+**Where it came from.** Before the three-folder split the flag was computed and
+read by nothing but a QC count and the dashboard, with no `discon_per_med` at
+all. The split is where the flag first entered line logic. The added-medication and line-start gates have never
 read it, in any version, and `overall/` holds no line-building code to have
 sorted it out in. So this is original behaviour, not something a refactor lost.
 
