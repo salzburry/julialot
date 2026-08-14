@@ -8,14 +8,20 @@
 #   DATABRICKS_PWD=... DOMINO_USER_NAME=usr00000 OBJECT_PREFIX=ndmm_ \
 #     STOCK_EXECUTE=TRUE Rscript lot/validation/run_stockpiling_rule.R
 #
-# The build puts an agent in a line's regimen when it is FILLED inside the
-# induction window. Optum supplies no treatment end date, so cover is FILL_DT
-# plus DAYS_SUP and an overlapping refill pushes it out instead of opening a new
-# episode - which means an agent can be covered across the whole of the next
-# line's window while carrying the earlier line's MAP_START_DT, and does not
-# join. This counts the patients and lines a coverage rule would change.
+# The build puts an agent in a line's regimen when its supply EPISODE STARTS
+# inside the induction window. Optum supplies no treatment end date, so cover is
+# FILL_DT plus DAYS_SUP and an overlapping refill pushes it out instead of
+# opening a new episode - so an agent can be covered across the whole of the next
+# line's window, or refilled inside it, while still carrying the earlier line's
+# MAP_START_DT, and does not join. This counts the patients and lines the two
+# wider tests would change.
 #
-# Reads a finished run and writes four tables of its own. It changes nothing in
+# Absorption bites a second time after the window: the added-medication query
+# reads MAP_START_DT as well, so a claim for an agent outside the line's regimen
+# that lands while an episode of it is still open ends nothing. STOCKPILE_
+# ABSORBED_ADD counts those boundaries.
+#
+# Reads a finished run and writes five tables of its own. It changes nothing in
 # lot, builds no lines, and does not touch the run it measures, so it can run
 # against production without a rebuild.
 #
@@ -35,45 +41,23 @@
 source(file.path(.script_dir, "R", "stockpiling.R"))
 source(file.path(.script_dir, "R", "run_binding.R"))
 
-# The status row is read once before the tables are written and once after.
-# Each program replaces its outputs one statement at a time, so a LOT rebuild
-# landing in the middle leaves some tables measured against the old attempt and
-# some against the new - all stamped with the attempt that was current when the
-# run started. Comparing the stamp is what turns that into a message instead of
-# a number nobody can trace.
-recheck_lot_attempt <- function(con, prefix, before, what) {
-  after <- tryCatch(lot_run_row(con, prefix), error = function(e) NULL)
-  if (is.null(after)) {
-    cat("\nWARNING: the LOT status row could not be re-read, so this run cannot\n",
-        "  confirm the tables it measured are still the attempt it started on.\n",
-        sep = "")
-    return(invisible(FALSE))
-  }
-  if (!identical(after$run, before$run) || !identical(after$stamp, before$stamp)) {
-    cat("\nWARNING: the LOT run moved while this was measuring.\n")
-    cat("  started on ", before$run, " / ", before$stamp, "\n", sep = "")
-    cat("  now        ", after$run,  " / ", after$stamp,  "\n", sep = "")
-    cat("  The ", what, " tables are part one attempt and part the other. Their\n",
-        "  SOURCE_LOT_STAMP says which attempt each row was measured against;\n",
-        "  re-run against a settled build before reading them.\n", sep = "")
-    return(invisible(FALSE))
-  }
-  cat("\nStill the attempt this started on: ", after$run, " / ", after$stamp,
-      ".\n", sep = "")
-  invisible(TRUE)
-}
 
 
+LOT_ROOT <- normalizePath(file.path(.script_dir, "..", "engine"), mustWork = TRUE)
 env_flag <- function(nm) identical(toupper(trimws(Sys.getenv(nm, unset = ""))), "TRUE")
 # A count that came back NULL is not a zero - it is a question that did not run.
 num0 <- function(x) if (!length(x) || is.na(x[1])) "-" else format(x[1], big.mark = ",")
 
 report_rule <- function(sc) {
-  cat("\nRegimen membership, as built and as the alternative.\n\n")
-  cat("  built        an agent joins a line's regimen when it is FILLED inside\n")
-  cat("               the induction window (MAP_START_DT in the window).\n")
-  cat("  alternative  it joins when the patient is COVERED, so an episode that\n")
-  cat("               opened in an earlier line and is still running joins too.\n\n")
+  cat("\nRegimen membership: the test as built, and the two wider ones.\n\n")
+  cat("  A  built     MAP_START_DT inside the window - the agent's supply\n")
+  cat("               EPISODE began there. Not the same as being on the drug.\n")
+  cat("  B  covered   the episode overlaps the window at all. What a MAP means\n")
+  cat("               on its face, and the reading the study team rejected.\n")
+  cat("  C  received  a claim DATE_SERVICE inside the window. The protocol's\n")
+  cat("               wording: 'all MM therapies received within 30 days on and\n")
+  cat("               following the LOT start date'.\n\n")
+  cat("  The headline counts B against A. The real-fill split below is C.\n\n")
   cat("  Induction windows judged: LOT1 ", sc$ind1, "d, CAR-T-started ", sc$cart,
       "d, other ", sc$indn, "d.\n", sep = "")
   cat("  ALLO-started lines are excluded - they carry no regimen at all.\n")
@@ -88,10 +72,16 @@ report_rule <- function(sc) {
   cat("              episode swallowed, so it opened no episode and the agent\n")
   cat("              is absent from the regimen anyway. Nothing settled covers\n")
   cat("              this: the patient is still filling the drug.\n")
+  cat("\n  And a second question, outside the window entirely: the added-\n")
+  cat("  medication query reads MAP_START_DT too, so a claim for an agent\n")
+  cat("  outside the line's regimen that lands while an episode of it is still\n")
+  cat("  open opens nothing and ends nothing. The LOT protocol's rule 2 ends a\n")
+  cat("  LOT on a new agent 'not present in the induction regimen', so that is\n")
+  cat("  a boundary asked for and not made. Counted separately.\n")
   cat("\nWrites <prefix>STOCKPILE_AGENTS, <prefix>STOCKPILE_IMPACT,\n",
-      "<prefix>STOCKPILE_BY_LOT and <prefix>STOCKPILE_BY_MED. It reads\n",
-      "<prefix>MMA_MED_PROCESSED for the claim dates. It writes no LOT table\n",
-      "and rebuilds nothing.\n", sep = "")
+      "<prefix>STOCKPILE_BY_LOT, <prefix>STOCKPILE_BY_MED and\n",
+      "<prefix>STOCKPILE_ABSORBED_ADD. It reads <prefix>MMA_MED_PROCESSED for\n",
+      "the claim dates. It writes no LOT table and rebuilds nothing.\n", sep = "")
 }
 
 main <- function() {
@@ -131,6 +121,7 @@ main <- function() {
   im    <- wrk(paste0(prefix, "STOCKPILE_IMPACT"))
   bl    <- wrk(paste0(prefix, "STOCKPILE_BY_LOT"))
   bm    <- wrk(paste0(prefix, "STOCKPILE_BY_MED"))
+  ab    <- wrk(paste0(prefix, "STOCKPILE_ABSORBED_ADD"))
 
   cat("\nMeasuring against LOT run ", run$run, " on ", lines, "\n", sep = "")
   cat("Windows from the run: LOT1 ", sc$ind1, "d, CAR-T ", sc$cart, "d, other ",
@@ -140,6 +131,8 @@ main <- function() {
   db_exec(con, glue("CREATE OR REPLACE TABLE {im} AS {stock_impact_sql(ag)}"))
   db_exec(con, glue("CREATE OR REPLACE TABLE {bl} AS {stock_by_lot_sql(im, lines)}"))
   db_exec(con, glue("CREATE OR REPLACE TABLE {bm} AS {stock_by_med_sql(ag)}"))
+  db_exec(con, glue("CREATE OR REPLACE TABLE {ab} AS {
+    stock_absorbed_add_sql(lines, maps, claims, sc, run_id, run$run, run$stamp)}"))
 
   tot <- db_q(con, glue("
     SELECT count(*) AS n_lines, count(DISTINCT PATID) AS n_pat,
@@ -197,6 +190,31 @@ main <- function() {
     if (nrow(m) > 15L) cat("  ... ", nrow(m) - 15L, " more in ", bm, "\n", sep = "")
   }
 
+  # The second question, and a different one. Membership is an agent missing
+  # from a regimen string; this is a line that never ended.
+  a <- db_q(con, glue("
+    SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_pat,
+           sum(WAS_IN_PREV_REGIMEN) AS n_re,
+           percentile_approx(DAYS_LINE_WOULD_LOSE, 0.5) AS med_lost
+    FROM {ab}"))
+  cat("\nAdded-medication boundaries absorption swallowed, AFTER the window:\n")
+  cat("  ", num0(a$n_rows), " agent-line pairs where a claim for an agent outside the\n",
+      "      line's regimen landed while an episode of it was still open, so it\n",
+      "      opened nothing and ended nothing.\n", sep = "")
+  cat("  ", num0(a$n_pat), " patients. Median ", format(a$med_lost[1]),
+      " days of line that the missing boundary\n      would have cut off.\n", sep = "")
+  cat("  ", num0(a$n_re), " are an agent returning from the previous line, the rest a\n",
+      "      first exposure. Rule 2 measures 'new' against THIS line's induction\n",
+      "      regimen, so both are boundaries the protocol asks for.\n", sep = "")
+  ab_l <- db_q(con, stock_absorbed_by_lot_sql(ab, lines))
+  cat(sprintf("  %-5s %9s %11s %9s %13s %9s\n",
+              "LOT", "lines", "absorbed", "patients", "re-challenge", "% lines"))
+  for (i in seq_len(nrow(ab_l)))
+    cat(sprintf("  %-5s %9s %11s %9s %13s %8s%%\n",
+                ab_l$LOT_NUM[i], num0(ab_l$N_LINES[i]),
+                num0(ab_l$N_ABSORBED_ADD_MED[i]), num0(ab_l$N_PATIENTS_AFFECTED[i]),
+                num0(ab_l$N_RECHALLENGE[i]), format(ab_l$PCT_LINES_AFFECTED[i])))
+
   cat("\nThese are regimen changes and the two boundary effects that follow from\n",
       "them. They are NOT a resulting line count. An added agent is a base agent,\n",
       "so it changes when the line runs out and what may end it, and every later\n",
@@ -211,4 +229,19 @@ main <- function() {
   if (!isTRUE(settled)) quit(status = 1L)
 }
 
-main()
+if (!interactive()) {
+  # cfg, wrk(), db_exec() and db_q() come from the engine. The dry run needs
+  # none of them, so they are loaded only on the path that connects.
+  if (env_flag("STOCK_EXECUTE")) {
+    library(DBI); library(odbc); library(glue)
+    e <- new.env(parent = globalenv())
+    sys.source(file.path(LOT_ROOT, "R", "load_inputs.R"), envir = e)
+    e$load_pipeline_inputs(LOT_ROOT, "config.csv")
+    for (f in c("config_lot.R", "db_utils_lot.R")) source(file.path(LOT_ROOT, "R", f))
+    set_lot_config(modifyList(cfg_defaults, list(
+      work_schema = Sys.getenv("PROJECT_WORK_SCHEMA",
+                      unset = Sys.getenv("DOMINO_USER_NAME", unset = "")),
+      object_prefix = Sys.getenv("OBJECT_PREFIX", unset = ""))))
+  }
+  main()
+}
