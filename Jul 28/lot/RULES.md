@@ -38,13 +38,15 @@ oncology agents.
 
 Medical claims carry no day supply, so 28 days is assumed for each.
 
-An agent joins a line's regimen by being filled inside the induction window, not
-by still being covered across it. Optum supplies no treatment end date: coverage
-is derived from the fill date and the days supplied, and overlapping refills
-stockpile it forward. A supply dispensed during the previous line and stockpiled
-into this one therefore does not join this one — a patient who has switched is
-no longer filling the old agent, so the leftover cover is a dispensing artefact
-rather than treatment.
+An agent joins a line's regimen by starting a supply episode inside the induction
+window. Optum supplies no treatment end date: coverage is derived from the fill
+date and the days supplied, and overlapping refills stockpile it forward into one
+episode. So a supply dispensed during the previous line and stockpiled into this
+one does not join this one — a patient who has switched is no longer filling the
+old agent, and the leftover cover is a dispensing artefact rather than treatment.
+The same test also drops a fill made inside the window when a still-open episode
+of that agent absorbs it, which is narrower than the protocol's "all MM therapies
+received within 30 days"; `lot/validation/run_stockpiling_rule.R` sizes it.
 
 Disenrollment does not censor. A patient who leaves the plan keeps contributing
 follow-up and the line ends `STUDY_END`. The `*_CE_SENS` columns hold the
