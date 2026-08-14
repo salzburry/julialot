@@ -100,7 +100,8 @@ treats them the same because both open a supply episode.
 
 ## 5. What has been measured, and what has not
 
-`validation/run_stockpiling_rule.R` and `validation/run_rechallenge_evidence.R`
+`lot/validation/run_stockpiling_rule.R` and
+`lot/validation/run_rechallenge_evidence.R`
 size decision 2 against a finished run. Against the production run:
 
 - **898 line boundaries in 624 patients** sit on a prior episode with
