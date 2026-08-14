@@ -31,12 +31,6 @@ CONTRACT <- list(
   # the line nor starts one. Confirmed by the study team on 2026-08-13; see
   # R/cart_rule.R and lot/LOT_RULES.md section 10.
   apply_cart_induction_rule   = TRUE,
-  # Whether a returning agent has to have been discontinued before it counts
-  # as an initiation. FALSE is what both engines have always done: an agent
-  # reappearing after any lapse in cover advances the line. Rule 5 of the
-  # continuity draft would make it TRUE, and is not signed off, so a build
-  # that sets it is a recorded deviation rather than the study.
-  returning_agent_requires_discontinuation = FALSE,
   # The protocol's belantamab exclusion. Pinned here so an unset
   # APPLY_NO_BELANTAMAB leaves it on rather than silently off, and turning it
   # off is a recorded contract change. criterion_enabled() reads this.

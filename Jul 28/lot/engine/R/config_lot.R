@@ -99,12 +99,6 @@ cfg_defaults <- list(
   # LOT_CONTRACT_OVERRIDE, the same as any other contract setting.
   apply_cart_induction_rule =
     as.logical(Sys.getenv("APPLY_CART_INDUCTION_RULE", unset = "TRUE")),
-  # Pinned FALSE in CONTRACT: the study team has not ruled that a supply
-  # episode reopening is short of an initiation, so a build that gates on it is
-  # a deviation and needs LOT_CONTRACT_OVERRIDE. See lot/DECISIONS.md.
-  returning_agent_requires_discontinuation =
-    as.logical(Sys.getenv("RETURNING_AGENT_REQUIRES_DISCONTINUATION",
-                          unset = "FALSE")),
   # Pinned TRUE in CONTRACT for the same reason. This is the value
   # criterion_enabled() applies, so the criterion and the recorded contract
   # cannot disagree about whether the exclusion ran.

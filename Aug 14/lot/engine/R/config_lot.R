@@ -99,12 +99,16 @@ cfg_defaults <- list(
   # LOT_CONTRACT_OVERRIDE, the same as any other contract setting.
   apply_cart_induction_rule =
     as.logical(Sys.getenv("APPLY_CART_INDUCTION_RULE", unset = "TRUE")),
-  # Pinned FALSE in CONTRACT: the study team has not ruled that a supply
-  # episode reopening is short of an initiation, so a build that gates on it is
-  # a deviation and needs LOT_CONTRACT_OVERRIDE. See lot/DECISIONS.md.
+  # Whether a returning agent has to have been discontinued before it counts as
+  # an initiation - Rule 5 of the continuity draft. This folder exists to try it,
+  # so config.csv turns it on and the setting is deliberately NOT in CONTRACT:
+  # pinning it would make every run here a recorded deviation needing
+  # LOT_CONTRACT_OVERRIDE, which is machinery a test folder does not want. It
+  # has to go into CONTRACT before any of this reaches the study build.
+  # The threshold it tests is MAP_DISCON_GAP_DAYS; there is no second gap here.
   returning_agent_requires_discontinuation =
     as.logical(Sys.getenv("RETURNING_AGENT_REQUIRES_DISCONTINUATION",
-                          unset = "FALSE")),
+                          unset = "TRUE")),
   # Pinned TRUE in CONTRACT for the same reason. This is the value
   # criterion_enabled() applies, so the criterion and the recorded contract
   # cannot disagree about whether the exclusion ran.

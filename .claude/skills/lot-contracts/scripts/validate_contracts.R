@@ -274,8 +274,6 @@ BINDING <- list(
   list(path = c("event_streams", "CART", "consolidation_days"),   key = "cart_consolidation_days"),
   list(path = c("event_streams", "CART", "bridging_med_add_days"), key = "cart_consolidation_days"),
   list(path = c("event_streams", "CART", "induction_absorbed"),   key = "apply_cart_induction_rule"),
-  list(path = c("advancement", "returning_agent_requires_discontinuation"),
-       key = "returning_agent_requires_discontinuation"),
   list(path = c("event_streams", "ALLO", "line_span"),            key = "allo_lot_span"),
   list(path = c("criteria", "no_belantamab", "enabled"),          key = "apply_no_belantamab"),
   # Blank is the contract algorithm - the gap-advancement rule is off - which
