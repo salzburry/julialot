@@ -102,12 +102,7 @@ BOOL_SETTINGS <- c("USE_QUARTERLY_TABLES", "CENSOR_AT_DISENROLLMENT",
                    "APPLY_NO_BELANTAMAB",
                    # Coerced with as.logical() like the rest, so a typo would
                    # otherwise become NA and read as off.
-                   "FACE_VALIDITY_FATAL",
-                   # Same coercion, and this one decides which algorithm the
-                   # run is. Unchecked, RETURNING_AGENT_REQUIRES_DISCONTINUATION=Ture
-                   # parses to NA, the gate emits nothing, and the run silently
-                   # produces contract lines while claiming to be this folder.
-                   "RETURNING_AGENT_REQUIRES_DISCONTINUATION")
+                   "FACE_VALIDITY_FATAL")
 INT_SETTINGS  <- c("INDUCTION_WINDOW_DAYS", "INDUCTION_WINDOW_DAYS_LOT_N",
                    "MAP_DISCON_GAP_DAYS", "MEDICAL_DAY_SUPPLY",
                    "SCT_AUTO_WINDOW_DAYS", "SCT_AUTO_GAP_DAYS",
@@ -601,7 +596,7 @@ load_lot_modules <- function(here) {
   source(file.path(here, "R", "load_inputs.R"))
   load_pipeline_inputs(here, "config.csv")
   for (f in c("config_lot.R", "db_utils_lot.R", "codelists_lot.R", "line_criteria.R",
-              "melp_rule.R", "cart_rule.R", "map_prev.R",
+              "melp_rule.R", "cart_rule.R",
               "continuing_meds.R", "prior_regimen.R"))
     source(file.path(here, "R", f))
   steps <- sort(list.files(file.path(here, "R", "steps"), "\\.R$", full.names = TRUE))
@@ -747,8 +742,8 @@ build_lot <- function(here, cohort_table, prefix,
 # The views LOT2-5 reads. All present means LOT1 ran in this session.
 LOT2_5_INPUT_VIEWS <- c("lot_patient_input", "mma_rollup", "permissible_subs",
                         "sct_codelist", "sct_claims_raw", "tx_auto_dates",
-                        "tx_allo_cart_dates", "map_stacked", "map_prev",
-                        "lot1_sct", "lot1_base_end")
+                        "tx_allo_cart_dates", "map_stacked", "lot1_sct",
+                        "lot1_base_end")
 
 # What a run writes, all prefixed. Two groups, because they answer different
 # questions and are named differently.
@@ -766,7 +761,7 @@ LOT_TABLES <- c(
   "LOT_BUILD_STATUS",
   # the pinned inputs and the LOT1 working, each written where it is built so
   # that every later read is a scan rather than a re-run of its query
-  "LOT_PATIENT_INPUT", "MMA_MED_PROCESSED", "MAP_STACKED", "MAP_PREV",
+  "LOT_PATIENT_INPUT", "MMA_MED_PROCESSED", "MAP_STACKED",
   "SCT_CLAIMS_RAW", "TX_AUTO_DATES", "TX_ALLO_CART_DATES",
   "LOT1_INDUCTION_MEDS", "LOT1_BASE", "LOT1_SCT", "LOT1_CONTAINS_MTX_REG",
   "LOT1_BASE_END"
@@ -1483,18 +1478,8 @@ code_fingerprint <- function(here) {
 # between recording what the run did and recording what it was supposed to do,
 # and a metadata row that says the second is worse than none: the dashboard
 # reads max_lot out of this string to decide how many panels a run has.
-# Settings that decide which lines a run builds but are not contract axes, so
-# CONTRACT_SETTINGS carries them and a finished run says which rule produced it.
-# Recorded, not governed: no deviation, no override, no refusal - the value is
-# simply written down beside the run.
-#
-# Without this a run leaves no trace of them at all. CODE_MD5 hashes R/ and
-# build.R and not config.csv, so flipping one of these gives two runs the same
-# fingerprint, the same CONTRACT_SETTINGS, and materially different lines.
-RECORDED_SETTINGS <- c("returning_agent_requires_discontinuation")
-
 contract_settings <- function(cfg) {
-  k <- sort(unique(c(names(CONTRACT), RECORDED_SETTINGS)), method = "radix")
+  k <- sort(names(CONTRACT), method = "radix")
   val <- function(key) {
     v <- if (!is.null(cfg[[key]])) cfg[[key]] else CONTRACT[[key]]
     as.character(v)[1]

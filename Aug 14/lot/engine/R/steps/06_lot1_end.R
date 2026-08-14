@@ -107,7 +107,7 @@ phase_lot1_end <- function(con, ctx) {
     ),
     post_runout_med AS (
       SELECT DISTINCT ms.PATID
-      FROM map_prev ms
+      FROM map_stacked ms
       INNER JOIN lot1_base lb ON ms.PATID = lb.PATID
       LEFT JOIN post_runout_excluded_meds prem
         ON ms.PATID = prem.PATID AND ms.MAP_MED_TYPE = prem.MED_ABBR
@@ -116,9 +116,11 @@ phase_lot1_end <- function(con, ctx) {
         AND ms.MAP_START_DT <= lb.OBS_END_DT
         AND ms.MAP_MED_CLASS <> 'STEROID'
         AND prem.MED_ABBR IS NULL
-        -- Consistent with the added-medication and line-start gates: a return
-        -- counts only where the patient had stopped the agent, or never had it.
-        {prev_discon_gate_sql('ms', cfg$returning_agent_requires_discontinuation)}
+        -- Deliberately NOT gated on the returning agent. Confirming that a
+        -- run-out really was the end is a weaker claim than starting a line: a
+        -- patient turning up again is evidence the line stopped, whether or not
+        -- that agent is allowed to open the next one. Gating it reported real
+        -- discontinuations as censoring.
     ),
     post_runout_autos AS (
       SELECT a.PATID, a.TX_DT,

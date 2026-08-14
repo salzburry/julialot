@@ -248,16 +248,13 @@ build_lot_n <- function(con, lot_num,
     med_cand AS (
       SELECT pe.PATID, min(ms.MAP_START_DT) AS d_MED
       FROM prev_end pe
-      INNER JOIN map_prev ms ON pe.PATID = ms.PATID
+      INNER JOIN map_stacked ms ON pe.PATID = ms.PATID
       LEFT JOIN prev_meds_expanded pme
         ON pe.PATID = pme.PATID AND ms.MAP_MED_TYPE = pme.MED_ABBR
       WHERE ms.MAP_START_DT > pe.PREV_END_DT
         AND ms.MAP_START_DT <= pe.OBS_END_DT
         AND ms.MAP_MED_CLASS <> 'STEROID'
         AND pme.MED_ABBR IS NULL
-        -- A return opens a line only where the patient had stopped the agent,
-        -- or had never had it before. Same test the added-medication query uses.
-        {prev_discon_gate_sql('ms', cfg$returning_agent_requires_discontinuation)}
       GROUP BY pe.PATID
     ),
     -- d_ALLO: earliest ALLO strictly after PREV_END_DT.
@@ -422,8 +419,7 @@ build_lot_n <- function(con, lot_num,
     -- restart opens the next line rather than extending this one.
     discon_per_med AS (
 {discon_per_med_sql(glue('lot{lot_num}_start'), glue('LOT{lot_num}_START_DT'),
-                     boundary_tbl = 'map_prev',
-                     boundary_gate = prev_discon_gate_sql('o', cfg$returning_agent_requires_discontinuation))}
+                    )}
     ),
     -- The regimen has run out when its LAST base agent has.
     discon_raw AS (
@@ -458,16 +454,13 @@ build_lot_n <- function(con, lot_num,
     ),
     first_add_candidates AS (
       SELECT ms.PATID, ms.MAP_START_DT, ms.MAP_MED_TYPE
-      FROM map_prev ms
+      FROM map_stacked ms
       INNER JOIN lot{lot_num}_start ls ON ms.PATID = ls.PATID
       LEFT JOIN base_meds bm
         ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
       LEFT JOIN discon d ON ls.PATID = d.PATID
       WHERE bm.MED_ABBR IS NULL
         AND ms.MAP_MED_CLASS <> 'STEROID'
-        -- A return counts as an initiation only where the patient had stopped
-        -- the agent, or had never had it before.
-        {prev_discon_gate_sql('ms', cfg$returning_agent_requires_discontinuation)}
         -- Per-start-type lookback gate:
         --   MED  / SCT_AUTO -> any agent after the 30-day induction window
         --   CART             -> any agent after the 45-day consolidation window
@@ -770,7 +763,7 @@ build_lot_n <- function(con, lot_num,
     ),
     post_runout_med AS (
       SELECT DISTINCT ms.PATID
-      FROM map_prev ms
+      FROM map_stacked ms
       INNER JOIN lot{lot_num}_base lb ON ms.PATID = lb.PATID
       LEFT JOIN post_runout_excluded_meds prem
         ON ms.PATID = prem.PATID AND ms.MAP_MED_TYPE = prem.MED_ABBR
@@ -779,9 +772,11 @@ build_lot_n <- function(con, lot_num,
         AND ms.MAP_START_DT <= lb.OBS_END_DT
         AND ms.MAP_MED_CLASS <> 'STEROID'
         AND prem.MED_ABBR IS NULL
-        -- Consistent with the added-medication and line-start gates: a return
-        -- counts only where the patient had stopped the agent, or never had it.
-        {prev_discon_gate_sql('ms', cfg$returning_agent_requires_discontinuation)}
+        -- Deliberately NOT gated on the returning agent. Confirming that a
+        -- run-out really was the end is a weaker claim than starting a line: a
+        -- patient turning up again is evidence the line stopped, whether or not
+        -- that agent is allowed to open the next one. Gating it reported real
+        -- discontinuations as censoring.
     ),
     post_runout_autos AS (
       SELECT a.PATID, a.TX_DT,

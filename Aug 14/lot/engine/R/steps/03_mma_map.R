@@ -420,19 +420,5 @@ phase_mma_map <- function(con, ctx) {
     SELECT * FROM map_med
   ", qc = "SELECT count(*) AS n_rows FROM map_stacked")
 
-  # STEP 5: MAP_PREV
-  #
-  # map_stacked with each row's preceding same-agent episode attached. Every
-  # boundary query reads this rather than carrying its own lag(). See
-  # engine/R/map_prev.R.
-  materialize(con, "S08_map_prev", view = "map_prev", name = "MAP_PREV",
-              body = map_prev_sql("map_stacked"),
-              qc = "
-    SELECT
-      count(*) AS n_rows,
-      sum(CASE WHEN PREV_DISCON_FLG IS NULL THEN 1 ELSE 0 END) AS n_first_episodes,
-      sum(CASE WHEN PREV_DISCON_FLG = 1 THEN 1 ELSE 0 END) AS n_after_discon,
-      sum(CASE WHEN PREV_DISCON_FLG = 0 THEN 1 ELSE 0 END) AS n_after_short_gap
-    FROM map_prev")
 
 }
