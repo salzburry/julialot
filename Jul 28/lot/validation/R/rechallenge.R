@@ -357,7 +357,7 @@ rechall_discon_flag_sql <- function(events_tbl, map_tbl, by = NULL) {
       WHERE MAP_MED_CLASS <> 'STEROID'
     ),
     bnd AS (
-      SELECT PATID, LOT_NUM, MED_ABBR, GAP_DAYS,
+      SELECT PATID, LOT_NUM, MED_ABBR, GAP_DAYS, BOUNDARY,
              CASE WHEN BOUNDARY = 'FIRED' THEN RETURN_DT
                   ELSE date_add(RETURN_DT, DAYS_BUILD_LATE) END AS BOUNDARY_DT
       FROM {events_tbl}
@@ -365,6 +365,7 @@ rechall_discon_flag_sql <- function(events_tbl, map_tbl, by = NULL) {
     ),
     ranked AS (
       SELECT b.PATID, b.LOT_NUM, b.MED_ABBR, b.BOUNDARY_DT, b.GAP_DAYS,
+             b.BOUNDARY,
              e.DISCON_FLG, e.EP_END_DT,
              datediff(b.BOUNDARY_DT, e.EP_END_DT) AS COVER_GAP_DAYS,
              row_number() OVER (PARTITION BY b.PATID, b.LOT_NUM, b.MED_ABBR,
