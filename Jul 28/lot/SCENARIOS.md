@@ -214,17 +214,10 @@ what matters is that it is not an episode start.
 The patient is on bortezomib and lenalidomide; the record says bortezomib. LEN
 still has only its d1 episode start, so LOT3's window cannot see it either.
 
-Worse, LEN is now free to start a line. The exclusion that stops a
-previous-line agent opening a line reads **one line back only**, and LEN is not
-in LOT2's regimen — so nothing holds it:
-
-    d205   LEN's cover finally lapses and it restarts, before BORT
-    ---
-    what ships:  LOT3  d205 -> ...   LEN BORT
-    correct:     LOT3  d210 -> ...   BORT
-
-Five days earlier, a different start type, and two regimens merged. With no BORT
-at all it is an extra line outright. `KNOWN_ISSUES.md` #1 carries this, and
+LEN is also free to start a line here: the exclusion that holds a previous-line
+agent reads **one line back only**, and LEN is not in LOT2's regimen. So if LEN's
+cover lapses and it restarts before BORT arrives, LEN opens LOT3 rather than
+BORT. `KNOWN_ISSUES.md` #1 carries this, and
 `run_scenario_counts.R`'s `4.3-line-started-by-an-agent-from-two-lines-back`
 counts it.
 
@@ -250,36 +243,43 @@ a divergence from the protocol's "all MM therapies identified during the first
 counts who it touches.
 
 
-### 4.3 A drug in the previous line's regimen cannot start a line
+### 4.3 A drug is held by its line while it runs, and released once stopped
 
-**Scenario** — *engine output.* A drug returning does not start a line on
-itself.
+**Scenario** — *derived.* A drug returning after a confirmed gap opens a line.
 
-    d0     LEN dispensed, 60 days supply
+    d0     LEN dispensed, 60 days supply — cover ends d+59
     d+244  LEN again, 185 days after cover ran out
     ---
-    LOT1   2016-01-01 -> 2016-09-30   LEN
+    LOT1   d0 -> d+59     LEN   DISCONTINUATION
+    LOT2   d+244 -> ...   LEN
 
-One line, spanning seven months with no cover. The alternative leaves the
-September treatment belonging to nothing at all.
+The 185-day gap reaches `map_discon_gap_days`, so LEN's first episode carries
+`MAP_DISCON_FLG = 1` and the per-drug chain stops there. LOT1 ends at its own
+run-out instead of stretching over the absence, and LEN — no longer a drug the
+patient is on — is free to open LOT2.
 
-**Scenario** — *engine output.* The extension stops at any other agent.
+Both halves are needed and they ship together. Breaking the chain alone would end
+LOT1 in February and then refuse the September treatment a line, leaving it in
+nothing; releasing the drug alone would open a line inside a line still
+notionally running. §11.1 is the reasoning and what the rule costs.
+
+**Scenario** — *derived.* While the drug is still running it is still the line's.
 
     d0     LEN, covered to d+87
     d+74   POMA, covered to d+140
     d+121  LEN again, 34 days after LEN's own cover ended
     ---
-    LOT1   2016-01-01 -> 2016-03-14   LEN
-    LOT2   2016-03-15 -> 2016-04-30   POMA
-    LOT3   2016-05-01 -> 2016-05-30   LEN
+    LOT1   d0 -> d+73     LEN
+    LOT2   d+74 -> ...    POMA
+    LOT3   d+121 -> ...   LEN
+
+LEN's 34-day gap is under `map_discon_gap_days`, so it is not a confirmed
+discontinuation and LEN is not released on that account. It opens LOT3 anyway,
+for the separate reason that it is not in LOT2's regimen — the exclusion looks
+one line back.
 
 POMA starts while LEN is still covered and still opens a line: it is outside
-line 1's window and in no regimen of line 1's. LEN's own reappearance is then
-judged against LOT2's regimen, which is POMA — so it is a new agent there, and
-opens LOT3.
-
-§11.1 is the reasoning behind this rule and what it costs.
-
+line 1's window and in no regimen of line 1's.
 
 ### 4.4 A permissible biosimilar substitute cannot start a line either
 
@@ -515,11 +515,6 @@ patients that lands on.
     ---
     LOT1  d0 -> d+40   SCT_AUTO_CONT
     the transplant is line 1's, and line 1 covers the day it happened
-
-Before this rule the same patient produced a line 1 of `d0 -> d+19`
-(`DISCONTINUATION`) and no line 2, because line 2's start gate refuses a
-transplant inside line 1's window — so the transplant appeared in no line at all.
-§14.5 has the full account.
 
 It cannot outrank an added agent, and the arithmetic rather than the branch
 order is why. An agent starting inside the window joins the regimen instead of

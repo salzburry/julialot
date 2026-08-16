@@ -69,7 +69,8 @@ FRAGMENT <- c(
   preg_hit_sql            = "wrapped in parentheses at the call site",
   .applies_sql            = "wrapped in parentheses at the call site",
   has                     = "wrapped in parentheses at the call site",
-  tandem_interrupt_events_sql = "opens with its own newline, spliced after an open paren")
+  tandem_interrupt_events_sql = "opens with its own newline, spliced after an open paren",
+  map_restart_sql             = "opens with its own newline, spliced after an open paren")
 
 files <- Filter(function(f) !grepl("/tests?/", f),
                 list.files(ROOT, pattern = "\\.R$", recursive = TRUE, full.names = TRUE))
