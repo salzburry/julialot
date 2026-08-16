@@ -58,7 +58,8 @@ AUDIT_COUNTS <- list(
           AND NOT EXISTS (SELECT 1 FROM {t$map} m
                           WHERE m.PATID = e.PATID
                             AND m.MAP_MED_TYPE = e.MED_ABBR
-                            AND m.MAP_START_DT <= e.LOT_BASE_END_DT)
+                            AND m.MAP_START_DT BETWEEN e.LOT_START_DT
+                                                   AND e.LOT_BASE_END_DT)
       )
       SELECT count(*)                                   AS N_AGENT_LINE_PAIRS,
              count(DISTINCT concat_ws('|', PATID, LOT_NUM)) AS N_LINES,
@@ -87,7 +88,7 @@ AUDIT_COUNTS <- list(
   #    an ALLO line is one day by design, and therapy past LOT5 is the cap. Only
   #    the residual bucket is a question.
   list(id = "outside-line-days-by-cause",
-       what = "Non-steroid supply days outside every line, partitioned by why",
+       what = "Non-steroid agent-DAYS owned by no line, partitioned by cause",
        expect = "no synthetic target - the unpartitioned 11.1% was an invalid measure",
        sql = "
       WITH bounds AS (
@@ -96,42 +97,63 @@ AUDIT_COUNTS <- list(
                max(LOT_NUM)             AS MAX_LOT
         FROM {t$long} GROUP BY PATID
       ),
-      uncovered AS (
-        SELECT m.PATID, m.MAP_MED_TYPE, m.MAP_START_DT, m.MAP_END_DT,
-               b.FIRST_START, b.LAST_END, b.MAX_LOT
+      drug_days AS (
+        SELECT m.PATID, m.MAP_MED_TYPE, m.MAP_CNT,
+               explode(sequence(m.MAP_START_DT, m.MAP_END_DT, interval 1 day)) AS SUPPLY_DT
         FROM {t$map} m
-        LEFT JOIN bounds b ON b.PATID = m.PATID
         WHERE m.MAP_MED_CLASS <> 'STEROID'
-          AND NOT EXISTS (SELECT 1 FROM {t$long} l
-                          WHERE l.PATID = m.PATID
-                            AND m.MAP_START_DT BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT)
-      )
+          AND m.MAP_START_DT IS NOT NULL AND m.MAP_END_DT IS NOT NULL
+          AND m.MAP_END_DT >= m.MAP_START_DT
+      ),
+      orphan AS (
+        SELECT d.*, b.FIRST_START, b.LAST_END, b.MAX_LOT
+        FROM drug_days d
+        LEFT JOIN bounds b ON b.PATID = d.PATID
+        WHERE NOT EXISTS (SELECT 1 FROM {t$long} l
+                          WHERE l.PATID = d.PATID
+                            AND d.SUPPLY_DT BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT)
+      ),
+      total AS (SELECT count(*) AS N_ALL_AGENT_DAYS FROM drug_days)
       SELECT CASE
-               WHEN FIRST_START IS NULL              THEN 'patient has no line at all'
-               WHEN MAP_START_DT <  FIRST_START      THEN 'before LOT1 started'
-               WHEN MAX_LOT = 5 AND MAP_START_DT > LAST_END
-                                                     THEN 'past the LOT5 cap'
-               WHEN MAP_START_DT >  LAST_END         THEN 'after the last line ended'
-               ELSE 'in a gap between lines'
-             END                        AS CAUSE,
-             count(*)                   AS N_EPISODES,
-             count(DISTINCT PATID)      AS N_PATIENTS
-      FROM uncovered
+               WHEN FIRST_START IS NULL             THEN 'patient has no LOT'
+               WHEN SUPPLY_DT <  FIRST_START        THEN 'before LOT1'
+               WHEN MAX_LOT = 5 AND SUPPLY_DT > LAST_END THEN 'past the LOT5 cap'
+               WHEN SUPPLY_DT >  LAST_END           THEN 'after the last observed LOT'
+               ELSE 'gap between LOTs'
+             END                                     AS CAUSE,
+             count(*)                                AS N_ORPHAN_AGENT_DAYS,
+             round(100.0 * count(*) / max(N_ALL_AGENT_DAYS), 2) AS PCT_OF_ALL_AGENT_DAYS,
+             count(DISTINCT PATID)                   AS N_PATIENTS,
+             count(DISTINCT concat_ws('|', cast(PATID AS string), MAP_MED_TYPE,
+                                      cast(MAP_CNT AS string))) AS N_EPISODES
+      FROM orphan CROSS JOIN total
       GROUP BY 1
       ORDER BY 2 DESC"),
 
   # 5. In-window CAR-T is deliberately not a boundary and IS kept in LOT1_SCT.
   #    The question is only whether the final deliverable can see it.
   list(id = "in-window-cart-not-in-final-table",
-       what = "Patients with an in-line CAR-T that LOT_LONG alone cannot reveal",
+       what = "Patients with a CAR-T inside LOT1's induction window, invisible in LOT_LONG",
        expect = "output-surface gap, not a boundary error",
        sql = "
-      SELECT count(*)                AS N_PATIENTS_WITH_IN_LOT1_CART
-      FROM {t$sct} s
-      WHERE s.FIRST_CART_DT IS NOT NULL
-        AND NOT EXISTS (SELECT 1 FROM {t$long} l
-                        WHERE l.PATID = s.PATID
-                          AND l.LOT_START_TYPE = 'CART')"),
+      WITH lot1 AS (
+        SELECT PATID, LOT_START_DT AS LOT1_START_DT
+        FROM {t$long} WHERE LOT_NUM = 1
+      ),
+      in_window AS (
+        SELECT s.PATID
+        FROM {t$sct} s
+        INNER JOIN lot1 l ON l.PATID = s.PATID
+        WHERE s.FIRST_CART_DT IS NOT NULL
+          AND s.FIRST_CART_DT BETWEEN l.LOT1_START_DT
+                                  AND date_add(l.LOT1_START_DT, {lot1_window - 1})
+      ),
+      cart_line AS (
+        SELECT DISTINCT PATID FROM {t$long} WHERE LOT_START_TYPE = 'CART'
+      )
+      SELECT count(*)                                                  AS N_PATIENTS_IN_WINDOW_CART,
+             sum(CASE WHEN c.PATID IS NOT NULL THEN 1 ELSE 0 END)      AS N_ALSO_WITH_A_CART_LINE_LATER
+      FROM in_window i LEFT JOIN cart_line c ON c.PATID = i.PATID"),
 
   # Context for the Q1 duration tab. Not a finding on its own.
   list(id = "line-length-by-start-type",
@@ -206,6 +228,7 @@ main <- function() {
   # with the build's own idea of when observation stopped.
   obs_col <- if (isTRUE(cfg$censor_at_disenrollment)) "ENDDATE_CE" else "ENDDATE"
 
+  lot1_window <- cfg$induction_window_days
   t <- list(long   = lot_out(which_tbl),
             map    = lot_out("MAP_STACKED"),
             sct    = lot_out("LOT1_SCT"),
