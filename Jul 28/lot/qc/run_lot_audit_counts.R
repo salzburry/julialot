@@ -16,9 +16,10 @@
 # frequencies are shape and not prevalence. This is the same set of questions put
 # to the finished build, and its answers are the ones that can be quoted.
 #
-# AUDIT_TABLE picks which line table to count: LOT_LONG_FINAL (default, the study
-# deliverable, line criteria applied) or LOT_LONG (before them). Run both if the
-# criteria drop a meaningful number of lines.
+# AUDIT_TABLE picks which line table to count. It defaults to LOT_LONG, which is
+# line assignment on its own; LOT_LONG_FINAL additionally applies the line
+# criteria, so counting it mixes assignment behaviour with cohort exclusions.
+# Run both only if you want that comparison deliberately.
 
 .script_dir <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -35,162 +36,112 @@ env_flag <- function(nm) identical(toupper(trimws(Sys.getenv(nm, unset = ""))), 
 # `expect` records what the synthetic cohort gave, purely so a wildly different
 # real number is noticeable rather than silently accepted.
 AUDIT_COUNTS <- list(
-  list(id = "auto-line-never-runs-out",
-       what = "Transplant-started lines with an empty regimen, and what they cost in days",
-       expect = "synthetic: 605/685 ASCT lines (88.3%), mean 506.9d vs 110.5d",
-       sql = "
-      SELECT l.LOT_START_TYPE,
-             CASE WHEN l.LOT_MED_CNT = 0 THEN 'empty regimen' ELSE 'has regimen' END AS REGIMEN,
-             count(*)                                        AS N_LINES,
-             round(avg(l.LOT_BASE_LENGTH), 1)                AS MEAN_LENGTH_DAYS,
-             percentile_approx(l.LOT_BASE_LENGTH, 0.5)       AS MEDIAN_LENGTH_DAYS,
-             sum(CASE WHEN l.LOT_BASE_END_REASON = 'STUDY_END' THEN 1 ELSE 0 END) AS ENDS_STUDY_END,
-             sum(CASE WHEN l.LOT_BASE_END_REASON = 'MED_ADD'   THEN 1 ELSE 0 END) AS ENDS_MED_ADD
-      FROM {t$long} l
-      GROUP BY 1, 2
-      ORDER BY 1, 2"),
-
-  list(id = "drug-days-outside-every-line",
-       what = "Non-steroid supply days attributed to no line at all",
-       expect = "synthetic: 230,710 of 2,079,231 drug-days (11.1%), 1,441/3,997 patients",
-       sql = "
-      WITH totals AS (
-        SELECT sum(datediff(m.MAP_END_DT, m.MAP_START_DT) + 1) AS DRUG_DAYS,
-               count(DISTINCT m.PATID)                         AS N_PAT
-        FROM {t$map} m
-        WHERE m.MAP_MED_CLASS <> 'STEROID'
-      ),
-      covered AS (
-        SELECT sum(greatest(0, datediff(
-                 least(m.MAP_END_DT,   l.LOT_BASE_END_DT),
-                 greatest(m.MAP_START_DT, l.LOT_START_DT)) + 1)) AS DRUG_DAYS
-        FROM {t$map} m
-        INNER JOIN {t$long} l ON l.PATID = m.PATID
-        WHERE m.MAP_MED_CLASS <> 'STEROID'
-          AND m.MAP_START_DT <= l.LOT_BASE_END_DT
-          AND m.MAP_END_DT   >= l.LOT_START_DT
-      )
-      SELECT t.DRUG_DAYS                                  AS TOTAL_DRUG_DAYS,
-             c.DRUG_DAYS                                  AS DRUG_DAYS_IN_A_LINE,
-             t.DRUG_DAYS - c.DRUG_DAYS                    AS DRUG_DAYS_OUTSIDE,
-             round(100.0 * (t.DRUG_DAYS - c.DRUG_DAYS) / t.DRUG_DAYS, 2) AS PCT_OUTSIDE,
-             t.N_PAT                                      AS N_PATIENTS_WITH_SUPPLY
-      FROM totals t CROSS JOIN covered c"),
-
-  list(id = "episodes-starting-outside-every-line",
-       what = "Whole supply episodes whose start date falls in no line",
-       expect = "synthetic: 380 of 16,592 non-steroid episodes",
-       sql = "
-      SELECT count(*)                    AS N_EPISODES,
-             count(DISTINCT m.PATID)     AS N_PATIENTS
-      FROM {t$map} m
-      WHERE m.MAP_MED_CLASS <> 'STEROID'
-        AND NOT EXISTS (SELECT 1 FROM {t$long} l
-                        WHERE l.PATID = m.PATID
-                          AND m.MAP_START_DT BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT)"),
-
-  list(id = "discon-dt-postdates-line-end",
-       what = "Lines carrying a discontinuation date after their own end date",
-       expect = "synthetic: 3,160 of 11,835 lines (26.7%), max 1,161 days after",
-       sql = "
-      SELECT l.LOT_BASE_END_REASON,
-             count(*)                                                        AS N_LINES,
-             round(avg(datediff(l.LOT_BASE_DISCON_DT, l.LOT_BASE_END_DT)), 1) AS MEAN_DAYS_AFTER,
-             max(datediff(l.LOT_BASE_DISCON_DT, l.LOT_BASE_END_DT))           AS MAX_DAYS_AFTER
-      FROM {t$long} l
-      WHERE l.LOT_BASE_DISCON_DT IS NOT NULL
-        AND l.LOT_BASE_DISCON_DT > l.LOT_BASE_END_DT
-      GROUP BY 1
-      ORDER BY 2 DESC"),
-
-  list(id = "discon-while-drug-still-supplied",
-       what = "Lines ending DISCONTINUATION while a non-regimen agent was still supplied",
-       expect = "synthetic: 1,277 of 5,419 DISCONTINUATION lines (23.6%)",
-       sql = "
-      SELECT count(*)                AS N_LINES,
-             count(DISTINCT l.PATID) AS N_PATIENTS
-      FROM {t$long} l
-      WHERE l.LOT_BASE_END_REASON = 'DISCONTINUATION'
-        AND EXISTS (SELECT 1 FROM {t$map} m
-                    WHERE m.PATID = l.PATID
-                      AND m.MAP_MED_CLASS <> 'STEROID'
-                      AND m.MAP_START_DT <= l.LOT_BASE_END_DT
-                      AND m.MAP_END_DT   >= l.LOT_BASE_END_DT
-                      AND NOT array_contains(
-                            split(coalesce(l.LOT_BASE_MEDS, ''), ' '), m.MAP_MED_TYPE))"),
-
-  list(id = "death-suppressed-at-line-cap",
-       what = "LOT5 rows reading DISCONTINUATION in patients who died inside observation",
-       expect = "synthetic: 35 lines, mean 503 days between the reported end and the death",
-       sql = "
-      SELECT count(*)                                                 AS N_LINES,
-             round(avg(datediff(p.DEATH_DT, l.LOT_BASE_END_DT)), 1)   AS MEAN_DAYS_END_TO_DEATH,
-             max(datediff(p.DEATH_DT, l.LOT_BASE_END_DT))             AS MAX_DAYS_END_TO_DEATH,
-             round(avg(l.LOT_BASE_LENGTH), 1)                         AS MEAN_REPORTED_LENGTH
-      FROM {t$long} l
-      INNER JOIN {t$cohort} p ON p.PATID = l.PATID
-      WHERE l.LOT_NUM = 5
-        AND l.LOT_BASE_END_REASON = 'DISCONTINUATION'
-        AND p.DEATH_DT IS NOT NULL
-        AND p.DEATH_DT <= p.{obs_col}"),
-
-  list(id = "regimen-agent-with-no-episode-in-window",
-       what = "Lines naming an agent that has no supply episode starting inside the line",
-       expect = "synthetic: 30 of 10,659 lines with a regimen",
+  # 1. The one confirmed correctness defect. Induction medications are gathered
+  #    across the whole window while the line's end is fixed later in the
+  #    cascade, so a transplant that closes the line early can leave an agent in
+  #    the regimen whose first supply begins after the line ended. That agent
+  #    also reaches the run-out and the next line's prior-regimen exclusion.
+  list(id = "regimen-agent-begins-after-line-end",
+       what = "Lines naming a regimen agent whose first supply episode starts after the line ended",
+       expect = "synthetic: 30 of 10,659 lines carrying a regimen",
        sql = "
       WITH exploded AS (
         SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_BASE_END_DT,
                explode(split(l.LOT_BASE_MEDS, ' ')) AS MED_ABBR
         FROM {t$long} l
         WHERE coalesce(trim(l.LOT_BASE_MEDS), '') <> ''
+      ),
+      offending AS (
+        SELECT DISTINCT e.PATID, e.LOT_NUM, e.MED_ABBR
+        FROM exploded e
+        WHERE e.MED_ABBR <> ''
+          AND NOT EXISTS (SELECT 1 FROM {t$map} m
+                          WHERE m.PATID = e.PATID
+                            AND m.MAP_MED_TYPE = e.MED_ABBR
+                            AND m.MAP_START_DT <= e.LOT_BASE_END_DT)
       )
-      SELECT count(DISTINCT concat_ws('|', e.PATID, e.LOT_NUM)) AS N_LINES,
-             count(DISTINCT e.PATID)                            AS N_PATIENTS
-      FROM exploded e
-      WHERE e.MED_ABBR <> ''
-        AND NOT EXISTS (SELECT 1 FROM {t$map} m
-                        WHERE m.PATID = e.PATID
-                          AND m.MAP_MED_TYPE = e.MED_ABBR
-                          AND m.MAP_START_DT BETWEEN e.LOT_START_DT AND e.LOT_BASE_END_DT)"),
+      SELECT count(*)                                   AS N_AGENT_LINE_PAIRS,
+             count(DISTINCT concat_ws('|', PATID, LOT_NUM)) AS N_LINES,
+             count(DISTINCT PATID)                       AS N_PATIENTS
+      FROM offending"),
 
-  list(id = "empty-regimen-lines-by-start-type",
-       what = "Regimen-less lines consuming a LOT1-5 slot, by what started them",
-       expect = "synthetic: 1,176 of 11,835 lines (9.9%)",
+  # 2. Not a defect - an open study-team question about how long a
+  #    regimen-less transplant line should run. Reported so the decision is
+  #    made against real durations rather than a synthetic guess.
+  list(id = "empty-regimen-transplant-line-durations",
+       what = "DECISION, not a defect: how long transplant lines with no regimen actually run",
+       expect = "synthetic: 605/685 ASCT lines empty, mean 506.9d vs 110.5d with a regimen",
        sql = "
       SELECT l.LOT_START_TYPE,
-             count(*)                         AS N_LINES,
-             round(avg(l.LOT_BASE_LENGTH), 1) AS MEAN_LENGTH_DAYS
+             CASE WHEN l.LOT_MED_CNT = 0 THEN 'empty regimen' ELSE 'has regimen' END AS REGIMEN,
+             count(*)                                   AS N_LINES,
+             round(avg(l.LOT_BASE_LENGTH), 1)           AS MEAN_LENGTH_DAYS,
+             percentile_approx(l.LOT_BASE_LENGTH, 0.5)  AS MEDIAN_LENGTH_DAYS,
+             percentile_approx(l.LOT_BASE_LENGTH, 0.75) AS P75_LENGTH_DAYS
       FROM {t$long} l
-      WHERE l.LOT_MED_CNT = 0
+      GROUP BY 1, 2
+      ORDER BY 1, 2"),
+
+  # 3. Treatment outside every line, split by cause. The unpartitioned total is
+  #    meaningless: leftover supply deliberately does not carry into a new line,
+  #    an ALLO line is one day by design, and therapy past LOT5 is the cap. Only
+  #    the residual bucket is a question.
+  list(id = "outside-line-days-by-cause",
+       what = "Non-steroid supply days outside every line, partitioned by why",
+       expect = "no synthetic target - the unpartitioned 11.1% was an invalid measure",
+       sql = "
+      WITH bounds AS (
+        SELECT PATID, min(LOT_START_DT) AS FIRST_START,
+               max(LOT_BASE_END_DT)     AS LAST_END,
+               max(LOT_NUM)             AS MAX_LOT
+        FROM {t$long} GROUP BY PATID
+      ),
+      uncovered AS (
+        SELECT m.PATID, m.MAP_MED_TYPE, m.MAP_START_DT, m.MAP_END_DT,
+               b.FIRST_START, b.LAST_END, b.MAX_LOT
+        FROM {t$map} m
+        LEFT JOIN bounds b ON b.PATID = m.PATID
+        WHERE m.MAP_MED_CLASS <> 'STEROID'
+          AND NOT EXISTS (SELECT 1 FROM {t$long} l
+                          WHERE l.PATID = m.PATID
+                            AND m.MAP_START_DT BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT)
+      )
+      SELECT CASE
+               WHEN FIRST_START IS NULL              THEN 'patient has no line at all'
+               WHEN MAP_START_DT <  FIRST_START      THEN 'before LOT1 started'
+               WHEN MAX_LOT = 5 AND MAP_START_DT > LAST_END
+                                                     THEN 'past the LOT5 cap'
+               WHEN MAP_START_DT >  LAST_END         THEN 'after the last line ended'
+               ELSE 'in a gap between lines'
+             END                        AS CAUSE,
+             count(*)                   AS N_EPISODES,
+             count(DISTINCT PATID)      AS N_PATIENTS
+      FROM uncovered
       GROUP BY 1
       ORDER BY 2 DESC"),
 
-  list(id = "patients-at-the-line-cap",
-       what = "Patients reaching LOT5, whose later therapy cannot be represented",
-       expect = "synthetic: 274 of 4,000 patients still supplied past the cap (6.9%)",
+  # 5. In-window CAR-T is deliberately not a boundary and IS kept in LOT1_SCT.
+  #    The question is only whether the final deliverable can see it.
+  list(id = "in-window-cart-not-in-final-table",
+       what = "Patients with an in-line CAR-T that LOT_LONG alone cannot reveal",
+       expect = "output-surface gap, not a boundary error",
        sql = "
-      WITH capped AS (
-        SELECT PATID, max(LOT_NUM) AS MAX_LOT,
-               max(CASE WHEN LOT_NUM = 5 THEN LOT_BASE_END_DT END) AS L5_END
-        FROM {t$long} GROUP BY PATID
-      )
-      SELECT count(*)                                                       AS N_AT_CAP,
-             sum(CASE WHEN EXISTS (SELECT 1 FROM {t$map} m
-                                   WHERE m.PATID = c.PATID
-                                     AND m.MAP_MED_CLASS <> 'STEROID'
-                                     AND m.MAP_START_DT > c.L5_END)
-                      THEN 1 ELSE 0 END)                                    AS N_TREATED_PAST_CAP
-      FROM capped c
-      WHERE c.MAX_LOT = 5"),
+      SELECT count(*)                AS N_PATIENTS_WITH_IN_LOT1_CART
+      FROM {t$sct} s
+      WHERE s.FIRST_CART_DT IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM {t$long} l
+                        WHERE l.PATID = s.PATID
+                          AND l.LOT_START_TYPE = 'CART')"),
 
+  # Context for the Q1 duration tab. Not a finding on its own.
   list(id = "line-length-by-start-type",
        what = "Line duration by line number and start type - context for the Q1 tab",
-       expect = "no synthetic target; this is the distribution the defects above distort",
+       expect = "no target; this is the distribution the findings above bear on",
        sql = "
       SELECT l.LOT_NUM, l.LOT_START_TYPE,
-             count(*)                                  AS N_LINES,
-             round(avg(l.LOT_BASE_LENGTH), 1)          AS MEAN_LENGTH_DAYS,
-             percentile_approx(l.LOT_BASE_LENGTH, 0.5) AS MEDIAN_LENGTH_DAYS,
+             count(*)                                   AS N_LINES,
+             round(avg(l.LOT_BASE_LENGTH), 1)           AS MEAN_LENGTH_DAYS,
+             percentile_approx(l.LOT_BASE_LENGTH, 0.5)  AS MEDIAN_LENGTH_DAYS,
              percentile_approx(l.LOT_BASE_LENGTH, 0.75) AS P75_LENGTH_DAYS
       FROM {t$long} l
       GROUP BY 1, 2
@@ -246,7 +197,7 @@ main <- function() {
 
   # Which line table to count. LOT_LONG_FINAL is the study deliverable, with the
   # line criteria applied; LOT_LONG is what the engine built before them.
-  which_tbl <- trimws(Sys.getenv("AUDIT_TABLE", unset = "LOT_LONG_FINAL"))
+  which_tbl <- trimws(Sys.getenv("AUDIT_TABLE", unset = "LOT_LONG"))
   if (!which_tbl %in% c("LOT_LONG_FINAL", "LOT_LONG"))
     stop("AUDIT_TABLE must be LOT_LONG_FINAL or LOT_LONG.", call. = FALSE)
 
@@ -257,11 +208,31 @@ main <- function() {
 
   t <- list(long   = lot_out(which_tbl),
             map    = lot_out("MAP_STACKED"),
+            sct    = lot_out("LOT1_SCT"),
             cohort = wrk(cohort))
 
   cat("Counting against:\n")
   for (nm in names(t)) cat("  ", nm, ": ", t[[nm]], "\n", sep = "")
   cat("  observation column: ", obs_col, "\n\n", sep = "")
+
+  # Substitution reciprocity is a codelist question, not a warehouse one:
+  # permissible_subs is loaded from CSV into a session view and is not persisted,
+  # so it is checked here against the file the build would read. A one-way pair
+  # is not automatically wrong - some are deliberately directional - but the set
+  # should be reviewed rather than assumed symmetric.
+  subs_csv <- file.path(cfg$codelist_dir, "permissible_subs.csv")
+  cat("== substitution-reciprocity\n")
+  if (!file.exists(subs_csv)) {
+    cat("   SKIPPED: no permissible_subs.csv at ", subs_csv, "\n\n", sep = "")
+  } else {
+    ps <- utils::read.csv(subs_csv, stringsAsFactors = FALSE)
+    key <- paste(ps$original_med, ps$substitute_med)
+    rev <- paste(ps$substitute_med, ps$original_med)
+    one_way <- ps[!(key %in% rev), c("original_med", "substitute_med")]
+    cat("   ", nrow(ps), " pairs, ", nrow(one_way), " present in one direction only\n", sep = "")
+    if (nrow(one_way)) print(head(one_way, 20), row.names = FALSE)
+    cat("\n")
+  }
 
   con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
@@ -280,17 +251,21 @@ main <- function() {
     }
     print(res, row.names = FALSE)
     cat("   (", a$expect, ")\n\n", sep = "")
+    # Long format, one row per cell. The counts return different columns from
+    # each other, so writing them as separate CSV tables into one file produced
+    # repeated headers and a file nothing could read.
     if (nrow(res)) {
-      flat <- data.frame(finding = a$id,
-                         lapply(res, as.character),
-                         stringsAsFactors = FALSE)
-      rows[[length(rows) + 1L]] <- utils::capture.output(
-        utils::write.csv(flat, row.names = FALSE))
+      for (i in seq_len(nrow(res))) for (nm in names(res)) {
+        rows[[length(rows) + 1L]] <- data.frame(
+          finding = a$id, row = i, metric = nm,
+          value = as.character(res[[nm]][i]),
+          stringsAsFactors = FALSE)
+      }
     }
   }
 
   csv <- file.path(out_dir, "lot_audit_counts.csv")
-  writeLines(unlist(rows), csv)
+  utils::write.csv(do.call(rbind, rows), csv, row.names = FALSE)
   cat("Wrote ", csv, "\n", sep = "")
   if (failed) {
     cat(failed, " count(s) failed - see the messages above.\n", sep = "")
