@@ -98,13 +98,20 @@ VIGNETTES <- list(
        why = "The boundary between one billing episode and two transplants."),
 
   # ---- CAR-T bridging, the idea's named 45-day case -----------------------
+  # The addition sits on induction_window_days, not earlier: a LOT1 MED_ADD is
+  # an agent absent from the regimen, and the regimen is exactly the agents whose
+  # episode started inside that window - so an agent added inside it is in the
+  # regimen and is not an addition at all. Both cases carried an addition on d20,
+  # which the engine cannot produce.
   list(id = "cart_bridge_within", title = "CAR-T inside the consolidation window",
        param = "cart_consolidation_days", pair = "within", confidence = "derived",
        where = "lot/engine/R/steps/06_lot1_end.R:176 - datediff BETWEEN 0 AND cart_consolidation_days",
        events = function(p) rbind(
          ev(0,  "MED",     "1L regimen starts"),
-         ev(20, "MED_ADD", "bridging agent added"),
-         ev(21 + p$cart_consolidation_days - 1L, "CART", "CAR-T inside the window from the day after the addition")),
+         ev(p$induction_window_days, "MED_ADD",
+            "bridging agent added, the first day it can be an addition"),
+         ev(p$induction_window_days + 1L + p$cart_consolidation_days - 1L, "CART",
+            "CAR-T inside the window from the day after the addition")),
        expected = function(p) paste0(
          "LOT1 ends with reason CART_INIT. The bridging agent stays part of LOT1 ",
          "rather than starting a line of its own."),
@@ -116,8 +123,9 @@ VIGNETTES <- list(
        where = "lot/engine/R/steps/06_lot1_end.R:176",
        events = function(p) rbind(
          ev(0,  "MED",     "1L regimen starts"),
-         ev(20, "MED_ADD", "agent added"),
-         ev(21 + p$cart_consolidation_days + 1L, "CART", "CAR-T one day outside the window")),
+         ev(p$induction_window_days, "MED_ADD", "agent added"),
+         ev(p$induction_window_days + 1L + p$cart_consolidation_days + 1L, "CART",
+            "CAR-T one day outside the window")),
        expected = function(p) paste0(
          "Not CART_INIT. The addition is an ordinary regimen change and the CAR-T ",
          "is handled by the ordinary rules for a CAR-T event."),
