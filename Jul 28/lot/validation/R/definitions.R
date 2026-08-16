@@ -67,7 +67,7 @@ LOT_DIMENSIONS <- list(
        ours = paste0("Yes, and it spans a single day - start and end are the ",
                      "transplant date. It carries no regimen string, because ",
                      "induction rows are suppressed for it."),
-       where = "lot/engine/R/steps/10_lot2_5_base.R:360, :477",
+       where = "lot/engine/R/steps/10_lot2_5_base.R:360, :478",
        proves = c("SCT_ALLO", "allo_lot_span"),
        question = "Is alloSCT counted as a prior line in its own right?"),
 
