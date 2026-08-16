@@ -9,11 +9,12 @@ line-advancing proposal is an exploration — it is not in the study's numbers,
 it is not built into any run that ships, and it is not here. `lot/FILES.md`
 says what that package is and what is still open on it.
 
-*Applied* is not *settled*. §11 carries two rules that are applied and still
-under review, §12 lists where the build departs from the written protocol, and
-§14 carries two things needing a ruling. What
-every rule here has in common is that the build does it on every run — not that
-the clinical question behind it is closed.
+*Applied* is not *settled*. §11 has two rules that are applied but still under
+review. §12 lists where the build differs from the written protocol. §14 has two
+things that need a ruling.
+
+Every rule here is one the build applies on every run. That is all they have in
+common. It does not mean the clinical question behind it is closed.
 
 Written from the code, not from the spec — where the two differ, this follows
 the code and says so (§12).
@@ -29,15 +30,15 @@ is what is in the folder and what each file does.
 | | Rule | Setting | |
 |---|---|---|---|
 | §2.1 | Steroids are excluded everywhere | — | |
-| §2.2 | A medical claim covers 28 days | `medical_day_supply` | |
+| §2.2 | A medical claim is assumed to cover 28 days | `medical_day_supply` | |
 | §2.3 | A claim arriving while cover is live extends the episode | — | |
 | §3.1 | Line 1 starts at the first non-steroid MM agent | — | |
 | §3.2 | Line 1's induction window is 60 days | `induction_window_days` | |
 | §3.3 | A regimen is bounded by the date the line ended | — | |
 | §3.4 | Line 1's first autologous transplant is part of induction | — | |
 | §4.1 | A later line opens on the earliest of four candidates | — | |
-| §4.2 | Later induction is 30 days, 45 on a CAR-T-started line | `lot_n_induction_window_days`, `cart_consolidation_days` | |
-| §4.3 | A drug is held by its line while it runs, released once stopped | `map_discon_gap_days` | |
+| §4.2 | Later induction is 30 days, and 45 on a CAR-T-started line | `lot_n_induction_window_days`, `cart_consolidation_days` | |
+| §4.3 | A drug is held by its line while it runs, and released once stopped | `map_discon_gap_days` | |
 | §4.4 | A permissible biosimilar substitute never starts a line | — | |
 | §4.5 | Same-day starts break `SCT_ALLO > CART > SCT_AUTO > MED` | — | |
 | §4.6 | An allogeneic line spans one day and carries no regimen | `allo_lot_span` | |
@@ -49,19 +50,19 @@ is what is in the folder and what each file does.
 | §6.3 | A second AUTO within 180 days is a planned tandem | `sct_tandem_days` | |
 | §6.4 | A CAR-T inside line 1's induction window is part of line 1 | `apply_cart_induction_rule` | |
 | §6.5 | An AUTO inside a line's own window holds that line open | `induction_window_days`, `cart_consolidation_days` | |
-| §7.1 | A line ends at the first of six events, by priority | — | |
+| §7.1 | A line ends at the earliest qualifying event | — | |
 | §7.2 | Within the transplant branch the earliest date wins | — | |
 | §7.3 | An added agent then a CAR-T within 45 days is `CART_INIT` | `cart_consolidation_days` | |
 | §7.4 | An agent added outside induction is `MED_ADD` | — | |
-| §7.5 | Death does not outrank a run-out the patient came back from | — | |
+| §7.5 | Death, and the run-out it can displace | — | |
 | §7.6 | Disenrollment is not censoring | — | |
 | §7.7 | Line length is inclusive of both ends | — | |
 | §8 | Belantamab removes the patient, not the line | `apply_no_belantamab` | |
 | §9 | Five lines are built, and nothing above them | `max_lot` | |
 | §10 | Maintenance is a flag, not a line | — | |
 | §11 | Two rules that are applied and still under review | — | |
-| §14.1 | **To confirm** — the consolidation window is 45, the spec says 30 | `cart_consolidation_days` | |
-| §14.2 | **To confirm** — a confirmed discontinuation loses to a later death | — | |
+| §14.1 | **To confirm** — the CAR-T consolidation window: 45 days, where the spec says 30 | `cart_consolidation_days` | |
+| §14.2 | **To confirm** — a confirmed discontinuation losing to a later death | — | |
 
 ---
 
@@ -93,16 +94,16 @@ as the study's numbers.
 with it. It is an exploration, not a rule — `lot/FILES.md`, under
 `exploration/melphalan/`.
 
-Being off is not the same as being absent, and it is worth being plain about
-which this is. The rule's module is inside the engine (`R/melp_rule.R`, sourced
-on every run) with splice points in `06_lot1_end.R` and `10_lot2_5_base.R`,
-because the rule needs each line's own induction window and that exists only
-while the line is being built. What makes blank safe is not that the code is
-gone but that every hook emits an empty string, so the generated SQL is the SQL
-the engine generated before the file existed — and
-`exploration/melphalan/tests/test_aug1_melp.R` proves it rather than asserting
-it, by substituting each hook's off value back into the step text and requiring
-nothing melphalan to remain.
+Off is not the same as absent. The rule's code is inside the engine
+(`R/melp_rule.R`), and it is sourced on every run. It has hooks in
+`06_lot1_end.R` and `10_lot2_5_base.R`, because the rule needs each line's own
+induction window, and that only exists while the line is being built.
+
+What makes blank safe is not that the code is gone. It is that every hook
+returns an empty string. So the SQL the engine builds is the same SQL it built
+before the file existed. `exploration/melphalan/tests/test_aug1_melp.R` proves
+this: it puts each hook's off value back into the step text and requires nothing
+melphalan to be left.
 
 The study window (`STUDY_START`, `STUDY_END`) is **not** pinned. It is the
 cohort's, passed per run and recorded in `LOT_RUN_METADATA`: the algorithm is
@@ -238,7 +239,7 @@ the returning treatment has a line to go to. `lot/engine/R/prior_regimen.R`
 carries both, and the run-out guards that mirror the start candidates read the
 same definition. §11.1 is the reasoning and what the rule costs.
 
-### 4.4 A permissible biosimilar substitute cannot start a line either
+### 4.4 A permissible biosimilar substitute never starts a line
 
 The substitute is unioned into the previous line's regimen for this test, so it
 is excluded from `d_MED` the same way the reference product is.
