@@ -68,6 +68,50 @@ AUDIT_COUNTS <- list(
       GROUP BY LOT_NUM, LOT_START_TYPE
       ORDER BY LOT_NUM, LOT_START_TYPE"),
 
+  # SCENARIOS.md 4.2 - the divergence from the protocol wording, and the one
+  # nobody can size by reading the code. Regimen membership is an episode
+  # STARTING inside the window; a dispense arriving under live cover extends the
+  # episode it is already in and leaves no start to find. So an agent the patient
+  # is demonstrably still taking on the day a line opens is absent from that
+  # line's regimen unless its cover happened to lapse first.
+  #
+  # The protocol says "all MM therapies identified during the first 30 days of
+  # the LOT", which reads wider. This is the number that decides whether that
+  # difference is a footnote or a finding, and it has to be answered before
+  # regimen strings are published.
+  list(id = "4.2-prior-agent-covered-but-not-in-the-regimen",
+       what = "Later lines where a previous line's agent is under live cover on the start date but absent from the regimen",
+       expect = "unknown - never measured; this is the protocol-wording divergence",
+       sql = "
+      WITH prev_agents AS (
+        SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_BASE_MEDS,
+               explode(split(p.LOT_BASE_MEDS, ' ')) AS PREV_MED
+        FROM {t$long} l
+        INNER JOIN {t$long} p ON p.PATID = l.PATID AND p.LOT_NUM = l.LOT_NUM - 1
+        WHERE l.LOT_NUM > 1
+          AND coalesce(trim(p.LOT_BASE_MEDS), '') <> ''
+      ),
+      still_covered AS (
+        SELECT DISTINCT a.PATID, a.LOT_NUM, a.PREV_MED,
+               CASE WHEN array_contains(split(a.LOT_BASE_MEDS, ' '), a.PREV_MED)
+                    THEN 1 ELSE 0 END AS IN_THIS_REGIMEN
+        FROM prev_agents a
+        INNER JOIN {t$map} m
+           ON m.PATID = a.PATID
+          AND m.MAP_MED_TYPE = a.PREV_MED
+          AND a.LOT_START_DT BETWEEN m.MAP_START_DT AND m.MAP_END_DT
+        WHERE a.PREV_MED <> ''
+      )
+      SELECT LOT_NUM,
+             CASE WHEN IN_THIS_REGIMEN = 1
+                  THEN 'COVERED AND IN THE REGIMEN (it restarted in the window)'
+                  ELSE 'COVERED BUT NOT IN THE REGIMEN (no episode start)' END AS HANDLED,
+             count(*)                                   AS N_AGENT_LINE_PAIRS,
+             count(DISTINCT PATID)                      AS N_PATIENTS
+      FROM still_covered
+      GROUP BY 1, 2
+      ORDER BY LOT_NUM, HANDLED"),
+
   # SCENARIOS.md 7.1 - a line ends at the earliest qualifying event. This is
   # the whole cascade as the data actually exercises it. A branch with no rows
   # is a branch nothing has ever taken.

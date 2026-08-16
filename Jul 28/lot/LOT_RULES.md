@@ -246,6 +246,30 @@ Non-steroid agents from the start date through day 29
 (`lot_n_induction_window_days`), or day 44 on a CAR-T-started line
 (`cart_consolidation_days`).
 
+The test is on `MAP_START_DT` — an episode *beginning* inside the window — and
+never on `MAP_END_DT`. Cover running through the window does not put an agent in
+the regimen, and neither does a dispense that lands inside the window while that
+agent's cover is already live: a claim arriving under live cover extends the
+episode it is already in rather than opening a new one (§2.3), so it leaves no
+episode start for this test to see.
+
+That has a consequence worth stating plainly, because it inverts the intuition.
+An agent from the previous line joins this line's regimen only if its cover
+**lapsed** and it restarted inside the window. The more continuously a patient
+stays on it, the more certainly it is absent from the later regimen — a patient
+taking lenalidomide without a break has one episode, starting at line 1, and it
+can never be seen by any later line's window.
+
+There is no prior-regimen exclusion here. `lot{n}_induction_meds` would take a
+previous-line agent happily; what keeps it out is only that it has no episode
+start to offer. That is a different gate from §4.3, which stops the same agent
+*starting* a line and is unconditional.
+
+**This is a divergence from the protocol wording**, and §12 carries it. The
+protocol says the later regimen is "all MM therapies identified during the first
+30 days of the LOT", which reads wider than fills. `run_scenario_counts.R`'s
+`4.2-prior-agent-covered-but-not-in-the-regimen` sizes it.
+
 ### 4.3 A drug in the previous line's regimen cannot start a line
 
 The protocol starts a later line at "the first administration for a new MM agent
@@ -686,6 +710,17 @@ initiation, which is a clinical question and not a protocol reading.
 
 ## 12. Where this differs from the written protocol
 
+- **A regimen is what was dispensed in the window, not what was available.** The
+  protocol says a later line's regimen is "all MM therapies identified during the
+  first 30 days of the LOT". The build reads that as an episode *starting* in the
+  window, so an agent whose cover runs through the window without lapsing is not
+  in the regimen — and neither is one dispensed inside the window while its own
+  cover was live, since that dispense extends the existing episode rather than
+  opening a new one. Two clinically identical patients can therefore get
+  different regimens depending on whether one of them missed a fill. Settled this
+  way by the study team and pinned by the engine suite; §4.2 has the mechanics,
+  and `run_scenario_counts.R`'s
+  `4.2-prior-agent-covered-but-not-in-the-regimen` is what would size it.
 - **The CAR-T induction rule is in the numbers** as of 2026-08-13, so runs
   before that date differ on `SCT_CART`, `CART_INIT`, line 1's length and line
   counts for the patients it touches. §6.4.

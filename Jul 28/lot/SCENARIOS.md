@@ -175,6 +175,54 @@ it opens LOT2 on its own date.
 Two different windows in one algorithm is a standing source of error: the
 later-line window closes sooner than a reader expects.
 
+**Scenario** — *derived.* A dispense inside the window that joins nothing,
+because it is not the start of anything.
+
+    d1     LEN, refilled without a break, covered through d120
+    d100   POMA starts — outside line 1's 60-day window, so it opens line 2
+    d110   LEN dispensed again, inside line 2's d100-d129 window
+    ---
+    LOT1   d1 -> d99     LEN            ends MED_ADD at POMA
+    LOT2   d100 -> ...   POMA
+
+LEN is not in line 2's regimen even though it was dispensed on d110, inside the
+window, and even though the patient is demonstrably taking both drugs. The d110
+claim arrived while LEN's cover was live, so it extended the episode that began
+on d1 (§2.3) rather than opening a new one, and `MAP_START_DT` is still d1. The
+window has no episode start to find.
+
+Moving that dispense earlier changes nothing, for the same reason:
+
+    d1     LEN, covered through d120
+    d90    LEN dispensed again — before line 2 even exists
+    d100   POMA starts
+    ---
+    LOT2   d100 -> ...   POMA
+
+Both are one LEN episode, d1 to d120. Where the dispense falls is irrelevant;
+what matters is that it is not an episode start.
+
+**Scenario** — *derived.* The same drug, the same window, opposite answer —
+because the cover lapsed first.
+
+    d1     LEN, cover ends d90
+    d91    nothing
+    d100   POMA starts, opening line 2
+    d110   LEN dispensed, 20 days after its own cover ran out
+    ---
+    LOT1   d1 -> d99      LEN
+    LOT2   d100 -> ...    POMA LEN
+
+Here d110 is past LEN's own run-out, so it opens a **new** episode whose
+`MAP_START_DT` is d110 — inside line 2's window — and LEN joins the regimen.
+
+The two patients may be clinically identical. The one who never missed a fill
+gets `POMA`; the one with a three-week gap gets `POMA LEN`. §12 records this as
+a divergence from the protocol's "all MM therapies identified during the first
+30 days of the LOT", and
+`run_scenario_counts.R`'s `4.2-prior-agent-covered-but-not-in-the-regimen`
+counts who it touches.
+
 
 ### 4.3 A drug in the previous line's regimen cannot start a line
 
