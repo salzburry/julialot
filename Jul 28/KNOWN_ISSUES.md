@@ -78,8 +78,28 @@ claims that `mma_med_processed` still carries, so the claim test has to be
 restricted to claims belonging to an episode the build kept, or the regimen will
 gain agents the rest of the algorithm does not know about.
 
+**It propagates, and this is the worst of it.** The prior-regimen exclusion
+that stops an agent starting a line looks **one line back only**
+(`LOT_NUM = {prev}`). An agent wrongly absent from LOT2's regimen is therefore
+wrongly absent from LOT3's exclusion set, and becomes eligible to *start* LOT3 —
+a line it should not be able to open.
+
+    d1     LEN, filling continuously
+    d100   POMA opens LOT2. LEN is omitted from LOT2's regimen (the defect)
+    d200   POMA runs out, LOT2 ends
+    d205   LEN's cover finally lapses and it restarts — a new episode
+    ---
+    what ships:  LOT3 starts d205 on LEN, because nothing excludes it
+    correct:     LEN is LOT2's agent and cannot start a line
+
+With a BORT at d210 that turns `LOT3 = BORT` into `LOT3 = LEN BORT` starting
+five days earlier. With no BORT at all it is an **extra line** that should not
+exist. So this is not confined to regimen strings: it moves start dates, start
+types and line counts.
+
 **What it would move.** `LOT_BASE_MEDS` and `LOT_MED_CNT` on later lines, the
-per-agent flags, and the run-out — a newly-admitted agent is a base agent and
+per-agent flags, line starts and counts through the exclusion above, and the
+run-out — a newly-admitted agent is a base agent and
 enters `discon_per_med`, so line lengths and boundaries move too. Published
 regimen strings change for a large group.
 
@@ -88,8 +108,10 @@ reading of the recorded decision and of the protocol's "all MM therapies
 identified during the first 30 days of the LOT" is that it is — and this is a
 fix rather than a change.
 
-**Count.** `4.2-prior-agent-covered-but-not-in-the-regimen` in
-`exploration/lot/run_scenario_counts.R` sizes it, and has never been run.
+**Counts.** `4.2-prior-agent-covered-but-not-in-the-regimen` sizes the regimen
+half. The propagation needs its own count — lines started by an agent that was
+in the regimen two lines back but not one — which is not yet written. Neither
+has been run.
 
 `lot/LOT_RULES.md` §4.2 and §12.
 
