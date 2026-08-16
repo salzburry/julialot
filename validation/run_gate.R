@@ -59,7 +59,10 @@ EXPECTED_FAILURES <- list(
     "05b_lot1_sct.R: differs beyond the approved deviations in 148 line(s)",
     "06_lot1_end.R: differs beyond the approved deviations in 205 line(s)",
     "08_persist.R: differs beyond the approved deviations in 111 line(s)",
-    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 823 line(s)")
+    # 823 -> 826: cart_exclude_predicate gained the active-through argument, so
+    # the call is three lines rather than two. Re-pinned deliberately, which is
+    # what this list is for.
+    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 826 line(s)")
 )
 
 # How one suite's output is read. Its own suite is validation/hygiene/

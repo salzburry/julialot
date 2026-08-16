@@ -143,7 +143,13 @@ phase_lot1_end <- function(con, ctx) {
           WHEN lb.LOT1_BASE_RUNOUT_DT IS NULL THEN 0
           WHEN prm.PATID IS NOT NULL THEN 1
           WHEN sct.FIRST_ALLO_DT IS NOT NULL AND sct.FIRST_ALLO_DT > lb.LOT1_BASE_RUNOUT_DT THEN 1
-          WHEN sct.ENDING_CART_DT IS NOT NULL AND sct.ENDING_CART_DT > lb.LOT1_BASE_RUNOUT_DT THEN 1
+          -- FIRST_CART_DT, not ENDING_CART_DT. This arm already requires the
+          -- infusion to be AFTER the run-out, so the line's treatment had
+          -- stopped before it arrived and the induction exemption cannot reach
+          -- it - the same condition cart_exclude_predicate now carries. Read
+          -- through ENDING_CART_DT, an in-window CAR-T after the run-out
+          -- confirmed nothing and started nothing.
+          WHEN sct.FIRST_CART_DT IS NOT NULL AND sct.FIRST_CART_DT > lb.LOT1_BASE_RUNOUT_DT THEN 1
           WHEN pra.PATID IS NOT NULL THEN 1
           ELSE 0
         END AS POST_RUNOUT_TRIGGER_FLG

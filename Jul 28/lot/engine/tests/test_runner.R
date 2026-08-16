@@ -803,11 +803,37 @@ cat("\n-- the CAR-T induction rule --\n")
 # apply_cart_induction_rule, so every assertion ran the rule-off path.
 sys.source(file.path(ROOT, "R", "cart_rule.R"), envir = globalenv())
 ok(identical(cart_eligible_dt(FALSE, "X", "Y", 60), "X") &&
-     identical(cart_exclude_predicate(FALSE, "X", "Y", 60), "") &&
+     identical(cart_exclude_predicate(FALSE, "X", "Y", 60, "E"), "") &&
      identical(cart_censor_predicate(FALSE, "T", "X", "Y", 60), ""),
    "rule off is a passthrough in all three helpers, so the SQL is unchanged")
 ok(has(cart_eligible_dt(TRUE, "X", "Y", 60), "date_add(Y, 59)"),
    "the window is 60 days inclusive - day 0 through day 59")
+
+# The exemption is conditional on LOT1 still running. Read as "inside the
+# window" alone, the window outlived the line: a LOT1 that discontinued inside
+# its own 60 days left an in-window CAR-T after the end that this predicate
+# refused as a LOT2 start, and that nothing else could place. It belonged to no
+# line at all.
+xcl <- cart_exclude_predicate(TRUE, "ac.TX_DT", "pe.PREV_START_DT", 60,
+                              "pe.PREV_END_DT")
+ok(has(xcl, "AND ac.TX_DT <= pe.PREV_END_DT"),
+   "the exclusion asks whether LOT1 was still running, not only whether the CAR-T is in the window")
+ok(has(xcl, "BETWEEN pe.PREV_START_DT AND date_add(pe.PREV_START_DT, 59)"),
+   "...and still asks the window question as well, so an in-line CAR-T is unaffected")
+# Both halves are one NOT(), so a CAR-T failing either half is a candidate.
+ok(length(gregexpr("AND NOT (", xcl, fixed = TRUE)[[1]]) == 1L,
+   "...as one negated conjunction, so failing either half leaves the CAR-T a start candidate")
+# The other side of the same rule. This arm already requires the infusion to be
+# after the run-out, so the line had stopped before it arrived - it must be able
+# to confirm the run-out it follows. Through ENDING_CART_DT it could not.
+e6 <- paste(readLines(file.path(ROOT, "R", "steps", "06_lot1_end.R"), warn = FALSE),
+            collapse = "\n")
+prt <- substr(e6, regexpr("post_runout_trigger AS", e6),
+              regexpr("AS POST_RUNOUT_TRIGGER_FLG", e6))
+ok(has(prt, "sct.FIRST_CART_DT > lb.LOT1_BASE_RUNOUT_DT"),
+   "a CAR-T after the run-out confirms it, whatever the induction window says")
+ok(!has(prt, "sct.ENDING_CART_DT"),
+   "...and the eligible-to-end date is not what that arm reads, which was the gap")
 
 # Generated with the rule ON, which the fixture above never does.
 cenv <- new.env(parent = globalenv())

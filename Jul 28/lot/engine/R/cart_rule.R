@@ -41,8 +41,23 @@ cart_censor_predicate <- function(on, type_col, cart_col, lot1_start_col,
 }
 
 # Keeps the same infusion out of LOT2's start candidates. Empty when off.
-cart_exclude_predicate <- function(on, cart_col, lot1_start_col, window_days) {
+#
+# `active_through` is the last day LOT1 was still running - its end date. The
+# exemption is conditional on it, because "part of LOT1" cannot mean anything
+# for an infusion arriving after LOT1 has ended. Without it the window outlives
+# the line: a LOT1 discontinuing inside its own 60 days left a CAR-T that this
+# predicate refused as a LOT2 start and that no other rule could place, so the
+# infusion belonged to no line at all.
+#
+# cart_cand already requires TX_DT > PREV_END_DT, so adding the condition makes
+# the predicate inert there - which is the point. Every CAR-T that reaches it is
+# one LOT1 has already ended before. Written as a condition rather than deleted
+# so the rule reads as the rule, and so a caller with a different frame cannot
+# reopen the gap by accident.
+cart_exclude_predicate <- function(on, cart_col, lot1_start_col, window_days,
+                                   active_through) {
   if (!isTRUE(on)) return("")
   paste0("\n        AND NOT (",
-         cart_in_induction_sql(cart_col, lot1_start_col, window_days), ")")
+         cart_in_induction_sql(cart_col, lot1_start_col, window_days),
+         "\n                 AND ", cart_col, " <= ", active_through, ")")
 }
