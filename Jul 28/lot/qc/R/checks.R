@@ -516,6 +516,37 @@ LOT_QC_CHECKS <- list(
     WHERE LOT1_TX_ENDDATE IS NOT NULL
       AND LOT1_TX_ENDDATE < LOT1_START_DT"), "pid")),
 
+  list(id = "E5", group = "Transplant", severity = "warn",
+       what = "no transplant falls in a gap between two lines",
+       why = paste0("The one failure mode the other transplant checks cannot ",
+                    "see. Every check beside this one starts from a line and ",
+                    "asks whether its dates agree - so a transplant that ended ",
+                    "up in NO line has no row to be wrong on and is invisible ",
+                    "to all of them. Read from the transplant instead: an ",
+                    "autologous event with a line after it must sit inside some ",
+                    "line's span. A trailing transplant is excluded, because a ",
+                    "patient whose last line has ended has nowhere left to put ",
+                    "one. Warn rather than fail: KNOWN_ISSUES.md #5 is a known ",
+                    "open case that lands here - a planned tandem partner ",
+                    "outside its line's window - so a non-zero count needs ",
+                    "reading against that before it is treated as new."),
+       needs = c("sct", "final"),
+       sql = function(t, p) counted(paste0("
+    SELECT a.pid, a.dt
+    FROM (
+      SELECT ", mask("PATID"), " AS pid, PATID AS k, LOT1_TX_AUTO_DT_1 AS dt
+      FROM ", t$sct, " WHERE LOT1_TX_AUTO_DT_1 IS NOT NULL
+      UNION ALL
+      SELECT ", mask("PATID"), " AS pid, PATID AS k, LOT1_TX_AUTO_DT_2 AS dt
+      FROM ", t$sct, " WHERE LOT1_TX_AUTO_DT_2 IS NOT NULL
+    ) a
+    LEFT JOIN ", t$final, " l ON a.k = l.PATID
+    GROUP BY a.pid, a.k, a.dt
+    HAVING sum(CASE WHEN a.dt BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT
+                    THEN 1 ELSE 0 END) = 0
+       AND sum(CASE WHEN l.LOT_START_DT > a.dt THEN 1 ELSE 0 END) > 0"),
+    "concat(pid, ' @ ', dt)")),
+
   # ---- F. The tables against each other ------------------------------------
 
   list(id = "F1", group = "Reconciliation", severity = "fail",

@@ -12,7 +12,7 @@ A cohort is what LOT is pointed at. It is not part of LOT and does not read it.
 | `overall/` | cohort build, the broad MM cohort. `build.R`, no arguments. Writes `OVERALL_COH_FINAL`. |
 | `ndmm/` | cohort build, the 1L newly-diagnosed study cohort. `build.R <prefix_>`. Also `build_subsequent_cohorts.R <prefix_>` for the 2L and 3L cohorts, which runs *after* the LOT build. |
 | `lot/engine/` | lines of therapy. `build.R <COHORT_TABLE> <prefix_>`. The only package anywhere here that writes LOT tables. |
-| `lot/qc/` | thirty-four checks on a finished run. Reads only, writes to `out/`. |
+| `lot/qc/` | thirty-five checks on a finished run. Reads only, writes to `out/`. |
 | `lot/validation/` | the rule scenarios, machine-checked. No warehouse. |
 | `reporting/dashboard/` | one self-contained HTML. Reads only. |
 | `analysis/outcomes/` | TTNT, TTD, OS, attrition — protocol Table 4. Reads only. |

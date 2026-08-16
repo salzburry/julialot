@@ -690,7 +690,32 @@ build_lot_n <- function(con, lot_num,
          AND datediff(ap.AUTO_DT_1, l.LOT{lot_num}_START_DT) < l.LOT_WINDOW_DAYS
         THEN ap.AUTO_DT_1
         ELSE NULL
-      END AS LOT{lot_num}_TX_AUTO_MAX_DT
+      END AS LOT{lot_num}_TX_AUTO_MAX_DT,
+      -- LOT{lot_num}_AUTO_HOLD_DT: the last AUTO this line owns that falls
+      -- inside the line's OWN window. The twin of LOT1_AUTO_HOLD_DT in
+      -- 05b_lot1_sct.R, and it holds the line open the same way - see the
+      -- SCT_AUTO_CONT branch below.
+      --
+      -- Deliberately not LOT{lot_num}_TX_AUTO_MAX_DT above, which reads as if it
+      -- were the same thing and is not: its tandem arm bounds AUTO_DT_2 only by
+      -- sct_tandem_days from AUTO_DT_1, never by LOT_WINDOW_DAYS. A tandem
+      -- partner 180 days after an AUTO on the last day of a 30-day window is
+      -- 209 days past the line start and still passes it. That is harmless
+      -- while the column is only reported and clamped afterwards, and not
+      -- harmless at all once it decides an end date: the line would swallow an
+      -- added medication months later and the line that agent should have
+      -- started would never open.
+      CASE
+        WHEN ap.AUTO_DT_2 IS NOT NULL
+         AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {sct_tandem_days}
+         AND coalesce(ab.n_allo_between, 0) = 0
+         AND datediff(ap.AUTO_DT_2, l.LOT{lot_num}_START_DT) < l.LOT_WINDOW_DAYS
+        THEN ap.AUTO_DT_2
+        WHEN ap.AUTO_DT_1 IS NOT NULL
+         AND datediff(ap.AUTO_DT_1, l.LOT{lot_num}_START_DT) < l.LOT_WINDOW_DAYS
+        THEN ap.AUTO_DT_1
+        ELSE NULL
+      END AS LOT{lot_num}_AUTO_HOLD_DT
     FROM lb l
     LEFT JOIN auto_pivot   ap ON l.PATID = ap.PATID
     LEFT JOIN allo_between ab ON l.PATID = ab.PATID
@@ -853,6 +878,7 @@ build_lot_n <- function(con, lot_num,
         sct.ENDING_AUTO_DT, sct.FIRST_ALLO_DT, sct.FIRST_CART_DT,
         sct.LOT{lot_num}_TX_AUTO_FLG,
         sct.LOT{lot_num}_TX_AUTO_MAX_DT,
+        sct.LOT{lot_num}_AUTO_HOLD_DT,
         coalesce(cmr.contains_mtx_reg, 0) AS contains_mtx_reg,
         -- LOT_TX_ENDDATE / REASON: earliest LOT-ending SCT event - 1 day.
         -- Suppress the SCT that started LOT_N from triggering its own end:
@@ -955,11 +981,12 @@ build_lot_n <- function(con, lot_num,
         -- after the end - which made that the one case where an orphaned
         -- transplant was guaranteed rather than incidental.
         --
-        -- LOT{lot_num}_TX_AUTO_MAX_DT is already bounded to the window by
-        -- lot{lot_num}_sct, so no separate hold column is needed here.
-        WHEN ec.LOT{lot_num}_TX_AUTO_MAX_DT IS NOT NULL
-         AND ec.LOT{lot_num}_TX_AUTO_MAX_DT > ec.LOT{lot_num}_NATURAL_END_DT
-         AND (ec.DEATH_DT IS NULL OR ec.LOT{lot_num}_TX_AUTO_MAX_DT < ec.DEATH_DT)
+        -- Reads LOT{lot_num}_AUTO_HOLD_DT, and not the LOT{lot_num}_TX_AUTO_MAX_DT
+        -- beside it, which is bounded by the window on one arm only. The two
+        -- names read alike and mean different things; lot{lot_num}_sct says why.
+        WHEN ec.LOT{lot_num}_AUTO_HOLD_DT IS NOT NULL
+         AND ec.LOT{lot_num}_AUTO_HOLD_DT > ec.LOT{lot_num}_NATURAL_END_DT
+         AND (ec.DEATH_DT IS NULL OR ec.LOT{lot_num}_AUTO_HOLD_DT < ec.DEATH_DT)
         THEN 'SCT_AUTO_CONT'
         WHEN ec.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND {if (allo_single_day) 1L else 0L} = 1
           THEN 'SCT_ALLO'
@@ -997,10 +1024,10 @@ build_lot_n <- function(con, lot_num,
         ELSE 'STUDY_END'
       END AS LOT{lot_num}_BASE_END_REASON,
       CASE
-        WHEN ec.LOT{lot_num}_TX_AUTO_MAX_DT IS NOT NULL
-         AND ec.LOT{lot_num}_TX_AUTO_MAX_DT > ec.LOT{lot_num}_NATURAL_END_DT
-         AND (ec.DEATH_DT IS NULL OR ec.LOT{lot_num}_TX_AUTO_MAX_DT < ec.DEATH_DT)
-        THEN ec.LOT{lot_num}_TX_AUTO_MAX_DT
+        WHEN ec.LOT{lot_num}_AUTO_HOLD_DT IS NOT NULL
+         AND ec.LOT{lot_num}_AUTO_HOLD_DT > ec.LOT{lot_num}_NATURAL_END_DT
+         AND (ec.DEATH_DT IS NULL OR ec.LOT{lot_num}_AUTO_HOLD_DT < ec.DEATH_DT)
+        THEN ec.LOT{lot_num}_AUTO_HOLD_DT
         ELSE ec.LOT{lot_num}_NATURAL_END_DT
       END AS LOT{lot_num}_BASE_END_DT
     FROM end_natural ec

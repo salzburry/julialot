@@ -67,9 +67,12 @@ EXPECTED_FAILURES <- list(
     # 823 -> 826: cart_exclude_predicate gained the active-through argument, so
     # the call is three lines rather than two.
     # 826 -> 845: SCT_AUTO_CONT and end_natural again at LOT2-5, and auto_cand
-    # reading the previous line's own window. Re-pinned deliberately, which is
-    # what this list is for.
-    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 845 line(s)")
+    # reading the previous line's own window.
+    # 845 -> 857: LOT{n}_AUTO_HOLD_DT, so the end date reads a hold date bounded
+    # by the line's window on BOTH arms rather than LOT{n}_TX_AUTO_MAX_DT, whose
+    # tandem arm is bounded only by sct_tandem_days. Re-pinned deliberately,
+    # which is what this list is for.
+    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 857 line(s)")
 )
 
 # How one suite's output is read. Its own suite is validation/hygiene/

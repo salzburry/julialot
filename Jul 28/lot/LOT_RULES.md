@@ -808,6 +808,12 @@ The windows are each line's own, measured from its start:
 | a CAR-T | days 0–44 | `cart_consolidation_days` |
 | an allogeneic transplant | the transplant date alone | — |
 
+The window bounds **both** transplants of a tandem pair, not only the first. A
+partner inside `sct_tandem_days` of an in-window transplant but outside the
+window itself does not hold the line open — see §14.5 for what that leaves open,
+and why the alternative is worse: at LOT2 it would let a line run to day 209 and
+swallow an added agent months after its regimen stopped.
+
 Ending **on** the transplant is the opposite of the two other AUTO-shaped
 reasons, and deliberately so. `SCT_AUTO` and the transplant branch in §7.2 end a
 line the day *before* their event, because there the transplant starts the next

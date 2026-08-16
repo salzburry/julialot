@@ -2275,6 +2275,30 @@ ok(length(gregexpr("cfg$induction_window_days", hold, fixed = TRUE)[[1]]) == 2L,
 ok(!grepl("OBS_END_DT", hold, fixed = TRUE),
    "...and not by the observation end, which is what LOT1_TX_AUTO_MAX_DT uses")
 
+# The same question at LOT2-5, which is where it was got wrong. The hold date
+# there was first taken from LOT{n}_TX_AUTO_MAX_DT, whose tandem arm bounds the
+# second transplant by sct_tandem_days from the FIRST one and by nothing else -
+# so a partner 180 days after an AUTO on the last day of a 30-day window sat 209
+# days past the line start and still counted. Reported and clamped that is
+# harmless; deciding an end date it swallows an added medication months later,
+# and the line that agent should have started never opens.
+holdn <- local({
+  e <- regexpr("END AS LOT{lot_num}_AUTO_HOLD_DT", l25_txt, fixed = TRUE)
+  cs <- gregexpr("CASE", l25_txt, fixed = TRUE)[[1]]
+  b  <- rev(cs[cs > 0 & cs < e])[1]
+  if (is.na(b) || e < 0) "" else substr(l25_txt, b, e)
+})
+ok(nchar(holdn) > 0, "LOT2-5 has a hold date of its own")
+ok(length(gregexpr("LOT_WINDOW_DAYS", holdn, fixed = TRUE)[[1]]) == 2L,
+   "...bounded by the line's own window on the tandem arm as well as the single one")
+ok(length(gregexpr("LOT_WINDOW_DAYS",
+                   substr(l25_txt, regexpr("LOTN_TX_AUTO_MAX_DT", l25_txt, fixed = TRUE),
+                          regexpr("END AS LOT{lot_num}_TX_AUTO_MAX_DT", l25_txt,
+                                  fixed = TRUE))[[1]], fixed = TRUE)[[1]]) == 2L,
+   "...and it is a different column from TX_AUTO_MAX_DT, which bounds one arm only")
+ok(!grepl("ec.LOT{lot_num}_TX_AUTO_MAX_DT", l25_txt, fixed = TRUE),
+   "...so no end-date branch reads the one-armed column by mistake")
+
 # One gate, stated three times - reason, date, length. If they drift, a line
 # reports one reason and the date of another.
 gates <- regmatches(e6, gregexpr(
