@@ -9,9 +9,6 @@ others are decisions the code cannot make for itself. The build ships as
 described, and every one is recorded in `lot/LOT_RULES.md` next to the rule it
 affects, so nobody reads the rules without meeting the caveat.
 
-The **Closed** section at the end lists what has been found and fixed. It is kept
-rather than deleted: each was found after the build was believed correct.
-
 ## Getting the numbers first
 
 What has been measured is named under each item. The counts live in
@@ -180,51 +177,3 @@ discontinuation, with the death recorded as the patient outcome it already is?
 so the other reading is recoverable in analysis without a rebuild.
 
 `lot/LOT_RULES.md` §7.5 and §14.4.
-
----
-
-## Closed
-
-**A drug returning after a confirmed gap could not start a line** — fixed. The
-exclusion was unconditional, so a line stretched over its own agent's absence:
-lenalidomide dispensed, gone for 185 days, dispensed again, and one line
-spanning seven months with no cover. `MAP_DISCON_FLG` already marked that gap,
-sat on the very row the line rules read, and was never consulted. It is now, in
-both halves at once — `discon_per_med` stops chaining at the last episode before
-the gap, and the prior-regimen exclusion releases the drug so the returning
-treatment has a line to go to. Either half alone is worse than neither. Against
-the production run this touched 495 line boundaries in 448 patients, median 257
-days uncovered. `lot/LOT_RULES.md` §4.3 and §11.1.
-
-
-**A planned tandem partner outside the window** — fixed, once the study team
-settled what makes a pair planned: a **clear gap**. Where nothing happens between
-the two transplants the second follows the first past the line's own window and
-the line is held open to it; where a medication, an allogeneic transplant or a
-CAR-T falls in between, the pair was never planned, so the later transplant is
-free to start a line instead. That single rule also settles the case where a
-partner fell inside a *later* line's window and was attached to the wrong line —
-the medication that started that later line is itself the interruption.
-`lot/LOT_RULES.md` §6.5 and §14.5.
-
-
-**A regimen containing an agent that started after the line ended** — fixed. A
-line picked its regimen over the whole induction window before it could know its
-own end date, because `phase_sct` ran after `phase_lot1_base`. Where a transplant
-ended the line early, the rest of the window kept collecting agents into the
-regimen of a line that was already over, and the same agent went on to start a
-later line. `phase_sct` now runs first, and `lot1_regimen_cutoff` /
-`lot{n}_regimen_cutoff` bound both the regimen window and the per-drug episode
-scan in `discon_per_med` — the second being the half that is easy to miss, since
-a refill of an agent legitimately in the regimen would otherwise still push the
-run-out past the transplant. `lot/LOT_RULES.md` §14.2 carries the record.
-
-
-**A CAR-T that belonged to no line** — fixed. The induction exemption measured
-its window from line 1's start and never asked whether line 1 was still running,
-so a line ending inside its own 60 days left an infusion that could neither end
-that line nor start the next. The exemption is now conditional on the line being
-active, and the run-out confirmation asks whether *any* transplant or CAR-T
-falls after the run-out rather than comparing against the line's earliest one.
-`lot/LOT_RULES.md` §14.1 carries the record, including the two wrong answers
-tried on the way.

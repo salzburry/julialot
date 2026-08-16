@@ -214,17 +214,10 @@ what matters is that it is not an episode start.
 The patient is on bortezomib and lenalidomide; the record says bortezomib. LEN
 still has only its d1 episode start, so LOT3's window cannot see it either.
 
-Worse, LEN is now free to start a line. The exclusion that stops a
-previous-line agent opening a line reads **one line back only**, and LEN is not
-in LOT2's regimen — so nothing holds it:
-
-    d205   LEN's cover finally lapses and it restarts, before BORT
-    ---
-    what ships:  LOT3  d205 -> ...   LEN BORT
-    correct:     LOT3  d210 -> ...   BORT
-
-Five days earlier, a different start type, and two regimens merged. With no BORT
-at all it is an extra line outright. `KNOWN_ISSUES.md` #1 carries this, and
+LEN is also free to start a line here: the exclusion that holds a previous-line
+agent reads **one line back only**, and LEN is not in LOT2's regimen. So if LEN's
+cover lapses and it restarts before BORT arrives, LEN opens LOT3 rather than
+BORT. `KNOWN_ISSUES.md` #1 carries this, and
 `run_scenario_counts.R`'s `4.3-line-started-by-an-agent-from-two-lines-back`
 counts it.
 
@@ -268,7 +261,7 @@ patient is on — is free to open LOT2.
 Both halves are needed and they ship together. Breaking the chain alone would end
 LOT1 in February and then refuse the September treatment a line, leaving it in
 nothing; releasing the drug alone would open a line inside a line still
-notionally running. §11.1 has what this cost while it was unfixed.
+notionally running. §11.1 is the reasoning and what the rule costs.
 
 **Scenario** — *derived.* While the drug is still running it is still the line's.
 
@@ -522,11 +515,6 @@ patients that lands on.
     ---
     LOT1  d0 -> d+40   SCT_AUTO_CONT
     the transplant is line 1's, and line 1 covers the day it happened
-
-Before this rule the same patient produced a line 1 of `d0 -> d+19`
-(`DISCONTINUATION`) and no line 2, because line 2's start gate refuses a
-transplant inside line 1's window — so the transplant appeared in no line at all.
-§14.5 has the full account.
 
 It cannot outrank an added agent, and the arithmetic rather than the branch
 order is why. An agent starting inside the window joins the regimen instead of
