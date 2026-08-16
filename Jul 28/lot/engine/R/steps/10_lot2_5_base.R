@@ -198,6 +198,19 @@ build_lot_n <- function(con, lot_num,
     "A CAR-T inside LOT1's induction window is part of LOT1 and starts nothing."
   else "No CAR-T exclusion at this line."
 
+  # The applicable window of the line auto_cand is looking BACK at, for the
+  # MED-started case. At LOT2 the previous line is always LOT1 - prev_end filters
+  # LOT_NUM = 1, and LOT1 is written into lot_long as 'MED' - so the window is
+  # LOT1's own 60 days, not the 30 that LOT2-5 use for themselves.
+  #
+  # It read 30 for every MED-started predecessor, LOT1 included. That put the
+  # gate 30 days short of the window LOT1 actually owns an AUTO over, so a
+  # transplant on days 30-59 was refused as a LOT2 start while LOT1 no longer
+  # covered it - see the SCT_AUTO_CONT branch in 06_lot1_end.R, which is the
+  # other half of the same rule and holds LOT1 open across exactly that range.
+  prev_med_window <- if (lot_num == 2L) lot1_induction_window_days
+                     else               induction_window_days
+
 
   # ---- Step N.1: compute candidate trigger dates ----
   materialize(con, paste0(pfx, "_lot", lot_num, "_start_candidates"),
@@ -281,7 +294,8 @@ build_lot_n <- function(con, lot_num,
     -- d_AUTO: earliest AUTO after PREV_END_DT that triggers a new LOT.
     -- Rule: AUTO starts a new LOT UNLESS
     --   (i) it falls inside the prior LOT's applicable window from PREV_START_DT
-    --       (30d MED/AUTO-started, 1d ALLO-started, 45d CART-started), or
+    --       ({prev_med_window}d MED/AUTO-started, 1d ALLO-started,
+    --       {cart_consolidation_days}d CART-started), or
     --   (ii) the AUTO is on/before sct_tandem_days (180d) after the IMMEDIATELY
     --        prior AUTO (planned tandem). tx_auto_dates has already merged
     --        AUTO claims < 60 d apart into one event, so by the time this CTE
@@ -300,13 +314,15 @@ build_lot_n <- function(con, lot_num,
       INNER JOIN autos_with_prev awp ON pe.PATID = awp.PATID
       WHERE awp.TX_DT > pe.PREV_END_DT
         AND awp.TX_DT <= pe.OBS_END_DT
-        -- (i) outside prior LOT's applicable window
+        -- (i) outside prior LOT's applicable window. The MED/AUTO-started case
+        -- is {prev_med_window} days here: LOT1's own window when the previous
+        -- line is LOT1, this line's otherwise.
         AND awp.TX_DT > date_add(
               pe.PREV_START_DT,
               CASE pe.PREV_START_TYPE
                 WHEN 'SCT_ALLO' THEN 0
                 WHEN 'CART'     THEN {cart_consolidation_days} - 1
-                ELSE                 {induction_window_days} - 1
+                ELSE                 {prev_med_window} - 1
               END)
         -- (ii) not a planned tandem. tx_auto_dates has already grouped AUTO
         -- claims < 60 d apart into one event, so only the sct_tandem_days
@@ -886,6 +902,40 @@ build_lot_n <- function(con, lot_num,
       LEFT JOIN lot{lot_num}_sct              sct ON lb.PATID = sct.PATID
       LEFT JOIN lot{lot_num}_contains_mtx_reg cmr ON lb.PATID = cmr.PATID
       LEFT JOIN post_runout_trigger           prt ON lb.PATID = prt.PATID
+    ),
+    -- The end this line would have had before an in-window AUTO is considered:
+    -- the date cascade below, minus its SCT_AUTO_CONT branch. Its own CTE
+    -- because LOT{lot_num}_BASE_DISCON_DT is derived in end_candidates and SQL
+    -- cannot reference a select-list alias from the same select list. Same
+    -- shape as end_natural in 06_lot1_end.R.
+    end_natural AS (
+      SELECT
+        ec.*,
+        CASE
+          WHEN ec.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND {if (allo_single_day) 1L else 0L} = 1
+            THEN ec.LOT{lot_num}_START_DT
+          WHEN ec.LOT{lot_num}_START_TYPE = 'CART' AND ec.LOT{lot_num}_MED_CNT = 0
+            THEN ec.LOT{lot_num}_START_DT
+          WHEN ec.LOT_TX_ENDDATE IS NOT NULL
+           AND NOT (ec.CART_INIT_FLG = 1 AND ec.LOT_TX_ENDDATE_REASON = 3)
+           AND (ec.LOT{lot_num}_BASE_1ST_ADD_MED_DT IS NULL
+                OR (ec.CART_INIT_FLG = 1 AND ec.LOT_TX_ENDDATE <= date_sub(ec.FIRST_CART_DT, 1))
+                OR (ec.CART_INIT_FLG = 0 AND ec.LOT_TX_ENDDATE <= ec.LOT{lot_num}_BASE_1ST_ADD_MED_DT))
+           AND (ec.LOT{lot_num}_BASE_DISCON_DT IS NULL OR ec.LOT_TX_ENDDATE <= ec.LOT{lot_num}_BASE_DISCON_DT)
+          THEN ec.LOT_TX_ENDDATE
+          WHEN ec.CART_INIT_FLG = 1
+           AND (ec.LOT{lot_num}_BASE_DISCON_DT IS NULL OR date_sub(ec.FIRST_CART_DT, 1) <= ec.LOT{lot_num}_BASE_DISCON_DT)
+          THEN date_sub(ec.FIRST_CART_DT, 1)
+          WHEN ec.LOT{lot_num}_BASE_1ST_ADD_MED_DT IS NOT NULL
+           AND ec.CART_INIT_FLG = 0
+           AND (ec.LOT{lot_num}_BASE_DISCON_DT IS NULL OR ec.LOT{lot_num}_BASE_1ST_ADD_MED_DT <= ec.LOT{lot_num}_BASE_DISCON_DT)
+          THEN ec.LOT{lot_num}_BASE_1ST_ADD_MED_DT
+          WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT
+           AND ec.POST_RUNOUT_TRIGGER_FLG = 0 THEN ec.DEATH_DT
+          WHEN ec.LOT{lot_num}_BASE_DISCON_DT IS NOT NULL THEN ec.LOT{lot_num}_BASE_DISCON_DT
+          ELSE ec.OBS_END_DT
+        END AS LOT{lot_num}_NATURAL_END_DT
+      FROM end_candidates ec
     )
     SELECT
       ec.*,
@@ -894,6 +944,23 @@ build_lot_n <- function(con, lot_num,
       --   CAR-T with no consolidation agents: LOT spans only FIRST_CART_DT.
       --   ALLO extend_to_next: fall through to the natural end-reason logic.
       CASE
+        -- SCT_AUTO_CONT: an AUTO inside this line's own applicable window
+        -- belongs to it, so the line cannot be finalised before the transplant.
+        -- Ends ON the AUTO, not the day before. See 06_lot1_end.R for the full
+        -- reasoning; this is the same rule at LOT2-5.
+        --
+        -- It is tested ahead of the two special start types deliberately. A
+        -- CAR-T-started line with no consolidation agents ends on its own start
+        -- date, so every AUTO in its {cart_consolidation_days}-day window falls
+        -- after the end - which made that the one case where an orphaned
+        -- transplant was guaranteed rather than incidental.
+        --
+        -- LOT{lot_num}_TX_AUTO_MAX_DT is already bounded to the window by
+        -- lot{lot_num}_sct, so no separate hold column is needed here.
+        WHEN ec.LOT{lot_num}_TX_AUTO_MAX_DT IS NOT NULL
+         AND ec.LOT{lot_num}_TX_AUTO_MAX_DT > ec.LOT{lot_num}_NATURAL_END_DT
+         AND (ec.DEATH_DT IS NULL OR ec.LOT{lot_num}_TX_AUTO_MAX_DT < ec.DEATH_DT)
+        THEN 'SCT_AUTO_CONT'
         WHEN ec.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND {if (allo_single_day) 1L else 0L} = 1
           THEN 'SCT_ALLO'
         WHEN ec.LOT{lot_num}_START_TYPE = 'CART' AND ec.LOT{lot_num}_MED_CNT = 0
@@ -930,30 +997,13 @@ build_lot_n <- function(con, lot_num,
         ELSE 'STUDY_END'
       END AS LOT{lot_num}_BASE_END_REASON,
       CASE
-        WHEN ec.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND {if (allo_single_day) 1L else 0L} = 1
-          THEN ec.LOT{lot_num}_START_DT
-        WHEN ec.LOT{lot_num}_START_TYPE = 'CART' AND ec.LOT{lot_num}_MED_CNT = 0
-          THEN ec.LOT{lot_num}_START_DT
-        WHEN ec.LOT_TX_ENDDATE IS NOT NULL
-         AND NOT (ec.CART_INIT_FLG = 1 AND ec.LOT_TX_ENDDATE_REASON = 3)
-         AND (ec.LOT{lot_num}_BASE_1ST_ADD_MED_DT IS NULL
-              OR (ec.CART_INIT_FLG = 1 AND ec.LOT_TX_ENDDATE <= date_sub(ec.FIRST_CART_DT, 1))
-              OR (ec.CART_INIT_FLG = 0 AND ec.LOT_TX_ENDDATE <= ec.LOT{lot_num}_BASE_1ST_ADD_MED_DT))
-         AND (ec.LOT{lot_num}_BASE_DISCON_DT IS NULL OR ec.LOT_TX_ENDDATE <= ec.LOT{lot_num}_BASE_DISCON_DT)
-        THEN ec.LOT_TX_ENDDATE
-        WHEN ec.CART_INIT_FLG = 1
-         AND (ec.LOT{lot_num}_BASE_DISCON_DT IS NULL OR date_sub(ec.FIRST_CART_DT, 1) <= ec.LOT{lot_num}_BASE_DISCON_DT)
-        THEN date_sub(ec.FIRST_CART_DT, 1)
-        WHEN ec.LOT{lot_num}_BASE_1ST_ADD_MED_DT IS NOT NULL
-         AND ec.CART_INIT_FLG = 0
-         AND (ec.LOT{lot_num}_BASE_DISCON_DT IS NULL OR ec.LOT{lot_num}_BASE_1ST_ADD_MED_DT <= ec.LOT{lot_num}_BASE_DISCON_DT)
-        THEN ec.LOT{lot_num}_BASE_1ST_ADD_MED_DT
-        WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT
-         AND ec.POST_RUNOUT_TRIGGER_FLG = 0 THEN ec.DEATH_DT
-        WHEN ec.LOT{lot_num}_BASE_DISCON_DT IS NOT NULL THEN ec.LOT{lot_num}_BASE_DISCON_DT
-        ELSE ec.OBS_END_DT
+        WHEN ec.LOT{lot_num}_TX_AUTO_MAX_DT IS NOT NULL
+         AND ec.LOT{lot_num}_TX_AUTO_MAX_DT > ec.LOT{lot_num}_NATURAL_END_DT
+         AND (ec.DEATH_DT IS NULL OR ec.LOT{lot_num}_TX_AUTO_MAX_DT < ec.DEATH_DT)
+        THEN ec.LOT{lot_num}_TX_AUTO_MAX_DT
+        ELSE ec.LOT{lot_num}_NATURAL_END_DT
       END AS LOT{lot_num}_BASE_END_DT
-    FROM end_candidates ec
+    FROM end_natural ec
   "), qc = glue("SELECT LOT{lot_num}_BASE_END_REASON, count(*) AS n
                  FROM lot{lot_num}_base_end
                  GROUP BY LOT{lot_num}_BASE_END_REASON

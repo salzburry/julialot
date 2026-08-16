@@ -209,9 +209,43 @@ LOT_QC_CHECKS <- list(
     FROM ", t$final, "
     WHERE LOT_BASE_END_REASON IS NULL
        OR LOT_BASE_END_REASON NOT IN
-          ('SCT_AUTO', 'SCT_ALLO', 'SCT_CART', 'SCT', 'CART_INIT',
-           'MED_ADD', 'DEATH', 'DISCONTINUATION', 'STUDY_END')"),
+          ('SCT_AUTO', 'SCT_AUTO_CONT', 'SCT_ALLO', 'SCT_CART', 'SCT',
+           'CART_INIT', 'MED_ADD', 'DEATH', 'DISCONTINUATION', 'STUDY_END')"),
     "coalesce(v, '(null)')")),
+
+  list(id = "B5b", group = "End reason", severity = "fail",
+       what = "SCT_AUTO_CONT ends on the transplant date itself",
+       why = paste0("The other two AUTO-shaped reasons end the line the day ",
+                    "BEFORE their transplant, because there the transplant ",
+                    "starts the next line. SCT_AUTO_CONT is the opposite case - ",
+                    "the transplant belongs to this line and closes it - so an ",
+                    "off-by-one here is the difference between the two rules, ",
+                    "not a rounding error."),
+       needs = "final",
+       sql = function(t, p) counted(paste0("
+    SELECT ", mask("PATID"), " AS pid, LOT_NUM
+    FROM ", t$final, "
+    WHERE LOT_BASE_END_REASON = 'SCT_AUTO_CONT'
+      AND (LOT_TX_AUTO_MAX_DT IS NULL
+           OR LOT_BASE_END_DT <> LOT_TX_AUTO_MAX_DT)"),
+    "concat(pid, ' LOT', LOT_NUM)")),
+
+  list(id = "B5c", group = "End reason", severity = "fail",
+       what = "an in-window transplant is never left outside its own line",
+       why = paste0("This is the defect SCT_AUTO_CONT exists to close. A line ",
+                    "whose AUTO flag is set must cover the transplant date: if ",
+                    "the line ends first, the next line's start gate refuses the ",
+                    "same transplant for being inside this line's window, and it ",
+                    "lands in no line at all. Checked on the flag rather than on ",
+                    "the reason, so it holds however the line ended."),
+       needs = "final",
+       sql = function(t, p) counted(paste0("
+    SELECT ", mask("PATID"), " AS pid, LOT_NUM
+    FROM ", t$final, "
+    WHERE LOT_TX_AUTO_FLG = 1
+      AND LOT_TX_AUTO_MAX_DT IS NOT NULL
+      AND LOT_TX_AUTO_MAX_DT > LOT_BASE_END_DT"),
+    "concat(pid, ' LOT', LOT_NUM)")),
 
   list(id = "B6", group = "End reason", severity = "fail",
        what = "the added-medication date is not before the line started",
