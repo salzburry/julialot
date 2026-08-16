@@ -28,7 +28,7 @@ MELP_CELLS <- list(
 # the narrow reading - the melphalan boundary is removed, and the line is not
 # held open to the second dose, because that would need melphalan to join a
 # regimen whose induction window it never entered. Open question 6 in
-# lot/LOT_RULES.md section 14, and n_b2_line_starts counts what it
+# lot/FILES.md, under lot/melphalan/, and n_b2_line_starts counts what it
 # decides.
 MELP_B2_READING <- paste0(
   "B.2: the melphalan boundary is removed and the line is not held open to the ",
@@ -472,7 +472,7 @@ melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP",
   # The B.2 group. All four conditions, because any one alone lets in lines with
   # no B.2 pair at all - a line DARA started, melphalan merely joining its
   # induction window, satisfies "after a runout, melphalan in the regimen".
-  # Open question 6 in lot/LOT_RULES.md section 14.
+  # Open question 6 in lot/FILES.md, under lot/melphalan/.
   b2 <- function(extra, alias) paste0(mx_with, "
     SELECT count(*) AS ", alias, "
     FROM (SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_START_TYPE,

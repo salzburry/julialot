@@ -14,8 +14,8 @@
 # and 3L, LOT1 length, regimens.
 #
 # Neither rule cell is the request implemented to the letter. On B.2 both take
-# the narrow reading, described in lot/LOT_RULES.md section 14 and left open
-# there as question 6.
+# the narrow reading, described in lot/FILES.md under lot/melphalan/ and left
+# open there as question 6.
 #
 # Execution is opt-in because a cell is a whole build, and there is no cheaper
 # way: moving a boundary changes which line every later dose falls in, and none

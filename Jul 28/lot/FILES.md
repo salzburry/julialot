@@ -1,8 +1,9 @@
 # What is in this folder
 
 The lines-of-therapy engine, and everything that depends on it. This file says
-what is here and what each file does. `LOT_RULES.md` is the other half: how a
-line is built, rule by rule, with worked examples.
+what is here and what each file does. `LOT_RULES.md` is the other half: the
+rules the line build applies, one at a time, each with a scenario showing what
+it does to a patient's claims.
 
 One package here writes a study run's LOT tables, and only that one: everything
 else reads that run, derives from it, or rebuilds it under a changed rule into
@@ -18,7 +19,7 @@ a prefix of its own. So the lines themselves have a single author.
 | `lot/questions/` | the study team's questions, one script each. Not a build. |
 | `lot/qc/` | the slower checks on a finished run, asked after the fact. `run_lot_qc.R`. |
 | `lot/validation/` | whether the rules are the right rules — vignettes, benchmarks, definitions, a sensitivity sweep. |
-| `lot/melphalan/` | a proposed line-advancing rule, built as three complete runs and differenced. Opt-in. |
+| `lot/melphalan/` | an exploration: a proposed line-advancing rule, built as three complete runs and differenced. Opt-in, and not in the study's numbers. |
 | `lot/safety/` | code lists for the protocol's key safety and utilisation events. Roster only — the codes are outstanding. |
 | `lot/tools/` | edits a production code list on request. Not a study stage. |
 
@@ -115,7 +116,7 @@ per patient, and has to fit the study window the run was given.
 | `R/db_utils_lot.R` | Connection, logging, retry, table naming (`wrk` / `lot_out`), `materialize()` and the step runner. |
 | `R/line_criteria.R` | Extra criteria on finished lines, declared as data. Every one is computed into `LOT_LONG_ALLFLAGS`; only the enabled ones are applied to `LOT_LONG_FINAL`. |
 | `R/cart_rule.R` | The CAR-T induction rule: an infusion inside line 1's window belongs to line 1 and neither ends nor starts a line. |
-| `R/melp_rule.R` | The melphalan rule. Off unless a mode is named, and off emits the same SQL as not having the file. It lives here because it needs each line's own induction window. |
+| `R/melp_rule.R` | The melphalan exploration's rule. Pinned off, and off emits the same SQL as not having the file, so it decides nothing in a study run. It lives here because it needs each line's own induction window — `lot/melphalan/` below. |
 | `R/prior_regimen.R` | The prior-regimen rule and each line's run-out. A drug in the previous regimen cannot start the next line; the line it belongs to extends over its later episodes instead, stopping at any other agent arriving in between. |
 | `R/steps/01_codelists.R` | Code lists into views, then the consistency checks between them — which are fatal, which are waivable through `CODELIST_WAIVERS`, and why. |
 | `R/steps/02_patient_input.R` | The cohort as the build reads it, snapshotted into `LOT_PATIENT_INPUT`. Sets the observation end date every later gap and window is measured against. |
@@ -168,8 +169,8 @@ criterion's so a rename cannot leave the predicate reading nothing.
 Every run says what it applied: the log names each criterion, whether it was
 applied and how many patients fail it — the disabled ones too — and the same goes
 into `LINE_CRITERIA_APPLIED` in `LOT_RUN_METADATA` as
-`no_belantamab=on:truncate:37`. `LOT_RULES.md` §9 is what a criterion means for
-the lines.
+`no_belantamab=on:truncate:37`. `LOT_RULES.md` is what a criterion means for
+the lines, under "Belantamab removes the patient, not the line".
 
 ### The funnel
 
@@ -391,26 +392,116 @@ removed does not give a line count: moving a boundary changes which line an
 exposure falls in, whether an agent is inside an induction window, regimen
 membership, discontinuation dates and every later line number.
 
-## `lot/melphalan/` — the proposed rule, built
+## `lot/melphalan/` — an exploration, not a rule
 
-Three complete LOT runs — `reference`, `as_asked`, `yield_to_sct` — and the
-difference between them. All three or none: a run where one mode failed reads
-like a finished experiment and is not one. Cells write to `melp_reference_`,
-`melp_as_asked_` and `melp_yield_to_sct_`, and a plan that would write to the
-study's own prefix is refused.
+**Nothing here is in the study's numbers.** `apply_melp_rule` is pinned blank in
+`CONTRACT`, blank generates the SQL the engine generated before this existed,
+and every cell that names a mode records a contract deviation that the
+questions, the dashboard and the benchmark harness all refuse. This is why the
+proposal is described here, in the folder inventory, and not in `LOT_RULES.md`:
+`LOT_RULES.md` is the confirmed rules, and this is not one of them.
+
+What it is: a study-team proposal that a melphalan (`MELP`) administration
+should advance the line on windows of its own, built as three complete LOT runs
+— `reference`, `as_asked`, `yield_to_sct` — and differenced. Three builds rather
+than arithmetic on a finished run, because the engine is sequential: a line's
+end date sets the next line's start, which sets that line's induction window,
+which decides which drugs join its regimen, which sets its discontinuation date,
+which decides whether the line after it starts at all.
+
+All three or none: a run where one mode failed reads like a finished experiment
+and is not one. Cells write to `melp_reference_`, `melp_as_asked_` and
+`melp_yield_to_sct_`, and a plan that would write to the study's own prefix is
+refused.
 
 | path | what it does |
 |---|---|
-| `run_aug1_melp.R` | Builds the comparison as three complete runs rather than estimating it, because moving one boundary changes every later line. Prints the plan by default; `AUG1_EXECUTE=TRUE` builds. |
+| `run_aug1_melp.R` | Builds the comparison as three complete runs rather than estimating it. Prints the plan by default; `AUG1_EXECUTE=TRUE` builds. |
 | `R/cells.R` | Which three builds, what is read off them, and the checks that they saw the same cohort, the same code lists, the same code and the same window. |
 | `R/scenarios.R` | The study team's four worked patients, held as data. |
 | `run_melp_scenarios.R` | Runs those scenarios through the shipped rule — the decision lifted out of the generated SQL rather than restated — and exits non-zero if any of them moves. No connection. |
 | `read_melp_metrics.R` | Reads the comparison off cells that are already built. |
-| `tests/test_aug1_melp.R` | That off is the absence of the rule, and the branch decision checked against the ask. |
+| `tests/test_aug1_melp.R` | That off is the absence of the rule, and the branch decision checked against the proposal. |
 
-The rule itself is not here — it is `lot/engine/R/melp_rule.R`, because the engine
-builds the lines and the rule needs each line's induction window. `LOT_RULES.md`
-§14 is the rule, the branch table, and the questions still open on it.
+The rule itself is not in this folder — it is `lot/engine/R/melp_rule.R`,
+because the engine builds the lines and the rule needs each line's own induction
+window, which exists only while that line is being built. It is off by default
+and off emits nothing.
+
+### The proposal
+
+An exposure is one administration; doses less than `melp_exposure_days` (30)
+apart are the same exposure. Consecutive exposures are judged as a pair, on the
+gap between them and on whether the first sits inside the line's induction
+window:
+
+| Branch | Condition | Effect | Against the shipped engine |
+|---|---|---|---|
+| A.1 | inside induction, gap < 180 | no boundary | agrees |
+| A.2 | inside induction, gap ≥ 180 | the later dose advances the line | differs — today the repeat dose extends the line's run-out instead |
+| B.1 | outside induction, gap < 60 | this dose starts a line | agrees, incidentally |
+| B.2 | outside induction, 60 ≤ gap < 180 | no boundary | differs — today the first dose advances the line |
+| B.3 | outside induction, gap ≥ 180 | the later dose advances the line | differs — today the first dose does |
+
+It moves in both directions, so the net effect on line counts is not derivable:
+A.2 makes more lines, B.2 and B.3 make fewer, and which wins depends on how many
+patients sit in each branch. `run_melphalan_rule.R` in `lot/validation/` reports
+the branch counts off a finished run without rebuilding anything.
+
+**Two readings of a coded transplant**, which is why three cells are built
+rather than two. High-dose melphalan is transplant conditioning, so a melphalan
+claim and an AUTO code are often the same clinical event and the transplant rule
+already fires on it. `as_asked` judges every exposure regardless; `yield_to_sct`
+leaves an exposure with an AUTO within `melp_sct_days` (14) to the transplant
+rule, so the melphalan rule fills only the gap where a transplant left no
+procedure code. Every output row records which mode produced it.
+
+**What B.2 does and does not do.** Suppressing B.2's boundaries stops melphalan
+ending the line at either dose. It does not hold the line open to the second
+dose. A line's discontinuation date is its base agents' last cover, and a
+melphalan first seen outside the induction window is not a base agent, so it
+does not extend that date — a line whose regimen runs out between the two doses
+still ends there, and the second dose falls in whatever line follows.
+
+### What has to be settled before it could be built for real
+
+The measurement program had to pick an answer to some of these to run at all.
+Where it did, the assumption is named. An assumption is not a decision.
+
+1. Does the rule apply to melphalan alone, or to any agent used as transplant
+   conditioning? As written it is drug-specific, which is a first for this
+   algorithm — every other rule is about classes, windows and gaps. *The program
+   assumes melphalan alone, through `melp_med_abbr`.* **Open.**
+
+2. What happens when the transplant procedure code is also present? The AUTO
+   rule and this rule would both fire on one clinical event. *The program runs
+   both readings and writes the mode onto every row.* **Open.**
+
+3. Is 30 days the exposure threshold, or 28? The build's medical day supply is
+   28, so episodes already merge on that boundary. *The program uses 30.*
+   **Confirmed by the worked examples.**
+
+4. Third and later exposures. The proposal is written for a first and a next
+   dose. *The program judges consecutive pairs.* **Confirmed by examples 3 and
+   4.**
+
+5. Does it apply at every line, or only at 1L? The induction window is 60 days
+   at 1L and 30 later, so the branches land differently. *The program applies it
+   at every line, against that line's own window.* **Confirmed by examples 3 and
+   4.**
+
+6. In B.2, does "both doses stay in the current line" mean the line has to be
+   held open to the second dose? Half of this is settled — the worked examples
+   say the second dose starts no line, and the boundary is removed at both
+   doses. What is left open is whether the line has to be held open to reach it,
+   which would need melphalan to join a regimen whose induction window it never
+   entered: a change to what a regimen means rather than a setting, and a
+   clinical decision. **Open**, and `n_b2_line_starts` is the number that
+   settles it — MED-started lines whose start is a B.2 second dose, with
+   `n_b2_melp_only` the subset no other agent could have started.
+
+Neither mode is the proposal implemented to the letter: the mode names describe
+the transplant reading, and on B.2 both take the narrow one above.
 
 ## `lot/safety/` — the protocol's safety and utilisation code lists
 

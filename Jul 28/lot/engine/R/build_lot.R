@@ -29,7 +29,7 @@ CONTRACT <- list(
   apply_melp_rule             = "",
   # A CAR-T inside LOT1's induction window is part of LOT1 - it neither ends
   # the line nor starts one. Confirmed by the study team on 2026-08-13; see
-  # R/cart_rule.R and lot/LOT_RULES.md section 12.
+  # R/cart_rule.R and the CAR-T induction rule in lot/LOT_RULES.md.
   apply_cart_induction_rule   = TRUE,
   # The protocol's belantamab exclusion. Pinned here so an unset
   # APPLY_NO_BELANTAMAB leaves it on rather than silently off, and turning it
