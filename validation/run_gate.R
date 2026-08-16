@@ -57,7 +57,9 @@ EXPECTED_FAILURES <- list(
     "05_sct.R: differs beyond the approved deviations in 11 line(s)",
     "04_lot1_base.R: differs from 02_lot1.R in 127 line(s)",
     "05b_lot1_sct.R: differs beyond the approved deviations in 148 line(s)",
-    "06_lot1_end.R: differs beyond the approved deviations in 205 line(s)",
+    # 205 -> 208: the post-run-out trigger's two SCT date comparisons became one
+    # existence test over a new post_runout_sct CTE. Re-pinned deliberately.
+    "06_lot1_end.R: differs beyond the approved deviations in 208 line(s)",
     "08_persist.R: differs beyond the approved deviations in 111 line(s)",
     # 823 -> 826: cart_exclude_predicate gained the active-through argument, so
     # the call is three lines rather than two. Re-pinned deliberately, which is

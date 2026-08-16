@@ -823,17 +823,52 @@ ok(has(xcl, "BETWEEN pe.PREV_START_DT AND date_add(pe.PREV_START_DT, 59)"),
 # Both halves are one NOT(), so a CAR-T failing either half is a candidate.
 ok(length(gregexpr("AND NOT (", xcl, fixed = TRUE)[[1]]) == 1L,
    "...as one negated conjunction, so failing either half leaves the CAR-T a start candidate")
-# The other side of the same rule. This arm already requires the infusion to be
-# after the run-out, so the line had stopped before it arrived - it must be able
-# to confirm the run-out it follows. Through ENDING_CART_DT it could not.
+# The other side of the same rule: a CAR-T after the run-out has to be able to
+# confirm the run-out it follows. Two wrong answers were shipped here in turn -
+# ENDING_CART_DT, which the induction exemption nulls, and then FIRST_CART_DT,
+# which is min() over the line and so hides a later infusion behind an earlier
+# absorbed one. The property that rules both out is that the arm reads no
+# aggregate at all.
 e6 <- paste(readLines(file.path(ROOT, "R", "steps", "06_lot1_end.R"), warn = FALSE),
             collapse = "\n")
 prt <- substr(e6, regexpr("post_runout_trigger AS", e6),
               regexpr("AS POST_RUNOUT_TRIGGER_FLG", e6))
-ok(has(prt, "sct.FIRST_CART_DT > lb.LOT1_BASE_RUNOUT_DT"),
-   "a CAR-T after the run-out confirms it, whatever the induction window says")
-ok(!has(prt, "sct.ENDING_CART_DT"),
-   "...and the eligible-to-end date is not what that arm reads, which was the gap")
+ok(!grepl("sct\\.", prt),
+   "no arm of the post-run-out trigger reads lot1_sct, whose dates are min() over the line")
+ok(length(gregexpr("PATID IS NOT NULL", prt, fixed = TRUE)[[1]]) == 3L,
+   "...all three event arms are existence tests over per-row CTEs, med / sct / auto")
+ok(!grepl("> lb\\.LOT1_BASE_RUNOUT_DT", prt),
+   "...and none of them compares a date, which is what let an earlier event hide a later one")
+
+# The predicate itself, lifted out of the step's own SQL and evaluated over the
+# patient it was got wrong for. A second copy written here would agree with
+# whatever this file believed, so the text is translated rather than restated,
+# and the translation has to consume all of it - a leftover SQL fragment makes
+# eval() error rather than quietly testing something else.
+prs <- substr(e6, regexpr("post_runout_sct AS", e6), regexpr("post_runout_trigger AS", e6))
+wh  <- sub("(?s)^.*?WHERE\\s+", "", prs, perl = TRUE)
+wh  <- gsub("\\s+", " ", sub("(?s)\\),.*$", "", wh, perl = TRUE))
+r <- wh
+r <- gsub("lb.LOT1_BASE_RUNOUT_DT IS NOT NULL", "!is.na(RUNOUT)", r, fixed = TRUE)
+r <- gsub("ac.SCT_TYPE IN ('ALLO', 'CART')", "TYPE %in% c('ALLO','CART')", r, fixed = TRUE)
+r <- gsub("ac.TX_DT > lb.LOT1_BASE_RUNOUT_DT", "TX > RUNOUT", r, fixed = TRUE)
+r <- gsub("ac.TX_DT <= lb.OBS_END_DT", "TX <= OBS_END", r, fixed = TRUE)
+r <- gsub(" AND ", " & ", r, fixed = TRUE)
+ok(!grepl("ac\\.|lb\\.|SELECT|WHERE", r),
+   "the post-run-out SCT predicate translates whole, so the case below tests the shipped text")
+confirms <- function(TX, TYPE = "CART", RUNOUT = 39, OBS_END = 100)
+  isTRUE(eval(parse(text = r)))
+
+# LEN d0, a CAR-T absorbed into the live line on d20, LEN running out d39, a
+# second CAR-T on d50, observation ending d100 - 61 days after the run-out, so
+# it cannot be confirmed by observation either.
+ok(!confirms(20), "an absorbed CAR-T before the run-out does not confirm it")
+ok(confirms(50),  "...and the second one, after the run-out, does")
+ok(any(vapply(c(20, 50), confirms, logical(1))),
+   "...so the patient with both confirms, which reading min() over the two could not")
+ok(confirms(50, TYPE = "ALLO") && !confirms(20, TYPE = "ALLO"),
+   "the same holds for ALLO, which had the identical min() comparison")
+ok(!confirms(120), "an infusion past the end of observation confirms nothing")
 
 # Generated with the rule ON, which the fixture above never does.
 cenv <- new.env(parent = globalenv())
