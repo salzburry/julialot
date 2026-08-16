@@ -83,8 +83,9 @@ phase_lot1_end <- function(con, ctx) {
     -- These CTEs MIRROR the actual LOT2 start-candidate logic from
     -- lot2_5_base.R (med_cand / auto_cand) so the guard fires exactly when
     -- LOT2 would actually have a valid start trigger:
-    --   - MED: any non-steroid MM agent NOT in LOT1's permissible biosimilar
-    --     substitutes. Same-drug restarts DO qualify.
+    --   - MED: any non-steroid MM agent that is NOT in LOT1's regimen and
+    --     NOT one of its permissible biosimilar substitutes. A restart of a
+    --     LOT1 regimen drug does NOT qualify - LOT1 extends over it instead.
     --   - AUTO: any AUTO outside LOT1 30-day applicable window
     --     (LOT2-5 auto_cand uses 30d for any MED-started prior LOT,
     --     regardless of LOT1's own 60d induction window) AND not within
@@ -161,7 +162,7 @@ phase_lot1_end <- function(con, ctx) {
         -- point. Either confirms it: {cfg$lot_discon_confirm_days} days of
         -- observation after it, or a LOT2-qualifying trigger. Unconfirmed
         -- leaves it NULL and the cascade censors at OBS_END_DT - which would
-        -- swallow the restart if elapsed time were the only test, since LOT2
+        -- swallow the trigger if elapsed time were the only test, since LOT2
         -- has to start after LOT1 ends.
         CASE
           WHEN lb.LOT1_BASE_RUNOUT_DT IS NOT NULL

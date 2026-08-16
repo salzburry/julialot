@@ -417,13 +417,6 @@ build_lot_n <- function(con, lot_num,
     -- discontinued. A later episode of the same drug does NOT open the next
     -- line: it was in this line's regimen, so this line extends over it, and
     -- the chain stops at the first break a different agent causes.
-    --
-    -- max(MAP_END_DT) over every episode quietly undid that. Drug A dosed
-    -- days 0-27, discontinued at 27 by the 90-day gap, restarting 117-144 gave
-    -- a line-level runout of 144: the restart was swallowed, and LOT2 never
-    -- opened because its trigger has to fall strictly after the previous end.
-    -- MAP_DISCON_FLG had been computed correctly all along and read by nothing
-    -- but a QC count.
     discon_per_med AS (
 {discon_per_med_sql(glue('lot{lot_num}_start'), glue('LOT{lot_num}_START_DT'))}
     ),

@@ -57,13 +57,6 @@ phase_lot1_base <- function(con, ctx) {
     -- Per drug, the end of ITS cover in this line. A later episode of the same
     -- drug extends it rather than opening a line, unless an agent that would
     -- end the line arrives in between.
-    --
-    -- max(MAP_END_DT) over every episode quietly undid that. Drug A dosed
-    -- days 0-27, discontinued at 27 by the 90-day gap, restarting 117-144 gave
-    -- a line-level runout of 144: the restart was swallowed, and LOT2 never
-    -- opened because its trigger has to fall strictly after the previous end.
-    -- MAP_DISCON_FLG had been computed correctly all along and read by nothing
-    -- but a QC count.
     discon_per_med AS (
 {discon_per_med_sql('lot1_start', 'LOT1_START_DT')}
     ),

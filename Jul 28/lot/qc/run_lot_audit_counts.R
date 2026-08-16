@@ -6,7 +6,6 @@
 #
 #   # run them
 #   DATABRICKS_PWD=... DOMINO_USER_NAME=usr00000 OBJECT_PREFIX=ndmm_ \
-#     INPUT_COHORT_TABLE=ndmm_NDMM_COHORT \
 #     AUDIT_EXECUTE=TRUE Rscript run_lot_audit_counts.R
 #
 # Read-only. Every statement is a SELECT; nothing is written to the warehouse.
@@ -43,7 +42,7 @@ AUDIT_COUNTS <- list(
   #    also reaches the run-out and the next line's prior-regimen exclusion.
   list(id = "regimen-agent-begins-after-line-end",
        what = "Lines naming a regimen agent whose first supply episode starts after the line ended",
-       expect = "synthetic: 30 of 10,659 lines carrying a regimen",
+       expect = "no comparator - the synthetic figure came from a query missing its lower bound, so it was a floor, not a count",
        sql = "
       WITH exploded AS (
         SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_BASE_END_DT,
@@ -88,7 +87,7 @@ AUDIT_COUNTS <- list(
   #    an ALLO line is one day by design, and therapy past LOT5 is the cap. Only
   #    the residual bucket is a question.
   list(id = "outside-line-days-by-cause",
-       what = "Non-steroid agent-DAYS owned by no line, partitioned by cause",
+       what = "Non-steroid agent-DAYS owned by no LOT, split by cause - only the unexplained bucket is a question",
        expect = "no synthetic target - the unpartitioned 11.1% was an invalid measure",
        sql = "
       WITH bounds AS (
@@ -98,28 +97,53 @@ AUDIT_COUNTS <- list(
         FROM {t$long} GROUP BY PATID
       ),
       drug_days AS (
-        SELECT m.PATID, m.MAP_MED_TYPE, m.MAP_CNT,
+        SELECT m.PATID, m.MAP_MED_TYPE, m.MAP_CNT, m.MAP_START_DT,
                explode(sequence(m.MAP_START_DT, m.MAP_END_DT, interval 1 day)) AS SUPPLY_DT
         FROM {t$map} m
         WHERE m.MAP_MED_CLASS <> 'STEROID'
           AND m.MAP_START_DT IS NOT NULL AND m.MAP_END_DT IS NOT NULL
           AND m.MAP_END_DT >= m.MAP_START_DT
       ),
+      -- Per EPISODE, not per day: did this episode begin inside some LOT? If so
+      -- its uncovered days are carryover, which the rules deliberately do not
+      -- move into the next regimen.
+      episode_began_in_lot AS (
+        SELECT DISTINCT m.PATID, m.MAP_MED_TYPE, m.MAP_CNT
+        FROM {t$map} m
+        INNER JOIN {t$long} l ON l.PATID = m.PATID
+         AND m.MAP_START_DT BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT
+        WHERE m.MAP_MED_CLASS <> 'STEROID'
+      ),
+      allo_lots AS (
+        SELECT PATID, LOT_START_DT FROM {t$long} WHERE LOT_START_TYPE = 'SCT_ALLO'
+      ),
       orphan AS (
-        SELECT d.*, b.FIRST_START, b.LAST_END, b.MAX_LOT
+        SELECT d.PATID, d.MAP_MED_TYPE, d.MAP_CNT, d.SUPPLY_DT,
+               b.FIRST_START, b.LAST_END, b.MAX_LOT,
+               CASE WHEN e.PATID IS NOT NULL THEN 1 ELSE 0 END AS IS_CARRYOVER,
+               CASE WHEN a.PATID IS NOT NULL THEN 1 ELSE 0 END AS NEAR_ALLO
         FROM drug_days d
         LEFT JOIN bounds b ON b.PATID = d.PATID
+        LEFT JOIN episode_began_in_lot e
+               ON e.PATID = d.PATID AND e.MAP_MED_TYPE = d.MAP_MED_TYPE
+              AND e.MAP_CNT = d.MAP_CNT
+        LEFT JOIN allo_lots a
+               ON a.PATID = d.PATID
+              AND d.SUPPLY_DT BETWEEN date_sub(a.LOT_START_DT, 1)
+                                  AND date_add(a.LOT_START_DT, 1)
         WHERE NOT EXISTS (SELECT 1 FROM {t$long} l
                           WHERE l.PATID = d.PATID
                             AND d.SUPPLY_DT BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT)
       ),
       total AS (SELECT count(*) AS N_ALL_AGENT_DAYS FROM drug_days)
       SELECT CASE
-               WHEN FIRST_START IS NULL             THEN 'patient has no LOT'
-               WHEN SUPPLY_DT <  FIRST_START        THEN 'before LOT1'
+               WHEN FIRST_START IS NULL                  THEN 'patient has no LOT'
+               WHEN SUPPLY_DT <  FIRST_START             THEN 'before LOT1'
                WHEN MAX_LOT = 5 AND SUPPLY_DT > LAST_END THEN 'past the LOT5 cap'
-               WHEN SUPPLY_DT >  LAST_END           THEN 'after the last observed LOT'
-               ELSE 'gap between LOTs'
+               WHEN SUPPLY_DT >  LAST_END                THEN 'after the last observed LOT'
+               WHEN IS_CARRYOVER = 1                     THEN 'carryover: episode began inside a LOT'
+               WHEN NEAR_ALLO = 1                        THEN 'adjacent to a one-day ALLO LOT'
+               ELSE 'unexplained gap between LOTs'
              END                                     AS CAUSE,
              count(*)                                AS N_ORPHAN_AGENT_DAYS,
              round(100.0 * count(*) / max(N_ALL_AGENT_DAYS), 2) AS PCT_OF_ALL_AGENT_DAYS,
@@ -146,7 +170,7 @@ AUDIT_COUNTS <- list(
         INNER JOIN lot1 l ON l.PATID = s.PATID
         WHERE s.FIRST_CART_DT IS NOT NULL
           AND s.FIRST_CART_DT BETWEEN l.LOT1_START_DT
-                                  AND date_add(l.LOT1_START_DT, {lot1_window - 1})
+                                  AND date_add(l.LOT1_START_DT, {p$ind1 - 1})
       ),
       cart_line AS (
         SELECT DISTINCT PATID FROM {t$long} WHERE LOT_START_TYPE = 'CART'
@@ -177,8 +201,8 @@ report_plan <- function() {
     cat("  ", a$id, "\n    ", a$what, "\n    ", a$expect, "\n", sep = "")
   }
   cat("\n", length(AUDIT_COUNTS), " counts. Set AUDIT_EXECUTE=TRUE to run them.\n", sep = "")
-  cat("Needs DATABRICKS_PWD, DOMINO_USER_NAME (or PROJECT_WORK_SCHEMA),\n")
-  cat("OBJECT_PREFIX and INPUT_COHORT_TABLE.\n\n")
+  cat("Needs DATABRICKS_PWD, DOMINO_USER_NAME (or PROJECT_WORK_SCHEMA)\n")
+  cat("and OBJECT_PREFIX. No cohort table: nothing here reads one.\n\n")
 }
 
 main <- function() {
@@ -207,12 +231,6 @@ main <- function() {
     stop("OBJECT_PREFIX '", pfx, "' should be a name ending in '_'.", call. = FALSE)
   cfg$object_prefix <- pfx
 
-  cohort <- trimws(Sys.getenv("INPUT_COHORT_TABLE", unset = ""))
-  if (!nzchar(cohort))
-    stop("No INPUT_COHORT_TABLE. The death-date count reads the cohort for its ",
-         "observation window. Give the whole name including the prefix, e.g. ",
-         pfx, "NDMM_COHORT.", call. = FALSE)
-
   set_lot_config(cfg)
   dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
   stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
@@ -228,11 +246,9 @@ main <- function() {
   # with the build's own idea of when observation stopped.
   obs_col <- if (isTRUE(cfg$censor_at_disenrollment)) "ENDDATE_CE" else "ENDDATE"
 
-  lot1_window <- cfg$induction_window_days
   t <- list(long   = lot_out(which_tbl),
             map    = lot_out("MAP_STACKED"),
-            sct    = lot_out("LOT1_SCT"),
-            cohort = wrk(cohort))
+            sct    = lot_out("LOT1_SCT"))
 
   cat("Counting against:\n")
   for (nm in names(t)) cat("  ", nm, ": ", t[[nm]], "\n", sep = "")
@@ -259,6 +275,27 @@ main <- function() {
 
   con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+
+  # Counting a half-written run reports its incompleteness as findings. Refuse
+  # one whose own build did not finish, the way run_lot_qc.R does, and take the
+  # induction window from what THAT run recorded rather than today's config.csv.
+  source(file.path(.script_dir, "R", "checks.R"))
+  st <- db_q(con, glue("SELECT RUN_ID, STATUS FROM {lot_out('LOT_BUILD_STATUS')}
+                        ORDER BY RUN_ID DESC LIMIT 1"))
+  if (!nrow(st))
+    stop("No row in ", lot_out("LOT_BUILD_STATUS"), ", so there is no run to ",
+         "count under prefix ", pfx, ".", call. = FALSE)
+  run_id <- as.character(st$RUN_ID[1]); status <- as.character(st$STATUS[1])
+  if (!identical(toupper(status), "COMPLETE"))
+    stop("The run owning this prefix is '", status, "', not complete. Counting ",
+         "it would report an unfinished build as findings.", call. = FALSE)
+  meta <- db_q(con, glue("SELECT CONTRACT_SETTINGS FROM {lot_out('LOT_RUN_METADATA')}
+                          WHERE RUN_ID = '{run_id}'"))
+  if (!nrow(meta))
+    stop("No LOT_RUN_METADATA row for run ", run_id, ", so the settings this ",
+         "run was built with are unknown.", call. = FALSE)
+  p <- qc_params(as.character(meta$CONTRACT_SETTINGS[1]), run_id)
+  cat("Run ", run_id, " (", status, "), induction window ", p$ind1, " days\n\n", sep = "")
 
   rows <- list()
   failed <- 0L
