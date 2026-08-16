@@ -416,8 +416,9 @@ build_lot_n <- function(con, lot_num,
       INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
     ),{melp_lotn_ctes(cfg, lot_num, induction_window_days, cart_consolidation_days, allo_lot_span)}
     -- Per drug, the end of ITS cover in this line: the FIRST episode flagged
-    -- discontinued. A later episode of the same drug is a restart, and a
-    -- restart opens the next line rather than extending this one.
+    -- discontinued. A later episode of the same drug does NOT open the next
+    -- line: it was in this line's regimen, so this line extends over it, and
+    -- the chain stops at the first break a different agent causes.
     discon_per_med AS (
 {discon_per_med_sql(glue('lot{lot_num}_start'), glue('LOT{lot_num}_START_DT'))}
     ),
