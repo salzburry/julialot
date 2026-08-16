@@ -92,6 +92,7 @@ first place, which is what the `to confirm` marker is for.
 | §6.2 | AUTO events under 60 days apart merge | `sct_auto_gap_days` | |
 | §6.3 | A second AUTO within 180 days is a planned tandem | `sct_tandem_days` | |
 | §6.4 | A CAR-T inside line 1's induction window is part of line 1 | `apply_cart_induction_rule` | |
+| §6.5 | An AUTO inside a line's own window holds that line open | `induction_window_days`, `cart_consolidation_days` | |
 | §7.1 | A line ends at the first of six events, by priority | — | |
 | §7.2 | Within the transplant branch the earliest date wins | — | |
 | §7.3 | An added agent then a CAR-T within 45 days is `CART_INIT` | `cart_consolidation_days` | |
@@ -792,6 +793,70 @@ Turning it off needs `LOT_CONTRACT_OVERRIDE=TRUE` and
 `APPLY_CART_INDUCTION_RULE=FALSE`, and is recorded as a deviation like any other
 contract change.
 
+### 6.5 An AUTO inside a line's own window holds that line open
+
+A transplant inside a line's applicable window belongs to that line, so the line
+cannot be finalised before it. Where the line would otherwise have ended earlier,
+it runs to the transplant and ends **on** it, with reason `SCT_AUTO_CONT`.
+
+The windows are each line's own, measured from its start:
+
+| line started by | window | setting |
+|---|---|---|
+| line 1 (medication) | days 0–59 | `induction_window_days` |
+| a medication or an AUTO, lines 2–5 | days 0–29 | `lot_n_induction_window_days` |
+| a CAR-T | days 0–44 | `cart_consolidation_days` |
+| an allogeneic transplant | the transplant date alone | — |
+
+Ending **on** the transplant is the opposite of the two other AUTO-shaped
+reasons, and deliberately so. `SCT_AUTO` and the transplant branch in §7.2 end a
+line the day *before* their event, because there the transplant starts the next
+line. Here it closes this one.
+
+**Scenario** — *to confirm.* A short first fill, then a transplant.
+
+    d0     1L starts on LEN, 20 days supply
+    d+19   cover runs out
+    d+40   autologous transplant, inside line 1's 60-day window
+    ---
+    LOT1  d0 -> d+40   SCT_AUTO_CONT
+    the transplant is line 1's, and line 1 covers the day it happened
+
+Before this rule the same patient produced a line 1 of `d0 -> d+19`
+(`DISCONTINUATION`) and no line 2, because line 2's start gate refuses a
+transplant inside line 1's window — so the transplant appeared in no line at all.
+§14.5 has the full account.
+
+**Scenario** — *to confirm.* It outranks an added agent, and loses to a death.
+
+    d0     1L starts on LEN, 20 days supply
+    d+19   cover runs out
+    d+30   DARA starts — an added agent, which would end line 1 at d+29
+    d+40   autologous transplant
+    ---
+    LOT1  d0 -> d+40   SCT_AUTO_CONT, not MED_ADD at d+29
+
+    d0     1L starts on LEN, 20 days supply
+    d+19   cover runs out
+    d+30   death
+    d+40   a transplant claim dated after the death
+    ---
+    LOT1  d0 -> d+30   DEATH. A line does not outlive the patient
+
+The second is not hypothetical bookkeeping: claims carry service dates after a
+recorded death, so the death guard is written into the rule rather than left to
+the ordering of the branches.
+
+A transplant at or after an allogeneic transplant or a CAR-T can never reach this
+rule — §6.4's censor drops it first — so `SCT_ALLO`, `SCT_CART` and `CART_INIT`
+ends are untouched by it.
+
+**What it moved.** Line 1 and line 2–5 lengths for the patients it touches, the
+`DISCONTINUATION` / `MED_ADD` / `SCT_CART` end-reason split, and — because a
+later line starts after the previous one ends — the start date and start type of
+the line after. Line *counts* move only where the transplant previously appeared
+in no line. Numbers from any run before 2026-08-16 are not comparable on those.
+
 ---
 
 ## 7. How a line ends
@@ -809,12 +874,20 @@ against the ones under it — the transplant branch fires only when
 
 | Order | Branch | End date |
 |---|---|---|
-| 1 | a transplant or CAR-T | the day before the procedure — §7.2 |
-| 2 | `CART_INIT` | the day before the infusion — §7.3 |
-| 3 | `MED_ADD` | the day before the added agent — §7.4 |
-| 4 | `DEATH` | the date of death — §7.5 |
-| 5 | `DISCONTINUATION` | the confirmed run-out date — §5.3 |
-| 6 | `STUDY_END` | the end of observation |
+| 1 | `SCT_AUTO_CONT` | the date of the transplant itself — §6.5 |
+| 2 | a transplant or CAR-T | the day before the procedure — §7.2 |
+| 3 | `CART_INIT` | the day before the infusion — §7.3 |
+| 4 | `MED_ADD` | the day before the added agent — §7.4 |
+| 5 | `DEATH` | the date of death — §7.5 |
+| 6 | `DISCONTINUATION` | the confirmed run-out date — §5.3 |
+| 7 | `STUDY_END` | the end of observation |
+
+`SCT_AUTO_CONT` is first only in the sense of being asked first. It is the one
+branch that reaches *forward* rather than gating itself against what is below,
+so it is gated the other way round: it fires only when its transplant falls
+strictly **after** the date every other branch would have produced. Where it
+fires, the line was going to end too early; where it does not, it changes
+nothing. Death is excluded from it explicitly rather than by the ordering.
 
 **Scenario** — *derived.* The earlier event ends the line, whatever its rank.
 
@@ -1523,6 +1596,60 @@ What it would move: end reasons and end dates for patients who ran out, were
 observed for the full buffer, never returned, and then died — so
 `LOT_BASE_LENGTH`, `TTD`, and the attrition split between died and
 discontinued. Not line counts.
+
+### 14.5 An autologous transplant that belonged to no line — **fixed**
+
+The same shape as §14.1, on the other arm, and it survived that fix because the
+two arms are written in different places.
+
+**What it was.** The next line's AUTO start gate refuses a transplant inside the
+previous line's applicable window — the transplant belongs to the line before.
+But nothing held that line open across its own window. A line that ended early
+released the transplant, and the gate then refused it for sitting in a window the
+line no longer covered. It appeared in no line at all:
+
+    d0     1L starts on LEN, 20 days supply
+    d+19   cover runs out — LOT1 ended here
+    d+40   autologous transplant
+    ---
+    LOT1's AUTO flags are cleared, because d+40 is after LOT1's end
+    LOT2 refuses d+40, because it is inside LOT1's window
+    the transplant is in no line
+
+**Two windows, and they did not match.** The gate measured 30 days from the
+previous line's start whatever that line was, LOT1 included — while LOT1's own
+window is 60. So a transplant on days 30–59 after LOT1 started was released by
+LOT1 *and* accepted by LOT2, and a transplant on days 1–29 was released by LOT1
+and refused. Which side of day 29 it fell on decided whether it existed.
+
+**Guaranteed, not incidental, in one case.** A CAR-T-started line with no
+consolidation agents ends on its own start date, so every day of its 45-day
+window is after its end. Every autologous transplant on days 1–44 after such a
+line was lost, every time.
+
+**What it is now.** §6.5. The line is held open to the transplant and ends on it
+(`SCT_AUTO_CONT`), and the gate reads the window of the line it is looking back
+at, so the two agree. `06_lot1_end.R`'s run-out guard moved with them — it
+decides whether a run-out counts as confirmed, and left on the old window it
+would have disagreed with the gate it exists to mirror.
+
+**The alternative we did not take.** The gate's window is unreachable while the
+line is still running — the same CTE already requires the transplant to be after
+the previous line's end — so deleting it would also have closed the gap, by
+letting the transplant *start* the next line instead. That reading was put to the
+study team beside this one and this one was chosen: a transplant inside a line's
+window is part of that line's treatment, and the protocol ends a line on an SCT
+not followed by maintenance within 180 days, which with no maintenance period in
+this build is every SCT.
+
+**Still open, and narrow.** A planned tandem partner outside the window is not
+covered. Where the first transplant is inside the window and its partner is 60 to
+180 days later, the first is now recovered and the second still is not: it is
+outside the window, so it does not hold the line open, and the next line's tandem
+clause refuses it as a planned partner of the first. The protocol calls that pair
+a continuation of the line of therapy, which would mean holding the line open to
+the second transplant as well — a wider rule than the one asked for here.
+`KNOWN_ISSUES.md` #5 carries it.
 
 ---
 

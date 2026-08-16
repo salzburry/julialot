@@ -150,7 +150,31 @@ phase_lot1_sct <- function(con, ctx) {
            AND coalesce(ab.n_allo_between, 0) = 0
           THEN ap.AUTO_DT_2
           ELSE ap.AUTO_DT_1
-        END AS LOT1_TX_AUTO_MAX_DT
+        END AS LOT1_TX_AUTO_MAX_DT,
+        -- LOT1_AUTO_HOLD_DT: the last AUTO LOT1 OWNS that falls inside LOT1's
+        -- own applicable window, days 0..{cfg$induction_window_days - 1} from the
+        -- line start. It is what stops the line being finalised before a
+        -- transplant that belongs to it - see the SCT_AUTO_CONT branch in
+        -- 06_lot1_end.R.
+        --
+        -- Deliberately NOT LOT1_TX_AUTO_MAX_DT, which is unbounded: that column
+        -- takes any AUTO in the observation period, including one that sits
+        -- after the line ended and starts LOT2 instead. Only an AUTO inside the
+        -- window can hold the line open.
+        --
+        -- Owns means the single AUTO, or the second of a tandem pair - never the
+        -- excess AUTO, which ENDING_AUTO_DT already closes the line on.
+        CASE
+          WHEN ap.AUTO_DT_2 IS NOT NULL
+           AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {cfg$sct_tandem_days}
+           AND coalesce(ab.n_allo_between, 0) = 0
+           AND datediff(ap.AUTO_DT_2, l.LOT1_START_DT) < {cfg$induction_window_days}
+          THEN ap.AUTO_DT_2
+          WHEN ap.AUTO_DT_1 IS NOT NULL
+           AND datediff(ap.AUTO_DT_1, l.LOT1_START_DT) < {cfg$induction_window_days}
+          THEN ap.AUTO_DT_1
+          ELSE NULL
+        END AS LOT1_AUTO_HOLD_DT
       FROM lot1 l
       LEFT JOIN auto_pivot ap ON l.PATID = ap.PATID
       LEFT JOIN allo_between ab ON l.PATID = ab.PATID

@@ -56,15 +56,20 @@ EXPECTED_FAILURES <- list(
     "03_mma_map.R: differs beyond the approved deviations in 217 line(s)",
     "05_sct.R: differs beyond the approved deviations in 11 line(s)",
     "04_lot1_base.R: differs from 02_lot1.R in 127 line(s)",
-    "05b_lot1_sct.R: differs beyond the approved deviations in 148 line(s)",
+    # 148 -> 158: LOT1_AUTO_HOLD_DT, the in-window AUTO that holds the line open.
+    "05b_lot1_sct.R: differs beyond the approved deviations in 158 line(s)",
     # 205 -> 208: the post-run-out trigger's two SCT date comparisons became one
-    # existence test over a new post_runout_sct CTE. Re-pinned deliberately.
-    "06_lot1_end.R: differs beyond the approved deviations in 208 line(s)",
+    # existence test over a new post_runout_sct CTE.
+    # 208 -> 241: the SCT_AUTO_CONT branch and the end_natural CTE it compares
+    # against, plus the run-out guard moving to LOT1's own window.
+    "06_lot1_end.R: differs beyond the approved deviations in 241 line(s)",
     "08_persist.R: differs beyond the approved deviations in 111 line(s)",
     # 823 -> 826: cart_exclude_predicate gained the active-through argument, so
-    # the call is three lines rather than two. Re-pinned deliberately, which is
+    # the call is three lines rather than two.
+    # 826 -> 845: SCT_AUTO_CONT and end_natural again at LOT2-5, and auto_cand
+    # reading the previous line's own window. Re-pinned deliberately, which is
     # what this list is for.
-    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 826 line(s)")
+    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 845 line(s)")
 )
 
 # How one suite's output is read. Its own suite is validation/hygiene/

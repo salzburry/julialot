@@ -1,6 +1,6 @@
 # Known issues — open questions for the study team
 
-Four things the build does that need a decision rather than a closer reading of
+Five things the build does that need a decision rather than a closer reading of
 the code. Each one is written to be answered: what the build does today, a
 worked patient, what it moves, the question, and the count that sizes it.
 
@@ -194,6 +194,57 @@ new line, or a continuation of the line the drug belongs to? This is a clinical
 question, not a protocol reading, which is why it has stayed open.
 
 `lot/LOT_RULES.md` §11.1, §11.2 and §11.3.
+
+---
+
+## 5. A planned tandem partner outside the window is still lost
+
+**What the build does.** `lot/LOT_RULES.md` §6.5 now holds a line open to a
+transplant inside its own applicable window. A tandem partner 60 to 180 days
+later is outside that window, so it does not hold the line open — and the next
+line's start gate refuses it as well, because it is a planned tandem of the first
+transplant and planned tandems do not start lines.
+
+    d0     1L starts on LEN, 20 days supply
+    d+19   cover runs out
+    d+20   first autologous transplant — inside line 1's 60-day window
+    d+150  second transplant, 130 days later — a planned tandem
+    ---
+    LOT1  d0 -> d+20   SCT_AUTO_CONT. The first transplant is recovered
+    d+150 is outside the window, so it does not extend line 1
+    d+150 is a planned tandem, so it does not start line 2
+    the second transplant is in no line
+
+Before §6.5 **both** transplants were lost this way. One of the two is now
+recovered; this is the remainder.
+
+**What the protocol says.** *"Tandem SCTs are two SCTs ≥60 to ≤180 days apart.
+These are considered planned and a continuation of the line of therapy."*
+(`docs/Part 3/Protocol/lot protocol.pdf`, §5.1.1.) On that reading the line
+should be held open to the second transplant too, not only to the first.
+
+**Why it was not done with §6.5.** §6.5 anchors on each line's own applicable
+window, and the study team's rule set explicitly left the 60–180-day tandem rule
+separate and unchanged. Extending a line to a transplant up to 180 days past a
+window that is 30 to 60 days wide is a materially wider rule than the one that
+was asked for, and it changes line 1 lengths for a different and larger group.
+
+**What a change would move.** Line 1 and line 2–5 lengths, `TTD`, and the
+transplant flags — a line held open to d+150 carries `LOT_TX_AUTO_TAND_FLG`
+rather than `LOT_TX_AUTO_SING_FLG`. Not line counts, since neither transplant
+starts a line under either reading.
+
+**Question for the study team.** Where a line already extends to an in-window
+transplant, should it extend again to that transplant's planned tandem partner?
+Our reading of the protocol is yes, but it is a wider rule than §6.5 and it was
+deliberately left out of it.
+
+**Counts.** Not yet written. It needs the gap from each line's in-window
+transplant to the next one, split by whether the next falls inside
+`sct_tandem_days`, which no count in `run_lot_audit_counts.R` currently asks for.
+
+`lot/LOT_RULES.md` §6.3 for the tandem rule, §6.5 for the window rule, and §14.5
+for how the two meet.
 
 ---
 

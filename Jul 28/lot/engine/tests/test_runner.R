@@ -732,7 +732,12 @@ cat("\n-- an SCT on LOT1's start date does not end it the day before --\n")
 # that computes nothing.
 sctenv <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "cart_rule.R"), envir = sctenv)
-assign("cfg", list(sct_tandem_days = 180L), envir = sctenv)
+# induction_window_days is read by LOT1_AUTO_HOLD_DT, which bounds the hold date
+# to LOT1's own window. Absent, glue interpolates a NULL and the whole body comes
+# back empty, so every extraction below misses rather than failing on its own
+# terms.
+assign("cfg", list(sct_tandem_days = 180L, induction_window_days = 60L),
+       envir = sctenv)
 SSQL <- character(0)
 assign("run_step", function(con, name, sql, qc = NULL) {
   SSQL <<- c(SSQL, sql); invisible(TRUE) }, envir = sctenv)
@@ -2242,5 +2247,108 @@ ok(grepl("ms.MAP_START_DT <= date_add(", ind_block, fixed = TRUE),
    "...and above by the induction window, on the same column")
 ok(!grepl("MAP_END_DT", ind_block, fixed = TRUE),
    "...and never on MAP_END_DT, so stockpiled cover cannot carry an agent in")
+
+
+cat("\n-- a transplant inside a line's window cannot be left outside the line --\n")
+# The two halves of one rule, and they only work together. SCT_AUTO_CONT holds
+# the line open across its own applicable window; the next line's AUTO gate
+# refuses a transplant inside that same window. Set to different widths, a
+# transplant falls in the space between them and lands in no line at all - which
+# is what a 30-day gate after a 60-day LOT1 did.
+
+# The hold date is bounded by the window. Unbounded, it would drag a line's end
+# out to a transplant that belongs to the NEXT line, which is the opposite
+# defect and a much louder one.
+s05b <- paste(readLines(file.path(ROOT, "R", "steps", "05b_lot1_sct.R"),
+                        warn = FALSE), collapse = "\n")
+# From the CASE, not from the comment above it - prose naming the window would
+# otherwise satisfy a check about the code applying it.
+hold <- local({
+  e <- regexpr("END AS LOT1_AUTO_HOLD_DT", s05b, fixed = TRUE)
+  cs <- gregexpr("CASE", s05b, fixed = TRUE)[[1]]
+  b  <- rev(cs[cs > 0 & cs < e])[1]
+  if (is.na(b) || e < 0) "" else substr(s05b, b, e)
+})
+ok(nchar(hold) > 0, "the hold date rule is where it was")
+ok(length(gregexpr("cfg$induction_window_days", hold, fixed = TRUE)[[1]]) == 2L,
+   "the hold date is bounded by the line's own window, on both the single and tandem arm")
+ok(!grepl("OBS_END_DT", hold, fixed = TRUE),
+   "...and not by the observation end, which is what LOT1_TX_AUTO_MAX_DT uses")
+
+# One gate, stated three times - reason, date, length. If they drift, a line
+# reports one reason and the date of another.
+gates <- regmatches(e6, gregexpr(
+  "(?s)WHEN ec\\.LOT1_AUTO_HOLD_DT IS NOT NULL.*?THEN", e6, perl = TRUE))[[1]]
+gates <- sub("\\s*THEN$", "", gates)
+ok(length(gates) == 3L,
+   "the SCT_AUTO_CONT gate is asked in all three cascades - reason, date and length")
+ok(length(unique(trimws(gsub("\\s+", " ", gates)))) == 1L,
+   "...and it is the same gate in each, so they cannot take different branches")
+ok(grepl("THEN ec.LOT1_AUTO_HOLD_DT", e6, fixed = TRUE) &&
+   !grepl("date_sub(ec.LOT1_AUTO_HOLD_DT", e6, fixed = TRUE),
+   "the line ends ON the transplant, not the day before it as the other AUTO reasons do")
+
+# Spark to R, whole-word swaps only, so what runs below is the shipped gate.
+# The guard afterwards is what makes that claim checkable: any SQL keyword left
+# behind means a clause was dropped rather than translated, and a dropped clause
+# is exactly how a gate silently widens.
+gate_r <- gsub("\\s+", " ", gates[1])
+gate_r <- gsub("ec\\.", "", gate_r)
+gate_r <- gsub("\\b([A-Z_0-9]+) IS NOT NULL", "!is.na(\\1)", gate_r)
+gate_r <- gsub("\\b([A-Z_0-9]+) IS NULL", "is.na(\\1)", gate_r)
+gate_r <- gsub("\\bAND\\b", "&&", gate_r)
+gate_r <- gsub("\\bOR\\b", "||", gate_r)
+gate_r <- trimws(sub("^\\s*WHEN\\b", "", gate_r))
+ok(!grepl("\\b(WHEN|THEN|IS|NULL|AND|OR)\\b", gsub("is\\.na", "", gate_r)),
+   "the gate translates whole - nothing was left behind as unread SQL")
+
+fires <- function(hold, natural, death = NA) {
+  eval(parse(text = gate_r),
+       list(LOT1_AUTO_HOLD_DT = hold, LOT1_NATURAL_END_DT = natural,
+            DEATH_DT = death))
+}
+d <- function(n) as.Date("2020-01-01") + n
+# LEN with 20 days supply, run-out d19, transplant d40. The line used to be
+# finalised at d19 and the transplant refused by LOT2 for sitting inside LOT1's
+# window, so it appeared nowhere.
+ok(isTRUE(fires(d(40), d(19))),
+   "a transplant after an early run-out extends the line rather than vanishing")
+ok(isFALSE(fires(d(20), d(59))),
+   "...but a line that already covers its transplant is left alone")
+ok(isTRUE(fires(d(40), d(29))),
+   "...and it outranks an added medication, which is the end it would otherwise take")
+ok(isFALSE(fires(d(40), d(19), death = d(30))),
+   "a death before the transplant still ends the line - a line may not outlive the patient")
+ok(isFALSE(fires(NA, d(19))),
+   "and a line with no in-window transplant is untouched")
+
+# The other half. auto_cand measures the window of the line it is looking BACK
+# at, so at LOT2 that is LOT1's 60 and not LOT2-5's own 30.
+ac <- local({
+  b <- regexpr("auto_cand AS", l25_txt, fixed = TRUE)
+  rest <- substring(l25_txt, b)
+  e <- regexpr("GROUP BY pe.PATID", rest, fixed = TRUE)
+  substr(rest, 1, if (e > 0) e else nchar(rest))
+})
+ok(nchar(ac) > 0 && grepl("PREV_START_TYPE", ac, fixed = TRUE),
+   "the next-line AUTO candidate block is where it was")
+ok(grepl("ELSE                 {prev_med_window} - 1", ac, fixed = TRUE),
+   "the next-line AUTO gate reads the previous line's own window, not this line's")
+ok(!grepl("{induction_window_days} - 1", ac, fixed = TRUE),
+   "...so it no longer applies the LOT2-5 window to a LOT1 predecessor")
+ok(grepl("prev_med_window <- if (lot_num == 2L) lot1_induction_window_days",
+         l25_txt, fixed = TRUE),
+   "...and that window is LOT1's exactly when the previous line is LOT1")
+# The run-out guard mirrors auto_cand; disagreeing lets DEATH take a line whose
+# run-out the next line does in fact open on.
+pra <- substr(e6, regexpr("post_runout_auto AS", e6, fixed = TRUE),
+              regexpr("post_runout_sct AS", e6, fixed = TRUE))
+# Code only. The comment beside it names the setting this used to borrow, and a
+# check that reads prose would pass on the explanation rather than the rule.
+pra_code <- paste(grep("^\\s*--", strsplit(pra, "\n")[[1]], value = TRUE, invert = TRUE),
+                  collapse = "\n")
+ok(grepl("{cfg$induction_window_days} - 1", pra_code, fixed = TRUE) &&
+   !grepl("lot_n_induction_window_days", pra_code, fixed = TRUE),
+   "the run-out guard reads the same window auto_cand does, so the two agree")
 
 report()
