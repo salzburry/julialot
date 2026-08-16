@@ -83,6 +83,12 @@ Run through the engine. Days-supply of 30 assumed where a case does not give one
 
 - **Leftover days-supply does not carry an agent into the next line's regimen.**
   Settled by the study team; the code matches.
+- **Steroids are excluded from every line decision by class**, and removed from
+  the production rollup outright by `lot/tools/remove_steroids_from_rollup.R`. The
+  spec is not consistent with itself here: its `Steroid Role in Induction` row
+  places them in `LOT1_BASE_MEDS`, while the rest of it excludes them from line
+  decisions by class - which is what the engine does. QC check D3 reports which of
+  the two spec-consistent states a run is in rather than failing it.
 - **Permissible biosimilar substitutions do not advance the line.**
 - **Induction windows:** 60 days at LOT1, 30 at LOT2-5, 45 for a CAR-T-started
   line.

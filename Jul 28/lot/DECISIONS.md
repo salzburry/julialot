@@ -146,6 +146,14 @@ definition should make impossible. Unresolved.
 
 - Leftover days-supply does not carry an agent into the next line's regimen. The
   study team settled this and the code matches it.
+- Steroids are excluded from every line decision by class, and removed from the
+  production rollup outright by `lot/tools/remove_steroids_from_rollup.R`. They do
+  not start a line, join a regimen, extend a run-out or count as an added
+  medication. The spec is not consistent with itself here: its `Steroid Role in
+  Induction` row places them in `LOT1_BASE_MEDS` and lets them extend
+  `LOT1_BASE_DISCON_DT`, while the rest of it excludes them from line decisions by
+  class - which is what the engine does. QC check D3 reports which of the two
+  spec-consistent states a run is in rather than failing it.
 - Permissible biosimilar substitutions do not advance the line.
 - The induction windows: 60 days at LOT1, 30 at LOT2-5, 45 for a CAR-T-started
   line.
