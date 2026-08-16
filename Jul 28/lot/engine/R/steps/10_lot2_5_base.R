@@ -487,12 +487,22 @@ build_lot_n <- function(con, lot_num,
               name = lotn_table(lot_num, "BASE"), body = glue("
     WITH map_restart AS ({map_restart_sql()}
     ),
+    -- SUBSTITUTE_ONLY = 1 means the drug is here only as a permissible
+    -- biosimilar substitute. A substitution does not advance the LOT (§4.4), so
+    -- a substitute never independently ends a line, confirms a run-out or opens
+    -- the next one - whatever gaps its own episodes carry. min() so a drug that
+    -- is both an actual regimen agent and somebody's substitute counts as the
+    -- former and keeps the release.
     base_meds AS (
-      SELECT PATID, MED_ABBR FROM lot{lot_num}_induction_meds
-      UNION
-      SELECT im.PATID, ps.substitute_med AS MED_ABBR
-      FROM lot{lot_num}_induction_meds im
-      INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
+      SELECT PATID, MED_ABBR, min(IS_SUB) AS SUBSTITUTE_ONLY
+      FROM (
+        SELECT PATID, MED_ABBR, 0 AS IS_SUB FROM lot{lot_num}_induction_meds
+        UNION ALL
+        SELECT im.PATID, ps.substitute_med AS MED_ABBR, 1 AS IS_SUB
+        FROM lot{lot_num}_induction_meds im
+        INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
+      )
+      GROUP BY PATID, MED_ABBR
     ),{melp_lotn_ctes(cfg, lot_num, induction_window_days, cart_consolidation_days, allo_lot_span)}
     -- Per drug, the end of ITS cover in this line: the FIRST episode flagged
     -- discontinued. A later episode of the same drug does NOT open the next
@@ -555,7 +565,8 @@ build_lot_n <- function(con, lot_num,
       -- line, but while another regimen drug is still holding this line open the
       -- restart falls inside it, cannot end it, and is then too early to open
       -- the next one - so the treatment belongs to no line at all.
-      WHERE (bm.MED_ABBR IS NULL OR coalesce(mr.PREV_DISCON, 0) = 1)
+      WHERE (bm.MED_ABBR IS NULL
+             OR (coalesce(mr.PREV_DISCON, 0) = 1 AND bm.SUBSTITUTE_ONLY = 0))
         AND ms.MAP_MED_CLASS <> 'STEROID'
         -- Per-start-type lookback gate:
         --   MED  / SCT_AUTO -> any agent after the 30-day induction window
@@ -896,12 +907,16 @@ build_lot_n <- function(con, lot_num,
     -- substitutes. med_cand excludes both, so accepting one here would confirm a
     -- discontinuation on an event no next line is allowed to open on.
     post_runout_excluded_meds AS (
-      SELECT im.PATID, im.MED_ABBR
-      FROM lot{lot_num}_induction_meds im
-      UNION
-      SELECT im.PATID, ps.substitute_med AS MED_ABBR
-      FROM lot{lot_num}_induction_meds im
-      INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
+      SELECT PATID, MED_ABBR, min(IS_SUB) AS SUBSTITUTE_ONLY
+      FROM (
+        SELECT im.PATID, im.MED_ABBR, 0 AS IS_SUB
+        FROM lot{lot_num}_induction_meds im
+        UNION ALL
+        SELECT im.PATID, ps.substitute_med AS MED_ABBR, 1 AS IS_SUB
+        FROM lot{lot_num}_induction_meds im
+        INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
+      )
+      GROUP BY PATID, MED_ABBR
     ),
     map_restart AS ({map_restart_sql()}
     ),
@@ -918,7 +933,8 @@ build_lot_n <- function(con, lot_num,
         AND ms.MAP_START_DT > lb.LOT{lot_num}_BASE_RUNOUT_DT
         AND ms.MAP_START_DT <= lb.OBS_END_DT
         AND ms.MAP_MED_CLASS <> 'STEROID'
-        AND (prem.MED_ABBR IS NULL OR coalesce(mr.PREV_DISCON, 0) = 1)
+        AND (prem.MED_ABBR IS NULL
+             OR (coalesce(mr.PREV_DISCON, 0) = 1 AND prem.SUBSTITUTE_ONLY = 0))
     ),
     post_runout_autos AS (
       -- N_BETWEEN: whether anything happened since the previous transplant. A

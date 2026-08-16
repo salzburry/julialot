@@ -96,10 +96,9 @@ commands read `Rscript build.R` — those are run from the package's folder.
 
 Entry point `build.R <COHORT_TABLE> <prefix_> [<study_start> <study_end>]`, or
 the same four as `INPUT_COHORT_TABLE`, `OBJECT_PREFIX`, `STUDY_START`,
-`STUDY_END`. One run per prefix at a time. There is one way to run it — start to
-finish; LOT2-5 cannot be continued in a session of its own, because a rebuild
-would re-read the code lists and the cohort and could build LOT1 from one version
-and `LOT_LONG` from another.
+`STUDY_END`. One run per prefix at a time. There is one way to run it: start to finish. LOT2-5 cannot be continued in a
+session of its own. A rebuild re-reads the code lists and the cohort, so it
+could build LOT1 from one version and `LOT_LONG` from another.
 
 A cohort table has to provide `PATID`, `INDEX_DATE`, `ENDDATE`, `ENDDATE_CE`,
 `DEATH_DT`, `GDR_CD`, `YRDOB`, `AGE_INDEX_YR`, `FU_DAYS`, `FU_DAYS_CE`, one row
@@ -192,10 +191,10 @@ stops the build, as does a step larger than the one above it.
 
 ### The code-list checks
 
-Three consistency checks are reviewable and stop the build unless named in
-`CODELIST_WAIVERS`, because each has a reading a study team can accept: a
-code-list med with no rollup row (`orphan_meds`), a rollup med with no
-extractable NDC/HCPCS code (`uncoded_meds`), a code type other than NDC or HCPCS
+Three consistency checks are reviewable. Each stops the build unless named in
+`CODELIST_WAIVERS`, because each has a reading a study team can accept: a code-
+list med with no rollup row (`orphan_meds`), a rollup med with no extractable
+NDC/HCPCS code (`uncoded_meds`), and a code type other than NDC or HCPCS
 (`code_types`). The full waivable set is:
 
 ```
@@ -221,10 +220,9 @@ check that fires is evidence about the production code lists.
 **NDC shape** is the one worth reading twice. The join pads whatever digits it
 finds to eleven — `lpad(regexp_replace(CL_CODE, '[^0-9]', ''), 11, '0')`.
 `ndc_shape` is for codes that cannot be an NDC in any form: letters, more than
-eleven digits, fewer than ten. `ndc_short` is for ten-digit codes, which are a
-real FDA form but one of three layouts — 4-4-2, 5-3-2 or 5-4-1 — and the
-eleven-digit form is made by inserting the zero into the short segment, not at
-the far left. `50242-040-62` is 5-3-2, so it becomes `50242004062`; the blanket
+eleven digits, fewer than ten. `ndc_short` is for ten-digit codes. Ten digits is a real FDA form, but it has
+three layouts: 4-4-2, 5-3-2 and 5-4-1. The eleven-digit form is made by
+inserting a zero into the short segment, not at the far left. `50242-040-62` is 5-3-2, so it becomes `50242004062`; the blanket
 left-pad produces `05024204062`, a different key. The conversion has to happen in
 the file. Waive `ndc_short` only once the study team has confirmed the ten-digit
 entries are 4-4-2, the one layout the pad gets right. `check_claim_ndc` asks the
