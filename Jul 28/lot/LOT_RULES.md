@@ -201,11 +201,10 @@ Non-steroid agents from the start date through day 29
 (`cart_consolidation_days`).
 
 The test is on `MAP_START_DT` — an episode *beginning* inside the window — and
-never on `MAP_END_DT`. Cover running through the window does not put an agent in
-the regimen, and neither does a dispense that lands inside the window while that
-agent's cover is already live: a claim arriving under live cover extends the
-episode it is already in rather than opening a new one (§2.3), so it leaves no
-episode start for this test to see.
+never on `MAP_END_DT`. Cover running through the window does not put an agent in the regimen. Nor does
+a dispense inside the window, if that agent's cover was already live. A claim
+arriving under live cover extends the episode it is already in (§2.3). It opens
+no new one, so there is no episode start for this test to find.
 
 That has a consequence worth stating plainly, because it inverts the intuition.
 An agent from the previous line joins this line's regimen only if its cover
@@ -284,11 +283,10 @@ stops at the first break, and there are two kinds
   **this** line's own regimen does not break it, and neither does a permissible
   substitute of one — so a second regimen agent refilling mid-line cannot
   truncate the first one's cover; steroids never break it; and transplant and
-  CAR-T are not read here at all. One that ends a line does so at a higher
-  priority than `DISCONTINUATION`, so a run-out chained past it never surfaces;
-  one that does not end a line — line 1's induction AUTO, a tandem inside
-  `sct_tandem_days`, a CAR-T inside line 1's window — must not break the chain
-  anyway.
+  CAR-T are not read here at all. One that ends a line outranks `DISCONTINUATION`, so a run-out chained past it
+never surfaces. One that does not end a line must not break the chain anyway —
+line 1's induction AUTO, a tandem inside `sct_tandem_days`, a CAR-T inside line
+1's window.
 
 ### 5.3 A run-out is a discontinuation only once confirmed
 
@@ -432,11 +430,10 @@ Two stages, not one flat list.
 ### 7.1 A line ends at the earliest qualifying event
 
 **The earliest event wins. The order below decides only which reason is
-recorded when two land on the same date.** Every branch in the cascade is gated
-against the ones under it — the transplant branch fires only when
-`LOT1_TX_ENDDATE <= LOT1_BASE_1ST_ADD_MED_DT` and `<= LOT1_BASE_DISCON_DT`,
-`MED_ADD` only when the added agent is at or before the run-out, and so on
-(`06_lot1_end.R`). So a later event never displaces an earlier one.
+recorded when two land on the same date.** Every branch is gated against the ones under it. The transplant branch fires
+only when `LOT1_TX_ENDDATE <= LOT1_BASE_1ST_ADD_MED_DT` and `<=
+LOT1_BASE_DISCON_DT`. `MED_ADD` fires only when the added agent is at or before
+the run-out. And so on (`06_lot1_end.R`). So a later event never displaces an earlier one.
 
 | Order | Branch | End date |
 |---|---|---|
@@ -573,11 +570,10 @@ The rule is §4.3. What is recorded here is the reading behind it.
 
 **The protocol** says a subsequent LOT starts at "the first administration for a
 new MM agent **that was not part of the previous LOT regimen**". Read strictly,
-that excludes a previous-regimen drug forever. The build reads it as excluding a
-drug the patient has not stopped, and treats an episode after a gap of
-`map_discon_gap_days` as a restart rather than a continuation — otherwise a line
-spans its own agent's absence, and a nine-month line with no cover is not a line
-of therapy in any clinical sense.
+that excludes a previous-regimen drug forever. The build reads it as excluding a drug the patient has not stopped. An episode
+after a gap of `map_discon_gap_days` is a restart, not a continuation.
+Otherwise a line spans its own agent's absence, and a nine-month line with no
+cover is not a line of therapy in any clinical sense.
 
 **The spec** agrees in the one place it touches this,
 `maintenance_validated.csv` `MAINT_REINTRODUCTION_RULE`: "The introduction of
@@ -686,11 +682,10 @@ initiation, which is a clinical question and not a protocol reading.
   it governs where the two differ. §6.3.
 - **A regimen is what was dispensed in the window, not what was available.** The
   protocol says a later line's regimen is "all MM therapies identified during the
-  first 30 days of the LOT". The build reads that as an episode *starting* in the
-  window, so an agent whose cover runs through the window without lapsing is not
-  in the regimen — and neither is one dispensed inside the window while its own
-  cover was live, since that dispense extends the existing episode rather than
-  opening a new one. Two clinically identical patients can therefore get
+  first 30 days of the LOT". The build reads that as an episode *starting* in the window. So an agent whose
+cover runs through the window without lapsing is not in the regimen. Nor is one
+dispensed inside the window while its own cover was live, because that dispense
+extends the existing episode. Two clinically identical patients can therefore get
   different regimens depending on whether one of them missed a fill. Settled this
   way by the study team and pinned by the engine suite; §4.2 has the mechanics,
   and `run_scenario_counts.R`'s
@@ -755,12 +750,11 @@ study team — this section is the analysis, that one is the ask.
 
 ### 14.1 The CAR-T consolidation window: 45 days, where the spec says 30
 
-`cart_consolidation_days` is 45. `10_lot2_5_base.R`'s own header records it as
-superseding an earlier 30, so the change was made deliberately rather than
-drifting, but the written protocol and program spec carry 30 and this
-repository holds no document that carries 45 — it came from prior internal
-work that is not here, which is why it cannot be checked against the protocol
-text.
+`cart_consolidation_days` is 45. `10_lot2_5_base.R`'s own header records 45 as superseding an earlier 30. So the
+change was deliberate, not drift. But the protocol and the program spec both
+carry 30, and no document here carries 45. It came from prior internal work
+that is not in this repository. That is why it cannot be checked against the
+protocol text.
 
 It decides two things at once, so a ruling moves both:
 

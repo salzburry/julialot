@@ -263,10 +263,9 @@ The 185-day gap reaches `map_discon_gap_days`, so LEN's first episode carries
 run-out instead of stretching over the absence, and LEN — no longer a drug the
 patient is on — is free to open LOT2.
 
-Both halves are needed and they ship together. Breaking the chain alone would end
-LOT1 in February and then refuse the September treatment a line, leaving it in
-nothing; releasing the drug alone would open a line inside a line still
-notionally running. §11.1 is the reasoning and what the rule costs.
+Both halves are needed and they ship together. Break the chain alone and LOT1 ends in February, but the September treatment is
+then refused a line and belongs to nothing. Release the drug alone and a line
+opens inside a line still notionally running. §11.1 is the reasoning and what the rule costs.
 
 **Scenario** — *derived.* A restart while another regimen drug is still running.
 
@@ -412,10 +411,9 @@ day 250 unless stated.
 | never returns | *null* | `STUDY_END` d+250 | 1 |
 | never returns, but observed to d+545 | d+200 | `DISCONTINUATION` d+200 | 1 |
 
-Row 2 is the one worth reading twice, and it turns on the ten days. The restart
-is a base agent of this line and the gap from d+200 to d+210 is far short of
-`map_discon_gap_days`, so the drug has not discontinued: it cannot open a line
-(§4.3) and therefore cannot confirm the run-out either. Push the same restart out
+Row 2 is the one worth reading twice, and it turns on the ten days. The restart is a base agent of this line, and ten days is far short of
+`map_discon_gap_days`. So the drug has not discontinued. It cannot open a line
+(§4.3), and so it cannot confirm the run-out either. Push the same restart out
 past a confirmed gap and both change — it opens a line and confirms the run-out
 on the way.
 
@@ -729,9 +727,9 @@ Here the confirmed discontinuation is computed, written to
 `LOT*_BASE_DISCON_DT`, and then not used as the end. The line is recorded as
 running 220 days when the treatment stopped on day 100, so `LOT_BASE_LENGTH`
 carries 120 days with no cover in it, and `TTD` reads the line as ending at the
-death. The discontinuation date itself is not lost — it is on the row — so a
-reader can recover the other reading without a rebuild, which is the reason
-this is recorded rather than treated as urgent.
+death. The discontinuation date is not lost. It is on the row, so a reader can recover
+the other reading without a rebuild. That is why this is recorded rather than
+treated as urgent.
 
 
 ### 7.6 Disenrollment is not censoring
@@ -773,10 +771,10 @@ merely different lines. `LOT_LONG_ALLFLAGS` carries every criterion as a 0/1
 column whether or not it is enabled; `LOT_LONG_FINAL` is what survives the
 enabled ones and is what every downstream reader uses.
 
-Two rules worth knowing: a line the criterion is not asked of **passes** — not
-applicable is not a failure, or a criterion aimed at L2 would fail every L1 —
-and a predicate evaluating to NULL **fails**, because unknown is not evidence
-the line qualifies.
+Two rules worth knowing. A line the criterion is not asked of **passes**: not
+applicable is not a failure, or a criterion aimed at L2 would fail every L1. A
+predicate evaluating to NULL **fails**, because unknown is not evidence the
+line qualifies.
 
 `APPLY_NO_BELANTAMAB` ships `TRUE` because that is the NDMM cohort's exclusion.
 It is not automatically right for another cohort, and passing a different cohort
