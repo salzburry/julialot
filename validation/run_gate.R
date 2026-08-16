@@ -67,6 +67,68 @@ suites <- suites[grepl("/tests/", suites) |
 suites <- suites[!grepl("testutil\\.R$|/_|run_gate\\.R$|run_all\\.R$", suites)]
 rel <- sub(paste0("^", REPO, "/"), "", suites)
 
+# WHICH suites, not how many. The list above is discovered from disk, so
+# deleting a package deletes its suite and the gate goes green over a smaller
+# repository - the one failure mode a green count cannot show you. That is not
+# hypothetical: two packages were removed from the study folder in one commit
+# and took 99 assertions with them, and nothing here would have objected.
+#
+# So the set is pinned the way EXPECTED_FAILURES is pinned - by identity, and
+# failing in BOTH directions. A suite that disappears is the case this exists
+# for. A suite that appears fails too, because a list nobody has to update is a
+# list that stops describing anything; adding the name is the conscious act.
+#
+# Study-folder entries are relative to the study folder so STUDY_FOLDER can be
+# repointed at another delivery; the rest are repo-relative.
+EXPECTED_SUITES <- list(
+  study = c(
+    "analysis/outcomes/tests/test_runner.R",
+    "analysis/questions/tests/test_setup.R",
+    "exploration/lot/tests/test_benchmarks.R",
+    "exploration/lot/tests/test_definitions.R",
+    "exploration/lot/tests/test_melphalan.R",
+    "exploration/lot/tests/test_sensitivity.R",
+    "exploration/lot/tests/test_stockpiling.R",
+    "exploration/melphalan/run_melp_scenarios.R",
+    "exploration/melphalan/tests/test_aug1_melp.R",
+    "lot/engine/tests/test_line_criteria.R",
+    "lot/engine/tests/test_runner.R",
+    "lot/qc/tests/test_lot_qc.R",
+    "lot/validation/tests/test_vignettes.R",
+    "ndmm/tests/test_runner.R",
+    "ndmm/tests/test_same_as_overall.R",
+    "ndmm/tests/test_subsequent.R",
+    "overall/tests/test_runner.R",
+    "reporting/dashboard/tests/test_runner.R"),
+  here = c(
+    "hygiene/codelist_code_types.R",
+    "hygiene/gate_semantics.R",
+    "hygiene/lot_contract_binding.R",
+    "hygiene/lot_selfcontained.R",
+    "hygiene/sql_splices.R",
+    "hygiene/study_folder_standalone.R",
+    "port/lot.R",
+    "port/ndmm.R",
+    "port/overall.R"))
+
+found <- c(sub(paste0("^", STUDY, "/"), "", suites[startsWith(suites, paste0(STUDY, "/"))]),
+           sub(paste0("^", HERE, "/"), "",  suites[startsWith(suites, paste0(HERE, "/"))]))
+want  <- c(EXPECTED_SUITES$study, EXPECTED_SUITES$here)
+gone  <- setdiff(want, found)
+extra <- setdiff(found, want)
+if (length(gone) || length(extra)) {
+  cat("\n", strrep("=", 74), "\n", sep = "")
+  cat("  THE SUITE LIST HAS MOVED\n")
+  cat(strrep("=", 74), "\n", sep = "")
+  for (s in gone)  cat("  MISSING  ", s, "\n", sep = "")
+  for (s in extra) cat("  NEW      ", s, "\n", sep = "")
+  cat("\n  A missing suite is a check that stopped running, and a green count\n")
+  cat("  below would be green over less of the repository than last time. A new\n")
+  cat("  one only needs adding to EXPECTED_SUITES in this file. Either way the\n")
+  cat("  list is edited deliberately, not discovered.\n\n")
+  quit(status = 1L)
+}
+
 cat("\n", strrep("=", 74), "\n", sep = "")
 cat("  THE MERGE GATE - EVERY SUITE\n")
 cat(strrep("=", 74), "\n", sep = "")

@@ -1,6 +1,6 @@
 # The melphalan line-advancing rule. Off unless APPLY_MELP_RULE names a mode,
 # and off emits the same SQL as not having it. The ask, the cells and the
-# comparison live in lot/melphalan/; the rule is here because it needs each
+# comparison live in exploration/melphalan/; the rule is here because it needs each
 # line's induction window, which exists only while that line is being built.
 #
 # It changes which melphalan MAP rows may be an added medication, and on what
@@ -22,7 +22,7 @@
 #
 # Suppressing both doses of a B.2 pair stops melphalan ending the line at
 # either. It does not hold the line open to the second dose.
-# That is open question 6 in lot/FILES.md, under lot/melphalan/.
+# That is open question 6 in exploration/FILES.md.
 #
 # The two modes differ only on a coded transplant on the same event, where the
 # SCT rule fires too. as_asked judges every exposure regardless; yield_to_sct
