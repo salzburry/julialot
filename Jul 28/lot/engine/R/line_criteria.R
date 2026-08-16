@@ -1,4 +1,4 @@
-# Extra criteria on lines of therapy. See README.md for how to add one.
+# Extra criteria on lines of therapy. See lot/FILES.md for how to add one.
 #
 #   <prefix>LOT_LONG_ALLFLAGS  every criterion as a 0/1 column, always computed
 #   <prefix>LOT_LONG_FINAL     the enabled ones applied

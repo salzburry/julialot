@@ -51,7 +51,7 @@ for (want in c("sct_auto_is_a_line", "maintenance_is_a_line", "gap_ends_a_line")
 cat("\n-- and the citations are file AND line, to a line the file has --\n")
 # A citation naming only a file sends the reader to eight hundred lines of SQL
 # to find out whether one sentence is true, and a claim that expensive to check
-# does not get checked. The README says "file and line", so this holds it to it.
+# does not get checked. lot/FILES.md says "file and line", so this holds it to it.
 #
 # Format: `path:line`, comma-separated, a bare `:line` continuing the path.
 cite_parts <- function(s) {

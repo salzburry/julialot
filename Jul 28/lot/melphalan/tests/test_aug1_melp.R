@@ -508,8 +508,11 @@ ok(has(paste(melp_metric_sql("F", "A", "r1", "MELP"), collapse = "\n"), "cast(NU
 mrs <- paste(readLines(file.path(LOT, "R", "melp_rule.R"), warn = FALSE), collapse = "\n")
 ok(has(mrs, "It does not hold the line") && grepl("[Oo]pen question 6", mrs),
    "...and the rule says so where it suppresses, rather than claiming the ask")
-doc <- paste(readLines(file.path(PARENT, "questions", "melphalan_lot_rule.md"),
-                       warn = FALSE), collapse = "\n")
+# The ask, the open questions and the two readings are all in lot/LOT_RULES.md -
+# one document for the rules, rather than a per-package README that says a
+# slightly different thing about the same branch.
+doc <- paste(readLines(file.path(PARENT, "LOT_RULES.md"), warn = FALSE),
+             collapse = "\n")
 ok(grepl("^6\\.", doc, perl = TRUE) || has(doc, "\n6. In B.2"),
    "...and it is on the study team's list with the other five")
 ok(has(doc, "n_b2_line_starts"),
@@ -518,10 +521,9 @@ ok(has(doc, "n_b2_line_starts"),
 # after the previous one ran out, rather than every melphalan line.
 ok(!has(sql, "w.LOT_START_TYPE = 'MED'"),
    "and it does not settle for start-type MED, which any drug can produce")
-ok(!has(rd <- paste(readLines(file.path(ROOT, "README.md"), warn = FALSE), collapse = "\n"),
-        "both doses stay in the current line - which is what this builds"),
-   "the README does not claim the reading the code does not implement")
-ok(has(rd, "It does not hold the line open"),
+ok(!has(doc, "both doses stay in the current line - which is what this builds"),
+   "the rules document does not claim the reading the code does not implement")
+ok(has(doc, "It does not hold the line open"),
    "...it says which of the two readings is built")
 # And nothing anywhere may claim to be the whole rule. Neither mode is: the
 # names are about the TRANSPLANT reading, and on B.2 both take the narrow one.
@@ -529,8 +531,8 @@ ok(has(rd, "It does not hold the line open"),
 claims <- function(x) grepl("(exactly|precisely) as (written|asked)", x, ignore.case = TRUE)
 ok(!any(vapply(MELP_CELLS, function(c_i) claims(c_i$what), logical(1))),
    "no cell describes itself as the rule exactly as written")
-ok(!claims(rd) && !claims(rs),
-   "...nor does the README or the runner")
+ok(!claims(doc) && !claims(rs),
+   "...nor does the rules document or the runner")
 ok(exists("MELP_B2_READING") && has(MELP_B2_READING, "not held open"),
    "the B.2 reading is stated as a value, so the plan can print it")
 ok(has(rs, "MELP_B2_READING"),

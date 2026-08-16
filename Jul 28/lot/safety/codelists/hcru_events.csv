@@ -11,4 +11,4 @@ inpatient_length_of_stay_all_cause,length_of_stay,primary,CONFINEMENT,LOS,a colu
 inpatient_length_of_stay_mm_related,length_of_stay,primary,CONFINEMENT,,PLACEHOLDER: which diagnosis position on the confinement makes a stay MM-related
 er_visit,count_and_category,primary,POS,,PLACEHOLDER: the POS value(s) for an ER visit - the POS tab of the data dictionary
 er_visit,count_and_category,fallback,TOS_CD,,PLACEHOLDER: the TOS_CD value(s) for an ER visit - the TOS tab; TOS_EXT if a finer split is wanted
-er_visit,count_and_category,fallback,REV_CD,,PLACEHOLDER AND UNCONFIRMED: revenue codes identify an ER visit in most claims data - but see the README; no CDM table surfaces a revenue-code column to join on
+er_visit,count_and_category,fallback,REV_CD,,PLACEHOLDER AND UNCONFIRMED: revenue codes identify an ER visit in most claims data - but no CDM table surfaces a revenue-code column to join on

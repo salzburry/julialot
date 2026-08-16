@@ -297,8 +297,8 @@ pinned <- Filter(function(a) a$cfg %in% contract_keys, SENS_AXES)
 ok(length(pinned) > 0,
    paste0("the axes really are contract-pinned (", length(pinned), " of ",
           length(SENS_AXES), "), so this is not hypothetical"))
-# How many cells that is, counted rather than written down. The README says the
-# number, and a number in prose goes stale the first time an axis is added.
+# How many cells that is, counted rather than written down. lot/FILES.md says
+# the number, and a number in prose goes stale the first time an axis is added.
 alt <- Filter(function(c_i) !is.na(c_i$param), cells)
 ok(length(pinned) == length(SENS_AXES) &&
      all(vapply(alt, function(c_i) c_i$axis$cfg %in% contract_keys, logical(1))),

@@ -496,7 +496,7 @@ DASHBOARD_SECTIONS <- c(list(
   # What the cohort's own follow-up-CE window costs, read off the table the
   # cohort build writes for exactly this. Not a sensitivity anyone has to run:
   # every build produces it, and the gap between the applied row and the
-  # 90-day row is the deviation priced in patients. DECISIONS.md #1.
+  # 90-day row is the deviation priced in patients. ndmm/DECISIONS.md #1.
   #
   # N_COHORT is the whole conjunction at that window, so it is the cohort you
   # would ship rather than one criterion's count.

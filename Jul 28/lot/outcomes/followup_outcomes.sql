@@ -86,7 +86,7 @@ GROUP BY LOT_NUM ORDER BY LOT_NUM;
 
 -- 3. The same, restricted to lines whose patient is in that line's own cohort.
 --    Both denominators are reported by the build and neither is the study's
---    answer on its own - see lot/outcomes/README.md. Run 2 and 3 together or
+--    answer on its own - see lot/FILES.md. Run 2 and 3 together or
 --    neither. Quoting one is picking a denominator silently.
 --
 --    Conditional aggregation rather than WHERE LINE_ELIGIBLE = 1, so a line

@@ -198,7 +198,7 @@ phase_codelists <- function(con) {
   # NDCs must be canonical eleven-digit values; the join pads anything else
   # without complaining. Two names because they need different answers:
   # ndc_shape cannot be an NDC at all, ndc_short is a real ten-digit form whose
-  # 4-4-2 / 5-3-2 / 5-4-1 layout the pad has to guess. README has the
+  # 4-4-2 / 5-3-2 / 5-4-1 layout the pad has to guess. lot/FILES.md has the
   # arithmetic.
   ndc_shape <- db_q(con, "
     SELECT CL_CODE, CL_MED_ABBR, n_digits,
@@ -381,7 +381,7 @@ phase_codelists <- function(con) {
       stop("The production code lists would change who counts as treated:\n  ",
            paste0(fatal$check, ": ", fatal$detail, collapse = "\n  "),
            "\nFix the code lists. The checks a run may waive once the study ",
-           "team has reviewed them are listed in the README and named in ",
+           "team has reviewed them are listed in lot/FILES.md and named in ",
            "CODELIST_WAIVERS, e.g. CODELIST_WAIVERS=uncoded_meds; the rest ",
            "have no reading that leaves the result usable.", call. = FALSE)
   }

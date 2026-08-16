@@ -360,7 +360,7 @@ ok(!any(is.na(at)) && !is.unsorted(at[!is.na(at)]),
    "and calls them in that order")
 
 cat("\n-- the criteria layer reaches the warehouse --\n")
-# The README promises these two tables. Nothing was producing them. Driven
+# lot/FILES.md promises these two tables. Nothing was producing them. Driven
 # below rather than grepped for: the statements themselves are asserted.
 
 # Those read the source, so the function could be a no-op and still pass them -

@@ -22,7 +22,7 @@
 #                        A dose first seen outside the induction window is an
 #                        added medication and advances the line; a repeat of a
 #                        drug already in the regimen extends it instead. That is
-#                        the behaviour lot/questions/melphalan_lot_rule.md
+#                        the behaviour lot/LOT_RULES.md section 14
 #                        records under "What the build does today", and it is a
 #                        model of the engine, not the engine.
 #
@@ -70,7 +70,7 @@ MELP_SCENARIOS <- list(
 # examples never vary it - all of them are drawn on a 60-day or 30-day line.
 #
 # `starts` here is read off the branch table in
-# lot/questions/melphalan_lot_rule.md, not off a run.
+# lot/LOT_RULES.md section 14, not off a run.
 MELP_WINDOW_CASES <- list(
   list(id = "window_cart_45_a1",
        what = paste0("CAR-T-started line, so induction runs to day 45. A dose ",
