@@ -732,7 +732,7 @@ stopping only one moves the problem rather than fixing it:
 | `lot1_sct` | `FIRST_CART_DT` feeds `LOT1_TX_ENDDATE`, ending LOT1 as `SCT_CART` | an in-induction CAR-T is not a line-ending SCT |
 | `lot1_base_end` | `CART_INIT_FLG` ends LOT1 at `FIRST_CART_DT − 1` | the flag cannot be set by an in-induction CAR-T |
 | LOT2 `d_CART` | the same infusion opens LOT2 | excluded as a start candidate — **only while line 1 is still running** |
-| `POST_RUNOUT_TRIGGER_FLG` | any CAR-T after the run-out confirms it | reads `FIRST_CART_DT`, so a CAR-T after the run-out confirms it whatever the window says |
+| `POST_RUNOUT_TRIGGER_FLG` | an in-window CAR-T after the run-out confirmed nothing | asks whether **any** ALLO or CAR-T falls after the run-out, as an existence test rather than against a date |
 
 The last two are the pair that has to agree, and they are the fix. Both are
 about an infusion arriving after the line's treatment stopped, so both treat it
@@ -757,8 +757,26 @@ the infusion.
 
 The CAR-T also confirms the d+29 run-out in its own right, through
 `POST_RUNOUT_TRIGGER_FLG`, so the line does not need the full 90 days of
-observation to close. Read without the still-running condition, this patient had
-LOT1 ending d+29, no LOT2, and a CAR-T on d+40 belonging to no line.
+observation to close. That arm asks whether *any* ALLO or CAR-T falls after the
+run-out — an existence test over the transplant rows, not a comparison against
+the line's earliest infusion. The distinction is the whole rule when a patient
+has more than one:
+
+    d0     LEN starts
+    d+20   first CAR-T — absorbed, LOT1 is running
+    d+39   LEN runs out
+    d+50   second CAR-T — after the run-out, still inside d0–d+59
+    d+100  observation ends, 61 days after the run-out
+    ---
+    LOT1  d0 -> d+39   DISCONTINUATION, confirmed by the d+50 infusion
+    LOT2  d+50         CAR-T-started
+
+Neither of the line's summary dates can see the d+50 infusion here.
+`FIRST_CART_DT` is `min()` over the line, so it is d+20 and not after the
+run-out; `ENDING_CART_DT` is null, because the exemption nulls both. Only
+asking the rows directly finds it. Read without the still-running condition,
+this patient had LOT1 ending d+29, no LOT2, and a CAR-T on d+40 belonging to no
+line.
 
 `q3_cart_screen()` in `analysis/questions/jul20_studyteam_qs.R` counts the
 patients that lands on.
@@ -1297,7 +1315,28 @@ reverse:
 | | before | after |
 |---|---|---|
 | `cart_exclude_predicate` (`R/cart_rule.R`) | excluded any in-window CAR-T from LOT2's start candidates | takes an `active_through` date and excludes only a CAR-T at or before line 1's end |
-| `POST_RUNOUT_TRIGGER_FLG` (`06_lot1_end.R`) | read `ENDING_CART_DT`, which the exemption had already nulled | reads `FIRST_CART_DT`, so a CAR-T after the run-out confirms it |
+| `POST_RUNOUT_TRIGGER_FLG` (`06_lot1_end.R`) | compared the line's earliest ALLO and earliest CAR-T against the run-out | asks whether **any** ALLO or CAR-T falls after the run-out, through a `post_runout_sct` CTE |
+
+**The second one took two attempts, and the first attempt is worth recording.**
+It originally read `ENDING_CART_DT`, which the induction exemption nulls, so an
+in-window CAR-T after the run-out confirmed nothing. Changing it to
+`FIRST_CART_DT` fixed the one-infusion patient and not the two-infusion one:
+`FIRST_CART_DT` is `min()` over the whole line, so an earlier absorbed CAR-T
+hides every later one behind it. A patient with a CAR-T on d+20, a run-out on
+d+39 and a second CAR-T on d+50 has `FIRST_CART_DT` = d+20, which is not after
+the run-out, while the infusion that should confirm it is never looked at.
+
+Both wrong answers were aggregates, which is the point. The arm now matches the
+`post_runout_med` and `post_runout_auto` arms beside it — an existence test over
+rows — and the same change fixes the ALLO arm, which carried the identical
+`min()` comparison. `R/cart_rule.R` already documents this mistake in the other
+direction, for the line-ending date; it is the same trap.
+
+The suite pins the property rather than the column: no arm of the trigger reads
+`lot1_sct`, all three event arms are existence tests, and none compares a date.
+The `post_runout_sct` predicate is also lifted out of the step's own SQL and
+evaluated over the two-infusion patient, so that case is checked rather than
+described.
 
 `cart_cand` already required `TX_DT > PREV_END_DT`, so the new condition makes
 the exclusion inert there — which is the whole point. Every CAR-T that reaches

@@ -137,25 +137,45 @@ phase_lot1_end <- function(con, ctx) {
         AND NOT (awp.PREV_AUTO_DT IS NOT NULL
                  AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {cfg$sct_tandem_days})
     ),
+    post_runout_sct AS (
+      -- Any ALLO or CAR-T strictly after the run-out and inside observation.
+      --
+      -- An EXISTENCE test over rows, like post_runout_med and post_runout_auto
+      -- beside it, and deliberately not a comparison against lot1_sct's dates.
+      -- FIRST_ALLO_DT and FIRST_CART_DT are min() over the whole line, so an
+      -- earlier infusion hides every later one behind it: a patient with a
+      -- CAR-T on day 20 absorbed into a live LOT1, a run-out on day 39 and a
+      -- second CAR-T on day 50 has FIRST_CART_DT = day 20, which is not after
+      -- the run-out, while the day-50 infusion that should confirm it is never
+      -- looked at. ENDING_CART_DT is no better - the induction exemption nulls
+      -- both. This is the same aggregate-versus-row mistake R/cart_rule.R
+      -- documents for the line-ending date, in the other direction.
+      --
+      -- No window test: the arm already requires the infusion to be after the
+      -- run-out, so the line's treatment had stopped before it arrived and the
+      -- induction exemption cannot reach it.
+      SELECT DISTINCT lb.PATID
+      FROM lot1_base lb
+      INNER JOIN tx_allo_cart_dates ac ON lb.PATID = ac.PATID
+      WHERE lb.LOT1_BASE_RUNOUT_DT IS NOT NULL
+        AND ac.SCT_TYPE IN ('ALLO', 'CART')
+        AND ac.TX_DT > lb.LOT1_BASE_RUNOUT_DT
+        AND ac.TX_DT <= lb.OBS_END_DT
+    ),
     post_runout_trigger AS (
+      -- Every arm is an existence test on a per-row CTE. Nothing here reads an
+      -- aggregate, which is what makes a later event impossible to hide.
       SELECT lb.PATID,
         CASE
           WHEN lb.LOT1_BASE_RUNOUT_DT IS NULL THEN 0
           WHEN prm.PATID IS NOT NULL THEN 1
-          WHEN sct.FIRST_ALLO_DT IS NOT NULL AND sct.FIRST_ALLO_DT > lb.LOT1_BASE_RUNOUT_DT THEN 1
-          -- FIRST_CART_DT, not ENDING_CART_DT. This arm already requires the
-          -- infusion to be AFTER the run-out, so the line's treatment had
-          -- stopped before it arrived and the induction exemption cannot reach
-          -- it - the same condition cart_exclude_predicate now carries. Read
-          -- through ENDING_CART_DT, an in-window CAR-T after the run-out
-          -- confirmed nothing and started nothing.
-          WHEN sct.FIRST_CART_DT IS NOT NULL AND sct.FIRST_CART_DT > lb.LOT1_BASE_RUNOUT_DT THEN 1
+          WHEN prs.PATID IS NOT NULL THEN 1
           WHEN pra.PATID IS NOT NULL THEN 1
           ELSE 0
         END AS POST_RUNOUT_TRIGGER_FLG
       FROM lot1_base lb
-      LEFT JOIN lot1_sct sct ON lb.PATID = sct.PATID
       LEFT JOIN post_runout_med prm ON lb.PATID = prm.PATID
+      LEFT JOIN post_runout_sct prs ON lb.PATID = prs.PATID
       LEFT JOIN post_runout_auto pra ON lb.PATID = pra.PATID
     ),
     end_candidates AS (
