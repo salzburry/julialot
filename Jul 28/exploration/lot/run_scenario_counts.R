@@ -112,6 +112,42 @@ AUDIT_COUNTS <- list(
       GROUP BY 1, 2
       ORDER BY LOT_NUM, HANDLED"),
 
+  # SCENARIOS.md 4.3 - the propagation of the count above. The prior-regimen
+  # exclusion looks one line back only, so an agent wrongly missing from line
+  # N-1 is free to START line N. The signature is a line whose regimen carries
+  # an agent that was in the regimen two lines back but not one - which either
+  # means the drug genuinely stopped and came back, or means it never stopped
+  # and line N-1 simply failed to record it. The two are indistinguishable here,
+  # so this is an upper bound, and the shape to pull patient-level and read.
+  list(id = "4.3-line-started-by-an-agent-from-two-lines-back",
+       what = "Lines whose regimen holds an agent present two lines back but absent one line back",
+       expect = "upper bound on the exclusion being wrongly relaxed",
+       sql = "
+      WITH ctx AS (
+        SELECT l.PATID, l.LOT_NUM, l.LOT_START_TYPE, l.LOT_BASE_MEDS,
+               p1.LOT_BASE_MEDS AS PREV1, p2.LOT_BASE_MEDS AS PREV2
+        FROM {t$long} l
+        INNER JOIN {t$long} p1 ON p1.PATID = l.PATID AND p1.LOT_NUM = l.LOT_NUM - 1
+        INNER JOIN {t$long} p2 ON p2.PATID = l.PATID AND p2.LOT_NUM = l.LOT_NUM - 2
+        WHERE l.LOT_NUM >= 3
+          AND coalesce(trim(l.LOT_BASE_MEDS), '') <> ''
+      ),
+      ex AS (
+        SELECT PATID, LOT_NUM, LOT_START_TYPE, PREV1, PREV2,
+               explode(split(LOT_BASE_MEDS, ' ')) AS MED
+        FROM ctx
+      )
+      SELECT LOT_NUM, LOT_START_TYPE,
+             count(*)                                       AS N_AGENT_LINE_PAIRS,
+             count(DISTINCT concat_ws('|', PATID, LOT_NUM))  AS N_LINES,
+             count(DISTINCT PATID)                           AS N_PATIENTS
+      FROM ex
+      WHERE MED <> ''
+        AND NOT array_contains(split(coalesce(PREV1, ''), ' '), MED)
+        AND array_contains(split(coalesce(PREV2, ''), ' '), MED)
+      GROUP BY LOT_NUM, LOT_START_TYPE
+      ORDER BY LOT_NUM, LOT_START_TYPE"),
+
   # SCENARIOS.md 7.1 - a line ends at the earliest qualifying event. This is
   # the whole cascade as the data actually exercises it. A branch with no rows
   # is a branch nothing has ever taken.

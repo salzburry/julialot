@@ -202,6 +202,32 @@ Moving that dispense earlier changes nothing, for the same reason:
 Both are one LEN episode, d1 to d120. Where the dispense falls is irrelevant;
 what matters is that it is not an episode start.
 
+**Scenario** — *derived.* And it carries forward into the line after.
+
+    d1     LEN, filling continuously
+    d100   POMA opens LOT2 — LEN is omitted from LOT2's regimen
+    d200   POMA runs out, LOT2 ends
+    d210   BORT starts
+    ---
+    LOT3   d210 -> ...   BORT
+
+The patient is on bortezomib and lenalidomide; the record says bortezomib. LEN
+still has only its d1 episode start, so LOT3's window cannot see it either.
+
+Worse, LEN is now free to start a line. The exclusion that stops a
+previous-line agent opening a line reads **one line back only**, and LEN is not
+in LOT2's regimen — so nothing holds it:
+
+    d205   LEN's cover finally lapses and it restarts, before BORT
+    ---
+    what ships:  LOT3  d205 -> ...   LEN BORT
+    correct:     LOT3  d210 -> ...   BORT
+
+Five days earlier, a different start type, and two regimens merged. With no BORT
+at all it is an extra line outright. `KNOWN_ISSUES.md` #1 carries this, and
+`run_scenario_counts.R`'s `4.3-line-started-by-an-agent-from-two-lines-back`
+counts it.
+
 **Scenario** — *derived.* The same drug, the same window, opposite answer —
 because the cover lapsed first.
 
