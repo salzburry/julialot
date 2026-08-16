@@ -132,6 +132,28 @@ ok(all(df$confidence %in% c("derived", "to_confirm")),
 ok(sum(df$confidence == "to_confirm") > 0,
    "...and the ones that need a real run are marked rather than asserted")
 
+cat("\n-- and the rules document cites this catalogue, not a copy of it --\n")
+# lot/LOT_RULES.md gives a scenario per rule and names the vignette each one has
+# a machine-checked twin in. A renamed or deleted vignette would leave the
+# document pointing at a case that no longer exists - and a prose scenario with
+# nothing under test behind it is exactly what the catalogue is for.
+rules <- paste(readLines(file.path(PARENT, "LOT_RULES.md"), warn = FALSE),
+               collapse = "\n")
+# Every backticked token in the document, which is where an id would be written.
+# Read this way rather than off "vignette `x`" so a pair written `a` / `b`, or a
+# reference phrased some other way, still counts as a citation.
+ticked <- unique(unlist(regmatches(
+  rules, gregexpr("`[A-Za-z0-9_]+`", rules))))
+ticked <- gsub("`", "", ticked, fixed = TRUE)
+cited  <- intersect(ticked, df$id)
+ok(length(cited) > 0,
+   paste0("the rules document names vignettes by id (", length(cited), ")"))
+uncited <- setdiff(df$id, cited)
+ok(!length(uncited),
+   if (length(uncited)) paste0("...and every vignette is cited by a rule - not cited: ",
+                               paste(uncited, collapse = ", "))
+   else "...and every vignette here is cited by a rule, so neither side grew alone")
+
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))
 if (fail > 0L) quit(status = 1L)

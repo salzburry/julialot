@@ -1,5 +1,5 @@
 # The melphalan line-advancing rule, measured against a finished run.
-# See lot/LOT_RULES.md section 14 for the rule as asked.
+# See lot/FILES.md, under lot/melphalan/, for the rule as proposed.
 #
 # An exposure is one administration; doses under MELP_EXPOSURE_DAYS apart are the
 # same one. Consecutive pairs, so a third is judged against the second.

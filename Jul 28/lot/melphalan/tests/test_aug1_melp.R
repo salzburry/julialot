@@ -508,10 +508,11 @@ ok(has(paste(melp_metric_sql("F", "A", "r1", "MELP"), collapse = "\n"), "cast(NU
 mrs <- paste(readLines(file.path(LOT, "R", "melp_rule.R"), warn = FALSE), collapse = "\n")
 ok(has(mrs, "It does not hold the line") && grepl("[Oo]pen question 6", mrs),
    "...and the rule says so where it suppresses, rather than claiming the ask")
-# The ask, the open questions and the two readings are all in lot/LOT_RULES.md -
-# one document for the rules, rather than a per-package README that says a
-# slightly different thing about the same branch.
-doc <- paste(readLines(file.path(PARENT, "LOT_RULES.md"), warn = FALSE),
+# The proposal, the open questions and the two readings are in lot/FILES.md,
+# under this package's own entry. Not in lot/LOT_RULES.md: that document is the
+# rules the build applies, and this is not one of them - it is off in CONTRACT
+# and every cell that turns it on is a recorded deviation.
+doc <- paste(readLines(file.path(PARENT, "FILES.md"), warn = FALSE),
              collapse = "\n")
 ok(grepl("^6\\.", doc, perl = TRUE) || has(doc, "\n6. In B.2"),
    "...and it is on the study team's list with the other five")
@@ -522,7 +523,7 @@ ok(has(doc, "n_b2_line_starts"),
 ok(!has(sql, "w.LOT_START_TYPE = 'MED'"),
    "and it does not settle for start-type MED, which any drug can produce")
 ok(!has(doc, "both doses stay in the current line - which is what this builds"),
-   "the rules document does not claim the reading the code does not implement")
+   "the folder documentation does not claim the reading the code does not implement")
 ok(has(doc, "It does not hold the line open"),
    "...it says which of the two readings is built")
 # And nothing anywhere may claim to be the whole rule. Neither mode is: the
@@ -532,7 +533,7 @@ claims <- function(x) grepl("(exactly|precisely) as (written|asked)", x, ignore.
 ok(!any(vapply(MELP_CELLS, function(c_i) claims(c_i$what), logical(1))),
    "no cell describes itself as the rule exactly as written")
 ok(!claims(doc) && !claims(rs),
-   "...nor does the rules document or the runner")
+   "...nor does the folder documentation or the runner")
 ok(exists("MELP_B2_READING") && has(MELP_B2_READING, "not held open"),
    "the B.2 reading is stated as a value, so the plan can print it")
 ok(has(rs, "MELP_B2_READING"),

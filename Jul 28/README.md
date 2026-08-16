@@ -23,9 +23,10 @@ A cohort is what LOT is pointed at. It is not part of LOT and does not read it.
 
 Each cohort build has a `RULES.md` giving the rules it applies and the
 assumptions behind them, with `ndmm/DECISIONS.md` as the long form for the
-cohort. `lot/` has two documents and no others: `lot/LOT_RULES.md` is how a line
-is built, rule by rule, with worked examples and the decisions behind it, and
-`lot/FILES.md` is what is in that folder and what each file does.
+cohort. `lot/` has two documents and no others: `lot/LOT_RULES.md` is the rules
+the line build applies, one at a time, each with a scenario showing what it does
+to a patient's claims, and `lot/FILES.md` is what is in that folder and what
+each file does.
 
 `ndmm/` and `overall/` are independent - neither reads the other, and each goes
 to the raw CDM and the production code lists on its own. `lot/engine/` takes a
@@ -92,10 +93,10 @@ the NDMM cohort, and `lot/LOT_RULES.md` covers the lines.
 | NDMM cohort | `ndmm/DECISIONS.md`, numbered, with reasoning and what was measured |
 | maintenance | `ndmm/DECISIONS.md` #10 - **not implemented**; the protocol defines a period, the build carries a flag |
 | pregnancy window | `ndmm/DECISIONS.md` #9 - protocol and program spec disagree; which wins is recorded there |
-| lines of therapy | `lot/LOT_RULES.md` §11, and §13 for where the build differs from the protocol. `SCT_TANDEM_DAYS` and `CART_CONSOLIDATION_DAYS` come from prior internal work not in this repository, so they cannot be checked against the protocol text |
+| lines of therapy | `lot/LOT_RULES.md` - "Applied, and still under review", and "Where this differs from the written protocol". `SCT_TANDEM_DAYS` and `CART_CONSOLIDATION_DAYS` come from prior internal work not in this repository, so they cannot be checked against the protocol text |
 | outcomes | `lot/FILES.md`, `outcomes/` - the `STUDY_END` censoring rule for TTD, the fifth attrition category, both denominators |
 | safety and utilisation | `lot/FILES.md`, `safety/` - the roster, what is outstanding, and the protocol's own `>30`/`>=30` ambiguity |
-| the melphalan proposal | `lot/LOT_RULES.md` §14, and the open questions `run_melp_scenarios.R` prints |
+| the melphalan proposal | `lot/FILES.md`, under `lot/melphalan/`. It is an exploration, not a rule the build applies, which is why it is not in `lot/LOT_RULES.md` |
 
 Where one of those documents and this table disagree, the document is the record.
 
