@@ -263,6 +263,22 @@ LOT1 in February and then refuse the September treatment a line, leaving it in
 nothing; releasing the drug alone would open a line inside a line still
 notionally running. §11.1 is the reasoning and what the rule costs.
 
+**Scenario** — *derived.* A restart while another regimen drug is still running.
+
+    d0     LEN + DARA start LOT1
+    d+29   LEN runs out
+    d+150  LEN restarts, after a confirmed 121-day gap
+    d+199  DARA runs out
+    ---
+    LOT1   d0 -> d+149    LEN DARA
+    LOT2   d+150 -> ...   LEN
+
+DARA is still covering LOT1 when LEN comes back, so LEN's restart does not have
+to wait for the line to run out. It ends LOT1 on d+149 the way any added agent
+would, and opens LOT2 on d+150. Without that, the restart would sit inside a line
+it could not close and be too early to open the next — and the treatment would
+belong to no line at all.
+
 **Scenario** — *derived.* While the drug is still running it is still the line's.
 
     d0     LEN, covered to d+87
@@ -418,9 +434,10 @@ part that is easy to get wrong by one day.
     ---
     not a tandem. The second AUTO is excess, and excess AUTO ends LOT1
 
-Planned tandem and unplanned second transplant look identical in claims. The
-only thing separating them is the gap, and a patient sitting on it goes either
-way — the same two claims, one day apart, land in different lines.
+Two things separate a planned tandem from an unplanned second transplant: the
+gap must be inside `sct_tandem_days`, and nothing may happen between the two —
+no non-steroid medication starting, no allogeneic transplant, no CAR-T. A pair
+with treatment in the middle was not planned, whatever the interval.
 
 **Scenario** — *to confirm; vignette `excess_auto`.* A third transplant.
 

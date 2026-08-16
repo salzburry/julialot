@@ -248,11 +248,18 @@ build_lot_n <- function(con, lot_num,
       LATERAL VIEW explode(split(coalesce(pe.PREV_BASE_MEDS, ''), ' ')) e AS m
       WHERE m <> ''
     ),
+    -- SUBSTITUTE_ONLY = 1 means the drug is excluded solely for being a
+    -- permissible substitute. min() so a drug that is both an actual previous
+    -- regimen agent and somebody's substitute counts as the former.
     prev_meds_expanded AS (
-      SELECT pma.PATID, ps.substitute_med AS MED_ABBR
+      SELECT PATID, MED_ABBR, min(IS_SUB) AS SUBSTITUTE_ONLY
+      FROM (
+      SELECT pma.PATID, ps.substitute_med AS MED_ABBR, 1 AS IS_SUB
       FROM prev_meds_array pma
       INNER JOIN permissible_subs ps ON pma.MED_ABBR = ps.original_med
 {prior_regimen_excl_sql()}
+      )
+      GROUP BY PATID, MED_ABBR
     ),
     -- d_MED: earliest non-steroid MM agent strictly after PREV_END_DT,
     -- excluding the prior-LOT regimen and its permissible biosimilar subs.
@@ -276,7 +283,8 @@ build_lot_n <- function(con, lot_num,
         -- still on inside the line that owns it; a drug returning after a
         -- confirmed gap is a restart and opens a line like any other agent.
         AND (pme.MED_ABBR IS NULL
-             OR coalesce(mr.PREV_DISCON, 0) = 1{melp_prior_regimen_exempt(cfg)})
+             OR (coalesce(mr.PREV_DISCON, 0) = 1
+                 AND pme.SUBSTITUTE_ONLY = 0){melp_prior_regimen_exempt(cfg)})
       GROUP BY pe.PATID
     ),
     -- d_ALLO: earliest ALLO strictly after PREV_END_DT.
@@ -477,7 +485,9 @@ build_lot_n <- function(con, lot_num,
   materialize(con, paste0(pfx, "_lot", lot_num, "_base"),
               view = glue("lot{lot_num}_base"),
               name = lotn_table(lot_num, "BASE"), body = glue("
-    WITH base_meds AS (
+    WITH map_restart AS ({map_restart_sql()}
+    ),
+    base_meds AS (
       SELECT PATID, MED_ABBR FROM lot{lot_num}_induction_meds
       UNION
       SELECT im.PATID, ps.substitute_med AS MED_ABBR
@@ -535,8 +545,17 @@ build_lot_n <- function(con, lot_num,
       INNER JOIN lot{lot_num}_start ls ON ms.PATID = ls.PATID
       LEFT JOIN base_meds bm
         ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
+      LEFT JOIN map_restart mr
+        ON mr.PATID = ms.PATID AND mr.MAP_MED_TYPE = ms.MAP_MED_TYPE
+       AND mr.MAP_START_DT = ms.MAP_START_DT
       LEFT JOIN discon d ON ls.PATID = d.PATID
-      WHERE bm.MED_ABBR IS NULL
+      -- A regimen drug returning after a confirmed gap ends this line, the same
+      -- as any other agent would. Without this the release is only half a rule:
+      -- the restart is kept out of the run-out and is eligible to START the next
+      -- line, but while another regimen drug is still holding this line open the
+      -- restart falls inside it, cannot end it, and is then too early to open
+      -- the next one - so the treatment belongs to no line at all.
+      WHERE (bm.MED_ABBR IS NULL OR coalesce(mr.PREV_DISCON, 0) = 1)
         AND ms.MAP_MED_CLASS <> 'STEROID'
         -- Per-start-type lookback gate:
         --   MED  / SCT_AUTO -> any agent after the 30-day induction window

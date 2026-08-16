@@ -79,7 +79,9 @@ phase_lot1_base <- function(con, ctx) {
   # Written here rather than in phase_lot1_end: S15 reads it twice before that
   # phase is reached. Sixteen reads over a run.
   materialize(con, "S10_lot1_base", view = "lot1_base", name = "LOT1_BASE", body = glue("
-    WITH base_meds AS (
+    WITH map_restart AS ({map_restart_sql()}
+    ),
+    base_meds AS (
       SELECT PATID, MED_ABBR
       FROM lot1_induction_meds
       UNION
@@ -165,7 +167,15 @@ phase_lot1_base <- function(con, ctx) {
       INNER JOIN base_core bc ON ms.PATID = bc.PATID
       LEFT JOIN base_meds bm
         ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
-      WHERE bm.MED_ABBR IS NULL
+      LEFT JOIN map_restart mr
+        ON mr.PATID = ms.PATID AND mr.MAP_MED_TYPE = ms.MAP_MED_TYPE
+       AND mr.MAP_START_DT = ms.MAP_START_DT
+      -- A regimen drug returning after a confirmed gap ends this line, the same
+      -- as any other agent would. Without it the release is half a rule: while
+      -- another regimen drug still holds this line open, the restart falls
+      -- inside the line, cannot end it, and is then too early to open the next
+      -- one - so the treatment belongs to no line at all.
+      WHERE (bm.MED_ABBR IS NULL OR coalesce(mr.PREV_DISCON, 0) = 1)
         AND ms.MAP_MED_CLASS <> 'STEROID'  -- a steroid cannot trigger an add-med
         AND ms.MAP_START_DT >= bc.LOT1_START_DT
         AND ms.MAP_START_DT <= coalesce(bc.LOT1_BASE_RUNOUT_DT, bc.OBS_END_DT)

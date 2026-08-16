@@ -11,7 +11,7 @@ says what that package is and what is still open on it.
 
 *Applied* is not *settled*. §11 carries two rules that are applied and still
 under review, §12 lists where the build departs from the written protocol, and
-and §14 carries two things needing a ruling. What
+§14 carries two things needing a ruling. What
 every rule here has in common is that the build does it on every run — not that
 the clinical question behind it is closed.
 
@@ -37,7 +37,7 @@ is what is in the folder and what each file does.
 | §3.4 | Line 1's first autologous transplant is part of induction | — | |
 | §4.1 | A later line opens on the earliest of four candidates | — | |
 | §4.2 | Later induction is 30 days, 45 on a CAR-T-started line | `lot_n_induction_window_days`, `cart_consolidation_days` | |
-| §4.3 | A drug in the previous line's regimen cannot start a line | — | |
+| §4.3 | A drug is held by its line while it runs, released once stopped | `map_discon_gap_days` | |
 | §4.4 | A permissible biosimilar substitute cannot either | — | |
 | §4.5 | Same-day starts break `SCT_ALLO > CART > SCT_AUTO > MED` | — | |
 | §4.6 | An allogeneic line spans one day and carries no regimen | `allo_lot_span` | |
@@ -564,12 +564,15 @@ rather than a closer reading of the protocol.
 
 ### 11.1 A drug returning after its line has ended — INTERPRETATION
 
-The rule is §4.3, and it is applied unconditionally in both deliveries with no
-switch. What is recorded here is what it costs.
+The rule is §4.3. What is recorded here is the reading behind it.
 
 **The protocol** says a subsequent LOT starts at "the first administration for a
-new MM agent **that was not part of the previous LOT regimen**", so a drug that
-was that regimen cannot start the next line. The code follows this reading.
+new MM agent **that was not part of the previous LOT regimen**". Read strictly,
+that excludes a previous-regimen drug forever. The build reads it as excluding a
+drug the patient has not stopped, and treats an episode after a gap of
+`map_discon_gap_days` as a restart rather than a continuation — otherwise a line
+spans its own agent's absence, and a nine-month line with no cover is not a line
+of therapy in any clinical sense.
 
 **The spec** agrees in the one place it touches this,
 `maintenance_validated.csv` `MAINT_REINTRODUCTION_RULE`: "The introduction of
@@ -578,9 +581,14 @@ does not advance the LOT** but ends the maintenance period." That rule is scoped
 to maintenance, which the engine does not implement, so it is indicative rather
 than binding.
 
-**The cost.** A line can span a treatment-free interval — the §4.3 scenario is
-one nine-month LOT1 with seven months uncovered, ending `DISCONTINUATION`. That
-is the price of the return belonging to a line rather than to nothing.
+**What is still open.** Whether `map_discon_gap_days` — 90 days, the same
+threshold used for episode-level discontinuation — is the right length for this
+judgement. It is a clinical question about when a re-start is a new line rather
+than a reading of the protocol.
+
+**The release is narrow.** It applies to a drug that was the previous regimen,
+never to one excluded only for being a permissible biosimilar substitute (§4.4).
+The exclusion set records which of the two each drug is.
 
 ### 11.2 A drug returning mid-line after a break in supply — INTERPRETATION
 

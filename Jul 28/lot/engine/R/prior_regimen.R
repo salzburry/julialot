@@ -19,10 +19,16 @@
 # otherwise holds only their permissible biosimilar substitutes.
 prior_regimen_excl_sql <- function() {
   "
-      UNION
-      SELECT pma.PATID, pma.MED_ABBR
+      UNION ALL
+      SELECT pma.PATID, pma.MED_ABBR, 0 AS IS_SUB
       FROM prev_meds_array pma"
 }
+
+# The release applies to a drug that WAS the previous regimen. It does not apply
+# to one excluded only for being a permissible biosimilar substitute: §4.4 says a
+# substitute never starts a line, and an old discontinued episode of it must not
+# become a way around that. So the exclusion set carries WHY each drug is in it,
+# and only the actual regimen drugs are releasable.
 
 # Per (patient, drug, episode): was this episode preceded by a confirmed
 # discontinuation of the same drug? Spliced as a CTE by every caller that has to

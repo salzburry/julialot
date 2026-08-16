@@ -448,7 +448,7 @@ main <- function() {
     }
   }
 
-  csv <- file.path(out_dir, "lot_audit_counts.csv")
+  csv <- file.path(out_dir, "lot_scenario_counts.csv")
   utils::write.csv(do.call(rbind, rows), csv, row.names = FALSE)
   cat("Wrote ", csv, "\n", sep = "")
   if (failed) {
