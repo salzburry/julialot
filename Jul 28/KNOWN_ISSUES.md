@@ -1,17 +1,23 @@
 # Known issues — open questions for the study team
 
-Four things the build does that need a decision rather than a closer reading of
+Three things the build does that need a decision rather than a closer reading of
 the code. Each one is written to be answered: what the build does today, a
 worked patient, what it moves, the question, and the count that sizes it.
 
-**None of these is being changed while it is open.** The build ships as
-described, and every one of them is recorded in `lot/LOT_RULES.md` next to the
-rule it affects, so nobody reads the rules without meeting the caveat.
+**None of these is being changed while it is open**, and none of them is a
+defect — each is a decision the code cannot make for itself. The build ships as
+described, and every one is recorded in `lot/LOT_RULES.md` next to the rule it
+affects, so nobody reads the rules without meeting the caveat.
+
+The **Closed** section at the end lists what has been found and fixed. It is kept
+rather than deleted: each was found after the build was believed correct.
 
 ## Getting the numbers first
 
-Every item names a count in `exploration/lot/run_lot_audit_counts.R`. Those are
-read-only — every statement is a `SELECT`, nothing is written — and they run
+What has been measured is named under each item. The counts live in
+`exploration/lot/run_lot_audit_counts.R`, which also carries the ones that sized
+the defects in the Closed section — worth re-running after a rebuild, since those
+should now come back empty. They are read-only — every statement is a `SELECT`, nothing is written — and they run
 against a finished study run:
 
 ```
@@ -127,58 +133,18 @@ question, not a protocol reading, which is why it has stayed open.
 
 ---
 
-## 4. A planned tandem partner outside the window is still lost
-
-**What the build does.** `lot/LOT_RULES.md` §6.5 now holds a line open to a
-transplant inside its own applicable window. A tandem partner 60 to 180 days
-later is outside that window, so it does not hold the line open — and the next
-line's start gate refuses it as well, because it is a planned tandem of the first
-transplant and planned tandems do not start lines.
-
-    d0     1L starts on LEN, 20 days supply
-    d+19   cover runs out
-    d+20   first autologous transplant — inside line 1's 60-day window
-    d+150  second transplant, 130 days later — a planned tandem
-    ---
-    LOT1  d0 -> d+20   SCT_AUTO_CONT. The first transplant is recovered
-    d+150 is outside the window, so it does not extend line 1
-    d+150 is a planned tandem, so it does not start line 2
-    the second transplant is in no line
-
-Before §6.5 **both** transplants were lost this way. One of the two is now
-recovered; this is the remainder.
-
-**What the protocol says.** *"Tandem SCTs are two SCTs ≥60 to ≤180 days apart.
-These are considered planned and a continuation of the line of therapy."*
-(`docs/Part 3/Protocol/lot protocol.pdf`, §5.1.1.) On that reading the line
-should be held open to the second transplant too, not only to the first.
-
-**Why it was not done with §6.5.** §6.5 anchors on each line's own applicable
-window, and the study team's rule set explicitly left the 60–180-day tandem rule
-separate and unchanged. Extending a line to a transplant up to 180 days past a
-window that is 30 to 60 days wide is a materially wider rule than the one that
-was asked for, and it changes line 1 lengths for a different and larger group.
-
-**What a change would move.** Line 1 and line 2–5 lengths, `TTD`, and the
-transplant flags — a line held open to d+150 carries `LOT_TX_AUTO_TAND_FLG`
-rather than `LOT_TX_AUTO_SING_FLG`. Not line counts, since neither transplant
-starts a line under either reading.
-
-**Question for the study team.** Where a line already extends to an in-window
-transplant, should it extend again to that transplant's planned tandem partner?
-Our reading of the protocol is yes, but it is a wider rule than §6.5 and it was
-deliberately left out of it.
-
-**Counts.** Not yet written. It needs the gap from each line's in-window
-transplant to the next one, split by whether the next falls inside
-`sct_tandem_days`, which no count in `run_lot_audit_counts.R` currently asks for.
-
-`lot/LOT_RULES.md` §6.3 for the tandem rule, §6.5 for the window rule, and §14.5
-for how the two meet.
-
----
-
 ## Closed
+
+**A planned tandem partner outside the window** — fixed, once the study team
+settled what makes a pair planned: a **clear gap**. Where nothing happens between
+the two transplants the second follows the first past the line's own window and
+the line is held open to it; where a medication, an allogeneic transplant or a
+CAR-T falls in between, the pair was never planned, so the later transplant is
+free to start a line instead. That single rule also settles the case where a
+partner fell inside a *later* line's window and was attached to the wrong line —
+the medication that started that later line is itself the interruption.
+`lot/LOT_RULES.md` §6.5 and §14.5.
+
 
 **A regimen containing an agent that started after the line ended** — fixed. A
 line picked its regimen over the whole induction window before it could know its

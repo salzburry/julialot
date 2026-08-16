@@ -105,6 +105,30 @@ phase_lot1_sct <- function(con, ctx) {
       WHERE ap.AUTO_DT_2 IS NOT NULL
       GROUP BY ap.PATID
     ),
+    -- A tandem is a tandem only if nothing happens between the two transplants.
+    -- The gap alone does not make the pair planned: a patient treated in between
+    -- was not waiting for a second transplant, and the protocol's reading of a
+    -- tandem as planned, and as a continuation of the line of therapy, does
+    -- not describe them.
+    --
+    -- Anything means a non-steroid medication starting, or an allogeneic
+    -- transplant, or a CAR-T. Strictly between, so a claim on either transplant
+    -- date is part of that transplant rather than an interruption of the pair.
+    --
+    -- This is what makes it safe for the hold date below to follow a tandem
+    -- partner past the line's own window. Nothing can be swallowed by the
+    -- extension, because anything that could have been swallowed breaks the
+    -- tandem before the extension is reached.
+    tandem_interrupt AS (
+      SELECT ap.PATID,
+             sum(CASE WHEN x.dt > ap.AUTO_DT_1 AND x.dt < ap.AUTO_DT_2
+                      THEN 1 ELSE 0 END) AS n_between
+      FROM auto_pivot ap
+      LEFT JOIN ({tandem_interrupt_events_sql()}
+      ) x ON ap.PATID = x.PATID
+      WHERE ap.AUTO_DT_2 IS NOT NULL
+      GROUP BY ap.PATID
+    ),
     -- Derive tandem flag and LOT-ending AUTO date
     sct_derived AS (
       SELECT
@@ -117,6 +141,7 @@ phase_lot1_sct <- function(con, ctx) {
           WHEN ap.AUTO_DT_2 IS NOT NULL
            AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {cfg$sct_tandem_days}  -- Tandem if AUTO_DT_2 is within sct_tandem_days (180d) of AUTO_DT_1; no +1
            AND coalesce(ab.n_allo_between, 0) = 0
+           AND coalesce(ti.n_between, 0) = 0
           THEN 1 ELSE 0
         END AS LOT1_SCT_AUTO_TAND_FLG,
         -- Single AUTO: has first AUTO but not a valid tandem
@@ -124,7 +149,8 @@ phase_lot1_sct <- function(con, ctx) {
           WHEN ap.AUTO_DT_1 IS NOT NULL
            AND NOT (ap.AUTO_DT_2 IS NOT NULL
                     AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {cfg$sct_tandem_days}  -- Tandem if AUTO_DT_2 is within sct_tandem_days (180d) of AUTO_DT_1; no +1
-                    AND coalesce(ab.n_allo_between, 0) = 0)
+                    AND coalesce(ab.n_allo_between, 0) = 0
+           AND coalesce(ti.n_between, 0) = 0)
           THEN 1 ELSE 0
         END AS LOT1_SCT_AUTO_SING_FLG,
         -- LOT-ending AUTO: excess AUTO beyond what's allowed
@@ -133,6 +159,7 @@ phase_lot1_sct <- function(con, ctx) {
           WHEN ap.AUTO_DT_2 IS NOT NULL
            AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {cfg$sct_tandem_days}  -- Tandem if AUTO_DT_2 is within sct_tandem_days (180d) of AUTO_DT_1; no +1
            AND coalesce(ab.n_allo_between, 0) = 0
+           AND coalesce(ti.n_between, 0) = 0
           THEN ap.AUTO_DT_3
           WHEN ap.AUTO_DT_1 IS NOT NULL
           THEN ap.AUTO_DT_2
@@ -148,6 +175,7 @@ phase_lot1_sct <- function(con, ctx) {
           WHEN ap.AUTO_DT_2 IS NOT NULL
            AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {cfg$sct_tandem_days}
            AND coalesce(ab.n_allo_between, 0) = 0
+           AND coalesce(ti.n_between, 0) = 0
           THEN ap.AUTO_DT_2
           ELSE ap.AUTO_DT_1
         END AS LOT1_TX_AUTO_MAX_DT,
@@ -164,11 +192,20 @@ phase_lot1_sct <- function(con, ctx) {
         --
         -- Owns means the single AUTO, or the second of a tandem pair - never the
         -- excess AUTO, which ENDING_AUTO_DT already closes the line on.
+        --
+        -- The FIRST transplant of a tandem must be in the window; the second
+        -- need not, and follows it however far out it sits. That is the
+        -- protocol's rule - a planned tandem is a continuation of the line -
+        -- and it is safe here only because tandem_interrupt has already
+        -- established that nothing happened between the two. A pair with a
+        -- medication, an ALLO or a CAR-T in the middle is not a tandem, so the
+        -- extension cannot swallow an event: the event breaks the pair first.
         CASE
           WHEN ap.AUTO_DT_2 IS NOT NULL
            AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {cfg$sct_tandem_days}
            AND coalesce(ab.n_allo_between, 0) = 0
-           AND datediff(ap.AUTO_DT_2, l.LOT1_START_DT) < {cfg$induction_window_days}
+           AND coalesce(ti.n_between, 0) = 0
+           AND datediff(ap.AUTO_DT_1, l.LOT1_START_DT) < {cfg$induction_window_days}
           THEN ap.AUTO_DT_2
           WHEN ap.AUTO_DT_1 IS NOT NULL
            AND datediff(ap.AUTO_DT_1, l.LOT1_START_DT) < {cfg$induction_window_days}
@@ -178,6 +215,7 @@ phase_lot1_sct <- function(con, ctx) {
       FROM lot1 l
       LEFT JOIN auto_pivot ap ON l.PATID = ap.PATID
       LEFT JOIN allo_between ab ON l.PATID = ab.PATID
+      LEFT JOIN tandem_interrupt ti ON l.PATID = ti.PATID
       LEFT JOIN first_allo fa ON l.PATID = fa.PATID
       LEFT JOIN first_cart fc ON l.PATID = fc.PATID
     )

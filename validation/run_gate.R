@@ -55,28 +55,21 @@ EXPECTED_FAILURES <- list(
     # Counted over comment-stripped code, so prose does not churn it.
     "03_mma_map.R: differs beyond the approved deviations in 217 line(s)",
     "05_sct.R: differs beyond the approved deviations in 11 line(s)",
-    # 127 -> 133: lot1_regimen_cutoff, and the regimen window and the per-drug
+    # lot1_regimen_cutoff, and the regimen window and the per-drug
     # episode scan both bounded by it.
     "04_lot1_base.R: differs from 02_lot1.R in 133 line(s)",
-    # 148 -> 158: LOT1_AUTO_HOLD_DT, the in-window AUTO that holds the line open.
-    "05b_lot1_sct.R: differs beyond the approved deviations in 158 line(s)",
-    # 205 -> 208: the post-run-out trigger's two SCT date comparisons became one
-    # existence test over a new post_runout_sct CTE.
-    # 208 -> 241: the SCT_AUTO_CONT branch and the end_natural CTE it compares
-    # against, plus the run-out guard moving to LOT1's own window.
-    "06_lot1_end.R: differs beyond the approved deviations in 241 line(s)",
+    # LOT1_AUTO_HOLD_DT, and a tandem that needs a clear gap between its two
+    # transplants.
+    "05b_lot1_sct.R: differs beyond the approved deviations in 176 line(s)",
+    # The SCT_AUTO_CONT branch and the end_natural CTE it compares against, the
+    # post-run-out trigger as existence tests, and the run-out guard on LOT1's
+    # own window with the tandem gap.
+    "06_lot1_end.R: differs beyond the approved deviations in 255 line(s)",
     "08_persist.R: differs beyond the approved deviations in 111 line(s)",
-    # 823 -> 826: cart_exclude_predicate gained the active-through argument, so
-    # the call is three lines rather than two.
-    # 826 -> 845: SCT_AUTO_CONT and end_natural again at LOT2-5, and auto_cand
-    # reading the previous line's own window.
-    # 845 -> 857: LOT{n}_AUTO_HOLD_DT, so the end date reads a hold date bounded
-    # by the line's window on BOTH arms rather than LOT{n}_TX_AUTO_MAX_DT, whose
-    # tandem arm is bounded only by sct_tandem_days. Re-pinned deliberately,
-    # which is what this list is for.
-    # 857 -> 872: the same regimen cutoff at LOT2-5, where CAR-T cuts as well
-    # as ALLO. Re-pinned deliberately, which is what this list is for.
-    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 872 line(s)")
+    # SCT_AUTO_CONT and end_natural at LOT2-5, LOT{n}_AUTO_HOLD_DT, auto_cand
+    # reading the previous line's own window, the regimen cutoff, and the tandem
+    # gap. Re-pinned deliberately, which is what this list is for.
+    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 914 line(s)")
 )
 
 # How one suite's output is read. Its own suite is validation/hygiene/

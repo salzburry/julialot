@@ -11,7 +11,7 @@ says what that package is and what is still open on it.
 *Applied* is not *settled*. Seven of the scenarios below are marked `to
 confirm`, §11 carries two rules that are applied and still under review, §12
 lists where the build departs from the written protocol, §3.3 records a known
-defect in the regimen rule since fixed (§14.2), and §14 carries three rules
+defect in the regimen rule since fixed (§14.2), and §14 carries three defects
 now fixed and two more needing a ruling. What every rule here
 has in common is that the build does it on every run — not that the clinical
 question behind it is closed.
@@ -108,6 +108,7 @@ first place, which is what the `to confirm` marker is for.
 | §14.2 | **Fixed** — a regimen collecting agents after its line ended | — | |
 | §14.3 | **To confirm** — the consolidation window is 45, the spec says 30 | `cart_consolidation_days` | |
 | §14.4 | **To confirm** — a confirmed discontinuation loses to a later death | — | |
+| §14.5 | **Fixed** — an autologous transplant that belonged to no line | `sct_tandem_days` | |
 
 ---
 
@@ -333,14 +334,14 @@ It is not only a cosmetic string. The agent also reaches the run-out
 calculation (§5.2) and the next line's prior-regimen exclusion (§4.3), so it
 can move a later line boundary as well.
 
-This is fixed — §14.2 has the account, and what follows describes what the
-build did before it. QC check `C1` does **not** catch it. C1 asks whether a regimen agent has an
-episode in the line's *induction window*; this asks whether it has one in the
-line's *actual span*, and an early transplant makes those two different. The
-count is `regimen-agent-begins-after-line-end` in
-`exploration/lot/run_lot_audit_counts.R` — 30 of 10,659 lines carrying a
-regimen on the synthetic cohort. Not yet fixed, and not yet measured against
-the production run.
+This is fixed. §14.2 has the account; everything above describes what the build
+did before it, because the shape is worth keeping — QC check `C1` never caught
+it, and would not catch it again. C1 asks whether a regimen agent has an episode
+in the line's *induction window*; the defect was about an episode in the line's
+*actual span*, and an early transplant makes those two different. The count that
+sized it, `regimen-agent-begins-after-line-end` in
+`exploration/lot/run_lot_audit_counts.R`, is the way to confirm it is gone on a
+rebuild: it should return nothing.
 
 ### 3.4 Line 1's first autologous transplant is part of induction
 
@@ -833,14 +834,14 @@ Before this rule the same patient produced a line 1 of `d0 -> d+19`
 transplant inside line 1's window — so the transplant appeared in no line at all.
 §14.5 has the full account.
 
-**Scenario** — *to confirm.* It outranks an added agent, and loses to a death.
+It cannot outrank an added agent, and the arithmetic rather than the branch
+order is why. An agent starting inside the window joins the regimen instead of
+being an addition, so `MED_ADD` needs a start on day 60 or later at line 1 — at
+or past the furthest a hold date reaches. The same holds on a 30-day and a
+45-day line. A tandem partner can reach beyond the window, but a medication
+between the two transplants breaks the tandem before it gets there.
 
-    d0     1L starts on LEN, 20 days supply
-    d+19   cover runs out
-    d+30   DARA starts — an added agent, which would end line 1 at d+29
-    d+40   autologous transplant
-    ---
-    LOT1  d0 -> d+40   SCT_AUTO_CONT, not MED_ADD at d+29
+**Scenario** — *to confirm.* It loses to a death.
 
     d0     1L starts on LEN, 20 days supply
     d+19   cover runs out
@@ -1367,11 +1368,12 @@ initiation, which is a clinical question and not a protocol reading.
 
 ## 14. Fixed, and still open
 
-One rule that was fixed, one defect with the fix worked out but not applied, and
-two things that need a ruling rather than a closer reading of the code. All four
-are also in `KNOWN_ISSUES.md`, one level up, written as questions to put to the
-study team with the count that sizes each — this section is the analysis, that
-one is the ask.
+Three defects since fixed, and two things that need a ruling rather than a
+closer reading of the code. The two open ones are also in `KNOWN_ISSUES.md`, one
+level up, written as questions to put to the study team — this section is the
+analysis, that one is the ask. The fixed ones stay here rather than being
+deleted: each was found after the build was believed correct, and what each one
+looked like beforehand is the useful part.
 `cart_consolidation_days` stays at 45, `apply_cart_induction_rule` stays `TRUE`,
 and the death branch stays as it is.
 
@@ -1580,14 +1582,14 @@ window is part of that line's treatment, and the protocol ends a line on an SCT
 not followed by maintenance within 180 days, which with no maintenance period in
 this build is every SCT.
 
-**Still open, and narrow.** A planned tandem partner outside the window is not
-covered. Where the first transplant is inside the window and its partner is 60 to
-180 days later, the first is now recovered and the second still is not: it is
-outside the window, so it does not hold the line open, and the next line's tandem
-clause refuses it as a planned partner of the first. The protocol calls that pair
-a continuation of the line of therapy, which would mean holding the line open to
-the second transplant as well — a wider rule than the one asked for here.
-`KNOWN_ISSUES.md` #5 carries it.
+**The tandem partner, since closed too.** A planned partner outside the window
+was still lost at first: it did not hold the line open, and the next line's
+tandem clause refused it as a partner of the first. It is covered now, because
+the study team settled what a tandem is — a pair with a **clear gap**. Where
+nothing happens between the two transplants the partner follows its pair however
+far out it sits; where a medication, an allogeneic transplant or a CAR-T falls in
+between, the pair was never planned and the later transplant is free to start a
+line. §6.5 has the rule.
 
 ---
 
