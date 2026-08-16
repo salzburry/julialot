@@ -55,7 +55,9 @@ EXPECTED_FAILURES <- list(
     # Counted over comment-stripped code, so prose does not churn it.
     "03_mma_map.R: differs beyond the approved deviations in 217 line(s)",
     "05_sct.R: differs beyond the approved deviations in 11 line(s)",
-    "04_lot1_base.R: differs from 02_lot1.R in 127 line(s)",
+    # 127 -> 133: lot1_regimen_cutoff, and the regimen window and the per-drug
+    # episode scan both bounded by it.
+    "04_lot1_base.R: differs from 02_lot1.R in 133 line(s)",
     # 148 -> 158: LOT1_AUTO_HOLD_DT, the in-window AUTO that holds the line open.
     "05b_lot1_sct.R: differs beyond the approved deviations in 158 line(s)",
     # 205 -> 208: the post-run-out trigger's two SCT date comparisons became one
@@ -72,7 +74,9 @@ EXPECTED_FAILURES <- list(
     # by the line's window on BOTH arms rather than LOT{n}_TX_AUTO_MAX_DT, whose
     # tandem arm is bounded only by sct_tandem_days. Re-pinned deliberately,
     # which is what this list is for.
-    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 857 line(s)")
+    # 857 -> 872: the same regimen cutoff at LOT2-5, where CAR-T cuts as well
+    # as ALLO. Re-pinned deliberately, which is what this list is for.
+    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 872 line(s)")
 )
 
 # How one suite's output is read. Its own suite is validation/hygiene/

@@ -19,6 +19,41 @@ phase_lot1_base <- function(con, ctx) {
     GROUP BY ms.PATID
   ", qc = "SELECT count(*) AS n_patients_with_lot1, min(LOT1_START_DT) AS min_lot1_start, max(LOT1_START_DT) AS max_lot1_start FROM lot1_start")
 
+  # S08b: the last day LOT1's regimen may collect an agent on.
+  #
+  # A line picks its regimen over the whole induction window, and it used to do
+  # that before it could know its own end date - phase_sct ran after this one.
+  # So where an allogeneic transplant ended LOT1 early, the rest of the window
+  # kept collecting agents into the regimen of a line that was already over: an
+  # agent first dispensed after the line ended was counted in its regimen, and
+  # went on to start a later line as well. Double attribution, and it moved the
+  # run-out with it, because a stranded agent is a base agent.
+  #
+  # ALLO only, at LOT1. A CAR-T inside the induction window is part of LOT1
+  # under the induction exemption (R/cart_rule.R), and one outside the window is
+  # outside the regimen window too, so it has nothing left to strand. An AUTO
+  # cannot strand anything either - it only ever extends the line (LOT_RULES.md
+  # §6.5). LOT2-5 has no induction exemption, so CAR-T counts there.
+  #
+  # Floored at the line start, so an ALLO on day one gives a one-day line whose
+  # regimen is that day's agents rather than an empty regimen with a cutoff
+  # before its own start.
+  run_step(con, "S08b_lot1_regimen_cutoff", "
+    CREATE OR REPLACE TEMPORARY VIEW lot1_regimen_cutoff AS
+    SELECT
+      l1.PATID,
+      l1.LOT1_START_DT,
+      min(CASE WHEN ac.SCT_TYPE = 'ALLO' AND ac.TX_DT >= l1.LOT1_START_DT
+               THEN greatest(l1.LOT1_START_DT, date_sub(ac.TX_DT, 1)) END)
+        AS REGIMEN_CUTOFF_DT
+    FROM lot1_start l1
+    LEFT JOIN tx_allo_cart_dates ac ON l1.PATID = ac.PATID
+    GROUP BY l1.PATID, l1.LOT1_START_DT
+  ", qc = "
+    SELECT count(*) AS n_patients,
+           sum(CASE WHEN REGIMEN_CUTOFF_DT IS NOT NULL THEN 1 ELSE 0 END) AS n_cut
+    FROM lot1_regimen_cutoff")
+
   # Written to a table: S10 below reads it three times (twice through
   # base_meds, once through med_summary) and S16b four more, and each read
   # would otherwise re-run the join against map_stacked. Thirteen over a run.
@@ -29,10 +64,12 @@ phase_lot1_base <- function(con, ctx) {
       ms.MAP_MED_TYPE AS MED_ABBR,
       ms.MAP_MED_CLASS AS MED_CLASS
     FROM map_stacked ms
-    INNER JOIN lot1_start l1
+    INNER JOIN lot1_regimen_cutoff l1
       ON ms.PATID = l1.PATID
     WHERE ms.MAP_START_DT >= l1.LOT1_START_DT
-      AND ms.MAP_START_DT <= date_add(l1.LOT1_START_DT, {cfg$induction_window_days - 1})
+      AND ms.MAP_START_DT <= least(
+            date_add(l1.LOT1_START_DT, {cfg$induction_window_days - 1}),
+            coalesce(l1.REGIMEN_CUTOFF_DT, cast('9999-12-31' as date)))
       AND ms.MAP_MED_CLASS <> 'STEROID'  -- corticosteroids are not oncology agents
   "), qc = "
     SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients, avg(cnt) AS avg_induction_meds
@@ -65,7 +102,7 @@ phase_lot1_base <- function(con, ctx) {
     -- MAP_DISCON_FLG had been computed correctly all along and read by nothing
     -- but a QC count.
     discon_per_med AS (
-{discon_per_med_sql('lot1_start', 'LOT1_START_DT')}
+{discon_per_med_sql('lot1_regimen_cutoff', 'LOT1_START_DT', end_col = 'REGIMEN_CUTOFF_DT')}
     ),
     -- The regimen has run out when its LAST base agent has.
     discon_raw AS (

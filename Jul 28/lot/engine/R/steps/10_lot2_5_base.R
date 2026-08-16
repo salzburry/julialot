@@ -386,6 +386,36 @@ build_lot_n <- function(con, lot_num,
                  GROUP BY LOT{lot_num}_START_TYPE
                  ORDER BY LOT{lot_num}_START_TYPE"))
 
+  # The last day this line's regimen may collect an agent on. Same rule as
+  # lot1_regimen_cutoff in 04_lot1_base.R, and see that comment for why it
+  # exists - a line used to keep collecting agents across a window it had
+  # already been cut short in, so an agent first dispensed after the line ended
+  # was counted in its regimen and started a later line as well.
+  #
+  # ALLO and CAR-T here, where LOT1 has ALLO only. LOT1's induction exemption
+  # keeps an in-window CAR-T inside the line and so closes that door; LOT2-5 has
+  # no such exemption, and a CAR-T ends the line the day before the infusion
+  # whatever the regimen window says.
+  #
+  # A transplant that STARTED this line is not a cutoff on it - the exclusion is
+  # strictly after the start date.
+  run_step(con, paste0(pfx, "_lot", lot_num, "_regimen_cutoff"), glue("
+    CREATE OR REPLACE TEMPORARY VIEW lot{lot_num}_regimen_cutoff AS
+    SELECT
+      ls.PATID,
+      ls.LOT{lot_num}_START_DT,
+      ls.LOT{lot_num}_START_TYPE,
+      min(CASE WHEN ac.SCT_TYPE IN ('ALLO', 'CART')
+                AND ac.TX_DT > ls.LOT{lot_num}_START_DT
+               THEN date_sub(ac.TX_DT, 1) END) AS REGIMEN_CUTOFF_DT
+    FROM lot{lot_num}_start ls
+    LEFT JOIN tx_allo_cart_dates ac ON ls.PATID = ac.PATID
+    GROUP BY ls.PATID, ls.LOT{lot_num}_START_DT, ls.LOT{lot_num}_START_TYPE
+  "), qc = glue("
+    SELECT count(*) AS n_pats,
+           sum(CASE WHEN REGIMEN_CUTOFF_DT IS NOT NULL THEN 1 ELSE 0 END) AS n_cut
+    FROM lot{lot_num}_regimen_cutoff"))
+
   # ---- Step N.3: LOT_N regimen, discontinuation, first add ----
   # ALLO and CART starts have different regimen rules; handled at the end-date stage.
   med_flag_exprs <- paste(vapply(meds, function(m)
@@ -405,15 +435,18 @@ build_lot_n <- function(con, lot_num,
       ms.MAP_MED_TYPE  AS MED_ABBR,
       ms.MAP_MED_CLASS AS MED_CLASS
     FROM map_stacked ms
-    INNER JOIN lot{lot_num}_start ls ON ms.PATID = ls.PATID
+    INNER JOIN lot{lot_num}_regimen_cutoff ls ON ms.PATID = ls.PATID
     WHERE ms.MAP_START_DT >= ls.LOT{lot_num}_START_DT
       -- CAR-T-started LOTs use the 45-day consolidation window.
-      -- All other start types use the 30-day induction window.
-      AND ms.MAP_START_DT <= date_add(
-            ls.LOT{lot_num}_START_DT,
-            CASE WHEN ls.LOT{lot_num}_START_TYPE = 'CART'
-                 THEN {cart_consolidation_days - 1}
-                 ELSE {induction_window_days - 1} END)
+      -- All other start types use the 30-day induction window, and either is
+      -- cut short by a transplant that ended the line inside it.
+      AND ms.MAP_START_DT <= least(
+            date_add(
+              ls.LOT{lot_num}_START_DT,
+              CASE WHEN ls.LOT{lot_num}_START_TYPE = 'CART'
+                   THEN {cart_consolidation_days - 1}
+                   ELSE {induction_window_days - 1} END),
+            coalesce(ls.REGIMEN_CUTOFF_DT, cast('9999-12-31' as date)))
       AND ms.MAP_MED_CLASS <> 'STEROID'
       -- ALLO singleton LOTs contain no MM therapies; suppress regimen rows.
       AND ls.LOT{lot_num}_START_TYPE <> 'SCT_ALLO'
@@ -442,7 +475,7 @@ build_lot_n <- function(con, lot_num,
     -- MAP_DISCON_FLG had been computed correctly all along and read by nothing
     -- but a QC count.
     discon_per_med AS (
-{discon_per_med_sql(glue('lot{lot_num}_start'), glue('LOT{lot_num}_START_DT'))}
+{discon_per_med_sql(glue('lot{lot_num}_regimen_cutoff'), glue('LOT{lot_num}_START_DT'), end_col = 'REGIMEN_CUTOFF_DT')}
     ),
     -- The regimen has run out when its LAST base agent has.
     discon_raw AS (

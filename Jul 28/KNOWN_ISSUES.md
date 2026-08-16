@@ -1,6 +1,6 @@
 # Known issues — open questions for the study team
 
-Five things the build does that need a decision rather than a closer reading of
+Four things the build does that need a decision rather than a closer reading of
 the code. Each one is written to be answered: what the build does today, a
 worked patient, what it moves, the question, and the count that sizes it.
 
@@ -29,77 +29,7 @@ conversation.
 
 ---
 
-## 1. A regimen can contain an agent that started after the line ended
-
-**Priority.** The only one of the four that is a defect rather than a choice.
-It affects LOT1 and LOT2-5 alike.
-
-**What the build does.** Every line picks its regimen over the whole induction
-window before it knows its own end date — at LOT1 `04_lot1_base.R` runs before
-`05_sct.R`, and in the LOT2-5 loop the `induction_meds` stage runs before the
-`sct` stage. When a transplant ends the line early, the rest of the window keeps
-collecting agents into a regimen for a line that is already over.
-
-    d0     LOT1 starts on LEN
-    d+10   allogeneic transplant — LOT1 ends d+9
-    d+30   DARA starts
-    ---
-    LOT1  d0 -> d+9   regimen LEN DARA      <- DARA starts 21 days after the end
-    LOT2  d+10        the ALLO, a single-day line with no regimen
-    LOT3  d+30        DARA
-
-DARA is counted in LOT1's regimen **and** starts LOT3. The same shape occurs at
-LOT2 with a CAR-T:
-
-    d0     LOT2 starts on POMA
-    d+10   CAR-T — LOT2 ends d+9
-    d+20   DARA starts
-    ---
-    DARA is in LOT2's regimen, and in the CAR-T-started LOT3's as well
-
-**Which paths do it.** Only an end computed independently of the regimen can
-strand an agent, and only where that event is not already gated by a window:
-
-| | LOT1 | LOT2-5 |
-|---|---|---|
-| AUTO | no | no — the in-LOT AUTO window is the regimen window |
-| ALLO | **yes** | **yes** |
-| CAR-T | no — the induction exemption closes it | **yes** |
-
-**What it moves.** `LOT_BASE_MEDS`, `LOT_MED_CNT` and the per-agent flag
-columns; the run-out, because a stranded agent is a base agent and enters
-`discon_per_med`; the added-medication candidate list; and the next line's
-prior-regimen exclusion. So it can move a later line boundary, not only a
-regimen string.
-
-**The fix has two halves, and the second is easy to miss.** Bounding regimen
-*membership* at the transplant end is not enough on its own:
-
-    REGIMEN_CUTOFF = min(regimen_window_end, independent_transplant_end)
-
-`discon_per_med` chains a base agent's own later episodes forward from the
-line's **start** with no upper bound, so a refill of an agent that legitimately
-is in the regimen still pushes the run-out past the transplant after membership
-has been corrected. The cutoff has to bound the per-drug episode scan too, and
-then the run-out, the added-medication candidates, the end reason and the next
-line's exclusion all have to be recomputed.
-
-**Question for the study team.** Should a line's regimen be bounded by the date
-the line actually ended? Our reading is yes — an agent first given after a line
-is over was not part of that line's treatment — but it changes published
-regimen strings and can change line counts, so it is not ours to decide.
-
-**Counts.** `post-end-regimen-by-line-and-end-reason` (how many, split by line
-and by what ended the line), `post-end-agent-also-starts-a-later-line` (the
-double attribution, which is the number the decision turns on), and
-`runout-extends-past-the-transplant-end` (the second half of the fix). Synthetic
-shape: 30 of 10,659 lines carrying a regimen.
-
-Full analysis: `lot/LOT_RULES.md` §14.2, and §3.3 for the rule it breaks.
-
----
-
-## 2. The CAR-T consolidation window is 45 days, and the spec says 30
+## 1. The CAR-T consolidation window is 45 days, and the spec says 30
 
 **What the build does.** `cart_consolidation_days` is 45.
 `10_lot2_5_base.R`'s own header records it as superseding an earlier 30, so the
@@ -126,7 +56,7 @@ produce a 30-day run by accident.
 
 ---
 
-## 3. A confirmed discontinuation still loses to a later death
+## 2. A confirmed discontinuation still loses to a later death
 
 **What the build does.** The death branch of the end cascade is gated on
 `POST_RUNOUT_TRIGGER_FLG` alone; `DEATH_DT` is never compared with
@@ -165,7 +95,7 @@ so the other reading is recoverable in analysis without a rebuild.
 
 ---
 
-## 4. A drug returning after a confirmed gap cannot start a line
+## 3. A drug returning after a confirmed gap cannot start a line
 
 **What the build does.** An agent in the previous line's regimen can never start
 the next line, however long it has been gone. The line that owns the drug
@@ -197,7 +127,7 @@ question, not a protocol reading, which is why it has stayed open.
 
 ---
 
-## 5. A planned tandem partner outside the window is still lost
+## 4. A planned tandem partner outside the window is still lost
 
 **What the build does.** `lot/LOT_RULES.md` §6.5 now holds a line open to a
 transplant inside its own applicable window. A tandem partner 60 to 180 days
@@ -249,6 +179,18 @@ for how the two meet.
 ---
 
 ## Closed
+
+**A regimen containing an agent that started after the line ended** — fixed. A
+line picked its regimen over the whole induction window before it could know its
+own end date, because `phase_sct` ran after `phase_lot1_base`. Where a transplant
+ended the line early, the rest of the window kept collecting agents into the
+regimen of a line that was already over, and the same agent went on to start a
+later line. `phase_sct` now runs first, and `lot1_regimen_cutoff` /
+`lot{n}_regimen_cutoff` bound both the regimen window and the per-drug episode
+scan in `discon_per_med` — the second being the half that is easy to miss, since
+a refill of an agent legitimately in the regimen would otherwise still push the
+run-out past the transplant. `lot/LOT_RULES.md` §14.2 carries the record.
+
 
 **A CAR-T that belonged to no line** — fixed. The induction exemption measured
 its window from line 1's start and never asked whether line 1 was still running,
