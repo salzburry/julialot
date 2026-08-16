@@ -1334,29 +1334,74 @@ the same problem as §14.1 and is not fixed by it.
 
 DARA is counted in line 1's regimen and starts line 3. No CAR-T is involved.
 
-**The scope is narrower than it looks, and that is what makes it fixable.** Only
-an end reason that is computed *independently of the regimen* can strand an
-agent this way:
+**It is not a line-1 problem.** Every line builds its regimen before it knows
+its own end — at LOT1 `04_lot1_base.R` runs before `05_sct.R`, and in the
+LOT2-5 loop the `induction_meds` stage runs before the `sct` stage. So the
+question is only which end events can land *inside* a line's own regimen window,
+and that has to be asked per line and per transplant type rather than assumed.
 
-| end reason | can it strand an agent? | why |
+Only an end reason computed *independently of the regimen* can strand an agent
+at all:
+
+| end reason | can it strand? | why |
 |---|---|---|
-| SCT — `SCT_ALLO`, excess `SCT_AUTO`, `SCT_CART` | **yes** | `LOT1_TX_ENDDATE` is built in `05b_lot1_sct.R` from transplant dates alone |
-| `DEATH` | no in practice | there are no claims after it |
+| a transplant or CAR-T | **yes, some of them** | the SCT dates are built from transplant claims alone — see the next table |
+| `DEATH` | no, in practice | there are no claims after it |
 | `DISCONTINUATION` | no | self-correcting: an agent starting inside the window joins `base_meds`, and the run-out is `max(MAP_END_DT)` over `base_meds`, so it extends past that agent |
-| `MED_ADD` / `CART_INIT` | no | the added agent must be absent from the regimen, so at line 1 it cannot start before day 60 — the window has already closed |
+| `MED_ADD` / `CART_INIT` | no | the added agent must be absent from the regimen, so it cannot start before the window has closed |
 
-So the fix is: bound the regimen window at the line-ending transplant date where
-there is one — `min(LOT_START + window - 1, LOT_TX_ENDDATE)` — then recompute
-the run-out, the added-medication candidates, the end reason and the next line's
-prior-regimen exclusion over the corrected regimen. There is no circularity to
-resolve, because the transplant date does not depend on the regimen.
+And within the transplant branch it depends on whether that event is gated by a
+window of its own:
+
+| | LOT1 | LOT2-5 |
+|---|---|---|
+| **AUTO** | no — the first is induction (§3.4), and an excess AUTO cannot land inside 60 days: distinct AUTO events are at least `sct_auto_gap_days` (60) apart, so a third is on day 120 at the earliest, and a non-tandem second is past day 180 | no — an AUTO inside `LOT_WINDOW_DAYS` is *in-LOT* and does not end the line, and that window is the same 30/45 the regimen uses |
+| **ALLO** | **yes** — `first_allo` in `05b_lot1_sct.R` takes any ALLO from the line start onward, with no window gate | **yes** — `first_allo` takes any ALLO strictly after the line start, with no window gate |
+| **CAR-T** | no — `cart_eligible_dt` exempts an in-window infusion from ending the line (§6.4), which closes this door as a side effect | **yes** — `first_cart` has no window gate, and the induction exemption is LOT1-only |
+
+Two things fall out of that, and both are worth stating because they are not
+what a reader expects.
+
+The AUTO column is clean for a reason rather than by luck: **the in-LOT AUTO
+window and the regimen window are the same number** at every line — 30 for a
+MED-started line, 45 for a CAR-T-started one, 1 for an ALLO-started one, and at
+LOT1 the induction convention does the same job. An AUTO can only end a line
+once that window has closed, which is exactly when it can no longer strand
+anything.
+
+And **LOT2-5 has one stranding path more than LOT1, not fewer.** LOT1's CAR-T
+induction rule stops an in-window infusion ending the line, so a CAR-T cannot
+strand an agent there. Lines 2 to 5 have no equivalent — `first_cart` takes any
+infusion strictly after the start — so a CAR-T inside LOT2's 30-day window ends
+LOT2 and leaves the rest of that window still collecting agents into its
+regimen.
+
+    d0     LOT2 starts on POMA
+    d+10   CAR-T — inside LOT2's 30-day window, so it ends LOT2 at d+9
+    d+20   DARA starts
+    ---
+    LOT2's regimen carries DARA, which starts 11 days after LOT2 ended
+
+So the fix is needed at LOT1 **and** at LOT2-5, and the ALLO path is the one
+common to both.
+
+The fix is the same shape at both: bound the regimen window at the line-ending
+transplant date where there is one — `min(LOT_START + window - 1,
+LOT_TX_ENDDATE)` — then recompute the run-out, the added-medication candidates,
+the end reason and the next line's prior-regimen exclusion over the corrected
+regimen. There is no circularity to resolve, because the transplant date does
+not depend on the regimen. Only the ALLO and CAR-T arms can actually move a
+bound, since AUTO is already gated.
 
 **What blocks it is step order, not logic.** `04_lot1_base.R` builds
-`base_meds` before `05_sct.R` and `05b_lot1_sct.R` exist, so the bound is not
-available when the regimen is built. `05b` reads only `PATID`, `LOT1_START_DT`
-and `OBS_END_DT` from `lot1_base` — none of which depend on the regimen — so
-the transplant summary could be computed earlier, or the regimen corrected in a
-second pass. Either is a real change to the LOT1 pipeline and the LOT2-5 loop.
+`base_meds` before `05_sct.R` and `05b_lot1_sct.R` exist, and the LOT2-5 loop
+builds `lot{n}_induction_meds` before `lot{n}_sct`, so at neither is the bound
+available when the regimen is built. `05b` reads only `PATID`,
+`LOT1_START_DT` and `OBS_END_DT` from `lot1_base` — none of which depend on the
+regimen — and the LOT2-5 `sct` stage reads its line's start and type the same
+way, so at both the transplant summary could be computed earlier or the regimen
+corrected in a second pass. Either is a real change to the LOT1 pipeline and to
+the seven-stage LOT2-5 loop.
 
 **Why it is not done here.** It moves regimen membership, which moves run-outs,
 end dates, every later line's start and the prior-regimen exclusion — the whole
