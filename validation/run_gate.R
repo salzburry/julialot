@@ -30,7 +30,20 @@ HERE <- local({
   d
 })
 REPO   <- dirname(HERE)
-STUDY  <- Sys.getenv("STUDY_FOLDER", unset = file.path(REPO, "Jul 28"))
+# STUDY_FOLDER takes either an absolute path or a name relative to the repo.
+# Both forms were already in use and they did not agree: this file resolved the
+# variable as a path, while the hygiene suites read it as a bare folder name and
+# join it to the repo root themselves. An absolute value therefore ran the study
+# suites correctly and made three hygiene suites SKIP against a path that could
+# not exist - which the gate counts against itself, so the failure was at least
+# loud. Normalised here, and handed on in the form the suites expect.
+STUDY <- local({
+  v <- Sys.getenv("STUDY_FOLDER", unset = "")
+  if (!nzchar(v)) file.path(REPO, "Jul 28")
+  else if (startsWith(v, "/")) v
+  else file.path(REPO, v)
+})
+Sys.setenv(STUDY_FOLDER = sub(paste0("^", REPO, "/"), "", STUDY))
 
 # suite -> the failures it is allowed to have, by identity. Absent means none.
 EXPECTED_FAILURES <- list(
@@ -78,10 +91,14 @@ rel <- sub(paste0("^", REPO, "/"), "", suites)
 # for. A suite that appears fails too, because a list nobody has to update is a
 # list that stops describing anything; adding the name is the conscious act.
 #
-# Study-folder entries are relative to the study folder so STUDY_FOLDER can be
-# repointed at another delivery; the rest are repo-relative.
+# Study-folder entries are relative to the study folder, and keyed by which
+# delivery they describe, because STUDY_FOLDER can be repointed at another one
+# and the deliveries do not have the same shape. "Aug 14" is a fork of "Jul 28"
+# with the returning-agent rule changed; it still carries the packages Jul 28
+# has since moved out, so one flat list would refuse whichever delivery it was
+# not written for.
 EXPECTED_SUITES <- list(
-  study = c(
+  "Jul 28" = c(
     "analysis/outcomes/tests/test_runner.R",
     "analysis/questions/tests/test_setup.R",
     "exploration/lot/tests/test_benchmarks.R",
@@ -100,20 +117,51 @@ EXPECTED_SUITES <- list(
     "ndmm/tests/test_subsequent.R",
     "overall/tests/test_runner.R",
     "reporting/dashboard/tests/test_runner.R"),
-  here = c(
-    "hygiene/codelist_code_types.R",
-    "hygiene/gate_semantics.R",
-    "hygiene/lot_contract_binding.R",
-    "hygiene/lot_selfcontained.R",
-    "hygiene/sql_splices.R",
-    "hygiene/study_folder_standalone.R",
-    "port/lot.R",
-    "port/ndmm.R",
-    "port/overall.R"))
+  "Aug 14" = c(
+    "lot/dashboard/tests/test_runner.R",
+    "lot/engine/tests/test_line_criteria.R",
+    "lot/engine/tests/test_runner.R",
+    "lot/melphalan/run_melp_scenarios.R",
+    "lot/melphalan/tests/test_aug1_melp.R",
+    "lot/outcomes/tests/test_runner.R",
+    "lot/qc/tests/test_lot_qc.R",
+    "lot/questions/tests/test_setup.R",
+    "lot/safety/tests/test_safety_codelists.R",
+    "lot/tools/tests/test_remove_steroids.R",
+    "lot/validation/tests/test_benchmarks.R",
+    "lot/validation/tests/test_definitions.R",
+    "lot/validation/tests/test_melphalan.R",
+    "lot/validation/tests/test_sensitivity.R",
+    "lot/validation/tests/test_stockpiling.R",
+    "lot/validation/tests/test_vignettes.R",
+    "ndmm/tests/test_runner.R",
+    "ndmm/tests/test_same_as_overall.R",
+    "ndmm/tests/test_subsequent.R",
+    "overall/tests/test_runner.R"))
+
+# The repo-side suites are the same whichever delivery is being gated.
+EXPECTED_HERE <- c(
+  "hygiene/codelist_code_types.R",
+  "hygiene/gate_semantics.R",
+  "hygiene/lot_contract_binding.R",
+  "hygiene/lot_selfcontained.R",
+  "hygiene/sql_splices.R",
+  "hygiene/study_folder_standalone.R",
+  "port/lot.R",
+  "port/ndmm.R",
+  "port/overall.R")
+
+DELIVERY <- basename(STUDY)
+if (is.null(EXPECTED_SUITES[[DELIVERY]])) {
+  cat("\n  No pinned suite list for delivery '", DELIVERY, "'. Add one to\n",
+      "  EXPECTED_SUITES in this file, so a suite that disappears from it is\n",
+      "  still caught.\n\n", sep = "")
+  quit(status = 1L)
+}
 
 found <- c(sub(paste0("^", STUDY, "/"), "", suites[startsWith(suites, paste0(STUDY, "/"))]),
            sub(paste0("^", HERE, "/"), "",  suites[startsWith(suites, paste0(HERE, "/"))]))
-want  <- c(EXPECTED_SUITES$study, EXPECTED_SUITES$here)
+want  <- c(EXPECTED_SUITES[[DELIVERY]], EXPECTED_HERE)
 gone  <- setdiff(want, found)
 extra <- setdiff(found, want)
 if (length(gone) || length(extra)) {

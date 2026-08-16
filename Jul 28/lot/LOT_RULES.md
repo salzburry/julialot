@@ -8,12 +8,13 @@ line-advancing proposal is an exploration — it is not in the study's numbers,
 it is not built into any run that ships, and it is not here. `lot/FILES.md`
 says what that package is and what is still open on it.
 
-*Applied* is not *settled*. Seven of the scenarios below are marked
-`to confirm`, §11 carries two rules that are applied and still under review,
-§12 lists where the build departs from the written protocol, and §3.3 records a
-known defect in the regimen rule. What every rule here has in common is that the
-build does it on every run — not that the clinical question behind it is
-closed.
+*Applied* is not *settled*. Seven of the scenarios below are marked `to
+confirm`, §11 carries two rules that are applied and still under review, §12
+lists where the build departs from the written protocol, §3.3 records a known
+defect in the regimen rule, and §14 carries three things the build does that
+need a ruling rather than a closer reading of the code. What every rule here
+has in common is that the build does it on every run — not that the clinical
+question behind it is closed.
 
 Written from the code, not from the spec — where the two differ, this follows
 the code and says so (§12). Two rules entered the numbers on 2026-08-13 and
@@ -51,12 +52,21 @@ Each one is labelled by how far it is from having been seen:
 `to confirm` is a claim about us, not about the algorithm. Those are the ones to
 look at before quoting any of this.
 
-Scenarios naming a vignette id — `tandem_within` and the like — have a
-machine-checked twin in `lot/validation/R/vignettes.R`, which derives every
-offset from the setting that decides it and fails if a setting is renamed or a
-boundary stops straddling its parameter. `Rscript lot/validation/run_vignettes.R`
-renders the catalogue. Where a scenario here and the catalogue disagree, the
-catalogue is the one under test.
+Scenarios naming a vignette id — `tandem_within` and the like — have a twin in
+`lot/validation/R/vignettes.R`. `Rscript lot/validation/run_vignettes.R` renders
+the catalogue.
+
+Be clear about what that twin buys, because it is less than it looks.
+`test_vignettes.R` checks the catalogue's **internal consistency**: that every
+setting a case names exists in the config, that each boundary pair straddles its
+setting and the two sides expect different things, that timelines run forwards,
+that the quoted files are there, and that this document and the catalogue cite
+each other in both directions. It does **not** run a patient through the engine.
+No scenario on this page has been executed against the SQL, and none of them is
+a regression test — an `expected` is a reading of the rules, not an observed
+output. What the catalogue prevents is drift: a renamed setting or a moved
+boundary fails it. What it cannot prevent is the rules being read wrongly in the
+first place, which is what the `to confirm` marker is for.
 
 ## The rules at a glance
 
@@ -93,6 +103,9 @@ catalogue is the one under test.
 | §9 | Five lines are built, and nothing above them | `max_lot` | |
 | §10 | Maintenance is a flag, not a line | — | |
 | §11 | Two rules that are applied and still under review | — | |
+| §14.1 | **To confirm** — a CAR-T that belongs to no line | `apply_cart_induction_rule` | |
+| §14.2 | **To confirm** — the consolidation window is 45, the spec says 30 | `cart_consolidation_days` | |
+| §14.3 | **To confirm** — a confirmed discontinuation loses to a later death | — | |
 
 ---
 
@@ -131,9 +144,9 @@ because the rule needs each line's own induction window and that exists only
 while the line is being built. What makes blank safe is not that the code is
 gone but that every hook emits an empty string, so the generated SQL is the SQL
 the engine generated before the file existed — and
-`exploration/melphalan/tests/test_aug1_melp.R` proves it rather than asserting it, by
-substituting each hook's off value back into the step text and requiring nothing
-melphalan to remain.
+`exploration/melphalan/tests/test_aug1_melp.R` proves it rather than asserting
+it, by substituting each hook's off value back into the step text and requiring
+nothing melphalan to remain.
 
 The study window (`STUDY_START`, `STUDY_END`) is **not** pinned. It is the
 cohort's, passed per run and recorded in `LOT_RUN_METADATA`: the algorithm is
@@ -298,23 +311,33 @@ in `LOT_BASE_MEDS` whose first supply episode begins after the line was already
 over.
 
     d0     LOT1 starts on LEN
-    d+10   autologous transplant closes the line at d+9
+    d+10   allogeneic transplant closes the line at d+9
     d+30   DARA dispensed, still inside the 60-day induction window
     ---
-    DARA is in LOT1's LOT_BASE_MEDS, and its supply starts 21 days after
-    LOT1 ended
+    LOT1  d0 -> d+9    regimen LEN DARA
+    LOT2  d+10         the ALLO, a single-day line with no regimen (§4.6)
+    LOT3  d+30         DARA
 
-It is not only a cosmetic string. That agent reaches the run-out calculation
-(§5.2) and the next line's prior-regimen exclusion (§4.3), so it can move a
-later line boundary as well.
+An allogeneic transplant rather than an autologous one: line 1's first AUTO is
+part of induction and closes nothing (§3.4), so it cannot be what ends the line
+here. An excess AUTO would do as well.
+
+The agent is counted twice. DARA is in LOT1's `LOT_BASE_MEDS` even though its
+supply starts 21 days after LOT1 ended, and it then starts LOT3 as well —
+LOT2 is the ALLO line, which carries no regimen, so §4.3's prior-regimen
+exclusion has nothing to exclude DARA against.
+
+It is not only a cosmetic string. The agent also reaches the run-out
+calculation (§5.2) and the next line's prior-regimen exclusion (§4.3), so it
+can move a later line boundary as well.
 
 QC check `C1` does **not** catch this. C1 asks whether a regimen agent has an
 episode in the line's *induction window*; this asks whether it has one in the
 line's *actual span*, and an early transplant makes those two different. The
 count is `regimen-agent-begins-after-line-end` in
-`exploration/lot/run_lot_audit_counts.R` — 30 of 10,659 lines carrying a regimen on the
-synthetic cohort. Not yet fixed, and not yet measured against the production
-run.
+`exploration/lot/run_lot_audit_counts.R` — 30 of 10,659 lines carrying a
+regimen on the synthetic cohort. Not yet fixed, and not yet measured against
+the production run.
 
 ### 3.4 Line 1's first autologous transplant is part of induction
 
@@ -707,8 +730,8 @@ CAR-T that arrived after line 1 had already ended for some other reason.
     LOT1 still ends d+30. The rule stops that CAR-T starting a line; it does
     not reopen a closed one
 
-`q3_cart_screen()` in `analysis/questions/jul20_studyteam_qs.R` counts the patients
-that lands on.
+`q3_cart_screen()` in `analysis/questions/jul20_studyteam_qs.R` counts the
+patients that lands on.
 
 **What it moved.** `SCT_CART` and `CART_INIT` counts both fall — not by the same
 patients and not by the whole affected population, since the two reasons are
@@ -727,12 +750,16 @@ contract change.
 
 Two stages, not one flat list.
 
-### 7.1 A line ends at the first of six events, by priority
+### 7.1 A line ends at the earliest qualifying event
 
-A priority order, not a tie-break on equal dates. Each branch is gated so it
-only fires when its event is at or before the run-out.
+**The earliest event wins. The order below decides only which reason is
+recorded when two land on the same date.** Every branch in the cascade is gated
+against the ones under it — the transplant branch fires only when
+`LOT1_TX_ENDDATE <= LOT1_BASE_1ST_ADD_MED_DT` and `<= LOT1_BASE_DISCON_DT`,
+`MED_ADD` only when the added agent is at or before the run-out, and so on
+(`06_lot1_end.R`). So a later event never displaces an earlier one.
 
-| Priority | Branch | End date |
+| Order | Branch | End date |
 |---|---|---|
 | 1 | a transplant or CAR-T | the day before the procedure — §7.2 |
 | 2 | `CART_INIT` | the day before the infusion — §7.3 |
@@ -741,18 +768,29 @@ only fires when its event is at or before the run-out.
 | 5 | `DISCONTINUATION` | the confirmed run-out date — §5.3 |
 | 6 | `STUDY_END` | the end of observation |
 
-**Scenario** — *derived.* One patient, four claims, showing the order in action.
+**Scenario** — *derived.* The earlier event ends the line, whatever its rank.
 
     d0     LOT1 starts on LEN
     d+90   POMA added, outside the induction window
     d+120  allogeneic transplant
     ---
-    LOT1 ends d+119 as SCT_ALLO, not d+89 as MED_ADD
+    LOT1 ends d+89 as MED_ADD, not d+119 as SCT_ALLO
 
-The transplant outranks the addition even though the addition came first: the
-order is a priority, not a race. An allogeneic transplant rather than an
-autologous one, because line 1's first AUTO is part of induction and ends
-nothing (§3.4).
+The transplant is first in the order and still loses, because its gate requires
+its date to be at or before the added medication's and d+120 is not. The
+transplant then opens the next line in the ordinary way.
+
+**Scenario** — *derived.* Same two events, same date.
+
+    d0     LOT1 starts on LEN
+    d+90   POMA added, outside the induction window
+    d+90   allogeneic transplant
+    ---
+    LOT1 ends d+89 as SCT_ALLO
+
+Here the gate holds — d+90 <= d+90 — so the order decides, and the transplant
+takes the reason. `DEATH` is the one branch not gated on a date comparison: it
+is gated on `POST_RUNOUT_TRIGGER_FLG` instead (§7.5).
 
 ### 7.2 Within the transplant branch the earliest date wins
 
@@ -781,19 +819,24 @@ An added medication followed by a CAR-T inside `cart_consolidation_days` is
 bridging therapy. The line ends the day before the infusion, and the bridging
 agent stays in that line rather than starting a regimen of its own.
 
+The added medication has to be an addition, which at line 1 means it starts on
+or after day 60: anything starting inside the induction window joins the
+regimen and is not an added agent at all (§7.4). The scenarios below place it
+there for that reason.
+
 **Scenario** — *derived; vignette `cart_bridge_within`.*
 
     d0     1L regimen starts
-    d+20   bridging agent added
-    d+65   CAR-T, inside the window that opens the day after the addition
+    d+60   bridging agent added, the first day it can be an addition
+    d+105  CAR-T, inside the window that opens the day after the addition
     ---
-    LOT1 ends CART_INIT at d+64. The bridging agent stays part of LOT1
+    LOT1 ends CART_INIT at d+104. The bridging agent stays part of LOT1
 
 **Scenario** — *to confirm; vignette `cart_bridge_beyond`.*
 
     d0     1L regimen starts
-    d+20   agent added
-    d+67   CAR-T, one day outside the window
+    d+60   agent added
+    d+107  CAR-T, one day outside the window
     ---
     not CART_INIT. The addition is an ordinary regimen change (§7.4) and the
     CAR-T is handled by the ordinary rules for a CAR-T event
@@ -817,9 +860,14 @@ by a CAR-T inside the window belongs to `CART_INIT` and is never re-read as a
 
 ### 7.4 An agent added outside induction is `MED_ADD`
 
-The candidate test is `MAP_START_DT` after the induction window, against agents
-absent from **this** line's regimen — which matches the protocol's rule 2,
-"initiation of a new MM agent that was not present in the induction regimen".
+The candidate is any non-steroid episode from the line's start to its run-out
+whose agent is **absent from this line's regimen** (`first_add_candidates`,
+`04_lot1_base.R`). There is no separate "after the induction window" predicate:
+the regimen is exactly the agents whose episode started inside that window, so
+an agent starting inside it is in the regimen by construction and can never be
+an addition. At line 1 that puts the earliest possible `MED_ADD` on day 60.
+This matches the protocol's rule 2, "initiation of a new MM agent that was not
+present in the induction regimen".
 
 **Scenario** — *derived.*
 
@@ -845,25 +893,63 @@ regimen, per §4.3 — and are unaffected.
 `Rscript exploration/lot/run_stockpiling_rule.R` counts the hidden boundaries in
 `STOCKPILE_ABSORBED_ADD`.
 
-### 7.5 Death does not outrank a run-out the patient came back from
+### 7.5 Death, and the run-out it can displace
 
-`DEATH` outranks `DISCONTINUATION`, but only when no line-opening trigger sits
-between the run-out and the death. Same trigger as §5.3, same reasoning.
+`DEATH` is the one branch not gated on a date comparison (§7.1). Its only gate
+is `POST_RUNOUT_TRIGGER_FLG = 0` — no line-opening trigger between the run-out
+and the death:
 
-**Scenario** — *derived.*
+```sql
+WHEN DEATH_DT IS NOT NULL AND DEATH_DT <= OBS_END_DT
+ AND POST_RUNOUT_TRIGGER_FLG = 0 THEN 'DEATH'
+WHEN LOT1_BASE_DISCON_DT IS NOT NULL THEN 'DISCONTINUATION'
+```
+
+`DEATH_DT` is never compared with `LOT1_BASE_DISCON_DT`, so where both exist the
+death takes the line's end whatever the dates are. Three cases, and they do not
+all behave the same way.
+
+**Scenario** — *derived.* The patient came back, so the run-out stands.
 
     d0     LOT1 starts
-    d+200  the regimen runs out
-    d+210  a new agent
-    d+220  death
+    d+100  the regimen runs out
+    d+130  a new agent
+    d+150  death
     ---
-    LOT1 ends DISCONTINUATION at d+200, and the new therapy opens LOT2
+    LOT1 ends DISCONTINUATION at d+100, and the new therapy opens LOT2
+    the death falls inside LOT2
+
+**Scenario** — *derived.* The patient died before the run-out could be
+confirmed, and the death is the only answer available.
 
     d0     LOT1 starts
-    d+200  the regimen runs out
-    d+220  death, with nothing in between
+    d+100  the regimen runs out
+    d+150  death — only 50 days later, and nothing in between
     ---
-    LOT1 ends DEATH at d+220
+    LOT1_BASE_DISCON_DT is null: 50 < lot_discon_confirm_days, and no return
+    LOT1 ends DEATH at d+150
+
+Observation ends at the death (the cohort clamps `ENDDATE` there), so the
+confirmation buffer can never complete for a patient who dies inside it. This
+case is what the death branch is for, and it needs no comparison to work.
+
+**Scenario** — *derived, and the case that diverges (§12, §14).* The buffer
+completed, and the death still takes the end.
+
+    d0     LOT1 starts
+    d+100  the regimen runs out
+    d+220  death — 120 days later, and nothing in between
+    ---
+    LOT1_BASE_DISCON_DT is d+100, confirmed by 120 days of observation
+    LOT1 still ends DEATH at d+220
+
+Here the confirmed discontinuation is computed, written to
+`LOT*_BASE_DISCON_DT`, and then not used as the end. The line is recorded as
+running 220 days when the treatment stopped on day 100, so `LOT_BASE_LENGTH`
+carries 120 days with no cover in it, and `TTD` reads the line as ending at the
+death. The discontinuation date itself is not lost — it is on the row — so a
+reader can recover the other reading without a rebuild, which is the reason
+this is recorded rather than treated as urgent.
 
 ### 7.6 Disenrollment is not censoring
 
@@ -1112,7 +1198,22 @@ initiation, which is a clinical question and not a protocol reading.
   one. §7.5 already takes that position against `DEATH`. §5.3.
 - **Regimen membership is an episode start, and the protocol reads wider.**
   §3.3.
-- **Disenrollment is not censoring** in the primary analysis. §7.6.
+- **A CAR-T-started line consolidates for 45 days, and the spec says 30.** The
+  code's own header records the supersede — `cart_consolidation_days = 45
+  (supersedes the earlier 30d value)`, `10_lot2_5_base.R` — so this is a
+  deliberate change rather than drift, but it is not the written protocol's
+  number. It sets both the CAR-T-started line's regimen window and the
+  `CART_INIT` bridging window (§7.3), so it moves regimen membership and line
+  boundaries together. Staying at 45. §14.
+- **A confirmed discontinuation loses to a later death.** The protocol ends a
+  line at the earliest qualifying event; the death branch is not date-gated, so
+  a run-out confirmed by 90+ days of observation is still overridden by a death
+  after it. Only that case diverges — a death inside the confirmation window is
+  the branch working as intended, since the buffer cannot complete for a patient
+  who dies in it. §7.5, §14.
+- **Disenrollment is not censoring** in the primary analysis. The protocol ends
+  follow-up at the earliest of death, disenrollment or study end; the primary
+  cascade carries disenrollment in the `*_CE_SENS` columns instead. §7.6.
 - **Maintenance is not implemented.** §10.
 - **`max_lot` is 5.** §9.
 - **A drug returning cannot start a line on itself**, and a drug returning after
@@ -1137,7 +1238,150 @@ initiation, which is a clinical question and not a protocol reading.
 | The scenarios above, machine-checked | `lot/validation/R/vignettes.R` |
 | The patients the CAR-T rule touches | `analysis/questions/jul20_studyteam_qs.R` |
 
-## 14. What stops a run
+## 14. To confirm
+
+Three things the build does that need a ruling rather than a closer reading of
+the code. Nothing here is a proposed change and nothing here is switched off:
+`cart_consolidation_days` stays at 45, `apply_cart_induction_rule` stays `TRUE`,
+and the death branch stays as it is. Each is recorded with what it would take to
+settle it.
+
+### 14.1 A CAR-T that belongs to no line
+
+**The case.**
+
+The CAR-T induction rule (§6.4) measures its window from **line 1's start**,
+and applies it whatever line 1's end date turned out to be. So when line 1 ends
+early, the window outlives the line:
+
+    d0     LEN starts, 30 days of cover
+    d+29   LEN runs out
+    d+40   CAR-T
+    d+120  observation continues, confirming the d+29 run-out (§5.3)
+    ---
+    LOT1   d0 -> d+29   DISCONTINUATION
+    LOT2   never opened
+    the CAR-T at d+40 is in no line at all
+
+Four rules meet, and each is individually doing what it was written to do:
+
+| | |
+|---|---|
+| §5.3 | the run-out at d+29 is confirmed, so LOT1 ends there |
+| §6.4 | d+40 is inside d0–d+59, so the infusion is "part of LOT1" |
+| §6.4 | ...but the rule does not reopen or extend a line that has already ended |
+| §6.4 | ...and the same test removes d+40 from LOT2's `d_CART` candidates |
+
+Verified in the code rather than inferred: `cart_in_induction_sql`
+(`R/cart_rule.R`) tests `TX_DT BETWEEN PREV_START_DT AND date_add(PREV_START_DT,
+59)`, and `cart_cand` in `10_lot2_5_base.R` ANDs `NOT(...)` of that into the
+LOT2 start candidates. `PREV_START_DT` is line 1's start; the line's end date
+is not consulted.
+
+**Why it does not show up elsewhere.**
+
+The orphan needs line 1 to end **before** the CAR-T for a reason that does not
+itself open line 2. A run-out confirmed by observation is the case that does
+it. Two near neighbours do not:
+
+- **A transplant ends line 1 first.** The ALLO or excess AUTO opens LOT2 itself,
+  so by the time LOT3's candidates are collected the previous line is no longer
+  LOT1 and the exclusion is not applied at all (`cart_on` is
+  `lot_num == 2L`). The CAR-T is reconsidered and starts a line.
+- **A `MED_ADD` ends line 1 first.** The added agent opens LOT2, and the same
+  reasoning applies.
+
+So the population is narrow: line 1 discontinuing inside its own induction
+window, with a CAR-T after the run-out and still inside day 59.
+
+**The two consistent readings.**
+
+The rules have to give one of these up. Both are one-line changes; neither is
+made here.
+
+1. **The infusion belongs to line 1, so line 1 must reach it.** Hold the line
+   open to the CAR-T — extend `LOT1_BASE_END_DT` to at least the infusion date
+   when an in-induction CAR-T falls after the end. This keeps §6.4's claim
+   literally true and makes the line span a period with no cover, which §4.3
+   already does elsewhere.
+2. **Line 1 ended before the infusion, so the infusion starts line 2.** Gate the
+   exclusion on the line's end as well as its start — exclude only a CAR-T that
+   falls inside the induction window *and* on or before `LOT1_BASE_END_DT`. This
+   keeps line 1 as the discontinuation left it and lets the CAR-T open LOT2.
+
+Reading 2 is the smaller change and the one that cannot lose a treatment
+episode, which is why it is written second rather than first — but that is an
+argument, not a decision, and it belongs to the study team. Whichever is chosen,
+`q3_cart_screen()` in `analysis/questions/jul20_studyteam_qs.R` is where the
+affected patients are counted, and the count should be taken before the change
+rather than after.
+
+**What is not in dispute.**
+
+The 45-day consolidation window (`cart_consolidation_days`) is not involved in
+this at all — it governs the CAR-T-started line's own regimen window and the
+`CART_INIT` bridging window (§7.3). The contradiction is entirely inside line
+1's 60-day `induction_window_days`.
+
+---
+
+### 14.2 The CAR-T consolidation window: 45 days, where the spec says 30
+
+`cart_consolidation_days` is 45. `10_lot2_5_base.R`'s own header records it as
+superseding an earlier 30, so the change was made deliberately rather than
+drifting, but the written protocol and program spec carry 30 and this
+repository holds no document that carries 45 — it came from prior internal
+work that is not here, which is why it cannot be checked against the protocol
+text.
+
+It decides two things at once, so a ruling moves both:
+
+| | |
+|---|---|
+| the CAR-T-started line's regimen window | which agents are in that line's regimen, §4.2 |
+| the `CART_INIT` bridging window | whether an added agent followed by a CAR-T is bridging or an ordinary addition, §7.3 |
+
+At 30 the second is the sharper effect: an addition followed by a CAR-T 31 to
+45 days later stops being `CART_INIT` and becomes a `MED_ADD`, which opens a
+line where the current build opens none.
+
+**Staying at 45**, on the study team's instruction, until they rule. Changing
+it is a one-line config edit and a rebuild, and it is pinned in `CONTRACT`, so
+a run at 30 records the deviation and every downstream reader refuses it as the
+study's numbers — there is no way to produce a 30-day run by accident.
+
+### 14.3 A confirmed discontinuation losing to a later death
+
+§7.5's third scenario. The rule is not wrong where it was designed to help — a
+patient who dies inside the confirmation buffer can never complete it, because
+observation ends at the death, so the death is the only end available. What
+needs a ruling is the case beyond that: the buffer completed, the
+discontinuation is confirmed and written, and a later death still takes the
+line's end.
+
+Two decisions made months apart now meet here. The death branch came first, to
+keep death as the recorded end of a line; the confirmation buffer came in
+August (§5.3). Neither was written against the other, and the branch's gate is
+`POST_RUNOUT_TRIGGER_FLG` alone, so it never asks which date is earlier.
+
+The alternative is one predicate — fire the death branch only when the
+discontinuation is absent or later than the death:
+
+    AND (LOT1_BASE_DISCON_DT IS NULL OR DEATH_DT <= LOT1_BASE_DISCON_DT)
+
+which would leave the line ending `DISCONTINUATION` at the run-out and the
+death recorded as the patient outcome it already is, on `DEATH_DT`. That is the
+protocol's earliest-qualifying-event reading, and it is what §7.1 says the rest
+of the cascade does.
+
+What it would move: end reasons and end dates for patients who ran out, were
+observed for the full buffer, never returned, and then died — so
+`LOT_BASE_LENGTH`, `TTD`, and the attrition split between died and
+discontinued. Not line counts.
+
+---
+
+## 15. What stops a run
 
 A cohort whose own build did not finish. A cohort that does not fit the study
 window the run was given. A setting that differs from the pinned contract
