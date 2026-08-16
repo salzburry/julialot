@@ -1,11 +1,11 @@
 # Known issues — open questions for the study team
 
-Three things the build does that need a decision rather than a closer reading of
-the code. Each one is written to be answered: what the build does today, a
+Four things: one defect with a known correct answer, and three that need a
+decision rather than a closer reading of the code. Each one is written to be answered: what the build does today, a
 worked patient, what it moves, the question, and the count that sizes it.
 
-**None of these is being changed while it is open**, and none of them is a
-defect — each is a decision the code cannot make for itself. The build ships as
+**None of these is being changed while it is open.** #1 is a defect and the
+others are decisions the code cannot make for itself. The build ships as
 described, and every one is recorded in `lot/LOT_RULES.md` next to the rule it
 affects, so nobody reads the rules without meeting the caveat.
 
@@ -35,7 +35,67 @@ conversation.
 
 ---
 
-## 1. The CAR-T consolidation window is 45 days, and the spec says 30
+## 1. A continued agent is missing from the later line's regimen
+
+**A defect, not a choice.** The rule the study team settled is *an agent joins a
+regimen by being filled in the window, not by cover* — that is the heading of the
+engine test that pins it. The code implements something narrower, and nobody
+appears to have chosen it.
+
+**What the build does.** `lot{n}_induction_meds` reads `map_stacked`, which
+carries one row per MAP **episode**, and tests `MAP_START_DT`. A dispense arriving
+while that drug's cover is live extends the open episode rather than opening a
+new one (`03_mma_map.R` CASE 3), so it leaves no `MAP_START_DT` behind. There are
+three possible rules and the build is on the third:
+
+| | rule | in the regimen? |
+|---|---|---|
+| a | cover overlaps the window | rejected — this is the wide reading |
+| b | a **claim** falls in the window | **what was decided** |
+| c | an **episode starts** in the window | **what shipped** |
+
+    d1     LEN, refilled without a break, covered through d200
+    d100   POMA opens LOT2, window d100-d129
+    d110   LEN dispensed — a real claim, inside the window
+    ---
+    LOT2 regimen = POMA. The d110 claim is invisible: it extended the
+    episode that began on d1, and d1 is the only MAP_START_DT LEN has.
+
+**Why it matters more than it looks.** It bites on exactly the drugs that get
+continued across a line boundary, which in myeloma is most of them —
+lenalidomide above all. The more continuously a patient takes an agent, the more
+certainly it is absent from the later line's regimen. Two clinically identical
+patients differ on whether one missed a fill.
+
+**The data is there.** `mma_med_processed` is materialized per claim, with
+`DATE_SERVICE`, `MED_ABBR` and `MED_CLASS`, and it is built before the regimen
+step. So this is not a data limitation; the fills are discarded by the time the
+regimen is assembled.
+
+**The fix, and the care it needs.** Test membership on a claim date rather than
+an episode start. It is not a blind table swap: `map_med` filters and rolls up
+claims that `mma_med_processed` still carries, so the claim test has to be
+restricted to claims belonging to an episode the build kept, or the regimen will
+gain agents the rest of the algorithm does not know about.
+
+**What it would move.** `LOT_BASE_MEDS` and `LOT_MED_CNT` on later lines, the
+per-agent flags, and the run-out — a newly-admitted agent is a base agent and
+enters `discon_per_med`, so line lengths and boundaries move too. Published
+regimen strings change for a large group.
+
+**Question for the study team.** Confirm rule (b) is the intended one — our
+reading of the recorded decision and of the protocol's "all MM therapies
+identified during the first 30 days of the LOT" is that it is — and this is a
+fix rather than a change.
+
+**Count.** `4.2-prior-agent-covered-but-not-in-the-regimen` in
+`exploration/lot/run_scenario_counts.R` sizes it, and has never been run.
+
+`lot/LOT_RULES.md` §4.2 and §12.
+
+---
+
+## 2. The CAR-T consolidation window is 45 days, and the spec says 30
 
 **What the build does.** `cart_consolidation_days` is 45.
 `10_lot2_5_base.R`'s own header records it as superseding an earlier 30, so the
@@ -62,7 +122,7 @@ produce a 30-day run by accident.
 
 ---
 
-## 2. A confirmed discontinuation still loses to a later death
+## 3. A confirmed discontinuation still loses to a later death
 
 **What the build does.** The death branch of the end cascade is gated on
 `POST_RUNOUT_TRIGGER_FLG` alone; `DEATH_DT` is never compared with
@@ -101,7 +161,7 @@ so the other reading is recoverable in analysis without a rebuild.
 
 ---
 
-## 3. A drug returning after a confirmed gap cannot start a line
+## 4. A drug returning after a confirmed gap cannot start a line
 
 **What the build does.** An agent in the previous line's regimen can never start
 the next line, however long it has been gone. The line that owns the drug
