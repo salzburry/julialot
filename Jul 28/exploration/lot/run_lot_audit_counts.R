@@ -167,6 +167,98 @@ AUDIT_COUNTS <- list(
              percentile_approx(l.LOT_BASE_LENGTH, 0.75) AS P75_LENGTH_DAYS
       FROM {t$long} l
       GROUP BY 1, 2
+      ORDER BY 1, 2"),
+
+  # 7. The post-end regimen defect, sized where the fix would have to reach.
+  #    Split by line number and by what ended the line, because the analysis
+  #    says which paths can strand: ALLO at every line, CAR-T at LOT2-5 only
+  #    (LOT1's induction exemption closes that one), and AUTO nowhere, since the
+  #    in-LOT AUTO window is the regimen window. A count landing on SCT_AUTO or
+  #    on a LOT1 SCT_CART contradicts that reading and is the finding.
+  list(id = "post-end-regimen-by-line-and-end-reason",
+       what = "Lines naming a regimen agent whose first episode starts after the line ended, by LOT and end reason",
+       expect = "expected on SCT_ALLO at any line and SCT_CART at LOT2+; anything else contradicts the analysis",
+       sql = "
+      WITH exploded AS (
+        SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_BASE_END_DT,
+               l.LOT_BASE_END_REASON,
+               explode(split(l.LOT_BASE_MEDS, ' ')) AS MED_ABBR
+        FROM {t$long} l
+        WHERE coalesce(trim(l.LOT_BASE_MEDS), '') <> ''
+      ),
+      offending AS (
+        SELECT DISTINCT e.PATID, e.LOT_NUM, e.LOT_BASE_END_REASON, e.MED_ABBR
+        FROM exploded e
+        WHERE e.MED_ABBR <> ''
+          AND NOT EXISTS (SELECT 1 FROM {t$map} m
+                          WHERE m.PATID = e.PATID
+                            AND m.MAP_MED_TYPE = e.MED_ABBR
+                            AND m.MAP_START_DT BETWEEN e.LOT_START_DT
+                                                   AND e.LOT_BASE_END_DT)
+      )
+      SELECT LOT_NUM, LOT_BASE_END_REASON,
+             count(*)                                        AS N_AGENT_LINE_PAIRS,
+             count(DISTINCT concat_ws('|', PATID, LOT_NUM))  AS N_LINES,
+             count(DISTINCT PATID)                           AS N_PATIENTS
+      FROM offending
+      GROUP BY 1, 2
+      ORDER BY 1, 2"),
+
+  # 8. The consequence that is not cosmetic: the same agent counted in a line it
+  #    post-dates AND opening a later line. This is the number the decision turns
+  #    on, because it is the one that moves a line count rather than a string.
+  list(id = "post-end-agent-also-starts-a-later-line",
+       what = "Stranded regimen agents that also appear in a LATER line's regimen for the same patient",
+       expect = "no target; this is double attribution, and the reason the defect is not cosmetic",
+       sql = "
+      WITH exploded AS (
+        SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_BASE_END_DT,
+               explode(split(l.LOT_BASE_MEDS, ' ')) AS MED_ABBR
+        FROM {t$long} l
+        WHERE coalesce(trim(l.LOT_BASE_MEDS), '') <> ''
+      ),
+      stranded AS (
+        SELECT DISTINCT e.PATID, e.LOT_NUM, e.MED_ABBR
+        FROM exploded e
+        WHERE e.MED_ABBR <> ''
+          AND NOT EXISTS (SELECT 1 FROM {t$map} m
+                          WHERE m.PATID = e.PATID
+                            AND m.MAP_MED_TYPE = e.MED_ABBR
+                            AND m.MAP_START_DT BETWEEN e.LOT_START_DT
+                                                   AND e.LOT_BASE_END_DT)
+      )
+      SELECT s.LOT_NUM                                       AS STRANDED_IN_LOT,
+             count(*)                                        AS N_AGENT_LINE_PAIRS,
+             count(DISTINCT concat_ws('|', s.PATID, s.LOT_NUM)) AS N_LINES,
+             count(DISTINCT s.PATID)                         AS N_PATIENTS
+      FROM stranded s
+      INNER JOIN exploded later
+              ON later.PATID = s.PATID
+             AND later.LOT_NUM > s.LOT_NUM
+             AND later.MED_ABBR = s.MED_ABBR
+      GROUP BY 1
+      ORDER BY 1"),
+
+  # 9. The second-order half of the same fix. Bounding regimen MEMBERSHIP is not
+  #    enough on its own: discon_per_med chains a base agent's own later episodes
+  #    forward from the line's START with no upper bound, so a refill after the
+  #    transplant still pushes RAW_DISCON_DT past it. Counted separately because
+  #    it survives the membership fix and needs its own cutoff.
+  list(id = "runout-extends-past-the-transplant-end",
+       what = "Lines ended by a transplant whose run-out date is later than that end",
+       expect = "no target; these are the lines where bounding membership alone would not be enough",
+       sql = "
+      SELECT l.LOT_NUM, l.LOT_BASE_END_REASON,
+             count(*)                                   AS N_LINES,
+             count(DISTINCT l.PATID)                    AS N_PATIENTS,
+             percentile_approx(datediff(l.LOT_BASE_RUNOUT_DT,
+                                        l.LOT_BASE_END_DT), 0.5) AS MEDIAN_DAYS_PAST_END,
+             max(datediff(l.LOT_BASE_RUNOUT_DT, l.LOT_BASE_END_DT)) AS MAX_DAYS_PAST_END
+      FROM {t$long} l
+      WHERE l.LOT_BASE_END_REASON IN ('SCT_AUTO', 'SCT_ALLO', 'SCT_CART')
+        AND l.LOT_BASE_RUNOUT_DT IS NOT NULL
+        AND l.LOT_BASE_RUNOUT_DT > l.LOT_BASE_END_DT
+      GROUP BY 1, 2
       ORDER BY 1, 2")
 )
 

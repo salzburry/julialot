@@ -1289,7 +1289,10 @@ initiation, which is a clinical question and not a protocol reading.
 ## 14. Fixed, and still open
 
 One rule that was fixed, one defect with the fix worked out but not applied, and
-two things that need a ruling rather than a closer reading of the code.
+two things that need a ruling rather than a closer reading of the code. All four
+are also in `KNOWN_ISSUES.md`, one level up, written as questions to put to the
+study team with the count that sizes each — this section is the analysis, that
+one is the ask.
 `cart_consolidation_days` stays at 45, `apply_cart_induction_rule` stays `TRUE`,
 and the death branch stays as it is.
 
@@ -1432,6 +1435,16 @@ regimen. There is no circularity to resolve, because the transplant date does
 not depend on the regimen. Only the ALLO and CAR-T arms can actually move a
 bound, since AUTO is already gated.
 
+**The cutoff has to bound the per-drug episode scan too, not only membership.**
+`discon_per_med` chains a base agent's own later episodes forward from the
+line's **start**, with no upper bound (`R/prior_regimen.R` — the only date
+predicate is `MAP_START_DT >= ls.<start_col>`). So an agent that legitimately
+belongs to the regimen still pushes `LOT*_BASE_RUNOUT_DT` past the transplant
+on a refill after it, and that survives a membership-only correction. The
+run-out feeds the added-medication window and the post-run-out trigger, so it is
+not a spare column. `runout-extends-past-the-transplant-end` in
+`exploration/lot/run_lot_audit_counts.R` counts the lines this half applies to.
+
 **What blocks it is step order, not logic.** `04_lot1_base.R` builds
 `base_meds` before `05_sct.R` and `05b_lot1_sct.R` exist, and the LOT2-5 loop
 builds `lot{n}_induction_meds` before `lot{n}_sct`, so at neither is the bound
@@ -1447,10 +1460,15 @@ end dates, every later line's start and the prior-regimen exclusion — the whol
 chain. Nothing in this repository executes a patient through the engine SQL (see
 "How to read a scenario"), so a change of that reach cannot be checked short of
 a warehouse run against a real cohort. `run_lot_audit_counts.R` in
-`exploration/lot/` is where the affected lines are counted —
-`regimen-agent-begins-after-line-end`, 30 of 10,659 lines carrying a regimen on
-the synthetic cohort — and that count should be taken on the production run
-before and after.
+`exploration/lot/` is where the affected lines are counted, and it now carries
+three counts for this one: `post-end-regimen-by-line-and-end-reason`,
+`post-end-agent-also-starts-a-later-line` — the double attribution, which is the
+number the decision turns on — and `runout-extends-past-the-transplant-end`.
+Synthetic shape is 30 of 10,659 lines carrying a regimen; the production numbers
+should be taken before anything is changed.
+
+It is question 1 in `KNOWN_ISSUES.md`, which is the register for the study team
+rather than for a reader of these rules.
 
 ### 14.3 The CAR-T consolidation window: 45 days, where the spec says 30
 

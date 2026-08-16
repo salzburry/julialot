@@ -104,6 +104,12 @@ the NDMM cohort, and `lot/LOT_RULES.md` covers the lines.
 
 Where one of those documents and this table disagree, the document is the record.
 
+`KNOWN_ISSUES.md` is the other side of that: the decisions that have **not** been
+made. Four open questions for the study team, each with a worked patient, what it
+would move, and the count in `exploration/lot/run_lot_audit_counts.R` that sizes
+it. Nothing in it is being changed while it is open, and each one is also
+recorded in `lot/LOT_RULES.md` beside the rule it affects.
+
 ## Settings
 
 `config.csv` in each package holds the defaults; the environment wins over it.

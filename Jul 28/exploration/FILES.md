@@ -160,7 +160,7 @@ one resolves which run actually wrote the tables before measuring them.
 | `run_rechallenge_evidence.R` | Prints what would be measured; opt-in to run. |
 | `R/melphalan.R` | Measures the melphalan rule against a finished run without applying it. Writes `MELP_RULE_EXPOSURES`, `MELP_RULE_BRANCHES`, `MELP_RULE_IMPACT`. |
 | `run_melphalan_rule.R` | Prints the rule and its settings; `MELP_EXECUTE=TRUE` measures it. |
-| `run_lot_audit_counts.R` | Real-data frequencies for the LOT assignment findings. Not formal QC — investigation, and it carries the one confirmed correctness defect, which is also recorded in `lot/LOT_RULES.md` §3.3 so it survives this script being moved or retired. |
+| `run_lot_audit_counts.R` | Real-data frequencies for the LOT assignment findings. Not formal QC — investigation. Eight counts, three of them sizing the post-end regimen defect: how many lines by line number and end reason, how often the stranded agent also starts a later line, and how often the run-out extends past the transplant that ended the line. The defect itself is recorded in `lot/LOT_RULES.md` §3.3 and §14.2, and as question 1 in `KNOWN_ISSUES.md`, so it survives this script being moved or retired. |
 | `tests/` | One suite per measurement, each reading its SQL as a string. |
 | `out/` | Generated. Nothing reads it back. |
 
