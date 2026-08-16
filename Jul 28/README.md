@@ -11,28 +11,35 @@ A cohort is what LOT is pointed at. It is not part of LOT and does not read it.
 |---|---|
 | `overall/` | cohort build, the broad MM cohort. `build.R`, no arguments. Writes `OVERALL_COH_FINAL`. |
 | `ndmm/` | cohort build, the 1L newly-diagnosed study cohort. `build.R <prefix_>`. Also `build_subsequent_cohorts.R <prefix_>` for the 2L and 3L cohorts, which runs *after* the LOT build. |
-| `lot/engine/` | lines of therapy. `build.R <COHORT_TABLE> <prefix_>`. The only package in `lot/` that writes LOT tables. |
-| `lot/dashboard/` | one self-contained HTML. Reads only. |
-| `lot/outcomes/` | TTNT, TTD, OS, attrition. Reads only. |
-| `lot/questions/` | the study team's questions, one script each. Not a build. |
-| `lot/qc/` | the slower checks on a finished run. Reads only, writes to `out/`. |
-| `lot/validation/` | whether the rules are the right rules. Not part of a study run. |
-| `lot/melphalan/` | a proposed line-advancing rule, built as three runs and differenced. Opt-in. |
+| `lot/engine/` | lines of therapy. `build.R <COHORT_TABLE> <prefix_>`. The only package anywhere here that writes LOT tables. |
+| `lot/qc/` | thirty-two checks on a finished run. Reads only, writes to `out/`. |
+| `lot/validation/` | the rule scenarios, machine-checked. No warehouse. |
+| `reporting/dashboard/` | one self-contained HTML. Reads only. |
+| `analysis/outcomes/` | TTNT, TTD, OS, attrition — protocol Table 4. Reads only. |
+| `analysis/questions/` | the study team's questions, one script each. Not a build. |
+| `exploration/melphalan/` | a proposed line-advancing rule the build does not apply, built as three runs and differenced. Opt-in. |
+| `exploration/lot/` | benchmarks, the definition comparison, the sensitivity sweep, stockpiling, re-challenge, audit counts. Not part of a study run. |
 
-Each cohort build has a `RULES.md` giving the rules it applies and the
-assumptions behind them, with `ndmm/DECISIONS.md` as the long form for the
-cohort. `lot/` has two documents and no others: `lot/LOT_RULES.md` is the rules
-the line build applies, one at a time, each with a scenario showing what it does
-to a patient's claims, and `lot/FILES.md` is what is in that folder and what
-each file does.
+`lot/` is the algorithm and only the algorithm: the engine that builds the
+lines, the checks that sign a run off, and the scenarios that say what the rules
+are. Everything derived from a finished run is in `reporting/` and `analysis/`;
+everything asked *about* the rules rather than applied by them is in
+`exploration/`. The boundary is deliberate — what the study ships as the
+algorithm is one directory with three packages in it.
+
+Each area carries a `FILES.md` saying what is in it and what each file does, and
+each cohort build a `RULES.md` giving the rules it applies, with
+`ndmm/DECISIONS.md` as the long form for the cohort. `lot/LOT_RULES.md` is the
+rules the line build applies, one at a time, each with a scenario showing what
+it does to a patient's claims.
 
 `ndmm/` and `overall/` are independent - neither reads the other, and each goes
 to the raw CDM and the production code lists on its own. `lot/engine/` takes a
 cohort table by name, so it runs over either:
 
 ```
-ndmm     ->  lot over <prefix>NDMM_COHORT  ->  lot/dashboard, lot/questions/*_qs.R
-overall  ->  lot over OVERALL_COH_FINAL    ->  lot/questions/broad_studyteam_qs.R
+ndmm     ->  lot over <prefix>NDMM_COHORT  ->  reporting/dashboard, analysis/questions/*_qs.R
+overall  ->  lot over OVERALL_COH_FINAL    ->  analysis/questions/broad_studyteam_qs.R
 ```
 
 The study is the first path. The second exists because two of the study team's
@@ -41,9 +48,9 @@ questions are about patients the NDMM cohort excluded.
 ```
 DATABRICKS_PWD=... Rscript ndmm/build.R                    ndmm_
 DATABRICKS_PWD=... Rscript lot/engine/build.R              ndmm_NDMM_COHORT ndmm_
-DATABRICKS_PWD=... Rscript lot/dashboard/build.R           ndmm_NDMM_COHORT ndmm_
+DATABRICKS_PWD=... Rscript reporting/dashboard/build.R     ndmm_NDMM_COHORT ndmm_
 DATABRICKS_PWD=... Rscript ndmm/build_subsequent_cohorts.R ndmm_
-DATABRICKS_PWD=... Rscript lot/outcomes/build.R            ndmm_NDMM_COHORT ndmm_
+DATABRICKS_PWD=... Rscript analysis/outcomes/build.R       ndmm_NDMM_COHORT ndmm_
 ```
 
 The 2L and 3L cohorts sit between the lines and the outcomes, and both sides of
@@ -53,9 +60,9 @@ them for LINE_ELIGIBLE: run it first on a clean prefix and it quietly reports
 ALL_LINES alone, and run it first on a re-run and it reads the previous
 attempt's cohorts.
 
-Read a package's own README before running it. Under `lot/` that is
-`lot/FILES.md`, which carries every package's commands, settings and outputs;
-`overall/` documents itself in its entry script's header.
+Read the area's `FILES.md` before running a package — `lot/`, `reporting/`,
+`analysis/` and `exploration/` each carry one, with every package's commands,
+settings and outputs. `overall/` documents itself in its entry script's header.
 
 ## Which names carry a prefix
 
@@ -92,8 +99,8 @@ the NDMM cohort, and `lot/LOT_RULES.md` covers the lines.
 | maintenance | `ndmm/DECISIONS.md` #10 - **not implemented**; the protocol defines a period, the build carries a flag |
 | pregnancy window | `ndmm/DECISIONS.md` #9 - protocol and program spec disagree; which wins is recorded there |
 | lines of therapy | `lot/LOT_RULES.md` - "Applied, and still under review", and "Where this differs from the written protocol". `SCT_TANDEM_DAYS` and `CART_CONSOLIDATION_DAYS` come from prior internal work not in this repository, so they cannot be checked against the protocol text |
-| outcomes | `lot/FILES.md`, `outcomes/` - the `STUDY_END` censoring rule for TTD, the fifth attrition category, both denominators |
-| the melphalan proposal | `lot/FILES.md`, under `lot/melphalan/`. It is an exploration, not a rule the build applies, which is why it is not in `lot/LOT_RULES.md` |
+| outcomes | `analysis/FILES.md` - the `STUDY_END` censoring rule for TTD, the fifth attrition category, both denominators |
+| the melphalan proposal | `exploration/FILES.md`. It is an exploration, not a rule the build applies, which is why it is neither in `lot/` nor in `lot/LOT_RULES.md` |
 
 Where one of those documents and this table disagree, the document is the record.
 
@@ -119,21 +126,22 @@ a commit rather than reported by whoever ran them.
 Rscript overall/tests/test_runner.R
 Rscript ndmm/tests/test_runner.R                 # and test_same_as_overall.R,
                                                  # test_subsequent.R
-Rscript lot/engine/tests/test_runner.R           # and test_line_criteria.R
-Rscript lot/dashboard/tests/test_runner.R
-Rscript lot/questions/tests/test_setup.R
-Rscript lot/outcomes/tests/test_runner.R
+Rscript lot/engine/tests/test_runner.R              # and test_line_criteria.R
 Rscript lot/qc/tests/test_lot_qc.R
-Rscript lot/validation/tests/test_vignettes.R    # and test_sensitivity.R,
-                                                 # test_benchmarks.R,
-                                                 # test_definitions.R,
-                                                 # test_melphalan.R
-Rscript lot/melphalan/tests/test_aug1_melp.R
+Rscript lot/validation/tests/test_vignettes.R
+Rscript reporting/dashboard/tests/test_runner.R
+Rscript analysis/outcomes/tests/test_runner.R
+Rscript analysis/questions/tests/test_setup.R
+Rscript exploration/melphalan/tests/test_aug1_melp.R
+Rscript exploration/lot/tests/test_benchmarks.R     # and test_definitions.R,
+                                                    # test_melphalan.R,
+                                                    # test_sensitivity.R,
+                                                    # test_stockpiling.R
 ```
 
 The study team's worked melphalan scenarios run without a connection too, and
 exit non-zero if any of them moves:
 
 ```
-Rscript lot/melphalan/run_melp_scenarios.R
+Rscript exploration/melphalan/run_melp_scenarios.R
 ```

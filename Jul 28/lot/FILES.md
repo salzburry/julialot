@@ -1,61 +1,55 @@
 # What is in this folder
 
-The lines-of-therapy engine, and everything that depends on it. This file says
-what is here and what each file does. `LOT_RULES.md` is the other half: the
-rules the line build applies, one at a time, each with a scenario showing what
-it does to a patient's claims.
+`lot/` is the lines-of-therapy product: the engine that builds the lines, the
+checks that sign a run off, and the scenarios that say what the rules are. This
+file says what is here and what each file does. `LOT_RULES.md` is the other
+half: the rules the build applies, one at a time, each with a scenario showing
+what it does to a patient's claims.
 
-One package here writes a study run's LOT tables, and only that one: everything
-else reads that run, derives from it, or rebuilds it under a changed rule into
-a prefix of its own. So the lines themselves have a single author.
-`lot/outcomes/` does add tables under the study's prefix, but they are its own
-`OUT_*`, derived from a finished run rather than a second account of it.
+Only one package here writes anything, and it writes the lines. Everything else
+in this folder reads a finished run in order to check it or to describe it.
 
 | | |
 |---|---|
 | `lot/engine/` | builds the lines. `build.R <COHORT_TABLE> <prefix_>`. The only package here that writes a study run. |
-| `lot/dashboard/` | one self-contained HTML off a finished run. `build.R <COHORT_TABLE> <lot_prefix_>`. |
-| `lot/outcomes/` | TTNT, TTD, OS and attrition off a finished run. `build.R <COHORT_TABLE> <lot_prefix_>`. |
-| `lot/questions/` | the study team's questions, one script each. Not a build. |
-| `lot/qc/` | the slower checks on a finished run, asked after the fact. `run_lot_qc.R`. |
-| `lot/validation/` | whether the rules are the right rules — vignettes, benchmarks, definitions, a sensitivity sweep. |
-| `lot/melphalan/` | an exploration: a proposed line-advancing rule, built as three complete runs and differenced. Opt-in, and not in the study's numbers. |
+| `lot/qc/` | thirty-two checks on a finished run, asked after the fact. Reads only. `run_lot_qc.R`. |
+| `exploration/lot/` | the rule scenarios, machine-checked against the settings that decide them. No warehouse. |
 
-Paths are written from the study folder, so `lot/engine/` is what you type
-standing at its root. Inside each package's own file table below they are
-relative to that package, which is why they read `R/build_lot.R` and the
-commands read `Rscript build.R` — those are run from the package's folder.
+## What is deliberately not here
+
+A cohort, everything derived from a finished run, and every experiment on the
+rules. Each sits beside this folder rather than inside it, so that what the
+study ships as *the algorithm* is one directory with three packages in it:
+
+| | |
+|---|---|
+| `ndmm/`, `overall/` | the cohort builds. A cohort is what the engine is pointed at, so it comes before LOT rather than under it |
+| `reporting/dashboard/` | one self-contained HTML off a finished run |
+| `analysis/outcomes/` | TTNT, TTD, OS and attrition — protocol Table 4 |
+| `analysis/questions/` | the study team's asks, one script each |
+| `exploration/melphalan/` | a proposed rule the build does not apply |
+| `exploration/lot/` | benchmarks, definitions, sensitivity, stockpiling, re-challenge, audit counts |
+
+Each of those areas has its own `FILES.md`. The direction is one-way: they
+resolve `lot/engine` and read its modules, and nothing in `lot/` resolves back
+out. `reporting/` and `analysis/outcomes/` do not even do that — they read a
+finished run's tables and carry their own helpers.
 
 ## What a study run uses
 
-`lot/engine/`, then `lot/dashboard/`, `lot/outcomes/` and `lot/questions/` over
-what it wrote. `lot/qc/` signs a finished run off.
+`lot/engine/`, then `reporting/dashboard/`, `analysis/outcomes/` and
+`analysis/questions/` over what it wrote. `lot/qc/` signs the finished run off.
 
-The other two are not part of a run: `lot/validation/` is the case for the
-rules, and `lot/melphalan/` an experiment on one of them. Both build — the
-sensitivity sweep and the melphalan cells — into throwaway prefixes of their
-own, and both are opt-in, so neither can land on a study's tables by being run
-at the wrong moment.
+Nothing under `exploration/` is part of a run. The two things there that build
+write to throwaway prefixes of their own and are opt-in, so neither can land on
+a study's tables by being run at the wrong moment.
 
 ## Why the engine is its own folder
 
 It is copied into other projects as-is, so it may not reach outside itself: no
-sibling here is on its path, its only outside dependencies are the R packages
-`DBI`, `odbc` and `glue`, and nothing in it names a cohort. A check outside the
-study folder holds every file in it to that.
-
-The direction is one-way, and it is the whole reason the split reads the way it
-does. `lot/qc/`, `lot/questions/`, `lot/validation/` and `lot/melphalan/` resolve
-`../engine` and read its modules, so the config, the code lists and the naming
-helpers have one definition rather than a copy per reader. `lot/engine/`
-resolves nothing back.
-
-`lot/dashboard/` and `lot/outcomes/` are the two that do not: they read a
-finished run's tables and nothing else, so they carry their own
-`load_inputs.R`, config and helpers. That is a real duplication, and the reason
-it is tolerated is that neither reads a code list or a line rule — only columns
-the engine has already written — so there is no rule for their copy to drift
-away from.
+sibling is on its path, its only outside dependencies are the R packages `DBI`,
+`odbc` and `glue`, and nothing in it names a cohort. A check outside the study
+folder holds every file in it to that.
 
 ## The cohorts are not here
 
@@ -64,27 +58,33 @@ at — `build.R` takes the table name — so it comes before LOT rather than und
 it, and neither cohort build reads anything in this folder at run time.
 
 Two things do cross. `ndmm/build_subsequent_cohorts.R` runs *after* a LOT run,
-because the 2L and 3L index dates are line starts; it is still a cohort build, so
-it lives with the cohorts. And `ndmm/tests/` reads `lot/engine/R/build_lot.R` as a
-source file — not to run it, but to pin the interface between them: the columns
-the engine requires of a cohort, and the columns its status table really has.
+because the 2L and 3L index dates are line starts; it is still a cohort build,
+so it lives with the cohorts. And `ndmm/tests/` reads `lot/engine/R/build_lot.R`
+as a source file — not to run it, but to pin the interface between them: the
+columns the engine requires of a cohort, and the columns its status table
+really has.
 
 ## Settings
 
-Each package has a `config.csv` where it has settings at all, and the environment
-wins over the file. The cohort table and the prefix are never in a config file —
-the caller passes them, because one prefix is one study and a wrong prefix is a
-wrong study.
+Each package has a `config.csv` where it has settings at all, and the
+environment wins over the file. The cohort table and the prefix are never in a
+config file — the caller passes them, because one prefix is one study and a
+wrong prefix is a wrong study.
 
 Settings that change what a build *means* are pinned in `CONTRACT`
-(`lot/engine/R/build_lot.R`) and refused if changed, since a different
-threshold is a different algorithm. `LOT_CONTRACT_OVERRIDE=TRUE` exists for the
+(`lot/engine/R/build_lot.R`) and refused if changed, since a different threshold
+is a different algorithm. `LOT_CONTRACT_OVERRIDE=TRUE` exists for the
 sensitivity sweep and the melphalan cells; a run that uses it records what it
-deviated on in `CONTRACT_DEVIATIONS`, and every reader here refuses such a run
-as the study's numbers.
+deviated on in `CONTRACT_DEVIATIONS`, and every reader in the delivery refuses
+such a run as the study's numbers.
 
 Code lists live outside version control on a mounted path (`CODELIST_DIR`) and
 are hashed either side of each read, so a run records which version it used.
+
+Paths are written from the study folder, so `lot/engine/` is what you type
+standing at its root. Inside each package's own file table below they are
+relative to that package, which is why they read `R/build_lot.R` and the
+commands read `Rscript build.R` — those are run from the package's folder.
 
 ---
 
@@ -114,7 +114,7 @@ per patient, and has to fit the study window the run was given.
 | `R/db_utils_lot.R` | Connection, logging, retry, table naming (`wrk` / `lot_out`), `materialize()` and the step runner. |
 | `R/line_criteria.R` | Extra criteria on finished lines, declared as data. Every one is computed into `LOT_LONG_ALLFLAGS`; only the enabled ones are applied to `LOT_LONG_FINAL`. |
 | `R/cart_rule.R` | The CAR-T induction rule: an infusion inside line 1's window belongs to line 1 and neither ends nor starts a line. |
-| `R/melp_rule.R` | The melphalan exploration's rule. Pinned off, and off emits the same SQL as not having the file, so it decides nothing in a study run. It lives here because it needs each line's own induction window — `lot/melphalan/` below. |
+| `R/melp_rule.R` | The melphalan exploration's rule. Pinned off, and off emits the same SQL as not having the file, so it decides nothing in a study run. It lives here because it needs each line's own induction window — `exploration/melphalan/` below. |
 | `R/prior_regimen.R` | The prior-regimen rule and each line's run-out. A drug in the previous regimen cannot start the next line; the line it belongs to extends over its later episodes instead, stopping at any other agent arriving in between. |
 | `R/steps/01_codelists.R` | Code lists into views, then the consistency checks between them — which are fatal, which are waivable through `CODELIST_WAIVERS`, and why. |
 | `R/steps/02_patient_input.R` | The cohort as the build reads it, snapshotted into `LOT_PATIENT_INPUT`. Sets the observation end date every later gap and window is measured against. |
@@ -257,65 +257,6 @@ whether or not it passed, and the bands are wide deliberately — they catch gro
 failure, and none is a published benchmark. Reported, not fatal;
 `FACE_VALIDITY_FATAL=TRUE` makes them stop.
 
-## `lot/dashboard/` — one HTML off a finished run
-
-`build.R <COHORT_TABLE> <lot_prefix_> [<cohort_prefix_>]`. Reading only: it
-creates, replaces and drops nothing, so it can be re-run against a finished study
-as often as anyone wants.
-
-| path | what it does |
-|---|---|
-| `build.R` | Entry point. Renders one cohort's dashboard after the cohort and line builds. |
-| `config.csv` | Settings: which tables to read, the attrition table's name and window, and one `SHOW_*` switch per panel. A switch that is neither `TRUE` nor `FALSE` stops the build. |
-| `R/build_dashboard.R` | The runner. Resolves which LOT run owns the tables from `LOT_BUILD_STATUS`, refuses one that did not finish or that carries contract deviations, then draws. |
-| `R/sections.R` | What the dashboard shows. Every panel is one entry — a name, a tab, its query, what it needs and how to draw the answer. Also the attrition layouts, the transition Sankeys and the patient-journey scenarios. |
-| `R/render.R` | Writes one self-contained HTML file using base R only, so a missing plotting package cannot silently produce nothing. Holds `PALETTE`, the whole colour scheme. |
-| `R/db_utils_dash.R` | Reading only. This package creates, replaces and drops nothing, which is what makes it safe to re-run against a finished study. |
-| `R/config_dash.R`, `R/load_inputs.R` | Settings, and the `config.csv` reader. |
-| `tests/test_runner.R` | The registry, the guards, the placeholder filling, that the package cannot write, and that the HTML escapes values and needs no network. |
-
-Two things worth knowing before reading a number off it. Every clinical panel
-is drawn on `LOT_LONG_FINAL`; only the Validation tab reads `LOT_LONG`, where
-the before/after comparison is the point. And `followup_end_reason` is one row
-per **patient** over the whole study population, while `outcomes`'
-`N_LOST_TO_FU` and `N_ONGOING` are one row per patient-**line** and only over
-what is left after the next line, death and discontinuation have been taken
-out. The two do not reconcile, and `outcomes_followup` is the panel to read
-beside `OUT_ATTRITION`.
-
-## `lot/outcomes/` — protocol Table 4
-
-`build.R <COHORT_TABLE> <lot_prefix_>`. Reads only; writes five `OUT_*` tables.
-
-| path | what it does |
-|---|---|
-| `build.R` | Entry point for treatment patterns and treatment-related outcomes. |
-| `R/build_outcomes.R` | Computes those outcomes off one finished run. Builds no line and no cohort of its own. |
-| `R/run_outcomes.R` | Resolves which run owns the tables, refuses anything it cannot vouch for, then writes the five output tables. |
-| `R/config_out.R` | Settings, all about which run to read. Nothing here defines a clinical rule. |
-| `R/db_utils_out.R`, `R/load_inputs.R` | Connection, logging and settings helpers for that package. |
-| `config.csv` | Three settings: the run to read, the cohort prefix, and `STUDY_END`, which is checked against the LOT run rather than trusted. |
-| `followup_outcomes.sql` | Paste-and-run: reads observed follow-up, event counts and the attrition split back off a finished run, and checks the five categories sum to `N_ON_LINE`. |
-| `tests/test_runner.R` | The SQL as a string, and the censoring arithmetic evaluated in R over hand-made cases. |
-
-| table | one row per |
-|---|---|
-| `<prefix>OUT_TTE` | patient per line — TTNT, TTD and OS as a date and a 0/1 each |
-| `<prefix>OUT_ATTRITION` | denominator and line — the attrition categories, which partition it |
-| `<prefix>OUT_LINE_GAP` | denominator and line pair — months from one line's start to the next |
-| `<prefix>OUT_REGIMEN` | denominator, line and regimen — N and % receiving each |
-| `<prefix>OUT_DX_TO_LOT1` | one row — months from MM diagnosis to the 1L index. The only optional output. |
-
-It refuses a run it cannot identify and a lineage it cannot prove — the newest
-`LOT_BUILD_STATUS` row has to be `complete`, built from the cohort named on the
-command line, carry no `CONTRACT_DEVIATIONS`, and name the same `STUDY_END` this
-package is set to. `OUT_ALLOW_UNPROVEN_LINEAGE=TRUE` accepts what could not be
-checked; a lineage shown to be wrong still stops.
-
-Both readings of "of the patients who reached 2L" are reported side by side —
-`ALL_LINES` and `LINE_ELIGIBLE` — because nothing in the protocol picks one.
-Regimens are raw, not the Annex 2 SOC categories.
-
 ## `lot/qc/` — the slower checks on a finished run
 
 | path | what it does |
@@ -331,177 +272,27 @@ look, `info` is counted and never scored. A check that could not run is reported
 as an error, not a pass. It judges a run by that run's own recorded
 `CONTRACT_SETTINGS`, not by `config.csv`.
 
-## `lot/questions/` — the study team's asks
+## `exploration/lot/` — the rule scenarios, machine-checked
 
-One script per ask, each writing its own CSVs or workbook. All read a finished
-run and write nothing to the warehouse. `OBJECT_PREFIX` and `INPUT_COHORT_TABLE`
-are required, and each script checks the cohort it was given against what the LOT
-build recorded.
+The twin of the scenarios in `LOT_RULES.md`. Every rule there carries a
+timeline of claims and what the algorithm makes of them, and 21 of those name a
+vignette id — this is where that id lives. It is a **specification**, not
+observed data: nothing here has been run against a warehouse.
 
-| path | what it does |
-|---|---|
-| `_setup.R` | Shared setup, using the engine's own modules rather than a second copy so the two cannot drift. Loads `config.csv` first, then pins a config the way the build does. |
-| `lot1_studyteam_qs.R` | The standalone LOT1 asks. |
-| `poma_studyteam_qs.R` | The POMA-in-1L asks — one workbook, one tab per question. |
-| `jul20_studyteam_qs.R` | The July-20 set, including `q3_cart_screen()`, which counts the patients the CAR-T induction rule touches. |
-| `lot_followup_qs.R` | The follow-ups on steroids, regimen mix and CAR-T. |
-| `broad_studyteam_qs.R` | The two asks NDMM cannot answer, over the broad cohort — the other-cancer association, and the diagnosis-anchored trial flags. |
-| `validation_qs.R` | The "MM LOT validation next steps" asks. |
-| `validation_helpers.R` | The analysis behind those questions, shared with the dashboard's exploratory tables. |
-| `tests/test_setup.R` | Executes the setup and holds the population, the table names and the bone-metastasis list to what the build does. |
-
-`LOT_POPULATION=PRECRITERIA` is the one axis: the same run before the line
-criteria, worth asking for when the question is what a criterion cost. It is not
-a cohort, and a denominator taken from it counts patients the study removed.
-
-## `lot/validation/` — whether the rules are the right rules
-
-Five asks, each taken as far as this folder can take it. None of it has executed
-against a warehouse, so nothing here is an observed output. Every runner prints
-what it would measure and needs no connection until told to execute.
+It stays with the rules rather than moving to `exploration/` because it is not
+a measurement of the build, it is a statement of what the build's own rules say.
+The measurements are in `exploration/lot/`.
 
 | path | what it does |
 |---|---|
-| `R/run_binding.R` | Works out which run actually wrote the tables about to be measured, since the tables themselves do not say. |
-| `R/vignettes.R` | The edge cases the algorithm is hardest on, each with the assignment the rules give. A specification, not observed data. Every offset is derived from the parameter that decides it, so the cases move when a setting moves. |
-| `run_vignettes.R` | Renders the catalogue. No connection; writes a CSV and a markdown table to `out/`. |
-| `R/benchmarks.R` | This algorithm's distributions — lines per patient, regimen frequencies, durations, TTNT — beside published figures. |
-| `benchmarks.csv` | The reference grid, shipping with `published_value` blank: the published figures are not this folder's to write, and an unfilled row reports itself rather than passing. A value with no `source` is refused on load. |
-| `run_benchmarks.R` | Measures a finished run and compares. `OBJECT_PREFIX` required; `BENCH_EXECUTE=TRUE` to run. |
-| `R/definitions.R` | How this algorithm operationalises "line of therapy" across twelve dimensions, each answer cited to file and line so a reader can check it. |
-| `definitions_sources.csv` | The grid somebody with the documents fills in — 12 dimensions × 6 source slots. A summary or a recollection is rejected by name; the default falls to "not yet sourced", never to "agrees". |
-| `run_definitions.R` | Renders the comparison. No warehouse — the rules are in the code, not the data. |
-| `R/sensitivity.R` | Moves one threshold at a time, with the direction predicted before the run, so a metric moving the other way is a finding. Fourteen cells, each a complete LOT build under `LOT_CONTRACT_OVERRIDE` into a throwaway prefix. |
-| `run_sensitivity.R` | Prints the grid, the predicted directions and the cell count by default; `SENS_EXECUTE=TRUE` builds them. |
-| `R/stockpiling.R` | Sizes coverage-based regimen membership: what leftover cover would add or remove if it counted. Writes `STOCKPILE_AGENTS`, `STOCKPILE_IMPACT`, `STOCKPILE_BY_LOT`, `STOCKPILE_BY_MED`. |
-| `run_stockpiling_rule.R` | Prints the rule; `STOCK_EXECUTE=TRUE` measures it. |
-| `R/rechallenge.R` | Sizes re-challenge events — an agent returning — and the gap that decides each one. |
-| `sql/rechallenge_evidence.sql` | The query behind it. |
-| `run_rechallenge_evidence.R` | Prints what would be measured; opt-in to run. |
-| `R/melphalan.R` | Measures the melphalan rule against a finished run without applying it. Writes `MELP_RULE_EXPOSURES`, `MELP_RULE_BRANCHES`, `MELP_RULE_IMPACT`. |
-| `run_melphalan_rule.R` | Prints the rule and its settings; `MELP_EXECUTE=TRUE` measures it. |
-| `tests/test_vignettes.R` | The catalogue cannot drift: the parameters have to exist, the boundary pairs have to straddle them and expect different things, the timelines have to run forwards, the cited files have to be there. |
-| `tests/test_benchmarks.R` | The loader, the verdicts and the Kaplan-Meier arithmetic against a worked example. |
-| `tests/test_definitions.R` | Our column against the code it cites, and the source grid against the one thing it exists to enforce. |
-| `tests/test_sensitivity.R` | The grid, the guards and the comparison logic, driven with fabricated results. |
-| `tests/test_stockpiling.R`, `tests/test_melphalan.R` | Each measurement's SQL, read as a string. |
-| `out/` | Generated. `run_vignettes.R` and `run_definitions.R` write their CSVs and the vignette markdown table here; nothing reads them back. |
+| `R/vignettes.R` | The edge cases the algorithm is hardest on, each with the assignment the rules give. Every offset is derived from the parameter that decides it, so a case moves when a setting moves and a renamed setting fails the catalogue rather than leaving prose describing a rule that is gone. |
+| `run_vignettes.R` | Renders the catalogue. No warehouse and no connection; writes a CSV and a markdown table to `out/`. |
+| `tests/test_vignettes.R` | The catalogue cannot drift: the parameters have to exist, the boundary pairs have to straddle them and expect different things, the timelines have to run forwards, and the files the rules are quoted from have to be there. It also holds `LOT_RULES.md` and the catalogue to each other in both directions — a scenario citing a vignette that does not exist fails, and a vignette no rule cites fails too. |
+| `out/` | Generated. Nothing reads it back. |
 
-It counts **boundaries**, not lines. Subtracting boundaries added from boundaries
-removed does not give a line count: moving a boundary changes which line an
-exposure falls in, whether an agent is inside an induction window, regimen
-membership, discontinuation dates and every later line number.
-
-## `lot/melphalan/` — an exploration, not a rule
-
-**Nothing here is in the study's numbers.** `apply_melp_rule` is pinned blank in
-`CONTRACT`, blank generates the SQL the engine generated before this existed,
-and every cell that names a mode records a contract deviation that the
-questions, the dashboard and the benchmark harness all refuse. This is why the
-proposal is described here, in the folder inventory, and not in `LOT_RULES.md`:
-`LOT_RULES.md` is the confirmed rules, and this is not one of them.
-
-What it is: a study-team proposal that a melphalan (`MELP`) administration
-should advance the line on windows of its own, built as three complete LOT runs
-— `reference`, `as_asked`, `yield_to_sct` — and differenced. Three builds rather
-than arithmetic on a finished run, because the engine is sequential: a line's
-end date sets the next line's start, which sets that line's induction window,
-which decides which drugs join its regimen, which sets its discontinuation date,
-which decides whether the line after it starts at all.
-
-All three or none: a run where one mode failed reads like a finished experiment
-and is not one. Cells write to `melp_reference_`, `melp_as_asked_` and
-`melp_yield_to_sct_`, and a plan that would write to the study's own prefix is
-refused.
-
-| path | what it does |
-|---|---|
-| `run_aug1_melp.R` | Builds the comparison as three complete runs rather than estimating it. Prints the plan by default; `AUG1_EXECUTE=TRUE` builds. |
-| `R/cells.R` | Which three builds, what is read off them, and the checks that they saw the same cohort, the same code lists, the same code and the same window. |
-| `R/scenarios.R` | The study team's four worked patients, held as data. |
-| `run_melp_scenarios.R` | Runs those scenarios through the shipped rule — the decision lifted out of the generated SQL rather than restated — and exits non-zero if any of them moves. No connection. |
-| `read_melp_metrics.R` | Reads the comparison off cells that are already built. |
-| `tests/test_aug1_melp.R` | That off is the absence of the rule, and the branch decision checked against the proposal. |
-
-The rule itself is not in this folder — it is `lot/engine/R/melp_rule.R`,
-because the engine builds the lines and the rule needs each line's own induction
-window, which exists only while that line is being built. It is off by default
-and off emits nothing.
-
-### The proposal
-
-An exposure is one administration; doses less than `melp_exposure_days` (30)
-apart are the same exposure. Consecutive exposures are judged as a pair, on the
-gap between them and on whether the first sits inside the line's induction
-window:
-
-| Branch | Condition | Effect | Against the shipped engine |
-|---|---|---|---|
-| A.1 | inside induction, gap < 180 | no boundary | agrees |
-| A.2 | inside induction, gap ≥ 180 | the later dose advances the line | differs — today the repeat dose extends the line's run-out instead |
-| B.1 | outside induction, gap < 60 | this dose starts a line | agrees, incidentally |
-| B.2 | outside induction, 60 ≤ gap < 180 | no boundary | differs — today the first dose advances the line |
-| B.3 | outside induction, gap ≥ 180 | the later dose advances the line | differs — today the first dose does |
-
-It moves in both directions, so the net effect on line counts is not derivable:
-A.2 makes more lines, B.2 and B.3 make fewer, and which wins depends on how many
-patients sit in each branch. `run_melphalan_rule.R` in `lot/validation/` reports
-the branch counts off a finished run without rebuilding anything.
-
-**Two readings of a coded transplant**, which is why three cells are built
-rather than two. High-dose melphalan is transplant conditioning, so a melphalan
-claim and an AUTO code are often the same clinical event and the transplant rule
-already fires on it. `as_asked` judges every exposure regardless; `yield_to_sct`
-leaves an exposure with an AUTO within `melp_sct_days` (14) to the transplant
-rule, so the melphalan rule fills only the gap where a transplant left no
-procedure code. Every output row records which mode produced it.
-
-**What B.2 does and does not do.** Suppressing B.2's boundaries stops melphalan
-ending the line at either dose. It does not hold the line open to the second
-dose. A line's discontinuation date is its base agents' last cover, and a
-melphalan first seen outside the induction window is not a base agent, so it
-does not extend that date — a line whose regimen runs out between the two doses
-still ends there, and the second dose falls in whatever line follows.
-
-### What has to be settled before it could be built for real
-
-The measurement program had to pick an answer to some of these to run at all.
-Where it did, the assumption is named. An assumption is not a decision.
-
-1. Does the rule apply to melphalan alone, or to any agent used as transplant
-   conditioning? As written it is drug-specific, which is a first for this
-   algorithm — every other rule is about classes, windows and gaps. *The program
-   assumes melphalan alone, through `melp_med_abbr`.* **Open.**
-
-2. What happens when the transplant procedure code is also present? The AUTO
-   rule and this rule would both fire on one clinical event. *The program runs
-   both readings and writes the mode onto every row.* **Open.**
-
-3. Is 30 days the exposure threshold, or 28? The build's medical day supply is
-   28, so episodes already merge on that boundary. *The program uses 30.*
-   **Confirmed by the worked examples.**
-
-4. Third and later exposures. The proposal is written for a first and a next
-   dose. *The program judges consecutive pairs.* **Confirmed by examples 3 and
-   4.**
-
-5. Does it apply at every line, or only at 1L? The induction window is 60 days
-   at 1L and 30 later, so the branches land differently. *The program applies it
-   at every line, against that line's own window.* **Confirmed by examples 3 and
-   4.**
-
-6. In B.2, does "both doses stay in the current line" mean the line has to be
-   held open to the second dose? Half of this is settled — the worked examples
-   say the second dose starts no line, and the boundary is removed at both
-   doses. What is left open is whether the line has to be held open to reach it,
-   which would need melphalan to join a regimen whose induction window it never
-   entered: a change to what a regimen means rather than a setting, and a
-   clinical decision. **Open**, and `n_b2_line_starts` is the number that
-   settles it — MED-started lines whose start is a B.2 second dose, with
-   `n_b2_melp_only` the subset no other agent could have started.
-
-Neither mode is the proposal implemented to the letter: the mode names describe
-the transplant reading, and on B.2 both take the narrow one above.
+Each vignette carries a `confidence` of `derived` or `to_confirm`, and that is a
+claim about us rather than about the algorithm: `to_confirm` marks where the
+rules interact and the first real run settles it.
 
 ---
 
@@ -514,14 +305,9 @@ by whoever ran them.
 
 ```
 Rscript lot/engine/tests/test_runner.R           # and test_line_criteria.R
-Rscript lot/dashboard/tests/test_runner.R
-Rscript lot/outcomes/tests/test_runner.R
 Rscript lot/qc/tests/test_lot_qc.R
-Rscript lot/questions/tests/test_setup.R
-Rscript lot/validation/tests/test_vignettes.R    # and test_sensitivity.R,
-                                                 # test_benchmarks.R,
-                                                 # test_definitions.R,
-                                                 # test_melphalan.R,
-                                                 # test_stockpiling.R
-Rscript lot/melphalan/tests/test_aug1_melp.R     # and run_melp_scenarios.R
+Rscript lot/validation/tests/test_vignettes.R
 ```
+
+The suites for everything outside this folder are listed in the study folder's
+`README.md`, which names every one of them in a single block.

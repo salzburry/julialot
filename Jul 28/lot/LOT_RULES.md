@@ -122,7 +122,7 @@ as the study's numbers.
 
 `apply_melp_rule` is pinned blank, and the five `melp_*` thresholds are pinned
 with it. It is an exploration, not a rule — `lot/FILES.md`, under
-`lot/melphalan/`.
+`exploration/melphalan/`.
 
 Being off is not the same as being absent, and it is worth being plain about
 which this is. The rule's module is inside the engine (`R/melp_rule.R`, sourced
@@ -131,7 +131,7 @@ because the rule needs each line's own induction window and that exists only
 while the line is being built. What makes blank safe is not that the code is
 gone but that every hook emits an empty string, so the generated SQL is the SQL
 the engine generated before the file existed — and
-`lot/melphalan/tests/test_aug1_melp.R` proves it rather than asserting it, by
+`exploration/melphalan/tests/test_aug1_melp.R` proves it rather than asserting it, by
 substituting each hook's off value back into the step text and requiring nothing
 melphalan to remain.
 
@@ -287,7 +287,7 @@ opening a new one. Two consequences, and they are not the same thing:
     ---
     DARA is NOT in LOT2's regimen — its episode started in LOT1
 
-`Rscript lot/validation/run_stockpiling_rule.R` sizes the second case against a
+`Rscript exploration/lot/run_stockpiling_rule.R` sizes the second case against a
 finished run, in `STOCKPILE_AGENTS` and `STOCKPILE_IMPACT`.
 
 **Known defect — an agent can be in the regimen whose supply starts after the
@@ -312,7 +312,7 @@ QC check `C1` does **not** catch this. C1 asks whether a regimen agent has an
 episode in the line's *induction window*; this asks whether it has one in the
 line's *actual span*, and an early transplant makes those two different. The
 count is `regimen-agent-begins-after-line-end` in
-`lot/qc/run_lot_audit_counts.R` — 30 of 10,659 lines carrying a regimen on the
+`exploration/lot/run_lot_audit_counts.R` — 30 of 10,659 lines carrying a regimen on the
 synthetic cohort. Not yet fixed, and not yet measured against the production
 run.
 
@@ -707,7 +707,7 @@ CAR-T that arrived after line 1 had already ended for some other reason.
     LOT1 still ends d+30. The rule stops that CAR-T starting a line; it does
     not reopen a closed one
 
-`q3_cart_screen()` in `lot/questions/jul20_studyteam_qs.R` counts the patients
+`q3_cart_screen()` in `analysis/questions/jul20_studyteam_qs.R` counts the patients
 that lands on.
 
 **What it moved.** `SCT_CART` and `CART_INIT` counts both fall — not by the same
@@ -842,7 +842,7 @@ does not end.
 
 `MED` line starts use a different comparison — against the *previous* line's
 regimen, per §4.3 — and are unaffected.
-`Rscript lot/validation/run_stockpiling_rule.R` counts the hidden boundaries in
+`Rscript exploration/lot/run_stockpiling_rule.R` counts the hidden boundaries in
 `STOCKPILE_ABSORBED_ADD`.
 
 ### 7.5 Death does not outrank a run-out the patient came back from
@@ -1135,7 +1135,7 @@ initiation, which is a clinical question and not a protocol reading.
 | Line criteria and truncation | `lot/engine/R/line_criteria.R` |
 | The CAR-T induction rule | `lot/engine/R/cart_rule.R` |
 | The scenarios above, machine-checked | `lot/validation/R/vignettes.R` |
-| The patients the CAR-T rule touches | `lot/questions/jul20_studyteam_qs.R` |
+| The patients the CAR-T rule touches | `analysis/questions/jul20_studyteam_qs.R` |
 
 ## 14. What stops a run
 
