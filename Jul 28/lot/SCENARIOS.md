@@ -127,18 +127,23 @@ The steroid is not an oncology agent (§2.1), so it does not fix the index.
 The `- 1` is the difference between a regimen of four drugs and one of three.
 
 
-### 3.3 Regimen membership is an episode start, not a fill
+### 3.3 A regimen is bounded by the date the line ended
 
 **Scenario** — *derived.*
 
-    d0     LOT1 starts on LEN and DARA
-    d+120  LOT2 starts on POMA, while DARA is still covered by a d+100 refill
+    d0     LOT1 starts on LEN
+    d+10   allogeneic transplant — LOT1 ends d+9
+    d+30   DARA starts, still inside line 1's 60-day window
     ---
-    DARA is NOT in LOT2's regimen — its episode started in LOT1
+    LOT1   d0 -> d+9   regimen LEN
 
-`Rscript exploration/lot/run_stockpiling_rule.R` sizes the second case against a
-finished run, in `STOCKPILE_AGENTS` and `STOCKPILE_IMPACT`.
+DARA is dispensed inside the induction window but after the line was over, so
+`REGIMEN_CUTOFF_DT` keeps it out. It goes on to start a later line, and belongs
+to that one alone.
 
+The cutoff bounds the per-drug episode scan too. Without that half, a refill of
+LEN after the transplant would still push line 1's run-out past d+9, and the
+line would end later than the transplant that ended it.
 
 ### 3.4 Line 1's first autologous transplant is part of induction
 
@@ -363,11 +368,21 @@ buying, and the inclusive `>=` puts the boundary day on the discontinuation
 side.
 
 
-### 5.2 A run-out chains forward over the drug's own later episodes
+### 5.2 A run-out chains forward until the drug is discontinued
 
-**Scenario** — *engine output.* The first example in §4.3: LEN returns 185 days
-after its own cover ran out, nothing else in between, so LOT1's run-out chains
-forward to the end of the September episode and the line ends 30 September.
+**Scenario** — *derived.* The chain carries a refill and stops at a gap.
+
+    d0     LEN, cover to d+59
+    d+40   LEN refilled — cover pushed to d+99
+    ---
+    LOT1's run-out is d+99, not d+59: the refill is LEN's own and chains forward
+
+    d0     LEN, cover to d+59
+    d+244  LEN again, 185 days after cover ran out
+    ---
+    LOT1's run-out is d+59. The gap reaches map_discon_gap_days, so the first
+    episode carries MAP_DISCON_FLG and the chain stops there rather than
+    stretching to the September episode. §4.3 then releases LEN to open LOT2.
 
 
 ### 5.3 A run-out is a discontinuation only once confirmed
@@ -383,8 +398,12 @@ day 250 unless stated.
 | never returns | *null* | `STUDY_END` d+250 | 1 |
 | never returns, but observed to d+545 | d+200 | `DISCONTINUATION` d+200 | 1 |
 
-Row 2 is the one worth reading twice: the restart is a base agent of this line,
-so it cannot open a line (§4.3) and therefore cannot confirm the run-out either.
+Row 2 is the one worth reading twice, and it turns on the ten days. The restart
+is a base agent of this line and the gap from d+200 to d+210 is far short of
+`map_discon_gap_days`, so the drug has not discontinued: it cannot open a line
+(§4.3) and therefore cannot confirm the run-out either. Push the same restart out
+past a confirmed gap and both change — it opens a line and confirms the run-out
+on the way.
 
 
 ### 6.1 AUTO codes within 13 days are one transplant
