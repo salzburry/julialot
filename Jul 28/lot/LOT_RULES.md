@@ -590,9 +590,18 @@ threshold used for episode-level discontinuation — is the right length for thi
 judgement. It is a clinical question about when a re-start is a new line rather
 than a reading of the protocol.
 
-**The release is narrow.** It applies to a drug that was the previous regimen,
-never to one excluded only for being a permissible biosimilar substitute (§4.4).
-The exclusion set records which of the two each drug is.
+**The release is narrow, and deliberately so.** It applies to a drug that was
+the regimen. It never applies to one present only as a permissible biosimilar
+substitute: §4.4 says a substitution does not advance the line, and a long gap in
+a substitute's own episodes is not evidence about the drug it stands in for.
+Reading it as one would be a new clinical rule, not an implementation of an
+existing one.
+
+That holds in all five places a release is asked for — the two add-medication
+blocks, the two run-out guards and the next line's start — so a substitute
+cannot end a line, confirm a run-out or open the next one by any route. Each
+exclusion set records which of the two each drug is, and a drug that is both an
+actual regimen agent and somebody's substitute counts as the former.
 
 ### 11.2 A drug returning mid-line after a break in supply — INTERPRETATION
 

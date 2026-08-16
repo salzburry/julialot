@@ -189,6 +189,20 @@ cat("\n-- what a run writes is declared, both directions --\n")
 # from a step - fails here rather than surfacing as a surprise in a schema.
 # LOT_LONG_STAGE is allowed on the written side without being declared:
 # build_lot2_5 drops it after the publish, so a finished run does not have it.
+# gregexpr returns -1 when nothing matches, and length(-1) is 1 - so every
+# "count the occurrences" assertion written as length(gregexpr(...)[[1]]) reads a
+# MISSING pattern as ONE occurrence. Any such check expecting exactly 1 passes on
+# the very deletion it exists to catch, and one expecting N passes when N-1 are
+# gone and the last is deleted too. Counted here instead, once.
+n_hits <- function(pat, x) {
+  m <- gregexpr(pat, x, fixed = TRUE)[[1]]
+  if (length(m) == 1L && m[1] == -1L) 0L else length(m)
+}
+stopifnot(n_hits("zzz", "abc") == 0L, n_hits("a", "abc") == 1L,
+          n_hits("a", "aba") == 2L,
+          # the exact case that made the old form lie
+          length(gregexpr("zzz", "abc", fixed = TRUE)[[1]]) == 1L)
+
 lotn_env <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "cart_rule.R"), envir = lotn_env)
 sys.source(file.path(ROOT, "R", "prior_regimen.R"), envir = lotn_env)
@@ -565,7 +579,7 @@ ok(grepl("c.CL_MED_CLASS AS MED_CLASS", mmx, fixed = TRUE) &&
    "...which is the pairing that matters: claims classed from one, columns from the other")
 # NOT IN against a column that may be NULL returns no rows at all, so the
 # check would pass by being unanswerable. Both sides use NOT EXISTS.
-ok(length(gregexpr("NOT EXISTS (", cd, fixed = TRUE)[[1]]) == 2 &&
+ok(n_hits("NOT EXISTS (", cd) == 2 &&
      !grepl("NOT IN (SELECT", cd, fixed = TRUE),
    "the substitution checks cannot pass by being unanswerable")
 # Extraction only joins NDC and HCPCS. ICD is not among them: it would match
@@ -832,7 +846,7 @@ ok(has(xcl, "AND ac.TX_DT <= pe.PREV_END_DT"),
 ok(has(xcl, "BETWEEN pe.PREV_START_DT AND date_add(pe.PREV_START_DT, 59)"),
    "...and still asks the window question as well, so an in-line CAR-T is unaffected")
 # Both halves are one NOT(), so a CAR-T failing either half is a candidate.
-ok(length(gregexpr("AND NOT (", xcl, fixed = TRUE)[[1]]) == 1L,
+ok(n_hits("AND NOT (", xcl) == 1L,
    "...as one negated conjunction, so failing either half leaves the CAR-T a start candidate")
 # The other side of the same rule: a CAR-T after the run-out has to be able to
 # confirm the run-out it follows. Two wrong answers were shipped here in turn -
@@ -846,7 +860,7 @@ prt <- substr(e6, regexpr("post_runout_trigger AS", e6),
               regexpr("AS POST_RUNOUT_TRIGGER_FLG", e6))
 ok(!grepl("sct\\.", prt),
    "no arm of the post-run-out trigger reads lot1_sct, whose dates are min() over the line")
-ok(length(gregexpr("PATID IS NOT NULL", prt, fixed = TRUE)[[1]]) == 3L,
+ok(n_hits("PATID IS NOT NULL", prt) == 3L,
    "...all three event arms are existence tests over per-row CTEs, med / sct / auto")
 ok(!grepl("> lb\\.LOT1_BASE_RUNOUT_DT", prt),
    "...and none of them compares a date, which is what let an earlier event hide a later one")
@@ -2297,15 +2311,14 @@ ok(grepl("sum(i.BREAKS + e.PREV_DISCON)", pr, fixed = TRUE),
 ok(grepl("map_restart_sql <- function", pr, fixed = TRUE),
    "what counts as a restart is defined once")
 restart_sites <- sum(vapply(c("04_lot1_base.R", "06_lot1_end.R", "10_lot2_5_base.R"), function(f)
-  length(gregexpr("{map_restart_sql()}",
-    paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE), collapse = "\n"),
-    fixed = TRUE)[[1]]), integer(1)))
+  n_hits("{map_restart_sql()}",
+    paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE), collapse = "\n")), integer(1)))
 ok(restart_sites == 5L,
    paste0("...and spliced into all five that ask - the start candidate, the two ",
           "add-medication blocks, and both run-out guards (", restart_sites, ")"))
 for (f in c("04_lot1_base.R", "06_lot1_end.R", "10_lot2_5_base.R")) {
   src <- paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE), collapse = "\n")
-  n <- length(gregexpr("coalesce(mr.PREV_DISCON, 0) = 1", src, fixed = TRUE)[[1]])
+  n <- n_hits("coalesce(mr.PREV_DISCON, 0) = 1", src)
   ok(n >= 1L, paste0(f, ": a discontinued drug is released"))
 }
 # The half that was missing. A restart is kept out of the run-out and may START
@@ -2314,7 +2327,7 @@ for (f in c("04_lot1_base.R", "06_lot1_end.R", "10_lot2_5_base.R")) {
 # cannot close and too early to open the next: no line owns the treatment.
 for (f in c("04_lot1_base.R", "10_lot2_5_base.R")) {
   src <- paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE), collapse = "\n")
-  ok(grepl("WHERE (bm.MED_ABBR IS NULL OR coalesce(mr.PREV_DISCON, 0) = 1)",
+  ok(grepl("OR (coalesce(mr.PREV_DISCON, 0) = 1 AND bm.SUBSTITUTE_ONLY = 0))",
            src, fixed = TRUE),
      paste0(f, ": a restart can end the line even while another regimen drug runs"))
 }
@@ -2323,10 +2336,24 @@ for (f in c("04_lot1_base.R", "10_lot2_5_base.R")) {
 # start a line, and an old discontinued episode must not be a way around it.
 l25src <- paste(readLines(file.path(ROOT, "R", "steps", "10_lot2_5_base.R"),
                           warn = FALSE), collapse = "\n")
-ok(grepl("min(IS_SUB) AS SUBSTITUTE_ONLY", l25src, fixed = TRUE),
-   "the exclusion set records WHY each drug is in it")
-ok(grepl("AND pme.SUBSTITUTE_ONLY = 0", l25src, fixed = TRUE),
-   "...and only an actual previous-regimen drug is releasable, not a substitute")
+# Provenance, in every set that carries it, and the release gated on it in every
+# path that reads one. A substitution does not advance the LOT, so a substitute
+# never independently ends a line, confirms a run-out or opens the next - and one
+# path releasing it while the others do not is how a rule stops meaning anything.
+prov <- vapply(c("04_lot1_base.R", "06_lot1_end.R", "10_lot2_5_base.R"), function(f)
+  n_hits("min(IS_SUB) AS SUBSTITUTE_ONLY",
+    paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE), collapse = "\n")), integer(1))
+ok(sum(prov) == 5L,
+   paste0("every set a release reads records WHY each drug is in it (", sum(prov), ")"))
+gated <- vapply(c("04_lot1_base.R", "06_lot1_end.R", "10_lot2_5_base.R"), function(f) {
+  x <- paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE), collapse = "\n")
+  n_hits("SUBSTITUTE_ONLY = 0", x)
+}, integer(1))
+ok(sum(gated) == 5L,
+   paste0("...and all five release paths are gated on it - the two add-medication ",
+          "blocks, the two run-out guards, and the next line's start (", sum(gated), ")"))
+ok(!grepl("OR coalesce(mr.PREV_DISCON, 0) = 1)", l25src, fixed = TRUE),
+   "...so no path releases a drug without asking whether it is only a substitute")
 
 
 cat("\n-- a transplant inside a line's window cannot be left outside the line --\n")
@@ -2350,7 +2377,7 @@ hold <- local({
   if (is.na(b) || e < 0) "" else substr(s05b, b, e)
 })
 ok(nchar(hold) > 0, "the hold date rule is where it was")
-ok(length(gregexpr("cfg$induction_window_days", hold, fixed = TRUE)[[1]]) == 2L,
+ok(n_hits("cfg$induction_window_days", hold) == 2L,
    "the hold date is bounded by the line's own window, on both the single and tandem arm")
 ok(!grepl("OBS_END_DT", hold, fixed = TRUE),
    "...and not by the observation end, which is what LOT1_TX_AUTO_MAX_DT uses")
@@ -2369,12 +2396,12 @@ holdn <- local({
   if (is.na(b) || e < 0) "" else substr(l25_txt, b, e)
 })
 ok(nchar(holdn) > 0, "LOT2-5 has a hold date of its own")
-ok(length(gregexpr("LOT_WINDOW_DAYS", holdn, fixed = TRUE)[[1]]) == 2L,
+ok(n_hits("LOT_WINDOW_DAYS", holdn) == 2L,
    "...bounded by the line's own window on the tandem arm as well as the single one")
-ok(length(gregexpr("LOT_WINDOW_DAYS",
-                   substr(l25_txt, regexpr("LOTN_TX_AUTO_MAX_DT", l25_txt, fixed = TRUE),
-                          regexpr("END AS LOT{lot_num}_TX_AUTO_MAX_DT", l25_txt,
-                                  fixed = TRUE))[[1]], fixed = TRUE)[[1]]) == 2L,
+ok(n_hits("LOT_WINDOW_DAYS",
+          substr(l25_txt, regexpr("LOTN_TX_AUTO_MAX_DT", l25_txt, fixed = TRUE),
+                 regexpr("END AS LOT{lot_num}_TX_AUTO_MAX_DT", l25_txt,
+                         fixed = TRUE))) == 2L,
    "...and it is a different column from TX_AUTO_MAX_DT, which bounds one arm only")
 ok(!grepl("ec.LOT{lot_num}_TX_AUTO_MAX_DT", l25_txt, fixed = TRUE),
    "...so no end-date branch reads the one-armed column by mistake")
@@ -2399,9 +2426,8 @@ for (h in list(list(hold, "LOT1", "cfg$induction_window_days"),
 ok(grepl("tandem_interrupt_events_sql <- function", pr, fixed = TRUE),
    "what breaks a tandem is defined once")
 sites <- sum(vapply(c("05b_lot1_sct.R", "06_lot1_end.R", "10_lot2_5_base.R"),
-  function(f) length(gregexpr("{tandem_interrupt_events_sql()}",
-    paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE), collapse = "\n"),
-    fixed = TRUE)[[1]]), integer(1)))
+  function(f) n_hits("{tandem_interrupt_events_sql()}",
+    paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE), collapse = "\n")), integer(1)))
 ok(sites == 5L,
    paste0("...and spliced into all five places that ask - two tandem flags, the ",
           "start gate, and its two run-out mirrors (", sites, ")"))

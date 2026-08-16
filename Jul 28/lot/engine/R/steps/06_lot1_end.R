@@ -99,12 +99,16 @@ phase_lot1_end <- function(con, ctx) {
     -- substitutes. med_cand excludes both, so accepting one here would confirm a
     -- discontinuation on an event no next line is allowed to open on.
     post_runout_excluded_meds AS (
-      SELECT im.PATID, im.MED_ABBR
-      FROM lot1_induction_meds im
-      UNION
-      SELECT im.PATID, ps.substitute_med AS MED_ABBR
-      FROM lot1_induction_meds im
-      INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
+      SELECT PATID, MED_ABBR, min(IS_SUB) AS SUBSTITUTE_ONLY
+      FROM (
+        SELECT im.PATID, im.MED_ABBR, 0 AS IS_SUB
+        FROM lot1_induction_meds im
+        UNION ALL
+        SELECT im.PATID, ps.substitute_med AS MED_ABBR, 1 AS IS_SUB
+        FROM lot1_induction_meds im
+        INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
+      )
+      GROUP BY PATID, MED_ABBR
     ),
     map_restart AS ({map_restart_sql()}
     ),
@@ -124,7 +128,8 @@ phase_lot1_end <- function(con, ctx) {
         -- Mirrors med_cand, which releases a drug returning after a confirmed
         -- gap. A guard reading a different rule from the candidate it mirrors
         -- lets DEATH take a line whose run-out the next line does open on.
-        AND (prem.MED_ABBR IS NULL OR coalesce(mr.PREV_DISCON, 0) = 1)
+        AND (prem.MED_ABBR IS NULL
+             OR (coalesce(mr.PREV_DISCON, 0) = 1 AND prem.SUBSTITUTE_ONLY = 0))
     ),
     post_runout_autos AS (
       -- N_BETWEEN: whether anything happened since the previous transplant. A

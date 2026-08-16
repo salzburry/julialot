@@ -81,14 +81,24 @@ phase_lot1_base <- function(con, ctx) {
   materialize(con, "S10_lot1_base", view = "lot1_base", name = "LOT1_BASE", body = glue("
     WITH map_restart AS ({map_restart_sql()}
     ),
+    -- SUBSTITUTE_ONLY = 1 means the drug is here only as a permissible
+    -- biosimilar substitute. A substitution does not advance the LOT (§4.4), so
+    -- a substitute never independently ends a line, confirms a run-out or opens
+    -- the next one - whatever gaps its own episodes carry. min() so a drug that
+    -- is both an actual regimen agent and somebody's substitute counts as the
+    -- former and keeps the release.
     base_meds AS (
-      SELECT PATID, MED_ABBR
-      FROM lot1_induction_meds
-      UNION
-      SELECT im.PATID, ps.substitute_med AS MED_ABBR
-      FROM lot1_induction_meds im
-      INNER JOIN permissible_subs ps
-        ON im.MED_ABBR = ps.original_med
+      SELECT PATID, MED_ABBR, min(IS_SUB) AS SUBSTITUTE_ONLY
+      FROM (
+        SELECT PATID, MED_ABBR, 0 AS IS_SUB
+        FROM lot1_induction_meds
+        UNION ALL
+        SELECT im.PATID, ps.substitute_med AS MED_ABBR, 1 AS IS_SUB
+        FROM lot1_induction_meds im
+        INNER JOIN permissible_subs ps
+          ON im.MED_ABBR = ps.original_med
+      )
+      GROUP BY PATID, MED_ABBR
     ),
     -- Steroids are excluded from base_meds by the lot1_induction_meds filter.
     -- because corticosteroids are not oncology agents and should
@@ -175,7 +185,8 @@ phase_lot1_base <- function(con, ctx) {
       -- another regimen drug still holds this line open, the restart falls
       -- inside the line, cannot end it, and is then too early to open the next
       -- one - so the treatment belongs to no line at all.
-      WHERE (bm.MED_ABBR IS NULL OR coalesce(mr.PREV_DISCON, 0) = 1)
+      WHERE (bm.MED_ABBR IS NULL
+             OR (coalesce(mr.PREV_DISCON, 0) = 1 AND bm.SUBSTITUTE_ONLY = 0))
         AND ms.MAP_MED_CLASS <> 'STEROID'  -- a steroid cannot trigger an add-med
         AND ms.MAP_START_DT >= bc.LOT1_START_DT
         AND ms.MAP_START_DT <= coalesce(bc.LOT1_BASE_RUNOUT_DT, bc.OBS_END_DT)

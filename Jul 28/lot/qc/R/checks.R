@@ -231,21 +231,27 @@ LOT_QC_CHECKS <- list(
     "concat(pid, ' LOT', LOT_NUM)")),
 
   list(id = "B5c", group = "End reason", severity = "fail",
-       what = "an in-window transplant is never left outside its own line",
-       why = paste0("This is the defect SCT_AUTO_CONT exists to close. A line ",
-                    "whose AUTO flag is set must cover the transplant date: if ",
-                    "the line ends first, the next line's start gate refuses the ",
-                    "same transplant for being inside this line's window, and it ",
-                    "lands in no line at all. Checked on the flag rather than on ",
-                    "the reason, so it holds however the line ended."),
-       needs = "final",
+       what = "line 1 covers the transplant its own SCT table records",
+       why = paste0("This is the defect SCT_AUTO_CONT exists to close: a line ",
+                    "that ends before a transplant inside its own window leaves ",
+                    "that transplant in no line, because the next line's start ",
+                    "gate refuses it for being in-window. It has to be read from ",
+                    "the UNCLAMPED source. The published table nulls any AUTO ",
+                    "date after the line end, so a check written against it can ",
+                    "never fire and would report clean on the very defect it ",
+                    "names. LOT1_SCT keeps the raw dates, so line 1 is checkable; ",
+                    "lines 2-5 have no equivalent published table and are NOT ",
+                    "covered here - E5 is the wider net."),
+       needs = c("sct", "final"),
        sql = function(t, p) counted(paste0("
-    SELECT ", mask("PATID"), " AS pid, LOT_NUM
-    FROM ", t$final, "
-    WHERE LOT_TX_AUTO_FLG = 1
-      AND LOT_TX_AUTO_MAX_DT IS NOT NULL
-      AND LOT_TX_AUTO_MAX_DT > LOT_BASE_END_DT"),
-    "concat(pid, ' LOT', LOT_NUM)")),
+    SELECT ", mask("s.PATID"), " AS pid, s.LOT1_TX_AUTO_DT_1 AS tx
+    FROM ", t$sct, " s
+    INNER JOIN ", t$final, " l ON s.PATID = l.PATID AND l.LOT_NUM = 1
+    WHERE s.LOT1_TX_AUTO_DT_1 IS NOT NULL
+      AND s.LOT1_TX_AUTO_DT_1 BETWEEN l.LOT_START_DT
+                                  AND date_add(l.LOT_START_DT, ", p$ind1, " - 1)
+      AND s.LOT1_TX_AUTO_DT_1 > l.LOT_BASE_END_DT"),
+    "concat(pid, ' @ ', tx)")),
 
   list(id = "B6", group = "End reason", severity = "fail",
        what = "the added-medication date is not before the line started",
@@ -529,7 +535,10 @@ LOT_QC_CHECKS <- list(
                     "one. Warn rather than fail: KNOWN_ISSUES.md #5 is a known ",
                     "open case that lands here - a planned tandem partner ",
                     "outside its line's window - so a non-zero count needs ",
-                    "reading against that before it is treated as new."),
+                    "reading against that before it is treated as new. Scope: it reads ",
+                    "LOT1_SCT's two AUTO dates, which is every AUTO line 1 owns ",
+                    "and NOT every AUTO in the patient's history - a transplant ",
+                    "owned by lines 2-5 is outside it."),
        needs = c("sct", "final"),
        sql = function(t, p) counted(paste0("
     SELECT a.pid, a.dt

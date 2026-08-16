@@ -302,7 +302,7 @@ one line back.
 POMA starts while LEN is still covered and still opens a line: it is outside
 line 1's window and in no regimen of line 1's.
 
-### 4.4 A permissible biosimilar substitute cannot start a line either
+### 4.4 A permissible biosimilar substitute never starts a line
 
 **Scenario** — *to confirm; vignette `biosimilar_switch`.*
 
@@ -315,6 +315,20 @@ Whether this holds depends on `permissible_subs.csv`, not on the rule. A
 substitution the code list does not know about looks like a regimen change, and
 starts a line that did not happen.
 
+
+**Scenario** — *derived.* A gap in the substitute does not release it.
+
+    d0     LOT1 on a reference biologic
+    d+30   the patient switches to its biosimilar — same line, §4.4
+    d+200  the biosimilar stops; 120 days pass
+    d+320  the biosimilar restarts
+    ---
+    the restart does not end LOT1, confirm its run-out, or open LOT2
+
+The restart rule in §4.3 releases a drug that WAS the regimen. This one is in
+the exclusion set only as a substitute, and a gap in its own episodes says
+nothing about the agent it stands in for. Treating it as a new line would be a
+new clinical rule rather than an application of an existing one.
 
 ### 4.5 Same-day starts break `SCT_ALLO > CART > SCT_AUTO > MED`
 
