@@ -22,7 +22,7 @@
 #
 # Suppressing both doses of a B.2 pair stops melphalan ending the line at
 # either. It does not hold the line open to the second dose.
-# That is open question 6 in lot/questions/melphalan_lot_rule.md.
+# That is open question 6 in lot/LOT_RULES.md section 14.
 #
 # The two modes differ only on a coded transplant on the same event, where the
 # SCT rule fires too. as_asked judges every exposure regardless; yield_to_sct

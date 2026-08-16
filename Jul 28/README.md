@@ -21,9 +21,11 @@ A cohort is what LOT is pointed at. It is not part of LOT and does not read it.
 | `lot/safety/` | code lists for the protocol's safety and utilisation events. Roster only. |
 | `lot/tools/` | edits a production code list on request. Not a study stage. |
 
-Each of the three has a `RULES.md` giving the rules that build applies and the
-assumptions behind them. `lot/LOT_RULES.md` is the long form for the lines and
-`ndmm/DECISIONS.md` is the long form for the cohort.
+Each cohort build has a `RULES.md` giving the rules it applies and the
+assumptions behind them, with `ndmm/DECISIONS.md` as the long form for the
+cohort. `lot/` has two documents and no others: `lot/LOT_RULES.md` is how a line
+is built, rule by rule, with worked examples and the decisions behind it, and
+`lot/FILES.md` is what is in that folder and what each file does.
 
 `ndmm/` and `overall/` are independent - neither reads the other, and each goes
 to the raw CDM and the production code lists on its own. `lot/engine/` takes a
@@ -52,8 +54,9 @@ them for LINE_ELIGIBLE: run it first on a clean prefix and it quietly reports
 ALL_LINES alone, and run it first on a re-run and it reads the previous
 attempt's cohorts.
 
-Read a package's own README before running it - or the entry script's header
-where it has none (`overall/`, `lot/tools/`).
+Read a package's own README before running it. Under `lot/` that is
+`lot/FILES.md`, which carries every package's commands, settings and outputs;
+`overall/` and `lot/tools/` document themselves in their entry script's header.
 
 ## Which names carry a prefix
 
@@ -81,21 +84,20 @@ owns them.
 ## Where the decisions are written down
 
 A decision is anywhere this build chose something the protocol does not settle,
-or chose to differ from it. There is no single register: `ndmm/DECISIONS.md` is
-one and covers the NDMM cohort; everything else records decisions in its own
-README, next to the thing decided.
+or chose to differ from it. There are two registers: `ndmm/DECISIONS.md` covers
+the NDMM cohort, and `lot/LOT_RULES.md` covers the lines.
 
 | | where |
 |---|---|
 | NDMM cohort | `ndmm/DECISIONS.md`, numbered, with reasoning and what was measured |
 | maintenance | `ndmm/DECISIONS.md` #10 - **not implemented**; the protocol defines a period, the build carries a flag |
 | pregnancy window | `ndmm/DECISIONS.md` #9 - protocol and program spec disagree; which wins is recorded there |
-| lines of therapy | `lot/engine/README.md`. `SCT_TANDEM_DAYS` and `CART_CONSOLIDATION_DAYS` come from prior internal work not in this repository, so they cannot be checked against the protocol text |
-| outcomes | `lot/outcomes/README.md` - the `STUDY_END` censoring rule for TTD, the fifth attrition category, both denominators |
-| safety and utilisation | `lot/safety/README.md` - acute/chronic counting, event attribution, the protocol's own `>30`/`>=30` ambiguity |
-| the melphalan proposal | `lot/melphalan/README.md`, and the open questions `run_melp_scenarios.R` prints |
+| lines of therapy | `lot/LOT_RULES.md` §11, and §13 for where the build differs from the protocol. `SCT_TANDEM_DAYS` and `CART_CONSOLIDATION_DAYS` come from prior internal work not in this repository, so they cannot be checked against the protocol text |
+| outcomes | `lot/FILES.md`, `outcomes/` - the `STUDY_END` censoring rule for TTD, the fifth attrition category, both denominators |
+| safety and utilisation | `lot/FILES.md`, `safety/` - the roster, what is outstanding, and the protocol's own `>30`/`>=30` ambiguity |
+| the melphalan proposal | `lot/LOT_RULES.md` §14, and the open questions `run_melp_scenarios.R` prints |
 
-Where a README and this table disagree, the README is the record.
+Where one of those documents and this table disagree, the document is the record.
 
 ## Settings
 

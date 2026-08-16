@@ -5,7 +5,8 @@ phase_qc <- function(con, ctx) {
 
   # The NDC format QC that ran here is gone: it measured lengths the join does
   # not use. check_claim_ndc covers both claim tables and ndc_shape, ndc_short
-  # and bad_ndc cover the code list, both before extraction. See the README.
+  # and bad_ndc cover the code list, both before extraction. lot/FILES.md has
+  # the arithmetic behind the two NDC shapes.
 
   # Validation QC suite: reporting on MAP and LOT, not gating. The whole block
   # is wrapped below, so a failure here prints and the run carries on. The

@@ -194,7 +194,9 @@ db_exec <- function(con, sql) {
 
 # A count as plain digits. as.character(1e5) is "1e+05", and glue and paste0
 # both take that route - in LOT_LONG_BY_LINE that is recorded verbatim and
-# wrong. See the README for the numeric-column case.
+# wrong. In a numeric column it arrives as a floating point literal, and what
+# the warehouse does with that depends on its store-assignment policy, which is
+# untested here. Sending digits removes the question either way.
 sql_count <- function(x) {
   if (length(x) != 1L || is.na(x)) return("NULL")
   format(x, scientific = FALSE, trim = TRUE)

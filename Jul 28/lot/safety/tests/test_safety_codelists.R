@@ -230,7 +230,7 @@ both <- function(smut = identity, hmut = identity) {
   write.csv(hmut(h2), file.path(d, "hcru_events.csv"), row.names = FALSE, na = "")
   d
 }
-ok(file.exists(CLI), "the command the README documents is where it says it is")
+ok(file.exists(CLI), "the command lot/FILES.md documents is where it says it is")
 agrees(TPL, "the shipped template, which is a placeholder")
 agrees(both(), "a fully filled list")
 agrees(both(function(s) { s$code_type[1] <- "REV_CD"; s }),

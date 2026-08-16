@@ -607,7 +607,7 @@ ok(any(grepl("COHORT_RUN_ID IS NOT NULL ORDER BY RUN_TIMESTAMP DESC", st,
 # That query ordered by RECORDED_AT, which LOT_RUN_METADATA does not have
 # (08_persist.R writes RUN_TIMESTAMP). It failed inside its own tryCatch, took
 # the "an older lot did not record it" path, and passed - so the guard never
-# ran while the code and the README both claimed it.
+# ran while the code and the docs both claimed it.
 pers <- readLines(file.path(GROUP, "engine", "R", "steps", "08_persist.R"),
                   warn = FALSE)
 ok(any(grepl("RUN_ID STRING, RUN_TIMESTAMP TIMESTAMP", pers, fixed = TRUE)),

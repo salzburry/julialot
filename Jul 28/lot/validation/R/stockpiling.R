@@ -7,7 +7,7 @@
 # line's MAP_START_DT.
 #
 # The build tests MAP_START_DT, so such an agent does not join the next line's
-# regimen - see lot/RULES.md. The protocol reads wider ("all MM therapies
+# regimen - see lot/LOT_RULES.md section 4. The protocol reads wider ("all MM therapies
 # received within 30 days on and following the LOT start date", July 30 cohort
 # protocol p.19) and the LOT2-5 spec's worked example A assumes a continuing
 # agent lands in LOT2. This sizes the difference.

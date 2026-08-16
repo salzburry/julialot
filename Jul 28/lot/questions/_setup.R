@@ -253,7 +253,7 @@ qs_ndmm_trial_flags <- function(con) {
   # actually uses (08_persist.R). Ordering by a column that is not there put the
   # whole query inside its own tryCatch, which returned NULL, which took the
   # "an older lot did not record it" path and passed. A guard that cannot run
-  # is worse than no guard: the code and the README both claimed the check.
+  # is worse than no guard: the code and the docs both claimed the check.
   #
   # Same rule for the read itself, which that fix left in place: a missing
   # table is an older lot, anything else is this guard not running.

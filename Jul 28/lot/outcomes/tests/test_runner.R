@@ -561,8 +561,8 @@ ok(has(FINAL, "LINE_ELIGIBLE, NEXT_LINE_ELIGIBLE"),
 cat("\n-- every output says which run it is, not just the first one --\n")
 ro  <- paste(readLines(file.path(ROOT, "R", "run_outcomes.R"), warn = FALSE),
              collapse = "\n")
-# The README promises "a run that dies part-way leaves a mismatch rather than a
-# silent mix", and only OUT_TTE carried a run id. The summaries are written
+# lot/FILES.md promises that a run that dies part-way leaves a mismatch rather
+# than a silent mix, and only OUT_TTE carried a run id. The summaries are written
 # sequentially with CREATE OR REPLACE, so a failure between them leaves this
 # run's OUT_TTE beside the last run's summaries, and a run id on each is what
 # says so.

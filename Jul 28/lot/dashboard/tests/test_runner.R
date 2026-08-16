@@ -751,10 +751,11 @@ cat("\n-- and they are not confused with the outcomes build's --\n")
 # N_LOST_TO_FU / N_ONGOING are one row per patient-LINE, over what is left
 # after the next line, death and discontinuation are taken out - so this
 # panel's "Died" has no counterpart there. Calling them the same split, which
-# the README did, sends a reader to reconcile two numbers that cannot.
+# the docs once did, sends a reader to reconcile two numbers that cannot. The
+# folder's documentation is lot/FILES.md now, so that is the half checked here.
 dsrc <- c(paste(readLines(file.path(ROOT, "R", "sections.R"), warn = FALSE),
                 collapse = "\n"),
-          paste(readLines(file.path(ROOT, "README.md"), warn = FALSE),
+          paste(readLines(file.path(dirname(ROOT), "FILES.md"), warn = FALSE),
                 collapse = "\n"))
 ok(!any(grepl("same split", dsrc, fixed = TRUE)),
    "nothing here calls the end-reason panel the same split as outcomes")
