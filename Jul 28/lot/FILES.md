@@ -20,8 +20,6 @@ a prefix of its own. So the lines themselves have a single author.
 | `lot/qc/` | the slower checks on a finished run, asked after the fact. `run_lot_qc.R`. |
 | `lot/validation/` | whether the rules are the right rules — vignettes, benchmarks, definitions, a sensitivity sweep. |
 | `lot/melphalan/` | an exploration: a proposed line-advancing rule, built as three complete runs and differenced. Opt-in, and not in the study's numbers. |
-| `lot/safety/` | code lists for the protocol's key safety and utilisation events. Roster only — the codes are outstanding. |
-| `lot/tools/` | edits a production code list on request. Not a study stage. |
 
 Paths are written from the study folder, so `lot/engine/` is what you type
 standing at its root. Inside each package's own file table below they are
@@ -33,11 +31,11 @@ commands read `Rscript build.R` — those are run from the package's folder.
 `lot/engine/`, then `lot/dashboard/`, `lot/outcomes/` and `lot/questions/` over
 what it wrote. `lot/qc/` signs a finished run off.
 
-The rest are not part of a run: `lot/validation/` is the case for the rules,
-`lot/melphalan/` an experiment on one of them, `lot/tools/` a maintenance
-utility. The two that build — the sensitivity sweep and the melphalan cells —
-write to throwaway prefixes of their own and are opt-in, so neither can land on
-a study's tables by being run at the wrong moment.
+The other two are not part of a run: `lot/validation/` is the case for the
+rules, and `lot/melphalan/` an experiment on one of them. Both build — the
+sensitivity sweep and the melphalan cells — into throwaway prefixes of their
+own, and both are opt-in, so neither can land on a study's tables by being run
+at the wrong moment.
 
 ## Why the engine is its own folder
 
@@ -233,8 +231,10 @@ same question of both claim tables before LOT1 starts, under
 
 **Steroids** are maintained separately, so their codes are not in
 `cl_mma_codelist.csv`, and both places that build `mma_rollup` drop them by class
-as well. The rollup file itself should not list them either;
-`lot/tools/remove_steroids_from_rollup.R` makes that edit on the server.
+as well. The rollup file itself should not list them either — QC check `D3`
+reports whether the production copy still does. That edit is made on the server
+by hand now; the script that used to make it was removed with `lot/tools/` and
+is in git history if it is wanted again.
 
 ### Face validity
 
@@ -503,31 +503,6 @@ Where it did, the assumption is named. An assumption is not a decision.
 Neither mode is the proposal implemented to the letter: the mode names describe
 the transplant reading, and on B.2 both take the narrow one above.
 
-## `lot/safety/` — the protocol's safety and utilisation code lists
-
-Roster only. The protocol settles which conditions are measured, so the roster is
-in version control; the annex settles which codes, which is not settled, so those
-live on `CODELIST_DIR` with every other code list.
-
-| path | what it does |
-|---|---|
-| `run_safety_codelists.R` | Reports what the code lists still need. Exit status is the loader's own verdict, so the command cannot report ready on a list the analysis would refuse. |
-| `R/codelists_safety.R` | Loads them, and holds them to their shape. The codes themselves are not in this repository. |
-| `codelists/safety_events.csv` | Table 2's twenty-six conditions in seven domains, one row per condition, code cell empty. |
-| `codelists/hcru_events.csv` | Table 3's four utilisation events, with `precedence` (`primary` / `fallback`) so an event identified two ways is not counted twice. |
-| `tests/test_safety_codelists.R` | That the placeholders hold their shape and refuse to be read while they are placeholders, and that the command and the loader agree. |
-
-Open: the twenty-six conditions' codes, the acute/chronic washout (`>30` in one
-place, `>=30` in another), which diagnosis position makes a stay MM-related, the
-ER-visit values, and whether a revenue-code field is exposed anywhere joinable.
-
-## `lot/tools/` — one maintenance script
-
-| path | what it does |
-|---|---|
-| `remove_steroids_from_rollup.R` | Removes steroid rows from the production medication rollup. Reports by default; changes nothing unless given `--write`. Handles the file as raw bytes, replaces it by rename, re-checks both files' md5s immediately before doing so, and refuses unless its own premise holds — that steroids carry no codes. |
-| `tests/test_remove_steroids.R` | The byte-for-byte claim, the refusals, and both mid-run edits. |
-
 ---
 
 # Tests
@@ -549,6 +524,4 @@ Rscript lot/validation/tests/test_vignettes.R    # and test_sensitivity.R,
                                                  # test_melphalan.R,
                                                  # test_stockpiling.R
 Rscript lot/melphalan/tests/test_aug1_melp.R     # and run_melp_scenarios.R
-Rscript lot/safety/tests/test_safety_codelists.R
-Rscript lot/tools/tests/test_remove_steroids.R
 ```

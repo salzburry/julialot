@@ -18,8 +18,6 @@ A cohort is what LOT is pointed at. It is not part of LOT and does not read it.
 | `lot/qc/` | the slower checks on a finished run. Reads only, writes to `out/`. |
 | `lot/validation/` | whether the rules are the right rules. Not part of a study run. |
 | `lot/melphalan/` | a proposed line-advancing rule, built as three runs and differenced. Opt-in. |
-| `lot/safety/` | code lists for the protocol's safety and utilisation events. Roster only. |
-| `lot/tools/` | edits a production code list on request. Not a study stage. |
 
 Each cohort build has a `RULES.md` giving the rules it applies and the
 assumptions behind them, with `ndmm/DECISIONS.md` as the long form for the
@@ -57,7 +55,7 @@ attempt's cohorts.
 
 Read a package's own README before running it. Under `lot/` that is
 `lot/FILES.md`, which carries every package's commands, settings and outputs;
-`overall/` and `lot/tools/` document themselves in their entry script's header.
+`overall/` documents itself in its entry script's header.
 
 ## Which names carry a prefix
 
@@ -95,7 +93,6 @@ the NDMM cohort, and `lot/LOT_RULES.md` covers the lines.
 | pregnancy window | `ndmm/DECISIONS.md` #9 - protocol and program spec disagree; which wins is recorded there |
 | lines of therapy | `lot/LOT_RULES.md` - "Applied, and still under review", and "Where this differs from the written protocol". `SCT_TANDEM_DAYS` and `CART_CONSOLIDATION_DAYS` come from prior internal work not in this repository, so they cannot be checked against the protocol text |
 | outcomes | `lot/FILES.md`, `outcomes/` - the `STUDY_END` censoring rule for TTD, the fifth attrition category, both denominators |
-| safety and utilisation | `lot/FILES.md`, `safety/` - the roster, what is outstanding, and the protocol's own `>30`/`>=30` ambiguity |
 | the melphalan proposal | `lot/FILES.md`, under `lot/melphalan/`. It is an exploration, not a rule the build applies, which is why it is not in `lot/LOT_RULES.md` |
 
 Where one of those documents and this table disagree, the document is the record.
@@ -127,13 +124,11 @@ Rscript lot/dashboard/tests/test_runner.R
 Rscript lot/questions/tests/test_setup.R
 Rscript lot/outcomes/tests/test_runner.R
 Rscript lot/qc/tests/test_lot_qc.R
-Rscript lot/tools/tests/test_remove_steroids.R
 Rscript lot/validation/tests/test_vignettes.R    # and test_sensitivity.R,
                                                  # test_benchmarks.R,
                                                  # test_definitions.R,
                                                  # test_melphalan.R
 Rscript lot/melphalan/tests/test_aug1_melp.R
-Rscript lot/safety/tests/test_safety_codelists.R
 ```
 
 The study team's worked melphalan scenarios run without a connection too, and
