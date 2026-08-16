@@ -192,7 +192,8 @@ build_lot_n <- function(con, lot_num,
   # a day - see R/cart_rule.R.
   cart_on <- isTRUE(apply_cart_induction_rule) && lot_num == 2L
   cart_excl <- cart_exclude_predicate(cart_on, "ac.TX_DT", "pe.PREV_START_DT",
-                                      lot1_induction_window_days)
+                                      lot1_induction_window_days,
+                                      "pe.PREV_END_DT")
   cart_note <- if (cart_on)
     "A CAR-T inside LOT1's induction window is part of LOT1 and starts nothing."
   else "No CAR-T exclusion at this line."
