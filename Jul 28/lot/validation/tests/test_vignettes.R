@@ -133,11 +133,12 @@ ok(sum(df$confidence == "to_confirm") > 0,
    "...and the ones that need a real run are marked rather than asserted")
 
 cat("\n-- and the rules document cites this catalogue, not a copy of it --\n")
-# lot/LOT_RULES.md gives a scenario per rule and names the vignette each one has
+# lot/SCENARIOS.md works each rule through a patient and names the vignette each
+# scenario has. The rules themselves are in LOT_RULES.md, and carry no scenarios
 # a machine-checked twin in. A renamed or deleted vignette would leave the
 # document pointing at a case that no longer exists - and a prose scenario with
 # nothing under test behind it is exactly what the catalogue is for.
-rules <- paste(readLines(file.path(PARENT, "LOT_RULES.md"), warn = FALSE),
+rules <- paste(readLines(file.path(PARENT, "SCENARIOS.md"), warn = FALSE),
                collapse = "\n")
 # Every backticked token in the document, which is where an id would be written.
 # Read this way rather than off "vignette `x`" so a pair written `a` / `b`, or a
@@ -147,7 +148,7 @@ ticked <- unique(unlist(regmatches(
 ticked <- gsub("`", "", ticked, fixed = TRUE)
 cited  <- intersect(ticked, df$id)
 ok(length(cited) > 0,
-   paste0("the rules document names vignettes by id (", length(cited), ")"))
+   paste0("the scenarios document names vignettes by id (", length(cited), ")"))
 uncited <- setdiff(df$id, cited)
 ok(!length(uncited),
    if (length(uncited)) paste0("...and every vignette is cited by a rule - not cited: ",

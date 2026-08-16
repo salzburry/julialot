@@ -30,8 +30,8 @@ algorithm is one directory with three packages in it.
 Each area carries a `FILES.md` saying what is in it and what each file does, and
 each cohort build a `RULES.md` giving the rules it applies, with
 `ndmm/DECISIONS.md` as the long form for the cohort. `lot/LOT_RULES.md` is the
-rules the line build applies, one at a time, each with a scenario showing what
-it does to a patient's claims.
+rules the line build applies, one at a time, and `lot/SCENARIOS.md` works each
+of them through a patient's claims.
 
 `ndmm/` and `overall/` are independent - neither reads the other, and each goes
 to the raw CDM and the production code lists on its own. `lot/engine/` takes a
@@ -105,7 +105,7 @@ the NDMM cohort, and `lot/LOT_RULES.md` covers the lines.
 Where one of those documents and this table disagree, the document is the record.
 
 `KNOWN_ISSUES.md` is the other side of that: the decisions that have **not** been
-made. Four open questions for the study team, each with a worked patient, what it
+made. Four entries for the study team, each with a worked patient, what it
 would move, and the count in `exploration/lot/run_lot_audit_counts.R` that sizes
 it. Nothing in it is being changed while it is open, and each one is also
 recorded in `lot/LOT_RULES.md` beside the rule it affects.

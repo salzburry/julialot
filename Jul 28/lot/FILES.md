@@ -2,7 +2,9 @@
 
 `lot/` is the lines-of-therapy product: the engine that builds the lines, the
 checks that sign a run off, and the scenarios that say what the rules are. This
-file says what is here and what each file does. `LOT_RULES.md` is the other
+file says what is here and what each file does. This folder carries three
+documents and no more: `LOT_RULES.md` is the rules, `SCENARIOS.md` works each
+one through a patient's claims, and this file is the other
 half: the rules the build applies, one at a time, each with a scenario showing
 what it does to a patient's claims.
 
@@ -274,7 +276,7 @@ as an error, not a pass. It judges a run by that run's own recorded
 
 ## `exploration/lot/` — the rule scenarios, machine-checked
 
-The twin of the scenarios in `LOT_RULES.md`. Every rule there carries a
+The twin of the scenarios in `SCENARIOS.md`. Every rule there carries a
 timeline of claims and what the algorithm makes of them, and 21 of those name a
 vignette id — this is where that id lives. It is a **specification**, not
 observed data: nothing here has been run against a warehouse.
@@ -287,7 +289,7 @@ The measurements are in `exploration/lot/`.
 |---|---|
 | `R/vignettes.R` | The edge cases the algorithm is hardest on, each with the assignment the rules give. Every offset is derived from the parameter that decides it, so a case moves when a setting moves and a renamed setting fails the catalogue rather than leaving prose describing a rule that is gone. |
 | `run_vignettes.R` | Renders the catalogue. No warehouse and no connection; writes a CSV and a markdown table to `out/`. |
-| `tests/test_vignettes.R` | The catalogue cannot drift: the parameters have to exist, the boundary pairs have to straddle them and expect different things, the timelines have to run forwards, and the files the rules are quoted from have to be there. It also holds `LOT_RULES.md` and the catalogue to each other in both directions — a scenario citing a vignette that does not exist fails, and a vignette no rule cites fails too. |
+| `tests/test_vignettes.R` | The catalogue cannot drift: the parameters have to exist, the boundary pairs have to straddle them and expect different things, the timelines have to run forwards, and the files the rules are quoted from have to be there. It also holds `SCENARIOS.md` and the catalogue to each other in both directions — a scenario citing a vignette that does not exist fails, and a vignette no rule cites fails too. |
 | `out/` | Generated. Nothing reads it back. |
 
 Each vignette carries a `confidence` of `derived` or `to_confirm`, and that is a

@@ -304,9 +304,20 @@ build_lot_n <- function(con, lot_num,
     -- first-ever AUTOs CAN trigger a new LOT (LOT2-5 only; LOT1 retains the
     -- convention that the first AUTO is part of induction).
     autos_with_prev AS (
-      SELECT a.PATID, a.TX_DT,
-             lag(a.TX_DT) OVER (PARTITION BY a.PATID ORDER BY a.TX_DT) AS PREV_AUTO_DT
-      FROM tx_auto_dates a
+      -- N_BETWEEN: whether anything happened since the previous transplant. A
+      -- pair 180 days apart with a medication in the middle is not a planned
+      -- tandem, so the later transplant is free to start a line.
+      SELECT p.PATID, p.TX_DT, p.PREV_AUTO_DT,
+             coalesce(sum(CASE WHEN x.dt > p.PREV_AUTO_DT AND x.dt < p.TX_DT
+                               THEN 1 ELSE 0 END), 0) AS N_BETWEEN
+      FROM (
+        SELECT a.PATID, a.TX_DT,
+               lag(a.TX_DT) OVER (PARTITION BY a.PATID ORDER BY a.TX_DT) AS PREV_AUTO_DT
+        FROM tx_auto_dates a
+      ) p
+      LEFT JOIN ({tandem_interrupt_events_sql()}
+      ) x ON p.PATID = x.PATID
+      GROUP BY p.PATID, p.TX_DT, p.PREV_AUTO_DT
     ),
     auto_cand AS (
       SELECT pe.PATID, min(awp.TX_DT) AS d_AUTO
@@ -338,6 +349,7 @@ build_lot_n <- function(con, lot_num,
         -- SCT sits one day after the end date, which is where that AUTO is.
         AND NOT (awp.PREV_AUTO_DT IS NOT NULL
                  AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {sct_tandem_days}
+                 AND awp.N_BETWEEN = 0
                  AND NOT (pe.PREV_END_REASON = 'SCT_AUTO'
                           AND awp.TX_DT = date_add(pe.PREV_END_DT, 1)))
       GROUP BY pe.PATID
@@ -651,6 +663,20 @@ build_lot_n <- function(con, lot_num,
         AND ac.TX_DT <= l.OBS_END_DT
       GROUP BY ac.PATID
     ),
+    -- A tandem is a tandem only if nothing happens between the two transplants.
+    -- Same rule as 05b_lot1_sct.R, and see that comment for why: it is what
+    -- makes it safe for the hold date to follow a tandem partner past this
+    -- line's own window.
+    tandem_interrupt AS (
+      SELECT ap.PATID,
+             sum(CASE WHEN x.dt > ap.AUTO_DT_1 AND x.dt < ap.AUTO_DT_2
+                      THEN 1 ELSE 0 END) AS n_between
+      FROM auto_pivot ap
+      LEFT JOIN ({tandem_interrupt_events_sql()}
+      ) x ON ap.PATID = x.PATID
+      WHERE ap.AUTO_DT_2 IS NOT NULL
+      GROUP BY ap.PATID
+    ),
     allo_between AS (
       SELECT ap.PATID,
         sum(CASE WHEN ac.TX_DT >= ap.AUTO_DT_1 AND ac.TX_DT <= ap.AUTO_DT_2 THEN 1 ELSE 0 END) AS n_allo_between
@@ -676,6 +702,7 @@ build_lot_n <- function(con, lot_num,
             AND ap.AUTO_DT_2 IS NOT NULL
             AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {sct_tandem_days}
             AND coalesce(ab.n_allo_between, 0) = 0
+         AND coalesce(ti.n_between, 0) = 0
            THEN ap.AUTO_DT_2 END AS LOT{lot_num}_TX_AUTO_DT_2,
       CASE
         WHEN ap.AUTO_DT_1 IS NOT NULL
@@ -683,6 +710,7 @@ build_lot_n <- function(con, lot_num,
          AND ap.AUTO_DT_2 IS NOT NULL
          AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {sct_tandem_days}
          AND coalesce(ab.n_allo_between, 0) = 0
+         AND coalesce(ti.n_between, 0) = 0
         THEN 1 ELSE 0
       END AS LOT{lot_num}_SCT_AUTO_TAND_FLG,
       CASE
@@ -690,7 +718,8 @@ build_lot_n <- function(con, lot_num,
          AND datediff(ap.AUTO_DT_1, l.LOT{lot_num}_START_DT) < l.LOT_WINDOW_DAYS
          AND NOT (ap.AUTO_DT_2 IS NOT NULL
                   AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {sct_tandem_days}
-                  AND coalesce(ab.n_allo_between, 0) = 0)
+                  AND coalesce(ab.n_allo_between, 0) = 0
+         AND coalesce(ti.n_between, 0) = 0)
         THEN 1 ELSE 0
       END AS LOT{lot_num}_SCT_AUTO_SING_FLG,
       CASE
@@ -702,6 +731,7 @@ build_lot_n <- function(con, lot_num,
         WHEN ap.AUTO_DT_2 IS NOT NULL
          AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {sct_tandem_days}
          AND coalesce(ab.n_allo_between, 0) = 0
+         AND coalesce(ti.n_between, 0) = 0
         THEN ap.AUTO_DT_3
         -- Single in-LOT AUTO: AUTO_DT_2 ends LOT N (when it exists and is non-tandem)
         ELSE ap.AUTO_DT_2
@@ -718,6 +748,7 @@ build_lot_n <- function(con, lot_num,
          AND ap.AUTO_DT_2 IS NOT NULL
          AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {sct_tandem_days}
          AND coalesce(ab.n_allo_between, 0) = 0
+         AND coalesce(ti.n_between, 0) = 0
         THEN ap.AUTO_DT_2
         WHEN ap.AUTO_DT_1 IS NOT NULL
          AND datediff(ap.AUTO_DT_1, l.LOT{lot_num}_START_DT) < l.LOT_WINDOW_DAYS
@@ -742,7 +773,8 @@ build_lot_n <- function(con, lot_num,
         WHEN ap.AUTO_DT_2 IS NOT NULL
          AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {sct_tandem_days}
          AND coalesce(ab.n_allo_between, 0) = 0
-         AND datediff(ap.AUTO_DT_2, l.LOT{lot_num}_START_DT) < l.LOT_WINDOW_DAYS
+         AND coalesce(ti.n_between, 0) = 0
+         AND datediff(ap.AUTO_DT_1, l.LOT{lot_num}_START_DT) < l.LOT_WINDOW_DAYS
         THEN ap.AUTO_DT_2
         WHEN ap.AUTO_DT_1 IS NOT NULL
          AND datediff(ap.AUTO_DT_1, l.LOT{lot_num}_START_DT) < l.LOT_WINDOW_DAYS
@@ -752,6 +784,7 @@ build_lot_n <- function(con, lot_num,
     FROM lb l
     LEFT JOIN auto_pivot   ap ON l.PATID = ap.PATID
     LEFT JOIN allo_between ab ON l.PATID = ab.PATID
+    LEFT JOIN tandem_interrupt ti ON l.PATID = ti.PATID
     LEFT JOIN first_allo   fa ON l.PATID = fa.PATID
     LEFT JOIN first_cart   fc ON l.PATID = fc.PATID
   "), qc = glue("SELECT count(*) AS n_pats,
@@ -855,9 +888,20 @@ build_lot_n <- function(con, lot_num,
         AND prem.MED_ABBR IS NULL
     ),
     post_runout_autos AS (
-      SELECT a.PATID, a.TX_DT,
-             lag(a.TX_DT) OVER (PARTITION BY a.PATID ORDER BY a.TX_DT) AS PREV_AUTO_DT
-      FROM tx_auto_dates a
+      -- N_BETWEEN: whether anything happened since the previous transplant. A
+      -- pair 180 days apart with a medication in the middle is not a planned
+      -- tandem, so the later transplant is free to start a line.
+      SELECT p.PATID, p.TX_DT, p.PREV_AUTO_DT,
+             coalesce(sum(CASE WHEN x.dt > p.PREV_AUTO_DT AND x.dt < p.TX_DT
+                               THEN 1 ELSE 0 END), 0) AS N_BETWEEN
+      FROM (
+        SELECT a.PATID, a.TX_DT,
+               lag(a.TX_DT) OVER (PARTITION BY a.PATID ORDER BY a.TX_DT) AS PREV_AUTO_DT
+        FROM tx_auto_dates a
+      ) p
+      LEFT JOIN ({tandem_interrupt_events_sql()}
+      ) x ON p.PATID = x.PATID
+      GROUP BY p.PATID, p.TX_DT, p.PREV_AUTO_DT
     ),
     post_runout_auto AS (
       SELECT DISTINCT lb.PATID
@@ -874,7 +918,8 @@ build_lot_n <- function(con, lot_num,
                 ELSE                 {induction_window_days} - 1
               END)
         AND NOT (awp.PREV_AUTO_DT IS NOT NULL
-                 AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {sct_tandem_days})
+                 AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {sct_tandem_days}
+                 AND awp.N_BETWEEN = 0)
     ),
     post_runout_trigger AS (
       SELECT lb.PATID,

@@ -191,6 +191,7 @@ cat("\n-- what a run writes is declared, both directions --\n")
 # build_lot2_5 drops it after the publish, so a finished run does not have it.
 lotn_env <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "cart_rule.R"), envir = lotn_env)
+sys.source(file.path(ROOT, "R", "prior_regimen.R"), envir = lotn_env)
 sys.source(file.path(ROOT, "R", "steps", "10_lot2_5_base.R"), envir = lotn_env)
 undeclared <- setdiff(OUTPUTS, c(get("LOT_TABLES", envir = env), lotn_env$.LOT_LONG_STAGE))
 ok(length(undeclared) == 0,
@@ -736,6 +737,7 @@ cat("\n-- an SCT on LOT1's start date does not end it the day before --\n")
 # that computes nothing.
 sctenv <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "cart_rule.R"), envir = sctenv)
+sys.source(file.path(ROOT, "R", "prior_regimen.R"), envir = sctenv)
 # induction_window_days is read by LOT1_AUTO_HOLD_DT, which bounds the hold date
 # to LOT1's own window. Absent, glue interpolates a NULL and the whole body comes
 # back empty, so every extraction below misses rather than failing on its own
@@ -882,6 +884,7 @@ ok(!confirms(120), "an infusion past the end of observation confirms nothing")
 # Generated with the rule ON, which the fixture above never does.
 cenv <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "cart_rule.R"), envir = cenv)
+sys.source(file.path(ROOT, "R", "prior_regimen.R"), envir = cenv)
 assign("cfg", list(sct_tandem_days = 180L, induction_window_days = 60L,
                    apply_cart_induction_rule = TRUE), envir = cenv)
 CSQL <- character(0)
@@ -943,7 +946,7 @@ case_to_r <- function(x) {
   }
   arms <- Filter(nzchar, trimws(strsplit(x, "\\bWHEN\\b")[[1]]))
   tr <- function(s) {
-    s <- gsub("\\b(ap|ab)\\.", "", trimws(s))
+    s <- gsub("\\b(ap|ab|ti)\\.", "", trimws(s))
     s <- gsub("([A-Za-z_][A-Za-z0-9_]*) IS NOT NULL", "!is.na(\\1)", s)
     s <- gsub("([A-Za-z_][A-Za-z0-9_]*) IS NULL", "is.na(\\1)", s)
     s <- gsub("datediff(", "dd(", gsub("coalesce(", "cly(", s, fixed = TRUE), fixed = TRUE)
@@ -958,11 +961,13 @@ case_to_r <- function(x) {
   paste0(paste(out, collapse = ""), tr(els))
 }
 dd <- function(a, b) as.numeric(a - b)
-ending_auto <- function(a1 = NA, a2 = NA, a3 = NA, allo_between = 0) {
+ending_auto <- function(a1 = NA, a2 = NA, a3 = NA, allo_between = 0,
+                        n_between = 0) {
   e <- new.env(parent = environment())
   for (n in c("AUTO_DT_1", "AUTO_DT_2", "AUTO_DT_3"))
     assign(n, as.Date(get(c(AUTO_DT_1 = "a1", AUTO_DT_2 = "a2", AUTO_DT_3 = "a3")[n])), envir = e)
   assign("n_allo_between", allo_between, envir = e)
+  assign("n_between", n_between, envir = e)
   eval(parse(text = case_to_r(case_sql)), envir = e)
 }
 D <- function(x) as.Date(x)
@@ -983,6 +988,12 @@ ok(identical(ending_auto(a1 = "2025-03-01", a2 = "2025-11-02"), D("2025-11-02"))
 ok(identical(ending_auto(a1 = "2025-03-01", a2 = "2025-06-01", allo_between = 1),
              D("2025-06-01")),
    "an ALLO between the pair disqualifies the tandem, so the second ends LOT1")
+# A medication starting between the two is the same disqualification, and the
+# one the ALLO check above could not see. The gap alone does not make a pair
+# planned: a patient treated in between was not waiting for a transplant.
+ok(identical(ending_auto(a1 = "2025-03-01", a2 = "2025-06-01", n_between = 1),
+             D("2025-06-01")),
+   "...and so does anything else in the middle - a tandem needs a clear gap")
 ok(is.na(ending_auto()), "no transplant at all ends nothing")
 
 
@@ -2321,6 +2332,33 @@ ok(length(gregexpr("LOT_WINDOW_DAYS",
 ok(!grepl("ec.LOT{lot_num}_TX_AUTO_MAX_DT", l25_txt, fixed = TRUE),
    "...so no end-date branch reads the one-armed column by mistake")
 
+# A tandem partner follows its pair past the window. That is only safe because a
+# tandem needs a clear gap: anything the extension could swallow breaks the pair
+# before the extension is reached. The two halves are checked together, because
+# either alone is a defect - the window bound alone loses the partner, and the
+# extension alone is the day-209 swallow this suite already pins against.
+for (h in list(list(hold, "LOT1", "cfg$induction_window_days"),
+               list(holdn, "LOT2-5", "LOT_WINDOW_DAYS"))) {
+  ok(grepl(paste0("datediff(ap.AUTO_DT_1, "), h[[1]], fixed = TRUE) &&
+     !grepl("datediff(ap.AUTO_DT_2, l", h[[1]], fixed = TRUE),
+     paste0(h[[2]], ": the tandem arm bounds the FIRST transplant by the window, ",
+            "so the partner may sit beyond it"))
+  ok(grepl("n_between", h[[1]], fixed = TRUE),
+     paste0("...and only when nothing happened between the two"))
+}
+# One definition of what breaks a tandem, spliced everywhere it is asked. Five
+# copies is how the five drift apart, and a tandem test that disagrees with the
+# start gate it mirrors puts a transplant in no line at all.
+ok(grepl("tandem_interrupt_events_sql <- function", pr, fixed = TRUE),
+   "what breaks a tandem is defined once")
+sites <- sum(vapply(c("05b_lot1_sct.R", "06_lot1_end.R", "10_lot2_5_base.R"),
+  function(f) length(gregexpr("{tandem_interrupt_events_sql()}",
+    paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE), collapse = "\n"),
+    fixed = TRUE)[[1]]), integer(1)))
+ok(sites == 5L,
+   paste0("...and spliced into all five places that ask - two tandem flags, the ",
+          "start gate, and its two run-out mirrors (", sites, ")"))
+
 # One gate, stated three times - reason, date, length. If they drift, a line
 # reports one reason and the date of another.
 gates <- regmatches(e6, gregexpr(
@@ -2361,8 +2399,15 @@ ok(isTRUE(fires(d(40), d(19))),
    "a transplant after an early run-out extends the line rather than vanishing")
 ok(isFALSE(fires(d(20), d(59))),
    "...but a line that already covers its transplant is left alone")
+# NOT an added-medication override, which is unreachable and was wrong to claim.
+# At LOT1 an agent starting inside the 60-day window joins the regimen instead of
+# being an addition, so MED_ADD needs a start at day 60 or later, which is at or
+# after the furthest a hold date can reach; the same arithmetic holds on a 30-day
+# and a 45-day line. A tandem partner CAN reach past the window, but a medication
+# between the two transplants breaks the tandem before it gets there. So the
+# branch below is about a later natural end of any kind, and d+29 is simply one.
 ok(isTRUE(fires(d(40), d(29))),
-   "...and it outranks an added medication, which is the end it would otherwise take")
+   "...and about the natural end's date, not about which branch produced it")
 ok(isFALSE(fires(d(40), d(19), death = d(30))),
    "a death before the transplant still ends the line - a line may not outlive the patient")
 ok(isFALSE(fires(NA, d(19))),

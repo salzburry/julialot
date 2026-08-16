@@ -119,9 +119,20 @@ phase_lot1_end <- function(con, ctx) {
         AND prem.MED_ABBR IS NULL
     ),
     post_runout_autos AS (
-      SELECT a.PATID, a.TX_DT,
-             lag(a.TX_DT) OVER (PARTITION BY a.PATID ORDER BY a.TX_DT) AS PREV_AUTO_DT
-      FROM tx_auto_dates a
+      -- N_BETWEEN: whether anything happened since the previous transplant. A
+      -- pair 180 days apart with a medication in the middle is not a planned
+      -- tandem, so the later transplant is free to start a line.
+      SELECT p.PATID, p.TX_DT, p.PREV_AUTO_DT,
+             coalesce(sum(CASE WHEN x.dt > p.PREV_AUTO_DT AND x.dt < p.TX_DT
+                               THEN 1 ELSE 0 END), 0) AS N_BETWEEN
+      FROM (
+        SELECT a.PATID, a.TX_DT,
+               lag(a.TX_DT) OVER (PARTITION BY a.PATID ORDER BY a.TX_DT) AS PREV_AUTO_DT
+        FROM tx_auto_dates a
+      ) p
+      LEFT JOIN ({tandem_interrupt_events_sql()}
+      ) x ON p.PATID = x.PATID
+      GROUP BY p.PATID, p.TX_DT, p.PREV_AUTO_DT
     ),
     post_runout_auto AS (
       -- Mirrors LOT2-5 auto_cand, which now measures the window that belongs to
@@ -141,7 +152,8 @@ phase_lot1_end <- function(con, ctx) {
         AND awp.TX_DT <= lb.OBS_END_DT
         AND awp.TX_DT > date_add(lb.LOT1_START_DT, {cfg$induction_window_days} - 1)
         AND NOT (awp.PREV_AUTO_DT IS NOT NULL
-                 AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {cfg$sct_tandem_days})
+                 AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {cfg$sct_tandem_days}
+                 AND awp.N_BETWEEN = 0)
     ),
     post_runout_sct AS (
       -- Any ALLO or CAR-T strictly after the run-out and inside observation.

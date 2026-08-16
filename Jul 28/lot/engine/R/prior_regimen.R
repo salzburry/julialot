@@ -85,3 +85,21 @@ discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
       WHERE BROKEN_BY_HERE = 0
       GROUP BY PATID, MAP_MED_TYPE")
 }
+
+# Every event that breaks a planned tandem: a non-steroid medication starting,
+# an allogeneic transplant, or a CAR-T. A tandem is only a tandem if nothing
+# happens between the two transplants - the gap alone does not make the pair
+# planned, and a patient treated in between was not waiting for a second
+# transplant.
+#
+# One definition, spliced into all five places that ask the question: the tandem
+# flags at LOT1 and LOT2-5, the next line's AUTO start gate, and the two
+# run-out guards that mirror it. Five copies of this rule is how the five drift
+# apart, and a tandem test that disagrees with the gate it mirrors puts a
+# transplant in no line at all.
+tandem_interrupt_events_sql <- function() "
+        SELECT PATID, MAP_START_DT AS dt FROM map_stacked
+        WHERE MAP_MED_CLASS <> 'STEROID'
+        UNION ALL
+        SELECT PATID, TX_DT AS dt FROM tx_allo_cart_dates
+        WHERE SCT_TYPE IN ('ALLO', 'CART')"

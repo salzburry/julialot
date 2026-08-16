@@ -1,72 +1,30 @@
 # The lines-of-therapy rules
 
-Every rule the build applies, the setting that governs it, the file it lives in,
-and a scenario for each one.
+Every rule the build applies, the setting that governs it, and the file it
+lives in. `SCENARIOS.md` carries the worked example for each, numbered to match:
+§6.5 here is 6.5 there.
 
 **The rules this build applies, and only those.** The melphalan
 line-advancing proposal is an exploration — it is not in the study's numbers,
 it is not built into any run that ships, and it is not here. `lot/FILES.md`
 says what that package is and what is still open on it.
 
-*Applied* is not *settled*. Seven of the scenarios below are marked `to
-confirm`, §11 carries two rules that are applied and still under review, §12
-lists where the build departs from the written protocol, §3.3 records a known
-defect in the regimen rule since fixed (§14.2), and §14 carries three rules
-now fixed and two more needing a ruling. What every rule here
-has in common is that the build does it on every run — not that the clinical
-question behind it is closed.
+*Applied* is not *settled*. §11 carries two rules that are applied and still
+under review, §12 lists where the build departs from the written protocol, and
+§14 carries three defects since fixed and two things needing a ruling. What
+every rule here has in common is that the build does it on every run — not that
+the clinical question behind it is closed.
 
 Written from the code, not from the spec — where the two differ, this follows
 the code and says so (§12). Two rules entered the numbers on 2026-08-13 and
 were not in them before: the CAR-T induction rule (§6.4) and the discontinuation
 confirmation buffer (§5.3). Runs before that date differ from this document.
 
-`lot/FILES.md` is the other half of this folder's documentation: what is in it,
-and what each file does.
+This folder carries three documents and no more. This one is the rules,
+`SCENARIOS.md` is those rules worked through a patient's claims, and `FILES.md`
+is what is in the folder and what each file does.
 
 ---
-
-## How to read a scenario
-
-Every rule below carries one. A scenario is a timeline of claims and what the
-algorithm makes of them:
-
-    d0     LEN dispensed, 60 days supply
-    d+31   POMA dispensed
-    ---
-    LOT1   d0 -> d+59   LEN POMA
-
-`d0` is the patient's first non-steroid MM agent unless the scenario says
-otherwise, and offsets are days from it. Where a scenario turns on a setting,
-the offset is written as the setting rather than as a number, because a number
-in prose is wrong the moment the setting moves.
-
-Each one is labelled by how far it is from having been seen:
-
-| | |
-|---|---|
-| *engine output* | run through the build. The dates are what it produced. |
-| *derived* | follows from the rule quoted beside it — reading the code is enough |
-| *to confirm* | the rules interact and this is our reading of them; the first real run settles it |
-
-`to confirm` is a claim about us, not about the algorithm. Those are the ones to
-look at before quoting any of this.
-
-Scenarios naming a vignette id — `tandem_within` and the like — have a twin in
-`lot/validation/R/vignettes.R`. `Rscript lot/validation/run_vignettes.R` renders
-the catalogue.
-
-Be clear about what that twin buys, because it is less than it looks.
-`test_vignettes.R` checks the catalogue's **internal consistency**: that every
-setting a case names exists in the config, that each boundary pair straddles its
-setting and the two sides expect different things, that timelines run forwards,
-that the quoted files are there, and that this document and the catalogue cite
-each other in both directions. It does **not** run a patient through the engine.
-No scenario on this page has been executed against the SQL, and none of them is
-a regression test — an `expected` is a reading of the rules, not an observed
-output. What the catalogue prevents is drift: a renamed setting or a moved
-boundary fails it. What it cannot prevent is the rules being read wrongly in the
-first place, which is what the `to confirm` marker is for.
 
 ## The rules at a glance
 
@@ -108,6 +66,7 @@ first place, which is what the `to confirm` marker is for.
 | §14.2 | **Fixed** — a regimen collecting agents after its line ended | — | |
 | §14.3 | **To confirm** — the consolidation window is 45, the spec says 30 | `cart_consolidation_days` | |
 | §14.4 | **To confirm** — a confirmed discontinuation loses to a later death | — | |
+| §14.5 | **Fixed** — an autologous transplant that belonged to no line | `sct_tandem_days` | |
 
 ---
 
@@ -169,27 +128,10 @@ regimen is assembled, before discontinuation, and before an added medication can
 end a line. Corticosteroids are not treated as oncology agents.
 `lot/engine/R/steps/10_lot2_5_base.R` — `MAP_MED_CLASS <> 'STEROID'`.
 
-**Scenario** — *derived; vignette `steroid_only_interval`.*
-
-    d0     1L regimen starts
-    d+150  dexamethasone alone for several weeks
-    d+220  the next regimen begins
-    ---
-    the steroid stretch neither starts a line nor continues one
-
-Steroids accompany almost every myeloma regimen. Counted, they would start lines
-everywhere and no line would ever be seen to end.
-
 ### 2.2 A medical claim is assumed to cover 28 days
 
 A medical claim carries no day supply, so `medical_day_supply` is assumed for
 it. `MAP_END_DT` is the later of the rx run-out and the medical run-out.
-
-**Scenario** — *derived.*
-
-    d0     a medical-claim administration, no day supply on the claim
-    ---
-    cover runs d0 -> d+27, medical_day_supply = 28 days inclusive
 
 ### 2.3 A claim arriving while cover is live extends the episode
 
@@ -200,27 +142,6 @@ Optum supplies no treatment end date, so cover is `FILL_DT` plus `DAYS_SUP`,
 pushed out by overlapping refills. That stockpiling is a dispensing artefact
 rather than a treatment record, and it is the mechanism behind §3.3 and §7.4.
 
-**Scenario** — *engine output.*
-
-    d0     LEN dispensed, 60 days supply  (covers to 2016-02-29)
-    d+31   LEN refilled, 28 days supply, while cover is still live
-    ---
-    LOT1   2016-01-01 -> 2016-03-28   LEN
-
-The refill does not move the end to its own run-out. It pushes the existing
-run-out out by its own 28 days.
-
-**Scenario** — *to confirm; vignette `overlapping_oral_refills`.*
-
-    d0     oral agent dispensed, 30 days supply
-    d+20   refilled early, before the first has run out
-    d+40   refilled early again
-    ---
-    one episode, running to the accumulated run-out rather than to the last
-    fill plus one supply
-
-Early refills move the gap that would otherwise end the line.
-
 ---
 
 ## 3. Line 1
@@ -228,15 +149,6 @@ Early refills move the gap that would otherwise end the line.
 `lot/engine/R/steps/04_lot1_base.R`.
 
 ### 3.1 Line 1 starts at the first non-steroid MM agent
-
-**Scenario** — *derived.*
-
-    d0     dexamethasone
-    d+10   LEN dispensed
-    ---
-    LOT1 starts d+10
-
-The steroid is not an oncology agent (§2.1), so it does not fix the index.
 
 ### 3.2 Line 1's induction window is 60 days
 
@@ -246,36 +158,6 @@ of day 0. `LOT_BASE_MEDS` and `LOT_MED_CNT` are those observed agents.
 Permissible biosimilar substitutes enter the set used for discontinuation and
 added-medication logic, but are not counted in `LOT_MED_CNT` and not listed in
 `LOT_BASE_MEDS`.
-
-**Scenario** — *engine output.* A second agent inside the window joins the line.
-
-    d0     LEN dispensed, 60 days supply
-    d+31   POMA dispensed
-    ---
-    LOT1   2016-01-01 -> 2016-02-29   LEN POMA
-
-**Scenario** — *engine output.* Outside the window it starts a line.
-
-    d0     LEN dispensed, 60 days supply
-    d+61   POMA dispensed
-    ---
-    LOT1   2016-01-01 -> 2016-02-29   LEN
-    LOT2   2016-03-02 -> 2016-03-29   POMA
-
-**Scenario** — *derived; vignettes `induction_lot1_within` /
-`induction_lot1_beyond`.*
-
-    d0                             1L regimen starts
-    d+(induction_window_days - 1)  agent added on the last day inside
-    ---
-    joins LOT1's regimen
-
-    d0                             1L regimen starts
-    d+induction_window_days        agent added one day outside
-    ---
-    not an induction agent — it is an addition, and §7.4 decides what that does
-
-The `- 1` is the difference between a regimen of four drugs and one of three.
 
 ### 3.3 Regimen membership is an episode start, not a fill
 
@@ -294,16 +176,6 @@ opening a new one. Two consequences, and they are not the same thing:
   translating it to `MAP_START_DT` in `LOTN_MED_[MED]`
   (`docs/Part 3/Program Spec/lot2plus_validated.csv`). An episode start is
   narrower than a therapy received.
-
-**Scenario** — *derived.*
-
-    d0     LOT1 starts on LEN and DARA
-    d+120  LOT2 starts on POMA, while DARA is still covered by a d+100 refill
-    ---
-    DARA is NOT in LOT2's regimen — its episode started in LOT1
-
-`Rscript exploration/lot/run_stockpiling_rule.R` sizes the second case against a
-finished run, in `STOCKPILE_AGENTS` and `STOCKPILE_IMPACT`.
 
 **Known defect — an agent can be in the regimen whose supply starts after the
 line ended.** Induction medications are gathered across the whole induction
@@ -333,27 +205,20 @@ It is not only a cosmetic string. The agent also reaches the run-out
 calculation (§5.2) and the next line's prior-regimen exclusion (§4.3), so it
 can move a later line boundary as well.
 
-This is fixed — §14.2 has the account, and what follows describes what the
-build did before it. QC check `C1` does **not** catch it. C1 asks whether a regimen agent has an
-episode in the line's *induction window*; this asks whether it has one in the
-line's *actual span*, and an early transplant makes those two different. The
-count is `regimen-agent-begins-after-line-end` in
-`exploration/lot/run_lot_audit_counts.R` — 30 of 10,659 lines carrying a
-regimen on the synthetic cohort. Not yet fixed, and not yet measured against
-the production run.
+This is fixed. §14.2 has the account; everything above describes what the build
+did before it, because the shape is worth keeping — QC check `C1` never caught
+it, and would not catch it again. C1 asks whether a regimen agent has an episode
+in the line's *induction window*; the defect was about an episode in the line's
+*actual span*, and an early transplant makes those two different. The count that
+sized it, `regimen-agent-begins-after-line-end` in
+`exploration/lot/run_lot_audit_counts.R`, is the way to confirm it is gone on a
+rebuild: it should return nothing.
 
 ### 3.4 Line 1's first autologous transplant is part of induction
 
 A first-ever transplant does not end line 1 and does not open line 2. Lines 2 to
 5 do not keep this convention — there the first transplant outside the previous
 line's window ends the line (§4.1).
-
-**Scenario** — *to confirm; from vignette `allo_after_failed_auto`.*
-
-    d0     1L regimen starts
-    d+40   autologous transplant
-    ---
-    the AUTO sits inside LOT1. It neither ends the line nor opens the next one
 
 ---
 
@@ -375,31 +240,35 @@ end of observation.
 
 Unlike line 1, a first-ever AUTO can open a line here.
 
-**Scenario** — *engine output.* The `d_MED` candidate, on the second example in
-§3.2: POMA at d+61 is outside line 1's window and in no regimen of line 1's, so
-it opens LOT2 on its own date.
-
 ### 4.2 Later induction is 30 days, and 45 on a CAR-T-started line
 
 Non-steroid agents from the start date through day 29
 (`lot_n_induction_window_days`), or day 44 on a CAR-T-started line
 (`cart_consolidation_days`).
 
-**Scenario** — *derived; vignettes `induction_lotn_within` /
-`induction_lotn_beyond`.*
+The test is on `MAP_START_DT` — an episode *beginning* inside the window — and
+never on `MAP_END_DT`. Cover running through the window does not put an agent in
+the regimen, and neither does a dispense that lands inside the window while that
+agent's cover is already live: a claim arriving under live cover extends the
+episode it is already in rather than opening a new one (§2.3), so it leaves no
+episode start for this test to see.
 
-    d0                                   LOT2 starts
-    d+(lot_n_induction_window_days - 1)  agent added on the last day inside
-    ---
-    joins LOT2's regimen
+That has a consequence worth stating plainly, because it inverts the intuition.
+An agent from the previous line joins this line's regimen only if its cover
+**lapsed** and it restarted inside the window. The more continuously a patient
+stays on it, the more certainly it is absent from the later regimen — a patient
+taking lenalidomide without a break has one episode, starting at line 1, and it
+can never be seen by any later line's window.
 
-    d0                                   LOT2 starts
-    d+lot_n_induction_window_days        agent added one day outside
-    ---
-    not part of LOT2's regimen
+There is no prior-regimen exclusion here. `lot{n}_induction_meds` would take a
+previous-line agent happily; what keeps it out is only that it has no episode
+start to offer. That is a different gate from §4.3, which stops the same agent
+*starting* a line and is unconditional.
 
-Two different windows in one algorithm is a standing source of error: the
-later-line window closes sooner than a reader expects.
+**This is a divergence from the protocol wording**, and §12 carries it. The
+protocol says the later regimen is "all MM therapies identified during the first
+30 days of the LOT", which reads wider than fills. `run_scenario_counts.R`'s
+`4.2-prior-agent-covered-but-not-in-the-regimen` sizes it.
 
 ### 4.3 A drug in the previous line's regimen cannot start a line
 
@@ -409,81 +278,18 @@ regimen is not such an agent — however long it has been gone. The line that ow
 the drug extends over its later episodes instead (§5.2).
 `lot/engine/R/prior_regimen.R`.
 
-**Scenario** — *engine output.* A drug returning does not start a line on
-itself.
-
-    d0     LEN dispensed, 60 days supply
-    d+244  LEN again, 185 days after cover ran out
-    ---
-    LOT1   2016-01-01 -> 2016-09-30   LEN
-
-One line, spanning seven months with no cover. The alternative leaves the
-September treatment belonging to nothing at all.
-
-**Scenario** — *engine output.* The extension stops at any other agent.
-
-    d0     LEN, covered to d+87
-    d+74   POMA, covered to d+140
-    d+121  LEN again, 34 days after LEN's own cover ended
-    ---
-    LOT1   2016-01-01 -> 2016-03-14   LEN
-    LOT2   2016-03-15 -> 2016-04-30   POMA
-    LOT3   2016-05-01 -> 2016-05-30   LEN
-
-POMA starts while LEN is still covered and still opens a line: it is outside
-line 1's window and in no regimen of line 1's. LEN's own reappearance is then
-judged against LOT2's regimen, which is POMA — so it is a new agent there, and
-opens LOT3.
-
-§11.1 is the reasoning behind this rule and what it costs.
-
 ### 4.4 A permissible biosimilar substitute cannot start a line either
 
 The substitute is unioned into the previous line's regimen for this test, so it
 is excluded from `d_MED` the same way the reference product is.
 `permissible_subs.csv` names the pairs.
 
-**Scenario** — *to confirm; vignette `biosimilar_switch`.*
-
-    d0     1L regimen starts on the reference product
-    d+70   the biosimilar of the same agent is dispensed instead
-    ---
-    no new line — a permissible substitute is the same agent for line purposes
-
-Whether this holds depends on `permissible_subs.csv`, not on the rule. A
-substitution the code list does not know about looks like a regimen change, and
-starts a line that did not happen.
-
 ### 4.5 Same-day starts break `SCT_ALLO > CART > SCT_AUTO > MED`
-
-**Scenario** — *derived.*
-
-    d0     LOT1 starts
-    d+200  an allogeneic transplant and a new agent on the same date
-    ---
-    the line starts as SCT_ALLO, not MED
-
-`LOT_START_TYPE = 'MED'` therefore says a medication won the tie-break, not
-which medication: `d_MED` is the earliest qualifying agent and the drug is not
-kept.
 
 ### 4.6 An allogeneic line spans one day and carries no regimen
 
 `allo_lot_span` is `single_day`, and induction rows are suppressed for an
 ALLO-started line.
-
-**Scenario** — *derived; vignette `allo_single_day`.*
-
-    d0     LOT1 starts
-    d+200  allogeneic transplant
-    d+201  a medication the following day
-    ---
-    the ALLO line starts and ends on d+200, with a blank LOT_BASE_MEDS
-    the d+201 medication starts the line after it
-
-A one-day line with no regimen is the shape that broke the transition Sankeys,
-which read a blank regimen as no line at all. Anything using `LOT_BASE_MEDS` to
-decide whether a line exists will miss it.
 
 ---
 
@@ -502,25 +308,6 @@ the last `MAP_END_DT` to the end of observation counts too. The predicate is
 
 Per drug, not per line. The line has run out when its last base agent has.
 
-**Scenario** — *derived; vignettes `map_gap_within` / `map_gap_beyond`.*
-
-    d0                                1L regimen starts
-    d+60                              administrative hold, no claims
-    d+(60 + map_discon_gap_days - 1)  the same agent resumes, one day inside
-    ---
-    no discontinuation — exposure continues across the gap
-
-    d0                                1L regimen starts
-    d+60                              no claims
-    d+(60 + map_discon_gap_days)      the same agent resumes, exactly at it
-    ---
-    discontinuation
-
-Prior-authorisation holds and hospitalisations both produce silence in claims,
-and neither is a clinical decision to stop. That is what the threshold is
-buying, and the inclusive `>=` puts the boundary day on the discontinuation
-side.
-
 ### 5.2 A run-out chains forward over the drug's own later episodes
 
 A drug's cover in a line is chained forward over its own later episodes, because
@@ -537,10 +324,6 @@ is deliberately narrow (`lot/engine/R/prior_regimen.R`):
   surfaces; one that does not end a line — line 1's induction AUTO, a tandem
   inside `sct_tandem_days`, a CAR-T inside line 1's window — must not break the
   chain anyway.
-
-**Scenario** — *engine output.* The first example in §4.3: LEN returns 185 days
-after its own cover ran out, nothing else in between, so LOT1's run-out chains
-forward to the end of the September episode and the line ends 30 September.
 
 ### 5.3 A run-out is a discontinuation only once confirmed
 
@@ -565,20 +348,6 @@ data is absent; a patient who comes back has replaced the absence with evidence,
 and there is nothing left to wait for. Waiting anyway would swallow their next
 line, since a line censored to `OBS_END_DT` leaves nothing after it for the next
 one to start on.
-
-**Scenario** — *derived, and checked line by line against the shipped step 04
-and step 06 SQL.* Four patients, all running out on day 200, observation ending
-day 250 unless stated.
-
-| what follows the run-out | `DISCON_DT` | the line ends | lines |
-|---|---|---|---|
-| restarts d+210 on a **different** agent | d+200 | `DISCONTINUATION` d+200 | 2 |
-| restarts d+210 on **a base agent of this line** | *null* | `STUDY_END` d+250 | 1 |
-| never returns | *null* | `STUDY_END` d+250 | 1 |
-| never returns, but observed to d+545 | d+200 | `DISCONTINUATION` d+200 | 1 |
-
-Row 2 is the one worth reading twice: the restart is a base agent of this line,
-so it cannot open a line (§4.3) and therefore cannot confirm the run-out either.
 
 **Where it is applied.** In the end step (`06_lot1_end.R` and the LOT2-5
 equivalent), not where the run-out is computed — `POST_RUNOUT_TRIGGER_FLG` needs
@@ -620,69 +389,17 @@ are workup, the last is the infusion. Where a window straddles the tandem
 boundary the date closest to that boundary is taken instead, so the tandem test
 (§6.3) lands correctly.
 
-**Scenario** — *derived; vignettes `auto_window_within` / `auto_window_beyond`.*
-
-    d0                             1L regimen starts
-    d+40                           transplant code
-    d+(40 + sct_auto_window_days)  a second code, still inside the window
-    ---
-    one transplant, not two. The predicate is <=, so the window is 14 calendar
-    days inclusive of the first
-
-    d0                                 1L regimen starts
-    d+40                               transplant code
-    d+(40 + sct_auto_window_days + 1)  a second code, one day outside
-    ---
-    two separate AUTO events, subject to the gap and tandem rules
-
-A single admission often bills more than one code. The inclusive `<=` is the
-part that is easy to get wrong by one day.
-
 ### 6.2 AUTO events under 60 days apart merge
 
 After the grouping in §6.1, events less than `sct_auto_gap_days` apart become
 one. It is the second pass: §6.1 groups codes into events, this merges events
 that are too close together to be two transplants.
 
-**Scenario** — *derived.*
-
-    d+40   an AUTO event
-    d+80   a second AUTO event, 40 days later
-    ---
-    one AUTO event, not two — 40 < sct_auto_gap_days
-
 ### 6.3 A second AUTO within 180 days is a planned tandem
 
 A second AUTO within `sct_tandem_days` of the one before it is a planned tandem
 and does not end the line and does not start one. Beyond it, the transplant is
 excess and does both.
-
-**Scenario** — *to confirm; vignettes `tandem_within` / `tandem_beyond`.*
-
-    d0                             1L regimen starts
-    d+30                           first autologous transplant
-    d+(30 + sct_tandem_days - 1)   second AUTO, one day inside the window
-    ---
-    one tandem pair. A tandem is allowed, so LOT1 is not ended by the second
-
-    d0                             1L regimen starts
-    d+30                           first autologous transplant
-    d+(30 + sct_tandem_days + 1)   second AUTO, one day past the window
-    ---
-    not a tandem. The second AUTO is excess, and excess AUTO ends LOT1
-
-Planned tandem and unplanned second transplant look identical in claims. The
-only thing separating them is the gap, and a patient sitting on it goes either
-way — the same two claims, one day apart, land in different lines.
-
-**Scenario** — *to confirm; vignette `excess_auto`.* A third transplant.
-
-    d0                            1L regimen starts
-    d+30                          first transplant
-    d+(30 + sct_tandem_days - 1)  tandem partner
-    d+400                         third transplant
-    ---
-    the first two are a tandem inside LOT1; the third is excess and ends LOT1
 
 ### 6.4 A CAR-T inside line 1's induction window is part of line 1
 
@@ -708,79 +425,9 @@ line 1 ends inside its own 60 days, and an infusion in that gap belonged to
 nothing at all. "Part of line 1" cannot mean anything for an infusion arriving
 after line 1 is over.
 
-**Scenario** — *derived.*
-
-    d0     1L regimen starts
-    d+21   CAR-T, three weeks into induction
-    ---
-    LOT1 only. The CAR-T is part of LOT1's induction
-
-    d0     1L regimen starts
-    d+70   CAR-T, outside the 60-day window
-    ---
-    LOT1 ends d+69, and LOT2 starts d+70 as a CAR-T-started line
-
-Before the rule the first of those came out as **two** lines — `CART_INIT`
-closed LOT1 the day before the infusion and LOT2 opened as a CAR-T-started line.
-A CAR-T that soon after 1L started is not a second line; it is the same
-treatment episode, or an index date in the wrong place.
-
-A CAR-T acts on a line boundary in four places, and the rule reaches all four —
-stopping only one moves the problem rather than fixing it:
-
-| Where | Without the rule | With it |
-|---|---|---|
-| `lot1_sct` | `FIRST_CART_DT` feeds `LOT1_TX_ENDDATE`, ending LOT1 as `SCT_CART` | an in-induction CAR-T is not a line-ending SCT |
-| `lot1_base_end` | `CART_INIT_FLG` ends LOT1 at `FIRST_CART_DT − 1` | the flag cannot be set by an in-induction CAR-T |
-| LOT2 `d_CART` | the same infusion opens LOT2 | excluded as a start candidate — **only while line 1 is still running** |
-| `POST_RUNOUT_TRIGGER_FLG` | an in-window CAR-T after the run-out confirmed nothing | asks whether **any** ALLO or CAR-T falls after the run-out, as an existence test rather than against a date |
-
-The last two are the pair that has to agree, and they are the fix. Both are
-about an infusion arriving after the line's treatment stopped, so both treat it
-as line 2's business: it opens the line, and it confirms the run-out that closed
-line 1. Read without that condition, the start candidate was refused *and* the
-run-out went unconfirmed by it — which is how one infusion could fall out of the
-algorithm altogether.
-
 **What it deliberately does not do.** It does not extend line 1 to swallow a
 CAR-T that arrived after line 1 had already ended for some other reason. Line 1
 keeps the end the other rule gave it; the infusion opens the next line.
-
-**Scenario** — *derived.* The line has ended, so the exemption does not reach
-the infusion.
-
-    d0     LEN starts, 30 days of cover
-    d+29   LEN runs out, and is later confirmed (§5.3)
-    d+40   CAR-T — inside d0–d+59, but after line 1 ended
-    ---
-    LOT1  d0 -> d+29   DISCONTINUATION
-    LOT2  d+40         CAR-T-started
-
-The CAR-T also confirms the d+29 run-out in its own right, through
-`POST_RUNOUT_TRIGGER_FLG`, so the line does not need the full 90 days of
-observation to close. That arm asks whether *any* ALLO or CAR-T falls after the
-run-out — an existence test over the transplant rows, not a comparison against
-the line's earliest infusion. The distinction is the whole rule when a patient
-has more than one:
-
-    d0     LEN starts
-    d+20   first CAR-T — absorbed, LOT1 is running
-    d+39   LEN runs out
-    d+50   second CAR-T — after the run-out, still inside d0–d+59
-    d+100  observation ends, 61 days after the run-out
-    ---
-    LOT1  d0 -> d+39   DISCONTINUATION, confirmed by the d+50 infusion
-    LOT2  d+50         CAR-T-started
-
-Neither of the line's summary dates can see the d+50 infusion here.
-`FIRST_CART_DT` is `min()` over the line, so it is d+20 and not after the
-run-out; `ENDING_CART_DT` is null, because the exemption nulls both. Only
-asking the rows directly finds it. Read without the still-running condition,
-this patient had LOT1 ending d+29, no LOT2, and a CAR-T on d+40 belonging to no
-line.
-
-`q3_cart_screen()` in `analysis/questions/jul20_studyteam_qs.R` counts the
-patients that lands on.
 
 **What it moved.** `SCT_CART` and `CART_INIT` counts both fall — not by the same
 patients and not by the whole affected population, since the two reasons are
@@ -818,44 +465,6 @@ Ending **on** the transplant is the opposite of the two other AUTO-shaped
 reasons, and deliberately so. `SCT_AUTO` and the transplant branch in §7.2 end a
 line the day *before* their event, because there the transplant starts the next
 line. Here it closes this one.
-
-**Scenario** — *to confirm.* A short first fill, then a transplant.
-
-    d0     1L starts on LEN, 20 days supply
-    d+19   cover runs out
-    d+40   autologous transplant, inside line 1's 60-day window
-    ---
-    LOT1  d0 -> d+40   SCT_AUTO_CONT
-    the transplant is line 1's, and line 1 covers the day it happened
-
-Before this rule the same patient produced a line 1 of `d0 -> d+19`
-(`DISCONTINUATION`) and no line 2, because line 2's start gate refuses a
-transplant inside line 1's window — so the transplant appeared in no line at all.
-§14.5 has the full account.
-
-**Scenario** — *to confirm.* It outranks an added agent, and loses to a death.
-
-    d0     1L starts on LEN, 20 days supply
-    d+19   cover runs out
-    d+30   DARA starts — an added agent, which would end line 1 at d+29
-    d+40   autologous transplant
-    ---
-    LOT1  d0 -> d+40   SCT_AUTO_CONT, not MED_ADD at d+29
-
-    d0     1L starts on LEN, 20 days supply
-    d+19   cover runs out
-    d+30   death
-    d+40   a transplant claim dated after the death
-    ---
-    LOT1  d0 -> d+30   DEATH. A line does not outlive the patient
-
-The second is not hypothetical bookkeeping: claims carry service dates after a
-recorded death, so the death guard is written into the rule rather than left to
-the ordering of the branches.
-
-A transplant at or after an allogeneic transplant or a CAR-T can never reach this
-rule — §6.4's censor drops it first — so `SCT_ALLO`, `SCT_CART` and `CART_INIT`
-ends are untouched by it.
 
 **What it moved.** Line 1 and line 2–5 lengths for the patients it touches, the
 `DISCONTINUATION` / `MED_ADD` / `SCT_CART` end-reason split, and — because a
@@ -895,30 +504,6 @@ strictly **after** the date every other branch would have produced. Where it
 fires, the line was going to end too early; where it does not, it changes
 nothing. Death is excluded from it explicitly rather than by the ordering.
 
-**Scenario** — *derived.* The earlier event ends the line, whatever its rank.
-
-    d0     LOT1 starts on LEN
-    d+90   POMA added, outside the induction window
-    d+120  allogeneic transplant
-    ---
-    LOT1 ends d+89 as MED_ADD, not d+119 as SCT_ALLO
-
-The transplant is first in the order and still loses, because its gate requires
-its date to be at or before the added medication's and d+120 is not. The
-transplant then opens the next line in the ordinary way.
-
-**Scenario** — *derived.* Same two events, same date.
-
-    d0     LOT1 starts on LEN
-    d+90   POMA added, outside the induction window
-    d+90   allogeneic transplant
-    ---
-    LOT1 ends d+89 as SCT_ALLO
-
-Here the gate holds — d+90 <= d+90 — so the order decides, and the transplant
-takes the reason. `DEATH` is the one branch not gated on a date comparison: it
-is gated on `POST_RUNOUT_TRIGGER_FLG` instead (§7.5).
-
 ### 7.2 Within the transplant branch the earliest date wins
 
 The reason names which type it was — `SCT_AUTO`, `SCT_ALLO` or `SCT_CART`. There
@@ -927,18 +512,6 @@ is no priority between the three; an ALLO does not outrank an earlier AUTO.
 `SCT_CART` therefore arises two ways: a line that ends at a CAR-T, and a
 CAR-T-started line with no consolidation agent, which spans a single day.
 Neither applies to a CAR-T inside line 1's induction window (§6.4).
-
-**Scenario** — *to confirm; vignette `allo_after_failed_auto`.*
-
-    d0     1L regimen starts
-    d+40   autologous transplant
-    d+240  allogeneic transplant after relapse
-    ---
-    the AUTO sits inside LOT1 (§3.4). The ALLO ends the line it falls in and
-    opens a one-day SCT_ALLO line (§4.6)
-
-Salvage allo after a failed auto is a different clinical event from a planned
-tandem, and the two are told apart by which rule fires, not by a flag.
 
 ### 7.3 An added agent then a CAR-T within 45 days is `CART_INIT`
 
@@ -951,39 +524,9 @@ or after day 60: anything starting inside the induction window joins the
 regimen and is not an added agent at all (§7.4). The scenarios below place it
 there for that reason.
 
-**Scenario** — *derived; vignette `cart_bridge_within`.*
-
-    d0     1L regimen starts
-    d+60   bridging agent added, the first day it can be an addition
-    d+105  CAR-T, inside the window that opens the day after the addition
-    ---
-    LOT1 ends CART_INIT at d+104. The bridging agent stays part of LOT1
-
-**Scenario** — *to confirm; vignette `cart_bridge_beyond`.*
-
-    d0     1L regimen starts
-    d+60   agent added
-    d+107  CAR-T, one day outside the window
-    ---
-    not CART_INIT. The addition is an ordinary regimen change (§7.4) and the
-    CAR-T is handled by the ordinary rules for a CAR-T event
-
-Bridging therapy is given to hold a patient until CAR-T. Counted as its own
-line, it inflates every downstream line number.
-
 **`CART_INIT` is a taxonomy, not a fall-through.** An added medication followed
 by a CAR-T inside the window belongs to `CART_INIT` and is never re-read as a
 `MED_ADD` event.
-
-**Scenario** — *derived.*
-
-    d0     LOT1 starts
-    d+200  the regimen runs out
-    d+300  bridging agent added
-    d+320  CAR-T
-    ---
-    LOT1 ends DISCONTINUATION at d+200 — not MED_ADD at d+300 — and the CAR-T
-    opens the next line
 
 ### 7.4 An agent added outside induction is `MED_ADD`
 
@@ -996,29 +539,9 @@ an addition. At line 1 that puts the earliest possible `MED_ADD` on day 60.
 This matches the protocol's rule 2, "initiation of a new MM agent that was not
 present in the induction regimen".
 
-**Scenario** — *derived.*
-
-    d0     LOT1 starts on LEN
-    d+90   POMA dispensed, outside the 60-day window and inside LEN's cover
-    ---
-    LOT1 ends d+89 as MED_ADD, and LOT2 starts d+90 on POMA
-
 **Absorption hides an addition.** A claim landing while an episode of that agent
 is still open opens no episode (§2.3), so it is never a candidate and the line
 does not end.
-
-**Scenario** — *derived.*
-
-    d0     LOT1 starts on LEN and POMA
-    d+120  POMA refilled while its earlier episode is still covered
-    ---
-    no MED_ADD, and no line boundary. Two patients with the same refill get
-    different line counts depending on how much days-supply was left
-
-`MED` line starts use a different comparison — against the *previous* line's
-regimen, per §4.3 — and are unaffected.
-`Rscript exploration/lot/run_stockpiling_rule.R` counts the hidden boundaries in
-`STOCKPILE_ABSORBED_ADD`.
 
 ### 7.5 Death, and the run-out it can displace
 
@@ -1036,75 +559,16 @@ WHEN LOT1_BASE_DISCON_DT IS NOT NULL THEN 'DISCONTINUATION'
 death takes the line's end whatever the dates are. Three cases, and they do not
 all behave the same way.
 
-**Scenario** — *derived.* The patient came back, so the run-out stands.
-
-    d0     LOT1 starts
-    d+100  the regimen runs out
-    d+130  a new agent
-    d+150  death
-    ---
-    LOT1 ends DISCONTINUATION at d+100, and the new therapy opens LOT2
-    the death falls inside LOT2
-
-**Scenario** — *derived.* The patient died before the run-out could be
-confirmed, and the death is the only answer available.
-
-    d0     LOT1 starts
-    d+100  the regimen runs out
-    d+150  death — only 50 days later, and nothing in between
-    ---
-    LOT1_BASE_DISCON_DT is null: 50 < lot_discon_confirm_days, and no return
-    LOT1 ends DEATH at d+150
-
-Observation ends at the death (the cohort clamps `ENDDATE` there), so the
-confirmation buffer can never complete for a patient who dies inside it. This
-case is what the death branch is for, and it needs no comparison to work.
-
-**Scenario** — *derived, and the case that diverges (§12, §14).* The buffer
-completed, and the death still takes the end.
-
-    d0     LOT1 starts
-    d+100  the regimen runs out
-    d+220  death — 120 days later, and nothing in between
-    ---
-    LOT1_BASE_DISCON_DT is d+100, confirmed by 120 days of observation
-    LOT1 still ends DEATH at d+220
-
-Here the confirmed discontinuation is computed, written to
-`LOT*_BASE_DISCON_DT`, and then not used as the end. The line is recorded as
-running 220 days when the treatment stopped on day 100, so `LOT_BASE_LENGTH`
-carries 120 days with no cover in it, and `TTD` reads the line as ending at the
-death. The discontinuation date itself is not lost — it is on the row — so a
-reader can recover the other reading without a rebuild, which is the reason
-this is recorded rather than treated as urgent.
-
 ### 7.6 Disenrollment is not censoring
 
 A period ending at disenrollment is classified `STUDY_END`. There is no
 `DISENROLLMENT` end reason; the `*_CE_SENS` columns carry the alternative
 reading.
 
-**Scenario** — *derived.*
-
-    d0     LOT1 starts
-    d+300  the patient leaves the plan
-    d+500  the study period ends, the line still open
-    ---
-    LOT1 ends STUDY_END at d+500, and LOT1_BASE_END_CE_SENS carries d+300
-
 ### 7.7 Line length is inclusive of both ends
 
 `LOT_BASE_LENGTH` is the run-out date minus the start plus 1 for a
 discontinuation, and the end date minus the start plus 1 otherwise.
-
-**Scenario** — *derived.*
-
-    LOT1 starts d0 and ends d+29
-    ---
-    LOT_BASE_LENGTH = 30, not 29
-
-A reader computing their own `datediff` reports every percentile a day short of
-the number the rest of the study quotes.
 
 ---
 
@@ -1125,47 +589,11 @@ LOT N is defined against LOT N−1 — removing a middle line would leave LOT1
 beside LOT3. Because this criterion is patient-level the test fails on every
 line, so truncation leaves the patient with none.
 
-**Scenario** — *derived; vignette `belantamab_any_line`.*
-
-    d0     1L regimen starts
-    d+300  LOT2 starts
-    d+500  belantamab given at LOT3
-    ---
-    the patient loses EVERY line, not just LOT3 onward. They are in LOT_LONG
-    and absent from LOT_LONG_FINAL entirely
-
-That is the one shape that makes the two tables hold different *patients*, not
-merely different lines. `LOT_LONG_ALLFLAGS` carries every criterion as a 0/1
-column whether or not it is enabled; `LOT_LONG_FINAL` is what survives the
-enabled ones and is what every downstream reader uses.
-
-Two rules worth knowing: a line the criterion is not asked of **passes** — not
-applicable is not a failure, or a criterion aimed at L2 would fail every L1 —
-and a predicate evaluating to NULL **fails**, because unknown is not evidence
-the line qualifies.
-
-`APPLY_NO_BELANTAMAB` ships `TRUE` because that is the NDMM cohort's exclusion.
-It is not automatically right for another cohort, and passing a different cohort
-does not change it — the switch has to be set `FALSE` deliberately.
-
 ---
 
 ## 9. Five lines are built, and nothing above them
 
 `max_lot`. `check_lot_long()` refuses any line number outside `1..max_lot`.
-
-**Scenario** — *derived; vignette `line_beyond_max`.*
-
-    d0        1L starts
-    d+1000    a regimen change that would be LOT6
-    ---
-    no line above LOT5 is built. The patient's later therapy is not represented
-
-A count of lines is a count of lines **built**, not of lines received. The cap
-is invisible in the output where line 5 ends by run-out or study end — a capped
-patient looks exactly like a completed one. Where line 5 ends by a transplant,
-an added medication or a CAR-T, the end reason itself shows that a further
-line-opening trigger existed.
 
 ---
 
@@ -1174,18 +602,6 @@ line-opening trigger existed.
 There is no maintenance concept in the build. `contains_mtx_reg` is descriptive
 and nothing more; `MAINTENANCE_END` and `SCT_NO_MAINT` are not final end
 reasons, and those cases route by their earliest applicable event.
-
-**Scenario** — *derived; vignette `maintenance_to_relapse`.*
-
-    d0     1L regimen starts
-    d+120  reduced to a single maintenance agent
-    d+400  new agents added at relapse
-    ---
-    no maintenance line. The relapse is handled by the ordinary rules, so the
-    line count does not include one
-
-This is a deliberate divergence from algorithms that count maintenance
-separately, and it shifts every later line number by one against them.
 
 ---
 
@@ -1227,20 +643,6 @@ takes agents outside this line's regimen whose `MAP_START_DT` falls after the
 induction window (§7.4). A supply episode reopens whenever cover lapses by a
 single day, so a refill collected late produces a new `MAP_START_DT` and reads
 as an initiation. The patient never stopped the drug.
-
-**Scenario** — *engine output.*
-
-    d0     LENA, 30 days supply
-    d+31   LENA, 90 days supply
-    d+73   POMA, 90 days supply
-    d+122  LENA again, two days after its own cover lapsed
-    ---
-    LOT1, LOT2, and LOT3 from d+122 on LENA
-
-LOT3 opens on a two-day lapse in cover. Contrast the §4.3 scenario, where LENA
-returned after seven months and opened nothing: what decides it is regimen
-membership, not the length of the gap. Here the previous line's regimen is POMA,
-so LENA is a new agent against it.
 
 **The spec carries both readings in one row.** `lot1baseend_validated.csv` row
 34, `LOT1_BASE_1ST_ADD_MED_DT / LOT1_BASE_1ST_ADD_MED`:
@@ -1308,6 +710,17 @@ initiation, which is a clinical question and not a protocol reading.
 
 ## 12. Where this differs from the written protocol
 
+- **A regimen is what was dispensed in the window, not what was available.** The
+  protocol says a later line's regimen is "all MM therapies identified during the
+  first 30 days of the LOT". The build reads that as an episode *starting* in the
+  window, so an agent whose cover runs through the window without lapsing is not
+  in the regimen — and neither is one dispensed inside the window while its own
+  cover was live, since that dispense extends the existing episode rather than
+  opening a new one. Two clinically identical patients can therefore get
+  different regimens depending on whether one of them missed a fill. Settled this
+  way by the study team and pinned by the engine suite; §4.2 has the mechanics,
+  and `run_scenario_counts.R`'s
+  `4.2-prior-agent-covered-but-not-in-the-regimen` is what would size it.
 - **The CAR-T induction rule is in the numbers** as of 2026-08-13, so runs
   before that date differ on `SCT_CART`, `CART_INIT`, line 1's length and line
   counts for the patients it touches. §6.4.
@@ -1367,11 +780,12 @@ initiation, which is a clinical question and not a protocol reading.
 
 ## 14. Fixed, and still open
 
-One rule that was fixed, one defect with the fix worked out but not applied, and
-two things that need a ruling rather than a closer reading of the code. All four
-are also in `KNOWN_ISSUES.md`, one level up, written as questions to put to the
-study team with the count that sizes each — this section is the analysis, that
-one is the ask.
+Three defects since fixed, and two things that need a ruling rather than a
+closer reading of the code. The two open ones are also in `KNOWN_ISSUES.md`, one
+level up, written as questions to put to the study team — this section is the
+analysis, that one is the ask. The fixed ones stay here rather than being
+deleted: each was found after the build was believed correct, and what each one
+looked like beforehand is the useful part.
 `cart_consolidation_days` stays at 45, `apply_cart_induction_rule` stays `TRUE`,
 and the death branch stays as it is.
 
@@ -1580,14 +994,14 @@ window is part of that line's treatment, and the protocol ends a line on an SCT
 not followed by maintenance within 180 days, which with no maintenance period in
 this build is every SCT.
 
-**Still open, and narrow.** A planned tandem partner outside the window is not
-covered. Where the first transplant is inside the window and its partner is 60 to
-180 days later, the first is now recovered and the second still is not: it is
-outside the window, so it does not hold the line open, and the next line's tandem
-clause refuses it as a planned partner of the first. The protocol calls that pair
-a continuation of the line of therapy, which would mean holding the line open to
-the second transplant as well — a wider rule than the one asked for here.
-`KNOWN_ISSUES.md` #5 carries it.
+**The tandem partner, since closed too.** A planned partner outside the window
+was still lost at first: it did not hold the line open, and the next line's
+tandem clause refused it as a partner of the first. It is covered now, because
+the study team settled what a tandem is — a pair with a **clear gap**. Where
+nothing happens between the two transplants the partner follows its pair however
+far out it sits; where a medication, an allogeneic transplant or a CAR-T falls in
+between, the pair was never planned and the later transplant is free to start a
+line. §6.5 has the rule.
 
 ---
 

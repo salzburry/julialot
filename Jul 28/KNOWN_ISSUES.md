@@ -1,17 +1,23 @@
 # Known issues — open questions for the study team
 
-Four things the build does that need a decision rather than a closer reading of
-the code. Each one is written to be answered: what the build does today, a
+Four things: one defect with a known correct answer, and three that need a
+decision rather than a closer reading of the code. Each one is written to be answered: what the build does today, a
 worked patient, what it moves, the question, and the count that sizes it.
 
-**None of these is being changed while it is open.** The build ships as
-described, and every one of them is recorded in `lot/LOT_RULES.md` next to the
-rule it affects, so nobody reads the rules without meeting the caveat.
+**None of these is being changed while it is open.** #1 is a defect and the
+others are decisions the code cannot make for itself. The build ships as
+described, and every one is recorded in `lot/LOT_RULES.md` next to the rule it
+affects, so nobody reads the rules without meeting the caveat.
+
+The **Closed** section at the end lists what has been found and fixed. It is kept
+rather than deleted: each was found after the build was believed correct.
 
 ## Getting the numbers first
 
-Every item names a count in `exploration/lot/run_lot_audit_counts.R`. Those are
-read-only — every statement is a `SELECT`, nothing is written — and they run
+What has been measured is named under each item. The counts live in
+`exploration/lot/run_lot_audit_counts.R`, which also carries the ones that sized
+the defects in the Closed section — worth re-running after a rebuild, since those
+should now come back empty. They are read-only — every statement is a `SELECT`, nothing is written — and they run
 against a finished study run:
 
 ```
@@ -29,7 +35,89 @@ conversation.
 
 ---
 
-## 1. The CAR-T consolidation window is 45 days, and the spec says 30
+## 1. A continued agent is missing from the later line's regimen
+
+**A defect, not a choice.** The rule the study team settled is *an agent joins a
+regimen by being filled in the window, not by cover* — that is the heading of the
+engine test that pins it. The code implements something narrower, and nobody
+appears to have chosen it.
+
+**What the build does.** `lot{n}_induction_meds` reads `map_stacked`, which
+carries one row per MAP **episode**, and tests `MAP_START_DT`. A dispense arriving
+while that drug's cover is live extends the open episode rather than opening a
+new one (`03_mma_map.R` CASE 3), so it leaves no `MAP_START_DT` behind. There are
+three possible rules and the build is on the third:
+
+| | rule | in the regimen? |
+|---|---|---|
+| a | cover overlaps the window | rejected — this is the wide reading |
+| b | a **claim** falls in the window | **what was decided** |
+| c | an **episode starts** in the window | **what shipped** |
+
+    d1     LEN, refilled without a break, covered through d200
+    d100   POMA opens LOT2, window d100-d129
+    d110   LEN dispensed — a real claim, inside the window
+    ---
+    LOT2 regimen = POMA. The d110 claim is invisible: it extended the
+    episode that began on d1, and d1 is the only MAP_START_DT LEN has.
+
+**Why it matters more than it looks.** It bites on exactly the drugs that get
+continued across a line boundary, which in myeloma is most of them —
+lenalidomide above all. The more continuously a patient takes an agent, the more
+certainly it is absent from the later line's regimen. Two clinically identical
+patients differ on whether one missed a fill.
+
+**The data is there.** `mma_med_processed` is materialized per claim, with
+`DATE_SERVICE`, `MED_ABBR` and `MED_CLASS`, and it is built before the regimen
+step. So this is not a data limitation; the fills are discarded by the time the
+regimen is assembled.
+
+**The fix, and the care it needs.** Test membership on a claim date rather than
+an episode start. It is not a blind table swap: `map_med` filters and rolls up
+claims that `mma_med_processed` still carries, so the claim test has to be
+restricted to claims belonging to an episode the build kept, or the regimen will
+gain agents the rest of the algorithm does not know about.
+
+**It propagates, and this is the worst of it.** The prior-regimen exclusion
+that stops an agent starting a line looks **one line back only**
+(`LOT_NUM = {prev}`). An agent wrongly absent from LOT2's regimen is therefore
+wrongly absent from LOT3's exclusion set, and becomes eligible to *start* LOT3 —
+a line it should not be able to open.
+
+    d1     LEN, filling continuously
+    d100   POMA opens LOT2. LEN is omitted from LOT2's regimen (the defect)
+    d200   POMA runs out, LOT2 ends
+    d205   LEN's cover finally lapses and it restarts — a new episode
+    ---
+    what ships:  LOT3 starts d205 on LEN, because nothing excludes it
+    correct:     LEN is LOT2's agent and cannot start a line
+
+With a BORT at d210 that turns `LOT3 = BORT` into `LOT3 = LEN BORT` starting
+five days earlier. With no BORT at all it is an **extra line** that should not
+exist. So this is not confined to regimen strings: it moves start dates, start
+types and line counts.
+
+**What it would move.** `LOT_BASE_MEDS` and `LOT_MED_CNT` on later lines, the
+per-agent flags, line starts and counts through the exclusion above, and the
+run-out — a newly-admitted agent is a base agent and
+enters `discon_per_med`, so line lengths and boundaries move too. Published
+regimen strings change for a large group.
+
+**Question for the study team.** Confirm rule (b) is the intended one — our
+reading of the recorded decision and of the protocol's "all MM therapies
+identified during the first 30 days of the LOT" is that it is — and this is a
+fix rather than a change.
+
+**Counts.** `4.2-prior-agent-covered-but-not-in-the-regimen` sizes the regimen
+half. The propagation needs its own count — lines started by an agent that was
+in the regimen two lines back but not one — which is not yet written. Neither
+has been run.
+
+`lot/LOT_RULES.md` §4.2 and §12.
+
+---
+
+## 2. The CAR-T consolidation window is 45 days, and the spec says 30
 
 **What the build does.** `cart_consolidation_days` is 45.
 `10_lot2_5_base.R`'s own header records it as superseding an earlier 30, so the
@@ -56,7 +144,7 @@ produce a 30-day run by accident.
 
 ---
 
-## 2. A confirmed discontinuation still loses to a later death
+## 3. A confirmed discontinuation still loses to a later death
 
 **What the build does.** The death branch of the end cascade is gated on
 `POST_RUNOUT_TRIGGER_FLG` alone; `DEATH_DT` is never compared with
@@ -95,7 +183,7 @@ so the other reading is recoverable in analysis without a rebuild.
 
 ---
 
-## 3. A drug returning after a confirmed gap cannot start a line
+## 4. A drug returning after a confirmed gap cannot start a line
 
 **What the build does.** An agent in the previous line's regimen can never start
 the next line, however long it has been gone. The line that owns the drug
@@ -127,58 +215,18 @@ question, not a protocol reading, which is why it has stayed open.
 
 ---
 
-## 4. A planned tandem partner outside the window is still lost
-
-**What the build does.** `lot/LOT_RULES.md` §6.5 now holds a line open to a
-transplant inside its own applicable window. A tandem partner 60 to 180 days
-later is outside that window, so it does not hold the line open — and the next
-line's start gate refuses it as well, because it is a planned tandem of the first
-transplant and planned tandems do not start lines.
-
-    d0     1L starts on LEN, 20 days supply
-    d+19   cover runs out
-    d+20   first autologous transplant — inside line 1's 60-day window
-    d+150  second transplant, 130 days later — a planned tandem
-    ---
-    LOT1  d0 -> d+20   SCT_AUTO_CONT. The first transplant is recovered
-    d+150 is outside the window, so it does not extend line 1
-    d+150 is a planned tandem, so it does not start line 2
-    the second transplant is in no line
-
-Before §6.5 **both** transplants were lost this way. One of the two is now
-recovered; this is the remainder.
-
-**What the protocol says.** *"Tandem SCTs are two SCTs ≥60 to ≤180 days apart.
-These are considered planned and a continuation of the line of therapy."*
-(`docs/Part 3/Protocol/lot protocol.pdf`, §5.1.1.) On that reading the line
-should be held open to the second transplant too, not only to the first.
-
-**Why it was not done with §6.5.** §6.5 anchors on each line's own applicable
-window, and the study team's rule set explicitly left the 60–180-day tandem rule
-separate and unchanged. Extending a line to a transplant up to 180 days past a
-window that is 30 to 60 days wide is a materially wider rule than the one that
-was asked for, and it changes line 1 lengths for a different and larger group.
-
-**What a change would move.** Line 1 and line 2–5 lengths, `TTD`, and the
-transplant flags — a line held open to d+150 carries `LOT_TX_AUTO_TAND_FLG`
-rather than `LOT_TX_AUTO_SING_FLG`. Not line counts, since neither transplant
-starts a line under either reading.
-
-**Question for the study team.** Where a line already extends to an in-window
-transplant, should it extend again to that transplant's planned tandem partner?
-Our reading of the protocol is yes, but it is a wider rule than §6.5 and it was
-deliberately left out of it.
-
-**Counts.** Not yet written. It needs the gap from each line's in-window
-transplant to the next one, split by whether the next falls inside
-`sct_tandem_days`, which no count in `run_lot_audit_counts.R` currently asks for.
-
-`lot/LOT_RULES.md` §6.3 for the tandem rule, §6.5 for the window rule, and §14.5
-for how the two meet.
-
----
-
 ## Closed
+
+**A planned tandem partner outside the window** — fixed, once the study team
+settled what makes a pair planned: a **clear gap**. Where nothing happens between
+the two transplants the second follows the first past the line's own window and
+the line is held open to it; where a medication, an allogeneic transplant or a
+CAR-T falls in between, the pair was never planned, so the later transplant is
+free to start a line instead. That single rule also settles the case where a
+partner fell inside a *later* line's window and was attached to the wrong line —
+the medication that started that later line is itself the interruption.
+`lot/LOT_RULES.md` §6.5 and §14.5.
+
 
 **A regimen containing an agent that started after the line ended** — fixed. A
 line picked its regimen over the whole induction window before it could know its
