@@ -280,17 +280,21 @@ main <- function() {
     }
     print(res, row.names = FALSE)
     cat("   (", a$expect, ")\n\n", sep = "")
+    # Long format, one row per cell. The counts return different columns from
+    # each other, so writing them as separate CSV tables into one file produced
+    # repeated headers and a file nothing could read.
     if (nrow(res)) {
-      flat <- data.frame(finding = a$id,
-                         lapply(res, as.character),
-                         stringsAsFactors = FALSE)
-      rows[[length(rows) + 1L]] <- utils::capture.output(
-        utils::write.csv(flat, row.names = FALSE))
+      for (i in seq_len(nrow(res))) for (nm in names(res)) {
+        rows[[length(rows) + 1L]] <- data.frame(
+          finding = a$id, row = i, metric = nm,
+          value = as.character(res[[nm]][i]),
+          stringsAsFactors = FALSE)
+      }
     }
   }
 
   csv <- file.path(out_dir, "lot_audit_counts.csv")
-  writeLines(unlist(rows), csv)
+  utils::write.csv(do.call(rbind, rows), csv, row.names = FALSE)
   cat("Wrote ", csv, "\n", sep = "")
   if (failed) {
     cat(failed, " count(s) failed - see the messages above.\n", sep = "")

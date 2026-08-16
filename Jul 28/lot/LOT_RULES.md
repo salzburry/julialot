@@ -68,9 +68,11 @@ when the gap from `MAP_END_DT` to the next `MAP_START_DT` is **90 days or
 more**. A gap of 90+ days from the last `MAP_END_DT` to the end of observation
 counts too.
 
-Per drug, not per line. A drug's cover in a line ends at its **first** run-out —
-a later fill of the same drug is a restart, and a restart opens the next line
-(§6). The line has run out when its last base agent has.
+Per drug, not per line. A drug's cover in a line is chained forward over its
+own later episodes: a drug that was in this line's regimen cannot open the next
+line, so the line it belongs to extends over its return (§6). The chain stops at
+the first break caused by a *different* agent. The line has run out when its
+last base agent has.
 
 **The confirmation buffer** (`lot_discon_confirm_days` = 90). A run-out is not
 a discontinuation until it is confirmed, and there are two ways to confirm it.
@@ -120,7 +122,8 @@ out on day 200, observation ending day 250 unless stated:
 
 | | follows the run-out | `DISCON_DT` | line ends | lines |
 |---|---|---|---|---|
-| restarts on day 210 | a base agent | day 200 | `DISCONTINUATION` day 200 | 2 |
+| restarts on day 210, a **different** agent | a new agent | day 200 | `DISCONTINUATION` day 200 | 2 |
+| restarts on day 210, **a base agent of this line** | nothing that can open a line | *null* | `STUDY_END` day 250 | 1 |
 | never returns | nothing | *null* | `STUDY_END` day 250 | 1 |
 | never returns, observed to day 545 | nothing, but 345 days of it | day 200 | `DISCONTINUATION` day 200 | 1 |
 
@@ -200,7 +203,7 @@ previous line's end and on or before the end of observation
 
 | Candidate | Rule |
 |---|---|
-| `d_MED` | earliest non-steroid MM agent. **Permissible biosimilar substitutes of the previous line's drugs do not trigger.** A restart of the same drug **does** — the previous line ended by running out, and a fresh fill is a new line. |
+| `d_MED` | earliest non-steroid MM agent. **Permissible biosimilar substitutes of the previous line's drugs do not trigger.** A restart of a drug that was in the previous line's regimen **does not** — that line extends over its later episodes instead. |
 | `d_ALLO` | earliest ALLO |
 | `d_CART` | earliest CAR-T. At LOT2, one inside LOT1's 60-day induction window is excluded — §10 |
 | `d_AUTO` | earliest AUTO that is (i) outside the previous line's applicable window measured from that line's **start** — 0 days if ALLO-started, 44 if CAR-T-started, 29 otherwise — and (ii) not within 180 days of the immediately preceding AUTO (planned tandem) |
