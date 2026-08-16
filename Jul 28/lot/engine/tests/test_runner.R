@@ -2296,18 +2296,37 @@ ok(grepl("sum(i.BREAKS + e.PREV_DISCON)", pr, fixed = TRUE),
    "...and a confirmed gap breaks the chain, so a line cannot span its own agent's absence")
 ok(grepl("map_restart_sql <- function", pr, fixed = TRUE),
    "what counts as a restart is defined once")
-restart_sites <- sum(vapply(c("06_lot1_end.R", "10_lot2_5_base.R"), function(f)
+restart_sites <- sum(vapply(c("04_lot1_base.R", "06_lot1_end.R", "10_lot2_5_base.R"), function(f)
   length(gregexpr("{map_restart_sql()}",
     paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE), collapse = "\n"),
     fixed = TRUE)[[1]]), integer(1)))
-ok(restart_sites == 3L,
-   paste0("...and spliced into all three that ask - the start candidate and both ",
-          "run-out guards (", restart_sites, ")"))
-for (f in c("06_lot1_end.R", "10_lot2_5_base.R")) {
+ok(restart_sites == 5L,
+   paste0("...and spliced into all five that ask - the start candidate, the two ",
+          "add-medication blocks, and both run-out guards (", restart_sites, ")"))
+for (f in c("04_lot1_base.R", "06_lot1_end.R", "10_lot2_5_base.R")) {
   src <- paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE), collapse = "\n")
   n <- length(gregexpr("coalesce(mr.PREV_DISCON, 0) = 1", src, fixed = TRUE)[[1]])
-  ok(n >= 1L, paste0(f, ": the exclusion releases a drug that has discontinued"))
+  ok(n >= 1L, paste0(f, ": a discontinued drug is released"))
 }
+# The half that was missing. A restart is kept out of the run-out and may START
+# the next line - but while another regimen drug still holds this line open, the
+# restart falls inside it. Unless it can END the line too, it is inside a line it
+# cannot close and too early to open the next: no line owns the treatment.
+for (f in c("04_lot1_base.R", "10_lot2_5_base.R")) {
+  src <- paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE), collapse = "\n")
+  ok(grepl("WHERE (bm.MED_ABBR IS NULL OR coalesce(mr.PREV_DISCON, 0) = 1)",
+           src, fixed = TRUE),
+     paste0(f, ": a restart can end the line even while another regimen drug runs"))
+}
+# Provenance. The release is for a drug that WAS the previous regimen, never for
+# one excluded only as a permissible substitute - S4.4 says a substitute cannot
+# start a line, and an old discontinued episode must not be a way around it.
+l25src <- paste(readLines(file.path(ROOT, "R", "steps", "10_lot2_5_base.R"),
+                          warn = FALSE), collapse = "\n")
+ok(grepl("min(IS_SUB) AS SUBSTITUTE_ONLY", l25src, fixed = TRUE),
+   "the exclusion set records WHY each drug is in it")
+ok(grepl("AND pme.SUBSTITUTE_ONLY = 0", l25src, fixed = TRUE),
+   "...and only an actual previous-regimen drug is releasable, not a substitute")
 
 
 cat("\n-- a transplant inside a line's window cannot be left outside the line --\n")
