@@ -30,8 +30,8 @@ algorithm is one directory with three packages in it.
 Each area carries a `FILES.md` saying what is in it and what each file does, and
 each cohort build a `RULES.md` giving the rules it applies, with
 `ndmm/DECISIONS.md` as the long form for the cohort. `lot/LOT_RULES.md` is the
-rules the line build applies, one at a time, each with a scenario showing what
-it does to a patient's claims.
+rules the line build applies, one at a time, and `lot/SCENARIOS.md` works each
+of them through a patient's claims.
 
 `ndmm/` and `overall/` are independent - neither reads the other, and each goes
 to the raw CDM and the production code lists on its own. `lot/engine/` takes a
