@@ -270,13 +270,20 @@ protocol says the later regimen is "all MM therapies identified during the first
 30 days of the LOT", which reads wider than fills. `run_scenario_counts.R`'s
 `4.2-prior-agent-covered-but-not-in-the-regimen` sizes it.
 
-### 4.3 A drug in the previous line's regimen cannot start a line
+### 4.3 A drug is held by its line while it runs, and released once stopped
 
 The protocol starts a later line at "the first administration for a new MM agent
-that was not part of the previous LOT regimen", and a drug that *was* that
-regimen is not such an agent — however long it has been gone. The line that owns
-the drug extends over its later episodes instead (§5.2).
-`lot/engine/R/prior_regimen.R`.
+that was not part of the previous LOT regimen". A drug the patient has not
+stopped is not new, so the line that owns it extends over its later episodes
+(§5.2). A drug that has **discontinued** is: an episode arriving after a gap of
+`map_discon_gap_days` is a restart, and opens a line like any other agent.
+
+One rule in two halves, and each alone is worse than neither. `discon_per_med`
+stops chaining at the last episode before the gap, so a line no longer spans its
+own agent's absence; and the prior-regimen exclusion releases the same drug, so
+the returning treatment has a line to go to. `lot/engine/R/prior_regimen.R`
+carries both, and the run-out guards that mirror the start candidates read the
+same definition. §11.1 records what this cost while it was unfixed.
 
 ### 4.4 A permissible biosimilar substitute cannot start a line either
 

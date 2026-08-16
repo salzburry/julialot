@@ -2282,6 +2282,34 @@ ok(!grepl("MAP_END_DT", ind_block, fixed = TRUE),
    "...and never on MAP_END_DT, so stockpiled cover cannot carry an agent in")
 
 
+cat("\n-- a drug is held by its line while it runs, and released once stopped --\n")
+# Two halves of one rule, and each alone is worse than neither. Breaking the
+# run-out chain without releasing the drug leaves the returning treatment in no
+# line at all; releasing it without breaking the chain opens a line inside a line
+# still notionally running. So both are asserted together, and the run-out guards
+# that mirror the candidates are asserted with them - a guard reading a different
+# rule from the candidate it mirrors lets DEATH take a line whose run-out the
+# next line does in fact open on.
+ok(grepl("lag(ms.MAP_DISCON_FLG)", pr, fixed = TRUE),
+   "the per-drug episode chain reads the discontinuation flag at all")
+ok(grepl("sum(i.BREAKS + e.PREV_DISCON)", pr, fixed = TRUE),
+   "...and a confirmed gap breaks the chain, so a line cannot span its own agent's absence")
+ok(grepl("map_restart_sql <- function", pr, fixed = TRUE),
+   "what counts as a restart is defined once")
+restart_sites <- sum(vapply(c("06_lot1_end.R", "10_lot2_5_base.R"), function(f)
+  length(gregexpr("{map_restart_sql()}",
+    paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE), collapse = "\n"),
+    fixed = TRUE)[[1]]), integer(1)))
+ok(restart_sites == 3L,
+   paste0("...and spliced into all three that ask - the start candidate and both ",
+          "run-out guards (", restart_sites, ")"))
+for (f in c("06_lot1_end.R", "10_lot2_5_base.R")) {
+  src <- paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE), collapse = "\n")
+  n <- length(gregexpr("coalesce(mr.PREV_DISCON, 0) = 1", src, fixed = TRUE)[[1]])
+  ok(n >= 1L, paste0(f, ": the exclusion releases a drug that has discontinued"))
+}
+
+
 cat("\n-- a transplant inside a line's window cannot be left outside the line --\n")
 # The two halves of one rule, and they only work together. SCT_AUTO_CONT holds
 # the line open across its own applicable window; the next line's AUTO gate

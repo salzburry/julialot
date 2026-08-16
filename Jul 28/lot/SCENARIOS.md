@@ -250,64 +250,43 @@ a divergence from the protocol's "all MM therapies identified during the first
 counts who it touches.
 
 
-### 4.3 A drug in the previous line's regimen cannot start a line
+### 4.3 A drug is held by its line while it runs, and released once stopped
 
-**Scenario** — *engine output.* A drug returning does not start a line on
-itself.
+**Scenario** — *derived.* A drug returning after a confirmed gap opens a line.
 
-    d0     LEN dispensed, 60 days supply
+    d0     LEN dispensed, 60 days supply — cover ends d+59
     d+244  LEN again, 185 days after cover ran out
     ---
-    LOT1   2016-01-01 -> 2016-09-30   LEN
+    LOT1   d0 -> d+59     LEN   DISCONTINUATION
+    LOT2   d+244 -> ...   LEN
 
-One line, spanning seven months with no cover.
+The 185-day gap reaches `map_discon_gap_days`, so LEN's first episode carries
+`MAP_DISCON_FLG = 1` and the per-drug chain stops there. LOT1 ends at its own
+run-out instead of stretching over the absence, and LEN — no longer a drug the
+patient is on — is free to open LOT2.
 
-**Why the 90-day rule does not end it at February.** Two settings are both 90
-and neither applies here, which is the whole of the confusion:
+Both halves are needed and they ship together. Breaking the chain alone would end
+LOT1 in February and then refuse the September treatment a line, leaving it in
+nothing; releasing the drug alone would open a line inside a line still
+notionally running. §11.1 has what this cost while it was unfixed.
 
-* `map_discon_gap_days` **does** fire. The 185-day gap exceeds it, so the
-  February episode is flagged `MAP_DISCON_FLG = 1` in `map_stacked`. The flag is
-  set, and it sits on the very row the line rules read.
-* `lot_discon_confirm_days` is the observation buffer that turns a line's
-  **run-out** into a `DISCONTINUATION` (§5.3). It never gets the chance, because
-  this line has no run-out in February to confirm.
-
-The run-out is later than you would expect, and that is what decides it.
-`discon_per_med` chains each base agent's own episodes forward from the line's
-start, breaking only at an agent that would end the line (§5.2). LEN's September
-episode is LEN's own, so nothing breaks the chain, and the line's run-out becomes
-the end of the **second** episode — 30 September, not 29 February. There is no
-February run-out for the buffer to act on.
-
-So `MAP_DISCON_FLG` is computed, is correct, is on the row, and is never
-consulted. `discon_per_med` does not read it.
-
-**And ending the line in February is not enough on its own.** §4.3 stops a
-previous-regimen agent starting a line, so the September LEN could not open LOT2
-either — it would belong to nothing at all. The two rules have to move together
-or not at all, which is why this is one question rather than two, and why it has
-stayed open: it is a clinical judgement about whether a re-start after a
-confirmed gap is a new line, not a reading of the code.
-
-Measured against the production run, 495 line boundaries in 448 patients sit on
-an episode flagged discontinued, median 257 days uncovered. `KNOWN_ISSUES.md` #4
-is the ask; §11.1 is the reasoning and what the current rule costs.
-
-**Scenario** — *engine output.* The extension stops at any other agent.
+**Scenario** — *derived.* While the drug is still running it is still the line's.
 
     d0     LEN, covered to d+87
     d+74   POMA, covered to d+140
     d+121  LEN again, 34 days after LEN's own cover ended
     ---
-    LOT1   2016-01-01 -> 2016-03-14   LEN
-    LOT2   2016-03-15 -> 2016-04-30   POMA
-    LOT3   2016-05-01 -> 2016-05-30   LEN
+    LOT1   d0 -> d+73     LEN
+    LOT2   d+74 -> ...    POMA
+    LOT3   d+121 -> ...   LEN
+
+LEN's 34-day gap is under `map_discon_gap_days`, so it is not a confirmed
+discontinuation and LEN is not released on that account. It opens LOT3 anyway,
+for the separate reason that it is not in LOT2's regimen — the exclusion looks
+one line back.
 
 POMA starts while LEN is still covered and still opens a line: it is outside
-line 1's window and in no regimen of line 1's. LEN's own reappearance is then
-judged against LOT2's regimen, which is POMA — so it is a new agent there, and
-opens LOT3.
-
+line 1's window and in no regimen of line 1's.
 
 ### 4.4 A permissible biosimilar substitute cannot start a line either
 

@@ -1,6 +1,6 @@
 # Known issues — open questions for the study team
 
-Four things: one defect with a known correct answer, and three that need a
+Three things: one defect with a known correct answer, and two that need a
 decision rather than a closer reading of the code. Each one is written to be answered: what the build does today, a
 worked patient, what it moves, the question, and the count that sizes it.
 
@@ -183,39 +183,19 @@ so the other reading is recoverable in analysis without a rebuild.
 
 ---
 
-## 4. A drug returning after a confirmed gap cannot start a line
-
-**What the build does.** An agent in the previous line's regimen can never start
-the next line, however long it has been gone. The line that owns the drug
-extends over its later episodes instead.
-
-    d0     LEN, 60 days supply
-    d+244  LEN again, 185 days after cover ran out
-    ---
-    LOT1  d0 -> d+274   one line, spanning seven months with no cover
-
-**Where the doubt is.** `MAP_DISCON_FLG` already marks every episode where the
-gap to the next one reaches `map_discon_gap_days`, and it sits on the same rows
-the line rules read. But the prior-regimen exclusion is applied unconditionally
-and `discon_per_med` never consults the flag. If the intended rule is *a
-previous-regimen drug cannot advance the line while continuing, but may start a
-later line once it has discontinued*, the build does not implement it.
-
-**What has been measured.** Against the production run, 898 line boundaries in
-624 patients sit on a prior episode still flagged as running (median 8 days
-uncovered), and 495 in 448 patients on an episode flagged discontinued (median
-257 days). Those are boundary counts, not a resulting line structure — an exact
-structure needs an alternate build.
-
-**Question for the study team.** Is a re-start after a confirmed 90-day gap a
-new line, or a continuation of the line the drug belongs to? This is a clinical
-question, not a protocol reading, which is why it has stayed open.
-
-`lot/LOT_RULES.md` §11.1, §11.2 and §11.3.
-
----
-
 ## Closed
+
+**A drug returning after a confirmed gap could not start a line** — fixed. The
+exclusion was unconditional, so a line stretched over its own agent's absence:
+lenalidomide dispensed, gone for 185 days, dispensed again, and one line
+spanning seven months with no cover. `MAP_DISCON_FLG` already marked that gap,
+sat on the very row the line rules read, and was never consulted. It is now, in
+both halves at once — `discon_per_med` stops chaining at the last episode before
+the gap, and the prior-regimen exclusion releases the drug so the returning
+treatment has a line to go to. Either half alone is worse than neither. Against
+the production run this touched 495 line boundaries in 448 patients, median 257
+days uncovered. `lot/LOT_RULES.md` §4.3 and §11.1.
+
 
 **A planned tandem partner outside the window** — fixed, once the study team
 settled what makes a pair planned: a **clear gap**. Where nothing happens between

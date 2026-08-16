@@ -106,17 +106,25 @@ phase_lot1_end <- function(con, ctx) {
       FROM lot1_induction_meds im
       INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
     ),
+    map_restart AS ({map_restart_sql()}
+    ),
     post_runout_med AS (
       SELECT DISTINCT ms.PATID
       FROM map_stacked ms
       INNER JOIN lot1_base lb ON ms.PATID = lb.PATID
       LEFT JOIN post_runout_excluded_meds prem
         ON ms.PATID = prem.PATID AND ms.MAP_MED_TYPE = prem.MED_ABBR
+      LEFT JOIN map_restart mr
+        ON mr.PATID = ms.PATID AND mr.MAP_MED_TYPE = ms.MAP_MED_TYPE
+       AND mr.MAP_START_DT = ms.MAP_START_DT
       WHERE lb.LOT1_BASE_RUNOUT_DT IS NOT NULL
         AND ms.MAP_START_DT > lb.LOT1_BASE_RUNOUT_DT
         AND ms.MAP_START_DT <= lb.OBS_END_DT
         AND ms.MAP_MED_CLASS <> 'STEROID'
-        AND prem.MED_ABBR IS NULL
+        -- Mirrors med_cand, which releases a drug returning after a confirmed
+        -- gap. A guard reading a different rule from the candidate it mirrors
+        -- lets DEATH take a line whose run-out the next line does open on.
+        AND (prem.MED_ABBR IS NULL OR coalesce(mr.PREV_DISCON, 0) = 1)
     ),
     post_runout_autos AS (
       -- N_BETWEEN: whether anything happened since the previous transplant. A

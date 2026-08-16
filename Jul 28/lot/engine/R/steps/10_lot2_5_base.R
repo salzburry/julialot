@@ -258,16 +258,25 @@ build_lot_n <- function(con, lot_num,
     -- excluding the prior-LOT regimen and its permissible biosimilar subs.
     -- A drug that was the previous regimen does NOT trigger LOT_N; the line it
     -- belongs to extends over it instead - see R/prior_regimen.R.
+    map_restart AS ({map_restart_sql()}
+    ),
     med_cand AS (
       SELECT pe.PATID, min(ms.MAP_START_DT) AS d_MED
       FROM prev_end pe
       INNER JOIN map_stacked ms ON pe.PATID = ms.PATID
       LEFT JOIN prev_meds_expanded pme
         ON pe.PATID = pme.PATID AND ms.MAP_MED_TYPE = pme.MED_ABBR
+      LEFT JOIN map_restart mr
+        ON mr.PATID = ms.PATID AND mr.MAP_MED_TYPE = ms.MAP_MED_TYPE
+       AND mr.MAP_START_DT = ms.MAP_START_DT
       WHERE ms.MAP_START_DT > pe.PREV_END_DT
         AND ms.MAP_START_DT <= pe.OBS_END_DT
         AND ms.MAP_MED_CLASS <> 'STEROID'
-        AND (pme.MED_ABBR IS NULL{melp_prior_regimen_exempt(cfg)})
+        -- Released once discontinued. The exclusion holds a drug the patient is
+        -- still on inside the line that owns it; a drug returning after a
+        -- confirmed gap is a restart and opens a line like any other agent.
+        AND (pme.MED_ABBR IS NULL
+             OR coalesce(mr.PREV_DISCON, 0) = 1{melp_prior_regimen_exempt(cfg)})
       GROUP BY pe.PATID
     ),
     -- d_ALLO: earliest ALLO strictly after PREV_END_DT.
@@ -875,17 +884,22 @@ build_lot_n <- function(con, lot_num,
       FROM lot{lot_num}_induction_meds im
       INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
     ),
+    map_restart AS ({map_restart_sql()}
+    ),
     post_runout_med AS (
       SELECT DISTINCT ms.PATID
       FROM map_stacked ms
       INNER JOIN lot{lot_num}_base lb ON ms.PATID = lb.PATID
       LEFT JOIN post_runout_excluded_meds prem
         ON ms.PATID = prem.PATID AND ms.MAP_MED_TYPE = prem.MED_ABBR
+      LEFT JOIN map_restart mr
+        ON mr.PATID = ms.PATID AND mr.MAP_MED_TYPE = ms.MAP_MED_TYPE
+       AND mr.MAP_START_DT = ms.MAP_START_DT
       WHERE lb.LOT{lot_num}_BASE_RUNOUT_DT IS NOT NULL
         AND ms.MAP_START_DT > lb.LOT{lot_num}_BASE_RUNOUT_DT
         AND ms.MAP_START_DT <= lb.OBS_END_DT
         AND ms.MAP_MED_CLASS <> 'STEROID'
-        AND prem.MED_ABBR IS NULL
+        AND (prem.MED_ABBR IS NULL OR coalesce(mr.PREV_DISCON, 0) = 1)
     ),
     post_runout_autos AS (
       -- N_BETWEEN: whether anything happened since the previous transplant. A
