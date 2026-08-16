@@ -31,7 +31,17 @@ prior_regimen_excl_sql <- function() {
 # LEFT JOIN and aggregates rather than EXISTS: a correlated subquery fails under
 # spark.sql.crossJoin.enabled=false.
 discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
-                               boundary_tbl = "map_stacked", boundary_gate = "") {
+                               boundary_tbl = "map_stacked", boundary_gate = "",
+                               end_col = NULL) {
+  # The scan is bounded BELOW by the line start and, without this, not at all
+  # above: a base agent's later episodes chain forward for as long as the
+  # patient keeps filling it. Bounding regimen membership at the date the line
+  # was cut short is therefore only half a fix - a refill of an agent that
+  # legitimately IS in the regimen still pushes the run-out past the transplant.
+  # Both halves or neither.
+  upper <- if (is.null(end_col)) "" else paste0("
+          AND ms.MAP_START_DT <= coalesce(ls.", end_col,
+          ", cast('9999-12-31' as date))")
   paste0("
       WITH ep AS (
         SELECT ms.PATID, ms.MAP_MED_TYPE, ms.MAP_START_DT, ms.MAP_END_DT,
@@ -40,7 +50,7 @@ discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
         FROM ", map_tbl, " ms
         INNER JOIN ", start_view, " ls ON ms.PATID = ls.PATID
         INNER JOIN base_meds bm ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
-        WHERE ms.MAP_START_DT >= ls.", start_col, "
+        WHERE ms.MAP_START_DT >= ls.", start_col, upper, "
       ),
       interrupts AS (
         SELECT e.PATID, e.MAP_MED_TYPE, e.MAP_START_DT,

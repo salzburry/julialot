@@ -676,8 +676,12 @@ build_lot <- function(here, cohort_table, prefix,
   recheck_cohort_build(con, cfg, cohort_status)
   check_claim_ndc(con, cfg)
   phase_mma_map(con, ctx)
-  phase_lot1_base(con, ctx)
+  # Transplant dates before the regimen, not after. phase_sct reads only
+  # lot_patient_input, the code lists and raw claims - nothing line-shaped - so
+  # the old order was incidental, and it was what stopped a line's regimen from
+  # knowing the date its own line was cut short.
   phase_sct(con, ctx)
+  phase_lot1_base(con, ctx)
   phase_lot1_sct(con, ctx)
   phase_lot1_end(con, ctx)
   phase_qc(con, ctx)

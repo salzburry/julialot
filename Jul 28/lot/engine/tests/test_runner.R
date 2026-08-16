@@ -339,7 +339,11 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_cohort",
            "phase_patient_input", "materialize_cohort_input",
            "check_claim_ndc",
            "phase_mma_map",
-           "phase_lot1_base", "phase_sct", "phase_lot1_sct",
+           # phase_sct ahead of phase_lot1_base, so a line's regimen can be
+           # bounded by the transplant that ended the line. Not cosmetic: the
+           # order IS the fix, and swapping it back silently restores a regimen
+           # that collects agents after its own line is over.
+           "phase_sct", "phase_lot1_base", "phase_lot1_sct",
            "phase_lot1_end", "phase_qc",
            "check_lot1_invariants", "phase_persist", "materialize_sct_views",
            "build_lot2_5",
@@ -2243,8 +2247,26 @@ ind_block <- local({
 })
 ok(grepl("ms.MAP_START_DT >= ls.LOT{lot_num}_START_DT", ind_block, fixed = TRUE),
    "regimen membership is bounded below by the line's own start date")
-ok(grepl("ms.MAP_START_DT <= date_add(", ind_block, fixed = TRUE),
+ok(grepl("ms.MAP_START_DT <= least(", ind_block, fixed = TRUE) &&
+   grepl("date_add(", ind_block, fixed = TRUE),
    "...and above by the induction window, on the same column")
+ok(grepl("REGIMEN_CUTOFF_DT", ind_block, fixed = TRUE),
+   "...and by the transplant that ended the line, whichever of the two is earlier")
+# The other half, and the one that looks unnecessary. Bounding MEMBERSHIP is not
+# enough on its own: discon_per_med chains a base agent's own later episodes
+# forward from the line's start, so a refill of an agent that legitimately IS in
+# the regimen still pushes the run-out past the transplant after membership has
+# been corrected. Both call sites pass the cutoff, or the fix is half applied.
+pr <- paste(readLines(file.path(ROOT, "R", "prior_regimen.R"), warn = FALSE),
+            collapse = "\n")
+ok(grepl("AND ms.MAP_START_DT <= coalesce(ls.", pr, fixed = TRUE),
+   "the per-drug episode scan takes an upper bound at all")
+for (f in c("04_lot1_base.R", "10_lot2_5_base.R")) {
+  s <- paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE), collapse = "\n")
+  ok(grepl("discon_per_med_sql", s, fixed = TRUE) &&
+     grepl("end_col = 'REGIMEN_CUTOFF_DT'", s, fixed = TRUE),
+     paste0("...and ", f, " passes it, so membership and the run-out are cut on the same date"))
+}
 ok(!grepl("MAP_END_DT", ind_block, fixed = TRUE),
    "...and never on MAP_END_DT, so stockpiled cover cannot carry an agent in")
 
@@ -2274,6 +2296,30 @@ ok(length(gregexpr("cfg$induction_window_days", hold, fixed = TRUE)[[1]]) == 2L,
    "the hold date is bounded by the line's own window, on both the single and tandem arm")
 ok(!grepl("OBS_END_DT", hold, fixed = TRUE),
    "...and not by the observation end, which is what LOT1_TX_AUTO_MAX_DT uses")
+
+# The same question at LOT2-5, which is where it was got wrong. The hold date
+# there was first taken from LOT{n}_TX_AUTO_MAX_DT, whose tandem arm bounds the
+# second transplant by sct_tandem_days from the FIRST one and by nothing else -
+# so a partner 180 days after an AUTO on the last day of a 30-day window sat 209
+# days past the line start and still counted. Reported and clamped that is
+# harmless; deciding an end date it swallows an added medication months later,
+# and the line that agent should have started never opens.
+holdn <- local({
+  e <- regexpr("END AS LOT{lot_num}_AUTO_HOLD_DT", l25_txt, fixed = TRUE)
+  cs <- gregexpr("CASE", l25_txt, fixed = TRUE)[[1]]
+  b  <- rev(cs[cs > 0 & cs < e])[1]
+  if (is.na(b) || e < 0) "" else substr(l25_txt, b, e)
+})
+ok(nchar(holdn) > 0, "LOT2-5 has a hold date of its own")
+ok(length(gregexpr("LOT_WINDOW_DAYS", holdn, fixed = TRUE)[[1]]) == 2L,
+   "...bounded by the line's own window on the tandem arm as well as the single one")
+ok(length(gregexpr("LOT_WINDOW_DAYS",
+                   substr(l25_txt, regexpr("LOTN_TX_AUTO_MAX_DT", l25_txt, fixed = TRUE),
+                          regexpr("END AS LOT{lot_num}_TX_AUTO_MAX_DT", l25_txt,
+                                  fixed = TRUE))[[1]], fixed = TRUE)[[1]]) == 2L,
+   "...and it is a different column from TX_AUTO_MAX_DT, which bounds one arm only")
+ok(!grepl("ec.LOT{lot_num}_TX_AUTO_MAX_DT", l25_txt, fixed = TRUE),
+   "...so no end-date branch reads the one-armed column by mistake")
 
 # One gate, stated three times - reason, date, length. If they drift, a line
 # reports one reason and the date of another.

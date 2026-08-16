@@ -386,6 +386,36 @@ build_lot_n <- function(con, lot_num,
                  GROUP BY LOT{lot_num}_START_TYPE
                  ORDER BY LOT{lot_num}_START_TYPE"))
 
+  # The last day this line's regimen may collect an agent on. Same rule as
+  # lot1_regimen_cutoff in 04_lot1_base.R, and see that comment for why it
+  # exists - a line used to keep collecting agents across a window it had
+  # already been cut short in, so an agent first dispensed after the line ended
+  # was counted in its regimen and started a later line as well.
+  #
+  # ALLO and CAR-T here, where LOT1 has ALLO only. LOT1's induction exemption
+  # keeps an in-window CAR-T inside the line and so closes that door; LOT2-5 has
+  # no such exemption, and a CAR-T ends the line the day before the infusion
+  # whatever the regimen window says.
+  #
+  # A transplant that STARTED this line is not a cutoff on it - the exclusion is
+  # strictly after the start date.
+  run_step(con, paste0(pfx, "_lot", lot_num, "_regimen_cutoff"), glue("
+    CREATE OR REPLACE TEMPORARY VIEW lot{lot_num}_regimen_cutoff AS
+    SELECT
+      ls.PATID,
+      ls.LOT{lot_num}_START_DT,
+      ls.LOT{lot_num}_START_TYPE,
+      min(CASE WHEN ac.SCT_TYPE IN ('ALLO', 'CART')
+                AND ac.TX_DT > ls.LOT{lot_num}_START_DT
+               THEN date_sub(ac.TX_DT, 1) END) AS REGIMEN_CUTOFF_DT
+    FROM lot{lot_num}_start ls
+    LEFT JOIN tx_allo_cart_dates ac ON ls.PATID = ac.PATID
+    GROUP BY ls.PATID, ls.LOT{lot_num}_START_DT, ls.LOT{lot_num}_START_TYPE
+  "), qc = glue("
+    SELECT count(*) AS n_pats,
+           sum(CASE WHEN REGIMEN_CUTOFF_DT IS NOT NULL THEN 1 ELSE 0 END) AS n_cut
+    FROM lot{lot_num}_regimen_cutoff"))
+
   # ---- Step N.3: LOT_N regimen, discontinuation, first add ----
   # ALLO and CART starts have different regimen rules; handled at the end-date stage.
   med_flag_exprs <- paste(vapply(meds, function(m)
@@ -405,15 +435,18 @@ build_lot_n <- function(con, lot_num,
       ms.MAP_MED_TYPE  AS MED_ABBR,
       ms.MAP_MED_CLASS AS MED_CLASS
     FROM map_stacked ms
-    INNER JOIN lot{lot_num}_start ls ON ms.PATID = ls.PATID
+    INNER JOIN lot{lot_num}_regimen_cutoff ls ON ms.PATID = ls.PATID
     WHERE ms.MAP_START_DT >= ls.LOT{lot_num}_START_DT
       -- CAR-T-started LOTs use the 45-day consolidation window.
-      -- All other start types use the 30-day induction window.
-      AND ms.MAP_START_DT <= date_add(
-            ls.LOT{lot_num}_START_DT,
-            CASE WHEN ls.LOT{lot_num}_START_TYPE = 'CART'
-                 THEN {cart_consolidation_days - 1}
-                 ELSE {induction_window_days - 1} END)
+      -- All other start types use the 30-day induction window, and either is
+      -- cut short by a transplant that ended the line inside it.
+      AND ms.MAP_START_DT <= least(
+            date_add(
+              ls.LOT{lot_num}_START_DT,
+              CASE WHEN ls.LOT{lot_num}_START_TYPE = 'CART'
+                   THEN {cart_consolidation_days - 1}
+                   ELSE {induction_window_days - 1} END),
+            coalesce(ls.REGIMEN_CUTOFF_DT, cast('9999-12-31' as date)))
       AND ms.MAP_MED_CLASS <> 'STEROID'
       -- ALLO singleton LOTs contain no MM therapies; suppress regimen rows.
       AND ls.LOT{lot_num}_START_TYPE <> 'SCT_ALLO'
@@ -442,7 +475,7 @@ build_lot_n <- function(con, lot_num,
     -- MAP_DISCON_FLG had been computed correctly all along and read by nothing
     -- but a QC count.
     discon_per_med AS (
-{discon_per_med_sql(glue('lot{lot_num}_start'), glue('LOT{lot_num}_START_DT'))}
+{discon_per_med_sql(glue('lot{lot_num}_regimen_cutoff'), glue('LOT{lot_num}_START_DT'), end_col = 'REGIMEN_CUTOFF_DT')}
     ),
     -- The regimen has run out when its LAST base agent has.
     discon_raw AS (
@@ -690,7 +723,32 @@ build_lot_n <- function(con, lot_num,
          AND datediff(ap.AUTO_DT_1, l.LOT{lot_num}_START_DT) < l.LOT_WINDOW_DAYS
         THEN ap.AUTO_DT_1
         ELSE NULL
-      END AS LOT{lot_num}_TX_AUTO_MAX_DT
+      END AS LOT{lot_num}_TX_AUTO_MAX_DT,
+      -- LOT{lot_num}_AUTO_HOLD_DT: the last AUTO this line owns that falls
+      -- inside the line's OWN window. The twin of LOT1_AUTO_HOLD_DT in
+      -- 05b_lot1_sct.R, and it holds the line open the same way - see the
+      -- SCT_AUTO_CONT branch below.
+      --
+      -- Deliberately not LOT{lot_num}_TX_AUTO_MAX_DT above, which reads as if it
+      -- were the same thing and is not: its tandem arm bounds AUTO_DT_2 only by
+      -- sct_tandem_days from AUTO_DT_1, never by LOT_WINDOW_DAYS. A tandem
+      -- partner 180 days after an AUTO on the last day of a 30-day window is
+      -- 209 days past the line start and still passes it. That is harmless
+      -- while the column is only reported and clamped afterwards, and not
+      -- harmless at all once it decides an end date: the line would swallow an
+      -- added medication months later and the line that agent should have
+      -- started would never open.
+      CASE
+        WHEN ap.AUTO_DT_2 IS NOT NULL
+         AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {sct_tandem_days}
+         AND coalesce(ab.n_allo_between, 0) = 0
+         AND datediff(ap.AUTO_DT_2, l.LOT{lot_num}_START_DT) < l.LOT_WINDOW_DAYS
+        THEN ap.AUTO_DT_2
+        WHEN ap.AUTO_DT_1 IS NOT NULL
+         AND datediff(ap.AUTO_DT_1, l.LOT{lot_num}_START_DT) < l.LOT_WINDOW_DAYS
+        THEN ap.AUTO_DT_1
+        ELSE NULL
+      END AS LOT{lot_num}_AUTO_HOLD_DT
     FROM lb l
     LEFT JOIN auto_pivot   ap ON l.PATID = ap.PATID
     LEFT JOIN allo_between ab ON l.PATID = ab.PATID
@@ -853,6 +911,7 @@ build_lot_n <- function(con, lot_num,
         sct.ENDING_AUTO_DT, sct.FIRST_ALLO_DT, sct.FIRST_CART_DT,
         sct.LOT{lot_num}_TX_AUTO_FLG,
         sct.LOT{lot_num}_TX_AUTO_MAX_DT,
+        sct.LOT{lot_num}_AUTO_HOLD_DT,
         coalesce(cmr.contains_mtx_reg, 0) AS contains_mtx_reg,
         -- LOT_TX_ENDDATE / REASON: earliest LOT-ending SCT event - 1 day.
         -- Suppress the SCT that started LOT_N from triggering its own end:
@@ -955,11 +1014,12 @@ build_lot_n <- function(con, lot_num,
         -- after the end - which made that the one case where an orphaned
         -- transplant was guaranteed rather than incidental.
         --
-        -- LOT{lot_num}_TX_AUTO_MAX_DT is already bounded to the window by
-        -- lot{lot_num}_sct, so no separate hold column is needed here.
-        WHEN ec.LOT{lot_num}_TX_AUTO_MAX_DT IS NOT NULL
-         AND ec.LOT{lot_num}_TX_AUTO_MAX_DT > ec.LOT{lot_num}_NATURAL_END_DT
-         AND (ec.DEATH_DT IS NULL OR ec.LOT{lot_num}_TX_AUTO_MAX_DT < ec.DEATH_DT)
+        -- Reads LOT{lot_num}_AUTO_HOLD_DT, and not the LOT{lot_num}_TX_AUTO_MAX_DT
+        -- beside it, which is bounded by the window on one arm only. The two
+        -- names read alike and mean different things; lot{lot_num}_sct says why.
+        WHEN ec.LOT{lot_num}_AUTO_HOLD_DT IS NOT NULL
+         AND ec.LOT{lot_num}_AUTO_HOLD_DT > ec.LOT{lot_num}_NATURAL_END_DT
+         AND (ec.DEATH_DT IS NULL OR ec.LOT{lot_num}_AUTO_HOLD_DT < ec.DEATH_DT)
         THEN 'SCT_AUTO_CONT'
         WHEN ec.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND {if (allo_single_day) 1L else 0L} = 1
           THEN 'SCT_ALLO'
@@ -997,10 +1057,10 @@ build_lot_n <- function(con, lot_num,
         ELSE 'STUDY_END'
       END AS LOT{lot_num}_BASE_END_REASON,
       CASE
-        WHEN ec.LOT{lot_num}_TX_AUTO_MAX_DT IS NOT NULL
-         AND ec.LOT{lot_num}_TX_AUTO_MAX_DT > ec.LOT{lot_num}_NATURAL_END_DT
-         AND (ec.DEATH_DT IS NULL OR ec.LOT{lot_num}_TX_AUTO_MAX_DT < ec.DEATH_DT)
-        THEN ec.LOT{lot_num}_TX_AUTO_MAX_DT
+        WHEN ec.LOT{lot_num}_AUTO_HOLD_DT IS NOT NULL
+         AND ec.LOT{lot_num}_AUTO_HOLD_DT > ec.LOT{lot_num}_NATURAL_END_DT
+         AND (ec.DEATH_DT IS NULL OR ec.LOT{lot_num}_AUTO_HOLD_DT < ec.DEATH_DT)
+        THEN ec.LOT{lot_num}_AUTO_HOLD_DT
         ELSE ec.LOT{lot_num}_NATURAL_END_DT
       END AS LOT{lot_num}_BASE_END_DT
     FROM end_natural ec
