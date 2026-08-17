@@ -66,6 +66,80 @@ AUDIT_COUNTS <- list(
              count(DISTINCT PATID)                       AS N_PATIENTS
       FROM offending"),
 
+  # 1b. FIXED - the size of the tandem AUTO ownership fix, measured from the
+  #     transplants rather than from the lines. auto_cand refused a transplant
+  #     a line of its own whenever it landed within sct_tandem_days of the one
+  #     before it, without asking whether a line had ever HELD that pair. Where
+  #     the earlier transplant fell outside its line's window, nothing held the
+  #     line open to the later one, so it belonged to no line and was dropped
+  #     from the published row - LOT_LONG clamps the AUTO columns to the span.
+  #
+  #     Run this against a build from BEFORE the fix to size what it was
+  #     costing, and against one after to confirm it is zero. The excused shape
+  #     - a transplant trailing the last line once max_lot is used up - is
+  #     reported separately, since that one is a reconciliation number and not
+  #     a defect at any version.
+  list(id = "transplant-belonging-to-no-line",
+       what = "FIXED: processed autologous transplants inside no line, split by whether a line was still available",
+       expect = "synthetic before the fix: 1 of 14 unowned at 600 patients, 12 of 26 at 2,000; after: 0",
+       sql = "
+      WITH unowned AS (
+        SELECT x.PATID, x.TX_DT,
+               (SELECT count(*) FROM {t$long} c WHERE c.PATID = x.PATID) AS N_LINES,
+               (SELECT max(c.LOT_BASE_END_DT) FROM {t$long} c WHERE c.PATID = x.PATID) AS LAST_END
+        FROM {t$auto} x
+        WHERE EXISTS (SELECT 1 FROM {t$long} c WHERE c.PATID = x.PATID)
+          AND x.TX_DT >= (SELECT min(c.LOT_START_DT) FROM {t$long} c
+                           WHERE c.PATID = x.PATID)
+          AND NOT EXISTS (SELECT 1 FROM {t$long} l
+                           WHERE l.PATID = x.PATID
+                             AND x.TX_DT BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT)
+      )
+      SELECT CASE WHEN TX_DT <= LAST_END THEN 'a. in a gap between two lines'
+                  WHEN N_LINES < {max_lot} THEN 'b. after the last line, with lines still available - THE DEFECT'
+                  ELSE 'c. after the last line at the cap - a reconciliation number, not a defect'
+             END                     AS SHAPE,
+             count(*)                AS N_TRANSPLANTS,
+             count(DISTINCT PATID)   AS N_PATIENTS
+      FROM unowned GROUP BY 1 ORDER BY 1"),
+
+  # 1c. FIXED - the population the same fix moves, measured from the pairs.
+  #     A tandem whose FIRST transplant sits outside its line's window is the
+  #     shape that was being treated as a planned tandem when no line had
+  #     hold of it. This is the group whose line structure the fix can change,
+  #     so it bounds the impact whichever direction the numbers move.
+  list(id = "tandem-pair-whose-first-transplant-is-out-of-window",
+       what = "FIXED: AUTO pairs within sct_tandem_days whose earlier transplant fell outside its line's window",
+       expect = "synthetic: bounds the 12 patients the fix moved at 2,000",
+       sql = "
+      WITH paired AS (
+        SELECT PATID, TX_DT,
+               lag(TX_DT) OVER (PARTITION BY PATID ORDER BY TX_DT) AS PREV_TX_DT
+        FROM {t$auto}
+      ),
+      owning AS (
+        SELECT p.PATID, p.TX_DT, p.PREV_TX_DT, l.LOT_NUM,
+               l.LOT_START_DT, l.LOT_START_TYPE
+        FROM paired p
+        INNER JOIN {t$long} l
+          ON l.PATID = p.PATID
+         AND p.PREV_TX_DT BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT
+        WHERE p.PREV_TX_DT IS NOT NULL
+          AND datediff(p.TX_DT, p.PREV_TX_DT) <= {tandem_days}
+      )
+      SELECT LOT_NUM,
+             count(*)              AS N_PAIRS,
+             count(DISTINCT PATID) AS N_PATIENTS,
+             sum(CASE WHEN PREV_TX_DT > date_add(LOT_START_DT,
+                   CASE LOT_START_TYPE WHEN 'SCT_ALLO' THEN 0
+                                       WHEN 'CART' THEN {cart_days} - 1
+                                       WHEN 'MED' THEN CASE WHEN LOT_NUM = 1
+                                              THEN {lot1_window} - 1
+                                              ELSE {lotn_window} - 1 END
+                                       ELSE {lotn_window} - 1 END)
+                  THEN 1 ELSE 0 END) AS N_FIRST_OUT_OF_WINDOW
+      FROM owning GROUP BY LOT_NUM ORDER BY LOT_NUM"),
+
   # 2. Not a defect - an open study-team question about how long a
   #    regimen-less transplant line should run. Reported so the decision is
   #    made against real durations rather than a synthetic guess.
@@ -321,9 +395,17 @@ main <- function() {
   obs_col <- if (isTRUE(cfg$censor_at_disenrollment)) "ENDDATE_CE" else "ENDDATE"
 
   lot1_window <- cfg$induction_window_days
+  # Named locally so the new AUDIT_COUNTS templates read the settings the run
+  # used rather than restating them - a count that hard-codes 180 or 45 stops
+  # sizing the build the moment a contract deviation moves either.
+  lotn_window <- cfg$lot_n_induction_window_days
+  cart_days   <- cfg$cart_consolidation_days
+  tandem_days <- cfg$sct_tandem_days
+  max_lot     <- cfg$max_lot
   t <- list(long   = lot_out(which_tbl),
             map    = lot_out("MAP_STACKED"),
             sct    = lot_out("LOT1_SCT"),
+            auto   = lot_out("TX_AUTO_DATES"),
             cohort = wrk(cohort))
 
   cat("Counting against:\n")

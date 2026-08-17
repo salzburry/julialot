@@ -439,15 +439,22 @@ melp_lot1_ctes <- function(cfg) {
 melp_lot1_base_from <- function(cfg) {
   if (!melp_rule_on(cfg)) return("lot1_base lb")
   # LOT1_BASE_RUNOUT_DT is swapped here too, for the B.2 hold - see melp_hold.
-  # Only ever forward, and only where the line ran out at all: a NULL run-out
-  # is a line still covered on its own regimen, which needs no carrying.
+  # Only ever forward, and a NULL run-out is carried as well as a later one.
+  #
+  # NULL used to be left alone, on the reading that it means a line still
+  # covered by its own regimen. It does not: RAW_DISCON_DT is already capped at
+  # OBS_END_DT, so a covered line has a run-out. NULL means the line has no
+  # base medication to run out AT ALL - a CAR-T-started line with no
+  # consolidation drug, or a single-day ALLO. Those are exactly the lines whose
+  # natural end is their start, so a B.2 pair sitting after it had both doses
+  # outside every line: the hold existed and was refused.
   "(SELECT lb0.* EXCEPT (LOT1_BASE_1ST_ADD_MED_DT, LOT1_BASE_1ST_ADD_MED,
                          LOT1_BASE_RUNOUT_DT),
            mp.LOT1_BASE_1ST_ADD_MED_DT,
            mp.LOT1_BASE_1ST_ADD_MED,
-           CASE WHEN lb0.LOT1_BASE_RUNOUT_DT IS NOT NULL
-                 AND mh.MELP_HOLD_DT IS NOT NULL
-                 AND mh.MELP_HOLD_DT > lb0.LOT1_BASE_RUNOUT_DT
+           CASE WHEN mh.MELP_HOLD_DT IS NOT NULL
+                 AND (lb0.LOT1_BASE_RUNOUT_DT IS NULL
+                      OR mh.MELP_HOLD_DT > lb0.LOT1_BASE_RUNOUT_DT)
                 THEN mh.MELP_HOLD_DT
                 ELSE lb0.LOT1_BASE_RUNOUT_DT END AS LOT1_BASE_RUNOUT_DT
     FROM lot1_base lb0
@@ -460,9 +467,8 @@ melp_lot1_base_from <- function(cfg) {
 # Empty when the rule is off, so discon reads exactly as it did.
 melp_runout_case <- function(cfg, col, alias = "mh") {
   if (!melp_rule_on(cfg)) return(col)
-  glue("CASE WHEN {col} IS NOT NULL
-             AND {alias}.MELP_HOLD_DT IS NOT NULL
-             AND {alias}.MELP_HOLD_DT > {col}
+  glue("CASE WHEN {alias}.MELP_HOLD_DT IS NOT NULL
+             AND ({col} IS NULL OR {alias}.MELP_HOLD_DT > {col})
             THEN {alias}.MELP_HOLD_DT
             ELSE {col} END")
 }
