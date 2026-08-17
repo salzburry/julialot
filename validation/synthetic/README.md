@@ -52,6 +52,14 @@ three need the attrition funnel or the metadata row, which `build_lot.R` writes
 outside the emitted chain, and `D2` reads per-source run-out dates that
 `map_stacked` carries in the warehouse and not as a fixture here.
 
+**All four are `fail` severity.** So "every executed invariant holds" is what a
+green run here says, and it is not the same sentence as "the catalogue passed".
+`D2`, `F2`, `F3` and `F4` are answered only by `run_lot_qc.R` against a
+warehouse. Two other gaps sit in the same place: `permissible_subs` is never
+populated, so the five substitute-provenance paths have static assertions and no
+executable patient; and `03_mma_map.R` and `05_sct.R` are fixture inputs rather
+than executed logic, for the duckdb reason under *What it cannot do*.
+
 ## Seven patients that are not drawn
 
 Everything else is random. That is the point, and it means a rule reached only
