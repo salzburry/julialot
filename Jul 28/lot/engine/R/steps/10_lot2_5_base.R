@@ -1015,9 +1015,22 @@ build_lot_n <- function(con, lot_num,
                 WHEN 'CART'     THEN {cart_consolidation_days} - 1
                 ELSE                 {induction_window_days} - 1
               END)
+        -- The same ownership condition auto_cand carries on its own tandem
+        -- exemption, against this line's own window rather than the previous
+        -- one's - this guard is asking about the line it is inside. A pair
+        -- whose earlier transplant fell outside that window was never held by
+        -- this line, so it is not a tandem this guard may decline to confirm
+        -- a run-out for.
         AND NOT (awp.PREV_AUTO_DT IS NOT NULL
                  AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {sct_tandem_days}
-                 AND awp.N_BETWEEN = 0)
+                 AND awp.N_BETWEEN = 0
+                 AND awp.PREV_AUTO_DT <= date_add(
+                       lb.LOT{lot_num}_START_DT,
+                       CASE lb.LOT{lot_num}_START_TYPE
+                         WHEN 'SCT_ALLO' THEN 0
+                         WHEN 'CART'     THEN {cart_consolidation_days} - 1
+                         ELSE                 {induction_window_days} - 1
+                       END))
     ),
     post_runout_trigger AS (
       SELECT lb.PATID,

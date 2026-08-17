@@ -178,9 +178,18 @@ phase_lot1_end <- function(con, ctx) {
         AND awp.TX_DT > lb.LOT1_BASE_RUNOUT_DT
         AND awp.TX_DT <= lb.OBS_END_DT
         AND awp.TX_DT > date_add(lb.LOT1_START_DT, {cfg$induction_window_days} - 1)
+        -- The tandem exemption, with the same ownership condition auto_cand
+        -- carries: a pair only counts as a tandem where the EARLIER transplant
+        -- fell inside the line's window, because that is the only case a line
+        -- was ever holding the pair. Without it this guard refuses to confirm
+        -- a run-out on account of a tandem that auto_cand has already decided
+        -- is not one - and then the two disagree about the same AUTO, which is
+        -- exactly what the note above says must not happen.
         AND NOT (awp.PREV_AUTO_DT IS NOT NULL
                  AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {cfg$sct_tandem_days}
-                 AND awp.N_BETWEEN = 0)
+                 AND awp.N_BETWEEN = 0
+                 AND awp.PREV_AUTO_DT <= date_add(lb.LOT1_START_DT,
+                                                  {cfg$induction_window_days} - 1))
     ),
     post_runout_sct AS (
       -- Any ALLO or CAR-T strictly after the run-out and inside observation.

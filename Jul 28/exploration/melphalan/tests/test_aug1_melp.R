@@ -662,18 +662,26 @@ ok(has(mrs, "melp_hold carries the line to it") &&
 # and every cell that turns it on is a recorded deviation.
 doc <- paste(readLines(file.path(PARENT, "FILES.md"), warn = FALSE),
              collapse = "\n")
-ok(grepl("^6\\.", doc, perl = TRUE) || has(doc, "\n6. In B.2"),
-   "...and it is on the study team's list with the other five")
+# Item 6 stays on the list, struck through, because a question that was open
+# and got answered is worth more to the next reader than a gap in the
+# numbering. So it is looked for as answered, not as open.
+ok(has(doc, "6. ~~In B.2") && has(doc, "Settled by the request"),
+   "...and it is on the study team's list, recorded as settled rather than removed")
 ok(has(doc, "n_b2_line_starts"),
    "...pointing at the number that settles it")
 # The count is the group the reading decides: a line melphalan started straight
 # after the previous one ran out, rather than every melphalan line.
 ok(!has(sql, "w.LOT_START_TYPE = 'MED'"),
    "and it does not settle for start-type MED, which any drug can produce")
-ok(!has(doc, "both doses stay in the current line - which is what this builds"),
-   "the folder documentation does not claim the reading the code does not implement")
-ok(has(doc, "It does not hold the line open"),
-   "...it says which of the two readings is built")
+# These two used to pin the OPPOSITE of what the engine now does: that the
+# folder said the line is NOT held open. The engine gained melp_hold and the
+# documentation was not moved with it, so the suite went green holding both
+# positions at once - the code asserting the hold exists, and this asserting
+# the docs deny it. The check is now that the two agree.
+ok(has(doc, "the line is carried to the") && !has(doc, "It does not hold the line open"),
+   "the folder documentation states the reading the code implements")
+ok(has(doc, "melp_hold"),
+   "...and names the thing that implements it, so the two are checkable against each other")
 # And nothing anywhere may claim to be the whole rule. Neither mode is: the
 # names are about the TRANSPLANT reading, and on B.2 both take the narrow one.
 # This was the label the detailed section already contradicted.
