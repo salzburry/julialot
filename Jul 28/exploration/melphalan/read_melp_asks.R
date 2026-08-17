@@ -7,6 +7,14 @@
 #      melphalan alone
 #   3. how many receive an SCT in a melphalan-containing LOT, by line
 #
+# All three are asked of a build with the CAR-T 60-day induction rule applied.
+# That rule is the engine's, not this script's, and it was part of the same
+# request: a CAR-T inside line 1's 60-day window belongs to line 1 and does not
+# start line 2. So it is a PRECONDITION here and not a fourth answer - the
+# script reads it back off each cell and refuses to report anything if a cell
+# was built without it, because those three tables would then describe a build
+# nobody asked for.
+#
 #   DATABRICKS_PWD=... DOMINO_USER_NAME=usr00000 \
 #     Rscript exploration/melphalan/read_melp_asks.R
 #
@@ -65,22 +73,36 @@ for (c_i in cells)
                     "with run_aug1_melp.R.", call. = FALSE))
   }
 
-# --- 4. is the CAR-T 60-day induction rule on in these cells? ---------------
-# Asked of what each cell RECORDED, not of the code. A cell build sets only
-# LOT_CONTRACT_OVERRIDE and APPLY_MELP_RULE, so it inherits the contract's
-# apply_cart_induction_rule - but reading it back off the run is the only
-# answer that describes the tables being compared rather than the file on disk.
-q4 <- do.call(rbind, lapply(cells, function(c_i) {
+# The precondition: every cell must carry the CAR-T 60-day induction rule.
+#
+# Read back off what each cell RECORDED, not off the code. A cell build sets
+# only LOT_CONTRACT_OVERRIDE and APPLY_MELP_RULE, so it inherits the contract's
+# apply_cart_induction_rule - but the file on disk describes the next build,
+# and these tables were written by an earlier one.
+#
+# A stop, not a warning. The three answers below are about what the melphalan
+# rule changes; computed over a build without the CAR-T rule they would be
+# about two differences at once, and nothing in the CSVs would say so.
+cart <- vapply(cells, function(c_i) {
   s <- tryCatch(db_q(con, paste0("
     SELECT CONTRACT_SETTINGS FROM ", tbl(c_i, "LOT_RUN_METADATA"),
-    " ORDER BY 1 LIMIT 1"))$CONTRACT_SETTINGS[1],
+    " LIMIT 1"))$CONTRACT_SETTINGS[1],
     error = function(e) NA_character_)
-  v <- if (is.na(s)) NA_character_
-       else sub("^.*apply_cart_induction_rule=([^|]*).*$", "\\1", s)
-  data.frame(CELL = c_i$id,
-             CART_INDUCTION_RULE = if (is.na(s)) "(no metadata row)" else v,
-             stringsAsFactors = FALSE)
-}))
+  if (is.na(s) || !grepl("apply_cart_induction_rule=", s, fixed = TRUE))
+    return(NA_character_)
+  toupper(trimws(sub("^.*apply_cart_induction_rule=([^|]*).*$", "\\1", s)))
+}, character(1))
+names(cart) <- vapply(cells, function(c_i) c_i$id, character(1))
+bad <- names(cart)[is.na(cart) | cart != "TRUE"]
+if (length(bad))
+  stop("The CAR-T 60-day induction rule is not recorded as applied in: ",
+       paste0(bad, " (", ifelse(is.na(cart[bad]), "not recorded", cart[bad]), ")",
+              collapse = ", "),
+       ". Rebuild those cells before reading them - the three answers below are ",
+       "about what the melphalan rule changes, and over a build without the ",
+       "CAR-T rule they would be about two changes at once.", call. = FALSE)
+cat("CAR-T 60-day induction rule: applied in all ", length(cells),
+    " cells\n", sep = "")
 
 # The denominator: melphalan anywhere in follow-up, from the reference cell.
 # map_stacked is bounded to the patient's own observation, so "anywhere in the
@@ -180,7 +202,5 @@ write_out(q2_mono, "melp_ask2_2l_melp_mono.csv",
           "   ...and 2L melphalan on its own")
 write_out(q3, "melp_ask3_sct_in_melp_lot.csv",
           "3. An SCT inside a melphalan-containing LOT, by line")
-write_out(q4, "melp_ask4_cart_induction_rule.csv",
-          "4. The CAR-T 60-day induction rule, as each cell recorded it")
 
 cat("\nDone. ", n_denom, " melphalan patients, ", length(cells), " cells.\n", sep = "")
