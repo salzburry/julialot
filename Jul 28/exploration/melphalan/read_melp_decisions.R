@@ -16,10 +16,15 @@
 #
 # Every statement is a SELECT. It builds nothing and changes no rule.
 #
-# The last block is the one to read first. UNOWNED counts melphalan doses that
-# ended up in no line at all, which is the failure mode every ownership
-# decision here exists to prevent - and the one place a remaining gap shows up
-# as a number rather than as a paragraph.
+# Block 2 is the one to read first. It counts melphalan doses that ended up in
+# no line at all, which is the failure mode every ownership decision here exists
+# to prevent - and the one place a remaining gap shows up as a number rather
+# than as a paragraph.
+#
+# None of these blocks is a counterfactual by itself. Each is a number for one
+# cell; the effect of a decision is the difference between the cells, which is
+# what make_audit_workbook.R puts side by side. Where a block's own number is a
+# population rather than an effect, the block says so.
 
 .script_dir <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -116,12 +121,27 @@ per_cell <- function(body) do.call(rbind, lapply(cells, function(c_i) {
 #
 # INSIDE is judged against the line the exposure falls in, the way the engine
 # judges it, rather than against LOT1 for everyone.
+#
+# LEFT JOIN to the lines, not INNER. An inner join counted only the exposures
+# that ended up inside a finished line, so the branch table added up to less
+# than the exposures there are and the missing ones were invisible - which is
+# the wrong way round, because an exposure in no line is the failure block 2
+# exists to count. They get their own row here rather than being dropped.
+#
+# The engine judges an exposure against the line's OBSERVATION span, so it can
+# decide one that the finished line does not end up containing. This is a read
+# of the finished tables, so "in no line" is the most it can say about those.
 branch <- per_cell(function(c_i) paste0(expo_sql(c_i), ",
+  first_line AS (
+    SELECT PATID, min(LOT_START_DT) AS FIRST_START_DT
+    FROM ", tbl(c_i, "LOT_LONG_FINAL"), " GROUP BY PATID
+  ),
   judged AS (
     SELECT p.PATID, p.EXPO_DT, p.NEXT_DT,
            datediff(p.NEXT_DT, p.EXPO_DT) AS GAP,
            l.LOT_NUM,
-           CASE WHEN p.EXPO_DT <= date_add(l.LOT_START_DT,
+           CASE WHEN l.PATID IS NULL THEN NULL
+                WHEN p.EXPO_DT <= date_add(l.LOT_START_DT,
                   CASE l.LOT_START_TYPE
                     WHEN 'SCT_ALLO' THEN 0
                     WHEN 'CART'     THEN ", cfg$cart_consolidation_days - 1, "
@@ -131,11 +151,14 @@ branch <- per_cell(function(c_i) paste0(expo_sql(c_i), ",
                   END)
                 THEN 1 ELSE 0 END AS INSIDE
     FROM paired p
-    INNER JOIN ", tbl(c_i, "LOT_LONG_FINAL"), " l
+    INNER JOIN first_line f
+      ON f.PATID = p.PATID AND p.EXPO_DT >= f.FIRST_START_DT
+    LEFT JOIN ", tbl(c_i, "LOT_LONG_FINAL"), " l
       ON l.PATID = p.PATID
      AND p.EXPO_DT BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT
   )
-  SELECT CASE WHEN GAP IS NULL             THEN 'no next exposure - no branch applies'
+  SELECT CASE WHEN INSIDE IS NULL         THEN 'in no line - no window to judge it against'
+              WHEN GAP IS NULL             THEN 'no next exposure - no branch applies'
               WHEN INSIDE = 1 AND GAP <  ", ADV,  " THEN 'A.1 in, next <", ADV, " - does not advance'
               WHEN INSIDE = 1                       THEN 'A.2 in, next >=", ADV, " - later advances'
               WHEN GAP <  ", REST, "                THEN 'B.1 out, next <", REST, " - advances at the FIRST dose'
@@ -152,44 +175,98 @@ branch <- per_cell(function(c_i) paste0(expo_sql(c_i), ",
 # does not need interpreting: it should be zero, and where it is not, the LOT
 # start type of the line the dose sits after says which gap produced it.
 #
-# The known open case is a B.2 pair after a CAR-T-only or single-day ALLO line:
-# those lines end on their own start date before any run-out is consulted, so
-# carrying the run-out cannot reach the dose. It will show here as rows whose
-# PRIOR_LINE_TYPE is CART or SCT_ALLO. Anything else is a gap nobody has
-# named yet.
+# Two things are NOT that failure and are split out rather than counted in.
+#
+# AFTER_THE_CAP: the build stops at max_lot lines. A patient who reached the cap
+# goes on being treated after the last line ends, and every one of those doses
+# is outside every line by construction. Counting them as unowned would put a
+# number in this block that no ownership decision can ever move - and it is the
+# same carve-out the synthetic harness makes on the same invariant.
+#
+# PRIOR_LINE_TYPE of CART or SCT_ALLO: the known open case. Those lines end on
+# their own start date before any run-out is consulted, so carrying the run-out
+# cannot reach the dose. Anything else, with AFTER_THE_CAP = 'no', is a gap
+# nobody has named yet.
+#
+# max_by rather than a correlated subquery with LIMIT 1. Spark rejects a
+# correlated scalar subquery that is not an aggregate, so the LIMIT form would
+# have failed on the warehouse rather than returned the wrong answer - but it
+# would have failed at the end of a long read.
 unowned <- per_cell(function(c_i) paste0("
-  WITH doses AS (
+  WITH lines AS (
+    SELECT PATID, min(LOT_START_DT) AS FIRST_START_DT,
+           max(LOT_BASE_END_DT) AS LAST_END_DT, count(*) AS N_LINES
+    FROM ", tbl(c_i, "LOT_LONG_FINAL"), " GROUP BY PATID
+  ),
+  doses AS (
     SELECT DISTINCT PATID, MAP_START_DT AS DOSE_DT
     FROM ", tbl(c_i, "MAP_STACKED"),
     " WHERE upper(trim(MAP_MED_TYPE)) = '", MELP, "'
   ),
   orphan AS (
-    SELECT d.PATID, d.DOSE_DT
+    SELECT d.PATID, d.DOSE_DT,
+           CASE WHEN ln.N_LINES >= ", cfg$max_lot, "
+                 AND d.DOSE_DT > ln.LAST_END_DT THEN 'yes' ELSE 'no' END AS AFTER_THE_CAP
     FROM doses d
-    WHERE EXISTS (SELECT 1 FROM ", tbl(c_i, "LOT_LONG_FINAL"), " c
-                   WHERE c.PATID = d.PATID)
-      AND d.DOSE_DT >= (SELECT min(c.LOT_START_DT) FROM ", tbl(c_i, "LOT_LONG_FINAL"), " c
-                         WHERE c.PATID = d.PATID)
+    INNER JOIN lines ln ON ln.PATID = d.PATID
+    WHERE d.DOSE_DT >= ln.FIRST_START_DT
       AND NOT EXISTS (SELECT 1 FROM ", tbl(c_i, "LOT_LONG_FINAL"), " l
                        WHERE l.PATID = d.PATID
                          AND d.DOSE_DT BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT)
+  ),
+  with_prior AS (
+    SELECT o.PATID, o.DOSE_DT, o.AFTER_THE_CAP,
+           coalesce(max_by(l.LOT_START_TYPE, l.LOT_BASE_END_DT), '(none)') AS PRIOR_LINE_TYPE
+    FROM orphan o
+    LEFT JOIN ", tbl(c_i, "LOT_LONG_FINAL"), " l
+      ON l.PATID = o.PATID AND l.LOT_BASE_END_DT < o.DOSE_DT
+    GROUP BY o.PATID, o.DOSE_DT, o.AFTER_THE_CAP
   )
-  SELECT coalesce((SELECT l.LOT_START_TYPE FROM ", tbl(c_i, "LOT_LONG_FINAL"), " l
-                    WHERE l.PATID = o.PATID AND l.LOT_BASE_END_DT < o.DOSE_DT
-                    ORDER BY l.LOT_BASE_END_DT DESC LIMIT 1), '(none)') AS PRIOR_LINE_TYPE,
+  SELECT AFTER_THE_CAP, PRIOR_LINE_TYPE,
          count(*)              AS N_DOSES,
          count(DISTINCT PATID) AS N_PATIENTS
-  FROM orphan o GROUP BY 1 ORDER BY 1"))
+  FROM with_prior GROUP BY 1, 2 ORDER BY 1, 2"))
 
-# --- 3. the hold, as the length it added -------------------------------------
+# --- 3. the hold, as the population it can touch and the mark it leaves -------
 # The line-ownership decisions are all implemented by carrying a line's run-out
-# to a non-advancing exposure. This is what that carrying is worth: lines whose
-# last melphalan dose sits after every other agent's cover ended, so the line
-# reaches the dose only because the rule carried it.
+# to a non-advancing exposure. Two numbers, because they say different things
+# and only one of them is the rule's own.
+#
+#   N_PAST_THE_REGIMEN     lines whose last melphalan dose sits after the last
+#                          cover of the line's OWN regimen agents. This is the
+#                          group at risk, not the rule's effect: it is nonzero
+#                          in the reference cell too, because a line can reach
+#                          such a dose for reasons that have nothing to do with
+#                          the rule - melphalan in the regimen covering itself,
+#                          an added drug or a death ending the line later, the
+#                          LOT cap, or the end of observation.
+#
+#   N_ENDING_ON_A_MELP_DOSE   lines that end in DISCONTINUATION on exactly the
+#                          date of their last melphalan dose. That is the hold's
+#                          signature: melp_hold sets the run-out TO the dose, so
+#                          a held line ends on it. Off the rule the two dates
+#                          coincide only by accident, so the difference between
+#                          the cells is what the carrying did.
+#
+# Neither is a counterfactual on its own. This script reports one number per
+# cell; the comparison across cells is where the effect is.
+#
+# The cover is the line's own REGIMEN agents, read off LOT_BASE_MEDS, not every
+# non-steroid drug overlapping the span. Any drug at all was the wrong set: a
+# line's run-out is built from its regimen, so a single unrelated agent running
+# late made the last melphalan dose look covered and took the line out of the
+# count. Two things still separate this from the engine's own run-out, and both
+# are one-directional:
+#
+#   a permissible substitute's cover counts toward the run-out and is not in
+#   LOT_BASE_MEDS, so REGIMEN_END_DT can be early and the days over-stated;
+#
+#   the run-out chain stops at a confirmed gap in the drug's own episodes, and
+#   this does not, so REGIMEN_END_DT can be late and the days under-stated.
 hold <- per_cell(function(c_i) paste0("
   WITH last_melp AS (
     SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_BASE_END_DT,
-           l.LOT_BASE_END_REASON, l.LOT_BASE_LENGTH,
+           l.LOT_BASE_END_REASON, l.LOT_BASE_DISCON_DT, l.LOT_BASE_MEDS,
            max(ms.MAP_START_DT) AS LAST_MELP_DT
     FROM ", tbl(c_i, "LOT_LONG_FINAL"), " l
     INNER JOIN ", tbl(c_i, "MAP_STACKED"), " ms
@@ -197,30 +274,33 @@ hold <- per_cell(function(c_i) paste0("
      AND upper(trim(ms.MAP_MED_TYPE)) = '", MELP, "'
      AND ms.MAP_START_DT BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT
     GROUP BY l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_BASE_END_DT,
-             l.LOT_BASE_END_REASON, l.LOT_BASE_LENGTH
+             l.LOT_BASE_END_REASON, l.LOT_BASE_DISCON_DT, l.LOT_BASE_MEDS
   ),
-  other_cover AS (
-    SELECT lm.PATID, lm.LOT_NUM, max(ms.MAP_END_DT) AS OTHER_END_DT
+  regimen_cover AS (
+    SELECT lm.PATID, lm.LOT_NUM, max(ms.MAP_END_DT) AS REGIMEN_END_DT
     FROM last_melp lm
     INNER JOIN ", tbl(c_i, "MAP_STACKED"), " ms
       ON ms.PATID = lm.PATID
      AND upper(trim(ms.MAP_MED_TYPE)) <> '", MELP, "'
-     AND ms.MAP_MED_CLASS <> 'STEROID'
+     AND array_contains(split(lm.LOT_BASE_MEDS, ' '), ms.MAP_MED_TYPE)
+     AND ms.MAP_START_DT >= lm.LOT_START_DT
      AND ms.MAP_START_DT <= lm.LOT_BASE_END_DT
-     AND ms.MAP_END_DT   >= lm.LOT_START_DT
     GROUP BY lm.PATID, lm.LOT_NUM
   )
   SELECT lm.LOT_NUM,
          count(*)                                        AS N_LINES_WITH_MELP,
-         sum(CASE WHEN oc.OTHER_END_DT IS NULL
-                    OR lm.LAST_MELP_DT > oc.OTHER_END_DT
-                  THEN 1 ELSE 0 END)                     AS N_HELD_TO_THE_DOSE,
-         percentile_approx(CASE WHEN oc.OTHER_END_DT IS NOT NULL
-                                 AND lm.LAST_MELP_DT > oc.OTHER_END_DT
-                                THEN datediff(lm.LAST_MELP_DT, oc.OTHER_END_DT) END, 0.5)
-                                                         AS MEDIAN_DAYS_ADDED
+         sum(CASE WHEN rc.REGIMEN_END_DT IS NULL
+                    OR lm.LAST_MELP_DT > rc.REGIMEN_END_DT
+                  THEN 1 ELSE 0 END)                     AS N_PAST_THE_REGIMEN,
+         sum(CASE WHEN lm.LOT_BASE_END_REASON = 'DISCONTINUATION'
+                   AND lm.LOT_BASE_DISCON_DT = lm.LAST_MELP_DT
+                  THEN 1 ELSE 0 END)                     AS N_ENDING_ON_A_MELP_DOSE,
+         percentile_approx(CASE WHEN rc.REGIMEN_END_DT IS NOT NULL
+                                 AND lm.LAST_MELP_DT > rc.REGIMEN_END_DT
+                                THEN datediff(lm.LAST_MELP_DT, rc.REGIMEN_END_DT) END, 0.5)
+                                                         AS MEDIAN_DAYS_PAST_THE_REGIMEN
   FROM last_melp lm
-  LEFT JOIN other_cover oc ON oc.PATID = lm.PATID AND oc.LOT_NUM = lm.LOT_NUM
+  LEFT JOIN regimen_cover rc ON rc.PATID = lm.PATID AND rc.LOT_NUM = lm.LOT_NUM
   GROUP BY lm.LOT_NUM ORDER BY lm.LOT_NUM"))
 
 show <- function(d, title, note = NULL) {
@@ -234,13 +314,18 @@ melp_status_unchanged(con, cells, status)
 
 show(branch,  "1. How many exposures each branch of the request decides")
 show(unowned, "2. Melphalan doses inside NO line",
-     "should be empty; CART / SCT_ALLO rows are the known open case")
-show(hold,    "3. Lines reaching their last melphalan dose only because the rule carried them")
+     paste0("AFTER_THE_CAP='no' should be empty; CART / SCT_ALLO rows are the ",
+            "known open case.\n   AFTER_THE_CAP='yes' is treatment past the ",
+            cfg$max_lot, "-line cap and no ownership decision can move it"))
+show(hold,    "3. Lines whose last melphalan dose sits past their own regimen's cover",
+     paste0("N_PAST_THE_REGIMEN is the group at risk, not the effect. ",
+            "N_ENDING_ON_A_MELP_DOSE is the hold's signature -\n   ",
+            "read the difference between the cells, not the number in one"))
 
 rows <- do.call(rbind, lapply(
-  list(list("branch-populations", branch),
-       list("doses-in-no-line",   unowned),
-       list("held-to-the-dose",   hold)),
+  list(list("branch-populations",  branch),
+       list("doses-in-no-line",    unowned),
+       list("past-the-regimen",    hold)),
   function(x) if (is.null(x[[2]])) NULL else
     data.frame(DECISION = x[[1]],
                MEASURE  = apply(x[[2]], 1, function(r)

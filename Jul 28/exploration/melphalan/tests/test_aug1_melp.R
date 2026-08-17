@@ -346,8 +346,30 @@ ok(has(rd, "INSIDE = 1 AND GAP <") && has(rd, "GAP <  \", REST, \""),
 # The number that does not need interpreting.
 ok(has(rd, "Melphalan doses inside NO line") && has(rd, "PRIOR_LINE_TYPE"),
    "unowned doses are counted, and attributed to the line type before them")
-ok(has(rd, "should be empty; CART / SCT_ALLO rows are the known open case"),
+ok(has(rd, "AFTER_THE_CAP='no' should be empty; CART / SCT_ALLO rows are the "),
    "...with the one open gap named, so a nonzero row is not read as new")
+# Treatment past the LOT cap is outside every line by construction, so counting
+# it as unowned puts a number in that block no ownership decision can move. The
+# same carve-out the synthetic harness makes on the same invariant.
+ok(has(rd, "AFTER_THE_CAP") && has(rd, "ln.N_LINES >= \", cfg$max_lot, \""),
+   "...and doses past the LOT cap are split out rather than counted as unowned")
+# Spark rejects a correlated scalar subquery that is not an aggregate, so the
+# ORDER BY / LIMIT 1 form this used to carry would have died on the warehouse.
+ok(!has(rd, "ORDER BY l.LOT_BASE_END_DT DESC LIMIT 1") &&
+     has(rd, "max_by(l.LOT_START_TYPE"),
+   "...and the prior line type is an aggregate, which Spark will actually run")
+# The group at risk and the rule's own mark are different numbers, and calling
+# the first one the second is what made this block read as a counterfactual.
+ok(has(rd, "N_PAST_THE_REGIMEN") && has(rd, "N_ENDING_ON_A_MELP_DOSE") &&
+     !has(rd, "N_HELD_TO_THE_DOSE"),
+   "the hold block separates the population at risk from the hold's signature")
+ok(has(rd, "array_contains(split(lm.LOT_BASE_MEDS, ' '), ms.MAP_MED_TYPE)"),
+   "...and measures cover off the line's own regimen, not every drug in the span")
+# An exposure in no line is the thing block 2 exists to count, so block 1 must
+# not silently drop it.
+ok(has(rd, "LEFT JOIN \", tbl(c_i, \"LOT_LONG_FINAL\")") &&
+     has(rd, "in no line - no window to judge it against"),
+   "the branch table keeps exposures that ended up in no line, in a row of their own")
 
 cat("\n-- the cells, and what they cannot do --\n")
 cells <- melp_cell_plan()
