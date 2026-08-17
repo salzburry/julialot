@@ -125,17 +125,31 @@ LOT_QC_CHECKS <- list(
     "concat(pid, ' LOT', LOT_NUM, ': count ', LOT_MED_CNT, ', string has ', want)")),
 
   list(id = "A7", group = "Structure", severity = "fail",
-       what = "an empty regimen belongs only to a procedure-started line",
-       why = paste0("The induction step suppresses regimen rows for an ALLO ",
-                    "line, which is why that line carries no drugs. A ",
-                    "medication-started line with no regimen is a line whose ",
-                    "own starting drug did not reach its regimen."),
+       what = "a medication-started line has a regimen",
+       why = paste0("The real invariant is narrow: a line started by a DRUG ",
+                    "must carry that drug. Its regimen window opens on the ",
+                    "line's own start date, and that is the date the starting ",
+                    "drug's episode begins, so an empty regimen there is a ",
+                    "line whose own starting drug did not reach it. ",
+                    "Every OTHER start type may legitimately be empty, and the ",
+                    "check asks only about 'MED' rather than listing them. An ",
+                    "ALLO line is empty by construction - the induction step ",
+                    "suppresses its rows. A CAR-T line is empty when no ",
+                    "consolidation drug arrives in its window. And an ",
+                    "AUTO-started line is empty when no drug starts in its ",
+                    "30 days, which is a shape the build really produces and ",
+                    "this check used to fail: SCT_AUTO was missing from the ",
+                    "allowed list, so a transplant that opened a later line ",
+                    "with no drug behind it was reported as a defect. ",
+                    "Asking about 'MED' rather than naming the rest is what ",
+                    "stops that recurring. A5 pins LOT_START_TYPE to its four ",
+                    "values, so a new one cannot arrive here unannounced."),
        needs = "final",
        sql = function(t, p) counted(paste0("
     SELECT ", mask("PATID"), " AS pid, LOT_NUM, LOT_START_TYPE
     FROM ", t$final, "
     WHERE trim(coalesce(LOT_BASE_MEDS, '')) = ''
-      AND LOT_START_TYPE NOT IN ('SCT_ALLO', 'CART')"),
+      AND LOT_START_TYPE = 'MED'"),
     "concat(pid, ' LOT', LOT_NUM, ' started by ', LOT_START_TYPE)")),
 
   # ---- B. End reason against end date --------------------------------------
@@ -402,17 +416,43 @@ LOT_QC_CHECKS <- list(
     "concat(pid, ' LOT', LOT_NUM, ': ', MED_ABBR, ' has no episode in the window')")),
 
   list(id = "C2", group = "Regimen", severity = "fail",
-       what = "the added medication is not already in the regimen",
-       why = paste0("An added medication is by definition one the regimen does ",
-                    "not contain. If it does, the candidate query and the ",
-                    "regimen disagree about what the regimen is."),
-       needs = "final",
+       what = "the added medication is not already in the regimen, unless it returned",
+       why = paste0("An added medication is normally one the regimen does not ",
+                    "contain. Where it does, the candidate query and the ",
+                    "regimen disagree about what the regimen is. ",
+                    "The exception is a rule, not a tolerance. A regimen drug ",
+                    "whose own episode carried a confirmed discontinuation and ",
+                    "which then restarts ends the line like any other drug ",
+                    "would (LOT_RULES.md 11.1, prior_regimen.R). That drug IS ",
+                    "in the regimen and IS the added medication, both correctly. ",
+                    "This check predates that rule and was not moved with it, so ",
+                    "it failed every returning-drug line - eleven of them on a ",
+                    "400-patient synthetic run, all eleven a restart after a ",
+                    "confirmed gap and none of them a defect. ",
+                    "The exemption is read the way the engine reads it: the lag ",
+                    "of MAP_DISCON_FLG over that drug's own episodes, so it is ",
+                    "the episode IMMEDIATELY before the restart that has to ",
+                    "carry the flag. Any-earlier-episode would excuse a drug ",
+                    "that discontinued once and has been running since."),
+       needs = c("final", "map"),
        sql = function(t, p) counted(paste0("
-    SELECT ", mask("PATID"), " AS pid, LOT_NUM, LOT_BASE_1ST_ADD_MED AS med
-    FROM ", t$final, "
-    WHERE LOT_BASE_1ST_ADD_MED IS NOT NULL
-      AND array_contains(split(coalesce(LOT_BASE_MEDS, ''), ' '),
-                         LOT_BASE_1ST_ADD_MED)"),
+    WITH restart AS (
+      SELECT cast(PATID as string) AS PATID, MAP_MED_TYPE, MAP_START_DT,
+             coalesce(lag(MAP_DISCON_FLG) OVER (PARTITION BY PATID, MAP_MED_TYPE
+                                    ORDER BY MAP_START_DT), 0) AS PREV_DISCON
+      FROM ", t$map, "
+    )
+    SELECT ", mask("f.PATID"), " AS pid, f.LOT_NUM,
+           f.LOT_BASE_1ST_ADD_MED AS med
+    FROM ", t$final, " f
+    LEFT JOIN restart r
+      ON r.PATID = cast(f.PATID as string)
+     AND r.MAP_MED_TYPE = f.LOT_BASE_1ST_ADD_MED
+     AND r.MAP_START_DT = date_add(f.LOT_BASE_1ST_ADD_MED_DT, 1)
+    WHERE f.LOT_BASE_1ST_ADD_MED IS NOT NULL
+      AND array_contains(split(coalesce(f.LOT_BASE_MEDS, ''), ' '),
+                         f.LOT_BASE_1ST_ADD_MED)
+      AND coalesce(r.PREV_DISCON, 0) = 0"),
     "concat(pid, ' LOT', LOT_NUM, ': ', med)")),
 
   list(id = "C3", group = "Regimen", severity = "info",
@@ -583,19 +623,30 @@ LOT_QC_CHECKS <- list(
                     "that an event past the end of observation is data rather ",
                     "than a defect - but 05_sct.R bounds every claim source to ",
                     "the patient's INDEX_DATE and OBS_END_DT, so TX_AUTO_DATES ",
-                    "cannot hold one. Nothing this returns is explained by ",
-                    "follow-up running out, so every row is an ownership ",
-                    "failure. E5b carries the one case that is not."),
+                    "cannot hold one. ",
+                    "Scoped to the span where the build had a line to give. A ",
+                    "transplant BEFORE the patient's first line is not an ",
+                    "ownership defect: the SCT step keeps claims from ",
+                    "INDEX_DATE, LOT1 opens on the first non-steroid episode, ",
+                    "and nothing makes those the same day - so a transplant in ",
+                    "between belongs to no line and no rule could have given it ",
+                    "one. Whether the patient later starts a line is beside the ",
+                    "point, and gating on it made the same mismatch a blocking ",
+                    "defect for one patient and a reported number for another. ",
+                    "E5b carries both of those cases."),
        needs = c("long", "auto"),
        sql = function(t, p) counted(paste0("
     SELECT a.pid, a.dt, a.n_lines
     FROM (
       SELECT ", mask("x.PATID"), " AS pid, x.PATID AS k, x.TX_DT AS dt,
-             (SELECT count(*) FROM ", t$long, " c WHERE c.PATID = x.PATID) AS n_lines
+             (SELECT count(*) FROM ", t$long, " c WHERE c.PATID = x.PATID) AS n_lines,
+             (SELECT min(c.LOT_START_DT) FROM ", t$long, " c
+               WHERE c.PATID = x.PATID) AS first_start
       FROM ", t$auto, " x
     ) a
     LEFT JOIN ", t$long, " l ON a.k = l.PATID
     WHERE a.n_lines > 0
+      AND a.dt >= a.first_start
     GROUP BY a.pid, a.k, a.dt, a.n_lines
     HAVING sum(CASE WHEN a.dt BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT
                     THEN 1 ELSE 0 END) = 0
@@ -604,25 +655,37 @@ LOT_QC_CHECKS <- list(
     "concat(pid, ' @ ', dt, ' with ', n_lines, ' lines')")),
 
   list(id = "E5b", group = "Transplant", severity = "warn",
-       what = "transplants on a patient the build gave no line at all",
-       why = paste0("The case E5 is scoped away from, kept as its own number ",
-                    "rather than dropped. A line starts on a non-steroid ",
-                    "medication episode, so a patient whose claims produced a ",
-                    "transplant but no such episode gets no LOT1 and their ",
-                    "transplant belongs to nothing. That is not a defect in how ",
-                    "lines are built - there was no line to build - it is the ",
-                    "same disagreement between the cohort's own indexing and ",
-                    "this package's episode derivation that the attrition ",
-                    "funnel reports as a RECONCILIATION step. ",
-                    "Kept out of E5 so that check can fail: folded in, a run ",
+       what = "transplants the build never had a line to put them in",
+       why = paste0("The cases E5 is scoped away from, kept as their own ",
+                    "number rather than dropped. Both are the same thing: a ",
+                    "transplant that arrives before this package has a line to ",
+                    "give it. ",
+                    "A line starts on a non-steroid medication episode. A ",
+                    "patient whose claims produced a transplant but no such ",
+                    "episode gets no line at all. A patient whose first episode ",
+                    "comes after the transplant gets a first line that starts ",
+                    "later than it. The SCT step keeps claims from INDEX_DATE, ",
+                    "and nothing ties INDEX_DATE to the first episode, so both ",
+                    "are shapes the build produces. ",
+                    "Neither is a defect in how lines are built - there was no ",
+                    "line to build the transplant into - and both are the same ",
+                    "disagreement between the cohort's own indexing and this ",
+                    "package's episode derivation that the attrition funnel ",
+                    "reports as a RECONCILIATION step. ",
+                    "Kept out of E5 so that check can fail. Folded in, a run ",
                     "would go red on a known cohort question rather than on an ",
-                    "ownership defect, and the two would be indistinguishable ",
-                    "in the report."),
+                    "ownership defect, and the report could not tell the two ",
+                    "apart. Split the other way - by whether the patient has ",
+                    "any line at all - and one patient's pre-index transplant ",
+                    "blocks the run while another's is a number, on a ",
+                    "difference that has nothing to do with the transplant."),
        needs = c("long", "auto"),
        sql = function(t, p) counted(paste0("
     SELECT ", mask("x.PATID"), " AS pid, x.TX_DT AS dt
     FROM ", t$auto, " x
-    WHERE NOT EXISTS (SELECT 1 FROM ", t$long, " c WHERE c.PATID = x.PATID)"),
+    WHERE x.TX_DT < coalesce((SELECT min(c.LOT_START_DT) FROM ", t$long, " c
+                               WHERE c.PATID = x.PATID),
+                             cast('9999-12-31' as date))"),
     "concat(pid, ' @ ', dt)")),
 
   # ---- F. The tables against each other ------------------------------------

@@ -162,6 +162,32 @@ ok(!has(SQL$B5, "'SUBSTITUTION'") && !has(SQL$B5, "'MAINTENANCE_END'"),
    "...and not the two reasons the spec lists that nothing produces")
 ok(has(SQL$B6, "LOT_BASE_1ST_ADD_MED_DT < LOT_START_DT"),
    "B6 catches an added-medication date before its own line")
+# A7 asks about MED starts and nothing else. An AUTO can open a line at LOT2-5
+# and no drug need join its 30-day window, so that line legitimately carries no
+# regimen - a shape the build really produces, and one A7 failed while its
+# allowed list named only SCT_ALLO and CART. Asking about 'MED' is what stops
+# the next start type reopening it; A5 pins the enum so one cannot appear
+# unnoticed.
+ok(has(SQL$A7, "LOT_START_TYPE = 'MED'") && !has(SQL$A7, "NOT IN ('SCT_ALLO'"),
+   "A7 asks only whether a medication-started line carries a regimen")
+ok(has(SQL$A5, "NOT IN ('MED', 'SCT_ALLO', 'SCT_AUTO', 'CART')"),
+   "...and A5 still pins the four start types A7 leans on")
+# C2 predates the returning-drug rule. A regimen drug whose own episode carried
+# a confirmed discontinuation and then restarted ends the line like any other
+# drug (LOT_RULES.md 11.1), so it is in the regimen AND is the added
+# medication, both correctly. Unexempted, C2 failed every such line.
+ok(has(SQL$C2, "array_contains(split(coalesce(f.LOT_BASE_MEDS, ''), ' ')"),
+   "C2 still catches an added medication that is already in the regimen")
+ok(has(SQL$C2, "coalesce(r.PREV_DISCON, 0) = 0"),
+   "...unless that drug restarted after a confirmed discontinuation")
+# The lag, not "any earlier episode". Read the loose way it would excuse a drug
+# that discontinued once and has been running ever since.
+ok(has(SQL$C2, "lag(MAP_DISCON_FLG) OVER (PARTITION BY PATID, MAP_MED_TYPE"),
+   "...read as the engine reads it, off the episode immediately before")
+pr <- paste(readLines(file.path(dirname(ROOT), "engine", "R", "prior_regimen.R"),
+                      warn = FALSE), collapse = "\n")
+ok(has(pr, "lag(ms.MAP_DISCON_FLG) OVER (PARTITION BY ms.PATID, ms.MAP_MED_TYPE"),
+   "...which is the expression the engine itself releases the drug on")
 # C1 is the regimen rule asked backwards, so it has to use all three windows.
 ok(has(SQL$C1, "THEN 59") && has(SQL$C1, "THEN 44") && has(SQL$C1, "ELSE                                 29"),
    "C1 applies LOT1's window, CAR-T's and the later-line one, each inclusive")
@@ -253,19 +279,59 @@ ok(identical(e5$severity, "fail"),
    "...and a row in it fails the run, since no row can be explained by follow-up")
 sct_src <- paste(readLines(file.path(dirname(ROOT), "engine", "R", "steps", "05_sct.R"),
                            warn = FALSE), collapse = "\n")
-ok(!has(sct_src, "FST_DT AS date) >= p.INDEX_DATE\n") ||
-     length(gregexpr("<= p.OBS_END_DT", sct_src, fixed = TRUE)[[1]]) ==
-     length(gregexpr(">= p.INDEX_DATE", sct_src, fixed = TRUE)[[1]]),
-   "...which rests on every SCT claim source being bounded at both ends")
+# Each arm on its own, not a count of the two bounds across the file. Counting
+# them proved nothing this claim needs: delete BOTH predicates from one arm and
+# the totals still match, delete every lower bound and the totals still match.
+# Cut each CTE out by name and ask it directly.
+#
+# The arms and the alias each one bounds on. A source added to the union
+# without an entry here fails the count below rather than passing unexamined.
+SCT_ARMS <- c(med_proc = "m", med_bill = "m", medproc = "mp", med_diag = "d")
+unbounded <- character(0)
+for (nm in names(SCT_ARMS)) {
+  al <- SCT_ARMS[[nm]]
+  i <- regexpr(paste0("\n    ", nm, " AS ("), sct_src, fixed = TRUE)
+  if (i < 0) { unbounded <- c(unbounded, paste0(nm, " (no such CTE)")); next }
+  rest <- substring(sct_src, i)
+  j <- regexpr("\n    ),", rest, fixed = TRUE)
+  arm <- substring(rest, 1, if (j > 0) j else nchar(rest))
+  lo <- has(arm, paste0("cast(", al, ".FST_DT AS date) >= p.INDEX_DATE"))
+  hi <- has(arm, paste0("cast(", al, ".FST_DT AS date) <= p.OBS_END_DT"))
+  if (!lo || !hi)
+    unbounded <- c(unbounded, paste0(nm, " (",
+                                     paste(c("no lower bound", "no upper bound")[c(!lo, !hi)],
+                                           collapse = ", "), ")"))
+}
+ok(!length(unbounded),
+   if (length(unbounded))
+     paste0("...but an SCT claim source is not bounded at both ends: ",
+            paste(unbounded, collapse = "; "))
+   else "...which rests on each of the four SCT claim sources being bounded at both ends")
+# And that those four ARE the sources. A fifth arm added to the union without
+# an entry above would otherwise never be asked the question.
+sct_union <- substring(sct_src, regexpr("combined AS (", sct_src, fixed = TRUE))
+sct_union <- substring(sct_union, 1, regexpr("\n    ),", sct_union, fixed = TRUE))
+ok(length(gregexpr("SELECT * FROM ", sct_union, fixed = TRUE)[[1]]) == length(SCT_ARMS),
+   "...and the union has exactly those four arms, so none escapes the question")
 # The one case E5 cannot judge, kept as its own number rather than folded in.
 # A patient with no line has no ownership to check; that is the funnel's
 # reconciliation question, and folding it in would turn a known cohort
 # disagreement into a red run indistinguishable from a real orphan.
 ok(has(SQL$E5, "WHERE a.n_lines > 0"),
    "E5 asks only about patients who have a line at all")
+# ...and only from the first line onward. The SCT step keeps claims from
+# INDEX_DATE and LOT1 opens on the first non-steroid episode, so a transplant
+# can land before any line exists. Splitting on whether the patient has a line
+# at all made that same mismatch a blocking defect for one patient and a
+# reported number for another, on a difference that is nothing to do with the
+# transplant.
+ok(has(SQL$E5, "AND a.dt >= a.first_start"),
+   "...and only from the day their first line starts")
 e5b <- Filter(function(c_i) identical(c_i$id, "E5b"), LOT_QC_CHECKS)[[1]]
-ok(identical(e5b$severity, "warn") && has(SQL$E5b, "NOT EXISTS"),
-   "...and E5b reports the patients with none, without failing the run")
+ok(identical(e5b$severity, "warn"),
+   "...and E5b reports the rest without failing the run")
+ok(has(SQL$E5b, "x.TX_DT < coalesce((SELECT min(c.LOT_START_DT)"),
+   "...taking a transplant before the first line and one on a patient with none")
 ok(has(SQL$E2, "< 60") && has(SQL$E2, "> 180"),
    "E2 holds a tandem pair to the recorded 60-to-180 band")
 ok(has(SQL$E3, "= 180"),

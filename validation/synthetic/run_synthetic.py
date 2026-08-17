@@ -126,7 +126,7 @@ def planted():
 
     Everything above is drawn. That is the point of the harness, but it means a
     rule reached by a narrow combination of dates can go untested for a whole
-    run and the coverage line reads zero. The four below are built by hand so
+    run and the coverage line reads zero. The ones below are built by hand so
     they are always there.
 
     Most are the same combination: a regimen that runs out EARLY and a
@@ -134,10 +134,15 @@ def planted():
     and drawing it needs a short supply and a transplant in the right 60 days
     at once.
 
-    The last two are the CAR-T-started line, which is the shape most likely to
-    orphan a transplant: a CAR-T line with no consolidation drug ends on its own
-    start date, so its whole 45-day window sits after the end and every AUTO in
-    that window depends on the hold to belong anywhere.
+    Two are the CAR-T-started line, which is the shape most likely to orphan a
+    transplant: a CAR-T line with no consolidation drug ends on its own start
+    date, so its whole 45-day window sits after the end and every AUTO in that
+    window depends on the hold to belong anywhere.
+
+    The last is a transplant that lands BEFORE the patient's first line. The
+    generator cannot draw it - its transplants start at least 100 days after
+    index and its first medication by day 70 - and it is the shape that decides
+    whether an unowned transplant is a defect or a reconciliation number.
 
     Still no expected answers. These are patients, not fixtures - they widen
     what the invariants are asked about, and nothing here says what any line
@@ -178,6 +183,13 @@ def planted():
     # window, so the two sides of the window are both present.
     pat('P0005', [('LEN', 'IMID', ix, ix + 19, 0)],
         auto=[ix + 250], ac=[('CART', ix + 200)])
+    # A transplant on day 5, with the first medication episode on day 20. The
+    # SCT step keeps claims from INDEX_DATE and a line opens on the first
+    # non-steroid episode, so the day-5 transplant belongs to no line and no
+    # rule could have given it one. E5 must not call that a defect; E5b counts
+    # it. Its twin - the same mismatch on a patient who never gets a line - is
+    # what E5b used to be scoped to on its own.
+    pat('P0006', [('LEN', 'IMID', ix + 20, ix + 200, 0)], auto=[ix + 5])
     return out
 
 
@@ -405,63 +417,6 @@ def checks(c):
  ("a cohort patient with no such line",
   "SELECT c.PATID FROM coh_2l c WHERE NOT EXISTS "
   "(SELECT 1 FROM lot_long l WHERE l.PATID = c.PATID AND l.LOT_NUM = 2)"),
- # Ownership. Every other invariant here starts from a line and asks whether
- # its own dates agree, so a transplant that landed in NO line has no row to be
- # wrong on. These two start from the transplant.
- ("a transplant inside a line's own window that the line ended before - B5c",
-  "SELECT a.PATID, l.LOT_NUM, a.TX_DT FROM tx_auto_dates a "
-  "JOIN lot_long l ON l.PATID = a.PATID "
-  "WHERE a.TX_DT BETWEEN l.LOT_START_DT AND l.LOT_START_DT + INTERVAL (CASE "
-  "  WHEN l.LOT_START_TYPE = 'SCT_ALLO' THEN 0 "
-  "  WHEN l.LOT_START_TYPE = 'CART' THEN 44 "
-  f"  WHEN l.LOT_NUM = 1 THEN {c['ind1'] - 1} ELSE 29 END) DAY "
-  "AND a.TX_DT > l.LOT_BASE_END_DT "
-  # The same censor the build applies, from the same day it applies it. The
-  # build stops reading a line's transplants at the first allograft or CAR-T,
-  # so one after those was never the line's to hold. LOT1 censors from its
-  # start date (05b_lot1_sct.R); LOT2 and later from the day AFTER
-  # (10_lot2_5_base.R), so the transplant that STARTED the line is not read as
-  # a censor on it. Using >= everywhere switched this check off for every
-  # CAR-T-started line - which is the shape most likely to orphan a transplant,
-  # since a CAR-T line with no consolidation ends on its own start date.
-  "AND NOT EXISTS (SELECT 1 FROM tx_allo_cart_dates x WHERE x.PATID = a.PATID "
-  "  AND ((l.LOT_NUM = 1 AND x.TX_DT >= l.LOT_START_DT) "
-  "    OR (l.LOT_NUM > 1 AND x.TX_DT > l.LOT_START_DT)) "
-  "  AND x.TX_DT <= a.TX_DT " +
-  # Only when the run applied the rule. At CART_RULE=FALSE the engine has no
-  # exemption, and keeping one here would excuse an orphan it really produces.
-  (f"  AND NOT (x.SCT_TYPE = 'CART' AND l.LOT_NUM = 1 "
-   f"           AND x.TX_DT <= l.LOT_START_DT + INTERVAL {c['ind1'] - 1} DAY)"
-   if c["cart_rule"] else "") + ")"),
- # E5's ownership question, as an invariant rather than a number. Every SCT
- # claim source in 05_sct.R is bounded to [INDEX_DATE, OBS_END_DT], so
- # tx_auto_dates cannot hold an event past the end of follow-up - which was the
- # only reason this was ever reported rather than failed.
- #
- # One excuse, two conditions, both needed: the build ran out of lines AND the
- # event trails the last one. Patients with no line at all are out of scope, the
- # same way E5 scopes them out; they have no ownership to check.
- ("a transplant in no line at all - E5",
-  "SELECT a.PATID, a.TX_DT FROM tx_auto_dates a "
-  "WHERE EXISTS (SELECT 1 FROM lot_long c WHERE c.PATID = a.PATID) "
-  "AND NOT EXISTS "
-  "  (SELECT 1 FROM lot_long l WHERE l.PATID = a.PATID "
-  "   AND a.TX_DT BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT) "
-  f"AND ((SELECT count(*) FROM lot_long c WHERE c.PATID = a.PATID) < {c['max_lot']} "
-  "     OR a.TX_DT <= (SELECT max(c.LOT_BASE_END_DT) FROM lot_long c "
-  "                    WHERE c.PATID = a.PATID))"),
-]
-
-# Counted and printed, not failed - the case E5 cannot judge, kept as its own
-# number rather than dropped. A line starts on a non-steroid medication
-# episode, so a patient whose claims gave a transplant but no such episode gets
-# no line and their transplant belongs to nothing. That is the cohort-versus-
-# episode disagreement the attrition funnel reports, not a defect in how lines
-# are built. QC calls the same number E5b.
-OBSERVE = [
- ("transplants on a patient with no line at all - E5b",
-  "SELECT count(*) FROM tx_auto_dates a WHERE NOT EXISTS "
-  "  (SELECT 1 FROM lot_long c WHERE c.PATID = a.PATID)"),
 ]
 
 COVERAGE = [
@@ -479,6 +434,59 @@ COVERAGE = [
  ("lines started by something other than a drug", "l.LOT_START_TYPE <> 'MED'"),
  ("single-day lines",                  "l.LOT_BASE_LENGTH = 1"),
 ]
+
+
+def run_qc(con, sqldir):
+    """The shipped QC catalogue, run against the synthetic output.
+
+    The harness used to carry Python rewrites of two QC predicates, which
+    proved the rewrites. A rewrite can be right while the shipped check is
+    wrong, and that is what happened: this run was green over a valid
+    AUTO-started line with an empty regimen, while the real A7 would have
+    failed it. So emit_qc.R asks checks.R for its own SQL and it is that SQL
+    which runs here.
+
+    A fail-severity check with a row is an invariant break, the same as
+    anything in CHECKS. warn and info are counted and printed. A check that
+    could not run is reported as itself - never as a pass.
+    """
+    qcfile = os.path.join(sqldir, "qc.tsv")
+    r = subprocess.run(["Rscript", os.path.join(HERE, "emit_qc.R"), qcfile],
+                       capture_output=True, text=True)
+    if r.returncode == 3:
+        print("  " + (r.stdout.strip() or "SKIP")); return [], []
+    if r.returncode != 0:
+        raise RuntimeError("emit_qc.R failed:\n" + r.stdout + r.stderr)
+    print("  " + r.stdout.strip())
+
+    bad, noted, skipped, broke = [], [], [], []
+    with open(qcfile) as fh:
+        head = fh.readline().rstrip("\n").split("\t")
+        for line in fh:
+            row = dict(zip(head, line.rstrip("\n").split("\t")))
+            if not row["sql"]:
+                skipped.append(f"{row['id']} (needs {row['missing']})"); continue
+            sql = row["sql"].replace("\\n", "\n")
+            try:
+                n, detail = con.execute(to_duckdb(sql)).fetchone()
+            except Exception as ex:
+                broke.append(f"{row['id']}: {str(ex).splitlines()[0][:90]}"); continue
+            if not n:
+                continue
+            line_out = f"{row['id']} ({row['severity']}): {n} - {row['what']}"
+            if detail:
+                line_out += f"  e.g. {detail}"
+            (bad if row["severity"] == "fail" else noted).append(line_out)
+    for s_i in noted:
+        print("  reported ", s_i)
+    # A check that could not run is not a check that found nothing. Both lists
+    # are printed, and a translation failure counts against the run: silence
+    # here would read as a clean catalogue.
+    for s_i in skipped:
+        print("  skipped  ", s_i)
+    for s_i in broke:
+        print("  ERROR    ", s_i)
+    return bad, broke
 
 
 def snapshot(con):
@@ -510,11 +518,15 @@ def main():
     print(r.stdout.strip())
 
     con = duckdb.connect(); con.execute("SET TimeZone='UTC'")
-    load(con, generate(seed, npat))
+    pats = generate(seed, npat)
+    load(con, pats)
     probe = sqlglot.transpile("SELECT datediff(date '2024-01-11', date '2024-01-01')",
                               read='spark', write='duckdb')[0]
     assert con.execute(probe).fetchall()[0][0] == 10, "datediff does not mean a - b here"
-    print(f"calibration ok; {npat} synthetic patients, seed {seed}\n")
+    # len(pats), not npat: the planted patients are patients too, and printing
+    # the argument instead reported a population smaller than the one that ran.
+    print(f"calibration ok; {len(pats)} synthetic patients "
+          f"({npat} drawn on seed {seed}, {len(pats) - npat} planted)\n")
 
     run_chain(con, sqldir)
     q = lambda s: con.execute(s).fetchall()
@@ -540,11 +552,11 @@ def main():
         if not v: vacuous += 1
         print(f"  {name:46} {v}{'   <-- nothing here, so nothing was tested' if not v else ''}")
 
-    print("\nreported, not failed")
-    for name, sql in OBSERVE:
-        print(f"  {name:46} {q(sql)[0][0]}")
+    print("\nthe shipped QC catalogue, against these patients")
+    qc_bad, qc_broke = run_qc(con, sqldir)
 
     bad = [(n, rows) for n, sql in checks(cfg) for rows in [q(sql)] if rows]
+    bad += [(n, ["-"]) for n in qc_bad + qc_broke]
     print()
     if bad:
         print(f"{len(bad)} INVARIANT(S) BROKEN:")
