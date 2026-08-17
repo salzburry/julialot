@@ -116,6 +116,7 @@ subst_off <- function(f) {
                  c("{melp_prev_line_ctes(cfg, prev_med_window, cart_consolidation_days)}",
                    melp_prev_line_ctes(off, 60L, 45L)),
                  c("{melp_hold_join(cfg, 'ls')}",      melp_hold_join(off, "ls")),
+                 c("{melp_lot1_base_tbl(cfg)}",        melp_lot1_base_tbl(off)),
                  c("{melp_suppress_predicate(cfg)}",   melp_suppress_predicate(off)),
                  c("{melp_prior_regimen_exempt(cfg)}", melp_prior_regimen_exempt(off))))
     txt <- gsub(p[1], p[2], txt, fixed = TRUE)
@@ -249,24 +250,39 @@ hold <- gsub("\\s+", " ", local({
   i <- regexpr("melp_hold AS \\(", s2)
   sub("(?s)\\) GROUP BY.*$", "", substr(s2, i + attr(i, "match.length"), nchar(s2)), perl = TRUE)
 }))
-ok(has(hold, "max(j.NEXT_DT) AS MELP_HOLD_DT"),
-   "the hold is the LATER exposure of the pair, which is the one at risk")
-ok(has(hold, "INSIDE = 0") && has(hold, "GAP >= 60") && has(hold, "GAP < 180"),
-   "...and it is B.2's window exactly - not A.1, not B.1, not B.3")
-ok(has(hold, "j.NEXT_DT <= E"),
-   "...bounded by the line's span, so it cannot reach past observation")
-# Carried on the run-out rather than as an end reason of its own, so the 90-day
-# confirmation is measured from the dose and every other end still outranks it.
-ok(has(melp_lot1_base_from(ask), "AS LOT1_BASE_RUNOUT_DT") &&
-     has(melp_lot1_base_from(ask), "mh.MELP_HOLD_DT > lb0.LOT1_BASE_RUNOUT_DT"),
-   "LOT1 carries its run-out forward to the hold, and only forward")
+# EVERY suppressed exposure, not B.2's later dose alone. Suppressing an
+# exposure and owning it are two halves of one statement, so the hold reads the
+# same list the suppression does. Scoped to B.2 it left A.1's later exposure
+# and B.3's first one refused a line by one half and unowned by the other.
+ok(has(hold, "max(s.SUPPRESS_DT) AS MELP_HOLD_DT") &&
+     has(hold, "FROM melp_suppress_dates s"),
+   "the hold owns every suppressed exposure, off the same list that suppresses them")
+ok(!has(hold, "GAP >= 60") && !has(hold, "INSIDE = 0"),
+   "...so it does not re-state one branch's window and miss the others")
+ok(has(hold, "s.SUPPRESS_DT <= E") && has(hold, "s.SUPPRESS_DT >= L.S"),
+   "...bounded by the line's own span at both ends")
+# Dose dates, so a suppressed exposure made of several doses is owned to its
+# last one rather than to the date the exposure opened.
+ok(has(hold, "melp_suppress_dates"),
+   "...and by dose, since an exposure can be more than one")
+# One held run-out, read by every CTE in 06 - not swapped at end_candidates
+# only, which left the trigger guards reading the original date.
+ok(has(melp_lot1_ctes(ask), "melp_lot1_base AS (") &&
+     has(melp_lot1_ctes(ask), "mh.MELP_HOLD_DT > lb0.LOT1_BASE_RUNOUT_DT"),
+   "LOT1 builds ONE swapped base table, carried forward only")
+ok(identical(melp_lot1_base_tbl(off), "lot1_base lb") &&
+     identical(melp_lot1_base_tbl(ask), "melp_lot1_base lb"),
+   "...and every other reader in 06 is pointed at it, or at lot1_base when off")
+ok(!has(melp_lot1_base_from(ask), "LOT1_BASE_RUNOUT_DT"),
+   "...so end_candidates no longer swaps the run-out a second time")
+ok(has(melp_lot1_ctes(ask), "melp_span AS (") &&
+     has(melp_lot1_ctes(ask), "coalesce(mb.LOT1_BASE_RUNOUT_DT, ml.OBS_END_DT) AS SPAN_END_DT"),
+   "the recomputed candidate list is bounded at the HELD run-out, not the original")
 ok(identical(melp_runout_case(off, "X"), "X"),
    "...and with the rule off the run-out expression is handed straight back")
 ok(has(melp_runout_case(ask, "X"), "mh.MELP_HOLD_DT > X") &&
-     has(melp_runout_case(ask, "X"), "ELSE X END"),
-   "LOT2-5 wraps its own run-out the same way")
-ok(!has(melp_lot1_base_from(ask), "LOT1_BASE_RUNOUT_DT,\n           mp."),
-   "the swapped run-out is EXCEPTed from lb0.*, so the column is not ambiguous")
+     has(melp_runout_case(ask, "X"), "X IS NULL"),
+   "LOT2-5 wraps its own run-out, and carries a NULL one too")
 
 cat("\n-- the reader that answers the three questions --\n")
 # read_melp_asks.R had no cover at all: the gate could go green with the file

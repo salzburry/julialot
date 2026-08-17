@@ -210,15 +210,31 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
       WHERE INSIDE = 0 AND GAP IS NOT NULL AND GAP < {cfg$melp_restart_days}
         AND YIELD_THIS = 0
     ),
-    -- B.2's later exposure again, this time as a date the line is carried to.
+    -- The suppressed exposures again, this time as a date the line is carried
+    -- to. It is the SAME list, deliberately: suppressing an exposure and
+    -- owning it are two halves of one statement.
     --
-    -- Taking both boundaries off the candidate list is only half of what the
-    -- request asks for. It stops melphalan ENDING the line at either dose. It
-    -- does not keep the second dose INSIDE the line, and where the line's own
-    -- regimen runs out between the two, the line ends at that run-out and the
-    -- later dose falls outside it - into no line at all, since the same rule
-    -- has just refused it as a line start. The request says both doses stay in
-    -- the current line, so the line has to reach the second one.
+    -- Taking a boundary off the candidate list only stops melphalan ENDING
+    -- the line there. It does not keep the exposure INSIDE the line, and
+    -- where the line's own regimen ran out first, the line ends at that
+    -- run-out and the exposure falls outside it - into no line at all, since
+    -- the same rule has just refused it as a line start. Every branch that
+    -- says an exposure does not advance is therefore also saying which line
+    -- it belongs to, and this is where that half is applied.
+    --
+    -- Every arm of melp_suppress, not just B.2's. All three say the same
+    -- thing about their exposure:
+    --
+    --   B.2 both doses          both doses stay in the current line
+    --   A.1 the later exposure  the pair does not advance the LOT
+    --   B.3 the first exposure  does not advance for the first dose
+    --
+    -- Scoping this to B.2 alone left A.1's later exposure and B.3's first one
+    -- suppressed but unowned - refused a line of their own by one half of the
+    -- rule and not given one by the other.
+    --
+    -- Dose dates rather than exposure dates, via melp_suppress_dates, so a
+    -- suppressed exposure made of several doses is owned to its last one.
     --
     -- Carried on the RUN-OUT rather than as an end reason of its own. The
     -- run-out is where the line's treatment stopped, and under this rule it
@@ -232,15 +248,12 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
     -- Bounded by the line's own span, so an exposure past the end of
     -- observation cannot extend a line beyond it.
     melp_hold AS (
-      SELECT j.PATID, max(j.NEXT_DT) AS MELP_HOLD_DT
-      FROM melp_judged j
-      INNER JOIN {line_tbl} ON {line_tbl}.PATID = j.PATID
-      WHERE j.INSIDE = 0 AND j.YIELD_THIS = 0 AND j.YIELD_NEXT = 0
-        AND j.GAP IS NOT NULL
-        AND j.GAP >= {cfg$melp_restart_days}
-        AND j.GAP <  {cfg$melp_advance_days}
-        AND j.NEXT_DT <= {span_end}
-      GROUP BY j.PATID
+      SELECT s.PATID, max(s.SUPPRESS_DT) AS MELP_HOLD_DT
+      FROM melp_suppress_dates s
+      INNER JOIN {line_tbl} ON {line_tbl}.PATID = s.PATID
+      WHERE s.SUPPRESS_DT >= {line_tbl}.{start_col}
+        AND s.SUPPRESS_DT <= {span_end}
+      GROUP BY s.PATID
     ),"))
 }
 
@@ -377,8 +390,7 @@ melp_lot1_ctes <- function(cfg) {
     -- LOT1 is always MED-started, so there is no CART or ALLO case here.
     melp_line AS (
       SELECT PATID, LOT1_START_DT, OBS_END_DT,
-             date_add(LOT1_START_DT, {cfg$induction_window_days - 1}) AS IND_END_DT,
-             coalesce(LOT1_BASE_RUNOUT_DT, OBS_END_DT) AS SPAN_END_DT
+             date_add(LOT1_START_DT, {cfg$induction_window_days - 1}) AS IND_END_DT
       FROM lot1_base
     ),"),
     # The decision runs over the line's observation. The candidate list keeps
@@ -387,6 +399,38 @@ melp_lot1_ctes <- function(cfg) {
     melp_decision_ctes(cfg, "melp_line", "LOT1_START_DT", "melp_line.OBS_END_DT",
                        "melp_line.IND_END_DT"),
     glue("
+    -- lot1_base with the held run-out substituted, built ONCE and read by
+    -- every CTE in 06 that asks when this line ran out.
+    --
+    -- It used to be substituted only at end_candidates, which left LOT1
+    -- reading two different run-out dates in one statement: the post-run-out
+    -- trigger CTEs saw the original, the final calculation saw the held one.
+    -- A melphalan dose after the original run-out then registered as a trigger
+    -- - evidence the patient restarted - and that trigger was applied to the
+    -- HELD run-out, confirming a discontinuation on a date with none of the
+    -- observation behind it the confirmation rule requires. The candidate list
+    -- was bounded at the original date too, so a drug added between the two
+    -- could be missed as an addition while the line ran on past it.
+    melp_lot1_base AS (
+      SELECT lb0.* EXCEPT (LOT1_BASE_RUNOUT_DT),
+             CASE WHEN mh.MELP_HOLD_DT IS NOT NULL
+                   AND (lb0.LOT1_BASE_RUNOUT_DT IS NULL
+                        OR mh.MELP_HOLD_DT > lb0.LOT1_BASE_RUNOUT_DT)
+                  THEN mh.MELP_HOLD_DT
+                  ELSE lb0.LOT1_BASE_RUNOUT_DT END AS LOT1_BASE_RUNOUT_DT
+      FROM lot1_base lb0
+      LEFT JOIN melp_hold mh ON mh.PATID = lb0.PATID
+    ),
+    -- The candidate list's own bound, off the held run-out for the same
+    -- reason. 04_lot1_base.R stops its candidates at the run-out; carrying the
+    -- line past that date without carrying this one leaves the stretch the
+    -- hold added unable to produce an addition.
+    melp_span AS (
+      SELECT ml.PATID, ml.LOT1_START_DT, ml.OBS_END_DT, ml.IND_END_DT,
+             coalesce(mb.LOT1_BASE_RUNOUT_DT, ml.OBS_END_DT) AS SPAN_END_DT
+      FROM melp_line ml
+      INNER JOIN melp_lot1_base mb ON mb.PATID = ml.PATID
+    ),
     -- The add-med pick, worked out again with the rule applied. Same span,
     -- same steroid exclusion, the same returning-drug release and the same
     -- rand(42) tie-break as 04_lot1_base.R. A patient with no melphalan gets
@@ -405,7 +449,7 @@ melp_lot1_ctes <- function(cfg) {
     melp_add_candidates AS (
       SELECT ms.PATID, ms.MAP_START_DT, ms.MAP_MED_TYPE
       FROM map_stacked ms
-      INNER JOIN melp_line ON melp_line.PATID = ms.PATID
+      INNER JOIN melp_span ON melp_span.PATID = ms.PATID
       LEFT JOIN melp_base_meds bm
         ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
       LEFT JOIN melp_map_restart mr
@@ -414,9 +458,9 @@ melp_lot1_ctes <- function(cfg) {
       WHERE (bm.MED_ABBR IS NULL
              OR (coalesce(mr.PREV_DISCON, 0) = 1 AND bm.SUBSTITUTE_ONLY = 0))
         AND ms.MAP_MED_CLASS <> 'STEROID'
-        AND ms.MAP_START_DT >= melp_line.LOT1_START_DT
-        AND ms.MAP_START_DT <= melp_line.SPAN_END_DT{melp_suppress_predicate(cfg)}
-      {melp_inject_arm(cfg, 'melp_line', 'LOT1_START_DT', 'melp_line.SPAN_END_DT')}
+        AND ms.MAP_START_DT >= melp_span.LOT1_START_DT
+        AND ms.MAP_START_DT <= melp_span.SPAN_END_DT{melp_suppress_predicate(cfg)}
+      {melp_inject_arm(cfg, 'melp_span', 'LOT1_START_DT', 'melp_span.SPAN_END_DT')}
     ),
     melp_add_pick AS (
       SELECT PATID, LOT1_BASE_1ST_ADD_MED_DT, LOT1_BASE_1ST_ADD_MED
@@ -438,28 +482,21 @@ melp_lot1_ctes <- function(cfg) {
 # class, so the list is as long as the code list and changes with it.
 melp_lot1_base_from <- function(cfg) {
   if (!melp_rule_on(cfg)) return("lot1_base lb")
-  # LOT1_BASE_RUNOUT_DT is swapped here too, for the B.2 hold - see melp_hold.
-  # Only ever forward, and a NULL run-out is carried as well as a later one.
-  #
-  # NULL used to be left alone, on the reading that it means a line still
-  # covered by its own regimen. It does not: RAW_DISCON_DT is already capped at
-  # OBS_END_DT, so a covered line has a run-out. NULL means the line has no
-  # base medication to run out AT ALL - a CAR-T-started line with no
-  # consolidation drug, or a single-day ALLO. Those are exactly the lines whose
-  # natural end is their start, so a B.2 pair sitting after it had both doses
-  # outside every line: the hold existed and was refused.
-  "(SELECT lb0.* EXCEPT (LOT1_BASE_1ST_ADD_MED_DT, LOT1_BASE_1ST_ADD_MED,
-                         LOT1_BASE_RUNOUT_DT),
+  # The add-med columns are still swapped here, because melp_add_pick is built
+  # after melp_lot1_base and cannot be folded into it. The run-out is NOT
+  # swapped here any more - melp_lot1_base carries it, so every reader in 06
+  # gets the same date.
+  "(SELECT mb.* EXCEPT (LOT1_BASE_1ST_ADD_MED_DT, LOT1_BASE_1ST_ADD_MED),
            mp.LOT1_BASE_1ST_ADD_MED_DT,
-           mp.LOT1_BASE_1ST_ADD_MED,
-           CASE WHEN mh.MELP_HOLD_DT IS NOT NULL
-                 AND (lb0.LOT1_BASE_RUNOUT_DT IS NULL
-                      OR mh.MELP_HOLD_DT > lb0.LOT1_BASE_RUNOUT_DT)
-                THEN mh.MELP_HOLD_DT
-                ELSE lb0.LOT1_BASE_RUNOUT_DT END AS LOT1_BASE_RUNOUT_DT
-    FROM lot1_base lb0
-    LEFT JOIN melp_add_pick mp ON mp.PATID = lb0.PATID
-    LEFT JOIN melp_hold     mh ON mh.PATID = lb0.PATID) lb"
+           mp.LOT1_BASE_1ST_ADD_MED
+    FROM melp_lot1_base mb
+    LEFT JOIN melp_add_pick mp ON mp.PATID = mb.PATID) lb"
+}
+
+# What every OTHER CTE in 06 reads for this line. Off, it is lot1_base itself.
+melp_lot1_base_tbl <- function(cfg) {
+  if (!melp_rule_on(cfg)) return("lot1_base lb")
+  "melp_lot1_base lb"
 }
 
 # The same carry at LOT2-5, where there is no column swap to hang it on: the

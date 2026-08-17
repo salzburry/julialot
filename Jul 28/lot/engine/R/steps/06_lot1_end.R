@@ -129,7 +129,7 @@ phase_lot1_end <- function(con, ctx) {
     post_runout_med AS (
       SELECT DISTINCT ms.PATID
       FROM map_stacked ms
-      INNER JOIN lot1_base lb ON ms.PATID = lb.PATID
+      INNER JOIN {melp_lot1_base_tbl(cfg)} ON ms.PATID = lb.PATID
       LEFT JOIN post_runout_excluded_meds prem
         ON ms.PATID = prem.PATID AND ms.MAP_MED_TYPE = prem.MED_ABBR
       LEFT JOIN map_restart mr
@@ -172,7 +172,7 @@ phase_lot1_end <- function(con, ctx) {
       -- LOT2. Read different windows and DEATH takes a line whose run-out the
       -- next line does in fact open on.
       SELECT DISTINCT lb.PATID
-      FROM lot1_base lb
+      FROM {melp_lot1_base_tbl(cfg)}
       INNER JOIN post_runout_autos awp ON lb.PATID = awp.PATID
       WHERE lb.LOT1_BASE_RUNOUT_DT IS NOT NULL
         AND awp.TX_DT > lb.LOT1_BASE_RUNOUT_DT
@@ -209,7 +209,7 @@ phase_lot1_end <- function(con, ctx) {
       -- run-out, so the line's treatment had stopped before it arrived and the
       -- induction exemption cannot reach it.
       SELECT DISTINCT lb.PATID
-      FROM lot1_base lb
+      FROM {melp_lot1_base_tbl(cfg)}
       INNER JOIN tx_allo_cart_dates ac ON lb.PATID = ac.PATID
       WHERE lb.LOT1_BASE_RUNOUT_DT IS NOT NULL
         AND ac.SCT_TYPE IN ('ALLO', 'CART')
@@ -227,7 +227,7 @@ phase_lot1_end <- function(con, ctx) {
           WHEN pra.PATID IS NOT NULL THEN 1
           ELSE 0
         END AS POST_RUNOUT_TRIGGER_FLG
-      FROM lot1_base lb
+      FROM {melp_lot1_base_tbl(cfg)}
       LEFT JOIN post_runout_med prm ON lb.PATID = prm.PATID
       LEFT JOIN post_runout_sct prs ON lb.PATID = prs.PATID
       LEFT JOIN post_runout_auto pra ON lb.PATID = pra.PATID
