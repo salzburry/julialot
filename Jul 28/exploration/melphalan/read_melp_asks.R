@@ -2,7 +2,7 @@
 # Three questions, among patients who receive melphalan anywhere in follow-up:
 #
 #   1. the change in duration of each line after applying the melphalan rule
-#   2. the regimen distribution for each line, and how many still get 2L
+#   2. for every line, how many LOTs contain melphalan and how many are
 #      melphalan on its own
 #   3. how many receive an SCT in a melphalan-containing LOT, by line
 #
@@ -121,14 +121,21 @@ if (!is.null(q1)) {
              "MEDIAN_DAYS", "MEDIAN_CHANGE", "MEAN_DAYS", "MEAN_CHANGE")]
 }
 
-# --- 2. regimens for each line -----------------------------------------------
+# --- 2. melphalan-containing and melphalan-only LOTs, every line ------------
+# ANY_MELP is a LOT whose regimen holds melphalan, among other drugs or on its
+# own. MELP_MONO is the subset where melphalan is the whole regimen.
+# array_contains over the split string, not LIKE, so a drug whose abbreviation
+# merely contains MELP cannot match.
 q2 <- per_cell(function(c_i) paste0("
   SELECT l.LOT_NUM,
-         coalesce(nullif(trim(l.LOT_BASE_MEDS), ''), '(none)') AS REGIMEN,
-         count(DISTINCT l.PATID) AS N_PATIENTS
+         count(DISTINCT l.PATID) AS N_PATIENTS,
+         count(DISTINCT CASE WHEN array_contains(
+                 split(coalesce(l.LOT_BASE_MEDS, ''), ' '), '", MELP, "')
+                             THEN l.PATID END) AS N_ANY_MELP,
+         count(DISTINCT CASE WHEN trim(coalesce(l.LOT_BASE_MEDS, '')) = '", MELP, "'
+                             THEN l.PATID END) AS N_MELP_MONO
   FROM ", lines_of(c_i), "
-  GROUP BY l.LOT_NUM, coalesce(nullif(trim(l.LOT_BASE_MEDS), ''), '(none)')
-  ORDER BY l.LOT_NUM, N_PATIENTS DESC"))
+  GROUP BY l.LOT_NUM ORDER BY l.LOT_NUM"))
 
 # --- 3. an SCT inside a melphalan-containing LOT -----------------------------
 # Any transplant the line carries: autologous, allogeneic or CAR-T.
@@ -152,13 +159,7 @@ write_out <- function(d, name, title) {
 }
 
 write_out(q1, "melp_ask1_line_duration.csv", "1. Duration of each line")
-write_out(q2, "melp_ask2_regimens_by_line.csv", "2. Regimens for each line")
-# The number the question names, off the table above rather than a second query.
-if (!is.null(q2)) {
-  mono <- q2[q2$LOT_NUM == 2 & q2$REGIMEN == MELP, c("CELL", "N_PATIENTS")]
-  cat("\n   2L ", MELP, " on its own: ",
-      if (nrow(mono)) paste0(mono$CELL, "=", mono$N_PATIENTS, collapse = ", ")
-      else "none", "\n", sep = "")
-}
+write_out(q2, "melp_ask2_melp_lots_by_line.csv",
+          "2. LOTs containing melphalan, and LOTs that are melphalan alone")
 write_out(q3, "melp_ask3_sct_in_melp_lot.csv",
           "3. An SCT inside a melphalan-containing LOT")
