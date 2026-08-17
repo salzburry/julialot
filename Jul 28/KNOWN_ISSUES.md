@@ -188,4 +188,4 @@ discontinuation, with the death recorded as the patient outcome it already is?
 **Not urgent, and here is why.** `LOT*_BASE_DISCON_DT` is on the row either way,
 so the other reading is recoverable in analysis without a rebuild.
 
-`lot/LOT_RULES.md` §7.5 and §14.4.
+`lot/LOT_RULES.md` §7.5 and §14.2.

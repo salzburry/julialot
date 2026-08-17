@@ -35,6 +35,7 @@ except ImportError as ex:
     sys.exit(f"SKIP: {ex.name} is not installed; this harness needs duckdb and sqlglot")
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
 REPO = os.path.dirname(os.path.dirname(HERE))
 
 EPOCH = datetime.date(2016, 1, 1)
@@ -489,6 +490,46 @@ def run_qc(con, sqldir):
     return bad, broke
 
 
+def run_qc_scenarios():
+    """The shipped checks against hand-built tables, for the ones the patients
+    cannot reach. See qc_scenarios.py for why these have expected answers when
+    nothing else here does."""
+    import qc_scenarios
+    sqldir = tempfile.mkdtemp(prefix="qc_scen_")
+    qcfile = os.path.join(sqldir, "qc.tsv")
+    env = dict(os.environ, SCENARIO="1")
+    r = subprocess.run(["Rscript", os.path.join(HERE, "emit_qc.R"), qcfile],
+                       capture_output=True, text=True, env=env)
+    if r.returncode == 3:
+        print("  " + (r.stdout.strip() or "SKIP")); return []
+    if r.returncode != 0:
+        raise RuntimeError("emit_qc.R failed:\n" + r.stdout + r.stderr)
+    sql = {}
+    with open(qcfile) as fh:
+        head = fh.readline().rstrip("\n").split("\t")
+        for line in fh:
+            row = dict(zip(head, line.rstrip("\n").split("\t")))
+            if row["sql"]:
+                sql[row["id"]] = row["sql"].replace("\\n", "\n")
+
+    bad, n = [], 0
+    for sc in qc_scenarios.scenarios():
+        if sc["check"] not in sql:
+            bad.append(f"{sc['check']} is not in the emitted catalogue"); continue
+        con = duckdb.connect(); con.execute("SET TimeZone='UTC'")
+        for st in sc["sql"]:
+            con.execute(st)
+        got = con.execute(to_duckdb(sql[sc["check"]])).fetchone()[0]
+        n += 1
+        if got != sc["rows"]:
+            bad.append(f"{sc['check']} on '{sc['name']}': {got} row(s), "
+                       f"expected {sc['rows']}")
+        con.close()
+    print(f"  {n} scenarios over {len(set(s['check'] for s in qc_scenarios.scenarios()))} "
+          f"checks the patient run cannot reach")
+    return bad
+
+
 def snapshot(con):
     rows = con.execute(
         "SELECT PATID, LOT_NUM, LOT_START_DT, LOT_START_TYPE, LOT_BASE_END_DT, "
@@ -555,8 +596,13 @@ def main():
     print("\nthe shipped QC catalogue, against these patients")
     qc_bad, qc_broke = run_qc(con, sqldir)
 
+    print("\n...and against fixtures, for the checks no patient can reach")
+    scen_bad = run_qc_scenarios()
+    for s_i in scen_bad:
+        print("  WRONG    ", s_i)
+
     bad = [(n, rows) for n, sql in checks(cfg) for rows in [q(sql)] if rows]
-    bad += [(n, ["-"]) for n in qc_bad + qc_broke]
+    bad += [(n, ["-"]) for n in qc_bad + qc_broke + scen_bad]
     print()
     if bad:
         print(f"{len(bad)} INVARIANT(S) BROKEN:")

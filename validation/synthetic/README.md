@@ -47,18 +47,32 @@ A rewrite can be right while the shipped check is wrong, and both were:
 Both are `fail` severity, so both would have blocked every warehouse run, and
 neither was reachable while the harness ran copies.
 
-Four checks cannot be answered here and say so rather than passing quietly:
-three need the attrition funnel or the metadata row, which `build_lot.R` writes
-outside the emitted chain, and `D2` reads per-source run-out dates that
-`map_stacked` carries in the warehouse and not as a fixture here.
+Four checks cannot be answered against the patient population and say so rather
+than passing quietly: three need the attrition funnel or the metadata row, which
+`build_lot.R` writes outside the emitted chain, and `D2` reads per-source
+run-out dates that `map_stacked` carries in the warehouse and not as a fixture
+here.
 
-**All four are `fail` severity.** So "every executed invariant holds" is what a
-green run here says, and it is not the same sentence as "the catalogue passed".
-`D2`, `F2`, `F3` and `F4` are answered only by `run_lot_qc.R` against a
-warehouse. Two other gaps sit in the same place: `permissible_subs` is never
-populated, so the five substitute-provenance paths have static assertions and no
-executable patient; and `03_mma_map.R` and `05_sct.R` are fixture inputs rather
-than executed logic, for the duckdb reason under *What it cannot do*.
+**All four are `fail` severity**, so a green patient run is not the same
+sentence as "the catalogue passed".
+
+`F2` and `F3` are covered anyway, by `qc_scenarios.py` — the shipped SQL run
+against hand-built attrition tables, each wrong in one specific way, asserting
+the check notices. Those have expected answers, and that is right here: what is
+under test is the check, not the algorithm. `E1` is there for a different
+reason — it reads the raw per-line flags, and a correct build cannot produce
+the double flag it looks for, so a patient run can only ever show it silent.
+
+The scenarios earn their place. Against the versions that shipped before them,
+five passed and should not have: a missing final funnel row, a duplicated one,
+a line count that disagrees while the patients match, the zero progression rows
+for lines nobody reached, and a row above `max_lot`.
+
+`D2` and `F4` remain answerable only by `run_lot_qc.R` against a warehouse. Two
+other gaps sit in the same place: `permissible_subs` is never populated, so the
+five substitute-provenance paths have static assertions and no executable
+patient; and `03_mma_map.R` and `05_sct.R` are fixture inputs rather than
+executed logic, for the duckdb reason under *What it cannot do*.
 
 ## Seven patients that are not drawn
 

@@ -174,6 +174,30 @@ main <- function() {
     cat("  absent: ", paste(names(have)[!have], collapse = ", "),
         " - checks needing them are skipped\n", sep = "")
 
+  # The per-line raw SCT tables, for the lines this run actually built. E1 has
+  # to read the raw flags - LOT_LONG derives its single flag as the negation of
+  # its tandem flag, so both being 1 cannot survive the projection and a check
+  # over the published columns can never fail.
+  #
+  # Probed rather than assumed, and carried in p rather than in t. The LOT2-5
+  # loop stops at the first line with no patients to roll forward, so a run
+  # that reached LOT3 wrote no LOT4_SCT. In t, naming a table that is not there
+  # SKIPS the check; here it just shortens the union, which answers the
+  # question for the lines that exist instead of refusing to answer at all.
+  p$sct_extra <- local({
+    got <- character(0)
+    for (k in seq(2L, p$max_lot)) {
+      nm <- lot_out(paste0("LOT", k, "_SCT"))
+      okk <- isTRUE(tryCatch({ db_q(con, paste0("SELECT 1 FROM ", nm, " LIMIT 1")); TRUE },
+                             error = function(e) FALSE))
+      if (okk) got[as.character(k)] <- nm
+    }
+    got
+  })
+  cat("  raw transplant tables: LOT1",
+      if (length(p$sct_extra)) paste0(", LOT", names(p$sct_extra), collapse = "") else "",
+      " (E1 reads these, not the published flags)\n", sep = "")
+
   rows <- list()
   for (c_i in LOT_QC_CHECKS) {
     missing <- setdiff(c_i$needs, names(have)[have])
