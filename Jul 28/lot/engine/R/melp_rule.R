@@ -259,12 +259,24 @@ melp_prior_regimen_exempt <- function(cfg, alias = "ms") {
 melp_lot1_ctes <- function(cfg) {
   if (!melp_rule_on(cfg)) return("")
   paste0("\n", glue("
+    -- The line's own drugs and their permissible substitutes, carrying WHICH
+    -- of the two each one is. Same shape as base_meds in 04_lot1_base.R,
+    -- because the candidate gate below has to read the same rule that step
+    -- reads - see melp_add_candidates.
     melp_base_meds AS (
-      SELECT PATID, MED_ABBR FROM lot1_induction_meds
-      UNION
-      SELECT im.PATID, ps.substitute_med AS MED_ABBR
-      FROM lot1_induction_meds im
-      INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
+      SELECT PATID, MED_ABBR, min(IS_SUB) AS SUBSTITUTE_ONLY
+      FROM (
+        SELECT PATID, MED_ABBR, 0 AS IS_SUB FROM lot1_induction_meds
+        UNION ALL
+        SELECT im.PATID, ps.substitute_med AS MED_ABBR, 1 AS IS_SUB
+        FROM lot1_induction_meds im
+        INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
+      )
+      GROUP BY PATID, MED_ABBR
+    ),
+    -- Spliced from prior_regimen.R rather than written again here, for the
+    -- same reason: one definition of what a restart is.
+    melp_map_restart AS ({map_restart_sql()}
     ),
     -- LOT1's induction end, the way 04_lot1_base.R bounds its induction meds.
     -- The window includes its first day, so the last day inside is start + W-1.
@@ -282,16 +294,31 @@ melp_lot1_ctes <- function(cfg) {
                        "melp_line.IND_END_DT"),
     glue("
     -- The add-med pick, worked out again with the rule applied. Same span,
-    -- same steroid exclusion and the same rand(42) tie-break as
-    -- 04_lot1_base.R. A patient with no melphalan gets the pick that step
-    -- already made.
+    -- same steroid exclusion, the same returning-drug release and the same
+    -- rand(42) tie-break as 04_lot1_base.R. A patient with no melphalan gets
+    -- the pick that step already made.
+    --
+    -- The release is why this is not simply every base drug being excluded.
+    -- That gate was this file's until now, and it was 04_lot1_base.R's before
+    -- the returning-drug rule shipped - so turning the melphalan rule on
+    -- quietly reverted LOT1 to the older rule FOR EVERY PATIENT. On the
+    -- synthetic population, turning the rule on moved 16 patients and 12 of
+    -- them had no melphalan at all - among them the planted control, whose
+    -- LEN restarted after a confirmed gap and which lost that boundary and its
+    -- entire second line. With the release restored, 2 patients move and both
+    -- take melphalan. A cell that moves patients the rule cannot touch is not
+    -- measuring the rule.
     melp_add_candidates AS (
       SELECT ms.PATID, ms.MAP_START_DT, ms.MAP_MED_TYPE
       FROM map_stacked ms
       INNER JOIN melp_line ON melp_line.PATID = ms.PATID
       LEFT JOIN melp_base_meds bm
         ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
-      WHERE bm.MED_ABBR IS NULL
+      LEFT JOIN melp_map_restart mr
+        ON mr.PATID = ms.PATID AND mr.MAP_MED_TYPE = ms.MAP_MED_TYPE
+       AND mr.MAP_START_DT = ms.MAP_START_DT
+      WHERE (bm.MED_ABBR IS NULL
+             OR (coalesce(mr.PREV_DISCON, 0) = 1 AND bm.SUBSTITUTE_ONLY = 0))
         AND ms.MAP_MED_CLASS <> 'STEROID'
         AND ms.MAP_START_DT >= melp_line.LOT1_START_DT
         AND ms.MAP_START_DT <= melp_line.SPAN_END_DT{melp_suppress_predicate(cfg)}

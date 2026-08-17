@@ -28,6 +28,10 @@ has   <- function(x, s) grepl(s, x, fixed = TRUE)
 
 library(glue)
 `%||%` <- function(a, b) if (is.null(a)) b else a
+# prior_regimen.R first: melp_rule.R splices map_restart_sql() into LOT1's
+# recomputed candidate list, so the two drive one definition of a restart
+# rather than a copy each. The engine loads both; so does this.
+source(file.path(LOT, "R", "prior_regimen.R"))
 source(file.path(LOT, "R", "melp_rule.R"))
 source(file.path(ROOT, "R", "cells.R"))
 
