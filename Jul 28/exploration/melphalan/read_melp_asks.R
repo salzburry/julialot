@@ -47,44 +47,60 @@ cells <- melp_cell_plan(MELP_CELLS,
                         trimws(Sys.getenv("AUG1_PREFIX_BASE", unset = "melp_")))
 tbl <- function(cell, name) paste0(cfg$catalog, ".", schema, ".", cell$prefix, name)
 
-# Two cells of a three-way comparison are not a smaller answer, they are a
-# different one, so a missing cell stops the run.
-for (c_i in cells)
-  for (nm in c("LOT_LONG_FINAL", "MAP_STACKED"))
-    tryCatch(db_q(con, paste0("SELECT 1 FROM ", tbl(c_i, nm), " LIMIT 1")),
-             error = function(e)
-               stop("Cell '", c_i$id, "' has no ", tbl(c_i, nm),
-                    ". Build the cells first with run_aug1_melp.R.", call. = FALSE))
+# Provenance, through the package's own checks rather than a second set here.
+# Readable tables and a CAR-T setting are not enough to make three cells
+# comparable: melp_read_inputs / melp_check_inputs hold them to one cohort
+# attempt, one code hash, one code-list set and one study window, and
+# melp_check_deviations holds each to exactly its own intended deviation and
+# the reference to none. Without those, three cells built over two cohort
+# attempts read as a melphalan effect.
+status <- setNames(lapply(cells, function(c_i) cell_status(con, c_i)),
+                   vapply(cells, function(c_i) c_i$id, character(1)))
+inputs <- melp_read_inputs(con, cells, status)
 
-# The build these questions are asked of has the CAR-T 60-day induction rule
-# applied. Read back off what each cell recorded, not off the code, and a stop
-# rather than a warning: over a build without it the answers below would be
-# about two changes at once and nothing in the CSVs would say so.
-cart <- vapply(cells, function(c_i) {
-  s <- tryCatch(db_q(con, paste0("SELECT CONTRACT_SETTINGS FROM ",
-                                 tbl(c_i, "LOT_RUN_METADATA"),
-                                 " LIMIT 1"))$CONTRACT_SETTINGS[1],
-                error = function(e) NA_character_)
-  if (is.na(s) || !grepl("apply_cart_induction_rule=", s, fixed = TRUE))
-    return(NA_character_)
-  toupper(trimws(sub("^.*apply_cart_induction_rule=([^|]*).*$", "\\1", s)))
-}, character(1))
-names(cart) <- vapply(cells, function(c_i) c_i$id, character(1))
-bad <- names(cart)[is.na(cart) | cart != "TRUE"]
-if (length(bad))
-  stop("The CAR-T 60-day induction rule is not recorded as applied in: ",
-       paste(bad, collapse = ", "), ". Rebuild those cells before reading them.",
+# A code-fingerprint mismatch is a stop here, not the warning it is elsewhere.
+# This script reads cells some earlier run built, and a rule-on cell built by
+# older engine code answers the question about that engine rather than this
+# one. The reference cell is the reason it cannot be shrugged off: with the
+# rule off, melp_lot1_ctes emits nothing, so the reference is whatever the
+# engine was on the day it ran while the two rule-on cells carry the rule AND
+# whatever else that day's code did. A difference between them is then two
+# changes, and nothing in the CSVs would say so.
+if (identical(melp_check_code(inputs, LOT_ROOT), FALSE))
+  stop("These cells were not built by the engine code reading them. Rebuild ",
+       "all ", length(cells), " with run_aug1_melp.R before reading them - a ",
+       "melphalan number off older code cannot be compared with this one.",
        call. = FALSE)
+st <- melp_settings(inputs)
+cat("All ", length(cells), " cells: cohort attempt ", inputs[[1]]$COHORT_RUN_ID[1],
+    " / ", inputs[[1]]$COHORT_STAMP[1],
+    ", same code, code lists, window and settings\n", sep = "")
+
+# The CAR-T 60-day induction rule is the build these questions are asked of.
+# Off the cells' own recorded settings, and a stop rather than a warning: over
+# a build without it the answers would be about two changes at once and
+# nothing in the CSVs would say so.
+cart <- vapply(inputs, function(r) {
+  v <- melp_parse_settings(r$CONTRACT_SETTINGS[1])[["apply_cart_induction_rule"]]
+  if (is.null(v)) NA_character_ else toupper(trimws(v))
+}, character(1))
+if (any(is.na(cart) | cart != "TRUE"))
+  stop("The CAR-T 60-day induction rule is not recorded as applied in: ",
+       paste(names(cart)[is.na(cart) | cart != "TRUE"], collapse = ", "),
+       ". Rebuild those cells before reading them.", call. = FALSE)
 cat("CAR-T 60-day induction rule applied in all ", length(cells), " cells\n", sep = "")
 
-# Melphalan anywhere in follow-up, fixed once from the reference cell and used
-# for every cell. Each cell's own melphalan patients would let the population
-# move with the rule, and a difference would not say whether the lines changed
-# or the people did. map_stacked is bounded to the patient's observation, so
-# "anywhere in the table" is "anywhere in follow-up".
+# The melphalan abbreviation comes off the cells too, not off this session's
+# config - the tables were written by an earlier run and it is that run's
+# abbreviation the regimen strings carry.
+MELP <- toupper(trimws(st$melp_med_abbr %||% MELP))
+
+# Melphalan anywhere in follow-up, through the package's own definition and
+# fixed once from the reference cell. Each cell's own melphalan patients would
+# let the population move with the rule, and a difference would not say whether
+# the lines changed or the people did.
 ref <- cells[[which(vapply(cells, function(c_i) is.na(c_i$mode), logical(1)))[1]]]
-denom <- paste0("(SELECT DISTINCT PATID FROM ", tbl(ref, "MAP_STACKED"),
-                " WHERE upper(trim(MAP_MED_TYPE)) = '", MELP, "')")
+denom <- paste0("(", melp_exposed_sql(tbl(ref, "MAP_STACKED"), MELP), ")")
 cat("Melphalan anywhere in follow-up: ",
     db_q(con, paste0("SELECT count(*) AS n FROM ", denom, " d"))$n[1],
     " patients\n", sep = "")
@@ -138,25 +154,48 @@ q2 <- per_cell(function(c_i) paste0("
   GROUP BY l.LOT_NUM ORDER BY l.LOT_NUM"))
 
 # --- 3. an SCT inside a melphalan-containing LOT -----------------------------
-# Any transplant the line carries: autologous, allogeneic or CAR-T.
+# A melphalan LOT here is one with a melphalan DOSE between its start and end,
+# not one whose regimen string holds melphalan. The two differ, and the regimen
+# string is the wrong one for this question: a melphalan dose outside the
+# induction window never reaches LOT_BASE_MEDS, and an ALLO line has a blank
+# regimen by construction - allo_lot_span is single_day - so a dose given on
+# that day would be dropped by a regimen test.
+#
+# The transplant expression is melp_sct_sql(), the package's own. It counts
+# AUTO anywhere in the line and ALLO as the line's start type, and leaves CAR-T
+# out: a one-day ALLO line has no inside for a transplant to sit in, and CAR-T
+# is a separate question rather than a third term in this total.
 q3 <- per_cell(function(c_i) paste0("
   SELECT l.LOT_NUM,
          count(DISTINCT l.PATID) AS N_PATIENTS_MELP_LOT,
-         count(DISTINCT CASE WHEN coalesce(l.LOT_TX_AUTO_FLG, 0) = 1
-                               OR coalesce(l.LOT_ALLO_LOT_FLG, 0) = 1
-                               OR coalesce(l.LOT_CART_LOT_FLG, 0) = 1
-                             THEN l.PATID END) AS N_PATIENTS_WITH_SCT
+         count(DISTINCT CASE WHEN ", melp_sct_sql(), " THEN l.PATID END)
+                                 AS N_PATIENTS_WITH_SCT
   FROM ", lines_of(c_i), "
-  WHERE array_contains(split(coalesce(l.LOT_BASE_MEDS, ''), ' '), '", MELP, "')
+  WHERE EXISTS (SELECT 1 FROM ", tbl(c_i, "MAP_STACKED"), " ms
+                 WHERE cast(ms.PATID as string) = cast(l.PATID as string)
+                   AND upper(trim(ms.MAP_MED_TYPE)) = '", MELP, "'
+                   AND ms.MAP_START_DT >= l.LOT_START_DT
+                   AND ms.MAP_START_DT <= l.LOT_BASE_END_DT)
   GROUP BY l.LOT_NUM ORDER BY l.LOT_NUM"))
 
+# A query with no rows still writes, so an earlier run's file cannot sit there
+# looking like this one's answer.
 write_out <- function(d, name, title) {
   cat("\n", title, "\n", sep = "")
-  if (is.null(d) || !nrow(d)) { cat("  (no rows)\n"); return(invisible()) }
-  print(d, row.names = FALSE)
-  utils::write.csv(d, file.path(out_dir, name), row.names = FALSE)
-  cat("  -> ", file.path(out_dir, name), "\n", sep = "")
+  f <- file.path(out_dir, name)
+  if (is.null(d) || !nrow(d)) {
+    cat("  (no rows)\n")
+    utils::write.csv(data.frame(), f, row.names = FALSE)
+  } else {
+    print(d, row.names = FALSE)
+    utils::write.csv(d, f, row.names = FALSE)
+  }
+  cat("  -> ", f, "\n", sep = "")
 }
+
+# A cell rebuilt between the first query and the last would mix two builds, so
+# the read is held to the attempt it started on before anything is written.
+melp_status_unchanged(con, cells, status)
 
 write_out(q1, "melp_ask1_line_duration.csv", "1. Duration of each line")
 write_out(q2, "melp_ask2_melp_lots_by_line.csv",

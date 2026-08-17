@@ -133,6 +133,47 @@ check_melp_plan <- function(cells, study_prefix) {
   invisible(TRUE)
 }
 
+# Clear a cell's prefix before it is rebuilt.
+#
+# A rebuild is CREATE OR REPLACE table by table, which is not the same as a
+# clean prefix. A table the previous build wrote and this one does not is left
+# where it was, carrying the older engine's answer under the new run's prefix,
+# and every guard in this file would pass: LOT_BUILD_STATUS, LOT_RUN_METADATA
+# and the code fingerprint all come off tables the new build DID write. The
+# stale one is only found by whichever reader happens to name it.
+#
+# So the prefix is emptied first and the cell rebuilt into nothing. Anything
+# left behind afterwards is this build's.
+#
+# Scoped by check_melp_plan, which has already refused a prefix that is not a
+# plain object prefix or that collides with the study's - so the LIKE below
+# cannot reach a study table. It runs against the cells' own throwaway
+# prefixes and nothing else.
+melp_drop_cell <- function(con, c_i, study_prefix = "") {
+  check_melp_plan(list(c_i), study_prefix)
+  cfg <- lot_config()
+  where <- paste0(cfg$catalog, ".", cfg$work_schema)
+  got <- db_q(con, paste0("SHOW TABLES IN ", where,
+                          " LIKE '", c_i$prefix, "*'"))
+  # The column is tableName on Databricks and table_name elsewhere; take
+  # whichever is there rather than a positional index, which would silently
+  # pick the database column if the order ever moved.
+  nm <- intersect(c("tableName", "table_name", "TABLE_NAME"), names(got))
+  if (!length(nm))
+    stop("SHOW TABLES returned no table-name column (",
+         paste(names(got), collapse = ", "), "), so ", c_i$id,
+         "'s prefix cannot be shown to be empty before it is rebuilt.",
+         call. = FALSE)
+  tbls <- sort(as.character(got[[nm[1]]]))
+  # Belt and braces. SHOW TABLES ... LIKE is the warehouse's own matcher and
+  # this does not trust it to have been anchored at the start of the name.
+  tbls <- tbls[startsWith(tbls, c_i$prefix)]
+  for (t in tbls) db_exec(con, paste0("DROP TABLE IF EXISTS ", where, ".", t))
+  cat("  cleared ", c_i$id, ": dropped ", length(tbls), " table(s) under ",
+      c_i$prefix, "\n", sep = "")
+  invisible(tbls)
+}
+
 # What every cell has to agree on before any difference between them can be
 # called the rule's.
 #
