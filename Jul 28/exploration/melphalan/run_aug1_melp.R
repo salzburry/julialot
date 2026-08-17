@@ -24,6 +24,10 @@
 # It writes to its own throwaway prefixes and never to the study's. Each cell
 # carries CONTRACT_DEVIATIONS in its LOT_BUILD_STATUS row, so every reader in
 # this folder refuses it as the study's numbers.
+#
+# Each prefix is EMPTIED before it is rebuilt. Anything an earlier run left
+# under it is dropped, so no table can survive into a later cell carrying an
+# older engine's answer - see melp_drop_cell in R/cells.R.
 
 .script_dir <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -109,6 +113,17 @@ main <- function() {
     work_schema = Sys.getenv("PROJECT_WORK_SCHEMA",
                     unset = Sys.getenv("DOMINO_USER_NAME", unset = "")))))
 
+  con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+
+  # Empty each prefix before building into it, so what comes back is this run's
+  # and only this run's. A rebuild alone does not give that: it replaces the
+  # tables it writes and leaves anything else the previous build left, under
+  # the same prefix and past every guard here. See melp_drop_cell.
+  cat("\nClearing the prefixes. Whatever was built under them is gone after ",
+      "this.\n", sep = "")
+  for (c_i in cells) melp_drop_cell(con, c_i, study)
+
   built <- vapply(cells, function(c_i) run_cell(c_i, cohort, cohort_pfx), logical(1))
   # All three, not "the reference plus whatever worked". The experiment is the
   # three-way comparison: without one mode the transplant question is not
@@ -120,9 +135,6 @@ main <- function() {
          ". The result is the comparison between all three, so a partial run is ",
          "not a smaller answer - it is no answer. See the logs in ", out_dir, ".",
          call. = FALSE)
-
-  con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
-  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
   # The reading half is melp_report(), in cells.R, because read_melp_metrics.R
   # runs the same half on its own when this one dies after the builds land.

@@ -231,6 +231,56 @@ ok(all(vapply(cells[-1], function(c_i) c_i$mode %in% MELP_RULE_MODES, logical(1)
 runs(check_melp_plan(cells, "ndmm_"), "the plan is safe to run beside the study")
 stops(check_melp_plan(cells, "melp_reference_"),
       "a cell that would write over the study's own prefix is refused")
+
+# --- clearing a prefix before it is rebuilt ---------------------------------
+# No warehouse, so db_q and db_exec are replaced for this block: the first
+# answers SHOW TABLES from a fixture, the second records what it was asked to
+# drop. What is under test is which names come out, and there is no way to
+# check that against a real connection here.
+local({
+  seen <- character(0)
+  listed <- c("melp_reference_LOT_LONG_FINAL", "melp_reference_MAP_STACKED",
+              "melp_reference_OLD_TABLE_FROM_A_PREVIOUS_BUILD",
+              # What SHOW TABLES ... LIKE must not be trusted to have excluded.
+              "ndmm_LOT_LONG_FINAL", "xmelp_reference_STRAY")
+  fake <- function(cols) {
+    assign("db_q", function(con, sql) setNames(list(listed), cols[1]),
+           envir = globalenv())
+    assign("db_exec", function(con, sql) { seen <<- c(seen, sql); 1L },
+           envir = globalenv())
+  }
+  # lot_config too: this suite never loads the engine's config machinery, and
+  # sourcing it here to reach two fields would make the whole test depend on it.
+  assign("lot_config", function() list(catalog = "cat", work_schema = "wrk"),
+         envir = globalenv())
+
+  fake("tableName")
+  dropped <- melp_drop_cell(NULL, cells[[1]], "ndmm_")
+  ok(identical(dropped, sort(c("melp_reference_LOT_LONG_FINAL",
+                               "melp_reference_MAP_STACKED",
+                               "melp_reference_OLD_TABLE_FROM_A_PREVIOUS_BUILD"))),
+     "the prefix is emptied - including a table this build no longer writes")
+  ok(!any(grepl("ndmm_|xmelp_", seen)),
+     "...and nothing outside the cell's own prefix is touched")
+  ok(length(seen) == 3L && all(startsWith(seen, "DROP TABLE IF EXISTS cat.wrk.")),
+     "...one drop per table, fully qualified")
+
+  # The name column is tableName on Databricks and table_name elsewhere. Taken
+  # positionally this would pick whichever column came first and drop nothing.
+  seen <- character(0); fake("table_name")
+  ok(length(melp_drop_cell(NULL, cells[[1]], "ndmm_")) == 3L,
+     "the table-name column is found by name, not by position")
+  seen <- character(0); fake("database")
+  stops(melp_drop_cell(NULL, cells[[1]], "ndmm_"),
+        "a listing with no recognisable name column stops rather than dropping nothing quietly")
+
+  # The guard that keeps this away from the study, on the destructive path too.
+  seen <- character(0); fake("tableName")
+  stops(melp_drop_cell(NULL, cells[[1]], "melp_reference_"),
+        "clearing refuses the study's own prefix, not just building does")
+  ok(!length(seen), "...and refuses it before issuing any drop")
+  rm("db_q", "db_exec", "lot_config", envir = globalenv())
+})
 rs <- paste(readLines(file.path(ROOT, "run_aug1_melp.R"), warn = FALSE), collapse = "\n")
 # The building half is the runner's; the reading half is melp_report() in
 # cells.R, because read_melp_metrics.R runs that half on its own. Checks about
