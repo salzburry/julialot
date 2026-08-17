@@ -179,19 +179,43 @@ main <- function() {
   # its tandem flag, so both being 1 cannot survive the projection and a check
   # over the published columns can never fail.
   #
-  # Probed rather than assumed, and carried in p rather than in t. The LOT2-5
-  # loop stops at the first line with no patients to roll forward, so a run
-  # that reached LOT3 wrote no LOT4_SCT. In t, naming a table that is not there
-  # SKIPS the check; here it just shortens the union, which answers the
-  # question for the lines that exist instead of refusing to answer at all.
+  # The line numbers come from the run's own published table, because max_lot is
+  # a CONTRACT SETTING and not a property of the run. Looping seq(2, max_lot)
+  # and taking any readable table meant retained tables counted: per-line stage
+  # tables are deliberately kept, and a run only replaces the lines it builds.
+  #
+  #   prior run reached LOT5  -> LOT4_SCT and LOT5_SCT remain
+  #   this run reached LOT3   -> it rewrites neither
+  #   E1 read LOT1..LOT5      -> judged THIS run on the previous one's patients
+  #
+  # So a retained LOT4_SCT is ignored because this run has no LOT4 - a reason,
+  # not the accident of whether the table happened to read.
+  #
+  # AND AN EXPECTED TABLE THAT WILL NOT READ IS AN ERROR. `tryCatch(FALSE)`
+  # made "the table is not there" and "the table is there and broken"
+  # indistinguishable, and both shortened the union silently - so the check
+  # reported a clean result over the lines it managed to read. A line this run
+  # BUILT must have its raw SCT table readable, or QC stops and says which.
   p$sct_extra <- local({
+    lots <- tryCatch(
+      db_q(con, paste0("SELECT DISTINCT LOT_NUM FROM ", t$final,
+                       " WHERE LOT_NUM >= 2 ORDER BY LOT_NUM"))$LOT_NUM,
+      error = function(e) integer(0))
+    lots <- sort(unique(as.integer(lots[!is.na(lots)])))
     got <- character(0)
-    for (k in seq(2L, p$max_lot)) {
+    missing <- character(0)
+    for (k in lots) {
       nm <- lot_out(paste0("LOT", k, "_SCT"))
       okk <- isTRUE(tryCatch({ db_q(con, paste0("SELECT 1 FROM ", nm, " LIMIT 1")); TRUE },
                              error = function(e) FALSE))
-      if (okk) got[as.character(k)] <- nm
+      if (okk) got[as.character(k)] <- nm else missing <- c(missing, nm)
     }
+    if (length(missing))
+      stop("QC cannot validate transplants for lines this run built: ",
+           paste(missing, collapse = ", "), " unreadable. A missing raw SCT ",
+           "table used to shorten E1's union silently, so the check passed ",
+           "over the lines it could read. Fix the table or the prefix; do not ",
+           "run QC without it.", call. = FALSE)
     got
   })
   cat("  raw transplant tables: LOT1",

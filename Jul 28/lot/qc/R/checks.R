@@ -93,6 +93,23 @@ qc_window_sql <- function(t, p, per_line = FALSE) {
     )")
 }
 
+# The returning-drug exemption. C2's `why` states the rule and why the lag has
+# to be the immediately-preceding episode; this is the one copy of the SQL.
+#
+# One definition for the same reason qc_window_sql() has one: C2 and C3 both
+# lean on this exemption, and two copies of a rule is how the two stop
+# describing the same rule. They were still byte-identical when this was
+# extracted, which is the moment to do it rather than after they have drifted.
+#
+# No leading newline or indent, so each call site keeps its own layout and the
+# emitted SQL is byte-identical to the two copies this replaced.
+qc_restart_sql <- function(t) paste0("restart AS (
+      SELECT cast(PATID as string) AS PATID, MAP_MED_TYPE, MAP_START_DT,
+             coalesce(lag(MAP_DISCON_FLG) OVER (PARTITION BY PATID, MAP_MED_TYPE
+                                    ORDER BY MAP_START_DT), 0) AS PREV_DISCON
+      FROM ", t$map, "
+    )")
+
 LOT_QC_CHECKS <- list(
 
   # ---- A. Line structure ---------------------------------------------------
@@ -517,12 +534,7 @@ LOT_QC_CHECKS <- list(
                     "that discontinued once and has been running since."),
        needs = c("final", "map"),
        sql = function(t, p) counted(paste0("
-    WITH restart AS (
-      SELECT cast(PATID as string) AS PATID, MAP_MED_TYPE, MAP_START_DT,
-             coalesce(lag(MAP_DISCON_FLG) OVER (PARTITION BY PATID, MAP_MED_TYPE
-                                    ORDER BY MAP_START_DT), 0) AS PREV_DISCON
-      FROM ", t$map, "
-    )
+    WITH ", qc_restart_sql(t), "
     SELECT ", mask("f.PATID"), " AS pid, f.LOT_NUM,
            f.LOT_BASE_1ST_ADD_MED AS med
     FROM ", t$final, " f
@@ -567,12 +579,7 @@ LOT_QC_CHECKS <- list(
       FROM ", t$final, "
       WHERE LOT_BASE_1ST_ADD_MED_DT IS NOT NULL
     ),
-    restart AS (
-      SELECT cast(PATID as string) AS PATID, MAP_MED_TYPE, MAP_START_DT,
-             coalesce(lag(MAP_DISCON_FLG) OVER (PARTITION BY PATID, MAP_MED_TYPE
-                                    ORDER BY MAP_START_DT), 0) AS PREV_DISCON
-      FROM ", t$map, "
-    )
+    ", qc_restart_sql(t), "
     SELECT ", mask("a.PATID"), " AS pid, a.LOT_NUM,
            count(DISTINCT ms.MAP_MED_TYPE) AS n_tied
     FROM add_lines a
@@ -920,27 +927,39 @@ LOT_QC_CHECKS <- list(
                 collapse = " UNION ALL\n      "), "
     ),
     reach AS (
-      SELECT LOT_NUM, count(DISTINCT PATID) AS n
+      -- BOTH FIGURES THE WRITER RECORDS. The attrition writer stores
+      -- N_PATIENTS and N_LINES per progression row, and this compared only the
+      -- first - so a row claiming the right patient count and the wrong line
+      -- count reconciled. The 'correct' synthetic fixture demonstrated it:
+      -- three patients over five lines were written as LOT1 3/5, LOT2 1/3,
+      -- LOT3 1/1 and labelled a good progression set, when the lines say
+      -- 3/3, 1/1, 1/1. An external review found both the gap and the fixture.
+      SELECT LOT_NUM, count(DISTINCT PATID) AS n, count(*) AS n_lines
       FROM ", t$final, " GROUP BY LOT_NUM
     ),
     said AS (
       SELECT cast(regexp_extract(STEP, 'LOT([0-9]+)', 1) as int) AS LOT_NUM,
-             max(N_PATIENTS) AS N_PATIENTS, count(*) AS n_rows
+             max(N_PATIENTS) AS N_PATIENTS, max(N_LINES) AS N_LINES,
+             count(*) AS n_rows
       FROM ", t$attrition, "
       WHERE RUN_ID = '", p$run_id, "' AND KIND = 'progression'
       GROUP BY cast(regexp_extract(STEP, 'LOT([0-9]+)', 1) as int)
     )
     SELECT coalesce(w.LOT_NUM, s.LOT_NUM) AS LOT_NUM,
            coalesce(s.n_rows, 0) AS rows_written,
-           s.N_PATIENTS AS said, coalesce(r.n, 0) AS actual
+           s.N_PATIENTS AS said, coalesce(r.n, 0) AS actual,
+           s.N_LINES AS said_lines, coalesce(r.n_lines, 0) AS actual_lines
     FROM want w
     FULL OUTER JOIN said s ON s.LOT_NUM = w.LOT_NUM
     LEFT JOIN reach r ON r.LOT_NUM = coalesce(w.LOT_NUM, s.LOT_NUM)
     WHERE w.LOT_NUM IS NULL
        OR coalesce(s.n_rows, 0) <> 1
-       OR s.N_PATIENTS <> coalesce(r.n, 0)"),
+       OR s.N_PATIENTS <> coalesce(r.n, 0)
+       OR coalesce(s.N_LINES, -1) <> coalesce(r.n_lines, 0)"),
     paste0("concat('LOT', LOT_NUM, ': ', rows_written, ' row(s), funnel says ',",
-           " coalesce(cast(said as string), 'nothing'), ', lines say ', actual)"))),
+           " coalesce(cast(said as string), 'nothing'), '/',",
+           " coalesce(cast(said_lines as string), 'nothing'),",
+           " ' (patients/lines), lines say ', actual, '/', actual_lines)"))),
 
   list(id = "F4", group = "Reconciliation", severity = "fail",
        what = "the run has exactly one metadata row",

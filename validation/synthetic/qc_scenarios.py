@@ -49,9 +49,17 @@ def _lines(pats):
 
 
 # Three patients, five lines between them: P1 reaches LOT3, P2 LOT1, P3 LOT1.
+#
+# N_LINES ON A PROGRESSION ROW IS count(*) FOR THAT LOT, not the cohort total.
+# P1/P2/P3 each hold a LOT1, so LOT1 has three lines; only P1 holds a LOT2 and a
+# LOT3, so those have one each. This set read 3/5, 1/3, 1/1 - the cohort's total
+# line count pasted into LOT1, and a 3 in LOT2 from nothing at all - and was
+# labelled a correct progression set. It passed because F3 compared only
+# N_PATIENTS and never read N_LINES, so the fixture written to demonstrate a
+# GOOD funnel was itself an instance of the defect. An external review found it.
 GOOD_LINES = {"P1": 3, "P2": 1, "P3": 1}
-GOOD_PROGRESSION = [(10, "progression", "Reached LOT1", 3, 5),
-                    (11, "progression", "Reached LOT2", 1, 3),
+GOOD_PROGRESSION = [(10, "progression", "Reached LOT1", 3, 3),
+                    (11, "progression", "Reached LOT2", 1, 1),
                     (12, "progression", "Reached LOT3", 1, 1),
                     (13, "progression", "Reached LOT4", 0, 0),
                     (14, "progression", "Reached LOT5", 0, 0)]
