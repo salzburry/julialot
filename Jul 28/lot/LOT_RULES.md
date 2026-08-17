@@ -720,10 +720,12 @@ initiation, which is a clinical question and not a protocol reading.
   nothing else happens in between either — no non-steroid medication starting, no
   CAR-T — is a study-team decision, not something the protocol establishes, and
   it governs where the two differ. §6.3.
-- **A regimen is what was dispensed in the window, not what was available —
-  and this one is open.** The protocol says a later line's regimen is "all MM
-  therapies identified during the first 30 days of the LOT". The build reads
-  that as an episode *starting* in the window. So an agent whose cover runs
+- **A regimen is the agents whose supply episode STARTED in the window — and
+  this one is open.** Not what was available, and not simply what was
+  dispensed: a dispense under live cover extends the open episode and starts
+  none, so it does not join either. The protocol says a later line's regimen is
+  "all MM therapies identified during the first 30 days of the LOT". The build
+  reads that as an episode *starting* in the window. So an agent whose cover runs
   through the window without lapsing is not in the regimen. Nor is one
   dispensed inside the window while its own cover was live, because that
   dispense extends the existing episode. Two clinically identical patients can

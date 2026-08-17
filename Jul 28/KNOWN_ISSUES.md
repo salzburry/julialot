@@ -98,10 +98,11 @@ not exist. Which is why the answer moves more than regimen strings.
     under (c):  LOT3 starts d205 on LEN, because nothing excludes it
     under (b):  LEN was LOT2's agent and cannot start a line
 
-With a BORT at d210 that turns `LOT3 = BORT` into `LOT3 = LEN BORT` starting
-five days earlier. With no BORT at all it is an **extra line** that should not
-exist. So this is not confined to regimen strings: it moves start dates, start
-types and line counts.
+With a BORT at d210 the two readings differ on whether `LOT3` is `BORT` or
+`LEN BORT`, and on whether it starts five days earlier. With no BORT at all
+they differ on whether that line exists. So the answer is not confined to
+regimen strings: it moves start dates, start types and line counts. Which of
+the two is right is the question, not something this entry settles.
 
 **What it would move.** `LOT_BASE_MEDS` and `LOT_MED_CNT` on later lines, the
 per-agent flags, line starts and counts through the exclusion above, and the
@@ -115,10 +116,11 @@ LOT", which reads wider than (c) — but reading it as (b) is an interpretation,
 not something the text settles. Answering (b) makes this a change to the build;
 answering (c) closes the entry.
 
-**Counts.** `4.2-prior-agent-covered-but-not-in-the-regimen` sizes the regimen
-half. The propagation needs its own count — lines started by an agent that was
-in the regimen two lines back but not one — which is not yet written. Neither
-has been run.
+**Counts.** Both halves have a count and neither has been run.
+`4.2-prior-agent-covered-but-not-in-the-regimen` sizes the regimen half, and
+`4.3-line-started-by-an-agent-from-two-lines-back` sizes the propagation — the
+lines whose regimen holds an agent present two lines back and absent one line
+back. Both are in `exploration/lot/run_scenario_counts.R`.
 
 `lot/LOT_RULES.md` §4.2, §12 and §14.3.
 

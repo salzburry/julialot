@@ -248,7 +248,17 @@ LOT_QC_CHECKS <- list(
                     "reading a line's AUTOs at the first allogeneic or CAR-T ",
                     "event, so an AUTO after one of those is not an orphan but ",
                     "a transplant the line was never asked to hold open. The ",
-                    "same censor is applied here."),
+                    "same censor is applied here - and from the same day the ",
+                    "build applies it. LOT1 censors from its start date; LOT2 ",
+                    "and later censor from the day AFTER, so the transplant ",
+                    "that STARTED the line is not read as a censor on it. ",
+                    "Taking the LOT1 rule everywhere switched this check off ",
+                    "for every CAR-T-started and allograft-started line: the ",
+                    "start event sits on the start date, so it censored every ",
+                    "later AUTO and the check could not fire. That is the one ",
+                    "shape where an orphan is most likely, because a CAR-T ",
+                    "line with no consolidation ends on its own start date and ",
+                    "its whole window sits after the end."),
        needs = c("long", "auto", "allo"),
        sql = function(t, p) counted(paste0("
     SELECT ", mask("a.PATID"), " AS pid, l.LOT_NUM, a.TX_DT AS tx
@@ -267,7 +277,8 @@ LOT_QC_CHECKS <- list(
         SELECT 1 FROM ", t$allo, " x
         WHERE x.PATID = a.PATID
           AND x.SCT_TYPE IN ('ALLO', 'CART')
-          AND x.TX_DT >= l.LOT_START_DT
+          AND ((l.LOT_NUM = 1  AND x.TX_DT >= l.LOT_START_DT)
+            OR (l.LOT_NUM  > 1 AND x.TX_DT >  l.LOT_START_DT))
           AND x.TX_DT <= a.TX_DT",
       # An in-induction CAR-T is part of LOT1 and does not censor - the build
       # keeps reading LOT1's AUTOs past it, so this check must too. It is the
@@ -546,7 +557,7 @@ LOT_QC_CHECKS <- list(
     WHERE LOT1_TX_ENDDATE IS NOT NULL
       AND LOT1_TX_ENDDATE < LOT1_START_DT"), "pid")),
 
-  list(id = "E5", group = "Transplant", severity = "warn",
+  list(id = "E5", group = "Transplant", severity = "fail",
        what = "every processed autologous transplant belongs to some line",
        why = paste0("The one failure mode the other transplant checks cannot ",
                     "see. Every check beside this one starts from a line and ",
@@ -561,17 +572,20 @@ LOT_QC_CHECKS <- list(
                     "by design; asking the same question of those events needs a ",
                     "different one, and answering it here would report every ",
                     "correctly handled ALLO as an orphan. ",
-                    "Two ways an unassigned event is allowed, and it takes only ",
-                    "one. It may trail the last line - but only once the build ",
-                    "has run out of lines to give it, because with fewer than ",
-                    "max_lot lines there was still a line available and the ",
-                    "event is the missing next line. Or it may sit in a gap ",
-                    "between lines the build has already used up. Joined with ",
-                    "AND these two cancelled: a trailing event on a patient with ",
-                    "room for another line failed the date half and went ",
-                    "unreported, which is the orphan this check exists to find. ",
-                    "Warn rather than fail: an event past the end of ",
-                    "observation is data, not a defect."),
+                    "There is ONE excuse and it has two conditions, both ",
+                    "required: the build has run out of lines to give the event ",
+                    "(max_lot reached) AND the event trails the last line. With ",
+                    "fewer than max_lot lines a line was still available, so an ",
+                    "unassigned event is the missing next line. Inside the span ",
+                    "of the lines that exist, it is an event that fell in a gap ",
+                    "between two of them. ",
+                    "A failure, not a warning. This was a warn on the reasoning ",
+                    "that an event past the end of observation is data rather ",
+                    "than a defect - but 05_sct.R bounds every claim source to ",
+                    "the patient's INDEX_DATE and OBS_END_DT, so TX_AUTO_DATES ",
+                    "cannot hold one. Nothing this returns is explained by ",
+                    "follow-up running out, so every row is an ownership ",
+                    "failure. E5b carries the one case that is not."),
        needs = c("long", "auto"),
        sql = function(t, p) counted(paste0("
     SELECT a.pid, a.dt, a.n_lines
@@ -581,12 +595,35 @@ LOT_QC_CHECKS <- list(
       FROM ", t$auto, " x
     ) a
     LEFT JOIN ", t$long, " l ON a.k = l.PATID
+    WHERE a.n_lines > 0
     GROUP BY a.pid, a.k, a.dt, a.n_lines
     HAVING sum(CASE WHEN a.dt BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT
                     THEN 1 ELSE 0 END) = 0
        AND (a.n_lines < ", p$max_lot, "
             OR a.dt <= max(l.LOT_BASE_END_DT))"),
     "concat(pid, ' @ ', dt, ' with ', n_lines, ' lines')")),
+
+  list(id = "E5b", group = "Transplant", severity = "warn",
+       what = "transplants on a patient the build gave no line at all",
+       why = paste0("The case E5 is scoped away from, kept as its own number ",
+                    "rather than dropped. A line starts on a non-steroid ",
+                    "medication episode, so a patient whose claims produced a ",
+                    "transplant but no such episode gets no LOT1 and their ",
+                    "transplant belongs to nothing. That is not a defect in how ",
+                    "lines are built - there was no line to build - it is the ",
+                    "same disagreement between the cohort's own indexing and ",
+                    "this package's episode derivation that the attrition ",
+                    "funnel reports as a RECONCILIATION step. ",
+                    "Kept out of E5 so that check can fail: folded in, a run ",
+                    "would go red on a known cohort question rather than on an ",
+                    "ownership defect, and the two would be indistinguishable ",
+                    "in the report."),
+       needs = c("long", "auto"),
+       sql = function(t, p) counted(paste0("
+    SELECT ", mask("x.PATID"), " AS pid, x.TX_DT AS dt
+    FROM ", t$auto, " x
+    WHERE NOT EXISTS (SELECT 1 FROM ", t$long, " c WHERE c.PATID = x.PATID)"),
+    "concat(pid, ' @ ', dt)")),
 
   # ---- F. The tables against each other ------------------------------------
 

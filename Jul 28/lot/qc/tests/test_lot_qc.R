@@ -215,8 +215,18 @@ ok(identical(Filter(function(c_i) identical(c_i$id, "B9"), LOT_QC_CHECKS)[[1]]$s
 # is still inside the 60-day window.
 ok(has(SQL$B5c, "NOT EXISTS") && has(SQL$B5c, "x.SCT_TYPE IN ('ALLO', 'CART')"),
    "B5c applies the same ALLO/CAR-T censor the build applies")
-ok(has(SQL$B5c, "x.TX_DT >= l.LOT_START_DT") && has(SQL$B5c, "x.TX_DT <= a.TX_DT"),
-   "...only for an event between the line start and the transplant it is judging")
+ok(has(SQL$B5c, "x.TX_DT <= a.TX_DT"),
+   "...only for an event at or before the transplant it is judging")
+# And from the day the build censors from. 05b_lot1_sct.R reads LOT1's boundary
+# events with >= the line start; 10_lot2_5_base.R reads a later line's with >,
+# so the transplant that STARTED that line is not a censor on it. Taking LOT1's
+# rule everywhere switched this check off for every CAR-T-started and
+# ALLO-started line: the start event sits on the start date and censored
+# everything after it, so no orphan could ever be reported.
+ok(has(SQL$B5c, "(l.LOT_NUM = 1  AND x.TX_DT >= l.LOT_START_DT)"),
+   "...censoring LOT1 from its start date, as 05b_lot1_sct.R does")
+ok(has(SQL$B5c, "(l.LOT_NUM  > 1 AND x.TX_DT >  l.LOT_START_DT)"),
+   "...and a later line from the day after, so its own start event is not a censor")
 # The exemption follows the run. With the CAR-T induction rule on, an infusion
 # inside LOT1's window is part of LOT1 and does not stop the build reading
 # LOT1's later AUTOs - so it must not stop this check either.
@@ -228,12 +238,34 @@ ok(P$cart_exempt && has(SQL$B5c, "x.SCT_TYPE = 'CART' AND l.LOT_NUM = 1"),
 ok(!noexempt$cart_exempt &&
      !has(b5c$sql(TBL, noexempt), "x.SCT_TYPE = 'CART' AND l.LOT_NUM = 1"),
    "...and does not, when the run did not")
-# E5 allows an unassigned transplant for either of two reasons, and it takes
-# only one of them. Joined with AND they cancelled: a trailing event on a
-# patient with room for another line failed the date half and went unreported -
-# the orphan the check exists to find.
+# E5 has one excuse with two conditions, both needed: the build ran out of
+# lines AND the event trails the last one. Negated, that is the OR below.
+# Joined the other way the two cancelled: a trailing event on a patient with
+# room for another line failed the date half and went unreported - the orphan
+# the check exists to find.
 ok(has(SQL$E5, "AND (a.n_lines < 5\n            OR a.dt <= max(l.LOT_BASE_END_DT))"),
-   "E5 excuses an unassigned transplant on either ground, not only on both")
+   "E5 reports an unassigned transplant unless BOTH conditions excuse it")
+# Every claim source in 05_sct.R is bounded to [INDEX_DATE, OBS_END_DT], so
+# TX_AUTO_DATES cannot carry an event past the end of follow-up. That was the
+# stated reason for reporting rather than failing, and it does not hold.
+e5 <- Filter(function(c_i) identical(c_i$id, "E5"), LOT_QC_CHECKS)[[1]]
+ok(identical(e5$severity, "fail"),
+   "...and a row in it fails the run, since no row can be explained by follow-up")
+sct_src <- paste(readLines(file.path(dirname(ROOT), "engine", "R", "steps", "05_sct.R"),
+                           warn = FALSE), collapse = "\n")
+ok(!has(sct_src, "FST_DT AS date) >= p.INDEX_DATE\n") ||
+     length(gregexpr("<= p.OBS_END_DT", sct_src, fixed = TRUE)[[1]]) ==
+     length(gregexpr(">= p.INDEX_DATE", sct_src, fixed = TRUE)[[1]]),
+   "...which rests on every SCT claim source being bounded at both ends")
+# The one case E5 cannot judge, kept as its own number rather than folded in.
+# A patient with no line has no ownership to check; that is the funnel's
+# reconciliation question, and folding it in would turn a known cohort
+# disagreement into a red run indistinguishable from a real orphan.
+ok(has(SQL$E5, "WHERE a.n_lines > 0"),
+   "E5 asks only about patients who have a line at all")
+e5b <- Filter(function(c_i) identical(c_i$id, "E5b"), LOT_QC_CHECKS)[[1]]
+ok(identical(e5b$severity, "warn") && has(SQL$E5b, "NOT EXISTS"),
+   "...and E5b reports the patients with none, without failing the run")
 ok(has(SQL$E2, "< 60") && has(SQL$E2, "> 180"),
    "E2 holds a tandem pair to the recorded 60-to-180 band")
 ok(has(SQL$E3, "= 180"),
