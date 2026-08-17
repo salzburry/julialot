@@ -720,14 +720,17 @@ initiation, which is a clinical question and not a protocol reading.
   nothing else happens in between either — no non-steroid medication starting, no
   CAR-T — is a study-team decision, not something the protocol establishes, and
   it governs where the two differ. §6.3.
-- **A regimen is what was dispensed in the window, not what was available.** The
-  protocol says a later line's regimen is "all MM therapies identified during the
-  first 30 days of the LOT". The build reads that as an episode *starting* in the window. So an agent whose
-cover runs through the window without lapsing is not in the regimen. Nor is one
-dispensed inside the window while its own cover was live, because that dispense
-extends the existing episode. Two clinically identical patients can therefore get
-  different regimens depending on whether one of them missed a fill. Settled this
-  way by the study team and pinned by the engine suite; §4.2 has the mechanics,
+- **A regimen is what was dispensed in the window, not what was available —
+  and this one is open.** The protocol says a later line's regimen is "all MM
+  therapies identified during the first 30 days of the LOT". The build reads
+  that as an episode *starting* in the window. So an agent whose cover runs
+  through the window without lapsing is not in the regimen. Nor is one
+  dispensed inside the window while its own cover was live, because that
+  dispense extends the existing episode. Two clinically identical patients can
+  therefore get different regimens depending on whether one of them missed a
+  fill. The engine suite pins the build's behaviour, and the build has always
+  worked this way, but nothing located so far records a decision between the
+  episode start and the claim date. §4.2 has the mechanics, §14.3 the question,
   and `run_scenario_counts.R`'s
   `4.2-prior-agent-covered-but-not-in-the-regimen` is what would size it.
 - **The discontinuation confirmation buffer is applied**,
@@ -740,8 +743,6 @@ extends the existing episode. Two clinically identical patients can therefore ge
   confirmation in its own right, so the run-out stands and the next line opens.
   Gating on elapsed observation alone would have merged those two lines into
   one. §7.5 already takes that position against `DEATH`. §5.3.
-- **Regimen membership is an episode start, and the protocol reads wider.**
-  §3.3.
 - **A CAR-T-started line consolidates for 45 days, and the spec says 30.** The
   code's own header records the supersede — `cart_consolidation_days = 45
   (supersedes the earlier 30d value)`, `10_lot2_5_base.R` — so this is a
@@ -784,9 +785,9 @@ extends the existing episode. Two clinically identical patients can therefore ge
 
 ## 14. Still open
 
-Two things that need a ruling rather than a closer reading of the code. Both
-are also in `KNOWN_ISSUES.md`, one level up, written as questions to put to the
-study team — this section is the analysis, that one is the ask.
+Three things that need a ruling rather than a closer reading of the code. All
+three are also in `KNOWN_ISSUES.md`, one level up, written as questions to put
+to the study team — this section is the analysis, that one is the ask.
 
 ### 14.1 The CAR-T consolidation window: 45 days, where the spec says 30
 
@@ -840,6 +841,39 @@ What it would move: end reasons and end dates for patients who ran out, were
 observed for the full buffer, never returned, and then died — so
 `LOT_BASE_LENGTH`, `TTD`, and the attrition split between died and
 discontinued. Not line counts.
+
+### 14.3 Whether a regimen is joined by a claim or by an episode start
+
+§4.2's mechanics, asked as a question. The build tests `MAP_START_DT`, so an
+agent joins a later line's regimen only if its own cover lapsed and it
+restarted inside the window. A dispense arriving while cover is live extends
+the open episode (§2.3) and leaves no start date behind, so the claim is
+invisible to the test.
+
+Three readings are possible and the build is on the third:
+
+| | rule | in the regimen? |
+|---|---|---|
+| a | cover overlaps the window | rejected — this is the wide reading |
+| b | a **claim** falls in the window | the alternative, unrecorded either way |
+| c | an **episode starts** in the window | what the build does, and always has |
+
+It bites hardest on the agents that get continued across a line boundary, which
+in myeloma is most of them. And it does not stop at the regimen string: the
+prior-regimen exclusion looks one line back only, so an agent wrongly absent
+from line 2's regimen is also absent from line 3's exclusion set and becomes
+able to *start* line 3 — a line start, a line count, not just a name.
+
+`mma_med_processed` carries every claim with its date, and it is built before
+the regimen step, so reading (b) is not blocked by the data. It is not a table
+swap either: `map_med` filters and rolls up claims that the raw table still
+carries, so a claim test has to be restricted to claims inside an episode the
+build kept.
+
+**Open.** Nothing located so far records a decision between (b) and (c). The
+protocol's "all MM therapies identified during the first 30 days of the LOT"
+reads wider than (c), but reading it as (b) is an interpretation rather than
+something the text settles. `KNOWN_ISSUES.md` #1 is the ask.
 
 ## 15. What stops a run
 

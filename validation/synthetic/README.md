@@ -25,8 +25,24 @@ hold whatever the rules are.
 > outside observation · line numbers contiguous from 1 · each line starts after
 > the previous ends · end reasons from the known set · `DISCONTINUATION`
 > carries a date · no unconfirmed discontinuation (B8) · nothing past the cap ·
+> no transplant inside a line's own window that the line ended before (B5c) ·
 > 3L ⊆ 2L · a cohort's index is that line's start · no cohort row without both
 > enrolment flags
+
+One number is printed and not failed: transplants that landed in no line at
+all. `E5` in the QC catalogue is a warn for the same reason — one of those can
+be an event past the end of the data, which is data rather than a defect. What
+matters is the number moving between two runs.
+
+## Four patients that are not drawn
+
+Everything else is random. That is the point, and it means a rule reached only
+by a narrow combination of dates can go untested for a whole run. Four patients
+are built by hand so they are always present: a regimen that runs out early
+with a transplant later in the same window, the same one day outside it, a
+tandem partner far beyond the window, and an allograft that ends the line
+before an in-window transplant. They are patients, not fixtures — nothing says
+what their lines should come back as.
 
 ## Two things it tells you that a green suite will not
 

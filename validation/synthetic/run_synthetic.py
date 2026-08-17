@@ -118,7 +118,51 @@ def generate(seed, n):
                                  obs_end + rnd.choice([0, 100]))],
                          strict=[(index - rnd.choice([100, 365]),
                                   obs_end - rnd.choice([0, 0, 50, 200]))]))
-    return pats
+    return pats + planted()
+
+
+def planted():
+    """The shapes a random draw reaches too rarely to rely on.
+
+    Everything above is drawn. That is the point of the harness, but it means a
+    rule reached by a narrow combination of dates can go untested for a whole
+    run and the coverage line reads zero. The four below are built by hand so
+    they are always there.
+
+    All four are the same combination: a regimen that runs out EARLY and a
+    transplant later in the same window. That is what SCT_AUTO_CONT exists for,
+    and drawing it needs a short supply and a transplant in the right 60 days
+    at once.
+
+    Still no expected answers. These are patients, not fixtures - they widen
+    what the invariants are asked about, and nothing here says what any line
+    should come back as.
+    """
+    ix, out = 300, []
+
+    def pat(pid, maps, auto=(), ac=()):
+        obs = ix + 1200
+        out.append(dict(pid=pid, index=ix, death=None, obs_end=obs,
+                        maps=maps, sct_ac=list(ac), sct_auto=list(auto),
+                        spans=[(ix - 365, obs)], strict=[(ix - 365, obs)]))
+
+    # Cover to day 19, transplant on day 40 - inside line 1's 60-day window,
+    # and 21 days after the line would otherwise have run out.
+    pat('P0000', [('LEN', 'IMID', ix, ix + 19, 0)], auto=[ix + 40])
+    # The same patient with the transplant one day past the window, where it
+    # cannot hold line 1 open and has to land somewhere else.
+    pat('P0001', [('LEN', 'IMID', ix, ix + 19, 0)], auto=[ix + 60])
+    # In-window transplant with a tandem partner far outside it. The partner
+    # follows the first only because nothing happens between them.
+    pat('P0002', [('LEN', 'IMID', ix, ix + 19, 0)],
+        auto=[ix + 40, ix + 40 + 179])
+    # An allograft on day 9 ends line 1 before the day-40 transplant. The build
+    # stops reading a line's transplants at the first allograft, so that
+    # transplant is not line 1's to hold - the case a check without the same
+    # censor reports as an orphan.
+    pat('P0003', [('LEN', 'IMID', ix, ix + 19, 0)],
+        auto=[ix + 40], ac=[('ALLO', ix + 9)])
+    return out
 
 
 def coalesce_same_drug(maps):
@@ -265,8 +309,12 @@ def run_chain(con, sqldir):
         con.execute(to_duckdb(open(os.path.join(sqldir, f'sub_{n}l.sql')).read()))
 
 
-REASONS = ('SCT_ALLO','SCT_CART','SCT_AUTO','SCT','CART_INIT','MED_ADD',
-           'DEATH','DISCONTINUATION','STUDY_END')
+# SCT_AUTO_CONT is in the set: a transplant inside a line's own window holds
+# that line open and ends it ON the transplant date. Left out, every patient
+# who reaches that branch fails "an end reason outside the known set" - the
+# harness reporting its own list as a defect in the build.
+REASONS = ('SCT_ALLO','SCT_CART','SCT_AUTO','SCT_AUTO_CONT','SCT','CART_INIT',
+           'MED_ADD','DEATH','DISCONTINUATION','STUDY_END')
 
 CHECKS = [
  ("a line ends before it starts",
@@ -321,6 +369,40 @@ CHECKS = [
  ("a cohort patient with no such line",
   "SELECT c.PATID FROM coh_2l c WHERE NOT EXISTS "
   "(SELECT 1 FROM lot_long l WHERE l.PATID = c.PATID AND l.LOT_NUM = 2)"),
+ # Ownership. Every other invariant here starts from a line and asks whether
+ # its own dates agree, so a transplant that landed in NO line has no row to be
+ # wrong on. These two start from the transplant.
+ ("a transplant inside a line's own window that the line ended before - B5c",
+  "SELECT a.PATID, l.LOT_NUM, a.TX_DT FROM tx_auto_dates a "
+  "JOIN lot_long l ON l.PATID = a.PATID "
+  "WHERE a.TX_DT BETWEEN l.LOT_START_DT AND l.LOT_START_DT + INTERVAL (CASE "
+  "  WHEN l.LOT_START_TYPE = 'SCT_ALLO' THEN 0 "
+  "  WHEN l.LOT_START_TYPE = 'CART' THEN 44 "
+  "  WHEN l.LOT_NUM = 1 THEN 59 ELSE 29 END) DAY "
+  "AND a.TX_DT > l.LOT_BASE_END_DT "
+  # The same censor the build applies: it stops reading a line's transplants at
+  # the first allograft or CAR-T, so one after those was never the line's to
+  # hold. Without this the check fails a correct run.
+  "AND NOT EXISTS (SELECT 1 FROM tx_allo_cart_dates x WHERE x.PATID = a.PATID "
+  "  AND x.TX_DT >= l.LOT_START_DT AND x.TX_DT <= a.TX_DT "
+  "  AND NOT (x.SCT_TYPE = 'CART' AND l.LOT_NUM = 1 "
+  "           AND x.TX_DT <= l.LOT_START_DT + INTERVAL 59 DAY))"),
+]
+
+# Counted and printed, not failed. E5 in the QC catalogue is a warn for the
+# same reason: a transplant in no line can be an event past the end of the
+# data, which is data rather than a defect. A number that moves between two
+# runs is the signal; a number above zero on its own is not.
+OBSERVE = [
+ ("transplants in no line at all - E5's warn",
+  "SELECT count(*) FROM tx_auto_dates a WHERE NOT EXISTS "
+  "  (SELECT 1 FROM lot_long l WHERE l.PATID = a.PATID "
+  "   AND a.TX_DT BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT) "
+  # Two ways one is excused and it takes only one: the build ran out of lines
+  # to give it, or it sits in a gap between lines rather than after the last.
+  "AND ((SELECT count(*) FROM lot_long c WHERE c.PATID = a.PATID) < 5 "
+  "     OR a.TX_DT <= (SELECT max(c.LOT_BASE_END_DT) FROM lot_long c "
+  "                    WHERE c.PATID = a.PATID))"),
 ]
 
 COVERAGE = [
@@ -331,7 +413,10 @@ COVERAGE = [
   "datediff('day', l.LOT_BASE_DISCON_DT, p.OBS_END_DT) < 90"),
  ("lines censored at STUDY_END",       "l.LOT_BASE_END_REASON = 'STUDY_END'"),
  ("lines ended by a transplant or CAR-T",
-  "l.LOT_BASE_END_REASON IN ('SCT_ALLO','SCT_CART','SCT_AUTO','CART_INIT')"),
+  "l.LOT_BASE_END_REASON IN ('SCT_ALLO','SCT_CART','SCT_AUTO','CART_INIT',"
+  "'SCT_AUTO_CONT')"),
+ ("lines held open to a transplant in their own window",
+  "l.LOT_BASE_END_REASON = 'SCT_AUTO_CONT'"),
  ("lines started by something other than a drug", "l.LOT_START_TYPE <> 'MED'"),
  ("single-day lines",                  "l.LOT_BASE_LENGTH = 1"),
 ]
@@ -390,6 +475,10 @@ def main():
               f"JOIN lot_patient_input p ON p.PATID = l.PATID")[0][0] or 0
         if not v: vacuous += 1
         print(f"  {name:46} {v}{'   <-- nothing here, so nothing was tested' if not v else ''}")
+
+    print("\nreported, not failed")
+    for name, sql in OBSERVE:
+        print(f"  {name:46} {q(sql)[0][0]}")
 
     bad = [(n, rows) for n, sql in CHECKS for rows in [q(sql)] if rows]
     print()

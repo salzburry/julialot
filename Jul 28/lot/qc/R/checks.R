@@ -243,8 +243,13 @@ LOT_QC_CHECKS <- list(
                     "those columns cannot see it and would report clean. Read ",
                     "against LOT_LONG, not the published table, so a line ",
                     "dropped by the line criteria does not read as a missing ",
-                    "one."),
-       needs = c("long", "auto"),
+                    "one. ",
+                    "One transplant is not the line's to cover: the build stops ",
+                    "reading a line's AUTOs at the first allogeneic or CAR-T ",
+                    "event, so an AUTO after one of those is not an orphan but ",
+                    "a transplant the line was never asked to hold open. The ",
+                    "same censor is applied here."),
+       needs = c("long", "auto", "allo"),
        sql = function(t, p) counted(paste0("
     SELECT ", mask("a.PATID"), " AS pid, l.LOT_NUM, a.TX_DT AS tx
     FROM ", t$auto, " a
@@ -257,7 +262,19 @@ LOT_QC_CHECKS <- list(
                               ELSE CASE WHEN l.LOT_NUM = 1 THEN ", p$ind1, " - 1
                                         ELSE ", p$indn, " - 1 END
                             END)
-      AND a.TX_DT > l.LOT_BASE_END_DT"),
+      AND a.TX_DT > l.LOT_BASE_END_DT
+      AND NOT EXISTS (
+        SELECT 1 FROM ", t$allo, " x
+        WHERE x.PATID = a.PATID
+          AND x.SCT_TYPE IN ('ALLO', 'CART')
+          AND x.TX_DT >= l.LOT_START_DT
+          AND x.TX_DT <= a.TX_DT",
+      # An in-induction CAR-T is part of LOT1 and does not censor - the build
+      # keeps reading LOT1's AUTOs past it, so this check must too. It is the
+      # only exemption, and it is LOT1's alone.
+      if (isTRUE(p$cart_exempt)) paste0("
+          AND NOT (x.SCT_TYPE = 'CART' AND l.LOT_NUM = 1
+                   AND x.TX_DT <= date_add(l.LOT_START_DT, ", p$ind1 - 1L, "))") else "", ")"),
     "concat(pid, ' LOT', LOT_NUM, ' @ ', tx)")),
 
   list(id = "B6", group = "End reason", severity = "fail",
@@ -530,7 +547,7 @@ LOT_QC_CHECKS <- list(
       AND LOT1_TX_ENDDATE < LOT1_START_DT"), "pid")),
 
   list(id = "E5", group = "Transplant", severity = "warn",
-       what = "every processed transplant belongs to some line",
+       what = "every processed autologous transplant belongs to some line",
        why = paste0("The one failure mode the other transplant checks cannot ",
                     "see. Every check beside this one starts from a line and ",
                     "asks whether its dates agree, so a transplant that ended ",
@@ -538,11 +555,21 @@ LOT_QC_CHECKS <- list(
                     "TX_AUTO_DATES instead - every processed autologous event, ",
                     "whatever any line made of it - and requires each to sit ",
                     "inside some line's span. ",
-                    "A trailing transplant is allowed only once the build has ",
-                    "run out of lines to give it: with fewer than max_lot lines ",
-                    "there was still a line available, so an unassigned event ",
-                    "is the missing next line, which is exactly the case a ",
-                    "later-line-must-exist condition used to exclude. ",
+                    "Autologous only, and the title says so. An allogeneic ",
+                    "transplant or a CAR-T ends a line on the day before it and ",
+                    "starts the next one, so its own date sits in no line's span ",
+                    "by design; asking the same question of those events needs a ",
+                    "different one, and answering it here would report every ",
+                    "correctly handled ALLO as an orphan. ",
+                    "Two ways an unassigned event is allowed, and it takes only ",
+                    "one. It may trail the last line - but only once the build ",
+                    "has run out of lines to give it, because with fewer than ",
+                    "max_lot lines there was still a line available and the ",
+                    "event is the missing next line. Or it may sit in a gap ",
+                    "between lines the build has already used up. Joined with ",
+                    "AND these two cancelled: a trailing event on a patient with ",
+                    "room for another line failed the date half and went ",
+                    "unreported, which is the orphan this check exists to find. ",
                     "Warn rather than fail: an event past the end of ",
                     "observation is data, not a defect."),
        needs = c("long", "auto"),
@@ -557,8 +584,8 @@ LOT_QC_CHECKS <- list(
     GROUP BY a.pid, a.k, a.dt, a.n_lines
     HAVING sum(CASE WHEN a.dt BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT
                     THEN 1 ELSE 0 END) = 0
-       AND a.n_lines < ", p$max_lot, "
-       AND a.dt <= max(l.LOT_BASE_END_DT)"),
+       AND (a.n_lines < ", p$max_lot, "
+            OR a.dt <= max(l.LOT_BASE_END_DT))"),
     "concat(pid, ' @ ', dt, ' with ', n_lines, ' lines')")),
 
   # ---- F. The tables against each other ------------------------------------
@@ -680,8 +707,13 @@ qc_int <- function(settings, key) {
 # config.csv, so an edited config cannot judge lines built under the old value.
 qc_params <- function(settings, run_id) {
   censor <- toupper(trimws(qc_setting(settings, "censor_at_disenrollment")))
+  # Whether the run treated a CAR-T inside LOT1's window as part of LOT1. B5c
+  # needs it: with the rule on, such an infusion does not stop the build reading
+  # LOT1's later AUTOs, and a check that censored there would miss the orphan.
+  cart_ex <- toupper(trimws(qc_setting(settings, "apply_cart_induction_rule")))
   list(run_id   = run_id,
        censor   = identical(censor, "TRUE"),
+       cart_exempt = identical(cart_ex, "TRUE"),
        ind1     = qc_int(settings, "induction_window_days"),
        indn     = qc_int(settings, "lot_n_induction_window_days"),
        cart     = qc_int(settings, "cart_consolidation_days"),

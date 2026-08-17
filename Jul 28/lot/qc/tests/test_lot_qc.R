@@ -28,11 +28,12 @@ source(file.path(ROOT, "R", "checks.R"))
 # the real ones - LOT_LONG sits inside LOT_LONG_FINAL - so "reads this table"
 # below means what it says instead of matching the shorter name by accident.
 TBL <- list(final = "s.TFINAL", long = "s.TLONG", map = "s.TMAP",
-            sct = "s.TSCT", auto = "s.TAUTO",
+            sct = "s.TSCT", auto = "s.TAUTO", allo = "s.TALLOCART",
             attrition = "s.TATTR", meta = "s.TMETA",
             cohort = "s.TCOHORT")
 SETTINGS <- paste0(
-  "allo_lot_span=single_day|belantamab_med_abbr=BELA|cart_consolidation_days=45|",
+  "allo_lot_span=single_day|apply_cart_induction_rule=TRUE|",
+  "belantamab_med_abbr=BELA|cart_consolidation_days=45|",
   "catalog=hive_metastore|cdm_schema=clnprw_optum|censor_at_disenrollment=FALSE|",
   "codelist_dir=/mnt/code/codelist|dsn=RWDE|induction_window_days=60|",
   "lot_discon_confirm_days=90|lot_n_induction_window_days=30|",
@@ -207,6 +208,32 @@ ok(identical(Filter(function(c_i) identical(c_i$id, "B8"), LOT_QC_CHECKS)[[1]]$s
    "B8 is an invariant now the buffer is applied, so a row in it fails the run")
 ok(identical(Filter(function(c_i) identical(c_i$id, "B9"), LOT_QC_CHECKS)[[1]]$severity, "info"),
    "B9 reports a documented ambiguity, so it can never fail a run")
+# B5c asks whether a line covered a transplant inside its own window. The
+# build stops reading a line's AUTOs at the first ALLO or CAR-T, so an AUTO
+# after one of those was never the line's to cover. Without the censor the
+# check fails a correct run: an ALLO on day 9 ends LOT1, and an AUTO on day 20
+# is still inside the 60-day window.
+ok(has(SQL$B5c, "NOT EXISTS") && has(SQL$B5c, "x.SCT_TYPE IN ('ALLO', 'CART')"),
+   "B5c applies the same ALLO/CAR-T censor the build applies")
+ok(has(SQL$B5c, "x.TX_DT >= l.LOT_START_DT") && has(SQL$B5c, "x.TX_DT <= a.TX_DT"),
+   "...only for an event between the line start and the transplant it is judging")
+# The exemption follows the run. With the CAR-T induction rule on, an infusion
+# inside LOT1's window is part of LOT1 and does not stop the build reading
+# LOT1's later AUTOs - so it must not stop this check either.
+b5c <- Filter(function(c_i) identical(c_i$id, "B5c"), LOT_QC_CHECKS)[[1]]
+noexempt <- qc_params(sub("apply_cart_induction_rule=TRUE",
+                          "apply_cart_induction_rule=FALSE", SETTINGS, fixed = TRUE), "r")
+ok(P$cart_exempt && has(SQL$B5c, "x.SCT_TYPE = 'CART' AND l.LOT_NUM = 1"),
+   "...and exempts an in-induction CAR-T at LOT1 when the run applied that rule")
+ok(!noexempt$cart_exempt &&
+     !has(b5c$sql(TBL, noexempt), "x.SCT_TYPE = 'CART' AND l.LOT_NUM = 1"),
+   "...and does not, when the run did not")
+# E5 allows an unassigned transplant for either of two reasons, and it takes
+# only one of them. Joined with AND they cancelled: a trailing event on a
+# patient with room for another line failed the date half and went unreported -
+# the orphan the check exists to find.
+ok(has(SQL$E5, "AND (a.n_lines < 5\n            OR a.dt <= max(l.LOT_BASE_END_DT))"),
+   "E5 excuses an unassigned transplant on either ground, not only on both")
 ok(has(SQL$E2, "< 60") && has(SQL$E2, "> 180"),
    "E2 holds a tandem pair to the recorded 60-to-180 band")
 ok(has(SQL$E3, "= 180"),

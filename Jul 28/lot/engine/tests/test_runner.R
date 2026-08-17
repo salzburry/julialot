@@ -2261,9 +2261,13 @@ cat("\n-- an agent joins a regimen by being filled in the window, not by cover -
 # MAP_START_DT, so that episode does not join: a patient who has switched is no
 # longer filling the old agent, and the residual cover is a dispensing artefact.
 #
-# Pinned because the protocol reads wider - "all MM therapies identified during
-# the first 30 days of the LOT" - and the study team settled it this way. Anyone
-# widening it to cover has to bring MAP_END_DT into this block, which fails here.
+# What is pinned here is that cover is rejected. Anyone widening membership to
+# cover has to bring MAP_END_DT into this block, which fails here.
+#
+# It does NOT pin the narrower question of whether a CLAIM inside the window
+# joins, where the agent's episode began earlier and is still open. That one is
+# open - LOT_RULES.md 14.3 and KNOWN_ISSUES.md 1 - and reading this block as an
+# answer to it would be reading a decision that has not been made.
 ind_block <- local({
   i <- regexpr('_induction_meds"', l25_txt, fixed = TRUE)
   rest <- substring(l25_txt, i)
