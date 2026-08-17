@@ -363,19 +363,49 @@ AUDIT_COUNTS <- list(
   #    transplant still pushes RAW_DISCON_DT past it. Counted separately because
   #    it survives the membership fix and needs its own cutoff.
   list(id = "runout-extends-past-the-transplant-end",
-       what = "Lines ended by a transplant whose run-out date is later than that end",
+       what = "Lines ended by a transplant whose regimen was still covered after that end",
        expect = "no target; these are the lines where bounding membership alone would not be enough",
+       # Off map_stacked, not off a run-out column. LOT_LONG does not carry one:
+       # LOT_BASE_RUNOUT_DT lives on the per-line *_BASE tables and stops there,
+       # and only LOT_BASE_DISCON_DT is projected. This query used to name the
+       # run-out anyway and failed on the warehouse with an unresolved column -
+       # invisibly, because the execute path could not run at all until the
+       # config ordering above was fixed.
+       #
+       # DISCON_DT is not the substitute either. It is the CONFIRMED
+       # discontinuation, and a line ended by a transplant usually has none, so
+       # reading it would answer zero for a reason that has nothing to do with
+       # the question. The line's own cover is what the question is about, so
+       # it is taken from the episodes: the last cover end among the agents the
+       # line names, over episodes that had started by the time it ended.
        sql = "
-      SELECT l.LOT_NUM, l.LOT_BASE_END_REASON,
-             count(*)                                   AS N_LINES,
-             count(DISTINCT l.PATID)                    AS N_PATIENTS,
-             percentile_approx(datediff(l.LOT_BASE_RUNOUT_DT,
-                                        l.LOT_BASE_END_DT), 0.5) AS MEDIAN_DAYS_PAST_END,
-             max(datediff(l.LOT_BASE_RUNOUT_DT, l.LOT_BASE_END_DT)) AS MAX_DAYS_PAST_END
-      FROM {t$long} l
-      WHERE l.LOT_BASE_END_REASON IN ('SCT_AUTO', 'SCT_ALLO', 'SCT_CART')
-        AND l.LOT_BASE_RUNOUT_DT IS NOT NULL
-        AND l.LOT_BASE_RUNOUT_DT > l.LOT_BASE_END_DT
+      WITH ended_by_tx AS (
+        SELECT l.PATID, l.LOT_NUM, l.LOT_BASE_END_DT, l.LOT_BASE_END_REASON,
+               explode(split(l.LOT_BASE_MEDS, ' ')) AS MED_ABBR
+        FROM {t$long} l
+        WHERE l.LOT_BASE_END_REASON IN ('SCT_AUTO', 'SCT_ALLO', 'SCT_CART')
+          AND coalesce(trim(l.LOT_BASE_MEDS), '') <> ''
+      ),
+      cover AS (
+        SELECT e.PATID, e.LOT_NUM, e.LOT_BASE_END_DT, e.LOT_BASE_END_REASON,
+               max(m.MAP_END_DT) AS LAST_COVER_DT
+        FROM ended_by_tx e
+        INNER JOIN {t$map} m
+          ON m.PATID = e.PATID
+         AND m.MAP_MED_TYPE = e.MED_ABBR
+         AND m.MAP_START_DT <= e.LOT_BASE_END_DT
+        WHERE e.MED_ABBR <> ''
+        GROUP BY 1, 2, 3, 4
+      )
+      SELECT LOT_NUM, LOT_BASE_END_REASON,
+             count(*)                AS N_LINES,
+             count(DISTINCT PATID)   AS N_PATIENTS,
+             percentile_approx(datediff(LAST_COVER_DT, LOT_BASE_END_DT), 0.5)
+                                     AS MEDIAN_DAYS_PAST_END,
+             max(datediff(LAST_COVER_DT, LOT_BASE_END_DT))
+                                     AS MAX_DAYS_PAST_END
+      FROM cover
+      WHERE LAST_COVER_DT > LOT_BASE_END_DT
       GROUP BY 1, 2
       ORDER BY 1, 2")
 )
