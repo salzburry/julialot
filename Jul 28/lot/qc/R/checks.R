@@ -920,27 +920,39 @@ LOT_QC_CHECKS <- list(
                 collapse = " UNION ALL\n      "), "
     ),
     reach AS (
-      SELECT LOT_NUM, count(DISTINCT PATID) AS n
+      -- BOTH FIGURES THE WRITER RECORDS. The attrition writer stores
+      -- N_PATIENTS and N_LINES per progression row, and this compared only the
+      -- first - so a row claiming the right patient count and the wrong line
+      -- count reconciled. The 'correct' synthetic fixture demonstrated it:
+      -- three patients over five lines were written as LOT1 3/5, LOT2 1/3,
+      -- LOT3 1/1 and labelled a good progression set, when the lines say
+      -- 3/3, 1/1, 1/1. An external review found both the gap and the fixture.
+      SELECT LOT_NUM, count(DISTINCT PATID) AS n, count(*) AS n_lines
       FROM ", t$final, " GROUP BY LOT_NUM
     ),
     said AS (
       SELECT cast(regexp_extract(STEP, 'LOT([0-9]+)', 1) as int) AS LOT_NUM,
-             max(N_PATIENTS) AS N_PATIENTS, count(*) AS n_rows
+             max(N_PATIENTS) AS N_PATIENTS, max(N_LINES) AS N_LINES,
+             count(*) AS n_rows
       FROM ", t$attrition, "
       WHERE RUN_ID = '", p$run_id, "' AND KIND = 'progression'
       GROUP BY cast(regexp_extract(STEP, 'LOT([0-9]+)', 1) as int)
     )
     SELECT coalesce(w.LOT_NUM, s.LOT_NUM) AS LOT_NUM,
            coalesce(s.n_rows, 0) AS rows_written,
-           s.N_PATIENTS AS said, coalesce(r.n, 0) AS actual
+           s.N_PATIENTS AS said, coalesce(r.n, 0) AS actual,
+           s.N_LINES AS said_lines, coalesce(r.n_lines, 0) AS actual_lines
     FROM want w
     FULL OUTER JOIN said s ON s.LOT_NUM = w.LOT_NUM
     LEFT JOIN reach r ON r.LOT_NUM = coalesce(w.LOT_NUM, s.LOT_NUM)
     WHERE w.LOT_NUM IS NULL
        OR coalesce(s.n_rows, 0) <> 1
-       OR s.N_PATIENTS <> coalesce(r.n, 0)"),
+       OR s.N_PATIENTS <> coalesce(r.n, 0)
+       OR coalesce(s.N_LINES, -1) <> coalesce(r.n_lines, 0)"),
     paste0("concat('LOT', LOT_NUM, ': ', rows_written, ' row(s), funnel says ',",
-           " coalesce(cast(said as string), 'nothing'), ', lines say ', actual)"))),
+           " coalesce(cast(said as string), 'nothing'), '/',",
+           " coalesce(cast(said_lines as string), 'nothing'),",
+           " ' (patients/lines), lines say ', actual, '/', actual_lines)"))),
 
   list(id = "F4", group = "Reconciliation", severity = "fail",
        what = "the run has exactly one metadata row",
