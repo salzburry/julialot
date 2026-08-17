@@ -286,7 +286,7 @@ The measurements are in `exploration/lot/`.
 | path | what it does |
 |---|---|
 | `R/vignettes.R` | The edge cases the algorithm is hardest on, each with the assignment the rules give. Every offset is derived from the parameter that decides it, so a case moves when a setting moves and a renamed setting fails the catalogue rather than leaving prose describing a rule that is gone. |
-| `run_vignettes.R` | Renders the catalogue. No warehouse and no connection; writes a CSV and a markdown table to `out/`. |
+| `run_vignettes.R` | Renders the catalogue. No warehouse and no connection; writes a CSV and a markdown table to `out/`. Both are committed, and the merge gate re-renders them and fails on any difference — so the tracked catalogue cannot drift from the code that generates it. `OUTPUT_DIR` redirects the render, which is how the gate compares without touching the working tree. |
 | `tests/test_vignettes.R` | The catalogue cannot drift: the parameters have to exist, the boundary pairs have to straddle them and expect different things, the timelines have to run forwards, and the files the rules are quoted from have to be there. It also holds `SCENARIOS.md` and the catalogue to each other in both directions — a scenario citing a vignette that does not exist fails, and a vignette no rule cites fails too. |
 | `out/` | Generated. Nothing reads it back. |
 

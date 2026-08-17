@@ -368,9 +368,18 @@ that are too close together to be two transplants.
 
 ### 6.3 A second AUTO within 180 days is a planned tandem
 
-A second AUTO within `sct_tandem_days` of the one before it is a planned tandem
-and does not end the line and does not start one. Beyond it, the transplant is
-excess and does both.
+A second AUTO is a planned tandem when **both** hold: it is within
+`sct_tandem_days` of the one before it, and **nothing happened between the two**
+— no non-steroid medication starting, no allogeneic transplant, no CAR-T,
+strictly between the two dates. A planned tandem does not end the line and does
+not start one.
+
+Beyond `sct_tandem_days`, or with an interruption in the gap, the pair is not a
+tandem: the transplant is excess and does both.
+
+Running out of treatment is not an interruption. The clear-gap test asks what
+happened, and an absence of treatment is not an event — see §6.5, which is where
+that matters.
 
 ### 6.4 A CAR-T inside line 1's induction window is part of line 1
 
@@ -420,16 +429,18 @@ The windows are each line's own, measured from its start:
 | an allogeneic transplant | the transplant date alone | — |
 
 Only the **first** transplant of a tandem pair need be inside the window. Its
-partner follows it however far out it sits, and holds the line open to its own
-date. What makes that safe is §6.3's clear gap: a pair with a medication start,
+partner may sit outside it and still hold the line open to its own date. Not
+arbitrarily far out: the pair must still be within `sct_tandem_days` of each
+other, which is what makes it a pair at all (§6.3). What makes that safe is §6.3's clear gap: a pair with a medication start,
 an allogeneic transplant or a CAR-T between them is not a tandem at all, so
 nothing the extension could swallow survives to be swallowed.  A confirmed
 discontinuation between the two does **not** break the pair. Running out of
 treatment is an absence, not an event, and §6.3 asks only what happened. So a
 line whose regimen ran out on day 59, with a tandem partner on day 150 and
 nothing in between, runs to day 150 as `SCT_AUTO_CONT` rather than ending on
-day 59 as `DISCONTINUATION`. The transplant pair was planned before the gap
-opened, and the gap is what a planned tandem looks like in claims.
+day 59 as `DISCONTINUATION`. Under this rule the pair is classified as a tandem, and the gap is what that
+classification looks like in claims. Whether it was planned in advance is not
+something the claims establish.
 
 Ending **on** the transplant is the opposite of the two other AUTO-shaped
 reasons, and deliberately so. `SCT_AUTO` and the transplant branch in §7.2 end a
@@ -647,14 +658,21 @@ What §11.1 and §11.2 come down to is which queries read it:
 | query | what it decides | reads the flag |
 |---|---|---|
 | `discon_per_med` | when the line's cover runs out | yes |
-| `first_add_candidates` | whether a returning agent ends the line | **no** |
-| `med_cand` | whether a returning agent starts the next line | **no** |
+| `first_add_candidates` | whether a returning agent ends the line | yes, for a regimen drug |
+| `med_cand` | whether a returning agent starts the next line | yes, for a regimen drug |
+| `post_runout_med` | whether a return confirms the run-out | yes, for a regimen drug |
 
-Three predicates that do not consult a flag already on the row. That is the size
-of it — not a missing parameter and not a missing concept, and 30 or 60 days is
-a config value and a rebuild rather than a code change. The added-medication and
-line-start queries have never read the flag; this is original behaviour, not
-something a refactor lost.
+All four read it now, and §4.3 is what they read it for: a drug that **was** the
+regimen is released once its own episode carries the flag, and held to its line
+until then. A permissible substitute is never released this way.
+
+What is left open here is narrower than it was. A drug that was **never** in the
+line's regimen still enters the added-medication query on any new `MAP_START_DT`,
+including one opened by a single day's lapse in cover. The flag is on that row
+too and nothing consults it there, because the drug was not the line's to hold
+in the first place. Whether a one-day gap should read as an initiation for such
+an agent is the remaining question, and 30 or 60 days is a config value and a
+rebuild rather than a code change.
 
 **What has been measured.** `run_stockpiling_rule.R` and
 `run_rechallenge_evidence.R` size this against a finished run. Against the
