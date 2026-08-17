@@ -26,23 +26,34 @@ hold whatever the rules are.
 > the previous ends · end reasons from the known set · `DISCONTINUATION`
 > carries a date · no unconfirmed discontinuation (B8) · nothing past the cap ·
 > no transplant inside a line's own window that the line ended before (B5c) ·
+> no transplant in no line at all (E5) ·
 > 3L ⊆ 2L · a cohort's index is that line's start · no cohort row without both
 > enrolment flags
 
-One number is printed and not failed: transplants that landed in no line at
-all. `E5` in the QC catalogue is a warn for the same reason — one of those can
-be an event past the end of the data, which is data rather than a defect. What
-matters is the number moving between two runs.
+One number is printed and not failed: transplants belonging to a patient the
+build gave no line at all. A line starts on a medication episode, so that is
+the cohort-versus-episode disagreement the attrition funnel reports, not a
+defect in how lines are built. QC calls the same number `E5b`.
 
-## Four patients that are not drawn
+## Six patients that are not drawn
 
 Everything else is random. That is the point, and it means a rule reached only
-by a narrow combination of dates can go untested for a whole run. Four patients
+by a narrow combination of dates can go untested for a whole run. Six patients
 are built by hand so they are always present: a regimen that runs out early
 with a transplant later in the same window, the same one day outside it, a
-tandem partner far beyond the window, and an allograft that ends the line
-before an in-window transplant. They are patients, not fixtures — nothing says
+tandem partner far beyond the window, an allograft that ends the line before an
+in-window transplant, and two CAR-T-started lines with a transplant either side
+of the consolidation window. They are patients, not fixtures — nothing says
 what their lines should come back as.
+
+## The settings the checks are judged by
+
+`CONFIRM_DAYS` and `CART_RULE` reach the emitted SQL through `emit_chain.R`,
+and the checks read the same two values. They have to: at `CONFIRM_DAYS=0` a
+run-out is confirmed the moment it happens, and a check holding the contract's
+90 reported 53 legitimate discontinuations as failures on a 300-patient run.
+At `CART_RULE=FALSE` the engine has no in-induction exemption, and a check that
+kept one would excuse an orphan the build really produces.
 
 ## Two things it tells you that a green suite will not
 

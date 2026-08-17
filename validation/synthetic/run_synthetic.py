@@ -129,10 +129,15 @@ def planted():
     run and the coverage line reads zero. The four below are built by hand so
     they are always there.
 
-    All four are the same combination: a regimen that runs out EARLY and a
+    Most are the same combination: a regimen that runs out EARLY and a
     transplant later in the same window. That is what SCT_AUTO_CONT exists for,
     and drawing it needs a short supply and a transplant in the right 60 days
     at once.
+
+    The last two are the CAR-T-started line, which is the shape most likely to
+    orphan a transplant: a CAR-T line with no consolidation drug ends on its own
+    start date, so its whole 45-day window sits after the end and every AUTO in
+    that window depends on the hold to belong anywhere.
 
     Still no expected answers. These are patients, not fixtures - they widen
     what the invariants are asked about, and nothing here says what any line
@@ -162,6 +167,17 @@ def planted():
     # censor reports as an orphan.
     pat('P0003', [('LEN', 'IMID', ix, ix + 19, 0)],
         auto=[ix + 40], ac=[('ALLO', ix + 9)])
+    # A CAR-T opens line 2 with no drug joining it, then a transplant 20 days
+    # later - inside the 45-day consolidation window, and after the line would
+    # otherwise have ended on its own start date. B5c is the check that has to
+    # see this one, and it could not while it censored on the CAR-T that
+    # started the line.
+    pat('P0004', [('LEN', 'IMID', ix, ix + 19, 0)],
+        auto=[ix + 220], ac=[('CART', ix + 200)])
+    # The same shape with the CAR-T at line 2 and a later AUTO outside the
+    # window, so the two sides of the window are both present.
+    pat('P0005', [('LEN', 'IMID', ix, ix + 19, 0)],
+        auto=[ix + 250], ac=[('CART', ix + 200)])
     return out
 
 
@@ -316,7 +332,23 @@ def run_chain(con, sqldir):
 REASONS = ('SCT_ALLO','SCT_CART','SCT_AUTO','SCT_AUTO_CONT','SCT','CART_INIT',
            'MED_ADD','DEATH','DISCONTINUATION','STUDY_END')
 
-CHECKS = [
+# The same two settings emit_chain.R reads off the environment, read the same
+# way here. A check that hardcodes what the emitted SQL was told is a check of
+# a different build: at CONFIRM_DAYS=0 every immediate discontinuation is
+# legitimate and a hardcoded 90 reports each one as a failure, and at
+# CART_RULE=FALSE the in-induction exemption is not in the engine, so applying
+# it here excuses an orphan the build would really produce.
+def settings():
+    return {
+        "confirm": int(os.environ.get("CONFIRM_DAYS", "90")),
+        "cart_rule": os.environ.get("CART_RULE", "TRUE").upper() == "TRUE",
+        "max_lot": 5,
+        "ind1": 60,
+    }
+
+
+def checks(c):
+  return [
  ("a line ends before it starts",
   "SELECT PATID, LOT_NUM FROM lot_long WHERE LOT_BASE_END_DT < LOT_START_DT"),
  ("LOT_BASE_LENGTH disagrees with the dates",
@@ -343,14 +375,18 @@ CHECKS = [
  ("DISCONTINUATION with no discontinuation date",
   "SELECT PATID, LOT_NUM FROM lot_long WHERE LOT_BASE_END_REASON = 'DISCONTINUATION' "
   "AND LOT_BASE_DISCON_DT IS NULL"),
+ # The window is the run's, not a constant. At CONFIRM_DAYS=0 a run-out is
+ # confirmed the moment it happens, and every one of them would fail a
+ # hardcoded 90.
  ("an unconfirmed discontinuation - B8's invariant",
   "SELECT l.PATID, l.LOT_NUM FROM lot_long l JOIN lot_patient_input p "
   "ON p.PATID = l.PATID WHERE l.LOT_BASE_END_REASON = 'DISCONTINUATION' "
-  "AND datediff('day', l.LOT_BASE_END_DT, p.OBS_END_DT) < 90 AND l.LOT_NUM < 5 "
+  f"AND datediff('day', l.LOT_BASE_END_DT, p.OBS_END_DT) < {c['confirm']} "
+  f"AND l.LOT_NUM < {c['max_lot']} "
   "AND NOT EXISTS (SELECT 1 FROM lot_long n WHERE n.PATID = l.PATID "
   "                AND n.LOT_NUM = l.LOT_NUM + 1)"),
  ("more lines than the cap",
-  "SELECT PATID FROM lot_long WHERE LOT_NUM > 5"),
+  f"SELECT PATID FROM lot_long WHERE LOT_NUM > {c['max_lot']}"),
  ("two supply episodes of one drug overlapping - no build can emit this",
   "SELECT a.PATID, a.MAP_MED_TYPE FROM map_stacked a JOIN map_stacked b "
   "ON b.PATID = a.PATID AND b.MAP_MED_TYPE = a.MAP_MED_TYPE "
@@ -378,31 +414,54 @@ CHECKS = [
   "WHERE a.TX_DT BETWEEN l.LOT_START_DT AND l.LOT_START_DT + INTERVAL (CASE "
   "  WHEN l.LOT_START_TYPE = 'SCT_ALLO' THEN 0 "
   "  WHEN l.LOT_START_TYPE = 'CART' THEN 44 "
-  "  WHEN l.LOT_NUM = 1 THEN 59 ELSE 29 END) DAY "
+  f"  WHEN l.LOT_NUM = 1 THEN {c['ind1'] - 1} ELSE 29 END) DAY "
   "AND a.TX_DT > l.LOT_BASE_END_DT "
-  # The same censor the build applies: it stops reading a line's transplants at
-  # the first allograft or CAR-T, so one after those was never the line's to
-  # hold. Without this the check fails a correct run.
+  # The same censor the build applies, from the same day it applies it. The
+  # build stops reading a line's transplants at the first allograft or CAR-T,
+  # so one after those was never the line's to hold. LOT1 censors from its
+  # start date (05b_lot1_sct.R); LOT2 and later from the day AFTER
+  # (10_lot2_5_base.R), so the transplant that STARTED the line is not read as
+  # a censor on it. Using >= everywhere switched this check off for every
+  # CAR-T-started line - which is the shape most likely to orphan a transplant,
+  # since a CAR-T line with no consolidation ends on its own start date.
   "AND NOT EXISTS (SELECT 1 FROM tx_allo_cart_dates x WHERE x.PATID = a.PATID "
-  "  AND x.TX_DT >= l.LOT_START_DT AND x.TX_DT <= a.TX_DT "
-  "  AND NOT (x.SCT_TYPE = 'CART' AND l.LOT_NUM = 1 "
-  "           AND x.TX_DT <= l.LOT_START_DT + INTERVAL 59 DAY))"),
-]
-
-# Counted and printed, not failed. E5 in the QC catalogue is a warn for the
-# same reason: a transplant in no line can be an event past the end of the
-# data, which is data rather than a defect. A number that moves between two
-# runs is the signal; a number above zero on its own is not.
-OBSERVE = [
- ("transplants in no line at all - E5's warn",
-  "SELECT count(*) FROM tx_auto_dates a WHERE NOT EXISTS "
+  "  AND ((l.LOT_NUM = 1 AND x.TX_DT >= l.LOT_START_DT) "
+  "    OR (l.LOT_NUM > 1 AND x.TX_DT > l.LOT_START_DT)) "
+  "  AND x.TX_DT <= a.TX_DT " +
+  # Only when the run applied the rule. At CART_RULE=FALSE the engine has no
+  # exemption, and keeping one here would excuse an orphan it really produces.
+  (f"  AND NOT (x.SCT_TYPE = 'CART' AND l.LOT_NUM = 1 "
+   f"           AND x.TX_DT <= l.LOT_START_DT + INTERVAL {c['ind1'] - 1} DAY)"
+   if c["cart_rule"] else "") + ")"),
+ # E5's ownership question, as an invariant rather than a number. Every SCT
+ # claim source in 05_sct.R is bounded to [INDEX_DATE, OBS_END_DT], so
+ # tx_auto_dates cannot hold an event past the end of follow-up - which was the
+ # only reason this was ever reported rather than failed.
+ #
+ # One excuse, two conditions, both needed: the build ran out of lines AND the
+ # event trails the last one. Patients with no line at all are out of scope, the
+ # same way E5 scopes them out; they have no ownership to check.
+ ("a transplant in no line at all - E5",
+  "SELECT a.PATID, a.TX_DT FROM tx_auto_dates a "
+  "WHERE EXISTS (SELECT 1 FROM lot_long c WHERE c.PATID = a.PATID) "
+  "AND NOT EXISTS "
   "  (SELECT 1 FROM lot_long l WHERE l.PATID = a.PATID "
   "   AND a.TX_DT BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT) "
-  # Two ways one is excused and it takes only one: the build ran out of lines
-  # to give it, or it sits in a gap between lines rather than after the last.
-  "AND ((SELECT count(*) FROM lot_long c WHERE c.PATID = a.PATID) < 5 "
+  f"AND ((SELECT count(*) FROM lot_long c WHERE c.PATID = a.PATID) < {c['max_lot']} "
   "     OR a.TX_DT <= (SELECT max(c.LOT_BASE_END_DT) FROM lot_long c "
   "                    WHERE c.PATID = a.PATID))"),
+]
+
+# Counted and printed, not failed - the case E5 cannot judge, kept as its own
+# number rather than dropped. A line starts on a non-steroid medication
+# episode, so a patient whose claims gave a transplant but no such episode gets
+# no line and their transplant belongs to nothing. That is the cohort-versus-
+# episode disagreement the attrition funnel reports, not a defect in how lines
+# are built. QC calls the same number E5b.
+OBSERVE = [
+ ("transplants on a patient with no line at all - E5b",
+  "SELECT count(*) FROM tx_auto_dates a WHERE NOT EXISTS "
+  "  (SELECT 1 FROM lot_long c WHERE c.PATID = a.PATID)"),
 ]
 
 COVERAGE = [
@@ -468,6 +527,11 @@ def main():
     for n in (2, 3):
         print(f"  {n}L cohort: {q(f'SELECT count(*) FROM coh_{n}l')[0][0]}")
 
+    cfg = settings()
+    if cfg["confirm"] != 90 or not cfg["cart_rule"]:
+        print(f"settings: CONFIRM_DAYS={cfg['confirm']}, "
+              f"CART_RULE={cfg['cart_rule']} - the checks follow them too")
+
     print("\ncoverage of the input space")
     vacuous = 0
     for name, pred in COVERAGE:
@@ -480,7 +544,7 @@ def main():
     for name, sql in OBSERVE:
         print(f"  {name:46} {q(sql)[0][0]}")
 
-    bad = [(n, rows) for n, sql in CHECKS for rows in [q(sql)] if rows]
+    bad = [(n, rows) for n, sql in checks(cfg) for rows in [q(sql)] if rows]
     print()
     if bad:
         print(f"{len(bad)} INVARIANT(S) BROKEN:")
