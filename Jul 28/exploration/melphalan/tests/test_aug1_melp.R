@@ -321,6 +321,29 @@ ok(has(ra, "ASK_CSVS") && has(ra, "unlink(f)"),
 ok(has(ra, "melp_ask2_melp_lots_by_line.csv"),
    "...including the name Q2 used before it carried the distribution")
 
+# The decision reader. Same reason read_melp_asks.R has a test: a reader with
+# none can ask the warehouse the wrong question and the gate stays green.
+rd <- paste(readLines(file.path(ROOT, "read_melp_decisions.R"), warn = FALSE),
+            collapse = "\n")
+ok(!grepl("(?m)^\\s*(db_exec|dbExecute|CREATE|INSERT|DROP|UPDATE|DELETE)\\b", rd, perl = TRUE),
+   "the decision reader only reads")
+ok(has(rd, "melp_read_inputs") && has(rd, "melp_status_unchanged") &&
+     has(rd, 'identical(melp_check_code(inputs, LOT_ROOT), FALSE)'),
+   "...behind the same provenance guards as the asks reader")
+# The branch split has to come off the exposure chain, not off raw doses: three
+# doses inside melp_exposure_days are ONE administration, and counting them as
+# two pairs would size every branch wrongly.
+ok(has(rd, "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW") &&
+     has(rd, "lead(EXPO_DT)"),
+   "...and counts branches over exposures, chained the way the engine chains them")
+ok(has(rd, "INSIDE = 1 AND GAP <") && has(rd, "GAP <  \", REST, \""),
+   "the branch labels are the request's five, cut at the same thresholds")
+# The number that does not need interpreting.
+ok(has(rd, "Melphalan doses inside NO line") && has(rd, "PRIOR_LINE_TYPE"),
+   "unowned doses are counted, and attributed to the line type before them")
+ok(has(rd, "should be empty; CART / SCT_ALLO rows are the known open case"),
+   "...with the one open gap named, so a nonzero row is not read as new")
+
 cat("\n-- the cells, and what they cannot do --\n")
 cells <- melp_cell_plan()
 ok(length(cells) == 3L, "three builds: the study's, and the two readings")

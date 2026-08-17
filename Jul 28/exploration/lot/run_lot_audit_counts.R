@@ -140,6 +140,50 @@ AUDIT_COUNTS <- list(
                   THEN 1 ELSE 0 END) AS N_FIRST_OUT_OF_WINDOW
       FROM owning GROUP BY LOT_NUM ORDER BY LOT_NUM"),
 
+  # 1d. FIXED - the guard-mirror defect, sized from the disagreement itself.
+  #     auto_cand gained the ownership condition on its tandem exemption and
+  #     the two post-run-out guards kept the older test, so for a window the
+  #     two disagreed about the same transplant: the guard declined to confirm
+  #     a run-out on account of a tandem the next-line gate had already ruled
+  #     was not one. The line then ran on and absorbed the transplant instead
+  #     of ending and letting the next line open on it.
+  #
+  #     This counts the shape the disagreement needed: a transplant after a
+  #     line's run-out, within sct_tandem_days of the one before it, where THAT
+  #     earlier transplant fell outside the line's window. Nonzero on a build
+  #     from before the fix is the population whose line lengths and counts the
+  #     fix moves; it is the same query either side, because what it counts is
+  #     the patient shape and not the verdict.
+  list(id = "runout-unconfirmed-by-a-tandem-no-line-held",
+       what = "FIXED: post-run-out AUTOs the old guard excused as tandem partners of an out-of-window transplant",
+       expect = "the population the guard-mirror fix moves; zero means the shape does not occur here",
+       sql = "
+      WITH paired AS (
+        SELECT PATID, TX_DT,
+               lag(TX_DT) OVER (PARTITION BY PATID ORDER BY TX_DT) AS PREV_TX_DT
+        FROM {t$auto}
+      )
+      SELECT l.LOT_NUM,
+             count(*)                AS N_TRANSPLANTS,
+             count(DISTINCT l.PATID) AS N_PATIENTS
+      FROM paired p
+      INNER JOIN {t$long} l ON l.PATID = p.PATID
+      WHERE p.PREV_TX_DT IS NOT NULL
+        -- after this line ran out, and inside it, so the guard was the thing
+        -- deciding whether the run-out counted as a discontinuation
+        AND p.TX_DT >  l.LOT_BASE_END_DT
+        AND datediff(p.TX_DT, p.PREV_TX_DT) <= {tandem_days}
+        -- the earlier transplant belongs to this line...
+        AND p.PREV_TX_DT BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT
+        -- ...but fell outside its window, so no line ever held the pair
+        AND p.PREV_TX_DT > date_add(l.LOT_START_DT,
+              CASE l.LOT_START_TYPE WHEN 'SCT_ALLO' THEN 0
+                                    WHEN 'CART' THEN {cart_days} - 1
+                                    ELSE CASE WHEN l.LOT_NUM = 1
+                                              THEN {lot1_window} - 1
+                                              ELSE {lotn_window} - 1 END END)
+      GROUP BY l.LOT_NUM ORDER BY l.LOT_NUM"),
+
   # 2. Not a defect - an open study-team question about how long a
   #    regimen-less transplant line should run. Reported so the decision is
   #    made against real durations rather than a synthetic guess.
