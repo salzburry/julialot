@@ -106,6 +106,11 @@ main <- function() {
             # as TX_AUTO_DT_1, so a check reading those columns cannot see it -
             # and would report clean on the orphan it exists to find.
             auto      = lot_out("TX_AUTO_DATES"),
+            # The allogeneic and CAR-T events, for the one thing the ownership
+            # checks need them for: the build stops reading a line's AUTOs at
+            # the first of these, so a check on unowned AUTOs must stop there
+            # too or it reports the censor as a defect.
+            allo      = lot_out("TX_ALLO_CART_DATES"),
             attrition = lot_out("LOT_ATTRITION"),
             meta      = lot_out("LOT_RUN_METADATA"),
             cohort    = wrk(cohort))

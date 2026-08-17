@@ -1,4 +1,4 @@
-# The cohort, as LOT reads it. OBS_END_DT is picked here and every MAP gap,
+# The cohort, as LOT reads it. OBS_END_DT is chosen here, and every MAP gap,
 # discontinuation and SCT window downstream uses it.
 
 phase_patient_input <- function(con) {

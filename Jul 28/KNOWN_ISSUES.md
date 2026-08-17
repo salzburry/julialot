@@ -83,19 +83,20 @@ claims that `mma_med_processed` still carries, so the claim test has to be
 restricted to claims belonging to an episode the build kept, or the regimen will
 gain agents the rest of the algorithm does not know about.
 
-**It propagates, and that is what makes the answer matter.** The prior-regimen exclusion
-that stops an agent starting a line looks **one line back only**
-(`LOT_NUM = {prev}`). An agent wrongly absent from LOT2's regimen is therefore
-wrongly absent from LOT3's exclusion set, and becomes eligible to *start* LOT3 —
-a line it should not be able to open.
+**It propagates, and that is what makes the answer matter.** The prior-regimen
+exclusion that stops an agent starting a line looks **one line back only**
+(`LOT_NUM = {prev}`). An agent absent from LOT2's regimen is therefore absent
+from LOT3's exclusion set too, and becomes eligible to *start* LOT3. Under (c)
+that is correct and there is nothing to fix; under (b) it is a line that should
+not exist. Which is why the answer moves more than regimen strings.
 
     d1     LEN, filling continuously
     d100   POMA opens LOT2. LEN is omitted from LOT2's regimen (rule c)
     d200   POMA runs out, LOT2 ends
     d205   LEN's cover finally lapses and it restarts — a new episode
     ---
-    what ships:  LOT3 starts d205 on LEN, because nothing excludes it
-    correct:     LEN is LOT2's agent and cannot start a line
+    under (c):  LOT3 starts d205 on LEN, because nothing excludes it
+    under (b):  LEN was LOT2's agent and cannot start a line
 
 With a BORT at d210 that turns `LOT3 = BORT` into `LOT3 = LEN BORT` starting
 five days earlier. With no BORT at all it is an **extra line** that should not
@@ -119,7 +120,7 @@ half. The propagation needs its own count — lines started by an agent that was
 in the regimen two lines back but not one — which is not yet written. Neither
 has been run.
 
-`lot/LOT_RULES.md` §4.2 and §12.
+`lot/LOT_RULES.md` §4.2, §12 and §14.3.
 
 ---
 

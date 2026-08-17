@@ -5,8 +5,8 @@ phase_mma_map <- function(con, ctx) {
 
   # STEP 2 (5A): MMA_MED - Raw extraction
   # Sources: medical (PROC_CD, BILL_PROC_CD, NDC), rx (NDC)
-  # Note: med_procedure excluded - PROC holds ICD procedure codes, measured;
-  # see source (4) below
+  # med_procedure is left out. Its PROC column holds ICD procedure codes. That
+  # was measured - see source (4) below.
   run_step(con, "S04_mma_med_raw", glue("
     CREATE OR REPLACE TEMPORARY VIEW mma_med_raw AS
     WITH codelist AS (
@@ -70,28 +70,29 @@ phase_mma_map <- function(con, ctx) {
       INNER JOIN codelist c
         ON c.CL_CODE_TYPE = 'NDC'
        -- Normalize both sides to NDC11 (lpad stripped value to 11 digits with zeros)
-       -- Without this a codelist NDC with no digits pads to eleven zeros, and
-       -- so does a claim with no NDC: every such claim becomes a treatment.
+       -- Without this, a codelist NDC with no digits pads to eleven zeros.
+       -- So does a claim with no NDC, and every such claim becomes a
+       -- treatment.
        AND regexp_replace(c.CL_CODE, '[^0-9]', '') <> ''
-       -- ...and the claim side. The WHERE below only tests the raw value, so a
-       -- punctuation-only NDC passes it and still normalizes to eleven zeros.
+       -- ...and the claim side. The WHERE below tests only the raw value, so
+       -- a punctuation-only NDC passes it and still becomes eleven zeros.
        AND {ndc_key('m.NDC')}
          = lpad(regexp_replace(c.CL_CODE, '[^0-9]', ''), 11, '0')
       WHERE cast(m.NDC as string) IS NOT NULL AND trim(cast(m.NDC as string)) <> ''
         AND cast(m.FST_DT AS date) >= p.INDEX_DATE
         AND cast(m.FST_DT AS date) <= p.OBS_END_DT  -- ENDDATE primary; ENDDATE_CE under sensitivity flag
     ),
-    -- 4) med_procedure is not a drug source: its PROC column holds ICD
+    -- 4) med_procedure is not a drug source. Its PROC column holds ICD
     -- procedure codes, and the MMA code list is HCPCS and NDC.
     --
-    -- Measured, because med_procedure.PROC is named among
-    -- the tables joined to CL_MMA_CODELIST and Optum's business rules say PROC
-    -- can carry a drug given as a procedure under HCPCS/CPT. Neither holds
-    -- here. Profiling PROC over the study period returns 43.1M of ~43.2M rows
-    -- at ICD_FLAG=10 and seven characters, which is ICD-10-PCS. The whole
-    -- five-character tail is ~15k rows, 0.035%, and its values are things like
-    -- 00002 and ERHOS - malformed, not J-codes. Reading this table would add
-    -- no MM therapy claim.
+    -- This was measured rather than assumed. med_procedure.PROC is named among
+    -- the tables joined to CL_MMA_CODELIST, and Optum's business rules say
+    -- PROC can carry a drug given as a procedure under HCPCS/CPT. Neither
+    -- holds here. Profiling PROC over the study period gives 43.1M of ~43.2M
+    -- rows at ICD_FLAG=10 and seven characters, which is ICD-10-PCS. The whole
+    -- five-character tail is ~15k rows, 0.035%, with values like 00002 and
+    -- ERHOS - malformed, not J-codes. Reading this table would add no MM
+    -- therapy claim.
     -- 5) Pharmacy (rx) claims (NDC)
     rx_claims AS (
       SELECT
@@ -110,10 +111,12 @@ phase_mma_map <- function(con, ctx) {
         ON c.CL_CODE_TYPE = 'NDC'
        -- Normalize both sides to NDC11 (lpad stripped value to 11 digits with zeros)
        -- Same guard as the medical NDC join above. The Rx path has no other
-       -- claim-side filter, so an unguarded blank code reaches every fill.
+       -- claim-side filter, so a blank code left unguarded reaches every
+       -- fill.
        AND regexp_replace(c.CL_CODE, '[^0-9]', '') <> ''
-       -- The Rx branch has no WHERE on NDC at all, so without this a missing
-       -- fill NDC becomes eleven zeros and matches an all-zero code list row.
+       -- The Rx branch has no WHERE on NDC at all. Without this, a missing
+       -- fill NDC becomes eleven zeros and matches an all-zero code list
+       -- row.
        AND {ndc_key('r.NDC')}
          = lpad(regexp_replace(c.CL_CODE, '[^0-9]', ''), 11, '0')
       WHERE cast(r.FILL_DT AS date) >= p.INDEX_DATE
@@ -130,7 +133,7 @@ phase_mma_map <- function(con, ctx) {
       count(DISTINCT MED_ABBR) AS n_meds,
       sum(case when CLAIM_TYPE='pharmacy' then 1 else 0 end) AS n_pharmacy_rows,
       sum(case when CLAIM_TYPE='medical' then 1 else 0 end) AS n_medical_rows,
-      -- Confirms each source path is actually contributing claims.
+      -- Confirms each source path is really contributing claims.
       sum(case when CLAIM_SOURCE='med_proc_cd' then 1 else 0 end) AS n_from_proc_cd,
       sum(case when CLAIM_SOURCE='med_bill_proc' then 1 else 0 end) AS n_from_bill_proc,
       sum(case when CLAIM_SOURCE='med_ndc' then 1 else 0 end) AS n_from_med_ndc,
@@ -139,11 +142,11 @@ phase_mma_map <- function(con, ctx) {
 
   # Enrich + dedup.
   #
-  # Written to a table rather than left as a view. mma_med_raw beneath it is
-  # the four-arm scan of `medical` and `rx` above, and this is read six times
-  # over the run - map_med, the imputation check below, phase_qc's coverage
-  # table, and the two counts in phase_persist. Left lazy that is six passes
-  # over the raw claim tables for one extraction.
+  # Written to a table rather than left as a view. Beneath it, mma_med_raw is
+  # the four-arm scan of `medical` and `rx` above. This is read six times over
+  # a run: map_med, the imputation check below, phase_qc's coverage table, and
+  # the two counts in phase_persist. Left lazy, that is six passes over the raw
+  # claim tables for one extraction.
   materialize(con, "S05_mma_med_processed", view = "mma_med_processed", name = "MMA_MED_PROCESSED", body = glue("
     WITH enriched AS (
       SELECT
@@ -162,8 +165,8 @@ phase_mma_map <- function(con, ctx) {
         ON r.MED_ABBR = ru.CL_MED_ABBR
     ),
     filtered AS (
-      -- Pharmacy claims
-      -- with missing or anomalous DAY_SUPPLY should be imputed to 28, not dropped.
+      -- A pharmacy claim with a missing or odd DAY_SUPPLY is imputed to 28,
+      -- not dropped.
       SELECT
         PATID, CODE, CODE_TYPE, CLAIM_TYPE, DATE_SERVICE,
         CASE
@@ -175,15 +178,16 @@ phase_mma_map <- function(con, ctx) {
       FROM enriched
     ),
     dedup AS (
-      -- Dedup: within (PATID, MED_ABBR, DATE_SERVICE, CLAIM_TYPE)
-      -- keep max DAY_SUPPLY (pharmacy) or single row (medical, all 28)
+      -- Dedup within (PATID, MED_ABBR, DATE_SERVICE, CLAIM_TYPE). Keep the
+      -- largest DAY_SUPPLY for pharmacy, or the single row for medical, where
+      -- they are all 28.
       SELECT
         PATID,
         MED_ABBR,
         DATE_SERVICE,
         CLAIM_TYPE,
         max(DAY_SUPPLY) AS DAY_SUPPLY,
-        -- Deterministic dedup: min() for reproducibility across runs
+        -- min() so two runs dedup the same way.
         min(CODE) AS CODE,
         min(CODE_TYPE) AS CODE_TYPE,
         min(MED_CLASS) AS MED_CLASS,
@@ -202,7 +206,7 @@ phase_mma_map <- function(con, ctx) {
       max(DAY_SUPPLY) AS max_day_supply
     FROM mma_med_processed")
 
-  # Sanity check: after imputation, no pharmacy rows should have invalid DAY_SUPPLY
+  # After imputation, no pharmacy row should have an invalid DAY_SUPPLY.
   bad_ds <- db_q(con, "SELECT count(*) AS n_bad FROM mma_med_processed WHERE CLAIM_TYPE='pharmacy' AND (DAY_SUPPLY IS NULL OR DAY_SUPPLY < 1)")$n_bad
   if (bad_ds > 0) stop(glue("Post-imputation: found {bad_ds} pharmacy rows with invalid DAY_SUPPLY — imputation logic failed."))
 
@@ -228,7 +232,7 @@ phase_mma_map <- function(con, ctx) {
 
   run_step(con, "S06_map_med", glue("
     CREATE OR REPLACE TEMPORARY VIEW map_med AS
-    -- Stays a view: map_stacked below is its only reader, and that one is
+    -- Stays a view. map_stacked below is its only reader, and that one is
     -- written to a table, so this plan runs once either way.
     WITH claims AS (
       SELECT
@@ -245,11 +249,12 @@ phase_mma_map <- function(con, ctx) {
         PATID,
         MED_ABBR,
         min(MED_CLASS) AS MED_CLASS,  -- deterministic; should be 1:1 with MED_ABBR via rollup
-        -- Sort: by date, then pharmacy before medical on same date (type_ord=0 for rx).
-        -- Design choice: pharmacy processed first on same-day ties. This is safe because:
-        --   rx pushout only depends on rx_runout (not med_runout),
-        --   and medical never has pushout, so order on same day doesn't distort either.
-        -- The MAP algorithm doesn't mandate tie-break order; this choice is documented and deterministic.
+        -- Sorted by date, then pharmacy before medical on the same date
+        -- (type_ord=0 for rx). Pharmacy first on a same-day tie is a choice,
+        -- and it is safe: rx pushout depends only on rx_runout, never on
+        -- med_runout, and medical has no pushout at all. So the order within a
+        -- day distorts neither. The MAP algorithm does not fix a tie-break
+        -- order. This one is written down and gives the same answer twice.
         sort_array(collect_list(named_struct(
           'dt', dt,
           'type_ord', case when claim_type='pharmacy' then 0 else 1 end,
@@ -331,8 +336,9 @@ phase_mma_map <- function(con, ctx) {
                   -- MEDICAL RUNOUT UPDATE
                   -- Pushout is not implemented for medical.
                   -- Always: DATE_SERVICE + DAY_SUPPLY - 1.
-                  -- greatest() is a safety belt: if a same-day or out-of-order claim
-                  -- produces an earlier runout, we keep the existing later one.
+                  -- greatest() is a safety belt. If a same-day or
+                  -- out-of-order claim gives an earlier runout, the later one
+                  -- already there is kept.
                   'med_runout', CASE
                     WHEN x.type='medical' THEN
                       CASE

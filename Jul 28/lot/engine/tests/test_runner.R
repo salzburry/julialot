@@ -917,8 +917,14 @@ ok(has(c15, "min(CASE WHEN NOT ("),
 ok(has(c15, "AS ENDING_CART_DT") && has(c15, "min(ac.TX_DT) AS CART_DT"),
    "...so both dates exist: the earliest CAR-T, and the earliest that can end a line")
 # The boundary reads the eligible one; LOT1_1ST_SCT_DT keeps the descriptive one.
-end_arm <- substr(c15, regexpr("LOT1_TX_ENDDATE: earliest", c15),
+#
+# Cut on CODE, not on the comment above it. This used to open on
+# "LOT1_TX_ENDDATE: earliest", and rewording that comment made regexpr return
+# -1, so the arm came out empty and the assertion failed on prose.
+end_arm <- substr(c15, regexpr("THEN greatest(sd.LOT1_START_DT, date_sub(", c15,
+                               fixed = TRUE),
                   regexpr("AS LOT1_TX_ENDDATE_REASON", c15))
+ok(nzchar(trimws(end_arm)), "the end-date arm is found at all")
 ok(has(end_arm, "ENDING_CART_DT") && !has(end_arm, "FIRST_CART_DT"),
    "the LOT1 end date is built from the eligible CAR-T, not the first one")
 ok(has(c15, "sd.FIRST_CART_DT,"),
@@ -2261,9 +2267,13 @@ cat("\n-- an agent joins a regimen by being filled in the window, not by cover -
 # MAP_START_DT, so that episode does not join: a patient who has switched is no
 # longer filling the old agent, and the residual cover is a dispensing artefact.
 #
-# Pinned because the protocol reads wider - "all MM therapies identified during
-# the first 30 days of the LOT" - and the study team settled it this way. Anyone
-# widening it to cover has to bring MAP_END_DT into this block, which fails here.
+# What is pinned here is that cover is rejected. Anyone widening membership to
+# cover has to bring MAP_END_DT into this block, which fails here.
+#
+# It does NOT pin the narrower question of whether a CLAIM inside the window
+# joins, where the agent's episode began earlier and is still open. That one is
+# open - LOT_RULES.md 14.3 and KNOWN_ISSUES.md 1 - and reading this block as an
+# answer to it would be reading a decision that has not been made.
 ind_block <- local({
   i <- regexpr('_induction_meds"', l25_txt, fixed = TRUE)
   rest <- substring(l25_txt, i)

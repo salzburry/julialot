@@ -364,16 +364,20 @@ decide whether a line exists will miss it.
 **Scenario** — *derived; vignettes `map_gap_within` / `map_gap_beyond`.*
 
     d0                                1L regimen starts
-    d+60                              administrative hold, no claims
-    d+(60 + map_discon_gap_days - 1)  the same agent resumes, one day inside
+    d+59                              last day the agent is covered
+    d+(59 + map_discon_gap_days - 1)  the same agent resumes, one day inside
     ---
     no discontinuation — exposure continues across the gap
 
     d0                                1L regimen starts
-    d+60                              no claims
-    d+(60 + map_discon_gap_days)      the same agent resumes, exactly at it
+    d+59                              last day the agent is covered
+    d+(59 + map_discon_gap_days)      the same agent resumes, exactly at it
     ---
     discontinuation
+
+The gap is measured from the last covered day, not from the last fill or the
+first silent one. With a 90-day threshold that puts the two sides on d+148 and
+d+149.
 
 Prior-authorisation holds and hospitalisations both produce silence in claims,
 and neither is a clinical decision to stop. That is what the threshold is
@@ -455,7 +459,7 @@ part that is easy to get wrong by one day.
 
     d0                             1L regimen starts
     d+30                           first autologous transplant
-    d+(30 + sct_tandem_days - 1)   second AUTO, one day inside the window
+    d+(30 + sct_tandem_days)       second AUTO, on the last day inside
     ---
     one tandem pair. A tandem is allowed, so LOT1 is not ended by the second
 
@@ -464,6 +468,10 @@ part that is easy to get wrong by one day.
     d+(30 + sct_tandem_days + 1)   second AUTO, one day past the window
     ---
     not a tandem. The second AUTO is excess, and excess AUTO ends LOT1
+
+The test is `datediff <= sct_tandem_days`, so the two sides are d+210 and
+d+211 — adjacent days, which is what makes the pair a boundary case rather
+than two unrelated examples.
 
 Two things separate a planned tandem from an unplanned second transplant: the
 gap must be inside `sct_tandem_days`, and nothing may happen between the two —
@@ -671,7 +679,7 @@ tandem, and the two are told apart by which rule fires, not by a flag.
 
     d0     1L regimen starts
     d+60   agent added
-    d+107  CAR-T, one day outside the window
+    d+106  CAR-T, one day outside the window
     ---
     not CART_INIT. The addition is an ordinary regimen change (§7.4) and the
     CAR-T is handled by the ordinary rules for a CAR-T event
