@@ -371,9 +371,38 @@ build_lot_n <- function(con, lot_num,
         -- was then rejected here for being within 180 days of AUTO 2, so LOT2
         -- never opened. The line-ending SCT sits one day after the end date,
         -- which is exactly where that AUTO is.
+        --
+        -- The pair must also be one the previous line OWNED, which is what the
+        -- window test below asks. The 180-day test on its own says the two
+        -- transplants are close together and nothing more; it does not say a
+        -- line ever held them. Where the earlier AUTO falls outside the
+        -- previous line's window, nothing held that line open to the later one
+        -- - LOT{lot_num}_AUTO_HOLD_DT carries the same window test and goes
+        -- NULL - so refusing the later one HERE as that line's tandem partner
+        -- leaves it in no line at all. AUTO 1 in December outside LOT1's
+        -- window, LOT1 ending on its own run-out in February, AUTO 2 in June:
+        -- LOT1 does not reach it and this rejected it, so it belonged to
+        -- nothing. Same failure as the paragraph above, from the other side of
+        -- the pair.
+        --
+        -- Deliberately NOT the wider reading, that a tandem holds the previous
+        -- line open through AUTO 2 wherever AUTO 1 sits. The hold date reaches
+        -- forward, so a line let past its own window swallows what is in
+        -- between - an added medication that should have opened its own line,
+        -- an allograft that should have ended this one. Measured on 2000
+        -- synthetic patients that moved 52 patients, 39 of whom had no
+        -- unowned transplant to fix, and broke B5b. This reading moved 12, all
+        -- of them patients with one.
         AND NOT (awp.PREV_AUTO_DT IS NOT NULL
                  AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {sct_tandem_days}
                  AND awp.N_BETWEEN = 0
+                 AND awp.PREV_AUTO_DT <= date_add(
+                       pe.PREV_START_DT,
+                       CASE pe.PREV_START_TYPE
+                         WHEN 'SCT_ALLO' THEN 0
+                         WHEN 'CART'     THEN {cart_consolidation_days} - 1
+                         ELSE                 {prev_med_window} - 1
+                       END)
                  AND NOT (pe.PREV_END_REASON = 'SCT_AUTO'
                           AND awp.TX_DT = date_add(pe.PREV_END_DT, 1)))
       GROUP BY pe.PATID
