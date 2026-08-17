@@ -184,6 +184,56 @@ AUDIT_COUNTS <- list(
                                               ELSE {lotn_window} - 1 END END)
       GROUP BY l.LOT_NUM ORDER BY l.LOT_NUM"),
 
+  # 1e. NOT a defect - the size of the 90-day threshold, which nothing has
+  #     ever measured. A break in supply of even one day starts a new episode.
+  #     The 90 days is a separate question: did the patient STOP? Only a drug
+  #     that comes back after a confirmed stop is released to open a new line;
+  #     under 90 days it stays blocked by the previous line's regimen.
+  #
+  #     So a difference of days in when a refill was picked up decides whether
+  #     a patient gets an extra line. That is the rule as designed. What is not
+  #     known is how many patients sit close enough to the threshold for a
+  #     delayed pickup or a pharmacy switch to move them across it, which is
+  #     what this bands.
+  #
+  #     Restricted to drugs that were in some line's regimen, because those are
+  #     the only ones the release rule applies to. A drug nobody was on cannot
+  #     be blocked by a previous regimen in the first place.
+  list(id = "return-gap-around-the-90-day-threshold",
+       what = "DECISION: how close returning drugs sit to the 90-day line that frees them to open a new LOT",
+       expect = "no target - nothing has measured this. Read the two bands either side of 90.",
+       sql = "
+      WITH in_a_regimen AS (
+        SELECT DISTINCT l.PATID, explode(split(l.LOT_BASE_MEDS, ' ')) AS MED_ABBR
+        FROM {t$long} l
+        WHERE coalesce(trim(l.LOT_BASE_MEDS), '') <> ''
+      ),
+      gaps AS (
+        SELECT m.PATID, m.MAP_MED_TYPE,
+               datediff(lead(m.MAP_START_DT) OVER (PARTITION BY m.PATID, m.MAP_MED_TYPE
+                                                   ORDER BY m.MAP_START_DT),
+                        m.MAP_END_DT) AS GAP_DAYS
+        FROM {t$map} m
+      )
+      SELECT CASE WHEN g.GAP_DAYS <  30 THEN 'a. under 30 days'
+                  WHEN g.GAP_DAYS <  76 THEN 'b. 30 to 75'
+                  WHEN g.GAP_DAYS <  83 THEN 'c. 76 to 82 - within 2 weeks under'
+                  WHEN g.GAP_DAYS <  90 THEN 'd. 83 to 89 - within 1 week under'
+                  WHEN g.GAP_DAYS <  97 THEN 'e. 90 to 96 - within 1 week over'
+                  WHEN g.GAP_DAYS < 104 THEN 'f. 97 to 103 - within 2 weeks over'
+                  WHEN g.GAP_DAYS < 181 THEN 'g. 104 to 180'
+                  ELSE                       'h. over 180 days' END AS RETURN_GAP,
+             CASE WHEN g.GAP_DAYS >= {discon_days} THEN 'released - may open a LOT'
+                  ELSE 'still blocked by the previous regimen' END AS EFFECT,
+             count(*)                    AS N_RETURNS,
+             count(DISTINCT g.PATID)     AS N_PATIENTS
+      FROM gaps g
+      INNER JOIN in_a_regimen r
+         ON r.PATID = g.PATID AND r.MED_ABBR = g.MAP_MED_TYPE
+      WHERE g.GAP_DAYS IS NOT NULL
+      GROUP BY 1, 2
+      ORDER BY 1"),
+
   # 2. Not a defect - an open study-team question about how long a
   #    regimen-less transplant line should run. Reported so the decision is
   #    made against real durations rather than a synthetic guess.
@@ -490,6 +540,7 @@ main <- function() {
   cart_days   <- cfg$cart_consolidation_days
   tandem_days <- cfg$sct_tandem_days
   max_lot     <- cfg$max_lot
+  discon_days <- cfg$map_discon_gap_days
   t <- list(long   = lot_out(which_tbl),
             map    = lot_out("MAP_STACKED"),
             sct    = lot_out("LOT1_SCT"),
