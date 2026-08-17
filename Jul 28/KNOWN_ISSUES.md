@@ -1,11 +1,11 @@
 # Known issues — open questions for the study team
 
-Three things: one defect with a known correct answer, and two that need a
-decision rather than a closer reading of the code. Each one is written to be answered: what the build does today, a
+Three things that need a decision rather than a closer reading of the code.
+None of them is a defect: the build does what it does on purpose, and what is
+open is whether that is the right rule. Each one is written to be answered: what the build does today, a
 worked patient, what it moves, the question, and the count that sizes it.
 
-**None of these is being changed while it is open.** #1 is a defect and the
-others are decisions the code cannot make for itself. The build ships as
+**None of these is being changed while it is open.** The build ships as
 described, and every one is recorded in `lot/LOT_RULES.md` next to the rule it
 affects, so nobody reads the rules without meeting the caveat.
 
@@ -34,10 +34,18 @@ conversation.
 
 ## 1. A continued agent is missing from the later line's regimen
 
-**A defect, not a choice.** The rule the study team settled is *an agent joins a
-regimen by being filled in the window, not by cover* — that is the heading of the
-engine test that pins it. The code implements something narrower, and nobody
-appears to have chosen it.
+**An open question, not a defect.** This entry used to assert that claim-level
+membership had been agreed and that the build failed to implement it. That
+assertion does not hold up. It rested on the heading of an engine test — *an
+agent joins a regimen by being filled in the window, not by cover* — which
+rejects **cover** and says nothing about claims versus episode starts. Reading it
+as a decision between those two was a misreading, and it created a conflict with
+`lot/LOT_RULES.md` §4.2 that no document outside this file supports.
+
+What is actually true: the build has always used the episode start, the program
+spec's crosswalk describes `MAP_START_DT`, and nothing located so far records a
+decision either way on the narrower question. So this is a question about the
+current rule, not a gap against an agreed one.
 
 **What the build does.** `lot{n}_induction_meds` reads `map_stacked`, which
 carries one row per MAP **episode**, and tests `MAP_START_DT`. A dispense arriving
@@ -48,8 +56,8 @@ three possible rules and the build is on the third:
 | | rule | in the regimen? |
 |---|---|---|
 | a | cover overlaps the window | rejected — this is the wide reading |
-| b | a **claim** falls in the window | **what was decided** |
-| c | an **episode starts** in the window | **what shipped** |
+| b | a **claim** falls in the window | the alternative, unrecorded either way |
+| c | an **episode starts** in the window | **what the build does, and always has** |
 
     d1     LEN, refilled without a break, covered through d200
     d100   POMA opens LOT2, window d100-d129
@@ -75,14 +83,14 @@ claims that `mma_med_processed` still carries, so the claim test has to be
 restricted to claims belonging to an episode the build kept, or the regimen will
 gain agents the rest of the algorithm does not know about.
 
-**It propagates, and this is the worst of it.** The prior-regimen exclusion
+**It propagates, and that is what makes the answer matter.** The prior-regimen exclusion
 that stops an agent starting a line looks **one line back only**
 (`LOT_NUM = {prev}`). An agent wrongly absent from LOT2's regimen is therefore
 wrongly absent from LOT3's exclusion set, and becomes eligible to *start* LOT3 —
 a line it should not be able to open.
 
     d1     LEN, filling continuously
-    d100   POMA opens LOT2. LEN is omitted from LOT2's regimen (the defect)
+    d100   POMA opens LOT2. LEN is omitted from LOT2's regimen (rule c)
     d200   POMA runs out, LOT2 ends
     d205   LEN's cover finally lapses and it restarts — a new episode
     ---
@@ -100,10 +108,11 @@ run-out — a newly-admitted agent is a base agent and
 enters `discon_per_med`, so line lengths and boundaries move too. Published
 regimen strings change for a large group.
 
-**Question for the study team.** Confirm rule (b) is the intended one — our
-reading of the recorded decision and of the protocol's "all MM therapies
-identified during the first 30 days of the LOT" is that it is — and this is a
-fix rather than a change.
+**Question for the study team.** Which of (b) and (c) is intended? The protocol
+says the regimen is "all MM therapies identified during the first 30 days of the
+LOT", which reads wider than (c) — but reading it as (b) is an interpretation,
+not something the text settles. Answering (b) makes this a change to the build;
+answering (c) closes the entry.
 
 **Counts.** `4.2-prior-agent-covered-but-not-in-the-regimen` sizes the regimen
 half. The propagation needs its own count — lines started by an agent that was
@@ -137,7 +146,7 @@ source? If it is 30, the change is a one-line config edit and a rebuild.
 every downstream reader refuses it as the study's numbers. There is no way to
 produce a 30-day run by accident.
 
-`lot/LOT_RULES.md` §14.3.
+`lot/LOT_RULES.md` §14.1.
 
 ---
 

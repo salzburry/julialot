@@ -307,9 +307,13 @@ VIGNETTES <- list(
   list(id = "line_beyond_max", title = "A patient who would reach a line above MAX_LOT",
        param = "max_lot", confidence = "derived",
        where = "lot/engine/R/build_lot.R - lines outside 1..max_lot are refused by check_lot_long",
-       events = function(p) rbind(
-         ev(0, "MED", "1L starts"),
-         ev(200 * p$max_lot, "MED", paste0("a regimen change that would be LOT", p$max_lot + 1L))),
+       # One regimen change per line, so the timeline actually reaches the cap
+       # rather than asserting it. Two events could only ever demonstrate LOT2.
+       events = function(p) do.call(rbind, c(
+         list(ev(0, "MED", "1L starts")),
+         lapply(seq_len(p$max_lot), function(k)
+           ev(200 * k, "MED", paste0("a new agent, opening LOT", k + 1L,
+                                     if (k == p$max_lot) " - above the cap" else ""))))),
        expected = function(p) paste0(
          "No line above ", p$max_lot, " is built. The patient's later therapy is ",
          "not represented, so a count of lines is a count of lines BUILT, not of ",

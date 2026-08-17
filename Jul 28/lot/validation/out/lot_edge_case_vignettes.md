@@ -153,7 +153,7 @@ reading of how the rules interact, and the first warehouse run settles it.
 
 **line_beyond_max** - A patient who would reach a line above MAX_LOT
 
-- timeline: d+0 MED (1L starts); d+1000 MED (a regimen change that would be LOT6)
+- timeline: d+0 MED (1L starts); d+200 MED (a new agent, opening LOT2); d+400 MED (a new agent, opening LOT3); d+600 MED (a new agent, opening LOT4); d+800 MED (a new agent, opening LOT5); d+1000 MED (a new agent, opening LOT6 - above the cap)
 - why it is hard: The cap is invisible in the output: a capped patient looks like a completed one.
 - rule: lot/engine/R/build_lot.R - lines outside 1..max_lot are refused by check_lot_long
 

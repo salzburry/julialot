@@ -707,6 +707,13 @@ initiation, which is a clinical question and not a protocol reading.
 
 ## 12. Where this differs from the written protocol
 
+- **The tandem window is inclusive of 180 elapsed days.** The engine tests
+  `datediff(AUTO_2, AUTO_1) <= sct_tandem_days`; the program-spec crosswalk
+  writes it `datediff + 1 <= 180`. They differ on one day — a pair exactly 180
+  days apart is a tandem here and is not under the crosswalk's arithmetic. The
+  engine has carried an explicit `no +1` comment on that line since before this
+  work, so it is a long-standing choice rather than drift, but the two documents
+  have never been reconciled. §6.3.
 - **A planned tandem needs a clear gap, not only an interval.** The protocol
   defines a planned tandem by the 60-180 day gap between two autologous
   transplants and by no allogeneic transplant between them. Requiring that
