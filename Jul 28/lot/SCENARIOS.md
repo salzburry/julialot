@@ -577,10 +577,18 @@ Only the **first** transplant of a pair need be inside the window. The partner
 follows it however far out it sits.
 
 The run-out does not break the pair. §6.3 asks what *happened* between the two
-transplants, and running out of treatment is an absence rather than an event. A
-medication start, an allogeneic transplant or a CAR-T in that gap would break it
-— and then the line would end at d+59, and the second transplant would be free
-to start a line of its own.
+transplants, and running out of treatment is an absence rather than an event.
+
+A medication start, an allogeneic transplant or a CAR-T in that gap does break
+it. The line then ends wherever the ordinary cascade puts it (§7.1) — **not**
+necessarily at the run-out. An interrupting event before the run-out ends the
+line earlier:
+
+    d+40   DARA starts, before POMA's cover has run out
+    ---
+    LOT2 ends d+39 as MED_ADD, not d+59 as DISCONTINUATION
+
+Either way the second transplant is free to start or join a later line.
 
 It cannot outrank an added agent, and the arithmetic rather than the branch
 order is why. An agent starting inside the window joins the regimen instead of
