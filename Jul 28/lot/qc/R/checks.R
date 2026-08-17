@@ -93,6 +93,23 @@ qc_window_sql <- function(t, p, per_line = FALSE) {
     )")
 }
 
+# The returning-drug exemption. C2's `why` states the rule and why the lag has
+# to be the immediately-preceding episode; this is the one copy of the SQL.
+#
+# One definition for the same reason qc_window_sql() has one: C2 and C3 both
+# lean on this exemption, and two copies of a rule is how the two stop
+# describing the same rule. They were still byte-identical when this was
+# extracted, which is the moment to do it rather than after they have drifted.
+#
+# No leading newline or indent, so each call site keeps its own layout and the
+# emitted SQL is byte-identical to the two copies this replaced.
+qc_restart_sql <- function(t) paste0("restart AS (
+      SELECT cast(PATID as string) AS PATID, MAP_MED_TYPE, MAP_START_DT,
+             coalesce(lag(MAP_DISCON_FLG) OVER (PARTITION BY PATID, MAP_MED_TYPE
+                                    ORDER BY MAP_START_DT), 0) AS PREV_DISCON
+      FROM ", t$map, "
+    )")
+
 LOT_QC_CHECKS <- list(
 
   # ---- A. Line structure ---------------------------------------------------
@@ -517,12 +534,7 @@ LOT_QC_CHECKS <- list(
                     "that discontinued once and has been running since."),
        needs = c("final", "map"),
        sql = function(t, p) counted(paste0("
-    WITH restart AS (
-      SELECT cast(PATID as string) AS PATID, MAP_MED_TYPE, MAP_START_DT,
-             coalesce(lag(MAP_DISCON_FLG) OVER (PARTITION BY PATID, MAP_MED_TYPE
-                                    ORDER BY MAP_START_DT), 0) AS PREV_DISCON
-      FROM ", t$map, "
-    )
+    WITH ", qc_restart_sql(t), "
     SELECT ", mask("f.PATID"), " AS pid, f.LOT_NUM,
            f.LOT_BASE_1ST_ADD_MED AS med
     FROM ", t$final, " f
@@ -567,12 +579,7 @@ LOT_QC_CHECKS <- list(
       FROM ", t$final, "
       WHERE LOT_BASE_1ST_ADD_MED_DT IS NOT NULL
     ),
-    restart AS (
-      SELECT cast(PATID as string) AS PATID, MAP_MED_TYPE, MAP_START_DT,
-             coalesce(lag(MAP_DISCON_FLG) OVER (PARTITION BY PATID, MAP_MED_TYPE
-                                    ORDER BY MAP_START_DT), 0) AS PREV_DISCON
-      FROM ", t$map, "
-    )
+    ", qc_restart_sql(t), "
     SELECT ", mask("a.PATID"), " AS pid, a.LOT_NUM,
            count(DISTINCT ms.MAP_MED_TYPE) AS n_tied
     FROM add_lines a

@@ -179,20 +179,17 @@ main <- function() {
   # its tandem flag, so both being 1 cannot survive the projection and a check
   # over the published columns can never fail.
   #
-  # DERIVED FROM THIS RUN'S OWN LINES, not probed across the contract's cap.
-  #
-  # The previous version looped seq(2, max_lot) - a CONTRACT SETTING, not a
-  # property of the run - and took any readable table as belonging to it. Per-
-  # line stage tables are deliberately RETAINED, and a run only replaces the
-  # lines it builds, so:
+  # The line numbers come from the run's own published table, because max_lot is
+  # a CONTRACT SETTING and not a property of the run. Looping seq(2, max_lot)
+  # and taking any readable table meant retained tables counted: per-line stage
+  # tables are deliberately kept, and a run only replaces the lines it builds.
   #
   #   prior run reached LOT5  -> LOT4_SCT and LOT5_SCT remain
   #   this run reached LOT3   -> it rewrites neither
   #   E1 read LOT1..LOT5      -> judged THIS run on the previous one's patients
   #
-  # An external review found it. The line numbers now come from the run's own
-  # published table, so a retained LOT4_SCT is ignored because this run has no
-  # LOT4, not because the table happened to be unreadable.
+  # So a retained LOT4_SCT is ignored because this run has no LOT4 - a reason,
+  # not the accident of whether the table happened to read.
   #
   # AND AN EXPECTED TABLE THAT WILL NOT READ IS AN ERROR. `tryCatch(FALSE)`
   # made "the table is not there" and "the table is there and broken"
