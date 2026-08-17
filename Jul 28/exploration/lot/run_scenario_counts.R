@@ -359,7 +359,10 @@ main <- function() {
   load_pipeline_inputs(LOT_ROOT, "config.csv")
   for (f in c("config_lot.R", "db_utils_lot.R")) source(file.path(LOT_ROOT, "R", f))
 
-  cfg <- lot_config()
+  # cfg_defaults, not lot_config(): config_lot.R defines the first when it is
+  # sourced, and the second reads what set_lot_config() installs - which is the
+  # call below. Same ordering bug run_lot_audit_counts.R had.
+  cfg <- get("cfg_defaults", envir = globalenv())
   schema <- trimws(Sys.getenv("PROJECT_WORK_SCHEMA",
              unset = Sys.getenv("DOMINO_USER_NAME",
              unset = Sys.getenv("DOMINO_STARTING_USERNAME", unset = ""))))
