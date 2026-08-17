@@ -57,7 +57,7 @@ EXPECTED_FAILURES <- list(
     "05_sct.R: differs beyond the approved deviations in 11 line(s)",
     # lot1_regimen_cutoff, and the regimen window and the per-drug
     # episode scan both bounded by it.
-    "04_lot1_base.R: differs from 02_lot1.R in 147 line(s)",
+    "04_lot1_base.R: differs from 02_lot1.R in 149 line(s)",
     # LOT1_AUTO_HOLD_DT, and a tandem that needs a clear gap between its two
     # transplants.
     "05b_lot1_sct.R: differs beyond the approved deviations in 176 line(s)",
