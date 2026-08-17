@@ -45,6 +45,12 @@ def d(n): return (EPOCH + datetime.timedelta(days=int(n))).isoformat()
 MEDS = [('LEN','IMID'), ('BORT','PI'), ('DARA','MAB'),
         ('POMA','IMID'), ('CYCLO','ALKY'), ('CARF','PI')]
 STEROID = ('DEX', 'STEROID')
+# Melphalan is in the code-list universe but never in a random history. A
+# conditioning dose is a shape - one dose beside a transplant, sometimes a
+# second one later - not a drug someone happens to be on, so drawing it would
+# measure something the rule is not about. planted() builds the shapes.
+MELP = ('MELP', 'ALKY')
+ROLLUP = MEDS + [STEROID, MELP]
 
 
 def generate(seed, n):
@@ -191,6 +197,26 @@ def planted():
     # it. Its twin - the same mismatch on a patient who never gets a line - is
     # what E5b used to be scoped to on its own.
     pat('P0006', [('LEN', 'IMID', ix + 20, ix + 200, 0)], auto=[ix + 5])
+
+    # The melphalan shapes the rule in R/melp_rule.R is written against, one
+    # patient each. Nothing here says what their lines should be - the point is
+    # that MELP_RULE has something to act on at all. Without them the whole
+    # rule is unreachable: MELP is not in any random history, so every mode
+    # emitted different SQL and produced identical output.
+    #
+    #   A.1  a single conditioning dose inside induction
+    #   A.2  inside induction, next exposure 180+ days later
+    #   B.1  outside induction, next exposure inside 60 days
+    #   B.2  outside induction, next exposure 60-179 days later
+    #   B.3  outside induction, next exposure 180+ days later
+    def melp(pid, doses, auto=()):
+        pat(pid, [('LEN', 'IMID', ix, ix + 90, 0)] +
+                 [(MELP[0], MELP[1], ix + d, ix + d, 0) for d in doses], auto=auto)
+    melp('M0001', [14], auto=[ix + 21])
+    melp('M0002', [14, 14 + 200], auto=[ix + 21, ix + 21 + 200])
+    melp('M0003', [120, 120 + 30])
+    melp('M0004', [120, 120 + 90])
+    melp('M0005', [120, 120 + 200])
     return out
 
 
@@ -277,7 +303,7 @@ CREATE TABLE spans_strict (PATID VARCHAR, cov_start DATE, cov_end DATE);
 def load(con, pats):
     for s in DDL.strip().split(';'):
         if s.strip(): con.execute(s)
-    for med, cls in MEDS + [STEROID]:
+    for med, cls in ROLLUP:
         con.execute("INSERT INTO mma_rollup VALUES (?,?,NULL,NULL)", [med, cls])
     for p in pats:
         dd = d(p['death']) if p['death'] is not None else None

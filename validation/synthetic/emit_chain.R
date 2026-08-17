@@ -32,7 +32,10 @@ if (!dir.exists(ENGINE)) {
 }
 library(glue)
 
-MEDS    <- c("LEN", "BORT", "DARA", "POMA", "CYCLO", "CARF")
+# MELP is in the universe so MELP_RULE has something to act on. It is not drawn
+# into random histories - run_synthetic.py plants the melphalan patients instead
+# - because a conditioning dose is a specific shape, not a drug taken at random.
+MEDS    <- c("LEN", "BORT", "DARA", "POMA", "CYCLO", "CARF", "MELP")
 CLASSES <- c("IMID", "PI", "MAB", "ALKY")
 
 e <- new.env(parent = globalenv())
