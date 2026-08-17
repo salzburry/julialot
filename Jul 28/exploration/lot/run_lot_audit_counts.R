@@ -386,9 +386,18 @@ report_plan <- function() {
   for (a in AUDIT_COUNTS) {
     cat("  ", a$id, "\n    ", a$what, "\n    ", a$expect, "\n", sep = "")
   }
-  cat("\n", length(AUDIT_COUNTS), " counts. Set AUDIT_EXECUTE=TRUE to run them.\n", sep = "")
-  cat("Needs DATABRICKS_PWD, DOMINO_USER_NAME (or PROJECT_WORK_SCHEMA),\n")
-  cat("OBJECT_PREFIX and INPUT_COHORT_TABLE.\n\n")
+  # The trailer says what happens NEXT, so it has to know whether this is the
+  # dry run. Printed unconditionally it told an operator who had already set
+  # AUDIT_EXECUTE to set it - which reads as the flag not having been picked
+  # up, and sends them after the wrong thing when the next line is an error.
+  cat("\n", length(AUDIT_COUNTS), " counts.", sep = "")
+  if (env_flag("AUDIT_EXECUTE")) {
+    cat(" Running them now.\n\n")
+  } else {
+    cat(" Set AUDIT_EXECUTE=TRUE to run them.\n")
+    cat("Needs DATABRICKS_PWD, DOMINO_USER_NAME (or PROJECT_WORK_SCHEMA),\n")
+    cat("OBJECT_PREFIX and INPUT_COHORT_TABLE.\n\n")
+  }
 }
 
 main <- function() {
@@ -400,7 +409,12 @@ main <- function() {
   load_pipeline_inputs(LOT_ROOT, "config.csv")
   for (f in c("config_lot.R", "db_utils_lot.R")) source(file.path(LOT_ROOT, "R", f))
 
-  cfg <- lot_config()
+  # cfg_defaults, not lot_config(). config_lot.R defines cfg_defaults when it is
+  # sourced; lot_config() reads the config that set_lot_config() installs, and
+  # that has not happened yet - it happens below, once the schema and prefix
+  # this script is given have been folded in. Calling it here stopped the whole
+  # execute path on its own guard, which is why only the plan ever printed.
+  cfg <- get("cfg_defaults", envir = globalenv())
   schema <- trimws(Sys.getenv("PROJECT_WORK_SCHEMA",
              unset = Sys.getenv("DOMINO_USER_NAME",
              unset = Sys.getenv("DOMINO_STARTING_USERNAME", unset = ""))))
