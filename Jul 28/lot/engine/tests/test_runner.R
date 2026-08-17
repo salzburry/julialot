@@ -2558,5 +2558,25 @@ pra_code <- paste(grep("^\\s*--", strsplit(pra, "\n")[[1]], value = TRUE, invert
 ok(grepl("{cfg$induction_window_days} - 1", pra_code, fixed = TRUE) &&
    !grepl("lot_n_induction_window_days", pra_code, fixed = TRUE),
    "the run-out guard reads the same window auto_cand does, so the two agree")
+# The window SETTING was all this checked, and that was not enough. When
+# auto_cand gained the ownership condition on its tandem exemption, this guard
+# kept the older test - so the two disagreed about the same transplant while
+# the suite stayed green on the setting they still shared. The mirror is the
+# whole predicate, so the whole predicate is what gets checked.
+ok(grepl("awp.PREV_AUTO_DT <= date_add(", pra_code, fixed = TRUE),
+   "...and the same ownership condition on the tandem exemption, not just the window")
+ok(grepl("datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {cfg$sct_tandem_days}",
+         pra_code, fixed = TRUE),
+   "...with the 180-day bound still beside it")
+# Both guards, not one. LOT1 is in 06 and LOT2-5 in 10, and fixing either alone
+# leaves the same disagreement at the other lines.
+pra10 <- substr(l25_txt, regexpr("post_runout_auto AS", l25_txt, fixed = TRUE),
+                regexpr("post_runout_trigger AS", l25_txt, fixed = TRUE))
+pra10_code <- paste(grep("^\\s*--", strsplit(pra10, "\n")[[1]], value = TRUE, invert = TRUE),
+                    collapse = "\n")
+ok(nchar(pra10_code) > 0 && grepl("awp.PREV_AUTO_DT <= date_add(", pra10_code, fixed = TRUE),
+   "the LOT2-5 run-out guard carries it too, against its own line's window")
+ok(grepl("WHEN 'CART'     THEN {cart_consolidation_days} - 1", pra10_code, fixed = TRUE),
+   "...which is the start-type CASE, since a CAR-T line's window is not 30 days")
 
 report()

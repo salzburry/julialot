@@ -88,12 +88,20 @@ leaves an exposure with an AUTO within `melp_sct_days` (14) to the transplant
 rule, so the melphalan rule fills only the gap where a transplant left no
 procedure code. Every output row records which mode produced it.
 
-**What B.2 does and does not do.** Suppressing B.2's boundaries stops melphalan
-ending the line at either dose. It does not hold the line open to the second
-dose. A line's discontinuation date is its base agents' last cover, and a
-melphalan first seen outside the induction window is not a base agent, so it
-does not extend that date — a line whose regimen runs out between the two doses
-still ends there, and the second dose falls in whatever line follows.
+**What B.2 does.** Two things, because the request asks for two. Suppressing
+B.2's boundaries stops melphalan ending the line at either dose. That alone
+does not keep the second dose *inside* the line: a line's discontinuation date
+is its base agents' last cover, and a melphalan first seen outside the induction
+window is not a base agent, so a line whose regimen ran out between the two
+doses used to end there and leave the second dose in whatever followed — and
+with the same rule refusing that dose as a line start, in nothing at all. The
+request says both doses stay in the current line, so the line is carried to the
+second dose. It rides on the run-out (`melp_hold` in `lot/engine/R/melp_rule.R`)
+rather than on an end reason of its own, which keeps the 90-day confirmation
+measured from the dose and leaves every other end still outranking it.
+
+This used to be listed below as an open question. It is not one: the request
+settles it in words.
 
 ### What has to be settled before it could be built for real
 
@@ -122,18 +130,18 @@ Where it did, the assumption is named. An assumption is not a decision.
    at every line, against that line's own window.* **Confirmed by examples 3 and
    4.**
 
-6. In B.2, does "both doses stay in the current line" mean the line has to be
-   held open to the second dose? Half of this is settled — the worked examples
-   say the second dose starts no line, and the boundary is removed at both
-   doses. What is left open is whether the line has to be held open to reach it,
-   which would need melphalan to join a regimen whose induction window it never
-   entered: a change to what a regimen means rather than a setting, and a
-   clinical decision. **Open**, and `n_b2_line_starts` is the number that
-   settles it — MED-started lines whose start is a B.2 second dose, with
-   `n_b2_melp_only` the subset no other agent could have started.
+6. ~~In B.2, does "both doses stay in the current line" mean the line has to be
+   held open to the second dose?~~ **Settled by the request**, which says in
+   words that both doses stay in the current line. The line is carried to the
+   second dose — see *What B.2 does* above. `n_b2_line_starts` remains as the
+   number that sizes it: MED-started lines whose start is a B.2 second dose,
+   with `n_b2_melp_only` the subset no other agent could have started. Under
+   the rule those lines should no longer exist, so it is now a check rather
+   than a question.
 
-Neither mode is the proposal implemented to the letter: the mode names describe
-the transplant reading, and on B.2 both take the narrow one above.
+Both modes implement the branch table. What the mode names describe is the
+transplant reading — the one thing the request does not cover — and that is the
+only difference between them.
 
 ## `exploration/lot/` — measuring the algorithm
 
