@@ -100,6 +100,14 @@ main <- function() {
             long      = lot_out("LOT_LONG"),
             map       = lot_out("MAP_STACKED"),
             sct       = lot_out("LOT1_SCT"),
+            # Lines 2-5 keep their own SCT tables. The loop writes one per
+            # iteration whatever the data holds, so all five exist on a contract
+            # run and the transplant checks can read every line rather than
+            # line 1 alone.
+            sct2      = lot_out("LOT2_SCT"),
+            sct3      = lot_out("LOT3_SCT"),
+            sct4      = lot_out("LOT4_SCT"),
+            sct5      = lot_out("LOT5_SCT"),
             attrition = lot_out("LOT_ATTRITION"),
             meta      = lot_out("LOT_RUN_METADATA"),
             cohort    = wrk(cohort))
