@@ -14,7 +14,7 @@ in this folder reads a finished run in order to check it or to describe it.
 | | |
 |---|---|
 | `lot/engine/` | builds the lines. `build.R <COHORT_TABLE> <prefix_>`. The only package here that writes a study run. |
-| `lot/qc/` | thirty-six checks on a finished run, asked after the fact. Reads only. `run_lot_qc.R`. |
+| `lot/qc/` | thirty-seven checks on a finished run, asked after the fact. Reads only. `run_lot_qc.R`. |
 | `exploration/lot/` | the rule scenarios, machine-checked against the settings that decide them. No warehouse. |
 
 ## What is deliberately not here

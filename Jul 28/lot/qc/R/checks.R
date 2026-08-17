@@ -33,6 +33,66 @@ counted <- function(body, detail = "NULL") {
          body, "\n) q")
 }
 
+# The days a line may take a regimen drug from, as the induction step bounds
+# them - the induction window AND the transplant cutoff, whichever is earlier.
+#
+# One definition because C1 and C4 ask opposite directions of the same set, and
+# two copies of a window is how the two stop describing the same rule. C1 asked
+# the window alone, which is the weaker half: a regimen drug whose episode
+# started after the transplant that ended the line is still inside the nominal
+# 30, 45 or 60 days, so C1 passed on exactly the shape REGIMEN_CUTOFF_DT was
+# added to prevent.
+#
+# The cutoff is read the way 04_lot1_base.R and 10_lot2_5_base.R build it. LOT1
+# takes an allograft from its start date, and takes a CAR-T only where the
+# induction exemption is off - with the rule on, an in-window CAR-T is part of
+# LOT1 and cuts nothing. Later lines take both, and only strictly after their
+# own start, so the transplant that STARTED the line is not a cutoff on it.
+# Floored at the line start, so a transplant on day one leaves a one-day window
+# rather than one that closes before it opens.
+#
+# per_line = TRUE gives one row per line (`lines`); FALSE gives one row per
+# line and regimen drug (`reg`).
+qc_window_sql <- function(t, p, per_line = FALSE) {
+  cutoff <- paste0("
+    cut AS (
+      SELECT cast(l.PATID as string) AS PATID, l.LOT_NUM,
+             min(greatest(l.LOT_START_DT, date_sub(x.TX_DT, 1))) AS CUTOFF_DT
+      FROM ", t$final, " l
+      INNER JOIN ", t$allo, " x ON cast(x.PATID as string) = cast(l.PATID as string)
+      WHERE (l.LOT_NUM = 1  AND x.TX_DT >= l.LOT_START_DT
+             AND (x.SCT_TYPE = 'ALLO'
+                  OR ", if (isTRUE(p$cart_exempt)) "1 = 0" else "x.SCT_TYPE = 'CART'", "))
+         OR (l.LOT_NUM  > 1 AND x.TX_DT >  l.LOT_START_DT)
+      GROUP BY cast(l.PATID as string), l.LOT_NUM
+    ),")
+  win <- paste0("
+             least(
+               date_add(l.LOT_START_DT,
+                 CASE WHEN l.LOT_NUM = 1             THEN ", p$ind1 - 1, "
+                      WHEN l.LOT_START_TYPE = 'CART' THEN ", p$cart - 1, "
+                      ELSE                                ", p$indn - 1, " END),
+               coalesce(c.CUTOFF_DT, cast('9999-12-31' as date))) AS ELIGIBLE_END")
+  if (per_line)
+    paste0(cutoff, "
+    lines AS (
+      SELECT cast(l.PATID as string) AS PATID, l.LOT_NUM, l.LOT_START_DT,
+             l.LOT_START_TYPE, l.LOT_BASE_MEDS,", win, "
+      FROM ", t$final, " l
+      LEFT JOIN cut c ON c.PATID = cast(l.PATID as string) AND c.LOT_NUM = l.LOT_NUM
+    )")
+  else
+    paste0(cutoff, "
+    reg AS (
+      SELECT cast(l.PATID as string) AS PATID, l.LOT_NUM, l.LOT_START_DT,
+             l.LOT_START_TYPE, m AS MED_ABBR,", win, "
+      FROM ", t$final, " l
+      LEFT JOIN cut c ON c.PATID = cast(l.PATID as string) AND c.LOT_NUM = l.LOT_NUM
+      LATERAL VIEW explode(split(coalesce(l.LOT_BASE_MEDS, ''), ' ')) e AS m
+      WHERE m <> ''
+    )")
+}
+
 LOT_QC_CHECKS <- list(
 
   # ---- A. Line structure ---------------------------------------------------
@@ -88,9 +148,12 @@ LOT_QC_CHECKS <- list(
        what = "line 1 is medication-started",
        why = paste0("LOT1 starts at the first non-steroid agent, so its start ",
                     "type is written as MED and never derived. The post-runout ",
-                    "guard in the LOT1 end step relies on that: it hardcodes the ",
-                    "30-day window that the next line's AUTO rule would apply to ",
-                    "a MED-started predecessor."),
+                    "guard in the LOT1 end step relies on that: it applies the ",
+                    "window the next line's AUTO rule would apply to a ",
+                    "MED-started predecessor, which for LOT1 is LOT1's OWN 60 ",
+                    "days. It read 30 once - the later-line window - and that ",
+                    "left the guard short of the range LOT1 actually owns a ",
+                    "transplant over."),
        needs = "final",
        sql = function(t, p) counted(paste0("
     SELECT ", mask("PATID"), " AS pid
@@ -388,32 +451,50 @@ LOT_QC_CHECKS <- list(
                     "window is the line's own: 60 days at LOT1, 45 for a CAR-T ",
                     "started line, 30 otherwise. A drug with no episode in it ",
                     "reached the regimen some other way."),
-       needs = c("final", "map"),
+       needs = c("final", "map", "allo"),
        sql = function(t, p) counted(paste0("
-    WITH reg AS (
-      SELECT cast(l.PATID as string) AS PATID, l.LOT_NUM, l.LOT_START_DT,
-             l.LOT_START_TYPE, m AS MED_ABBR
-      FROM ", t$final, " l
-      LATERAL VIEW explode(split(coalesce(l.LOT_BASE_MEDS, ''), ' ')) e AS m
-      WHERE m <> ''
-    ),
-    win AS (
-      SELECT r.*,
-             date_add(r.LOT_START_DT,
-               CASE WHEN r.LOT_NUM = 1              THEN ", p$ind1 - 1, "
-                    WHEN r.LOT_START_TYPE = 'CART'  THEN ", p$cart - 1, "
-                    ELSE                                 ", p$indn - 1, " END) AS WIN_END
-      FROM reg r
-    )
+    WITH ", qc_window_sql(t, p), "
     SELECT ", mask("w.PATID"), " AS pid, w.LOT_NUM, w.MED_ABBR
-    FROM win w
+    FROM reg w
     LEFT JOIN ", t$map, " ms
       ON cast(ms.PATID as string) = w.PATID
      AND ms.MAP_MED_TYPE = w.MED_ABBR
      AND ms.MAP_START_DT >= w.LOT_START_DT
-     AND ms.MAP_START_DT <= w.WIN_END
+     AND ms.MAP_START_DT <= w.ELIGIBLE_END
     WHERE ms.PATID IS NULL"),
     "concat(pid, ' LOT', LOT_NUM, ': ', MED_ABBR, ' has no episode in the window')")),
+
+  list(id = "C4", group = "Regimen", severity = "fail",
+       what = "an eligible episode in the window reached the regimen",
+       why = paste0("C1 asked one direction only: every drug IN the regimen has ",
+                    "an episode that could have put it there. It says nothing ",
+                    "about a drug the window should have admitted and did not. ",
+                    "Both halves pass on a regimen that is missing the drug ",
+                    "which STARTED the line - C1 because the drugs listed are ",
+                    "all eligible, A7 because the string is not empty. This is ",
+                    "the other direction. ",
+                    "Eligible means what the induction step means by it: a ",
+                    "non-steroid episode starting on or after the line start and ",
+                    "on or before the earlier of the induction window and the ",
+                    "transplant cutoff. Every such episode's drug has to appear ",
+                    "in LOT_BASE_MEDS. ",
+                    "ALLO lines are out of scope, and by construction rather ",
+                    "than by exception - the induction step suppresses their ",
+                    "regimen rows, so the eligible set is empty for them too."),
+       needs = c("final", "map", "allo"),
+       sql = function(t, p) counted(paste0("
+    WITH ", qc_window_sql(t, p, per_line = TRUE), "
+    SELECT ", mask("l.PATID"), " AS pid, l.LOT_NUM, ms.MAP_MED_TYPE AS med
+    FROM lines l
+    INNER JOIN ", t$map, " ms
+      ON cast(ms.PATID as string) = l.PATID
+     AND ms.MAP_START_DT >= l.LOT_START_DT
+     AND ms.MAP_START_DT <= l.ELIGIBLE_END
+    WHERE l.LOT_START_TYPE <> 'SCT_ALLO'
+      AND ms.MAP_MED_CLASS <> 'STEROID'
+      AND NOT array_contains(split(coalesce(l.LOT_BASE_MEDS, ''), ' '),
+                             ms.MAP_MED_TYPE)"),
+    "concat(pid, ' LOT', LOT_NUM, ': ', med, ' was eligible and is not in the regimen')")),
 
   list(id = "C2", group = "Regimen", severity = "fail",
        what = "the added medication is not already in the regimen, unless it returned",
@@ -462,7 +543,22 @@ LOT_QC_CHECKS <- list(
                     "ORDER BY. Spark seeds that per partition, so the date is ",
                     "stable across re-runs but the drug is only stable while the ",
                     "physical plan is. This counts how many lines are exposed. ",
-                    "Zero means the question never arises on this cohort."),
+                    "Zero means the question never arises on this cohort. ",
+                    "Counted over the drugs the engine would ACTUALLY have ",
+                    "considered, which is not the same as every drug sharing the ",
+                    "date. A steroid can never be a candidate. And a regimen ",
+                    "drug normally cannot, but one restarting after a confirmed ",
+                    "discontinuation can - so a discontinued LEN returning on the ",
+                    "same day a new DARA starts is a genuine two-way tie, and ",
+                    "reading LOT_BASE_MEDS alone dropped LEN and reported no tie ",
+                    "at all. Both errors ran in the same direction as each other ",
+                    "being invisible: one hid a tie, the other invented one. ",
+                    "One eligibility rule is still missing, and saying so is ",
+                    "cheaper than half-implementing it: a permissible substitute ",
+                    "of a regimen drug is excluded by the engine and is counted ",
+                    "here, because permissible_subs is not one of the tables this ",
+                    "package binds. Info severity, so the number informs and ",
+                    "never gates."),
        needs = c("final", "map"),
        sql = function(t, p) counted(paste0("
     WITH add_lines AS (
@@ -470,6 +566,12 @@ LOT_QC_CHECKS <- list(
              date_add(LOT_BASE_1ST_ADD_MED_DT, 1) AS ADD_START_DT
       FROM ", t$final, "
       WHERE LOT_BASE_1ST_ADD_MED_DT IS NOT NULL
+    ),
+    restart AS (
+      SELECT cast(PATID as string) AS PATID, MAP_MED_TYPE, MAP_START_DT,
+             coalesce(lag(MAP_DISCON_FLG) OVER (PARTITION BY PATID, MAP_MED_TYPE
+                                    ORDER BY MAP_START_DT), 0) AS PREV_DISCON
+      FROM ", t$map, "
     )
     SELECT ", mask("a.PATID"), " AS pid, a.LOT_NUM,
            count(DISTINCT ms.MAP_MED_TYPE) AS n_tied
@@ -477,8 +579,13 @@ LOT_QC_CHECKS <- list(
     INNER JOIN ", t$map, " ms
       ON cast(ms.PATID as string) = a.PATID
      AND ms.MAP_START_DT = a.ADD_START_DT
-    WHERE NOT array_contains(split(coalesce(a.LOT_BASE_MEDS, ''), ' '),
-                             ms.MAP_MED_TYPE)
+    LEFT JOIN restart r
+      ON r.PATID = a.PATID AND r.MAP_MED_TYPE = ms.MAP_MED_TYPE
+     AND r.MAP_START_DT = ms.MAP_START_DT
+    WHERE ms.MAP_MED_CLASS <> 'STEROID'
+      AND (NOT array_contains(split(coalesce(a.LOT_BASE_MEDS, ''), ' '),
+                              ms.MAP_MED_TYPE)
+           OR coalesce(r.PREV_DISCON, 0) = 1)
     GROUP BY ", mask("a.PATID"), ", a.LOT_NUM
     HAVING count(DISTINCT ms.MAP_MED_TYPE) > 1"),
     "concat(pid, ' LOT', LOT_NUM, ': ', n_tied, ' drugs share the date')")),
@@ -540,31 +647,40 @@ LOT_QC_CHECKS <- list(
 
   # ---- E. Transplants ------------------------------------------------------
 
+  # E1-E3 read LOT_LONG, which carries the per-line transplant columns for
+  # EVERY line. They read LOT1_SCT once, which answered them for LOT1 alone -
+  # and LOT2-5 has its own SCT implementation in 10_lot2_5_base.R, so proving
+  # LOT1 proved nothing about the code that actually builds the later lines. A
+  # LOT2 tandem pair 230 days apart with the flag set passed all three.
   list(id = "E1", group = "Transplant", severity = "fail",
        what = "tandem and single autologous flags are mutually exclusive",
-       why = "A patient is one or the other; the flags are built as a negation.",
-       needs = "sct",
+       why = paste0("A line is one or the other; the flags are built as a ",
+                    "negation. Asked of every line, because LOT2-5 builds them ",
+                    "in its own step and LOT1 cannot speak for it."),
+       needs = "long",
        sql = function(t, p) counted(paste0("
-    SELECT ", mask("PATID"), " AS pid
-    FROM ", t$sct, "
-    WHERE LOT1_SCT_AUTO_TAND_FLG = 1 AND LOT1_SCT_AUTO_SING_FLG = 1"), "pid")),
+    SELECT ", mask("PATID"), " AS pid, LOT_NUM
+    FROM ", t$long, "
+    WHERE LOT_TX_AUTO_TAND_FLG = 1 AND LOT_TX_AUTO_SING_FLG = 1"),
+    "concat(pid, ' LOT', LOT_NUM)")),
 
   list(id = "E2", group = "Transplant", severity = "fail",
        what = "a tandem pair sits between 60 and 180 days apart",
        why = paste0("The lower bound is enforced upstream, by merging ",
                     "autologous events closer than 60 days into one. The upper ",
                     "bound is the tandem test itself. A pair outside either is a ",
-                    "pair one of those two steps should not have produced."),
-       needs = "sct",
+                    "pair one of those two steps should not have produced. ",
+                    "Every line, for the reason above E1."),
+       needs = "long",
        sql = function(t, p) counted(paste0("
-    SELECT ", mask("PATID"), " AS pid,
-           datediff(LOT1_TX_AUTO_DT_2, LOT1_TX_AUTO_DT_1) AS gap
-    FROM ", t$sct, "
-    WHERE LOT1_SCT_AUTO_TAND_FLG = 1
-      AND (LOT1_TX_AUTO_DT_2 IS NULL
-           OR datediff(LOT1_TX_AUTO_DT_2, LOT1_TX_AUTO_DT_1) < ", p$auto_gap, "
-           OR datediff(LOT1_TX_AUTO_DT_2, LOT1_TX_AUTO_DT_1) > ", p$tandem, ")"),
-    "concat(pid, ': ', gap, ' days apart')")),
+    SELECT ", mask("PATID"), " AS pid, LOT_NUM,
+           datediff(LOT_TX_AUTO_DT_2, LOT_TX_AUTO_DT_1) AS gap
+    FROM ", t$long, "
+    WHERE LOT_TX_AUTO_TAND_FLG = 1
+      AND (LOT_TX_AUTO_DT_2 IS NULL
+           OR datediff(LOT_TX_AUTO_DT_2, LOT_TX_AUTO_DT_1) < ", p$auto_gap, "
+           OR datediff(LOT_TX_AUTO_DT_2, LOT_TX_AUTO_DT_1) > ", p$tandem, ")"),
+    "concat(pid, ' LOT', LOT_NUM, ': ', gap, ' days apart')")),
 
   list(id = "E3", group = "Transplant", severity = "info",
        what = "tandem pairs sitting exactly on the boundary",
@@ -576,20 +692,30 @@ LOT_QC_CHECKS <- list(
                     "that tighter reading. A pair at exactly 180 days is tandem ",
                     "under one and not the other, and a tandem pair does not end ",
                     "the line. This is how many patients the disagreement is ",
-                    "worth."),
-       needs = "sct",
+                    "worth. Every line, for the reason above E1."),
+       needs = "long",
        sql = function(t, p) counted(paste0("
-    SELECT ", mask("PATID"), " AS pid
-    FROM ", t$sct, "
-    WHERE LOT1_SCT_AUTO_TAND_FLG = 1
-      AND datediff(LOT1_TX_AUTO_DT_2, LOT1_TX_AUTO_DT_1) = ", p$tandem), "pid")),
+    SELECT ", mask("PATID"), " AS pid, LOT_NUM
+    FROM ", t$long, "
+    WHERE LOT_TX_AUTO_TAND_FLG = 1
+      AND datediff(LOT_TX_AUTO_DT_2, LOT_TX_AUTO_DT_1) = ", p$tandem),
+    "concat(pid, ' LOT', LOT_NUM)")),
 
   list(id = "E4", group = "Transplant", severity = "fail",
        what = "the transplant end date is not before the line started",
        why = paste0("It is a transplant date minus one, floored at the line ",
                     "start precisely so a transplant coded on day one gives a ",
                     "one-day line. An unfloored value would be a line ending ",
-                    "before it began."),
+                    "before it began. ",
+                    "LOT1 only, and unlike E1-E3 that is not a gap. LOT1 is the ",
+                    "only line that admits a transplant ON its own start date, ",
+                    "which is why it needs the floor at all. 10_lot2_5_base.R ",
+                    "gates every end-candidate transplant on being strictly ",
+                    "AFTER the line start, so date_sub(x, 1) cannot land before ",
+                    "it and the failure this looks for is unreachable there. ",
+                    "The pre-floor column is not published for later lines ",
+                    "either, so asking would need four more tables to answer a ",
+                    "question the structure already answers."),
        needs = "sct",
        sql = function(t, p) counted(paste0("
     SELECT ", mask("PATID"), " AS pid
@@ -709,26 +835,41 @@ LOT_QC_CHECKS <- list(
        what = "the attrition funnel ends where the published table does",
        why = paste0("The last funnel row is the study population. If it does ",
                     "not equal the table it names, one of the two was written ",
-                    "by a different attempt."),
+                    "by a different attempt. ",
+                    "The absence of a funnel is a failure too, and it did not ",
+                    "used to be. This compared the last row against the table, ",
+                    "so a run whose funnel was never written had no last row, ",
+                    "no comparison, and no violation - the check passed hardest ",
+                    "on the case it exists for. The row count is asked first."),
        needs = c("final", "attrition"),
        sql = function(t, p) counted(paste0("
-    WITH last_step AS (
-      SELECT N_PATIENTS
-      FROM ", t$attrition, "
-      WHERE RUN_ID = '", p$run_id, "' AND KIND <> 'progression'
-      ORDER BY STEP_NUM DESC LIMIT 1
-    )
-    SELECT ls.N_PATIENTS AS funnel,
-           (SELECT count(DISTINCT PATID) FROM ", t$final, ") AS published
-    FROM last_step ls
-    WHERE ls.N_PATIENTS <> (SELECT count(DISTINCT PATID) FROM ", t$final, ")"),
-    "concat('funnel says ', funnel, ', table has ', published)")),
+    SELECT n_rows, funnel, published
+    FROM (
+      SELECT (SELECT count(*) FROM ", t$attrition, "
+               WHERE RUN_ID = '", p$run_id, "' AND KIND <> 'progression') AS n_rows,
+             (SELECT N_PATIENTS FROM ", t$attrition, "
+               WHERE RUN_ID = '", p$run_id, "' AND KIND <> 'progression'
+               ORDER BY STEP_NUM DESC LIMIT 1) AS funnel,
+             (SELECT count(DISTINCT PATID) FROM ", t$final, ") AS published
+    ) x
+    WHERE n_rows = 0 OR funnel IS NULL OR funnel <> published"),
+    "concat('funnel rows ', n_rows, ', says ', coalesce(cast(funnel as string), 'nothing'), ', table has ', published)")),
 
   list(id = "F3", group = "Reconciliation", severity = "fail",
        what = "the progression rows are the reach the published table shows",
        why = paste0("Those rows are what the dashboard draws and what gets ",
                     "quoted. Recomputing them from the lines is the only way to ",
-                    "know they describe this run."),
+                    "know they describe this run. ",
+                    "Both directions, and a duplicate too. A LEFT JOIN from the ",
+                    "funnel could only judge the rows that were there, so a run ",
+                    "missing its LOT3 row compared LOT1 and LOT2, found them ",
+                    "right and passed - and a run missing every progression row ",
+                    "compared nothing at all. A line the table has and the ",
+                    "funnel does not is now a violation, and so is a line the ",
+                    "funnel names twice. ",
+                    "A funnel row of zero for a line nobody reached is NOT a ",
+                    "violation: the writer emits a row for every line to ",
+                    "max_lot, so zero-against-absent is the two agreeing."),
        needs = c("final", "attrition"),
        sql = function(t, p) counted(paste0("
     WITH reach AS (
@@ -737,14 +878,19 @@ LOT_QC_CHECKS <- list(
     ),
     said AS (
       SELECT cast(regexp_extract(STEP, 'LOT([0-9]+)', 1) as int) AS LOT_NUM,
-             N_PATIENTS
+             max(N_PATIENTS) AS N_PATIENTS, count(*) AS n_rows
       FROM ", t$attrition, "
       WHERE RUN_ID = '", p$run_id, "' AND KIND = 'progression'
+      GROUP BY cast(regexp_extract(STEP, 'LOT([0-9]+)', 1) as int)
     )
-    SELECT s.LOT_NUM, s.N_PATIENTS AS said, coalesce(r.n, 0) AS actual
-    FROM said s LEFT JOIN reach r ON s.LOT_NUM = r.LOT_NUM
-    WHERE s.N_PATIENTS <> coalesce(r.n, 0)"),
-    "concat('LOT', LOT_NUM, ': funnel says ', said, ', lines say ', actual)")),
+    SELECT coalesce(s.LOT_NUM, r.LOT_NUM) AS LOT_NUM,
+           s.N_PATIENTS AS said, coalesce(r.n, 0) AS actual,
+           coalesce(s.n_rows, 0) AS rows_written
+    FROM said s FULL OUTER JOIN reach r ON s.LOT_NUM = r.LOT_NUM
+    WHERE s.LOT_NUM IS NULL
+       OR coalesce(s.n_rows, 0) <> 1
+       OR s.N_PATIENTS <> coalesce(r.n, 0)"),
+    "concat('LOT', LOT_NUM, ': funnel says ', coalesce(cast(said as string), 'nothing'), ' in ', rows_written, ' row(s), lines say ', actual)")),
 
   list(id = "F4", group = "Reconciliation", severity = "fail",
        what = "the run has exactly one metadata row",

@@ -189,10 +189,39 @@ pr <- paste(readLines(file.path(dirname(ROOT), "engine", "R", "prior_regimen.R")
 ok(has(pr, "lag(ms.MAP_DISCON_FLG) OVER (PARTITION BY ms.PATID, ms.MAP_MED_TYPE"),
    "...which is the expression the engine itself releases the drug on")
 # C1 is the regimen rule asked backwards, so it has to use all three windows.
-ok(has(SQL$C1, "THEN 59") && has(SQL$C1, "THEN 44") && has(SQL$C1, "ELSE                                 29"),
+ok(has(SQL$C1, "THEN 59") && has(SQL$C1, "THEN 44") && has(SQL$C1, "ELSE                                29"),
    "C1 applies LOT1's window, CAR-T's and the later-line one, each inclusive")
 ok(has(SQL$C1, "LEFT JOIN s.TMAP") && has(SQL$C1, "WHERE ms.PATID IS NULL"),
    "...and finds the regimen drugs with no episode in that window")
+# ...and the transplant cutoff, not the window alone. A regimen drug whose
+# episode started after the transplant that ended the line is still inside the
+# nominal 30, 45 or 60 days, so the window on its own passed on exactly the
+# shape REGIMEN_CUTOFF_DT was added to prevent.
+ok(has(SQL$C1, "AS ELIGIBLE_END") && has(SQL$C1, "coalesce(c.CUTOFF_DT"),
+   "...bounded by the transplant cutoff as well, the way the engine bounds it")
+ok(has(SQL$C1, "l.LOT_NUM  > 1 AND x.TX_DT >  l.LOT_START_DT"),
+   "...reading a later line's cutoff from the day after its own start")
+# C4 is the other direction. Both halves pass on a regimen missing the drug
+# that STARTED the line: C1 because everything listed is eligible, A7 because
+# the string is not empty.
+ok(has(SQL$C4, "AS ELIGIBLE_END") && has(SQL$C4, "NOT array_contains"),
+   "C4 asks the reverse: an eligible episode in the window reached the regimen")
+ok(has(SQL$C4, "ms.MAP_MED_CLASS <> 'STEROID'") &&
+     has(SQL$C4, "l.LOT_START_TYPE <> 'SCT_ALLO'"),
+   "...over the episodes the induction step would have taken, and no others")
+# The two share one window definition. Two copies is how they stop describing
+# the same rule, which is the state C1 was already in against the engine.
+ok(identical(qc_window_sql(TBL, P), qc_window_sql(TBL, P)) &&
+     has(SQL$C1, "cut AS (") && has(SQL$C4, "cut AS ("),
+   "...and both are built from one window definition, not two")
+# The CAR-T exemption follows the run here too: with the rule on, an in-window
+# CAR-T is part of LOT1 and cuts nothing off its regimen.
+ok(has(qc_window_sql(TBL, P), "OR 1 = 0"),
+   "the LOT1 cutoff ignores CAR-T while the induction rule is on")
+cart_off <- qc_params(sub("apply_cart_induction_rule=TRUE",
+                          "apply_cart_induction_rule=FALSE", SETTINGS, fixed = TRUE), "r")
+ok(has(qc_window_sql(TBL, cart_off), "OR x.SCT_TYPE = 'CART'"),
+   "...and takes it when the run turned that rule off")
 ok(has(SQL$D3, "= 'STEROID'"),
    "D3 looks for steroids in the episodes, where the spec says they should be")
 # The spec keeps steroid claims in the episode data - DEXA is its own worked
@@ -307,12 +336,19 @@ ok(!length(unbounded),
      paste0("...but an SCT claim source is not bounded at both ends: ",
             paste(unbounded, collapse = "; "))
    else "...which rests on each of the four SCT claim sources being bounded at both ends")
-# And that those four ARE the sources. A fifth arm added to the union without
-# an entry above would otherwise never be asked the question.
+# And that those four ARE the sources. Counting arms was not enough: four
+# occurrences of "SELECT * FROM" is equally true of a union that names medproc
+# twice and med_diag not at all, and every named CTE would still be present and
+# correctly bounded above while one of them never reached the output. So the
+# names are pulled out and compared as a multiset.
 sct_union <- substring(sct_src, regexpr("combined AS (", sct_src, fixed = TRUE))
 sct_union <- substring(sct_union, 1, regexpr("\n    ),", sct_union, fixed = TRUE))
-ok(length(gregexpr("SELECT * FROM ", sct_union, fixed = TRUE)[[1]]) == length(SCT_ARMS),
-   "...and the union has exactly those four arms, so none escapes the question")
+union_arms <- sort(trimws(gsub("^SELECT \\* FROM ", "",
+  regmatches(sct_union,
+             gregexpr("SELECT \\* FROM [A-Za-z_][A-Za-z0-9_]*", sct_union))[[1]])))
+ok(identical(union_arms, sort(names(SCT_ARMS))),
+   paste0("...and the union reads exactly those four, once each (found: ",
+          paste(union_arms, collapse = ", "), ")"))
 # The one case E5 cannot judge, kept as its own number rather than folded in.
 # A patient with no line has no ownership to check; that is the funnel's
 # reconciliation question, and folding it in would turn a known cohort
