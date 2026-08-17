@@ -28,8 +28,7 @@ source(file.path(ROOT, "R", "checks.R"))
 # the real ones - LOT_LONG sits inside LOT_LONG_FINAL - so "reads this table"
 # below means what it says instead of matching the shorter name by accident.
 TBL <- list(final = "s.TFINAL", long = "s.TLONG", map = "s.TMAP",
-            sct = "s.TSCT", sct2 = "s.TSCT2", sct3 = "s.TSCT3",
-            sct4 = "s.TSCT4", sct5 = "s.TSCT5",
+            sct = "s.TSCT", auto = "s.TAUTO",
             attrition = "s.TATTR", meta = "s.TMETA",
             cohort = "s.TCOHORT")
 SETTINGS <- paste0(

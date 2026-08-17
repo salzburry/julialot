@@ -100,14 +100,12 @@ main <- function() {
             long      = lot_out("LOT_LONG"),
             map       = lot_out("MAP_STACKED"),
             sct       = lot_out("LOT1_SCT"),
-            # Lines 2-5 keep their own SCT tables. The loop writes one per
-            # iteration whatever the data holds, so all five exist on a contract
-            # run and the transplant checks can read every line rather than
-            # line 1 alone.
-            sct2      = lot_out("LOT2_SCT"),
-            sct3      = lot_out("LOT3_SCT"),
-            sct4      = lot_out("LOT4_SCT"),
-            sct5      = lot_out("LOT5_SCT"),
+            # Every processed autologous event, before any line claims one.
+            # The per-line SCT tables cannot answer an ownership question: an
+            # AUTO outside a line's window is stored as ENDING_AUTO_DT and never
+            # as TX_AUTO_DT_1, so a check reading those columns cannot see it -
+            # and would report clean on the orphan it exists to find.
+            auto      = lot_out("TX_AUTO_DATES"),
             attrition = lot_out("LOT_ATTRITION"),
             meta      = lot_out("LOT_RUN_METADATA"),
             cohort    = wrk(cohort))

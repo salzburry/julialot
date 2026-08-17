@@ -33,7 +33,7 @@ reading of how the rules interact, and the first warehouse run settles it.
 
 **tandem_within** - Second AUTO inside the tandem window
 
-- timeline: d+0 MED (1L regimen starts); d+30 AUTO (first autologous transplant); d+209 AUTO (second AUTO, one day inside the tandem window)
+- timeline: d+0 MED (1L regimen starts); d+30 AUTO (first autologous transplant); d+210 AUTO (second AUTO, exactly on the tandem window's last inside day)
 - why it is hard: Planned tandem and unplanned second transplant look identical in claims. The only thing separating them is the gap, and a patient sitting on it goes either way.
 - rule: lot/engine/R/steps/05_sct.R - 14-day window grouping + 60-day gap + 180-day tandem
 
@@ -57,25 +57,25 @@ reading of how the rules interact, and the first warehouse run settles it.
 
 **cart_bridge_within** - CAR-T inside the consolidation window
 
-- timeline: d+0 MED (1L regimen starts); d+60 MED_ADD (bridging agent added, the first day it can be an addition); d+105 CART (CAR-T inside the window from the day after the addition)
+- timeline: d+0 MED (1L regimen starts); d+60 MED_ADD (bridging agent added, the first day it can be an addition); d+105 CART (CAR-T exactly on the window's last inside day, counted from the addition)
 - why it is hard: Bridging therapy is given to hold a patient until CAR-T. Counted as its own line it inflates every downstream line number.
 - rule: lot/engine/R/steps/06_lot1_end.R:176 - datediff BETWEEN 0 AND cart_consolidation_days
 
 **cart_bridge_beyond** - CAR-T past the consolidation window
 
-- timeline: d+0 MED (1L regimen starts); d+60 MED_ADD (agent added); d+107 CART (CAR-T one day outside the window)
+- timeline: d+0 MED (1L regimen starts); d+60 MED_ADD (agent added); d+106 CART (CAR-T on the first day outside the window)
 - why it is hard: Whether the added agent reads as bridging or as a new regimen.
 - rule: lot/engine/R/steps/06_lot1_end.R:176
 
 **map_gap_within** - Treatment gap below the discontinuation threshold
 
-- timeline: d+0 MED (1L regimen starts); d+60 GAP_START (administrative hold - no claims); d+149 MED (same agent resumes, one day inside the threshold)
+- timeline: d+0 MED (1L regimen starts); d+59 MAP_END (last day the agent is covered - the gap starts d60); d+148 MED (same agent resumes, one day inside the threshold measured from MAP_END_DT)
 - why it is hard: Prior-authorisation holds and hospitalisations both produce silence in claims. Neither is a clinical decision to stop.
 - rule: lot/engine/R/steps/03_mma_map.R:396 - datediff(next_start, map_end) >= map_discon_gap_days
 
 **map_gap_beyond** - Treatment gap at the discontinuation threshold
 
-- timeline: d+0 MED (1L regimen starts); d+60 GAP_START (no claims); d+150 MED (same agent resumes, exactly at the threshold)
+- timeline: d+0 MED (1L regimen starts); d+59 MAP_END (last day the agent is covered); d+149 MED (same agent resumes, exactly at the threshold measured from MAP_END_DT)
 - why it is hard: The inclusive >= puts the boundary day on the discontinuation side.
 - rule: lot/engine/R/steps/03_mma_map.R:396
 
