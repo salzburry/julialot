@@ -309,8 +309,20 @@ ok(has(ra, "melp_check_code(inputs, LOT_ROOT)"),
 ok(has(ra, "apply_cart_induction_rule") && has(ra, "Rebuild those cells"),
    "the CAR-T 60-day rule is a precondition, not a column in the output")
 # The three questions, each recognisable in the SQL that answers it.
-ok(has(ra, "LOT_BASE_LENGTH") && has(ra, "MEDIAN_CHANGE"),
+ok(has(ra, "LOT_BASE_LENGTH") && has(ra, "MEDIAN_CHANGE_UNPAIRED"),
    "Q1 answers the CHANGE in line duration, not three tables to subtract by eye")
+# ...and the change it reports first is a difference of two medians over two
+# different sets of patients, because the rule moves who has a LOT2 at all. The
+# name says so, and the paired answer sits beside it rather than instead of it.
+ok(has(ra, "FULL OUTER JOIN b ON a.PATID = b.PATID AND a.LOT_NUM = b.LOT_NUM") &&
+     has(ra, "MEDIAN_PAIRED_CHANGE"),
+   "...with the same patient's line paired across the cells, not two medians subtracted")
+ok(has(ra, "N_ONLY_IN_THIS_CELL") && has(ra, "N_ONLY_IN_THE_REFERENCE"),
+   "...and lines present in only one cell counted rather than dropped from the pairing")
+ok(has(ra, "LINE_COUNT_CHANGE") && has(ra, "coalesce(a.N, 0) AS REF_LINES"),
+   "...and the change in how many lines a patient ends up with, which renumbering cannot explain")
+ok(has(ra, "pairing is on the line") && has(ra, "NUMBER, not on the treatment"),
+   "...with the one thing the pairing cannot see stated where the query is")
 ok(has(ra, "GROUP BY r.LOT_NUM, r.REGIMEN") && has(ra, "PCT_OF_LINE"),
    "Q2 answers the distribution of regimens at each line")
 ok(has(ra, "IS_MELP_MONO") && has(ra, "q2$LOT_NUM == 2"),
