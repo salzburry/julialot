@@ -236,6 +236,32 @@ def planted():
     # without a hold the line ends at its run-out and the second dose falls
     # outside it. This is the patient that tells the two apart.
     melp('M0007', [120, 120 + 90], cover=150)
+    # A.1 and B.3 with the line ending BEFORE the non-advancing exposure. Same
+    # gap as M0007 opens for B.2, and the reason the hold covers every
+    # suppressed exposure rather than B.2's alone: A.1's later dose and B.3's
+    # first dose are each refused a line of their own, so if the line they
+    # belong to has already ended they belong to nothing.
+    melp('M0008', [14, 14 + 100], cover=60)    # A.1  in, next <180, cover ends d60
+    melp('M0009', [70, 70 + 180], cover=29)    # B.3  out, next >=180, cover ends d29
+    # B.2 after a CAR-T-started line with no consolidation drug. That line has
+    # no medication to run out, so its natural end is its own start and the
+    # whole 45-day window sits after it - the shape where a hold hung on a
+    # non-null run-out was refused and both doses landed outside every line.
+    # LEN to d90 so LOT1 ends and the CAR-T at d150 opens LOT2.
+    pat('M0010', [('LEN', 'IMID', ix, ix + 90, 0),
+                  (MELP[0], MELP[1], ix + 210, ix + 210, 0),
+                  (MELP[0], MELP[1], ix + 300, ix + 300, 0)],
+        ac=[('CART', ix + 150)])
+    # LOT1 B.2 with SHORT follow-up after the held run-out. Observation ends 40
+    # days past the second dose, so a discontinuation confirmed at that dose
+    # has nothing like the 90 days the rule requires - the case that shows
+    # whether the post-run-out guards read the held date or the original one.
+    out.append(dict(pid='M0011', index=ix, death=None, obs_end=ix + 250,
+                    maps=[('LEN', 'IMID', ix, ix + 150, 0),
+                          (MELP[0], MELP[1], ix + 120, ix + 120, 0),
+                          (MELP[0], MELP[1], ix + 210, ix + 210, 0)],
+                    sct_ac=[], sct_auto=[],
+                    spans=[(ix - 365, ix + 250)], strict=[(ix - 365, ix + 250)]))
     return out
 
 
