@@ -564,6 +564,24 @@ patients that lands on.
     LOT1  d0 -> d+40   SCT_AUTO_CONT
     the transplant is line 1's, and line 1 covers the day it happened
 
+**Scenario** — *derived.* A tandem partner outranks the run-out between them.
+
+    d0     LOT2 starts on POMA, covered to d+59
+    d+20   first autologous transplant, inside LOT2's 30-day window
+    d+59   POMA runs out
+    d+150  second transplant, 130 days later, nothing in between
+    ---
+    LOT2  d0 -> d+150   SCT_AUTO_CONT, not DISCONTINUATION at d+59
+
+Only the **first** transplant of a pair need be inside the window. The partner
+follows it however far out it sits.
+
+The run-out does not break the pair. §6.3 asks what *happened* between the two
+transplants, and running out of treatment is an absence rather than an event. A
+medication start, an allogeneic transplant or a CAR-T in that gap would break it
+— and then the line would end at d+59, and the second transplant would be free
+to start a line of its own.
+
 It cannot outrank an added agent, and the arithmetic rather than the branch
 order is why. An agent starting inside the window joins the regimen instead of
 being an addition, so `MED_ADD` needs a start on day 60 or later at line 1 — at

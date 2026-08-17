@@ -2308,6 +2308,19 @@ ok(grepl("lag(ms.MAP_DISCON_FLG)", pr, fixed = TRUE),
    "the per-drug episode chain reads the discontinuation flag at all")
 ok(grepl("sum(i.BREAKS + e.PREV_DISCON)", pr, fixed = TRUE),
    "...and a confirmed gap breaks the chain, so a line cannot span its own agent's absence")
+# The chain is the fifth path, and the one with no gate of its own to inspect -
+# it reads the flag inline rather than through a release predicate. Without this
+# a substitute's own gap could pull the run-out forward while the other four
+# paths refuse that same drug, ending a line on a restart no line could own.
+ok(grepl("CASE WHEN bm.SUBSTITUTE_ONLY = 1 THEN 0 ELSE", pr, fixed = TRUE),
+   "a substitute's own gap never breaks the per-drug chain")
+# The guard has to WRAP the lag, not sit near it: a CASE beside an ungated lag
+# would read as protected while protecting nothing. Checked by requiring the lag
+# inside the guarded expression, and the whole thing to close on PREV_DISCON.
+ok(grepl(paste0("CASE WHEN bm.SUBSTITUTE_ONLY = 1 THEN 0 ELSE",
+                "[^;]*?lag\\(ms\\.MAP_DISCON_FLG\\)[^;]*?END AS PREV_DISCON"),
+         gsub("\\s+", " ", pr)),
+   "...and the guard wraps the lag itself, not something beside it")
 ok(grepl("map_restart_sql <- function", pr, fixed = TRUE),
    "what counts as a restart is defined once")
 restart_sites <- sum(vapply(c("04_lot1_base.R", "06_lot1_end.R", "10_lot2_5_base.R"), function(f)
