@@ -60,10 +60,7 @@ tbl <- function(cell, name) paste0(cfg$catalog, ".", schema, ".", cell$prefix, n
 status <- setNames(lapply(cells, function(c_i) cell_status(con, c_i)),
                    vapply(cells, function(c_i) c_i$id, character(1)))
 inputs <- melp_read_inputs(con, cells, status)
-if (identical(melp_check_code(inputs, LOT_ROOT), FALSE))
-  stop("These cells were not built by the engine code reading them. Rebuild ",
-       "all ", length(cells), " with run_aug1_melp.R before reading them.",
-       call. = FALSE)
+melp_check_code(inputs, LOT_ROOT)
 st   <- melp_settings(inputs)
 MELP <- toupper(trimws(st$melp_med_abbr %||% cfg$melp_med_abbr %||% "MELP"))
 EXPO <- as.integer(st$melp_exposure_days  %||% cfg$melp_exposure_days)
@@ -250,5 +247,6 @@ rows <- do.call(rbind, lapply(
                  paste(names(x[[2]]), r, sep = "=", collapse = "; ")),
                stringsAsFactors = FALSE)))
 f <- file.path(out_dir, DECISION_CSV)
-utils::write.csv(if (is.null(rows)) data.frame() else rows, f, row.names = FALSE)
+utils::write.csv(if (is.null(rows)) data.frame() else melp_stamp(rows, inputs, status),
+                 f, row.names = FALSE)
 cat("\n  -> ", f, "\n", sep = "")

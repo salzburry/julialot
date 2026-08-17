@@ -116,6 +116,8 @@ subst_off <- function(f) {
                  c("{melp_prev_line_ctes(cfg, prev_med_window, cart_consolidation_days)}",
                    melp_prev_line_ctes(off, 60L, 45L)),
                  c("{melp_hold_join(cfg, 'ls')}",      melp_hold_join(off, "ls")),
+                 c("{melp_hold_col(cfg, 'mh')}",       melp_hold_col(off, "mh")),
+                 c("{melp_line_type_guard(cfg, lot_num)}", melp_line_type_guard(off, 2)),
                  c("{melp_lot1_base_tbl(cfg)}",        melp_lot1_base_tbl(off)),
                  c("{melp_suppress_predicate(cfg)}",   melp_suppress_predicate(off)),
                  c("{melp_prior_regimen_exempt(cfg)}", melp_prior_regimen_exempt(off))))
@@ -298,9 +300,8 @@ ok(has(ra, "melp_read_inputs") && has(ra, "melp_check_inputs") ||
    "it holds all cells to one cohort attempt, code list set and study window")
 ok(has(ra, "melp_status_unchanged(con, cells, status)"),
    "...and re-checks the build status before anything is written")
-ok(has(ra, 'identical(melp_check_code(inputs, LOT_ROOT), FALSE)') &&
-     has(ra, "stop("),
-   "a cell built by older engine code stops the read rather than warning")
+ok(has(ra, "melp_check_code(inputs, LOT_ROOT)"),
+   "the read is held to the engine code that built the cells")
 ok(has(ra, "apply_cart_induction_rule") && has(ra, "Rebuild those cells"),
    "the CAR-T 60-day rule is a precondition, not a column in the output")
 # The three questions, each recognisable in the SQL that answers it.
@@ -328,7 +329,7 @@ rd <- paste(readLines(file.path(ROOT, "read_melp_decisions.R"), warn = FALSE),
 ok(!grepl("(?m)^\\s*(db_exec|dbExecute|CREATE|INSERT|DROP|UPDATE|DELETE)\\b", rd, perl = TRUE),
    "the decision reader only reads")
 ok(has(rd, "melp_read_inputs") && has(rd, "melp_status_unchanged") &&
-     has(rd, 'identical(melp_check_code(inputs, LOT_ROOT), FALSE)'),
+     has(rd, "melp_check_code(inputs, LOT_ROOT)"),
    "...behind the same provenance guards as the asks reader")
 # The branch split has to come off the exposure chain, not off raw doses: three
 # doses inside melp_exposure_days are ONE administration, and counting them as

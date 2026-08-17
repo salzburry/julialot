@@ -80,11 +80,7 @@ inputs <- melp_read_inputs(con, cells, status)
 # engine was on the day it ran while the two rule-on cells carry the rule AND
 # whatever else that day's code did. A difference between them is then two
 # changes, and nothing in the CSVs would say so.
-if (identical(melp_check_code(inputs, LOT_ROOT), FALSE))
-  stop("These cells were not built by the engine code reading them. Rebuild ",
-       "all ", length(cells), " with run_aug1_melp.R before reading them - a ",
-       "melphalan number off older code cannot be compared with this one.",
-       call. = FALSE)
+melp_check_code(inputs, LOT_ROOT)
 st <- melp_settings(inputs)
 cat("All ", length(cells), " cells: cohort attempt ", inputs[[1]]$COHORT_RUN_ID[1],
     " / ", inputs[[1]]$COHORT_STAMP[1],
@@ -216,6 +212,7 @@ q3 <- per_cell(function(c_i) paste0("
 # A query with no rows still writes, so an earlier run's file cannot sit there
 # looking like this one's answer.
 write_out <- function(d, name, title) {
+  d <- melp_stamp(d, inputs, status)
   cat("\n", title, "\n", sep = "")
   f <- file.path(out_dir, name)
   if (is.null(d) || !nrow(d)) {

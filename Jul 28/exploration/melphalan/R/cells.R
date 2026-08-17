@@ -974,12 +974,51 @@ melp_check_code <- function(inputs, lot_root) {
     if (is.null(x) || length(x) == 0 || is.na(x[1])) "<none>" else as.character(x[1])
   }, character(1)))
   if (identical(was, now)) return(invisible(TRUE))
-  warning("These cells were built by LOT code with fingerprint ",
-          paste(was, collapse = "/"), ", and the code reading them is ",
-          now, ". The numbers below describe the engine as it was when the ",
-          "cells were built, not as it is now. Rebuild the cells if the ",
-          "answer is meant to be about the current algorithm.", call. = FALSE)
-  invisible(FALSE)
+  # A STOP, not a warning. This used to warn and hand the caller FALSE to act
+  # on, which two readers did and one did not - so the headline metrics could
+  # still be written from cells an older engine built, and a warning scrolls
+  # past. Numbers that describe a different engine are worse than no numbers,
+  # because nothing downstream carries the disagreement.
+  #
+  # MELP_ALLOW_STALE_CODE=TRUE is the deliberate escape, for looking at an old
+  # cell on purpose. It downgrades this to the warning it used to be.
+  msg <- paste0("These cells were built by LOT code with fingerprint ",
+                paste(was, collapse = "/"), ", and the code reading them is ",
+                now, ". The numbers would describe the engine as it was when ",
+                "the cells were built, not as it is now. Rebuild all cells ",
+                "with run_aug1_melp.R. Set MELP_ALLOW_STALE_CODE=TRUE to read ",
+                "them anyway.")
+  if (identical(toupper(trimws(Sys.getenv("MELP_ALLOW_STALE_CODE", unset = ""))),
+                "TRUE")) {
+    warning(msg, " Reading anyway because MELP_ALLOW_STALE_CODE is set.",
+            call. = FALSE)
+    return(invisible(FALSE))
+  }
+  stop(msg, call. = FALSE)
+}
+
+# Provenance columns, prepended to every CSV this folder writes.
+#
+# A CSV that leaves the folder is on its own. Nothing in it said which cohort
+# attempt, which engine code or which run produced it, so a file found on a
+# desktop months later could not be told from one built by a different engine -
+# which is exactly the confusion these cells exist to avoid.
+melp_stamp <- function(d, inputs, status) {
+  if (is.null(d) || !nrow(d)) return(d)
+  one <- function(f) {
+    v <- unique(vapply(inputs, function(r) {
+      x <- r[[f]]
+      if (is.null(x) || !length(x) || is.na(x[1])) "" else as.character(x[1])
+    }, character(1)))
+    paste(v, collapse = "/")
+  }
+  cbind(COHORT_RUN_ID = one("COHORT_RUN_ID"),
+        COHORT_STAMP  = one("COHORT_STAMP"),
+        CODE_MD5      = one("CODE_MD5"),
+        LOT_RUN_IDS   = paste(vapply(status, function(x) x$run_id, character(1)),
+                              collapse = "/"),
+        READ_AT       = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
+        d, stringsAsFactors = FALSE)
 }
 
 melp_read_inputs <- function(con, cells, status) {
