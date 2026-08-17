@@ -239,7 +239,7 @@ build_lot_n <- function(con, lot_num,
       INNER JOIN lot_patient_input p ON ll.PATID = p.PATID
       WHERE ll.LOT_NUM = {prev}
         AND ll.LOT_BASE_END_DT IS NOT NULL
-    ),
+    ),{melp_prev_line_ctes(cfg, prev_med_window, cart_consolidation_days)}
     -- The previous line's regimen and its permissible biosimilar substitutes.
     -- Neither starts LOT_N. A substitute continues the drug it replaces, and
     -- the drug itself was part of the previous regimen.
@@ -288,7 +288,7 @@ build_lot_n <- function(con, lot_num,
         -- a confirmed gap is a restart, and opens a line like any other.
         AND (pme.MED_ABBR IS NULL
              OR (coalesce(mr.PREV_DISCON, 0) = 1
-                 AND pme.SUBSTITUTE_ONLY = 0){melp_prior_regimen_exempt(cfg)})
+                 AND pme.SUBSTITUTE_ONLY = 0){melp_prior_regimen_exempt(cfg)}){melp_suppress_predicate(cfg)}
       GROUP BY pe.PATID
     ),
     -- d_ALLO: earliest ALLO strictly after PREV_END_DT.

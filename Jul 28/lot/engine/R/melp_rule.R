@@ -147,6 +147,27 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
         AND GAP IS NOT NULL
         AND GAP >= {cfg$melp_restart_days}
         AND GAP <  {cfg$melp_advance_days}
+      UNION
+      -- A.1's later exposure. Inside induction with the next one under
+      -- melp_advance_days, the rule says the pair does not advance the line -
+      -- and that is a statement about the LATER exposure, since the first is
+      -- in the regimen and advances nothing by construction.
+      --
+      -- It needs saying here because the general returning-drug rule would
+      -- otherwise release it. Melphalan inside induction is one of the line's
+      -- own drugs, so the prior-regimen exclusion holds it - but only while it
+      -- is still being taken. A gap of map_discon_gap_days between the two
+      -- exposures makes the second a restart, and a restart opens a line like
+      -- any other drug's. That general rule and this one disagree on the same
+      -- date, and the melphalan branch is the one the request decides.
+      --
+      -- The upper bound leaves A.2 alone: at melp_advance_days or more the
+      -- later exposure DOES advance, and the inject arm puts it back.
+      SELECT DISTINCT PATID, NEXT_DT AS SUPPRESS_DT
+      FROM melp_judged
+      WHERE INSIDE = 1 AND YIELD_THIS = 0 AND YIELD_NEXT = 0
+        AND GAP IS NOT NULL
+        AND GAP <  {cfg$melp_advance_days}
     ),
     -- The suppressed EXPOSURES, expanded to every dose in them. The decision
     -- is per exposure. The candidate list is per dose. Suppressing only the
@@ -238,15 +259,56 @@ melp_inject_arm <- function(cfg, line_tbl, start_col, span_end, extra = "") {
         AND i.INJECT_DT <= {span_end}{extra}"))
 }
 
+# The same decision, computed against the PREVIOUS line, for the statement that
+# picks what starts the next one. med_cand lives in a different statement from
+# the line build, so melp_inject is not in scope there and the exemption below
+# had nothing to read.
+#
+# The previous line is the right line to judge against. Inside induction is a
+# statement about the line an exposure sits in, and every exposure med_cand is
+# looking at sits after the previous line started - so it is that line's window
+# the branch table is asking about.
+#
+# The window expression is the one auto_cand measures in the same statement:
+# the ALLO single day, the CAR-T consolidation window, or the previous line's
+# own medication window.
+melp_prev_line_ctes <- function(cfg, prev_med_window, cart_consolidation_days) {
+  if (!melp_rule_on(cfg)) return("")
+  melp_decision_ctes(
+    cfg, "prev_end", "PREV_START_DT", "prev_end.OBS_END_DT",
+    glue("CASE
+              WHEN prev_end.PREV_START_TYPE = 'SCT_ALLO'
+                THEN prev_end.PREV_START_DT
+              WHEN prev_end.PREV_START_TYPE = 'CART'
+                THEN date_add(prev_end.PREV_START_DT, {cart_consolidation_days - 1})
+              ELSE date_add(prev_end.PREV_START_DT, {prev_med_window - 1})
+            END"))
+}
+
 # While the rule is on, melphalan's line-advancing decisions belong to it. So
 # the prior-regimen exclusion must not veto them. Melphalan already in the
 # previous line's regimen was barred from med_cand, and an injected boundary
 # then ended a line without opening the next one, leaving the exposure with no
 # line. Empty when the rule is off, so the contract build's candidates do not
 # change.
+#
+# The exemption names the DATES the rule says advance, not the drug. It used to
+# release every melphalan row unconditionally, which is wider than any branch:
+#
+#   the first exposure of a B.2 pair          - both doses stay in the line
+#   the later exposure of a B.2 pair          - the same
+#   the first exposure of a B.3 pair          - only the later one advances
+#   the later exposure of an A.1 pair         - the pair does not advance
+#
+# all four could open a line, and the branch table says none of them may. The
+# dates that MAY are exactly melp_inject: B.1's first exposure, and the later
+# exposure of an A.2 or B.3 pair. So the exemption reads that list.
 melp_prior_regimen_exempt <- function(cfg, alias = "ms") {
   if (!melp_rule_on(cfg)) return("")
-  glue(" OR upper(trim({alias}.MAP_MED_TYPE)) = '{melp_abbr(cfg)}'")
+  glue(" OR (upper(trim({alias}.MAP_MED_TYPE)) = '{melp_abbr(cfg)}'
+                 AND EXISTS (SELECT 1 FROM melp_inject i
+                             WHERE i.PATID = {alias}.PATID
+                               AND i.INJECT_DT = {alias}.MAP_START_DT))")
 }
 
 # LOT1 is corrected in 06_lot1_end.R rather than in 04. yield_to_sct needs

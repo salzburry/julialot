@@ -113,6 +113,8 @@ subst_off <- function(f) {
                  c("{melp_lot1_base_from(cfg)}",       melp_lot1_base_from(off)),
                  c("{melp_lotn_ctes(cfg, lot_num, induction_window_days, cart_consolidation_days, allo_lot_span)}",
                    melp_lotn_ctes(off, 2, 30L, 45L, "single_day")),
+                 c("{melp_prev_line_ctes(cfg, prev_med_window, cart_consolidation_days)}",
+                   melp_prev_line_ctes(off, 60L, 45L)),
                  c("{melp_suppress_predicate(cfg)}",   melp_suppress_predicate(off)),
                  c("{melp_prior_regimen_exempt(cfg)}", melp_prior_regimen_exempt(off))))
     txt <- gsub(p[1], p[2], txt, fixed = TRUE)
@@ -216,10 +218,21 @@ ok(has(d$inject, "YIELD_THIS = 0 AND YIELD_NEXT = 0"),
 # Guarding the second arm on YIELD_THIS alone would remove a boundary on an
 # exposure the transplant rule was left to decide.
 sup <- strsplit(d$suppress, "UNION", fixed = TRUE)[[1]]
-ok(length(sup) == 2L &&
+ok(length(sup) == 3L &&
      has(sup[1], "YIELD_THIS = 0") && !has(sup[1], "YIELD_NEXT") &&
-     has(sup[2], "YIELD_THIS = 0 AND YIELD_NEXT = 0"),
+     has(sup[2], "YIELD_THIS = 0 AND YIELD_NEXT = 0") &&
+     has(sup[3], "YIELD_THIS = 0 AND YIELD_NEXT = 0"),
    "...and a removed one on whichever exposure it would have fallen on")
+# A.1's later exposure. The email says a first dose inside induction with the
+# next under 180 days does not advance the LOT, and nothing in the file said so
+# until now: the two out-of-induction arms both test INSIDE = 0.
+ok(has(sup[3], "INSIDE = 1") && has(sup[3], "NEXT_DT AS SUPPRESS_DT"),
+   "A.1's later exposure is taken off the candidate list, on its own date")
+ok(has(sup[3], paste0("GAP < ", CFG$melp_advance_days)) &&
+     !has(sup[3], paste0("GAP >= ", CFG$melp_restart_days)),
+   "...bounded above only - A.2 is the same shape past 180 days and does advance")
+ok(sum(vapply(sup, function(s) has(s, "INSIDE = 1"), logical(1))) == 1L,
+   "...and it is the only arm that acts inside induction")
 
 cat("\n-- the cells, and what they cannot do --\n")
 cells <- melp_cell_plan()
