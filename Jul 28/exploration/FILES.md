@@ -69,16 +69,25 @@ window:
 
 | Branch | Condition | Effect | Against the shipped engine |
 |---|---|---|---|
-| A.1 | inside induction, gap < 180 | no boundary | agrees |
-| A.2 | inside induction, gap ≥ 180 | the later dose advances the line | differs — today the repeat dose extends the line's run-out instead |
-| B.1 | outside induction, gap < 60 | this dose starts a line | agrees, incidentally |
-| B.2 | outside induction, 60 ≤ gap < 180 | no boundary | differs — today the first dose advances the line |
-| B.3 | outside induction, gap ≥ 180 | the later dose advances the line | differs — today the first dose does |
+| A.1 | inside induction, gap < 180 | no boundary | agrees below a 90-day gap; differs at or above one, where the returning-drug release already advances the later dose |
+| A.2 | inside induction, gap ≥ 180 | the later dose advances the line | agrees — a 180-day gap is past the 90-day release, so the engine already advances there |
+| B.1 | outside induction, gap < 60 | this dose starts a line | agrees, unless an earlier dose put melphalan in the regimen and it came back inside 90 days — then the engine opens no boundary and the rule injects one |
+| B.2 | outside induction, 60 ≤ gap < 180 | no boundary | differs — today the first dose advances the line, and at a 90-day gap or more so does the second |
+| B.3 | outside induction, gap ≥ 180 | the later dose advances the line | differs — today both do, and the rule keeps only the later one |
+
+The right-hand column turns on the **returning-drug release**, which is why the
+gap matters twice. A drug in the line's own regimen cannot start a line while it
+is still being taken, but `map_discon_gap_days` (90) between one episode and the
+next makes the later one a restart, and `lot/engine/R/prior_regimen.R` releases a
+restart to open a line like any other drug's. So the engine is not frozen after
+the first dose, and a branch that reads as "no boundary" is only a change where
+the engine would otherwise have opened one.
 
 It moves in both directions, so the net effect on line counts is not derivable:
-A.2 makes more lines, B.2 and B.3 make fewer, and which wins depends on how many
-patients sit in each branch. `run_melphalan_rule.R` in `exploration/lot/` reports
-the branch counts off a finished run without rebuilding anything.
+A.1 and B.2 and B.3 remove boundaries the engine opens, A.2 removes none and
+B.1 adds one on a narrow population, and which wins depends on how many patients
+sit in each branch. `run_melphalan_rule.R` in `exploration/lot/` reports the
+branch counts off a finished run without rebuilding anything.
 
 **Two readings of a coded transplant**, which is why three cells are built
 rather than two. High-dose melphalan is transplant conditioning, so a melphalan

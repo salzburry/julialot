@@ -36,7 +36,11 @@ source(file.path(LOT, "R", "melp_rule.R"))
 source(file.path(ROOT, "R", "cells.R"))
 
 CFG <- list(melp_med_abbr = "MELP", melp_exposure_days = 30L,
-            melp_restart_days = 60L, melp_advance_days = 180L, melp_sct_days = 14L)
+            melp_restart_days = 60L, melp_advance_days = 180L, melp_sct_days = 14L,
+            # Not a melphalan setting, and not read by melp_rule.R at all. The
+            # worked scenarios need it: their model of the engine has to know
+            # when a line's own drug is released to open a line again.
+            map_discon_gap_days = 90L)
 off <- modifyList(CFG, list(apply_melp_rule = ""))
 ask <- modifyList(CFG, list(apply_melp_rule = "as_asked"))
 yld <- modifyList(CFG, list(apply_melp_rule = "yield_to_sct"))
@@ -770,6 +774,22 @@ e1 <- Filter(function(s) identical(s$id, "example_1"), MELP_SCENARIOS)[[1]]
 r1 <- melp_scenario_run(ask, e1)
 ok(all(e1$doses %in% r1$suppress),
    "example 1: both doses of the B.2 pair have their boundary removed, not just the first")
+# The model of the engine has to carry the returning-drug release too, or every
+# later exposure of a line's own melphalan looks frozen and the rule gets
+# credited with boundaries the engine opens by itself. Held by the two cases
+# that turn on it rather than by reading the source for a keyword.
+ok(all(e1$doses %in% r1$starts_off),
+   "example 1: without the rule BOTH doses advance, so B.2 removes two boundaries, not one")
+w_a2 <- Filter(function(s) identical(s$id, "window_cart_45_a2"), MELP_WINDOW_CASES)[[1]]
+r_a2 <- melp_scenario_run(ask, w_a2)
+ok(identical(as.numeric(r_a2$starts), as.numeric(r_a2$starts_off)) &&
+     identical(as.numeric(r_a2$starts), 240),
+   "A.2: the returning drug opens that boundary anyway, so the rule adds nothing there")
+# And the release is the general 90-day one, not a melphalan threshold: at 89
+# days the drug is still the line's own and the same pair moves nothing.
+r_held <- melp_scenario_run(modifyList(ask, list(map_discon_gap_days = 201L)), w_a2)
+ok(!length(r_held$starts_off),
+   "...and with the gap threshold above 200 days it does not, which is what makes it the release")
 # And the settings the scenarios are judged against are the shipped ones, or
 # the branches move and the agreement above means nothing.
 sc_cfg <- utils::read.csv(file.path(LOT, "config.csv"), stringsAsFactors = FALSE,
