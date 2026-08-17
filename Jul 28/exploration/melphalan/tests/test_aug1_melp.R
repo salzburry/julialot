@@ -268,6 +268,43 @@ ok(has(melp_runout_case(ask, "X"), "mh.MELP_HOLD_DT > X") &&
 ok(!has(melp_lot1_base_from(ask), "LOT1_BASE_RUNOUT_DT,\n           mp."),
    "the swapped run-out is EXCEPTed from lb0.*, so the column is not ambiguous")
 
+cat("\n-- the reader that answers the three questions --\n")
+# read_melp_asks.R had no cover at all: the gate could go green with the file
+# asking the wrong question of the warehouse. No connection here, so what is
+# checked is the text - which query is asked, and which guards stand in front
+# of it.
+ra <- paste(readLines(file.path(ROOT, "read_melp_asks.R"), warn = FALSE),
+            collapse = "\n")
+ok(!grepl("(?m)^\\s*(db_exec|dbExecute|CREATE|INSERT|DROP|UPDATE|DELETE)\\b", ra, perl = TRUE),
+   "the reader only reads - no statement in it writes to the warehouse")
+ok(has(ra, "melp_read_inputs") && has(ra, "melp_check_inputs") ||
+     has(ra, "melp_read_inputs"),
+   "it holds all cells to one cohort attempt, code list set and study window")
+ok(has(ra, "melp_status_unchanged(con, cells, status)"),
+   "...and re-checks the build status before anything is written")
+ok(has(ra, 'identical(melp_check_code(inputs, LOT_ROOT), FALSE)') &&
+     has(ra, "stop("),
+   "a cell built by older engine code stops the read rather than warning")
+ok(has(ra, "apply_cart_induction_rule") && has(ra, "Rebuild those cells"),
+   "the CAR-T 60-day rule is a precondition, not a column in the output")
+# The three questions, each recognisable in the SQL that answers it.
+ok(has(ra, "LOT_BASE_LENGTH") && has(ra, "MEDIAN_CHANGE"),
+   "Q1 answers the CHANGE in line duration, not three tables to subtract by eye")
+ok(has(ra, "GROUP BY r.LOT_NUM, r.REGIMEN") && has(ra, "PCT_OF_LINE"),
+   "Q2 answers the distribution of regimens at each line")
+ok(has(ra, "IS_MELP_MONO") && has(ra, "q2$LOT_NUM == 2"),
+   "...and pulls 2L melphalan monotherapy out of that table rather than beside it")
+ok(has(ra, "melp_sct_sql()") && has(ra, "ms.MAP_START_DT >= l.LOT_START_DT"),
+   "Q3 keys a melphalan LOT on a DOSE inside the line, not on the regimen string")
+# The regimen string is the wrong test for Q3 and the file says why, so the
+# next reader does not simplify it back.
+ok(has(ra, "never reaches LOT_BASE_MEDS"),
+   "...and the reason is recorded, since a regimen test looks simpler and is wrong")
+ok(has(ra, "ASK_CSVS") && has(ra, "unlink(f)"),
+   "last run's CSVs are cleared before this one starts, not as it writes")
+ok(has(ra, "melp_ask2_melp_lots_by_line.csv"),
+   "...including the name Q2 used before it carried the distribution")
+
 cat("\n-- the cells, and what they cannot do --\n")
 cells <- melp_cell_plan()
 ok(length(cells) == 3L, "three builds: the study's, and the two readings")
