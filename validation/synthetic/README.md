@@ -30,21 +30,42 @@ hold whatever the rules are.
 > 3L ⊆ 2L · a cohort's index is that line's start · no cohort row without both
 > enrolment flags
 
-One number is printed and not failed: transplants belonging to a patient the
-build gave no line at all. A line starts on a medication episode, so that is
-the cohort-versus-episode disagreement the attrition funnel reports, not a
-defect in how lines are built. QC calls the same number `E5b`.
+## ...and the shipped QC catalogue, on the same patients
 
-## Six patients that are not drawn
+`emit_qc.R` asks `lot/qc/R/checks.R` for its own SQL and that SQL runs here,
+bound to the tables this harness builds. A `fail` check with a row breaks the
+run like any invariant above; `warn` and `info` are counted and printed.
+
+This replaced two Python rewrites of QC predicates, which proved the rewrites.
+A rewrite can be right while the shipped check is wrong, and both were:
+
+| check | on 400 patients | what it was |
+|---|---|---|
+| `A7` | **65** rows | every AUTO-started line with no drug in its window — a shape the build produces on purpose |
+| `C2` | **11** rows | every regimen drug returning after a confirmed gap — the rule `prior_regimen.R` implements |
+
+Both are `fail` severity, so both would have blocked every warehouse run, and
+neither was reachable while the harness ran copies.
+
+Four checks cannot be answered here and say so rather than passing quietly:
+three need the attrition funnel or the metadata row, which `build_lot.R` writes
+outside the emitted chain, and `D2` reads per-source run-out dates that
+`map_stacked` carries in the warehouse and not as a fixture here.
+
+## Seven patients that are not drawn
 
 Everything else is random. That is the point, and it means a rule reached only
-by a narrow combination of dates can go untested for a whole run. Six patients
+by a narrow combination of dates can go untested for a whole run. Seven patients
 are built by hand so they are always present: a regimen that runs out early
 with a transplant later in the same window, the same one day outside it, a
 tandem partner far beyond the window, an allograft that ends the line before an
-in-window transplant, and two CAR-T-started lines with a transplant either side
-of the consolidation window. They are patients, not fixtures — nothing says
-what their lines should come back as.
+in-window transplant, two CAR-T-started lines with a transplant either side of
+the consolidation window, and a transplant landing before the patient's first
+line. That last one the generator cannot draw — its transplants start at least
+100 days after index and its first medication by day 70 — and it is what
+decides whether an unowned transplant is a defect or a reconciliation number.
+They are patients, not fixtures — nothing says what their lines should come
+back as.
 
 ## The settings the checks are judged by
 
