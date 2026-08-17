@@ -649,8 +649,13 @@ for (v in list(list("no MAP",   paste(melp_metric_sql("F", "A", "r1", "MELP"), c
 ok(has(paste(melp_metric_sql("F", "A", "r1", "MELP"), collapse = "\n"), "cast(NULL as bigint)"),
    "with no MAP table to read, the B.2 columns are NULL rather than wrong")
 mrs <- paste(readLines(file.path(LOT, "R", "melp_rule.R"), warn = FALSE), collapse = "\n")
-ok(has(mrs, "It does not hold the line") && grepl("[Oo]pen question 6", mrs),
-   "...and the rule says so where it suppresses, rather than claiming the ask")
+# The request asks for two things at B.2 and suppression is only one of them,
+# so the file has to name the other where it does the suppressing - and the
+# hold has to actually be there. This used to check the opposite: that the file
+# admitted it did NOT hold the line, and pointed at open question 6.
+ok(has(mrs, "melp_hold carries the line to it") &&
+     has(mrs, "melp_hold AS (") && !grepl("[Oo]pen question 6", mrs),
+   "...and the rule names the hold where it suppresses, the question being settled")
 # The proposal, the open questions and the two readings are in lot/FILES.md,
 # under this package's own entry. Not in lot/LOT_RULES.md: that document is the
 # rules the build applies, and this is not one of them - it is off in CONTRACT
