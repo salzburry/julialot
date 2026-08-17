@@ -39,6 +39,20 @@ MELP <- toupper(trimws(cfg$melp_med_abbr %||% "MELP"))
 out_dir <- melp_out_dir(.script_dir)
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
+# Last run's answers go before this one starts, not when it finishes writing.
+# Every check below can stop the read - a rebuilt cell, a code fingerprint that
+# moved, a cohort attempt that does not match - and each one leaves the files
+# from whenever this last succeeded sitting in out/ with nothing to say they
+# are not today's. Removed up front, an interrupted read leaves no answer
+# rather than a stale one.
+ASK_CSVS <- c("melp_ask1_line_duration.csv", "melp_ask2_regimens_by_line.csv",
+              "melp_ask3_sct_in_melp_lot.csv",
+              # The name Q2 used before it carried the distribution. Cleared
+              # too, so a folder holding both files cannot be read as two
+              # answers to the same question.
+              "melp_ask2_melp_lots_by_line.csv")
+for (f in file.path(out_dir, ASK_CSVS)) if (file.exists(f)) unlink(f)
+
 stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
 con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
 on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
@@ -137,21 +151,42 @@ if (!is.null(q1)) {
              "MEDIAN_DAYS", "MEDIAN_CHANGE", "MEAN_DAYS", "MEAN_CHANGE")]
 }
 
-# --- 2. melphalan-containing and melphalan-only LOTs, every line ------------
-# ANY_MELP is a LOT whose regimen holds melphalan, among other drugs or on its
-# own. MELP_MONO is the subset where melphalan is the whole regimen.
+# --- 2. the distribution of regimens at each line ----------------------------
+# The question is what's the dist of regimens for each line (how many pts
+# receive 2L MELP mono still) - so the answer is the distribution, one row per
+# regimen per line, with the melphalan-only row it names among them rather than
+# instead of them. A two-column any-melphalan / melphalan-only summary answers
+# the parenthesis and drops the question.
+#
+# PCT_OF_LINE is within the line, so a line's rows sum to 100. IS_MELP_MONO
+# marks the row the question calls out; IS_ANY_MELP marks a regimen holding
+# melphalan among other drugs, so the two summary numbers are still recoverable
+# by summing.
+#
 # array_contains over the split string, not LIKE, so a drug whose abbreviation
-# merely contains MELP cannot match.
+# merely contains MELP cannot match. A blank regimen is kept and labelled: an
+# ALLO line has one by construction (allo_lot_span is single_day), and dropping
+# it would make the percentages of a line that has such patients wrong.
 q2 <- per_cell(function(c_i) paste0("
-  SELECT l.LOT_NUM,
-         count(DISTINCT l.PATID) AS N_PATIENTS,
-         count(DISTINCT CASE WHEN array_contains(
-                 split(coalesce(l.LOT_BASE_MEDS, ''), ' '), '", MELP, "')
-                             THEN l.PATID END) AS N_ANY_MELP,
-         count(DISTINCT CASE WHEN trim(coalesce(l.LOT_BASE_MEDS, '')) = '", MELP, "'
-                             THEN l.PATID END) AS N_MELP_MONO
-  FROM ", lines_of(c_i), "
-  GROUP BY l.LOT_NUM ORDER BY l.LOT_NUM"))
+  WITH r AS (
+    SELECT l.LOT_NUM,
+           CASE WHEN trim(coalesce(l.LOT_BASE_MEDS, '')) = ''
+                THEN '(no regimen)' ELSE trim(l.LOT_BASE_MEDS) END AS REGIMEN,
+           l.PATID
+    FROM ", lines_of(c_i), "
+  )
+  SELECT r.LOT_NUM, r.REGIMEN,
+         count(DISTINCT r.PATID) AS N_PATIENTS,
+         round(100.0 * count(DISTINCT r.PATID)
+               / max(t.N_LINE_PATIENTS), 1) AS PCT_OF_LINE,
+         CASE WHEN r.REGIMEN = '", MELP, "' THEN 1 ELSE 0 END AS IS_MELP_MONO,
+         CASE WHEN array_contains(split(r.REGIMEN, ' '), '", MELP, "')
+              THEN 1 ELSE 0 END                              AS IS_ANY_MELP
+  FROM r
+  INNER JOIN (SELECT LOT_NUM, count(DISTINCT PATID) AS N_LINE_PATIENTS
+              FROM r GROUP BY LOT_NUM) t ON t.LOT_NUM = r.LOT_NUM
+  GROUP BY r.LOT_NUM, r.REGIMEN
+  ORDER BY r.LOT_NUM, N_PATIENTS DESC, r.REGIMEN"))
 
 # --- 3. an SCT inside a melphalan-containing LOT -----------------------------
 # A melphalan LOT here is one with a melphalan DOSE between its start and end,
@@ -198,7 +233,17 @@ write_out <- function(d, name, title) {
 melp_status_unchanged(con, cells, status)
 
 write_out(q1, "melp_ask1_line_duration.csv", "1. Duration of each line")
-write_out(q2, "melp_ask2_melp_lots_by_line.csv",
-          "2. LOTs containing melphalan, and LOTs that are melphalan alone")
+write_out(q2, "melp_ask2_regimens_by_line.csv",
+          "2. Distribution of regimens at each line")
 write_out(q3, "melp_ask3_sct_in_melp_lot.csv",
           "3. An SCT inside a melphalan-containing LOT")
+
+# The row the question names, pulled out of the distribution rather than
+# computed a second way - so it cannot disagree with the table above it.
+if (!is.null(q2)) {
+  mono2 <- q2[q2$LOT_NUM == 2 & q2$IS_MELP_MONO == 1,
+              c("CELL", "LOT_NUM", "REGIMEN", "N_PATIENTS", "PCT_OF_LINE")]
+  cat("\n   ...of which, 2L melphalan monotherapy:\n")
+  if (!nrow(mono2)) cat("     none at LOT2 in any cell\n")
+  else print(mono2, row.names = FALSE)
+}

@@ -2526,6 +2526,27 @@ ok(!grepl("{induction_window_days} - 1", ac, fixed = TRUE),
 ok(grepl("prev_med_window <- if (lot_num == 2L) lot1_induction_window_days",
          l25_txt, fixed = TRUE),
    "...and that window is LOT1's exactly when the previous line is LOT1")
+# The tandem exemption is what refuses a transplant a line of its own, so it
+# has to be limited to pairs a line actually held. Without the window test on
+# PREV_AUTO_DT, a pair whose first member sits outside the previous line's
+# window still counts as a tandem - and since nothing held that line open to
+# the second member either, the second transplant lands in no line at all.
+# Dropping this conjunct is the regression, and E5 is what catches it.
+tex <- local({
+  b <- regexpr("AND NOT (awp.PREV_AUTO_DT IS NOT NULL", ac, fixed = TRUE)
+  if (b < 0) "" else substring(ac, b)
+})
+ok(nchar(tex) > 0, "the tandem exemption is still in the next-line AUTO gate")
+ok(grepl("awp.PREV_AUTO_DT <= date_add(", tex, fixed = TRUE),
+   "the tandem exemption applies only where the EARLIER AUTO is in the window")
+ok(grepl("ELSE                 {prev_med_window} - 1", tex, fixed = TRUE),
+   "...measured against the previous line's own window, the same one (i) uses")
+# The pair is bounded from both ends, and by different things. Losing either
+# leaves a shape with no line: without the 180 days an ordinary tandem partner
+# starts a line, without the window an out-of-window pair orphans one.
+ok(grepl("datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {sct_tandem_days}", tex,
+         fixed = TRUE),
+   "...and the 180-day bound is still there beside it, not replaced by it")
 # The run-out guard mirrors auto_cand; disagreeing lets DEATH take a line whose
 # run-out the next line does in fact open on.
 pra <- substr(e6, regexpr("post_runout_auto AS", e6, fixed = TRUE),

@@ -22,8 +22,8 @@
 # engine may not otherwise offer.
 #
 # Suppressing both doses of a B.2 pair stops melphalan ending the line at
-# either. It does not hold the line open to the second dose.
-# That is open question 6 in exploration/FILES.md.
+# either. It does not on its own keep the second dose INSIDE the line, which
+# the request also asks for, so melp_hold carries the line to it.
 #
 # The two modes differ only where a coded transplant sits on the same event and
 # the SCT rule fires too. as_asked judges every exposure anyway. yield_to_sct
@@ -147,6 +147,27 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
         AND GAP IS NOT NULL
         AND GAP >= {cfg$melp_restart_days}
         AND GAP <  {cfg$melp_advance_days}
+      UNION
+      -- A.1's later exposure. Inside induction with the next one under
+      -- melp_advance_days, the rule says the pair does not advance the line -
+      -- and that is a statement about the LATER exposure, since the first is
+      -- in the regimen and advances nothing by construction.
+      --
+      -- It needs saying here because the general returning-drug rule would
+      -- otherwise release it. Melphalan inside induction is one of the line's
+      -- own drugs, so the prior-regimen exclusion holds it - but only while it
+      -- is still being taken. A gap of map_discon_gap_days between the two
+      -- exposures makes the second a restart, and a restart opens a line like
+      -- any other drug's. That general rule and this one disagree on the same
+      -- date, and the melphalan branch is the one the request decides.
+      --
+      -- The upper bound leaves A.2 alone: at melp_advance_days or more the
+      -- later exposure DOES advance, and the inject arm puts it back.
+      SELECT DISTINCT PATID, NEXT_DT AS SUPPRESS_DT
+      FROM melp_judged
+      WHERE INSIDE = 1 AND YIELD_THIS = 0 AND YIELD_NEXT = 0
+        AND GAP IS NOT NULL
+        AND GAP <  {cfg$melp_advance_days}
     ),
     -- The suppressed EXPOSURES, expanded to every dose in them. The decision
     -- is per exposure. The candidate list is per dose. Suppressing only the
@@ -188,6 +209,38 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
       FROM melp_judged
       WHERE INSIDE = 0 AND GAP IS NOT NULL AND GAP < {cfg$melp_restart_days}
         AND YIELD_THIS = 0
+    ),
+    -- B.2's later exposure again, this time as a date the line is carried to.
+    --
+    -- Taking both boundaries off the candidate list is only half of what the
+    -- request asks for. It stops melphalan ENDING the line at either dose. It
+    -- does not keep the second dose INSIDE the line, and where the line's own
+    -- regimen runs out between the two, the line ends at that run-out and the
+    -- later dose falls outside it - into no line at all, since the same rule
+    -- has just refused it as a line start. The request says both doses stay in
+    -- the current line, so the line has to reach the second one.
+    --
+    -- Carried on the RUN-OUT rather than as an end reason of its own. The
+    -- run-out is where the line's treatment stopped, and under this rule it
+    -- did not stop at the regimen: a melphalan administration the request
+    -- assigns to this line happened later. Moving that date keeps the whole
+    -- end cascade intact - the 90-day confirmation is measured from the dose,
+    -- a death or an addition in between still takes the line first, and the
+    -- reason stays DISCONTINUATION rather than becoming a fourth
+    -- transplant-shaped end nothing else knows about.
+    --
+    -- Bounded by the line's own span, so an exposure past the end of
+    -- observation cannot extend a line beyond it.
+    melp_hold AS (
+      SELECT j.PATID, max(j.NEXT_DT) AS MELP_HOLD_DT
+      FROM melp_judged j
+      INNER JOIN {line_tbl} ON {line_tbl}.PATID = j.PATID
+      WHERE j.INSIDE = 0 AND j.YIELD_THIS = 0 AND j.YIELD_NEXT = 0
+        AND j.GAP IS NOT NULL
+        AND j.GAP >= {cfg$melp_restart_days}
+        AND j.GAP <  {cfg$melp_advance_days}
+        AND j.NEXT_DT <= {span_end}
+      GROUP BY j.PATID
     ),"))
 }
 
@@ -238,15 +291,56 @@ melp_inject_arm <- function(cfg, line_tbl, start_col, span_end, extra = "") {
         AND i.INJECT_DT <= {span_end}{extra}"))
 }
 
+# The same decision, computed against the PREVIOUS line, for the statement that
+# picks what starts the next one. med_cand lives in a different statement from
+# the line build, so melp_inject is not in scope there and the exemption below
+# had nothing to read.
+#
+# The previous line is the right line to judge against. Inside induction is a
+# statement about the line an exposure sits in, and every exposure med_cand is
+# looking at sits after the previous line started - so it is that line's window
+# the branch table is asking about.
+#
+# The window expression is the one auto_cand measures in the same statement:
+# the ALLO single day, the CAR-T consolidation window, or the previous line's
+# own medication window.
+melp_prev_line_ctes <- function(cfg, prev_med_window, cart_consolidation_days) {
+  if (!melp_rule_on(cfg)) return("")
+  melp_decision_ctes(
+    cfg, "prev_end", "PREV_START_DT", "prev_end.OBS_END_DT",
+    glue("CASE
+              WHEN prev_end.PREV_START_TYPE = 'SCT_ALLO'
+                THEN prev_end.PREV_START_DT
+              WHEN prev_end.PREV_START_TYPE = 'CART'
+                THEN date_add(prev_end.PREV_START_DT, {cart_consolidation_days - 1})
+              ELSE date_add(prev_end.PREV_START_DT, {prev_med_window - 1})
+            END"))
+}
+
 # While the rule is on, melphalan's line-advancing decisions belong to it. So
 # the prior-regimen exclusion must not veto them. Melphalan already in the
 # previous line's regimen was barred from med_cand, and an injected boundary
 # then ended a line without opening the next one, leaving the exposure with no
 # line. Empty when the rule is off, so the contract build's candidates do not
 # change.
+#
+# The exemption names the DATES the rule says advance, not the drug. It used to
+# release every melphalan row unconditionally, which is wider than any branch:
+#
+#   the first exposure of a B.2 pair          - both doses stay in the line
+#   the later exposure of a B.2 pair          - the same
+#   the first exposure of a B.3 pair          - only the later one advances
+#   the later exposure of an A.1 pair         - the pair does not advance
+#
+# all four could open a line, and the branch table says none of them may. The
+# dates that MAY are exactly melp_inject: B.1's first exposure, and the later
+# exposure of an A.2 or B.3 pair. So the exemption reads that list.
 melp_prior_regimen_exempt <- function(cfg, alias = "ms") {
   if (!melp_rule_on(cfg)) return("")
-  glue(" OR upper(trim({alias}.MAP_MED_TYPE)) = '{melp_abbr(cfg)}'")
+  glue(" OR (upper(trim({alias}.MAP_MED_TYPE)) = '{melp_abbr(cfg)}'
+                 AND EXISTS (SELECT 1 FROM melp_inject i
+                             WHERE i.PATID = {alias}.PATID
+                               AND i.INJECT_DT = {alias}.MAP_START_DT))")
 }
 
 # LOT1 is corrected in 06_lot1_end.R rather than in 04. yield_to_sct needs
@@ -344,11 +438,37 @@ melp_lot1_ctes <- function(cfg) {
 # class, so the list is as long as the code list and changes with it.
 melp_lot1_base_from <- function(cfg) {
   if (!melp_rule_on(cfg)) return("lot1_base lb")
-  "(SELECT lb0.* EXCEPT (LOT1_BASE_1ST_ADD_MED_DT, LOT1_BASE_1ST_ADD_MED),
+  # LOT1_BASE_RUNOUT_DT is swapped here too, for the B.2 hold - see melp_hold.
+  # Only ever forward, and only where the line ran out at all: a NULL run-out
+  # is a line still covered on its own regimen, which needs no carrying.
+  "(SELECT lb0.* EXCEPT (LOT1_BASE_1ST_ADD_MED_DT, LOT1_BASE_1ST_ADD_MED,
+                         LOT1_BASE_RUNOUT_DT),
            mp.LOT1_BASE_1ST_ADD_MED_DT,
-           mp.LOT1_BASE_1ST_ADD_MED
+           mp.LOT1_BASE_1ST_ADD_MED,
+           CASE WHEN lb0.LOT1_BASE_RUNOUT_DT IS NOT NULL
+                 AND mh.MELP_HOLD_DT IS NOT NULL
+                 AND mh.MELP_HOLD_DT > lb0.LOT1_BASE_RUNOUT_DT
+                THEN mh.MELP_HOLD_DT
+                ELSE lb0.LOT1_BASE_RUNOUT_DT END AS LOT1_BASE_RUNOUT_DT
     FROM lot1_base lb0
-    LEFT JOIN melp_add_pick mp ON mp.PATID = lb0.PATID) lb"
+    LEFT JOIN melp_add_pick mp ON mp.PATID = lb0.PATID
+    LEFT JOIN melp_hold     mh ON mh.PATID = lb0.PATID) lb"
+}
+
+# The same carry at LOT2-5, where there is no column swap to hang it on: the
+# run-out is computed in the statement rather than read off an earlier table.
+# Empty when the rule is off, so discon reads exactly as it did.
+melp_runout_case <- function(cfg, col, alias = "mh") {
+  if (!melp_rule_on(cfg)) return(col)
+  glue("CASE WHEN {col} IS NOT NULL
+             AND {alias}.MELP_HOLD_DT IS NOT NULL
+             AND {alias}.MELP_HOLD_DT > {col}
+            THEN {alias}.MELP_HOLD_DT
+            ELSE {col} END")
+}
+melp_hold_join <- function(cfg, on_alias, alias = "mh") {
+  if (!melp_rule_on(cfg)) return("")
+  paste0("\n", glue("      LEFT JOIN melp_hold {alias} ON {on_alias}.PATID = {alias}.PATID"))
 }
 
 # LOT2-5 needs no such swap. first_add_candidates is inside the statement that

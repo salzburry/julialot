@@ -194,7 +194,7 @@ end of observation.
 | `d_MED` | earliest non-steroid MM agent, excluding the previous line's own regimen (§4.3) and its permissible substitutes (§4.4) |
 | `d_ALLO` | earliest allogeneic transplant |
 | `d_CART` | earliest CAR-T. At LOT2, one inside line 1's induction window is excluded — §6.4 |
-| `d_AUTO` | earliest autologous transplant that is (i) outside the previous line's applicable window measured from that line's **start** — 0 days if ALLO-started, 44 if CAR-T-started, 29 otherwise — and (ii) not within `sct_tandem_days` of the immediately preceding AUTO (§6.3) |
+| `d_AUTO` | earliest autologous transplant that is (i) outside the previous line's applicable window measured from that line's **start** — 0 days if ALLO-started, 44 if CAR-T-started, 29 otherwise — and (ii) not within `sct_tandem_days` of the immediately preceding AUTO, where **that** AUTO is itself inside the same window (§6.3) |
 
 Unlike line 1, a first-ever AUTO can open a line here.
 
@@ -380,6 +380,34 @@ tandem: the transplant is excess and does both.
 Running out of treatment is not an interruption. The clear-gap test asks what
 happened, and an absence of treatment is not an event — see §6.5, which is where
 that matters.
+
+**The pair must be one a line owned.** Being a tandem is what stops the second
+transplant opening a line, so it can only stop it where a line was holding the
+pair in the first place. That means the **first** of the two has to fall inside
+its line's applicable window — the same window §6.5 uses to decide whether a
+transplant holds the line open, and the same one `d_AUTO` measures in §9.2's
+condition (i).
+
+Where it does not, the line never reached the second transplant, and refusing
+that transplant a line of its own leaves it in none at all:
+
+    d1     line 1 starts on its regimen
+    d341   AUTO 1 — 341 days out, far outside the 60-day window, so nothing
+           holds line 1 open to anything that follows it
+    d400   line 1 ends on its own confirmed run-out
+    d520   AUTO 2 — 179 days after AUTO 1, so within sct_tandem_days
+    ---
+    line 1 ended 120 days before AUTO 2 and cannot contain it. Treating the
+    pair as a tandem would refuse AUTO 2 a line too, and the transplant
+    would belong to nothing. It opens line 2 as SCT_AUTO instead.
+
+QC check `E5` is what finds this: it starts from the processed transplants
+rather than from the lines, so an event in no line has a row to be wrong on.
+The narrower reading — that the tandem holds the earlier line open through the
+second transplant wherever the first one sits — was measured and rejected: it
+moves patients who have no unowned transplant at all, because a hold date
+reaches forward and the extended line swallows the additions and allografts
+in between.
 
 ### 6.4 A CAR-T inside line 1's induction window is part of line 1
 

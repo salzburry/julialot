@@ -228,6 +228,14 @@ def planted():
     pat('M0006', [('LEN', 'IMID', ix, ix + 29, 0),
                   ('DARA', 'MAB', ix, ix + 199, 0),
                   ('LEN', 'IMID', ix + 150, ix + 180, 0)])
+    # B.2 with the line ENDING BETWEEN the two doses, which M0004 cannot reach:
+    # its LEN runs to d400, so the line is open at both. Here LEN runs out at
+    # d150 and is confirmed 90 days later, so the line's own end lands between
+    # the doses at d120 and d210. Removing melphalan's two boundaries is then
+    # not enough - the request says both doses stay in the current line, and
+    # without a hold the line ends at its run-out and the second dose falls
+    # outside it. This is the patient that tells the two apart.
+    melp('M0007', [120, 120 + 90], cover=150)
     return out
 
 

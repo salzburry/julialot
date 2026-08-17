@@ -239,7 +239,7 @@ build_lot_n <- function(con, lot_num,
       INNER JOIN lot_patient_input p ON ll.PATID = p.PATID
       WHERE ll.LOT_NUM = {prev}
         AND ll.LOT_BASE_END_DT IS NOT NULL
-    ),
+    ),{melp_prev_line_ctes(cfg, prev_med_window, cart_consolidation_days)}
     -- The previous line's regimen and its permissible biosimilar substitutes.
     -- Neither starts LOT_N. A substitute continues the drug it replaces, and
     -- the drug itself was part of the previous regimen.
@@ -288,7 +288,7 @@ build_lot_n <- function(con, lot_num,
         -- a confirmed gap is a restart, and opens a line like any other.
         AND (pme.MED_ABBR IS NULL
              OR (coalesce(mr.PREV_DISCON, 0) = 1
-                 AND pme.SUBSTITUTE_ONLY = 0){melp_prior_regimen_exempt(cfg)})
+                 AND pme.SUBSTITUTE_ONLY = 0){melp_prior_regimen_exempt(cfg)}){melp_suppress_predicate(cfg)}
       GROUP BY pe.PATID
     ),
     -- d_ALLO: earliest ALLO strictly after PREV_END_DT.
@@ -371,9 +371,38 @@ build_lot_n <- function(con, lot_num,
         -- was then rejected here for being within 180 days of AUTO 2, so LOT2
         -- never opened. The line-ending SCT sits one day after the end date,
         -- which is exactly where that AUTO is.
+        --
+        -- The pair must also be one the previous line OWNED, which is what the
+        -- window test below asks. The 180-day test on its own says the two
+        -- transplants are close together and nothing more; it does not say a
+        -- line ever held them. Where the earlier AUTO falls outside the
+        -- previous line's window, nothing held that line open to the later one
+        -- - LOT{lot_num}_AUTO_HOLD_DT carries the same window test and goes
+        -- NULL - so refusing the later one HERE as that line's tandem partner
+        -- leaves it in no line at all. AUTO 1 in December outside LOT1's
+        -- window, LOT1 ending on its own run-out in February, AUTO 2 in June:
+        -- LOT1 does not reach it and this rejected it, so it belonged to
+        -- nothing. Same failure as the paragraph above, from the other side of
+        -- the pair.
+        --
+        -- Deliberately NOT the wider reading, that a tandem holds the previous
+        -- line open through AUTO 2 wherever AUTO 1 sits. The hold date reaches
+        -- forward, so a line let past its own window swallows what is in
+        -- between - an added medication that should have opened its own line,
+        -- an allograft that should have ended this one. Measured on 2000
+        -- synthetic patients that moved 52 patients, 39 of whom had no
+        -- unowned transplant to fix, and broke B5b. This reading moved 12, all
+        -- of them patients with one.
         AND NOT (awp.PREV_AUTO_DT IS NOT NULL
                  AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {sct_tandem_days}
                  AND awp.N_BETWEEN = 0
+                 AND awp.PREV_AUTO_DT <= date_add(
+                       pe.PREV_START_DT,
+                       CASE pe.PREV_START_TYPE
+                         WHEN 'SCT_ALLO' THEN 0
+                         WHEN 'CART'     THEN {cart_consolidation_days} - 1
+                         ELSE                 {prev_med_window} - 1
+                       END)
                  AND NOT (pe.PREV_END_REASON = 'SCT_AUTO'
                           AND awp.TX_DT = date_add(pe.PREV_END_DT, 1)))
       GROUP BY pe.PATID
@@ -491,6 +520,16 @@ build_lot_n <- function(con, lot_num,
   "), qc = glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_pats
                  FROM lot{lot_num}_induction_meds"))
 
+  # Built out here rather than inline. It is a CASE expression handed to a
+  # function, and a nested glue() call inside a glue() template does not parse -
+  # the inner quotes close the outer one.
+  runout_expr <- melp_runout_case(cfg, paste0(
+    "CASE\n",
+    "          WHEN d.RAW_DISCON_DT IS NOT NULL AND d.RAW_DISCON_DT <= ls.OBS_END_DT\n",
+    "            THEN d.RAW_DISCON_DT\n",
+    "          ELSE NULL\n",
+    "        END"))
+
   materialize(con, paste0(pfx, "_lot", lot_num, "_base"),
               view = glue("lot{lot_num}_base"),
               name = lotn_table(lot_num, "BASE"), body = glue("
@@ -540,13 +579,9 @@ build_lot_n <- function(con, lot_num,
         -- tail past death or study end cannot extend the line. Still the
         -- run-out, not a discontinuation. The end statement below confirms it,
         -- where POST_RUNOUT_TRIGGER_FLG exists.
-        CASE
-          WHEN d.RAW_DISCON_DT IS NOT NULL AND d.RAW_DISCON_DT <= ls.OBS_END_DT
-            THEN d.RAW_DISCON_DT
-          ELSE NULL
-        END AS LOT{lot_num}_BASE_RUNOUT_DT
+        {runout_expr} AS LOT{lot_num}_BASE_RUNOUT_DT
       FROM lot{lot_num}_start ls
-      LEFT JOIN discon_raw d ON ls.PATID = d.PATID
+      LEFT JOIN discon_raw d ON ls.PATID = d.PATID{melp_hold_join(cfg, 'ls')}
     ),
     med_summary AS (
       SELECT

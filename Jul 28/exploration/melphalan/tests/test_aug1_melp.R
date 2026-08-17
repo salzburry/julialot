@@ -113,12 +113,19 @@ subst_off <- function(f) {
                  c("{melp_lot1_base_from(cfg)}",       melp_lot1_base_from(off)),
                  c("{melp_lotn_ctes(cfg, lot_num, induction_window_days, cart_consolidation_days, allo_lot_span)}",
                    melp_lotn_ctes(off, 2, 30L, 45L, "single_day")),
+                 c("{melp_prev_line_ctes(cfg, prev_med_window, cart_consolidation_days)}",
+                   melp_prev_line_ctes(off, 60L, 45L)),
+                 c("{melp_hold_join(cfg, 'ls')}",      melp_hold_join(off, "ls")),
                  c("{melp_suppress_predicate(cfg)}",   melp_suppress_predicate(off)),
                  c("{melp_prior_regimen_exempt(cfg)}", melp_prior_regimen_exempt(off))))
     txt <- gsub(p[1], p[2], txt, fixed = TRUE)
   # The inject arm spans two lines in the step, so it is cut rather than swapped.
-  sub("(?s)\\{melp_inject_arm\\(cfg,.*?\\)\\}", melp_inject_arm(off, "t", "c", "e"),
-      txt, perl = TRUE)
+  txt <- sub("(?s)\\{melp_inject_arm\\(cfg,.*?\\)\\}", melp_inject_arm(off, "t", "c", "e"),
+             txt, perl = TRUE)
+  # melp_runout_case() is called in R rather than spliced in a template - it
+  # wraps an expression the step already had - so it is cut the same way. Off,
+  # it hands that expression straight back, which is what the step read before.
+  sub("(?s)melp_runout_case\\(cfg, paste0\\(.*?\\)\\)", "<off>", txt, perl = TRUE)
 }
 ok(!has(subst_off("06_lot1_end.R"), "melp_") &&
      !has(subst_off("10_lot2_5_base.R"), "melp_"),
@@ -216,10 +223,87 @@ ok(has(d$inject, "YIELD_THIS = 0 AND YIELD_NEXT = 0"),
 # Guarding the second arm on YIELD_THIS alone would remove a boundary on an
 # exposure the transplant rule was left to decide.
 sup <- strsplit(d$suppress, "UNION", fixed = TRUE)[[1]]
-ok(length(sup) == 2L &&
+ok(length(sup) == 3L &&
      has(sup[1], "YIELD_THIS = 0") && !has(sup[1], "YIELD_NEXT") &&
-     has(sup[2], "YIELD_THIS = 0 AND YIELD_NEXT = 0"),
+     has(sup[2], "YIELD_THIS = 0 AND YIELD_NEXT = 0") &&
+     has(sup[3], "YIELD_THIS = 0 AND YIELD_NEXT = 0"),
    "...and a removed one on whichever exposure it would have fallen on")
+# A.1's later exposure. The email says a first dose inside induction with the
+# next under 180 days does not advance the LOT, and nothing in the file said so
+# until now: the two out-of-induction arms both test INSIDE = 0.
+ok(has(sup[3], "INSIDE = 1") && has(sup[3], "NEXT_DT AS SUPPRESS_DT"),
+   "A.1's later exposure is taken off the candidate list, on its own date")
+ok(has(sup[3], paste0("GAP < ", CFG$melp_advance_days)) &&
+     !has(sup[3], paste0("GAP >= ", CFG$melp_restart_days)),
+   "...bounded above only - A.2 is the same shape past 180 days and does advance")
+ok(sum(vapply(sup, function(s) has(s, "INSIDE = 1"), logical(1))) == 1L,
+   "...and it is the only arm that acts inside induction")
+
+# B.2 again, as a date the line is carried to rather than a boundary removed.
+# Taking both boundaries away stops melphalan ENDING the line; it does not keep
+# the later dose INSIDE it. Where the regimen runs out between the two, the
+# line ends at the run-out and the second dose lands in no line at all - the
+# same rule having just refused it as a line start.
+hold <- gsub("\\s+", " ", local({
+  s2 <- melp_decision_ctes(ask, "L", "S", "E", "L.IND_END")
+  i <- regexpr("melp_hold AS \\(", s2)
+  sub("(?s)\\) GROUP BY.*$", "", substr(s2, i + attr(i, "match.length"), nchar(s2)), perl = TRUE)
+}))
+ok(has(hold, "max(j.NEXT_DT) AS MELP_HOLD_DT"),
+   "the hold is the LATER exposure of the pair, which is the one at risk")
+ok(has(hold, "INSIDE = 0") && has(hold, "GAP >= 60") && has(hold, "GAP < 180"),
+   "...and it is B.2's window exactly - not A.1, not B.1, not B.3")
+ok(has(hold, "j.NEXT_DT <= E"),
+   "...bounded by the line's span, so it cannot reach past observation")
+# Carried on the run-out rather than as an end reason of its own, so the 90-day
+# confirmation is measured from the dose and every other end still outranks it.
+ok(has(melp_lot1_base_from(ask), "AS LOT1_BASE_RUNOUT_DT") &&
+     has(melp_lot1_base_from(ask), "mh.MELP_HOLD_DT > lb0.LOT1_BASE_RUNOUT_DT"),
+   "LOT1 carries its run-out forward to the hold, and only forward")
+ok(identical(melp_runout_case(off, "X"), "X"),
+   "...and with the rule off the run-out expression is handed straight back")
+ok(has(melp_runout_case(ask, "X"), "mh.MELP_HOLD_DT > X") &&
+     has(melp_runout_case(ask, "X"), "ELSE X END"),
+   "LOT2-5 wraps its own run-out the same way")
+ok(!has(melp_lot1_base_from(ask), "LOT1_BASE_RUNOUT_DT,\n           mp."),
+   "the swapped run-out is EXCEPTed from lb0.*, so the column is not ambiguous")
+
+cat("\n-- the reader that answers the three questions --\n")
+# read_melp_asks.R had no cover at all: the gate could go green with the file
+# asking the wrong question of the warehouse. No connection here, so what is
+# checked is the text - which query is asked, and which guards stand in front
+# of it.
+ra <- paste(readLines(file.path(ROOT, "read_melp_asks.R"), warn = FALSE),
+            collapse = "\n")
+ok(!grepl("(?m)^\\s*(db_exec|dbExecute|CREATE|INSERT|DROP|UPDATE|DELETE)\\b", ra, perl = TRUE),
+   "the reader only reads - no statement in it writes to the warehouse")
+ok(has(ra, "melp_read_inputs") && has(ra, "melp_check_inputs") ||
+     has(ra, "melp_read_inputs"),
+   "it holds all cells to one cohort attempt, code list set and study window")
+ok(has(ra, "melp_status_unchanged(con, cells, status)"),
+   "...and re-checks the build status before anything is written")
+ok(has(ra, 'identical(melp_check_code(inputs, LOT_ROOT), FALSE)') &&
+     has(ra, "stop("),
+   "a cell built by older engine code stops the read rather than warning")
+ok(has(ra, "apply_cart_induction_rule") && has(ra, "Rebuild those cells"),
+   "the CAR-T 60-day rule is a precondition, not a column in the output")
+# The three questions, each recognisable in the SQL that answers it.
+ok(has(ra, "LOT_BASE_LENGTH") && has(ra, "MEDIAN_CHANGE"),
+   "Q1 answers the CHANGE in line duration, not three tables to subtract by eye")
+ok(has(ra, "GROUP BY r.LOT_NUM, r.REGIMEN") && has(ra, "PCT_OF_LINE"),
+   "Q2 answers the distribution of regimens at each line")
+ok(has(ra, "IS_MELP_MONO") && has(ra, "q2$LOT_NUM == 2"),
+   "...and pulls 2L melphalan monotherapy out of that table rather than beside it")
+ok(has(ra, "melp_sct_sql()") && has(ra, "ms.MAP_START_DT >= l.LOT_START_DT"),
+   "Q3 keys a melphalan LOT on a DOSE inside the line, not on the regimen string")
+# The regimen string is the wrong test for Q3 and the file says why, so the
+# next reader does not simplify it back.
+ok(has(ra, "never reaches LOT_BASE_MEDS"),
+   "...and the reason is recorded, since a regimen test looks simpler and is wrong")
+ok(has(ra, "ASK_CSVS") && has(ra, "unlink(f)"),
+   "last run's CSVs are cleared before this one starts, not as it writes")
+ok(has(ra, "melp_ask2_melp_lots_by_line.csv"),
+   "...including the name Q2 used before it carried the distribution")
 
 cat("\n-- the cells, and what they cannot do --\n")
 cells <- melp_cell_plan()
@@ -565,8 +649,13 @@ for (v in list(list("no MAP",   paste(melp_metric_sql("F", "A", "r1", "MELP"), c
 ok(has(paste(melp_metric_sql("F", "A", "r1", "MELP"), collapse = "\n"), "cast(NULL as bigint)"),
    "with no MAP table to read, the B.2 columns are NULL rather than wrong")
 mrs <- paste(readLines(file.path(LOT, "R", "melp_rule.R"), warn = FALSE), collapse = "\n")
-ok(has(mrs, "It does not hold the line") && grepl("[Oo]pen question 6", mrs),
-   "...and the rule says so where it suppresses, rather than claiming the ask")
+# The request asks for two things at B.2 and suppression is only one of them,
+# so the file has to name the other where it does the suppressing - and the
+# hold has to actually be there. This used to check the opposite: that the file
+# admitted it did NOT hold the line, and pointed at open question 6.
+ok(has(mrs, "melp_hold carries the line to it") &&
+     has(mrs, "melp_hold AS (") && !grepl("[Oo]pen question 6", mrs),
+   "...and the rule names the hold where it suppresses, the question being settled")
 # The proposal, the open questions and the two readings are in lot/FILES.md,
 # under this package's own entry. Not in lot/LOT_RULES.md: that document is the
 # rules the build applies, and this is not one of them - it is off in CONTRACT
@@ -593,7 +682,7 @@ ok(!any(vapply(MELP_CELLS, function(c_i) claims(c_i$what), logical(1))),
    "no cell describes itself as the rule exactly as written")
 ok(!claims(doc) && !claims(rs),
    "...nor does the folder documentation or the runner")
-ok(exists("MELP_B2_READING") && has(MELP_B2_READING, "not held open"),
+ok(exists("MELP_B2_READING") && has(MELP_B2_READING, "carried to the"),
    "the B.2 reading is stated as a value, so the plan can print it")
 ok(has(rs, "MELP_B2_READING"),
    "...and the plan does print it, before anyone commits three builds")
