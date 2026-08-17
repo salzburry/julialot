@@ -647,22 +647,48 @@ LOT_QC_CHECKS <- list(
 
   # ---- E. Transplants ------------------------------------------------------
 
-  # E1-E3 read LOT_LONG, which carries the per-line transplant columns for
+  # E2 and E3 read LOT_LONG, which carries the per-line transplant columns for
   # EVERY line. They read LOT1_SCT once, which answered them for LOT1 alone -
   # and LOT2-5 has its own SCT implementation in 10_lot2_5_base.R, so proving
   # LOT1 proved nothing about the code that actually builds the later lines. A
-  # LOT2 tandem pair 230 days apart with the flag set passed all three.
+  # LOT2 tandem pair 230 days apart with the flag set passed both.
+  #
+  # E1 cannot follow them, and the reason is worth stating rather than
+  # discovering twice. LOT_LONG does not carry the two flags, it DERIVES them:
+  # SING is written as "an in-LOT DT_1 that is not a TAND". Both being 1 is
+  # unsatisfiable there, so E1 over LOT_LONG is a tautology - it was moved
+  # there and stopped being able to fail, at LOT1 as well as later. It reads
+  # the raw tables instead.
   list(id = "E1", group = "Transplant", severity = "fail",
        what = "tandem and single autologous flags are mutually exclusive",
-       why = paste0("A line is one or the other; the flags are built as a ",
-                    "negation. Asked of every line, because LOT2-5 builds them ",
-                    "in its own step and LOT1 cannot speak for it."),
-       needs = "long",
-       sql = function(t, p) counted(paste0("
-    SELECT ", mask("PATID"), " AS pid, LOT_NUM
-    FROM ", t$long, "
-    WHERE LOT_TX_AUTO_TAND_FLG = 1 AND LOT_TX_AUTO_SING_FLG = 1"),
-    "concat(pid, ' LOT', LOT_NUM)")),
+       why = paste0("A line is one or the other, and the raw step builds them ",
+                    "as two independent CASE expressions rather than as a ",
+                    "negation - which is what makes this a question and not an ",
+                    "identity. Asked of LOT1_SCT and of each LOT<n>_SCT the run ",
+                    "wrote. ",
+                    "Asked of the RAW tables on purpose. The published columns ",
+                    "in LOT_LONG are derived: the single flag there IS the ",
+                    "negation of the tandem flag, so a raw table carrying both ",
+                    "at 1 is normalised to TAND=1, SING=0 on the way out and ",
+                    "the published row looks clean. ",
+                    "The later-line tables are named through the run's own ",
+                    "record of which lines it built, because the loop stops at ",
+                    "the first line with no patients to roll forward - a run ",
+                    "that reached LOT3 wrote no LOT4_SCT, and naming it would ",
+                    "skip this check rather than answer it."),
+       needs = "sct",
+       sql = function(t, p) {
+         arms <- c(list(list(tbl = t$sct, n = 1L)),
+                   lapply(seq_along(p$sct_extra), function(i)
+                     list(tbl = p$sct_extra[[i]], n = as.integer(names(p$sct_extra)[i]))))
+         counted(paste(vapply(arms, function(a) paste0("
+    SELECT ", mask("PATID"), " AS pid, ", a$n, " AS LOT_NUM
+    FROM ", a$tbl, "
+    WHERE LOT", a$n, "_SCT_AUTO_TAND_FLG = 1
+      AND LOT", a$n, "_SCT_AUTO_SING_FLG = 1"), character(1)),
+           collapse = "\n    UNION ALL"),
+         "concat(pid, ' LOT', LOT_NUM)")
+       }),
 
   list(id = "E2", group = "Transplant", severity = "fail",
        what = "a tandem pair sits between 60 and 180 days apart",
@@ -832,47 +858,68 @@ LOT_QC_CHECKS <- list(
     "concat(pid, ' LOT', LOT_NUM)")),
 
   list(id = "F2", group = "Reconciliation", severity = "fail",
-       what = "the attrition funnel ends where the published table does",
-       why = paste0("The last funnel row is the study population. If it does ",
-                    "not equal the table it names, one of the two was written ",
-                    "by a different attempt. ",
-                    "The absence of a funnel is a failure too, and it did not ",
-                    "used to be. This compared the last row against the table, ",
-                    "so a run whose funnel was never written had no last row, ",
-                    "no comparison, and no violation - the check passed hardest ",
-                    "on the case it exists for. The row count is asked first."),
+       what = "the funnel's final row is the published table, on both counts",
+       why = paste0("The final row IS the study population, so it has to exist, ",
+                    "exist once, and equal the table it names. ",
+                    "By KIND, not by position. This took the last ",
+                    "non-progression row by STEP_NUM, which is the final row ",
+                    "only when one was written - a run whose funnel stopped at ",
+                    "'With LOT1 built' handed that row over instead, compared ",
+                    "its count with the table, found them equal and passed. The ",
+                    "missing final row is the thing it is for. ",
+                    "Patients AND lines. The funnel records both because a ",
+                    "truncating criterion drops a patient's later lines without ",
+                    "dropping the patient, so a patient count alone agrees while ",
+                    "the line counts differ - 100 patients and 260 lines against ",
+                    "100 and 240 passed. ",
+                    "Duplicates fail too: two final rows under one run id means ",
+                    "an earlier attempt survived, and which one a reader takes ",
+                    "is then whichever the engine returns first."),
        needs = c("final", "attrition"),
        sql = function(t, p) counted(paste0("
-    SELECT n_rows, funnel, published
+    SELECT n_final, funnel_p, funnel_l, published_p, published_l
     FROM (
       SELECT (SELECT count(*) FROM ", t$attrition, "
-               WHERE RUN_ID = '", p$run_id, "' AND KIND <> 'progression') AS n_rows,
-             (SELECT N_PATIENTS FROM ", t$attrition, "
-               WHERE RUN_ID = '", p$run_id, "' AND KIND <> 'progression'
-               ORDER BY STEP_NUM DESC LIMIT 1) AS funnel,
-             (SELECT count(DISTINCT PATID) FROM ", t$final, ") AS published
+               WHERE RUN_ID = '", p$run_id, "' AND KIND = 'final') AS n_final,
+             (SELECT max(N_PATIENTS) FROM ", t$attrition, "
+               WHERE RUN_ID = '", p$run_id, "' AND KIND = 'final') AS funnel_p,
+             (SELECT max(N_LINES) FROM ", t$attrition, "
+               WHERE RUN_ID = '", p$run_id, "' AND KIND = 'final') AS funnel_l,
+             (SELECT count(DISTINCT PATID) FROM ", t$final, ") AS published_p,
+             (SELECT count(*) FROM ", t$final, ")               AS published_l
     ) x
-    WHERE n_rows = 0 OR funnel IS NULL OR funnel <> published"),
-    "concat('funnel rows ', n_rows, ', says ', coalesce(cast(funnel as string), 'nothing'), ', table has ', published)")),
+    WHERE n_final <> 1
+       OR funnel_p IS NULL OR funnel_p <> published_p
+       OR funnel_l IS NULL OR funnel_l <> published_l"),
+    paste0("concat('final rows ', n_final, '; funnel ',",
+           " coalesce(cast(funnel_p as string), 'null'), ' patients / ',",
+           " coalesce(cast(funnel_l as string), 'null'), ' lines; table ',",
+           " published_p, ' / ', published_l)"))),
 
   list(id = "F3", group = "Reconciliation", severity = "fail",
-       what = "the progression rows are the reach the published table shows",
+       what = "there is one progression row per line, and each is the reach the table shows",
        why = paste0("Those rows are what the dashboard draws and what gets ",
                     "quoted. Recomputing them from the lines is the only way to ",
                     "know they describe this run. ",
-                    "Both directions, and a duplicate too. A LEFT JOIN from the ",
-                    "funnel could only judge the rows that were there, so a run ",
-                    "missing its LOT3 row compared LOT1 and LOT2, found them ",
-                    "right and passed - and a run missing every progression row ",
-                    "compared nothing at all. A line the table has and the ",
-                    "funnel does not is now a violation, and so is a line the ",
-                    "funnel names twice. ",
-                    "A funnel row of zero for a line nobody reached is NOT a ",
-                    "violation: the writer emits a row for every line to ",
-                    "max_lot, so zero-against-absent is the two agreeing."),
+                    "The expected rows are GENERATED, 1 through max_lot, not ",
+                    "discovered from the two sides. The writer promises a row ",
+                    "for every line to the cap, including the ones nobody ",
+                    "reached - and a missing LOT4 and LOT5 appear on neither ",
+                    "side of a join between the funnel and the table, so a join ",
+                    "compared LOT1 to LOT3, found them right and passed. A ",
+                    "stray LOT6 row passed the same way, its zero agreeing with ",
+                    "an absent published count. ",
+                    "So: exactly one row per expected line, nothing outside ",
+                    "1..max_lot, and each count equal to the table's. A ",
+                    "progression row of zero for a line nobody reached is ",
+                    "correct and is what the writer emits."),
        needs = c("final", "attrition"),
        sql = function(t, p) counted(paste0("
-    WITH reach AS (
+    WITH want AS (
+      ", paste0("SELECT ", seq_len(p$max_lot), " AS LOT_NUM",
+                collapse = " UNION ALL\n      "), "
+    ),
+    reach AS (
       SELECT LOT_NUM, count(DISTINCT PATID) AS n
       FROM ", t$final, " GROUP BY LOT_NUM
     ),
@@ -883,14 +930,17 @@ LOT_QC_CHECKS <- list(
       WHERE RUN_ID = '", p$run_id, "' AND KIND = 'progression'
       GROUP BY cast(regexp_extract(STEP, 'LOT([0-9]+)', 1) as int)
     )
-    SELECT coalesce(s.LOT_NUM, r.LOT_NUM) AS LOT_NUM,
-           s.N_PATIENTS AS said, coalesce(r.n, 0) AS actual,
-           coalesce(s.n_rows, 0) AS rows_written
-    FROM said s FULL OUTER JOIN reach r ON s.LOT_NUM = r.LOT_NUM
-    WHERE s.LOT_NUM IS NULL
+    SELECT coalesce(w.LOT_NUM, s.LOT_NUM) AS LOT_NUM,
+           coalesce(s.n_rows, 0) AS rows_written,
+           s.N_PATIENTS AS said, coalesce(r.n, 0) AS actual
+    FROM want w
+    FULL OUTER JOIN said s ON s.LOT_NUM = w.LOT_NUM
+    LEFT JOIN reach r ON r.LOT_NUM = coalesce(w.LOT_NUM, s.LOT_NUM)
+    WHERE w.LOT_NUM IS NULL
        OR coalesce(s.n_rows, 0) <> 1
        OR s.N_PATIENTS <> coalesce(r.n, 0)"),
-    "concat('LOT', LOT_NUM, ': funnel says ', coalesce(cast(said as string), 'nothing'), ' in ', rows_written, ' row(s), lines say ', actual)")),
+    paste0("concat('LOT', LOT_NUM, ': ', rows_written, ' row(s), funnel says ',",
+           " coalesce(cast(said as string), 'nothing'), ', lines say ', actual)"))),
 
   list(id = "F4", group = "Reconciliation", severity = "fail",
        what = "the run has exactly one metadata row",

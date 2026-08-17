@@ -211,9 +211,18 @@ ok(has(SQL$C4, "ms.MAP_MED_CLASS <> 'STEROID'") &&
    "...over the episodes the induction step would have taken, and no others")
 # The two share one window definition. Two copies is how they stop describing
 # the same rule, which is the state C1 was already in against the engine.
-ok(identical(qc_window_sql(TBL, P), qc_window_sql(TBL, P)) &&
-     has(SQL$C1, "cut AS (") && has(SQL$C4, "cut AS ("),
-   "...and both are built from one window definition, not two")
+#
+# Asked by feeding the helper a value neither check could produce on its own
+# and looking for it in both. Comparing qc_window_sql(TBL, P) with itself, as
+# this did, is true however the checks are written - it never mentioned C1 or
+# C4 at all.
+marked <- qc_params(sub("induction_window_days=60", "induction_window_days=61",
+                        SETTINGS, fixed = TRUE), "r")
+c1m <- LOT_QC_CHECKS[[which(names(SQL) == "C1")]]$sql(TBL, marked)
+c4m <- LOT_QC_CHECKS[[which(names(SQL) == "C4")]]$sql(TBL, marked)
+ok(has(qc_window_sql(TBL, marked), "THEN 60") &&
+     has(c1m, "THEN 60") && has(c4m, "THEN 60"),
+   "...and both take their window from the one helper, not from a copy each")
 # The CAR-T exemption follows the run here too: with the rule on, an in-window
 # CAR-T is part of LOT1 and cuts nothing off its regimen.
 ok(has(qc_window_sql(TBL, P), "OR 1 = 0"),
@@ -374,8 +383,29 @@ ok(has(SQL$E3, "= 180"),
    "E3 counts the pairs sitting exactly on the boundary the two readings differ on")
 ok(has(SQL$F3, "KIND = 'progression'") && has(SQL$F3, "count(DISTINCT PATID)"),
    "F3 recomputes the progression rows from the lines rather than trusting them")
-ok(has(SQL$F2, "KIND <> 'progression'"),
-   "F2 takes the funnel's last step, which the progression rows are not part of")
+# F2 names the final row by KIND. Taking the last non-progression row by
+# STEP_NUM is the final row only when one was written, so a funnel that stopped
+# early handed over the row above it and the counts matched.
+ok(has(SQL$F2, "KIND = 'final'") && !has(SQL$F2, "ORDER BY STEP_NUM"),
+   "F2 finds the final row by KIND, not by taking whichever row came last")
+ok(has(SQL$F2, "n_final <> 1"),
+   "...and a missing or duplicated final row is itself the failure")
+ok(has(SQL$F2, "funnel_l <> published_l") && has(SQL$F2, "max(N_LINES)"),
+   "...comparing lines as well as patients, which a truncating criterion splits")
+# F3's expected rows are generated from max_lot, not discovered from the two
+# sides. A missing LOT4 and LOT5 are on neither side of a join, so a join
+# compared the rows that were there and passed.
+ok(has(SQL$F3, "WITH want AS") && has(SQL$F3, "SELECT 5 AS LOT_NUM"),
+   "F3 generates the rows it expects, 1 through max_lot")
+ok(has(SQL$F3, "w.LOT_NUM IS NULL") && has(SQL$F3, "coalesce(s.n_rows, 0) <> 1"),
+   "...rejecting a line outside that range, and anything other than one row each")
+# The cap is the run's, not a constant: a run built at max_lot=3 must not be
+# asked for LOT4 and LOT5 rows nobody promised.
+capped <- qc_params(sub("max_lot=5", "max_lot=3", SETTINGS, fixed = TRUE), "r")
+f3 <- Filter(function(c_i) identical(c_i$id, "F3"), LOT_QC_CHECKS)[[1]]
+ok(has(f3$sql(TBL, capped), "SELECT 3 AS LOT_NUM") &&
+     !has(f3$sql(TBL, capped), "SELECT 4 AS LOT_NUM"),
+   "...and it expects exactly the run's own cap, no more")
 
 cat("\n-- every check is pinned to the run being read --\n")
 # A check that reads a run-scoped table without naming the run would mix two

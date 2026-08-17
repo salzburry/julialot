@@ -46,6 +46,15 @@ TBL <- list(final = "lot_long_final", long = "lot_long", map = "map_stacked",
             sct = "lot1_sct", auto = "tx_auto_dates",
             allo = "tx_allo_cart_dates", cohort = "lot_patient_input")
 
+# SCENARIO=1 emits the same checks against the tiny hand-built tables in
+# qc_scenarios.py instead. Those cover the checks the patient chain cannot
+# reach - the funnel and metadata tables are written by build_lot.R in R, not
+# by the emitted SQL - and E1, whose failure a correct build cannot produce.
+if (nzchar(Sys.getenv("SCENARIO", unset = "")))
+  TBL <- list(final = "qc_final", attrition = "qc_attrition", sct = "qc_sct1",
+              long = "qc_final", map = "qc_final", auto = "qc_final",
+              allo = "qc_final", cohort = "qc_final", meta = "qc_final")
+
 # Built through qc_params rather than hand-assembled, so the settings parsing
 # is exercised by the same run. The two the harness varies come from the
 # environment; the rest are the contract.
@@ -59,6 +68,11 @@ settings <- paste(c(
   "medical_day_supply=28", "sct_auto_gap_days=60", "sct_auto_window_days=13",
   "sct_tandem_days=180", "apply_melp_rule="), collapse = "|")
 p <- qc_params(settings, "synthetic")
+# E1 reads the raw per-line flags, and the runner tells it which lines the run
+# wrote. Under SCENARIO the fixture supplies LOT2 only, which is the case the
+# patient run cannot make fail.
+p$sct_extra <- if (nzchar(Sys.getenv("SCENARIO", unset = "")))
+  c("2" = "qc_sct2") else character(0)
 
 # Checks the harness cannot answer even though it has the tables, because the
 # stand-in table does not carry what they read. map_stacked is an INPUT here -
