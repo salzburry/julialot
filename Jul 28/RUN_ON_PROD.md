@@ -38,7 +38,7 @@ AUDIT_EXECUTE=TRUE Rscript exploration/lot/run_lot_audit_counts.R
 cp exploration/lot/out/lot_audit_counts.csv exploration/lot/out/before_fix.csv
 ```
 
-Expect `11 counts. Running them now.` then eleven tables. The three to keep:
+Expect `12 counts. Running them now.` then twelve tables. The three to keep:
 
 - `transplant-belonging-to-no-line` — shape **b** is the defect
 - `tandem-pair-whose-first-transplant-is-out-of-window`
@@ -88,9 +88,20 @@ Rscript exploration/melphalan/read_melp_decisions.R                 # what each 
 Each prefix is emptied before it is rebuilt. `APPLY_MELP_RULE` stays blank in
 `CONTRACT`, so the study's own run is untouched by all of this.
 
-In the decisions output read **block 2 first** — melphalan doses in no line. It
-should be empty. Rows with `PRIOR_LINE_TYPE` of `CART` or `SCT_ALLO` are the
-one gap still open. Anything else there is a gap nobody has named.
+In the decisions output read **block 2 first** — melphalan doses in no line.
+The rows with `AFTER_THE_CAP = no` should be empty; of those, rows with
+`PRIOR_LINE_TYPE` of `CART` or `SCT_ALLO` are the one gap still open, and
+anything else there is a gap nobody has named. `AFTER_THE_CAP = yes` is
+treatment past the five-line cap and is outside every line by construction, so
+it is a reconciliation number rather than a defect.
+
+Question 1 writes three files, not one. `melp_ask1_line_duration.csv` is each
+cell's own median at each line, and its change columns are marked UNPAIRED
+because the rule moves who has a second line at all.
+`melp_ask1_paired_line_change.csv` pairs the same patient's line across the
+cells, and `melp_ask1_line_count_change.csv` counts the change in how many
+lines a patient ends up with. The last of those is the one no renumbering can
+explain.
 
 ## When something stops
 

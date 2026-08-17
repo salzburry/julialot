@@ -67,10 +67,11 @@ three possible rules and the build is on the third:
     episode that began on d1, and d1 is the only MAP_START_DT LEN has.
 
 **Why it matters more than it looks.** It bites on exactly the drugs that get
-continued across a line boundary, which in myeloma is most of them —
-lenalidomide above all. The more continuously a patient takes an agent, the more
-certainly it is absent from the later line's regimen. Two clinically identical
-patients differ on whether one missed a fill.
+continued across a line boundary — how many of this cohort's regimens that is
+has not been measured, and `run_lot_audit_counts.R` is where such a count would
+go. The more continuously a patient takes an agent, the more certainly it is
+absent from the later line's regimen. Two clinically identical patients differ
+on whether one missed a fill.
 
 **The data is there.** `mma_med_processed` is materialized per claim, with
 `DATE_SERVICE`, `MED_ABBR` and `MED_CLASS`, and it is built before the regimen

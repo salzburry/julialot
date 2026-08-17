@@ -53,6 +53,8 @@ refused.
 | `R/scenarios.R` | The study team's four worked patients, held as data. |
 | `run_melp_scenarios.R` | Runs those scenarios through the shipped rule — the decision lifted out of the generated SQL rather than restated — and exits non-zero if any of them moves. No connection. |
 | `read_melp_metrics.R` | Reads the comparison off cells that are already built. |
+| `read_melp_asks.R` | The study team's three questions, off built cells. Question 1 writes three files: each cell's own median, the same patient's line paired across cells, and the change in how many lines a patient ends up with. |
+| `read_melp_decisions.R` | What each decision the rule was built out of is worth, as a number per cell. Block 2 — melphalan doses in no line — is the one to read first. |
 | `tests/test_aug1_melp.R` | That off is the absence of the rule, and the branch decision checked against the proposal. |
 
 The rule itself is not in this folder — it is `lot/engine/R/melp_rule.R`,
@@ -177,7 +179,7 @@ one resolves which run actually wrote the tables before measuring them.
 | `run_rechallenge_evidence.R` | Prints what would be measured; opt-in to run. |
 | `R/melphalan.R` | Measures the melphalan rule against a finished run without applying it. Writes `MELP_RULE_EXPOSURES`, `MELP_RULE_BRANCHES`, `MELP_RULE_IMPACT`. |
 | `run_melphalan_rule.R` | Prints the rule and its settings; `MELP_EXECUTE=TRUE` measures it. |
-| `run_lot_audit_counts.R` | Real-data frequencies for the LOT assignment findings. Not formal QC — investigation. Eight counts, three of them sizing the post-end regimen defect, which is now fixed: on a rebuild those three should come back empty, which is how the fix is confirmed against claims rather than against the code. |
+| `run_lot_audit_counts.R` | Real-data frequencies for the LOT assignment findings. Not formal QC — investigation. Twelve counts. Three size the post-end regimen defect, which is now fixed: on a rebuild those three should come back empty, which is how the fix is confirmed against claims rather than against the code. Four more size the tandem AUTO ownership fix and the guard that mirrors it, and one bands how close returning drugs sit to the 90-day release — a threshold nothing else has measured. |
 | `run_scenario_counts.R` | Whether the real data contains the shapes `lot/LOT_RULES.md` is written around. Eleven counts, each naming the section it belongs to, and each splitting the matching patients by what the build actually did with them — so "there are N of these" is followed by "and here is how they came out". A rule with no patients behind it is not wrong but is not carrying weight either; a count of zero where one was expected means the scenario has been mis-read, or the shape cannot arise for a reason nobody has written down. It counts finished output and does not execute patients through the engine, so a surprising split is a reason to look at the rule, not proof that the rule fired. |
 | `tests/` | One suite per measurement, each reading its SQL as a string. |
 | `out/` | Generated. Nothing reads it back. |

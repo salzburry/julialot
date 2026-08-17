@@ -517,7 +517,11 @@ melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP",
   # The B.2 group. All four conditions, because any one alone lets in lines with
   # no B.2 pair at all - a line DARA started, melphalan merely joining its
   # induction window, satisfies "after a runout, melphalan in the regimen".
-  # Open question 6 in exploration/FILES.md.
+  #
+  # Under the rule these lines should not exist: melp_hold carries the previous
+  # line to the second dose, so nothing is left to start a line on it. So this
+  # is a check on the hold, not the open question it was when the hold did not
+  # ship - see "What B.2 does" in exploration/FILES.md.
   b2 <- function(extra, alias) paste0(mx_with, "
     SELECT count(*) AS ", alias, "
     FROM (SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_START_TYPE,

@@ -647,16 +647,20 @@ ok(has(rr, 'pfx_of("as_asked")') && has(rr, 'pfx_of("yield_to_sct")'),
 ok(has(rr, "rather than an output left out"),
    "...and a comparison that could not be made stops the run rather than being skipped")
 
-cat("\n-- B.2 removes a boundary; it does not hold the line open --\n")
+cat("\n-- B.2 removes a boundary, and melp_hold carries the line to the second dose --\n")
 # The rule as written says both doses stay in the current line. Suppression
-# cannot deliver that: a line's discontinuation is its base agents' last cover,
-# and a melphalan first seen outside induction is not one of them. So where the
-# regimen runs out between the two doses, the line ends there and the second
-# dose starts the next one. Making melphalan a member of a regimen whose
-# induction window it never entered is a clinical decision, not an
-# implementation one - so it is recorded as open, and counted.
+# cannot deliver that on its own: a line's discontinuation is its base agents'
+# last cover, and a melphalan first seen outside induction is not one of them.
+# So where the regimen runs out between the two doses, the line used to end
+# there and the second dose started the next one.
+#
+# That was recorded as an open question and it is not one any more: the request
+# says in words that both doses stay in the current line, and melp_hold carries
+# the run-out to the suppressed dose so they do. n_b2_line_starts is therefore
+# a CHECK rather than a question - under the rule those lines should not exist,
+# and a nonzero count in a rule cell is the hold failing to reach them.
 ok(has(sql, "AS n_b2_line_starts"),
-   "the lines that decision governs are counted, not left to be argued about")
+   "the lines the hold has to reach are counted, so a hold that misses them shows")
 # All four conditions, because any one alone lets in lines with no B.2 pair -
 # a line DARA started, with melphalan merely joining its induction window,
 # satisfies "starts after a runout and has melphalan in the regimen".
