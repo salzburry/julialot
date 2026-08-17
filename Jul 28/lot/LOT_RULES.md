@@ -419,10 +419,17 @@ The windows are each line's own, measured from its start:
 | a CAR-T | days 0–44 | `cart_consolidation_days` |
 | an allogeneic transplant | the transplant date alone | — |
 
-The window bounds **both** transplants of a tandem pair, not only the first. A
-partner inside `sct_tandem_days` of an in-window transplant but outside the
-window itself does not hold the line open. Holding it open would let a line run
-to day 209 at LOT2 and swallow an added agent months after its regimen stopped.
+Only the **first** transplant of a tandem pair need be inside the window. Its
+partner follows it however far out it sits, and holds the line open to its own
+date. What makes that safe is §6.3's clear gap: a pair with a medication start,
+an allogeneic transplant or a CAR-T between them is not a tandem at all, so
+nothing the extension could swallow survives to be swallowed.  A confirmed
+discontinuation between the two does **not** break the pair. Running out of
+treatment is an absence, not an event, and §6.3 asks only what happened. So a
+line whose regimen ran out on day 59, with a tandem partner on day 150 and
+nothing in between, runs to day 150 as `SCT_AUTO_CONT` rather than ending on
+day 59 as `DISCONTINUATION`. The transplant pair was planned before the gap
+opened, and the gap is what a planned tandem looks like in claims.
 
 Ending **on** the transplant is the opposite of the two other AUTO-shaped
 reasons, and deliberately so. `SCT_AUTO` and the transplant branch in §7.2 end a
