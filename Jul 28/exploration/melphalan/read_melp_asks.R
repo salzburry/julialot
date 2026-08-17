@@ -57,7 +57,20 @@ tbl <- function(cell, name) paste0(cfg$catalog, ".", schema, ".", cell$prefix, n
 status <- setNames(lapply(cells, function(c_i) cell_status(con, c_i)),
                    vapply(cells, function(c_i) c_i$id, character(1)))
 inputs <- melp_read_inputs(con, cells, status)
-melp_check_code(inputs, LOT_ROOT)
+
+# A code-fingerprint mismatch is a stop here, not the warning it is elsewhere.
+# This script reads cells some earlier run built, and a rule-on cell built by
+# older engine code answers the question about that engine rather than this
+# one. The reference cell is the reason it cannot be shrugged off: with the
+# rule off, melp_lot1_ctes emits nothing, so the reference is whatever the
+# engine was on the day it ran while the two rule-on cells carry the rule AND
+# whatever else that day's code did. A difference between them is then two
+# changes, and nothing in the CSVs would say so.
+if (identical(melp_check_code(inputs, LOT_ROOT), FALSE))
+  stop("These cells were not built by the engine code reading them. Rebuild ",
+       "all ", length(cells), " with run_aug1_melp.R before reading them - a ",
+       "melphalan number off older code cannot be compared with this one.",
+       call. = FALSE)
 st <- melp_settings(inputs)
 cat("All ", length(cells), " cells: cohort attempt ", inputs[[1]]$COHORT_RUN_ID[1],
     " / ", inputs[[1]]$COHORT_STAMP[1],
