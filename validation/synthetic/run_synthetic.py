@@ -209,14 +209,25 @@ def planted():
     #   B.1  outside induction, next exposure inside 60 days
     #   B.2  outside induction, next exposure 60-179 days later
     #   B.3  outside induction, next exposure 180+ days later
-    def melp(pid, doses, auto=()):
-        pat(pid, [('LEN', 'IMID', ix, ix + 90, 0)] +
+    # LEN runs to d400, so the line is STILL ACTIVE at every melphalan dose
+    # below. With LEN stopping at d90 the line had already ended before the
+    # outside-induction doses, so each one opened a line by itself and the
+    # branch under test was never reached - which is why all three modes
+    # produced identical output on them.
+    def melp(pid, doses, auto=(), cover=400):
+        pat(pid, [('LEN', 'IMID', ix, ix + cover, 0)] +
                  [(MELP[0], MELP[1], ix + d, ix + d, 0) for d in doses], auto=auto)
-    melp('M0001', [14], auto=[ix + 21])
-    melp('M0002', [14, 14 + 200], auto=[ix + 21, ix + 21 + 200])
-    melp('M0003', [120, 120 + 30])
-    melp('M0004', [120, 120 + 90])
-    melp('M0005', [120, 120 + 200])
+    melp('M0001', [14, 14 + 100], auto=[ix + 21])   # A.1  in, next  <180
+    melp('M0002', [14, 14 + 200], auto=[ix + 21])   # A.2  in, next >=180
+    melp('M0003', [120, 120 + 30])                  # B.1  out, next  <60
+    melp('M0004', [120, 120 + 90])                  # B.2  out, next 60-179
+    melp('M0005', [120, 120 + 200])                 # B.3  out, next >=180
+    # The control: no melphalan at all, and a regimen drug returning after a
+    # confirmed gap. The melphalan modes must not move this patient - if they
+    # do, a difference between the cells is not the melphalan rule.
+    pat('M0006', [('LEN', 'IMID', ix, ix + 29, 0),
+                  ('DARA', 'MAB', ix, ix + 199, 0),
+                  ('LEN', 'IMID', ix + 150, ix + 180, 0)])
     return out
 
 
