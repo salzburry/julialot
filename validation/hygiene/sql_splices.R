@@ -54,6 +54,7 @@ FRAGMENT <- c(
   melp_decision_ctes      = "opens with its own newline",
   melp_lotn_ctes          = "delegates to melp_decision_ctes",
   melp_prev_line_ctes     = "delegates to melp_decision_ctes",
+  melp_hold_join          = "opens with its own newline",
   melp_suppress_predicate = "opens with its own newline",
   melp_inject_arm         = "opens with its own newline",
   melp_allo_guard         = "opens with its own newline",

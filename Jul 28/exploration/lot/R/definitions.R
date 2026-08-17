@@ -67,7 +67,7 @@ LOT_DIMENSIONS <- list(
        ours = paste0("Yes, and it spans a single day - start and end are the ",
                      "transplant date. It carries no regimen string, because ",
                      "induction rows are suppressed for it."),
-       where = "lot/engine/R/steps/10_lot2_5_base.R:442, :625",
+       where = "lot/engine/R/steps/10_lot2_5_base.R:442, :631",
        proves = c("SCT_ALLO", "allo_lot_span"),
        question = "Is alloSCT counted as a prior line in its own right?"),
 
@@ -135,7 +135,7 @@ LOT_DIMENSIONS <- list(
        ours = paste0("No, where the pair is declared in permissible_subs.csv. ",
                      "A substitution the code list does not know about looks ",
                      "like a regimen change and starts a line."),
-       where = "lot/engine/R/steps/10_lot2_5_base.R:263, :541",
+       where = "lot/engine/R/steps/10_lot2_5_base.R:263, :551",
        proves = c("permissible_subs", "original_med"),
        question = paste0("Are biosimilars, route changes or generic swaps ",
                          "treated as the same agent?")),

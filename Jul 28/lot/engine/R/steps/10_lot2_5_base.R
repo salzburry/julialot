@@ -520,6 +520,16 @@ build_lot_n <- function(con, lot_num,
   "), qc = glue("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_pats
                  FROM lot{lot_num}_induction_meds"))
 
+  # Built out here rather than inline. It is a CASE expression handed to a
+  # function, and a nested glue() call inside a glue() template does not parse -
+  # the inner quotes close the outer one.
+  runout_expr <- melp_runout_case(cfg, paste0(
+    "CASE\n",
+    "          WHEN d.RAW_DISCON_DT IS NOT NULL AND d.RAW_DISCON_DT <= ls.OBS_END_DT\n",
+    "            THEN d.RAW_DISCON_DT\n",
+    "          ELSE NULL\n",
+    "        END"))
+
   materialize(con, paste0(pfx, "_lot", lot_num, "_base"),
               view = glue("lot{lot_num}_base"),
               name = lotn_table(lot_num, "BASE"), body = glue("
@@ -569,13 +579,9 @@ build_lot_n <- function(con, lot_num,
         -- tail past death or study end cannot extend the line. Still the
         -- run-out, not a discontinuation. The end statement below confirms it,
         -- where POST_RUNOUT_TRIGGER_FLG exists.
-        CASE
-          WHEN d.RAW_DISCON_DT IS NOT NULL AND d.RAW_DISCON_DT <= ls.OBS_END_DT
-            THEN d.RAW_DISCON_DT
-          ELSE NULL
-        END AS LOT{lot_num}_BASE_RUNOUT_DT
+        {runout_expr} AS LOT{lot_num}_BASE_RUNOUT_DT
       FROM lot{lot_num}_start ls
-      LEFT JOIN discon_raw d ON ls.PATID = d.PATID
+      LEFT JOIN discon_raw d ON ls.PATID = d.PATID{melp_hold_join(cfg, 'ls')}
     ),
     med_summary AS (
       SELECT

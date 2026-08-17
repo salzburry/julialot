@@ -209,6 +209,38 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
       FROM melp_judged
       WHERE INSIDE = 0 AND GAP IS NOT NULL AND GAP < {cfg$melp_restart_days}
         AND YIELD_THIS = 0
+    ),
+    -- B.2's later exposure again, this time as a date the line is carried to.
+    --
+    -- Taking both boundaries off the candidate list is only half of what the
+    -- request asks for. It stops melphalan ENDING the line at either dose. It
+    -- does not keep the second dose INSIDE the line, and where the line's own
+    -- regimen runs out between the two, the line ends at that run-out and the
+    -- later dose falls outside it - into no line at all, since the same rule
+    -- has just refused it as a line start. The request says both doses stay in
+    -- the current line, so the line has to reach the second one.
+    --
+    -- Carried on the RUN-OUT rather than as an end reason of its own. The
+    -- run-out is where the line's treatment stopped, and under this rule it
+    -- did not stop at the regimen: a melphalan administration the request
+    -- assigns to this line happened later. Moving that date keeps the whole
+    -- end cascade intact - the 90-day confirmation is measured from the dose,
+    -- a death or an addition in between still takes the line first, and the
+    -- reason stays DISCONTINUATION rather than becoming a fourth
+    -- transplant-shaped end nothing else knows about.
+    --
+    -- Bounded by the line's own span, so an exposure past the end of
+    -- observation cannot extend a line beyond it.
+    melp_hold AS (
+      SELECT j.PATID, max(j.NEXT_DT) AS MELP_HOLD_DT
+      FROM melp_judged j
+      INNER JOIN {line_tbl} ON {line_tbl}.PATID = j.PATID
+      WHERE j.INSIDE = 0 AND j.YIELD_THIS = 0 AND j.YIELD_NEXT = 0
+        AND j.GAP IS NOT NULL
+        AND j.GAP >= {cfg$melp_restart_days}
+        AND j.GAP <  {cfg$melp_advance_days}
+        AND j.NEXT_DT <= {span_end}
+      GROUP BY j.PATID
     ),"))
 }
 
@@ -406,11 +438,37 @@ melp_lot1_ctes <- function(cfg) {
 # class, so the list is as long as the code list and changes with it.
 melp_lot1_base_from <- function(cfg) {
   if (!melp_rule_on(cfg)) return("lot1_base lb")
-  "(SELECT lb0.* EXCEPT (LOT1_BASE_1ST_ADD_MED_DT, LOT1_BASE_1ST_ADD_MED),
+  # LOT1_BASE_RUNOUT_DT is swapped here too, for the B.2 hold - see melp_hold.
+  # Only ever forward, and only where the line ran out at all: a NULL run-out
+  # is a line still covered on its own regimen, which needs no carrying.
+  "(SELECT lb0.* EXCEPT (LOT1_BASE_1ST_ADD_MED_DT, LOT1_BASE_1ST_ADD_MED,
+                         LOT1_BASE_RUNOUT_DT),
            mp.LOT1_BASE_1ST_ADD_MED_DT,
-           mp.LOT1_BASE_1ST_ADD_MED
+           mp.LOT1_BASE_1ST_ADD_MED,
+           CASE WHEN lb0.LOT1_BASE_RUNOUT_DT IS NOT NULL
+                 AND mh.MELP_HOLD_DT IS NOT NULL
+                 AND mh.MELP_HOLD_DT > lb0.LOT1_BASE_RUNOUT_DT
+                THEN mh.MELP_HOLD_DT
+                ELSE lb0.LOT1_BASE_RUNOUT_DT END AS LOT1_BASE_RUNOUT_DT
     FROM lot1_base lb0
-    LEFT JOIN melp_add_pick mp ON mp.PATID = lb0.PATID) lb"
+    LEFT JOIN melp_add_pick mp ON mp.PATID = lb0.PATID
+    LEFT JOIN melp_hold     mh ON mh.PATID = lb0.PATID) lb"
+}
+
+# The same carry at LOT2-5, where there is no column swap to hang it on: the
+# run-out is computed in the statement rather than read off an earlier table.
+# Empty when the rule is off, so discon reads exactly as it did.
+melp_runout_case <- function(cfg, col, alias = "mh") {
+  if (!melp_rule_on(cfg)) return(col)
+  glue("CASE WHEN {col} IS NOT NULL
+             AND {alias}.MELP_HOLD_DT IS NOT NULL
+             AND {alias}.MELP_HOLD_DT > {col}
+            THEN {alias}.MELP_HOLD_DT
+            ELSE {col} END")
+}
+melp_hold_join <- function(cfg, on_alias, alias = "mh") {
+  if (!melp_rule_on(cfg)) return("")
+  paste0("\n", glue("      LEFT JOIN melp_hold {alias} ON {on_alias}.PATID = {alias}.PATID"))
 }
 
 # LOT2-5 needs no such swap. first_add_candidates is inside the statement that

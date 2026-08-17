@@ -115,12 +115,17 @@ subst_off <- function(f) {
                    melp_lotn_ctes(off, 2, 30L, 45L, "single_day")),
                  c("{melp_prev_line_ctes(cfg, prev_med_window, cart_consolidation_days)}",
                    melp_prev_line_ctes(off, 60L, 45L)),
+                 c("{melp_hold_join(cfg, 'ls')}",      melp_hold_join(off, "ls")),
                  c("{melp_suppress_predicate(cfg)}",   melp_suppress_predicate(off)),
                  c("{melp_prior_regimen_exempt(cfg)}", melp_prior_regimen_exempt(off))))
     txt <- gsub(p[1], p[2], txt, fixed = TRUE)
   # The inject arm spans two lines in the step, so it is cut rather than swapped.
-  sub("(?s)\\{melp_inject_arm\\(cfg,.*?\\)\\}", melp_inject_arm(off, "t", "c", "e"),
-      txt, perl = TRUE)
+  txt <- sub("(?s)\\{melp_inject_arm\\(cfg,.*?\\)\\}", melp_inject_arm(off, "t", "c", "e"),
+             txt, perl = TRUE)
+  # melp_runout_case() is called in R rather than spliced in a template - it
+  # wraps an expression the step already had - so it is cut the same way. Off,
+  # it hands that expression straight back, which is what the step read before.
+  sub("(?s)melp_runout_case\\(cfg, paste0\\(.*?\\)\\)", "<off>", txt, perl = TRUE)
 }
 ok(!has(subst_off("06_lot1_end.R"), "melp_") &&
      !has(subst_off("10_lot2_5_base.R"), "melp_"),
@@ -233,6 +238,35 @@ ok(has(sup[3], paste0("GAP < ", CFG$melp_advance_days)) &&
    "...bounded above only - A.2 is the same shape past 180 days and does advance")
 ok(sum(vapply(sup, function(s) has(s, "INSIDE = 1"), logical(1))) == 1L,
    "...and it is the only arm that acts inside induction")
+
+# B.2 again, as a date the line is carried to rather than a boundary removed.
+# Taking both boundaries away stops melphalan ENDING the line; it does not keep
+# the later dose INSIDE it. Where the regimen runs out between the two, the
+# line ends at the run-out and the second dose lands in no line at all - the
+# same rule having just refused it as a line start.
+hold <- gsub("\\s+", " ", local({
+  s2 <- melp_decision_ctes(ask, "L", "S", "E", "L.IND_END")
+  i <- regexpr("melp_hold AS \\(", s2)
+  sub("(?s)\\) GROUP BY.*$", "", substr(s2, i + attr(i, "match.length"), nchar(s2)), perl = TRUE)
+}))
+ok(has(hold, "max(j.NEXT_DT) AS MELP_HOLD_DT"),
+   "the hold is the LATER exposure of the pair, which is the one at risk")
+ok(has(hold, "INSIDE = 0") && has(hold, "GAP >= 60") && has(hold, "GAP < 180"),
+   "...and it is B.2's window exactly - not A.1, not B.1, not B.3")
+ok(has(hold, "j.NEXT_DT <= E"),
+   "...bounded by the line's span, so it cannot reach past observation")
+# Carried on the run-out rather than as an end reason of its own, so the 90-day
+# confirmation is measured from the dose and every other end still outranks it.
+ok(has(melp_lot1_base_from(ask), "AS LOT1_BASE_RUNOUT_DT") &&
+     has(melp_lot1_base_from(ask), "mh.MELP_HOLD_DT > lb0.LOT1_BASE_RUNOUT_DT"),
+   "LOT1 carries its run-out forward to the hold, and only forward")
+ok(identical(melp_runout_case(off, "X"), "X"),
+   "...and with the rule off the run-out expression is handed straight back")
+ok(has(melp_runout_case(ask, "X"), "mh.MELP_HOLD_DT > X") &&
+     has(melp_runout_case(ask, "X"), "ELSE X END"),
+   "LOT2-5 wraps its own run-out the same way")
+ok(!has(melp_lot1_base_from(ask), "LOT1_BASE_RUNOUT_DT,\n           mp."),
+   "the swapped run-out is EXCEPTed from lb0.*, so the column is not ambiguous")
 
 cat("\n-- the cells, and what they cannot do --\n")
 cells <- melp_cell_plan()
