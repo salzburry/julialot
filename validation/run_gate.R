@@ -157,6 +157,7 @@ EXPECTED_HERE <- c(
   "hygiene/lot_selfcontained.R",
   "hygiene/sql_splices.R",
   "hygiene/study_folder_standalone.R",
+  "hygiene/vignette_catalogue_current.R",
   "port/lot.R",
   "port/ndmm.R",
   "port/overall.R")
