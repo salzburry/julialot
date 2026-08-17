@@ -1,5 +1,5 @@
 # Code lists into views, then the consistency checks. Returns what the later
-# phases need: the SCT source and the per-med / per-class flag expressions.
+# phases need: the SCT source, and the per-med and per-class flag expressions.
 
 phase_codelists <- function(con) {
   # STEP 0: Register code lists as TEMP views
@@ -14,14 +14,14 @@ phase_codelists <- function(con) {
     c("CL_CODE_TYPE", "CL_CODE", "SCT_TYPE"))
   run_step(con, "S00_mma_rollup", glue("
     CREATE OR REPLACE TEMPORARY VIEW mma_rollup AS
-    -- DISTINCT: this is a lookup keyed on CL_MED_ABBR, so a repeated row
+    -- DISTINCT because this is a lookup keyed on CL_MED_ABBR. A repeated row
     -- would fan out every join against it.
     SELECT DISTINCT
       lower(trim(CL_MEDICATION_FULL)) AS CL_MEDICATION_FULL,
       upper(trim(CL_MED_CLASS))       AS CL_MED_CLASS,
       upper(trim(CL_MED_ABBR))        AS CL_MED_ABBR,
-      -- Rollup fields can be 'YES', 'YES mainly...', 1, 0, or NULL.
-      -- Robust parsing: treat 'YES%' or '1' as 1, everything else as 0.
+      -- Rollup fields come as 'YES', 'YES mainly...', 1, 0 or NULL. Read
+      -- 'YES%' or '1' as 1, and everything else as 0.
       CASE WHEN upper(trim(cast(MONOMAINTENANCE AS string))) LIKE 'YES%'
             OR  trim(cast(MONOMAINTENANCE AS string)) = '1'
            THEN 1 ELSE 0 END AS MONOMAINTENANCE,
@@ -38,8 +38,8 @@ phase_codelists <- function(con) {
             OR  trim(cast(USED_FOR_OTHER_CANCERS AS string)) = '1'
            THEN 1 ELSE 0 END AS USED_FOR_OTHER_CANCERS
     FROM {rollup_src}
-    -- Steroid codes are maintained separately, so the rollup should not list
-    -- them either. build_lot2_5() filters the same way.
+    -- Steroid codes are kept separately, so the rollup should not list them
+    -- either. build_lot2_5() filters the same way.
     WHERE upper(trim(coalesce(CL_MED_CLASS, ''))) <> 'STEROID'
   "), qc = "SELECT count(*) AS n_rows, count(DISTINCT CL_MED_ABBR) AS n_meds,
             sum(MONOMAINTENANCE) AS n_monomaint, sum(CONDITIONING) AS n_conditioning,
@@ -47,7 +47,8 @@ phase_codelists <- function(con) {
 
   run_step(con, "S01_mma_codelist", glue("
     CREATE OR REPLACE TEMPORARY VIEW mma_codelist AS
-    -- DISTINCT: a repeated row would duplicate every claim it matches.
+    -- DISTINCT, because a repeated row would duplicate every claim it
+    -- matches.
     SELECT DISTINCT
       upper(trim(CL_CODE_TYPE)) AS CL_CODE_TYPE,
       upper(regexp_replace(trim(CL_CODE), '[^A-Za-z0-9]', '')) AS CL_CODE,
@@ -57,9 +58,10 @@ phase_codelists <- function(con) {
     FROM {codelist_src}
     WHERE CL_CODE IS NOT NULL AND trim(CL_CODE) <> ''
       AND CL_CODE_TYPE IS NOT NULL AND trim(CL_CODE_TYPE) <> ''
-      -- The filter above tests the raw value but the code is stored normalized,
-      -- so '--' would survive as ''. The claim side coalesces a missing code to
-      -- '' too, and the two would match every claim with no code at all.
+      -- The filter above tests the raw value, but the code is stored
+      -- normalized, so '--' would survive as ''. The claim side turns a
+      -- missing code into '' too, and the two would then match every claim
+      -- with no code at all.
       AND regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''
   "), qc = "SELECT count(*) AS n_rows, count(DISTINCT CL_MED_ABBR) AS n_meds, count(DISTINCT CL_CODE_TYPE) AS n_code_types FROM mma_codelist")
 
@@ -72,25 +74,25 @@ phase_codelists <- function(con) {
     WHERE original_med IS NOT NULL AND substitute_med IS NOT NULL
   "), qc = "SELECT count(*) AS n_rows, count(DISTINCT original_med) AS n_orig_meds FROM permissible_subs")
 
-  # Validate the code lists before treatment extraction.
-  # Reviewable findings need a named waiver; the rest always stop the build.
+  # Check the code lists before treatment extraction. Reviewable findings need
+  # a named waiver. The rest always stop the build.
   log_msg("Checking codelist <-> rollup consistency...")
   problems <- data.frame(check = character(0), detail = character(0),
                          stringsAsFactors = FALSE)
 
-  # The rows extraction can reach: every join in 03_mma_map is on one of these
+  # The rows extraction can reach. Every join in 03_mma_map is on one of these
   # two types, so a check counting any other row answers about a row the build
-  # never reads. code_types keeps the full list - the unread types are its
-  # subject.
+  # never reads. code_types keeps the full list, because the unread types are
+  # what it is about.
   run_step(con, "S01b_mma_extractable_codelist", "
     CREATE OR REPLACE TEMPORARY VIEW mma_extractable_codelist AS
     SELECT * FROM mma_codelist WHERE CL_CODE_TYPE IN ('NDC', 'HCPCS')
   ", qc = "SELECT count(*) AS n_rows, count(DISTINCT CL_MED_ABBR) AS n_meds
            FROM mma_extractable_codelist")
 
-  # A code list med with no rollup row is still extracted and still carries its
-  # class - that comes from the code list. What it has no values for are the
-  # rollup flags, so no rule keyed on one of those applies to it.
+  # A code list med with no rollup row is still extracted, and still carries
+  # its class - that comes from the code list. What it has no values for are
+  # the rollup flags, so no rule keyed on one of those applies to it.
   orphan_meds <- db_q(con, "
     SELECT c.CL_MED_ABBR, count(*) AS n_codes
     FROM mma_extractable_codelist c
@@ -129,7 +131,7 @@ phase_codelists <- function(con) {
   }
 
   # Only these two are ever joined on, in 03_mma_map. A code of any other type
-  # sits in the list and matches nothing - the medication looks unused.
+  # sits in the list and matches nothing, so the medication looks unused.
   EXTRACTED_CODE_TYPES <- c("NDC", "HCPCS")
   code_types <- db_q(con, "
     SELECT CL_CODE_TYPE, count(*) AS n_codes
@@ -147,14 +149,14 @@ phase_codelists <- function(con) {
       stringsAsFactors = FALSE))
 
   # DISTINCT covers all five selected columns, but extraction joins on only
-  # (CL_CODE_TYPE, CL_CODE). Two rows sharing a code but naming different drugs
-  # both survive, and one claim then becomes two treatment events.
+  # (CL_CODE_TYPE, CL_CODE). Two rows sharing a code while naming different
+  # drugs both survive, and one claim then becomes two treatment events.
   code_to_med <- db_q(con, "
     SELECT CL_CODE_TYPE, join_key, count(DISTINCT CL_MED_ABBR) AS n_meds,
            concat_ws(', ', collect_set(CL_MED_ABBR)) AS meds
     FROM (
       SELECT CL_CODE_TYPE, CL_MED_ABBR,
-             -- The key extraction joins on, not the stored code: the NDC join
+             -- The key extraction joins on, not the stored code. The NDC join
              -- pads to eleven digits, so '123456789' and '0123456789' are one
              -- key there and would look like two here.
              CASE WHEN CL_CODE_TYPE = 'NDC'
@@ -176,8 +178,8 @@ phase_codelists <- function(con) {
     log_msg("  OK: Each code names exactly one medication.")
   }
 
-  # An NDC of '0' passes the digit guard on the join and still pads to eleven
-  # zeros, which is what a claim with no NDC looks like.
+  # An NDC of '0' passes the digit guard on the join, then pads to eleven
+  # zeros - which is what a claim with no NDC looks like.
   bad_ndc <- db_q(con, "
     SELECT CL_CODE, CL_MED_ABBR
     FROM mma_codelist
@@ -195,9 +197,9 @@ phase_codelists <- function(con) {
     log_msg("  OK: No all-zero NDC rows.")
   }
 
-  # NDCs must be canonical eleven-digit values; the join pads anything else
-  # without complaining. Two names because they need different answers:
-  # ndc_shape cannot be an NDC at all, ndc_short is a real ten-digit form whose
+  # NDCs must be canonical eleven-digit values. The join pads anything else
+  # without complaining. Two names, because they need different answers.
+  # ndc_shape cannot be an NDC at all. ndc_short is a real ten-digit form whose
   # 4-4-2 / 5-3-2 / 5-4-1 layout the pad has to guess. lot/FILES.md has the
   # arithmetic.
   ndc_shape <- db_q(con, "
@@ -262,7 +264,7 @@ phase_codelists <- function(con) {
     log_msg("  OK: Each rollup medication is defined one way.")
   }
 
-  # Blank keys join to nothing useful and make the checks above meaningless.
+  # Blank keys join to nothing useful, and make the checks above meaningless.
   blank_keys <- db_q(con, "
     SELECT
       (SELECT count(*) FROM mma_rollup
@@ -280,7 +282,7 @@ phase_codelists <- function(con) {
   else
     log_msg("  OK: No blank medication or class.")
 
-  # Two classes for one abbreviation: min() later picks one without saying so.
+  # Two classes for one abbreviation. min() later picks one and says nothing.
   multi_class <- db_q(con, "
     SELECT CL_MED_ABBR, count(DISTINCT CL_MED_CLASS) AS n_classes,
            concat_ws(', ', collect_set(CL_MED_CLASS)) AS classes
@@ -298,11 +300,12 @@ phase_codelists <- function(con) {
     log_msg("  OK: Each MED_ABBR maps to exactly one class.")
   }
 
-  # Claims take MED_CLASS from the code list; the LOT1_CLASS_<x> columns are
-  # named from the rollup's. The two must agree, or the column is always zero.
-  # Compared as sets, so a med one file classes two ways is compared rather
-  # than skipped. INNER JOIN because a med in only one file is orphan_meds or
-  # uncoded_meds, and steroids are absent from the rollup by design.
+  # Claims take MED_CLASS from the code list. The LOT1_CLASS_<x> columns are
+  # named from the rollup's. The two must agree or the column is always zero.
+  # Compared as sets, so a med that one file classes two ways is compared
+  # rather than skipped. INNER JOIN, because a med in only one file is
+  # orphan_meds or uncoded_meds, and steroids are left out of the rollup on
+  # purpose.
   class_agreement <- db_q(con, "
     SELECT c.CL_MED_ABBR,
            concat_ws(', ', collect_set(c.CL_MED_CLASS)) AS codelist_class,
@@ -345,8 +348,8 @@ phase_codelists <- function(con) {
     log_msg("  OK: Every substitute_med is a medication the code list produces.")
   }
 
-  # The other side is less damaging - the join simply never matches, so the
-  # substitution is dead rather than wrong - but it is still a rule the study
+  # The other side does less harm. The join simply never matches, so the
+  # substitution is dead rather than wrong. But it is still a rule the study
   # team believes is running.
   subs_orig <- db_q(con, "
     SELECT DISTINCT p.original_med AS med
@@ -371,9 +374,9 @@ phase_codelists <- function(con) {
     if (nrow(waived)) {
       for (i in seq_len(nrow(waived)))
         log_msg("WAIVED (", waived$check[i], "): ", waived$detail[i])
-      # What actually fired, for LOT_BUILD_STATUS. The requested list says
-      # nothing about the code lists; this says what was really in them.
-      # Keep whatever another preflight has already recorded.
+      # What really fired, for LOT_BUILD_STATUS. The requested list says
+      # nothing about the code lists. This says what was in them. Keep
+      # whatever another preflight has already recorded.
       options(lot_waivers_applied = union(
         getOption("lot_waivers_applied", character(0)), waived$check))
     }
@@ -438,9 +441,9 @@ phase_codelists <- function(con) {
            " - they are written into SQL string literals as they stand.",
            call. = FALSE)
   }
-  # LOT1_MED_CNT, LOT{n}_MED_CNT and LOT_MED_CNT are fixed columns - the count
-  # of induction medications - so an abbreviation of CNT generates a second
-  # column of that name at every line.
+  # LOT1_MED_CNT, LOT{n}_MED_CNT and LOT_MED_CNT are fixed columns holding the
+  # count of induction medications. So an abbreviation of CNT would generate a
+  # second column of that name at every line.
   if ("CNT" %in% sanitize_col(meds))
     stop("Medication abbreviation ",
          paste(meds[sanitize_col(meds) == "CNT"], collapse = ", "),

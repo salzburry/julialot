@@ -1,15 +1,15 @@
 # Reads config.csv (name,value,description) into the environment as defaults.
 #
-# The environment wins: a row is applied only when that variable is unset, so
+# The environment wins. A row is applied only when that variable is unset, so
 # the file never overrides a shell export or a value Domino injected. A blank
-# value, a blank name or a '#' name is skipped, and DATABRICKS_PWD is never
-# read from the file. Source before config_lot.R reads Sys.getenv().
+# value, a blank name or a '#' name is skipped, and DATABRICKS_PWD is never read
+# from the file. Source this before config_lot.R reads Sys.getenv().
 
-# Coerce a date string to YYYY-MM-DD. Accepts ISO (pass-through) plus
-# the common Excel reformats (DD-MM-YYYY, DD/MM/YYYY, MM/DD/YYYY,
-# YYYY/MM/DD). Returns the input unchanged if nothing parses to a
-# plausible (year >= 1900) date, so a downstream config error still
-# surfaces clearly rather than being silently wrong.
+# Turn a date string into YYYY-MM-DD. ISO passes straight through. So do the
+# common Excel reformats: DD-MM-YYYY, DD/MM/YYYY, MM/DD/YYYY, YYYY/MM/DD.
+# If nothing parses to a plausible date - year 1900 or later - the input comes
+# back unchanged, so a config error downstream still shows clearly instead of
+# being quietly wrong.
 .normalize_iso_date <- function(v, nm = "") {
   if (grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", v)) return(v)
   cand <- Filter(Negate(is.na), lapply(
@@ -20,8 +20,8 @@
     }))
   iso <- unique(vapply(cand, format, character(1)))
   # 03/04/2025 is 3 April read day-first and 4 March read month-first. Taking
-  # the first format that parses picks one silently; for STUDY_END the two fall
-  # in different quarters, which is a different set of CDM tables.
+  # the first format that parses picks one quietly. For STUDY_END the two fall
+  # in different quarters, which means a different set of CDM tables.
   if (length(iso) > 1L)
     stop("[load_inputs] ", nm, " '", v, "' is ambiguous - it reads as ",
          paste(iso, collapse = " or "), ". Write it as YYYY-MM-DD.",
@@ -67,15 +67,15 @@ load_pipeline_inputs <- function(dirs, filename = "pipeline_inputs.csv") {
       }
       if (is.na(vl) || trimws(as.character(vl)) == "") next
       vl <- trimws(as.character(vl))
-      # Excel (esp. non-US locale) silently rewrites ISO dates, e.g.
-      # STUDY_END 2025-06-30 -> 30-06-2025, which then mis-parses into
-      # the wrong quarterly table. Normalize known date keys back to
-      # YYYY-MM-DD here so the CSV survives an Excel round-trip.
+      # Excel quietly rewrites ISO dates, especially in a non-US locale:
+      # STUDY_END 2025-06-30 becomes 30-06-2025, which then parses into the
+      # wrong quarterly table. Known date keys go back to YYYY-MM-DD here, so
+      # the CSV survives a trip through Excel.
       if (toupper(nm) %in% c("STUDY_END", "STUDY_START",
                              "ID_START", "ID_END")) {
         vl <- .normalize_iso_date(vl, nm)
       }
-      # Environment wins: only fill when the variable is unset/empty.
+      # The environment wins. Only fill when the variable is unset or empty.
       if (nzchar(Sys.getenv(nm, unset = ""))) { n_kept_env <- n_kept_env + 1L; next }
       do.call(Sys.setenv, setNames(list(as.character(vl)), nm))
       n_set <- n_set + 1L

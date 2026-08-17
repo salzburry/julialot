@@ -10,8 +10,8 @@ phase_sct <- function(con, ctx) {
   #   - ALLO/CART immediately end LOT1
   #   - Single AUTO allowed; tandem pair allowed; excess AUTO ends LOT1
   #
-  # Maintenance is a descriptive flag only (contains_mtx_reg, derived in
-  # S16b). There is no standalone maintenance-period view.
+  # Maintenance is a descriptive flag and nothing more - contains_mtx_reg,
+  # derived in S16b. There is no maintenance-period view.
 
   # S11: Register SCT codelist
   # Normalize CL_CODE_TYPE to canonical values:
@@ -49,14 +49,14 @@ phase_sct <- function(con, ctx) {
       END AS SCT_TYPE
     FROM {sct_src}
     WHERE CL_CODE IS NOT NULL AND trim(CL_CODE) <> ''
-      -- Normalized, not raw: see mma_codelist. A punctuation-only code would
+      -- Normalized, not raw - see mma_codelist. A punctuation-only code would
       -- otherwise match every claim with a missing procedure or diagnosis.
       AND regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''
       AND SCT_TYPE IS NOT NULL AND trim(SCT_TYPE) <> ''
   "), qc = "SELECT SCT_TYPE, CL_CODE_TYPE, count(*) AS n_codes FROM sct_codelist GROUP BY SCT_TYPE, CL_CODE_TYPE ORDER BY SCT_TYPE, CL_CODE_TYPE")
 
-  # DISTINCT includes SCT_TYPE, so one code can still name both AUTO and ALLO -
-  # and the claim extraction keeps a row per type, turning one claim into two
+  # DISTINCT covers SCT_TYPE, so one code can still name both AUTO and ALLO.
+  # The claim extraction keeps a row per type, so one claim becomes two
   # transplants.
   sct_dup <- db_q(con, "
     SELECT CL_CODE_TYPE, CL_CODE, concat_ws(', ', collect_set(SCT_TYPE)) AS types
@@ -71,8 +71,8 @@ phase_sct <- function(con, ctx) {
          " - one claim would become several transplants.", call. = FALSE)
   }
   # ...and again ignoring the code type, for the types that share a claim
-  # column. The med_procedure join accepts ICD10PROC, ICD9PROC or HCPCS
-  # against mp.PROC, so one code under two of them matches the same row twice.
+  # column. The med_procedure join takes ICD10PROC, ICD9PROC or HCPCS against
+  # mp.PROC, so one code under two of them matches the same row twice.
   sct_cross <- db_q(con, "
     SELECT CL_CODE, concat_ws(', ', collect_set(CL_CODE_TYPE)) AS code_types,
            concat_ws(', ', collect_set(SCT_TYPE)) AS types
@@ -90,10 +90,10 @@ phase_sct <- function(con, ctx) {
   log_msg("  OK: Each SCT code names exactly one transplant type.")
 
   # The CASE above maps the spellings it knows and passes anything else
-  # through unchanged. Only AUTO, ALLO and CART are ever selected from -
-  # UNKNOWN is a deliberate bucket that nothing reads - so an unmapped
-  # spelling does not raise an error, it just never matches: those
-  # transplants stop existing, and no count says so.
+  # through unchanged. Only AUTO, ALLO and CART are ever selected from.
+  # UNKNOWN is a bucket nothing reads. So an unmapped spelling raises no error.
+  # It simply never matches, those transplants stop existing, and no count says
+  # so.
   sct_unmapped <- db_q(con, "
     SELECT SCT_TYPE, count(*) AS n_codes
     FROM sct_codelist
@@ -110,11 +110,11 @@ phase_sct <- function(con, ctx) {
   }
   log_msg("  OK: Every SCT_TYPE is one the build reads.")
 
-  # The same hole on the other arm of the same CASE. The claim joins below
-  # read exactly five code types; anything the CASE does not map passes
-  # through and matches none of them. A blank type gets through too - S01
-  # drops those from the MM code list, and this list has no equivalent filter,
-  # so the WHERE above guards CL_CODE and SCT_TYPE but not this.
+  # The same hole on the other arm of the same CASE. The claim joins below read
+  # exactly five code types. Anything the CASE does not map passes through and
+  # matches none of them. A blank type gets through too: S01 drops those from
+  # the MM code list, and this list has no such filter, so the WHERE above
+  # guards CL_CODE and SCT_TYPE but not this.
   sct_code_type <- db_q(con, "
     SELECT coalesce(CL_CODE_TYPE, '<null>') AS CL_CODE_TYPE, count(*) AS n_codes
     FROM sct_codelist
@@ -137,8 +137,8 @@ phase_sct <- function(con, ctx) {
 
   # An ICD-9 code type has to be read as ICD-9. The '%PROC%' arm above catches
   # spellings the exact ICD9PROC test misses, so they arrive as ICD10PROC and
-  # the check above accepts them. Asked of the raw value: these are the only
-  # spellings the CASE turns into an ICD-9 type.
+  # the check above accepts them. Asked of the raw value, because these are the
+  # only spellings the CASE turns into an ICD-9 type.
   sct_version <- db_q(con, glue("
     SELECT trim(CL_CODE_TYPE) AS CL_CODE_TYPE, count(*) AS n_codes
     FROM {sct_src}
@@ -190,20 +190,20 @@ phase_sct <- function(con, ctx) {
       WHERE cast(m.FST_DT AS date) >= p.INDEX_DATE
         AND cast(m.FST_DT AS date) <= p.OBS_END_DT
     ),
-    -- MED_PROCEDURE PROC: ICD-9/ICD-10 procedure codes, plus an HCPCS branch
-    -- that matches nothing in this extract and is kept anyway.
+    -- MED_PROCEDURE PROC holds ICD-9 and ICD-10 procedure codes. There is also
+    -- an HCPCS branch that matches nothing in this extract, and it is kept.
     --
-    -- Profiling PROC over the study period returns 43.1M of 43.2M rows at
-    -- ICD_FLAG=10 and seven characters - ICD-10-PCS - with no HCPCS
-    -- population. So the CL_CODE_TYPE='HCPCS' branch below contributes no row
-    -- here, and every HCPCS SCT code (CPT 38240/38241, S2150, CAR-T
-    -- Q2042/Q2054/Q2055/Q2056) is found by med_proc and med_bill above, which
-    -- read the columns those codes live in. It is NOT the safety net it once
-    -- read as, and nothing should be relied on it.
+    -- Profiling PROC over the study period gives 43.1M of 43.2M rows at
+    -- ICD_FLAG=10 and seven characters - ICD-10-PCS - with no HCPCS at all. So
+    -- the CL_CODE_TYPE='HCPCS' branch below contributes no row here. Every
+    -- HCPCS SCT code (CPT 38240/38241, S2150, CAR-T Q2042/Q2054/Q2055/Q2056)
+    -- is found by med_proc and med_bill above, which read the columns those
+    -- codes live in. It is NOT the safety net it once read as, and nothing
+    -- should lean on it.
     --
-    -- Left in place deliberately: it is one disjunct in a join condition the
-    -- query evaluates either way, so it costs no extra scan, and it is correct
-    -- if a later extract does carry HCPCS there. See ndmm/DECISIONS.md #6.
+    -- Left in on purpose. It is one disjunct in a join condition the query
+    -- evaluates either way, so it costs no extra scan, and it is right if a
+    -- later extract does carry HCPCS there. See ndmm/DECISIONS.md #6.
     medproc AS (
       SELECT mp.PATID, cast(mp.FST_DT AS date) AS DATE_SERVICE,
              s.SCT_TYPE, s.CL_CODE AS CODE, 'med_procedure' AS SRC
@@ -242,7 +242,7 @@ phase_sct <- function(con, ctx) {
       UNION ALL SELECT * FROM medproc
       UNION ALL SELECT * FROM med_diag
     )
-    -- Deduplicate: one record per (PATID, DATE_SERVICE, SCT_TYPE)
+    -- Dedup to one record per (PATID, DATE_SERVICE, SCT_TYPE).
     SELECT PATID, DATE_SERVICE, SCT_TYPE, min(CODE) AS CODE
     FROM combined
     GROUP BY PATID, DATE_SERVICE, SCT_TYPE
@@ -253,36 +253,37 @@ phase_sct <- function(con, ctx) {
     GROUP BY SCT_TYPE
     ORDER BY SCT_TYPE")
 
-  # NOTE: SCT CTEs include SRC column for debug traceability (dropped during dedup).
-  # To audit source contributions, query the combined CTE directly before dedup.
+  # The SCT CTEs carry an SRC column so a row can be traced back. Dedup drops
+  # it. To see what each source contributed, query the combined CTE before
+  # dedup.
 
 
   # S13: AUTO SCT date processing
   #
-  # Step 1: Group AUTO claims into 14-day windows - claims 0..13 days after
-  #         the window's first claim (datediff <= sct_auto_window_days = 13,
-  #         a 14-day window counting its first day). Select the last (max)
-  #         date in each window, not the first -- first claims are workup
-  #         activity, last claim is the actual transplant.
+  # Step 1: group AUTO claims into 14-day windows. A claim joins the window if
+  #         it falls 0 to 13 days after the window's first claim
+  #         (datediff <= sct_auto_window_days = 13, a 14-day window counting
+  #         its first day). Take the LAST date in each window, not the first.
+  #         The first claims are workup; the last is the transplant.
   #
-  # Tandem boundary adjustment: when a 14-day window overlaps the 180-day
-  # tandem boundary (from the previous finalized TX date), select the date
-  # closest to the boundary rather than the window max. This ensures accurate
-  # tandem determination. Computed as min |date - boundary| over all dates
-  # in the window. (Worked example: TX_AUTO1=09MAY2018, 180-day mark
-  # ~05NOV2018, window 06NOV-20NOV picks 07NOV instead of 20NOV.)
+  # Tandem boundary adjustment. When a 14-day window straddles the 180-day
+  # tandem boundary, measured from the previous finalized TX date, take the
+  # date closest to the boundary instead of the window's last. That is what
+  # makes the tandem call right. It is min |date - boundary| over the dates in
+  # the window. Worked example: TX_AUTO1 = 09MAY2018, the 180-day mark is
+  # ~05NOV2018, and the window 06NOV-20NOV picks 07NOV rather than 20NOV.
   #
-  # The boundary is prev + sct_tandem_days, the last day that still counts as
-  # a tandem. It has to be the same day the classification uses, and every
+  # The boundary is prev + sct_tandem_days: the last day that still counts as a
+  # tandem. It has to be the same day the classification uses, and every
   # classification site tests datediff(AUTO_DT_2, AUTO_DT_1) <= sct_tandem_days
   # - see 05b_lot1_sct.R and 10_lot2_5_base.R. This target was prev + 179 while
-  # they tested <= 180, so a window straddling the seam was pulled to the wrong
-  # side of it: with claims on day 178 and day 181, aiming at 179 selects 178
-  # and calls it a tandem, aiming at 180 selects 181 and opens a new line. The
-  # worked example above says 180 too - 09MAY2018 + 180 is 05NOV2018.
+  # they tested <= 180, so a window across the seam was pulled to the wrong
+  # side. With claims on day 178 and day 181, aiming at 179 picks 178 and calls
+  # it a tandem; aiming at 180 picks 181 and opens a new line. The worked
+  # example says 180 too: 09MAY2018 + 180 is 05NOV2018.
   #
-  # Step 2: Apply 60-day minimum gap between events (merge if < 60 days apart).
-  # Result: finalized TX dates for AUTO SCT per patient.
+  # Step 2: apply the 60-day minimum gap between events, merging anything
+  # closer. The result is the finalized AUTO TX dates per patient.
   run_step(con, "S13_tx_auto_dates", glue("
     CREATE OR REPLACE TEMPORARY VIEW tx_auto_dates AS
     WITH auto_dates AS (
@@ -296,8 +297,8 @@ phase_sct <- function(con, ctx) {
       FROM auto_dates
       GROUP BY PATID
     ),
-    -- Phase 1 + 2 combined: 14-day windowing with tandem-aware date selection
-    -- + 60-day gap merging in a single pass.
+    -- Phases 1 and 2 in one pass: 14-day windowing with tandem-aware date
+    -- selection, and 60-day gap merging.
     --
     -- State tracks:
     --   tx_dates: finalized TX dates array
@@ -335,10 +336,11 @@ phase_sct <- function(con, ctx) {
                 'tx_dates', s.tx_dates,
                 'cur_start', s.cur_start,
                 'cur_max_dt', x,  -- x >= cur_max_dt since sorted
-                -- Track date closest to tandem boundary, BUT only when date is
-                -- within window_days of the boundary (i.e., window overlaps or
-                -- is adjacent to the 180-day mark). When far from boundary,
-                -- cur_boundary_dt stays NULL so coalesce() falls back to max.
+                -- Track the date closest to the tandem boundary, but only
+                -- when that date is within window_days of it - that is, the
+                -- window touches the 180-day mark. Far from the boundary,
+                -- cur_boundary_dt stays NULL and coalesce() falls back to the
+                -- window's last date.
                 'cur_boundary_dt', CASE
                   WHEN s.last_tx_dt IS NULL THEN NULL
                   WHEN abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days})))
@@ -365,8 +367,9 @@ phase_sct <- function(con, ctx) {
               )
             -- Beyond 14-day window: finalize current window, start new
             ELSE
-              -- Select date: use boundary-closest if tandem boundary active, else max
-              -- Then apply 60-day gap: only keep if >= 60 days from last_tx_dt
+              -- Pick the date: boundary-closest if the tandem boundary is
+              -- active, otherwise the window's last. Then the 60-day gap: keep
+              -- it only if it is 60 or more days from last_tx_dt.
               CASE
                 WHEN s.last_tx_dt IS NOT NULL
                  AND datediff(
@@ -374,12 +377,14 @@ phase_sct <- function(con, ctx) {
                        s.last_tx_dt
                      ) < {cfg$sct_auto_gap_days}
                 THEN
-                  -- Too close to last TX: discard window, start new
+                  -- Too close to the last TX. Drop the window and start a new
+                  -- one.
                   named_struct(
                     'tx_dates', s.tx_dates,
                     'cur_start', x,
                     'cur_max_dt', x,
-                    -- Only init boundary tracking if x is near the boundary
+                    -- Start boundary tracking only if x is near the
+                    -- boundary.
                     'cur_boundary_dt', CASE
                       WHEN s.last_tx_dt IS NOT NULL
                        AND abs(datediff(x, date_add(s.last_tx_dt, {cfg$sct_tandem_days})))
@@ -397,7 +402,7 @@ phase_sct <- function(con, ctx) {
                     'last_tx_dt', s.last_tx_dt
                   )
                 ELSE
-                  -- Valid TX: finalize and start new window
+                  -- A real TX. Finalize it and start a new window.
                   named_struct(
                     'tx_dates', array_append(
                       s.tx_dates,
@@ -405,7 +410,7 @@ phase_sct <- function(con, ctx) {
                     ),
                     'cur_start', x,
                     'cur_max_dt', x,
-                    -- Init boundary tracking relative to newly finalized TX
+                    -- Start boundary tracking from the TX just finalized.
                     'cur_boundary_dt', CASE
                       WHEN abs(datediff(
                              x,
@@ -432,7 +437,7 @@ phase_sct <- function(con, ctx) {
           -- Finalize: flush last open window
           s -> CASE
             WHEN s.cur_start IS NULL THEN s.tx_dates
-            -- Apply 60-day gap check for last window
+            -- The 60-day gap check, for the last window.
             WHEN s.last_tx_dt IS NOT NULL
              AND datediff(
                    coalesce(s.cur_boundary_dt, s.cur_max_dt),

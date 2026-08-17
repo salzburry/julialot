@@ -917,8 +917,14 @@ ok(has(c15, "min(CASE WHEN NOT ("),
 ok(has(c15, "AS ENDING_CART_DT") && has(c15, "min(ac.TX_DT) AS CART_DT"),
    "...so both dates exist: the earliest CAR-T, and the earliest that can end a line")
 # The boundary reads the eligible one; LOT1_1ST_SCT_DT keeps the descriptive one.
-end_arm <- substr(c15, regexpr("LOT1_TX_ENDDATE: earliest", c15),
+#
+# Cut on CODE, not on the comment above it. This used to open on
+# "LOT1_TX_ENDDATE: earliest", and rewording that comment made regexpr return
+# -1, so the arm came out empty and the assertion failed on prose.
+end_arm <- substr(c15, regexpr("THEN greatest(sd.LOT1_START_DT, date_sub(", c15,
+                               fixed = TRUE),
                   regexpr("AS LOT1_TX_ENDDATE_REASON", c15))
+ok(nzchar(trimws(end_arm)), "the end-date arm is found at all")
 ok(has(end_arm, "ENDING_CART_DT") && !has(end_arm, "FIRST_CART_DT"),
    "the LOT1 end date is built from the eligible CAR-T, not the first one")
 ok(has(c15, "sd.FIRST_CART_DT,"),

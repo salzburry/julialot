@@ -6,9 +6,10 @@ phase_lot1_base <- function(con, ctx) {
   med_flag_exprs <- ctx$med_flag_exprs; class_flag_exprs <- ctx$class_flag_exprs
 
   # STEP 5 (6): LOT1_BASE
-  # Stays a view: one aggregate over map_stacked, which is a table by now, and
-  # both its readers below are written to tables - so it is planned three
-  # times and each is a grouped scan rather than a re-run of the extraction.
+  # Stays a view. It is one aggregate over map_stacked, which is a table by
+  # now, and both its readers below are written to tables. So it is planned
+  # three times, and each is a grouped scan rather than the extraction run
+  # again.
   run_step(con, "S08_lot1_start", "
     CREATE OR REPLACE TEMPORARY VIEW lot1_start AS
     SELECT
@@ -21,28 +22,28 @@ phase_lot1_base <- function(con, ctx) {
 
   # S08b: the last day LOT1's regimen may collect an agent on.
   #
-  # A line picks its regimen over the whole induction window, and it used to do
-  # that before it could know its own end date - phase_sct ran after this one.
-  # So where an allogeneic transplant ended LOT1 early, the rest of the window
-  # kept collecting agents into the regimen of a line that was already over: an
-  # agent first dispensed after the line ended was counted in its regimen, and
-  # went on to start a later line as well. Double attribution, and it moved the
-  # run-out with it, because a stranded agent is a base agent.
+  # A line picks its regimen over the whole induction window. It used to do
+  # that before it could know its own end date, because phase_sct ran after
+  # this one. So where an allogeneic transplant ended LOT1 early, the rest of
+  # the window kept collecting drugs into the regimen of a line already over.
+  # A drug first dispensed after the line ended was counted in its regimen, and
+  # went on to start a later line as well. Counted twice, and it moved the
+  # run-out with it, because a stranded drug is a base drug.
   #
   # ALLO always. CAR-T only when the induction exemption is off.
   #
   # With the exemption on - the pinned setting - a CAR-T inside the window is
-  # part of LOT1 and ends nothing, and one outside the window is outside the
-  # regimen window too, so it has nothing left to strand. Switch the exemption
-  # off for a sensitivity run and that stops being true: the CAR-T then ends
-  # LOT1 the day before, and the rest of the window would keep collecting agents
+  # part of LOT1 and ends nothing. One outside the window is outside the
+  # regimen window too, so it has nothing left to strand. Turn the exemption
+  # off for a sensitivity run and that stops being true. The CAR-T then ends
+  # LOT1 the day before, and the rest of the window would keep collecting drugs
   # into a line already over. So the cutoff follows the exemption.
   #
   # An AUTO cannot strand anything either way. It only ever extends the line
   # (LOT_RULES.md §6.5). LOT2-5 has no exemption, so CAR-T always counts there.
   #
-  # Floored at the line start, so an ALLO on day one gives a one-day line whose
-  # regimen is that day's agents rather than an empty regimen with a cutoff
+  # Floored at the line start. An ALLO on day one then gives a one-day line
+  # whose regimen is that day's drugs, not an empty regimen with a cutoff
   # before its own start.
   run_step(con, "S08b_lot1_regimen_cutoff", glue("
     CREATE OR REPLACE TEMPORARY VIEW lot1_regimen_cutoff AS
@@ -63,9 +64,9 @@ phase_lot1_base <- function(con, ctx) {
            sum(CASE WHEN REGIMEN_CUTOFF_DT IS NOT NULL THEN 1 ELSE 0 END) AS n_cut
     FROM lot1_regimen_cutoff")
 
-  # Written to a table: S10 below reads it three times (twice through
-  # base_meds, once through med_summary) and S16b four more, and each read
-  # would otherwise re-run the join against map_stacked. Thirteen over a run.
+  # Written to a table. S10 below reads it three times - twice through
+  # base_meds, once through med_summary - and S16b four more. Each read would
+  # otherwise run the join against map_stacked again. Thirteen over a run.
   materialize(con, "S09_lot1_induction_meds", view = "lot1_induction_meds", name = "LOT1_INDUCTION_MEDS", body = glue("
     SELECT DISTINCT
       ms.PATID,
@@ -84,18 +85,18 @@ phase_lot1_base <- function(con, ctx) {
     SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients, avg(cnt) AS avg_induction_meds
     FROM (SELECT PATID, count(DISTINCT MED_ABBR) AS cnt FROM lot1_induction_meds GROUP BY PATID)")
 
-  # LOT1 BASE: induction meds + permissible subs, discon, first add.
-  # Written here rather than in phase_lot1_end: S15 reads it twice before that
-  # phase is reached. Sixteen reads over a run.
+  # LOT1 BASE: induction meds plus permissible subs, the run-out, and the first
+  # add. Written here rather than in phase_lot1_end, because S15 reads it twice
+  # before that phase is reached. Sixteen reads over a run.
   materialize(con, "S10_lot1_base", view = "lot1_base", name = "LOT1_BASE", body = glue("
     WITH map_restart AS ({map_restart_sql()}
     ),
     -- SUBSTITUTE_ONLY = 1 means the drug is here only as a permissible
-    -- biosimilar substitute. A substitution does not advance the LOT (§4.4), so
-    -- a substitute never independently ends a line, confirms a run-out or opens
-    -- the next one - whatever gaps its own episodes carry. min() so a drug that
-    -- is both an actual regimen agent and somebody's substitute counts as the
-    -- former and keeps the release.
+    -- biosimilar substitute. A substitution does not advance the LOT (§4.4).
+    -- So a substitute never ends a line on its own, confirms a run-out or
+    -- opens the next one, whatever gaps its own episodes carry. min() so a
+    -- drug that is both a real regimen drug and somebody's substitute counts
+    -- as the former and keeps the release.
     base_meds AS (
       SELECT PATID, MED_ABBR, min(IS_SUB) AS SUBSTITUTE_ONLY
       FROM (
@@ -109,19 +110,20 @@ phase_lot1_base <- function(con, ctx) {
       )
       GROUP BY PATID, MED_ABBR
     ),
-    -- Steroids are excluded from base_meds by the lot1_induction_meds filter.
-    -- because corticosteroids are not oncology agents and should
-    -- not drive regimen membership, discontinuation, or add-med logic.
-    -- Per drug, the end of ITS cover in this line. A later episode of the same
-    -- drug extends it rather than opening a line, unless an agent that would
-    -- end the line arrives in between.
+    -- Steroids are kept out of base_meds by the lot1_induction_meds filter.
+    -- Corticosteroids are not oncology agents, so they must not drive regimen
+    -- membership, discontinuation or the add-med rules.
     --
-    -- max(MAP_END_DT) over every episode quietly undid that. Drug A dosed
-    -- days 0-27, discontinued at 27 by the 90-day gap, restarting 117-144 gave
-    -- a line-level runout of 144: the restart was swallowed, and LOT2 never
-    -- opened because its trigger has to fall strictly after the previous end.
-    -- MAP_DISCON_FLG had been computed correctly all along and read by nothing
-    -- but a QC count.
+    -- Per drug, this is the end of ITS cover in this line. A later episode of
+    -- the same drug extends it rather than opening a line, unless a drug that
+    -- would end the line arrives in between.
+    --
+    -- max(MAP_END_DT) over every episode quietly undid that. Drug A dosed days
+    -- 0-27, discontinued at 27 by the 90-day gap, restarting 117-144, gave a
+    -- line-level runout of 144. The restart was swallowed, and LOT2 never
+    -- opened, because its trigger has to fall strictly after the previous end.
+    -- MAP_DISCON_FLG had been right all along and was read by nothing but a QC
+    -- count.
     discon_per_med AS (
 {discon_per_med_sql('lot1_regimen_cutoff', 'LOT1_START_DT', end_col = 'REGIMEN_CUTOFF_DT')}
     ),
@@ -134,9 +136,9 @@ phase_lot1_base <- function(con, ctx) {
     discon AS (
       SELECT
         p.PATID,
-        -- Where the regimen ran out, capped at OBS_END_DT so days-supply
-        -- tails past death or study end do not extend the line. This is the
-        -- run-out, not yet a discontinuation: 06_lot1_end.R confirms it, once
+        -- Where the regimen ran out, capped at OBS_END_DT so a days-supply
+        -- tail past death or study end cannot extend the line. This is the
+        -- run-out, not yet a discontinuation. 06_lot1_end.R confirms it, once
         -- the post-runout trigger exists. The add-med window below wants this
         -- raw date.
         CASE
@@ -189,11 +191,11 @@ phase_lot1_base <- function(con, ctx) {
       LEFT JOIN map_restart mr
         ON mr.PATID = ms.PATID AND mr.MAP_MED_TYPE = ms.MAP_MED_TYPE
        AND mr.MAP_START_DT = ms.MAP_START_DT
-      -- A regimen drug returning after a confirmed gap ends this line, the same
-      -- as any other agent would. Without it the release is half a rule: while
+      -- A regimen drug returning after a confirmed gap ends this line, like
+      -- any other drug would. Without it the release is half a rule. While
       -- another regimen drug still holds this line open, the restart falls
       -- inside the line, cannot end it, and is then too early to open the next
-      -- one - so the treatment belongs to no line at all.
+      -- one. The treatment belongs to no line at all.
       WHERE (bm.MED_ABBR IS NULL
              OR (coalesce(mr.PREV_DISCON, 0) = 1 AND bm.SUBSTITUTE_ONLY = 0))
         AND ms.MAP_MED_CLASS <> 'STEROID'  -- a steroid cannot trigger an add-med
@@ -201,10 +203,10 @@ phase_lot1_base <- function(con, ctx) {
         AND ms.MAP_START_DT <= coalesce(bc.LOT1_BASE_RUNOUT_DT, bc.OBS_END_DT)
     ),
     first_add_pick AS (
-      -- When multiple non-induction drugs share the earliest add date,
-      -- pick one at random with a fixed seed. rand(42) is deterministic
-      -- across runs, so the pick is reproducible but not alphabetically
-      -- biased the way min() was.
+      -- When several non-induction drugs share the earliest add date, one is
+      -- picked at random on a fixed seed. rand(42) gives the same answer in
+      -- every run, so the pick repeats without being biased towards the front
+      -- of the alphabet the way min() was.
       SELECT PATID, LOT1_BASE_1ST_ADD_MED_DT, LOT1_BASE_1ST_ADD_MED
       FROM (
         SELECT
@@ -225,7 +227,7 @@ phase_lot1_base <- function(con, ctx) {
       bc.LOT1_START_DT, bc.LOT1_MED_CNT, bc.LOT1_BASE_MEDS,
       bc.LOT1_BASE_RUNOUT_DT,
       -- LOT1_BASE_LENGTH is set in S16, where LOT1_BASE_END_DT is final.
-      -- This uses the 2-way formula on the derived end date.
+      -- This uses the two-way formula on the derived end date.
       {paste0('bc.', paste(c(paste0('LOT1_MED_', vapply(meds, sanitize_col, character(1))), paste0('LOT1_CLASS_', vapply(classes, sanitize_col, character(1)))), collapse = ', bc.'))},
       fa.LOT1_BASE_1ST_ADD_MED_DT,
       fa.LOT1_BASE_1ST_ADD_MED

@@ -263,7 +263,7 @@ ok(any(grepl("NDMM_FU_CE_COUNTS", rs, fixed = TRUE)),
 ok(any(grepl("CENSOR_AT_DISENROLLMENT", rs, fixed = TRUE)),
    "...while CE as censoring is named as one that IS swept, not lumped in with it")
 sct <- readLines(file.path(LOT, "R", "steps", "05_sct.R"), warn = FALSE)
-ok(any(grepl("Maintenance is a descriptive flag only", sct, fixed = TRUE)),
+ok(any(grepl("Maintenance is a descriptive flag", sct, fixed = TRUE)),
    "...and that claim about maintenance is checked against the code, not asserted")
 
 cat("\n-- execution is opt-in, because a cell is a whole build --\n")

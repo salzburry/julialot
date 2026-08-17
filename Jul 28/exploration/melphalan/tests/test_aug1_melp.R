@@ -454,7 +454,9 @@ ok(has(sql, "e.EXPO_DT = x.LOT_START_DT"),
 ok(has(sql, "x.LOT_START_TYPE = 'MED'"),
    "...and melphalan started it, not a procedure coded on the same day")
 tie <- sf("10_lot2_5_base.R")
-ok(grepl("Same-day tie-break: SCT_ALLO > CART > SCT_AUTO > MED", tie, fixed = TRUE),
+# The ordering itself, not the sentence around it, so tidying the comment
+# cannot silently stop this from being checked.
+ok(grepl("SCT_ALLO > CART > SCT_AUTO > MED", tie, fixed = TRUE),
    "...which is the tie-break the engine documents, not an assumption here")
 ok(has(sql, "e.PREV_EXPO_DT >= x.PREV_START_DT") &&
      has(sql, "e.PREV_EXPO_DT <  x.LOT_START_DT"),

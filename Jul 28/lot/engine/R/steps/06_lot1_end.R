@@ -1,32 +1,37 @@
 # The LOT1 end date and reason.
 #
-# map_stacked, lot1_base and lot1_sct are each written to a table where they are
-# built - S07, S10 and S15 - because all three are read before this phase runs.
-# (CACHE TABLE is unsupported on SQL warehouses, so a table is the only way to
-# hold a result.)
+# map_stacked, lot1_base and lot1_sct are each written to a table where they
+# are built - S07, S10 and S15 - because all three are read before this phase
+# runs. CACHE TABLE is not supported on SQL warehouses, so a table is the only
+# way to hold a result.
 
 phase_lot1_end <- function(con, ctx) {
   meds <- ctx$meds
 
-  # S16b: contains_mtx_reg - flag-only maintenance concept.
-  # Does the LOT1 induction regimen contain a valid maintenance-approved subset
-  # (mono or dual) PLUS an anchor agent (any additional induction drug outside
-  # that subset)? The anchor may itself be maintenance-eligible in another context.
-  # A table: it self-joins lot1_induction_meds four times, and S16 below reads
-  # it again. One row per patient, so the write is small either way.
+  # S16b: contains_mtx_reg. Maintenance as a flag and nothing else.
+  #
+  # Does LOT1's induction regimen hold a valid maintenance-approved subset, mono
+  # or dual, PLUS an anchor drug - any other induction drug outside that subset?
+  # The anchor may itself be maintenance-eligible in another context.
+  #
+  # A table, because it self-joins lot1_induction_meds four times and S16 below
+  # reads it again. One row per patient, so the write is small either way.
   materialize(con, "S16b_lot1_contains_mtx_reg", view = "lot1_contains_mtx_reg", name = "LOT1_CONTAINS_MTX_REG", body = glue("
     WITH
-    -- Valid maintenance regimens from actual induction drugs only (NOT substitution-
-    -- expanded base_meds). Permissible subs can create phantom regimen members whose
-    -- original drug then falsely anchors a single-agent induction.
+    -- Valid maintenance regimens, from real induction drugs only - NOT the
+    -- substitution-expanded base_meds. Permissible subs can add regimen members
+    -- that were never dispensed, and the original drug then wrongly anchors a
+    -- single-drug induction.
     valid_maint_regimens AS (
-      -- Mono maintenance: drug has MONOMAINTENANCE=1 and is an actual induction drug
+      -- Mono maintenance: MONOMAINTENANCE = 1, and the drug is a real
+      -- induction drug.
       SELECT DISTINCT im.PATID, im.MED_ABBR AS REGIMEN_KEY
       FROM lot1_induction_meds im
       INNER JOIN mma_rollup ru ON im.MED_ABBR = ru.CL_MED_ABBR
       WHERE ru.MONOMAINTENANCE = 1
       UNION
-      -- Dual maintenance: drug lists partner via DUALMAINTENANCEWITH, both in induction
+      -- Dual maintenance: the drug names a partner in DUALMAINTENANCEWITH, and
+      -- both are in induction.
       SELECT DISTINCT
         im.PATID,
         concat_ws(' ', sort_array(array(im.MED_ABBR, im2.MED_ABBR))) AS REGIMEN_KEY
@@ -56,47 +61,56 @@ phase_lot1_end <- function(con, ctx) {
     FROM lot1_contains_mtx_reg
     GROUP BY contains_mtx_reg")
 
-  # S16: LOT1_BASE_END - the final LOT1 end reason and date.
-  # Priority (highest wins), not just a tie-break on equal dates:
+  # S16: LOT1_BASE_END - LOT1's final end reason and date.
+  #
+  # Priority, highest first. This is a ranking, not just a tie-break on equal
+  # dates:
   #   SCT_AUTO_CONT > SCT_ALLO > SCT_CART > SCT_AUTO (excess) > CART_INIT
   #   > MED_ADD > DEATH > DISCONTINUATION > STUDY_END
-  # SCT_AUTO_CONT sits at the top only in the sense of being tested first; it
-  # is gated on falling after every other branch's date, so it never displaces
-  # an end that already came later. DEATH is excluded from it explicitly.
+  #
+  # SCT_AUTO_CONT is at the top only in the sense of being tested first. It is
+  # gated on falling after every other branch's date, so it never takes an end
+  # that already came later. DEATH is excluded from it by name.
+  #
   # DEATH can outrank an earlier DISCONTINUATION, but only when no
-  # LOT2-qualifying trigger sits between runout and death (the post-runout
-  # guard below). The SCT / CART_INIT / MED_ADD branches each gate
-  # themselves against DISCON_DT, so they only fire when their event is at
-  # or before runout.
-  # Disenrollment is not a censoring criterion, so a period that ends at
-  # disenrollment is classified STUDY_END (there is no DISENROLLMENT reason).
-  # MAINTENANCE_END and SCT_NO_MAINT are not final values; those cases
-  # route by their earliest applicable event.
-  # CART_INIT (MED_ADD followed by CART within cart_consolidation_days)
-  # ends LOT1 on ENDING_CART_DT - 1, the day before the CAR-T infusion.
-  # A table: it is read nine times downstream and each read would otherwise
-  # re-run the post-runout guard below, which scans map_stacked twice.
+  # LOT2-qualifying trigger sits between the run-out and the death - the
+  # post-runout guard below. The SCT, CART_INIT and MED_ADD branches each gate
+  # themselves against DISCON_DT, so they fire only when their event is at or
+  # before the run-out.
+  #
+  # Disenrollment is not a censoring criterion, so a period ending at
+  # disenrollment is STUDY_END. There is no DISENROLLMENT reason.
+  # MAINTENANCE_END and SCT_NO_MAINT are not final values either. Those cases
+  # route by their earliest applicable event. CART_INIT - a MED_ADD followed by
+  # a CART within cart_consolidation_days - ends LOT1 on ENDING_CART_DT - 1,
+  # the day before the infusion.
+  #
+  # A table, because it is read nine times downstream and each read would
+  # otherwise re-run the post-runout guard below, which scans map_stacked
+  # twice.
   materialize(con, "S16_lot1_base_end", view = "lot1_base_end", name = "LOT1_BASE_END", body = glue("
     WITH{melp_lot1_ctes(cfg)}
-    -- Post-runout guard: identify whether any LOT2-qualifying trigger
-    -- exists strictly after LOT1_BASE_RUNOUT_DT and on/before OBS_END_DT.
-    -- Prevents DEATH from preempting DISCONTINUATION when a patient ran out
-    -- and then started new therapy (or had an SCT) before dying.
+    -- The post-runout guard. Is there a LOT2-qualifying trigger strictly after
+    -- LOT1_BASE_RUNOUT_DT and on or before OBS_END_DT? It stops DEATH taking a
+    -- line from DISCONTINUATION where the patient ran out, then started new
+    -- therapy or had an SCT, and only then died.
     --
-    -- These CTEs MIRROR the actual LOT2 start-candidate logic from
-    -- lot2_5_base.R (med_cand / auto_cand) so the guard fires exactly when
-    -- LOT2 would actually have a valid start trigger:
-    --   - MED: any non-steroid MM agent NOT in LOT1's permissible biosimilar
-    --     substitutes. Same-drug restarts DO qualify.
+    -- These CTEs MIRROR LOT2's own start-candidate rules in lot2_5_base.R
+    -- (med_cand / auto_cand), so the guard fires exactly when LOT2 would have a
+    -- valid start trigger:
+    --   - MED: any non-steroid MM drug NOT among LOT1's permissible biosimilar
+    --     substitutes. A same-drug restart DOES qualify.
     --   - AUTO: any AUTO outside LOT1's own {cfg$induction_window_days}-day
-    --     applicable window AND not within sct_tandem_days (180d) of the
-    --     immediately prior AUTO in patient history (planned tandem).
-    --   - ALLO/CART: any after runout (no window check; always trigger),
-    --     except a CAR-T inside LOT1 induction, which under the CAR-T rule is
-    --     part of LOT1 and starts nothing - so LOT2 would not act on it.
-    -- What cannot confirm this line's run-out, because it cannot start the next
-    -- line either: this line's own regimen agents and their permissible
-    -- substitutes. med_cand excludes both, so accepting one here would confirm a
+    --     window, and not within sct_tandem_days (180d) of the AUTO right
+    --     before it in the patient's history - that pair is a planned tandem.
+    --   - ALLO/CART: any after the run-out. No window check; it always
+    --     triggers. The one exception is a CAR-T inside LOT1 induction, which
+    --     under the CAR-T rule is part of LOT1 and starts nothing, so LOT2
+    --     would not act on it.
+    --
+    -- What cannot confirm this line's run-out is what cannot start the next
+    -- line: this line's own regimen drugs and their permissible substitutes.
+    -- med_cand excludes both, so accepting one here would confirm a
     -- discontinuation on an event no next line is allowed to open on.
     post_runout_excluded_meds AS (
       SELECT PATID, MED_ABBR, min(IS_SUB) AS SUBSTITUTE_ONLY
@@ -132,9 +146,9 @@ phase_lot1_end <- function(con, ctx) {
              OR (coalesce(mr.PREV_DISCON, 0) = 1 AND prem.SUBSTITUTE_ONLY = 0))
     ),
     post_runout_autos AS (
-      -- N_BETWEEN: whether anything happened since the previous transplant. A
-      -- pair 180 days apart with a medication in the middle is not a planned
-      -- tandem, so the later transplant is free to start a line.
+      -- N_BETWEEN: did anything happen since the previous transplant? A pair
+      -- 180 days apart with a medication in the middle is not a planned tandem,
+      -- so the later transplant is free to start a line.
       SELECT p.PATID, p.TX_DT, p.PREV_AUTO_DT,
              coalesce(sum(CASE WHEN x.dt > p.PREV_AUTO_DT AND x.dt < p.TX_DT
                                THEN 1 ELSE 0 END), 0) AS N_BETWEEN
@@ -148,14 +162,14 @@ phase_lot1_end <- function(con, ctx) {
       GROUP BY p.PATID, p.TX_DT, p.PREV_AUTO_DT
     ),
     post_runout_auto AS (
-      -- Mirrors LOT2-5 auto_cand, which now measures the window that belongs to
-      -- the line it is looking back at. The previous line here is always LOT1,
-      -- so that is LOT1's own {cfg$induction_window_days} days, not the
+      -- Mirrors LOT2-5's auto_cand, which measures the window belonging to the
+      -- line it looks back at. Here the previous line is always LOT1, so that
+      -- is LOT1's own {cfg$induction_window_days} days - not the
       -- {cfg$lot_n_induction_window_days} this used to borrow from LOT2-5.
       --
       -- The two have to agree. This guard decides whether a run-out counts as a
-      -- confirmed discontinuation; auto_cand decides whether the same AUTO opens
-      -- LOT2. Reading different windows lets DEATH take a line whose run-out the
+      -- confirmed discontinuation. auto_cand decides whether the same AUTO opens
+      -- LOT2. Read different windows and DEATH takes a line whose run-out the
       -- next line does in fact open on.
       SELECT DISTINCT lb.PATID
       FROM lot1_base lb
@@ -172,17 +186,17 @@ phase_lot1_end <- function(con, ctx) {
       -- Any ALLO or CAR-T strictly after the run-out and inside observation.
       --
       -- An EXISTENCE test over rows, like post_runout_med and post_runout_auto
-      -- beside it, and deliberately not a comparison against lot1_sct's dates.
-      -- FIRST_ALLO_DT and FIRST_CART_DT are min() over the whole line, so an
-      -- earlier infusion hides every later one behind it: a patient with a
-      -- CAR-T on day 20 absorbed into a live LOT1, a run-out on day 39 and a
-      -- second CAR-T on day 50 has FIRST_CART_DT = day 20, which is not after
-      -- the run-out, while the day-50 infusion that should confirm it is never
-      -- looked at. ENDING_CART_DT is no better - the induction exemption nulls
-      -- both. This is the same aggregate-versus-row mistake R/cart_rule.R
-      -- documents for the line-ending date, in the other direction.
+      -- beside it. It is deliberately not a comparison against lot1_sct's
+      -- dates. FIRST_ALLO_DT and FIRST_CART_DT are min() over the whole line,
+      -- so an earlier infusion hides every later one behind it. Take a patient
+      -- with a CAR-T on day 20 absorbed into a live LOT1, a run-out on day 39
+      -- and a second CAR-T on day 50: FIRST_CART_DT is day 20, which is not
+      -- after the run-out, and the day-50 infusion that should confirm it is
+      -- never looked at. ENDING_CART_DT is no better, because the induction
+      -- exemption nulls both. This is the aggregate-versus-row mistake
+      -- R/cart_rule.R describes for the line-ending date, running the other way.
       --
-      -- No window test: the arm already requires the infusion to be after the
+      -- No window test. The arm already requires the infusion to be after the
       -- run-out, so the line's treatment had stopped before it arrived and the
       -- induction exemption cannot reach it.
       SELECT DISTINCT lb.PATID
@@ -195,7 +209,7 @@ phase_lot1_end <- function(con, ctx) {
     ),
     post_runout_trigger AS (
       -- Every arm is an existence test on a per-row CTE. Nothing here reads an
-      -- aggregate, which is what makes a later event impossible to hide.
+      -- aggregate, and that is what makes a later event impossible to hide.
       SELECT lb.PATID,
         CASE
           WHEN lb.LOT1_BASE_RUNOUT_DT IS NULL THEN 0
@@ -213,13 +227,13 @@ phase_lot1_end <- function(con, ctx) {
       SELECT
         lb.*,
         coalesce(prt.POST_RUNOUT_TRIGGER_FLG, 0) AS POST_RUNOUT_TRIGGER_FLG,
-        -- The run-out becomes a discontinuation here rather than in
-        -- 04_lot1_base.R, because POST_RUNOUT_TRIGGER_FLG only exists at this
-        -- point. Either confirms it: {cfg$lot_discon_confirm_days} days of
-        -- observation after it, or a LOT2-qualifying trigger. Unconfirmed
-        -- leaves it NULL and the cascade censors at OBS_END_DT - which would
-        -- swallow the restart if elapsed time were the only test, since LOT2
-        -- has to start after LOT1 ends.
+        -- The run-out becomes a discontinuation here, not in 04_lot1_base.R,
+        -- because POST_RUNOUT_TRIGGER_FLG does not exist before this point.
+        -- Either thing confirms it: {cfg$lot_discon_confirm_days} days of
+        -- observation after it, or a LOT2-qualifying trigger. Unconfirmed, it
+        -- stays NULL and the cascade censors at OBS_END_DT. If elapsed time
+        -- were the only test that would swallow the restart, since LOT2 has to
+        -- start after LOT1 ends.
         CASE
           WHEN lb.LOT1_BASE_RUNOUT_DT IS NOT NULL
            AND (coalesce(prt.POST_RUNOUT_TRIGGER_FLG, 0) = 1
@@ -239,18 +253,21 @@ phase_lot1_end <- function(con, ctx) {
         sct.FIRST_CART_DT,
         sct.ENDING_CART_DT,
         sct.LOT1_AUTO_HOLD_DT,
-        -- contains_mtx_reg flag (descriptive only; does not drive end-reason
-        -- routing or create a standalone maintenance period)
+        -- The contains_mtx_reg flag. Descriptive only. It does not route an
+        -- end reason and it does not create a maintenance period.
         COALESCE(cmr.contains_mtx_reg, 0) AS contains_mtx_reg,
-        -- CART_INIT: MED_ADD followed by CART within {cfg$cart_consolidation_days} days
-        -- If a new medication is added but then, within 45 days of that new
-        -- agent, the patient starts CAR-T, the LOT1 end reason should be the
-        -- CAR-T initiation, not the medication add.
-        -- datediff(A, B) = A - B in Databricks; CART_DT - ADD_START_DT BETWEEN 0 AND 45
-        -- Note: LOT1_BASE_1ST_ADD_MED_DT is date_sub(ADD_START_DT, 1), so add 1 back
-        -- ENDING_CART_DT, not FIRST_CART_DT: the earliest CAR-T eligible to
-        -- end the line, which is NULL only when the patient has no such
-        -- infusion at all. lot1_sct computes it per row - see R/cart_rule.R.
+        -- CART_INIT: a MED_ADD followed by a CART within
+        -- {cfg$cart_consolidation_days} days. Where a new medication is added
+        -- and the patient starts CAR-T within 45 days of it, LOT1's end reason
+        -- is the CAR-T initiation, not the add.
+        --
+        -- datediff(A, B) is A - B in Databricks, so this is
+        -- CART_DT - ADD_START_DT BETWEEN 0 AND 45. LOT1_BASE_1ST_ADD_MED_DT is
+        -- date_sub(ADD_START_DT, 1), so the 1 is added back.
+        --
+        -- ENDING_CART_DT, not FIRST_CART_DT: the earliest CAR-T allowed to end
+        -- the line, which is NULL only when the patient has no such infusion at
+        -- all. lot1_sct works it out per row - see R/cart_rule.R.
         CASE
           WHEN sct.ENDING_CART_DT IS NOT NULL
            AND lb.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
@@ -263,13 +280,13 @@ phase_lot1_end <- function(con, ctx) {
       LEFT JOIN lot1_contains_mtx_reg cmr ON lb.PATID = cmr.PATID
       LEFT JOIN post_runout_trigger   prt ON lb.PATID = prt.PATID
     ),
-    -- The end this line would have had before an in-window AUTO is considered:
-    -- the whole cascade below, minus its SCT_AUTO_CONT branch. Computed as its
-    -- own CTE because LOT1_BASE_DISCON_DT is derived in end_candidates and SQL
-    -- cannot reference a select-list alias from the same select list.
+    -- The end this line would have had before an in-window AUTO is weighed:
+    -- the whole cascade below, minus its SCT_AUTO_CONT branch. It is its own
+    -- CTE because LOT1_BASE_DISCON_DT is derived in end_candidates, and SQL
+    -- cannot read a select-list alias from the same select list.
     --
-    -- It exists so the SCT_AUTO_CONT branch has one thing to compare against
-    -- instead of restating every branch it has to beat. An AUTO extends the
+    -- It exists so the SCT_AUTO_CONT branch has one thing to compare against,
+    -- rather than restating every branch it has to beat. An AUTO extends the
     -- line only when it lands strictly after this date.
     end_natural AS (
       SELECT
@@ -298,52 +315,58 @@ phase_lot1_end <- function(con, ctx) {
     )
     SELECT
       ec.*,
-      -- End reason priority (highest wins), not just a tie-break on equal
-      -- earliest dates:
+      -- End reason priority, highest first. A ranking, not just a tie-break on
+      -- equal earliest dates:
       --   SCT_AUTO_CONT > SCT_ALLO > SCT_CART > SCT_AUTO (excess) > CART_INIT
       --   > MED_ADD > DEATH > DISCONTINUATION > STUDY_END
+      --
       -- DEATH can outrank an earlier DISCONTINUATION, but only when no
-      -- LOT2-qualifying trigger sits between runout and death (the
-      -- post-runout guard above). SCT / CART_INIT / MED_ADD each gate
-      -- themselves against DISCON_DT so they fire only when their event is
-      -- at or before runout.
-      -- Disenrollment is not a censoring criterion, so a period that ends
-      -- at disenrollment is STUDY_END. MAINTENANCE_END and SCT_NO_MAINT
-      -- are not final values; those cases route by earliest applicable
-      -- event. CART_INIT ends LOT1 on ENDING_CART_DT - 1 (day before infusion).
+      -- LOT2-qualifying trigger sits between the run-out and the death - the
+      -- post-runout guard above. SCT, CART_INIT and MED_ADD each gate
+      -- themselves against DISCON_DT, so they fire only when their event is at
+      -- or before the run-out.
+      --
+      -- Disenrollment is not a censoring criterion, so a period ending at
+      -- disenrollment is STUDY_END. MAINTENANCE_END and SCT_NO_MAINT are not
+      -- final values; those cases route by their earliest applicable event.
+      -- CART_INIT ends LOT1 on ENDING_CART_DT - 1, the day before the
+      -- infusion.
       CASE
-        -- SCT_AUTO_CONT: an AUTO inside LOT1's own applicable window belongs to
-        -- LOT1, so LOT1 cannot be finalised before it. Where the cascade below
-        -- would have ended the line earlier, the line runs to the transplant and
-        -- ends ON it - not the day before, because this AUTO continues the line
-        -- rather than starting the next one.
+        -- SCT_AUTO_CONT. An AUTO inside LOT1's own window belongs to LOT1, so
+        -- LOT1 cannot be closed before it. Where the cascade below would have
+        -- ended the line earlier, the line runs to the transplant and ends ON
+        -- it - not the day before, because this AUTO continues the line rather
+        -- than starting the next one.
         --
-        -- Why the line ends there at all: the protocol ends a LOT on the SCT
-        -- date when the SCT is not followed by a maintenance regimen within 180
-        -- days, and this build carries no maintenance period, so that test can
-        -- never be met and the SCT date always wins.
+        -- Why it ends there at all: the protocol ends a LOT on the SCT date
+        -- when no maintenance regimen follows within 180 days. This build
+        -- carries no maintenance period, so that test can never be met and the
+        -- SCT date always wins.
         --
-        -- Placed first, and gated on being strictly after LOT1_NATURAL_END_DT,
-        -- so it fires only when it genuinely extends the line. That makes it
-        -- outrank MED_ADD as well as DISCONTINUATION and STUDY_END. It cannot
-        -- reach the SCT_ALLO / SCT_CART / CART_INIT ends: 05b_lot1_sct.R drops
-        -- every AUTO at or after the first ALLO or CAR-T, so an AUTO that
-        -- survives to here is always earlier than those events, never after them.
+        -- Tested first, and gated on being strictly after LOT1_NATURAL_END_DT,
+        -- so it fires only when it really extends the line. That puts it above
+        -- MED_ADD as well as DISCONTINUATION and STUDY_END. It cannot reach the
+        -- SCT_ALLO, SCT_CART or CART_INIT ends: 05b_lot1_sct.R drops every AUTO
+        -- at or after the first ALLO or CAR-T, so an AUTO surviving to here is
+        -- always earlier than those events, never later.
         --
-        -- DEATH is the one end it does not outrank, which is the explicit guard
-        -- below rather than a consequence of the ordering: claims can carry a
-        -- service date after the recorded death, and a line may not outlive the
+        -- DEATH is the one end it does not outrank. That is the explicit guard
+        -- below, not a side effect of the ordering. Claims can carry a service
+        -- date after the recorded death, and a line may not outlive the
         -- patient.
         WHEN ec.LOT1_AUTO_HOLD_DT IS NOT NULL
          AND ec.LOT1_AUTO_HOLD_DT > ec.LOT1_NATURAL_END_DT
          AND (ec.DEATH_DT IS NULL OR ec.LOT1_AUTO_HOLD_DT < ec.DEATH_DT)
         THEN 'SCT_AUTO_CONT'
-        -- Rule 2: SCT (ALLO, CART, or excess AUTO)
-        -- When CART_INIT_FLG=1 and the SCT IS the CART (reason=3), skip this branch
-        -- so CART_INIT can handle it. Otherwise CART events always route to SCT_CART
-        -- before CART_INIT is ever reached.
-        -- Tie-break vs CART_INIT uses ENDING_CART_DT - 1 (CART_INIT's end date),
-        -- so SCT only wins on ties when its end is <= CART_INIT's end.
+        -- Rule 2: SCT - ALLO, CART, or an excess AUTO.
+        --
+        -- When CART_INIT_FLG = 1 and the SCT IS the CART (reason = 3), this
+        -- branch is skipped so CART_INIT can take it. Otherwise every CART
+        -- routes to SCT_CART and CART_INIT is never reached.
+        --
+        -- The tie-break against CART_INIT uses ENDING_CART_DT - 1, CART_INIT's
+        -- own end date, so SCT wins a tie only when its end is at or before
+        -- CART_INIT's.
         WHEN ec.LOT1_TX_ENDDATE IS NOT NULL
          AND NOT (ec.CART_INIT_FLG = 1 AND ec.LOT1_TX_ENDDATE_REASON = 3)
          AND (ec.LOT1_BASE_1ST_ADD_MED_DT IS NULL
@@ -356,33 +379,35 @@ phase_lot1_end <- function(con, ctx) {
                WHEN 3 THEN 'SCT_CART'
                ELSE 'SCT'
              END
-        -- CART_INIT: MED_ADD followed by CART within {cfg$cart_consolidation_days} days.
-        -- The end date is ENDING_CART_DT - 1, so gate against discon uses that.
+        -- CART_INIT: a MED_ADD followed by a CART within
+        -- {cfg$cart_consolidation_days} days. Its end date is
+        -- ENDING_CART_DT - 1, so the gate against the run-out uses that.
         WHEN ec.CART_INIT_FLG = 1
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR date_sub(ec.ENDING_CART_DT, 1) <= ec.LOT1_BASE_DISCON_DT)
         THEN 'CART_INIT'
-        -- MED_ADD: new non-base drug added (not followed by CART within 45 days)
+        -- MED_ADD: a new non-base drug added, with no CART within 45 days.
         WHEN ec.LOT1_BASE_1ST_ADD_MED_DT IS NOT NULL
          AND ec.CART_INIT_FLG = 0
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_BASE_1ST_ADD_MED_DT <= ec.LOT1_BASE_DISCON_DT)
         THEN 'MED_ADD'
-        -- DEATH outranks DISCONTINUATION, but only when no LOT2-start
-        -- trigger exists between runout and death. If the patient ran out
-        -- then started new therapy (or had an SCT) before dying, the runout
-        -- is the true LOT1 end and the new event triggers LOT2.
+        -- DEATH outranks DISCONTINUATION, but only when no LOT2-start trigger
+        -- sits between the run-out and the death. If the patient ran out, then
+        -- started new therapy or had an SCT before dying, the run-out is LOT1's
+        -- real end and the new event opens LOT2.
         WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT
          AND ec.POST_RUNOUT_TRIGGER_FLG = 0 THEN 'DEATH'
-        -- Rule 1: Discontinuation of all agents (also catches former MAINTENANCE_END patients)
+        -- Rule 1: every drug discontinued. This also picks up the patients
+        -- that used to be MAINTENANCE_END.
         WHEN ec.LOT1_BASE_DISCON_DT IS NOT NULL THEN 'DISCONTINUATION'
-        -- Study end (disenrollment not a censoring criterion per study design;
-        -- DISENROLLMENT therefore never triggers in the primary cascade).
+        -- Study end. Disenrollment is not a censoring criterion in this study,
+        -- so DISENROLLMENT never fires in the primary cascade.
         ELSE 'STUDY_END'
       END AS LOT1_BASE_END_REASON,
-      -- Corresponding end date (mirrors end-reason priority).
-      -- CART_INIT ends LOT1 on ENDING_CART_DT - 1.
+      -- The matching end date. Same order as the end reason above. CART_INIT
+      -- ends LOT1 on ENDING_CART_DT - 1.
       CASE
-        -- SCT_AUTO_CONT ends ON the AUTO, not the day before it. See the reason
-        -- cascade above for why.
+        -- SCT_AUTO_CONT ends ON the AUTO, not the day before. The reason
+        -- cascade above says why.
         WHEN ec.LOT1_AUTO_HOLD_DT IS NOT NULL
          AND ec.LOT1_AUTO_HOLD_DT > ec.LOT1_NATURAL_END_DT
          AND (ec.DEATH_DT IS NULL OR ec.LOT1_AUTO_HOLD_DT < ec.DEATH_DT)
@@ -406,10 +431,9 @@ phase_lot1_end <- function(con, ctx) {
         WHEN ec.LOT1_BASE_DISCON_DT IS NOT NULL THEN ec.LOT1_BASE_DISCON_DT
         ELSE ec.OBS_END_DT  -- OBS_END_DT = ENDDATE (disenrollment not a censoring criterion)
       END AS LOT1_BASE_END_DT,
-      -- LOT1_BASE_LENGTH: mirrors the LOT1_BASE_END_DT cascade exactly, so
-      -- length always equals (LOT1_BASE_END_DT - LOT1_START_DT + 1). The
-      -- cascade order matches the END_REASON priority
-      -- (DEATH > DISCONTINUATION > STUDY_END).
+      -- LOT1_BASE_LENGTH mirrors the LOT1_BASE_END_DT cascade exactly, so the
+      -- length is always LOT1_BASE_END_DT - LOT1_START_DT + 1. The order here
+      -- matches the END_REASON priority: DEATH > DISCONTINUATION > STUDY_END.
       CASE
         WHEN ec.LOT1_AUTO_HOLD_DT IS NOT NULL
          AND ec.LOT1_AUTO_HOLD_DT > ec.LOT1_NATURAL_END_DT
@@ -429,8 +453,8 @@ phase_lot1_end <- function(con, ctx) {
          AND ec.CART_INIT_FLG = 0
          AND (ec.LOT1_BASE_DISCON_DT IS NULL OR ec.LOT1_BASE_1ST_ADD_MED_DT <= ec.LOT1_BASE_DISCON_DT)
         THEN datediff(ec.LOT1_BASE_1ST_ADD_MED_DT, ec.LOT1_START_DT) + 1
-        -- DEATH outranks DISCONTINUATION, but only when no post-runout
-        -- LOT2-start trigger exists.
+        -- DEATH outranks DISCONTINUATION, but only when there is no
+        -- post-runout LOT2-start trigger.
         WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT
          AND ec.POST_RUNOUT_TRIGGER_FLG = 0
         THEN datediff(ec.DEATH_DT, ec.LOT1_START_DT) + 1
@@ -448,5 +472,5 @@ phase_lot1_end <- function(con, ctx) {
     ORDER BY LOT1_BASE_END_REASON")
 
 
-  # NDC format QC: do the code list and the claims agree on length?
+  # NDC format QC. Do the code list and the claims agree on length?
 }

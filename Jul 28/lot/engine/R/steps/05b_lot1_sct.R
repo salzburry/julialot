@@ -1,21 +1,21 @@
-# LOT1's own SCT summary. Needs lot1_base, so it is not part of what a
-# fresh-session LOT2-5 run rebuilds.
+# LOT1's own SCT summary. It needs lot1_base, so a fresh-session LOT2-5 run
+# does not rebuild it.
 #
-# It reads views phase_sct left behind rather than anything out of ctx, so ctx
-# is in the signature for consistency with the other phases and nothing more.
+# It reads the views phase_sct left behind, not anything out of ctx. ctx is in
+# the signature to match the other phases, and for no other reason.
 
 phase_lot1_sct <- function(con, ctx) {
   # S15: LOT1 SCT variables
   # Derives: LOT1_TX_AUTO_DT_1/2, TAND_FLG, SING_FLG,
   #          LOT1_TX_ENDDATE, LOT1_TX_ENDDATE_REASON, LOT1_1ST_SCT_DT
-  # Written to a table rather than left for phase_lot1_end to copy: five
-  # aggregates and a window function over the SCT dates, read twelve times
-  # over the run - S16, phase_qc, phase_persist's QC row, and the LOT1
-  # projection LOT2-5 starts from.
-  # A CAR-T inside LOT1's induction window does not end LOT1 - see R/cart_rule.R.
-  # FIRST_CART_DT itself is left alone: LOT1_1ST_SCT_DT below is descriptive,
-  # and under this rule that infusion genuinely is the first SCT during LOT1.
-  # Only the line-ending arithmetic is gated.
+  # Written to a table rather than left for phase_lot1_end to copy. It is five
+  # aggregates and a window function over the SCT dates, read twelve times over
+  # a run: S16, phase_qc, phase_persist's QC row, and the LOT1 projection
+  # LOT2-5 starts from.
+  # A CAR-T inside LOT1's induction window does not end LOT1 - see
+  # R/cart_rule.R. FIRST_CART_DT itself is left alone. LOT1_1ST_SCT_DT below is
+  # descriptive, and under this rule that infusion really is the first SCT
+  # during LOT1. Only the line-ending arithmetic is gated.
   cart_elig <- cart_eligible_dt(cfg$apply_cart_induction_rule,
                                 "ac.TX_DT", "l.LOT1_START_DT",
                                 cfg$induction_window_days)
@@ -31,11 +31,10 @@ phase_lot1_sct <- function(con, ctx) {
       SELECT PATID, LOT1_START_DT, OBS_END_DT FROM lot1_base
     ),
     -- AUTO dates within LOT1 observation window
-    -- Censored at earliest ALLO/CART: ALLO and CART immediately end LOT1,
-    -- so AUTO events after an ALLO/CART are not relevant to LOT1. The
-    -- predicate is strict (<), so an AUTO ON the ALLO/CART date is dropped
-    -- too - the line has ended the day before, and that AUTO belongs to
-    -- whatever follows.
+    -- Censored at the earliest ALLO or CART. Both end LOT1 at once, so an
+    -- AUTO after one of them is nothing to do with LOT1. The predicate is
+    -- strict (<), so an AUTO ON the ALLO/CART date is dropped too: the line
+    -- ended the day before, and that AUTO belongs to whatever follows.
     earliest_non_auto AS (
       SELECT ac.PATID, min(ac.TX_DT) AS FIRST_NON_AUTO_DT
       FROM tx_allo_cart_dates ac
@@ -89,12 +88,13 @@ phase_lot1_sct <- function(con, ctx) {
         AND ac.TX_DT <= l.OBS_END_DT
       GROUP BY ac.PATID
     ),
-    -- Check for ALLO between AUTO_DT_1 and AUTO_DT_2 (inclusive)
-    -- Tandem disqualified if ALLO exists such that AUTO_DT_1 <= ALLO <= AUTO_DT_2
-    -- Belt and braces: the censor above already drops any AUTO at or past the
-    -- first ALLO, so AUTO_DT_2 with an ALLO at or before it cannot survive to
-    -- here and this branch is not reachable from LOT1's own inputs. Kept
-    -- because it is cheap and the two guards fail safe independently.
+    -- Is there an ALLO between AUTO_DT_1 and AUTO_DT_2, inclusive? If so the
+    -- pair is not a tandem.
+    --
+    -- Belt and braces. The censor above already drops any AUTO at or past the
+    -- first ALLO, so an AUTO_DT_2 with an ALLO at or before it cannot reach
+    -- here, and this branch is unreachable from LOT1's own inputs. Kept because
+    -- it is cheap and the two guards fail safe on their own.
     allo_between AS (
       SELECT ap.PATID,
         sum(CASE WHEN ac.TX_DT >= ap.AUTO_DT_1 AND ac.TX_DT <= ap.AUTO_DT_2
@@ -105,20 +105,20 @@ phase_lot1_sct <- function(con, ctx) {
       WHERE ap.AUTO_DT_2 IS NOT NULL
       GROUP BY ap.PATID
     ),
-    -- A tandem is a tandem only if nothing happens between the two transplants.
-    -- The gap alone does not make the pair planned: a patient treated in between
-    -- was not waiting for a second transplant, and the protocol's reading of a
-    -- tandem as planned, and as a continuation of the line of therapy, does
-    -- not describe them.
+    -- A tandem is a tandem only if nothing happens between the two
+    -- transplants. The gap alone does not make the pair planned. A patient
+    -- treated in between was not waiting for a second transplant, and the
+    -- protocol reads a tandem as planned and as a continuation of the line -
+    -- which does not describe them.
     --
-    -- Anything means a non-steroid medication starting, or an allogeneic
-    -- transplant, or a CAR-T. Strictly between, so a claim on either transplant
-    -- date is part of that transplant rather than an interruption of the pair.
+    -- Anything at all means a non-steroid medication starting, an allogeneic
+    -- transplant, or a CAR-T. Strictly between, so a claim on either
+    -- transplant date belongs to that transplant rather than interrupting the
+    -- pair.
     --
     -- This is what makes it safe for the hold date below to follow a tandem
-    -- partner past the line's own window. Nothing can be swallowed by the
-    -- extension, because anything that could have been swallowed breaks the
-    -- tandem before the extension is reached.
+    -- partner past the line's own window. The extension can swallow nothing,
+    -- because anything it could swallow breaks the tandem first.
     tandem_interrupt AS (
       SELECT ap.PATID,
              sum(CASE WHEN x.dt > ap.AUTO_DT_1 AND x.dt < ap.AUTO_DT_2
@@ -180,26 +180,26 @@ phase_lot1_sct <- function(con, ctx) {
           ELSE ap.AUTO_DT_1
         END AS LOT1_TX_AUTO_MAX_DT,
         -- LOT1_AUTO_HOLD_DT: the last AUTO LOT1 OWNS that falls inside LOT1's
-        -- own applicable window, days 0..{cfg$induction_window_days - 1} from the
-        -- line start. It is what stops the line being finalised before a
-        -- transplant that belongs to it - see the SCT_AUTO_CONT branch in
-        -- 06_lot1_end.R.
+        -- own window, days 0..{cfg$induction_window_days - 1} from the line
+        -- start. It is what stops the line being closed before a transplant
+        -- that belongs to it - see the SCT_AUTO_CONT branch in 06_lot1_end.R.
         --
-        -- Deliberately NOT LOT1_TX_AUTO_MAX_DT, which is unbounded: that column
-        -- takes any AUTO in the observation period, including one that sits
-        -- after the line ended and starts LOT2 instead. Only an AUTO inside the
-        -- window can hold the line open.
+        -- Not LOT1_TX_AUTO_MAX_DT, and that is on purpose. That column has no
+        -- upper bound: it takes any AUTO in the observation period, including
+        -- one sitting after the line ended that starts LOT2 instead. Only an
+        -- AUTO inside the window can hold the line open.
         --
-        -- Owns means the single AUTO, or the second of a tandem pair - never the
-        -- excess AUTO, which ENDING_AUTO_DT already closes the line on.
+        -- Owns here means the single AUTO, or the second of a tandem pair.
+        -- Never the excess AUTO, which ENDING_AUTO_DT already closes the line
+        -- on.
         --
-        -- The FIRST transplant of a tandem must be in the window; the second
-        -- need not, and follows it however far out it sits. That is the
-        -- protocol's rule - a planned tandem is a continuation of the line -
-        -- and it is safe here only because tandem_interrupt has already
-        -- established that nothing happened between the two. A pair with a
-        -- medication, an ALLO or a CAR-T in the middle is not a tandem, so the
-        -- extension cannot swallow an event: the event breaks the pair first.
+        -- The FIRST transplant of a tandem must be in the window. The second
+        -- need not be, and follows it however far out it sits. That is the
+        -- protocol's rule: a planned tandem continues the line. It is safe here
+        -- only because tandem_interrupt has already established that nothing
+        -- happened between the two. A pair with a medication, an ALLO or a
+        -- CAR-T in the middle is not a tandem, so the extension cannot swallow
+        -- an event - the event breaks the pair first.
         CASE
           WHEN ap.AUTO_DT_2 IS NOT NULL
            AND datediff(ap.AUTO_DT_2, ap.AUTO_DT_1) <= {cfg$sct_tandem_days}
@@ -221,10 +221,11 @@ phase_lot1_sct <- function(con, ctx) {
     )
     SELECT
       sd.*,
-      -- LOT1_TX_ENDDATE: earliest LOT-ending SCT event - 1 day, floored at the
-      -- line start. The windows above take an SCT on the start date itself, and
-      -- the day before that is earlier than the line - which check_lot_long
-      -- refuses. Floored, the line is one day long and still ends SCT_CART.
+      -- LOT1_TX_ENDDATE: the earliest LOT-ending SCT event, minus a day,
+      -- floored at the line start. The windows above accept an SCT on the start
+      -- date itself, and the day before that is earlier than the line, which
+      -- check_lot_long refuses. Floored, the line is one day long and still
+      -- ends SCT_CART.
       -- {cart_note}
       CASE
         WHEN coalesce(sd.ENDING_AUTO_DT, sd.FIRST_ALLO_DT, sd.ENDING_CART_DT) IS NOT NULL
@@ -236,7 +237,8 @@ phase_lot1_sct <- function(con, ctx) {
           ), 1))
         ELSE NULL
       END AS LOT1_TX_ENDDATE,
-      -- LOT1_TX_ENDDATE_REASON: 1=AUTO, 2=ALLO, 3=CART (whichever is earliest)
+      -- LOT1_TX_ENDDATE_REASON: 1 = AUTO, 2 = ALLO, 3 = CART - whichever came
+      -- first.
       CASE
         WHEN coalesce(sd.ENDING_AUTO_DT, sd.FIRST_ALLO_DT, sd.ENDING_CART_DT) IS NULL THEN NULL
         WHEN coalesce(sd.ENDING_AUTO_DT, cast('9999-12-31' as date))
@@ -249,7 +251,7 @@ phase_lot1_sct <- function(con, ctx) {
         THEN 2
         ELSE 3
       END AS LOT1_TX_ENDDATE_REASON,
-      -- LOT1_1ST_SCT_DT: first SCT of any type during LOT1
+      -- LOT1_1ST_SCT_DT: the first SCT of any type during LOT1.
       CASE
         WHEN coalesce(sd.LOT1_TX_AUTO_DT_1, sd.FIRST_ALLO_DT, sd.FIRST_CART_DT) IS NOT NULL
         THEN least(

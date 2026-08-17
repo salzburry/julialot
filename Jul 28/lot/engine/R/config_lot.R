@@ -29,18 +29,17 @@ cfg_defaults <- list(
   tbl_rx       = "rx",
 
   use_quarterly_tables = as.logical(Sys.getenv("USE_QUARTERLY_TABLES", unset = "TRUE")),
-  # The study window this run covers, and the default for it. build_lot() takes
-  # it as an argument, so these are what a run uses when none is passed.
+  # The study window this run covers. build_lot() takes it as an argument, so
+  # these are what a run uses when none is passed.
   #
-  # LOT bounds every claim scan by the cohort's own INDEX_DATE and OBS_END_DT
-  # rather than by these dates, so they do not filter anything directly - what
-  # they do is say which data this build is entitled to see, and study_end also
-  # picks the quarterly CDM tables. A cohort built to a wider window than these
-  # would have its follow-up silently truncated at the vintage;
-  # check_cohort_window() stops instead.
+  # They do not filter claims. Every claim scan is bounded by the cohort's own
+  # INDEX_DATE and OBS_END_DT. What these dates say is which data this build may
+  # see, and study_end also picks the quarterly CDM tables. A cohort built to a
+  # wider window than these would have its follow-up quietly cut at the vintage.
+  # check_cohort_window() stops the run instead.
   #
-  # These dates are the study period of the cohort this build is usually run
-  # for. Another cohort passes its own window - nothing here has to change.
+  # These are the study period of the cohort this build usually runs for.
+  # Another cohort passes its own window and nothing here changes.
   study_start          = Sys.getenv("STUDY_START", unset = "2016-01-01"),
   study_end            = Sys.getenv("STUDY_END", unset = "2026-03-31"),
 
@@ -72,7 +71,7 @@ cfg_defaults <- list(
 
   # What the cohort build calls its run-status table, before the prefix. Empty
   # means try the names the cohort builds in this folder use. The check refuses
-  # a cohort whose own build did not finish - and refuses the run outright if
+  # a cohort whose own build did not finish. It also refuses the run outright if
   # this names a table that cannot be read.
   cohort_status_table = trimws(Sys.getenv("COHORT_STATUS_TABLE", unset = "")),
   # Stop the build when a face-validity check falls outside its band. Off by

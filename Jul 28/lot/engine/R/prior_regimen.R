@@ -1,22 +1,22 @@
-# An agent in the previous line's regimen cannot start the next one WHILE IT IS
-# STILL RUNNING: the protocol starts a later LOT on "a new MM agent that was not
-# part of the previous LOT regimen", and a drug the patient has not stopped is
-# not new. Its later episodes belong to the line it is already in, so that
-# line's run-out chains forward over them.
+# A drug in the previous line's regimen cannot start the next line while it is
+# still running. The protocol starts a later LOT on "a new MM agent that was not
+# part of the previous LOT regimen". A drug the patient never stopped is not
+# new. Its later episodes belong to the line it is already in, so that line's
+# run-out chains forward over them.
 #
-# Once it has been discontinued it is released. map_discon_gap_days marks the
-# episode whose gap to the next reaches the threshold, and an episode arriving
-# after such a gap is a restart, not a continuation - so it may open a line like
-# any other agent. The exclusion used to be unconditional, which left a line
-# spanning its own agent's 185-day absence.
+# Once the drug is discontinued it is released. map_discon_gap_days flags the
+# episode whose gap to the next reaches the threshold. An episode after such a
+# gap is a restart, not a continuation, so it may open a line like any other
+# drug. The exclusion was once unconditional. That left a line spanning its own
+# drug's 185-day absence.
 #
-# The two halves of that are one rule and ship together. Releasing the drug
-# without breaking the run-out chain would open a line inside a line that was
-# still notionally running; breaking the chain without releasing the drug would
-# leave the returning treatment in no line at all. See discon_per_med_sql below.
+# Those two halves are one rule and ship together. Release the drug without
+# breaking the run-out chain and a line opens inside a line still notionally
+# running. Break the chain without releasing the drug and the returning
+# treatment belongs to no line at all. See discon_per_med_sql below.
 
-# The prior-LOT drugs themselves, added to the set med_cand excludes - which
-# otherwise holds only their permissible biosimilar substitutes.
+# The prior-LOT drugs themselves, added to the set med_cand excludes. Without
+# them that set holds only their permissible biosimilar substitutes.
 prior_regimen_excl_sql <- function() {
   "
       UNION ALL
@@ -24,18 +24,18 @@ prior_regimen_excl_sql <- function() {
       FROM prev_meds_array pma"
 }
 
-# The release applies to a drug that WAS the previous regimen. It does not apply
-# to one excluded only for being a permissible biosimilar substitute: §4.4 says a
+# Only a drug that WAS the previous regimen is released this way. A drug
+# excluded for being a permissible biosimilar substitute is not. §4.4 says a
 # substitute never starts a line, and an old discontinued episode of it must not
-# become a way around that. So the exclusion set carries WHY each drug is in it,
-# and only the actual regimen drugs are releasable.
+# become a way around that. So the exclusion set records WHY each drug is in it,
+# and only the real regimen drugs can be released.
 
-# Per (patient, drug, episode): was this episode preceded by a confirmed
-# discontinuation of the same drug? Spliced as a CTE by every caller that has to
-# tell a restart from a continuation - the start candidates and the run-out
-# guards that mirror them. One definition, because a guard reading a different
-# rule from the candidate it mirrors is how a line ends on an event the next
-# line then refuses to open on.
+# Per patient, drug and episode: did a confirmed discontinuation of the same
+# drug come first? Spliced in as a CTE by every caller that has to tell a
+# restart from a continuation - the start candidates, and the run-out guards
+# that mirror them. One definition for all of them. A guard reading a different
+# rule from the candidate it mirrors ends a line on an event the next line then
+# refuses to open on.
 map_restart_sql <- function() {
   "
       SELECT ms.PATID, ms.MAP_MED_TYPE, ms.MAP_START_DT,
@@ -44,44 +44,45 @@ map_restart_sql <- function() {
       FROM map_stacked ms"
 }
 
-# Where a line's cover ends, per drug: the body of discon_per_med. A drug's
-# episodes chain forward from the line's start, and the run-out is the end of the
-# last one reached; the chain breaks only at an agent that would actually end the
-# line, so a line another agent ended stays where that agent put it.
+# Where a line's cover ends, per drug. This is the body of discon_per_med.
 #
-# A confirmed discontinuation of the drug itself breaks it too. map_discon_gap_days
-# marks an episode whose gap to the next reaches the threshold, and that flag sat
-# on the very row this scan reads without ever being consulted - so a line
-# extended over its own agent's 185-day absence and ran for seven months with no
-# cover. The chain now stops at the last episode before the gap.
+# A drug's episodes chain forward from the line's start. The run-out is the end
+# of the last one reached. The chain breaks only at a drug that would really end
+# the line, so a line another drug ended stays where that drug put it.
 #
-# This is half a rule. Stopping the chain without also letting the drug open a
-# line leaves the returning treatment belonging to nothing at all, so
-# prior_regimen_excl_sql() releases it in the same commit. Neither half is safe
-# alone.
+# A confirmed discontinuation of the drug itself breaks it too.
+# map_discon_gap_days flags an episode whose gap to the next reaches the
+# threshold. That flag sat on the very row this scan reads and was never read.
+# So a line stretched over its own drug's 185-day absence and ran for seven
+# months with no cover. The chain now stops at the last episode before the gap.
 #
-# What else breaks it is deliberately narrow. A drug in this line's own regimen does
-# not - base_meds carries the induction agents AND their permissible substitutes,
-# and neither is a boundary, so a second regimen agent refilling mid-line cannot
-# truncate the first one's cover. Steroids never do. `boundary_gate` lets a
-# caller narrow it further to agents its own rules would accept as a line start.
+# That is half a rule. Stop the chain without also letting the drug open a line
+# and the returning treatment belongs to nothing, so prior_regimen_excl_sql()
+# releases it in the same commit. Neither half is safe alone.
 #
-# Transplant and CAR-T are deliberately not read here. One that ends a line does
-# so at a higher priority than DISCONTINUATION, so a run-out chained past it
-# never surfaces; one that does not end a line - LOT1's induction AUTO, a tandem
-# inside 180 days, CAR-T inside LOT1's window - must not break the chain anyway.
+# What else breaks the chain is kept narrow on purpose. A drug in this line's
+# own regimen does not break it. base_meds holds the induction drugs AND their
+# permissible substitutes, and neither is a boundary, so a second regimen drug
+# refilling mid-line cannot cut the first one's cover short. Steroids never
+# break it. `boundary_gate` lets a caller narrow it further, to drugs its own
+# rules would accept as a line start.
 #
-# LEFT JOIN and aggregates rather than EXISTS: a correlated subquery fails under
+# Transplant and CAR-T are left out on purpose. One that ends a line outranks
+# DISCONTINUATION, so a run-out chained past it never shows. One that does not
+# end a line - LOT1's induction AUTO, a tandem inside 180 days, CAR-T inside
+# LOT1's window - must not break the chain anyway.
+#
+# LEFT JOIN and aggregates rather than EXISTS. A correlated subquery fails under
 # spark.sql.crossJoin.enabled=false.
 discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
                                boundary_tbl = "map_stacked", boundary_gate = "",
                                end_col = NULL) {
-  # The scan is bounded BELOW by the line start and, without this, not at all
-  # above: a base agent's later episodes chain forward for as long as the
-  # patient keeps filling it. Bounding regimen membership at the date the line
-  # was cut short is therefore only half a fix - a refill of an agent that
-  # legitimately IS in the regimen still pushes the run-out past the transplant.
-  # Both halves or neither.
+  # The scan starts at the line start. Without this it has no upper bound at
+  # all: a base drug's later episodes chain forward for as long as the patient
+  # keeps filling it. So bounding regimen membership at the date the line was
+  # cut short is only half a fix. A refill of a drug that really IS in the
+  # regimen still pushes the run-out past the transplant. Both halves or
+  # neither.
   upper <- if (is.null(end_col)) "" else paste0("
           AND ms.MAP_START_DT <= coalesce(ls.", end_col,
           ", cast('9999-12-31' as date))")
@@ -95,11 +96,11 @@ discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
                -- gap, so the lag is what tells this episode it is a restart.
                --
                -- Never for a substitute. A substitution does not advance the
-               -- LOT, so a gap in a substitute's own episodes must not break the
-               -- chain either. Letting it break here while the start, add-med
-               -- and run-out gates all refuse the same drug would end a line on
-               -- a restart that no line can then own - the treatment would
-               -- belong to nothing. The four paths have to read one rule.
+               -- LOT, so a gap in a substitute's own episodes must not break
+               -- the chain either. Let it break here while the start, add-med
+               -- and run-out gates all refuse the same drug, and a line ends on
+               -- a restart that no line can then own. The treatment would
+               -- belong to nothing. All four paths read one rule.
                CASE WHEN bm.SUBSTITUTE_ONLY = 1 THEN 0 ELSE
                  coalesce(lag(ms.MAP_DISCON_FLG) OVER (PARTITION BY ms.PATID, ms.MAP_MED_TYPE
                                           ORDER BY ms.MAP_START_DT), 0) END AS PREV_DISCON
@@ -143,16 +144,16 @@ discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
 }
 
 # Every event that breaks a planned tandem: a non-steroid medication starting,
-# an allogeneic transplant, or a CAR-T. A tandem is only a tandem if nothing
-# happens between the two transplants - the gap alone does not make the pair
+# an allogeneic transplant, or a CAR-T. A tandem is a tandem only if nothing
+# happens between the two transplants. The gap alone does not make the pair
 # planned, and a patient treated in between was not waiting for a second
 # transplant.
 #
-# One definition, spliced into all five places that ask the question: the tandem
-# flags at LOT1 and LOT2-5, the next line's AUTO start gate, and the two
-# run-out guards that mirror it. Five copies of this rule is how the five drift
-# apart, and a tandem test that disagrees with the gate it mirrors puts a
-# transplant in no line at all.
+# One definition, spliced into all five places that ask. The tandem flags at
+# LOT1 and at LOT2-5, the next line's AUTO start gate, and the two run-out
+# guards that mirror it. Five copies of a rule is how five copies drift apart,
+# and a tandem test that disagrees with the gate it mirrors puts a transplant
+# in no line at all.
 tandem_interrupt_events_sql <- function() "
         SELECT PATID, MAP_START_DT AS dt FROM map_stacked
         WHERE MAP_MED_CLASS <> 'STEROID'

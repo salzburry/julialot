@@ -4,25 +4,28 @@
 phase_persist <- function(con, ctx) {
   if (isTRUE(cfg$persist_to_schema)) {
     # Nothing is copied to a table here any more. LOT1_BASE_END and
-    # MMA_MED_PROCESSED were written at this point, along with MAP_STACKED,
-    # LOT1_BASE and LOT1_SCT before them; all five are now written by the step
-    # that builds them, and their views repointed at the tables. Copying them
-    # here was the wrong end of the run to do it: every read before this phase
-    # - phase_lot1_base, phase_lot1_sct, phase_qc, the LOT1 invariants - had
-    # already re-run the query, and the copy repointed nothing, so the reads
-    # after it did too.
+    # MMA_MED_PROCESSED used to be written at this point, along with
+    # MAP_STACKED, LOT1_BASE and LOT1_SCT before them. All five are now written
+    # by the step that builds them, with their views repointed at the tables.
     #
-    # The counts below therefore read tables. They are still counts of what
-    # this run built, which is what the metadata row is for.
+    # Copying them here was the wrong end of the run for it. Every read before
+    # this phase - phase_lot1_base, phase_lot1_sct, phase_qc, the LOT1
+    # invariants - had already re-run the query, and the copy repointed
+    # nothing, so the reads after it did too.
+    #
+    # So the counts below read tables. They are still counts of what this run
+    # built, which is what the metadata row is for.
 
-    # Persist run metadata - parameters + key counts for rerun comparison
+    # Save the run metadata: the parameters and the headline counts, so two
+    # runs can be compared.
     tryCatch({
       cohort_n <- as.numeric(db_q(con, "SELECT count(DISTINCT PATID) AS n FROM lot_patient_input")$n)
       mma_n    <- as.numeric(db_q(con, "SELECT count(*) AS n FROM mma_med_processed")$n)
       map_n    <- as.numeric(db_q(con, "SELECT count(*) AS n FROM map_stacked")$n)
       lot1_n   <- as.numeric(db_q(con, "SELECT count(*) AS n FROM lot1_base")$n)
 
-      # Create metadata table if not exists (full current schema).
+      # Create the metadata table if it is not there, with the current
+      # schema.
       run_step(con, "S22a_create_metadata_table", glue("
         CREATE TABLE IF NOT EXISTS {lot_out('LOT_RUN_METADATA')} (
           RUN_ID STRING, RUN_TIMESTAMP TIMESTAMP,
@@ -35,7 +38,7 @@ phase_persist <- function(con, ctx) {
       "))
       # An older table may pre-date INDUCTION_WINDOW_DAYS_LOT_N, and CREATE
       # TABLE IF NOT EXISTS will not add it. Look before altering: adding a
-      # column that is already there errors.
+      # column that is already there is an error.
       have_cols <- tryCatch({
         d  <- db_q(con, glue("DESCRIBE {lot_out('LOT_RUN_METADATA')}"))
         cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
@@ -57,13 +60,13 @@ phase_persist <- function(con, ctx) {
       } else {
         log_msg("  Metadata schema: INDUCTION_WINDOW_DAYS_LOT_N already present (no migration needed)")
       }
-      # Delete any prior row for this exact run_id (idempotent re-runs)
+      # Delete any earlier row for this run_id, so a re-run is safe.
       run_step(con, "S22b_dedup_metadata", glue("
         DELETE FROM {lot_out('LOT_RUN_METADATA')} WHERE RUN_ID = '{run_id}'
       "))
-      # Name the columns. ALTER TABLE appends new ones rather than putting
-      # them in place, and an older table may carry columns since removed, so
-      # position cannot be relied on.
+      # Name the columns. ALTER TABLE adds new ones at the end rather than in
+      # place, and an older table may still carry columns since removed. So
+      # position cannot be trusted.
       run_step(con, "S22c_insert_run_metadata", glue("
         INSERT INTO {lot_out('LOT_RUN_METADATA')} (
           RUN_ID, RUN_TIMESTAMP, CDM_SCHEMA, WORK_SCHEMA, INPUT_COHORT_TABLE,
@@ -90,9 +93,9 @@ phase_persist <- function(con, ctx) {
       log_msg("  WARNING: Run metadata persist failed: ", conditionMessage(e))
     })
 
-    # Persist QC summary - one row per check for governance
+    # Save the QC summary: one row per check, for governance.
     tryCatch({
-      # Table-driven QC checks: name -> SQL that returns a single count
+      # The QC checks as data: a name, and SQL returning one count.
       qc_defs <- list(
         list(name = "CODELIST_ORPHAN_MEDS", sql = "
           SELECT count(DISTINCT c.CL_MED_ABBR) AS n

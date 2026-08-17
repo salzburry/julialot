@@ -117,7 +117,7 @@ ok(!length(missing),
 # The two facts the catalogue leans on hardest, checked against the code rather
 # than trusted: an ALLO line has no regimen, and no_belantamab is patient-level.
 sct <- readLines(file.path(PARENT, "engine", "R", "steps", "10_lot2_5_base.R"), warn = FALSE)
-ok(any(grepl("ALLO singleton LOTs contain no MM therapies", sct, fixed = TRUE)),
+ok(any(grepl("ALLO LOT holds no MM therapy", sct, fixed = TRUE)),
    "...and the ALLO no-regimen case the catalogue describes is really in the build")
 lc <- readLines(file.path(PARENT, "engine", "R", "line_criteria.R"), warn = FALSE)
 ok(any(grepl('on_fail = "truncate"', lc, fixed = TRUE)) &&
