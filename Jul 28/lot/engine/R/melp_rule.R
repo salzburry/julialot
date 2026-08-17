@@ -22,8 +22,8 @@
 # engine may not otherwise offer.
 #
 # Suppressing both doses of a B.2 pair stops melphalan ending the line at
-# either. It does not hold the line open to the second dose.
-# That is open question 6 in exploration/FILES.md.
+# either. It does not on its own keep the second dose INSIDE the line, which
+# the request also asks for, so melp_hold carries the line to it.
 #
 # The two modes differ only where a coded transplant sits on the same event and
 # the SCT rule fires too. as_asked judges every exposure anyway. yield_to_sct

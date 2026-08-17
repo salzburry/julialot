@@ -23,16 +23,20 @@ MELP_CELLS <- list(
                      "melphalan rule then fills only the gap where a transplant ",
                      "left no procedure code")))
 
-# Neither cell is the rule exactly as written, and the names do not say so: they
-# name the transplant reading, which is what separates the two. On B.2 both take
-# the narrow reading - the melphalan boundary is removed, and the line is not
-# held open to the second dose, because that would need melphalan to join a
-# regimen whose induction window it never entered. Open question 6 in
-# exploration/FILES.md, and n_b2_line_starts counts what it
-# decides.
+# The names say what separates the two cells: the transplant reading, and only
+# that. Both implement the branch table as written.
+#
+# B.2 used to be the exception. Both cells removed the melphalan boundary and
+# left the line to end where it would have, on the reasoning that holding it
+# open would need melphalan to join a regimen whose induction window it never
+# entered - open question 6. The request settles it: both doses stay in the
+# current line. So the line is carried to the second dose, on its run-out
+# rather than as an end reason of its own - see melp_hold in R/melp_rule.R.
+# n_b2_line_starts counts what that decides.
 MELP_B2_READING <- paste0(
-  "B.2: the melphalan boundary is removed and the line is not held open to the ",
-  "second dose. Both cells take this reading - see open question 6.")
+  "B.2: the melphalan boundary is removed AND the line is carried to the ",
+  "second dose, so both stay in the current line. Both cells take this ",
+  "reading - it is the request as written, not a choice between two.")
 
 # The cell's own status row: which run owns the prefix, whether it finished,
 # and when it last moved.

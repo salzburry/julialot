@@ -677,7 +677,7 @@ ok(!any(vapply(MELP_CELLS, function(c_i) claims(c_i$what), logical(1))),
    "no cell describes itself as the rule exactly as written")
 ok(!claims(doc) && !claims(rs),
    "...nor does the folder documentation or the runner")
-ok(exists("MELP_B2_READING") && has(MELP_B2_READING, "not held open"),
+ok(exists("MELP_B2_READING") && has(MELP_B2_READING, "carried to the"),
    "the B.2 reading is stated as a value, so the plan can print it")
 ok(has(rs, "MELP_B2_READING"),
    "...and the plan does print it, before anyone commits three builds")
