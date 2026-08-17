@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# Does the real data contain the scenarios lot/SCENARIOS.md is written around?
+# Does the real data contain the scenarios lot/LOT_RULES.md is written around?
 #
 #   # list what this will count; no connection, touches nothing
 #   Rscript run_scenario_counts.R
@@ -12,7 +12,7 @@
 # Read-only. Every statement is a SELECT; nothing is written to the warehouse.
 # Results print as a table and land in out/lot_scenario_counts.csv.
 #
-# Every scenario in lot/SCENARIOS.md is a claim about what the build DOES to a
+# Every rule in lot/LOT_RULES.md is a claim about what the build DOES to a
 # patient of a given shape. Each is either derived from the code or checked
 # against the vignette catalogue - and neither of those asks the question this
 # script asks, which is whether such a patient exists at all.
@@ -24,7 +24,7 @@
 # the scenario has been mis-read, or that the shape cannot arise for a reason
 # nobody has written down.
 #
-# Each entry names the section of SCENARIOS.md it counts, so a number can be
+# Each entry names the section of LOT_RULES.md it counts, so a number can be
 # taken back to the scenario it is about. HANDLED is the column to read second:
 # it splits the matching patients by what the build actually did with them, so
 # "there are 412 of these" is followed by "and here is how they came out".
@@ -54,7 +54,7 @@ env_flag <- function(nm) identical(toupper(trimws(Sys.getenv(nm, unset = ""))), 
 # `expect` records what the synthetic cohort gave, purely so a wildly different
 # real number is noticeable rather than silently accepted.
 AUDIT_COUNTS <- list(
-  # SCENARIOS.md 3.1 / 4.1 - what starts a line, and how often each way.
+  # LOT_RULES.md 3.1 / 4.1 - what starts a line, and how often each way.
   # The denominator every other count here should be read against.
   list(id = "5.1-how-every-line-starts",
        what = "Lines by what started them, with median length",
@@ -68,7 +68,7 @@ AUDIT_COUNTS <- list(
       GROUP BY LOT_NUM, LOT_START_TYPE
       ORDER BY LOT_NUM, LOT_START_TYPE"),
 
-  # SCENARIOS.md 4.2 - the divergence from the protocol wording, and the one
+  # LOT_RULES.md 4.2 - the divergence from the protocol wording, and the one
   # nobody can size by reading the code. Regimen membership is an episode
   # STARTING inside the window; a dispense arriving under live cover extends the
   # episode it is already in and leaves no start to find. So an agent the patient
@@ -112,7 +112,7 @@ AUDIT_COUNTS <- list(
       GROUP BY 1, 2
       ORDER BY LOT_NUM, HANDLED"),
 
-  # SCENARIOS.md 4.3 - the propagation of the count above. The prior-regimen
+  # LOT_RULES.md 4.3 - the propagation of the count above. The prior-regimen
   # exclusion looks one line back only, so an agent wrongly missing from line
   # N-1 is free to START line N. The signature is a line whose regimen carries
   # an agent that was in the regimen two lines back but not one - which either
@@ -148,7 +148,7 @@ AUDIT_COUNTS <- list(
       GROUP BY LOT_NUM, LOT_START_TYPE
       ORDER BY LOT_NUM, LOT_START_TYPE"),
 
-  # SCENARIOS.md 7.1 - a line ends at the earliest qualifying event. This is
+  # LOT_RULES.md 7.1 - a line ends at the earliest qualifying event. This is
   # the whole cascade as the data actually exercises it. A branch with no rows
   # is a branch nothing has ever taken.
   list(id = "7.1-which-end-reasons-actually-occur",
@@ -163,7 +163,7 @@ AUDIT_COUNTS <- list(
       GROUP BY LOT_BASE_END_REASON
       ORDER BY N_LINES DESC"),
 
-  # SCENARIOS.md 6.5 - the rule added most recently, and the one with no prior
+  # LOT_RULES.md 6.5 - the rule added most recently, and the one with no prior
   # run behind it at all. If SCT_AUTO_CONT is absent from a finished run, the
   # scenario it was written for does not arise in this cohort and the rule is
   # inert; if it is common, every line it touched changed length.
@@ -190,7 +190,7 @@ AUDIT_COUNTS <- list(
       GROUP BY l.LOT_NUM
       ORDER BY l.LOT_NUM"),
 
-  # SCENARIOS.md 6.5 and 14.5 - the defect the rule closed. Every autologous
+  # LOT_RULES.md 6.5 and 14.5 - the defect the rule closed. Every autologous
   # transplant should now sit inside some line. Read from the transplant rather
   # than from the line, which is the only direction that can see one that
   # belongs nowhere. HANDLED says which line took it.
@@ -223,7 +223,7 @@ AUDIT_COUNTS <- list(
       GROUP BY 1
       ORDER BY N_TRANSPLANTS DESC"),
 
-  # SCENARIOS.md 6.3 - a tandem is a pair inside 180 days with a clear gap.
+  # LOT_RULES.md 6.3 - a tandem is a pair inside 180 days with a clear gap.
   # The gap condition is the study team's, added late, and nothing has ever
   # measured how many pairs it excludes. TANDEM vs INTERRUPTED is that number.
   list(id = "6.3-tandem-pairs-and-what-interrupts-them",
@@ -253,7 +253,7 @@ AUDIT_COUNTS <- list(
       GROUP BY 1
       ORDER BY N_PATIENTS DESC"),
 
-  # SCENARIOS.md 3.3 and 14.2 - the regimen cutoff. This should now be empty.
+  # LOT_RULES.md 3.3 and 14.2 - the regimen cutoff. This should now be empty.
   # A non-zero count means the cutoff is not binding somewhere.
   list(id = "3.3-regimen-agents-starting-after-the-line-ended",
        what = "Lines naming a regimen agent with no supply episode inside the line",
@@ -276,7 +276,7 @@ AUDIT_COUNTS <- list(
       GROUP BY e.LOT_NUM
       ORDER BY e.LOT_NUM"),
 
-  # SCENARIOS.md 5.3 - a run-out is a discontinuation only once confirmed.
+  # LOT_RULES.md 5.3 - a run-out is a discontinuation only once confirmed.
   # How many lines rest on the buffer rather than on an event.
   list(id = "5.3-how-discontinuations-were-confirmed",
        what = "DISCONTINUATION lines by whether a next line exists - a PROXY for the confirmation route",
@@ -294,7 +294,7 @@ AUDIT_COUNTS <- list(
       GROUP BY 1
       ORDER BY N_LINES DESC"),
 
-  # SCENARIOS.md 6.4 and 7.3 - the CAR-T rules, both added late and both
+  # LOT_RULES.md 6.4 and 7.3 - the CAR-T rules, both added late and both
   # carrying a window this repository has no document for.
   list(id = "6.4-car-t-lines-and-how-they-resolved",
        what = "CAR-T-started lines and CART_INIT ends, by line",
@@ -309,7 +309,7 @@ AUDIT_COUNTS <- list(
       GROUP BY LOT_NUM
       ORDER BY LOT_NUM"),
 
-  # SCENARIOS.md 11.1 - the returning-agent rule, KNOWN_ISSUES #3. The number
+  # LOT_RULES.md 11.1 - the returning-agent rule, KNOWN_ISSUES #3. The number
   # the open question turns on, so it is here rather than only in the audit.
   list(id = "11.1-lines-spanning-a-long-uncovered-gap",
        what = "Lines whose length exceeds summed covered days - OVERLAP IS DOUBLE-COUNTED",

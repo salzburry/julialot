@@ -124,6 +124,54 @@ back. Both are in `exploration/lot/run_scenario_counts.R`.
 
 `lot/LOT_RULES.md` §4.2, §12 and §14.3.
 
+
+---
+
+## 1b. Two readings the code had to choose, and the protocol does not settle
+
+Both are applied on every run. What is open is not the behaviour but whether it
+is the right reading of the protocol, and each needs a clinician rather than a
+closer reading of the text. `lot/LOT_RULES.md` states what the code does;
+this is why the choice was open.
+
+**A drug returning after its line has ended** — `lot/LOT_RULES.md` §4.3. The
+protocol starts a later line at "the first administration for a new MM agent
+that was not part of the previous LOT regimen". A drug the patient never
+stopped is arguably not new, so the build holds it inside the line that owns it
+and releases it only once discontinued. Reading "new" as "new episode" instead
+would open a line at every refill after a lapse.
+
+**A drug returning mid-line after a break in supply** — §7.4. A supply episode
+reopens whenever cover lapses by a single day, so a refill collected late
+produces a new episode start and reads as an initiation. The build ends the line
+and opens the next one. The patient never stopped the drug.
+
+Both turn on the same thing: whether an episode boundary in claims means a
+treatment decision. `exploration/lot/run_scenario_counts.R` sizes each.
+
+---
+
+## 1c. Where the build differs from the written protocol
+
+Recorded so a reader of the protocol is not surprised by the numbers. None of
+these is a defect; each is a deliberate choice made when the two disagreed.
+
+- **The tandem window is inclusive of 180 elapsed days.** The engine tests
+  `datediff(AUTO_2, AUTO_1) <= sct_tandem_days`; the program-spec crosswalk
+  writes it `datediff + 1 <= 180`. They differ on a pair exactly 180 days apart.
+- **A planned tandem needs a clear gap, not only an interval.** The protocol
+  names the interval; the build also requires nothing to have happened between
+  the two transplants.
+- **A regimen is the agents whose supply episode STARTED in the window.** The
+  protocol reads wider — see item 1 above.
+- **The discontinuation confirmation buffer is applied**, and confirmed two
+  ways where the spec names only one: `lot_discon_confirm_days` of observation,
+  or a LOT-qualifying trigger.
+- **A CAR-T-started line consolidates for 45 days, and the spec says 30** — item 2.
+- **A confirmed discontinuation loses to a later death** — item 3.
+- **Disenrollment is not censoring** in the primary analysis.
+- **Maintenance is not implemented** as a period; it is a descriptive flag.
+
 ---
 
 ## 2. The CAR-T consolidation window is 45 days, and the spec says 30
