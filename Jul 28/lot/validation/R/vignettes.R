@@ -54,7 +54,8 @@ VIGNETTES <- list(
        events = function(p) rbind(
          ev(0,   "MED",  "1L regimen starts"),
          ev(30,  "AUTO", "first autologous transplant"),
-         ev(30 + p$sct_tandem_days - 1L, "AUTO", "second AUTO, one day inside the tandem window")),
+         ev(30 + p$sct_tandem_days, "AUTO",
+            "second AUTO, exactly on the tandem window's last inside day")),
        expected = function(p) paste0(
          "The two AUTOs are one tandem pair. A tandem is allowed, so LOT1 is not ",
          "ended by the second one."),
@@ -110,8 +111,8 @@ VIGNETTES <- list(
          ev(0,  "MED",     "1L regimen starts"),
          ev(p$induction_window_days, "MED_ADD",
             "bridging agent added, the first day it can be an addition"),
-         ev(p$induction_window_days + 1L + p$cart_consolidation_days - 1L, "CART",
-            "CAR-T inside the window from the day after the addition")),
+         ev(p$induction_window_days + p$cart_consolidation_days, "CART",
+            "CAR-T exactly on the window's last inside day, counted from the addition")),
        expected = function(p) paste0(
          "LOT1 ends with reason CART_INIT. The bridging agent stays part of LOT1 ",
          "rather than starting a line of its own."),
@@ -124,8 +125,8 @@ VIGNETTES <- list(
        events = function(p) rbind(
          ev(0,  "MED",     "1L regimen starts"),
          ev(p$induction_window_days, "MED_ADD", "agent added"),
-         ev(p$induction_window_days + 1L + p$cart_consolidation_days + 1L, "CART",
-            "CAR-T one day outside the window")),
+         ev(p$induction_window_days + p$cart_consolidation_days + 1L, "CART",
+            "CAR-T on the first day outside the window")),
        expected = function(p) paste0(
          "Not CART_INIT. The addition is an ordinary regimen change and the CAR-T ",
          "is handled by the ordinary rules for a CAR-T event."),
@@ -137,8 +138,9 @@ VIGNETTES <- list(
        where = "lot/engine/R/steps/03_mma_map.R:396 - datediff(next_start, map_end) >= map_discon_gap_days",
        events = function(p) rbind(
          ev(0,   "MED", "1L regimen starts"),
-         ev(60,  "GAP_START", "administrative hold - no claims"),
-         ev(60 + p$map_discon_gap_days - 1L, "MED", "same agent resumes, one day inside the threshold")),
+         ev(59,  "MAP_END", "last day the agent is covered - the gap starts d60"),
+         ev(59 + p$map_discon_gap_days - 1L, "MED",
+            "same agent resumes, one day inside the threshold measured from MAP_END_DT")),
        expected = function(p) "No discontinuation. The agent's exposure continues across the gap.",
        why = paste0("Prior-authorisation holds and hospitalisations both produce ",
                     "silence in claims. Neither is a clinical decision to stop.")),
@@ -148,8 +150,9 @@ VIGNETTES <- list(
        where = "lot/engine/R/steps/03_mma_map.R:396",
        events = function(p) rbind(
          ev(0,  "MED", "1L regimen starts"),
-         ev(60, "GAP_START", "no claims"),
-         ev(60 + p$map_discon_gap_days, "MED", "same agent resumes, exactly at the threshold")),
+         ev(59, "MAP_END", "last day the agent is covered"),
+         ev(59 + p$map_discon_gap_days, "MED",
+            "same agent resumes, exactly at the threshold measured from MAP_END_DT")),
        expected = function(p) paste0(
          "Discontinuation. The predicate is >=, so the threshold day itself counts ",
          "as a gap."),
@@ -304,9 +307,13 @@ VIGNETTES <- list(
   list(id = "line_beyond_max", title = "A patient who would reach a line above MAX_LOT",
        param = "max_lot", confidence = "derived",
        where = "lot/engine/R/build_lot.R - lines outside 1..max_lot are refused by check_lot_long",
-       events = function(p) rbind(
-         ev(0, "MED", "1L starts"),
-         ev(200 * p$max_lot, "MED", paste0("a regimen change that would be LOT", p$max_lot + 1L))),
+       # One regimen change per line, so the timeline actually reaches the cap
+       # rather than asserting it. Two events could only ever demonstrate LOT2.
+       events = function(p) do.call(rbind, c(
+         list(ev(0, "MED", "1L starts")),
+         lapply(seq_len(p$max_lot), function(k)
+           ev(200 * k, "MED", paste0("a new agent, opening LOT", k + 1L,
+                                     if (k == p$max_lot) " - above the cap" else ""))))),
        expected = function(p) paste0(
          "No line above ", p$max_lot, " is built. The patient's later therapy is ",
          "not represented, so a count of lines is a count of lines BUILT, not of ",
@@ -380,6 +387,15 @@ check_vignettes <- function(p, v = VIGNETTES) {
     if (!(db > dw))
       bad <- c(bad, paste0("parameter '", nm, "': the 'beyond' case (d", db,
                            ") is not later than the 'within' case (d", dw, ")"))
+    # Later is not enough. A pair that straddles the value from two days out
+    # tests that the rule exists, not where its edge is - and every off-by-one
+    # this catalogue has carried sat in that slack. The two sides must be
+    # ADJACENT, so 'within' is the last day inside and 'beyond' the first day
+    # outside. If that is wrong, one of them is on the wrong side of the edge.
+    if (db > dw && db - dw != 1L)
+      bad <- c(bad, paste0("parameter '", nm, "': the two sides are ", db - dw,
+                           " days apart (d", dw, " and d", db, "), so neither is ",
+                           "pinned to the boundary. They must be consecutive days"))
     if (identical(w$expected(p), b$expected(p)))
       bad <- c(bad, paste0("parameter '", nm, "': both sides expect the same thing, ",
                            "so the boundary is not being tested"))

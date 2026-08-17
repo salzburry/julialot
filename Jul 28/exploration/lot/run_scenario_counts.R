@@ -174,8 +174,16 @@ AUDIT_COUNTS <- list(
       SELECT l.LOT_NUM,
              count(*)                                     AS N_LINES,
              count(DISTINCT l.PATID)                      AS N_PATIENTS,
+             -- NOT end minus transplant: for SCT_AUTO_CONT those are the same
+             -- date by construction, so that column could only ever be zero.
+             -- The comparator has to be the end the line would have had, and
+             -- LOT_BASE_DISCON_DT is the one carried on the row - the run-out
+             -- the branch overrode. Null where the line had no run-out, which
+             -- is a case this cannot size from the published table at all.
              percentile_approx(datediff(l.LOT_BASE_END_DT,
-                                        l.LOT_TX_AUTO_MAX_DT), 0.5) AS MEDIAN_DAYS_PAST_TX,
+                                        l.LOT_BASE_DISCON_DT), 0.5) AS MEDIAN_DAYS_EXTENDED,
+             sum(CASE WHEN l.LOT_BASE_DISCON_DT IS NULL THEN 1 ELSE 0 END)
+               AS N_NO_RUNOUT_TO_COMPARE,
              percentile_approx(l.LOT_BASE_LENGTH, 0.5)    AS MEDIAN_LENGTH
       FROM {t$long} l
       WHERE l.LOT_BASE_END_REASON = 'SCT_AUTO_CONT'
@@ -187,8 +195,8 @@ AUDIT_COUNTS <- list(
   # than from the line, which is the only direction that can see one that
   # belongs nowhere. HANDLED says which line took it.
   list(id = "6.5-does-every-transplant-have-a-line",
-       what = "Autologous transplants by whether a line covers them, and which line",
-       expect = "IN_A_LINE should account for all of them inside observation",
+       what = "LINE 1 autologous transplants by whether a line covers them - NOT every AUTO",
+       expect = "partial: reads LOT1_SCT only. QC E5 is the complete version, over TX_AUTO_DATES",
        sql = "
       WITH tx AS (
         SELECT s.PATID, s.LOT1_TX_AUTO_DT_1 AS TX_DT FROM {t$sct} s
@@ -219,8 +227,8 @@ AUDIT_COUNTS <- list(
   # The gap condition is the study team's, added late, and nothing has ever
   # measured how many pairs it excludes. TANDEM vs INTERRUPTED is that number.
   list(id = "6.3-tandem-pairs-and-what-interrupts-them",
-       what = "Two-transplant patients by gap length and whether anything falls between",
-       expect = "the INTERRUPTED rows are the pairs the clear-gap rule removed",
+       what = "LINE 1 two-transplant patients by gap and intervening MEDICATION only",
+       expect = "partial: the engine also breaks a tandem on an ALLO or CAR-T between the two, and applies the rule at every line",
        sql = "
       WITH pairs AS (
         SELECT s.PATID, s.LOT1_TX_AUTO_DT_1 AS A1, s.LOT1_TX_AUTO_DT_2 AS A2
@@ -271,8 +279,8 @@ AUDIT_COUNTS <- list(
   # SCENARIOS.md 5.3 - a run-out is a discontinuation only once confirmed.
   # How many lines rest on the buffer rather than on an event.
   list(id = "5.3-how-discontinuations-were-confirmed",
-       what = "DISCONTINUATION lines by whether an event or the buffer confirmed them",
-       expect = "both should be substantial; all-buffer would mean the guard never fires",
+       what = "DISCONTINUATION lines by whether a next line exists - a PROXY for the confirmation route",
+       expect = "proxy only: a next line existing does not establish that it, rather than the 90-day buffer, confirmed the run-out",
        sql = "
       SELECT CASE WHEN datediff(l.LOT_BASE_END_DT, l.LOT_BASE_DISCON_DT) = 0
                    AND EXISTS (SELECT 1 FROM {t$long} n
@@ -304,8 +312,8 @@ AUDIT_COUNTS <- list(
   # SCENARIOS.md 11.1 - the returning-agent rule, KNOWN_ISSUES #3. The number
   # the open question turns on, so it is here rather than only in the audit.
   list(id = "11.1-lines-spanning-a-long-uncovered-gap",
-       what = "Lines whose length far exceeds their covered days, by end reason",
-       expect = "the returning-agent question is about the tail of this",
+       what = "Lines whose length exceeds summed covered days - OVERLAP IS DOUBLE-COUNTED",
+       expect = "over-counts cover on combination therapy, so uncovered days are understated. A floor, not a measure",
        sql = "
       WITH covered AS (
         SELECT l.PATID, l.LOT_NUM, l.LOT_BASE_LENGTH, l.LOT_BASE_END_REASON,

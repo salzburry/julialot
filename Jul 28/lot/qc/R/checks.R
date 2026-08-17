@@ -33,23 +33,6 @@ counted <- function(body, detail = "NULL") {
          body, "\n) q")
 }
 
-# Every AUTO date the build records, across all five lines, as one UNION. Line 1
-# names its columns LOT1_TX_AUTO_DT_1/_2 and lines 2-5 do the same with their own
-# number, so the shape is identical and only the table and prefix change.
-#
-# Reading line 1 alone was the gap: it could not show that an AUTO owned by a
-# later line sits in exactly one line, which is the whole claim these checks make.
-all_auto_sql <- function(t) {
-  h <- c(t$sct, t$sct2, t$sct3, t$sct4, t$sct5)
-  paste(vapply(seq_along(h), function(i) sprintf(
-    "      SELECT PATID, %d AS LOT_NUM, LOT%d_TX_AUTO_DT_1 AS TX_DT
-      FROM %s WHERE LOT%d_TX_AUTO_DT_1 IS NOT NULL
-      UNION ALL
-      SELECT PATID, %d AS LOT_NUM, LOT%d_TX_AUTO_DT_2 AS TX_DT
-      FROM %s WHERE LOT%d_TX_AUTO_DT_2 IS NOT NULL",
-    i, i, h[i], i, i, i, h[i], i), character(1)), collapse = "\n      UNION ALL\n")
-}
-
 LOT_QC_CHECKS <- list(
 
   # ---- A. Line structure ---------------------------------------------------
@@ -248,24 +231,24 @@ LOT_QC_CHECKS <- list(
     "concat(pid, ' LOT', LOT_NUM)")),
 
   list(id = "B5c", group = "End reason", severity = "fail",
-       what = "a line covers the in-window transplant its own SCT table records",
+       what = "a line covers every transplant inside its own window",
        why = paste0("This is the defect SCT_AUTO_CONT exists to close: a line ",
                     "that ends before a transplant inside its own window leaves ",
                     "that transplant in no line, because the next line's start ",
-                    "gate refuses it for being in-window. Read from the ",
-                    "UNCLAMPED source - the published table nulls any AUTO date ",
-                    "after the line end, so a check written against it can never ",
-                    "fire and would report clean on the very defect it names. ",
-                    "Every line, not line 1: LOT1_SCT through LOT5_SCT all keep ",
-                    "their raw dates, and a transplant owned by a later line is ",
-                    "exactly the case line 1 alone could not see."),
-       needs = c("final", "sct", "sct2", "sct3", "sct4", "sct5"),
+                    "gate refuses it for being in-window. Read from ",
+                    "TX_AUTO_DATES - every processed autologous event, before ",
+                    "any line claims one. The per-line SCT tables cannot answer ",
+                    "this: an AUTO outside a line's window is stored as ",
+                    "ENDING_AUTO_DT and never as TX_AUTO_DT_1, so a check over ",
+                    "those columns cannot see it and would report clean. Read ",
+                    "against LOT_LONG, not the published table, so a line ",
+                    "dropped by the line criteria does not read as a missing ",
+                    "one."),
+       needs = c("long", "auto"),
        sql = function(t, p) counted(paste0("
-    SELECT ", mask("a.PATID"), " AS pid, a.LOT_NUM, a.TX_DT AS tx
-    FROM (
-", all_auto_sql(t), "
-    ) a
-    INNER JOIN ", t$final, " l ON a.PATID = l.PATID AND l.LOT_NUM = a.LOT_NUM
+    SELECT ", mask("a.PATID"), " AS pid, l.LOT_NUM, a.TX_DT AS tx
+    FROM ", t$auto, " a
+    INNER JOIN ", t$long, " l ON a.PATID = l.PATID
     WHERE a.TX_DT BETWEEN l.LOT_START_DT
                       AND date_add(l.LOT_START_DT,
                             CASE l.LOT_START_TYPE
@@ -547,33 +530,36 @@ LOT_QC_CHECKS <- list(
       AND LOT1_TX_ENDDATE < LOT1_START_DT"), "pid")),
 
   list(id = "E5", group = "Transplant", severity = "warn",
-       what = "no transplant falls in a gap between two lines",
+       what = "every processed transplant belongs to some line",
        why = paste0("The one failure mode the other transplant checks cannot ",
                     "see. Every check beside this one starts from a line and ",
-                    "asks whether its dates agree - so a transplant that ended ",
-                    "up in NO line has no row to be wrong on and is invisible ",
-                    "to all of them. Read from the transplant instead: an ",
-                    "autologous event with a line after it must sit inside some ",
-                    "line's span. A trailing transplant is excluded, because a ",
-                    "patient whose last line has ended has nowhere left to put ",
-                    "one. Reads LOT1_SCT through LOT5_SCT, so a transplant owned ",
-                    "by any line counts. Warn rather than fail: real data can ",
-                    "put an event in a gap for reasons that are not defects."),
-       needs = c("final", "sct", "sct2", "sct3", "sct4", "sct5"),
+                    "asks whether its dates agree, so a transplant that ended ",
+                    "up in NO line has no row to be wrong on. This starts from ",
+                    "TX_AUTO_DATES instead - every processed autologous event, ",
+                    "whatever any line made of it - and requires each to sit ",
+                    "inside some line's span. ",
+                    "A trailing transplant is allowed only once the build has ",
+                    "run out of lines to give it: with fewer than max_lot lines ",
+                    "there was still a line available, so an unassigned event ",
+                    "is the missing next line, which is exactly the case a ",
+                    "later-line-must-exist condition used to exclude. ",
+                    "Warn rather than fail: an event past the end of ",
+                    "observation is data, not a defect."),
+       needs = c("long", "auto"),
        sql = function(t, p) counted(paste0("
-    SELECT a.pid, a.dt
+    SELECT a.pid, a.dt, a.n_lines
     FROM (
-      SELECT ", mask("PATID"), " AS pid, PATID AS k, TX_DT AS dt
-      FROM (
-", all_auto_sql(t), "
-      ) u
+      SELECT ", mask("x.PATID"), " AS pid, x.PATID AS k, x.TX_DT AS dt,
+             (SELECT count(*) FROM ", t$long, " c WHERE c.PATID = x.PATID) AS n_lines
+      FROM ", t$auto, " x
     ) a
-    LEFT JOIN ", t$final, " l ON a.k = l.PATID
-    GROUP BY a.pid, a.k, a.dt
+    LEFT JOIN ", t$long, " l ON a.k = l.PATID
+    GROUP BY a.pid, a.k, a.dt, a.n_lines
     HAVING sum(CASE WHEN a.dt BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT
                     THEN 1 ELSE 0 END) = 0
-       AND sum(CASE WHEN l.LOT_START_DT > a.dt THEN 1 ELSE 0 END) > 0"),
-    "concat(pid, ' @ ', dt)")),
+       AND a.n_lines < ", p$max_lot, "
+       AND a.dt <= max(l.LOT_BASE_END_DT)"),
+    "concat(pid, ' @ ', dt, ' with ', n_lines, ' lines')")),
 
   # ---- F. The tables against each other ------------------------------------
 
