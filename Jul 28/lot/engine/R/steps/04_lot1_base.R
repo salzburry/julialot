@@ -29,27 +29,36 @@ phase_lot1_base <- function(con, ctx) {
   # went on to start a later line as well. Double attribution, and it moved the
   # run-out with it, because a stranded agent is a base agent.
   #
-  # ALLO only, at LOT1. A CAR-T inside the induction window is part of LOT1
-  # under the induction exemption (R/cart_rule.R), and one outside the window is
-  # outside the regimen window too, so it has nothing left to strand. An AUTO
-  # cannot strand anything either - it only ever extends the line (LOT_RULES.md
-  # §6.5). LOT2-5 has no induction exemption, so CAR-T counts there.
+  # ALLO always. CAR-T only when the induction exemption is off.
+  #
+  # With the exemption on - the pinned setting - a CAR-T inside the window is
+  # part of LOT1 and ends nothing, and one outside the window is outside the
+  # regimen window too, so it has nothing left to strand. Switch the exemption
+  # off for a sensitivity run and that stops being true: the CAR-T then ends
+  # LOT1 the day before, and the rest of the window would keep collecting agents
+  # into a line already over. So the cutoff follows the exemption.
+  #
+  # An AUTO cannot strand anything either way. It only ever extends the line
+  # (LOT_RULES.md §6.5). LOT2-5 has no exemption, so CAR-T always counts there.
   #
   # Floored at the line start, so an ALLO on day one gives a one-day line whose
   # regimen is that day's agents rather than an empty regimen with a cutoff
   # before its own start.
-  run_step(con, "S08b_lot1_regimen_cutoff", "
+  run_step(con, "S08b_lot1_regimen_cutoff", glue("
     CREATE OR REPLACE TEMPORARY VIEW lot1_regimen_cutoff AS
     SELECT
       l1.PATID,
       l1.LOT1_START_DT,
-      min(CASE WHEN ac.SCT_TYPE = 'ALLO' AND ac.TX_DT >= l1.LOT1_START_DT
+      min(CASE WHEN ac.TX_DT >= l1.LOT1_START_DT
+                AND (ac.SCT_TYPE = 'ALLO'
+                     OR (ac.SCT_TYPE = 'CART'
+                         AND {if (isTRUE(cfg$apply_cart_induction_rule)) 0L else 1L} = 1))
                THEN greatest(l1.LOT1_START_DT, date_sub(ac.TX_DT, 1)) END)
         AS REGIMEN_CUTOFF_DT
     FROM lot1_start l1
     LEFT JOIN tx_allo_cart_dates ac ON l1.PATID = ac.PATID
     GROUP BY l1.PATID, l1.LOT1_START_DT
-  ", qc = "
+  "), qc = "
     SELECT count(*) AS n_patients,
            sum(CASE WHEN REGIMEN_CUTOFF_DT IS NOT NULL THEN 1 ELSE 0 END) AS n_cut
     FROM lot1_regimen_cutoff")

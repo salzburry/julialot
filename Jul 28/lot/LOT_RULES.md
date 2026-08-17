@@ -158,9 +158,13 @@ added-medication logic, but are not counted in `LOT_MED_CNT` and not listed in
 ### 3.3 A regimen is bounded by the date the line ended
 
 Every line picks its regimen over its induction window, but no further than its
-own end. Where a transplant ends the line early, `REGIMEN_CUTOFF_DT` closes the
-window on the day before it, so an agent first dispensed after the line was over
-is not in its regimen. The cutoff bounds the per-drug episode scan too: without
+own end. Where a transplant ends the line early, `REGIMEN_CUTOFF_DT` closes the window
+on the day before it. An agent first dispensed after the line was over is not
+in its regimen. Which transplants cut the window depends on the line and on the
+CAR-T rule: an allogeneic transplant always cuts, at every line. A CAR-T cuts
+at lines 2 to 5 always, and at line 1 only when `apply_cart_induction_rule` is
+off — with it on, an in-window CAR-T is part of line 1 and ends nothing (§6.4).
+An autologous transplant never cuts, because it only extends a line (§6.5). The cutoff bounds the per-drug episode scan too: without
 that, a refill of an agent legitimately in the regimen would push the run-out
 past the transplant. `04_lot1_base.R`, `10_lot2_5_base.R`, `prior_regimen.R`.
 
@@ -276,9 +280,13 @@ stops at the first break, and there are two kinds
 (`lot/engine/R/prior_regimen.R`):
 
 - **the drug's own discontinuation.** An episode whose gap to the next reaches
-  `map_discon_gap_days` carries `MAP_DISCON_FLG`, and the chain stops there. So a
-  line ends at its own run-out rather than spanning the absence, and the
-  returning episode is a restart that §4.3 releases.
+`map_discon_gap_days` carries `MAP_DISCON_FLG`, and the chain stops there. So a
+line ends at its own run-out rather than spanning the absence, and the
+returning episode is a restart that §4.3 releases. This never applies to a
+permissible substitute. A gap in a substitute's own episodes does not break the
+chain, because a substitution does not advance the line (§4.4) — and breaking
+here while §4.3's gates refuse the same drug would end a line on a restart no
+line could then own.
 - **a different agent that would end the line.** Deliberately narrow: a drug in
   **this** line's own regimen does not break it, and neither does a permissible
   substitute of one — so a second regimen agent refilling mid-line cannot

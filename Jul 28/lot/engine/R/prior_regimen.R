@@ -93,8 +93,16 @@ discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
                -- Did this drug's PREVIOUS episode end in a confirmed
                -- discontinuation? MAP_DISCON_FLG sits on the episode before the
                -- gap, so the lag is what tells this episode it is a restart.
-               coalesce(lag(ms.MAP_DISCON_FLG) OVER (PARTITION BY ms.PATID, ms.MAP_MED_TYPE
-                                        ORDER BY ms.MAP_START_DT), 0) AS PREV_DISCON
+               --
+               -- Never for a substitute. A substitution does not advance the
+               -- LOT, so a gap in a substitute's own episodes must not break the
+               -- chain either. Letting it break here while the start, add-med
+               -- and run-out gates all refuse the same drug would end a line on
+               -- a restart that no line can then own - the treatment would
+               -- belong to nothing. The four paths have to read one rule.
+               CASE WHEN bm.SUBSTITUTE_ONLY = 1 THEN 0 ELSE
+                 coalesce(lag(ms.MAP_DISCON_FLG) OVER (PARTITION BY ms.PATID, ms.MAP_MED_TYPE
+                                          ORDER BY ms.MAP_START_DT), 0) END AS PREV_DISCON
         FROM ", map_tbl, " ms
         INNER JOIN ", start_view, " ls ON ms.PATID = ls.PATID
         INNER JOIN base_meds bm ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
