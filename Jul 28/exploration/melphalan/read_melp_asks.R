@@ -65,6 +65,23 @@ for (c_i in cells)
                     "with run_aug1_melp.R.", call. = FALSE))
   }
 
+# --- 4. is the CAR-T 60-day induction rule on in these cells? ---------------
+# Asked of what each cell RECORDED, not of the code. A cell build sets only
+# LOT_CONTRACT_OVERRIDE and APPLY_MELP_RULE, so it inherits the contract's
+# apply_cart_induction_rule - but reading it back off the run is the only
+# answer that describes the tables being compared rather than the file on disk.
+q4 <- do.call(rbind, lapply(cells, function(c_i) {
+  s <- tryCatch(db_q(con, paste0("
+    SELECT CONTRACT_SETTINGS FROM ", tbl(c_i, "LOT_RUN_METADATA"),
+    " ORDER BY 1 LIMIT 1"))$CONTRACT_SETTINGS[1],
+    error = function(e) NA_character_)
+  v <- if (is.na(s)) NA_character_
+       else sub("^.*apply_cart_induction_rule=([^|]*).*$", "\\1", s)
+  data.frame(CELL = c_i$id,
+             CART_INDUCTION_RULE = if (is.na(s)) "(no metadata row)" else v,
+             stringsAsFactors = FALSE)
+}))
+
 # The denominator: melphalan anywhere in follow-up, from the reference cell.
 # map_stacked is bounded to the patient's own observation, so "anywhere in the
 # table" is "anywhere in follow-up" without a date test.
@@ -163,5 +180,7 @@ write_out(q2_mono, "melp_ask2_2l_melp_mono.csv",
           "   ...and 2L melphalan on its own")
 write_out(q3, "melp_ask3_sct_in_melp_lot.csv",
           "3. An SCT inside a melphalan-containing LOT, by line")
+write_out(q4, "melp_ask4_cart_induction_rule.csv",
+          "4. The CAR-T 60-day induction rule, as each cell recorded it")
 
 cat("\nDone. ", n_denom, " melphalan patients, ", length(cells), " cells.\n", sep = "")
