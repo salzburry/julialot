@@ -300,7 +300,11 @@ main <- function() {
   set_lot_config(cfg)
   stop_if_blank(cfg$pwd, "DATABRICKS_PWD environment variable is not set.")
 
-  which_tbl <- trimws(Sys.getenv("AUDIT_TABLE", unset = "LOT_LONG"))
+  # The study population is the default. LOT_LONG is the same run BEFORE the
+  # line criteria, so it can hold patients the study removed - ask for it with
+  # AUDIT_TABLE=LOT_LONG when the question is the pure algorithm, and the
+  # provenance sheet will name it.
+  which_tbl <- trimws(Sys.getenv("AUDIT_TABLE", unset = "LOT_LONG_FINAL"))
   if (!which_tbl %in% c("LOT_LONG_FINAL", "LOT_LONG"))
     stop("AUDIT_TABLE must be LOT_LONG_FINAL or LOT_LONG.", call. = FALSE)
 
@@ -404,8 +408,13 @@ main <- function() {
   counts <- do.call(rbind, rows)
 
   # The tables must still be the attempt the counts started on, or the sheet
-  # mixes two builds and nothing on it says so.
-  recheck_lot_attempt(con, pfx, run, "scenario count")
+  # mixes two builds and nothing on it says so. Fatal: a workbook whose counts
+  # straddle two attempts must not exist, because only the provenance sheet
+  # names an attempt and it would name the wrong one for half the rows.
+  if (!isTRUE(recheck_lot_attempt(con, pfx, run, "scenario count")))
+    stop("The LOT run moved while the scenarios were being counted, so no ",
+         "workbook was written. Re-run once the rebuild has finished.",
+         call. = FALSE)
 
   write_workbook(list("What these numbers describe" = PROVENANCE,
                       "How a line is built" = HOW_A_LINE_IS_BUILT,

@@ -614,6 +614,16 @@ build_dashboard_run <- function(here, cohort_table, lot_prefix,
   # hold when the answer is "no files" as much as when it is nineteen.
   if (isTRUE(cfg$export_csv)) write_csv_exports(panels, cfg)
   else clear_csv_exports(cfg, "EXPORT_CSV is FALSE")
+  # The complete regimen distribution is a study-team deliverable, not just a
+  # panel. Every other panel may degrade to "Not shown" and the dashboard is
+  # still useful; this one absent means the deliverable silently did not ship,
+  # so it stops the run instead.
+  ar <- Filter(function(p) identical(p$name, "all_regimens"), panels)
+  if (length(ar) == 1L && (is.null(ar[[1]]$data) || !nrow(ar[[1]]$data)))
+    stop("The all_regimens panel produced no rows, so the complete ",
+         "regimen-distribution CSV was not written. That table is the Q1 ",
+         "deliverable; fix the read (see the FAIL line above) and re-run ",
+         "rather than shipping a dashboard without it.", call. = FALSE)
   log_msg("Dashboard written: ", path)
   log_msg(SEP)
   invisible(path)

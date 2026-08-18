@@ -34,7 +34,13 @@ if (requireNamespace("glue", quietly = TRUE)) library(glue) else
     }
     paste0(c(out, substr(t, pos, nchar(t))), collapse = "")
   }
-sql_text <- function(x) paste0("'", gsub("'", "''", as.character(x)), "'")
+# The engine's own contract, scalar on purpose: a vector handed in whole comes
+# back as one NULL. The builders must quote per element, and a test helper
+# that quietly vectorized would hide exactly that mistake.
+sql_text <- function(x) {
+  if (length(x) != 1L || is.na(x)) return("NULL")
+  paste0("'", gsub("'", "''", as.character(x)), "'")
+}
 source(file.path(ROOT, "R", "stockpiling.R"))
 source(file.path(ROOT, "R", "rechallenge.R"))
 
@@ -50,9 +56,14 @@ ok(any(grepl("^INDUCTION_WINDOW_DAYS,60", cfgcsv)) &&
      any(grepl("^CART_CONSOLIDATION_DAYS,45", cfgcsv)),
    "...and those are the numbers the engine ships, not a second copy")
 # A run's own contract wins over this environment: a line has to be judged by
-# the window it was built under.
-ok(identical(stock_cfg(list(INDUCTION_WINDOW_DAYS_LOT_N = "45"))$indn, 45L),
-   "the run's recorded window is preferred over the environment")
+# the window it was built under. from_run is lot_run_meta()'s shape - the
+# values live inside the $settings string, not as top-level elements.
+ok(identical(stock_cfg(list(settings = paste0(
+     "cart_consolidation_days=45|induction_window_days=60|",
+     "lot_n_induction_window_days=45")))$indn, 45L),
+   "the run's recorded CONTRACT_SETTINGS wins over the environment")
+ok(identical(stock_cfg(list(settings = NA_character_))$indn, 30L),
+   "...and a run too old to have recorded one falls back cleanly")
 ok(identical(stock_cfg(list(INDUCTION_WINDOW_DAYS_LOT_N = "nope"))$indn, 30L),
    "a window that is not a number falls back rather than becoming NA")
 
@@ -215,6 +226,15 @@ ok(grepl("WHERE 1 = 0", subs_cte_sql(NULL), fixed = TRUE),
 sp <- data.frame(original_med = "RITU", substitute_med = "RITU-ABBS")
 ok(has(subs_cte_sql(sp), "'RITU'") && has(subs_cte_sql(sp), "'RITU-ABBS'"),
    "pairs are inlined uppercased and quoted")
+# More than one pair is the production shape, and the one a whole-vector
+# sql_text() collapses to a single (NULL, NULL) row.
+sp2 <- data.frame(original_med = c("RITU", "DARA"),
+                  substitute_med = c("RITU-ABBS", "DARA-BIOS"))
+s2 <- subs_cte_sql(sp2)
+ok(has(s2, "('RITU', 'RITU-ABBS')") && has(s2, "('DARA', 'DARA-BIOS')"),
+   "two pairs render as two VALUES rows, each quoted on its own")
+ok(!grepl("NULL", s2, fixed = TRUE),
+   "...and none of them collapses to NULL through a whole-vector quote")
 ok(has(subs_cte_sql(tbl = "cl.subs"), "FROM cl.subs"),
    "...or read from a warehouse table where the code list is published there")
 aa2 <- stock_absorbed_add_sql("lines", "maps", "claims", sc, "r1", "run", "stamp", sp)

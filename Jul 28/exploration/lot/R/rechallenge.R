@@ -31,17 +31,27 @@
 # any threshold - that needs an alternate build.
 
 RECHALL_SETTINGS <- list(
-  ind1 = list(env = "INDUCTION_WINDOW_DAYS",       default = 60L),
-  indn = list(env = "INDUCTION_WINDOW_DAYS_LOT_N", default = 30L),
-  cart = list(env = "CART_CONSOLIDATION_DAYS",     default = 45L),
-  partner = list(env = "RECHALL_PARTNER_DAYS",     default = 30L))
+  ind1 = list(key = "induction_window_days",       env = "INDUCTION_WINDOW_DAYS",       default = 60L),
+  indn = list(key = "lot_n_induction_window_days", env = "INDUCTION_WINDOW_DAYS_LOT_N", default = 30L),
+  cart = list(key = "cart_consolidation_days",     env = "CART_CONSOLIDATION_DAYS",     default = 45L),
+  # Not an engine setting, so it has no contract key - env only.
+  partner = list(key = NULL, env = "RECHALL_PARTNER_DAYS", default = 30L))
 
+# The engine windows come from the measured run's recorded CONTRACT_SETTINGS
+# (lot_run_meta()'s $settings); the environment is only the dry-run fallback.
 rechall_cfg <- function(from_run = NULL) {
+  rec <- function(settings, key) {
+    if (is.null(settings) || length(settings) != 1L || is.na(settings)) return(NULL)
+    hit <- regmatches(settings, regexpr(paste0("(^|\\|)", key, "=[^|]*"), settings))
+    if (!length(hit)) return(NULL)
+    sub(paste0("^\\|?", key, "="), "", hit)
+  }
   out <- list()
   for (nm in names(RECHALL_SETTINGS)) {
     s <- RECHALL_SETTINGS[[nm]]
-    v <- if (!is.null(from_run) && !is.null(from_run[[s$env]])) from_run[[s$env]]
-         else Sys.getenv(s$env, unset = "")
+    v <- if (!is.null(s$key) && !is.null(from_run))
+           rec(from_run$settings, s$key) else NULL
+    if (is.null(v)) v <- Sys.getenv(s$env, unset = "")
     v <- suppressWarnings(as.integer(trimws(v)))
     out[[nm]] <- if (is.na(v) || v < 1L) s$default else v
   }
