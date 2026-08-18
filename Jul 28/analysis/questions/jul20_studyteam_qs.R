@@ -855,8 +855,7 @@ q3_cart_shift_table <- function(shift) {
 # A "MELP boundary" is a line transition attributable to melphalan: the
 # earlier line ended MED_ADD with MELP as the added drug, and/or the next
 # line is MED-started on the date a MELP MAP begins. Each boundary is
-# bucketed by timing against the first MELP MAP of the line it follows,
-# because the rule text is ambiguous (see the summary file).
+# bucketed by timing against the first MELP MAP of the line it follows.
 q3_melp_screen <- function(con, lot_long, map_tbl, melp) {
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW _jul20_melp_maps AS
@@ -1510,16 +1509,9 @@ main <- function() {
     "== Q3: PRELIMINARY rule screens - NOT an engine re-run ==",
     "These screens identify the patients and line boundaries the two candidate rules would touch, from the already-derived LOT output. They do not re-derive lines: moving a boundary changes induction windows, regimens, discontinuation dates, add-med picks, transplant classification and every later line. Exact numbers need an isolated scenario re-run of the LOT derivation (separate scenario output tables; production untouched) once the rules are confirmed.",
     "",
-    "-- (a) MELP 60-180-day rule --",
+    "-- (a) MELP screen --",
     "The melphalan question is answered in exploration/melphalan/ - run_aug1_melp.R with read_melp_asks.R and read_melp_decisions.R. Do not quote this section for it.",
-    "The rule this screen reads is ambiguous: 'if a MELP occurs >=60 and <=180 days after the start of the first MELP MAP in a LOT, it does not advance the LOT; otherwise MELP should be treated as part of the LOT.' Read literally, BOTH branches keep MELP inside the line, so no MELP ever advances a line. What that leaves open:",
-    "  1. Does the rule apply only to repeated MELP episodes 60-180 days apart, or to every MELP?",
-    "  2. Is it restricted to an autologous-transplant (conditioning) context?",
-    "  3. Is the anchor the first MELP MAP of the line, or",
-    "  4. ... the transplant date?",
-    "  5. Does it apply to one specific line (e.g. LOT1) or",
-    "  6. ... to all lines?",
-    "The melp_rule_inventory file buckets every MELP-attributable boundary by timing against the first MELP MAP of its line (including 'no earlier MELP' rows), so each candidate reading can be sized from the same table. The lines-shift file shows the current lines-per-patient distribution next to the screened distributions under the literal and the narrow (60-180-day-only) readings.",
+    "The melp_rule_inventory file buckets every MELP-attributable boundary by timing against the first MELP MAP of its line, including 'no earlier MELP' rows. The lines-shift file puts the current lines-per-patient distribution beside the screened ones.",
     "",
     "-- (b) CAR-T induction-window rule --",
     sprintf(paste0(
