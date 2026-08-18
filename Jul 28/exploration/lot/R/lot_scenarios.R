@@ -457,7 +457,7 @@ LOT_SCENARIOS <- list(
        note = paste0("ONE line, ending DEATH at d220 - not DISCONTINUATION at ",
                      "d100, even though the run-out has 120 days of observation ",
                      "behind it and is confirmed. LOT_BASE_DISCON_DT still ",
-                     "carries d100. This is open question 3 in KNOWN_ISSUES.md."),
+                     "carries d100. This is open question 2 in KNOWN_ISSUES.md."),
        sql = "
       SELECT l.LOT_NUM, count(DISTINCT l.PATID) AS N_PATIENTS
       FROM {t$long} l
