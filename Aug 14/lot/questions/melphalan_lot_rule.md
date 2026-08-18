@@ -1,5 +1,23 @@
 # Melphalan: a proposed line-advancing rule
 
+> **Historical — read `Jul 28/exploration/FILES.md` for the current statement.**
+>
+> This records the melphalan ask as it stood in this delivery. Two things in it
+> have since been settled and one has since been shown to be wrong, so quoting
+> it for today's question gives the wrong answer:
+>
+> - **Question 6, whether B.2 holds the line open to the second dose, is
+>   settled.** The restated ask says in words that both doses stay in the
+>   current line, and `Jul 28/lot/engine/R/melp_rule.R` carries the line to the
+>   second dose on its run-out (`melp_hold`).
+> - **The "against the shipped engine" column is out of date.** It was written
+>   before the returning-drug release, which frees a line's own drug once
+>   `map_discon_gap_days` (90) separates two of its episodes. With that rule in
+>   place A.2 adds no boundary the engine would not open anyway, and B.3 removes
+>   one rather than moving one.
+> - **`Aug 14/` is a fork of `Jul 28/`, not its successor**, despite the name.
+>   The melphalan work continued in `Jul 28/exploration/melphalan/`.
+
 A study-team request to change how a melphalan (`MELP`) administration advances
 the line of therapy, and what the build does today.
 

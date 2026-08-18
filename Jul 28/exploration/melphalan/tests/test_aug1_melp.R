@@ -358,8 +358,14 @@ ok(has(rd, "INSIDE = 1 AND GAP <") && has(rd, "GAP <  \", REST, \""),
 # The number that does not need interpreting.
 ok(has(rd, "Melphalan doses inside NO line") && has(rd, "PRIOR_LINE_TYPE"),
    "unowned doses are counted, and attributed to the line type before them")
-ok(has(rd, "AFTER_THE_CAP='no' should be empty; CART / SCT_ALLO rows are the "),
-   "...with the one open gap named, so a nonzero row is not read as new")
+# No prior line type is an expected exception any more: melp_line_type_guard
+# lets the hold override the single-day ALLO and no-regimen CAR-T short-circuits,
+# so a pre-cap unowned dose after either is a finding rather than a known case.
+ok(has(rd, "AFTER_THE_CAP='no' should be EMPTY - CART and SCT_ALLO rows ") &&
+     !has(rd, "CART / SCT_ALLO rows are the "),
+   "...and no prior line type is offered as an expected exception")
+ok(has(rd, "melp_line_type_guard() closed that"),
+   "...naming what closed it, so the claim is checkable against the engine")
 # Treatment past the LOT cap is outside every line by construction, so counting
 # it as unowned puts a number in that block no ownership decision can move. The
 # same carve-out the synthetic harness makes on the same invariant.

@@ -13,8 +13,9 @@ affects, so nobody reads the rules without meeting the caveat.
 
 What has been measured is named under each item. The counts live in
 `exploration/lot/run_lot_audit_counts.R`, which also carries the ones that sized
-the defects in the Closed section — worth re-running after a rebuild, since those
-should now come back empty. They are read-only — every statement is a `SELECT`, nothing is written — and they run
+the defects already fixed — the regimen window, the tandem AUTO ownership and
+the guard that mirrors it. Those are worth re-running after a rebuild, since
+they should now come back empty; each one says so in its own entry there. They are read-only — every statement is a `SELECT`, nothing is written — and they run
 against a finished study run:
 
 ```
@@ -123,7 +124,9 @@ answering (c) closes the entry.
 lines whose regimen holds an agent present two lines back and absent one line
 back. Both are in `exploration/lot/run_scenario_counts.R`.
 
-`lot/LOT_RULES.md` §4.2, §12 and §14.3.
+`lot/LOT_RULES.md` §4.2 states the window the code applies. The two
+readings it leaves open are 1b below, and the places the build parts company
+with the written protocol are 1c.
 
 
 ---
@@ -142,10 +145,21 @@ stopped is arguably not new, so the build holds it inside the line that owns it
 and releases it only once discontinued. Reading "new" as "new episode" instead
 would open a line at every refill after a lapse.
 
-**A drug returning mid-line after a break in supply** — §7.4. A supply episode
-reopens whenever cover lapses by a single day, so a refill collected late
-produces a new episode start and reads as an initiation. The build ends the line
-and opens the next one. The patient never stopped the drug.
+**A drug returning mid-line after a break in supply** — §5.2 and §7.4. A supply
+episode reopens whenever cover lapses by a single day, so a refill collected
+late leaves a new `MAP_START_DT` behind. What the build does with that episode
+is NOT decided by the one-day lapse: for a drug the line already owns, a new
+episode is a boundary only once `MAP_DISCON_FLG` sits on the one before it,
+which takes `map_discon_gap_days` — 90 days — between them. Under 90 days the
+drug is still the line's own, the run-out chains straight over the gap, and
+`med_cand` refuses the drug as a line start. So a late refill does not end a
+line; ninety days off the drug does.
+
+This entry used to say a single day was enough. It was wrong, and wrong in the
+direction that makes the rule look far more sensitive to ordinary refill
+behaviour than it is. What is genuinely open is the 90 itself: whether three
+months without a fill is a treatment decision or a claims artefact — a patient
+on a long holiday, a switch of pharmacy benefit, a stockpile.
 
 Both turn on the same thing: whether an episode boundary in claims means a
 treatment decision. `exploration/lot/run_scenario_counts.R` sizes each.
@@ -198,7 +212,7 @@ source? If it is 30, the change is a one-line config edit and a rebuild.
 every downstream reader refuses it as the study's numbers. There is no way to
 produce a 30-day run by accident.
 
-`lot/LOT_RULES.md` §14.1.
+`lot/LOT_RULES.md` §4.2, which states the 45 the code applies.
 
 ---
 
@@ -237,4 +251,4 @@ discontinuation, with the death recorded as the patient outcome it already is?
 **Not urgent, and here is why.** `LOT*_BASE_DISCON_DT` is on the row either way,
 so the other reading is recoverable in analysis without a rebuild.
 
-`lot/LOT_RULES.md` §7.5 and §14.2.
+`lot/LOT_RULES.md` §7.5.
