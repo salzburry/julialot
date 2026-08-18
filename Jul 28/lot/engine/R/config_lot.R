@@ -44,8 +44,12 @@ cfg_defaults <- list(
   study_end            = Sys.getenv("STUDY_END", unset = "2026-03-31"),
 
   # ---- LOT parameters ----
-  # One 90-day discontinuation rule only, at MAP level per drug. There is no
-  # second LOT-level wait.
+  # Two 90-day settings, two different rules. map_discon_gap_days is PER DRUG:
+  # a gap this long between one drug episode and the next makes the later one
+  # a restart. lot_discon_confirm_days is PER LINE: a raw run-out becomes the
+  # line's discontinuation only after this much observation past it, or a
+  # LOT-start trigger. Same number, not the same rule - see the header of
+  # steps/10_lot2_5_base.R.
   induction_window_days       = as.integer(Sys.getenv("INDUCTION_WINDOW_DAYS", unset = "60")),
   lot_n_induction_window_days = as.integer(Sys.getenv("INDUCTION_WINDOW_DAYS_LOT_N", unset = "30")),
   map_discon_gap_days         = as.integer(Sys.getenv("MAP_DISCON_GAP_DAYS", unset = "90")),

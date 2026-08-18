@@ -15,7 +15,11 @@
 # words with the same patient in days beside them, the patient counts by line
 # number, what every code in the output table means, and the open questions
 # still waiting on the study team. Without openxlsx the same sheets come out
-# as CSVs.
+# as CSVs, named after the workbook they stand in for.
+#
+# Without SCENARIO_EXECUTE the preview goes to out/lot_scenarios_reference.xlsx
+# instead - no counts, no connection - so it never overwrites the counted
+# workbook.
 #
 # The lines in each scenario are not predictions. Each one was produced by
 # running the engine's own SQL over that patient, and the synthetic harness
@@ -107,7 +111,9 @@ OPEN_QUESTIONS <- data.frame(
            "counts."),
     paste0("A break of 90 days or more in one drug's supply counts as ",
            "stopping it. Under 90 days the line carries on through the gap. ",
-           "One day either side turns one line into two."),
+           "When the drug that comes back is one the current line was built ",
+           "on, one day either side turns one line into two - S05 and S06. ",
+           "A drug from an older line opens a new line at any gap."),
     paste0("The line is recorded as ending at the death. The date treatment ",
            "stopped is still on the row, so the other reading is recoverable ",
            "without a rebuild."),
@@ -244,7 +250,8 @@ write_workbook <- function(sheets, path) {
   cat("openxlsx is not installed - writing CSVs instead of the workbook.\n")
   for (nm in names(sheets)) {
     f <- file.path(dirname(path),
-                   paste0("lot_scenarios_", gsub("[^A-Za-z0-9]+", "_", tolower(nm)), ".csv"))
+                   paste0(sub("\\.xlsx$", "", basename(path)), "_",
+                          gsub("[^A-Za-z0-9]+", "_", tolower(nm)), ".csv"))
     utils::write.csv(sheets[[nm]], f, row.names = FALSE)
     cat("Wrote ", f, "\n", sep = "")
   }
@@ -261,7 +268,7 @@ main <- function() {
                         "Scenarios"           = scen,
                         "Open questions"      = OPEN_QUESTIONS,
                         "What the codes mean"  = WHAT_THE_CODES_MEAN),
-                   file.path(out_dir, "lot_scenarios.xlsx"))
+                   file.path(out_dir, "lot_scenarios_reference.xlsx"))
     return(invisible(0L))
   }
 

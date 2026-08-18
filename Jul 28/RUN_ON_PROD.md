@@ -51,7 +51,7 @@ Drop `AUDIT_EXECUTE` to list what it would count; needs no connection.
 
 ## 1b. The scenario workbook for the study team
 
-How a line is created, seventeen worked patients with the lines the engine
+How a line is created, thirty-one worked patients with the lines the engine
 builds from them, and how many real patients are in each shape by line number.
 
 ```
@@ -62,7 +62,8 @@ Writes `exploration/lot/out/lot_scenarios.xlsx`: what the numbers describe
 (run id, cohort, table, settings), how a line is built, the scenarios, the
 patient counts, the open questions, and what the codes mean. Needs `openxlsx`;
 without it the same sheets come out as CSVs. Drop `SCENARIO_EXECUTE` to see
-the scenarios with no connection.
+the scenarios with no connection — that preview goes to
+`lot_scenarios_reference.xlsx`, so it never overwrites the counted workbook.
 
 Run it before step 2 as well if you want the counts on the current tables.
 

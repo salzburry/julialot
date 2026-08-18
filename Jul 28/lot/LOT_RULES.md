@@ -506,7 +506,9 @@ Two stages, not one flat list.
 recorded when two land on the same date.** Every branch is gated against the ones under it. The transplant branch fires
 only when `LOT1_TX_ENDDATE <= LOT1_BASE_1ST_ADD_MED_DT` and `<=
 LOT1_BASE_DISCON_DT`. `MED_ADD` fires only when the added agent is at or before
-the run-out. And so on (`06_lot1_end.R`). So a later event never displaces an earlier one.
+the run-out. And so on (`06_lot1_end.R`). So a later event never displaces an
+earlier one — with one exception: `DEATH` is not gated on a date comparison, so
+a later death displaces an earlier confirmed run-out (§7.5).
 
 | Order | Branch | End date |
 |---|---|---|
@@ -527,8 +529,13 @@ nothing. Death is excluded from it explicitly rather than by the ordering.
 
 ### 7.2 Within the transplant branch the earliest date wins
 
-The reason names which type it was — `SCT_AUTO`, `SCT_ALLO` or `SCT_CART`. There
-is no priority between the three; an ALLO does not outrank an earlier AUTO.
+The reason names which type it was — `SCT_AUTO`, `SCT_ALLO` or `SCT_CART`. On
+different dates there is no priority between the three; an ALLO does not
+outrank an earlier AUTO. On an exact same-day tie the recorded reason follows
+the order the CASE tests in, and the two sites disagree: line 1 records AUTO,
+then ALLO, then CAR-T (`05b_lot1_sct.R`); lines 2–5 record ALLO, then CAR-T,
+then AUTO (`10_lot2_5_base.R`). The end date is identical either way — open
+question Q4 in the scenario workbook.
 
 `SCT_CART` therefore arises two ways: a line that ends at a CAR-T, and a
 CAR-T-started line with no consolidation agent, which spans a single day.
