@@ -26,13 +26,10 @@ MELP_CELLS <- list(
 # The names say what separates the two cells: the transplant reading, and only
 # that. Both implement the branch table as written.
 #
-# B.2 used to be the exception. Both cells removed the melphalan boundary and
-# left the line to end where it would have, on the reasoning that holding it
-# open would need melphalan to join a regimen whose induction window it never
-# entered - open question 6. The request settles it: both doses stay in the
-# current line. So the line is carried to the second dose, on its run-out
-# rather than as an end reason of its own - see melp_hold in R/melp_rule.R.
-# n_b2_line_starts counts what that decides.
+# B.2 in both cells: the melphalan boundary is removed AND the line is carried
+# to the second dose, so both doses stay in the current line. The carry rides on
+# the run-out rather than on an end reason of its own - see melp_hold in
+# R/melp_rule.R. n_b2_line_starts checks it.
 MELP_B2_READING <- paste0(
   "B.2: the melphalan boundary is removed AND the line is carried to the ",
   "second dose, so both stay in the current line. Both cells take this ",
@@ -78,9 +75,9 @@ cell_status <- function(con, c_i) {
 }
 
 # The same rows again, immediately before anything is published. Everything read
-# so far came off tables a concurrent build can replace, so this is the only
-# thing standing between "these three cells agreed when we started" and "they
-# still describe the same three builds now".
+# so far comes off tables a concurrent build can replace, so this is the only
+# check standing between "these three cells agreed at the start of the read" and
+# "they still describe the same three builds".
 #
 # Not a lock - a rebuild finishing inside the read still goes undetected if it
 # also finishes before this runs. It closes the window rather than the door,
@@ -106,9 +103,9 @@ melp_status_unchanged <- function(con, cells, before) {
 
 # Where both scripts publish.
 #
-# One resolver, because they had two: the runner wrote beside its build logs and
-# the recovery read wrote to the artifacts directory, so a recovery could
-# succeed while the stale CSVs it replaced sat next to the logs, still looking
+# One resolver for both scripts. With two - the runner writing beside its build
+# logs and the recovery read writing to the artifacts directory - a recovery can
+# succeed while the CSVs it means to replace sit next to the logs, still looking
 # current.
 melp_out_dir <- function(script_dir) {
   d <- trimws(Sys.getenv("OUTPUT_DIR", unset = ""))
@@ -695,12 +692,12 @@ melp_metrics <- function(con, ...) {
   do.call(cbind, unname(out))
 }
 
-# Each cell against the reference. No direction is predicted, and that is the
+# Each cell against the reference. No direction is predicted. That is the
 # difference between this and the sensitivity sweep: there a threshold moves a
-# number a way we can reason about beforehand, so predicting the sign first is a
-# test. Here the rule moves boundaries in both directions at once - A.2 adds
-# lines, B.2 and B.3 remove them - and which wins is what the run is for.
-# Writing down a guess would be a guess.
+# number one way, so predicting the sign first is a test. Here the rule moves
+# boundaries in both directions at once - B.1 adds a line, B.2 and B.3 remove
+# one - and which wins is what the run is for. A written-down guess would be a
+# guess.
 melp_compare <- function(results, cells = MELP_CELLS) {
   ref <- results[results$cell == "reference", , drop = FALSE]
   if (!nrow(ref)) stop("No reference cell in the results.", call. = FALSE)
@@ -931,19 +928,17 @@ melp_modes_apart <- function(results) {
 # ---- The read ---------------------------------------------------------------
 # What every cell was built over, before any number is read off it.
 #
-# MELP_INPUT_FIELDS compares CODE_MD5 across the three cells, which catches a
-# cell built from different code than its siblings but not all three built from
-# an engine that has since changed - they agree with each other perfectly.
+# MELP_INPUT_FIELDS compares CODE_MD5 across the three cells. That catches a
+# cell built from different code than its siblings. It does not catch all three
+# being built from an engine that no longer matches this checkout, because
+# those three agree with each other perfectly.
 #
-# So the recorded hash is also compared against the code actually running. Same
+# So the recorded hash is also compared against the code now running. Same
 # fingerprint the build writes: every .R under the engine's R/ plus build.R,
 # concatenated in radix order and hashed.
 #
-# A warning rather than a stop, unlike the sibling check. A cell built by other
-# code is a broken experiment; a cell built by older code is a stale one, and
-# whether that matters is the reader's call - re-reading last month's cells to
-# reproduce last month's numbers is a legitimate thing to do, and stopping it
-# would make the rebuild the only option.
+# A mismatch stops the read. MELP_ALLOW_STALE_CODE=TRUE downgrades it to a
+# warning, for reading an old cell on purpose.
 melp_check_code <- function(inputs, lot_root) {
   # The build's own function, not a second implementation of it - a hash that
   # has to equal the one in the metadata cannot be computed a different way.
@@ -978,14 +973,13 @@ melp_check_code <- function(inputs, lot_root) {
     if (is.null(x) || length(x) == 0 || is.na(x[1])) "<none>" else as.character(x[1])
   }, character(1)))
   if (identical(was, now)) return(invisible(TRUE))
-  # A STOP, not a warning. This used to warn and hand the caller FALSE to act
-  # on, which two readers did and one did not - so the headline metrics could
-  # still be written from cells an older engine built, and a warning scrolls
-  # past. Numbers that describe a different engine are worse than no numbers,
-  # because nothing downstream carries the disagreement.
+  # A STOP, not a warning. A warning scrolls past, and a reader that carries on
+  # writes headline numbers from cells a different engine built. Numbers that
+  # describe another engine are worse than no numbers, because nothing
+  # downstream carries the disagreement.
   #
-  # MELP_ALLOW_STALE_CODE=TRUE is the deliberate escape, for looking at an old
-  # cell on purpose. It downgrades this to the warning it used to be.
+  # MELP_ALLOW_STALE_CODE=TRUE is the escape, for reading an old cell on
+  # purpose. It downgrades this to a warning.
   msg <- paste0("These cells were built by LOT code with fingerprint ",
                 paste(was, collapse = "/"), ", and the code reading them is ",
                 now, ". The numbers would describe the engine as it was when ",
@@ -1147,16 +1141,15 @@ melp_report <- function(con, cells, out_dir, lot_root = NULL) {
   # last point where saying so costs nothing.
   melp_status_unchanged(con, cells, status)
 
-  # Written aside, then moved into place. Writing the four names directly meant
-  # a failure on the second left the first already replaced and the other three
-  # from the previous read - the mixed set this whole function exists to avoid,
-  # arrived at a different way.
+  # Written aside, then moved into place. Writing the four names directly lets a
+  # failure on the second leave the first already replaced and the other three
+  # from the previous read - the mixed set this function exists to avoid,
+  # reached a different way.
   #
-  # The renames are not one commit: a process killed between them still tears
-  # the set. It narrows the window from the length of four queries and a write
-  # to the length of a rename, which is the cheap part of the fix; a truly
-  # atomic swap needs a run-stamped directory, which changes where the outputs
-  # live.
+  # The renames are not one operation: a process killed between them still tears
+  # the set. This narrows the window from four queries and a write down to a
+  # rename. A truly atomic swap needs a run-stamped directory, which changes
+  # where the outputs live.
   dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
   out <- list(melp_cells.csv = res, melp_vs_reference.csv = cmp,
               melp_modes_apart.csv = ap, melp_modes_patients.csv = pd,

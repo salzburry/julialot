@@ -12,9 +12,9 @@ ROOT <- local({
   dirname(d)
 })
 PARENT <- dirname(ROOT)
-# The engine is not a sibling any more - this package sits in exploration/,
-# so the engine is reached through the study folder. PARENT stays the area,
-# because the proposal is documented in exploration/FILES.md.
+# This package sits in exploration/, so the engine is reached through the study
+# folder. PARENT is the area, because the proposal is documented in
+# exploration/FILES.md.
 LOT    <- file.path(dirname(PARENT), "lot", "engine")
 
 pass <- 0L; fail <- 0L
@@ -77,15 +77,14 @@ cat("\n-- and every fragment opens with its own newline --\n")
 # template's leading blank line - so a fragment that does not open with one
 # welds onto the text before it.
 #
-# Not a formatting nit. melp_allo_guard was the one without, and every
-# melphalan cell died in Spark on
+# Not a formatting nit. A fragment without its own newline produces
 #   AND i.INJECT_DT <= lot2_start.OBS_END_DTAND lot2_start.LOT2_START_TYPE ...
-# which parses as an identifier OBS_END_DTAND followed by a table name. The
-# off-path tests above all passed, because off emits nothing and nothing is
-# what they check.
+# which parses as an identifier OBS_END_DTAND followed by a table name, and
+# kills the cell in Spark. The off-path tests above cannot catch it: off emits
+# nothing, and nothing is what they check.
 #
-# Checked for all of them, not for that one: the next fragment added has the
-# same choice to get wrong.
+# Checked for every fragment, because each new one has the same choice to get
+# wrong.
 FRAGMENTS <- list(
   melp_lot1_ctes          = list(yld),
   melp_lotn_ctes          = list(yld, 2, 30L, 45L, "single_day"),
@@ -98,7 +97,7 @@ for (nm in names(FRAGMENTS)) {
   ok(nzchar(v) && startsWith(v, "\n"),
      paste0(nm, "() emits something and opens it with a newline"))
 }
-# The splice that broke, assembled rather than described.
+# The splice itself, assembled rather than described.
 arm <- melp_inject_arm(yld, "lot2_start", "LOT2_START_DT", "lot2_start.OBS_END_DT",
                        melp_allo_guard(2L, "single_day"))
 ok(has(arm, "<= lot2_start.OBS_END_DT\n"),
@@ -177,10 +176,10 @@ ok(has(b1, "YIELD_THIS = 0") && !has(b1, "YIELD_NEXT"),
 
 cat("\n-- inside induction is THIS exposure's date, not the drug's membership --\n")
 # The two are the same only for the first dose. Dosed on day 10 and again on day
-# 100, melphalan is in the base regimen throughout - so reading it off the
-# regimen calls the day-100 dose an A branch, and B.1 or B.2 is lost. That was
-# the bug: the rule and the July measurement, which computes DAYS_INTO_LINE per
-# exposure, disagreed about the same patient.
+# 100, melphalan is in the base regimen throughout - so reading INSIDE off the
+# regimen would call the day-100 dose an A branch, and B.1 or B.2 would be lost.
+# The rule reads the exposure's own date against the line's induction end, the
+# way a per-exposure DAYS_INTO_LINE does.
 s <- melp_decision_ctes(ask, "L", "S", "E", "L.IND_END")
 ok(has(s, "CASE WHEN p.EXPO_DT <= L.IND_END THEN 1 ELSE 0 END AS INSIDE"),
    "each exposure is judged on its own date against the line's induction end")
@@ -235,9 +234,9 @@ ok(length(sup) == 3L &&
      has(sup[2], "YIELD_THIS = 0 AND YIELD_NEXT = 0") &&
      has(sup[3], "YIELD_THIS = 0 AND YIELD_NEXT = 0"),
    "...and a removed one on whichever exposure it would have fallen on")
-# A.1's later exposure. The email says a first dose inside induction with the
-# next under 180 days does not advance the LOT, and nothing in the file said so
-# until now: the two out-of-induction arms both test INSIDE = 0.
+# A.1's later exposure. The ask says a first dose inside induction with the next
+# under 180 days does not advance the LOT. It needs its own arm: the two
+# out-of-induction arms both test INSIDE = 0.
 ok(has(sup[3], "INSIDE = 1") && has(sup[3], "NEXT_DT AS SUPPRESS_DT"),
    "A.1's later exposure is taken off the candidate list, on its own date")
 ok(has(sup[3], paste0("GAP < ", CFG$melp_advance_days)) &&
@@ -358,21 +357,21 @@ ok(has(rd, "INSIDE = 1 AND GAP <") && has(rd, "GAP <  \", REST, \""),
 # The number that does not need interpreting.
 ok(has(rd, "Melphalan doses inside NO line") && has(rd, "PRIOR_LINE_TYPE"),
    "unowned doses are counted, and attributed to the line type before them")
-# No prior line type is an expected exception any more: melp_line_type_guard
-# lets the hold override the single-day ALLO and no-regimen CAR-T short-circuits,
-# so a pre-cap unowned dose after either is a finding rather than a known case.
+# No prior line type is an expected exception. melp_line_type_guard lets the
+# hold override the single-day ALLO and no-regimen CAR-T short-circuits, so a
+# pre-cap unowned dose after either is a finding.
 ok(has(rd, "AFTER_THE_CAP='no' should be EMPTY - CART and SCT_ALLO rows ") &&
      !has(rd, "CART / SCT_ALLO rows are the "),
    "...and no prior line type is offered as an expected exception")
-ok(has(rd, "melp_line_type_guard() closed that"),
-   "...naming what closed it, so the claim is checkable against the engine")
+ok(has(rd, "melp_line_type_guard() lets the hold override both"),
+   "...naming the guard that reaches those lines, so the claim is checkable against the engine")
 # Treatment past the LOT cap is outside every line by construction, so counting
 # it as unowned puts a number in that block no ownership decision can move. The
 # same carve-out the synthetic harness makes on the same invariant.
 ok(has(rd, "AFTER_THE_CAP") && has(rd, "ln.N_LINES >= \", cfg$max_lot, \""),
    "...and doses past the LOT cap are split out rather than counted as unowned")
-# Spark rejects a correlated scalar subquery that is not an aggregate, so the
-# ORDER BY / LIMIT 1 form this used to carry would have died on the warehouse.
+# Spark rejects a correlated scalar subquery that is not an aggregate, so an
+# ORDER BY / LIMIT 1 form would die on the warehouse.
 ok(!has(rd, "ORDER BY l.LOT_BASE_END_DT DESC LIMIT 1") &&
      has(rd, "max_by(l.LOT_START_TYPE"),
    "...and the prior line type is an aggregate, which Spark will actually run")
@@ -501,9 +500,9 @@ ok(has(sql, "RUN_ID = 'r1'"),
 # The four melphalan figures are what makes the double-count visible.
 ok(has(sql, "AS n_melp_add") && has(sql, "AS n_sct_auto_end"),
    "lines ended by melphalan and by transplant are counted separately")
-# Built from MELP_METRICS rather than listed out again. Spelled out, the
-# fixture had to be edited every time a metric was added, and until it was,
-# melp_compare()'s own "named but not selected" guard fired on the fixture
+# Built from MELP_METRICS rather than listed out again. Spelled out, the fixture
+# would need editing every time a metric is added, and until it was,
+# melp_compare()'s own "named but not selected" guard would fire on the fixture
 # instead of on the SQL - a real check failing for a fake reason.
 three_cells <- function(...) {
   d <- as.data.frame(as.list(stats::setNames(
@@ -654,16 +653,14 @@ ok(has(rr, "rather than an output left out"),
    "...and a comparison that could not be made stops the run rather than being skipped")
 
 cat("\n-- B.2 removes a boundary, and melp_hold carries the line to the second dose --\n")
-# The rule as written says both doses stay in the current line. Suppression
-# cannot deliver that on its own: a line's discontinuation is its base agents'
-# last cover, and a melphalan first seen outside induction is not one of them.
-# So where the regimen runs out between the two doses, the line used to end
-# there and the second dose started the next one.
+# The rule says both doses stay in the current line. Suppression cannot deliver
+# that on its own: a line's discontinuation is its base agents' last cover, and
+# a melphalan first seen outside induction is not one of them. Where the regimen
+# runs out between the two doses, the line would end there and the second dose
+# would start the next one.
 #
-# That was recorded as an open question and it is not one any more: the request
-# says in words that both doses stay in the current line, and melp_hold carries
-# the run-out to the suppressed dose so they do. n_b2_line_starts is therefore
-# a CHECK rather than a question - under the rule those lines should not exist,
+# melp_hold carries the run-out to the suppressed dose, so it does not.
+# n_b2_line_starts is the check: under the rule those lines should not exist,
 # and a nonzero count in a rule cell is the hold failing to reach them.
 ok(has(sql, "AS n_b2_line_starts"),
    "the lines the hold has to reach are counted, so a hold that misses them shows")
@@ -737,10 +734,9 @@ for (v in list(list("no MAP",   paste(melp_metric_sql("F", "A", "r1", "MELP"), c
 ok(has(paste(melp_metric_sql("F", "A", "r1", "MELP"), collapse = "\n"), "cast(NULL as bigint)"),
    "with no MAP table to read, the B.2 columns are NULL rather than wrong")
 mrs <- paste(readLines(file.path(LOT, "R", "melp_rule.R"), warn = FALSE), collapse = "\n")
-# The request asks for two things at B.2 and suppression is only one of them,
-# so the file has to name the other where it does the suppressing - and the
-# hold has to actually be there. This used to check the opposite: that the file
-# admitted it did NOT hold the line, and pointed at open question 6.
+# The request asks for two things at B.2 and suppression is only one of them, so
+# the file has to name the other where it does the suppressing - and the hold
+# has to be there in the SQL.
 ok(has(mrs, "melp_hold carries the line to it") &&
      has(mrs, "melp_hold AS (") && !grepl("[Oo]pen question 6", mrs),
    "...and the rule names the hold where it suppresses, the question being settled")
@@ -768,8 +764,7 @@ ok(has(doc, "the line is carried to") && !has(doc, "It does not hold the line op
 ok(has(doc, "melp_hold"),
    "...and names the thing that implements it, so the two are checkable against each other")
 # And nothing anywhere may claim to be the whole rule. Neither mode is: the
-# names are about the TRANSPLANT reading, and on B.2 both take the narrow one.
-# This was the label the detailed section already contradicted.
+# names are about the TRANSPLANT reading, which the request does not cover.
 claims <- function(x) grepl("(exactly|precisely) as (written|asked)", x, ignore.case = TRUE)
 ok(!any(vapply(MELP_CELLS, function(c_i) claims(c_i$what), logical(1))),
    "no cell describes itself as the rule exactly as written")
@@ -831,8 +826,8 @@ ok(identical(as.numeric(r_a2$starts), as.numeric(r_a2$starts_off)) &&
 r_held <- melp_scenario_run(modifyList(ask, list(map_discon_gap_days = 201L)), w_a2)
 ok(!length(r_held$starts_off),
    "...and with the gap threshold above 200 days it does not, which is what makes it the release")
-# And the settings the scenarios are judged against are the shipped ones, or
-# the branches move and the agreement above means nothing.
+# And the scenarios are judged against the settings the engine carries, or the
+# branches move and the agreement above means nothing.
 sc_cfg <- utils::read.csv(file.path(LOT, "config.csv"), stringsAsFactors = FALSE,
                           comment.char = "#")
 val <- function(nm) as.integer(trimws(sc_cfg[[2]][trimws(sc_cfg[[1]]) == nm][1]))

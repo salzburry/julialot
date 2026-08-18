@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # The study team's worked melphalan scenarios, and the induction-window
-# variants they do not cover, run through the shipped rule.
+# variants they do not cover, run through the rule the engine carries.
 #
 #   Rscript exploration/melphalan/run_melp_scenarios.R
 #
@@ -49,8 +49,8 @@ if (requireNamespace("glue", quietly = TRUE)) {
 source(file.path(LOT_ROOT, "R", "melp_rule.R"))
 source(file.path(.script_dir, "R", "scenarios.R"))
 
-# The shipped settings, read from the engine's own config rather than repeated,
-# so a changed threshold shows up here as a moved branch instead of silently
+# The settings come from the engine's own config rather than being repeated
+# here, so a changed threshold shows up as a moved branch instead of silently
 # disagreeing with the build.
 cfg_rows <- utils::read.csv(file.path(LOT_ROOT, "config.csv"),
                             stringsAsFactors = FALSE, comment.char = "#")

@@ -41,12 +41,12 @@ MELP <- toupper(trimws(cfg$melp_med_abbr %||% "MELP"))
 out_dir <- melp_out_dir(.script_dir)
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
-# Last run's answers go before this one starts, not when it finishes writing.
-# Every check below can stop the read - a rebuilt cell, a code fingerprint that
-# moved, a cohort attempt that does not match - and each one leaves the files
-# from whenever this last succeeded sitting in out/ with nothing to say they
-# are not today's. Removed up front, an interrupted read leaves no answer
-# rather than a stale one.
+# The previous answers are removed before this read starts, not when it
+# finishes writing. Every check below can stop the read - a rebuilt cell, a code
+# fingerprint that does not match, a different cohort attempt - and each one
+# would otherwise leave older files in out/ with nothing marking them as old.
+# Removed up front, an interrupted read leaves no answer rather than a wrong
+# one.
 ASK_CSVS <- c("melp_ask1_line_duration.csv",
               "melp_ask1_paired_line_change.csv",
               "melp_ask1_line_count_change.csv",
@@ -77,14 +77,15 @@ status <- setNames(lapply(cells, function(c_i) cell_status(con, c_i)),
                    vapply(cells, function(c_i) c_i$id, character(1)))
 inputs <- melp_read_inputs(con, cells, status)
 
-# A code-fingerprint mismatch is a stop here, not the warning it is elsewhere.
-# This script reads cells some earlier run built, and a rule-on cell built by
-# older engine code answers the question about that engine rather than this
-# one. The reference cell is the reason it cannot be shrugged off: with the
-# rule off, melp_lot1_ctes emits nothing, so the reference is whatever the
-# engine was on the day it ran while the two rule-on cells carry the rule AND
+# A code-fingerprint mismatch stops the read. This script reads cells an earlier
+# run built, and a cell built by different engine code answers the question
+# about that engine rather than this one.
+#
+# The reference cell is why it cannot be shrugged off. With the rule off,
+# melp_lot1_ctes emits nothing, so the reference carries whatever the engine did
+# on the day it was built, while the two rule-on cells carry the rule AND
 # whatever else that day's code did. A difference between them is then two
-# changes, and nothing in the CSVs would say so.
+# changes at once, and nothing in the CSVs would say so.
 melp_check_code(inputs, LOT_ROOT)
 st <- melp_settings(inputs)
 cat("All ", length(cells), " cells: cohort attempt ", inputs[[1]]$COHORT_RUN_ID[1],
