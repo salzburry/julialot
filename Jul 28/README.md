@@ -31,7 +31,8 @@ Each area carries a `FILES.md` saying what is in it and what each file does, and
 each cohort build a `RULES.md` giving the rules it applies, with
 `ndmm/DECISIONS.md` as the long form for the cohort. `lot/LOT_RULES.md` is the
 rules the line build applies, one at a time, each naming the machine-checked
-vignette that tests it. Open questions live in `KNOWN_ISSUES.md`.
+vignette that tests it. Open questions live on the Open questions sheet of
+the scenario workbook (`exploration/lot/run_lot_scenarios.R`).
 
 `ndmm/` and `overall/` are independent - neither reads the other, and each goes
 to the raw CDM and the production code lists on its own. `lot/engine/` takes a
@@ -98,17 +99,17 @@ the NDMM cohort, and `lot/LOT_RULES.md` covers the lines.
 | NDMM cohort | `ndmm/DECISIONS.md`, numbered, with reasoning and what was measured |
 | maintenance | `ndmm/DECISIONS.md` #10 - **not implemented**; the protocol defines a period, the build carries a flag |
 | pregnancy window | `ndmm/DECISIONS.md` #9 - protocol and program spec disagree; which wins is recorded there |
-| lines of therapy | `lot/LOT_RULES.md` - "Applied, and still under review", and "Where this differs from the written protocol". `SCT_TANDEM_DAYS` and `CART_CONSOLIDATION_DAYS` come from prior internal work not in this repository, so they cannot be checked against the protocol text |
+| lines of therapy | `lot/LOT_RULES.md`, and the scenario workbook's Open questions sheet |
 | outcomes | `analysis/FILES.md` - the `STUDY_END` censoring rule for TTD, the fifth attrition category, both denominators |
 | the melphalan proposal | `exploration/FILES.md`. It is an exploration, not a rule the build applies, which is why it is neither in `lot/` nor in `lot/LOT_RULES.md` |
 
 Where one of those documents and this table disagree, the document is the record.
 
-`KNOWN_ISSUES.md` is the other side of that: the decisions that have **not** been
-made. Three entries for the study team, each with a worked patient, what it
-would move, and the count in `exploration/lot/run_lot_audit_counts.R` that sizes
-it. Nothing in it is being changed while it is open, and each one is also
-recorded in `lot/LOT_RULES.md` beside the rule it affects.
+The scenario workbook's **Open questions** sheet is the other side of that:
+the rules that still need a decision from the study team. Each one names the
+scenario that shows it and the count that sizes it, and each is also recorded
+in `lot/LOT_RULES.md` beside the rule it affects. None is being changed while
+it is open.
 
 ## Settings
 

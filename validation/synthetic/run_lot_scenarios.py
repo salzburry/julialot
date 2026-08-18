@@ -52,6 +52,7 @@ def scenarios(path):
         meds = re.search(r'meds = "([^"]*)"', p)
         auto = re.search(r'auto = "([^"]*)"', p)
         ac = re.search(r'ac = "([^"]*)"', p)
+        subs = re.search(r'subs = "([^"]*)"', p)
         death = re.search(r"death = (\d+)", p)
         obs = re.search(r"obs = (\d+)", p)
         lines = [x.strip() for x in re.findall(r'"([^"]*)"', lm.group(1))]
@@ -60,6 +61,7 @@ def scenarios(path):
             meds=[t.strip() for t in (meds.group(1) if meds else "").split(";") if t.strip()],
             auto=[int(x) for x in (auto.group(1).split(",") if auto else []) if x.strip()],
             ac=[t.strip() for t in (ac.group(1) if ac else "").split(",") if t.strip()],
+            subs=[t.strip() for t in (subs.group(1) if subs else "").split(",") if t.strip()],
             death=int(death.group(1)) if death else None,
             obs=int(obs.group(1)) if obs else 1200))
     return out
@@ -120,6 +122,19 @@ def main():
     con = duckdb.connect()
     con.execute("SET TimeZone='UTC'")
     rs.load(con, [plant(s) for s in scs])
+    # Biosimilar pairs, and a rollup row for any agent the harness's own list
+    # does not carry - the engine reads mma_rollup for every drug it sees.
+    known = {m for m, _ in rs.ROLLUP}
+    for s in scs:
+        for pair in s["subs"]:
+            orig, sub = [x.strip() for x in pair.split(":")]
+            con.execute("INSERT INTO permissible_subs VALUES (?, ?)", [orig, sub])
+        for m in s["meds"]:
+            abbr, cls = [x.strip() for x in m.split(":")[:2]]
+            if abbr not in known:
+                known.add(abbr)
+                con.execute("INSERT INTO mma_rollup VALUES (?, ?, NULL, NULL)",
+                            [abbr, cls])
     rs.run_chain(con, sqldir)
     print("%d scenarios planted and run through the engine\n" % len(scs))
 

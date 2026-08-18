@@ -6,8 +6,9 @@ the file it lives in, and a worked example.
 **Only what the code does.** No protocol text, no spec comparison, no rejected
 alternatives, no repair history. Where a rule is applied but the clinical
 question behind it is still open, the rule is stated here as behaviour and the
-question lives in `KNOWN_ISSUES.md` at the top of the study folder. This
-document is written from the code and describes nothing else.
+question lives on the Open questions sheet of the scenario workbook
+(`exploration/lot/run_lot_scenarios.R`). This document is written from the
+code and describes nothing else.
 
 The melphalan line-advancing proposal is an exploration. It is not in the
 study's numbers, it is not built into any run that ships, and it is not here.
@@ -225,8 +226,9 @@ start to offer. That is a different gate from §4.3, which stops the same agent
 *starting* a line and is unconditional.
 
 Whether membership should be an episode start or any fill in the window is an
-open question, recorded in `KNOWN_ISSUES.md`. `run_scenario_counts.R`'s
-`4.2-prior-agent-covered-but-not-in-the-regimen` sizes it.
+open question - Q1 on the scenario workbook's Open questions sheet.
+`run_scenario_counts.R`'s `4.2-prior-agent-covered-but-not-in-the-regimen`
+sizes it.
 
 ### 4.3 A drug is held by its line while it runs, and released once stopped
 
@@ -246,7 +248,8 @@ the run-out guards that mirror the start candidates read the same definition.
 The threshold is `map_discon_gap_days`, not any gap. A drug whose cover lapses
 for a day opens a new episode (§2.3) and nothing follows: the run-out chains
 over it and the drug is still refused as a line start. It takes 90 days off the
-drug. `KNOWN_ISSUES.md` 1b holds the open question.
+drug. Whether 90 is the right threshold is Q2 on the scenario workbook's Open
+questions sheet.
 
 ### 4.4 A permissible biosimilar substitute never starts a line
 

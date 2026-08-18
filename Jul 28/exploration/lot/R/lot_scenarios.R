@@ -292,8 +292,8 @@ LOT_SCENARIOS <- list(
                      "is on it throughout. A regimen is the agents whose EPISODE ",
                      "STARTS in the window, and LEN's episode started on d0. A ",
                      "refill inside LOT2's window extends that episode and leaves ",
-                     "no new start behind. This is open question 1 in ",
-                     "KNOWN_ISSUES.md."),
+                     "no new start behind. This is Q1 on the Open ",
+                     "questions sheet."),
        sql = "
       SELECT n.LOT_NUM, count(DISTINCT n.PATID) AS N_PATIENTS
       FROM {t$long} n
@@ -457,7 +457,7 @@ LOT_SCENARIOS <- list(
        note = paste0("ONE line, ending DEATH at d220 - not DISCONTINUATION at ",
                      "d100, even though the run-out has 120 days of observation ",
                      "behind it and is confirmed. LOT_BASE_DISCON_DT still ",
-                     "carries d100. This is open question 2 in KNOWN_ISSUES.md."),
+                     "carries d100. This is Q3 on the Open questions sheet."),
        sql = "
       SELECT l.LOT_NUM, count(DISTINCT l.PATID) AS N_PATIENTS
       FROM {t$long} l
@@ -511,5 +511,338 @@ LOT_SCENARIOS <- list(
       WHERE m.MAP_MED_CLASS = 'STEROID'
         AND NOT EXISTS (SELECT 1 FROM {t$long} l
                         WHERE l.PATID = m.PATID
-                          AND m.MAP_START_DT BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT)")
+                          AND m.MAP_START_DT BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT)"),
+
+  list(id = "S18", group = "Which drugs count as the line's",
+       title = "A repeat prescription collected while the last one is still covering the patient",
+       story = paste0("A patient is on lenalidomide. They collect the next prescription ",
+                      "50 days in, while the current supply still has 50 days left on it. "),
+       outcome = paste0("One line. The second collection does not count as starting the ",
+                        "drug again - it just extends how long the patient is covered. So ",
+                        "it is not a new drug being added, and it does not close the line. "),
+       patient = list(meds = "LEN:IMID:0:201"),
+       timeline = c("LEN  one supply episode, d0-d201",
+                    "     (two collections: d0 and d50. The second landed while the",
+                    "      first was still covering, so they become one episode that",
+                    "      runs 50 days longer)"),
+       lines = c("LOT1  d0-d201  MED  DISCONTINUATION  regimen LEN"),
+       rule = "LOT_RULES.md 2.3",
+       note = paste0("A claim arriving while an agent's cover is live extends the open ",
+                     "episode rather than opening a new one (03_mma_map.R CASE 3). It ",
+                     "leaves no MAP_START_DT, so nothing downstream can see it. The ",
+                     "pushout is by the second fill's days supply, which is why the ",
+                     "episode runs to d201 rather than d150. "),
+       sql = NULL,
+       sql_note = "the folding happens when supply episodes are built, upstream of the line table, so a finished run cannot be asked how often it happened"),
+
+  list(id = "S19", group = "Which drugs count as the line's",
+       title = "Two drugs started on the same day",
+       story = paste0("A patient starts daratumumab and lenalidomide on the same day. "),
+       outcome = paste0("One line with both drugs on it. The line starts that day and both ",
+                        "drugs are part of the starting treatment. "),
+       patient = list(meds = "DARA:MAB:0:200; LEN:IMID:0:200"),
+       timeline = c("DARA  cover d0-d200",
+                    "LEN   cover d0-d200"),
+       lines = c("LOT1  d0-d200  MED  DISCONTINUATION  regimen DARA LEN"),
+       rule = "LOT_RULES.md 3.1, 3.2",
+       note = paste0("The line starts at the earliest non-steroid agent, and both ",
+                     "qualify on the same date. Neither can be an addition to the other: ",
+                     "both are inside the induction window by construction. "),
+       sql = NULL,
+       sql_note = "same count as S07 - lines carrying more than one drug"),
+
+  list(id = "S20", group = "Transplants",
+       title = "A transplant and a new drug on the same day",
+       story = paste0("A patient's first drug runs out. Fifty days later they have a stem ",
+                      "cell transplant and start pomalidomide, both on the same day. "),
+       outcome = paste0("Two lines. The second line is recorded as started by the ",
+                        "transplant, not by the drug - a transplant wins when both land on ",
+                        "the same day. The pomalidomide is still on that line's drug list. "),
+       patient = list(meds = "LEN:IMID:0:50; POMA:IMID:100:300", auto = "100"),
+       timeline = c("LEN   cover d0-d50",
+                    "AUTO  d100",
+                    "POMA  cover d100-d300"),
+       lines = c("LOT1  d0-d50    MED       DISCONTINUATION  regimen LEN",
+                 "LOT2  d100-d300  SCT_AUTO  DISCONTINUATION  regimen POMA"),
+       rule = "LOT_RULES.md 4.5",
+       note = paste0("The same-day tie-break is SCT_ALLO > CART > SCT_AUTO > MED. It ",
+                     "decides the START TYPE only - the regimen is still collected over ",
+                     "the window, so the drug appears on the line the transplant ",
+                     "started. "),
+       sql = "
+      SELECT l.LOT_NUM, count(DISTINCT l.PATID) AS N_PATIENTS
+      FROM {t$long} l
+      WHERE l.LOT_START_TYPE IN ('SCT_AUTO', 'SCT_ALLO', 'CART')
+        AND coalesce(trim(l.LOT_BASE_MEDS), '') <> ''
+      GROUP BY l.LOT_NUM ORDER BY l.LOT_NUM"),
+
+  list(id = "S21", group = "How a line ends",
+       title = "Six changes of treatment - more than the five lines counted",
+       story = paste0("A patient goes through six different drugs, each starting well ",
+                      "after the last one stopped. "),
+       outcome = paste0("Five lines. Counting stops at five, so the sixth drug is not given ",
+                        "a line and does not appear anywhere in the line table. "),
+       patient = list(meds = "LEN:IMID:0:50; POMA:IMID:70:120; DARA:MAB:160:210; BORT:PI:250:300; CARF:PI:340:390; ELO:MAB:430:480"),
+       timeline = c("LEN   cover d0-d50",
+                    "POMA  cover d70-d120",
+                    "DARA  cover d160-d210",
+                    "BORT  cover d250-d300",
+                    "CARF  cover d340-d390",
+                    "ELO   cover d430-d480   - a sixth change of treatment"),
+       lines = c("LOT1  d0-d50     MED  DISCONTINUATION  regimen LEN",
+                 "LOT2  d70-d120   MED  DISCONTINUATION  regimen POMA",
+                 "LOT3  d160-d210  MED  DISCONTINUATION  regimen DARA",
+                 "LOT4  d250-d300  MED  DISCONTINUATION  regimen BORT",
+                 "LOT5  d340-d390  MED  DISCONTINUATION  regimen CARF"),
+       rule = "LOT_RULES.md 9",
+       note = paste0("max_lot is 5. Treatment after the fifth line belongs to no line by ",
+                     "construction, which is why every count of unowned treatment carves ",
+                     "it out rather than reporting it as a defect. "),
+       sql = "
+      WITH capped AS (
+        SELECT PATID, max(LOT_NUM) AS N_LINES, max(LOT_BASE_END_DT) AS LAST_END
+        FROM {t$long} GROUP BY PATID HAVING max(LOT_NUM) >= {max_lot}
+      )
+      SELECT {max_lot} AS LOT_NUM, count(DISTINCT c.PATID) AS N_PATIENTS
+      FROM capped c
+      INNER JOIN {t$map} m
+         ON m.PATID = c.PATID AND m.MAP_START_DT > c.LAST_END
+        AND m.MAP_MED_CLASS <> 'STEROID'"),
+
+  list(id = "S22", group = "Which drugs count as the line's",
+       title = "A drug added on the last day that still counts as starting treatment",
+       story = paste0("A patient starts daratumumab, and adds lenalidomide on day 59. "),
+       outcome = paste0("One line with both drugs. Day 59 is the last day of the 60-day ",
+                        "window, so the lenalidomide is still part of the starting ",
+                        "treatment. One day later it would have opened a second line. "),
+       patient = list(meds = "DARA:MAB:0:200; LEN:IMID:59:200"),
+       timeline = c("DARA  cover d0-d200",
+                    "LEN   cover d59-d200   - the last day of the window"),
+       lines = c("LOT1  d0-d200  MED  DISCONTINUATION  regimen DARA LEN"),
+       rule = "LOT_RULES.md 3.2",
+       note = paste0("The window runs from the line start through start + 59, inclusive ",
+                     "of both ends. S08 is the same patient one day later, and gets two ",
+                     "lines. "),
+       sql = NULL,
+       sql_note = "same count as S07 - lines carrying more than one drug"),
+
+  list(id = "S23", group = "Which drugs count as the line's",
+       title = "A drug added 45 days into the second line, where the window is only 30",
+       story = paste0("A patient changes treatment, then adds a third drug 45 days into ",
+                      "the new treatment. "),
+       outcome = paste0("Three lines. The first 60 days only apply to the first line. From ",
+                        "the second line on, the window is 30 days - so a drug added on day ",
+                        "45 is a new drug rather than part of the treatment, and it opens ",
+                        "another line. "),
+       patient = list(meds = "DARA:MAB:0:50; LEN:IMID:100:300; POMA:IMID:145:300"),
+       timeline = c("DARA  cover d0-d50",
+                    "LEN   cover d100-d300   - opens line 2, window d100-d129",
+                    "POMA  cover d145-d300   - 45 days into line 2, outside its window"),
+       lines = c("LOT1  d0-d50     MED  DISCONTINUATION  regimen DARA",
+                 "LOT2  d100-d144  MED  MED_ADD          regimen LEN",
+                 "LOT3  d145-d300  MED  DISCONTINUATION  regimen POMA"),
+       rule = "LOT_RULES.md 3.2, 4.2",
+       note = paste0("60 days at line 1, 30 from line 2 on, 45 on a CAR-T-started line. ",
+                     "The same interval is inside the window at line 1 and outside it at ",
+                     "line 2. "),
+       sql = "
+      SELECT l.LOT_NUM, count(DISTINCT l.PATID) AS N_PATIENTS
+      FROM {t$long} l
+      WHERE l.LOT_BASE_END_REASON = 'MED_ADD' AND l.LOT_NUM > 1
+      GROUP BY l.LOT_NUM ORDER BY l.LOT_NUM"),
+
+  list(id = "S24", group = "How a line ends",
+       title = "The patient dies before the stop can be confirmed",
+       story = paste0("A patient's drug runs out after three months. They die 30 days ",
+                      "later. "),
+       outcome = paste0("One line, ending at the death. Stopping treatment needs 90 days of ",
+                        "follow-up to confirm it, and the patient did not live that long - ",
+                        "so there is no confirmed stop to compete with the death. This is ",
+                        "NOT the disputed case: the death is the only ending available. "),
+       patient = list(meds = "LEN:IMID:0:100", death = 130, obs = 130),
+       timeline = c("LEN    cover d0-d100",
+                    "death  d130   - 30 days after the drug ran out"),
+       lines = c("LOT1  d0-d130  MED  DEATH  regimen LEN"),
+       rule = "LOT_RULES.md 5.3, 7.5",
+       note = paste0("Contrast with S25, where 120 days of follow-up DO confirm the stop ",
+                     "and the death still takes the line's end. That one is Q3 on the ",
+                     "Open questions sheet; this one is not in question. "),
+       sql = "
+      SELECT l.LOT_NUM, count(DISTINCT l.PATID) AS N_PATIENTS
+      FROM {t$long} l
+      WHERE l.LOT_BASE_END_REASON = 'DEATH' AND l.LOT_BASE_DISCON_DT IS NULL
+      GROUP BY l.LOT_NUM ORDER BY l.LOT_NUM"),
+
+  list(id = "S25", group = "How a line ends",
+       title = "The patient restarts treatment, then dies",
+       story = paste0("A patient's drug runs out after three months. Three months after ",
+                      "that they start a different drug, and they die later on. "),
+       outcome = paste0("Two lines. The restart confirms that the first treatment had ",
+                        "stopped, so the first line ends where it ran out. The death ends ",
+                        "the second line. "),
+       patient = list(meds = "LEN:IMID:0:100; POMA:IMID:200:300", death = 400, obs = 400),
+       timeline = c("LEN    cover d0-d100",
+                    "POMA   cover d200-d300",
+                    "death  d400"),
+       lines = c("LOT1  d0-d100    MED  DISCONTINUATION  regimen LEN",
+                 "LOT2  d200-d400  MED  DEATH            regimen POMA"),
+       rule = "LOT_RULES.md 5.3, 7.5",
+       note = paste0("Later treatment is one of the two things that can confirm a ",
+                     "run-out - the other is 90 days of observation. Here it arrives ",
+                     "before the 90 days are up and confirms it early. "),
+       sql = "
+      SELECT l.LOT_NUM, count(DISTINCT l.PATID) AS N_PATIENTS
+      FROM {t$long} l
+      INNER JOIN {t$long} p ON p.PATID = l.PATID AND p.LOT_NUM = l.LOT_NUM - 1
+      WHERE l.LOT_BASE_END_REASON = 'DEATH'
+        AND p.LOT_BASE_END_REASON = 'DISCONTINUATION'
+      GROUP BY l.LOT_NUM ORDER BY l.LOT_NUM"),
+
+  list(id = "S26", group = "Transplants",
+       title = "Two transplants just over six months apart",
+       story = paste0("A patient's drug runs out after three weeks. They have a ",
+                      "transplant on day 40 and another one 181 days later. "),
+       outcome = paste0("Two lines. Just over six months is too long to count as one ",
+                        "planned pair, so the second transplant is treated as new treatment ",
+                        "and opens a line of its own. "),
+       patient = list(meds = "LEN:IMID:0:19", auto = "40,221"),
+       timeline = c("LEN   cover d0-d19",
+                    "AUTO  d40    - inside the 60-day window",
+                    "AUTO  d221   - 181 days after the first"),
+       lines = c("LOT1  d0-d40      MED       SCT_AUTO_CONT  regimen LEN",
+                 "LOT2  d221-d1200  SCT_AUTO  STUDY_END      regimen (none)"),
+       rule = "LOT_RULES.md 6.3",
+       note = paste0("sct_tandem_days is 180 and the test is <= 180, so 181 falls ",
+                     "outside. S10 is the same patient at 179 days and gets one line. "),
+       sql = "
+      WITH paired AS (
+        SELECT PATID, TX_DT,
+               lag(TX_DT) OVER (PARTITION BY PATID ORDER BY TX_DT) AS PREV_TX_DT
+        FROM {t$auto}
+      )
+      SELECT l.LOT_NUM, count(DISTINCT l.PATID) AS N_PATIENTS
+      FROM paired p
+      INNER JOIN {t$long} l
+         ON l.PATID = p.PATID AND l.LOT_START_DT = p.TX_DT
+      WHERE p.PREV_TX_DT IS NOT NULL
+        AND datediff(p.TX_DT, p.PREV_TX_DT) > {tandem_days}
+      GROUP BY l.LOT_NUM ORDER BY l.LOT_NUM"),
+
+  list(id = "S27", group = "Transplants",
+       title = "Three transplants: a planned pair, then a third much later",
+       story = paste0("A patient has two transplants 100 days apart, and a third one more ",
+                      "than a year after that. "),
+       outcome = paste0("Two lines. The first two count as one planned pair and stay on the ",
+                        "first line. The third is far too late to join them, so it opens a ",
+                        "new line. "),
+       patient = list(meds = "LEN:IMID:0:19", auto = "40,140,440"),
+       timeline = c("LEN   cover d0-d19",
+                    "AUTO  d40",
+                    "AUTO  d140   - 100 days after the first",
+                    "AUTO  d440   - 300 days after the second"),
+       lines = c("LOT1  d0-d140     MED       SCT_AUTO_CONT  regimen LEN",
+                 "LOT2  d440-d1200  SCT_AUTO  STUDY_END      regimen (none)"),
+       rule = "LOT_RULES.md 6.3, 6.5",
+       note = paste0("The pair is judged on consecutive transplants, so the third is ",
+                     "measured against the second and not against the first. The line is ",
+                     "held open to the second, which is where it ends. "),
+       sql = "
+      WITH n AS (
+        SELECT PATID, count(*) AS N_AUTO FROM {t$auto} GROUP BY PATID HAVING count(*) >= 3
+      )
+      SELECT l.LOT_NUM, count(DISTINCT l.PATID) AS N_PATIENTS
+      FROM n INNER JOIN {t$long} l ON l.PATID = n.PATID
+      GROUP BY l.LOT_NUM ORDER BY l.LOT_NUM"),
+
+  list(id = "S28", group = "Transplants",
+       title = "A transplant before any treatment in the data",
+       story = paste0("A patient has a stem cell transplant on day 20, and their first ",
+                      "myeloma drug does not appear until day 100. "),
+       outcome = paste0("One line, starting at the drug. The transplant is before the first ",
+                        "line begins, so it belongs to no line. That is expected rather ",
+                        "than a fault - the patient was treated before the data starts. "),
+       patient = list(meds = "LEN:IMID:100:300", auto = "20"),
+       timeline = c("AUTO  d20    - before any drug in the data",
+                    "LEN   cover d100-d300"),
+       lines = c("LOT1  d100-d300  MED  DISCONTINUATION  regimen LEN"),
+       rule = "LOT_RULES.md 3.1",
+       note = paste0("The first line starts at the first non-steroid agent, so nothing ",
+                     "before that date can be inside a line. Counts of unowned ",
+                     "transplants exclude this shape for that reason. "),
+       sql = "
+      WITH first_line AS (
+        SELECT PATID, min(LOT_START_DT) AS FIRST_START FROM {t$long} GROUP BY PATID
+      )
+      SELECT 1 AS LOT_NUM, count(DISTINCT x.PATID) AS N_PATIENTS
+      FROM {t$auto} x
+      INNER JOIN first_line f ON f.PATID = x.PATID
+      WHERE x.TX_DT < f.FIRST_START"),
+
+  list(id = "S29", group = "A drug that comes back",
+       title = "A biosimilar of the drug the line was built on",
+       story = paste0("A patient is on daratumumab for three months. Three months after ",
+                      "it stops they start a biosimilar version of the same drug. "),
+       outcome = paste0("One line. A permitted biosimilar swap never counts as new ",
+                        "treatment, so it does not open a line - even though the patient ",
+                        "was off the drug for 90 days, which for the original drug would ",
+                        "have been enough. The line runs on to the end of the biosimilar's ",
+                        "supply. "),
+       patient = list(meds = "DARA:MAB:0:100; DARAB:MAB:190:300", subs = "DARA:DARAB"),
+       timeline = c("DARA   cover d0-d100",
+                    "DARAB  cover d190-d300   - a permitted biosimilar of DARA, 90 days later"),
+       lines = c("LOT1  d0-d300  MED  DISCONTINUATION  regimen DARA"),
+       rule = "LOT_RULES.md 4.4",
+       note = paste0("A substitute is never released by a gap, however long. ",
+                     "discon_per_med sets PREV_DISCON to 0 for a substitute-only drug, ",
+                     "and the prior-regimen exclusion holds it unconditionally. Compare ",
+                     "S06, where the same 90-day gap on the original drug opens a second ",
+                     "line. "),
+       sql = NULL,
+       sql_note = "permissible_subs is loaded from CSV into a session view and is never written to the warehouse, so a finished run cannot be asked which agents were substitutes"),
+
+  list(id = "S30", group = "A drug that comes back",
+       title = "A biosimilar of a drug from two lines back",
+       story = paste0("A patient is on daratumumab, changes to lenalidomide, and later ",
+                      "starts a biosimilar of the daratumumab. "),
+       outcome = paste0("Three lines. The biosimilar opens the third line, because the rule ",
+                        "that would have blocked it only looks at the line immediately ",
+                        "before - and that line was lenalidomide. Same shape as S01 and ",
+                        "S02. "),
+       patient = list(meds = "DARA:MAB:0:100; LEN:IMID:90:200; DARAB:MAB:250:400", subs = "DARA:DARAB"),
+       timeline = c("DARA   cover d0-d100",
+                    "LEN    cover d90-d200",
+                    "DARAB  cover d250-d400"),
+       lines = c("LOT1  d0-d89     MED  MED_ADD          regimen DARA",
+                 "LOT2  d90-d200   MED  DISCONTINUATION  regimen LEN",
+                 "LOT3  d250-d400  MED  DISCONTINUATION  regimen DARAB"),
+       rule = "LOT_RULES.md 4.4, 4.1",
+       note = paste0("The substitute exclusion is built from the PREVIOUS line's ",
+                     "regimen. A substitute for a drug two lines back is not in that ",
+                     "set, so nothing stops it. S29 is the same swap one line earlier, ",
+                     "and gets one line. "),
+       sql = NULL,
+       sql_note = "permissible_subs is never written to the warehouse - see S29"),
+
+  list(id = "S31", group = "CAR-T",
+       title = "A CAR-T line with a drug started after it",
+       story = paste0("A patient has CAR-T therapy on day 100, and starts pomalidomide 20 ",
+                      "days later. "),
+       outcome = paste0("Two lines. The CAR-T closes the first line and opens a CAR-T line. ",
+                        "The pomalidomide starts inside that line's 45-day window, so it ",
+                        "joins its drug list and the line runs on until the drug stops. "),
+       patient = list(meds = "LEN:IMID:0:200; POMA:IMID:120:400", ac = "CART:100"),
+       timeline = c("LEN   cover d0-d200",
+                    "CART  d100",
+                    "POMA  cover d120-d400   - 20 days after the CAR-T, inside its 45-day window"),
+       lines = c("LOT1  d0-d99     MED   SCT_CART         regimen LEN",
+                 "LOT2  d100-d400  CART  DISCONTINUATION  regimen POMA"),
+       rule = "LOT_RULES.md 4.2, 6.4",
+       note = paste0("A CAR-T-started line collects its regimen over 45 days rather than ",
+                     "30. S13 is the same CAR-T with nothing started after it, and that ",
+                     "line lasts a single day. "),
+       sql = "
+      SELECT l.LOT_NUM, count(DISTINCT l.PATID) AS N_PATIENTS
+      FROM {t$long} l
+      WHERE l.LOT_START_TYPE = 'CART' AND l.LOT_MED_CNT > 0
+      GROUP BY l.LOT_NUM ORDER BY l.LOT_NUM")
 )

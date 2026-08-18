@@ -309,8 +309,9 @@ AUDIT_COUNTS <- list(
       GROUP BY LOT_NUM
       ORDER BY LOT_NUM"),
 
-  # LOT_RULES.md 11.1 - the returning-agent rule, KNOWN_ISSUES #3. The number
-  # the open question turns on, so it is here rather than only in the audit.
+  # The returning-agent rule (LOT_RULES.md 4.3), and Q2 on the scenario
+  # workbook's Open questions sheet. The number the open question turns on, so
+  # it is here rather than only in the audit.
   list(id = "11.1-lines-spanning-a-long-uncovered-gap",
        what = "Lines whose length exceeds summed covered days - OVERLAP IS DOUBLE-COUNTED",
        expect = "over-counts cover on combination therapy, so uncovered days are understated. A floor, not a measure",

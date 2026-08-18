@@ -2272,8 +2272,9 @@ cat("\n-- an agent joins a regimen by being filled in the window, not by cover -
 #
 # It does NOT pin the narrower question of whether a CLAIM inside the window
 # joins, where the agent's episode began earlier and is still open. That one is
-# open - LOT_RULES.md 14.3 and KNOWN_ISSUES.md 1 - and reading this block as an
-# answer to it would be reading a decision that has not been made.
+# open - LOT_RULES.md 4.2, and Q1 on the scenario workbook's Open questions
+# sheet - and reading this block as an answer to it would be reading a decision
+# that has not been made.
 ind_block <- local({
   i <- regexpr('_induction_meds"', l25_txt, fixed = TRUE)
   rest <- substring(l25_txt, i)

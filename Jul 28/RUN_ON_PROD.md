@@ -143,7 +143,7 @@ written and the run reports how many failed.
 ## Read before quoting anything
 
 - `lot/LOT_RULES.md` — the rules the build applies
-- `KNOWN_ISSUES.md` — open study-team questions
+- the scenario workbook's Open questions sheet — open study-team questions
 - `exploration/FILES.md` — the melphalan proposal and what is unsettled
 
 ## Do not present these as settled
