@@ -1098,9 +1098,15 @@ build_lot_n <- function(con, lot_num,
             ), 1)
           ELSE NULL
         END AS LOT_TX_ENDDATE,
-        -- Same-day SCT end priority, inherited from LOT1:
-        -- SCT_ALLO > SCT_CART > SCT_AUTO. ALLO takes an ALLO==CART or
-        -- ALLO==AUTO tie, CART takes CART==AUTO, and otherwise it is AUTO.
+        -- Same-day SCT end priority at LOT2-5: SCT_ALLO > SCT_CART >
+        -- SCT_AUTO. ALLO takes an ALLO==CART or ALLO==AUTO tie, CART takes
+        -- CART==AUTO, and otherwise it is AUTO.
+        --
+        -- NOT the same order LOT1 uses. 05b_lot1_sct.R tests AUTO first, so
+        -- on an exact same-day tie LOT1 records SCT_AUTO where this records
+        -- SCT_ALLO or SCT_CART. The end DATE is identical either way; only
+        -- the recorded reason differs. Which order is right is open question
+        -- Q4 on the scenario workbook's Open questions sheet.
         CASE
           WHEN coalesce(
                  CASE WHEN sct.ENDING_AUTO_DT > lb.LOT{lot_num}_START_DT THEN sct.ENDING_AUTO_DT END,

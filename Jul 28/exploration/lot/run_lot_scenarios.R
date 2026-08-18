@@ -15,7 +15,11 @@
 # words with the same patient in days beside them, the patient counts by line
 # number, what every code in the output table means, and the open questions
 # still waiting on the study team. Without openxlsx the same sheets come out
-# as CSVs.
+# as CSVs, named after the workbook they stand in for.
+#
+# Without SCENARIO_EXECUTE the preview goes to out/lot_scenarios_reference.xlsx
+# instead - no counts, no connection - so it never overwrites the counted
+# workbook.
 #
 # The lines in each scenario are not predictions. Each one was produced by
 # running the engine's own SQL over that patient, and the synthetic harness
@@ -59,16 +63,24 @@ HOW_A_LINE_IS_BUILT <- data.frame(
            "following runs stop there."),
     paste0("A new drug being added, a transplant, CAR-T therapy, the patient ",
            "dying, the drugs running out, or the data ending."),
-    paste0("On whichever of those comes first. If two land on the same day, a ",
-           "donor transplant wins, then CAR-T, then a stem cell transplant, ",
-           "then a drug."),
+    paste0("On whichever of those comes first, with one exception: where ",
+           "treatment stopped, the stop was confirmed, and the patient later ",
+           "died with nothing in between, the line is recorded as ending at ",
+           "the death (open question Q3, scenario S15). Same-day ties: when a ",
+           "transplant and a drug would START the next line on the same day, ",
+           "a donor transplant wins, then CAR-T, then a stem cell transplant, ",
+           "then a drug. When two transplant types would END a line on the ",
+           "same day, the first line breaks the tie in a different order from ",
+           "later lines - open question Q4."),
     paste0("Running out of drugs only counts as stopping treatment once ",
            "either 90 days of follow-up have passed with nothing else, or the ",
            "patient starts something that would begin the next line. Until ",
            "then the line is recorded as running to the end of the data."),
-    paste0("On whichever comes first: a drug that was not on this line, a ",
-           "stem cell transplant no line has claimed, CAR-T therapy, or a ",
-           "donor transplant. It has to be after the previous line ended."),
+    paste0("On whichever comes first: a drug that was not on this line, one ",
+           "of this line's own drugs coming back after a confirmed 90-day ",
+           "break, a stem cell transplant no line has claimed, CAR-T therapy, ",
+           "or a donor transplant. It has to be after the previous line ",
+           "ended."),
     paste0("After 5 lines. Anything the patient is given after that is not ",
            "counted into a line.")),
   stringsAsFactors = FALSE)
@@ -79,7 +91,7 @@ fmt_block <- function(v) if (!length(v)) "" else paste(v, collapse = "\n")
 # each one on every run; what is open is whether it is the right rule. Each
 # points at the scenario that shows it and the count that sizes it.
 OPEN_QUESTIONS <- data.frame(
-  ID = c("Q1", "Q2", "Q3"),
+  ID = c("Q1", "Q2", "Q3", "Q4"),
   THE_QUESTION = c(
     paste0("Should a drug the patient is still taking count as part of the ",
            "new line, even though they started it in an earlier line?"),
@@ -88,7 +100,10 @@ OPEN_QUESTIONS <- data.frame(
            "benefit, a stockpile?"),
     paste0("When treatment stops, the stop is confirmed, and the patient ",
            "later dies with nothing in between - should the line end at the ",
-           "stop, with the death kept as the patient outcome it already is?")),
+           "stop, with the death kept as the patient outcome it already is?"),
+    paste0("When two transplant types would end a line on the same day, which ",
+           "one is recorded as the reason? The first line and later lines ",
+           "answer differently.")),
   WHAT_THE_CODE_DOES_TODAY = c(
     paste0("A drug counts only if the patient STARTS it in the line's first ",
            "60 days (30 for later lines, 45 after CAR-T). A drug carried ",
@@ -96,10 +111,17 @@ OPEN_QUESTIONS <- data.frame(
            "counts."),
     paste0("A break of 90 days or more in one drug's supply counts as ",
            "stopping it. Under 90 days the line carries on through the gap. ",
-           "One day either side turns one line into two."),
+           "When the drug that comes back is one the current line was built ",
+           "on, one day either side turns one line into two - S05 and S06. ",
+           "A drug from an older line opens a new line at any gap."),
     paste0("The line is recorded as ending at the death. The date treatment ",
            "stopped is still on the row, so the other reading is recoverable ",
-           "without a rebuild.")),
+           "without a rebuild."),
+    paste0("On the first line a stem cell transplant wins the tie, then a ",
+           "donor transplant, then CAR-T. On later lines a donor transplant ",
+           "wins, then CAR-T, then a stem cell transplant. The end DATE is ",
+           "identical either way; only the recorded reason differs, and only ",
+           "on an exact same-day tie.")),
   WHAT_A_CHANGE_WOULD_MOVE = c(
     paste0("The drug lists on later lines. Line starts and line counts, ",
            "because a drug missing from a line's list is free to start the ",
@@ -107,14 +129,18 @@ OPEN_QUESTIONS <- data.frame(
     paste0("Where lines end and how many there are, for every patient whose ",
            "refill gap sits near the threshold."),
     paste0("Line lengths, time to discontinuation, and the died/stopped ",
-           "split. Not line counts.")),
-  SEE_SCENARIO = c("S09", "S05 and S06", "S15"),
+           "split. Not line counts."),
+    paste0("Only the recorded end reason on exact-tie days, and any summary ",
+           "split by end reason. No dates and no line counts.")),
+  SEE_SCENARIO = c("S09", "S05 and S06", "S15",
+                   "none - two transplants on one day is rarer than any worked case here"),
   THE_COUNT_THAT_SIZES_IT = c(
     paste0("4.2-prior-agent-covered-but-not-in-the-regimen and ",
            "4.3-line-started-by-an-agent-from-two-lines-back, in ",
            "run_scenario_counts.R"),
     "return-gap-around-the-90-day-threshold, in run_lot_audit_counts.R",
-    "the S15 row of the Patients-by-line sheet"),
+    "the S15 row of the Patients-by-line sheet",
+    "no count yet - same-day transplant-type ties would need their own query"),
   stringsAsFactors = FALSE)
 
 # The codes the output table uses, in words. The scenarios are readable without
@@ -133,13 +159,16 @@ WHAT_THE_CODES_MEAN <- data.frame(
     "The line started on a donor transplant.",
     "The line ended because the patient started a drug that was not on it.",
     "The line ended because the drugs ran out, and the stop was confirmed.",
-    "The line ended on a stem cell transplant.",
-    paste0("The line was held open to a second, planned transplant, and ",
-           "ended there."),
-    "The line ended on CAR-T therapy.",
+    "The line ended the day before a stem cell transplant.",
+    paste0("The line was held open to a transplant it owns and ended ON the ",
+           "transplant date - a planned second transplant, or a single ",
+           "in-window transplant landing after the drugs ran out. Unlike the ",
+           "other transplant ends, which close the line the day BEFORE the ",
+           "event."),
+    "The line ended the day before CAR-T therapy.",
     paste0("The line ended on CAR-T therapy that followed a drug added in ",
            "the 45 days before it."),
-    "The line ended on a donor transplant.",
+    "The line ended the day before a donor transplant.",
     "The line ended because the patient died.",
     paste0("The drugs the patient started in the line's first 60 days (30 ",
            "for later lines, 45 after CAR-T). Blank for a donor-transplant ",
@@ -221,7 +250,8 @@ write_workbook <- function(sheets, path) {
   cat("openxlsx is not installed - writing CSVs instead of the workbook.\n")
   for (nm in names(sheets)) {
     f <- file.path(dirname(path),
-                   paste0("lot_scenarios_", gsub("[^A-Za-z0-9]+", "_", tolower(nm)), ".csv"))
+                   paste0(sub("\\.xlsx$", "", basename(path)), "_",
+                          gsub("[^A-Za-z0-9]+", "_", tolower(nm)), ".csv"))
     utils::write.csv(sheets[[nm]], f, row.names = FALSE)
     cat("Wrote ", f, "\n", sep = "")
   }
@@ -238,7 +268,7 @@ main <- function() {
                         "Scenarios"           = scen,
                         "Open questions"      = OPEN_QUESTIONS,
                         "What the codes mean"  = WHAT_THE_CODES_MEAN),
-                   file.path(out_dir, "lot_scenarios.xlsx"))
+                   file.path(out_dir, "lot_scenarios_reference.xlsx"))
     return(invisible(0L))
   }
 
@@ -246,6 +276,7 @@ main <- function() {
   source(file.path(LOT_ROOT, "R", "load_inputs.R"))
   load_pipeline_inputs(LOT_ROOT, "config.csv")
   for (f in c("config_lot.R", "db_utils_lot.R")) source(file.path(LOT_ROOT, "R", f))
+  source(file.path(.script_dir, "R", "run_binding.R"))
 
   # cfg_defaults, not lot_config(): config_lot.R defines cfg_defaults when it is
   # sourced, and lot_config() reads the config set_lot_config() installs, which
@@ -273,32 +304,80 @@ main <- function() {
   if (!which_tbl %in% c("LOT_LONG_FINAL", "LOT_LONG"))
     stop("AUDIT_TABLE must be LOT_LONG_FINAL or LOT_LONG.", call. = FALSE)
 
-  # Named locally so a scenario's SQL reads the settings the run used rather
-  # than restating them.
-  lot1_window <- cfg$induction_window_days
-  lotn_window <- cfg$lot_n_induction_window_days
-  cart_days   <- cfg$cart_consolidation_days
-  tandem_days <- cfg$sct_tandem_days
-  max_lot     <- cfg$max_lot
-  discon_days <- cfg$map_discon_gap_days
+  con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
+  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+
+  # Which run wrote these tables, and whether it finished as the contract
+  # algorithm. Readable tables are not enough: a failed rebuild leaves lines
+  # that read perfectly, and a contract-override sensitivity cell is a
+  # different algorithm whose counts are not this study's.
+  run <- require_lot_run(con, pfx)
+  meta <- lot_run_meta(con, pfx)
+
+  # The settings the counts are cut on come from the measured RUN's own
+  # contract record, not from this session's config. A workbook built a month
+  # later, with a different config beside it, still counts the run under the
+  # thresholds the run was built with. Local config is only the fallback for a
+  # run too old to have recorded a value, and the provenance sheet says which
+  # was used.
+  run_setting <- function(key, fallback) {
+    v <- lot_run_contract(con, pfx, key)
+    if (is.null(v) || is.na(v) || !nzchar(trimws(v))) fallback
+    else as.integer(trimws(v))
+  }
+  lot1_window <- run_setting("induction_window_days",       cfg$induction_window_days)
+  lotn_window <- run_setting("lot_n_induction_window_days", cfg$lot_n_induction_window_days)
+  cart_days   <- run_setting("cart_consolidation_days",     cfg$cart_consolidation_days)
+  tandem_days <- run_setting("sct_tandem_days",             cfg$sct_tandem_days)
+  max_lot     <- run_setting("max_lot",                     cfg$max_lot)
+  discon_days <- run_setting("map_discon_gap_days",         cfg$map_discon_gap_days)
   t <- list(long = lot_out(which_tbl), map  = lot_out("MAP_STACKED"),
             sct  = lot_out("LOT1_SCT"), auto = lot_out("TX_AUTO_DATES"),
             allo = lot_out("TX_ALLO_CART_DATES"))
 
   cat("Counting against:\n")
   for (nm in names(t)) cat("  ", nm, ": ", t[[nm]], "\n", sep = "")
-  cat("\n")
+  cat("  run ", run$run, " / attempt ", run$stamp, " / cohort ", run$cohort,
+      "\n\n", sep = "")
 
-  con <- DBI::dbConnect(odbc::odbc(), dsn = cfg$dsn, pwd = cfg$pwd, timeout = 120)
-  on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
+  # What the numbers describe, on its own sheet, so the workbook carries its
+  # own provenance instead of borrowing this session's.
+  PROVENANCE <- data.frame(
+    FIELD = c("LOT run id", "Run attempt (UPDATED_AT)", "Input cohort table",
+              "Study end", "Object prefix", "Line table counted",
+              "Cohort run id / stamp", "Contract settings (as recorded)",
+              "Contract deviations", "Windows used by the counts",
+              "Read at"),
+    VALUE = c(as.character(run$run), as.character(run$stamp),
+              as.character(run$cohort), as.character(run$study_end),
+              pfx, which_tbl,
+              if (is.null(meta)) "(no metadata row - a run predating it)"
+              else paste0(meta$cohort_run, " / ", meta$cohort_at),
+              if (is.null(meta) || is.na(meta$settings))
+                "(not recorded - session config used as fallback)"
+              else as.character(meta$settings),
+              "(none - require_lot_run refuses a deviating run)",
+              paste0("lot1=", lot1_window, "d lotn=", lotn_window,
+                     "d cart=", cart_days, "d tandem=", tandem_days,
+                     "d discon=", discon_days, "d max_lot=", max_lot),
+              format(Sys.time(), "%Y-%m-%d %H:%M:%S %Z")),
+    stringsAsFactors = FALSE)
 
+  # Each count says what it measures. Most are the RULE's population - every
+  # patient the rule decides - which is wider than the worked drugs and days.
+  # The catalogue's count_of states it per scenario, and it travels on every
+  # row, so a zero reads as "nobody in the rule's population" and never as
+  # "the worked example cannot happen".
   rows <- list(); failed <- 0L
+  row_of <- function(s, lot, n, note) data.frame(
+    ID = s$id, WHAT_HAPPENS_TO_THE_PATIENT = s$story,
+    WHAT_THE_COUNT_MEASURES = s$count_of %||% s$sql_note %||% "",
+    LOT_NUM = lot, N_PATIENTS = n, NOTE = note, stringsAsFactors = FALSE)
   for (s in LOT_SCENARIOS) {
     if (is.null(s$sql)) {
-      rows[[length(rows) + 1L]] <- data.frame(
-        ID = s$id, WHAT_HAPPENS_TO_THE_PATIENT = s$story, LOT_NUM = NA_integer_,
-        N_PATIENTS = NA_integer_,
-        NOTE = s$sql_note %||% "no count for this shape", stringsAsFactors = FALSE)
+      rows[[length(rows) + 1L]] <-
+        row_of(s, NA_integer_, NA_integer_,
+               s$sql_note %||% "no count for this shape")
       next
     }
     cat("== ", s$id, "  ", s$title, "\n", sep = "")
@@ -307,30 +386,29 @@ main <- function() {
     if (inherits(res, "error")) {
       failed <- failed + 1L
       cat("   FAILED: ", conditionMessage(res), "\n", sep = "")
-      rows[[length(rows) + 1L]] <- data.frame(
-        ID = s$id, WHAT_HAPPENS_TO_THE_PATIENT = s$story,
-        LOT_NUM = NA_integer_, N_PATIENTS = NA_integer_,
-        NOTE = paste("query failed:", substr(conditionMessage(res), 1, 200)),
-        stringsAsFactors = FALSE)
+      rows[[length(rows) + 1L]] <-
+        row_of(s, NA_integer_, NA_integer_,
+               paste("query failed:", substr(conditionMessage(res), 1, 200)))
       next
     }
     if (!nrow(res)) {
-      cat("   no patients in this shape\n")
-      rows[[length(rows) + 1L]] <- data.frame(
-        ID = s$id, WHAT_HAPPENS_TO_THE_PATIENT = s$story,
-        LOT_NUM = NA_integer_, N_PATIENTS = 0L,
-        NOTE = "no patients in this shape", stringsAsFactors = FALSE)
+      cat("   zero - nobody in this count's population\n")
+      rows[[length(rows) + 1L]] <-
+        row_of(s, NA_integer_, 0L, "zero - nobody in this count's population")
       next
     }
     print(res, row.names = FALSE)
-    rows[[length(rows) + 1L]] <- data.frame(
-      ID = s$id, WHAT_HAPPENS_TO_THE_PATIENT = s$story,
-      LOT_NUM = as.integer(res$LOT_NUM), N_PATIENTS = as.integer(res$N_PATIENTS),
-      NOTE = "", stringsAsFactors = FALSE)
+    rows[[length(rows) + 1L]] <-
+      row_of(s, as.integer(res$LOT_NUM), as.integer(res$N_PATIENTS), "")
   }
   counts <- do.call(rbind, rows)
 
-  write_workbook(list("How a line is built" = HOW_A_LINE_IS_BUILT,
+  # The tables must still be the attempt the counts started on, or the sheet
+  # mixes two builds and nothing on it says so.
+  recheck_lot_attempt(con, pfx, run, "scenario count")
+
+  write_workbook(list("What these numbers describe" = PROVENANCE,
+                      "How a line is built" = HOW_A_LINE_IS_BUILT,
                       "Scenarios"           = scen,
                       "Patients by line"    = counts,
                       "Open questions"      = OPEN_QUESTIONS,

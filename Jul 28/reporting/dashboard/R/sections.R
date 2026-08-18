@@ -665,6 +665,32 @@ DASHBOARD_SECTIONS <- c(list(
            GROUP BY `Line`, `Regimen`)
          WHERE rn <= {top_n} ORDER BY `Line`, `Patients` DESC"),
 
+  # Every regimen, no cut. The panel above answers "what is common"; this one
+  # answers "what is there" - one row per (line, regimen), the whole tail, so
+  # the CSV export beside the HTML is the complete downloadable list per line.
+  # PCT is of the line's own patient denominator, so each line's rows
+  # reconcile to 100 and to the funnel's count for that line.
+  list(name = "all_regimens", tab = "Regimens",
+       label = "All base regimens, by line - complete, no top-N cut",
+       needs = "lot_final", render = "table",
+       sql = "
+         SELECT r.`Line`, r.`Regimen`, r.`Patients`,
+                round(100.0 * r.`Patients` / t.`LinePatients`, 2) AS `PctOfLine`
+         FROM (
+           SELECT `Line`, `Regimen`, count(DISTINCT PATID) AS `Patients`
+           FROM (
+             SELECT LOT_NUM AS `Line`, PATID,
+                    coalesce(nullif(trim(LOT_BASE_MEDS), ''),
+                             concat(coalesce(LOT_START_TYPE, '?'), ' (no regimen)'))
+                      AS `Regimen`
+             FROM {lot_final})
+           GROUP BY `Line`, `Regimen`) r
+         INNER JOIN (
+           SELECT LOT_NUM AS `Line`, count(DISTINCT PATID) AS `LinePatients`
+           FROM {lot_final} GROUP BY LOT_NUM) t
+           ON t.`Line` = r.`Line`
+         ORDER BY r.`Line`, r.`Patients` DESC, r.`Regimen`"),
+
   list(name = "first_added_med", tab = "Regimens",
        label = "First drug added after the base regimen",
        needs = "lot_final", render = "table",

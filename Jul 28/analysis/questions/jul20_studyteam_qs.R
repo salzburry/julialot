@@ -3,9 +3,11 @@
 #
 #   Rscript jul20_studyteam_qs.R
 #
-# Q1 (the dashboard refresh) is in jul20_refresh_dashboard.R. The workbook needs
-# openxlsx; without it you get the CSVs and a note. Nothing is written to the
-# database - session temp views only.
+# Q1 (every regimen per line, steroid-free, no top-N cut) is answered by the
+# dashboard package: reporting/dashboard/build.R writes an untruncated
+# all-regimens panel and a CSV per run - see "All base regimens, by line"
+# there. The workbook here needs openxlsx; without it you get the CSVs and a
+# note. Nothing is written to the database - session temp views only.
 #
 # Population is LOT_LONG_FINAL. LOT_POPULATION=PRECRITERIA gives the run before
 # the line criteria; run the refresh and this script with the same setting.
@@ -32,10 +34,12 @@
 #
 #   (a) MELP: off unless JUL20_Q3A_MELP=TRUE. The melphalan question is
 #       answered in exploration/melphalan/.
-#   (b) CAR-T: patients whose first CAR-T falls inside the 60-day LOT1 induction
-#       window, classified by how the engine handled it. The fold-back merge is
-#       computed where LOT1 ended by the CAR-T and LOT2 is CART-started; the
-#       other groups stay visible and flagged.
+#   (b) CAR-T: a conformance check of the applied rule. A CAR-T inside LOT1's
+#       60-day induction window, while LOT1 is still open, is part of LOT1: it
+#       ends nothing and starts nothing. A CAR-T after LOT1 already ended may
+#       open the next line even inside the calendar window. The screen
+#       classifies every in-window first CAR-T against that rule and counts
+#       the rows that break it, which should be zero on a current build.
 #
 # Every run writes a validation summary and a run-status file: TECHNICALLY
 # COMPLETE - PENDING MANUAL REVIEW, or INCOMPLETE with reasons.
@@ -385,17 +389,37 @@ q2_lot2_regimens <- function(con, lot_long, n_dual) {
              stringsAsFactors = FALSE)
 }
 
-# Q2c - diagnosis years: INDEX_DATE (the qualifying MM diagnosis date behind
-# the Part-1 cohort) by calendar year, with an NA row so the total stays the
-# full dual cohort.
+# Q2c - diagnosis years, from MM_DX_DT: the earliest qualifying MM diagnosis.
+#
+# NOT INDEX_DATE. In this cohort INDEX_DATE is the 1L treatment start - the
+# cohort build sets it from LOT1_START_DT - so a diagnosis year read off it is
+# the year treatment began, which is a different question. MM_DX_DT is the
+# diagnosis: one qualifying inpatient claim, or two qualifying outpatient
+# claims within the window, earliest date kept.
+#
+# A cohort built before MM_DX_DT was carried has no such column. That run
+# CANNOT answer the diagnosis question, and the honest output is a status row
+# saying so - not the treatment year under a diagnosis label.
+cohort_has_mm_dx <- function(con, coh_tbl) {
+  d <- tryCatch(db_q(con, glue("DESCRIBE {coh_tbl}")), error = function(e) NULL)
+  if (is.null(d)) return(FALSE)
+  cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
+  length(cn) > 0 && "MM_DX_DT" %in% toupper(trimws(as.character(d[[cn[1]]])))
+}
 q2_diagnosis_years <- function(con, coh_tbl, n_dual) {
+  if (!cohort_has_mm_dx(con, coh_tbl))
+    return(data.frame(status = paste0(
+      "MM diagnosis year unavailable: this cohort run does not carry MM_DX_DT. ",
+      "INDEX_DATE is the 1L treatment start, not the diagnosis, so it is not ",
+      "reported in its place. Rebuild the cohort with the current package to ",
+      "answer this."), stringsAsFactors = FALSE))
   d <- db_q(con, glue("
-    SELECT year(cast(e.INDEX_DATE as date)) AS diagnosis_year,
-           count(DISTINCT d.PATID)          AS n_patients
+    SELECT year(cast(e.MM_DX_DT as date))  AS diagnosis_year,
+           count(DISTINCT d.PATID)         AS n_patients
     FROM _jul20_dual d
     JOIN {coh_tbl} e ON cast(e.PATID as string) = d.PATID
-    WHERE e.INDEX_DATE IS NOT NULL
-    GROUP BY year(cast(e.INDEX_DATE as date))
+    WHERE e.MM_DX_DT IS NOT NULL
+    GROUP BY year(cast(e.MM_DX_DT as date))
     ORDER BY diagnosis_year"))
   if (nrow(d) == 0)
     return(data.frame(status = "No diagnosis dates found (ELIG_COH_FINAL join returned no rows).",
@@ -602,6 +626,9 @@ q2_region_payer_crosstab <- function(con, have_region, have_payer, n_dual) {
 # Q2 - patient-level roster (one row per dual patient).
 q2_roster <- function(con, lot_long, coh_tbl, dara, bort,
                       have_claims, have_payer, have_region) {
+  # The diagnosis columns are NULL, not repurposed, on a cohort run that does
+  # not carry MM_DX_DT - see q2_diagnosis_years.
+  has_mm_dx <- cohort_has_mm_dx(con, coh_tbl)
   claims_sel <- if (have_claims) "
            dc.n_medical_service_dates  AS dara_medical_service_dates,
            dc.n_pharmacy_fill_dates    AS dara_pharmacy_fill_dates,
@@ -628,8 +655,10 @@ q2_roster <- function(con, lot_long, coh_tbl, dara, bort,
       FROM {lot_long} WHERE LOT_NUM = 2
     )
     SELECT d.PATID,
-           cast(e.INDEX_DATE as string)          AS mm_diagnosis_index_date,
-           year(cast(e.INDEX_DATE as date))      AS mm_diagnosis_year,
+           {if (has_mm_dx) 'cast(e.MM_DX_DT as string)' else 'cast(NULL as string)'} AS mm_diagnosis_date,
+           {if (has_mm_dx) 'year(cast(e.MM_DX_DT as date))' else 'cast(NULL as int)'} AS mm_diagnosis_year,
+           cast(e.INDEX_DATE as string)          AS lot1_index_date,
+           {if (has_mm_dx) 'datediff(cast(e.INDEX_DATE as date), cast(e.MM_DX_DT as date))' else 'cast(NULL as int)'} AS days_dx_to_lot1,
            e.AGE_INDEX_YR                        AS age_at_index,
            e.GDR_CD                              AS gender,
            cast(d.L1 as string)                  AS lot1_start_dt,
@@ -733,28 +762,27 @@ q3_cart_screen <- function(con, lot_long, sct_tbl, w1) {
     LEFT JOIN l2  ON l2.PATID  = l.PATID
     LEFT JOIN cnt c ON c.PATID = l.PATID"))
 
+  # Conformance, not impact. The applied rule: an in-window CAR-T while LOT1
+  # is open is absorbed - LOT1 does not end on it and no CART line starts on
+  # it. A violation is observable as LOT1 ending the DAY BEFORE its in-window
+  # first CAR-T with a CAR-T end reason. LOT1 ending before the infusion for
+  # its own reason, with the CAR-T then opening the next line, conforms - the
+  # calendar window does not resurrect a finished line.
   inv <- db_q(con, glue("
     SELECT
       count(*)                                                          AS n_lot1_patients,
       sum(CASE WHEN CART_DT IS NOT NULL THEN 1 ELSE 0 END)              AS n_any_cart_on_after_lot1,
       sum(cart_in_window)                                               AS n_cart_in_induction_window,
-      sum(CASE WHEN cart_in_window = 1 AND ended_by_cart = 1
-               THEN 1 ELSE 0 END)                                       AS n_affected_lot1_ended_by_cart,
       sum(CASE WHEN cart_in_window = 1 AND ended_by_cart = 0
-               THEN 1 ELSE 0 END)                                       AS n_in_window_not_ending_lot1,
+                AND L1_END >= CART_DT THEN 1 ELSE 0 END)                AS n_absorbed_conforming,
+      sum(CASE WHEN cart_in_window = 1 AND ended_by_cart = 0
+                AND L1_END < CART_DT THEN 1 ELSE 0 END)                 AS n_lot1_over_before_infusion_conforming,
       sum(CASE WHEN cart_in_window = 1 AND ended_by_cart = 1
-                AND END_REASON = 'SCT_CART' THEN 1 ELSE 0 END)          AS n_affected_reason_sct_cart,
+                AND datediff(CART_DT, L1_END) = 1
+               THEN 1 ELSE 0 END)                                       AS n_violations_lot1_ended_by_in_window_cart,
       sum(CASE WHEN cart_in_window = 1 AND ended_by_cart = 1
-                AND END_REASON = 'CART_INIT' THEN 1 ELSE 0 END)         AS n_affected_reason_cart_init,
-      sum(CASE WHEN cart_in_window = 1 AND ended_by_cart = 1
-                AND L2 IS NOT NULL THEN 1 ELSE 0 END)                   AS n_affected_with_lot2_to_merge,
-      sum(CASE WHEN cart_in_window = 1 AND ended_by_cart = 1
-                AND L2 IS NULL THEN 1 ELSE 0 END)                       AS n_affected_without_lot2_end_not_derivable,
-      sum(CASE WHEN cart_in_window = 1 AND ended_by_cart = 1
-                AND L2_TYPE = 'CART' THEN 1 ELSE 0 END)                 AS n_affected_lot2_type_cart,
-      sum(CASE WHEN cart_in_window = 1 AND ended_by_cart = 1
-                AND L2_TYPE = 'CART' AND L2 <> CART_DT
-               THEN 1 ELSE 0 END)                                       AS n_group1_lot2_not_on_cart_date
+                AND datediff(CART_DT, L1_END) <> 1
+               THEN 1 ELSE 0 END)                                       AS n_ended_by_a_later_cart_review
     FROM _jul20_cart"))
 
   mid <- max(2L, as.integer(floor(w1 / 2)))
@@ -776,31 +804,18 @@ q3_cart_screen <- function(con, lot_long, sct_tbl, w1) {
     GROUP BY first_cart_timing
     ORDER BY first_cart_timing"))
 
-  # The fold-back merge applies only to group 1 (LOT1 ended by the CAR-T and
-  # a CART-started LOT2 exists); groups 2-4 stay visible in the roster but do
-  # not move in the screened shift.
-  shift <- db_q(con, "
-    SELECT n_lots,
-           count(*) AS n_patients,
-           sum(CASE WHEN cart_in_window = 1 AND ended_by_cart = 1
-                     AND L2 IS NOT NULL AND L2_TYPE = 'CART'
-                    THEN 1 ELSE 0 END) AS n_losing_one_line
-    FROM _jul20_cart
-    GROUP BY n_lots ORDER BY n_lots")
-
-  # Every in-window CAR-T patient stays in the affected universe, classified
-  # by how the current engine handled the CAR-T.
+  # Every in-window first-CAR-T patient, classified against the applied rule.
   roster <- db_q(con, "
     SELECT PATID,
            CASE
-             WHEN ended_by_cart = 1 AND L2 IS NOT NULL AND L2_TYPE = 'CART'
-               THEN '1: LOT1 ended by CAR-T; CART-started LOT2 folds back'
-             WHEN ended_by_cart = 1 AND L2 IS NULL
-               THEN '2: LOT1 ended by CAR-T; no LOT2 - merged end not derivable'
-             WHEN ended_by_cart = 1
-               THEN '4: LOT1 ended by CAR-T; LOT2 not CART-started - review individually'
-             ELSE '3: in-window CAR-T but LOT1 currently ends for another reason - needs the scenario re-run'
-           END AS screen_group,
+             WHEN ended_by_cart = 0 AND L1_END >= CART_DT
+               THEN '1 CONFORMS: absorbed - LOT1 runs on past the infusion'
+             WHEN ended_by_cart = 0 AND L1_END < CART_DT
+               THEN '2 CONFORMS: LOT1 was already over - the CAR-T is free to start the next line'
+             WHEN ended_by_cart = 1 AND datediff(CART_DT, L1_END) = 1
+               THEN '3 DOES NOT CONFORM: LOT1 ends the day before its in-window CAR-T - stale run or rule off'
+             ELSE '4 REVIEW: a CAR-T end reason from a later infusion, not this one'
+           END AS conformance,
            cast(L1 as string)      AS lot1_start_dt,
            cast(L1_END as string)  AS lot1_end_dt,
            END_REASON              AS lot1_end_reason,
@@ -809,42 +824,12 @@ q3_cart_screen <- function(con, lot_long, sct_tbl, w1) {
            cast(L2 as string)      AS lot2_start_dt,
            L2_TYPE                 AS lot2_start_type,
            L2_REGIMEN              AS lot2_regimen,
-           cast(L2_END as string)  AS lot2_end_dt,
-           L2_END_REASON           AS lot2_end_reason,
-           CASE WHEN ended_by_cart = 1 AND L2 IS NOT NULL AND L2_TYPE = 'CART'
-                THEN cast(L2_END as string)
-                ELSE '(not derivable from existing outputs - needs the scenario re-run)' END
-                                   AS screened_merged_lot1_end,
-           n_lots                  AS n_lots_current,
-           CASE WHEN ended_by_cart = 1 AND L2 IS NOT NULL AND L2_TYPE = 'CART'
-                THEN n_lots - 1 ELSE n_lots END AS n_lots_screened
+           n_lots                  AS n_lots_current
     FROM _jul20_cart
     WHERE cart_in_window = 1
-    ORDER BY screen_group, PATID")
+    ORDER BY conformance, PATID")
 
-  list(inventory = inv, timing = timing, shift = shift, roster = roster)
-}
-
-# Lines-per-patient distribution, current vs screened merge: affected
-# patients with a LOT2 move down one bucket, everyone else is unchanged.
-q3_cart_shift_table <- function(shift) {
-  if (is_status_table(shift) || nrow(shift) == 0) return(shift)
-  lots  <- as.integer(num(shift$n_lots))
-  n     <- as.integer(num(shift$n_patients))
-  lose  <- as.integer(num(shift$n_losing_one_line))
-  mx <- max(lots)
-  before <- integer(mx); after <- integer(mx)
-  for (i in seq_along(lots)) {
-    before[lots[i]] <- before[lots[i]] + n[i]
-    after[lots[i]]  <- after[lots[i]] + (n[i] - lose[i])
-    tgt <- max(1L, lots[i] - 1L)
-    after[tgt] <- after[tgt] + lose[i]
-  }
-  data.frame(lines_per_patient = seq_len(mx),
-             n_patients_current = before,
-             n_patients_screened = after,
-             change = after - before,
-             stringsAsFactors = FALSE)
+  list(inventory = inv, timing = timing, roster = roster)
 }
 
 # Q3a - MELP rule: preliminary boundary screen (not an engine re-run).
@@ -1426,27 +1411,19 @@ main <- function() {
   if (!is_status_table(cart)) {
     write_out(cart$inventory, "cart_rule_inventory")
     write_out(cart$timing, "cart_rule_timing")
-    write_out(q3_cart_shift_table(cart$shift), "cart_rule_lines_shift")
-    write_out(cart$roster, "cart_rule_affected_patients")
+    write_out(cart$roster, "cart_rule_conformance_patients")
     inv <- cart$inventory
-    n_group3 <- num(inv$n_in_window_not_ending_lot1[1])
-    n_group4 <- num(inv$n_affected_with_lot2_to_merge[1]) -
-                num(inv$n_affected_lot2_type_cart[1])
-    n_bad_l2_date <- num(inv$n_group1_lot2_not_on_cart_date[1])
-    add_check("cart_screened_shift_covers_all_in_window_patients",
-              isTRUE(!is.na(n_group3) && n_group3 == 0),
-              sprintf("%s in-window CAR-T patient(s) whose LOT1 currently ends for another reason (group 3) - in the roster but outside the fold-back shift; the scenario re-run must cover them",
-                      n_group3),
+    n_viol   <- num(inv$n_violations_lot1_ended_by_in_window_cart[1])
+    n_review <- num(inv$n_ended_by_a_later_cart_review[1])
+    add_check("cart_rule_no_in_window_infusion_ends_lot1",
+              isTRUE(!is.na(n_viol) && n_viol == 0),
+              sprintf("%s patient(s) whose LOT1 ends the day before an in-window CAR-T - the applied rule forbids that. A stale LOT run, or a build with the rule off; rebuild before quoting anything from this run",
+                      n_viol))
+    add_check("cart_rule_later_infusion_rows_reviewed",
+              isTRUE(!is.na(n_review) && n_review == 0),
+              sprintf("%s patient(s) with a CAR-T end reason not attributable to the in-window infusion - a later infusion ended the line under the ordinary rules; review the roster rows",
+                      n_review),
               flag_only = TRUE)
-    add_check("cart_group4_lot2_not_cart_started",
-              isTRUE(!is.na(n_group4) && n_group4 == 0),
-              sprintf("%s patient(s) whose LOT1 ended by CAR-T but LOT2 is not CART-started (group 4; e.g. a same-day higher-priority transplant) - excluded from the fold-back, review individually",
-                      n_group4),
-              flag_only = TRUE)
-    add_check("cart_group1_lot2_starts_on_cart_date",
-              isTRUE(!is.na(n_bad_l2_date) && n_bad_l2_date == 0),
-              sprintf("%s group-1 patient(s) whose CART-started LOT2 does not start on the first CAR-T date - engine-output inconsistency, investigate",
-                      n_bad_l2_date))
   } else {
     write_out(cart, "cart_rule_inventory")
     gaps <- c(gaps, paste0("Q3b CAR-T screen unavailable - ",
@@ -1477,6 +1454,12 @@ main <- function() {
       write_out(ex$lots, "melp_rule_example_lots")
       write_out(ex$maps, "melp_rule_example_maps")
     }
+  } else if (!q3a_on) {
+    # NOT APPLICABLE, not a gap. The screen is off by design and the melphalan
+    # question is answered in exploration/melphalan/, so a default run is
+    # complete without it. Marking it a gap would push an operator toward
+    # turning on the screen the summary says not to quote.
+    write_out(melp, "melp_rule_totals")
   } else {
     write_out(melp, "melp_rule_totals")
     gaps <- c(gaps, paste0("Q3a MELP screen unavailable - ",
@@ -1490,7 +1473,9 @@ main <- function() {
   summary_lines <- c(
     paste0("July-20 study-team questions Q2+Q3 - ", cohort_label),
     paste0("Generated ", stamp, " by jul20_studyteam_qs.R against ", cfg$work_schema, "."),
-    paste0("Q1 (the dashboard refresh) is produced separately by jul20_refresh_dashboard.R."),
+    paste0("Q1 (every regimen per line, no top-N cut) is produced by the dashboard ",
+           "package - reporting/dashboard/build.R, panel 'All base regimens, by line', ",
+           "exported as a CSV beside the HTML."),
     "",
     "== Q2: 1L DARA+BORT dual therapy ==",
     paste0("Cohort definition: LOT1 regimen is EXACTLY daratumumab + bortezomib (tokens ",
@@ -1511,16 +1496,18 @@ main <- function() {
     "",
     "-- (b) CAR-T induction-window rule --",
     sprintf(paste0(
-      "Under the current engine a CAR-T occurring while LOT1 is open ends it the day before ",
-      "(SCT_CART, or CART_INIT when it lands within %d days of an added agent) and opens a ",
-      "CART-started LOT2. The screen covers EVERY patient whose first CAR-T falls inside the ",
-      "%d-day induction window (LOT1 start .. start+%dd) and classifies them: ",
-      "(1) LOT1 ended by the CAR-T and a CART-started LOT2 exists - the fold-back merge is computed for these; ",
-      "(2) LOT1 ended by the CAR-T but no LOT2 row exists - the merged end is not derivable from existing outputs; ",
-      "(3) the CAR-T is in-window but LOT1 currently ends for another reason - the rule may still touch these patients, and only the scenario re-run can say how; ",
-      "(4) LOT1 ended by the CAR-T but LOT2 is not CART-started (e.g. a same-day higher-priority transplant) - excluded from the fold-back. ",
-      "Groups 2-4 are flagged in the validation summary; the lines-per-patient shift covers group 1 only and is a lower bound on the change."),
-      VQS_CART, VQS_W1, VQS_W1 - 1),
+      "RULE CONFORMANCE, not an impact screen. Under the applied rule a CAR-T inside ",
+      "LOT1's %d-day induction window (LOT1 start .. start+%dd), while LOT1 is still ",
+      "open, is absorbed into LOT1: it ends nothing and starts nothing. A CAR-T after ",
+      "LOT1 already ended may open the next line even inside the calendar window. ",
+      "Every in-window first CAR-T is classified: ",
+      "(1) CONFORMS - absorbed, LOT1 runs on past the infusion; ",
+      "(2) CONFORMS - LOT1 was already over, the CAR-T is free to start the next line; ",
+      "(3) DOES NOT CONFORM - LOT1 ends the day before its in-window CAR-T, which the ",
+      "applied rule forbids: a stale run or a build with the rule off, rebuild before quoting; ",
+      "(4) REVIEW - a CAR-T end reason from a later infusion under the ordinary rules. ",
+      "Class 3 is a hard validation check and must be zero."),
+      VQS_W1, VQS_W1 - 1),
     "",
     paste0("Files: see jul20_qs_*_", tolower(cohort_mode), "_", stamp,
            ".csv alongside this summary; the validation_summary file carries the automated reconciliation checks, and the run_status file distinguishes 'technically complete - pending manual review' from an incomplete run."))
@@ -1549,13 +1536,14 @@ main <- function() {
       "distinct medication service dates on medical claims (MMA_MED_PROCESSED is deduplicated to one row per patient+agent+date+claim type) inside LOT1 - not administrations, not cycles",
       "distinct pharmacy fill dates inside LOT1",
       "days between episode start and the earlier of episode end / LOT1 end, summed per agent",
-      "ELIG_COH_FINAL.INDEX_DATE - the qualifying MM diagnosis index date behind cohort entry",
+      "mm_diagnosis_date - ELIG_COH_FINAL.MM_DX_DT, the earliest qualifying MM diagnosis (one inpatient claim, or two outpatient claims in the window). NULL when the cohort run predates the column",
+      "lot1_index_date - ELIG_COH_FINAL.INDEX_DATE, the 1L treatment start the cohort is anchored on. NOT the diagnosis date",
       "LOT_LONG LOT_NUM=2 regimen; '(no 2L observed)' keeps the denominator at the full dual cohort",
       "member_enrollment.BUS on the span covering the LOT1 start; MCR=Medicare, COM=Commercial, blank=Unknown, else Other(<BUS>); anchor = LOT1 start date. 'Payer/type' is answered by this line-of-business split; a finer plan/product breakdown would need an explicitly approved enrollment field, configured the same way as the region source",
       if (nzchar(region_note)) region_note else "(not derived)",
-      "PRELIMINARY affected-patient/boundary screen over existing LOT output; NOT an engine re-run; exact impact needs an isolated scenario re-derivation",
+      "Q3b is a conformance check of the applied CAR-T rule over existing LOT output; Q3a is off by default and answered in exploration/melphalan/",
       "a line transition attributable to melphalan: prior line ended MED_ADD with MELP as the added drug, and/or the next line is MED-started on a MELP MAP start date",
-      sprintf("any patient whose first CAR-T date falls within LOT1 start .. start+%dd (the %d-day induction window), classified by how the current engine handled the CAR-T; the fold-back merge is computed only for those whose LOT1 ended by the CAR-T and whose LOT2 is CART-started",
+      sprintf("any patient whose first CAR-T date falls within LOT1 start .. start+%dd (the %d-day induction window), classified for conformance with the applied rule: absorbed while open, free to start the next line once LOT1 was over, or - a violation - ending LOT1 the day before the infusion",
               VQS_W1 - 1, VQS_W1)),
     stringsAsFactors = FALSE)
   write_out(defs, "definitions")
@@ -1621,14 +1609,13 @@ main <- function() {
       tables = tbls("Boundary roster" = "melp_rule_boundaries",
                     "Example patient LOT rows" = "melp_rule_example_lots",
                     "Example patient MELP MAP dates" = "melp_rule_example_maps"))
-    add_wb("Q3b CAR-T", "Q3(b) - CAR-T rule PRELIMINARY screen (not exact impact)",
+    add_wb("Q3b CAR-T", "Q3(b) - CAR-T rule conformance (in-window infusions vs the applied rule)",
       subtitle = cohort_label,
-      tables = tbls("Inventory" = "cart_rule_inventory",
-                    "First CAR-T timing vs LOT1 start" = "cart_rule_timing",
-                    "Lines per patient (current vs screened)" = "cart_rule_lines_shift"))
-    add_wb("Q3b CAR-T patients", "Q3(b) - CAR-T affected patients (all in-window CAR-T)",
+      tables = tbls("Conformance counts" = "cart_rule_inventory",
+                    "First CAR-T timing vs LOT1 start" = "cart_rule_timing"))
+    add_wb("Q3b CAR-T patients", "Q3(b) - in-window CAR-T patients, classified for conformance",
       subtitle = cohort_label,
-      tables = tbls("Affected patients" = "cart_rule_affected_patients"))
+      tables = tbls("Conformance roster" = "cart_rule_conformance_patients"))
 
     xlsx <- file.path(out_dir, paste0("jul20_studyteam_qs_", tolower(cohort_mode), "_", stamp, ".xlsx"))
     ok_wb <- isTRUE(tryCatch({ wbx_write_workbook(wb_sheets, xlsx); TRUE },

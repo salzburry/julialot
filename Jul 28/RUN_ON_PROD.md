@@ -1,6 +1,6 @@
 # What to run, in order
 
-Built from `9504e04`. Code and docs only — **no code lists** (the engine reads
+Code and docs only — **no code lists** (the engine reads
 them from `CODELIST_DIR`, default `/mnt/code/codelist`) and **no cohort build**
 (`ndmm_NDMM_COHORT` has to exist already).
 
@@ -51,16 +51,19 @@ Drop `AUDIT_EXECUTE` to list what it would count; needs no connection.
 
 ## 1b. The scenario workbook for the study team
 
-How a line is created, seventeen worked patients with the lines the engine
+How a line is created, thirty-one worked patients with the lines the engine
 builds from them, and how many real patients are in each shape by line number.
 
 ```
 SCENARIO_EXECUTE=TRUE Rscript exploration/lot/run_lot_scenarios.R
 ```
 
-Writes `exploration/lot/out/lot_scenarios.xlsx`. Needs `openxlsx`; without it
-the same three sheets come out as CSVs. Drop `SCENARIO_EXECUTE` to see the
-scenarios with no connection.
+Writes `exploration/lot/out/lot_scenarios.xlsx`: what the numbers describe
+(run id, cohort, table, settings), how a line is built, the scenarios, the
+patient counts, the open questions, and what the codes mean. Needs `openxlsx`;
+without it the same sheets come out as CSVs. Drop `SCENARIO_EXECUTE` to see
+the scenarios with no connection — that preview goes to
+`lot_scenarios_reference.xlsx`, so it never overwrites the counted workbook.
 
 Run it before step 2 as well if you want the counts on the current tables.
 
@@ -151,8 +154,5 @@ written and the run reports how many failed.
 - `yield_to_sct` vs `as_asked`: what wins when a melphalan exposure and an AUTO
   code describe the same event. The request does not cover it, which is why
   both cells are built.
-- A B.2 pair after a CAR-T-only or single-day ALLO line. Those lines end on
-  their own start date before any run-out is consulted, so the hold cannot
-  reach the doses. Block 2 of the decisions reader counts what it costs.
 - What "2L MELP mono" means: melphalan as the only induction-regimen agent
   (what is built), or the only therapy exposure anywhere in the line.
