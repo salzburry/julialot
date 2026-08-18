@@ -195,8 +195,8 @@ pin_output_schema <- function(cfg) {
   if (!nzchar(schema))
     stop("No output schema. Set DOMINO_USER_NAME to your personal schema ",
          "(e.g. usr00000), or PROJECT_WORK_SCHEMA to override.", call. = FALSE)
-  # It goes straight into table names, so check the value we resolved rather
-  # than each variable it could have come from.
+  # It goes straight into table names, so the check is on the resolved value
+  # rather than on each variable it could have come from.
   if (!grepl("^[A-Za-z_][A-Za-z0-9_]*$", schema))
     stop("Output schema '", schema, "' is not a schema name.", call. = FALSE)
   cfg$work_schema <- schema
@@ -473,7 +473,7 @@ check_cohort_build <- function(con, cfg) {
   list(run_id = NA_character_, stamp = NA_character_, table = NA_character_)
 }
 
-# The cohort must not have moved while we were reading it.
+# The cohort must not move while it is being read.
 #
 # check_cohort_build() runs before the cohort is copied into
 # LOT_PATIENT_INPUT, with the code lists loaded in between. A cohort rebuilt in
@@ -1437,9 +1437,9 @@ record_codelist_hashes <- function(con, cfg) {
   # behind, and the INSERT below names its columns. So a column this table
   # lacks fails the run rather than being filled by position.
   #
-  # Stricter than the shared helper on one point, and that is deliberate. This
-  # table is the record of WHICH code lists a cohort was built from, so a
-  # DESCRIBE that cannot be read stops rather than carrying on unmigrated.
+  # Stricter than the shared helper on one point. This table is the record of
+  # WHICH code lists a cohort was built from, so a DESCRIBE that cannot be read
+  # stops the run rather than carrying on unmigrated.
   # lot_ensure_cols() treats the same silence as "leave it alone", which is
   # right for a status row and not for this.
   if (!length(tryCatch({

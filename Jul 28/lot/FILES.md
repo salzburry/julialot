@@ -231,8 +231,7 @@ same question of both claim tables before LOT1 starts, under
 `cl_mma_codelist.csv`, and both places that build `mma_rollup` drop them by class
 as well. The rollup file itself should not list them either — QC check `D3`
 reports whether the production copy still does. That edit is made on the server
-by hand now; the script that used to make it was removed with `lot/tools/` and
-is in git history if it is wanted again.
+by hand. No script in this folder makes it.
 
 ### Face validity
 

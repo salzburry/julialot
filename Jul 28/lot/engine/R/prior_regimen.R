@@ -7,13 +7,13 @@
 # Once the drug is discontinued it is released. map_discon_gap_days flags the
 # episode whose gap to the next reaches the threshold. An episode after such a
 # gap is a restart, not a continuation, so it may open a line like any other
-# drug. The exclusion was once unconditional. That left a line spanning its own
-# drug's 185-day absence.
+# drug.
 #
-# Those two halves are one rule and ship together. Release the drug without
-# breaking the run-out chain and a line opens inside a line still notionally
-# running. Break the chain without releasing the drug and the returning
-# treatment belongs to no line at all. See discon_per_med_sql below.
+# The release and the run-out chain are two halves of one rule and neither is
+# safe alone. Release the drug without breaking the chain and a line opens
+# inside a line still notionally running. Break the chain without releasing the
+# drug and the returning treatment belongs to no line at all. See
+# discon_per_med_sql below.
 
 # The prior-LOT drugs themselves, added to the set med_cand excludes. Without
 # them that set holds only their permissible biosimilar substitutes.
@@ -52,13 +52,13 @@ map_restart_sql <- function() {
 #
 # A confirmed discontinuation of the drug itself breaks it too.
 # map_discon_gap_days flags an episode whose gap to the next reaches the
-# threshold. That flag sat on the very row this scan reads and was never read.
-# So a line stretched over its own drug's 185-day absence and ran for seven
-# months with no cover. The chain now stops at the last episode before the gap.
+# threshold, and the chain stops at the last episode before that gap. Without
+# this a line stretches over its own drug's absence and runs for months with no
+# cover.
 #
-# That is half a rule. Stop the chain without also letting the drug open a line
-# and the returning treatment belongs to nothing, so prior_regimen_excl_sql()
-# releases it in the same commit. Neither half is safe alone.
+# That is half a rule. Stopping the chain without letting the drug open a line
+# leaves the returning treatment belonging to nothing, so
+# prior_regimen_excl_sql() releases it. Neither half is safe alone.
 #
 # What else breaks the chain is kept narrow on purpose. A drug in this line's
 # own regimen does not break it. base_meds holds the induction drugs AND their

@@ -750,23 +750,20 @@ ok(has(mrs, "melp_hold carries the line to it") &&
 # and every cell that turns it on is a recorded deviation.
 doc <- paste(readLines(file.path(PARENT, "FILES.md"), warn = FALSE),
              collapse = "\n")
-# Item 6 stays on the list, struck through, because a question that was open
-# and got answered is worth more to the next reader than a gap in the
-# numbering. So it is looked for as answered, not as open.
-ok(has(doc, "6. ~~In B.2") && has(doc, "Settled by the request"),
-   "...and it is on the study team's list, recorded as settled rather than removed")
+# Item 6 on the list is B.2's line hold. It is answered, and the answer is the
+# request's own words, so the list has to say settled rather than open.
+ok(has(doc, "6. In B.2") && has(doc, "Settled by the request"),
+   "...and the study team's list marks B.2's line hold settled, not open")
 ok(has(doc, "n_b2_line_starts"),
    "...pointing at the number that settles it")
 # The count is the group the reading decides: a line melphalan started straight
 # after the previous one ran out, rather than every melphalan line.
 ok(!has(sql, "w.LOT_START_TYPE = 'MED'"),
    "and it does not settle for start-type MED, which any drug can produce")
-# These two used to pin the OPPOSITE of what the engine now does: that the
-# folder said the line is NOT held open. The engine gained melp_hold and the
-# documentation was not moved with it, so the suite went green holding both
-# positions at once - the code asserting the hold exists, and this asserting
-# the docs deny it. The check is now that the two agree.
-ok(has(doc, "the line is carried to the") && !has(doc, "It does not hold the line open"),
+# The engine carries the line to the second dose (melp_hold). The folder
+# documentation has to say the same thing, or a reader gets one answer from the
+# code and the opposite from the text.
+ok(has(doc, "the line is carried to") && !has(doc, "It does not hold the line open"),
    "the folder documentation states the reading the code implements")
 ok(has(doc, "melp_hold"),
    "...and names the thing that implements it, so the two are checkable against each other")

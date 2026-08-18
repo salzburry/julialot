@@ -20,15 +20,14 @@
 #   LOT_ALLO_LOT_FLG, LOT_CART_LOT_FLG, contains_mtx_reg,
 #   LOT_BASE_END_DT_CE_SENS, LOT_BASE_END_REASON_CE_SENS
 #
-# Key parameters (defaults reflect study-team decisions):
+# Key parameters:
 #   induction_window_days   = 30   (LOT1 uses 60)
-#   cart_consolidation_days = 45   (supersedes the earlier 30d value)
+#   cart_consolidation_days = 45
 #   sct_tandem_days         = 180  (>180d AUTO is unplanned)
 #   allo_lot_span           = "single_day": ALLO LOT spans only ALLO_DT
 #   max_lot                 = 5
 #
-#   TWO 90-day settings, and they are different rules. This header used to say
-#   there was no LOT-level buffer, which was true once and is not now:
+#   TWO 90-day settings, and they are different rules:
 #     map_discon_gap_days     = 90   PER DRUG. A gap this long between one of a
 #                                    drug's episodes and the next makes the
 #                                    later one a restart. It is what stops a
@@ -41,8 +40,8 @@
 #                                    this many days of observation after it.
 #                                    Unconfirmed, the cascade censors at
 #                                    OBS_END_DT instead.
-#   They happen to carry the same number. Reading one as the other puts a line's
-#   end on the wrong date.
+#   They carry the same number. Reading one as the other puts a line's end on
+#   the wrong date.
 #
 # End reasons are decided by date. The tie-break applies only to equal dates.
 
@@ -73,17 +72,16 @@
 # The per-line stages, in build order. Each is written to <prefix>LOT<n>_<NAME>
 # and its session view repointed, so the next stage reads a table.
 #
-# As temporary views this loop was the slowest part of a run. A view is a
-# query, and Spark inlines its plan at every reference and re-runs it. These
-# views sit on top of each other, so the cost compounds. lotN_base reads
-# lotN_induction_meds three times and is itself read six times, and
-# lotN_base_end reads lotN_base four more. Counted through the chain, the
-# start-candidate query - four aggregates and a window function over every
-# patient - is planned about a hundred times per line, and the whole structure
-# is rebuilt for each of LOT2 to LOT5.
+# Tables rather than temporary views, because a view is a query: Spark inlines
+# its plan at every reference and re-runs it, and these stages sit on top of
+# each other, so the cost compounds. lotN_base reads lotN_induction_meds three
+# times and is itself read six times; lotN_base_end reads lotN_base four more.
+# Through the chain, the start-candidate query - four aggregates and a window
+# function over every patient - would be planned about a hundred times per
+# line, for each of LOT2 to LOT5.
 #
-# Written to tables, each stage is planned once and every later reference is a
-# scan. The SQL is the same. Only where its rows live has changed.
+# Written to a table, each stage is planned once and every later reference is a
+# scan. The SQL is identical either way; only where the rows live differs.
 .LOTN_STAGES <- c("START_CANDIDATES", "START", "INDUCTION_MEDS", "BASE",
                   "SCT", "CONTAINS_MTX_REG", "BASE_END")
 
@@ -338,9 +336,8 @@ build_lot_n <- function(con, lot_num,
     --        event, so by the time this CTE sees an AUTO only the 180-day
     --        upper bound is left to test.
     --
-    -- The PREV_AUTO_DT IS NOT NULL guard from the earlier rule is gone. A
-    -- first-ever AUTO CAN trigger a new LOT. That is LOT2-5 only; at LOT1 the
-    -- first AUTO is still part of induction.
+    -- A first-ever AUTO CAN trigger a new LOT here. That is LOT2-5 only; at
+    -- LOT1 the first AUTO is part of induction.
     autos_with_prev AS (
       -- N_BETWEEN: whether anything happened since the previous transplant. A
       -- pair 180 days apart with a medication in the middle is not a planned
@@ -467,10 +464,10 @@ build_lot_n <- function(con, lot_num,
                  ORDER BY LOT{lot_num}_START_TYPE"))
 
   # The last day this line's regimen may collect a drug on. Same rule as
-  # lot1_regimen_cutoff in 04_lot1_base.R, and that comment says why it exists:
-  # a line used to keep collecting drugs across a window it had already been cut
-  # short in, so a drug first dispensed after the line ended was counted in its
-  # regimen and started a later line too.
+  # lot1_regimen_cutoff in 04_lot1_base.R. Without it a line keeps collecting
+  # drugs across a window it has already been cut short in, so a drug first
+  # dispensed after the line ended counts in its regimen and can start a later
+  # line as well.
   #
   # ALLO and CAR-T here, where LOT1 has ALLO only. LOT1's induction exemption
   # keeps an in-window CAR-T inside the line and closes that door. LOT2-5 has no
@@ -572,12 +569,11 @@ build_lot_n <- function(con, lot_num,
     -- line. It was in this line's regimen, so this line extends over it, and
     -- the chain stops at the first break a different drug causes.
     --
-    -- max(MAP_END_DT) over every episode quietly undid that. Drug A dosed days
-    -- 0-27, discontinued at 27 by the 90-day gap, restarting 117-144, gave a
-    -- line-level runout of 144. The restart was swallowed, and LOT2 never
-    -- opened, because its trigger has to fall strictly after the previous end.
-    -- MAP_DISCON_FLG had been right all along and was read by nothing but a QC
-    -- count.
+    -- max(MAP_END_DT) over every episode would undo that. Drug A dosed days
+    -- 0-27, discontinued at 27 by the 90-day gap, restarting 117-144, would
+    -- give a line-level run-out of 144. The restart is then swallowed and LOT2
+    -- never opens, because its trigger has to fall strictly after the previous
+    -- end.
     discon_per_med AS (
 {discon_per_med_sql(glue('lot{lot_num}_regimen_cutoff'), glue('LOT{lot_num}_START_DT'), end_col = 'REGIMEN_CUTOFF_DT')}
     ),

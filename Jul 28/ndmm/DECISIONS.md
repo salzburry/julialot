@@ -1,15 +1,14 @@
-# NDMM cohort - recorded decisions
+# NDMM cohort - the rules that decide who is in it
 
-Choices that change who is in the cohort. Each says what was decided, what the
-code does, and what still needs confirming.
+Each rule that changes cohort membership: what the code does, and whether it is
+still open.
 
-A decision here is only as good as the person who made it. Pending sign-off
-means the code is written and the number is reported, but nobody has signed the
-record.
+Pending sign-off means the code is written and the number is reported, but
+nobody has signed the rule off.
 
-**What kind of pending.** These are not the same thing, and reading them alike
-has repeatedly turned an interpretation into a reported protocol gap. Each
-status below says which it is:
+**Four kinds of pending, and they are not the same.** Reading an interpretation
+as a protocol gap reports a requirement the build is missing when there is
+none. Each status below says which kind it is:
 
 | kind | what it means |
 |---|---|
@@ -26,13 +25,13 @@ answer is a code list and a count, not a missing requirement.
 
 ## 1. Follow-up enrolment - one day, this cohort only
 
-Decided: the enrolment span must cover the 1L index date itself. One day,
+Rule: the enrolment span must cover the 1L index date itself. One day,
 not the three months used elsewhere.
 
 Scope: this cohort only. Others keep three months unless changed separately.
 
-Code: `NDMM_FU_CE_DAYS = 0`, pinned in `CONTRACT`, so changing it is a
-deliberate edit rather than a setting anyone can pass. The flag is `CE_lot1_fu`
+Code: `NDMM_FU_CE_DAYS = 0`, pinned in `CONTRACT`, so it cannot be changed by
+passing a setting. The flag is `CE_lot1_fu`
 in `R/steps/06_flags.R`, built over no-gap spans and bounded by death and the
 study end.
 
@@ -52,7 +51,7 @@ applied row is marked - the divergence is visible rather than argued about.
 
 ## 2. Belantamab - split across two packages
 
-Decided: the exclusion runs in two halves, because no one package can see
+Rule: the exclusion runs in two halves, because no one package can see
 all of it.
 
 | half | where | why |
@@ -116,13 +115,13 @@ Downstream, and this matters:
 - Belantamab cannot set the 1L index. Different rule, and it stays here,
   because the index is what LOT1 anchors on.
 
-Status: decided and implemented.
+Status: signed off.
 
 ---
 
 ## 3. Eligible 1L agents - the code list is the list
 
-Decided: `cl_mma_codelist.csv` is the study's definition of MM therapy, so
+Rule: `cl_mma_codelist.csv` is the study's definition of MM therapy, so
 it is also the eligible-1L set. There is no separate eligibility file.
 
 Code: any agent on that list may set the index, less steroids (dropped where
@@ -140,14 +139,15 @@ is checked against the code list, so a name matching nothing stops the run.
 What it gives up: narrowing the set now needs code rather than a file. That
 is the point - the code list is authoritative.
 
-Status: decided and implemented.
+Status: signed off.
 
 ---
 
 ## 4. Other malignancy - grouping and bone metastasis
 
-Two questions, both decided. What remains is data-dependent: the review tables
-say how much each moved, and those are read after the first run.
+Two questions. Both are answered in code. How much each one moves is
+data-dependent: the review tables carry it, and they are read after the first
+run.
 
 ### Grain - pair on the ICD category
 
@@ -178,11 +178,9 @@ baseline never contained. The criterion is another cancer **in** the 1L
 baseline, so both `first_dt` and `next_dt` are bounded to
 `[index - 365, index - 1]`.
 
-This makes the cohort larger, and it is the one change in this section that
-moves it that way. A pair straddling the index no longer excludes anyone, so
-patients the source dropped are now in. Two claims 30 days apart still confirm,
-and the 30-day pairing rule is unchanged - what changed is where the pair has
-to sit.
+This makes the cohort larger than an unbounded pair would. A pair straddling
+the index excludes nobody. Two claims 30 days apart still confirm; the 30-day
+pairing rule is the same either way. The bound is on where the pair sits.
 
 Code: `04_other_malig.R`, the join to `outpatient_pairs`. `next_dt` is always
 after `first_dt`, so its lower bound is arithmetically redundant; it is written
@@ -232,8 +230,8 @@ any prefix collapse to one group `MET`; everything else keeps the ICD category.
 `C80.2` a transplant case, and neither is secondary. They keep the category
 rule.
 
-What it does not do: add anything to the exclusion. This regroups codes
-already on `other_malig.csv` - a code not on that file was never in scope.
+What it does not do: add anything to the exclusion. It regroups codes that are
+already on `other_malig.csv`. A code not on that file is not in scope.
 `report_metastatic_group()` logs how many codes the group actually claimed and
 warns if that is zero, so a prefix matching nothing is visible.
 
@@ -279,7 +277,7 @@ extract, most metastatic patients are already reachable through their primary
 code and this group adds little. Whether it holds in Optum claims is not
 something this package has checked.
 
-Status: MEASUREMENT. Decided and implemented; the magnitude arrives with the
+Status: MEASUREMENT. The magnitude arrives with the
 first warehouse run. Nothing to sign - read `NDMM_OTHER_MALIG_GRAIN` and see
 whether the watch tiers did real work.
 
@@ -344,7 +342,7 @@ mechanism and all of it is judgement. `NDMM_MM_ADJACENT_GROUPS` selects on
 
 ## 5. Study window and data vintage
 
-Decided: `lot` takes the study window as a run argument, and defaults to
+Rule: `lot` takes the study window as a run argument, and defaults to
 this cohort's: `2016-01-01` to `2026-03-31`.
 
 The window is not in `lot`'s `CONTRACT`. `CONTRACT` fixes what a LOT run
@@ -384,7 +382,7 @@ every criterion, applied or not, with the patients it catches
 "no patient had belantamab", "the criterion was off" and "this is not that
 cohort" all produce the same `LOT_LONG_FINAL`.
 
-Status: decided and implemented.
+Status: signed off.
 
 ---
 
@@ -484,7 +482,7 @@ Changing that would change who counts as inpatient.
 
 ## 7. Month windows are day counts
 
-Decided: every "months" window in this package is a fixed day count. Twelve
+Rule: every "months" window in this package is a fixed day count. Twelve
 months of baseline is 365 days - `[index - 365, index - 1]` - at 1L, 2L and
 3L alike. Three months of 2L/3L follow-up is 90 days.
 
@@ -538,7 +536,7 @@ The exclusion is applied over the **whole study period**, `NDMM_STUDY_START` to
 `STUDY_END`. `05_pregnancy.R` bounds all three claim sources - diagnosis,
 procedure and revenue - on that window.
 
-Two authorities say different things and neither had been recorded as winning:
+Two authorities say different things, and no document says which wins:
 
 | | says |
 |---|---|
@@ -628,17 +626,18 @@ register.
 
 ## 11. An ICD_FLAG naming neither family - reported, not gated
 
-Decided: the build reports and continues. It stopped, and the first production
-run halted on 16 rows across two CDM tables - 15 diagnosis, 1 procedure, every
-one with a blank flag.
+Rule: the build reports and continues. It does not stop. On the first
+production run 16 rows across two CDM tables carried a blank flag - 15
+diagnosis, 1 procedure.
 
 Code: `check_icd_flag()` in `R/build_ndmm.R`. It finds claims whose `ICD_FLAG`
 names neither ICD-9 nor ICD-10 **and** whose normalised code is on a list this
 cohort reads, names each code and which list it is on, and writes the finding
 to `NDMM_RUN_METADATA.FINDINGS` with its counts.
 
-Effect on the cohort: none. Those rows matched no code list entry before this
-change and match none after it. What changed is whether the build stops.
+Effect on the cohort: none. Those rows match no code list entry, so nothing
+about who is in the cohort turns on them. What they change is what the run
+reports.
 
 Why it is worth reporting at all: the miss cuts both ways. On an MM diagnosis
 code the lost match can exclude a patient who should be in; on an other-cancer

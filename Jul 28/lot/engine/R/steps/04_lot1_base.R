@@ -22,21 +22,19 @@ phase_lot1_base <- function(con, ctx) {
 
   # S08b: the last day LOT1's regimen may collect an agent on.
   #
-  # A line picks its regimen over the whole induction window. It used to do
-  # that before it could know its own end date, because phase_sct ran after
-  # this one. So where an allogeneic transplant ended LOT1 early, the rest of
-  # the window kept collecting drugs into the regimen of a line already over.
-  # A drug first dispensed after the line ended was counted in its regimen, and
-  # went on to start a later line as well. Counted twice, and it moved the
-  # run-out with it, because a stranded drug is a base drug.
+  # A line picks its regimen over the whole induction window. Without a cutoff
+  # it keeps collecting past its own end: where an allogeneic transplant ends
+  # LOT1 early, the rest of the window would still gather drugs into the regimen
+  # of a line already over. A drug first dispensed after the line ended would
+  # count in its regimen AND start a later line - counted twice - and it would
+  # move the run-out with it, because a regimen drug is a base drug.
   #
   # ALLO always. CAR-T only when the induction exemption is off.
   #
   # With the exemption on - the pinned setting - a CAR-T inside the window is
-  # part of LOT1 and ends nothing. One outside the window is outside the
-  # regimen window too, so it has nothing left to strand. Turn the exemption
-  # off for a sensitivity run and that stops being true. The CAR-T then ends
-  # LOT1 the day before, and the rest of the window would keep collecting drugs
+  # part of LOT1 and ends nothing, and one outside the window is outside the
+  # regimen window too, so it has nothing to strand. With the exemption off the
+  # CAR-T ends LOT1 the day before, and the rest of the window would collect
   # into a line already over. So the cutoff follows the exemption.
   #
   # An AUTO cannot strand anything either way. It only ever extends the line
@@ -118,12 +116,11 @@ phase_lot1_base <- function(con, ctx) {
     -- the same drug extends it rather than opening a line, unless a drug that
     -- would end the line arrives in between.
     --
-    -- max(MAP_END_DT) over every episode quietly undid that. Drug A dosed days
-    -- 0-27, discontinued at 27 by the 90-day gap, restarting 117-144, gave a
-    -- line-level runout of 144. The restart was swallowed, and LOT2 never
-    -- opened, because its trigger has to fall strictly after the previous end.
-    -- MAP_DISCON_FLG had been right all along and was read by nothing but a QC
-    -- count.
+    -- max(MAP_END_DT) over every episode would undo that. Drug A dosed days
+    -- 0-27, discontinued at 27 by the 90-day gap, restarting 117-144, would
+    -- give a line-level run-out of 144. The restart is then swallowed and LOT2
+    -- never opens, because its trigger has to fall strictly after the previous
+    -- end.
     discon_per_med AS (
 {discon_per_med_sql('lot1_regimen_cutoff', 'LOT1_START_DT', end_col = 'REGIMEN_CUTOFF_DT')}
     ),
