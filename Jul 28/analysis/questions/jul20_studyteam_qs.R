@@ -854,8 +854,8 @@ q3_cart_shift_table <- function(shift) {
 #
 # A "MELP boundary" is a line transition attributable to melphalan: the
 # earlier line ended MED_ADD with MELP as the added drug, and/or the next
-# line is MED-started on the date a MELP MAP begins. Each boundary is
-# bucketed by timing against the first MELP MAP of the line it follows.
+# line is MED-started on the date a MELP MAP begins. Each boundary carries the
+# days between it and the first MELP MAP of the line it follows.
 q3_melp_screen <- function(con, lot_long, map_tbl, melp) {
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW _jul20_melp_maps AS
@@ -925,12 +925,8 @@ q3_melp_screen <- function(con, lot_long, map_tbl, melp) {
            anch.anchor_melp_start,
            CASE WHEN anch.anchor_melp_start IS NULL THEN NULL
                 ELSE datediff(a.adv_melp_start, anch.anchor_melp_start) END AS gap_days,
-           CASE
-             WHEN anch.anchor_melp_start IS NULL THEN 'first MELP of the line (no earlier MELP anchor)'
-             WHEN datediff(a.adv_melp_start, anch.anchor_melp_start) < 60 THEN 'under 60 days'
-             WHEN datediff(a.adv_melp_start, anch.anchor_melp_start) <= 180 THEN '60-180 days'
-             ELSE 'over 180 days'
-           END AS gap_bucket
+           CASE WHEN anch.anchor_melp_start IS NULL THEN 'no earlier MELP in the line'
+                ELSE 'has an earlier MELP in the line' END AS anchor_state
     FROM adv a
     LEFT JOIN anch ON anch.PATID = a.PATID AND anch.prev_lot = a.prev_lot"))
 
@@ -940,23 +936,29 @@ q3_melp_screen <- function(con, lot_long, map_tbl, melp) {
         WHERE PATID IN (SELECT cast(PATID as string) FROM {lot_long}))  AS n_patients_with_melp_map,
       (SELECT count(*) FROM _jul20_melp_bounds)                          AS n_melp_boundaries,
       (SELECT count(DISTINCT PATID) FROM _jul20_melp_bounds)             AS n_patients_with_melp_boundary,
-      (SELECT count(*) FROM _jul20_melp_bounds WHERE gap_bucket = '60-180 days')
-                                                                         AS n_boundaries_60_180,
       (SELECT count(*) FROM _jul20_melp_bounds WHERE next_lot IS NOT NULL)
                                                                          AS n_boundaries_with_next_line"))
 
+  # The gap itself, as a distribution rather than as named bands. A band is a
+  # reading of the rule; the days between the two MELP dates are what the
+  # claims say.
   inv <- db_q(con, "
-    SELECT gap_bucket,
+    SELECT anchor_state,
            count(*)                                                    AS n_boundaries,
            count(DISTINCT PATID)                                       AS n_patients,
+           min(gap_days)                                               AS min_gap_days,
+           percentile_approx(gap_days, 0.25)                           AS p25_gap_days,
+           percentile_approx(gap_days, 0.5)                            AS median_gap_days,
+           percentile_approx(gap_days, 0.75)                           AS p75_gap_days,
+           max(gap_days)                                               AS max_gap_days,
            sum(ended_by_melp_add)                                      AS n_prev_ended_med_add_melp,
            sum(next_starts_on_melp)                                    AS n_next_line_starts_on_melp,
            sum(CASE WHEN prev_auto_flg = 1 OR coalesce(next_auto_flg, 0) = 1
                      OR coalesce(next_start_type, '') = 'SCT_AUTO'
                     THEN 1 ELSE 0 END)                                 AS n_with_transplant_context
     FROM _jul20_melp_bounds
-    GROUP BY gap_bucket
-    ORDER BY gap_bucket")
+    GROUP BY anchor_state
+    ORDER BY anchor_state")
 
   by_line <- db_q(con, "
     SELECT concat('LOT', cast(prev_lot as string), ' -> ',
@@ -978,17 +980,14 @@ q3_melp_screen <- function(con, lot_long, map_tbl, melp) {
     ),
     supp AS (
       SELECT PATID,
-             sum(CASE WHEN next_lot IS NOT NULL THEN 1 ELSE 0 END) AS n_supp_literal,
-             sum(CASE WHEN next_lot IS NOT NULL AND gap_bucket = '60-180 days'
-                      THEN 1 ELSE 0 END)                           AS n_supp_narrow
+             sum(CASE WHEN next_lot IS NOT NULL THEN 1 ELSE 0 END) AS n_suppressible
       FROM _jul20_melp_bounds GROUP BY PATID
     )
     SELECT c.n_lots,
-           coalesce(s.n_supp_literal, 0) AS n_supp_literal,
-           coalesce(s.n_supp_narrow, 0)  AS n_supp_narrow,
+           coalesce(s.n_suppressible, 0) AS n_suppressible,
            count(*)                      AS n_patients
     FROM cnt c LEFT JOIN supp s ON s.PATID = c.PATID
-    GROUP BY c.n_lots, coalesce(s.n_supp_literal, 0), coalesce(s.n_supp_narrow, 0)
+    GROUP BY c.n_lots, coalesce(s.n_suppressible, 0)
     ORDER BY c.n_lots"))
 
   roster <- db_q(con, "
@@ -1007,7 +1006,7 @@ q3_melp_screen <- function(con, lot_long, map_tbl, melp) {
            cast(adv_melp_start as string)    AS advancing_melp_map_start_dt,
            cast(anchor_melp_start as string) AS first_melp_map_in_line_dt,
            gap_days,
-           gap_bucket,
+           anchor_state,
            prev_auto_flg,
            coalesce(next_auto_flg, 0)        AS next_auto_flg
     FROM _jul20_melp_bounds
@@ -1017,26 +1016,23 @@ q3_melp_screen <- function(con, lot_long, map_tbl, melp) {
        shift = shift, roster = roster)
 }
 
-# True current-vs-screened lines-per-patient distributions for the MELP
-# screen, one column per reading. Per patient: screened lines = current
-# lines minus that patient's suppressed boundaries (floored at 1).
+# Current-vs-screened lines-per-patient distributions for the MELP screen.
+# Per patient: screened lines = current lines minus that patient's
+# suppressible boundaries, floored at 1.
 q3_melp_shift_table <- function(shift) {
   if (is_status_table(shift) || nrow(shift) == 0) return(shift)
   lots <- as.integer(num(shift$n_lots))
-  supl <- as.integer(num(shift$n_supp_literal))
-  supn <- as.integer(num(shift$n_supp_narrow))
+  supp <- as.integer(num(shift$n_suppressible))
   n    <- as.integer(num(shift$n_patients))
   mx <- max(lots)
-  cur <- integer(mx); lit <- integer(mx); nar <- integer(mx)
+  cur <- integer(mx); scr <- integer(mx)
   for (i in seq_along(lots)) {
     cur[lots[i]] <- cur[lots[i]] + n[i]
-    tl <- max(1L, lots[i] - supl[i]); lit[tl] <- lit[tl] + n[i]
-    tn <- max(1L, lots[i] - supn[i]); nar[tn] <- nar[tn] + n[i]
+    t <- max(1L, lots[i] - supp[i]); scr[t] <- scr[t] + n[i]
   }
   data.frame(lines_per_patient = seq_len(mx),
              n_patients_current = cur,
-             n_patients_screened_literal_reading = lit,
-             n_patients_screened_narrow_reading = nar,
+             n_patients_screened = scr,
              stringsAsFactors = FALSE)
 }
 
@@ -1511,7 +1507,7 @@ main <- function() {
     "",
     "-- (a) MELP screen --",
     "The melphalan question is answered in exploration/melphalan/ - run_aug1_melp.R with read_melp_asks.R and read_melp_decisions.R. Do not quote this section for it.",
-    "The melp_rule_inventory file buckets every MELP-attributable boundary by timing against the first MELP MAP of its line, including 'no earlier MELP' rows. The lines-shift file puts the current lines-per-patient distribution beside the screened ones.",
+    "The melp_rule_inventory file reports every MELP-attributable boundary, split by whether the line held an earlier MELP MAP, with the distribution of days between the two dates. The lines-shift file puts the current lines-per-patient distribution beside the screened one.",
     "",
     "-- (b) CAR-T induction-window rule --",
     sprintf(paste0(
@@ -1617,7 +1613,7 @@ main <- function() {
     add_wb("Q3a MELP", "Q3(a) - MELP rule PRELIMINARY screen (not exact impact)",
       subtitle = cohort_label,
       tables = tbls("Headline totals" = "melp_rule_totals",
-                    "Boundaries by timing bucket" = "melp_rule_inventory",
+                    "Boundaries and the gap between MELP dates" = "melp_rule_inventory",
                     "Boundaries by line pair" = "melp_rule_by_line",
                     "Lines per patient (current vs screened)" = "melp_rule_lines_shift"))
     add_wb("Q3a MELP patients", "Q3(a) - MELP boundary patients and example timelines",
