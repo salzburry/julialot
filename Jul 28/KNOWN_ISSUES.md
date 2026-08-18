@@ -1,6 +1,6 @@
 # Known issues — open questions for the study team
 
-Three rules need a decision from a clinician. None is a defect. The build
+Two rules need a decision from a clinician. None is a defect. The build
 applies each one on every run. What is open is whether the rule is right.
 
 Each entry says what the code does, shows a patient, says what a change would
@@ -141,40 +141,13 @@ means a treatment decision. `exploration/lot/run_scenario_counts.R` sizes each.
   protocol reads wider — item 1.
 - **A run-out needs confirming, two ways.** The spec names one. The code accepts
   either `lot_discon_confirm_days` of observation, or a LOT-qualifying trigger.
-- **A CAR-T-started line consolidates for 45 days. The spec says 30** — item 2.
-- **A confirmed discontinuation loses to a later death** — item 3.
+- **A confirmed discontinuation loses to a later death** — item 2.
 - **Disenrollment is not censoring** in the primary analysis.
 - **Maintenance is a descriptive flag, not a period.**
 
 ---
 
-## 2. The CAR-T consolidation window is 45 days, and the spec says 30
-
-**What the code does.** `cart_consolidation_days` is 45. The protocol and the
-program spec carry 30. No document in this repository carries 45.
-
-**What it decides.** Two things, so one ruling moves both:
-
-- the CAR-T-started line's own regimen window;
-- the `CART_INIT` bridging window, which decides whether an added agent followed
-  by a CAR-T is bridging therapy or an ordinary addition.
-
-At 30, an addition followed by a CAR-T 31 to 45 days later stops being
-`CART_INIT` and becomes a `MED_ADD`. That opens a line the current build does
-not.
-
-**The question.** Is 45 the agreed number, and what is the source? If it is 30,
-the change is one config value and a rebuild.
-
-**Safety.** The value is pinned in `CONTRACT`. A run at 30 records the deviation
-and every downstream reader refuses it as the study's numbers. A 30-day run
-cannot be produced by accident.
-
-Rule: `lot/LOT_RULES.md` §4.2.
-
----
-
-## 3. A confirmed discontinuation loses to a later death
+## 2. A confirmed discontinuation loses to a later death
 
 **What the code does.** The death branch of the end cascade is gated on
 `POST_RUNOUT_TRIGGER_FLG` alone. `DEATH_DT` is never compared with
