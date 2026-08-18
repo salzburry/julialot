@@ -49,6 +49,21 @@ Expect `12 counts. Running them now.` then twelve tables. The three to keep:
 
 Drop `AUDIT_EXECUTE` to list what it would count; needs no connection.
 
+## 1b. The scenario workbook for the study team
+
+How a line is created, seventeen worked patients with the lines the engine
+builds from them, and how many real patients are in each shape by line number.
+
+```
+SCENARIO_EXECUTE=TRUE Rscript exploration/lot/run_lot_scenarios.R
+```
+
+Writes `exploration/lot/out/lot_scenarios.xlsx`. Needs `openxlsx`; without it
+the same three sheets come out as CSVs. Drop `SCENARIO_EXECUTE` to see the
+scenarios with no connection.
+
+Run it before step 2 as well if you want the counts on the current tables.
+
 ## 2. Rebuild the study LOT
 
 ```
