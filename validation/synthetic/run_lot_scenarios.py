@@ -14,6 +14,15 @@ mismatch exits non-zero and prints both.
 
 Same duckdb + sqlglot harness as run_synthetic.py, and the same emitted chain,
 so what runs is the engine's SQL and not a model of it.
+
+What this validates, and what it does not. The patients are planted as supply
+EPISODES and transplant dates, with MAP_DISCON_FLG computed from the configured
+gap - so everything from the episode table down is the engine's own SQL: line
+starts, regimens, run-outs, ends, ownership. The raw-claim-to-episode step
+(03_mma_map's fold) is upstream of the plant and is exercised by
+run_synthetic.py's generator, not here. And only the LINES are checked: the
+catalogue's stories, notes and counting SQL are prose and queries this harness
+does not judge.
 """
 import os, re, sys, tempfile, subprocess, datetime
 

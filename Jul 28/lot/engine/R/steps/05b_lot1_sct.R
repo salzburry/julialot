@@ -238,7 +238,10 @@ phase_lot1_sct <- function(con, ctx) {
         ELSE NULL
       END AS LOT1_TX_ENDDATE,
       -- LOT1_TX_ENDDATE_REASON: 1 = AUTO, 2 = ALLO, 3 = CART - whichever came
-      -- first.
+      -- first. On an exact same-day tie AUTO wins here, then ALLO, then CART -
+      -- the opposite order from LOT2-5, which tests ALLO first. The end DATE
+      -- is the same either way; only the recorded reason differs. Open
+      -- question Q4 on the scenario workbook's Open questions sheet.
       CASE
         WHEN coalesce(sd.ENDING_AUTO_DT, sd.FIRST_ALLO_DT, sd.ENDING_CART_DT) IS NULL THEN NULL
         WHEN coalesce(sd.ENDING_AUTO_DT, cast('9999-12-31' as date))

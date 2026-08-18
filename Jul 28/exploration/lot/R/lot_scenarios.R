@@ -46,6 +46,9 @@ LOT_SCENARIOS <- list(
                      "same way. The 60-day gap does NOT block DARA from starting a line: ",
                      "the prior-regimen exclusion looks one line back, and DARA was ",
                      "LOT1's drug, not LOT2's."),
+       count_of = paste0("every patient where a drug from two lines back returns and ",
+                           "starts a line - any drugs, any gap. Wider than the worked ",
+                           "days."),
        sql = "
       WITH ex AS (
         SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_BASE_END_DT,
@@ -109,6 +112,8 @@ LOT_SCENARIOS <- list(
                      "the 60-day window (d0-d59), so it does not hold the line ",
                      "open either - the line still ends where its drug runs out. ",
                      "The transplant sits inside LOT1 because LOT1 covers d0-d100."),
+       count_of = paste0("every transplant sitting inside a line but past that line's ",
+                           "window, at any line. Wider than the worked history."),
        sql = "
       SELECT l.LOT_NUM, count(DISTINCT l.PATID) AS N_PATIENTS
       FROM {t$long} l
@@ -143,6 +148,9 @@ LOT_SCENARIOS <- list(
                      "LOT1's window, so no line ever held the pair. The tandem ",
                      "exemption does not apply and the second transplant opens ",
                      "LOT2 on its own date."),
+       count_of = paste0("every close transplant pair whose earlier transplant fell ",
+                           "outside its line's window - the pairs no line held. Wider ",
+                           "than the worked days."),
        sql = "
       WITH paired AS (
         SELECT PATID, TX_DT,
@@ -180,6 +188,8 @@ LOT_SCENARIOS <- list(
                      "was never discontinued. LOT1's run-out chains over the gap ",
                      "to d400, and the drug cannot start a line because it is ",
                      "still LOT1's own."),
+       count_of = paste0("every return of a line's own drug after a break under 90 ",
+                           "days - the held population, any drug."),
        sql = "
       WITH ep AS (
         SELECT m.PATID, m.MAP_MED_TYPE, m.MAP_END_DT,
@@ -214,6 +224,8 @@ LOT_SCENARIOS <- list(
                      "map_discon_gap_days, so the first episode is a confirmed ",
                      "discontinuation and the return is a restart. This is the ",
                      "one day that changes the answer - S05 and S06 differ by it."),
+       count_of = paste0("every return at 90 days or more - the released population, ",
+                           "any drug."),
        sql = "
       WITH ep AS (
         SELECT m.PATID, m.MAP_MED_TYPE, m.MAP_END_DT,
@@ -244,6 +256,9 @@ LOT_SCENARIOS <- list(
        note = paste0("ONE line with both drugs in its regimen. An agent starting ",
                      "inside the window joins the regimen, so it can never be an ",
                      "addition."),
+       count_of = paste0("every line whose drug list holds more than one drug - any ",
+                           "drugs, any timing inside the window. Much wider than the ",
+                           "worked pair."),
        sql = "
       SELECT l.LOT_NUM, count(DISTINCT l.PATID) AS N_PATIENTS
       FROM {t$long} l
@@ -266,6 +281,8 @@ LOT_SCENARIOS <- list(
        note = paste0("TWO lines. One day moves the agent out of the regimen and ",
                      "makes it an added medication, which ends LOT1 the day ",
                      "before and starts LOT2 on it."),
+       count_of = paste0("every line ended by an added drug, on any day outside the ",
+                           "window - not only day-60 additions."),
        sql = "
       SELECT l.LOT_NUM, count(DISTINCT l.PATID) AS N_PATIENTS
       FROM {t$long} l
@@ -294,6 +311,9 @@ LOT_SCENARIOS <- list(
                      "refill inside LOT2's window extends that episode and leaves ",
                      "no new start behind. This is Q1 on the Open ",
                      "questions sheet."),
+       count_of = paste0("every later line with a previous-line drug covered across ",
+                           "its start and absent from its list - the exact rule ",
+                           "population."),
        sql = "
       SELECT n.LOT_NUM, count(DISTINCT n.PATID) AS N_PATIENTS
       FROM {t$long} n
@@ -326,6 +346,9 @@ LOT_SCENARIOS <- list(
                      "in between, so the pair is a planned tandem and LOT1 is ",
                      "carried to it. The line's drug ran out on d19; the ",
                      "transplant pair is what keeps it open to d219."),
+       count_of = paste0("every line held open to a planned transplant pair (end ",
+                           "reason SCT_AUTO_CONT). Includes single in-window transplants ",
+                           "past the natural end, not only pairs."),
        sql = "
       SELECT l.LOT_NUM, count(DISTINCT l.PATID) AS N_PATIENTS
       FROM {t$long} l
@@ -352,6 +375,8 @@ LOT_SCENARIOS <- list(
                      "interval. POMA between the two transplants breaks the pair, ",
                      "so the second transplant is unplanned and opens a line of ",
                      "its own."),
+       count_of = paste0("every close transplant pair with treatment between the two - ",
+                           "the broken pairs, whatever the treatment was."),
        sql = "
       WITH paired AS (
         SELECT PATID, TX_DT,
@@ -389,14 +414,23 @@ LOT_SCENARIOS <- list(
        note = paste0("ONE line. A CAR-T inside LOT1's window is part of LOT1 and ",
                      "ends nothing. LOT_LONG carries no CAR-T column for it, so ",
                      "the infusion is invisible in the published table."),
+       count_of = paste0("every first CAR-T inside LOT1's window that was absorbed - ",
+                           "LOT1 runs to or past the infusion. The exact rule ",
+                           "population."),
        sql = "
-      WITH lot1 AS (SELECT PATID, LOT_START_DT FROM {t$long} WHERE LOT_NUM = 1)
+      WITH lot1 AS (SELECT PATID, LOT_START_DT, LOT_BASE_END_DT
+                    FROM {t$long} WHERE LOT_NUM = 1)
       SELECT 1 AS LOT_NUM, count(DISTINCT s.PATID) AS N_PATIENTS
       FROM {t$sct} s
       INNER JOIN lot1 l ON l.PATID = s.PATID
       WHERE s.FIRST_CART_DT IS NOT NULL
         AND s.FIRST_CART_DT BETWEEN l.LOT_START_DT
-                                AND date_add(l.LOT_START_DT, {lot1_window} - 1)"),
+                                AND date_add(l.LOT_START_DT, {lot1_window} - 1)
+        -- absorbed, not merely in the calendar window: the rule needs LOT1
+        -- still open, and an absorbed infusion leaves the line running to or
+        -- past it. A line that ended before the infusion is the other case -
+        -- the CAR-T is free to start the next line.
+        AND l.LOT_BASE_END_DT >= s.FIRST_CART_DT"),
 
   list(id = "S13", group = "CAR-T",
        title = "CAR-T therapy after the first 60 days",
@@ -413,6 +447,8 @@ LOT_SCENARIOS <- list(
        note = paste0("TWO lines. Outside the window the CAR-T ends LOT1 the day ",
                      "before and starts a CAR-T line. With no consolidation drug ",
                      "in its 45-day window, that line is one day long."),
+       count_of = paste0("every CAR-T-started line, however it arose - wider than the ",
+                           "worked history."),
        sql = "
       SELECT l.LOT_NUM, count(DISTINCT l.PATID) AS N_PATIENTS
       FROM {t$long} l
@@ -434,6 +470,7 @@ LOT_SCENARIOS <- list(
        note = paste0("TWO lines. An allogeneic transplant always ends the line ",
                      "before it and opens one of its own, and that line spans a ",
                      "single day and carries no regimen."),
+       count_of = paste0("every donor-transplant line - the exact rule population."),
        sql = "
       SELECT l.LOT_NUM, count(DISTINCT l.PATID) AS N_PATIENTS
       FROM {t$long} l
@@ -458,6 +495,8 @@ LOT_SCENARIOS <- list(
                      "d100, even though the run-out has 120 days of observation ",
                      "behind it and is confirmed. LOT_BASE_DISCON_DT still ",
                      "carries d100. This is Q3 on the Open questions sheet."),
+       count_of = paste0("every line ending DEATH that carries an earlier confirmed ",
+                           "stop - the exact population of open question Q3."),
        sql = "
       SELECT l.LOT_NUM, count(DISTINCT l.PATID) AS N_PATIENTS
       FROM {t$long} l
@@ -483,6 +522,9 @@ LOT_SCENARIOS <- list(
                      "observation did not follow, and no later treatment ",
                      "arrived. LOT_BASE_DISCON_DT is NULL and the line censors ",
                      "at the end of observation."),
+       count_of = paste0("every line ending at the data's end with no confirmed stop - ",
+                           "any reason the stop went unconfirmed, not only short ",
+                           "follow-up."),
        sql = "
       SELECT l.LOT_NUM, count(DISTINCT l.PATID) AS N_PATIENTS
       FROM {t$long} l
@@ -505,6 +547,8 @@ LOT_SCENARIOS <- list(
                      "start a line, do not join a regimen, and do not end a line ",
                      "as an addition. The DEX cover is invisible to the ",
                      "algorithm."),
+       count_of = paste0("every patient with steroid supply outside every line - any ",
+                           "steroid, any timing."),
        sql = "
       SELECT count(DISTINCT m.PATID) AS N_PATIENTS, 0 AS LOT_NUM
       FROM {t$map} m
@@ -569,6 +613,8 @@ LOT_SCENARIOS <- list(
                      "decides the START TYPE only - the regimen is still collected over ",
                      "the window, so the drug appears on the line the transplant ",
                      "started. "),
+       count_of = paste0("every transplant-started line that carries drugs on its list ",
+                           "- any in-window drug, not only same-day starts."),
        sql = "
       SELECT l.LOT_NUM, count(DISTINCT l.PATID) AS N_PATIENTS
       FROM {t$long} l
@@ -598,6 +644,8 @@ LOT_SCENARIOS <- list(
        note = paste0("max_lot is 5. Treatment after the fifth line belongs to no line by ",
                      "construction, which is why every count of unowned treatment carves ",
                      "it out rather than reporting it as a defect. "),
+       count_of = paste0("every patient at the 5-line cap with non-steroid treatment ",
+                           "after the last line - the exact rule population."),
        sql = "
       WITH capped AS (
         SELECT PATID, max(LOT_NUM) AS N_LINES, max(LOT_BASE_END_DT) AS LAST_END
@@ -645,6 +693,8 @@ LOT_SCENARIOS <- list(
        note = paste0("60 days at line 1, 30 from line 2 on, 45 on a CAR-T-started line. ",
                      "The same interval is inside the window at line 1 and outside it at ",
                      "line 2. "),
+       count_of = paste0("every later line ended by an added drug - any drug, any day ",
+                           "past the 30 (or 45)."),
        sql = "
       SELECT l.LOT_NUM, count(DISTINCT l.PATID) AS N_PATIENTS
       FROM {t$long} l
@@ -667,6 +717,8 @@ LOT_SCENARIOS <- list(
        note = paste0("Contrast with S25, where 120 days of follow-up DO confirm the stop ",
                      "and the death still takes the line's end. That one is Q3 on the ",
                      "Open questions sheet; this one is not in question. "),
+       count_of = paste0("every line ending DEATH with no confirmed stop on the row - ",
+                           "the death was the only ending available."),
        sql = "
       SELECT l.LOT_NUM, count(DISTINCT l.PATID) AS N_PATIENTS
       FROM {t$long} l
@@ -690,6 +742,8 @@ LOT_SCENARIOS <- list(
        note = paste0("Later treatment is one of the two things that can confirm a ",
                      "run-out - the other is 90 days of observation. Here it arrives ",
                      "before the 90 days are up and confirms it early. "),
+       count_of = paste0("every DEATH line directly after a confirmed-stop line - the ",
+                           "exact shape."),
        sql = "
       SELECT l.LOT_NUM, count(DISTINCT l.PATID) AS N_PATIENTS
       FROM {t$long} l
@@ -714,6 +768,8 @@ LOT_SCENARIOS <- list(
        rule = "LOT_RULES.md 6.3",
        note = paste0("sct_tandem_days is 180 and the test is <= 180, so 181 falls ",
                      "outside. S10 is the same patient at 179 days and gets one line. "),
+       count_of = paste0("every transplant opening a line more than 180 days after the ",
+                           "one before it - the exact rule population."),
        sql = "
       WITH paired AS (
         SELECT PATID, TX_DT,
@@ -746,6 +802,8 @@ LOT_SCENARIOS <- list(
        note = paste0("The pair is judged on consecutive transplants, so the third is ",
                      "measured against the second and not against the first. The line is ",
                      "held open to the second, which is where it ends. "),
+       count_of = paste0("every patient with three or more transplants, by line - ",
+                           "wider than the worked spacing."),
        sql = "
       WITH n AS (
         SELECT PATID, count(*) AS N_AUTO FROM {t$auto} GROUP BY PATID HAVING count(*) >= 3
@@ -769,6 +827,8 @@ LOT_SCENARIOS <- list(
        note = paste0("The first line starts at the first non-steroid agent, so nothing ",
                      "before that date can be inside a line. Counts of unowned ",
                      "transplants exclude this shape for that reason. "),
+       count_of = paste0("every patient with a transplant before their first line - ",
+                           "the exact rule population."),
        sql = "
       WITH first_line AS (
         SELECT PATID, min(LOT_START_DT) AS FIRST_START FROM {t$long} GROUP BY PATID
@@ -840,6 +900,8 @@ LOT_SCENARIOS <- list(
        note = paste0("A CAR-T-started line collects its regimen over 45 days rather than ",
                      "30. S13 is the same CAR-T with nothing started after it, and that ",
                      "line lasts a single day. "),
+       count_of = paste0("every CAR-T-started line with at least one drug on its list ",
+                           "- the exact rule population."),
        sql = "
       SELECT l.LOT_NUM, count(DISTINCT l.PATID) AS N_PATIENTS
       FROM {t$long} l

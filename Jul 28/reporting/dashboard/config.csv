@@ -33,6 +33,7 @@ SHOW_LINE_LENGTH,TRUE,Lines - line length in days (completed lines)
 SHOW_LINE_LENGTH_DETAIL,TRUE,Lines - line length full distribution (completed lines)
 SHOW_MED_COUNT,TRUE,Lines - drugs in the base regimen
 SHOW_TOP_REGIMENS,TRUE,Regimens - most common base regimens by line
+SHOW_ALL_REGIMENS,TRUE,Regimens - every base regimen per line, complete, no top-N cut; the CSV export is the full downloadable list
 SHOW_FIRST_ADDED_MED,TRUE,Regimens - first drug added after the base regimen
 SHOW_SCT,TRUE,Transplant - ALLO / CAR-T / AUTO lines
 SHOW_LOT1_TO_LOT2,TRUE,Transitions - LOT1 to LOT2 regimen Sankey

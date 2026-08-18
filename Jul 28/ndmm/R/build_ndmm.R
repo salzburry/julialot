@@ -689,7 +689,7 @@ build_ndmm_cohort_table <- function(con, cfg) {
       GROUP BY i.PATID
     ),
     dem AS (
-      SELECT cast(PATID as string) AS PATID, GDR_CD, YRDOB
+      SELECT cast(PATID as string) AS PATID, GDR_CD, YRDOB, MM_DX_DT
       FROM {NDMM_BASE_COHORT}
     ),
     -- The death date was imputed against the MM diagnosis, and the cohort is
@@ -706,6 +706,10 @@ build_ndmm_cohort_table <- function(con, cfg) {
     )
     SELECT i.PATID,
            i.INDEX_DATE,
+           -- The qualifying MM diagnosis date, carried so a reader can report
+           -- diagnosis and treatment start as the two different dates they
+           -- are. INDEX_DATE is the 1L treatment start, not the diagnosis.
+           d.MM_DX_DT,
            least({se}, coalesce(dd.DEATH_DT, {se}))                   AS ENDDATE,
            least({se}, coalesce(dd.DEATH_DT, {se}),
                  coalesce(ce.ENDDATE_CE, {se}))                       AS ENDDATE_CE,
