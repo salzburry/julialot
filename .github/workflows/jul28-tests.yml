@@ -5,6 +5,18 @@ name: Jul 28 tests
 # claim "all suites pass" stops being something an author reports and becomes
 # something a machine records against a commit.
 #
+# THAT IS THE INTENT, AND IT IS NOT WHAT IS HAPPENING. Every run since this file
+# was added has ended in 2-4 seconds with no runner assigned and no logs to
+# download, and cohort_explorer-tests.yml - which passed on 11 August - started
+# failing the same way on 13 August. Two workflows failing identically, one of
+# them without changing, is the job never starting rather than a suite failing:
+# an Actions billing or spending limit, or hosted runners turned off for the
+# account. Nothing in this file fixes that; it needs repository settings access.
+#
+# So do not read a red check here as a failing suite without opening the run
+# first. If it has no logs and lasted seconds, it never ran. Run the gate
+# locally - Rscript validation/run_gate.R - until the account is sorted out.
+#
 # Scoped to changes that can affect it: the study folder, the checks that hold
 # it to its claims, and this file.
 #
@@ -36,9 +48,9 @@ jobs:
       # have the real thing.
       - name: Install R dependencies
         run: Rscript -e 'install.packages("glue")'
-      # One entry point, one exit status. It pins the port suite's six known
+      # One entry point, one exit status. It pins the port suite's known
       # failures BY IDENTITY and fails if the set moves in either direction -
-      # one fixed and one introduced leaves the count at six, which is why the
+      # one fixed and one introduced leaves the count unchanged, which is why the
       # count is not what is pinned. A skipped suite and a suite that exits
       # non-zero after printing a clean summary both fail it too.
       - name: Every suite (exits non-zero if any is not as expected)
