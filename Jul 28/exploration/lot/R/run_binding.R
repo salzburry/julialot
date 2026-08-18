@@ -10,7 +10,8 @@
 # the tables. Filtering to complete rows would credit a failed rerun's tables
 # to the previous good run. The questions and the dashboard do the same.
 #
-# SELECT * rather than a column list: STUDY_END was added later, and naming it
+# SELECT * rather than a column list: a status table without STUDY_END is
+# readable this way, and naming the column
 # would make an older run's table unreadable - which reads as no run at all.
 
 # Case-insensitively: LOT writes uppercase columns, overall writes lowercase.

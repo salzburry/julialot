@@ -4,8 +4,8 @@
 # definitions, and flag where they agree and where they do not.
 #
 # OUR column is complete, cited to file and line. It is the half the code can
-# settle, and the half nobody had written down: the rules sit across eight step
-# files, and "does this count SCT as a line" had no single place to look.
+# settle. The rules sit across eight step files, so a question like "does this
+# count SCT as a line" otherwise has no single place to look.
 #
 # THEIR columns are empty, because the consensus paper and the trial protocols
 # are not in this folder and nothing here can stand in for them. What must not

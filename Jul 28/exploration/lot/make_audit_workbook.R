@@ -18,8 +18,8 @@
 # stacking them wide produced repeated headers in one file. Long is right for
 # writing and unreadable for reading, so this pivots it back.
 #
-# Two things it does that a naive pivot does not, and they are the reason the
-# hand-made version had blank cells and mismatched rows.
+# Two things it does that a naive pivot does not. Without them the sheet has
+# blank cells and mismatched rows.
 #
 #  1. A metric is a MEASURE if its name starts with N_, PCT_, MEDIAN_, MEAN_,
 #     MIN_, MAX_ or P75_. Everything else - LOT_NUM, SHAPE, CAUSE,
@@ -28,11 +28,10 @@
 #     than left blank under a merged-looking header, so the sheet can be
 #     filtered and sorted without falling apart.
 #
-#  2. Old and new are joined on those KEYS, never on row position. The whole
-#     point of the comparison is that a slice can appear in one run and not the
-#     other - a shape that stopped happening is the fix working - and a
-#     positional join silently pairs row 2 of one with row 2 of the other and
-#     reports both as changed.
+#  2. Old and new are joined on those KEYS, never on row position. The point of
+#     the comparison is that a slice can appear in one run and not the other,
+#     and a positional join silently pairs row 2 of one with row 2 of the other
+#     and reports both as changed.
 
 .script_dir <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)

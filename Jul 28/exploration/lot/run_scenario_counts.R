@@ -190,10 +190,10 @@ AUDIT_COUNTS <- list(
       GROUP BY l.LOT_NUM
       ORDER BY l.LOT_NUM"),
 
-  # LOT_RULES.md 6.5 and 14.5 - the defect the rule closed. Every autologous
-  # transplant should now sit inside some line. Read from the transplant rather
-  # than from the line, which is the only direction that can see one that
-  # belongs nowhere. HANDLED says which line took it.
+  # LOT_RULES.md 6.5. Every autologous transplant should sit inside some line.
+  # Read from the transplant rather than from the line, which is the only
+  # direction that can see one belonging nowhere. HANDLED says which line took
+  # it.
   list(id = "6.5-does-every-transplant-have-a-line",
        what = "LINE 1 autologous transplants by whether a line covers them - NOT every AUTO",
        expect = "partial: reads LOT1_SCT only. QC E5 is the complete version, over TX_AUTO_DATES",

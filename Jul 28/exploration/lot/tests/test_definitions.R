@@ -21,8 +21,8 @@ ROOT <- local({
 # the engine and the cohort builds alike - so a citation resolves against STUDY,
 # while this package's own reads of the engine go through PARENT.
 PARENT <- dirname(ROOT)
-# The engine is not a sibling any more - this package sits in its own area
-# beside lot/, so reads of the engine go through the study folder.
+# This package sits in its own area beside lot/, so reads of the engine go
+# through the study folder.
 LOT    <- file.path(dirname(PARENT), "lot", "engine")
 STUDY  <- dirname(PARENT)
 
@@ -96,10 +96,10 @@ ok(!length(past_end) && !length(blank),
      paste0("cites a line the file does not have, or a blank one: ",
             paste(unique(c(past_end, blank)), collapse = ", "))
    else "...and a line that file actually has")
-# And a line of CODE. Six of these cited a comment - which is what the build
-# says about itself, and the whole point of a citation here is to show what it
-# DOES. A comment can be true, stale, or aspirational and reads the same in all
-# three states, so a comparison against a protocol rested on prose either way.
+# And a line of CODE, not a comment. A comment is what the build says about
+# itself; the point of a citation here is to show what it DOES. A comment can be
+# accurate, out of date, or aspirational and reads the same in all three states,
+# so a citation landing on one rests a protocol comparison on prose.
 commented <- character(0)
 for (i in seq_len(nrow(ours))) {
   p <- cite_parts(ours$ours_at[i]); if (is.null(p)) next

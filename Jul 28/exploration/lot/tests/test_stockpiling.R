@@ -11,8 +11,8 @@ ROOT <- local({
   dirname(d)
 })
 PARENT <- dirname(ROOT)
-# The engine is not a sibling any more - this package sits in its own area
-# beside lot/, so reads of the engine go through the study folder.
+# This package sits in its own area beside lot/, so reads of the engine go
+# through the study folder.
 LOT    <- file.path(dirname(PARENT), "lot", "engine")
 pass <- 0L; fail <- 0L
 ok <- function(cond, what) {
