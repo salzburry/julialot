@@ -9,7 +9,9 @@
 #   DATABRICKS_PWD=... DOMINO_USER_NAME=usr00000 \
 #     Rscript exploration/melphalan/read_melp_asks.R
 #
-# Reads the cells run_aug1_melp.R has already built and writes three CSVs.
+# Reads the cells run_aug1_melp.R has already built and writes five CSVs -
+# question 1 takes three of them, because a per-cell median cannot say what
+# changed on its own. See the note above q1.
 # Every statement is a SELECT: it builds nothing and changes no rule.
 
 .script_dir <- local({
@@ -45,7 +47,10 @@ dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 # from whenever this last succeeded sitting in out/ with nothing to say they
 # are not today's. Removed up front, an interrupted read leaves no answer
 # rather than a stale one.
-ASK_CSVS <- c("melp_ask1_line_duration.csv", "melp_ask2_regimens_by_line.csv",
+ASK_CSVS <- c("melp_ask1_line_duration.csv",
+              "melp_ask1_paired_line_change.csv",
+              "melp_ask1_line_count_change.csv",
+              "melp_ask2_regimens_by_line.csv",
               "melp_ask3_sct_in_melp_lot.csv",
               # The name Q2 used before it carried the distribution. Cleared
               # too, so a folder holding both files cannot be read as two
@@ -80,11 +85,7 @@ inputs <- melp_read_inputs(con, cells, status)
 # engine was on the day it ran while the two rule-on cells carry the rule AND
 # whatever else that day's code did. A difference between them is then two
 # changes, and nothing in the CSVs would say so.
-if (identical(melp_check_code(inputs, LOT_ROOT), FALSE))
-  stop("These cells were not built by the engine code reading them. Rebuild ",
-       "all ", length(cells), " with run_aug1_melp.R before reading them - a ",
-       "melphalan number off older code cannot be compared with this one.",
-       call. = FALSE)
+melp_check_code(inputs, LOT_ROOT)
 st <- melp_settings(inputs)
 cat("All ", length(cells), " cells: cohort attempt ", inputs[[1]]$COHORT_RUN_ID[1],
     " / ", inputs[[1]]$COHORT_STAMP[1],
@@ -129,6 +130,17 @@ per_cell <- function(body) do.call(rbind, lapply(cells, function(c_i) {
 }))
 
 # --- 1. duration of each line ------------------------------------------------
+# Three tables, because one of them cannot answer the question on its own.
+#
+# This first one is the marginal: each cell's own median at each line. It is
+# what a reader expects to see, and it is not the change. The rule moves
+# boundaries, so the set of patients who HAVE a LOT2 is not the same in two
+# cells, and a difference between two medians over two different populations
+# mixes "the lines got longer" with "different people have a second line". The
+# change columns are named UNPAIRED for that reason.
+#
+# 1b pairs the patients. 1c counts the lines. Between them they say which of the
+# two happened.
 q1 <- per_cell(function(c_i) paste0("
   SELECT l.LOT_NUM,
          count(DISTINCT l.PATID)                   AS N_PATIENTS,
@@ -144,12 +156,90 @@ if (!is.null(q1)) {
   r <- q1[q1$CELL == ref$id, c("LOT_NUM", "MEDIAN_DAYS", "MEAN_DAYS")]
   names(r) <- c("LOT_NUM", "REF_MEDIAN", "REF_MEAN")
   q1 <- merge(q1, r, by = "LOT_NUM", all.x = TRUE)
-  q1$MEDIAN_CHANGE <- q1$MEDIAN_DAYS - q1$REF_MEDIAN
-  q1$MEAN_CHANGE   <- round(q1$MEAN_DAYS - q1$REF_MEAN, 1)
+  q1$MEDIAN_CHANGE_UNPAIRED <- q1$MEDIAN_DAYS - q1$REF_MEDIAN
+  q1$MEAN_CHANGE_UNPAIRED   <- round(q1$MEAN_DAYS - q1$REF_MEAN, 1)
   q1 <- q1[order(q1$CELL, q1$LOT_NUM),
            c("CELL", "LOT_NUM", "N_PATIENTS", "N_LINES",
-             "MEDIAN_DAYS", "MEDIAN_CHANGE", "MEAN_DAYS", "MEAN_CHANGE")]
+             "MEDIAN_DAYS", "MEDIAN_CHANGE_UNPAIRED",
+             "MEAN_DAYS", "MEAN_CHANGE_UNPAIRED")]
 }
+
+# One statement per rule cell, joined to the reference cell in the warehouse.
+# Both tables sit in the same schema under different prefixes, so the pairing is
+# a join rather than two reads subtracted in R - which would pair by row order
+# and be wrong the moment a patient gains or loses a line.
+vs_ref <- function(body) do.call(rbind, lapply(
+  Filter(function(c_i) !identical(c_i$id, ref$id), cells),
+  function(c_i) {
+    d <- db_q(con, body(c_i))
+    if (!nrow(d)) NULL else cbind(CELL = c_i$id, d, stringsAsFactors = FALSE)
+  }))
+
+# --- 1b. the same duration, patient-paired -----------------------------------
+# The same patient's LOT n in both cells, so the difference is a difference in
+# that patient's line rather than in who has one. Lines present in only one cell
+# are counted rather than dropped: they are the rest of the answer, and a paired
+# median computed over the overlap alone would hide them.
+#
+# NAMED, because it limits what this table says: the pairing is on the line
+# NUMBER, not on the treatment. Where the rule inserts a boundary, everything
+# after it shifts up by one, so a patient's LOT3 in the rule cell can be the
+# treatment their LOT2 was in the reference. That makes a per-line change here
+# an upper bound on how much any one line really moved, and it is why 1c counts
+# lines separately - a line-count change is not open to that reading.
+q1_paired <- vs_ref(function(c_i) paste0("
+  WITH exposed AS ", denom, ",
+  a AS (
+    SELECT cast(l.PATID as string) AS PATID, l.LOT_NUM,
+           l.LOT_BASE_LENGTH AS REF_DAYS
+    FROM ", tbl(ref, "LOT_LONG_FINAL"), " l
+    INNER JOIN exposed e ON cast(l.PATID as string) = e.PATID
+  ),
+  b AS (
+    SELECT cast(l.PATID as string) AS PATID, l.LOT_NUM,
+           l.LOT_BASE_LENGTH AS CELL_DAYS
+    FROM ", tbl(c_i, "LOT_LONG_FINAL"), " l
+    INNER JOIN exposed e ON cast(l.PATID as string) = e.PATID
+  ),
+  paired AS (
+    SELECT coalesce(a.LOT_NUM, b.LOT_NUM) AS LOT_NUM,
+           a.REF_DAYS, b.CELL_DAYS
+    FROM a FULL OUTER JOIN b ON a.PATID = b.PATID AND a.LOT_NUM = b.LOT_NUM
+  )
+  SELECT LOT_NUM,
+         sum(CASE WHEN REF_DAYS IS NOT NULL AND CELL_DAYS IS NOT NULL
+                  THEN 1 ELSE 0 END)                      AS N_PAIRED,
+         sum(CASE WHEN REF_DAYS IS NULL THEN 1 ELSE 0 END) AS N_ONLY_IN_THIS_CELL,
+         sum(CASE WHEN CELL_DAYS IS NULL THEN 1 ELSE 0 END) AS N_ONLY_IN_THE_REFERENCE,
+         sum(CASE WHEN CELL_DAYS > REF_DAYS THEN 1 ELSE 0 END) AS N_LONGER,
+         sum(CASE WHEN CELL_DAYS < REF_DAYS THEN 1 ELSE 0 END) AS N_SHORTER,
+         percentile_approx(CASE WHEN REF_DAYS IS NOT NULL AND CELL_DAYS IS NOT NULL
+                                THEN CELL_DAYS - REF_DAYS END, 0.5)
+                                                          AS MEDIAN_PAIRED_CHANGE,
+         round(avg(CASE WHEN REF_DAYS IS NOT NULL AND CELL_DAYS IS NOT NULL
+                        THEN CELL_DAYS - REF_DAYS END), 1) AS MEAN_PAIRED_CHANGE
+  FROM paired GROUP BY LOT_NUM ORDER BY LOT_NUM"))
+
+# --- 1c. how many lines each patient ends up with ----------------------------
+# The change that is not open to a renumbering reading. Every melphalan-exposed
+# patient is on both sides, counted as 0 lines where a cell gives them none, so
+# the rows add up to the whole population and a patient who lost their only
+# line shows as -1 rather than disappearing.
+q1_lines <- vs_ref(function(c_i) paste0("
+  WITH exposed AS ", denom, ",
+  a AS (SELECT cast(PATID as string) AS PATID, count(*) AS N
+        FROM ", tbl(ref, "LOT_LONG_FINAL"), " GROUP BY cast(PATID as string)),
+  b AS (SELECT cast(PATID as string) AS PATID, count(*) AS N
+        FROM ", tbl(c_i, "LOT_LONG_FINAL"), " GROUP BY cast(PATID as string)),
+  per_pat AS (
+    SELECT e.PATID, coalesce(a.N, 0) AS REF_LINES, coalesce(b.N, 0) AS CELL_LINES
+    FROM exposed e
+    LEFT JOIN a ON a.PATID = e.PATID
+    LEFT JOIN b ON b.PATID = e.PATID
+  )
+  SELECT CELL_LINES - REF_LINES AS LINE_COUNT_CHANGE,
+         count(*)               AS N_PATIENTS
+  FROM per_pat GROUP BY 1 ORDER BY 1"))
 
 # --- 2. the distribution of regimens at each line ----------------------------
 # The question is what's the dist of regimens for each line (how many pts
@@ -216,6 +306,7 @@ q3 <- per_cell(function(c_i) paste0("
 # A query with no rows still writes, so an earlier run's file cannot sit there
 # looking like this one's answer.
 write_out <- function(d, name, title) {
+  d <- melp_stamp(d, inputs, status)
   cat("\n", title, "\n", sep = "")
   f <- file.path(out_dir, name)
   if (is.null(d) || !nrow(d)) {
@@ -232,7 +323,12 @@ write_out <- function(d, name, title) {
 # the read is held to the attempt it started on before anything is written.
 melp_status_unchanged(con, cells, status)
 
-write_out(q1, "melp_ask1_line_duration.csv", "1. Duration of each line")
+write_out(q1, "melp_ask1_line_duration.csv",
+          "1. Duration of each line (each cell's own median - the change is NOT paired)")
+write_out(q1_paired, "melp_ask1_paired_line_change.csv",
+          "1b. The same patient's line, in each cell, against the reference")
+write_out(q1_lines, "melp_ask1_line_count_change.csv",
+          "1c. Change in the number of lines a patient ends up with")
 write_out(q2, "melp_ask2_regimens_by_line.csv",
           "2. Distribution of regimens at each line")
 write_out(q3, "melp_ask3_sct_in_melp_lot.csv",

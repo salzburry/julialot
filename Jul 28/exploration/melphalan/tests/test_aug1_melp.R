@@ -36,7 +36,11 @@ source(file.path(LOT, "R", "melp_rule.R"))
 source(file.path(ROOT, "R", "cells.R"))
 
 CFG <- list(melp_med_abbr = "MELP", melp_exposure_days = 30L,
-            melp_restart_days = 60L, melp_advance_days = 180L, melp_sct_days = 14L)
+            melp_restart_days = 60L, melp_advance_days = 180L, melp_sct_days = 14L,
+            # Not a melphalan setting, and not read by melp_rule.R at all. The
+            # worked scenarios need it: their model of the engine has to know
+            # when a line's own drug is released to open a line again.
+            map_discon_gap_days = 90L)
 off <- modifyList(CFG, list(apply_melp_rule = ""))
 ask <- modifyList(CFG, list(apply_melp_rule = "as_asked"))
 yld <- modifyList(CFG, list(apply_melp_rule = "yield_to_sct"))
@@ -116,6 +120,8 @@ subst_off <- function(f) {
                  c("{melp_prev_line_ctes(cfg, prev_med_window, cart_consolidation_days)}",
                    melp_prev_line_ctes(off, 60L, 45L)),
                  c("{melp_hold_join(cfg, 'ls')}",      melp_hold_join(off, "ls")),
+                 c("{melp_hold_col(cfg, 'mh')}",       melp_hold_col(off, "mh")),
+                 c("{melp_line_type_guard(cfg, lot_num)}", melp_line_type_guard(off, 2)),
                  c("{melp_lot1_base_tbl(cfg)}",        melp_lot1_base_tbl(off)),
                  c("{melp_suppress_predicate(cfg)}",   melp_suppress_predicate(off)),
                  c("{melp_prior_regimen_exempt(cfg)}", melp_prior_regimen_exempt(off))))
@@ -298,14 +304,25 @@ ok(has(ra, "melp_read_inputs") && has(ra, "melp_check_inputs") ||
    "it holds all cells to one cohort attempt, code list set and study window")
 ok(has(ra, "melp_status_unchanged(con, cells, status)"),
    "...and re-checks the build status before anything is written")
-ok(has(ra, 'identical(melp_check_code(inputs, LOT_ROOT), FALSE)') &&
-     has(ra, "stop("),
-   "a cell built by older engine code stops the read rather than warning")
+ok(has(ra, "melp_check_code(inputs, LOT_ROOT)"),
+   "the read is held to the engine code that built the cells")
 ok(has(ra, "apply_cart_induction_rule") && has(ra, "Rebuild those cells"),
    "the CAR-T 60-day rule is a precondition, not a column in the output")
 # The three questions, each recognisable in the SQL that answers it.
-ok(has(ra, "LOT_BASE_LENGTH") && has(ra, "MEDIAN_CHANGE"),
+ok(has(ra, "LOT_BASE_LENGTH") && has(ra, "MEDIAN_CHANGE_UNPAIRED"),
    "Q1 answers the CHANGE in line duration, not three tables to subtract by eye")
+# ...and the change it reports first is a difference of two medians over two
+# different sets of patients, because the rule moves who has a LOT2 at all. The
+# name says so, and the paired answer sits beside it rather than instead of it.
+ok(has(ra, "FULL OUTER JOIN b ON a.PATID = b.PATID AND a.LOT_NUM = b.LOT_NUM") &&
+     has(ra, "MEDIAN_PAIRED_CHANGE"),
+   "...with the same patient's line paired across the cells, not two medians subtracted")
+ok(has(ra, "N_ONLY_IN_THIS_CELL") && has(ra, "N_ONLY_IN_THE_REFERENCE"),
+   "...and lines present in only one cell counted rather than dropped from the pairing")
+ok(has(ra, "LINE_COUNT_CHANGE") && has(ra, "coalesce(a.N, 0) AS REF_LINES"),
+   "...and the change in how many lines a patient ends up with, which renumbering cannot explain")
+ok(has(ra, "pairing is on the line") && has(ra, "NUMBER, not on the treatment"),
+   "...with the one thing the pairing cannot see stated where the query is")
 ok(has(ra, "GROUP BY r.LOT_NUM, r.REGIMEN") && has(ra, "PCT_OF_LINE"),
    "Q2 answers the distribution of regimens at each line")
 ok(has(ra, "IS_MELP_MONO") && has(ra, "q2$LOT_NUM == 2"),
@@ -328,7 +345,7 @@ rd <- paste(readLines(file.path(ROOT, "read_melp_decisions.R"), warn = FALSE),
 ok(!grepl("(?m)^\\s*(db_exec|dbExecute|CREATE|INSERT|DROP|UPDATE|DELETE)\\b", rd, perl = TRUE),
    "the decision reader only reads")
 ok(has(rd, "melp_read_inputs") && has(rd, "melp_status_unchanged") &&
-     has(rd, 'identical(melp_check_code(inputs, LOT_ROOT), FALSE)'),
+     has(rd, "melp_check_code(inputs, LOT_ROOT)"),
    "...behind the same provenance guards as the asks reader")
 # The branch split has to come off the exposure chain, not off raw doses: three
 # doses inside melp_exposure_days are ONE administration, and counting them as
@@ -341,8 +358,30 @@ ok(has(rd, "INSIDE = 1 AND GAP <") && has(rd, "GAP <  \", REST, \""),
 # The number that does not need interpreting.
 ok(has(rd, "Melphalan doses inside NO line") && has(rd, "PRIOR_LINE_TYPE"),
    "unowned doses are counted, and attributed to the line type before them")
-ok(has(rd, "should be empty; CART / SCT_ALLO rows are the known open case"),
+ok(has(rd, "AFTER_THE_CAP='no' should be empty; CART / SCT_ALLO rows are the "),
    "...with the one open gap named, so a nonzero row is not read as new")
+# Treatment past the LOT cap is outside every line by construction, so counting
+# it as unowned puts a number in that block no ownership decision can move. The
+# same carve-out the synthetic harness makes on the same invariant.
+ok(has(rd, "AFTER_THE_CAP") && has(rd, "ln.N_LINES >= \", cfg$max_lot, \""),
+   "...and doses past the LOT cap are split out rather than counted as unowned")
+# Spark rejects a correlated scalar subquery that is not an aggregate, so the
+# ORDER BY / LIMIT 1 form this used to carry would have died on the warehouse.
+ok(!has(rd, "ORDER BY l.LOT_BASE_END_DT DESC LIMIT 1") &&
+     has(rd, "max_by(l.LOT_START_TYPE"),
+   "...and the prior line type is an aggregate, which Spark will actually run")
+# The group at risk and the rule's own mark are different numbers, and calling
+# the first one the second is what made this block read as a counterfactual.
+ok(has(rd, "N_PAST_THE_REGIMEN") && has(rd, "N_ENDING_ON_A_MELP_DOSE") &&
+     !has(rd, "N_HELD_TO_THE_DOSE"),
+   "the hold block separates the population at risk from the hold's signature")
+ok(has(rd, "array_contains(split(lm.LOT_BASE_MEDS, ' '), ms.MAP_MED_TYPE)"),
+   "...and measures cover off the line's own regimen, not every drug in the span")
+# An exposure in no line is the thing block 2 exists to count, so block 1 must
+# not silently drop it.
+ok(has(rd, "LEFT JOIN \", tbl(c_i, \"LOT_LONG_FINAL\")") &&
+     has(rd, "in no line - no window to judge it against"),
+   "the branch table keeps exposures that ended up in no line, in a row of their own")
 
 cat("\n-- the cells, and what they cannot do --\n")
 cells <- melp_cell_plan()
@@ -608,16 +647,20 @@ ok(has(rr, 'pfx_of("as_asked")') && has(rr, 'pfx_of("yield_to_sct")'),
 ok(has(rr, "rather than an output left out"),
    "...and a comparison that could not be made stops the run rather than being skipped")
 
-cat("\n-- B.2 removes a boundary; it does not hold the line open --\n")
+cat("\n-- B.2 removes a boundary, and melp_hold carries the line to the second dose --\n")
 # The rule as written says both doses stay in the current line. Suppression
-# cannot deliver that: a line's discontinuation is its base agents' last cover,
-# and a melphalan first seen outside induction is not one of them. So where the
-# regimen runs out between the two doses, the line ends there and the second
-# dose starts the next one. Making melphalan a member of a regimen whose
-# induction window it never entered is a clinical decision, not an
-# implementation one - so it is recorded as open, and counted.
+# cannot deliver that on its own: a line's discontinuation is its base agents'
+# last cover, and a melphalan first seen outside induction is not one of them.
+# So where the regimen runs out between the two doses, the line used to end
+# there and the second dose started the next one.
+#
+# That was recorded as an open question and it is not one any more: the request
+# says in words that both doses stay in the current line, and melp_hold carries
+# the run-out to the suppressed dose so they do. n_b2_line_starts is therefore
+# a CHECK rather than a question - under the rule those lines should not exist,
+# and a nonzero count in a rule cell is the hold failing to reach them.
 ok(has(sql, "AS n_b2_line_starts"),
-   "the lines that decision governs are counted, not left to be argued about")
+   "the lines the hold has to reach are counted, so a hold that misses them shows")
 # All four conditions, because any one alone lets in lines with no B.2 pair -
 # a line DARA started, with melphalan merely joining its induction window,
 # satisfies "starts after a runout and has melphalan in the regimen".
@@ -769,6 +812,22 @@ e1 <- Filter(function(s) identical(s$id, "example_1"), MELP_SCENARIOS)[[1]]
 r1 <- melp_scenario_run(ask, e1)
 ok(all(e1$doses %in% r1$suppress),
    "example 1: both doses of the B.2 pair have their boundary removed, not just the first")
+# The model of the engine has to carry the returning-drug release too, or every
+# later exposure of a line's own melphalan looks frozen and the rule gets
+# credited with boundaries the engine opens by itself. Held by the two cases
+# that turn on it rather than by reading the source for a keyword.
+ok(all(e1$doses %in% r1$starts_off),
+   "example 1: without the rule BOTH doses advance, so B.2 removes two boundaries, not one")
+w_a2 <- Filter(function(s) identical(s$id, "window_cart_45_a2"), MELP_WINDOW_CASES)[[1]]
+r_a2 <- melp_scenario_run(ask, w_a2)
+ok(identical(as.numeric(r_a2$starts), as.numeric(r_a2$starts_off)) &&
+     identical(as.numeric(r_a2$starts), 240),
+   "A.2: the returning drug opens that boundary anyway, so the rule adds nothing there")
+# And the release is the general 90-day one, not a melphalan threshold: at 89
+# days the drug is still the line's own and the same pair moves nothing.
+r_held <- melp_scenario_run(modifyList(ask, list(map_discon_gap_days = 201L)), w_a2)
+ok(!length(r_held$starts_off),
+   "...and with the gap threshold above 200 days it does not, which is what makes it the release")
 # And the settings the scenarios are judged against are the shipped ones, or
 # the branches move and the agreement above means nothing.
 sc_cfg <- utils::read.csv(file.path(LOT, "config.csv"), stringsAsFactors = FALSE,

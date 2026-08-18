@@ -19,12 +19,36 @@
 #                        administration. A window function in the build; a fold
 #                        here, off the same setting.
 #   the engine's default what happens at a melphalan date the rule leaves alone.
-#                        A dose first seen outside the induction window is an
-#                        added medication and advances the line; a repeat of a
-#                        drug already in the regimen extends it instead. That is
-#                        the behaviour exploration/FILES.md,
-#                        records under "What the build does today", and it is a
-#                        model of the engine, not the engine.
+#                        Three parts, and all three are modelled below:
+#
+#                          a dose first seen outside the induction window is an
+#                          added medication and advances the line;
+#
+#                          a repeat of a drug already in the line's regimen does
+#                          not - it extends the line instead;
+#
+#                          UNLESS the drug came back after a confirmed
+#                          discontinuation. map_discon_gap_days between one
+#                          episode and the next makes the later one a restart,
+#                          and prior_regimen.R releases a restart to open a line
+#                          like any other drug's.
+#
+#                        That third part shipped with the returning-drug rule and
+#                        was missing here. Without it every later exposure of a
+#                        line's own melphalan looked frozen, so A.2 read as a
+#                        boundary the rule ADDS when the engine already opens it,
+#                        and example 1 read as one boundary removed when the rule
+#                        removes two. It is a model of the engine either way, not
+#                        the engine.
+#
+# The release is modelled off DOSE dates, and the build measures it off MAP
+# episodes: the flag needs map_discon_gap_days between one episode's END and the
+# next one's start. An episode ends at its last dose plus its days supply minus
+# one, and no scenario carries a days supply. So the model reads a melphalan
+# administration as covering its own day and nothing more, which is the ordinary
+# shape of a coded conditioning dose. A longer supply would push a gap just over
+# the threshold back under it, and that is the one place this model can be
+# looser than the build.
 #
 # So a disagreement here is a real disagreement about the rule; an agreement
 # says the branches line up, not that a warehouse run would.
@@ -137,12 +161,21 @@ MELP_WINDOW_CASES <- list(
 
 # The exposure chain: doses closer together than the setting are one
 # administration, and the exposure is dated at the first of them.
+#
+# Its LAST dose is carried too. The decision never asks for it - every branch is
+# about EXPO_DT - but the returning-drug release does: cover runs from the last
+# dose of an administration, so a gap measured from the first would be too long
+# and would release a drug the build holds.
 melp_exposures <- function(doses, exposure_days) {
   d <- sort(unique(doses))
-  if (!length(d)) return(numeric(0))
-  keep <- d[1]; last <- d[1]
-  for (x in d[-1]) { if (x - last >= exposure_days) keep <- c(keep, x); last <- x }
-  keep
+  if (!length(d)) return(data.frame(EXPO_DT = numeric(0), LAST_DT = numeric(0)))
+  keep <- d[1]; last <- d[1]; ends <- d[1]
+  for (x in d[-1]) {
+    if (x - last >= exposure_days) { keep <- c(keep, x); ends <- c(ends, x) }
+    else ends[length(ends)] <- x
+    last <- x
+  }
+  data.frame(EXPO_DT = keep, LAST_DT = ends)
 }
 
 # Run one scenario. Returns the judged rows, what the rule did to each, and the
@@ -153,9 +186,17 @@ melp_scenario_run <- function(cfg, sc) {
                inject   = .melp_arms(.melp_cte(sql, "melp_inject")))
 
   e <- melp_exposures(sc$doses, cfg$melp_exposure_days)
-  rows <- data.frame(EXPO_DT = e, NEXT_DT = c(e[-1], NA))
+  rows <- data.frame(EXPO_DT = e$EXPO_DT, LAST_DT = e$LAST_DT,
+                     NEXT_DT = c(e$EXPO_DT[-1], NA))
   rows$GAP        <- rows$NEXT_DT - rows$EXPO_DT
   rows$INSIDE     <- as.integer(rows$EXPO_DT <= sc$induction_end)
+  # The returning-drug release, per exposure: was this one far enough after the
+  # end of the last that the build flags the gap as a discontinuation? Measured
+  # from the previous exposure's LAST dose, with an administration covering only
+  # its own day - see the header. The first exposure has nothing behind it.
+  rows$RELEASED <- c(0L, as.integer(
+    rows$EXPO_DT[-1] - rows$LAST_DT[-nrow(rows)] >= cfg$map_discon_gap_days))[
+      seq_len(nrow(rows))]
   # No coded transplant in any scenario, so nothing yields. Named, not assumed:
   # a scenario that carried one would need the AUTO dates too.
   rows$YIELD_THIS <- 0L
@@ -176,9 +217,10 @@ melp_scenario_run <- function(cfg, sc) {
   #
   # Walked in order, because a boundary changes what comes after it. The line a
   # boundary opens is started by melphalan, so melphalan is one of that line's
-  # base agents and no later dose can be an added medication in it. Only an
-  # injected date opens a boundary after that: the inject arm is a UNION onto
-  # first_add_candidates and does not pass through its base-med exclusion.
+  # base agents and no later dose can be an added medication in it - until the
+  # drug returns after a confirmed gap, which releases it again. Only an
+  # injected date opens a boundary without either: the inject arm is a UNION
+  # onto first_add_candidates and does not pass through its base-med exclusion.
   in_regimen <- nrow(rows) > 0L && rows$INSIDE[1] == 1L
   walk <- function(sup, inj) {
     base <- in_regimen
@@ -186,7 +228,11 @@ melp_scenario_run <- function(cfg, sc) {
     for (i in seq_len(nrow(rows))) {
       x <- rows$EXPO_DT[i]
       if (x %in% inj) { base <- TRUE; next }
-      if (!base && rows$INSIDE[i] == 0L && !(x %in% sup)) {
+      # A released exposure is a candidate whether or not melphalan is in the
+      # regimen: prior_regimen.R excludes the line's own drugs and then puts
+      # back the ones whose previous episode was a confirmed discontinuation.
+      if ((!base || rows$RELEASED[i] == 1L) &&
+          rows$INSIDE[i] == 0L && !(x %in% sup)) {
         out <- c(out, x); base <- TRUE
       }
     }

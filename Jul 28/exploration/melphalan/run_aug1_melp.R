@@ -13,9 +13,12 @@
 # difference is the MELP-adjusted line structure: lines per patient, reach to 2L
 # and 3L, LOT1 length, regimens.
 #
-# Neither rule cell is the request implemented to the letter. On B.2 both take
-# the narrow reading, described in lot/FILES.md under exploration/melphalan/ and left
-# open there as question 6.
+# Both rule cells implement the branch table, B.2 included: the request says in
+# words that both doses stay in the current line, so melp_hold carries the
+# run-out to them rather than only taking the boundary away. What the two cell
+# names describe is the TRANSPLANT reading - the one thing the request does not
+# cover - and that is the only difference between them. See exploration/FILES.md
+# under exploration/melphalan/, where B.2 is recorded as settled.
 #
 # Execution is opt-in because a cell is a whole build, and there is no cheaper
 # way: moving a boundary changes which line every later dose falls in, and none

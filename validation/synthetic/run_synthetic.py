@@ -432,7 +432,50 @@ def settings():
 
 
 def checks(c):
-  return [
+  # Every melphalan dose the rule refuses to let start a line has to end up
+  # INSIDE a line. Suppressing a dose and owning it are two halves of one
+  # statement, and only the first half is visible in line dates - so without
+  # this the run went green while M0010's two doses sat in no line at all.
+  #
+  # Only when the rule is on. With it off the engine makes no such promise, and
+  # a melphalan dose outside every line is an ordinary unowned exposure.
+  #
+  # The carve-out is the CAP, not "after the last line". A patient already at
+  # max_lot has no line left to give, so a dose past their final line is the
+  # cap showing. Below the cap a line was still available, and a dose past the
+  # final line is exactly the failure this exists to catch.
+  #
+  # Written the other way round first - excusing every dose past the last line -
+  # it could not see M0010, whose CAR-T line ends on its own start date so that
+  # BOTH its doses are past it. The check went green on the one patient it was
+  # added for. Same shape as E5's excuse, and for the same reason.
+  max_lot = c["max_lot"]
+  melp_owned = [] if not os.environ.get("MELP_RULE") else [
+   ("a melphalan dose the rule suppressed sits in no line",
+    f"""SELECT m.PATID, m.MAP_START_DT
+       FROM map_stacked m
+       WHERE upper(trim(m.MAP_MED_TYPE)) = 'MELP'
+         AND EXISTS (SELECT 1 FROM lot_long c WHERE c.PATID = m.PATID)
+         AND m.MAP_START_DT >= (SELECT min(c.LOT_START_DT) FROM lot_long c
+                                 WHERE c.PATID = m.PATID)
+         AND ((SELECT count(*) FROM lot_long c WHERE c.PATID = m.PATID) < {max_lot}
+              OR m.MAP_START_DT <= (SELECT max(c.LOT_BASE_END_DT) FROM lot_long c
+                                     WHERE c.PATID = m.PATID))
+         AND NOT EXISTS (SELECT 1 FROM lot_long l
+                          WHERE l.PATID = m.PATID
+                            AND m.MAP_START_DT BETWEEN l.LOT_START_DT
+                                                   AND l.LOT_BASE_END_DT)"""),
+   ("a melphalan dose falls in two lines at once",
+    """SELECT m.PATID, m.MAP_START_DT
+       FROM map_stacked m
+       WHERE upper(trim(m.MAP_MED_TYPE)) = 'MELP'
+       GROUP BY m.PATID, m.MAP_START_DT
+       HAVING (SELECT count(*) FROM lot_long l
+                WHERE l.PATID = m.PATID
+                  AND m.MAP_START_DT BETWEEN l.LOT_START_DT
+                                         AND l.LOT_BASE_END_DT) > 1"""),
+  ]
+  return melp_owned + [
  ("a line ends before it starts",
   "SELECT PATID, LOT_NUM FROM lot_long WHERE LOT_BASE_END_DT < LOT_START_DT"),
  ("LOT_BASE_LENGTH disagrees with the dates",

@@ -36,14 +36,28 @@ env_flag <- function(nm) identical(toupper(trimws(Sys.getenv(nm, unset = ""))), 
 # `expect` records what the synthetic cohort gave, purely so a wildly different
 # real number is noticeable rather than silently accepted.
 AUDIT_COUNTS <- list(
-  # 1. The one confirmed correctness defect. Induction medications are gathered
-  #    across the whole window while the line's end is fixed later in the
-  #    cascade, so a transplant that closes the line early can leave an agent in
-  #    the regimen whose first supply begins after the line ended. That agent
-  #    also reaches the run-out and the next line's prior-regimen exclusion.
+  # 1. The regimen-window defect, as it stands after the REGIMEN_CUTOFF_DT fix.
+  #    Induction medications used to be gathered across the whole window while
+  #    the line's end was fixed later in the cascade, so a transplant that closed
+  #    the line early left an agent in the regimen whose first supply began after
+  #    the line ended. That agent also reached the run-out and the next line's
+  #    prior-regimen exclusion. 04_lot1_base.R and 10_lot2_5_base.R now cut the
+  #    regimen window at REGIMEN_CUTOFF_DT, so this is a check that the shape is
+  #    gone rather than a measurement of a live defect - which is why the old
+  #    synthetic figure is not carried here as a target: it was counted before
+  #    the fix and a build after it should not reproduce it.
+  #
+  #    TWO shapes, split rather than added, because "no episode STARTS inside
+  #    the line" and "the agent is not covered inside the line at all" are
+  #    different questions and only the second is stranding. An agent whose
+  #    episode began before the line and runs into it was given during the line;
+  #    counting it as stranded reads a claim/episode boundary as a defect. The
+  #    build gathers a regimen only from episodes starting at or after the line
+  #    start, so shape b should be empty - and if it is not, that is a finding
+  #    about the criteria layer moving line ends, not about the regimen window.
   list(id = "regimen-agent-begins-after-line-end",
-       what = "Lines naming a regimen agent whose first supply episode starts after the line ended",
-       expect = "synthetic: 30 of 10,659 lines carrying a regimen",
+       what = "Lines naming a regimen agent that has no supply episode starting inside the line, split by whether it was covered at all",
+       expect = "expected 0 after the REGIMEN_CUTOFF_DT fix; shape b should be empty at any version",
        sql = "
       WITH exploded AS (
         SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_BASE_END_DT,
@@ -52,7 +66,15 @@ AUDIT_COUNTS <- list(
         WHERE coalesce(trim(l.LOT_BASE_MEDS), '') <> ''
       ),
       offending AS (
-        SELECT DISTINCT e.PATID, e.LOT_NUM, e.MED_ABBR
+        SELECT DISTINCT e.PATID, e.LOT_NUM, e.MED_ABBR,
+               CASE WHEN EXISTS (SELECT 1 FROM {t$map} m
+                                 WHERE m.PATID = e.PATID
+                                   AND m.MAP_MED_TYPE = e.MED_ABBR
+                                   AND m.MAP_START_DT <= e.LOT_BASE_END_DT
+                                   AND m.MAP_END_DT   >= e.LOT_START_DT)
+                    THEN 'b. covered by an episode that began before the line'
+                    ELSE 'a. no cover inside the line at all - stranded'
+               END AS SHAPE
         FROM exploded e
         WHERE e.MED_ABBR <> ''
           AND NOT EXISTS (SELECT 1 FROM {t$map} m
@@ -61,10 +83,11 @@ AUDIT_COUNTS <- list(
                             AND m.MAP_START_DT BETWEEN e.LOT_START_DT
                                                    AND e.LOT_BASE_END_DT)
       )
-      SELECT count(*)                                   AS N_AGENT_LINE_PAIRS,
+      SELECT SHAPE,
+             count(*)                                   AS N_AGENT_LINE_PAIRS,
              count(DISTINCT concat_ws('|', PATID, LOT_NUM)) AS N_LINES,
              count(DISTINCT PATID)                       AS N_PATIENTS
-      FROM offending"),
+      FROM offending GROUP BY 1 ORDER BY 1"),
 
   # 1b. FIXED - the size of the tandem AUTO ownership fix, measured from the
   #     transplants rather than from the lines. auto_cand refused a transplant
@@ -108,24 +131,46 @@ AUDIT_COUNTS <- list(
   #     shape that was being treated as a planned tandem when no line had
   #     hold of it. This is the group whose line structure the fix can change,
   #     so it bounds the impact whichever direction the numbers move.
+  #     The gap alone does not make a pair a tandem. 05b_lot1_sct.R requires
+  #     that nothing happens strictly between the two transplants - no
+  #     non-steroid medication starting, no allogeneic transplant, no CAR-T -
+  #     and a pair with something in between was never treated as planned, so
+  #     the fix never touched it. Counting those in over-stated the population
+  #     the fix can move. The condition is the engine's own, spliced from the
+  #     same three sources tandem_interrupt_events_sql() reads.
   list(id = "tandem-pair-whose-first-transplant-is-out-of-window",
-       what = "FIXED: AUTO pairs within sct_tandem_days whose earlier transplant fell outside its line's window",
-       expect = "synthetic: bounds the 12 patients the fix moved at 2,000",
+       what = "FIXED: uninterrupted AUTO pairs within sct_tandem_days whose earlier transplant fell outside its line's window",
+       expect = "bounds the patients the fix can move; the interruption condition narrows it - on 600 synthetic patients, 15 pairs at LOT1 without it and 5 with",
        sql = "
       WITH paired AS (
         SELECT PATID, TX_DT,
                lag(TX_DT) OVER (PARTITION BY PATID ORDER BY TX_DT) AS PREV_TX_DT
         FROM {t$auto}
       ),
+      interrupts AS (
+        SELECT PATID, MAP_START_DT AS dt FROM {t$map}
+        WHERE MAP_MED_CLASS <> 'STEROID'
+        UNION ALL
+        SELECT PATID, TX_DT AS dt FROM {t$allo}
+        WHERE SCT_TYPE IN ('ALLO', 'CART')
+      ),
+      uninterrupted AS (
+        SELECT p.*
+        FROM paired p
+        WHERE p.PREV_TX_DT IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM interrupts x
+                          WHERE x.PATID = p.PATID
+                            AND x.dt > p.PREV_TX_DT
+                            AND x.dt < p.TX_DT)
+      ),
       owning AS (
         SELECT p.PATID, p.TX_DT, p.PREV_TX_DT, l.LOT_NUM,
                l.LOT_START_DT, l.LOT_START_TYPE
-        FROM paired p
+        FROM uninterrupted p
         INNER JOIN {t$long} l
           ON l.PATID = p.PATID
          AND p.PREV_TX_DT BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT
-        WHERE p.PREV_TX_DT IS NOT NULL
-          AND datediff(p.TX_DT, p.PREV_TX_DT) <= {tandem_days}
+        WHERE datediff(p.TX_DT, p.PREV_TX_DT) <= {tandem_days}
       )
       SELECT LOT_NUM,
              count(*)              AS N_PAIRS,
@@ -154,6 +199,31 @@ AUDIT_COUNTS <- list(
   #     from before the fix is the population whose line lengths and counts the
   #     fix moves; it is the same query either side, because what it counts is
   #     the patient shape and not the verdict.
+  #     The transplant has to fall after the line's RUN-OUT, which is the date
+  #     the guard is about. This used to compare it with LOT_BASE_END_DT, the
+  #     line's final end, which is a different date in both directions: an
+  #     add-med or a death ends a line before its regimen runs out, and an
+  #     unconfirmed run-out leaves the line censored at the end of observation
+  #     long after it. Neither is the guard's question, so the old count was a
+  #     different population rather than a wider or narrower one.
+  #
+  #     LOT_LONG carries no run-out column, so it is rebuilt here the way
+  #     discon_per_med and discon_raw build it: per regimen agent, chain the
+  #     agent's episodes forward from the line start and stop at the one after
+  #     a confirmed gap - MAP_DISCON_FLG sits on the episode BEFORE the gap, so
+  #     the lag is what tells an episode it is a restart - then take the last
+  #     cover reached across the agents.
+  #
+  #     Dropping the discon break made this proxy far too generous: the run-out
+  #     came out at the last refill however long the patient had been off the
+  #     drug, and the count fell below what comparing with the line end gave,
+  #     which is the wrong direction for a query meant to widen it.
+  #
+  #     Three differences from the engine's run-out remain, so this is a shape
+  #     count and not a verdict: the engine's chain also breaks at a non-regimen
+  #     drug starting in a gap, it caps the run-out at OBS_END_DT, and a
+  #     permissible substitute's cover counts toward it and is not in
+  #     LOT_BASE_MEDS.
   list(id = "runout-unconfirmed-by-a-tandem-no-line-held",
        what = "FIXED: post-run-out AUTOs the old guard excused as tandem partners of an out-of-window transplant",
        expect = "the population the guard-mirror fix moves; zero means the shape does not occur here",
@@ -162,27 +232,66 @@ AUDIT_COUNTS <- list(
         SELECT PATID, TX_DT,
                lag(TX_DT) OVER (PARTITION BY PATID ORDER BY TX_DT) AS PREV_TX_DT
         FROM {t$auto}
+      ),
+      named AS (
+        SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_BASE_END_DT,
+               l.LOT_START_TYPE,
+               explode(split(l.LOT_BASE_MEDS, ' ')) AS MED_ABBR
+        FROM {t$long} l
+        WHERE coalesce(trim(l.LOT_BASE_MEDS), '') <> ''
+      ),
+      ep AS (
+        SELECT e.PATID, e.LOT_NUM, e.LOT_START_DT, e.LOT_BASE_END_DT,
+               e.LOT_START_TYPE, e.MED_ABBR, m.MAP_START_DT, m.MAP_END_DT,
+               coalesce(lag(m.MAP_DISCON_FLG)
+                          OVER (PARTITION BY e.PATID, e.LOT_NUM, e.MED_ABBR
+                                ORDER BY m.MAP_START_DT), 0) AS PREV_DISCON
+        FROM named e
+        INNER JOIN {t$map} m
+          ON m.PATID = e.PATID
+         AND m.MAP_MED_TYPE = e.MED_ABBR
+         AND m.MAP_START_DT >= e.LOT_START_DT
+        WHERE e.MED_ABBR <> ''
+      ),
+      reached AS (
+        SELECT ep.*,
+               sum(PREV_DISCON) OVER (PARTITION BY PATID, LOT_NUM, MED_ABBR
+                                      ORDER BY MAP_START_DT
+                                      ROWS BETWEEN UNBOUNDED PRECEDING
+                                               AND CURRENT ROW) AS BROKEN_BY_HERE
+        FROM ep
+      ),
+      per_med AS (
+        SELECT PATID, LOT_NUM, LOT_START_DT, LOT_BASE_END_DT, LOT_START_TYPE,
+               MED_ABBR, max(MAP_END_DT) AS MED_END_DT
+        FROM reached WHERE BROKEN_BY_HERE = 0
+        GROUP BY 1, 2, 3, 4, 5, 6
+      ),
+      runout AS (
+        SELECT PATID, LOT_NUM, LOT_START_DT, LOT_BASE_END_DT, LOT_START_TYPE,
+               max(MED_END_DT) AS RUNOUT_DT
+        FROM per_med GROUP BY 1, 2, 3, 4, 5
       )
-      SELECT l.LOT_NUM,
+      SELECT r.LOT_NUM,
              count(*)                AS N_TRANSPLANTS,
-             count(DISTINCT l.PATID) AS N_PATIENTS
+             count(DISTINCT r.PATID) AS N_PATIENTS
       FROM paired p
-      INNER JOIN {t$long} l ON l.PATID = p.PATID
+      INNER JOIN runout r ON r.PATID = p.PATID
       WHERE p.PREV_TX_DT IS NOT NULL
-        -- after this line ran out, and inside it, so the guard was the thing
-        -- deciding whether the run-out counted as a discontinuation
-        AND p.TX_DT >  l.LOT_BASE_END_DT
+        -- after this line's regimen ran out, which is the date the guard was
+        -- deciding about
+        AND p.TX_DT >  r.RUNOUT_DT
         AND datediff(p.TX_DT, p.PREV_TX_DT) <= {tandem_days}
         -- the earlier transplant belongs to this line...
-        AND p.PREV_TX_DT BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT
+        AND p.PREV_TX_DT BETWEEN r.LOT_START_DT AND r.LOT_BASE_END_DT
         -- ...but fell outside its window, so no line ever held the pair
-        AND p.PREV_TX_DT > date_add(l.LOT_START_DT,
-              CASE l.LOT_START_TYPE WHEN 'SCT_ALLO' THEN 0
+        AND p.PREV_TX_DT > date_add(r.LOT_START_DT,
+              CASE r.LOT_START_TYPE WHEN 'SCT_ALLO' THEN 0
                                     WHEN 'CART' THEN {cart_days} - 1
-                                    ELSE CASE WHEN l.LOT_NUM = 1
+                                    ELSE CASE WHEN r.LOT_NUM = 1
                                               THEN {lot1_window} - 1
                                               ELSE {lotn_window} - 1 END END)
-      GROUP BY l.LOT_NUM ORDER BY l.LOT_NUM"),
+      GROUP BY r.LOT_NUM ORDER BY r.LOT_NUM"),
 
   # 1e. NOT a defect - the size of the 90-day threshold, which nothing has
   #     ever measured. A break in supply of even one day starts a new episode.
@@ -196,41 +305,52 @@ AUDIT_COUNTS <- list(
   #     delayed pickup or a pharmacy switch to move them across it, which is
   #     what this bands.
   #
-  #     Restricted to drugs that were in some line's regimen, because those are
-  #     the only ones the release rule applies to. A drug nobody was on cannot
-  #     be blocked by a previous regimen in the first place.
+  #     Restricted to a return that the release rule can actually decide: the
+  #     drug has to be in the regimen of the line RUNNING WHEN IT COMES BACK,
+  #     because that is the regimen med_cand excludes it from. Any line's
+  #     regimen was too wide - a drug that was in LOT1 and returns during LOT3,
+  #     with LOT3's regimen not naming it, is not blocked by anything and its
+  #     gap decides nothing. Counting those in made the bands either side of 90
+  #     look busier than the decision they describe.
   list(id = "return-gap-around-the-90-day-threshold",
        what = "DECISION: how close returning drugs sit to the 90-day line that frees them to open a new LOT",
        expect = "no target - nothing has measured this. Read the two bands either side of 90.",
        sql = "
-      WITH in_a_regimen AS (
-        SELECT DISTINCT l.PATID, explode(split(l.LOT_BASE_MEDS, ' ')) AS MED_ABBR
-        FROM {t$long} l
-        WHERE coalesce(trim(l.LOT_BASE_MEDS), '') <> ''
-      ),
-      gaps AS (
+      WITH gaps AS (
         SELECT m.PATID, m.MAP_MED_TYPE,
+               lead(m.MAP_START_DT) OVER (PARTITION BY m.PATID, m.MAP_MED_TYPE
+                                          ORDER BY m.MAP_START_DT) AS RETURN_DT,
                datediff(lead(m.MAP_START_DT) OVER (PARTITION BY m.PATID, m.MAP_MED_TYPE
                                                    ORDER BY m.MAP_START_DT),
                         m.MAP_END_DT) AS GAP_DAYS
         FROM {t$map} m
+      ),
+      -- The line the return would be judged against: the latest one that had
+      -- started by the day the drug came back. max_by rather than a correlated
+      -- subquery, which Spark will not run unless it is an aggregate.
+      judged_against AS (
+        SELECT g.PATID, g.MAP_MED_TYPE, g.GAP_DAYS,
+               max_by(l.LOT_BASE_MEDS, l.LOT_START_DT) AS PREV_REGIMEN
+        FROM gaps g
+        INNER JOIN {t$long} l
+          ON l.PATID = g.PATID AND l.LOT_START_DT <= g.RETURN_DT
+        WHERE g.GAP_DAYS IS NOT NULL
+        GROUP BY g.PATID, g.MAP_MED_TYPE, g.GAP_DAYS, g.RETURN_DT
       )
-      SELECT CASE WHEN g.GAP_DAYS <  30 THEN 'a. under 30 days'
-                  WHEN g.GAP_DAYS <  76 THEN 'b. 30 to 75'
-                  WHEN g.GAP_DAYS <  83 THEN 'c. 76 to 82 - within 2 weeks under'
-                  WHEN g.GAP_DAYS <  90 THEN 'd. 83 to 89 - within 1 week under'
-                  WHEN g.GAP_DAYS <  97 THEN 'e. 90 to 96 - within 1 week over'
-                  WHEN g.GAP_DAYS < 104 THEN 'f. 97 to 103 - within 2 weeks over'
-                  WHEN g.GAP_DAYS < 181 THEN 'g. 104 to 180'
+      SELECT CASE WHEN j.GAP_DAYS <  30 THEN 'a. under 30 days'
+                  WHEN j.GAP_DAYS <  76 THEN 'b. 30 to 75'
+                  WHEN j.GAP_DAYS <  83 THEN 'c. 76 to 82 - within 2 weeks under'
+                  WHEN j.GAP_DAYS <  90 THEN 'd. 83 to 89 - within 1 week under'
+                  WHEN j.GAP_DAYS <  97 THEN 'e. 90 to 96 - within 1 week over'
+                  WHEN j.GAP_DAYS < 104 THEN 'f. 97 to 103 - within 2 weeks over'
+                  WHEN j.GAP_DAYS < 181 THEN 'g. 104 to 180'
                   ELSE                       'h. over 180 days' END AS RETURN_GAP,
-             CASE WHEN g.GAP_DAYS >= {discon_days} THEN 'released - may open a LOT'
+             CASE WHEN j.GAP_DAYS >= {discon_days} THEN 'released - may open a LOT'
                   ELSE 'still blocked by the previous regimen' END AS EFFECT,
              count(*)                    AS N_RETURNS,
-             count(DISTINCT g.PATID)     AS N_PATIENTS
-      FROM gaps g
-      INNER JOIN in_a_regimen r
-         ON r.PATID = g.PATID AND r.MED_ABBR = g.MAP_MED_TYPE
-      WHERE g.GAP_DAYS IS NOT NULL
+             count(DISTINCT j.PATID)     AS N_PATIENTS
+      FROM judged_against j
+      WHERE array_contains(split(coalesce(j.PREV_REGIMEN, ''), ' '), j.MAP_MED_TYPE)
       GROUP BY 1, 2
       ORDER BY 1"),
 
@@ -344,7 +464,7 @@ AUDIT_COUNTS <- list(
   #    in-LOT AUTO window is the regimen window. A count landing on SCT_AUTO or
   #    on a LOT1 SCT_CART contradicts that reading and is the finding.
   list(id = "post-end-regimen-by-line-and-end-reason",
-       what = "Lines naming a regimen agent whose first episode starts after the line ended, by LOT and end reason",
+       what = "Lines naming a regimen agent with no supply cover inside the line at all, by LOT and end reason",
        expect = "expected on SCT_ALLO at any line and SCT_CART at LOT2+; anything else contradicts the analysis",
        sql = "
       WITH exploded AS (
@@ -358,11 +478,14 @@ AUDIT_COUNTS <- list(
         SELECT DISTINCT e.PATID, e.LOT_NUM, e.LOT_BASE_END_REASON, e.MED_ABBR
         FROM exploded e
         WHERE e.MED_ABBR <> ''
+          -- No cover inside the line at all, not merely no episode STARTING in
+          -- it. Count 1 splits the two; here only the stranded shape is wanted,
+          -- because this table is read as which paths strand an agent.
           AND NOT EXISTS (SELECT 1 FROM {t$map} m
                           WHERE m.PATID = e.PATID
                             AND m.MAP_MED_TYPE = e.MED_ABBR
-                            AND m.MAP_START_DT BETWEEN e.LOT_START_DT
-                                                   AND e.LOT_BASE_END_DT)
+                            AND m.MAP_START_DT <= e.LOT_BASE_END_DT
+                            AND m.MAP_END_DT   >= e.LOT_START_DT)
       )
       SELECT LOT_NUM, LOT_BASE_END_REASON,
              count(*)                                        AS N_AGENT_LINE_PAIRS,
@@ -389,11 +512,12 @@ AUDIT_COUNTS <- list(
         SELECT DISTINCT e.PATID, e.LOT_NUM, e.MED_ABBR
         FROM exploded e
         WHERE e.MED_ABBR <> ''
+          -- Cover, not a start date, for the same reason as the count above.
           AND NOT EXISTS (SELECT 1 FROM {t$map} m
                           WHERE m.PATID = e.PATID
                             AND m.MAP_MED_TYPE = e.MED_ABBR
-                            AND m.MAP_START_DT BETWEEN e.LOT_START_DT
-                                                   AND e.LOT_BASE_END_DT)
+                            AND m.MAP_START_DT <= e.LOT_BASE_END_DT
+                            AND m.MAP_END_DT   >= e.LOT_START_DT)
       )
       SELECT s.LOT_NUM                                       AS STRANDED_IN_LOT,
              count(*)                                        AS N_AGENT_LINE_PAIRS,
@@ -545,6 +669,10 @@ main <- function() {
             map    = lot_out("MAP_STACKED"),
             sct    = lot_out("LOT1_SCT"),
             auto   = lot_out("TX_AUTO_DATES"),
+            # The interrupting events a tandem has to be free of, alongside a
+            # non-steroid medication start. Same three sources as
+            # tandem_interrupt_events_sql().
+            allo   = lot_out("TX_ALLO_CART_DATES"),
             cohort = wrk(cohort))
 
   cat("Counting against:\n")

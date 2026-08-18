@@ -654,7 +654,7 @@ build_lot_n <- function(con, lot_num,
       ls.ENDDATE_CE,
       coalesce(ms.LOT{lot_num}_MED_CNT, 0)   AS LOT{lot_num}_MED_CNT,
       coalesce(ms.LOT{lot_num}_BASE_MEDS, '') AS LOT{lot_num}_BASE_MEDS,
-      d.LOT{lot_num}_BASE_RUNOUT_DT,
+      d.LOT{lot_num}_BASE_RUNOUT_DT,{melp_hold_col(cfg, 'mh')}
       fa.LOT{lot_num}_BASE_1ST_ADD_MED_DT,
       fa.LOT{lot_num}_BASE_1ST_ADD_MED,
       -- The per-MED and per-CLASS flags, matching LOT1. NULL becomes 0 for a
@@ -668,7 +668,7 @@ build_lot_n <- function(con, lot_num,
     FROM lot{lot_num}_start ls
     LEFT JOIN med_summary    ms ON ls.PATID = ms.PATID
     LEFT JOIN discon         d  ON ls.PATID = d.PATID
-    LEFT JOIN first_add_pick fa ON ls.PATID = fa.PATID
+    LEFT JOIN first_add_pick fa ON ls.PATID = fa.PATID{melp_hold_join(cfg, 'ls')}
   "), qc = glue("SELECT count(*) AS n_pats,
                         avg(LOT{lot_num}_MED_CNT) AS avg_meds,
                         sum(CASE WHEN LOT{lot_num}_BASE_RUNOUT_DT IS NOT NULL THEN 1 ELSE 0 END) AS n_runout,
@@ -1129,9 +1129,9 @@ build_lot_n <- function(con, lot_num,
       SELECT
         ec.*,
         CASE
-          WHEN ec.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND {if (allo_single_day) 1L else 0L} = 1
+          WHEN ec.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND {if (allo_single_day) 1L else 0L} = 1{melp_line_type_guard(cfg, lot_num)}
             THEN ec.LOT{lot_num}_START_DT
-          WHEN ec.LOT{lot_num}_START_TYPE = 'CART' AND ec.LOT{lot_num}_MED_CNT = 0
+          WHEN ec.LOT{lot_num}_START_TYPE = 'CART' AND ec.LOT{lot_num}_MED_CNT = 0{melp_line_type_guard(cfg, lot_num)}
             THEN ec.LOT{lot_num}_START_DT
           WHEN ec.LOT_TX_ENDDATE IS NOT NULL
            AND NOT (ec.CART_INIT_FLG = 1 AND ec.LOT_TX_ENDDATE_REASON = 3)
@@ -1181,9 +1181,9 @@ build_lot_n <- function(con, lot_num,
          AND ec.LOT{lot_num}_AUTO_HOLD_DT > ec.LOT{lot_num}_NATURAL_END_DT
          AND (ec.DEATH_DT IS NULL OR ec.LOT{lot_num}_AUTO_HOLD_DT < ec.DEATH_DT)
         THEN 'SCT_AUTO_CONT'
-        WHEN ec.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND {if (allo_single_day) 1L else 0L} = 1
+        WHEN ec.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND {if (allo_single_day) 1L else 0L} = 1{melp_line_type_guard(cfg, lot_num)}
           THEN 'SCT_ALLO'
-        WHEN ec.LOT{lot_num}_START_TYPE = 'CART' AND ec.LOT{lot_num}_MED_CNT = 0
+        WHEN ec.LOT{lot_num}_START_TYPE = 'CART' AND ec.LOT{lot_num}_MED_CNT = 0{melp_line_type_guard(cfg, lot_num)}
           THEN 'SCT_CART'
         WHEN ec.LOT_TX_ENDDATE IS NOT NULL
          AND NOT (ec.CART_INIT_FLG = 1 AND ec.LOT_TX_ENDDATE_REASON = 3)

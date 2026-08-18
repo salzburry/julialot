@@ -509,6 +509,28 @@ melp_runout_case <- function(cfg, col, alias = "mh") {
             THEN {alias}.MELP_HOLD_DT
             ELSE {col} END")
 }
+# A line whose type ends it on its own start date - a single-day ALLO, or a
+# CAR-T line with no consolidation drug - is short-circuited in the end cascade
+# BEFORE any run-out is consulted. Carrying the run-out therefore cannot reach
+# it, so a B.2 pair sitting after such a line had both doses outside every line
+# while the hold date existed and was never applied.
+#
+# These two fragments let the hold override that short-circuit. The line then
+# falls through to the ordinary cascade, where the carried run-out ends it on
+# the dose - and every other end still outranks that, so a death or an added
+# drug in between takes the line first.
+#
+# Both empty when the rule is off, so the contract build's cascade is untouched.
+melp_hold_col <- function(cfg, alias = "mh") {
+  if (!melp_rule_on(cfg)) return("")
+  paste0("\n", glue("        {alias}.MELP_HOLD_DT,"))
+}
+melp_line_type_guard <- function(cfg, lot_num, alias = "ec") {
+  if (!melp_rule_on(cfg)) return("")
+  paste0("\n", glue("           AND NOT ({alias}.MELP_HOLD_DT IS NOT NULL
+                    AND {alias}.MELP_HOLD_DT > {alias}.LOT{lot_num}_START_DT)"))
+}
+
 melp_hold_join <- function(cfg, on_alias, alias = "mh") {
   if (!melp_rule_on(cfg)) return("")
   paste0("\n", glue("      LEFT JOIN melp_hold {alias} ON {on_alias}.PATID = {alias}.PATID"))

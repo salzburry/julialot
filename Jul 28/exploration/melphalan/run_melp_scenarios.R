@@ -63,7 +63,11 @@ CFG <- list(apply_melp_rule    = "as_asked",
             melp_exposure_days = setting("MELP_EXPOSURE_DAYS", 30L),
             melp_restart_days  = setting("MELP_RESTART_DAYS",  60L),
             melp_advance_days  = setting("MELP_ADVANCE_DAYS", 180L),
-            melp_sct_days      = setting("MELP_SCT_DAYS",      14L))
+            melp_sct_days      = setting("MELP_SCT_DAYS",      14L),
+            # Not a melphalan setting. The model of the engine needs it: a
+            # line's own drug is released once it returns after a gap this
+            # long, and that is what several of these cases turn on.
+            map_discon_gap_days = setting("MAP_DISCON_GAP_DAYS", 90L))
 
 fmt <- function(v) if (!length(v)) "none" else paste(v, collapse = ", ")
 
@@ -74,6 +78,8 @@ cat("\n  Settings, from the engine's config.csv:\n")
 cat(sprintf("    one administration    doses < %d days apart\n", CFG$melp_exposure_days))
 cat(sprintf("    B.1 boundary          a next exposure < %d days\n", CFG$melp_restart_days))
 cat(sprintf("    advancing gap         a next exposure >= %d days\n", CFG$melp_advance_days))
+cat(sprintf("    returning drug        released again after %d days off it\n",
+            CFG$map_discon_gap_days))
 cat("\n  Day 0 is the start of the line the melphalan falls in. The branch and\n")
 cat("  the decision are lifted from the SQL the build runs, not restated.\n")
 
@@ -100,23 +106,28 @@ for (sc in ALL) {
   cat(sprintf("  exposures             %s%s\n", fmt(r$rows$EXPO_DT),
               if (length(sc$doses) != nrow(r$rows))
                 sprintf("   (%d doses merged)", length(sc$doses) - nrow(r$rows)) else ""))
-  cat("\n     exposure   next    gap   inside   branch   the rule\n")
-  cat("     ", strrep("-", 62), "\n", sep = "")
+  cat("\n     exposure   next    gap   inside   returning   branch   the rule\n")
+  cat("     ", strrep("-", 74), "\n", sep = "")
   for (i in seq_len(nrow(r$rows))) {
     row <- r$rows[i, ]
     act <- if (row$EXPO_DT %in% r$suppress && row$EXPO_DT %in% r$inject) "removed, then added"
            else if (row$EXPO_DT %in% r$suppress) "boundary removed"
            else if (row$EXPO_DT %in% r$inject)   "boundary added"
            else "left to the engine"
-    cat(sprintf("     %8s %6s %6s %8s   %-8s %s\n",
+    cat(sprintf("     %8s %6s %6s %8s %11s   %-8s %s\n",
                 row$EXPO_DT,
                 if (is.na(row$NEXT_DT)) "-" else row$NEXT_DT,
                 if (is.na(row$GAP)) "-" else row$GAP,
                 if (row$INSIDE == 1L) "yes" else "no",
+                if (row$RELEASED == 1L) "released" else "-",
                 melp_branch(row, CFG), act))
   }
   cat(sprintf("\n  melphalan in the regimen   %s\n",
-              if (r$in_regimen) "yes - a repeat extends the line" else "no"))
+              if (r$in_regimen)
+                paste0("yes - a repeat extends the line, unless it ",
+                       "returns\n                             after ",
+                       CFG$map_discon_gap_days, " days off it")
+              else "no"))
   cat(sprintf("  without the rule           %s\n", fmt(r$starts_off)))
   cat(sprintf("  new line at                %s\n", fmt(r$starts)))
   add <- setdiff(r$starts, r$starts_off)
@@ -146,10 +157,14 @@ cat("  engine, what the engine then does is modelled here from the recorded\n")
 cat("  behaviour rather than run - so an agreement says the branches line up,\n")
 cat("  not that a warehouse run reproduces the drawing.\n")
 cat("\n  Still open, and not decided by any of these: whether the rule is\n")
-cat("  melphalan alone or any conditioning agent, what happens when the\n")
-cat("  transplant procedure code is on the same event, and whether B.2 should\n")
-cat("  hold the line open to the second dose. No scenario carries a coded\n")
-cat("  transplant, and in every one the base regimen still covers.\n")
+cat("  melphalan alone or any conditioning agent, and what happens when the\n")
+cat("  transplant procedure code is on the same event. No scenario carries a\n")
+cat("  coded transplant, and in every one the base regimen still covers.\n")
+cat("\n  Not open any more: whether B.2 holds the line open to the second dose.\n")
+cat("  The request says in words that both doses stay in the current line, and\n")
+cat("  melp_hold carries the run-out to them. These scenarios cannot show it -\n")
+cat("  the regimen covers throughout every one of them, so there is nothing\n")
+cat("  for the hold to reach.\n")
 cat("\n  One more, and it is in the code rather than the scope: under the\n")
 cat("  optional yield_to_sct mode, a boundary falling on the LATER dose is\n")
 cat("  suppressed when the FIRST dose sat beside a transplant, even with no\n")

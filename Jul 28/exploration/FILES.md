@@ -53,6 +53,8 @@ refused.
 | `R/scenarios.R` | The study team's four worked patients, held as data. |
 | `run_melp_scenarios.R` | Runs those scenarios through the shipped rule — the decision lifted out of the generated SQL rather than restated — and exits non-zero if any of them moves. No connection. |
 | `read_melp_metrics.R` | Reads the comparison off cells that are already built. |
+| `read_melp_asks.R` | The study team's three questions, off built cells. Question 1 writes three files: each cell's own median, the same patient's line paired across cells, and the change in how many lines a patient ends up with. |
+| `read_melp_decisions.R` | What each decision the rule was built out of is worth, as a number per cell. Block 2 — melphalan doses in no line — is the one to read first. |
 | `tests/test_aug1_melp.R` | That off is the absence of the rule, and the branch decision checked against the proposal. |
 
 The rule itself is not in this folder — it is `lot/engine/R/melp_rule.R`,
@@ -69,16 +71,25 @@ window:
 
 | Branch | Condition | Effect | Against the shipped engine |
 |---|---|---|---|
-| A.1 | inside induction, gap < 180 | no boundary | agrees |
-| A.2 | inside induction, gap ≥ 180 | the later dose advances the line | differs — today the repeat dose extends the line's run-out instead |
-| B.1 | outside induction, gap < 60 | this dose starts a line | agrees, incidentally |
-| B.2 | outside induction, 60 ≤ gap < 180 | no boundary | differs — today the first dose advances the line |
-| B.3 | outside induction, gap ≥ 180 | the later dose advances the line | differs — today the first dose does |
+| A.1 | inside induction, gap < 180 | no boundary | agrees below a 90-day gap; differs at or above one, where the returning-drug release already advances the later dose |
+| A.2 | inside induction, gap ≥ 180 | the later dose advances the line | agrees — a 180-day gap is past the 90-day release, so the engine already advances there |
+| B.1 | outside induction, gap < 60 | this dose starts a line | agrees, unless an earlier dose put melphalan in the regimen and it came back inside 90 days — then the engine opens no boundary and the rule injects one |
+| B.2 | outside induction, 60 ≤ gap < 180 | no boundary | differs — today the first dose advances the line, and at a 90-day gap or more so does the second |
+| B.3 | outside induction, gap ≥ 180 | the later dose advances the line | differs — today both do, and the rule keeps only the later one |
+
+The right-hand column turns on the **returning-drug release**, which is why the
+gap matters twice. A drug in the line's own regimen cannot start a line while it
+is still being taken, but `map_discon_gap_days` (90) between one episode and the
+next makes the later one a restart, and `lot/engine/R/prior_regimen.R` releases a
+restart to open a line like any other drug's. So the engine is not frozen after
+the first dose, and a branch that reads as "no boundary" is only a change where
+the engine would otherwise have opened one.
 
 It moves in both directions, so the net effect on line counts is not derivable:
-A.2 makes more lines, B.2 and B.3 make fewer, and which wins depends on how many
-patients sit in each branch. `run_melphalan_rule.R` in `exploration/lot/` reports
-the branch counts off a finished run without rebuilding anything.
+A.1 and B.2 and B.3 remove boundaries the engine opens, A.2 removes none and
+B.1 adds one on a narrow population, and which wins depends on how many patients
+sit in each branch. `run_melphalan_rule.R` in `exploration/lot/` reports the
+branch counts off a finished run without rebuilding anything.
 
 **Two readings of a coded transplant**, which is why three cells are built
 rather than two. High-dose melphalan is transplant conditioning, so a melphalan
@@ -168,8 +179,8 @@ one resolves which run actually wrote the tables before measuring them.
 | `run_rechallenge_evidence.R` | Prints what would be measured; opt-in to run. |
 | `R/melphalan.R` | Measures the melphalan rule against a finished run without applying it. Writes `MELP_RULE_EXPOSURES`, `MELP_RULE_BRANCHES`, `MELP_RULE_IMPACT`. |
 | `run_melphalan_rule.R` | Prints the rule and its settings; `MELP_EXECUTE=TRUE` measures it. |
-| `run_lot_audit_counts.R` | Real-data frequencies for the LOT assignment findings. Not formal QC — investigation. Eight counts, three of them sizing the post-end regimen defect, which is now fixed: on a rebuild those three should come back empty, which is how the fix is confirmed against claims rather than against the code. |
-| `run_scenario_counts.R` | Whether the real data contains the scenarios `lot/SCENARIOS.md` is written around. Eleven counts, each naming the section it belongs to, and each splitting the matching patients by what the build actually did with them — so "there are N of these" is followed by "and here is how they came out". A rule with no patients behind it is not wrong but is not carrying weight either; a count of zero where one was expected means the scenario has been mis-read, or the shape cannot arise for a reason nobody has written down. It counts finished output and does not execute patients through the engine, so a surprising split is a reason to look at the rule, not proof that the rule fired. |
+| `run_lot_audit_counts.R` | Real-data frequencies for the LOT assignment findings. Not formal QC — investigation. Twelve counts. Three size the post-end regimen defect, which is now fixed: on a rebuild those three should come back empty, which is how the fix is confirmed against claims rather than against the code. Four more size the tandem AUTO ownership fix and the guard that mirrors it, and one bands how close returning drugs sit to the 90-day release — a threshold nothing else has measured. |
+| `run_scenario_counts.R` | Whether the real data contains the shapes `lot/LOT_RULES.md` is written around. Eleven counts, each naming the section it belongs to, and each splitting the matching patients by what the build actually did with them — so "there are N of these" is followed by "and here is how they came out". A rule with no patients behind it is not wrong but is not carrying weight either; a count of zero where one was expected means the scenario has been mis-read, or the shape cannot arise for a reason nobody has written down. It counts finished output and does not execute patients through the engine, so a surprising split is a reason to look at the rule, not proof that the rule fired. |
 | `tests/` | One suite per measurement, each reading its SQL as a string. |
 | `out/` | Generated. Nothing reads it back. |
 
