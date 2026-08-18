@@ -27,7 +27,7 @@ scenarios in `lot/LOT_RULES.md`, so they stay with the rules, in
 ## `exploration/melphalan/` — an exploration, not a rule
 
 **Nothing here is in the study's numbers.** `apply_melp_rule` is pinned blank in
-`CONTRACT`, blank generates the SQL the engine generated before this existed,
+`CONTRACT`. Blank emits no melphalan SQL at all,
 and every cell that names a mode records a contract deviation that the
 questions, the dashboard and the benchmark harness all refuse. This is why the
 proposal is described here, in the folder inventory, and not in `LOT_RULES.md`:
@@ -51,7 +51,7 @@ refused.
 | `run_aug1_melp.R` | Builds the comparison as three complete runs rather than estimating it. Prints the plan by default; `AUG1_EXECUTE=TRUE` builds. |
 | `R/cells.R` | Which three builds, what is read off them, and the checks that they saw the same cohort, the same code lists, the same code and the same window. |
 | `R/scenarios.R` | The study team's four worked patients, held as data. |
-| `run_melp_scenarios.R` | Runs those scenarios through the shipped rule — the decision lifted out of the generated SQL rather than restated — and exits non-zero if any of them moves. No connection. |
+| `run_melp_scenarios.R` | Runs those scenarios through the rule the engine ships — the decision is lifted out of the generated SQL rather than restated — and exits non-zero if any of them moves. No connection. |
 | `read_melp_metrics.R` | Reads the comparison off cells that are already built. |
 | `read_melp_asks.R` | The study team's three questions, off built cells. Question 1 writes three files: each cell's own median, the same patient's line paired across cells, and the change in how many lines a patient ends up with. |
 | `read_melp_decisions.R` | What each decision the rule was built out of is worth, as a number per cell. Block 2 — melphalan doses in no line — is the one to read first. |
@@ -69,7 +69,7 @@ apart are the same exposure. Consecutive exposures are judged as a pair, on the
 gap between them and on whether the first sits inside the line's induction
 window:
 
-| Branch | Condition | Effect | Against the shipped engine |
+| Branch | Condition | Effect | Against the engine with the rule off |
 |---|---|---|---|
 | A.1 | inside induction, gap < 180 | no boundary | agrees below a 90-day gap; differs at or above one, where the returning-drug release already advances the later dose |
 | A.2 | inside induction, gap ≥ 180 | the later dose advances the line | agrees — a 180-day gap is past the 90-day release, so the engine already advances there |
@@ -99,25 +99,26 @@ leaves an exposure with an AUTO within `melp_sct_days` (14) to the transplant
 rule, so the melphalan rule fills only the gap where a transplant left no
 procedure code. Every output row records which mode produced it.
 
-**What B.2 does.** Two things, because the request asks for two. Suppressing
-B.2's boundaries stops melphalan ending the line at either dose. That alone
-does not keep the second dose *inside* the line: a line's discontinuation date
-is its base agents' last cover, and a melphalan first seen outside the induction
-window is not a base agent, so a line whose regimen ran out between the two
-doses used to end there and leave the second dose in whatever followed — and
-with the same rule refusing that dose as a line start, in nothing at all. The
-request says both doses stay in the current line, so the line is carried to the
-second dose. It rides on the run-out (`melp_hold` in `lot/engine/R/melp_rule.R`)
-rather than on an end reason of its own, which keeps the 90-day confirmation
-measured from the dose and leaves every other end still outranking it.
+**What B.2 does.** Two things, because the request asks for two.
 
-This used to be listed below as an open question. It is not one: the request
-settles it in words.
+Suppressing B.2's boundaries stops melphalan ending the line at either dose.
+That alone does not keep the second dose *inside* the line. A line's
+discontinuation date is its base agents' last cover, and a melphalan first seen
+outside the induction window is not a base agent. So where the regimen runs out
+between the two doses, the line ends there and the second dose falls outside it
+— and the same rule refuses that dose as a line start, so it lands in no line at
+all.
+
+The request says both doses stay in the current line, so the line is carried to
+the second dose. The carry rides on the run-out (`melp_hold` in
+`lot/engine/R/melp_rule.R`) rather than on an end reason of its own. That keeps
+the 90-day confirmation measured from the dose, and leaves every other end still
+outranking it.
 
 ### What has to be settled before it could be built for real
 
-The measurement program had to pick an answer to some of these to run at all.
-Where it did, the assumption is named. An assumption is not a decision.
+The measurement program picks an answer to each of these so it can run. The
+answer it picks is named. An assumption is not a decision.
 
 1. Does the rule apply to melphalan alone, or to any agent used as transplant
    conditioning? As written it is drug-specific, which is a first for this
@@ -141,14 +142,15 @@ Where it did, the assumption is named. An assumption is not a decision.
    at every line, against that line's own window.* **Confirmed by examples 3 and
    4.**
 
-6. ~~In B.2, does "both doses stay in the current line" mean the line has to be
-   held open to the second dose?~~ **Settled by the request**, which says in
-   words that both doses stay in the current line. The line is carried to the
-   second dose — see *What B.2 does* above. `n_b2_line_starts` remains as the
-   number that sizes it: MED-started lines whose start is a B.2 second dose,
-   with `n_b2_melp_only` the subset no other agent could have started. Under
-   the rule those lines should no longer exist, so it is now a check rather
-   than a question.
+6. In B.2, does "both doses stay in the current line" mean the line is held
+   open to the second dose? **Settled by the request**, which says in words
+   that both doses stay in the current line. The line is carried to the second
+   dose — see *What B.2 does* above.
+
+   `n_b2_line_starts` checks it: MED-started lines whose start is a B.2 second
+   dose, with `n_b2_melp_only` the subset no other agent could have started.
+   Under the rule those lines should not exist, so a rule cell should count
+   zero.
 
 Both modes implement the branch table. What the mode names describe is the
 transplant reading — the one thing the request does not cover — and that is the
@@ -179,7 +181,9 @@ one resolves which run actually wrote the tables before measuring them.
 | `run_rechallenge_evidence.R` | Prints what would be measured; opt-in to run. |
 | `R/melphalan.R` | Measures the melphalan rule against a finished run without applying it. Writes `MELP_RULE_EXPOSURES`, `MELP_RULE_BRANCHES`, `MELP_RULE_IMPACT`. |
 | `run_melphalan_rule.R` | Prints the rule and its settings; `MELP_EXECUTE=TRUE` measures it. |
-| `run_lot_audit_counts.R` | Real-data frequencies for the LOT assignment findings. Not formal QC — investigation. Twelve counts. Three size the post-end regimen defect, which is now fixed: on a rebuild those three should come back empty, which is how the fix is confirmed against claims rather than against the code. Four more size the tandem AUTO ownership fix and the guard that mirrors it, and one bands how close returning drugs sit to the 90-day release — a threshold nothing else has measured. |
+| `run_lot_scenarios.R` | How a line of therapy is created, scenario by scenario, and how many patients each rule decides. Seventeen worked treatment histories with the lines the engine builds from them — each one produced by running the engine's own SQL over that patient, not predicted — plus a count per scenario. Writes `out/lot_scenarios.xlsx`: how a line is built, the scenarios, and the patient counts by line number. Prints the scenarios with no connection; `SCENARIO_EXECUTE=TRUE` adds the counts. |
+| `R/lot_scenarios.R` | The catalogue: per scenario, the timeline, the lines the engine builds, the rule that decides it, and the counting SQL. The synthetic harness re-runs every timeline and fails if a line moves. |
+| `run_lot_audit_counts.R` | Real-data frequencies for the shapes the LOT rules turn on. Not formal QC — investigation. Twelve counts. Three ask whether a regimen agent has any cover inside its line. Four size the transplant-ownership shapes: transplants in no line, tandem pairs whose first transplant is outside its line's window, and post-run-out transplants. One bands how close returning drugs sit to the 90-day release. The rest are durations and treatment outside every line. |
 | `run_scenario_counts.R` | Whether the real data contains the shapes `lot/LOT_RULES.md` is written around. Eleven counts, each naming the section it belongs to, and each splitting the matching patients by what the build actually did with them — so "there are N of these" is followed by "and here is how they came out". A rule with no patients behind it is not wrong but is not carrying weight either; a count of zero where one was expected means the scenario has been mis-read, or the shape cannot arise for a reason nobody has written down. It counts finished output and does not execute patients through the engine, so a surprising split is a reason to look at the rule, not proof that the rule fired. |
 | `tests/` | One suite per measurement, each reading its SQL as a string. |
 | `out/` | Generated. Nothing reads it back. |

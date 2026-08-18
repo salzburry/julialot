@@ -35,7 +35,7 @@ stops <- function(expr, what) ok(!is.null(tryCatch({ expr; NULL },
 
 source(file.path(ROOT, "R", "vignettes.R"))
 
-# The shipped settings, read the way the build reads them.
+# The settings the engine carries, read the way the build reads them.
 P <- local({
   lot_root <- file.path(PARENT, "engine")
   e <- new.env(parent = globalenv())
@@ -133,11 +133,8 @@ ok(sum(df$confidence == "to_confirm") > 0,
    "...and the ones that need a real run are marked rather than asserted")
 
 cat("\n-- and the rules document cites this catalogue, not a copy of it --\n")
-# LOT_RULES.md names the vignette that tests each rule. It used to be
-# SCENARIOS.md that did, working every rule through a patient in prose beside
-# the rules themselves; that document is gone and its citations moved here, so
-# the rules and the machine-checked cases are one file rather than two that can
-# drift apart.
+# LOT_RULES.md names the vignette that tests each rule, so the rules and the
+# machine-checked cases live in one file rather than two that can drift apart.
 #
 # Checked in both directions. A renamed or deleted vignette leaves the document
 # pointing at a case that does not exist, and a vignette no rule cites is a case

@@ -30,7 +30,7 @@ SENS_AXES <- list(
        expect = list(n_lines = "down", pct_reaching_lot2 = "down",
                      median_lot1_length = "up", n_patients = "none"),
        confidence = "derived",
-       why = paste0("MAP_DISCON_FLG is not descriptive any more and this axis ",
+       why = paste0("MAP_DISCON_FLG is not descriptive and this axis ",
                     "is no longer a negative control. A drug's cover in a line ",
                     "ends at its FIRST episode flagged discontinued, falling ",
                     "back to its last episode's end when none is flagged - see ",

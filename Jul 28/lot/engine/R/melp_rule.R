@@ -330,24 +330,24 @@ melp_prev_line_ctes <- function(cfg, prev_med_window, cart_consolidation_days) {
             END"))
 }
 
-# While the rule is on, melphalan's line-advancing decisions belong to it. So
+# While the rule is on, melphalan's line-advancing decisions belong to it, so
 # the prior-regimen exclusion must not veto them. Melphalan already in the
-# previous line's regimen was barred from med_cand, and an injected boundary
-# then ended a line without opening the next one, leaving the exposure with no
+# previous line's regimen is barred from med_cand, and an injected boundary
+# would then end a line without opening the next one, leaving the exposure in no
 # line. Empty when the rule is off, so the contract build's candidates do not
 # change.
 #
-# The exemption names the DATES the rule says advance, not the drug. It used to
-# release every melphalan row unconditionally, which is wider than any branch:
+# The exemption names the DATES the rule says advance, not the drug. Releasing
+# every melphalan row would be wider than any branch allows:
 #
 #   the first exposure of a B.2 pair          - both doses stay in the line
 #   the later exposure of a B.2 pair          - the same
 #   the first exposure of a B.3 pair          - only the later one advances
 #   the later exposure of an A.1 pair         - the pair does not advance
 #
-# all four could open a line, and the branch table says none of them may. The
-# dates that MAY are exactly melp_inject: B.1's first exposure, and the later
-# exposure of an A.2 or B.3 pair. So the exemption reads that list.
+# All four could then open a line, and the branch table says none of them may.
+# The dates that MAY are exactly melp_inject: B.1's first exposure, and the
+# later exposure of an A.2 or B.3 pair. So the exemption reads that list.
 melp_prior_regimen_exempt <- function(cfg, alias = "ms") {
   if (!melp_rule_on(cfg)) return("")
   glue(" OR (upper(trim({alias}.MAP_MED_TYPE)) = '{melp_abbr(cfg)}'
@@ -402,15 +402,16 @@ melp_lot1_ctes <- function(cfg) {
     -- lot1_base with the held run-out substituted, built ONCE and read by
     -- every CTE in 06 that asks when this line ran out.
     --
-    -- It used to be substituted only at end_candidates, which left LOT1
-    -- reading two different run-out dates in one statement: the post-run-out
-    -- trigger CTEs saw the original, the final calculation saw the held one.
-    -- A melphalan dose after the original run-out then registered as a trigger
-    -- - evidence the patient restarted - and that trigger was applied to the
-    -- HELD run-out, confirming a discontinuation on a date with none of the
-    -- observation behind it the confirmation rule requires. The candidate list
-    -- was bounded at the original date too, so a drug added between the two
-    -- could be missed as an addition while the line ran on past it.
+    -- One table, so every reader in 06 sees the same date. Substituting only at
+    -- end_candidates would leave LOT1 reading two run-out dates in one
+    -- statement: the post-run-out trigger CTEs would see the original and the
+    -- final calculation the held one. A melphalan dose after the original
+    -- run-out would then register as a trigger - evidence the patient restarted
+    -- - and that trigger would be applied to the HELD run-out, confirming a
+    -- discontinuation on a date without the observation the confirmation rule
+    -- requires. The candidate list would be bounded at the original date too,
+    -- so a drug added between the two could be missed as an addition while the
+    -- line ran on past it.
     melp_lot1_base AS (
       SELECT lb0.* EXCEPT (LOT1_BASE_RUNOUT_DT),
              CASE WHEN mh.MELP_HOLD_DT IS NOT NULL
@@ -437,15 +438,13 @@ melp_lot1_ctes <- function(cfg) {
     -- the pick that step already made.
     --
     -- The release is why this is not simply every base drug being excluded.
-    -- That gate was this file's until now, and it was 04_lot1_base.R's before
-    -- the returning-drug rule shipped - so turning the melphalan rule on
-    -- quietly reverted LOT1 to the older rule FOR EVERY PATIENT. On the
-    -- synthetic population, turning the rule on moved 16 patients and 12 of
-    -- them had no melphalan at all - among them the planted control, whose
-    -- LEN restarted after a confirmed gap and which lost that boundary and its
-    -- entire second line. With the release restored, 2 patients move and both
-    -- take melphalan. A cell that moves patients the rule cannot touch is not
-    -- measuring the rule.
+    -- Without it, turning the melphalan rule on would give LOT1 a different
+    -- returning-drug rule FOR EVERY PATIENT, melphalan or not: on the synthetic
+    -- population that moves 16 patients, 12 of them with no melphalan at all -
+    -- including a control whose LEN restarts after a confirmed gap and which
+    -- would lose that boundary and its whole second line. With the release, 2
+    -- patients move and both take melphalan. A cell that moves patients the
+    -- rule cannot touch is not measuring the rule.
     melp_add_candidates AS (
       SELECT ms.PATID, ms.MAP_START_DT, ms.MAP_MED_TYPE
       FROM map_stacked ms
@@ -482,10 +481,9 @@ melp_lot1_ctes <- function(cfg) {
 # class, so the list is as long as the code list and changes with it.
 melp_lot1_base_from <- function(cfg) {
   if (!melp_rule_on(cfg)) return("lot1_base lb")
-  # The add-med columns are still swapped here, because melp_add_pick is built
-  # after melp_lot1_base and cannot be folded into it. The run-out is NOT
-  # swapped here any more - melp_lot1_base carries it, so every reader in 06
-  # gets the same date.
+  # Only the add-med columns are swapped here. melp_add_pick is built after
+  # melp_lot1_base and cannot be folded into it. The run-out is not swapped
+  # here: melp_lot1_base carries it, so every reader in 06 gets the same date.
   "(SELECT mb.* EXCEPT (LOT1_BASE_1ST_ADD_MED_DT, LOT1_BASE_1ST_ADD_MED),
            mp.LOT1_BASE_1ST_ADD_MED_DT,
            mp.LOT1_BASE_1ST_ADD_MED
@@ -511,9 +509,9 @@ melp_runout_case <- function(cfg, col, alias = "mh") {
 }
 # A line whose type ends it on its own start date - a single-day ALLO, or a
 # CAR-T line with no consolidation drug - is short-circuited in the end cascade
-# BEFORE any run-out is consulted. Carrying the run-out therefore cannot reach
-# it, so a B.2 pair sitting after such a line had both doses outside every line
-# while the hold date existed and was never applied.
+# BEFORE any run-out is consulted. Carrying the run-out cannot reach such a
+# line, so a B.2 pair after one would have both doses outside every line even
+# though the hold date exists.
 #
 # These two fragments let the hold override that short-circuit. The line then
 # falls through to the ordinary cascade, where the carried run-out ends it on

@@ -24,8 +24,8 @@ A cohort is what LOT is pointed at. It is not part of LOT and does not read it.
 lines, the checks that sign a run off, and the scenarios that say what the rules
 are. Everything derived from a finished run is in `reporting/` and `analysis/`;
 everything asked *about* the rules rather than applied by them is in
-`exploration/`. The boundary is deliberate — what the study ships as the
-algorithm is one directory with three packages in it.
+`exploration/`. So what the study ships as the algorithm is one directory with
+three packages in it.
 
 Each area carries a `FILES.md` saying what is in it and what each file does, and
 each cohort build a `RULES.md` giving the rules it applies, with

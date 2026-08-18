@@ -1,29 +1,27 @@
 #!/usr/bin/env Rscript
-# What each melphalan decision is worth, as a number per cell.
+# What each part of the melphalan rule is worth, as a number per cell.
 #
 #   DATABRICKS_PWD=... DOMINO_USER_NAME=usr00000 \
 #     Rscript exploration/melphalan/read_melp_decisions.R
 #
-# read_melp_asks.R answers the three questions. This answers a different one:
-# the rule was built out of several decisions, some of them settled by the
-# request and some assumed, and each one moved patients. A single before-and-
-# after on line counts cannot say which decision did what, so a reviewer cannot
-# tell a well-founded change from a guess that happened to be quiet.
+# read_melp_asks.R answers the three questions. This answers a different one.
+# The rule is several parts - the branch table, the suppression, the ownership
+# carry - and each part moves a different population. A single before-and-after
+# on line counts cannot say which part did what.
 #
-# One block per decision, counting the population that decision touches. Read
-# against the reference cell each is the group at risk; against a rule cell it
-# is what the decision did to them.
+# One block per part, counting the population it touches. Against the reference
+# cell each block is the group at risk; against a rule cell it is what the part
+# did to them.
 #
 # Every statement is a SELECT. It builds nothing and changes no rule.
 #
-# Block 2 is the one to read first. It counts melphalan doses that ended up in
-# no line at all, which is the failure mode every ownership decision here exists
-# to prevent - and the one place a remaining gap shows up as a number rather
-# than as a paragraph.
+# Block 2 is the one to read first. It counts melphalan doses in no line at
+# all, which is the failure the ownership carry exists to prevent, and the one
+# place a gap shows up as a number rather than as a paragraph.
 #
-# None of these blocks is a counterfactual by itself. Each is a number for one
-# cell; the effect of a decision is the difference between the cells, which is
-# what make_audit_workbook.R puts side by side. Where a block's own number is a
+# No block here is a counterfactual by itself. Each is a number for one cell.
+# The effect of a rule part is the difference between the cells, which
+# make_audit_workbook.R puts side by side. Where a block's own number is a
 # population rather than an effect, the block says so.
 
 .script_dir <- local({
@@ -122,11 +120,10 @@ per_cell <- function(body) do.call(rbind, lapply(cells, function(c_i) {
 # INSIDE is judged against the line the exposure falls in, the way the engine
 # judges it, rather than against LOT1 for everyone.
 #
-# LEFT JOIN to the lines, not INNER. An inner join counted only the exposures
-# that ended up inside a finished line, so the branch table added up to less
-# than the exposures there are and the missing ones were invisible - which is
-# the wrong way round, because an exposure in no line is the failure block 2
-# exists to count. They get their own row here rather than being dropped.
+# LEFT JOIN to the lines, not INNER. An inner join keeps only the exposures
+# inside a finished line, so the branch table adds up to less than the exposures
+# there are and the missing ones are invisible - and an exposure in no line is
+# the failure block 2 exists to count. They get a row of their own here.
 #
 # The engine judges an exposure against the line's OBSERVATION span, so it can
 # decide one that the finished line does not end up containing. This is a read
@@ -169,33 +166,31 @@ branch <- per_cell(function(c_i) paste0(expo_sql(c_i), ",
          count(DISTINCT PATID)   AS N_PATIENTS
   FROM judged GROUP BY 1 ORDER BY 1"))
 
-# --- 2. the ownership decision, as the number it exists to keep at zero -------
-# Every non-advancing exposure is supposed to sit inside the line it belongs
-# to. A dose in no line is that decision failing, and it is the one number that
-# does not need interpreting: it should be zero, and where it is not, the LOT
-# start type of the line the dose sits after says which gap produced it.
+# --- 2. ownership: the number that should be zero ----------------------------
+# Every non-advancing exposure has to sit inside the line it belongs to. A dose
+# in no line is that rule failing, and it is the one number here that needs no
+# interpreting. Where it is not zero, the LOT start type of the line before the
+# dose says which gap produced it.
 #
-# Two things are NOT that failure and are split out rather than counted in.
+# One thing is NOT that failure, and is split out rather than counted in.
 #
 # AFTER_THE_CAP: the build stops at max_lot lines. A patient who reached the cap
 # goes on being treated after the last line ends, and every one of those doses
 # is outside every line by construction. Counting them as unowned would put a
-# number in this block that no ownership decision can ever move - and it is the
-# same carve-out the synthetic harness makes on the same invariant.
+# number in this block that no ownership rule can move. The synthetic harness
+# carves the same doses out of the same invariant.
 #
-# PRIOR_LINE_TYPE is kept as an attribution, not as an excuse. It used to name
-# CART and SCT_ALLO as a known open case: a single-day ALLO line, and a CAR-T
-# line with no consolidation drug, end on their own start date before any
-# run-out is consulted, so carrying the run-out could not reach a dose after
-# them. melp_line_type_guard() closed that - the hold now overrides both
-# short-circuits, the line falls through to the ordinary cascade, and every
-# other end still outranks the carried run-out.
+# PRIOR_LINE_TYPE is an attribution, not an excuse. A single-day ALLO line, and
+# a CAR-T line with no consolidation drug, end on their own start date before
+# any run-out is consulted. melp_line_type_guard() lets the hold override both
+# short-circuits, so the line falls through to the ordinary cascade and reaches
+# the dose - and every other end still outranks the carried run-out.
 #
-# So there is no expected nonzero row here any more. With AFTER_THE_CAP = 'no',
-# every row is a gap nobody has named, CART and SCT_ALLO included. The synthetic
-# harness holds the same invariant, and its planted CAR-T-only B.2 patient is
-# the case that proves the guard fires: that patient's LOT2 is a CAR-T line with
-# no regimen, and it still owns both melphalan doses.
+# So no row here is expected. With AFTER_THE_CAP = 'no', every row is a gap
+# nobody has named, CART and SCT_ALLO included. The synthetic harness holds the
+# same invariant, and its planted CAR-T-only B.2 patient exercises the guard:
+# that patient's LOT2 is a CAR-T line with no regimen, and it owns both
+# melphalan doses.
 #
 # max_by rather than a correlated subquery with LIMIT 1. Spark rejects a
 # correlated scalar subquery that is not an aggregate, so the LIMIT form would
@@ -236,10 +231,9 @@ unowned <- per_cell(function(c_i) paste0("
          count(DISTINCT PATID) AS N_PATIENTS
   FROM with_prior GROUP BY 1, 2 ORDER BY 1, 2"))
 
-# --- 3. the hold, as the population it can touch and the mark it leaves -------
-# The line-ownership decisions are all implemented by carrying a line's run-out
-# to a non-advancing exposure. Two numbers, because they say different things
-# and only one of them is the rule's own.
+# --- 3. the hold: the population it can touch and the mark it leaves ---------
+# The ownership carry moves a line's run-out to a non-advancing exposure. Two
+# numbers, because they say different things and only one is the rule's own.
 #
 #   N_PAST_THE_REGIMEN     lines whose last melphalan dose sits after the last
 #                          cover of the line's OWN regimen agents. This is the
@@ -324,9 +318,9 @@ melp_status_unchanged(con, cells, status)
 show(branch,  "1. How many exposures each branch of the request decides")
 show(unowned, "2. Melphalan doses inside NO line",
      paste0("AFTER_THE_CAP='no' should be EMPTY - CART and SCT_ALLO rows ",
-            "included, since melp_line_type_guard closed that case.\n   ",
+            "included, since melp_line_type_guard reaches those lines.\n   ",
             "AFTER_THE_CAP='yes' is treatment past the ", cfg$max_lot,
-            "-line cap and no ownership decision can move it"))
+            "-line cap and no ownership rule can move it"))
 show(hold,    "3. Lines whose last melphalan dose sits past their own regimen's cover",
      paste0("N_PAST_THE_REGIMEN is the group at risk, not the effect. ",
             "N_ENDING_ON_A_MELP_DOSE is the hold's signature -\n   ",

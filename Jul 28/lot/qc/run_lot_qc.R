@@ -181,8 +181,8 @@ main <- function() {
   #
   # The line numbers come from the run's own published table, because max_lot is
   # a CONTRACT SETTING and not a property of the run. Looping seq(2, max_lot)
-  # and taking any readable table meant retained tables counted: per-line stage
-  # tables are deliberately kept, and a run only replaces the lines it builds.
+  # and taking any readable table counts retained ones: per-line stage tables
+  # are kept on purpose, and a run only replaces the lines it builds.
   #
   #   prior run reached LOT5  -> LOT4_SCT and LOT5_SCT remain
   #   this run reached LOT3   -> it rewrites neither
@@ -192,9 +192,9 @@ main <- function() {
   # not the accident of whether the table happened to read.
   #
   # AND AN EXPECTED TABLE THAT WILL NOT READ IS AN ERROR. `tryCatch(FALSE)`
-  # made "the table is not there" and "the table is there and broken"
-  # indistinguishable, and both shortened the union silently - so the check
-  # reported a clean result over the lines it managed to read. A line this run
+  # makes "the table is not there" and "the table is there and broken"
+  # indistinguishable, and both shorten the union silently - so the check
+  # reports a clean result over the lines it managed to read. A line this run
   # BUILT must have its raw SCT table readable, or QC stops and says which.
   p$sct_extra <- local({
     lots <- tryCatch(
@@ -213,7 +213,7 @@ main <- function() {
     if (length(missing))
       stop("QC cannot validate transplants for lines this run built: ",
            paste(missing, collapse = ", "), " unreadable. A missing raw SCT ",
-           "table used to shorten E1's union silently, so the check passed ",
+           "table would shorten E1's union silently, so the check would pass ",
            "over the lines it could read. Fix the table or the prefix; do not ",
            "run QC without it.", call. = FALSE)
     got

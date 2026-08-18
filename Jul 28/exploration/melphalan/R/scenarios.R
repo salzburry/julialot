@@ -1,10 +1,10 @@
 # The study team's worked scenarios, the induction-window variants they do not
 # cover, and the rule run over both.
 #
-# Four patients came with the restated ask, each drawn twice - as the build
-# classifies them today, and as the study team says the rule should. They are
-# the only statement of the rule that names dates rather than branches, so they
-# are held here as data and re-run rather than checked once by eye.
+# Four patients come with the ask, each drawn twice - as the build classifies
+# them, and as the study team says the rule should. They are the only statement
+# of the rule that names dates rather than branches, so they are held here as
+# data and re-run rather than checked once by eye.
 #
 # Nothing here restates the rule. The branch decision is lifted out of the SQL
 # `melp_decision_ctes()` generates - the same text the build runs - by cutting
@@ -33,13 +33,12 @@
 #                          and prior_regimen.R releases a restart to open a line
 #                          like any other drug's.
 #
-#                        That third part shipped with the returning-drug rule and
-#                        was missing here. Without it every later exposure of a
-#                        line's own melphalan looked frozen, so A.2 read as a
-#                        boundary the rule ADDS when the engine already opens it,
-#                        and example 1 read as one boundary removed when the rule
-#                        removes two. It is a model of the engine either way, not
-#                        the engine.
+#                        All three parts matter. Without the third, every later
+#                        exposure of a line's own melphalan looks frozen: A.2
+#                        reads as a boundary the rule ADDS when the engine opens
+#                        it anyway, and example 1 reads as one boundary removed
+#                        when the rule removes two. This is a model of the
+#                        engine, not the engine.
 #
 # The release is modelled off DOSE dates, and the build measures it off MAP
 # episodes: the flag needs map_discon_gap_days between one episode's END and the

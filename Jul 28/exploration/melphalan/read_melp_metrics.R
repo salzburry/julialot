@@ -38,9 +38,9 @@ if (!nzchar(schema))
 cfg$work_schema <- schema
 set_lot_config(cfg)
 
-# run_aug1_melp.R's resolver, not a second default. The two disagreed, so a
-# recovery wrote a fresh set to the artifacts directory while the build's own
-# stale CSVs stayed beside its logs, still looking current.
+# run_aug1_melp.R's resolver, not a second default. With two, a recovery writes
+# a fresh set to the artifacts directory while the build's own older CSVs stay
+# beside its logs, still looking current.
 out_dir <- melp_out_dir(.script_dir)
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 

@@ -18,8 +18,8 @@ ROOT <- local({
 # The LOT group this package sits in, resolved from this file rather than named:
 # it stays right whatever that folder is called.
 PARENT <- dirname(ROOT)
-# The engine is not a sibling any more - this package sits in its own area
-# beside lot/, so reads of the engine go through the study folder.
+# This package sits in its own area beside lot/, so reads of the engine go
+# through the study folder.
 LOT    <- file.path(dirname(PARENT), "lot", "engine")
 
 pass <- 0L; fail <- 0L
@@ -134,7 +134,7 @@ ok(identical(c3$verdict[c3$metric == "n_patients"], "AGAINST EXPECTATION"),
 c4 <- sens_compare(mk(row("sct_tandem_days_365", "SCT_TANDEM_DAYS", 365, 180)))
 ok(all(c4$verdict[c4$metric == "n_patients"] == "as expected"),
    "...and passes when it does not")
-# "unclear" was recorded so the run could settle it. Scoring it as a hit or a
+# "unclear" is recorded so the run can settle it. Scoring it as a hit or a
 # miss would reward whichever guess had been written down.
 c5 <- sens_compare(mk(row("induction_window_days_90", "INDUCTION_WINDOW_DAYS", 90, 60,
                           n_lines = 900)))

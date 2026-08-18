@@ -131,7 +131,7 @@ qs_population <- function() {
   old <- Sys.getenv("LOT_COHORT", unset = "")
   if (nzchar(old))
     stop("LOT_COHORT is no longer read. It chose between the full LOT run and a ",
-         "separate NDMM-filtered table, and that table is not produced any more - ",
+         "separate NDMM-filtered table, which this build does not produce - ",
          "the LOT run is over the cohort, so its output is the study population. ",
          "Use LOT_POPULATION=FINAL (the study population, the default) or ",
          "LOT_POPULATION=PRECRITERIA (the same run before the line criteria).",

@@ -143,9 +143,9 @@ resolve_owner_run <- function(con, inputs, have, cfg) {
 
   # Was this run built as the contract algorithm at all?
   #
-  # Its own query rather than a column in the SELECT below: CONTRACT_DEVIATIONS
-  # was added later, and naming it there would make an older run's status table
-  # unreadable - which reads as no status table, and falls back to the weaker
+  # Its own query rather than a column in the SELECT below: naming
+  # CONTRACT_DEVIATIONS there makes a status table without that column
+  # unreadable, which reads as no status table and falls back to the weaker
   # metadata answer. Empty on every contract build.
   #
   # No override on this one. It is not an inference from timestamps that could
@@ -164,11 +164,11 @@ resolve_owner_run <- function(con, inputs, have, cfg) {
   # back depends on how the ODBC layer surfaces it.
   #
   # Two predicates, because the two reads below ask different questions. A
-  # column error is legacy for CONTRACT_DEVIATIONS, which was added later - but
-  # not for the ownership read, whose RUN_ID, STATE and UPDATED_AT have been
-  # there from the start. A status table missing one of those is malformed, and
-  # falling back to the newest completed metadata row would put run A's
-  # provenance over run B's tables. Only an absent table is legacy there.
+  # column error is a legacy table for CONTRACT_DEVIATIONS, but not for the
+  # ownership read: RUN_ID, STATE and UPDATED_AT are required columns, and a
+  # status table missing one is malformed. Falling back to the newest completed
+  # metadata row there would put run A's provenance over run B's tables. Only
+  # an absent table is legacy on that read.
   missing_table <- function(msg)
     grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found|does not exist",
           msg, ignore.case = TRUE)

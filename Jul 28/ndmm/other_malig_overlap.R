@@ -26,8 +26,8 @@
                                             fixed = TRUE))) else getwd()
 })
 # The build's own constants, not a copy of them - a list written out again here
-# would keep answering for a setting the build no longer uses. Neither file
-# opens a connection.
+# would answer for a setting the build does not use. Neither file opens a
+# connection.
 for (f in c("ndmm_constants.R", "standalone_constants.R"))
   source(file.path(.script_dir, "R", f))
 

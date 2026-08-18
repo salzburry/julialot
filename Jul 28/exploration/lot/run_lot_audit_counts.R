@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# Real-data frequencies for the LOT assignment findings.
+# Real-data frequencies for the shapes the LOT rules turn on.
 #
 #   # list the counts this will run; no connection, touches nothing
 #   Rscript run_lot_audit_counts.R
@@ -12,14 +12,13 @@
 # Read-only. Every statement is a SELECT; nothing is written to the warehouse.
 # Results print as a table and land in out/lot_audit_counts.csv.
 #
-# The audit that produced these questions ran against synthetic patients, so its
-# frequencies are shape and not prevalence. This is the same set of questions put
-# to the finished build, and its answers are the ones that can be quoted.
+# Any synthetic figure quoted under `expect` is a shape, not a prevalence. The
+# numbers this script produces against a finished build are the quotable ones.
 #
 # AUDIT_TABLE picks which line table to count. It defaults to LOT_LONG, which is
 # line assignment on its own; LOT_LONG_FINAL additionally applies the line
 # criteria, so counting it mixes assignment behaviour with cohort exclusions.
-# Run both only if you want that comparison deliberately.
+# Run both only if that comparison is what you want.
 
 .script_dir <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -32,32 +31,28 @@ LOT_ROOT <- normalizePath(file.path(.script_dir, "..", "..", "lot", "engine"), m
 out_dir  <- file.path(.script_dir, "out")
 env_flag <- function(nm) identical(toupper(trimws(Sys.getenv(nm, unset = ""))), "TRUE")
 
-# One entry per finding. `sql` is a glue template over the table names below.
-# `expect` records what the synthetic cohort gave, purely so a wildly different
-# real number is noticeable rather than silently accepted.
+# One entry per count. `sql` is a glue template over the table names below.
+# `expect` says what the number should look like, so a wildly different one is
+# noticeable rather than silently accepted.
 AUDIT_COUNTS <- list(
-  # 1. The regimen-window defect, as it stands after the REGIMEN_CUTOFF_DT fix.
-  #    Induction medications used to be gathered across the whole window while
-  #    the line's end was fixed later in the cascade, so a transplant that closed
-  #    the line early left an agent in the regimen whose first supply began after
-  #    the line ended. That agent also reached the run-out and the next line's
-  #    prior-regimen exclusion. 04_lot1_base.R and 10_lot2_5_base.R now cut the
-  #    regimen window at REGIMEN_CUTOFF_DT, so this is a check that the shape is
-  #    gone rather than a measurement of a live defect - which is why the old
-  #    synthetic figure is not carried here as a target: it was counted before
-  #    the fix and a build after it should not reproduce it.
+  # 1. Regimen agents with no supply inside their own line.
   #
-  #    TWO shapes, split rather than added, because "no episode STARTS inside
-  #    the line" and "the agent is not covered inside the line at all" are
-  #    different questions and only the second is stranding. An agent whose
-  #    episode began before the line and runs into it was given during the line;
-  #    counting it as stranded reads a claim/episode boundary as a defect. The
-  #    build gathers a regimen only from episodes starting at or after the line
-  #    start, so shape b should be empty - and if it is not, that is a finding
-  #    about the criteria layer moving line ends, not about the regimen window.
+  #    04_lot1_base.R and 10_lot2_5_base.R cut the regimen window at
+  #    REGIMEN_CUTOFF_DT, so a line stops collecting drugs at the transplant
+  #    that ended it. This count checks that against claims: an agent named in
+  #    LOT_BASE_MEDS whose supply does not reach inside the line.
+  #
+  #    TWO shapes, split rather than added, because they are different
+  #    questions. "No episode STARTS inside the line" and "the agent is not
+  #    covered inside the line at all" differ, and only the second is
+  #    stranding. An agent whose episode began before the line and runs into it
+  #    was given during the line. The build gathers a regimen only from
+  #    episodes starting at or after the line start, so shape b should be
+  #    empty. A shape b row points at the criteria layer moving line ends, not
+  #    at the regimen window.
   list(id = "regimen-agent-begins-after-line-end",
        what = "Lines naming a regimen agent that has no supply episode starting inside the line, split by whether it was covered at all",
-       expect = "expected 0 after the REGIMEN_CUTOFF_DT fix; shape b should be empty at any version",
+       expect = "both shapes should be empty",
        sql = "
       WITH exploded AS (
         SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_BASE_END_DT,
@@ -89,22 +84,21 @@ AUDIT_COUNTS <- list(
              count(DISTINCT PATID)                       AS N_PATIENTS
       FROM offending GROUP BY 1 ORDER BY 1"),
 
-  # 1b. FIXED - the size of the tandem AUTO ownership fix, measured from the
-  #     transplants rather than from the lines. auto_cand refused a transplant
-  #     a line of its own whenever it landed within sct_tandem_days of the one
-  #     before it, without asking whether a line had ever HELD that pair. Where
-  #     the earlier transplant fell outside its line's window, nothing held the
-  #     line open to the later one, so it belonged to no line and was dropped
-  #     from the published row - LOT_LONG clamps the AUTO columns to the span.
+  # 1b. Processed autologous transplants that sit inside no line at all.
   #
-  #     Run this against a build from BEFORE the fix to size what it was
-  #     costing, and against one after to confirm it is zero. The excused shape
-  #     - a transplant trailing the last line once max_lot is used up - is
-  #     reported separately, since that one is a reconciliation number and not
-  #     a defect at any version.
+  #     Counted from the transplants, not from the lines. auto_cand refuses a
+  #     transplant a line of its own when it lands within sct_tandem_days of the
+  #     one before it AND the earlier transplant was inside its line's window.
+  #     Without that second condition a pair no line ever held would leave the
+  #     later transplant owned by nothing, and LOT_LONG clamps the AUTO columns
+  #     to the span, so it would not show on the published row either.
+  #
+  #     Shape b is the one to read. Shape c - a transplant trailing the last
+  #     line once max_lot is used up - is a reconciliation number, not a defect,
+  #     so it is reported separately.
   list(id = "transplant-belonging-to-no-line",
-       what = "FIXED: processed autologous transplants inside no line, split by whether a line was still available",
-       expect = "synthetic before the fix: 1 of 14 unowned at 600 patients, 12 of 26 at 2,000; after: 0",
+       what = "Processed autologous transplants inside no line, split by whether a line was still available",
+       expect = "shape b should be empty; shape c is a reconciliation number",
        sql = "
       WITH unowned AS (
         SELECT x.PATID, x.TX_DT,
@@ -119,28 +113,29 @@ AUDIT_COUNTS <- list(
                              AND x.TX_DT BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT)
       )
       SELECT CASE WHEN TX_DT <= LAST_END THEN 'a. in a gap between two lines'
-                  WHEN N_LINES < {max_lot} THEN 'b. after the last line, with lines still available - THE DEFECT'
+                  WHEN N_LINES < {max_lot} THEN 'b. after the last line, with lines still available - THE ONE TO WATCH'
                   ELSE 'c. after the last line at the cap - a reconciliation number, not a defect'
              END                     AS SHAPE,
              count(*)                AS N_TRANSPLANTS,
              count(DISTINCT PATID)   AS N_PATIENTS
       FROM unowned GROUP BY 1 ORDER BY 1"),
 
-  # 1c. FIXED - the population the same fix moves, measured from the pairs.
-  #     A tandem whose FIRST transplant sits outside its line's window is the
-  #     shape that was being treated as a planned tandem when no line had
-  #     hold of it. This is the group whose line structure the fix can change,
-  #     so it bounds the impact whichever direction the numbers move.
-  #     The gap alone does not make a pair a tandem. 05b_lot1_sct.R requires
-  #     that nothing happens strictly between the two transplants - no
-  #     non-steroid medication starting, no allogeneic transplant, no CAR-T -
-  #     and a pair with something in between was never treated as planned, so
-  #     the fix never touched it. Counting those in over-stated the population
-  #     the fix can move. The condition is the engine's own, spliced from the
-  #     same three sources tandem_interrupt_events_sql() reads.
+  # 1c. The same population, counted from the PAIRS.
+  #
+  #     A tandem whose first transplant sits outside its line's window is a pair
+  #     no line ever held. This bounds how many patients the ownership condition
+  #     in auto_cand can decide.
+  #
+  #     The gap alone does not make a pair a tandem. 05b_lot1_sct.R also
+  #     requires that nothing happens strictly between the two transplants - no
+  #     non-steroid medication starting, no allogeneic transplant, no CAR-T. A
+  #     pair with something in between is not a planned tandem, so counting it
+  #     here would over-state the population. The condition is the engine's
+  #     own, spliced from the same three sources tandem_interrupt_events_sql()
+  #     reads.
   list(id = "tandem-pair-whose-first-transplant-is-out-of-window",
-       what = "FIXED: uninterrupted AUTO pairs within sct_tandem_days whose earlier transplant fell outside its line's window",
-       expect = "bounds the patients the fix can move; the interruption condition narrows it - on 600 synthetic patients, 15 pairs at LOT1 without it and 5 with",
+       what = "Uninterrupted AUTO pairs within sct_tandem_days whose earlier transplant fell outside its line's window",
+       expect = "bounds the patients the ownership condition decides. On 600 synthetic patients: 5 pairs at LOT1, 4 of them out of window",
        sql = "
       WITH paired AS (
         SELECT PATID, TX_DT,
@@ -185,39 +180,34 @@ AUDIT_COUNTS <- list(
                   THEN 1 ELSE 0 END) AS N_FIRST_OUT_OF_WINDOW
       FROM owning GROUP BY LOT_NUM ORDER BY LOT_NUM"),
 
-  # 1d. FIXED - the guard-mirror defect, sized from the disagreement itself.
-  #     auto_cand gained the ownership condition on its tandem exemption and
-  #     the two post-run-out guards kept the older test, so for a window the
-  #     two disagreed about the same transplant: the guard declined to confirm
-  #     a run-out on account of a tandem the next-line gate had already ruled
-  #     was not one. The line then ran on and absorbed the transplant instead
-  #     of ending and letting the next line open on it.
+  # 1d. Post-run-out transplants that the guard treats as tandem partners.
   #
-  #     This counts the shape the disagreement needed: a transplant after a
-  #     line's run-out, within sct_tandem_days of the one before it, where THAT
-  #     earlier transplant fell outside the line's window. Nonzero on a build
-  #     from before the fix is the population whose line lengths and counts the
-  #     fix moves; it is the same query either side, because what it counts is
-  #     the patient shape and not the verdict.
-  #     The transplant has to fall after the line's RUN-OUT, which is the date
-  #     the guard is about. This used to compare it with LOT_BASE_END_DT, the
-  #     line's final end, which is a different date in both directions: an
-  #     add-med or a death ends a line before its regimen runs out, and an
-  #     unconfirmed run-out leaves the line censored at the end of observation
-  #     long after it. Neither is the guard's question, so the old count was a
-  #     different population rather than a wider or narrower one.
+  #     Two places read the tandem rule: auto_cand, which decides whether an
+  #     AUTO opens the next line, and the two post-run-out guards, which decide
+  #     whether a run-out counts as a confirmed discontinuation. Both carry the
+  #     ownership condition. If they disagreed, a guard would decline to confirm
+  #     a run-out on account of a tandem the next-line gate had ruled was not
+  #     one, and the line would run on and absorb the transplant instead of
+  #     ending and letting the next line open on it.
+  #
+  #     The shape counted: a transplant after a line's run-out, within
+  #     sct_tandem_days of the one before it, where THAT earlier transplant fell
+  #     outside the line's window.
+  #
+  #     RUN-OUT, not the line's final end. They are different dates in both
+  #     directions - an add-med or a death ends a line before its regimen runs
+  #     out, and an unconfirmed run-out leaves the line censored at the end of
+  #     observation long after it - and only the run-out is what the guard is
+  #     about.
   #
   #     LOT_LONG carries no run-out column, so it is rebuilt here the way
   #     discon_per_med and discon_raw build it: per regimen agent, chain the
   #     agent's episodes forward from the line start and stop at the one after
   #     a confirmed gap - MAP_DISCON_FLG sits on the episode BEFORE the gap, so
   #     the lag is what tells an episode it is a restart - then take the last
-  #     cover reached across the agents.
-  #
-  #     Dropping the discon break made this proxy far too generous: the run-out
-  #     came out at the last refill however long the patient had been off the
-  #     drug, and the count fell below what comparing with the line end gave,
-  #     which is the wrong direction for a query meant to widen it.
+  #     cover reached across the agents. Without the discon break the proxy
+  #     lands on the last refill however long the patient has been off the drug,
+  #     which is far too late.
   #
   #     Three differences from the engine's run-out remain, so this is a shape
   #     count and not a verdict: the engine's chain also breaks at a non-regimen
@@ -225,8 +215,8 @@ AUDIT_COUNTS <- list(
   #     permissible substitute's cover counts toward it and is not in
   #     LOT_BASE_MEDS.
   list(id = "runout-unconfirmed-by-a-tandem-no-line-held",
-       what = "FIXED: post-run-out AUTOs the old guard excused as tandem partners of an out-of-window transplant",
-       expect = "the population the guard-mirror fix moves; zero means the shape does not occur here",
+       what = "Post-run-out AUTOs the guard could excuse as tandem partners of an out-of-window transplant",
+       expect = "the population the guard and auto_cand have to agree about. On 600 synthetic patients: 5 at LOT1",
        sql = "
       WITH paired AS (
         SELECT PATID, TX_DT,
@@ -313,8 +303,8 @@ AUDIT_COUNTS <- list(
   #     gap decides nothing. Counting those in made the bands either side of 90
   #     look busier than the decision they describe.
   list(id = "return-gap-around-the-90-day-threshold",
-       what = "DECISION: how close returning drugs sit to the 90-day line that frees them to open a new LOT",
-       expect = "no target - nothing has measured this. Read the two bands either side of 90.",
+       what = "OPEN QUESTION: how close returning drugs sit to the 90-day line that frees them to open a new LOT",
+       expect = "no target. Read the two bands either side of 90.",
        sql = "
       WITH gaps AS (
         SELECT m.PATID, m.MAP_MED_TYPE,
@@ -358,7 +348,7 @@ AUDIT_COUNTS <- list(
   #    regimen-less transplant line should run. Reported so the decision is
   #    made against real durations rather than a synthetic guess.
   list(id = "empty-regimen-transplant-line-durations",
-       what = "DECISION, not a defect: how long transplant lines with no regimen actually run",
+       what = "OPEN QUESTION, not a defect: how long transplant lines with no regimen run",
        expect = "synthetic: 605/685 ASCT lines empty, mean 506.9d vs 110.5d with a regimen",
        sql = "
       SELECT l.LOT_START_TYPE,
@@ -377,7 +367,7 @@ AUDIT_COUNTS <- list(
   #    the residual bucket is a question.
   list(id = "outside-line-days-by-cause",
        what = "Non-steroid agent-DAYS owned by no line, partitioned by cause",
-       expect = "no synthetic target - the unpartitioned 11.1% was an invalid measure",
+       expect = "no target. Only the gap-between-LOTs bucket is a question; the rest are by design",
        sql = "
       WITH bounds AS (
         SELECT PATID, min(LOT_START_DT) AS FIRST_START,
@@ -422,7 +412,7 @@ AUDIT_COUNTS <- list(
   #    The question is only whether the final deliverable can see it.
   list(id = "in-window-cart-not-in-final-table",
        what = "Patients with a CAR-T inside LOT1's induction window, invisible in LOT_LONG",
-       expect = "output-surface gap, not a boundary error",
+       expect = "an output-surface question, not a boundary error",
        sql = "
       WITH lot1 AS (
         SELECT PATID, LOT_START_DT AS LOT1_START_DT
@@ -446,7 +436,7 @@ AUDIT_COUNTS <- list(
   # Context for the Q1 duration tab. Not a finding on its own.
   list(id = "line-length-by-start-type",
        what = "Line duration by line number and start type - context for the Q1 tab",
-       expect = "no target; this is the distribution the findings above bear on",
+       expect = "no target. This is the distribution the counts above bear on",
        sql = "
       SELECT l.LOT_NUM, l.LOT_START_TYPE,
              count(*)                                   AS N_LINES,
@@ -457,15 +447,15 @@ AUDIT_COUNTS <- list(
       GROUP BY 1, 2
       ORDER BY 1, 2"),
 
-  # 7. The post-end regimen defect, sized where the fix would have to reach.
-  #    Split by line number and by what ended the line, because the analysis
-  #    says which paths can strand: ALLO at every line, CAR-T at LOT2-5 only
-  #    (LOT1's induction exemption closes that one), and AUTO nowhere, since the
-  #    in-LOT AUTO window is the regimen window. A count landing on SCT_AUTO or
-  #    on a LOT1 SCT_CART contradicts that reading and is the finding.
+  # 7. The same stranded agents, split by line number and by what ended the
+  #    line, because only some paths can strand one: ALLO at every line, CAR-T
+  #    at LOT2-5 only (LOT1's induction exemption closes that one), and AUTO
+  #    nowhere, since the in-LOT AUTO window is the regimen window. A count
+  #    landing on SCT_AUTO, or on a LOT1 SCT_CART, contradicts that and is the
+  #    finding.
   list(id = "post-end-regimen-by-line-and-end-reason",
        what = "Lines naming a regimen agent with no supply cover inside the line at all, by LOT and end reason",
-       expect = "expected on SCT_ALLO at any line and SCT_CART at LOT2+; anything else contradicts the analysis",
+       expect = "possible on SCT_ALLO at any line and SCT_CART at LOT2+; anything else is the finding",
        sql = "
       WITH exploded AS (
         SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_BASE_END_DT,
@@ -500,7 +490,7 @@ AUDIT_COUNTS <- list(
   #    on, because it is the one that moves a line count rather than a string.
   list(id = "post-end-agent-also-starts-a-later-line",
        what = "Stranded regimen agents that also appear in a LATER line's regimen for the same patient",
-       expect = "no target; this is double attribution, and the reason the defect is not cosmetic",
+       expect = "no target. This is double attribution: one agent counted in two lines",
        sql = "
       WITH exploded AS (
         SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_BASE_END_DT,
@@ -538,20 +528,17 @@ AUDIT_COUNTS <- list(
   #    it survives the membership fix and needs its own cutoff.
   list(id = "runout-extends-past-the-transplant-end",
        what = "Lines ended by a transplant whose regimen was still covered after that end",
-       expect = "no target; these are the lines where bounding membership alone would not be enough",
-       # Off map_stacked, not off a run-out column. LOT_LONG does not carry one:
-       # LOT_BASE_RUNOUT_DT lives on the per-line *_BASE tables and stops there,
-       # and only LOT_BASE_DISCON_DT is projected. This query used to name the
-       # run-out anyway and failed on the warehouse with an unresolved column -
-       # invisibly, because the execute path could not run at all until the
-       # config ordering above was fixed.
+       expect = "no target. These are the lines where bounding regimen membership alone is not enough",
+       # Off map_stacked, not off a run-out column. LOT_LONG carries no
+       # run-out: LOT_BASE_RUNOUT_DT lives on the per-line *_BASE tables and
+       # stops there, and only LOT_BASE_DISCON_DT is projected.
        #
-       # DISCON_DT is not the substitute either. It is the CONFIRMED
+       # DISCON_DT is not a substitute for it. That is the CONFIRMED
        # discontinuation, and a line ended by a transplant usually has none, so
-       # reading it would answer zero for a reason that has nothing to do with
-       # the question. The line's own cover is what the question is about, so
-       # it is taken from the episodes: the last cover end among the agents the
-       # line names, over episodes that had started by the time it ended.
+       # reading it answers zero for a reason unrelated to the question. The
+       # question is about the line's own cover, so it comes from the episodes:
+       # the last cover end among the agents the line names, over episodes that
+       # had started by the time it ended.
        sql = "
       WITH ended_by_tx AS (
         SELECT l.PATID, l.LOT_NUM, l.LOT_BASE_END_DT, l.LOT_BASE_END_REASON,
@@ -585,7 +572,7 @@ AUDIT_COUNTS <- list(
 )
 
 report_plan <- function() {
-  cat("\nReal-data frequencies for the LOT assignment findings.\n\n")
+  cat("\nReal-data frequencies for the shapes the LOT rules turn on.\n\n")
   cat("Read-only: every statement is a SELECT. Nothing is written to the warehouse.\n\n")
   for (a in AUDIT_COUNTS) {
     cat("  ", a$id, "\n    ", a$what, "\n    ", a$expect, "\n", sep = "")

@@ -341,8 +341,8 @@ stops(check_cohort_window(fake_con, "wk.COH",
 rm("db_q", "log_msg", envir = globalenv())
 
 cat("\n-- build_lot() actually runs the phases, in order --\n")
-# Every step file passing its own test proved nothing about whether build_lot()
-# calls it. The line-criteria layer shipped complete, tested, and never invoked.
+# A step file passing its own test says nothing about whether build_lot() calls
+# it. Without this, a whole layer can be complete, tested and never invoked.
 bl <- paste(readLines(file.path(ROOT, "R", "build_lot.R"), warn = FALSE),
             collapse = "\n")
 body <- sub(".*build_lot <- function\\([^)]*\\) \\{", "", bl)
@@ -356,8 +356,8 @@ ORDER <- c("check_settings", "pin_output_schema", "pin_cohort",
            "phase_mma_map",
            # phase_sct ahead of phase_lot1_base, so a line's regimen can be
            # bounded by the transplant that ended the line. Not cosmetic: the
-           # order IS the fix, and swapping it back silently restores a regimen
-           # that collects agents after its own line is over.
+           # order is the rule, and swapping it silently gives a regimen that
+           # collects agents after its own line is over.
            "phase_sct", "phase_lot1_base", "phase_lot1_sct",
            "phase_lot1_end", "phase_qc",
            "check_lot1_invariants", "phase_persist", "materialize_sct_views",
@@ -445,9 +445,9 @@ i_ar <- which(grepl("VIEW lot_long_allflags AS SELECT * FROM wk.p_LOT_LONG_ALLFL
 ok(!is.na(i_ar) && !is.na(i_v) && i_ar < i_v,
    "and after allflags is repointed, so it reads the table, not the query")
 
-# With a criterion declared, so the chain is carrying something. Empty is the
-# shipped state and every stage is SELECT * there - a mis-wired source would
-# look identical.
+# With a criterion declared, so the chain is carrying something. The default is
+# an empty set, where every stage is SELECT * - and a mis-wired source looks
+# identical there.
 CRIT <- list(list(name = "t_crit", label = "t", lines = "*", flag = "T_FLAG",
                   sql = "LOT_START_TYPE = 'MED'", on_fail = "truncate"))
 old_env <- Sys.getenv("APPLY_T_CRIT", unset = NA)
@@ -720,8 +720,8 @@ ok(any(grepl("GROUP BY CL_CODE_TYPE", qs, fixed = TRUE) &
    "code_types still reports over the whole list - that is its job")
 
 # phase_qc reports the SCT end date past observation as INVESTIGATE inside a
-# tryCatch, so a run could finish with it. The invariant is the fail-loud copy;
-# without it the comment in 07_qc.R claiming these are re-checked was wrong.
+# tryCatch, so a run can finish with it. This invariant is the fail-loud copy,
+# and it is what makes 07_qc.R's claim that these are re-checked true.
 inv <- get("LOT1_INVARIANTS", envir = env)
 inv_sql <- paste(vapply(inv, function(i) i$sql, character(1)), collapse = " ")
 ok(any(vapply(inv, function(i) identical(i$name, "SCT end date past observation"),
@@ -776,15 +776,15 @@ s15 <- SSQL[grepl("VIEW lot1_sct", SSQL, fixed = TRUE)][1]
 # fails the arithmetic below rather than the extraction.
 b  <- regexpr("ELSE NULL\\s+END AS LOT1_TX_ENDDATE", s15)
 th <- gregexpr("IS NOT NULL\\s+THEN ", s15)[[1]]
-# The last THEN before that ELSE, not the first in the statement - earlier CASEs
-# in the same view have the same shape and one of them matched instead.
+# The last THEN before that ELSE, not the first in the statement: earlier CASEs
+# in the same view have the same shape and would match instead.
 k <- if (b > 0) rev(which(th > 0 & th < b))[1] else NA_integer_
 ok(!is.na(k), "the LOT1_TX_ENDDATE arm is where it was")
 expr_sql <- if (!is.na(k))
   substr(s15, th[k] + attr(th, "match.length")[k], b - 1L) else "NA"
 
 # Spark to R. Each name is a whole-word swap of an operator with the same
-# meaning, so what runs below is the shipped arithmetic and not a paraphrase.
+# meaning, so what runs below is the engine's own arithmetic, not a paraphrase.
 r <- expr_sql
 r <- gsub("cast('9999-12-31' as date)", "SENTINEL", r, fixed = TRUE)
 r <- gsub("date_sub(", "dsub(", r, fixed = TRUE)
@@ -818,14 +818,14 @@ ok(identical(enddate("2025-04-22", auto = "2025-06-01", cart = "2025-07-31"),
    "and the earliest of the three still wins")
 
 cat("\n-- the CAR-T induction rule --\n")
-# Two defects shipped here, and both were the same mistake: the induction test
-# was applied to min(TX_DT) instead of to the rows going into it. A patient with
-# a CAR-T on day 20 and another on day 90 had the min taken first and nulled, so
-# the day-90 infusion ended nothing and started nothing; and the day-20 one went
-# on censoring later AUTOs out of LOT1 while being declared part of it.
+# The induction test has to be applied to the rows going INTO the aggregate,
+# not to min(TX_DT). Applied to the min, a patient with a CAR-T on day 20 and
+# another on day 90 has the min taken first and nulled: the day-90 infusion ends
+# nothing and starts nothing, while the day-20 one goes on censoring later AUTOs
+# out of LOT1 while being declared part of it.
 #
-# The suite could not have caught either: the fixture above sets no
-# apply_cart_induction_rule, so every assertion ran the rule-off path.
+# The fixture above sets no apply_cart_induction_rule, so every assertion there
+# runs the rule-off path. These run the rule-on one.
 sys.source(file.path(ROOT, "R", "cart_rule.R"), envir = globalenv())
 ok(identical(cart_eligible_dt(FALSE, "X", "Y", 60), "X") &&
      identical(cart_exclude_predicate(FALSE, "X", "Y", 60, "E"), "") &&
@@ -849,11 +849,10 @@ ok(has(xcl, "BETWEEN pe.PREV_START_DT AND date_add(pe.PREV_START_DT, 59)"),
 ok(n_hits("AND NOT (", xcl) == 1L,
    "...as one negated conjunction, so failing either half leaves the CAR-T a start candidate")
 # The other side of the same rule: a CAR-T after the run-out has to be able to
-# confirm the run-out it follows. Two wrong answers were shipped here in turn -
-# ENDING_CART_DT, which the induction exemption nulls, and then FIRST_CART_DT,
-# which is min() over the line and so hides a later infusion behind an earlier
-# absorbed one. The property that rules both out is that the arm reads no
-# aggregate at all.
+# confirm the run-out it follows. Two dates cannot do it: ENDING_CART_DT, which
+# the induction exemption nulls, and FIRST_CART_DT, which is min() over the line
+# and hides a later infusion behind an earlier absorbed one. The property that
+# rules out both is that the arm reads no aggregate at all.
 e6 <- paste(readLines(file.path(ROOT, "R", "steps", "06_lot1_end.R"), warn = FALSE),
             collapse = "\n")
 prt <- substr(e6, regexpr("post_runout_trigger AS", e6),
@@ -918,9 +917,9 @@ ok(has(c15, "AS ENDING_CART_DT") && has(c15, "min(ac.TX_DT) AS CART_DT"),
    "...so both dates exist: the earliest CAR-T, and the earliest that can end a line")
 # The boundary reads the eligible one; LOT1_1ST_SCT_DT keeps the descriptive one.
 #
-# Cut on CODE, not on the comment above it. This used to open on
-# "LOT1_TX_ENDDATE: earliest", and rewording that comment made regexpr return
-# -1, so the arm came out empty and the assertion failed on prose.
+# Cut on CODE, not on the comment above it. Anchored on a comment, rewording
+# that comment makes regexpr return -1, the arm comes out empty, and the
+# assertion fails on prose.
 end_arm <- substr(c15, regexpr("THEN greatest(sd.LOT1_START_DT, date_sub(", c15,
                                fixed = TRUE),
                   regexpr("AS LOT1_TX_ENDDATE_REASON", c15))
@@ -953,7 +952,7 @@ ok(!is.na(j), "the ENDING_AUTO_DT rule is where it was")
 case_sql <- if (!is.na(j)) substr(s15, cw[j], ea + 3L) else "CASE ELSE NULL END"
 
 # CASE WHEN a THEN x WHEN b THEN y ELSE z END -> nested if/else, so what runs
-# is the shipped rule rather than a second copy of it that agrees with itself.
+# is the engine's own rule, not a second copy that agrees with itself.
 case_to_r <- function(x) {
   # Trailing -- comments first: collapsing the newlines would fold one into the
   # expression and comment out the rest of the rule.
@@ -1193,7 +1192,7 @@ ok(grepl("= 11 THEN", k, fixed = TRUE) && grepl("= 10 THEN concat('0'", k, fixed
 ok(grepl("RLIKE '^0+$' THEN NULL", k, fixed = TRUE),
    "...and all zeros is not a product, so it gets none")
 ok(!any(c("claim_ndc_short", "claim_ndc_shape") %in% WAIVABLE_CHECKS),
-   "and neither claim-side condition is a waiver any more - there is nothing to waive")
+   "and neither claim-side condition is a waiver - there is nothing to waive")
 ok(all(c("orphan_meds", "uncoded_meds", "ndc_short") %in% WAIVABLE_CHECKS),
    "...while the code list's own conditions, which are fixable at source, remain")
 
@@ -1264,10 +1263,10 @@ le <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "build_lot.R"), envir = le)
 assign("log_msg", function(...) invisible(NULL), envir = le)
 assign("lot_out", function(x) x, envir = le)
-# No hand-rolled substitution here: testutil.R's stand-in interpolates for
-# real, so {tbl} and {cfg$max_lot} resolve from the calling frame the way glue
-# would. The stub this replaces rewrote a fixed {t} and would have gone quietly
-# inert the moment that variable was renamed - which is exactly what happened.
+# No hand-rolled substitution here: testutil.R's stand-in interpolates for real,
+# so {tbl} and {cfg$max_lot} resolve from the calling frame the way glue would.
+# A stub that rewrites one fixed placeholder goes quietly inert the moment that
+# variable is renamed.
 LL_OK <- list(n_rows = 100, n_patients = 40, n_null_start = 0, n_null_end = 0,
               n_end_before_start = 0, n_bad_lot_num = 0)
 ll_stub <- function(shape = list(), dup = 0, gaps = 0, seq_bad = 0, past_obs = 0) {
@@ -1425,8 +1424,8 @@ ok(!is.null(unmapped), "an unmapped SCT_TYPE stops the build")
 ok(grepl("PERIPHERAL BLOOD", unmapped, fixed = TRUE),
    "and the message names the spelling to add or fix")
 # Which types count is decided by the query, not by the stub above, so assert
-# the predicate itself. UNKNOWN is deliberate - the CASE creates it and nothing
-# reads it - so stopping on it would fail every run that has one.
+# the predicate itself. UNKNOWN is a value the CASE creates and nothing reads,
+# so stopping on it would fail every run that has one.
 ok(grepl("NOT IN ('AUTO', 'ALLO', 'CART', 'UNKNOWN')", sc2, fixed = TRUE),
    "UNKNOWN is accepted alongside the three that are read")
 for (t in c("AUTO", "ALLO", "CART"))
@@ -1518,8 +1517,9 @@ ok(identical(getOption("lot_contract_deviations"), character(0)),
 ok("CONTRACT_DEVIATIONS" %in% names(BUILD_STATUS_COLS),
    "the status table has a column for them, so ownership and algorithm resolve together")
 # Built from CONTRACT itself, CONTRACT_SETTINGS would record the values an
-# overridden run was SUPPOSED to use rather than the ones it used. The dashboard reads
-# max_lot out of that string to decide how many panels a run has.
+# overridden run was SUPPOSED to use rather than the ones it did use. The
+# dashboard reads max_lot out of that string to decide how many panels a run
+# has.
 Sys.setenv(LOT_CONTRACT_OVERRIDE = "TRUE")
 ok(grepl("max_lot=8", contract_settings(alt), fixed = TRUE),
    "the recorded settings are what the run actually used")
@@ -2150,9 +2150,9 @@ ok(!length(missing),
      paste0("created from a column list but never brought up to it: ",
             paste(missing, collapse = ", "))
    else paste0("...and every one is brought up to its list (", length(made), ")"))
-# How far patients get - LOT1, then LOT2, and so on. Nobody was removed there:
-# a patient with no LOT3 did not progress, or their follow-up ended. Read as
-# exclusions those would be the study losing people it never lost.
+# How far patients get - LOT1, then LOT2, and so on. Nobody is removed there: a
+# patient with no LOT3 did not progress, or their follow-up ended. Read as
+# exclusions they would be the study losing people it never lost.
 ok(any(grepl('kind = "progression", step = paste0("Reached LOT", k)', src, fixed = TRUE)),
    "the funnel carries how far patients got, line by line")
 ok(any(grepl("seq_len(as.integer(cfg$max_lot))", src, fixed = TRUE)),
@@ -2289,9 +2289,9 @@ ok(grepl("REGIMEN_CUTOFF_DT", ind_block, fixed = TRUE),
    "...and by the transplant that ended the line, whichever of the two is earlier")
 # The other half, and the one that looks unnecessary. Bounding MEMBERSHIP is not
 # enough on its own: discon_per_med chains a base agent's own later episodes
-# forward from the line's start, so a refill of an agent that legitimately IS in
-# the regimen still pushes the run-out past the transplant after membership has
-# been corrected. Both call sites pass the cutoff, or the fix is half applied.
+# forward from the line's start, so a refill of an agent that genuinely IS in
+# the regimen still pushes the run-out past the transplant. Both call sites have
+# to pass the cutoff, or the rule is half applied.
 pr <- paste(readLines(file.path(ROOT, "R", "prior_regimen.R"), warn = FALSE),
             collapse = "\n")
 ok(grepl("AND ms.MAP_START_DT <= coalesce(ls.", pr, fixed = TRUE),
@@ -2344,9 +2344,9 @@ for (f in c("04_lot1_base.R", "06_lot1_end.R", "10_lot2_5_base.R")) {
   n <- n_hits("coalesce(mr.PREV_DISCON, 0) = 1", src)
   ok(n >= 1L, paste0(f, ": a discontinued drug is released"))
 }
-# The half that was missing. A restart is kept out of the run-out and may START
-# the next line - but while another regimen drug still holds this line open, the
-# restart falls inside it. Unless it can END the line too, it is inside a line it
+# The third part of the same rule. A restart is kept out of the run-out and may
+# START the next line - but while another regimen drug still holds this line
+# open, the restart falls inside it. Unless it can END the line too, it is inside a line it
 # cannot close and too early to open the next: no line owns the treatment.
 for (f in c("04_lot1_base.R", "10_lot2_5_base.R")) {
   src <- paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE), collapse = "\n")
@@ -2468,7 +2468,7 @@ ok(grepl("THEN ec.LOT1_AUTO_HOLD_DT", e6, fixed = TRUE) &&
    !grepl("date_sub(ec.LOT1_AUTO_HOLD_DT", e6, fixed = TRUE),
    "the line ends ON the transplant, not the day before it as the other AUTO reasons do")
 
-# Spark to R, whole-word swaps only, so what runs below is the shipped gate.
+# Spark to R, whole-word swaps only, so what runs below is the gate itself.
 # The guard afterwards is what makes that claim checkable: any SQL keyword left
 # behind means a clause was dropped rather than translated, and a dropped clause
 # is exactly how a gate silently widens.
@@ -2488,14 +2488,14 @@ fires <- function(hold, natural, death = NA) {
             DEATH_DT = death))
 }
 d <- function(n) as.Date("2020-01-01") + n
-# LEN with 20 days supply, run-out d19, transplant d40. The line used to be
-# finalised at d19 and the transplant refused by LOT2 for sitting inside LOT1's
-# window, so it appeared nowhere.
+# LEN with 20 days supply, run-out d19, transplant d40. Without the hold, the
+# line finalises at d19 and LOT2 refuses the transplant for sitting inside
+# LOT1's window, so it appears nowhere.
 ok(isTRUE(fires(d(40), d(19))),
    "a transplant after an early run-out extends the line rather than vanishing")
 ok(isFALSE(fires(d(20), d(59))),
    "...but a line that already covers its transplant is left alone")
-# NOT an added-medication override, which is unreachable and was wrong to claim.
+# NOT an added-medication override, which is unreachable here.
 # At LOT1 an agent starting inside the 60-day window joins the regimen instead of
 # being an addition, so MED_ADD needs a start at day 60 or later, which is at or
 # after the furthest a hold date can reach; the same arithmetic holds on a 30-day
@@ -2522,7 +2522,7 @@ ok(nchar(ac) > 0 && grepl("PREV_START_TYPE", ac, fixed = TRUE),
 ok(grepl("ELSE                 {prev_med_window} - 1", ac, fixed = TRUE),
    "the next-line AUTO gate reads the previous line's own window, not this line's")
 ok(!grepl("{induction_window_days} - 1", ac, fixed = TRUE),
-   "...so it no longer applies the LOT2-5 window to a LOT1 predecessor")
+   "...so it does not apply the LOT2-5 window to a LOT1 predecessor")
 ok(grepl("prev_med_window <- if (lot_num == 2L) lot1_induction_window_days",
          l25_txt, fixed = TRUE),
    "...and that window is LOT1's exactly when the previous line is LOT1")
@@ -2531,7 +2531,7 @@ ok(grepl("prev_med_window <- if (lot_num == 2L) lot1_induction_window_days",
 # PREV_AUTO_DT, a pair whose first member sits outside the previous line's
 # window still counts as a tandem - and since nothing held that line open to
 # the second member either, the second transplant lands in no line at all.
-# Dropping this conjunct is the regression, and E5 is what catches it.
+# E5 in the synthetic harness is what catches a missing conjunct.
 tex <- local({
   b <- regexpr("AND NOT (awp.PREV_AUTO_DT IS NOT NULL", ac, fixed = TRUE)
   if (b < 0) "" else substring(ac, b)
@@ -2551,18 +2551,17 @@ ok(grepl("datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {sct_tandem_days}", tex,
 # run-out the next line does in fact open on.
 pra <- substr(e6, regexpr("post_runout_auto AS", e6, fixed = TRUE),
               regexpr("post_runout_sct AS", e6, fixed = TRUE))
-# Code only. The comment beside it names the setting this used to borrow, and a
-# check that reads prose would pass on the explanation rather than the rule.
+# Code only. The comment beside it names the other line's setting, so a check
+# that reads prose would pass on the explanation rather than on the rule.
 pra_code <- paste(grep("^\\s*--", strsplit(pra, "\n")[[1]], value = TRUE, invert = TRUE),
                   collapse = "\n")
 ok(grepl("{cfg$induction_window_days} - 1", pra_code, fixed = TRUE) &&
    !grepl("lot_n_induction_window_days", pra_code, fixed = TRUE),
    "the run-out guard reads the same window auto_cand does, so the two agree")
-# The window SETTING was all this checked, and that was not enough. When
-# auto_cand gained the ownership condition on its tandem exemption, this guard
-# kept the older test - so the two disagreed about the same transplant while
-# the suite stayed green on the setting they still shared. The mirror is the
-# whole predicate, so the whole predicate is what gets checked.
+# The whole predicate, not just the window SETTING. Checking the setting alone
+# lets the guard and auto_cand disagree about the same transplant while still
+# sharing the number, and the suite stays green on the half they share. The
+# guard mirrors the whole predicate, so the whole predicate is checked.
 ok(grepl("awp.PREV_AUTO_DT <= date_add(", pra_code, fixed = TRUE),
    "...and the same ownership condition on the tandem exemption, not just the window")
 ok(grepl("datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {cfg$sct_tandem_days}",

@@ -140,7 +140,7 @@ stops(read_benchmarks(wr(b2)),
 b2 <- rbind(cited(base), base)
 stops(read_benchmarks(wr(b2)),
       "...and a value sitting on the same key as a blank row, which does it too")
-# ...while a key held only by blanks is the shipped grid: five regimen slots
+# ...while a key held only by blanks is how the grid ships: five regimen slots
 # per line, waiting for a regimen. An empty slot multiplies nothing.
 b2 <- rbind(base, base)
 runs(read_benchmarks(wr(b2)),
@@ -154,13 +154,13 @@ runs(read_benchmarks(wr(b)),
      "a complete row loads - including one recorded as not comparable, which is a finding")
 
 cat("\n-- a reference this run did not produce is reported, not dropped --\n")
-# An observed-left join loses silently in the one direction
-# that matters: a published figure whose key this run has no observation for -
-# a regimen outside the observed top N, a line the cohort never reached - fell
-# out of the output entirely. The reader saw every figure that HAD been
-# compared and no trace of the ones that had not, which reads as full coverage.
-# The "no observation" verdict existed for this case and could never fire,
-# because a row with no observation had no row.
+# An observed-left join loses rows silently in the one direction that matters:
+# a published figure this run has no observation for - a regimen outside the
+# observed top N, a line the cohort never reached - drops out of the output
+# entirely. The reader then sees every figure that WAS compared and no trace of
+# the ones that were not, which reads as full coverage. The "no observation"
+# verdict is for this case, and under a left join it could never fire, because
+# a row with no observation would have no row.
 o1 <- data.frame(metric = "pct_regimen_at_line", line = 1L, regimen = "VRd",
                  observed = 40, denom = 100, censored = NA_integer_,
                  events = NA_integer_, stringsAsFactors = FALSE)
@@ -316,8 +316,8 @@ ok(identical(got$run, "r2") && identical(got$cohort, "ndmm_NDMM_COHORT"),
                       input_cohort_table = "c", stringsAsFactors = FALSE)
 ok(identical(require_lot_run(NULL, "ndmm_", "X")$run, "r3"),
    "...whatever case the status table spells its columns in")
-# STUDY_END was added later; naming it in the SELECT would make an older run's
-# status table unreadable, which reads as no run at all - the softest failure.
+# Naming STUDY_END in the SELECT would make a status table without that column
+# unreadable, which reads as no run at all - the softest failure.
 ok(is.na(require_lot_run(NULL, "ndmm_", "X")$study_end),
    "...and a status table predating STUDY_END still reads, without it")
 # A sensitivity cell is a complete, well-formed LOT run of a different

@@ -3,18 +3,14 @@
 
 phase_persist <- function(con, ctx) {
   if (isTRUE(cfg$persist_to_schema)) {
-    # Nothing is copied to a table here any more. LOT1_BASE_END and
-    # MMA_MED_PROCESSED used to be written at this point, along with
-    # MAP_STACKED, LOT1_BASE and LOT1_SCT before them. All five are now written
-    # by the step that builds them, with their views repointed at the tables.
+    # No table is copied here. MAP_STACKED, MMA_MED_PROCESSED, LOT1_BASE,
+    # LOT1_SCT and LOT1_BASE_END are each written by the step that builds them,
+    # with their views repointed at the table. A copy at this phase would come
+    # too late: every read before it - phase_lot1_base, phase_lot1_sct,
+    # phase_qc, the LOT1 invariants - would re-run the query instead.
     #
-    # Copying them here was the wrong end of the run for it. Every read before
-    # this phase - phase_lot1_base, phase_lot1_sct, phase_qc, the LOT1
-    # invariants - had already re-run the query, and the copy repointed
-    # nothing, so the reads after it did too.
-    #
-    # So the counts below read tables. They are still counts of what this run
-    # built, which is what the metadata row is for.
+    # So the counts below read tables. They count what this run built, which is
+    # what the metadata row is for.
 
     # Save the run metadata: the parameters and the headline counts, so two
     # runs can be compared.

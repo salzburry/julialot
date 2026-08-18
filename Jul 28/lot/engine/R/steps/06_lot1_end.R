@@ -163,9 +163,9 @@ phase_lot1_end <- function(con, ctx) {
     ),
     post_runout_auto AS (
       -- Mirrors LOT2-5's auto_cand, which measures the window belonging to the
-      -- line it looks back at. Here the previous line is always LOT1, so that
-      -- is LOT1's own {cfg$induction_window_days} days - not the
-      -- {cfg$lot_n_induction_window_days} this used to borrow from LOT2-5.
+      -- line it looks back at. Here the previous line is always LOT1, so the
+      -- window is LOT1's own {cfg$induction_window_days} days, not the
+      -- {cfg$lot_n_induction_window_days} LOT2-5 uses for its own lines.
       --
       -- The two have to agree. This guard decides whether a run-out counts as a
       -- confirmed discontinuation. auto_cand decides whether the same AUTO opens
@@ -405,8 +405,7 @@ phase_lot1_end <- function(con, ctx) {
         -- real end and the new event opens LOT2.
         WHEN ec.DEATH_DT IS NOT NULL AND ec.DEATH_DT <= ec.OBS_END_DT
          AND ec.POST_RUNOUT_TRIGGER_FLG = 0 THEN 'DEATH'
-        -- Rule 1: every drug discontinued. This also picks up the patients
-        -- that used to be MAINTENANCE_END.
+        -- Rule 1: every drug discontinued.
         WHEN ec.LOT1_BASE_DISCON_DT IS NOT NULL THEN 'DISCONTINUATION'
         -- Study end. Disenrollment is not a censoring criterion in this study,
         -- so DISENROLLMENT never fires in the primary cascade.

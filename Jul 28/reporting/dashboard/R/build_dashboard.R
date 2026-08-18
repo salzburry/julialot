@@ -192,9 +192,10 @@ fill_sql <- function(sql, inputs, cfg) {
 # Was this table written after the moment LOT recorded reading that cohort?
 #
 # Three answers, not two. A refused query, a missing stamp column, a LOT run
-# that recorded no stamp and a timestamp as.POSIXct() will not take all used to
+# that recorded no stamp and a timestamp as.POSIXct() will not take must not
 # collapse into FALSE - "not a later attempt", the one thing none of them
-# established - and the panel went out labelled as though it had been checked.
+# establishes - and the panel would go out labelled as though it had been
+# checked.
 #
 #   TRUE  written after the stamp - a later attempt under the same run id
 #   FALSE written at or before it - the attempt LOT read
@@ -244,7 +245,7 @@ resolve_fu_ce_window <- function(secs, con, inputs, have, owner) {
   if (is.na(n) || n < 1) {
     sec$skip <- paste0(
       "the follow-up-enrolment windows for cohort run ", cr, " - the cohort LOT ",
-      "read - are not in ", inputs$fu_ce_counts, " any more. What is there ",
+      "read - are not in ", inputs$fu_ce_counts, ". What is there ",
       "prices a window against a different cohort refresh.")
     log_msg("  skip  fu_ce_window - no rows for cohort run ", cr)
     secs[[i]] <- sec; return(secs)
@@ -320,9 +321,10 @@ resolve_attrition <- function(secs, con, inputs, have, cfg, owner) {
   # Show the funnel belonging to the cohort LOT read, or show none.
   #
   # Warning text over the wrong rows is not enough: the numbers on the panel
-  # are still a different cohort refresh, and a funnel is read as the funnel
-  # for the study beside it. So the query is pinned to the recorded cohort run
-  # when we know it, and the panel is skipped when that run's rows are gone.
+  # would still be a different cohort refresh, and a funnel is read as the
+  # funnel for the study beside it. So the query is pinned to the recorded
+  # cohort run where that is known, and the panel is skipped when that run's
+  # rows are gone.
   cr <- owner$cohort_run
   if (is.null(cr) || is.na(cr) || !nzchar(cr)) {
     # Nothing recorded the link. Say so on the panel rather than in a log
@@ -338,7 +340,7 @@ resolve_attrition <- function(secs, con, inputs, have, cfg, owner) {
   if (is.na(n) || n < 1) {
     sec$skip <- paste0(
       "the cohort funnel for run ", cr, " - the cohort LOT read - is not in ",
-      inputs$attrition, " any more. The newest funnel there describes a ",
+      inputs$attrition, ". The newest funnel there describes a ",
       "different cohort refresh, so showing it beside these lines would be a ",
       "funnel for one cohort above the numbers for another.")
     log_msg("  skip  attrition - no rows for cohort run ", cr)

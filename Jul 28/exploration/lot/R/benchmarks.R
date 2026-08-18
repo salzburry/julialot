@@ -244,12 +244,12 @@ read_benchmarks <- function(path) {
   # and does not know which rows carry a value, so a supplied row sitting on
   # the same key as a blank one still returns the observation twice - once
   # compared and once as "no reference supplied". Checking only the supplied
-  # rows missed exactly that pair.
+  # rows would not see that pair.
   #
-  # A key held only by blanks is fine and is what the shipped grid is: the
-  # top-five regimens per line are five rows waiting for a regimen, and an
-  # empty slot cannot multiply anything. So a key is required to be unique the
-  # moment ANY row on it carries a value.
+  # A key held only by blanks is fine, and is what the grid ships as: the
+  # top-five regimens per line are five rows waiting for a regimen, and an empty
+  # slot cannot multiply anything. So a key has to be unique the moment ANY row
+  # on it carries a value.
   live <- unique(allk[supplied])
   dup <- unique(allk[allk %in% live & duplicated(allk)])
   if (length(dup))
@@ -383,18 +383,18 @@ compare_benchmarks <- function(observed, refs) {
                            ifelse(is.null(d$regimen) | is.na(d$regimen), "", d$regimen),
                            sep = "|")
   refs$.k <- key(refs); observed$.k <- key(observed)
-  # The three context columns travel with the verdict. Requiring them on the
-  # way in and dropping them on the way out puts the basis for a comparison in
-  # a file nobody reads and the verdict in the one they do - which is the
-  # traceability the guard was added to get, lost at the last step.
+  # The three context columns travel with the verdict. Requiring them on the way
+  # in and dropping them on the way out would put the basis for a comparison in
+  # a file nobody reads and the verdict in the one they do.
   #
-  # A FULL join, not observed-left. Left was silent loss in the direction that
+  # A FULL join, not observed-left. Left loses rows in the direction that
   # matters most: a published figure whose key this run did not produce - a
-  # regimen outside the observed top N, a line the cohort never reached -
-  # vanished from the output entirely. The reader saw every published figure
-  # they had compared and no sign of the ones that went missing, which reads as
-  # full coverage. The "no observation" verdict below existed for exactly this
-  # case and could never fire, because a row with no observation had no row.
+  # regimen outside the observed top N, a line the cohort never reached - drops
+  # out of the output entirely. The reader then sees every published figure that
+  # WAS compared and no sign of the ones that went missing, which reads as full
+  # coverage. The "no observation" verdict below is for exactly this case, and
+  # under a left join it could never fire, because a row with no observation
+  # would have no row.
   rk <- refs[, c(".k", "metric", "line", "regimen", "published_value", "unit",
                  "source", "source_population", "source_followup",
                  "source_algorithm", "comparable", "caveat", "notes")]

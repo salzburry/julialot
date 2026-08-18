@@ -26,12 +26,14 @@ Override only if prod differs: `DATABRICKS_DSN=RWDE`,
 `DATABRICKS_CATALOG=hive_metastore`, `OPTUM_CDM_SCHEMA=clnprw_optum`,
 `CODELIST_DIR=/mnt/code/codelist`, `OUTPUT_DIR=/mnt/artifacts/results`.
 
-## 1. Size the AUTO defect on the CURRENT build — FIRST, before rebuilding
+## 1. Count the current warehouse tables — FIRST, before rebuilding
 
-The AUTO fixes change the contract build, so the LOT tables in the warehouse
-still carry the defect. These counts read a patient SHAPE rather than a
-verdict, so the same query runs either side of the fix — but once you rebuild,
-the "before" number is gone for good.
+Run this before step 2. The counts read the LOT tables that are in the
+warehouse now. Step 2 overwrites them, and these numbers cannot be recovered
+afterwards.
+
+Each count reads a patient SHAPE, not a verdict, so the same query runs against
+any build.
 
 ```
 AUDIT_EXECUTE=TRUE Rscript exploration/lot/run_lot_audit_counts.R
@@ -40,13 +42,29 @@ cp exploration/lot/out/lot_audit_counts.csv exploration/lot/out/before_fix.csv
 
 Expect `12 counts. Running them now.` then twelve tables. The three to keep:
 
-- `transplant-belonging-to-no-line` — shape **b** is the defect
+- `transplant-belonging-to-no-line` — shape **b** is the one to watch: a
+  transplant in no line while a line was still available
 - `tandem-pair-whose-first-transplant-is-out-of-window`
 - `runout-unconfirmed-by-a-tandem-no-line-held`
 
 Drop `AUDIT_EXECUTE` to list what it would count; needs no connection.
 
-## 2. Rebuild the study LOT on the fixed engine
+## 1b. The scenario workbook for the study team
+
+How a line is created, seventeen worked patients with the lines the engine
+builds from them, and how many real patients are in each shape by line number.
+
+```
+SCENARIO_EXECUTE=TRUE Rscript exploration/lot/run_lot_scenarios.R
+```
+
+Writes `exploration/lot/out/lot_scenarios.xlsx`. Needs `openxlsx`; without it
+the same three sheets come out as CSVs. Drop `SCENARIO_EXECUTE` to see the
+scenarios with no connection.
+
+Run it before step 2 as well if you want the counts on the current tables.
+
+## 2. Rebuild the study LOT
 
 ```
 Rscript lot/engine/build.R ndmm_NDMM_COHORT ndmm_
@@ -90,11 +108,10 @@ Each prefix is emptied before it is rebuilt. `APPLY_MELP_RULE` stays blank in
 
 In the decisions output read **block 2 first** — melphalan doses in no line.
 Every row with `AFTER_THE_CAP = no` should be absent, `PRIOR_LINE_TYPE` of
-`CART` or `SCT_ALLO` included. Those two used to be an expected exception,
-because a single-day ALLO line and a CAR-T line with no consolidation drug end
-on their own start date before any run-out is consulted. `melp_line_type_guard`
-closed it: the hold overrides both short-circuits now. So do not accept a
-pre-cap row of any prior line type — investigate it.
+`CART` or `SCT_ALLO` included. A single-day ALLO line and a CAR-T line with no
+consolidation drug end on their own start date, before any run-out is read.
+`melp_line_type_guard` lets the melphalan hold override that, so those lines
+reach the dose too. Investigate any pre-cap row, whatever the prior line type.
 
 `AFTER_THE_CAP = yes` is treatment past the five-line cap. It is outside every
 line by construction and no ownership decision can move it, so it is a
@@ -110,7 +127,7 @@ explain.
 
 ## When something stops
 
-Every stop below is deliberate, not a crash.
+Each message below is a check stopping the run, not a crash.
 
 | message | meaning |
 |---|---|

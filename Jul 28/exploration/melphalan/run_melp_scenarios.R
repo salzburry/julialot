@@ -1,6 +1,6 @@
 #!/usr/bin/env Rscript
 # The study team's worked melphalan scenarios, and the induction-window
-# variants they do not cover, run through the shipped rule.
+# variants they do not cover, run through the rule the engine carries.
 #
 #   Rscript exploration/melphalan/run_melp_scenarios.R
 #
@@ -49,8 +49,8 @@ if (requireNamespace("glue", quietly = TRUE)) {
 source(file.path(LOT_ROOT, "R", "melp_rule.R"))
 source(file.path(.script_dir, "R", "scenarios.R"))
 
-# The shipped settings, read from the engine's own config rather than repeated,
-# so a changed threshold shows up here as a moved branch instead of silently
+# The settings come from the engine's own config rather than being repeated
+# here, so a changed threshold shows up as a moved branch instead of silently
 # disagreeing with the build.
 cfg_rows <- utils::read.csv(file.path(LOT_ROOT, "config.csv"),
                             stringsAsFactors = FALSE, comment.char = "#")
@@ -160,7 +160,7 @@ cat("\n  Still open, and not decided by any of these: whether the rule is\n")
 cat("  melphalan alone or any conditioning agent, and what happens when the\n")
 cat("  transplant procedure code is on the same event. No scenario carries a\n")
 cat("  coded transplant, and in every one the base regimen still covers.\n")
-cat("\n  Not open any more: whether B.2 holds the line open to the second dose.\n")
+cat("\n  Settled, not open: whether B.2 holds the line open to the second dose.\n")
 cat("  The request says in words that both doses stay in the current line, and\n")
 cat("  melp_hold carries the run-out to them. These scenarios cannot show it -\n")
 cat("  the regimen covers throughout every one of them, so there is nothing\n")

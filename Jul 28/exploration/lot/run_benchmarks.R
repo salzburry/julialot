@@ -146,10 +146,10 @@ main <- function() {
   cat("\nWrote ", f, "\n", sep = "")
   cat("No row here is a pass or a fail. A difference is two studies differing ",
       "until the `comparable` column says otherwise.\n", sep = "")
-  # The run is incomplete, and the file it just wrote does not say so - every
-  # verdict in it is about the metrics that DID measure. Saying it here and in
-  # the exit status is what keeps "we did not measure this" from being read as
-  # "there was nothing to measure".
+  # The run is incomplete and the file it just wrote does not say so: every
+  # verdict in it is about the metrics that DID measure. Saying so here and in
+  # the exit status keeps "this was not measured" from reading as "there was
+  # nothing to measure".
   if (length(failed)) {
     cat("\nINCOMPLETE: TTNT failed for line(s) ", paste(failed, collapse = ", "),
         ". Those rows carry no observation, and a reference sitting on one ",
