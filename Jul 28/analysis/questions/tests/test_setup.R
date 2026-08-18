@@ -843,6 +843,30 @@ ok(grepl("FU_DAYS_CE", txt$sql, fixed = TRUE) &&
      grepl("percentile_approx(FU_DAYS, 0.5)", txt$sql, fixed = TRUE),
    "the quick script reports both follow-up lengths, as the other two do")
 
+cat("\n-- the July-20 melphalan screen is superseded, and cannot run by accident --\n")
+# It screened the earlier one-sentence rule, off persisted tables rather than by
+# re-running the engine, and both of its branches kept melphalan inside the
+# line. The restated ask is a five-branch table in which three branches advance
+# it, and it is built as three complete LOT runs in exploration/melphalan/.
+#
+# Prose alone would not stop anyone running the script and quoting the numbers,
+# so the screen is gated. These hold the gate and the pointer together: a gate
+# with no pointer leaves a reader stuck, and a pointer with no gate leaves the
+# old answer one command away.
+j20 <- paste(readLines(file.path(ROOT, "jul20_studyteam_qs.R"), warn = FALSE),
+             collapse = "\n")
+ok(grepl("JUL20_Q3A_MELP", j20, fixed = TRUE) &&
+     grepl("SUPERSEDED and not run", j20, fixed = TRUE),
+   "the melphalan screen is off unless JUL20_Q3A_MELP=TRUE")
+ok(grepl("exploration/melphalan/run_aug1_melp.R", j20, fixed = TRUE) &&
+     grepl("read_melp_asks.R", j20, fixed = TRUE),
+   "...and says what replaced it, by path")
+# The gate reads the environment ONCE, where the screen is called. A second
+# reference would mean some other answer in this file had been gated with it -
+# the DARA+BORT work in particular, which is not superseded and must still run.
+ok(length(gregexpr('Sys.getenv("JUL20_Q3A_MELP"', j20, fixed = TRUE)[[1]]) == 1L,
+   "...and gates only that screen: the setting is read in exactly one place")
+
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))
 if (fail > 0L) quit(status = 1L)

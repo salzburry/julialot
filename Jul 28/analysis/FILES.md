@@ -58,7 +58,7 @@ build recorded.
 | `_setup.R` | Shared setup, using the engine's own modules rather than a second copy so the two cannot drift. Loads `config.csv` first, then pins a config the way the build does. |
 | `lot1_studyteam_qs.R` | The standalone LOT1 asks. |
 | `poma_studyteam_qs.R` | The POMA-in-1L asks — one workbook, one tab per question. |
-| `jul20_studyteam_qs.R` | The July-20 set, including `q3_cart_screen()`, which counts the patients the CAR-T induction rule touches. |
+| `jul20_studyteam_qs.R` | The July-20 set, including `q3_cart_screen()`, which counts the patients the CAR-T induction rule touches. Its **Q3a melphalan screen is superseded** and off unless `JUL20_Q3A_MELP=TRUE`: it screened an earlier one-sentence rule off persisted tables, and the restated five-branch ask is built as three complete runs in `exploration/melphalan/`. |
 | `lot_followup_qs.R` | The follow-ups on steroids, regimen mix and CAR-T. |
 | `broad_studyteam_qs.R` | The two asks NDMM cannot answer, over the broad cohort — the other-cancer association, and the diagnosis-anchored trial flags. |
 | `validation_qs.R` | The "MM LOT validation next steps" asks. |
