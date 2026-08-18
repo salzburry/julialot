@@ -242,7 +242,13 @@ stops chaining at the last episode before the gap, so a line no longer spans its
 own agent's absence; and the prior-regimen exclusion releases the same drug, so
 the returning treatment has a line to go to. `lot/engine/R/prior_regimen.R`
 carries both, and the run-out guards that mirror the start candidates read the
-same definition. §11.1 is the reasoning and what the rule costs.
+same definition.
+
+Note the threshold. It is `map_discon_gap_days`, not any gap: a drug whose cover
+lapses for a day opens a new episode (§2.3) and nothing follows from it - the
+run-out chains over it and the drug is still refused as a line start. It takes
+90 days off the drug. `KNOWN_ISSUES.md` 1b carries the reasoning and what the
+rule costs.
 
 ### 4.4 A permissible biosimilar substitute never starts a line
 

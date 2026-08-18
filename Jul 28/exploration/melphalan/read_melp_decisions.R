@@ -183,10 +183,19 @@ branch <- per_cell(function(c_i) paste0(expo_sql(c_i), ",
 # number in this block that no ownership decision can ever move - and it is the
 # same carve-out the synthetic harness makes on the same invariant.
 #
-# PRIOR_LINE_TYPE of CART or SCT_ALLO: the known open case. Those lines end on
-# their own start date before any run-out is consulted, so carrying the run-out
-# cannot reach the dose. Anything else, with AFTER_THE_CAP = 'no', is a gap
-# nobody has named yet.
+# PRIOR_LINE_TYPE is kept as an attribution, not as an excuse. It used to name
+# CART and SCT_ALLO as a known open case: a single-day ALLO line, and a CAR-T
+# line with no consolidation drug, end on their own start date before any
+# run-out is consulted, so carrying the run-out could not reach a dose after
+# them. melp_line_type_guard() closed that - the hold now overrides both
+# short-circuits, the line falls through to the ordinary cascade, and every
+# other end still outranks the carried run-out.
+#
+# So there is no expected nonzero row here any more. With AFTER_THE_CAP = 'no',
+# every row is a gap nobody has named, CART and SCT_ALLO included. The synthetic
+# harness holds the same invariant, and its planted CAR-T-only B.2 patient is
+# the case that proves the guard fires: that patient's LOT2 is a CAR-T line with
+# no regimen, and it still owns both melphalan doses.
 #
 # max_by rather than a correlated subquery with LIMIT 1. Spark rejects a
 # correlated scalar subquery that is not an aggregate, so the LIMIT form would
@@ -314,9 +323,10 @@ melp_status_unchanged(con, cells, status)
 
 show(branch,  "1. How many exposures each branch of the request decides")
 show(unowned, "2. Melphalan doses inside NO line",
-     paste0("AFTER_THE_CAP='no' should be empty; CART / SCT_ALLO rows are the ",
-            "known open case.\n   AFTER_THE_CAP='yes' is treatment past the ",
-            cfg$max_lot, "-line cap and no ownership decision can move it"))
+     paste0("AFTER_THE_CAP='no' should be EMPTY - CART and SCT_ALLO rows ",
+            "included, since melp_line_type_guard closed that case.\n   ",
+            "AFTER_THE_CAP='yes' is treatment past the ", cfg$max_lot,
+            "-line cap and no ownership decision can move it"))
 show(hold,    "3. Lines whose last melphalan dose sits past their own regimen's cover",
      paste0("N_PAST_THE_REGIMEN is the group at risk, not the effect. ",
             "N_ENDING_ON_A_MELP_DOSE is the hold's signature -\n   ",

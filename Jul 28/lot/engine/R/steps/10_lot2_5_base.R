@@ -22,12 +22,27 @@
 #
 # Key parameters (defaults reflect study-team decisions):
 #   induction_window_days   = 30   (LOT1 uses 60)
-#     There is no LOT-level discontinuation buffer. The per-drug 90-day rule
-#     lives in map_discon_gap_days.
 #   cart_consolidation_days = 45   (supersedes the earlier 30d value)
 #   sct_tandem_days         = 180  (>180d AUTO is unplanned)
 #   allo_lot_span           = "single_day": ALLO LOT spans only ALLO_DT
 #   max_lot                 = 5
+#
+#   TWO 90-day settings, and they are different rules. This header used to say
+#   there was no LOT-level buffer, which was true once and is not now:
+#     map_discon_gap_days     = 90   PER DRUG. A gap this long between one of a
+#                                    drug's episodes and the next makes the
+#                                    later one a restart. It is what stops a
+#                                    line's run-out chaining over the drug's own
+#                                    absence, and what releases the drug to open
+#                                    a line - see prior_regimen.R.
+#     lot_discon_confirm_days = 90   PER LINE. A raw run-out only becomes
+#                                    LOTn_BASE_DISCON_DT once something confirms
+#                                    it: a qualifying post-run-out trigger, or
+#                                    this many days of observation after it.
+#                                    Unconfirmed, the cascade censors at
+#                                    OBS_END_DT instead.
+#   They happen to carry the same number. Reading one as the other puts a line's
+#   end on the wrong date.
 #
 # End reasons are decided by date. The tie-break applies only to equal dates.
 

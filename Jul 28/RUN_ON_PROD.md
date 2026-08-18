@@ -89,11 +89,16 @@ Each prefix is emptied before it is rebuilt. `APPLY_MELP_RULE` stays blank in
 `CONTRACT`, so the study's own run is untouched by all of this.
 
 In the decisions output read **block 2 first** — melphalan doses in no line.
-The rows with `AFTER_THE_CAP = no` should be empty; of those, rows with
-`PRIOR_LINE_TYPE` of `CART` or `SCT_ALLO` are the one gap still open, and
-anything else there is a gap nobody has named. `AFTER_THE_CAP = yes` is
-treatment past the five-line cap and is outside every line by construction, so
-it is a reconciliation number rather than a defect.
+Every row with `AFTER_THE_CAP = no` should be absent, `PRIOR_LINE_TYPE` of
+`CART` or `SCT_ALLO` included. Those two used to be an expected exception,
+because a single-day ALLO line and a CAR-T line with no consolidation drug end
+on their own start date before any run-out is consulted. `melp_line_type_guard`
+closed it: the hold overrides both short-circuits now. So do not accept a
+pre-cap row of any prior line type — investigate it.
+
+`AFTER_THE_CAP = yes` is treatment past the five-line cap. It is outside every
+line by construction and no ownership decision can move it, so it is a
+reconciliation number rather than a defect.
 
 Question 1 writes three files, not one. `melp_ask1_line_duration.csv` is each
 cell's own median at each line, and its change columns are marked UNPAIRED
