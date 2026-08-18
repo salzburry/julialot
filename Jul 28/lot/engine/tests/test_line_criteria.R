@@ -232,10 +232,10 @@ ok(grepl("exclude nobody", m, fixed = TRUE),
    "...and says what would have happened, which is the whole point")
 # A query that errors is not evidence the abbreviation is fine.
 assign("db_q", function(con, sql) stop("no such table"), envir = be)
-ok(grepl("no row of cl_mma_codelist.csv",
+ok(grepl("no such table",
          tryCatch({ be$check_belantamab_abbr(NULL, list(belantamab_med_abbr = "BELA")); "" },
                   error = conditionMessage), fixed = TRUE),
-   "and a failed count is treated as no match, not as a pass")
+   "and a failed count stops with its own message, not as a pass")
 # Switched off, it must not ask - the code list need not carry belantamab then.
 assign("enabled_line_criteria", function(...) list(), envir = be)
 assign("db_q", function(con, sql) stop("should not be called"), envir = be)

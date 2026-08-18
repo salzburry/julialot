@@ -12,7 +12,7 @@ build knows them. `R/steps/` is the criteria in the order they apply.
 | `other_malig_overlap.R` | Reports what the other-cancer list actually says about myeloma. Reads the CSVs only - no warehouse, no connection. |
 | `config.csv` | Every setting as `name,value,description`. The cohort prefix is not here; the caller passes it. |
 | `R/build_ndmm.R` | The runner. Stops when an input is missing rather than skipping the filter that needed it, because a count nobody can reproduce is worse than no count. |
-| `R/build_subsequent.R` | The 2L and 3L cohorts, built as separate cohorts rather than flags on the lines, which is how the protocol scopes the extra criteria. |
+| `R/build_subsequent.R` | The 2L and 3L cohorts, built as separate cohorts rather than flags on the lines, because the extra criteria apply only to those cohorts. |
 | `R/config.R` | Settings, checked against `CONTRACT` before anything runs. |
 | `R/load_inputs.R` | Reads `config.csv` into the environment as defaults. The environment always wins, and the password is never read from the file. |
 | `R/codelists.R` | Loads the four code lists from CSV. There is no embedded fallback: a missing file stops the run. |
@@ -26,7 +26,7 @@ build knows them. `R/steps/` is the criteria in the order they apply.
 | `R/steps/03_prior_therapy.R` | Myeloma therapy in the 12 months before the index date. |
 | `R/steps/04_other_malig.R` | Another active cancer in the 12 months before the index date. |
 | `R/steps/05_pregnancy.R` | Pregnancy or childbirth anywhere in the study period. |
-| `R/steps/05b_preg_window.R` | Sizes what the narrower reading of the pregnancy window would cost, since the protocol and the program spec disagree on it. |
+| `R/steps/05b_preg_window.R` | Sizes what the narrower reading of the pregnancy window would cost, since two readings are possible. |
 | `R/steps/06_flags.R` | One row per patient carrying every filter's verdict. |
 | `R/steps/07_cohort.R` | The attrition counts. Each row applies all previous filters plus the new one, so it reads top to bottom as a funnel. |
 | `R/steps/08_clintrial.R` | Clinical-trial evidence as a descriptive flag. Not a criterion - it filters nobody. |

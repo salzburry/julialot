@@ -1,7 +1,7 @@
 # Steps 5-7: MM agents in baseline and follow-up, MM diagnosis in baseline.
 
 phase_clinical_flags <- function(cfg, h, ctx) {
-  work <- h$work; cdm_src <- h$cdm_src
+  cdm_src <- h$cdm_src
   fu_cap_expr <- ctx$fu_cap_expr; ce_join_for_fu_cap <- ctx$ce_join_for_fu_cap
 
   list(
@@ -12,7 +12,7 @@ phase_clinical_flags <- function(cfg, h, ctx) {
       name = "17_mm_baseline_evidence_flag",
       description = "Checking for any STRICT MM dx (203.0x/C90.0x) claim in baseline period",
       sql = glue("
-        CREATE OR REPLACE TEMPORARY VIEW {work('mm_baseline_evidence_flag')} AS
+        CREATE OR REPLACE TEMPORARY VIEW mm_baseline_evidence_flag AS
         SELECT
           q.PATID,
           q.index_date,
@@ -23,11 +23,11 @@ phase_clinical_flags <- function(cfg, h, ctx) {
                                      AND date_sub(q.index_date, 1)
                     AND e.mm_dx_strict_flg = 1
                THEN 1 ELSE 0 END) AS MM_BASELINE_EVIDENCE
-        FROM {work('mm_qualifying')} q
-        LEFT JOIN {work('mm_dx_events_all')} e ON q.PATID = e.PATID
+        FROM mm_qualifying q
+        LEFT JOIN mm_dx_events_all e ON q.PATID = e.PATID
         GROUP BY q.PATID, q.index_date
       "),
-      qc = glue("SELECT sum(MM_BASELINE_EVIDENCE) AS n_with_baseline_mm FROM {work('mm_baseline_evidence_flag')}")
+      qc = glue("SELECT sum(MM_BASELINE_EVIDENCE) AS n_with_baseline_mm FROM mm_baseline_evidence_flag")
     ),
 
     # ---- Phase 8: MM therapy events + flags (Steps 5-6) ----
@@ -46,12 +46,12 @@ phase_clinical_flags <- function(cfg, h, ctx) {
       description = "Identifying MM therapy events (medical PROC_CD + BILL_PROC_CD + NDC, Rx NDC)",
       source_tables = c("medical", "rx", "med_procedure"),
       sql = glue("
-        CREATE OR REPLACE TEMPORARY VIEW {work('therapy_events')} AS
+        CREATE OR REPLACE TEMPORARY VIEW therapy_events AS
         -- 1) Medical therapy via PROC_CD (HCPCS/CPT)
         SELECT /*+ BROADCAST(c) */
           m.PATID, cast(m.FST_DT as date) AS event_dt, 'MEDICAL_PROC_CD' AS source
         FROM {cdm_src(cfg$tbl_medical)} m
-        INNER JOIN {work('mm_therapy_codes')} c
+        INNER JOIN mm_therapy_codes c
           ON c.code_type IN ('HCPCS','CPT')
           AND upper(regexp_replace(coalesce(cast(m.PROC_CD as string),''), '[^A-Za-z0-9]', '')) = c.code
         WHERE m.FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
@@ -60,7 +60,7 @@ phase_clinical_flags <- function(cfg, h, ctx) {
         SELECT /*+ BROADCAST(c) */
           m.PATID, cast(m.FST_DT as date) AS event_dt, 'MEDICAL_BILL_PROC_CD' AS source
         FROM {cdm_src(cfg$tbl_medical)} m
-        INNER JOIN {work('mm_therapy_codes')} c
+        INNER JOIN mm_therapy_codes c
           ON c.code_type = 'HCPCS'
           AND upper(regexp_replace(coalesce(cast(m.BILL_PROC_CD as string),''), '[^A-Za-z0-9]', '')) = c.code
         WHERE m.FST_DT BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
@@ -69,7 +69,7 @@ phase_clinical_flags <- function(cfg, h, ctx) {
         SELECT /*+ BROADCAST(c) */
           m.PATID, cast(m.FST_DT as date) AS event_dt, 'MEDICAL_NDC' AS source
         FROM {cdm_src(cfg$tbl_medical)} m
-        INNER JOIN {work('mm_therapy_codes')} c
+        INNER JOIN mm_therapy_codes c
           -- Both sides lpad to 11. A code with no digits and a NULL NDC both
           -- become 00000000000, so require digits on the code list side.
           ON c.code_type = 'NDC'
@@ -82,7 +82,7 @@ phase_clinical_flags <- function(cfg, h, ctx) {
         SELECT /*+ BROADCAST(c) */
           r.PATID, cast(r.FILL_DT as date) AS event_dt, 'RX' AS source
         FROM {cdm_src(cfg$tbl_rx)} r
-        INNER JOIN {work('mm_therapy_codes')} c
+        INNER JOIN mm_therapy_codes c
           -- Same guard as the medical NDC join above.
           ON c.code_type = 'NDC'
           AND regexp_replace(c.code, '[^0-9]', '') <> ''
@@ -94,7 +94,7 @@ phase_clinical_flags <- function(cfg, h, ctx) {
         SELECT /*+ BROADCAST(c) */
           p.PATID, cast(p.FST_DT as date) AS event_dt, 'MED_PROCEDURE_PROC' AS source
         FROM {cdm_src(cfg$tbl_med_proc)} p
-        INNER JOIN {work('mm_therapy_codes')} c
+        INNER JOIN mm_therapy_codes c
           ON c.code_type IN ('HCPCS','CPT')
           AND upper(regexp_replace(coalesce(cast(p.PROC as string),''), '[^A-Za-z0-9]', '')) = c.code
           AND regexp_replace(coalesce(cast(p.PROC as string),''), '[^A-Za-z0-9]', '') <> ''
@@ -108,7 +108,7 @@ phase_clinical_flags <- function(cfg, h, ctx) {
           sum(CASE WHEN source = 'MEDICAL_NDC'          THEN 1 ELSE 0 END) AS n_med_ndc,
           sum(CASE WHEN source = 'RX'                   THEN 1 ELSE 0 END) AS n_rx_ndc,
           sum(CASE WHEN source = 'MED_PROCEDURE_PROC'   THEN 1 ELSE 0 END) AS n_med_procedure
-        FROM {work('therapy_events')}")
+        FROM therapy_events")
     ),
 
     # Join death_dt to therapy_flags so follow-up therapy is bounded by death date
@@ -118,7 +118,7 @@ phase_clinical_flags <- function(cfg, h, ctx) {
       name = "19_therapy_flags",
       description = "CRITERION: MM therapy in baseline/follow-up (death-aware)",
       sql = glue("
-        CREATE OR REPLACE TEMPORARY VIEW {work('therapy_flags')} AS
+        CREATE OR REPLACE TEMPORARY VIEW therapy_flags AS
         SELECT
           q.PATID,
           q.index_date,
@@ -131,13 +131,13 @@ phase_clinical_flags <- function(cfg, h, ctx) {
           max(CASE WHEN t.event_dt >= q.index_date
                     AND t.event_dt <= {fu_cap_expr}
                THEN 1 ELSE 0 END) AS MM_THERAPY_FOLLOWUP
-        FROM {work('mm_qualifying')} q
-        LEFT JOIN {work('death_dt')} d ON q.PATID = d.PATID AND q.index_date = d.index_date
+        FROM mm_qualifying q
+        LEFT JOIN death_dt d ON q.PATID = d.PATID AND q.index_date = d.index_date
         {ce_join_for_fu_cap}
-        LEFT JOIN {work('therapy_events')} t ON q.PATID = t.PATID
+        LEFT JOIN therapy_events t ON q.PATID = t.PATID
         GROUP BY q.PATID, q.index_date
       "),
-      qc = glue("SELECT sum(MM_THERAPY_FOLLOWUP) AS n_with_fu_therapy FROM {work('therapy_flags')}")
+      qc = glue("SELECT sum(MM_THERAPY_FOLLOWUP) AS n_with_fu_therapy FROM therapy_flags")
     )
   )
 }

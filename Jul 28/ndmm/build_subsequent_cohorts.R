@@ -1,6 +1,5 @@
 #!/usr/bin/env Rscript
-# The 2L and 3L cohorts, per protocol 6.2.1.1 "Additional eligibility for 2L
-# and 3L RRMM Cohorts".
+# The 2L and 3L cohorts, with their own extra eligibility rules.
 #
 #   DATABRICKS_PWD=... Rscript ndmm/build_subsequent_cohorts.R <prefix_>
 #

@@ -25,7 +25,7 @@ study ships as *the algorithm* is one directory with three packages in it:
 |---|---|
 | `ndmm/`, `overall/` | the cohort builds. A cohort is what the engine is pointed at, so it comes before LOT rather than under it |
 | `reporting/dashboard/` | one self-contained HTML off a finished run |
-| `analysis/outcomes/` | TTNT, TTD, OS and attrition — protocol Table 4 |
+| `analysis/outcomes/` | TTNT, TTD, OS and attrition |
 | `analysis/questions/` | the study team's asks, one script each |
 | `exploration/melphalan/` | a proposed rule the build does not apply |
 | `exploration/lot/` | benchmarks, definitions, sensitivity, stockpiling, re-challenge, audit counts |

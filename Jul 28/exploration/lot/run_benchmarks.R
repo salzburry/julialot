@@ -92,7 +92,7 @@ main <- function() {
   top_n    <- suppressWarnings(as.integer(Sys.getenv("BENCH_TOP_N", unset = "5")))
   if (is.na(top_n) || top_n < 1) top_n <- 5L
 
-  add <- function(df, extra = character(0)) {
+  add <- function(df) {
     if (is.null(df) || !nrow(df)) return(NULL)
     for (nm in c("line", "regimen", "denom", "censored", "events"))
       if (!nm %in% names(df)) df[[nm]] <- NA

@@ -1,11 +1,11 @@
 # What the narrower reading of the pregnancy window would cost, as a number
 # rather than an argument.
 #
-# The protocol says "during the study period" and the validated program spec,
-# citing an earlier section of it, says "during the baseline or follow-up
-# period". This build applies the protocol's, which is the wider of the two and
-# so excludes strictly more - a childbirth claim years from a patient's index
-# date drops them here and would not there. See DECISIONS.md #9.
+# The window can be read two ways: the whole study period, or the patient's
+# own baseline and follow-up. This build applies the study period, which is
+# the wider of the two and so excludes strictly more - a childbirth claim
+# years from a patient's index date drops them here and would not there. See
+# DECISIONS.md #9.
 #
 # One scan serves both windows, because the study period contains the
 # patient-relative one: the narrower rule is a filter on the same matched
@@ -14,9 +14,8 @@
 # What the alternative row is, exactly, because it is a one-variable
 # sensitivity and not a re-creation of the older pipeline: the same 365-day
 # baseline this build uses, and follow-up running to death or the study end.
-# It does NOT stop at disenrolment. Whether the program spec's "follow-up"
-# meant that is open, and is the thing to settle at sign-off - see
-# DECISIONS.md #9.
+# It does NOT stop at disenrolment. Whether the narrower reading's follow-up
+# should is open, and is the thing to settle at sign-off - see DECISIONS.md #9.
 
 # Whether a patient's claim falls in the window the row is about. One
 # definition, used by all three columns: the kept count is the negation of the
@@ -86,8 +85,8 @@ build_ndmm_preg_window_counts <- function(con, cfg) {
     GROUP BY w.rule, w.sort_key
     ORDER BY w.sort_key"))
   got <- db_q(con, glue("SELECT * FROM {wrk('NDMM_PREG_WINDOW_COUNTS')}"))
-  log_msg("Pregnancy (criterion 8), by window. This run applies the protocol's ",
-          "study period; the program spec says baseline + follow-up.")
+  log_msg("Pregnancy (criterion 8), by window. This run applies the study ",
+          "period; the narrower reading is baseline + follow-up.")
   for (i in seq_len(nrow(got)))
     log_msg("    ", if (got$IS_THIS_RUN[i] == 1L) "->" else "  ", " ",
             got$PREG_WINDOW_RULE[i], ": ",

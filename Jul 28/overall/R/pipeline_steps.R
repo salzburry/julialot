@@ -62,14 +62,12 @@ build_steps <- function(cfg, mat_tables) {
   #   sensitivity  also cap at last enrollment (censor_at_disenrollment)
   if (isTRUE(cfg$censor_at_disenrollment)) {
     ctx$fu_cap_expr <- glue("least(date('{cfg$study_end}'), coalesce(d.DEATH_DT, date('{cfg$study_end}')), coalesce(ce.ENDDATE_CE, date('{cfg$study_end}')))")
-    ctx$ce_join_for_fu_cap <- glue("LEFT JOIN {h$work('ce_flags')} ce ON q.PATID = ce.PATID AND q.index_date = ce.index_date")
+    ctx$ce_join_for_fu_cap <- glue("LEFT JOIN ce_flags ce ON q.PATID = ce.PATID AND q.index_date = ce.index_date")
   } else {
     ctx$fu_cap_expr <- glue("least(date('{cfg$study_end}'), coalesce(d.DEATH_DT, date('{cfg$study_end}')))")
     ctx$ce_join_for_fu_cap <- ""
   }
 
-  all_phases <- lapply(PHASE_FNS, function(fn)
-    function() do.call(fn, list(cfg = cfg, h = h, ctx = ctx)))
-
-  do.call(c, lapply(all_phases, function(fn) fn()))
+  do.call(c, lapply(PHASE_FNS, function(fn)
+    do.call(fn, list(cfg = cfg, h = h, ctx = ctx))))
 }

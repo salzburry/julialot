@@ -63,7 +63,6 @@ source(file.path(.script_dir, "_setup.R"))
 qs_setup(.script_dir)
 source(file.path(.script_dir, "validation_helpers.R"))        # vqs_* helpers (shared)
 
-`%||%` <- function(a, b) if (is.null(a)) b else a
 
 # Run a pull and return its data, or a one-row "status" table naming the
 # failure, so a gap is visible instead of silent.
@@ -78,6 +77,13 @@ best_effort <- function(expr, label) {
                stringsAsFactors = FALSE)
   else r
 }
+
+# TRUE if a view-building call ran, FALSE (with the reason logged) if not.
+built_ok <- function(expr, label) isTRUE(tryCatch({ expr; TRUE },
+  error = function(e) {
+    log_msg("  NOTE: '", label, "' unavailable - ", conditionMessage(e))
+    FALSE
+  }))
 
 is_status_table <- function(x)
   is.data.frame(x) && identical(names(x), "status")
@@ -477,11 +483,10 @@ q2_region_source_from_env <- function(con, describe_cols) {
   if (!nzchar(tbl_env) || !nzchar(col_env))
     return(list(tbl = NULL, col = NULL, has_spans = FALSE,
                 reason = "REGION_SOURCE_TABLE / REGION_SOURCE_COLUMN not set - region requires an explicitly approved source"))
-  cands <- if (grepl("\\.", tbl_env)) tbl_env else {
-    c(tryCatch(cdm_src(tbl_env), error = function(e) NULL),
-      tryCatch(cdm(tbl_env),     error = function(e) NULL))
-  }
-  cands <- unique(cands[!vapply(cands, is.null, logical(1))])
+  # cdm() is plain name-building and cannot fail; cdm_src() can stop on a
+  # malformed STUDY_END, and that is a config error worth stopping on.
+  cands <- if (grepl("\\.", tbl_env)) tbl_env else
+    unique(c(cdm_src(tbl_env), cdm(tbl_env)))
   fails <- character(0)
   for (tbl in cands) {
     cols <- describe_cols(tbl)
@@ -507,8 +512,7 @@ q2_region_candidates_report <- function(con, describe_cols) {
   rows <- list()
   for (base in c("member_cont_enrollment", "member_enrollment", "member")) {
     for (namer in list(cdm_src, cdm)) {
-      tbl <- tryCatch(namer(base), error = function(e) NULL)
-      if (is.null(tbl)) next
+      tbl <- namer(base)
       cols <- describe_cols(tbl)
       if (length(cols) == 0) next
       hits <- cols[grepl("REGION|DIVISION|STATE|GEO|ZIP", toupper(cols))]
@@ -1220,12 +1224,12 @@ main <- function() {
 
     have_agent <- FALSE
     if (have_map)
-      have_agent <- !is_status_table(best_effort(
-        q2_build_agent_views(con, map_tbl, tok$dara, tok$bort), "per-agent episode view"))
+      have_agent <- built_ok(
+        q2_build_agent_views(con, map_tbl, tok$dara, tok$bort), "per-agent episode view")
     have_claims <- FALSE
     if (have_mma)
-      have_claims <- !is_status_table(best_effort(
-        q2_build_claim_view(con, mma_tbl, tok$dara, tok$bort), "per-agent service-date view"))
+      have_claims <- built_ok(
+        q2_build_claim_view(con, mma_tbl, tok$dara, tok$bort), "per-agent service-date view")
     if (!have_claims)
       gaps <- c(gaps, "Q2a service-date counts unavailable (MMA_MED_PROCESSED unreadable) - episode counts still reported")
 
@@ -1235,7 +1239,7 @@ main <- function() {
       db_q(con, glue("SELECT BUS, ELIGEFF, ELIGEND FROM {enr} LIMIT 1")); TRUE
     }, error = function(e) FALSE))
     if (enr_ok) {
-      have_payer <- !is_status_table(best_effort(q2_build_payer_view(con, enr), "payer lookup"))
+      have_payer <- built_ok(q2_build_payer_view(con, enr), "payer lookup")
       if (have_payer) {
         payer_note <- paste0("Payer = member_enrollment.BUS on the enrollment span covering the ",
                              "LOT1 start (MCR = Medicare, COM = Commercial; Medicare wins overlaps; ",
@@ -1259,7 +1263,7 @@ main <- function() {
     do_census <- region_map_mode %in% c("CENSUS", "CENSUS_REGION", "STATE_TO_CENSUS")
     reg_src <- q2_region_source_from_env(con, describe_cols)
     if (!is.null(reg_src$tbl)) {
-      have_region <- !is_status_table(best_effort(q2_build_region_view(con, reg_src, do_census), "region lookup"))
+      have_region <- built_ok(q2_build_region_view(con, reg_src, do_census), "region lookup")
       if (have_region) {
         region_note <- sprintf(
           "Region = %s.%s (approved via REGION_SOURCE_TABLE/REGION_SOURCE_COLUMN; %s). %s Confirm the mapping in the region_value_counts file.",
@@ -1483,7 +1487,7 @@ main <- function() {
     paste0("Exact-dual patients: ", fmt_or_na(n_dual),
            " (the dual_definition_and_context file shows the broader contains-both count)."),
     if (!is.null(q2_zero_note)) q2_zero_note else NULL,
-    "Utilization is reported as drug episodes (MAPs), medical service dates and pharmacy fill dates - protocol cycles are not recorded in claims.",
+    "Utilization is reported as drug episodes (MAPs), medical service dates and pharmacy fill dates - regimen cycles are not recorded in claims.",
     payer_note,
     region_note,
     "",

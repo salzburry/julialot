@@ -1,7 +1,7 @@
 # Step 2: age at index, and the death date that caps follow-up.
 
 phase_demographics <- function(cfg, h, ctx) {
-  work <- h$work; cdm_src <- h$cdm_src
+  cdm_src <- h$cdm_src
 
   list(
     # ---- Phase 6: demographics (age -> Step 2) + death date ----
@@ -10,7 +10,7 @@ phase_demographics <- function(cfg, h, ctx) {
       description = "Extracting patient demographics (age/gender)",
       source_tables = c("member_cont_enrollment"),
       sql = glue("
-        CREATE OR REPLACE TEMPORARY VIEW {work('member_demo')} AS
+        CREATE OR REPLACE TEMPORARY VIEW member_demo AS
         WITH ranked AS (
           SELECT PATID, GDR_CD, cast(YRDOB as int) AS YRDOB,
                  row_number() OVER (PARTITION BY PATID
@@ -33,7 +33,7 @@ phase_demographics <- function(cfg, h, ctx) {
         )
         SELECT PATID, GDR_CD, YRDOB FROM ranked WHERE rn = 1
       "),
-      qc = glue("SELECT count(*) AS n_patients FROM {work('member_demo')}")
+      qc = glue("SELECT count(*) AS n_patients FROM member_demo")
     ),
 
     # ---- Phase 6b: death date ----
@@ -46,7 +46,7 @@ phase_demographics <- function(cfg, h, ctx) {
       description = "Deriving death dates (month->15th, year-only uses July15/Dec31 rule)",
       source_tables = c("dod"),
       sql = glue("
-        CREATE OR REPLACE TEMPORARY VIEW {work('death_dt')} AS
+        CREATE OR REPLACE TEMPORARY VIEW death_dt AS
         WITH raw_death AS (
           SELECT
             PATID,
@@ -92,7 +92,7 @@ phase_demographics <- function(cfg, h, ctx) {
                   ELSE make_date(b.death_yr, 7, 15)
                 END
             END AS death_raw
-          FROM {work('mm_qualifying')} q
+          FROM mm_qualifying q
           LEFT JOIN best b ON q.PATID = b.PATID
         )
         -- Final clamp: ensure DEATH_DT >= index_date (prevents negative FU_DAYS from data issues)
@@ -106,7 +106,7 @@ phase_demographics <- function(cfg, h, ctx) {
           END AS DEATH_DT
         FROM calc
       "),
-      qc = glue("SELECT count(*) AS n_with_death_dt FROM {work('death_dt')} WHERE DEATH_DT IS NOT NULL")
+      qc = glue("SELECT count(*) AS n_with_death_dt FROM death_dt WHERE DEATH_DT IS NOT NULL")
     )
   )
 }

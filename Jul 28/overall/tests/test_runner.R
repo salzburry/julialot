@@ -206,7 +206,7 @@ cat("\n-- codelist checks name columns the views actually have --\n")
 cl_src <- paste(readLines(file.path(ROOT, "R", "steps", "01_codelists.R"),
                           warn = FALSE), collapse = "\n")
 view_cols <- function(view) {
-  i <- regexpr(paste0("TEMPORARY VIEW \\{work\\('", view, "'\\)\\}"), cl_src)
+  i <- regexpr(paste0("TEMPORARY VIEW ", view), cl_src)
   if (i < 0) return(character(0))
   blk <- substr(cl_src, i, i + attr(i, "match.length") + 900)
   blk <- substr(blk, 1, regexpr('"\\)', blk))

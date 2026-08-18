@@ -81,11 +81,7 @@ build_ndmm_clintrial_codes <- function(con) {
   # would notice: the flags builder inner-joins this view, an empty view yields
   # no rows, and every patient gets CLINTRIAL = 0 - a clean-looking answer that
   # means the scan had nothing to look for.
-  n <- tryCatch(db_q(con, glue("SELECT count(*) AS N FROM {NDMM_CLINTRIAL_CODES}")),
-                error = function(e) NULL)
-  if (is.null(n) || !nrow(n))
-    stop("Could not count the codes in clintrial.csv, so this run cannot say ",
-         "whether the clinical-trial scan has anything to match.", call. = FALSE)
+  n <- db_q(con, glue("SELECT count(*) AS N FROM {NDMM_CLINTRIAL_CODES}"))
   if (as.numeric(n[[1]][1]) == 0)
     stop("clintrial.csv has rows but no usable codes: every one is blank or ",
          "punctuation-only once non-alphanumerics are stripped, or carries no ",
@@ -98,14 +94,11 @@ build_ndmm_clintrial_codes <- function(con) {
   # cannot fire, and the count above cannot see it because the row is present
   # and well formed. Same guard 05_pregnancy.R carries, over this scan's types.
   want <- paste(sprintf("'%s'", NDMM_CLINTRIAL_CODE_TYPES), collapse = ", ")
-  bad <- tryCatch(db_q(con, glue("
+  bad <- db_q(con, glue("
     SELECT code_type, count(*) AS n
     FROM {NDMM_CLINTRIAL_CODES}
     WHERE code_type NOT IN ({want})
-    GROUP BY code_type ORDER BY code_type")), error = function(e) NULL)
-  if (is.null(bad))
-    stop("Could not check the code types in clintrial.csv, so this run cannot ",
-         "say whether every clinical-trial code is reachable.", call. = FALSE)
+    GROUP BY code_type ORDER BY code_type"))
   if (nrow(bad))
     stop("clintrial.csv carries code type(s) no claim source produces: ",
          paste0(bad$code_type, " (", bad$n, " code(s))", collapse = ", "),

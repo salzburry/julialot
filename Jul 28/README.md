@@ -15,7 +15,7 @@ A cohort is what LOT is pointed at. It is not part of LOT and does not read it.
 | `lot/qc/` | thirty-five checks on a finished run. Reads only, writes to `out/`. |
 | `lot/validation/` | the rule scenarios, machine-checked. No warehouse. |
 | `reporting/dashboard/` | one self-contained HTML. Reads only. |
-| `analysis/outcomes/` | TTNT, TTD, OS, attrition — protocol Table 4. Reads only. |
+| `analysis/outcomes/` | TTNT, TTD, OS, attrition. Reads only. |
 | `analysis/questions/` | the study team's questions, one script each. Not a build. |
 | `exploration/melphalan/` | a proposed line-advancing rule the build does not apply, built as three runs and differenced. Opt-in. |
 | `exploration/lot/` | benchmarks, the definition comparison, the sensitivity sweep, stockpiling, re-challenge, audit counts. Not part of a study run. |
@@ -90,15 +90,15 @@ owns them.
 
 ## Where the decisions are written down
 
-A decision is anywhere this build chose something the protocol does not settle,
-or chose to differ from it. There are two registers: `ndmm/DECISIONS.md` covers
+A decision is anywhere this build had to choose between two readings of a
+rule. There are two registers: `ndmm/DECISIONS.md` covers
 the NDMM cohort, and `lot/LOT_RULES.md` covers the lines.
 
 | | where |
 |---|---|
 | NDMM cohort | `ndmm/DECISIONS.md`, numbered, with reasoning and what was measured |
-| maintenance | `ndmm/DECISIONS.md` #10 - **not implemented**; the protocol defines a period, the build carries a flag |
-| pregnancy window | `ndmm/DECISIONS.md` #9 - protocol and program spec disagree; which wins is recorded there |
+| maintenance | `ndmm/DECISIONS.md` #10 - **not built**; the build carries a flag, not a period |
+| pregnancy window | `ndmm/DECISIONS.md` #9 - two windows are possible; the one the code applies is recorded there |
 | lines of therapy | `lot/LOT_RULES.md`, and the scenario workbook's Open questions sheet |
 | outcomes | `analysis/FILES.md` - the `STUDY_END` censoring rule for TTD, the fifth attrition category, both denominators |
 | the melphalan proposal | `exploration/FILES.md`. It is an exploration, not a rule the build applies, which is why it is neither in `lot/` nor in `lot/LOT_RULES.md` |

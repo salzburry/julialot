@@ -364,8 +364,8 @@ pin_output_schema <- function(cfg) {
     stop("Output schema '", schema, "' is not a schema name. Give the schema ",
          "on its own - letters, digits and underscores - with no catalog and ",
          "no punctuation.", call. = FALSE)
-  cfg$work_schema     <- schema
-  cfg$personal_schema <- schema
+  cfg$work_schema     <- trimws(schema)
+  cfg$personal_schema <- trimws(schema)
   cfg$object_prefix   <- Sys.getenv("OBJECT_PREFIX", unset = "")
   cfg
 }

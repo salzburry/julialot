@@ -1,8 +1,8 @@
 # Re-challenge events, measured against a finished run.
 #
-# The LOT protocol ends a line on "initiation of a new MM agent that was not
-# present in the induction regimen" and starts the next on an agent "not part of
-# the previous LOT regimen". Neither asks whether the patient has had the agent
+# A line ends on a new MM agent that was not in the induction regimen, and the
+# next line starts on an agent not in the previous line's regimen. Neither rule
+# asks whether the patient has had the agent
 # before, so an agent returning after an earlier line ends one line and opens
 # another. Whether that is right is a clinical question, and the thing that
 # decides it is not in the line table: how long the patient had actually been off

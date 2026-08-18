@@ -350,19 +350,13 @@ it marked `EXCLUDES` is the open question, named in the log.
 
 ### Which agents may set the 1L index
 
-The eligible treatments are the MM regimens commonly used in the first line
-setting, excluding those restricted to later LOTs (see exclusion first-line
-setting, less those restricted to later lines - and the exclusions name exactly
-one therapy: belantamab. So nothing else is restricted, and neither does this
-build - anything on `cl_mma_codelist.csv` that is not belantamab and not a
-steroid can set the index. On the production file that is 25 of 26 agents; see
-`DECISIONS.md` section 3.
+Exactly one therapy is restricted to later lines: belantamab. Nothing else
+is. So anything on `cl_mma_codelist.csv` that is not belantamab and not a
+steroid can set the index. On the production file that is 25 of 26 agents;
+see `DECISIONS.md` section 3.
 
-Annex 2 is not that list. It is "Categorization of SOC Regimens", which the
-regimen categorisation calls "an exemplary list of potential treatment
-combinations... may be recategorized" - an analysis grouping. Inventing an
-allowlist from it would shrink the cohort by a rule nobody could reproduce from
-the document.
+There is no allowlist of first-line regimens. Inventing one would shrink the
+cohort by a rule nobody could reproduce.
 
 `<prefix>NDMM_INDEX_AGENTS` - every `CL_MED_ABBR` on the code list, whether
 this run would let it set an index, and how many patients it set one for.
@@ -585,15 +579,14 @@ the wrong day.
 
 ### The 2L and 3L cohorts come after the LOT run
 
-Protocol 6.2.1.1 has an "Additional eligibility for 2L and 3L RRMM Cohorts"
-block. Those cohorts are indexed on the start of that line, so lot has to
-have found the lines first:
+The 2L and 3L cohorts carry extra eligibility rules of their own. They are
+indexed on the start of that line, so lot has to have found the lines first:
 
 ```
 DATABRICKS_PWD=... Rscript build_subsequent_cohorts.R ndmm_
 ```
 
-Three criteria, all the protocol's, and nothing else:
+Three criteria and nothing else:
 
 1. received that line - a LOT 2 (or LOT 3) row in `<prefix>LOT_LONG_FINAL`
 2. CE for the 12 months before that line's start, gaps of 30 days or fewer
@@ -603,7 +596,7 @@ Three criteria, all the protocol's, and nothing else:
 Death is the only stated alternative, so it is the only thing that shortens
 the window. The study end does not: a living patient whose window runs past the
 data has not shown the enrolment, and would be included on the data's account
-rather than the protocol's.
+rather than the rule's.
 
 The enrollment tests read `<prefix>NDMM_ENROLL_SPANS` and
 `<prefix>NDMM_ENROLL_SPANS_STRICT`, the two span tables this build already

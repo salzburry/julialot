@@ -79,11 +79,6 @@ check_choices <- function(cfg) {
   invisible(TRUE)
 }
 
-# Tables this build needs from elsewhere. There are none: it reads raw CDM and
-# its own code lists and nothing else, which is what lets it be handed over on
-# its own.
-upstream_tables <- function(cfg) list()
-
 # A temporary view is a query, not a result - Spark re-runs it on every read.
 # These stack, so the thirteen reads of NDMM_LOT1_STARTS would each re-run the
 # whole MM-diagnosis chain under it. Writing each to the work schema once and
@@ -248,14 +243,10 @@ raw_tables <- function(cfg) {
 # Every input table, before any work. Skipping a filter whose
 # inputs it could not read and carried on, which produces a cohort that is
 # smaller than it should be with nothing in the output saying so.
+# This build reads raw CDM and its own code lists and nothing built by another
+# package, which is what lets it be handed over on its own.
 check_upstream <- function(con, cfg) {
   missing <- character(0)
-  up <- upstream_tables(cfg)
-  for (t in names(up)) {
-    got <- tryCatch({ db_q(con, glue("SELECT 1 FROM {wrk(t)} LIMIT 1")); TRUE },
-                    error = function(e) FALSE)
-    if (!got) missing <- c(missing, paste0(wrk(t), " (built by ", up[[t]], ")"))
-  }
   raw <- raw_tables(cfg)
   for (t in raw) {
     got <- tryCatch({ db_q(con, glue("SELECT 1 FROM {cdm_src(t)} LIMIT 1")); TRUE },
@@ -267,8 +258,7 @@ check_upstream <- function(con, cfg) {
          "\nEvery NDMM filter needs its input. Skipping one would drop patients ",
          "the criteria do not exclude, and the attrition would not say so.",
          call. = FALSE)
-  log_msg("Inputs present (", length(up), " built, ",
-          length(raw), " raw)")
+  log_msg("Inputs present (", length(raw), " raw)")
   invisible(TRUE)
 }
 
@@ -315,9 +305,6 @@ check_constants <- function(cfg) {
       stop("Module constant ", s$const, " is not loaded; the modules must be ",
            "sourced before the settings can be checked.", call. = FALSE)
     got <- get(s$const, envir = globalenv())
-    # A list-valued constant is compared as the joined string cfg holds, or a
-    # four-element vector never equals the one setting that produced it.
-    if (!is.null(s$collapse)) got <- paste(got, collapse = s$collapse)
     if (!isTRUE(all.equal(as.character(got), as.character(cfg[[s$cfg]]))))
       wrong <- c(wrong, paste0(s$const, " = ", format(got), " but ", s$cfg,
                                " = ", format(cfg[[s$cfg]]),
@@ -408,16 +395,13 @@ ATTRITION_COLS <- c(RUN_ID = "STRING", STEP_NUM = "INT", CRITERION = "STRING",
 # INSERT naming it fails at the end of the run. Each table is created and then
 # brought up to its column list.
 #
-# Look before adding - ADD COLUMNS on a column that exists is an error - and
-# treat an unreadable DESCRIBE as no answer rather than as a table with no
-# columns, or this would try to add every column to a table that has them all.
+# Look before adding - ADD COLUMNS on a column that exists is an error. The
+# table was created two statements ago, so a DESCRIBE that fails is a real
+# fault and stops with its own message rather than deferring to the INSERT.
 ensure_cols <- function(con, tbl, spec) {
-  have <- tryCatch({
-    d  <- db_q(con, glue("DESCRIBE {tbl}"))
-    cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
-    if (length(cn)) toupper(trimws(as.character(d[[cn[1]]]))) else character(0)
-  }, error = function(e) character(0))
-  if (!length(have)) return(invisible(FALSE))
+  d    <- db_q(con, glue("DESCRIBE {tbl}"))
+  cn   <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
+  have <- if (length(cn)) toupper(trimws(as.character(d[[cn[1]]]))) else character(0)
   for (m in setdiff(names(spec), have)) {
     tryCatch({
       db_exec(con, glue("ALTER TABLE {tbl} ADD COLUMNS ({m} {spec[[m]]})"))
@@ -1344,8 +1328,7 @@ build_ndmm <- function(here, prefix) {
   # parameters, so it needs no change: the base cohort answers for
   # ELIG_COH_FINAL (it carries PATID and DEATH_DT, which is all that step
   # reads), and the belantamab view answers in MAP_STACKED's shape.
-  build_ndmm_flags(con, NDMM_BASE_COHORT, NDMM_BELANTAMAB_PATIDS,
-                   TRUE, TRUE, TRUE, TRUE)
+  build_ndmm_flags(con, NDMM_BASE_COHORT, NDMM_BELANTAMAB_PATIDS)
   checkpoint(con, "NDMM_PATIDS")
 
   # Descriptive, not a criterion - it is built after the flags and joins
@@ -1358,12 +1341,9 @@ build_ndmm <- function(here, prefix) {
   # After the flags: each scope is costed against the whole conjunction, so it
   # needs every other criterion already decided.
   build_ndmm_fu_ce_counts(con, cfg)
-  # Prices the pregnancy window against the reading the program spec gives.
+  # Prices the narrower reading of the pregnancy window.
   # After the flags, because the cohort column needs them.
   build_ndmm_preg_window_counts(con, cfg)
-  # build_lot_long_filtered() is not called. It joins LOT_LONG to the cohort
-  # for reporting views, and neither the cohort nor the attrition reads it.
-  # Left in 07_cohort.R for anyone who wants it.
 
   counts <- ndmm_counts(con, NDMM_MM_QUALIFYING, NDMM_BASE_COHORT)
   for (i in seq_along(ATTRITION_STEPS))

@@ -1,7 +1,7 @@
 # Analysis
 
-What is derived from a finished LOT run: the protocol's treatment-patterns and
-outcomes table, and the study team's individual asks.
+What is derived from a finished LOT run: the treatment-patterns and outcomes
+tables, and the study team's individual asks.
 
 Neither package builds a line. `outcomes/` writes its own `OUT_*` tables under
 the study's prefix, derived from a finished run rather than a second account of
@@ -13,7 +13,7 @@ finish or that carries contract deviations.
 
 ---
 
-## `analysis/outcomes/` — protocol Table 4
+## `analysis/outcomes/` — the outcomes tables
 
 `build.R <COHORT_TABLE> <lot_prefix_>`. Reads only; writes five `OUT_*` tables.
 
@@ -43,8 +43,8 @@ package is set to. `OUT_ALLOW_UNPROVEN_LINEAGE=TRUE` accepts what could not be
 checked; a lineage shown to be wrong still stops.
 
 Both readings of "of the patients who reached 2L" are reported side by side —
-`ALL_LINES` and `LINE_ELIGIBLE` — because nothing in the protocol picks one.
-Regimens are raw, not the Annex 2 SOC categories.
+`ALL_LINES` and `LINE_ELIGIBLE` — because nothing settled picks one.
+Regimens are raw, not grouped into categories.
 
 ## `analysis/questions/` — the study team's asks
 

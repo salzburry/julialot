@@ -678,15 +678,19 @@ melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP",
     FROM melp_cover"))
 }
 
-# One row, from however many statements it takes. A statement that comes back
-# empty or unreadable is a NULL here, and the caller stops on it - the result is
-# the comparison between all three cells, not a best effort at one.
+# One row, from however many statements it takes. A statement that fails stops
+# with the warehouse's own message. One that comes back empty is a NULL here,
+# and the caller stops on it - the result is the comparison between all three
+# cells, not a best effort at one.
 melp_metrics <- function(con, ...) {
   qs <- melp_metric_sql(...)
   out <- list()
   for (nm in names(qs)) {
-    d <- tryCatch(db_q(con, qs[[nm]]), error = function(e) NULL)
-    if (is.null(d) || !is.data.frame(d) || nrow(d) != 1L) return(NULL)
+    d <- tryCatch(db_q(con, qs[[nm]]), error = function(e) e)
+    if (inherits(d, "error"))
+      stop("Metrics statement ", nm, " failed: ", conditionMessage(d),
+           call. = FALSE)
+    if (nrow(d) != 1L) return(NULL)
     out[[nm]] <- d
   }
   do.call(cbind, unname(out))
@@ -942,19 +946,13 @@ melp_modes_apart <- function(results) {
 melp_check_code <- function(inputs, lot_root) {
   # The build's own function, not a second implementation of it - a hash that
   # has to equal the one in the metadata cannot be computed a different way.
-  # Neither script sources build_lot.R, so it is loaded into a private env
-  # rather than left to a tryCatch that would report "cannot fingerprint" for
-  # a function that is simply not in scope.
-  fp <- if (exists("code_fingerprint", mode = "function"))
-          get("code_fingerprint", mode = "function")
-        else {
-          e <- new.env(parent = globalenv())
-          ok <- tryCatch({
-            sys.source(file.path(lot_root, "R", "build_lot.R"), envir = e); TRUE
-          }, error = function(err) FALSE)
-          if (ok && exists("code_fingerprint", envir = e, mode = "function"))
-            get("code_fingerprint", envir = e, mode = "function") else NULL
-        }
+  # Neither script sources build_lot.R, so it is loaded into a private env.
+  e <- new.env(parent = globalenv())
+  ok <- tryCatch({
+    sys.source(file.path(lot_root, "R", "build_lot.R"), envir = e); TRUE
+  }, error = function(err) FALSE)
+  fp <- if (ok && exists("code_fingerprint", envir = e, mode = "function"))
+          get("code_fingerprint", envir = e, mode = "function") else NULL
   if (is.null(fp)) {
     warning("code_fingerprint() could not be loaded from ", lot_root,
             ", so there is no check that these cells were built by the code ",
@@ -1083,10 +1081,10 @@ melp_report <- function(con, cells, out_dir, lot_root = NULL) {
       indn         = st$indn,
       cart         = st$cart)
     if (is.null(m))
-      stop("Metrics could not be read for ", c_i$id, " (", final, "). Either ",
-           "that cell was never built, or one of its statements failed. The result ",
-           "is the comparison between all three, so this is a stop rather than a row ",
-           "left out of it.", call. = FALSE)
+      stop("Metrics could not be read for ", c_i$id, " (", final, "): a ",
+           "statement returned no row, so that cell was never fully built. The ",
+           "result is the comparison between all three, so ",
+           "this is a stop rather than a row left out of it.", call. = FALSE)
     rows[[length(rows) + 1L]] <- cbind(cell = c_i$id, mode = c_i$mode, m,
                                        stringsAsFactors = FALSE)
     # The by-line tables, over the melphalan-exposed. Duration, regimen make-up
@@ -1102,7 +1100,7 @@ melp_report <- function(con, cells, out_dir, lot_root = NULL) {
              "): ", if (inherits(d, "error")) conditionMessage(d) else "no rows",
              ". That breakdown is what was asked for, so this is a stop rather ",
              "than an output left out.", call. = FALSE)
-      acc <- if (identical(v[[1]], "by_line")) "by_line" else "regimens"
+      acc <- v[[1]]
       out_acc[[acc]][[length(out_acc[[acc]]) + 1L]] <-
         cbind(cell = c_i$id, mode = c_i$mode, d, stringsAsFactors = FALSE)
     }

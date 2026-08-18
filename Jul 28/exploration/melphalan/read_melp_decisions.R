@@ -65,10 +65,10 @@ status <- setNames(lapply(cells, function(c_i) cell_status(con, c_i)),
 inputs <- melp_read_inputs(con, cells, status)
 melp_check_code(inputs, LOT_ROOT)
 st   <- melp_settings(inputs)
-MELP <- toupper(trimws(st$melp_med_abbr %||% cfg$melp_med_abbr %||% "MELP"))
-EXPO <- as.integer(st$melp_exposure_days  %||% cfg$melp_exposure_days)
-REST <- as.integer(st$melp_restart_days   %||% cfg$melp_restart_days)
-ADV  <- as.integer(st$melp_advance_days   %||% cfg$melp_advance_days)
+MELP <- toupper(trimws(st$abbr))
+EXPO <- as.integer(st$expo_days)
+REST <- as.integer(st$restart_days)
+ADV  <- as.integer(st$advance_days)
 
 cat("All ", length(cells), " cells: cohort attempt ", inputs[[1]]$COHORT_RUN_ID[1],
     ", same code and settings. exposure=", EXPO, "d restart=", REST,

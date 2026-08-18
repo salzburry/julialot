@@ -79,7 +79,8 @@ for (c_i in LOT_QC_CHECKS) {
   ok(setequal(used, c_i$needs),
      paste0(c_i$id, " declares exactly the tables it reads"))
 }
-ok(all(qc_needs() %in% keys), "every declared table is one the runner supplies")
+ok(all(unlist(lapply(LOT_QC_CHECKS, function(c_i) c_i$needs)) %in% keys),
+   "every declared table is one the runner supplies")
 
 cat("\n-- no patient id leaves in the clear --\n")
 # The report is a file that gets circulated. Every check that names a patient
@@ -154,9 +155,9 @@ ok(has(SQL$A1, "datediff(LOT_BASE_END_DT, LOT_START_DT) + 1"),
    "A1 compares the length column against the span its dates describe")
 ok(has(SQL$A6, "size(split(trim(LOT_BASE_MEDS), ' '))"),
    "A6 counts the regimen string rather than trusting the count column")
-# The enum is the build's, not the program spec's. CART_INIT is produced and
-# is not in the spec; SUBSTITUTION and MAINTENANCE_END are in the spec and are
-# produced by nothing. A5 and B5 are where that is written down.
+# The enum is what the build writes. CART_INIT is produced; SUBSTITUTION and
+# MAINTENANCE_END are produced by nothing. A5 and B5 are where that is
+# written down.
 ok(has(SQL$B5, "'CART_INIT'"), "B5 accepts CART_INIT, which the build writes")
 ok(!has(SQL$B5, "'SUBSTITUTION'") && !has(SQL$B5, "'MAINTENANCE_END'"),
    "...and not the two reasons the spec lists that nothing produces")

@@ -213,7 +213,8 @@ find_subsequent_cohorts <- function(con, lot_run, lines = c(2L, 3L),
     # built over attempt A, and this package reads the tables it is given
     # rather than assuming how they were made - so the agreed value is held
     # against the attempt the LOT run actually read.
-    if (!is.null(attempt) && length(attempt) == 2L && !any(is.na(attempt))) {
+    if (!is.null(coh) && !is.null(stamp) &&
+        !is.null(attempt) && length(attempt) == 2L && !any(is.na(attempt))) {
       if (!identical(coh, attempt[["run"]]) ||
           !identical(stamp, attempt[["stamp"]]))
         stop("The line cohorts were built over cohort attempt ", coh, " (",
@@ -343,10 +344,12 @@ check_lot_run <- function(con, prefix, cohort_table, study_end) {
 # the record in the log, which is the point: "we could not check" and "we
 # checked and it matched" stop being the same outcome.
 out_unproven <- function(what) {
+  # NULL, not FALSE: callers hold the returned value against recorded ids with
+  # !is.null() guards, and a FALSE would be compared as if it were an id.
   if (identical(toupper(trimws(Sys.getenv("OUT_ALLOW_UNPROVEN_LINEAGE",
                                           unset = ""))), "TRUE")) {
     log_msg("UNPROVEN LINEAGE ACCEPTED: ", what)
-    return(invisible(FALSE))
+    return(invisible(NULL))
   }
   stop(what, " The lines' lineage cannot be proven, and outcomes measured over ",
        "mixed vintages look exactly like right ones. ",
@@ -395,7 +398,7 @@ check_cohort_attempt <- function(con, lot_run_id) {
                                "cohort run ", now_id, ".")))
   eq <- function(a, b) {
     a <- trimws(as.character(a)); b <- trimws(as.character(b))
-    length(a) == 1L && length(b) == 1L && !is.na(a) && !is.na(b) && identical(a, b)
+    !is.na(a) && !is.na(b) && identical(a, b)
   }
   # Two attempts can reuse a run id, which is what the stamp is for - so a
   # blank stamp does not prove the attempt, it declines to speak about it.
@@ -484,7 +487,7 @@ build_outcomes <- function(here, cohort_table, prefix) {
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
   log_msg(SEP)
-  log_msg("Treatment patterns and treatment-related outcomes (protocol Table 4)")
+  log_msg("Treatment patterns and treatment-related outcomes")
   log_msg("  cohort ", cfg$input_cohort_table, ", LOT prefix ", cfg$object_prefix)
   log_msg("  run ", run_id)
   log_msg(SEP)

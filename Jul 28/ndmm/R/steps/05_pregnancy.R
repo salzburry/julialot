@@ -32,25 +32,18 @@ build_ndmm_preg_codes <- function(con) {
   # NO_PREGNANCY = 1 and the exclusion would be off with nothing to show for
   # it. The type check below cannot catch that: it reads this same view, and
   # an empty view has no wrong types in it.
-  n <- tryCatch(db_q(con, glue("SELECT count(*) AS N FROM {NDMM_PREG_CODES}")),
-                error = function(e) NULL)
-  if (is.null(n) || !nrow(n))
-    stop("Could not count the codes in pregnancy.csv, so this run cannot say ",
-         "whether the pregnancy exclusion has anything to match.", call. = FALSE)
+  n <- db_q(con, glue("SELECT count(*) AS N FROM {NDMM_PREG_CODES}"))
   if (as.numeric(n[[1]][1]) == 0)
     stop("pregnancy.csv has rows but no usable codes: every one is blank or ",
          "punctuation-only once non-alphanumerics are stripped. The exclusion ",
          "would match nothing and every candidate would pass it.", call. = FALSE)
 
   want <- paste(sprintf("'%s'", NDMM_PREG_CODE_TYPES), collapse = ", ")
-  bad <- tryCatch(db_q(con, glue("
+  bad <- db_q(con, glue("
     SELECT code_type, count(*) AS n
     FROM {NDMM_PREG_CODES}
     WHERE code_type NOT IN ({want})
-    GROUP BY code_type ORDER BY code_type")), error = function(e) NULL)
-  if (is.null(bad))
-    stop("Could not check the code types in pregnancy.csv, so this run cannot ",
-         "say whether every pregnancy code is reachable.", call. = FALSE)
+    GROUP BY code_type ORDER BY code_type"))
   if (nrow(bad))
     stop("pregnancy.csv carries code type(s) no claim source produces: ",
          paste0(bad$code_type, " (", bad$n, " code(s))", collapse = ", "),

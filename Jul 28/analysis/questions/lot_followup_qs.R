@@ -42,7 +42,6 @@ source(file.path(.script_dir, "_setup.R"))
 qs_setup(.script_dir)
 source(file.path(.script_dir, "validation_helpers.R"))        # vqs_* helpers (shared)
 
-`%||%` <- function(a, b) if (is.null(a)) b else a
 
 # Writes the workbook with openxlsx. A "sheet" is a list of name, title,
 # optional subtitle, narrative lines, and named tables (each a data.frame, or a
@@ -878,11 +877,11 @@ main <- function() {
     if (is.null(cart_raw))
       extra_gaps <- c(extra_gaps, "Q5 CAR-T / (b) pre-LOT1 CAR-T scan unavailable - question (b) unanswered")
     q5_notes <- c(
-      if (cohort_mode == "NDMM")
+      if (cohort_mode == "FINAL")
         sprintf("The first table recomputes the CAR-T-relative-to-LOT1 measures for this cohort (%s, LOT1 = %s patients). The study team's earlier table showed 11,148 LOT1 patients and 124 with any CAR-T on/after LOT1 - compare those to the table below. Set LOT_POPULATION=PRECRITERIA for the pre-criteria run.",
                 cohort_label, format(n_lot1, big.mark = ","))
       else
-        sprintf("The first table recomputes the CAR-T-relative-to-LOT1 measures for this cohort (%s, LOT1 = %s patients). The study team's earlier table (11,148 LOT1 patients; 124 with any CAR-T) was the NDMM default cohort, so this full-cohort run will differ. Run without LOT_POPULATION for the study population.",
+        sprintf("The first table recomputes the CAR-T-relative-to-LOT1 measures for this cohort (%s, LOT1 = %s patients). The study team's earlier table (11,148 LOT1 patients; 124 with any CAR-T) was the study cohort, so this pre-criteria run will differ. Run without LOT_POPULATION for the study population.",
                 cohort_label, format(n_lot1, big.mark = ",")),
       if (is.null(cart_raw))
         "The pre-LOT1 CAR-T rows need the raw claims scan, which was not available this run, so 'CAR-T before LOT1' and 'prior-to-or-during' show as NA. The during/closing timing is still valid. This run is marked incomplete for question (b)."

@@ -63,12 +63,6 @@
 # 9999-12-31 sentinel for SQL least() with NULLs.
 .SENTINEL <- "cast('9999-12-31' as date)"
 
-# Build "least(coalesce(a, sentinel), coalesce(b, sentinel), ...)" expression.
-.least_coalesce <- function(cols) {
-  parts <- vapply(cols, function(c) sprintf("coalesce(%s, %s)", c, .SENTINEL), character(1))
-  sprintf("least(%s)", paste(parts, collapse = ", "))
-}
-
 # The per-line stages, in build order. Each is written to <prefix>LOT<n>_<NAME>
 # and its session view repointed, so the next stage reads a table.
 #
@@ -440,7 +434,9 @@ build_lot_n <- function(con, lot_num,
                  FROM lot{lot_num}_start_candidates"))
 
   # ---- Step N.2: pick LOT_N_START_DT and LOT_N_START_TYPE ----
-  least_expr <- .least_coalesce(c("d_MED", "d_ALLO", "d_CART", "d_AUTO"))
+  least_expr <- sprintf("least(%s)", paste(
+    sprintf("coalesce(%s, %s)", c("d_MED", "d_ALLO", "d_CART", "d_AUTO"),
+            .SENTINEL), collapse = ", "))
   materialize(con, paste0(pfx, "_lot", lot_num, "_start"),
               view = glue("lot{lot_num}_start"),
               name = lotn_table(lot_num, "START"), body = glue("
@@ -1353,7 +1349,7 @@ build_lot2_5 <- function(con,
                         # does not ask for it gets the algorithm unchanged.
                         apply_cart_induction_rule  = FALSE,
                         lot1_induction_window_days = 60) {
-  stopifnot(allo_lot_span %in% c("single_day", "extend_to_next"))
+  # allo_lot_span was validated by check_settings() before a connection opened.
   stopifnot(max_lot >= 2L && max_lot <= 9L)
 
   log_msg("Building LOT_LONG (LOT1..LOT", max_lot, ")")

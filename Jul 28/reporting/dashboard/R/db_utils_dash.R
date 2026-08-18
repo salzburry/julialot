@@ -34,15 +34,12 @@ with_retry <- function(fn, max_retries = dash_config()$max_retries,
 
 db_q <- function(con, sql) .unint64(with_retry(function() DBI::dbGetQuery(con, sql)))
 
-# <catalog>.<schema>.<table>, or <schema>.<table> when no catalog is set. The
-# schema is the work schema the cohort and LOT builds wrote into.
-full_name <- function(schema, object) {
+# <catalog>.<work schema>.<table> - the work schema the cohort and LOT builds
+# wrote into. The catalog is pinned by CONTRACT, so it is always set.
+wrk <- function(tbl) {
   cfg <- dash_config()
-  if (nzchar(cfg$catalog)) paste0(cfg$catalog, ".", schema, ".", object)
-  else paste0(schema, ".", object)
+  paste0(cfg$catalog, ".", cfg$work_schema, ".", tbl)
 }
-
-wrk <- function(tbl) full_name(dash_config()$work_schema, tbl)
 
 # The tables a section may name. Every one is resolved once, up front, so a
 # section cannot invent a name and a missing table is reported against the
@@ -84,8 +81,8 @@ dashboard_inputs <- function(cfg) {
 # note rather than a run to fail: the rest of the dashboard is still true.
 probe_inputs <- function(con, inputs) {
   vapply(inputs, function(tbl)
-    isTRUE(tryCatch({ db_q(con, paste0("SELECT 1 FROM ", tbl, " LIMIT 1")); TRUE },
-                    error = function(e) FALSE)),
+    tryCatch({ db_q(con, paste0("SELECT 1 FROM ", tbl, " LIMIT 1")); TRUE },
+             error = function(e) FALSE),
     logical(1))
 }
 

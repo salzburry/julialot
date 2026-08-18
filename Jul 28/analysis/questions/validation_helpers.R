@@ -44,9 +44,9 @@ VQS_ELOT_TOKEN <- toupper(Sys.getenv("ELOT_MED_ABBR", unset = "ELOT"))
 VQS_PANO_TOKEN <- toupper(Sys.getenv("PANO_MED_ABBR", unset = "PANO"))
 
 # Induction windows (config-driven; fall back to study defaults).
-VQS_W1 <- tryCatch(as.integer(cfg$induction_window_days),       error = function(e) 60L)
-VQS_W2 <- tryCatch(as.integer(cfg$lot_n_induction_window_days), error = function(e) 30L)
-VQS_CART <- tryCatch(as.integer(cfg$cart_consolidation_days),   error = function(e) 45L)
+VQS_W1   <- as.integer(cfg$induction_window_days)
+VQS_W2   <- as.integer(cfg$lot_n_induction_window_days)
+VQS_CART <- as.integer(cfg$cart_consolidation_days)
 if (is.na(VQS_W1) || VQS_W1 < 1) VQS_W1 <- 60L
 if (is.na(VQS_W2) || VQS_W2 < 1) VQS_W2 <- 30L
 if (is.na(VQS_CART) || VQS_CART < 1) VQS_CART <- 45L
@@ -78,9 +78,9 @@ vqs_in_list <- function(ids) {
   paste(sprintf("'%s'", gsub("'", "''", ids)), collapse = ", ")
 }
 
-vqs_readable <- function(con, tbl) isTRUE(tryCatch(
-  nrow(db_q(con, glue("SELECT 1 FROM {tbl} LIMIT 1"))) >= 0,
-  error = function(e) FALSE))
+vqs_readable <- function(con, tbl) isTRUE(tryCatch({
+  db_q(con, glue("SELECT 1 FROM {tbl} LIMIT 1")); TRUE
+}, error = function(e) FALSE))
 
 # Steroid-claim relation (sub-select string) over a built steroid-claims view.
 vqs_steroid_src <- function(ster_view) glue(
@@ -114,8 +114,9 @@ vqs_build_steroid_claims <- function(con, lot_long, ster_csv) {
   # "unknown" reads as a version that could not be looked up, when what really
   # happened is that the file could not be opened - and the steroid answers
   # would still be quoted. grepl is FALSE on NA, so this covers that too.
-  ster_hash <- function() tryCatch(unname(tools::md5sum(ster_csv)),
-                                   error = function(e) NA_character_)
+  # md5sum returns NA for a file it cannot open; it does not error. A
+  # function because the file is hashed again after the read, to catch a swap.
+  ster_hash <- function() unname(tools::md5sum(ster_csv))
   ster_md5 <- ster_hash()
   if (length(ster_md5) != 1L || !grepl("^[0-9a-f]{32}$", ster_md5)) {
     out$note <- paste0("could not hash steroid_codes.csv (", ster_csv,
@@ -230,7 +231,7 @@ vqs_obs_bounds_src <- function(con) {
   obs_end <- if (isTRUE(cfg$censor_at_disenrollment))
     "coalesce(cast(ENDDATE_CE AS date), cast(ENDDATE AS date))"
   else "cast(ENDDATE AS date)"
-  ok <- vqs_readable(con, tbl) && isTRUE(tryCatch({
+  ok <- isTRUE(tryCatch({
     db_q(con, glue("SELECT INDEX_DATE, ENDDATE FROM {tbl} LIMIT 1")); TRUE
   }, error = function(e) FALSE))
   if (!ok) return(list(sql = NULL, available = FALSE))
@@ -248,7 +249,7 @@ vqs_obs_bounds_src <- function(con) {
 # Returns a named list(poma=, elot=, pano=, resolved=<character notes>).
 vqs_resolve_agent_tokens <- function(con) {
   out <- list(poma = VQS_POMA_TOKEN, elot = VQS_ELOT_TOKEN,
-              pano = VQS_PANO_TOKEN, notes = character(0))
+              pano = VQS_PANO_TOKEN, notes = character(0), resolved = FALSE)
   ok <- tryCatch({ vqs_build_mma_codelist(con); TRUE }, error = function(e) FALSE)
   if (!ok) {
     out$notes <- "mma_codelist unavailable; using default/env tokens."
@@ -268,6 +269,7 @@ vqs_resolve_agent_tokens <- function(con) {
   out$pano <- pick("panobinostat", VQS_PANO_TOKEN)
   out$notes <- sprintf("Resolved tokens from cl_mma_codelist.csv: POMA=%s, ELOT=%s, PANO=%s.",
                        out$poma, out$elot, out$pano)
+  out$resolved <- TRUE
   out
 }
 

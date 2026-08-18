@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# The 2L and 3L cohorts, held to protocol 6.2.1.1. No warehouse: the SQL is
+# The 2L and 3L cohorts, held to their eligibility rules. No warehouse: the SQL is
 # built as a string and the guards are driven with stubs.
 #
 #   Rscript "ndmm/tests/test_subsequent.R"
@@ -81,7 +81,7 @@ ok(has(FUN2, "date_sub(g.ix, 365)") && has(FUN2, "date_add(g.ix, 90)") &&
 cat("\n-- both windows are settings, and every output records them --\n")
 ok(subseq_days("SUBSEQ_PRE_DAYS", 365L) == 365L &&
      subseq_days("SUBSEQ_FU_CE_DAYS", 90L) == 90L,
-   "365 and 90 days by default - the protocol's 12 months and 3 months")
+   "365 and 90 days by default - 12 months of baseline and 3 of follow-up")
 withr <- function(v, val, f) {
   old <- Sys.getenv(v, unset = NA)
   do.call(Sys.setenv, setNames(list(val), v)); on.exit({
@@ -221,7 +221,7 @@ withr("NDMM_SUBSEQ_ALLOW_UNPROVEN", "TRUE", function() {
           "...but a PROVEN mismatch still stops - the override is not a skip")
 })
 
-# The window pins. Any pair but the protocol's builds a different cohort into
+# The window pins. Any other pair builds a different cohort into
 # the study's table names, so it stops unless asked for as a sensitivity.
 runs(subseq_check_windows(365L, 90L), "the contract windows pass silently")
 m <- tryCatch({ subseq_check_windows(180L, 90L); "" }, error = conditionMessage)

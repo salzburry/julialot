@@ -1,39 +1,35 @@
 # One row per patient carrying every filter's verdict.
 #
 
-build_ndmm_flags <- function(con, elig_coh_final, map_stacked,
-                           q2_ok_belantamab, q2_ok_priortx,
-                           q2_ok_othercancer, q2_ok_pregnancy = NULL) {
-  if (is.null(q2_ok_pregnancy))
-    q2_ok_pregnancy <- .ndmm_table_ok(con, NDMM_PREGNANCY_PATIDS)
-  bela_expr <- if (q2_ok_belantamab) glue("
+build_ndmm_flags <- function(con, elig_coh_final, map_stacked) {
+  bela_expr <- glue("
         SELECT DISTINCT cast(PATID as string) AS PATID
         FROM {map_stacked}
         WHERE upper(MAP_MED_TYPE) LIKE 'BEL%'
-  ") else "SELECT cast(NULL as string) AS PATID WHERE 1 = 0"
+  ")
 
   # Belantamab before the 1L index. The exclusion covers any LOT and names no
   # period, so belantamab earlier in the patient's history disqualifies them
   # even though the 12-month prior-therapy window cannot reach it. lot settles
   # the other half, from the index onward - it cannot settle this one, because
   # the claims it reads start at the index.
-  bela_pre_expr <- if (q2_ok_belantamab) glue("
+  bela_pre_expr <- glue("
         SELECT DISTINCT cast(PATID as string) AS PATID
         FROM {map_stacked}
         WHERE upper(MAP_MED_TYPE) LIKE 'BEL%' AND PRE_LOT1 = 1
-  ") else "SELECT cast(NULL as string) AS PATID WHERE 1 = 0"
+  ")
 
-  prior_tx_expr <- if (q2_ok_priortx) glue("
+  prior_tx_expr <- glue("
         SELECT DISTINCT PATID FROM {NDMM_THERAPY_PRE_LOT1}
-  ") else "SELECT cast(NULL as string) AS PATID WHERE 1 = 0"
+  ")
 
-  other_cancer_expr <- if (q2_ok_othercancer) glue("
+  other_cancer_expr <- glue("
         SELECT DISTINCT cast(PATID as string) AS PATID FROM {NDMM_OTHER_MALIG_PATIDS}
-  ") else "SELECT cast(NULL as string) AS PATID WHERE 1 = 0"
+  ")
 
-  pregnancy_expr <- if (q2_ok_pregnancy) glue("
+  pregnancy_expr <- glue("
         SELECT DISTINCT cast(PATID as string) AS PATID FROM {NDMM_PREGNANCY_PATIDS}
-  ") else "SELECT cast(NULL as string) AS PATID WHERE 1 = 0"
+  ")
 
   db_exec(con, glue("
     CREATE OR REPLACE TEMPORARY VIEW {NDMM_FLAGS_ALL} AS

@@ -7,8 +7,6 @@
 #
 # Nothing here names a cohort or decides what is shown - that is sections.R.
 
-`%||%` <- function(a, b) if (is.null(a)) b else a
-
 # Settings that decide what a dashboard run means. Everything that varies per
 # run - the cohort, the prefixes, where the file goes - is an argument instead.
 CONTRACT <- list(
@@ -205,14 +203,14 @@ fill_sql <- function(sql, inputs, cfg) {
 # driver's.
 stamp_is_newer <- function(con, sql, st) {
   when <- function(x) {
-    x <- suppressWarnings(as.character(x))
+    x <- as.character(x)
     if (!length(x) || is.na(x[1]) || !nzchar(trimws(x[1]))) return(NA_real_)
     t <- suppressWarnings(tryCatch(as.POSIXct(x[1], tz = "UTC"),
                                    error = function(e) NULL))
     if (!length(t) || is.na(t[1])) NA_real_ else as.numeric(t[1])
   }
   d <- tryCatch(db_q(con, sql), error = function(e) NULL)
-  got <- if (is.null(d) || !is.data.frame(d) || !nrow(d) || !ncol(d)) NULL else d[[1]][1]
+  got <- if (is.null(d) || !nrow(d) || !ncol(d)) NULL else d[[1]][1]
   a <- when(got); b <- when(st)
   if (is.na(a) || is.na(b)) return(NA)
   a > b
@@ -239,9 +237,17 @@ resolve_fu_ce_window <- function(secs, con, inputs, have, owner) {
   cr <- owner$cohort_run
   if (is.null(cr) || is.na(cr) || !nzchar(cr))
     return(untied("no cohort run id was recorded by the LOT build,"))
+  # A read that failed and rows that are absent are different findings; the
+  # panel must not claim the rows are missing when the count never ran.
   n <- tryCatch(db_q(con, paste0("SELECT count(*) AS n FROM ", inputs$fu_ce_counts,
                                  " WHERE RUN_ID = '", cr, "'"))$n,
-                error = function(e) NA)
+                error = function(e) e)
+  if (inherits(n, "error")) {
+    sec$skip <- paste0(inputs$fu_ce_counts, " could not be counted for cohort ",
+                       "run ", cr, ": ", conditionMessage(n))
+    log_msg("  skip  fu_ce_window - count failed: ", conditionMessage(n))
+    secs[[i]] <- sec; return(secs)
+  }
   if (is.na(n) || n < 1) {
     sec$skip <- paste0(
       "the follow-up-enrolment windows for cohort run ", cr, " - the cohort LOT ",
@@ -336,7 +342,13 @@ resolve_attrition <- function(secs, con, inputs, have, cfg, owner) {
   }
   n <- tryCatch(db_q(con, paste0(
          "SELECT count(*) AS n FROM ", inputs$attrition,
-         " WHERE ", L$run_col, " = '", cr, "'"))$n, error = function(e) NA)
+         " WHERE ", L$run_col, " = '", cr, "'"))$n, error = function(e) e)
+  if (inherits(n, "error")) {
+    sec$skip <- paste0(inputs$attrition, " could not be counted for run ", cr,
+                       ": ", conditionMessage(n))
+    log_msg("  skip  attrition - count failed: ", conditionMessage(n))
+    secs[[i]] <- sec; return(secs)
+  }
   if (is.na(n) || n < 1) {
     sec$skip <- paste0(
       "the cohort funnel for run ", cr, " - the cohort LOT read - is not in ",
@@ -387,7 +399,7 @@ resolve_attrition <- function(secs, con, inputs, have, cfg, owner) {
 # Nothing here stops the run: every other panel is still true.
 check_max_lot <- function(con, inputs, have, cfg) {
   col <- function(d, nm) {
-    if (is.null(d) || !is.data.frame(d)) return(NULL)
+    if (is.null(d)) return(NULL)
     i <- match(toupper(nm), toupper(names(d)))
     if (is.na(i)) NULL else d[[i]]
   }

@@ -1,7 +1,7 @@
 # MM diagnosis events: claim headers, confinements, then the dx event tables.
 
 phase_dx_events <- function(cfg, h, ctx) {
-  work <- h$work; cdm_src <- h$cdm_src
+  cdm_src <- h$cdm_src
   icd_family_sql <- ctx$icd_fam
 
   list(
@@ -13,7 +13,7 @@ phase_dx_events <- function(cfg, h, ctx) {
       description = "Extracting medical claim headers from CDM (study period)",
       source_tables = c("medical"),
       sql = glue("
-        CREATE OR REPLACE TEMPORARY VIEW {work('med_claim_header')} AS
+        CREATE OR REPLACE TEMPORARY VIEW med_claim_header AS
         -- Keep the five-column claim grain.
         -- Flag each line before max(POS) can hide an inpatient code.
         SELECT PATID, PAT_PLANID, CLMID, FST_DT, LOC_CD,
@@ -32,7 +32,7 @@ phase_dx_events <- function(cfg, h, ctx) {
                sum(CASE WHEN PAT_PLANID IS NULL THEN 1 ELSE 0 END) AS n_null_pat_planid,
                sum(CASE WHEN LOC_CD     IS NULL THEN 1 ELSE 0 END) AS n_null_loc_cd,
                sum(CASE WHEN FST_DT     IS NULL THEN 1 ELSE 0 END) AS n_null_fst_dt
-        FROM {work('med_claim_header')}")
+        FROM med_claim_header")
     ),
 
     # Keep confinements with valid admission and discharge dates.
@@ -41,7 +41,7 @@ phase_dx_events <- function(cfg, h, ctx) {
       description = "Extracting confinement records",
       source_tables = c("confinement"),
       sql = glue("
-        CREATE OR REPLACE TEMPORARY VIEW {work('confinement')} AS
+        CREATE OR REPLACE TEMPORARY VIEW confinement AS
         SELECT DISTINCT PATID, CONF_ID,
                cast(ADMIT_DATE as date) AS ADMIT_DATE,
                cast(DISCH_DATE as date) AS DISCH_DATE
@@ -50,7 +50,7 @@ phase_dx_events <- function(cfg, h, ctx) {
           AND ADMIT_DATE IS NOT NULL
           AND DISCH_DATE IS NOT NULL
       "),
-      qc = glue("SELECT count(*) AS n_confinements FROM {work('confinement')}")
+      qc = glue("SELECT count(*) AS n_confinements FROM confinement")
     ),
 
     # Inpatient means a POS/TOS line flag or a valid confinement.
@@ -59,7 +59,7 @@ phase_dx_events <- function(cfg, h, ctx) {
       description = "Identifying MM diagnosis events (full study period, Approach 1+2 inpatient)",
       source_tables = c("med_diagnosis", "confinement"),
       sql = glue("
-        CREATE OR REPLACE TEMPORARY VIEW {work('mm_dx_events_all')} AS
+        CREATE OR REPLACE TEMPORARY VIEW mm_dx_events_all AS
         SELECT /*+ BROADCAST(c) */
           d.PATID,
           d.PAT_PLANID,
@@ -89,21 +89,21 @@ phase_dx_events <- function(cfg, h, ctx) {
           CASE WHEN cf.CONF_ID IS NOT NULL THEN 1 ELSE 0 END AS conf_validated,
           h.line_inpatient AS pos_tos_inpatient
         FROM {cdm_src(cfg$tbl_med_diag)} d
-        INNER JOIN {work('med_claim_header')} h
+        INNER JOIN med_claim_header h
           -- PAT_PLANID and LOC_CD may be NULL; use null-safe equality.
           ON d.PATID      =   h.PATID
          AND d.CLMID      =   h.CLMID
          AND d.FST_DT     =   h.FST_DT
          AND d.PAT_PLANID <=> h.PAT_PLANID
          AND d.LOC_CD     <=> h.LOC_CD
-        INNER JOIN {work('mm_dx_codes')} c
+        INNER JOIN mm_dx_codes c
           ON upper(regexp_replace(d.DIAG, '[^A-Za-z0-9]', '')) = c.dx
           AND ({icd_family_sql('d.ICD_FLAG')}) = c.icd_family
-        LEFT JOIN {work('confinement')} cf
+        LEFT JOIN confinement cf
           ON h.PATID = cf.PATID AND h.CONF_ID = cf.CONF_ID
         WHERE cast(d.FST_DT as date) BETWEEN date('{cfg$study_start}') AND date('{cfg$study_end}')
       "),
-      qc = glue("SELECT count(DISTINCT PATID) AS n_patients, sum(inpatient_flg) AS n_inpatient_events, sum(conf_validated) AS n_via_conf, sum(pos_tos_inpatient) AS n_via_pos_tos FROM {work('mm_dx_events_all')}")
+      qc = glue("SELECT count(DISTINCT PATID) AS n_patients, sum(inpatient_flg) AS n_inpatient_events, sum(conf_validated) AS n_via_conf, sum(pos_tos_inpatient) AS n_via_pos_tos FROM mm_dx_events_all")
     ),
 
     # MM dx events in ID period only (for index date qualification)
@@ -111,11 +111,11 @@ phase_dx_events <- function(cfg, h, ctx) {
       name = "08b_mm_dx_events_id",
       description = "Filtering MM events to identification period",
       sql = glue("
-        CREATE OR REPLACE TEMPORARY VIEW {work('mm_dx_events_id')} AS
-        SELECT * FROM {work('mm_dx_events_all')}
+        CREATE OR REPLACE TEMPORARY VIEW mm_dx_events_id AS
+        SELECT * FROM mm_dx_events_all
         WHERE svc_dt BETWEEN date('{cfg$id_start}') AND date('{cfg$id_end}')
       "),
-      qc = glue("SELECT count(DISTINCT PATID) AS n_patients FROM {work('mm_dx_events_id')}")
+      qc = glue("SELECT count(DISTINCT PATID) AS n_patients FROM mm_dx_events_id")
     )
   )
 }

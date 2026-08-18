@@ -1,5 +1,5 @@
 #!/usr/bin/env Rscript
-# The outcome definitions, held to protocol Table 4. No warehouse: the SQL is
+# The outcome definitions. No warehouse: the SQL is
 # built as a string, and the arithmetic is checked by evaluating the same rule
 # in R over hand-made cases.
 #
@@ -48,7 +48,7 @@ sys.source(file.path(ROOT, "R", "run_outcomes.R"),   envir = globalenv())
 BASE <- outcomes_base_sql("s.LINES", "s.COH")
 TTE  <- outcomes_tte_sql(BASE, "r1", "L1")
 
-cat("\n-- the follow-up end is the protocol's, not the LOT run's --\n")
+cat("\n-- the follow-up end is the study's, not the LOT run's --\n")
 # 6.1: "from the index date ... until the end of continuous enrollment or end
 # of study period or death, whichever occurs first."
 ok(has(TTE, "least(cast(c.ENDDATE as date)") && has(TTE, "c.ENDDATE_CE"),
@@ -58,7 +58,7 @@ ok(has(TTE, "least(cast(c.ENDDATE as date)") && has(TTE, "c.ENDDATE_CE"),
 ok(has(TTE, "coalesce(cast(c.ENDDATE_CE as date), cast(c.ENDDATE as date))"),
    "...and a patient who never disenrolled is not lost to a NULL")
 
-cat("\n-- TTNT, TTD and OS as Table 4 defines them --\n")
+cat("\n-- TTNT, TTD and OS as defined --\n")
 ok(has(TTE, "coalesce(b.NEXT_LOT_START_DT") && has(TTE, "AS TTNT_DT"),
    "TTNT ends at the next LOT or death, whichever is first")
 ok(has(TTE, "coalesce(b.LOT_END_DT") && has(TTE, "AS TTD_DT"),
@@ -200,7 +200,7 @@ cat("\n-- attrition: exclusive, and the categories mean what they say --\n")
 ATT <- outcomes_attrition_sql("s.TTE", "2026-03-31", "r1", "L1", TRUE)
 ok(has(ATT, "AS N_NEXT_LOT") && has(ATT, "AS N_DIED") &&
      has(ATT, "AS N_DISCON_NO_NEXT") && has(ATT, "AS N_LOST_TO_FU"),
-   "all four of Table 4's categories are counted")
+   "all four named categories are counted")
 # A patient who starts a next line and later dies belongs to the next-line
 # count; every other category is conditioned on there being no next line.
 #
@@ -212,17 +212,17 @@ ok(!has(ATT, "NEXT_LOT_NUM IS NOT NULL") && !has(ATT, "NEXT_LOT_NUM IS NULL"),
    "no category keys on the next-line column, which ignores follow-up")
 ok(length(gregexpr("TTNT_REASON = 'NEXT_LOT'", ATT)[[1]]) >= 4,
    "the observed next-LOT event conditions all five categories")
-# Table 4's four are not exhaustive. A patient still on treatment when the
+# The four named categories are not exhaustive. A patient still on treatment when the
 # data runs out was observed to the end of the study - they are not lost.
 ok(has(ATT, "AS N_ONGOING"),
    "still on treatment at the study end is its own count, not lost to follow-up")
 ok(grepl("FU_END_DT <\\s+date\\('2026-03-31'\\)", ATT) &&
      has(ATT, "FU_END_DT >= date('2026-03-31')"),
    "...and the two are separated by whether observation stopped before the study did")
-# Table 4 asks for number AND percent, so each category carries both.
+# Number AND percent are asked for, so each category carries both.
 ok(all(vapply(c("NEXT_LOT", "DIED", "DISCON_NO_NEXT", "LOST_TO_FU", "ONGOING"),
               function(k) has(ATT, paste0("AS PCT_", k)), logical(1))),
-   "each category carries its percent, as Table 4 asks")
+   "each category carries its percent beside the count")
 # The five partition the line: every patient lands in exactly one. Driven off
 # the SQL's own predicates, not a second copy of them. A copy keyed on the
 # next-line column agrees with an implementation that keys on it too.
@@ -504,11 +504,11 @@ tte_n <- outcomes_tte_sql(BASE, "r1", "L1", NULL)
 ok(has(tte_n, "NULL AS SUBSEQ_RUN_ID") && has(tte_n, "NULL AS CE_PRE_DAYS"),
    "with no line cohorts the provenance is NULL, as LINE_ELIGIBLE is")
 
-cat("\n-- Table 4 is answered over both denominators, not one chosen here --\n")
+cat("\n-- the outcomes are answered over both denominators, not one chosen here --\n")
 # 2L can mean "of the patients we followed from 1L" or "of the patients we could
 # properly observe at 2L" - NDMM_COHORT_2L adds 365 days of enrolment before the
 # line and 90 after. They answer different questions and give different numbers,
-# and nothing in the protocol picks one, so both are reported and the reader picks.
+# and nothing settled picks one, so both are reported and the reader picks.
 REG <- outcomes_regimen_sql("s.TTE", "r1", "L1", TRUE)
 EL <- outcomes_base_sql("s.LINES", "s.COH", NULL, list("2" = "s.C2", "3" = "s.C3"))
 TTE_EL <- outcomes_tte_sql(EL, "r1", "L1")

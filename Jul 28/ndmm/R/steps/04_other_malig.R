@@ -306,11 +306,5 @@ build_ndmm_other_malig_pre_lot1 <- function(con, med_diag_tbl) {
 #   NO_PREGNANCY            : no pregnancy code - diagnosis, HCPCS, ICD
 #                             procedure or revenue - anywhere in the study
 #                             period.
-# Readability probe used by the pregnancy gate (the scan view may not exist
-# if its source claims tables are unavailable).
-.ndmm_table_ok <- function(con, tbl) isTRUE(tryCatch(
-  nrow(db_q(con, glue("SELECT 1 FROM {tbl} LIMIT 1"))) >= 0,
-  error = function(e) FALSE))
-
 # Pregnancy exclusion, read straight from pregnancy.csv over the study period.
 # Self-contained, so it depends on no other build.

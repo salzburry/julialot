@@ -158,7 +158,7 @@ validate_line_criteria <- function(crit = LINE_CRITERIA, max_lot = NULL) {
 # A typo that quietly drops an intended criterion is worse than a halt.
 #
 # When it is unset the default is the criterion's own, not FALSE for everything.
-# no_belantamab is the protocol's exclusion and is pinned TRUE in CONTRACT. So
+# no_belantamab is a study exclusion and is pinned TRUE in CONTRACT. So
 # an unset variable leaves it on, and an explicit FALSE is a contract deviation
 # that check_contract() records. Under a blanket FALSE default, a config.csv
 # that lost the row gave a complete run with the exclusion off and nothing said

@@ -67,9 +67,9 @@ main <- function() {
   stamp <- format(Sys.time(), "%Y%m%d_%H%M%S")
 
   num <- function(x) suppressWarnings(as.numeric(x))
-  readable <- function(tbl) isTRUE(tryCatch(
-    nrow(db_q(con, glue("SELECT 1 FROM {tbl} LIMIT 1"))) >= 0,
-    error = function(e) FALSE))
+  readable <- function(tbl) isTRUE(tryCatch({
+    db_q(con, glue("SELECT 1 FROM {tbl} LIMIT 1")); TRUE
+  }, error = function(e) FALSE))
 
   write_out <- function(df, tag) {
     if (is.null(df) || nrow(df) == 0) {

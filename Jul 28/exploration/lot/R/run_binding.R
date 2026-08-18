@@ -23,10 +23,11 @@
 
 lot_run_row <- function(con, prefix) {
   tbl <- wrk(paste0(prefix, "LOT_BUILD_STATUS"))
-  d <- tryCatch(db_q(con, paste0(
-    "SELECT * FROM ", tbl, " ORDER BY UPDATED_AT DESC LIMIT 1")),
-    error = function(e) NULL)
-  if (is.null(d) || nrow(d) == 0) return(NULL)
+  # A table that cannot be READ raises here rather than reading as "no run
+  # recorded" - same rule as lot_run_meta(). NULL means the table has no row.
+  d <- db_q(con, paste0(
+    "SELECT * FROM ", tbl, " ORDER BY UPDATED_AT DESC LIMIT 1"))
+  if (nrow(d) == 0) return(NULL)
   one <- function(nm) {
     v <- .bind_col(d, nm)
     if (is.null(v)) NA_character_ else as.character(v[1])
@@ -92,8 +93,10 @@ lot_run_meta <- function(con, prefix) {
 # would ask for lines the run never built, or leave out lines it did.
 # CONTRACT_SETTINGS records the run's own values; the dashboard reads it the
 # same way. NULL when there is nothing to read, so the caller can say so.
-lot_run_contract <- function(con, prefix, key) {
-  m <- lot_run_meta(con, prefix)
+# Pass meta to reuse a row already fetched instead of re-reading the table
+# once per key.
+lot_run_contract <- function(con, prefix, key, meta = NULL) {
+  m <- if (is.null(meta)) lot_run_meta(con, prefix) else meta
   if (is.null(m) || is.na(m$settings)) return(NULL)
   hit <- regmatches(m$settings,
                     regexpr(paste0("(^|\\|)", key, "=[^|]*"), m$settings))

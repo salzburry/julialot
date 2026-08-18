@@ -1,7 +1,7 @@
 # Steps 3 and 4: continuous enrollment through baseline, and on the index date.
 
 phase_enrollment <- function(cfg, h, ctx) {
-  work <- h$work; cdm_src <- h$cdm_src
+  cdm_src <- h$cdm_src
 
   list(
     # ---- Phase 4: enrollment spans (feed CE gates, Steps 3-4) ----
@@ -13,7 +13,7 @@ phase_enrollment <- function(cfg, h, ctx) {
       description = "Building enrollment spans with 30-day gap logic from member_enrollment",
       source_tables = c("member_enrollment"),
       sql = glue("
-        CREATE OR REPLACE TEMPORARY VIEW {work('enrollment_spans')} AS
+        CREATE OR REPLACE TEMPORARY VIEW enrollment_spans AS
         WITH base AS (
           -- Use member_enrollment (raw) with 30-day gap allowance
           SELECT PATID, cast(ELIGEFF as date) AS elig_eff, cast(ELIGEND as date) AS elig_end
@@ -48,7 +48,7 @@ phase_enrollment <- function(cfg, h, ctx) {
         FROM grouped
         GROUP BY PATID, grp_id
       "),
-      qc = glue("SELECT count(DISTINCT PATID) AS n_patients FROM {work('enrollment_spans')}")
+      qc = glue("SELECT count(DISTINCT PATID) AS n_patients FROM enrollment_spans")
     ),
 
     # ---- Phase 4b: strict enrollment spans (no gaps) ----
@@ -61,7 +61,7 @@ phase_enrollment <- function(cfg, h, ctx) {
       description = "Building strict enrollment spans (no gaps, handles overlaps)",
       source_tables = c("member_enrollment"),
       sql = glue("
-        CREATE OR REPLACE TEMPORARY VIEW {work('enrollment_spans_strict')} AS
+        CREATE OR REPLACE TEMPORARY VIEW enrollment_spans_strict AS
         WITH base AS (
           -- Use member_enrollment (raw) to detect ALL gaps
           SELECT PATID, cast(ELIGEFF as date) AS elig_eff, cast(ELIGEND as date) AS elig_end
@@ -97,7 +97,7 @@ phase_enrollment <- function(cfg, h, ctx) {
         FROM grouped
         GROUP BY PATID, grp_id
       "),
-      qc = glue("SELECT count(DISTINCT PATID) AS n_patients FROM {work('enrollment_spans_strict')}")
+      qc = glue("SELECT count(DISTINCT PATID) AS n_patients FROM enrollment_spans_strict")
     ),
 
     # ---- Phase 5: CE flags - CE_b (Step 3) and CE_f (Step 4) ----
@@ -109,12 +109,12 @@ phase_enrollment <- function(cfg, h, ctx) {
       name = "14_ce_flags",
       description = "CRITERION: Continuous enrollment (baseline before index, follow-up from index)",
       sql = glue("
-        CREATE OR REPLACE TEMPORARY VIEW {work('ce_flags')} AS
+        CREATE OR REPLACE TEMPORARY VIEW ce_flags AS
         WITH idx AS (
           SELECT PATID, index_date,
                  date_sub(index_date, {cfg$baseline_days}) AS baseline_start,
                  date_sub(index_date, 1) AS baseline_end
-          FROM {work('mm_qualifying')}
+          FROM mm_qualifying
         ),
         -- CE_b and CE_f use standard enrollment spans (with 30-day allowable gaps)
         -- Baseline excludes index_date; CE_f requires enrollment on index_date (follow-up starts on index)
@@ -127,7 +127,7 @@ phase_enrollment <- function(cfg, h, ctx) {
                  CASE WHEN s.cov_start <= i.index_date AND s.cov_end >= i.index_date
                       THEN 1 ELSE 0 END AS has_1day_followup
           FROM idx i
-          LEFT JOIN {work('enrollment_spans')} s ON i.PATID = s.PATID
+          LEFT JOIN enrollment_spans s ON i.PATID = s.PATID
         )
         SELECT PATID, index_date, baseline_start, baseline_end,
                max(covers_baseline) AS CE_b,
@@ -136,7 +136,7 @@ phase_enrollment <- function(cfg, h, ctx) {
         FROM joined_std
         GROUP BY PATID, index_date, baseline_start, baseline_end
       "),
-      qc = glue("SELECT sum(CE_b) AS n_with_baseline_ce FROM {work('ce_flags')}")
+      qc = glue("SELECT sum(CE_b) AS n_with_baseline_ce FROM ce_flags")
     )
   )
 }

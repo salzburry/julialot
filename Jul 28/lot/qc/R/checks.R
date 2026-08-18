@@ -292,9 +292,9 @@ LOT_QC_CHECKS <- list(
 
   list(id = "B5", group = "End reason", severity = "fail",
        what = "the end reason is one the build can write",
-       why = paste0("The enum here is the build's, not the program spec's - the ",
-                    "spec lists SUBSTITUTION and MAINTENANCE_END, which nothing ",
-                    "produces, and does not list CART_INIT, which is produced. ",
+       why = paste0("The enum here is what the build writes - nothing ",
+                    "produces SUBSTITUTION or MAINTENANCE_END, and CART_INIT ",
+                    "is produced. ",
                     "This check is what makes that concrete rather than a ",
                     "reading of the code."),
        needs = "final",
@@ -986,12 +986,6 @@ LOT_QC_CHECKS <- list(
     LEFT JOIN ", t$cohort, " c ON cast(f.PATID as string) = cast(c.PATID as string)
     WHERE c.PATID IS NULL"), "pid"))
 )
-
-# Which tables a check needs, across the whole catalogue. The runner uses this
-# to skip a check whose table is absent rather than failing it: a missing table
-# is a run built by a different version, not a defect in this one.
-qc_needs <- function(checks = LOT_QC_CHECKS)
-  sort(unique(unlist(lapply(checks, function(c_i) c_i$needs))))
 
 # ---- Reading the run's own settings ----------------------------------------
 # Here rather than in the runner so they can be tested without a connection,

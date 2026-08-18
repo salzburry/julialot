@@ -51,16 +51,16 @@ PARTS <- list(
 #
 # All of these are the one clinical change the study team confirmed: the 1L
 # follow-up CE is one day of enrollment on the index date, not three months.
-# The protocol text (Rev Round 2, S6.2.1.1) says three months, so this is a
-# deliberate override of the written spec and is spelled out rather than
-# absorbed - the numbers it produces are not the numbers apr_30_2026 produces.
+# Three months is written elsewhere, so this is a deliberate override and is
+# spelled out rather than absorbed - the numbers it produces are not the
+# numbers apr_30_2026 produces.
 SUBST <- list(
-  # The study-period default. S6.1 gives 01 Jan 2016; the source defaulted to
-  # 2015-07-01, which is the overall build's window, not this one's. config.csv
-  # supplies STUDY_START in a real run so the effective date was already the
-  # protocol's - but cfg$study_start defaults the same variable to 2016-01-01,
-  # so without config.csv the two disagreed and check_constants() stopped the
-  # build. Both defaults are the protocol's date now, and a config.csv that
+  # The study-period default. The study starts 01 Jan 2016; the source
+  # defaulted to 2015-07-01, which is the overall build's window, not this
+  # one's. config.csv supplies STUDY_START in a real run so the effective date
+  # was already right - but cfg$study_start defaults the same variable to
+  # 2016-01-01, so without config.csv the two disagreed and check_constants()
+  # stopped the build. Both defaults are the study's date now, and a config.csv that
   # goes missing no longer widens the pregnancy and MM-diagnosis scans.
   "R/ndmm_constants.R" = list(
     # The dated events view the pregnancy scan now writes. A new name, not a
@@ -93,7 +93,7 @@ SUBST <- list(
   "R/steps/05_pregnancy.R" = list(
     # The medical arm now projects the claim date as well, because the events
     # view is dated - NDMM_PREG_WINDOW_COUNTS prices the study-period window
-    # against the program spec's baseline+follow-up reading, and cannot without
+    # against the narrower baseline+follow-up reading, and cannot without
     # dates. The EXCLUSION is unchanged: still every patient with a matched
     # claim anywhere in the study period. See DECISIONS.md #9.
     list(from = "SELECT cast(m.PATID as string) AS PATID, cast(m.FST_DT as date) AS event_dt,",
@@ -148,7 +148,12 @@ SUBST <- list(
     list(from = "THEN 1 ELSE 0 END) AS CE_fu",
          to   = "THEN 1 ELSE 0 END) AS CE_lot1_3mo", n = 1L),
     list(from = "coalesce(fuce.CE_fu, 0)                              AS CE_lot1_fu,",
-         to   = "coalesce(fuce.CE_lot1_3mo, 0)                        AS CE_lot1_3mo_fu,", n = 1L))
+         to   = "coalesce(fuce.CE_lot1_3mo, 0)                        AS CE_lot1_3mo_fu,", n = 1L),
+    # pregnancy_expr's close: the port ends the glue() call where the source
+    # ends the conditional's else arm. The head SPLICE stops one line short of
+    # it, so this puts the source's close back.
+    list(from = "\")",
+         to   = "\") else \"SELECT cast(NULL as string) AS PATID WHERE 1 = 0\"", n = 1L))
   # 06_flags.R's fourth CE_lot1_fu reference was the one in NDMM_PATIDS's WHERE.
   # That clause is now generated, so the line it renamed no longer exists and
   # the whole clause is undone by SPLICE below instead. 07_cohort.R's reference
@@ -192,8 +197,8 @@ ADDED <- list(
     "OR regexp_replace(CL_CODE, '[^0-9]', '') <> '')" = 1L,
     "AND regexp_replace(coalesce(cast(m.PROC_CD as string),''), '[^A-Za-z0-9]', '') <> ''" = 1L,
     "AND regexp_replace(coalesce(cast(m.BILL_PROC_CD as string),''), '[^A-Za-z0-9]', '') <> ''" = 1L,
-    # The fifth clinical change. The program spec names T_MED_PROCEDURE (PROC)
-    # among the CDM tables joined to CL_MMA_CODELIST, and Optum business rule 5
+    # The fifth clinical change. T_MED_PROCEDURE (PROC) joins to
+    # CL_MMA_CODELIST, and Optum business rule 5
     # says PROC finds a drug given as a procedure under a HCPCS or CPT code. The
     # source reads four sources and not that one, so a therapy administered and
     # coded that way is invisible to it - which would let a patient pass the
@@ -270,7 +275,7 @@ ADDED <- list(
     "'HCPCS', CASE WHEN s.BILL_PROC_CD IS NOT NULL" = 1L,
     "THEN upper(regexp_replace(s.BILL_PROC_CD, '[^A-Za-z0-9]', '')) END," = 1L,
     # The scan carries the claim date now, so NDMM_PREG_WINDOW_COUNTS can price
-    # the study-period window against the program spec's baseline+follow-up
+    # the study-period window against the narrower baseline+follow-up
     # reading. The EXCLUSION is unchanged - still every patient with a matched
     # claim anywhere in the study period. See DECISIONS.md #9.
     "cast(d.FST_DT as date) AS event_dt," = 1L,
@@ -294,16 +299,15 @@ ADDED <- list(
 # it is still held to the source exactly, and markers that stop matching are
 # reported - so deleting the rewrite does not read as a perfect match.
 #
-# ndmm_counts(): the attrition follows protocol Rev Round 2 S6.2.1.1 then
-# S6.2.1.2 in the order those sections list the criteria. The source applies
+# ndmm_counts(): the attrition follows the criteria in their listed study
+# order. The source applies
 # belantamab first and follow-up CE second-to-last. Same final cohort - it is
 # one conjunction either way - but different per-step counts, and the attrition
 # is the deliverable.
 SPLICE <- list(
-  # The sixth clinical change, and the one the protocol dictates rather than
-  # permits. S6.2.1.2 excludes on "the same primary tumor type and/or
-  # metastatic cancer". SECONDARY MALIGNANT NEOPLASM OF BONE is C79.51, a
-  # metastatic cancer, so the protocol says it excludes; the source overrode it
+  # The sixth clinical change. The exclusion covers the same primary tumor
+  # type and metastatic cancer. SECONDARY MALIGNANT NEOPLASM OF BONE is
+  # C79.51, a metastatic cancer, so it excludes; the source overrode it
   # because myeloma bone disease is often miscoded that way. Dropped from the
   # override list, so it excludes as written. The cohort is smaller than
   # apr_30_2026's. See ndmm/DECISIONS.md #4.
@@ -345,9 +349,8 @@ SPLICE <- list(
   # the attrition are the same six criteria by construction. The clause the
   # source wrote is swapped back in here; the flags and their order are held by
   # test_runner.R, which reads the generated clause rather than the file.
-  # The seventh clinical change, and the second the protocol dictates rather
-  # than permits. S6.2.1.2 excludes belantamab "in any LOT" and, unlike the
-  # three exclusions beside it - "during the 12-month 1L baseline period", "in
+  # The seventh clinical change. Belantamab excludes in any LOT and, unlike
+  # the three exclusions beside it - "during the 12-month 1L baseline period", "in
   # the 1L baseline period", "during the study period" - gives that one no
   # period at all. So a belantamab line earlier in the patient's history
   # disqualifies them too. The lot package cannot see that: map_stacked is built
@@ -358,13 +361,14 @@ SPLICE <- list(
   # added, so two of its lines are the same text as two of bela_expr's and
   # removing "the first occurrence" would take the wrong one out.
   "R/steps/06_flags.R" = list(
-    # Ends on the added predicate, which is the only unique line in the block:
-    # the `") else "SELECT ... WHERE 1 = 0"` that closes it closes all five of
-    # these CTEs. The port's own copy of that line then lines up with the
-    # source's, so the splice restores bela_expr's first four lines only.
-    list(from = "bela_expr <- if (q2_ok_belantamab) glue(\"",
-         to   = "WHERE upper(MAP_MED_TYPE) LIKE 'BEL%' AND PRE_LOT1 = 1",
-         src_from = 627L, src_to = 630L),
+    # The whole head of the function. The port drops the source's per-table
+    # gates - this build stops on a missing input instead of passing everyone
+    # on a criterion - and adds bela_pre_expr. Restoring the source head undoes
+    # both at once. Ends on pregnancy_expr's SELECT, the last unique line of
+    # the head; the close after it is restored by the SUBST below.
+    list(from = "build_ndmm_flags <- function(con, elig_coh_final, map_stacked) {",
+         to   = "SELECT DISTINCT cast(PATID as string) AS PATID FROM {NDMM_PREGNANCY_PATIDS}",
+         src_from = 622L, src_to = 642L),
     list(from = 'checkpoint(con, "NDMM_FLAGS_ALL")',
          to   = 'checkpoint(con, "NDMM_FLAGS_ALL")',
          src_from = 727L, src_to = 741L),
@@ -391,7 +395,7 @@ SPLICE <- list(
     # pairs on the code-list label, and a label is one ICD code's description -
     # 1,618 over 1,643 codes - so pairing on it means pairing on the identical
     # code, and a cancer at two subsites never confirms itself. This pairs on
-    # the ICD category, which is the protocol's unit. It can only add
+    # the ICD category, which is the exclusion's own unit. It can only add
     # exclusions, so the cohort is smaller than apr_30_2026's.
     list(from = "CREATE OR REPLACE TEMPORARY VIEW {NDMM_OTHER_MALIG_CODES} AS",
          to   = "ON m.dx = om.dx AND m.icd_family = om.icd_family",
@@ -463,13 +467,17 @@ DROPPED <- list(
                                  "NDMM_FLAGS_ALL_TBL"),
   # NDMM_LOT1_STARTS is built by 00b_lot1_index.R from claims, not from LOT_LONG.
   "R/steps/02_lot1_starts.R" = "build_lot1_starts_ndmm",
+  # The readability probe fed the source's per-table gates. This build stops on
+  # a missing input instead, so nothing calls it.
+  "R/steps/04_other_malig.R" = ".ndmm_table_ok",
   # Nothing reads NDMM_LOT_LONG_FILT: the LOT-detail views it fed are the
   # dashboard package's, and that reads LOT_LONG_FINAL directly.
   "R/steps/07_cohort.R"      = "build_lot_long_filtered"
 )
 
-# Remove each named definition from the source lines. A function runs to its
-# closing brace in column 0; a constant is the one line.
+# Remove each named definition from the source lines. A braced function runs
+# to its closing brace in column 0; a brace-less one runs until its parentheses
+# balance; a constant is the one line.
 undrop <- function(want, file) {
   short <- character(0)
   for (nm in DROPPED[[file]]) {
@@ -478,9 +486,20 @@ undrop <- function(want, file) {
     i <- i[1]
     j <- i
     if (grepl("function", want[i], fixed = TRUE)) {
-      k <- which(want[(i + 1L):length(want)] == "}")
-      if (!length(k)) { short <- c(short, paste0(nm, " (no closing brace)")); next }
-      j <- i + k[1]
+      if (grepl("\\{\\s*$", want[i])) {
+        k <- which(want[(i + 1L):length(want)] == "}")
+        if (!length(k)) { short <- c(short, paste0(nm, " (no closing brace)")); next }
+        j <- i + k[1]
+      } else {
+        open_n  <- function(x) lengths(regmatches(x, gregexpr("(", x, fixed = TRUE)))
+        close_n <- function(x) lengths(regmatches(x, gregexpr(")", x, fixed = TRUE)))
+        bal <- open_n(want[i]) - close_n(want[i])
+        while (bal > 0 && j < length(want)) {
+          j <- j + 1L
+          bal <- bal + open_n(want[j]) - close_n(want[j])
+        }
+        if (bal > 0) { short <- c(short, paste0(nm, " (parentheses never balance)")); next }
+      }
     }
     want <- want[-(i:j)]
   }
