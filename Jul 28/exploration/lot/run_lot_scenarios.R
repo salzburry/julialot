@@ -13,8 +13,9 @@
 #
 # Output: out/lot_scenarios.xlsx. How a line is built, the scenarios in plain
 # words with the same patient in days beside them, the patient counts by line
-# number, and what every code in the output table means. Without openxlsx the
-# same sheets come out as CSVs.
+# number, what every code in the output table means, and the open questions
+# still waiting on the study team. Without openxlsx the same sheets come out
+# as CSVs.
 #
 # The lines in each scenario are not predictions. Each one was produced by
 # running the engine's own SQL over that patient, and the synthetic harness
@@ -73,6 +74,48 @@ HOW_A_LINE_IS_BUILT <- data.frame(
   stringsAsFactors = FALSE)
 
 fmt_block <- function(v) if (!length(v)) "" else paste(v, collapse = "\n")
+
+# The rules that still need a decision from the study team. The code applies
+# each one on every run; what is open is whether it is the right rule. Each
+# points at the scenario that shows it and the count that sizes it.
+OPEN_QUESTIONS <- data.frame(
+  ID = c("Q1", "Q2", "Q3"),
+  THE_QUESTION = c(
+    paste0("Should a drug the patient is still taking count as part of the ",
+           "new line, even though they started it in an earlier line?"),
+    paste0("Is three months without a fill a treatment decision, or a ",
+           "paperwork artefact - a long holiday, a change of pharmacy ",
+           "benefit, a stockpile?"),
+    paste0("When treatment stops, the stop is confirmed, and the patient ",
+           "later dies with nothing in between - should the line end at the ",
+           "stop, with the death kept as the patient outcome it already is?")),
+  WHAT_THE_CODE_DOES_TODAY = c(
+    paste0("A drug counts only if the patient STARTS it in the line's first ",
+           "60 days (30 for later lines, 45 after CAR-T). A drug carried ",
+           "over from the last line and refilled without a break never ",
+           "counts."),
+    paste0("A break of 90 days or more in one drug's supply counts as ",
+           "stopping it. Under 90 days the line carries on through the gap. ",
+           "One day either side turns one line into two."),
+    paste0("The line is recorded as ending at the death. The date treatment ",
+           "stopped is still on the row, so the other reading is recoverable ",
+           "without a rebuild.")),
+  WHAT_A_CHANGE_WOULD_MOVE = c(
+    paste0("The drug lists on later lines. Line starts and line counts, ",
+           "because a drug missing from a line's list is free to start the ",
+           "next one. Line lengths."),
+    paste0("Where lines end and how many there are, for every patient whose ",
+           "refill gap sits near the threshold."),
+    paste0("Line lengths, time to discontinuation, and the died/stopped ",
+           "split. Not line counts.")),
+  SEE_SCENARIO = c("S09", "S05 and S06", "S15"),
+  THE_COUNT_THAT_SIZES_IT = c(
+    paste0("4.2-prior-agent-covered-but-not-in-the-regimen and ",
+           "4.3-line-started-by-an-agent-from-two-lines-back, in ",
+           "run_scenario_counts.R"),
+    "return-gap-around-the-90-day-threshold, in run_lot_audit_counts.R",
+    "the S15 row of the Patients-by-line sheet"),
+  stringsAsFactors = FALSE)
 
 # The codes the output table uses, in words. The scenarios are readable without
 # it; the table they describe is not.
@@ -193,6 +236,7 @@ main <- function() {
   if (!env_flag("SCENARIO_EXECUTE")) {
     write_workbook(list("How a line is built" = HOW_A_LINE_IS_BUILT,
                         "Scenarios"           = scen,
+                        "Open questions"      = OPEN_QUESTIONS,
                         "What the codes mean"  = WHAT_THE_CODES_MEAN),
                    file.path(out_dir, "lot_scenarios.xlsx"))
     return(invisible(0L))
@@ -289,6 +333,7 @@ main <- function() {
   write_workbook(list("How a line is built" = HOW_A_LINE_IS_BUILT,
                       "Scenarios"           = scen,
                       "Patients by line"    = counts,
+                      "Open questions"      = OPEN_QUESTIONS,
                       "What the codes mean" = WHAT_THE_CODES_MEAN),
                  file.path(out_dir, "lot_scenarios.xlsx"))
   if (failed) {

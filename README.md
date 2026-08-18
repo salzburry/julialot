@@ -48,7 +48,7 @@ fixed the only evidence the gate is green is running it locally.
 | question | file |
 |---|---|
 | What rules does the LOT engine apply? | `Jul 28/lot/LOT_RULES.md` |
-| What is still open for the study team? | `Jul 28/KNOWN_ISSUES.md` |
+| What is still open for the study team? | the Open questions sheet of `Jul 28/exploration/lot/run_lot_scenarios.R`'s workbook |
 | How do I run this on production? | `Jul 28/RUN_ON_PROD.md` |
 | What is in each folder? | each folder's own `FILES.md` |
 | The melphalan proposal and its branch table | `Jul 28/exploration/FILES.md` |
