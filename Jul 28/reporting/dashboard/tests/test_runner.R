@@ -69,10 +69,10 @@ ok(setequal(shows, want),
                      collapse = ", ")))
 
 cat("\n-- a section names only the inputs that exist --\n")
-# Asked of the code rather than kept as a copy here. A hand-written list goes
-# stale the moment an input is added, and it goes stale as three panels
-# failing to resolve a name the run resolves perfectly well - which reads as a
-# bug in the panels.
+# Asked of the code rather than kept as a copy here. A hand-written list falls
+# behind the moment an input is added, and it does so as panels failing to
+# resolve a name the run resolves perfectly well - which reads as a bug in the
+# panels.
 INPUTS <- local({
   set_dash_config(list(catalog = "", work_schema = "wk", lot_prefix = "p_",
                        cohort_prefix = "c_", input_cohort_table = "COH",
@@ -398,9 +398,9 @@ m <- tryCatch({ resolve_owner_run(NULL, oi, ohave, ocfg); "" }, error = conditio
 ok(grepl("LOT_CONTRACT_OVERRIDE", m, fixed = TRUE) &&
      grepl("max_lot=8", m, fixed = TRUE),
    "a run built as a different algorithm is refused, and named deviation by deviation")
-# The column was added later. Naming it in the ownership SELECT would make an
-# older status table unreadable - which reads as no status table at all and
-# falls back to the weaker metadata answer.
+# Naming the column in the ownership SELECT makes a status table without it
+# unreadable - which reads as no status table at all, and falls back to the
+# weaker metadata answer.
 stub(function(con, sql)
   if (grepl("CONTRACT_DEVIATIONS", sql, fixed = TRUE)) stop("no such column")
   else if (grepl("wk.ST", sql, fixed = TRUE))
@@ -549,8 +549,8 @@ s <- lay2(NDMM_COLS, own, 8L, funnel_at = "2026-01-01 09:00:00")
 ok(is.null(s$skip) && !grepl("not verified", s$label, fixed = TRUE),
    "...and the attempt LOT actually read is shown")
 # The same three-valued answer the CE-window panel gives. A comparison that
-# could not be made was collapsing into "not a later attempt", which is the one
-# thing it did not establish, and the funnel then went out labelled with a
+# cannot be made must not collapse into "not a later attempt", which is the one
+# thing it does not establish - the funnel would then go out labelled with a
 # cohort run as though the attempt had been checked.
 for (case in list(list(at = NA, why = "a funnel stamp that comes back NULL"),
                   list(at = "sometime", why = "one in a shape no date parser takes"),
@@ -600,9 +600,8 @@ ok(length(coh) > 0 && all(vapply(coh, function(s)
           length(coh), ")"))
 # needs has to name what the SQL reads, or probe_inputs cannot skip the panel
 # when its table is missing and the query fails instead.
-# Over every input the run resolves, not a list written out here. The written
-# one had already gone stale at lot_attrition: those panels declare it
-# correctly, but nothing here was checking that they did.
+# Over every input the run resolves, not a list written out here. A written list
+# falls behind the panels, and then checks nothing about the ones it missed.
 in_re <- paste0("\\{(", paste(names(INPUTS), collapse = "|"), ")\\}")
 mism <- Filter(function(s) {
   u <- gsub("[{}]", "", unique(regmatches(s$sql, gregexpr(in_re, s$sql))[[1]]))
@@ -750,9 +749,9 @@ cat("\n-- and they are not confused with the outcomes build's --\n")
 # This panel is one row per PATIENT over the study population. outcomes'
 # N_LOST_TO_FU / N_ONGOING are one row per patient-LINE, over what is left
 # after the next line, death and discontinuation are taken out - so this
-# panel's "Died" has no counterpart there. Calling them the same split, which
-# the docs once did, sends a reader to reconcile two numbers that cannot. The
-# folder's documentation is lot/FILES.md now, so that is the half checked here.
+# panel's "Died" has no counterpart there. Calling them the same split sends a
+# reader to reconcile two numbers that cannot be reconciled, so lot/FILES.md has
+# to keep them apart - which is the half checked here.
 dsrc <- c(paste(readLines(file.path(ROOT, "R", "sections.R"), warn = FALSE),
                 collapse = "\n"),
           paste(readLines(file.path(dirname(ROOT), "FILES.md"), warn = FALSE),
@@ -808,9 +807,9 @@ ok(grepl("LEFT JOIN b ON a.PATID = b.PATID", tsql, fixed = TRUE) &&
      grepl("'No LOT2'", tsql, fixed = TRUE),
    "a left join, so those who stopped are drawn instead of vanishing")
 # An SCT_ALLO line carries no regimen - the induction rows are suppressed for
-# it - so filtering on a non-blank LOT_BASE_MEDS read a patient who did reach
-# LOT2 as having stopped, and removed them entirely when it was the source
-# line. Inventing attrition is worse than omitting it.
+# it - so filtering on a non-blank LOT_BASE_MEDS reads a patient who did reach
+# LOT2 as having stopped, and removes them entirely when it is the source line.
+# Inventing attrition is worse than omitting it.
 ok(!grepl("AND trim(LOT_BASE_MEDS) <> ''", tsql, fixed = TRUE),
    "a line with no regimen string is still a line the patient reached")
 ok(grepl("concat(coalesce(LOT_START_TYPE, '?'), ' (no regimen)')", tsql, fixed = TRUE),

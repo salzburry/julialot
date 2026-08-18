@@ -23,10 +23,8 @@ build_ndmm_preg_codes <- function(con) {
   # A code type no source produces is a rule that cannot fire. Every other named
   # thing in this package stops the run when it matches nothing - the belantamab
   # abbreviation, the index-excluded agents, the MM-adjacent labels - and this
-  # code list was the one exemption. Read on the warehouse 2026-08-02 the file
-  # carries only the six below, so this passes; it is here because the file is
-  # production and can be re-issued, and a CPT-typed delivery code would
-  # otherwise be silent.
+  # code list is held to the same rule. The file is production and can be
+  # re-issued, so a CPT-typed delivery code would otherwise be silent.
   # Before the code types: whether any code survived normalising at all.
   # load_codelist_csv counts raw rows, and the view above drops rows whose code
   # is blank or punctuation-only - so a file carrying one row of 'HCPCS,---'

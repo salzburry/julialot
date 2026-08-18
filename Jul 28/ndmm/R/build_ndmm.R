@@ -170,7 +170,7 @@ check_settings <- function() {
     if (nzchar(x) && !grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", x))
       bad <- c(bad, paste0(v, "='", x, "' (want YYYY-MM-DD)"))
   }
-  # Empty means no ceiling, which is the shipped default. A value has to be a
+  # Empty means no ceiling, which is the default. A value has to be a
   # whole number, because "500 rows" or "5e2" would silently become something
   # else and the ceiling is the whole point of setting it.
   x <- trimws(Sys.getenv("NDMM_ICD_FLAG_MAX_ROWS", unset = ""))
@@ -237,9 +237,9 @@ check_contract <- function(cfg) {
   invisible(TRUE)
 }
 
-# Every raw CDM table a step reads. member_enrollment is the first one used -
-# both enrollment-span builds sit on it - and it was missing from this list,
-# so the preflight passed and the run then failed inside phase one.
+# Every raw CDM table a step reads, member_enrollment included: both
+# enrollment-span builds sit on it and it is the first one used, so a name
+# missing here lets the preflight pass and the run fail inside phase one.
 raw_tables <- function(cfg) {
   c(cfg$tbl_medical, cfg$tbl_rx, cfg$tbl_med_diag, cfg$tbl_med_proc,
     cfg$tbl_confinement, cfg$tbl_member_enroll, cfg$tbl_member_elig, cfg$tbl_dod)
@@ -833,10 +833,11 @@ BUILD_STATUS_COLS <- c(RUN_ID = "STRING", OBJECT_PREFIX = "STRING",
                        # Without it, LOT's check_cohort_build() can read a
                        # status row here and still not know whether it belongs
                        # to the cohort table it was handed - its ownership test
-                       # is "yes / no / it does not say", and this build only
-                       # ever answered "it does not say". A stale or mismatched
-                       # cohort then passed as verified. ensure_cols() adds the
-                       # column to a table written by an earlier run.
+                       # is "yes / no / it does not say". Without the column
+                       # the only answer available is "it does not say", and a
+                       # mismatched cohort then passes as verified.
+                       # ensure_cols() adds the column to a table written by an
+                       # earlier run.
                        FINAL_TABLE_NAME = "STRING",
                        UPDATED_AT = "TIMESTAMP")
 
@@ -1002,7 +1003,7 @@ check_icd_flag <- function(con, cfg) {
                                codes_line(probe_detail(p$t, p$c, p$l), n)))
     if (length(n) == 1L && !is.na(n) && n > 0) tally <- tally + n
     # A count that came back unreadable is not a count of zero. Saying so is
-    # the difference between "nothing to report" and "we could not tell".
+    # the difference between "nothing to report" and "this could not be read".
     if (!(length(n) == 1L && !is.na(n)))
       unreadable <- c(unreadable, p$t)
   }

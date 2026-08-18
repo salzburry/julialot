@@ -27,7 +27,7 @@ build_ndmm_belantamab_codes <- function(con) {
   # package cannot see the production CSV. If it matches nothing, the exclusion
   # the whole study turns on silently does nothing, and belantamab claims would
   # also be allowed to set the index date. Stop and say so rather than build a
-  # cohort on an assumption that turned out false.
+  # cohort on an assumption nothing has checked.
   n <- tryCatch(as.integer(db_q(con, glue(
     "SELECT count(*) AS n FROM {NDMM_BELANTAMAB_CODES}"))$n),
     error = function(e) NA_integer_)

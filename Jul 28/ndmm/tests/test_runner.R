@@ -183,8 +183,8 @@ drive_up <- function(unreadable = character(0)) {
   tryCatch({ ue$check_upstream(NULL, UCFG); NULL }, error = conditionMessage)
 }
 ok(is.null(drive_up()), "all eight raw inputs readable lets the run start")
-# There are no built inputs any more: this package reads raw CDM and its code
-# lists, which is what lets it be handed to someone on its own.
+# There are no built inputs: this package reads raw CDM and its code lists,
+# which is what lets it be handed to someone on its own.
 ok(length(upstream_tables(cfg_defaults)) == 0L,
    "the build depends on no table another build in this folder makes")
 msg <- drive_up("cdm.t_dod")
@@ -1525,9 +1525,9 @@ ok(grepl("'icd_ceiling(5),raw_icd_flag(16 rows, 2 codes)'", s_fail, fixed = TRUE
    "...in the same sorted, comma-joined shape the metadata column uses")
 ok(grepl("NULL", drive_status(character(0)), fixed = TRUE),
    "...and a run with nothing to report leaves the column NULL rather than empty")
-# One value per column. The findings value was added to a list that already had
-# one INSERT naming every column, and a mismatch is a SQL error at the moment a
-# run is trying to record that it failed - which would lose the record twice.
+# One value per column. The INSERT names every column, and a mismatch is a SQL
+# error at the moment a run is trying to record that it failed - which loses the
+# record twice.
 #
 # Counted off a finding carrying no comma of its own: the real ones do, and
 # splitting the VALUES list on ", " counts those as separators too.
@@ -1980,8 +1980,8 @@ cat("\n-- every setting config.csv ships is one the code reads --\n")
 # knob. Nothing compared the two.
 #
 # One direction only. The platform supplies names this file has no business
-# carrying, so a name read but not shipped is normal. A name shipped but never
-# read is not: it does nothing, or it is a typo for one that would have.
+# carrying, so a name read but not declared is normal. A name declared but never
+# read is not: it does nothing, or it is a typo for one that would.
 cnames <- local({
   rows <- read.csv(file.path(ROOT, "config.csv"), stringsAsFactors = FALSE,
                    comment.char = "#")
@@ -2247,12 +2247,12 @@ if (requireNamespace("bit64", quietly = TRUE)) {
 ok(2^53 > 1e15, "counts here are orders below the double's exact-integer limit")
 
 cat("\n-- the pregnancy window comparison counts the right people --\n")
-# The defect this replaces: `hit` held only patients WITH a pregnancy event and
-# was left-joined to all of them, so the window flags were NULL for everyone
-# else, NOT(NULL) is NULL, and CASE WHEN NULL THEN PATID END counted nobody.
-# Every patient without a pregnancy claim vanished from both cohort columns and
-# the applied row reported a cohort of zero. Nothing failed; the table simply
-# said something untrue about the study.
+# What this rules out: a `hit` holding only patients WITH a pregnancy event,
+# left-joined to all of them. The window flags are then NULL for everyone else,
+# NOT(NULL) is NULL, and CASE WHEN NULL THEN PATID END counts nobody. Every
+# patient without a pregnancy claim drops out of both cohort columns and the
+# applied row reports a cohort of zero. Nothing fails; the table just says
+# something untrue about the study.
 #
 # The suite could not see it because it checked the scan's bounds, the distinct
 # exclusion, the checkpoint and the orchestration - never the number.

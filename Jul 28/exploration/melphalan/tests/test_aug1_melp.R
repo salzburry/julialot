@@ -279,7 +279,7 @@ ok(identical(melp_lot1_base_tbl(off), "lot1_base lb") &&
      identical(melp_lot1_base_tbl(ask), "melp_lot1_base lb"),
    "...and every other reader in 06 is pointed at it, or at lot1_base when off")
 ok(!has(melp_lot1_base_from(ask), "LOT1_BASE_RUNOUT_DT"),
-   "...so end_candidates no longer swaps the run-out a second time")
+   "...so end_candidates does not swap the run-out a second time")
 ok(has(melp_lot1_ctes(ask), "melp_span AS (") &&
      has(melp_lot1_ctes(ask), "coalesce(mb.LOT1_BASE_RUNOUT_DT, ml.OBS_END_DT) AS SPAN_END_DT"),
    "the recomputed candidate list is bounded at the HELD run-out, not the original")

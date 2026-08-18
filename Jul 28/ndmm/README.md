@@ -131,7 +131,7 @@ began. The window that matters is in neither.
 | column | window |
 |---|---|
 | `CLINTRIAL_PRE_DX` | before the MM diagnosis |
-| `CLINTRIAL_DX_TO_LOT1` | diagnosis to the day before 1L - the one that was missing |
+| `CLINTRIAL_DX_TO_LOT1` | diagnosis to the day before 1L |
 | `CLINTRIAL_POST_LOT1` | 1L onward - context, never evidence of a prior line |
 | `CLINTRIAL_PRE_LOT1_12MO` | the twelve months before 1L |
 | `CLINTRIAL_FIRST_PRE_LOT1_DT`, `CLINTRIAL_DAYS_BEFORE_LOT1` | when, over any claim before 1L |
@@ -246,9 +246,9 @@ here.
 | 9 | No belantamab before the 1L index | any claim for a belantamab code from `cl_mma_codelist.csv`, in `medical`, `rx` or `med_procedure`, dated strictly before the index. This is half of the belantamab exclusion - the half `lot` cannot see, because the claims it reads start at the index. The other half, belantamab from the index onward, is `lot`'s `no_belantamab` line criterion. Overlaps #6 by design: that one already removes belantamab inside the 12-month baseline, so this one's incremental drop is the patients whose belantamab predates it | `00b_lot1_index.R`, `06_flags.R` |
 
 Four of the nine need a number from a real run before anyone can sign them
-off. Each is decided and implemented - `DECISIONS.md` is the record - and each
-writes a review table saying what it cost, so the confirmation is a reading
-rather than a rewrite:
+off. Each is implemented - `DECISIONS.md` states the rule - and each writes a
+review table saying what it costs, so the confirmation is a reading rather than
+a rewrite:
 
 | criterion | what the run has to settle | read it from |
 |---|---|---|
@@ -264,9 +264,9 @@ Not applied: clinical-trial participation. It belongs to the broader MM
 cohort's funnel, not to this one's four exclusions. Putting it back is a new
 step, not a toggle.
 
-Belantamab is matched by drug, not by class. The exclusion names belantamab
-and calls it an ADC because it was the only ADC in use for MM at the time. That
-describes the drug; it does not widen the criterion to the class.
+Belantamab is matched by drug, not by class. The exclusion names belantamab and
+calls it an ADC, which describes the drug. It does not widen the criterion to
+the class.
 
 How belantamab is spelled is an assumption this package cannot check.
 `NDMM_BELANTAMAB_ABBR`, default `BELA`, matched as a whole `CL_MED_ABBR`
@@ -378,13 +378,13 @@ than another cancer: monoclonal gammopathy, solitary plasmacytoma,
 plasma cell leukemia, extramedullary plasmacytoma. All four are
 plasma-cell disease, which is the index disease or its precursor.
 
-Secondary neoplasm of bone is not among them, and that is deliberate.
-The rule excludes on the same primary tumour type or metastatic cancer,
-and `C79.51`, `C79.52` and `198.5` are metastatic cancers. An earlier override
-kept `SECONDARY MALIGNANT NEOPLASM OF BONE` because myeloma bone disease is
-commonly miscoded that way; this build follows the stated rule instead and
-lets all three exclude. They pair under ICD category `C79` with the rest of the
-secondary-neoplasm block.
+Secondary neoplasm of bone is not among them. The rule excludes on the same
+primary tumour type or metastatic cancer, and `C79.51`, `C79.52` and `198.5`
+are metastatic cancers, so all three exclude. They pair under ICD category
+`C79` with the rest of the secondary-neoplasm block.
+
+The argument for keeping them is that myeloma bone disease is commonly miscoded
+that way. This build follows the stated rule instead.
 
 That makes the cohort smaller, and some of the patients it
 removes will be myeloma patients whose bone lesions were coded as metastases.
@@ -539,9 +539,10 @@ completed run the two agree; on a stopped one only the status row exists.
 
 A count that cannot be read stops, from either CDM source independently: one
 source unreadable and the other reporting rows makes the total a partial, and a
-ceiling weighed against a partial passes on a volume nobody measured. `NDMM_WAIVERS=raw_icd_flag` is still accepted and now does
-nothing - an unrecognised waiver name stops the build as a typo, so removing it
-would break the commands that were told to pass it.
+ceiling weighed against a partial passes on a volume nobody measured.
+`NDMM_WAIVERS=raw_icd_flag` is accepted and does nothing. An unrecognised waiver
+name stops the build as a typo, so the name stays accepted for the commands that
+pass it.
 
 Each waiver is accepted separately:
 `NDMM_WAIVERS=codelist_ndc_shape,codelist_ndc_short`. Those two are the only
@@ -806,9 +807,9 @@ sensitivity tables take all-but-the-one they vary. Nothing writes the
 conjunction out for itself, so the cohort table, the funnel and those tables
 cannot disagree about what the criteria are.
 
-### Decisions that change who is in the cohort
+### Rules that change who is in the cohort
 
-Five, each deliberate and each recorded:
+Five, each recorded in `DECISIONS.md`:
 
 | change | direction |
 |---|---|

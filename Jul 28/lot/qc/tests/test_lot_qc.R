@@ -195,8 +195,8 @@ ok(has(SQL$C1, "LEFT JOIN s.TMAP") && has(SQL$C1, "WHERE ms.PATID IS NULL"),
    "...and finds the regimen drugs with no episode in that window")
 # ...and the transplant cutoff, not the window alone. A regimen drug whose
 # episode started after the transplant that ended the line is still inside the
-# nominal 30, 45 or 60 days, so the window on its own passed on exactly the
-# shape REGIMEN_CUTOFF_DT was added to prevent.
+# nominal 30, 45 or 60 days, so the window on its own passes exactly the shape
+# REGIMEN_CUTOFF_DT exists to prevent.
 ok(has(SQL$C1, "AS ELIGIBLE_END") && has(SQL$C1, "coalesce(c.CUTOFF_DT"),
    "...bounded by the transplant cutoff as well, the way the engine bounds it")
 ok(has(SQL$C1, "l.LOT_NUM  > 1 AND x.TX_DT >  l.LOT_START_DT"),
@@ -274,9 +274,9 @@ ok(identical(Filter(function(c_i) identical(c_i$id, "B9"), LOT_QC_CHECKS)[[1]]$s
    "B9 reports a documented ambiguity, so it can never fail a run")
 # B5c asks whether a line covered a transplant inside its own window. The
 # build stops reading a line's AUTOs at the first ALLO or CAR-T, so an AUTO
-# after one of those was never the line's to cover. Without the censor the
-# check fails a correct run: an ALLO on day 9 ends LOT1, and an AUTO on day 20
-# is still inside the 60-day window.
+# after one of those is not the line's to cover. Without the censor the check
+# fails a correct run: an ALLO on day 9 ends LOT1, and an AUTO on day 20 is
+# still inside the 60-day window.
 ok(has(SQL$B5c, "NOT EXISTS") && has(SQL$B5c, "x.SCT_TYPE IN ('ALLO', 'CART')"),
    "B5c applies the same ALLO/CAR-T censor the build applies")
 ok(has(SQL$B5c, "x.TX_DT <= a.TX_DT"),
@@ -310,8 +310,8 @@ ok(!noexempt$cart_exempt &&
 ok(has(SQL$E5, "AND (a.n_lines < 5\n            OR a.dt <= max(l.LOT_BASE_END_DT))"),
    "E5 reports an unassigned transplant unless BOTH conditions excuse it")
 # Every claim source in 05_sct.R is bounded to [INDEX_DATE, OBS_END_DT], so
-# TX_AUTO_DATES cannot carry an event past the end of follow-up. That was the
-# stated reason for reporting rather than failing, and it does not hold.
+# TX_AUTO_DATES cannot carry an event past the end of follow-up. One that does
+# is a broken input, which is why this fails rather than reports.
 e5 <- Filter(function(c_i) identical(c_i$id, "E5"), LOT_QC_CHECKS)[[1]]
 ok(identical(e5$severity, "fail"),
    "...and a row in it fails the run, since no row can be explained by follow-up")
