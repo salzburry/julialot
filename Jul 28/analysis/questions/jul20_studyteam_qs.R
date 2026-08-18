@@ -30,22 +30,8 @@
 #   the exact impact: moving a boundary changes induction windows, regimens,
 #   discontinuation dates and every later line.
 #
-#   (a) MELP: off unless JUL20_Q3A_MELP=TRUE. It screens a one-sentence
-#       melphalan rule whose two branches both keep MELP inside the line, so
-#       under it no MELP ever advances a line. That is not the rule the study
-#       asks about: the ask is a five-branch table (A.1, A.2, B.1, B.2, B.3) in
-#       which A.2, B.1 and B.3 advance the line. This screen also reads
-#       persisted tables rather than re-running the engine, so it cannot see a
-#       moved boundary changing the induction window, the regimen, the
-#       discontinuation date and every later line.
-#
-#       The melphalan question is answered by three complete builds,
-#       differenced:
-#         exploration/melphalan/run_aug1_melp.R      builds the cells
-#         exploration/melphalan/read_melp_asks.R     the study team's questions
-#         exploration/melphalan/read_melp_decisions.R what each decision is worth
-#       The branch table is in exploration/FILES.md. Do not quote this screen
-#       for the melphalan question.
+#   (a) MELP: off unless JUL20_Q3A_MELP=TRUE. The melphalan question is
+#       answered in exploration/melphalan/.
 #   (b) CAR-T: patients whose first CAR-T falls inside the 60-day LOT1 induction
 #       window, classified by how the engine handled it. The fold-back merge is
 #       computed where LOT1 ended by the CAR-T and LOT2 is CART-started; the
@@ -863,9 +849,8 @@ q3_cart_shift_table <- function(shift) {
 
 # Q3a - MELP rule: preliminary boundary screen (not an engine re-run).
 #
-# Gated behind JUL20_Q3A_MELP=TRUE. It answers a one-sentence melphalan rule
-# rather than the five-branch ask, so it is off unless the July-20 workbook is
-# being reproduced. See the header.
+# Gated behind JUL20_Q3A_MELP=TRUE. The melphalan question is answered in
+# exploration/melphalan/.
 #
 # A "MELP boundary" is a line transition attributable to melphalan: the
 # earlier line ended MED_ADD with MELP as the added drug, and/or the next
@@ -1473,17 +1458,14 @@ main <- function() {
                            substr(as.character(cart$status[1]), 1, 200)))
   }
 
-  # Opt-in. Runnable so the July-20 workbook can be reproduced; refused by
-  # default so nobody answers the melphalan question with the one-sentence rule
-  # this screens.
+  # Opt-in, so it cannot run by accident.
   q3a_on <- identical(toupper(trimws(Sys.getenv("JUL20_Q3A_MELP", unset = ""))), "TRUE")
   melp <- if (!q3a_on)
     data.frame(status = paste0(
-      "NOT RUN. This screens a one-sentence melphalan rule off persisted ",
-      "tables, not the five-branch ask. The melphalan question is answered in ",
-      "exploration/melphalan/ - run_aug1_melp.R builds three complete cells ",
-      "and read_melp_asks.R / read_melp_decisions.R read them. Set ",
-      "JUL20_Q3A_MELP=TRUE only to reproduce the July-20 workbook."),
+      "NOT RUN. The melphalan question is answered in exploration/melphalan/ - ",
+      "run_aug1_melp.R builds the cells, read_melp_asks.R and ",
+      "read_melp_decisions.R read them. Set JUL20_Q3A_MELP=TRUE to run this ",
+      "screen anyway."),
       stringsAsFactors = FALSE)
   else if (have_map)
     best_effort(q3_melp_screen(con, lot_long, map_tbl, tok$melp), "MELP rule screen")
@@ -1529,7 +1511,7 @@ main <- function() {
     "These screens identify the patients and line boundaries the two candidate rules would touch, from the already-derived LOT output. They do not re-derive lines: moving a boundary changes induction windows, regimens, discontinuation dates, add-med picks, transplant classification and every later line. Exact numbers need an isolated scenario re-run of the LOT derivation (separate scenario output tables; production untouched) once the rules are confirmed.",
     "",
     "-- (a) MELP 60-180-day rule --",
-    "Do not quote this section for the melphalan question. It screens a one-sentence rule whose two branches both keep MELP inside the line. The ask is a five-branch table (A.1, A.2, B.1, B.2, B.3) in which A.2, B.1 and B.3 DO advance the line, and it is built as three complete LOT runs in exploration/melphalan/ rather than screened off persisted tables. Use run_aug1_melp.R with read_melp_asks.R and read_melp_decisions.R.",
+    "The melphalan question is answered in exploration/melphalan/ - run_aug1_melp.R with read_melp_asks.R and read_melp_decisions.R. Do not quote this section for it.",
     "The rule this screen reads is ambiguous: 'if a MELP occurs >=60 and <=180 days after the start of the first MELP MAP in a LOT, it does not advance the LOT; otherwise MELP should be treated as part of the LOT.' Read literally, BOTH branches keep MELP inside the line, so no MELP ever advances a line. What that leaves open:",
     "  1. Does the rule apply only to repeated MELP episodes 60-180 days apart, or to every MELP?",
     "  2. Is it restricted to an autologous-transplant (conditioning) context?",

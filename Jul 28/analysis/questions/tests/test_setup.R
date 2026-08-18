@@ -856,9 +856,10 @@ cat("\n-- the July-20 melphalan screen cannot run by accident --\n")
 j20 <- paste(readLines(file.path(ROOT, "jul20_studyteam_qs.R"), warn = FALSE),
              collapse = "\n")
 ok(grepl("JUL20_Q3A_MELP", j20, fixed = TRUE) &&
-     grepl("NOT RUN. This screens a one-sentence melphalan rule", j20, fixed = TRUE),
+     grepl("NOT RUN.", j20, fixed = TRUE),
    "the melphalan screen is off unless JUL20_Q3A_MELP=TRUE")
-ok(grepl("exploration/melphalan/run_aug1_melp.R", j20, fixed = TRUE) &&
+ok(grepl("exploration/melphalan/", j20, fixed = TRUE) &&
+     grepl("run_aug1_melp.R", j20, fixed = TRUE) &&
      grepl("read_melp_asks.R", j20, fixed = TRUE),
    "...and says where the melphalan question is answered, by path")
 # The gate reads the environment ONCE, where the screen is called. A second
