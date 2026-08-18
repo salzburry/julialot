@@ -326,7 +326,7 @@ LOT_QC_CHECKS <- list(
 
   list(id = "B5c", group = "End reason", severity = "fail",
        what = "a line covers every transplant inside its own window",
-       why = paste0("This is the defect SCT_AUTO_CONT exists to close: a line ",
+       why = paste0("This is the shape SCT_AUTO_CONT exists to prevent: a line ",
                     "that ends before a transplant inside its own window leaves ",
                     "that transplant in no line, because the next line's start ",
                     "gate refuses it for being in-window. Read from ",

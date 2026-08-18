@@ -257,7 +257,7 @@ AUDIT_COUNTS <- list(
   # A non-zero count means the cutoff is not binding somewhere.
   list(id = "3.3-regimen-agents-starting-after-the-line-ended",
        what = "Lines naming a regimen agent with no supply episode inside the line",
-       expect = "zero - this is the defect the regimen cutoff closed",
+       expect = "zero - the regimen cutoff is what keeps it at zero",
        sql = "
       WITH exploded AS (
         SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_BASE_END_DT,

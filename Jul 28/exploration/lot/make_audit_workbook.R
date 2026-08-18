@@ -68,7 +68,7 @@ NOTES <- list(
     "Every other transplant check starts from a line, so a transplant with no line has no row to be wrong on - it simply disappears. This one starts from the transplants instead."),
   "tandem-pair-whose-first-transplant-is-out-of-window" = c(
     "Two transplants close together where the first came too late to belong to its line.",
-    "Neither. It shows how many patients the fix could touch.",
+    "Neither. It shows how many patients the rule could touch.",
     "Two transplants within 180 days are read as one planned pair, which stops the second starting a line. That only holds if a line was keeping the pair. If the first was already outside the line's window, nothing was - so the second ends up owned by nobody."),
   "runout-unconfirmed-by-a-tandem-no-line-held" = c(
     "A transplant after the line ran out that one rule called a pair and another did not.",

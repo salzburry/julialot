@@ -113,7 +113,7 @@ AUDIT_COUNTS <- list(
                              AND x.TX_DT BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT)
       )
       SELECT CASE WHEN TX_DT <= LAST_END THEN 'a. in a gap between two lines'
-                  WHEN N_LINES < {max_lot} THEN 'b. after the last line, with lines still available - THE DEFECT'
+                  WHEN N_LINES < {max_lot} THEN 'b. after the last line, with lines still available - THE ONE TO WATCH'
                   ELSE 'c. after the last line at the cap - a reconciliation number, not a defect'
              END                     AS SHAPE,
              count(*)                AS N_TRANSPLANTS,

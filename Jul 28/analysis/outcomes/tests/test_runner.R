@@ -130,7 +130,7 @@ g <- tte("2020-01-01", "2020-09-01", "2020-07-01", "2021-01-01")
 ok(g$event == 1 && g$days == 182, "...and death before the next line, likewise")
 # Disenrolled, then died outside observation. The death is not an event: it was
 # never seen. This is the one case where a strict test happens to be right, and
-# the reason the fix is "on or before" rather than "on".
+# the reason the test is "on or before" rather than "on".
 h <- tte("2020-01-01", NA, "2020-09-01", "2021-01-01", ce_end = "2020-06-30")
 ok(h$fu_end == as.Date("2020-06-30") && h$event == 0 && h$days == 181,
    "disenrolled before dying: censored at disenrolment, not an event")
@@ -684,7 +684,7 @@ refuses(mk(), "2026-03-31", "a run built to a different study end is refused",
 # Re-running the cohort under the same prefix replaces the cohort, the
 # enrolment spans and NDMM_BASE_COHORT in place. The table name still matches,
 # so name-checking alone accepts lines from attempt A measured against dates
-# from attempt B - the defect already fixed in the 2L/3L builder.
+# from attempt B - the same shape the 2L/3L builder guards against.
 refuses(mk(ndmm = list(RUN_ID = "N8", UPDATED_AT = "2026-04-02 11:00:00")),
         "cohort run N7", "a cohort rebuilt since the LOT run is refused")
 refuses(mk(ndmm = modifyList(NDMMS, list(UPDATED_AT = "2026-04-02 11:00:00"))),

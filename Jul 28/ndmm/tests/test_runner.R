@@ -2298,11 +2298,12 @@ cat("\n-- and the numbers are checked against invariants, not just produced --\n
 good <- data.frame(N_WITH_PREG_CLAIM = c(3L, 2L), N_EXCL_INCREMENTAL = c(2L, 1L),
                    N_COHORT = c(1L, 2L), IS_THIS_RUN = c(1L, 0L))
 ok(isTRUE(we$check_preg_window_counts(good)), "a consistent pair passes")
-# Exactly the shape the defect produced: applied row zero, the rest plausible.
+# Exactly the shape a NULL-collapsed pregnancy join produces: applied row zero,
+# the rest plausible.
 bug <- data.frame(N_WITH_PREG_CLAIM = c(3L, 2L), N_EXCL_INCREMENTAL = c(0L, 0L),
                   N_COHORT = c(0L, 1L), IS_THIS_RUN = c(1L, 0L))
 ok(inherits(tryCatch(we$check_preg_window_counts(bug), error = function(e) e), "error"),
-   "...and the shape the defect produced - applied cohort zero - is refused")
+   "...and that shape - applied cohort zero - is refused")
 worse <- data.frame(N_WITH_PREG_CLAIM = c(3L, 2L), N_EXCL_INCREMENTAL = c(2L, 1L),
                     N_COHORT = c(2L, 1L), IS_THIS_RUN = c(1L, 0L))
 ok(inherits(tryCatch(we$check_preg_window_counts(worse), error = function(e) e), "error"),
