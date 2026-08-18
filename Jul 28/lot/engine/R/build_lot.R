@@ -31,7 +31,7 @@ CONTRACT <- list(
   # the line nor starts one. Confirmed by the study team on 2026-08-13; see
   # R/cart_rule.R and the CAR-T induction rule in lot/LOT_RULES.md.
   apply_cart_induction_rule   = TRUE,
-  # The protocol's belantamab exclusion. Pinned here so an unset
+  # The belantamab exclusion. Pinned here so an unset
   # APPLY_NO_BELANTAMAB leaves it on rather than silently off, and turning it
   # off is a recorded contract change. criterion_enabled() reads this.
   apply_no_belantamab         = TRUE,
@@ -384,7 +384,7 @@ check_cohort_build <- function(con, cfg) {
     names_it <- if (is.na(cohort_col)) NA
                 else identical(toupper(trimws(cohort_col)), want)
     found[[length(found) + 1L]] <- list(
-      table = tbl, state = tolower(trimws(pick("state") %||% "")),
+      table = tbl, state = tolower(trimws(pick("state"))),
       run_id = pick("run_id"), stamp = pick("updated_at"),
       names_it = names_it, cohort = cohort_col)
   }
@@ -493,7 +493,7 @@ recheck_cohort_build <- function(con, cfg, before) {
   }
   after <- tryCatch(check_cohort_build(con, cfg), error = function(e) e)
   if (inherits(after, "error"))
-    stop("The cohort build's status changed while LOT was reading it: ",
+    stop("Re-checking the cohort build after the copy failed: ",
          conditionMessage(after), call. = FALSE)
   if (!identical(after$run_id, before$run_id) ||
       !identical(as.character(after$stamp), as.character(before$stamp)))
@@ -574,18 +574,8 @@ check_lot_contract <- function(cfg) {
             "such in LOT_BUILD_STATUS, and the questions, the dashboard and ",
             "the benchmark harness all refuse a run carrying deviations.")
   }
-  # Without a prefix every run writes the same table names, so a second cohort
-  # would overwrite the first instead of sitting beside it.
-  if (!nzchar(cfg$object_prefix))
-    stop("No output prefix. LOT outputs would collide with another cohort's.",
-         call. = FALSE)
-  if (!nzchar(cfg$input_cohort_table))
-    stop("No cohort table to read.", call. = FALSE)
-  # Not in CONTRACT, so say so here rather than letting an empty window reach
-  # get_quarter_suffix() and fail as an unparseable date.
-  if (!nzchar(cfg$study_start %||% "") || !nzchar(cfg$study_end %||% ""))
-    stop("No study window. LOT reads the quarterly CDM tables that study_end ",
-         "selects, so it cannot start without one.", call. = FALSE)
+  # A blank prefix, cohort table or study window has already stopped the run in
+  # pin_cohort() / pin_study_window(), which run first.
   if (!isTRUE(cfg$persist_to_schema))
     stop("PERSIST_TO_SCHEMA is FALSE, so nothing would be written. ",
          "Set it TRUE to build LOT.", call. = FALSE)
@@ -1348,14 +1338,15 @@ run_face_validity <- function(con, cfg) {
 }
 
 check_run_recorded <- function(con, cfg) {
+  # A count that cannot be READ stops with the warehouse's own message - it is
+  # not the same finding as a row that is not there.
   # Exactly one row, not at least one. 08_persist writes this table with a
   # DELETE and an INSERT retried separately, so an INSERT that reached the
   # warehouse with its answer lost leaves two rows. Caught here rather than in
   # the writer.
   meta_tbl <- lot_out("LOT_RUN_METADATA")
-  n <- tryCatch(db_q(con, glue(
-         "SELECT count(*) AS n FROM {meta_tbl} WHERE RUN_ID = '{run_id}'"))$n,
-       error = function(e) 0L)
+  n <- db_q(con, glue(
+         "SELECT count(*) AS n FROM {meta_tbl} WHERE RUN_ID = '{run_id}'"))$n
   if (is.na(n) || n < 1)
     stop("This run left no row in ", meta_tbl, ". The outputs exist but ",
          "nothing records how they were built.", call. = FALSE)
@@ -1367,10 +1358,9 @@ check_run_recorded <- function(con, cfg) {
   # The same fixed set of checks runs every time, so a CHECK_NAME appearing
   # twice is a doubled write rather than a second finding.
   qc_tbl <- lot_out("LOT_QC_SUMMARY")
-  q <- tryCatch(db_q(con, glue(
+  q <- db_q(con, glue(
          "SELECT count(*) AS n, count(DISTINCT CHECK_NAME) AS k
-          FROM {qc_tbl} WHERE RUN_ID = '{run_id}'")),
-       error = function(e) data.frame(n = 0L, k = 0L))
+          FROM {qc_tbl} WHERE RUN_ID = '{run_id}'"))
   if (is.na(q$n) || q$n < 1)
     stop("This run left no row in ", qc_tbl, ". The outputs exist but ",
          "nothing records how they were built.", call. = FALSE)
@@ -1381,12 +1371,11 @@ check_run_recorded <- function(con, cfg) {
   # has to be accounted for. "At least one row" would pass a run that recorded
   # a single file, which is the shape a partial write leaves behind.
   cl_tbl <- lot_out("LOT_CODELIST_METADATA")
-  c4 <- tryCatch(db_q(con, glue(
+  c4 <- db_q(con, glue(
          "SELECT count(*) AS n, count(DISTINCT CODELIST_FILE) AS k
           FROM {cl_tbl}
           WHERE RUN_ID = '{run_id}' AND MD5 RLIKE '^[0-9a-f]{{32}}$'
-            AND CODELIST_FILE IN ({paste0(\"'\", CODELIST_FILES, \"'\", collapse = ', ')})")),
-       error = function(e) data.frame(n = 0L, k = 0L))
+            AND CODELIST_FILE IN ({paste0(\"'\", CODELIST_FILES, \"'\", collapse = ', ')})"))
   if (is.na(c4$k) || c4$k != length(CODELIST_FILES))
     stop("This run recorded ", if (is.na(c4$k)) 0 else c4$k, " of ",
          length(CODELIST_FILES), " code lists in ", cl_tbl,
@@ -1398,11 +1387,10 @@ check_run_recorded <- function(con, cfg) {
 
   # The row is written by phase_persist, before LOT2-5 exists, so a row alone
   # says only that LOT1 ran. record_final_counts fills the rest in.
-  n <- tryCatch(db_q(con, glue(
+  n <- db_q(con, glue(
          "SELECT count(*) AS n FROM {meta_tbl}
           WHERE RUN_ID = '{run_id}' AND N_LOT_LONG_ROWS IS NOT NULL
-            AND N_LOT_FINAL_ROWS IS NOT NULL"))$n,
-       error = function(e) 0L)
+            AND N_LOT_FINAL_ROWS IS NOT NULL"))$n
   if (is.na(n) || n < 1)
     stop("The metadata row for this run has no LOT_LONG counts. It describes ",
          "LOT1 only, so nothing records what LOT2-5 produced.", call. = FALSE)
@@ -1672,9 +1660,8 @@ check_belantamab_abbr <- function(con, cfg) {
                enabled_line_criteria())
   if (!length(on)) return(invisible(NULL))
   abbr <- cfg$belantamab_med_abbr
-  n <- tryCatch(as.integer(db_q(con, glue(
-    "SELECT count(*) AS n FROM mma_codelist WHERE CL_MED_ABBR = '{abbr}'"))$n),
-    error = function(e) NA_integer_)
+  n <- as.integer(db_q(con, glue(
+    "SELECT count(*) AS n FROM mma_codelist WHERE CL_MED_ABBR = '{abbr}'"))$n)
   if (is.na(n) || n == 0)
     stop("APPLY_NO_BELANTAMAB is on, but no row of cl_mma_codelist.csv has ",
          "CL_MED_ABBR = '", abbr, "'. The criterion would exclude nobody and ",

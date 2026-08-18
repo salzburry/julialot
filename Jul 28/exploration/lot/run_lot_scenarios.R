@@ -321,8 +321,8 @@ main <- function() {
   # run too old to have recorded a value, and the provenance sheet says which
   # was used.
   run_setting <- function(key, fallback) {
-    v <- lot_run_contract(con, pfx, key)
-    if (is.null(v) || is.na(v) || !nzchar(trimws(v))) fallback
+    v <- lot_run_contract(con, pfx, key, meta = meta)
+    if (is.null(v) || !nzchar(trimws(v))) fallback
     else as.integer(trimws(v))
   }
   lot1_window <- run_setting("induction_window_days",       cfg$induction_window_days)

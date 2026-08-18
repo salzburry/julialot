@@ -145,7 +145,6 @@ make_naming_helpers <- function(cfg, mat_tables = new.env()) {
     else paste0(schema, ".", object)
   }
   cdm  <- function(tbl) full_name(cfg$cdm_schema, tbl)
-  work <- function(tbl) tbl
 
   work_tbl <- function(name) {
     if (exists(name, envir = mat_tables)) return(get(name, envir = mat_tables))
@@ -161,7 +160,7 @@ make_naming_helpers <- function(cfg, mat_tables = new.env()) {
     else cdm(base_table)
   }
 
-  list(full_name = full_name, cdm = cdm, work = work,
+  list(full_name = full_name, cdm = cdm,
        work_tbl = work_tbl, cdm_src = cdm_src, cdm_quarterly = cdm_quarterly)
 }
 
@@ -418,27 +417,21 @@ run_step <- function(step_name, sql, conn, cfg, qc_sql = NULL, description = NUL
   cat(DASH_60, "\n")
   flush.console()
 
-  tryCatch({
-    # A dropped connection cannot be repaired in place. The step SQL reads the
-    # aliases materialize_to_personal_schema() creates, and those are
-    # session-scoped -- a new session has none of them, so the retry fails on a
-    # missing view and the real cause is buried. Stop and let the run restart.
-    if (!db_ping(conn$con)) {
-      stop(errorCondition(
-        "Lost the Databricks connection. The session's views are gone; rerun the build.",
-        class = c("fatal_error", "error", "condition")))
-    }
+  # A dropped connection cannot be repaired in place. The step SQL reads the
+  # aliases materialize_to_personal_schema() creates, and those are
+  # session-scoped -- a new session has none of them, so the retry fails on a
+  # missing view and the real cause is buried. Stop and let the run restart.
+  if (!db_ping(conn$con)) {
+    stop(errorCondition(
+      "Lost the Databricks connection. The session's views are gone; rerun the build.",
+      class = c("fatal_error", "error", "condition")))
+  }
 
-    DBI::dbExecute(conn$con, sql)
+  DBI::dbExecute(conn$con, sql)
 
-    run_qc(conn$con, qc_sql)
+  run_qc(conn$con, qc_sql)
 
-    ended_at <- Sys.time()
-    log_msg("  >> Completed in ", round(as.numeric(difftime(ended_at, started_at, units = "secs")), 1), "s")
-    flush.console()
-
-  }, error = function(e) {
-    log_msg("STEP FAILED: ", step_name, " - ", conditionMessage(e))
-    stop(e)
-  })
+  ended_at <- Sys.time()
+  log_msg("  >> Completed in ", round(as.numeric(difftime(ended_at, started_at, units = "secs")), 1), "s")
+  flush.console()
 }

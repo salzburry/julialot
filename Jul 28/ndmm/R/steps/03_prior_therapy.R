@@ -47,14 +47,11 @@ NDMM_MMA_CODE_TYPES <- c("HCPCS", "CPT", "NDC")
 # NDMM_INDEX_AGENTS as an agent with no name.
 check_ndmm_mma_code_types <- function(con) {
   want <- paste(sprintf("'%s'", NDMM_MMA_CODE_TYPES), collapse = ", ")
-  bad <- tryCatch(db_q(con, glue("
+  bad <- db_q(con, glue("
     SELECT code_type, count(*) AS n
     FROM {NDMM_MMA_CODELIST}
     WHERE code_type NOT IN ({want})
-    GROUP BY code_type ORDER BY code_type")), error = function(e) NULL)
-  if (is.null(bad))
-    stop("Could not check the code types in cl_mma_codelist.csv, so this run ",
-         "cannot say whether every MM therapy code is reachable.", call. = FALSE)
+    GROUP BY code_type ORDER BY code_type"))
   if (nrow(bad))
     stop("cl_mma_codelist.csv carries code type(s) no claim source produces: ",
          paste0(bad$code_type, " (", bad$n, " code(s))", collapse = ", "),
@@ -69,26 +66,21 @@ check_ndmm_mma_code_types <- function(con) {
   # patient may never have had. Where one of the names is index-ineligible the
   # claim is dropped entirely and the index date moves or disappears. LOT stops
   # on the same collision in 01_codelists.R.
-  dup <- tryCatch(db_q(con, glue("
+  dup <- db_q(con, glue("
     SELECT code_type, code, count(DISTINCT med_abbr) AS n_meds
     FROM {NDMM_MMA_CODELIST}
     GROUP BY code_type, code
     HAVING count(DISTINCT med_abbr) > 1
-    ORDER BY code_type, code")), error = function(e) NULL)
-  if (is.null(dup))
-    stop("Could not check cl_mma_codelist.csv for one code naming several ",
-         "medications.", call. = FALSE)
+    ORDER BY code_type, code"))
   if (nrow(dup))
     stop("cl_mma_codelist.csv has ", nrow(dup), " code(s) naming more than one ",
          "medication, e.g. ", dup$code_type[1], " ", dup$code[1], " (",
          dup$n_meds[1], " agents).\nThe scan joins on (code_type, code) alone, ",
          "so one claim becomes one row per agent named and the index can move ",
          "or vanish where one of them is index-ineligible.", call. = FALSE)
-  blank <- tryCatch(db_q(con, glue("
+  blank <- db_q(con, glue("
     SELECT count(*) AS n FROM {NDMM_MMA_CODELIST}
-    WHERE med_abbr IS NULL OR trim(med_abbr) = ''")), error = function(e) NULL)
-  if (is.null(blank))
-    stop("Could not check cl_mma_codelist.csv for blank medications.", call. = FALSE)
+    WHERE med_abbr IS NULL OR trim(med_abbr) = ''"))
   if (blank$n[1] > 0)
     stop("cl_mma_codelist.csv has ", blank$n[1], " row(s) with a blank ",
          "CL_MED_ABBR. They match claims but name no agent, so they reach ",

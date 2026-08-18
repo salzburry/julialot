@@ -107,9 +107,9 @@ phase_lot1_sct <- function(con, ctx) {
     ),
     -- A tandem is a tandem only if nothing happens between the two
     -- transplants. The gap alone does not make the pair planned. A patient
-    -- treated in between was not waiting for a second transplant, and the
-    -- protocol reads a tandem as planned and as a continuation of the line -
-    -- which does not describe them.
+    -- treated in between was not waiting for a second transplant, and a
+    -- tandem is read as planned - a continuation of the line - which does not
+    -- describe them.
     --
     -- Anything at all means a non-steroid medication starting, an allogeneic
     -- transplant, or a CAR-T. Strictly between, so a claim on either
@@ -194,8 +194,8 @@ phase_lot1_sct <- function(con, ctx) {
         -- on.
         --
         -- The FIRST transplant of a tandem must be in the window. The second
-        -- need not be, and follows it however far out it sits. That is the
-        -- protocol's rule: a planned tandem continues the line. It is safe here
+        -- need not be, and follows it however far out it sits. A planned
+        -- tandem continues the line. It is safe here
         -- only because tandem_interrupt has already established that nothing
         -- happened between the two. A pair with a medication, an ALLO or a
         -- CAR-T in the middle is not a tandem, so the extension cannot swallow

@@ -54,9 +54,8 @@ report_rule <- function(sc) {
   cat("               EPISODE began there. Not the same as being on the drug.\n")
   cat("  B  covered   the episode overlaps the window at all. What a MAP means\n")
   cat("               on its face, and the reading the study team rejected.\n")
-  cat("  C  received  a claim DATE_SERVICE inside the window. The protocol's\n")
-  cat("               wording: 'all MM therapies received within 30 days on and\n")
-  cat("               following the LOT start date'.\n\n")
+  cat("  C  received  a claim DATE_SERVICE inside the window - the widest\n")
+  cat("               reading: every therapy received inside the window.\n\n")
   cat("  The headline counts B against A. The real-fill split below is C.\n\n")
   cat("  Induction windows judged: LOT1 ", sc$ind1, "d, CAR-T-started ", sc$cart,
       "d, other ", sc$indn, "d.\n", sep = "")
@@ -75,8 +74,8 @@ report_rule <- function(sc) {
   cat("\n  And a second question, outside the window entirely: the added-\n")
   cat("  medication query reads MAP_START_DT too, so a claim for an agent\n")
   cat("  outside the line's regimen that lands while an episode of it is still\n")
-  cat("  open opens nothing and ends nothing. The LOT protocol's rule 2 ends a\n")
-  cat("  LOT on a new agent 'not present in the induction regimen', so that is\n")
+  cat("  open opens nothing and ends nothing. The added-medication rule ends a\n")
+  cat("  LOT on a new agent not in the induction regimen, so that is\n")
   cat("  a boundary asked for and not made. Counted separately.\n")
   cat("\nWrites <prefix>STOCKPILE_AGENTS, <prefix>STOCKPILE_IMPACT,\n",
       "<prefix>STOCKPILE_BY_LOT, <prefix>STOCKPILE_BY_MED and\n",
@@ -101,8 +100,7 @@ main <- function() {
   run <- require_lot_run(con, prefix)
   # The windows this run was built with, not this environment's config: a line
   # has to be judged by the window it was made under.
-  sc <- stock_cfg(from_run = tryCatch(lot_run_meta(con, prefix),
-                                      error = function(e) NULL))
+  sc <- stock_cfg(from_run = lot_run_meta(con, prefix))
   run_id <- paste0("stock_", format(Sys.time(), "%Y%m%d%H%M%S"))
 
   lines  <- wrk(paste0(prefix, "LOT_LONG_FINAL"))
@@ -121,16 +119,17 @@ main <- function() {
   # a biosimilar of a regimen agent reads as an outside agent and every count
   # below is an over-count. permissible_subs is a temporary view built from a
   # code list, so it has to be read from the code list here too.
-  subs <- tryCatch(
-    load_codelist_csv("permissible_subs.csv",
-                      c("original_med", "substitute_med")),
-    error = function(e) NULL)
-  if (is.null(subs) || !nrow(subs))
-    stop("Cannot read permissible_subs.csv from CODELIST_DIR. The engine's ",
+  subs_csv <- file.path(cfg$codelist_dir, "permissible_subs.csv")
+  if (!file.exists(subs_csv))
+    stop("permissible_subs.csv is not at ", subs_csv, ". The engine's ",
          "regimen is the induction meds AND their permissible substitutes, so ",
          "without the pairs a biosimilar of a regimen agent counts as an ",
          "outside agent and every number here is an over-count. Set ",
          "CODELIST_DIR to the run's code list.", call. = FALSE)
+  subs <- read.csv(subs_csv, stringsAsFactors = FALSE, colClasses = "character")
+  if (!all(c("original_med", "substitute_med") %in% names(subs)) || !nrow(subs))
+    stop(subs_csv, " must carry original_med and substitute_med rows.",
+         call. = FALSE)
   cat("Substitution pairs loaded: ", nrow(subs), ".\n", sep = "")
 
   ag    <- wrk(paste0(prefix, "STOCKPILE_AGENTS"))
@@ -221,8 +220,8 @@ main <- function() {
   cat("  ", num0(a$n_pat), " patients. Median ", format(a$med_lost[1]),
       " days of line that the missing boundary\n      would have cut off.\n", sep = "")
   cat("  ", num0(a$n_re), " are an agent returning from the previous line, the rest a\n",
-      "      first exposure. Rule 2 measures 'new' against THIS line's induction\n",
-      "      regimen, so both are boundaries the protocol asks for.\n", sep = "")
+      "      first exposure. The added-medication rule measures 'new' against THIS\n",
+      "      line's induction regimen, so both are boundaries it asks for.\n", sep = "")
   ab_l <- db_q(con, stock_absorbed_by_lot_sql(ab, lines))
   cat(sprintf("  %-5s %9s %11s %9s %13s %9s\n",
               "LOT", "lines", "absorbed", "patients", "re-challenge", "% lines"))

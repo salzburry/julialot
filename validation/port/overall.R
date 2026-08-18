@@ -251,8 +251,8 @@ DEVIATIONS <- list(
     list(port = BILL_PROC, src = character(0)),
     list(port = EVENTS_PORT, src = EVENTS_SRC)),
 
-  # The fifth therapy source. The program spec names T_MED_PROCEDURE (PROC)
-  # among the CDM tables joined to CL_MMA_CODELIST, and Optum business rule 5
+  # The fifth therapy source. T_MED_PROCEDURE (PROC) joins to
+  # CL_MMA_CODELIST, and Optum business rule 5
   # says PROC carries a drug given as a procedure under a HCPCS or CPT code. The
   # source read four sources and not that one, so a therapy administered and
   # coded that way was invisible to it.
@@ -275,7 +275,7 @@ DEVIATIONS <- list(
            "SELECT /*+ BROADCAST(c) */",
            "p.PATID, cast(p.FST_DT as date) AS event_dt, 'MED_PROCEDURE_PROC' AS source",
            "FROM {cdm_src(cfg$tbl_med_proc)} p",
-           "INNER JOIN {work('mm_therapy_codes')} c",
+           "INNER JOIN mm_therapy_codes c",
            "ON c.code_type IN ('HCPCS','CPT')",
            "AND upper(regexp_replace(coalesce(cast(p.PROC as string),''), '[^A-Za-z0-9]', '')) = c.code",
            "AND regexp_replace(coalesce(cast(p.PROC as string),''), '[^A-Za-z0-9]', '') <> ''",

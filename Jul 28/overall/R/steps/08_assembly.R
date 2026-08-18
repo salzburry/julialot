@@ -1,7 +1,7 @@
 # Join every flag, apply the criteria, keep each patient's earliest surviving index.
 
 phase_assembly <- function(cfg, h, ctx) {
-  full_name <- h$full_name; work <- h$work
+  full_name <- h$full_name
   criteria_sql <- ctx$criteria_sql
   step1_sql    <- ctx$step1_sql
 
@@ -18,7 +18,7 @@ phase_assembly <- function(cfg, h, ctx) {
       name = "23_ELIG_COH_ALLFLAGS",
       description = "Assembling cohort with all flags",
       sql = glue("
-        CREATE OR REPLACE TEMPORARY VIEW {work('ELIG_COH_ALLFLAGS')} AS
+        CREATE OR REPLACE TEMPORARY VIEW ELIG_COH_ALLFLAGS AS
         WITH base AS (
           SELECT
             q.PATID,
@@ -39,15 +39,15 @@ phase_assembly <- function(cfg, h, ctx) {
             ct.CLINTRIAL_BASELINE,
             ct.CLINTRIAL_FOLLOWUP,
             q.inpt_qual, q.outpt_qual, q.outpt2_30, q.outpt2_60, q.outpt2_90, q.index_source
-          FROM {work('mm_qualifying')} q
-          LEFT JOIN {work('ce_flags')} ce ON q.PATID = ce.PATID AND q.index_date = ce.index_date
-          LEFT JOIN {work('member_demo')} d ON q.PATID = d.PATID
-          LEFT JOIN {work('death_dt')} death ON q.PATID = death.PATID AND q.index_date = death.index_date
-          LEFT JOIN {work('mm_baseline_evidence_flag')} mm_bl ON q.PATID = mm_bl.PATID AND q.index_date = mm_bl.index_date
-          LEFT JOIN {work('therapy_flags')} th ON q.PATID = th.PATID AND q.index_date = th.index_date
-          LEFT JOIN {work('pregnancy_flag')} preg ON q.PATID = preg.PATID AND q.index_date = preg.index_date
-          LEFT JOIN {work('clintrial_flag')} ct ON q.PATID = ct.PATID AND q.index_date = ct.index_date
-          LEFT JOIN {work('other_malig_flag')} om ON q.PATID = om.PATID AND q.index_date = om.index_date
+          FROM mm_qualifying q
+          LEFT JOIN ce_flags ce ON q.PATID = ce.PATID AND q.index_date = ce.index_date
+          LEFT JOIN member_demo d ON q.PATID = d.PATID
+          LEFT JOIN death_dt death ON q.PATID = death.PATID AND q.index_date = death.index_date
+          LEFT JOIN mm_baseline_evidence_flag mm_bl ON q.PATID = mm_bl.PATID AND q.index_date = mm_bl.index_date
+          LEFT JOIN therapy_flags th ON q.PATID = th.PATID AND q.index_date = th.index_date
+          LEFT JOIN pregnancy_flag preg ON q.PATID = preg.PATID AND q.index_date = preg.index_date
+          LEFT JOIN clintrial_flag ct ON q.PATID = ct.PATID AND q.index_date = ct.index_date
+          LEFT JOIN other_malig_flag om ON q.PATID = om.PATID AND q.index_date = om.index_date
         ),
         -- CE_3mosf with death-aware logic (no gaps, ends at min of 90 days/death/study_end)
         ce3mos_calc AS (
@@ -62,7 +62,7 @@ phase_assembly <- function(cfg, h, ctx) {
             ss.cov_start,
             ss.cov_end
           FROM base b
-          LEFT JOIN {work('enrollment_spans_strict')} ss ON b.PATID = ss.PATID
+          LEFT JOIN enrollment_spans_strict ss ON b.PATID = ss.PATID
         ),
         ce3mos_flag AS (
           SELECT PATID, index_date,
@@ -97,20 +97,20 @@ phase_assembly <- function(cfg, h, ctx) {
         FROM base b
         LEFT JOIN ce3mos_flag c3 ON b.PATID = c3.PATID AND b.index_date = c3.index_date
       "),
-      qc = glue("SELECT count(*) AS n_total, count(DISTINCT PATID) AS n_patients FROM {work('ELIG_COH_ALLFLAGS')}")
+      qc = glue("SELECT count(*) AS n_total, count(DISTINCT PATID) AS n_patients FROM ELIG_COH_ALLFLAGS")
     ),
 
     list(
       name = "24_ELIG_COH_FINAL",
       description = glue("FINAL COHORT ({cfg$final_table_name}): Apply IE criteria then select EARLIEST qualifying index_date per patient"),
       sql = glue("
-        CREATE OR REPLACE TEMPORARY VIEW {work(cfg$final_table_name)} AS
+        CREATE OR REPLACE TEMPORARY VIEW {cfg$final_table_name} AS
         -- First apply IE criteria, then select the EARLIEST qualifying index_date per patient
         -- This ensures that if a patient's earliest potential index_date fails IE criteria,
         -- a later index_date that passes can still be selected
         WITH filtered AS (
           SELECT *
-          FROM {work('ELIG_COH_ALLFLAGS')}
+          FROM ELIG_COH_ALLFLAGS
           WHERE 1=1
             -- Step 1: Index date must qualify via IP (strict) or OP in configured window
             AND {step1_sql}
@@ -123,7 +123,7 @@ phase_assembly <- function(cfg, h, ctx) {
         )
         SELECT * FROM ranked WHERE rn = 1
       "),
-      qc = glue("SELECT count(*) AS n_final_cohort FROM {work(cfg$final_table_name)}")
+      qc = glue("SELECT count(*) AS n_final_cohort FROM {cfg$final_table_name}")
     ),
 
     # ---- Step 24b: write the final cohort as a permanent table ----
@@ -135,7 +135,7 @@ phase_assembly <- function(cfg, h, ctx) {
         description = glue("Persist final cohort to {persist_tbl}"),
         sql = glue("
           CREATE OR REPLACE TABLE {persist_tbl} AS
-          SELECT * FROM {work(cfg$final_table_name)}
+          SELECT * FROM {cfg$final_table_name}
         "),
         qc = glue("SELECT count(*) AS n_persisted FROM {persist_tbl}")
       )

@@ -8,10 +8,9 @@
 #
 # The build tests MAP_START_DT, so such an agent does not join the next line's
 # regimen - see "Regimen membership is an episode start" in lot/LOT_RULES.md.
-# The protocol reads wider ("all MM therapies
-# received within 30 days on and following the LOT start date", July 30 cohort
-# protocol p.19) and the LOT2-5 spec's worked example A assumes a continuing
-# agent lands in LOT2. This sizes the difference.
+# A wider reading is possible: every MM therapy received inside the induction
+# window joins the regimen, whether or not its episode started there. This
+# sizes the difference.
 #
 # Two populations, not one, and they are not the same question:
 #
@@ -37,10 +36,9 @@
 # Absorption bites a second time, AFTER the induction window. 10_lot2_5_base.R
 # reads MAP_START_DT again for the added-medication query, so a claim for an
 # agent outside this line's regimen that lands while an episode of that agent is
-# still open opens nothing and ends nothing. The LOT protocol's rule 2 ends a LOT
-# on "initiation of a new MM agent that was not present in the induction
-# regimen", so that is a boundary the protocol asks for and the build does not
-# make. stock_absorbed_add_sql() counts those, and they are a separate question
+# still open opens nothing and ends nothing. The added-medication rule ends a
+# LOT on a new MM agent that was not in the induction regimen, so that is a
+# boundary asked for and not made. stock_absorbed_add_sql() counts those, and they are a separate question
 # from regimen membership: one is an agent missing from a regimen string, the
 # other is a line that never ended.
 #
@@ -255,8 +253,8 @@ stock_impact_sql <- function(agents_tbl) {
 # that date means an open episode took it.
 #
 # WAS_IN_PREV_REGIMEN splits re-challenge from a first exposure. It does not
-# decide correctness: rule 2 measures "new" against THIS line's induction
-# regimen, so both are boundaries the protocol asks for. It is there because a
+# decide correctness: the added-medication rule measures "new" against THIS
+# line's induction regimen, so both are boundaries it asks for. It is there because a
 # returning agent and a never-seen one are different clinically.
 stock_absorbed_add_sql <- function(lines_tbl, map_tbl, claims_tbl, cfg, run_id,
                                    lot_run = NA_character_,

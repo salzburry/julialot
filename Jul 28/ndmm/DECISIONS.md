@@ -6,20 +6,9 @@ still open.
 Pending sign-off means the code is written and the number is reported, but
 nobody has signed the rule off.
 
-**Four kinds of pending, and they are not the same.** Reading an interpretation
-as a protocol gap reports a requirement the build is missing when there is
-none. Each status below says which kind it is:
-
-| kind | what it means |
-|---|---|
-| PROTOCOL GAP | the protocol defines something and the build does not do it. Only #10 is one. |
-| DOCUMENT CONFLICT | two written authorities disagree and the code follows one. #9. |
-| INTERPRETATION | the protocol states a rule; turning it into claims logic needed a choice the protocol does not make. #4, #7, #8. Needs an SME, not a protocol reading. |
-| MEASUREMENT | no decision outstanding - the number arrives with the first warehouse run. The magnitude half of #4. |
-
-Only a PROTOCOL GAP makes the build incomplete against the protocol. An
-INTERPRETATION is a question about how a rule was operationalised, and the
-answer is a code list and a count, not a missing requirement.
+Statuses are plain. Signed off: settled. Open: the code applies one reading
+and the study team still has to confirm it. Measured: nothing to decide, the
+number arrives with the first run. Not built: the code does not do it.
 
 ---
 
@@ -277,7 +266,7 @@ extract, most metastatic patients are already reachable through their primary
 code and this group adds little. Whether it holds in Optum claims is not
 something this package has checked.
 
-Status: MEASUREMENT. The magnitude arrives with the
+Status: measured. The magnitude arrives with the
 first warehouse run. Nothing to sign - read `NDMM_OTHER_MALIG_GRAIN` and see
 whether the watch tiers did real work.
 
@@ -299,9 +288,9 @@ the code list carried and whether the override reached it.
 Effect: a larger cohort. Every patient it keeps has one of the six state codes
 in baseline and no other exclusion.
 
-Status: INTERPRETATION, pending SME sign-off. Not a protocol gap: the protocol
-says to exclude another malignancy and stops there. It names no codes, so
-somebody had to decide what "another" means against the code list supplied.
+Status: open, pending study-team sign-off. The rule is to exclude another
+malignancy, and it names no codes. Somebody had to decide what "another"
+means against the code list.
 
 And the question is not the six states. All nine labels sit in C90 - the ICD
 block for multiple myeloma and malignant plasma cell neoplasms - where the
@@ -501,9 +490,9 @@ Code: `NDMM_PRE_LOT1_DAYS = 365` pinned in `CONTRACT`;
 whatever was used is written into every output as `CE_PRE_DAYS` and
 `CE_FU_DAYS`.
 
-Status: INTERPRETATION, pending SME sign-off. The protocol says months and
-does not say calendar or fixed; both readings are faithful to it. The 1L
-sensitivity put them seven patients apart.
+Status: open, pending study-team sign-off. "Months" can be read as calendar
+months or as fixed days, and the code uses fixed days. The 1L sensitivity put
+the two readings seven patients apart.
 
 ---
 
@@ -520,32 +509,23 @@ date is built from it in `R/steps/00_mm_cohort.R`:
 - either way, never before `MM_DX_DT`: a constructed date earlier than the
   diagnosis is set to the diagnosis date.
 
-The protocol states only the 15th-of-month rule. The month-end, mid-year and
-clamping rules exist to keep a constructed date from contradicting an
-observed one, and they move follow-up and death-based eligibility for the
-patients they touch.
+The 15th-of-month rule is the base convention. The month-end, mid-year and
+clamping rules keep a constructed date from contradicting an observed one,
+and they move follow-up and death-based eligibility for the patients they
+touch.
 
-Status: INTERPRETATION, pending SME sign-off. The protocol gives the
-15th-of-month rule and does not cover a year-only record, or a diagnosis
-falling after the constructed date. Both occur in the CDM and needed a
-convention.
+Status: open, pending study-team sign-off. The 15th-of-month rule does not
+cover a year-only record, or a diagnosis falling after the constructed date.
+Both occur in the CDM and needed a convention.
 
-## 9. Pregnancy - which window, when two documents disagree
+## 9. Pregnancy - which window
 
 The exclusion is applied over the **whole study period**, `NDMM_STUDY_START` to
 `STUDY_END`. `05_pregnancy.R` bounds all three claim sources - diagnosis,
 procedure and revenue - on that window.
 
-Two authorities say different things, and no document says which wins:
-
-| | says |
-|---|---|
-| the current protocol, 6.2.1.2 Exclusion Criteria | "Evidence of pregnancy: ... indicating pregnancy or childbirth **during the study period**" |
-| the validated program spec, citing an earlier protocol 4.2 Exclusion 3 | ">=1 medical claim ... **during the baseline or follow-up period**", and "Spans baseline + follow-up period" |
-
-The code follows the protocol: a later version supersedes a spec sheet built
-against an earlier one. Recorded here because the spec sheet is still on disk
-saying otherwise.
+There is a narrower reading: only the patient's own baseline and follow-up.
+The code applies the study period. Which window is right is still open.
 
 It is the wider window, so it EXCLUDES MORE. The study period is about ten years
 and a patient's own baseline and follow-up is a fraction of it, so a pregnancy
@@ -573,10 +553,10 @@ the conjunction the published cohort count comes from, so it has to equal it.
 this build's 365-day baseline, not calendar months, and follow-up running to
 death or the study end. **It does not stop at disenrolment.**
 
-The program spec says "baseline or follow-up period" without defining where
-follow-up ends. If the study team means it to stop where continuous enrolment
-stops, this row bounds the narrower reading rather than being it - and in which
-direction depends on the column:
+The narrower reading does not define where follow-up ends. If the study team
+means it to stop where continuous enrolment stops, this row bounds the
+narrower reading rather than being it - and in which direction depends on the
+column:
 
 | | if follow-up should stop at disenrolment |
 |---|---|
@@ -591,36 +571,31 @@ One scan serves both: the claim scan writes `NDMM_PREGNANCY_EVENTS` with dates,
 the exclusion takes distinct patients of it over the study period, and the
 review table filters the same events to `[index - 365, follow-up end]`.
 
-Status: DOCUMENT CONFLICT, pending sign-off on precedence. Both readings are
-written down and they disagree; the code follows the current protocol. If the
-study team means the patient-specific window it is the three `BETWEEN` bounds
-in `05_pregnancy.R`, and the cohort gets larger.
+Status: open, pending sign-off on the window. The code applies the study
+period. If the study team wants the patient-specific window it is the three
+`BETWEEN` bounds in `05_pregnancy.R`, and the cohort gets larger.
 
 ## 10. Maintenance is a flag, not a period
 
-The protocol (5.1.1, and `maintenance_validated.csv`) defines a maintenance
-regimen: a period of 120 days or longer during which only a valid maintenance
-therapy is available; 30 days instead of 120 following an autologous SCT, or
-after the second of a tandem pair, with whatever days are available where
-follow-up ends first; the initial regimen transitioning into maintenance as
-other agents are discontinued; and named valid mono and dual regimens.
+A full maintenance definition would be: a period of 120 days or longer during
+which only a valid maintenance therapy is available; 30 days instead of 120
+following an autologous SCT, or after the second of a tandem pair, with
+whatever days are available where follow-up ends first; the initial regimen
+transitioning into maintenance as other agents are discontinued; and named
+valid mono and dual regimens (`maintenance_validated.csv`).
 
 **None of that is built.** The engine derives `contains_mtx_reg`, a descriptive
 0/1 on the line, and constructs no maintenance period, start, end, type or end
-reason. The validation sheet records every row of the definition as not yet
-implemented, and `exploration/lot/R/definitions.R` states the resulting behaviour
-as this build's answer - that maintenance is never a line.
+reason. `exploration/lot/R/definitions.R` states the resulting behaviour as
+this build's answer - that maintenance is never a line.
 
-That is not a decision that maintenance should not be a line. The period the
-protocol defines does not exist here, so the question has not been put. A line
-whose regimen reduces to a single maintenance agent continues as the same line.
+That is not a decision that maintenance should not be a line. The period does
+not exist here, so the question has not been put. A line whose regimen reduces
+to a single maintenance agent continues as the same line.
 
-Status: PROTOCOL GAP, NOT IMPLEMENTED. The protocol defines the period and the
-build does not construct it - the only item in this register of that kind, and
-the only one that makes the build incomplete against the protocol rather than
-unratified against an SME. It changes line counts wherever the protocol would
-have opened a maintenance period. Safety and HCRU are the others, outside this
-register.
+Status: not built. The only item in this register of that kind. It changes
+line counts wherever a maintenance period would have opened. Safety and HCRU
+are also not built, outside this register.
 
 ---
 

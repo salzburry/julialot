@@ -615,8 +615,8 @@ ok(!length(mism),
 cat("\n-- the follow-up panels agree with each other --\n")
 # The cohort carries two follow-up lengths and they answer different questions:
 # FU_DAYS runs to death or the study end, FU_DAYS_CE is also capped at
-# disenrolment - the protocol's follow-up period and what outcomes censors on.
-# Showing one picks a side without saying so.
+# disenrolment - the follow-up period outcomes censors on. Showing one picks
+# a side without saying so.
 fu <- Filter(function(s) grepl("^followup", s$name), DASHBOARD_SECTIONS)
 ok(length(fu) >= 4L, paste0("follow-up gets more than one panel (", length(fu), ")"))
 # The panels that report days. followup_end_reason is not one - it partitions

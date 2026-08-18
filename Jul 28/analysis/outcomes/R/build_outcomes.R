@@ -1,5 +1,4 @@
-# Secondary Objective 1: treatment patterns and treatment-related outcomes.
-# Protocol Table 4.
+# Treatment patterns and treatment-related outcomes.
 #
 # Reads one finished LOT run. Computes no line and no cohort of its own, so any
 # number here traces back to the run that produced it.
@@ -8,17 +7,17 @@
 #   TTD   the same, plus the current line's own end
 #   OS    index LOT start to death
 #
-# All three censor at the follow-up end. The protocol excludes the start date
+# All three censor at the follow-up end. The count excludes the start date
 # and includes the event date, so the index day does not count and the event day
 # does, which is a plain datediff.
 
-# The follow-up end, per protocol 6.1: the day after the index date to whichever
+# The follow-up end: the day after the index date to whichever
 # comes first - the end of continuous enrollment, the end of the study period,
 # or death.
 #
 # The cohort carries both halves: ENDDATE is min(death, study end) and
 # ENDDATE_CE is where continuous enrolment stops. The earliest of the two is
-# the protocol's follow-up end. ENDDATE_CE is NULL for a patient who never
+# the follow-up end. ENDDATE_CE is NULL for a patient who never
 # disenrolled, which is why it is coalesced rather than compared raw - a NULL
 # inside least() would swallow the whole expression.
 FU_END_SQL <- "least(cast(c.ENDDATE as date),
@@ -35,7 +34,7 @@ FU_END_SQL <- "least(cast(c.ENDDATE as date),
 # diagnosis columns are then absent rather than guessed.
 #
 # subseq_tbls names the line-specific eligibility cohorts, keyed by line number
-# ("2" -> <prefix>NDMM_COHORT_2L). Table 4's denominator for a later line is a
+# ("2" -> <prefix>NDMM_COHORT_2L). The denominator for a later line is a
 # study-team question with two defensible answers, so both are carried rather
 # than one being chosen here:
 #
@@ -58,7 +57,7 @@ outcomes_base_sql <- function(lines_tbl, cohort_tbl, base_tbl = NULL,
   dx_cols <- if (is.null(base_tbl))
     "cast(NULL as date) AS MM_DX_DT, cast(NULL as int) AS DX_TO_LOT1_DAYS"
   else
-    # Table 4 measures diagnosis date (excluded) to index date (included), and
+    # The gap measures diagnosis date (excluded) to index date (included), and
     # the cohort's INDEX_DATE is that 1L index.
     "x.MM_DX_DT, datediff(c.INDEX_DATE, x.MM_DX_DT) AS DX_TO_LOT1_DAYS"
   # 1L is the cohort itself, so every 1L line is eligible by construction. A
@@ -140,10 +139,8 @@ outcomes_base_sql <- function(lines_tbl, cohort_tbl, base_tbl = NULL,
 # by every table that carries a DENOM or a LINE_ELIGIBLE, so the provenance
 # cannot land on one output and not the next.
 prov_cols <- function(subseq) {
-  g <- function(k) {
-    v <- if (is.null(subseq)) NULL else subseq[[k]]
-    sql_text(if (is.null(v) || is.na(v)) NA_character_ else as.character(v))
-  }
+  # sql_text() already renders NULL and NA as SQL NULL.
+  g <- function(k) sql_text(if (is.null(subseq)) NULL else subseq[[k]])
   paste0("           ", g("subseq"), " AS SUBSEQ_RUN_ID,\n",
          "           ", g("pre"),    " AS CE_PRE_DAYS,\n",
          "           ", g("fu"),     " AS CE_FU_DAYS,\n")
@@ -168,7 +165,7 @@ outcomes_tte_sql <- function(base_sql, run_id, lot_run_id = NA_character_,
              -- TTNT: next line or death, whichever is first.
              least(coalesce(b.NEXT_LOT_START_DT, date('9999-12-31')),
                    coalesce(b.DEATH_DT,          date('9999-12-31'))) AS TTNT_DT,
-             -- TTD: the line's own end as well, per Table 4.
+             -- TTD: the line's own end as well.
              least(coalesce(b.LOT_END_DT,        date('9999-12-31')),
                    coalesce(b.NEXT_LOT_START_DT, date('9999-12-31')),
                    coalesce(b.DEATH_DT,          date('9999-12-31'))) AS TTD_DT,
@@ -231,14 +228,14 @@ denom_from <- function(tte_tbl, both) paste0(
   tte_tbl, " t CROSS JOIN (SELECT 'ALL_LINES' AS DENOM",
   if (both) " UNION ALL SELECT 'LINE_ELIGIBLE'" else "", ") d")
 DENOM_KEEP <- "(d.DENOM = 'ALL_LINES' OR t.LINE_ELIGIBLE = 1)"
-# A gap belongs to the line being INITIATED, not the one being left: Table 4
+# A gap belongs to the line being INITIATED, not the one being left: it
 # says "among patients initiating a subsequent LOT", and the cohort that governs
 # a 1L-to-2L gap is the 2L one. Keying on this row's flag would make every
 # 1L-to-2L gap eligible - 1L always is - so the restricted answer would be the
 # unrestricted one, and a 2L-to-3L gap would be judged on 2L eligibility.
 DENOM_KEEP_NEXT <- "(d.DENOM = 'ALL_LINES' OR t.NEXT_LINE_ELIGIBLE = 1)"
 
-# Table 4's treatment attrition: number and percent of patients who received
+# The treatment attrition: number and percent of patients who received
 # each subsequent LOT, discontinued and did not receive another, were lost to
 # follow-up, or died.
 #
@@ -247,7 +244,7 @@ DENOM_KEEP_NEXT <- "(d.DENOM = 'ALL_LINES' OR t.NEXT_LINE_ELIGIBLE = 1)"
 # since that is what the row is about. Every other category is conditioned on
 # there being no next line.
 #
-# The protocol names four but they are not exhaustive, and the gap matters.
+# Four named categories are not exhaustive, and the gap matters.
 # A patient still on treatment when the data runs out has not been lost to
 # follow-up - they were observed to the end of the study period and were still
 # being treated. Folding them into "lost to follow-up" would overstate loss and
@@ -257,7 +254,7 @@ outcomes_attrition_sql <- function(tte_tbl, study_end, run_id, lot_run_id,
                                    both_denoms = FALSE, subseq = NULL) {
   # "Received the next LOT" has to mean OBSERVED to receive it. lot's primary
   # analysis ignores disenrolment, so LOT_LONG_FINAL carries lines that start
-  # after a patient's protocol follow-up ended - NEXT_LOT_NUM is populated for
+  # after a patient's follow-up ended - NEXT_LOT_NUM is populated for
   # them and TTNT already censors them. Counting the column instead of the event
   # credits the study with progressions nobody watched happen, and blocks those
   # patients from every other category, all of which require no next line.
@@ -267,7 +264,7 @@ outcomes_attrition_sql <- function(tte_tbl, study_end, run_id, lot_run_id,
   # the patient was on treatment when observation stopped. Why it stopped is the
   # difference between the two.
   still <- glue("{none} AND OS_EVENT = 0 AND TTD_EVENT = 0")
-  # Table 4 asks for number AND percent. Denominator is the line's own N.
+  # Number AND percent are asked for. Denominator is the line's own N.
   pct <- function(e) glue("round(100.0 * sum(CASE WHEN {e} THEN 1 ELSE 0 END)
                                  / nullif(count(*), 0), 1)")
   n <- function(e) glue("sum(CASE WHEN {e} THEN 1 ELSE 0 END)")
@@ -295,7 +292,7 @@ outcomes_attrition_sql <- function(tte_tbl, study_end, run_id, lot_run_id,
     GROUP BY d.DENOM, t.LOT_NUM ORDER BY d.DENOM, t.LOT_NUM")
 }
 
-# Table 4's time from prior LOT to next LOT initiation: among patients starting
+# Time from prior LOT to next LOT initiation: among patients starting
 # a subsequent LOT, prior start (excluded) to next start (included). Continuous
 # months, so days / 30.4375 - the mean Gregorian month, not 30, which drifts by
 # six days a year.
@@ -328,7 +325,7 @@ outcomes_line_gap_sql <- function(tte_tbl, run_id, lot_run_id,
     ORDER BY d.DENOM, t.LOT_NUM, t.NEXT_LOT_NUM")
 }
 
-# Table 4's patients receiving each line: number and percent on each 1L, 2L, 3L
+# Patients receiving each line: number and percent on each 1L, 2L, 3L
 # and 4L regimen. Regimen as lot recorded it - the SOC categories in 6.2.2 are
 # Annex 2's and are not applied here, so this is the raw distribution a category
 # map would be built against.
@@ -349,7 +346,7 @@ outcomes_regimen_sql <- function(tte_tbl, run_id, lot_run_id,
     ORDER BY d.DENOM, t.LOT_NUM, N DESC")
 }
 
-# Table 4's time from diagnosis to 1L initiation, in months: diagnosis date
+# Time from diagnosis to 1L initiation, in months: diagnosis date
 # (excluded) to index date (included), at the 1L index.
 #
 # One row per patient, so the 1L rows only - the value is the same on every

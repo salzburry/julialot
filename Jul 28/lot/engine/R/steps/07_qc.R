@@ -1,7 +1,6 @@
 # QC counts on what was built.
 
 phase_qc <- function(con, ctx) {
-  meds <- ctx$meds
 
   # The NDC format QC that ran here is gone. It measured lengths the join does
   # not use. check_claim_ndc covers both claim tables. ndc_shape, ndc_short and

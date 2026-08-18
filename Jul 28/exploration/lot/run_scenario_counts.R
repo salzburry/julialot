@@ -68,20 +68,20 @@ AUDIT_COUNTS <- list(
       GROUP BY LOT_NUM, LOT_START_TYPE
       ORDER BY LOT_NUM, LOT_START_TYPE"),
 
-  # LOT_RULES.md 4.2 - the divergence from the protocol wording, and the one
-  # nobody can size by reading the code. Regimen membership is an episode
+  # LOT_RULES.md 4.2 - the divergence between two readings of regimen
+  # membership, and the one nobody can size by reading the code. Regimen membership is an episode
   # STARTING inside the window; a dispense arriving under live cover extends the
   # episode it is already in and leaves no start to find. So an agent the patient
   # is demonstrably still taking on the day a line opens is absent from that
   # line's regimen unless its cover happened to lapse first.
   #
-  # The protocol says "all MM therapies identified during the first 30 days of
-  # the LOT", which reads wider. This is the number that decides whether that
-  # difference is a footnote or a finding, and it has to be answered before
-  # regimen strings are published.
+  # The wider reading is every MM therapy received during the first 30 days of
+  # the LOT. This is the number that decides whether that difference is a
+  # footnote or a finding, and it has to be answered before regimen strings
+  # are published.
   list(id = "4.2-prior-agent-covered-but-not-in-the-regimen",
        what = "Later lines where a previous line's agent is under live cover on the start date but absent from the regimen",
-       expect = "unknown - never measured; this is the protocol-wording divergence",
+       expect = "unknown - never measured; this is the regimen-membership divergence",
        sql = "
       WITH prev_agents AS (
         SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_BASE_MEDS,

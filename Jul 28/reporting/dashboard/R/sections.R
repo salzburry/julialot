@@ -375,8 +375,8 @@ DASHBOARD_SECTIONS <- c(list(
 
   # Two definitions, two rows. FU_DAYS runs to death or the study end and
   # ignores disenrolment - LOT's primary analysis. FU_DAYS_CE is also capped
-  # where enrolment stops - the protocol's follow-up period, and what outcomes
-  # censors on. Showing one picks a side silently.
+  # where enrolment stops - the follow-up period outcomes censors on. Showing
+  # one picks a side silently.
   #
   # Rows rather than one wide line: side-by-side percentiles of two different
   # definitions invite reading across as though the columns were a

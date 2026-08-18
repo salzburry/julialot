@@ -2,7 +2,6 @@
 # Keep them all; the earliest surviving one is picked in 08_assembly.R.
 
 phase_index_date <- function(cfg, h, ctx) {
-  work <- h$work
 
   list(
     # ---- Phase 3: index date (Step 1 gate) ----
@@ -12,23 +11,23 @@ phase_index_date <- function(cfg, h, ctx) {
       name = "09_mm_inpatient_potential",
       description = "Finding ALL potential inpatient MM index dates (STRICT 203.0x/C90.0x only)",
       sql = glue("
-        CREATE OR REPLACE TEMPORARY VIEW {work('mm_inpatient_potential')} AS
+        CREATE OR REPLACE TEMPORARY VIEW mm_inpatient_potential AS
         SELECT DISTINCT PATID, svc_dt AS potential_index, 'INPATIENT' AS index_source
-        FROM {work('mm_dx_events_id')}
+        FROM mm_dx_events_id
         WHERE inpatient_flg = 1
           AND mm_dx_strict_flg = 1
       "),
-      qc = glue("SELECT count(*) AS n_potential_inpt FROM {work('mm_inpatient_potential')}")
+      qc = glue("SELECT count(*) AS n_potential_inpt FROM mm_inpatient_potential")
     ),
 
     list(
       name = "10_mm_outpatient_pairs",
       description = "Building outpatient diagnosis date pairs",
       sql = glue("
-        CREATE OR REPLACE TEMPORARY VIEW {work('mm_outpatient_pairs')} AS
+        CREATE OR REPLACE TEMPORARY VIEW mm_outpatient_pairs AS
         WITH distinct_dates AS (
           SELECT DISTINCT PATID, svc_dt
-          FROM {work('mm_dx_events_id')}
+          FROM mm_dx_events_id
           WHERE outpatient_flg = 1
         ),
         with_next AS (
@@ -41,14 +40,14 @@ phase_index_date <- function(cfg, h, ctx) {
         FROM with_next
         WHERE next_dt IS NOT NULL
       "),
-      qc = glue("SELECT count(*) AS n_pairs FROM {work('mm_outpatient_pairs')}")
+      qc = glue("SELECT count(*) AS n_pairs FROM mm_outpatient_pairs")
     ),
 
     list(
       name = "11_mm_outpatient_potential",
       description = "Finding ALL potential outpatient MM index dates (2+ OP in window, not just earliest)",
       sql = glue("
-        CREATE OR REPLACE TEMPORARY VIEW {work('mm_outpatient_potential')} AS
+        CREATE OR REPLACE TEMPORARY VIEW mm_outpatient_potential AS
         -- Each qualifying pair's first_dt is a potential index date
         -- Keep track of which windows (30/60/90) each date qualifies for
         SELECT DISTINCT
@@ -58,17 +57,17 @@ phase_index_date <- function(cfg, h, ctx) {
           CASE WHEN diff_days <= {cfg$dx_window_90} THEN 1 ELSE 0 END AS qualifies_90,
           CASE WHEN diff_days <= {cfg$dx_window_60} THEN 1 ELSE 0 END AS qualifies_60,
           CASE WHEN diff_days <= {cfg$dx_window_30} THEN 1 ELSE 0 END AS qualifies_30
-        FROM {work('mm_outpatient_pairs')}
+        FROM mm_outpatient_pairs
         WHERE diff_days <= {cfg$dx_window_90}
       "),
-      qc = glue("SELECT count(*) AS n_potential_outpt FROM {work('mm_outpatient_potential')}")
+      qc = glue("SELECT count(*) AS n_potential_outpt FROM mm_outpatient_potential")
     ),
 
     list(
       name = "12_mm_qualifying",
       description = "Combining ALL potential index dates (IP or OP within 90d max window) - keeps all, not just earliest",
       sql = glue("
-        CREATE OR REPLACE TEMPORARY VIEW {work('mm_qualifying')} AS
+        CREATE OR REPLACE TEMPORARY VIEW mm_qualifying AS
         -- Keep every candidate at the widest window (90d); Step 24 applies the
         -- configured {cfg$outpatient_window}d window. Filtering here would lose a
         -- patient whose earliest date fails IE but whose later date passes.
@@ -76,12 +75,12 @@ phase_index_date <- function(cfg, h, ctx) {
         WITH all_potential AS (
           -- Inpatient potential index dates (always qualify regardless of window)
           SELECT PATID, potential_index, 1 AS inpt_qual, 0 AS outpt2_30, 0 AS outpt2_60, 0 AS outpt2_90
-          FROM {work('mm_inpatient_potential')}
+          FROM mm_inpatient_potential
           UNION ALL
           -- Outpatient potential index dates (include ALL that qualify within 90d)
           SELECT PATID, potential_index, 0 AS inpt_qual,
                  qualifies_30 AS outpt2_30, qualifies_60 AS outpt2_60, qualifies_90 AS outpt2_90
-          FROM {work('mm_outpatient_potential')}
+          FROM mm_outpatient_potential
         )
         -- Aggregate per PATID + potential_index to handle dates that qualify via both paths
         SELECT
@@ -102,7 +101,7 @@ phase_index_date <- function(cfg, h, ctx) {
         FROM all_potential
         GROUP BY PATID, potential_index
       "),
-      qc = glue("SELECT count(*) AS n_potential_index, count(DISTINCT PATID) AS n_patients FROM {work('mm_qualifying')}")
+      qc = glue("SELECT count(*) AS n_potential_index, count(DISTINCT PATID) AS n_patients FROM mm_qualifying")
     )
   )
 }

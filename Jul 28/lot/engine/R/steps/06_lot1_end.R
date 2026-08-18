@@ -6,7 +6,6 @@
 # way to hold a result.
 
 phase_lot1_end <- function(con, ctx) {
-  meds <- ctx$meds
 
   # S16b: contains_mtx_reg. Maintenance as a flag and nothing else.
   #
@@ -347,8 +346,8 @@ phase_lot1_end <- function(con, ctx) {
         -- it - not the day before, because this AUTO continues the line rather
         -- than starting the next one.
         --
-        -- Why it ends there at all: the protocol ends a LOT on the SCT date
-        -- when no maintenance regimen follows within 180 days. This build
+        -- Why it ends there at all: a LOT ends on the SCT date when no
+        -- maintenance regimen follows within 180 days. This build
         -- carries no maintenance period, so that test can never be met and the
         -- SCT date always wins.
         --

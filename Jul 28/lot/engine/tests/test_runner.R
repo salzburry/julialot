@@ -98,8 +98,8 @@ stops(pin_study_window(base, "2026-03-31", "2016-01-01"),
 stops(pin_study_window(modifyList(base, list(study_start = "", study_end = "")),
                        NULL, NULL),
       "no window at all, from either source")
-stops(check_lot_contract(modifyList(cfg, list(study_end = ""))),
-      "and the contract refuses an empty window even though it does not pin one")
+stops(pin_study_window(modifyList(base, list(study_end = "")), "2016-01-01", NULL),
+      "and an empty end date alone is refused, before the contract is read")
 
 cat("\n-- and the run records which window built it --\n")
 # FINAL_METADATA_COLS drives the ALTER that adds these columns; the UPDATE sets
@@ -132,10 +132,11 @@ ok(all(c("STUDY_START", "STUDY_END") %in% names(FINAL_METADATA_COLS)),
           "CONTRACT_SETTINGS does not carry it"))
 
 cat("\n-- two cohorts cannot collide --\n")
-# The point of the module: same rules, different output names.
-stops(check_lot_contract(modifyList(cfg, list(object_prefix = ""))),
+# The point of the module: same rules, different output names. pin_cohort()
+# owns the refusal and runs before anything else reads either field.
+stops(pin_cohort(base, TBL_A, ""),
       "a blank prefix is rejected, so outputs cannot collide")
-stops(check_lot_contract(modifyList(cfg, list(input_cohort_table = ""))),
+stops(pin_cohort(base, "", PFX_A),
       "a blank cohort table is rejected")
 
 cat("\n-- lot_out() prefixes LOT's outputs, wrk() leaves the cohort alone --\n")
@@ -1844,29 +1845,11 @@ ok(identical(qs("2024-09-30"), "2024q3"),
 # production run hits when the caller passes no window of its own.
 ok(identical(qs(loaded$study_end), want_q(loaded$study_end)),
    paste0("the configured STUDY_END resolves to ", want_q(loaded$study_end)))
-# as.Date("30-06-2025") does not fail - it returns year 0030. Without the
-# year < 1900 guard that is accepted and the suffix becomes 30q2.
-ok(identical(qs("30-06-2025"), "2025q2"),
-   "an Excel-reformatted date is recovered, not read as the year 30")
-# All five layouts the recovery declares, not just the ones as.Date happens to
-# survive. It ERRORS rather than returning NA on a string it cannot read, so
-# the two month-first ones - what a US-locale Excel writes - never reached the
-# loop at all, and neither did the message below.
-EXCEL <- c("30-06-2025", "30/06/2025", "06/30/2025", "2025/06/30", "06-30-2025")
-got_x <- vapply(EXCEL, qs, character(1), USE.NAMES = FALSE)
-ok(all(got_x == "2025q2"),
-   paste0("every layout the recovery lists is recovered (",
-          paste(unique(got_x), collapse = " "), ")"))
-# No whitespace case: as.Date skips surrounding spaces itself, so an assertion
-# on "  2025-06-30  " passes with or without the trimws() it would be testing.
-# 03/04/2025 is 3 April day-first and 4 March month-first, and those fall in
-# different quarters - a different set of CDM tables for the whole study.
-# Nothing in the string says which was meant, so it is refused rather than
-# guessed; the unambiguous layouts above still recover.
-amb <- qs("03/04/2025")
-ok(grepl("ambiguous", amb, fixed = TRUE) && grepl("2025-04-03", amb, fixed = TRUE) &&
-     grepl("2025-03-04", amb, fixed = TRUE),
-   "an ambiguous date is refused, naming both readings")
+# as.Date("30-06-2025") does not fail - it returns year 0030. The year < 1900
+# guard turns that into a stop. Non-ISO layouts are normalized (or refused)
+# upstream by load_inputs / pin_study_window, so here they are simply errors.
+ok(grepl("stopped:", qs("30-06-2025"), fixed = TRUE),
+   "an Excel-reformatted date stops rather than reading as the year 30")
 lni <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "load_inputs.R"), envir = lni)
 ok(inherits(tryCatch(suppressMessages(lni$.normalize_iso_date("03/04/2025", "STUDY_END")),

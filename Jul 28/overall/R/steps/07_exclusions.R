@@ -1,7 +1,7 @@
 # Steps 8-10: other cancer, pregnancy, clinical trial.
 
 phase_exclusions <- function(cfg, h, ctx) {
-  work <- h$work; cdm_src <- h$cdm_src
+  cdm_src <- h$cdm_src
   fu_cap_expr <- ctx$fu_cap_expr; ce_join_for_fu_cap <- ctx$ce_join_for_fu_cap
   icd_family_sql <- ctx$icd_fam
 
@@ -15,7 +15,7 @@ phase_exclusions <- function(cfg, h, ctx) {
       description = "EXCLUSION: Pregnancy flag (DX + PROC + RVNU_CD, baseline + follow-up)",
       source_tables = c("med_diagnosis", "medical", "med_procedure"),
       sql = glue("
-        CREATE OR REPLACE TEMPORARY VIEW {work('pregnancy_flag')} AS
+        CREATE OR REPLACE TEMPORARY VIEW pregnancy_flag AS
         WITH dx AS (
           SELECT PATID, cast(FST_DT as date) AS event_dt,
                  {icd_family_sql('ICD_FLAG', 'ICD9DIAG', 'ICD10DIAG')} AS code_type,
@@ -58,7 +58,7 @@ phase_exclusions <- function(cfg, h, ctx) {
         matched AS (
           SELECT /*+ BROADCAST(p) */ e.PATID, e.event_dt
           FROM events e
-          INNER JOIN {work('preg_codes')} p ON e.code_type = p.code_type AND e.code = p.code
+          INNER JOIN preg_codes p ON e.code_type = p.code_type AND e.code = p.code
         )
         SELECT
           q.PATID,
@@ -68,13 +68,13 @@ phase_exclusions <- function(cfg, h, ctx) {
           max(CASE WHEN m.event_dt BETWEEN date_sub(q.index_date, {cfg$baseline_days})
                                        AND {fu_cap_expr}
                THEN 1 ELSE 0 END) AS PREGNANT_FLAG
-        FROM {work('mm_qualifying')} q
-        LEFT JOIN {work('death_dt')} d ON q.PATID = d.PATID AND q.index_date = d.index_date
+        FROM mm_qualifying q
+        LEFT JOIN death_dt d ON q.PATID = d.PATID AND q.index_date = d.index_date
         {ce_join_for_fu_cap}
         LEFT JOIN matched m ON q.PATID = m.PATID
         GROUP BY q.PATID, q.index_date
       "),
-      qc = glue("SELECT sum(PREGNANT_FLAG) AS n_pregnant FROM {work('pregnancy_flag')}")
+      qc = glue("SELECT sum(PREGNANT_FLAG) AS n_pregnant FROM pregnancy_flag")
     ),
 
     # Flags evidence of clinical trial participation during each of the
@@ -85,7 +85,7 @@ phase_exclusions <- function(cfg, h, ctx) {
       description = "EXCLUSION: Clinical trial flag (DX + PROC + RVNU_CD, baseline + follow-up)",
       source_tables = c("med_diagnosis", "medical", "med_procedure"),
       sql = glue("
-        CREATE OR REPLACE TEMPORARY VIEW {work('clintrial_flag')} AS
+        CREATE OR REPLACE TEMPORARY VIEW clintrial_flag AS
         WITH dx AS (
           SELECT PATID, cast(FST_DT as date) AS event_dt,
                  {icd_family_sql('ICD_FLAG', 'ICD9DIAG', 'ICD10DIAG')} AS code_type,
@@ -128,7 +128,7 @@ phase_exclusions <- function(cfg, h, ctx) {
         matched AS (
           SELECT /*+ BROADCAST(c) */ e.PATID, e.event_dt
           FROM events e
-          INNER JOIN {work('clintrial_codes')} c ON e.code_type = c.code_type AND e.code = c.code
+          INNER JOIN clintrial_codes c ON e.code_type = c.code_type AND e.code = c.code
         )
         SELECT
           q.PATID,
@@ -142,13 +142,13 @@ phase_exclusions <- function(cfg, h, ctx) {
           max(CASE WHEN m.event_dt >= q.index_date
                     AND m.event_dt <= {fu_cap_expr}
                THEN 1 ELSE 0 END) AS CLINTRIAL_FOLLOWUP
-        FROM {work('mm_qualifying')} q
-        LEFT JOIN {work('death_dt')} d ON q.PATID = d.PATID AND q.index_date = d.index_date
+        FROM mm_qualifying q
+        LEFT JOIN death_dt d ON q.PATID = d.PATID AND q.index_date = d.index_date
         {ce_join_for_fu_cap}
         LEFT JOIN matched m ON q.PATID = m.PATID
         GROUP BY q.PATID, q.index_date
       "),
-      qc = glue("SELECT sum(CLINTRIAL_BASELINE) + sum(CLINTRIAL_FOLLOWUP) AS n_clintrial FROM {work('clintrial_flag')}")
+      qc = glue("SELECT sum(CLINTRIAL_BASELINE) + sum(CLINTRIAL_FOLLOWUP) AS n_clintrial FROM clintrial_flag")
     ),
 
     list(
@@ -156,7 +156,7 @@ phase_exclusions <- function(cfg, h, ctx) {
       description = "EXCLUSION: Other malignancy flag (>=1 IP or >=2 OP within 30d)",
       source_tables = c("med_diagnosis", "medical", "confinement"),
       sql = glue("
-        CREATE OR REPLACE TEMPORARY VIEW {work('other_malig_flag')} AS
+        CREATE OR REPLACE TEMPORARY VIEW other_malig_flag AS
         WITH dx AS (
           -- Carry the full 5-column claim key so dx_with_setting can join
           -- med_claim_header on the same grain (see step 07a comment).
@@ -172,7 +172,7 @@ phase_exclusions <- function(cfg, h, ctx) {
                  dx.PATID, dx.PAT_PLANID, dx.CLMID, dx.FST_DT, dx.LOC_CD,
                  dx.event_dt, o.tumor_group
           FROM dx
-          INNER JOIN {work('other_malig_codes')} o ON dx.dx = o.dx AND dx.icd_family = o.icd_family
+          INNER JOIN other_malig_codes o ON dx.dx = o.dx AND dx.icd_family = o.icd_family
         ),
         -- Use the same inpatient rule as MM qualifying.
         dx_with_setting AS (
@@ -180,14 +180,14 @@ phase_exclusions <- function(cfg, h, ctx) {
                  CASE WHEN h.line_inpatient = 1 OR cf.CONF_ID IS NOT NULL
                       THEN 1 ELSE 0 END AS inpatient_flg
           FROM dx_mapped dm
-          INNER JOIN {work('med_claim_header')} h
+          INNER JOIN med_claim_header h
             -- Null-safe on PAT_PLANID / LOC_CD; see comment in step 08a.
             ON dm.PATID      =   h.PATID
            AND dm.CLMID      =   h.CLMID
            AND dm.FST_DT     =   h.FST_DT
            AND dm.PAT_PLANID <=> h.PAT_PLANID
            AND dm.LOC_CD     <=> h.LOC_CD
-          LEFT JOIN {work('confinement')} cf
+          LEFT JOIN confinement cf
             ON h.PATID = cf.PATID AND h.CONF_ID = cf.CONF_ID
         ),
         -- Path A: >=1 inpatient claim for a tumor group in baseline
@@ -232,12 +232,12 @@ phase_exclusions <- function(cfg, h, ctx) {
             THEN 1
             ELSE 0
           END) AS OTHER_MALIGN_FLAG
-        FROM {work('mm_qualifying')} q
+        FROM mm_qualifying q
         LEFT JOIN inpatient_flag ip ON q.PATID = ip.PATID
         LEFT JOIN outpatient_pairs op ON q.PATID = op.PATID
         GROUP BY q.PATID, q.index_date
       "),
-      qc = glue("SELECT sum(OTHER_MALIGN_FLAG) AS n_other_malig FROM {work('other_malig_flag')}")
+      qc = glue("SELECT sum(OTHER_MALIGN_FLAG) AS n_other_malig FROM other_malig_flag")
     )
   )
 }

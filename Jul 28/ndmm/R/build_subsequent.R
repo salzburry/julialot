@@ -1,5 +1,4 @@
-# The 2L and 3L cohorts, per protocol 6.2.1.1 "Additional eligibility for 2L
-# and 3L RRMM Cohorts".
+# The 2L and 3L cohorts, with their own extra eligibility rules.
 #
 # Runs after the LOT build, because the 2L and 3L index dates are line starts
 # and only lot knows them. They are separate cohorts rather than flags on the
@@ -122,11 +121,11 @@ write_subseq_status <- function(con, cfg, attempt, state, pre_days, fu_days,
 # The two windows, as settings of their own rather than the 1L cohort's.
 #
 # SUBSEQ_PRE_DAYS is days of CE before the cohort index date - 365 for the
-# protocol's 12 months. It is not PRE_LOT1_DAYS: that one is pinned by
+# 12 months of baseline. It is not PRE_LOT1_DAYS: that one is pinned by
 # CONTRACT to the value the 1L cohort was built with, so it cannot be moved
 # without redefining that cohort. These are a separate question.
 #
-# SUBSEQ_FU_CE_DAYS is days of follow-up CE - 90 for the protocol's 3 months,
+# SUBSEQ_FU_CE_DAYS is days of follow-up CE - 90 for the 3 months,
 # counted the same way NDMM_FU_CE_DAYS counts the 1L window. Days rather than
 # calendar months: 90 days is not add_months(index, 3), because month lengths
 # differ, and the 1L build's own sensitivity table put the two seven patients
@@ -163,7 +162,7 @@ subseq_check_windows <- function(pre_days, fu_days) {
   if (!length(off)) return(invisible(FALSE))
   if (!identical(toupper(trimws(Sys.getenv("NDMM_SUBSEQ_OVERRIDE", unset = ""))),
                  "TRUE"))
-    stop("The 2L/3L windows are not the protocol's: ",
+    stop("The 2L/3L windows are not the study's: ",
          paste(off, collapse = ", "), ". Cohorts built under other windows are ",
          "different cohorts wearing the study's table names. ",
          "NDMM_SUBSEQ_OVERRIDE=TRUE builds them anyway, as a named ",
@@ -298,23 +297,23 @@ subseq_check_cohort_attempt <- function(con, lot_run_id) {
                            "run ", now_id, "."))
     return(invisible(list(cohort_run = NA_character_, cohort_stamp = NA_character_)))
   }
-  lot_run_id <- lot_cohort_id
+  cohort_run_id <- lot_cohort_id
   eq <- function(a, b) {
     a <- trimws(as.character(a)); b <- trimws(as.character(b))
-    length(a) == 1L && length(b) == 1L && !is.na(a) && !is.na(b) && identical(a, b)
+    !is.na(a) && !is.na(b) && identical(a, b)
   }
   # The stamp exists because two attempts can reuse a run id, so a blank one
   # does not prove the attempt. "Could not check" is not "checked".
-  if (eq(lot_run_id, now_id) && (is.na(lot_stamp) || !nzchar(trimws(lot_stamp)))) {
-    subseq_unproven(paste0(meta, " records cohort run ", lot_run_id,
+  if (eq(cohort_run_id, now_id) && (is.na(lot_stamp) || !nzchar(trimws(lot_stamp)))) {
+    subseq_unproven(paste0(meta, " records cohort run ", cohort_run_id,
                            " with no stamp, so a second attempt under the same ",
                            "run id cannot be told from the one the lines were ",
                            "built over."))
-    return(invisible(list(cohort_run = lot_run_id, cohort_stamp = NA_character_)))
+    return(invisible(list(cohort_run = cohort_run_id, cohort_stamp = NA_character_)))
   }
-  same <- eq(lot_run_id, now_id) && eq(lot_stamp, now_stamp)
+  same <- eq(cohort_run_id, now_id) && eq(lot_stamp, now_stamp)
   if (!same)
-    stop("The LOT lines were built over NDMM run ", lot_run_id, " (", lot_stamp,
+    stop("The LOT lines were built over NDMM run ", cohort_run_id, " (", lot_stamp,
          "), but ", tbl, " now holds run ", now_id, " (", now_stamp,
          "). The cohort and the enrollment spans on disk are a later attempt ",
          "than the lines, so eligibility would be worked out from enrollment ",
@@ -323,12 +322,11 @@ subseq_check_cohort_attempt <- function(con, lot_run_id) {
   log_msg("  Cohort attempt ", now_id, " matches the one the LOT run read.")
   # Returned, not just checked: these go onto the cohort tables so a later
   # reader can tell whether they still belong beside the LOT tables on disk.
-  invisible(list(cohort_run = lot_run_id, cohort_stamp = lot_stamp))
+  invisible(list(cohort_run = cohort_run_id, cohort_stamp = lot_stamp))
 }
 
 # Criterion 2: 12 months of CE before that cohort's own index date, over the
-# gap-merged spans, because the protocol counts gaps of 30 days or fewer as
-# continuous. The window is [index - 365, index - 1], the one 06_flags.R uses
+# gap-merged spans, because gaps of 30 days or fewer count as continuous. The window is [index - 365, index - 1], the one 06_flags.R uses
 # at 1L.
 subseq_pre_expr <- function(ix, pre_days) {
   glue("max(CASE WHEN s.cov_start <= date_sub({ix}, {as.integer(pre_days)})",
@@ -486,7 +484,7 @@ build_subsequent <- function(here, prefix,
   on.exit(try(DBI::dbDisconnect(con), silent = TRUE), add = TRUE)
 
   log_msg(SEP)
-  log_msg("Subsequent-line cohorts (protocol 6.2.1.1), prefix ", prefix)
+  log_msg("Subsequent-line cohorts (2L and 3L), prefix ", prefix)
   log_msg("  received that line")
   log_msg("  ", pre_days, " days of CE before its start, gaps <= ",
           cfg$gap_days, " days")

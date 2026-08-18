@@ -109,7 +109,7 @@ cat("CAR-T 60-day induction rule applied in all ", length(cells), " cells\n", se
 # The melphalan abbreviation comes off the cells too, not off this session's
 # config - the tables were written by an earlier run and it is that run's
 # abbreviation the regimen strings carry.
-MELP <- toupper(trimws(st$melp_med_abbr %||% MELP))
+MELP <- toupper(trimws(st$abbr %||% MELP))
 
 # Melphalan anywhere in follow-up, through the package's own definition and
 # fixed once from the reference cell. Each cell's own melphalan patients would
@@ -126,7 +126,7 @@ lines_of <- function(cell)
          " ON cast(l.PATID as string) = cast(d.PATID as string)")
 
 per_cell <- function(body) do.call(rbind, lapply(cells, function(c_i) {
-  d <- db_q(con, paste0(body(c_i)))
+  d <- db_q(con, body(c_i))
   if (!nrow(d)) NULL else cbind(CELL = c_i$id, d, stringsAsFactors = FALSE)
 }))
 

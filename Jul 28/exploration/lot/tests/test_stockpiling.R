@@ -226,7 +226,7 @@ ok(has(re2, "INNER JOIN subs s ON r.MED_ABBR = s.original_med"),
    "...and the same in the re-challenge population")
 for (rf in c("run_stockpiling_rule.R", "run_rechallenge_evidence.R")) {
   txt <- paste(readLines(file.path(ROOT, rf), warn = FALSE), collapse = "\n")
-  ok(has(txt, "Cannot read permissible_subs.csv"),
+  ok(has(txt, "permissible_subs.csv is not at"),
      paste0(rf, " refuses to measure without the pairs rather than over-count"))
 }
 

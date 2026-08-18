@@ -1,7 +1,6 @@
 # A drug in the previous line's regimen cannot start the next line while it is
-# still running. The protocol starts a later LOT on "a new MM agent that was not
-# part of the previous LOT regimen". A drug the patient never stopped is not
-# new. Its later episodes belong to the line it is already in, so that line's
+# still running. A later LOT starts on a new MM agent that was not part of the
+# previous LOT regimen, and a drug the patient never stopped is not new. Its later episodes belong to the line it is already in, so that line's
 # run-out chains forward over them.
 #
 # Once the drug is discontinued it is released. map_discon_gap_days flags the

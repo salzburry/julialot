@@ -44,7 +44,7 @@ report_catalogue <- function(checks) {
     cat(sprintf("    %-4s %-5s %s\n", c_i$id, c_i$severity, c_i$what))
   }
   cat("\n  ", length(checks), " checks. ",
-      sum(vapply(checks, function(c) identical(c$severity, "fail"), logical(1))),
+      sum(vapply(checks, function(c_i) identical(c_i$severity, "fail"), logical(1))),
       " of them are failures if they find anything; the rest are reported.\n", sep = "")
 }
 

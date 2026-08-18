@@ -151,7 +151,6 @@ wbx_write_workbook <- function(sheets, xlsx_path, csv_dir, stamp, allow_csv = FA
   invisible(TRUE)
 }
 
-`%||%` <- function(a, b) if (is.null(a)) b else a
 
 # Best-effort optional table: return the data on success, else a one-row table
 # naming the failure. Assigning NULL into a list element would DELETE it (R
@@ -209,10 +208,9 @@ main <- function() {
   have_map   <- vqs_readable(con, map_tbl)
   have_sct   <- vqs_readable(con, sct_tbl)
   have_final <- vqs_readable(con, final_tbl)
-  for (chk in list(c(have_map, map_tbl), c(have_sct, sct_tbl),
-                   c(have_final, final_tbl)))
-    if (!isTRUE(as.logical(chk[1])))
-      log_msg("WARNING: ", chk[2], " not readable - dependent sections will note the gap.")
+  if (!have_map)   log_msg("WARNING: ", map_tbl,   " not readable - dependent sections will note the gap.")
+  if (!have_sct)   log_msg("WARNING: ", sct_tbl,   " not readable - dependent sections will note the gap.")
+  if (!have_final) log_msg("WARNING: ", final_tbl, " not readable - dependent sections will note the gap.")
 
   tokens <- vqs_resolve_agent_tokens(con)               # builds mma_codelist view; resolves POMA
   poma   <- tokens$poma
@@ -532,8 +530,7 @@ main <- function() {
 
   # ---- Q5: pharmacy-benefit continuity + LEN/THAL look-back -------------
   q5_tables <- list(); q5_notes <- character()
-  if (have_final && n_poma > 0 && length(tokens$notes) &&
-      !any(grepl("unavailable", tokens$notes, ignore.case = TRUE))) {
+  if (have_final && n_poma > 0 && isTRUE(tokens$resolved)) {
     # The index columns are anchored on the cohort's INDEX_DATE, which this
     # cohort sets to LOT1_START_DT - the same date as lot1_dt. So they are not
     # a second, earlier window: they are a longer look-back on the same anchor
@@ -713,7 +710,7 @@ main <- function() {
       "READ THIS BEFORE Q2 AND Q4. Both are rates over a follow-up window, and the study end is fixed - so a group that indexed later",
       "has less room, and a lower rate on one side can be the calendar rather than the treatment.",
       "TWO DEFINITIONS. *_fu_days runs from the day after the index date to death or the study end and ignores disenrolment - the LOT",
-      "run's primary analysis. *_fu_days_ce is also capped where continuous enrolment stops, which is the protocol's follow-up period",
+      "run's primary analysis. *_fu_days_ce is also capped where continuous enrolment stops, which is the follow-up period outcomes censors on",
       "and what the outcomes build censors on. Where the two differ, the difference is disenrolment.",
       "WHAT ENDED IT is in that order: a patient who disenrolled and died afterwards counts as disenrolled, because that death is",
       "outside the window this cohort observes. The categories are exclusive and cover the group. They are NOT the outcomes build's",

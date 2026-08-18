@@ -3,7 +3,7 @@
 What the build does, rule by rule: the behaviour, the setting that governs it,
 the file it lives in, and a worked example.
 
-**Only what the code does.** No protocol text, no spec comparison, no rejected
+**Only what the code does.** No rejected
 alternatives, no repair history. Where a rule is applied but the clinical
 question behind it is still open, the rule is stated here as behaviour and the
 question lives on the Open questions sheet of the scenario workbook

@@ -118,8 +118,8 @@ for (nm in list(list("required (build stops if missing)", CORE),
 }
 # Anything plasma-cell-looking that no label covers AND the mm_dx join does not
 # reach. Both halves matter: a label off the list is still overridden if its
-# codes are on mm_dx.csv, and reporting those as excluding would send an SME
-# after codes the build already keeps.
+# codes are on mm_dx.csv, and reporting those as excluding would send a
+# reviewer after codes the build already keeps.
 uncovered <- pc[!(pc$g %in% GROUPS) & !(pc$k %in% mm$k), ]
 line("")
 if (!nrow(uncovered)) {

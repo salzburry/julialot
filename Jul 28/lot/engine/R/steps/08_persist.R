@@ -129,7 +129,7 @@ phase_persist <- function(con, ctx) {
       log_msg("  WARNING: QC summary persist failed: ", conditionMessage(e))
     })
 
-  } else {
-    log_msg("Persist disabled (PERSIST_TO_SCHEMA=FALSE).")
   }
+  # No disabled branch: check_lot_contract() stops any run without
+  # PERSIST_TO_SCHEMA=TRUE before a connection opens.
 }

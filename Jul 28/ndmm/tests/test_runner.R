@@ -183,10 +183,6 @@ drive_up <- function(unreadable = character(0)) {
   tryCatch({ ue$check_upstream(NULL, UCFG); NULL }, error = conditionMessage)
 }
 ok(is.null(drive_up()), "all eight raw inputs readable lets the run start")
-# There are no built inputs: this package reads raw CDM and its code lists,
-# which is what lets it be handed to someone on its own.
-ok(length(upstream_tables(cfg_defaults)) == 0L,
-   "the build depends on no table another build in this folder makes")
 msg <- drive_up("cdm.t_dod")
 ok(!is.null(msg) && grepl("dod", msg, fixed = TRUE),
    "the death table is preflighted - the demographics step needs it")
@@ -456,6 +452,10 @@ ASQL <- character(0); AUNITS <- list()
 akeep <- function(g) { ASQL <<- c(ASQL, g); AUNITS[[length(AUNITS) + 1L]] <<- g; TRUE }
 assign("db_exec", function(con, s) akeep(s), envir = ae)
 assign("db_replace", function(con, ...) akeep(c(...)), envir = ae)
+# ensure_cols() DESCRIBEs the table it just created; answer with the full
+# column list so no ALTER is attempted against the stub.
+assign("db_q", function(con, s) data.frame(col_name = names(ae$ATTRITION_COLS)),
+       envir = ae)
 ASQL <- character(0); AUNITS <- list()
 ae$write_attrition(NULL, list(), mk(c(1000,900,800,700,600,500,400,300,200)))
 ins <- grep("INSERT", ASQL, value = TRUE)[1]
@@ -727,8 +727,8 @@ SSQL <- character(0)
 se$build_ndmm_lot1_index(NULL, "cdm.medical", "cdm.rx", "cdm.med_procedure")
 x <- SSQL[1]
 # Five sources: medical PROC_CD, medical BILL_PROC_CD, medical NDC, rx NDC and
-# med_procedure PROC. The last is the program spec's T_MED_PROCEDURE (PROC)
-# join to CL_MMA_CODELIST, added so a drug given as a procedure is not missed.
+# med_procedure PROC. The last is a T_MED_PROCEDURE (PROC) join to
+# CL_MMA_CODELIST, added so a drug given as a procedure is not missed.
 n_arms <- length(gregexpr("INNER JOIN _ndmm_base_cohort b", x, fixed = TRUE)[[1]])
 ok(n_arms == 5L,
    paste0("the index is looked for in all five claim sources (", n_arms, ")"))
@@ -1788,12 +1788,11 @@ named <- unique(unlist(lapply(args, function(a) {
   a <- trimws(a)
   if (grepl("^['\"].*['\"]$", a)) gsub("^['\"]|['\"]$", "", a)
   else if (exists(a, envir = consts, inherits = FALSE)) get(a, envir = consts)
-  else NULL                       # wrk(t), the loop variable in check_upstream
+  else NULL                       # wrk() over a variable the scan cannot see
 })))
-inputs <- names(upstream_tables(cfg_defaults))
 ok(length(called) > 0,
    paste0("the scan follows the ", length(called), " step functions the runner calls"))
-undeclared <- setdiff(named, c(OUTPUTS, inputs))
+undeclared <- setdiff(named, OUTPUTS)
 ok(length(undeclared) == 0,
    if (length(undeclared)) paste0("tables written but not declared: ",
                                   paste(undeclared, collapse = ", "))
@@ -1842,8 +1841,7 @@ ok(length(gregexpr("'HCPCS',", px, fixed = TRUE)[[1]]) == 2L,
 
 # The events view carries dates now, so the window question can be priced. What
 # must NOT have moved is the exclusion: it is still every patient with a matched
-# claim anywhere in the study period, which is what the protocol says and what
-# every earlier run applied. DECISIONS.md #9 records why that is the wider of
+# claim anywhere in the study period, which is what every earlier run applied. DECISIONS.md #9 records why that is the wider of
 # two readings; this pins that recording it changed nothing.
 ok(grepl("BETWEEN date('2016-01-01') AND date('", px, fixed = TRUE),
    "the scan is still bounded to the study period, not a patient window")
@@ -1894,9 +1892,9 @@ ok(grepl("code type(s) no claim source produces", m, fixed = TRUE) &&
 ok(grepl("keep those", m, fixed = TRUE),
    "...and says the patients would be kept, which is the failure")
 assign("db_q", function(con, sql) stop("no such view"), envir = pe)
-ok(grepl("cannot", tryCatch({ pe$build_ndmm_preg_codes(NULL); "" },
-                            error = conditionMessage), fixed = TRUE),
-   "and a check that could not run is not read as a pass")
+ok(grepl("no such view", tryCatch({ pe$build_ndmm_preg_codes(NULL); "" },
+                                  error = conditionMessage), fixed = TRUE),
+   "and a check that could not run stops with the real cause, not a pass")
 ok(setequal(pe$NDMM_PREG_CODE_TYPES,
             c("ICD9DIAG", "ICD10DIAG", "ICD9PROC", "ICD10PROC", "HCPCS", "REV")),
    "the six types the guard allows are the six the scan emits")
@@ -1953,8 +1951,9 @@ ok(length(drive_cols(c("A", "B", "C"))) == 0L,
 e2 <- drive_cols(c("A", "B"))
 ok(length(e2) == 1L && grepl("ADD COLUMNS (C STRING)", e2[1], fixed = TRUE),
    "...one that is missing a column has it added, with its declared type")
-ok(length(drive_cols(NULL)) == 0L,
-   "...and a DESCRIBE that cannot be read adds nothing, rather than adding all of them")
+ok(grepl("no DESCRIBE here",
+         tryCatch(drive_cols(NULL), error = conditionMessage), fixed = TRUE),
+   "...and a DESCRIBE that cannot be read stops with its own message, rather than adding all of them")
 # DERIVED, not a list written out here. A whitelist of four passes the moment a
 # fifth CREATE TABLE IF NOT EXISTS is added, which is exactly how the two in
 # lot/engine went years without one - so the set comes from the file.
@@ -2085,9 +2084,9 @@ ok(grepl("no usable codes", mct, fixed = TRUE),
 ok(grepl("flagged as not in a trial", mct, fixed = TRUE),
    "...and says every patient would read as not in a trial, which is the failure")
 assign("db_q", function(con, sql) stop("no such view"), envir = ce)
-ok(grepl("cannot say", tryCatch({ ce$build_ndmm_clintrial_codes(NULL); "" },
-                                error = conditionMessage), fixed = TRUE),
-   "and a check that could not run is not read as a pass")
+ok(grepl("no such view", tryCatch({ ce$build_ndmm_clintrial_codes(NULL); "" },
+                                  error = conditionMessage), fixed = TRUE),
+   "and a check that could not run stops with the real cause, not a pass")
 # Codes that cannot be reached are the other way a full-looking list does
 # nothing: a CPT-typed row loads, joins on a type no arm emits, and matches
 # zero, so a patient in a trial by that code reads as not in one.

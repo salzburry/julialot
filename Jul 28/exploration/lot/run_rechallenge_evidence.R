@@ -10,9 +10,9 @@
 #
 # Reads <prefix>STOCKPILE_ABSORBED_ADD, so run_stockpiling_rule.R comes first.
 #
-# The question it serves: the protocol ends a line on an agent that is not in the
-# line's regimen, and says nothing about whether the patient has had that agent
-# before. So a drug returning after an earlier line ends one line and opens
+# The question it serves: a line ends on an agent that is not in the line's
+# regimen, and the rule says nothing about whether the patient has had that
+# agent before. So a drug returning after an earlier line ends one line and opens
 # another. Whether it should is clinical, and the measure that decides it is how
 # long the patient had actually been off the drug - GAP_DAYS, read off claim
 # dates so it means the same thing for a patient whose cover had lapsed and one
@@ -41,7 +41,7 @@ report_rule <- function(rc) {
   cat("\nRe-challenge: an agent returning to a line it is not part of.\n\n")
   cat("  An event is an agent that appeared in ANY earlier line for the patient,\n")
   cat("  is absent from this line's regimen, and turns up inside this line. The\n")
-  cat("  protocol ends the line on it and opens the next one there.\n\n")
+  cat("  rule ends the line on it and opens the next one there.\n\n")
   cat("  GAP_DAYS is the days from the previous claim for that agent to the one\n")
   cat("  that brings it back. It comes from claim dates, not cover, so it reads\n")
   cat("  the same whether or not days-supply happened to run out.\n\n")
@@ -75,8 +75,7 @@ main <- function() {
 
   prefix <- Sys.getenv("OBJECT_PREFIX", unset = "")
   run <- require_lot_run(con, prefix)
-  rc  <- rechall_cfg(from_run = tryCatch(lot_run_meta(con, prefix),
-                                         error = function(e) NULL))
+  rc  <- rechall_cfg(from_run = lot_run_meta(con, prefix))
   run_id <- paste0("rechall_", format(Sys.time(), "%Y%m%d%H%M%S"))
 
   lines  <- wrk(paste0(prefix, "LOT_LONG_FINAL"))
@@ -95,16 +94,17 @@ main <- function() {
   # a biosimilar of a regimen agent reads as an outside agent and every count
   # below is an over-count. permissible_subs is a temporary view built from a
   # code list, so it has to be read from the code list here too.
-  subs <- tryCatch(
-    load_codelist_csv("permissible_subs.csv",
-                      c("original_med", "substitute_med")),
-    error = function(e) NULL)
-  if (is.null(subs) || !nrow(subs))
-    stop("Cannot read permissible_subs.csv from CODELIST_DIR. The engine's ",
+  subs_csv <- file.path(cfg$codelist_dir, "permissible_subs.csv")
+  if (!file.exists(subs_csv))
+    stop("permissible_subs.csv is not at ", subs_csv, ". The engine's ",
          "regimen is the induction meds AND their permissible substitutes, so ",
          "without the pairs a biosimilar of a regimen agent counts as an ",
          "outside agent and every number here is an over-count. Set ",
          "CODELIST_DIR to the run's code list.", call. = FALSE)
+  subs <- read.csv(subs_csv, stringsAsFactors = FALSE, colClasses = "character")
+  if (!all(c("original_med", "substitute_med") %in% names(subs)) || !nrow(subs))
+    stop(subs_csv, " must carry original_med and substitute_med rows.",
+         call. = FALSE)
   cat("Substitution pairs loaded: ", nrow(subs), ".\n", sep = "")
 
   ev <- wrk(paste0(prefix, "RECHALL_EVENTS"))

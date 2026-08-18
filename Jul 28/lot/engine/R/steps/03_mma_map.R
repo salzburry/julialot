@@ -1,7 +1,6 @@
 # MM-approved and steroid claims, then the Medication Available Period.
 
 phase_mma_map <- function(con, ctx) {
-  meds <- ctx$meds
 
   # STEP 2 (5A): MMA_MED - Raw extraction
   # Sources: medical (PROC_CD, BILL_PROC_CD, NDC), rx (NDC)
