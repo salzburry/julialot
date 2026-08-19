@@ -79,6 +79,40 @@ if (!is.null(aff)) {
 }
 roster_f <- find_file("^aug15_qs_map_splitting_review_roster_.*\\.csv$")
 
+# When does the old drug come back? Two clocks per affected patient, banded:
+# how long they were OFF the drug (from its last covered day to its return),
+# and how far past the line's regimen window the return landed. One row per
+# patient - their first affected line - on the same-drug reading.
+map_gap_tbl <- NULL
+gap_head <- NULL
+ros <- read_any("^aug15_qs_map_splitting_review_roster_.*\\.csv$")
+if (!is.null(ros) &&
+    all(c("MATCH_BASIS", "CLASS", "PATID", "GAP_FROM_PRIOR_EPISODE_END_DAYS",
+          "BOUNDARY_MEDS_START_DT", "INDUCTION_WINDOW_END") %in% names(ros))) {
+  r <- ros[ros$MATCH_BASIS == "EXACT_TOKEN" & ros$CLASS == "AFFECTED", ]
+  r <- r[!duplicated(r$PATID), ]
+  if (nrow(r)) {
+    off <- suppressWarnings(as.numeric(r$GAP_FROM_PRIOR_EPISODE_END_DAYS))
+    aft <- suppressWarnings(as.numeric(
+      as.Date(r$BOUNDARY_MEDS_START_DT) - as.Date(r$INDUCTION_WINDOW_END)))
+    bands <- c("up to 3 months", "3-6 months", "6-12 months",
+               "1-2 years", "over 2 years")
+    cnt <- function(v) {
+      b <- cut(v, c(-Inf, 90, 180, 365, 730, Inf), labels = bands)
+      c(as.integer(table(factor(b, levels = bands))), sum(is.na(v)))
+    }
+    map_gap_tbl <- data.frame(
+      `Time band` = c(bands, "unknown"),
+      `How long they were off the drug` = cnt(off),
+      `How far past the line's window it came back` = cnt(aft),
+      check.names = FALSE, stringsAsFactors = FALSE)
+    gap_head <- paste0(
+      n1(sum(off <= 180, na.rm = TRUE)), " come back within 6 months of ",
+      "stopping the drug; ", n1(sum(off > 365, na.rm = TRUE)),
+      " after more than a year.")
+  }
+}
+
 fp <- read_any("^foldin_patients\\.csv$")
 fold_lines_f <- find_file("^foldin_changed_lines\\.csv$")
 
@@ -183,6 +217,8 @@ if (!is.null(map_tbl))
           paste0(n1(map_tbl[1, 2]), " lose the split (same drug); ",
                  n1(map_tbl[2, 2]), " counting biosimilars. ",
                  n1(map_tbl[1, 3]), " more keep it - a new drug started the same day."))
+if (!is.null(gap_head))
+  add_sum("When does the old drug come back?", gap_head)
 if (!is.null(fp))
   add_sum("What if we apply the rule? (test copy, study numbers untouched)",
           paste0(n1(fp$N_DIFFERENT), " of ", n1(fp$N_PATIENTS),
@@ -220,6 +256,10 @@ notes <- c(
   paste0("Scenario counts are per LINE: a patient with the shape at two ",
          "lines is counted at each, so the totals can be larger than the ",
          "number of patients."),
+  if (!is.null(map_gap_tbl)) paste0(
+    "The time-gap sheet uses two clocks: days from the drug's last covered ",
+    "day to its return, and days from the end of the line's regimen window ",
+    "to the return. One row per affected patient, same-drug reading."),
   if (!is.null(roster_f)) paste0("Patient list for the MAP rule: ", basename(roster_f)),
   if (!is.null(fold_lines_f)) paste0("Before/after lines per changed patient: ",
                                      basename(fold_lines_f)),
@@ -238,6 +278,7 @@ sheets <- list("Answers"  = summary_tbl,
                "Notes"    = data.frame(Note = notes, stringsAsFactors = FALSE),
                "Decisions to make" = decisions)
 if (!is.null(map_tbl))  sheets[["MAP rule"]] <- map_tbl
+if (!is.null(map_gap_tbl)) sheets[["MAP rule - time gaps"]] <- map_gap_tbl
 if (!is.null(melp_tbl)) sheets[["MELP"]] <- melp_tbl
 if (!is.null(fu_tbl))   sheets[["12-month cover"]] <- fu_tbl
 if (!is.null(scen_tbl)) sheets[["Scenario counts"]] <- scen_tbl
