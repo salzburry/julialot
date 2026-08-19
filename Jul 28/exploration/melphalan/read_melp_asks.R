@@ -3,7 +3,8 @@
 #
 #   1. the change in duration of each line after applying the melphalan rule
 #   2. for every line, how many LOTs contain melphalan and how many are
-#      melphalan on its own
+#      melphalan on its own - mono among the captured non-steroid MM agents,
+#      so a patient also on a steroid still reads as mono
 #   3. how many receive an SCT in a melphalan-containing LOT, by line
 #
 #   DATABRICKS_PWD=... DOMINO_USER_NAME=usr00000 \

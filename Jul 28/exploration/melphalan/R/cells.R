@@ -399,8 +399,9 @@ MELP_METRICS <- c(
   n_pat_with_melp    = "patients with any melphalan line",
   n_b2_line_starts   = "MED-started lines whose start is a B.2 second dose",
   n_b2_melp_only     = "...of those, the ones no other agent would have started",
-  # The question the rule is actually being asked about: melphalan on its own
-  # should not advance a line. These count the lines where it did.
+  # The population under discussion: lines that are melphalan alone among the
+  # captured non-steroid agents. The rule allows some to advance a line and
+  # folds others away; these count where each happened, they do not judge it.
   n_melp_mono_lines    = "lines whose whole regimen is melphalan",
   n_pat_melp_mono      = "patients with at least one melphalan-only line",
   n_melp_mono_adv      = "...of those, MED-started lines after LOT1 - melphalan alone advanced a line",

@@ -4,15 +4,15 @@ This file walks the LOT half of the delivery. The complete delivery runs in
 this order, each step over the one before it:
 
 1. NDMM cohort build (`ndmm/`) — writes `ndmm_NDMM_COHORT` with `MM_DX_DT`
-2. LOT build over that exact cohort attempt — steps 1–3 below
-3. LOT QC — step 4 below
+2. LOT build over that exact cohort attempt — section 2 below
+3. LOT QC and confirmation — section 3 below
 4. Dashboard (`reporting/dashboard/build.R`) — includes the complete
    all-regimens CSV, which the build refuses to ship without
 5. 2L/3L cohorts (`ndmm/build_subsequent_cohorts.R`) — after EVERY LOT rebuild
 6. Outcomes (`analysis/outcomes/build.R`)
 7. Study-question programs (`analysis/questions/`)
-8. Scenario workbook and audits — steps 1a–1b below
-9. MELP cells and readers — separate sensitivity prefixes only, step 6 below
+8. Audit counts and the scenario workbook — sections 1 and 1b below
+9. MELP cells and readers — separate sensitivity prefixes only, section 4 below
 
 Code and docs only — **no code lists** (the engine reads
 them from `CODELIST_DIR`, default `/mnt/code/codelist`) and **no cohort build**
