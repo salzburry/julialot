@@ -299,7 +299,8 @@ NOT_AN_AXIS <- c(
   melp_exposure_days = "parameter of the gap-advancement prototype, inert while it is off",
   melp_restart_days = "parameter of the gap-advancement prototype, inert while it is off",
   melp_advance_days = "parameter of the gap-advancement prototype, inert while it is off",
-  melp_sct_days = "parameter of the gap-advancement prototype, inert while it is off"
+  melp_sct_days = "parameter of the gap-advancement prototype, inert while it is off",
+  melp_simple_course_days = "parameter of the gap-advancement prototype, inert while it is off"
 )
 
 # Every engine setting is either bound to a contract field or explicitly not an

@@ -112,6 +112,8 @@ cfg_defaults <- list(
   melp_restart_days  = as.integer(Sys.getenv("MELP_RESTART_DAYS",  unset = "60")),
   melp_advance_days  = as.integer(Sys.getenv("MELP_ADVANCE_DAYS",  unset = "180")),
   melp_sct_days      = as.integer(Sys.getenv("MELP_SCT_DAYS",      unset = "14")),
+  melp_simple_course_days = as.integer(Sys.getenv("MELP_SIMPLE_COURSE_DAYS",
+                                                  unset = "28")),
 
   # ---- Code lists ----
   codelist_dir = Sys.getenv("CODELIST_DIR", unset = "/mnt/code/codelist"),

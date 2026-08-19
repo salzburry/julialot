@@ -122,6 +122,18 @@ Rscript exploration/melphalan/read_melp_asks.R                      # Julia's Q1
 Rscript exploration/melphalan/read_melp_decisions.R                 # what each decision was worth
 ```
 
+The SIMPLIFIED fallback from the later note is a separate package with its own
+two builds, under `melp_simple_` prefixes:
+
+```
+Rscript exploration/melphalan/run_melp_simple.R                          # plan only
+MELP_SIMPLE_EXECUTE=TRUE Rscript exploration/melphalan/run_melp_simple.R # build + read
+```
+
+Its console output and four `melp_simple_*.csv` files compare the simplified
+rule to the contract build. The 28-day course cap is an open question: rebuild
+with `MELP_SIMPLE_COURSE_DAYS=30` to see the other reading.
+
 Each prefix is emptied before it is rebuilt. `APPLY_MELP_RULE` stays blank in
 `CONTRACT`, so the study's own run is untouched by all of this.
 

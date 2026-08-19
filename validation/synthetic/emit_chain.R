@@ -52,6 +52,7 @@ assign("cfg", list(
   apply_melp_rule = Sys.getenv("MELP_RULE", unset = ""), melp_med_abbr = "MELP",
   melp_exposure_days = 30L, melp_restart_days = 60L,
   melp_advance_days = 180L, melp_sct_days = 14L,
+  melp_simple_course_days = 28L,
   study_end = "2026-03-31"), e)
 
 assign("materialize", function(con, step, view, name, body, qc = NULL) {

@@ -30,8 +30,8 @@
 #
 #   2. A pointer to the melphalan comparison. The three-cell package evaluates
 #      the original five-branch rule; run it separately. The simplified
-#      shorter-course fallback from the newer note is NOT implemented and is
-#      not evaluated by anything yet.
+#      shorter-course fallback from the newer note has its own two-cell
+#      package, exploration/melphalan/run_melp_simple.R - also run separately.
 #
 #   3. Patients whose prior line ended with the recorded reason
 #      DISCONTINUATION and who then hold the 12-month continuous-enrollment
@@ -432,7 +432,7 @@ main <- function() {
     STATUS = c(
       "screen written - a sizing of current boundaries, not the rebuilt line table",
       "not produced here - run the melphalan package",
-      "NOT IMPLEMENTED anywhere - no cell evaluates it yet",
+      "built as its own cell - run the simplified package",
       "written"),
     WHERE = c(
       paste0("aug15_qs_map_splitting_affected_", stamp, ".csv, with the ",
@@ -440,7 +440,9 @@ main <- function() {
       paste0("exploration/melphalan: AUG1_EXECUTE=TRUE run_aug1_melp.R (the ",
              "reference and two cells of the original five-branch rule), then ",
              "read_melp_asks.R and read_melp_decisions.R"),
-      "needs a decision to build it as its own cell",
+      paste0("exploration/melphalan: MELP_SIMPLE_EXECUTE=TRUE ",
+             "run_melp_simple.R - two builds under melp_simple_ prefixes; ",
+             "the 28-vs-30-day cap is still an open question"),
       paste0("aug15_qs_discontinued_then_12mo_ce_", stamp, ".csv; chained ",
              "attrition ", attr_note)),
     stringsAsFactors = FALSE)
