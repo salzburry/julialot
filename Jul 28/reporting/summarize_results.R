@@ -111,20 +111,35 @@ if (!is.null(fu))
     check.names = FALSE, stringsAsFactors = FALSE)
 attr_f <- find_file("^aug15_qs_subsequent_cohort_attrition_.*\\.csv$")
 
+# The counts are per LINE: a patient with the shape at two lines is counted
+# at each. Shown line by line for that reason - the total says how often the
+# shape happens, and one patient can be behind more than one of them, so it
+# is NOT a patient count and can be larger than the cohort.
+scen_pivot <- function(d) {
+  d <- d[!is.na(d$N_PATIENTS), ]
+  d$N_PATIENTS <- as.numeric(d$N_PATIENTS)
+  d$LOT_NUM <- suppressWarnings(as.integer(d$LOT_NUM))
+  wide <- data.frame(Shape = sort(unique(d$ID)), stringsAsFactors = FALSE)
+  for (ln in sort(unique(d$LOT_NUM[!is.na(d$LOT_NUM)]))) {
+    v <- d[!is.na(d$LOT_NUM) & d$LOT_NUM == ln, c("ID", "N_PATIENTS")]
+    wide[[paste0("Line ", ln)]] <- v$N_PATIENTS[match(wide$Shape, v$ID)]
+  }
+  ln_cols <- setdiff(names(wide), "Shape")
+  wide[["Times it happens (all lines)"]] <-
+    rowSums(wide[ln_cols], na.rm = TRUE)
+  if ("WHAT_HAPPENS_TO_THE_PATIENT" %in% names(d)) {
+    story <- d[!duplicated(d$ID), c("ID", "WHAT_HAPPENS_TO_THE_PATIENT")]
+    wide[["What happens"]] <- story[[2]][match(wide$Shape, story$ID)]
+  }
+  wide[order(-wide[["Times it happens (all lines)"]]), ]
+}
 scen_tbl <- NULL
 wb_f <- find_file("^lot_scenarios\\.xlsx$")
 if (!is.null(wb_f) && requireNamespace("openxlsx", quietly = TRUE)) {
   for (sh in tryCatch(openxlsx::getSheetNames(wb_f), error = function(e) character(0))) {
     d <- tryCatch(openxlsx::read.xlsx(wb_f, sheet = sh), error = function(e) NULL)
-    if (!is.null(d) && all(c("ID", "N_PATIENTS") %in% names(d))) {
-      d <- d[!is.na(d$N_PATIENTS), ]
-      d$N_PATIENTS <- as.numeric(d$N_PATIENTS)
-      t <- aggregate(N_PATIENTS ~ ID, d, sum)
-      story <- d[!duplicated(d$ID), c("ID", intersect("WHAT_HAPPENS_TO_THE_PATIENT", names(d)))]
-      t <- merge(t, story, by = "ID", all.x = TRUE)
-      t <- t[order(-t$N_PATIENTS), ]
-      names(t) <- c("Shape", "Patients", "What happens")[seq_along(t)]
-      scen_tbl <- t
+    if (!is.null(d) && all(c("ID", "LOT_NUM", "N_PATIENTS") %in% names(d))) {
+      scen_tbl <- scen_pivot(d)
       break
     }
   }
@@ -202,6 +217,9 @@ notes <- c(
          "(small gaps merged)."),
   paste0("Melphalan with a steroid counts as melphalan alone - steroids are ",
          "not in the captured drug list."),
+  paste0("Scenario counts are per LINE: a patient with the shape at two ",
+         "lines is counted at each, so the totals can be larger than the ",
+         "number of patients."),
   if (!is.null(roster_f)) paste0("Patient list for the MAP rule: ", basename(roster_f)),
   if (!is.null(fold_lines_f)) paste0("Before/after lines per changed patient: ",
                                      basename(fold_lines_f)),
