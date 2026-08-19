@@ -621,6 +621,17 @@ qs_check_cohort_attempt <- function(con, cfg) {
   invisible(TRUE)
 }
 
+# A cohort-side table that sits beside the cohort table, named for it:
+# ndmm_NDMM_COHORT -> ndmm_NDMM_ENROLL_SPANS. The cohort's own prefix, which
+# is not always the LOT prefix, so qs_tbl() would name the wrong schema half.
+qs_cohort_side_tbl <- function(base) {
+  cfg <- lot_config()
+  if (!grepl("NDMM_COHORT$", cfg$input_cohort_table))
+    stop(cfg$input_cohort_table, " is not an NDMM cohort table, so its ",
+         base, " cannot be named from it.", call. = FALSE)
+  wrk(sub("NDMM_COHORT$", base, cfg$input_cohort_table))
+}
+
 # Re-read the LOT status row and require the same run and attempt as when the
 # program started. The queries above happened over minutes; a rebuild landing
 # in the middle leaves early files from one attempt and later files from
