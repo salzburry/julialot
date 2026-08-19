@@ -288,9 +288,14 @@ ok(has(melp_lot1_ctes(ask), "melp_span AS (") &&
    "the recomputed candidate list is bounded at the HELD run-out, not the original")
 ok(identical(melp_runout_case(off, "X"), "X"),
    "...and with the rule off the run-out expression is handed straight back")
-ok(has(melp_runout_case(ask, "X"), "mh.MELP_HOLD_DT > X") &&
-     has(melp_runout_case(ask, "X"), "X IS NULL"),
-   "LOT2-5 wraps its own run-out, and carries a NULL one too")
+ok(has(melp_runout_case(ask, "X"), "mh.MELP_HOLD_DT > (X)") &&
+     has(melp_runout_case(ask, "X"), "(X) IS NULL AND d.PATID IS NULL"),
+   paste0("LOT2-5 wraps its own run-out; a NULL one is supplied only for a ",
+          "line with no regimen at all, never for cover past observation"))
+# LOT1 is always medication-started, so its NULL run-out can only mean cover
+# past observation - the hold must extend, never substitute.
+ok(has(melp_lot1_ctes(ask), "AND lb0.LOT1_BASE_RUNOUT_DT IS NOT NULL"),
+   "...and at LOT1 the hold never replaces a NULL run-out at all")
 
 cat("\n-- the reader that answers the three questions --\n")
 # read_melp_asks.R had no cover at all: the gate could go green with the file

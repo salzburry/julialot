@@ -68,8 +68,14 @@ run_cell <- function(c_i, cohort, cohort_pfx) {
   env  <- paste0("COHORT_PREFIX=", cohort_pfx)
   st   <- trimws(Sys.getenv("COHORT_STATUS_TABLE", unset = ""))
   if (nzchar(st)) env <- c(env, paste0("COHORT_STATUS_TABLE=", st))
-  if (!is.na(c_i$mode))
+  if (!is.na(c_i$mode)) {
     env <- c(env, "LOT_CONTRACT_OVERRIDE=TRUE", "APPLY_MAP_FOLDIN=TRUE")
+  } else {
+    # Pinned to the contract explicitly - a child inherits the shell, so an
+    # ambient APPLY_MAP_FOLDIN or melphalan setting must not reach the
+    # reference build.
+    env <- c(env, "APPLY_MAP_FOLDIN=FALSE", "APPLY_MELP_RULE=")
+  }
   log_f <- file.path(out_dir, paste0("build_foldin_", c_i$id, ".log"))
   cat("  building ", c_i$id, " -> ", c_i$prefix, "  (log: ", log_f, ")\n", sep = "")
   rc <- system2("Rscript", args, env = env, stdout = log_f, stderr = log_f)
@@ -116,6 +122,10 @@ foldin_changed_sql <- function(a_tbl, b_tbl) {
                     OR NOT (a.LOT_BASE_END_REASON <=> b.LOT_BASE_END_REASON)
                     OR NOT (a.LOT_BASE_MEDS       <=> b.LOT_BASE_MEDS)
                     OR NOT (a.LOT_BASE_DISCON_DT  <=> b.LOT_BASE_DISCON_DT)
+                    -- The stored first-added medication too: a same-day case
+                    -- where only the pick changes moves no date, and would
+                    -- otherwise be invisible here.
+                    OR NOT (a.LOT_BASE_1ST_ADD_MED <=> b.LOT_BASE_1ST_ADD_MED)
                   THEN 1 ELSE 0 END AS LINE_CHANGED
       FROM a FULL OUTER JOIN b
         ON a.PATID = b.PATID AND a.LOT_NUM = b.LOT_NUM

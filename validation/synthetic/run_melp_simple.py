@@ -20,6 +20,12 @@ MELP_RULE=simplified - over patients that pin each branch of the rule:
       gives the dose a line of its own
   SF  a control with no melphalan and a released restart -> identical lines
       under both builds, or the mode is moving patients it cannot touch
+  SG  the base drug covers PAST OBSERVATION and a suppressed course sits in
+      the line -> the line still ends STUDY_END. A missing run-out here
+      means treatment active at censoring, and the hold must never turn
+      that into a discontinuation on the melphalan date. Checked at LOT1
+      (SG) and at LOT2 (SG2), and for the five-branch as_asked mode too -
+      the hold machinery is shared, so the same patients guard both.
 """
 import os, sys, tempfile, subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -47,6 +53,12 @@ PATS = [
     P('SE', [('LEN', 'IMID', 0, 150), ('MELP', 'ALKY', 300, 327)]),
     P('SF', [('LEN', 'IMID', 0, 29), ('DARA', 'MAB', 0, 199),
              ('LEN', 'IMID', 150, 180)]),
+    # A 90-day dose pair, so the five-branch modes read B.2 and the
+    # simplified mode reads two short unconfirmed courses - both suppress.
+    P('SG', [('LEN', 'IMID', 0, 1250), ('MELP', 'ALKY', 100, 100),
+             ('MELP', 'ALKY', 190, 190)]),
+    P('SG2', [('LEN', 'IMID', 0, 80), ('DARA', 'MAB', 300, 1250),
+              ('MELP', 'ALKY', 420, 420), ('MELP', 'ALKY', 510, 510)]),
 ]
 
 
@@ -76,6 +88,7 @@ def build(mode):
 def main():
     ref = build("")
     smp = build("simplified")
+    ask = build("as_asked")
 
     fails = []
     def ok(cond, what):
@@ -113,6 +126,15 @@ def main():
 
     ok(ref.get('SF') == smp.get('SF') and ref.get('SF'),
        "SF: a patient with no melphalan is identical under both builds")
+
+    ok(len(smp['SG']) == 1 and smp['SG'][0][3] == 'STUDY_END',
+       "SG simplified: base cover past observation keeps the line STUDY_END")
+    ok(len(ask['SG']) == 1 and ask['SG'][0][3] == 'STUDY_END',
+       "SG as_asked: ...and the five-branch hold does the same")
+    ok(len(smp['SG2']) == 2 and smp['SG2'][1][3] == 'STUDY_END',
+       "SG2 simplified: the same at a later line")
+    ok(len(ask['SG2']) == 2 and ask['SG2'][1][3] == 'STUDY_END',
+       "SG2 as_asked: ...under the five-branch hold too")
 
     print()
     if fails:
