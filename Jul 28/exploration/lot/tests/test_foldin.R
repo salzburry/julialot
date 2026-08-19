@@ -63,8 +63,11 @@ ok(has(s, "foldin_hold AS (") &&
 ok(has(s, "WHERE bm.MED_ABBR IS NULL") &&
      has(s, "ms.MAP_START_DT >= ls.LOT{lot_num}_START_DT"),
    "...over episodes STARTING in the line, own-base drugs kept out")
-ok(has(foldin_runout_case(on_, "X"), "(X) IS NOT NULL AND fh.FOLDIN_HOLD_DT > (X)"),
-   "the hold only ever extends a run-out that exists")
+ok(has(foldin_runout_case(on_, "X"), "(X) IS NULL AND d.PATID IS NULL") &&
+     has(foldin_runout_case(on_, "X"), "fh.FOLDIN_HOLD_DT > (X)"),
+   paste0("the hold extends a run-out that exists, and SUPPLIES one for a ",
+          "line with no regimen at all - never for cover running past ",
+          "observation"))
 ok(has(s, "foldin_boundary_src AS (") &&
      identical(foldin_boundary_tbl(on_), "foldin_boundary_src") &&
      has(s, "fm.MED_ABBR IS NULL OR bm2.MED_ABBR IS NOT NULL"),
@@ -113,6 +116,9 @@ ok(has(rf, 'key = "apply_map_foldin"') && has(rf, 'vary = "apply_map_foldin"'),
 ok(has(rf, "melp_status_unchanged") && has(rf, "melp_check_code") &&
      has(rf, "melp_read_inputs"),
    "the read carries the same run-ownership checks as the melphalan packages")
+ok(has(rf, "foldin_changed_lines.csv") && has(rf, "FULL OUTER JOIN b") &&
+     has(rf, "LINE_CHANGED"),
+   "every moved patient's lines are written before/after, not only aggregates")
 
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))

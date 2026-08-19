@@ -406,10 +406,17 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
     ),
     -- Suppressing and owning are two halves of one statement, exactly as in
     -- the five-branch modes: the line is carried to the course it refused a
-    -- boundary to, bounded by its own span.
+    -- boundary to. Carried to the course's LAST COVERED DAY, not its first
+    -- dose - 'received for 28 days' is a statement about cover, and the
+    -- short test above already measures cover, so ownership reads the same
+    -- clock. The five-branch modes hold to dose dates because their branch
+    -- table is written in dose dates; this rule is written in days of
+    -- supply. Capped at the line's own span.
     melp_hold AS (
-      SELECT s.PATID, max(s.SUPPRESS_DT) AS MELP_HOLD_DT
-      FROM melp_suppress_dates s
+      SELECT s.PATID, max(least(c.COURSE_END_DT, {span_end})) AS MELP_HOLD_DT
+      FROM melp_suppress s
+      INNER JOIN melp_course c
+        ON c.PATID = s.PATID AND c.EXPO_DT = s.SUPPRESS_DT
       INNER JOIN {line_tbl} ON {line_tbl}.PATID = s.PATID
       WHERE s.SUPPRESS_DT >= {line_tbl}.{start_col}
         AND s.SUPPRESS_DT <= {span_end}

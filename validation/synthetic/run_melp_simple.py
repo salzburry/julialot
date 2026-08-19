@@ -16,8 +16,8 @@ MELP_RULE=simplified - over patients that pin each branch of the rule:
   SD  a course longer than the cap                  -> left to the engine;
       it advances on its own date under both builds
   SE  a short course after the line already ran out -> the line is carried
-      to the dose and ends there; the contract build gives the dose a line
-      of its own
+      to the course's last covered day and ends there; the contract build
+      gives the dose a line of its own
   SF  a control with no melphalan and a released restart -> identical lines
       under both builds, or the mode is moving patients it cannot touch
 """
@@ -107,9 +107,9 @@ def main():
 
     ok(len(ref['SE']) == 2 and starts(ref, 'SE')[1] == rs.d(IX + 300),
        "SE contract: the late dose gets a melphalan-only line")
-    ok(len(smp['SE']) == 1 and smp['SE'][0][2] == rs.d(IX + 300)
+    ok(len(smp['SE']) == 1 and smp['SE'][0][2] == rs.d(IX + 327)
        and smp['SE'][0][3] == 'DISCONTINUATION',
-       "SE simplified: one line, carried to the dose and ending there")
+       "SE simplified: one line, owning the course's full cover to day 327")
 
     ok(ref.get('SF') == smp.get('SF') and ref.get('SF'),
        "SF: a patient with no melphalan is identical under both builds")

@@ -24,6 +24,11 @@ regimen window is PART of that line, not a reason to start the next one.
   F8  B returns in the gap between two
       episodes of 2L's own drug              -> it no longer breaks that
       drug's run-out chain; the line runs through
+  F9  B returns after a single-day ALLO 2L   -> the ALLO line is carried to
+      B's cover and ends there - a line with no regimen has no run-out of
+      its own, so the hold has to supply one rather than extend one
+  F10 ...and after a CAR-T 2L with no
+      consolidation drug                     -> the same
 """
 import os, sys, tempfile, subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -57,6 +62,10 @@ PATS = [
              ('LEN', 'IMID', 150, 180)]),
     P('F8', L1 + [('DARA', 'MAB', 200, 250), ('DARA', 'MAB', 270, 330),
                   ('BORT', 'PI', 260, 290)]),
+    dict(P('F9', L1 + [('BORT', 'PI', 300, 360)]),
+         sct_ac=[('ALLO', IX + 200)]),
+    dict(P('F10', L1 + [('BORT', 'PI', 300, 360)]),
+         sct_ac=[('CART', IX + 200)]),
 ]
 
 
@@ -132,6 +141,17 @@ def main():
     ok(n(fold, 'F8') == 2 and fold['F8'][1][2] == rs.d(IX + 330)
        and fold['F8'][1][3] == 'DISCONTINUATION',
        "F8 fold-in: the chain holds and 2L runs through to day 330")
+
+    ok(n(ref, 'F9') == 3 and ref['F9'][2][1] == rs.d(IX + 300),
+       "F9 contract: the return after the ALLO line starts a line of its own")
+    ok(n(fold, 'F9') == 2 and fold['F9'][1][2] == rs.d(IX + 360)
+       and fold['F9'][1][3] == 'DISCONTINUATION',
+       "F9 fold-in: the ALLO line is carried to the return's cover, day 360")
+    ok(n(ref, 'F10') == 3 and ref['F10'][2][1] == rs.d(IX + 300),
+       "F10 contract: the same after a drugless CAR-T line")
+    ok(n(fold, 'F10') == 2 and fold['F10'][1][2] == rs.d(IX + 360)
+       and fold['F10'][1][3] == 'DISCONTINUATION',
+       "F10 fold-in: the drugless CAR-T line is carried to day 360 too")
 
     print()
     if fails:

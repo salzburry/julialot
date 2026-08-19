@@ -907,6 +907,9 @@ ok(has(ss, "MAP_MED_CLASS <> 'STEROID'") &&
    "a confirming agent passes the same candidate gate the engine applies")
 ok(has(ss, "melp_suppress_dates") && has(ss, "melp_hold"),
    "...and the suppress-dates and hold CTEs keep their names, so every splice holds")
+ok(has(cutcte(ss, "melp_hold"), "COURSE_END_DT"),
+   paste0("the line owns the suppressed course's FULL cover, not just its ",
+          "first day - the same clock the short test reads"))
 # The two existing modes must emit byte-identical SQL whether or not the new
 # arguments are handed in - the five-branch rule never reads them.
 ok(identical(melp_decision_ctes(ask, "L", "S", "E", "L.IND_END"),

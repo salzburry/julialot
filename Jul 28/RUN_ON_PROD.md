@@ -131,8 +131,11 @@ MELP_SIMPLE_EXECUTE=TRUE Rscript exploration/melphalan/run_melp_simple.R # build
 ```
 
 Its console output and four `melp_simple_*.csv` files compare the simplified
-rule to the contract build. The 28-day course cap is an open question: rebuild
-with `MELP_SIMPLE_COURSE_DAYS=30` to see the other reading.
+rule to the contract build. The 28-day course cap is an open question.
+`MELP_SIMPLE_COURSE_DAYS=30` widens which recorded course lengths count as
+short; it does **not** re-impute the 28-day medical supply — that other
+reading of the question would change how episodes are built and is not
+implemented.
 
 Each prefix is emptied before it is rebuilt. `APPLY_MELP_RULE` stays blank in
 `CONTRACT`, so the study's own run is untouched by all of this.
