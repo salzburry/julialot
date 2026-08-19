@@ -224,6 +224,15 @@ if (!is.null(melp_tbl)) sheets[["MELP"]] <- melp_tbl
 if (!is.null(fu_tbl))   sheets[["12-month cover"]] <- fu_tbl
 if (!is.null(scen_tbl)) sheets[["Scenario counts"]] <- scen_tbl
 
+# Strip control characters from every text cell - a warehouse string with
+# one in it makes Excel "repair" the workbook down to nothing.
+sheets <- lapply(sheets, function(d) {
+  for (nm in names(d)) if (is.character(d[[nm]]))
+    d[[nm]] <- gsub("[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]", "", d[[nm]],
+                    useBytes = TRUE)
+  d
+})
+
 xlsx_dest <- file.path(dest_dir, paste0("results_summary_", stamp, ".xlsx"))
 if (requireNamespace("openxlsx", quietly = TRUE)) {
   wb <- openxlsx::createWorkbook()

@@ -258,7 +258,18 @@ report_plan <- function() {
 # One sheet per frame where openxlsx is there, one CSV each where it is not.
 # The workbook is the deliverable and the CSVs are the fallback, so a machine
 # without the package still produces every number.
+#
+# Control characters are stripped from every text cell first. A warehouse
+# error message carried into a NOTE cell once held one, openxlsx wrote it
+# as-is, and Excel then "repaired" the workbook by emptying every sheet.
+xml_clean <- function(d) {
+  for (nm in names(d)) if (is.character(d[[nm]]))
+    d[[nm]] <- gsub("[\x01-\x08\x0B\x0C\x0E-\x1F\x7F]", "", d[[nm]],
+                    useBytes = TRUE)
+  d
+}
 write_workbook <- function(sheets, path) {
+  sheets <- lapply(sheets, xml_clean)
   if (requireNamespace("openxlsx", quietly = TRUE)) {
     wb <- openxlsx::createWorkbook()
     for (nm in names(sheets)) {
