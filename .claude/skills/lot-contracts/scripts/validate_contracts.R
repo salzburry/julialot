@@ -126,6 +126,10 @@ check_contract <- function(doc, raw_text, fname) {
   adv <- doc$advancement
   if (!is.logical(adv$new_agent)) say("advancement.new_agent must be true or false")
   if (!is.logical(adv$drop_based)) say("advancement.drop_based must be true or false")
+  if (!is.null(adv$prior_line_agent_return) &&
+      !identical(adv$prior_line_agent_return, "new_line") &&
+      !identical(adv$prior_line_agent_return, "joins_line"))
+    say("advancement.prior_line_agent_return must be 'new_line' or 'joins_line'")
   g <- adv$same_regimen_gap_days
   if (!(identical(g, "none") || is_posint(g)))
     say("advancement.same_regimen_gap_days must be 'none' or a positive integer")
@@ -279,7 +283,11 @@ BINDING <- list(
   # Blank is the contract algorithm - the gap-advancement rule is off - which
   # the contract writes as `none` on the advancement axis.
   list(path = c("advancement", "same_regimen_gap_days"), key = "apply_melp_rule",
-       to = function(v) if (identical(v, "")) "none" else NULL)
+       to = function(v) if (identical(v, "")) "none" else NULL),
+  # FALSE is the study's algorithm - a prior line's agent returning splits the
+  # line. TRUE is the fold-in mode, which no contract build carries.
+  list(path = c("advancement", "prior_line_agent_return"), key = "apply_map_foldin",
+       to = function(v) if (isTRUE(v)) "joins_line" else "new_line")
 )
 
 # Engine settings that are deliberately NOT contract axes, each with the reason.

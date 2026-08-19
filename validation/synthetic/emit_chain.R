@@ -50,6 +50,7 @@ assign("cfg", list(
   apply_cart_induction_rule =
     as.logical(Sys.getenv("CART_RULE", unset = "TRUE")),
   apply_melp_rule = Sys.getenv("MELP_RULE", unset = ""), melp_med_abbr = "MELP",
+  apply_map_foldin = toupper(Sys.getenv("MAP_FOLDIN", unset = "FALSE")) == "TRUE",
   melp_exposure_days = 30L, melp_restart_days = 60L,
   melp_advance_days = 180L, melp_sct_days = 14L,
   melp_simple_course_days = 28L,
@@ -77,6 +78,8 @@ assign("db_q", function(con, sql) {
 }, e)
 
 sys.source(file.path(ENGINE, "melp_rule.R"), e)
+if (file.exists(file.path(ENGINE, "foldin_rule.R")))
+  sys.source(file.path(ENGINE, "foldin_rule.R"), e)
 sys.source(file.path(ENGINE, "cart_rule.R"), e)
 if (file.exists(file.path(ENGINE, "prior_regimen.R")))
   sys.source(file.path(ENGINE, "prior_regimen.R"), e)

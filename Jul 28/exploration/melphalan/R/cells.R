@@ -264,7 +264,12 @@ melp_check_inputs <- function(rows) {
 # `allowed` names the settings a mode cell may legitimately deviate on beyond
 # the mode itself. The simplified package passes its course cap: the cap is
 # part of the rule under test there, not a stray setting.
-melp_check_deviations <- function(rows, cells, allowed = character(0)) {
+#
+# `key` is the setting the cells exist to differ on. The melphalan packages
+# leave the default; the fold-in package passes apply_map_foldin, with the
+# cell's mode field carrying the value it must record.
+melp_check_deviations <- function(rows, cells, allowed = character(0),
+                                  key = "apply_melp_rule") {
   mode_of <- setNames(lapply(cells, function(c_i) c_i$mode),
                       vapply(cells, function(c_i) c_i$id, character(1)))
   bad <- character(0)
@@ -280,16 +285,16 @@ melp_check_deviations <- function(rows, cells, allowed = character(0)) {
                              "deviates on: ", paste(entries, collapse = "; ")))
       next
     }
-    melp  <- grep("^apply_melp_rule=", entries)
+    melp  <- grep(paste0("^", key, "="), entries)
     other <- entries[-melp]
     if (length(allowed))
       other <- other[!grepl(paste0("^(", paste(allowed, collapse = "|"), ")="),
                             other)]
     if (!length(melp))
       bad <- c(bad, paste0("  ", id, " is meant to build the rule but records no ",
-                           "melphalan deviation (",
+                           key, " deviation (",
                            if (length(entries)) paste(entries, collapse = "; ") else "none", ")"))
-    else if (!any(grepl(paste0("^apply_melp_rule=", want, "\\b"), entries[melp])))
+    else if (!any(grepl(paste0("^", key, "=", want, "\\b"), entries[melp])))
       bad <- c(bad, paste0("  ", id, " is meant to build ", want,
                            " but records: ", paste(entries[melp], collapse = "; ")))
     if (length(other))
@@ -1027,7 +1032,8 @@ melp_stamp <- function(d, inputs, status) {
         d, stringsAsFactors = FALSE)
 }
 
-melp_read_inputs <- function(con, cells, status, allowed = character(0)) {
+melp_read_inputs <- function(con, cells, status, allowed = character(0),
+                             key = "apply_melp_rule") {
   inputs <- list()
   for (c_i in cells) {
     # The error is kept, not swallowed. A query that failed and a run with no
@@ -1048,7 +1054,7 @@ melp_read_inputs <- function(con, cells, status, allowed = character(0)) {
     inputs[[c_i$id]] <- r
   }
   melp_check_inputs(inputs)
-  melp_check_deviations(inputs, cells, allowed)
+  melp_check_deviations(inputs, cells, allowed, key)
   inputs
 }
 
