@@ -35,8 +35,18 @@ export DATABRICKS_PWD='...'
 export DOMINO_USER_NAME=usr00000
 export OBJECT_PREFIX=ndmm_
 export COHORT_PREFIX=ndmm_
+export LOT_PREFIX=ndmm_
 export INPUT_COHORT_TABLE=ndmm_NDMM_COHORT
 ```
+
+`LOT_PREFIX` is the dashboard's name for the prefix the LOT run used — the
+same value as `OBJECT_PREFIX` here. The dashboard also takes the three as
+arguments instead:
+`Rscript reporting/dashboard/build.R ndmm_NDMM_COHORT ndmm_ ndmm_`.
+
+A FRESH TERMINAL HAS NONE OF THESE. Every `No OBJECT_PREFIX` /
+`needs a cohort table` stop means this block was not run in the shell you
+are in now.
 
 Override only if prod differs: `DATABRICKS_DSN=RWDE`,
 `DATABRICKS_CATALOG=hive_metastore`, `OPTUM_CDM_SCHEMA=clnprw_optum`,
