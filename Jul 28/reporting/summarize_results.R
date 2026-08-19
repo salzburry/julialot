@@ -46,8 +46,8 @@ n1 <- function(x) if (is.null(x) || !length(x) || is.na(x[1])) "?" else
 out <- character(0)
 say <- function(...) out <<- c(out, paste0(...))
 
-say("NDMM lines of therapy - answers for the study team")
-say("Made ", format(Sys.time(), "%d %b %Y %H:%M"), " from the finished runs.")
+say("NDMM lines of therapy - results")
+say(format(Sys.time(), "%d %b %Y %H:%M"))
 say("")
 
 # ---- which run this all comes from ------------------------------------------
@@ -69,129 +69,128 @@ if (!is.null(status_f)) {
 say("")
 
 # ---- 1. the MAP splitting rule ----------------------------------------------
-say("1) HOW MANY PATIENTS DOES THE MAP-SPLITTING RULE AFFECT?")
+say("1) MAP-splitting rule - how many patients")
 aff <- read_any("^aug15_qs_map_splitting_affected_.*\\.csv$")
 if (is.null(aff)) {
-  say("   (no screen file found - run aug15_studyteam_qs.R)")
+  say("   No screen file yet - run aug15_studyteam_qs.R first.")
 } else {
   all_rows <- aff[aff$LINE_THAT_ENDED == "ALL", ]
   pick <- function(basis, cls) {
     r <- all_rows[all_rows$MATCH_BASIS == basis & all_rows$CLASS == cls, ]
     if (nrow(r)) r$N_PATIENTS[1] else 0
   }
-  say("   Counting the same drug only:")
-  say("     ", n1(pick("EXACT_TOKEN", "AFFECTED")),
-      " patients would LOSE a line boundary under the rule.")
-  say("     ", n1(pick("EXACT_TOKEN", "SAME_DAY_NEW_AGENT")),
-      " keep it - a new drug started the same day.")
-  say("   Counting the drug or its biosimilar:")
-  say("     ", n1(pick("SUBSTITUTE_FAMILY", "AFFECTED")), " would lose it; ",
-      n1(pick("SUBSTITUTE_FAMILY", "SAME_DAY_NEW_AGENT")), " keep it.")
-  say("   What 'affected' means: a drug from the LAST line came back after the")
-  say("   current line's window, and it is the only reason a new line starts.")
+  say("   ", n1(pick("EXACT_TOKEN", "AFFECTED")),
+      " patients: an old drug came back and that alone splits the line today.")
+  say("   ", n1(pick("EXACT_TOKEN", "SAME_DAY_NEW_AGENT")),
+      " more: an old drug came back, but a new drug started the same day,")
+  say("   so the split stays either way.")
+  say("   If a biosimilar counts as the same drug, the two numbers are ",
+      n1(pick("SUBSTITUTE_FAMILY", "AFFECTED")), " and ",
+      n1(pick("SUBSTITUTE_FAMILY", "SAME_DAY_NEW_AGENT")), ".")
   roster <- find_file("^aug15_qs_map_splitting_review_roster_.*\\.csv$")
   if (!is.null(roster))
-    say("   Patient-by-patient detail: ", basename(roster))
+    say("   List of these patients: ", basename(roster))
 }
-fv <- read_any("^foldin_vs_reference\\.csv$")
 fp <- read_any("^foldin_patients\\.csv$")
 if (!is.null(fp)) {
-  say("   If we APPLY the rule (trial rebuild, not the study numbers):")
-  say("     ", n1(fp$N_DIFFERENT), " of ", n1(fp$N_PATIENTS),
-      " patients change; ", n1(fp$N_LINE_COUNT_DIFFERENT),
-      " end up with a different NUMBER of lines.")
+  say("")
+  say("   We also built a test copy of the line table with the rule switched")
+  say("   on. The study tables are untouched. Result: ", n1(fp$N_DIFFERENT),
+      " of ", n1(fp$N_PATIENTS), " patients change,")
+  say("   and ", n1(fp$N_LINE_COUNT_DIFFERENT),
+      " of them end up with a different number of lines.")
   ch <- find_file("^foldin_changed_lines\\.csv$")
-  if (!is.null(ch)) say("     Their before/after lines: ", basename(ch))
-  say("     Read with its assumptions: any earlier line's drug folds; the drug")
-  say("     joins the line's TIME, not its regimen name; a return after the")
-  say("     line ran out still folds. All three are open for the team to set.")
+  if (!is.null(ch)) say("   Before and after for each: ", basename(ch))
+  say("   Three choices went into this build - please confirm each:")
+  say("   - a drug from any old line folds in, not just the last line's")
+  say("   - the drug extends the line's dates but is not added to its regimen")
+  say("   - it folds in even when the line had already ended")
 }
 say("")
 
 # ---- 2. the MELP rules ------------------------------------------------------
-say("2) HOW ARE THE MELP RULES WORKING?")
+say("2) The MELP rules")
 mp <- read_any("^melp_modes_patients\\.csv$")
 mv <- read_any("^melp_vs_reference\\.csv$")
 if (is.null(mv) && is.null(mp)) {
-  say("   (no melphalan comparison files found - run the melphalan package)")
+  say("   No melphalan comparison files yet - run the melphalan package first.")
 } else {
   vs <- function(d, cellname, metric) {
     r <- d[d$cell == cellname & d$metric == metric, ]
     if (nrow(r)) paste0(n1(r$reference), " -> ", n1(r$observed)) else "?"
   }
   if (!is.null(mv)) {
-    say("   Your five-branch rule, as a full trial rebuild (mode 'as_asked'):")
-    say("     lines overall: ", vs(mv, "as_asked", "n_lines"),
-        "; patients with any line: ", vs(mv, "as_asked", "n_patients"))
-    say("     melphalan-only lines: ", vs(mv, "as_asked", "n_melp_mono_lines"),
-        "; lines melphalan alone STARTED: ", vs(mv, "as_asked", "n_melp_mono_adv"))
+    say("   Your July rule, built as a test copy next to the study build:")
+    say("   total lines ", vs(mv, "as_asked", "n_lines"),
+        ". Melphalan-only lines ", vs(mv, "as_asked", "n_melp_mono_lines"), ".")
+    say("   Lines that melphalan alone started ",
+        vs(mv, "as_asked", "n_melp_mono_adv"), ".")
   }
   if (!is.null(mp))
-    say("   The two transplant readings differ for ", n1(mp$N_DIFFERENT),
-        " patients - that choice is still the team's.")
+    say("   ", n1(mp$N_DIFFERENT), " patients come out differently depending ",
+        "on how we treat a dose next to a transplant.")
 }
-sv <- read_any("^melp_simple_vs_reference\\.csv$")
 sp <- read_any("^melp_simple_patients\\.csv$")
 if (!is.null(sp))
-  say("   The simple 28-day fallback changes ", n1(sp$N_DIFFERENT), " of ",
-      n1(sp$N_PATIENTS), " patients vs today's build.")
-say("   Notes: none of this touches the study's own numbers. 'Melphalan only'")
-say("   counts captured drugs, so melphalan WITH a steroid still reads as")
-say("   melphalan only. The 28-vs-30-day question is about course length;")
-say("   changing the assumed days supplied is a different change, not built.")
+  say("   The simple 28-day version changes ", n1(sp$N_DIFFERENT), " of ",
+      n1(sp$N_PATIENTS), " patients.")
+say("   To keep in mind: the study numbers are unchanged. Melphalan with a")
+say("   steroid still counts as melphalan alone, because steroids are not in")
+say("   the captured drug list. And 28 vs 30 days is about course length -")
+say("   changing the assumed days supplied would be a separate change.")
 say("")
 
 # ---- 3. the 12-month CE funnel ----------------------------------------------
-say("3) DISCONTINUE THE PRIOR LINE, THEN 12 MONTHS COVER BEFORE THE NEXT")
+say("3) Discontinued the prior line, then 12 months of coverage")
 fu <- read_any("^aug15_qs_discontinued_then_12mo_ce_.*\\.csv$")
 if (is.null(fu)) {
-  say("   (no funnel file found - run aug15_studyteam_qs.R)")
+  say("   No funnel file yet - run aug15_studyteam_qs.R first.")
 } else {
   for (i in seq_len(nrow(fu))) {
     say("   ", fu$COHORT[i], ": ", n1(fu$N_DISCONTINUED_PRIOR[i]),
-        " discontinued ", fu$PRIOR_LINE_DISCONTINUED[i], "; ",
-        n1(fu$N_ALSO_HAS_NEXT_LINE[i]), " reached ", fu$COHORT[i], "; ",
-        n1(fu$N_ALSO_12MO_CE_BEFORE_IT[i]),
-        " also have 12 months cover before it.")
+        " patients stopped ", fu$PRIOR_LINE_DISCONTINUED[i], ". ",
+        n1(fu$N_ALSO_HAS_NEXT_LINE[i]), " of them went on to ", fu$COHORT[i],
+        ". ", n1(fu$N_ALSO_12MO_CE_BEFORE_IT[i]),
+        " of those also had 12 months of")
+    say("       coverage before it started.")
   }
-  say("   '12 months' = one merged enrollment span over the 365 days before")
-  say("   the line starts. Discontinued = the line's recorded end reason.")
+  say("   12 months = enrolled for the full 365 days before the line starts")
+  say("   (small gaps merged). Stopped = the line's recorded end reason.")
   attr_f <- find_file("^aug15_qs_subsequent_cohort_attrition_.*\\.csv$")
   if (!is.null(attr_f))
-    say("   The formally chained 2L/3L study cohort is beside it: ",
-        basename(attr_f))
+    say("   The official 2L/3L cohort funnel is in ", basename(attr_f), ".")
   else
-    say("   (The chained study-cohort file was not written - its build did ",
-        "not match this LOT run.)")
+    say("   The official 2L/3L cohort file was not written - rebuild it ",
+        "after this LOT run.")
 }
 say("")
 
 # ---- checks -----------------------------------------------------------------
-say("CHECKS BEHIND THE NUMBERS")
+say("Checks")
 aud <- read_any("^lot_audit_counts\\.csv$")
 if (!is.null(aud)) {
   b <- aud[aud$finding == "transplant-belonging-to-no-line", ]
   if (nrow(b)) {
-    say("   Transplant-in-no-line audit rows (shape b should be 0 after the ",
-        "rebuild):")
+    say("   Transplants outside every line (should be 0 after the rebuild):")
     for (r in unique(b$row)) {
       rr <- b[b$row == r, ]
       say("     ", paste(paste0(rr$metric, "=", rr$value), collapse = "  "))
     }
   }
 }
-say("   QC report and the scenario workbook (lot_scenarios.xlsx) carry the")
-say("   rest; the workbook's Open questions sheet lists what is not settled.")
+say("   The QC report and lot_scenarios.xlsx have the rest. The workbook's")
+say("   Open questions sheet lists what is still not settled.")
 say("")
 
-say("DECISIONS WE NEED FROM THE TEAM")
-say("   - MAP fold-in: adopt or not; only the last line's drugs or any earlier")
-say("     line's; does the drug join the regimen name or only the line's time;")
-say("     does a return after the line ran out still fold?")
-say("   - MELP: five-branch rule or the simple fallback; which transplant")
-say("     reading; 28 or 30 days; what 'mono' should mean given MELP+DEX.")
-say("   - Tandem transplants: today a stop between the two does NOT break the")
-say("     pair; a new drug between them does. Confirm or correct.")
+say("What we need Julia to decide")
+say("   - MAP rule: use it or not. If yes: any old line's drugs or just the")
+say("     last line's? Add the drug to the regimen, or just extend the line?")
+say("     Fold it in even after the line ended?")
+say("   - MELP: the July rule or the simple 28-day one? What happens to a")
+say("     dose next to a transplant? 28 or 30 days? And is melphalan+DEX")
+say("     'melphalan alone'?")
+say("   - Tandems: today a treatment stop between two transplants does not")
+say("     break the pair, but a new drug does. Is that right?")
 
 txt <- paste(out, collapse = "\n")
 dest <- file.path(if (dir.exists(res_dir)) res_dir else ".",
