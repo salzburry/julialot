@@ -16,6 +16,9 @@
 #                            disappears
 #        SAME_DAY_NEW_AGENT  a genuinely new agent started the same day, so
 #                            the boundary would remain even under the fold-in
+#      A per-patient review roster sits beside the counts: prior and current
+#      regimens, the returning drug and its date, the window end, the gap from
+#      the drug's last cover, same-day starters, and the next line.
 #      It is a screen of current boundaries, not the line table the proposed
 #      rule would build - a folded agent changes the regimen, the run-out and
 #      every later window, which needs a rebuild, not arithmetic.
@@ -103,11 +106,12 @@ main <- function() {
   # Substitutes are canonicalized to their original, so DARA vs its
   # biosimilar - and two different biosimilars of one original - all read as
   # the same drug, the way the engine's regimen does.
-  affected <- db_q(con, glue("
+  screen_ctes <- glue("
     WITH ln AS (
       SELECT cast(PATID as string) AS PATID, cast(LOT_NUM as int) AS LOT_NUM,
              LOT_BASE_MEDS, LOT_BASE_1ST_ADD_MED,
              cast(LOT_BASE_1ST_ADD_MED_DT as date) AS ADD_DT,
+             cast(LOT_START_DT as date) AS LOT_START_DT, LOT_START_TYPE,
              LOT_BASE_END_REASON
       FROM {lines}
     ),
@@ -132,7 +136,7 @@ main <- function() {
       FROM toks t LEFT JOIN subs sb ON sb.s = t.MED
     ),
     fired AS ( -- MED_ADD boundaries whose STORED add med is a previous-line agent
-      SELECT DISTINCT f.PATID, f.LOT_NUM, f.ADD_DT
+      SELECT DISTINCT f.PATID, f.LOT_NUM, f.ADD_DT, f.ADD_CANON
       FROM (SELECT l.*, coalesce(sb.o, upper(trim(l.LOT_BASE_1ST_ADD_MED))) AS ADD_CANON
             FROM ln l
             LEFT JOIN subs sb ON sb.s = upper(trim(l.LOT_BASE_1ST_ADD_MED))
@@ -146,7 +150,7 @@ main <- function() {
                -- which the stored add med is one random pick. The stored
                -- ADD_MED_DT is the day BEFORE the episode start (it is the
                -- line-end date), so the start is one day past it.
-      SELECT f.PATID, f.LOT_NUM,
+      SELECT f.PATID, f.LOT_NUM, upper(trim(mp.MAP_MED_TYPE)) AS MED_RAW,
              coalesce(sb.o, upper(trim(mp.MAP_MED_TYPE))) AS CAND_CANON
       FROM fired f
       INNER JOIN {maps} mp
@@ -156,7 +160,7 @@ main <- function() {
       LEFT JOIN subs sb ON sb.s = upper(trim(mp.MAP_MED_TYPE))
     ),
     outside AS ( -- ...minus the line's own (canonical) regimen
-      SELECT c.PATID, c.LOT_NUM, c.CAND_CANON
+      SELECT c.PATID, c.LOT_NUM, c.MED_RAW, c.CAND_CANON
       FROM cand c
       LEFT JOIN cur x ON x.PATID = c.PATID AND x.LOT_NUM = c.LOT_NUM
                      AND x.CUR_CANON = c.CAND_CANON
@@ -173,6 +177,8 @@ main <- function() {
              THEN 'SAME_DAY_NEW_AGENT' ELSE 'AFFECTED' END AS CLASS
       FROM fired f
     )
+    ")
+  affected <- db_q(con, paste0(screen_ctes, "
     SELECT CLASS, cast(LOT_NUM as string) AS LINE_THAT_ENDED,
            count(*) AS N_LINES, count(DISTINCT PATID) AS N_PATIENTS
     FROM verdict GROUP BY CLASS, LOT_NUM
@@ -180,6 +186,66 @@ main <- function() {
     SELECT CLASS, 'ALL', count(*), count(DISTINCT PATID)
     FROM verdict GROUP BY CLASS
     ORDER BY CLASS, LINE_THAT_ENDED"))
+  # The review roster: the same population, one row per boundary, so each
+  # counted patient can be judged as the clinical scenario it claims to be.
+  # The induction windows shown come from the run's own recorded settings
+  # where present, this session's config otherwise.
+  meta_cs <- tryCatch(db_q(con, glue("
+    SELECT CONTRACT_SETTINGS FROM {qs_tbl('LOT_RUN_METADATA')}
+    ORDER BY RUN_TIMESTAMP DESC LIMIT 1")), error = function(e) NULL)
+  rec_setting <- function(key, fallback) {
+    v <- if (!is.null(meta_cs) && nrow(meta_cs)) as.character(meta_cs[[1]][1]) else NA
+    if (is.na(v)) return(as.integer(fallback))
+    hit <- regmatches(v, regexpr(paste0("(^|\\|)", key, "=[^|]*"), v))
+    if (!length(hit)) return(as.integer(fallback))
+    n <- suppressWarnings(as.integer(sub(paste0("^\\|?", key, "="), "", hit)))
+    if (is.na(n)) as.integer(fallback) else n
+  }
+  indn <- rec_setting("lot_n_induction_window_days", cfg$lot_n_induction_window_days)
+  cart <- rec_setting("cart_consolidation_days",     cfg$cart_consolidation_days)
+  roster <- db_q(con, paste0(screen_ctes, glue("
+    SELECT v.PATID,
+           v.LOT_NUM                                AS LINE_THAT_ENDED,
+           v.CLASS,
+           pl.LOT_BASE_MEDS                         AS PRIOR_LINE_REGIMEN,
+           l.LOT_BASE_MEDS                          AS LINE_REGIMEN,
+           upper(trim(l.LOT_BASE_1ST_ADD_MED))      AS RETURNING_MED,
+           l.LOT_START_DT                           AS LINE_START_DT,
+           date_add(l.LOT_START_DT,
+                    CASE WHEN l.LOT_START_TYPE = 'CART'
+                         THEN {cart} ELSE {indn} END - 1)
+                                                    AS INDUCTION_WINDOW_END,
+           date_add(l.ADD_DT, 1)                    AS RETURNING_MED_START_DT,
+           gap.GAP_DAYS                             AS GAP_FROM_PRIOR_EPISODE_END_DAYS,
+           coalesce(oth.OTHERS, '')                 AS OTHER_MEDS_STARTING_SAME_DAY,
+           nx.LOT_START_DT                          AS NEXT_LINE_START_DT,
+           nx.LOT_BASE_MEDS                         AS NEXT_LINE_REGIMEN
+    FROM verdict v
+    INNER JOIN ln l  ON l.PATID  = v.PATID AND l.LOT_NUM  = v.LOT_NUM
+    LEFT JOIN ln pl  ON pl.PATID = v.PATID AND pl.LOT_NUM = v.LOT_NUM - 1
+    LEFT JOIN ln nx  ON nx.PATID = v.PATID AND nx.LOT_NUM = v.LOT_NUM + 1
+    LEFT JOIN (  -- the returning drug family's latest cover end before the return
+      SELECT f.PATID, f.LOT_NUM,
+             datediff(date_add(f.ADD_DT, 1), max(cast(mp.MAP_END_DT as date))) AS GAP_DAYS
+      FROM fired f
+      INNER JOIN {maps} mp
+              ON cast(mp.PATID as string) = f.PATID
+             AND cast(mp.MAP_END_DT as date) < date_add(f.ADD_DT, 1)
+      LEFT JOIN subs sb ON sb.s = upper(trim(mp.MAP_MED_TYPE))
+      WHERE coalesce(sb.o, upper(trim(mp.MAP_MED_TYPE))) = f.ADD_CANON
+      GROUP BY f.PATID, f.LOT_NUM, f.ADD_DT
+    ) gap ON gap.PATID = v.PATID AND gap.LOT_NUM = v.LOT_NUM
+    LEFT JOIN (  -- every other outside-regimen agent starting the same day
+      SELECT o.PATID, o.LOT_NUM,
+             concat_ws(' ', sort_array(collect_set(o.MED_RAW))) AS OTHERS
+      FROM outside o
+      INNER JOIN fired f2 ON f2.PATID = o.PATID AND f2.LOT_NUM = o.LOT_NUM
+      WHERE o.CAND_CANON <> f2.ADD_CANON
+      GROUP BY o.PATID, o.LOT_NUM
+    ) oth ON oth.PATID = v.PATID AND oth.LOT_NUM = v.LOT_NUM
+    ORDER BY v.CLASS, v.PATID, v.LOT_NUM")))
+  if (!is.null(roster) && nrow(roster)) roster$SUBS_MD5 <- subs_md5
+
   if (!is.null(affected) && nrow(affected)) {
     affected$WHAT_THE_CLASS_MEANS <- ifelse(
       affected$CLASS == "AFFECTED",
@@ -275,7 +341,8 @@ main <- function() {
       "NOT IMPLEMENTED anywhere - no cell evaluates it yet",
       "written"),
     WHERE = c(
-      paste0("aug15_qs_map_splitting_affected_", stamp, ".csv"),
+      paste0("aug15_qs_map_splitting_affected_", stamp, ".csv, with the ",
+             "per-patient review roster beside it"),
       paste0("exploration/melphalan: AUG1_EXECUTE=TRUE run_aug1_melp.R (the ",
              "reference and two cells of the original five-branch rule), then ",
              "read_melp_asks.R and read_melp_decisions.R"),
@@ -295,6 +362,7 @@ main <- function() {
     basename(f)
   }
   written <- c(write_out(prov(affected), "map_splitting_affected"),
+               write_out(prov(roster),   "map_splitting_review_roster"),
                write_out(prov(funnel),   "discontinued_then_12mo_ce"),
                if (!is.null(attr_df)) write_out(prov(attr_df), "subsequent_cohort_attrition"),
                write_out(prov(summary),  "summary"))
