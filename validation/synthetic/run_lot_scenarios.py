@@ -20,9 +20,11 @@ EPISODES and transplant dates, with MAP_DISCON_FLG computed from the configured
 gap - so everything from the episode table down is the engine's own SQL: line
 starts, regimens, run-outs, ends, ownership. The raw-claim-to-episode step
 (03_mma_map's fold) is upstream of the plant and is exercised by
-run_synthetic.py's generator, not here. And only the LINES are checked: the
-catalogue's stories, notes and counting SQL are prose and queries this harness
-does not judge.
+run_synthetic.py's generator, not here. The LINES are checked against what
+the catalogue states, and every counting query is EXECUTED against the
+synthetic tables - its values are the warehouse's business, but a query that
+does not run at all (an unresolved column, a typo) has to fail here rather
+than on the production server. S12 shipped exactly that way once.
 """
 import os, re, sys, tempfile, subprocess, datetime
 
@@ -65,8 +67,9 @@ def scenarios(path):
         death = re.search(r"death = (\d+)", p)
         obs = re.search(r"obs = (\d+)", p)
         lines = [x.strip() for x in re.findall(r'"([^"]*)"', lm.group(1))]
+        sm = re.search(r'sql = "(.*?)"\)', body, re.S)
         out.append(dict(
-            id=sid, group=group, lines=lines,
+            id=sid, group=group, lines=lines, sql=sm.group(1) if sm else None,
             meds=[t.strip() for t in (meds.group(1) if meds else "").split(";") if t.strip()],
             auto=[int(x) for x in (auto.group(1).split(",") if auto else []) if x.strip()],
             ac=[t.strip() for t in (ac.group(1) if ac else "").split(",") if t.strip()],
@@ -165,6 +168,38 @@ def main():
             print("     the engine builds")
             for l in got or ["(no lines)"]:
                 print("       ", l)
+    # Every counting query must at least EXECUTE against the same schema the
+    # warehouse run reads - same column names, since the synthetic chain is
+    # the engine's own SQL. The counts themselves are the warehouse's.
+    FILL = {"{t$long}": "lot_long_final", "{t$map}": "map_stacked",
+            "{t$sct}": "lot1_sct", "{t$auto}": "tx_auto_dates",
+            "{t$allo}": "tx_allo_cart_dates",
+            "{lot1_window}": "60", "{lotn_window}": "30",
+            "{tandem_days}": "180", "{cart_days}": "45",
+            "{discon_days}": "90", "{max_lot}": "5"}
+    n_sql = 0
+    for s in scs:
+        if not s["sql"]:
+            continue
+        q = s["sql"]
+        for k, v in FILL.items():
+            q = q.replace(k, v)
+        left = re.findall(r"\{[^}]*\}", q)
+        if left:
+            bad += 1
+            print("  %-5s count query has unfilled placeholder(s): %s"
+                  % (s["id"], ", ".join(left)))
+            continue
+        try:
+            con.execute(rs.to_duckdb(q)).fetchall()
+            n_sql += 1
+        except Exception as ex:
+            bad += 1
+            print("  %-5s count query DOES NOT RUN: %s"
+                  % (s["id"], str(ex).splitlines()[0][:160]))
+    print("%d counting quer%s execute against the synthetic tables"
+          % (n_sql, "y" if n_sql == 1 else "ies"))
+
     print()
     if bad:
         print("%d scenario(s) no longer match the engine." % bad)

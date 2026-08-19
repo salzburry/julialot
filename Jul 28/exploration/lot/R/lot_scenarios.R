@@ -418,7 +418,8 @@ LOT_SCENARIOS <- list(
                            "LOT1 runs to or past the infusion. The exact rule ",
                            "population."),
        sql = "
-      WITH lot1 AS (SELECT PATID, LOT_START_DT, LOT_BASE_END_DT
+      WITH lot1 AS (SELECT PATID, LOT_START_DT, LOT_BASE_END_DT,
+                           LOT_BASE_END_REASON
                     FROM {t$long} WHERE LOT_NUM = 1)
       SELECT 1 AS LOT_NUM, count(DISTINCT s.PATID) AS N_PATIENTS
       FROM {t$sct} s
