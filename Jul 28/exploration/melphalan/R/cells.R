@@ -1210,9 +1210,9 @@ melp_report <- function(con, cells, out_dir, lot_root = NULL) {
   cat("\nAmong patients given ", st$abbr, " at any point in follow-up (",
       nf(res$n_pat_melp_fu[res$cell == "reference"]),
       " on the contract build).\n", sep = "")
-  cat("Melphalan alone means the regimen's only agent. Steroids are not in the\n",
-      "regimen at all, so a ", st$abbr, "+dex line is not being counted as ",
-      "single-agent.\n\n", sep = "")
+  cat("Melphalan alone means the regimen's only agent. Steroids are never\n",
+      "captured in the regimen, so a ", st$abbr, "-plus-steroid line still ",
+      "reads as ", st$abbr, " alone\nin every mono count here.\n\n", sep = "")
   cat(sprintf("  %-13s %4s %7s %8s %7s %9s %9s %10s %9s\n",
               "cell", "LOT", "lines", "med len", "mono", "mono pts",
               "mono len", "med-start", "SCT+melp"))

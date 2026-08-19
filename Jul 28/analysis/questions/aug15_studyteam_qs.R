@@ -28,7 +28,13 @@
 #      every later window, which needs a rebuild, not arithmetic.
 #      The rule itself is NOT changed here. The rebuild exists separately:
 #      exploration/lot/run_foldin_cells.R builds the fold-in as its own
-#      gated cell pair and differences it against the contract build.
+#      gated cell pair and differences it against the contract build. Scope
+#      differs on purpose: this screen counts PREVIOUS-line returns only,
+#      while the cell folds agents of every earlier line - so this count is
+#      a lower bound on the cell's population, not its exact size.
+#      In the roster, GAP_FROM_PRIOR_EPISODE_END_DAYS is one number per
+#      patient and line: the gap from the MOST RECENT prior cover among the
+#      returning medications, not one gap per drug.
 #
 #   2. A pointer to the melphalan comparison. The three-cell package evaluates
 #      the original five-branch rule; run it separately. The simplified
@@ -452,8 +458,22 @@ main <- function() {
 
   # The tables must still be the attempts every number above was read from -
   # the LOT run, and the cohort whose enrollment spans the funnel just read.
+  # The cohort check stops on a PROVEN mismatch by itself; here an UNPROVABLE
+  # attempt is refused too, under the same waiver as the LOT lineage - a
+  # study-team answer whose enrollment spans cannot be tied to the cohort the
+  # lines were built over is the same problem as one with no recorded LOT run.
   qs_require_same_attempt(con, bound, "mid-August answers")
-  qs_check_cohort_attempt(con, cfg)
+  cohort_proven <- isTRUE(qs_check_cohort_attempt(con, cfg))
+  if (!cohort_proven && !waived)
+    stop("The cohort attempt behind these answers could not be verified (see ",
+         "the warning above), so the enrollment spans the funnel read cannot ",
+         "be tied to the cohort the lines were built over. Rebuild so the ",
+         "attempt is recorded, or set AUG15_ALLOW_UNVERIFIED=TRUE to publish ",
+         "anyway - the run-status file will then say the lineage was waived.",
+         call. = FALSE)
+  if (!cohort_proven && waived)
+    log_msg("WARNING: cohort attempt unproven - published under the ",
+            "AUG15_ALLOW_UNVERIFIED waiver.")
 
   write_out <- function(df, tag) {
     if (is.null(df) || nrow(df) == 0) { log_msg("  (", tag, ": no rows)"); return(invisible(NULL)) }
@@ -470,18 +490,24 @@ main <- function() {
 
   status <- c(paste0("aug15_studyteam_qs run ", stamp),
               if (waived) "  LINEAGE WAIVED (AUG15_ALLOW_UNVERIFIED=TRUE)",
+              if (!cohort_proven) "  COHORT ATTEMPT UNPROVEN (published under the waiver)",
               paste0("  LOT run:    ", run_id, " / attempt ", run_stamp),
               paste0("  population: ", pop$mode, " (", lines, ")"),
               paste0("  subs md5:   ", subs_md5),
               paste0("  chained 2L/3L attrition: ", attr_note),
               "  files:", paste0("    ", written),
-              "  The MAP count is a sizing screen; the rule is unchanged.",
-              "  The simplified MELP fallback is not implemented anywhere.")
+              paste0("  The MAP count is a sizing screen. The primary study ",
+                     "contract is unchanged;"),
+              paste0("  the fold-in is built separately as a gated cell pair ",
+                     "(exploration/lot/run_foldin_cells.R)."),
+              paste0("  The simplified MELP fallback is built as its own ",
+                     "package (exploration/melphalan/run_melp_simple.R)."))
   writeLines(status, file.path(out_dir, paste0("aug15_qs_run_status_", stamp, ".txt")))
 
   log_msg(SEP)
-  log_msg("Mid-August sizing outputs written. The MELP comparison runs ",
-          "separately, and the simplified MELP fallback is not implemented.")
+  log_msg("Mid-August sizing outputs written. The MELP comparison, the ",
+          "simplified fallback and the fold-in cell pair each run separately; ",
+          "the study contract is unchanged by all of them.")
   log_msg(SEP)
 }
 

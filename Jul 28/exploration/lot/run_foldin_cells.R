@@ -47,8 +47,11 @@ FOLDIN_CELLS <- list(
        what = "the contract build, unchanged - the baseline the rule is measured against"),
   list(id = "folded", mode = "TRUE",
        what = paste0("a prior line's agent returning after the current line's ",
-                     "regimen window joins that line instead of splitting it; ",
-                     "the line's run-out is carried over the returning cover")))
+                     "regimen window joins that line instead of splitting it. ",
+                     "The line's SPAN owns the return - the regimen string and ",
+                     "drug counts do not change - and agents of EVERY earlier ",
+                     "line fold, not only the last one's. Both readings are ",
+                     "taken here and open for the study team to confirm")))
 
 report_plan <- function(cells) {
   cat("\nThe MAP fold-in rule, as two builds.\n\n")
@@ -77,7 +80,52 @@ run_cell <- function(c_i, cohort, cohort_pfx) {
   TRUE
 }
 
-# Two built cells in, three files out. Everything is computed first and
+# Every line of every patient the rule moved, before and after, one row per
+# patient and line with both cells' dates side by side - so the study team
+# reviews patients, not only aggregates. All lines of a moved patient are
+# kept, changed or not, because a renumbered line only makes sense next to
+# the ones around it. Null-safe comparisons, so a line present on one side
+# only, or a date going missing, reads as a change rather than vanishing.
+foldin_changed_sql <- function(a_tbl, b_tbl) {
+  side <- function(t) paste0("
+      SELECT cast(PATID as string) AS PATID, LOT_NUM, LOT_START_DT,
+             LOT_BASE_END_DT, LOT_BASE_END_REASON, LOT_BASE_MEDS,
+             LOT_BASE_DISCON_DT, LOT_BASE_1ST_ADD_MED
+      FROM ", t)
+  paste0("
+    WITH a AS (", side(a_tbl), "),
+    b AS (", side(b_tbl), "),
+    j AS (
+      SELECT coalesce(a.PATID, b.PATID)     AS PATID,
+             coalesce(a.LOT_NUM, b.LOT_NUM) AS LOT_NUM,
+             a.LOT_START_DT         AS REF_START_DT,
+             b.LOT_START_DT         AS FOLD_START_DT,
+             a.LOT_BASE_END_DT      AS REF_END_DT,
+             b.LOT_BASE_END_DT      AS FOLD_END_DT,
+             a.LOT_BASE_END_REASON  AS REF_END_REASON,
+             b.LOT_BASE_END_REASON  AS FOLD_END_REASON,
+             a.LOT_BASE_MEDS        AS REF_REGIMEN,
+             b.LOT_BASE_MEDS        AS FOLD_REGIMEN,
+             a.LOT_BASE_DISCON_DT   AS REF_DISCON_DT,
+             b.LOT_BASE_DISCON_DT   AS FOLD_DISCON_DT,
+             a.LOT_BASE_1ST_ADD_MED AS REF_1ST_ADD_MED,
+             b.LOT_BASE_1ST_ADD_MED AS FOLD_1ST_ADD_MED,
+             CASE WHEN a.PATID IS NULL OR b.PATID IS NULL
+                    OR NOT (a.LOT_START_DT        <=> b.LOT_START_DT)
+                    OR NOT (a.LOT_BASE_END_DT     <=> b.LOT_BASE_END_DT)
+                    OR NOT (a.LOT_BASE_END_REASON <=> b.LOT_BASE_END_REASON)
+                    OR NOT (a.LOT_BASE_MEDS       <=> b.LOT_BASE_MEDS)
+                    OR NOT (a.LOT_BASE_DISCON_DT  <=> b.LOT_BASE_DISCON_DT)
+                  THEN 1 ELSE 0 END AS LINE_CHANGED
+      FROM a FULL OUTER JOIN b
+        ON a.PATID = b.PATID AND a.LOT_NUM = b.LOT_NUM
+    ),
+    moved AS (SELECT DISTINCT PATID FROM j WHERE LINE_CHANGED = 1)
+    SELECT j.* FROM j INNER JOIN moved m ON m.PATID = j.PATID
+    ORDER BY j.PATID, j.LOT_NUM")
+}
+
+# Two built cells in, four files out. Everything is computed first and
 # written afterwards, so a read that cannot produce the whole set writes none.
 foldin_report <- function(con, cells, out_dir, lot_root = NULL) {
   status <- setNames(lapply(cells, function(c_i) cell_status(con, c_i)),
@@ -121,13 +169,20 @@ foldin_report <- function(con, cells, out_dir, lot_root = NULL) {
     wrk(paste0(pfx_of("folded"), "LOT_LONG_FINAL"))))
   if (!nrow(pd))
     stop("The two builds could not be compared patient by patient.", call. = FALSE)
+  # The roster behind those totals: every moved patient's lines, both cells
+  # side by side. Zero rows is an answer (the rule moved nobody), so the file
+  # is written either way.
+  ch <- db_q(con, foldin_changed_sql(
+    wrk(paste0(pfx_of("reference"), "LOT_LONG_FINAL")),
+    wrk(paste0(pfx_of("folded"), "LOT_LONG_FINAL"))))
 
   melp_status_unchanged(con, cells, status)
 
   dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
-  out <- list(foldin_cells.csv        = melp_stamp(res, inputs, status),
-              foldin_vs_reference.csv = melp_stamp(cmp, inputs, status),
-              foldin_patients.csv     = melp_stamp(pd, inputs, status))
+  out <- list(foldin_cells.csv         = melp_stamp(res, inputs, status),
+              foldin_vs_reference.csv  = melp_stamp(cmp, inputs, status),
+              foldin_patients.csv      = melp_stamp(pd, inputs, status),
+              foldin_changed_lines.csv = melp_stamp(ch, inputs, status))
   tmp <- file.path(out_dir, paste0(".", names(out), ".part"))
   on.exit(unlink(tmp[file.exists(tmp)]), add = TRUE)
   for (i in seq_along(out))
@@ -149,9 +204,13 @@ foldin_report <- function(con, cells, out_dir, lot_root = NULL) {
   cat("  ", pd$N_LINE_COUNT_DIFFERENT[1], " of those have a different NUMBER of lines\n", sep = "")
   cat("  ", pd$N_SAME_COUNT_DIFFERENT_LINES[1],
       " have the same number of lines in different places\n", sep = "")
+  cat("\n  foldin_changed_lines.csv holds every moved patient's lines, both\n",
+      "  cells side by side - the file to review patient by patient.\n", sep = "")
   cat("\nThe sizing screen in analysis/questions counts the CURRENT boundaries\n",
-      "the rule would remove, class by class; these two builds are what those\n",
-      "boundaries turn into once the run-outs and windows move with them.\n", sep = "")
+      "where a PREVIOUS-line agent returns; these two builds are what those\n",
+      "boundaries turn into once the run-outs and windows move with them.\n",
+      "The cell folds agents of EVERY earlier line, so the screen's count is\n",
+      "a lower bound on the population this pair moves.\n", sep = "")
   cat("\nWrote ", out_dir, ".\n", sep = "")
   invisible(list(cells = res, compare = cmp, patients = pd))
 }

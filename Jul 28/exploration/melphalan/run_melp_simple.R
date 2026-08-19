@@ -23,9 +23,13 @@
 # difference between them is what the simplification does, in patients.
 #
 # Two things are not settled by running this:
-#   - whether the cap should be 28 days or an imputed 30. Rebuild with
-#     MELP_SIMPLE_COURSE_DAYS=30 (it reaches the simplified cell only) and
-#     compare the two reads.
+#   - the cap. MELP_SIMPLE_COURSE_DAYS=30 (it reaches the simplified cell
+#     only) widens which RECORDED course lengths count as short - it does
+#     NOT re-impute days supplied. A medical melphalan claim still carries
+#     the 28-day imputed supply either way, so its recorded course stays 28
+#     days. The other reading of the study team's question - impute the
+#     melphalan supply itself as 30 - would change how episodes are built
+#     and is not implemented; it needs its own decision.
 #   - what "melphalan mono" should mean where MELP+DEX was collapsed to
 #     melphalan by the code list - steroids are not captured, so a
 #     melphalan-with-steroid line reads as melphalan alone here.
@@ -182,11 +186,13 @@ melp_simple_report <- function(con, cells, out_dir, lot_root = NULL) {
                 mono$cell[i], mono$LOT_NUM[i], nf(mono$N_LINES[i]),
                 nf(mono$N_MONO[i]), nf(mono$N_PAT_MONO[i]),
                 nf(mono$N_MONO_MED_START[i])))
-  cat("\nNot settled by this run: whether the cap should be ", cap,
-      " or an imputed 30\n(rebuild the simplified cell with ",
-      "MELP_SIMPLE_COURSE_DAYS=30 and compare), and\nwhat melphalan-with-DEX ",
-      "should count as - steroids are not captured, so a\nmelphalan-plus-",
-      "steroid line reads as melphalan alone in every count above.\n", sep = "")
+  cat("\nNot settled by this run: the cap (this build used ", cap, " days; ",
+      "MELP_SIMPLE_COURSE_DAYS=30\nwidens which recorded course lengths count ",
+      "as short - it does NOT re-impute the\n28-day medical supply, which ",
+      "would change episode construction and is not built),\nand what ",
+      "melphalan-with-DEX should count as - steroids are not captured, so a\n",
+      "melphalan-plus-steroid line reads as melphalan alone in every count ",
+      "above.\n", sep = "")
   cat("\nWrote ", out_dir, ".\n", sep = "")
   invisible(list(cells = res, compare = cmp, patients = pd, by_line = mono))
 }

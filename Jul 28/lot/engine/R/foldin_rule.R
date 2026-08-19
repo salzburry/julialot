@@ -123,13 +123,28 @@ foldin_boundary_tbl <- function(cfg) {
   if (!foldin_on(cfg)) return("map_stacked") else "foldin_boundary_src"
 }
 
-# The carry onto the run-out. Only ever extends a run-out that exists: a line
-# whose cover runs past observation has no run-out to move, and every folded
-# episode already sits inside it.
-foldin_runout_case <- function(cfg, col, alias = "fh") {
+# The carry onto the run-out. A NULL run-out means two different things and
+# they are told apart:
+#
+#   the regimen's cover runs past observation (a discon_per_med row exists,
+#   capped away) - the hold must NOT replace it, or the line ends on the
+#   folded cover while a base drug is still being taken;
+#
+#   the line has NO regimen at all - a single-day ALLO, or a CAR-T with no
+#   consolidation drug, where discon_per_med produced no row - so there is
+#   no run-out to extend and the hold has to SUPPLY one, or the guard below
+#   lifts the short-circuit and the line falls through to study end with the
+#   folded treatment dangling inside it. F9/F10 in the planted harness pin
+#   this shape.
+#
+# `no_regimen` is the caller's test for the second case; the one call site
+# passes the discon_raw join alias.
+foldin_runout_case <- function(cfg, col, alias = "fh",
+                               no_regimen = "d.PATID IS NULL") {
   if (!foldin_on(cfg)) return(col)
   glue("CASE WHEN {alias}.FOLDIN_HOLD_DT IS NOT NULL
-             AND ({col}) IS NOT NULL AND {alias}.FOLDIN_HOLD_DT > ({col})
+             AND ((({col}) IS NULL AND {no_regimen})
+                  OR {alias}.FOLDIN_HOLD_DT > ({col}))
             THEN {alias}.FOLDIN_HOLD_DT
             ELSE {col} END")
 }
