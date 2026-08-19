@@ -1,0 +1,89 @@
+Julia's asks, transcribed from two emails and a Teams thread.
+Saved 19 Aug 2026. Screenshots supplied by Onkar.
+
+=====================================================================
+1. EMAIL - Julia Moore, sent Friday, July 24, 2026 1:44 PM
+   Subject: RE: Dashboard
+=====================================================================
+
+Thank you Onkar, this is great.
+
+Regarding Melphalan, can we look at the impact of applying this rule:
+
+If the first MELP dose is inside the induction window:
+  - Next dose <180 days later  -> doesn't advance the LOT.
+  - Next dose >=180 days later -> advances the LOT (new LOT starts at
+    that later dose).
+
+If the first MELP dose is outside the induction window:
+  - Next dose <60 days later     -> advances the LOT, but the LOT
+    actually starts back at the FIRST dose (so that first dose becomes
+    day 0 of the new LOT).
+  - Next dose 60-180 days later  -> doesn't advance the LOT (both doses
+    stay in the current line).
+  - Next dose >=180 days later   -> doesn't advance for the first dose,
+    but the later dose (>=180 days) starts a new LOT on its own date.
+
+* MELP exposure = one administration (assume <30 days apart = same
+  exposure). I have attached some patient examples too. Can we look at
+  this at our next 1:1?
+
+Best,
+Julia
+
+=====================================================================
+2. EMAIL - Julia Moore, received Wed 19-08-2026 04:05
+   Subject: RE: Dashboard
+=====================================================================
+
+Hi Onkar,
+
+The study team DOES feel that reclassifying MELP is important. To make
+matters more complicated, some patients that receive MELP "mono"
+therapy may be valid "mono" regimens if the patient was also receiving
+MELP with DEX (which we've scrapped from our codelist).
+
+If the rule below is causing too much trouble, a fair simplification
+would be:
+
+  MELP received for <=28 days (or do we impute days supplied to 30?)
+  outside any induction window does not advance the line.
+
+  * It's important to check if a patient receives MELP on day 100 for
+    28 days and then receives a new agent on day 105, the new line
+    should start on day 100 when MELP appears.
+
+As discussed, we should also update the MAP-breaking rule. If a patient
+received "drug A + drug B" in 1L and has a new med add ("drug C") that
+advances the LOT, if "drug B" reappears after the end of the 2L
+induction window, drug B should be part of 2L (not a reason to
+initiate 3L).
+
+Also, as relayed over Team, could we also get a cohort count for the
+NDMM study of how many pts discontinue 1L before starting a 12mo CE
+baseline period for 2L, and then same for 3L?
+
+Thanks so much,
+Julia
+
+=====================================================================
+3. TEAMS THREAD - Julia Moore and Onkar
+=====================================================================
+
+Onkar:
+  I have few more other issues which I wanted to discuss like AUTO SCT
+  we have tandem but what if something comes in middle or discontinued
+
+Julia Moore (Monday 21:56):
+  Ok sure. Is meeting at 1AM ok for you? I am meeting with Ashley and
+  Peter at 1:30 so would be great to know ahead of that call
+
+Onkar (Monday 21:56):
+  sure works
+
+Julia Moore (Today 01:06):
+  Hi Onkar, in addition to understanding how many pts are affected by
+  the "MAP-splitting rule" and reporting how the MELP rules I created
+  is working, can I also a cohort count for the NDMM study of how many
+  pts discontinue 1L before starting a 12mo CE baseline period for 2L,
+  and then same for 3L?
