@@ -23,13 +23,16 @@
 # difference between them is what the simplification does, in patients.
 #
 # Two things are not settled by running this:
-#   - the cap. MELP_SIMPLE_COURSE_DAYS=30 (it reaches the simplified cell
-#     only) widens which RECORDED course lengths count as short - it does
+#   - the cap. MELP_SIMPLE_COURSE_DAYS=30 (the runner hands it to the
+#     simplified cell only; the reference is pinned to the contract's 28)
+#     widens which RECORDED course lengths count as short - it does
 #     NOT re-impute days supplied. A medical melphalan claim still carries
 #     the 28-day imputed supply either way, so its recorded course stays 28
 #     days. The other reading of the study team's question - impute the
 #     melphalan supply itself as 30 - would change how episodes are built
 #     and is not implemented; it needs its own decision.
+#     Both cap runs write the same prefixes and file names, so copy the
+#     28-day melp_simple_*.csv set aside before running the 30-day one.
 #   - what "melphalan mono" should mean where MELP+DEX was collapsed to
 #     melphalan by the code list - steroids are not captured, so a
 #     melphalan-with-steroid line reads as melphalan alone here.
@@ -78,10 +81,14 @@ run_cell <- function(c_i, cohort, cohort_pfx, cap) {
   if (!is.na(c_i$mode)) {
     env <- c(env, "LOT_CONTRACT_OVERRIDE=TRUE",
              paste0("APPLY_MELP_RULE=", c_i$mode),
-             # The cap reaches the mode cell only. The reference must be the
-             # contract build with no deviation at all - the setting is inert
-             # while the rule is off, so it changes nothing there anyway.
+             # The cap reaches the mode cell only.
              paste0("MELP_SIMPLE_COURSE_DAYS=", cap))
+  } else {
+    # The reference is pinned to the contract explicitly, not left to inherit
+    # the shell. A child inherits the parent's exports, so a 30-day
+    # sensitivity run would otherwise hand MELP_SIMPLE_COURSE_DAYS=30 to the
+    # reference too - and the contract check would refuse to build it.
+    env <- c(env, "APPLY_MELP_RULE=", "MELP_SIMPLE_COURSE_DAYS=28")
   }
   log_f <- file.path(out_dir, paste0("build_simple_", c_i$id, ".log"))
   cat("  building ", c_i$id, " -> ", c_i$prefix, "  (log: ", log_f, ")\n", sep = "")

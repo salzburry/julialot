@@ -610,11 +610,17 @@ melp_lot1_ctes <- function(cfg) {
     -- requires. The candidate list would be bounded at the original date too,
     -- so a drug added between the two could be missed as an addition while the
     -- line ran on past it.
+    -- The hold only ever EXTENDS a run-out here, never replaces a NULL one.
+    -- LOT1 is always medication-started, so it always has a regimen and a
+    -- per-drug cover end: its run-out is NULL only when that cover runs past
+    -- observation. Substituting the hold there would end a line on a
+    -- suppressed melphalan date while a base drug is still being taken -
+    -- turning treatment active at censoring into a discontinuation.
     melp_lot1_base AS (
       SELECT lb0.* EXCEPT (LOT1_BASE_RUNOUT_DT),
              CASE WHEN mh.MELP_HOLD_DT IS NOT NULL
-                   AND (lb0.LOT1_BASE_RUNOUT_DT IS NULL
-                        OR mh.MELP_HOLD_DT > lb0.LOT1_BASE_RUNOUT_DT)
+                   AND lb0.LOT1_BASE_RUNOUT_DT IS NOT NULL
+                   AND mh.MELP_HOLD_DT > lb0.LOT1_BASE_RUNOUT_DT
                   THEN mh.MELP_HOLD_DT
                   ELSE lb0.LOT1_BASE_RUNOUT_DT END AS LOT1_BASE_RUNOUT_DT
       FROM lot1_base lb0
@@ -698,10 +704,22 @@ melp_lot1_base_tbl <- function(cfg) {
 # The same carry at LOT2-5, where there is no column swap to hang it on: the
 # run-out is computed in the statement rather than read off an earlier table.
 # Empty when the rule is off, so discon reads exactly as it did.
-melp_runout_case <- function(cfg, col, alias = "mh") {
+#
+# A NULL run-out means two different things here, and they are told apart the
+# way foldin_runout_case tells them apart. A line with NO regimen at all - a
+# CAR-T with no consolidation drug - has no run-out to extend, so the hold
+# SUPPLIES one, which is what keeps a suppressed exposure after such a line
+# inside it. A line whose regimen cover runs past observation also has a NULL
+# run-out, and there the hold must NOT substitute: the line would end on a
+# suppressed melphalan date while a base drug is still being taken.
+# `no_regimen` is the caller's test for the first case; the one call site
+# passes the discon_raw join alias.
+melp_runout_case <- function(cfg, col, alias = "mh",
+                             no_regimen = "d.PATID IS NULL") {
   if (!melp_rule_on(cfg)) return(col)
   glue("CASE WHEN {alias}.MELP_HOLD_DT IS NOT NULL
-             AND ({col} IS NULL OR {alias}.MELP_HOLD_DT > {col})
+             AND ((({col}) IS NULL AND {no_regimen})
+                  OR {alias}.MELP_HOLD_DT > ({col}))
             THEN {alias}.MELP_HOLD_DT
             ELSE {col} END")
 }
