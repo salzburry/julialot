@@ -1,16 +1,17 @@
 #!/usr/bin/env Rscript
-# One plain-text summary of the study-team answers, filled from the files the
+# One short workbook of the study-team answers, filled from the files the
 # runs already wrote. Reads only; no connection.
 #
 #   Rscript reporting/summarize_results.R [results_dir]
 #
 # results_dir defaults to OUTPUT_DIR, then /mnt/artifacts/results. The
-# melphalan, fold-in and audit outputs are also looked for in their own out/
-# folders, so it works whether or not OUTPUT_DIR was set for those runs.
-# A section whose files are missing says so instead of stopping.
+# melphalan, fold-in, QC, dashboard and audit outputs are also looked for in
+# their own out/ folders, so it works whether or not OUTPUT_DIR was set for
+# those runs. A missing file becomes a "run X first" note, never a stop.
 #
-# Writes results_summary_<stamp>.txt next to the August answers and prints
-# the same text.
+# Writes results_summary_<stamp>.xlsx (one small sheet per topic; needs
+# openxlsx) and results_summary_<stamp>.txt (same content as plain text,
+# always written - paste it into an email as is).
 
 .script_dir <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -26,9 +27,11 @@ res_dir <- if (length(argv)) argv[1] else {
 }
 DIRS <- unique(c(res_dir,
                  file.path(STUDY, "exploration", "melphalan", "out"),
-                 file.path(STUDY, "exploration", "lot", "out")))
+                 file.path(STUDY, "exploration", "lot", "out"),
+                 file.path(STUDY, "lot", "qc", "out"),
+                 "/mnt/artifacts/dashboard/csv",
+                 file.path(res_dir, "csv")))
 
-# Newest file matching the pattern across the candidate dirs, or NULL.
 find_file <- function(pattern) {
   hits <- unlist(lapply(DIRS[dir.exists(DIRS)], function(d)
     list.files(d, pattern, full.names = TRUE)))
@@ -43,157 +46,209 @@ read_any <- function(pattern) {
 n1 <- function(x) if (is.null(x) || !length(x) || is.na(x[1])) "?" else
   format(as.numeric(x[1]), big.mark = ",")
 
-out <- character(0)
-say <- function(...) out <<- c(out, paste0(...))
-
-say("NDMM lines of therapy - results")
-say(format(Sys.time(), "%d %b %Y %H:%M"))
-say("")
-
-# ---- which run this all comes from ------------------------------------------
+# ---- gather everything first ------------------------------------------------
 status_f <- find_file("^aug15_qs_run_status_.*\\.txt$")
 stamp <- if (!is.null(status_f))
   sub("^aug15_qs_run_status_(.*)\\.txt$", "\\1", basename(status_f)) else
   format(Sys.time(), "%Y%m%d_%H%M%S")
+run_line <- "run not identified - no aug15 run-status file found"
+warn_lines <- character(0)
 if (!is.null(status_f)) {
   st <- readLines(status_f, warn = FALSE)
-  run_ln <- grep("LOT run:", st, value = TRUE)
-  if (length(run_ln)) say("Built on", sub(".*LOT run:", " LOT run", run_ln[1]), ".")
-  waived <- grep("WAIVED|UNPROVEN", st, value = TRUE)
-  for (w in waived)
-    say("WARNING: ", trimws(w), " - fix this before sending numbers out.")
-} else {
-  say("NOTE: no aug15 run-status file found under ", res_dir,
-      " - run analysis/questions/aug15_studyteam_qs.R first.")
+  r <- grep("LOT run:", st, value = TRUE)
+  if (length(r)) run_line <- trimws(r[1])
+  warn_lines <- trimws(grep("WAIVED|UNPROVEN", st, value = TRUE))
 }
-say("")
 
-# ---- 1. the MAP splitting rule ----------------------------------------------
-say("1) MAP-splitting rule - how many patients")
 aff <- read_any("^aug15_qs_map_splitting_affected_.*\\.csv$")
-if (is.null(aff)) {
-  say("   No screen file yet - run aug15_studyteam_qs.R first.")
-} else {
-  all_rows <- aff[aff$LINE_THAT_ENDED == "ALL", ]
+map_tbl <- NULL
+if (!is.null(aff)) {
+  a <- aff[aff$LINE_THAT_ENDED == "ALL", ]
   pick <- function(basis, cls) {
-    r <- all_rows[all_rows$MATCH_BASIS == basis & all_rows$CLASS == cls, ]
+    r <- a[a$MATCH_BASIS == basis & a$CLASS == cls, ]
     if (nrow(r)) r$N_PATIENTS[1] else 0
   }
-  say("   ", n1(pick("EXACT_TOKEN", "AFFECTED")),
-      " patients: an old drug came back and that alone splits the line today.")
-  say("   ", n1(pick("EXACT_TOKEN", "SAME_DAY_NEW_AGENT")),
-      " more: an old drug came back, but a new drug started the same day,")
-  say("   so the split stays either way.")
-  say("   If a biosimilar counts as the same drug, the two numbers are ",
-      n1(pick("SUBSTITUTE_FAMILY", "AFFECTED")), " and ",
-      n1(pick("SUBSTITUTE_FAMILY", "SAME_DAY_NEW_AGENT")), ".")
-  roster <- find_file("^aug15_qs_map_splitting_review_roster_.*\\.csv$")
-  if (!is.null(roster))
-    say("   List of these patients: ", basename(roster))
+  map_tbl <- data.frame(
+    `How we match the drug` = c("Same drug only", "Drug or its biosimilar"),
+    `Split goes away`  = c(pick("EXACT_TOKEN", "AFFECTED"),
+                           pick("SUBSTITUTE_FAMILY", "AFFECTED")),
+    `Split stays (new drug same day)` =
+                         c(pick("EXACT_TOKEN", "SAME_DAY_NEW_AGENT"),
+                           pick("SUBSTITUTE_FAMILY", "SAME_DAY_NEW_AGENT")),
+    check.names = FALSE, stringsAsFactors = FALSE)
 }
+roster_f <- find_file("^aug15_qs_map_splitting_review_roster_.*\\.csv$")
+
 fp <- read_any("^foldin_patients\\.csv$")
-if (!is.null(fp)) {
-  say("")
-  say("   We also built a test copy of the line table with the rule switched")
-  say("   on. The study tables are untouched. Result: ", n1(fp$N_DIFFERENT),
-      " of ", n1(fp$N_PATIENTS), " patients change,")
-  say("   and ", n1(fp$N_LINE_COUNT_DIFFERENT),
-      " of them end up with a different number of lines.")
-  ch <- find_file("^foldin_changed_lines\\.csv$")
-  if (!is.null(ch)) say("   Before and after for each: ", basename(ch))
-  say("   Three choices went into this build - please confirm each:")
-  say("   - a drug from any old line folds in, not just the last line's")
-  say("   - the drug extends the line's dates but is not added to its regimen")
-  say("   - it folds in even when the line had already ended")
-}
-say("")
+fold_lines_f <- find_file("^foldin_changed_lines\\.csv$")
 
-# ---- 2. the MELP rules ------------------------------------------------------
-say("2) The MELP rules")
-mp <- read_any("^melp_modes_patients\\.csv$")
 mv <- read_any("^melp_vs_reference\\.csv$")
-if (is.null(mv) && is.null(mp)) {
-  say("   No melphalan comparison files yet - run the melphalan package first.")
-} else {
-  vs <- function(d, cellname, metric) {
-    r <- d[d$cell == cellname & d$metric == metric, ]
-    if (nrow(r)) paste0(n1(r$reference), " -> ", n1(r$observed)) else "?"
-  }
-  if (!is.null(mv)) {
-    say("   Your July rule, built as a test copy next to the study build:")
-    say("   total lines ", vs(mv, "as_asked", "n_lines"),
-        ". Melphalan-only lines ", vs(mv, "as_asked", "n_melp_mono_lines"), ".")
-    say("   Lines that melphalan alone started ",
-        vs(mv, "as_asked", "n_melp_mono_adv"), ".")
-  }
-  if (!is.null(mp))
-    say("   ", n1(mp$N_DIFFERENT), " patients come out differently depending ",
-        "on how we treat a dose next to a transplant.")
-}
+mp <- read_any("^melp_modes_patients\\.csv$")
 sp <- read_any("^melp_simple_patients\\.csv$")
-if (!is.null(sp))
-  say("   The simple 28-day version changes ", n1(sp$N_DIFFERENT), " of ",
-      n1(sp$N_PATIENTS), " patients.")
-say("   To keep in mind: the study numbers are unchanged. Melphalan with a")
-say("   steroid still counts as melphalan alone, because steroids are not in")
-say("   the captured drug list. And 28 vs 30 days is about course length -")
-say("   changing the assumed days supplied would be a separate change.")
-say("")
-
-# ---- 3. the 12-month CE funnel ----------------------------------------------
-say("3) Discontinued the prior line, then 12 months of coverage")
-fu <- read_any("^aug15_qs_discontinued_then_12mo_ce_.*\\.csv$")
-if (is.null(fu)) {
-  say("   No funnel file yet - run aug15_studyteam_qs.R first.")
-} else {
-  for (i in seq_len(nrow(fu))) {
-    say("   ", fu$COHORT[i], ": ", n1(fu$N_DISCONTINUED_PRIOR[i]),
-        " patients stopped ", fu$PRIOR_LINE_DISCONTINUED[i], ". ",
-        n1(fu$N_ALSO_HAS_NEXT_LINE[i]), " of them went on to ", fu$COHORT[i],
-        ". ", n1(fu$N_ALSO_12MO_CE_BEFORE_IT[i]),
-        " of those also had 12 months of")
-    say("       coverage before it started.")
+melp_tbl <- NULL
+if (!is.null(mv)) {
+  g <- function(metric) {
+    r <- mv[mv$cell == "as_asked" & mv$metric == metric, ]
+    if (nrow(r)) c(r$reference[1], r$observed[1]) else c(NA, NA)
   }
-  say("   12 months = enrolled for the full 365 days before the line starts")
-  say("   (small gaps merged). Stopped = the line's recorded end reason.")
-  attr_f <- find_file("^aug15_qs_subsequent_cohort_attrition_.*\\.csv$")
-  if (!is.null(attr_f))
-    say("   The official 2L/3L cohort funnel is in ", basename(attr_f), ".")
-  else
-    say("   The official 2L/3L cohort file was not written - rebuild it ",
-        "after this LOT run.")
+  m1 <- g("n_lines"); m2 <- g("n_melp_mono_lines"); m3 <- g("n_melp_mono_adv")
+  melp_tbl <- data.frame(
+    What = c("Total lines", "Melphalan-only lines",
+             "Lines melphalan alone started"),
+    Today = c(m1[1], m2[1], m3[1]),
+    `Under the July rule` = c(m1[2], m2[2], m3[2]),
+    check.names = FALSE, stringsAsFactors = FALSE)
 }
-say("")
 
-# ---- checks -----------------------------------------------------------------
-say("Checks")
-aud <- read_any("^lot_audit_counts\\.csv$")
-if (!is.null(aud)) {
-  b <- aud[aud$finding == "transplant-belonging-to-no-line", ]
-  if (nrow(b)) {
-    say("   Transplants outside every line (should be 0 after the rebuild):")
-    for (r in unique(b$row)) {
-      rr <- b[b$row == r, ]
-      say("     ", paste(paste0(rr$metric, "=", rr$value), collapse = "  "))
+fu <- read_any("^aug15_qs_discontinued_then_12mo_ce_.*\\.csv$")
+fu_tbl <- NULL
+if (!is.null(fu))
+  fu_tbl <- data.frame(
+    `For` = fu$COHORT,
+    `Stopped the prior line` = fu$N_DISCONTINUED_PRIOR,
+    `Went on to the next line` = fu$N_ALSO_HAS_NEXT_LINE,
+    `Also 12 months cover before it` = fu$N_ALSO_12MO_CE_BEFORE_IT,
+    check.names = FALSE, stringsAsFactors = FALSE)
+attr_f <- find_file("^aug15_qs_subsequent_cohort_attrition_.*\\.csv$")
+
+scen_tbl <- NULL
+wb_f <- find_file("^lot_scenarios\\.xlsx$")
+if (!is.null(wb_f) && requireNamespace("openxlsx", quietly = TRUE)) {
+  for (sh in tryCatch(openxlsx::getSheetNames(wb_f), error = function(e) character(0))) {
+    d <- tryCatch(openxlsx::read.xlsx(wb_f, sheet = sh), error = function(e) NULL)
+    if (!is.null(d) && all(c("ID", "N_PATIENTS") %in% names(d))) {
+      d <- d[!is.na(d$N_PATIENTS), ]
+      d$N_PATIENTS <- as.numeric(d$N_PATIENTS)
+      t <- aggregate(N_PATIENTS ~ ID, d, sum)
+      story <- d[!duplicated(d$ID), c("ID", intersect("WHAT_HAPPENS_TO_THE_PATIENT", names(d)))]
+      t <- merge(t, story, by = "ID", all.x = TRUE)
+      t <- t[order(-t$N_PATIENTS), ]
+      names(t) <- c("Shape", "Patients", "What happens")[seq_along(t)]
+      scen_tbl <- t
+      break
     }
   }
 }
-say("   The QC report and lot_scenarios.xlsx have the rest. The workbook's")
-say("   Open questions sheet lists what is still not settled.")
-say("")
 
-say("What we need Julia to decide")
-say("   - MAP rule: use it or not. If yes: any old line's drugs or just the")
-say("     last line's? Add the drug to the regimen, or just extend the line?")
-say("     Fold it in even after the line ended?")
-say("   - MELP: the July rule or the simple 28-day one? What happens to a")
-say("     dose next to a transplant? 28 or 30 days? And is melphalan+DEX")
-say("     'melphalan alone'?")
-say("   - Tandems: today a treatment stop between two transplants does not")
-say("     break the pair, but a new drug does. Is that right?")
+qc <- read_any("^lot_qc_results\\.csv$")
+ar <- read_any("^all_regimens\\.csv$")
+aud <- read_any("^lot_audit_counts\\.csv$")
+aud_line <- NULL
+if (!is.null(aud)) {
+  b <- aud[aud$finding == "transplant-belonging-to-no-line", ]
+  if (nrow(b))
+    aud_line <- paste(unlist(lapply(unique(b$row), function(r) {
+      rr <- b[b$row == r, ]
+      paste(paste0(rr$metric, "=", rr$value), collapse = " ")
+    })), collapse = "; ")
+}
 
-txt <- paste(out, collapse = "\n")
-dest <- file.path(if (dir.exists(res_dir)) res_dir else ".",
-                  paste0("results_summary_", stamp, ".txt"))
-writeLines(txt, dest)
-cat(txt, "\n\nWrote ", dest, "\n", sep = "")
+decisions <- data.frame(
+  Topic = c("MAP rule", "MAP rule", "MAP rule", "MAP rule",
+            "MELP", "MELP", "MELP", "MELP", "Tandems"),
+  Question = c(
+    "Use it or not?",
+    "Any old line's drugs, or just the last line's?",
+    "Add the returning drug to the regimen, or just extend the line?",
+    "Fold it in even after the line already ended?",
+    "The July rule or the simple 28-day one?",
+    "What happens to a dose right next to a transplant?",
+    "28 or 30 days for the course cap?",
+    "Is melphalan+DEX 'melphalan alone'?",
+    paste0("Today a treatment stop between two transplants does not break ",
+           "the pair, but a new drug does. Is that right?")),
+  stringsAsFactors = FALSE)
+
+# ---- the one-line answers ---------------------------------------------------
+sum_rows <- list()
+add_sum <- function(q, a) sum_rows[[length(sum_rows) + 1L]] <<-
+  data.frame(Question = q, Answer = a, stringsAsFactors = FALSE)
+if (!is.null(map_tbl))
+  add_sum("How many patients does the MAP-splitting rule affect?",
+          paste0(n1(map_tbl[1, 2]), " lose the split (same drug); ",
+                 n1(map_tbl[2, 2]), " counting biosimilars. ",
+                 n1(map_tbl[1, 3]), " more keep it - a new drug started the same day."))
+if (!is.null(fp))
+  add_sum("What if we apply the rule? (test copy, study numbers untouched)",
+          paste0(n1(fp$N_DIFFERENT), " of ", n1(fp$N_PATIENTS),
+                 " patients change; ", n1(fp$N_LINE_COUNT_DIFFERENT),
+                 " get a different number of lines."))
+if (!is.null(melp_tbl))
+  add_sum("MELP - the July rule (test copy)",
+          paste0("Melphalan-only lines ", n1(melp_tbl[2, 2]), " -> ",
+                 n1(melp_tbl[2, 3]), "; lines it alone started ",
+                 n1(melp_tbl[3, 2]), " -> ", n1(melp_tbl[3, 3]), "."))
+if (!is.null(sp))
+  add_sum("MELP - the simple 28-day version",
+          paste0("Changes ", n1(sp$N_DIFFERENT), " of ", n1(sp$N_PATIENTS),
+                 " patients."))
+if (!is.null(fu_tbl)) for (i in seq_len(nrow(fu_tbl)))
+  add_sum(paste0("Stopped prior line + 12 months cover, for ", fu_tbl[i, 1]),
+          paste0(n1(fu_tbl[i, 2]), " stopped; ", n1(fu_tbl[i, 3]),
+                 " reached the line; ", n1(fu_tbl[i, 4]),
+                 " also had the 12 months."))
+summary_tbl <- if (length(sum_rows)) do.call(rbind, sum_rows) else
+  data.frame(Question = "No result files found under these folders",
+             Answer = paste(DIRS, collapse = "; "), stringsAsFactors = FALSE)
+
+notes <- c(
+  paste0("Built on ", run_line, "."),
+  if (length(warn_lines)) paste0("WARNING: ", warn_lines,
+                                 " - fix before sending out."),
+  "The rule tests are separate copies. The study's own numbers are unchanged.",
+  paste0("'Affected' means: a drug from an old line came back after the new ",
+         "line's window, and that alone is what splits the line today."),
+  paste0("12 months = enrolled for the full 365 days before the line starts ",
+         "(small gaps merged)."),
+  paste0("Melphalan with a steroid counts as melphalan alone - steroids are ",
+         "not in the captured drug list."),
+  if (!is.null(roster_f)) paste0("Patient list for the MAP rule: ", basename(roster_f)),
+  if (!is.null(fold_lines_f)) paste0("Before/after lines per changed patient: ",
+                                     basename(fold_lines_f)),
+  if (!is.null(attr_f)) paste0("Official 2L/3L cohort funnel: ", basename(attr_f)),
+  if (!is.null(aud_line)) paste0("Audit - transplants outside every line ",
+                                 "(want 0): ", aud_line),
+  if (!is.null(qc)) paste0("QC: ", nrow(qc), " checks ran, ",
+                           sum(!(tolower(qc$result) %in% c("ok", "pass", ""))),
+                           " to look at (lot_qc_report.md)."),
+  if (!is.null(ar)) paste0("Full regimen list: all_regimens.csv, ", nrow(ar),
+                           " rows, nothing cut off."))
+
+# ---- write ------------------------------------------------------------------
+dest_dir <- if (dir.exists(res_dir)) res_dir else "."
+sheets <- list("Answers"  = summary_tbl,
+               "Notes"    = data.frame(Note = notes, stringsAsFactors = FALSE),
+               "Decisions to make" = decisions)
+if (!is.null(map_tbl))  sheets[["MAP rule"]] <- map_tbl
+if (!is.null(melp_tbl)) sheets[["MELP"]] <- melp_tbl
+if (!is.null(fu_tbl))   sheets[["12-month cover"]] <- fu_tbl
+if (!is.null(scen_tbl)) sheets[["Scenario counts"]] <- scen_tbl
+
+xlsx_dest <- file.path(dest_dir, paste0("results_summary_", stamp, ".xlsx"))
+if (requireNamespace("openxlsx", quietly = TRUE)) {
+  wb <- openxlsx::createWorkbook()
+  for (nm in names(sheets)) {
+    openxlsx::addWorksheet(wb, nm)
+    openxlsx::writeData(wb, nm, sheets[[nm]])
+    openxlsx::setColWidths(wb, nm, cols = seq_along(sheets[[nm]]),
+                           widths = "auto")
+  }
+  openxlsx::saveWorkbook(wb, xlsx_dest, overwrite = TRUE)
+  cat("Wrote ", xlsx_dest, "\n", sep = "")
+} else {
+  cat("openxlsx is not installed, so no workbook - the text file has the ",
+      "same content.\n", sep = "")
+}
+
+txt <- character(0)
+for (nm in names(sheets)) {
+  txt <- c(txt, nm, strrep("-", nchar(nm)))
+  d <- sheets[[nm]]
+  for (i in seq_len(nrow(d)))
+    txt <- c(txt, paste0("  ", paste(paste0(names(d), ": ", as.character(d[i, ])),
+                                     collapse = "  |  ")))
+  txt <- c(txt, "")
+}
+txt_dest <- file.path(dest_dir, paste0("results_summary_", stamp, ".txt"))
+writeLines(txt, txt_dest)
+cat(paste(txt, collapse = "\n"), "\nWrote ", txt_dest, "\n", sep = "")
