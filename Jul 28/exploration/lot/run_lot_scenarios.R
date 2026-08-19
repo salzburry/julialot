@@ -91,7 +91,7 @@ fmt_block <- function(v) if (!length(v)) "" else paste(v, collapse = "\n")
 # each one on every run; what is open is whether it is the right rule. Each
 # points at the scenario that shows it and the count that sizes it.
 OPEN_QUESTIONS <- data.frame(
-  ID = c("Q1", "Q2", "Q3", "Q4"),
+  ID = c("Q1", "Q2", "Q3", "Q4", "Q5", "Q6"),
   THE_QUESTION = c(
     paste0("Should a drug the patient is still taking count as part of the ",
            "new line, even though they started it in an earlier line?"),
@@ -103,7 +103,15 @@ OPEN_QUESTIONS <- data.frame(
            "stop, with the death kept as the patient outcome it already is?"),
     paste0("When two transplant types would end a line on the same day, which ",
            "one is recorded as the reason? The first line and later lines ",
-           "answer differently.")),
+           "answer differently."),
+    paste0("When an agent from the previous line's regimen comes back after ",
+           "the current line's induction window, should it join the current ",
+           "line instead of ending it? The study team has asked for the ",
+           "join reading."),
+    paste0("Inside the 180-day window, what should break a planned tandem ",
+           "transplant pair? Today a treatment event between the two breaks ",
+           "it; running out of supply, or a confirmed stop with nothing ",
+           "started, does not.")),
   WHAT_THE_CODE_DOES_TODAY = c(
     paste0("A drug counts only if the patient STARTS it in the line's first ",
            "60 days (30 for later lines, 45 after CAR-T). A drug carried ",
@@ -121,7 +129,14 @@ OPEN_QUESTIONS <- data.frame(
            "donor transplant, then CAR-T. On later lines a donor transplant ",
            "wins, then CAR-T, then a stem cell transplant. The end DATE is ",
            "identical either way; only the recorded reason differs, and only ",
-           "on an exact same-day tie.")),
+           "on an exact same-day tie."),
+    paste0("The returning agent ends the line as an added medication and the ",
+           "next line starts on it."),
+    paste0("A non-steroid medication start, a donor transplant or a CAR-T ",
+           "between the two transplants breaks the pair; the later ",
+           "transplant then starts its own line. A run-out or a confirmed ",
+           "discontinuation alone does not break it - the line is held open ",
+           "to the second transplant.")),
   WHAT_A_CHANGE_WOULD_MOVE = c(
     paste0("The drug lists on later lines. Line starts and line counts, ",
            "because a drug missing from a line's list is free to start the ",
@@ -131,16 +146,25 @@ OPEN_QUESTIONS <- data.frame(
     paste0("Line lengths, time to discontinuation, and the died/stopped ",
            "split. Not line counts."),
     paste0("Only the recorded end reason on exact-tie days, and any summary ",
-           "split by end reason. No dates and no line counts.")),
+           "split by end reason. No dates and no line counts."),
+    paste0("The ended line's regimen, run-out and end date, the next line's ",
+           "existence, and every later line number and window. A rebuild, ",
+           "not arithmetic."),
+    paste0("Which second transplants extend a line and which start one - ",
+           "line counts and lengths for every broken or held pair.")),
   SEE_SCENARIO = c("S09", "S05 and S06", "S15",
-                   "none - two transplants on one day is rarer than any worked case here"),
+                   "none - two transplants on one day is rarer than any worked case here",
+                   "S30 shows the drug two lines back; the previous-line case is the MED_ADD rule",
+                   "S26 and S27 show the unbroken pairs"),
   THE_COUNT_THAT_SIZES_IT = c(
     paste0("4.2-prior-agent-covered-but-not-in-the-regimen and ",
            "4.3-line-started-by-an-agent-from-two-lines-back, in ",
            "run_scenario_counts.R"),
     "return-gap-around-the-90-day-threshold, in run_lot_audit_counts.R",
     "the S15 row of the Patients-by-line sheet",
-    "no count yet - same-day transplant-type ties would need their own query"),
+    "no count yet - same-day transplant-type ties would need their own query",
+    "aug15_qs_map_splitting_affected, from analysis/questions/aug15_studyteam_qs.R",
+    "tandem-pair-whose-first-transplant-is-out-of-window in run_lot_audit_counts.R sizes a related shape; the interruption split has no count yet"),
   stringsAsFactors = FALSE)
 
 # The codes the output table uses, in words. The scenarios are readable without

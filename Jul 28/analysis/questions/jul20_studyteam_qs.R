@@ -428,7 +428,7 @@ q2_diagnosis_years <- function(con, coh_tbl, n_dual) {
     GROUP BY year(cast(e.MM_DX_DT as date))
     ORDER BY diagnosis_year"))
   if (nrow(d) == 0)
-    return(data.frame(status = "No diagnosis dates found (ELIG_COH_FINAL join returned no rows).",
+    return(data.frame(status = "No diagnosis dates found (the cohort-table join returned no rows).",
                       stringsAsFactors = FALSE))
   out <- data.frame(diagnosis_year = as.integer(num(d$diagnosis_year)),
                     n_patients = as.integer(num(d$n_patients)),
@@ -1399,7 +1399,7 @@ main <- function() {
                   sprintf("diagnosis-year sum %d (incl. missing) vs %d dual patients",
                           sum(q2_dx$n_patients), as.integer(n_dual)))
     } else {
-      gaps <- c(gaps, "Q2c diagnosis dates unavailable - ELIG_COH_FINAL unreadable")
+      gaps <- c(gaps, "Q2c diagnosis dates unavailable - the cohort table is unreadable")
     }
 
     xt <- best_effort(q2_region_payer_crosstab(con, have_region, have_payer, n_dual),
@@ -1556,8 +1556,8 @@ main <- function() {
       "distinct medication service dates on medical claims (MMA_MED_PROCESSED is deduplicated to one row per patient+agent+date+claim type) inside LOT1 - not administrations, not cycles",
       "distinct pharmacy fill dates inside LOT1",
       "days between episode start and the earlier of episode end / LOT1 end, summed per agent",
-      "mm_diagnosis_date - ELIG_COH_FINAL.MM_DX_DT, the earliest qualifying MM diagnosis (one inpatient claim, or two outpatient claims in the window). NULL when the cohort run predates the column",
-      "lot1_index_date - ELIG_COH_FINAL.INDEX_DATE, the 1L treatment start the cohort is anchored on. NOT the diagnosis date",
+      "mm_diagnosis_date - the cohort table's MM_DX_DT, the earliest qualifying MM diagnosis (one inpatient claim, or two outpatient claims in the window). NULL when the cohort run predates the column",
+      "lot1_index_date - the cohort table's INDEX_DATE, the 1L treatment start the cohort is anchored on. NOT the diagnosis date",
       "LOT_LONG LOT_NUM=2 regimen; '(no 2L observed)' keeps the denominator at the full dual cohort",
       "member_enrollment.BUS on the span covering the LOT1 start; MCR=Medicare, COM=Commercial, blank=Unknown, else Other(<BUS>); anchor = LOT1 start date. 'Payer/type' is answered by this line-of-business split; a finer plan/product breakdown would need an explicitly approved enrollment field, configured the same way as the region source",
       if (nzchar(region_note)) region_note else "(not derived)",
