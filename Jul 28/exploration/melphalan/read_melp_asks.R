@@ -331,6 +331,10 @@ write_out(q1_paired, "melp_ask1_paired_line_change.csv",
           "1b. The same patient's line, in each cell, against the reference")
 write_out(q1_lines, "melp_ask1_line_count_change.csv",
           "1c. Change in the number of lines a patient ends up with")
+if (!is.null(q2) && nrow(q2))
+  q2$MONO_MEANS <- paste0("mono among captured non-steroid MM agents - ",
+                          "steroids are excluded from regimens, so melphalan ",
+                          "with a steroid still reads as melphalan mono")
 write_out(q2, "melp_ask2_regimens_by_line.csv",
           "2. Distribution of regimens at each line")
 write_out(q3, "melp_ask3_sct_in_melp_lot.csv",

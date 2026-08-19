@@ -3,16 +3,18 @@
 This file walks the LOT half of the delivery. The complete delivery runs in
 this order, each step over the one before it:
 
-1. NDMM cohort build (`ndmm/`) — writes `ndmm_NDMM_COHORT` with `MM_DX_DT`
-2. LOT build over that exact cohort attempt — section 2 below
-3. LOT QC and confirmation — section 3 below
-4. Dashboard (`reporting/dashboard/build.R`) — includes the complete
+1. Prebuild snapshot: audit counts on the CURRENT tables — section 1 below,
+   before anything is rebuilt (the numbers cannot be recovered afterwards)
+2. NDMM cohort build (`ndmm/`) — writes `ndmm_NDMM_COHORT` with `MM_DX_DT`
+3. LOT build over that exact cohort attempt — section 2 below
+4. LOT QC and confirmation — section 3 below
+5. Dashboard (`reporting/dashboard/build.R`) — includes the complete
    all-regimens CSV, which the build refuses to ship without
-5. 2L/3L cohorts (`ndmm/build_subsequent_cohorts.R`) — after EVERY LOT rebuild
-6. Outcomes (`analysis/outcomes/build.R`)
-7. Study-question programs (`analysis/questions/`)
-8. Audit counts and the scenario workbook — sections 1 and 1b below
-9. MELP cells and readers — separate sensitivity prefixes only, section 4 below
+6. 2L/3L cohorts (`ndmm/build_subsequent_cohorts.R`) — after EVERY LOT rebuild
+7. Outcomes (`analysis/outcomes/build.R`)
+8. Study-question programs (`analysis/questions/`)
+9. The scenario workbook on the finished run — section 1b below
+10. MELP cells and readers — separate sensitivity prefixes only, section 4 below
 
 Code and docs only — **no code lists** (the engine reads
 them from `CODELIST_DIR`, default `/mnt/code/codelist`) and **no cohort build**
