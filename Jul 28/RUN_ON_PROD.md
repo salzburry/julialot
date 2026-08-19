@@ -137,6 +137,21 @@ with `MELP_SIMPLE_COURSE_DAYS=30` to see the other reading.
 Each prefix is emptied before it is rebuilt. `APPLY_MELP_RULE` stays blank in
 `CONTRACT`, so the study's own run is untouched by all of this.
 
+## 4b. The MAP fold-in — evaluation only, same pattern
+
+The study team's proposed reading that a prior line's agent returning after
+the current line's regimen window joins that line instead of splitting it.
+Two builds under `foldin_` prefixes, differenced:
+
+```
+Rscript exploration/lot/run_foldin_cells.R                        # plan only
+FOLDIN_EXECUTE=TRUE Rscript exploration/lot/run_foldin_cells.R    # build + read
+```
+
+`APPLY_MAP_FOLDIN` stays FALSE in `CONTRACT`; the folded cell records its
+deviation and no reader accepts it as the study's. Read its three
+`foldin_*.csv` files next to the sizing screen's counts from step 8.
+
 In the decisions output read **block 2 first** — melphalan doses in no line.
 Every row with `AFTER_THE_CAP = no` should be absent, `PRIOR_LINE_TYPE` of
 `CART` or `SCT_ALLO` included. A single-day ALLO line and a CAR-T line with no

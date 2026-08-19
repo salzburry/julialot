@@ -55,6 +55,9 @@ lines:
 advancement:
   new_agent: <true | false>
   same_regimen_gap_days: <days | none>   # none = a re-challenge never advances
+  prior_line_agent_return: <new_line | joins_line>  # a prior line's agent
+                                         # returning after the current line's
+                                         # regimen window: splits, or folds in
   drop_based: <true | false>
 
 event_streams: {}           # or one map per stream:

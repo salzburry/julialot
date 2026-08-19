@@ -98,6 +98,7 @@ cfg_defaults <- list(
   # A mode is a different algorithm, so it is pinned in CONTRACT and needs
   # LOT_CONTRACT_OVERRIDE - see R/melp_rule.R.
   apply_melp_rule    = Sys.getenv("APPLY_MELP_RULE",    unset = ""),
+  apply_map_foldin   = as.logical(Sys.getenv("APPLY_MAP_FOLDIN", unset = "FALSE")),
   # Pinned TRUE in CONTRACT. Turning it off is a different algorithm and needs
   # LOT_CONTRACT_OVERRIDE, the same as any other contract setting.
   apply_cart_induction_rule =

@@ -26,7 +26,9 @@
 #      It is a screen of current boundaries, not the line table the proposed
 #      rule would build - a folded agent changes the regimen, the run-out and
 #      every later window, which needs a rebuild, not arithmetic.
-#      The rule itself is NOT changed here.
+#      The rule itself is NOT changed here. The rebuild exists separately:
+#      exploration/lot/run_foldin_cells.R builds the fold-in as its own
+#      gated cell pair and differences it against the contract build.
 #
 #   2. A pointer to the melphalan comparison. The three-cell package evaluates
 #      the original five-branch rule; run it separately. The simplified
@@ -436,7 +438,8 @@ main <- function() {
       "written"),
     WHERE = c(
       paste0("aug15_qs_map_splitting_affected_", stamp, ".csv, with the ",
-             "per-patient review roster beside it"),
+             "per-patient review roster beside it; the rule itself is built ",
+             "as a cell pair by exploration/lot/run_foldin_cells.R"),
       paste0("exploration/melphalan: AUG1_EXECUTE=TRUE run_aug1_melp.R (the ",
              "reference and two cells of the original five-branch rule), then ",
              "read_melp_asks.R and read_melp_decisions.R"),

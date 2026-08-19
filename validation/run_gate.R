@@ -113,6 +113,7 @@ EXPECTED_SUITES <- list(
     "analysis/questions/tests/test_setup.R",
     "exploration/lot/tests/test_benchmarks.R",
     "exploration/lot/tests/test_definitions.R",
+    "exploration/lot/tests/test_foldin.R",
     "exploration/lot/tests/test_melphalan.R",
     "exploration/lot/tests/test_sensitivity.R",
     "exploration/lot/tests/test_stockpiling.R",

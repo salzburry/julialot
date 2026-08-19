@@ -27,6 +27,11 @@ CONTRACT <- list(
   # one, which is why it is pinned here rather than left as a free setting - as
   # are the thresholds that say what the rule means.
   apply_melp_rule             = "",
+  # The MAP fold-in: a prior line's agent returning joins the line it returns
+  # in instead of splitting it. FALSE is the study's algorithm; TRUE is the
+  # study team's proposed reading, built only as its own cell - see
+  # R/foldin_rule.R.
+  apply_map_foldin            = FALSE,
   # A CAR-T inside LOT1's induction window is part of LOT1 - it neither ends
   # the line nor starts one. Confirmed by the study team on 2026-08-13; see
   # R/cart_rule.R and the CAR-T induction rule in lot/LOT_RULES.md.
@@ -105,7 +110,7 @@ REQUIRED_COHORT_COLS <- c("PATID", "INDEX_DATE", "ENDDATE", "ENDDATE_CE",
 # integer setting that will not parse becomes NA and silently widens a window.
 BOOL_SETTINGS <- c("USE_QUARTERLY_TABLES", "CENSOR_AT_DISENROLLMENT",
                    "PERSIST_TO_SCHEMA", "APPLY_CART_INDUCTION_RULE",
-                   "APPLY_NO_BELANTAMAB",
+                   "APPLY_NO_BELANTAMAB", "APPLY_MAP_FOLDIN",
                    # Coerced with as.logical() like the rest, so a typo would
                    # otherwise become NA and read as off.
                    "FACE_VALIDITY_FATAL")
@@ -594,7 +599,7 @@ load_lot_modules <- function(here) {
   source(file.path(here, "R", "load_inputs.R"))
   load_pipeline_inputs(here, "config.csv")
   for (f in c("config_lot.R", "db_utils_lot.R", "codelists_lot.R", "line_criteria.R",
-              "melp_rule.R", "cart_rule.R", "prior_regimen.R"))
+              "melp_rule.R", "foldin_rule.R", "cart_rule.R", "prior_regimen.R"))
     source(file.path(here, "R", f))
   steps <- sort(list.files(file.path(here, "R", "steps"), "\\.R$", full.names = TRUE))
   for (f in steps) source(f)

@@ -246,7 +246,7 @@ build_lot_n <- function(con, lot_num,
       INNER JOIN lot_patient_input p ON ll.PATID = p.PATID
       WHERE ll.LOT_NUM = {prev}
         AND ll.LOT_BASE_END_DT IS NOT NULL
-    ),{melp_prev_line_ctes(cfg, prev_med_window, cart_consolidation_days)}
+    ),{melp_prev_line_ctes(cfg, prev_med_window, cart_consolidation_days)}{foldin_prior_ctes(cfg, prev)}
     -- The previous line's regimen and its permissible biosimilar substitutes.
     -- Neither starts LOT_N. A substitute continues the drug it replaces, and
     -- the drug itself was part of the previous regimen.
@@ -295,7 +295,7 @@ build_lot_n <- function(con, lot_num,
         -- a confirmed gap is a restart, and opens a line like any other.
         AND (pme.MED_ABBR IS NULL
              OR (coalesce(mr.PREV_DISCON, 0) = 1
-                 AND pme.SUBSTITUTE_ONLY = 0){melp_prior_regimen_exempt(cfg)}){melp_suppress_predicate(cfg)}
+                 AND pme.SUBSTITUTE_ONLY = 0){melp_prior_regimen_exempt(cfg)}){melp_suppress_predicate(cfg)}{foldin_trigger_predicate(cfg)}
       GROUP BY pe.PATID
     ),
     -- d_ALLO: earliest ALLO strictly after PREV_END_DT.
@@ -531,12 +531,12 @@ build_lot_n <- function(con, lot_num,
   # Built out here rather than inline. It is a CASE expression handed to a
   # function, and a nested glue() call inside a glue() template does not parse -
   # the inner quotes close the outer one.
-  runout_expr <- melp_runout_case(cfg, paste0(
+  runout_expr <- melp_runout_case(cfg, foldin_runout_case(cfg, paste0(
     "CASE\n",
     "          WHEN d.RAW_DISCON_DT IS NOT NULL AND d.RAW_DISCON_DT <= ls.OBS_END_DT\n",
     "            THEN d.RAW_DISCON_DT\n",
     "          ELSE NULL\n",
-    "        END"))
+    "        END")))
 
   materialize(con, paste0(pfx, "_lot", lot_num, "_base"),
               view = glue("lot{lot_num}_base"),
@@ -559,7 +559,7 @@ build_lot_n <- function(con, lot_num,
         INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
       )
       GROUP BY PATID, MED_ABBR
-    ),{melp_lotn_ctes(cfg, lot_num, induction_window_days, cart_consolidation_days, allo_lot_span)}
+    ),{melp_lotn_ctes(cfg, lot_num, induction_window_days, cart_consolidation_days, allo_lot_span)}{foldin_lotn_ctes(cfg, lot_num)}
     -- Per drug, the end of ITS cover in this line: the FIRST episode flagged
     -- discontinued. A later episode of the same drug does NOT open the next
     -- line. It was in this line's regimen, so this line extends over it, and
@@ -571,7 +571,8 @@ build_lot_n <- function(con, lot_num,
     -- never opens, because its trigger has to fall strictly after the previous
     -- end.
     discon_per_med AS (
-{discon_per_med_sql(glue('lot{lot_num}_regimen_cutoff'), glue('LOT{lot_num}_START_DT'), end_col = 'REGIMEN_CUTOFF_DT')}
+{discon_per_med_sql(glue('lot{lot_num}_regimen_cutoff'), glue('LOT{lot_num}_START_DT'),
+                    boundary_tbl = foldin_boundary_tbl(cfg), end_col = 'REGIMEN_CUTOFF_DT')}
     ),
     -- The regimen has run out when its LAST base agent has.
     discon_raw AS (
@@ -588,7 +589,7 @@ build_lot_n <- function(con, lot_num,
         -- where POST_RUNOUT_TRIGGER_FLG exists.
         {runout_expr} AS LOT{lot_num}_BASE_RUNOUT_DT
       FROM lot{lot_num}_start ls
-      LEFT JOIN discon_raw d ON ls.PATID = d.PATID{melp_hold_join(cfg, 'ls')}
+      LEFT JOIN discon_raw d ON ls.PATID = d.PATID{melp_hold_join(cfg, 'ls')}{foldin_hold_join(cfg, 'ls')}
     ),
     med_summary AS (
       SELECT
@@ -635,7 +636,7 @@ build_lot_n <- function(con, lot_num,
         AND ms.MAP_START_DT <= coalesce(d.LOT{lot_num}_BASE_RUNOUT_DT, ls.OBS_END_DT)
         -- A single_day ALLO LOT ends on the ALLO date itself, so an add-med
         -- cannot apply.
-        AND NOT (ls.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND {if (allo_lot_span == 'single_day') 1L else 0L} = 1){melp_suppress_predicate(cfg)}
+        AND NOT (ls.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND {if (allo_lot_span == 'single_day') 1L else 0L} = 1){melp_suppress_predicate(cfg)}{foldin_suppress_predicate(cfg)}
       {melp_inject_arm(cfg, glue('lot{lot_num}_start'), glue('LOT{lot_num}_START_DT'),
                        glue('lot{lot_num}_start.OBS_END_DT'), melp_allo_guard(lot_num, allo_lot_span))}
     ),
@@ -661,7 +662,7 @@ build_lot_n <- function(con, lot_num,
       ls.ENDDATE_CE,
       coalesce(ms.LOT{lot_num}_MED_CNT, 0)   AS LOT{lot_num}_MED_CNT,
       coalesce(ms.LOT{lot_num}_BASE_MEDS, '') AS LOT{lot_num}_BASE_MEDS,
-      d.LOT{lot_num}_BASE_RUNOUT_DT,{melp_hold_col(cfg, 'mh')}
+      d.LOT{lot_num}_BASE_RUNOUT_DT,{melp_hold_col(cfg, 'mh')}{foldin_hold_col(cfg, 'fh')}
       fa.LOT{lot_num}_BASE_1ST_ADD_MED_DT,
       fa.LOT{lot_num}_BASE_1ST_ADD_MED,
       -- The per-MED and per-CLASS flags, matching LOT1. NULL becomes 0 for a
@@ -675,7 +676,7 @@ build_lot_n <- function(con, lot_num,
     FROM lot{lot_num}_start ls
     LEFT JOIN med_summary    ms ON ls.PATID = ms.PATID
     LEFT JOIN discon         d  ON ls.PATID = d.PATID
-    LEFT JOIN first_add_pick fa ON ls.PATID = fa.PATID{melp_hold_join(cfg, 'ls')}
+    LEFT JOIN first_add_pick fa ON ls.PATID = fa.PATID{melp_hold_join(cfg, 'ls')}{foldin_hold_join(cfg, 'ls')}
   "), qc = glue("SELECT count(*) AS n_pats,
                         avg(LOT{lot_num}_MED_CNT) AS avg_meds,
                         sum(CASE WHEN LOT{lot_num}_BASE_RUNOUT_DT IS NOT NULL THEN 1 ELSE 0 END) AS n_runout,
@@ -1142,9 +1143,9 @@ build_lot_n <- function(con, lot_num,
       SELECT
         ec.*,
         CASE
-          WHEN ec.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND {if (allo_single_day) 1L else 0L} = 1{melp_line_type_guard(cfg, lot_num)}
+          WHEN ec.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND {if (allo_single_day) 1L else 0L} = 1{melp_line_type_guard(cfg, lot_num)}{foldin_line_type_guard(cfg, lot_num)}
             THEN ec.LOT{lot_num}_START_DT
-          WHEN ec.LOT{lot_num}_START_TYPE = 'CART' AND ec.LOT{lot_num}_MED_CNT = 0{melp_line_type_guard(cfg, lot_num)}
+          WHEN ec.LOT{lot_num}_START_TYPE = 'CART' AND ec.LOT{lot_num}_MED_CNT = 0{melp_line_type_guard(cfg, lot_num)}{foldin_line_type_guard(cfg, lot_num)}
             THEN ec.LOT{lot_num}_START_DT
           WHEN ec.LOT_TX_ENDDATE IS NOT NULL
            AND NOT (ec.CART_INIT_FLG = 1 AND ec.LOT_TX_ENDDATE_REASON = 3)
@@ -1194,9 +1195,9 @@ build_lot_n <- function(con, lot_num,
          AND ec.LOT{lot_num}_AUTO_HOLD_DT > ec.LOT{lot_num}_NATURAL_END_DT
          AND (ec.DEATH_DT IS NULL OR ec.LOT{lot_num}_AUTO_HOLD_DT < ec.DEATH_DT)
         THEN 'SCT_AUTO_CONT'
-        WHEN ec.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND {if (allo_single_day) 1L else 0L} = 1{melp_line_type_guard(cfg, lot_num)}
+        WHEN ec.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND {if (allo_single_day) 1L else 0L} = 1{melp_line_type_guard(cfg, lot_num)}{foldin_line_type_guard(cfg, lot_num)}
           THEN 'SCT_ALLO'
-        WHEN ec.LOT{lot_num}_START_TYPE = 'CART' AND ec.LOT{lot_num}_MED_CNT = 0{melp_line_type_guard(cfg, lot_num)}
+        WHEN ec.LOT{lot_num}_START_TYPE = 'CART' AND ec.LOT{lot_num}_MED_CNT = 0{melp_line_type_guard(cfg, lot_num)}{foldin_line_type_guard(cfg, lot_num)}
           THEN 'SCT_CART'
         WHEN ec.LOT_TX_ENDDATE IS NOT NULL
          AND NOT (ec.CART_INIT_FLG = 1 AND ec.LOT_TX_ENDDATE_REASON = 3)

@@ -67,7 +67,7 @@ LOT_DIMENSIONS <- list(
        ours = paste0("Yes, and it spans a single day - start and end are the ",
                      "transplant date. It carries no regimen string, because ",
                      "induction rows are suppressed for it."),
-       where = "lot/engine/R/steps/10_lot2_5_base.R:450, :638",
+       where = "lot/engine/R/steps/10_lot2_5_base.R:450, :639",
        proves = c("SCT_ALLO", "allo_lot_span"),
        question = "Is alloSCT counted as a prior line in its own right?"),
 
@@ -163,7 +163,7 @@ LOT_DIMENSIONS <- list(
        dimension = "Is there a cap on how many lines are counted?",
        ours = paste0("Yes - MAX_LOT. Nothing above it is built, so a capped ",
                      "patient is indistinguishable from a completed one."),
-       where = "lot/engine/R/build_lot.R:1811",
+       where = "lot/engine/R/build_lot.R:1816",
        proves = c("max_lot"),
        question = paste0("Does the source cap the line count, or report the ",
                          "full distribution?")),

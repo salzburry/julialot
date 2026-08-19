@@ -131,7 +131,10 @@ subst_off <- function(f) {
   # melp_runout_case() is called in R rather than spliced in a template - it
   # wraps an expression the step already had - so it is cut the same way. Off,
   # it hands that expression straight back, which is what the step read before.
-  sub("(?s)melp_runout_case\\(cfg, paste0\\(.*?\\)\\)", "<off>", txt, perl = TRUE)
+  # The fold-in rule's own wrapper sits inside it now and hands back the same
+  # way, so the cut takes both.
+  sub("(?s)melp_runout_case\\(cfg, foldin_runout_case\\(cfg, paste0\\(.*?\\)\\)\\)",
+      "<off>", txt, perl = TRUE)
 }
 ok(!has(subst_off("06_lot1_end.R"), "melp_") &&
      !has(subst_off("10_lot2_5_base.R"), "melp_"),

@@ -4,13 +4,13 @@
 # Change the engine, and this file (and the pin table) change in the same commit.
 
 tumor: multiple_myeloma
-contract_version: 2
+contract_version: 3
 status: baseline_extracted
 
 provenance:
   source: extracted from Jul 28/lot/engine (config_lot.R defaults and step files)
   reviewed_by: []
-  notes: v1 at the materialization pass, the NDMM study run. v2 records three axes the engine gained on 2026-08-13 and this file had not - lines.discon_confirm_days, lines.discon_confirmed_by_return, event_streams.CART.induction_absorbed - and the pin now reads build_lot.R's CONTRACT instead of copying it, which is why they were invisible until v2
+  notes: v1 at the materialization pass, the NDMM study run. v2 records three axes the engine gained on 2026-08-13 and this file had not - lines.discon_confirm_days, lines.discon_confirmed_by_return, event_streams.CART.induction_absorbed - and the pin now reads build_lot.R's CONTRACT instead of copying it, which is why they were invisible until v2. v3 records advancement.prior_line_agent_return, the axis behind the study team's August fold-in request - the engine gained a gated APPLY_MAP_FOLDIN mode, pinned off, and new_line stays the study's algorithm until the team decides on the evaluation cells
 
 observation:
   censor_at_disenrollment: false
@@ -57,6 +57,10 @@ lines:
 advancement:
   new_agent: true
   same_regimen_gap_days: none
+  # A prior line's agent returning after the current line's regimen window:
+  # new_line = it ends the line and starts the next (the study's algorithm);
+  # joins_line = it folds into the line it returns in (the fold-in mode).
+  prior_line_agent_return: new_line
   drop_based: false
 
 event_streams:
