@@ -430,7 +430,13 @@ LOT_SCENARIOS <- list(
         -- still open, and an absorbed infusion leaves the line running to or
         -- past it. A line that ended before the infusion is the other case -
         -- the CAR-T is free to start the next line.
-        AND l.LOT_BASE_END_DT >= s.FIRST_CART_DT"),
+        AND l.LOT_BASE_END_DT >= s.FIRST_CART_DT
+        -- ...and not ended BY it. A line that starts on the infusion date and
+        -- ends there with a CAR-T reason is the day-zero violation shape (the
+        -- end is floored at the start), not an absorbed infusion.
+        AND NOT (l.LOT_BASE_END_REASON IN ('SCT_CART', 'CART_INIT')
+                 AND l.LOT_BASE_END_DT = s.FIRST_CART_DT
+                 AND l.LOT_START_DT = s.FIRST_CART_DT)"),
 
   list(id = "S13", group = "CAR-T",
        title = "CAR-T therapy after the first 60 days",

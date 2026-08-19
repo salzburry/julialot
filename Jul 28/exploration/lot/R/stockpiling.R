@@ -51,18 +51,29 @@
 # LOT2-5's is INDUCTION_WINDOW_DAYS_LOT_N, which does not follow the pattern of
 # the other two.
 STOCK_SETTINGS <- list(
-  ind1 = list(env = "INDUCTION_WINDOW_DAYS",       default = 60L),
-  indn = list(env = "INDUCTION_WINDOW_DAYS_LOT_N", default = 30L),
-  cart = list(env = "CART_CONSOLIDATION_DAYS",     default = 45L))
+  ind1 = list(key = "induction_window_days",       env = "INDUCTION_WINDOW_DAYS",       default = 60L),
+  indn = list(key = "lot_n_induction_window_days", env = "INDUCTION_WINDOW_DAYS_LOT_N", default = 30L),
+  cart = list(key = "cart_consolidation_days",     env = "CART_CONSOLIDATION_DAYS",     default = 45L))
 
-# Read from the run's own contract where the caller supplies it, so the window
-# judged is the window built with. Falls back to config for a dry run.
+# One value out of a run's CONTRACT_SETTINGS string ("a=1|b=2|..."), or NULL.
+.contract_value <- function(settings, key) {
+  if (is.null(settings) || length(settings) != 1L || is.na(settings)) return(NULL)
+  hit <- regmatches(settings, regexpr(paste0("(^|\\|)", key, "=[^|]*"), settings))
+  if (!length(hit)) return(NULL)
+  sub(paste0("^\\|?", key, "="), "", hit)
+}
+
+# Read from the measured run's recorded CONTRACT_SETTINGS (lot_run_meta()'s
+# $settings) where the caller supplies it, so the window judged is the window
+# built with. The environment is only the fallback for a dry run or a run too
+# old to have recorded a value.
 stock_cfg <- function(from_run = NULL) {
   out <- list()
   for (nm in names(STOCK_SETTINGS)) {
     s <- STOCK_SETTINGS[[nm]]
-    v <- if (!is.null(from_run) && !is.null(from_run[[s$env]])) from_run[[s$env]]
-         else Sys.getenv(s$env, unset = "")
+    v <- if (!is.null(s$key) && !is.null(from_run))
+           .contract_value(from_run$settings, s$key) else NULL
+    if (is.null(v)) v <- Sys.getenv(s$env, unset = "")
     v <- suppressWarnings(as.integer(trimws(v)))
     out[[nm]] <- if (is.na(v) || v < 1L) s$default else v
   }
@@ -94,9 +105,13 @@ subs_cte_sql <- function(pairs = NULL, tbl = NULL) {
     return("SELECT cast(null as string) AS original_med,
                    cast(null as string) AS substitute_med
             WHERE 1 = 0")
-  vals <- paste(sprintf("(%s, %s)",
-                        sql_text(toupper(trimws(pairs$original_med))),
-                        sql_text(toupper(trimws(pairs$substitute_med)))),
+  # sql_text() is scalar - a whole vector would come back as one NULL - so
+  # each pair is quoted on its own and the CTE gets one row per pair.
+  q1 <- vapply(toupper(trimws(pairs$original_med)),   sql_text, character(1),
+               USE.NAMES = FALSE)
+  q2 <- vapply(toupper(trimws(pairs$substitute_med)), sql_text, character(1),
+               USE.NAMES = FALSE)
+  vals <- paste(sprintf("(%s, %s)", q1, q2),
                 collapse = ",\n                   ")
   glue("SELECT * FROM (VALUES\n                   {vals}\n                 ) AS s(original_med, substitute_med)")
 }

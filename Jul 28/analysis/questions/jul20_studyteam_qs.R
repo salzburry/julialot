@@ -769,9 +769,13 @@ q3_cart_screen <- function(con, lot_long, sct_tbl, w1) {
   # Conformance, not impact. The applied rule: an in-window CAR-T while LOT1
   # is open is absorbed - LOT1 does not end on it and no CART line starts on
   # it. A violation is observable as LOT1 ending the DAY BEFORE its in-window
-  # first CAR-T with a CAR-T end reason. LOT1 ending before the infusion for
-  # its own reason, with the CAR-T then opening the next line, conforms - the
-  # calendar window does not resurrect a finished line.
+  # first CAR-T with a CAR-T end reason - or, for an infusion ON the LOT1
+  # start date, ending ON it: the engine floors a line end at the line start,
+  # so the day-before signature lands on day zero itself. A day-zero diff on a
+  # line that did NOT start on the infusion date is a later infusion the day
+  # after an in-window one, which the ordinary rules allow. LOT1 ending before
+  # the infusion for its own reason, with the CAR-T then opening the next
+  # line, conforms - the calendar window does not resurrect a finished line.
   inv <- db_q(con, glue("
     SELECT
       count(*)                                                          AS n_lot1_patients,
@@ -782,10 +786,14 @@ q3_cart_screen <- function(con, lot_long, sct_tbl, w1) {
       sum(CASE WHEN cart_in_window = 1 AND ended_by_cart = 0
                 AND L1_END < CART_DT THEN 1 ELSE 0 END)                 AS n_lot1_over_before_infusion_conforming,
       sum(CASE WHEN cart_in_window = 1 AND ended_by_cart = 1
-                AND datediff(CART_DT, L1_END) = 1
+                AND (datediff(CART_DT, L1_END) = 1
+                     OR (datediff(CART_DT, L1_END) = 0
+                         AND days_from_lot1_start = 0))
                THEN 1 ELSE 0 END)                                       AS n_violations_lot1_ended_by_in_window_cart,
       sum(CASE WHEN cart_in_window = 1 AND ended_by_cart = 1
-                AND datediff(CART_DT, L1_END) <> 1
+                AND NOT (datediff(CART_DT, L1_END) = 1
+                         OR (datediff(CART_DT, L1_END) = 0
+                             AND days_from_lot1_start = 0))
                THEN 1 ELSE 0 END)                                       AS n_ended_by_a_later_cart_review
     FROM _jul20_cart"))
 
@@ -816,8 +824,11 @@ q3_cart_screen <- function(con, lot_long, sct_tbl, w1) {
                THEN '1 CONFORMS: absorbed - LOT1 runs on past the infusion'
              WHEN ended_by_cart = 0 AND L1_END < CART_DT
                THEN '2 CONFORMS: LOT1 was already over - the CAR-T is free to start the next line'
-             WHEN ended_by_cart = 1 AND datediff(CART_DT, L1_END) = 1
-               THEN '3 DOES NOT CONFORM: LOT1 ends the day before its in-window CAR-T - stale run or rule off'
+             WHEN ended_by_cart = 1
+                  AND (datediff(CART_DT, L1_END) = 1
+                       OR (datediff(CART_DT, L1_END) = 0
+                           AND days_from_lot1_start = 0))
+               THEN '3 DOES NOT CONFORM: LOT1 ends on or the day before its in-window CAR-T - stale run or rule off'
              ELSE '4 REVIEW: a CAR-T end reason from a later infusion, not this one'
            END AS conformance,
            cast(L1 as string)      AS lot1_start_dt,
@@ -1088,7 +1099,7 @@ main <- function() {
   # wrk(cfg$input_cohort_table) itself, and a readable cohort table is no
   # evidence the LOT run used it - nor that the run that last wrote these
   # tables finished.
-  qs_check_run_binding(con)
+  lot_attempt_at_start <- qs_check_run_binding(con)
   have_map <- vqs_readable(con, map_tbl)
   have_sct <- vqs_readable(con, sct_tbl)
   have_mma <- vqs_readable(con, mma_tbl)
@@ -1421,7 +1432,7 @@ main <- function() {
     n_review <- num(inv$n_ended_by_a_later_cart_review[1])
     add_check("cart_rule_no_in_window_infusion_ends_lot1",
               isTRUE(!is.na(n_viol) && n_viol == 0),
-              sprintf("%s patient(s) whose LOT1 ends the day before an in-window CAR-T - the applied rule forbids that. A stale LOT run, or a build with the rule off; rebuild before quoting anything from this run",
+              sprintf("%s patient(s) whose LOT1 ends on or the day before an in-window CAR-T - the applied rule forbids that. A stale LOT run, or a build with the rule off; rebuild before quoting anything from this run",
                       n_viol))
     add_check("cart_rule_later_infusion_rows_reviewed",
               isTRUE(!is.na(n_review) && n_review == 0),
@@ -1517,6 +1528,10 @@ main <- function() {
            ".csv alongside this summary; the validation_summary file carries the automated reconciliation checks, and the run_status file distinguishes 'technically complete - pending manual review' from an incomplete run."))
   write_text(summary_lines, "rule_impact_and_q2_summary")
 
+  # The tables must still be the attempt every number above was read from, or
+  # the files in this directory describe two different runs without saying so.
+  qs_require_same_attempt(con, lot_attempt_at_start, "July-20 answers")
+
   defs <- data.frame(
     item = c(
       "cohort",
@@ -1526,6 +1541,7 @@ main <- function() {
       "pharmacy fill dates",
       "days covered",
       "diagnosis date",
+      "treatment start (index)",
       "2L regimen",
       "payer",
       "region",
@@ -1547,7 +1563,7 @@ main <- function() {
       if (nzchar(region_note)) region_note else "(not derived)",
       "Q3b is a conformance check of the applied CAR-T rule over existing LOT output; Q3a is off by default and answered in exploration/melphalan/",
       "a line transition attributable to melphalan: prior line ended MED_ADD with MELP as the added drug, and/or the next line is MED-started on a MELP MAP start date",
-      sprintf("any patient whose first CAR-T date falls within LOT1 start .. start+%dd (the %d-day induction window), classified for conformance with the applied rule: absorbed while open, free to start the next line once LOT1 was over, or - a violation - ending LOT1 the day before the infusion",
+      sprintf("any patient whose first CAR-T date falls within LOT1 start .. start+%dd (the %d-day induction window), classified for conformance with the applied rule: absorbed while open, free to start the next line once LOT1 was over, or - a violation - ending LOT1 on or the day before the infusion",
               VQS_W1 - 1, VQS_W1)),
     stringsAsFactors = FALSE)
   write_out(defs, "definitions")
@@ -1658,8 +1674,11 @@ main <- function() {
     log_msg("July-20 Q2+Q3 complete. Outputs in ", out_dir)
   }
   log_msg(SEP)
+  # Nonzero when anything required is missing, so a wrapper reading the exit
+  # code sees the same verdict the run_status file records.
+  invisible(if (length(gaps) > 0) 1L else 0L)
 }
 
 if (!interactive()) {
-  main()
+  quit(save = "no", status = as.integer(main() %||% 0L))
 }

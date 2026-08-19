@@ -869,6 +869,40 @@ ok(grepl("exploration/melphalan/", j20, fixed = TRUE) &&
 ok(length(gregexpr('Sys.getenv("JUL20_Q3A_MELP"', j20, fixed = TRUE)[[1]]) == 1L,
    "...and gates only that screen: the setting is read in exactly one place")
 
+cat("\n-- the July definitions table constructs --\n")
+# The one construction a source-string assertion cannot catch: data.frame()
+# stops when item and definition disagree in length, late in the run, after
+# most CSVs are already on disk. Counted off the parsed call, so no warehouse
+# and no stubs are needed and a new entry on one side without the other fails
+# here first.
+defs_call <- local({
+  found <- NULL
+  walk <- function(e) {
+    if (!is.null(found)) return(invisible(NULL))
+    if (is.call(e)) {
+      if (identical(e[[1]], as.name("<-")) && length(e) == 3L &&
+          identical(e[[2]], as.name("defs"))) { found <<- e[[3]]; return(invisible(NULL)) }
+      for (i in seq_along(e)) {
+        # An empty argument (x[, 1]) is a symbol with no name; touching it as
+        # a value raises the missing-argument error, so it is skipped by name.
+        skip <- tryCatch({ a <- e[[i]]
+                           is.symbol(a) && !nzchar(as.character(a)) },
+                         error = function(err) TRUE)
+        if (!skip) walk(e[[i]])
+      }
+    }
+  }
+  for (ex in parse(file.path(ROOT, "jul20_studyteam_qs.R"))) walk(ex)
+  found
+})
+ok(!is.null(defs_call) && identical(as.character(defs_call[[1]]), "data.frame"),
+   "the defs table is one data.frame() call the test can inspect")
+n_item <- length(defs_call[["item"]]) - 1L
+n_def  <- length(defs_call[["definition"]]) - 1L
+ok(n_item == n_def,
+   paste0("item and definition agree in length (", n_item, " vs ", n_def,
+          "), so data.frame() can construct it"))
+
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))
 if (fail > 0L) quit(status = 1L)

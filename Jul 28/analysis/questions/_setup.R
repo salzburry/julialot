@@ -484,6 +484,9 @@ qs_lot_run_row <- function(con, prefix) {
   dev <- one("CONTRACT_DEVIATIONS")
   list(tbl       = tbl,
        run       = one("RUN_ID"),
+       # The attempt, not just the run: a re-run keeps its RUN_ID and replaces
+       # the tables in place. UPDATED_AT moves every time.
+       stamp     = one("UPDATED_AT"),
        state     = tolower(trimws(one("STATE"))),
        cohort    = one("INPUT_COHORT_TABLE"),
        study_end = one("STUDY_END"),
@@ -558,6 +561,93 @@ qs_check_run_binding <- function(con) {
          "describe one run using another's cohort.", call. = FALSE)
   v <- qs_vintage_note(got, "This run")
   if (!is.null(v)) log_msg("WARNING: ", v)
+  qs_check_cohort_attempt(con, cfg)
+  invisible(got)
+}
+
+# The cohort table's CONTENTS must be the attempt the LOT run read. The name
+# match above is not enough: a cohort re-run keeps the table name and replaces
+# the rows, so lines from attempt A can sit beside diagnosis and index fields
+# from attempt B with every name agreeing. The LOT run records which attempt
+# it read (COHORT_RUN_ID / COHORT_STAMP); the cohort build's status row says
+# which attempt the table now holds.
+qs_check_cohort_attempt <- function(con, cfg) {
+  meta <- wrk(paste0(cfg$object_prefix, "LOT_RUN_METADATA"))
+  m <- tryCatch(db_q(con, glue(
+    "SELECT * FROM {meta} ORDER BY RUN_TIMESTAMP DESC LIMIT 1")),
+    error = function(e) NULL)
+  pick <- function(d, nm) {
+    v <- qs_col(d, nm)
+    if (is.null(v)) NA_character_ else trimws(as.character(v[1]))
+  }
+  if (is.null(m) || !nrow(m)) {
+    log_msg("WARNING: ", meta, " is unreadable or empty, so which cohort ",
+            "attempt the LOT run read cannot be established. The join of ",
+            "lines to cohort fields is unverified.")
+    return(invisible(FALSE))
+  }
+  want_run   <- pick(m, "COHORT_RUN_ID")
+  want_stamp <- pick(m, "COHORT_STAMP")
+  if (is.na(want_run) || !nzchar(want_run)) {
+    log_msg("WARNING: the LOT run recorded no cohort attempt (an older build), ",
+            "so the join of lines to cohort fields is unverified.")
+    return(invisible(FALSE))
+  }
+  # The cohort's own status table sits beside the cohort table, named for it.
+  if (!grepl("NDMM_COHORT$", cfg$input_cohort_table)) {
+    log_msg("WARNING: ", cfg$input_cohort_table, " is not an NDMM cohort table, ",
+            "so it has no status row here to hold the attempt against.")
+    return(invisible(FALSE))
+  }
+  st_tbl <- wrk(sub("NDMM_COHORT$", "NDMM_BUILD_STATUS", cfg$input_cohort_table))
+  st <- tryCatch(db_q(con, glue(
+    "SELECT * FROM {st_tbl} ORDER BY UPDATED_AT DESC LIMIT 1")),
+    error = function(e) NULL)
+  if (is.null(st) || !nrow(st)) {
+    log_msg("WARNING: ", st_tbl, " is unreadable or empty, so the cohort ",
+            "table's current attempt cannot be compared to the one the LOT ",
+            "run read.")
+    return(invisible(FALSE))
+  }
+  now_run <- pick(st, "RUN_ID"); now_stamp <- pick(st, "UPDATED_AT")
+  if (!identical(want_run, now_run) || !identical(want_stamp, now_stamp))
+    stop("The LOT lines were built over cohort attempt ", want_run, " (",
+         want_stamp, "), but ", cfg$input_cohort_table, " now holds attempt ",
+         now_run, " (", now_stamp, "). Diagnosis and index fields would come ",
+         "from a different cohort refresh than the line history beside them. ",
+         "Rebuild LOT over the current cohort, or restore the cohort attempt ",
+         "the lines were built from.", call. = FALSE)
+  log_msg("  Cohort attempt verified: ", want_run, " / ", want_stamp)
+  invisible(TRUE)
+}
+
+# A cohort-side table that sits beside the cohort table, named for it:
+# ndmm_NDMM_COHORT -> ndmm_NDMM_ENROLL_SPANS. The cohort's own prefix, which
+# is not always the LOT prefix, so qs_tbl() would name the wrong schema half.
+qs_cohort_side_tbl <- function(base) {
+  cfg <- lot_config()
+  if (!grepl("NDMM_COHORT$", cfg$input_cohort_table))
+    stop(cfg$input_cohort_table, " is not an NDMM cohort table, so its ",
+         base, " cannot be named from it.", call. = FALSE)
+  wrk(sub("NDMM_COHORT$", base, cfg$input_cohort_table))
+}
+
+# Re-read the LOT status row and require the same run and attempt as when the
+# program started. The queries above happened over minutes; a rebuild landing
+# in the middle leaves early files from one attempt and later files from
+# another, all stamped as one run.
+qs_require_same_attempt <- function(con, before, what) {
+  if (is.null(before)) return(invisible(FALSE))
+  after <- qs_lot_run_row(con, lot_config()$object_prefix)
+  if (is.null(after))
+    stop("The LOT status row disappeared while the ", what, " were being ",
+         "built, so the tables they read cannot be shown to be one attempt's.",
+         call. = FALSE)
+  if (!identical(after$run, before$run) || !identical(after$stamp, before$stamp))
+    stop("The LOT run moved while the ", what, " were being built: started on ",
+         before$run, " / ", before$stamp, ", now ", after$run, " / ",
+         after$stamp, ". The outputs are part one attempt and part the other. ",
+         "Re-run against the finished rebuild.", call. = FALSE)
   invisible(TRUE)
 }
 

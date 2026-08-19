@@ -106,6 +106,20 @@ main <- function() {
     stop(subs_csv, " must carry original_med and substitute_med rows.",
          call. = FALSE)
   cat("Substitution pairs loaded: ", nrow(subs), ".\n", sep = "")
+  # ...and they must be the version the measured run was built with. The run
+  # records one MD5 per code-list file; classifying substitutes with a
+  # different file would judge the lines under pairs they were not built with.
+  rec_md5 <- db_q(con, paste0(
+    "SELECT MD5 FROM ", wrk(paste0(prefix, "LOT_CODELIST_METADATA")),
+    " WHERE RUN_ID = '", run$run, "'",
+    " AND CODELIST_FILE = 'permissible_subs.csv'"))
+  local_md5 <- unname(tools::md5sum(subs_csv))
+  if (nrow(rec_md5) != 1L || !identical(trimws(as.character(rec_md5[[1]][1])), local_md5))
+    stop("permissible_subs.csv on disk (md5 ", local_md5, ") is not the version ",
+         "LOT run ", run$run, " recorded",
+         if (nrow(rec_md5) == 1L) paste0(" (", rec_md5[[1]][1], ")") else "",
+         ". Point CODELIST_DIR at the code list that built the run.",
+         call. = FALSE)
 
   ev <- wrk(paste0(prefix, "RECHALL_EVENTS"))
   bg <- wrk(paste0(prefix, "RECHALL_BY_GAP"))
