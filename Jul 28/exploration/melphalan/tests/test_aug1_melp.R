@@ -854,7 +854,10 @@ cat("\n-- the mixed-yield case, pinned because it is not decided --\n")
 # the question is a visible change to a test rather than a silent one.
 melp <- paste(readLines(file.path(ROOT, "..", "..", "lot", "engine", "R", "melp_rule.R"),
                         warn = FALSE), collapse = "\n")
-inj <- sub("(?s).*melp_inject AS \\(", "", melp, perl = TRUE)
+# Anchored on the five-branch arm's own comment, not on the CTE name: the
+# simplified mode emits a melp_inject of its own further down the file, and
+# that one has no yield flags to pin.
+inj <- sub("(?s).*-- A\\.2 and B\\.3: the later dose", "", melp, perl = TRUE)
 inj <- sub("(?s)UNION.*", "", inj, perl = TRUE)
 ok(grepl("YIELD_THIS = 0 AND YIELD_NEXT = 0", inj, fixed = TRUE),
    "the later-dose inject arm requires BOTH yield flags, not only the later one")
@@ -868,6 +871,59 @@ ok(grepl("YIELD_THIS <- 0L", sc, fixed = TRUE) &&
    "the worked scenarios hold both flags at zero, so none of them distinguishes them")
 ok(grepl("No coded transplant in any scenario", sc, fixed = TRUE),
    "...and that is stated in the scenarios rather than left to be noticed")
+
+cat("\n-- the simplified fallback is a mode of its own --\n")
+# The rule text: a short course outside induction advances nothing on its own;
+# a new agent inside the course advances it on the melphalan date. Its branch
+# behaviour on planted patients is proved end to end by the repository's
+# planted-patient harness; these pin the shape of the SQL and that the two
+# existing modes are untouched by its existence.
+smp <- modifyList(CFG, list(apply_melp_rule = "simplified",
+                            melp_simple_course_days = 28L))
+ok("simplified" %in% MELP_RULE_MODES && melp_rule_on(smp),
+   "simplified is a recognised mode")
+stops(melp_decision_ctes(smp, "L", "S", "E", "L.IND_END"),
+      "...and it refuses a caller that hands in no base set or restart flags")
+ss <- melp_decision_ctes(smp, "L", "S", "E", "L.IND_END",
+                         base_tbl = "bm", restart_tbl = "mr")
+cutcte <- function(txt, cte) {
+  i <- regexpr(paste0(cte, " AS \\("), txt)
+  gsub("\\s+", " ",
+       sub("(?s)\\).*$", "", substr(txt, i + attr(i, "match.length"), nchar(txt)),
+           perl = TRUE))
+}
+ok(has(cutcte(ss, "melp_suppress"), "INSIDE = 0 AND SHORT = 1 AND CONFIRMED = 0"),
+   "suppressed: outside induction, short, and nothing new started in the course")
+ok(has(cutcte(ss, "melp_inject"), "INSIDE = 0 AND SHORT = 1 AND CONFIRMED = 1") &&
+     has(cutcte(ss, "melp_inject"), "EXPO_DT AS INJECT_DT"),
+   "injected: the confirmed course advances on ITS first day, not the agent's")
+ok(has(ss, "<= 28") && !has(ss, "<= 30"),
+   "the cap is the setting handed in, not a number written twice")
+ok(has(ss, "MAP_MED_CLASS <> 'STEROID'") &&
+     has(ss, "coalesce(cr.PREV_DISCON, 0) = 1 AND cb.SUBSTITUTE_ONLY = 0"),
+   "a confirming agent passes the same candidate gate the engine applies")
+ok(has(ss, "melp_suppress_dates") && has(ss, "melp_hold"),
+   "...and the suppress-dates and hold CTEs keep their names, so every splice holds")
+# The two existing modes must emit byte-identical SQL whether or not the new
+# arguments are handed in - the five-branch rule never reads them.
+ok(identical(melp_decision_ctes(ask, "L", "S", "E", "L.IND_END"),
+             melp_decision_ctes(ask, "L", "S", "E", "L.IND_END",
+                                base_tbl = "bm", restart_tbl = "mr")),
+   "as_asked is unchanged by the simplified mode's arguments")
+ok(has(melp_prev_line_ctes(smp, 30L, 45L), "melp_sc_base") &&
+     !has(melp_prev_line_ctes(ask, 30L, 45L), "melp_sc_base"),
+   "the start-candidates splice builds its own base set only for simplified")
+# The runner: its own prefixes, the cap reaching the mode cell only.
+rs <- paste(readLines(file.path(ROOT, "run_melp_simple.R"), warn = FALSE),
+            collapse = "\n")
+ok(has(rs, 'melp_cell_plan(MELP_SIMPLE_CELLS, "melp_simple_")'),
+   "the simplified package builds under its own melp_simple_ prefixes")
+ok(has(rs, 'paste0("MELP_SIMPLE_COURSE_DAYS=", cap)') &&
+     has(rs, 'allowed = "melp_simple_course_days"'),
+   "the course cap reaches the mode cell only, and is an allowed deviation there")
+ok(has(rs, "melp_status_unchanged") && has(rs, "melp_check_code") &&
+     has(rs, "melp_read_inputs"),
+   "the read carries the same run-ownership checks as the three-cell package")
 
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))

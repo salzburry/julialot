@@ -15,7 +15,7 @@ study ships; this is what was asked about it.
 
 | | |
 |---|---|
-| `exploration/melphalan/` | a proposed line-advancing rule, built as three complete runs and differenced |
+| `exploration/melphalan/` | two proposed line-advancing rules, each built as complete runs and differenced |
 | `exploration/lot/` | benchmarks, the definition comparison, the sensitivity sweep, stockpiling, re-challenge, the melphalan measurement, and the audit counts |
 
 The rule vignettes are **not** here. They are the machine-checked twins of the
@@ -46,10 +46,15 @@ and is not one. Cells write to `melp_reference_`, `melp_as_asked_` and
 `melp_yield_to_sct_`, and a plan that would write to the study's own prefix is
 refused.
 
+The study team's later note offered a SIMPLIFIED fallback, and that is a
+separate package with its own two cells — see `run_melp_simple.R` below. The
+two packages answer different questions and neither replaces the other.
+
 | path | what it does |
 |---|---|
 | `run_aug1_melp.R` | Builds the comparison as three complete runs rather than estimating it. Prints the plan by default; `AUG1_EXECUTE=TRUE` builds. |
-| `R/cells.R` | Which three builds, what is read off them, and the checks that they saw the same cohort, the same code lists, the same code and the same window. |
+| `run_melp_simple.R` | The study team's SIMPLIFIED fallback, as its own two builds under `melp_simple_` prefixes: the contract build, and a rule where a melphalan course of 28 days or fewer outside induction does not advance a line on its own — unless a new agent starts inside the course, in which case the next line starts on the melphalan date. `MELP_SIMPLE_EXECUTE=TRUE` builds; the 28-vs-30-day cap is an open question, answered by rebuilding with `MELP_SIMPLE_COURSE_DAYS=30`. |
+| `R/cells.R` | Which builds, what is read off them, and the checks that they saw the same cohort, the same code lists, the same code and the same window. Shared by both packages. |
 | `R/scenarios.R` | The study team's four worked patients, held as data. |
 | `run_melp_scenarios.R` | Runs those scenarios through the rule the engine ships — the decision is lifted out of the generated SQL rather than restated — and exits non-zero if any of them moves. No connection. |
 | `read_melp_metrics.R` | Reads the comparison off cells that are already built. |

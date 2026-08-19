@@ -7,15 +7,19 @@
 #
 # What this program produces, and what it does not:
 #
-#   1. A sizing SCREEN for the MAP-splitting rule: lines that ended MED_ADD
-#      because an agent from the PREVIOUS line's regimen came back after the
-#      line's induction window. Two classes, because the stored first-add
-#      medication is one of possibly several same-day candidates:
-#        AFFECTED            every same-day candidate is a previous-line agent,
-#                            so under the proposed fold-in the boundary
+#   1. A sizing SCREEN for the MAP-splitting rule: MED_ADD boundaries where
+#      an agent from the PREVIOUS line's regimen is among the medications that
+#      started on the boundary date. Every boundary is classified from the
+#      engine's own candidate rule - outside-regimen starts plus released
+#      restarts of the line's own drugs - not from the one randomly stored
+#      first-add medication. Two classes:
+#        AFFECTED            every candidate that day is a previous-line
+#                            agent, so under the proposed fold-in the boundary
 #                            disappears
-#        SAME_DAY_NEW_AGENT  a genuinely new agent started the same day, so
-#                            the boundary would remain even under the fold-in
+#        SAME_DAY_NEW_AGENT  another engine-valid candidate also started that
+#                            day, so the boundary would remain
+#      ...each under two match bases, EXACT_TOKEN and SUBSTITUTE_FAMILY,
+#      because "the drug reappears" does not settle biosimilars.
 #      A per-patient review roster sits beside the counts: prior and current
 #      regimens, the returning drug and its date, the window end, the gap from
 #      the drug's last cover, same-day starters, and the next line.
@@ -26,8 +30,8 @@
 #
 #   2. A pointer to the melphalan comparison. The three-cell package evaluates
 #      the original five-branch rule; run it separately. The simplified
-#      shorter-course fallback from the newer note is NOT implemented and is
-#      not evaluated by anything yet.
+#      shorter-course fallback from the newer note has its own two-cell
+#      package, exploration/melphalan/run_melp_simple.R - also run separately.
 #
 #   3. Patients whose prior line ended with the recorded reason
 #      DISCONTINUATION and who then hold the 12-month continuous-enrollment
@@ -55,6 +59,20 @@ main <- function() {
 
   bound <- qs_check_run_binding(con)
   if (!is.list(bound)) bound <- NULL
+  # A study-team answer needs proven lineage. No recorded run means the
+  # substitution hash, the attempt recheck and the provenance stamps all have
+  # nothing to hold against - refused, unless waived on the record.
+  waived <- identical(toupper(trimws(Sys.getenv("AUG15_ALLOW_UNVERIFIED",
+                                                unset = ""))), "TRUE")
+  if (is.null(bound) && !waived)
+    stop("No LOT run is recorded under this prefix, so these answers cannot ",
+         "be tied to the build that made the lines. Rebuild LOT, or set ",
+         "AUG15_ALLOW_UNVERIFIED=TRUE to size an ungoverned build anyway - ",
+         "every row will then carry NA provenance and the run-status file ",
+         "will say the lineage was waived.", call. = FALSE)
+  if (is.null(bound) && waived)
+    log_msg("WARNING: AUG15_ALLOW_UNVERIFIED is set - lineage unproven, ",
+            "every output row carries NA provenance.")
   run_id    <- if (is.null(bound)) NA_character_ else bound$run
   run_stamp <- if (is.null(bound)) NA_character_ else bound$stamp
 
@@ -103,9 +121,25 @@ main <- function() {
             "held against the run that built the lines.")
   }
 
-  # Substitutes are canonicalized to their original, so DARA vs its
-  # biosimilar - and two different biosimilars of one original - all read as
-  # the same drug, the way the engine's regimen does.
+  # The screen mirrors the engine's own candidate rule, not an approximation
+  # of it. On each MED_ADD boundary the pool is every non-steroid episode
+  # starting on the add date that the engine would accept as a first-add
+  # candidate: an agent outside the line's regimen (exact token, the way the
+  # engine joins it), or a regimen agent whose PREVIOUS episode of the same
+  # token was flagged discontinued - the released restart. The engine exempts
+  # substitute-only regimen entries from that release; the flag is
+  # engine-internal, so the release here is slightly wider, which can only
+  # move a line OUT of AFFECTED, never into it.
+  #
+  # Every boundary is classified, not just the ones whose randomly stored
+  # first-add medication happens to be the returning drug - the stored pick
+  # is one member of the pool and decides nothing here.
+  #
+  # Two match bases, because "drug B reappears" does not settle biosimilars:
+  #   EXACT_TOKEN        the same recorded abbreviation returned
+  #   SUBSTITUTE_FAMILY  the drug or any permissible substitute of the same
+  #                      original returned
+  # The truth the engine built sits between the two; both are reported.
   screen_ctes <- glue("
     WITH ln AS (
       SELECT cast(PATID as string) AS PATID, cast(LOT_NUM as int) AS LOT_NUM,
@@ -125,71 +159,101 @@ main <- function() {
       FROM ln l LATERAL VIEW explode(split(trim(l.LOT_BASE_MEDS), ' ')) m AS MED
       WHERE trim(coalesce(l.LOT_BASE_MEDS, '')) <> ''
     ),
-    prev AS (  -- the previous line's regimen, canonicalized
-      SELECT t.PATID, t.LOT_NUM + 1 AS NEXT_LOT,
-             coalesce(sb.o, t.MED) AS PREV_CANON
+    prevx AS (  -- the previous line's regimen, exact tokens
+      SELECT PATID, LOT_NUM + 1 AS NEXT_LOT, MED FROM toks
+    ),
+    prevf AS (  -- the previous line's regimen, canonicalized to originals
+      SELECT DISTINCT t.PATID, t.LOT_NUM + 1 AS NEXT_LOT,
+             coalesce(sb.o, t.MED) AS CANON
       FROM toks t LEFT JOIN subs sb ON sb.s = t.MED
     ),
-    cur AS (   -- the ended line's own regimen, canonicalized
-      SELECT t.PATID, t.LOT_NUM,
-             coalesce(sb.o, t.MED) AS CUR_CANON
-      FROM toks t LEFT JOIN subs sb ON sb.s = t.MED
+    boundaries AS (  -- every MED_ADD boundary, whatever medication is stored
+      SELECT PATID, LOT_NUM, ADD_DT, upper(trim(LOT_BASE_1ST_ADD_MED)) AS STORED_MED
+      FROM ln
+      WHERE LOT_BASE_END_REASON = 'MED_ADD' AND ADD_DT IS NOT NULL
     ),
-    fired AS ( -- MED_ADD boundaries whose STORED add med is a previous-line agent
-      SELECT DISTINCT f.PATID, f.LOT_NUM, f.ADD_DT, f.ADD_CANON
-      FROM (SELECT l.*, coalesce(sb.o, upper(trim(l.LOT_BASE_1ST_ADD_MED))) AS ADD_CANON
-            FROM ln l
-            LEFT JOIN subs sb ON sb.s = upper(trim(l.LOT_BASE_1ST_ADD_MED))
-            WHERE l.LOT_BASE_END_REASON = 'MED_ADD'
-              AND trim(coalesce(l.LOT_BASE_1ST_ADD_MED, '')) <> '') f
-      INNER JOIN prev p ON p.PATID = f.PATID AND p.NEXT_LOT = f.LOT_NUM
-                       AND p.PREV_CANON = f.ADD_CANON
+    restarts AS ( -- each episode, with whether the same token's previous
+                  -- episode was flagged discontinued (the engine's release)
+      SELECT cast(PATID as string) AS PATID, upper(trim(MAP_MED_TYPE)) AS MED,
+             cast(MAP_START_DT as date) AS ST,
+             coalesce(lag(MAP_DISCON_FLG) OVER (PARTITION BY PATID, MAP_MED_TYPE
+                                                ORDER BY MAP_START_DT), 0) AS PREV_DISCON
+      FROM {maps}
     ),
-    cand AS (  -- every non-steroid episode starting on the add date that is
-               -- outside the line's regimen: the engine's same-day pool, of
-               -- which the stored add med is one random pick. The stored
-               -- ADD_MED_DT is the day BEFORE the episode start (it is the
-               -- line-end date), so the start is one day past it.
-      SELECT f.PATID, f.LOT_NUM, upper(trim(mp.MAP_MED_TYPE)) AS MED_RAW,
-             coalesce(sb.o, upper(trim(mp.MAP_MED_TYPE))) AS CAND_CANON
-      FROM fired f
+    pool AS (   -- the engine's candidate pool on the boundary date. The stored
+                -- ADD_MED_DT is the day BEFORE the episode start (it is the
+                -- line-end date), so the start is one day past it.
+      SELECT b.PATID, b.LOT_NUM, upper(trim(mp.MAP_MED_TYPE)) AS MED_RAW,
+             coalesce(sb.o, upper(trim(mp.MAP_MED_TYPE))) AS MED_CANON
+      FROM boundaries b
       INNER JOIN {maps} mp
-              ON cast(mp.PATID as string) = f.PATID
-             AND cast(mp.MAP_START_DT as date) = date_add(f.ADD_DT, 1)
+              ON cast(mp.PATID as string) = b.PATID
+             AND cast(mp.MAP_START_DT as date) = date_add(b.ADD_DT, 1)
              AND upper(coalesce(mp.MAP_MED_CLASS, '')) <> 'STEROID'
       LEFT JOIN subs sb ON sb.s = upper(trim(mp.MAP_MED_TYPE))
+      LEFT JOIN toks cx ON cx.PATID = b.PATID AND cx.LOT_NUM = b.LOT_NUM
+                       AND cx.MED = upper(trim(mp.MAP_MED_TYPE))
+      LEFT JOIN restarts mr ON mr.PATID = b.PATID
+                           AND mr.MED = upper(trim(mp.MAP_MED_TYPE))
+                           AND mr.ST = date_add(b.ADD_DT, 1)
+      WHERE cx.MED IS NULL OR coalesce(mr.PREV_DISCON, 0) = 1
     ),
-    outside AS ( -- ...minus the line's own (canonical) regimen
-      SELECT c.PATID, c.LOT_NUM, c.MED_RAW, c.CAND_CANON
-      FROM cand c
-      LEFT JOIN cur x ON x.PATID = c.PATID AND x.LOT_NUM = c.LOT_NUM
-                     AND x.CUR_CANON = c.CAND_CANON
-      WHERE x.CUR_CANON IS NULL
+    poolx AS (  -- each pool member, previous-line membership by exact token
+      SELECT p.PATID, p.LOT_NUM, p.MED_RAW,
+             CASE WHEN px.MED IS NOT NULL THEN 1 ELSE 0 END AS IS_PREV
+      FROM pool p
+      LEFT JOIN (SELECT DISTINCT PATID, NEXT_LOT, MED FROM prevx) px
+             ON px.PATID = p.PATID AND px.NEXT_LOT = p.LOT_NUM
+            AND px.MED = p.MED_RAW
     ),
-    verdict AS (
-      SELECT f.PATID, f.LOT_NUM,
-             CASE WHEN EXISTS (
-               SELECT 1 FROM outside o
-               LEFT JOIN prev p ON p.PATID = o.PATID AND p.NEXT_LOT = o.LOT_NUM
-                               AND p.PREV_CANON = o.CAND_CANON
-               WHERE o.PATID = f.PATID AND o.LOT_NUM = f.LOT_NUM
-                 AND p.PREV_CANON IS NULL)
-             THEN 'SAME_DAY_NEW_AGENT' ELSE 'AFFECTED' END AS CLASS
-      FROM fired f
+    poolf AS (  -- ...and by substitution family
+      SELECT p.PATID, p.LOT_NUM, p.MED_RAW,
+             CASE WHEN pf.CANON IS NOT NULL THEN 1 ELSE 0 END AS IS_PREV
+      FROM pool p
+      LEFT JOIN prevf pf ON pf.PATID = p.PATID AND pf.NEXT_LOT = p.LOT_NUM
+                        AND pf.CANON = p.MED_CANON
+    ),
+    verdict AS ( -- boundaries where a previous-line agent is in the pool:
+                 -- AFFECTED when the whole pool is previous-line agents,
+                 -- SAME_DAY_NEW_AGENT when anything else started that day
+      SELECT 'EXACT_TOKEN' AS MATCH_BASIS, PATID, LOT_NUM,
+             CASE WHEN min(IS_PREV) = 1 THEN 'AFFECTED'
+                  ELSE 'SAME_DAY_NEW_AGENT' END AS CLASS
+      FROM poolx GROUP BY PATID, LOT_NUM HAVING max(IS_PREV) = 1
+      UNION ALL
+      SELECT 'SUBSTITUTE_FAMILY', PATID, LOT_NUM,
+             CASE WHEN min(IS_PREV) = 1 THEN 'AFFECTED'
+                  ELSE 'SAME_DAY_NEW_AGENT' END AS CLASS
+      FROM poolf GROUP BY PATID, LOT_NUM HAVING max(IS_PREV) = 1
     )
     ")
   affected <- db_q(con, paste0(screen_ctes, "
-    SELECT CLASS, cast(LOT_NUM as string) AS LINE_THAT_ENDED,
+    SELECT MATCH_BASIS, CLASS, cast(LOT_NUM as string) AS LINE_THAT_ENDED,
            count(*) AS N_LINES, count(DISTINCT PATID) AS N_PATIENTS
-    FROM verdict GROUP BY CLASS, LOT_NUM
+    FROM verdict GROUP BY MATCH_BASIS, CLASS, LOT_NUM
     UNION ALL
-    SELECT CLASS, 'ALL', count(*), count(DISTINCT PATID)
-    FROM verdict GROUP BY CLASS
-    ORDER BY CLASS, LINE_THAT_ENDED"))
-  # The review roster: the same population, one row per boundary, so each
-  # counted patient can be judged as the clinical scenario it claims to be.
-  # The induction windows shown come from the run's own recorded settings
-  # where present, this session's config otherwise.
+    SELECT MATCH_BASIS, CLASS, 'ALL', count(*), count(DISTINCT PATID)
+    FROM verdict GROUP BY MATCH_BASIS, CLASS
+    ORDER BY MATCH_BASIS, CLASS, LINE_THAT_ENDED"))
+  # Zero is a result. The CSV always carries every basis-and-class total, so
+  # an absent combination reads as 0 rather than as a missing file.
+  full <- expand.grid(MATCH_BASIS = c("EXACT_TOKEN", "SUBSTITUTE_FAMILY"),
+                      CLASS = c("AFFECTED", "SAME_DAY_NEW_AGENT"),
+                      LINE_THAT_ENDED = "ALL", stringsAsFactors = FALSE)
+  have_combo <- paste(affected$MATCH_BASIS, affected$CLASS,
+                      affected$LINE_THAT_ENDED)
+  missing <- full[!(paste(full$MATCH_BASIS, full$CLASS, full$LINE_THAT_ENDED)
+                    %in% have_combo), ]
+  if (nrow(missing)) {
+    missing$N_LINES <- 0L; missing$N_PATIENTS <- 0L
+    affected <- rbind(affected, missing)
+    affected <- affected[order(affected$MATCH_BASIS, affected$CLASS,
+                               affected$LINE_THAT_ENDED), ]
+  }
+
+  # The review roster: one row per counted boundary per basis, so each can be
+  # judged as the clinical scenario it claims to be. The induction windows
+  # shown come from the run's own recorded settings where present.
   meta_cs <- tryCatch(db_q(con, glue("
     SELECT CONTRACT_SETTINGS FROM {qs_tbl('LOT_RUN_METADATA')}
     ORDER BY RUN_TIMESTAMP DESC LIMIT 1")), error = function(e) NULL)
@@ -204,46 +268,61 @@ main <- function() {
   indn <- rec_setting("lot_n_induction_window_days", cfg$lot_n_induction_window_days)
   cart <- rec_setting("cart_consolidation_days",     cfg$cart_consolidation_days)
   roster <- db_q(con, paste0(screen_ctes, glue("
-    SELECT v.PATID,
+    SELECT v.MATCH_BASIS, v.PATID,
            v.LOT_NUM                                AS LINE_THAT_ENDED,
            v.CLASS,
            pl.LOT_BASE_MEDS                         AS PRIOR_LINE_REGIMEN,
            l.LOT_BASE_MEDS                          AS LINE_REGIMEN,
-           upper(trim(l.LOT_BASE_1ST_ADD_MED))      AS RETURNING_MED,
+           b.STORED_MED                             AS STORED_FIRST_ADD_MED,
+           rt.MEDS                                  AS RETURNING_PREV_MEDS,
+           coalesce(ot.MEDS, '')                    AS OTHER_MEDS_STARTING_SAME_DAY,
            l.LOT_START_DT                           AS LINE_START_DT,
            date_add(l.LOT_START_DT,
                     CASE WHEN l.LOT_START_TYPE = 'CART'
                          THEN {cart} ELSE {indn} END - 1)
                                                     AS INDUCTION_WINDOW_END,
-           date_add(l.ADD_DT, 1)                    AS RETURNING_MED_START_DT,
+           date_add(l.ADD_DT, 1)                    AS BOUNDARY_MEDS_START_DT,
            gap.GAP_DAYS                             AS GAP_FROM_PRIOR_EPISODE_END_DAYS,
-           coalesce(oth.OTHERS, '')                 AS OTHER_MEDS_STARTING_SAME_DAY,
            nx.LOT_START_DT                          AS NEXT_LINE_START_DT,
            nx.LOT_BASE_MEDS                         AS NEXT_LINE_REGIMEN
     FROM verdict v
-    INNER JOIN ln l  ON l.PATID  = v.PATID AND l.LOT_NUM  = v.LOT_NUM
-    LEFT JOIN ln pl  ON pl.PATID = v.PATID AND pl.LOT_NUM = v.LOT_NUM - 1
-    LEFT JOIN ln nx  ON nx.PATID = v.PATID AND nx.LOT_NUM = v.LOT_NUM + 1
-    LEFT JOIN (  -- the returning drug family's latest cover end before the return
-      SELECT f.PATID, f.LOT_NUM,
-             datediff(date_add(f.ADD_DT, 1), max(cast(mp.MAP_END_DT as date))) AS GAP_DAYS
-      FROM fired f
+    INNER JOIN ln l         ON l.PATID  = v.PATID AND l.LOT_NUM  = v.LOT_NUM
+    INNER JOIN boundaries b ON b.PATID  = v.PATID AND b.LOT_NUM  = v.LOT_NUM
+    LEFT JOIN ln pl         ON pl.PATID = v.PATID AND pl.LOT_NUM = v.LOT_NUM - 1
+    LEFT JOIN ln nx         ON nx.PATID = v.PATID AND nx.LOT_NUM = v.LOT_NUM + 1
+    LEFT JOIN (  -- the pool members that ARE the previous line's, per basis
+      SELECT 'EXACT_TOKEN' AS MATCH_BASIS, PATID, LOT_NUM,
+             concat_ws(' ', sort_array(collect_set(MED_RAW))) AS MEDS
+      FROM poolx WHERE IS_PREV = 1 GROUP BY PATID, LOT_NUM
+      UNION ALL
+      SELECT 'SUBSTITUTE_FAMILY', PATID, LOT_NUM,
+             concat_ws(' ', sort_array(collect_set(MED_RAW)))
+      FROM poolf WHERE IS_PREV = 1 GROUP BY PATID, LOT_NUM
+    ) rt ON rt.MATCH_BASIS = v.MATCH_BASIS AND rt.PATID = v.PATID
+        AND rt.LOT_NUM = v.LOT_NUM
+    LEFT JOIN (  -- ...and the ones that are not
+      SELECT 'EXACT_TOKEN' AS MATCH_BASIS, PATID, LOT_NUM,
+             concat_ws(' ', sort_array(collect_set(MED_RAW))) AS MEDS
+      FROM poolx WHERE IS_PREV = 0 GROUP BY PATID, LOT_NUM
+      UNION ALL
+      SELECT 'SUBSTITUTE_FAMILY', PATID, LOT_NUM,
+             concat_ws(' ', sort_array(collect_set(MED_RAW)))
+      FROM poolf WHERE IS_PREV = 0 GROUP BY PATID, LOT_NUM
+    ) ot ON ot.MATCH_BASIS = v.MATCH_BASIS AND ot.PATID = v.PATID
+        AND ot.LOT_NUM = v.LOT_NUM
+    LEFT JOIN (  -- the returning family's latest cover end before the return
+      SELECT b2.PATID, b2.LOT_NUM,
+             datediff(date_add(b2.ADD_DT, 1), max(cast(mp.MAP_END_DT as date))) AS GAP_DAYS
+      FROM boundaries b2
+      INNER JOIN pool p2 ON p2.PATID = b2.PATID AND p2.LOT_NUM = b2.LOT_NUM
       INNER JOIN {maps} mp
-              ON cast(mp.PATID as string) = f.PATID
-             AND cast(mp.MAP_END_DT as date) < date_add(f.ADD_DT, 1)
+              ON cast(mp.PATID as string) = b2.PATID
+             AND cast(mp.MAP_END_DT as date) < date_add(b2.ADD_DT, 1)
       LEFT JOIN subs sb ON sb.s = upper(trim(mp.MAP_MED_TYPE))
-      WHERE coalesce(sb.o, upper(trim(mp.MAP_MED_TYPE))) = f.ADD_CANON
-      GROUP BY f.PATID, f.LOT_NUM, f.ADD_DT
+      WHERE coalesce(sb.o, upper(trim(mp.MAP_MED_TYPE))) = p2.MED_CANON
+      GROUP BY b2.PATID, b2.LOT_NUM, b2.ADD_DT
     ) gap ON gap.PATID = v.PATID AND gap.LOT_NUM = v.LOT_NUM
-    LEFT JOIN (  -- every other outside-regimen agent starting the same day
-      SELECT o.PATID, o.LOT_NUM,
-             concat_ws(' ', sort_array(collect_set(o.MED_RAW))) AS OTHERS
-      FROM outside o
-      INNER JOIN fired f2 ON f2.PATID = o.PATID AND f2.LOT_NUM = o.LOT_NUM
-      WHERE o.CAND_CANON <> f2.ADD_CANON
-      GROUP BY o.PATID, o.LOT_NUM
-    ) oth ON oth.PATID = v.PATID AND oth.LOT_NUM = v.LOT_NUM
-    ORDER BY v.CLASS, v.PATID, v.LOT_NUM")))
+    ORDER BY v.MATCH_BASIS, v.CLASS, v.PATID, v.LOT_NUM")))
   if (!is.null(roster) && nrow(roster)) roster$SUBS_MD5 <- subs_md5
 
   if (!is.null(affected) && nrow(affected)) {
@@ -303,19 +382,34 @@ main <- function() {
   # An older attrition beside a fresh count would read as the same vintage.
   attr_read <- tryCatch({
     st <- db_q(con, glue("
-      SELECT STATE, SOURCE_LOT_RUN_ID, SOURCE_LOT_STAMP
+      SELECT STATE, ATTEMPT, SOURCE_LOT_RUN_ID, SOURCE_LOT_STAMP
       FROM {qs_cohort_side_tbl('NDMM_SUBSEQ_BUILD_STATUS')}
       ORDER BY UPDATED_AT DESC LIMIT 1"))
     if (nrow(st) == 1L &&
         identical(tolower(trimws(st$STATE[1])), "complete") &&
         identical(trimws(st$SOURCE_LOT_RUN_ID[1]), run_id) &&
         identical(trimws(st$SOURCE_LOT_STAMP[1]), run_stamp)) {
-      list(df = db_q(con, glue("
+      a <- db_q(con, glue("
              SELECT COHORT, N_FROM, N_REACHED_LOT, N_CE_PRE, N_FINAL,
-                    CE_PRE_DAYS, CE_FU_DAYS
+                    CE_PRE_DAYS, CE_FU_DAYS, SUBSEQ_ATTEMPT
              FROM {qs_cohort_side_tbl('NDMM_SUBSEQUENT_ATTRITION')}
-             ORDER BY COHORT")),
-           note = "written - the chained build matches this LOT attempt")
+             ORDER BY COHORT"))
+      # The lineage match is not enough on its own: the attrition rows must be
+      # the completed attempt's, built under the contract windows - a retry or
+      # a window sensitivity carries the same run ids.
+      if (!nrow(a) ||
+          !all(trimws(as.character(a$SUBSEQ_ATTEMPT)) ==
+               trimws(as.character(st$ATTEMPT[1]))) ||
+          !all(as.integer(a$CE_PRE_DAYS) == 365L) ||
+          !all(as.integer(a$CE_FU_DAYS)  == 90L)) {
+        list(df = NULL,
+             note = paste0("not written - the attrition rows are not the ",
+                           "completed attempt's contract-window build (365/90); ",
+                           "re-run ndmm/build_subsequent_cohorts.R"))
+      } else {
+        list(df = a,
+             note = "written - the chained build matches this LOT attempt")
+      }
     } else {
       list(df = NULL,
            note = paste0("not written - the subsequent-cohort build on disk ",
@@ -338,7 +432,7 @@ main <- function() {
     STATUS = c(
       "screen written - a sizing of current boundaries, not the rebuilt line table",
       "not produced here - run the melphalan package",
-      "NOT IMPLEMENTED anywhere - no cell evaluates it yet",
+      "built as its own cell - run the simplified package",
       "written"),
     WHERE = c(
       paste0("aug15_qs_map_splitting_affected_", stamp, ".csv, with the ",
@@ -346,13 +440,17 @@ main <- function() {
       paste0("exploration/melphalan: AUG1_EXECUTE=TRUE run_aug1_melp.R (the ",
              "reference and two cells of the original five-branch rule), then ",
              "read_melp_asks.R and read_melp_decisions.R"),
-      "needs a decision to build it as its own cell",
+      paste0("exploration/melphalan: MELP_SIMPLE_EXECUTE=TRUE ",
+             "run_melp_simple.R - two builds under melp_simple_ prefixes; ",
+             "the 28-vs-30-day cap is still an open question"),
       paste0("aug15_qs_discontinued_then_12mo_ce_", stamp, ".csv; chained ",
              "attrition ", attr_note)),
     stringsAsFactors = FALSE)
 
-  # The tables must still be the attempt every number above was read from.
+  # The tables must still be the attempts every number above was read from -
+  # the LOT run, and the cohort whose enrollment spans the funnel just read.
   qs_require_same_attempt(con, bound, "mid-August answers")
+  qs_check_cohort_attempt(con, cfg)
 
   write_out <- function(df, tag) {
     if (is.null(df) || nrow(df) == 0) { log_msg("  (", tag, ": no rows)"); return(invisible(NULL)) }
@@ -368,6 +466,7 @@ main <- function() {
                write_out(prov(summary),  "summary"))
 
   status <- c(paste0("aug15_studyteam_qs run ", stamp),
+              if (waived) "  LINEAGE WAIVED (AUG15_ALLOW_UNVERIFIED=TRUE)",
               paste0("  LOT run:    ", run_id, " / attempt ", run_stamp),
               paste0("  population: ", pop$mode, " (", lines, ")"),
               paste0("  subs md5:   ", subs_md5),

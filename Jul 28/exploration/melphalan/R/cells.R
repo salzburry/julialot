@@ -240,10 +240,10 @@ melp_check_inputs <- function(rows) {
                            "): not recorded by any cell, so it cannot be compared"))
   }
   if (length(bad))
-    stop("The three cells were not built over the same inputs, so the ",
+    stop("These cells were not built over the same inputs, so the ",
          "differences between them are not the rule's:\n",
          paste(bad, collapse = "\n"),
-         "\nRebuild all three without touching the cohort or the code lists.",
+         "\nRebuild them together without touching the cohort or the code lists.",
          call. = FALSE)
   invisible(TRUE)
 }
@@ -260,7 +260,11 @@ melp_check_inputs <- function(rows) {
 # "key=value (contract value)", pipe-separated by write_build_status(). So the
 # entries are what is counted, and the mode is matched inside its own entry
 # rather than anywhere in the string.
-melp_check_deviations <- function(rows, cells) {
+#
+# `allowed` names the settings a mode cell may legitimately deviate on beyond
+# the mode itself. The simplified package passes its course cap: the cap is
+# part of the rule under test there, not a stray setting.
+melp_check_deviations <- function(rows, cells, allowed = character(0)) {
   mode_of <- setNames(lapply(cells, function(c_i) c_i$mode),
                       vapply(cells, function(c_i) c_i$id, character(1)))
   bad <- character(0)
@@ -278,6 +282,9 @@ melp_check_deviations <- function(rows, cells) {
     }
     melp  <- grep("^apply_melp_rule=", entries)
     other <- entries[-melp]
+    if (length(allowed))
+      other <- other[!grepl(paste0("^(", paste(allowed, collapse = "|"), ")="),
+                            other)]
     if (!length(melp))
       bad <- c(bad, paste0("  ", id, " is meant to build the rule but records no ",
                            "melphalan deviation (",
@@ -324,7 +331,9 @@ melp_parse_settings <- function(s) {
   setNames(as.list(sub("^[^=]*=", "", kv)), sub("=.*$", "", kv))
 }
 
-melp_settings <- function(rows) {
+# `vary` names the settings the cells are allowed to differ on: the mode
+# always, plus - in the simplified package - the course cap it is testing.
+melp_settings <- function(rows, vary = "apply_melp_rule") {
   s <- lapply(rows, function(r) melp_parse_settings(r$CONTRACT_SETTINGS))
   empty <- names(s)[vapply(s, function(x) !length(x), logical(1))]
   if (length(empty))
@@ -337,7 +346,7 @@ melp_settings <- function(rows) {
   # match, including ones no metric reads. A cell built with a different
   # max_lot is not the same experiment.
   bad <- character(0)
-  keys <- setdiff(sort(unique(unlist(lapply(s, names)))), "apply_melp_rule")
+  keys <- setdiff(sort(unique(unlist(lapply(s, names)))), vary)
   for (k in keys) {
     v <- vapply(s, function(x) if (is.null(x[[k]])) "<none>" else x[[k]], character(1))
     if (length(unique(v)) > 1L)
@@ -1018,7 +1027,7 @@ melp_stamp <- function(d, inputs, status) {
         d, stringsAsFactors = FALSE)
 }
 
-melp_read_inputs <- function(con, cells, status) {
+melp_read_inputs <- function(con, cells, status, allowed = character(0)) {
   inputs <- list()
   for (c_i in cells) {
     # The error is kept, not swallowed. A query that failed and a run with no
@@ -1039,7 +1048,7 @@ melp_read_inputs <- function(con, cells, status) {
     inputs[[c_i$id]] <- r
   }
   melp_check_inputs(inputs)
-  melp_check_deviations(inputs, cells)
+  melp_check_deviations(inputs, cells, allowed)
   inputs
 }
 

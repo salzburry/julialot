@@ -29,7 +29,17 @@
 # the SCT rule fires too. as_asked judges every exposure anyway. yield_to_sct
 # leaves an exposure with an AUTO within melp_sct_days to the transplant rule.
 # Both are built as cells and compared. Neither is the answer.
-MELP_RULE_MODES <- c("as_asked", "yield_to_sct")
+#
+# 'simplified' is a different rule, not a third reading of the same one: the
+# study team's fallback proposal. A melphalan course of melp_simple_course_days
+# or less, outside the line's induction window, does not advance the line on
+# its own - the course is suppressed and the line carried to it. If another
+# engine-valid agent starts while that course still covers, the next line DOES
+# start, and it starts on the melphalan date, not the later agent's - so the
+# course's first day is injected as the boundary. Everything else - a course
+# inside induction, or one longer than the cap - is left to the engine.
+# Built only as its own cell; the study run keeps APPLY_MELP_RULE blank.
+MELP_RULE_MODES <- c("as_asked", "yield_to_sct", "simplified")
 
 # Read once. An unknown mode stops the build rather than quietly acting like one
 # of them. "" is the contract build.
@@ -52,9 +62,17 @@ melp_abbr    <- function(cfg) toupper(trimws(cfg$melp_med_abbr %||% "MELP"))
 # line_tbl / start_col / span_end name that line. induction_end is the step's
 # own induction-end expression for it - 60 days at LOT1, 30 at LOT2-5, 45 on a
 # CART-started line. It is handed in rather than rebuilt here.
-melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end) {
+#
+# base_tbl / restart_tbl are read only by the simplified mode - see
+# melp_simplified_ctes. The five-branch modes never ask what else the patient
+# takes, so both stay unused there and their SQL is unchanged.
+melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end,
+                               base_tbl = NULL, restart_tbl = NULL) {
   mode <- melp_rule_mode(cfg)
   if (!nzchar(mode)) return("")
+  if (identical(mode, "simplified"))
+    return(melp_simplified_ctes(cfg, line_tbl, start_col, span_end,
+                                induction_end, base_tbl, restart_tbl))
   abbr <- melp_abbr(cfg)
   yield_this <- if (identical(mode, "yield_to_sct")) "p.HAS_AUTO" else "0"
   yield_next <- if (identical(mode, "yield_to_sct")) "coalesce(p.NEXT_HAS_AUTO, 0)" else "0"
@@ -257,6 +275,148 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
     ),"))
 }
 
+# The simplified rule's decision, emitting the same four CTE names the
+# consumers read - melp_suppress_dates, melp_inject, melp_hold and the chain
+# they hang off - so every splice point downstream is shared with the
+# five-branch modes.
+#
+# Per exposure (doses chained the same way), against the line handed in:
+#
+#   INSIDE     the exposure starts on or before the line's induction end
+#   SHORT      the course covers melp_simple_course_days or fewer - from its
+#              first dose to the last day any of its episodes' supply reaches
+#   CONFIRMED  an engine-valid candidate of ANOTHER drug starts while the
+#              course still covers: non-steroid, not melphalan, and either
+#              outside the judged line's base set or a released restart of one
+#              of its own drugs. A drug the line already holds does not
+#              confirm anything - nothing new happened.
+#
+#   outside induction, SHORT, not confirmed  -> suppressed AND held: the
+#                                               course stays in the line
+#   outside induction, SHORT, confirmed      -> injected at the course's first
+#                                               day: the next line starts on
+#                                               the melphalan date, not the
+#                                               confirming agent's later one
+#   everything else                          -> left to the engine
+#
+# base_tbl names (PATID, MED_ABBR, SUBSTITUTE_ONLY) for the judged line and
+# restart_tbl the restart flags (map_restart_sql's shape). Each caller passes
+# the ones already in scope in its statement; melp_prev_line_ctes emits its
+# own pair first, because nothing usable exists yet where it splices.
+melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
+                                 induction_end, base_tbl, restart_tbl) {
+  if (is.null(base_tbl) || is.null(restart_tbl))
+    stop("The simplified melphalan rule needs the judged line's base set and ",
+         "restart flags to tell a confirming agent from a drug the line ",
+         "already holds. This caller handed in neither.", call. = FALSE)
+  abbr <- melp_abbr(cfg)
+  paste0("\n", glue("
+    melp_doses AS (
+      SELECT PATID, MAP_START_DT AS DOSE_DT
+      FROM map_stacked
+      WHERE upper(trim(MAP_MED_TYPE)) = '{abbr}'
+      GROUP BY PATID, MAP_START_DT
+    ),
+    -- Chained, not pairwise, like the five-branch modes: doses closer than
+    -- melp_exposure_days are one administration.
+    melp_runs AS (
+      SELECT PATID, DOSE_DT,
+             CASE WHEN datediff(DOSE_DT,
+                    lag(DOSE_DT) OVER (PARTITION BY PATID ORDER BY DOSE_DT))
+                       < {cfg$melp_exposure_days}
+                  THEN 0 ELSE 1 END AS IS_NEW
+      FROM melp_doses
+    ),
+    melp_dose_expo AS (
+      SELECT PATID, DOSE_DT,
+             min(DOSE_DT) OVER (PARTITION BY PATID, E) AS EXPO_DT
+      FROM (SELECT PATID, DOSE_DT,
+                   sum(IS_NEW) OVER (PARTITION BY PATID ORDER BY DOSE_DT
+                                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS E
+            FROM melp_runs) r
+    ),
+    -- How long the course covers: the latest supply end over its episodes.
+    -- Days supplied, not dose dates - 'received for 28 days' is a statement
+    -- about cover, and a single administration's episode carries its own.
+    melp_course AS (
+      SELECT d.PATID, d.EXPO_DT, max(m.MAP_END_DT) AS COURSE_END_DT
+      FROM melp_dose_expo d
+      INNER JOIN map_stacked m
+        ON m.PATID = d.PATID AND m.MAP_START_DT = d.DOSE_DT
+       AND upper(trim(m.MAP_MED_TYPE)) = '{abbr}'
+      GROUP BY d.PATID, d.EXPO_DT
+    ),
+    -- The confirming agent: a different, non-steroid drug starting while the
+    -- course still covers, and one the engine itself would accept as a
+    -- candidate against this line - outside its base set, or a released
+    -- restart that is not substitute-only. The same gate the candidate lists
+    -- apply, read from the tables handed in, so the two cannot disagree.
+    melp_confirm AS (
+      SELECT DISTINCT mc.PATID, mc.EXPO_DT
+      FROM melp_course mc
+      INNER JOIN map_stacked c
+        ON c.PATID = mc.PATID
+       AND c.MAP_START_DT >  mc.EXPO_DT
+       AND c.MAP_START_DT <= mc.COURSE_END_DT
+       AND c.MAP_MED_CLASS <> 'STEROID'
+       AND upper(trim(c.MAP_MED_TYPE)) <> '{abbr}'
+      LEFT JOIN {base_tbl} cb
+        ON cb.PATID = c.PATID AND cb.MED_ABBR = c.MAP_MED_TYPE
+      LEFT JOIN {restart_tbl} cr
+        ON cr.PATID = c.PATID AND cr.MAP_MED_TYPE = c.MAP_MED_TYPE
+       AND cr.MAP_START_DT = c.MAP_START_DT
+      WHERE (cb.MED_ABBR IS NULL
+             OR (coalesce(cr.PREV_DISCON, 0) = 1 AND cb.SUBSTITUTE_ONLY = 0))
+    ),
+    melp_judged AS (
+      SELECT mc.PATID, mc.EXPO_DT,
+             CASE WHEN mc.EXPO_DT <= {induction_end} THEN 1 ELSE 0 END AS INSIDE,
+             CASE WHEN datediff(mc.COURSE_END_DT, mc.EXPO_DT) + 1
+                       <= {cfg$melp_simple_course_days} THEN 1 ELSE 0 END AS SHORT,
+             CASE WHEN cf.PATID IS NOT NULL THEN 1 ELSE 0 END AS CONFIRMED
+      FROM melp_course mc
+      LEFT JOIN melp_confirm cf
+        ON cf.PATID = mc.PATID AND cf.EXPO_DT = mc.EXPO_DT
+      INNER JOIN {line_tbl} ON {line_tbl}.PATID = mc.PATID
+      WHERE mc.EXPO_DT >= {line_tbl}.{start_col}
+        AND mc.EXPO_DT <= {span_end}
+    ),
+    -- A short unconfirmed course outside induction neither ends the line nor
+    -- starts one...
+    melp_suppress AS (
+      SELECT DISTINCT PATID, EXPO_DT AS SUPPRESS_DT
+      FROM melp_judged
+      WHERE INSIDE = 0 AND SHORT = 1 AND CONFIRMED = 0
+    ),
+    -- ...and every dose in it comes off the candidate list, not just the
+    -- first - same reason as the five-branch modes.
+    melp_suppress_dates AS (
+      SELECT DISTINCT d.PATID, d.DOSE_DT AS SUPPRESS_DT
+      FROM melp_dose_expo d
+      INNER JOIN melp_suppress s
+        ON s.PATID = d.PATID AND s.SUPPRESS_DT = d.EXPO_DT
+    ),
+    -- A confirmed short course advances - on ITS first day. The confirming
+    -- agent needs no help of its own: it is an engine candidate already, and
+    -- later than this date by construction.
+    melp_inject AS (
+      SELECT DISTINCT PATID, EXPO_DT AS INJECT_DT
+      FROM melp_judged
+      WHERE INSIDE = 0 AND SHORT = 1 AND CONFIRMED = 1
+    ),
+    -- Suppressing and owning are two halves of one statement, exactly as in
+    -- the five-branch modes: the line is carried to the course it refused a
+    -- boundary to, bounded by its own span.
+    melp_hold AS (
+      SELECT s.PATID, max(s.SUPPRESS_DT) AS MELP_HOLD_DT
+      FROM melp_suppress_dates s
+      INNER JOIN {line_tbl} ON {line_tbl}.PATID = s.PATID
+      WHERE s.SUPPRESS_DT >= {line_tbl}.{start_col}
+        AND s.SUPPRESS_DT <= {span_end}
+      GROUP BY s.PATID
+    ),"))
+}
+
 # Takes a suppressed MELPHALAN row off the engine's own candidate list. Empty
 # when the rule is off, so the predicate chain it sits in is unchanged.
 #
@@ -319,7 +479,33 @@ melp_inject_arm <- function(cfg, line_tbl, start_col, span_end, extra = "") {
 # own medication window.
 melp_prev_line_ctes <- function(cfg, prev_med_window, cart_consolidation_days) {
   if (!melp_rule_on(cfg)) return("")
-  melp_decision_ctes(
+  # The simplified mode's confirm gate needs the previous regimen's base set
+  # and the restart flags, and this splices before either exists in the
+  # statement - prev_meds_expanded and map_restart are defined further down.
+  # So it emits its own pair, built the same way, from prev_end (in scope).
+  # The exploded meds go in their own CTE first: LATERAL VIEW and a JOIN in
+  # one FROM do not survive translation.
+  pre <- if (identical(melp_rule_mode(cfg), "simplified")) paste0("\n", glue("
+    melp_sc_prev AS (
+      SELECT pe.PATID, m AS MED_ABBR
+      FROM prev_end pe
+      LATERAL VIEW explode(split(coalesce(pe.PREV_BASE_MEDS, ''), ' ')) e AS m
+      WHERE m <> ''
+    ),
+    melp_sc_base AS (
+      SELECT PATID, MED_ABBR, min(IS_SUB) AS SUBSTITUTE_ONLY
+      FROM (
+        SELECT PATID, MED_ABBR, 0 AS IS_SUB FROM melp_sc_prev
+        UNION ALL
+        SELECT p.PATID, ps.substitute_med AS MED_ABBR, 1 AS IS_SUB
+        FROM melp_sc_prev p
+        INNER JOIN permissible_subs ps ON p.MED_ABBR = ps.original_med
+      )
+      GROUP BY PATID, MED_ABBR
+    ),
+    melp_sc_restart AS ({map_restart_sql()}
+    ),")) else ""
+  paste0(pre, melp_decision_ctes(
     cfg, "prev_end", "PREV_START_DT", "prev_end.OBS_END_DT",
     glue("CASE
               WHEN prev_end.PREV_START_TYPE = 'SCT_ALLO'
@@ -327,7 +513,8 @@ melp_prev_line_ctes <- function(cfg, prev_med_window, cart_consolidation_days) {
               WHEN prev_end.PREV_START_TYPE = 'CART'
                 THEN date_add(prev_end.PREV_START_DT, {cart_consolidation_days - 1})
               ELSE date_add(prev_end.PREV_START_DT, {prev_med_window - 1})
-            END"))
+            END"),
+    base_tbl = "melp_sc_base", restart_tbl = "melp_sc_restart"))
 }
 
 # While the rule is on, melphalan's line-advancing decisions belong to it, so
@@ -396,8 +583,12 @@ melp_lot1_ctes <- function(cfg) {
     # The decision runs over the line's observation. The candidate list keeps
     # 04's own bound at the discontinuation date. Two different questions:
     # which line a dose belongs to, and how late an add can still end it.
+    # The base set and restart flags above double as the simplified mode's
+    # confirm gate - same tables, so the two rules cannot read different ones.
     melp_decision_ctes(cfg, "melp_line", "LOT1_START_DT", "melp_line.OBS_END_DT",
-                       "melp_line.IND_END_DT"),
+                       "melp_line.IND_END_DT",
+                       base_tbl = "melp_base_meds",
+                       restart_tbl = "melp_map_restart"),
     glue("
     -- lot1_base with the held run-out substituted, built ONCE and read by
     -- every CTE in 06 that asks when this line ran out.
@@ -545,6 +736,8 @@ melp_lotn_ctes <- function(cfg, lot_num, induction_window_days,
                            cart_consolidation_days, allo_lot_span) {
   if (!melp_rule_on(cfg)) return("")
   ls <- glue("lot{lot_num}_start")
+  # base_meds and map_restart are this statement's own CTEs, defined before
+  # this splices - the same ones first_add_candidates reads.
   melp_decision_ctes(
     cfg, ls, glue("LOT{lot_num}_START_DT"), glue("{ls}.OBS_END_DT"),
     glue("CASE
@@ -553,5 +746,6 @@ melp_lotn_ctes <- function(cfg, lot_num, induction_window_days,
               WHEN {ls}.LOT{lot_num}_START_TYPE = 'CART'
                 THEN date_add({ls}.LOT{lot_num}_START_DT, {cart_consolidation_days - 1})
               ELSE date_add({ls}.LOT{lot_num}_START_DT, {induction_window_days - 1})
-            END"))
+            END"),
+    base_tbl = "base_meds", restart_tbl = "map_restart")
 }

@@ -29,6 +29,8 @@ The synthetic harness is separate and needs `duckdb` and `sqlglot`:
 python3 validation/synthetic/run_synthetic.py
 MELP_RULE=as_asked python3 validation/synthetic/run_synthetic.py
 python3 validation/synthetic/run_lot_scenarios.py   # the workbook's worked lines
+python3 validation/synthetic/run_aug15_screen.py    # the MAP-splitting screen vs the engine
+python3 validation/synthetic/run_melp_simple.py     # the simplified melphalan rule's planted cases
 ```
 
 ## GitHub Actions
