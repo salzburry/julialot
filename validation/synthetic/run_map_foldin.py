@@ -18,8 +18,9 @@ regimen window is PART of that line, not a reason to start the next one.
   F5  B restarts with NO newer line in
       between                                -> untouched: the engine's own
       restart rule still opens the next line
-  F6  B returns two lines later, during 3L   -> still folds; agents of EVERY
-      earlier line fold, not only the last one's
+  F6  B returns two lines later, during 3L   -> does NOT fold. Two agents
+      advanced the line between B's two doses, and the request's second
+      clause gives that return a line of its own
   F7  a control with no prior-line return    -> identical under both builds
   F8  B returns in the gap between two
       episodes of 2L's own drug              -> it no longer breaks that
@@ -29,6 +30,10 @@ regimen window is PART of that line, not a reason to start the next one.
       its own, so the hold has to supply one rather than extend one
   F10 ...and after a CAR-T 2L with no
       consolidation drug                     -> the same
+  F11 B returns with NO advance in between   -> count 0, not the request's
+      case; the engine's restart rule keeps it
+  F12 B returns with ONE advance in between  -> count 1, folds
+  F13 B returns with TWO advances in between -> count 2, starts a line
 """
 import os, sys, tempfile, subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -66,6 +71,20 @@ PATS = [
          sct_ac=[('ALLO', IX + 200)]),
     dict(P('F10', L1 + [('BORT', 'PI', 300, 360)]),
          sct_ac=[('CART', IX + 200)]),
+    # F11-F13: the COUNT itself, one patient per arm. Same shape throughout -
+    # B is in 1L and returns on day 450 - and only the number of agents that
+    # advanced the line in between changes.
+    #
+    # F11 count 0: nothing advanced the line, so the return is not the
+    # request's case at all. The engine's own restart rule keeps it.
+    P('F11', L1 + [('BORT', 'PI', 450, 510)]),
+    # F12 count 1: DARA advanced the line once. B folds into the line it
+    # returns in - the request's first clause, and its worked example.
+    P('F12', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 450, 510)]),
+    # F13 count 2: DARA then CARF. The second clause - the return starts a
+    # line of its own, exactly as it does with the rule off.
+    P('F13', L1 + [('DARA', 'MAB', 200, 260), ('CARF', 'PI', 300, 600),
+                   ('BORT', 'PI', 450, 510)]),
 ]
 
 
@@ -129,12 +148,19 @@ def main():
        and ref['F5'][1][1] == rs.d(IX + 300),
        "F5: a restart with no newer line in between still opens the next line")
 
-    ok(n(ref, 'F6') == 4 and n(fold, 'F6') == 3
-       and fold['F6'][2][2] == rs.d(IX + 510),
-       "F6: an agent from two lines back folds too, and 3L is carried to it")
+    ok(n(ref, 'F6') == 4 and n(fold, 'F6') == 4,
+       "F6: two advances in between, so the return starts a line under both")
 
     ok(ref.get('F7') == fold.get('F7') and ref.get('F7'),
        "F7: a patient with no prior-line return is identical under both builds")
+
+    # The count, arm by arm.
+    ok(ref.get('F11') == fold.get('F11') and ref.get('F11'),
+       "F11 count 0: nothing advanced in between, so the rule leaves it alone")
+    ok(n(ref, 'F12') > n(fold, 'F12'),
+       "F12 count 1: one advance in between, so the return folds")
+    ok(ref.get('F13') == fold.get('F13') and ref.get('F13'),
+       "F13 count 2: two advances in between, so the return still starts a line")
 
     ok(n(ref, 'F8') == 3,
        "F8 contract: the return breaks 2L's own drug's chain and takes a line")

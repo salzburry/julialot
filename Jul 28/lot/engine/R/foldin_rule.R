@@ -6,13 +6,29 @@
 # that next line's induction window - B should be PART of the line it
 # reappears in, not a reason to start another one.
 #
+# THE COUNT, from their 20 Aug refinement, is what decides it. Look at what was
+# given between the drug's two doses:
+#
+#   one agent advanced the line   -> the return does NOT start a line. It is
+#                                    bundled into the line it returns in.
+#   two or more advanced it       -> the return DOES start a line. Treatment
+#                                    has moved on twice; the drug is not
+#                                    coming back to the line it left.
+#   none advanced it              -> not this rule's case. Nothing moved, so
+#                                    the drug is returning to the line it left
+#                                    and the engine's own restart rule keeps it.
+#
+# So the fold is per EPISODE, not per drug: the same drug can fold on one
+# return and open a line on the next. foldin_count_ctes() below does the
+# counting, and everything else reads foldin_episodes.
+#
 # In engine terms, for each line from LOT2 up:
 #
 #   the FOLD SET is every agent of every EARLIER line's regimen, and their
 #   permissible substitutes - except agents that are also in this line's own
 #   base set, which keep the engine's own rules (a drug in both regimens is
 #   this line's drug, and its restarts are the engine's ordinary open
-#   question, not this rule's).
+#   question, not this rule's) - and then only the EPISODES the count folds.
 #
 #   SUPPRESS   a fold-set episode is never an added-medication candidate, so
 #              it cannot end the line - released restart or not. The release
@@ -60,8 +76,122 @@ foldin_on <- function(cfg) isTRUE(cfg$apply_map_foldin)
 # own-base drugs out so a drug in both regimens stays under the engine's
 # rules, and takes episodes STARTING in the line - an episode already running
 # when the line began belongs to the line that collected it.
+# THE COUNT. The study team's 20 Aug refinement: a returning drug folds only
+# when ONE agent advanced the line between its two doses. Two or more advances
+# and the return starts a line of its own - the treatment has moved far enough
+# that the drug is not coming back to the line it left.
+#
+# So the fold set is per EPISODE, not per drug. The same drug can fold on one
+# return and start a line on the next.
+#
+# The interval is dose to dose, as the request words it, and NOT cover end to
+# dose. A drug's cover often runs past the line it belonged to, so measuring
+# from where it stopped would put the advance that ended that line BEFORE the
+# interval and count zero - which is the request's own example, and it must
+# fold.
+#
+# What counts as an advance is a LINE that opened in between. That is the
+# parenthetical "advancing the LOT" read directly: a line is what an advance
+# produces, whatever opened it. A transplant-started line counts, which the
+# request does not say in words - it says "agents" - and is the reading to put
+# back to the study team.
+#
+# count = 0 is not the request's case at all: nothing advanced the line, so the
+# drug is returning to the line it left, and that is the engine's ordinary
+# restart rule. Left alone. Only 1 folds.
+#
+# `n_start` and `n_tbl` name the line being built, so its own start counts as
+# an advance too - lot_long does not hold it yet. The start-candidate statement
+# has no such line and passes NULL.
+foldin_count_ctes <- function(n_start = NULL, n_tbl = NULL,
+                              meds = "foldin_meds", line_pred) {
+  this_line <- if (is.null(n_start)) "0" else glue(
+    "max(CASE WHEN {n_start} >  e.PREV_DOSE_DT
+                AND {n_start} <  e.MAP_START_DT THEN 1 ELSE 0 END)")
+  # paste0, not glue: glue trims a template's leading newline, and this
+  # fragment splices straight after a table alias - without it the statement
+  # read "FROM foldin_epi eINNER JOIN ...".
+  join_n <- if (is.null(n_tbl)) "" else
+    paste0("\n      INNER JOIN ", n_tbl, " ON ", n_tbl, ".PATID = e.PATID")
+  # The in-this-line test, and only where there IS a line being built. The
+  # start-candidate statement has none, and needs none: lot_long has grown by
+  # the time it judges a later line, so its count is already the whole history.
+  between_sel <- if (is.null(n_start)) "" else
+    ",\n             max(CASE WHEN o.PATID IS NOT NULL THEN 1 ELSE 0 END) AS N_BETWEEN"
+  between_pred <- if (is.null(n_start)) "" else " AND N_BETWEEN = 0"
+  between_join <- if (is.null(n_start)) "" else paste0("
+      LEFT JOIN map_stacked o
+        ON o.PATID = e.PATID
+       AND o.MAP_START_DT >  ", n_start, "
+       AND o.MAP_START_DT <  e.MAP_START_DT
+       AND o.MAP_MED_CLASS <> 'STEROID'
+       AND NOT EXISTS (SELECT 1 FROM base_meds ob
+                       WHERE ob.PATID = o.PATID AND ob.MED_ABBR = o.MAP_MED_TYPE)
+       AND NOT EXISTS (SELECT 1 FROM ", meds, " ofm
+                       WHERE ofm.PATID = o.PATID
+                         AND ofm.MED_ABBR = o.MAP_MED_TYPE)")
+  glue("
+    -- Every episode of a fold-set drug, under the AGENT it belongs to. A
+    -- permissible substitute is the same agent as the drug it replaces, so
+    -- the pair has to share one dose history: partitioned by the raw
+    -- abbreviation, a substitute's first appearance had no previous dose at
+    -- all, its interval was undefined, and it folded where the drug it
+    -- replaces would have.
+    foldin_agent AS (
+      SELECT ms.PATID, ms.MAP_MED_TYPE, ms.MAP_START_DT,
+             coalesce(min(ps.original_med), ms.MAP_MED_TYPE) AS AGENT
+      FROM map_stacked ms
+      INNER JOIN {meds} fm
+        ON fm.PATID = ms.PATID AND fm.MED_ABBR = ms.MAP_MED_TYPE
+      LEFT JOIN permissible_subs ps ON ps.substitute_med = ms.MAP_MED_TYPE
+      GROUP BY ms.PATID, ms.MAP_MED_TYPE, ms.MAP_START_DT
+    ),
+    foldin_epi AS (
+      SELECT a.PATID, a.MAP_MED_TYPE, a.MAP_START_DT,
+             lag(a.MAP_START_DT) OVER (PARTITION BY a.PATID, a.AGENT
+                                       ORDER BY a.MAP_START_DT) AS PREV_DOSE_DT
+      FROM foldin_agent a
+    ),
+    -- How many lines opened strictly between the two doses. A LEFT JOIN and a
+    -- count, not a correlated subquery: the translation has to survive Spark
+    -- and the harness alike.
+    foldin_counted AS (
+      SELECT e.PATID, e.MAP_MED_TYPE, e.MAP_START_DT,
+             count(l.LOT_NUM) + {this_line} AS N_ADVANCES{between_sel}
+      FROM foldin_epi e{join_n}
+      LEFT JOIN lot_long l
+        ON l.PATID = e.PATID AND {line_pred}
+       AND l.LOT_START_DT >  e.PREV_DOSE_DT
+       AND l.LOT_START_DT <  e.MAP_START_DT{between_join}
+      WHERE e.PREV_DOSE_DT IS NOT NULL
+      GROUP BY e.PATID, e.MAP_MED_TYPE, e.MAP_START_DT
+    ),
+    -- Exactly one advance, and the return has to be in THIS line.
+    --
+    -- The count is line-relative while the lines are being built: at LOT2 only
+    -- LOT2 has opened, at LOT3 both LOT2 and LOT3 have. Without the second
+    -- test the same return folded into LOT2 (count 1 there) and started a
+    -- line at LOT3 (count 2), and LOT2's end reason changed from its own
+    -- discontinuation to the next line's addition for a drug that never
+    -- joined it.
+    --
+    -- So a return with another line-defining agent between this line's start
+    -- and itself belongs to a later line, and this one does not claim it.
+    -- Same shape as melp_taken in R/melp_rule.R, for the same reason.
+    foldin_episodes AS (
+      SELECT PATID, MAP_MED_TYPE AS MED_ABBR, MAP_START_DT
+      FROM foldin_counted WHERE N_ADVANCES = 1{between_pred}
+    ),")
+}
+
 foldin_lotn_ctes <- function(cfg, lot_num) {
   if (!foldin_on(cfg)) return("")
+  # Built out here: a nested glue() inside the template below does not parse,
+  # because the inner quotes close the outer one.
+  count_ctes <- foldin_count_ctes(
+    n_start   = glue("lot{lot_num}_start.LOT{lot_num}_START_DT"),
+    n_tbl     = glue("lot{lot_num}_start"),
+    line_pred = glue("l.LOT_NUM < {lot_num}"))
   paste0("\n", glue("
     foldin_prev AS (
       SELECT ll.PATID, m AS MED_ABBR
@@ -76,6 +206,7 @@ foldin_lotn_ctes <- function(cfg, lot_num) {
       FROM foldin_prev p
       INNER JOIN permissible_subs ps ON p.MED_ABBR = ps.original_med
     ),
+{count_ctes}
     -- What may interrupt a base drug's run-out chain, with the folded drugs
     -- taken out: a returning prior-line agent is part of this line under the
     -- rule, and part of the line breaks nothing. Own-base rows are kept -
@@ -84,8 +215,9 @@ foldin_lotn_ctes <- function(cfg, lot_num) {
     foldin_boundary_src AS (
       SELECT ms.*
       FROM map_stacked ms
-      LEFT JOIN foldin_meds fm
+      LEFT JOIN foldin_episodes fm
         ON fm.PATID = ms.PATID AND fm.MED_ABBR = ms.MAP_MED_TYPE
+       AND fm.MAP_START_DT = ms.MAP_START_DT
       LEFT JOIN base_meds bm2
         ON bm2.PATID = ms.PATID AND bm2.MED_ABBR = ms.MAP_MED_TYPE
       WHERE fm.MED_ABBR IS NULL OR bm2.MED_ABBR IS NOT NULL
@@ -95,8 +227,9 @@ foldin_lotn_ctes <- function(cfg, lot_num) {
              max(least(ms.MAP_END_DT, ls.OBS_END_DT)) AS FOLDIN_HOLD_DT
       FROM map_stacked ms
       INNER JOIN lot{lot_num}_start ls ON ls.PATID = ms.PATID
-      INNER JOIN foldin_meds fm
+      INNER JOIN foldin_episodes fm
         ON fm.PATID = ms.PATID AND fm.MED_ABBR = ms.MAP_MED_TYPE
+       AND fm.MAP_START_DT = ms.MAP_START_DT
       LEFT JOIN base_meds bm
         ON bm.PATID = ms.PATID AND bm.MED_ABBR = ms.MAP_MED_TYPE
       WHERE bm.MED_ABBR IS NULL
@@ -112,9 +245,10 @@ foldin_suppress_predicate <- function(cfg) {
   if (!foldin_on(cfg)) return("")
   paste0("\n", glue("
         AND NOT (bm.MED_ABBR IS NULL
-                 AND EXISTS (SELECT 1 FROM foldin_meds fm
+                 AND EXISTS (SELECT 1 FROM foldin_episodes fm
                              WHERE fm.PATID = ms.PATID
-                               AND fm.MED_ABBR = ms.MAP_MED_TYPE))"))
+                               AND fm.MED_ABBR = ms.MAP_MED_TYPE
+                               AND fm.MAP_START_DT = ms.MAP_START_DT))"))
 }
 
 # What discon_per_med scans for interrupting drugs. The engine's own source
@@ -178,6 +312,10 @@ foldin_line_type_guard <- function(cfg, lot_num, alias = "ec") {
 # between stays the engine's ordinary restart, untouched by this rule.
 foldin_prior_ctes <- function(cfg, prev) {
   if (!foldin_on(cfg)) return("")
+  # The same count, over the lines lot_long holds at this point - 1..prev. The
+  # line being started does not exist yet, so there is no own-start term.
+  count_ctes <- foldin_count_ctes(meds = "foldin_sc_meds",
+                                  line_pred = glue("l.LOT_NUM <= {prev}"))
   paste0("\n", glue("
     foldin_sc_prev AS (
       SELECT ll.PATID, m AS MED_ABBR
@@ -191,7 +329,8 @@ foldin_prior_ctes <- function(cfg, prev) {
       SELECT p.PATID, ps.substitute_med AS MED_ABBR
       FROM foldin_sc_prev p
       INNER JOIN permissible_subs ps ON p.MED_ABBR = ps.original_med
-    ),"))
+    ),
+{count_ctes}"))
 }
 
 # An older line's agent never starts a line while the rule is on - it belongs
@@ -200,7 +339,8 @@ foldin_prior_ctes <- function(cfg, prev) {
 foldin_trigger_predicate <- function(cfg) {
   if (!foldin_on(cfg)) return("")
   paste0("\n", glue("
-        AND NOT EXISTS (SELECT 1 FROM foldin_sc_meds fm
+        AND NOT EXISTS (SELECT 1 FROM foldin_episodes fm
                         WHERE fm.PATID = ms.PATID
-                          AND fm.MED_ABBR = ms.MAP_MED_TYPE)"))
+                          AND fm.MED_ABBR = ms.MAP_MED_TYPE
+                          AND fm.MAP_START_DT = ms.MAP_START_DT)"))
 }

@@ -55,8 +55,9 @@ ok(has(p, "WHERE ll.LOT_NUM < {prev} AND m <> ''"),
 
 cat("\n-- suppressing and owning are two halves of one statement --\n")
 ok(has(foldin_suppress_predicate(on_), "bm.MED_ABBR IS NULL") &&
-     has(foldin_suppress_predicate(on_), "foldin_meds"),
-   "a fold-set episode is no candidate - unless the drug is in this line's own base")
+     has(foldin_suppress_predicate(on_), "foldin_episodes") &&
+     has(foldin_suppress_predicate(on_), "fm.MAP_START_DT = ms.MAP_START_DT"),
+   "a folded EPISODE is no candidate - unless the drug is in this line's own base")
 ok(has(s, "foldin_hold AS (") &&
      has(s, "max(least(ms.MAP_END_DT, ls.OBS_END_DT)) AS FOLDIN_HOLD_DT"),
    "the hold carries the line to the folded cover, capped at observation")
@@ -72,8 +73,27 @@ ok(has(s, "foldin_boundary_src AS (") &&
      identical(foldin_boundary_tbl(on_), "foldin_boundary_src") &&
      has(s, "fm.MED_ABBR IS NULL OR bm2.MED_ABBR IS NOT NULL"),
    "a folded episode no longer breaks a base drug's run-out chain")
-ok(has(foldin_trigger_predicate(on_), "foldin_sc_meds"),
-   "an older line's agent never starts a line while the rule is on")
+ok(has(foldin_trigger_predicate(on_), "foldin_episodes") &&
+     has(foldin_trigger_predicate(on_), "fm.MAP_START_DT = ms.MAP_START_DT"),
+   "an older line's FOLDED episode never starts a line while the rule is on")
+
+cat("\n-- the count: one advance folds, two or more do not --\n")
+# The study team's 20 Aug refinement. The whole rule now turns on N_ADVANCES,
+# so the arithmetic is pinned here and the behaviour on planted patients by
+# the harness named in the repository README.
+ok(has(s, "foldin_episodes AS (") && has(s, "WHERE N_ADVANCES = 1"),
+   "exactly one advance between the two doses folds, and nothing else does")
+ok(has(s, "count(l.LOT_NUM)") && has(s, "l.LOT_START_DT >  e.PREV_DOSE_DT") &&
+     has(s, "l.LOT_START_DT <  e.MAP_START_DT"),
+   "...counted as the lines that opened between the drug's two doses")
+ok(has(s, "lag(a.MAP_START_DT) OVER (PARTITION BY a.PATID, a.AGENT"),
+   "the interval is dose to dose, and a substitute shares the agent's doses")
+ok(has(s, "N_BETWEEN = 0"),
+   "...and a return with another agent before it belongs to a later line")
+# The start-candidate statement judges a later line once lot_long has grown,
+# so it needs no in-this-line test and must not carry one.
+ok(has(p, "WHERE N_ADVANCES = 1") && !has(p, "N_BETWEEN"),
+   "the trigger side counts the same way, over the lines it can already see")
 
 cat("\n-- the splices are in the step, and only where they belong --\n")
 sf <- function(f) paste(readLines(file.path(LOT, "R", "steps", f), warn = FALSE),
