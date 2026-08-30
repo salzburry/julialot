@@ -1,80 +1,47 @@
-# The MAP fold-in rule. CONTRACT pins APPLY_MAP_FOLDIN TRUE, so the study's
-# build runs it. Set FALSE - which only a comparison cell does - every hook
-# here emits nothing and the statements are what they were before this file.
+# The MAP fold-in rule - LOT_RULES.md 4.8. CONTRACT pins APPLY_MAP_FOLDIN TRUE,
+# so the study's build runs it. Set FALSE - which only a comparison cell does -
+# every hook here emits nothing and the statements are what they were before
+# this file.
 #
-# The rule, from the study team: a patient on drug A + drug B in one line,
-# advanced to the next line by a new drug C, whose drug B then reappears after
-# that next line's induction window - B should be PART of the line it
-# reappears in, not a reason to start another one.
+# The rule in one sentence: a drug of the IMMEDIATELY PREVIOUS line that comes
+# back joins the line it returns in rather than starting one, when exactly one
+# agent opened a line between its two doses. Two or more and it starts a line;
+# none and this rule says nothing. LOT_RULES.md 4.8 has the wording, the worked
+# examples and the boundaries; this file is how it is measured.
 #
-# THE COUNT, from their 20 Aug refinement, is what decides it. Look at what was
-# given between the drug's two doses:
+# The FOLD SET is the previous line's regimen and their permissible
+# substitutes, minus this line's own base drugs - a drug in both regimens is
+# this line's drug, and its restarts are 4.3's question - and then only the
+# EPISODES the count folds. foldin_count_ctes() does the counting; everything
+# else reads foldin_episodes.
 #
-#   one agent opened a line       -> the return does NOT start a line. It is
-#                                    bundled into the line it returns in.
-#   two or more different agents  -> the return DOES start a line. Treatment
-#                                    has moved on twice; the drug is not
-#                                    coming back to the line it left.
-#   no agent did                  -> not this rule's case. Nothing moved, so
-#                                    the drug is returning to the line it left
-#                                    and the engine's own restart rule keeps it.
+# Four hooks, which is all the rest of this file is:
 #
-# Each RETURN is judged on its own - the same drug can fold on one return and
-# not on the next - and a course then folds as a whole, so a follow-up dose
-# weeks later is not judged separately from the return that began it.
-# foldin_count_ctes() below does the counting; everything else reads
-# foldin_episodes.
+#   SUPPRESS   a fold-set episode is never an added-medication candidate, so it
+#              cannot end the line - released restart or not.
 #
-# In engine terms, for each line from LOT2 up:
-#
-#   the FOLD SET is every agent of the IMMEDIATELY PREVIOUS line's regimen,
-#   and their permissible substitutes - except agents that are also in this
-#   line's own base set, which keep the engine's own rules (a drug in both
-#   regimens is this line's drug, and its restarts are §4.3's question, not
-#   this rule's) - and then only the EPISODES the count folds.
-#
-#   The previous line only, which is the request's own shape: A + B in one
-#   line, C advances it, B comes back. A drug from further back is out of
-#   scope and the engine's ordinary rules keep it.
-#
-#   SUPPRESS   a fold-set episode is never an added-medication candidate, so
-#              it cannot end the line - released restart or not. The release
-#              exists to solve ownership, and this rule solves ownership the
-#              other way (the hold below), so it is switched off for these
-#              drugs.
-#
-#   NEVER TRIGGER   a folded drug cannot start the next line either - but
-#              only where §4.3's release is still ON. With the release
-#              withdrawn, which is what CONTRACT pins, §4.3 already refuses
-#              the previous line's whole regimen a line of its own, and the
-#              fold set is a subset of that regimen. So both hooks emit
-#              nothing in the contract build and the statement is shorter by
-#              a whole CTE block.
+#   NEVER TRIGGER   a folded drug cannot start the next line either, but only
+#              where 4.3's release is ON. With the release withdrawn, which is
+#              what CONTRACT pins, 4.3 already refuses the previous line's
+#              whole regimen a line of its own and the fold set is a subset of
+#              that, so this hook emits nothing in the contract build.
 #
 #   HOLD       suppressing and owning are two halves of one statement. The
 #              line's run-out is carried to the last day any folded episode's
-#              supply reaches (capped at observation), so the treatment the
-#              rule refuses a line to still sits inside a line. Same shape as
-#              melp_hold in R/melp_rule.R, and it rides the same runout so the
-#              whole end cascade - confirmation, death, a real addition in
-#              between - still applies.
+#              supply reaches, capped at observation. Same shape as melp_hold
+#              in R/melp_rule.R, and it rides the same runout so the whole end
+#              cascade still applies.
 #
-#   CHAIN      a folded episode must not break a base drug's run-out chain
-#              either: discon_per_med's interrupt scan reads a boundary source
-#              with the folded drugs taken out.
+#   CHAIN      a folded episode must not break a base drug's run-out chain:
+#              discon_per_med's interrupt scan reads a boundary source with the
+#              folded drugs taken out.
 #
-# What this deliberately does NOT change: LOT1 (it has no earlier line);
-# transplant and CAR-T triggers; the tandem-interrupt rule.
+# Untouched: LOT1 (no earlier line), transplant and CAR-T triggers, the
+# tandem-interrupt rule.
 #
-# A folded drug DOES join the line's reported regimen - LOT_BASE_MEDS,
-# LOT_MED_CNT and the med and class flags - because a drug the rule says is
-# part of the line should read as part of it. A held melphalan dose still does
-# not (§4.7): that rule was not asked the same question.
-#
-# Pinned TRUE in CONTRACT since the study adopted the rule. A FALSE build
-# records the deviation in LOT_BUILD_STATUS and every reader that resolves run
-# ownership refuses it as the study's. Measured against a build without it by
-# exploration/lot/run_foldin_cells.R.
+# A FALSE build records the deviation in LOT_BUILD_STATUS and every reader that
+# resolves run ownership refuses it as the study's. Measured against a build
+# without it by exploration/lot/run_foldin_cells.R.
 
 foldin_on <- function(cfg) isTRUE(cfg$apply_map_foldin)
 
@@ -88,37 +55,24 @@ foldin_on <- function(cfg) isTRUE(cfg$apply_map_foldin)
 # own-base drugs out so a drug in both regimens stays under the engine's
 # rules, and takes episodes STARTING in the line - an episode already running
 # when the line began belongs to the line that collected it.
-# THE COUNT. The branches it decides are in the file header. What follows is
-# how each one is measured, and why that measure and not an easier one.
+# THE COUNT - LOT_RULES.md 4.8 for why each measure is the one it is. What the
+# SQL below needs stated:
 #
-# The interval is dose to dose, as the request words it, and NOT cover end to
-# dose. A drug's cover often runs past the line it belonged to, so measuring
-# from where it stopped would put the advance that ended that line BEFORE the
-# interval and count zero - which is the request's own example, and it must
-# fold.
+#   The interval is DOSE TO DOSE, not cover-end to dose. A drug's cover often
+#   runs past the line it belonged to, so measuring from where it stopped puts
+#   the advance that ended that line before the interval.
 #
-# What is counted is DIFFERENT AGENTS that opened a line, which is the request
-# in its own words: "two or more different agents were introduced in between".
-# A line is read through the drug that started it, so one agent that opens a
-# line, discontinues, and opens another on a released restart (§4.3) is ONE
-# agent. Counting LINES made that two advances and refused the fold on one
-# drug's treatment holiday.
+#   What is counted is DIFFERENT AGENTS that opened a line, not lines. One
+#   agent opening two lines is one advance; two drugs opening a line together
+#   are one advance too.
 #
-# TRANSPLANTS AND CAR-T ARE NOT IN THAT COUNT AT ALL, because the request is
-# about drugs - it was written for a line advanced by an agent, and
-# transplants were not in view. So they are not read into it either way. They
-# keep the engine's own rules, where they are standalone line-defining events,
-# and one that OPENED A LINE between the two doses OVERRIDES the fold whatever
-# the agent count says. A drug returning across a transplant is not returning
-# to the line it left.
+#   TRANSPLANTS AND CAR-T ARE NOT IN THE COUNT - it counts drugs. They keep the
+#   engine's own rules, and one that OPENED A LINE between the two doses
+#   OVERRIDES the fold whatever the count says. One the line OWNS - an AUTO
+#   inside its own window, a planned tandem partner - opens no line, so it
+#   never reaches the test.
 #
-# One that the line OWNS is not a boundary and overrides nothing: an AUTO
-# inside the line's own window, or a planned tandem partner, opens no line, so
-# it is not a line start and never reaches the test.
-#
-# count = 0 is not the request's case at all: nothing advanced the line, so the
-# drug is returning to the line it left, and that is the engine's ordinary
-# restart rule. Left alone. Only 1 folds.
+#   count = 0 is not this rule's case. Only 1 folds.
 #
 # `n_start` and `n_tbl` name the line being built, so its own start counts as
 # an advance too - lot_long does not hold it yet. The start-candidate statement

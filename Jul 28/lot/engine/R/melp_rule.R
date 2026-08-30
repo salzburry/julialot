@@ -19,9 +19,9 @@
 # injected as the boundary. A course inside induction, or one longer than the
 # cap, is left to the engine untouched. melp_simplified_ctes() below.
 #
-# The rest of this header is the two five-branch modes, which the study team
-# asked for first and did not adopt. They are kept because the comparison that
-# chose between them is a cell anyone can rebuild.
+# THE UNADOPTED MODES - the two five-branch readings the study team asked for
+# first. Kept because the comparison that chose between them is a cell anyone
+# can rebuild. Read this far only when reading their code.
 #
 #   inside induction, next exposure < 180d    no advance
 #   inside induction, next >= 180d            the next one advances, on its date
@@ -30,25 +30,19 @@
 #   outside, next >= 180d                     the next one advances, on its date
 #
 # "Inside induction" compares this exposure's date with this line's induction
-# end. It is not about whether melphalan is in the regimen. The two agree only
-# for the first dose.
+# end, not whether melphalan is in the regimen. The two agree only for the
+# first dose.
 #
-# So the rule does two things. It SUPPRESSES candidates outside induction whose
-# next exposure is 60+ days away - both doses of a B.2 pair. And it INJECTS the
-# advancing dose of a 180+ pair, and the first dose of a B.1 pair, which the
-# engine may not otherwise offer.
+# So they SUPPRESS candidates outside induction whose next exposure is 60+ days
+# away - both doses of a B.2 pair - and INJECT the advancing dose of a 180+
+# pair and the first dose of a B.1 pair, which the engine may not otherwise
+# offer. Suppressing both B.2 doses stops melphalan ending the line at either
+# but does not keep the second dose inside it:
+# melp_hold carries the line to it.
 #
-# Suppressing both doses of a B.2 pair stops melphalan ending the line at
-# either. It does not on its own keep the second dose INSIDE the line, which
-# the request also asks for, so melp_hold carries the line to it.
-#
-# The two modes differ only where a coded transplant sits on the same event and
-# the SCT rule fires too. as_asked judges every exposure anyway. yield_to_sct
-# leaves an exposure with an AUTO within melp_sct_days to the transplant rule.
-# Both are built as cells and compared. Neither is the answer.
-#
-# 'simplified' is a different rule, not a third reading of the same one, and it
-# is the one the study team adopted. It is stated at the top of this file.
+# The two differ only where a coded transplant sits on the same event: as_asked
+# judges every exposure anyway, yield_to_sct leaves an exposure with an AUTO
+# within melp_sct_days to the transplant rule.
 MELP_RULE_MODES <- c("as_asked", "yield_to_sct", "simplified")
 
 # "off" is a mode name like the others, and it is the ONLY way to ask for a
@@ -665,11 +659,10 @@ melp_prev_line_ctes <- function(cfg, prev_med_window, cart_consolidation_days,
   # The CAR-T induction rule is LOT1's alone (LOT_RULES.md 6.4), so the
   # exemption is passed only where the previous line IS LOT1 - and LOT1 always
   # starts on a medication, so ind_end resolves to its own 60-day window there.
-  # Without it this recomputation read an in-window CAR-T as a break while the
-  # LOT1 statement read it as part of the line: one decision, computed twice,
-  # differently. No planted shape shows a different answer, because the paths
-  # it feeds are gated by the exemption dates the LOT1 decision produces - but
-  # a divergence nothing currently reads is still a divergence.
+  # Without it this recomputation reads an in-window CAR-T as a break while the
+  # LOT1 statement reads it as part of the line: one decision, computed twice,
+  # differently. No planted shape shows a different answer today, but a
+  # divergence nothing currently reads is still a divergence.
   cart_from <- if (isTRUE(cfg$apply_cart_induction_rule) &&
                    identical(lot_num, 2L)) ind_end else NULL
   paste0(pre, melp_decision_ctes(
@@ -685,17 +678,11 @@ melp_prev_line_ctes <- function(cfg, prev_med_window, cart_consolidation_days,
 # line. Empty only on a rule-off build, so the study's LOT2-5 candidate list
 # does carry this carve-out from the prior-regimen exclusion.
 #
-# The exemption names the DATES the rule says advance, not the drug. Releasing
-# every melphalan row would be wider than any branch allows:
-#
-#   the first exposure of a B.2 pair          - both doses stay in the line
-#   the later exposure of a B.2 pair          - the same
-#   the first exposure of a B.3 pair          - only the later one advances
-#   the later exposure of an A.1 pair         - the pair does not advance
-#
-# All four could then open a line, and the branch table says none of them may.
-# The dates that MAY are exactly melp_inject: B.1's first exposure, and the
-# later exposure of an A.2 or B.3 pair. So the exemption reads that list.
+# The exemption names the DATES the rule says advance, not the drug. Released
+# by drug, four exposures the branch table refuses a line could open one: both
+# doses of a B.2 pair, B.3's first, and A.1's later. The dates that MAY advance
+# are exactly melp_inject - B.1's first, and the later exposure of an A.2 or
+# B.3 pair - so the exemption reads that list.
 melp_prior_regimen_exempt <- function(cfg, alias = "ms") {
   if (!melp_rule_on(cfg)) return("")
   glue(" OR (upper(trim({alias}.MAP_MED_TYPE)) = '{melp_abbr(cfg)}'
