@@ -849,8 +849,14 @@ q3_cart_screen <- function(con, lot_long, sct_tbl, w1) {
 
 # Q3a - MELP rule: preliminary boundary screen (not an engine re-run).
 #
-# Gated behind JUL20_Q3A_MELP=TRUE. The melphalan question is answered in
-# exploration/melphalan/.
+# Gated behind JUL20_Q3A_MELP=TRUE.
+#
+# READ THE NUMBERS AS A RESIDUAL, NOT AS A SIZE. This screen counts boundaries
+# a melphalan rule would move, over a FINISHED run - and since 2026-08-30 the
+# run it reads already applies one (LOT_RULES.md 4.7). So what it now sizes is
+# the five-branch rule ON TOP of the study's rule, not the melphalan question
+# from a standing start. A small number here means the two rules mostly agree,
+# NOT that melphalan makes little difference to line counting.
 #
 # A "MELP boundary" is a line transition attributable to melphalan: the
 # earlier line ended MED_ADD with MELP as the added drug, and/or the next
@@ -1449,10 +1455,13 @@ main <- function() {
   q3a_on <- identical(toupper(trimws(Sys.getenv("JUL20_Q3A_MELP", unset = ""))), "TRUE")
   melp <- if (!q3a_on)
     data.frame(status = paste0(
-      "NOT RUN. The melphalan question is answered in exploration/melphalan/ - ",
-      "run_aug1_melp.R builds the cells, read_melp_asks.R and ",
-      "read_melp_decisions.R read them. Set JUL20_Q3A_MELP=TRUE to run this ",
-      "screen anyway."),
+      "NOT RUN. The study adopted the melphalan short-course rule on ",
+      "2026-08-30 and the build applies it - LOT_RULES.md 4.7. This screen ",
+      "sizes the FIVE-BRANCH rule, which was measured and not adopted, and ",
+      "it would size it on top of the rule the run already applies. ",
+      "exploration/melphalan/ holds that comparison - run_aug1_melp.R builds ",
+      "the cells, read_melp_asks.R and read_melp_decisions.R read them. Set ",
+      "JUL20_Q3A_MELP=TRUE to run the screen anyway."),
       stringsAsFactors = FALSE)
   else if (have_map)
     best_effort(q3_melp_screen(con, lot_long, map_tbl, tok$melp), "MELP rule screen")
@@ -1506,7 +1515,7 @@ main <- function() {
     "These screens identify the patients and line boundaries the two candidate rules would touch, from the already-derived LOT output. They do not re-derive lines: moving a boundary changes induction windows, regimens, discontinuation dates, add-med picks, transplant classification and every later line. Exact numbers need an isolated scenario re-run of the LOT derivation (separate scenario output tables; production untouched) once the rules are confirmed.",
     "",
     "-- (a) MELP screen --",
-    "The melphalan question is answered in exploration/melphalan/ - run_aug1_melp.R with read_melp_asks.R and read_melp_decisions.R. Do not quote this section for it.",
+    "The build applies the melphalan short-course rule (LOT_RULES.md 4.7) since 2026-08-30. This section sizes the five-branch rule that was NOT adopted, and it measures it on top of the rule the run already applies - so a small number here means the two rules agree, not that melphalan does not matter. Do not quote this section for the melphalan question; exploration/melphalan/ holds that comparison.",
     "The melp_rule_inventory file reports every MELP-attributable boundary, split by whether the line held an earlier MELP MAP, with the distribution of days between the two dates. The lines-shift file puts the current lines-per-patient distribution beside the screened one.",
     "",
     "-- (b) CAR-T induction-window rule --",

@@ -1,6 +1,6 @@
 # LOT edge-case vignettes
 
-Resolved against: induction_window_days=60, lot_n_induction_window_days=30, map_discon_gap_days=90, medical_day_supply=28, sct_auto_window_days=13, sct_auto_gap_days=60, sct_tandem_days=180, cart_consolidation_days=45, max_lot=5
+Resolved against: induction_window_days=60, lot_n_induction_window_days=30, map_discon_gap_days=90, medical_day_supply=28, sct_auto_window_days=13, sct_auto_gap_days=60, sct_tandem_days=180, cart_consolidation_days=45, melp_simple_course_days=28, max_lot=5
 
 `derived` follows from the rule quoted beside it. `to_confirm` is our
 reading of how the rules interact, and the first warehouse run settles it.
@@ -22,6 +22,9 @@ reading of how the rules interact, and the first warehouse run settles it.
 | `allo_single_day` | Allogeneic transplant line spans one day | - | The ALLO line starts and ends on the transplant date. The next day's medication starts the line after it. The ALLO line carries NO regimen string - induction rows are suppressed for it - which is why anything reading LOT_BASE_MEDS to decide a line exists will miss it. | derived |
 | `allo_after_failed_auto` | Allogeneic transplant after a failed autologous | - | The AUTO sits inside LOT1. The ALLO ends the line it falls in and opens a one-day SCT_ALLO line. | to_confirm |
 | `biosimilar_switch` | Biosimilar substituted mid-line | - | No new line. A permissible substitute is the same agent for line purposes, and the pair is declared in permissible_subs.csv - so whether this holds depends on that file, not on this rule. | to_confirm |
+| `melp_short_course` | Brief melphalan course outside induction | `melp_simple_course_days = 28` | No new line. The course neither ends line 1 nor starts line 2, and line 1 is carried to day 127 - the last day the course covers - rather than ending at the melphalan date. | to_confirm |
+| `melp_long_course` | Melphalan course past the short cap | `melp_simple_course_days = 28` | A new line at day 100. Past the cap the rule stands aside and melphalan is an added medication like any other agent. | to_confirm |
+| `melp_short_course_confirmed` | A new agent inside a brief melphalan course | - | A new line, and it starts on day 100 - the melphalan date - not on day 105. The agent inside the course is what tells us treatment changed; the melphalan is where it changed. | to_confirm |
 | `maintenance_to_relapse` | Maintenance running into relapse | - | Maintenance is NOT a line of its own here - contains_mtx_reg is a flag and there is no maintenance period. The relapse is handled by the ordinary rules, so the line count does not include a maintenance line. | derived |
 | `steroid_only_interval` | Steroid-only stretch between regimens | - | The steroid stretch neither starts nor continues a line. | derived |
 | `belantamab_any_line` | Belantamab anywhere in the patient's lines | - | The criterion is patient-level, so the patient loses EVERY line, not just LOT3 onward. They are absent from LOT_LONG_FINAL entirely and present in LOT_LONG. | derived |
@@ -120,6 +123,24 @@ reading of how the rules interact, and the first warehouse run settles it.
 - timeline: d+0 MED (1L regimen starts with the reference product); d+70 MED (biosimilar of the same agent dispensed instead)
 - why it is hard: A substitution the code list does not know about looks like a regimen change, which starts a line that did not happen.
 - rule: lot/engine/R/steps/01_codelists.R:66 - permissible_subs
+
+**melp_short_course** - Brief melphalan course outside induction
+
+- timeline: d+0 MED (1L regimen starts); d+100 MED (one melphalan administration, no other agent with it); d+127 MAP_END (last day that course covers - exactly the cap, so the course is short)
+- why it is hard: A brief melphalan course outside induction is usually transplant conditioning. Counted as an added medication it opens a line of therapy nobody gave.
+- rule: lot/engine/R/melp_rule.R:449 - melp_suppress, SHORT = 1 AND CONFIRMED = 0
+
+**melp_long_course** - Melphalan course past the short cap
+
+- timeline: d+0 MED (1L regimen starts); d+100 MED (melphalan starts); d+128 MAP_END (last day covered - one day past the cap, so the course is not short)
+- why it is hard: The cap is what separates conditioning from melphalan given as treatment. Ongoing melphalan is a regimen.
+- rule: lot/engine/R/melp_rule.R:434 - datediff(COURSE_END_DT, EXPO_DT) + 1 <= cap
+
+**melp_short_course_confirmed** - A new agent inside a brief melphalan course
+
+- timeline: d+0 MED (1L regimen starts); d+100 MED (melphalan starts; its cover runs to day 127); d+105 MED (a different line-defining agent starts, inside that cover)
+- why it is hard: Dating the line at the later agent would put the boundary after treatment had already moved on, and split the melphalan away from the line it belongs to.
+- rule: lot/engine/R/melp_rule.R:465 - melp_inject, CONFIRMED = 1, at EXPO_DT
 
 **maintenance_to_relapse** - Maintenance running into relapse
 

@@ -929,9 +929,20 @@ rs <- paste(readLines(file.path(ROOT, "run_melp_simple.R"), warn = FALSE),
             collapse = "\n")
 ok(has(rs, 'melp_cell_plan(MELP_SIMPLE_CELLS, "melp_simple_")'),
    "the simplified package builds under its own melp_simple_ prefixes")
-ok(has(rs, 'paste0("MELP_SIMPLE_COURSE_DAYS=", cap)') &&
-     has(rs, 'allowed = "melp_simple_course_days"'),
-   "the course cap reaches the mode cell only, and is an allowed deviation there")
+ok(has(rs, '"MELP_SIMPLE_COURSE_DAYS=28"') &&
+     !has(rs, 'allowed = "melp_simple_course_days"'),
+   "both cells carry the contract's 28-day cap - the package does not vary it")
+# Since the study adopted the rule, the cell WITHOUT it is the deviating one.
+# A cell asking for no rule has to say the word: load_inputs.R fills an empty
+# variable from config.csv, which carries the contract mode, so a blank
+# APPLY_MELP_RULE would build the contract and the package would compare it
+# with itself.
+ok(has(rs, 'mode = "off", melp = "off"') &&
+     has(rs, 'mode = NA_character_, melp = "simplified"'),
+   "the rule-off cell deviates and the simplified cell is the contract build")
+ok(!has(rs, 'env, "APPLY_MELP_RULE="') &&
+     has(rs, 'paste0("APPLY_MELP_RULE=", c_i$melp)'),
+   "...and neither cell asks for the rule off with an empty value")
 ok(has(rs, "melp_status_unchanged") && has(rs, "melp_check_code") &&
      has(rs, "melp_read_inputs"),
    "the read carries the same run-ownership checks as the three-cell package")

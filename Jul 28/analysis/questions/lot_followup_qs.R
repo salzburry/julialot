@@ -922,7 +922,7 @@ main <- function() {
       "Table 1: how many MELP-in-2L lines carry an autologous transplant (transplant flagged, and monotherapy-plus-transplant).",
       "Table 2: how long the melphalan-only lines last. A very short line is more consistent with conditioning than with ongoing therapy, but length alone does not prove intent.",
       "Table 3: for MED-started melphalan-only lines (where the line start is the melphalan claim date), the days from the melphalan start to the transplant. Melphalan a few days before the transplant (a small positive gap) is the conditioning pattern. SCT_AUTO-started lines are excluded here because their line start is the transplant date itself.",
-      "If the signals line up, the study-team decision is whether to fold transplant-conditioning melphalan into 1L rather than open a 2L line (a spec choice, not changed here)."),
+      "SETTLED on 2026-08-30. The study team adopted the melphalan short-course rule (LOT_RULES.md 4.7): a short melphalan course outside a line's start window no longer opens a line of its own. These tables are the evidence that led there, and a run built after the adoption will show far fewer melphalan-only 2L lines than one built before it."),
     tables = d1_tables)
 
   # ---- D2: Top regimens in 1L and 2L (LENA+DARA in context) --------------

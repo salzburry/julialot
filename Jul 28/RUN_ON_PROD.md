@@ -14,7 +14,8 @@ this order, each step over the one before it:
 7. Outcomes (`analysis/outcomes/build.R`)
 8. Study-question programs (`analysis/questions/`)
 9. The scenario workbook on the finished run — section 1b below
-10. MELP cells and readers — separate sensitivity prefixes only, section 4 below
+10. MELP cells and readers — the comparison behind the adopted rule, on its
+    own prefixes, section 4 below
 
 Code and docs only — **no code lists** (the engine reads
 them from `CODELIST_DIR`, default `/mnt/code/codelist`) and **no cohort build**
@@ -35,8 +36,18 @@ export DATABRICKS_PWD='...'
 export DOMINO_USER_NAME=usr00000
 export OBJECT_PREFIX=ndmm_
 export COHORT_PREFIX=ndmm_
+export LOT_PREFIX=ndmm_
 export INPUT_COHORT_TABLE=ndmm_NDMM_COHORT
 ```
+
+`LOT_PREFIX` is the dashboard's name for the prefix the LOT run used — the
+same value as `OBJECT_PREFIX` here. The dashboard also takes the three as
+arguments instead:
+`Rscript reporting/dashboard/build.R ndmm_NDMM_COHORT ndmm_ ndmm_`.
+
+A FRESH TERMINAL HAS NONE OF THESE. Every `No OBJECT_PREFIX` /
+`needs a cohort table` stop means this block was not run in the shell you
+are in now.
 
 Override only if prod differs: `DATABRICKS_DSN=RWDE`,
 `DATABRICKS_CATALOG=hive_metastore`, `OPTUM_CDM_SCHEMA=clnprw_optum`,
@@ -130,17 +141,21 @@ Rscript exploration/melphalan/run_melp_simple.R                          # plan 
 MELP_SIMPLE_EXECUTE=TRUE Rscript exploration/melphalan/run_melp_simple.R # build + read
 ```
 
-Its console output and four `melp_simple_*.csv` files compare the simplified
-rule to the contract build. The 28-day course cap is an open question.
-`MELP_SIMPLE_COURSE_DAYS=30` reaches the simplified cell only — the runner
-pins the reference to the contract's 28 — and widens which recorded course
-lengths count as short; it does **not** re-impute the 28-day medical supply,
-which would change how episodes are built and is not implemented. Both cap
-runs write the same prefixes and file names, so copy the 28-day
-`melp_simple_*.csv` set aside before running the 30-day one.
+Its console output and four `melp_simple_*.csv` files compare the study's
+rule against a build with no melphalan rule at all. Both cells are built at the
+contract's 28-day course cap — the package varies the rule, not the
+threshold.
 
-Each prefix is emptied before it is rebuilt. `APPLY_MELP_RULE` stays blank in
-`CONTRACT`, so the study's own run is untouched by all of this.
+Each prefix is emptied before it is rebuilt, and every cell writes to its own,
+so the study's run is untouched by all of this.
+
+**Which cell deviates changed when the rule was adopted.** `APPLY_MELP_RULE` is
+`simplified` in `CONTRACT`, so the simplified cell IS the study's algorithm and
+records no deviation, while the cell without the rule is built with
+`APPLY_MELP_RULE=off` under `LOT_CONTRACT_OVERRIDE=TRUE`. Use the word `off`,
+never a blank: the settings loader fills a variable that is unset **or empty**
+from `config.csv`, so `APPLY_MELP_RULE=` would build the contract and the
+comparison would be the study's build against itself.
 
 ## 4b. The MAP fold-in — evaluation only, same pattern
 
@@ -195,7 +210,7 @@ written and the run reports how many failed.
 
 - `lot/LOT_RULES.md` — the rules the build applies
 - the scenario workbook's Open questions sheet — open study-team questions
-- `exploration/FILES.md` — the melphalan proposal and what is unsettled
+- `exploration/FILES.md` — how the melphalan rule was chosen, and what is still unsettled
 
 ## Do not present these as settled
 

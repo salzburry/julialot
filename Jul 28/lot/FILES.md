@@ -27,7 +27,7 @@ study ships as *the algorithm* is one directory with three packages in it:
 | `reporting/dashboard/` | one self-contained HTML off a finished run |
 | `analysis/outcomes/` | TTNT, TTD, OS and attrition |
 | `analysis/questions/` | the study team's asks, one script each |
-| `exploration/melphalan/` | a proposed rule the build does not apply |
+| `exploration/melphalan/` | how the melphalan rule the build applies was chosen, and the one that was not |
 | `exploration/lot/` | benchmarks, definitions, sensitivity, stockpiling, re-challenge, audit counts |
 
 Each of those areas has its own `FILES.md`. The direction is one-way: they
@@ -113,7 +113,7 @@ per patient, and has to fit the study window the run was given.
 | `R/db_utils_lot.R` | Connection, logging, retry, table naming (`wrk` / `lot_out`), `materialize()` and the step runner. |
 | `R/line_criteria.R` | Extra criteria on finished lines, declared as data. Every one is computed into `LOT_LONG_ALLFLAGS`; only the enabled ones are applied to `LOT_LONG_FINAL`. |
 | `R/cart_rule.R` | The CAR-T induction rule: an infusion inside line 1's window belongs to line 1 and neither ends nor starts a line. |
-| `R/melp_rule.R` | The melphalan exploration's rule. Pinned off, and off emits the same SQL as not having the file, so it decides nothing in a study run. It lives here because it needs each line's own induction window — `exploration/melphalan/` below. |
+| `R/melp_rule.R` | The melphalan rule. The study's mode is `simplified` — a short course outside induction does not advance a line on its own (`LOT_RULES.md` 4.7). It lives here because it needs each line's own induction window. The other modes, and `off`, are comparison builds — `exploration/melphalan/` below. |
 | `R/prior_regimen.R` | The prior-regimen rule and each line's run-out. A drug in the previous regimen cannot start the next line; the line it belongs to extends over its later episodes instead, stopping at any other agent arriving in between. |
 | `R/steps/01_codelists.R` | Code lists into views, then the consistency checks between them — which are fatal, which are waivable through `CODELIST_WAIVERS`, and why. |
 | `R/steps/02_patient_input.R` | The cohort as the build reads it, snapshotted into `LOT_PATIENT_INPUT`. Sets the observation end date every later gap and window is measured against. |

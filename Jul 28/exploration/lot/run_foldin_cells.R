@@ -69,12 +69,18 @@ run_cell <- function(c_i, cohort, cohort_pfx) {
   st   <- trimws(Sys.getenv("COHORT_STATUS_TABLE", unset = ""))
   if (nzchar(st)) env <- c(env, paste0("COHORT_STATUS_TABLE=", st))
   if (!is.na(c_i$mode)) {
-    env <- c(env, "LOT_CONTRACT_OVERRIDE=TRUE", "APPLY_MAP_FOLDIN=TRUE")
+    # The melphalan mode is pinned on this side too. Pinning it on one arm only
+    # left the comparison open to an ambient APPLY_MELP_RULE reaching the other,
+    # which would put two changes between the cells instead of one.
+    env <- c(env, "LOT_CONTRACT_OVERRIDE=TRUE", "APPLY_MAP_FOLDIN=TRUE",
+             "APPLY_MELP_RULE=simplified")
   } else {
     # Pinned to the contract explicitly - a child inherits the shell, so an
     # ambient APPLY_MAP_FOLDIN or melphalan setting must not reach the
-    # reference build.
-    env <- c(env, "APPLY_MAP_FOLDIN=FALSE", "APPLY_MELP_RULE=")
+    # reference build. The melphalan mode is named rather than blanked:
+    # load_inputs.R fills an empty variable from config.csv, so
+    # APPLY_MELP_RULE= would pin nothing at all.
+    env <- c(env, "APPLY_MAP_FOLDIN=FALSE", "APPLY_MELP_RULE=simplified")
   }
   log_f <- file.path(out_dir, paste0("build_foldin_", c_i$id, ".log"))
   cat("  building ", c_i$id, " -> ", c_i$prefix, "  (log: ", log_f, ")\n", sep = "")

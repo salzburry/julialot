@@ -9,15 +9,25 @@
 # same clinical event, and the transplant rule already fires on it. The request
 # does not say which rule should win. So both readings are built and the
 # difference between them is the answer to that question, in patients.
+# `mode` is the deviation a cell must record, NA marking the contract build.
+# `melp` is what the cell hands to APPLY_MELP_RULE - a separate thing, because
+# the contract build names its mode too rather than inheriting the shell.
+#
+# The reference is the contract build, and since the study adopted the
+# simplified rule that is what the reference now contains. So these two cells
+# measure the five-branch rule against the study's rule, not against a build
+# with no melphalan rule at all - which is what they measured before the
+# adoption. Numbers from the two eras are not comparable, and the reference
+# column is the half that moved.
 MELP_CELLS <- list(
-  list(id = "reference", mode = NA_character_,
+  list(id = "reference", mode = NA_character_, melp = "simplified",
        what = "the contract build, unchanged - what the study has today"),
-  list(id = "as_asked", mode = "as_asked",
+  list(id = "as_asked", mode = "as_asked", melp = "as_asked",
        what = paste0("every melphalan exposure judged, including one with a ",
                      "transplant coded on it - so one clinical event can end a ",
                      "line twice. The transplant question answered the way the ",
                      "request implies, since it carves nothing out")),
-  list(id = "yield_to_sct", mode = "yield_to_sct",
+  list(id = "yield_to_sct", mode = "yield_to_sct", melp = "yield_to_sct",
        what = paste0("the same, except that an exposure with an AUTO coded ",
                      "within MELP_SCT_DAYS is left to the transplant rule. The ",
                      "melphalan rule then fills only the gap where a transplant ",
@@ -262,8 +272,9 @@ melp_check_inputs <- function(rows) {
 # rather than anywhere in the string.
 #
 # `allowed` names the settings a mode cell may legitimately deviate on beyond
-# the mode itself. The simplified package passes its course cap: the cap is
-# part of the rule under test there, not a stray setting.
+# the mode itself. No package passes one today - the melphalan and fold-in
+# cells each differ on their mode alone - and the contract cell may never
+# deviate at all: if it needed to, it would not be the contract build.
 #
 # `key` is the setting the cells exist to differ on. The melphalan packages
 # leave the default; the fold-in package passes apply_map_foldin, with the

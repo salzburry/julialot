@@ -6,7 +6,7 @@ infer it from the folder dates.
 
 | folder | what it is |
 |---|---|
-| **`Jul 28/`** | **The current delivery.** The lines-of-therapy engine, the cohort builds, the readers, the melphalan exploration and the study documentation. Everything below assumes this one unless it says otherwise. |
+| **`Jul 28/`** | **The current delivery.** The lines-of-therapy engine, the cohort builds, the readers, the melphalan comparison cells and the study documentation. Everything below assumes this one unless it says otherwise. |
 | `Aug 14/` | A **fork** of `Jul 28/`, not its successor, despite the name. It carries a descriptive `LOT_CONTINUING_MEDS` column that `Jul 28/` does not, and it still holds packages `Jul 28/` has since moved. Its melphalan document predates the restated ask and carries a banner saying so. |
 | `apr_30_2026/` | The baseline the port suites compare `Jul 28/` against. Not a delivery to run. |
 | `jun_21_2026/`, `cohort_explorer/`, `Apr 18 2026/` | Earlier work, each with its own suites. |
@@ -55,4 +55,5 @@ fixed the only evidence the gate is green is running it locally.
 | What is still open for the study team? | the Open questions sheet of `Jul 28/exploration/lot/run_lot_scenarios.R`'s workbook |
 | How do I run this on production? | `Jul 28/RUN_ON_PROD.md` |
 | What is in each folder? | each folder's own `FILES.md` |
-| The melphalan proposal and its branch table | `Jul 28/exploration/FILES.md` |
+| The melphalan rule the build applies | `Jul 28/lot/LOT_RULES.md`, 4.7 |
+| How that rule was chosen, and the branch table that was not adopted | `Jul 28/exploration/FILES.md` |

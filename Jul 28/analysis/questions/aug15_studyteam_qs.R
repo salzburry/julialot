@@ -36,10 +36,11 @@
 #      patient and line: the gap from the MOST RECENT prior cover among the
 #      returning medications, not one gap per drug.
 #
-#   2. A pointer to the melphalan comparison. The three-cell package evaluates
-#      the original five-branch rule; run it separately. The simplified
-#      shorter-course fallback from the newer note has its own two-cell
-#      package, exploration/melphalan/run_melp_simple.R - also run separately.
+#   2. A pointer to the melphalan comparison. The study adopted the
+#      short-course rule on 2026-08-30 and the build applies it, so this run's
+#      own line table is already built with it. The cells that measured the
+#      choice run separately: the five-branch rule that was not adopted, and
+#      the adopted rule against a build without it.
 #
 #   3. Patients whose prior line ended with the recorded reason
 #      DISCONTINUATION and who then hold the 12-month continuous-enrollment
@@ -435,23 +436,25 @@ main <- function() {
     ASK = c(
       "1. Patients affected by the MAP-splitting rule",
       "2. How the MELP rules are working",
-      "2b. The simplified shorter-course MELP fallback",
+      "2b. The adopted short-course MELP rule, against a build without it",
       "3. Discontinue the prior line, then the 12mo CE baseline"),
     STATUS = c(
       "screen written - a sizing of current boundaries, not the rebuilt line table",
       "not produced here - run the melphalan package",
-      "built as its own cell - run the simplified package",
+      "applied in this run's lines; the cells measure what it changed",
       "written"),
     WHERE = c(
       paste0("aug15_qs_map_splitting_affected_", stamp, ".csv, with the ",
              "per-patient review roster beside it; the rule itself is built ",
              "as a cell pair by exploration/lot/run_foldin_cells.R"),
       paste0("exploration/melphalan: AUG1_EXECUTE=TRUE run_aug1_melp.R (the ",
-             "reference and two cells of the original five-branch rule), then ",
-             "read_melp_asks.R and read_melp_decisions.R"),
+             "five-branch rule that was NOT adopted, measured against the ",
+             "contract build), then read_melp_asks.R and ",
+             "read_melp_decisions.R"),
       paste0("exploration/melphalan: MELP_SIMPLE_EXECUTE=TRUE ",
-             "run_melp_simple.R - two builds under melp_simple_ prefixes; ",
-             "the 28-vs-30-day cap is still an open question"),
+             "run_melp_simple.R - the adopted rule against a build with no ",
+             "melphalan rule, under melp_simple_ prefixes, both at the ",
+             "contract's 28-day cap"),
       paste0("aug15_qs_discontinued_then_12mo_ce_", stamp, ".csv; chained ",
              "attrition ", attr_note)),
     stringsAsFactors = FALSE)
@@ -500,14 +503,16 @@ main <- function() {
                      "contract is unchanged;"),
               paste0("  the fold-in is built separately as a gated cell pair ",
                      "(exploration/lot/run_foldin_cells.R)."),
-              paste0("  The simplified MELP fallback is built as its own ",
-                     "package (exploration/melphalan/run_melp_simple.R)."))
+              paste0("  The melphalan short-course rule IS applied in these ",
+                     "lines (LOT_RULES.md 4.7); what it"),
+              paste0("  changed is measured by ",
+                     "exploration/melphalan/run_melp_simple.R."))
   writeLines(status, file.path(out_dir, paste0("aug15_qs_run_status_", stamp, ".txt")))
 
   log_msg(SEP)
-  log_msg("Mid-August sizing outputs written. The MELP comparison, the ",
-          "simplified fallback and the fold-in cell pair each run separately; ",
-          "the study contract is unchanged by all of them.")
+  log_msg("Mid-August sizing outputs written. The melphalan short-course rule ",
+          "is part of these lines; the cells that measured it, and the ",
+          "fold-in cell pair, each run separately.")
   log_msg(SEP)
 }
 

@@ -1020,9 +1020,15 @@ qc_params <- function(settings, run_id) {
   # needs it: with the rule on, such an infusion does not stop the build reading
   # LOT1's later AUTOs, and a check that censored there would miss the orphan.
   cart_ex <- toupper(trimws(qc_setting(settings, "apply_cart_induction_rule")))
+  # Which melphalan rule the run applied. No check judges by it, but a report
+  # that cannot say it is a report where the study's build and one without the
+  # rule look the same on their face - and they are different algorithms, with
+  # different line counts and different line shapes.
+  melp <- trimws(qc_setting(settings, "apply_melp_rule"))
   list(run_id   = run_id,
        censor   = identical(censor, "TRUE"),
        cart_exempt = identical(cart_ex, "TRUE"),
+       melp_rule = if (nzchar(melp)) melp else "off",
        ind1     = qc_int(settings, "induction_window_days"),
        indn     = qc_int(settings, "lot_n_induction_window_days"),
        cart     = qc_int(settings, "cart_consolidation_days"),
@@ -1090,6 +1096,10 @@ qc_markdown <- function(res, run_id, pfx, p, devs) {
           paste0("Windows as the run recorded them: LOT1 ", p$ind1,
                  " days, later lines ", p$indn, ", CAR-T ", p$cart,
                  "; tandem ", p$tandem, ", autologous gap ", p$auto_gap, "."),
+          # In the report, not only on the console: a study build and one
+          # without the melphalan rule are different algorithms with different
+          # line counts, and the file is what gets read later.
+          paste0("Melphalan rule: ", p$melp_rule, "."),
           "", "| | check | result | n | detail |", "|---|---|---|---|---|")
   for (i in seq_len(nrow(res)))
     ln <- c(ln, paste0("| ", res$id[i], " | ", res$what[i], " | ",
