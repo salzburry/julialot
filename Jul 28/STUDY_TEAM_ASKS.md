@@ -96,8 +96,18 @@ says. One the line owns — inside its window, or a planned tandem partner —
 opens no line and overrides nothing.
 
 The one thing this changes that nobody asked for: a drug returning into a line
-that a transplant or CAR-T opened no longer folds, because that line
-contributes no agent and the transplant overrides besides. It used to fold.
+that a transplant or CAR-T opened no longer folds. That line contributes no
+agent, and the transplant overrides besides. It used to fold.
+
+**Left as it is, deliberately.** A drug coming back soon after a transplant is
+already handled by the line's own consolidation window (`LOT_RULES.md` 4.2) and
+never needed this rule: on a planted CAR-T line opened at day 200, a return at
+day 230 joins that line under both builds. The planted cases that changed have
+the return at day 300 — 100 days out — and at that distance a new line is what
+every other rule in the build gives. Widening the window to reach it would
+change what a consolidation window means, and `allo_lot_span = extend_to_next`
+does not help either: it lengthens the transplant line but the return still
+ends it with `MED_ADD` and opens the next one.
 
 **The interval is dose to dose**, not stop to return. A drug's cover often runs
 past the line it belonged to, so measuring from where it stopped would put the
