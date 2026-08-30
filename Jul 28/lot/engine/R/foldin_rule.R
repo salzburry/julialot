@@ -72,9 +72,10 @@
 foldin_on <- function(cfg) isTRUE(cfg$apply_map_foldin)
 
 # The fold set and the hold, for the statement that builds line N's base.
-# lot_long holds lines 1..N-1 at this point, so "every earlier line" is a
-# scan of it. The exploded regimen goes in its own CTE first: LATERAL VIEW
-# and a JOIN in one FROM do not survive translation.
+# lot_long holds lines 1..N-1 at this point, so the previous line's regimen is
+# a scan of it. The set itself comes from prior_lines_regimen_ctes() in
+# R/prior_regimen.R - one definition, so this and the melphalan rule's
+# "is this agent NEW" test cannot disagree about the same pair of drugs.
 #
 # base_meds and lot{n}_start are this statement's own; the hold keeps
 # own-base drugs out so a drug in both regimens stays under the engine's
@@ -353,19 +354,7 @@ foldin_lotn_ctes <- function(cfg, lot_num, induction_end = NULL) {
     line_pred   = glue("l.LOT_NUM < {lot_num}"),
     melp_on     = melp_rule_on(cfg))
   paste0("\n", glue("
-    foldin_prev AS (
-      SELECT ll.PATID, m AS MED_ABBR
-      FROM lot_long ll
-      LATERAL VIEW explode(split(coalesce(ll.LOT_BASE_MEDS, ''), ' ')) e AS m
-      WHERE ll.LOT_NUM = {lot_num} - 1 AND m <> ''
-    ),
-    foldin_meds AS (
-      SELECT PATID, MED_ABBR FROM foldin_prev
-      UNION
-      SELECT p.PATID, ps.substitute_med AS MED_ABBR
-      FROM foldin_prev p
-      INNER JOIN permissible_subs ps ON p.MED_ABBR = ps.original_med
-    ),
+{prior_lines_regimen_ctes(glue('ll.LOT_NUM = {lot_num} - 1'), raw = 'foldin_prev', out = 'foldin_meds')}
 {count_ctes}
     -- What may interrupt a base drug's run-out chain, with the folded drugs
     -- taken out: a returning prior-line agent is part of this line under the
@@ -529,19 +518,7 @@ foldin_prior_ctes <- function(cfg, prev) {
                                   meds = "foldin_sc_meds",
                                   line_pred = glue("l.LOT_NUM <= {prev}"))
   paste0("\n", glue("
-    foldin_sc_prev AS (
-      SELECT ll.PATID, m AS MED_ABBR
-      FROM lot_long ll
-      LATERAL VIEW explode(split(coalesce(ll.LOT_BASE_MEDS, ''), ' ')) e AS m
-      WHERE ll.LOT_NUM = {prev} AND m <> ''
-    ),
-    foldin_sc_meds AS (
-      SELECT PATID, MED_ABBR FROM foldin_sc_prev
-      UNION
-      SELECT p.PATID, ps.substitute_med AS MED_ABBR
-      FROM foldin_sc_prev p
-      INNER JOIN permissible_subs ps ON p.MED_ABBR = ps.original_med
-    ),
+{prior_lines_regimen_ctes(glue('ll.LOT_NUM = {prev}'), raw = 'foldin_sc_prev', out = 'foldin_sc_meds')}
 {count_ctes}"))
 }
 

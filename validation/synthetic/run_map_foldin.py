@@ -15,6 +15,13 @@ regimen window is PART of that line, not a reason to start the next one.
       new drug starts                        -> the boundary stays; the new
       drug starts the next line on that day under both builds
   F4  B's permissible substitute returns     -> folds like B itself
+  F4b ...and the REVERSE: the substitute is
+      the prior regimen's drug and the
+      reference product returns              -> the same. 4.4 makes the pair
+      one agent, so the fold has to read the same whichever half the regimen
+      names
+  F4c the pair dosed on ONE day              -> the course grouping takes both,
+      so the tie decides nothing
   F5  B restarts with NO newer line in
       between                                -> ONE line either way. Nothing
       was given in between, so 4.3 keeps the restart inside the line it left
@@ -78,6 +85,17 @@ PATS = [
     P('F3', L1 + [('DARA', 'MAB', 200, 400), ('BORT', 'PI', 300, 360),
                   ('CARF', 'PI', 300, 380)]),
     P('F4', L1 + [('DARA', 'MAB', 200, 400), ('BORTB', 'PI', 300, 360)]),
+    # F4b: the reverse direction. BORTB is 1L's regimen drug and BORT - the
+    # drug it stands in for - is what returns. Expanding the raw regimen picked
+    # up substitutes of a named drug but not the drug a named substitute stands
+    # in for, so this pair folded one way and not the other.
+    P('F4b', [('LEN', 'IMID', 0, 80), ('BORTB', 'PI', 0, 80),
+              ('DARA', 'MAB', 200, 400), ('BORT', 'PI', 300, 360)]),
+    # F4c: both halves of the pair on one date, with different cover. They
+    # share an agent, so the lag inside that partition has two candidates and
+    # no order between them - the course grouping is what makes it not matter.
+    P('F4c', L1 + [('DARA', 'MAB', 200, 400),
+                   ('BORT', 'PI', 300, 360), ('BORTB', 'PI', 300, 500)]),
     P('F5', [('LEN', 'IMID', 0, 80), ('BORT', 'PI', 0, 80),
              ('BORT', 'PI', 300, 360)]),
     P('F6', L1 + [('DARA', 'MAB', 200, 260), ('CARF', 'PI', 400, 500),
@@ -201,6 +219,12 @@ def main():
 
     ok(n(ref, 'F4') == 3 and n(fold, 'F4') == 2,
        "F4: the permissible substitute folds exactly like the drug it replaces")
+    ok(n(ref, 'F4b') == 3 and n(fold, 'F4b') == 2,
+       "F4b: ...and so does the reference product when the substitute is the "
+       "regimen drug")
+    ok(n(ref, 'F4c') == 3 and n(fold, 'F4c') == 2
+       and fold['F4c'][1][2] == rs.d(IX + 500),
+       "F4c: the pair dosed on one day folds as one course, to day 500")
 
     ok(ref.get('F5') == fold.get('F5') and n(ref, 'F5') == 1,
        "F5: a restart with no newer line in between stays in the line it left")

@@ -127,6 +127,13 @@ procedures do count in it: a transplant that breaks the line, past its
 induction window and not a planned tandem partner, means the return belongs to
 a later line.
 
+**A permissible substitute and the drug it replaces are one agent**, in both
+directions. A regimen naming the reference product folds its substitute's
+return, and a regimen naming the substitute folds the reference product's — the
+fold set is read through the agent rather than through the drug the regimen
+happened to write down. The pair dosed on a single day is one course, so the
+tie decides nothing either.
+
 **A prior line with two agents.** Each returning agent is judged on its own
 interval and its own count, and a returning agent is not an advance for the
 other. Line 1 of A + B, line 2 opened by C: A and B each see one advance, so

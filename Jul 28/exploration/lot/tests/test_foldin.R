@@ -55,8 +55,15 @@ cat("\n-- the fold set is the previous line's regimen, and its substitutes --\n"
 s <- foldin_lotn_ctes(on_, "{lot_num}")
 ok(has(s, "WHERE ll.LOT_NUM = {lot_num} - 1 AND m <> ''"),
    "the line build folds the IMMEDIATELY PREVIOUS line's regimen")
-ok(has(s, "INNER JOIN permissible_subs ps ON p.MED_ABBR = ps.original_med"),
-   "...expanded by the permissible substitutes, so a biosimilar folds too")
+# Read through the AGENT, so the set is the same whichever half of a
+# permissible pair the regimen happens to name. Expanding the raw regimen was
+# one-directional: a regimen naming the reference product picked up its
+# substitute, a regimen naming the substitute did not pick up the reference
+# product, and the pair folded one way only.
+ok(has(s, "coalesce(ps.original_med, p.MED_ABBR) AS AGENT"),
+   "...each regimen drug read under the agent it belongs to")
+ok(has(s, "INNER JOIN permissible_subs ps ON ps.original_med = a.AGENT"),
+   "...and expanded back to every substitute for that agent, both directions")
 p <- foldin_prior_ctes(on_, "{prev}")
 ok(has(p, "WHERE ll.LOT_NUM = {prev} AND m <> ''"),
    paste0("the trigger reads the same one line - the regimen of the line ",

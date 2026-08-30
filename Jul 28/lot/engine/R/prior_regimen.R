@@ -261,10 +261,24 @@ prior_lines_regimen_ctes <- function(line_pred, raw = "prior_raw",
       LATERAL VIEW explode(split(coalesce(ll.LOT_BASE_MEDS, \'\'), \' \')) e AS m
       WHERE {line_pred} AND m <> \'\'
     ),
-    {out} AS (
-      SELECT PATID, MED_ABBR FROM {raw}
-      UNION
-      SELECT p.PATID, ps.substitute_med AS MED_ABBR
+    -- Each regimen drug under its AGENT. A drug that IS a permissible
+    -- substitute collapses to the one it replaces, so the set below is the
+    -- same whichever half of the pair the regimen happens to name.
+    {raw}_agent AS (
+      SELECT DISTINCT p.PATID, coalesce(ps.original_med, p.MED_ABBR) AS AGENT
       FROM {raw} p
-      INNER JOIN permissible_subs ps ON p.MED_ABBR = ps.original_med
+      LEFT JOIN permissible_subs ps ON ps.substitute_med = p.MED_ABBR
+    ),
+    -- Every drug that IS one of those agents: the agent itself, and every
+    -- permissible substitute for it. Expanding the raw regimen instead was
+    -- one-directional - a regimen naming the reference product picked up its
+    -- substitute, but a regimen naming the substitute did not pick up the
+    -- reference product, so the same pair folded one way and not the other.
+    -- §4.4 makes them one agent, so both directions have to read the same.
+    {out} AS (
+      SELECT PATID, AGENT AS MED_ABBR FROM {raw}_agent
+      UNION
+      SELECT a.PATID, ps.substitute_med AS MED_ABBR
+      FROM {raw}_agent a
+      INNER JOIN permissible_subs ps ON ps.original_med = a.AGENT
     ),")
