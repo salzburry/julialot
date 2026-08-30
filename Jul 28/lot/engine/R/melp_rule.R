@@ -711,6 +711,24 @@ melp_prior_regimen_exempt <- function(cfg, alias = "ms") {
 #
 # end_candidates is the one place those columns enter 06, so this is one
 # substitution rather than an edit per reference.
+# Melphalan is never an INTERRUPT in a base drug's run-out chain while this
+# rule is on, because this rule decides what melphalan does to a line and the
+# chain scan cannot see that decision - at LOT1 it runs before the decision
+# exists at all.
+#
+# A course inside induction is in the regimen, so the scan already skips it. A
+# SUPPRESSED course advances nothing by definition, so breaking a chain on it
+# is simply wrong: it truncated the base drug's cover, the drug's own later
+# episode was then never reached, and 4.3 refuses that episode a line of its
+# own - so the treatment belonged to no line at all. A course this rule DOES
+# advance on ends the line through the boundary it injects, not through the
+# chain, so nothing is lost by leaving it out here either.
+melp_boundary_gate <- function(cfg) {
+  if (!melp_rule_on(cfg)) return("")
+  paste0("\n              AND upper(trim(o.MAP_MED_TYPE)) <> '",
+         melp_abbr(cfg), "'")
+}
+
 melp_lot1_ctes <- function(cfg) {
   if (!melp_rule_on(cfg)) return("")
   paste0("\n", glue("

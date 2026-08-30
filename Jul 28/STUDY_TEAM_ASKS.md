@@ -56,9 +56,11 @@ A transplant breaks the line only when the engine's own rules say it does, and
 those rules differ by kind. An **autologous** transplant breaks it only past the
 line's induction window and only when it is not the second of a planned tandem
 pair — inside the window, or as a tandem partner, the line owns it and it
-breaks nothing. An **allogeneic** transplant or a **CAR-T** breaks the line
-wherever it falls after the line's start, with no window test at all. Both
-rules read the same helper, so neither can drift from the other.
+breaks nothing. An **allogeneic** transplant breaks the line wherever it falls
+after the line's start, with no window test at all. A **CAR-T** does the same
+everywhere except line 1's own induction window, where the CAR-T rule makes it
+part of line 1 and it breaks nothing. Both rules read the same helper, so
+neither can drift from the other.
 
 ---
 

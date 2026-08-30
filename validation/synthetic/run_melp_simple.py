@@ -93,6 +93,16 @@ PATS = [
     # transplant test from the agent test.
     P('SKn', [('LEN', 'IMID', 0, 400), ('MELP', 'ALKY', 100, 127),
               ('DARA', 'MAB', 105, 300)]),
+    # SL/SLn: a suppressed course must not break a base drug's run-out chain.
+    # LEN covers 0-80, a short unconfirmed course covers 100-127, and LEN
+    # itself returns on day 200. The course advances nothing, so the line has
+    # to run over it exactly as it does when the course is absent. Breaking
+    # the chain there truncated LEN's cover, its day-200 episode was never
+    # reached, and 4.3 refuses that episode a line of its own - so sixty-one
+    # days of treatment belonged to no line at all.
+    P('SL',  [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 100, 127),
+              ('LEN', 'IMID', 200, 260)]),
+    P('SLn', [('LEN', 'IMID', 0, 80), ('LEN', 'IMID', 200, 260)]),
     P('SJ0', [('LEN', 'IMID', 0, 600), ('MELP', 'ALKY', 500, 527)]),
     P('SJ', [('LEN', 'IMID', 0, 600), ('MELP', 'ALKY', 500, 527)]),
 ]
@@ -153,6 +163,10 @@ def main():
     ok(len(smp['SKn']) == 2 and starts(smp, 'SKn')[1] == rs.d(IX + 100),
        "SKn simplified: ...and with no allograft in between it confirms it, "
        "opening the line on the melphalan date")
+
+    ok(smp['SL'] == smp['SLn'] and len(smp['SL']) == 1,
+       "SL/SLn: a suppressed course leaves the run-out chain alone, so the "
+       "line runs over it exactly as it does with no melphalan at all")
 
     ok(len(ref['SA']) == 2 and starts(ref, 'SA')[1] == rs.d(IX + 100),
        "SA no rule: the short course opens a line of its own on day 100")

@@ -66,8 +66,13 @@ sf <- function(f) paste(readLines(file.path(LOT, "R", "steps", f), warn = FALSE)
 ok(has(sf("06_lot1_end.R"), "FROM {melp_lot1_base_from(cfg)}") &&
      has(sf("06_lot1_end.R"), "WITH{melp_lot1_ctes(cfg)}"),
    "LOT1 has exactly two hooks, both in 06")
-ok(!has(sf("04_lot1_base.R"), "melp_"),
-   "...and none in 04, where tx_auto_dates does not exist yet")
+# 04 carries exactly one, and it is not a decision: melp_boundary_gate() keeps
+# melphalan out of the run-out chain's interrupt scan, which is a predicate
+# over map_stacked and needs nothing 04 does not already have. The decision
+# itself still cannot live here - it reads lot1_base, which is what 04 builds.
+ok(length(gregexpr("melp_", sf("04_lot1_base.R"), fixed = TRUE)[[1]]) == 1L &&
+     has(sf("04_lot1_base.R"), "boundary_gate = melp_boundary_gate(cfg)"),
+   "...and 04 carries only the boundary gate, which needs no line table")
 ok(has(sf("10_lot2_5_base.R"), "{melp_lotn_ctes(cfg, lot_num, induction_window_days,") &&
      has(sf("10_lot2_5_base.R"), "{melp_suppress_predicate(cfg)}") &&
      has(sf("10_lot2_5_base.R"), "melp_inject_arm(cfg"),
@@ -118,6 +123,8 @@ subst_off <- function(f) {
                    melp_lotn_ctes(off, 2, 30L, 45L, "single_day")),
                  c("{melp_prev_line_ctes(cfg, prev_med_window, cart_consolidation_days, lot_num)}",
                    melp_prev_line_ctes(off, 60L, 45L, 2L)),
+                 c("boundary_gate = melp_boundary_gate(cfg),",
+                   paste0("boundary_gate = \"", melp_boundary_gate(off), "\",")),
                  c("{melp_hold_join(cfg, 'ls')}",      melp_hold_join(off, "ls")),
                  c("{melp_hold_col(cfg, 'mh')}",       melp_hold_col(off, "mh")),
                  c("{melp_line_type_guard(cfg, lot_num)}", melp_line_type_guard(off, 2)),

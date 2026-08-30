@@ -5,17 +5,15 @@ name: Jul 28 tests
 # claim "all suites pass" stops being something an author reports and becomes
 # something a machine records against a commit.
 #
-# THAT IS THE INTENT, AND IT IS NOT WHAT IS HAPPENING. Every run since this file
-# was added has ended in 2-4 seconds with no runner assigned and no logs to
-# download, and cohort_explorer-tests.yml - which passed on 11 August - started
-# failing the same way on 13 August. Two workflows failing identically, one of
-# them without changing, is the job never starting rather than a suite failing:
-# an Actions billing or spending limit, or hosted runners turned off for the
-# account. Nothing in this file fixes that; it needs repository settings access.
+# It runs. Between 13 and 30 August every run ended in seconds with no runner
+# assigned and no logs, here and in cohort_explorer-tests.yml - an account-level
+# Actions problem rather than a failing suite, and this comment used to say so.
+# Runners came back on 30 August and the gate has recorded real results since.
 #
-# So do not read a red check here as a failing suite without opening the run
-# first. If it has no logs and lasted seconds, it never ran. Run the gate
-# locally - Rscript validation/run_gate.R - until the account is sorted out.
+# The reading advice still holds for any FUTURE outage, because the symptom is
+# distinctive: a run with no logs that lasted seconds never started, whatever
+# its colour. Open the run before reading a red check as a failing suite, and
+# fall back to Rscript validation/run_gate.R locally.
 #
 # Scoped to changes that can affect it: the study folder, the checks that hold
 # it to its claims, and this file.

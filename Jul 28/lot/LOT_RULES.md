@@ -12,7 +12,7 @@ renamed vignette, or one no rule cites, fails
 `lot/validation/tests/test_vignettes.R`.
 
 > **Changed 2026-08-30.** Three rules changed what starts and ends a line:
-> §4.3 (a drug the patient has had before never starts one), §4.7 (a short
+> §4.3 (a drug of the previous regimen never starts one), §4.7 (a short
 > melphalan course) and §4.8 (a returning earlier-line drug). Each refuses a
 > boundary and carries the line over the treatment instead, so a line's end can
 > now sit later than its own regimen's cover (§5.2) and `MED_ADD` is narrower
@@ -35,7 +35,7 @@ renamed vignette, or one no rule cites, fails
 | §3.4 | Line 1's first autologous transplant is part of induction | — | |
 | §4.1 | A later line opens on the earliest of four candidates | — | |
 | §4.2 | Later induction is 30 days, and 45 on a CAR-T-started line | `lot_n_induction_window_days`, `cart_consolidation_days` | |
-| §4.3 | A drug the patient has had before never starts a line | `apply_own_return_fold` | |
+| §4.3 | A drug of the previous regimen never starts a line | `apply_own_return_fold` | |
 | §4.4 | A permissible biosimilar substitute never starts a line | — | |
 | §4.5 | Same-day starts break `SCT_ALLO > CART > SCT_AUTO > MED` | — | |
 | §4.6 | An allogeneic line spans one day and carries no regimen | `allo_lot_span` | |
@@ -176,9 +176,9 @@ An autologous transplant never cuts, because it only extends a line (§6.5). The
 that, a refill of an agent legitimately in the regimen would push the run-out
 past the transplant. `04_lot1_base.R`, `10_lot2_5_base.R`, `prior_regimen.R`.
 
-QC check `C1` does not cover this. C1 asks whether a regimen agent has an
-episode in the line's *induction window*; the bound is on the line's *actual
-span*, and an early transplant makes those two different.
+QC check `C1` covers this. Its window helper builds the same transplant cutoff
+and bounds the accepted range by it, so a regimen agent first dispensed after
+an early transplant is reported rather than passed.
 
 ### 3.4 Line 1's first autologous transplant is part of induction
 
@@ -243,13 +243,18 @@ open question - Q1 on the scenario workbook's Open questions sheet.
 `run_scenario_counts.R`'s `4.2-prior-agent-covered-but-not-in-the-regimen`
 sizes it.
 
-### 4.3 A drug the patient has had before never starts a line
+### 4.3 A drug of the previous regimen never starts a line
 
 Worked example: `maintenance_to_relapse`.
 
-A line opens on an agent that was **not** in the previous regimen. A drug the
-patient has already had is not one, whatever the gap since, so its later
-episodes never start a line — the line that owns it runs on over them (§5.2).
+A line opens on an agent that was **not** in the previous regimen. A drug that
+was in it is not one, whatever the gap since, so its later episodes never start
+a line — the line that owns it runs on over them (§5.2).
+
+**The previous regimen, not everything the patient has ever had.** A drug last
+given two or more lines back is outside this rule and can open a line like any
+other agent. That is the same scope §4.8's fold set reads, and §4.7's test for
+what counts as a new agent — one meaning of "new" in all three.
 
 **One rule in two halves, and both are needed.** Refuse the return a line and
 the returning treatment would belong to no line at all, so the line's run-out

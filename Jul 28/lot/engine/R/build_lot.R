@@ -94,7 +94,7 @@ WAIVABLE_CHECKS <- c("orphan_meds", "uncoded_meds", "code_types",
 # Fatal checks: always stop the build. Named rather than merely absent, so a
 # waiver naming one is told why it is refused instead of "no such check".
 FATAL_CHECKS <- c("code_to_med", "bad_ndc", "rollup_defs", "blank_keys",
-                  "multi_original", "subs_chain",
+                  "multi_original", "subs_chain", "subs_star",
                   "ndc_shape", "multi_class", "class_agreement")
 
 ALL_CHECKS <- c(WAIVABLE_CHECKS, FATAL_CHECKS)
@@ -783,7 +783,10 @@ LOT_TABLES <- c(
   "LOT_PATIENT_INPUT", "MMA_MED_PROCESSED", "MAP_STACKED",
   "SCT_CLAIMS_RAW", "TX_AUTO_DATES", "TX_ALLO_CART_DATES",
   "LOT1_INDUCTION_MEDS", "LOT1_BASE", "LOT1_SCT", "LOT1_CONTAINS_MTX_REG",
-  "LOT1_BASE_END"
+  "LOT1_BASE_END",
+  # The substitution pairs, written out so the QC package can read which drugs
+  # are one agent instead of guessing - see 01_codelists.R.
+  "PERMISSIBLE_SUBS"
 )
 
 # Everything a run wrote: the fixed names and the per-line stage tables

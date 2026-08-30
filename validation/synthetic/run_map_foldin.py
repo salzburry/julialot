@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """The MAP fold-in rule, proved on planted patients.
 
-Runs the engine's own emitted SQL twice - the contract build and
-MAP_FOLDIN=TRUE - over patients that pin each branch of the rule. The rule,
-from the study team: a prior line's agent returning after the current line's
-regimen window is PART of that line, not a reason to start the next one.
+Runs the engine's own emitted SQL twice, over patients that pin each branch of
+the rule. CONTRACT pins APPLY_MAP_FOLDIN TRUE, so the FOLD arm is the study's
+build; the other arm is MAP_FOLDIN=FALSE, kept as the reference to measure it
+against. The assertions below name them `fold` and `ref` for that reason - the
+word "contract" in an assertion label means the reference arm and is a
+leftover, not a claim about what the contract pins. The rule, from the study
+team: a prior line's agent returning after the current line's regimen window is
+PART of that line, not a reason to start the next one.
 
   F1  drug B (1L) returns during 2L          -> the split disappears; 2L runs
       to its own run-out
@@ -60,6 +64,17 @@ regimen window is PART of that line, not a reason to start the next one.
       MELPHALAN course                       -> it does not confirm it. A
       returning drug is not a NEW agent, so the melphalan rule cannot read as
       a change the drug this rule bundles
+  F19n ...and the same patient with no
+      melphalan at all                       -> identical regimen and count. A
+      suppressed course decides nothing, so it must not decide this either
+  F20-F26                                    -> the transplant, course and
+      substitute cases; each is commented where it is planted below
+  F27 a suppressed course that was in the
+      previous regimen                       -> joins neither regimen nor
+      count (4.7), where the fold would otherwise have taken it
+  F28-F30 how far back the returner was
+      last seen                              -> previous line folds; anything
+      further back is simply a new agent
 """
 import os, sys, tempfile, subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
