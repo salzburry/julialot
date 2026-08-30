@@ -20,6 +20,12 @@
 #               enough to know it.
 #   to_confirm  the rules interact and this is our reading. The first real run
 #               settles it. A claim about us, not about the algorithm.
+#
+# `where` is "path | anchor": the file, and a literal that has to appear in it.
+# It was "path:line", and line numbers do not survive editing - twelve of the
+# fourteen ended up pointing at whatever had drifted into their slot. The
+# anchor moves with the code it names, and test_vignettes.R greps for it, so a
+# citation whose rule has gone fails rather than misleading a reader.
 
 # The parameters a vignette may hinge on. Named rather than inlined, so a
 # renamed setting breaks the catalogue.
@@ -51,7 +57,7 @@ VIGNETTES <- list(
   # ---- tandem transplant, the idea's first named case ---------------------
   list(id = "tandem_within", title = "Second AUTO inside the tandem window",
        param = "sct_tandem_days", pair = "within", confidence = "to_confirm",
-       where = "lot/engine/R/steps/05_sct.R - 14-day window grouping + 60-day gap + 180-day tandem",
+       where = "lot/engine/R/steps/05_sct.R | {cfg$sct_tandem_days}",
        events = function(p) rbind(
          ev(0,   "MED",  "1L regimen starts"),
          ev(30,  "AUTO", "first autologous transplant"),
@@ -66,7 +72,7 @@ VIGNETTES <- list(
 
   list(id = "tandem_beyond", title = "Second AUTO past the tandem window",
        param = "sct_tandem_days", pair = "beyond", confidence = "to_confirm",
-       where = "lot/engine/R/steps/05_sct.R - single AUTO allowed; tandem pair allowed; excess AUTO ends LOT1",
+       where = "lot/engine/R/steps/05_sct.R | Single AUTO allowed; tandem pair allowed; excess AUTO ends LOT1",
        events = function(p) rbind(
          ev(0,   "MED",  "1L regimen starts"),
          ev(30,  "AUTO", "first autologous transplant"),
@@ -78,7 +84,7 @@ VIGNETTES <- list(
   # ---- AUTO windowing ------------------------------------------------------
   list(id = "auto_window_within", title = "Two AUTO codes inside the grouping window",
        param = "sct_auto_window_days", pair = "within", confidence = "derived",
-       where = "lot/engine/R/steps/05_sct.R:323 - datediff(x, cur_start) <= sct_auto_window_days",
+       where = "lot/engine/R/steps/05_sct.R | datediff(x, s.cur_start) <= {cfg$sct_auto_window_days}",
        events = function(p) rbind(
          ev(0,  "MED",  "1L regimen starts"),
          ev(40, "AUTO", "transplant code"),
@@ -91,7 +97,7 @@ VIGNETTES <- list(
 
   list(id = "auto_window_beyond", title = "Two AUTO codes past the grouping window",
        param = "sct_auto_window_days", pair = "beyond", confidence = "derived",
-       where = "lot/engine/R/steps/05_sct.R:323",
+       where = "lot/engine/R/steps/05_sct.R | datediff(x, s.cur_start) <= {cfg$sct_auto_window_days}",
        events = function(p) rbind(
          ev(0,  "MED",  "1L regimen starts"),
          ev(40, "AUTO", "transplant code"),
@@ -107,7 +113,7 @@ VIGNETTES <- list(
   # which the engine cannot produce.
   list(id = "cart_bridge_within", title = "CAR-T inside the consolidation window",
        param = "cart_consolidation_days", pair = "within", confidence = "derived",
-       where = "lot/engine/R/steps/06_lot1_end.R:176 - datediff BETWEEN 0 AND cart_consolidation_days",
+       where = "lot/engine/R/steps/06_lot1_end.R | BETWEEN 0 AND {cfg$cart_consolidation_days}",
        events = function(p) rbind(
          ev(0,  "MED",     "1L regimen starts"),
          ev(p$induction_window_days, "MED_ADD",
@@ -122,7 +128,7 @@ VIGNETTES <- list(
 
   list(id = "cart_bridge_beyond", title = "CAR-T past the consolidation window",
        param = "cart_consolidation_days", pair = "beyond", confidence = "to_confirm",
-       where = "lot/engine/R/steps/06_lot1_end.R:176",
+       where = "lot/engine/R/steps/06_lot1_end.R | BETWEEN 0 AND {cfg$cart_consolidation_days}",
        events = function(p) rbind(
          ev(0,  "MED",     "1L regimen starts"),
          ev(p$induction_window_days, "MED_ADD", "agent added"),
@@ -136,7 +142,7 @@ VIGNETTES <- list(
   # ---- administrative gaps, the idea's named case -------------------------
   list(id = "map_gap_within", title = "Treatment gap below the discontinuation threshold",
        param = "map_discon_gap_days", pair = "within", confidence = "derived",
-       where = "lot/engine/R/steps/03_mma_map.R:396 - datediff(next_start, map_end) >= map_discon_gap_days",
+       where = "lot/engine/R/steps/03_mma_map.R | datediff(w.NEXT_MAP_START_DT, w.MAP_END_DT) >= {cfg$map_discon_gap_days}",
        events = function(p) rbind(
          ev(0,   "MED", "1L regimen starts"),
          ev(59,  "MAP_END", "last day the agent is covered - the gap starts d60"),
@@ -148,7 +154,7 @@ VIGNETTES <- list(
 
   list(id = "map_gap_beyond", title = "Treatment gap at the discontinuation threshold",
        param = "map_discon_gap_days", pair = "beyond", confidence = "derived",
-       where = "lot/engine/R/steps/03_mma_map.R:396",
+       where = "lot/engine/R/steps/03_mma_map.R | datediff(w.NEXT_MAP_START_DT, w.MAP_END_DT) >= {cfg$map_discon_gap_days}",
        events = function(p) rbind(
          ev(0,  "MED", "1L regimen starts"),
          ev(59, "MAP_END", "last day the agent is covered"),
@@ -162,7 +168,7 @@ VIGNETTES <- list(
   # ---- induction windows ---------------------------------------------------
   list(id = "induction_lot1_within", title = "Agent added on the last day of LOT1 induction",
        param = "induction_window_days", pair = "within", confidence = "derived",
-       where = "lot/engine/R/steps/10_lot2_5_base.R:362 - MAP_START <= date_add(LOT_START, window - 1)",
+       where = "lot/engine/R/steps/10_lot2_5_base.R | ELSE {induction_window_days - 1} END)",
        events = function(p) rbind(
          ev(0, "MED", "1L regimen starts"),
          ev(p$induction_window_days - 1L, "MED_ADD", "agent added on the last day inside the window")),
@@ -173,7 +179,7 @@ VIGNETTES <- list(
 
   list(id = "induction_lot1_beyond", title = "Agent added the day after LOT1 induction closes",
        param = "induction_window_days", pair = "beyond", confidence = "derived",
-       where = "lot/engine/R/steps/10_lot2_5_base.R:362",
+       where = "lot/engine/R/steps/10_lot2_5_base.R | ELSE {induction_window_days - 1} END)",
        events = function(p) rbind(
          ev(0, "MED", "1L regimen starts"),
          ev(p$induction_window_days, "MED_ADD", "agent added one day outside")),
@@ -182,7 +188,7 @@ VIGNETTES <- list(
 
   list(id = "induction_lotn_within", title = "Agent added on the last day of a later line's induction",
        param = "lot_n_induction_window_days", pair = "within", confidence = "derived",
-       where = "lot/engine/R/steps/10_lot2_5_base.R:362 - LOT2+ uses the shorter window",
+       where = "lot/engine/R/steps/10_lot2_5_base.R | prev_med_window <- if (lot_num == 2L) lot1_induction_window_days",
        events = function(p) rbind(
          ev(0, "MED", "LOT2 starts"),
          ev(p$lot_n_induction_window_days - 1L, "MED_ADD", "agent added on the last day inside")),
@@ -193,7 +199,7 @@ VIGNETTES <- list(
 
   list(id = "induction_lotn_beyond", title = "Agent added the day after a later line's induction closes",
        param = "lot_n_induction_window_days", pair = "beyond", confidence = "derived",
-       where = "lot/engine/R/steps/10_lot2_5_base.R:362",
+       where = "lot/engine/R/steps/10_lot2_5_base.R | ELSE {induction_window_days - 1} END)",
        events = function(p) rbind(
          ev(0, "MED", "LOT2 starts"),
          ev(p$lot_n_induction_window_days, "MED_ADD", "agent added one day outside")),
@@ -203,7 +209,7 @@ VIGNETTES <- list(
   # ---- cases with no boundary, but a rule worth stating -------------------
   list(id = "allo_single_day", title = "Allogeneic transplant line spans one day",
        param = NA_character_, confidence = "derived",
-       where = "lot/engine/R/steps/10_lot2_5_base.R:681 - allo_lot_span single_day",
+       where = "lot/engine/R/steps/10_lot2_5_base.R | A single_day ALLO LOT ends on the ALLO date itself",
        events = function(p) rbind(
          ev(0,   "MED",      "LOT1 starts"),
          ev(200, "ALLO",     "allogeneic transplant"),
@@ -218,7 +224,7 @@ VIGNETTES <- list(
 
   list(id = "allo_after_failed_auto", title = "Allogeneic transplant after a failed autologous",
        param = NA_character_, confidence = "to_confirm",
-       where = "lot/engine/R/steps/05_sct.R - ALLO immediately ends LOT1",
+       where = "lot/engine/R/steps/05_sct.R | ALLO",
        events = function(p) rbind(
          ev(0,   "MED",  "1L regimen starts"),
          ev(40,  "AUTO", "autologous transplant"),
@@ -230,7 +236,7 @@ VIGNETTES <- list(
 
   list(id = "biosimilar_switch", title = "Biosimilar substituted mid-line",
        param = NA_character_, confidence = "to_confirm",
-       where = "lot/engine/R/steps/01_codelists.R:66 - permissible_subs",
+       where = "lot/engine/R/steps/01_codelists.R | materialize(con, \"S02_permissible_subs\"",
        events = function(p) rbind(
          ev(0,  "MED", "1L regimen starts with the reference product"),
          ev(70, "MED", "biosimilar of the same agent dispensed instead")),
@@ -243,7 +249,7 @@ VIGNETTES <- list(
 
   list(id = "melp_short_course", title = "Brief melphalan course outside induction",
        param = "melp_simple_course_days", pair = "within", confidence = "to_confirm",
-       where = "lot/engine/R/melp_rule.R:469 - melp_suppress, SHORT = 1 AND CONFIRMED = 0",
+       where = "lot/engine/R/melp_rule.R | WHERE INSIDE = 0 AND SHORT = 1 AND CONFIRMED = 0",
        events = function(p) rbind(
          ev(0,   "MED", "1L regimen starts"),
          ev(100, "MED", "one melphalan administration, no other agent with it"),
@@ -260,7 +266,7 @@ VIGNETTES <- list(
 
   list(id = "melp_long_course", title = "Melphalan course past the short cap",
        param = "melp_simple_course_days", pair = "beyond", confidence = "to_confirm",
-       where = "lot/engine/R/melp_rule.R:454 - datediff(COURSE_END_DT, EXPO_DT) + 1 <= cap",
+       where = "lot/engine/R/melp_rule.R | datediff(mc.COURSE_END_DT, mc.EXPO_DT) + 1",
        events = function(p) rbind(
          ev(0,   "MED", "1L regimen starts"),
          ev(100, "MED", "melphalan starts"),
@@ -274,7 +280,7 @@ VIGNETTES <- list(
 
   list(id = "melp_short_course_confirmed", title = "A new agent inside a brief melphalan course",
        param = NA_character_, confidence = "to_confirm",
-       where = "lot/engine/R/melp_rule.R:485 - melp_inject, CONFIRMED = 1, at EXPO_DT",
+       where = "lot/engine/R/melp_rule.R | WHERE INSIDE = 0 AND SHORT = 1 AND CONFIRMED = 1",
        events = function(p) rbind(
          ev(0,   "MED", "1L regimen starts"),
          ev(100, "MED", "melphalan starts; its cover runs to day 127"),
@@ -289,7 +295,7 @@ VIGNETTES <- list(
 
   list(id = "returning_drug_one_advance", title = "A drug returns after one advance",
        param = NA_character_, confidence = "to_confirm",
-       where = "lot/engine/R/foldin_rule.R - foldin_episodes, N_ADVANCES = 1",
+       where = "lot/engine/R/foldin_rule.R | N_ADVANCES",
        events = function(p) rbind(
          ev(0,   "MED", "1L starts on drug A and drug B"),
          ev(200, "MED", "drug C starts and advances the line to 2L"),
@@ -304,7 +310,7 @@ VIGNETTES <- list(
 
   list(id = "returning_drug_two_advances", title = "A drug returns after two advances",
        param = NA_character_, confidence = "to_confirm",
-       where = "lot/engine/R/foldin_rule.R - foldin_episodes, N_ADVANCES = 1",
+       where = "lot/engine/R/foldin_rule.R | N_ADVANCES",
        events = function(p) rbind(
          ev(0,   "MED", "1L starts on drug A and drug B"),
          ev(200, "MED", "drug C advances the line to 2L"),
@@ -320,7 +326,7 @@ VIGNETTES <- list(
   list(id = "returning_drug_two_agents_one_line",
        title = "Two drugs start one line while a drug is away",
        param = NA_character_, confidence = "to_confirm",
-       where = "lot/engine/R/foldin_rule.R - foldin_openers, one row per line",
+       where = "lot/engine/R/foldin_rule.R | foldin_openers",
        events = function(p) rbind(
          ev(0,   "MED", "1L starts on drug A and drug B"),
          ev(200, "MED", "drugs C and D start together and advance the line to 2L"),
@@ -334,7 +340,7 @@ VIGNETTES <- list(
 
   list(id = "maintenance_to_relapse", title = "Maintenance running into relapse",
        param = NA_character_, confidence = "derived",
-       where = "lot/engine/R/steps/05_sct.R:13 - maintenance is a descriptive flag only",
+       where = "lot/engine/R/steps/05_sct.R | Maintenance is a descriptive flag and nothing more",
        events = function(p) rbind(
          ev(0,   "MED", "1L regimen starts"),
          ev(120, "MED", "reduced to a single maintenance agent"),
@@ -349,7 +355,7 @@ VIGNETTES <- list(
 
   list(id = "steroid_only_interval", title = "Steroid-only stretch between regimens",
        param = NA_character_, confidence = "derived",
-       where = "lot/engine/R/steps/10_lot2_5_base.R:367 - MAP_MED_CLASS <> 'STEROID'",
+       where = "lot/engine/R/steps/10_lot2_5_base.R | AND ms.MAP_MED_CLASS <> 'STEROID'",
        events = function(p) rbind(
          ev(0,   "MED",     "1L regimen starts"),
          ev(150, "STEROID", "dexamethasone alone for several weeks"),
@@ -359,7 +365,7 @@ VIGNETTES <- list(
 
   list(id = "belantamab_any_line", title = "Belantamab anywhere in the patient's lines",
        param = NA_character_, confidence = "derived",
-       where = "lot/engine/R/line_criteria.R:39 - no_belantamab, on_fail = truncate",
+       where = "lot/engine/R/line_criteria.R | on_fail = \"truncate\"",
        events = function(p) rbind(
          ev(0,   "MED", "1L regimen starts"),
          ev(300, "MED", "LOT2 starts"),
@@ -373,7 +379,7 @@ VIGNETTES <- list(
 
   list(id = "excess_auto", title = "A third autologous transplant",
        param = NA_character_, confidence = "to_confirm",
-       where = "lot/engine/R/steps/05_sct.R:11 - excess AUTO ends LOT1",
+       where = "lot/engine/R/steps/05_sct.R | Single AUTO allowed; tandem pair allowed; excess AUTO ends LOT1",
        events = function(p) rbind(
          ev(0,   "MED",  "1L regimen starts"),
          ev(30,  "AUTO", "first transplant"),
@@ -384,7 +390,7 @@ VIGNETTES <- list(
 
   list(id = "overlapping_oral_refills", title = "Overlapping oral refills",
        param = "medical_day_supply", confidence = "to_confirm",
-       where = "lot/engine/R/steps/03_mma_map.R - run-out from day supply",
+       where = "lot/engine/R/steps/03_mma_map.R | rx_runout",
        events = function(p) rbind(
          ev(0,  "RX", "oral agent dispensed, 30-day supply"),
          ev(20, "RX", "refilled early, before the first has run out"),
@@ -398,7 +404,7 @@ VIGNETTES <- list(
 
   list(id = "line_beyond_max", title = "A patient who would reach a line above MAX_LOT",
        param = "max_lot", confidence = "derived",
-       where = "lot/engine/R/build_lot.R - lines outside 1..max_lot are refused by check_lot_long",
+       where = "lot/engine/R/build_lot.R | check_lot_long",
        # One regimen change per line, so the timeline actually reaches the cap
        # rather than asserting it. Two events could only ever demonstrate LOT2.
        events = function(p) do.call(rbind, c(

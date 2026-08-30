@@ -102,18 +102,33 @@ notime <- lapply(VIGNETTES, function(x) {
 stops(check_vignettes(P, notime), "...and a timeline that runs backwards")
 
 cat("\n-- every rule it quotes is somewhere a reader can go --\n")
-# The quoted location is the difference between a claim and a citation. A file
-# that has been renamed or removed takes the catalogue with it.
+# A citation is "path | anchor", and the anchor is a literal that has to appear
+# in that file. It used to be "path:line", and line numbers do not survive
+# editing: twelve of the fourteen pointed at whatever had drifted into their
+# slot, and nothing here noticed because only the FILE was checked. An anchor
+# moves with the code it names, and when the code goes the citation fails.
 missing <- character(0)
+adrift  <- character(0)
 for (v in VIGNETTES) {
-  f <- sub("[: ].*$", "", v$where)
+  parts <- strsplit(v$where, " | ", fixed = TRUE)[[1]]
+  f <- trimws(parts[1])
   if (!nzchar(f) || identical(f, "nowhere")) next
-  if (!file.exists(file.path(STUDY, f))) missing <- c(missing, paste0(v$id, " -> ", f))
+  path <- file.path(STUDY, f)
+  if (!file.exists(path)) { missing <- c(missing, paste0(v$id, " -> ", f)); next }
+  if (length(parts) < 2L) { adrift <- c(adrift, paste0(v$id, " -> no anchor")); next }
+  anchor <- trimws(paste(parts[-1], collapse = " | "))
+  src <- readLines(path, warn = FALSE)
+  if (!any(grepl(anchor, src, fixed = TRUE)))
+    adrift <- c(adrift, paste0(v$id, " -> '", anchor, "' is not in ", f))
 }
 ok(!length(missing),
    if (length(missing)) paste0("quotes a file that is not here: ",
                                paste(missing, collapse = "; "))
    else "every quoted rule names a file that exists")
+ok(!length(adrift),
+   if (length(adrift)) paste0("...and the quoted line is gone: ",
+                              paste(adrift, collapse = "; "))
+   else "...and the line each one quotes is still in that file")
 # The two facts the catalogue leans on hardest, checked against the code rather
 # than trusted: an ALLO line has no regimen, and no_belantamab is patient-level.
 sct <- readLines(file.path(PARENT, "engine", "R", "steps", "10_lot2_5_base.R"), warn = FALSE)
