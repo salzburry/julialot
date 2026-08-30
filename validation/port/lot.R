@@ -138,12 +138,12 @@ SUBST <- list(
          to   = "AND lpad(regexp_replace(coalesce(cast(r.NDC as string),''), '[^0-9]', ''), 11, '0')",
          n = 1L)),
   "05_sct.R"       = list(list(from = "SELECT DISTINCT", to = "SELECT", n = 1L)),
-  # The melphalan line-advancing rule (lot/melphalan), off unless APPLY_MELP_RULE
-  # names a mode. Both hooks emit nothing when it is unset, so the contract
-  # build's SQL is the source's - which is what these two entries pin: the
-  # substituted text is what the source has, and the port's is a call that
-  # returns it. LOT1 is corrected here rather than in 04 because yield_to_sct
-  # reads tx_auto_dates, and that view is built in 05.
+  # The melphalan line-advancing rule, off when APPLY_MELP_RULE is off. Both
+  # hooks emit nothing then, so the rule-off build's SQL is the source's -
+  # which is what these two entries pin: the substituted text is what the
+  # source has, and the port's is a call that returns it. LOT1 is corrected
+  # here rather than in 04 because the decision reads lot1_base, which 04 is
+  # the step that builds.
   "06_lot1_end.R"  = list(
     list(from = "FROM {melp_lot1_base_from(cfg)}", to = "FROM lot1_base lb", n = 1L),
     list(from = "WITH{melp_lot1_ctes(cfg)}",       to = "WITH",              n = 1L)),

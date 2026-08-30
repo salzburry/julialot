@@ -7,14 +7,14 @@
 # rule at all.
 #
 #   # print the plan; touches nothing, needs no connection
-#   INPUT_COHORT_TABLE=ndmm_NDMM_COHORT Rscript exploration/melphalan/run_melp_simple.R
+#   INPUT_COHORT_TABLE=ndmm_NDMM_COHORT Rscript lot/melphalan/run_melp_simple.R
 #
 #   # build the two cells and read them
 #   DATABRICKS_PWD=... INPUT_COHORT_TABLE=ndmm_NDMM_COHORT COHORT_PREFIX=ndmm_ \
-#     MELP_SIMPLE_EXECUTE=TRUE Rscript exploration/melphalan/run_melp_simple.R
+#     MELP_SIMPLE_EXECUTE=TRUE Rscript lot/melphalan/run_melp_simple.R
 #
 #   # read cells already built, without rebuilding (after a failure in the read)
-#   ... MELP_SIMPLE_READ=TRUE Rscript exploration/melphalan/run_melp_simple.R
+#   ... MELP_SIMPLE_READ=TRUE Rscript lot/melphalan/run_melp_simple.R
 #
 # The rule under test, from the study team's follow-up note: melphalan received
 # for 28 days or fewer outside any induction window does not advance the line
@@ -22,10 +22,8 @@
 # that course still covers, the next line starts on the MELPHALAN date, not
 # the agent's later one - their day-100/105 example.
 #
-# This is separate from the three-cell package (run_aug1_melp.R), which
-# evaluates the original five-branch rule the study did not adopt. Two
-# complete LOT builds under their own melp_simple_* prefixes: one with no
-# melphalan rule, and the contract's simplified rule. The difference between
+# Two complete LOT builds under their own melp_simple_* prefixes: one with no
+# melphalan rule, and the contract's short-course rule. The difference between
 # them is what the rule does, in patients.
 #
 # Which cell is the deviation flipped when the rule was adopted. 'simplified'
@@ -138,9 +136,8 @@ melp_simple_report <- function(con, cells, out_dir, lot_root = NULL) {
     cat("  reading ", c_i$id, " from ", final, "\n", sep = "")
     m <- melp_metrics(con, final,
       wrk(paste0(c_i$prefix, "LOT_ATTRITION")), status[[c_i$id]]$run_id, st$abbr,
-      map_tbl = map_t, expo_days = st$expo_days, restart_days = st$restart_days,
-      advance_days = st$advance_days, ind1 = st$ind1, indn = st$indn,
-      cart = st$cart)
+      map_tbl = map_t, expo_days = st$expo_days, ind1 = st$ind1,
+      indn = st$indn, cart = st$cart)
     if (is.null(m))
       stop("Metrics could not be read for ", c_i$id, " (", final, "): a ",
            "statement returned no row, so that cell was never fully built.",

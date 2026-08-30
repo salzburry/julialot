@@ -150,6 +150,37 @@ ok(!length(hits),
    if (length(hits)) paste0("a file hard-codes the folder's own name: ", hits[1])
    else "no file hard-codes the folder's own name in a path")
 
+# A source() that reaches ACROSS packages has to resolve to a file that is
+# there. Nothing checked this, and it cost: moving the melphalan package from
+# exploration/ to lot/ left run_foldin_cells.R sourcing a path that no longer
+# existed. That script needs a warehouse, so no suite runs it and the gate
+# stayed green over a file that could not load.
+#
+# Only the `file.path(.script_dir, ...)` form, and only where every other part
+# is a string literal. That is the one form whose base is known without running
+# the file - .script_dir is the script's own directory everywhere in this
+# folder - and it is the form a package move breaks. Paths built from a
+# package-root variable (ROOT, LOT_ROOT) resolve against something this cannot
+# know, and a same-package source() does not survive a move to begin with.
+srcs <- unlist(lapply(names(text), function(nm) {
+  hits <- grep("source(file.path(.script_dir", text[[nm]], fixed = TRUE, value = TRUE)
+  unlist(lapply(hits, function(l) {
+    m <- regmatches(l, regexpr("file\\.path\\([^)]*\\)", l))
+    if (!length(m)) return(NULL)
+    parts <- trimws(strsplit(sub("^file\\.path\\(", "", sub("\\)$", "", m)), ",")[[1]])
+    if (!identical(parts[1], ".script_dir")) return(NULL)
+    rest <- parts[-1]
+    if (!length(rest) || !all(grepl('^".*"$', rest))) return(NULL)
+    rel  <- do.call(file.path, as.list(gsub('"', "", rest)))
+    if (file.exists(file.path(dirname(file.path(ROOT, nm)), rel))) NULL
+    else paste0(nm, " -> ", rel)
+  }))
+}))
+ok(!length(srcs),
+   if (length(srcs)) paste0("sources a file that is not there: ",
+                            paste(srcs, collapse = "; "))
+   else "every cross-package source() path resolves to a file that exists")
+
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))
 if (fail > 0L) quit(status = 1L)

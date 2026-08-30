@@ -78,8 +78,7 @@ assign("cfg", list(
   apply_own_return_fold = toupper(Sys.getenv(
     "OWN_RETURN_FOLD",
     unset = engine_default("APPLY_OWN_RETURN_FOLD", "FALSE"))) == "TRUE",
-  melp_exposure_days = 30L, melp_restart_days = 60L,
-  melp_advance_days = 180L, melp_sct_days = 14L,
+  melp_exposure_days = 30L,
   melp_simple_course_days =
     as.integer(engine_default("MELP_SIMPLE_COURSE_DAYS", "28")),
   study_end = "2026-03-31"), e)

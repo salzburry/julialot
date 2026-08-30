@@ -331,14 +331,7 @@ NOT_AN_AXIS <- c(
   tbl_med_diag = "deployment: CDM table name",
   tbl_rx = "deployment: CDM table name",
   use_quarterly_tables = "deployment: which physical CDM tables the vintage offers",
-  belantamab_med_abbr = "code-list spelling of the criterion drug, not a rule",
-  # The three the short-course rule reads are bound above. These three belong
-  # to the five-branch modes, which were measured against the study's build and
-  # not adopted - so they are inert in every contract build, and pinned only so
-  # that a comparison cell rebuilt later is the same comparison.
-  melp_restart_days = "parameter of the five-branch comparison modes, which no contract build carries",
-  melp_advance_days = "parameter of the five-branch comparison modes, which no contract build carries",
-  melp_sct_days = "parameter of the five-branch comparison modes, which no contract build carries"
+  belantamab_med_abbr = "code-list spelling of the criterion drug, not a rule"
 )
 
 # Every engine setting is either bound to a contract field or explicitly not an

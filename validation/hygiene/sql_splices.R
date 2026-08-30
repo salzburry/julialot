@@ -51,7 +51,8 @@ TOKEN <- c("work", "wrk", "lot_out", "cdm_src", "full_name", "lotn_table",
 # the reason is the thing to re-check if the call site moves.
 FRAGMENT <- c(
   melp_lot1_ctes          = "opens with its own newline",
-  melp_decision_ctes      = "opens with its own newline",
+  melp_simplified_ctes    = "opens with its own newline",
+  melp_decision_ctes      = "delegates to melp_simplified_ctes",
   melp_lotn_ctes          = "delegates to melp_decision_ctes",
   melp_prev_line_ctes     = "delegates to melp_decision_ctes",
   melp_hold_join          = "opens with its own newline",
@@ -144,13 +145,28 @@ for (fn in need_nl) {
   ok(!is.null(d) && grepl('paste0("\\n"', d, fixed = TRUE),
      paste0(fn, "() opens its fragment with a newline"))
 }
-# A delegating hook is safe only while what it delegates to is checked above.
+# A delegating hook is safe only while what it delegates to is checked above -
+# and delegation can be more than one hop. melp_lotn_ctes calls
+# melp_decision_ctes, which since the five-branch modes were retired is itself
+# a thin front door onto melp_simplified_ctes. Follow the chain to whichever
+# function actually writes the newline, so an added hop cannot quietly break
+# the guarantee.
 deleg <- names(FRAGMENT)[grepl("^delegates to ", FRAGMENT)]
+resolve <- function(fn, seen = character(0)) {
+  if (fn %in% need_nl) return(fn)
+  if (fn %in% seen) return(NA_character_)          # a cycle reaches no newline
+  nxt <- FRAGMENT[[fn]]
+  if (is.null(nxt) || !grepl("^delegates to ", nxt)) return(NA_character_)
+  resolve(sub("^delegates to ", "", nxt), c(seen, fn))
+}
 for (fn in deleg) {
-  to <- sub("^delegates to ", "", FRAGMENT[[fn]])
-  d  <- defs2[[fn]]
-  ok(!is.null(d) && grepl(paste0(to, "("), d, fixed = TRUE) && to %in% need_nl,
-     paste0(fn, "() delegates to ", to, "(), which is checked above"))
+  to   <- sub("^delegates to ", "", FRAGMENT[[fn]])
+  root <- resolve(to)
+  d    <- defs2[[fn]]
+  ok(!is.null(d) && grepl(paste0(to, "("), d, fixed = TRUE) && !is.na(root),
+     paste0(fn, "() delegates to ", to, "(), which reaches ",
+            if (is.na(root)) "no checked fragment" else paste0(root, "()"),
+            " above"))
 }
 
 cat("\n", strrep("-", 52), "\n", sep = "")

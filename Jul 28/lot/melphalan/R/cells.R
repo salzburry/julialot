@@ -1,49 +1,29 @@
-# The three builds this asks for, and what is read off them.
+# The two builds this package compares, and what is read off them.
 #
 # The rule itself is not here - it is lot/engine/R/melp_rule.R, because the
-# engine builds the lines. This file is the experiment: which builds, what to
-# measure, and how to read one against another.
+# engine builds the lines. This file is the measurement: which builds, what to
+# read off them, and how to read one against the other.
 #
-# Three cells, because the ask leaves one thing open. Melphalan is transplant
-# conditioning, so a melphalan claim and an AUTO procedure code are often the
-# same clinical event, and the transplant rule already fires on it. The request
-# does not say which rule should win. So both readings are built and the
-# difference between them is the answer to that question, in patients.
+# TWO cells. The study adopted the short-course rule, so the contract build
+# carries it and the cell WITHOUT it is the one that deviates. What the pair
+# measures is what the rule did to the study's numbers - which is the evidence
+# the adoption rests on, kept runnable.
+#
 # `mode` is the deviation a cell must record, NA marking the contract build.
 # `melp` is what the cell hands to APPLY_MELP_RULE - a separate thing, because
-# the contract build names its mode too rather than inheriting the shell.
+# the contract build names its value too rather than inheriting the shell.
 #
-# The reference is the contract build, and since the study adopted the
-# simplified rule that is what the reference now contains. So these two cells
-# measure the five-branch rule against the study's rule, not against a build
-# with no melphalan rule at all - which is what they measured before the
-# adoption. Numbers from the two eras are not comparable, and the reference
-# column is the half that moved.
+# Until 2026-08-30 there was a third cell and a five-branch rule to compare
+# against. That comparison is finished and the rule was not adopted; both are
+# gone, and STUDY_TEAM_ASKS.md keeps the finding.
 MELP_CELLS <- list(
-  list(id = "reference", mode = NA_character_, melp = "simplified",
-       what = "the contract build, unchanged - what the study has today"),
-  list(id = "as_asked", mode = "as_asked", melp = "as_asked",
-       what = paste0("every melphalan exposure judged, including one with a ",
-                     "transplant coded on it - so one clinical event can end a ",
-                     "line twice. The transplant question answered the way the ",
-                     "request implies, since it carves nothing out")),
-  list(id = "yield_to_sct", mode = "yield_to_sct", melp = "yield_to_sct",
-       what = paste0("the same, except that an exposure with an AUTO coded ",
-                     "within MELP_SCT_DAYS is left to the transplant rule. The ",
-                     "melphalan rule then fills only the gap where a transplant ",
-                     "left no procedure code")))
-
-# The names say what separates the two cells: the transplant reading, and only
-# that. Both implement the branch table as written.
-#
-# B.2 in both cells: the melphalan boundary is removed AND the line is carried
-# to the second dose, so both doses stay in the current line. The carry rides on
-# the run-out rather than on an end reason of its own - see melp_hold in
-# R/melp_rule.R. n_b2_line_starts checks it.
-MELP_B2_READING <- paste0(
-  "B.2: the melphalan boundary is removed AND the line is carried to the ",
-  "second dose, so both stay in the current line. Both cells take this ",
-  "reading - it is the request as written, not a choice between two.")
+  list(id = "reference", mode = "off", melp = "off",
+       what = "no melphalan rule - what the build did before the study adopted one"),
+  list(id = "simplified", mode = NA_character_, melp = "simplified",
+       what = paste0("the study's rule: a short melphalan course outside ",
+                     "induction does not advance a line on its own; a new ",
+                     "agent starting inside the course advances it on the ",
+                     "melphalan date")))
 
 # The cell's own status row: which run owns the prefix, whether it finished,
 # and when it last moved.
@@ -61,7 +41,7 @@ MELP_B2_READING <- paste0(
 cell_status <- function(con, c_i) {
   # paste0, not glue. Everything else in this file builds SQL that way, and a
   # lone glue() call makes the package an attach dependency of every script that
-  # sources it - read_melp_metrics.R does not attach it and died here.
+  # sources it - a reader that does not attach it died here.
   tbl <- wrk(paste0(c_i$prefix, "LOT_BUILD_STATUS"))
   st <- tryCatch(db_q(con, paste0(
     "SELECT RUN_ID, STATE, cast(UPDATED_AT as string) AS UPDATED_AT FROM ", tbl,
@@ -86,8 +66,8 @@ cell_status <- function(con, c_i) {
 
 # The same rows again, immediately before anything is published. Everything read
 # so far comes off tables a concurrent build can replace, so this is the only
-# check standing between "these three cells agreed at the start of the read" and
-# "they still describe the same three builds".
+# check standing between "these cells agreed at the start of the read" and
+# "they still describe the same builds".
 #
 # Not a lock - a rebuild finishing inside the read still goes undetected if it
 # also finishes before this runs. It closes the window rather than the door,
@@ -199,7 +179,7 @@ melp_drop_cell <- function(con, c_i, study_prefix = "") {
 # LOT records all of it: the cohort attempt it read in LOT_RUN_METADATA, the
 # code fingerprint and study window beside it, and every code list's md5 in
 # LOT_CODELIST_METADATA. So the check is to read it back rather than to trust
-# that three sequential builds saw the same world.
+# that two sequential builds saw the same world.
 #
 # CONTRACT_SETTINGS is not here, and is checked all the same - by
 # melp_settings(), which compares it key by key. It cannot be compared as one
@@ -260,27 +240,28 @@ melp_check_inputs <- function(rows) {
 
 # And each cell has to be the algorithm it says it is.
 #
-# The reference must carry no deviation: if it needed one it is not the contract
-# build, and every delta is measured against the wrong thing. Each mode must
-# carry the melphalan deviation, naming the mode that cell is supposed to be -
-# and nothing else, because the cells are three separate processes and a second
-# setting reaching one of them would be read as the rule's effect.
+# Which cell deviates FLIPPED when the study adopted the rule. The cell that
+# carries it is the contract build now, and must record no deviation at all: if
+# it needed one it is not the contract build, and every delta is measured
+# against the wrong thing. The cell built WITHOUT the rule is the deviating one,
+# and must record the melphalan deviation naming what it was asked for - and
+# nothing else, because the cells are separate processes and a second setting
+# reaching one of them would be read as the rule's effect.
+#
+# The code says this generically, off each cell's own `mode`: NA is the contract
+# build, a word is a deviation to expect. So the flip needed no change here.
 #
 # check_lot_contract() writes one entry per wrong setting as
 # "key=value (contract value)", pipe-separated by write_build_status(). So the
 # entries are what is counted, and the mode is matched inside its own entry
 # rather than anywhere in the string.
 #
-# `allowed` names the settings a mode cell may legitimately deviate on beyond
-# the mode itself. No package passes one today - the melphalan and fold-in
-# cells each differ on their mode alone - and the contract cell may never
-# deviate at all: if it needed to, it would not be the contract build.
-#
-# `key` is the setting the cells exist to differ on. The melphalan packages
-# leave the default; the fold-in package passes apply_map_foldin, with the
-# cell's mode field carrying the value it must record.
-melp_check_deviations <- function(rows, cells, allowed = character(0),
-                                  key = "apply_melp_rule") {
+# `key` is the setting the cells exist to differ on. The melphalan package
+# leaves the default; the fold-in package passes apply_map_foldin, with the
+# cell's mode field carrying the value it must record. A cell may deviate on
+# that setting and nothing else, and the contract cell may not deviate at all:
+# if it needed to, it would not be the contract build.
+melp_check_deviations <- function(rows, cells, key = "apply_melp_rule") {
   mode_of <- setNames(lapply(cells, function(c_i) c_i$mode),
                       vapply(cells, function(c_i) c_i$id, character(1)))
   bad <- character(0)
@@ -298,9 +279,6 @@ melp_check_deviations <- function(rows, cells, allowed = character(0),
     }
     melp  <- grep(paste0("^", key, "="), entries)
     other <- entries[-melp]
-    if (length(allowed))
-      other <- other[!grepl(paste0("^(", paste(allowed, collapse = "|"), ")="),
-                            other)]
     if (!length(melp))
       bad <- c(bad, paste0("  ", id, " is meant to build the rule but records no ",
                            key, " deviation (",
@@ -325,15 +303,13 @@ melp_check_deviations <- function(rows, cells, allowed = character(0),
 # only while the two agree. They stop agreeing the moment the read happens
 # separately from the build: a recovery run a week later with
 # MELP_EXPOSURE_DAYS=31 in the environment recounts B.2 under a rule no cell was
-# built with, and every provenance check still passes, because the three cells
+# built with, and every provenance check still passes, because both cells
 # do agree with each other.
 #
 # So the values come off CONTRACT_SETTINGS, which is the run's own record of
 # what it used.
 MELP_SETTING_KEYS <- c(abbr         = "melp_med_abbr",
                        expo_days    = "melp_exposure_days",
-                       restart_days = "melp_restart_days",
-                       advance_days = "melp_advance_days",
                        ind1         = "induction_window_days",
                        indn         = "lot_n_induction_window_days",
                        cart         = "cart_consolidation_days")
@@ -422,6 +398,11 @@ MELP_METRICS <- c(
   n_melp_lines       = "lines whose regimen contains melphalan",
   n_sct_auto_end     = "lines ended by an autologous transplant",
   n_pat_with_melp    = "patients with any melphalan line",
+  # "B.2" is the retired five-branch rule's name for the shape: a dose 60-179
+  # days after the one before it, outside induction. The name is kept because
+  # the count is still the sharpest measure of what the adopted rule changed -
+  # these are exactly the line starts it refuses, so the figure should fall to
+  # near nothing in the cell that carries the rule and not in the one without.
   n_b2_line_starts   = "MED-started lines whose start is a B.2 second dose",
   n_b2_melp_only     = "...of those, the ones no other agent would have started",
   # The population under discussion: lines that are melphalan alone among the
@@ -477,13 +458,16 @@ melp_sct_sql <- function()
 # One statement per cell. The reaching-LOTn figures come from LOT_ATTRITION,
 # which already holds them, rather than being derived a second way.
 #
-# The four melphalan figures are where the double-count shows. If as_asked ends
-# more lines by melphalan than yield_to_sct does, and the transplant ends fewer,
-# the two rules were firing on the same events - which is the question the two
-# cells exist to settle.
-# ind1 / indn / cart are the build's own induction windows, needed to tell a
-# previous line's B exposure from an A one. map_tbl is the persisted MAP stack,
-# which is what makes the B.2 count exact rather than a proxy.
+# The four melphalan figures are where the rule shows: how many lines it ends
+# by melphalan, and how many the transplant ends instead. Melphalan is
+# transplant conditioning, so a melphalan claim and an AUTO code are often the
+# same clinical event, and the two columns moving in opposite directions is
+# what tells you the rules are firing on one event rather than two.
+#
+# ind1 / indn / cart are the build's own induction windows, needed to tell an
+# exposure inside a line's induction from one outside it. map_tbl is the
+# persisted MAP stack, which is what makes the course count exact rather than
+# a proxy.
 # Several statements, not one.
 #
 # It was one SELECT with nineteen scalar subqueries over seven CTEs, two of
@@ -496,9 +480,15 @@ melp_sct_sql <- function()
 # The counts that shared a scan now share a CASE instead.
 #
 # Returns one statement per name. melp_metrics() runs them and cbinds the row.
+# The 60-179 day band that identifies a "B.2" pair. It named two settings of
+# the retired five-branch rule; nothing in the build reads them now, so the two
+# numbers live here, beside the only thing that uses them. They describe the
+# SHAPE the count is looking for, not a rule any build applies.
+MELP_B2_FROM <- 60L
+MELP_B2_TO   <- 180L
+
 melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP",
-                            map_tbl = NULL, expo_days = 30L, restart_days = 60L,
-                            advance_days = 180L, ind1 = 60L, indn = 30L,
+                            map_tbl = NULL, expo_days = 30L, ind1 = 60L, indn = 30L,
                             cart = 45L) {
   in_melp <- paste0("array_contains(split(upper(coalesce(LOT_BASE_MEDS, '')), ' '), '", abbr, "')")
   mono    <- melp_mono_sql(abbr)
@@ -576,7 +566,7 @@ melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP",
             ELSE ", indn - 1L, " END
     -- 4. and the pair 60-179 days apart, which is B.2 not B.1 or B.3
       AND datediff(x.LOT_START_DT, e.PREV_EXPO_DT)
-            BETWEEN ", restart_days, " AND ", advance_days - 1L, extra)
+            BETWEEN ", MELP_B2_FROM, " AND ", MELP_B2_TO - 1L, extra)
 
   # The same lines, less the ones another agent would have started anyway.
   # LOT_START_TYPE = 'MED' says a medication won the tie-break, not which one,
@@ -706,7 +696,7 @@ melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP",
 
 # One row, from however many statements it takes. A statement that fails stops
 # with the warehouse's own message. One that comes back empty is a NULL here,
-# and the caller stops on it - the result is the comparison between all three
+# and the caller stops on it - the result is the comparison between both
 # cells, not a best effort at one.
 melp_metrics <- function(con, ...) {
   qs <- melp_metric_sql(...)
@@ -728,7 +718,7 @@ melp_metrics <- function(con, ...) {
 # boundaries in both directions at once - B.1 adds a line, B.2 and B.3 remove
 # one - and which wins is what the run is for. A written-down guess would be a
 # guess.
-melp_compare <- function(results, cells = MELP_CELLS) {
+melp_compare <- function(results, cells) {
   ref <- results[results$cell == "reference", , drop = FALSE]
   if (!nrow(ref)) stop("No reference cell in the results.", call. = FALSE)
   out <- list()
@@ -856,57 +846,6 @@ melp_by_line_sql <- function(final_tbl, map_tbl, abbr = "MELP") {
     ORDER BY LOT_NUM")
 }
 
-# Every regimen at every line, among the same melphalan-exposed patients.
-#
-# The whole distribution rather than the melphalan rows, because "how many are
-# still 2L melphalan alone" is only answerable against what else 2L is. Not
-# truncated here: a top-N would silently drop the tail, and the tail is where a
-# rule that splits lines shows up as regimens nobody recognises.
-melp_regimens_by_line_sql <- function(final_tbl, map_tbl, abbr = "MELP") {
-  mono <- melp_mono_sql(abbr)
-  any_melp <- paste0("array_contains(split(upper(coalesce(LOT_BASE_MEDS, '')), ' '), '",
-                     abbr, "')")
-  paste0("
-    WITH exposed AS (", melp_exposed_sql(map_tbl, abbr), "),
-    lines0 AS (
-      SELECT f.* FROM ", final_tbl, " f
-      INNER JOIN exposed e ON cast(f.PATID as string) = e.PATID
-    ),
-    -- Melphalan actually given inside the line, from MAP_STACKED.
-    --
-    -- The regimen cannot answer this on its own. An ALLO-started line carries
-    -- no regimen rows at all - 10_lot2_5_base.R suppresses them - so a
-    -- melphalan-conditioned allograft has a blank LOT_BASE_MEDS and is
-    -- invisible to any test on it. A count of melphalan-plus-ALLO built from
-    -- the regimen is structurally zero, which reads as evidence of absence.
-    melp_in_line AS (
-      SELECT DISTINCT l.PATID, l.LOT_NUM
-      FROM lines0 l
-      INNER JOIN ", map_tbl, " m
-              ON cast(m.PATID as string) = cast(l.PATID as string)
-      WHERE upper(trim(m.MAP_MED_TYPE)) = '", abbr, "'
-        AND m.MAP_START_DT BETWEEN l.LOT_START_DT AND l.LOT_BASE_END_DT
-    ),
-    lines AS (
-      SELECT l.*, CASE WHEN d.PATID IS NOT NULL THEN 1 ELSE 0 END AS HAS_MELP_DOSE
-      FROM lines0 l
-      LEFT JOIN melp_in_line d ON d.PATID = l.PATID AND d.LOT_NUM = l.LOT_NUM
-    )
-    SELECT LOT_NUM,
-           -- A transplant- or CART-started line can carry no agents at all.
-           -- Left as its own label rather than an empty string, which reads as
-           -- a missing value in every spreadsheet this lands in.
-           coalesce(nullif(trim(upper(LOT_BASE_MEDS)), ''), '(no agents)') AS REGIMEN,
-           count(DISTINCT PATID)                             AS N_PATIENTS,
-           count(*)                                          AS N_LINES,
-           max(CASE WHEN ", mono, " THEN 1 ELSE 0 END)       AS IS_MELP_MONO,
-           max(CASE WHEN ", any_melp, " THEN 1 ELSE 0 END)   AS HAS_MELP,
-           percentile_approx(LOT_BASE_LENGTH, 0.5)           AS MEDIAN_LEN
-    FROM lines
-    GROUP BY LOT_NUM, coalesce(nullif(trim(upper(LOT_BASE_MEDS)), ''), '(no agents)')
-    ORDER BY LOT_NUM, N_PATIENTS DESC, REGIMEN")
-}
-
 # The two readings against each other, patient by patient rather than by
 # subtracting totals.
 #
@@ -940,28 +879,13 @@ melp_modes_patients_sql <- function(a_tbl, y_tbl) {
     FROM a FULL OUTER JOIN y ON a.PATID = y.PATID")
 }
 
-# The aggregate view of the same thing. Useful, and not the same claim: this is
-# the downstream consequence of the two readings, not a count of the events
-# where both rules fired.
-melp_modes_apart <- function(results) {
-  a <- results[results$cell == "as_asked", , drop = FALSE]
-  y <- results[results$cell == "yield_to_sct", , drop = FALSE]
-  if (!nrow(a) || !nrow(y)) return(NULL)
-  do.call(rbind, lapply(names(MELP_METRICS), function(m) data.frame(
-    metric = m,
-    as_asked = suppressWarnings(as.numeric(a[[m]][1])),
-    yield_to_sct = suppressWarnings(as.numeric(y[[m]][1])),
-    difference = suppressWarnings(as.numeric(a[[m]][1]) - as.numeric(y[[m]][1])),
-    stringsAsFactors = FALSE)))
-}
-
 # ---- The read ---------------------------------------------------------------
 # What every cell was built over, before any number is read off it.
 #
-# MELP_INPUT_FIELDS compares CODE_MD5 across the three cells. That catches a
-# cell built from different code than its siblings. It does not catch all three
+# MELP_INPUT_FIELDS compares CODE_MD5 across the cells. That catches a
+# cell built from different code than its sibling. It does not catch both
 # being built from an engine that no longer matches this checkout, because
-# those three agree with each other perfectly.
+# the two agree with each other perfectly.
 #
 # So the recorded hash is also compared against the code now running. Same
 # fingerprint the build writes: every .R under the engine's R/ plus build.R,
@@ -1008,7 +932,7 @@ melp_check_code <- function(inputs, lot_root) {
                 paste(was, collapse = "/"), ", and the code reading them is ",
                 now, ". The numbers would describe the engine as it was when ",
                 "the cells were built, not as it is now. Rebuild all cells ",
-                "with run_aug1_melp.R. Set MELP_ALLOW_STALE_CODE=TRUE to read ",
+                "with run_melp_simple.R. Set MELP_ALLOW_STALE_CODE=TRUE to read ",
                 "them anyway.")
   if (identical(toupper(trimws(Sys.getenv("MELP_ALLOW_STALE_CODE", unset = ""))),
                 "TRUE")) {
@@ -1043,8 +967,7 @@ melp_stamp <- function(d, inputs, status) {
         d, stringsAsFactors = FALSE)
 }
 
-melp_read_inputs <- function(con, cells, status, allowed = character(0),
-                             key = "apply_melp_rule") {
+melp_read_inputs <- function(con, cells, status, key = "apply_melp_rule") {
   inputs <- list()
   for (c_i in cells) {
     # The error is kept, not swallowed. A query that failed and a run with no
@@ -1065,189 +988,6 @@ melp_read_inputs <- function(con, cells, status, allowed = character(0),
     inputs[[c_i$id]] <- r
   }
   melp_check_inputs(inputs)
-  melp_check_deviations(inputs, cells, allowed, key)
+  melp_check_deviations(inputs, cells, key)
   inputs
-}
-
-# Three built cells in, six files out.
-#
-# One function rather than a copy in each script. run_aug1_melp.R builds and
-# then reads; read_melp_metrics.R only reads, which is what a Spark failure in
-# the reading half leaves to do. When each carried its own reading, the recovery
-# script wrote two of them and left the rest as whichever run wrote them last -
-# one directory, one timestamp, describing two different runs.
-#
-# So everything is computed first and written afterwards. A read that cannot
-# produce the whole set writes none of it, and the previous set stays whole.
-melp_report <- function(con, cells, out_dir, lot_root = NULL) {
-  # Once per cell, then carried. Asking again for each run id is what lets a
-  # rebuild land between two questions - see cell_status().
-  status <- setNames(lapply(cells, function(c_i) cell_status(con, c_i)),
-                     vapply(cells, function(c_i) c_i$id, character(1)))
-  inputs <- melp_read_inputs(con, cells, status)
-  if (!is.null(lot_root)) melp_check_code(inputs, lot_root)
-  st <- melp_settings(inputs)
-  cat("\nAll three cells were built over cohort attempt ",
-      inputs[[1]]$COHORT_RUN_ID[1], " / ", inputs[[1]]$COHORT_STAMP[1],
-      ", the same code, the same code lists and the same settings.\n", sep = "")
-
-  rows <- list()
-  out_acc <- list(by_line = list(), regimens = list())
-  for (c_i in cells) {
-    final <- wrk(paste0(c_i$prefix, "LOT_LONG_FINAL"))
-    cat("  reading ", c_i$id, " from ", final, "\n", sep = "")
-    # The MAP stack and the build's own windows, so the B.2 count is that
-    # population rather than every line melphalan happens to appear in.
-    m <- melp_metrics(con, final,
-      wrk(paste0(c_i$prefix, "LOT_ATTRITION")), status[[c_i$id]]$run_id, st$abbr,
-      map_tbl      = wrk(paste0(c_i$prefix, "MAP_STACKED")),
-      expo_days    = st$expo_days,
-      restart_days = st$restart_days,
-      advance_days = st$advance_days,
-      ind1         = st$ind1,
-      indn         = st$indn,
-      cart         = st$cart)
-    if (is.null(m))
-      stop("Metrics could not be read for ", c_i$id, " (", final, "): a ",
-           "statement returned no row, so that cell was never fully built. The ",
-           "result is the comparison between all three, so ",
-           "this is a stop rather than a row left out of it.", call. = FALSE)
-    rows[[length(rows) + 1L]] <- cbind(cell = c_i$id, mode = c_i$mode, m,
-                                       stringsAsFactors = FALSE)
-    # The by-line tables, over the melphalan-exposed. Duration, regimen make-up
-    # and transplants-inside-a-melphalan-line - which the row above only totals.
-    map_t <- wrk(paste0(c_i$prefix, "MAP_STACKED"))
-    for (v in list(list("by_line", melp_by_line_sql(final, map_t, st$abbr),
-                        "counted by line"),
-                   list("regimens", melp_regimens_by_line_sql(final, map_t, st$abbr),
-                        "broken down by regimen"))) {
-      d <- tryCatch(db_q(con, v[[2]]), error = function(e) e)
-      if (inherits(d, "error") || !nrow(d))
-        stop("Melphalan could not be ", v[[3]], " for ", c_i$id, " (", final,
-             "): ", if (inherits(d, "error")) conditionMessage(d) else "no rows",
-             ". That breakdown is what was asked for, so this is a stop rather ",
-             "than an output left out.", call. = FALSE)
-      acc <- v[[1]]
-      out_acc[[acc]][[length(out_acc[[acc]]) + 1L]] <-
-        cbind(cell = c_i$id, mode = c_i$mode, d, stringsAsFactors = FALSE)
-    }
-  }
-  res  <- do.call(rbind, rows)
-  mono <- do.call(rbind, out_acc$by_line)
-  regs <- do.call(rbind, out_acc$regimens)
-  cmp  <- melp_compare(res)
-
-  ap <- melp_modes_apart(res)
-  if (is.null(ap))
-    stop("The plan has no as_asked and yield_to_sct pair, so the transplant ",
-         "question is not answered and this is not the experiment.", call. = FALSE)
-
-  # The prefixes come from the plan, not from the default spelled out again.
-  # AUG1_PREFIX_BASE moves every cell, so a prefix written out here reads
-  # nothing under a custom base - or, worse, reads a previous experiment's
-  # tables that happen to still be there and reports them as this run's.
-  pfx_of <- function(id) {
-    hit <- Filter(function(c_i) identical(c_i$id, id), cells)
-    if (!length(hit)) stop("no ", id, " cell in the plan", call. = FALSE)
-    hit[[1]]$prefix
-  }
-  # Required, not best-effort. This is the comparison the two modes exist for,
-  # so a run that skipped it is not a finished experiment.
-  pd <- tryCatch(db_q(con, melp_modes_patients_sql(
-    wrk(paste0(pfx_of("as_asked"), "LOT_LONG_FINAL")),
-    wrk(paste0(pfx_of("yield_to_sct"), "LOT_LONG_FINAL")))), error = function(e) e)
-  if (inherits(pd, "error") || !nrow(pd))
-    stop("The two readings could not be compared patient by patient: ",
-         if (inherits(pd, "error")) conditionMessage(pd) else "no rows",
-         ". That comparison is what the two modes are for, so this is a stop ",
-         "rather than an output left out.", call. = FALSE)
-
-  # Everything above came off tables a concurrent build can replace. This is the
-  # last point where saying so costs nothing.
-  melp_status_unchanged(con, cells, status)
-
-  # Written aside, then moved into place. Writing the four names directly lets a
-  # failure on the second leave the first already replaced and the other three
-  # from the previous read - the mixed set this function exists to avoid,
-  # reached a different way.
-  #
-  # The renames are not one operation: a process killed between them still tears
-  # the set. This narrows the window from four queries and a write down to a
-  # rename. A truly atomic swap needs a run-stamped directory, which changes
-  # where the outputs live.
-  dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
-  out <- list(melp_cells.csv = res, melp_vs_reference.csv = cmp,
-              melp_modes_apart.csv = ap, melp_modes_patients.csv = pd,
-              melp_by_line.csv = mono, melp_regimens_by_line.csv = regs)
-  tmp <- file.path(out_dir, paste0(".", names(out), ".part"))
-  on.exit(unlink(tmp[file.exists(tmp)]), add = TRUE)
-  for (i in seq_along(out))
-    utils::write.csv(out[[i]], tmp[i], row.names = FALSE)
-  for (i in seq_along(out))
-    if (!file.rename(tmp[i], file.path(out_dir, names(out)[i])))
-      stop("Could not move ", names(out)[i], " into ", out_dir, ". The outputs ",
-           "there are now part this read and part the one before it - delete ",
-           "them and re-run rather than reading what is left.", call. = FALSE)
-
-  cat("\nAgainst the contract build:\n\n")
-  for (i in seq_len(nrow(cmp)))
-    cat(sprintf("  %-13s %-19s %10s -> %-10s %+8s  %s\n",
-                cmp$cell[i], cmp$metric[i], format(cmp$reference[i]),
-                format(cmp$observed[i]), format(cmp$change[i]),
-                if (is.na(cmp$pct_change[i])) "" else paste0(cmp$pct_change[i], "%")))
-
-  cat("\nThe two readings against each other, in aggregate. This is the\n",
-      "downstream consequence of the two interpretations, not a count of the\n",
-      "events where both rules fired:\n\n", sep = "")
-  for (i in seq_len(nrow(ap)))
-    cat(sprintf("  %-19s as_asked %-10s yield_to_sct %-10s  %+s\n",
-                ap$metric[i], format(ap$as_asked[i]),
-                format(ap$yield_to_sct[i]), format(ap$difference[i])))
-
-  cat("\nAnd patient by patient. A patient counts as differing when their line\n",
-      "count, or any line's start, end or end reason, is not the same under\n",
-      "both readings:\n\n", sep = "")
-  cat("  ", pd$N_PATIENTS[1], " patients in either build\n", sep = "")
-  cat("  ", pd$N_DIFFERENT[1], " whose lines differ between the two readings\n", sep = "")
-  cat("  ", pd$N_LINE_COUNT_DIFFERENT[1], " of those have a different NUMBER of lines\n", sep = "")
-  cat("  ", pd$N_SAME_COUNT_DIFFERENT_LINES[1],
-      " have the same number of lines in different places -\n",
-      "      which is why the aggregate above understates it\n", sep = "")
-  cat("  ", pd$N_ONLY_ONE_SIDE[1], " appear in one build and not the other\n", sep = "")
-
-  # The three by-line questions, at LOT2 and LOT3. Whole tables in
-  # melp_by_line.csv and melp_regimens_by_line.csv.
-  nf <- function(x) if (length(x) != 1L || is.na(x)) "-" else format(x)
-  cat("\nAmong patients given ", st$abbr, " at any point in follow-up (",
-      nf(res$n_pat_melp_fu[res$cell == "reference"]),
-      " on the contract build).\n", sep = "")
-  cat("Melphalan alone means the regimen's only agent. Steroids are never\n",
-      "captured in the regimen, so a ", st$abbr, "-plus-steroid line still ",
-      "reads as ", st$abbr, " alone\nin every mono count here.\n\n", sep = "")
-  cat(sprintf("  %-13s %4s %7s %8s %7s %9s %9s %10s %9s\n",
-              "cell", "LOT", "lines", "med len", "mono", "mono pts",
-              "mono len", "med-start", "SCT+melp"))
-  for (i in which(mono$LOT_NUM %in% c(2L, 3L)))
-    cat(sprintf("  %-13s %4s %7s %8s %7s %9s %9s %10s %9s\n",
-                mono$cell[i], mono$LOT_NUM[i], nf(mono$N_LINES[i]),
-                nf(mono$MEDIAN_LEN[i]), nf(mono$N_MONO[i]),
-                nf(mono$N_PAT_MONO[i]), nf(mono$MEDIAN_MONO_LEN[i]),
-                nf(mono$N_MONO_MED_START[i]), nf(mono$N_PAT_MELP_SCT[i])))
-  cat("\n  med len    every line at that LOT, so reference against a rule row is\n",
-      "             the change in duration the rule caused\n",
-      "  mono pts   patients with a ", st$abbr, "-only line at that LOT\n",
-      "  med-start  of the mono lines, the ones a medication started - where the\n",
-      "             rule set the boundary rather than a transplant\n",
-      "  SCT+melp   patients with a transplant inside a ", st$abbr,
-      "-containing line.\n             High-dose ", st$abbr, " is conditioning, ",
-      "so those are most likely a\n             transplant rather than a new ",
-      "therapy\n", sep = "")
-  cat("\n  Regimens: ", nrow(regs), " rows over ",
-      length(unique(regs$LOT_NUM)), " lines and ", length(cells),
-      " cells in melp_regimens_by_line.csv -\n  every regimen, not a top-N, so ",
-      "the tail a line-splitting rule creates is visible.\n", sep = "")
-
-  cat("\nWrote ", out_dir, ".\n", sep = "")
-  invisible(list(cells = res, compare = cmp, apart = ap, patients = pd,
-                 by_line = mono, regimens = regs))
 }

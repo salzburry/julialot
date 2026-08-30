@@ -94,16 +94,16 @@ cfg_defaults <- list(
   censor_at_disenrollment = as.logical(Sys.getenv("CENSOR_AT_DISENROLLMENT", unset = "FALSE")),
 
   # ---- The melphalan line-advancing rule (R/melp_rule.R) ----
-  # 'simplified' is the contract build, and config.csv carries it. Any other
-  # value - 'off', 'as_asked', 'yield_to_sct' - is a different algorithm, so it
-  # is pinned in CONTRACT and needs LOT_CONTRACT_OVERRIDE.
+  # 'simplified' is the contract build, and config.csv carries it. The only
+  # other value is 'off', which is a different algorithm, so it is pinned in
+  # CONTRACT and needs LOT_CONTRACT_OVERRIDE.
   #
   # The default here stays blank on purpose. config.csv is what supplies the
   # contract mode, so a run that somehow loses it lands on blank, fails the
   # contract check and stops - rather than defaulting to the study's rule and
   # hiding the fact that the settings file never loaded. Note that blank cannot
   # be asked for from the environment: load_inputs.R fills an empty variable
-  # from config.csv. 'off' is the word that survives, and melp_rule_mode()
+  # from config.csv. 'off' is the word that survives, and melp_rule_on()
   # maps it to no rule.
   apply_melp_rule    = Sys.getenv("APPLY_MELP_RULE",    unset = ""),
   # Pinned TRUE in CONTRACT since the study adopted the rule - LOT_RULES.md
@@ -132,9 +132,6 @@ cfg_defaults <- list(
     as.logical(Sys.getenv("APPLY_NO_BELANTAMAB", unset = "TRUE")),
   melp_med_abbr      = Sys.getenv("MELP_MED_ABBR",      unset = "MELP"),
   melp_exposure_days = as.integer(Sys.getenv("MELP_EXPOSURE_DAYS", unset = "30")),
-  melp_restart_days  = as.integer(Sys.getenv("MELP_RESTART_DAYS",  unset = "60")),
-  melp_advance_days  = as.integer(Sys.getenv("MELP_ADVANCE_DAYS",  unset = "180")),
-  melp_sct_days      = as.integer(Sys.getenv("MELP_SCT_DAYS",      unset = "14")),
   melp_simple_course_days = as.integer(Sys.getenv("MELP_SIMPLE_COURSE_DAYS",
                                                   unset = "28")),
 

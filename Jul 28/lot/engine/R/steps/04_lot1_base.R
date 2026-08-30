@@ -112,7 +112,8 @@ phase_lot1_base <- function(con, ctx) {
                         glue('date_add(lot1_regimen_cutoff.LOT1_START_DT, {cfg$induction_window_days - 1})'))}
     discon_per_med AS (
 {discon_per_med_sql('lot1_regimen_cutoff', 'LOT1_START_DT', end_col = 'REGIMEN_CUTOFF_DT',
-                    boundary_gate = melp_boundary_gate(cfg),
+                    boundary_join = melp_boundary_join(cfg),
+                    boundary_break_pred = melp_boundary_break_pred(cfg),
                     own_gap_breaks = own_gap_breaks_chain(cfg))}
     ),
     -- The regimen has run out when its LAST base agent has.

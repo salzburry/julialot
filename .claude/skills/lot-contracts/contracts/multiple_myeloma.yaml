@@ -16,7 +16,7 @@ status: baseline_extracted
 provenance:
   source: extracted from Jul 28/lot/engine (config_lot.R defaults and step files)
   reviewed_by: []
-  notes: "v1 at the materialization pass, the NDMM study run. v2 records three axes the engine gained on 2026-08-13 and this file had not - lines.discon_confirm_days, lines.discon_confirmed_by_return, event_streams.CART.induction_absorbed - and the pin now reads build_lot.R's CONTRACT instead of copying it, which is why they were invisible until v2. v3 records advancement.prior_line_agent_return, the axis behind the study team's August fold-in request - the engine gained a gated APPLY_MAP_FOLDIN mode, pinned off, and new_line stays the study's algorithm until the team decides on the evaluation cells. v4 records the short-course axis: on 2026-08-30 the study team adopted the melphalan rule, so advancement.short_course_rule moves from none to applied and this tumor's algorithm now includes it. The five-branch modes the team asked for first were measured and not adopted; they are comparison cells and no contract build carries one. v5 adopts the MAP fold-in with the study team's count: advancement.prior_line_agent_return moves from new_line to one_advance_joins. v6 makes the engine match advancement.same_regimen_gap_days, which has read none since v1: a re-challenge of the line's own regimen no longer advances the line, and the line runs over the break instead"
+  notes: "v1 at the materialization pass, the NDMM study run. v2 records three axes the engine gained on 2026-08-13 and this file had not - lines.discon_confirm_days, lines.discon_confirmed_by_return, event_streams.CART.induction_absorbed - and the pin now reads build_lot.R's CONTRACT instead of copying it, which is why they were invisible until v2. v3 records advancement.prior_line_agent_return, the axis behind the study team's August fold-in request - the engine gained a gated APPLY_MAP_FOLDIN mode, pinned off, and new_line stays the study's algorithm until the team decides on the evaluation cells. v4 records the short-course axis: on 2026-08-30 the study team adopted the melphalan rule, so advancement.short_course_rule moves from none to applied and this tumor's algorithm now includes it. The five-branch modes the team asked for first were measured and not adopted, and were removed from the engine on 2026-08-30 along with the three settings only they read; APPLY_MELP_RULE now takes the adopted rule or off, and nothing else. v5 adopts the MAP fold-in with the study team's count: advancement.prior_line_agent_return moves from new_line to one_advance_joins. v6 makes the engine match advancement.same_regimen_gap_days, which has read none since v1: a re-challenge of the line's own regimen no longer advances the line, and the line runs over the break instead"
 
 observation:
   censor_at_disenrollment: false
@@ -81,9 +81,11 @@ advancement:
   # joins_line = it folds into the line it returns in (the fold-in mode).
   # one_advance_joins = the return joins the line it returns in when exactly
   # one agent advanced the line between that drug's two doses; two or more and
-  # it starts a line, as new_line always does. Scoped to the previous line the
-  # count can only be nought or one, so the two-or-more branch states the rule
-  # the study team asked for without being reachable - see STUDY_TEAM_ASKS.md.
+  # it starts a line, as new_line always does. The scope is the immediately
+  # previous line and that is SETTLED, not provisional - so the count can only
+  # be nought or one, and the two-or-more branch states the rule the study team
+  # asked for without being reachable. Widening the scope is the only thing
+  # that would make it fire - see STUDY_TEAM_ASKS.md.
   prior_line_agent_return: one_advance_joins
   # A brief course of one named agent, outside the line's regimen window, does
   # not advance the line on its own - the line is carried to the end of that

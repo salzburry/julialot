@@ -7,9 +7,16 @@ Behaviour only. Open clinical questions live on the Open questions sheet of the
 scenario workbook (`exploration/lot/run_lot_scenarios.R`). What each file does
 is `FILES.md`. What the study team asked for is `STUDY_TEAM_ASKS.md`.
 
-Worked examples are machine-checked cases in `lot/validation/R/`, not prose. A
-renamed vignette, or one no rule cites, fails
-`lot/validation/tests/test_vignettes.R`.
+Worked examples are cases in `lot/validation/R/`, not prose, and their
+structure is machine-checked: every offset is derived from the setting that
+decides it, each boundary pair straddles that setting by one day, and every
+rule they cite still exists where they say it does. A renamed vignette, or one
+no rule cites, fails `lot/validation/tests/test_vignettes.R`.
+
+What is NOT checked is the OUTCOME. A vignette says what the rules give, and
+nothing runs a patient through the engine to confirm it — which is why each one
+carries a confidence, and why the ones marked `to_confirm` are our reading
+rather than a result.
 
 > **Changed 2026-08-30.** Three rules changed what starts and ends a line:
 > §4.3 (a drug of the previous regimen never starts one), §4.7 (a short
@@ -91,10 +98,6 @@ as the study's numbers.
 | `melp_med_abbr` | `MELP` | how melphalan is spelled on the code list |
 | `melp_exposure_days` | 30 | melphalan doses closer than this are one course |
 | `melp_simple_course_days` | 28 | a course covering this or fewer days is short — §4.7 |
-
-`melp_restart_days`, `melp_advance_days` and `melp_sct_days` are pinned but
-inert — they belong to the five-branch melphalan rule, which was not adopted.
-Pinned so a comparison cell rebuilt later is the same comparison.
 
 To build without the melphalan rule, use `APPLY_MELP_RULE=off`. Not a blank:
 the settings loader fills any variable that is unset **or empty** from
@@ -323,8 +326,10 @@ a line start and never reaches the test.
 regimen.** A drug is in that regimen only through an episode starting at or
 after that line's start (§3.3), and the return has to be inside the line being
 built, so exactly one line can have opened in between. The row is kept because
-it states the rule the study team asked for, and because widening the fold set
-would make it live again.
+it states the rule the study team asked for. The scope is settled at the
+previous line (`STUDY_TEAM_ASKS.md`), so the row is a statement of the rule
+rather than a branch waiting to fire; widening the scope is what would make it
+reachable.
 
 A return only joins the line that actually contains it. While lines are built in
 order the count is relative to the line being built, so a return with another
@@ -403,6 +408,29 @@ melphalan date anyway. This is the one place the two rules meet, and it settles
 both directions: a course this rule suppressed is not a line-defining agent for
 §4.8's count either, and it joins no regimen (§4.7 holds it, and a held course
 is in neither `LOT_BASE_MEDS` nor `LOT_MED_CNT`).
+
+**And the melphalan itself may be the returning drug.** A course this rule
+CONFIRMS starts the next line, on its own first day — so §4.8 stands back from
+it too, exactly as it does from a suppressed one, and for the opposite reason:
+a suppressed course opens nothing, a confirmed one opens a line, and neither is
+a drug folding back into the line before it. Worked example:
+`melp_confirmed_beats_the_fold`. Left to both rules, the previous line named a
+drug whose only episode began after that line had ended, and its end date and
+end reason moved with it.
+
+**A transplant inside a course does not split it.** One course gets one
+answer, and the answer is settled by where the course STARTS — the ask says a
+course outside **any** induction window does not advance the line, so a
+transplant landing between two doses of one course changes nothing about
+whether it advances. A course that began before a line is outside that line's
+induction window, not exempt from its judgement. The line the transplant opened
+is carried to the end of that course's cover and owns the doses that fall in
+it, exactly as it would for a course that began after it. Not a choice between
+owners: the transplant ends the earlier line where it falls (§6), so that line
+cannot reach the later dose at all. Worked example:
+`melp_course_split_by_a_transplant`. Judged only against a line it starts
+inside, the course was dropped by the transplant's line and its later dose
+opened a line of its own.
 
 **A steroid never confirms a course.** Corticosteroids are not oncology agents
 (§2.1), so melphalan given with one is still melphalan on its own: the course

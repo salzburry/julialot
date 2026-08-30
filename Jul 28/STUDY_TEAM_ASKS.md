@@ -33,6 +33,67 @@ creates.
 `lot/LOT_RULES.md` 4.7, `lot/engine/R/melp_rule.R`. Course cap 28 days, and the
 build offers no other.
 
+**The cap is `<= 28`, inclusive — CONFIRMED 30 Aug.** A course covering exactly
+28 days is short and the rule applies to it. This was the last thing about the
+cap that could have been read two ways; it is not open any more.
+
+**A confirmed course that is ALSO a returning drug — SETTLED 30 Aug, by the
+words above.** The ask says a patient given melphalan on day 100 who starts a
+new agent on day 105 begins the new line on **day 100**. That holds whether or
+not the melphalan is a drug the patient had in an earlier line. So when §4.8
+would fold that course into the line it returns in, §4.8 stands back: the
+course starts a line, and a dose that starts a line is not a drug folding back
+into the line before it.
+
+Left to both rules, the previous line named a drug whose only episode began
+after that line had ended, and the line's end date and end reason moved with
+it. On the worked patient:
+
+| | previous line | new line |
+|---|---|---|
+| both rules claiming it | `d200 → d449` **MED_ADD**, regimen `DARA MELP` | `d450` |
+| the ask, and the build now | `d200 → d300` **DISCONTINUATION**, regimen `DARA` | `d450`, regimen `MELP` + the day-305 agent |
+
+Worked example `melp_confirmed_beats_the_fold` in the vignette catalogue.
+
+**A course a transplant SPLITS — SETTLED 30 Aug, by the words above.** Two
+melphalan doses close enough together to be one course, with a transplant
+landing between them. The ask says a course of 28 days or fewer outside **any**
+induction window does not advance the line. A course that began before a line
+is outside that line's induction window — so the transplant changes nothing
+about whether it advances, and no line starts on either dose.
+
+The engine judged a course only against a line it started inside, so the
+transplant's line dropped it altogether and the later dose reached the engine
+as an ordinary added medication and opened a line of its own — which 4.7
+forbids outright. Which line OWNS a course was already a separate rule
+(another line-defining agent, or a breaking transplant, arriving first), asked
+twice; between the two tests a split course fell through.
+
+The same course with the transplant before or after it always behaved. All
+four positions now agree:
+
+| transplant | day-90 dose | day-110 dose | line opened on a dose? |
+|---|---|---|---|
+| none | 1L | 1L | no |
+| before the course | the transplant's line | the transplant's line | no |
+| **inside the course** | **1L** | **the transplant's line** | **no** — was a line of its own |
+| after the course | 1L | 1L | no |
+
+**Flagged, though nothing here was chosen:** the day-110 dose ends up in the
+line the transplant opened rather than back in 1L beside its own first dose.
+That is not a decision of ours between two workable answers — 1L was never
+available. An allograft ends the line wherever it falls (`LOT_RULES.md` 6),
+which is an existing rule this ask did not touch, so 1L ends on day 99 and
+cannot reach day 110 whatever the melphalan rule says. The only line that can
+own the dose is the one the transplant opened, which is also what the build
+already did for a course starting *after* a transplant.
+
+Raised because it is a visible consequence of the ask, not because it is open:
+if the study team wants that dose in 1L instead, what changes is the
+**transplant** rule, not this one. Worked example
+`melp_course_split_by_a_transplant`.
+
 **Two things it does that the ask did not say in words**, both deliberate, both
 open to correction:
 
@@ -163,21 +224,23 @@ is the note's own example with both drugs coming back rather than one.
 
   A held melphalan course still joins neither the regimen nor the count (§4.7).
   That rule was not asked the same question, and nothing here decides it.
-- ~~Whether agents of **every** earlier line fold, or only the previous line's.~~
-  **Settled 30 Aug: the immediately previous line only**, which is the shape
-  the 15 Aug note describes — A + B in one line, C advances it, B comes back.
-  A drug from further back is out of scope and the engine's ordinary rules keep
+- Whether agents of **every** earlier line fold, or only the previous line's.
+  **SETTLED: the immediately previous line only.** Decided 30 Aug, briefly
+  reopened the same day when a claim of ours turned out to be wrong, and
+  confirmed as it stands. This is what the build does, and it is the shape the
+  15 Aug note describes — A + B in one line, C advances it, B comes back. A
+  drug from further back is out of scope and the engine's ordinary rules keep
   it.
 
-  **A claim that the two readings are equivalent was made here on 30 Aug and
-  is WITHDRAWN.** It rested on consecutive lines never sharing an opener, which
-  is false: foldin_openers labelled a line with min() over every non-steroid
-  drug dosed on its start date, including a returning previous-regimen drug
-  that 4.3 forbids from opening anything. Two consecutive lines could then
-  carry the same label and two advances collapse into one. That labelling is
-  fixed, but the scopes still differ - on a planted patient the narrow scope
-  gives four lines where the wide scope gives three - so the choice between
-  them is a real one and remains the study team's.
+  **The two readings are NOT equivalent, and an earlier claim here that they
+  were is WITHDRAWN.** It rested on consecutive lines never sharing an opener,
+  which is false: foldin_openers labelled a line with min() over every
+  non-steroid drug dosed on its start date, including a returning
+  previous-regimen drug that 4.3 forbids from opening anything. Two consecutive
+  lines could then carry the same label and two advances collapse into one.
+  That labelling is fixed, and the scopes still differ — on a planted patient
+  the narrow scope gives four lines where the wide gives three. The choice was
+  therefore a real one, and it was made: narrow.
 
   One thing follows that is worth the study team knowing: the note's **"two or
   more"** clause can then never fire. A drug is in a line's regimen only
@@ -214,9 +277,9 @@ is the note's own example with both drugs coming back rather than one.
   The middle row was the odd one out. Both rules now read the previous line,
   so a drug from further back is simply new and behaves like the bottom row.
   The alternative — widening the fold set to every earlier line — was not
-  taken: it would have reopened a scope the study team narrowed on 30 Aug,
-  though it is the reading that would make the "two or more" clause below
-  live again. Worth revisiting only if that clause is meant to fire.
+  taken, and the scope is settled. It is the reading that would make the "two
+  or more" clause below fire, so if that clause is ever meant to be reachable,
+  the scope is the thing to change and this is where to start.
 
   Neither reading needed an ordering decision, because neither rule has to
   consult the other's output: what a returning drug IS comes from the earlier
@@ -270,8 +333,25 @@ five-branch table keyed to when the next melphalan exposure comes.
 
 **Result:** it moved almost nothing — most conditioning melphalan has no later
 dose for the branches to judge. 2L melphalan-only went 424 → 422 patients. Not
-adopted. The cells stay runnable as the evidence:
-`exploration/melphalan/run_aug1_melp.R`.
+adopted.
+
+**Removed from the build on 30 Aug.** The choice was settled, so the two
+readings (`as_asked` and `yield_to_sct`), the 239 lines of engine SQL behind
+them, their three-cell package and the three settings only they read
+(`melp_restart_days`, `melp_advance_days`, `melp_sct_days`) are gone. Asking a
+build for either name now stops it rather than quietly giving the short-course
+rule under a name that meant something else.
+
+The number above is the finding, and it is what this entry keeps. What stays
+runnable is the comparison that matters now — the adopted rule against a build
+without it, in `lot/melphalan/`.
+
+One thing went with them and is worth naming: the transplant question. A
+melphalan claim and an AUTO procedure code are often one clinical event, and
+the two readings existed because the 1 Aug note did not say which rule should
+win. The short-course rule does not raise that question in the same form — it
+judges a course's length and what starts inside it, not whether a transplant
+sits on the dose — so nothing is left unanswered by the removal.
 
 ---
 

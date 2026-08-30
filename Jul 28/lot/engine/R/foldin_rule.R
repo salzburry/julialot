@@ -92,20 +92,40 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
   # need melphalan to consult the fold, and each rule reading the other has no
   # order that works. What remains is written down in STUDY_TEAM_ASKS.md.
   # The same exclusion, in the WHERE of foldin_agent rather than a join.
-  # The MELP test is not decoration. melp_suppress_dates carries a patient and
-  # a DATE, so matching on those alone removes whatever else started that day -
-  # a returning drug landing on the same date as a suppressed course was
-  # dropped from the fold set and opened a line of its own.
+  #
+  # BOTH melphalan verdicts, for opposite reasons. 4.7 judges a short course
+  # outside induction one of two ways, and this rule must stand back from
+  # each:
+  #
+  #   SUPPRESSED  the course opens nothing, so it is not an agent that
+  #               arrived - reading it as one would count an advance that
+  #               never happened.
+  #   INJECTED    the course opens the NEXT LINE, on the melphalan's own first
+  #               day. The study team's words: a patient given melphalan on
+  #               day 100 who starts a new agent on day 105 begins the new
+  #               line on day 100. A dose that STARTS a line is not a drug
+  #               folding back into the line before it.
+  #
+  # Only the suppressed half was here, so an injected course was claimed by
+  # both rules at once - see melp_injected_starts_the_line in the vignettes.
+  #
+  # The MELP test is not decoration. Both date tables carry a patient and a
+  # DATE, so matching on those alone removes whatever else started that day -
+  # a returning drug landing on the same date as a judged course was dropped
+  # from the fold set and opened a line of its own.
+  melp_judged_dt <- function(alias) paste0("
+                 AND (EXISTS (SELECT 1 FROM melp_suppress_dates msd
+                              WHERE msd.PATID = ", alias, ".PATID
+                                AND msd.SUPPRESS_DT = ", alias, ".MAP_START_DT)
+                      OR EXISTS (SELECT 1 FROM melp_inject mi
+                                 WHERE mi.PATID = ", alias, ".PATID
+                                   AND mi.INJECT_DT = ", alias, ".MAP_START_DT))")
   not_supp_ms <- if (!melp_on) "" else paste0("
-      WHERE NOT (upper(trim(ms.MAP_MED_TYPE)) = '", melp_abbr(cfg), "'
-                 AND EXISTS (SELECT 1 FROM melp_suppress_dates msd
-                             WHERE msd.PATID = ms.PATID
-                               AND msd.SUPPRESS_DT = ms.MAP_START_DT))")
+      WHERE NOT (upper(trim(ms.MAP_MED_TYPE)) = '", melp_abbr(cfg), "'",
+                 melp_judged_dt("ms"), ")")
   not_supp <- if (!melp_on) "" else paste0("
-          AND NOT (upper(trim(ms.MAP_MED_TYPE)) = '", melp_abbr(cfg), "'
-                   AND EXISTS (SELECT 1 FROM melp_suppress_dates msd
-                               WHERE msd.PATID = ms.PATID
-                                 AND msd.SUPPRESS_DT = ms.MAP_START_DT))")
+          AND NOT (upper(trim(ms.MAP_MED_TYPE)) = '", melp_abbr(cfg), "'",
+                   melp_judged_dt("ms"), ")")
   this_tx <- if (is.null(n_start) || is.null(n_type)) "" else paste0("
       UNION
       SELECT ", n_tbl, ".PATID, ", n_start, " AS OPEN_DT
@@ -441,9 +461,12 @@ foldin_regimen_union <- function(cfg, lot_num, induction_end) {
   # regimen cannot disagree about one episode.
   supp <- function(alias) if (!melp_rule_on(cfg)) "" else paste0("
         AND NOT (upper(trim(", alias, ".MAP_MED_TYPE)) = '", cfg$melp_med_abbr, "'
-                 AND EXISTS (SELECT 1 FROM melp_suppress_dates msd
-                             WHERE msd.PATID = ", alias, ".PATID
-                               AND msd.SUPPRESS_DT = ", alias, ".MAP_START_DT))")
+                 AND (EXISTS (SELECT 1 FROM melp_suppress_dates msd
+                              WHERE msd.PATID = ", alias, ".PATID
+                                AND msd.SUPPRESS_DT = ", alias, ".MAP_START_DT)
+                      OR EXISTS (SELECT 1 FROM melp_inject mi
+                                 WHERE mi.PATID = ", alias, ".PATID
+                                   AND mi.INJECT_DT = ", alias, ".MAP_START_DT)))")
   paste0("\n", glue("
       UNION
       SELECT ms.PATID, ms.MAP_MED_TYPE AS MED_ABBR, ms.MAP_MED_CLASS AS MED_CLASS
@@ -480,12 +503,12 @@ foldin_regimen_union <- function(cfg, lot_num, induction_end) {
         -- reading it as an arrival here dropped a correctly folded drug from
         -- the regimen while leaving the line's dates untouched - so the line
         -- reported a doublet as a single agent and nothing in the shape of the
-        -- line showed it. A return landing on the SAME DAY as one
-        -- belongs to the line that agent opens, not to this one: the count
-        -- looks strictly before the return, so it does not see a same-day
-        -- arrival and folds anyway. Without this the line reported a drug
-        -- whose only episode began after the line had ended, and the next line
-        -- reported it too.
+        -- line showed it. A return landing on the SAME DAY as one belongs
+        -- to the line that agent opens, not to this one - so this scan is AT
+        -- OR BEFORE the return, not strictly before it. Strictly before, it
+        -- could not see a same-day arrival and folded anyway: the line
+        -- reported a drug whose only episode began after the line had ended,
+        -- and the next line reported it too.
         AND NOT EXISTS (
           SELECT 1 FROM map_stacked nb
           WHERE nb.PATID = ms.PATID

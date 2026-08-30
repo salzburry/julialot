@@ -43,7 +43,12 @@
   if (length(a)) dirname(normalizePath(gsub("~+~", " ", sub("^--file=", "", a[1]),
                                             fixed = TRUE))) else getwd()
 })
-source(file.path(.script_dir, "..", "melphalan", "R", "cells.R"))
+# The cell machinery - build a plan, hold every cell to one cohort and one
+# build of the engine, read metrics off each - is shared with the melphalan
+# package and lives there. It moved from exploration/ to lot/ when the
+# melphalan rule was adopted; this reads it from where it is rather than
+# keeping a second copy.
+source(file.path(.script_dir, "..", "..", "lot", "melphalan", "R", "cells.R"))
 
 LOT_ROOT <- normalizePath(file.path(.script_dir, "..", "..", "lot", "engine"), mustWork = TRUE)
 env_flag <- function(nm) identical(toupper(trimws(Sys.getenv(nm, unset = ""))), "TRUE")

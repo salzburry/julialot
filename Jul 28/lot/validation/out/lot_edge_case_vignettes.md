@@ -25,6 +25,8 @@ reading of how the rules interact, and the first warehouse run settles it.
 | `melp_short_course` | Brief melphalan course outside induction | `melp_simple_course_days = 28` | No new line. The course neither ends line 1 nor starts line 2, and line 1 is carried to day 127 - the last day the course covers - rather than ending at the melphalan date. | to_confirm |
 | `melp_long_course` | Melphalan course past the short cap | `melp_simple_course_days = 28` | A new line at day 100. Past the cap the rule stands aside and melphalan is an added medication like any other agent. | to_confirm |
 | `melp_short_course_confirmed` | A new agent inside a brief melphalan course | - | A new line, and it starts on day 100 - the melphalan date - not on day 105. The agent inside the course is what tells us treatment changed; the melphalan is where it changed. | to_confirm |
+| `melp_course_split_by_a_transplant` | A transplant lands inside a brief melphalan course | - | No line starts on either dose. The course covers 21 days, which is under the cap, and it began outside any induction window - so it does not advance the line, wherever the transplant sits. The day-90 dose stays in 1L; the allograft's own line is carried to day 110 and owns the second. | to_confirm |
+| `melp_confirmed_beats_the_fold` | A confirmed melphalan course that is also a returning drug | - | A new line on day 300 - the melphalan date - carrying the melphalan and the day-305 agent. 2L keeps its own end and does NOT name melphalan: the course starts a line, so it is not a drug folding back into the line before it. | to_confirm |
 | `returning_drug_one_advance` | A drug returns after one advance | - | No new line. One agent advanced the line between B's two doses, so B joins 2L - the line's span carries it, and it joins 2L's regimen string too. | to_confirm |
 | `returning_drug_two_advances` | A drug returns after two advances | - | A new line at day 450. Treatment moved on twice while B was away, so B is not returning to the line it left and its return opens one. | to_confirm |
 | `returning_drug_two_agents_one_line` | Two drugs start one line while a drug is away | - | No new line. Two agents started 2L, but they advanced the line ONCE between them, so B sees one advance and joins 2L. | to_confirm |
@@ -144,6 +146,18 @@ reading of how the rules interact, and the first warehouse run settles it.
 - timeline: d+0 MED (1L regimen starts); d+100 MED (melphalan starts; its cover runs to day 127); d+105 MED (a different line-defining agent starts, inside that cover)
 - why it is hard: Dating the line at the later agent would put the boundary after treatment had already moved on, and split the melphalan away from the line it belongs to.
 - rule: lot/engine/R/melp_rule.R | WHERE INSIDE = 0 AND SHORT = 1 AND CONFIRMED = 1
+
+**melp_course_split_by_a_transplant** - A transplant lands inside a brief melphalan course
+
+- timeline: d+0 MED (1L regimen starts); d+90 MED (melphalan, outside 1L's induction window); d+100 ALLO (an allograft, between the two doses); d+110 MED (a second melphalan dose - same course, it is inside melp_exposure_days of the first)
+- why it is hard: The transplant splits one course in two. Judged only against a line it starts inside, the course was dropped by the allograft's line altogether, and the day-110 dose reached the engine as an ordinary added medication and opened a line of its own - which the rule forbids. Refusing it that line without giving it to one leaves the dose in no line at all, so both halves move together.
+- rule: lot/engine/R/melp_rule.R | Outside ANY induction window, in the ask
+
+**melp_confirmed_beats_the_fold** - A confirmed melphalan course that is also a returning drug
+
+- timeline: d+0 MED (1L starts on drug A and melphalan); d+200 MED (drug C starts and advances the line to 2L); d+300 MED (melphalan returns for 28 days, outside 2L's window); d+305 MED (a different line-defining agent starts, inside that cover)
+- why it is hard: Two adopted rules reach for the same course. 4.7 says a confirmed short course opens the next line on its own first day; 4.8 says a previous line's drug coming back joins the line it returns in. Both cannot hold, and the study team's words settle it - the new line starts when the melphalan appears. 4.8 stands back. Without that, 2L named a drug whose only episode began after 2L had ended, and its end date and reason moved with it.
+- rule: lot/engine/R/foldin_rule.R | OR EXISTS (SELECT 1 FROM melp_inject mi
 
 **returning_drug_one_advance** - A drug returns after one advance
 

@@ -38,8 +38,8 @@ SETTINGS <- paste0(
   "codelist_dir=/mnt/code/codelist|dsn=RWDE|induction_window_days=60|",
   "lot_discon_confirm_days=90|lot_n_induction_window_days=30|",
   "map_discon_gap_days=90|max_lot=5|",
-  "medical_day_supply=28|melp_advance_days=180|melp_exposure_days=30|",
-  "melp_med_abbr=MELP|melp_restart_days=60|melp_sct_days=14|",
+  "medical_day_supply=28|melp_exposure_days=30|",
+  "melp_med_abbr=MELP|",
   "sct_auto_gap_days=60|sct_auto_window_days=13|sct_tandem_days=180|",
   "tbl_med_diag=med_diagnosis|tbl_med_proc=med_procedure|tbl_medical=medical|",
   "tbl_rx=rx|use_quarterly_tables=TRUE|apply_melp_rule=simplified|",
@@ -436,7 +436,7 @@ res <- data.frame(id = c("A1", "E3"), group = c("Structure", "Transplant"),
 md <- qc_markdown(res, "run-abc", "ndmm_", P, "")
 ok(any(grepl("run-abc", md)), "the report names the run")
 ok(any(grepl("LOT1 60 days", md)), "...and the windows it was judged by")
-dev <- qc_markdown(res, "run-abc", "melp_as_asked_", P, "apply_melp_rule=as_asked ()")
+dev <- qc_markdown(res, "run-abc", "melp_reference_", P, "apply_melp_rule=off ()")
 ok(any(grepl("Not a contract build", dev)),
    "a deviating run says so on the report, not only on the console")
 ok(!any(grepl("Not a contract build", md)),

@@ -62,9 +62,9 @@ EXPECTED_FAILURES <- list(
     "03_mma_map.R: differs beyond the approved deviations in 217 line(s) [1bc3749e]",
     "05_sct.R: differs beyond the approved deviations in 11 line(s) [6457f58f]",
     # lot1_regimen_cutoff, the regimen window and the per-drug episode scan
-    # both bounded by it, and the same-day add-med tie-break as a row hash
-    # rather than a seeded rand.
-    "04_lot1_base.R: differs from 02_lot1.R in 143 line(s) [0ce86120]",
+    # both bounded by it, the same-day add-med tie-break as a row hash rather
+    # than a seeded rand, and the short-course boundary gate as an anti-join.
+    "04_lot1_base.R: differs from 02_lot1.R in 143 line(s) [1b2e6ad1]",
     # LOT1_AUTO_HOLD_DT, and a tandem that needs a clear gap between its two
     # transplants.
     "05b_lot1_sct.R: differs beyond the approved deviations in 176 line(s) [524fd363]",
@@ -75,9 +75,10 @@ EXPECTED_FAILURES <- list(
     "08_persist.R: differs beyond the approved deviations in 111 line(s) [4ef6f10b]",
     # SCT_AUTO_CONT and end_natural at LOT2-5, LOT{n}_AUTO_HOLD_DT, auto_cand
     # reading the previous line's own window, the regimen cutoff, and the tandem
-    # gap, and the add-med tie-break as a row hash. Re-pinned deliberately,
-    # which is what this list is for.
-    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 963 line(s) [554b6b19]")
+    # gap, the add-med tie-break as a row hash, and the short-course and
+    # not-new gates as anti-joins rather than correlated subqueries in a join
+    # condition. Re-pinned deliberately, which is what this list is for.
+    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 964 line(s) [398073f4]")
 )
 
 # How one suite's output is read. Its own suite is validation/hygiene/
@@ -90,10 +91,13 @@ suites <- c(
 )
 suites <- suites[grepl("/tests/", suites) |
                  grepl("/validation/(port|hygiene)/", suites) |
-                 # Not under tests/, and advertised in the study README as a
-                 # check that exits non-zero if any of the study team's worked
+                 # Not under tests/, and advertised in a delivery's README as
+                 # a check that exits non-zero if any of the study team's worked
                  # scenarios moves. A check nothing runs is a check in name
                  # only, so it is named here rather than left to be remembered.
+                 # Jul 28 no longer has one - the worked scenarios belonged to
+                 # the five-branch melphalan rule, which was retired - but
+                 # Aug 14 still does, and STUDY_FOLDER can point at either.
                  grepl("/run_melp_scenarios\\.R$", suites)]
 suites <- suites[!grepl("testutil\\.R$|/_|run_gate\\.R$|run_all\\.R$", suites)]
 rel <- sub(paste0("^", REPO, "/"), "", suites)
@@ -122,13 +126,11 @@ EXPECTED_SUITES <- list(
     "exploration/lot/tests/test_benchmarks.R",
     "exploration/lot/tests/test_definitions.R",
     "exploration/lot/tests/test_foldin.R",
-    "exploration/lot/tests/test_melphalan.R",
     "exploration/lot/tests/test_sensitivity.R",
     "exploration/lot/tests/test_stockpiling.R",
-    "exploration/melphalan/run_melp_scenarios.R",
-    "exploration/melphalan/tests/test_aug1_melp.R",
     "lot/engine/tests/test_line_criteria.R",
     "lot/engine/tests/test_runner.R",
+    "lot/melphalan/tests/test_melp_simple.R",
     "lot/qc/tests/test_lot_qc.R",
     "lot/validation/tests/test_vignettes.R",
     "ndmm/tests/test_runner.R",

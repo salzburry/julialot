@@ -30,9 +30,10 @@ PART of that line, not a reason to start the next one.
       between                                -> ONE line either way. Nothing
       was given in between, so 4.3 keeps the restart inside the line it left
       and this rule has nothing to decide
-  F6  B returns two lines later, during 3L   -> does NOT fold. Two agents
-      advanced the line between B's two doses, and the request's second
-      clause gives that return a line of its own
+  F6  B returns two lines later, during 3L   -> does NOT fold. B is not in
+      the previous line's regimen, so it is outside the fold set. The
+      request's second clause would give the same answer, but it is not what
+      decides this one - see F13
   F7  a control with no prior-line return    -> identical under both builds
   F8  B returns in the gap between two
       episodes of 2L's own drug              -> it no longer breaks that
@@ -45,7 +46,9 @@ PART of that line, not a reason to start the next one.
   F11 B returns with NO advance in between   -> count 0, not the request's
       case; the engine's restart rule keeps it
   F12 B returns with ONE advance in between  -> count 1, folds
-  F13 B returns with TWO advances in between -> count 2, starts a line
+  F13 B returns with TWO advances in between -> starts a line. Scoped to the
+      previous line the count cannot reach two, so this pins the OUTCOME the
+      request's second clause describes, not the clause itself
   F14 B's return has a follow-up episode     -> one course, one answer: the
       whole course folds, not only its first episode
   F15 a PROCEDURE opens the line in between  -> it overrides the fold. One
@@ -139,6 +142,9 @@ PATS = [
                    ('BORT', 'PI', 300, 360), ('BORTB', 'PI', 300, 500)]),
     P('F5', [('LEN', 'IMID', 0, 80), ('BORT', 'PI', 0, 80),
              ('BORT', 'PI', 300, 360)]),
+    # F6: B returns two lines after its own. Same outcome as F13 and for the
+    # same reason - the fold set is the previous line's regimen and B is not
+    # in it - so this pins the outcome, not the two-or-more clause.
     P('F6', L1 + [('DARA', 'MAB', 200, 260), ('CARF', 'PI', 400, 500),
                   ('BORT', 'PI', 450, 510)]),
     P('F7', [('LEN', 'IMID', 0, 29), ('DARA', 'MAB', 0, 199),
@@ -159,8 +165,17 @@ PATS = [
     # F12 count 1: DARA advanced the line once. B folds into the line it
     # returns in - the request's first clause, and its worked example.
     P('F12', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 450, 510)]),
-    # F13 count 2: DARA then CARF. The second clause - the return starts a
-    # line of its own, exactly as it does with the rule off.
+    # F13 count 2: DARA then CARF, so the interval holds two advances.
+    #
+    # It starts a line of its own, exactly as it does with the rule off - but
+    # NOT because the two-or-more clause fired. By day 450 the immediately
+    # previous line's regimen is CARF, and the fold set is that regimen, so B
+    # is not a fold candidate and the count is never asked. Scoped to the
+    # previous line the count can only ever be nought or one; the two-or-more
+    # clause is the rule the study team asked for and is unreachable, which
+    # STUDY_TEAM_ASKS.md carries as an open scope question. What this patient
+    # pins is the OUTCOME the clause describes, by whichever route: a return
+    # with two advances behind it gets a line.
     P('F13', L1 + [('DARA', 'MAB', 200, 260), ('CARF', 'PI', 300, 600),
                    ('BORT', 'PI', 450, 510)]),
     # F14: the returning COURSE, not just its first episode. B returns at d450
@@ -280,6 +295,22 @@ PATS = [
                    ('MELP', 'ALKY', 450, 477), ('BORT', 'PI', 450, 510)]),
     P('F31n', L1 + [('DARA', 'MAB', 200, 600),
                     ('MELP', 'ALKY', 450, 477), ('BORT', 'PI', 451, 510)]),
+    # F32: the study team's day-100/105 rule where the melphalan is ALSO a
+    # returning previous-line drug. MELP is in 1L's regimen, DARA opens 2L,
+    # MELP returns at d450 for 28 days, and POMA starts at d455 inside that
+    # cover - so 4.7 CONFIRMS the course and the next line starts on the
+    # melphalan date. 4.8 must stand back: a dose that starts a line is not a
+    # drug folding back into the line before it.
+    #
+    # Claimed by both rules, 2L ran to d449 with MELP in its regimen - a drug
+    # whose only episode begins at d450, after 2L has ended - and its end
+    # reason changed with it. F32n is the same patient without the confirming
+    # agent, where the course IS suppressed and 2L legitimately holds it.
+    P('F32', [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 0, 27),
+              ('DARA', 'MAB', 200, 300), ('MELP', 'ALKY', 450, 477),
+              ('POMA', 'IMID', 455, 520)]),
+    P('F32n', [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 0, 27),
+               ('DARA', 'MAB', 200, 300), ('MELP', 'ALKY', 450, 477)]),
     # F28/F29/F30: one scope for "not new". Three patients with the same
     # history and the same short melphalan course at day 600, differing only
     # in how far back the drug returning inside it was last seen.
@@ -472,8 +503,24 @@ def main():
     ok(ref.get('F5') == fold.get('F5') and n(ref, 'F5') == 1,
        "F5: a restart with no newer line in between stays in the line it left")
 
+    # F32: the two adopted rules reaching for one course. 4.7 wins, by the
+    # study team's own words - the new line starts when the melphalan appears.
+    ok(fold.get('F32') == ref.get('F32') and n(fold, 'F32') == 3,
+       "F32: a confirmed course that is also a returning drug starts a line, "
+       "so the fold leaves it alone and both builds agree")
+    ok(n(fold, 'F32') == 3 and fold['F32'][1][2] == rs.d(IX + 300) and
+       fold['F32'][2][1] == rs.d(IX + 450),
+       "F32: ...2L keeps its own end at d300 and 3L starts on the melphalan "
+       "date, not the confirming agent's")
+    ok(REGIMEN[(True, 'F32')][2][0] == 'DARA',
+       "F32: ...and 2L does not name a drug whose episode begins after it ended")
+    ok(n(fold, 'F32n') == 2 and fold['F32n'][1][2] == rs.d(IX + 477),
+       "F32n: with no confirming agent the course is suppressed, and 2L is "
+       "held to its cover as before")
+
     ok(n(ref, 'F6') == 4 and n(fold, 'F6') == 4,
-       "F6: two advances in between, so the return starts a line under both")
+       "F6: a return from two lines back is outside the fold set, so it "
+       "starts a line under both")
 
     ok(ref.get('F7') == fold.get('F7') and ref.get('F7'),
        "F7: a patient with no prior-line return is identical under both builds")
@@ -484,7 +531,8 @@ def main():
     ok(n(ref, 'F12') > n(fold, 'F12'),
        "F12 count 1: one advance in between, so the return folds")
     ok(ref.get('F13') == fold.get('F13') and ref.get('F13'),
-       "F13 count 2: two advances in between, so the return still starts a line")
+       "F13: two advances in between, so the return starts a line - by the "
+       "fold set's scope, not by the two-or-more clause, which cannot fire")
 
     ok(n(ref, 'F14') == 3 and n(fold, 'F14') == 2,
        "F14: the whole returning course folds, not only its first episode")
