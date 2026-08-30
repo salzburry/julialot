@@ -221,7 +221,15 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
         WHERE 1 = 1", line_break_window_pred(cfg, "tx", induction, n_start), "
       ) o
         ON o.PATID = k.PATID
-       AND o.AT_DT <  k.MAP_START_DT")
+       -- At or before, not strictly before. A genuinely new agent arriving on
+       -- the SAME DAY as the return takes preference: the return belongs to
+       -- the line that agent opens, not to the one it was coming back to.
+       -- Strictly-before let the same-day case fold, and then the reported
+       -- regimen alone corrected it - so the drug named the new line while
+       -- still extending the old one's run-out, one episode doing two jobs in
+       -- two lines. Every consumer reads foldin_episodes, so the preference
+       -- belongs here rather than in any one of them.
+       AND o.AT_DT <= k.MAP_START_DT")
   glue("
     -- Every episode of a fold-set drug, under the AGENT it belongs to. A
     -- permissible substitute is the same agent as the drug it replaces, so

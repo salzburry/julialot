@@ -43,7 +43,7 @@ SETTINGS <- paste0(
   "sct_auto_gap_days=60|sct_auto_window_days=13|sct_tandem_days=180|",
   "tbl_med_diag=med_diagnosis|tbl_med_proc=med_procedure|tbl_medical=medical|",
   "tbl_rx=rx|use_quarterly_tables=TRUE|apply_melp_rule=simplified|",
-  "apply_map_foldin=TRUE|",
+  "apply_map_foldin=TRUE|apply_own_return_fold=TRUE|",
   "cohort_status_table=")
 P <- qc_params(SETTINGS, "run-abc")
 SQL <- lapply(LOT_QC_CHECKS, function(c_i) c_i$sql(TBL, P))
@@ -177,14 +177,22 @@ ok(has(SQL$A7, "LOT_START_TYPE = 'MED'") && !has(SQL$A7, "NOT IN ('SCT_ALLO'"),
    "A7 asks only whether a medication-started line carries a regimen")
 ok(has(SQL$A5, "NOT IN ('MED', 'SCT_ALLO', 'SCT_AUTO', 'CART')"),
    "...and A5 still pins the four start types A7 leans on")
-# C2 predates the returning-drug rule. A regimen drug whose own episode carried
-# a confirmed discontinuation and then restarted ends the line like any other
-# drug (LOT_RULES.md 11.1), so it is in the regimen AND is the added
-# medication, both correctly. Unexempted, C2 failed every such line.
+# C2's exemption belongs to the OLDER returning-drug rule, where a confirmed
+# gap released the drug so that it could be both in the regimen and the added
+# medication. LOT_RULES.md 4.3 withdrew that release, so under the settings the
+# study pins there is nothing to exempt - and an exemption for output the
+# contract cannot produce would have passed a regression recreating it.
 ok(has(SQL$C2, "array_contains(split(coalesce(f.LOT_BASE_MEDS, ''), ' ')"),
    "C2 still catches an added medication that is already in the regimen")
-ok(has(SQL$C2, "coalesce(r.PREV_DISCON, 0) = 0"),
-   "...unless that drug restarted after a confirmed discontinuation")
+ok(!has(SQL$C2, "coalesce(r.PREV_DISCON, 0) = 0"),
+   "...with no exemption, because the pinned rule releases no such drug")
+# ...and the exemption comes back for a comparison build, where the release is
+# back too. The check reads the run's own setting rather than tolerating both.
+ok(has(c_i_sql_off <- LOT_QC_CHECKS[[which(vapply(LOT_QC_CHECKS,
+         function(c_i) identical(c_i$id, "C2"), logical(1)))]]$sql(
+           TBL, modifyList(P, list(own_return_fold = FALSE))),
+       "coalesce(r.PREV_DISCON, 0) = 0"),
+   "...and it returns for a build where the older rule is switched back on")
 # The lag, not "any earlier episode". Read the loose way it would excuse a drug
 # that discontinued once and has been running ever since.
 ok(has(SQL$C2, "lag(MAP_DISCON_FLG) OVER (PARTITION BY PATID, MAP_MED_TYPE"),

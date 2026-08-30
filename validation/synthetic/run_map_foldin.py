@@ -201,6 +201,10 @@ PATS = [
     # count looks strictly BEFORE the return, so it does not see CARF and folds
     # anyway - and the regimen union had no medication boundary, so 2L named a
     # drug whose only episode began after 2L had ended, while 3L named it too.
+    # F20n: F20 with the return removed, to show where 2L ends on its own.
+    # The return must not move that: assigned to 3L by the regimen while still
+    # extending 2L, one episode was doing two jobs in two lines.
+    P('F20n', L1 + [('DARA', 'MAB', 200, 400), ('CARF', 'PI', 450, 600)]),
     P('F20', L1 + [('DARA', 'MAB', 200, 400), ('BORT', 'PI', 450, 510),
                    ('CARF', 'PI', 450, 600)]),
     # F21: a return after a break SHORTER than the discontinuation gap. B is
@@ -547,6 +551,12 @@ def main():
        and n(ref, 'F20') == 3,
        "F20: a same-day new agent keeps the boundary, and 2L does not name "
        "the drug whose episode starts in 3L")
+    ok(fold['F20'][1][2] == fold['F20n'][1][2]
+       and fold['F20'][1][3] == fold['F20n'][1][3],
+       "F20/F20n: the new drug takes preference, so the return belongs to the "
+       "line it opens and leaves the previous line's end exactly where its own "
+       "run-out put it (" + str(fold['F20'][1][2:4]) + ")")
+
     ok(regimen(True, 'F20', 3)[0] == 'BORT CARF',
        "F20: ...the line the return actually falls in names it")
     ok(n(ref, 'F21') == 3 and n(fold, 'F21') == 2
