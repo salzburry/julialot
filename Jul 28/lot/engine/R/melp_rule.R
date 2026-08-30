@@ -91,12 +91,14 @@ melp_abbr    <- function(cfg) toupper(trimws(cfg$melp_med_abbr %||% "MELP"))
 # melp_simplified_ctes. The five-branch modes never ask what else the patient
 # takes, so both stay unused there and their SQL is unchanged.
 melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end,
-                               base_tbl = NULL, restart_tbl = NULL) {
+                               base_tbl = NULL, restart_tbl = NULL,
+                               not_new_ctes = "") {
   mode <- melp_rule_mode(cfg)
   if (!nzchar(mode)) return("")
   if (identical(mode, "simplified"))
     return(melp_simplified_ctes(cfg, line_tbl, start_col, span_end,
-                                induction_end, base_tbl, restart_tbl))
+                                induction_end, base_tbl, restart_tbl,
+                                not_new_ctes))
   abbr <- melp_abbr(cfg)
   yield_this <- if (identical(mode, "yield_to_sct")) "p.HAS_AUTO" else "0"
   yield_next <- if (identical(mode, "yield_to_sct")) "coalesce(p.NEXT_HAS_AUTO, 0)" else "0"
@@ -328,12 +330,19 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
 # the ones already in scope in its statement; melp_prev_line_ctes emits its
 # own pair first, because nothing usable exists yet where it splices.
 melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
-                                 induction_end, base_tbl, restart_tbl) {
+                                 induction_end, base_tbl, restart_tbl,
+                                 not_new_ctes = "") {
   if (is.null(base_tbl) || is.null(restart_tbl))
     stop("The simplified melphalan rule needs the judged line's base set and ",
          "restart flags to tell a confirming agent from a drug the line ",
          "already holds. This caller handed in neither.", call. = FALSE)
   abbr <- melp_abbr(cfg)
+  # Present only when the fold-in is on and there is an earlier line to read.
+  not_new_join <- if (!nzchar(not_new_ctes)) "" else
+    "\n      LEFT JOIN melp_not_new nn
+        ON nn.PATID = c.PATID AND nn.MED_ABBR = c.MAP_MED_TYPE"
+  not_new_pred <- if (!nzchar(not_new_ctes)) "" else
+    "\n        AND nn.MED_ABBR IS NULL"
   paste0("\n", glue("
     melp_doses AS (
       SELECT PATID, MAP_START_DT AS DOSE_DT
@@ -375,6 +384,18 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
     -- candidate against this line - outside its base set, or a released
     -- restart that is not substitute-only. The same gate the candidate lists
     -- apply, read from the tables handed in, so the two cannot disagree.
+{not_new_ctes}
+    -- The agent that confirms a short course has to be a NEW one. The request
+    -- words it as the patient starting a NEW AGENT; the fold-in request words
+    -- a drug from an earlier line coming back as THE RETURNING DRUG, never a
+    -- new one, and bundles it into the line it returns in. So a returning
+    -- prior-line agent cannot be what confirms a course - one rule would
+    -- otherwise bundle the drug and the other read it as a change.
+    --
+    -- The join is present only when the fold-in is on, and only from LOT2 up,
+    -- since LOT1 has no earlier line. melp_not_new comes from the same
+    -- definition the fold set is built from - prior_lines_regimen_ctes() in
+    -- R/prior_regimen.R - so the two cannot drift.
     melp_confirm AS (
       SELECT DISTINCT mc.PATID, mc.EXPO_DT
       FROM melp_course mc
@@ -388,9 +409,9 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
         ON cb.PATID = c.PATID AND cb.MED_ABBR = c.MAP_MED_TYPE
       LEFT JOIN {restart_tbl} cr
         ON cr.PATID = c.PATID AND cr.MAP_MED_TYPE = c.MAP_MED_TYPE
-       AND cr.MAP_START_DT = c.MAP_START_DT
+       AND cr.MAP_START_DT = c.MAP_START_DT{not_new_join}
       WHERE (cb.MED_ABBR IS NULL
-             OR (coalesce(cr.PREV_DISCON, 0) = 1 AND cb.SUBSTITUTE_ONLY = 0))
+             OR (coalesce(cr.PREV_DISCON, 0) = 1 AND cb.SUBSTITUTE_ONLY = 0)){not_new_pred}
     ),
     -- A course belongs to ONE line: the latest whose start precedes it.
     --
@@ -873,8 +894,16 @@ melp_lotn_ctes <- function(cfg, lot_num, induction_window_days,
   ls <- glue("lot{lot_num}_start")
   # base_meds and map_restart are this statement's own CTEs, defined before
   # this splices - the same ones first_add_candidates reads.
+  # A returning prior-line agent is not a NEW agent, so it cannot confirm a
+  # short course - LOT_RULES.md 4.7 and 4.8. Only where the fold-in is on, and
+  # only from LOT2 up, since LOT1 has no earlier line.
+  not_new <- if (!isTRUE(cfg$apply_map_foldin) || lot_num < 2) "" else
+    paste0("\n", prior_lines_regimen_ctes(glue("ll.LOT_NUM < {lot_num}"),
+                                          raw = "melp_prior_raw",
+                                          out = "melp_not_new"))
   melp_decision_ctes(
     cfg, ls, glue("LOT{lot_num}_START_DT"), glue("{ls}.OBS_END_DT"),
     lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days),
-    base_tbl = "base_meds", restart_tbl = "map_restart")
+    base_tbl = "base_meds", restart_tbl = "map_restart",
+    not_new_ctes = not_new)
 }

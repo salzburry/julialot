@@ -204,3 +204,29 @@ line_break_tandem_pred <- function(cfg, alias, induction_end) paste0("\n", glue(
                 AND datediff({alias}.TX_DT, {alias}.PREV_AUTO_DT) <= {cfg$sct_tandem_days}
                 AND {alias}.N_BETWEEN = 0
                 AND {alias}.PREV_AUTO_DT <= {induction_end})"))
+
+# The agents of a patient's EARLIER lines, and their permissible substitutes.
+#
+# Two rules need the same set and must not drift apart. The fold-in builds its
+# fold set from it. The melphalan rule reads it to answer a different question:
+# whether the agent starting inside a short course is a NEW one. A drug from an
+# earlier line coming back is, in the request's own words, "the returning
+# drug" - never a new drug - so it cannot be what confirms a course.
+#
+# The exploded regimen goes in its own CTE first: LATERAL VIEW and a JOIN in
+# one FROM do not survive translation.
+prior_lines_regimen_ctes <- function(line_pred, raw = "prior_raw",
+                                     out = "prior_meds") glue("
+    {raw} AS (
+      SELECT ll.PATID, m AS MED_ABBR
+      FROM lot_long ll
+      LATERAL VIEW explode(split(coalesce(ll.LOT_BASE_MEDS, \'\'), \' \')) e AS m
+      WHERE {line_pred} AND m <> \'\'
+    ),
+    {out} AS (
+      SELECT PATID, MED_ABBR FROM {raw}
+      UNION
+      SELECT p.PATID, ps.substitute_med AS MED_ABBR
+      FROM {raw} p
+      INNER JOIN permissible_subs ps ON p.MED_ABBR = ps.original_med
+    ),")

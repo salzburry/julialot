@@ -352,6 +352,14 @@ engine would itself accept against this line, non-steroid, and not melphalan.
 Then the line does advance — and it advances on the **melphalan** date, not the
 later agent's, so the boundary sits where treatment actually changed.
 
+That agent has to be a **new** one. A drug from an earlier line coming back is
+the returning drug, not a new one — §4.8 bundles it into the line it returns in
+— so it confirms nothing. Without this the same drug was bundled by §4.8 and
+read as a change by this rule, and the line advanced on the melphalan date
+anyway. This is the one place the two rules meet, and it settles both
+directions: a course this rule suppressed is not a line-defining agent for
+§4.8's count either.
+
 A course inside the induction window, or one covering more days than the cap,
 is left to the engine untouched.
 

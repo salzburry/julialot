@@ -136,15 +136,21 @@ is the note's own example with both drugs coming back rather than one.
 - Whether the returning drug joins the line's regimen string or only its span.
   Today it joins the span only.
 - Whether agents of **every** earlier line fold, or only the previous line's.
-- **The two rules meet in one place only, and only one direction is
-  resolved.** A melphalan course the melphalan rule suppressed is not a
-  line-defining agent, so it no longer blocks a fold — that direction is done.
-  The reverse is not: a returning drug that folds into a line can still be read
-  by the melphalan rule as a new agent confirming a short course, so the same
-  drug is bundled by one rule and treated as a change by the other. It cannot
-  be fixed by reading the other rule back, because each rule would then depend
-  on the other and neither can be built first. It needs a decision about which
-  rule is applied first, and one test that says so.
+- ~~Which rule is applied first where the two meet.~~ **Settled**, from what
+  the two notes say rather than from a choice of ours. Both directions now
+  hold:
+  - a melphalan course the melphalan rule suppressed does not advance the
+    line, so it is not an agent that advanced it for this count either;
+  - a returning drug is, in the note's own words, "the returning drug" and not
+    a new one, and the melphalan rule advances a short course only when the
+    patient "starts a **new** agent" — so a returning drug confirms nothing.
+
+  Neither reading needed an ordering decision, because neither rule has to
+  consult the other's output: what a returning drug IS comes from the earlier
+  lines' regimens, which are already built. On a planted patient the fold-in
+  used to do nothing at all here — the drug was bundled by one rule and read
+  as a change by the other, and the line advanced on the melphalan date
+  regardless.
 
 **Sizing already done, on a build without the rule:** 1,408 patients have a
 line break caused only by a returning previous-line drug; 39 more keep the

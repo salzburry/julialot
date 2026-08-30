@@ -47,6 +47,10 @@ regimen window is PART of that line, not a reason to start the next one.
       is no advance either
   F18 ONE agent opens TWO lines in between   -> one agent, not two: DARA opens
       2L, discontinues, and opens 3L on a released restart. The return folds
+  F19 the return lands inside a short
+      MELPHALAN course                       -> it does not confirm it. A
+      returning drug is not a NEW agent, so the melphalan rule cannot read as
+      a change the drug this rule bundles
 """
 import os, sys, tempfile, subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -128,6 +132,14 @@ PATS = [
     # AGENTS, as the request words it, DARA is one agent and B folds.
     P('F18', L1 + [('DARA', 'MAB', 200, 260), ('DARA', 'MAB', 400, 600),
                    ('BORT', 'PI', 450, 510)]),
+    # F19: where the two adopted rules meet. DARA opens 2L. A short melphalan
+    # course sits at day 450, outside 2L's window, and B returns at day 455 -
+    # inside that course's cover. The melphalan rule advances a short course
+    # when a NEW agent starts while it still covers; this rule says B is not a
+    # new drug but the returning one. Without that, B was bundled by one rule
+    # and read as a change by the other, and 3L opened on the melphalan date.
+    P('F19', L1 + [('DARA', 'MAB', 200, 600),
+                   ('MELP', 'ALKY', 450, 477), ('BORT', 'PI', 455, 520)]),
 ]
 
 
@@ -215,6 +227,13 @@ def main():
     ok(n(fold, 'F15') == 4 and fold['F15'][1][2] == rs.d(IX + 250)
        and fold['F15'][1][3] == 'DISCONTINUATION',
        "F15: ...so LOT2 keeps its own discontinuation")
+
+    ok(n(ref, 'F19') == 3 and ref['F19'][2][1] == rs.d(IX + 450),
+       "F19 contract: the melphalan course advances the line on its own date")
+    ok(n(fold, 'F19') == 2 and fold['F19'][1][2] == rs.d(IX + 600)
+       and fold['F19'][1][3] == 'DISCONTINUATION',
+       "F19 fold-in: the returning drug is not a new agent, so it confirms "
+       "nothing and 2L runs through")
 
     ok(n(ref, 'F18') == 4 and n(fold, 'F18') == 3,
        "F18 contract: one agent opening two lines refuses the fold")
