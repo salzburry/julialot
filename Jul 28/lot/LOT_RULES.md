@@ -404,6 +404,30 @@ both directions: a course this rule suppressed is not a line-defining agent for
 §4.8's count either, and it joins no regimen (§4.7 holds it, and a held course
 is in neither `LOT_BASE_MEDS` nor `LOT_MED_CNT`).
 
+**A steroid never confirms a course.** Corticosteroids are not oncology agents
+(§2.1), so melphalan given with one is still melphalan on its own: the course
+stays suppressed and the line is carried to its cover. That is what the study
+team's "melphalan mono" question settles, and it settles nothing wider — the
+agent that confirms has to be a non-steroid drug.
+
+**A returning drug does not confirm a course, even where it opens a line.**
+Where a transplant or CAR-T opened the line, §4.8 refuses the fold, so the
+returning drug is line-defining and starts the next line **on its own date**.
+It still does not confirm the melphalan course, so the line is not backdated to
+the melphalan date. The same history with a drug the patient never had gives
+the earlier start and puts the course in the regimen:
+
+| arriving while a short course covers | the next line starts | its regimen |
+|---|---|---|
+| a steroid | it does not start — the course is held | — |
+| a drug of the previous regimen | **its own date** | that drug |
+| a drug never given before | **the melphalan date** | the course and that drug |
+
+The middle row is a deliberate choice, not a gap. A returning drug is the
+returning drug (§4.8), and a course it arrives beside is still a course nobody
+started a new regimen on — so it opens a line where the engine's own rules give
+it one, and takes nothing back to the melphalan date with it.
+
 **"Not new" is the previous line only, the same scope §4.8's fold set reads.**
 A drug last given further back than that is a new agent here and confirms a
 course like any other. It has to be: §4.3 excludes only the previous regimen,

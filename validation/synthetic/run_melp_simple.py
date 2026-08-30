@@ -111,6 +111,21 @@ PATS = [
     # day-99 MED_ADD instead.
     P('SM',  [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 100, 128),
               ('LEN', 'IMID', 200, 260)]),
+    # SN/SNs/SNn: what confirms a short course, with a CAR-T-opened line and
+    # the same course at day 400 in all three. Only the drug arriving at 405
+    # during its cover changes, and the three answers are the rule:
+    #   a steroid              - confirms nothing, the course is held (2.1)
+    #   a previous-line drug   - opens a line on ITS OWN date, not the course's
+    #   a drug never given     - confirms, so the line opens on the course
+    dict(P('SNs', [('LEN', 'IMID', 0, 80), ('BORT', 'PI', 0, 80),
+                   ('MELP', 'ALKY', 400, 427), ('DEX', 'STEROID', 405, 600)]),
+         sct_ac=[('CART', IX + 200)]),
+    dict(P('SN',  [('LEN', 'IMID', 0, 80), ('BORT', 'PI', 0, 80),
+                   ('MELP', 'ALKY', 400, 427), ('BORT', 'PI', 405, 600)]),
+         sct_ac=[('CART', IX + 200)]),
+    dict(P('SNn', [('LEN', 'IMID', 0, 80), ('BORT', 'PI', 0, 80),
+                   ('MELP', 'ALKY', 400, 427), ('POMA', 'IMID', 405, 600)]),
+         sct_ac=[('CART', IX + 200)]),
     P('SJ0', [('LEN', 'IMID', 0, 600), ('MELP', 'ALKY', 500, 527)]),
     P('SJ', [('LEN', 'IMID', 0, 600), ('MELP', 'ALKY', 500, 527)]),
 ]
@@ -171,6 +186,16 @@ def main():
     ok(len(smp['SKn']) == 2 and starts(smp, 'SKn')[1] == rs.d(IX + 100),
        "SKn simplified: ...and with no allograft in between it confirms it, "
        "opening the line on the melphalan date")
+
+    ok(len(smp['SNs']) == 2,
+       "SNs simplified: a steroid confirms nothing - melphalan with one is "
+       "still melphalan on its own, and the course is held")
+    ok(len(smp['SN']) == 3 and starts(smp, 'SN')[2] == rs.d(IX + 405),
+       "SN simplified: a previous-line drug the procedure made line-defining "
+       "opens the next line on ITS OWN date, not the melphalan date")
+    ok(len(smp['SNn']) == 3 and starts(smp, 'SNn')[2] == rs.d(IX + 400),
+       "SNn simplified: ...where a drug never given before confirms the "
+       "course, so that line opens on the melphalan date instead")
 
     ok(len(smp['SM']) == 2 and starts(smp, 'SM')[1] == rs.d(IX + 100)
        and smp['SM'][0][3] == 'DISCONTINUATION',
