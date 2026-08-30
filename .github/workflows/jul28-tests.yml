@@ -1,9 +1,10 @@
 name: Jul 28 tests
 
-# The merge gate for the study folder. Everything it runs is pure R over the
-# repository's own files - no warehouse, no credentials, no connection - so the
-# claim "all suites pass" stops being something an author reports and becomes
-# something a machine records against a commit.
+# The merge gate for the study folder. Two jobs: the R suites, and the
+# planted-patient harnesses that run the engine's emitted SQL in duckdb. Both
+# work off the repository's own files - no warehouse, no credentials, no
+# connection - so the claim "all suites pass" stops being something an author
+# reports and becomes something a machine records against a commit.
 #
 # It runs. Between 13 and 30 August every run ended in seconds with no runner
 # assigned and no logs, here and in cohort_explorer-tests.yml - an account-level
@@ -28,6 +29,10 @@ on:
       - 'Jul 28/**'
       - 'validation/**'
       - 'apr_30_2026/**'
+      # The tumour contracts, because one of the suites holds the engine to
+      # them. Left out, a contract-only change skipped the very gate that
+      # checks the contract still binds.
+      - '.claude/skills/lot-contracts/**'
       - '.github/workflows/jul28-tests.yml'
   pull_request:
     paths: *paths
@@ -53,3 +58,42 @@ jobs:
       # non-zero after printing a clean summary both fail it too.
       - name: Every suite (exits non-zero if any is not as expected)
         run: Rscript validation/run_gate.R
+
+  # The planted-patient harnesses. They build the engine's own emitted SQL over
+  # synthetic patients in duckdb and check the LINES that come out, which is a
+  # different question from the R suites: those read the SQL the build would
+  # emit, these read what it produces. Every patient-level defect found in
+  # review so far came from here rather than from the gate, so a green gate
+  # alone was never evidence the lines were right.
+  #
+  # A separate job because it needs Python with duckdb and sqlglot, and because
+  # a translation failure here should read as its own red check rather than as
+  # the R gate breaking.
+  harnesses:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+      # The harnesses ask the engine for its SQL, so they need what the engine
+      # needs to emit it.
+      - name: Install R dependencies
+        run: Rscript -e 'install.packages("glue")'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install Python dependencies
+        run: pip install duckdb sqlglot
+      # Each exits non-zero on its own failures. run_synthetic is last and
+      # slowest - it draws six hundred patients and runs the shipped QC over
+      # them - so the quick ones report first.
+      - name: Planted-patient harnesses
+        working-directory: validation/synthetic
+        run: |
+          set -e
+          python3 run_melp_simple.py
+          python3 run_map_foldin.py
+          python3 run_lot_scenarios.py
+          python3 run_aug15_screen.py
+          python3 run_synthetic.py

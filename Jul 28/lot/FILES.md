@@ -126,10 +126,10 @@ per patient, and must fit the study window the run was given.
 | `tests/testutil.R` | Shared assertion helpers. Not a suite. |
 
 **What a run leaves behind.** `LOT_LONG` and `LOT_LONG_FINAL` (the study
-population), `LOT_LONG_ALLFLAGS`, `LOT_PATIENT_INPUT`, `MAP_STACKED`, the LOT1
-stage tables, the per-line `LOT<n>_<STAGE>` tables, `LOT_ATTRITION`,
-`LOT_RUN_METADATA`, `LOT_CODELIST_METADATA`, `LOT_QC_SUMMARY` and
-`LOT_BUILD_STATUS` — all prefixed. Read `LOT_BUILD_STATUS` before trusting any of
+population), `LOT_LONG_ALLFLAGS`, `LOT_PATIENT_INPUT`, `MAP_STACKED`,
+`PERMISSIBLE_SUBS`, the LOT1 stage tables, the per-line `LOT<n>_<STAGE>`
+tables, `LOT_ATTRITION`, `LOT_RUN_METADATA`, `LOT_CODELIST_METADATA`,
+`LOT_QC_SUMMARY` and `LOT_BUILD_STATUS` — all prefixed. Read `LOT_BUILD_STATUS` before trusting any of
 them: `started` once preflight passes, then `complete`, or `failed`.
 
 The per-line stage tables stay behind deliberately: they are each line's

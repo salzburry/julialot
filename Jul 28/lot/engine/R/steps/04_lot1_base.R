@@ -108,6 +108,8 @@ phase_lot1_base <- function(con, ctx) {
     -- give a line-level run-out of 144. The restart is then swallowed and LOT2
     -- never opens, because its trigger has to fall strictly after the previous
     -- end.
+{melp_short_course_ctes(cfg, 'lot1_regimen_cutoff', 'LOT1_START_DT',
+                        glue('date_add(lot1_regimen_cutoff.LOT1_START_DT, {cfg$induction_window_days - 1})'))}
     discon_per_med AS (
 {discon_per_med_sql('lot1_regimen_cutoff', 'LOT1_START_DT', end_col = 'REGIMEN_CUTOFF_DT',
                     boundary_gate = melp_boundary_gate(cfg),
@@ -177,11 +179,16 @@ phase_lot1_base <- function(con, ctx) {
       LEFT JOIN map_restart mr
         ON mr.PATID = ms.PATID AND mr.MAP_MED_TYPE = ms.MAP_MED_TYPE
        AND mr.MAP_START_DT = ms.MAP_START_DT
-      -- A regimen drug returning after a confirmed gap ends this line, like
-      -- any other drug would. Without it the release is half a rule. While
-      -- another regimen drug still holds this line open, the restart falls
-      -- inside the line, cannot end it, and is then too early to open the next
-      -- one. The treatment belongs to no line at all.
+      -- return_release_sql() emits nothing under the rule the study pins: a
+      -- drug of this line's regimen never ends it, whatever the gap, so its
+      -- later episodes are not added-medication candidates at all (4.3).
+      --
+      -- With apply_own_return_fold FALSE - a comparison build - the release is
+      -- back and a regimen drug returning after a confirmed gap ends the line
+      -- like any other drug. It has to, there: refuse it while another regimen
+      -- drug still holds the line open and the restart falls inside the line,
+      -- cannot end it, and is too early to open the next. The treatment would
+      -- belong to no line at all.
       WHERE (bm.MED_ABBR IS NULL
 {return_release_sql(cfg, 'mr', 'bm')})
         AND ms.MAP_MED_CLASS <> 'STEROID'  -- a steroid cannot trigger an add-med
@@ -189,10 +196,16 @@ phase_lot1_base <- function(con, ctx) {
         AND ms.MAP_START_DT <= coalesce(bc.LOT1_BASE_RUNOUT_DT, bc.OBS_END_DT)
     ),
     first_add_pick AS (
-      -- When several non-induction drugs share the earliest add date, one is
-      -- picked at random on a fixed seed. rand(42) gives the same answer in
-      -- every run, so the pick repeats without being biased towards the front
-      -- of the alphabet the way min() was.
+      -- When several non-induction drugs share the earliest add date, the
+      -- tie is broken on a hash of the patient and the drug name. It has to
+      -- be a function of the ROW, not of chance: rand(42) was here, and
+      -- Spark seeds rand per partition, so the drug it picked was stable only
+      -- while the physical plan was - a re-partition on the same data could
+      -- change it. The hash is not biased towards the front of the alphabet
+      -- the way min() was, and PATID is in it so the same two drugs do not
+      -- resolve the same way for every patient.
+      --
+      -- The DATE was never at risk either way, only which drug is named.
       SELECT PATID, LOT1_BASE_1ST_ADD_MED_DT, LOT1_BASE_1ST_ADD_MED
       FROM (
         SELECT
@@ -201,7 +214,7 @@ phase_lot1_base <- function(con, ctx) {
           MAP_MED_TYPE              AS LOT1_BASE_1ST_ADD_MED,
           row_number() OVER (
             PARTITION BY PATID
-            ORDER BY MAP_START_DT, rand(42)
+            ORDER BY MAP_START_DT, hash(PATID, MAP_MED_TYPE)
           ) AS rn
         FROM first_add_candidates
       ) ranked

@@ -8,8 +8,9 @@
 # flags the episode whose gap to the next reaches the threshold, and an episode
 # after such a gap was a restart that could open a line like any other drug.
 # apply_own_return_fold withdraws that release, and CONTRACT pins it TRUE - so
-# in the study's build a drug the patient has had before never starts a line,
-# whatever the gap. The release survives only for comparison builds. See
+# in the study's build a drug of the PREVIOUS regimen never starts a line,
+# whatever the gap. A drug last given further back than that is outside this
+# rule and opens a line like any other agent. The release survives only for comparison builds. See
 # return_release_on() below, which is the one place that decides.
 #
 # The release and the run-out chain are two halves of one rule and neither is
@@ -27,7 +28,7 @@
 # any other agent.
 #
 # TRUE - what CONTRACT pins - withdraws that. A line advances on an agent that
-# was not in the previous regimen, and a drug the patient has had before is not
+# was not in the previous regimen, and a drug that WAS in it is not
 # one, whatever the gap. Nothing was given in between, so the drug is returning
 # to the line it left.
 #
@@ -252,11 +253,10 @@ discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
 # planned, and a patient treated in between was not waiting for a second
 # transplant.
 #
-# One definition, spliced into all five places that ask. The tandem flags at
+# One definition, spliced into all five places that ask: the tandem flags at
 # LOT1 and at LOT2-5, the next line's AUTO start gate, and the two run-out
-# guards that mirror it. Five copies of a rule is how five copies drift apart,
-# and a tandem test that disagrees with the gate it mirrors puts a transplant
-# in no line at all.
+# guards that mirror it. A tandem test that disagrees with the gate it mirrors
+# puts a transplant in no line at all.
 tandem_interrupt_events_sql <- function() "
         SELECT PATID, MAP_START_DT AS dt FROM map_stacked
         WHERE MAP_MED_CLASS <> 'STEROID'
@@ -268,11 +268,8 @@ tandem_interrupt_events_sql <- function() "
 #
 # Two rules ask which procedures BREAK a line - the melphalan rule, to say
 # whether a later course still belongs to it, and the fold-in, to count what
-# advanced the line between a returning drug's two doses. Both used to take
-# any date in tx_auto_dates or tx_allo_cart_dates past the line's window, and
-# that is not the engine's rule: a PLANNED TANDEM continues the line and opens
-# nothing. An AUTO in LOT1's window with its tandem partner on day 180 then
-# switched the melphalan rule off for the rest of that patient.
+# advanced the line between a returning drug's two doses. Not every transplant
+# past the window does: a PLANNED TANDEM continues the line and opens nothing.
 #
 # PREV_AUTO_DT and N_BETWEEN are what line_break_tandem_pred() below reads.
 # ALLO and CAR-T rows carry no previous AUTO, so that predicate never excludes
@@ -314,9 +311,8 @@ line_break_tx_sql <- function() glue("
 #          dates applies. Outside the window a CAR-T opens the next line at
 #          LOT1 as anywhere else.
 #
-# paste0 around the glue, not glue alone: glue trims a template leading
-# newline and this fragment splices straight after another predicate, which
-# without it read "... <= mc.EXPO_DTAND NOT (...".
+# paste0 around the glue, not glue alone: glue trims a template's leading
+# newline, and this fragment splices straight after another predicate.
 line_break_window_pred <- function(cfg, alias, induction_end, line_start,
                                    cart_from = NULL) {
   cart <- if (is.null(cart_from) || identical(cart_from, line_start)) "" else

@@ -70,9 +70,13 @@ ok(has(sf("06_lot1_end.R"), "FROM {melp_lot1_base_from(cfg)}") &&
 # melphalan out of the run-out chain's interrupt scan, which is a predicate
 # over map_stacked and needs nothing 04 does not already have. The decision
 # itself still cannot live here - it reads lot1_base, which is what 04 builds.
-ok(length(gregexpr("melp_", sf("04_lot1_base.R"), fixed = TRUE)[[1]]) == 1L &&
+# 04 carries two, and neither is a decision: the short-course CTE and the
+# predicate that reads it keep melphalan out of the run-out chain's interrupt
+# scan. Both read map_stacked and the line's start, which 04 already has. The
+# DECISION still cannot live here - it reads lot1_base, which is what 04 builds.
+ok(has(sf("04_lot1_base.R"), "melp_short_course_ctes(cfg, 'lot1_regimen_cutoff'") &&
      has(sf("04_lot1_base.R"), "boundary_gate = melp_boundary_gate(cfg)"),
-   "...and 04 carries only the boundary gate, which needs no line table")
+   "...and 04 carries only the short-course gate, which needs no line decision")
 ok(has(sf("10_lot2_5_base.R"), "{melp_lotn_ctes(cfg, lot_num, induction_window_days,") &&
      has(sf("10_lot2_5_base.R"), "{melp_suppress_predicate(cfg)}") &&
      has(sf("10_lot2_5_base.R"), "melp_inject_arm(cfg"),
@@ -125,6 +129,10 @@ subst_off <- function(f) {
                    melp_prev_line_ctes(off, 60L, 45L, 2L)),
                  c("boundary_gate = melp_boundary_gate(cfg),",
                    paste0("boundary_gate = \"", melp_boundary_gate(off), "\",")),
+                 c("{melp_short_course_ctes(cfg, 'lot1_regimen_cutoff', 'LOT1_START_DT',\n                        glue('date_add(lot1_regimen_cutoff.LOT1_START_DT, {cfg$induction_window_days - 1})'))}",
+                   melp_short_course_ctes(off, "l", "s", "e")),
+                 c("{melp_short_course_ctes(cfg, glue('lot{lot_num}_start'), glue('LOT{lot_num}_START_DT'),\n                        lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days))}",
+                   melp_short_course_ctes(off, "l", "s", "e")),
                  c("{melp_hold_join(cfg, 'ls')}",      melp_hold_join(off, "ls")),
                  c("{melp_hold_col(cfg, 'mh')}",       melp_hold_col(off, "mh")),
                  c("{melp_line_type_guard(cfg, lot_num)}", melp_line_type_guard(off, 2)),

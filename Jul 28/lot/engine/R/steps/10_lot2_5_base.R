@@ -299,9 +299,15 @@ build_lot_n <- function(con, lot_num,
       WHERE ms.MAP_START_DT > pe.PREV_END_DT
         AND ms.MAP_START_DT <= pe.OBS_END_DT
         AND ms.MAP_MED_CLASS <> 'STEROID'
-        -- Released once discontinued. The exclusion holds a drug the patient
-        -- is still taking inside the line that owns it. A drug returning after
-        -- a confirmed gap is a restart, and opens a line like any other.
+        -- The exclusion holds a drug of the PREVIOUS regimen inside the line
+        -- that owns it, whatever the gap since it stopped (4.3). A drug last
+        -- given further back is not in this set and opens a line like any
+        -- other agent.
+        --
+        -- return_release_sql() adds nothing under the pinned rule. With
+        -- apply_own_return_fold FALSE - a comparison build - it releases a
+        -- drug whose own episode carried a confirmed discontinuation, which is
+        -- the older algorithm.
         AND (pme.MED_ABBR IS NULL
 {return_release_sql(cfg, 'mr', 'pme', melp_prior_regimen_exempt(cfg))}){melp_suppress_predicate(cfg)}{foldin_trigger_predicate(cfg)}
       GROUP BY pe.PATID
@@ -567,6 +573,8 @@ build_lot_n <- function(con, lot_num,
     -- give a line-level run-out of 144. The restart is then swallowed and LOT2
     -- never opens, because its trigger has to fall strictly after the previous
     -- end.
+{melp_short_course_ctes(cfg, glue('lot{lot_num}_start'), glue('LOT{lot_num}_START_DT'),
+                        lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days))}
     discon_per_med AS (
 {discon_per_med_sql(glue('lot{lot_num}_regimen_cutoff'), glue('LOT{lot_num}_START_DT'),
                     boundary_tbl = foldin_boundary_tbl(cfg), end_col = 'REGIMEN_CUTOFF_DT',
@@ -654,7 +662,11 @@ build_lot_n <- function(con, lot_num,
           PATID,
           date_sub(MAP_START_DT, 1) AS LOT{lot_num}_BASE_1ST_ADD_MED_DT,
           MAP_MED_TYPE              AS LOT{lot_num}_BASE_1ST_ADD_MED,
-          row_number() OVER (PARTITION BY PATID ORDER BY MAP_START_DT, rand(42)) AS rn
+          -- Same tie-break as 04_lot1_base.R, and for the same reason: a
+          -- function of the row, so the drug named does not depend on the
+          -- physical plan.
+          row_number() OVER (PARTITION BY PATID
+                             ORDER BY MAP_START_DT, hash(PATID, MAP_MED_TYPE)) AS rn
         FROM first_add_candidates
       ) ranked
       WHERE rn = 1

@@ -201,6 +201,10 @@ PATS = [
     # count looks strictly BEFORE the return, so it does not see CARF and folds
     # anyway - and the regimen union had no medication boundary, so 2L named a
     # drug whose only episode began after 2L had ended, while 3L named it too.
+    # F20n: F20 with the return removed, to show where 2L ends on its own.
+    # The return must not move that: assigned to 3L by the regimen while still
+    # extending 2L, one episode was doing two jobs in two lines.
+    P('F20n', L1 + [('DARA', 'MAB', 200, 400), ('CARF', 'PI', 450, 600)]),
     P('F20', L1 + [('DARA', 'MAB', 200, 400), ('BORT', 'PI', 450, 510),
                    ('CARF', 'PI', 450, 600)]),
     # F21: a return after a break SHORTER than the discontinuation gap. B is
@@ -267,6 +271,15 @@ PATS = [
               ('DARA', 'MAB', 200, 600), ('MELP', 'ALKY', 450, 477)]),
     P('F27n', [('LEN', 'IMID', 0, 80),
                ('DARA', 'MAB', 200, 600), ('MELP', 'ALKY', 450, 477)]),
+    # F31: a suppressed course and a returning drug starting the SAME DAY.
+    # melp_suppress_dates carries a patient and a date, so a suppression test
+    # that matched on those alone removed whatever else began that day - B was
+    # dropped from the fold set and opened a line of its own. B must fold here
+    # exactly as it does when it arrives a day later, which F31n is.
+    P('F31', L1 + [('DARA', 'MAB', 200, 600),
+                   ('MELP', 'ALKY', 450, 477), ('BORT', 'PI', 450, 510)]),
+    P('F31n', L1 + [('DARA', 'MAB', 200, 600),
+                    ('MELP', 'ALKY', 450, 477), ('BORT', 'PI', 451, 510)]),
     # F28/F29/F30: one scope for "not new". Three patients with the same
     # history and the same short melphalan course at day 600, differing only
     # in how far back the drug returning inside it was last seen.
@@ -321,12 +334,11 @@ def build(foldin):
     #
     # Not "a drug appears in one line only" - a drug legitimately returns in a
     # later line and is that line's regimen too.
-    # The shipped QC, over a population that HAS a substitution pair. This is
-    # the only place it can be: run_synthetic is the harness that normally runs
-    # the catalogue, and its six hundred patients cannot be built at all with a
-    # non-empty permissible_subs - statement 27 spills the disk. So the checks
-    # that decide which drugs are one agent were never exercised, and C1 failed
-    # a legitimately folded biosimilar for want of a test that could see it.
+    # The shipped QC over planted patients that HAVE a substitution pair, with
+    # the fold-in on. run_synthetic runs the same catalogue over its drawn
+    # population and its own pair; this run adds the cases a draw does not
+    # reach. C1 failed a legitimately folded biosimilar for want of a test that
+    # could see it, and neither run could see it while both tables were empty.
     if foldin:
         QC.extend(qc_findings(con, sqldir))
     OWNERSHIP[foldin] = {
@@ -488,6 +500,10 @@ def main():
        "F19/F19n: a suppressed course decides nothing, so the folded regimen "
        "reads the same with and without it (" + str(regimen(True, 'F19', 2))
        + " vs " + str(regimen(True, 'F19n', 2)) + ")")
+    ok(n(fold, 'F31') == 2 and regimen(True, 'F31', 2) == regimen(True, 'F31n', 2),
+       "F31/F31n: a suppressed course removes only MELP, so a drug arriving "
+       "the same day still folds (" + str(regimen(True, 'F31', 2)) + ")")
+
     ok(regimen(True, 'F27', 2) == regimen(True, 'F27n', 2),
        "F27/F27n: a held melphalan course joins neither regimen nor count, "
        "even where the fold would otherwise take it ("
@@ -534,6 +550,12 @@ def main():
        and n(ref, 'F20') == 3,
        "F20: a same-day new agent keeps the boundary, and 2L does not name "
        "the drug whose episode starts in 3L")
+    ok(fold['F20'][1][2] == fold['F20n'][1][2]
+       and fold['F20'][1][3] == fold['F20n'][1][3],
+       "F20/F20n: the new drug takes preference, so the return belongs to the "
+       "line it opens and leaves the previous line's end exactly where its own "
+       "run-out put it (" + str(fold['F20'][1][2:4]) + ")")
+
     ok(regimen(True, 'F20', 3)[0] == 'BORT CARF',
        "F20: ...the line the return actually falls in names it")
     ok(n(ref, 'F21') == 3 and n(fold, 'F21') == 2

@@ -569,20 +569,21 @@ LOT_QC_CHECKS <- list(
        why = paste0("An added medication is normally one the regimen does not ",
                     "contain. Where it does, the candidate query and the ",
                     "regimen disagree about what the regimen is. ",
-                    "The exception is a rule, not a tolerance. A regimen drug ",
-                    "whose own episode carried a confirmed discontinuation and ",
-                    "which then restarts ends the line like any other drug ",
-                    "would (LOT_RULES.md 11.1, prior_regimen.R). That drug IS ",
-                    "in the regimen and IS the added medication, both correctly. ",
-                    "This check predates that rule and was not moved with it, so ",
-                    "it failed every returning-drug line - eleven of them on a ",
-                    "400-patient synthetic run, all eleven a restart after a ",
-                    "confirmed gap and none of them a defect. ",
-                    "The exemption is read the way the engine reads it: the lag ",
-                    "of MAP_DISCON_FLG over that drug's own episodes, so it is ",
-                    "the episode IMMEDIATELY before the restart that has to ",
-                    "carry the flag. Any-earlier-episode would excuse a drug ",
-                    "that discontinued once and has been running since."),
+                    "There is no exception under the rule the study pins. A ",
+                    "regimen drug restarting after a confirmed discontinuation ",
+                    "USED to end the line like any other drug, and this check ",
+                    "carried an exemption for it - the lag of MAP_DISCON_FLG ",
+                    "over that drug's own episodes. LOT_RULES.md 4.3 withdrew ",
+                    "that release on 2026-08-30: a drug of the previous regimen ",
+                    "never starts a line, whatever the gap, so it can no longer ",
+                    "be the added medication either. The exemption therefore ",
+                    "excused output the contract build cannot produce, which ",
+                    "means a regression recreating the old algorithm would have ",
+                    "passed a fail-severity check. ",
+                    "It survives only for a comparison build, where ",
+                    "apply_own_return_fold is FALSE and the release is back: ",
+                    "the settings decide, so the check reads the same switch ",
+                    "the engine does rather than tolerating both."),
        needs = c("final", "map"),
        sql = function(t, p) counted(paste0("
     WITH ", qc_restart_sql(t), "
@@ -595,17 +596,19 @@ LOT_QC_CHECKS <- list(
      AND r.MAP_START_DT = date_add(f.LOT_BASE_1ST_ADD_MED_DT, 1)
     WHERE f.LOT_BASE_1ST_ADD_MED IS NOT NULL
       AND array_contains(split(coalesce(f.LOT_BASE_MEDS, ''), ' '),
-                         f.LOT_BASE_1ST_ADD_MED)
-      AND coalesce(r.PREV_DISCON, 0) = 0"),
+                         f.LOT_BASE_1ST_ADD_MED)",
+    if (isTRUE(p$own_return_fold)) "" else
+      "\n      AND coalesce(r.PREV_DISCON, 0) = 0"),
     "concat(pid, ' LOT', LOT_NUM, ': ', med)")),
 
   list(id = "C3", group = "Regimen", severity = "info",
        what = "lines where more than one drug could have been the added medication",
        why = paste0("When several non-regimen drugs share the earliest added ",
-                    "date the build breaks the tie with rand(42) inside a window ",
-                    "ORDER BY. Spark seeds that per partition, so the date is ",
-                    "stable across re-runs but the drug is only stable while the ",
-                    "physical plan is. This counts how many lines are exposed. ",
+                    "date the build breaks the tie on a hash of the patient and ",
+                    "the drug name, so the drug it names is the same in every ",
+                    "run. The pick is still arbitrary - nothing in the data says ",
+                    "which drug was the addition - so this counts how many ",
+                    "lines are answered by a tie-break rather than by evidence. ",
                     "Zero means the question never arises on this cohort. ",
                     "Counted over the drugs the engine would ACTUALLY have ",
                     "considered, which is not the same as every drug sharing the ",
@@ -1082,10 +1085,15 @@ qc_params <- function(settings, run_id) {
   # strict window test would report as a drug that reached the regimen some
   # other way. Read off the run's own recorded settings, not config.csv.
   foldin <- toupper(trimws(qc_setting(settings, "apply_map_foldin")))
+  # Which returning-drug rule the run applied. C2's exemption belongs to the
+  # OLDER one, where a confirmed gap released the drug; under the rule the
+  # study pins there is nothing to exempt.
+  ownret <- toupper(trimws(qc_setting(settings, "apply_own_return_fold")))
   list(run_id   = run_id,
        censor   = identical(censor, "TRUE"),
        cart_exempt = identical(cart_ex, "TRUE"),
        foldin   = identical(foldin, "TRUE"),
+       own_return_fold = identical(ownret, "TRUE"),
        melp_rule = if (nzchar(melp)) melp else "off",
        ind1     = qc_int(settings, "induction_window_days"),
        indn     = qc_int(settings, "lot_n_induction_window_days"),

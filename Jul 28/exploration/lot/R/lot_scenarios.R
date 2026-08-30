@@ -871,7 +871,7 @@ LOT_SCENARIOS <- list(
                      "S06, where the same 90-day gap on the original drug opens a second ",
                      "line. "),
        sql = NULL,
-       sql_note = "permissible_subs is loaded from CSV into a session view and is never written to the warehouse, so a finished run cannot be asked which agents were substitutes"),
+       sql_note = "permissible_subs is written out as <prefix>PERMISSIBLE_SUBS, so a finished run can be asked which agents were substitutes - it was a session view only, which is why the QC package had to guess"),
 
   list(id = "S30", group = "A drug that comes back",
        title = "A biosimilar of a drug from two lines back",
@@ -898,7 +898,7 @@ LOT_SCENARIOS <- list(
                      "for. S29 is the same swap one line earlier, and gets one ",
                      "line. "),
        sql = NULL,
-       sql_note = "permissible_subs is never written to the warehouse - see S29"),
+       sql_note = "permissible_subs is written out as <prefix>PERMISSIBLE_SUBS - see S29"),
 
   list(id = "S31", group = "CAR-T",
        title = "A CAR-T line with a drug started after it",

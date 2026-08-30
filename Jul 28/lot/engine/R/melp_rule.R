@@ -19,9 +19,9 @@
 # injected as the boundary. A course inside induction, or one longer than the
 # cap, is left to the engine untouched. melp_simplified_ctes() below.
 #
-# The rest of this header is the two five-branch modes, which the study team
-# asked for first and did not adopt. They are kept because the comparison that
-# chose between them is a cell anyone can rebuild.
+# THE UNADOPTED MODES - the two five-branch readings the study team asked for
+# first. Kept because the comparison that chose between them is a cell anyone
+# can rebuild. Read this far only when reading their code.
 #
 #   inside induction, next exposure < 180d    no advance
 #   inside induction, next >= 180d            the next one advances, on its date
@@ -30,25 +30,19 @@
 #   outside, next >= 180d                     the next one advances, on its date
 #
 # "Inside induction" compares this exposure's date with this line's induction
-# end. It is not about whether melphalan is in the regimen. The two agree only
-# for the first dose.
+# end, not whether melphalan is in the regimen. The two agree only for the
+# first dose.
 #
-# So the rule does two things. It SUPPRESSES candidates outside induction whose
-# next exposure is 60+ days away - both doses of a B.2 pair. And it INJECTS the
-# advancing dose of a 180+ pair, and the first dose of a B.1 pair, which the
-# engine may not otherwise offer.
+# So they SUPPRESS candidates outside induction whose next exposure is 60+ days
+# away - both doses of a B.2 pair - and INJECT the advancing dose of a 180+
+# pair and the first dose of a B.1 pair, which the engine may not otherwise
+# offer. Suppressing both B.2 doses stops melphalan ending the line at either
+# but does not keep the second dose inside it:
+# melp_hold carries the line to it.
 #
-# Suppressing both doses of a B.2 pair stops melphalan ending the line at
-# either. It does not on its own keep the second dose INSIDE the line, which
-# the request also asks for, so melp_hold carries the line to it.
-#
-# The two modes differ only where a coded transplant sits on the same event and
-# the SCT rule fires too. as_asked judges every exposure anyway. yield_to_sct
-# leaves an exposure with an AUTO within melp_sct_days to the transplant rule.
-# Both are built as cells and compared. Neither is the answer.
-#
-# 'simplified' is a different rule, not a third reading of the same one, and it
-# is the one the study team adopted. It is stated at the top of this file.
+# The two differ only where a coded transplant sits on the same event: as_asked
+# judges every exposure anyway, yield_to_sct leaves an exposure with an AUTO
+# within melp_sct_days to the transplant rule.
 MELP_RULE_MODES <- c("as_asked", "yield_to_sct", "simplified")
 
 # "off" is a mode name like the others, and it is the ONLY way to ask for a
@@ -665,11 +659,10 @@ melp_prev_line_ctes <- function(cfg, prev_med_window, cart_consolidation_days,
   # The CAR-T induction rule is LOT1's alone (LOT_RULES.md 6.4), so the
   # exemption is passed only where the previous line IS LOT1 - and LOT1 always
   # starts on a medication, so ind_end resolves to its own 60-day window there.
-  # Without it this recomputation read an in-window CAR-T as a break while the
-  # LOT1 statement read it as part of the line: one decision, computed twice,
-  # differently. No planted shape shows a different answer, because the paths
-  # it feeds are gated by the exemption dates the LOT1 decision produces - but
-  # a divergence nothing currently reads is still a divergence.
+  # Without it this recomputation reads an in-window CAR-T as a break while the
+  # LOT1 statement reads it as part of the line: one decision, computed twice,
+  # differently. No planted shape shows a different answer today, but a
+  # divergence nothing currently reads is still a divergence.
   cart_from <- if (isTRUE(cfg$apply_cart_induction_rule) &&
                    identical(lot_num, 2L)) ind_end else NULL
   paste0(pre, melp_decision_ctes(
@@ -685,17 +678,11 @@ melp_prev_line_ctes <- function(cfg, prev_med_window, cart_consolidation_days,
 # line. Empty only on a rule-off build, so the study's LOT2-5 candidate list
 # does carry this carve-out from the prior-regimen exclusion.
 #
-# The exemption names the DATES the rule says advance, not the drug. Releasing
-# every melphalan row would be wider than any branch allows:
-#
-#   the first exposure of a B.2 pair          - both doses stay in the line
-#   the later exposure of a B.2 pair          - the same
-#   the first exposure of a B.3 pair          - only the later one advances
-#   the later exposure of an A.1 pair         - the pair does not advance
-#
-# All four could then open a line, and the branch table says none of them may.
-# The dates that MAY are exactly melp_inject: B.1's first exposure, and the
-# later exposure of an A.2 or B.3 pair. So the exemption reads that list.
+# The exemption names the DATES the rule says advance, not the drug. Released
+# by drug, four exposures the branch table refuses a line could open one: both
+# doses of a B.2 pair, B.3's first, and A.1's later. The dates that MAY advance
+# are exactly melp_inject - B.1's first, and the later exposure of an A.2 or
+# B.3 pair - so the exemption reads that list.
 melp_prior_regimen_exempt <- function(cfg, alias = "ms") {
   if (!melp_rule_on(cfg)) return("")
   glue(" OR (upper(trim({alias}.MAP_MED_TYPE)) = '{melp_abbr(cfg)}'
@@ -711,22 +698,77 @@ melp_prior_regimen_exempt <- function(cfg, alias = "ms") {
 #
 # end_candidates is the one place those columns enter 06, so this is one
 # substitution rather than an edit per reference.
-# Melphalan is never an INTERRUPT in a base drug's run-out chain while this
-# rule is on, because this rule decides what melphalan does to a line and the
-# chain scan cannot see that decision - at LOT1 it runs before the decision
-# exists at all.
+# Which melphalan episodes must not INTERRUPT a base drug's run-out chain.
 #
-# A course inside induction is in the regimen, so the scan already skips it. A
-# SUPPRESSED course advances nothing by definition, so breaking a chain on it
-# is simply wrong: it truncated the base drug's cover, the drug's own later
-# episode was then never reached, and 4.3 refuses that episode a line of its
-# own - so the treatment belonged to no line at all. A course this rule DOES
-# advance on ends the line through the boundary it injects, not through the
-# chain, so nothing is lost by leaving it out here either.
+# Only the SHORT courses, and only outside the line's own induction window -
+# exactly the ones 4.7 refuses a boundary to. A course inside induction is in
+# the regimen and the scan already skips it. A course longer than the cap is
+# left to the engine untouched (4.7), so it breaks the chain like any other
+# drug; removing every melphalan row instead made an over-cap course stop
+# ending the line at its own run-out, which is the opposite of untouched.
+#
+# The grouping is the rule's own - doses closer than melp_exposure_days are
+# one administration, and the course covers to its latest supply end - so this
+# and melp_course cannot disagree about what a course is. None of it needs the
+# melphalan DECISION, which is why it can run at LOT1, where that decision does
+# not exist yet: it reads map_stacked and the line's start, nothing else.
+melp_short_course_ctes <- function(cfg, line_tbl, start_col, induction_end) {
+  if (!melp_rule_on(cfg)) return("")
+  abbr <- melp_abbr(cfg)
+  paste0("\n", glue("
+    melp_bg_doses AS (
+      SELECT PATID, MAP_START_DT AS DOSE_DT
+      FROM map_stacked
+      WHERE upper(trim(MAP_MED_TYPE)) = '{abbr}'
+      GROUP BY PATID, MAP_START_DT
+    ),
+    melp_bg_runs AS (
+      SELECT PATID, DOSE_DT,
+             CASE WHEN datediff(DOSE_DT,
+                    lag(DOSE_DT) OVER (PARTITION BY PATID ORDER BY DOSE_DT))
+                       < {cfg$melp_exposure_days}
+                  THEN 0 ELSE 1 END AS IS_NEW
+      FROM melp_bg_doses
+    ),
+    melp_bg_expo AS (
+      SELECT PATID, DOSE_DT,
+             min(DOSE_DT) OVER (PARTITION BY PATID, E) AS EXPO_DT
+      FROM (SELECT PATID, DOSE_DT,
+                   sum(IS_NEW) OVER (PARTITION BY PATID ORDER BY DOSE_DT
+                                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS E
+            FROM melp_bg_runs) r
+    ),
+    melp_bg_course AS (
+      SELECT d.PATID, d.EXPO_DT, d.DOSE_DT, max(m.MAP_END_DT) AS COURSE_END_DT
+      FROM melp_bg_expo d
+      INNER JOIN map_stacked m
+        ON m.PATID = d.PATID AND m.MAP_START_DT = d.DOSE_DT
+       AND upper(trim(m.MAP_MED_TYPE)) = '{abbr}'
+      GROUP BY d.PATID, d.EXPO_DT, d.DOSE_DT
+    ),
+    -- Every dose of a course that is SHORT and starts past this line's own
+    -- induction window. The course's length is judged once, at its first
+    -- dose, so a follow-up dose is in or out with the course it belongs to.
+    melp_no_break AS (
+      SELECT c.PATID, c.DOSE_DT AS MAP_START_DT
+      FROM melp_bg_course c
+      INNER JOIN (SELECT PATID, EXPO_DT, max(COURSE_END_DT) AS COURSE_END_DT
+                  FROM melp_bg_course GROUP BY PATID, EXPO_DT) x
+        ON x.PATID = c.PATID AND x.EXPO_DT = c.EXPO_DT
+      INNER JOIN {line_tbl} ON {line_tbl}.PATID = c.PATID
+      WHERE datediff(x.COURSE_END_DT, c.EXPO_DT) + 1 <= {cfg$melp_simple_course_days}
+        AND c.EXPO_DT > {induction_end}
+    ),"))
+}
+
+# The predicate that reads it, ANDed into the interrupt scan's join.
 melp_boundary_gate <- function(cfg) {
   if (!melp_rule_on(cfg)) return("")
-  paste0("\n              AND upper(trim(o.MAP_MED_TYPE)) <> '",
-         melp_abbr(cfg), "'")
+  paste0("\n              AND NOT (upper(trim(o.MAP_MED_TYPE)) = '",
+         melp_abbr(cfg), "'\n",
+         "                       AND EXISTS (SELECT 1 FROM melp_no_break nb2\n",
+         "                                   WHERE nb2.PATID = o.PATID\n",
+         "                                     AND nb2.MAP_START_DT = o.MAP_START_DT))")
 }
 
 melp_lot1_ctes <- function(cfg) {
@@ -811,7 +853,7 @@ melp_lot1_ctes <- function(cfg) {
     ),
     -- The add-med pick, worked out again with the rule applied. Same span,
     -- same steroid exclusion, the same returning-drug release and the same
-    -- rand(42) tie-break as 04_lot1_base.R. A patient with no melphalan gets
+    -- hash tie-break as 04_lot1_base.R. A patient with no melphalan gets
     -- the pick that step already made.
     --
     -- The release is why this is not simply every base drug being excluded.
@@ -845,7 +887,8 @@ melp_lot1_ctes <- function(cfg) {
                date_sub(MAP_START_DT, 1) AS LOT1_BASE_1ST_ADD_MED_DT,
                MAP_MED_TYPE              AS LOT1_BASE_1ST_ADD_MED,
                row_number() OVER (PARTITION BY PATID
-                                  ORDER BY MAP_START_DT, rand(42)) AS rn
+                                  ORDER BY MAP_START_DT,
+                                           hash(PATID, MAP_MED_TYPE)) AS rn
         FROM melp_add_candidates
       ) ranked
       WHERE rn = 1

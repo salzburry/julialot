@@ -61,9 +61,10 @@ EXPECTED_FAILURES <- list(
     "01_codelists.R: differs beyond the approved deviations in 2 line(s) [6d3ee77f]",
     "03_mma_map.R: differs beyond the approved deviations in 217 line(s) [1bc3749e]",
     "05_sct.R: differs beyond the approved deviations in 11 line(s) [6457f58f]",
-    # lot1_regimen_cutoff, and the regimen window and the per-drug
-    # episode scan both bounded by it.
-    "04_lot1_base.R: differs from 02_lot1.R in 137 line(s) [14525203]",
+    # lot1_regimen_cutoff, the regimen window and the per-drug episode scan
+    # both bounded by it, and the same-day add-med tie-break as a row hash
+    # rather than a seeded rand.
+    "04_lot1_base.R: differs from 02_lot1.R in 143 line(s) [0ce86120]",
     # LOT1_AUTO_HOLD_DT, and a tandem that needs a clear gap between its two
     # transplants.
     "05b_lot1_sct.R: differs beyond the approved deviations in 176 line(s) [524fd363]",
@@ -74,8 +75,9 @@ EXPECTED_FAILURES <- list(
     "08_persist.R: differs beyond the approved deviations in 111 line(s) [4ef6f10b]",
     # SCT_AUTO_CONT and end_natural at LOT2-5, LOT{n}_AUTO_HOLD_DT, auto_cand
     # reading the previous line's own window, the regimen cutoff, and the tandem
-    # gap. Re-pinned deliberately, which is what this list is for.
-    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 958 line(s) [364e0e9a]")
+    # gap, and the add-med tie-break as a row hash. Re-pinned deliberately,
+    # which is what this list is for.
+    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 963 line(s) [554b6b19]")
 )
 
 # How one suite's output is read. Its own suite is validation/hygiene/
