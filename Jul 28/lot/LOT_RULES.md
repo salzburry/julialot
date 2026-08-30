@@ -295,6 +295,14 @@ later agent's, so the boundary sits where treatment actually changed.
 A course inside the induction window, or one covering more days than the cap,
 is left to the engine untouched.
 
+**One line owns a course** — the latest one whose start comes before it. A
+course is disqualified from an earlier line by another line-defining agent
+arriving first: that agent ends the line, and what follows belongs to the line
+it started. It is not disqualified by distance alone, so a course long after
+the drugs ran out still belongs to the line when nothing happened in between.
+Without this every line claimed every later course and the earliest was carried
+to the last one, which cost a line its own recorded discontinuation.
+
 The rule reads days of **cover**, not dose dates, on both tests: what counts as
 short, and how far the line is carried. A medical melphalan claim carries the
 imputed `medical_day_supply`, so a single administration covers 28 days.

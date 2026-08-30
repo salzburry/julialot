@@ -392,6 +392,42 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
       WHERE (cb.MED_ABBR IS NULL
              OR (coalesce(cr.PREV_DISCON, 0) = 1 AND cb.SUBSTITUTE_ONLY = 0))
     ),
+    -- A course belongs to ONE line: the latest whose start precedes it.
+    --
+    -- Without this the bounds below - the line start to OBSERVATION end - let
+    -- every line claim every later course, and melp_hold takes the max, so the
+    -- FIRST line is carried to the LAST suppressed course in the record. A
+    -- patient with LEN to day 200, a second line opening at day 300 and a lone
+    -- melphalan course at day 900 had line 1 ending day 299 MED_ADD, its real
+    -- day-200 discontinuation gone, and line 2 carried to day 927.
+    --
+    -- The test is an intervening line-defining agent, not a gap. A course long
+    -- after the drugs ran out still belongs to the line when nothing else
+    -- happened in between - that is the request's own case, and the planted SE
+    -- patient pins it. What disqualifies a course is another agent the engine
+    -- would open a line on, arriving first: the line ends there, and what comes
+    -- after belongs to the line that agent started.
+    --
+    -- Same candidate gate as melp_confirm below, so ownership and confirmation
+    -- cannot disagree about what counts as an agent.
+    melp_taken AS (
+      SELECT DISTINCT mc.PATID, mc.EXPO_DT
+      FROM melp_course mc
+      INNER JOIN {line_tbl} ON {line_tbl}.PATID = mc.PATID
+      INNER JOIN map_stacked o
+        ON o.PATID = mc.PATID
+       AND o.MAP_START_DT >  {line_tbl}.{start_col}
+       AND o.MAP_START_DT <= mc.EXPO_DT
+       AND o.MAP_MED_CLASS <> 'STEROID'
+       AND upper(trim(o.MAP_MED_TYPE)) <> '{abbr}'
+      LEFT JOIN {base_tbl} ob
+        ON ob.PATID = o.PATID AND ob.MED_ABBR = o.MAP_MED_TYPE
+      LEFT JOIN {restart_tbl} orr
+        ON orr.PATID = o.PATID AND orr.MAP_MED_TYPE = o.MAP_MED_TYPE
+       AND orr.MAP_START_DT = o.MAP_START_DT
+      WHERE (ob.MED_ABBR IS NULL
+             OR (coalesce(orr.PREV_DISCON, 0) = 1 AND ob.SUBSTITUTE_ONLY = 0))
+    ),
     melp_judged AS (
       SELECT mc.PATID, mc.EXPO_DT,
              CASE WHEN mc.EXPO_DT <= {induction_end} THEN 1 ELSE 0 END AS INSIDE,
@@ -402,8 +438,11 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
       LEFT JOIN melp_confirm cf
         ON cf.PATID = mc.PATID AND cf.EXPO_DT = mc.EXPO_DT
       INNER JOIN {line_tbl} ON {line_tbl}.PATID = mc.PATID
+      LEFT JOIN melp_taken tk
+        ON tk.PATID = mc.PATID AND tk.EXPO_DT = mc.EXPO_DT
       WHERE mc.EXPO_DT >= {line_tbl}.{start_col}
         AND mc.EXPO_DT <= {span_end}
+        AND tk.PATID IS NULL
     ),
     -- A short unconfirmed course outside induction neither ends the line nor
     -- starts one...

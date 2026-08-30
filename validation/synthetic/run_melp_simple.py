@@ -62,6 +62,14 @@ PATS = [
              ('MELP', 'ALKY', 190, 190)]),
     P('SG2', [('LEN', 'IMID', 0, 80), ('DARA', 'MAB', 300, 1250),
               ('MELP', 'ALKY', 420, 420), ('MELP', 'ALKY', 510, 510)]),
+    # SH: a course must be owned by ONE line - the latest whose start precedes
+    # it. Line 1 runs out at day 200 and discontinues; line 2 opens at day 300;
+    # a lone course sits at day 900. Bounded only by the OBSERVATION end, both
+    # lines claimed that course and the hold took the max, so line 1 ended day
+    # 299 MED_ADD with its real discontinuation gone. Line 1 must keep it, and
+    # line 2 - the line the course actually falls after - carries it.
+    P('SH', [('LEN', 'IMID', 0, 200), ('DARA', 'MAB', 300, 600),
+             ('MELP', 'ALKY', 900, 927)]),
 ]
 
 
@@ -140,6 +148,20 @@ def main():
        "SG2 as_asked: ...under the five-branch hold too")
 
     print()
+    # SH - one line owns the course, and the earlier line keeps its own end.
+    # Bounded only by the observation end, EVERY line claimed EVERY later
+    # course and the hold took the max, so line 1 lost its discontinuation to
+    # a course 700 days after it.
+    sh = smp.get('SH', [])
+    ok(len(sh) == 2, "SH simplified: the lone course opens no line of its own")
+    ok(len(sh) == 2 and sh[0][2] == rs.d(IX + 200)
+       and sh[0][3] == 'DISCONTINUATION',
+       "SH simplified: line 1 keeps its real day-200 discontinuation")
+    ok(len(sh) == 2 and sh[1][2] == rs.d(IX + 927),
+       "SH simplified: line 2 - the line the course falls after - carries it")
+    ok(len(ref.get('SH', [])) == 3,
+       "SH no rule: the course gets a melphalan-only line of its own")
+
     if fails:
         print("%d check(s) failed" % len(fails)); sys.exit(1)
     print("the simplified rule lands every planted case where the request puts it")
