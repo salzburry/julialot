@@ -60,6 +60,7 @@ FRAGMENT <- c(
   melp_suppress_predicate = "opens with its own newline",
   melp_inject_arm         = "opens with its own newline",
   melp_allo_guard         = "opens with its own newline",
+  regimen_with_subs_sql   = "opens with its own newline",
   melp_prior_regimen_exempt = "spliced inside parens, after IS NULL",
   melp_branch_sql         = "spliced after a space, at end of line",
   stock_impact_sql        = "spliced after AS and a space, at end of line",

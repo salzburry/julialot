@@ -55,6 +55,28 @@ prior_regimen_excl_sql <- function() {
       FROM prev_meds_array pma"
 }
 
+# A line's regimen plus the permissible biosimilar substitutes for it, with
+# SUBSTITUTE_ONLY recording WHY each drug is in the set. Four callers need this
+# set - LOT1 and LOT2-5 both build their base_meds from it, and both run-out
+# guards build the drugs they must not accept from it. They read the same rule,
+# so they get it from here. A guard spelling it out differently from the
+# candidate set it mirrors ends a line on an event the next line refuses to
+# open on. min() so a drug that is both a real regimen drug and somebody's
+# substitute counts as the former.
+regimen_with_subs_sql <- function(src) {
+  paste0("\n",
+         "      SELECT PATID, MED_ABBR, min(IS_SUB) AS SUBSTITUTE_ONLY
+      FROM (
+        SELECT PATID, MED_ABBR, 0 AS IS_SUB
+        FROM ", src, "
+        UNION ALL
+        SELECT im.PATID, ps.substitute_med AS MED_ABBR, 1 AS IS_SUB
+        FROM ", src, " im
+        INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
+      )
+      GROUP BY PATID, MED_ABBR")
+}
+
 # Only a drug that WAS the previous regimen is released this way. A drug
 # excluded for being a permissible biosimilar substitute is not. §4.4 says a
 # substitute never starts a line, and an old discontinued episode of it must not

@@ -2370,11 +2370,17 @@ l25src <- paste(readLines(file.path(ROOT, "R", "steps", "10_lot2_5_base.R"),
 # path that reads one. A substitution does not advance the LOT, so a substitute
 # never independently ends a line, confirms a run-out or opens the next - and one
 # path releasing it while the others do not is how a rule stops meaning anything.
+# Four of the five sets are the same one - a line's regimen plus its permissible
+# substitutes - so they are one helper, counted where the helper is called. The
+# fifth, prev_meds_expanded, is a different set and stays written out.
 prov <- vapply(c("04_lot1_base.R", "06_lot1_end.R", "10_lot2_5_base.R"), function(f)
-  n_hits("min(IS_SUB) AS SUBSTITUTE_ONLY",
+  n_hits("regimen_with_subs_sql(",
     paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE), collapse = "\n")), integer(1))
+prov <- c(prov, n_hits("min(IS_SUB) AS SUBSTITUTE_ONLY", l25src))
 ok(sum(prov) == 5L,
    paste0("every set a release reads records WHY each drug is in it (", sum(prov), ")"))
+ok(n_hits("min(IS_SUB) AS SUBSTITUTE_ONLY", pr) == 1L,
+   "...and the shared one records it in the single place it is written")
 # The release is spliced now rather than written out, so the provenance gate is
 # counted where the release itself lives - once, for all five sites.
 gated <- n_hits(".SUBSTITUTE_ONLY = 0)", pr)

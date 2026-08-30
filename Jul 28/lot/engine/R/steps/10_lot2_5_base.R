@@ -545,19 +545,8 @@ build_lot_n <- function(con, lot_num,
     -- SUBSTITUTE_ONLY = 1 means the drug is here only as a permissible
     -- biosimilar substitute. A substitution does not advance the LOT (§4.4).
     -- So a substitute never ends a line on its own, confirms a run-out or
-    -- opens the next one, whatever gaps its own episodes carry. min() so a
-    -- drug that is both a real regimen drug and somebody's substitute counts
-    -- as the former and keeps the release.
-    base_meds AS (
-      SELECT PATID, MED_ABBR, min(IS_SUB) AS SUBSTITUTE_ONLY
-      FROM (
-        SELECT PATID, MED_ABBR, 0 AS IS_SUB FROM lot{lot_num}_induction_meds
-        UNION ALL
-        SELECT im.PATID, ps.substitute_med AS MED_ABBR, 1 AS IS_SUB
-        FROM lot{lot_num}_induction_meds im
-        INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
-      )
-      GROUP BY PATID, MED_ABBR
+    -- opens the next one, whatever gaps its own episodes carry.
+    base_meds AS ({regimen_with_subs_sql(paste0('lot', lot_num, '_induction_meds'))}
     ),{melp_lotn_ctes(cfg, lot_num, induction_window_days, cart_consolidation_days, allo_lot_span)}{foldin_lotn_ctes(cfg, lot_num, lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days))}{foldin_base_meds_ctes(cfg)}
     -- Per drug, the end of ITS cover in this line: the FIRST episode flagged
     -- discontinued. A later episode of the same drug does NOT open the next
@@ -971,17 +960,7 @@ build_lot_n <- function(con, lot_num,
     -- line: this line's own regimen drugs and their permissible substitutes.
     -- med_cand excludes both, so accepting one here would confirm a
     -- discontinuation on an event no next line is allowed to open on.
-    post_runout_excluded_meds AS (
-      SELECT PATID, MED_ABBR, min(IS_SUB) AS SUBSTITUTE_ONLY
-      FROM (
-        SELECT im.PATID, im.MED_ABBR, 0 AS IS_SUB
-        FROM lot{lot_num}_induction_meds im
-        UNION ALL
-        SELECT im.PATID, ps.substitute_med AS MED_ABBR, 1 AS IS_SUB
-        FROM lot{lot_num}_induction_meds im
-        INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
-      )
-      GROUP BY PATID, MED_ABBR
+    post_runout_excluded_meds AS ({regimen_with_subs_sql(paste0('lot', lot_num, '_induction_meds'))}
     ),
     map_restart AS ({map_restart_sql()}
     ),
