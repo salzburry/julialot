@@ -374,6 +374,28 @@ def load(con, pats):
             con.execute("INSERT INTO spans_strict VALUES (?,?,?)", [p['pid'], d(a), d(b)])
 
 
+# One substitution pair, and only one row for it. The engine treats a
+# substitute and its reference as the same agent in six places, and with this
+# table empty none of those six ran on the population - they had static
+# assertions and no patient. BORT and CARF are drawn often enough that hundreds
+# of patients reach them. They are not biosimilars of one another; what is
+# under test is the equivalence machinery, and it only needs a declared pair to
+# have something to do.
+#
+# ONE row, not two. The engine expands a pair in both directions itself, so
+# declaring the reverse here as well would hide it if that stopped being true.
+#
+# Declared in main() rather than in load(), because the planted harnesses call
+# load() too and each declares its own pair against its own patients. A pair
+# forced on all of them changes what their planted cases should answer.
+SUBS = [("BORT", "CARF")]
+
+
+def load_subs(con, pairs=SUBS):
+    for orig, sub in pairs:
+        con.execute("INSERT INTO permissible_subs VALUES (?,?)", [orig, sub])
+
+
 def _fix_concat_ws(node):
     """Spark's concat_ws flattens an array argument; duckdb's stringifies it.
 
@@ -395,10 +417,12 @@ def to_duckdb(sql):
 def run_chain(con, sqldir):
     for i, st in enumerate(open(os.path.join(sqldir, 'full_chain.sql')).read().split('\n;;;\n')):
         if not st.strip(): continue
-        # Spark's seeded rand() has no duckdb equivalent; it only breaks a
-        # same-day tie between added agents, and pinning it keeps the run
-        # reproducible. Dates and line counts do not depend on it.
-        st = st.replace('rand(42)', '0')
+        # The build's same-day tie-break is hash(PATID, MAP_MED_TYPE), which
+        # both engines have. It used to be Spark's seeded rand(), with no
+        # duckdb equivalent, and this loop pinned it to 0 so the run stayed
+        # reproducible. Nothing to pin now: the tie-break is a function of the
+        # row, so it answers the same here as it does in the warehouse - not
+        # the same VALUE, the two hashes differ, but the same way twice.
         try:
             con.execute(to_duckdb(st))
         except Exception as ex:
@@ -554,6 +578,12 @@ COVERAGE = [
   "l.LOT_BASE_END_REASON = 'SCT_AUTO_CONT'"),
  ("lines started by something other than a drug", "l.LOT_START_TYPE <> 'MED'"),
  ("single-day lines",                  "l.LOT_BASE_LENGTH = 1"),
+ # The substitution machinery. A line naming one half of a declared pair is a
+ # line where "same agent as the previous line" had a decision to make. Empty
+ # this bucket and SUBS is empty, which is how the six substitute paths went
+ # untested for as long as they did.
+ ("lines naming a drug in a substitution pair",
+  "l.LOT_MED_BORT = 1 OR l.LOT_MED_CARF = 1"),
 ]
 
 
@@ -681,6 +711,7 @@ def main():
     con = duckdb.connect(); con.execute("SET TimeZone='UTC'")
     pats = generate(seed, npat)
     load(con, pats)
+    load_subs(con)
     probe = sqlglot.transpile("SELECT datediff(date '2024-01-11', date '2024-01-01')",
                               read='spark', write='duckdb')[0]
     assert con.execute(probe).fetchall()[0][0] == 10, "datediff does not mean a - b here"

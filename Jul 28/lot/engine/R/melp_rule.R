@@ -866,7 +866,7 @@ melp_lot1_ctes <- function(cfg) {
     ),
     -- The add-med pick, worked out again with the rule applied. Same span,
     -- same steroid exclusion, the same returning-drug release and the same
-    -- rand(42) tie-break as 04_lot1_base.R. A patient with no melphalan gets
+    -- hash tie-break as 04_lot1_base.R. A patient with no melphalan gets
     -- the pick that step already made.
     --
     -- The release is why this is not simply every base drug being excluded.
@@ -900,7 +900,8 @@ melp_lot1_ctes <- function(cfg) {
                date_sub(MAP_START_DT, 1) AS LOT1_BASE_1ST_ADD_MED_DT,
                MAP_MED_TYPE              AS LOT1_BASE_1ST_ADD_MED,
                row_number() OVER (PARTITION BY PATID
-                                  ORDER BY MAP_START_DT, rand(42)) AS rn
+                                  ORDER BY MAP_START_DT,
+                                           hash(PATID, MAP_MED_TYPE)) AS rn
         FROM melp_add_candidates
       ) ranked
       WHERE rn = 1

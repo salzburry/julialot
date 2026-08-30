@@ -1,12 +1,22 @@
 # Synthetic-population runs
 
-Opt-in. **Not in the merge gate** — it needs `duckdb` and `sqlglot`, which
-nothing else here does, and 600 patients take about twenty seconds.
+In the merge gate, as the `harnesses` job of the Jul 28 tests workflow. It is
+a job of its own because it needs Python with `duckdb` and `sqlglot`, which
+nothing else here does. Locally:
 
 ```
+pip install duckdb sqlglot
 python3 validation/synthetic/run_synthetic.py
 python3 validation/synthetic/run_synthetic.py --seed 7 --n 2000
 ```
+
+`run_synthetic.py` is the population run; 600 patients take about twenty
+seconds. Four more harnesses in this folder plant named patients and assert
+the lines they should produce — `run_melp_simple.py` (melphalan),
+`run_map_foldin.py` (MAP fold-in and the shipped QC over planted patients),
+`run_lot_scenarios.py` and `run_aug15_screen.py`. CI runs all five. They are
+where every patient-level defect found in review came from, so run them
+around any engine change, not just the gate.
 
 ## What it is
 
@@ -68,24 +78,41 @@ five passed and should not have: a missing final funnel row, a duplicated one,
 a line count that disagrees while the patients match, the zero progression rows
 for lines nobody reached, and a row above `max_lot`.
 
-`D2` and `F4` remain answerable only by `run_lot_qc.R` against a warehouse. Two
-other gaps sit in the same place: `permissible_subs` is never populated, so the
-five substitute-provenance paths have static assertions and no executable
-patient; and `03_mma_map.R` and `05_sct.R` are fixture inputs rather than
-executed logic, for the duckdb reason under *What it cannot do*.
+`D2` and `F4` remain answerable only by `run_lot_qc.R` against a warehouse, and
+`03_mma_map.R` and `05_sct.R` are fixture inputs rather than executed logic, for
+the duckdb reason under *What it cannot do*.
 
-## Seven patients that are not drawn
+`permissible_subs` used to be a third gap — empty, so the substitute paths had
+static assertions and no executable patient. It now carries one pair, `BORT` →
+`CARF`. One row, because the engine expands a pair in both directions itself
+and a fixture that declared the reverse too would hide it if that stopped being
+true. The pair is not a real biosimilar relationship; what is under test is the
+equivalence machinery, which only needs a declared pair to have something to
+do. It is not decoration: against the same seed with the table empty, 102 lines
+appear or disappear, 207 change value, and 2L/3L membership moves for 22 and 27
+patients.
+
+## Eighteen patients that are not drawn
 
 Everything else is random. That is the point, and it means a rule reached only
-by a narrow combination of dates can go untested for a whole run. Seven patients
-are built by hand so they are always present: a regimen that runs out early
-with a transplant later in the same window, the same one day outside it, a
-tandem partner far beyond the window, an allograft that ends the line before an
+by a narrow combination of dates can go untested for a whole run. Eighteen
+patients are built by hand so they are always present.
+
+`P0000`–`P0006` are the transplant shapes: a regimen that runs out early with a
+transplant later in the same window, the same one day outside it, a tandem
+partner far beyond the window, an allograft that ends the line before an
 in-window transplant, two CAR-T-started lines with a transplant either side of
 the consolidation window, and a transplant landing before the patient's first
 line. That last one the generator cannot draw — its transplants start at least
 100 days after index and its first medication by day 70 — and it is what
 decides whether an unowned transplant is a defect or a reconciliation number.
+
+`M0001`–`M0011` are the melphalan shapes. Melphalan is not in any random
+history, so without them the whole rule is unreachable and every mode emitted
+different SQL over identical output. They cover the five in/out-of-induction
+cases, a no-melphalan control, and the cases where the line ends between or
+before the suppressed doses.
+
 They are patients, not fixtures — nothing says what their lines should come
 back as.
 

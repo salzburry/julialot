@@ -334,12 +334,11 @@ def build(foldin):
     #
     # Not "a drug appears in one line only" - a drug legitimately returns in a
     # later line and is that line's regimen too.
-    # The shipped QC, over a population that HAS a substitution pair. This is
-    # the only place it can be: run_synthetic is the harness that normally runs
-    # the catalogue, and its six hundred patients cannot be built at all with a
-    # non-empty permissible_subs - statement 27 spills the disk. So the checks
-    # that decide which drugs are one agent were never exercised, and C1 failed
-    # a legitimately folded biosimilar for want of a test that could see it.
+    # The shipped QC over planted patients that HAVE a substitution pair, with
+    # the fold-in on. run_synthetic runs the same catalogue over its drawn
+    # population and its own pair; this run adds the cases a draw does not
+    # reach. C1 failed a legitimately folded biosimilar for want of a test that
+    # could see it, and neither run could see it while both tables were empty.
     if foldin:
         QC.extend(qc_findings(con, sqldir))
     OWNERSHIP[foldin] = {

@@ -23,7 +23,7 @@ against those lines. The cases are the ones a wrong screen gets wrong:
         inside the baseline window         -> F2 drops at the CE step
 
 Classification must not depend on which same-day candidate the engine's
-rand(42) tie-break stored, so every assertion here is deterministic.
+tie-break stored, so every assertion here is deterministic.
 """
 import os, sys, re, tempfile, subprocess, datetime
 HERE = os.path.dirname(os.path.abspath(__file__))

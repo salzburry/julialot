@@ -23,7 +23,10 @@ It exits non-zero if any suite is missing, skipped, or not as expected. The port
 suite's known failures are pinned by identity, so one fixed and one introduced
 still fails the gate.
 
-The synthetic harness is separate and needs `duckdb` and `sqlglot`:
+The synthetic harnesses run the engine's own emitted SQL over synthetic
+patients in duckdb, so they check the lines that come out rather than the SQL
+that would be sent. They are the second CI job, and they need `duckdb` and
+`sqlglot`:
 
 ```
 python3 validation/synthetic/run_synthetic.py
@@ -37,7 +40,9 @@ python3 validation/synthetic/run_map_foldin.py      # the MAP fold-in rule's pla
 ## GitHub Actions
 
 `.github/workflows/jul28-tests.yml` exists to make the gate's result something a
-machine records against a commit rather than something an author reports.
+machine records against a commit rather than something an author reports. Two
+jobs: `suites` runs `validation/run_gate.R`, and `harnesses` runs the five
+synthetic runs above.
 
 **It does, since 30 August.** Between 13 and 30 August every run ended in 2 to
 4 seconds with no runner assigned and no logs to download, here and in

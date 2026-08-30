@@ -662,7 +662,11 @@ build_lot_n <- function(con, lot_num,
           PATID,
           date_sub(MAP_START_DT, 1) AS LOT{lot_num}_BASE_1ST_ADD_MED_DT,
           MAP_MED_TYPE              AS LOT{lot_num}_BASE_1ST_ADD_MED,
-          row_number() OVER (PARTITION BY PATID ORDER BY MAP_START_DT, rand(42)) AS rn
+          -- Same tie-break as 04_lot1_base.R, and for the same reason: a
+          -- function of the row, so the drug named does not depend on the
+          -- physical plan.
+          row_number() OVER (PARTITION BY PATID
+                             ORDER BY MAP_START_DT, hash(PATID, MAP_MED_TYPE)) AS rn
         FROM first_add_candidates
       ) ranked
       WHERE rn = 1

@@ -196,10 +196,16 @@ phase_lot1_base <- function(con, ctx) {
         AND ms.MAP_START_DT <= coalesce(bc.LOT1_BASE_RUNOUT_DT, bc.OBS_END_DT)
     ),
     first_add_pick AS (
-      -- When several non-induction drugs share the earliest add date, one is
-      -- picked at random on a fixed seed. rand(42) gives the same answer in
-      -- every run, so the pick repeats without being biased towards the front
-      -- of the alphabet the way min() was.
+      -- When several non-induction drugs share the earliest add date, the
+      -- tie is broken on a hash of the patient and the drug name. It has to
+      -- be a function of the ROW, not of chance: rand(42) was here, and
+      -- Spark seeds rand per partition, so the drug it picked was stable only
+      -- while the physical plan was - a re-partition on the same data could
+      -- change it. The hash is not biased towards the front of the alphabet
+      -- the way min() was, and PATID is in it so the same two drugs do not
+      -- resolve the same way for every patient.
+      --
+      -- The DATE was never at risk either way, only which drug is named.
       SELECT PATID, LOT1_BASE_1ST_ADD_MED_DT, LOT1_BASE_1ST_ADD_MED
       FROM (
         SELECT
@@ -208,7 +214,7 @@ phase_lot1_base <- function(con, ctx) {
           MAP_MED_TYPE              AS LOT1_BASE_1ST_ADD_MED,
           row_number() OVER (
             PARTITION BY PATID
-            ORDER BY MAP_START_DT, rand(42)
+            ORDER BY MAP_START_DT, hash(PATID, MAP_MED_TYPE)
           ) AS rn
         FROM first_add_candidates
       ) ranked
