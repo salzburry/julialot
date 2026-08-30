@@ -25,6 +25,9 @@ has <- function(x, s) grepl(s, x, fixed = TRUE)
 
 library(glue)
 `%||%` <- function(a, b) if (is.null(a)) b else a
+# The fold-in consults the melphalan rule - a course that rule suppressed is
+# not a line-defining agent - so it loads first here, as it does in the engine.
+source(file.path(LOT, "R", "melp_rule.R"))
 source(file.path(LOT, "R", "foldin_rule.R"))
 
 off <- list(apply_map_foldin = FALSE)
@@ -116,11 +119,15 @@ ok(length(gregexpr("{foldin_line_type_guard(cfg, lot_num)}", s10, fixed = TRUE)[
 ok(!has(sf("04_lot1_base.R"), "foldin") && !has(sf("06_lot1_end.R"), "foldin"),
    "LOT1 never hears of the rule - it has no earlier line to fold from")
 
-cat("\n-- the contract pins it off --\n")
+cat("\n-- the contract carries it --\n")
 bl <- paste(readLines(file.path(LOT, "R", "build_lot.R"), warn = FALSE),
             collapse = "\n")
-ok(has(bl, "apply_map_foldin            = FALSE"),
-   "APPLY_MAP_FOLDIN is FALSE in CONTRACT, so TRUE is a recorded deviation")
+ok(has(bl, "apply_map_foldin            = TRUE"),
+   "APPLY_MAP_FOLDIN is TRUE in CONTRACT, so a build without it deviates")
+cfgcsv <- paste(readLines(file.path(LOT, "config.csv"), warn = FALSE),
+                collapse = "\n")
+ok(has(cfgcsv, "APPLY_MAP_FOLDIN,TRUE,"),
+   "...and config.csv ships the same value, so a run does not stop on it")
 ok(has(bl, '"APPLY_MAP_FOLDIN"'), "...and the setting is type-checked")
 ok(has(bl, '"foldin_rule.R"'), "...and the rule file is loaded with the engine")
 
@@ -129,8 +136,15 @@ rf <- paste(readLines(file.path(ROOT, "run_foldin_cells.R"), warn = FALSE),
             collapse = "\n")
 ok(has(rf, 'melp_cell_plan(FOLDIN_CELLS, "foldin_")'),
    "the package builds under its own foldin_ prefixes")
-ok(has(rf, '"LOT_CONTRACT_OVERRIDE=TRUE", "APPLY_MAP_FOLDIN=TRUE"'),
-   "the mode cell is built as a recorded deviation")
+# Since the study adopted the rule it is the cell WITHOUT it that deviates.
+ok(has(rf, 'mode = "FALSE", foldin = "FALSE"') &&
+     has(rf, 'mode = NA_character_, foldin = "TRUE"'),
+   "the no-rule cell deviates and the folded cell is the contract build")
+ok(has(rf, 'if (!is.na(c_i$mode)) env <- c(env, "LOT_CONTRACT_OVERRIDE=TRUE")'),
+   "...and the override goes on whichever cell is not the contract")
+ok(has(rf, 'paste0("APPLY_MAP_FOLDIN=", c_i$foldin)') &&
+     has(rf, '"APPLY_MELP_RULE=simplified"'),
+   "both cells name both settings, so an ambient one reaches neither")
 ok(has(rf, 'key = "apply_map_foldin"') && has(rf, 'vary = "apply_map_foldin"'),
    "the shared cell checks govern this rule's own setting")
 ok(has(rf, "melp_status_unchanged") && has(rf, "melp_check_code") &&

@@ -287,6 +287,36 @@ VIGNETTES <- list(
                     "after treatment had already moved on, and split the ",
                     "melphalan away from the line it belongs to.")),
 
+  list(id = "returning_drug_one_advance", title = "A drug returns after one advance",
+       param = NA_character_, confidence = "to_confirm",
+       where = "lot/engine/R/foldin_rule.R - foldin_episodes, N_ADVANCES = 1",
+       events = function(p) rbind(
+         ev(0,   "MED", "1L starts on drug A and drug B"),
+         ev(200, "MED", "drug C starts and advances the line to 2L"),
+         ev(450, "MED", "drug B comes back, while 2L is still running")),
+       expected = function(p) paste0(
+         "No new line. One agent advanced the line between B's two doses, so B ",
+         "joins 2L - the line's span carries it, and its regimen string does ",
+         "not change."),
+       why = paste0("A drug the patient has had before is not new treatment. ",
+                    "Counted as an addition it opens a line that is really the ",
+                    "same one continuing.")),
+
+  list(id = "returning_drug_two_advances", title = "A drug returns after two advances",
+       param = NA_character_, confidence = "to_confirm",
+       where = "lot/engine/R/foldin_rule.R - foldin_episodes, N_ADVANCES = 1",
+       events = function(p) rbind(
+         ev(0,   "MED", "1L starts on drug A and drug B"),
+         ev(200, "MED", "drug C advances the line to 2L"),
+         ev(300, "MED", "drug D advances it again, to 3L"),
+         ev(450, "MED", "drug B comes back, during 3L")),
+       expected = function(p) paste0(
+         "A new line at day 450. Treatment moved on twice while B was away, so ",
+         "B is not returning to the line it left and its return opens one."),
+       why = paste0("The count is what separates a drug rejoining its own line ",
+                    "from one re-introduced after the regimen has changed ",
+                    "twice over.")),
+
   list(id = "maintenance_to_relapse", title = "Maintenance running into relapse",
        param = NA_character_, confidence = "derived",
        where = "lot/engine/R/steps/05_sct.R:13 - maintenance is a descriptive flag only",

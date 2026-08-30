@@ -157,20 +157,24 @@ never a blank: the settings loader fills a variable that is unset **or empty**
 from `config.csv`, so `APPLY_MELP_RULE=` would build the contract and the
 comparison would be the study's build against itself.
 
-## 4b. The MAP fold-in — evaluation only, same pattern
+## 4b. The MAP fold-in — the study's rule, and the build without it
 
-The study team's proposed reading that a prior line's agent returning after
-the current line's regimen window joins that line instead of splitting it.
-Two builds under `foldin_` prefixes, differenced:
+The study's rule that a prior line's agent returning after the current line's
+regimen window joins that line instead of splitting it, when exactly one agent
+advanced the line between that drug's two doses. Two builds under `foldin_`
+prefixes — one without the rule, and the contract's — differenced:
 
 ```
 Rscript exploration/lot/run_foldin_cells.R                        # plan only
 FOLDIN_EXECUTE=TRUE Rscript exploration/lot/run_foldin_cells.R    # build + read
 ```
 
-`APPLY_MAP_FOLDIN` stays FALSE in `CONTRACT`; the folded cell records its
-deviation and no reader accepts it as the study's. Read its three
-`foldin_*.csv` files next to the sizing screen's counts from step 8.
+`APPLY_MAP_FOLDIN` is TRUE in `CONTRACT`, so the folded cell IS the study's
+algorithm and records no deviation; the reference cell is built with
+`APPLY_MAP_FOLDIN=FALSE` under the override and no reader accepts it as the
+study's. Read its three `foldin_*.csv` files next to the sizing screen's
+counts from step 8 — that screen was written against a build without the rule,
+so it sizes what the rule has already done.
 
 In the decisions output read **block 2 first** — melphalan doses in no line.
 Every row with `AFTER_THE_CAP = no` should be absent, `PRIOR_LINE_TYPE` of

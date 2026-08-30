@@ -55,9 +55,12 @@ lines:
 advancement:
   new_agent: <true | false>
   same_regimen_gap_days: <days | none>   # none = a re-challenge never advances
-  prior_line_agent_return: <new_line | joins_line>  # a prior line's agent
-                                         # returning after the current line's
-                                         # regimen window: splits, or folds in
+  prior_line_agent_return: <new_line | joins_line | one_advance_joins>
+                                         # a prior line's agent returning after
+                                         # the current line's regimen window:
+                                         # splits, folds in always, or folds in
+                                         # only when ONE agent advanced the
+                                         # line between the drug's two doses
   short_course_rule: <applied | none>    # a brief course of ONE named agent,
                                          # outside the regimen window, does not
                                          # advance the line on its own; the line

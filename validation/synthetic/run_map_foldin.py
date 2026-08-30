@@ -89,11 +89,12 @@ PATS = [
 
 
 def build(foldin):
+    # Both arms name the value. The default is read from the engine's shipped
+    # config.csv now, and that carries TRUE, so leaving it unset would build
+    # the fold-in on BOTH sides and compare the contract with itself.
     sqldir = tempfile.mkdtemp(prefix="foldin_")
     env = dict(os.environ)
-    env.pop("MAP_FOLDIN", None)
-    if foldin:
-        env["MAP_FOLDIN"] = "TRUE"
+    env["MAP_FOLDIN"] = "TRUE" if foldin else "FALSE"
     r = subprocess.run(["Rscript", os.path.join(HERE, "emit_chain.R"), sqldir],
                        capture_output=True, text=True, env=env)
     if r.returncode != 0:

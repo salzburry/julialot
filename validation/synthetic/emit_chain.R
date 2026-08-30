@@ -13,8 +13,8 @@
 # (apply_cart_induction_rule) and MELP_RULE (apply_melp_rule). Everything else
 # is the contract.
 #
-# MELP_RULE's DEFAULT is read out of the engine's own config.csv rather than
-# written here. The rest of this cfg is a hand copy of CONTRACT, which is
+# MELP_RULE's and MAP_FOLDIN's DEFAULTS are read out of the engine's own
+# config.csv rather than written here. The rest of this cfg is a hand copy of CONTRACT, which is
 # tolerable for settings that rarely move; the melphalan mode is not, because
 # it decides whether a whole rule is in the emitted SQL. Copied by hand, this
 # harness would go on certifying the algorithm the study used to ship while
@@ -71,7 +71,8 @@ assign("cfg", list(
   apply_melp_rule = Sys.getenv("MELP_RULE",
                                unset = engine_default("APPLY_MELP_RULE")),
   melp_med_abbr = "MELP",
-  apply_map_foldin = toupper(Sys.getenv("MAP_FOLDIN", unset = "FALSE")) == "TRUE",
+  apply_map_foldin = toupper(Sys.getenv(
+    "MAP_FOLDIN", unset = engine_default("APPLY_MAP_FOLDIN", "FALSE"))) == "TRUE",
   melp_exposure_days = 30L, melp_restart_days = 60L,
   melp_advance_days = 180L, melp_sct_days = 14L,
   melp_simple_course_days =

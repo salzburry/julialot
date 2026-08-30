@@ -10,7 +10,7 @@ trail that leads to those, and the list of what is still owed.
 | | Ask | Asked | State |
 |---|---|---|---|
 | 1 | Melphalan short-course rule (28 days) | 19 Aug, confirmed 20 Aug | **Built.** `LOT_RULES.md` 4.7 |
-| 2 | MAP fold-in: a returning drug joins the line it returns in | 15 Aug, refined 20 Aug | **Built as a mode, off in the contract.** The count is implemented |
+| 2 | MAP fold-in: a returning drug joins the line it returns in | 15 Aug, refined 20 Aug | **Built and applied.** `LOT_RULES.md` 4.8 |
 | 3 | Five-branch melphalan rule | 1 Aug | **Measured, not adopted** |
 | 4 | Discontinued 1L, then a 12-month baseline before 2L / 3L | 19 Aug | **Answered** |
 | 5 | What "melphalan mono" means when melphalan came with a steroid | 19 Aug | **Open** — needs the study team |
@@ -54,7 +54,7 @@ nothing happened in between.
 
 ---
 
-## 2. The MAP fold-in rule — BUILT, NOT TURNED ON
+## 2. The MAP fold-in rule — BUILT AND APPLIED
 
 **Asked (15 Aug):** a patient on drug A + drug B in line 1, moved to line 2 by
 a new drug C. If drug B comes back after line 2's induction window, B should be
@@ -70,9 +70,9 @@ a new drug C. If drug B comes back after line 2's induction window, B should be
 > - If **two or more** different agents were introduced in between — advancing
 >   the line twice or more — then the drug's return **does** start a new line.
 
-**State today.** The count **is implemented**. `apply_map_foldin` is still
-pinned `FALSE`, so the study build does not yet apply it — turning it on is the
-study team's call, and it is a contract change like any other.
+**State today.** Adopted on 30 Aug. `apply_map_foldin` is pinned `TRUE` in
+`CONTRACT` and the rule is stated in `lot/LOT_RULES.md` 4.8, so the study's
+lines carry it.
 
 **How the count works.** For each return, the engine counts the lines that
 opened between that drug's two doses. One, and the return folds. Two or more,
@@ -100,11 +100,15 @@ Three things about that count, each a reading to confirm:
 - Whether the returning drug joins the line's regimen string or only its span.
   Today it joins the span only.
 - Whether agents of **every** earlier line fold, or only the previous line's.
-- The two rules have not been made to work together. With fold-in on, a
-  returning drug that folds into a line can still be read by the melphalan rule
-  as a new agent confirming a short course — so the same drug would be bundled
-  by one rule and treated as a change by the other. This needs one decision and
-  one test, not two.
+- **The two rules meet in one place only, and only one direction is
+  resolved.** A melphalan course the melphalan rule suppressed is not a
+  line-defining agent, so it no longer blocks a fold — that direction is done.
+  The reverse is not: a returning drug that folds into a line can still be read
+  by the melphalan rule as a new agent confirming a short course, so the same
+  drug is bundled by one rule and treated as a change by the other. It cannot
+  be fixed by reading the other rule back, because each rule would then depend
+  on the other and neither can be built first. It needs a decision about which
+  rule is applied first, and one test that says so.
 
 **Sizing already done, on a build without the rule:** 1,408 patients have a
 line break caused only by a returning previous-line drug; 39 more keep the

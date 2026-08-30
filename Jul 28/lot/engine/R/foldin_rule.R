@@ -104,7 +104,22 @@ foldin_on <- function(cfg) isTRUE(cfg$apply_map_foldin)
 # an advance too - lot_long does not hold it yet. The start-candidate statement
 # has no such line and passes NULL.
 foldin_count_ctes <- function(n_start = NULL, n_tbl = NULL,
-                              meds = "foldin_meds", line_pred) {
+                              meds = "foldin_meds", line_pred,
+                              melp_on = FALSE) {
+  # A melphalan course the melphalan rule SUPPRESSED is not a line-defining
+  # agent - that rule has already decided it opens nothing - so it must not
+  # disqualify a return from folding either. Without this the two rules
+  # disagree about the same episode: one says it defines no boundary, the
+  # other counts it as the agent that arrived first.
+  #
+  # This is the only direction that can be read here. The melphalan CTEs are
+  # spliced BEFORE these, so this side may consult them; the reverse would
+  # need melphalan to consult the fold, and each rule reading the other has no
+  # order that works. What remains is written down in STUDY_TEAM_ASKS.md.
+  not_supp <- if (!melp_on) "" else "
+       AND NOT EXISTS (SELECT 1 FROM melp_suppress_dates msd
+                       WHERE msd.PATID = o.PATID
+                         AND msd.SUPPRESS_DT = o.MAP_START_DT)"
   this_line <- if (is.null(n_start)) "0" else glue(
     "max(CASE WHEN {n_start} >  e.PREV_DOSE_DT
                 AND {n_start} <  e.MAP_START_DT THEN 1 ELSE 0 END)")
@@ -129,7 +144,7 @@ foldin_count_ctes <- function(n_start = NULL, n_tbl = NULL,
                        WHERE ob.PATID = o.PATID AND ob.MED_ABBR = o.MAP_MED_TYPE)
        AND NOT EXISTS (SELECT 1 FROM ", meds, " ofm
                        WHERE ofm.PATID = o.PATID
-                         AND ofm.MED_ABBR = o.MAP_MED_TYPE)")
+                         AND ofm.MED_ABBR = o.MAP_MED_TYPE)", not_supp)
   glue("
     -- Every episode of a fold-set drug, under the AGENT it belongs to. A
     -- permissible substitute is the same agent as the drug it replaces, so
@@ -191,7 +206,8 @@ foldin_lotn_ctes <- function(cfg, lot_num) {
   count_ctes <- foldin_count_ctes(
     n_start   = glue("lot{lot_num}_start.LOT{lot_num}_START_DT"),
     n_tbl     = glue("lot{lot_num}_start"),
-    line_pred = glue("l.LOT_NUM < {lot_num}"))
+    line_pred = glue("l.LOT_NUM < {lot_num}"),
+    melp_on   = melp_rule_on(cfg))
   paste0("\n", glue("
     foldin_prev AS (
       SELECT ll.PATID, m AS MED_ABBR
