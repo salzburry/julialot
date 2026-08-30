@@ -103,9 +103,9 @@ foldin_on <- function(cfg) isTRUE(cfg$apply_map_foldin)
 # `n_start` and `n_tbl` name the line being built, so its own start counts as
 # an advance too - lot_long does not hold it yet. The start-candidate statement
 # has no such line and passes NULL.
-foldin_count_ctes <- function(n_start = NULL, n_tbl = NULL,
-                              meds = "foldin_meds", line_pred,
-                              melp_on = FALSE) {
+foldin_count_ctes <- function(discon_days, n_start = NULL, n_tbl = NULL,
+                              n_induction = NULL, meds = "foldin_meds",
+                              line_pred, melp_on = FALSE) {
   # A melphalan course the melphalan rule SUPPRESSED is not a line-defining
   # agent - that rule has already decided it opens nothing - so it must not
   # disqualify a return from folding either. Without this the two rules
@@ -117,43 +117,58 @@ foldin_count_ctes <- function(n_start = NULL, n_tbl = NULL,
   # need melphalan to consult the fold, and each rule reading the other has no
   # order that works. What remains is written down in STUDY_TEAM_ASKS.md.
   not_supp <- if (!melp_on) "" else "
-       AND NOT EXISTS (SELECT 1 FROM melp_suppress_dates msd
-                       WHERE msd.PATID = o.PATID
-                         AND msd.SUPPRESS_DT = o.MAP_START_DT)"
+          AND NOT EXISTS (SELECT 1 FROM melp_suppress_dates msd
+                          WHERE msd.PATID = ms.PATID
+                            AND msd.SUPPRESS_DT = ms.MAP_START_DT)"
   this_line <- if (is.null(n_start)) "0" else glue(
-    "max(CASE WHEN {n_start} >  e.PREV_DOSE_DT
-                AND {n_start} <  e.MAP_START_DT THEN 1 ELSE 0 END)")
+    "max(CASE WHEN {n_start} >  k.PREV_COURSE_DT
+                AND {n_start} <  k.MAP_START_DT THEN 1 ELSE 0 END)")
   # paste0, not glue: glue trims a template's leading newline, and this
   # fragment splices straight after a table alias - without it the statement
-  # read "FROM foldin_epi eINNER JOIN ...".
+  # read "FROM foldin_course_prev kINNER JOIN ...".
   join_n <- if (is.null(n_tbl)) "" else
-    paste0("\n      INNER JOIN ", n_tbl, " ON ", n_tbl, ".PATID = e.PATID")
+    paste0("\n      INNER JOIN ", n_tbl, " ON ", n_tbl, ".PATID = k.PATID")
   # The in-this-line test, and only where there IS a line being built. The
   # start-candidate statement has none, and needs none: lot_long has grown by
   # the time it judges a later line, so its count is already the whole history.
+  #
+  # Procedures are in it as well as medications. Scanning map_stacked alone
+  # left the same hole the melphalan rule had: a CAR-T opening the next line
+  # is not a medication row, so an earlier line went on claiming a return that
+  # arrived after it, and that line's own discontinuation became the
+  # procedure's end reason. Measured from the line's INDUCTION END, because a
+  # transplant inside a line's own window belongs to it and opens nothing.
   between_sel <- if (is.null(n_start)) "" else
     ",\n             max(CASE WHEN o.PATID IS NOT NULL THEN 1 ELSE 0 END) AS N_BETWEEN"
   between_pred <- if (is.null(n_start)) "" else " AND N_BETWEEN = 0"
   between_join <- if (is.null(n_start)) "" else paste0("
-      LEFT JOIN map_stacked o
-        ON o.PATID = e.PATID
-       AND o.MAP_START_DT >  ", n_start, "
-       AND o.MAP_START_DT <  e.MAP_START_DT
-       AND o.MAP_MED_CLASS <> 'STEROID'
-       AND NOT EXISTS (SELECT 1 FROM base_meds ob
-                       WHERE ob.PATID = o.PATID AND ob.MED_ABBR = o.MAP_MED_TYPE)
-       AND NOT EXISTS (SELECT 1 FROM ", meds, " ofm
-                       WHERE ofm.PATID = o.PATID
-                         AND ofm.MED_ABBR = o.MAP_MED_TYPE)", not_supp)
+      LEFT JOIN (
+        SELECT ms.PATID, ms.MAP_START_DT AS AT_DT
+        FROM map_stacked ms
+        WHERE ms.MAP_MED_CLASS <> 'STEROID'
+          AND NOT EXISTS (SELECT 1 FROM base_meds ob
+                          WHERE ob.PATID = ms.PATID
+                            AND ob.MED_ABBR = ms.MAP_MED_TYPE)
+          AND NOT EXISTS (SELECT 1 FROM ", meds, " ofm
+                          WHERE ofm.PATID = ms.PATID
+                            AND ofm.MED_ABBR = ms.MAP_MED_TYPE)", not_supp, "
+        UNION
+        SELECT tx.PATID, tx.TX_DT AS AT_DT
+        FROM (SELECT PATID, TX_DT FROM tx_auto_dates
+              UNION SELECT PATID, TX_DT FROM tx_allo_cart_dates) tx
+      ) o
+        ON o.PATID = k.PATID
+       AND o.AT_DT >  ", if (is.null(n_induction)) n_start else
+                          paste0("least(", n_start, ", ", n_induction, ")"), "
+       AND o.AT_DT <  k.MAP_START_DT")
   glue("
     -- Every episode of a fold-set drug, under the AGENT it belongs to. A
     -- permissible substitute is the same agent as the drug it replaces, so
-    -- the pair has to share one dose history: partitioned by the raw
-    -- abbreviation, a substitute's first appearance had no previous dose at
-    -- all, its interval was undefined, and it folded where the drug it
-    -- replaces would have.
+    -- the pair shares one history: partitioned by the raw abbreviation, a
+    -- substitute's first appearance had no previous dose at all and folded
+    -- where the drug it replaces would not have.
     foldin_agent AS (
-      SELECT ms.PATID, ms.MAP_MED_TYPE, ms.MAP_START_DT,
+      SELECT ms.PATID, ms.MAP_MED_TYPE, ms.MAP_START_DT, min(ms.MAP_END_DT) AS MAP_END_DT,
              coalesce(min(ps.original_med), ms.MAP_MED_TYPE) AS AGENT
       FROM map_stacked ms
       INNER JOIN {meds} fm
@@ -161,25 +176,59 @@ foldin_count_ctes <- function(n_start = NULL, n_tbl = NULL,
       LEFT JOIN permissible_subs ps ON ps.substitute_med = ms.MAP_MED_TYPE
       GROUP BY ms.PATID, ms.MAP_MED_TYPE, ms.MAP_START_DT
     ),
+    -- A COURSE is episodes of one agent with no discontinuation between them -
+    -- the engine's own {discon_days}-day gap. It does not decide the fold; it
+    -- CARRIES it. A returning course was being split between two owners: its
+    -- first episode folded, and its own follow-up weeks later had no advance
+    -- behind it, so it was judged separately, not folded, and opened a line.
+    -- One course, one answer.
+    -- Two steps, because a window function cannot be nested inside another.
+    foldin_runs AS (
+      SELECT PATID, MAP_MED_TYPE, MAP_START_DT, AGENT,
+             CASE WHEN datediff(MAP_START_DT,
+                    lag(MAP_END_DT) OVER (PARTITION BY PATID, AGENT
+                                          ORDER BY MAP_START_DT))
+                       >= {discon_days} THEN 1 ELSE 0 END AS IS_RETURN
+      FROM foldin_agent
+    ),
+    foldin_course AS (
+      SELECT PATID, MAP_MED_TYPE, MAP_START_DT, AGENT,
+             min(MAP_START_DT) OVER (PARTITION BY PATID, AGENT, R) AS COURSE_START_DT
+      FROM (SELECT PATID, MAP_MED_TYPE, MAP_START_DT, AGENT,
+                   sum(IS_RETURN) OVER (PARTITION BY PATID, AGENT
+                                        ORDER BY MAP_START_DT
+                                        ROWS BETWEEN UNBOUNDED PRECEDING
+                                                 AND CURRENT ROW) AS R
+            FROM foldin_runs) q
+    ),
+    -- Every episode beside the agent's PREVIOUS one. That pair is the
+    -- request's two doses, and the interval between them is what the count
+    -- reads - dose to dose, not stop to return.
     foldin_epi AS (
-      SELECT a.PATID, a.MAP_MED_TYPE, a.MAP_START_DT,
-             lag(a.MAP_START_DT) OVER (PARTITION BY a.PATID, a.AGENT
-                                       ORDER BY a.MAP_START_DT) AS PREV_DOSE_DT
-      FROM foldin_agent a
+      SELECT c.PATID, c.MAP_MED_TYPE, c.MAP_START_DT, c.AGENT, c.COURSE_START_DT,
+             lag(c.MAP_START_DT) OVER (PARTITION BY c.PATID, c.AGENT
+                                       ORDER BY c.MAP_START_DT) AS PREV_COURSE_DT
+      FROM foldin_course c
     ),
     -- How many lines opened strictly between the two doses. A LEFT JOIN and a
     -- count, not a correlated subquery: the translation has to survive Spark
     -- and the harness alike.
     foldin_counted AS (
-      SELECT e.PATID, e.MAP_MED_TYPE, e.MAP_START_DT,
+      SELECT k.PATID, k.AGENT, k.COURSE_START_DT, k.MAP_START_DT,
              count(l.LOT_NUM) + {this_line} AS N_ADVANCES{between_sel}
-      FROM foldin_epi e{join_n}
+      FROM foldin_epi k{join_n}
       LEFT JOIN lot_long l
-        ON l.PATID = e.PATID AND {line_pred}
-       AND l.LOT_START_DT >  e.PREV_DOSE_DT
-       AND l.LOT_START_DT <  e.MAP_START_DT{between_join}
-      WHERE e.PREV_DOSE_DT IS NOT NULL
-      GROUP BY e.PATID, e.MAP_MED_TYPE, e.MAP_START_DT
+        ON l.PATID = k.PATID AND {line_pred}
+       AND l.LOT_START_DT >  k.PREV_COURSE_DT
+       AND l.LOT_START_DT <  k.MAP_START_DT{between_join}
+      WHERE k.PREV_COURSE_DT IS NOT NULL
+      GROUP BY k.PATID, k.AGENT, k.COURSE_START_DT, k.MAP_START_DT
+    ),
+    -- A course folds if any of its episodes does, and then all of them do.
+    foldin_folded AS (
+      SELECT DISTINCT PATID, AGENT, COURSE_START_DT
+      FROM foldin_counted
+      WHERE N_ADVANCES = 1{between_pred}
     ),
     -- Exactly one advance, and the return has to be in THIS line.
     --
@@ -190,24 +239,27 @@ foldin_count_ctes <- function(n_start = NULL, n_tbl = NULL,
     -- discontinuation to the next line's addition for a drug that never
     -- joined it.
     --
-    -- So a return with another line-defining agent between this line's start
-    -- and itself belongs to a later line, and this one does not claim it.
     -- Same shape as melp_taken in R/melp_rule.R, for the same reason.
     foldin_episodes AS (
-      SELECT PATID, MAP_MED_TYPE AS MED_ABBR, MAP_START_DT
-      FROM foldin_counted WHERE N_ADVANCES = 1{between_pred}
+      SELECT c.PATID, c.MAP_MED_TYPE AS MED_ABBR, c.MAP_START_DT
+      FROM foldin_course c
+      INNER JOIN foldin_folded f
+        ON f.PATID = c.PATID AND f.AGENT = c.AGENT
+       AND f.COURSE_START_DT = c.COURSE_START_DT
     ),")
 }
 
-foldin_lotn_ctes <- function(cfg, lot_num) {
+foldin_lotn_ctes <- function(cfg, lot_num, induction_end = NULL) {
   if (!foldin_on(cfg)) return("")
   # Built out here: a nested glue() inside the template below does not parse,
   # because the inner quotes close the outer one.
   count_ctes <- foldin_count_ctes(
-    n_start   = glue("lot{lot_num}_start.LOT{lot_num}_START_DT"),
-    n_tbl     = glue("lot{lot_num}_start"),
-    line_pred = glue("l.LOT_NUM < {lot_num}"),
-    melp_on   = melp_rule_on(cfg))
+    discon_days = cfg$map_discon_gap_days,
+    n_start     = glue("lot{lot_num}_start.LOT{lot_num}_START_DT"),
+    n_tbl       = glue("lot{lot_num}_start"),
+    n_induction = induction_end,
+    line_pred   = glue("l.LOT_NUM < {lot_num}"),
+    melp_on     = melp_rule_on(cfg))
   paste0("\n", glue("
     foldin_prev AS (
       SELECT ll.PATID, m AS MED_ABBR
@@ -330,7 +382,8 @@ foldin_prior_ctes <- function(cfg, prev) {
   if (!foldin_on(cfg)) return("")
   # The same count, over the lines lot_long holds at this point - 1..prev. The
   # line being started does not exist yet, so there is no own-start term.
-  count_ctes <- foldin_count_ctes(meds = "foldin_sc_meds",
+  count_ctes <- foldin_count_ctes(discon_days = cfg$map_discon_gap_days,
+                                  meds = "foldin_sc_meds",
                                   line_pred = glue("l.LOT_NUM <= {prev}"))
   paste0("\n", glue("
     foldin_sc_prev AS (

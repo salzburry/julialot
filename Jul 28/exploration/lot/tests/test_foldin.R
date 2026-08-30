@@ -30,8 +30,10 @@ library(glue)
 source(file.path(LOT, "R", "melp_rule.R"))
 source(file.path(LOT, "R", "foldin_rule.R"))
 
-off <- list(apply_map_foldin = FALSE)
-on_ <- list(apply_map_foldin = TRUE)
+# map_discon_gap_days is what separates one course of a drug from the next, so
+# the rule reads it now.
+off <- list(apply_map_foldin = FALSE, map_discon_gap_days = 90L)
+on_ <- list(apply_map_foldin = TRUE,  map_discon_gap_days = 90L)
 
 cat("\n-- off is not a setting, it is the absence of the rule --\n")
 ok(identical(foldin_lotn_ctes(off, 2), ""), "the line build gets no extra CTEs")
@@ -84,13 +86,21 @@ cat("\n-- the count: one advance folds, two or more do not --\n")
 # The study team's 20 Aug refinement. The whole rule now turns on N_ADVANCES,
 # so the arithmetic is pinned here and the behaviour on planted patients by
 # the harness named in the repository README.
-ok(has(s, "foldin_episodes AS (") && has(s, "WHERE N_ADVANCES = 1"),
+ok(has(s, "foldin_folded AS (") && has(s, "WHERE N_ADVANCES = 1"),
    "exactly one advance between the two doses folds, and nothing else does")
-ok(has(s, "count(l.LOT_NUM)") && has(s, "l.LOT_START_DT >  e.PREV_DOSE_DT") &&
-     has(s, "l.LOT_START_DT <  e.MAP_START_DT"),
+ok(has(s, "count(l.LOT_NUM)") && has(s, "l.LOT_START_DT >  k.PREV_COURSE_DT") &&
+     has(s, "l.LOT_START_DT <  k.MAP_START_DT"),
    "...counted as the lines that opened between the drug's two doses")
-ok(has(s, "lag(a.MAP_START_DT) OVER (PARTITION BY a.PATID, a.AGENT"),
+ok(has(s, "lag(c.MAP_START_DT) OVER (PARTITION BY c.PATID, c.AGENT"),
    "the interval is dose to dose, and a substitute shares the agent's doses")
+# A course carries the answer to its own later episodes. Judged one episode at
+# a time, a returning course was split between two owners: its first episode
+# folded and its follow-up, with no advance behind it, opened a line.
+ok(has(s, "foldin_course AS (") && has(s, "IS_RETURN") &&
+     has(s, "INNER JOIN foldin_folded f"),
+   "a course is one answer - every episode in it folds, or none does")
+ok(has(s, "FROM tx_auto_dates") && has(s, "FROM tx_allo_cart_dates"),
+   "a procedure counts as an intervening boundary, not only a medication")
 ok(has(s, "N_BETWEEN = 0"),
    "...and a return with another agent before it belongs to a later line")
 # The start-candidate statement judges a later line once lot_long has grown,
@@ -105,9 +115,9 @@ s10 <- sf("10_lot2_5_base.R")
 ok(has(s10, "{foldin_prior_ctes(cfg, prev)}") &&
      has(s10, "{foldin_trigger_predicate(cfg)}"),
    "the start candidates carry the fold's trigger exclusion")
-ok(has(s10, "{foldin_lotn_ctes(cfg, lot_num)}") &&
+ok(has(s10, "{foldin_lotn_ctes(cfg, lot_num, lotn_induction_end(") &&
      has(s10, "{foldin_suppress_predicate(cfg)}"),
-   "the line build carries the fold's candidate exclusion")
+   "the line build carries the fold's candidate exclusion, and the line's window")
 ok(has(s10, "boundary_tbl = foldin_boundary_tbl(cfg)"),
    "...and discon_per_med reads the filtered boundary source")
 ok(has(s10, "foldin_runout_case(cfg,") &&

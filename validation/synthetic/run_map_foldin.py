@@ -34,6 +34,10 @@ regimen window is PART of that line, not a reason to start the next one.
       case; the engine's restart rule keeps it
   F12 B returns with ONE advance in between  -> count 1, folds
   F13 B returns with TWO advances in between -> count 2, starts a line
+  F14 B's return has a follow-up episode     -> one course, one answer: the
+      whole course folds, not only its first episode
+  F15 a PROCEDURE opens the line in between  -> it disqualifies the return the
+      same way a drug does
 """
 import os, sys, tempfile, subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -85,6 +89,17 @@ PATS = [
     # line of its own, exactly as it does with the rule off.
     P('F13', L1 + [('DARA', 'MAB', 200, 260), ('CARF', 'PI', 300, 600),
                    ('BORT', 'PI', 450, 510)]),
+    # F14: the returning COURSE, not just its first episode. B returns at d450
+    # and folds; its own follow-up at d500 - inside the 90-day gap, so the same
+    # course - had no advance behind it and was judged on its own, so it did
+    # not fold and opened a line. One course, one answer.
+    P('F14', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 450, 480),
+                   ('BORT', 'PI', 500, 530)]),
+    # F15: a PROCEDURE opens the line in between. Scanning medications alone,
+    # LOT2 went on claiming B's return even though a CAR-T had opened LOT3,
+    # and LOT2's own discontinuation became the CAR-T's end reason.
+    dict(P('F15', L1 + [('DARA', 'MAB', 200, 250), ('BORT', 'PI', 450, 480)]),
+         sct_ac=[('CART', IX + 300)]),
 ]
 
 
@@ -162,6 +177,16 @@ def main():
        "F12 count 1: one advance in between, so the return folds")
     ok(ref.get('F13') == fold.get('F13') and ref.get('F13'),
        "F13 count 2: two advances in between, so the return still starts a line")
+
+    ok(n(ref, 'F14') == 3 and n(fold, 'F14') == 2,
+       "F14: the whole returning course folds, not only its first episode")
+    ok(n(fold, 'F14') == 2 and fold['F14'][1][2] == rs.d(IX + 600),
+       "F14: ...and one line owns it, so no line opens on the follow-up")
+    ok(n(ref, 'F15') == 4 and n(fold, 'F15') == 4,
+       "F15: a CAR-T line in between stops LOT2 claiming the return")
+    ok(n(fold, 'F15') == 4 and fold['F15'][1][2] == rs.d(IX + 250)
+       and fold['F15'][1][3] == 'DISCONTINUATION',
+       "F15: ...so LOT2 keeps its own discontinuation")
 
     ok(n(ref, 'F8') == 3,
        "F8 contract: the return breaks 2L's own drug's chain and takes a line")

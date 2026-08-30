@@ -559,7 +559,7 @@ build_lot_n <- function(con, lot_num,
         INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
       )
       GROUP BY PATID, MED_ABBR
-    ),{melp_lotn_ctes(cfg, lot_num, induction_window_days, cart_consolidation_days, allo_lot_span)}{foldin_lotn_ctes(cfg, lot_num)}
+    ),{melp_lotn_ctes(cfg, lot_num, induction_window_days, cart_consolidation_days, allo_lot_span)}{foldin_lotn_ctes(cfg, lot_num, lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days))}
     -- Per drug, the end of ITS cover in this line: the FIRST episode flagged
     -- discontinued. A later episode of the same drug does NOT open the next
     -- line. It was in this line's regimen, so this line extends over it, and

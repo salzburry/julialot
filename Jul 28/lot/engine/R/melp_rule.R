@@ -844,6 +844,23 @@ melp_hold_join <- function(cfg, on_alias, alias = "mh") {
 # rather than read off cfg here. A CART-started line closes at the consolidation
 # window and an ALLO line has no window at all, and both live in the step. The
 # test holds this expression against the one first_add_candidates uses.
+# The last day of a line's own induction window, as SQL. A line's window
+# depends on what started it, and two rules need the same answer - the
+# melphalan rule to say what is inside induction, the fold-in to say which
+# procedures belong to the line rather than opening the next one. Written once
+# so they cannot drift apart.
+lotn_induction_end <- function(lot_num, induction_window_days,
+                               cart_consolidation_days) {
+  ls <- glue("lot{lot_num}_start")
+  glue("CASE
+              WHEN {ls}.LOT{lot_num}_START_TYPE = 'SCT_ALLO'
+                THEN {ls}.LOT{lot_num}_START_DT
+              WHEN {ls}.LOT{lot_num}_START_TYPE = 'CART'
+                THEN date_add({ls}.LOT{lot_num}_START_DT, {cart_consolidation_days - 1})
+              ELSE date_add({ls}.LOT{lot_num}_START_DT, {induction_window_days - 1})
+            END")
+}
+
 melp_lotn_ctes <- function(cfg, lot_num, induction_window_days,
                            cart_consolidation_days, allo_lot_span) {
   if (!melp_rule_on(cfg)) return("")
@@ -852,12 +869,6 @@ melp_lotn_ctes <- function(cfg, lot_num, induction_window_days,
   # this splices - the same ones first_add_candidates reads.
   melp_decision_ctes(
     cfg, ls, glue("LOT{lot_num}_START_DT"), glue("{ls}.OBS_END_DT"),
-    glue("CASE
-              WHEN {ls}.LOT{lot_num}_START_TYPE = 'SCT_ALLO'
-                THEN {ls}.LOT{lot_num}_START_DT
-              WHEN {ls}.LOT{lot_num}_START_TYPE = 'CART'
-                THEN date_add({ls}.LOT{lot_num}_START_DT, {cart_consolidation_days - 1})
-              ELSE date_add({ls}.LOT{lot_num}_START_DT, {induction_window_days - 1})
-            END"),
+    lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days),
     base_tbl = "base_meds", restart_tbl = "map_restart")
 }
