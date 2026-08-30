@@ -64,6 +64,13 @@ ok(has(s, "coalesce(ps.original_med, p.MED_ABBR) AS AGENT"),
    "...each regimen drug read under the agent it belongs to")
 ok(has(s, "INNER JOIN permissible_subs ps ON ps.original_med = a.AGENT"),
    "...and expanded back to every substitute for that agent, both directions")
+# Both start-candidate hooks are silent while the returning-drug release is
+# withdrawn - §4.3 refuses that whole regimen a line already, and the fold set
+# is a subset of it. Emitting them anyway was a second copy of one exclusion.
+on_rel <- c(on_, list(apply_own_return_fold = TRUE))
+ok(!nzchar(foldin_prior_ctes(on_rel, "{prev}")) &&
+     !nzchar(foldin_trigger_predicate(on_rel)),
+   "the start-candidate hooks are silent when 4.3 already covers them")
 p <- foldin_prior_ctes(on_, "{prev}")
 ok(has(p, "WHERE ll.LOT_NUM = {prev} AND m <> ''"),
    paste0("the trigger reads the same one line - the regimen of the line ",

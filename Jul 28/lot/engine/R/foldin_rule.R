@@ -42,10 +42,13 @@
 #              other way (the hold below), so it is switched off for these
 #              drugs.
 #
-#   NEVER TRIGGER   a folded drug cannot start the next line either. §4.3
-#              already refuses the previous line's own regimen a line of its
-#              own, so this and that rule agree about the same drugs; this one
-#              adds nothing there and takes nothing away.
+#   NEVER TRIGGER   a folded drug cannot start the next line either - but
+#              only where §4.3's release is still ON. With the release
+#              withdrawn, which is what CONTRACT pins, §4.3 already refuses
+#              the previous line's whole regimen a line of its own, and the
+#              fold set is a subset of that regimen. So both hooks emit
+#              nothing in the contract build and the statement is shorter by
+#              a whole CTE block.
 #
 #   HOLD       suppressing and owning are two halves of one statement. The
 #              line's run-out is carried to the last day any folded episode's
@@ -587,12 +590,12 @@ foldin_line_type_guard <- function(cfg, lot_num, alias = "ec") {
                     AND {alias}.FOLDIN_HOLD_DT > {alias}.LOT{lot_num}_START_DT)"))
 }
 
-# The fold set for the NEXT line's start candidates: the lines BEFORE the
-# previous one. The previous line's own regimen is already excluded there,
-# with the release the engine ships - a drug restarting with no newer line in
-# between stays the engine's ordinary restart, untouched by this rule.
+# The fold set for the NEXT line's start candidates. Emitted only where §4.3's
+# release is still on: with it withdrawn, §4.3 refuses the previous line's
+# regimen a line of its own and the fold set is a subset of that regimen, so
+# there is nothing left here to refuse.
 foldin_prior_ctes <- function(cfg, prev) {
-  if (!foldin_on(cfg)) return("")
+  if (!foldin_on(cfg) || !return_release_on(cfg)) return("")
   # The same count, over the lines lot_long holds at this point - 1..prev. The
   # line being started does not exist yet, so there is no own-start term.
   count_ctes <- foldin_count_ctes(cfg, discon_days = cfg$map_discon_gap_days,
@@ -607,7 +610,7 @@ foldin_prior_ctes <- function(cfg, prev) {
 # to the line it returned in, which the hold above has already stretched over
 # it.
 foldin_trigger_predicate <- function(cfg) {
-  if (!foldin_on(cfg)) return("")
+  if (!foldin_on(cfg) || !return_release_on(cfg)) return("")
   paste0("\n", glue("
         AND NOT EXISTS (SELECT 1 FROM foldin_episodes fm
                         WHERE fm.PATID = ms.PATID
