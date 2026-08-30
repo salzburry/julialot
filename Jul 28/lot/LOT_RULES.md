@@ -390,13 +390,28 @@ engine would itself accept against this line, non-steroid, and not melphalan.
 Then the line does advance — and it advances on the **melphalan** date, not the
 later agent's, so the boundary sits where treatment actually changed.
 
-That agent has to be a **new** one. A drug from an earlier line coming back is
-the returning drug, not a new one — §4.8 bundles it into the line it returns in
-— so it confirms nothing. Without this the same drug was bundled by §4.8 and
-read as a change by this rule, and the line advanced on the melphalan date
-anyway. This is the one place the two rules meet, and it settles both
-directions: a course this rule suppressed is not a line-defining agent for
-§4.8's count either.
+That agent has to be a **new** one. A drug from the **immediately previous**
+line coming back is the returning drug, not a new one — §4.8 bundles it into
+the line it returns in — so it confirms nothing. Without this the same drug was
+bundled by §4.8 and read as a change by this rule, and the line advanced on the
+melphalan date anyway. This is the one place the two rules meet, and it settles
+both directions: a course this rule suppressed is not a line-defining agent for
+§4.8's count either, and it joins no regimen (§4.7 holds it, and a held course
+is in neither `LOT_BASE_MEDS` nor `LOT_MED_CNT`).
+
+**"Not new" is the previous line only, the same scope §4.8's fold set reads.**
+A drug last given further back than that is a new agent here and confirms a
+course like any other. It has to be: §4.3 excludes only the previous regimen,
+so such a drug can already open a line — and reading every earlier line here
+made it both at once, too old to confirm and new enough to start a line. It
+then opened the next line on its **own** date while a drug the patient had
+never had opened it on the melphalan date, for the same shape of history.
+
+> **Changed 2026-08-30.** Narrowed from every earlier line to the previous one,
+> so the two rules share one meaning of "new". It moves the next line's start
+> from the returning drug's date to the melphalan date, by up to
+> `melp_simple_course_days`, for patients where a drug from two or more lines
+> back returns inside a short course.
 
 A course inside the induction window, or one covering more days than the cap,
 is left to the engine untouched.

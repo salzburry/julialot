@@ -942,8 +942,16 @@ melp_lotn_ctes <- function(cfg, lot_num, induction_window_days,
   # A returning prior-line agent is not a NEW agent, so it cannot confirm a
   # short course - LOT_RULES.md 4.7 and 4.8. Only where the fold-in is on, and
   # only from LOT2 up, since LOT1 has no earlier line.
+  #
+  # The IMMEDIATELY PREVIOUS line, which is the same scope the fold set reads
+  # (foldin_lotn_ctes). Reading every earlier line instead made one drug two
+  # things at once: a drug last seen two lines back was too old to confirm a
+  # course and, since 4.3 excludes only the previous regimen, still new enough
+  # to open a line. It then started the next line on its own date while a
+  # genuinely new drug in the same position started it on the melphalan date.
+  # One scope for both rules, so "not new" cannot mean two things.
   not_new <- if (!isTRUE(cfg$apply_map_foldin) || lot_num < 2) "" else
-    paste0("\n", prior_lines_regimen_ctes(glue("ll.LOT_NUM < {lot_num}"),
+    paste0("\n", prior_lines_regimen_ctes(glue("ll.LOT_NUM = {lot_num} - 1"),
                                           raw = "melp_prior_raw",
                                           out = "melp_not_new"))
   melp_decision_ctes(

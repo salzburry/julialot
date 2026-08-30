@@ -252,6 +252,26 @@ PATS = [
               ('DARA', 'MAB', 200, 600), ('MELP', 'ALKY', 450, 477)]),
     P('F27n', [('LEN', 'IMID', 0, 80),
                ('DARA', 'MAB', 200, 600), ('MELP', 'ALKY', 450, 477)]),
+    # F28/F29/F30: one scope for "not new". Three patients with the same
+    # history and the same short melphalan course at day 600, differing only
+    # in how far back the drug returning inside it was last seen.
+    #
+    #   F28  the previous line's drug  -> folds, and there is no next line
+    #   F29  a drug from TWO lines back -> does not fold, but it IS new, so it
+    #        confirms the course and the next line opens on the melphalan date
+    #   F30  a drug never seen          -> the same as F29
+    #
+    # melp_not_new read EVERY earlier line while the fold set reads only the
+    # previous one, so F29's drug was at once too old to confirm and - 4.3
+    # excluding only the previous regimen - new enough to open a line. It
+    # started the next line on its own date, ten days after the melphalan one,
+    # where F30 started it on the course. F29 and F30 now agree.
+    P('F28', L1 + [('DARA', 'MAB', 200, 280), ('CARF', 'PI', 400, 800),
+                   ('MELP', 'ALKY', 600, 627), ('DARA', 'MAB', 610, 700)]),
+    P('F29', L1 + [('DARA', 'MAB', 200, 280), ('CARF', 'PI', 400, 800),
+                   ('MELP', 'ALKY', 600, 627), ('BORT', 'PI', 610, 700)]),
+    P('F30', L1 + [('DARA', 'MAB', 200, 280), ('CARF', 'PI', 400, 800),
+                   ('MELP', 'ALKY', 600, 627), ('POMA', 'IMID', 610, 700)]),
 ]
 
 
@@ -408,6 +428,15 @@ def main():
     ok(n(ref, 'F4c') == 3 and n(fold, 'F4c') == 2
        and fold['F4c'][1][2] == rs.d(IX + 500),
        "F4c: the pair dosed on one day folds as one course, to day 500")
+
+    ok(n(fold, 'F29') == 4 and fold['F29'][3][1] == rs.d(IX + 600)
+       and n(fold, 'F30') == 4 and fold['F30'][3][1] == rs.d(IX + 600),
+       "F29/F30: a drug from further back than the fold reaches is NEW, so it "
+       "confirms the course and the line opens on the melphalan date, exactly "
+       "as a drug never seen does")
+    ok(n(fold, 'F28') == 3,
+       "F28: ...while the previous line's own drug still folds, and no line "
+       "opens at all")
 
     ok(n(fold, 'F4f') == 2 and fold['F4f'][1][2] == rs.d(IX + 900),
        "F4f: a folded drug brings its whole agent, so the equivalent product "
