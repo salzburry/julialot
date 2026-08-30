@@ -213,7 +213,7 @@ tandem_interrupt_events_sql <- function() "
 # ALLO and CAR-T rows carry no previous AUTO, so that predicate never excludes
 # them - they always break the line once they are past its window.
 line_break_tx_sql <- function() glue("
-        SELECT p.PATID, p.TX_DT, p.PREV_AUTO_DT,
+        SELECT p.PATID, p.TX_DT, 'AUTO' AS SCT_KIND, p.PREV_AUTO_DT,
                coalesce(sum(CASE WHEN x.dt > p.PREV_AUTO_DT AND x.dt < p.TX_DT
                                  THEN 1 ELSE 0 END), 0) AS N_BETWEEN
         FROM (
@@ -225,24 +225,48 @@ line_break_tx_sql <- function() glue("
         ) x ON p.PATID = x.PATID
         GROUP BY p.PATID, p.TX_DT, p.PREV_AUTO_DT
         UNION ALL
-        SELECT PATID, TX_DT, cast(NULL AS date) AS PREV_AUTO_DT, 0 AS N_BETWEEN
+        SELECT PATID, TX_DT, SCT_TYPE AS SCT_KIND,
+               cast(NULL AS date) AS PREV_AUTO_DT, 0 AS N_BETWEEN
         FROM tx_allo_cart_dates")
 
-# The planned-tandem exemption, in the same three parts auto_cand and the LOT1
-# post-runout guard test: within sct_tandem_days of the AUTO before it, nothing
-# in between, and that earlier AUTO inside the line's own window. The last part
-# is the ownership condition - a pair whose first transplant the line never
-# held was never the line's tandem - and leaving it out would exempt a pair the
-# start gate has already decided is not one.
+# When one of those transplants BREAKS the line, by kind. Three kinds, three
+# rules, and the engine states each; reading one window over all of them is
+# what this replaces.
 #
-# paste0 around the glue, not glue alone: glue trims a template's leading
+#   AUTO   past the line own induction window, and not a planned tandem:
+#          within sct_tandem_days of the AUTO before it, nothing in between,
+#          and that earlier AUTO inside the window. All three are what
+#          auto_cand and the LOT1 post-runout guard test, ownership condition
+#          included - a pair whose first transplant the line never held was
+#          never the line tandem.
+#
+#   ALLO   strictly after the line START, no window. That is how
+#          lot{n}_regimen_cutoff cuts a regimen, and how LOT1 does it too.
+#
+#   CART   the same at LOT2-5. At LOT1 the induction rule (LOT_RULES.md 6.4)
+#          keeps a CAR-T INSIDE the window as part of the line, so there it
+#          breaks only past the window - cart_from carries which of the two
+#          dates applies. Outside the window a CAR-T opens the next line at
+#          LOT1 as anywhere else.
+#
+# paste0 around the glue, not glue alone: glue trims a template leading
 # newline and this fragment splices straight after another predicate, which
 # without it read "... <= mc.EXPO_DTAND NOT (...".
-line_break_tandem_pred <- function(cfg, alias, induction_end) paste0("\n", glue("
-       AND NOT ({alias}.PREV_AUTO_DT IS NOT NULL
-                AND datediff({alias}.TX_DT, {alias}.PREV_AUTO_DT) <= {cfg$sct_tandem_days}
-                AND {alias}.N_BETWEEN = 0
-                AND {alias}.PREV_AUTO_DT <= {induction_end})"))
+line_break_window_pred <- function(cfg, alias, induction_end, line_start,
+                                   cart_from = NULL) {
+  cart <- if (is.null(cart_from) || identical(cart_from, line_start)) "" else
+    paste0("\n                 AND (", alias, ".SCT_KIND <> 'CART' OR ",
+           alias, ".TX_DT > ", cart_from, ")")
+  paste0("\n       AND ((", alias, ".SCT_KIND = 'AUTO'
+                 AND ", alias, ".TX_DT > ", induction_end, "
+                 AND NOT (", alias, ".PREV_AUTO_DT IS NOT NULL
+                          AND datediff(", alias, ".TX_DT, ", alias,
+                              ".PREV_AUTO_DT) <= ", cfg$sct_tandem_days, "
+                          AND ", alias, ".N_BETWEEN = 0
+                          AND ", alias, ".PREV_AUTO_DT <= ", induction_end, "))
+            OR (", alias, ".SCT_KIND <> 'AUTO'
+                 AND ", alias, ".TX_DT > ", line_start, cart, "))")
+}
 
 # The agents of a patient's EARLIER lines, and their permissible substitutes.
 #

@@ -210,8 +210,7 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
         FROM (", line_break_tx_sql(), "
         ) tx
         INNER JOIN ", n_tbl, " ON ", n_tbl, ".PATID = tx.PATID
-        WHERE tx.TX_DT > ", induction,
-        line_break_tandem_pred(cfg, "tx", induction), "
+        WHERE 1 = 1", line_break_window_pred(cfg, "tx", induction, n_start), "
       ) o
         ON o.PATID = k.PATID
        AND o.AT_DT <  k.MAP_START_DT")
@@ -239,9 +238,17 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
     -- Two steps, because a window function cannot be nested inside another.
     foldin_runs AS (
       SELECT PATID, MAP_MED_TYPE, MAP_START_DT, AGENT,
+             -- Measured against the MAXIMUM cover reached so far, not the
+             -- immediately preceding episode's end. A short substitute
+             -- episode inside the reference product's cover would otherwise
+             -- hand the next episode that short end as its predecessor and
+             -- read a break the agent never had - the pair shares one
+             -- history, so what matters is how far that history reaches.
              CASE WHEN datediff(MAP_START_DT,
-                    lag(MAP_END_DT) OVER (PARTITION BY PATID, AGENT
-                                          ORDER BY MAP_START_DT))
+                    max(MAP_END_DT) OVER (PARTITION BY PATID, AGENT
+                                          ORDER BY MAP_START_DT
+                                          ROWS BETWEEN UNBOUNDED PRECEDING
+                                                   AND 1 PRECEDING))
                        >= {discon_days} THEN 1 ELSE 0 END AS IS_RETURN
       FROM foldin_agent
     ),
@@ -453,8 +460,8 @@ foldin_regimen_union <- function(cfg, lot_num, induction_end) {
           FROM ({line_break_tx_sql()}
           ) btx
           WHERE btx.PATID = ms.PATID
-            AND btx.TX_DT >  {induction_end}
-            AND btx.TX_DT <= ms.MAP_START_DT{line_break_tandem_pred(cfg, \'btx\', induction_end)}
+            AND btx.TX_DT <= ms.MAP_START_DT{line_break_window_pred(cfg, \'btx\',
+                  induction_end, glue(\'lot{lot_num}_start.LOT{lot_num}_START_DT\'))}
         )
         -- ...and nothing at or after a genuinely NEW agent, which ends the
         -- line as an added medication. A return landing on the SAME DAY as one

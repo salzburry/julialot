@@ -300,6 +300,30 @@ phase_codelists <- function(con) {
     log_msg("  OK: Each MED_ABBR maps to exactly one class.")
   }
 
+  # One substitute standing in for two different drugs. The fold set and the
+  # fold-in's agent grouping both collapse a substitute to the drug it
+  # replaces, and with two candidates min() picks lexically and says nothing -
+  # so a returning drug could be read as the wrong agent's return. Fatal for
+  # the same reason multi_class is: the pick is arbitrary and it reaches the
+  # lines.
+  multi_original <- db_q(con, "
+    SELECT substitute_med, count(DISTINCT original_med) AS n_originals,
+           concat_ws(', ', collect_set(original_med)) AS originals
+    FROM permissible_subs
+    GROUP BY substitute_med
+    HAVING count(DISTINCT original_med) > 1
+  ")
+  if (nrow(multi_original) > 0) {
+    log_msg("  Substitute standing in for more than one drug:")
+    print(multi_original)
+    problems <- rbind(problems, data.frame(check = "multi_original", detail = paste0(
+      nrow(multi_original), " substitute(s) with more than one original: ",
+      paste(multi_original$substitute_med, collapse = ", ")),
+      stringsAsFactors = FALSE))
+  } else {
+    log_msg("  OK: Each substitute stands in for exactly one drug.")
+  }
+
   # Claims take MED_CLASS from the code list. The LOT1_CLASS_<x> columns are
   # named from the rollup's. The two must agree or the column is always zero.
   # Compared as sets, so a med that one file classes two ways is compared

@@ -573,6 +573,13 @@ ok(grepl("concat_ws(',', sort_array(collect_set(c.CL_MED_CLASS)))", cd, fixed = 
    "class agreement compares the whole set, skipping no medication")
 ok("multi_class" %in% FATAL_CHECKS,
    "...and multi_class is fatal, so min() never picks a class silently")
+# The same shape one level down. A substitute standing in for two drugs is
+# collapsed by min(original_med), and that pick decides which agent's return
+# the fold-in is judging - so it stops the build rather than being taken.
+ok(grepl("HAVING count(DISTINCT original_med) > 1", cd, fixed = TRUE),
+   "a substitute standing in for two drugs is detected")
+ok("multi_original" %in% FATAL_CHECKS,
+   "...and is fatal, so min() never picks an agent silently either")
 mmx <- paste(readLines(file.path(ROOT, "R", "steps", "03_mma_map.R"), warn = FALSE),
              collapse = "\n")
 ok(grepl("c.CL_MED_CLASS AS MED_CLASS", mmx, fixed = TRUE) &&

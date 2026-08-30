@@ -193,6 +193,15 @@ PATS = [
     # opening on it.
     P('F24', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 300, 360),
                    ('MELP', 'ALKY', 450, 477)]),
+    # F25/F26: what BREAKS a line, by kind. An ALLO or CAR-T breaks it from
+    # the line START - no window - which is how lot{n}_regimen_cutoff cuts a
+    # regimen. Only an AUTO gets the induction window and the tandem
+    # exemption. Reading one window over all three was a helper that
+    # contradicted the rule it cited.
+    dict(P('F25', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 450, 510)]),
+         sct_ac=[('CART', IX + 210)]),
+    dict(P('F26', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 450, 510)]),
+         sct_ac=[('ALLO', IX + 210)]),
     # F19: where the two adopted rules meet. DARA opens 2L. A short melphalan
     # course sits at day 450, outside 2L's window, and B returns at day 455 -
     # inside that course's cover. The melphalan rule advances a short course
@@ -393,6 +402,11 @@ def main():
     ok(n(fold, 'F24') == 2 and fold['F24'][1][2] == rs.d(IX + 600)
        and fold['F24'][1][3] == 'DISCONTINUATION',
        "F24: a folded drug is not another agent taking a melphalan course")
+
+    for pid, kind in (('F25', 'CAR-T'), ('F26', 'an ALLO')):
+        ok(fold.get(pid) == ref.get(pid) and n(fold, pid) == 4,
+           "%s: %s inside the line's window still breaks it, so the return "
+           "takes its own line" % (pid, kind))
 
     # The invariants, over every planted patient in both arms. A drug in two
     # regimens, a drug a line names but never covered, or an episode in no line

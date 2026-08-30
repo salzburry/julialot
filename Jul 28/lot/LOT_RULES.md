@@ -395,11 +395,18 @@ line: that agent ends the line, and what follows belongs to the line it
 started. Distance alone does not disqualify it, so a course long after the
 drugs ran out still belongs to the line when nothing happened in between.
 
-A transplant or CAR-T is that agent only when it **breaks** the line — past the
-line's own induction window (§3.4, §6.5), and not the second transplant of a
-planned tandem pair, which continues the line and opens nothing (§6.5). One
-inside the window, or a tandem partner however far out it sits, belongs to the
-line and leaves this rule alone.
+A transplant or CAR-T is that agent only when it **breaks** the line, and the
+three kinds break it differently — the same rules §3.4, §6.3, §6.4 and §6.5
+state:
+
+| | breaks the line |
+|---|---|
+| AUTO | past the line's own induction window, and not an uninterrupted tandem partner of an AUTO the line held |
+| ALLO | strictly after the line's start. No window |
+| CAR-T | the same, except inside line 1's own window, where §6.4 makes it part of line 1 |
+
+An AUTO inside the window, or a tandem partner however far out it sits, belongs
+to the line and leaves this rule alone.
 
 The rule reads days of **cover**, not dose dates, on both tests: what counts as
 short, and how far the line is carried. A medical melphalan claim carries the

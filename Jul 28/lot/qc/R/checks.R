@@ -472,8 +472,10 @@ LOT_QC_CHECKS <- list(
                     "line's drug returning after the window joins this line's ",
                     "regimen (LOT_RULES.md 4.8), and its episode is inside the ",
                     "LINE rather than the window. The accepted range ends at ",
-                    "the line's end there, and a drug with no episode anywhere ",
-                    "in the line is still caught."),
+                    "the line's end there - but only for a drug the PREVIOUS ",
+                    "line carried, which is what a fold requires. A drug that ",
+                    "is neither in the window nor a previous-line agent got ",
+                    "into the regimen some other way and is still caught."),
        needs = c("final", "map", "allo"),
        sql = function(t, p) counted(paste0("
     WITH ", qc_window_sql(t, p), "
@@ -486,7 +488,24 @@ LOT_QC_CHECKS <- list(
      AND ms.MAP_START_DT <= ",
        if (isTRUE(p$foldin)) "greatest(w.ELIGIBLE_END, w.LOT_BASE_END_DT)"
        else "w.ELIGIBLE_END", "
-    WHERE ms.PATID IS NULL"),
+    WHERE ms.PATID IS NULL",
+    # ...and the wider range is allowed only where a fold could have put the
+    # drug there: it has to be an agent of the line BEFORE this one. Widening
+    # for every regimen drug would have let unrelated post-induction pollution
+    # through, since anything inside the line would pass.
+    if (!isTRUE(p$foldin)) "" else paste0("
+       OR NOT EXISTS (
+            SELECT 1 FROM ", t$final, " pl
+            WHERE cast(pl.PATID as string) = w.PATID
+              AND pl.LOT_NUM = w.LOT_NUM - 1
+              AND array_contains(split(coalesce(pl.LOT_BASE_MEDS, ''), ' '),
+                                 w.MED_ABBR))
+          AND NOT EXISTS (
+            SELECT 1 FROM ", t$map, " ms2
+            WHERE cast(ms2.PATID as string) = w.PATID
+              AND ms2.MAP_MED_TYPE = w.MED_ABBR
+              AND ms2.MAP_START_DT >= w.LOT_START_DT
+              AND ms2.MAP_START_DT <= w.ELIGIBLE_END)")),
     "concat(pid, ' LOT', LOT_NUM, ': ', MED_ABBR, ' has no episode in the line')")),
 
   list(id = "C4", group = "Regimen", severity = "fail",
