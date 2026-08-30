@@ -103,7 +103,7 @@ cfg_defaults <- list(
   # contract check and stops - rather than defaulting to the study's rule and
   # hiding the fact that the settings file never loaded. Note that blank cannot
   # be asked for from the environment: load_inputs.R fills an empty variable
-  # from config.csv. 'off' is the word that survives, and melp_rule_mode()
+  # from config.csv. 'off' is the word that survives, and melp_rule_on()
   # maps it to no rule.
   apply_melp_rule    = Sys.getenv("APPLY_MELP_RULE",    unset = ""),
   # Pinned TRUE in CONTRACT since the study adopted the rule - LOT_RULES.md

@@ -57,45 +57,67 @@ cat("\n-- and the citations are file AND line, to a line the file has --\n")
 # does not get checked. lot/FILES.md says "file and line", so this holds it to it.
 #
 # Format: `path:line`, comma-separated, a bare `:line` continuing the path.
+# A citation is "path | anchor", several separated by " ;; ". The anchor is a
+# literal that has to appear in that file, and this resolves it to the line it
+# is on - so every check below still works on a (file, line) pair and none of
+# them had to change.
+#
+# It was "path:line". Line numbers do not survive editing: four separate edits
+# in one week moved code above a citation and left it pointing at whatever had
+# drifted into its slot. The suite caught each one, which is why they were
+# never wrong for long - but re-pointing by hand is work the anchor form does
+# not need. An anchor moves with the code it names, and a citation whose code
+# is GONE fails, which is the case worth failing on.
+#
+# The FIRST match wins, and a repeated anchor is fine. Several of these rules
+# are written identically in five places - the tandem window, the steroid
+# exclusion - and any occurrence serves a reader who greps for it equally well.
+# What must fail is an anchor that is not there AT ALL, which is the case that
+# means the code it quotes has gone.
 cite_parts <- function(s) {
-  path <- NA_character_; out <- list()
-  for (b in trimws(strsplit(s, ",")[[1]])) {
-    if (grepl("^:[0-9]+$", b)) {
-      if (is.na(path)) return(NULL)
-      out[[length(out) + 1L]] <- list(file = path, line = as.integer(sub("^:", "", b)))
-    } else if (grepl("^[^ :]+:[0-9]+$", b)) {
-      path <- sub(":[0-9]+$", "", b)
-      out[[length(out) + 1L]] <- list(file = path, line = as.integer(sub("^.*:", "", b)))
-    } else return(NULL)
+  out <- list()
+  for (b in trimws(strsplit(s, ";;", fixed = TRUE)[[1]])) {
+    if (!nzchar(b)) next
+    halves <- trimws(strsplit(b, "|", fixed = TRUE)[[1]])
+    if (length(halves) != 2L || !all(nzchar(halves))) return(NULL)
+    f <- file.path(STUDY, halves[1])
+    if (!file.exists(f)) {
+      out[[length(out) + 1L]] <- list(file = halves[1], line = NA_integer_,
+                                      anchor = halves[2])
+      next
+    }
+    hit <- which(grepl(halves[2], readLines(f, warn = FALSE), fixed = TRUE))
+    out[[length(out) + 1L]] <- list(
+      file = halves[1], anchor = halves[2],
+      line = if (length(hit)) hit[1] else NA_integer_, absent = !length(hit))
   }
   out
 }
-unlined <- character(0); missing <- character(0); past_end <- character(0)
-blank   <- character(0)
+unlined <- character(0); missing <- character(0); gone <- character(0)
 for (i in seq_len(nrow(ours))) {
   p <- cite_parts(ours$ours_at[i])
   if (is.null(p) || !length(p)) { unlined <- c(unlined, ours$dimension_id[i]); next }
   for (c_i in p) {
-    f <- file.path(STUDY, c_i$file)
-    if (!file.exists(f)) { missing <- c(missing, ours$dimension_id[i]); next }
-    txt <- readLines(f, warn = FALSE)
-    if (c_i$line > length(txt)) past_end <- c(past_end, ours$dimension_id[i])
-    else if (!nzchar(trimws(txt[c_i$line]))) blank <- c(blank, ours$dimension_id[i])
+    if (!file.exists(file.path(STUDY, c_i$file))) {
+      missing <- c(missing, paste0(ours$dimension_id[i], " -> ", c_i$file)); next
+    }
+    if (isTRUE(c_i$absent))
+      gone <- c(gone, paste0(ours$dimension_id[i], " -> '", c_i$anchor,
+                             "' is not in ", basename(c_i$file)))
   }
 }
 ok(!length(unlined),
-   if (length(unlined)) paste0("cites a file with no line: ",
+   if (length(unlined)) paste0("cites something that is not 'path | anchor': ",
                                paste(unique(unlined), collapse = ", "))
-   else "every citation is file:line, so a reader can check one claim in one look")
+   else "every citation is 'path | anchor', so a reader can grep one claim")
 ok(!length(missing),
    if (length(missing)) paste0("cites a file that is not here: ",
                                paste(unique(missing), collapse = ", "))
    else "...naming a file that exists")
-ok(!length(past_end) && !length(blank),
-   if (length(past_end) || length(blank))
-     paste0("cites a line the file does not have, or a blank one: ",
-            paste(unique(c(past_end, blank)), collapse = ", "))
-   else "...and a line that file actually has")
+ok(!length(gone),
+   if (length(gone)) paste0("the code it quotes is gone: ",
+                            paste(unique(gone), collapse = "; "))
+   else "...and the line each one quotes is still in that file")
 # And a line of CODE, not a comment. A comment is what the build says about
 # itself; the point of a citation here is to show what it DOES. A comment can be
 # accurate, out of date, or aspirational and reads the same in all three states,

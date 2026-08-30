@@ -66,8 +66,8 @@ cell_status <- function(con, c_i) {
 
 # The same rows again, immediately before anything is published. Everything read
 # so far comes off tables a concurrent build can replace, so this is the only
-# check standing between "these three cells agreed at the start of the read" and
-# "they still describe the same three builds".
+# check standing between "these cells agreed at the start of the read" and
+# "they still describe the same builds".
 #
 # Not a lock - a rebuild finishing inside the read still goes undetected if it
 # also finishes before this runs. It closes the window rather than the door,
@@ -179,7 +179,7 @@ melp_drop_cell <- function(con, c_i, study_prefix = "") {
 # LOT records all of it: the cohort attempt it read in LOT_RUN_METADATA, the
 # code fingerprint and study window beside it, and every code list's md5 in
 # LOT_CODELIST_METADATA. So the check is to read it back rather than to trust
-# that three sequential builds saw the same world.
+# that two sequential builds saw the same world.
 #
 # CONTRACT_SETTINGS is not here, and is checked all the same - by
 # melp_settings(), which compares it key by key. It cannot be compared as one
@@ -240,27 +240,28 @@ melp_check_inputs <- function(rows) {
 
 # And each cell has to be the algorithm it says it is.
 #
-# The reference must carry no deviation: if it needed one it is not the contract
-# build, and every delta is measured against the wrong thing. Each mode must
-# carry the melphalan deviation, naming the mode that cell is supposed to be -
-# and nothing else, because the cells are three separate processes and a second
-# setting reaching one of them would be read as the rule's effect.
+# Which cell deviates FLIPPED when the study adopted the rule. The cell that
+# carries it is the contract build now, and must record no deviation at all: if
+# it needed one it is not the contract build, and every delta is measured
+# against the wrong thing. The cell built WITHOUT the rule is the deviating one,
+# and must record the melphalan deviation naming what it was asked for - and
+# nothing else, because the cells are separate processes and a second setting
+# reaching one of them would be read as the rule's effect.
+#
+# The code says this generically, off each cell's own `mode`: NA is the contract
+# build, a word is a deviation to expect. So the flip needed no change here.
 #
 # check_lot_contract() writes one entry per wrong setting as
 # "key=value (contract value)", pipe-separated by write_build_status(). So the
 # entries are what is counted, and the mode is matched inside its own entry
 # rather than anywhere in the string.
 #
-# `allowed` names the settings a mode cell may legitimately deviate on beyond
-# the mode itself. No package passes one today - the melphalan and fold-in
-# cells each differ on their mode alone - and the contract cell may never
-# deviate at all: if it needed to, it would not be the contract build.
-#
-# `key` is the setting the cells exist to differ on. The melphalan packages
-# leave the default; the fold-in package passes apply_map_foldin, with the
-# cell's mode field carrying the value it must record.
-melp_check_deviations <- function(rows, cells, allowed = character(0),
-                                  key = "apply_melp_rule") {
+# `key` is the setting the cells exist to differ on. The melphalan package
+# leaves the default; the fold-in package passes apply_map_foldin, with the
+# cell's mode field carrying the value it must record. A cell may deviate on
+# that setting and nothing else, and the contract cell may not deviate at all:
+# if it needed to, it would not be the contract build.
+melp_check_deviations <- function(rows, cells, key = "apply_melp_rule") {
   mode_of <- setNames(lapply(cells, function(c_i) c_i$mode),
                       vapply(cells, function(c_i) c_i$id, character(1)))
   bad <- character(0)
@@ -278,9 +279,6 @@ melp_check_deviations <- function(rows, cells, allowed = character(0),
     }
     melp  <- grep(paste0("^", key, "="), entries)
     other <- entries[-melp]
-    if (length(allowed))
-      other <- other[!grepl(paste0("^(", paste(allowed, collapse = "|"), ")="),
-                            other)]
     if (!length(melp))
       bad <- c(bad, paste0("  ", id, " is meant to build the rule but records no ",
                            key, " deviation (",
@@ -305,7 +303,7 @@ melp_check_deviations <- function(rows, cells, allowed = character(0),
 # only while the two agree. They stop agreeing the moment the read happens
 # separately from the build: a recovery run a week later with
 # MELP_EXPOSURE_DAYS=31 in the environment recounts B.2 under a rule no cell was
-# built with, and every provenance check still passes, because the three cells
+# built with, and every provenance check still passes, because both cells
 # do agree with each other.
 #
 # So the values come off CONTRACT_SETTINGS, which is the run's own record of
@@ -698,7 +696,7 @@ melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP",
 
 # One row, from however many statements it takes. A statement that fails stops
 # with the warehouse's own message. One that comes back empty is a NULL here,
-# and the caller stops on it - the result is the comparison between all three
+# and the caller stops on it - the result is the comparison between both
 # cells, not a best effort at one.
 melp_metrics <- function(con, ...) {
   qs <- melp_metric_sql(...)
@@ -884,10 +882,10 @@ melp_modes_patients_sql <- function(a_tbl, y_tbl) {
 # ---- The read ---------------------------------------------------------------
 # What every cell was built over, before any number is read off it.
 #
-# MELP_INPUT_FIELDS compares CODE_MD5 across the three cells. That catches a
-# cell built from different code than its siblings. It does not catch all three
+# MELP_INPUT_FIELDS compares CODE_MD5 across the cells. That catches a
+# cell built from different code than its sibling. It does not catch both
 # being built from an engine that no longer matches this checkout, because
-# those three agree with each other perfectly.
+# the two agree with each other perfectly.
 #
 # So the recorded hash is also compared against the code now running. Same
 # fingerprint the build writes: every .R under the engine's R/ plus build.R,
@@ -969,8 +967,7 @@ melp_stamp <- function(d, inputs, status) {
         d, stringsAsFactors = FALSE)
 }
 
-melp_read_inputs <- function(con, cells, status, allowed = character(0),
-                             key = "apply_melp_rule") {
+melp_read_inputs <- function(con, cells, status, key = "apply_melp_rule") {
   inputs <- list()
   for (c_i in cells) {
     # The error is kept, not swallowed. A query that failed and a run with no
@@ -991,6 +988,6 @@ melp_read_inputs <- function(con, cells, status, allowed = character(0),
     inputs[[c_i$id]] <- r
   }
   melp_check_inputs(inputs)
-  melp_check_deviations(inputs, cells, allowed, key)
+  melp_check_deviations(inputs, cells, key)
   inputs
 }

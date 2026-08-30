@@ -57,14 +57,14 @@ ok(identical(melp_boundary_join(off), "") &&
    "...and nothing narrows the run-out chain's interrupt scan")
 ok(!melp_rule_on(off) && melp_rule_on(on),
    "on and off are decided by the setting, not by a caller passing a flag")
-stops(melp_rule_mode(list(apply_melp_rule = "sometimes")),
+stops(melp_rule_on(list(apply_melp_rule = "sometimes")),
       "an unrecognised value stops rather than behaving like the rule is on")
 # The two retired modes must not quietly still work. They named a whole
 # algorithm, so a build asking for one has to fail loudly rather than get the
 # short-course rule under a name that meant something else.
-stops(melp_rule_mode(list(apply_melp_rule = "as_asked")),
+stops(melp_rule_on(list(apply_melp_rule = "as_asked")),
       "as_asked is gone, and asking for it stops the build")
-stops(melp_rule_mode(list(apply_melp_rule = "yield_to_sct")),
+stops(melp_rule_on(list(apply_melp_rule = "yield_to_sct")),
       "...and so is yield_to_sct")
 
 # Where the hooks are, and that there are no others.
@@ -134,8 +134,8 @@ cat("\n-- the rule the study adopted --\n")
 # starting inside the course advances it on the MELPHALAN date. Branch
 # behaviour on real patients is proved end to end by the repository's
 # planted-patient harnesses; these pin the shape of the SQL.
-ok(identical(MELP_RULE_MODES, "simplified"),
-   "one rule is left, and it is the one that was adopted")
+ok(identical(MELP_RULE_ON, "simplified") && identical(MELP_RULE_OFF, "off"),
+   "one rule is left, and APPLY_MELP_RULE is on or off")
 stops(melp_decision_ctes(on, "L", "S", "E", "L.IND_END"),
       "it refuses a caller that hands in no base set or restart flags")
 ss <- melp_decision_ctes(on, "L", "S", "E", "L.IND_END",

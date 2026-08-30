@@ -22,37 +22,41 @@
 # The study team asked first for a five-branch rule keyed on the gap to the next
 # exposure, in two readings. Both were built, measured against this one, and not
 # adopted; they were removed on 2026-08-30 once the choice was settled, and
-# STUDY_TEAM_ASKS.md keeps the finding. Nothing in the build reads a mode name
-# any more.
-MELP_RULE_MODES <- c("simplified")
-
+# STUDY_TEAM_ASKS.md keeps the finding.
+# The two values APPLY_MELP_RULE takes. There is one rule, so this is on/off,
+# and it stays a WORD rather than a flag for two reasons: APPLY_MELP_RULE is a
+# CONTRACT axis, and config.csv carries the word.
+#
 # "off" is the ONLY way to ask for a rule-off build from the environment. Blank
 # cannot do it: load_inputs.R fills any variable that is unset OR empty from
 # config.csv, and config.csv carries the contract value - so APPLY_MELP_RULE=
-# reaches the build as
-# 'simplified' and a comparison cell meant to hold the rule off would quietly
-# measure the contract against itself. A word survives that fill; an empty
-# string does not.
+# reaches the build as 'simplified', and a comparison cell meant to hold the
+# rule off would quietly measure the contract against itself. A word survives
+# that fill; an empty string does not.
 #
 # Blank still means off for a cfg built in R rather than from the environment,
 # which is how the tests and the emitters construct one.
+MELP_RULE_ON  <- "simplified"
 MELP_RULE_OFF <- "off"
 
-# Read once. An unrecognised value stops the build rather than quietly acting
-# like the rule is on. Kept as a named value rather than a flag because
-# APPLY_MELP_RULE is a CONTRACT axis and config.csv carries the word.
-melp_rule_mode <- function(cfg) {
+# Read once, and the only question anything asks. An unrecognised value stops
+# the build rather than quietly acting like the rule is on - which is what the
+# two retired five-branch names now do.
+#
+# This was melp_rule_mode(), returning which of three modes was in force, with
+# melp_rule_on() a wrapper over it. With one rule left, the mode and the
+# predicate were the same question asked twice.
+melp_rule_on <- function(cfg) {
   m <- tolower(trimws(cfg$apply_melp_rule %||% ""))
-  if (!nzchar(m) || identical(m, MELP_RULE_OFF)) return("")
-  if (!m %in% MELP_RULE_MODES)
+  if (!nzchar(m) || identical(m, MELP_RULE_OFF)) return(FALSE)
+  if (!identical(m, MELP_RULE_ON))
     stop("APPLY_MELP_RULE='", m, "' is not one of: ",
-         paste(c(MELP_RULE_MODES, MELP_RULE_OFF), collapse = ", "),
-         ". The contract build is 'simplified'; '", MELP_RULE_OFF,
+         paste(c(MELP_RULE_ON, MELP_RULE_OFF), collapse = ", "),
+         ". The contract build is '", MELP_RULE_ON, "'; '", MELP_RULE_OFF,
          "' builds without the rule and needs LOT_CONTRACT_OVERRIDE.",
          call. = FALSE)
-  m
+  TRUE
 }
-melp_rule_on <- function(cfg) nzchar(melp_rule_mode(cfg))
 melp_abbr    <- function(cfg) toupper(trimws(cfg$melp_med_abbr %||% "MELP"))
 
 # The exposure chain and the decision, as CTEs. Doses are global; the decision
@@ -426,7 +430,7 @@ melp_prev_line_ctes <- function(cfg, prev_med_window, cart_consolidation_days,
   # So it emits its own pair, built the same way, from prev_end (in scope).
   # The exploded meds go in their own CTE first: LATERAL VIEW and a JOIN in
   # one FROM do not survive translation.
-  pre <- if (identical(melp_rule_mode(cfg), "simplified")) paste0("\n", glue("
+  pre <- if (melp_rule_on(cfg)) paste0("\n", glue("
     melp_sc_prev AS (
       SELECT pe.PATID, m AS MED_ABBR
       FROM prev_end pe

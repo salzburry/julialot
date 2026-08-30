@@ -68,11 +68,11 @@ cells <- melp_cell_plan(MELP_CELLS,
 tbl <- function(cell, name) paste0(cfg$catalog, ".", schema, ".", cell$prefix, name)
 
 # Provenance, through the package's own checks rather than a second set here.
-# Readable tables and a CAR-T setting are not enough to make three cells
+# Readable tables and a CAR-T setting are not enough to make two cells
 # comparable: melp_read_inputs / melp_check_inputs hold them to one cohort
 # attempt, one code hash, one code-list set and one study window, and
 # melp_check_deviations holds each to exactly its own intended deviation and
-# the reference to none. Without those, three cells built over two cohort
+# the reference to none. Without those, two cells built over two cohort
 # attempts read as a melphalan effect.
 status <- setNames(lapply(cells, function(c_i) cell_status(con, c_i)),
                    vapply(cells, function(c_i) c_i$id, character(1)))
