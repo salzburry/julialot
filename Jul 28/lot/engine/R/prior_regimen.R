@@ -4,10 +4,13 @@
 # later episodes belong to the line it is already in, so that line's run-out
 # chains forward over them.
 #
-# Once the drug is discontinued it is released. map_discon_gap_days flags the
-# episode whose gap to the next reaches the threshold. An episode after such a
-# gap is a restart, not a continuation, so it may open a line like any other
-# drug.
+# The engine's OLDER rule released it once discontinued: map_discon_gap_days
+# flags the episode whose gap to the next reaches the threshold, and an episode
+# after such a gap was a restart that could open a line like any other drug.
+# apply_own_return_fold withdraws that release, and CONTRACT pins it TRUE - so
+# in the study's build a drug the patient has had before never starts a line,
+# whatever the gap. The release survives only for comparison builds. See
+# return_release_on() below, which is the one place that decides.
 #
 # The release and the run-out chain are two halves of one rule and neither is
 # safe alone. Release the drug without breaking the chain and a line opens
@@ -72,6 +75,16 @@ regimen_with_subs_sql <- function(src) {
         SELECT im.PATID, ps.substitute_med AS MED_ABBR, 1 AS IS_SUB
         FROM ", src, " im
         INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
+        UNION ALL
+        -- ...and the same the other way. A line whose regimen names the
+        -- SUBSTITUTE has to exclude the drug it stands in for just as surely:
+        -- 4.4 makes the pair one agent whichever half the patient was given
+        -- first. Expanding one way only, a patient on a biosimilar in 1L had
+        -- the reference product open 2L for them, while the mirror-image
+        -- patient stayed in one line.
+        SELECT im.PATID, ps.original_med AS MED_ABBR, 1 AS IS_SUB
+        FROM ", src, " im
+        INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.substitute_med
       )
       GROUP BY PATID, MED_ABBR")
 }
@@ -150,6 +163,29 @@ discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
   paste0("
       WITH ep AS (
         SELECT ms.PATID, ms.MAP_MED_TYPE, ms.MAP_START_DT, ms.MAP_END_DT,
+               -- Where the interrupt scan for THIS episode starts. Normally
+               -- the drug's own previous episode. NULL for a first episode -
+               -- the scan finds nothing and the chain is unbroken - with one
+               -- exception: a drug that is in base_meds ONLY as a permissible
+               -- substitute need never have been given in this line at all,
+               -- so its first episode here can sit long after the regimen
+               -- stopped, with another drug in between. That one scans from
+               -- the line's start.
+               --
+               -- A real regimen drug needs no such widening, and giving it
+               -- one is not free: its first episode starts inside the
+               -- induction window by construction, and any non-steroid drug
+               -- starting before that is in the window too, so it is in
+               -- base_meds and could never be a boundary. Widening every row
+               -- turned a narrow range join into one that spilled gigabytes
+               -- on six hundred patients.
+               CASE WHEN bm.SUBSTITUTE_ONLY = 1
+                    THEN coalesce(lag(ms.MAP_END_DT) OVER (PARTITION BY ms.PATID, ms.MAP_MED_TYPE
+                                             ORDER BY ms.MAP_START_DT),
+                                  ls.", start_col, ")
+                    ELSE lag(ms.MAP_END_DT) OVER (PARTITION BY ms.PATID, ms.MAP_MED_TYPE
+                                             ORDER BY ms.MAP_START_DT)
+               END AS SCAN_FROM,
                lag(ms.MAP_END_DT) OVER (PARTITION BY ms.PATID, ms.MAP_MED_TYPE
                                         ORDER BY ms.MAP_START_DT) AS PREV_END,
                -- Did this drug's PREVIOUS episode end in a confirmed
@@ -177,8 +213,16 @@ discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
                ON o.PATID = e.PATID
               AND o.MAP_MED_TYPE <> e.MAP_MED_TYPE
               AND o.MAP_MED_CLASS <> 'STEROID'
-              AND e.PREV_END IS NOT NULL
-              AND o.MAP_START_DT >  e.PREV_END
+              -- SCAN_FROM, not PREV_END. A drug in base_meds need not have
+              -- been given in this line at all: base_meds carries the
+              -- permissible substitutes of the regimen, and a patient may
+              -- take one only much later. Scanning only between a drug's OWN
+              -- episodes left that drug's single distant episode with no
+              -- interval to look in, so nothing could break its chain and the
+              -- line's run-out reached it. The line then ran months past its
+              -- own treatment, and a biosimilar return ended the line
+              -- somewhere the drug it stands in for would not.
+              AND o.MAP_START_DT >  e.SCAN_FROM
               AND o.MAP_START_DT <  e.MAP_START_DT
               ", boundary_gate, "
         LEFT JOIN ", base_tbl, " obm

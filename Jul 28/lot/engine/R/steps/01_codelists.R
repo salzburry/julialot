@@ -65,8 +65,13 @@ phase_codelists <- function(con) {
       AND regexp_replace(CL_CODE, '[^A-Za-z0-9]', '') <> ''
   "), qc = "SELECT count(*) AS n_rows, count(DISTINCT CL_MED_ABBR) AS n_meds, count(DISTINCT CL_CODE_TYPE) AS n_code_types FROM mma_codelist")
 
-  run_step(con, "S02_permissible_subs", glue("
-    CREATE OR REPLACE TEMPORARY VIEW permissible_subs AS
+  # Written out, not left as a temporary view. The QC package runs against the
+  # tables a finished build left behind, so a view it cannot see forces it to
+  # guess at which drugs are one agent - and C1 failed a legitimately folded
+  # biosimilar for want of this table. The view of the same name is created
+  # beside it, so every reference below is unchanged.
+  materialize(con, "S02_permissible_subs", view = "permissible_subs",
+              name = "PERMISSIBLE_SUBS", body = glue("
     SELECT
       upper(trim(original_med))   AS original_med,
       upper(trim(substitute_med)) AS substitute_med
@@ -322,6 +327,33 @@ phase_codelists <- function(con) {
       stringsAsFactors = FALSE))
   } else {
     log_msg("  OK: Each substitute stands in for exactly one drug.")
+  }
+
+  # A drug that is BOTH somebody's substitute and somebody else's original -
+  # a chain A -> B -> C, or a cycle. Every place that treats a pair as one
+  # agent expands one hop in each direction, which is exact for a flat pair
+  # and wrong for a chain: A and C would be the same agent through B, and no
+  # single hop reaches from one to the other. Rather than canonicalize whole
+  # components everywhere, the topology is held flat here, where saying so is
+  # cheap and the failure is one clear message instead of a line count nobody
+  # can explain.
+  subs_chain <- db_q(con, "
+    SELECT a.substitute_med AS med,
+           concat_ws(', ', collect_set(a.original_med))   AS stands_in_for,
+           concat_ws(', ', collect_set(b.substitute_med)) AS stood_in_for_by
+    FROM permissible_subs a
+    INNER JOIN permissible_subs b ON b.original_med = a.substitute_med
+    GROUP BY a.substitute_med
+  ")
+  if (nrow(subs_chain) > 0) {
+    log_msg("  Substitution chain or cycle:")
+    print(subs_chain)
+    problems <- rbind(problems, data.frame(check = "subs_chain", detail = paste0(
+      nrow(subs_chain), " drug(s) both a substitute and an original: ",
+      paste(subs_chain$med, collapse = ", ")),
+      stringsAsFactors = FALSE))
+  } else {
+    log_msg("  OK: No substitution chains - every pair stands on its own.")
   }
 
   # Claims take MED_CLASS from the code list. The LOT1_CLASS_<x> columns are

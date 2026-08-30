@@ -246,7 +246,7 @@ build_lot_n <- function(con, lot_num,
       INNER JOIN lot_patient_input p ON ll.PATID = p.PATID
       WHERE ll.LOT_NUM = {prev}
         AND ll.LOT_BASE_END_DT IS NOT NULL
-    ),{melp_prev_line_ctes(cfg, prev_med_window, cart_consolidation_days)}{foldin_prior_ctes(cfg, prev)}
+    ),{melp_prev_line_ctes(cfg, prev_med_window, cart_consolidation_days, lot_num)}{foldin_prior_ctes(cfg, prev)}
     -- The previous line's regimen and its permissible biosimilar substitutes.
     -- Neither starts LOT_N. A substitute continues the drug it replaces, and
     -- the drug itself was part of the previous regimen.
@@ -268,6 +268,15 @@ build_lot_n <- function(con, lot_num,
       SELECT pma.PATID, ps.substitute_med AS MED_ABBR, 1 AS IS_SUB
       FROM prev_meds_array pma
       INNER JOIN permissible_subs ps ON pma.MED_ABBR = ps.original_med
+      UNION ALL
+      -- Both directions. 4.4 makes a substitute and the drug it replaces one
+      -- agent whichever half the previous line happens to name, so a regimen
+      -- of the biosimilar has to exclude the reference product too. One way
+      -- only, a patient given the biosimilar in the earlier line had the
+      -- reference product open the next one for them.
+      SELECT pma.PATID, ps.original_med AS MED_ABBR, 1 AS IS_SUB
+      FROM prev_meds_array pma
+      INNER JOIN permissible_subs ps ON pma.MED_ABBR = ps.substitute_med
 {prior_regimen_excl_sql()}
       )
       GROUP BY PATID, MED_ABBR

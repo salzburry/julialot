@@ -44,7 +44,8 @@ source(QC)
 # reported as skipped rather than quietly left out.
 TBL <- list(final = "lot_long_final", long = "lot_long", map = "map_stacked",
             sct = "lot1_sct", auto = "tx_auto_dates",
-            allo = "tx_allo_cart_dates", cohort = "lot_patient_input")
+            allo = "tx_allo_cart_dates", cohort = "lot_patient_input",
+            subs = "permissible_subs")
 
 # SCENARIO=1 emits the same checks against the tiny hand-built tables in
 # qc_scenarios.py instead. Those cover the checks the patient chain cannot

@@ -30,7 +30,7 @@ source(file.path(ROOT, "R", "checks.R"))
 TBL <- list(final = "s.TFINAL", long = "s.TLONG", map = "s.TMAP",
             sct = "s.TSCT", auto = "s.TAUTO", allo = "s.TALLOCART",
             attrition = "s.TATTR", meta = "s.TMETA",
-            cohort = "s.TCOHORT")
+            cohort = "s.TCOHORT", subs = "s.TSUBS")
 SETTINGS <- paste0(
   "allo_lot_span=single_day|apply_cart_induction_rule=TRUE|",
   "belantamab_med_abbr=BELA|cart_consolidation_days=45|",

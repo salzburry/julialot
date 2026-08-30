@@ -416,6 +416,9 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
     melp_confirm AS (
       SELECT DISTINCT mc.PATID, mc.EXPO_DT
       FROM melp_course mc
+      -- The judged line, for the transplant test below: which transplants
+      -- break a line is a question about THAT line's window and start.
+      INNER JOIN {line_tbl} ON {line_tbl}.PATID = mc.PATID
       INNER JOIN map_stacked c
         ON c.PATID = mc.PATID
        AND c.MAP_START_DT >  mc.EXPO_DT
@@ -429,6 +432,27 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
        AND cr.MAP_START_DT = c.MAP_START_DT{not_new_join}
       WHERE (cb.MED_ABBR IS NULL
 {return_release_sql(cfg, 'cr', 'cb')}){not_new_pred}
+        -- ...and nothing has ENDED the judged line between the course and the
+        -- agent. A transplant that breaks the line is a boundary of its own,
+        -- so an agent arriving after one belongs to the line that transplant
+        -- opened - it is no candidate against this line, and it cannot make
+        -- this line's course advance. Scanning only for the agent, a course
+        -- on day 100 with an allograft on 102 and a new drug on 105 was
+        -- confirmed by that drug and a line was BACKDATED to day 100, ending
+        -- two days later at the allograft: a line whose whole regimen was a
+        -- course the rule says advances nothing.
+        --
+        -- Same helper melp_taken reads, so ownership and confirmation cannot
+        -- disagree about which transplants are boundaries.
+        AND NOT EXISTS (
+          SELECT 1
+          FROM ({line_break_tx_sql()}
+          ) ctx
+          WHERE ctx.PATID = mc.PATID
+            AND ctx.TX_DT >  mc.EXPO_DT
+            AND ctx.TX_DT <= c.MAP_START_DT{line_break_window_pred(cfg, 'ctx',
+                  induction_end, paste0(line_tbl, '.', start_col), cart_from)}
+        )
     ),
     -- A course belongs to ONE line: the latest whose start precedes it.
     --
@@ -611,7 +635,8 @@ melp_inject_arm <- function(cfg, line_tbl, start_col, span_end, extra = "") {
 # The window expression is the one auto_cand measures in the same statement:
 # the ALLO single day, the CAR-T consolidation window, or the previous line's
 # own medication window.
-melp_prev_line_ctes <- function(cfg, prev_med_window, cart_consolidation_days) {
+melp_prev_line_ctes <- function(cfg, prev_med_window, cart_consolidation_days,
+                               lot_num = NULL) {
   if (!melp_rule_on(cfg)) return("")
   # The simplified mode's confirm gate needs the previous regimen's base set
   # and the restart flags, and this splices before either exists in the
@@ -626,29 +651,31 @@ melp_prev_line_ctes <- function(cfg, prev_med_window, cart_consolidation_days) {
       LATERAL VIEW explode(split(coalesce(pe.PREV_BASE_MEDS, ''), ' ')) e AS m
       WHERE m <> ''
     ),
-    melp_sc_base AS (
-      SELECT PATID, MED_ABBR, min(IS_SUB) AS SUBSTITUTE_ONLY
-      FROM (
-        SELECT PATID, MED_ABBR, 0 AS IS_SUB FROM melp_sc_prev
-        UNION ALL
-        SELECT p.PATID, ps.substitute_med AS MED_ABBR, 1 AS IS_SUB
-        FROM melp_sc_prev p
-        INNER JOIN permissible_subs ps ON p.MED_ABBR = ps.original_med
-      )
-      GROUP BY PATID, MED_ABBR
+    melp_sc_base AS ({regimen_with_subs_sql('melp_sc_prev')}
     ),
     melp_sc_restart AS ({map_restart_sql()}
     ),")) else ""
-  paste0(pre, melp_decision_ctes(
-    cfg, "prev_end", "PREV_START_DT", "prev_end.OBS_END_DT",
-    glue("CASE
+  ind_end <- glue("CASE
               WHEN prev_end.PREV_START_TYPE = 'SCT_ALLO'
                 THEN prev_end.PREV_START_DT
               WHEN prev_end.PREV_START_TYPE = 'CART'
                 THEN date_add(prev_end.PREV_START_DT, {cart_consolidation_days - 1})
               ELSE date_add(prev_end.PREV_START_DT, {prev_med_window - 1})
-            END"),
-    base_tbl = "melp_sc_base", restart_tbl = "melp_sc_restart"))
+            END")
+  # The CAR-T induction rule is LOT1's alone (LOT_RULES.md 6.4), so the
+  # exemption is passed only where the previous line IS LOT1 - and LOT1 always
+  # starts on a medication, so ind_end resolves to its own 60-day window there.
+  # Without it this recomputation read an in-window CAR-T as a break while the
+  # LOT1 statement read it as part of the line: one decision, computed twice,
+  # differently. No planted shape shows a different answer, because the paths
+  # it feeds are gated by the exemption dates the LOT1 decision produces - but
+  # a divergence nothing currently reads is still a divergence.
+  cart_from <- if (isTRUE(cfg$apply_cart_induction_rule) &&
+                   identical(lot_num, 2L)) ind_end else NULL
+  paste0(pre, melp_decision_ctes(
+    cfg, "prev_end", "PREV_START_DT", "prev_end.OBS_END_DT", ind_end,
+    base_tbl = "melp_sc_base", restart_tbl = "melp_sc_restart",
+    cart_from = cart_from))
 }
 
 # While the rule is on, melphalan's line-advancing decisions belong to it, so
@@ -691,16 +718,11 @@ melp_lot1_ctes <- function(cfg) {
     -- of the two each one is. Same shape as base_meds in 04_lot1_base.R,
     -- because the candidate gate below has to read the same rule that step
     -- reads - see melp_add_candidates.
-    melp_base_meds AS (
-      SELECT PATID, MED_ABBR, min(IS_SUB) AS SUBSTITUTE_ONLY
-      FROM (
-        SELECT PATID, MED_ABBR, 0 AS IS_SUB FROM lot1_induction_meds
-        UNION ALL
-        SELECT im.PATID, ps.substitute_med AS MED_ABBR, 1 AS IS_SUB
-        FROM lot1_induction_meds im
-        INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
-      )
-      GROUP BY PATID, MED_ABBR
+    -- Spliced rather than written out again, so this rule's idea of which
+    -- drugs are one agent cannot drift from the engine's. Written out here, it
+    -- expanded the pair one way only and re-derived an added medication the
+    -- line itself had already refused.
+    melp_base_meds AS ({regimen_with_subs_sql('lot1_induction_meds')}
     ),
     -- Spliced from prior_regimen.R rather than written again here, for the
     -- same reason: one definition of what a restart is.
@@ -920,8 +942,16 @@ melp_lotn_ctes <- function(cfg, lot_num, induction_window_days,
   # A returning prior-line agent is not a NEW agent, so it cannot confirm a
   # short course - LOT_RULES.md 4.7 and 4.8. Only where the fold-in is on, and
   # only from LOT2 up, since LOT1 has no earlier line.
+  #
+  # The IMMEDIATELY PREVIOUS line, which is the same scope the fold set reads
+  # (foldin_lotn_ctes). Reading every earlier line instead made one drug two
+  # things at once: a drug last seen two lines back was too old to confirm a
+  # course and, since 4.3 excludes only the previous regimen, still new enough
+  # to open a line. It then started the next line on its own date while a
+  # genuinely new drug in the same position started it on the melphalan date.
+  # One scope for both rules, so "not new" cannot mean two things.
   not_new <- if (!isTRUE(cfg$apply_map_foldin) || lot_num < 2) "" else
-    paste0("\n", prior_lines_regimen_ctes(glue("ll.LOT_NUM < {lot_num}"),
+    paste0("\n", prior_lines_regimen_ctes(glue("ll.LOT_NUM = {lot_num} - 1"),
                                           raw = "melp_prior_raw",
                                           out = "melp_not_new"))
   melp_decision_ctes(

@@ -52,9 +52,13 @@ does a transplant or CAR-T that breaks that line. Distance alone does not: a
 course long after the drugs ran out still belongs to the line when nothing
 happened in between.
 
-A transplant breaks the line only when the engine's own rules say it does —
-past the line's induction window, and not the second of a planned tandem pair.
-Both rules read the same test.
+A transplant breaks the line only when the engine's own rules say it does, and
+those rules differ by kind. An **autologous** transplant breaks it only past the
+line's induction window and only when it is not the second of a planned tandem
+pair — inside the window, or as a tandem partner, the line owns it and it
+breaks nothing. An **allogeneic** transplant or a **CAR-T** breaks the line
+wherever it falls after the line's start, with no window test at all. Both
+rules read the same helper, so neither can drift from the other.
 
 ---
 
@@ -179,6 +183,28 @@ is the note's own example with both drugs coming back rather than one.
   - a returning drug is, in the note's own words, "the returning drug" and not
     a new one, and the melphalan rule advances a short course only when the
     patient "starts a **new** agent" — so a returning drug confirms nothing.
+
+  **How far back "returning" reaches — settled 30 Aug, the previous line.**
+  The melphalan rule read every earlier line while the fold set reads only the
+  previous one, and the mismatch made one drug two things at once. A drug last
+  given two lines back was too old to confirm a course and, since a line opens
+  on an agent that was not in the **previous** regimen, still new enough to
+  open a line. Three patients with the same history and the same short course,
+  differing only in how far back the returning drug was last seen, came out
+  three different ways:
+
+  | last seen | what happened |
+  |---|---|
+  | the previous line | folds — no next line at all |
+  | two lines back | did not fold, did not confirm, but opened the next line on its **own** date |
+  | never | confirmed the course, opening the next line on the **melphalan** date |
+
+  The middle row was the odd one out. Both rules now read the previous line,
+  so a drug from further back is simply new and behaves like the bottom row.
+  The alternative — widening the fold set to every earlier line — was not
+  taken: it would have reopened a scope the study team narrowed on 30 Aug,
+  though it is the reading that would make the "two or more" clause below
+  live again. Worth revisiting only if that clause is meant to fire.
 
   Neither reading needed an ordering decision, because neither rule has to
   consult the other's output: what a returning drug IS comes from the earlier

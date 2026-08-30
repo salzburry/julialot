@@ -580,6 +580,12 @@ ok(grepl("HAVING count(DISTINCT original_med) > 1", cd, fixed = TRUE),
    "a substitute standing in for two drugs is detected")
 ok("multi_original" %in% FATAL_CHECKS,
    "...and is fatal, so min() never picks an agent silently either")
+# One hop each way is exact for a flat pair and blind to a chain, so the
+# topology is held flat rather than the equivalence made transitive.
+ok(grepl("b.original_med = a.substitute_med", cd, fixed = TRUE),
+   "a drug that is both a substitute and an original is detected")
+ok("subs_chain" %in% FATAL_CHECKS,
+   "...and is fatal, so no chain reaches a one-hop expansion")
 mmx <- paste(readLines(file.path(ROOT, "R", "steps", "03_mma_map.R"), warn = FALSE),
              collapse = "\n")
 ok(grepl("c.CL_MED_CLASS AS MED_CLASS", mmx, fixed = TRUE) &&
@@ -619,6 +625,11 @@ mk_db_q <- function(problem) function(con, sql) {
       data.frame(CL_MED_ABBR = "DUP", n_classes = 2, classes = "A, B") else
       data.frame(CL_MED_ABBR = character(0), n_classes = integer(0),
                  classes = character(0)))
+  if (grepl("b.original_med = a.substitute_med", sql, fixed = TRUE))
+    return(if (problem == "subs_chain")
+      data.frame(med = "B", stands_in_for = "A", stood_in_for_by = "C") else
+      data.frame(med = character(0), stands_in_for = character(0),
+                 stood_in_for_by = character(0)))
   if (grepl("AS n_defs", sql))
     return(if (problem == "rollup_defs") data.frame(CL_MED_ABBR = "LEN", n_defs = 2)
            else data.frame(CL_MED_ABBR = character(0), n_defs = integer(0)))
@@ -662,6 +673,10 @@ mk_db_q <- function(problem) function(con, sql) {
 ce <- new.env(parent = globalenv())
 for (nm in c("log_msg", "print")) assign(nm, function(...) invisible(NULL), envir = ce)
 assign("run_step", function(...) invisible(TRUE), envir = ce)
+# permissible_subs is written out rather than left a view, so the QC package
+# can read which drugs are one agent. Stubbed like run_step: this env has no
+# database, and the phase is being tested for its checks, not its writes.
+assign("materialize", function(...) invisible(TRUE), envir = ce)
 assign("glue", function(..., .envir = parent.frame()) paste0(..., collapse = ""), envir = ce)
 assign("load_codelist_csv", function(...) "(SELECT 1) src", envir = ce)
 # codelist_waivers() lives in build_lot.R, which this env does not source. It
@@ -678,6 +693,7 @@ ok(!inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error")
    "a consistent pair of code lists runs")
 for (prob in c("orphan", "uncoded", "type", "class", "code_to_med", "bad_ndc",
                "rollup_defs", "blank_keys", "subs_substitute", "subs_original",
+               "subs_chain",
                "ndc_shape", "ndc_short", "class_agreement")) {
   assign("db_q", mk_db_q(prob), envir = ce)
   ok(inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),

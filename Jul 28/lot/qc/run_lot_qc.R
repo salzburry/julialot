@@ -111,6 +111,10 @@ main <- function() {
             # the first of these, so a check on unowned AUTOs must stop there
             # too or it reports the censor as a defect.
             allo      = lot_out("TX_ALLO_CART_DATES"),
+            # Which drugs are one agent. C1 has to answer that the way the
+            # engine does - a substitute and the drug it replaces are one
+            # agent in both directions - and cannot without the pairs.
+            subs      = lot_out("PERMISSIBLE_SUBS"),
             attrition = lot_out("LOT_ATTRITION"),
             meta      = lot_out("LOT_RUN_METADATA"),
             cohort    = wrk(cohort))
