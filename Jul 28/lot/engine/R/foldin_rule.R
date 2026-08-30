@@ -138,14 +138,20 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
   # need melphalan to consult the fold, and each rule reading the other has no
   # order that works. What remains is written down in STUDY_TEAM_ASKS.md.
   # The same exclusion, in the WHERE of foldin_agent rather than a join.
-  not_supp_ms <- if (!melp_on) "" else "
-      WHERE NOT EXISTS (SELECT 1 FROM melp_suppress_dates msd
-                        WHERE msd.PATID = ms.PATID
-                          AND msd.SUPPRESS_DT = ms.MAP_START_DT)"
-  not_supp <- if (!melp_on) "" else "
-          AND NOT EXISTS (SELECT 1 FROM melp_suppress_dates msd
-                          WHERE msd.PATID = ms.PATID
-                            AND msd.SUPPRESS_DT = ms.MAP_START_DT)"
+  # The MELP test is not decoration. melp_suppress_dates carries a patient and
+  # a DATE, so matching on those alone removes whatever else started that day -
+  # a returning drug landing on the same date as a suppressed course was
+  # dropped from the fold set and opened a line of its own.
+  not_supp_ms <- if (!melp_on) "" else paste0("
+      WHERE NOT (upper(trim(ms.MAP_MED_TYPE)) = '", melp_abbr(cfg), "'
+                 AND EXISTS (SELECT 1 FROM melp_suppress_dates msd
+                             WHERE msd.PATID = ms.PATID
+                               AND msd.SUPPRESS_DT = ms.MAP_START_DT))")
+  not_supp <- if (!melp_on) "" else paste0("
+          AND NOT (upper(trim(ms.MAP_MED_TYPE)) = '", melp_abbr(cfg), "'
+                   AND EXISTS (SELECT 1 FROM melp_suppress_dates msd
+                               WHERE msd.PATID = ms.PATID
+                                 AND msd.SUPPRESS_DT = ms.MAP_START_DT))")
   this_tx <- if (is.null(n_start) || is.null(n_type)) "" else paste0("
       UNION
       SELECT ", n_tbl, ".PATID, ", n_start, " AS OPEN_DT
@@ -309,6 +315,12 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
       -- by the same agent still collapse to one. min() only has to be
       -- deterministic; which of two co-starters names the line is not a
       -- judgement this rule makes.
+      --
+      -- But it must choose among drugs that COULD have opened the line. A
+      -- drug of the previous line's regimen cannot (4.3), so a returning drug
+      -- dosed on the start date is not what advanced anything - and min()
+      -- picked it anyway whenever it sorted first, labelling two consecutive
+      -- lines with the same agent and collapsing two advances into one.
       SELECT l.PATID, l.LOT_START_DT AS OPEN_DT,
              min(coalesce(ps.original_med, ms.MAP_MED_TYPE)) AS OPENER
       FROM lot_long l
@@ -316,7 +328,12 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
         ON ms.PATID = l.PATID AND ms.MAP_START_DT = l.LOT_START_DT
        AND ms.MAP_MED_CLASS <> 'STEROID'
       LEFT JOIN permissible_subs ps ON ps.substitute_med = ms.MAP_MED_TYPE
+      LEFT JOIN lot_long pl
+        ON pl.PATID = l.PATID AND pl.LOT_NUM = l.LOT_NUM - 1
+       AND array_contains(split(coalesce(pl.LOT_BASE_MEDS, ''), ' '),
+                          coalesce(ps.original_med, ms.MAP_MED_TYPE))
       WHERE l.LOT_START_TYPE = 'MED' AND {line_pred}
+        AND pl.PATID IS NULL
       GROUP BY l.PATID, l.LOT_START_DT{this_line}
     ),
     -- Transplants and CAR-T keep the engine's own rules and are not counted

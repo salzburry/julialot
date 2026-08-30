@@ -103,6 +103,14 @@ PATS = [
     P('SL',  [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 100, 127),
               ('LEN', 'IMID', 200, 260)]),
     P('SLn', [('LEN', 'IMID', 0, 80), ('LEN', 'IMID', 200, 260)]),
+    # SM: a course LONGER than the cap. 4.7 leaves such a course to the engine
+    # untouched, so it breaks the base drug's run-out chain like any other drug
+    # and the line ends at its own discontinuation. Keeping every melphalan row
+    # out of that scan - which is how the short-course case was first fixed -
+    # made an over-cap course stop ending the line at day 80, moving it to a
+    # day-99 MED_ADD instead.
+    P('SM',  [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 100, 128),
+              ('LEN', 'IMID', 200, 260)]),
     P('SJ0', [('LEN', 'IMID', 0, 600), ('MELP', 'ALKY', 500, 527)]),
     P('SJ', [('LEN', 'IMID', 0, 600), ('MELP', 'ALKY', 500, 527)]),
 ]
@@ -163,6 +171,11 @@ def main():
     ok(len(smp['SKn']) == 2 and starts(smp, 'SKn')[1] == rs.d(IX + 100),
        "SKn simplified: ...and with no allograft in between it confirms it, "
        "opening the line on the melphalan date")
+
+    ok(len(smp['SM']) == 2 and starts(smp, 'SM')[1] == rs.d(IX + 100)
+       and smp['SM'][0][3] == 'DISCONTINUATION',
+       "SM simplified: a course past the cap is left to the engine, so the "
+       "line ends at its own run-out and the course opens the next")
 
     ok(smp['SL'] == smp['SLn'] and len(smp['SL']) == 1,
        "SL/SLn: a suppressed course leaves the run-out chain alone, so the "

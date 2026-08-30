@@ -267,6 +267,15 @@ PATS = [
               ('DARA', 'MAB', 200, 600), ('MELP', 'ALKY', 450, 477)]),
     P('F27n', [('LEN', 'IMID', 0, 80),
                ('DARA', 'MAB', 200, 600), ('MELP', 'ALKY', 450, 477)]),
+    # F31: a suppressed course and a returning drug starting the SAME DAY.
+    # melp_suppress_dates carries a patient and a date, so a suppression test
+    # that matched on those alone removed whatever else began that day - B was
+    # dropped from the fold set and opened a line of its own. B must fold here
+    # exactly as it does when it arrives a day later, which F31n is.
+    P('F31', L1 + [('DARA', 'MAB', 200, 600),
+                   ('MELP', 'ALKY', 450, 477), ('BORT', 'PI', 450, 510)]),
+    P('F31n', L1 + [('DARA', 'MAB', 200, 600),
+                    ('MELP', 'ALKY', 450, 477), ('BORT', 'PI', 451, 510)]),
     # F28/F29/F30: one scope for "not new". Three patients with the same
     # history and the same short melphalan course at day 600, differing only
     # in how far back the drug returning inside it was last seen.
@@ -488,6 +497,10 @@ def main():
        "F19/F19n: a suppressed course decides nothing, so the folded regimen "
        "reads the same with and without it (" + str(regimen(True, 'F19', 2))
        + " vs " + str(regimen(True, 'F19n', 2)) + ")")
+    ok(n(fold, 'F31') == 2 and regimen(True, 'F31', 2) == regimen(True, 'F31n', 2),
+       "F31/F31n: a suppressed course removes only MELP, so a drug arriving "
+       "the same day still folds (" + str(regimen(True, 'F31', 2)) + ")")
+
     ok(regimen(True, 'F27', 2) == regimen(True, 'F27n', 2),
        "F27/F27n: a held melphalan course joins neither regimen nor count, "
        "even where the fold would otherwise take it ("

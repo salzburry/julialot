@@ -169,25 +169,15 @@ is the note's own example with both drugs coming back rather than one.
   A drug from further back is out of scope and the engine's ordinary rules keep
   it.
 
-  **The two readings give the same lines.** Widening the fold set back to every
-  earlier line was run against every planted patient and changed nothing at
-  all - not a date, not a count, not a line. That is not luck, and it is worth
-  stating as the reason the question can be closed:
-
-  - A drug last dosed **one** line back folds under either reading. Wide: one
-    line opened in between, so the count is one. Narrow: it is in scope, and
-    one advance folds it.
-  - A drug last dosed **two or more** lines back opens a line under either.
-    Wide: two or more lines opened in between, and consecutive lines cannot
-    share an opener - the agent that opened a line is in that line's regimen,
-    and a drug of the previous regimen may not open the next one - so the
-    distinct-agent count is at least two, which the note says starts a line.
-    Narrow: the drug is out of scope, so it is simply a new agent, and a new
-    agent starts a line.
-
-  So the **"two or more"** clause never fires as a code path under the narrow
-  scope, but the outcome it prescribes is delivered by ordinary scoping in
-  every case. The clause is unreachable; the rule it states is not unimplemented.
+  **A claim that the two readings are equivalent was made here on 30 Aug and
+  is WITHDRAWN.** It rested on consecutive lines never sharing an opener, which
+  is false: foldin_openers labelled a line with min() over every non-steroid
+  drug dosed on its start date, including a returning previous-regimen drug
+  that 4.3 forbids from opening anything. Two consecutive lines could then
+  carry the same label and two advances collapse into one. That labelling is
+  fixed, but the scopes still differ - on a planted patient the narrow scope
+  gives four lines where the wide scope gives three - so the choice between
+  them is a real one and remains the study team's.
 
   One thing follows that is worth the study team knowing: the note's **"two or
   more"** clause can then never fire. A drug is in a line's regimen only
