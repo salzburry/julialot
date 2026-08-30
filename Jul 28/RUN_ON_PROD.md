@@ -1,5 +1,13 @@
 # What to run, in order
 
+> **The line-counting algorithm changed on 2026-08-30**, so the next run is not
+> a refresh of the last one. Two adopted rules change what starts and ends a
+> line: the melphalan short course (`lot/LOT_RULES.md` 4.7) and the returning
+> earlier-line drug (4.8). Line counts, line dates, end reasons and the 2L/3L
+> cohorts all move. Run the prebuild snapshot in section 1 FIRST — the old
+> numbers cannot be recovered once the tables are rebuilt — and treat every
+> figure from an earlier run as superseded.
+
 This file walks the LOT half of the delivery. The complete delivery runs in
 this order, each step over the one before it:
 
@@ -120,7 +128,7 @@ checks are statements about the contract algorithm. The study's own `ndmm_`
 run has none. To point it at a melphalan cell instead, add
 `QC_ALLOW_DEVIATION=TRUE` and the report will carry the deviation.
 
-## 4. Melphalan — independent of 2 and 3, can run alongside
+## 4. The rule cells — independent of 2 and 3, can run alongside
 
 Reads only the cohort and its own `melp_*` prefixes. Required before any
 melphalan number: the cells now in the warehouse were built by older engine
@@ -133,8 +141,8 @@ Rscript exploration/melphalan/read_melp_asks.R                      # Julia's Q1
 Rscript exploration/melphalan/read_melp_decisions.R                 # what each decision was worth
 ```
 
-The SIMPLIFIED fallback from the later note is a separate package with its own
-two builds, under `melp_simple_` prefixes:
+The rule the study ADOPTED is measured by its own package, two builds under
+`melp_simple_` prefixes — the study's rule against a build without it:
 
 ```
 Rscript exploration/melphalan/run_melp_simple.R                          # plan only

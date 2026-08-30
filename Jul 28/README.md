@@ -5,6 +5,16 @@ things that read a finished run.
 
 A cohort is what LOT is pointed at. It is not part of LOT and does not read it.
 
+> **The line-counting algorithm changed on 2026-08-30.** Two rules the study
+> team asked for were adopted, and both change what starts and ends a line:
+> a short melphalan course outside induction no longer starts one
+> (`lot/LOT_RULES.md` 4.7), and a drug from an earlier line coming back joins
+> the line it returns in when exactly one agent advanced the line while it was
+> away (4.8). **Every LOT number produced before that date is superseded** —
+> line counts, line dates, end reasons and the cohorts built from them. Rebuild
+> before quoting anything. `STUDY_TEAM_ASKS.md` is the trail of what was asked,
+> what was decided, and what is still owed.
+
 ## The packages
 
 | | |
@@ -18,6 +28,7 @@ A cohort is what LOT is pointed at. It is not part of LOT and does not read it.
 | `analysis/outcomes/` | TTNT, TTD, OS, attrition. Reads only. |
 | `analysis/questions/` | the study team's questions, one script each. Not a build. |
 | `exploration/melphalan/` | the melphalan rules, built as complete runs and differenced — the study adopted one of them. Opt-in. |
+| `exploration/lot/run_foldin_cells.R` | the MAP fold-in the study adopted, measured against a build without it. Opt-in. |
 | `exploration/lot/` | benchmarks, the definition comparison, the sensitivity sweep, stockpiling, re-challenge, audit counts. Not part of a study run. |
 
 `lot/` is the algorithm and only the algorithm: the engine that builds the
@@ -102,6 +113,7 @@ the NDMM cohort, and `lot/LOT_RULES.md` covers the lines.
 | lines of therapy | `lot/LOT_RULES.md`, and the scenario workbook's Open questions sheet |
 | outcomes | `analysis/FILES.md` - the `STUDY_END` censoring rule for TTD, the fifth attrition category, both denominators |
 | the melphalan rule the build applies | `lot/LOT_RULES.md` 4.7. How it was chosen, and the five-branch rule that was not adopted, are in `exploration/FILES.md` |
+| a drug from an earlier line coming back | `lot/LOT_RULES.md` 4.8 - it joins the line it returns in when one agent advanced the line in between |
 | what the study team asked for, and what is still owed | `STUDY_TEAM_ASKS.md` |
 
 Where one of those documents and this table disagree, the document is the record.

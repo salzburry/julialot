@@ -28,6 +28,7 @@ study ships as *the algorithm* is one directory with three packages in it:
 | `analysis/outcomes/` | TTNT, TTD, OS and attrition |
 | `analysis/questions/` | the study team's asks, one script each |
 | `exploration/melphalan/` | how the melphalan rule the build applies was chosen, and the one that was not |
+| `exploration/lot/run_foldin_cells.R` | the MAP fold-in the build applies, measured against a build without it |
 | `exploration/lot/` | benchmarks, definitions, sensitivity, stockpiling, re-challenge, audit counts |
 
 Each of those areas has its own `FILES.md`. The direction is one-way: they
@@ -74,7 +75,7 @@ wrong prefix is a wrong study.
 Settings that change what a build *means* are pinned in `CONTRACT`
 (`lot/engine/R/build_lot.R`) and refused if changed, since a different threshold
 is a different algorithm. `LOT_CONTRACT_OVERRIDE=TRUE` exists for the
-sensitivity sweep and the melphalan cells; a run that uses it records what it
+sensitivity sweep and the rule cells; a run that uses it records what it
 deviated on in `CONTRACT_DEVIATIONS`, and every reader in the delivery refuses
 such a run as the study's numbers.
 
@@ -114,7 +115,8 @@ per patient, and has to fit the study window the run was given.
 | `R/line_criteria.R` | Extra criteria on finished lines, declared as data. Every one is computed into `LOT_LONG_ALLFLAGS`; only the enabled ones are applied to `LOT_LONG_FINAL`. |
 | `R/cart_rule.R` | The CAR-T induction rule: an infusion inside line 1's window belongs to line 1 and neither ends nor starts a line. |
 | `R/melp_rule.R` | The melphalan rule. The study's mode is `simplified` — a short course outside induction does not advance a line on its own (`LOT_RULES.md` 4.7). It lives here because it needs each line's own induction window. The other modes, and `off`, are comparison builds — `exploration/melphalan/` below. |
-| `R/prior_regimen.R` | The prior-regimen rule and each line's run-out. A drug in the previous regimen cannot start the next line; the line it belongs to extends over its later episodes instead, stopping at any other agent arriving in between. |
+| `R/foldin_rule.R` | The MAP fold-in. A drug from an earlier line coming back joins the line it returns in, when exactly ONE agent advanced the line between that drug's two doses; two or more and the return starts a line (`LOT_RULES.md` 4.8). `APPLY_MAP_FOLDIN=FALSE` builds without it, as a comparison — `exploration/lot/run_foldin_cells.R`. |
+| `R/prior_regimen.R` | The prior-regimen rule and each line's run-out. A drug in the previous regimen cannot start the next line; the line it belongs to extends over its later episodes instead, stopping at any other agent arriving in between. Narrowed by the fold-in above for drugs of EARLIER lines. |
 | `R/steps/01_codelists.R` | Code lists into views, then the consistency checks between them — which are fatal, which are waivable through `CODELIST_WAIVERS`, and why. |
 | `R/steps/02_patient_input.R` | The cohort as the build reads it, snapshotted into `LOT_PATIENT_INPUT`. Sets the observation end date every later gap and window is measured against. |
 | `R/steps/03_mma_map.R` | Claims into medication available periods. A new period opens only for a claim beyond every runout; one arriving while cover is live pushes the runout out instead. |

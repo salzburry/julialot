@@ -10,10 +10,23 @@ question lives on the Open questions sheet of the scenario workbook
 (`exploration/lot/run_lot_scenarios.R`). This document is written from the
 code and describes nothing else.
 
-The melphalan short-course rule IS in the study's numbers - the study team
-adopted it on 2026-08-30 - and it is stated here, at 4.7. The five-branch
-melphalan rule they asked for first was measured and not adopted; that one is
-an exploration, and `lot/FILES.md` says what its package is.
+**Two rules were added on 2026-08-30, and they change what starts and ends a
+line.** Both are in the study's numbers, and both are stated here:
+
+- **§4.7** — a short melphalan course outside induction does not start a line.
+- **§4.8** — a drug from an earlier line coming back joins the line it returns
+  in, when exactly one agent advanced the line while it was away.
+
+They work the same way: the treatment is refused a boundary, and the line it
+fell in is carried over it instead. So under both, a line's end can sit later
+than its own regimen's cover — see §5.2 — and `MED_ADD` (§7.4) is narrower than
+it was. What each rule does NOT change is the regimen string: neither a held
+melphalan course nor a folded returning drug joins `LOT_BASE_MEDS`.
+
+The five-branch melphalan rule the study team asked for first was measured and
+not adopted; that one is an exploration, and `lot/FILES.md` says what its
+package is. `STUDY_TEAM_ASKS.md` is the trail of what was asked and what is
+still owed.
 
 Each rule names the vignette that tests it. Those are machine-checked cases in
 `lot/validation/R/`, not prose - a renamed or deleted vignette fails
@@ -198,12 +211,16 @@ end of observation.
 
 | Candidate | Rule |
 |---|---|
-| `d_MED` | earliest non-steroid MM agent, excluding the previous line's own regimen (§4.3) and its permissible substitutes (§4.4) |
+| `d_MED` | earliest non-steroid MM agent, excluding the previous line's own regimen (§4.3) and its permissible substitutes (§4.4). Two agents are excluded by rules of their own: a short melphalan course (§4.7) and a returning earlier-line drug the count folds (§4.8) |
 | `d_ALLO` | earliest allogeneic transplant |
 | `d_CART` | earliest CAR-T. At LOT2, one inside line 1's induction window is excluded — §6.4 |
 | `d_AUTO` | earliest autologous transplant that is (i) outside the previous line's applicable window measured from that line's **start** — 0 days if ALLO-started, 44 if CAR-T-started, 29 otherwise — and (ii) not within `sct_tandem_days` of the immediately preceding AUTO, where **that** AUTO is itself inside the same window (§6.3) |
 
 Unlike line 1, a first-ever AUTO can open a line here.
+
+One candidate can also be *moved* rather than removed: a short melphalan course
+confirmed by another agent starting inside its cover opens the line on the
+**melphalan** date rather than that agent's later one (§4.7).
 
 ### 4.2 Later induction is 30 days, and 45 on a CAR-T-started line
 
@@ -399,7 +416,15 @@ line could then own.
   CAR-T are not read here at all. One that ends a line outranks `DISCONTINUATION`, so a run-out chained past it
 never surfaces. One that does not end a line must not break the chain anyway —
 line 1's induction AUTO, a tandem inside `sct_tandem_days`, a CAR-T inside line
-1's window.
+1's window, and a returning earlier-line drug the count folds (§4.8), which is
+part of this line and so breaks nothing in it.
+
+**A run-out can also be carried past where the drugs stop.** A suppressed
+melphalan course (§4.7) or a folded returning drug (§4.8) is held inside the
+line, and the line's run-out moves to the last day that treatment covers. So a
+line's end can sit later than any of its own regimen's cover, and the rest of
+the end cascade — confirmation, death, a real addition in between — still
+applies on top of it.
 
 ### 5.3 A run-out is a discontinuation only once confirmed
 
@@ -663,6 +688,12 @@ an addition. At line 1 that puts the earliest possible `MED_ADD` on day 60.
 **Absorption hides an addition.** A claim landing while an episode of that agent
 is still open opens no episode (§2.3), so it is never a candidate and the line
 does not end.
+
+**Two agents are taken off this list by rules of their own**, so `MED_ADD` is
+narrower than it reads here: a short melphalan course outside induction (§4.7),
+and a returning earlier-line drug the count folds (§4.8). Both are held inside
+the line instead, which is why the line's run-out can sit later than its own
+drugs' cover.
 
 ### 7.5 Death, and the run-out it can displace
 
