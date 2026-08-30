@@ -201,12 +201,15 @@ always zero:
 
 ```
 code_to_med  bad_ndc  rollup_defs  blank_keys  ndc_shape
-multi_class  class_agreement
+multi_class  multi_original  class_agreement
 ```
 
 Naming one of the second group is refused before the build starts.
 `multi_class` is fatal because `min(MED_CLASS)` picks lexically, not clinically,
-and the choice reaches the class flags and the steroid exclusion. The SCT checks
+and the choice reaches the class flags and the steroid exclusion.
+`multi_original` is fatal for the same reason: a substitute standing in for two
+drugs is collapsed to one of them by `min()`, and that pick decides which
+agent's return a §4.8 fold is judging. The SCT checks
 in `05_sct.R` are on neither list and always stop the build. Run with none of
 them set first: a check that fires is evidence about the production code lists.
 

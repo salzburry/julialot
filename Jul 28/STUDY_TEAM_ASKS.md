@@ -19,8 +19,8 @@ trail to those, and the list of what is still owed.
 
 ## 1. The melphalan short-course rule — BUILT
 
-**Asked (19 Aug), confirmed (20 Aug):** melphalan received for fewer than 28
-days outside any induction window does not advance the line. And: a patient
+**Asked (19 Aug), confirmed (20 Aug):** melphalan received for 28 days or fewer
+outside any induction window does not advance the line. And: a patient
 given melphalan on day 100 for 28 days who then starts a new agent on day 105
 should have the new line start on **day 100**, when the melphalan appears — not
 on day 105.
@@ -126,6 +126,13 @@ and started another. That ownership test is separate from the count, and
 procedures do count in it: a transplant that breaks the line, past its
 induction window and not a planned tandem partner, means the return belongs to
 a later line.
+
+**A permissible substitute and the drug it replaces are one agent**, in both
+directions. A regimen naming the reference product folds its substitute's
+return, and a regimen naming the substitute folds the reference product's — the
+fold set is read through the agent rather than through the drug the regimen
+happened to write down. The pair dosed on a single day is one course, so the
+tie decides nothing either.
 
 **A prior line with two agents.** Each returning agent is judged on its own
 interval and its own count, and a returning agent is not an advance for the

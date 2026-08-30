@@ -94,6 +94,7 @@ WAIVABLE_CHECKS <- c("orphan_meds", "uncoded_meds", "code_types",
 # Fatal checks: always stop the build. Named rather than merely absent, so a
 # waiver naming one is told why it is refused instead of "no such check".
 FATAL_CHECKS <- c("code_to_med", "bad_ndc", "rollup_defs", "blank_keys",
+                  "multi_original",
                   "ndc_shape", "multi_class", "class_agreement")
 
 ALL_CHECKS <- c(WAIVABLE_CHECKS, FATAL_CHECKS)

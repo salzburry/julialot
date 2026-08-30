@@ -92,21 +92,8 @@ phase_lot1_base <- function(con, ctx) {
     -- SUBSTITUTE_ONLY = 1 means the drug is here only as a permissible
     -- biosimilar substitute. A substitution does not advance the LOT (§4.4).
     -- So a substitute never ends a line on its own, confirms a run-out or
-    -- opens the next one, whatever gaps its own episodes carry. min() so a
-    -- drug that is both a real regimen drug and somebody's substitute counts
-    -- as the former and keeps the release.
-    base_meds AS (
-      SELECT PATID, MED_ABBR, min(IS_SUB) AS SUBSTITUTE_ONLY
-      FROM (
-        SELECT PATID, MED_ABBR, 0 AS IS_SUB
-        FROM lot1_induction_meds
-        UNION ALL
-        SELECT im.PATID, ps.substitute_med AS MED_ABBR, 1 AS IS_SUB
-        FROM lot1_induction_meds im
-        INNER JOIN permissible_subs ps
-          ON im.MED_ABBR = ps.original_med
-      )
-      GROUP BY PATID, MED_ABBR
+    -- opens the next one, whatever gaps its own episodes carry.
+    base_meds AS ({regimen_with_subs_sql('lot1_induction_meds')}
     ),
     -- Steroids are kept out of base_meds by the lot1_induction_meds filter.
     -- Corticosteroids are not oncology agents, so they must not drive regimen

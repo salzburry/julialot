@@ -60,6 +60,7 @@ FRAGMENT <- c(
   melp_suppress_predicate = "opens with its own newline",
   melp_inject_arm         = "opens with its own newline",
   melp_allo_guard         = "opens with its own newline",
+  regimen_with_subs_sql   = "opens with its own newline",
   melp_prior_regimen_exempt = "spliced inside parens, after IS NULL",
   melp_branch_sql         = "spliced after a space, at end of line",
   stock_impact_sql        = "spliced after AS and a space, at end of line",
@@ -77,6 +78,8 @@ FRAGMENT <- c(
   line_break_tx_sql       = "opens with its own newline, spliced after an open paren",
   line_break_tandem_pred  = "paste0 puts the newline back that glue trims",
   foldin_regimen_union    = "paste0 puts the newline back that glue trims",
+  foldin_base_meds_ctes   = "paste0 puts the newline back that glue trims",
+  foldin_base_meds        = "returns a table name",
   map_restart_sql             = "opens with its own newline, spliced after an open paren")
 
 files <- Filter(function(f) !grepl("/tests?/", f),

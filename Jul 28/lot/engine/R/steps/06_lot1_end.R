@@ -111,17 +111,7 @@ phase_lot1_end <- function(con, ctx) {
     -- line: this line's own regimen drugs and their permissible substitutes.
     -- med_cand excludes both, so accepting one here would confirm a
     -- discontinuation on an event no next line is allowed to open on.
-    post_runout_excluded_meds AS (
-      SELECT PATID, MED_ABBR, min(IS_SUB) AS SUBSTITUTE_ONLY
-      FROM (
-        SELECT im.PATID, im.MED_ABBR, 0 AS IS_SUB
-        FROM lot1_induction_meds im
-        UNION ALL
-        SELECT im.PATID, ps.substitute_med AS MED_ABBR, 1 AS IS_SUB
-        FROM lot1_induction_meds im
-        INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
-      )
-      GROUP BY PATID, MED_ABBR
+    post_runout_excluded_meds AS ({regimen_with_subs_sql('lot1_induction_meds')}
     ),
     map_restart AS ({map_restart_sql()}
     ),

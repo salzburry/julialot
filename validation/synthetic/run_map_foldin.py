@@ -15,6 +15,13 @@ regimen window is PART of that line, not a reason to start the next one.
       new drug starts                        -> the boundary stays; the new
       drug starts the next line on that day under both builds
   F4  B's permissible substitute returns     -> folds like B itself
+  F4b ...and the REVERSE: the substitute is
+      the prior regimen's drug and the
+      reference product returns              -> the same. 4.4 makes the pair
+      one agent, so the fold has to read the same whichever half the regimen
+      names
+  F4c the pair dosed on ONE day              -> the course grouping takes both,
+      so the tie decides nothing
   F5  B restarts with NO newer line in
       between                                -> ONE line either way. Nothing
       was given in between, so 4.3 keeps the restart inside the line it left
@@ -78,6 +85,17 @@ PATS = [
     P('F3', L1 + [('DARA', 'MAB', 200, 400), ('BORT', 'PI', 300, 360),
                   ('CARF', 'PI', 300, 380)]),
     P('F4', L1 + [('DARA', 'MAB', 200, 400), ('BORTB', 'PI', 300, 360)]),
+    # F4b: the reverse direction. BORTB is 1L's regimen drug and BORT - the
+    # drug it stands in for - is what returns. Expanding the raw regimen picked
+    # up substitutes of a named drug but not the drug a named substitute stands
+    # in for, so this pair folded one way and not the other.
+    P('F4b', [('LEN', 'IMID', 0, 80), ('BORTB', 'PI', 0, 80),
+              ('DARA', 'MAB', 200, 400), ('BORT', 'PI', 300, 360)]),
+    # F4c: both halves of the pair on one date, with different cover. They
+    # share an agent, so the lag inside that partition has two candidates and
+    # no order between them - the course grouping is what makes it not matter.
+    P('F4c', L1 + [('DARA', 'MAB', 200, 400),
+                   ('BORT', 'PI', 300, 360), ('BORTB', 'PI', 300, 500)]),
     P('F5', [('LEN', 'IMID', 0, 80), ('BORT', 'PI', 0, 80),
              ('BORT', 'PI', 300, 360)]),
     P('F6', L1 + [('DARA', 'MAB', 200, 260), ('CARF', 'PI', 400, 500),
@@ -134,6 +152,56 @@ PATS = [
     # break. One agent has advanced the line while B was away, so B folds.
     P('F18', L1 + [('DARA', 'MAB', 200, 260), ('DARA', 'MAB', 400, 600),
                    ('BORT', 'PI', 450, 510)]),
+    # F20-F24 come from an external review of the rules as first shipped.
+    # Every one produced a wrong line, a drug in a regimen it never covered, or
+    # treatment in no line at all.
+    #
+    # F20: B returns the SAME DAY a genuinely new CARF opens the next line. The
+    # count looks strictly BEFORE the return, so it does not see CARF and folds
+    # anyway - and the regimen union had no medication boundary, so 2L named a
+    # drug whose only episode began after 2L had ended, while 3L named it too.
+    P('F20', L1 + [('DARA', 'MAB', 200, 400), ('BORT', 'PI', 450, 510),
+                   ('CARF', 'PI', 450, 600)]),
+    # F21: a return after a break SHORTER than the discontinuation gap. B is
+    # away from d190 to d250 - 60 days, not 90 - and one agent advanced the
+    # line while it was away, so it folds.
+    #
+    # This was reported as a defect, on the reading that "comes back after
+    # being stopped" means the engine's 90-day discontinuation. It does not:
+    # the request's own worked case (scenario S01) has the drug away for 60
+    # days, so requiring a discontinuation would refuse to fold the very
+    # example the rule was written for. A new episode opens only for a claim
+    # beyond every run-out, so every episode after a drug's first already
+    # follows a break in cover, and that is the parent condition.
+    P('F21', [('LEN', 'IMID', 0, 80), ('BORT', 'PI', 0, 20),
+              ('BORT', 'PI', 160, 190), ('DARA', 'MAB', 200, 600),
+              ('BORT', 'PI', 250, 300)]),
+    # F22: B folds into 2L, then stops and returns AGAIN with nothing in
+    # between. The fold put B in 2L's reported regimen, so 4.3 refused it a
+    # line of its own - but the WORKING set did not carry it, so 2L stopped at
+    # its own drug's cover and the second return fell in no line at all.
+    P('F22', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 300, 360),
+                   ('BORT', 'PI', 700, 760)]),
+    # F23: CARF and DARA co-start 2L. That is ONE advance, not two, so B's
+    # return still folds. Counting each opener drug made it two.
+    P('F23', L1 + [('DARA', 'MAB', 200, 600), ('CARF', 'PI', 200, 600),
+                   ('BORT', 'PI', 450, 510)]),
+    # F24: the return comes BEFORE the melphalan course, where F19 has it
+    # after. B folds into 2L, so it is not another agent taking the course from
+    # 2L - but melp_taken read the working base set, where a folded drug is
+    # absent, and let the course end 2L as an added medication with no line
+    # opening on it.
+    P('F24', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 300, 360),
+                   ('MELP', 'ALKY', 450, 477)]),
+    # F25/F26: what BREAKS a line, by kind. An ALLO or CAR-T breaks it from
+    # the line START - no window - which is how lot{n}_regimen_cutoff cuts a
+    # regimen. Only an AUTO gets the induction window and the tandem
+    # exemption. Reading one window over all three was a helper that
+    # contradicted the rule it cited.
+    dict(P('F25', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 450, 510)]),
+         sct_ac=[('CART', IX + 210)]),
+    dict(P('F26', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 450, 510)]),
+         sct_ac=[('ALLO', IX + 210)]),
     # F19: where the two adopted rules meet. DARA opens 2L. A short melphalan
     # course sits at day 450, outside 2L's window, and B returns at day 455 -
     # inside that course's cover. The melphalan rule advances a short course
@@ -162,12 +230,56 @@ def build(foldin):
     con.execute("INSERT INTO mma_rollup VALUES ('BORTB','PI',NULL,NULL)")
     rs.run_chain(con, sqldir)
     lines = {}
-    for pid, n, s, e, why in con.execute(
+    for pid, n, s, e, why, meds, cnt in con.execute(
             "SELECT PATID, LOT_NUM, LOT_START_DT, LOT_BASE_END_DT, "
-            "LOT_BASE_END_REASON FROM lot_long ORDER BY PATID, LOT_NUM").fetchall():
+            "LOT_BASE_END_REASON, coalesce(LOT_BASE_MEDS, ''), LOT_MED_CNT "
+            "FROM lot_long ORDER BY PATID, LOT_NUM").fetchall():
         lines.setdefault(pid, []).append((n, str(s)[:10], str(e)[:10], why))
+        REGIMEN.setdefault((foldin, pid), {})[n] = (meds, cnt)
+    # OWNERSHIP, the two invariants the line table alone cannot show. A drug a
+    # line REPORTS has to have an episode inside that line, and every
+    # non-steroid episode has to belong to a line. The harness read only line
+    # numbers, dates and end reasons before, which is how a line naming a drug
+    # it never covered, and a return left in no line at all, both passed.
+    #
+    # Not "a drug appears in one line only" - a drug legitimately returns in a
+    # later line and is that line's regimen too.
+    OWNERSHIP[foldin] = {
+        "orphan": con.execute("""
+            SELECT ms.PATID, ms.MAP_MED_TYPE, cast(ms.MAP_START_DT AS date)
+            FROM map_stacked ms
+            LEFT JOIN lot_long l
+              ON l.PATID = ms.PATID
+             AND ms.MAP_START_DT >= l.LOT_START_DT
+             AND ms.MAP_START_DT <= l.LOT_BASE_END_DT
+            WHERE ms.MAP_MED_CLASS <> 'STEROID' AND l.PATID IS NULL
+            ORDER BY 1, 3""").fetchall(),
+        "phantom": con.execute("""
+            WITH reg AS (
+              SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_BASE_END_DT, m AS MED_ABBR
+              FROM lot_long l, UNNEST(str_split(coalesce(l.LOT_BASE_MEDS,''),' ')) AS t(m)
+              WHERE m <> ''
+            )
+            SELECT r.PATID, r.LOT_NUM, r.MED_ABBR
+            FROM reg r
+            LEFT JOIN map_stacked ms
+              ON ms.PATID = r.PATID AND ms.MAP_MED_TYPE = r.MED_ABBR
+             AND ms.MAP_START_DT >= r.LOT_START_DT
+             AND ms.MAP_START_DT <= r.LOT_BASE_END_DT
+            WHERE ms.PATID IS NULL ORDER BY 1, 2""").fetchall(),
+    }
     con.close()
     return lines
+
+
+# Filled by build(): the reported regimen per (arm, patient, line), and the
+# three ownership queries. Kept beside the line table so an assertion can ask
+# about either without a second build.
+REGIMEN, OWNERSHIP = {}, {}
+
+
+def regimen(foldin, pid, lot):
+    return REGIMEN.get((foldin, pid), {}).get(lot, ("", 0))
 
 
 def main():
@@ -201,6 +313,12 @@ def main():
 
     ok(n(ref, 'F4') == 3 and n(fold, 'F4') == 2,
        "F4: the permissible substitute folds exactly like the drug it replaces")
+    ok(n(ref, 'F4b') == 3 and n(fold, 'F4b') == 2,
+       "F4b: ...and so does the reference product when the substitute is the "
+       "regimen drug")
+    ok(n(ref, 'F4c') == 3 and n(fold, 'F4c') == 2
+       and fold['F4c'][1][2] == rs.d(IX + 500),
+       "F4c: the pair dosed on one day folds as one course, to day 500")
 
     ok(ref.get('F5') == fold.get('F5') and n(ref, 'F5') == 1,
        "F5: a restart with no newer line in between stays in the line it left")
@@ -264,6 +382,43 @@ def main():
        "F10 contract: the same after a drugless CAR-T line")
     ok(fold.get('F10') == ref.get('F10'),
        "F10 fold-in: the same after a drugless CAR-T line")
+
+    ok(n(fold, 'F20') == 3 and regimen(True, 'F20', 2)[0] == 'DARA'
+       and n(ref, 'F20') == 3,
+       "F20: a same-day new agent keeps the boundary, and 2L does not name "
+       "the drug whose episode starts in 3L")
+    ok(regimen(True, 'F20', 3)[0] == 'BORT CARF',
+       "F20: ...the line the return actually falls in names it")
+    ok(n(ref, 'F21') == 3 and n(fold, 'F21') == 2
+       and regimen(True, 'F21', 2)[0] == 'BORT DARA',
+       "F21: a 60-day break is a return for this rule, as in the request's own "
+       "worked case, so it folds")
+    ok(n(fold, 'F22') == 2 and fold['F22'][1][2] == rs.d(IX + 760)
+       and fold['F22'][1][3] == 'DISCONTINUATION',
+       "F22: a folded drug's second return stays in the line that folded it")
+    ok(n(ref, 'F23') == 3 and n(fold, 'F23') == 2
+       and regimen(True, 'F23', 2)[1] == 3,
+       "F23: two drugs co-starting a line advance it once, so the return folds")
+    ok(n(fold, 'F24') == 2 and fold['F24'][1][2] == rs.d(IX + 600)
+       and fold['F24'][1][3] == 'DISCONTINUATION',
+       "F24: a folded drug is not another agent taking a melphalan course")
+
+    for pid, kind in (('F25', 'CAR-T'), ('F26', 'an ALLO')):
+        ok(fold.get(pid) == ref.get(pid) and n(fold, pid) == 4,
+           "%s: %s inside the line's window still breaks it, so the return "
+           "takes its own line" % (pid, kind))
+
+    # The invariants, over every planted patient in both arms. A drug in two
+    # regimens, a drug a line names but never covered, or an episode in no line
+    # at all is a defect whatever the line numbers say.
+    for arm, on in (("contract", False), ("fold-in", True)):
+        o = OWNERSHIP[on]
+        ok(not o["phantom"],
+           "%s: every drug a line reports has an episode inside it (%s)"
+           % (arm, o["phantom"][:3] or "none"))
+        ok(not o["orphan"],
+           "%s: every non-steroid episode belongs to a line (%s)"
+           % (arm, o["orphan"][:3] or "none"))
 
     print()
     if fails:

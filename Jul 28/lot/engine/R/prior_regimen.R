@@ -1,7 +1,8 @@
 # A drug in the previous line's regimen cannot start the next line while it is
 # still running. A later LOT starts on a new MM agent that was not part of the
-# previous LOT regimen, and a drug the patient never stopped is not new. Its later episodes belong to the line it is already in, so that line's
-# run-out chains forward over them.
+# previous LOT regimen, and a drug the patient never stopped is not new. Its
+# later episodes belong to the line it is already in, so that line's run-out
+# chains forward over them.
 #
 # Once the drug is discontinued it is released. map_discon_gap_days flags the
 # episode whose gap to the next reaches the threshold. An episode after such a
@@ -27,11 +28,9 @@
 # one, whatever the gap. Nothing was given in between, so the drug is returning
 # to the line it left.
 #
-# The release and the run-out chain are two halves of one rule (see the header
-# of this file), so both halves move together: return_release_sql() withdraws
-# the release, and own_gap_breaks_chain() stops discon_per_med breaking the
-# line at the same gap. Withdraw one alone and the returning treatment belongs
-# to no line at all.
+# Both halves move together: return_release_sql() withdraws the release, and
+# own_gap_breaks_chain() stops discon_per_med breaking the line at the same
+# gap.
 return_release_on <- function(cfg) !isTRUE(cfg$apply_own_return_fold)
 
 return_release_sql <- function(cfg, restart, base, extra = "") {
@@ -53,6 +52,28 @@ prior_regimen_excl_sql <- function() {
       UNION ALL
       SELECT pma.PATID, pma.MED_ABBR, 0 AS IS_SUB
       FROM prev_meds_array pma"
+}
+
+# A line's regimen plus the permissible biosimilar substitutes for it, with
+# SUBSTITUTE_ONLY recording WHY each drug is in the set. Four callers need this
+# set - LOT1 and LOT2-5 both build their base_meds from it, and both run-out
+# guards build the drugs they must not accept from it. They read the same rule,
+# so they get it from here. A guard spelling it out differently from the
+# candidate set it mirrors ends a line on an event the next line refuses to
+# open on. min() so a drug that is both a real regimen drug and somebody's
+# substitute counts as the former.
+regimen_with_subs_sql <- function(src) {
+  paste0("\n",
+         "      SELECT PATID, MED_ABBR, min(IS_SUB) AS SUBSTITUTE_ONLY
+      FROM (
+        SELECT PATID, MED_ABBR, 0 AS IS_SUB
+        FROM ", src, "
+        UNION ALL
+        SELECT im.PATID, ps.substitute_med AS MED_ABBR, 1 AS IS_SUB
+        FROM ", src, " im
+        INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
+      )
+      GROUP BY PATID, MED_ABBR")
 }
 
 # Only a drug that WAS the previous regimen is released this way. A drug
@@ -107,7 +128,8 @@ map_restart_sql <- function() {
 # spark.sql.crossJoin.enabled=false.
 discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
                                boundary_tbl = "map_stacked", boundary_gate = "",
-                               end_col = NULL, own_gap_breaks = TRUE) {
+                               end_col = NULL, own_gap_breaks = TRUE,
+                               base_tbl = "base_meds") {
   # The scan starts at the line start. Without this it has no upper bound at
   # all: a base drug's later episodes chain forward for as long as the patient
   # keeps filling it. So bounding regimen membership at the date the line was
@@ -143,7 +165,7 @@ discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
                ", prev_discon, "
         FROM ", map_tbl, " ms
         INNER JOIN ", start_view, " ls ON ms.PATID = ls.PATID
-        INNER JOIN base_meds bm ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
+        INNER JOIN ", base_tbl, " bm ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
         WHERE ms.MAP_START_DT >= ls.", start_col, upper, "
       ),
       interrupts AS (
@@ -159,7 +181,7 @@ discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
               AND o.MAP_START_DT >  e.PREV_END
               AND o.MAP_START_DT <  e.MAP_START_DT
               ", boundary_gate, "
-        LEFT JOIN base_meds obm
+        LEFT JOIN ", base_tbl, " obm
                ON obm.PATID = o.PATID AND obm.MED_ABBR = o.MAP_MED_TYPE
         GROUP BY e.PATID, e.MAP_MED_TYPE, e.MAP_START_DT
       ),
@@ -212,7 +234,7 @@ tandem_interrupt_events_sql <- function() "
 # ALLO and CAR-T rows carry no previous AUTO, so that predicate never excludes
 # them - they always break the line once they are past its window.
 line_break_tx_sql <- function() glue("
-        SELECT p.PATID, p.TX_DT, p.PREV_AUTO_DT,
+        SELECT p.PATID, p.TX_DT, 'AUTO' AS SCT_KIND, p.PREV_AUTO_DT,
                coalesce(sum(CASE WHEN x.dt > p.PREV_AUTO_DT AND x.dt < p.TX_DT
                                  THEN 1 ELSE 0 END), 0) AS N_BETWEEN
         FROM (
@@ -224,24 +246,48 @@ line_break_tx_sql <- function() glue("
         ) x ON p.PATID = x.PATID
         GROUP BY p.PATID, p.TX_DT, p.PREV_AUTO_DT
         UNION ALL
-        SELECT PATID, TX_DT, cast(NULL AS date) AS PREV_AUTO_DT, 0 AS N_BETWEEN
+        SELECT PATID, TX_DT, SCT_TYPE AS SCT_KIND,
+               cast(NULL AS date) AS PREV_AUTO_DT, 0 AS N_BETWEEN
         FROM tx_allo_cart_dates")
 
-# The planned-tandem exemption, in the same three parts auto_cand and the LOT1
-# post-runout guard test: within sct_tandem_days of the AUTO before it, nothing
-# in between, and that earlier AUTO inside the line's own window. The last part
-# is the ownership condition - a pair whose first transplant the line never
-# held was never the line's tandem - and leaving it out would exempt a pair the
-# start gate has already decided is not one.
+# When one of those transplants BREAKS the line, by kind. Three kinds, three
+# rules, and the engine states each; reading one window over all of them is
+# what this replaces.
 #
-# paste0 around the glue, not glue alone: glue trims a template's leading
+#   AUTO   past the line own induction window, and not a planned tandem:
+#          within sct_tandem_days of the AUTO before it, nothing in between,
+#          and that earlier AUTO inside the window. All three are what
+#          auto_cand and the LOT1 post-runout guard test, ownership condition
+#          included - a pair whose first transplant the line never held was
+#          never the line tandem.
+#
+#   ALLO   strictly after the line START, no window. That is how
+#          lot{n}_regimen_cutoff cuts a regimen, and how LOT1 does it too.
+#
+#   CART   the same at LOT2-5. At LOT1 the induction rule (LOT_RULES.md 6.4)
+#          keeps a CAR-T INSIDE the window as part of the line, so there it
+#          breaks only past the window - cart_from carries which of the two
+#          dates applies. Outside the window a CAR-T opens the next line at
+#          LOT1 as anywhere else.
+#
+# paste0 around the glue, not glue alone: glue trims a template leading
 # newline and this fragment splices straight after another predicate, which
 # without it read "... <= mc.EXPO_DTAND NOT (...".
-line_break_tandem_pred <- function(cfg, alias, induction_end) paste0("\n", glue("
-       AND NOT ({alias}.PREV_AUTO_DT IS NOT NULL
-                AND datediff({alias}.TX_DT, {alias}.PREV_AUTO_DT) <= {cfg$sct_tandem_days}
-                AND {alias}.N_BETWEEN = 0
-                AND {alias}.PREV_AUTO_DT <= {induction_end})"))
+line_break_window_pred <- function(cfg, alias, induction_end, line_start,
+                                   cart_from = NULL) {
+  cart <- if (is.null(cart_from) || identical(cart_from, line_start)) "" else
+    paste0("\n                 AND (", alias, ".SCT_KIND <> 'CART' OR ",
+           alias, ".TX_DT > ", cart_from, ")")
+  paste0("\n       AND ((", alias, ".SCT_KIND = 'AUTO'
+                 AND ", alias, ".TX_DT > ", induction_end, "
+                 AND NOT (", alias, ".PREV_AUTO_DT IS NOT NULL
+                          AND datediff(", alias, ".TX_DT, ", alias,
+                              ".PREV_AUTO_DT) <= ", cfg$sct_tandem_days, "
+                          AND ", alias, ".N_BETWEEN = 0
+                          AND ", alias, ".PREV_AUTO_DT <= ", induction_end, "))
+            OR (", alias, ".SCT_KIND <> 'AUTO'
+                 AND ", alias, ".TX_DT > ", line_start, cart, "))")
+}
 
 # The agents of a patient's EARLIER lines, and their permissible substitutes.
 #
@@ -261,10 +307,24 @@ prior_lines_regimen_ctes <- function(line_pred, raw = "prior_raw",
       LATERAL VIEW explode(split(coalesce(ll.LOT_BASE_MEDS, \'\'), \' \')) e AS m
       WHERE {line_pred} AND m <> \'\'
     ),
-    {out} AS (
-      SELECT PATID, MED_ABBR FROM {raw}
-      UNION
-      SELECT p.PATID, ps.substitute_med AS MED_ABBR
+    -- Each regimen drug under its AGENT. A drug that IS a permissible
+    -- substitute collapses to the one it replaces, so the set below is the
+    -- same whichever half of the pair the regimen happens to name.
+    {raw}_agent AS (
+      SELECT DISTINCT p.PATID, coalesce(ps.original_med, p.MED_ABBR) AS AGENT
       FROM {raw} p
-      INNER JOIN permissible_subs ps ON p.MED_ABBR = ps.original_med
+      LEFT JOIN permissible_subs ps ON ps.substitute_med = p.MED_ABBR
+    ),
+    -- Every drug that IS one of those agents: the agent itself, and every
+    -- permissible substitute for it. Expanding the raw regimen instead was
+    -- one-directional - a regimen naming the reference product picked up its
+    -- substitute, but a regimen naming the substitute did not pick up the
+    -- reference product, so the same pair folded one way and not the other.
+    -- §4.4 makes them one agent, so both directions have to read the same.
+    {out} AS (
+      SELECT PATID, AGENT AS MED_ABBR FROM {raw}_agent
+      UNION
+      SELECT a.PATID, ps.substitute_med AS MED_ABBR
+      FROM {raw}_agent a
+      INNER JOIN permissible_subs ps ON ps.original_med = a.AGENT
     ),")

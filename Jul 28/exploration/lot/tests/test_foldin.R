@@ -55,8 +55,22 @@ cat("\n-- the fold set is the previous line's regimen, and its substitutes --\n"
 s <- foldin_lotn_ctes(on_, "{lot_num}")
 ok(has(s, "WHERE ll.LOT_NUM = {lot_num} - 1 AND m <> ''"),
    "the line build folds the IMMEDIATELY PREVIOUS line's regimen")
-ok(has(s, "INNER JOIN permissible_subs ps ON p.MED_ABBR = ps.original_med"),
-   "...expanded by the permissible substitutes, so a biosimilar folds too")
+# Read through the AGENT, so the set is the same whichever half of a
+# permissible pair the regimen happens to name. Expanding the raw regimen was
+# one-directional: a regimen naming the reference product picked up its
+# substitute, a regimen naming the substitute did not pick up the reference
+# product, and the pair folded one way only.
+ok(has(s, "coalesce(ps.original_med, p.MED_ABBR) AS AGENT"),
+   "...each regimen drug read under the agent it belongs to")
+ok(has(s, "INNER JOIN permissible_subs ps ON ps.original_med = a.AGENT"),
+   "...and expanded back to every substitute for that agent, both directions")
+# Both start-candidate hooks are silent while the returning-drug release is
+# withdrawn - §4.3 refuses that whole regimen a line already, and the fold set
+# is a subset of it. Emitting them anyway was a second copy of one exclusion.
+on_rel <- c(on_, list(apply_own_return_fold = TRUE))
+ok(!nzchar(foldin_prior_ctes(on_rel, "{prev}")) &&
+     !nzchar(foldin_trigger_predicate(on_rel)),
+   "the start-candidate hooks are silent when 4.3 already covers them")
 p <- foldin_prior_ctes(on_, "{prev}")
 ok(has(p, "WHERE ll.LOT_NUM = {prev} AND m <> ''"),
    paste0("the trigger reads the same one line - the regimen of the line ",
@@ -105,8 +119,13 @@ ok(has(s, "count(DISTINCT fo.OPENER)") &&
 # from further back is out of scope and the engine's ordinary rules keep it.
 ok(has(s, "foldin_openers AS (") && has(s, "l.LOT_START_TYPE = 'MED'"),
    "an agent is the drug a MED-started line opened on - a procedure is not one")
-ok(has(s, "coalesce(ps.original_med, ms.MAP_MED_TYPE) AS OPENER"),
+ok(has(s, "min(coalesce(ps.original_med, ms.MAP_MED_TYPE)) AS OPENER"),
    "...and a permissible substitute is the same agent as the drug it replaces")
+# ONE row per line. A doublet opening a line advanced the LOT once, and the
+# request counts agents advancing it twice or more - counting each opener drug
+# made a two-drug start two advances and refused a fold it should have taken.
+ok(has(s, "GROUP BY l.PATID, l.LOT_START_DT"),
+   "...and a line contributes ONE advance however many drugs opened it")
 ok(has(s, "lag(c.MAP_START_DT) OVER (PARTITION BY c.PATID, c.AGENT"),
    "the interval is dose to dose, and a substitute shares the agent's doses")
 # A course carries the answer to its own later episodes. Judged one episode at

@@ -48,28 +48,31 @@ Sys.setenv(STUDY_FOLDER = sub(paste0("^", REPO, "/"), "", STUDY))
 # suite -> the failures it is allowed to have, by identity. Absent means none.
 EXPECTED_FAILURES <- list(
   "validation/port/lot.R" = c(
-    # The line COUNT is part of the identity, not decoration. Without it a pin
-    # reads "this file differs", which stays true however much more of it
-    # diverges, so edits to an already-pinned file ride in unexamined. A count
-    # moves when the divergence set moves, and re-pinning is a conscious act.
-    # Counted over comment-stripped code, so prose does not churn it.
-    "03_mma_map.R: differs beyond the approved deviations in 217 line(s)",
-    "05_sct.R: differs beyond the approved deviations in 11 line(s)",
+    # The COUNT and the digest after it are part of the identity, not
+    # decoration. Without them a pin reads "this file differs", which stays
+    # true however much more of it diverges, so edits to an already-pinned
+    # file ride in unexamined. The count alone is not enough either: repairing
+    # one divergence and adding another of the same size keeps it. The digest
+    # is taken over the differing lines themselves, so any change to WHICH
+    # lines differ moves it, and re-pinning is a conscious act. Both are read
+    # over comment-stripped code, so prose does not churn them.
+    "03_mma_map.R: differs beyond the approved deviations in 217 line(s) [1bc3749e]",
+    "05_sct.R: differs beyond the approved deviations in 11 line(s) [6457f58f]",
     # lot1_regimen_cutoff, and the regimen window and the per-drug
     # episode scan both bounded by it.
-    "04_lot1_base.R: differs from 02_lot1.R in 151 line(s)",
+    "04_lot1_base.R: differs from 02_lot1.R in 140 line(s) [7242e66f]",
     # LOT1_AUTO_HOLD_DT, and a tandem that needs a clear gap between its two
     # transplants.
-    "05b_lot1_sct.R: differs beyond the approved deviations in 176 line(s)",
+    "05b_lot1_sct.R: differs beyond the approved deviations in 176 line(s) [524fd363]",
     # The SCT_AUTO_CONT branch and the end_natural CTE it compares against, the
     # post-run-out trigger as existence tests, and the run-out guard on LOT1's
     # own window with the tandem gap.
-    "06_lot1_end.R: differs beyond the approved deviations in 264 line(s)",
-    "08_persist.R: differs beyond the approved deviations in 111 line(s)",
+    "06_lot1_end.R: differs beyond the approved deviations in 257 line(s) [25de3497]",
+    "08_persist.R: differs beyond the approved deviations in 111 line(s) [4ef6f10b]",
     # SCT_AUTO_CONT and end_natural at LOT2-5, LOT{n}_AUTO_HOLD_DT, auto_cand
     # reading the previous line's own window, the regimen cutoff, and the tandem
     # gap. Re-pinned deliberately, which is what this list is for.
-    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 971 line(s)")
+    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 953 line(s) [1b07f98a]")
 )
 
 # How one suite's output is read. Its own suite is validation/hygiene/

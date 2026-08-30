@@ -545,20 +545,9 @@ build_lot_n <- function(con, lot_num,
     -- SUBSTITUTE_ONLY = 1 means the drug is here only as a permissible
     -- biosimilar substitute. A substitution does not advance the LOT (§4.4).
     -- So a substitute never ends a line on its own, confirms a run-out or
-    -- opens the next one, whatever gaps its own episodes carry. min() so a
-    -- drug that is both a real regimen drug and somebody's substitute counts
-    -- as the former and keeps the release.
-    base_meds AS (
-      SELECT PATID, MED_ABBR, min(IS_SUB) AS SUBSTITUTE_ONLY
-      FROM (
-        SELECT PATID, MED_ABBR, 0 AS IS_SUB FROM lot{lot_num}_induction_meds
-        UNION ALL
-        SELECT im.PATID, ps.substitute_med AS MED_ABBR, 1 AS IS_SUB
-        FROM lot{lot_num}_induction_meds im
-        INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
-      )
-      GROUP BY PATID, MED_ABBR
-    ),{melp_lotn_ctes(cfg, lot_num, induction_window_days, cart_consolidation_days, allo_lot_span)}{foldin_lotn_ctes(cfg, lot_num, lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days))}
+    -- opens the next one, whatever gaps its own episodes carry.
+    base_meds AS ({regimen_with_subs_sql(paste0('lot', lot_num, '_induction_meds'))}
+    ),{melp_lotn_ctes(cfg, lot_num, induction_window_days, cart_consolidation_days, allo_lot_span)}{foldin_lotn_ctes(cfg, lot_num, lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days))}{foldin_base_meds_ctes(cfg)}
     -- Per drug, the end of ITS cover in this line: the FIRST episode flagged
     -- discontinued. A later episode of the same drug does NOT open the next
     -- line. It was in this line's regimen, so this line extends over it, and
@@ -572,7 +561,8 @@ build_lot_n <- function(con, lot_num,
     discon_per_med AS (
 {discon_per_med_sql(glue('lot{lot_num}_regimen_cutoff'), glue('LOT{lot_num}_START_DT'),
                     boundary_tbl = foldin_boundary_tbl(cfg), end_col = 'REGIMEN_CUTOFF_DT',
-                    own_gap_breaks = own_gap_breaks_chain(cfg))}
+                    own_gap_breaks = own_gap_breaks_chain(cfg),
+                    base_tbl = foldin_base_meds(cfg))}
     ),
     -- The regimen has run out when its LAST base agent has.
     discon_raw AS (
@@ -608,7 +598,11 @@ build_lot_n <- function(con, lot_num,
       SELECT ms.PATID, ms.MAP_START_DT, ms.MAP_MED_TYPE
       FROM map_stacked ms
       INNER JOIN lot{lot_num}_start ls ON ms.PATID = ls.PATID
-      LEFT JOIN base_meds bm
+      -- The EFFECTIVE base set, so a drug the fold put in this line is this
+      -- line's drug here too. Reading base_meds alone let a folded drug's
+      -- SECOND return end the line as an added medication while the next line
+      -- refused it a line of its own - treatment in neither.
+      LEFT JOIN {foldin_base_meds(cfg)} bm
         ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
       LEFT JOIN map_restart mr
         ON mr.PATID = ms.PATID AND mr.MAP_MED_TYPE = ms.MAP_MED_TYPE
@@ -966,17 +960,7 @@ build_lot_n <- function(con, lot_num,
     -- line: this line's own regimen drugs and their permissible substitutes.
     -- med_cand excludes both, so accepting one here would confirm a
     -- discontinuation on an event no next line is allowed to open on.
-    post_runout_excluded_meds AS (
-      SELECT PATID, MED_ABBR, min(IS_SUB) AS SUBSTITUTE_ONLY
-      FROM (
-        SELECT im.PATID, im.MED_ABBR, 0 AS IS_SUB
-        FROM lot{lot_num}_induction_meds im
-        UNION ALL
-        SELECT im.PATID, ps.substitute_med AS MED_ABBR, 1 AS IS_SUB
-        FROM lot{lot_num}_induction_meds im
-        INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
-      )
-      GROUP BY PATID, MED_ABBR
+    post_runout_excluded_meds AS ({regimen_with_subs_sql(paste0('lot', lot_num, '_induction_meds'))}
     ),
     map_restart AS ({map_restart_sql()}
     ),

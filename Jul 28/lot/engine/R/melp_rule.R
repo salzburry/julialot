@@ -92,13 +92,13 @@ melp_abbr    <- function(cfg) toupper(trimws(cfg$melp_med_abbr %||% "MELP"))
 # takes, so both stay unused there and their SQL is unchanged.
 melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end,
                                base_tbl = NULL, restart_tbl = NULL,
-                               not_new_ctes = "") {
+                               not_new_ctes = "", cart_from = NULL) {
   mode <- melp_rule_mode(cfg)
   if (!nzchar(mode)) return("")
   if (identical(mode, "simplified"))
     return(melp_simplified_ctes(cfg, line_tbl, start_col, span_end,
                                 induction_end, base_tbl, restart_tbl,
-                                not_new_ctes))
+                                not_new_ctes, cart_from))
   abbr <- melp_abbr(cfg)
   yield_this <- if (identical(mode, "yield_to_sct")) "p.HAS_AUTO" else "0"
   yield_next <- if (identical(mode, "yield_to_sct")) "coalesce(p.NEXT_HAS_AUTO, 0)" else "0"
@@ -331,7 +331,7 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
 # own pair first, because nothing usable exists yet where it splices.
 melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
                                  induction_end, base_tbl, restart_tbl,
-                                 not_new_ctes = "") {
+                                 not_new_ctes = "", cart_from = NULL) {
   if (is.null(base_tbl) || is.null(restart_tbl))
     stop("The simplified melphalan rule needs the judged line's base set and ",
          "restart flags to tell a confirming agent from a drug the line ",
@@ -343,6 +343,23 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
         ON nn.PATID = c.PATID AND nn.MED_ABBR = c.MAP_MED_TYPE"
   not_new_pred <- if (!nzchar(not_new_ctes)) "" else
     "\n        AND nn.MED_ABBR IS NULL"
+  # The same set, for melp_taken's "another agent got here first" scan. A drug
+  # of an earlier line coming back is not another agent taking the course - the
+  # fold-in has put it in this line (LOT_RULES.md 4.8). Reading the working
+  # base set alone missed that, because a folded drug joins the line's REPORTED
+  # regimen and the fold CTEs are spliced after these, so this statement cannot
+  # see them. This set is built from the earlier lines instead, which are
+  # already there.
+  #
+  # It reaches slightly wider than the folded episodes: a previous-line agent
+  # whose return the count does NOT fold is excluded too. Under the previous-
+  # line fold set that case cannot arise - a return either folds or is left to
+  # 4.3, which keeps it in the line it left - so the wider reach is empty in
+  # practice, and it is stated here rather than relied on silently.
+  taken_not_new <- if (!nzchar(not_new_ctes)) "" else
+    "\n       AND NOT EXISTS (SELECT 1 FROM melp_not_new tnn
+                        WHERE tnn.PATID = o.PATID
+                          AND tnn.MED_ABBR = o.MAP_MED_TYPE)"
   paste0("\n", glue("
     melp_doses AS (
       SELECT PATID, MAP_START_DT AS DOSE_DT
@@ -440,7 +457,7 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
        AND o.MAP_START_DT >  {line_tbl}.{start_col}
        AND o.MAP_START_DT <= mc.EXPO_DT
        AND o.MAP_MED_CLASS <> 'STEROID'
-       AND upper(trim(o.MAP_MED_TYPE)) <> '{abbr}'
+       AND upper(trim(o.MAP_MED_TYPE)) <> '{abbr}'{taken_not_new}
       LEFT JOIN {base_tbl} ob
         ON ob.PATID = o.PATID AND ob.MED_ABBR = o.MAP_MED_TYPE
       LEFT JOIN {restart_tbl} orr
@@ -472,8 +489,8 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
       INNER JOIN ({line_break_tx_sql()}
       ) tx
         ON tx.PATID = mc.PATID
-       AND tx.TX_DT >  {induction_end}
-       AND tx.TX_DT <= mc.EXPO_DT{line_break_tandem_pred(cfg, 'tx', induction_end)}
+       AND tx.TX_DT <= mc.EXPO_DT{line_break_window_pred(cfg, 'tx', induction_end,
+             paste0(line_tbl, '.', start_col), cart_from)}
     ),
     melp_judged AS (
       SELECT mc.PATID, mc.EXPO_DT,
@@ -705,7 +722,13 @@ melp_lot1_ctes <- function(cfg) {
     melp_decision_ctes(cfg, "melp_line", "LOT1_START_DT", "melp_line.OBS_END_DT",
                        "melp_line.IND_END_DT",
                        base_tbl = "melp_base_meds",
-                       restart_tbl = "melp_map_restart"),
+                       restart_tbl = "melp_map_restart",
+                       # A CAR-T inside LOT1's own window is part of LOT1
+                       # (§6.4), so there it breaks the line only past that
+                       # window. One outside it opens the next line as anywhere
+                       # else. With the rule off there is no exemption at all.
+                       cart_from = if (isTRUE(cfg$apply_cart_induction_rule))
+                                     "melp_line.IND_END_DT" else NULL),
     glue("
     -- lot1_base with the held run-out substituted, built ONCE and read by
     -- every CTE in 06 that asks when this line ran out.

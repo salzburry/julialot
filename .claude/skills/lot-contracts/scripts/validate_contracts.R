@@ -14,7 +14,8 @@ CONTRACT_DIR <- normalizePath(file.path(SELF, "..", "contracts"))
 # ---- A parser for the schema's YAML subset -------------------------------
 # Two-space indents, `key: value`, `key:` opening a map, `- item` scalar list
 # entries, {} / [] explicit empties, full-line comments. Nothing else - the
-# schema promises no anchors, inline maps, or quoting, so a tiny parser can be
+# schema promises no anchors or inline maps, and quotes only where a value
+# carries ": ", so a tiny parser can be
 # exact instead of a big one being approximate.
 
 .coerce <- function(v) {
@@ -66,6 +67,11 @@ parse_contract <- function(lines) {
     } else if (grepl("^[A-Za-z_][A-Za-z0-9_]*:( |$)", txt)) {
       key <- sub(":.*$", "", txt)
       val <- trimws(sub("^[A-Za-z_][A-Za-z0-9_]*:", "", txt))
+      # A value carrying ": " has to be quoted or the file is not standard
+      # YAML - PyYAML reads it as a nested mapping and stops. This parser is
+      # the subset one; unquoting here is what lets the files be both.
+      if (grepl('^".*"$', val))
+        val <- gsub('\\\\"', '"', substr(val, 2, nchar(val) - 1))
       if (length(path) < depth)
         stop("line ", i, ": indented deeper than any open key")
       path <- c(path[seq_len(depth)], key)

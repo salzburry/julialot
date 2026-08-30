@@ -155,7 +155,8 @@ SUBST <- list(
                        "cart_consolidation_days, allo_lot_span)}",
                        "{foldin_lotn_ctes(cfg, lot_num, lotn_induction_end(",
                        "lot_num, induction_window_days, ",
-                       "cart_consolidation_days))}"), to = "),", n = 1L),
+                       "cart_consolidation_days))}",
+                       "{foldin_base_meds_ctes(cfg)}"), to = "),", n = 1L),
     list(from = paste0("AND NOT (ls.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND ",
                        "{if (allo_lot_span == 'single_day') 1L else 0L} = 1)",
                        "{melp_suppress_predicate(cfg)}",
@@ -359,6 +360,24 @@ undeviate <- function(lines, file) {
 # the pin - only real code does.
 n_diff <- function(g, w) sum(is.na(g) | is.na(w) | g != w, na.rm = TRUE)
 
+# A short fingerprint of WHICH lines differ, not just how many. run_gate.R
+# matches an expected failure on the whole message, so a count alone let one
+# divergence be repaired and another introduced at the same size while the
+# gate stayed green. This changes whenever the differing lines do.
+#
+# A rolling 31-bit hash rather than a package: the multiply stays inside
+# double precision, and it only has to be stable and sensitive, not
+# cryptographic.
+diff_id <- function(g, w) {
+  idx <- which(is.na(g) | is.na(w) | g != w)
+  if (!length(idx)) return("--------")
+  txt <- paste(idx, ifelse(is.na(w[idx]), "", w[idx]),
+               ifelse(is.na(g[idx]), "", g[idx]), collapse = "\n")
+  h <- 0
+  for (b in utf8ToInt(txt)) h <- (h * 31 + b) %% 2147483647L
+  sprintf("%08x", h)
+}
+
 code_only <- function(lines) {
   # A trailing "--" or "#" is a comment only when it is outside quotes; an odd
   # number of quotes before it means the marker sits inside a string literal.
@@ -407,7 +426,7 @@ for (p in PHASES) {
       g <- c(got, rep(NA, n - length(got))); w <- c(want, rep(NA, n - length(want)))
       d <- which(is.na(g) | is.na(w) | g != w)[1]
       ok(FALSE, paste0(p$file, ": differs beyond the approved deviations in ",
-                       n_diff(g, w), " line(s), at ",
+                       n_diff(g, w), " line(s) [", diff_id(g, w), "], at ",
                        "source line ", p$from + d - 1,
                        "\n           source: ", if (is.na(w[d])) "<nothing>" else w[d],
                        "\n           ported: ", if (is.na(g[d])) "<nothing>" else g[d]))
@@ -421,7 +440,7 @@ for (p in PHASES) {
     g <- c(got, rep(NA, n - length(got))); w <- c(want, rep(NA, n - length(want)))
     d <- which(is.na(g) | is.na(w) | g != w)[1]
     ok(FALSE, paste0(p$file, ": differs from 02_lot1.R in ", n_diff(g, w),
-                     " line(s), at source line ",
+                     " line(s) [", diff_id(g, w), "], at source line ",
                      p$from + d - 1, "\n           source: ", w[d],
                      "\n           ported: ", g[d]))
   } else {
@@ -501,8 +520,8 @@ for (p in WHOLE) {
     n <- max(length(got), length(want))
     g <- c(got, rep(NA, n - length(got))); w <- c(want, rep(NA, n - length(want)))
     d <- which(is.na(g) | is.na(w) | g != w)[1]
-    ok(FALSE, paste0(p$file, ": differs from ", p$src, " in ", n_diff(g, w),
-                     " line(s), at line ", d,
+    ok(FALSE, paste0(p$file, ": differs from ", p$src, " in ", n_diff(g, w), " line(s) [",
+                     diff_id(g, w), "], at line ", d,
                      "\n           source: ", w[d], "\n           ported: ", g[d]))
   } else {
     ok(TRUE, paste0(p$file, ": same code as ", p$src, " (", length(want), " lines)"))
