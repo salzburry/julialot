@@ -639,7 +639,7 @@ LOT_QC_CHECKS <- list(
                     "them either. Zero means the list is clean; a count means the ",
                     "steroid rows are still in the production rollup, and the ",
                     "class filters are what the exclusion is resting on - correct ",
-                    "in every current step, but resting on twelve predicates ",
+                    "in every current step, but resting on sixteen predicates ",
                     "rather than on the input."),
        needs = "map",
        sql = function(t, p) counted(paste0("

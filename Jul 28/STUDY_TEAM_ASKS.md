@@ -12,7 +12,7 @@ trail to those, and the list of what is still owed.
 | 2 | MAP fold-in: a returning drug joins the line it returns in | 15 Aug, refined 20 Aug | **Built and applied.** `LOT_RULES.md` 4.8 |
 | 3 | Five-branch melphalan rule | 1 Aug | **Measured, not adopted** |
 | 4 | Discontinued 1L, then a 12-month baseline before 2L / 3L | 19 Aug | **Answered** |
-| 5 | What "melphalan mono" means when melphalan came with a steroid | 19 Aug | **Open** — needs the study team |
+| 5 | What "melphalan mono" means when melphalan came with a steroid | 19 Aug | **Answered.** `LOT_RULES.md` 2.1 |
 | 6 | A line advances on a NEW agent, so a drug the patient has had before should not start one | 30 Aug | **Built and applied.** `LOT_RULES.md` 4.3 |
 
 ---
@@ -243,15 +243,26 @@ production run.
 
 ---
 
-## 5. What "melphalan mono" means — OPEN
+## 5. What "melphalan mono" means — ANSWERED
 
 **Raised (19 Aug):** some patients recorded as melphalan monotherapy may be
-valid mono regimens, and some were melphalan with a steroid, which was dropped
-from the code list.
+valid mono regimens, and some were melphalan with a steroid.
 
-Steroids are not captured anywhere in this build, so a melphalan-plus-steroid
-line reads as melphalan alone in every count. Nothing decides this; it is stated
-wherever those counts are printed.
+**Answered by the algorithm, not by a decision waiting to be made.** Steroids
+are not oncology agents here: `LOT_RULES.md` 2.1 excludes them from every line
+decision — sixteen predicates across the steps and the two adopted rules — and
+the code-list load drops steroid rows from the rollup before any of them run.
+So melphalan given with a steroid **is** melphalan monotherapy, in the same way
+it is for every other regimen in the study. There is nothing here that reads
+one way for melphalan and another way elsewhere.
+
+**What is worth saying when those counts are quoted** is the reporting side,
+which is a read rather than a decision. The spec keeps steroid claims in the
+episode data even though no rule reads them, so whether a melphalan-mono line
+can be told apart from melphalan-plus-steroid depends on the production rollup:
+QC check `D3` counts episodes carrying a steroid, and it says which state the
+run is in. Zero and the two cannot be separated at all; a count and they can,
+by reading the episodes directly. Either way no line moves.
 
 ---
 

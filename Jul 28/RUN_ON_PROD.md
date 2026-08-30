@@ -225,5 +225,10 @@ written and the run reports how many failed.
 - `yield_to_sct` vs `as_asked`: what wins when a melphalan exposure and an AUTO
   code describe the same event. The request does not cover it, which is why
   both cells are built.
-- What "2L MELP mono" means: melphalan as the only induction-regimen agent
-  (what is built), or the only therapy exposure anywhere in the line.
+- What "2L MELP mono" means: melphalan as the only agent in the line's regimen
+  (what is built), or the only therapy exposure anywhere in the line. Steroids
+  are not the ambiguity — they are excluded from every line decision, so
+  melphalan with a steroid is melphalan mono here as it is everywhere else. The
+  gap has narrowed since the fold-in was adopted: a returning previous-line
+  drug now joins the regimen, so a line that spans two drugs no longer reads as
+  mono.
