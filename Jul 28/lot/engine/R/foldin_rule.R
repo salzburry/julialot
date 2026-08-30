@@ -9,12 +9,12 @@
 # THE COUNT, from their 20 Aug refinement, is what decides it. Look at what was
 # given between the drug's two doses:
 #
-#   one agent advanced the line   -> the return does NOT start a line. It is
+#   one agent opened a line       -> the return does NOT start a line. It is
 #                                    bundled into the line it returns in.
-#   two or more advanced it       -> the return DOES start a line. Treatment
+#   two or more different agents  -> the return DOES start a line. Treatment
 #                                    has moved on twice; the drug is not
 #                                    coming back to the line it left.
-#   none advanced it              -> not this rule's case. Nothing moved, so
+#   no agent did                  -> not this rule's case. Nothing moved, so
 #                                    the drug is returning to the line it left
 #                                    and the engine's own restart rule keeps it.
 #
@@ -90,11 +90,21 @@ foldin_on <- function(cfg) isTRUE(cfg$apply_map_foldin)
 # interval and count zero - which is the request's own example, and it must
 # fold.
 #
-# What counts as an advance is a LINE that opened in between. That is the
-# parenthetical "advancing the LOT" read directly: a line is what an advance
-# produces, whatever opened it. A transplant-started line counts, which the
-# request does not say in words - it says "agents" - and is the reading to put
-# back to the study team.
+# What is counted is DIFFERENT AGENTS that opened a line, which is the request
+# in its own words: "two or more different agents were introduced in between".
+# So a line is read through the drug that started it, and two things follow
+# that counting LINES did not do:
+#
+#   one agent that opens two lines is ONE agent. A drug opening a line,
+#   discontinuing, and opening another on a released restart (§4.3) used to
+#   count twice and refuse the fold. It counts once.
+#
+#   a line opened by a TRANSPLANT or CAR-T has no agent, so it counts nothing.
+#   A drug returning into an ALLO or CAR-T line therefore sees no advance at
+#   all, and the engine's ordinary restart rule keeps it.
+#
+# The second is a consequence of the wording rather than an aim of it, and it
+# is written down in STUDY_TEAM_ASKS.md as such.
 #
 # count = 0 is not the request's case at all: nothing advanced the line, so the
 # drug is returning to the line it left, and that is the engine's ordinary
@@ -104,7 +114,8 @@ foldin_on <- function(cfg) isTRUE(cfg$apply_map_foldin)
 # an advance too - lot_long does not hold it yet. The start-candidate statement
 # has no such line and passes NULL.
 foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
-                              n_induction = NULL, meds = "foldin_meds",
+                              n_induction = NULL, n_type = NULL,
+                              meds = "foldin_meds",
                               line_pred, melp_on = FALSE) {
   # A melphalan course the melphalan rule SUPPRESSED is not a line-defining
   # agent - that rule has already decided it opens nothing - so it must not
@@ -120,9 +131,18 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
           AND NOT EXISTS (SELECT 1 FROM melp_suppress_dates msd
                           WHERE msd.PATID = ms.PATID
                             AND msd.SUPPRESS_DT = ms.MAP_START_DT)"
-  this_line <- if (is.null(n_start)) "0" else glue(
-    "max(CASE WHEN {n_start} >  k.PREV_COURSE_DT
-                AND {n_start} <  k.MAP_START_DT THEN 1 ELSE 0 END)")
+  # The line being built is not in lot_long yet, so its own opener is unioned
+  # into the set below. The start-candidate statement has no such line.
+  this_line <- if (is.null(n_start) || is.null(n_type)) "" else paste0("
+      UNION
+      SELECT ", n_tbl, ".PATID, ", n_start, " AS OPEN_DT,
+             coalesce(ps.original_med, ms.MAP_MED_TYPE) AS OPENER
+      FROM ", n_tbl, "
+      INNER JOIN map_stacked ms
+        ON ms.PATID = ", n_tbl, ".PATID AND ms.MAP_START_DT = ", n_start, "
+       AND ms.MAP_MED_CLASS <> 'STEROID'
+      LEFT JOIN permissible_subs ps ON ps.substitute_med = ms.MAP_MED_TYPE
+      WHERE ", n_type, " = 'MED'")
   # paste0, not glue: glue trims a template's leading newline, and this
   # fragment splices straight after a table alias - without it the statement
   # read "FROM foldin_course_prev kINNER JOIN ...".
@@ -227,17 +247,38 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
                                        ORDER BY c.MAP_START_DT) AS PREV_COURSE_DT
       FROM foldin_course c
     ),
-    -- How many lines opened strictly between the two doses. A LEFT JOIN and a
-    -- count, not a correlated subquery: the translation has to survive Spark
-    -- and the harness alike.
+    -- The AGENT that opened each line. The request counts two or more
+    -- different AGENTS, not lines, so a line is read through the drug that
+    -- started it: the non-steroid medication dosed on its start date.
+    --
+    -- Two consequences of taking that wording literally, both intended:
+    -- a line opened by a transplant or CAR-T has no agent and contributes
+    -- nothing to the count, and one agent that opens two lines is still one
+    -- agent. A permissible substitute collapses to the drug it replaces -
+    -- §4.4 already says a substitution is not a change of agent.
+    foldin_openers AS (
+      SELECT DISTINCT l.PATID, l.LOT_START_DT AS OPEN_DT,
+             coalesce(ps.original_med, ms.MAP_MED_TYPE) AS OPENER
+      FROM lot_long l
+      INNER JOIN map_stacked ms
+        ON ms.PATID = l.PATID AND ms.MAP_START_DT = l.LOT_START_DT
+       AND ms.MAP_MED_CLASS <> 'STEROID'
+      LEFT JOIN permissible_subs ps ON ps.substitute_med = ms.MAP_MED_TYPE
+      WHERE l.LOT_START_TYPE = 'MED' AND {line_pred}{this_line}
+    ),
+    -- How many different agents opened a line strictly between the two doses.
+    -- A LEFT JOIN and a count, not a correlated subquery: the translation has
+    -- to survive Spark and the harness alike. count(DISTINCT) rather than
+    -- count(): the in-this-line join beside it multiplies rows, and distinct
+    -- is what the request asks for anyway.
     foldin_counted AS (
       SELECT k.PATID, k.AGENT, k.COURSE_START_DT, k.MAP_START_DT,
-             count(l.LOT_NUM) + {this_line} AS N_ADVANCES{between_sel}
+             count(DISTINCT fo.OPENER) AS N_ADVANCES{between_sel}
       FROM foldin_epi k{join_n}
-      LEFT JOIN lot_long l
-        ON l.PATID = k.PATID AND {line_pred}
-       AND l.LOT_START_DT >  k.PREV_COURSE_DT
-       AND l.LOT_START_DT <  k.MAP_START_DT{between_join}
+      LEFT JOIN foldin_openers fo
+        ON fo.PATID = k.PATID
+       AND fo.OPEN_DT >  k.PREV_COURSE_DT
+       AND fo.OPEN_DT <  k.MAP_START_DT{between_join}
       WHERE k.PREV_COURSE_DT IS NOT NULL
       GROUP BY k.PATID, k.AGENT, k.COURSE_START_DT, k.MAP_START_DT
     ),
@@ -276,6 +317,7 @@ foldin_lotn_ctes <- function(cfg, lot_num, induction_end = NULL) {
     n_start     = glue("lot{lot_num}_start.LOT{lot_num}_START_DT"),
     n_tbl       = glue("lot{lot_num}_start"),
     n_induction = induction_end,
+    n_type      = glue("lot{lot_num}_start.LOT{lot_num}_START_TYPE"),
     line_pred   = glue("l.LOT_NUM < {lot_num}"),
     melp_on     = melp_rule_on(cfg))
   paste0("\n", glue("

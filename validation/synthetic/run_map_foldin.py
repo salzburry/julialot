@@ -25,9 +25,9 @@ regimen window is PART of that line, not a reason to start the next one.
   F8  B returns in the gap between two
       episodes of 2L's own drug              -> it no longer breaks that
       drug's run-out chain; the line runs through
-  F9  B returns after a single-day ALLO 2L   -> the ALLO line is carried to
-      B's cover and ends there - a line with no regimen has no run-out of
-      its own, so the hold has to supply one rather than extend one
+  F9  B returns after a single-day ALLO 2L   -> NO fold. The request counts
+      AGENTS, and an ALLO line was opened by no agent, so nothing advanced
+      and the engine's own restart rule keeps the return
   F10 ...and after a CAR-T 2L with no
       consolidation drug                     -> the same
   F11 B returns with NO advance in between   -> count 0, not the request's
@@ -36,14 +36,17 @@ regimen window is PART of that line, not a reason to start the next one.
   F13 B returns with TWO advances in between -> count 2, starts a line
   F14 B's return has a follow-up episode     -> one course, one answer: the
       whole course folds, not only its first episode
-  F15 a PROCEDURE opens the line in between  -> it disqualifies the return the
-      same way a drug does
+  F15 a PROCEDURE opens the line in between  -> it is not an agent, so it does
+      not count. One agent (DARA) advanced the line, so the return folds -
+      into the CAR-T line, which is the line that contains it
   F16 the only procedure in between is a
       PLANNED TANDEM                          -> it continues the line and
       opens nothing, so it is no advance: the return still folds
   F17 the only procedure in between is inside
       the line's own window                   -> it belongs to the line, so it
       is no advance either
+  F18 ONE agent opens TWO lines in between   -> one agent, not two: DARA opens
+      2L, discontinues, and opens 3L on a released restart. The return folds
 """
 import os, sys, tempfile, subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -118,6 +121,13 @@ PATS = [
          sct_auto=[IX + 210, IX + 350]),
     dict(P('F17', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 450, 510)]),
          sct_auto=[IX + 210]),
+    # F18: the same agent opens two lines. DARA opens 2L on day 200, its cover
+    # ends day 260, and a restart on day 400 - past the discontinuation gap -
+    # opens 3L under the returning-drug release (LOT_RULES.md 4.3). Counting
+    # LINES that is two advances and B is refused a fold; counting different
+    # AGENTS, as the request words it, DARA is one agent and B folds.
+    P('F18', L1 + [('DARA', 'MAB', 200, 260), ('DARA', 'MAB', 400, 600),
+                   ('BORT', 'PI', 450, 510)]),
 ]
 
 
@@ -200,11 +210,19 @@ def main():
        "F14: the whole returning course folds, not only its first episode")
     ok(n(fold, 'F14') == 2 and fold['F14'][1][2] == rs.d(IX + 600),
        "F14: ...and one line owns it, so no line opens on the follow-up")
-    ok(n(ref, 'F15') == 4 and n(fold, 'F15') == 4,
-       "F15: a CAR-T line in between stops LOT2 claiming the return")
-    ok(n(fold, 'F15') == 4 and fold['F15'][1][2] == rs.d(IX + 250)
+    ok(n(ref, 'F15') == 4 and n(fold, 'F15') == 3,
+       "F15: the CAR-T is no agent, so one agent advanced and the return folds")
+    ok(n(fold, 'F15') == 3 and fold['F15'][1][2] == rs.d(IX + 250)
        and fold['F15'][1][3] == 'DISCONTINUATION',
-       "F15: ...so LOT2 keeps its own discontinuation")
+       "F15: ...LOT2 keeps its own discontinuation, and the CAR-T line takes it")
+    ok(n(fold, 'F15') == 3 and fold['F15'][2][2] == rs.d(IX + 480),
+       "F15: ...carried to the return's cover, day 480")
+
+    ok(n(ref, 'F18') == 4 and n(fold, 'F18') == 3,
+       "F18 contract: one agent opening two lines refuses the fold")
+    ok(n(fold, 'F18') == 3 and fold['F18'][2][2] == rs.d(IX + 600)
+       and fold['F18'][2][3] == 'DISCONTINUATION',
+       "F18 fold-in: DARA is one agent, so the return folds into 3L")
 
     for pid, what in (('F17', "an AUTO inside the line's own window"),
                       ('F16', "...and its planned tandem partner")):
@@ -221,14 +239,13 @@ def main():
 
     ok(n(ref, 'F9') == 3 and ref['F9'][2][1] == rs.d(IX + 300),
        "F9 contract: the return after the ALLO line starts a line of its own")
-    ok(n(fold, 'F9') == 2 and fold['F9'][1][2] == rs.d(IX + 360)
-       and fold['F9'][1][3] == 'DISCONTINUATION',
-       "F9 fold-in: the ALLO line is carried to the return's cover, day 360")
+    ok(fold.get('F9') == ref.get('F9'),
+       "F9 fold-in: an ALLO line was opened by no AGENT, so nothing counts "
+       "and the return keeps its own line")
     ok(n(ref, 'F10') == 3 and ref['F10'][2][1] == rs.d(IX + 300),
        "F10 contract: the same after a drugless CAR-T line")
-    ok(n(fold, 'F10') == 2 and fold['F10'][1][2] == rs.d(IX + 360)
-       and fold['F10'][1][3] == 'DISCONTINUATION',
-       "F10 fold-in: the drugless CAR-T line is carried to day 360 too")
+    ok(fold.get('F10') == ref.get('F10'),
+       "F10 fold-in: the same after a drugless CAR-T line")
 
     print()
     if fails:

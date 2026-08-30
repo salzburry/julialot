@@ -38,7 +38,7 @@ renamed vignette, or one no rule cites, fails
 | §4.5 | Same-day starts break `SCT_ALLO > CART > SCT_AUTO > MED` | — | |
 | §4.6 | An allogeneic line spans one day and carries no regimen | `allo_lot_span` | |
 | §4.7 | A short melphalan course outside induction does not start a line | `apply_melp_rule`, `melp_simple_course_days` | |
-| §4.8 | A returning drug joins the line it returns in, after one advance | `apply_map_foldin` | |
+| §4.8 | A returning drug joins the line it returns in, after one agent | `apply_map_foldin` | |
 | §5.1 | A 90-day gap is running out | `map_discon_gap_days` | |
 | §5.2 | A run-out chains forward until the drug is discontinued | `map_discon_gap_days` | |
 | §5.3 | A run-out is a discontinuation only once confirmed | `lot_discon_confirm_days` | |
@@ -254,16 +254,18 @@ drug. Whether 90 is the right threshold is Q2 on the scenario workbook's Open
 questions sheet.
 
 The release is narrowed by §4.8: a drug of an **earlier** line, returning after
-exactly one advance, joins the line it returns in rather than opening one.
+exactly one agent advanced the line, joins the line it returns in rather than
+opening one.
 
-### 4.8 A returning drug joins the line it returns in, after one advance
+### 4.8 A returning drug joins the line it returns in, after one agent
 
 Worked example: `returning_drug_one_advance` / `returning_drug_two_advances`.
 
 A drug from an earlier line that comes back is read by what happened between
-its two doses. Count the lines that opened in that interval:
+its two doses. Count the **different agents** that opened a line in that
+interval:
 
-| lines opened in between | what the return does |
+| different agents in between | what the return does |
 |---|---|
 | one | joins the line it returns in — no new line |
 | two or more | opens a line, as any added agent would |
@@ -273,15 +275,25 @@ The interval is measured **dose to dose**, not from where the drug stopped. A
 drug's cover often runs past the line it belonged to, so measuring from the stop
 would put the advance that ended that line before the interval and count none.
 
-An advance is a **line that opened**, whatever opened it — a transplant-started
-line counts.
+An advance is an **agent**, not a line. A line is read through the drug it
+opened on, and two things follow:
+
+- **One agent that opens two lines is one agent.** A drug that opens a line,
+  discontinues, and opens another on a released restart (§4.3) counts once —
+  `returning_drug_one_agent_twice`.
+- **A transplant or CAR-T is not an agent**, so a line it opened counts
+  nothing. A drug returning into an ALLO or CAR-T line therefore sees no
+  advance at all, and §4.3's release keeps it.
+
+A permissible substitute is the same agent as the drug it replaces (§4.4), so a
+biosimilar swap is not a second agent.
 
 A return only joins the line that actually contains it. While lines are built in
 order the count is relative to the line being built, so a return with another
 line-defining agent — a drug **or a procedure** — before it belongs to a later
-line, and this one does not claim it. A procedure counts here on the same test
-§4.7 uses: past the line's own induction window and not a planned tandem
-partner. One the line owns opens nothing, so it is no advance.
+line, and this one does not claim it. That ownership test is separate from the
+count and procedures do count in it, on the same test §4.7 uses: past the line's
+own induction window and not a planned tandem partner.
 
 **One course, one answer.** Episodes of the same agent with no discontinuation
 between them (`map_discon_gap_days`) are one course, and they fold together or

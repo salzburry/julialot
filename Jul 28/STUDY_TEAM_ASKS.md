@@ -77,37 +77,42 @@ a new drug C. If drug B comes back after line 2's induction window, B should be
 `CONTRACT` and the rule is stated in `lot/LOT_RULES.md` 4.8, so the study's
 lines carry it.
 
-**How the count works.** For each return, the engine counts the lines that
-opened between that drug's two doses. One, and the return folds. Two or more,
-and it starts a line, as it does today. Zero is not the note's case at all —
-nothing advanced, so the drug is returning to the line it left and the engine's
-ordinary restart rule keeps it.
+**How the count works.** For each return, the engine counts the **different
+agents** that opened a line between that drug's two doses. One, and the return
+folds. Two or more, and it starts a line, as it does today. Zero is not the
+note's case at all — nothing advanced, so the drug is returning to the line it
+left and the engine's ordinary restart rule keeps it.
 
-Three things about that count, each a reading to confirm:
+Agents, not lines, because that is the note's own word. A line is read through
+the drug it opened on, and two things follow. Both were checked on planted
+patients before the change and both are intended:
 
-- **The interval is dose to dose**, not stop to return. A drug's cover often
-  runs past the line it belonged to, so measuring from where it stopped would
-  put the advance that ended that line *before* the interval and count zero —
-  and the note's own example must fold.
-- **An advance is a line that opened**, whatever opened it. That reads the
-  note's "advancing the LOT" directly. The note says "two or more different
-  **agents**", and the two readings part in two places, both checked on planted
-  patients:
-  - a transplant-started line counts as an advance here; on "agents" it would
-    not. A transplant the line itself owns — inside its window, or a planned
-    tandem partner — is not an advance either way.
-  - one agent that opens two lines counts as two advances here; on "different
-    agents" it counts as one. Drug D opens line 2, stops, restarts past the
-    discontinuation gap and opens line 3: a drug returning from line 1 is
-    refused a fold today, and would fold on the note's wording.
+- **One agent that opens two lines is one agent.** Drug D opens line 2, stops,
+  restarts past the discontinuation gap and opens line 3. Counting lines that
+  was two advances and a drug returning from line 1 was refused a fold.
+  Counting agents it is one, and the drug folds.
+- **A transplant or CAR-T is not an agent**, so a line it opened counts
+  nothing. A drug returning into an ALLO or CAR-T line now sees no advance at
+  all and keeps its own line, where before it folded. And where a CAR-T opened
+  a line in between but only one drug did, the return now folds.
 
-  Neither reading is being changed while it is open.
+The second is a consequence of the wording rather than an aim of it. It is the
+one thing here worth putting back to the study team in words: *should a
+transplant count as an advance?* The build says no, because the note says
+agents.
 
-- **The return must be in the line that claims it.** While lines are built in
-  order the count is line-relative — at the second line only one line has
-  opened, at the third both have — so without this a single return folded into
-  one line and started another. A return with another line-defining agent
-  before it belongs to a later line.
+**The interval is dose to dose**, not stop to return. A drug's cover often runs
+past the line it belonged to, so measuring from where it stopped would put the
+advance that ended that line *before* the interval and count zero — and the
+note's own example must fold.
+
+**The return must be in the line that claims it.** While lines are built in
+order the count is line-relative — at the second line only one line has opened,
+at the third both have — so without this a single return folded into one line
+and started another. That ownership test is separate from the count, and
+procedures do count in it: a transplant that breaks the line, past its
+induction window and not a planned tandem partner, means the return belongs to
+a later line.
 
 **A prior line with two agents.** Each returning agent is judged on its own
 interval and its own count, and a returning agent is not an advance for the

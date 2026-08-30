@@ -92,9 +92,18 @@ cat("\n-- the count: one advance folds, two or more do not --\n")
 # the harness named in the repository README.
 ok(has(s, "foldin_folded AS (") && has(s, "WHERE N_ADVANCES = 1"),
    "exactly one advance between the two doses folds, and nothing else does")
-ok(has(s, "count(l.LOT_NUM)") && has(s, "l.LOT_START_DT >  k.PREV_COURSE_DT") &&
-     has(s, "l.LOT_START_DT <  k.MAP_START_DT"),
-   "...counted as the lines that opened between the drug's two doses")
+ok(has(s, "count(DISTINCT fo.OPENER)") &&
+     has(s, "fo.OPEN_DT >  k.PREV_COURSE_DT") &&
+     has(s, "fo.OPEN_DT <  k.MAP_START_DT"),
+   "...counted as the different AGENTS that opened a line in between")
+# The request says AGENTS, so a line is read through the drug that started it
+# and a transplant-started line counts nothing. Both halves are pinned: the
+# MED-only filter, and the substitute collapse that keeps a biosimilar swap
+# from reading as a second agent.
+ok(has(s, "foldin_openers AS (") && has(s, "l.LOT_START_TYPE = 'MED'"),
+   "an agent is the drug a MED-started line opened on - a procedure is not one")
+ok(has(s, "coalesce(ps.original_med, ms.MAP_MED_TYPE) AS OPENER"),
+   "...and a permissible substitute is the same agent as the drug it replaces")
 ok(has(s, "lag(c.MAP_START_DT) OVER (PARTITION BY c.PATID, c.AGENT"),
    "the interval is dose to dose, and a substitute shares the agent's doses")
 # A course carries the answer to its own later episodes. Judged one episode at
