@@ -243,7 +243,7 @@ VIGNETTES <- list(
 
   list(id = "melp_short_course", title = "Brief melphalan course outside induction",
        param = "melp_simple_course_days", pair = "within", confidence = "to_confirm",
-       where = "lot/engine/R/melp_rule.R:449 - melp_suppress, SHORT = 1 AND CONFIRMED = 0",
+       where = "lot/engine/R/melp_rule.R:469 - melp_suppress, SHORT = 1 AND CONFIRMED = 0",
        events = function(p) rbind(
          ev(0,   "MED", "1L regimen starts"),
          ev(100, "MED", "one melphalan administration, no other agent with it"),
@@ -260,7 +260,7 @@ VIGNETTES <- list(
 
   list(id = "melp_long_course", title = "Melphalan course past the short cap",
        param = "melp_simple_course_days", pair = "beyond", confidence = "to_confirm",
-       where = "lot/engine/R/melp_rule.R:434 - datediff(COURSE_END_DT, EXPO_DT) + 1 <= cap",
+       where = "lot/engine/R/melp_rule.R:454 - datediff(COURSE_END_DT, EXPO_DT) + 1 <= cap",
        events = function(p) rbind(
          ev(0,   "MED", "1L regimen starts"),
          ev(100, "MED", "melphalan starts"),
@@ -274,7 +274,7 @@ VIGNETTES <- list(
 
   list(id = "melp_short_course_confirmed", title = "A new agent inside a brief melphalan course",
        param = NA_character_, confidence = "to_confirm",
-       where = "lot/engine/R/melp_rule.R:465 - melp_inject, CONFIRMED = 1, at EXPO_DT",
+       where = "lot/engine/R/melp_rule.R:485 - melp_inject, CONFIRMED = 1, at EXPO_DT",
        events = function(p) rbind(
          ev(0,   "MED", "1L regimen starts"),
          ev(100, "MED", "melphalan starts; its cover runs to day 127"),

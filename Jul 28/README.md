@@ -102,6 +102,7 @@ the NDMM cohort, and `lot/LOT_RULES.md` covers the lines.
 | lines of therapy | `lot/LOT_RULES.md`, and the scenario workbook's Open questions sheet |
 | outcomes | `analysis/FILES.md` - the `STUDY_END` censoring rule for TTD, the fifth attrition category, both denominators |
 | the melphalan rule the build applies | `lot/LOT_RULES.md` 4.7. How it was chosen, and the five-branch rule that was not adopted, are in `exploration/FILES.md` |
+| what the study team asked for, and what is still owed | `STUDY_TEAM_ASKS.md` |
 
 Where one of those documents and this table disagree, the document is the record.
 
