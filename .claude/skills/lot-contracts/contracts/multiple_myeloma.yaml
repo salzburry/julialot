@@ -62,18 +62,28 @@ lines:
 
 advancement:
   new_agent: true
-  # A re-challenge of the line's OWN regimen never advances the line: a drug
-  # the patient has had before is not a new agent, whatever the gap, and the
-  # line runs over the break rather than a second line opening on the return.
+  # A re-challenge of the line's OWN regimen never advances the line: a drug of
+  # the PREVIOUS regimen is not a new agent, whatever the gap, and the line
+  # runs over the break rather than a second line opening on the return.
   # Adopted 2026-08-30. Before that the engine released the drug after
   # lines.discon_gap_days and this axis and the engine disagreed.
+  #
+  # The previous regimen, not everything the patient has ever had: a drug last
+  # given two or more lines back is outside this axis and opens a line like any
+  # other agent. The same scope bounds prior_line_agent_return below and the
+  # brief_course rule's test for a new agent - one meaning of "new" in all
+  # three. Narrowed 2026-08-30; reading a wider set in one of them made a drug
+  # too old to confirm a brief course and new enough to start a line at once.
   same_regimen_gap_days: none
-  # A prior line's agent returning after the current line's regimen window:
+  # A prior line's agent returning after the current line's regimen window.
+  # The IMMEDIATELY previous line only:
   # new_line = it ends the line and starts the next (the study's algorithm);
   # joins_line = it folds into the line it returns in (the fold-in mode).
   # one_advance_joins = the return joins the line it returns in when exactly
   # one agent advanced the line between that drug's two doses; two or more and
-  # it starts a line, as new_line always does.
+  # it starts a line, as new_line always does. Scoped to the previous line the
+  # count can only be nought or one, so the two-or-more branch states the rule
+  # the study team asked for without being reachable - see STUDY_TEAM_ASKS.md.
   prior_line_agent_return: one_advance_joins
   # A brief course of one named agent, outside the line's regimen window, does
   # not advance the line on its own - the line is carried to the end of that

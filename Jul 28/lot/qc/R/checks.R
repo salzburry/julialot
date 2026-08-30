@@ -616,12 +616,12 @@ LOT_QC_CHECKS <- list(
                     "reading LOT_BASE_MEDS alone dropped LEN and reported no tie ",
                     "at all. Both errors ran in the same direction as each other ",
                     "being invisible: one hid a tie, the other invented one. ",
-                    "One eligibility rule is still missing, and saying so is ",
-                    "cheaper than half-implementing it: a permissible substitute ",
-                    "of a regimen drug is excluded by the engine and is counted ",
-                    "here, because permissible_subs is not one of the tables this ",
-                    "package binds. Info severity, so the number informs and ",
-                    "never gates."),
+                    "One eligibility rule is still missing: a permissible ",
+                    "substitute of a regimen drug is excluded by the engine and ",
+                    "is counted here. The pairs ARE bound now - C1 reads them - ",
+                    "so this is a gap in C3 rather than a missing table, and it ",
+                    "makes the count an upper bound. Info severity, so the ",
+                    "number informs and never gates."),
        needs = c("final", "map"),
        sql = function(t, p) counted(paste0("
     WITH add_lines AS (

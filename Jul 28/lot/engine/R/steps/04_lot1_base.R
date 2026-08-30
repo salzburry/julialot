@@ -110,6 +110,7 @@ phase_lot1_base <- function(con, ctx) {
     -- end.
     discon_per_med AS (
 {discon_per_med_sql('lot1_regimen_cutoff', 'LOT1_START_DT', end_col = 'REGIMEN_CUTOFF_DT',
+                    boundary_gate = melp_boundary_gate(cfg),
                     own_gap_breaks = own_gap_breaks_chain(cfg))}
     ),
     -- The regimen has run out when its LAST base agent has.

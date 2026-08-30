@@ -166,9 +166,23 @@ lits <- unlist(regmatches(step_src, gregexpr("lot_out\\((\'|\")[A-Z_0-9]+(\'|\")
                                              step_src, perl = TRUE)))
 # Only entries that also name a source view are tables; the bare name = "..."
 # form is also used for QC check labels, which are not outputs.
+#
+# TWO forms, and both have to be read. The SCT tables are declared as
+# list(view = ..., name = ...) entries, one per line. A materialize() call is
+# the other, and it wraps wherever it fits - so reading `view =` and `name =`
+# off the SAME line skipped every call that did not keep them together, which
+# is how PERMISSIBLE_SUBS came to be written by a step, absent from
+# LOT_TABLES, and still pass this check.
 vlines <- grep("view = ", step_src, fixed = TRUE, value = TRUE)
 named <- unlist(regmatches(vlines, gregexpr("(?<=name = \")[A-Z_0-9]{4,}(?=\")",
                                             vlines, perl = TRUE)))
+mat_chunks <- strsplit(paste(step_src, collapse = "\n"), "materialize(",
+                       fixed = TRUE)[[1]][-1]
+mat_chunks <- mat_chunks[grepl("view = ", mat_chunks, fixed = TRUE)]
+named <- c(named, unlist(lapply(mat_chunks, function(ch) {
+  m <- regmatches(ch, regexpr("(?<=name = \")[A-Z_0-9]{4,}(?=\")", ch, perl = TRUE))
+  if (length(m)) m else character(0)
+})))
 OUTPUTS <- unique(c(gsub("lot_out\\(|\'|\"|\\)", "", lits), named))
 ok(length(OUTPUTS) >= 6,
    paste0("found ", length(OUTPUTS), " named outputs in the steps: ",
@@ -586,6 +600,12 @@ ok(grepl("b.original_med = a.substitute_med", cd, fixed = TRUE),
    "a drug that is both a substitute and an original is detected")
 ok("subs_chain" %in% FATAL_CHECKS,
    "...and is fatal, so no chain reaches a one-hop expansion")
+# The star is the same problem without a chain: two substitutes of one drug
+# are one agent through it, and neither reaches the other in one hop.
+ok(grepl("HAVING count(DISTINCT substitute_med) > 1", cd, fixed = TRUE),
+   "a drug with more than one permissible substitute is detected")
+ok("subs_star" %in% FATAL_CHECKS,
+   "...and is fatal, so siblings cannot open a line against each other")
 mmx <- paste(readLines(file.path(ROOT, "R", "steps", "03_mma_map.R"), warn = FALSE),
              collapse = "\n")
 ok(grepl("c.CL_MED_CLASS AS MED_CLASS", mmx, fixed = TRUE) &&
@@ -630,6 +650,11 @@ mk_db_q <- function(problem) function(con, sql) {
       data.frame(med = "B", stands_in_for = "A", stood_in_for_by = "C") else
       data.frame(med = character(0), stands_in_for = character(0),
                  stood_in_for_by = character(0)))
+  if (grepl("HAVING count(DISTINCT substitute_med) > 1", sql, fixed = TRUE))
+    return(if (problem == "subs_star")
+      data.frame(original_med = "A", n_substitutes = 2, substitutes = "B, C") else
+      data.frame(original_med = character(0), n_substitutes = integer(0),
+                 substitutes = character(0)))
   if (grepl("AS n_defs", sql))
     return(if (problem == "rollup_defs") data.frame(CL_MED_ABBR = "LEN", n_defs = 2)
            else data.frame(CL_MED_ABBR = character(0), n_defs = integer(0)))
@@ -693,7 +718,7 @@ ok(!inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error")
    "a consistent pair of code lists runs")
 for (prob in c("orphan", "uncoded", "type", "class", "code_to_med", "bad_ndc",
                "rollup_defs", "blank_keys", "subs_substitute", "subs_original",
-               "subs_chain",
+               "subs_chain", "subs_star",
                "ndc_shape", "ndc_short", "class_agreement")) {
   assign("db_q", mk_db_q(prob), envir = ce)
   ok(inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),

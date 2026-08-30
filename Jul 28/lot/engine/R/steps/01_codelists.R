@@ -337,6 +337,11 @@ phase_codelists <- function(con) {
   # components everywhere, the topology is held flat here, where saying so is
   # cheap and the failure is one clear message instead of a line count nobody
   # can explain.
+  #
+  # The star A -> B, A -> C is the same problem without a chain, and it is
+  # caught below: B and C are one agent through A, and expanding from B
+  # reaches A but never its sibling C, so a later C opened a line the pair
+  # should never have allowed.
   subs_chain <- db_q(con, "
     SELECT a.substitute_med AS med,
            concat_ws(', ', collect_set(a.original_med))   AS stands_in_for,
@@ -354,6 +359,30 @@ phase_codelists <- function(con) {
       stringsAsFactors = FALSE))
   } else {
     log_msg("  OK: No substitution chains - every pair stands on its own.")
+  }
+
+  # One original with SEVERAL substitutes. The siblings are one agent through
+  # the drug they replace, but a one-hop expansion from either reaches only
+  # that drug, never the other sibling - so the line's regimen naming one of
+  # them did not exclude the other, and the sibling opened a line of its own.
+  # Held to one substitute per original for the same reason chains are held
+  # flat: the alternative is canonicalizing whole components in five places.
+  subs_star <- db_q(con, "
+    SELECT original_med, count(DISTINCT substitute_med) AS n_substitutes,
+           concat_ws(', ', collect_set(substitute_med)) AS substitutes
+    FROM permissible_subs
+    GROUP BY original_med
+    HAVING count(DISTINCT substitute_med) > 1
+  ")
+  if (nrow(subs_star) > 0) {
+    log_msg("  Drug with more than one permissible substitute:")
+    print(subs_star)
+    problems <- rbind(problems, data.frame(check = "subs_star", detail = paste0(
+      nrow(subs_star), " drug(s) with more than one substitute: ",
+      paste(subs_star$original_med, collapse = ", ")),
+      stringsAsFactors = FALSE))
+  } else {
+    log_msg("  OK: Each drug has at most one permissible substitute.")
   }
 
   # Claims take MED_CLASS from the code list. The LOT1_CLASS_<x> columns are

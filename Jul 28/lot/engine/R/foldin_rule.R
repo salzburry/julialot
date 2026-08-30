@@ -137,6 +137,11 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
   # spliced BEFORE these, so this side may consult them; the reverse would
   # need melphalan to consult the fold, and each rule reading the other has no
   # order that works. What remains is written down in STUDY_TEAM_ASKS.md.
+  # The same exclusion, in the WHERE of foldin_agent rather than a join.
+  not_supp_ms <- if (!melp_on) "" else "
+      WHERE NOT EXISTS (SELECT 1 FROM melp_suppress_dates msd
+                        WHERE msd.PATID = ms.PATID
+                          AND msd.SUPPRESS_DT = ms.MAP_START_DT)"
   not_supp <- if (!melp_on) "" else "
           AND NOT EXISTS (SELECT 1 FROM melp_suppress_dates msd
                           WHERE msd.PATID = ms.PATID
@@ -224,6 +229,15 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
       INNER JOIN {meds} fm
         ON fm.PATID = ms.PATID AND fm.MED_ABBR = ms.MAP_MED_TYPE
       LEFT JOIN permissible_subs ps ON ps.substitute_med = ms.MAP_MED_TYPE
+      -- A melphalan course the melphalan rule SUPPRESSED is not here at all.
+      -- It decides nothing, so it must neither fold itself nor stand as the
+      -- PREVIOUS dose of a later course - and standing as one is not a
+      -- harmless omission: the interval is measured dose to dose, so an
+      -- intervening suppressed course reset it and the later course counted
+      -- the advances since ITSELF rather than since the drug's real last
+      -- dose. A long course that would otherwise have folded then did not,
+      -- and the line reported one drug fewer for a course that decided
+      -- nothing.{not_supp_ms}
       GROUP BY ms.PATID, ms.MAP_MED_TYPE, ms.MAP_START_DT
     ),
     -- A COURSE is episodes of one agent with no discontinuation between them -

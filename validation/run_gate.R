@@ -63,7 +63,7 @@ EXPECTED_FAILURES <- list(
     "05_sct.R: differs beyond the approved deviations in 11 line(s) [6457f58f]",
     # lot1_regimen_cutoff, and the regimen window and the per-drug
     # episode scan both bounded by it.
-    "04_lot1_base.R: differs from 02_lot1.R in 140 line(s) [7242e66f]",
+    "04_lot1_base.R: differs from 02_lot1.R in 137 line(s) [14525203]",
     # LOT1_AUTO_HOLD_DT, and a tandem that needs a clear gap between its two
     # transplants.
     "05b_lot1_sct.R: differs beyond the approved deviations in 176 line(s) [524fd363]",
@@ -75,7 +75,7 @@ EXPECTED_FAILURES <- list(
     # SCT_AUTO_CONT and end_natural at LOT2-5, LOT{n}_AUTO_HOLD_DT, auto_cand
     # reading the previous line's own window, the regimen cutoff, and the tandem
     # gap. Re-pinned deliberately, which is what this list is for.
-    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 959 line(s) [619dd7c0]")
+    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 958 line(s) [364e0e9a]")
 )
 
 # How one suite's output is read. Its own suite is validation/hygiene/

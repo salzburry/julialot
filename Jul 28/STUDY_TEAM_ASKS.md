@@ -56,9 +56,11 @@ A transplant breaks the line only when the engine's own rules say it does, and
 those rules differ by kind. An **autologous** transplant breaks it only past the
 line's induction window and only when it is not the second of a planned tandem
 pair — inside the window, or as a tandem partner, the line owns it and it
-breaks nothing. An **allogeneic** transplant or a **CAR-T** breaks the line
-wherever it falls after the line's start, with no window test at all. Both
-rules read the same helper, so neither can drift from the other.
+breaks nothing. An **allogeneic** transplant breaks the line wherever it falls
+after the line's start, with no window test at all. A **CAR-T** does the same
+everywhere except line 1's own induction window, where the CAR-T rule makes it
+part of line 1 and it breaks nothing. Both rules read the same helper, so
+neither can drift from the other.
 
 ---
 
@@ -166,6 +168,26 @@ is the note's own example with both drugs coming back rather than one.
   the 15 Aug note describes — A + B in one line, C advances it, B comes back.
   A drug from further back is out of scope and the engine's ordinary rules keep
   it.
+
+  **The two readings give the same lines.** Widening the fold set back to every
+  earlier line was run against every planted patient and changed nothing at
+  all - not a date, not a count, not a line. That is not luck, and it is worth
+  stating as the reason the question can be closed:
+
+  - A drug last dosed **one** line back folds under either reading. Wide: one
+    line opened in between, so the count is one. Narrow: it is in scope, and
+    one advance folds it.
+  - A drug last dosed **two or more** lines back opens a line under either.
+    Wide: two or more lines opened in between, and consecutive lines cannot
+    share an opener - the agent that opened a line is in that line's regimen,
+    and a drug of the previous regimen may not open the next one - so the
+    distinct-agent count is at least two, which the note says starts a line.
+    Narrow: the drug is out of scope, so it is simply a new agent, and a new
+    agent starts a line.
+
+  So the **"two or more"** clause never fires as a code path under the narrow
+  scope, but the outcome it prescribes is delivered by ordinary scoping in
+  every case. The clause is unreachable; the rule it states is not unimplemented.
 
   One thing follows that is worth the study team knowing: the note's **"two or
   more"** clause can then never fire. A drug is in a line's regimen only
