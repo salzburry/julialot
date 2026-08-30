@@ -304,7 +304,13 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
     ),
     melp_judged AS (
       SELECT mc.PATID, mc.EXPO_DT,
-             CASE WHEN mc.EXPO_DT <= {induction_end} THEN 1 ELSE 0 END AS INSIDE,
+             -- Outside ANY induction window, in the ask's own words. A
+             -- course that started BEFORE this line is not inside this line's
+             -- window - it is outside it, like any other date before it. It
+             -- used to be dropped from judging instead, and a course a
+             -- transplant split then reached the next line unjudged.
+             CASE WHEN mc.EXPO_DT >= {line_tbl}.{start_col}
+                   AND mc.EXPO_DT <= {induction_end} THEN 1 ELSE 0 END AS INSIDE,
              CASE WHEN datediff(mc.COURSE_END_DT, mc.EXPO_DT) + 1
                        <= {cfg$melp_simple_course_days} THEN 1 ELSE 0 END AS SHORT,
              CASE WHEN cf.PATID IS NOT NULL THEN 1 ELSE 0 END AS CONFIRMED
@@ -314,8 +320,12 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
       INNER JOIN {line_tbl} ON {line_tbl}.PATID = mc.PATID
       LEFT JOIN melp_taken tk
         ON tk.PATID = mc.PATID AND tk.EXPO_DT = mc.EXPO_DT
-      WHERE mc.EXPO_DT >= {line_tbl}.{start_col}
-        AND mc.EXPO_DT <= {span_end}
+      -- No lower bound. Which line OWNS a course is melp_taken's question -
+      -- another line-defining agent, or a breaking transplant, arriving
+      -- first - and it was asked twice: once there, and again here as a
+      -- cruder date test. Between the two a course split by a transplant fell
+      -- through, judged by neither line.
+      WHERE mc.EXPO_DT <= {span_end}
         AND tk.PATID IS NULL
     ),
     -- A short unconfirmed course outside induction neither ends the line nor
@@ -355,8 +365,12 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
       INNER JOIN melp_course c
         ON c.PATID = s.PATID AND c.EXPO_DT = s.SUPPRESS_DT
       INNER JOIN {line_tbl} ON {line_tbl}.PATID = s.PATID
-      WHERE s.SUPPRESS_DT >= {line_tbl}.{start_col}
-        AND s.SUPPRESS_DT <= {span_end}
+      -- Bounded the same way melp_judged is, because suppressing and owning
+      -- are two halves of one statement: a course this line refused a
+      -- boundary to is a course this line has to hold. Carrying the lower
+      -- bound here and not there suppressed a transplant-split course
+      -- without giving it to anyone, and its later dose sat in no line.
+      WHERE s.SUPPRESS_DT <= {span_end}
       GROUP BY s.PATID
     ),"))
 }

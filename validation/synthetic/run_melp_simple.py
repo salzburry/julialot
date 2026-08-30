@@ -127,6 +127,24 @@ PATS = [
          sct_ac=[('CART', IX + 200)]),
     P('SJ0', [('LEN', 'IMID', 0, 600), ('MELP', 'ALKY', 500, 527)]),
     P('SJ', [('LEN', 'IMID', 0, 600), ('MELP', 'ALKY', 500, 527)]),
+    # SP*: one course, with a transplant in three positions around it. The two
+    # doses are closer together than melp_exposure_days, so they are ONE
+    # course, and the ask is that a course of 28 days or fewer outside ANY
+    # induction window does not advance the line - in all three.
+    #
+    # SPin is the one that was wrong. The course starts before the transplant
+    # line begins, so that line dropped it from judging altogether, and its
+    # later dose reached the engine as an ordinary added medication and opened
+    # a line of its own. SPbefore and SPafter always worked; they are here so
+    # the three read as one rule rather than a fix bolted onto one shape.
+    P('SPbefore', [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 90, 90),
+                   ('MELP', 'ALKY', 110, 110)], ac=[('ALLO', 85)]),
+    P('SPin',     [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 90, 90),
+                   ('MELP', 'ALKY', 110, 110)], ac=[('ALLO', 100)]),
+    P('SPafter',  [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 90, 90),
+                   ('MELP', 'ALKY', 110, 110)], ac=[('ALLO', 120)]),
+    P('SPnone',   [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 90, 90),
+                   ('MELP', 'ALKY', 110, 110)]),
 ]
 for _p in PATS:
     if _p['pid'] == 'SJ0':
@@ -237,6 +255,23 @@ def main():
     ok(len(smp['SG2']) == 2 and smp['SG2'][1][3] == 'STUDY_END',
        "SG2: the same at a later line")
 
+    # SP*: a short course never advances the line, wherever a transplant sits.
+    # Checked as OWNERSHIP, not line count: what went wrong was a melphalan
+    # dose starting a line, and what went wrong when that was fixed was the
+    # same dose belonging to nothing.
+    for pid in ('SPnone', 'SPbefore', 'SPin', 'SPafter'):
+        starts = [str(l[1])[:10] for l in smp[pid]]
+        ok(rs.d(IX + 110) not in starts and rs.d(IX + 90) not in starts,
+           f"{pid}: no line starts on a melphalan dose - a short course "
+           f"outside any induction window does not advance the line")
+        # ...and the other half of the same statement. Refusing a course a
+        # boundary without giving it to a line leaves the treatment nowhere,
+        # which is what removing the line-opening alone did to SPin.
+        owned = [d for d in (90, 110)
+                 if not any(l[1] <= rs.d(IX + d) <= l[2] for l in smp[pid])]
+        ok(not owned,
+           f"{pid}: ...and every dose of it sits inside a line"
+           + (f" - d{owned} in none" if owned else ""))
     print()
     # SH - one line owns the course, and the earlier line keeps its own end.
     # Bounded only by the observation end, EVERY line claimed EVERY later

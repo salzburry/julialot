@@ -416,6 +416,18 @@ a drug folding back into the line before it. Worked example:
 drug whose only episode began after that line had ended, and its end date and
 end reason moved with it.
 
+**A transplant inside a course does not split it.** One course gets one
+answer, and the answer is settled by where the course STARTS — the ask says a
+course outside **any** induction window does not advance the line, so a
+transplant landing between two doses of one course changes nothing about
+whether it advances. A course that began before a line is outside that line's
+induction window, not exempt from its judgement. The line the transplant opened
+is carried to the end of that course's cover and owns the doses that fall in
+it, exactly as it would for a course that began after it. Worked example:
+`melp_course_split_by_a_transplant`. Judged only against a line it starts
+inside, the course was dropped by the transplant's line and its later dose
+opened a line of its own.
+
 **A steroid never confirms a course.** Corticosteroids are not oncology agents
 (§2.1), so melphalan given with one is still melphalan on its own: the course
 stays suppressed and the line is carried to its cover. That is what the study

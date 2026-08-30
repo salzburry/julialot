@@ -56,6 +56,36 @@ it. On the worked patient:
 
 Worked example `melp_confirmed_beats_the_fold` in the vignette catalogue.
 
+**A course a transplant SPLITS — SETTLED 30 Aug, by the words above.** Two
+melphalan doses close enough together to be one course, with a transplant
+landing between them. The ask says a course of 28 days or fewer outside **any**
+induction window does not advance the line. A course that began before a line
+is outside that line's induction window — so the transplant changes nothing
+about whether it advances, and no line starts on either dose.
+
+The engine judged a course only against a line it started inside, so the
+transplant's line dropped it altogether and the later dose reached the engine
+as an ordinary added medication and opened a line of its own — which 4.7
+forbids outright. Which line OWNS a course was already a separate rule
+(another line-defining agent, or a breaking transplant, arriving first), asked
+twice; between the two tests a split course fell through.
+
+The same course with the transplant before or after it always behaved. All
+four positions now agree:
+
+| transplant | day-90 dose | day-110 dose | line opened on a dose? |
+|---|---|---|---|
+| none | 1L | 1L | no |
+| before the course | the transplant's line | the transplant's line | no |
+| **inside the course** | **1L** | **the transplant's line** | **no** — was a line of its own |
+| after the course | 1L | 1L | no |
+
+**The one thing to confirm:** the day-110 dose goes to the line the transplant
+opened, not back to 1L with its own first dose. That is not a new choice — it
+is what the build already did for a course starting after a transplant (the
+"before" row), applied to a course that straddles one. Worked example
+`melp_course_split_by_a_transplant`.
+
 **Two things it does that the ask did not say in words**, both deliberate, both
 open to correction:
 
