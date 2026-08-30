@@ -15,7 +15,7 @@ study ships; this is what was asked about it.
 
 | | |
 |---|---|
-| `exploration/melphalan/` | two proposed line-advancing rules, each built as complete runs and differenced |
+| `exploration/melphalan/` | two melphalan line-advancing rules, each built as complete runs and differenced — the study adopted one of them |
 | `exploration/lot/` | benchmarks, the definition comparison, the sensitivity sweep, stockpiling, re-challenge, the melphalan measurement, and the audit counts |
 
 The rule vignettes are **not** here. They are the machine-checked twins of the
@@ -24,36 +24,48 @@ scenarios in `lot/LOT_RULES.md`, so they stay with the rules, in
 
 ---
 
-## `exploration/melphalan/` — an exploration, not a rule
+## `exploration/melphalan/` — how the melphalan rule was chosen
 
-**Nothing here is in the study's numbers.** `apply_melp_rule` is pinned blank in
-`CONTRACT`. Blank emits no melphalan SQL at all,
-and every cell that names a mode records a contract deviation that the
-questions, the dashboard and the benchmark harness all refuse. This is why the
-proposal is described here, in the folder inventory, and not in `LOT_RULES.md`:
-`LOT_RULES.md` is the confirmed rules, and this is not one of them.
+**One of the rules measured here is now the study's**, and the folder is the
+evidence for that choice rather than a proposal any more.
 
-What it is: a study-team proposal that a melphalan (`MELP`) administration
-should advance the line on windows of its own, built as three complete LOT runs
-— `reference`, `as_asked`, `yield_to_sct` — and differenced. Three builds rather
-than arithmetic on a finished run, because the engine is sequential: a line's
-end date sets the next line's start, which sets that line's induction window,
-which decides which drugs join its regimen, which sets its discontinuation date,
-which decides whether the line after it starts at all.
+The study team asked first for a five-branch rule, where a melphalan (`MELP`)
+administration advances the line on windows of its own. It was built as three
+complete LOT runs — `reference`, `as_asked`, `yield_to_sct` — and differenced.
+It moved almost nothing, because the boundaries it judges are not the ones
+melphalan actually creates, and it was not adopted.
+
+The team's later note offered a simpler rule: a short melphalan course outside
+induction does not advance a line on its own. That one was built the same way,
+moved what the question was really about, and **the study adopted it on
+2026-08-30**. It is `apply_melp_rule = "simplified"` in `CONTRACT` and it is a
+rule like any other now — `lot/LOT_RULES.md` 4.7, not this file.
+
+So read the cells here as the comparison that produced a decision. What is
+still an exploration is the five-branch rule and the open cap question; what is
+not is the rule the build applies.
+
+Three builds rather than arithmetic on a finished run, because the engine is
+sequential: a line's end date sets the next line's start, which sets that
+line's induction window, which decides which drugs join its regimen, which sets
+its discontinuation date, which decides whether the line after it starts at
+all.
 
 All three or none: a run where one mode failed reads like a finished experiment
 and is not one. Cells write to `melp_reference_`, `melp_as_asked_` and
 `melp_yield_to_sct_`, and a plan that would write to the study's own prefix is
 refused.
 
-The study team's later note offered a SIMPLIFIED fallback, and that is a
-separate package with its own two cells — see `run_melp_simple.R` below. The
-two packages answer different questions and neither replaces the other.
+Which cell carries a deviation flipped when the rule was adopted. A cell is
+the contract build when it matches `CONTRACT`, and that is now the simplified
+one; a build with no melphalan rule at all is asked for with
+`APPLY_MELP_RULE=off` — the word, not a blank, because the settings loader
+fills an empty variable from `config.csv` — and it records the deviation.
 
 | path | what it does |
 |---|---|
-| `run_aug1_melp.R` | Builds the comparison as three complete runs rather than estimating it. Prints the plan by default; `AUG1_EXECUTE=TRUE` builds. |
-| `run_melp_simple.R` | The study team's SIMPLIFIED fallback, as its own two builds under `melp_simple_` prefixes: the contract build, and a rule where a melphalan course of 28 days or fewer outside induction does not advance a line on its own — unless a new agent starts inside the course, in which case the next line starts on the melphalan date. `MELP_SIMPLE_EXECUTE=TRUE` builds; the 28-vs-30-day cap is an open question, answered by rebuilding with `MELP_SIMPLE_COURSE_DAYS=30`. |
+| `run_aug1_melp.R` | The five-branch rule that was not adopted, as three complete runs rather than an estimate. Its `reference` is the contract build, so since the adoption these cells measure the five-branch rule against the study's rule, not against a build with no melphalan rule — numbers from before and after the adoption are not comparable. Prints the plan by default; `AUG1_EXECUTE=TRUE` builds. |
+| `run_melp_simple.R` | The rule the study adopted, against a build without it, under `melp_simple_` prefixes. `MELP_SIMPLE_EXECUTE=TRUE` builds. The 28-vs-30-day cap is still open, answered by rebuilding with `MELP_SIMPLE_COURSE_DAYS=30` — which is a deviation from the contract's 28, so that cell is built under the override. |
 | `R/cells.R` | Which builds, what is read off them, and the checks that they saw the same cohort, the same code lists, the same code and the same window. Shared by both packages. |
 | `R/scenarios.R` | The study team's four worked patients, held as data. |
 | `run_melp_scenarios.R` | Runs those scenarios through the rule the engine ships — the decision is lifted out of the generated SQL rather than restated — and exits non-zero if any of them moves. No connection. |

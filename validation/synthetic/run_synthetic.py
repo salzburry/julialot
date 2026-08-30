@@ -450,7 +450,13 @@ def checks(c):
   # BOTH its doses are past it. The check went green on the one patient it was
   # added for. Same shape as E5's excuse, and for the same reason.
   max_lot = c["max_lot"]
-  melp_owned = [] if not os.environ.get("MELP_RULE") else [
+  # These run on every default run now, not only when MELP_RULE is exported:
+  # the study's contract carries the melphalan rule, so the default chain is a
+  # chain that applies it. Gated on the variable, the two checks that caught
+  # M0010's orphaned doses would have been skipped on exactly the runs that
+  # exercise the shipped algorithm. Off is now the deviation, and a run that
+  # asks for it has nothing here to own.
+  melp_owned = [] if os.environ.get("MELP_RULE") == "off" else [
    ("a melphalan dose the rule suppressed sits in no line",
     f"""SELECT m.PATID, m.MAP_START_DT
        FROM map_stacked m

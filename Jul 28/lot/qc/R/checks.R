@@ -1020,9 +1020,15 @@ qc_params <- function(settings, run_id) {
   # needs it: with the rule on, such an infusion does not stop the build reading
   # LOT1's later AUTOs, and a check that censored there would miss the orphan.
   cart_ex <- toupper(trimws(qc_setting(settings, "apply_cart_induction_rule")))
+  # Which melphalan rule the run applied. No check judges by it, but a report
+  # that cannot say it is a report where the study's build and one without the
+  # rule look the same on their face - and they are different algorithms, with
+  # different line counts and different line shapes.
+  melp <- trimws(qc_setting(settings, "apply_melp_rule"))
   list(run_id   = run_id,
        censor   = identical(censor, "TRUE"),
        cart_exempt = identical(cart_ex, "TRUE"),
+       melp_rule = if (nzchar(melp)) melp else "off",
        ind1     = qc_int(settings, "induction_window_days"),
        indn     = qc_int(settings, "lot_n_induction_window_days"),
        cart     = qc_int(settings, "cart_consolidation_days"),

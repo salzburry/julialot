@@ -1,5 +1,10 @@
 #!/usr/bin/env Rscript
-# The simplified melphalan fallback, built and measured as its own analysis.
+# The melphalan rule the study adopted, against a build without it.
+#
+# This is the evidence the adoption decision rests on, kept runnable. It was
+# the comparison that produced the choice, and it is now the comparison that
+# shows what the choice did: the study build against one with no melphalan
+# rule at all.
 #
 #   # print the plan; touches nothing, needs no connection
 #   INPUT_COHORT_TABLE=ndmm_NDMM_COHORT Rscript exploration/melphalan/run_melp_simple.R
@@ -18,13 +23,21 @@
 # the agent's later one - their day-100/105 example.
 #
 # This is separate from the three-cell package (run_aug1_melp.R), which
-# evaluates the original five-branch rule. Two complete LOT builds under their
-# own melp_simple_* prefixes: the contract build and the simplified rule. The
-# difference between them is what the simplification does, in patients.
+# evaluates the original five-branch rule the study did not adopt. Two
+# complete LOT builds under their own melp_simple_* prefixes: one with no
+# melphalan rule, and the contract's simplified rule. The difference between
+# them is what the rule does, in patients.
+#
+# Which cell is the deviation flipped when the rule was adopted. 'simplified'
+# is now the contract algorithm and carries no deviation; 'reference' is built
+# with APPLY_MELP_RULE=off under LOT_CONTRACT_OVERRIDE, is stamped in
+# CONTRACT_DEVIATIONS, and every reader that resolves run ownership refuses it
+# as the study's numbers. That is correct: a build without the study's
+# melphalan rule is no longer the study's.
 #
 # Two things are not settled by running this:
-#   - the cap. MELP_SIMPLE_COURSE_DAYS=30 (the runner hands it to the
-#     simplified cell only; the reference is pinned to the contract's 28)
+#   - the cap. MELP_SIMPLE_COURSE_DAYS=30 (a deviation from the contract's 28,
+#     so that cell is built under the override too)
 #     widens which RECORDED course lengths count as short - it does
 #     NOT re-impute days supplied. A medical melphalan claim still carries
 #     the 28-day imputed supply either way, so its recorded course stays 28
@@ -52,19 +65,26 @@ LOT_ROOT <- normalizePath(file.path(.script_dir, "..", "..", "lot", "engine"), m
 env_flag <- function(nm) identical(toupper(trimws(Sys.getenv(nm, unset = ""))), "TRUE")
 out_dir  <- melp_out_dir(.script_dir)
 
+# `mode` is the deviation a cell must record, and NA marks the contract build.
+# Both moved when the study adopted the rule: the simplified cell IS the
+# contract now, and the cell without the rule is the one that deviates.
+# `melp` is what each hands to APPLY_MELP_RULE, which is a separate thing -
+# the contract cell names its mode too, so an ambient setting cannot reach it.
 MELP_SIMPLE_CELLS <- list(
-  list(id = "reference", mode = NA_character_,
-       what = "the contract build, unchanged - the baseline the rule is measured against"),
-  list(id = "simplified", mode = "simplified",
-       what = paste0("a short melphalan course outside induction does not ",
-                     "advance a line on its own; a new agent starting inside ",
-                     "the course advances it on the melphalan date")))
+  list(id = "reference", mode = "off", melp = "off",
+       what = "no melphalan rule - what the build did before the study adopted one"),
+  list(id = "simplified", mode = NA_character_, melp = "simplified",
+       what = paste0("the study's rule: a short melphalan course outside ",
+                     "induction does not advance a line on its own; a new ",
+                     "agent starting inside the course advances it on the ",
+                     "melphalan date")))
 
 report_plan <- function(cells, cap) {
-  cat("\nThe simplified melphalan rule, as two builds.\n\n")
+  cat("\nThe study's melphalan rule against a build without it.\n\n")
   for (c_i in cells)
     cat(sprintf("  %-11s %-11s %s\n", c_i$id,
-                if (is.na(c_i$mode)) "(no rule)" else c_i$mode, c_i$prefix))
+                if (identical(c_i$melp, "off")) "(no rule)" else c_i$melp,
+                c_i$prefix))
   cat("\n")
   for (c_i in cells) cat("  ", c_i$id, "\n    ", c_i$what, "\n", sep = "")
   cat("\n  course cap: ", cap, " days",
@@ -78,18 +98,23 @@ run_cell <- function(c_i, cohort, cohort_pfx, cap) {
   env  <- paste0("COHORT_PREFIX=", cohort_pfx)
   st   <- trimws(Sys.getenv("COHORT_STATUS_TABLE", unset = ""))
   if (nzchar(st)) env <- c(env, paste0("COHORT_STATUS_TABLE=", st))
-  if (!is.na(c_i$mode)) {
-    env <- c(env, "LOT_CONTRACT_OVERRIDE=TRUE",
-             paste0("APPLY_MELP_RULE=", c_i$mode),
-             # The cap reaches the mode cell only.
-             paste0("MELP_SIMPLE_COURSE_DAYS=", cap))
-  } else {
-    # The reference is pinned to the contract explicitly, not left to inherit
-    # the shell. A child inherits the parent's exports, so a 30-day
-    # sensitivity run would otherwise hand MELP_SIMPLE_COURSE_DAYS=30 to the
-    # reference too - and the contract check would refuse to build it.
-    env <- c(env, "APPLY_MELP_RULE=", "MELP_SIMPLE_COURSE_DAYS=28")
-  }
+  # Both cells name their mode, and neither is left to inherit the shell: a
+  # child gets the parent's exports, so a 30-day sensitivity run would
+  # otherwise hand MELP_SIMPLE_COURSE_DAYS=30 to the reference as well.
+  #
+  # 'off' rather than an empty value, and that is not a style choice.
+  # load_inputs.R fills any variable that is unset OR empty from config.csv,
+  # which now carries the contract mode - so APPLY_MELP_RULE= would reach the
+  # child as 'simplified' and this cell would measure the contract against
+  # itself, with no error anywhere to say so.
+  env <- c(env, paste0("APPLY_MELP_RULE=", c_i$melp),
+           paste0("MELP_SIMPLE_COURSE_DAYS=",
+                  if (identical(c_i$melp, "off")) "28" else cap))
+  # The override goes on whichever cell is not the contract build: the
+  # reference, which has no melphalan rule, and the simplified cell too
+  # whenever its cap is not the contract's.
+  if (!is.na(c_i$mode) || !identical(trimws(cap), "28"))
+    env <- c(env, "LOT_CONTRACT_OVERRIDE=TRUE")
   log_f <- file.path(out_dir, paste0("build_simple_", c_i$id, ".log"))
   cat("  building ", c_i$id, " -> ", c_i$prefix, "  (log: ", log_f, ")\n", sep = "")
   rc <- system2("Rscript", args, env = env, stdout = log_f, stderr = log_f)
@@ -170,7 +195,7 @@ melp_simple_report <- function(con, cells, out_dir, lot_root = NULL) {
     if (!file.rename(tmp[i], file.path(out_dir, names(out)[i])))
       stop("Could not move ", names(out)[i], " into ", out_dir, ".", call. = FALSE)
 
-  cat("\nThe simplified rule against the contract build:\n\n")
+  cat("\nThe study's rule against a build with no melphalan rule:\n\n")
   for (i in seq_len(nrow(cmp)))
     cat(sprintf("  %-19s %10s -> %-10s %+8s  %s\n",
                 cmp$metric[i], format(cmp$reference[i]),
@@ -259,9 +284,10 @@ main <- function() {
   }
 
   melp_simple_report(con, cells, out_dir, lot_root = LOT_ROOT)
-  cat("These are two algorithms' numbers. The simplified cell carries its ",
-      "deviation in\nLOT_BUILD_STATUS, and every reader that resolves run ",
-      "ownership refuses it as\nthe study's.\n", sep = "")
+  cat("These are two algorithms' numbers. The reference cell is the one that ",
+      "carries a\ndeviation in LOT_BUILD_STATUS now - it has no melphalan rule, ",
+      "and the study has\none - so every reader that resolves run ownership ",
+      "refuses it as the study's.\n", sep = "")
 }
 
 if (!interactive()) main()

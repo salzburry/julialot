@@ -69,9 +69,12 @@ run_cell <- function(c_i, cohort, cohort_pfx) {
   # A cell builds a different algorithm and says so. The reference cell changes
   # nothing and must not claim to - if it needed the override, it would not be
   # the thing the others are measured against.
-  if (!is.na(c_i$mode))
-    env <- c(env, "LOT_CONTRACT_OVERRIDE=TRUE",
-             paste0("APPLY_MELP_RULE=", c_i$mode))
+  #
+  # Every cell names its melphalan mode, the reference included: a child
+  # inherits the shell, and load_inputs.R fills an empty variable from
+  # config.csv, so the contract mode has to be stated rather than left blank.
+  env <- c(env, paste0("APPLY_MELP_RULE=", c_i$melp))
+  if (!is.na(c_i$mode)) env <- c(env, "LOT_CONTRACT_OVERRIDE=TRUE")
   log_f <- file.path(out_dir, paste0("build_", c_i$id, ".log"))
   cat("  building ", c_i$id, " -> ", c_i$prefix, "  (log: ", log_f, ")\n", sep = "")
   rc <- system2("Rscript", args, env = env, stdout = log_f, stderr = log_f)

@@ -9,15 +9,25 @@
 # same clinical event, and the transplant rule already fires on it. The request
 # does not say which rule should win. So both readings are built and the
 # difference between them is the answer to that question, in patients.
+# `mode` is the deviation a cell must record, NA marking the contract build.
+# `melp` is what the cell hands to APPLY_MELP_RULE - a separate thing, because
+# the contract build names its mode too rather than inheriting the shell.
+#
+# The reference is the contract build, and since the study adopted the
+# simplified rule that is what the reference now contains. So these two cells
+# measure the five-branch rule against the study's rule, not against a build
+# with no melphalan rule at all - which is what they measured before the
+# adoption. Numbers from the two eras are not comparable, and the reference
+# column is the half that moved.
 MELP_CELLS <- list(
-  list(id = "reference", mode = NA_character_,
+  list(id = "reference", mode = NA_character_, melp = "simplified",
        what = "the contract build, unchanged - what the study has today"),
-  list(id = "as_asked", mode = "as_asked",
+  list(id = "as_asked", mode = "as_asked", melp = "as_asked",
        what = paste0("every melphalan exposure judged, including one with a ",
                      "transplant coded on it - so one clinical event can end a ",
                      "line twice. The transplant question answered the way the ",
                      "request implies, since it carves nothing out")),
-  list(id = "yield_to_sct", mode = "yield_to_sct",
+  list(id = "yield_to_sct", mode = "yield_to_sct", melp = "yield_to_sct",
        what = paste0("the same, except that an exposure with an AUTO coded ",
                      "within MELP_SCT_DAYS is left to the transplant rule. The ",
                      "melphalan rule then fills only the gap where a transplant ",
@@ -280,9 +290,18 @@ melp_check_deviations <- function(rows, cells, allowed = character(0),
     entries <- entries[nzchar(entries)]
     want <- mode_of[[id]]
     if (is.na(want)) {
-      if (length(entries))
+      # The contract cell may carry only the deviations this package declares
+      # allowed - none, for a package whose cells differ on the mode alone.
+      # The simplified package allows its course cap: a cell at a cap other
+      # than the contract's is still the contract's RULE, and the cap is the
+      # thing under test there rather than a stray setting.
+      spare <- entries
+      if (length(allowed))
+        spare <- spare[!grepl(paste0("^(", paste(allowed, collapse = "|"), ")="),
+                              spare)]
+      if (length(spare))
         bad <- c(bad, paste0("  ", id, " is meant to be the contract build but ",
-                             "deviates on: ", paste(entries, collapse = "; ")))
+                             "deviates on: ", paste(spare, collapse = "; ")))
       next
     }
     melp  <- grep(paste0("^", key, "="), entries)

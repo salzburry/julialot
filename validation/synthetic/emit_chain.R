@@ -8,9 +8,17 @@
 # tested is the SQL that ships. Change a step file and the emitted text changes
 # with it - a test written against a copy could not say that.
 #
-# Two settings are read from the environment so a run can be differenced
-# against itself: CONFIRM_DAYS (lot_discon_confirm_days) and CART_RULE
-# (apply_cart_induction_rule). Everything else is the contract.
+# Three settings are read from the environment so a run can be differenced
+# against itself: CONFIRM_DAYS (lot_discon_confirm_days), CART_RULE
+# (apply_cart_induction_rule) and MELP_RULE (apply_melp_rule). Everything else
+# is the contract.
+#
+# MELP_RULE's DEFAULT is read out of the engine's own config.csv rather than
+# written here. The rest of this cfg is a hand copy of CONTRACT, which is
+# tolerable for settings that rarely move; the melphalan mode is not, because
+# it decides whether a whole rule is in the emitted SQL. Copied by hand, this
+# harness would go on certifying the algorithm the study used to ship while
+# reporting green.
 #
 # Not part of the merge gate. See README.md in this directory.
 
@@ -32,6 +40,17 @@ if (!dir.exists(ENGINE)) {
 }
 library(glue)
 
+# The engine's shipped default for one setting, read from its config.csv.
+engine_default <- function(name, fallback = "") {
+  f <- file.path(dirname(ENGINE), "config.csv")
+  if (!file.exists(f)) return(fallback)
+  d <- utils::read.csv(f, stringsAsFactors = FALSE)
+  i <- match(name, trimws(as.character(d$name)))
+  if (is.na(i)) return(fallback)
+  v <- trimws(as.character(d$value[i]))
+  if (is.na(v) || !nzchar(v)) fallback else v
+}
+
 # MELP is in the universe so MELP_RULE has something to act on. It is not drawn
 # into random histories - run_synthetic.py plants the melphalan patients instead
 # - because a conditioning dose is a specific shape, not a drug taken at random.
@@ -49,11 +68,14 @@ assign("cfg", list(
   sct_auto_gap_days = 60L, sct_tandem_days = 180L, max_lot = 5L,
   apply_cart_induction_rule =
     as.logical(Sys.getenv("CART_RULE", unset = "TRUE")),
-  apply_melp_rule = Sys.getenv("MELP_RULE", unset = ""), melp_med_abbr = "MELP",
+  apply_melp_rule = Sys.getenv("MELP_RULE",
+                               unset = engine_default("APPLY_MELP_RULE")),
+  melp_med_abbr = "MELP",
   apply_map_foldin = toupper(Sys.getenv("MAP_FOLDIN", unset = "FALSE")) == "TRUE",
   melp_exposure_days = 30L, melp_restart_days = 60L,
   melp_advance_days = 180L, melp_sct_days = 14L,
-  melp_simple_course_days = 28L,
+  melp_simple_course_days =
+    as.integer(engine_default("MELP_SIMPLE_COURSE_DAYS", "28")),
   study_end = "2026-03-31"), e)
 
 assign("materialize", function(con, step, view, name, body, qc = NULL) {

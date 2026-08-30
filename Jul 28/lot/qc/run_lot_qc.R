@@ -163,6 +163,7 @@ main <- function() {
       "d; tandem ", p$tandem, "d, autologous gap ", p$auto_gap, "d\n", sep = "")
   cat("  observation end: ", if (p$censor)
         "capped at disenrollment" else "ENDDATE, disenrollment ignored", "\n", sep = "")
+  cat("  melphalan rule: ", p$melp_rule, "\n", sep = "")
   if (nzchar(devs)) cat("  NOT A CONTRACT BUILD: ", devs, "\n", sep = "")
 
   # A table this version reads that the run did not write is a version

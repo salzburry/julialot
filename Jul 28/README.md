@@ -17,7 +17,7 @@ A cohort is what LOT is pointed at. It is not part of LOT and does not read it.
 | `reporting/dashboard/` | one self-contained HTML. Reads only. |
 | `analysis/outcomes/` | TTNT, TTD, OS, attrition. Reads only. |
 | `analysis/questions/` | the study team's questions, one script each. Not a build. |
-| `exploration/melphalan/` | a proposed line-advancing rule the build does not apply, built as three runs and differenced. Opt-in. |
+| `exploration/melphalan/` | the melphalan rules, built as complete runs and differenced — the study adopted one of them. Opt-in. |
 | `exploration/lot/` | benchmarks, the definition comparison, the sensitivity sweep, stockpiling, re-challenge, audit counts. Not part of a study run. |
 
 `lot/` is the algorithm and only the algorithm: the engine that builds the
@@ -101,7 +101,7 @@ the NDMM cohort, and `lot/LOT_RULES.md` covers the lines.
 | pregnancy window | `ndmm/DECISIONS.md` #9 - two windows are possible; the one the code applies is recorded there |
 | lines of therapy | `lot/LOT_RULES.md`, and the scenario workbook's Open questions sheet |
 | outcomes | `analysis/FILES.md` - the `STUDY_END` censoring rule for TTD, the fifth attrition category, both denominators |
-| the melphalan proposal | `exploration/FILES.md`. It is an exploration, not a rule the build applies, which is why it is neither in `lot/` nor in `lot/LOT_RULES.md` |
+| the melphalan rule the build applies | `lot/LOT_RULES.md` 4.7. How it was chosen, and the five-branch rule that was not adopted, are in `exploration/FILES.md` |
 
 Where one of those documents and this table disagree, the document is the record.
 

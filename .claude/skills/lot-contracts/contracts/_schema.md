@@ -58,6 +58,16 @@ advancement:
   prior_line_agent_return: <new_line | joins_line>  # a prior line's agent
                                          # returning after the current line's
                                          # regimen window: splits, or folds in
+  short_course_rule: <applied | none>    # a brief course of ONE named agent,
+                                         # outside the regimen window, does not
+                                         # advance the line on its own; the line
+                                         # is carried to the end of its cover.
+                                         # Another line-defining agent starting
+                                         # while it still covers does advance,
+                                         # on the brief course's first day.
+  short_course_agent: <MED_ABBR>         # required when the rule is applied
+  short_course_max_days: <days>          # cover at or under this is brief
+  short_course_chain_gap_days: <days>    # doses closer than this are one course
   drop_based: <true | false>
 
 event_streams: {}           # or one map per stream:

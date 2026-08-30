@@ -10,9 +10,10 @@ question lives on the Open questions sheet of the scenario workbook
 (`exploration/lot/run_lot_scenarios.R`). This document is written from the
 code and describes nothing else.
 
-The melphalan line-advancing proposal is an exploration. It is not in the
-study's numbers, it is not built into any run that ships, and it is not here.
-`lot/FILES.md` says what that package is.
+The melphalan short-course rule IS in the study's numbers - the study team
+adopted it on 2026-08-30 - and it is stated here, at 4.7. The five-branch
+melphalan rule they asked for first was measured and not adopted; that one is
+an exploration, and `lot/FILES.md` says what its package is.
 
 Each rule names the vignette that tests it. Those are machine-checked cases in
 `lot/validation/R/`, not prose - a renamed or deleted vignette fails
@@ -40,6 +41,7 @@ in the folder and what each file does.
 | §4.4 | A permissible biosimilar substitute never starts a line | — | |
 | §4.5 | Same-day starts break `SCT_ALLO > CART > SCT_AUTO > MED` | — | |
 | §4.6 | An allogeneic line spans one day and carries no regimen | `allo_lot_span` | |
+| §4.7 | A short melphalan course outside induction does not start a line | `apply_melp_rule`, `melp_simple_course_days` | |
 | §5.1 | A 90-day gap is running out | `map_discon_gap_days` | |
 | §5.2 | A run-out chains forward until the drug is discontinued | `map_discon_gap_days` | |
 | §5.3 | A run-out is a discontinuation only once confirmed | `lot_discon_confirm_days` | |
@@ -84,21 +86,23 @@ as the study's numbers.
 | `apply_cart_induction_rule` | `TRUE` | a CAR-T inside line 1's induction is part of line 1 — §6.4 |
 | `apply_no_belantamab` | `TRUE` | the belantamab criterion — §8 |
 | `belantamab_med_abbr` | `BELA` | how belantamab is spelled on the code list |
+| `apply_melp_rule` | `simplified` | the melphalan short-course rule — §4.7 |
+| `melp_med_abbr` | `MELP` | how melphalan is spelled on the code list |
+| `melp_exposure_days` | 30 | melphalan doses closer than this are one course |
+| `melp_simple_course_days` | 28 | a course covering this or fewer days is short — §4.7 |
 
-`apply_melp_rule` is pinned blank, and the five `melp_*` thresholds are pinned
-with it. It is an exploration, not a rule — `lot/FILES.md`, under
-`exploration/melphalan/`.
+Three more `melp_*` settings — `melp_restart_days`, `melp_advance_days`,
+`melp_sct_days` — are pinned but inert. They belong to the five-branch
+melphalan rule, which was measured against this build and not adopted. They
+are pinned so that a comparison cell rebuilt later is the same comparison the
+choice was made on.
 
-Off is not the same as absent. The rule's code is inside the engine
-(`R/melp_rule.R`), and it is sourced on every run. It has hooks in
-`06_lot1_end.R` and `10_lot2_5_base.R`, because the rule needs each line's own
-induction window, and that only exists while the line is being built.
-
-What makes blank safe is not that the code is gone. It is that every hook
-returns an empty string. So the SQL the engine builds is the same SQL it built
-before the file existed. `exploration/melphalan/tests/test_aug1_melp.R` proves
-this: it puts each hook's off value back into the step text and requires nothing
-melphalan to be left.
+Asking for no melphalan rule at all takes the word `off`, not a blank. A blank
+cannot travel: the settings loader fills any variable that is unset **or
+empty** from `config.csv`, which carries the contract mode, so
+`APPLY_MELP_RULE=` arrives as `simplified`. `off` is a different algorithm like
+any other, so it needs `LOT_CONTRACT_OVERRIDE=TRUE` and is recorded in
+`CONTRACT_DEVIATIONS`.
 
 The study window (`STUDY_START`, `STUDY_END`) is **not** pinned. It is the
 cohort's, passed per run and recorded in `LOT_RUN_METADATA`: the algorithm is
@@ -267,6 +271,43 @@ Worked example: `allo_single_day` / `allo_after_failed_auto`.
 
 `allo_lot_span` is `single_day`, and induction rows are suppressed for an
 ALLO-started line.
+
+One thing lifts it: a melphalan course the line was carried to (§4.7). The
+line then runs to the end of that cover instead of ending on its own start
+date. Nothing else reaches it — the short-circuit is tested before any run-out.
+
+### 4.7 A short melphalan course outside induction does not start a line
+
+Worked example: `melp_short_course` / `melp_long_course`, and
+`melp_short_course_confirmed` for the agent that does advance the line.
+
+Melphalan doses closer together than `melp_exposure_days` are one course. A
+course covering `melp_simple_course_days` or fewer days, whose first day falls
+outside the line's own induction window, does not end the line and does not
+start the next one. The line is carried instead to the last day that course
+covers, capped by the line's own span.
+
+The exception is another agent starting while the course still covers: one the
+engine would itself accept against this line, non-steroid, and not melphalan.
+Then the line does advance — and it advances on the **melphalan** date, not the
+later agent's, so the boundary sits where treatment actually changed.
+
+A course inside the induction window, or one covering more days than the cap,
+is left to the engine untouched.
+
+The rule reads days of **cover**, not dose dates, on both tests: what counts as
+short, and how far the line is carried. A medical melphalan claim carries the
+imputed `medical_day_supply`, so a single administration covers 28 days.
+
+`R/melp_rule.R`, spliced into `06_lot1_end.R` and `10_lot2_5_base.R` — the rule
+needs each line's own induction window, which exists only while that line is
+being built. Melphalan is also exempted there from the returning-drug
+exclusion (§4.3), so that this rule rather than that one decides melphalan's
+boundaries.
+
+Why melphalan: a brief course outside induction is usually transplant
+conditioning, and conditioning is part of the transplant rather than a line of
+treatment of its own.
 
 ---
 
@@ -540,6 +581,9 @@ question Q4 in the scenario workbook.
 `SCT_CART` therefore arises two ways: a line that ends at a CAR-T, and a
 CAR-T-started line with no consolidation agent, which spans a single day.
 Neither applies to a CAR-T inside line 1's induction window (§6.4).
+
+That single-day span, like the ALLO one in §4.6, is lifted by a melphalan
+course the line was carried to (§4.7).
 
 ### 7.3 An added agent then a CAR-T within 45 days is `CART_INIT`
 

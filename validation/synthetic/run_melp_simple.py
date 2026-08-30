@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""The simplified melphalan rule, proved on planted patients.
+"""The melphalan short-course rule, proved on planted patients.
 
-Runs the engine's own emitted SQL twice - the contract build and
-MELP_RULE=simplified - over patients that pin each branch of the rule:
+This is the rule the study adopted, so MELP_RULE=simplified is the CONTRACT
+build here. The other arm is MELP_RULE=off - what the engine did before the
+adoption - kept because a rule is only pinned by what it changes.
+
+Runs the engine's own emitted SQL twice, over patients that pin each branch:
 
   SA  a short course on its own, outside induction  -> no new line; the
       course stays in the line it fell in
   SB  a short course of the line's OWN unreleased melphalan, with a new
       agent five days into it                       -> the next line starts
-      on the melphalan date, where the contract build starts it on the
+      on the melphalan date, where a build with no rule starts it on the
       agent's later date
   SC  the study team's worked case: melphalan day 100 for 28 days, a new
       agent day 105                                 -> the next line starts
@@ -16,8 +19,8 @@ MELP_RULE=simplified - over patients that pin each branch of the rule:
   SD  a course longer than the cap                  -> left to the engine;
       it advances on its own date under both builds
   SE  a short course after the line already ran out -> the line is carried
-      to the course's last covered day and ends there; the contract build
-      gives the dose a line of its own
+      to the course's last covered day and ends there; with no rule the dose
+      gets a line of its own
   SF  a control with no melphalan and a released restart -> identical lines
       under both builds, or the mode is moving patients it cannot touch
   SG  the base drug covers PAST OBSERVATION and a suppressed course sits in
@@ -86,7 +89,7 @@ def build(mode):
 
 
 def main():
-    ref = build("")
+    ref = build("off")
     smp = build("simplified")
     ask = build("as_asked")
 
@@ -100,26 +103,26 @@ def main():
         return [r[1] for r in lines.get(pid, [])]
 
     ok(len(ref['SA']) == 2 and starts(ref, 'SA')[1] == rs.d(IX + 100),
-       "SA contract: the short course opens a line of its own on day 100")
+       "SA no rule: the short course opens a line of its own on day 100")
     ok(len(smp['SA']) == 1,
        "SA simplified: it does not - the course stays in the only line")
 
     ok(len(ref['SB']) == 2 and starts(ref, 'SB')[1] == rs.d(IX + 85),
-       "SB contract: the new agent starts the next line on ITS date, day 85")
+       "SB no rule: the new agent starts the next line on ITS date, day 85")
     ok(len(smp['SB']) == 2 and starts(smp, 'SB')[1] == rs.d(IX + 80),
        "SB simplified: the next line starts on the melphalan date, day 80")
 
     ok(starts(smp, 'SC')[1:] == [rs.d(IX + 100)],
        "SC simplified: melphalan day 100, agent day 105 - the line starts day 100")
     ok(starts(ref, 'SC')[1:] == [rs.d(IX + 100)],
-       "SC contract: the same here, since this melphalan was new to the line")
+       "SC no rule: the same here, since this melphalan was new to the line")
 
     ok(starts(ref, 'SD')[1:] == [rs.d(IX + 100)]
        and starts(smp, 'SD')[1:] == [rs.d(IX + 100)],
        "SD: a course past the cap is left to the engine under both builds")
 
     ok(len(ref['SE']) == 2 and starts(ref, 'SE')[1] == rs.d(IX + 300),
-       "SE contract: the late dose gets a melphalan-only line")
+       "SE no rule: the late dose gets a melphalan-only line")
     ok(len(smp['SE']) == 1 and smp['SE'][0][2] == rs.d(IX + 327)
        and smp['SE'][0][3] == 'DISCONTINUATION',
        "SE simplified: one line, owning the course's full cover to day 327")

@@ -32,6 +32,7 @@ VIGNETTE_PARAMS <- c(
   sct_auto_gap_days           = "gap below which a later AUTO is not a separate event",
   sct_tandem_days             = "days within which a second AUTO is the tandem of the first",
   cart_consolidation_days     = "days after a med addition within which CAR-T closes the line",
+  melp_simple_course_days     = "days of melphalan cover at or under which a course is short",
   max_lot                     = "highest line built")
 
 # One event. `day` is an offset from the 1L start, so a vignette reads as a
@@ -239,6 +240,52 @@ VIGNETTES <- list(
          "this holds depends on that file, not on this rule."),
        why = paste0("A substitution the code list does not know about looks like ",
                     "a regimen change, which starts a line that did not happen.")),
+
+  list(id = "melp_short_course", title = "Brief melphalan course outside induction",
+       param = "melp_simple_course_days", pair = "within", confidence = "to_confirm",
+       where = "lot/engine/R/melp_rule.R:410 - melp_suppress, SHORT = 1 AND CONFIRMED = 0",
+       events = function(p) rbind(
+         ev(0,   "MED", "1L regimen starts"),
+         ev(100, "MED", "one melphalan administration, no other agent with it"),
+         ev(100 + p$melp_simple_course_days - 1L, "MAP_END",
+            "last day that course covers - exactly the cap, so the course is short")),
+       expected = function(p) paste0(
+         "No new line. The course neither ends line 1 nor starts line 2, and ",
+         "line 1 is carried to day ",
+         100 + p$melp_simple_course_days - 1L, " - the last day the course ",
+         "covers - rather than ending at the melphalan date."),
+       why = paste0("A brief melphalan course outside induction is usually ",
+                    "transplant conditioning. Counted as an added medication it ",
+                    "opens a line of therapy nobody gave.")),
+
+  list(id = "melp_long_course", title = "Melphalan course past the short cap",
+       param = "melp_simple_course_days", pair = "beyond", confidence = "to_confirm",
+       where = "lot/engine/R/melp_rule.R:404 - datediff(COURSE_END_DT, EXPO_DT) + 1 <= cap",
+       events = function(p) rbind(
+         ev(0,   "MED", "1L regimen starts"),
+         ev(100, "MED", "melphalan starts"),
+         ev(100 + p$melp_simple_course_days, "MAP_END",
+            "last day covered - one day past the cap, so the course is not short")),
+       expected = function(p) paste0(
+         "A new line at day 100. Past the cap the rule stands aside and ",
+         "melphalan is an added medication like any other agent."),
+       why = paste0("The cap is what separates conditioning from melphalan ",
+                    "given as treatment. Ongoing melphalan is a regimen.")),
+
+  list(id = "melp_short_course_confirmed", title = "A new agent inside a brief melphalan course",
+       param = NA_character_, confidence = "to_confirm",
+       where = "lot/engine/R/melp_rule.R:426 - melp_inject, CONFIRMED = 1, at EXPO_DT",
+       events = function(p) rbind(
+         ev(0,   "MED", "1L regimen starts"),
+         ev(100, "MED", "melphalan starts; its cover runs to day 127"),
+         ev(105, "MED", "a different line-defining agent starts, inside that cover")),
+       expected = function(p) paste0(
+         "A new line, and it starts on day 100 - the melphalan date - not on ",
+         "day 105. The agent inside the course is what tells us treatment ",
+         "changed; the melphalan is where it changed."),
+       why = paste0("Dating the line at the later agent would put the boundary ",
+                    "after treatment had already moved on, and split the ",
+                    "melphalan away from the line it belongs to.")),
 
   list(id = "maintenance_to_relapse", title = "Maintenance running into relapse",
        param = NA_character_, confidence = "derived",

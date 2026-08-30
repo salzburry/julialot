@@ -280,10 +280,18 @@ BINDING <- list(
   list(path = c("event_streams", "CART", "induction_absorbed"),   key = "apply_cart_induction_rule"),
   list(path = c("event_streams", "ALLO", "line_span"),            key = "allo_lot_span"),
   list(path = c("criteria", "no_belantamab", "enabled"),          key = "apply_no_belantamab"),
-  # Blank is the contract algorithm - the gap-advancement rule is off - which
-  # the contract writes as `none` on the advancement axis.
-  list(path = c("advancement", "same_regimen_gap_days"), key = "apply_melp_rule",
-       to = function(v) if (identical(v, "")) "none" else NULL),
+  # The short-course rule: a brief course of one agent, outside the regimen
+  # window, does not advance the line on its own. 'simplified' is the mode that
+  # builds it and myeloma's contract carries it; a build with no melphalan rule
+  # writes `none`. The five-branch modes are comparison cells, not contract
+  # algorithms, so no contract value maps to them and the binding refuses one.
+  list(path = c("advancement", "short_course_rule"), key = "apply_melp_rule",
+       to = function(v) if (identical(v, "simplified")) "applied"
+                        else if (identical(v, "") || identical(v, "off")) "none"
+                        else NULL),
+  list(path = c("advancement", "short_course_agent"),  key = "melp_med_abbr"),
+  list(path = c("advancement", "short_course_max_days"), key = "melp_simple_course_days"),
+  list(path = c("advancement", "short_course_chain_gap_days"), key = "melp_exposure_days"),
   # FALSE is the study's algorithm - a prior line's agent returning splits the
   # line. TRUE is the fold-in mode, which no contract build carries.
   list(path = c("advancement", "prior_line_agent_return"), key = "apply_map_foldin",
@@ -303,12 +311,13 @@ NOT_AN_AXIS <- c(
   tbl_rx = "deployment: CDM table name",
   use_quarterly_tables = "deployment: which physical CDM tables the vintage offers",
   belantamab_med_abbr = "code-list spelling of the criterion drug, not a rule",
-  melp_med_abbr = "parameter of the gap-advancement prototype, inert while it is off",
-  melp_exposure_days = "parameter of the gap-advancement prototype, inert while it is off",
-  melp_restart_days = "parameter of the gap-advancement prototype, inert while it is off",
-  melp_advance_days = "parameter of the gap-advancement prototype, inert while it is off",
-  melp_sct_days = "parameter of the gap-advancement prototype, inert while it is off",
-  melp_simple_course_days = "parameter of the gap-advancement prototype, inert while it is off"
+  # The three the short-course rule reads are bound above. These three belong
+  # to the five-branch modes, which were measured against the study's build and
+  # not adopted - so they are inert in every contract build, and pinned only so
+  # that a comparison cell rebuilt later is the same comparison.
+  melp_restart_days = "parameter of the five-branch comparison modes, which no contract build carries",
+  melp_advance_days = "parameter of the five-branch comparison modes, which no contract build carries",
+  melp_sct_days = "parameter of the five-branch comparison modes, which no contract build carries"
 )
 
 # Every engine setting is either bound to a contract field or explicitly not an

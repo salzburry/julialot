@@ -1,10 +1,27 @@
-# The melphalan line-advancing rule. Off unless APPLY_MELP_RULE names a mode.
-# Off, it emits the same SQL as not having it at all. The ask, the cells and the
-# comparison live in exploration/melphalan/. The rule is here because it needs
-# each line's induction window, which exists only while that line is built.
+# The melphalan line-advancing rule. Which mode runs is APPLY_MELP_RULE, and
+# the study's is 'simplified' - see CONTRACT in build_lot.R and LOT_RULES.md
+# 4.7. The other modes, and 'off', are comparison builds: each is a different
+# algorithm, so each needs LOT_CONTRACT_OVERRIDE and is recorded as a deviation.
+# The cells that build them live in exploration/melphalan/.
 #
-# It changes which melphalan MAP rows may be an added medication, and on what
-# date. Everything else follows from that.
+# The rule is in the engine, not in that folder, because it needs each line's
+# induction window, which exists only while that line is being built.
+#
+# Every mode changes the same one thing: which melphalan MAP rows may be an
+# added medication, and on what date. Everything else follows from that.
+#
+# THE STUDY'S RULE - 'simplified'. A melphalan course covering
+# melp_simple_course_days or fewer days, outside the line's induction window,
+# does not advance the line on its own: the course is suppressed and the line
+# carried to the end of its cover. If another engine-valid agent starts while
+# that course still covers, the next line DOES start, and it starts on the
+# melphalan date rather than the later agent's - so the course's first day is
+# injected as the boundary. A course inside induction, or one longer than the
+# cap, is left to the engine untouched. melp_simplified_ctes() below.
+#
+# The rest of this header is the two five-branch modes, which the study team
+# asked for first and did not adopt. They are kept because the comparison that
+# chose between them is a cell anyone can rebuild.
 #
 #   inside induction, next exposure < 180d    no advance
 #   inside induction, next >= 180d            the next one advances, on its date
@@ -30,26 +47,33 @@
 # leaves an exposure with an AUTO within melp_sct_days to the transplant rule.
 # Both are built as cells and compared. Neither is the answer.
 #
-# 'simplified' is a different rule, not a third reading of the same one: the
-# study team's fallback proposal. A melphalan course of melp_simple_course_days
-# or less, outside the line's induction window, does not advance the line on
-# its own - the course is suppressed and the line carried to it. If another
-# engine-valid agent starts while that course still covers, the next line DOES
-# start, and it starts on the melphalan date, not the later agent's - so the
-# course's first day is injected as the boundary. Everything else - a course
-# inside induction, or one longer than the cap - is left to the engine.
-# Built only as its own cell; the study run keeps APPLY_MELP_RULE blank.
+# 'simplified' is a different rule, not a third reading of the same one, and it
+# is the one the study team adopted. It is stated at the top of this file.
 MELP_RULE_MODES <- c("as_asked", "yield_to_sct", "simplified")
 
+# "off" is a mode name like the others, and it is the ONLY way to ask for a
+# rule-off build from the environment. Blank cannot do it: load_inputs.R fills
+# any variable that is unset OR empty from config.csv, and config.csv now
+# carries the contract mode - so APPLY_MELP_RULE= reaches the build as
+# 'simplified' and a comparison cell meant to hold the rule off would quietly
+# measure the contract against itself. A word survives that fill; an empty
+# string does not.
+#
+# Blank still means off for a cfg built in R rather than from the environment,
+# which is how the tests and the emitters construct one.
+MELP_RULE_OFF <- "off"
+
 # Read once. An unknown mode stops the build rather than quietly acting like one
-# of them. "" is the contract build.
+# of them. "simplified" is the contract build - see CONTRACT in build_lot.R.
 melp_rule_mode <- function(cfg) {
   m <- tolower(trimws(cfg$apply_melp_rule %||% ""))
-  if (!nzchar(m)) return("")
+  if (!nzchar(m) || identical(m, MELP_RULE_OFF)) return("")
   if (!m %in% MELP_RULE_MODES)
     stop("APPLY_MELP_RULE='", m, "' is not one of: ",
-         paste(MELP_RULE_MODES, collapse = ", "),
-         ". Leave it unset for the contract build.", call. = FALSE)
+         paste(c(MELP_RULE_MODES, MELP_RULE_OFF), collapse = ", "),
+         ". The contract build is 'simplified'; '", MELP_RULE_OFF,
+         "' builds without the rule and needs LOT_CONTRACT_OVERRIDE.",
+         call. = FALSE)
   m
 }
 melp_rule_on <- function(cfg) nzchar(melp_rule_mode(cfg))
@@ -528,8 +552,8 @@ melp_prev_line_ctes <- function(cfg, prev_med_window, cart_consolidation_days) {
 # the prior-regimen exclusion must not veto them. Melphalan already in the
 # previous line's regimen is barred from med_cand, and an injected boundary
 # would then end a line without opening the next one, leaving the exposure in no
-# line. Empty when the rule is off, so the contract build's candidates do not
-# change.
+# line. Empty only on a rule-off build, so the study's LOT2-5 candidate list
+# does carry this carve-out from the prior-regimen exclusion.
 #
 # The exemption names the DATES the rule says advance, not the drug. Releasing
 # every melphalan row would be wider than any branch allows:
@@ -734,7 +758,11 @@ melp_runout_case <- function(cfg, col, alias = "mh",
 # the dose - and every other end still outranks that, so a death or an added
 # drug in between takes the line first.
 #
-# Both empty when the rule is off, so the contract build's cascade is untouched.
+# Both are present in the contract build, and empty only on a rule-off one. So
+# the study's end cascade DOES carry MELP_HOLD_DT and this override: a line
+# whose type would end it on its own start date can be carried past that date by
+# a suppressed melphalan course. LOT_RULES.md 4.6 and 7.2 say so where they
+# describe those single-day shapes.
 melp_hold_col <- function(cfg, alias = "mh") {
   if (!melp_rule_on(cfg)) return("")
   paste0("\n", glue("        {alias}.MELP_HOLD_DT,"))

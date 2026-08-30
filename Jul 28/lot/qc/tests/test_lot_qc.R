@@ -42,7 +42,8 @@ SETTINGS <- paste0(
   "melp_med_abbr=MELP|melp_restart_days=60|melp_sct_days=14|",
   "sct_auto_gap_days=60|sct_auto_window_days=13|sct_tandem_days=180|",
   "tbl_med_diag=med_diagnosis|tbl_med_proc=med_procedure|tbl_medical=medical|",
-  "tbl_rx=rx|use_quarterly_tables=TRUE|apply_melp_rule=")
+  "tbl_rx=rx|use_quarterly_tables=TRUE|apply_melp_rule=simplified|",
+  "cohort_status_table=")
 P <- qc_params(SETTINGS, "run-abc")
 SQL <- lapply(LOT_QC_CHECKS, function(c_i) c_i$sql(TBL, P))
 names(SQL) <- vapply(LOT_QC_CHECKS, function(c_i) c_i$id, character(1))
@@ -117,7 +118,9 @@ ok(qc_setting(SETTINGS, "induction_window_days") == "60" &&
    "...and the same pair reads correctly out of the real sorted string")
 ok(qc_setting(SETTINGS, "allo_lot_span") == "single_day",
    "...the first key in the string is found")
-ok(qc_setting(SETTINGS, "apply_melp_rule") == "",
+ok(qc_setting(SETTINGS, "apply_melp_rule") == "simplified",
+   "...and the melphalan rule the run applied is readable")
+ok(qc_setting(SETTINGS, "cohort_status_table") == "",
    "...and so is the last one, empty")
 # A run built by a version that recorded a different set cannot be judged by
 # this one. Defaulting would judge it by numbers it never used.

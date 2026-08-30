@@ -93,10 +93,18 @@ cfg_defaults <- list(
   # on lot_patient_input either way, so this flag is the only change needed.
   censor_at_disenrollment = as.logical(Sys.getenv("CENSOR_AT_DISENROLLMENT", unset = "FALSE")),
 
-  # ---- The melphalan line-advancing rule (lot/melphalan) ----
-  # Blank is the contract build and the SQL is the same as without the rule.
-  # A mode is a different algorithm, so it is pinned in CONTRACT and needs
-  # LOT_CONTRACT_OVERRIDE - see R/melp_rule.R.
+  # ---- The melphalan line-advancing rule (R/melp_rule.R) ----
+  # 'simplified' is the contract build, and config.csv carries it. Any other
+  # value - 'off', 'as_asked', 'yield_to_sct' - is a different algorithm, so it
+  # is pinned in CONTRACT and needs LOT_CONTRACT_OVERRIDE.
+  #
+  # The default here stays blank on purpose. config.csv is what supplies the
+  # contract mode, so a run that somehow loses it lands on blank, fails the
+  # contract check and stops - rather than defaulting to the study's rule and
+  # hiding the fact that the settings file never loaded. Note that blank cannot
+  # be asked for from the environment: load_inputs.R fills an empty variable
+  # from config.csv. 'off' is the word that survives, and melp_rule_mode()
+  # maps it to no rule.
   apply_melp_rule    = Sys.getenv("APPLY_MELP_RULE",    unset = ""),
   apply_map_foldin   = as.logical(Sys.getenv("APPLY_MAP_FOLDIN", unset = "FALSE")),
   # Pinned TRUE in CONTRACT. Turning it off is a different algorithm and needs

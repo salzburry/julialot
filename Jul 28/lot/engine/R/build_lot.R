@@ -23,10 +23,12 @@ CONTRACT <- list(
   codelist_dir                = "/mnt/code/codelist",
   use_quarterly_tables        = TRUE,
   censor_at_disenrollment     = FALSE,
-  # Blank is the algorithm this study is defined as. A mode builds a different
-  # one, which is why it is pinned here rather than left as a free setting - as
-  # are the thresholds that say what the rule means.
-  apply_melp_rule             = "",
+  # The melphalan rule this study is defined as, adopted by the study team on
+  # 2026-08-30 - LOT_RULES.md 4.7, R/melp_rule.R. Any other value, 'off'
+  # included, builds a different algorithm, which is why it is pinned here
+  # rather than left as a free setting - as are the thresholds that say what
+  # the rule means.
+  apply_melp_rule             = "simplified",
   # The MAP fold-in: a prior line's agent returning joins the line it returns
   # in instead of splitting it. FALSE is the study's algorithm; TRUE is the
   # study team's proposed reading, built only as its own cell - see
@@ -40,16 +42,21 @@ CONTRACT <- list(
   # APPLY_NO_BELANTAMAB leaves it on rather than silently off, and turning it
   # off is a recorded contract change. criterion_enabled() reads this.
   apply_no_belantamab         = TRUE,
+  # The study's rule reads three of these six: the abbreviation, the chaining
+  # gap that makes doses one course, and the course cap.
   melp_med_abbr               = "MELP",
   melp_exposure_days          = 30L,
+  # The course cap: melphalan covering this many days or fewer, outside
+  # induction, does not advance a line on its own. 28 is one imputed medical
+  # supply; whether it should be 30 is an open study-team question, answered by
+  # rebuilding the cell at 30.
+  melp_simple_course_days     = 28L,
+  # The remaining three belong to the two five-branch modes, which the study
+  # did not adopt. Inert in the contract build, and pinned so a comparison cell
+  # rebuilt later is the same comparison the choice was made on.
   melp_restart_days           = 60L,
   melp_advance_days           = 180L,
   melp_sct_days               = 14L,
-  # The simplified mode's course cap: melphalan covering this many days or
-  # fewer, outside induction, does not advance a line on its own. 28 is one
-  # imputed medical supply; whether it should be 30 is an open study-team
-  # question, answered by rebuilding the cell at 30.
-  melp_simple_course_days     = 28L,
   induction_window_days       = 60L,
   lot_n_induction_window_days = 30L,
   map_discon_gap_days         = 90L,
@@ -552,8 +559,12 @@ check_cohort_window <- function(con, tbl, cfg) {
 }
 
 # A build that is not the contract build is a different algorithm, and it is
-# refused. LOT_CONTRACT_OVERRIDE is the one way past, and it exists for one
-# caller: the sensitivity sweep, whose axes are all contract-pinned.
+# refused. LOT_CONTRACT_OVERRIDE is the one way past, and it exists for the
+# callers that build an alternative to measure this one against: the
+# sensitivity sweep, whose axes are all contract-pinned; the fold-in cells; and
+# the melphalan comparison cells. Note which way round that last one now runs -
+# since the study adopted the simplified rule, it is the RULE-OFF build
+# (APPLY_MELP_RULE=off) that is the deviation, and it is stamped as one.
 #
 # That is safe only because a deviating run cannot pass for the study's. The
 # deviations go into LOT_BUILD_STATUS and every reader refuses them,
