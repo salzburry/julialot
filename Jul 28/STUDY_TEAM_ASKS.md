@@ -135,8 +135,21 @@ is the note's own example with both drugs coming back rather than one.
 
 **What is still owed:**
 
-- Whether the returning drug joins the line's regimen string or only its span.
-  Today it joins the span only.
+- ~~Whether the returning drug joins the line's regimen string or only its
+  span.~~ **Settled 30 Aug: the regimen.** A drug the rule says is part of the
+  line reads as part of it, so it enters `LOT_BASE_MEDS`, `LOT_MED_CNT` and the
+  line's med and class flags. Before this a line could span 13 months of two
+  drugs and still read as monotherapy in every regimen table.
+
+  Two bounds came out of building it, both on planted patients. The regimen
+  names the drug **actually given**, so a permissible substitute appears under
+  its own abbreviation rather than the one it stands in for. And a folded
+  episode after a transplant that broke the line does **not** join — it belongs
+  to the line that transplant opened. Without that second bound a line named a
+  drug it never covered, which the QC invariant on regimen membership caught.
+
+  A held melphalan course still joins neither the regimen nor the count (§4.7).
+  That rule was not asked the same question, and nothing here decides it.
 - ~~Whether agents of **every** earlier line fold, or only the previous line's.~~
   **Settled 30 Aug: the immediately previous line only**, which is the shape
   the 15 Aug note describes — A + B in one line, C advances it, B comes back.

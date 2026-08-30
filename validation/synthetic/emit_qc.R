@@ -68,7 +68,9 @@ settings <- paste(c(
   "medical_day_supply=28", "sct_auto_gap_days=60", "sct_auto_window_days=13",
   "sct_tandem_days=180",
   paste0("apply_melp_rule=",
-         Sys.getenv("MELP_RULE", unset = "simplified"))), collapse = "|")
+         Sys.getenv("MELP_RULE", unset = "simplified")),
+  paste0("apply_map_foldin=",
+         Sys.getenv("MAP_FOLDIN", unset = "TRUE"))), collapse = "|")
 p <- qc_params(settings, "synthetic")
 # E1 reads the raw per-line flags, and the runner tells it which lines the run
 # wrote. Under SCENARIO the fixture supplies LOT2 only, which is the case the

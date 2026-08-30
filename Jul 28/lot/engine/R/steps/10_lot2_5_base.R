@@ -598,7 +598,10 @@ build_lot_n <- function(con, lot_num,
         concat_ws(' ', sort_array(collect_set(im.MED_ABBR))) AS LOT{lot_num}_BASE_MEDS,
         {med_flag_exprs},
         {class_flag_exprs}
-      FROM lot{lot_num}_induction_meds im
+      FROM (
+        SELECT PATID, MED_ABBR, MED_CLASS
+        FROM lot{lot_num}_induction_meds{foldin_regimen_union(cfg, lot_num, lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days))}
+      ) im
       GROUP BY im.PATID
     ),
     first_add_candidates AS (

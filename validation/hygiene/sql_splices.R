@@ -76,6 +76,7 @@ FRAGMENT <- c(
   tandem_interrupt_events_sql = "opens with its own newline, spliced after an open paren",
   line_break_tx_sql       = "opens with its own newline, spliced after an open paren",
   line_break_tandem_pred  = "paste0 puts the newline back that glue trims",
+  foldin_regimen_union    = "paste0 puts the newline back that glue trims",
   map_restart_sql             = "opens with its own newline, spliced after an open paren")
 
 files <- Filter(function(f) !grepl("/tests?/", f),

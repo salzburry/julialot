@@ -16,7 +16,7 @@ renamed vignette, or one no rule cites, fails
 > melphalan course) and §4.8 (a returning earlier-line drug). Each refuses a
 > boundary and carries the line over the treatment instead, so a line's end can
 > now sit later than its own regimen's cover (§5.2) and `MED_ADD` is narrower
-> (§7.4). None of them adds the drug to `LOT_BASE_MEDS`. §4.3 is the widest —
+> (§7.4). §4.8 puts its drug in `LOT_BASE_MEDS`; §4.3 and §4.7 do not. §4.3 is the widest —
 > it reaches every patient with a treatment holiday, not only the ones the
 > other two touch. **LOT numbers produced before that date are superseded.**
 
@@ -320,11 +320,19 @@ not at all. Judged one episode at a time, a returning course was split between
 two owners: its first episode folded, and its own follow-up weeks later had no
 advance behind it, so it opened a line.
 
-What joins is the line's **span**, not its regimen: the returning drug does not
-enter `LOT_BASE_MEDS`, exactly as a held melphalan course does not (§4.7). The
-line's run-out is carried to the last day the returning drug's supply reaches,
-capped at observation, so the treatment the rule refuses a line to still sits
-inside one.
+**The returning drug joins the line's regimen**, not only its span. It enters
+`LOT_BASE_MEDS`, `LOT_MED_CNT` and the line's med and class flags, because a
+drug the rule says is part of the line should read as part of it. The line's
+run-out is carried to the last day the drug's supply reaches, capped at
+observation, so the treatment the rule refuses a line to still sits inside one.
+
+The regimen names the drug **actually given** — a permissible substitute enters
+under its own abbreviation, not the one it stands in for.
+
+A folded episode past a transplant that broke the line does not join: it belongs
+to the line that transplant opened. A held melphalan course still joins neither
+the span's regimen nor its count (§4.7) — that rule was not asked the same
+question.
 
 A melphalan course the melphalan rule suppressed is not a line-defining agent
 here either — that rule has already decided it opens nothing.

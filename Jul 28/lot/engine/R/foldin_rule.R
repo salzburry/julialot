@@ -58,11 +58,12 @@
 #              with the folded drugs taken out.
 #
 # What this deliberately does NOT change: LOT1 (it has no earlier line);
-# transplant and CAR-T triggers; the tandem-interrupt rule (whether a folded
-# drug still breaks a planned tandem is a separate open question); and the
-# regimen itself - a folded drug does not join LOT_BASE_MEDS, exactly as a
-# held melphalan dose does not. The line's span owns it; its window does not
-# rename it.
+# transplant and CAR-T triggers; the tandem-interrupt rule.
+#
+# A folded drug DOES join the line's reported regimen - LOT_BASE_MEDS,
+# LOT_MED_CNT and the med and class flags - because a drug the rule says is
+# part of the line should read as part of it. A held melphalan dose still does
+# not (§4.7): that rule was not asked the same question.
 #
 # Pinned FALSE in CONTRACT. A TRUE build records the deviation in
 # LOT_BUILD_STATUS and every reader that resolves run ownership refuses it as
@@ -396,6 +397,57 @@ foldin_lotn_ctes <- function(cfg, lot_num, induction_end = NULL) {
         AND ms.MAP_START_DT <= ls.OBS_END_DT
       GROUP BY ms.PATID
     ),"))
+}
+
+# The folded episodes as REGIMEN rows, for med_summary. A drug this rule bundles
+# into a line joins that line's regimen string and its drug count - and its med
+# and class flags with them, since all four come off the same set.
+#
+# Bounded like foldin_hold, and cut short the same way the induction step is:
+# episodes of a fold-set drug STARTING inside the line, own-base drugs excluded
+# because they are in the regimen already, and nothing past a transplant that
+# ended the line. Without that cutoff a folded episode after the line closed
+# still named itself in the regimen, and QC C1 caught it - a regimen drug with
+# no episode anywhere inside its line.
+#
+# The line's own WORKING set - base_meds, and everything discon_per_med and the
+# candidate gates read - is deliberately not changed. That set is built before
+# these CTEs and the fold consults it, so feeding the fold back into it has no
+# order that works. What changes is what the line REPORTS, and that is what the
+# next line's exclusion set, the next line's fold set and every analysis read
+# off lot_long.
+foldin_regimen_union <- function(cfg, lot_num, induction_end) {
+  if (!foldin_on(cfg)) return("")
+  paste0("\n", glue("
+      UNION
+      SELECT ms.PATID, ms.MAP_MED_TYPE AS MED_ABBR, ms.MAP_MED_CLASS AS MED_CLASS
+      FROM map_stacked ms
+      INNER JOIN lot{lot_num}_start ON lot{lot_num}_start.PATID = ms.PATID
+      INNER JOIN lot{lot_num}_regimen_cutoff rc ON rc.PATID = ms.PATID
+      INNER JOIN foldin_episodes fm
+        ON fm.PATID = ms.PATID AND fm.MED_ABBR = ms.MAP_MED_TYPE
+       AND fm.MAP_START_DT = ms.MAP_START_DT
+      LEFT JOIN base_meds bm
+        ON bm.PATID = ms.PATID AND bm.MED_ABBR = ms.MAP_MED_TYPE
+      WHERE bm.MED_ABBR IS NULL
+        AND ms.MAP_START_DT >= lot{lot_num}_start.LOT{lot_num}_START_DT
+        AND ms.MAP_START_DT <= least(
+              lot{lot_num}_start.OBS_END_DT,
+              coalesce(rc.REGIMEN_CUTOFF_DT, cast(\'9999-12-31\' as date)))
+        -- ...and nothing at or after a transplant that BREAKS this line. The
+        -- regimen cutoff above covers ALLO and CAR-T only; an AUTO ends a line
+        -- too, and a folded episode the day after one belongs to the line that
+        -- AUTO opened. Same test 4.7 and the count use, so a transplant the
+        -- line owns - in its window, or a planned tandem partner - excludes
+        -- nothing.
+        AND NOT EXISTS (
+          SELECT 1
+          FROM ({line_break_tx_sql()}
+          ) btx
+          WHERE btx.PATID = ms.PATID
+            AND btx.TX_DT >  {induction_end}
+            AND btx.TX_DT <= ms.MAP_START_DT{line_break_tandem_pred(cfg, \'btx\', induction_end)}
+        )"))
 }
 
 # Takes fold-set rows off the added-medication candidate list. Own-base rows

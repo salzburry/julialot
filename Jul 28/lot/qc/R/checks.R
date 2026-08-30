@@ -85,7 +85,7 @@ qc_window_sql <- function(t, p, per_line = FALSE) {
     paste0(cutoff, "
     reg AS (
       SELECT cast(l.PATID as string) AS PATID, l.LOT_NUM, l.LOT_START_DT,
-             l.LOT_START_TYPE, m AS MED_ABBR,", win, "
+             l.LOT_BASE_END_DT, l.LOT_START_TYPE, m AS MED_ABBR,", win, "
       FROM ", t$final, " l
       LEFT JOIN cut c ON c.PATID = cast(l.PATID as string) AND c.LOT_NUM = l.LOT_NUM
       LATERAL VIEW explode(split(coalesce(l.LOT_BASE_MEDS, ''), ' ')) e AS m
@@ -463,11 +463,17 @@ LOT_QC_CHECKS <- list(
   # ---- C. Regimen against the claims ---------------------------------------
 
   list(id = "C1", group = "Regimen", severity = "fail",
-       what = "every drug in a regimen has a treatment episode in that line's window",
+       what = "every drug in a regimen has a treatment episode inside its line",
        why = paste0("This is the regimen rule itself, asked backwards. The ",
                     "window is the line's own: 60 days at LOT1, 45 for a CAR-T ",
                     "started line, 30 otherwise. A drug with no episode in it ",
-                    "reached the regimen some other way."),
+                    "reached the regimen some other way. ",
+                    "With the fold-in on one route is legitimate: a previous ",
+                    "line's drug returning after the window joins this line's ",
+                    "regimen (LOT_RULES.md 4.8), and its episode is inside the ",
+                    "LINE rather than the window. The accepted range ends at ",
+                    "the line's end there, and a drug with no episode anywhere ",
+                    "in the line is still caught."),
        needs = c("final", "map", "allo"),
        sql = function(t, p) counted(paste0("
     WITH ", qc_window_sql(t, p), "
@@ -477,9 +483,11 @@ LOT_QC_CHECKS <- list(
       ON cast(ms.PATID as string) = w.PATID
      AND ms.MAP_MED_TYPE = w.MED_ABBR
      AND ms.MAP_START_DT >= w.LOT_START_DT
-     AND ms.MAP_START_DT <= w.ELIGIBLE_END
+     AND ms.MAP_START_DT <= ",
+       if (isTRUE(p$foldin)) "greatest(w.ELIGIBLE_END, w.LOT_BASE_END_DT)"
+       else "w.ELIGIBLE_END", "
     WHERE ms.PATID IS NULL"),
-    "concat(pid, ' LOT', LOT_NUM, ': ', MED_ABBR, ' has no episode in the window')")),
+    "concat(pid, ' LOT', LOT_NUM, ': ', MED_ABBR, ' has no episode in the line')")),
 
   list(id = "C4", group = "Regimen", severity = "fail",
        what = "an eligible episode in the window reached the regimen",
@@ -1025,9 +1033,16 @@ qc_params <- function(settings, run_id) {
   # rule look the same on their face - and they are different algorithms, with
   # different line counts and different line shapes.
   melp <- trimws(qc_setting(settings, "apply_melp_rule"))
+  # Whether the run folded a returning previous-line drug into the line it
+  # returned in. C1 needs it: a folded drug joins that line's regimen and its
+  # episode sits inside the LINE but after the induction window, which the
+  # strict window test would report as a drug that reached the regimen some
+  # other way. Read off the run's own recorded settings, not config.csv.
+  foldin <- toupper(trimws(qc_setting(settings, "apply_map_foldin")))
   list(run_id   = run_id,
        censor   = identical(censor, "TRUE"),
        cart_exempt = identical(cart_ex, "TRUE"),
+       foldin   = identical(foldin, "TRUE"),
        melp_rule = if (nzchar(melp)) melp else "off",
        ind1     = qc_int(settings, "induction_window_days"),
        indn     = qc_int(settings, "lot_n_induction_window_days"),
