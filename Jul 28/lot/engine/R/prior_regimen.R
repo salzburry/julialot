@@ -14,6 +14,38 @@
 # drug and the returning treatment belongs to no line at all. See
 # discon_per_med_sql below.
 
+# THE RETURNING-DRUG RELEASE, LOT_RULES.md 4.3 - one definition for all eight
+# places that ask, because a guard reading a different rule from the candidate
+# it mirrors ends a line on an event the next line then refuses to open on.
+#
+# apply_own_return_fold FALSE is the engine's older rule: a gap of
+# map_discon_gap_days releases the drug, and its next episode opens a line like
+# any other agent.
+#
+# TRUE - what CONTRACT pins - withdraws that. A line advances on an agent that
+# was not in the previous regimen, and a drug the patient has had before is not
+# one, whatever the gap. Nothing was given in between, so the drug is returning
+# to the line it left.
+#
+# The release and the run-out chain are two halves of one rule (see the header
+# of this file), so both halves move together: return_release_sql() withdraws
+# the release, and own_gap_breaks_chain() stops discon_per_med breaking the
+# line at the same gap. Withdraw one alone and the returning treatment belongs
+# to no line at all.
+return_release_on <- function(cfg) !isTRUE(cfg$apply_own_return_fold)
+
+return_release_sql <- function(cfg, restart, base, extra = "") {
+  if (!return_release_on(cfg)) return(extra)
+  paste0("\n             OR (coalesce(", restart, ".PREV_DISCON, 0) = 1 AND ",
+         base, ".SUBSTITUTE_ONLY = 0)", extra)
+}
+
+# Whether a drug's OWN gap breaks its line's run-out chain. Off under the
+# rule: the line runs over the gap, so the returning episode sits inside the
+# line it left rather than in no line at all. Another drug interrupting still
+# breaks it - that is the `interrupts` scan, and it is untouched.
+own_gap_breaks_chain <- function(cfg) return_release_on(cfg)
+
 # The prior-LOT drugs themselves, added to the set med_cand excludes. Without
 # them that set holds only their permissible biosimilar substitutes.
 prior_regimen_excl_sql <- function() {
@@ -75,7 +107,7 @@ map_restart_sql <- function() {
 # spark.sql.crossJoin.enabled=false.
 discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
                                boundary_tbl = "map_stacked", boundary_gate = "",
-                               end_col = NULL) {
+                               end_col = NULL, own_gap_breaks = TRUE) {
   # The scan starts at the line start. Without this it has no upper bound at
   # all: a base drug's later episodes chain forward for as long as the patient
   # keeps filling it. So bounding regimen membership at the date the line was
@@ -85,6 +117,14 @@ discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
   upper <- if (is.null(end_col)) "" else paste0("
           AND ms.MAP_START_DT <= coalesce(ls.", end_col,
           ", cast('9999-12-31' as date))")
+  # Zero throughout when the returning-drug rule is on: a drug's own gap no
+  # longer breaks its line, because the episode after it belongs to the line
+  # it left rather than to the next one. Another drug interrupting still
+  # breaks the chain - that is the `interrupts` scan below, untouched.
+  prev_discon <- if (!own_gap_breaks) "cast(0 AS int) AS PREV_DISCON" else
+    "CASE WHEN bm.SUBSTITUTE_ONLY = 1 THEN 0 ELSE
+                 coalesce(lag(ms.MAP_DISCON_FLG) OVER (PARTITION BY ms.PATID, ms.MAP_MED_TYPE
+                                          ORDER BY ms.MAP_START_DT), 0) END AS PREV_DISCON"
   paste0("
       WITH ep AS (
         SELECT ms.PATID, ms.MAP_MED_TYPE, ms.MAP_START_DT, ms.MAP_END_DT,
@@ -100,9 +140,7 @@ discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
                -- and run-out gates all refuse the same drug, and a line ends on
                -- a restart that no line can then own. The treatment would
                -- belong to nothing. All four paths read one rule.
-               CASE WHEN bm.SUBSTITUTE_ONLY = 1 THEN 0 ELSE
-                 coalesce(lag(ms.MAP_DISCON_FLG) OVER (PARTITION BY ms.PATID, ms.MAP_MED_TYPE
-                                          ORDER BY ms.MAP_START_DT), 0) END AS PREV_DISCON
+               ", prev_discon, "
         FROM ", map_tbl, " ms
         INNER JOIN ", start_view, " ls ON ms.PATID = ls.PATID
         INNER JOIN base_meds bm ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR

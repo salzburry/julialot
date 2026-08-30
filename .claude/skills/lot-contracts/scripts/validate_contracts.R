@@ -299,7 +299,18 @@ BINDING <- list(
   # "joins" - the fold is conditional on the count, so the contract value says
   # so. FALSE is a build without the rule.
   list(path = c("advancement", "prior_line_agent_return"), key = "apply_map_foldin",
-       to = function(v) if (isTRUE(v)) "one_advance_joins" else "new_line")
+       to = function(v) if (isTRUE(v)) "one_advance_joins" else "new_line"),
+
+  # advancement.same_regimen_gap_days - a re-challenge of the line's OWN
+  # regimen. The axis already existed and read `none` for this tumor, meaning
+  # a re-challenge never advances; until 2026-08-30 the engine disagreed with
+  # it, releasing the drug after map_discon_gap_days. apply_own_return_fold
+  # TRUE - what CONTRACT now pins - makes the engine match: a drug the patient
+  # has had before is not a new agent, whatever the gap, and the line runs
+  # over the break instead. FALSE restores the released re-challenge, and the
+  # gap that released it is map_discon_gap_days.
+  list(path = c("advancement", "same_regimen_gap_days"), key = "apply_own_return_fold",
+       to = function(v) if (isTRUE(v)) "none" else 90L)
 )
 
 # Engine settings that are deliberately NOT contract axes, each with the reason.

@@ -16,8 +16,9 @@ regimen window is PART of that line, not a reason to start the next one.
       drug starts the next line on that day under both builds
   F4  B's permissible substitute returns     -> folds like B itself
   F5  B restarts with NO newer line in
-      between                                -> untouched: the engine's own
-      restart rule still opens the next line
+      between                                -> ONE line either way. Nothing
+      was given in between, so 4.3 keeps the restart inside the line it left
+      and this rule has nothing to decide
   F6  B returns two lines later, during 3L   -> does NOT fold. Two agents
       advanced the line between B's two doses, and the request's second
       clause gives that return a line of its own
@@ -45,8 +46,9 @@ regimen window is PART of that line, not a reason to start the next one.
   F17 the only procedure in between is inside
       the line's own window                   -> it belongs to the line, so it
       is no advance either
-  F18 ONE agent opens TWO lines in between   -> one agent, not two: DARA opens
-      2L, discontinues, and opens 3L on a released restart. The return folds
+  F18 the line's own drug restarts, then B
+      returns                                -> DARA's restart no longer opens
+      a line of its own (4.3), so one agent advanced the line and B folds
   F19 the return lands inside a short
       MELPHALAN course                       -> it does not confirm it. A
       returning drug is not a NEW agent, so the melphalan rule cannot read as
@@ -125,11 +127,11 @@ PATS = [
          sct_auto=[IX + 210, IX + 350]),
     dict(P('F17', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 450, 510)]),
          sct_auto=[IX + 210]),
-    # F18: the same agent opens two lines. DARA opens 2L on day 200, its cover
-    # ends day 260, and a restart on day 400 - past the discontinuation gap -
-    # opens 3L under the returning-drug release (LOT_RULES.md 4.3). Counting
-    # LINES that is two advances and B is refused a fold; counting different
-    # AGENTS, as the request words it, DARA is one agent and B folds.
+    # F18: the line's own drug takes a break. DARA opens 2L on day 200, its
+    # cover ends day 260, and it restarts on day 400 - past the discontinuation
+    # gap. Under LOT_RULES.md 4.3 that restart opens no line: nothing new was
+    # given, so DARA is returning to the line it left and 2L runs over the
+    # break. One agent has advanced the line while B was away, so B folds.
     P('F18', L1 + [('DARA', 'MAB', 200, 260), ('DARA', 'MAB', 400, 600),
                    ('BORT', 'PI', 450, 510)]),
     # F19: where the two adopted rules meet. DARA opens 2L. A short melphalan
@@ -200,9 +202,8 @@ def main():
     ok(n(ref, 'F4') == 3 and n(fold, 'F4') == 2,
        "F4: the permissible substitute folds exactly like the drug it replaces")
 
-    ok(ref.get('F5') == fold.get('F5') and n(ref, 'F5') == 2
-       and ref['F5'][1][1] == rs.d(IX + 300),
-       "F5: a restart with no newer line in between still opens the next line")
+    ok(ref.get('F5') == fold.get('F5') and n(ref, 'F5') == 1,
+       "F5: a restart with no newer line in between stays in the line it left")
 
     ok(n(ref, 'F6') == 4 and n(fold, 'F6') == 4,
        "F6: two advances in between, so the return starts a line under both")
@@ -235,11 +236,11 @@ def main():
        "F19 fold-in: the returning drug is not a new agent, so it confirms "
        "nothing and 2L runs through")
 
-    ok(n(ref, 'F18') == 4 and n(fold, 'F18') == 3,
-       "F18 contract: one agent opening two lines refuses the fold")
-    ok(n(fold, 'F18') == 3 and fold['F18'][2][2] == rs.d(IX + 600)
-       and fold['F18'][2][3] == 'DISCONTINUATION',
-       "F18 fold-in: DARA is one agent, so the return folds into 3L")
+    ok(n(ref, 'F18') == 3 and n(fold, 'F18') == 2,
+       "F18 contract: the own-drug restart opens no line, and B still takes one")
+    ok(n(fold, 'F18') == 2 and fold['F18'][1][2] == rs.d(IX + 600)
+       and fold['F18'][1][3] == 'DISCONTINUATION',
+       "F18 fold-in: ...and with one agent in between B folds, so 2L runs on")
 
     for pid, what in (('F17', "an AUTO inside the line's own window"),
                       ('F16', "...and its planned tandem partner")):

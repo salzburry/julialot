@@ -1,9 +1,10 @@
 # What to run, in order
 
 > **The line-counting algorithm changed on 2026-08-30**, so the next run is not
-> a refresh of the last one. Two adopted rules change what starts and ends a
-> line: the melphalan short course (`lot/LOT_RULES.md` 4.7) and the returning
-> earlier-line drug (4.8). Line counts, line dates, end reasons and the 2L/3L
+> a refresh of the last one. Three adopted rules change what starts and ends a
+> line: a drug the patient has had before never starts one (`lot/LOT_RULES.md`
+> 4.3), the melphalan short course (4.7) and the returning earlier-line drug
+> (4.8). The first reaches every patient with a treatment holiday. Line counts, line dates, end reasons and the 2L/3L
 > cohorts all move. Run the prebuild snapshot in section 1 FIRST — the old
 > numbers cannot be recovered once the tables are rebuilt — and treat every
 > figure from an earlier run as superseded.

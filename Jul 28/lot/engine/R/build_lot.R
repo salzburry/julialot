@@ -34,6 +34,7 @@ CONTRACT <- list(
   # between that drug's two doses. Asked for on 2026-08-15, given its count on
   # 2026-08-20, adopted on 2026-08-30 - LOT_RULES.md 4.8, R/foldin_rule.R.
   apply_map_foldin            = TRUE,
+  apply_own_return_fold       = TRUE,
   # A CAR-T inside LOT1's induction window is part of LOT1 - it neither ends
   # the line nor starts one. Confirmed by the study team on 2026-08-13; see
   # R/cart_rule.R and the CAR-T induction rule in lot/LOT_RULES.md.

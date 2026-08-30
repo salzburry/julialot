@@ -2323,21 +2323,37 @@ restart_sites <- sum(vapply(c("04_lot1_base.R", "06_lot1_end.R", "10_lot2_5_base
 ok(restart_sites == 5L,
    paste0("...and spliced into all five that ask - the start candidate, the two ",
           "add-medication blocks, and both run-out guards (", restart_sites, ")"))
-for (f in c("04_lot1_base.R", "06_lot1_end.R", "10_lot2_5_base.R")) {
-  src <- paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE), collapse = "\n")
-  n <- n_hits("coalesce(mr.PREV_DISCON, 0) = 1", src)
-  ok(n >= 1L, paste0(f, ": a discontinued drug is released"))
-}
-# The third part of the same rule. A restart is kept out of the run-out and may
-# START the next line - but while another regimen drug still holds this line
-# open, the restart falls inside it. Unless it can END the line too, it is inside a line it
-# cannot close and too early to open the next: no line owns the treatment.
-for (f in c("04_lot1_base.R", "10_lot2_5_base.R")) {
-  src <- paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE), collapse = "\n")
-  ok(grepl("OR (coalesce(mr.PREV_DISCON, 0) = 1 AND bm.SUBSTITUTE_ONLY = 0))",
-           src, fixed = TRUE),
-     paste0(f, ": a restart can end the line even while another regimen drug runs"))
-}
+# The release is one definition now, and it is GOVERNED: apply_own_return_fold
+# withdraws it, so a drug of the line's own regimen coming back opens no line
+# (LOT_RULES.md 4.3). Every site reads that one function - a guard reading a
+# different rule from the candidate it mirrors ends a line on an event the next
+# line then refuses to open on.
+ok(grepl("return_release_sql <- function", pr, fixed = TRUE),
+   "the returning-drug release is defined once")
+ok(grepl("coalesce(", pr, fixed = TRUE) &&
+     grepl(".PREV_DISCON, 0) = 1 AND ", pr, fixed = TRUE) &&
+     grepl(".SUBSTITUTE_ONLY = 0)", pr, fixed = TRUE),
+   "...and it is the discontinued-drug release, gated on provenance")
+ok(grepl("return_release_on <- function(cfg) !isTRUE(cfg$apply_own_return_fold)",
+         pr, fixed = TRUE),
+   "...withdrawn by apply_own_return_fold, which CONTRACT pins")
+rel_sites <- sum(vapply(c("04_lot1_base.R", "06_lot1_end.R", "10_lot2_5_base.R"), function(f)
+  n_hits("return_release_sql(cfg,",
+    paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE), collapse = "\n")), integer(1)))
+ok(rel_sites == 5L,
+   paste0("...and spliced into all five that ask - the start candidate, the two ",
+          "add-medication blocks, and both run-out guards (", rel_sites, ")"))
+# The other half of the same rule. Withdraw the release without stopping the
+# chain break and the returning treatment belongs to no line at all, so the two
+# move together off one setting.
+ok(grepl("own_gap_breaks_chain <- function(cfg) return_release_on(cfg)",
+         pr, fixed = TRUE),
+   "the run-out chain breaks on a drug's own gap exactly when the release is on")
+gap_sites <- sum(vapply(c("04_lot1_base.R", "10_lot2_5_base.R"), function(f)
+  n_hits("own_gap_breaks = own_gap_breaks_chain(cfg)",
+    paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE), collapse = "\n")), integer(1)))
+ok(gap_sites == 2L,
+   paste0("...and both discon_per_med call sites pass it (", gap_sites, ")"))
 # Provenance. The release is for a drug that WAS the previous regimen, never for
 # one excluded only as a permissible substitute - S4.4 says a substitute cannot
 # start a line, and an old discontinued episode must not be a way around it.
@@ -2352,12 +2368,12 @@ prov <- vapply(c("04_lot1_base.R", "06_lot1_end.R", "10_lot2_5_base.R"), functio
     paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE), collapse = "\n")), integer(1))
 ok(sum(prov) == 5L,
    paste0("every set a release reads records WHY each drug is in it (", sum(prov), ")"))
-gated <- vapply(c("04_lot1_base.R", "06_lot1_end.R", "10_lot2_5_base.R"), function(f) {
-  x <- paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE), collapse = "\n")
-  n_hits("SUBSTITUTE_ONLY = 0", x)
-}, integer(1))
-ok(sum(gated) == 5L,
-   paste0("...and all five release paths are gated on it - the two add-medication ",
+# The release is spliced now rather than written out, so the provenance gate is
+# counted where the release itself lives - once, for all five sites.
+gated <- n_hits(".SUBSTITUTE_ONLY = 0)", pr)
+ok(gated == 1L,
+   paste0("...and the one release path every site reads is gated on it (",
+          gated, ") - the two add-medication ",
           "blocks, the two run-out guards, and the next line's start (", sum(gated), ")"))
 ok(!grepl("OR coalesce(mr.PREV_DISCON, 0) = 1)", l25src, fixed = TRUE),
    "...so no path releases a drug without asking whether it is only a substitute")

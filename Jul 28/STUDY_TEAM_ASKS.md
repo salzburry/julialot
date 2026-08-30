@@ -13,6 +13,7 @@ trail to those, and the list of what is still owed.
 | 3 | Five-branch melphalan rule | 1 Aug | **Measured, not adopted** |
 | 4 | Discontinued 1L, then a 12-month baseline before 2L / 3L | 19 Aug | **Answered** |
 | 5 | What "melphalan mono" means when melphalan came with a steroid | 19 Aug | **Open** — needs the study team |
+| 6 | A line advances on a NEW agent, so a drug the patient has had before should not start one | 30 Aug | **Built and applied.** `LOT_RULES.md` 4.3 |
 
 ---
 
@@ -81,13 +82,14 @@ lines carry it.
 agents** that opened a line between that drug's two doses. One, and the return
 folds. Two or more, and it starts a line, as it does today. Zero is not the
 note's case at all — nothing advanced, so the drug is returning to the line it
-left and the engine's ordinary restart rule keeps it.
+left, and §4.3 keeps it there.
 
 Agents, not lines, because that is the note's own word. A line is read through
-the drug it opened on, so drug D opening line 2, stopping, restarting past the
-discontinuation gap and opening line 3 is **one** agent. Counting lines it was
-two advances, and a drug returning from line 1 was refused a fold on one
-drug's treatment holiday.
+the drug it opened on. Counting lines, a drug that opened one, stopped and
+opened another on a released restart was two advances, and a drug returning
+from an earlier line was refused a fold on one drug's treatment holiday. Ask 6
+has since removed that restart's line altogether, so the two readings now
+differ only where the same agent genuinely opens two lines.
 
 **Transplants and CAR-T are outside the count, because the note is about
 drugs.** It was written for a patient whose line was advanced by an agent, and
@@ -156,6 +158,37 @@ is the note's own example with both drugs coming back rather than one.
 line break caused only by a returning previous-line drug; 39 more keep the
 break because a genuinely new drug started the same day. Most returns are
 soon — 1,114 within six months of the drug's last cover, 92 beyond a year.
+
+---
+
+## 6. A drug the patient has had before does not start a line — BUILT AND APPLIED
+
+**Asked (30 Aug):** to advance a line you need a new agent that was not part of
+the prior regimen. A drug of the line's own regimen coming back after a break
+is not that, so it should not open the next line.
+
+**State today.** Adopted. `apply_own_return_fold` is pinned `TRUE` in
+`CONTRACT`, the rule is `lot/LOT_RULES.md` 4.3, and the engine's older release —
+where a gap of `map_discon_gap_days` let the drug open a line like any other
+agent — is gone.
+
+**The other half, and it is not optional.** Refuse the return a line and the
+returning treatment would belong to no line at all, so the line's run-out now
+chains over the break. A same-drug re-challenge is one line spanning the gap,
+where it used to be two. `map_discon_gap_days` still decides when cover has run
+out and where an episode boundary falls; it no longer decides whether the return
+opens a line.
+
+**This is the widest of the three rules adopted on 30 Aug.** It reaches every
+patient with a treatment holiday, not only the ones §4.7 and §4.8 touch. It
+changes line counts, line durations and line dates, and line duration now
+includes any break inside the line. The scenario catalogue's S06 is the shape:
+one drug, a 90-day break, then the same drug again — two lines before, one now.
+
+**Not yet sized.** The population is every patient whose own regimen drug comes
+back after a gap. `exploration/lot/run_rechallenge_evidence.R` counts those
+returns and the gap behind each one; the next production run is what puts a
+number on the change.
 
 ---
 

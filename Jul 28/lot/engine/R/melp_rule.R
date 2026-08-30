@@ -411,7 +411,7 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
         ON cr.PATID = c.PATID AND cr.MAP_MED_TYPE = c.MAP_MED_TYPE
        AND cr.MAP_START_DT = c.MAP_START_DT{not_new_join}
       WHERE (cb.MED_ABBR IS NULL
-             OR (coalesce(cr.PREV_DISCON, 0) = 1 AND cb.SUBSTITUTE_ONLY = 0)){not_new_pred}
+{return_release_sql(cfg, 'cr', 'cb')}){not_new_pred}
     ),
     -- A course belongs to ONE line: the latest whose start precedes it.
     --
@@ -447,7 +447,7 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
         ON orr.PATID = o.PATID AND orr.MAP_MED_TYPE = o.MAP_MED_TYPE
        AND orr.MAP_START_DT = o.MAP_START_DT
       WHERE (ob.MED_ABBR IS NULL
-             OR (coalesce(orr.PREV_DISCON, 0) = 1 AND ob.SUBSTITUTE_ONLY = 0))
+{return_release_sql(cfg, 'orr', 'ob')})
       UNION
       -- A line can also be opened by a procedure, and a course after one is
       -- no more this line's than a course after a new drug. Scanning
@@ -769,7 +769,7 @@ melp_lot1_ctes <- function(cfg) {
         ON mr.PATID = ms.PATID AND mr.MAP_MED_TYPE = ms.MAP_MED_TYPE
        AND mr.MAP_START_DT = ms.MAP_START_DT
       WHERE (bm.MED_ABBR IS NULL
-             OR (coalesce(mr.PREV_DISCON, 0) = 1 AND bm.SUBSTITUTE_ONLY = 0))
+{return_release_sql(cfg, 'mr', 'bm')})
         AND ms.MAP_MED_CLASS <> 'STEROID'
         AND ms.MAP_START_DT >= melp_span.LOT1_START_DT
         AND ms.MAP_START_DT <= melp_span.SPAN_END_DT{melp_suppress_predicate(cfg)}

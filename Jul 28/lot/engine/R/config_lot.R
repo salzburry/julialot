@@ -112,6 +112,15 @@ cfg_defaults <- list(
   # check and stops, rather than defaulting to the study's rule and hiding
   # that the settings file never loaded.
   apply_map_foldin   = as.logical(Sys.getenv("APPLY_MAP_FOLDIN", unset = "FALSE")),
+  # The returning-drug release, LOT_RULES.md 4.3. TRUE - the value pinned in
+  # CONTRACT since the study adopted it - means a drug of the line's own
+  # regimen coming back after a gap does NOT open the next line: nothing new
+  # was given, so it is returning to the line it left, and that line's run-out
+  # chains over the gap. FALSE is the engine's older rule, where the gap
+  # released the drug to open a line like any other agent. Default FALSE so a
+  # run that somehow loses config.csv fails the contract check and stops.
+  apply_own_return_fold =
+    as.logical(Sys.getenv("APPLY_OWN_RETURN_FOLD", unset = "FALSE")),
   # Pinned TRUE in CONTRACT. Turning it off is a different algorithm and needs
   # LOT_CONTRACT_OVERRIDE, the same as any other contract setting.
   apply_cart_induction_rule =

@@ -11,12 +11,14 @@ Worked examples are machine-checked cases in `lot/validation/R/`, not prose. A
 renamed vignette, or one no rule cites, fails
 `lot/validation/tests/test_vignettes.R`.
 
-> **Changed 2026-08-30.** Two rules were added, and both change what starts and
-> ends a line: §4.7 (a short melphalan course) and §4.8 (a returning
-> earlier-line drug). Each refuses a boundary and carries the line over the
-> treatment instead, so a line's end can now sit later than its own regimen's
-> cover (§5.2), and `MED_ADD` is narrower (§7.4). Neither adds the drug to
-> `LOT_BASE_MEDS`. **LOT numbers produced before that date are superseded.**
+> **Changed 2026-08-30.** Three rules changed what starts and ends a line:
+> §4.3 (a drug the patient has had before never starts one), §4.7 (a short
+> melphalan course) and §4.8 (a returning earlier-line drug). Each refuses a
+> boundary and carries the line over the treatment instead, so a line's end can
+> now sit later than its own regimen's cover (§5.2) and `MED_ADD` is narrower
+> (§7.4). None of them adds the drug to `LOT_BASE_MEDS`. §4.3 is the widest —
+> it reaches every patient with a treatment holiday, not only the ones the
+> other two touch. **LOT numbers produced before that date are superseded.**
 
 ---
 
@@ -33,7 +35,7 @@ renamed vignette, or one no rule cites, fails
 | §3.4 | Line 1's first autologous transplant is part of induction | — | |
 | §4.1 | A later line opens on the earliest of four candidates | — | |
 | §4.2 | Later induction is 30 days, and 45 on a CAR-T-started line | `lot_n_induction_window_days`, `cart_consolidation_days` | |
-| §4.3 | A drug is held by its line while it runs, and released once stopped | `map_discon_gap_days` | |
+| §4.3 | A drug the patient has had before never starts a line | `apply_own_return_fold` | |
 | §4.4 | A permissible biosimilar substitute never starts a line | — | |
 | §4.5 | Same-day starts break `SCT_ALLO > CART > SCT_AUTO > MED` | — | |
 | §4.6 | An allogeneic line spans one day and carries no regimen | `allo_lot_span` | |
@@ -85,6 +87,7 @@ as the study's numbers.
 | `belantamab_med_abbr` | `BELA` | how belantamab is spelled on the code list |
 | `apply_melp_rule` | `simplified` | the melphalan short-course rule — §4.7 |
 | `apply_map_foldin` | `TRUE` | a returning prior-line drug joins the line it returns in — §4.8 |
+| `apply_own_return_fold` | `TRUE` | a drug of the line's own regimen coming back never starts a line — §4.3 |
 | `melp_med_abbr` | `MELP` | how melphalan is spelled on the code list |
 | `melp_exposure_days` | 30 | melphalan doses closer than this are one course |
 | `melp_simple_course_days` | 28 | a course covering this or fewer days is short — §4.7 |
@@ -232,30 +235,36 @@ open question - Q1 on the scenario workbook's Open questions sheet.
 `run_scenario_counts.R`'s `4.2-prior-agent-covered-but-not-in-the-regimen`
 sizes it.
 
-### 4.3 A drug is held by its line while it runs, and released once stopped
+### 4.3 A drug the patient has had before never starts a line
 
 Worked example: `maintenance_to_relapse`.
 
-A drug the patient has not stopped does not start a line: the line that owns it
-extends over its later episodes (§5.2). A drug that has **discontinued** does -
-an episode arriving after a gap of `map_discon_gap_days` is a restart, and opens
-a line like any other agent.
+A line opens on an agent that was **not** in the previous regimen. A drug the
+patient has already had is not one, whatever the gap since, so its later
+episodes never start a line — the line that owns it runs on over them (§5.2).
 
-One rule in two halves, and both are needed. `discon_per_med` stops chaining at
-the last episode before the gap, so a line does not span its own agent's
-absence. The prior-regimen exclusion releases the same drug, so the returning
-treatment has a line to go to. `lot/engine/R/prior_regimen.R` carries both, and
-the run-out guards that mirror the start candidates read the same definition.
+**One rule in two halves, and both are needed.** Refuse the return a line and
+the returning treatment would belong to no line at all, so the line's run-out
+chains over the break instead of stopping at it. `discon_per_med` does not
+break a chain on the drug's own gap; another drug interrupting still breaks it.
+`lot/engine/R/prior_regimen.R` carries both halves off one setting
+(`apply_own_return_fold`), and the run-out guards that mirror the start
+candidates read the same definition.
 
-The threshold is `map_discon_gap_days`, not any gap. A drug whose cover lapses
-for a day opens a new episode (§2.3) and nothing follows: the run-out chains
-over it and the drug is still refused as a line start. It takes 90 days off the
-drug. Whether 90 is the right threshold is Q2 on the scenario workbook's Open
-questions sheet.
+So a same-drug re-challenge after any gap is **one line**, spanning the break.
+`map_discon_gap_days` still decides when a drug's cover has run out (§5.1) and
+where an episode boundary falls (§2.3); it no longer decides whether the return
+opens a line.
 
-The release is narrowed by §4.8: a drug of an **earlier** line, returning after
-exactly one agent advanced the line, joins the line it returns in rather than
-opening one.
+> **Changed 2026-08-30.** Before this the gap **released** the drug: an episode
+> after `map_discon_gap_days` was a restart and opened a line like any other
+> agent, and the line stopped at the gap. A patient on one drug with a
+> three-month break was two lines; they are now one. This changes line counts,
+> line durations and line dates for every patient with a treatment holiday, not
+> only the ones §4.8 touches.
+
+§4.8 is the same idea for a drug of an **earlier** line: returning after
+exactly one agent advanced the line, it joins the line it returns in.
 
 ### 4.8 A returning drug joins the line it returns in, after one agent
 
@@ -269,17 +278,16 @@ interval:
 |---|---|
 | one | joins the line it returns in — no new line |
 | two or more | opens a line, as any added agent would |
-| none | nothing advanced, so this rule says nothing — §4.3's release applies |
+| none | nothing advanced, so this rule says nothing — §4.3 keeps the return in the line it left |
 
 The interval is measured **dose to dose**, not from where the drug stopped. A
 drug's cover often runs past the line it belonged to, so measuring from the stop
 would put the advance that ended that line before the interval and count none.
 
 An advance is an **agent**, not a line. A line is read through the drug it
-opened on, so a drug that opens a line, discontinues, and opens another on a
-released restart (§4.3) counts **once** — `returning_drug_one_agent_twice`. A
-permissible substitute is the same agent as the drug it replaces (§4.4), so a
-biosimilar swap is not a second agent either.
+opened on, so one agent that opens two lines counts **once** —
+`returning_drug_one_agent_twice`. A permissible substitute is the same agent as
+the drug it replaces (§4.4), so a biosimilar swap is not a second agent either.
 
 **Transplants and CAR-T are not in that count**, which counts drugs. They keep
 the rules they have everywhere else (§6), where they are standalone

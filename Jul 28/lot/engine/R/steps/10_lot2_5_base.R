@@ -294,8 +294,7 @@ build_lot_n <- function(con, lot_num,
         -- is still taking inside the line that owns it. A drug returning after
         -- a confirmed gap is a restart, and opens a line like any other.
         AND (pme.MED_ABBR IS NULL
-             OR (coalesce(mr.PREV_DISCON, 0) = 1
-                 AND pme.SUBSTITUTE_ONLY = 0){melp_prior_regimen_exempt(cfg)}){melp_suppress_predicate(cfg)}{foldin_trigger_predicate(cfg)}
+{return_release_sql(cfg, 'mr', 'pme', melp_prior_regimen_exempt(cfg))}){melp_suppress_predicate(cfg)}{foldin_trigger_predicate(cfg)}
       GROUP BY pe.PATID
     ),
     -- d_ALLO: earliest ALLO strictly after PREV_END_DT.
@@ -572,7 +571,8 @@ build_lot_n <- function(con, lot_num,
     -- end.
     discon_per_med AS (
 {discon_per_med_sql(glue('lot{lot_num}_regimen_cutoff'), glue('LOT{lot_num}_START_DT'),
-                    boundary_tbl = foldin_boundary_tbl(cfg), end_col = 'REGIMEN_CUTOFF_DT')}
+                    boundary_tbl = foldin_boundary_tbl(cfg), end_col = 'REGIMEN_CUTOFF_DT',
+                    own_gap_breaks = own_gap_breaks_chain(cfg))}
     ),
     -- The regimen has run out when its LAST base agent has.
     discon_raw AS (
@@ -618,7 +618,7 @@ build_lot_n <- function(con, lot_num,
       -- inside it, cannot end it, and is then too early to open the next one.
       -- The treatment belongs to no line at all.
       WHERE (bm.MED_ABBR IS NULL
-             OR (coalesce(mr.PREV_DISCON, 0) = 1 AND bm.SUBSTITUTE_ONLY = 0))
+{return_release_sql(cfg, 'mr', 'bm')})
         AND ms.MAP_MED_CLASS <> 'STEROID'
         -- The lookback gate, per start type:
         --   MED / SCT_AUTO    -> any drug after the 30-day induction window
@@ -991,7 +991,7 @@ build_lot_n <- function(con, lot_num,
         AND ms.MAP_START_DT <= lb.OBS_END_DT
         AND ms.MAP_MED_CLASS <> 'STEROID'
         AND (prem.MED_ABBR IS NULL
-             OR (coalesce(mr.PREV_DISCON, 0) = 1 AND prem.SUBSTITUTE_ONLY = 0))
+{return_release_sql(cfg, 'mr', 'prem')})
     ),
     post_runout_autos AS (
       -- N_BETWEEN: whether anything happened since the previous transplant. A

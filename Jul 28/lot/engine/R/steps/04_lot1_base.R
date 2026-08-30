@@ -122,7 +122,8 @@ phase_lot1_base <- function(con, ctx) {
     -- never opens, because its trigger has to fall strictly after the previous
     -- end.
     discon_per_med AS (
-{discon_per_med_sql('lot1_regimen_cutoff', 'LOT1_START_DT', end_col = 'REGIMEN_CUTOFF_DT')}
+{discon_per_med_sql('lot1_regimen_cutoff', 'LOT1_START_DT', end_col = 'REGIMEN_CUTOFF_DT',
+                    own_gap_breaks = own_gap_breaks_chain(cfg))}
     ),
     -- The regimen has run out when its LAST base agent has.
     discon_raw AS (
@@ -194,7 +195,7 @@ phase_lot1_base <- function(con, ctx) {
       -- inside the line, cannot end it, and is then too early to open the next
       -- one. The treatment belongs to no line at all.
       WHERE (bm.MED_ABBR IS NULL
-             OR (coalesce(mr.PREV_DISCON, 0) = 1 AND bm.SUBSTITUTE_ONLY = 0))
+{return_release_sql(cfg, 'mr', 'bm')})
         AND ms.MAP_MED_CLASS <> 'STEROID'  -- a steroid cannot trigger an add-med
         AND ms.MAP_START_DT >= bc.LOT1_START_DT
         AND ms.MAP_START_DT <= coalesce(bc.LOT1_BASE_RUNOUT_DT, bc.OBS_END_DT)

@@ -5,12 +5,13 @@ things that read a finished run.
 
 A cohort is what LOT is pointed at. It is not part of LOT and does not read it.
 
-> **The line-counting algorithm changed on 2026-08-30.** Two rules the study
-> team asked for were adopted, and both change what starts and ends a line:
-> a short melphalan course outside induction no longer starts one
-> (`lot/LOT_RULES.md` 4.7), and a drug from an earlier line coming back joins
-> the line it returns in when exactly one agent advanced the line while it was
-> away (4.8). **Every LOT number produced before that date is superseded** —
+> **The line-counting algorithm changed on 2026-08-30.** Three rules now change
+> what starts and ends a line: a drug the patient has had before never starts
+> one, whatever the gap since (`lot/LOT_RULES.md` 4.3), a short melphalan course
+> outside induction does not start one (4.7), and a drug from an earlier line
+> coming back joins the line it returns in when exactly one agent advanced the
+> line while it was away (4.8). The first is the widest — it reaches every
+> patient with a treatment holiday. **Every LOT number produced before that date is superseded** —
 > line counts, line dates, end reasons and the cohorts built from them. Rebuild
 > before quoting anything. `STUDY_TEAM_ASKS.md` is the trail of what was asked,
 > what was decided, and what is still owed.
@@ -113,6 +114,7 @@ lines.
 | outcomes | `analysis/FILES.md` - the `STUDY_END` censoring rule for TTD, the fifth attrition category, both denominators |
 | the melphalan rule the build applies | `lot/LOT_RULES.md` 4.7. How it was chosen, and the five-branch rule that was not adopted, are in `exploration/FILES.md` |
 | a drug from an earlier line coming back | `lot/LOT_RULES.md` 4.8 - it joins the line it returns in when one agent advanced the line in between |
+| a drug of the line's own regimen coming back | `lot/LOT_RULES.md` 4.3 - it never starts a line, and the line runs over the break |
 | what the study team asked for, and what is still owed | `STUDY_TEAM_ASKS.md` |
 
 Where one of those documents and this table disagree, the document is the record.
