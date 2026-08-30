@@ -97,11 +97,13 @@ foldin_on <- function(cfg) isTRUE(cfg$apply_map_foldin)
 # agent. Counting LINES made that two advances and refused the fold on one
 # drug's treatment holiday.
 #
-# TRANSPLANTS AND CAR-T ARE NOT IN THAT COUNT AT ALL. They keep the engine's
-# own rules, where they are standalone line-defining events, and one that
-# OPENED A LINE between the two doses OVERRIDES the fold - whatever the agent
-# count says. A drug returning across a transplant is not returning to the
-# line it left.
+# TRANSPLANTS AND CAR-T ARE NOT IN THAT COUNT AT ALL, because the request is
+# about drugs - it was written for a line advanced by an agent, and
+# transplants were not in view. So they are not read into it either way. They
+# keep the engine's own rules, where they are standalone line-defining events,
+# and one that OPENED A LINE between the two doses OVERRIDES the fold whatever
+# the agent count says. A drug returning across a transplant is not returning
+# to the line it left.
 #
 # One that the line OWNS is not a boundary and overrides nothing: an AUTO
 # inside the line's own window, or a planned tandem partner, opens no line, so

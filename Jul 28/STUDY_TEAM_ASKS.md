@@ -89,25 +89,28 @@ discontinuation gap and opening line 3 is **one** agent. Counting lines it was
 two advances, and a drug returning from line 1 was refused a fold on one
 drug's treatment holiday.
 
-**Transplants and CAR-T are outside the count.** They keep the rules they have
-everywhere else, where they are standalone line-defining events, and one that
-opened a line between the two doses overrides the fold whatever the agent count
-says. One the line owns — inside its window, or a planned tandem partner —
-opens no line and overrides nothing.
+**Transplants and CAR-T are outside the count, because the note is about
+drugs.** It was written for a patient whose line was advanced by an agent, and
+transplants were not in view. So they are not read into it either way: they
+keep the rules they have everywhere else (`LOT_RULES.md` 6), where they are
+standalone line-defining events, and one that opened a line between the two
+doses overrides the fold whatever the agent count says. One the line owns —
+inside its window, or a planned tandem partner — opens no line and overrides
+nothing.
 
-The one thing this changes that nobody asked for: a drug returning into a line
-that a transplant or CAR-T opened no longer folds. That line contributes no
-agent, and the transplant overrides besides. It used to fold.
+This is a scope, not an unanswered question. Nothing about transplants is owed
+back to the study team here.
 
-**Left as it is, deliberately.** A drug coming back soon after a transplant is
-already handled by the line's own consolidation window (`LOT_RULES.md` 4.2) and
-never needed this rule: on a planted CAR-T line opened at day 200, a return at
-day 230 joins that line under both builds. The planted cases that changed have
-the return at day 300 — 100 days out — and at that distance a new line is what
-every other rule in the build gives. Widening the window to reach it would
-change what a consolidation window means, and `allo_lot_span = extend_to_next`
-does not help either: it lengthens the transplant line but the return still
-ends it with `MED_ADD` and opens the next one.
+One consequence, and it is left as it is: a drug returning into a line that a
+transplant or CAR-T opened does not fold. A drug coming back **soon** after a
+transplant never needed this rule — the line's own consolidation window
+(`LOT_RULES.md` 4.2) already takes it, and on a planted CAR-T line opened at
+day 200 a return at day 230 joins that line under both builds. A return 100
+days out gets a new line, which is what every other rule in the build gives.
+Widening the window to reach it would change what a consolidation window means,
+and `allo_lot_span = extend_to_next` does not help either: it lengthens the
+transplant line but the return still ends it with `MED_ADD` and opens the next
+one.
 
 **The interval is dose to dose**, not stop to return. A drug's cover often runs
 past the line it belonged to, so measuring from where it stopped would put the

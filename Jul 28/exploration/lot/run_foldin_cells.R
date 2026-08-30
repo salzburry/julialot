@@ -66,10 +66,11 @@ FOLDIN_CELLS <- list(
                      "advanced the line between the drug's two doses. The ",
                      "line's SPAN owns the return - the regimen string and ",
                      "drug counts do not change - agents of EVERY earlier ",
-                     "line fold, not only the last one's, and an AGENT is ",
-                     "what is counted - transplants stay outside it, and a ",
-                     "line one opened overrides the fold. Those three ",
-                     "readings are open for the study team to confirm")))
+                     "line fold, not only the last one's. Those two readings ",
+                     "are open for the study team to confirm. An AGENT is ",
+                     "what is counted because the request is about drugs; ",
+                     "transplants keep their own rules and a line one opened ",
+                     "overrides the fold")))
 
 report_plan <- function(cells) {
   cat("\nThe MAP fold-in rule, as two builds.\n\n")
