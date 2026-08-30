@@ -1,6 +1,10 @@
 #!/usr/bin/env Rscript
 # The study team's worked melphalan scenarios, and the induction-window
-# variants they do not cover, run through the rule the engine carries.
+# variants they do not cover, run through the FIVE-BRANCH rule they drew them
+# for. That rule was measured and not adopted - the study's own rule is the
+# short-course one (lot/LOT_RULES.md 4.7) - so the mode is pinned as_asked
+# here rather than read from the contract. These drawings are statements about
+# the five-branch rule, and they stay checkable.
 #
 #   Rscript exploration/melphalan/run_melp_scenarios.R
 #

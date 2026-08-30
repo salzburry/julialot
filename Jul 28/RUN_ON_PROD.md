@@ -141,8 +141,9 @@ Rscript exploration/melphalan/run_melp_simple.R                          # plan 
 MELP_SIMPLE_EXECUTE=TRUE Rscript exploration/melphalan/run_melp_simple.R # build + read
 ```
 
-Its console output and four `melp_simple_*.csv` files compare the simplified
-rule to the contract build. The 28-day course cap is an open question.
+Its console output and four `melp_simple_*.csv` files compare the study's
+rule against a build with no melphalan rule at all. The 28-day course cap is an
+open question.
 `MELP_SIMPLE_COURSE_DAYS=30` widens which recorded course lengths count as
 short; it does **not** re-impute the 28-day medical supply, which would change
 how episodes are built and is not implemented. 30 is a deviation from the

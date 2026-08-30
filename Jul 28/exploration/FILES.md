@@ -76,8 +76,9 @@ fills an empty variable from `config.csv` — and it records the deviation.
 
 The rule itself is not in this folder — it is `lot/engine/R/melp_rule.R`,
 because the engine builds the lines and the rule needs each line's own induction
-window, which exists only while that line is being built. It is off by default
-and off emits nothing.
+window, which exists only while that line is being built. The study's mode is
+`simplified`, so the engine emits it on every run; `off` and the two five-branch
+modes are comparison builds.
 
 ### The proposal
 

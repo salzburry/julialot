@@ -1096,6 +1096,10 @@ qc_markdown <- function(res, run_id, pfx, p, devs) {
           paste0("Windows as the run recorded them: LOT1 ", p$ind1,
                  " days, later lines ", p$indn, ", CAR-T ", p$cart,
                  "; tandem ", p$tandem, ", autologous gap ", p$auto_gap, "."),
+          # In the report, not only on the console: a study build and one
+          # without the melphalan rule are different algorithms with different
+          # line counts, and the file is what gets read later.
+          paste0("Melphalan rule: ", p$melp_rule, "."),
           "", "| | check | result | n | detail |", "|---|---|---|---|---|")
   for (i in seq_len(nrow(res)))
     ln <- c(ln, paste0("| ", res$id[i], " | ", res$what[i], " | ",

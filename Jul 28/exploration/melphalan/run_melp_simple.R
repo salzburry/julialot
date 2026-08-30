@@ -90,6 +90,14 @@ report_plan <- function(cells, cap) {
   cat("\n  course cap: ", cap, " days",
       if (!identical(cap, "28")) "  (overridden from the 28-day default)" else "",
       "\n", sep = "")
+  # At any cap but the contract's, the simplified cell is NOT the study's
+  # build - it is the study's rule at a different threshold. Said here because
+  # the cell keeps its name either way, and the name is what a reader carries.
+  if (!identical(cap, "28"))
+    cat("\n  NOTE: at a cap other than 28 the simplified cell is NOT the ",
+        "contract build.\n        It is the study's rule at a different ",
+        "threshold, and is built under the\n        override and stamped as a ",
+        "deviation.\n", sep = "")
   cat("\n", length(cells), " cells. EACH ONE IS A COMPLETE LOT BUILD.\n", sep = "")
 }
 

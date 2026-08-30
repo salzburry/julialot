@@ -128,19 +128,19 @@ reading of how the rules interact, and the first warehouse run settles it.
 
 - timeline: d+0 MED (1L regimen starts); d+100 MED (one melphalan administration, no other agent with it); d+127 MAP_END (last day that course covers - exactly the cap, so the course is short)
 - why it is hard: A brief melphalan course outside induction is usually transplant conditioning. Counted as an added medication it opens a line of therapy nobody gave.
-- rule: lot/engine/R/melp_rule.R:410 - melp_suppress, SHORT = 1 AND CONFIRMED = 0
+- rule: lot/engine/R/melp_rule.R:449 - melp_suppress, SHORT = 1 AND CONFIRMED = 0
 
 **melp_long_course** - Melphalan course past the short cap
 
 - timeline: d+0 MED (1L regimen starts); d+100 MED (melphalan starts); d+128 MAP_END (last day covered - one day past the cap, so the course is not short)
 - why it is hard: The cap is what separates conditioning from melphalan given as treatment. Ongoing melphalan is a regimen.
-- rule: lot/engine/R/melp_rule.R:404 - datediff(COURSE_END_DT, EXPO_DT) + 1 <= cap
+- rule: lot/engine/R/melp_rule.R:434 - datediff(COURSE_END_DT, EXPO_DT) + 1 <= cap
 
 **melp_short_course_confirmed** - A new agent inside a brief melphalan course
 
 - timeline: d+0 MED (1L regimen starts); d+100 MED (melphalan starts; its cover runs to day 127); d+105 MED (a different line-defining agent starts, inside that cover)
 - why it is hard: Dating the line at the later agent would put the boundary after treatment had already moved on, and split the melphalan away from the line it belongs to.
-- rule: lot/engine/R/melp_rule.R:426 - melp_inject, CONFIRMED = 1, at EXPO_DT
+- rule: lot/engine/R/melp_rule.R:465 - melp_inject, CONFIRMED = 1, at EXPO_DT
 
 **maintenance_to_relapse** - Maintenance running into relapse
 
