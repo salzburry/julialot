@@ -58,9 +58,9 @@ build recorded.
 | `_setup.R` | Shared setup, using the engine's own modules rather than a second copy so the two cannot drift. Loads `config.csv` first, then pins a config the way the build does. |
 | `lot1_studyteam_qs.R` | The standalone LOT1 asks. |
 | `poma_studyteam_qs.R` | The POMA-in-1L asks — one workbook, one tab per question. |
-| `jul20_studyteam_qs.R` | The July-20 set: the DARA+BORT dual-therapy question, and `q3_cart_screen()`, which counts the patients the CAR-T induction rule touches. Its Q3a melphalan screen is off unless `JUL20_Q3A_MELP=TRUE`; the melphalan question is answered in `exploration/melphalan/`. |
+| `jul20_studyteam_qs.R` | The July-20 set: the DARA+BORT dual-therapy question, and `q3_cart_screen()`, which counts the patients the CAR-T induction rule touches. Its Q3a melphalan screen is off unless `JUL20_Q3A_MELP=TRUE`; the melphalan question is answered in `lot/melphalan/`. |
 | `lot_followup_qs.R` | The follow-ups on steroids, regimen mix and CAR-T. |
-| `aug15_studyteam_qs.R` | The mid-August asks: the MAP-splitting sizing screen (returning previous-line agents, split by same-day new agents), and the discontinued-then-12-month-enrollment funnels for 2L and 3L. The screen was written to SIZE the fold-in; the build now applies it (`lot/LOT_RULES.md` 4.8), so on a study run the screen counts what the rule LEFT, not what it removed — `exploration/lot/run_foldin_cells.R` measures that. Points at `exploration/melphalan/` for the MELP comparison. |
+| `aug15_studyteam_qs.R` | The mid-August asks: the MAP-splitting sizing screen (returning previous-line agents, split by same-day new agents), and the discontinued-then-12-month-enrollment funnels for 2L and 3L. The screen was written to SIZE the fold-in; the build now applies it (`lot/LOT_RULES.md` 4.8), so on a study run the screen counts what the rule LEFT, not what it removed — `exploration/lot/run_foldin_cells.R` measures that. Points at `lot/melphalan/` for the MELP comparison. |
 | `broad_studyteam_qs.R` | The two asks NDMM cannot answer, over the broad cohort — the other-cancer association, and the diagnosis-anchored trial flags. |
 | `validation_qs.R` | The "MM LOT validation next steps" asks. |
 | `validation_helpers.R` | The analysis behind those questions, shared with the dashboard's exploratory tables. |

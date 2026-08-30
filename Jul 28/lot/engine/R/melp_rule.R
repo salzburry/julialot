@@ -1,54 +1,35 @@
-# The melphalan line-advancing rule. Which mode runs is APPLY_MELP_RULE, and
-# the study's is 'simplified' - see CONTRACT in build_lot.R and LOT_RULES.md
-# 4.7. The other modes, and 'off', are comparison builds: each is a different
-# algorithm, so each needs LOT_CONTRACT_OVERRIDE and is recorded as a deviation.
-# The cells that build them live in exploration/melphalan/.
+# The melphalan line-advancing rule - LOT_RULES.md 4.7, and CONTRACT in
+# build_lot.R. One rule, applied by every study build; APPLY_MELP_RULE turns it
+# off and nothing else. A rule-off build is a different algorithm, so it needs
+# LOT_CONTRACT_OVERRIDE and is recorded as a deviation - it exists so the rule's
+# effect can be measured, which lot/melphalan/ does.
 #
-# The rule is in the engine, not in that folder, because it needs each line's
-# induction window, which exists only while that line is being built.
+# The rule lives in the engine because it needs each line's induction window,
+# and that exists only while the line is being built.
 #
-# Every mode changes the same one thing: which melphalan MAP rows may be an
-# added medication, and on what date. Everything else follows from that.
+# It changes one thing: which melphalan MAP rows may be an added medication, and
+# on what date. Everything else follows.
 #
-# THE STUDY'S RULE - 'simplified'. A melphalan course covering
-# melp_simple_course_days or fewer days, outside the line's induction window,
-# does not advance the line on its own: the course is suppressed and the line
-# carried to the end of its cover. If another engine-valid agent starts while
-# that course still covers, the next line DOES start, and it starts on the
-# melphalan date rather than the later agent's - so the course's first day is
-# injected as the boundary. A course inside induction, or one longer than the
-# cap, is left to the engine untouched. melp_simplified_ctes() below.
+# A melphalan course covering melp_simple_course_days or fewer days, outside the
+# line's induction window, does not advance the line on its own: the course is
+# suppressed and the line carried to the end of its cover. If another
+# engine-valid agent starts while that course still covers, the next line DOES
+# start, and it starts on the melphalan date rather than the later agent's - so
+# the course's first day is injected as the boundary. A course inside induction,
+# or one longer than the cap, is left to the engine untouched.
+# melp_simplified_ctes() below does the work.
 #
-# THE UNADOPTED MODES - the two five-branch readings the study team asked for
-# first. Kept because the comparison that chose between them is a cell anyone
-# can rebuild. Read this far only when reading their code.
-#
-#   inside induction, next exposure < 180d    no advance
-#   inside induction, next >= 180d            the next one advances, on its date
-#   outside, next < 60d                       the first advances
-#   outside, next 60-179d                     neither advances
-#   outside, next >= 180d                     the next one advances, on its date
-#
-# "Inside induction" compares this exposure's date with this line's induction
-# end, not whether melphalan is in the regimen. The two agree only for the
-# first dose.
-#
-# So they SUPPRESS candidates outside induction whose next exposure is 60+ days
-# away - both doses of a B.2 pair - and INJECT the advancing dose of a 180+
-# pair and the first dose of a B.1 pair, which the engine may not otherwise
-# offer. Suppressing both B.2 doses stops melphalan ending the line at either
-# but does not keep the second dose inside it:
-# melp_hold carries the line to it.
-#
-# The two differ only where a coded transplant sits on the same event: as_asked
-# judges every exposure anyway, yield_to_sct leaves an exposure with an AUTO
-# within melp_sct_days to the transplant rule.
-MELP_RULE_MODES <- c("as_asked", "yield_to_sct", "simplified")
+# The study team asked first for a five-branch rule keyed on the gap to the next
+# exposure, in two readings. Both were built, measured against this one, and not
+# adopted; they were removed on 2026-08-30 once the choice was settled, and
+# STUDY_TEAM_ASKS.md keeps the finding. Nothing in the build reads a mode name
+# any more.
+MELP_RULE_MODES <- c("simplified")
 
-# "off" is a mode name like the others, and it is the ONLY way to ask for a
-# rule-off build from the environment. Blank cannot do it: load_inputs.R fills
-# any variable that is unset OR empty from config.csv, and config.csv now
-# carries the contract mode - so APPLY_MELP_RULE= reaches the build as
+# "off" is the ONLY way to ask for a rule-off build from the environment. Blank
+# cannot do it: load_inputs.R fills any variable that is unset OR empty from
+# config.csv, and config.csv carries the contract value - so APPLY_MELP_RULE=
+# reaches the build as
 # 'simplified' and a comparison cell meant to hold the rule off would quietly
 # measure the contract against itself. A word survives that fill; an empty
 # string does not.
@@ -57,8 +38,9 @@ MELP_RULE_MODES <- c("as_asked", "yield_to_sct", "simplified")
 # which is how the tests and the emitters construct one.
 MELP_RULE_OFF <- "off"
 
-# Read once. An unknown mode stops the build rather than quietly acting like one
-# of them. "simplified" is the contract build - see CONTRACT in build_lot.R.
+# Read once. An unrecognised value stops the build rather than quietly acting
+# like the rule is on. Kept as a named value rather than a flag because
+# APPLY_MELP_RULE is a CONTRACT axis and config.csv carries the word.
 melp_rule_mode <- function(cfg) {
   m <- tolower(trimws(cfg$apply_melp_rule %||% ""))
   if (!nzchar(m) || identical(m, MELP_RULE_OFF)) return("")
@@ -84,215 +66,16 @@ melp_abbr    <- function(cfg) toupper(trimws(cfg$melp_med_abbr %||% "MELP"))
 # base_tbl / restart_tbl are read only by the simplified mode - see
 # melp_simplified_ctes. The five-branch modes never ask what else the patient
 # takes, so both stay unused there and their SQL is unchanged.
+# The rule's decision. One reading - the short course the study adopted - so
+# this is a thin front door onto melp_simplified_ctes rather than a switch.
+# It stays a function of its own because every caller splices it by this name
+# and none of them should have to know which reading is in force.
 melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end,
                                base_tbl = NULL, restart_tbl = NULL,
                                not_new_ctes = "", cart_from = NULL) {
-  mode <- melp_rule_mode(cfg)
-  if (!nzchar(mode)) return("")
-  if (identical(mode, "simplified"))
-    return(melp_simplified_ctes(cfg, line_tbl, start_col, span_end,
-                                induction_end, base_tbl, restart_tbl,
-                                not_new_ctes, cart_from))
-  abbr <- melp_abbr(cfg)
-  yield_this <- if (identical(mode, "yield_to_sct")) "p.HAS_AUTO" else "0"
-  yield_next <- if (identical(mode, "yield_to_sct")) "coalesce(p.NEXT_HAS_AUTO, 0)" else "0"
-  # Each fragment opens with its own newline. glue() trims a template's leading
-  # blank line, so one spliced after "WITH" or after ")," would weld onto it.
-  paste0("\n", glue("
-    melp_doses AS (
-      SELECT PATID, MAP_START_DT AS DOSE_DT
-      FROM map_stacked
-      WHERE upper(trim(MAP_MED_TYPE)) = '{abbr}'
-      GROUP BY PATID, MAP_START_DT
-    ),
-    -- Chained, not pairwise. Three doses 20 days apart are one
-    -- administration. A plain lag() gap would make the third a new exposure at
-    -- 40 days from the first, and the rule would judge a pair that is not one.
-    melp_runs AS (
-      SELECT PATID, DOSE_DT,
-             CASE WHEN datediff(DOSE_DT,
-                    lag(DOSE_DT) OVER (PARTITION BY PATID ORDER BY DOSE_DT))
-                       < {cfg$melp_exposure_days}
-                  THEN 0 ELSE 1 END AS IS_NEW
-      FROM melp_doses
-    ),
-    -- Every dose with its exposure's first date. The suppress list has to
-    -- reach the LATER doses of a suppressed exposure too. A B.2 exposure made
-    -- of doses on days 70 and 98 is one administration. Suppressing only day
-    -- 70 left day 98 on the candidate list - the boundary B.2 says is not
-    -- there, opened by the second half of the same administration.
-    melp_dose_expo AS (
-      SELECT PATID, DOSE_DT,
-             min(DOSE_DT) OVER (PARTITION BY PATID, E) AS EXPO_DT
-      FROM (SELECT PATID, DOSE_DT,
-                   sum(IS_NEW) OVER (PARTITION BY PATID ORDER BY DOSE_DT
-                                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS E
-            FROM melp_runs) r
-    ),
-    melp_expo AS (
-      SELECT DISTINCT PATID, EXPO_DT FROM melp_dose_expo
-    ),
-    melp_expo_sct AS (
-      SELECT e.PATID, e.EXPO_DT,
-             max(CASE WHEN a.PATID IS NOT NULL THEN 1 ELSE 0 END) AS HAS_AUTO
-      FROM melp_expo e
-      LEFT JOIN (SELECT DISTINCT PATID, TX_DT FROM tx_auto_dates) a
-        ON a.PATID = e.PATID
-       AND abs(datediff(a.TX_DT, e.EXPO_DT)) <= {cfg$melp_sct_days}
-      GROUP BY e.PATID, e.EXPO_DT
-    ),
-    melp_pairs AS (
-      SELECT PATID, EXPO_DT, HAS_AUTO,
-             lead(EXPO_DT)  OVER (PARTITION BY PATID ORDER BY EXPO_DT) AS NEXT_DT,
-             lead(HAS_AUTO) OVER (PARTITION BY PATID ORDER BY EXPO_DT) AS NEXT_HAS_AUTO
-      FROM melp_expo_sct
-    ),
-    melp_judged AS (
-      SELECT p.PATID, p.EXPO_DT, p.NEXT_DT,
-             datediff(p.NEXT_DT, p.EXPO_DT) AS GAP,
-             CASE WHEN p.EXPO_DT <= {induction_end} THEN 1 ELSE 0 END AS INSIDE,
-             {yield_this} AS YIELD_THIS,
-             {yield_next} AS YIELD_NEXT
-      FROM melp_pairs p
-      INNER JOIN {line_tbl} ON {line_tbl}.PATID = p.PATID
-      WHERE p.EXPO_DT >= {line_tbl}.{start_col}
-        AND p.EXPO_DT <= {span_end}
-    ),
-    -- Off the candidate list: the first dose of a B.2 or B.3 pair, and the
-    -- later dose of a B.2 one. A yielded exposure is not judged at all, so it
-    -- keeps whatever the engine gave it.
-    melp_suppress AS (
-      SELECT DISTINCT PATID, EXPO_DT AS SUPPRESS_DT
-      FROM melp_judged
-      WHERE INSIDE = 0 AND YIELD_THIS = 0
-        AND GAP IS NOT NULL AND GAP >= {cfg$melp_restart_days}
-      UNION
-      -- B.2 says both doses stay in the current line, and the arm above only
-      -- ever reaches the first of the pair. A trailing exposure has no next
-      -- one, so its GAP is NULL. It is judged by nothing and falls through to
-      -- the engine, which sees a melphalan MAP outside induction, calls it an
-      -- added medication and advances the line at it. That is exactly the
-      -- boundary B.2 says is not there. It survived because every other branch
-      -- hides it: in A.1 melphalan is in the regimen and a repeat extends the
-      -- line instead, and in B.3 the later dose is meant to advance. Only a
-      -- B.2 pair whose second dose is the patient's last one shows it.
-      --
-      -- B.3's later dose is kept out by the upper bound. That one does
-      -- advance, on its own date, and the inject arm puts it back.
-      SELECT DISTINCT PATID, NEXT_DT AS SUPPRESS_DT
-      FROM melp_judged
-      WHERE INSIDE = 0 AND YIELD_THIS = 0 AND YIELD_NEXT = 0
-        AND GAP IS NOT NULL
-        AND GAP >= {cfg$melp_restart_days}
-        AND GAP <  {cfg$melp_advance_days}
-      UNION
-      -- A.1's later exposure. Inside induction with the next one under
-      -- melp_advance_days, the rule says the pair does not advance the line -
-      -- and that is a statement about the LATER exposure, since the first is
-      -- in the regimen and advances nothing by construction.
-      --
-      -- It needs saying here because the general returning-drug rule would
-      -- otherwise release it. Melphalan inside induction is one of the line's
-      -- own drugs, so the prior-regimen exclusion holds it - but only while it
-      -- is still being taken. A gap of map_discon_gap_days between the two
-      -- exposures makes the second a restart, and a restart opens a line like
-      -- any other drug's. That general rule and this one disagree on the same
-      -- date, and the melphalan branch is the one the request decides.
-      --
-      -- The upper bound leaves A.2 alone: at melp_advance_days or more the
-      -- later exposure DOES advance, and the inject arm puts it back.
-      SELECT DISTINCT PATID, NEXT_DT AS SUPPRESS_DT
-      FROM melp_judged
-      WHERE INSIDE = 1 AND YIELD_THIS = 0 AND YIELD_NEXT = 0
-        AND GAP IS NOT NULL
-        AND GAP <  {cfg$melp_advance_days}
-    ),
-    -- The suppressed EXPOSURES, expanded to every dose in them. The decision
-    -- is per exposure. The candidate list is per dose. Suppressing only the
-    -- exposure's first date left its later doses as candidates - see
-    -- melp_dose_expo. Kept apart from melp_suppress so the decision CTE still
-    -- reads as the branch table, and so the test harnesses can read its arms.
-    melp_suppress_dates AS (
-      SELECT DISTINCT d.PATID, d.DOSE_DT AS SUPPRESS_DT
-      FROM melp_dose_expo d
-      INNER JOIN melp_suppress s
-        ON s.PATID = d.PATID AND s.SUPPRESS_DT = d.EXPO_DT
-    ),
-    -- Back on to it. Two arms, because the rule advances at two dates.
-    --
-    -- UNRESOLVED, and left as it stands. An arm acting on EXPO_DT needs
-    -- YIELD_THIS = 0. An arm acting on NEXT_DT needs both flags. So a pair
-    -- whose FIRST dose sat beside a transplant, with none at the second, does
-    -- not advance at the second. The other reading - a boundary asks only
-    -- about the exposure it falls on - would advance it.
-    --
-    -- Which is right turns on whether a conditioning dose starts the 180-day
-    -- clock for the next one. No worked scenario carries a coded transplant,
-    -- so none of them tells the two apart. tests/test_aug1_melp.R pins what
-    -- the build does today, so answering the question is a visible change.
-    melp_inject AS (
-      -- A.2 and B.3: the later dose of a >= 180-day pair, at its own date.
-      SELECT DISTINCT PATID, NEXT_DT AS INJECT_DT
-      FROM melp_judged
-      WHERE GAP IS NOT NULL AND GAP >= {cfg$melp_advance_days}
-        AND YIELD_THIS = 0 AND YIELD_NEXT = 0
-      UNION
-      -- B.1: outside induction with the next dose inside 60 days, so this
-      -- dose starts a line. The engine opens that boundary itself unless an
-      -- earlier dose put melphalan in the regimen, and then it opens none at
-      -- all. So this arm is what keeps B.1 from being lost on a patient whose
-      -- first exposure was inside induction. Where the engine did open it, the
-      -- row is the same tuple and the UNION folds the two together.
-      SELECT DISTINCT PATID, EXPO_DT AS INJECT_DT
-      FROM melp_judged
-      WHERE INSIDE = 0 AND GAP IS NOT NULL AND GAP < {cfg$melp_restart_days}
-        AND YIELD_THIS = 0
-    ),
-    -- The suppressed exposures again, this time as a date the line is carried
-    -- to. It is the SAME list, deliberately: suppressing an exposure and
-    -- owning it are two halves of one statement.
-    --
-    -- Taking a boundary off the candidate list only stops melphalan ENDING
-    -- the line there. It does not keep the exposure INSIDE the line, and
-    -- where the line's own regimen ran out first, the line ends at that
-    -- run-out and the exposure falls outside it - into no line at all, since
-    -- the same rule has just refused it as a line start. Every branch that
-    -- says an exposure does not advance is therefore also saying which line
-    -- it belongs to, and this is where that half is applied.
-    --
-    -- Every arm of melp_suppress, not just B.2's. All three say the same
-    -- thing about their exposure:
-    --
-    --   B.2 both doses          both doses stay in the current line
-    --   A.1 the later exposure  the pair does not advance the LOT
-    --   B.3 the first exposure  does not advance for the first dose
-    --
-    -- Scoping this to B.2 alone left A.1's later exposure and B.3's first one
-    -- suppressed but unowned - refused a line of their own by one half of the
-    -- rule and not given one by the other.
-    --
-    -- Dose dates rather than exposure dates, via melp_suppress_dates, so a
-    -- suppressed exposure made of several doses is owned to its last one.
-    --
-    -- Carried on the RUN-OUT rather than as an end reason of its own. The
-    -- run-out is where the line's treatment stopped, and under this rule it
-    -- did not stop at the regimen: a melphalan administration the request
-    -- assigns to this line happened later. Moving that date keeps the whole
-    -- end cascade intact - the 90-day confirmation is measured from the dose,
-    -- a death or an addition in between still takes the line first, and the
-    -- reason stays DISCONTINUATION rather than becoming a fourth
-    -- transplant-shaped end nothing else knows about.
-    --
-    -- Bounded by the line's own span, so an exposure past the end of
-    -- observation cannot extend a line beyond it.
-    melp_hold AS (
-      SELECT s.PATID, max(s.SUPPRESS_DT) AS MELP_HOLD_DT
-      FROM melp_suppress_dates s
-      INNER JOIN {line_tbl} ON {line_tbl}.PATID = s.PATID
-      WHERE s.SUPPRESS_DT >= {line_tbl}.{start_col}
-        AND s.SUPPRESS_DT <= {span_end}
-      GROUP BY s.PATID
-    ),"))
+  if (!melp_rule_on(cfg)) return("")
+  melp_simplified_ctes(cfg, line_tbl, start_col, span_end, induction_end,
+                       base_tbl, restart_tbl, not_new_ctes, cart_from)
 }
 
 # The simplified rule's decision, emitting the same four CTE names the
@@ -696,8 +479,8 @@ melp_prior_regimen_exempt <- function(cfg, alias = "ms") {
                                AND i.INJECT_DT = {alias}.MAP_START_DT))")
 }
 
-# LOT1 is corrected in 06_lot1_end.R rather than in 04. yield_to_sct needs
-# tx_auto_dates, and that view is built in 05. Nothing between the two reads the
+# LOT1 is corrected in 06_lot1_end.R rather than in 04, because the decision
+# reads lot1_base and that is what 04 builds. Nothing between the two reads the
 # add-med columns - 05b takes only LOT1_START_DT and OBS_END_DT - so correcting
 # at 06 and correcting at 04 give the same lines.
 #

@@ -116,21 +116,26 @@ if (!is.null(ros) &&
 fp <- read_any("^foldin_patients\\.csv$")
 fold_lines_f <- find_file("^foldin_changed_lines\\.csv$")
 
-mv <- read_any("^melp_vs_reference\\.csv$")
-mp <- read_any("^melp_modes_patients\\.csv$")
+# The melphalan comparison. `reference` is the build WITHOUT the rule and
+# `observed` the build with it, so the columns below read left to right as
+# "before the rule" then "what we ship". They were the other way round while
+# the July five-branch rule was the thing being measured; that rule was
+# removed once it was not adopted, and with it the melp_vs_reference.csv this
+# used to read - so the block silently found nothing and printed nothing.
+mv <- read_any("^melp_simple_vs_reference\\.csv$")
 sp <- read_any("^melp_simple_patients\\.csv$")
 melp_tbl <- NULL
 if (!is.null(mv)) {
   g <- function(metric) {
-    r <- mv[mv$cell == "as_asked" & mv$metric == metric, ]
+    r <- mv[mv$cell == "simplified" & mv$metric == metric, ]
     if (nrow(r)) c(r$reference[1], r$observed[1]) else c(NA, NA)
   }
   m1 <- g("n_lines"); m2 <- g("n_melp_mono_lines"); m3 <- g("n_melp_mono_adv")
   melp_tbl <- data.frame(
     What = c("Total lines", "Melphalan-only lines",
              "Lines melphalan alone started"),
-    Today = c(m1[1], m2[1], m3[1]),
-    `Under the July rule` = c(m1[2], m2[2], m3[2]),
+    `Without the rule` = c(m1[1], m2[1], m3[1]),
+    `What we ship` = c(m1[2], m2[2], m3[2]),
     check.names = FALSE, stringsAsFactors = FALSE)
 }
 
@@ -225,12 +230,11 @@ if (!is.null(fp))
                  " patients change; ", n1(fp$N_LINE_COUNT_DIFFERENT),
                  " get a different number of lines."))
 if (!is.null(melp_tbl))
-  add_sum("MELP - the July rule (not used)",
+  add_sum("MELP - what the 28-day rule changed",
           paste0("Melphalan-only lines ", n1(melp_tbl[2, 2]), " -> ",
                  n1(melp_tbl[2, 3]), "; lines it alone started ",
                  n1(melp_tbl[3, 2]), " -> ", n1(melp_tbl[3, 3]),
-                 ". Measured against the build we ship, which already has ",
-                 "the 28-day rule in it."))
+                 ". A build without the rule, then the one we ship."))
 if (!is.null(sp))
   add_sum("MELP - the 28-day rule we now use",
           paste0("Changes ", n1(sp$N_DIFFERENT), " of ", n1(sp$N_PATIENTS),

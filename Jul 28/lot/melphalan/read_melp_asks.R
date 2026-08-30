@@ -8,9 +8,9 @@
 #   3. how many receive an SCT in a melphalan-containing LOT, by line
 #
 #   DATABRICKS_PWD=... DOMINO_USER_NAME=usr00000 \
-#     Rscript exploration/melphalan/read_melp_asks.R
+#     Rscript lot/melphalan/read_melp_asks.R
 #
-# Reads the cells run_aug1_melp.R has already built and writes five CSVs -
+# Reads the cells run_melp_simple.R has already built and writes five CSVs -
 # question 1 takes three of them, because a per-cell median cannot say what
 # changed on its own. See the note above q1.
 # Every statement is a SELECT: it builds nothing and changes no rule.
@@ -82,11 +82,10 @@ inputs <- melp_read_inputs(con, cells, status)
 # run built, and a cell built by different engine code answers the question
 # about that engine rather than this one.
 #
-# The reference cell is why it cannot be shrugged off. It is the contract
-# build, so since the study adopted the short-course rule the reference carries
-# THAT rule plus whatever else the engine did on the day it was built, while the
-# two cells carry a five-branch rule instead. A difference between them is then
-# two changes at once, and nothing in the CSVs would say so.
+# The two cells differ in ONE thing - whether the melphalan rule runs - and
+# that only holds while both are built by the same engine code. Built weeks
+# apart across an engine change, a difference between them is two changes at
+# once and nothing in the CSVs would say so.
 melp_check_code(inputs, LOT_ROOT)
 st <- melp_settings(inputs)
 cat("All ", length(cells), " cells: cohort attempt ", inputs[[1]]$COHORT_RUN_ID[1],

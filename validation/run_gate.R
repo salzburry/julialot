@@ -91,10 +91,13 @@ suites <- c(
 )
 suites <- suites[grepl("/tests/", suites) |
                  grepl("/validation/(port|hygiene)/", suites) |
-                 # Not under tests/, and advertised in the study README as a
-                 # check that exits non-zero if any of the study team's worked
+                 # Not under tests/, and advertised in a delivery's README as
+                 # a check that exits non-zero if any of the study team's worked
                  # scenarios moves. A check nothing runs is a check in name
                  # only, so it is named here rather than left to be remembered.
+                 # Jul 28 no longer has one - the worked scenarios belonged to
+                 # the five-branch melphalan rule, which was retired - but
+                 # Aug 14 still does, and STUDY_FOLDER can point at either.
                  grepl("/run_melp_scenarios\\.R$", suites)]
 suites <- suites[!grepl("testutil\\.R$|/_|run_gate\\.R$|run_all\\.R$", suites)]
 rel <- sub(paste0("^", REPO, "/"), "", suites)
@@ -123,13 +126,11 @@ EXPECTED_SUITES <- list(
     "exploration/lot/tests/test_benchmarks.R",
     "exploration/lot/tests/test_definitions.R",
     "exploration/lot/tests/test_foldin.R",
-    "exploration/lot/tests/test_melphalan.R",
     "exploration/lot/tests/test_sensitivity.R",
     "exploration/lot/tests/test_stockpiling.R",
-    "exploration/melphalan/run_melp_scenarios.R",
-    "exploration/melphalan/tests/test_aug1_melp.R",
     "lot/engine/tests/test_line_criteria.R",
     "lot/engine/tests/test_runner.R",
+    "lot/melphalan/tests/test_melp_simple.R",
     "lot/qc/tests/test_lot_qc.R",
     "lot/validation/tests/test_vignettes.R",
     "ndmm/tests/test_runner.R",

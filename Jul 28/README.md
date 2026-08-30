@@ -28,7 +28,6 @@ A cohort is what LOT is pointed at. It is not part of LOT and does not read it.
 | `reporting/dashboard/` | one self-contained HTML. Reads only. |
 | `analysis/outcomes/` | TTNT, TTD, OS, attrition. Reads only. |
 | `analysis/questions/` | the study team's questions, one script each. Not a build. |
-| `exploration/melphalan/` | the melphalan rules, built as complete runs and differenced — the study adopted one of them. Opt-in. |
 | `exploration/lot/run_foldin_cells.R` | the MAP fold-in the study adopted, measured against a build without it. Opt-in. |
 | `exploration/lot/` | benchmarks, the definition comparison, the sensitivity sweep, stockpiling, re-challenge, audit counts. Not part of a study run. |
 
@@ -112,7 +111,7 @@ lines.
 | pregnancy window | `ndmm/DECISIONS.md` #9 - two windows are possible; the one the code applies is recorded there |
 | lines of therapy | `lot/LOT_RULES.md`, and the scenario workbook's Open questions sheet |
 | outcomes | `analysis/FILES.md` - the `STUDY_END` censoring rule for TTD, the fifth attrition category, both denominators |
-| the melphalan rule the build applies | `lot/LOT_RULES.md` 4.7. How it was chosen, and the five-branch rule that was not adopted, are in `exploration/FILES.md` |
+| the melphalan rule the build applies | `lot/LOT_RULES.md` 4.7. What it does to the numbers is measured by `lot/melphalan/` |
 | a drug from an earlier line coming back | `lot/LOT_RULES.md` 4.8 - it joins the line it returns in when one agent advanced the line in between |
 | a drug of the line's own regimen coming back | `lot/LOT_RULES.md` 4.3 - it never starts a line, and the line runs over the break |
 | what the study team asked for, and what is still owed | `STUDY_TEAM_ASKS.md` |
@@ -152,16 +151,8 @@ Rscript lot/validation/tests/test_vignettes.R
 Rscript reporting/dashboard/tests/test_runner.R
 Rscript analysis/outcomes/tests/test_runner.R
 Rscript analysis/questions/tests/test_setup.R
-Rscript exploration/melphalan/tests/test_aug1_melp.R
+Rscript lot/melphalan/tests/test_melp_simple.R
 Rscript exploration/lot/tests/test_benchmarks.R     # and test_definitions.R,
-                                                    # test_melphalan.R,
                                                     # test_sensitivity.R,
                                                     # test_stockpiling.R
-```
-
-The study team's worked melphalan scenarios run without a connection too, and
-exit non-zero if any of them moves:
-
-```
-Rscript exploration/melphalan/run_melp_scenarios.R
 ```

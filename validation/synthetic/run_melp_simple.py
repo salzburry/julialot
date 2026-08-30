@@ -27,8 +27,7 @@ Runs the engine's own emitted SQL twice, over patients that pin each branch:
       the line -> the line still ends STUDY_END. A missing run-out here
       means treatment active at censoring, and the hold must never turn
       that into a discontinuation on the melphalan date. Checked at LOT1
-      (SG) and at LOT2 (SG2), and for the five-branch as_asked mode too -
-      the hold machinery is shared, so the same patients guard both.
+      (SG) and at LOT2 (SG2).
 """
 import os, sys, tempfile, subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -162,7 +161,6 @@ def build(mode):
 def main():
     ref = build("off")
     smp = build("simplified")
-    ask = build("as_asked")
 
     fails = []
     def ok(cond, what):
@@ -235,13 +233,9 @@ def main():
        "SF: a patient with no melphalan is identical under both builds")
 
     ok(len(smp['SG']) == 1 and smp['SG'][0][3] == 'STUDY_END',
-       "SG simplified: base cover past observation keeps the line STUDY_END")
-    ok(len(ask['SG']) == 1 and ask['SG'][0][3] == 'STUDY_END',
-       "SG as_asked: ...and the five-branch hold does the same")
+       "SG: base cover past observation keeps the line STUDY_END")
     ok(len(smp['SG2']) == 2 and smp['SG2'][1][3] == 'STUDY_END',
-       "SG2 simplified: the same at a later line")
-    ok(len(ask['SG2']) == 2 and ask['SG2'][1][3] == 'STUDY_END',
-       "SG2 as_asked: ...under the five-branch hold too")
+       "SG2: the same at a later line")
 
     print()
     # SH - one line owns the course, and the earlier line keeps its own end.

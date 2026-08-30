@@ -274,8 +274,25 @@ five-branch table keyed to when the next melphalan exposure comes.
 
 **Result:** it moved almost nothing — most conditioning melphalan has no later
 dose for the branches to judge. 2L melphalan-only went 424 → 422 patients. Not
-adopted. The cells stay runnable as the evidence:
-`exploration/melphalan/run_aug1_melp.R`.
+adopted.
+
+**Removed from the build on 30 Aug.** The choice was settled, so the two
+readings (`as_asked` and `yield_to_sct`), the 239 lines of engine SQL behind
+them, their three-cell package and the three settings only they read
+(`melp_restart_days`, `melp_advance_days`, `melp_sct_days`) are gone. Asking a
+build for either name now stops it rather than quietly giving the short-course
+rule under a name that meant something else.
+
+The number above is the finding, and it is what this entry keeps. What stays
+runnable is the comparison that matters now — the adopted rule against a build
+without it, in `lot/melphalan/`.
+
+One thing went with them and is worth naming: the transplant question. A
+melphalan claim and an AUTO procedure code are often one clinical event, and
+the two readings existed because the 1 Aug note did not say which rule should
+win. The short-course rule does not raise that question in the same form — it
+judges a course's length and what starts inside it, not whether a transplant
+sits on the dose — so nothing is left unanswered by the removal.
 
 ---
 

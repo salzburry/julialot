@@ -99,10 +99,6 @@ as the study's numbers.
 | `melp_exposure_days` | 30 | melphalan doses closer than this are one course |
 | `melp_simple_course_days` | 28 | a course covering this or fewer days is short — §4.7 |
 
-`melp_restart_days`, `melp_advance_days` and `melp_sct_days` are pinned but
-inert — they belong to the five-branch melphalan rule, which was not adopted.
-Pinned so a comparison cell rebuilt later is the same comparison.
-
 To build without the melphalan rule, use `APPLY_MELP_RULE=off`. Not a blank:
 the settings loader fills any variable that is unset **or empty** from
 `config.csv`, so a blank arrives as `simplified`.

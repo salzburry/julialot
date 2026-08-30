@@ -52,12 +52,6 @@ CONTRACT <- list(
   # supply, and it is the study team's settled value - the rule is the 28-day
   # one, and nothing in this delivery builds it at another cap.
   melp_simple_course_days     = 28L,
-  # The remaining three belong to the two five-branch modes, which the study
-  # did not adopt. Inert in the contract build, and pinned so a comparison cell
-  # rebuilt later is the same comparison the choice was made on.
-  melp_restart_days           = 60L,
-  melp_advance_days           = 180L,
-  melp_sct_days               = 14L,
   induction_window_days       = 60L,
   lot_n_induction_window_days = 30L,
   map_discon_gap_days         = 90L,
@@ -137,9 +131,7 @@ INT_SETTINGS  <- c("INDUCTION_WINDOW_DAYS", "INDUCTION_WINDOW_DAYS_LOT_N",
                    # coerces them the same way, but they were not checked
                    # here. MELP_EXPOSURE_DAYS=30.5 became 30, matched the
                    # contract value, and recorded no deviation.
-                   "MELP_EXPOSURE_DAYS", "MELP_RESTART_DAYS",
-                   "MELP_ADVANCE_DAYS", "MELP_SCT_DAYS",
-                   "MELP_SIMPLE_COURSE_DAYS")
+                   "MELP_EXPOSURE_DAYS", "MELP_SIMPLE_COURSE_DAYS")
 
 check_settings <- function() {
   bad <- character(0)

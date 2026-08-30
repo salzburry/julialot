@@ -119,7 +119,7 @@ Rscript analysis/questions/baseline_gap_qs.R                        # BASELINE_D
 Each script with an EXECUTE flag prints its catalogue and then stops unless the
 flag is set — a run that lists 37 checks and says `Nothing was read` did what it
 was asked. The flags are not interchangeable: `AUDIT_EXECUTE` for the audit
-counts, `QC_EXECUTE` for QC, `AUG1_EXECUTE` for the melphalan builds.
+counts, `QC_EXECUTE` for QC, `MELP_SIMPLE_EXECUTE` for the melphalan builds.
 `baseline_gap_qs.R` has none and runs straight away.
 
 QC refuses a run that recorded a contract deviation, since most of its checks
@@ -133,19 +133,13 @@ Reads only the cohort and its own `melp_*` prefixes. Required before any
 melphalan number — the cells now in the warehouse were built by older engine
 code, and the readers refuse them by fingerprint.
 
-```
-Rscript exploration/melphalan/run_aug1_melp.R                       # plan only
-AUG1_EXECUTE=TRUE Rscript exploration/melphalan/run_aug1_melp.R     # three full builds
-Rscript exploration/melphalan/read_melp_asks.R                      # Julia's Q1-Q3
-Rscript exploration/melphalan/read_melp_decisions.R                 # what each decision was worth
-```
-
-The rule the study ADOPTED is measured by its own package, two builds under
-`melp_simple_` prefixes — the study's rule against a build without it:
+Two builds under `melp_simple_` prefixes — the study's rule against a build
+without it — and then Julia's three questions off them:
 
 ```
-Rscript exploration/melphalan/run_melp_simple.R                          # plan only
-MELP_SIMPLE_EXECUTE=TRUE Rscript exploration/melphalan/run_melp_simple.R # build + read
+Rscript lot/melphalan/run_melp_simple.R                          # plan only
+MELP_SIMPLE_EXECUTE=TRUE Rscript lot/melphalan/run_melp_simple.R # build + read
+Rscript lot/melphalan/read_melp_asks.R                           # Julia's Q1-Q3
 ```
 
 Its console output and four `melp_simple_*.csv` files compare the study's rule
@@ -182,8 +176,8 @@ study's. Read its three `foldin_*.csv` files next to the sizing screen's counts
 from step 8 — that screen was written against a build without the rule, so it
 sizes what the rule has already done.
 
-In the decisions output read **block 2 first** — melphalan doses in no line.
-No row with `AFTER_THE_CAP = no` should be there, `PRIOR_LINE_TYPE` of `CART` or
+In the melphalan output read **melphalan doses in no line** first. No row with
+`AFTER_THE_CAP = no` should be there, `PRIOR_LINE_TYPE` of `CART` or
 `SCT_ALLO` included: a single-day ALLO line and a CAR-T line with no
 consolidation drug end on their own start date, before any run-out is read, but
 `melp_line_type_guard` lets the melphalan hold override that so those lines
@@ -208,7 +202,7 @@ Each message below is a check stopping the run, not a crash.
 | message | meaning |
 |---|---|
 | `code fingerprint ... Rebuild the cells` | step 4's build was skipped or half-ran |
-| `The last run under melp_... is 'failed'` | a cell died; see `exploration/melphalan/out/build_<cell>.log` |
+| `The last run under melp_... is 'failed'` | a cell died; see `lot/melphalan/out/build_<cell>.log` |
 | `No LOT_BUILD_STATUS row` | nothing has ever been built under that prefix |
 | `No work schema` / `No OBJECT_PREFIX` | an environment variable above is missing |
 | codelist errors in step 2 or 4 | `CODELIST_DIR` is not pointing at the populated folder |
@@ -220,13 +214,10 @@ written and the run reports how many failed.
 
 - `lot/LOT_RULES.md` — the rules the build applies
 - the scenario workbook's Open questions sheet — open study-team questions
-- `exploration/FILES.md` — how the melphalan rule was chosen, and what is still unsettled
+- `STUDY_TEAM_ASKS.md` — what the study team asked for, what was adopted, and what is still open
 
 ## Do not present these as settled
 
-- `yield_to_sct` vs `as_asked`: what wins when a melphalan exposure and an AUTO
-  code describe the same event. The request does not cover it, which is why
-  both cells are built.
 - What "2L MELP mono" means: melphalan as the only agent in the line's regimen
   (what is built), or the only therapy exposure anywhere in the line. Steroids
   are not the ambiguity — they are excluded from every line decision, so

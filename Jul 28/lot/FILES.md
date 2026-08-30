@@ -24,7 +24,7 @@ three packages in it:
 | `reporting/dashboard/` | one self-contained HTML off a finished run |
 | `analysis/outcomes/` | TTNT, TTD, OS and attrition |
 | `analysis/questions/` | the study team's asks, one script each |
-| `exploration/melphalan/` | how the melphalan rule the build applies was chosen, and the one that was not |
+| `lot/melphalan/` | what the melphalan rule does to the numbers, as two complete builds differenced |
 | `exploration/lot/run_foldin_cells.R` | the MAP fold-in the build applies, measured against a build without it |
 | `exploration/lot/` | benchmarks, definitions, sensitivity, stockpiling, re-challenge, audit counts |
 
@@ -108,7 +108,7 @@ per patient, and must fit the study window the run was given.
 | `R/db_utils_lot.R` | Connection, logging, retry, table naming (`wrk` / `lot_out`), `materialize()` and the step runner. |
 | `R/line_criteria.R` | Extra criteria on finished lines, declared as data. Every one is computed into `LOT_LONG_ALLFLAGS`; only the enabled ones are applied to `LOT_LONG_FINAL`. |
 | `R/cart_rule.R` | The CAR-T induction rule: an infusion inside line 1's window belongs to line 1 and neither ends nor starts a line. |
-| `R/melp_rule.R` | The melphalan rule. The study's mode is `simplified` — a short course outside induction does not advance a line on its own (`LOT_RULES.md` 4.7). It lives here because it needs each line's own induction window. The other modes, and `off`, are comparison builds — `exploration/melphalan/` below. |
+| `R/melp_rule.R` | The melphalan rule: a short course outside induction does not advance a line on its own (`LOT_RULES.md` 4.7). It lives here because it needs each line's own induction window. `APPLY_MELP_RULE=off` builds without it, which is the reference arm `lot/melphalan/` measures against. |
 | `R/foldin_rule.R` | The MAP fold-in. A drug from the immediately previous line coming back joins the line it returns in — its span and its regimen — when exactly ONE agent advanced the line between that drug's two doses; two or more and the return starts a line (`LOT_RULES.md` 4.8). It counts AGENTS, so one drug opening two lines is one advance; transplants stay outside the count and a line one opened overrides the fold. `APPLY_MAP_FOLDIN=FALSE` builds without it, as a comparison — `exploration/lot/run_foldin_cells.R`. |
 | `R/prior_regimen.R` | The prior-regimen rule and each line's run-out. A drug in the previous regimen cannot start the next line; the line it belongs to extends over its later episodes instead, stopping at any other agent arriving in between. Narrowed by the fold-in above for drugs of EARLIER lines. |
 | `R/steps/01_codelists.R` | Code lists into views, then the consistency checks between them — which are fatal, which are waivable through `CODELIST_WAIVERS`, and why. |
@@ -269,6 +269,33 @@ Nothing here duplicates a check the build already makes. Three severities:
 worth a look, `info` is counted and never scored. A check that could not run is
 reported as an error, not a pass. A run is judged by its own recorded
 `CONTRACT_SETTINGS`, not by `config.csv`.
+
+## `lot/melphalan/` — what the melphalan rule did to the numbers
+
+Two complete LOT builds, differenced: one with the rule the study adopted
+(`LOT_RULES.md` 4.7) and one with `APPLY_MELP_RULE=off`. That difference is the
+evidence the adoption rests on, kept runnable rather than written down once.
+
+Opt-in, and it cannot become a study run by accident. Cells write to
+`melp_simple_` prefixes of their own, a plan that would write to the study's
+prefix is refused, and the rule-off cell launches with `LOT_CONTRACT_OVERRIDE`
+and is stamped in `CONTRACT_DEVIATIONS` — so every reader in the delivery
+refuses it as the study's numbers. The cell that DOES carry the rule is the
+contract build and deviates from nothing.
+
+Both cells carry the contract's 28-day course cap. The package varies whether
+the rule runs, not the threshold it runs at.
+
+| path | what it does |
+|---|---|
+| `run_melp_simple.R` | Builds the two cells and reads them. Prints the plan by default; `MELP_SIMPLE_EXECUTE=TRUE` builds, `MELP_SIMPLE_READ=TRUE` reads cells already built. |
+| `read_melp_asks.R` | The study team's three questions, off built cells: the change in each line's duration, how many lines contain melphalan and how many are melphalan alone, and the change in how many lines a patient ends up with. |
+| `R/cells.R` | The cell plan, the provenance checks that hold both cells to one cohort and one build of the engine, and the metrics read off each. |
+| `tests/test_melp_simple.R` | That `off` really is the absence of the rule, that every spliced fragment opens with its own newline, and that a cell cannot write over the study's tables. |
+
+Until 2026-08-30 this package also carried the five-branch rule the study team
+asked for first, as a third cell. That rule was measured, not adopted, and
+removed; `STUDY_TEAM_ASKS.md` keeps the finding.
 
 ## `exploration/lot/` — the rule scenarios, machine-checked
 
