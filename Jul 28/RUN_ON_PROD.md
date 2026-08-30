@@ -142,14 +142,9 @@ MELP_SIMPLE_EXECUTE=TRUE Rscript exploration/melphalan/run_melp_simple.R # build
 ```
 
 Its console output and four `melp_simple_*.csv` files compare the study's
-rule against a build with no melphalan rule at all. The 28-day course cap is an
-open question.
-`MELP_SIMPLE_COURSE_DAYS=30` widens which recorded course lengths count as
-short; it does **not** re-impute the 28-day medical supply, which would change
-how episodes are built and is not implemented. 30 is a deviation from the
-contract's 28, so that cell is built under the override. Both cap runs write
-the same prefixes and file names, so copy the 28-day `melp_simple_*.csv` set
-aside before running the 30-day one.
+rule against a build with no melphalan rule at all. Both cells are built at the
+contract's 28-day course cap — the package varies the rule, not the
+threshold.
 
 Each prefix is emptied before it is rebuilt, and every cell writes to its own,
 so the study's run is untouched by all of this.

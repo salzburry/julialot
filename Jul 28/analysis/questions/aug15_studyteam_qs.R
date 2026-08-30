@@ -453,8 +453,8 @@ main <- function() {
              "read_melp_decisions.R"),
       paste0("exploration/melphalan: MELP_SIMPLE_EXECUTE=TRUE ",
              "run_melp_simple.R - the adopted rule against a build with no ",
-             "melphalan rule, under melp_simple_ prefixes; the 28-vs-30-day ",
-             "cap is still an open question"),
+             "melphalan rule, under melp_simple_ prefixes, both at the ",
+             "contract's 28-day cap"),
       paste0("aug15_qs_discontinued_then_12mo_ce_", stamp, ".csv; chained ",
              "attrition ", attr_note)),
     stringsAsFactors = FALSE)

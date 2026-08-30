@@ -272,8 +272,9 @@ melp_check_inputs <- function(rows) {
 # rather than anywhere in the string.
 #
 # `allowed` names the settings a mode cell may legitimately deviate on beyond
-# the mode itself. The simplified package passes its course cap: the cap is
-# part of the rule under test there, not a stray setting.
+# the mode itself. No package passes one today - the melphalan and fold-in
+# cells each differ on their mode alone - and the contract cell may never
+# deviate at all: if it needed to, it would not be the contract build.
 #
 # `key` is the setting the cells exist to differ on. The melphalan packages
 # leave the default; the fold-in package passes apply_map_foldin, with the
@@ -290,18 +291,9 @@ melp_check_deviations <- function(rows, cells, allowed = character(0),
     entries <- entries[nzchar(entries)]
     want <- mode_of[[id]]
     if (is.na(want)) {
-      # The contract cell may carry only the deviations this package declares
-      # allowed - none, for a package whose cells differ on the mode alone.
-      # The simplified package allows its course cap: a cell at a cap other
-      # than the contract's is still the contract's RULE, and the cap is the
-      # thing under test there rather than a stray setting.
-      spare <- entries
-      if (length(allowed))
-        spare <- spare[!grepl(paste0("^(", paste(allowed, collapse = "|"), ")="),
-                              spare)]
-      if (length(spare))
+      if (length(entries))
         bad <- c(bad, paste0("  ", id, " is meant to be the contract build but ",
-                             "deviates on: ", paste(spare, collapse = "; ")))
+                             "deviates on: ", paste(entries, collapse = "; ")))
       next
     }
     melp  <- grep(paste0("^", key, "="), entries)

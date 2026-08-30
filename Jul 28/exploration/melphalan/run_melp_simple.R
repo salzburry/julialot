@@ -17,8 +17,8 @@
 #   ... MELP_SIMPLE_READ=TRUE Rscript exploration/melphalan/run_melp_simple.R
 #
 # The rule under test, from the study team's follow-up note: melphalan received
-# for MELP_SIMPLE_COURSE_DAYS or fewer (28 by default) outside any induction
-# window does not advance the line on its own. If a new agent starts while
+# for 28 days or fewer outside any induction window does not advance the line
+# on its own. If a new agent starts while
 # that course still covers, the next line starts on the MELPHALAN date, not
 # the agent's later one - their day-100/105 example.
 #
@@ -35,17 +35,11 @@
 # as the study's numbers. That is correct: a build without the study's
 # melphalan rule is no longer the study's.
 #
-# Two things are not settled by running this:
-#   - the cap. MELP_SIMPLE_COURSE_DAYS=30 (a deviation from the contract's 28,
-#     so that cell is built under the override too)
-#     widens which RECORDED course lengths count as short - it does
-#     NOT re-impute days supplied. A medical melphalan claim still carries
-#     the 28-day imputed supply either way, so its recorded course stays 28
-#     days. The other reading of the study team's question - impute the
-#     melphalan supply itself as 30 - would change how episodes are built
-#     and is not implemented; it needs its own decision.
-#     Both cap runs write the same prefixes and file names, so copy the
-#     28-day melp_simple_*.csv set aside before running the 30-day one.
+# The course cap is the contract's 28 days and this package does not vary it.
+# Both cells are built at the contract value, so the only difference between
+# them is whether the rule runs at all.
+#
+# One thing is not settled by running this:
 #   - what "melphalan mono" should mean where MELP+DEX was collapsed to
 #     melphalan by the code list - steroids are not captured, so a
 #     melphalan-with-steroid line reads as melphalan alone here.
@@ -79,7 +73,7 @@ MELP_SIMPLE_CELLS <- list(
                      "agent starting inside the course advances it on the ",
                      "melphalan date")))
 
-report_plan <- function(cells, cap) {
+report_plan <- function(cells) {
   cat("\nThe study's melphalan rule against a build without it.\n\n")
   for (c_i in cells)
     cat(sprintf("  %-11s %-11s %s\n", c_i$id,
@@ -87,42 +81,32 @@ report_plan <- function(cells, cap) {
                 c_i$prefix))
   cat("\n")
   for (c_i in cells) cat("  ", c_i$id, "\n    ", c_i$what, "\n", sep = "")
-  cat("\n  course cap: ", cap, " days",
-      if (!identical(cap, "28")) "  (overridden from the 28-day default)" else "",
-      "\n", sep = "")
-  # At any cap but the contract's, the simplified cell is NOT the study's
-  # build - it is the study's rule at a different threshold. Said here because
-  # the cell keeps its name either way, and the name is what a reader carries.
-  if (!identical(cap, "28"))
-    cat("\n  NOTE: at a cap other than 28 the simplified cell is NOT the ",
-        "contract build.\n        It is the study's rule at a different ",
-        "threshold, and is built under the\n        override and stamped as a ",
-        "deviation.\n", sep = "")
+  cat("\n  course cap: the contract's 28 days\n", sep = "")
   cat("\n", length(cells), " cells. EACH ONE IS A COMPLETE LOT BUILD.\n", sep = "")
 }
 
-run_cell <- function(c_i, cohort, cohort_pfx, cap) {
+run_cell <- function(c_i, cohort, cohort_pfx) {
   args <- c(file.path(LOT_ROOT, "build.R"), cohort, c_i$prefix)
   env  <- paste0("COHORT_PREFIX=", cohort_pfx)
   st   <- trimws(Sys.getenv("COHORT_STATUS_TABLE", unset = ""))
   if (nzchar(st)) env <- c(env, paste0("COHORT_STATUS_TABLE=", st))
-  # Both cells name their mode, and neither is left to inherit the shell: a
-  # child gets the parent's exports, so a 30-day sensitivity run would
-  # otherwise hand MELP_SIMPLE_COURSE_DAYS=30 to the reference as well.
+  # Both cells name their settings rather than inheriting the shell: a child
+  # gets the parent's exports, so an ambient value would otherwise reach one
+  # arm of the comparison and not the other.
   #
   # 'off' rather than an empty value, and that is not a style choice.
   # load_inputs.R fills any variable that is unset OR empty from config.csv,
   # which now carries the contract mode - so APPLY_MELP_RULE= would reach the
   # child as 'simplified' and this cell would measure the contract against
   # itself, with no error anywhere to say so.
+  #
+  # Both cells carry the contract's cap: the package varies the rule, not the
+  # threshold.
   env <- c(env, paste0("APPLY_MELP_RULE=", c_i$melp),
-           paste0("MELP_SIMPLE_COURSE_DAYS=",
-                  if (identical(c_i$melp, "off")) "28" else cap))
-  # The override goes on whichever cell is not the contract build: the
-  # reference, which has no melphalan rule, and the simplified cell too
-  # whenever its cap is not the contract's.
-  if (!is.na(c_i$mode) || !identical(trimws(cap), "28"))
-    env <- c(env, "LOT_CONTRACT_OVERRIDE=TRUE")
+           "MELP_SIMPLE_COURSE_DAYS=28")
+  # The override goes on the cell that is not the contract build - the
+  # reference, which has no melphalan rule.
+  if (!is.na(c_i$mode)) env <- c(env, "LOT_CONTRACT_OVERRIDE=TRUE")
   log_f <- file.path(out_dir, paste0("build_simple_", c_i$id, ".log"))
   cat("  building ", c_i$id, " -> ", c_i$prefix, "  (log: ", log_f, ")\n", sep = "")
   rc <- system2("Rscript", args, env = env, stdout = log_f, stderr = log_f)
@@ -138,11 +122,9 @@ run_cell <- function(c_i, cohort, cohort_pfx, cap) {
 melp_simple_report <- function(con, cells, out_dir, lot_root = NULL) {
   status <- setNames(lapply(cells, function(c_i) cell_status(con, c_i)),
                      vapply(cells, function(c_i) c_i$id, character(1)))
-  inputs <- melp_read_inputs(con, cells, status,
-                             allowed = "melp_simple_course_days")
+  inputs <- melp_read_inputs(con, cells, status)
   if (!is.null(lot_root)) melp_check_code(inputs, lot_root)
-  st  <- melp_settings(inputs, vary = c("apply_melp_rule",
-                                        "melp_simple_course_days"))
+  st  <- melp_settings(inputs, vary = "apply_melp_rule")
   cap <- melp_parse_settings(
     inputs$simplified$CONTRACT_SETTINGS)$melp_simple_course_days
   cat("\nBoth cells were built over cohort attempt ",
@@ -226,13 +208,9 @@ melp_simple_report <- function(con, cells, out_dir, lot_root = NULL) {
                 mono$cell[i], mono$LOT_NUM[i], nf(mono$N_LINES[i]),
                 nf(mono$N_MONO[i]), nf(mono$N_PAT_MONO[i]),
                 nf(mono$N_MONO_MED_START[i])))
-  cat("\nNot settled by this run: the cap (this build used ", cap, " days; ",
-      "MELP_SIMPLE_COURSE_DAYS=30\nwidens which recorded course lengths count ",
-      "as short - it does NOT re-impute the\n28-day medical supply, which ",
-      "would change episode construction and is not built),\nand what ",
-      "melphalan-with-DEX should count as - steroids are not captured, so a\n",
-      "melphalan-plus-steroid line reads as melphalan alone in every count ",
-      "above.\n", sep = "")
+  cat("\nNot settled by this run: what melphalan-with-DEX should count as - ",
+      "steroids are not\ncaptured, so a melphalan-plus-steroid line reads as ",
+      "melphalan alone in every count\nabove.\n", sep = "")
   cat("\nWrote ", out_dir, ".\n", sep = "")
   invisible(list(cells = res, compare = cmp, patients = pd, by_line = mono))
 }
@@ -241,13 +219,9 @@ main <- function() {
   cohort <- trimws(Sys.getenv("INPUT_COHORT_TABLE", unset = ""))
   study  <- trimws(Sys.getenv("OBJECT_PREFIX", unset = ""))
   cohort_pfx <- trimws(Sys.getenv("COHORT_PREFIX", unset = ""))
-  cap    <- trimws(Sys.getenv("MELP_SIMPLE_COURSE_DAYS", unset = "28"))
-  if (!grepl("^[0-9]+$", cap))
-    stop("MELP_SIMPLE_COURSE_DAYS='", cap, "' is not a whole number of days.",
-         call. = FALSE)
   cells <- melp_cell_plan(MELP_SIMPLE_CELLS, "melp_simple_")
   check_melp_plan(cells, study)
-  report_plan(cells, cap)
+  report_plan(cells)
 
   build <- env_flag("MELP_SIMPLE_EXECUTE")
   read  <- env_flag("MELP_SIMPLE_READ")
@@ -281,7 +255,7 @@ main <- function() {
     cat("\nClearing the prefixes. Whatever was built under them is gone after ",
         "this.\n", sep = "")
     for (c_i in cells) melp_drop_cell(con, c_i, study)
-    built <- vapply(cells, function(c_i) run_cell(c_i, cohort, cohort_pfx, cap),
+    built <- vapply(cells, function(c_i) run_cell(c_i, cohort, cohort_pfx),
                     logical(1))
     if (!all(built))
       stop("These cells did not build: ",

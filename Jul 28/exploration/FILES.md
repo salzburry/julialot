@@ -65,7 +65,7 @@ fills an empty variable from `config.csv` — and it records the deviation.
 | path | what it does |
 |---|---|
 | `run_aug1_melp.R` | The five-branch rule that was not adopted, as three complete runs rather than an estimate. Its `reference` is the contract build, so since the adoption these cells measure the five-branch rule against the study's rule, not against a build with no melphalan rule — numbers from before and after the adoption are not comparable. Prints the plan by default; `AUG1_EXECUTE=TRUE` builds. |
-| `run_melp_simple.R` | The rule the study adopted, against a build without it, under `melp_simple_` prefixes. `MELP_SIMPLE_EXECUTE=TRUE` builds. The 28-vs-30-day cap is still open, answered by rebuilding with `MELP_SIMPLE_COURSE_DAYS=30` — which is a deviation from the contract's 28, so that cell is built under the override. |
+| `run_melp_simple.R` | The rule the study adopted, against a build without it, under `melp_simple_` prefixes. `MELP_SIMPLE_EXECUTE=TRUE` builds. Both cells carry the contract's 28-day course cap; the package varies the rule, not the threshold. |
 | `R/cells.R` | Which builds, what is read off them, and the checks that they saw the same cohort, the same code lists, the same code and the same window. Shared by both packages. |
 | `R/scenarios.R` | The study team's four worked patients, held as data. |
 | `run_melp_scenarios.R` | Runs those scenarios through the rule the engine ships — the decision is lifted out of the generated SQL rather than restated — and exits non-zero if any of them moves. No connection. |

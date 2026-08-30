@@ -48,8 +48,8 @@ CONTRACT <- list(
   melp_exposure_days          = 30L,
   # The course cap: melphalan covering this many days or fewer, outside
   # induction, does not advance a line on its own. 28 is one imputed medical
-  # supply; whether it should be 30 is an open study-team question, answered by
-  # rebuilding the cell at 30.
+  # supply, and it is the study team's settled value - the rule is the 28-day
+  # one, and nothing in this delivery builds it at another cap.
   melp_simple_course_days     = 28L,
   # The remaining three belong to the two five-branch modes, which the study
   # did not adopt. Inert in the contract build, and pinned so a comparison cell

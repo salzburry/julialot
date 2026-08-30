@@ -929,9 +929,9 @@ rs <- paste(readLines(file.path(ROOT, "run_melp_simple.R"), warn = FALSE),
             collapse = "\n")
 ok(has(rs, 'melp_cell_plan(MELP_SIMPLE_CELLS, "melp_simple_")'),
    "the simplified package builds under its own melp_simple_ prefixes")
-ok(has(rs, 'paste0("MELP_SIMPLE_COURSE_DAYS=",') &&
-     has(rs, 'allowed = "melp_simple_course_days"'),
-   "the course cap is an allowed deviation on the cell that carries it")
+ok(has(rs, '"MELP_SIMPLE_COURSE_DAYS=28"') &&
+     !has(rs, 'allowed = "melp_simple_course_days"'),
+   "both cells carry the contract's 28-day cap - the package does not vary it")
 # Since the study adopted the rule, the cell WITHOUT it is the deviating one.
 # A cell asking for no rule has to say the word: load_inputs.R fills an empty
 # variable from config.csv, which carries the contract mode, so a blank

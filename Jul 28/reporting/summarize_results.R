@@ -202,7 +202,7 @@ decisions <- data.frame(
     "Fold it in even after the line already ended?",
     "SETTLED - the 28-day rule is in the build now.",
     "What happens to a dose right next to a transplant?",
-    "28 or 30 days for the course cap?",
+    "SETTLED - the cap is 28 days.",
     "Is melphalan+DEX 'melphalan alone'?",
     paste0("Today a treatment stop between two transplants does not break ",
            "the pair, but a new drug does. Is that right?")),
