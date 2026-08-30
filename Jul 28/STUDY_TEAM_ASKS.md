@@ -163,14 +163,18 @@ is the note's own example with both drugs coming back rather than one.
 
   A held melphalan course still joins neither the regimen nor the count (§4.7).
   That rule was not asked the same question, and nothing here decides it.
-- ~~Whether agents of **every** earlier line fold, or only the previous line's.~~
-  **Settled 30 Aug: the immediately previous line only**, which is the shape
-  the 15 Aug note describes — A + B in one line, C advances it, B comes back.
-  A drug from further back is out of scope and the engine's ordinary rules keep
-  it.
+- Whether agents of **every** earlier line fold, or only the previous line's.
+  **OPEN — settled 30 Aug, then reopened the same day.** The strikethrough this
+  entry used to carry is gone on purpose: the build applies a reading, and the
+  choice is still the study team's.
 
-  **A claim that the two readings are equivalent was made here on 30 Aug and
-  is WITHDRAWN.** It rested on consecutive lines never sharing an opener, which
+  **What the build does:** the immediately previous line only, which is the
+  shape the 15 Aug note describes — A + B in one line, C advances it, B comes
+  back. A drug from further back is out of scope and the engine's ordinary
+  rules keep it.
+
+  **Why it is open again. A claim that the two readings are equivalent was made
+  here on 30 Aug and is WITHDRAWN.** It rested on consecutive lines never sharing an opener, which
   is false: foldin_openers labelled a line with min() over every non-steroid
   drug dosed on its start date, including a returning previous-regimen drug
   that 4.3 forbids from opening anything. Two consecutive lines could then

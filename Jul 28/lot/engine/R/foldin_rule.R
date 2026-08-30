@@ -480,12 +480,12 @@ foldin_regimen_union <- function(cfg, lot_num, induction_end) {
         -- reading it as an arrival here dropped a correctly folded drug from
         -- the regimen while leaving the line's dates untouched - so the line
         -- reported a doublet as a single agent and nothing in the shape of the
-        -- line showed it. A return landing on the SAME DAY as one
-        -- belongs to the line that agent opens, not to this one: the count
-        -- looks strictly before the return, so it does not see a same-day
-        -- arrival and folds anyway. Without this the line reported a drug
-        -- whose only episode began after the line had ended, and the next line
-        -- reported it too.
+        -- line showed it. A return landing on the SAME DAY as one belongs
+        -- to the line that agent opens, not to this one - so this scan is AT
+        -- OR BEFORE the return, not strictly before it. Strictly before, it
+        -- could not see a same-day arrival and folded anyway: the line
+        -- reported a drug whose only episode began after the line had ended,
+        -- and the next line reported it too.
         AND NOT EXISTS (
           SELECT 1 FROM map_stacked nb
           WHERE nb.PATID = ms.PATID

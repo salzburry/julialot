@@ -627,12 +627,15 @@ build_lot_n <- function(con, lot_num,
         ON mr.PATID = ms.PATID AND mr.MAP_MED_TYPE = ms.MAP_MED_TYPE
        AND mr.MAP_START_DT = ms.MAP_START_DT
       LEFT JOIN discon d ON ls.PATID = d.PATID
-      -- A regimen drug returning after a confirmed gap ends this line, like
-      -- any other drug would. Without this the release is half a rule. The
-      -- restart is kept out of the run-out and may START the next line, but
-      -- while another regimen drug still holds this line open the restart falls
-      -- inside it, cannot end it, and is then too early to open the next one.
-      -- The treatment belongs to no line at all.
+      -- return_release_sql() adds nothing under the pinned rule: 4.3 says a
+      -- regimen drug returning never advances the line, so there is no
+      -- restart to release. With apply_own_return_fold FALSE - a comparison
+      -- build - it lets one end this line as any other drug would, which is
+      -- the other half of that build's rule. The restart is kept out of the
+      -- run-out and may START the next line, but while another regimen drug
+      -- still holds this line open it falls inside it, cannot end it, and is
+      -- then too early to open the next. The treatment would belong to no
+      -- line at all.
       WHERE (bm.MED_ABBR IS NULL
 {return_release_sql(cfg, 'mr', 'bm')})
         AND ms.MAP_MED_CLASS <> 'STEROID'

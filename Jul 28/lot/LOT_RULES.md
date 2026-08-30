@@ -7,9 +7,16 @@ Behaviour only. Open clinical questions live on the Open questions sheet of the
 scenario workbook (`exploration/lot/run_lot_scenarios.R`). What each file does
 is `FILES.md`. What the study team asked for is `STUDY_TEAM_ASKS.md`.
 
-Worked examples are machine-checked cases in `lot/validation/R/`, not prose. A
-renamed vignette, or one no rule cites, fails
-`lot/validation/tests/test_vignettes.R`.
+Worked examples are cases in `lot/validation/R/`, not prose, and their
+structure is machine-checked: every offset is derived from the setting that
+decides it, each boundary pair straddles that setting by one day, and every
+rule they cite still exists where they say it does. A renamed vignette, or one
+no rule cites, fails `lot/validation/tests/test_vignettes.R`.
+
+What is NOT checked is the OUTCOME. A vignette says what the rules give, and
+nothing runs a patient through the engine to confirm it — which is why each one
+carries a confidence, and why the ones marked `to_confirm` are our reading
+rather than a result.
 
 > **Changed 2026-08-30.** Three rules changed what starts and ends a line:
 > §4.3 (a drug of the previous regimen never starts one), §4.7 (a short

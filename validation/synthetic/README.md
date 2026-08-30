@@ -20,11 +20,15 @@ around any engine change, not just the gate.
 
 ## What it is
 
-Random patients, from a fixed seed, pushed through **every statement the LOT
-build issues, in order** — LOT1, the transplant step, the end cascade, LOT2
+Random patients, from a fixed seed, pushed through **the LOT build's own
+statements, in order** — LOT1, the transplant step, the end cascade, LOT2
 through LOT5, then the 2L/3L cohorts. The SQL is emitted from the step files
 rather than copied, so it is the SQL that ships; edit a step and the tested
 text changes with it.
+
+Two steps are **not** in that chain — `03_mma_map.R` and `05_sct.R` — and their
+outputs are fixtures here instead. *What it cannot do*, below, says why and
+what that costs.
 
 It does **not** say what any individual patient's answer should be. That is the
 thing an author gets wrong — and gets wrong identically in the fixture and in
