@@ -87,13 +87,8 @@ foldin_on <- function(cfg) isTRUE(cfg$apply_map_foldin)
 # own-base drugs out so a drug in both regimens stays under the engine's
 # rules, and takes episodes STARTING in the line - an episode already running
 # when the line began belongs to the line that collected it.
-# THE COUNT. The study team's 20 Aug refinement: a returning drug folds only
-# when ONE agent advanced the line between its two doses. Two or more advances
-# and the return starts a line of its own - the treatment has moved far enough
-# that the drug is not coming back to the line it left.
-#
-# Each RETURN is judged on its own, so the same drug can fold on one return and
-# not on the next. A course then folds as a whole - see foldin_folded.
+# THE COUNT. The branches it decides are in the file header. What follows is
+# how each one is measured, and why that measure and not an easier one.
 #
 # The interval is dose to dose, as the request words it, and NOT cover end to
 # dose. A drug's cover often runs past the line it belonged to, so measuring
@@ -145,8 +140,6 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
           AND NOT EXISTS (SELECT 1 FROM melp_suppress_dates msd
                           WHERE msd.PATID = ms.PATID
                             AND msd.SUPPRESS_DT = ms.MAP_START_DT)"
-  # The line being built is not in lot_long yet, so its own start is unioned
-  # into both sets below. The start-candidate statement has no such line.
   this_tx <- if (is.null(n_start) || is.null(n_type)) "" else paste0("
       UNION
       SELECT ", n_tbl, ".PATID, ", n_start, " AS OPEN_DT

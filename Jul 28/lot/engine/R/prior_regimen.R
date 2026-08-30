@@ -1,7 +1,8 @@
 # A drug in the previous line's regimen cannot start the next line while it is
 # still running. A later LOT starts on a new MM agent that was not part of the
-# previous LOT regimen, and a drug the patient never stopped is not new. Its later episodes belong to the line it is already in, so that line's
-# run-out chains forward over them.
+# previous LOT regimen, and a drug the patient never stopped is not new. Its
+# later episodes belong to the line it is already in, so that line's run-out
+# chains forward over them.
 #
 # Once the drug is discontinued it is released. map_discon_gap_days flags the
 # episode whose gap to the next reaches the threshold. An episode after such a
@@ -27,11 +28,9 @@
 # one, whatever the gap. Nothing was given in between, so the drug is returning
 # to the line it left.
 #
-# The release and the run-out chain are two halves of one rule (see the header
-# of this file), so both halves move together: return_release_sql() withdraws
-# the release, and own_gap_breaks_chain() stops discon_per_med breaking the
-# line at the same gap. Withdraw one alone and the returning treatment belongs
-# to no line at all.
+# Both halves move together: return_release_sql() withdraws the release, and
+# own_gap_breaks_chain() stops discon_per_med breaking the line at the same
+# gap.
 return_release_on <- function(cfg) !isTRUE(cfg$apply_own_return_fold)
 
 return_release_sql <- function(cfg, restart, base, extra = "") {
