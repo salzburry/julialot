@@ -137,7 +137,20 @@ is the note's own example with both drugs coming back rather than one.
 
 - Whether the returning drug joins the line's regimen string or only its span.
   Today it joins the span only.
-- Whether agents of **every** earlier line fold, or only the previous line's.
+- ~~Whether agents of **every** earlier line fold, or only the previous line's.~~
+  **Settled 30 Aug: the immediately previous line only**, which is the shape
+  the 15 Aug note describes — A + B in one line, C advances it, B comes back.
+  A drug from further back is out of scope and the engine's ordinary rules keep
+  it.
+
+  One thing follows that is worth the study team knowing: the note's **"two or
+  more"** clause can then never fire. A drug is in a line's regimen only
+  through an episode starting at or after that line's start, and the return has
+  to be inside the line being built, so exactly one line can ever have opened
+  in between. Scoped this way the count is always nought or one. Nothing
+  observable changed when it was narrowed — every planted patient lands where
+  it did — because the wider set could not reach two either, once a same-drug
+  restart stopped opening a line of its own (ask 6).
 - ~~Which rule is applied first where the two meet.~~ **Settled**, from what
   the two notes say rather than from a choice of ours. Both directions now
   hold:

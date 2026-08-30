@@ -51,16 +51,16 @@ ok(identical(foldin_hold_col(off), "") && identical(foldin_hold_join(off, "ls"),
      identical(foldin_line_type_guard(off, 2), ""),
    "no hold column, join or guard reaches the statement")
 
-cat("\n-- the fold set is every earlier line's regimen, and its substitutes --\n")
+cat("\n-- the fold set is the previous line's regimen, and its substitutes --\n")
 s <- foldin_lotn_ctes(on_, "{lot_num}")
-ok(has(s, "WHERE ll.LOT_NUM < {lot_num} AND m <> ''"),
-   "the line build folds the regimens of every line before this one")
+ok(has(s, "WHERE ll.LOT_NUM = {lot_num} - 1 AND m <> ''"),
+   "the line build folds the IMMEDIATELY PREVIOUS line's regimen")
 ok(has(s, "INNER JOIN permissible_subs ps ON p.MED_ABBR = ps.original_med"),
    "...expanded by the permissible substitutes, so a biosimilar folds too")
 p <- foldin_prior_ctes(on_, "{prev}")
-ok(has(p, "WHERE ll.LOT_NUM < {prev} AND m <> ''"),
-   paste0("the trigger folds only the lines BEFORE the previous one - the ",
-          "previous line's own regimen keeps the engine's release"))
+ok(has(p, "WHERE ll.LOT_NUM = {prev} AND m <> ''"),
+   paste0("the trigger reads the same one line - the regimen of the line ",
+          "before the one being started"))
 
 cat("\n-- suppressing and owning are two halves of one statement --\n")
 ok(has(foldin_suppress_predicate(on_), "bm.MED_ABBR IS NULL") &&
@@ -100,6 +100,9 @@ ok(has(s, "count(DISTINCT fo.OPENER)") &&
 # and a transplant-started line counts nothing. Both halves are pinned: the
 # MED-only filter, and the substitute collapse that keeps a biosimilar swap
 # from reading as a second agent.
+# The fold set is the IMMEDIATELY PREVIOUS line's regimen, which is the
+# request's own shape - A + B in one line, C advances it, B comes back. A drug
+# from further back is out of scope and the engine's ordinary rules keep it.
 ok(has(s, "foldin_openers AS (") && has(s, "l.LOT_START_TYPE = 'MED'"),
    "an agent is the drug a MED-started line opened on - a procedure is not one")
 ok(has(s, "coalesce(ps.original_med, ms.MAP_MED_TYPE) AS OPENER"),

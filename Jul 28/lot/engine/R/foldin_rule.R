@@ -24,11 +24,15 @@
 #
 # In engine terms, for each line from LOT2 up:
 #
-#   the FOLD SET is every agent of every EARLIER line's regimen, and their
-#   permissible substitutes - except agents that are also in this line's own
-#   base set, which keep the engine's own rules (a drug in both regimens is
-#   this line's drug, and its restarts are the engine's ordinary open
-#   question, not this rule's) - and then only the EPISODES the count folds.
+#   the FOLD SET is every agent of the IMMEDIATELY PREVIOUS line's regimen,
+#   and their permissible substitutes - except agents that are also in this
+#   line's own base set, which keep the engine's own rules (a drug in both
+#   regimens is this line's drug, and its restarts are §4.3's question, not
+#   this rule's) - and then only the EPISODES the count folds.
+#
+#   The previous line only, which is the request's own shape: A + B in one
+#   line, C advances it, B comes back. A drug from further back is out of
+#   scope and the engine's ordinary rules keep it.
 #
 #   SUPPRESS   a fold-set episode is never an added-medication candidate, so
 #              it cannot end the line - released restart or not. The release
@@ -36,11 +40,10 @@
 #              other way (the hold below), so it is switched off for these
 #              drugs.
 #
-#   NEVER TRIGGER   a fold-set drug of the lines BEFORE the previous one
-#              cannot start the next line either. The previous line's own
-#              regimen keeps today's exclusion-with-release: a drug restarting
-#              with no newer line in between is the engine's ordinary restart
-#              rule, which the study team has not asked to change.
+#   NEVER TRIGGER   a folded drug cannot start the next line either. §4.3
+#              already refuses the previous line's own regimen a line of its
+#              own, so this and that rule agree about the same drugs; this one
+#              adds nothing there and takes nothing away.
 #
 #   HOLD       suppressing and owning are two halves of one statement. The
 #              line's run-out is carried to the last day any folded episode's
@@ -353,7 +356,7 @@ foldin_lotn_ctes <- function(cfg, lot_num, induction_end = NULL) {
       SELECT ll.PATID, m AS MED_ABBR
       FROM lot_long ll
       LATERAL VIEW explode(split(coalesce(ll.LOT_BASE_MEDS, ''), ' ')) e AS m
-      WHERE ll.LOT_NUM < {lot_num} AND m <> ''
+      WHERE ll.LOT_NUM = {lot_num} - 1 AND m <> ''
     ),
     foldin_meds AS (
       SELECT PATID, MED_ABBR FROM foldin_prev
@@ -478,7 +481,7 @@ foldin_prior_ctes <- function(cfg, prev) {
       SELECT ll.PATID, m AS MED_ABBR
       FROM lot_long ll
       LATERAL VIEW explode(split(coalesce(ll.LOT_BASE_MEDS, ''), ' ')) e AS m
-      WHERE ll.LOT_NUM < {prev} AND m <> ''
+      WHERE ll.LOT_NUM = {prev} AND m <> ''
     ),
     foldin_sc_meds AS (
       SELECT PATID, MED_ABBR FROM foldin_sc_prev

@@ -270,14 +270,15 @@ exactly one agent advanced the line, it joins the line it returns in.
 
 Worked example: `returning_drug_one_advance` / `returning_drug_two_advances`.
 
-A drug from an earlier line that comes back is read by what happened between
-its two doses. Count the **different agents** that opened a line in that
-interval:
+A drug from the **immediately previous** line that comes back is read by what
+happened between its two doses. A drug from further back is out of scope, and
+the engine's ordinary rules keep it. Count the **different agents** that opened
+a line in that interval:
 
 | different agents in between | what the return does |
 |---|---|
 | one | joins the line it returns in — no new line |
-| two or more | opens a line, as any added agent would |
+| two or more | opens a line, as any added agent would. Not reachable with the fold set scoped to the previous line — see below |
 | none | nothing advanced, so this rule says nothing — §4.3 keeps the return in the line it left |
 
 The interval is measured **dose to dose**, not from where the drug stopped. A
@@ -298,6 +299,13 @@ transplant is not returning to the line it left.
 A transplant the line owns overrides nothing. An AUTO inside the line's own
 window (§6.5), or a planned tandem partner (§6.3), opens no line, so it is not
 a line start and never reaches the test.
+
+**The two-or-more row cannot fire while the fold set is the previous line's
+regimen.** A drug is in that regimen only through an episode starting at or
+after that line's start (§3.3), and the return has to be inside the line being
+built, so exactly one line can have opened in between. The row is kept because
+it states the rule the study team asked for, and because widening the fold set
+would make it live again.
 
 A return only joins the line that actually contains it. While lines are built in
 order the count is relative to the line being built, so a return with another
