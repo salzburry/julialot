@@ -225,24 +225,22 @@ is the note's own example with both drugs coming back rather than one.
   A held melphalan course still joins neither the regimen nor the count (§4.7).
   That rule was not asked the same question, and nothing here decides it.
 - Whether agents of **every** earlier line fold, or only the previous line's.
-  **OPEN — settled 30 Aug, then reopened the same day.** The strikethrough this
-  entry used to carry is gone on purpose: the build applies a reading, and the
-  choice is still the study team's.
+  **SETTLED: the immediately previous line only.** Decided 30 Aug, briefly
+  reopened the same day when a claim of ours turned out to be wrong, and
+  confirmed as it stands. This is what the build does, and it is the shape the
+  15 Aug note describes — A + B in one line, C advances it, B comes back. A
+  drug from further back is out of scope and the engine's ordinary rules keep
+  it.
 
-  **What the build does:** the immediately previous line only, which is the
-  shape the 15 Aug note describes — A + B in one line, C advances it, B comes
-  back. A drug from further back is out of scope and the engine's ordinary
-  rules keep it.
-
-  **Why it is open again. A claim that the two readings are equivalent was made
-  here on 30 Aug and is WITHDRAWN.** It rested on consecutive lines never sharing an opener, which
-  is false: foldin_openers labelled a line with min() over every non-steroid
-  drug dosed on its start date, including a returning previous-regimen drug
-  that 4.3 forbids from opening anything. Two consecutive lines could then
-  carry the same label and two advances collapse into one. That labelling is
-  fixed, but the scopes still differ - on a planted patient the narrow scope
-  gives four lines where the wide scope gives three - so the choice between
-  them is a real one and remains the study team's.
+  **The two readings are NOT equivalent, and an earlier claim here that they
+  were is WITHDRAWN.** It rested on consecutive lines never sharing an opener,
+  which is false: foldin_openers labelled a line with min() over every
+  non-steroid drug dosed on its start date, including a returning
+  previous-regimen drug that 4.3 forbids from opening anything. Two consecutive
+  lines could then carry the same label and two advances collapse into one.
+  That labelling is fixed, and the scopes still differ — on a planted patient
+  the narrow scope gives four lines where the wide gives three. The choice was
+  therefore a real one, and it was made: narrow.
 
   One thing follows that is worth the study team knowing: the note's **"two or
   more"** clause can then never fire. A drug is in a line's regimen only
@@ -279,9 +277,9 @@ is the note's own example with both drugs coming back rather than one.
   The middle row was the odd one out. Both rules now read the previous line,
   so a drug from further back is simply new and behaves like the bottom row.
   The alternative — widening the fold set to every earlier line — was not
-  taken: it would have reopened a scope the study team narrowed on 30 Aug,
-  though it is the reading that would make the "two or more" clause below
-  live again. Worth revisiting only if that clause is meant to fire.
+  taken, and the scope is settled. It is the reading that would make the "two
+  or more" clause below fire, so if that clause is ever meant to be reachable,
+  the scope is the thing to change and this is where to start.
 
   Neither reading needed an ordering decision, because neither rule has to
   consult the other's output: what a returning drug IS comes from the earlier

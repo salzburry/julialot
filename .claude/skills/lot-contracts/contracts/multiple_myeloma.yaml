@@ -81,9 +81,11 @@ advancement:
   # joins_line = it folds into the line it returns in (the fold-in mode).
   # one_advance_joins = the return joins the line it returns in when exactly
   # one agent advanced the line between that drug's two doses; two or more and
-  # it starts a line, as new_line always does. Scoped to the previous line the
-  # count can only be nought or one, so the two-or-more branch states the rule
-  # the study team asked for without being reachable - see STUDY_TEAM_ASKS.md.
+  # it starts a line, as new_line always does. The scope is the immediately
+  # previous line and that is SETTLED, not provisional - so the count can only
+  # be nought or one, and the two-or-more branch states the rule the study team
+  # asked for without being reachable. Widening the scope is the only thing
+  # that would make it fire - see STUDY_TEAM_ASKS.md.
   prior_line_agent_return: one_advance_joins
   # A brief course of one named agent, outside the line's regimen window, does
   # not advance the line on its own - the line is carried to the end of that

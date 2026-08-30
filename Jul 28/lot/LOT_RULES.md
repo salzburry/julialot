@@ -326,8 +326,10 @@ a line start and never reaches the test.
 regimen.** A drug is in that regimen only through an episode starting at or
 after that line's start (§3.3), and the return has to be inside the line being
 built, so exactly one line can have opened in between. The row is kept because
-it states the rule the study team asked for, and because widening the fold set
-would make it live again.
+it states the rule the study team asked for. The scope is settled at the
+previous line (`STUDY_TEAM_ASKS.md`), so the row is a statement of the rule
+rather than a branch waiting to fire; widening the scope is what would make it
+reachable.
 
 A return only joins the line that actually contains it. While lines are built in
 order the count is relative to the line being built, so a return with another
