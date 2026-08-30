@@ -28,6 +28,10 @@ on:
       - 'Jul 28/**'
       - 'validation/**'
       - 'apr_30_2026/**'
+      # The tumour contracts, because one of the suites holds the engine to
+      # them. Left out, a contract-only change skipped the very gate that
+      # checks the contract still binds.
+      - '.claude/skills/lot-contracts/**'
       - '.github/workflows/jul28-tests.yml'
   pull_request:
     paths: *paths

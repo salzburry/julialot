@@ -8,8 +8,9 @@
 # flags the episode whose gap to the next reaches the threshold, and an episode
 # after such a gap was a restart that could open a line like any other drug.
 # apply_own_return_fold withdraws that release, and CONTRACT pins it TRUE - so
-# in the study's build a drug the patient has had before never starts a line,
-# whatever the gap. The release survives only for comparison builds. See
+# in the study's build a drug of the PREVIOUS regimen never starts a line,
+# whatever the gap. A drug last given further back than that is outside this
+# rule and opens a line like any other agent. The release survives only for comparison builds. See
 # return_release_on() below, which is the one place that decides.
 #
 # The release and the run-out chain are two halves of one rule and neither is
@@ -27,7 +28,7 @@
 # any other agent.
 #
 # TRUE - what CONTRACT pins - withdraws that. A line advances on an agent that
-# was not in the previous regimen, and a drug the patient has had before is not
+# was not in the previous regimen, and a drug that WAS in it is not
 # one, whatever the gap. Nothing was given in between, so the drug is returning
 # to the line it left.
 #

@@ -299,9 +299,15 @@ build_lot_n <- function(con, lot_num,
       WHERE ms.MAP_START_DT > pe.PREV_END_DT
         AND ms.MAP_START_DT <= pe.OBS_END_DT
         AND ms.MAP_MED_CLASS <> 'STEROID'
-        -- Released once discontinued. The exclusion holds a drug the patient
-        -- is still taking inside the line that owns it. A drug returning after
-        -- a confirmed gap is a restart, and opens a line like any other.
+        -- The exclusion holds a drug of the PREVIOUS regimen inside the line
+        -- that owns it, whatever the gap since it stopped (4.3). A drug last
+        -- given further back is not in this set and opens a line like any
+        -- other agent.
+        --
+        -- return_release_sql() adds nothing under the pinned rule. With
+        -- apply_own_return_fold FALSE - a comparison build - it releases a
+        -- drug whose own episode carried a confirmed discontinuation, which is
+        -- the older algorithm.
         AND (pme.MED_ABBR IS NULL
 {return_release_sql(cfg, 'mr', 'pme', melp_prior_regimen_exempt(cfg))}){melp_suppress_predicate(cfg)}{foldin_trigger_predicate(cfg)}
       GROUP BY pe.PATID

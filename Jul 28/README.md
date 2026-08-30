@@ -6,8 +6,8 @@ things that read a finished run.
 A cohort is what LOT is pointed at. It is not part of LOT and does not read it.
 
 > **The line-counting algorithm changed on 2026-08-30.** Three rules now change
-> what starts and ends a line: a drug the patient has had before never starts
-> one, whatever the gap since (`lot/LOT_RULES.md` 4.3), a short melphalan course
+> what starts and ends a line: a drug of the previous regimen never starts one,
+> whatever the gap since (`lot/LOT_RULES.md` 4.3), a short melphalan course
 > outside induction does not start one (4.7), and a drug from an earlier line
 > coming back joins the line it returns in when exactly one agent advanced the
 > line while it was away (4.8). The first is the widest — it reaches every

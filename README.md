@@ -39,13 +39,17 @@ python3 validation/synthetic/run_map_foldin.py      # the MAP fold-in rule's pla
 `.github/workflows/jul28-tests.yml` exists to make the gate's result something a
 machine records against a commit rather than something an author reports.
 
-**It has never produced that record.** Every run since the workflow was added
-has ended in 2 to 4 seconds with no runner assigned and no logs to download, and
-`cohort_explorer-tests.yml` — which passed on 11 August — began failing the same
-way on 13 August. That pattern is the job never starting, not a suite failing:
-an Actions billing or spending limit, or hosted runners turned off for the
-account. It needs someone with repository settings access, and until it is
-fixed the only evidence the gate is green is running it locally.
+**It does, since 30 August.** Between 13 and 30 August every run ended in 2 to
+4 seconds with no runner assigned and no logs to download, here and in
+`cohort_explorer-tests.yml` — the job never starting rather than a suite
+failing, and an account-level Actions problem rather than anything in this
+repository. Runners came back on 30 August and the gate has recorded real
+results against every commit since.
+
+If it happens again the symptom is distinctive: a run with no logs that lasted
+seconds never started, whatever colour the check is. Open the run before
+reading a red check as a failing suite, and fall back to
+`Rscript validation/run_gate.R` locally.
 
 ## What to read first
 

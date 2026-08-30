@@ -120,6 +120,11 @@ REQUIRED_COHORT_COLS <- c("PATID", "INDEX_DATE", "ENDDATE", "ENDDATE_CE",
 BOOL_SETTINGS <- c("USE_QUARTERLY_TABLES", "CENSOR_AT_DISENROLLMENT",
                    "PERSIST_TO_SCHEMA", "APPLY_CART_INDUCTION_RULE",
                    "APPLY_NO_BELANTAMAB", "APPLY_MAP_FOLDIN",
+                   # Governs which returning-drug rule the run applies
+                   # (LOT_RULES.md 4.3), and it was read as a boolean without
+                   # being declared as one - so a typo became NA and read as
+                   # off, quietly building the older algorithm.
+                   "APPLY_OWN_RETURN_FOLD",
                    # Coerced with as.logical() like the rest, so a typo would
                    # otherwise become NA and read as off.
                    "FACE_VALIDITY_FATAL")

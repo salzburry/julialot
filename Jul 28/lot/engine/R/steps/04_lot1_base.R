@@ -179,11 +179,16 @@ phase_lot1_base <- function(con, ctx) {
       LEFT JOIN map_restart mr
         ON mr.PATID = ms.PATID AND mr.MAP_MED_TYPE = ms.MAP_MED_TYPE
        AND mr.MAP_START_DT = ms.MAP_START_DT
-      -- A regimen drug returning after a confirmed gap ends this line, like
-      -- any other drug would. Without it the release is half a rule. While
-      -- another regimen drug still holds this line open, the restart falls
-      -- inside the line, cannot end it, and is then too early to open the next
-      -- one. The treatment belongs to no line at all.
+      -- return_release_sql() emits nothing under the rule the study pins: a
+      -- drug of this line's regimen never ends it, whatever the gap, so its
+      -- later episodes are not added-medication candidates at all (4.3).
+      --
+      -- With apply_own_return_fold FALSE - a comparison build - the release is
+      -- back and a regimen drug returning after a confirmed gap ends the line
+      -- like any other drug. It has to, there: refuse it while another regimen
+      -- drug still holds the line open and the restart falls inside the line,
+      -- cannot end it, and is too early to open the next. The treatment would
+      -- belong to no line at all.
       WHERE (bm.MED_ABBR IS NULL
 {return_release_sql(cfg, 'mr', 'bm')})
         AND ms.MAP_MED_CLASS <> 'STEROID'  -- a steroid cannot trigger an add-med
