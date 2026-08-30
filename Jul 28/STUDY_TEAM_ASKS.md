@@ -33,6 +33,29 @@ creates.
 `lot/LOT_RULES.md` 4.7, `lot/engine/R/melp_rule.R`. Course cap 28 days, and the
 build offers no other.
 
+**The cap is `<= 28`, inclusive — CONFIRMED 30 Aug.** A course covering exactly
+28 days is short and the rule applies to it. This was the last thing about the
+cap that could have been read two ways; it is not open any more.
+
+**A confirmed course that is ALSO a returning drug — SETTLED 30 Aug, by the
+words above.** The ask says a patient given melphalan on day 100 who starts a
+new agent on day 105 begins the new line on **day 100**. That holds whether or
+not the melphalan is a drug the patient had in an earlier line. So when §4.8
+would fold that course into the line it returns in, §4.8 stands back: the
+course starts a line, and a dose that starts a line is not a drug folding back
+into the line before it.
+
+Left to both rules, the previous line named a drug whose only episode began
+after that line had ended, and the line's end date and end reason moved with
+it. On the worked patient:
+
+| | previous line | new line |
+|---|---|---|
+| both rules claiming it | `d200 → d449` **MED_ADD**, regimen `DARA MELP` | `d450` |
+| the ask, and the build now | `d200 → d300` **DISCONTINUATION**, regimen `DARA` | `d450`, regimen `MELP` + the day-305 agent |
+
+Worked example `melp_confirmed_beats_the_fold` in the vignette catalogue.
+
 **Two things it does that the ask did not say in words**, both deliberate, both
 open to correction:
 

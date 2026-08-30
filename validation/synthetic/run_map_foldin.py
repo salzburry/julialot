@@ -295,6 +295,22 @@ PATS = [
                    ('MELP', 'ALKY', 450, 477), ('BORT', 'PI', 450, 510)]),
     P('F31n', L1 + [('DARA', 'MAB', 200, 600),
                     ('MELP', 'ALKY', 450, 477), ('BORT', 'PI', 451, 510)]),
+    # F32: the study team's day-100/105 rule where the melphalan is ALSO a
+    # returning previous-line drug. MELP is in 1L's regimen, DARA opens 2L,
+    # MELP returns at d450 for 28 days, and POMA starts at d455 inside that
+    # cover - so 4.7 CONFIRMS the course and the next line starts on the
+    # melphalan date. 4.8 must stand back: a dose that starts a line is not a
+    # drug folding back into the line before it.
+    #
+    # Claimed by both rules, 2L ran to d449 with MELP in its regimen - a drug
+    # whose only episode begins at d450, after 2L has ended - and its end
+    # reason changed with it. F32n is the same patient without the confirming
+    # agent, where the course IS suppressed and 2L legitimately holds it.
+    P('F32', [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 0, 27),
+              ('DARA', 'MAB', 200, 300), ('MELP', 'ALKY', 450, 477),
+              ('POMA', 'IMID', 455, 520)]),
+    P('F32n', [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 0, 27),
+               ('DARA', 'MAB', 200, 300), ('MELP', 'ALKY', 450, 477)]),
     # F28/F29/F30: one scope for "not new". Three patients with the same
     # history and the same short melphalan course at day 600, differing only
     # in how far back the drug returning inside it was last seen.
@@ -486,6 +502,21 @@ def main():
 
     ok(ref.get('F5') == fold.get('F5') and n(ref, 'F5') == 1,
        "F5: a restart with no newer line in between stays in the line it left")
+
+    # F32: the two adopted rules reaching for one course. 4.7 wins, by the
+    # study team's own words - the new line starts when the melphalan appears.
+    ok(fold.get('F32') == ref.get('F32') and n(fold, 'F32') == 3,
+       "F32: a confirmed course that is also a returning drug starts a line, "
+       "so the fold leaves it alone and both builds agree")
+    ok(n(fold, 'F32') == 3 and fold['F32'][1][2] == rs.d(IX + 300) and
+       fold['F32'][2][1] == rs.d(IX + 450),
+       "F32: ...2L keeps its own end at d300 and 3L starts on the melphalan "
+       "date, not the confirming agent's")
+    ok(REGIMEN[(True, 'F32')][2][0] == 'DARA',
+       "F32: ...and 2L does not name a drug whose episode begins after it ended")
+    ok(n(fold, 'F32n') == 2 and fold['F32n'][1][2] == rs.d(IX + 477),
+       "F32n: with no confirming agent the course is suppressed, and 2L is "
+       "held to its cover as before")
 
     ok(n(ref, 'F6') == 4 and n(fold, 'F6') == 4,
        "F6: a return from two lines back is outside the fold set, so it "

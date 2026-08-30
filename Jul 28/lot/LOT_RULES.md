@@ -407,6 +407,15 @@ both directions: a course this rule suppressed is not a line-defining agent for
 §4.8's count either, and it joins no regimen (§4.7 holds it, and a held course
 is in neither `LOT_BASE_MEDS` nor `LOT_MED_CNT`).
 
+**And the melphalan itself may be the returning drug.** A course this rule
+CONFIRMS starts the next line, on its own first day — so §4.8 stands back from
+it too, exactly as it does from a suppressed one, and for the opposite reason:
+a suppressed course opens nothing, a confirmed one opens a line, and neither is
+a drug folding back into the line before it. Worked example:
+`melp_confirmed_beats_the_fold`. Left to both rules, the previous line named a
+drug whose only episode began after that line had ended, and its end date and
+end reason moved with it.
+
 **A steroid never confirms a course.** Corticosteroids are not oncology agents
 (§2.1), so melphalan given with one is still melphalan on its own: the course
 stays suppressed and the line is carried to its cover. That is what the study
