@@ -30,10 +30,10 @@ CONTRACT <- list(
   # the rule means.
   apply_melp_rule             = "simplified",
   # The MAP fold-in: a prior line's agent returning joins the line it returns
-  # in instead of splitting it. FALSE is the study's algorithm; TRUE is the
-  # study team's proposed reading, built only as its own cell - see
-  # R/foldin_rule.R.
-  apply_map_foldin            = FALSE,
+  # in instead of splitting it, when exactly one agent advanced the line
+  # between that drug's two doses. Asked for on 2026-08-15, given its count on
+  # 2026-08-20, adopted on 2026-08-30 - LOT_RULES.md 4.8, R/foldin_rule.R.
+  apply_map_foldin            = TRUE,
   # A CAR-T inside LOT1's induction window is part of LOT1 - it neither ends
   # the line nor starts one. Confirmed by the study team on 2026-08-13; see
   # R/cart_rule.R and the CAR-T induction rule in lot/LOT_RULES.md.

@@ -427,6 +427,26 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
        AND orr.MAP_START_DT = o.MAP_START_DT
       WHERE (ob.MED_ABBR IS NULL
              OR (coalesce(orr.PREV_DISCON, 0) = 1 AND ob.SUBSTITUTE_ONLY = 0))
+      UNION
+      -- A line can also be opened by a procedure, and a course after one is
+      -- no more this line's than a course after a new drug. Scanning
+      -- medications alone left exactly that hole: a CAR-T opening line 2 on
+      -- day 100 did not stop line 1 claiming a course on day 200, and line
+      -- 1's own day-50 discontinuation became a day-99 SCT_CART end.
+      --
+      -- Measured from the line's INDUCTION END, not its start: a transplant
+      -- inside a line's own window belongs to that line and ends nothing
+      -- (LOT_RULES.md 3.4 and 6.5), so it must not disqualify the line from
+      -- a course of its own afterwards. One past the window is a boundary.
+      SELECT DISTINCT mc.PATID, mc.EXPO_DT
+      FROM melp_course mc
+      INNER JOIN {line_tbl} ON {line_tbl}.PATID = mc.PATID
+      INNER JOIN (SELECT DISTINCT PATID, TX_DT FROM tx_auto_dates
+                  UNION
+                  SELECT DISTINCT PATID, TX_DT FROM tx_allo_cart_dates) tx
+        ON tx.PATID = mc.PATID
+       AND tx.TX_DT >  {induction_end}
+       AND tx.TX_DT <= mc.EXPO_DT
     ),
     melp_judged AS (
       SELECT mc.PATID, mc.EXPO_DT,

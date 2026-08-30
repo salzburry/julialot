@@ -11,15 +11,22 @@
 #   # read cells already built, without rebuilding
 #   ... FOLDIN_READ=TRUE Rscript exploration/lot/run_foldin_cells.R
 #
-# The rule under test, from the study team: a patient on drug A + drug B whose
-# line was advanced by a new drug C, and whose drug B then reappears after the
-# next line's regimen window - B should be PART of the line it reappears in,
-# not a reason to start another one. The engine carries this as the gated
-# APPLY_MAP_FOLDIN mode (lot/engine/R/foldin_rule.R), pinned FALSE in
-# CONTRACT, so the study's own run is untouched.
+# The rule, from the study team: a patient on drug A + drug B whose line was
+# advanced by a new drug C, and whose drug B then reappears after the next
+# line's regimen window - B should be PART of the line it reappears in, not a
+# reason to start another one. Refined on 2026-08-20 into a count: one agent
+# advancing the line in between and the return folds, two or more and it opens
+# a line. The study adopted it on 2026-08-30, so APPLY_MAP_FOLDIN is TRUE in
+# CONTRACT and this is the study's own algorithm.
 #
-# Two complete LOT builds under their own foldin_* prefixes - the contract
-# build and the fold-in - differenced. Two builds rather than arithmetic on a
+# Which cell is the deviation flipped with that adoption. 'folded' is the
+# contract build and records nothing; 'reference' is built with
+# APPLY_MAP_FOLDIN=FALSE under LOT_CONTRACT_OVERRIDE, is stamped in
+# CONTRACT_DEVIATIONS, and every reader that resolves run ownership refuses it
+# as the study's numbers.
+#
+# Two complete LOT builds under their own foldin_* prefixes - one without the
+# rule and the contract's - differenced. Two builds rather than arithmetic on a
 # finished run, because a removed boundary changes the line's run-out and
 # every later window; the sizing screen in analysis/questions counts today's
 # boundaries, and this package is what those boundaries turn into.
@@ -42,22 +49,32 @@ LOT_ROOT <- normalizePath(file.path(.script_dir, "..", "..", "lot", "engine"), m
 env_flag <- function(nm) identical(toupper(trimws(Sys.getenv(nm, unset = ""))), "TRUE")
 out_dir  <- melp_out_dir(.script_dir)
 
+# `mode` is the deviation a cell must record, NA marking the contract build.
+# Both moved when the study adopted the rule: 'folded' IS the contract now, and
+# the cell without the rule is the one that deviates. `foldin` is what each
+# hands to APPLY_MAP_FOLDIN, which is a separate thing - the contract cell
+# names its value too, so an ambient setting cannot reach it.
 FOLDIN_CELLS <- list(
-  list(id = "reference", mode = NA_character_,
-       what = "the contract build, unchanged - the baseline the rule is measured against"),
-  list(id = "folded", mode = "TRUE",
-       what = paste0("a prior line's agent returning after the current line's ",
-                     "regimen window joins that line instead of splitting it. ",
-                     "The line's SPAN owns the return - the regimen string and ",
+  list(id = "reference", mode = "FALSE", foldin = "FALSE",
+       what = paste0("no fold-in - a returning prior-line agent splits the ",
+                     "line, which is what the build did before the study ",
+                     "adopted the rule")),
+  list(id = "folded", mode = NA_character_, foldin = "TRUE",
+       what = paste0("the study's rule: a prior line's agent returning after ",
+                     "the current line's regimen window joins that line ",
+                     "instead of splitting it, when exactly ONE agent ",
+                     "advanced the line between the drug's two doses. The ",
+                     "line's SPAN owns the return - the regimen string and ",
                      "drug counts do not change - and agents of EVERY earlier ",
-                     "line fold, not only the last one's. Both readings are ",
-                     "taken here and open for the study team to confirm")))
+                     "line fold, not only the last one's. Those two readings ",
+                     "are open for the study team to confirm")))
 
 report_plan <- function(cells) {
   cat("\nThe MAP fold-in rule, as two builds.\n\n")
   for (c_i in cells)
     cat(sprintf("  %-11s %-11s %s\n", c_i$id,
-                if (is.na(c_i$mode)) "(no rule)" else "fold-in", c_i$prefix))
+                if (identical(c_i$foldin, "TRUE")) "fold-in" else "(no rule)",
+                c_i$prefix))
   cat("\n")
   for (c_i in cells) cat("  ", c_i$id, "\n    ", c_i$what, "\n", sep = "")
   cat("\n", length(cells), " cells. EACH ONE IS A COMPLETE LOT BUILD.\n", sep = "")
@@ -68,20 +85,16 @@ run_cell <- function(c_i, cohort, cohort_pfx) {
   env  <- paste0("COHORT_PREFIX=", cohort_pfx)
   st   <- trimws(Sys.getenv("COHORT_STATUS_TABLE", unset = ""))
   if (nzchar(st)) env <- c(env, paste0("COHORT_STATUS_TABLE=", st))
-  if (!is.na(c_i$mode)) {
-    # The melphalan mode is pinned on this side too. Pinning it on one arm only
-    # left the comparison open to an ambient APPLY_MELP_RULE reaching the other,
-    # which would put two changes between the cells instead of one.
-    env <- c(env, "LOT_CONTRACT_OVERRIDE=TRUE", "APPLY_MAP_FOLDIN=TRUE",
-             "APPLY_MELP_RULE=simplified")
-  } else {
-    # Pinned to the contract explicitly - a child inherits the shell, so an
-    # ambient APPLY_MAP_FOLDIN or melphalan setting must not reach the
-    # reference build. The melphalan mode is named rather than blanked:
-    # load_inputs.R fills an empty variable from config.csv, so
-    # APPLY_MELP_RULE= would pin nothing at all.
-    env <- c(env, "APPLY_MAP_FOLDIN=FALSE", "APPLY_MELP_RULE=simplified")
-  }
+  # Both cells name both settings rather than inheriting the shell: a child
+  # gets the parent's exports, and an ambient value reaching one arm and not
+  # the other would put two changes between the cells instead of one. The
+  # melphalan mode is named rather than blanked - load_inputs.R fills an empty
+  # variable from config.csv, so APPLY_MELP_RULE= would pin nothing at all.
+  env <- c(env, paste0("APPLY_MAP_FOLDIN=", c_i$foldin),
+           "APPLY_MELP_RULE=simplified")
+  # The override goes on the cell that is not the contract build - since the
+  # study adopted the rule, that is the reference.
+  if (!is.na(c_i$mode)) env <- c(env, "LOT_CONTRACT_OVERRIDE=TRUE")
   log_f <- file.path(out_dir, paste0("build_foldin_", c_i$id, ".log"))
   cat("  building ", c_i$id, " -> ", c_i$prefix, "  (log: ", log_f, ")\n", sep = "")
   rc <- system2("Rscript", args, env = env, stdout = log_f, stderr = log_f)

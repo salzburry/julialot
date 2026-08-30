@@ -107,6 +107,11 @@ main <- function() {
   }
 
   # ---- 1. MAP-splitting screen ---------------------------------------------
+  # READ AS A RESIDUAL. Since the study adopted the fold-in (LOT_RULES.md 4.8)
+  # this run's own lines already have those boundaries folded away, so what
+  # this screen counts is what the rule LEFT - a return with two or more
+  # advances behind it, or one the count did not reach - not what it removed.
+  # exploration/lot/run_foldin_cells.R measures what it removed.
   # The substitution pairs, and proof they are the version the run was built
   # with: the run records one MD5 per code-list file.
   log_msg("1. MAP-splitting screen: MED_ADD boundaries made by a returning agent")
@@ -439,7 +444,7 @@ main <- function() {
       "2b. The adopted short-course MELP rule, against a build without it",
       "3. Discontinue the prior line, then the 12mo CE baseline"),
     STATUS = c(
-      "screen written - a sizing of current boundaries, not the rebuilt line table",
+      "applied in this run's lines; the screen now counts what the rule LEFT",
       "not produced here - run the melphalan package",
       "applied in this run's lines; the cells measure what it changed",
       "written"),
@@ -501,8 +506,10 @@ main <- function() {
               "  files:", paste0("    ", written),
               paste0("  The MAP count is a sizing screen. The primary study ",
                      "contract is unchanged;"),
-              paste0("  the fold-in is built separately as a gated cell pair ",
-                     "(exploration/lot/run_foldin_cells.R)."),
+              paste0("  The MAP fold-in IS applied in these lines ",
+                     "(LOT_RULES.md 4.8); what it"),
+              paste0("  changed is measured by ",
+                     "exploration/lot/run_foldin_cells.R."),
               paste0("  The melphalan short-course rule IS applied in these ",
                      "lines (LOT_RULES.md 4.7); what it"),
               paste0("  changed is measured by ",
@@ -511,8 +518,8 @@ main <- function() {
 
   log_msg(SEP)
   log_msg("Mid-August sizing outputs written. The melphalan short-course rule ",
-          "is part of these lines; the cells that measured it, and the ",
-          "fold-in cell pair, each run separately.")
+          "and the MAP fold-in are both part of these lines; the cells that ",
+          "measured each of them run separately.")
   log_msg(SEP)
 }
 

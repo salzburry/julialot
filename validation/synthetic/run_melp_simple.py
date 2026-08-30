@@ -39,10 +39,10 @@ import duckdb
 IX = 300
 
 
-def P(pid, maps, obs=1200):
+def P(pid, maps, obs=1200, ac=()):
     return dict(pid=pid, index=IX, death=None, obs_end=IX + obs,
                 maps=[(m, c, IX + a, IX + b, 0) for (m, c, a, b) in maps],
-                sct_ac=[], sct_auto=[],
+                sct_ac=[(t, IX + d) for (t, d) in ac], sct_auto=[],
                 spans=[(IX - 365, IX + obs)], strict=[(IX - 365, IX + obs)])
 
 
@@ -70,6 +70,11 @@ PATS = [
     # line 2 - the line the course actually falls after - carries it.
     P('SH', [('LEN', 'IMID', 0, 200), ('DARA', 'MAB', 300, 600),
              ('MELP', 'ALKY', 900, 927)]),
+    # SI: the same, but the later line is opened by a PROCEDURE rather than a
+    # drug. Scanning medications alone missed it, and line 1's day-50
+    # discontinuation became a day-99 SCT_CART end.
+    P('SI', [('LEN', 'IMID', 0, 50), ('MELP', 'ALKY', 200, 227)],
+      ac=(('CART', 100),)),
 ]
 
 
@@ -161,6 +166,15 @@ def main():
        "SH simplified: line 2 - the line the course falls after - carries it")
     ok(len(ref.get('SH', [])) == 3,
        "SH no rule: the course gets a melphalan-only line of its own")
+
+    # SI - a procedure opens the later line, and must disqualify it just as a
+    # drug does.
+    si = smp.get('SI', [])
+    ok(len(si) == 2 and si[0][2] == rs.d(IX + 50)
+       and si[0][3] == 'DISCONTINUATION',
+       "SI simplified: a CAR-T line in between leaves line 1's own end alone")
+    ok(len(si) == 2 and si[1][2] == rs.d(IX + 227),
+       "SI simplified: the CAR-T line carries the course instead")
 
     if fails:
         print("%d check(s) failed" % len(fails)); sys.exit(1)

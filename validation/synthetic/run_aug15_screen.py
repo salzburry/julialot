@@ -61,8 +61,19 @@ PATS = [
 
 def main():
     sqldir = tempfile.mkdtemp(prefix="aug15t_")
+    # Built WITHOUT the fold-in on purpose. This screen exists to size the
+    # boundaries a returning prior-line drug creates, and the contract build
+    # now folds most of them away - so run against it the screen would find
+    # nothing and prove nothing about its own SQL. What it checks here is that
+    # it identifies the shape when the shape is there.
+    #
+    # On the study's own tables the screen reads a folded build, so its count
+    # is what the rule LEFT, not what it removed. aug15_studyteam_qs.R says so
+    # where the number is produced.
+    env = dict(os.environ)
+    env["MAP_FOLDIN"] = "FALSE"
     r = subprocess.run(["Rscript", os.path.join(HERE, "emit_chain.R"), sqldir],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, env=env)
     if r.returncode != 0:
         sys.exit(r.stdout + r.stderr)
     con = duckdb.connect(); con.execute("SET TimeZone='UTC'")

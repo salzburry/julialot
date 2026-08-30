@@ -106,7 +106,7 @@ LOT_DIMENSIONS <- list(
                      "starts one on its own first day when another agent ",
                      "begins while it still covers."),
        where = paste0("lot/engine/R/steps/10_lot2_5_base.R:270, :282, :292, ",
-                      ":317, :352, :451, :452, lot/engine/R/melp_rule.R:449, :465"),
+                      ":317, :352, :451, :452, lot/engine/R/melp_rule.R:469, :485"),
        proves = c("d_MED", "d_AUTO", "CART", "STEROID", "permissible_subs",
                   "melp_suppress", "melp_inject"),
        question = paste0("Does a new line require documented progression or ",

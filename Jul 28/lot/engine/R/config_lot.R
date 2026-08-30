@@ -106,6 +106,11 @@ cfg_defaults <- list(
   # from config.csv. 'off' is the word that survives, and melp_rule_mode()
   # maps it to no rule.
   apply_melp_rule    = Sys.getenv("APPLY_MELP_RULE",    unset = ""),
+  # Pinned TRUE in CONTRACT since the study adopted the rule - LOT_RULES.md
+  # 4.8. FALSE builds without it and needs LOT_CONTRACT_OVERRIDE. The default
+  # stays FALSE so a run that somehow loses config.csv fails the contract
+  # check and stops, rather than defaulting to the study's rule and hiding
+  # that the settings file never loaded.
   apply_map_foldin   = as.logical(Sys.getenv("APPLY_MAP_FOLDIN", unset = "FALSE")),
   # Pinned TRUE in CONTRACT. Turning it off is a different algorithm and needs
   # LOT_CONTRACT_OVERRIDE, the same as any other contract setting.

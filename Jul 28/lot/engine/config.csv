@@ -26,7 +26,7 @@ APPLY_NO_BELANTAMAB,TRUE,Drop patients with belantamab in any LOT
 APPLY_CART_INDUCTION_RULE,TRUE,A CAR-T inside LOT1's induction window belongs to LOT1
 BELANTAMAB_MED_ABBR,BELA,How belantamab is named in MED_ABBR
 APPLY_MELP_RULE,simplified,The study's melphalan rule; off / as_asked / yield_to_sct are comparison builds and each needs LOT_CONTRACT_OVERRIDE
-APPLY_MAP_FOLDIN,FALSE,A prior line's agent returning joins the line it returns in instead of splitting it (evaluation only)
+APPLY_MAP_FOLDIN,TRUE,A prior line's agent returning joins the line it returns in when one agent advanced the line in between
 MELP_MED_ABBR,MELP,How melphalan is named in MED_ABBR
 MELP_EXPOSURE_DAYS,30,Doses closer together than this are one administration
 MELP_RESTART_DAYS,60,Outside induction: a next exposure sooner than this advances at the first dose

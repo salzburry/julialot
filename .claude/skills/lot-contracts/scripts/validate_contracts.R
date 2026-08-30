@@ -127,9 +127,10 @@ check_contract <- function(doc, raw_text, fname) {
   if (!is.logical(adv$new_agent)) say("advancement.new_agent must be true or false")
   if (!is.logical(adv$drop_based)) say("advancement.drop_based must be true or false")
   if (!is.null(adv$prior_line_agent_return) &&
-      !identical(adv$prior_line_agent_return, "new_line") &&
-      !identical(adv$prior_line_agent_return, "joins_line"))
-    say("advancement.prior_line_agent_return must be 'new_line' or 'joins_line'")
+      !(adv$prior_line_agent_return %in%
+        c("new_line", "joins_line", "one_advance_joins")))
+    say(paste0("advancement.prior_line_agent_return must be 'new_line', ",
+               "'joins_line' or 'one_advance_joins'"))
   g <- adv$same_regimen_gap_days
   if (!(identical(g, "none") || is_posint(g)))
     say("advancement.same_regimen_gap_days must be 'none' or a positive integer")
@@ -294,8 +295,11 @@ BINDING <- list(
   list(path = c("advancement", "short_course_chain_gap_days"), key = "melp_exposure_days"),
   # FALSE is the study's algorithm - a prior line's agent returning splits the
   # line. TRUE is the fold-in mode, which no contract build carries.
+  # TRUE is the study's algorithm since 2026-08-30, and it is not a plain
+  # "joins" - the fold is conditional on the count, so the contract value says
+  # so. FALSE is a build without the rule.
   list(path = c("advancement", "prior_line_agent_return"), key = "apply_map_foldin",
-       to = function(v) if (isTRUE(v)) "joins_line" else "new_line")
+       to = function(v) if (isTRUE(v)) "one_advance_joins" else "new_line")
 )
 
 # Engine settings that are deliberately NOT contract axes, each with the reason.

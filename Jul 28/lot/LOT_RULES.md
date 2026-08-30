@@ -42,6 +42,7 @@ in the folder and what each file does.
 | §4.5 | Same-day starts break `SCT_ALLO > CART > SCT_AUTO > MED` | — | |
 | §4.6 | An allogeneic line spans one day and carries no regimen | `allo_lot_span` | |
 | §4.7 | A short melphalan course outside induction does not start a line | `apply_melp_rule`, `melp_simple_course_days` | |
+| §4.8 | A returning drug joins the line it returns in, after one advance | `apply_map_foldin` | |
 | §5.1 | A 90-day gap is running out | `map_discon_gap_days` | |
 | §5.2 | A run-out chains forward until the drug is discontinued | `map_discon_gap_days` | |
 | §5.3 | A run-out is a discontinuation only once confirmed | `lot_discon_confirm_days` | |
@@ -87,6 +88,7 @@ as the study's numbers.
 | `apply_no_belantamab` | `TRUE` | the belantamab criterion — §8 |
 | `belantamab_med_abbr` | `BELA` | how belantamab is spelled on the code list |
 | `apply_melp_rule` | `simplified` | the melphalan short-course rule — §4.7 |
+| `apply_map_foldin` | `TRUE` | a returning prior-line drug joins the line it returns in — §4.8 |
 | `melp_med_abbr` | `MELP` | how melphalan is spelled on the code list |
 | `melp_exposure_days` | 30 | melphalan doses closer than this are one course |
 | `melp_simple_course_days` | 28 | a course covering this or fewer days is short — §4.7 |
@@ -254,6 +256,45 @@ for a day opens a new episode (§2.3) and nothing follows: the run-out chains
 over it and the drug is still refused as a line start. It takes 90 days off the
 drug. Whether 90 is the right threshold is Q2 on the scenario workbook's Open
 questions sheet.
+
+The release is narrowed by §4.8: a drug of an **earlier** line, returning after
+exactly one advance, joins the line it returns in rather than opening one.
+
+### 4.8 A returning drug joins the line it returns in, after one advance
+
+Worked example: `returning_drug_one_advance` / `returning_drug_two_advances`.
+
+A drug from an earlier line that comes back is read by what happened between
+its two doses. Count the lines that opened in that interval:
+
+| lines opened in between | what the return does |
+|---|---|
+| one | joins the line it returns in — no new line |
+| two or more | opens a line, as any added agent would |
+| none | nothing advanced, so this rule says nothing — §4.3's release applies |
+
+The interval is measured **dose to dose**, not from where the drug stopped. A
+drug's cover often runs past the line it belonged to, so measuring from the stop
+would put the advance that ended that line before the interval and count none.
+
+An advance is a **line that opened**, whatever opened it — a transplant-started
+line counts.
+
+A course only joins the line that actually contains it. While lines are built in
+order the count is relative to the line being built, so a return with another
+line-defining agent before it belongs to a later line and this one does not
+claim it.
+
+What joins is the line's **span**, not its regimen: the returning drug does not
+enter `LOT_BASE_MEDS`, exactly as a held melphalan course does not (§4.7). The
+line's run-out is carried to the last day the returning drug's supply reaches,
+capped at observation, so the treatment the rule refuses a line to still sits
+inside one.
+
+A melphalan course the melphalan rule suppressed is not a line-defining agent
+here either — that rule has already decided it opens nothing.
+
+`lot/engine/R/foldin_rule.R`.
 
 ### 4.4 A permissible biosimilar substitute never starts a line
 
