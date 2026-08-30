@@ -80,10 +80,18 @@ four positions now agree:
 | **inside the course** | **1L** | **the transplant's line** | **no** — was a line of its own |
 | after the course | 1L | 1L | no |
 
-**The one thing to confirm:** the day-110 dose goes to the line the transplant
-opened, not back to 1L with its own first dose. That is not a new choice — it
-is what the build already did for a course starting after a transplant (the
-"before" row), applied to a course that straddles one. Worked example
+**Flagged, though nothing here was chosen:** the day-110 dose ends up in the
+line the transplant opened rather than back in 1L beside its own first dose.
+That is not a decision of ours between two workable answers — 1L was never
+available. An allograft ends the line wherever it falls (`LOT_RULES.md` 6),
+which is an existing rule this ask did not touch, so 1L ends on day 99 and
+cannot reach day 110 whatever the melphalan rule says. The only line that can
+own the dose is the one the transplant opened, which is also what the build
+already did for a course starting *after* a transplant.
+
+Raised because it is a visible consequence of the ask, not because it is open:
+if the study team wants that dose in 1L instead, what changes is the
+**transplant** rule, not this one. Worked example
 `melp_course_split_by_a_transplant`.
 
 **Two things it does that the ask did not say in words**, both deliberate, both

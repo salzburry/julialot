@@ -423,7 +423,9 @@ transplant landing between two doses of one course changes nothing about
 whether it advances. A course that began before a line is outside that line's
 induction window, not exempt from its judgement. The line the transplant opened
 is carried to the end of that course's cover and owns the doses that fall in
-it, exactly as it would for a course that began after it. Worked example:
+it, exactly as it would for a course that began after it. Not a choice between
+owners: the transplant ends the earlier line where it falls (§6), so that line
+cannot reach the later dose at all. Worked example:
 `melp_course_split_by_a_transplant`. Judged only against a line it starts
 inside, the course was dropped by the transplant's line and its later dose
 opened a line of its own.
