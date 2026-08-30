@@ -147,13 +147,15 @@ SUBST <- list(
   "06_lot1_end.R"  = list(
     list(from = "FROM {melp_lot1_base_from(cfg)}", to = "FROM lot1_base lb", n = 1L),
     list(from = "WITH{melp_lot1_ctes(cfg)}",       to = "WITH",              n = 1L)),
-  # The fold-in hooks ride the same lines as the melphalan ones and emit
-  # nothing while APPLY_MAP_FOLDIN is FALSE, so the undone text is still the
-  # source's.
+  # The fold-in hooks ride the same lines as the melphalan ones. Both rules are
+  # in the contract now, so undoing them here is what shows the port what the
+  # source looked like before either was added.
   "10_lot2_5_base.R" = list(
     list(from = paste0("),{melp_lotn_ctes(cfg, lot_num, induction_window_days, ",
                        "cart_consolidation_days, allo_lot_span)}",
-                       "{foldin_lotn_ctes(cfg, lot_num)}"), to = "),", n = 1L),
+                       "{foldin_lotn_ctes(cfg, lot_num, lotn_induction_end(",
+                       "lot_num, induction_window_days, ",
+                       "cart_consolidation_days))}"), to = "),", n = 1L),
     list(from = paste0("AND NOT (ls.LOT{lot_num}_START_TYPE = 'SCT_ALLO' AND ",
                        "{if (allo_lot_span == 'single_day') 1L else 0L} = 1)",
                        "{melp_suppress_predicate(cfg)}",

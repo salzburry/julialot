@@ -142,7 +142,7 @@ phase_lot1_end <- function(con, ctx) {
         -- gap. A guard reading a different rule from the candidate it mirrors
         -- lets DEATH take a line whose run-out the next line does open on.
         AND (prem.MED_ABBR IS NULL
-             OR (coalesce(mr.PREV_DISCON, 0) = 1 AND prem.SUBSTITUTE_ONLY = 0))
+{return_release_sql(cfg, 'mr', 'prem')})
     ),
     post_runout_autos AS (
       -- N_BETWEEN: did anything happen since the previous transplant? A pair

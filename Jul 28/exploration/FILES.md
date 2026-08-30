@@ -6,12 +6,11 @@ right ones.
 
 Nothing here is part of a study run, and nothing here can become one by
 accident. The two things that build — the sensitivity sweep and the melphalan
-cells — write to throwaway prefixes of their own, are opt-in, and launch with
+cells — are opt-in, write to throwaway prefixes of their own, and launch with
 `LOT_CONTRACT_OVERRIDE=TRUE`, which writes `CONTRACT_DEVIATIONS` into that run's
 status row. Every reader in the delivery refuses a run carrying one.
 
-That is the boundary this folder exists to make visible. `lot/` is what the
-study ships; this is what was asked about it.
+`lot/` is what the study ships; this is what was asked about it.
 
 | | |
 |---|---|
@@ -26,41 +25,39 @@ scenarios in `lot/LOT_RULES.md`, so they stay with the rules, in
 
 ## `exploration/melphalan/` — how the melphalan rule was chosen
 
-**One of the rules measured here is now the study's**, and the folder is the
-evidence for that choice rather than a proposal any more.
+**One of the rules measured here is now the study's.** This folder is the
+evidence for that choice, not a proposal.
 
 The study team asked first for a five-branch rule, where a melphalan (`MELP`)
-administration advances the line on windows of its own. It was built as three
-complete LOT runs — `reference`, `as_asked`, `yield_to_sct` — and differenced.
-It moved almost nothing, because the boundaries it judges are not the ones
-melphalan actually creates, and it was not adopted.
+administration advances the line on windows of its own. Built as three complete
+LOT runs — `reference`, `as_asked`, `yield_to_sct` — and differenced. It moved
+almost nothing, because the boundaries it judges are not the ones melphalan
+actually creates. Not adopted.
 
-The team's later note offered a simpler rule: a short melphalan course outside
-induction does not advance a line on its own. That one was built the same way,
-moved what the question was really about, and **the study adopted it on
-2026-08-30**. It is `apply_melp_rule = "simplified"` in `CONTRACT` and it is a
-rule like any other now — `lot/LOT_RULES.md` 4.7, not this file.
+Their later note offered a simpler rule: a short melphalan course outside
+induction does not advance a line on its own. Built the same way, it moved what
+the question was really about, and **the study adopted it on 2026-08-30** —
+`apply_melp_rule = "simplified"` in `CONTRACT`, and a rule like any other now,
+in `lot/LOT_RULES.md` 4.7 rather than here.
 
-So read the cells here as the comparison that produced a decision. What is
-still an exploration is the five-branch rule and the open cap question; what is
-not is the rule the build applies.
+Still an exploration: the five-branch rule and the open cap question. Not: the
+rule the build applies.
 
 Three builds rather than arithmetic on a finished run, because the engine is
-sequential: a line's end date sets the next line's start, which sets that
+sequential — a line's end date sets the next line's start, which sets that
 line's induction window, which decides which drugs join its regimen, which sets
-its discontinuation date, which decides whether the line after it starts at
-all.
+its discontinuation date, which decides whether the line after it starts at all.
 
 All three or none: a run where one mode failed reads like a finished experiment
 and is not one. Cells write to `melp_reference_`, `melp_as_asked_` and
 `melp_yield_to_sct_`, and a plan that would write to the study's own prefix is
 refused.
 
-Which cell carries a deviation flipped when the rule was adopted. A cell is
-the contract build when it matches `CONTRACT`, and that is now the simplified
-one; a build with no melphalan rule at all is asked for with
-`APPLY_MELP_RULE=off` — the word, not a blank, because the settings loader
-fills an empty variable from `config.csv` — and it records the deviation.
+Which cell carries a deviation flipped when the rule was adopted. A cell is the
+contract build when it matches `CONTRACT`, and that is now the simplified one. A
+build with no melphalan rule at all is asked for with `APPLY_MELP_RULE=off` —
+the word, not a blank, because the settings loader fills an empty variable from
+`config.csv` — and it records the deviation.
 
 | path | what it does |
 |---|---|
@@ -74,11 +71,10 @@ fills an empty variable from `config.csv` — and it records the deviation.
 | `read_melp_decisions.R` | What each decision the rule was built out of is worth, as a number per cell. Block 2 — melphalan doses in no line — is the one to read first. |
 | `tests/test_aug1_melp.R` | That off is the absence of the rule, and the branch decision checked against the proposal. |
 
-The rule itself is not in this folder — it is `lot/engine/R/melp_rule.R`,
-because the engine builds the lines and the rule needs each line's own induction
-window, which exists only while that line is being built. The study's mode is
-`simplified`, so the engine emits it on every run; `off` and the two five-branch
-modes are comparison builds.
+The rule itself lives in `lot/engine/R/melp_rule.R`: it needs each line's own
+induction window, which exists only while that line is being built. The study's
+mode is `simplified`, so the engine emits it on every run; `off` and the two
+five-branch modes are comparison builds.
 
 ### The proposal
 
@@ -98,16 +94,16 @@ window:
 The right-hand column turns on the **returning-drug release**, which is why the
 gap matters twice. A drug in the line's own regimen cannot start a line while it
 is still being taken, but `map_discon_gap_days` (90) between one episode and the
-next makes the later one a restart, and `lot/engine/R/prior_regimen.R` releases a
-restart to open a line like any other drug's. So the engine is not frozen after
-the first dose, and a branch that reads as "no boundary" is only a change where
+next makes the later one a restart, and `lot/engine/R/prior_regimen.R` releases
+a restart to open a line like any other drug's. So the engine is not frozen
+after the first dose, and a branch reading "no boundary" is a change only where
 the engine would otherwise have opened one.
 
-It moves in both directions, so the net effect on line counts is not derivable:
-A.1 and B.2 and B.3 remove boundaries the engine opens, A.2 removes none and
-B.1 adds one on a narrow population, and which wins depends on how many patients
-sit in each branch. `run_melphalan_rule.R` in `exploration/lot/` reports the
-branch counts off a finished run without rebuilding anything.
+It moves in both directions, so the net effect on line counts is not derivable.
+A.1, B.2 and B.3 remove boundaries the engine opens; A.2 removes none; B.1 adds
+one on a narrow population. Which wins depends on how many patients sit in each
+branch. `run_melphalan_rule.R` in `exploration/lot/` reports the branch counts
+off a finished run without rebuilding anything.
 
 **Two readings of a coded transplant**, which is why three cells are built
 rather than two. High-dose melphalan is transplant conditioning, so a melphalan
@@ -115,28 +111,27 @@ claim and an AUTO code are often the same clinical event and the transplant rule
 already fires on it. `as_asked` judges every exposure regardless; `yield_to_sct`
 leaves an exposure with an AUTO within `melp_sct_days` (14) to the transplant
 rule, so the melphalan rule fills only the gap where a transplant left no
-procedure code. Every output row records which mode produced it.
+procedure code. Every output row records the mode that produced it.
 
 **What B.2 does.** Two things, because the request asks for two.
 
-Suppressing B.2's boundaries stops melphalan ending the line at either dose.
-That alone does not keep the second dose *inside* the line. A line's
-discontinuation date is its base agents' last cover, and a melphalan first seen
-outside the induction window is not a base agent. So where the regimen runs out
-between the two doses, the line ends there and the second dose falls outside it
-— and the same rule refuses that dose as a line start, so it lands in no line at
-all.
+Suppressing B.2's boundaries stops melphalan ending the line at either dose,
+but does not keep the second dose *inside* the line. A line's discontinuation
+date is its base agents' last cover, and a melphalan first seen outside the
+induction window is not a base agent. Where the regimen runs out between the two
+doses the line ends there, the second dose falls outside it — and the same rule
+refuses that dose as a line start, so it lands in no line at all.
 
 The request says both doses stay in the current line, so the line is carried to
 the second dose. The carry rides on the run-out (`melp_hold` in
-`lot/engine/R/melp_rule.R`) rather than on an end reason of its own. That keeps
-the 90-day confirmation measured from the dose, and leaves every other end still
+`lot/engine/R/melp_rule.R`) rather than on an end reason of its own, which keeps
+the 90-day confirmation measured from the dose and leaves every other end still
 outranking it.
 
 ### What has to be settled before it could be built for real
 
-The measurement program picks an answer to each of these so it can run. The
-answer it picks is named. An assumption is not a decision.
+The measurement program picks an answer to each of these so it can run, and
+names the answer it picked. An assumption is not a decision.
 
 1. Does the rule apply to melphalan alone, or to any agent used as transplant
    conditioning? As written it is drug-specific, which is a first for this
@@ -170,16 +165,16 @@ answer it picks is named. An assumption is not a decision.
    Under the rule those lines should not exist, so a rule cell should count
    zero.
 
-Both modes implement the branch table. What the mode names describe is the
-transplant reading — the one thing the request does not cover — and that is the
-only difference between them.
+Both modes implement the branch table. The mode names describe the transplant
+reading — the one thing the request does not cover — and that is their only
+difference.
 
 ## `exploration/lot/` — measuring the algorithm
 
 Five asks against the rules, plus the audit counts. None of it has executed
 against a warehouse, so nothing here is an observed output. Every runner prints
-what it would measure and needs no connection until told to execute, and each
-one resolves which run actually wrote the tables before measuring them.
+what it would measure, needs no connection until told to execute, and resolves
+which run actually wrote the tables before measuring them.
 
 | path | what it does |
 |---|---|
@@ -202,12 +197,12 @@ one resolves which run actually wrote the tables before measuring them.
 | `run_lot_scenarios.R` | How a line of therapy is created, scenario by scenario, and how many patients each rule decides. Thirty-one worked treatment histories with the lines the engine builds from them — each one produced by running the engine's own SQL over that patient, not predicted — plus a count per scenario. `SCENARIO_EXECUTE=TRUE` writes `out/lot_scenarios.xlsx` with the counts; without it a no-connection preview goes to `out/lot_scenarios_reference.xlsx` instead. |
 | `R/lot_scenarios.R` | The catalogue: per scenario, the timeline, the lines the engine builds, the rule that decides it, and the counting SQL. The synthetic harness re-runs every timeline and fails if a line moves. |
 | `run_lot_audit_counts.R` | Real-data frequencies for the shapes the LOT rules turn on. Not formal QC — investigation. Twelve counts. Three ask whether a regimen agent has any cover inside its line. Four size the transplant-ownership shapes: transplants in no line, tandem pairs whose first transplant is outside its line's window, and post-run-out transplants. One bands how close returning drugs sit to the 90-day release. The rest are durations and treatment outside every line. |
-| `run_foldin_cells.R` | The MAP fold-in the study adopted, against a build without it, under `foldin_` prefixes. A prior line's agent returning after the current line's regimen window joins that line instead of splitting it, when exactly ONE agent advanced the line between that drug's two doses (`lot/LOT_RULES.md` 4.8). Two readings inside it are TAKEN, not settled, and both are disclosed in the outputs: the line's SPAN owns the returning drug — `LOT_BASE_MEDS` and the drug counts do not change — and the fold reaches agents of EVERY earlier line, not only the immediately previous one. `APPLY_MAP_FOLDIN` is TRUE in `CONTRACT`, so the folded cell is the study's build and the reference is the deviation. `FOLDIN_EXECUTE=TRUE` builds and differences the pair, including a per-patient before/after line file. The sizing screen in `analysis/questions` counts previous-line returns only, so its count is a LOWER BOUND on the population the rule moved. |
+| `run_foldin_cells.R` | The MAP fold-in the study adopted, against a build without it, under `foldin_` prefixes. A prior line's agent returning after the current line's regimen window joins that line instead of splitting it, when exactly ONE agent advanced the line between that drug's two doses (`lot/LOT_RULES.md` 4.8). The returning drug joins the line's REGIMEN as well as its span — `LOT_BASE_MEDS`, `LOT_MED_CNT` and the med and class flags all carry it, so a folded line no longer reads as monotherapy. the fold reaches only the IMMEDIATELY PREVIOUS line's agents. What is counted is an AGENT, because the request is about drugs; transplants and CAR-T are outside it by scope and keep their own rules, so a line one opened overrides the fold. `APPLY_MAP_FOLDIN` is TRUE in `CONTRACT`, so the folded cell is the study's build and the reference is the deviation. `FOLDIN_EXECUTE=TRUE` builds and differences the pair, including a per-patient before/after line file. The sizing screen in `analysis/questions` counts previous-line returns only, so its count is a LOWER BOUND on the population the rule moved. |
 | `run_scenario_counts.R` | Whether the real data contains the shapes `lot/LOT_RULES.md` is written around. Eleven counts, each naming the section it belongs to, and each splitting the matching patients by what the build actually did with them — so "there are N of these" is followed by "and here is how they came out". A rule with no patients behind it is not wrong but is not carrying weight either; a count of zero where one was expected means the scenario has been mis-read, or the shape cannot arise for a reason nobody has written down. It counts finished output and does not execute patients through the engine, so a surprising split is a reason to look at the rule, not proof that the rule fired. |
 | `tests/` | One suite per measurement, each reading its SQL as a string. |
 | `out/` | Generated. Nothing reads it back. |
 
-It counts **boundaries**, not lines. Subtracting boundaries added from
-boundaries removed does not give a line count: moving a boundary changes which
-line an exposure falls in, whether an agent is inside an induction window,
-regimen membership, discontinuation dates and every later line number.
+It counts **boundaries**, not lines. Boundaries added minus boundaries removed
+is not a line count: moving a boundary changes which line an exposure falls in,
+whether an agent is inside an induction window, regimen membership,
+discontinuation dates and every later line number.

@@ -16,8 +16,9 @@ regimen window is PART of that line, not a reason to start the next one.
       drug starts the next line on that day under both builds
   F4  B's permissible substitute returns     -> folds like B itself
   F5  B restarts with NO newer line in
-      between                                -> untouched: the engine's own
-      restart rule still opens the next line
+      between                                -> ONE line either way. Nothing
+      was given in between, so 4.3 keeps the restart inside the line it left
+      and this rule has nothing to decide
   F6  B returns two lines later, during 3L   -> does NOT fold. Two agents
       advanced the line between B's two doses, and the request's second
       clause gives that return a line of its own
@@ -25,15 +26,33 @@ regimen window is PART of that line, not a reason to start the next one.
   F8  B returns in the gap between two
       episodes of 2L's own drug              -> it no longer breaks that
       drug's run-out chain; the line runs through
-  F9  B returns after a single-day ALLO 2L   -> the ALLO line is carried to
-      B's cover and ends there - a line with no regimen has no run-out of
-      its own, so the hold has to supply one rather than extend one
+  F9  B returns after a single-day ALLO 2L   -> NO fold. A transplant that
+      opened a line in between is a standalone boundary and overrides the
+      fold, so the engine's own restart rule keeps the return
   F10 ...and after a CAR-T 2L with no
       consolidation drug                     -> the same
   F11 B returns with NO advance in between   -> count 0, not the request's
       case; the engine's restart rule keeps it
   F12 B returns with ONE advance in between  -> count 1, folds
   F13 B returns with TWO advances in between -> count 2, starts a line
+  F14 B's return has a follow-up episode     -> one course, one answer: the
+      whole course folds, not only its first episode
+  F15 a PROCEDURE opens the line in between  -> it overrides the fold. One
+      agent advanced the line, but a transplant or CAR-T keeps the engine's
+      own rules and a line it opened is a boundary of its own
+  F16 the only procedure in between is a
+      PLANNED TANDEM                          -> it continues the line and
+      opens nothing, so it is no advance: the return still folds
+  F17 the only procedure in between is inside
+      the line's own window                   -> it belongs to the line, so it
+      is no advance either
+  F18 the line's own drug restarts, then B
+      returns                                -> DARA's restart no longer opens
+      a line of its own (4.3), so one agent advanced the line and B folds
+  F19 the return lands inside a short
+      MELPHALAN course                       -> it does not confirm it. A
+      returning drug is not a NEW agent, so the melphalan rule cannot read as
+      a change the drug this rule bundles
 """
 import os, sys, tempfile, subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -85,6 +104,44 @@ PATS = [
     # line of its own, exactly as it does with the rule off.
     P('F13', L1 + [('DARA', 'MAB', 200, 260), ('CARF', 'PI', 300, 600),
                    ('BORT', 'PI', 450, 510)]),
+    # F14: the returning COURSE, not just its first episode. B returns at d450
+    # and folds; its own follow-up at d500 - inside the 90-day gap, so the same
+    # course - had no advance behind it and was judged on its own, so it did
+    # not fold and opened a line. One course, one answer.
+    P('F14', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 450, 480),
+                   ('BORT', 'PI', 500, 530)]),
+    # F15: a PROCEDURE opens the line in between. Scanning medications alone,
+    # LOT2 went on claiming B's return even though a CAR-T had opened LOT3,
+    # and LOT2's own discontinuation became the CAR-T's end reason.
+    dict(P('F15', L1 + [('DARA', 'MAB', 200, 250), ('BORT', 'PI', 450, 480)]),
+         sct_ac=[('CART', IX + 300)]),
+    # F16/F17: transplants that open NO line must not count as an advance.
+    # DARA opens LOT2 on day 200 - one advance - and B returns on day 450.
+    # F17 puts an AUTO on day 210, inside LOT2's own 30-day window, which the
+    # line owns. F16 adds its planned tandem partner on day 350: 140 days
+    # later with nothing in between, so the pair continues LOT2. Both must
+    # fold exactly as F12 does. Bounding the scan at the line START rather
+    # than its induction end, and reading the raw transplant dates rather
+    # than the ones that break a line, refused both.
+    dict(P('F16', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 450, 510)]),
+         sct_auto=[IX + 210, IX + 350]),
+    dict(P('F17', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 450, 510)]),
+         sct_auto=[IX + 210]),
+    # F18: the line's own drug takes a break. DARA opens 2L on day 200, its
+    # cover ends day 260, and it restarts on day 400 - past the discontinuation
+    # gap. Under LOT_RULES.md 4.3 that restart opens no line: nothing new was
+    # given, so DARA is returning to the line it left and 2L runs over the
+    # break. One agent has advanced the line while B was away, so B folds.
+    P('F18', L1 + [('DARA', 'MAB', 200, 260), ('DARA', 'MAB', 400, 600),
+                   ('BORT', 'PI', 450, 510)]),
+    # F19: where the two adopted rules meet. DARA opens 2L. A short melphalan
+    # course sits at day 450, outside 2L's window, and B returns at day 455 -
+    # inside that course's cover. The melphalan rule advances a short course
+    # when a NEW agent starts while it still covers; this rule says B is not a
+    # new drug but the returning one. Without that, B was bundled by one rule
+    # and read as a change by the other, and 3L opened on the melphalan date.
+    P('F19', L1 + [('DARA', 'MAB', 200, 600),
+                   ('MELP', 'ALKY', 450, 477), ('BORT', 'PI', 455, 520)]),
 ]
 
 
@@ -145,9 +202,8 @@ def main():
     ok(n(ref, 'F4') == 3 and n(fold, 'F4') == 2,
        "F4: the permissible substitute folds exactly like the drug it replaces")
 
-    ok(ref.get('F5') == fold.get('F5') and n(ref, 'F5') == 2
-       and ref['F5'][1][1] == rs.d(IX + 300),
-       "F5: a restart with no newer line in between still opens the next line")
+    ok(ref.get('F5') == fold.get('F5') and n(ref, 'F5') == 1,
+       "F5: a restart with no newer line in between stays in the line it left")
 
     ok(n(ref, 'F6') == 4 and n(fold, 'F6') == 4,
        "F6: two advances in between, so the return starts a line under both")
@@ -163,6 +219,36 @@ def main():
     ok(ref.get('F13') == fold.get('F13') and ref.get('F13'),
        "F13 count 2: two advances in between, so the return still starts a line")
 
+    ok(n(ref, 'F14') == 3 and n(fold, 'F14') == 2,
+       "F14: the whole returning course folds, not only its first episode")
+    ok(n(fold, 'F14') == 2 and fold['F14'][1][2] == rs.d(IX + 600),
+       "F14: ...and one line owns it, so no line opens on the follow-up")
+    ok(n(ref, 'F15') == 4 and n(fold, 'F15') == 4,
+       "F15: a CAR-T opened a line in between, and that overrides the fold")
+    ok(n(fold, 'F15') == 4 and fold['F15'][1][2] == rs.d(IX + 250)
+       and fold['F15'][1][3] == 'DISCONTINUATION',
+       "F15: ...so LOT2 keeps its own discontinuation")
+
+    ok(n(ref, 'F19') == 3 and ref['F19'][2][1] == rs.d(IX + 450),
+       "F19 contract: the melphalan course advances the line on its own date")
+    ok(n(fold, 'F19') == 2 and fold['F19'][1][2] == rs.d(IX + 600)
+       and fold['F19'][1][3] == 'DISCONTINUATION',
+       "F19 fold-in: the returning drug is not a new agent, so it confirms "
+       "nothing and 2L runs through")
+
+    ok(n(ref, 'F18') == 3 and n(fold, 'F18') == 2,
+       "F18 contract: the own-drug restart opens no line, and B still takes one")
+    ok(n(fold, 'F18') == 2 and fold['F18'][1][2] == rs.d(IX + 600)
+       and fold['F18'][1][3] == 'DISCONTINUATION',
+       "F18 fold-in: ...and with one agent in between B folds, so 2L runs on")
+
+    for pid, what in (('F17', "an AUTO inside the line's own window"),
+                      ('F16', "...and its planned tandem partner")):
+        ok(n(ref, pid) == 3, "%s contract: the return still takes a line" % pid)
+        ok(n(fold, pid) == 2 and fold[pid][1][2] == rs.d(IX + 600)
+           and fold[pid][1][3] == 'DISCONTINUATION',
+           "%s fold-in: %s is no advance, so the return folds" % (pid, what))
+
     ok(n(ref, 'F8') == 3,
        "F8 contract: the return breaks 2L's own drug's chain and takes a line")
     ok(n(fold, 'F8') == 2 and fold['F8'][1][2] == rs.d(IX + 330)
@@ -171,14 +257,13 @@ def main():
 
     ok(n(ref, 'F9') == 3 and ref['F9'][2][1] == rs.d(IX + 300),
        "F9 contract: the return after the ALLO line starts a line of its own")
-    ok(n(fold, 'F9') == 2 and fold['F9'][1][2] == rs.d(IX + 360)
-       and fold['F9'][1][3] == 'DISCONTINUATION',
-       "F9 fold-in: the ALLO line is carried to the return's cover, day 360")
+    ok(fold.get('F9') == ref.get('F9'),
+       "F9 fold-in: the ALLO opened the line in between, so it overrides the "
+       "fold and the return keeps its own line")
     ok(n(ref, 'F10') == 3 and ref['F10'][2][1] == rs.d(IX + 300),
        "F10 contract: the same after a drugless CAR-T line")
-    ok(n(fold, 'F10') == 2 and fold['F10'][1][2] == rs.d(IX + 360)
-       and fold['F10'][1][3] == 'DISCONTINUATION',
-       "F10 fold-in: the drugless CAR-T line is carried to day 360 too")
+    ok(fold.get('F10') == ref.get('F10'),
+       "F10 fold-in: the same after a drugless CAR-T line")
 
     print()
     if fails:

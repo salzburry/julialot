@@ -123,7 +123,11 @@ subst_off <- function(f) {
                  c("{melp_line_type_guard(cfg, lot_num)}", melp_line_type_guard(off, 2)),
                  c("{melp_lot1_base_tbl(cfg)}",        melp_lot1_base_tbl(off)),
                  c("{melp_suppress_predicate(cfg)}",   melp_suppress_predicate(off)),
-                 c("{melp_prior_regimen_exempt(cfg)}", melp_prior_regimen_exempt(off))))
+                 c("{melp_prior_regimen_exempt(cfg)}", melp_prior_regimen_exempt(off)),
+                 # The exempt now rides INSIDE the returning-drug release, as
+                 # its `extra` argument, so the release is put back off too.
+                 c("{return_release_sql(cfg, 'mr', 'pme', melp_prior_regimen_exempt(cfg))}",
+                   return_release_sql(off, "mr", "pme", melp_prior_regimen_exempt(off)))))
     txt <- gsub(p[1], p[2], txt, fixed = TRUE)
   # The inject arm spans two lines in the step, so it is cut rather than swapped.
   txt <- sub("(?s)\\{melp_inject_arm\\(cfg,.*?\\)\\}", melp_inject_arm(off, "t", "c", "e"),

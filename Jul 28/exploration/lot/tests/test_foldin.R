@@ -27,11 +27,17 @@ library(glue)
 `%||%` <- function(a, b) if (is.null(a)) b else a
 # The fold-in consults the melphalan rule - a course that rule suppressed is
 # not a line-defining agent - so it loads first here, as it does in the engine.
+# prior_regimen.R carries the transplant helpers both rules read.
+source(file.path(LOT, "R", "prior_regimen.R"))
 source(file.path(LOT, "R", "melp_rule.R"))
 source(file.path(LOT, "R", "foldin_rule.R"))
 
-off <- list(apply_map_foldin = FALSE)
-on_ <- list(apply_map_foldin = TRUE)
+# map_discon_gap_days is what separates one course of a drug from the next, so
+# the rule reads it now.
+off <- list(apply_map_foldin = FALSE, map_discon_gap_days = 90L,
+            sct_tandem_days = 180L)
+on_ <- list(apply_map_foldin = TRUE,  map_discon_gap_days = 90L,
+            sct_tandem_days = 180L)
 
 cat("\n-- off is not a setting, it is the absence of the rule --\n")
 ok(identical(foldin_lotn_ctes(off, 2), ""), "the line build gets no extra CTEs")
@@ -45,16 +51,16 @@ ok(identical(foldin_hold_col(off), "") && identical(foldin_hold_join(off, "ls"),
      identical(foldin_line_type_guard(off, 2), ""),
    "no hold column, join or guard reaches the statement")
 
-cat("\n-- the fold set is every earlier line's regimen, and its substitutes --\n")
+cat("\n-- the fold set is the previous line's regimen, and its substitutes --\n")
 s <- foldin_lotn_ctes(on_, "{lot_num}")
-ok(has(s, "WHERE ll.LOT_NUM < {lot_num} AND m <> ''"),
-   "the line build folds the regimens of every line before this one")
+ok(has(s, "WHERE ll.LOT_NUM = {lot_num} - 1 AND m <> ''"),
+   "the line build folds the IMMEDIATELY PREVIOUS line's regimen")
 ok(has(s, "INNER JOIN permissible_subs ps ON p.MED_ABBR = ps.original_med"),
    "...expanded by the permissible substitutes, so a biosimilar folds too")
 p <- foldin_prior_ctes(on_, "{prev}")
-ok(has(p, "WHERE ll.LOT_NUM < {prev} AND m <> ''"),
-   paste0("the trigger folds only the lines BEFORE the previous one - the ",
-          "previous line's own regimen keeps the engine's release"))
+ok(has(p, "WHERE ll.LOT_NUM = {prev} AND m <> ''"),
+   paste0("the trigger reads the same one line - the regimen of the line ",
+          "before the one being started"))
 
 cat("\n-- suppressing and owning are two halves of one statement --\n")
 ok(has(foldin_suppress_predicate(on_), "bm.MED_ABBR IS NULL") &&
@@ -84,13 +90,33 @@ cat("\n-- the count: one advance folds, two or more do not --\n")
 # The study team's 20 Aug refinement. The whole rule now turns on N_ADVANCES,
 # so the arithmetic is pinned here and the behaviour on planted patients by
 # the harness named in the repository README.
-ok(has(s, "foldin_episodes AS (") && has(s, "WHERE N_ADVANCES = 1"),
+ok(has(s, "foldin_folded AS (") && has(s, "WHERE N_ADVANCES = 1"),
    "exactly one advance between the two doses folds, and nothing else does")
-ok(has(s, "count(l.LOT_NUM)") && has(s, "l.LOT_START_DT >  e.PREV_DOSE_DT") &&
-     has(s, "l.LOT_START_DT <  e.MAP_START_DT"),
-   "...counted as the lines that opened between the drug's two doses")
-ok(has(s, "lag(a.MAP_START_DT) OVER (PARTITION BY a.PATID, a.AGENT"),
+ok(has(s, "count(DISTINCT fo.OPENER)") &&
+     has(s, "fo.OPEN_DT >  k.PREV_COURSE_DT") &&
+     has(s, "fo.OPEN_DT <  k.MAP_START_DT"),
+   "...counted as the different AGENTS that opened a line in between")
+# The request says AGENTS, so a line is read through the drug that started it
+# and a transplant-started line counts nothing. Both halves are pinned: the
+# MED-only filter, and the substitute collapse that keeps a biosimilar swap
+# from reading as a second agent.
+# The fold set is the IMMEDIATELY PREVIOUS line's regimen, which is the
+# request's own shape - A + B in one line, C advances it, B comes back. A drug
+# from further back is out of scope and the engine's ordinary rules keep it.
+ok(has(s, "foldin_openers AS (") && has(s, "l.LOT_START_TYPE = 'MED'"),
+   "an agent is the drug a MED-started line opened on - a procedure is not one")
+ok(has(s, "coalesce(ps.original_med, ms.MAP_MED_TYPE) AS OPENER"),
+   "...and a permissible substitute is the same agent as the drug it replaces")
+ok(has(s, "lag(c.MAP_START_DT) OVER (PARTITION BY c.PATID, c.AGENT"),
    "the interval is dose to dose, and a substitute shares the agent's doses")
+# A course carries the answer to its own later episodes. Judged one episode at
+# a time, a returning course was split between two owners: its first episode
+# folded and its follow-up, with no advance behind it, opened a line.
+ok(has(s, "foldin_course AS (") && has(s, "IS_RETURN") &&
+     has(s, "INNER JOIN foldin_folded f"),
+   "a course is one answer - every episode in it folds, or none does")
+ok(has(s, "FROM tx_auto_dates") && has(s, "FROM tx_allo_cart_dates"),
+   "a procedure counts as an intervening boundary, not only a medication")
 ok(has(s, "N_BETWEEN = 0"),
    "...and a return with another agent before it belongs to a later line")
 # The start-candidate statement judges a later line once lot_long has grown,
@@ -105,9 +131,9 @@ s10 <- sf("10_lot2_5_base.R")
 ok(has(s10, "{foldin_prior_ctes(cfg, prev)}") &&
      has(s10, "{foldin_trigger_predicate(cfg)}"),
    "the start candidates carry the fold's trigger exclusion")
-ok(has(s10, "{foldin_lotn_ctes(cfg, lot_num)}") &&
+ok(has(s10, "{foldin_lotn_ctes(cfg, lot_num, lotn_induction_end(") &&
      has(s10, "{foldin_suppress_predicate(cfg)}"),
-   "the line build carries the fold's candidate exclusion")
+   "the line build carries the fold's candidate exclusion, and the line's window")
 ok(has(s10, "boundary_tbl = foldin_boundary_tbl(cfg)"),
    "...and discon_per_med reads the filtered boundary source")
 ok(has(s10, "foldin_runout_case(cfg,") &&

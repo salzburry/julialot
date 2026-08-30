@@ -317,6 +317,23 @@ VIGNETTES <- list(
                     "from one re-introduced after the regimen has changed ",
                     "twice over.")),
 
+  list(id = "returning_drug_one_agent_twice",
+       title = "One agent opens two lines while a drug is away",
+       param = NA_character_, confidence = "to_confirm",
+       where = "lot/engine/R/foldin_rule.R - foldin_openers, count(DISTINCT OPENER)",
+       events = function(p) rbind(
+         ev(0,   "MED", "1L starts on drug A and drug B"),
+         ev(200, "MED", "drug C advances the line to 2L"),
+         ev(260, "MED", "C's cover ends"),
+         ev(400, "MED", "C restarts past the 90-day gap and advances to 3L"),
+         ev(450, "MED", "drug B comes back, during 3L")),
+       expected = function(p) paste0(
+         "No new line. Two lines opened while B was away but ONE agent opened ",
+         "them both, and the request counts different agents - so B joins 3L."),
+       why = paste0("A drug the patient went back on is the same treatment, ",
+                    "not a second change. Counting lines rather than agents ",
+                    "would read one drug's holiday as two advances.")),
+
   list(id = "maintenance_to_relapse", title = "Maintenance running into relapse",
        param = NA_character_, confidence = "derived",
        where = "lot/engine/R/steps/05_sct.R:13 - maintenance is a descriptive flag only",

@@ -27,6 +27,7 @@ reading of how the rules interact, and the first warehouse run settles it.
 | `melp_short_course_confirmed` | A new agent inside a brief melphalan course | - | A new line, and it starts on day 100 - the melphalan date - not on day 105. The agent inside the course is what tells us treatment changed; the melphalan is where it changed. | to_confirm |
 | `returning_drug_one_advance` | A drug returns after one advance | - | No new line. One agent advanced the line between B's two doses, so B joins 2L - the line's span carries it, and its regimen string does not change. | to_confirm |
 | `returning_drug_two_advances` | A drug returns after two advances | - | A new line at day 450. Treatment moved on twice while B was away, so B is not returning to the line it left and its return opens one. | to_confirm |
+| `returning_drug_one_agent_twice` | One agent opens two lines while a drug is away | - | No new line. Two lines opened while B was away but ONE agent opened them both, and the request counts different agents - so B joins 3L. | to_confirm |
 | `maintenance_to_relapse` | Maintenance running into relapse | - | Maintenance is NOT a line of its own here - contains_mtx_reg is a flag and there is no maintenance period. The relapse is handled by the ordinary rules, so the line count does not include a maintenance line. | derived |
 | `steroid_only_interval` | Steroid-only stretch between regimens | - | The steroid stretch neither starts nor continues a line. | derived |
 | `belantamab_any_line` | Belantamab anywhere in the patient's lines | - | The criterion is patient-level, so the patient loses EVERY line, not just LOT3 onward. They are absent from LOT_LONG_FINAL entirely and present in LOT_LONG. | derived |
@@ -155,6 +156,12 @@ reading of how the rules interact, and the first warehouse run settles it.
 - timeline: d+0 MED (1L starts on drug A and drug B); d+200 MED (drug C advances the line to 2L); d+300 MED (drug D advances it again, to 3L); d+450 MED (drug B comes back, during 3L)
 - why it is hard: The count is what separates a drug rejoining its own line from one re-introduced after the regimen has changed twice over.
 - rule: lot/engine/R/foldin_rule.R - foldin_episodes, N_ADVANCES = 1
+
+**returning_drug_one_agent_twice** - One agent opens two lines while a drug is away
+
+- timeline: d+0 MED (1L starts on drug A and drug B); d+200 MED (drug C advances the line to 2L); d+260 MED (C's cover ends); d+400 MED (C restarts past the 90-day gap and advances to 3L); d+450 MED (drug B comes back, during 3L)
+- why it is hard: A drug the patient went back on is the same treatment, not a second change. Counting lines rather than agents would read one drug's holiday as two advances.
+- rule: lot/engine/R/foldin_rule.R - foldin_openers, count(DISTINCT OPENER)
 
 **maintenance_to_relapse** - Maintenance running into relapse
 

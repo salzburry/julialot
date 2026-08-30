@@ -43,6 +43,7 @@ SETTINGS <- paste0(
   "sct_auto_gap_days=60|sct_auto_window_days=13|sct_tandem_days=180|",
   "tbl_med_diag=med_diagnosis|tbl_med_proc=med_procedure|tbl_medical=medical|",
   "tbl_rx=rx|use_quarterly_tables=TRUE|apply_melp_rule=simplified|",
+  "apply_map_foldin=TRUE|",
   "cohort_status_table=")
 P <- qc_params(SETTINGS, "run-abc")
 SQL <- lapply(LOT_QC_CHECKS, function(c_i) c_i$sql(TBL, P))

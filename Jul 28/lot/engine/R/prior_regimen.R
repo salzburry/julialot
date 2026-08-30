@@ -14,6 +14,38 @@
 # drug and the returning treatment belongs to no line at all. See
 # discon_per_med_sql below.
 
+# THE RETURNING-DRUG RELEASE, LOT_RULES.md 4.3 - one definition for all eight
+# places that ask, because a guard reading a different rule from the candidate
+# it mirrors ends a line on an event the next line then refuses to open on.
+#
+# apply_own_return_fold FALSE is the engine's older rule: a gap of
+# map_discon_gap_days releases the drug, and its next episode opens a line like
+# any other agent.
+#
+# TRUE - what CONTRACT pins - withdraws that. A line advances on an agent that
+# was not in the previous regimen, and a drug the patient has had before is not
+# one, whatever the gap. Nothing was given in between, so the drug is returning
+# to the line it left.
+#
+# The release and the run-out chain are two halves of one rule (see the header
+# of this file), so both halves move together: return_release_sql() withdraws
+# the release, and own_gap_breaks_chain() stops discon_per_med breaking the
+# line at the same gap. Withdraw one alone and the returning treatment belongs
+# to no line at all.
+return_release_on <- function(cfg) !isTRUE(cfg$apply_own_return_fold)
+
+return_release_sql <- function(cfg, restart, base, extra = "") {
+  if (!return_release_on(cfg)) return(extra)
+  paste0("\n             OR (coalesce(", restart, ".PREV_DISCON, 0) = 1 AND ",
+         base, ".SUBSTITUTE_ONLY = 0)", extra)
+}
+
+# Whether a drug's OWN gap breaks its line's run-out chain. Off under the
+# rule: the line runs over the gap, so the returning episode sits inside the
+# line it left rather than in no line at all. Another drug interrupting still
+# breaks it - that is the `interrupts` scan, and it is untouched.
+own_gap_breaks_chain <- function(cfg) return_release_on(cfg)
+
 # The prior-LOT drugs themselves, added to the set med_cand excludes. Without
 # them that set holds only their permissible biosimilar substitutes.
 prior_regimen_excl_sql <- function() {
@@ -75,7 +107,7 @@ map_restart_sql <- function() {
 # spark.sql.crossJoin.enabled=false.
 discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
                                boundary_tbl = "map_stacked", boundary_gate = "",
-                               end_col = NULL) {
+                               end_col = NULL, own_gap_breaks = TRUE) {
   # The scan starts at the line start. Without this it has no upper bound at
   # all: a base drug's later episodes chain forward for as long as the patient
   # keeps filling it. So bounding regimen membership at the date the line was
@@ -85,6 +117,14 @@ discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
   upper <- if (is.null(end_col)) "" else paste0("
           AND ms.MAP_START_DT <= coalesce(ls.", end_col,
           ", cast('9999-12-31' as date))")
+  # Zero throughout when the returning-drug rule is on: a drug's own gap no
+  # longer breaks its line, because the episode after it belongs to the line
+  # it left rather than to the next one. Another drug interrupting still
+  # breaks the chain - that is the `interrupts` scan below, untouched.
+  prev_discon <- if (!own_gap_breaks) "cast(0 AS int) AS PREV_DISCON" else
+    "CASE WHEN bm.SUBSTITUTE_ONLY = 1 THEN 0 ELSE
+                 coalesce(lag(ms.MAP_DISCON_FLG) OVER (PARTITION BY ms.PATID, ms.MAP_MED_TYPE
+                                          ORDER BY ms.MAP_START_DT), 0) END AS PREV_DISCON"
   paste0("
       WITH ep AS (
         SELECT ms.PATID, ms.MAP_MED_TYPE, ms.MAP_START_DT, ms.MAP_END_DT,
@@ -100,9 +140,7 @@ discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
                -- and run-out gates all refuse the same drug, and a line ends on
                -- a restart that no line can then own. The treatment would
                -- belong to nothing. All four paths read one rule.
-               CASE WHEN bm.SUBSTITUTE_ONLY = 1 THEN 0 ELSE
-                 coalesce(lag(ms.MAP_DISCON_FLG) OVER (PARTITION BY ms.PATID, ms.MAP_MED_TYPE
-                                          ORDER BY ms.MAP_START_DT), 0) END AS PREV_DISCON
+               ", prev_discon, "
         FROM ", map_tbl, " ms
         INNER JOIN ", start_view, " ls ON ms.PATID = ls.PATID
         INNER JOIN base_meds bm ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
@@ -159,3 +197,74 @@ tandem_interrupt_events_sql <- function() "
         UNION ALL
         SELECT PATID, TX_DT AS dt FROM tx_allo_cart_dates
         WHERE SCT_TYPE IN ('ALLO', 'CART')"
+
+# Every transplant and CAR-T, with what the tandem test needs beside each one.
+#
+# Two rules ask which procedures BREAK a line - the melphalan rule, to say
+# whether a later course still belongs to it, and the fold-in, to count what
+# advanced the line between a returning drug's two doses. Both used to take
+# any date in tx_auto_dates or tx_allo_cart_dates past the line's window, and
+# that is not the engine's rule: a PLANNED TANDEM continues the line and opens
+# nothing. An AUTO in LOT1's window with its tandem partner on day 180 then
+# switched the melphalan rule off for the rest of that patient.
+#
+# PREV_AUTO_DT and N_BETWEEN are what line_break_tandem_pred() below reads.
+# ALLO and CAR-T rows carry no previous AUTO, so that predicate never excludes
+# them - they always break the line once they are past its window.
+line_break_tx_sql <- function() glue("
+        SELECT p.PATID, p.TX_DT, p.PREV_AUTO_DT,
+               coalesce(sum(CASE WHEN x.dt > p.PREV_AUTO_DT AND x.dt < p.TX_DT
+                                 THEN 1 ELSE 0 END), 0) AS N_BETWEEN
+        FROM (
+          SELECT a.PATID, a.TX_DT,
+                 lag(a.TX_DT) OVER (PARTITION BY a.PATID ORDER BY a.TX_DT) AS PREV_AUTO_DT
+          FROM tx_auto_dates a
+        ) p
+        LEFT JOIN ({tandem_interrupt_events_sql()}
+        ) x ON p.PATID = x.PATID
+        GROUP BY p.PATID, p.TX_DT, p.PREV_AUTO_DT
+        UNION ALL
+        SELECT PATID, TX_DT, cast(NULL AS date) AS PREV_AUTO_DT, 0 AS N_BETWEEN
+        FROM tx_allo_cart_dates")
+
+# The planned-tandem exemption, in the same three parts auto_cand and the LOT1
+# post-runout guard test: within sct_tandem_days of the AUTO before it, nothing
+# in between, and that earlier AUTO inside the line's own window. The last part
+# is the ownership condition - a pair whose first transplant the line never
+# held was never the line's tandem - and leaving it out would exempt a pair the
+# start gate has already decided is not one.
+#
+# paste0 around the glue, not glue alone: glue trims a template's leading
+# newline and this fragment splices straight after another predicate, which
+# without it read "... <= mc.EXPO_DTAND NOT (...".
+line_break_tandem_pred <- function(cfg, alias, induction_end) paste0("\n", glue("
+       AND NOT ({alias}.PREV_AUTO_DT IS NOT NULL
+                AND datediff({alias}.TX_DT, {alias}.PREV_AUTO_DT) <= {cfg$sct_tandem_days}
+                AND {alias}.N_BETWEEN = 0
+                AND {alias}.PREV_AUTO_DT <= {induction_end})"))
+
+# The agents of a patient's EARLIER lines, and their permissible substitutes.
+#
+# Two rules need the same set and must not drift apart. The fold-in builds its
+# fold set from it. The melphalan rule reads it to answer a different question:
+# whether the agent starting inside a short course is a NEW one. A drug from an
+# earlier line coming back is, in the request's own words, "the returning
+# drug" - never a new drug - so it cannot be what confirms a course.
+#
+# The exploded regimen goes in its own CTE first: LATERAL VIEW and a JOIN in
+# one FROM do not survive translation.
+prior_lines_regimen_ctes <- function(line_pred, raw = "prior_raw",
+                                     out = "prior_meds") glue("
+    {raw} AS (
+      SELECT ll.PATID, m AS MED_ABBR
+      FROM lot_long ll
+      LATERAL VIEW explode(split(coalesce(ll.LOT_BASE_MEDS, \'\'), \' \')) e AS m
+      WHERE {line_pred} AND m <> \'\'
+    ),
+    {out} AS (
+      SELECT PATID, MED_ABBR FROM {raw}
+      UNION
+      SELECT p.PATID, ps.substitute_med AS MED_ABBR
+      FROM {raw} p
+      INNER JOIN permissible_subs ps ON p.MED_ABBR = ps.original_med
+    ),")

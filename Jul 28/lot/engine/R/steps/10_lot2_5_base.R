@@ -294,8 +294,7 @@ build_lot_n <- function(con, lot_num,
         -- is still taking inside the line that owns it. A drug returning after
         -- a confirmed gap is a restart, and opens a line like any other.
         AND (pme.MED_ABBR IS NULL
-             OR (coalesce(mr.PREV_DISCON, 0) = 1
-                 AND pme.SUBSTITUTE_ONLY = 0){melp_prior_regimen_exempt(cfg)}){melp_suppress_predicate(cfg)}{foldin_trigger_predicate(cfg)}
+{return_release_sql(cfg, 'mr', 'pme', melp_prior_regimen_exempt(cfg))}){melp_suppress_predicate(cfg)}{foldin_trigger_predicate(cfg)}
       GROUP BY pe.PATID
     ),
     -- d_ALLO: earliest ALLO strictly after PREV_END_DT.
@@ -559,7 +558,7 @@ build_lot_n <- function(con, lot_num,
         INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
       )
       GROUP BY PATID, MED_ABBR
-    ),{melp_lotn_ctes(cfg, lot_num, induction_window_days, cart_consolidation_days, allo_lot_span)}{foldin_lotn_ctes(cfg, lot_num)}
+    ),{melp_lotn_ctes(cfg, lot_num, induction_window_days, cart_consolidation_days, allo_lot_span)}{foldin_lotn_ctes(cfg, lot_num, lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days))}
     -- Per drug, the end of ITS cover in this line: the FIRST episode flagged
     -- discontinued. A later episode of the same drug does NOT open the next
     -- line. It was in this line's regimen, so this line extends over it, and
@@ -572,7 +571,8 @@ build_lot_n <- function(con, lot_num,
     -- end.
     discon_per_med AS (
 {discon_per_med_sql(glue('lot{lot_num}_regimen_cutoff'), glue('LOT{lot_num}_START_DT'),
-                    boundary_tbl = foldin_boundary_tbl(cfg), end_col = 'REGIMEN_CUTOFF_DT')}
+                    boundary_tbl = foldin_boundary_tbl(cfg), end_col = 'REGIMEN_CUTOFF_DT',
+                    own_gap_breaks = own_gap_breaks_chain(cfg))}
     ),
     -- The regimen has run out when its LAST base agent has.
     discon_raw AS (
@@ -598,7 +598,10 @@ build_lot_n <- function(con, lot_num,
         concat_ws(' ', sort_array(collect_set(im.MED_ABBR))) AS LOT{lot_num}_BASE_MEDS,
         {med_flag_exprs},
         {class_flag_exprs}
-      FROM lot{lot_num}_induction_meds im
+      FROM (
+        SELECT PATID, MED_ABBR, MED_CLASS
+        FROM lot{lot_num}_induction_meds{foldin_regimen_union(cfg, lot_num, lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days))}
+      ) im
       GROUP BY im.PATID
     ),
     first_add_candidates AS (
@@ -618,7 +621,7 @@ build_lot_n <- function(con, lot_num,
       -- inside it, cannot end it, and is then too early to open the next one.
       -- The treatment belongs to no line at all.
       WHERE (bm.MED_ABBR IS NULL
-             OR (coalesce(mr.PREV_DISCON, 0) = 1 AND bm.SUBSTITUTE_ONLY = 0))
+{return_release_sql(cfg, 'mr', 'bm')})
         AND ms.MAP_MED_CLASS <> 'STEROID'
         -- The lookback gate, per start type:
         --   MED / SCT_AUTO    -> any drug after the 30-day induction window
@@ -991,7 +994,7 @@ build_lot_n <- function(con, lot_num,
         AND ms.MAP_START_DT <= lb.OBS_END_DT
         AND ms.MAP_MED_CLASS <> 'STEROID'
         AND (prem.MED_ABBR IS NULL
-             OR (coalesce(mr.PREV_DISCON, 0) = 1 AND prem.SUBSTITUTE_ONLY = 0))
+{return_release_sql(cfg, 'mr', 'prem')})
     ),
     post_runout_autos AS (
       -- N_BETWEEN: whether anything happened since the previous transplant. A
