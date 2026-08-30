@@ -438,15 +438,21 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
       -- inside a line's own window belongs to that line and ends nothing
       -- (LOT_RULES.md 3.4 and 6.5), so it must not disqualify the line from
       -- a course of its own afterwards. One past the window is a boundary.
+      --
+      -- With one exception, and it is the engine's own: a PLANNED TANDEM. The
+      -- second transplant of a tandem pair need not be in the window and may
+      -- follow the first however far out - the pair continues the line and
+      -- opens nothing. Scanning the raw transplant dates counted it as a
+      -- boundary, so an in-window AUTO with its partner on day 180 switched
+      -- this rule off for every later course that patient had.
       SELECT DISTINCT mc.PATID, mc.EXPO_DT
       FROM melp_course mc
       INNER JOIN {line_tbl} ON {line_tbl}.PATID = mc.PATID
-      INNER JOIN (SELECT DISTINCT PATID, TX_DT FROM tx_auto_dates
-                  UNION
-                  SELECT DISTINCT PATID, TX_DT FROM tx_allo_cart_dates) tx
+      INNER JOIN ({line_break_tx_sql()}
+      ) tx
         ON tx.PATID = mc.PATID
        AND tx.TX_DT >  {induction_end}
-       AND tx.TX_DT <= mc.EXPO_DT
+       AND tx.TX_DT <= mc.EXPO_DT{line_break_tandem_pred(cfg, 'tx', induction_end)}
     ),
     melp_judged AS (
       SELECT mc.PATID, mc.EXPO_DT,

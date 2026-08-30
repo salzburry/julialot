@@ -103,7 +103,7 @@ foldin_on <- function(cfg) isTRUE(cfg$apply_map_foldin)
 # `n_start` and `n_tbl` name the line being built, so its own start counts as
 # an advance too - lot_long does not hold it yet. The start-candidate statement
 # has no such line and passes NULL.
-foldin_count_ctes <- function(discon_days, n_start = NULL, n_tbl = NULL,
+foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
                               n_induction = NULL, meds = "foldin_meds",
                               line_pred, melp_on = FALSE) {
   # A melphalan course the melphalan rule SUPPRESSED is not a line-defining
@@ -136,8 +136,17 @@ foldin_count_ctes <- function(discon_days, n_start = NULL, n_tbl = NULL,
   # left the same hole the melphalan rule had: a CAR-T opening the next line
   # is not a medication row, so an earlier line went on claiming a return that
   # arrived after it, and that line's own discontinuation became the
-  # procedure's end reason. Measured from the line's INDUCTION END, because a
-  # transplant inside a line's own window belongs to it and opens nothing.
+  # procedure's end reason.
+  #
+  # The two arms are bounded differently, and each takes the bound its own
+  # rule uses. A DRUG that is neither this line's regimen nor a fold-set agent
+  # is a boundary from the line's START. A TRANSPLANT is one only past the
+  # line's INDUCTION END, because a transplant inside a line's own window
+  # belongs to it and opens nothing (LOT_RULES.md 3.4 and 6.5) - the same
+  # bound melp_taken uses, off the same lotn_induction_end(). Bounding both
+  # arms at the start, as one shared condition did, made an in-window
+  # transplant refuse a fold the line should have taken.
+  induction <- if (is.null(n_induction)) n_start else n_induction
   between_sel <- if (is.null(n_start)) "" else
     ",\n             max(CASE WHEN o.PATID IS NOT NULL THEN 1 ELSE 0 END) AS N_BETWEEN"
   between_pred <- if (is.null(n_start)) "" else " AND N_BETWEEN = 0"
@@ -145,7 +154,9 @@ foldin_count_ctes <- function(discon_days, n_start = NULL, n_tbl = NULL,
       LEFT JOIN (
         SELECT ms.PATID, ms.MAP_START_DT AS AT_DT
         FROM map_stacked ms
+        INNER JOIN ", n_tbl, " ON ", n_tbl, ".PATID = ms.PATID
         WHERE ms.MAP_MED_CLASS <> 'STEROID'
+          AND ms.MAP_START_DT > ", n_start, "
           AND NOT EXISTS (SELECT 1 FROM base_meds ob
                           WHERE ob.PATID = ms.PATID
                             AND ob.MED_ABBR = ms.MAP_MED_TYPE)
@@ -153,13 +164,19 @@ foldin_count_ctes <- function(discon_days, n_start = NULL, n_tbl = NULL,
                           WHERE ofm.PATID = ms.PATID
                             AND ofm.MED_ABBR = ms.MAP_MED_TYPE)", not_supp, "
         UNION
+        -- A planned tandem continues the line and opens nothing, so it is no
+        -- advance either. Same helper the melphalan rule reads, so the two
+        -- rules cannot disagree about which transplants are a boundary. The
+        -- line table is joined in here because both the window bound and the
+        -- tandem's own ownership test need this line's window.
         SELECT tx.PATID, tx.TX_DT AS AT_DT
-        FROM (SELECT PATID, TX_DT FROM tx_auto_dates
-              UNION SELECT PATID, TX_DT FROM tx_allo_cart_dates) tx
+        FROM (", line_break_tx_sql(), "
+        ) tx
+        INNER JOIN ", n_tbl, " ON ", n_tbl, ".PATID = tx.PATID
+        WHERE tx.TX_DT > ", induction,
+        line_break_tandem_pred(cfg, "tx", induction), "
       ) o
         ON o.PATID = k.PATID
-       AND o.AT_DT >  ", if (is.null(n_induction)) n_start else
-                          paste0("least(", n_start, ", ", n_induction, ")"), "
        AND o.AT_DT <  k.MAP_START_DT")
   glue("
     -- Every episode of a fold-set drug, under the AGENT it belongs to. A
@@ -254,6 +271,7 @@ foldin_lotn_ctes <- function(cfg, lot_num, induction_end = NULL) {
   # Built out here: a nested glue() inside the template below does not parse,
   # because the inner quotes close the outer one.
   count_ctes <- foldin_count_ctes(
+    cfg         = cfg,
     discon_days = cfg$map_discon_gap_days,
     n_start     = glue("lot{lot_num}_start.LOT{lot_num}_START_DT"),
     n_tbl       = glue("lot{lot_num}_start"),
@@ -382,7 +400,7 @@ foldin_prior_ctes <- function(cfg, prev) {
   if (!foldin_on(cfg)) return("")
   # The same count, over the lines lot_long holds at this point - 1..prev. The
   # line being started does not exist yet, so there is no own-start term.
-  count_ctes <- foldin_count_ctes(discon_days = cfg$map_discon_gap_days,
+  count_ctes <- foldin_count_ctes(cfg, discon_days = cfg$map_discon_gap_days,
                                   meds = "foldin_sc_meds",
                                   line_pred = glue("l.LOT_NUM <= {prev}"))
   paste0("\n", glue("

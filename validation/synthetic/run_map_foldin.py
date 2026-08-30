@@ -38,6 +38,12 @@ regimen window is PART of that line, not a reason to start the next one.
       whole course folds, not only its first episode
   F15 a PROCEDURE opens the line in between  -> it disqualifies the return the
       same way a drug does
+  F16 the only procedure in between is a
+      PLANNED TANDEM                          -> it continues the line and
+      opens nothing, so it is no advance: the return still folds
+  F17 the only procedure in between is inside
+      the line's own window                   -> it belongs to the line, so it
+      is no advance either
 """
 import os, sys, tempfile, subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -100,6 +106,18 @@ PATS = [
     # and LOT2's own discontinuation became the CAR-T's end reason.
     dict(P('F15', L1 + [('DARA', 'MAB', 200, 250), ('BORT', 'PI', 450, 480)]),
          sct_ac=[('CART', IX + 300)]),
+    # F16/F17: transplants that open NO line must not count as an advance.
+    # DARA opens LOT2 on day 200 - one advance - and B returns on day 450.
+    # F17 puts an AUTO on day 210, inside LOT2's own 30-day window, which the
+    # line owns. F16 adds its planned tandem partner on day 350: 140 days
+    # later with nothing in between, so the pair continues LOT2. Both must
+    # fold exactly as F12 does. Bounding the scan at the line START rather
+    # than its induction end, and reading the raw transplant dates rather
+    # than the ones that break a line, refused both.
+    dict(P('F16', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 450, 510)]),
+         sct_auto=[IX + 210, IX + 350]),
+    dict(P('F17', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 450, 510)]),
+         sct_auto=[IX + 210]),
 ]
 
 
@@ -187,6 +205,13 @@ def main():
     ok(n(fold, 'F15') == 4 and fold['F15'][1][2] == rs.d(IX + 250)
        and fold['F15'][1][3] == 'DISCONTINUATION',
        "F15: ...so LOT2 keeps its own discontinuation")
+
+    for pid, what in (('F17', "an AUTO inside the line's own window"),
+                      ('F16', "...and its planned tandem partner")):
+        ok(n(ref, pid) == 3, "%s contract: the return still takes a line" % pid)
+        ok(n(fold, pid) == 2 and fold[pid][1][2] == rs.d(IX + 600)
+           and fold[pid][1][3] == 'DISCONTINUATION',
+           "%s fold-in: %s is no advance, so the return folds" % (pid, what))
 
     ok(n(ref, 'F8') == 3,
        "F8 contract: the return breaks 2L's own drug's chain and takes a line")

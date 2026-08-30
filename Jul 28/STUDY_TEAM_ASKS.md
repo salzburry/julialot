@@ -1,11 +1,10 @@
 # What the study team asked for, and where each ask stands
 
-A standing record so nothing is lost between conversations: what was asked,
-when, what was decided, and whether the build does it today.
+What was asked, when, what was decided, and whether the build does it today.
 
-**This file does not decide anything.** A rule the build applies is stated in
+**This file decides nothing.** A rule the build applies is stated in
 `lot/LOT_RULES.md`; a setting it turns on is pinned in `CONTRACT`. This is the
-trail that leads to those, and the list of what is still owed.
+trail to those, and the list of what is still owed.
 
 | | Ask | Asked | State |
 |---|---|---|---|
@@ -26,21 +25,21 @@ should have the new line start on **day 100**, when the melphalan appears — no
 on day 105.
 
 **Decided:** adopt it. The five-branch rule asked for first was measured and
-not adopted, because the boundaries it judges are not the ones melphalan
-actually creates.
+not adopted — the boundaries it judges are not the ones melphalan actually
+creates.
 
 **Where it lives:** `apply_melp_rule = "simplified"` in `CONTRACT`,
 `lot/LOT_RULES.md` 4.7, `lot/engine/R/melp_rule.R`. Course cap 28 days, and the
-build does not offer another.
+build offers no other.
 
 **Two things it does that the ask did not say in words**, both deliberate, both
 open to correction:
 
 - **The line is carried to the end of the course's cover.** Refusing a course
   a boundary leaves the treatment in no line at all, so the line it fell in
-  owns it. On a planted case this moves a day-150 run-out to day 327, which
-  changes that line's end date, its end reason, and the baseline window before
-  the next line. The vignettes are marked `to_confirm` for this reason.
+  owns it. On a planted case this moves a day-150 run-out to day 327, changing
+  that line's end date, its end reason and the baseline window before the next
+  line. The vignettes are marked `to_confirm` for this reason.
 - **A course after a line's own single-day shape still holds it.** An
   allogeneic line, or a CAR-T line with no consolidation drug, spans one day —
   unless a melphalan course it owns carries it further (`LOT_RULES.md` 4.6,
@@ -48,9 +47,13 @@ open to correction:
 
 **One line owns a course** — the latest whose start comes before it. Another
 line-defining agent arriving first disqualifies it from an earlier line, and so
-does a transplant or CAR-T after that line's induction window. Distance alone
-does not: a course long after the drugs ran out still belongs to the line when
-nothing happened in between.
+does a transplant or CAR-T that breaks that line. Distance alone does not: a
+course long after the drugs ran out still belongs to the line when nothing
+happened in between.
+
+A transplant breaks the line only when the engine's own rules say it does —
+past the line's induction window, and not the second of a planned tandem pair.
+Both rules read the same test.
 
 ---
 
@@ -76,9 +79,9 @@ lines carry it.
 
 **How the count works.** For each return, the engine counts the lines that
 opened between that drug's two doses. One, and the return folds. Two or more,
-and it starts a line, exactly as it does today. Zero is not the note's case at
-all — nothing advanced, so the drug is returning to the line it left and the
-engine's ordinary restart rule keeps it.
+and it starts a line, as it does today. Zero is not the note's case at all —
+nothing advanced, so the drug is returning to the line it left and the engine's
+ordinary restart rule keeps it.
 
 Three things about that count, each a reading to confirm:
 
@@ -87,13 +90,30 @@ Three things about that count, each a reading to confirm:
   put the advance that ended that line *before* the interval and count zero —
   and the note's own example must fold.
 - **An advance is a line that opened**, whatever opened it. That reads the
-  note's "advancing the LOT" directly, and it means a transplant-started line
-  counts. The note says "agents", which would not.
+  note's "advancing the LOT" directly. The note says "two or more different
+  **agents**", and the two readings part in two places, both checked on planted
+  patients:
+  - a transplant-started line counts as an advance here; on "agents" it would
+    not. A transplant the line itself owns — inside its window, or a planned
+    tandem partner — is not an advance either way.
+  - one agent that opens two lines counts as two advances here; on "different
+    agents" it counts as one. Drug D opens line 2, stops, restarts past the
+    discontinuation gap and opens line 3: a drug returning from line 1 is
+    refused a fold today, and would fold on the note's wording.
+
+  Neither reading is being changed while it is open.
+
 - **The return must be in the line that claims it.** While lines are built in
   order the count is line-relative — at the second line only one line has
   opened, at the third both have — so without this a single return folded into
   one line and started another. A return with another line-defining agent
   before it belongs to a later line.
+
+**A prior line with two agents.** Each returning agent is judged on its own
+interval and its own count, and a returning agent is not an advance for the
+other. Line 1 of A + B, line 2 opened by C: A and B each see one advance, so
+both fold into line 2 — whether they come back together or months apart. This
+is the note's own example with both drugs coming back rather than one.
 
 **What is still owed:**
 
@@ -122,10 +142,10 @@ soon — 1,114 within six months of the drug's last cover, 92 beyond a year.
 **Asked (1 Aug):** melphalan advances the line on windows of its own, on a
 five-branch table keyed to when the next melphalan exposure comes.
 
-**Result:** it moved almost nothing, because most conditioning melphalan has no
-later dose for the branches to judge. 2L melphalan-only went 424 → 422
-patients. Not adopted. The cells stay runnable as the evidence for that
-choice — `exploration/melphalan/run_aug1_melp.R`.
+**Result:** it moved almost nothing — most conditioning melphalan has no later
+dose for the branches to judge. 2L melphalan-only went 424 → 422 patients. Not
+adopted. The cells stay runnable as the evidence:
+`exploration/melphalan/run_aug1_melp.R`.
 
 ---
 
@@ -137,8 +157,8 @@ continuous-enrolment baseline period for 2L, and the same for 3L.
 **Answered** by `analysis/questions/aug15_studyteam_qs.R`. The window is a
 fixed 365 days back from the next line's start, not the gap between the lines.
 
-These numbers were produced on a build **without** the melphalan rule and are
-superseded by the next production run.
+Produced on a build **without** the melphalan rule, so superseded by the next
+production run.
 
 ---
 
@@ -149,14 +169,14 @@ valid mono regimens, and some were melphalan with a steroid, which was dropped
 from the code list.
 
 Steroids are not captured anywhere in this build, so a melphalan-plus-steroid
-line reads as melphalan alone in every count. Nothing decides this; it is
-stated wherever those counts are printed.
+line reads as melphalan alone in every count. Nothing decides this; it is stated
+wherever those counts are printed.
 
 ---
 
 ## Numbers on this page
 
-Everything quoted here came from the 19 Aug production run, which was built
-**before** the melphalan rule was adopted. The rule changes line counts, line
-ends and line shapes, so every one of those figures needs re-reading from the
-next run before it is quoted again.
+Everything quoted here came from the 19 Aug production run, built **before**
+the melphalan rule was adopted. The rule changes line counts, line ends and line
+shapes, so every figure needs re-reading from the next run before it is quoted
+again.

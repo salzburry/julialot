@@ -279,7 +279,9 @@ line counts.
 A return only joins the line that actually contains it. While lines are built in
 order the count is relative to the line being built, so a return with another
 line-defining agent — a drug **or a procedure** — before it belongs to a later
-line, and this one does not claim it.
+line, and this one does not claim it. A procedure counts here on the same test
+§4.7 uses: past the line's own induction window and not a planned tandem
+partner. One the line owns opens nothing, so it is no advance.
 
 **One course, one answer.** Episodes of the same agent with no discontinuation
 between them (`map_discon_gap_days`) are one course, and they fold together or
@@ -343,6 +345,12 @@ line-defining agent arriving first disqualifies the course from an earlier
 line: that agent ends the line, and what follows belongs to the line it
 started. Distance alone does not disqualify it, so a course long after the
 drugs ran out still belongs to the line when nothing happened in between.
+
+A transplant or CAR-T is that agent only when it **breaks** the line — past the
+line's own induction window (§3.4, §6.5), and not the second transplant of a
+planned tandem pair, which continues the line and opens nothing (§6.5). One
+inside the window, or a tandem partner however far out it sits, belongs to the
+line and leaves this rule alone.
 
 The rule reads days of **cover**, not dose dates, on both tests: what counts as
 short, and how far the line is carried. A medical melphalan claim carries the

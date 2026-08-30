@@ -75,7 +75,18 @@ PATS = [
     # discontinuation became a day-99 SCT_CART end.
     P('SI', [('LEN', 'IMID', 0, 50), ('MELP', 'ALKY', 200, 227)],
       ac=(('CART', 100),)),
+    # SJ: an AUTO on day 30 - inside LOT1's own 60-day window, so LOT1 owns it
+    # - and its planned tandem partner on day 180, 150 days later with nothing
+    # in between. The engine says the pair continues the line. SJ0 is the same
+    # patient without the partner, and the two must land identically.
+    P('SJ0', [('LEN', 'IMID', 0, 600), ('MELP', 'ALKY', 500, 527)]),
+    P('SJ', [('LEN', 'IMID', 0, 600), ('MELP', 'ALKY', 500, 527)]),
 ]
+for _p in PATS:
+    if _p['pid'] == 'SJ0':
+        _p['sct_auto'] = [IX + 30]
+    elif _p['pid'] == 'SJ':
+        _p['sct_auto'] = [IX + 30, IX + 180]
 
 
 def build(mode):
@@ -175,6 +186,14 @@ def main():
        "SI simplified: a CAR-T line in between leaves line 1's own end alone")
     ok(len(si) == 2 and si[1][2] == rs.d(IX + 227),
        "SI simplified: the CAR-T line carries the course instead")
+
+    # SJ - a planned tandem is not a boundary, so it does not switch the rule
+    # off. The tandem patient and the single-AUTO patient must agree.
+    ok(len(smp.get('SJ0', [])) == 1 and smp['SJ0'][0][2] == rs.d(IX + 600)
+       and smp['SJ0'][0][3] == 'DISCONTINUATION',
+       "SJ0 simplified: the in-window AUTO leaves the rule alone - one line")
+    ok(smp.get('SJ') == smp.get('SJ0'),
+       "SJ simplified: its planned tandem partner does not switch the rule off")
 
     if fails:
         print("%d check(s) failed" % len(fails)); sys.exit(1)

@@ -27,13 +27,17 @@ library(glue)
 `%||%` <- function(a, b) if (is.null(a)) b else a
 # The fold-in consults the melphalan rule - a course that rule suppressed is
 # not a line-defining agent - so it loads first here, as it does in the engine.
+# prior_regimen.R carries the transplant helpers both rules read.
+source(file.path(LOT, "R", "prior_regimen.R"))
 source(file.path(LOT, "R", "melp_rule.R"))
 source(file.path(LOT, "R", "foldin_rule.R"))
 
 # map_discon_gap_days is what separates one course of a drug from the next, so
 # the rule reads it now.
-off <- list(apply_map_foldin = FALSE, map_discon_gap_days = 90L)
-on_ <- list(apply_map_foldin = TRUE,  map_discon_gap_days = 90L)
+off <- list(apply_map_foldin = FALSE, map_discon_gap_days = 90L,
+            sct_tandem_days = 180L)
+on_ <- list(apply_map_foldin = TRUE,  map_discon_gap_days = 90L,
+            sct_tandem_days = 180L)
 
 cat("\n-- off is not a setting, it is the absence of the rule --\n")
 ok(identical(foldin_lotn_ctes(off, 2), ""), "the line build gets no extra CTEs")

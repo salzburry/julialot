@@ -159,3 +159,48 @@ tandem_interrupt_events_sql <- function() "
         UNION ALL
         SELECT PATID, TX_DT AS dt FROM tx_allo_cart_dates
         WHERE SCT_TYPE IN ('ALLO', 'CART')"
+
+# Every transplant and CAR-T, with what the tandem test needs beside each one.
+#
+# Two rules ask which procedures BREAK a line - the melphalan rule, to say
+# whether a later course still belongs to it, and the fold-in, to count what
+# advanced the line between a returning drug's two doses. Both used to take
+# any date in tx_auto_dates or tx_allo_cart_dates past the line's window, and
+# that is not the engine's rule: a PLANNED TANDEM continues the line and opens
+# nothing. An AUTO in LOT1's window with its tandem partner on day 180 then
+# switched the melphalan rule off for the rest of that patient.
+#
+# PREV_AUTO_DT and N_BETWEEN are what line_break_tandem_pred() below reads.
+# ALLO and CAR-T rows carry no previous AUTO, so that predicate never excludes
+# them - they always break the line once they are past its window.
+line_break_tx_sql <- function() glue("
+        SELECT p.PATID, p.TX_DT, p.PREV_AUTO_DT,
+               coalesce(sum(CASE WHEN x.dt > p.PREV_AUTO_DT AND x.dt < p.TX_DT
+                                 THEN 1 ELSE 0 END), 0) AS N_BETWEEN
+        FROM (
+          SELECT a.PATID, a.TX_DT,
+                 lag(a.TX_DT) OVER (PARTITION BY a.PATID ORDER BY a.TX_DT) AS PREV_AUTO_DT
+          FROM tx_auto_dates a
+        ) p
+        LEFT JOIN ({tandem_interrupt_events_sql()}
+        ) x ON p.PATID = x.PATID
+        GROUP BY p.PATID, p.TX_DT, p.PREV_AUTO_DT
+        UNION ALL
+        SELECT PATID, TX_DT, cast(NULL AS date) AS PREV_AUTO_DT, 0 AS N_BETWEEN
+        FROM tx_allo_cart_dates")
+
+# The planned-tandem exemption, in the same three parts auto_cand and the LOT1
+# post-runout guard test: within sct_tandem_days of the AUTO before it, nothing
+# in between, and that earlier AUTO inside the line's own window. The last part
+# is the ownership condition - a pair whose first transplant the line never
+# held was never the line's tandem - and leaving it out would exempt a pair the
+# start gate has already decided is not one.
+#
+# paste0 around the glue, not glue alone: glue trims a template's leading
+# newline and this fragment splices straight after another predicate, which
+# without it read "... <= mc.EXPO_DTAND NOT (...".
+line_break_tandem_pred <- function(cfg, alias, induction_end) paste0("\n", glue("
+       AND NOT ({alias}.PREV_AUTO_DT IS NOT NULL
+                AND datediff({alias}.TX_DT, {alias}.PREV_AUTO_DT) <= {cfg$sct_tandem_days}
+                AND {alias}.N_BETWEEN = 0
+                AND {alias}.PREV_AUTO_DT <= {induction_end})"))

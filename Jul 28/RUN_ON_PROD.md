@@ -8,8 +8,8 @@
 > numbers cannot be recovered once the tables are rebuilt — and treat every
 > figure from an earlier run as superseded.
 
-This file walks the LOT half of the delivery. The complete delivery runs in
-this order, each step over the one before it:
+This file covers the LOT half of the delivery. The whole delivery runs in this
+order, each step over the one before it:
 
 1. Prebuild snapshot: audit counts on the CURRENT tables — section 1 below,
    before anything is rebuilt (the numbers cannot be recovered afterwards)
@@ -25,13 +25,12 @@ this order, each step over the one before it:
 10. MELP cells and readers — the comparison behind the adopted rule, on its
     own prefixes, section 4 below
 
-Code and docs only — **no code lists** (the engine reads
-them from `CODELIST_DIR`, default `/mnt/code/codelist`) and **no cohort build**
-(`ndmm_NDMM_COHORT` has to exist already; `ndmm/README.md` covers building it).
+Code and docs only. **No code lists** — the engine reads them from
+`CODELIST_DIR`, default `/mnt/code/codelist`. **No cohort build** —
+`ndmm_NDMM_COHORT` must exist already; `ndmm/README.md` covers building it.
 
-Every path below is relative to **this folder** — the one holding this file —
-so start by changing into it. The folder is dated and gets renamed, so it is
-not named here:
+Every path below is relative to **this folder**, so start by changing into it.
+The folder is dated and gets renamed, so it is not named here:
 
 ```
 cd /mnt/code/<study folder>      # the directory this file is in
@@ -48,14 +47,12 @@ export LOT_PREFIX=ndmm_
 export INPUT_COHORT_TABLE=ndmm_NDMM_COHORT
 ```
 
-`LOT_PREFIX` is the dashboard's name for the prefix the LOT run used — the
-same value as `OBJECT_PREFIX` here. The dashboard also takes the three as
-arguments instead:
+`LOT_PREFIX` is the dashboard's name for the prefix the LOT run used — the same
+value as `OBJECT_PREFIX`. The dashboard takes the three as arguments instead:
 `Rscript reporting/dashboard/build.R ndmm_NDMM_COHORT ndmm_ ndmm_`.
 
-A FRESH TERMINAL HAS NONE OF THESE. Every `No OBJECT_PREFIX` /
-`needs a cohort table` stop means this block was not run in the shell you
-are in now.
+A FRESH TERMINAL HAS NONE OF THESE. Every `No OBJECT_PREFIX` / `needs a cohort
+table` stop means this block was not run in the shell you are in now.
 
 Override only if prod differs: `DATABRICKS_DSN=RWDE`,
 `DATABRICKS_CATALOG=hive_metastore`, `OPTUM_CDM_SCHEMA=clnprw_optum`,
@@ -63,9 +60,8 @@ Override only if prod differs: `DATABRICKS_DSN=RWDE`,
 
 ## 1. Count the current warehouse tables — FIRST, before rebuilding
 
-Run this before step 2. The counts read the LOT tables that are in the
-warehouse now. Step 2 overwrites them, and these numbers cannot be recovered
-afterwards.
+Run this before step 2. The counts read the LOT tables in the warehouse now;
+step 2 overwrites them and the numbers cannot be recovered afterwards.
 
 Each count reads a patient SHAPE, not a verdict, so the same query runs against
 any build.
@@ -87,18 +83,19 @@ Drop `AUDIT_EXECUTE` to list what it would count; needs no connection.
 ## 1b. The scenario workbook for the study team
 
 How a line is created, thirty-one worked patients with the lines the engine
-builds from them, and how many real patients are in each shape by line number.
+builds from them, and how many real patients are in each shape by line
+number.
 
 ```
 SCENARIO_EXECUTE=TRUE Rscript exploration/lot/run_lot_scenarios.R
 ```
 
-Writes `exploration/lot/out/lot_scenarios.xlsx`: what the numbers describe
+Writes `exploration/lot/out/lot_scenarios.xlsx` — what the numbers describe
 (run id, cohort, table, settings), how a line is built, the scenarios, the
-patient counts, the open questions, and what the codes mean. Needs `openxlsx`;
-without it the same sheets come out as CSVs. Drop `SCENARIO_EXECUTE` to see
-the scenarios with no connection — that preview goes to
-`lot_scenarios_reference.xlsx`, so it never overwrites the counted workbook.
+patient counts, the open questions, what the codes mean. Needs `openxlsx`;
+without it the same sheets come out as CSVs. Drop `SCENARIO_EXECUTE` for the
+scenarios with no connection; that preview goes to
+`lot_scenarios_reference.xlsx` and never overwrites the counted workbook.
 
 Run it before step 2 as well if you want the counts on the current tables.
 
@@ -116,23 +113,22 @@ QC_EXECUTE=TRUE    Rscript lot/qc/run_lot_qc.R
 Rscript analysis/questions/baseline_gap_qs.R                        # BASELINE_DAYS=365
 ```
 
-Each of the three scripts with an EXECUTE flag prints its catalogue first and
-then stops unless the flag is set - so a run that lists 37 checks and says
-`Nothing was read` did exactly what it was asked to. The flags are not
-interchangeable: `AUDIT_EXECUTE` for the audit counts, `QC_EXECUTE` for QC,
-`AUG1_EXECUTE` for the melphalan builds. `baseline_gap_qs.R` has none and runs
-straight away.
+Each script with an EXECUTE flag prints its catalogue and then stops unless the
+flag is set — a run that lists 37 checks and says `Nothing was read` did what it
+was asked. The flags are not interchangeable: `AUDIT_EXECUTE` for the audit
+counts, `QC_EXECUTE` for QC, `AUG1_EXECUTE` for the melphalan builds.
+`baseline_gap_qs.R` has none and runs straight away.
 
-QC also refuses a run that recorded a contract deviation, since most of its
-checks are statements about the contract algorithm. The study's own `ndmm_`
-run has none. To point it at a melphalan cell instead, add
-`QC_ALLOW_DEVIATION=TRUE` and the report will carry the deviation.
+QC refuses a run that recorded a contract deviation, since most of its checks
+are statements about the contract algorithm. The study's own `ndmm_` run has
+none. To point it at a melphalan cell, add `QC_ALLOW_DEVIATION=TRUE`; the report
+then carries the deviation.
 
 ## 4. The rule cells — independent of 2 and 3, can run alongside
 
 Reads only the cohort and its own `melp_*` prefixes. Required before any
-melphalan number: the cells now in the warehouse were built by older engine
-code and the readers refuse them by fingerprint.
+melphalan number — the cells now in the warehouse were built by older engine
+code, and the readers refuse them by fingerprint.
 
 ```
 Rscript exploration/melphalan/run_aug1_melp.R                       # plan only
@@ -149,28 +145,27 @@ Rscript exploration/melphalan/run_melp_simple.R                          # plan 
 MELP_SIMPLE_EXECUTE=TRUE Rscript exploration/melphalan/run_melp_simple.R # build + read
 ```
 
-Its console output and four `melp_simple_*.csv` files compare the study's
-rule against a build with no melphalan rule at all. Both cells are built at the
-contract's 28-day course cap — the package varies the rule, not the
-threshold.
+Its console output and four `melp_simple_*.csv` files compare the study's rule
+against a build with no melphalan rule at all. Both cells are built at the
+contract's 28-day course cap: the package varies the rule, not the threshold.
 
-Each prefix is emptied before it is rebuilt, and every cell writes to its own,
-so the study's run is untouched by all of this.
+Each prefix is emptied before it is rebuilt and every cell writes to its own, so
+the study's run is untouched by all of this.
 
 **Which cell deviates changed when the rule was adopted.** `APPLY_MELP_RULE` is
 `simplified` in `CONTRACT`, so the simplified cell IS the study's algorithm and
-records no deviation, while the cell without the rule is built with
+records no deviation; the cell without the rule is built with
 `APPLY_MELP_RULE=off` under `LOT_CONTRACT_OVERRIDE=TRUE`. Use the word `off`,
-never a blank: the settings loader fills a variable that is unset **or empty**
-from `config.csv`, so `APPLY_MELP_RULE=` would build the contract and the
-comparison would be the study's build against itself.
+never a blank — the settings loader fills a variable that is unset **or empty**
+from `config.csv`, so `APPLY_MELP_RULE=` builds the contract and compares the
+study's build with itself.
 
 ## 4b. The MAP fold-in — the study's rule, and the build without it
 
-The study's rule that a prior line's agent returning after the current line's
-regimen window joins that line instead of splitting it, when exactly one agent
-advanced the line between that drug's two doses. Two builds under `foldin_`
-prefixes — one without the rule, and the contract's — differenced:
+A prior line's agent returning after the current line's regimen window joins
+that line instead of splitting it, when exactly one agent advanced the line
+between that drug's two doses. Two builds under `foldin_` prefixes — one without
+the rule, one the contract's — differenced:
 
 ```
 Rscript exploration/lot/run_foldin_cells.R                        # plan only
@@ -179,29 +174,29 @@ FOLDIN_EXECUTE=TRUE Rscript exploration/lot/run_foldin_cells.R    # build + read
 
 `APPLY_MAP_FOLDIN` is TRUE in `CONTRACT`, so the folded cell IS the study's
 algorithm and records no deviation; the reference cell is built with
-`APPLY_MAP_FOLDIN=FALSE` under the override and no reader accepts it as the
-study's. Read its three `foldin_*.csv` files next to the sizing screen's
-counts from step 8 — that screen was written against a build without the rule,
-so it sizes what the rule has already done.
+`APPLY_MAP_FOLDIN=FALSE` under the override, and no reader accepts it as the
+study's. Read its three `foldin_*.csv` files next to the sizing screen's counts
+from step 8 — that screen was written against a build without the rule, so it
+sizes what the rule has already done.
 
 In the decisions output read **block 2 first** — melphalan doses in no line.
-Every row with `AFTER_THE_CAP = no` should be absent, `PRIOR_LINE_TYPE` of
-`CART` or `SCT_ALLO` included. A single-day ALLO line and a CAR-T line with no
-consolidation drug end on their own start date, before any run-out is read.
-`melp_line_type_guard` lets the melphalan hold override that, so those lines
+No row with `AFTER_THE_CAP = no` should be there, `PRIOR_LINE_TYPE` of `CART` or
+`SCT_ALLO` included: a single-day ALLO line and a CAR-T line with no
+consolidation drug end on their own start date, before any run-out is read, but
+`melp_line_type_guard` lets the melphalan hold override that so those lines
 reach the dose too. Investigate any pre-cap row, whatever the prior line type.
 
 `AFTER_THE_CAP = yes` is treatment past the five-line cap. It is outside every
 line by construction and no ownership decision can move it, so it is a
 reconciliation number rather than a defect.
 
-Question 1 writes three files, not one. `melp_ask1_line_duration.csv` is each
-cell's own median at each line, and its change columns are marked UNPAIRED
-because the rule moves who has a second line at all.
-`melp_ask1_paired_line_change.csv` pairs the same patient's line across the
-cells, and `melp_ask1_line_count_change.csv` counts the change in how many
-lines a patient ends up with. The last of those is the one no renumbering can
-explain.
+Question 1 writes three files, not one:
+
+| file | what it holds |
+|---|---|
+| `melp_ask1_line_duration.csv` | each cell's own median at each line. Change columns marked UNPAIRED — the rule moves who has a second line at all |
+| `melp_ask1_paired_line_change.csv` | the same patient's line across the two cells |
+| `melp_ask1_line_count_change.csv` | the change in how many lines a patient ends up with. The one no renumbering can explain |
 
 ## When something stops
 
