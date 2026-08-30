@@ -285,10 +285,12 @@ The interval is measured **dose to dose**, not from where the drug stopped. A
 drug's cover often runs past the line it belonged to, so measuring from the stop
 would put the advance that ended that line before the interval and count none.
 
-An advance is an **agent**, not a line. A line is read through the drug it
-opened on, so one agent that opens two lines counts **once** —
-`returning_drug_one_agent_twice`. A permissible substitute is the same agent as
-the drug it replaces (§4.4), so a biosimilar swap is not a second agent either.
+An advance is an **agent**, not a line, and a **line is one advance** whatever
+opened it: two drugs starting a line together advanced it once between them —
+`returning_drug_two_agents_one_line`. A line is read through a single opener,
+so one agent opening two lines counts once too. A permissible substitute is the
+same agent as the drug it replaces (§4.4), so a biosimilar swap is not a second
+agent either, in either direction.
 
 **Transplants and CAR-T are not in that count**, which counts drugs. They keep
 the rules they have everywhere else (§6), where they are standalone

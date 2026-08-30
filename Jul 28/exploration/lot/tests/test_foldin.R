@@ -112,8 +112,13 @@ ok(has(s, "count(DISTINCT fo.OPENER)") &&
 # from further back is out of scope and the engine's ordinary rules keep it.
 ok(has(s, "foldin_openers AS (") && has(s, "l.LOT_START_TYPE = 'MED'"),
    "an agent is the drug a MED-started line opened on - a procedure is not one")
-ok(has(s, "coalesce(ps.original_med, ms.MAP_MED_TYPE) AS OPENER"),
+ok(has(s, "min(coalesce(ps.original_med, ms.MAP_MED_TYPE)) AS OPENER"),
    "...and a permissible substitute is the same agent as the drug it replaces")
+# ONE row per line. A doublet opening a line advanced the LOT once, and the
+# request counts agents advancing it twice or more - counting each opener drug
+# made a two-drug start two advances and refused a fold it should have taken.
+ok(has(s, "GROUP BY l.PATID, l.LOT_START_DT"),
+   "...and a line contributes ONE advance however many drugs opened it")
 ok(has(s, "lag(c.MAP_START_DT) OVER (PARTITION BY c.PATID, c.AGENT"),
    "the interval is dose to dose, and a substitute shares the agent's doses")
 # A course carries the answer to its own later episodes. Judged one episode at

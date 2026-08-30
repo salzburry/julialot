@@ -558,7 +558,7 @@ build_lot_n <- function(con, lot_num,
         INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
       )
       GROUP BY PATID, MED_ABBR
-    ),{melp_lotn_ctes(cfg, lot_num, induction_window_days, cart_consolidation_days, allo_lot_span)}{foldin_lotn_ctes(cfg, lot_num, lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days))}
+    ),{melp_lotn_ctes(cfg, lot_num, induction_window_days, cart_consolidation_days, allo_lot_span)}{foldin_lotn_ctes(cfg, lot_num, lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days))}{foldin_base_meds_ctes(cfg)}
     -- Per drug, the end of ITS cover in this line: the FIRST episode flagged
     -- discontinued. A later episode of the same drug does NOT open the next
     -- line. It was in this line's regimen, so this line extends over it, and
@@ -572,7 +572,8 @@ build_lot_n <- function(con, lot_num,
     discon_per_med AS (
 {discon_per_med_sql(glue('lot{lot_num}_regimen_cutoff'), glue('LOT{lot_num}_START_DT'),
                     boundary_tbl = foldin_boundary_tbl(cfg), end_col = 'REGIMEN_CUTOFF_DT',
-                    own_gap_breaks = own_gap_breaks_chain(cfg))}
+                    own_gap_breaks = own_gap_breaks_chain(cfg),
+                    base_tbl = foldin_base_meds(cfg))}
     ),
     -- The regimen has run out when its LAST base agent has.
     discon_raw AS (
@@ -608,7 +609,11 @@ build_lot_n <- function(con, lot_num,
       SELECT ms.PATID, ms.MAP_START_DT, ms.MAP_MED_TYPE
       FROM map_stacked ms
       INNER JOIN lot{lot_num}_start ls ON ms.PATID = ls.PATID
-      LEFT JOIN base_meds bm
+      -- The EFFECTIVE base set, so a drug the fold put in this line is this
+      -- line's drug here too. Reading base_meds alone let a folded drug's
+      -- SECOND return end the line as an added medication while the next line
+      -- refused it a line of its own - treatment in neither.
+      LEFT JOIN {foldin_base_meds(cfg)} bm
         ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
       LEFT JOIN map_restart mr
         ON mr.PATID = ms.PATID AND mr.MAP_MED_TYPE = ms.MAP_MED_TYPE

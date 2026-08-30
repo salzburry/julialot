@@ -107,7 +107,8 @@ map_restart_sql <- function() {
 # spark.sql.crossJoin.enabled=false.
 discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
                                boundary_tbl = "map_stacked", boundary_gate = "",
-                               end_col = NULL, own_gap_breaks = TRUE) {
+                               end_col = NULL, own_gap_breaks = TRUE,
+                               base_tbl = "base_meds") {
   # The scan starts at the line start. Without this it has no upper bound at
   # all: a base drug's later episodes chain forward for as long as the patient
   # keeps filling it. So bounding regimen membership at the date the line was
@@ -143,7 +144,7 @@ discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
                ", prev_discon, "
         FROM ", map_tbl, " ms
         INNER JOIN ", start_view, " ls ON ms.PATID = ls.PATID
-        INNER JOIN base_meds bm ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
+        INNER JOIN ", base_tbl, " bm ON ms.PATID = bm.PATID AND ms.MAP_MED_TYPE = bm.MED_ABBR
         WHERE ms.MAP_START_DT >= ls.", start_col, upper, "
       ),
       interrupts AS (
@@ -159,7 +160,7 @@ discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
               AND o.MAP_START_DT >  e.PREV_END
               AND o.MAP_START_DT <  e.MAP_START_DT
               ", boundary_gate, "
-        LEFT JOIN base_meds obm
+        LEFT JOIN ", base_tbl, " obm
                ON obm.PATID = o.PATID AND obm.MED_ABBR = o.MAP_MED_TYPE
         GROUP BY e.PATID, e.MAP_MED_TYPE, e.MAP_START_DT
       ),

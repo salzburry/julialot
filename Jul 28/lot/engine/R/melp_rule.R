@@ -343,6 +343,23 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
         ON nn.PATID = c.PATID AND nn.MED_ABBR = c.MAP_MED_TYPE"
   not_new_pred <- if (!nzchar(not_new_ctes)) "" else
     "\n        AND nn.MED_ABBR IS NULL"
+  # The same set, for melp_taken's "another agent got here first" scan. A drug
+  # of an earlier line coming back is not another agent taking the course - the
+  # fold-in has put it in this line (LOT_RULES.md 4.8). Reading the working
+  # base set alone missed that, because a folded drug joins the line's REPORTED
+  # regimen and the fold CTEs are spliced after these, so this statement cannot
+  # see them. This set is built from the earlier lines instead, which are
+  # already there.
+  #
+  # It reaches slightly wider than the folded episodes: a previous-line agent
+  # whose return the count does NOT fold is excluded too. Under the previous-
+  # line fold set that case cannot arise - a return either folds or is left to
+  # 4.3, which keeps it in the line it left - so the wider reach is empty in
+  # practice, and it is stated here rather than relied on silently.
+  taken_not_new <- if (!nzchar(not_new_ctes)) "" else
+    "\n       AND NOT EXISTS (SELECT 1 FROM melp_not_new tnn
+                        WHERE tnn.PATID = o.PATID
+                          AND tnn.MED_ABBR = o.MAP_MED_TYPE)"
   paste0("\n", glue("
     melp_doses AS (
       SELECT PATID, MAP_START_DT AS DOSE_DT
@@ -440,7 +457,7 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
        AND o.MAP_START_DT >  {line_tbl}.{start_col}
        AND o.MAP_START_DT <= mc.EXPO_DT
        AND o.MAP_MED_CLASS <> 'STEROID'
-       AND upper(trim(o.MAP_MED_TYPE)) <> '{abbr}'
+       AND upper(trim(o.MAP_MED_TYPE)) <> '{abbr}'{taken_not_new}
       LEFT JOIN {base_tbl} ob
         ON ob.PATID = o.PATID AND ob.MED_ABBR = o.MAP_MED_TYPE
       LEFT JOIN {restart_tbl} orr

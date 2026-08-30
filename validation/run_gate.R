@@ -69,7 +69,7 @@ EXPECTED_FAILURES <- list(
     # SCT_AUTO_CONT and end_natural at LOT2-5, LOT{n}_AUTO_HOLD_DT, auto_cand
     # reading the previous line's own window, the regimen cutoff, and the tandem
     # gap. Re-pinned deliberately, which is what this list is for.
-    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 971 line(s)")
+    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 972 line(s)")
 )
 
 # How one suite's output is read. Its own suite is validation/hygiene/

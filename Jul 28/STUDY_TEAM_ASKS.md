@@ -19,8 +19,8 @@ trail to those, and the list of what is still owed.
 
 ## 1. The melphalan short-course rule — BUILT
 
-**Asked (19 Aug), confirmed (20 Aug):** melphalan received for fewer than 28
-days outside any induction window does not advance the line. And: a patient
+**Asked (19 Aug), confirmed (20 Aug):** melphalan received for 28 days or fewer
+outside any induction window does not advance the line. And: a patient
 given melphalan on day 100 for 28 days who then starts a new agent on day 105
 should have the new line start on **day 100**, when the melphalan appears — not
 on day 105.

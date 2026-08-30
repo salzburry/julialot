@@ -18,9 +18,11 @@
 #                                    the drug is returning to the line it left
 #                                    and the engine's own restart rule keeps it.
 #
-# So the fold is per EPISODE, not per drug: the same drug can fold on one
-# return and open a line on the next. foldin_count_ctes() below does the
-# counting, and everything else reads foldin_episodes.
+# Each RETURN is judged on its own - the same drug can fold on one return and
+# not on the next - and a course then folds as a whole, so a follow-up dose
+# weeks later is not judged separately from the return that began it.
+# foldin_count_ctes() below does the counting; everything else reads
+# foldin_episodes.
 #
 # In engine terms, for each line from LOT2 up:
 #
@@ -65,9 +67,10 @@
 # part of the line should read as part of it. A held melphalan dose still does
 # not (§4.7): that rule was not asked the same question.
 #
-# Pinned FALSE in CONTRACT. A TRUE build records the deviation in
-# LOT_BUILD_STATUS and every reader that resolves run ownership refuses it as
-# the study's. Built and measured by exploration/lot/run_foldin_cells.R.
+# Pinned TRUE in CONTRACT since the study adopted the rule. A FALSE build
+# records the deviation in LOT_BUILD_STATUS and every reader that resolves run
+# ownership refuses it as the study's. Measured against a build without it by
+# exploration/lot/run_foldin_cells.R.
 
 foldin_on <- function(cfg) isTRUE(cfg$apply_map_foldin)
 
@@ -86,8 +89,8 @@ foldin_on <- function(cfg) isTRUE(cfg$apply_map_foldin)
 # and the return starts a line of its own - the treatment has moved far enough
 # that the drug is not coming back to the line it left.
 #
-# So the fold set is per EPISODE, not per drug. The same drug can fold on one
-# return and start a line on the next.
+# Each RETURN is judged on its own, so the same drug can fold on one return and
+# not on the next. A course then folds as a whole - see foldin_folded.
 #
 # The interval is dose to dose, as the request words it, and NOT cover end to
 # dose. A drug's cover often runs past the line it belonged to, so measuring
@@ -149,13 +152,14 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
   this_line <- if (is.null(n_start) || is.null(n_type)) "" else paste0("
       UNION
       SELECT ", n_tbl, ".PATID, ", n_start, " AS OPEN_DT,
-             coalesce(ps.original_med, ms.MAP_MED_TYPE) AS OPENER
+             min(coalesce(ps.original_med, ms.MAP_MED_TYPE)) AS OPENER
       FROM ", n_tbl, "
       INNER JOIN map_stacked ms
         ON ms.PATID = ", n_tbl, ".PATID AND ms.MAP_START_DT = ", n_start, "
        AND ms.MAP_MED_CLASS <> 'STEROID'
       LEFT JOIN permissible_subs ps ON ps.substitute_med = ms.MAP_MED_TYPE
-      WHERE ", n_type, " = 'MED'")
+      WHERE ", n_type, " = 'MED'
+      GROUP BY ", n_tbl, ".PATID, ", n_start)
   # paste0, not glue: glue trims a template's leading newline, and this
   # fragment splices straight after a table alias - without it the statement
   # read "FROM foldin_course_prev kINNER JOIN ...".
@@ -271,14 +275,21 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
     -- MED-started lines only. A line a transplant or CAR-T opened has no
     -- agent, and foldin_tx_between below is what reads those instead.
     foldin_openers AS (
-      SELECT DISTINCT l.PATID, l.LOT_START_DT AS OPEN_DT,
-             coalesce(ps.original_med, ms.MAP_MED_TYPE) AS OPENER
+      -- ONE row per line. A line opened by a doublet advanced the LOT once,
+      -- not twice, and the request counts agents ADVANCING THE LOT twice or
+      -- more - so the line contributes a single opener, and two lines opened
+      -- by the same agent still collapse to one. min() only has to be
+      -- deterministic; which of two co-starters names the line is not a
+      -- judgement this rule makes.
+      SELECT l.PATID, l.LOT_START_DT AS OPEN_DT,
+             min(coalesce(ps.original_med, ms.MAP_MED_TYPE)) AS OPENER
       FROM lot_long l
       INNER JOIN map_stacked ms
         ON ms.PATID = l.PATID AND ms.MAP_START_DT = l.LOT_START_DT
        AND ms.MAP_MED_CLASS <> 'STEROID'
       LEFT JOIN permissible_subs ps ON ps.substitute_med = ms.MAP_MED_TYPE
-      WHERE l.LOT_START_TYPE = 'MED' AND {line_pred}{this_line}
+      WHERE l.LOT_START_TYPE = 'MED' AND {line_pred}
+      GROUP BY l.PATID, l.LOT_START_DT{this_line}
     ),
     -- Transplants and CAR-T keep the engine's own rules and are not counted
     -- as agents at all. One that OPENED A LINE in between overrides the fold
@@ -312,6 +323,14 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
         ON tx.PATID = k.PATID
        AND tx.OPEN_DT >  k.PREV_COURSE_DT
        AND tx.OPEN_DT <  k.MAP_START_DT{between_join}
+      -- EVERY episode after the drug's first is judged, and each is a return:
+      -- a new episode opens only for a claim beyond every run-out (§2.3), so
+      -- an episode always follows a break in cover. It is NOT restricted to
+      -- episodes after a discon_days gap. The request's own worked case is a
+      -- 60-day break - shorter than the 90-day discontinuation - and reading
+      -- COMING BACK AFTER BEING STOPPED as the engine's discontinuation would
+      -- refuse to fold the very example the rule was written for. Scenario S01
+      -- is that case.
       WHERE k.PREV_COURSE_DT IS NOT NULL
       GROUP BY k.PATID, k.AGENT, k.COURSE_START_DT, k.MAP_START_DT
     ),
@@ -436,7 +455,62 @@ foldin_regimen_union <- function(cfg, lot_num, induction_end) {
           WHERE btx.PATID = ms.PATID
             AND btx.TX_DT >  {induction_end}
             AND btx.TX_DT <= ms.MAP_START_DT{line_break_tandem_pred(cfg, \'btx\', induction_end)}
+        )
+        -- ...and nothing at or after a genuinely NEW agent, which ends the
+        -- line as an added medication. A return landing on the SAME DAY as one
+        -- belongs to the line that agent opens, not to this one: the count
+        -- looks strictly before the return, so it does not see a same-day
+        -- arrival and folds anyway. Without this the line reported a drug
+        -- whose only episode began after the line had ended, and the next line
+        -- reported it too.
+        AND NOT EXISTS (
+          SELECT 1 FROM map_stacked nb
+          WHERE nb.PATID = ms.PATID
+            AND nb.MAP_MED_CLASS <> \'STEROID\'
+            AND nb.MAP_START_DT >  {induction_end}
+            AND nb.MAP_START_DT <= ms.MAP_START_DT
+            AND NOT EXISTS (SELECT 1 FROM base_meds ob
+                            WHERE ob.PATID = nb.PATID
+                              AND ob.MED_ABBR = nb.MAP_MED_TYPE)
+            AND NOT EXISTS (SELECT 1 FROM foldin_meds ofm
+                            WHERE ofm.PATID = nb.PATID
+                              AND ofm.MED_ABBR = nb.MAP_MED_TYPE)
         )"))
+}
+
+# The line's WORKING base set with the folded drugs in it. discon_per_med reads
+# this, so a folded drug's cover chains the line's run-out the way any regimen
+# drug's does.
+#
+# Without it the two halves of §4.3 came apart on a folded drug. The reported
+# regimen carries it, so the NEXT line refuses it a line of its own - correctly.
+# But the working set did not, so the line it folded into stopped at its own
+# drugs' cover, and a SECOND return of that drug fell after the line had ended
+# and before the next one could open: treatment in no line at all.
+#
+# base_meds itself is untouched, and the fold is computed from it, so there is
+# no circle: base_meds -> the fold -> this.
+#
+# SUBSTITUTE_ONLY = 0. A folded drug is in the line on its own account, not as
+# somebody's stand-in, and the release the flag gates is switched off for it
+# anyway.
+foldin_base_meds <- function(cfg) {
+  if (!foldin_on(cfg)) return("base_meds")
+  "foldin_base_meds_eff"
+}
+
+foldin_base_meds_ctes <- function(cfg) {
+  if (!foldin_on(cfg)) return("")
+  paste0("\n", glue("
+    foldin_base_meds_eff AS (
+      SELECT PATID, MED_ABBR, min(SUBSTITUTE_ONLY) AS SUBSTITUTE_ONLY
+      FROM (
+        SELECT PATID, MED_ABBR, SUBSTITUTE_ONLY FROM base_meds
+        UNION ALL
+        SELECT DISTINCT PATID, MED_ABBR, 0 AS SUBSTITUTE_ONLY FROM foldin_episodes
+      )
+      GROUP BY PATID, MED_ABBR
+    ),"))
 }
 
 # Takes fold-set rows off the added-medication candidate list. Own-base rows
