@@ -130,8 +130,8 @@ map_restart_sql <- function() {
 # own regimen does not break it. base_meds holds the induction drugs AND their
 # permissible substitutes, and neither is a boundary, so a second regimen drug
 # refilling mid-line cannot cut the first one's cover short. Steroids never
-# break it. `boundary_gate` lets a caller narrow it further, to drugs its own
-# rules would accept as a line start.
+# break it. `boundary_join`/`boundary_break_pred` let a caller narrow it
+# further, to drugs its own rules would accept as a line start.
 #
 # Transplant and CAR-T are left out on purpose. One that ends a line outranks
 # DISCONTINUATION, so a run-out chained past it never shows. One that does not
@@ -139,9 +139,14 @@ map_restart_sql <- function() {
 # LOT1's window - must not break the chain anyway.
 #
 # LEFT JOIN and aggregates rather than EXISTS. A correlated subquery fails under
-# spark.sql.crossJoin.enabled=false.
+# spark.sql.crossJoin.enabled=false, and a correlated one in a JOIN's ON clause
+# is not accepted by Spark before 4.0 at all. `boundary_join` and
+# `boundary_break_pred` exist so a caller narrowing what may interrupt does it
+# the same way - an anti-join and a test on the joined row - rather than by
+# putting a subquery where this file has just said one cannot go.
 discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
-                               boundary_tbl = "map_stacked", boundary_gate = "",
+                               boundary_tbl = "map_stacked",
+                               boundary_join = "", boundary_break_pred = "",
                                end_col = NULL, own_gap_breaks = TRUE,
                                base_tbl = "base_meds") {
   # The scan starts at the line start. Without this it has no upper bound at
@@ -207,7 +212,8 @@ discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
       ),
       interrupts AS (
         SELECT e.PATID, e.MAP_MED_TYPE, e.MAP_START_DT,
-               max(CASE WHEN o.PATID IS NOT NULL AND obm.MED_ABBR IS NULL
+               max(CASE WHEN o.PATID IS NOT NULL AND obm.MED_ABBR IS NULL",
+               boundary_break_pred, "
                         THEN 1 ELSE 0 END) AS BREAKS
         FROM ep e
         LEFT JOIN ", boundary_tbl, " o
@@ -225,9 +231,8 @@ discon_per_med_sql <- function(start_view, start_col, map_tbl = "map_stacked",
               -- somewhere the drug it stands in for would not.
               AND o.MAP_START_DT >  e.SCAN_FROM
               AND o.MAP_START_DT <  e.MAP_START_DT
-              ", boundary_gate, "
         LEFT JOIN ", base_tbl, " obm
-               ON obm.PATID = o.PATID AND obm.MED_ABBR = o.MAP_MED_TYPE
+               ON obm.PATID = o.PATID AND obm.MED_ABBR = o.MAP_MED_TYPE", boundary_join, "
         GROUP BY e.PATID, e.MAP_MED_TYPE, e.MAP_START_DT
       ),
       reached AS (

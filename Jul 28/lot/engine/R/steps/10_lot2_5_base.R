@@ -578,7 +578,8 @@ build_lot_n <- function(con, lot_num,
     discon_per_med AS (
 {discon_per_med_sql(glue('lot{lot_num}_regimen_cutoff'), glue('LOT{lot_num}_START_DT'),
                     boundary_tbl = foldin_boundary_tbl(cfg), end_col = 'REGIMEN_CUTOFF_DT',
-                    boundary_gate = melp_boundary_gate(cfg),
+                    boundary_join = melp_boundary_join(cfg),
+                    boundary_break_pred = melp_boundary_break_pred(cfg),
                     own_gap_breaks = own_gap_breaks_chain(cfg),
                     base_tbl = foldin_base_meds(cfg))}
     ),

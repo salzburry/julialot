@@ -350,10 +350,15 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
   # line fold set that case cannot arise - a return either folds or is left to
   # 4.3, which keeps it in the line it left - so the wider reach is empty in
   # practice, and it is stated here rather than relied on silently.
-  taken_not_new <- if (!nzchar(not_new_ctes)) "" else
-    "\n       AND NOT EXISTS (SELECT 1 FROM melp_not_new tnn
-                        WHERE tnn.PATID = o.PATID
-                          AND tnn.MED_ABBR = o.MAP_MED_TYPE)"
+  # An anti-join and a WHERE test, not an EXISTS in the ON clause. `o` is
+  # INNER JOINed here, so moving the condition out of the join changes
+  # nothing - and Spark does not accept a correlated subquery in a join
+  # condition before 4.0 (SPARK-45009).
+  taken_not_new_join <- if (!nzchar(not_new_ctes)) "" else
+    "\n      LEFT JOIN melp_not_new tnn
+        ON tnn.PATID = o.PATID AND tnn.MED_ABBR = o.MAP_MED_TYPE"
+  taken_not_new_pred <- if (!nzchar(not_new_ctes)) "" else
+    "\n        AND tnn.MED_ABBR IS NULL"
   paste0("\n", glue("
     melp_doses AS (
       SELECT PATID, MAP_START_DT AS DOSE_DT
@@ -475,14 +480,14 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
        AND o.MAP_START_DT >  {line_tbl}.{start_col}
        AND o.MAP_START_DT <= mc.EXPO_DT
        AND o.MAP_MED_CLASS <> 'STEROID'
-       AND upper(trim(o.MAP_MED_TYPE)) <> '{abbr}'{taken_not_new}
+       AND upper(trim(o.MAP_MED_TYPE)) <> '{abbr}'
       LEFT JOIN {base_tbl} ob
         ON ob.PATID = o.PATID AND ob.MED_ABBR = o.MAP_MED_TYPE
       LEFT JOIN {restart_tbl} orr
         ON orr.PATID = o.PATID AND orr.MAP_MED_TYPE = o.MAP_MED_TYPE
-       AND orr.MAP_START_DT = o.MAP_START_DT
+       AND orr.MAP_START_DT = o.MAP_START_DT{taken_not_new_join}
       WHERE (ob.MED_ABBR IS NULL
-{return_release_sql(cfg, 'orr', 'ob')})
+{return_release_sql(cfg, 'orr', 'ob')}){taken_not_new_pred}
       UNION
       -- A line can also be opened by a procedure, and a course after one is
       -- no more this line's than a course after a new drug. Scanning
@@ -761,14 +766,30 @@ melp_short_course_ctes <- function(cfg, line_tbl, start_col, induction_end) {
     ),"))
 }
 
-# The predicate that reads it, ANDed into the interrupt scan's join.
-melp_boundary_gate <- function(cfg) {
+# How the interrupt scan reads it: an anti-join, and a test on the joined row.
+#
+# NOT an EXISTS in the scan's ON clause, which is what this was. Spark does not
+# accept a correlated subquery in a join condition before 4.0 (SPARK-45009),
+# and prior_regimen.R says as much about correlated subqueries generally - so
+# the form that reads most directly is the one that would not have deployed.
+# duckdb accepts it, so the harnesses could not have caught it either.
+#
+# The two halves go to discon_per_med_sql together: the join brings the row in,
+# the predicate stops it counting as a break. Equivalent to filtering it out in
+# the ON clause, because BREAKS is a max() over the group - a row that cannot
+# break contributes nothing either way.
+melp_boundary_join <- function(cfg) {
   if (!melp_rule_on(cfg)) return("")
-  paste0("\n              AND NOT (upper(trim(o.MAP_MED_TYPE)) = '",
+  paste0("\n        LEFT JOIN melp_no_break nb2\n",
+         "               ON nb2.PATID = o.PATID\n",
+         "              AND nb2.MAP_START_DT = o.MAP_START_DT")
+}
+
+melp_boundary_break_pred <- function(cfg) {
+  if (!melp_rule_on(cfg)) return("")
+  paste0("\n                        AND NOT (upper(trim(o.MAP_MED_TYPE)) = '",
          melp_abbr(cfg), "'\n",
-         "                       AND EXISTS (SELECT 1 FROM melp_no_break nb2\n",
-         "                                   WHERE nb2.PATID = o.PATID\n",
-         "                                     AND nb2.MAP_START_DT = o.MAP_START_DT))")
+         "                                 AND nb2.PATID IS NOT NULL)")
 }
 
 melp_lot1_ctes <- function(cfg) {

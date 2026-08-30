@@ -66,16 +66,14 @@ sf <- function(f) paste(readLines(file.path(LOT, "R", "steps", f), warn = FALSE)
 ok(has(sf("06_lot1_end.R"), "FROM {melp_lot1_base_from(cfg)}") &&
      has(sf("06_lot1_end.R"), "WITH{melp_lot1_ctes(cfg)}"),
    "LOT1 has exactly two hooks, both in 06")
-# 04 carries exactly one, and it is not a decision: melp_boundary_gate() keeps
-# melphalan out of the run-out chain's interrupt scan, which is a predicate
-# over map_stacked and needs nothing 04 does not already have. The decision
-# itself still cannot live here - it reads lot1_base, which is what 04 builds.
-# 04 carries two, and neither is a decision: the short-course CTE and the
-# predicate that reads it keep melphalan out of the run-out chain's interrupt
-# scan. Both read map_stacked and the line's start, which 04 already has. The
-# DECISION still cannot live here - it reads lot1_base, which is what 04 builds.
+# 04 carries three, and none is a decision: the short-course CTE, and the
+# anti-join and predicate that read it, keep melphalan out of the run-out
+# chain's interrupt scan. All three read map_stacked and the line's start,
+# which 04 already has. The DECISION still cannot live here - it reads
+# lot1_base, which is what 04 builds.
 ok(has(sf("04_lot1_base.R"), "melp_short_course_ctes(cfg, 'lot1_regimen_cutoff'") &&
-     has(sf("04_lot1_base.R"), "boundary_gate = melp_boundary_gate(cfg)"),
+     has(sf("04_lot1_base.R"), "boundary_join = melp_boundary_join(cfg)") &&
+     has(sf("04_lot1_base.R"), "boundary_break_pred = melp_boundary_break_pred(cfg)"),
    "...and 04 carries only the short-course gate, which needs no line decision")
 ok(has(sf("10_lot2_5_base.R"), "{melp_lotn_ctes(cfg, lot_num, induction_window_days,") &&
      has(sf("10_lot2_5_base.R"), "{melp_suppress_predicate(cfg)}") &&
@@ -127,8 +125,10 @@ subst_off <- function(f) {
                    melp_lotn_ctes(off, 2, 30L, 45L, "single_day")),
                  c("{melp_prev_line_ctes(cfg, prev_med_window, cart_consolidation_days, lot_num)}",
                    melp_prev_line_ctes(off, 60L, 45L, 2L)),
-                 c("boundary_gate = melp_boundary_gate(cfg),",
-                   paste0("boundary_gate = \"", melp_boundary_gate(off), "\",")),
+                 c("boundary_join = melp_boundary_join(cfg),",
+                   paste0("boundary_join = \"", melp_boundary_join(off), "\",")),
+                 c("boundary_break_pred = melp_boundary_break_pred(cfg),",
+                   paste0("boundary_break_pred = \"", melp_boundary_break_pred(off), "\",")),
                  c("{melp_short_course_ctes(cfg, 'lot1_regimen_cutoff', 'LOT1_START_DT',\n                        glue('date_add(lot1_regimen_cutoff.LOT1_START_DT, {cfg$induction_window_days - 1})'))}",
                    melp_short_course_ctes(off, "l", "s", "e")),
                  c("{melp_short_course_ctes(cfg, glue('lot{lot_num}_start'), glue('LOT{lot_num}_START_DT'),\n                        lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days))}",

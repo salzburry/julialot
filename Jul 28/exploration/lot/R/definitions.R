@@ -67,7 +67,7 @@ LOT_DIMENSIONS <- list(
        ours = paste0("Yes, and it spans a single day - start and end are the ",
                      "transplant date. It carries no regimen string, because ",
                      "induction rows are suppressed for it."),
-       where = "lot/engine/R/steps/10_lot2_5_base.R:464, :654",
+       where = "lot/engine/R/steps/10_lot2_5_base.R:464, :655",
        proves = c("SCT_ALLO", "allo_lot_span"),
        question = "Is alloSCT counted as a prior line in its own right?"),
 
@@ -115,7 +115,7 @@ LOT_DIMENSIONS <- list(
                      "the line is folded into the line it returns in, joining ",
                      "that line's regimen rather than opening the next."),
        where = paste0("lot/engine/R/steps/10_lot2_5_base.R:270, :291, :301, ",
-                      ":332, :367, :465, :466, :467, lot/engine/R/melp_rule.R:531, :547, ",
+                      ":332, :367, :465, :466, :467, lot/engine/R/melp_rule.R:536, :552, ",
                       "lot/engine/R/prior_regimen.R:38, lot/engine/R/foldin_rule.R:322"),
        proves = c("d_MED", "d_AUTO", "CART", "STEROID", "permissible_subs",
                   "melp_suppress", "melp_inject", "apply_own_return_fold",
