@@ -276,17 +276,20 @@ drug's cover often runs past the line it belonged to, so measuring from the stop
 would put the advance that ended that line before the interval and count none.
 
 An advance is an **agent**, not a line. A line is read through the drug it
-opened on, and two things follow:
+opened on, so a drug that opens a line, discontinues, and opens another on a
+released restart (§4.3) counts **once** — `returning_drug_one_agent_twice`. A
+permissible substitute is the same agent as the drug it replaces (§4.4), so a
+biosimilar swap is not a second agent either.
 
-- **One agent that opens two lines is one agent.** A drug that opens a line,
-  discontinues, and opens another on a released restart (§4.3) counts once —
-  `returning_drug_one_agent_twice`.
-- **A transplant or CAR-T is not an agent**, so a line it opened counts
-  nothing. A drug returning into an ALLO or CAR-T line therefore sees no
-  advance at all, and §4.3's release keeps it.
+**Transplants and CAR-T are not in that count.** They keep the rules they have
+everywhere else (§6), where they are standalone line-defining events, and one
+that **opened a line** between the two doses **overrides the fold** whatever the
+agent count says: a drug returning across a transplant is not returning to the
+line it left.
 
-A permissible substitute is the same agent as the drug it replaces (§4.4), so a
-biosimilar swap is not a second agent.
+A transplant the line owns overrides nothing. An AUTO inside the line's own
+window (§6.5), or a planned tandem partner (§6.3), opens no line, so it is not
+a line start and never reaches the test.
 
 A return only joins the line that actually contains it. While lines are built in
 order the count is relative to the line being built, so a return with another

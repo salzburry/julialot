@@ -25,9 +25,9 @@ regimen window is PART of that line, not a reason to start the next one.
   F8  B returns in the gap between two
       episodes of 2L's own drug              -> it no longer breaks that
       drug's run-out chain; the line runs through
-  F9  B returns after a single-day ALLO 2L   -> NO fold. The request counts
-      AGENTS, and an ALLO line was opened by no agent, so nothing advanced
-      and the engine's own restart rule keeps the return
+  F9  B returns after a single-day ALLO 2L   -> NO fold. A transplant that
+      opened a line in between is a standalone boundary and overrides the
+      fold, so the engine's own restart rule keeps the return
   F10 ...and after a CAR-T 2L with no
       consolidation drug                     -> the same
   F11 B returns with NO advance in between   -> count 0, not the request's
@@ -36,9 +36,9 @@ regimen window is PART of that line, not a reason to start the next one.
   F13 B returns with TWO advances in between -> count 2, starts a line
   F14 B's return has a follow-up episode     -> one course, one answer: the
       whole course folds, not only its first episode
-  F15 a PROCEDURE opens the line in between  -> it is not an agent, so it does
-      not count. One agent (DARA) advanced the line, so the return folds -
-      into the CAR-T line, which is the line that contains it
+  F15 a PROCEDURE opens the line in between  -> it overrides the fold. One
+      agent advanced the line, but a transplant or CAR-T keeps the engine's
+      own rules and a line it opened is a boundary of its own
   F16 the only procedure in between is a
       PLANNED TANDEM                          -> it continues the line and
       opens nothing, so it is no advance: the return still folds
@@ -210,13 +210,11 @@ def main():
        "F14: the whole returning course folds, not only its first episode")
     ok(n(fold, 'F14') == 2 and fold['F14'][1][2] == rs.d(IX + 600),
        "F14: ...and one line owns it, so no line opens on the follow-up")
-    ok(n(ref, 'F15') == 4 and n(fold, 'F15') == 3,
-       "F15: the CAR-T is no agent, so one agent advanced and the return folds")
-    ok(n(fold, 'F15') == 3 and fold['F15'][1][2] == rs.d(IX + 250)
+    ok(n(ref, 'F15') == 4 and n(fold, 'F15') == 4,
+       "F15: a CAR-T opened a line in between, and that overrides the fold")
+    ok(n(fold, 'F15') == 4 and fold['F15'][1][2] == rs.d(IX + 250)
        and fold['F15'][1][3] == 'DISCONTINUATION',
-       "F15: ...LOT2 keeps its own discontinuation, and the CAR-T line takes it")
-    ok(n(fold, 'F15') == 3 and fold['F15'][2][2] == rs.d(IX + 480),
-       "F15: ...carried to the return's cover, day 480")
+       "F15: ...so LOT2 keeps its own discontinuation")
 
     ok(n(ref, 'F18') == 4 and n(fold, 'F18') == 3,
        "F18 contract: one agent opening two lines refuses the fold")
@@ -240,8 +238,8 @@ def main():
     ok(n(ref, 'F9') == 3 and ref['F9'][2][1] == rs.d(IX + 300),
        "F9 contract: the return after the ALLO line starts a line of its own")
     ok(fold.get('F9') == ref.get('F9'),
-       "F9 fold-in: an ALLO line was opened by no AGENT, so nothing counts "
-       "and the return keeps its own line")
+       "F9 fold-in: the ALLO opened the line in between, so it overrides the "
+       "fold and the return keeps its own line")
     ok(n(ref, 'F10') == 3 and ref['F10'][2][1] == rs.d(IX + 300),
        "F10 contract: the same after a drugless CAR-T line")
     ok(fold.get('F10') == ref.get('F10'),

@@ -67,9 +67,9 @@ FOLDIN_CELLS <- list(
                      "line's SPAN owns the return - the regimen string and ",
                      "drug counts do not change - agents of EVERY earlier ",
                      "line fold, not only the last one's, and an AGENT is ",
-                     "what is counted, so a transplant- or CAR-T-opened line ",
-                     "counts nothing. Those three readings are open for the ",
-                     "study team to confirm")))
+                     "what is counted - transplants stay outside it, and a ",
+                     "line one opened overrides the fold. Those three ",
+                     "readings are open for the study team to confirm")))
 
 report_plan <- function(cells) {
   cat("\nThe MAP fold-in rule, as two builds.\n\n")

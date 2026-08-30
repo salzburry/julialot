@@ -84,22 +84,20 @@ note's case at all — nothing advanced, so the drug is returning to the line it
 left and the engine's ordinary restart rule keeps it.
 
 Agents, not lines, because that is the note's own word. A line is read through
-the drug it opened on, and two things follow. Both were checked on planted
-patients before the change and both are intended:
+the drug it opened on, so drug D opening line 2, stopping, restarting past the
+discontinuation gap and opening line 3 is **one** agent. Counting lines it was
+two advances, and a drug returning from line 1 was refused a fold on one
+drug's treatment holiday.
 
-- **One agent that opens two lines is one agent.** Drug D opens line 2, stops,
-  restarts past the discontinuation gap and opens line 3. Counting lines that
-  was two advances and a drug returning from line 1 was refused a fold.
-  Counting agents it is one, and the drug folds.
-- **A transplant or CAR-T is not an agent**, so a line it opened counts
-  nothing. A drug returning into an ALLO or CAR-T line now sees no advance at
-  all and keeps its own line, where before it folded. And where a CAR-T opened
-  a line in between but only one drug did, the return now folds.
+**Transplants and CAR-T are outside the count.** They keep the rules they have
+everywhere else, where they are standalone line-defining events, and one that
+opened a line between the two doses overrides the fold whatever the agent count
+says. One the line owns — inside its window, or a planned tandem partner —
+opens no line and overrides nothing.
 
-The second is a consequence of the wording rather than an aim of it. It is the
-one thing here worth putting back to the study team in words: *should a
-transplant count as an advance?* The build says no, because the note says
-agents.
+The one thing this changes that nobody asked for: a drug returning into a line
+that a transplant or CAR-T opened no longer folds, because that line
+contributes no agent and the transplant overrides besides. It used to fold.
 
 **The interval is dose to dose**, not stop to return. A drug's cover often runs
 past the line it belonged to, so measuring from where it stopped would put the

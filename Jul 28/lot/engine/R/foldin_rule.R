@@ -92,19 +92,20 @@ foldin_on <- function(cfg) isTRUE(cfg$apply_map_foldin)
 #
 # What is counted is DIFFERENT AGENTS that opened a line, which is the request
 # in its own words: "two or more different agents were introduced in between".
-# So a line is read through the drug that started it, and two things follow
-# that counting LINES did not do:
+# A line is read through the drug that started it, so one agent that opens a
+# line, discontinues, and opens another on a released restart (§4.3) is ONE
+# agent. Counting LINES made that two advances and refused the fold on one
+# drug's treatment holiday.
 #
-#   one agent that opens two lines is ONE agent. A drug opening a line,
-#   discontinuing, and opening another on a released restart (§4.3) used to
-#   count twice and refuse the fold. It counts once.
+# TRANSPLANTS AND CAR-T ARE NOT IN THAT COUNT AT ALL. They keep the engine's
+# own rules, where they are standalone line-defining events, and one that
+# OPENED A LINE between the two doses OVERRIDES the fold - whatever the agent
+# count says. A drug returning across a transplant is not returning to the
+# line it left.
 #
-#   a line opened by a TRANSPLANT or CAR-T has no agent, so it counts nothing.
-#   A drug returning into an ALLO or CAR-T line therefore sees no advance at
-#   all, and the engine's ordinary restart rule keeps it.
-#
-# The second is a consequence of the wording rather than an aim of it, and it
-# is written down in STUDY_TEAM_ASKS.md as such.
+# One that the line OWNS is not a boundary and overrides nothing: an AUTO
+# inside the line's own window, or a planned tandem partner, opens no line, so
+# it is not a line start and never reaches the test.
 #
 # count = 0 is not the request's case at all: nothing advanced the line, so the
 # drug is returning to the line it left, and that is the engine's ordinary
@@ -131,8 +132,13 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
           AND NOT EXISTS (SELECT 1 FROM melp_suppress_dates msd
                           WHERE msd.PATID = ms.PATID
                             AND msd.SUPPRESS_DT = ms.MAP_START_DT)"
-  # The line being built is not in lot_long yet, so its own opener is unioned
-  # into the set below. The start-candidate statement has no such line.
+  # The line being built is not in lot_long yet, so its own start is unioned
+  # into both sets below. The start-candidate statement has no such line.
+  this_tx <- if (is.null(n_start) || is.null(n_type)) "" else paste0("
+      UNION
+      SELECT ", n_tbl, ".PATID, ", n_start, " AS OPEN_DT
+      FROM ", n_tbl, "
+      WHERE ", n_type, " <> 'MED'")
   this_line <- if (is.null(n_start) || is.null(n_type)) "" else paste0("
       UNION
       SELECT ", n_tbl, ".PATID, ", n_start, " AS OPEN_DT,
@@ -249,13 +255,14 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
     ),
     -- The AGENT that opened each line. The request counts two or more
     -- different AGENTS, not lines, so a line is read through the drug that
-    -- started it: the non-steroid medication dosed on its start date.
+    -- started it: the non-steroid medication dosed on its start date. One
+    -- agent that opens a line, discontinues, and opens another on a released
+    -- restart (LOT_RULES.md 4.3) is one agent, not two. A permissible
+    -- substitute collapses to the drug it replaces - 4.4 already says a
+    -- substitution is not a change of agent.
     --
-    -- Two consequences of taking that wording literally, both intended:
-    -- a line opened by a transplant or CAR-T has no agent and contributes
-    -- nothing to the count, and one agent that opens two lines is still one
-    -- agent. A permissible substitute collapses to the drug it replaces -
-    -- §4.4 already says a substitution is not a change of agent.
+    -- MED-started lines only. A line a transplant or CAR-T opened has no
+    -- agent, and foldin_tx_between below is what reads those instead.
     foldin_openers AS (
       SELECT DISTINCT l.PATID, l.LOT_START_DT AS OPEN_DT,
              coalesce(ps.original_med, ms.MAP_MED_TYPE) AS OPENER
@@ -266,19 +273,38 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
       LEFT JOIN permissible_subs ps ON ps.substitute_med = ms.MAP_MED_TYPE
       WHERE l.LOT_START_TYPE = 'MED' AND {line_pred}{this_line}
     ),
-    -- How many different agents opened a line strictly between the two doses.
-    -- A LEFT JOIN and a count, not a correlated subquery: the translation has
-    -- to survive Spark and the harness alike. count(DISTINCT) rather than
-    -- count(): the in-this-line join beside it multiplies rows, and distinct
-    -- is what the request asks for anyway.
+    -- Transplants and CAR-T keep the engine's own rules and are not counted
+    -- as agents at all. One that OPENED A LINE in between overrides the fold
+    -- outright: it is a standalone boundary, and a drug returning across it is
+    -- not returning to the line it left.
+    --
+    -- Read as a line start rather than re-derived from the transplant tables,
+    -- which is what makes it exact. A transplant the line owns - inside its
+    -- own window, or a planned tandem partner - opens no line, so it is not
+    -- in here and does not override anything.
+    foldin_tx_opened AS (
+      SELECT l.PATID, l.LOT_START_DT AS OPEN_DT
+      FROM lot_long l
+      WHERE l.LOT_START_TYPE <> 'MED' AND {line_pred}{this_tx}
+    ),
+    -- How many different agents opened a line strictly between the two doses,
+    -- and whether a transplant opened one there too. A LEFT JOIN and a count,
+    -- not a correlated subquery: the translation has to survive Spark and the
+    -- harness alike. count(DISTINCT) rather than count(): the joins beside it
+    -- multiply rows, and distinct is what the request asks for anyway.
     foldin_counted AS (
       SELECT k.PATID, k.AGENT, k.COURSE_START_DT, k.MAP_START_DT,
-             count(DISTINCT fo.OPENER) AS N_ADVANCES{between_sel}
+             count(DISTINCT fo.OPENER) AS N_ADVANCES,
+             max(CASE WHEN tx.PATID IS NOT NULL THEN 1 ELSE 0 END) AS N_TX{between_sel}
       FROM foldin_epi k{join_n}
       LEFT JOIN foldin_openers fo
         ON fo.PATID = k.PATID
        AND fo.OPEN_DT >  k.PREV_COURSE_DT
-       AND fo.OPEN_DT <  k.MAP_START_DT{between_join}
+       AND fo.OPEN_DT <  k.MAP_START_DT
+      LEFT JOIN foldin_tx_opened tx
+        ON tx.PATID = k.PATID
+       AND tx.OPEN_DT >  k.PREV_COURSE_DT
+       AND tx.OPEN_DT <  k.MAP_START_DT{between_join}
       WHERE k.PREV_COURSE_DT IS NOT NULL
       GROUP BY k.PATID, k.AGENT, k.COURSE_START_DT, k.MAP_START_DT
     ),
@@ -286,7 +312,7 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
     foldin_folded AS (
       SELECT DISTINCT PATID, AGENT, COURSE_START_DT
       FROM foldin_counted
-      WHERE N_ADVANCES = 1{between_pred}
+      WHERE N_ADVANCES = 1 AND N_TX = 0{between_pred}
     ),
     -- Exactly one advance, and the return has to be in THIS line.
     --
