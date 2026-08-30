@@ -52,9 +52,13 @@ does a transplant or CAR-T that breaks that line. Distance alone does not: a
 course long after the drugs ran out still belongs to the line when nothing
 happened in between.
 
-A transplant breaks the line only when the engine's own rules say it does —
-past the line's induction window, and not the second of a planned tandem pair.
-Both rules read the same test.
+A transplant breaks the line only when the engine's own rules say it does, and
+those rules differ by kind. An **autologous** transplant breaks it only past the
+line's induction window and only when it is not the second of a planned tandem
+pair — inside the window, or as a tandem partner, the line owns it and it
+breaks nothing. An **allogeneic** transplant or a **CAR-T** breaks the line
+wherever it falls after the line's start, with no window test at all. Both
+rules read the same helper, so neither can drift from the other.
 
 ---
 

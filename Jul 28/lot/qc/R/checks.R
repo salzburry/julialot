@@ -475,10 +475,36 @@ LOT_QC_CHECKS <- list(
                     "the line's end there - but only for a drug the PREVIOUS ",
                     "line carried, which is what a fold requires. A drug that ",
                     "is neither in the window nor a previous-line agent got ",
-                    "into the regimen some other way and is still caught."),
-       needs = c("final", "map", "allo"),
+                    "into the regimen some other way and is still caught. ",
+                    "A permissible substitute and the drug it replaces are ",
+                    "ONE agent, in both directions (4.4), so the previous ",
+                    "line carrying either counts as carrying the other. ",
+                    "Matching the reported name alone failed a folded ",
+                    "biosimilar whose previous line named the reference ",
+                    "product - a fail on valid output."),
+       needs = c("final", "map", "allo", "subs"),
        sql = function(t, p) counted(paste0("
-    WITH ", qc_window_sql(t, p), "
+    WITH ", qc_window_sql(t, p), ",
+    -- Every name this drug could wear in the previous line's regimen: itself,
+    -- the drug it stands in for, and the substitutes that stand in for it.
+    -- Both directions, because 4.4 makes the pair one agent whichever half a
+    -- line happens to report.
+    w_alias AS (
+      SELECT PATID, LOT_NUM, MED_ABBR, MED_ABBR AS ALIAS FROM reg
+      UNION ALL
+      SELECT w.PATID, w.LOT_NUM, w.MED_ABBR, s.original_med
+      FROM reg w INNER JOIN ", t$subs, " s ON s.substitute_med = w.MED_ABBR
+      UNION ALL
+      SELECT w.PATID, w.LOT_NUM, w.MED_ABBR, s.substitute_med
+      FROM reg w INNER JOIN ", t$subs, " s ON s.original_med = w.MED_ABBR
+    ),
+    prev_carried AS (
+      SELECT DISTINCT a.PATID, a.LOT_NUM, a.MED_ABBR
+      FROM w_alias a
+      INNER JOIN ", t$final, " pl
+        ON cast(pl.PATID as string) = a.PATID AND pl.LOT_NUM = a.LOT_NUM - 1
+      WHERE array_contains(split(coalesce(pl.LOT_BASE_MEDS, ''), ' '), a.ALIAS)
+    )
     SELECT ", mask("w.PATID"), " AS pid, w.LOT_NUM, w.MED_ABBR
     FROM reg w
     LEFT JOIN ", t$map, " ms
@@ -495,11 +521,9 @@ LOT_QC_CHECKS <- list(
     # through, since anything inside the line would pass.
     if (!isTRUE(p$foldin)) "" else paste0("
        OR NOT EXISTS (
-            SELECT 1 FROM ", t$final, " pl
-            WHERE cast(pl.PATID as string) = w.PATID
-              AND pl.LOT_NUM = w.LOT_NUM - 1
-              AND array_contains(split(coalesce(pl.LOT_BASE_MEDS, ''), ' '),
-                                 w.MED_ABBR))
+            SELECT 1 FROM prev_carried pc
+            WHERE pc.PATID = w.PATID AND pc.LOT_NUM = w.LOT_NUM
+              AND pc.MED_ABBR = w.MED_ABBR)
           AND NOT EXISTS (
             SELECT 1 FROM ", t$map, " ms2
             WHERE cast(ms2.PATID as string) = w.PATID

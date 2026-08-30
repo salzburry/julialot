@@ -85,6 +85,32 @@ PATS = [
     P('F3', L1 + [('DARA', 'MAB', 200, 400), ('BORT', 'PI', 300, 360),
                   ('CARF', 'PI', 300, 380)]),
     P('F4', L1 + [('DARA', 'MAB', 200, 400), ('BORTB', 'PI', 300, 360)]),
+    # F4r: F4 with the reference product in place of the substitute, and
+    # nothing else changed. 4.4 makes the pair one agent, so the two patients
+    # have to come out with the same lines - same dates, same end reasons.
+    # Counting lines alone cannot see the difference: the run-out chain read a
+    # substitute's single distant episode as this line's cover, because the
+    # interrupt scan looked only between a drug's OWN episodes and a substitute
+    # the patient never took in the line has none to look between. F4 ended 1L
+    # on day 199 as MED_ADD where F4r ended it on day 80 as DISCONTINUATION.
+    P('F4r', L1 + [('DARA', 'MAB', 200, 400), ('BORT', 'PI', 300, 360)]),
+    # F4d/F4e: the pair the OTHER way round in ordinary line-building, not in
+    # the fold. 1L reports the biosimilar and the reference product returns.
+    # 4.4 makes them one agent whichever half the line names, so the return
+    # cannot open a line - and the two patients have to come out identical.
+    # The substitution expansion ran reference -> substitute only, so the
+    # biosimilar-first patient had the reference product open 2L for them.
+    P('F4d', [('LEN', 'IMID', 0, 80), ('BORTB', 'PI', 0, 80),
+              ('BORT', 'PI', 450, 510)]),
+    P('F4e', [('LEN', 'IMID', 0, 80), ('BORT', 'PI', 0, 80),
+              ('BORTB', 'PI', 450, 510)]),
+    # F4f: a folded drug, then the equivalent product after it. BORT folds
+    # into 2L; BORTB arriving later is the same agent, so it belongs to 2L
+    # too. Adding only the exact folded abbreviation to the working set, BORTB
+    # ended 2L as an addition while the next line refused to open on it - and
+    # that treatment sat in no line at all.
+    P('F4f', L1 + [('DARA', 'MAB', 200, 900), ('BORT', 'PI', 450, 510),
+                   ('BORTB', 'PI', 600, 660)]),
     # F4b: the reverse direction. BORTB is 1L's regimen drug and BORT - the
     # drug it stands in for - is what returns. Expanding the raw regimen picked
     # up substitutes of a named drug but not the drug a named substitute stands
@@ -244,6 +270,14 @@ def build(foldin):
     #
     # Not "a drug appears in one line only" - a drug legitimately returns in a
     # later line and is that line's regimen too.
+    # The shipped QC, over a population that HAS a substitution pair. This is
+    # the only place it can be: run_synthetic is the harness that normally runs
+    # the catalogue, and its six hundred patients cannot be built at all with a
+    # non-empty permissible_subs - statement 27 spills the disk. So the checks
+    # that decide which drugs are one agent were never exercised, and C1 failed
+    # a legitimately folded biosimilar for want of a test that could see it.
+    if foldin:
+        QC.extend(qc_findings(con, sqldir))
     OWNERSHIP[foldin] = {
         "orphan": con.execute("""
             SELECT ms.PATID, ms.MAP_MED_TYPE, cast(ms.MAP_START_DT AS date)
@@ -272,10 +306,41 @@ def build(foldin):
     return lines
 
 
+def qc_findings(con, sqldir):
+    """Every fail-severity row the shipped catalogue returns on this build.
+
+    Asks checks.R for its own SQL rather than re-implementing any of it - a
+    rewrite can be right while the shipped check is wrong, which is exactly
+    what C1 was.
+    """
+    qcfile = os.path.join(sqldir, "qc.tsv")
+    r = subprocess.run(["Rscript", os.path.join(HERE, "emit_qc.R"), qcfile],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return ["emit_qc.R failed: " + (r.stdout + r.stderr).strip()[:200]]
+    out = []
+    with open(qcfile) as fh:
+        head = fh.readline().rstrip("\n").split("\t")
+        for line in fh:
+            row = dict(zip(head, line.rstrip("\n").split("\t")))
+            if not row["sql"] or row["severity"] != "fail":
+                continue
+            try:
+                n, detail = con.execute(
+                    rs.to_duckdb(row["sql"].replace("\\n", "\n"))).fetchone()
+            except Exception as ex:
+                out.append(f"{row['id']} could not run: {str(ex).splitlines()[0][:80]}")
+                continue
+            if n:
+                out.append(f"{row['id']}: {n} - {row['what']}"
+                           + (f"  e.g. {detail}" if detail else ""))
+    return out
+
+
 # Filled by build(): the reported regimen per (arm, patient, line), and the
 # three ownership queries. Kept beside the line table so an assertion can ask
 # about either without a second build.
-REGIMEN, OWNERSHIP = {}, {}
+REGIMEN, OWNERSHIP, QC = {}, {}, []
 
 
 def regimen(foldin, pid, lot):
@@ -313,12 +378,24 @@ def main():
 
     ok(n(ref, 'F4') == 3 and n(fold, 'F4') == 2,
        "F4: the permissible substitute folds exactly like the drug it replaces")
+    ok(fold.get('F4') == fold.get('F4r') and ref.get('F4') == ref.get('F4r'),
+       "F4/F4r: ...and the whole line - dates and end reasons, not just the "
+       "count - is what the reference product gives")
+    ok(not QC, "the shipped QC has no fail on a build with a substitution "
+               "pair" + (": " + "; ".join(QC) if QC else ""))
+    ok(n(fold, 'F4d') == 1 and fold.get('F4d') == fold.get('F4e'),
+       "F4d/F4e: the pair is one agent whichever half the regimen names, so "
+       "neither half's return opens a line")
     ok(n(ref, 'F4b') == 3 and n(fold, 'F4b') == 2,
        "F4b: ...and so does the reference product when the substitute is the "
        "regimen drug")
     ok(n(ref, 'F4c') == 3 and n(fold, 'F4c') == 2
        and fold['F4c'][1][2] == rs.d(IX + 500),
        "F4c: the pair dosed on one day folds as one course, to day 500")
+
+    ok(n(fold, 'F4f') == 2 and fold['F4f'][1][2] == rs.d(IX + 900),
+       "F4f: a folded drug brings its whole agent, so the equivalent product "
+       "after it stays in the line and is not left outside every line")
 
     ok(ref.get('F5') == fold.get('F5') and n(ref, 'F5') == 1,
        "F5: a restart with no newer line in between stays in the line it left")

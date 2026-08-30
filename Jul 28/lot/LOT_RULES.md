@@ -151,9 +151,15 @@ Worked example: `induction_lot1_within` / `induction_lot1_beyond`.
 Every distinct non-steroid agent whose episode starts from the start date
 through day 59 joins line 1's regimen — `induction_window_days` days inclusive
 of day 0. `LOT_BASE_MEDS` and `LOT_MED_CNT` are those observed agents.
-Permissible biosimilar substitutes enter the set used for discontinuation and
-added-medication logic, but are not counted in `LOT_MED_CNT` and not listed in
-`LOT_BASE_MEDS`.
+A permissible biosimilar substitute is **derived** into the set used for
+discontinuation and added-medication logic, and a drug that reaches that set
+only by derivation is neither counted in `LOT_MED_CNT` nor listed in
+`LOT_BASE_MEDS`. A substitute the patient actually received in the window is a
+different case: it has an episode of its own, so it is an observed agent and is
+listed and counted like any other. A patient given both halves of a declared
+pair inside one window therefore reports both and counts two, where §4.4 calls
+them one agent everywhere else. Whether the reported regimen should collapse
+the pair is an open question for the study team.
 
 ### 3.3 A regimen is bounded by the date the line ended
 
@@ -176,9 +182,11 @@ span*, and an early transplant makes those two different.
 
 ### 3.4 Line 1's first autologous transplant is part of induction
 
-A first-ever transplant does not end line 1 and does not open line 2. Lines 2 to
-5 do not keep this convention — there the first transplant outside the previous
-line's window ends the line (§4.1).
+A first-ever transplant **inside line 1's 60-day window** does not end line 1
+and does not open line 2; it holds the line open to its own date instead
+(§6.5). One outside that window ends line 1 and opens line 2 like any other,
+first or not. Lines 2 to 5 do not keep even the in-window convention — there
+the first transplant outside the previous line's window ends the line (§4.1).
 
 ---
 
@@ -196,7 +204,7 @@ end of observation.
 | `d_MED` | earliest non-steroid MM agent, excluding the previous line's own regimen (§4.3) and its permissible substitutes (§4.4). Two agents are excluded by rules of their own: a short melphalan course (§4.7) and a returning earlier-line drug the count folds (§4.8) |
 | `d_ALLO` | earliest allogeneic transplant |
 | `d_CART` | earliest CAR-T. At LOT2, one inside line 1's induction window is excluded — §6.4 |
-| `d_AUTO` | earliest autologous transplant that is (i) outside the previous line's applicable window measured from that line's **start** — 0 days if ALLO-started, 44 if CAR-T-started, 29 otherwise — and (ii) not within `sct_tandem_days` of the immediately preceding AUTO, where **that** AUTO is itself inside the same window (§6.3) |
+| `d_AUTO` | earliest autologous transplant that is (i) outside the previous line's applicable window measured from that line's **start** — 0 days if ALLO-started, 44 if CAR-T-started, **59 where the previous line is line 1**, 29 otherwise. It is the window that line owns, so a LOT2 candidate is read against line 1's 60 days and not against the 30 lines 2-5 use for themselves — §6.5 has the table — and (ii) not within `sct_tandem_days` of the immediately preceding AUTO, where **that** AUTO is itself inside the same window (§6.3) |
 
 Unlike line 1, a first-ever AUTO can open a line here.
 
@@ -267,6 +275,10 @@ opens a line.
 exactly one agent advanced the line, it joins the line it returns in.
 
 ### 4.8 A returning drug joins the line it returns in, after one agent
+
+> Out of numerical order on purpose. §4.3 and §4.8 are one idea applied to two
+> scopes — the line's own drug coming back, and an earlier line's — and reading
+> them apart is harder than reading them together. §4.4 follows.
 
 Worked example: `returning_drug_one_advance` / `returning_drug_two_advances`.
 
@@ -448,14 +460,19 @@ a drug the patient has not stopped cannot open the next line (§4.3). The chain
 stops at the first break, and there are two kinds
 (`lot/engine/R/prior_regimen.R`):
 
-- **the drug's own discontinuation.** An episode whose gap to the next reaches
-`map_discon_gap_days` carries `MAP_DISCON_FLG` and the chain stops there, so
-the line ends at its own run-out rather than spanning the absence. The
-returning episode is a restart, released by §4.3.
+- **the drug's own discontinuation — not under the rule the study pins.**
+`apply_own_return_fold` is `TRUE`, so a drug's own gap no longer breaks its
+chain: the episode after it belongs to the line it left, and the line runs on
+over the absence (§4.3). Both halves of that rule move together, and this is
+the half that stopped the chain.
 
-  Never for a permissible substitute: a substitution does not advance the line
-  (§4.4), and breaking here while §4.3 refuses the same drug would end a line
-  on a restart no line could own.
+  With `apply_own_return_fold` `FALSE` — the engine's older rule, kept for
+  comparison builds — an episode whose gap to the next reaches
+  `map_discon_gap_days` carries `MAP_DISCON_FLG`, the chain stops there, and
+  the returning episode is a restart §4.3 releases. Never for a permissible
+  substitute even then: a substitution does not advance the line (§4.4), and
+  breaking here while §4.3 refuses the same drug would end a line on a restart
+  no line could own.
 - **a different agent that would end the line.** Deliberately narrow: a drug in
   **this** line's own regimen does not break it, and neither does a permissible
   substitute of one — so a second regimen agent refilling mid-line cannot
@@ -820,6 +837,8 @@ reasons, and those cases route by their earliest applicable event.
 | Line 1's end cascade and the confirmation buffer | `lot/engine/R/steps/06_lot1_end.R` |
 | Lines 2-5: start, regimen, end, confirmation buffer | `lot/engine/R/steps/10_lot2_5_base.R` |
 | The prior-regimen rule and the run-out chain | `lot/engine/R/prior_regimen.R` |
+| The melphalan short-course rule — §4.7 | `lot/engine/R/melp_rule.R` |
+| The returning-drug fold-in — §4.8 | `lot/engine/R/foldin_rule.R` |
 | Line criteria and truncation | `lot/engine/R/line_criteria.R` |
 | The CAR-T induction rule | `lot/engine/R/cart_rule.R` |
 | The scenarios above, machine-checked | `lot/validation/R/vignettes.R` |

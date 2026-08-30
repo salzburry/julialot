@@ -56,6 +56,9 @@ EXPECTED_FAILURES <- list(
     # is taken over the differing lines themselves, so any change to WHICH
     # lines differ moves it, and re-pinning is a conscious act. Both are read
     # over comment-stripped code, so prose does not churn them.
+    # permissible_subs is written out rather than left a temporary view, so the
+    # QC package can read which drugs are one agent instead of guessing.
+    "01_codelists.R: differs beyond the approved deviations in 2 line(s) [6d3ee77f]",
     "03_mma_map.R: differs beyond the approved deviations in 217 line(s) [1bc3749e]",
     "05_sct.R: differs beyond the approved deviations in 11 line(s) [6457f58f]",
     # lot1_regimen_cutoff, and the regimen window and the per-drug
@@ -72,7 +75,7 @@ EXPECTED_FAILURES <- list(
     # SCT_AUTO_CONT and end_natural at LOT2-5, LOT{n}_AUTO_HOLD_DT, auto_cand
     # reading the previous line's own window, the regimen cutoff, and the tandem
     # gap. Re-pinned deliberately, which is what this list is for.
-    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 953 line(s) [1b07f98a]")
+    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 959 line(s) [726cf031]")
 )
 
 # How one suite's output is read. Its own suite is validation/hygiene/

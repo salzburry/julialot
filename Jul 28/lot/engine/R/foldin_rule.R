@@ -1,5 +1,6 @@
-# The MAP fold-in rule. Off unless APPLY_MAP_FOLDIN is TRUE. Off, every hook
-# here emits nothing, so the contract build's SQL is unchanged.
+# The MAP fold-in rule. CONTRACT pins APPLY_MAP_FOLDIN TRUE, so the study's
+# build runs it. Set FALSE - which only a comparison cell does - every hook
+# here emits nothing and the statements are what they were before this file.
 #
 # The rule, from the study team: a patient on drug A + drug B in one line,
 # advanced to the next line by a new drug C, whose drug B then reappears after
@@ -242,7 +243,7 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
              -- history, so what matters is how far that history reaches.
              CASE WHEN datediff(MAP_START_DT,
                     max(MAP_END_DT) OVER (PARTITION BY PATID, AGENT
-                                          ORDER BY MAP_START_DT
+                                          ORDER BY MAP_START_DT, MAP_MED_TYPE
                                           ROWS BETWEEN UNBOUNDED PRECEDING
                                                    AND 1 PRECEDING))
                        >= {discon_days} THEN 1 ELSE 0 END AS IS_RETURN
@@ -253,7 +254,7 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
              min(MAP_START_DT) OVER (PARTITION BY PATID, AGENT, R) AS COURSE_START_DT
       FROM (SELECT PATID, MAP_MED_TYPE, MAP_START_DT, AGENT,
                    sum(IS_RETURN) OVER (PARTITION BY PATID, AGENT
-                                        ORDER BY MAP_START_DT
+                                        ORDER BY MAP_START_DT, MAP_MED_TYPE
                                         ROWS BETWEEN UNBOUNDED PRECEDING
                                                  AND CURRENT ROW) AS R
             FROM foldin_runs) q
@@ -261,10 +262,20 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
     -- Every episode beside the agent's PREVIOUS one. That pair is the
     -- request's two doses, and the interval between them is what the count
     -- reads - dose to dose, not stop to return.
+    --
+    -- MAP_MED_TYPE is the tiebreak in all three windows above, and it is not
+    -- decoration. The partition is the AGENT, so a reference product and its
+    -- substitute dosed on ONE day are two peers with equal sort keys, and
+    -- Spark leaves the order between such peers undefined - two runs of the
+    -- same build could read a different predecessor. duckdb happening to be
+    -- stable proves nothing about the warehouse. The key makes the answer the
+    -- same every run; which of the pair sorts first is not a judgement this
+    -- rule makes.
     foldin_epi AS (
       SELECT c.PATID, c.MAP_MED_TYPE, c.MAP_START_DT, c.AGENT, c.COURSE_START_DT,
              lag(c.MAP_START_DT) OVER (PARTITION BY c.PATID, c.AGENT
-                                       ORDER BY c.MAP_START_DT) AS PREV_COURSE_DT
+                                       ORDER BY c.MAP_START_DT,
+                                                c.MAP_MED_TYPE) AS PREV_COURSE_DT
       FROM foldin_course c
     ),
     -- The AGENT that opened each line. The request counts two or more
@@ -421,12 +432,13 @@ foldin_lotn_ctes <- function(cfg, lot_num, induction_end = NULL) {
 # still named itself in the regimen, and QC C1 caught it - a regimen drug with
 # no episode anywhere inside its line.
 #
-# The line's own WORKING set - base_meds, and everything discon_per_med and the
-# candidate gates read - is deliberately not changed. That set is built before
-# these CTEs and the fold consults it, so feeding the fold back into it has no
-# order that works. What changes is what the line REPORTS, and that is what the
-# next line's exclusion set, the next line's fold set and every analysis read
-# off lot_long.
+# base_meds ITSELF is not rewritten. It is built before these CTEs and the fold
+# consults it, so feeding the fold back into that table has no order that
+# works. What the readers get instead is foldin_base_meds() below - base_meds
+# with the folded drugs taken out, which is what discon_per_med's boundary scan
+# reads, and which exists exactly because part of the line must not break the
+# line. So the working set the readers see does change; the table it is
+# derived from does not.
 foldin_regimen_union <- function(cfg, lot_num, induction_end) {
   if (!foldin_on(cfg)) return("")
   paste0("\n", glue("
@@ -511,6 +523,21 @@ foldin_base_meds_ctes <- function(cfg) {
         SELECT PATID, MED_ABBR, SUBSTITUTE_ONLY FROM base_meds
         UNION ALL
         SELECT DISTINCT PATID, MED_ABBR, 0 AS SUBSTITUTE_ONLY FROM foldin_episodes
+        UNION ALL
+        -- The folded drug's permissible substitutes, both directions. A drug
+        -- the fold made part of this line brings its whole agent with it, or
+        -- the equivalent product arriving next ends the line the fold just
+        -- claimed - and the next line refuses to open on it, because there it
+        -- IS recognised as the same agent. That left the treatment in no line.
+        SELECT DISTINCT fe.PATID, ps.substitute_med AS MED_ABBR,
+               1 AS SUBSTITUTE_ONLY
+        FROM foldin_episodes fe
+        INNER JOIN permissible_subs ps ON fe.MED_ABBR = ps.original_med
+        UNION ALL
+        SELECT DISTINCT fe.PATID, ps.original_med AS MED_ABBR,
+               1 AS SUBSTITUTE_ONLY
+        FROM foldin_episodes fe
+        INNER JOIN permissible_subs ps ON fe.MED_ABBR = ps.substitute_med
       )
       GROUP BY PATID, MED_ABBR
     ),"))

@@ -268,6 +268,15 @@ build_lot_n <- function(con, lot_num,
       SELECT pma.PATID, ps.substitute_med AS MED_ABBR, 1 AS IS_SUB
       FROM prev_meds_array pma
       INNER JOIN permissible_subs ps ON pma.MED_ABBR = ps.original_med
+      UNION ALL
+      -- Both directions. 4.4 makes a substitute and the drug it replaces one
+      -- agent whichever half the previous line happens to name, so a regimen
+      -- of the biosimilar has to exclude the reference product too. One way
+      -- only, a patient given the biosimilar in the earlier line had the
+      -- reference product open the next one for them.
+      SELECT pma.PATID, ps.original_med AS MED_ABBR, 1 AS IS_SUB
+      FROM prev_meds_array pma
+      INNER JOIN permissible_subs ps ON pma.MED_ABBR = ps.substitute_med
 {prior_regimen_excl_sql()}
       )
       GROUP BY PATID, MED_ABBR

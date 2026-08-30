@@ -626,16 +626,7 @@ melp_prev_line_ctes <- function(cfg, prev_med_window, cart_consolidation_days) {
       LATERAL VIEW explode(split(coalesce(pe.PREV_BASE_MEDS, ''), ' ')) e AS m
       WHERE m <> ''
     ),
-    melp_sc_base AS (
-      SELECT PATID, MED_ABBR, min(IS_SUB) AS SUBSTITUTE_ONLY
-      FROM (
-        SELECT PATID, MED_ABBR, 0 AS IS_SUB FROM melp_sc_prev
-        UNION ALL
-        SELECT p.PATID, ps.substitute_med AS MED_ABBR, 1 AS IS_SUB
-        FROM melp_sc_prev p
-        INNER JOIN permissible_subs ps ON p.MED_ABBR = ps.original_med
-      )
-      GROUP BY PATID, MED_ABBR
+    melp_sc_base AS ({regimen_with_subs_sql('melp_sc_prev')}
     ),
     melp_sc_restart AS ({map_restart_sql()}
     ),")) else ""
@@ -691,16 +682,11 @@ melp_lot1_ctes <- function(cfg) {
     -- of the two each one is. Same shape as base_meds in 04_lot1_base.R,
     -- because the candidate gate below has to read the same rule that step
     -- reads - see melp_add_candidates.
-    melp_base_meds AS (
-      SELECT PATID, MED_ABBR, min(IS_SUB) AS SUBSTITUTE_ONLY
-      FROM (
-        SELECT PATID, MED_ABBR, 0 AS IS_SUB FROM lot1_induction_meds
-        UNION ALL
-        SELECT im.PATID, ps.substitute_med AS MED_ABBR, 1 AS IS_SUB
-        FROM lot1_induction_meds im
-        INNER JOIN permissible_subs ps ON im.MED_ABBR = ps.original_med
-      )
-      GROUP BY PATID, MED_ABBR
+    -- Spliced rather than written out again, so this rule's idea of which
+    -- drugs are one agent cannot drift from the engine's. Written out here, it
+    -- expanded the pair one way only and re-derived an added medication the
+    -- line itself had already refused.
+    melp_base_meds AS ({regimen_with_subs_sql('lot1_induction_meds')}
     ),
     -- Spliced from prior_regimen.R rather than written again here, for the
     -- same reason: one definition of what a restart is.
