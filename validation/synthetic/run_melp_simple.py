@@ -79,6 +79,20 @@ PATS = [
     # - and its planned tandem partner on day 180, 150 days later with nothing
     # in between. The engine says the pair continues the line. SJ0 is the same
     # patient without the partner, and the two must land identically.
+    # SK: a procedure between the course and the drug that would confirm it.
+    # LEN covers 1L, a short course lands on day 100, an allograft on 102 ends
+    # 1L, and DARA arrives on 105. DARA is no candidate against 1L once the
+    # allograft has ended it, so it cannot make 1L's course advance - and a
+    # line BACKDATED to day 100 whose whole regimen is that course is one the
+    # rule says does not exist. Confirmation scanned only for the agent.
+    dict(P('SK', [('LEN', 'IMID', 0, 400), ('MELP', 'ALKY', 100, 127),
+                  ('DARA', 'MAB', 105, 300)]),
+         sct_ac=[('ALLO', IX + 102)]),
+    # SKn: the same with no allograft, where DARA does confirm the course and
+    # the line opens on the melphalan date. The pair is what tells the
+    # transplant test from the agent test.
+    P('SKn', [('LEN', 'IMID', 0, 400), ('MELP', 'ALKY', 100, 127),
+              ('DARA', 'MAB', 105, 300)]),
     P('SJ0', [('LEN', 'IMID', 0, 600), ('MELP', 'ALKY', 500, 527)]),
     P('SJ', [('LEN', 'IMID', 0, 600), ('MELP', 'ALKY', 500, 527)]),
 ]
@@ -125,6 +139,20 @@ def main():
 
     def starts(lines, pid):
         return [r[1] for r in lines.get(pid, [])]
+
+    # SK/SKn: a transplant between the course and the drug that would confirm
+    # it. With the allograft the course confirms nothing and 1L simply runs to
+    # it; without it the course advances on its own date, as SKn shows. The
+    # pair fails as one line vs three if confirmation stops reading
+    # transplants.
+    ok(len(smp['SK']) == 3 and starts(smp, 'SK')[0] == rs.d(IX)
+       and starts(smp, 'SK')[1] == rs.d(IX + 102)
+       and starts(smp, 'SK')[2] == rs.d(IX + 105),
+       "SK simplified: an agent arriving after the allograft cannot confirm "
+       "the course, so no line is backdated to the melphalan date")
+    ok(len(smp['SKn']) == 2 and starts(smp, 'SKn')[1] == rs.d(IX + 100),
+       "SKn simplified: ...and with no allograft in between it confirms it, "
+       "opening the line on the melphalan date")
 
     ok(len(ref['SA']) == 2 and starts(ref, 'SA')[1] == rs.d(IX + 100),
        "SA no rule: the short course opens a line of its own on day 100")

@@ -236,6 +236,22 @@ PATS = [
     # and read as a change by the other, and 3L opened on the melphalan date.
     P('F19', L1 + [('DARA', 'MAB', 200, 600),
                    ('MELP', 'ALKY', 450, 477), ('BORT', 'PI', 455, 520)]),
+    # F19n: F19 with the melphalan course taken out and nothing else changed.
+    # The course is SUPPRESSED, so it decides nothing and B's fold must read
+    # the same either way - regimen and count included. The "genuinely new
+    # agent" scan did not know about suppressed dates, so it treated the
+    # course as a drug arriving and dropped B from 2L's regimen while leaving
+    # every date identical: a doublet reported as a single agent, invisible in
+    # the shape of the line.
+    P('F19n', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 455, 520)]),
+    # F27: melphalan is in 1L's OWN regimen and returns as a suppressed short
+    # course during 2L. 4.7 says a held course joins neither regimen nor
+    # count; the fold folded it in regardless, and the two rules disagreed
+    # about one episode.
+    P('F27', [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 0, 27),
+              ('DARA', 'MAB', 200, 600), ('MELP', 'ALKY', 450, 477)]),
+    P('F27n', [('LEN', 'IMID', 0, 80),
+               ('DARA', 'MAB', 200, 600), ('MELP', 'ALKY', 450, 477)]),
 ]
 
 
@@ -423,6 +439,16 @@ def main():
     ok(n(fold, 'F15') == 4 and fold['F15'][1][2] == rs.d(IX + 250)
        and fold['F15'][1][3] == 'DISCONTINUATION',
        "F15: ...so LOT2 keeps its own discontinuation")
+
+    ok(regimen(True, 'F19', 2) == regimen(True, 'F19n', 2),
+       "F19/F19n: a suppressed course decides nothing, so the folded regimen "
+       "reads the same with and without it (" + str(regimen(True, 'F19', 2))
+       + " vs " + str(regimen(True, 'F19n', 2)) + ")")
+    ok(regimen(True, 'F27', 2) == regimen(True, 'F27n', 2),
+       "F27/F27n: a held melphalan course joins neither regimen nor count, "
+       "even where the fold would otherwise take it ("
+       + str(regimen(True, 'F27', 2)) + " vs "
+       + str(regimen(True, 'F27n', 2)) + ")")
 
     ok(n(ref, 'F19') == 3 and ref['F19'][2][1] == rs.d(IX + 450),
        "F19 contract: the melphalan course advances the line on its own date")

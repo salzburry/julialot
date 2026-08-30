@@ -113,7 +113,7 @@ LOT_DIMENSIONS <- list(
                      "the line is folded into the line it returns in, joining ",
                      "that line's regimen rather than opening the next."),
        where = paste0("lot/engine/R/steps/10_lot2_5_base.R:270, :291, :301, ",
-                      ":326, :361, :459, :460, :461, lot/engine/R/melp_rule.R:513, :529, ",
+                      ":326, :361, :459, :460, :461, lot/engine/R/melp_rule.R:537, :553, ",
                       "lot/engine/R/prior_regimen.R:37, lot/engine/R/foldin_rule.R:355"),
        proves = c("d_MED", "d_AUTO", "CART", "STEROID", "permissible_subs",
                   "melp_suppress", "melp_inject", "apply_own_return_fold",

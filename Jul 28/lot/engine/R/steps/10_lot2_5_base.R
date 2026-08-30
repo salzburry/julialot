@@ -246,7 +246,7 @@ build_lot_n <- function(con, lot_num,
       INNER JOIN lot_patient_input p ON ll.PATID = p.PATID
       WHERE ll.LOT_NUM = {prev}
         AND ll.LOT_BASE_END_DT IS NOT NULL
-    ),{melp_prev_line_ctes(cfg, prev_med_window, cart_consolidation_days)}{foldin_prior_ctes(cfg, prev)}
+    ),{melp_prev_line_ctes(cfg, prev_med_window, cart_consolidation_days, lot_num)}{foldin_prior_ctes(cfg, prev)}
     -- The previous line's regimen and its permissible biosimilar substitutes.
     -- Neither starts LOT_N. A substitute continues the drug it replaces, and
     -- the drug itself was part of the previous regimen.

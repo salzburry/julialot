@@ -441,6 +441,16 @@ foldin_lotn_ctes <- function(cfg, lot_num, induction_end = NULL) {
 # derived from does not.
 foldin_regimen_union <- function(cfg, lot_num, induction_end) {
   if (!foldin_on(cfg)) return("")
+  # A melphalan course the melphalan rule SUPPRESSED, by date. Two things here
+  # have to know about it, and for one reason: that rule has already decided
+  # the course opens nothing, so this one must not read the same rows as a
+  # drug arriving. Same test foldin_count_ctes uses, so the count and the
+  # regimen cannot disagree about one episode.
+  supp <- function(alias) if (!melp_rule_on(cfg)) "" else paste0("
+        AND NOT (upper(trim(", alias, ".MAP_MED_TYPE)) = '", cfg$melp_med_abbr, "'
+                 AND EXISTS (SELECT 1 FROM melp_suppress_dates msd
+                             WHERE msd.PATID = ", alias, ".PATID
+                               AND msd.SUPPRESS_DT = ", alias, ".MAP_START_DT))")
   paste0("\n", glue("
       UNION
       SELECT ms.PATID, ms.MAP_MED_TYPE AS MED_ABBR, ms.MAP_MED_CLASS AS MED_CLASS
@@ -452,7 +462,7 @@ foldin_regimen_union <- function(cfg, lot_num, induction_end) {
        AND fm.MAP_START_DT = ms.MAP_START_DT
       LEFT JOIN base_meds bm
         ON bm.PATID = ms.PATID AND bm.MED_ABBR = ms.MAP_MED_TYPE
-      WHERE bm.MED_ABBR IS NULL
+      WHERE bm.MED_ABBR IS NULL{supp('ms')}
         AND ms.MAP_START_DT >= lot{lot_num}_start.LOT{lot_num}_START_DT
         AND ms.MAP_START_DT <= least(
               lot{lot_num}_start.OBS_END_DT,
@@ -472,7 +482,12 @@ foldin_regimen_union <- function(cfg, lot_num, induction_end) {
                   induction_end, glue(\'lot{lot_num}_start.LOT{lot_num}_START_DT\'))}
         )
         -- ...and nothing at or after a genuinely NEW agent, which ends the
-        -- line as an added medication. A return landing on the SAME DAY as one
+        -- line as an added medication. A SUPPRESSED melphalan course is not
+        -- one: the melphalan rule has already decided it opens nothing, and
+        -- reading it as an arrival here dropped a correctly folded drug from
+        -- the regimen while leaving the line's dates untouched - so the line
+        -- reported a doublet as a single agent and nothing in the shape of the
+        -- line showed it. A return landing on the SAME DAY as one
         -- belongs to the line that agent opens, not to this one: the count
         -- looks strictly before the return, so it does not see a same-day
         -- arrival and folds anyway. Without this the line reported a drug
@@ -489,7 +504,7 @@ foldin_regimen_union <- function(cfg, lot_num, induction_end) {
                               AND ob.MED_ABBR = nb.MAP_MED_TYPE)
             AND NOT EXISTS (SELECT 1 FROM foldin_meds ofm
                             WHERE ofm.PATID = nb.PATID
-                              AND ofm.MED_ABBR = nb.MAP_MED_TYPE)
+                              AND ofm.MED_ABBR = nb.MAP_MED_TYPE){supp('nb')}
         )"))
 }
 
