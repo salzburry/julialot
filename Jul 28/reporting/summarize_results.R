@@ -200,7 +200,7 @@ decisions <- data.frame(
     "Any old line's drugs, or just the last line's?",
     "Add the returning drug to the regimen, or just extend the line?",
     "Fold it in even after the line already ended?",
-    "The July rule or the simple 28-day one?",
+    "SETTLED - the 28-day rule is in the build now.",
     "What happens to a dose right next to a transplant?",
     "28 or 30 days for the course cap?",
     "Is melphalan+DEX 'melphalan alone'?",
@@ -225,14 +225,16 @@ if (!is.null(fp))
                  " patients change; ", n1(fp$N_LINE_COUNT_DIFFERENT),
                  " get a different number of lines."))
 if (!is.null(melp_tbl))
-  add_sum("MELP - the July rule (test copy)",
+  add_sum("MELP - the July rule (not used)",
           paste0("Melphalan-only lines ", n1(melp_tbl[2, 2]), " -> ",
                  n1(melp_tbl[2, 3]), "; lines it alone started ",
-                 n1(melp_tbl[3, 2]), " -> ", n1(melp_tbl[3, 3]), "."))
+                 n1(melp_tbl[3, 2]), " -> ", n1(melp_tbl[3, 3]),
+                 ". Measured against the build we ship, which already has ",
+                 "the 28-day rule in it."))
 if (!is.null(sp))
-  add_sum("MELP - the simple 28-day version",
+  add_sum("MELP - the 28-day rule we now use",
           paste0("Changes ", n1(sp$N_DIFFERENT), " of ", n1(sp$N_PATIENTS),
-                 " patients."))
+                 " patients against a build without it."))
 if (!is.null(fu_tbl)) for (i in seq_len(nrow(fu_tbl)))
   add_sum(paste0("Stopped prior line + 12 months cover, for ", fu_tbl[i, 1]),
           paste0(n1(fu_tbl[i, 2]), " stopped; ", n1(fu_tbl[i, 3]),
@@ -246,7 +248,10 @@ notes <- c(
   paste0("Built on ", run_line, "."),
   if (length(warn_lines)) paste0("WARNING: ", warn_lines,
                                  " - fix before sending out."),
-  "The rule tests are separate copies. The study's own numbers are unchanged.",
+  paste0("The 28-day melphalan rule is IN the numbers - a short melphalan ",
+         "course outside the start window no longer opens a line on its own. ",
+         "The MAP rule and the July melphalan rule are still separate test ",
+         "copies and are not in them."),
   paste0("'Affected' means: a drug from an old line came back after the new ",
          "line's window, and that alone is what splits the line today."),
   paste0("12 months = enrolled for the full 365 days before the line starts ",

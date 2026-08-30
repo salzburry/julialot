@@ -12,6 +12,13 @@
 # lot, builds no lines, and does not touch the run it measures - so it can be
 # run against the production tables without a rebuild.
 #
+# What it measures moved on 2026-08-30. The study adopted the melphalan
+# short-course rule (lot/LOT_RULES.md 4.7), so the finished run this reads has
+# already had melphalan boundaries suppressed and injected. The counts below
+# are therefore what the FIVE-BRANCH rule would change ON TOP of the rule the
+# run applies - a residual between two rules, not the size of the melphalan
+# question.
+#
 # What it cannot do: give the resulting line count or the line dates. Moving a
 # boundary changes which line an exposure falls in, whether an agent is inside
 # an induction window, regimen membership, discontinuation dates and every later
