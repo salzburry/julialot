@@ -34,8 +34,11 @@ What counts a new line, chosen as a set:
 - `new_agent` — a non-equivalent, non-supportive drug's episode after the line
   end. **Implemented**; this is the engine's core rule.
 - `same_regimen_gap_days` — a fresh episode of the *same* regimen after ≥ X days
-  advances the line (re-challenge). **Prototype**: the pinned-off melphalan rule
-  (`R/melp_rule.R`) is exactly this shape for one drug at 180 days. Ovarian's
+  advances the line (re-challenge). **Not implemented, and myeloma reads
+  `none`**: a re-challenge of the line's own regimen does not advance it there,
+  whatever the gap. `R/melp_rule.R` is NOT this shape — it is
+  `short_course_rule`, keyed on how long a course covers rather than on the gap
+  before it. Ovarian's
   platinum re-challenge and SCLC's sensitive relapse need it generally. Engine
   default without it: a base-drug refill stretches the line without bound.
 - `drop_based` — losing a drug from a combination advances. **Specified only**;

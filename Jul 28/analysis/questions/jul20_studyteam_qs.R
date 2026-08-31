@@ -33,7 +33,7 @@
 #   discontinuation dates and every later line.
 #
 #   (a) MELP: off unless JUL20_Q3A_MELP=TRUE. The melphalan question is
-#       answered in exploration/melphalan/.
+#       answered in lot/melphalan/.
 #   (b) CAR-T: a conformance check of the applied rule. A CAR-T inside LOT1's
 #       60-day induction window, while LOT1 is still open, is part of LOT1: it
 #       ends nothing and starts nothing. A CAR-T after LOT1 already ended may
@@ -1459,9 +1459,11 @@ main <- function() {
       "2026-08-30 and the build applies it - LOT_RULES.md 4.7. This screen ",
       "sizes the FIVE-BRANCH rule, which was measured and not adopted, and ",
       "it would size it on top of the rule the run already applies. ",
-      "exploration/melphalan/ holds that comparison - run_aug1_melp.R builds ",
-      "the cells, read_melp_asks.R and read_melp_decisions.R read them. Set ",
-      "JUL20_Q3A_MELP=TRUE to run the screen anyway."),
+      "lot/melphalan/ measures the rule the study DID adopt against a build ",
+      "without it - run_melp_simple.R builds the two cells, read_melp_asks.R ",
+      "reads them. The five-branch rule itself was removed on 2026-08-30; ",
+      "STUDY_TEAM_ASKS.md keeps the finding. Set JUL20_Q3A_MELP=TRUE to run ",
+      "the screen anyway."),
       stringsAsFactors = FALSE)
   else if (have_map)
     best_effort(q3_melp_screen(con, lot_long, map_tbl, tok$melp), "MELP rule screen")
@@ -1480,7 +1482,7 @@ main <- function() {
     }
   } else if (!q3a_on) {
     # NOT APPLICABLE, not a gap. The screen is off by design and the melphalan
-    # question is answered in exploration/melphalan/, so a default run is
+    # question is answered in lot/melphalan/, so a default run is
     # complete without it. Marking it a gap would push an operator toward
     # turning on the screen the summary says not to quote.
     write_out(melp, "melp_rule_totals")
@@ -1515,7 +1517,7 @@ main <- function() {
     "These screens identify the patients and line boundaries the two candidate rules would touch, from the already-derived LOT output. They do not re-derive lines: moving a boundary changes induction windows, regimens, discontinuation dates, add-med picks, transplant classification and every later line. Exact numbers need an isolated scenario re-run of the LOT derivation (separate scenario output tables; production untouched) once the rules are confirmed.",
     "",
     "-- (a) MELP screen --",
-    "The build applies the melphalan short-course rule (LOT_RULES.md 4.7) since 2026-08-30. This section sizes the five-branch rule that was NOT adopted, and it measures it on top of the rule the run already applies - so a small number here means the two rules agree, not that melphalan does not matter. Do not quote this section for the melphalan question; exploration/melphalan/ holds that comparison.",
+    "The build applies the melphalan short-course rule (LOT_RULES.md 4.7) since 2026-08-30. This section sizes the five-branch rule that was NOT adopted, and it measures it on top of the rule the run already applies - so a small number here means the two rules agree, not that melphalan does not matter. Do not quote this section for the melphalan question; lot/melphalan/ holds that comparison.",
     "The melp_rule_inventory file reports every MELP-attributable boundary, split by whether the line held an earlier MELP MAP, with the distribution of days between the two dates. The lines-shift file puts the current lines-per-patient distribution beside the screened one.",
     "",
     "-- (b) CAR-T induction-window rule --",
@@ -1570,7 +1572,7 @@ main <- function() {
       "LOT_LONG LOT_NUM=2 regimen; '(no 2L observed)' keeps the denominator at the full dual cohort",
       "member_enrollment.BUS on the span covering the LOT1 start; MCR=Medicare, COM=Commercial, blank=Unknown, else Other(<BUS>); anchor = LOT1 start date. 'Payer/type' is answered by this line-of-business split; a finer plan/product breakdown would need an explicitly approved enrollment field, configured the same way as the region source",
       if (nzchar(region_note)) region_note else "(not derived)",
-      "Q3b is a conformance check of the applied CAR-T rule over existing LOT output; Q3a is off by default and answered in exploration/melphalan/",
+      "Q3b is a conformance check of the applied CAR-T rule over existing LOT output; Q3a is off by default and answered in lot/melphalan/",
       "a line transition attributable to melphalan: prior line ended MED_ADD with MELP as the added drug, and/or the next line is MED-started on a MELP MAP start date",
       sprintf("any patient whose first CAR-T date falls within LOT1 start .. start+%dd (the %d-day induction window), classified for conformance with the applied rule: absorbed while open, free to start the next line once LOT1 was over, or - a violation - ending LOT1 on or the day before the infusion",
               VQS_W1 - 1, VQS_W1)),

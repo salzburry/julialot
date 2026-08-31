@@ -5,8 +5,16 @@ be. They are **not part of the deliverable** — only `Jul 28/` is deployed — 
 that is the whole reason they live here.
 
 ```
-Rscript validation/run_all.R                      every suite, one summary
+Rscript validation/run_gate.R                     every suite, one exit status
+Rscript validation/run_all.R                      the port and hygiene suites only
 ```
+
+`run_gate.R` is what the merge gate runs and what to run before pushing: it
+covers the study folder's suites as well as these, and it pins the port
+suite's known differences by identity so a new one fails and a fixed one
+fails too. `run_all.R` is the narrower loop for working on the suites in this
+directory - it has no expected-difference handling, so the port suite reads
+as failing there.
 
 ## Why they are outside the packages
 

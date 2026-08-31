@@ -1,7 +1,14 @@
 #!/usr/bin/env Rscript
-# Every validation suite, one summary.
+# The port and hygiene suites in THIS directory, one summary.
 #
 #   Rscript validation/run_all.R
+#
+# Not the merge gate, and not every suite. run_gate.R is the gate: it adds the
+# study folder's own suites and pins the port suite's known differences by
+# identity, so it can tell an expected difference from a new one. This cannot -
+# the port suite reads as failing here - which makes it the loop to use while
+# working on the suites in this directory, and the wrong thing to judge a
+# release by.
 #
 # A suite that cannot find the package or the baseline it compares against
 # reports SKIP and is counted separately - a checkout may hold one and not the

@@ -452,14 +452,10 @@ main <- function() {
       paste0("aug15_qs_map_splitting_affected_", stamp, ".csv, with the ",
              "per-patient review roster beside it; the rule itself is built ",
              "as a cell pair by exploration/lot/run_foldin_cells.R"),
-      paste0("exploration/melphalan: AUG1_EXECUTE=TRUE run_aug1_melp.R (the ",
-             "five-branch rule that was NOT adopted, measured against the ",
-             "contract build), then read_melp_asks.R and ",
-             "read_melp_decisions.R"),
-      paste0("exploration/melphalan: MELP_SIMPLE_EXECUTE=TRUE ",
-             "run_melp_simple.R - the adopted rule against a build with no ",
-             "melphalan rule, under melp_simple_ prefixes, both at the ",
-             "contract's 28-day cap"),
+      paste0("lot/melphalan: MELP_SIMPLE_EXECUTE=TRUE run_melp_simple.R - ",
+             "the adopted rule against a build with no melphalan rule, under ",
+             "melp_simple_ prefixes, both at the contract's 28-day cap - ",
+             "then read_melp_asks.R for the study team's three questions"),
       paste0("aug15_qs_discontinued_then_12mo_ce_", stamp, ".csv; chained ",
              "attrition ", attr_note)),
     stringsAsFactors = FALSE)
@@ -513,7 +509,7 @@ main <- function() {
               paste0("  The melphalan short-course rule IS applied in these ",
                      "lines (LOT_RULES.md 4.7); what it"),
               paste0("  changed is measured by ",
-                     "exploration/melphalan/run_melp_simple.R."))
+                     "lot/melphalan/run_melp_simple.R."))
   writeLines(status, file.path(out_dir, paste0("aug15_qs_run_status_", stamp, ".txt")))
 
   log_msg(SEP)

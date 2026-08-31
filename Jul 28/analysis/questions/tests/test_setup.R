@@ -847,7 +847,7 @@ cat("\n-- the July-20 melphalan screen cannot run by accident --\n")
 # It screens a one-sentence rule off persisted tables rather than by re-running
 # the engine, and both of its branches keep melphalan inside the line. The ask
 # is a five-branch table in which three branches advance it, built as three
-# complete LOT runs in exploration/melphalan/.
+# complete LOT runs, which were removed with that rule on 2026-08-30.
 #
 # Prose alone would not stop anyone running the script and quoting the numbers,
 # so the screen is gated. These hold the gate and the pointer together: a gate
@@ -858,10 +858,16 @@ j20 <- paste(readLines(file.path(ROOT, "jul20_studyteam_qs.R"), warn = FALSE),
 ok(grepl("JUL20_Q3A_MELP", j20, fixed = TRUE) &&
      grepl("NOT RUN.", j20, fixed = TRUE),
    "the melphalan screen is off unless JUL20_Q3A_MELP=TRUE")
-ok(grepl("exploration/melphalan/", j20, fixed = TRUE) &&
-     grepl("run_aug1_melp.R", j20, fixed = TRUE) &&
+# By path, and by a path that EXISTS. This asserted run_aug1_melp.R until the
+# five-branch package was removed, so the suite was holding the pointer to a
+# file that had gone - the pointer half of the gate, pointing nowhere.
+ok(grepl("lot/melphalan/", j20, fixed = TRUE) &&
+     grepl("run_melp_simple.R", j20, fixed = TRUE) &&
      grepl("read_melp_asks.R", j20, fixed = TRUE),
    "...and says where the melphalan question is answered, by path")
+for (f in c("run_melp_simple.R", "read_melp_asks.R"))
+  ok(file.exists(file.path(dirname(dirname(ROOT)), "lot", "melphalan", f)),
+     paste0("...and ", f, " is really there"))
 # The gate reads the environment ONCE, where the screen is called. A second
 # reference would mean some other answer in this file had been gated with it -
 # the DARA+BORT work in particular, which answers its own question and must

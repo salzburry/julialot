@@ -29,7 +29,7 @@ reading of how the rules interact, and the first warehouse run settles it.
 | `melp_course_split_by_a_transplant` | A transplant lands inside a brief melphalan course | - | No line starts on either dose. The course covers 21 days, which is under the cap, and it began outside any induction window - so it does not advance the line, wherever the transplant sits. The day-90 dose stays in 1L; the allograft's own line is carried to day 110 and owns the second. | to_confirm |
 | `melp_confirmed_beats_the_fold` | A confirmed melphalan course that is also a returning drug | - | A new line on day 300 - the melphalan date - carrying the melphalan and the day-305 agent. 2L keeps its own end and does NOT name melphalan: the course starts a line, so it is not a drug folding back into the line before it. | to_confirm |
 | `returning_drug_one_advance` | A drug returns after one advance | - | No new line. One agent advanced the line between B's two doses, so B joins 2L - the line's span carries it, and it joins 2L's regimen string too. | to_confirm |
-| `returning_drug_two_advances` | A drug returns after two advances | - | A new line at day 450. Treatment moved on twice while B was away, so B is not returning to the line it left and its return opens one. | to_confirm |
+| `returning_drug_two_advances` | A drug returns after two advances | - | A new line at day 450. B is a 1L drug and the fold set is the IMMEDIATELY previous line's regimen, so B is not in it at all - the count is never asked, and B opens a line as any other agent would. | to_confirm |
 | `returning_drug_two_agents_one_line` | Two drugs start one line while a drug is away | - | No new line. Two agents started 2L, but they advanced the line ONCE between them, so B sees one advance and joins 2L. | to_confirm |
 | `maintenance_to_relapse` | Maintenance running into relapse | - | Maintenance is NOT a line of its own here - contains_mtx_reg is a flag and there is no maintenance period. The relapse is handled by the ordinary rules, so the line count does not include a maintenance line. | derived |
 | `steroid_only_interval` | Steroid-only stretch between regimens | - | The steroid stretch neither starts nor continues a line. | derived |
@@ -175,7 +175,7 @@ reading of how the rules interact, and the first warehouse run settles it.
 **returning_drug_two_advances** - A drug returns after two advances
 
 - timeline: d+0 MED (1L starts on drug A and drug B); d+200 MED (drug C advances the line to 2L); d+300 MED (drug D advances it again, to 3L); d+450 MED (drug B comes back, during 3L)
-- why it is hard: The count is what separates a drug rejoining its own line from one re-introduced after the regimen has changed twice over.
+- why it is hard: The outcome the study team's note describes for two advances, reached by the scope rather than by the count. Scoped to the previous line the count cannot reach two, so this pins the ANSWER the 'two or more' clause gives and not the clause itself - which is unreachable, and said to be so in the rules and the contract.
 - rule: lot/engine/R/foldin_rule.R | N_ADVANCES
 
 **returning_drug_two_agents_one_line** - Two drugs start one line while a drug is away

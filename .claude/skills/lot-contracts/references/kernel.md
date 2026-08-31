@@ -58,9 +58,11 @@ bridging; the line ends the day before the CAR-T), and the post-runout guard
 them — the guard mirrors the next line's own trigger logic exactly).
 
 **LOT2–5 triggers**, all strictly after the previous line's end: the earliest
-non-supportive episode of a drug that is not an equivalent of a prior-line drug
-(a prior drug merely continuing does not trigger; a fresh episode of it after the
-line ended does); any ALLO; any CAR-T; any *unplanned* AUTO (outside the prior
+non-supportive episode of a drug that is not an equivalent of a drug in the
+PREVIOUS line's regimen (neither a prior drug continuing NOR a fresh episode of
+it after the line ended triggers - the line runs over the break instead; a drug
+last given two or more lines back is outside that scope and triggers like any
+other); any ALLO; any CAR-T; any *unplanned* AUTO (outside the prior
 line's window and not tandem). Earliest wins; same-day ties resolve
 ALLO > CART > AUTO > MED. ALLO lines span a single day with no regimen. The loop
 stops at the first empty line, cap 5.
@@ -90,5 +92,5 @@ criteria applied, and counts.
 | `R/steps/06_lot1_end.R` | CART_INIT, post-runout guard, LOT1's end ladder |
 | `R/steps/10_lot2_5_base.R` | next-line triggers, LOT2–5 assembly, publish |
 | `R/line_criteria.R` | the criteria layer |
-| `R/melp_rule.R` | the pinned-off melphalan mode — gap-advancement prototype |
+| `R/melp_rule.R` | the melphalan short-course rule, applied by every study build |
 | `R/build_lot.R` | run order, contract checks, attrition, face validity |

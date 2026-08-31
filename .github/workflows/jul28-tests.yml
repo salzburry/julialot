@@ -37,6 +37,12 @@ on:
   pull_request:
     paths: *paths
 
+# Read-only. Nothing here comments, pushes, or publishes - both jobs check out
+# the repository and run tests - so the token these jobs get should not be able
+# to do any of it. The default is broader than that.
+permissions:
+  contents: read
+
 jobs:
   suites:
     runs-on: ubuntu-latest
@@ -83,8 +89,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      # Pinned. These two are not incidental tooling: sqlglot TRANSLATES the
+      # Spark SQL this repository emits and duckdb EXECUTES it, so a new
+      # version of either can change what the harnesses assert without a line
+      # of this repository changing. A translation regression should arrive
+      # as a deliberate version bump with the harnesses re-run, not inside an
+      # unrelated pull request. These are the versions the planted cases were
+      # verified against.
       - name: Install Python dependencies
-        run: pip install duckdb sqlglot
+        run: pip install 'duckdb==1.5.5' 'sqlglot==30.17.0'
       # Each exits non-zero on its own failures. run_synthetic is last and
       # slowest - it draws six hundred patients and runs the shipped QC over
       # them - so the quick ones report first.

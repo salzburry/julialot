@@ -572,9 +572,14 @@ melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP",
   # LOT_START_TYPE = 'MED' says a medication won the tie-break, not which one,
   # so a line daratumumab also started that day exists under either reading.
   #
-  # A lower bound, deliberately: med_cand also passes over the previous line's
-  # agents expanded by permissible substitutes, and that expansion is a session
-  # view rather than a table this can read. That drops a line, not invents one.
+  # Still a lower bound, but no longer for the reason it was. The expansion
+  # over permissible substitutes used to be a session view this could not
+  # read; PERMISSIBLE_SUBS is written out now, so that is no longer what
+  # limits it. What remains is that LOT_START_TYPE = 'MED' does not record
+  # WHICH medication won the tie-break, so a line another agent also started
+  # that day cannot be told from one melphalan alone started. The count drops
+  # such a line rather than inventing one, which is the safe direction for a
+  # figure read as "melphalan alone did this".
   melp_only <- paste0("
       AND NOT EXISTS (SELECT 1 FROM ", map_tbl, " o
                       WHERE o.PATID = x.PATID
