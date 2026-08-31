@@ -346,10 +346,38 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
     -- A confirmed short course advances - on ITS first day. The confirming
     -- agent needs no help of its own: it is an engine candidate already, and
     -- later than this date by construction.
+    -- ONE COURSE, ONE ANSWER - the same statement suppression makes above,
+    -- for the other verdict. The course advances the line on its FIRST day,
+    -- and its later doses belong to the line that day opened; none of them
+    -- may open a line of its own. Only the first day is the boundary, so
+    -- melp_inject keeps carrying that alone and this carries the rest.
+    --
+    -- Suppression expanded to every dose from the start and injection did
+    -- not, so a course given as more than one dose had its later doses left
+    -- as ordinary candidates. Where a transplant then ended the line the
+    -- course had opened, a later dose opened another line - which 4.7
+    -- forbids outright.
     melp_inject AS (
       SELECT DISTINCT PATID, EXPO_DT AS INJECT_DT
       FROM melp_judged
       WHERE INSIDE = 0 AND SHORT = 1 AND CONFIRMED = 1
+    ),
+    -- ONE COURSE, ONE ANSWER - the same statement suppression makes above,
+    -- for the other verdict. The course advances the line on its FIRST day,
+    -- and its later doses belong to the line that day opened; none of them
+    -- may open a line of its own. melp_inject carries the boundary alone,
+    -- because only the first day is one; this carries the rest.
+    --
+    -- Suppression expanded to every dose from the start and injection did
+    -- not, so a course given as more than one dose left its later doses as
+    -- ordinary candidates. Where a transplant then ended the line the course
+    -- had opened, a later dose opened another line - which 4.7 forbids.
+    melp_inject_rest AS (
+      SELECT DISTINCT d.PATID, d.DOSE_DT
+      FROM melp_dose_expo d
+      INNER JOIN melp_inject i
+        ON i.PATID = d.PATID AND i.INJECT_DT = d.EXPO_DT
+      WHERE d.DOSE_DT <> d.EXPO_DT
     ),
     -- Suppressing and owning are two halves of one statement, exactly as in
     -- the five-branch modes: the line is carried to the course it refused a
@@ -361,16 +389,37 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
     -- supply. Capped at the line's own span.
     melp_hold AS (
       SELECT s.PATID, max(least(c.COURSE_END_DT, {span_end})) AS MELP_HOLD_DT
-      FROM melp_suppress s
+      FROM (SELECT PATID, SUPPRESS_DT AS EXPO_DT, 0 AS IS_INJECT
+            FROM melp_suppress
+            UNION ALL
+            -- An INJECTED course too, but ONLY where it has doses after its
+            -- first. Those are refused a line of their own just as a
+            -- suppressed course's are, so the line they fall in has to reach
+            -- them - and that is the line the boundary opened, or whatever a
+            -- transplant left in its place.
+            --
+            -- Two things this must not do. Not hold the line the boundary
+            -- ENDS: that would carry it across its own boundary and turn a
+            -- confirmed discontinuation at its run-out into a medication
+            -- addition on the melphalan date. And not hold anything at all
+            -- for a SINGLE-dose course - there is nothing after the boundary
+            -- to own, and holding then swallowed a later agent that should
+            -- have opened a line of its own.
+            SELECT DISTINCT i.PATID, i.INJECT_DT AS EXPO_DT, 1 AS IS_INJECT
+            FROM melp_inject i
+            INNER JOIN melp_dose_expo dz
+              ON dz.PATID = i.PATID AND dz.EXPO_DT = i.INJECT_DT
+             AND dz.DOSE_DT <> dz.EXPO_DT) s
       INNER JOIN melp_course c
-        ON c.PATID = s.PATID AND c.EXPO_DT = s.SUPPRESS_DT
+        ON c.PATID = s.PATID AND c.EXPO_DT = s.EXPO_DT
       INNER JOIN {line_tbl} ON {line_tbl}.PATID = s.PATID
       -- Bounded the same way melp_judged is, because suppressing and owning
       -- are two halves of one statement: a course this line refused a
       -- boundary to is a course this line has to hold. Carrying the lower
       -- bound here and not there suppressed a transplant-split course
       -- without giving it to anyone, and its later dose sat in no line.
-      WHERE s.SUPPRESS_DT <= {span_end}
+      WHERE s.EXPO_DT <= {span_end}
+        AND (s.IS_INJECT = 0 OR {line_tbl}.{start_col} >= s.EXPO_DT)
       GROUP BY s.PATID
     ),"))
 }
@@ -383,13 +432,47 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
 # medication, and nothing else. A date-only match also removed any OTHER drug
 # starting on a suppressed date, so a same-day switch to a new drug lost its
 # boundary and the line never ended.
+# Whether melphalan belongs in a line's REGIMEN, for the statement that builds
+# LOT_BASE_MEDS and LOT_MED_CNT.
+#
+# A held course joins neither (LOT_RULES.md 4.7). The induction-meds table is
+# built one step earlier and carries drug names without dates, so it cannot
+# apply the verdict itself - a course held at the COURSE level had its later
+# dose reported at the DOSE level, and a line whose whole melphalan exposure
+# was held still named it and counted it.
+#
+# So the test is asked here, where the verdict CTEs are in scope: melphalan
+# stays only if at least one of its episodes in this line's window was NOT
+# held. One unheld dose is real exposure and the regimen should say so; none
+# means the whole course was held, and the regimen should not.
+melp_regimen_filter <- function(cfg, line_tbl, start_col, induction_end) {
+  if (!melp_rule_on(cfg)) return("")
+  paste0("\n", glue("
+        WHERE NOT (upper(trim(im0.MED_ABBR)) = '{melp_abbr(cfg)}'
+                   AND NOT EXISTS (
+                     SELECT 1
+                     FROM map_stacked mz
+                     INNER JOIN {line_tbl} ON {line_tbl}.PATID = mz.PATID
+                     WHERE mz.PATID = im0.PATID
+                       AND upper(trim(mz.MAP_MED_TYPE)) = '{melp_abbr(cfg)}'
+                       AND mz.MAP_START_DT >= {line_tbl}.{start_col}
+                       AND mz.MAP_START_DT <= {induction_end}
+                       AND NOT EXISTS (SELECT 1 FROM melp_suppress_dates sz
+                                       WHERE sz.PATID = mz.PATID
+                                         AND sz.SUPPRESS_DT = mz.MAP_START_DT)))"))
+}
+
 melp_suppress_predicate <- function(cfg, alias = "ms") {
   if (!melp_rule_on(cfg)) return("")
   paste0("\n", glue("
         AND NOT (upper(trim({alias}.MAP_MED_TYPE)) = '{melp_abbr(cfg)}'
                  AND EXISTS (SELECT 1 FROM melp_suppress_dates s
                              WHERE s.PATID = {alias}.PATID
-                               AND s.SUPPRESS_DT = {alias}.MAP_START_DT))"))
+                               AND s.SUPPRESS_DT = {alias}.MAP_START_DT))
+        AND NOT (upper(trim({alias}.MAP_MED_TYPE)) = '{melp_abbr(cfg)}'
+                 AND EXISTS (SELECT 1 FROM melp_inject_rest r
+                             WHERE r.PATID = {alias}.PATID
+                               AND r.DOSE_DT = {alias}.MAP_START_DT))"))
 }
 
 # The rows the rule adds, as a UNION arm on first_add_candidates. Bounded to

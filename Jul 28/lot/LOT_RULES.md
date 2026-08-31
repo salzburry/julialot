@@ -418,6 +418,23 @@ a drug folding back into the line before it. Worked example:
 drug whose only episode began after that line had ended, and its end date and
 end reason moved with it.
 
+**One course, one answer — for BOTH verdicts.** A suppressed course comes off
+the candidate list at every one of its doses, and so does a confirmed one:
+only its FIRST day is the boundary, and the doses after that belong to the
+line that day opened. The line they fall in is carried to reach them, exactly
+as it is for a suppressed course. Worked example:
+`melp_confirmed_course_is_one_course`. Judged the other way, a confirmed
+course given as more than one dose had its later doses left as ordinary
+candidates, and where a transplant ended the line the course had opened, one
+of them opened another.
+
+**A confirmed course is a boundary for OTHER drugs too.** It opens the next
+line, so a drug returning after it is returning into that line, not into the
+one before — §4.8 counts it as an advance like any other agent. A *suppressed*
+course is the opposite: it opens nothing, so it is no advance at all. The two
+verdicts answer "did something arrive here?" differently, and reading one for
+the other let a returning drug fold into a line that had already ended.
+
 **A transplant inside a course does not split it.** One course gets one
 answer, and the answer is settled by where the course STARTS — the ask says a
 course outside **any** induction window does not advance the line, so a

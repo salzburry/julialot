@@ -608,8 +608,8 @@ build_lot_n <- function(con, lot_num,
         {med_flag_exprs},
         {class_flag_exprs}
       FROM (
-        SELECT PATID, MED_ABBR, MED_CLASS
-        FROM lot{lot_num}_induction_meds{foldin_regimen_union(cfg, lot_num, lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days))}
+        SELECT im0.PATID, im0.MED_ABBR, im0.MED_CLASS
+        FROM lot{lot_num}_induction_meds im0{melp_regimen_filter(cfg, glue('lot{lot_num}_start'), glue('LOT{lot_num}_START_DT'), lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days))}{foldin_regimen_union(cfg, lot_num, lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days))}
       ) im
       GROUP BY im.PATID
     ),
