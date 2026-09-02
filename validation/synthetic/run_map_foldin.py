@@ -172,10 +172,14 @@ PATS = [
     # previous line's regimen is CARF, and the fold set is that regimen, so B
     # is not a fold candidate and the count is never asked. Scoped to the
     # previous line the count can only ever be nought or one; the two-or-more
-    # clause is the rule the study team asked for and is unreachable, which
-    # STUDY_TEAM_ASKS.md carries as an open scope question. What this patient
-    # pins is the OUTCOME the clause describes, by whichever route: a return
-    # with two advances behind it gets a line.
+    # clause is the rule the study team asked for and is unreachable at that
+    # scope. The scope is not an open question - it was settled on 30 Aug at
+    # the immediately previous line, and STUDY_TEAM_ASKS.md section 2 carries
+    # the decision and why the two readings are not equivalent. So the clause
+    # stays unreachable by choice, and what this patient pins is the OUTCOME
+    # it describes, by whichever route: a return with two advances behind it
+    # gets a line. Widening the scope is what would make the clause fire, and
+    # it would be a change to the settled rule, not a bug fix.
     P('F13', L1 + [('DARA', 'MAB', 200, 260), ('CARF', 'PI', 300, 600),
                    ('BORT', 'PI', 450, 510)]),
     # F14: the returning COURSE, not just its first episode. B returns at d450

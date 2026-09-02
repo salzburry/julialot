@@ -348,9 +348,12 @@ regimen.** A drug is in that regimen only through an episode starting at or
 after that line's start (§3.3), and the return has to be inside the line being
 built, so exactly one line can have opened in between. The row is kept because
 it states the rule the study team asked for. The scope is settled at the
-previous line (`STUDY_TEAM_ASKS.md`), so the row is a statement of the rule
-rather than a branch waiting to fire; widening the scope is what would make it
-reachable.
+previous line — decided 30 Aug, recorded in section 2 of `STUDY_TEAM_ASKS.md`
+with why the two readings are not equivalent — so the row is a statement of the
+rule rather than a branch waiting to fire. Widening the scope is what would make
+it reachable, and that is a change to the settled rule, not a defect to fix.
+The fold-in harness pins the outcome the row describes, by the route the narrow
+scope actually takes, and says so where it does (`F13`).
 
 A return only joins the line that actually contains it. While lines are built in
 order the count is relative to the line being built, so a return with another
