@@ -488,11 +488,35 @@ the earlier start and puts the course in the regimen:
 | a steroid | it does not start — the course is held | — |
 | a drug of the previous regimen | **its own date** | that drug |
 | a drug never given before | **the melphalan date** | the course and that drug |
+| the returning drug first, then a new one | **the returning drug's date** | both drugs; the course is held |
 
 The middle row is a deliberate choice, not a gap. A returning drug is the
 returning drug (§4.8), and a course it arrives beside is still a course nobody
 started a new regimen on — so it opens a line where the engine's own rules give
 it one, and takes nothing back to the melphalan date with it.
+
+**A drug that opened a line is a boundary, and an agent after one belongs to
+the line it opened.** The last row is that rule, not a fourth case: the
+returning drug starts its line on its own date (row two), so the new agent five
+days later arrives inside that line and is no candidate against the one before
+it. It cannot make that line's course advance, and the course is held where it
+falls. This is the same test a transplant already gets — a course on day 100
+with an allograft on 102 and a new drug on 105 is not confirmed by that drug —
+applied to the only medication that can be a boundary here without confirming
+the course itself. Worked example: `ZB1`/`ZB2` in the melphalan harness.
+
+The two drugs starting on the **same** day are not this case. Neither is after
+the other; they open one line together, and the new one confirms as it would
+alone.
+
+**A course belongs to the line the returning drug opened, not the one before
+it.** Ownership asks the same question from the other side and used to answer
+it differently: a return was read as folded into the line before it wherever
+the previous regimen named that drug, so a CAR-T line went on to claim a course
+falling after the return, and was carried from a single day to the day before
+it. Where a procedure opened the line, §4.8 refuses the fold — so the return is
+line-defining there and the course after it is not the procedure line's.
+Worked example: `ZB3`/`ZB3x`.
 
 **"Not new" is the previous line only, the same scope §4.8's fold set reads.**
 A drug last given further back than that is a new agent here and confirms a

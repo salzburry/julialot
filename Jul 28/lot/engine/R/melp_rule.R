@@ -77,11 +77,11 @@ melp_abbr    <- function(cfg) toupper(trimws(cfg$melp_med_abbr %||% "MELP"))
 melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end,
                                base_tbl = NULL, restart_tbl = NULL,
                                not_new_ctes = "", cart_from = NULL,
-                               first_auto_exempt = FALSE) {
+                               first_auto_exempt = FALSE, proc_line = NULL) {
   if (!melp_rule_on(cfg)) return("")
   melp_simplified_ctes(cfg, line_tbl, start_col, span_end, induction_end,
                        base_tbl, restart_tbl, not_new_ctes, cart_from,
-                       first_auto_exempt)
+                       first_auto_exempt, proc_line)
 }
 
 # The simplified rule's decision, emitting the same four CTE names the
@@ -115,7 +115,7 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
 melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
                                  induction_end, base_tbl, restart_tbl,
                                  not_new_ctes = "", cart_from = NULL,
-                                 first_auto_exempt = FALSE) {
+                                 first_auto_exempt = FALSE, proc_line = NULL) {
   if (is.null(base_tbl) || is.null(restart_tbl))
     stop("The simplified melphalan rule needs the judged line's base set and ",
          "restart flags to tell a confirming agent from a drug the line ",
@@ -125,6 +125,14 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
   not_new_join <- if (!nzchar(not_new_ctes)) "" else
     "\n      LEFT JOIN melp_not_new nn
         ON nn.PATID = c.PATID AND nn.MED_ABBR = c.MAP_MED_TYPE"
+  # No exception here, whatever else the returning drug does. "A returning drug
+  # does not confirm a course, even where it opens a line" (LOT_RULES.md 4.7):
+  # confirming asks whether a NEW agent arrived, and a returning one is not new
+  # wherever it lands. Relaxing this at a procedure-opened line - where the
+  # fold is refused and the drug is line-defining - let BORT of line 1 confirm
+  # a course and backdate the line to the melphalan date, which is the middle
+  # row of 4.7's own table read backwards. The boundary the returning drug DOES
+  # make is a separate test, in the NOT EXISTS at the end of melp_confirm.
   not_new_pred <- if (!nzchar(not_new_ctes)) "" else
     "\n        AND nn.MED_ABBR IS NULL"
   # The same set, for melp_taken's "another agent got here first" scan. A drug
@@ -136,26 +144,76 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
   # already there.
   #
   # It reaches wider than the folded episodes: a previous-line agent whose
-  # return the count does NOT fold is excluded too. That set is not empty, and
-  # this comment used to say it was. A transplant or CAR-T that opened a line
-  # in between overrides the fold (4.8), so the return neither folds nor stays
-  # in the line it left - it opens a line of its own. F9, F10 and F15 in the
-  # fold-in harness are planted patients of exactly that shape.
+  # return the count does NOT fold would be excluded too. A transplant or CAR-T
+  # that opened a line in between overrides the fold (4.8), so the return
+  # neither folds nor stays in the line it left - it opens a line of its own.
+  # F9, F10 and F15 in the fold-in harness are planted patients of that shape.
   #
-  # So the exclusion here can take a return that DID start a line. Whether that
-  # changes which line owns a later course is open: the timelines tried for it
-  # all came back with the course in the line the return opened, which is the
-  # answer wanted. It is written down because the reach is real, not because a
-  # patient is known to fall in it.
+  # That over-reach was written down here as open, with no patient known to
+  # fall in it, and one was found: a CAR-T line, BORT of line 1 returning
+  # inside it, and a lone short course after that return. The return was
+  # invisible to this scan, so the CAR-T line claimed a course the return's own
+  # line owns and was carried from a single day to the day before it, its
+  # SCT_CART end becoming a MED_ADD. The same hole let a later new agent
+  # confirm a course across that return in melp_confirm. Both are closed by the
+  # gate below: at a procedure-opened line the exclusion does not apply.
+  # Planted as ZB1/ZB3 beside their new-agent twins in the melphalan harness.
   # An anti-join and a WHERE test, not an EXISTS in the ON clause. `o` is
   # INNER JOINed here, so moving the condition out of the join changes
   # nothing - and Spark does not accept a correlated subquery in a join
   # condition before 4.0 (SPARK-45009).
+  # A MEDICATION boundary, the same idea as the transplant one at the end of
+  # melp_confirm and for the same reason. A drug that opened a line between the
+  # course and the agent is a boundary too, so an agent arriving after it
+  # belongs to the line that drug opened and cannot make this line's course
+  # advance.
+  #
+  # Only one kind of drug can be that boundary and not confirm the course
+  # itself: a previous-line drug returning at a procedure-opened line, where
+  # 4.8 refuses the fold and leaves it line-defining. Every other drug in the
+  # interval is either no candidate at all - a steroid, melphalan, a drug this
+  # line already holds - or a candidate, in which case it confirms the course
+  # and the boundary IS the melphalan date. So the set is exactly this one.
+  #
+  # Past the line's own induction window, because a return inside it is
+  # collected into this line's regimen and opens nothing. STRICTLY before the
+  # agent, not on or before as the transplant test has it: a transplant and a
+  # same-day drug are ordered by the engine's own tie-break and the drug lands
+  # in the transplant's line, while two drugs starting the same day start one
+  # line together and neither is "after" the other.
+  confirm_med_boundary <- if (!nzchar(not_new_ctes) || is.null(proc_line)) "" else
+    glue("
+        AND NOT EXISTS (
+          SELECT 1
+          FROM map_stacked b
+          INNER JOIN melp_not_new bn
+            ON bn.PATID = b.PATID AND bn.MED_ABBR = b.MAP_MED_TYPE
+          WHERE b.PATID = mc.PATID
+            AND b.MAP_MED_CLASS <> 'STEROID'
+            AND upper(trim(b.MAP_MED_TYPE)) <> '{abbr}'
+            AND b.MAP_START_DT >  mc.EXPO_DT
+            AND b.MAP_START_DT <  c.MAP_START_DT
+            AND b.MAP_START_DT >  {induction_end}
+            AND {proc_line}
+        )")
   taken_not_new_join <- if (!nzchar(not_new_ctes)) "" else
     "\n      LEFT JOIN melp_not_new tnn
         ON tnn.PATID = o.PATID AND tnn.MED_ABBR = o.MAP_MED_TYPE"
+  # ...with one exception, and only here. Where a PROCEDURE opened the line
+  # being judged, the fold-in is refused outright - 4.8: a transplant or CAR-T
+  # that opened a line in between overrides the fold - so the returning drug is
+  # folded into nothing. It is line-defining and starts the next line on its
+  # own date, which is exactly what this scan is asking about: another agent
+  # got here first, so the course is not this line's.
+  #
+  # The test is the judged line's own start type, not a re-derivation of the
+  # fold. The fold CTEs are spliced after these and cannot be read from here
+  # (R/foldin_rule.R records the same one-way dependency from its side), and
+  # they do not need to be: a return inside a procedure-opened line has crossed
+  # that procedure by construction, which is the whole of the override.
   taken_not_new_pred <- if (!nzchar(not_new_ctes)) "" else
-    "\n        AND tnn.MED_ABBR IS NULL"
+    if (is.null(proc_line)) "\n        AND tnn.MED_ABBR IS NULL"
+    else paste0("\n        AND (tnn.MED_ABBR IS NULL OR ", proc_line, ")")
   paste0("\n", glue("
     melp_doses AS (
       SELECT PATID, MAP_START_DT AS DOSE_DT
@@ -274,7 +332,7 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
             AND ctx.TX_DT <= c.MAP_START_DT{line_break_window_pred(cfg, 'ctx',
                   induction_end, paste0(line_tbl, '.', start_col), cart_from,
                   first_auto_exempt)}
-        )
+        ){confirm_med_boundary}
     ),
     -- A course belongs to ONE line: the latest whose start precedes it.
     --
@@ -1119,5 +1177,7 @@ melp_lotn_ctes <- function(cfg, lot_num, induction_window_days,
     cfg, ls, glue("LOT{lot_num}_START_DT"), glue("{ls}.OBS_END_DT"),
     lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days),
     base_tbl = "base_meds", restart_tbl = "map_restart",
-    not_new_ctes = not_new)
+    not_new_ctes = not_new,
+    proc_line = if (!nzchar(not_new)) NULL else
+      glue("{ls}.LOT{lot_num}_START_TYPE <> 'MED'"))
 }

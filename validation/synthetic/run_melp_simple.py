@@ -173,6 +173,41 @@ PATS = [
     # post-procedure dose entered the new line's regimen and its drug count.
     P('SR', [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 195, 195),
              ('MELP', 'ALKY', 205, 222)], ac=[('CART', 200)]),
+    # ZB*: a previous-line drug returning at a PROCEDURE-opened line is
+    # line-defining - the CAR-T it crossed overrides the fold (4.8) - so it is
+    # a boundary like any other, and the melphalan rule has to see it as one.
+    # It did not: the rule reads "not new" straight off the previous line's
+    # regimen, which is right for what may CONFIRM a course and wrong for what
+    # may take one, and both halves went through the same set.
+    #
+    # ZB1 is confirmation. SN's returning BORT arrives on 405 and a drug the
+    # patient never had on 410, both while the day-400 course still covers.
+    # BORT opens the line on its own date (SN), so POMA arrives after that
+    # boundary and belongs to the line BORT opened - it cannot make the earlier
+    # line's course advance. Scanning only for transplants, it did: the line
+    # was backdated to day 400 with BORT swept into a line starting before it.
+    # ZB2 is the same two drugs with no melphalan at all, and the two must give
+    # the same line starts.
+    dict(P('ZB1', [('LEN', 'IMID', 0, 80), ('BORT', 'PI', 0, 80),
+                   ('MELP', 'ALKY', 400, 427), ('BORT', 'PI', 405, 600),
+                   ('POMA', 'IMID', 410, 600)]),
+         sct_ac=[('CART', IX + 200)]),
+    dict(P('ZB2', [('LEN', 'IMID', 0, 80), ('BORT', 'PI', 0, 80),
+                   ('BORT', 'PI', 405, 600), ('POMA', 'IMID', 410, 600)]),
+         sct_ac=[('CART', IX + 200)]),
+    # ZB3 is ownership. BORT returns on day 300 and opens a line there; a lone
+    # short course sits at day 400 with nothing to confirm it. The course
+    # belongs to the line the return opened, not to the CAR-T line before it.
+    # Invisible to that scan, the CAR-T line claimed it too and was carried
+    # from a single day to the day before the return - its SCT_CART end
+    # becoming a MED_ADD. ZB3x is the same patient with the course removed,
+    # which is the shape the CAR-T line must keep.
+    dict(P('ZB3', [('LEN', 'IMID', 0, 80), ('BORT', 'PI', 0, 80),
+                   ('BORT', 'PI', 300, 500), ('MELP', 'ALKY', 400, 427)]),
+         sct_ac=[('CART', IX + 200)]),
+    dict(P('ZB3x', [('LEN', 'IMID', 0, 80), ('BORT', 'PI', 0, 80),
+                    ('BORT', 'PI', 300, 500)]),
+         sct_ac=[('CART', IX + 200)]),
 ]
 for _p in PATS:
     if _p['pid'] == 'SJ0':
@@ -246,6 +281,15 @@ def main():
     ok(len(smp['SNn']) == 3 and starts(smp, 'SNn')[2] == rs.d(IX + 400),
        "SNn simplified: ...where a drug never given before confirms the "
        "course, so that line opens on the melphalan date instead")
+
+    ok(starts(smp, 'ZB1') == starts(smp, 'ZB2')
+       and len(smp['ZB1']) == 3 and starts(smp, 'ZB1')[2] == rs.d(IX + 405)
+       and smp['ZB1'][2][4] == 'BORT POMA',
+       "ZB1/ZB2: a new agent arriving after a returning drug opened a line "
+       "cannot backdate that line to the melphalan date")
+    ok(smp['ZB3'] == smp['ZB3x'],
+       "ZB3/ZB3x: the CAR-T line does not claim a course that falls after the "
+       "returning drug opened a line of its own")
 
     ok(len(smp['SM']) == 2 and starts(smp, 'SM')[1] == rs.d(IX + 100)
        and smp['SM'][0][3] == 'DISCONTINUATION',
