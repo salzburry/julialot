@@ -691,11 +691,37 @@ melp_short_course_ctes <- function(cfg, line_tbl, start_col, induction_end,
   # that knew it was confirmed and the chain that decided the break were
   # different chains.
   #
-  # AFTER_WINDOW, not INSIDE = 0, because they are not the same question: a
-  # course starting BEFORE the line is INSIDE = 0 and is not after the window.
-  # This test has always asked the second, and merging them would add pre-line
-  # courses to the break set - a behaviour change the study team has not been
-  # asked for.
+  # AFTER_WINDOW, not INSIDE = 0, and they are not the same question: a course
+  # starting BEFORE the line is INSIDE = 0 and is not after the window. This
+  # test has always asked the second.
+  #
+  # An earlier version of this note had the consequence backwards - it said
+  # merging the two would add pre-line courses to the BREAK set. It would do the
+  # opposite: this CTE is the set that does NOT break, so INSIDE = 0 would take
+  # pre-line courses OUT of the break set and stop them interrupting.
+  #
+  # Which is arguably what 4.7 wants. A course this line judged and SUPPRESSED
+  # decides nothing, so it should refuse to break a chain wherever it started,
+  # and a pre-line course can be judged and suppressed here - melp_judged has no
+  # lower bound. Reading AFTER_WINDOW instead lets a later dose of such a course
+  # stay an interrupt.
+  #
+  # Left as it is, and measured rather than argued: swapping this one predicate
+  # to INSIDE = 0 changes NOTHING the validation estate can see - all five
+  # harnesses pass unchanged and the population diff is zero on every axis over
+  # 618 patients, planted melphalan and fold-in cases included. The difference
+  # is real in the SQL and unreachable in practice today.
+  #
+  # To reach it you would need a short course whose first dose precedes the
+  # line's start, judged and suppressed by that line, with a LATER dose of the
+  # same course landing in a gap of one of the line's base drugs. A short course
+  # spans 28 days or fewer, so that later dose is always within 28 days of the
+  # first, and the gap has to open inside that window. Two attempts to build it
+  # produced identical lines with the melphalan present and absent.
+  #
+  # So it stays a rule question rather than a silent edit: whether a suppressed
+  # course refuses to break wherever it started is the study team's to answer,
+  # and nothing here turns on it until they do.
   if (!is.null(verdict))
     return(paste0("\n", glue("
     melp_no_break AS (
