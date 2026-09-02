@@ -601,9 +601,37 @@ melp_prior_regimen_exempt <- function(cfg, alias = "ms") {
 # and melp_course cannot disagree about what a course is. None of it needs the
 # melphalan DECISION, which is why it can run at LOT1, where that decision does
 # not exist yet: it reads map_stacked and the line's start, nothing else.
-melp_short_course_ctes <- function(cfg, line_tbl, start_col, induction_end) {
+# judged: does this statement already carry the course verdict?
+#
+# melp_no_break below re-derives SHORT and OUTSIDE for itself, and never asked
+# about the third column. A CONFIRMED course opens a line, so it is a boundary
+# like any other agent - and being absent from the break test, the previous
+# line's run-out chain walked straight through it and took an episode that
+# belongs to the line the course opened. The line then ran to the boundary and
+# ended MED_ADD instead of at its own discontinuation, and the drug stood in
+# both lines. H4/H4c are that patient.
+#
+# TRUE only from 10_lot2_5_base.R, where melp_judged and melp_inject are CTEs
+# of the same statement. 04_lot1_base.R has neither: LOT1's verdict is built in
+# 06_lot1_end.R, which runs after. So LOT1 still carries the defect, and it is
+# left carrying it rather than being handed a second derivation of the verdict
+# to disagree with - reconstructing this decision independently is what put it
+# here. Closing LOT1 means moving its verdict ahead of S10, which is the
+# course-verdict work scoped separately; nothing about the verdict needs LOT1's
+# end, so there is no cycle in the way.
+melp_short_course_ctes <- function(cfg, line_tbl, start_col, induction_end,
+                                   judged = FALSE) {
   if (!melp_rule_on(cfg)) return("")
   abbr <- melp_abbr(cfg)
+  # Only the course's FIRST day. 4.7 makes that day the boundary and puts every
+  # later dose inside the line it opened, so a later dose decides nothing and
+  # stays out of the break test - the same split melp_inject and
+  # melp_inject_rest already draw.
+  not_injected <- if (!judged) "" else "
+        AND NOT (c.DOSE_DT = c.EXPO_DT
+                 AND EXISTS (SELECT 1 FROM melp_inject i
+                             WHERE i.PATID = c.PATID
+                               AND i.INJECT_DT = c.EXPO_DT))"
   paste0("\n", glue("
     melp_bg_doses AS (
       SELECT PATID, MAP_START_DT AS DOSE_DT
@@ -646,7 +674,7 @@ melp_short_course_ctes <- function(cfg, line_tbl, start_col, induction_end) {
         ON x.PATID = c.PATID AND x.EXPO_DT = c.EXPO_DT
       INNER JOIN {line_tbl} ON {line_tbl}.PATID = c.PATID
       WHERE datediff(x.COURSE_END_DT, c.EXPO_DT) + 1 <= {cfg$melp_simple_course_days}
-        AND c.EXPO_DT > {induction_end}
+        AND c.EXPO_DT > {induction_end}{not_injected}
     ),"))
 }
 

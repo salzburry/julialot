@@ -323,6 +323,24 @@ PATS = [
     P('F33', [('LEN', 'IMID', 0, 80), ('BORT', 'PI', 0, 80),
               ('DARA', 'MAB', 200, 300), ('MELP', 'ALKY', 450, 477),
               ('BORT', 'PI', 451, 520), ('POMA', 'IMID', 455, 560)]),
+    # F35/F35c: a confirmed course is a boundary for a RUN-OUT CHAIN too, not
+    # only for the candidate scan.
+    #
+    # DARA opens 2L at d200; a short MELP course d400-427 lies outside 2L's
+    # 30-day window and POMA d415, inside its cover, confirms it - so the
+    # course opens 3L on d400. DARA then refills at d410, which is inside 3L.
+    #
+    # The break test asked only whether a course was short and out of window,
+    # never whether it was confirmed, so 2L's run-out chain walked through the
+    # d400 boundary and took the d410 refill with it: 2L ran four and a half
+    # months past its own discontinuation, ended MED_ADD instead, and DARA
+    # stood in both 2L and 3L. F35c is the same patient without that refill,
+    # where 2L ends where it should and the pair shows what moved.
+    P('F35', [('LEN', 'IMID', 0, 80), ('DARA', 'MAB', 200, 260),
+              ('MELP', 'ALKY', 400, 427), ('DARA', 'MAB', 410, 470),
+              ('POMA', 'IMID', 415, 500)]),
+    P('F35c', [('LEN', 'IMID', 0, 80), ('DARA', 'MAB', 200, 260),
+               ('MELP', 'ALKY', 400, 427), ('POMA', 'IMID', 415, 500)]),
     # F34: F33 with MELP moved INTO the first line, and nothing else changed.
     #
     # That one move puts melphalan in the fold set, and the between-scan drops
@@ -551,6 +569,14 @@ def main():
     ok(REGIMEN[(True, 'F33')][2][0] == 'DARA' and n(fold, 'F33') == 3,
        "F33: an injected course is a boundary, so a drug returning after it "
        "does not fold into the line before it")
+    ok(fold['F35'][1][2] == fold['F35c'][1][2] and
+       fold['F35'][1][3] == fold['F35c'][1][3],
+       "F35: a confirmed course stops the previous line's run-out chain, so a "
+       "refill on the far side of it cannot carry that line past the boundary")
+    ok('DARA' in REGIMEN[(True, 'F35')][3][0] and
+       'DARA' not in REGIMEN[(True, 'F35c')][3][0],
+       "F35: ...and that refill is owned by the line the course opened, which "
+       "is the only line it falls in")
     ok(REGIMEN[(True, 'F34')][2][0] == 'DARA' and n(fold, 'F34') == 3,
        "F34: the same, with melphalan in the fold set - a confirmed course is "
        "a boundary whoever else has given the drug")
