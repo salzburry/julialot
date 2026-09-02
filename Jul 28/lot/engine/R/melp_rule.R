@@ -209,6 +209,31 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
     -- since LOT1 has no earlier line. melp_not_new comes from the same
     -- definition the fold set is built from - prior_lines_regimen_ctes() in
     -- R/prior_regimen.R - so the two cannot drift.
+    -- No lower bound on the confirming agent either: it must start after the
+    -- COURSE, not after the judged line. For a course that began before this
+    -- line, an agent that also began before it can therefore confirm it, and
+    -- because not_new is rebuilt from whichever line is the immediate
+    -- predecessor of THIS invocation, the same course can meet a different
+    -- not_new set on a later line than it met on an earlier one. Two lines can
+    -- in principle reach two verdicts about one course.
+    --
+    -- Reported as a defect in review and NOT reproduced. Four shapes were
+    -- built for it, including the one described - successive procedure-only
+    -- lines, whose empty regimens are what would make a returning drug look
+    -- new to the line after them - and none put melphalan into a later line's
+    -- regimen or count that it should not be in. Where a short course is
+    -- confirmed and a transplant splits it, the course still belongs to the
+    -- line its first day opened and the later dose joins nothing (Y8); where
+    -- the course is over the cap, 4.7 does not apply at all and melphalan is
+    -- an ordinary drug that may legitimately appear in two lines (Y7).
+    --
+    -- So it stands as a latent divergence, not a live one, and shares its root
+    -- with the previous-line verdict: melp_prev_line_ctes judges the earlier
+    -- line from the candidate statement with that line's REPORTED regimen and
+    -- no not_new, so it is not the same expression as that line's own verdict
+    -- either. Whether one course must have one verdict across every line that
+    -- looks at it is a rule for the study team; nothing measured here turns on
+    -- it today.
     melp_confirm AS (
       SELECT DISTINCT mc.PATID, mc.EXPO_DT
       FROM melp_course mc
