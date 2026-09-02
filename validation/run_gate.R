@@ -37,10 +37,21 @@ REPO   <- dirname(HERE)
 # suites correctly and made three hygiene suites SKIP against a path that could
 # not exist - which the gate counts against itself, so the failure was at least
 # loud. Normalised here, and handed on in the form the suites expect.
+#
+# "Absolute" has three shapes, not one. A leading "/" is the POSIX case and was
+# the only one recognised, so on Windows a drive path or a UNC share was taken
+# for a relative name and joined to the repo root - C:/work/Jul 28 became
+# <repo>/C:/work/Jul 28, which resolves to nothing and lands back in the SKIP
+# the paragraph above describes. R's own file.path uses "/" on every platform,
+# so a backslash form is normalised before it is tested rather than matched
+# separately.
 STUDY <- local({
   v <- Sys.getenv("STUDY_FOLDER", unset = "")
+  vv <- chartr("\\", "/", v)
+  absolute <- startsWith(vv, "/") ||        # POSIX, and the UNC //server/share
+    grepl("^[A-Za-z]:/", vv)                # a Windows drive letter
   if (!nzchar(v)) file.path(REPO, "Jul 28")
-  else if (startsWith(v, "/")) v
+  else if (absolute) vv
   else file.path(REPO, v)
 })
 Sys.setenv(STUDY_FOLDER = sub(paste0("^", REPO, "/"), "", STUDY))

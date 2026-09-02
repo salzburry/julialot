@@ -289,7 +289,7 @@ the rule runs, not the threshold it runs at.
 | path | what it does |
 |---|---|
 | `run_melp_simple.R` | Builds the two cells and reads them. Prints the plan by default; `MELP_SIMPLE_EXECUTE=TRUE` builds, `MELP_SIMPLE_READ=TRUE` reads cells already built. |
-| `read_melp_asks.R` | The study team's three questions, off built cells: the change in each line's duration, how many lines contain melphalan and how many are melphalan alone, and the change in how many lines a patient ends up with. |
+| `read_melp_asks.R` | The study team's three questions, off built cells: the change in each line's duration, how many lines contain melphalan and how many are melphalan alone, and how many patients receive a transplant in a melphalan-containing line, by line. |
 | `R/cells.R` | The cell plan, the provenance checks that hold both cells to one cohort and one build of the engine, and the metrics read off each. |
 | `tests/test_melp_simple.R` | That `off` really is the absence of the rule, that every spliced fragment opens with its own newline, and that a cell cannot write over the study's tables. |
 
@@ -297,7 +297,7 @@ Until 2026-08-30 this package also carried the five-branch rule the study team
 asked for first, as a third cell. That rule was measured, not adopted, and
 removed; `STUDY_TEAM_ASKS.md` keeps the finding.
 
-## `exploration/lot/` — the rule scenarios, machine-checked
+## `lot/validation/` — the rule vignettes, machine-checked
 
 The twin of the rules in `LOT_RULES.md`. Every rule there carries a timeline of
 claims and what the algorithm makes of them, and 21 of those name a vignette id;

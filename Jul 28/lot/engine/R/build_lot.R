@@ -87,9 +87,16 @@ WAIVABLE_CHECKS <- c("orphan_meds", "uncoded_meds", "code_types",
 
 # Fatal checks: always stop the build. Named rather than merely absent, so a
 # waiver naming one is told why it is refused instead of "no such check".
+# spaced_med_abbr is fatal rather than waivable, and not by symmetry with the
+# others: a regimen is one space-joined string, so an abbreviation carrying a
+# space reads back as two agents that do not exist, and the previous-regimen
+# test, the fold set, the substitution pair and the medication count then each
+# miss it in a different direction. Nothing downstream can see that it happened,
+# so there is no run a study could knowingly accept it on.
 FATAL_CHECKS <- c("code_to_med", "bad_ndc", "rollup_defs", "blank_keys",
                   "multi_original", "subs_chain", "subs_star",
-                  "ndc_shape", "multi_class", "class_agreement")
+                  "ndc_shape", "multi_class", "class_agreement",
+                  "spaced_med_abbr")
 
 ALL_CHECKS <- c(WAIVABLE_CHECKS, FATAL_CHECKS)
 

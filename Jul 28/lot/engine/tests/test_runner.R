@@ -695,6 +695,10 @@ mk_db_q <- function(problem) function(con, sql) {
   if (grepl("AS n_defs", sql))
     return(if (problem == "rollup_defs") data.frame(CL_MED_ABBR = "LEN", n_defs = 2)
            else data.frame(CL_MED_ABBR = character(0), n_defs = integer(0)))
+  if (grepl("CL_MED_ABBR LIKE '% %'", sql, fixed = TRUE))
+    return(if (problem == "spaced_med_abbr")
+      data.frame(CL_MED_ABBR = "DRUG A") else
+      data.frame(CL_MED_ABBR = character(0)))
   if (grepl("AS n_rollup", sql))
     return(data.frame(n_rollup = if (problem == "blank_keys") 2 else 0,
                       n_codelist = 0))
@@ -756,6 +760,12 @@ ok(!inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error")
 for (prob in c("orphan", "uncoded", "type", "class", "code_to_med", "bad_ndc",
                "rollup_defs", "blank_keys", "subs_substitute", "subs_original",
                "subs_chain", "subs_star",
+               # A regimen is one space-joined string, so an abbreviation with
+               # a space inside reads back as two agents that do not exist -
+               # and the previous-regimen test, the fold set, the substitution
+               # pair and the medication count each miss it differently. trim()
+               # at the load takes the ends only, so it has to be refused here.
+               "spaced_med_abbr",
                "ndc_shape", "ndc_short", "class_agreement")) {
   assign("db_q", mk_db_q(prob), envir = ce)
   ok(inherits(tryCatch(ce$phase_codelists(NULL), error = function(e) e), "error"),

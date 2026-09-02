@@ -41,7 +41,11 @@ everything asked *about* the rules rather than applied by them is in
 Each area carries a `FILES.md` — what is in it and what each file does — and
 each cohort build a `RULES.md`, with `ndmm/DECISIONS.md` as the long form for
 the cohort. `lot/LOT_RULES.md` is the rules the line build applies, each naming
-the machine-checked vignette that tests it. Open questions live on the Open
+the vignette that states it. Those vignettes are a catalogue held to the rules
+in both directions - a rule citing a vignette that is not there fails, and so
+does a vignette no rule cites - rather than a run of the algorithm. What
+executes the rules over patients is the scenario harness and the merge gate's
+synthetic runs. Open questions live on the Open
 questions sheet of the scenario workbook
 (`exploration/lot/run_lot_scenarios.R`).
 
