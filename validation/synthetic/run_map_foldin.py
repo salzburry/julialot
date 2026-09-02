@@ -323,6 +323,24 @@ PATS = [
     P('F33', [('LEN', 'IMID', 0, 80), ('BORT', 'PI', 0, 80),
               ('DARA', 'MAB', 200, 300), ('MELP', 'ALKY', 450, 477),
               ('BORT', 'PI', 451, 520), ('POMA', 'IMID', 455, 560)]),
+    # F34: F33 with MELP moved INTO the first line, and nothing else changed.
+    #
+    # That one move puts melphalan in the fold set, and the between-scan drops
+    # every fold-set drug before it asks whether a row is an injected course -
+    # so the d450 boundary went invisible and BORT, returning at d451, folded
+    # into a 2L that had already ended. 2L then reported BORT with its only
+    # returning episode starting after 2L's end, and BORT stood in both 2L and
+    # 3L. F33 cannot reach this: melphalan is not in ITS fold set, so the
+    # exclusion has nothing to match and the boundary survives by luck of the
+    # regimen rather than by the rule.
+    #
+    # The pair is the test. F33 and F34 must give the same answer, because
+    # which line happened to have given melphalan earlier says nothing about
+    # whether a confirmed course is a boundary.
+    P('F34', [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 0, 27),
+              ('BORT', 'PI', 0, 80),
+              ('DARA', 'MAB', 200, 300), ('MELP', 'ALKY', 450, 477),
+              ('BORT', 'PI', 451, 520), ('POMA', 'IMID', 455, 560)]),
     # F28/F29/F30: one scope for "not new". Three patients with the same
     # history and the same short melphalan course at day 600, differing only
     # in how far back the drug returning inside it was last seen.
@@ -533,6 +551,13 @@ def main():
     ok(REGIMEN[(True, 'F33')][2][0] == 'DARA' and n(fold, 'F33') == 3,
        "F33: an injected course is a boundary, so a drug returning after it "
        "does not fold into the line before it")
+    ok(REGIMEN[(True, 'F34')][2][0] == 'DARA' and n(fold, 'F34') == 3,
+       "F34: the same, with melphalan in the fold set - a confirmed course is "
+       "a boundary whoever else has given the drug")
+    ok(fold['F34'][1][2] == fold['F33'][1][2] and
+       fold['F34'][1][3] == fold['F33'][1][3],
+       "F34: ...so it ends where F33 ends, for the same reason: which line "
+       "gave melphalan earlier decides nothing here")
     ok(fold['F33'][1][2] == rs.d(IX + 300),
        "F33: ...and that line keeps its own end rather than being carried "
        "past the boundary")
