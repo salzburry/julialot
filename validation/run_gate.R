@@ -77,9 +77,11 @@ EXPECTED_FAILURES <- list(
     # reading the previous line's own window, the regimen cutoff, and the tandem
     # gap, the add-med tie-break as a row hash, the short-course and not-new
     # gates as anti-joins rather than correlated subqueries in a join
-    # condition, and a held melphalan course kept out of the line's regimen.
-    # Re-pinned deliberately, which is what this list is for.
-    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 964 line(s) [387a44c9]")
+    # condition, a held melphalan course kept out of the line's regimen, and
+    # the LOT_LONG publish lifted into publish_lot_long() so the drop that
+    # follows it can be refused without failing a build that already wrote a
+    # complete LOT_LONG. Re-pinned deliberately, which is what this list is for.
+    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 972 line(s) [1532da99]")
 )
 
 # How one suite's output is read. Its own suite is validation/hygiene/

@@ -1104,7 +1104,13 @@ check_no_active_run <- function(con, cfg) {
   # not running, which is not this check passing - clear_run_rows() below draws
   # the same line.
   if (inherits(d, "condition")) {
-    if (missing_object_error(d)) return(invisible(TRUE))
+    # "No table" is only a first run if this caller can read the schema that
+    # would hold it. Unity Catalog answers a missing grant with the same
+    # not-found wording, so the bare answer would turn this guard off for the
+    # length of a build at exactly the moment the catalog setting moves.
+    if (missing_object_error(d) &&
+        !isFALSE(namespace_readable(con, lot_out("LOT_BUILD_STATUS"))))
+      return(invisible(TRUE))
     # The same override the found-a-run branch takes, or the message below
     # names a way out that does not exist.
     if (ignoring) {
@@ -1117,9 +1123,12 @@ check_no_active_run <- function(con, cfg) {
          "already building prefix ", cfg$object_prefix, ": ",
          conditionMessage(d),
          "\nThis is the check that stops two runs sharing one prefix, and it ",
-         "did not run. It is not a first run - a missing table says so ",
-         "specifically, and this did not. Fix the read and start again, or set ",
-         "LOT_IGNORE_ACTIVE_RUN=TRUE if you know no other run is going.",
+         "did not run. It is not a first run. Either the error was not a ",
+         "missing table, or it said the table was missing and the schema it ",
+         "would sit in could not be listed either - which is what a caller ",
+         "without USE CATALOG or USE SCHEMA is told. Fix the read, or the ",
+         "grant, and start again; or set LOT_IGNORE_ACTIVE_RUN=TRUE if you ",
+         "know no other run is going.",
          call. = FALSE)
   }
   if (!nrow(d)) return(invisible(TRUE))

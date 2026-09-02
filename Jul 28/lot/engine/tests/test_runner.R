@@ -203,7 +203,9 @@ cat("\n-- what a run writes is declared, both directions --\n")
 # table added to a step without being declared - or declared and then removed
 # from a step - fails here rather than surfacing as a surprise in a schema.
 # LOT_LONG_STAGE is allowed on the written side without being declared:
-# build_lot2_5 drops it after the publish, so a finished run does not have it.
+# publish_lot_long() drops it after the publish, so a finished run does not
+# have it - or, if that drop was refused, says so and leaves it to be cleared
+# by hand. Either way it is never a table this build promises a reader.
 # gregexpr returns -1 when nothing matches, and length(-1) is 1 - so every
 # "count the occurrences" assertion written as length(gregexpr(...)[[1]]) reads a
 # MISSING pattern as ONE occurrence. Any such check expecting exactly 1 passes on
@@ -256,6 +258,41 @@ with_lines <- lro(c(2L, 3L))
 ok(all(c("LOT2_BASE", "LOT3_START_CANDIDATES", "LOT3_BASE_END") %in% with_lines) &&
      !any(grepl("^LOT[45]_", setdiff(with_lines, get("LOT_TABLES", envir = env)))),
    "with LOT2-3 built, their stage tables are declared and LOT4-5's are not")
+
+cat("\n-- publishing LOT_LONG, and what happens when the tidy-up cannot run --\n")
+# Three statements, not one, and they do not all carry the same weight. The
+# first publishes; the second drops the stage; the third repoints the view. A
+# failing DROP used to raise like any other step, so a lock or a missing DROP
+# grant marked a run that had ALREADY written a complete LOT_LONG as 'failed'.
+# Driven rather than grepped: what matters is what the function does when each
+# statement in turn refuses.
+drive_pub <- function(fails_on) {
+  pe <- new.env(parent = globalenv())
+  sys.source(file.path(ROOT, "R", "steps", "10_lot2_5_base.R"), envir = pe)
+  said <- character(0)
+  assign("lot_out", function(x) paste0("wk.p_", x), envir = pe)
+  assign("log_msg", function(...) said <<- c(said, paste0(...)), envir = pe)
+  assign("run_step", function(con, id, sql, qc = NULL) invisible(TRUE), envir = pe)
+  assign("db_exec", function(con, sql) {
+    if (nzchar(fails_on) && grepl(fails_on, sql, fixed = TRUE))
+      stop("PERMISSION_DENIED: ", fails_on)
+    invisible(TRUE)
+  }, envir = pe)
+  err <- tryCatch({ pe$publish_lot_long(NULL); NULL }, error = conditionMessage)
+  list(err = err, said = said)
+}
+clean <- drive_pub("")
+ok(is.null(clean$err) && !length(clean$said),
+   "a clean publish drops the stage, repoints the view and says nothing")
+dropfail <- drive_pub("DROP TABLE")
+ok(is.null(dropfail$err),
+   "...a DROP that is refused does not fail a run that already published LOT_LONG")
+ok(any(grepl("could not be dropped", dropfail$said, fixed = TRUE)) &&
+     any(grepl("wk.p_LOT_LONG_STAGE", dropfail$said, fixed = TRUE)),
+   "...and the half-built table left beside the real one is named, not swallowed")
+viewfail <- drive_pub("TEMPORARY VIEW")
+ok(!is.null(viewfail$err),
+   "...while a view that cannot be repointed still stops: the criteria layer reads it")
 
 cat("\n-- the cohort table is checked before any work --\n")
 # A missing column would otherwise surface deep into the build.
@@ -2071,11 +2108,20 @@ sys.source(file.path(ROOT, "R", "build_lot.R"), envir = ar)
 assign("log_msg", function(...) invisible(NULL), envir = ar)
 assign("lot_out", function(x) paste0("wk.p_", x), envir = ar)
 assign("run_id", "R2", envir = ar)
-drive_ar <- function(x) {
+drive_ar <- function(x, ns_readable = TRUE) {
   # Applying the part of the WHERE clause under test, because the warehouse
   # would. A stub that returns the same rows whatever it is asked cannot tell a
   # query that excludes this run's id from one that does not.
+  #
+  # Two different questions reach db_q now - the status read, and the catalogue
+  # listing that separates "no table here yet" from "no grant to see one" - so
+  # the stub answers them separately. One that did not could not tell them
+  # apart, which is the whole distinction under test.
   assign("db_q", function(con, s) {
+    if (grepl("SHOW TABLES IN", s, fixed = TRUE)) {
+      if (!ns_readable) stop("SCHEMA_NOT_FOUND")
+      return(data.frame())
+    }
     if (is.character(x)) stop(x)
     if (grepl("RUN_ID <> 'R2'", s, fixed = TRUE))
       x[as.character(x$RUN_ID) != "R2", , drop = FALSE] else x
@@ -2095,6 +2141,18 @@ ok(!is.null(same) && grepl("this run's own id", same, fixed = TRUE),
    "...as does a second attempt under this run's own id, saying which it is")
 ok(is.null(drive_ar("TABLE_OR_VIEW_NOT_FOUND")),
    "...a first run, with no status table yet, is not blocked by its absence")
+# Unity Catalog answers a caller holding no grant with the same not-found
+# wording it gives for a table that is genuinely absent, so the bare answer
+# cannot carry the first-run default on its own. The schema listing is asked as
+# well: absent from a schema this caller can list is a first run, absent from
+# one it cannot list is a missing grant, and only the first walks past.
+perm <- drive_ar("TABLE_OR_VIEW_NOT_FOUND", ns_readable = FALSE)
+ok(!is.null(perm) && grepl("USE CATALOG or USE SCHEMA", perm, fixed = TRUE),
+   "...while not-found in a schema that cannot be listed stops, naming the grant")
+Sys.setenv(LOT_IGNORE_ACTIVE_RUN = "TRUE")
+ok(is.null(drive_ar("TABLE_OR_VIEW_NOT_FOUND", ns_readable = FALSE)),
+   "...and that one takes the same documented override as any unreadable status")
+Sys.unsetenv("LOT_IGNORE_ACTIVE_RUN")
 for (case in list(list(m = "HTTP 403: permission denied", w = "a refused read"),
                   list(m = "Connection reset by peer",    w = "a dropped connection"))) {
   e <- drive_ar(case$m)
