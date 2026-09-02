@@ -76,8 +76,10 @@ EXPECTED_FAILURES <- list(
     # both bounded by it, the same-day add-med tie-break as a row hash rather
     # than a seeded rand, the short-course boundary gate as an anti-join, and
     # the melphalan verdict built here rather than judged again for the break
-    # test alone - the same helper 06 reads, bound one statement earlier.
-    "04_lot1_base.R: differs from 02_lot1.R in 148 line(s) [00080579]",
+    # test alone - the same helper 06 reads, bound one statement earlier and
+    # WITHOUT the half of it that reads lot1_base, which this statement is in
+    # the middle of creating.
+    "04_lot1_base.R: differs from 02_lot1.R in 147 line(s) [76bb89c3]",
     # LOT1_AUTO_HOLD_DT, and a tandem that needs a clear gap between its two
     # transplants.
     "05b_lot1_sct.R: differs beyond the approved deviations in 176 line(s) [524fd363]",
@@ -181,6 +183,7 @@ EXPECTED_SUITES <- list(
 # The repo-side suites are the same whichever delivery is being gated.
 EXPECTED_HERE <- c(
   "hygiene/codelist_code_types.R",
+  "hygiene/emitted_sql_shape.R",
   "hygiene/gate_semantics.R",
   "hygiene/lot_contract_binding.R",
   "hygiene/lot_selfcontained.R",

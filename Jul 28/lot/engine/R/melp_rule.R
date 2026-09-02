@@ -784,7 +784,20 @@ melp_boundary_break_pred <- function(cfg) {
 # chain the doses and judge length and window for itself, and never ask whether
 # a course was confirmed, which is why a confirmed course was no boundary there
 # and a boundary in 06.
-melp_lot1_ctes <- function(cfg, line_from = "lot1_base") {
+# end_ctes: emit the half that reads lot1_base itself.
+#
+# Everything from melp_lot1_base down - the held run-out substituted back in,
+# the span it bounds, and the candidate list - belongs to 06, which runs after
+# lot1_base exists. 04 runs while lot1_base is BEING created and must take the
+# decision half alone.
+#
+# Taking the whole helper into 04 put a CTE reading FROM lot1_base inside the
+# statement that creates it. Spark validates a CTE it never uses, so a clean
+# session raises TABLE_OR_VIEW_NOT_FOUND there and a stale relation left over
+# from an earlier run hides it - the worse of the two outcomes. duckdb prunes
+# an unused CTE before binding it, so the harness ran green over SQL Spark
+# would have refused.
+melp_lot1_ctes <- function(cfg, line_from = "lot1_base", end_ctes = TRUE) {
   if (!melp_rule_on(cfg)) return("")
   paste0("\n", glue("
     -- The line's own drugs and their permissible substitutes, carrying WHICH
@@ -824,7 +837,7 @@ melp_lot1_ctes <- function(cfg, line_from = "lot1_base") {
                        # else. With the rule off there is no exemption at all.
                        cart_from = if (isTRUE(cfg$apply_cart_induction_rule))
                                      "melp_line.IND_END_DT" else NULL),
-    glue("
+    if (!end_ctes) "" else glue("
     -- lot1_base with the held run-out substituted, built ONCE and read by
     -- every CTE in 06 that asks when this line ran out.
     --
