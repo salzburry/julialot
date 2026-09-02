@@ -39,7 +39,7 @@ rather than a result.
 | §3.1 | Line 1 starts at the first non-steroid MM agent | — | |
 | §3.2 | Line 1's induction window is 60 days | `induction_window_days` | |
 | §3.3 | A regimen is bounded by the date the line ended | — | |
-| §3.4 | Line 1's first autologous transplant is part of induction | — | |
+| §3.4 | Line 1's first autologous transplant never ends line 1 | — | |
 | §4.1 | A later line opens on the earliest of four candidates | — | |
 | §4.2 | Later induction is 30 days, and 45 on a CAR-T-started line | `lot_n_induction_window_days`, `cart_consolidation_days` | |
 | §4.3 | A drug of the previous regimen never starts a line | `apply_own_return_fold` | |
@@ -183,13 +183,34 @@ QC check `C1` covers this. Its window helper builds the same transplant cutoff
 and bounds the accepted range by it, so a regimen agent first dispensed after
 an early transplant is reported rather than passed.
 
-### 3.4 Line 1's first autologous transplant is part of induction
+### 3.4 Line 1's first autologous transplant never ends line 1
 
-A first-ever transplant **inside line 1's 60-day window** does not end line 1
-and does not open line 2; it holds the line open to its own date instead
-(§6.5). One outside that window ends line 1 and opens line 2 like any other,
-first or not. Lines 2 to 5 do not keep even the in-window convention — there
-the first transplant outside the previous line's window ends the line (§4.1).
+Wherever it falls, the first-ever autologous transplant belongs to line 1.
+
+**Inside line 1's 60-day window** it holds the line open to its own date
+(§6.5). A line whose own cover ran out earlier is carried to the transplant
+and ends there, `SCT_AUTO_CONT`.
+
+**Outside that window** it neither holds the line nor ends it. A line 1 that is
+still running continues exactly as if the transplant were not there — same end
+date, same reason. Where line 1 has already ended on its own, the transplant
+opens line 2 on its date like any other line-starting event. What it never does
+is cut a line that is still going.
+
+What ends line 1 is the **second** autologous transplant, or the **third**
+where the first two are a planned tandem (§6.3) — the tandem partner belongs to
+line 1 as well. Line 1 ends the day before it, `SCT_AUTO`, and the next line
+opens on the transplant date.
+
+Lines 2 to 5 do not keep this convention: there the first transplant outside the
+previous line's window ends the line (§4.1).
+
+> Until 2026-09-02 this section said a first transplant outside the window ended
+> line 1 and opened line 2. The build has never done that — a lone first
+> transplant leaves a live line 1 byte-for-byte unchanged — and `S03` in the
+> scenario catalogue pins the build's answer, so the sentence contradicted both
+> the code and the test that guards it. Corrected to the code, on the study
+> team's decision that the code is right.
 
 ---
 

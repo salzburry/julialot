@@ -76,6 +76,20 @@ def scenarios(path):
             subs=[t.strip() for t in (subs.group(1) if subs else "").split(",") if t.strip()],
             death=int(death.group(1)) if death else None,
             obs=int(obs.group(1)) if obs else 1200))
+    # Every id in the file has to come back out.
+    #
+    # The block regex ends a scenario at the first BLANK LINE, so two entries
+    # written back to back are read as one: the first swallows the second, and
+    # the second's patient and expected lines are never planted. Nothing said
+    # so - the run reported the same "ok" on a smaller catalogue, which is a
+    # test silently deleting itself. Adding three scenarios with no blank line
+    # between them is how that was found, and the count did not even rise.
+    declared = re.findall(r'list\(id = "([^"]+)", group =', src)
+    missing = [i for i in declared if i not in {o["id"] for o in out}]
+    if missing:
+        sys.exit("scenario catalogue: %d id(s) declared but not parsed: %s\n"
+                 "Entries are delimited by a blank line - two written back to "
+                 "back are read as one." % (len(missing), ", ".join(missing)))
     return out
 
 
