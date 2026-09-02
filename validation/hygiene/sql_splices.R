@@ -54,6 +54,9 @@ FRAGMENT <- c(
   melp_simplified_ctes    = "opens with its own newline",
   melp_decision_ctes      = "delegates to melp_simplified_ctes",
   melp_lotn_ctes          = "delegates to melp_decision_ctes",
+  melp_verdict_cte        = "opens with its own newline",
+  melp_lotn_verdict_cte   = "delegates to melp_verdict_cte",
+  melp_lot1_verdict_cte   = "delegates to melp_verdict_cte",
   melp_prev_line_ctes     = "delegates to melp_decision_ctes",
   melp_hold_join          = "opens with its own newline",
   melp_hold_col           = "opens with its own newline",
@@ -81,6 +84,11 @@ FRAGMENT <- c(
   line_break_tandem_pred  = "paste0 puts the newline back that glue trims",
   foldin_regimen_union    = "paste0 puts the newline back that glue trims",
   foldin_base_meds_ctes   = "paste0 puts the newline back that glue trims",
+  # Spliced tight in 10_lot2_5_base.R all along and never declared here. The
+  # scan only reached it once a call was inserted ahead of it, so this suite
+  # had a gap of its own: a fragment can sit unclassified while the call before
+  # it takes the report.
+  foldin_lotn_ctes        = "opens with its own newline",
   foldin_base_meds        = "returns a table name",
   map_restart_sql             = "opens with its own newline, spliced after an open paren")
 

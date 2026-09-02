@@ -74,8 +74,10 @@ EXPECTED_FAILURES <- list(
     "05_sct.R: differs beyond the approved deviations in 11 line(s) [6457f58f]",
     # lot1_regimen_cutoff, the regimen window and the per-drug episode scan
     # both bounded by it, the same-day add-med tie-break as a row hash rather
-    # than a seeded rand, and the short-course boundary gate as an anti-join.
-    "04_lot1_base.R: differs from 02_lot1.R in 143 line(s) [1b2e6ad1]",
+    # than a seeded rand, the short-course boundary gate as an anti-join, and
+    # the melphalan verdict built here rather than judged again for the break
+    # test alone - the same helper 06 reads, bound one statement earlier.
+    "04_lot1_base.R: differs from 02_lot1.R in 148 line(s) [00080579]",
     # LOT1_AUTO_HOLD_DT, and a tandem that needs a clear gap between its two
     # transplants.
     "05b_lot1_sct.R: differs beyond the approved deviations in 176 line(s) [524fd363]",
@@ -94,7 +96,7 @@ EXPECTED_FAILURES <- list(
     # complete LOT_LONG, and the short-course break test told that this
     # statement already carries the verdict, so a confirmed course stops a
     # run-out chain. Re-pinned deliberately, which is what this list is for.
-    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 976 line(s) [7f159f12]")
+    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 976 line(s) [42b7cbbf]")
 )
 
 # How one suite's output is read. Its own suite is validation/hygiene/
