@@ -716,15 +716,18 @@ Running out of treatment is not an interruption. The clear-gap test asks what
 happened, and an absence of treatment is not an event — see §6.5, which is where
 that matters.
 
-**The pair must be one a line owned.** Being a tandem is what stops the second
-transplant opening a line, so it can only stop it where a line was holding the
-pair in the first place. That means the **first** of the two has to fall inside
-its line's applicable window — the same window §6.5 uses to decide whether a
-transplant holds the line open, and the same one `d_AUTO` measures in §9.2's
-condition (i).
+**Being a tandem does not depend on a window.** The pair is read off the two
+dates and the gap between them, so a pair whose first transplant falls outside
+its line's window is still a tandem and still counts as one event: at line 1 a
+pair on days 200 and 300 leaves the **third** transplant as the one that ends
+the line, exactly as an in-window pair would — scenario `S11c`, and `S11a` and
+`S11b` are the one- and two-transplant cases beside it.
 
-Where it does not, the line never reached the second transplant, and refusing
-that transplant a line of its own leaves it in none at all:
+**What the window decides is whether the pair holds the line OPEN.** Only a
+first transplant inside the line's applicable window can do that (§6.5), and
+without the hold the line ends on its own run-out wherever that falls. A tandem
+cannot keep a line open that has already ended, and that is where the two
+readings come apart:
 
     d1     line 1 starts on its regimen
     d341   AUTO 1 — 341 days out, far outside the 60-day window, so nothing
@@ -732,12 +735,20 @@ that transplant a line of its own leaves it in none at all:
     d400   line 1 ends on its own confirmed run-out
     d520   AUTO 2 — 179 days after AUTO 1, so within sct_tandem_days
     ---
-    line 1 ended 120 days before AUTO 2 and cannot contain it. Treating the
-    pair as a tandem would refuse AUTO 2 a line too, and the transplant
-    would belong to nothing. It opens line 2 as SCT_AUTO instead.
+    line 1 ended 120 days before AUTO 2 and cannot contain it. If nothing
+    else gave AUTO 2 a line, the transplant would belong to nothing. It
+    opens line 2 as SCT_AUTO instead.
 
-QC check `E5` is what finds this: it starts from the processed transplants
-rather than from the lines, so an event in no line has a row to be wrong on.
+What gives it that line is the **next line's** candidate rule, not a refusal to
+call the pair a tandem: §9.2's condition (ii) exempts an AUTO within
+`sct_tandem_days` of the one before it only where **that earlier AUTO is itself
+inside the window**. Here it is not, so AUTO 2 is a candidate and opens line 2.
+Where the earlier AUTO is in the window the exemption holds, the pair stays
+inside the line it belongs to, and no line opens on the partner.
+
+QC check `E5` is what finds an event that falls through both: it starts from the
+processed transplants rather than from the lines, so an event in no line has a
+row to be wrong on.
 The narrower reading — that the tandem holds the earlier line open through the
 second transplant wherever the first one sits — was measured and rejected: it
 moves patients who have no unowned transplant at all, because a hold date

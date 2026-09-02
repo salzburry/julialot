@@ -28,10 +28,13 @@
 #      every later window, which needs a rebuild, not arithmetic.
 #      The rule itself is NOT changed here. The rebuild exists separately:
 #      exploration/lot/run_foldin_cells.R builds the fold-in as its own
-#      gated cell pair and differences it against the contract build. Scope
-#      differs on purpose: this screen counts PREVIOUS-line returns only,
-#      while the cell folds agents of every earlier line - so this count is
-#      a lower bound on the cell's population, not its exact size.
+#      gated cell pair and differences it against the contract build. Both
+#      read PREVIOUS-line returns - the scope the study team settled on
+#      30 Aug - so the two are not a narrow and a wide reading of the same
+#      thing. What this screen counts is CANDIDATE boundaries, before the
+#      fold's own conditions decide them: one advance in between, and no line
+#      a procedure opened. So it is larger than the cell's population, and it
+#      is a screen rather than a prediction of it.
 #      In the roster, GAP_FROM_PRIOR_EPISODE_END_DAYS is one number per
 #      patient and line: the gap from the MOST RECENT prior cover among the
 #      returning medications, not one gap per drug.

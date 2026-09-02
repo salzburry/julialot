@@ -302,10 +302,12 @@ line_break_tx_sql <- function() glue("
 #
 #   AUTO   past the line own induction window, and not a planned tandem:
 #          within sct_tandem_days of the AUTO before it, nothing in between,
-#          and that earlier AUTO inside the window. All three are what
-#          auto_cand and the LOT1 post-runout guard test, ownership condition
-#          included - a pair whose first transplant the line never held was
-#          never the line tandem.
+#          and that earlier AUTO inside the window. All three are what auto_cand
+#          and the LOT1 post-runout guard test. The third is the same condition
+#          9.2 (ii) carries and is about the HOLD, not about what a tandem is:
+#          a pair is a pair on its two dates alone (6.3), but one whose first
+#          transplant no line held open cannot keep a line open either, so the
+#          partner is a boundary here like any other transplant.
 #
 #   ALLO   strictly after the line START, no window. That is how
 #          lot{n}_regimen_cutoff cuts a regimen, and how LOT1 does it too.

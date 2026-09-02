@@ -261,7 +261,6 @@ failure, and none is a published benchmark. Reported, not fatal;
 |---|---|
 | `run_lot_qc.R` | Runs thirty-seven checks against a finished run and refuses one whose own build did not complete. Reads only; writes a report to `out/`. Exit status is 0 when nothing failed and 1 when something did, so it can gate a handover. |
 | `R/checks.R` | The checks as data — one entry per check, each carrying the query that finds violations, so the catalogue can be read without running it. |
-| `run_lot_audit_counts.R` | Real-data frequencies for the LOT assignment findings — the audit's questions put to the real run. |
 | `tests/test_lot_qc.R` | That each check answers the same shape, reads only the tables it declares, masks every patient id, and turns a count into the right verdict. |
 
 Nothing here duplicates a check the build already makes. Three severities:

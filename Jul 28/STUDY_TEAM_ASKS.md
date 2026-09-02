@@ -387,12 +387,15 @@ it is for every other regimen in the study. There is nothing here that reads
 one way for melphalan and another way elsewhere.
 
 **What is worth saying when those counts are quoted** is the reporting side,
-which is a read rather than a decision. The spec keeps steroid claims in the
-episode data even though no rule reads them, so whether a melphalan-mono line
-can be told apart from melphalan-plus-steroid depends on the production rollup:
-QC check `D3` counts episodes carrying a steroid, and it says which state the
-run is in. Zero and the two cannot be separated at all; a count and they can,
-by reading the episodes directly. Either way no line moves.
+which is a read rather than a decision. The build drops steroid rows from the
+medication rollup as it loads it (`01_codelists.R`), so a steroid-free input and
+a steroid-carrying one give the same rollup and the class predicates downstream
+have nothing left to exclude. Whether a melphalan-mono line can be told apart
+from melphalan-plus-steroid therefore depends on what survives into the finished
+episodes: QC check `D3` counts episodes carrying a steroid and says which state
+the run is in. Zero and the two cannot be separated from the build's own tables
+at all; a count and they can, by reading those episodes directly. Either way no
+line moves.
 
 ---
 

@@ -164,7 +164,7 @@ ok(has(SQL$A6, "size(split(trim(LOT_BASE_MEDS), ' '))"),
 # written down.
 ok(has(SQL$B5, "'CART_INIT'"), "B5 accepts CART_INIT, which the build writes")
 ok(!has(SQL$B5, "'SUBSTITUTION'") && !has(SQL$B5, "'MAINTENANCE_END'"),
-   "...and not the two reasons the spec lists that nothing produces")
+   "...and not the two reasons nothing in the build produces")
 ok(has(SQL$B6, "LOT_BASE_1ST_ADD_MED_DT < LOT_START_DT"),
    "B6 catches an added-medication date before its own line")
 # A7 asks about MED starts and nothing else. An AUTO can open a line at LOT2-5
@@ -245,12 +245,11 @@ cart_off <- qc_params(sub("apply_cart_induction_rule=TRUE",
 ok(has(qc_window_sql(TBL, cart_off), "OR x.SCT_TYPE = 'CART'"),
    "...and takes it when the run turned that rule off")
 ok(has(SQL$D3, "= 'STEROID'"),
-   "D3 looks for steroids in the episodes, where the spec says they should be")
-# The spec keeps steroid claims in the episode data - DEXA is its own worked
-# example - and excludes them from lines by class, which the engine does at
-# every decision point. So a steroid episode is a spec-consistent state, not a
-# defect, and a run over a production list still carrying dexamethasone must
-# not fail its QC for it.
+   "D3 looks for steroids in the episodes, which is where any would survive")
+# Steroids are excluded from lines by class at every decision point, and the
+# rollup drops them as it loads. A steroid episode surviving that is a state
+# the build tolerates rather than a line defect, so a run over a production
+# list still carrying dexamethasone must not fail its QC for it.
 d3 <- Filter(function(c_i) identical(c_i$id, "D3"), LOT_QC_CHECKS)[[1]]
 ok(identical(d3$severity, "warn"),
    "...and it reports rather than fails: the list's state, not a line defect")
@@ -276,10 +275,10 @@ ok(has(SQL$B8, "LOT_NUM = LAST_LOT_NUM"),
 ok(has(SQL$B8, "LOT_NUM < 5"),
    "...and exempts the max_lot cap, where no later line would be built anyway")
 ok(has(SQL$B9, "= 'DEATH'") && has(SQL$B9, "LOT_BASE_DISCON_DT < LOT_BASE_END_DT"),
-   "B9 counts deaths with a strictly earlier run-out - the spec-vs-build gap")
+   "B9 counts deaths with a strictly earlier run-out - the two readings' gap")
 # B8 was info while the confirmation buffer was an unresolved ambiguity between
-# the spec's own tabs. The study team adjudicated in favour of the tab that has
-# it and the build applies it, so the count is now an invariant: an unconfirmed
+# two readings. The study team adjudicated in favour of the one that has it and
+# the build applies it, so the count is now an invariant: an unconfirmed
 # DISCONTINUATION is a line the buffer should have censored.
 ok(identical(Filter(function(c_i) identical(c_i$id, "B8"), LOT_QC_CHECKS)[[1]]$severity, "fail"),
    "B8 is an invariant now the buffer is applied, so a row in it fails the run")

@@ -51,7 +51,7 @@ ok(identical(melp_lot1_base_from(off), "lot1_base lb"),
 ok(identical(melp_lotn_ctes(off, 2, 30L, 45L, "single_day"), ""), "LOT2-5 gets none either")
 ok(identical(melp_suppress_predicate(off), ""), "no predicate is added to the candidates")
 ok(identical(melp_inject_arm(off, "t", "c", "e"), ""), "and no rows are added to them")
-ok(identical(melp_short_course_ctes(off, "l", "s", "e"), ""), "no short-course CTEs")
+ok(identical(melp_short_course_ctes(off, "v"), ""), "no short-course CTEs")
 ok(identical(melp_boundary_join(off), "") &&
      identical(melp_boundary_break_pred(off), ""),
    "...and nothing narrows the run-out chain's interrupt scan")
@@ -86,7 +86,7 @@ ok(has(sf("06_lot1_end.R"), "FROM {melp_lot1_base_from(cfg)}") &&
 # statements cannot judge a course differently.
 ok(has(sf("04_lot1_base.R"), "melp_lot1_ctes(cfg, line_from =") &&
      has(sf("04_lot1_base.R"), "melp_lot1_verdict_cte(cfg)") &&
-     has(sf("04_lot1_base.R"), "verdict = 'melp_verdict'") &&
+     has(sf("04_lot1_base.R"), "melp_short_course_ctes(cfg, 'melp_verdict')") &&
      has(sf("04_lot1_base.R"), "boundary_join = melp_boundary_join(cfg)") &&
      has(sf("04_lot1_base.R"), "boundary_break_pred = melp_boundary_break_pred(cfg)"),
    "...and 04 reads the same verdict 06 does, rather than judging again itself")
@@ -109,7 +109,7 @@ FRAGMENTS <- list(
   melp_lot1_ctes           = list(on),
   melp_lotn_ctes           = list(on, 2, 30L, 45L, "single_day"),
   melp_suppress_predicate  = list(on),
-  melp_short_course_ctes   = list(on, "l", "s", "e"),
+  melp_short_course_ctes   = list(on, "melp_verdict"),
   melp_boundary_join       = list(on),
   melp_boundary_break_pred = list(on),
   melp_inject_arm          = list(on, "lot2_start", "LOT2_START_DT",

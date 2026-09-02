@@ -611,9 +611,7 @@ build_lot_n <- function(con, lot_num,
     -- give a line-level run-out of 144. The restart is then swallowed and LOT2
     -- never opens, because its trigger has to fall strictly after the previous
     -- end.
-{melp_short_course_ctes(cfg, glue('lot{lot_num}_start'), glue('LOT{lot_num}_START_DT'),
-                        lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days),
-                        verdict = 'melp_verdict')}
+{melp_short_course_ctes(cfg, 'melp_verdict')}
     discon_per_med AS (
 {discon_per_med_sql(glue('lot{lot_num}_regimen_cutoff'), glue('LOT{lot_num}_START_DT'),
                     boundary_tbl = foldin_boundary_tbl(cfg), end_col = 'REGIMEN_CUTOFF_DT',

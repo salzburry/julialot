@@ -79,7 +79,7 @@ EXPECTED_FAILURES <- list(
     # test alone - the same helper 06 reads, bound one statement earlier and
     # WITHOUT the half of it that reads lot1_base, which this statement is in
     # the middle of creating.
-    "04_lot1_base.R: differs from 02_lot1.R in 147 line(s) [76bb89c3]",
+    "04_lot1_base.R: differs from 02_lot1.R in 148 line(s) [435b8d49]",
     # LOT1_AUTO_HOLD_DT, and a tandem that needs a clear gap between its two
     # transplants.
     "05b_lot1_sct.R: differs beyond the approved deviations in 176 line(s) [524fd363]",
@@ -98,7 +98,7 @@ EXPECTED_FAILURES <- list(
     # complete LOT_LONG, and the short-course break test told that this
     # statement already carries the verdict, so a confirmed course stops a
     # run-out chain. Re-pinned deliberately, which is what this list is for.
-    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 976 line(s) [42b7cbbf]")
+    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 975 line(s) [12edf353]")
 )
 
 # How one suite's output is read. Its own suite is validation/hygiene/

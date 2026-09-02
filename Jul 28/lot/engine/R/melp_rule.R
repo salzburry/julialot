@@ -764,15 +764,18 @@ melp_prior_regimen_exempt <- function(cfg, alias = "ms") {
 # here. Closing LOT1 means moving its verdict ahead of S10, which is the
 # course-verdict work scoped separately; nothing about the verdict needs LOT1's
 # end, so there is no cycle in the way.
-melp_short_course_ctes <- function(cfg, line_tbl, start_col, induction_end,
-                                   verdict = NULL) {
+melp_short_course_ctes <- function(cfg, verdict) {
   if (!melp_rule_on(cfg)) return("")
-  # Where the verdict is in reach, read it. One relation, and the three
-  # questions this test asks are three of its columns rather than a second
-  # chaining of the doses and a second judging of length and window - which is
-  # how a confirmed course came to be treated as no boundary at all: the chain
-  # that knew it was confirmed and the chain that decided the break were
-  # different chains.
+  # Read the verdict. One relation, and the three questions this test asks are
+  # three of its columns rather than a second chaining of the doses and a second
+  # judging of length and window - which is how a confirmed course came to be
+  # treated as no boundary at all: the chain that knew it was confirmed and the
+  # chain that decided the break were different chains.
+  #
+  # This used to fall back to re-deriving the courses where no verdict was in
+  # reach. Both callers now pass one, so the fallback was fifty lines of the
+  # duplication the verdict exists to remove, kept alive by a default argument.
+  # The argument is required instead.
   #
   # AFTER_WINDOW, not INSIDE = 0, and they are not the same question: a course
   # starting BEFORE the line is INSIDE = 0 and is not after the window. This
@@ -805,60 +808,13 @@ melp_short_course_ctes <- function(cfg, line_tbl, start_col, induction_end,
   # So it stays a rule question rather than a silent edit: whether a suppressed
   # course refuses to break wherever it started is the study team's to answer,
   # and nothing here turns on it until they do.
-  if (!is.null(verdict))
-    return(paste0("\n", glue("
+  paste0("\n", glue("
     melp_no_break AS (
       SELECT DISTINCT PATID, DOSE_DT AS MAP_START_DT
       FROM {verdict}
       WHERE AFTER_WINDOW = 1 AND SHORT = 1
         AND NOT (CONFIRMED = 1 AND TAKEN = 0 AND IN_SPAN = 1
                  AND DOSE_DT = EXPO_DT)
-    ),")))
-  abbr <- melp_abbr(cfg)
-  not_injected <- ""
-  paste0("\n", glue("
-    melp_bg_doses AS (
-      SELECT PATID, MAP_START_DT AS DOSE_DT
-      FROM map_stacked
-      WHERE upper(trim(MAP_MED_TYPE)) = '{abbr}'
-      GROUP BY PATID, MAP_START_DT
-    ),
-    melp_bg_runs AS (
-      SELECT PATID, DOSE_DT,
-             CASE WHEN datediff(DOSE_DT,
-                    lag(DOSE_DT) OVER (PARTITION BY PATID ORDER BY DOSE_DT))
-                       < {cfg$melp_exposure_days}
-                  THEN 0 ELSE 1 END AS IS_NEW
-      FROM melp_bg_doses
-    ),
-    melp_bg_expo AS (
-      SELECT PATID, DOSE_DT,
-             min(DOSE_DT) OVER (PARTITION BY PATID, E) AS EXPO_DT
-      FROM (SELECT PATID, DOSE_DT,
-                   sum(IS_NEW) OVER (PARTITION BY PATID ORDER BY DOSE_DT
-                                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS E
-            FROM melp_bg_runs) r
-    ),
-    melp_bg_course AS (
-      SELECT d.PATID, d.EXPO_DT, d.DOSE_DT, max(m.MAP_END_DT) AS COURSE_END_DT
-      FROM melp_bg_expo d
-      INNER JOIN map_stacked m
-        ON m.PATID = d.PATID AND m.MAP_START_DT = d.DOSE_DT
-       AND upper(trim(m.MAP_MED_TYPE)) = '{abbr}'
-      GROUP BY d.PATID, d.EXPO_DT, d.DOSE_DT
-    ),
-    -- Every dose of a course that is SHORT and starts past this line's own
-    -- induction window. The course's length is judged once, at its first
-    -- dose, so a follow-up dose is in or out with the course it belongs to.
-    melp_no_break AS (
-      SELECT c.PATID, c.DOSE_DT AS MAP_START_DT
-      FROM melp_bg_course c
-      INNER JOIN (SELECT PATID, EXPO_DT, max(COURSE_END_DT) AS COURSE_END_DT
-                  FROM melp_bg_course GROUP BY PATID, EXPO_DT) x
-        ON x.PATID = c.PATID AND x.EXPO_DT = c.EXPO_DT
-      INNER JOIN {line_tbl} ON {line_tbl}.PATID = c.PATID
-      WHERE datediff(x.COURSE_END_DT, c.EXPO_DT) + 1 <= {cfg$melp_simple_course_days}
-        AND c.EXPO_DT > {induction_end}{not_injected}
     ),"))
 }
 
