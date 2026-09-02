@@ -132,11 +132,18 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
   # see them. This set is built from the earlier lines instead, which are
   # already there.
   #
-  # It reaches slightly wider than the folded episodes: a previous-line agent
-  # whose return the count does NOT fold is excluded too. Under the previous-
-  # line fold set that case cannot arise - a return either folds or is left to
-  # 4.3, which keeps it in the line it left - so the wider reach is empty in
-  # practice, and it is stated here rather than relied on silently.
+  # It reaches wider than the folded episodes: a previous-line agent whose
+  # return the count does NOT fold is excluded too. That set is not empty, and
+  # this comment used to say it was. A transplant or CAR-T that opened a line
+  # in between overrides the fold (4.8), so the return neither folds nor stays
+  # in the line it left - it opens a line of its own. F9, F10 and F15 in the
+  # fold-in harness are planted patients of exactly that shape.
+  #
+  # So the exclusion here can take a return that DID start a line. Whether that
+  # changes which line owns a later course is open: the timelines tried for it
+  # all came back with the course in the line the return opened, which is the
+  # answer wanted. It is written down because the reach is real, not because a
+  # patient is known to fall in it.
   # An anti-join and a WHERE test, not an EXISTS in the ON clause. `o` is
   # INNER JOINed here, so moving the condition out of the join changes
   # nothing - and Spark does not accept a correlated subquery in a join
@@ -346,17 +353,8 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
     -- A confirmed short course advances - on ITS first day. The confirming
     -- agent needs no help of its own: it is an engine candidate already, and
     -- later than this date by construction.
-    -- ONE COURSE, ONE ANSWER - the same statement suppression makes above,
-    -- for the other verdict. The course advances the line on its FIRST day,
-    -- and its later doses belong to the line that day opened; none of them
-    -- may open a line of its own. Only the first day is the boundary, so
-    -- melp_inject keeps carrying that alone and this carries the rest.
-    --
-    -- Suppression expanded to every dose from the start and injection did
-    -- not, so a course given as more than one dose had its later doses left
-    -- as ordinary candidates. Where a transplant then ended the line the
-    -- course had opened, a later dose opened another line - which 4.7
-    -- forbids outright.
+    -- Its FIRST day only. The rest of the course is melp_inject_rest below,
+    -- which is where the reason for the split is written out.
     melp_inject AS (
       SELECT DISTINCT PATID, EXPO_DT AS INJECT_DT
       FROM melp_judged
@@ -589,9 +587,14 @@ melp_prior_regimen_exempt <- function(cfg, alias = "ms") {
 # substitution rather than an edit per reference.
 # Which melphalan episodes must not INTERRUPT a base drug's run-out chain.
 #
-# Only the SHORT courses, and only outside the line's own induction window -
-# exactly the ones 4.7 refuses a boundary to. A course inside induction is in
-# the regimen and the scan already skips it. A course longer than the cap is
+# The SHORT courses outside the line's own induction window, MINUS the ones
+# that turned out to be confirmed. A confirmed course opens a line, so it is a
+# boundary like any other agent and has to break the chain; only a suppressed
+# course refuses a boundary and so refuses to break one. That subtraction is
+# made where the statement already carries the verdict - see the `judged`
+# argument below - and at LOT1, which does not, this set is still every short
+# outside-window course. A course inside induction is in the regimen and the
+# scan already skips it. A course longer than the cap is
 # left to the engine untouched (4.7), so it breaks the chain like any other
 # drug; removing every melphalan row instead made an over-cap course stop
 # ending the line at its own run-out, which is the opposite of untouched.
