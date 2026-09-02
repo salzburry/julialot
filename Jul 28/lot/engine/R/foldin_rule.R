@@ -82,51 +82,25 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
                               meds = "foldin_meds",
                               line_pred, melp_on = FALSE) {
   # A melphalan course the melphalan rule SUPPRESSED is not a line-defining
-  # agent - that rule has already decided it opens nothing - so it must not
-  # disqualify a return from folding either. Without this the two rules
-  # disagree about the same episode: one says it defines no boundary, the
-  # other counts it as the agent that arrived first.
+  # agent, so it must not disqualify a return from folding. Only this direction
+  # can be read: the melphalan CTEs are spliced BEFORE these, and each rule
+  # reading the other has no order that works. What remains is written down in
+  # STUDY_TEAM_ASKS.md.
+  # The same exclusion, in the WHERE of foldin_agent rather than a join, and
+  # covering BOTH melphalan verdicts for opposite reasons: a SUPPRESSED course
+  # opens nothing so it is no arriving agent, and an INJECTED one starts the
+  # next line so it is no drug folding back into the line before it. Covering
+  # only the suppressed half let an injected course be claimed by both rules at
+  # once - melp_injected_starts_the_line in the vignettes.
   #
-  # This is the only direction that can be read here. The melphalan CTEs are
-  # spliced BEFORE these, so this side may consult them; the reverse would
-  # need melphalan to consult the fold, and each rule reading the other has no
-  # order that works. What remains is written down in STUDY_TEAM_ASKS.md.
-  # The same exclusion, in the WHERE of foldin_agent rather than a join.
-  #
-  # BOTH melphalan verdicts, for opposite reasons. 4.7 judges a short course
-  # outside induction one of two ways, and this rule must stand back from
-  # each:
-  #
-  #   SUPPRESSED  the course opens nothing, so it is not an agent that
-  #               arrived - reading it as one would count an advance that
-  #               never happened.
-  #   INJECTED    the course opens the NEXT LINE, on the melphalan's own first
-  #               day. The study team's words: a patient given melphalan on
-  #               day 100 who starts a new agent on day 105 begins the new
-  #               line on day 100. A dose that STARTS a line is not a drug
-  #               folding back into the line before it.
-  #
-  # Only the suppressed half was here, so an injected course was claimed by
-  # both rules at once - see melp_injected_starts_the_line in the vignettes.
-  #
-  # The MELP test is not decoration. Both date tables carry a patient and a
-  # DATE, so matching on those alone removes whatever else started that day -
-  # a returning drug landing on the same date as a judged course was dropped
-  # from the fold set and opened a line of its own.
-  # TWO different questions, and they do not take the same answer.
-  #
-  #   "may this row FOLD?"        - neither verdict may. A suppressed course
-  #                                 decides nothing; an injected one starts the
-  #                                 next line. Neither is a drug folding back
-  #                                 into the line before it.
-  #   "did something ARRIVE here?" - a suppressed course did not, but an
-  #                                 INJECTED one did: it opens a line, so it is
-  #                                 a boundary like any other agent.
-  #
-  # Answering the second with the first hides a real boundary from the count.
-  # A returning drug landing just after an injected course then saw only the
-  # advance before it, folded into a line that had already ended, and that
-  # line reported a drug whose only episode began after it.
+  # The MELP test is not decoration: both date tables carry a patient and a
+  # DATE, so matching on those alone removed whatever else started that day.
+  # TWO different questions, and they do not take the same answer. "May this
+  # row FOLD?" - neither verdict may. "Did something ARRIVE here?" - a
+  # suppressed course did not, but an INJECTED one did, because it opens a
+  # line. Answering the second with the first hid a real boundary from the
+  # count, and a return landing just after an injected course folded into a
+  # line that had already ended.
   melp_dt <- function(alias, tbl, col) paste0("
                  AND EXISTS (SELECT 1 FROM ", tbl, " x
                              WHERE x.PATID = ", alias, ".PATID
@@ -145,21 +119,12 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
   # because it really did open a line.
   not_supp <- if (!melp_on) "" else paste0("
           AND NOT ", melp_is("ms", suppressed("ms")))
-  # ...and staying visible takes TWO changes, not one. The scan drops any drug
-  # in the fold set before it reads the line above, because a returning
-  # prior-line agent is not an advance. Where melphalan is ITSELF a fold-set
-  # drug - it was in the earlier regimen - that exclusion reached an injected
-  # course first and the line above never saw it.
-  #
-  # F33 could not catch this: its first line is LEN+BORT, so melphalan is
-  # outside the fold set and the exclusion has nothing to match. Compare F34,
-  # which is F33 with melphalan moved INTO the first line and nothing else
-  # changed, and which folded a return landing a day after the boundary into a
-  # line that had already ended.
-  #
-  # An injected course is an advance whoever else has given the drug, so it is
-  # let back past the fold-set test rather than being filtered later - later is
-  # too late, the row is already gone.
+  # ...and staying visible takes TWO changes, not one. The scan drops any
+  # fold-set drug before it reads the line above, and where melphalan is ITSELF
+  # a fold-set drug that exclusion reached an injected course first (F34, which
+  # is F33 with melphalan moved into the earlier regimen). An injected course is
+  # an advance whoever else has given the drug, so it is let back past the
+  # fold-set test rather than filtered later, when the row is already gone.
   inject_or <- if (!melp_on) "" else paste0("
                OR ", melp_is("ms", injected("ms")))
   this_tx <- if (is.null(n_start) || is.null(n_type)) "" else paste0("
@@ -184,23 +149,18 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
   join_n <- if (is.null(n_tbl)) "" else
     paste0("\n      INNER JOIN ", n_tbl, " ON ", n_tbl, ".PATID = k.PATID")
   # The in-this-line test, and only where there IS a line being built. The
-  # start-candidate statement has none, and needs none: lot_long has grown by
-  # the time it judges a later line, so its count is already the whole history.
+  # start-candidate statement has none and needs none: lot_long has grown by
+  # the time it judges a later line.
   #
-  # Procedures are in it as well as medications. Scanning map_stacked alone
-  # left the same hole the melphalan rule had: a CAR-T opening the next line
-  # is not a medication row, so an earlier line went on claiming a return that
-  # arrived after it, and that line's own discontinuation became the
-  # procedure's end reason.
+  # Procedures are in it as well as medications - a CAR-T opening the next line
+  # is not a medication row, and scanning map_stacked alone let an earlier line
+  # go on claiming a return that arrived after it.
   #
-  # The two arms are bounded differently, and each takes the bound its own
-  # rule uses. A DRUG that is neither this line's regimen nor a fold-set agent
-  # is a boundary from the line's START. A TRANSPLANT is one only past the
-  # line's INDUCTION END, because a transplant inside a line's own window
-  # belongs to it and opens nothing (LOT_RULES.md 3.4 and 6.5) - the same
-  # bound melp_taken uses, off the same lotn_induction_end(). Bounding both
-  # arms at the start, as one shared condition did, made an in-window
-  # transplant refuse a fold the line should have taken.
+  # The two arms take different bounds, each its own rule's. A DRUG that is
+  # neither this line's regimen nor a fold-set agent is a boundary from the
+  # line's START; a TRANSPLANT only past its INDUCTION END, because one inside
+  # the line's own window belongs to it and opens nothing (LOT_RULES.md 3.4 and
+  # 6.5) - the same bound melp_taken uses, off the same lotn_induction_end().
   induction <- if (is.null(n_induction)) n_start else n_induction
   between_sel <- if (is.null(n_start)) "" else
     ",\n             max(CASE WHEN o.PATID IS NOT NULL THEN 1 ELSE 0 END) AS N_BETWEEN"
@@ -233,12 +193,9 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
         ON o.PATID = k.PATID
        -- At or before, not strictly before. A genuinely new agent arriving on
        -- the SAME DAY as the return takes preference: the return belongs to
-       -- the line that agent opens, not to the one it was coming back to.
-       -- Strictly-before let the same-day case fold, and then the reported
-       -- regimen alone corrected it - so the drug named the new line while
-       -- still extending the old one's run-out, one episode doing two jobs in
-       -- two lines. Every consumer reads foldin_episodes, so the preference
-       -- belongs here rather than in any one of them.
+       -- the line that agent opens. Strictly-before let one episode name the
+       -- new line while still extending the old one's run-out. Every consumer
+       -- reads foldin_episodes, so the preference belongs here.
        AND o.AT_DT <= k.MAP_START_DT")
   glue("
     -- Every episode of a fold-set drug, under the AGENT it belongs to. A
@@ -255,21 +212,15 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
       LEFT JOIN permissible_subs ps ON ps.substitute_med = ms.MAP_MED_TYPE
       -- A melphalan course the melphalan rule SUPPRESSED is not here at all.
       -- It decides nothing, so it must neither fold itself nor stand as the
-      -- PREVIOUS dose of a later course - and standing as one is not a
-      -- harmless omission: the interval is measured dose to dose, so an
+      -- PREVIOUS dose of a later course: the interval is dose to dose, so an
       -- intervening suppressed course reset it and the later course counted
-      -- the advances since ITSELF rather than since the drug's real last
-      -- dose. A long course that would otherwise have folded then did not,
-      -- and the line reported one drug fewer for a course that decided
-      -- nothing.{not_supp_ms}
+      -- the advances since ITSELF.{not_supp_ms}
       GROUP BY ms.PATID, ms.MAP_MED_TYPE, ms.MAP_START_DT
     ),
     -- A COURSE is episodes of one agent with no discontinuation between them -
     -- the engine's own {discon_days}-day gap. It does not decide the fold; it
-    -- CARRIES it. A returning course was being split between two owners: its
-    -- first episode folded, and its own follow-up weeks later had no advance
-    -- behind it, so it was judged separately, not folded, and opened a line.
-    -- One course, one answer.
+    -- CARRIES it. Judged one episode at a time, a returning course was split
+    -- between two owners (F14). One course, one answer.
     -- Two steps, because a window function cannot be nested inside another.
     foldin_runs AS (
       SELECT PATID, MAP_MED_TYPE, MAP_START_DT, AGENT,
@@ -302,13 +253,10 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
     -- reads - dose to dose, not stop to return.
     --
     -- MAP_MED_TYPE is the tiebreak in all three windows above, and it is not
-    -- decoration. The partition is the AGENT, so a reference product and its
-    -- substitute dosed on ONE day are two peers with equal sort keys, and
-    -- Spark leaves the order between such peers undefined - two runs of the
-    -- same build could read a different predecessor. duckdb happening to be
-    -- stable proves nothing about the warehouse. The key makes the answer the
-    -- same every run; which of the pair sorts first is not a judgement this
-    -- rule makes.
+    -- decoration: the partition is the AGENT, so a reference product and its
+    -- substitute dosed on ONE day are peers with equal sort keys, and Spark
+    -- leaves such an order undefined. The key makes the answer the same every
+    -- run; which of the pair sorts first is no judgement of this rule's.
     foldin_epi AS (
       SELECT c.PATID, c.MAP_MED_TYPE, c.MAP_START_DT, c.AGENT, c.COURSE_START_DT,
              lag(c.MAP_START_DT) OVER (PARTITION BY c.PATID, c.AGENT
@@ -328,17 +276,12 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
     -- agent, and foldin_tx_between below is what reads those instead.
     foldin_openers AS (
       -- ONE row per line. A line opened by a doublet advanced the LOT once,
-      -- not twice, and the request counts agents ADVANCING THE LOT twice or
-      -- more - so the line contributes a single opener, and two lines opened
-      -- by the same agent still collapse to one. min() only has to be
-      -- deterministic; which of two co-starters names the line is not a
-      -- judgement this rule makes.
+      -- so the line contributes a single opener, and two lines opened by the
+      -- same agent collapse to one. min() only has to be deterministic.
       --
-      -- But it must choose among drugs that COULD have opened the line. A
-      -- drug of the previous line's regimen cannot (4.3), so a returning drug
-      -- dosed on the start date is not what advanced anything - and min()
-      -- picked it anyway whenever it sorted first, labelling two consecutive
-      -- lines with the same agent and collapsing two advances into one.
+      -- But it must choose among drugs that COULD have opened the line: a drug
+      -- of the previous line's regimen cannot (4.3), and min() picked one
+      -- anyway whenever it sorted first, collapsing two advances into one.
       SELECT l.PATID, l.LOT_START_DT AS OPEN_DT,
              min(coalesce(ps.original_med, ms.MAP_MED_TYPE)) AS OPENER
       FROM lot_long l
@@ -387,13 +330,10 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
        AND tx.OPEN_DT >  k.PREV_COURSE_DT
        AND tx.OPEN_DT <  k.MAP_START_DT{between_join}
       -- EVERY episode after the drug's first is judged, and each is a return:
-      -- a new episode opens only for a claim beyond every run-out (§2.3), so
-      -- an episode always follows a break in cover. It is NOT restricted to
-      -- episodes after a discon_days gap. The request's own worked case is a
-      -- 60-day break - shorter than the 90-day discontinuation - and reading
-      -- COMING BACK AFTER BEING STOPPED as the engine's discontinuation would
-      -- refuse to fold the very example the rule was written for. Scenario S01
-      -- is that case.
+      -- a new episode opens only for a claim beyond every run-out (2.3). NOT
+      -- restricted to episodes after a discon_days gap - the request's own
+      -- worked case is a 60-day break, shorter than the 90-day
+      -- discontinuation, and scenario S01 is that case.
       WHERE k.PREV_COURSE_DT IS NOT NULL
       GROUP BY k.PATID, k.AGENT, k.COURSE_START_DT, k.MAP_START_DT
     ),

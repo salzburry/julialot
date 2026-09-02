@@ -6,12 +6,12 @@
 #
 # The engine's OLDER rule released it once discontinued: map_discon_gap_days
 # flags the episode whose gap to the next reaches the threshold, and an episode
-# after such a gap was a restart that could open a line like any other drug.
-# apply_own_return_fold withdraws that release, and CONTRACT pins it TRUE - so
-# in the study's build a drug of the PREVIOUS regimen never starts a line,
-# whatever the gap. A drug last given further back than that is outside this
-# rule and opens a line like any other agent. The release survives only for comparison builds. See
-# return_release_on() below, which is the one place that decides.
+# after such a gap was a restart that could open a line. apply_own_return_fold
+# withdraws that release and CONTRACT pins it TRUE, so in the study's build a
+# drug of the PREVIOUS regimen never starts a line whatever the gap; a drug
+# last given further back is outside this rule. The release survives only for
+# comparison builds - see return_release_on() below, the one place that
+# decides.
 #
 # The release and the run-out chain are two halves of one rule and neither is
 # safe alone. Release the drug without breaking the chain and a line opens
@@ -22,16 +22,6 @@
 # THE RETURNING-DRUG RELEASE, LOT_RULES.md 4.3 - one definition for all eight
 # places that ask, because a guard reading a different rule from the candidate
 # it mirrors ends a line on an event the next line then refuses to open on.
-#
-# apply_own_return_fold FALSE is the engine's older rule: a gap of
-# map_discon_gap_days releases the drug, and its next episode opens a line like
-# any other agent.
-#
-# TRUE - what CONTRACT pins - withdraws that. A line advances on an agent that
-# was not in the previous regimen, and a drug that WAS in it is not
-# one, whatever the gap. Nothing was given in between, so the drug is returning
-# to the line it left.
-#
 # Both halves move together: return_release_sql() withdraws the release, and
 # own_gap_breaks_chain() stops discon_per_med breaking the line at the same
 # gap.
@@ -59,12 +49,10 @@ prior_regimen_excl_sql <- function() {
 }
 
 # A line's regimen plus the permissible biosimilar substitutes for it, with
-# SUBSTITUTE_ONLY recording WHY each drug is in the set. Four callers need this
-# set - LOT1 and LOT2-5 both build their base_meds from it, and both run-out
-# guards build the drugs they must not accept from it. They read the same rule,
-# so they get it from here. A guard spelling it out differently from the
-# candidate set it mirrors ends a line on an event the next line refuses to
-# open on. min() so a drug that is both a real regimen drug and somebody's
+# SUBSTITUTE_ONLY recording WHY each drug is in the set. Four callers need it -
+# LOT1 and LOT2-5 build their base_meds from it, and both run-out guards build
+# the drugs they must not accept from it - so it lives here for the reason
+# above. min() so a drug that is both a real regimen drug and somebody's
 # substitute counts as the former.
 regimen_with_subs_sql <- function(src) {
   paste0("\n",
@@ -99,9 +87,8 @@ regimen_with_subs_sql <- function(src) {
 # Per patient, drug and episode: did a confirmed discontinuation of the same
 # drug come first? Spliced in as a CTE by every caller that has to tell a
 # restart from a continuation - the start candidates, and the run-out guards
-# that mirror them. One definition for all of them. A guard reading a different
-# rule from the candidate it mirrors ends a line on an event the next line then
-# refuses to open on.
+# that mirror them - and one definition for all of them, again for the reason
+# above.
 map_restart_sql <- function() {
   "
       SELECT ms.PATID, ms.MAP_MED_TYPE, ms.MAP_START_DT,

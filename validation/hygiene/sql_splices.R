@@ -51,8 +51,7 @@ TOKEN <- c("work", "wrk", "lot_out", "cdm_src", "full_name", "lotn_table",
 # the reason is the thing to re-check if the call site moves.
 FRAGMENT <- c(
   melp_lot1_ctes          = "opens with its own newline",
-  melp_simplified_ctes    = "opens with its own newline",
-  melp_decision_ctes      = "delegates to melp_simplified_ctes",
+  melp_decision_ctes      = "opens with its own newline",
   melp_lotn_ctes          = "delegates to melp_decision_ctes",
   melp_verdict_cte        = "opens with its own newline",
   melp_lotn_verdict_cte   = "delegates to melp_verdict_cte",
@@ -154,11 +153,9 @@ for (fn in need_nl) {
      paste0(fn, "() opens its fragment with a newline"))
 }
 # A delegating hook is safe only while what it delegates to is checked above -
-# and delegation can be more than one hop. melp_lotn_ctes calls
-# melp_decision_ctes, which since the five-branch modes were retired is itself
-# a thin front door onto melp_simplified_ctes. Follow the chain to whichever
-# function actually writes the newline, so an added hop cannot quietly break
-# the guarantee.
+# and delegation can be more than one hop, as melp_lotn_ctes -> melp_decision_ctes
+# is. Follow the chain to whichever function actually writes the newline, so an
+# added hop cannot quietly break the guarantee.
 deleg <- names(FRAGMENT)[grepl("^delegates to ", FRAGMENT)]
 resolve <- function(fn, seen = character(0)) {
   if (fn %in% need_nl) return(fn)
