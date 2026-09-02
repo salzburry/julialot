@@ -108,8 +108,12 @@ phase_lot1_base <- function(con, ctx) {
     -- give a line-level run-out of 144. The restart is then swallowed and LOT2
     -- never opens, because its trigger has to fall strictly after the previous
     -- end.
-{melp_short_course_ctes(cfg, 'lot1_regimen_cutoff', 'LOT1_START_DT',
-                        glue('date_add(lot1_regimen_cutoff.LOT1_START_DT, {cfg$induction_window_days - 1})'))}
+{melp_lot1_ctes(cfg, line_from = '(SELECT c.PATID, c.LOT1_START_DT, p.OBS_END_DT
+                                   FROM lot1_regimen_cutoff c
+                                   INNER JOIN lot_patient_input p ON p.PATID = c.PATID)')}\
+{melp_lot1_verdict_cte(cfg)}\
+{melp_short_course_ctes(cfg, 'melp_line', 'LOT1_START_DT',
+                        'melp_line.IND_END_DT', verdict = 'melp_verdict')}
     discon_per_med AS (
 {discon_per_med_sql('lot1_regimen_cutoff', 'LOT1_START_DT', end_col = 'REGIMEN_CUTOFF_DT',
                     boundary_join = melp_boundary_join(cfg),

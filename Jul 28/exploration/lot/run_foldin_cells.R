@@ -247,8 +247,10 @@ foldin_report <- function(con, cells, out_dir, lot_root = NULL) {
   cat("\nThe sizing screen in analysis/questions counts the CURRENT boundaries\n",
       "where a PREVIOUS-line agent returns; these two builds are what those\n",
       "boundaries turn into once the run-outs and windows move with them.\n",
-      "The cell folds agents of EVERY earlier line, so the screen's count is\n",
-      "a lower bound on the population this pair moves.\n", sep = "")
+      "The cell folds agents of the IMMEDIATELY PREVIOUS line only - the\n",
+      "scope the study team settled - so the screen's count, which reads every\n",
+      "earlier line, is an upper bound on the population this pair moves.\n",
+      sep = "")
   cat("\nWrote ", out_dir, ".\n", sep = "")
   invisible(list(cells = res, compare = cmp, patients = pd))
 }

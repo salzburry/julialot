@@ -17,7 +17,9 @@ inside pharmacy coverage pushes the runout forward by its full supply; medical
 coverage never pushes out; a claim past both runouts starts a new episode — any
 positive gap splits. `MAP_END_DT` is the later runout. A gap of ≥ 90 days to the
 next episode (or to end of observation) sets the per-drug discontinuation flag;
-that is the engine's only 90-day rule.
+that is the MAP-level 90-day rule. It is not the only one: a run-out becomes
+a discontinuation only after `LOT_DISCON_CONFIRM_DAYS` (also 90) of further
+observation, which is a separate setting and a separate question.
 
 **Event streams.** The SCT code list yields typed dated events. AUTO claims are
 clustered (claims within 13 days of a cluster's first claim are one event, dated
@@ -42,7 +44,8 @@ declared equivalents (`permissible_subs.csv`). The **discontinuation date** is
 the base set's last runout inside observation — base drugs may refill without
 bound and the line stretches. The **first added drug** is the earliest
 non-supportive episode outside the base set at or before discontinuation; ties on
-a day resolve by seeded deterministic random.
+a day resolve by `hash(PATID, MAP_MED_TYPE)` - a row hash, so the same pair
+always resolves the same way, with no seed and nothing random about it.
 
 **A line ends** the day before the event that starts the next one, through a
 fixed priority ladder (myeloma's instance):

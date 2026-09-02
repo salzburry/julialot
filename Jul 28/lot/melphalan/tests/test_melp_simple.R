@@ -73,15 +73,23 @@ sf <- function(f) paste(readLines(file.path(LOT, "R", "steps", f), warn = FALSE)
 ok(has(sf("06_lot1_end.R"), "FROM {melp_lot1_base_from(cfg)}") &&
      has(sf("06_lot1_end.R"), "WITH{melp_lot1_ctes(cfg)}"),
    "LOT1 has exactly two decision hooks, both in 06")
-# 04 carries three, and none is a decision: the short-course CTE, and the
-# anti-join and predicate that read it, keep melphalan out of the run-out
-# chain's interrupt scan. All three read map_stacked and the line's start,
-# which 04 already has. The DECISION cannot live here - it reads lot1_base,
-# which is what 04 builds.
-ok(has(sf("04_lot1_base.R"), "melp_short_course_ctes(cfg, 'lot1_regimen_cutoff'") &&
+# 04 carries the decision too, and that is the point. It used to carry only the
+# short-course gate, on the reasoning that the decision reads lot1_base and
+# lot1_base is what 04 builds. That reasoning was wrong: the decision reads
+# LOT1_START_DT and OBS_END_DT and nothing else of the line, and both exist a
+# statement earlier - lot1_regimen_cutoff has the start, the cohort has the
+# observation end. Believing otherwise is what left 04 chaining the doses and
+# judging length and window for itself, and never asking whether a course was
+# confirmed, so a confirmed course was a boundary in 06 and no boundary here.
+#
+# Same helper as 06, differing only in where the line comes from, so the two
+# statements cannot judge a course differently.
+ok(has(sf("04_lot1_base.R"), "melp_lot1_ctes(cfg, line_from =") &&
+     has(sf("04_lot1_base.R"), "melp_lot1_verdict_cte(cfg)") &&
+     has(sf("04_lot1_base.R"), "verdict = 'melp_verdict'") &&
      has(sf("04_lot1_base.R"), "boundary_join = melp_boundary_join(cfg)") &&
      has(sf("04_lot1_base.R"), "boundary_break_pred = melp_boundary_break_pred(cfg)"),
-   "...and 04 carries only the short-course gate, which needs no line decision")
+   "...and 04 reads the same verdict 06 does, rather than judging again itself")
 ok(has(sf("10_lot2_5_base.R"), "{melp_lotn_ctes(cfg, lot_num, induction_window_days,") &&
      has(sf("10_lot2_5_base.R"), "{melp_suppress_predicate(cfg)}") &&
      has(sf("10_lot2_5_base.R"), "melp_inject_arm(cfg"),

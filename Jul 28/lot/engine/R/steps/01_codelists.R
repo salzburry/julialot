@@ -287,6 +287,36 @@ phase_codelists <- function(con) {
   else
     log_msg("  OK: No blank medication or class.")
 
+  # A space inside an abbreviation makes it two agents everywhere downstream.
+  #
+  # A regimen is stored as ONE space-joined string - concat_ws(' ',
+  # sort_array(collect_set(MED_ABBR))) in 04_lot1_base.R and 10_lot2_5_base.R -
+  # and every reader splits it back on that space: prior_regimen.R and
+  # 10_lot2_5_base.R for the previous regimen, foldin_rule.R for the fold set,
+  # melp_rule.R for the confirm gate. So 'DRUG A' is written once and read back
+  # as DRUG and A, neither of which names a medication. The previous-regimen
+  # test, the fold set, the substitution pair and the medication count all miss
+  # it, quietly and in different directions.
+  #
+  # The load upper()s and trim()s the value, which takes the ends only, so an
+  # internal space arrives intact. Checked here because that is where the
+  # abbreviation enters and the only place it can still be refused; the split
+  # itself has no way to tell one agent from two.
+  spaced_meds <- db_q(con, "
+    SELECT DISTINCT CL_MED_ABBR
+    FROM mma_extractable_codelist
+    WHERE CL_MED_ABBR LIKE '% %'
+    ORDER BY CL_MED_ABBR
+  ")
+  if (nrow(spaced_meds) > 0)
+    problems <- rbind(problems, data.frame(check = "spaced_med_abbr", detail = paste0(
+      nrow(spaced_meds), " medication abbreviation(s) with a space inside: ",
+      paste(spaced_meds$CL_MED_ABBR, collapse = ", "),
+      ". A regimen is one space-joined string, so each of these reads back as ",
+      "two agents that do not exist"), stringsAsFactors = FALSE))
+  else
+    log_msg("  OK: No medication abbreviation carries an internal space.")
+
   # Two classes for one abbreviation. min() later picks one and says nothing.
   multi_class <- db_q(con, "
     SELECT CL_MED_ABBR, count(DISTINCT CL_MED_CLASS) AS n_classes,

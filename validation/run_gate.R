@@ -37,10 +37,21 @@ REPO   <- dirname(HERE)
 # suites correctly and made three hygiene suites SKIP against a path that could
 # not exist - which the gate counts against itself, so the failure was at least
 # loud. Normalised here, and handed on in the form the suites expect.
+#
+# "Absolute" has three shapes, not one. A leading "/" is the POSIX case and was
+# the only one recognised, so on Windows a drive path or a UNC share was taken
+# for a relative name and joined to the repo root - C:/work/Jul 28 became
+# <repo>/C:/work/Jul 28, which resolves to nothing and lands back in the SKIP
+# the paragraph above describes. R's own file.path uses "/" on every platform,
+# so a backslash form is normalised before it is tested rather than matched
+# separately.
 STUDY <- local({
   v <- Sys.getenv("STUDY_FOLDER", unset = "")
+  vv <- chartr("\\", "/", v)
+  absolute <- startsWith(vv, "/") ||        # POSIX, and the UNC //server/share
+    grepl("^[A-Za-z]:/", vv)                # a Windows drive letter
   if (!nzchar(v)) file.path(REPO, "Jul 28")
-  else if (startsWith(v, "/")) v
+  else if (absolute) vv
   else file.path(REPO, v)
 })
 Sys.setenv(STUDY_FOLDER = sub(paste0("^", REPO, "/"), "", STUDY))
@@ -63,8 +74,10 @@ EXPECTED_FAILURES <- list(
     "05_sct.R: differs beyond the approved deviations in 11 line(s) [6457f58f]",
     # lot1_regimen_cutoff, the regimen window and the per-drug episode scan
     # both bounded by it, the same-day add-med tie-break as a row hash rather
-    # than a seeded rand, and the short-course boundary gate as an anti-join.
-    "04_lot1_base.R: differs from 02_lot1.R in 143 line(s) [1b2e6ad1]",
+    # than a seeded rand, the short-course boundary gate as an anti-join, and
+    # the melphalan verdict built here rather than judged again for the break
+    # test alone - the same helper 06 reads, bound one statement earlier.
+    "04_lot1_base.R: differs from 02_lot1.R in 148 line(s) [00080579]",
     # LOT1_AUTO_HOLD_DT, and a tandem that needs a clear gap between its two
     # transplants.
     "05b_lot1_sct.R: differs beyond the approved deviations in 176 line(s) [524fd363]",
@@ -80,8 +93,10 @@ EXPECTED_FAILURES <- list(
     # condition, a held melphalan course kept out of the line's regimen, and
     # the LOT_LONG publish lifted into publish_lot_long() so the drop that
     # follows it can be refused without failing a build that already wrote a
-    # complete LOT_LONG. Re-pinned deliberately, which is what this list is for.
-    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 972 line(s) [1532da99]")
+    # complete LOT_LONG, and the short-course break test told that this
+    # statement already carries the verdict, so a confirmed course stops a
+    # run-out chain. Re-pinned deliberately, which is what this list is for.
+    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 976 line(s) [42b7cbbf]")
 )
 
 # How one suite's output is read. Its own suite is validation/hygiene/

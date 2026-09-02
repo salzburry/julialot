@@ -145,6 +145,23 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
   # because it really did open a line.
   not_supp <- if (!melp_on) "" else paste0("
           AND NOT ", melp_is("ms", suppressed("ms")))
+  # ...and staying visible takes TWO changes, not one. The scan drops any drug
+  # in the fold set before it reads the line above, because a returning
+  # prior-line agent is not an advance. Where melphalan is ITSELF a fold-set
+  # drug - it was in the earlier regimen - that exclusion reached an injected
+  # course first and the line above never saw it.
+  #
+  # F33 could not catch this: its first line is LEN+BORT, so melphalan is
+  # outside the fold set and the exclusion has nothing to match. Compare F34,
+  # which is F33 with melphalan moved INTO the first line and nothing else
+  # changed, and which folded a return landing a day after the boundary into a
+  # line that had already ended.
+  #
+  # An injected course is an advance whoever else has given the drug, so it is
+  # let back past the fold-set test rather than being filtered later - later is
+  # too late, the row is already gone.
+  inject_or <- if (!melp_on) "" else paste0("
+               OR ", melp_is("ms", injected("ms")))
   this_tx <- if (is.null(n_start) || is.null(n_type)) "" else paste0("
       UNION
       SELECT ", n_tbl, ".PATID, ", n_start, " AS OPEN_DT
@@ -198,9 +215,9 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
           AND NOT EXISTS (SELECT 1 FROM base_meds ob
                           WHERE ob.PATID = ms.PATID
                             AND ob.MED_ABBR = ms.MAP_MED_TYPE)
-          AND NOT EXISTS (SELECT 1 FROM ", meds, " ofm
-                          WHERE ofm.PATID = ms.PATID
-                            AND ofm.MED_ABBR = ms.MAP_MED_TYPE)", not_supp, "
+          AND (NOT EXISTS (SELECT 1 FROM ", meds, " ofm
+                           WHERE ofm.PATID = ms.PATID
+                             AND ofm.MED_ABBR = ms.MAP_MED_TYPE)", inject_or, ")", not_supp, "
         UNION
         -- A planned tandem continues the line and opens nothing, so it is no
         -- advance either. Same helper the melphalan rule reads, so the two
