@@ -2,3 +2,16 @@
 __pycache__/
 *.py[cod]
 *$py.class
+
+# A local Spark session writes its warehouse to the working directory unless
+# told otherwise, so running the emitted chain against a real Spark leaves this
+# beside the deliveries. It is not one of them.
+#
+# This keeps it out of a commit and nothing more. It is not a guard for
+# validation/hygiene/study_folder_standalone.R, which reads the filesystem and
+# never consults this file: that suite counts every sibling directory and fails
+# when a Jul 28 file names one. It stays green on this directory only because
+# no file says "spark-warehouse" - a scratch directory called something a
+# delivery file does mention would still fail it, which is how an empty
+# artifacts/ broke the gate once.
+spark-warehouse/
