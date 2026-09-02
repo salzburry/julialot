@@ -318,13 +318,31 @@ line_break_tx_sql <- function() glue("
 #
 # paste0 around the glue, not glue alone: glue trims a template's leading
 # newline, and this fragment splices straight after another predicate.
+# first_auto_exempt: LOT1 only, where the FIRST autologous transplant is part
+# of the line and never ends it, wherever it falls (LOT_RULES.md 3.4). The
+# engine's own end cascade says so - ENDING_AUTO_DT in 05b_lot1_sct.R takes
+# AUTO_DT_2 in the single case, never AUTO_DT_1 - but this predicate did not,
+# so a first transplant outside the 60-day window was a boundary here while
+# being none there.
+#
+# What that cost: a short unconfirmed melphalan course after such a transplant
+# was marked TAKEN, so LOT1 never judged it, so it was never suppressed, and it
+# opened a line of its own on the melphalan date - which 4.7 forbids outright.
+# The planted W3 pair is that patient, and W3i - the same transplant inside the
+# window - was always right, which is why nothing caught it.
+#
+# LOT2-5 do NOT get this: there the first transplant outside the previous
+# line's window ends the line like any other (4.1), and that asymmetry is 3.4's
+# whole subject.
 line_break_window_pred <- function(cfg, alias, induction_end, line_start,
-                                   cart_from = NULL) {
+                                   cart_from = NULL, first_auto_exempt = FALSE) {
   cart <- if (is.null(cart_from) || identical(cart_from, line_start)) "" else
     paste0("\n                 AND (", alias, ".SCT_KIND <> 'CART' OR ",
            alias, ".TX_DT > ", cart_from, ")")
+  first_auto <- if (!isTRUE(first_auto_exempt)) "" else
+    paste0("\n                 AND ", alias, ".PREV_AUTO_DT IS NOT NULL")
   paste0("\n       AND ((", alias, ".SCT_KIND = 'AUTO'
-                 AND ", alias, ".TX_DT > ", induction_end, "
+                 AND ", alias, ".TX_DT > ", induction_end, first_auto, "
                  AND NOT (", alias, ".PREV_AUTO_DT IS NOT NULL
                           AND datediff(", alias, ".TX_DT, ", alias,
                               ".PREV_AUTO_DT) <= ", cfg$sct_tandem_days, "

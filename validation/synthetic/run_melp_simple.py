@@ -126,6 +126,14 @@ PATS = [
                    ('MELP', 'ALKY', 400, 427), ('POMA', 'IMID', 405, 600)]),
          sct_ac=[('CART', IX + 200)]),
     P('SJ0', [('LEN', 'IMID', 0, 600), ('MELP', 'ALKY', 500, 527)]),
+    # SJ1: SJ0's transplant moved OUTSIDE LOT1's 60-day window, on a line still
+    # running. 3.4 says the first transplant never ends LOT1 wherever it falls,
+    # so this must read exactly like SJ0. It did not: the boundary helper took
+    # any AUTO past the window as a break at LOT1 too, so the course was marked
+    # TAKEN, LOT1 never judged it, it was never suppressed, and it opened a line
+    # of its own on the melphalan date - which 4.7 forbids outright. SJ0 could
+    # not catch it because its transplant is in-window, which was always right.
+    P('SJ1', [('LEN', 'IMID', 0, 600), ('MELP', 'ALKY', 500, 527)]),
     P('SJ', [('LEN', 'IMID', 0, 600), ('MELP', 'ALKY', 500, 527)]),
     # SP*: one course, with a transplant in three positions around it. The two
     # doses are closer together than melp_exposure_days, so they are ONE
@@ -169,6 +177,8 @@ PATS = [
 for _p in PATS:
     if _p['pid'] == 'SJ0':
         _p['sct_auto'] = [IX + 30]
+    elif _p['pid'] == 'SJ1':
+        _p['sct_auto'] = [IX + 200]
     elif _p['pid'] == 'SJ':
         _p['sct_auto'] = [IX + 30, IX + 180]
 
@@ -341,6 +351,9 @@ def main():
        "SJ0 simplified: the in-window AUTO leaves the rule alone - one line")
     ok(smp.get('SJ') == smp.get('SJ0'),
        "SJ simplified: its planned tandem partner does not switch the rule off")
+    ok(smp.get('SJ1') == smp.get('SJ0'),
+       "SJ1 simplified: a FIRST transplant outside the window does not switch "
+       "it off either - 3.4 gives LOT1 that transplant wherever it falls")
 
     if fails:
         print("%d check(s) failed" % len(fails)); sys.exit(1)

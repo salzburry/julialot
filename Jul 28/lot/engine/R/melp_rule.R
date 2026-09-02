@@ -76,10 +76,12 @@ melp_abbr    <- function(cfg) toupper(trimws(cfg$melp_med_abbr %||% "MELP"))
 # and none of them should have to know which reading is in force.
 melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end,
                                base_tbl = NULL, restart_tbl = NULL,
-                               not_new_ctes = "", cart_from = NULL) {
+                               not_new_ctes = "", cart_from = NULL,
+                               first_auto_exempt = FALSE) {
   if (!melp_rule_on(cfg)) return("")
   melp_simplified_ctes(cfg, line_tbl, start_col, span_end, induction_end,
-                       base_tbl, restart_tbl, not_new_ctes, cart_from)
+                       base_tbl, restart_tbl, not_new_ctes, cart_from,
+                       first_auto_exempt)
 }
 
 # The simplified rule's decision, emitting the same four CTE names the
@@ -112,7 +114,8 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
 # own pair first, because nothing usable exists yet where it splices.
 melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
                                  induction_end, base_tbl, restart_tbl,
-                                 not_new_ctes = "", cart_from = NULL) {
+                                 not_new_ctes = "", cart_from = NULL,
+                                 first_auto_exempt = FALSE) {
   if (is.null(base_tbl) || is.null(restart_tbl))
     stop("The simplified melphalan rule needs the judged line's base set and ",
          "restart flags to tell a confirming agent from a drug the line ",
@@ -244,7 +247,8 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
           WHERE ctx.PATID = mc.PATID
             AND ctx.TX_DT >  mc.EXPO_DT
             AND ctx.TX_DT <= c.MAP_START_DT{line_break_window_pred(cfg, 'ctx',
-                  induction_end, paste0(line_tbl, '.', start_col), cart_from)}
+                  induction_end, paste0(line_tbl, '.', start_col), cart_from,
+                  first_auto_exempt)}
         )
     ),
     -- A course belongs to ONE line: the latest whose start precedes it.
@@ -307,7 +311,7 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
       ) tx
         ON tx.PATID = mc.PATID
        AND tx.TX_DT <= mc.EXPO_DT{line_break_window_pred(cfg, 'tx', induction_end,
-             paste0(line_tbl, '.', start_col), cart_from)}
+             paste0(line_tbl, '.', start_col), cart_from, first_auto_exempt)}
     ),
     melp_judged AS (
       SELECT mc.PATID, mc.EXPO_DT,
@@ -836,7 +840,9 @@ melp_lot1_ctes <- function(cfg, line_from = "lot1_base", end_ctes = TRUE) {
                        # window. One outside it opens the next line as anywhere
                        # else. With the rule off there is no exemption at all.
                        cart_from = if (isTRUE(cfg$apply_cart_induction_rule))
-                                     "melp_line.IND_END_DT" else NULL),
+                                     "melp_line.IND_END_DT" else NULL,
+                       # 3.4: LOT1's first transplant never ends the line.
+                       first_auto_exempt = TRUE),
     if (!end_ctes) "" else glue("
     -- lot1_base with the held run-out substituted, built ONCE and read by
     -- every CTE in 06 that asks when this line ran out.
