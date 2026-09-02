@@ -25,10 +25,11 @@ reading of how the rules interact, and the first warehouse run settles it.
 | `melp_short_course` | Brief melphalan course outside induction | `melp_simple_course_days = 28` | No new line. The course neither ends line 1 nor starts line 2, and line 1 is carried to day 127 - the last day the course covers - rather than ending at the melphalan date. | to_confirm |
 | `melp_long_course` | Melphalan course past the short cap | `melp_simple_course_days = 28` | A new line at day 100. Past the cap the rule stands aside and melphalan is an added medication like any other agent. | to_confirm |
 | `melp_short_course_confirmed` | A new agent inside a brief melphalan course | - | A new line, and it starts on day 100 - the melphalan date - not on day 105. The agent inside the course is what tells us treatment changed; the melphalan is where it changed. | to_confirm |
+| `melp_confirmed_course_is_one_course` | A confirmed melphalan course given as more than one dose | - | The course is confirmed, so it opens a line on day 90 - the melphalan date. Its day-110 dose opens nothing: only the first day of a course is a boundary. The allograft's line is carried to day 110 and owns it. | to_confirm |
 | `melp_course_split_by_a_transplant` | A transplant lands inside a brief melphalan course | - | No line starts on either dose. The course covers 21 days, which is under the cap, and it began outside any induction window - so it does not advance the line, wherever the transplant sits. The day-90 dose stays in 1L; the allograft's own line is carried to day 110 and owns the second. | to_confirm |
 | `melp_confirmed_beats_the_fold` | A confirmed melphalan course that is also a returning drug | - | A new line on day 300 - the melphalan date - carrying the melphalan and the day-305 agent. 2L keeps its own end and does NOT name melphalan: the course starts a line, so it is not a drug folding back into the line before it. | to_confirm |
 | `returning_drug_one_advance` | A drug returns after one advance | - | No new line. One agent advanced the line between B's two doses, so B joins 2L - the line's span carries it, and it joins 2L's regimen string too. | to_confirm |
-| `returning_drug_two_advances` | A drug returns after two advances | - | A new line at day 450. Treatment moved on twice while B was away, so B is not returning to the line it left and its return opens one. | to_confirm |
+| `returning_drug_two_advances` | A drug returns after two advances | - | A new line at day 450. B is a 1L drug and the fold set is the IMMEDIATELY previous line's regimen, so B is not in it at all - the count is never asked, and B opens a line as any other agent would. | to_confirm |
 | `returning_drug_two_agents_one_line` | Two drugs start one line while a drug is away | - | No new line. Two agents started 2L, but they advanced the line ONCE between them, so B sees one advance and joins 2L. | to_confirm |
 | `maintenance_to_relapse` | Maintenance running into relapse | - | Maintenance is NOT a line of its own here - contains_mtx_reg is a flag and there is no maintenance period. The relapse is handled by the ordinary rules, so the line count does not include a maintenance line. | derived |
 | `steroid_only_interval` | Steroid-only stretch between regimens | - | The steroid stretch neither starts nor continues a line. | derived |
@@ -147,6 +148,12 @@ reading of how the rules interact, and the first warehouse run settles it.
 - why it is hard: Dating the line at the later agent would put the boundary after treatment had already moved on, and split the melphalan away from the line it belongs to.
 - rule: lot/engine/R/melp_rule.R | WHERE INSIDE = 0 AND SHORT = 1 AND CONFIRMED = 1
 
+**melp_confirmed_course_is_one_course** - A confirmed melphalan course given as more than one dose
+
+- timeline: d+0 MED (1L regimen starts); d+90 MED (melphalan, outside 1L's induction window); d+95 MED (a new agent starts inside the course's cover); d+100 ALLO (an allograft); d+110 MED (a second melphalan dose - the same course, inside melp_exposure_days of the first)
+- why it is hard: Suppression came off the candidate list at every dose of a course from the start; confirmation stored only the first. A course given as one episode never showed it, because its later doses sat inside the line the boundary opened - until a transplant ended that line first, and a later dose opened one of its own.
+- rule: lot/engine/R/melp_rule.R | melp_inject_rest AS (
+
 **melp_course_split_by_a_transplant** - A transplant lands inside a brief melphalan course
 
 - timeline: d+0 MED (1L regimen starts); d+90 MED (melphalan, outside 1L's induction window); d+100 ALLO (an allograft, between the two doses); d+110 MED (a second melphalan dose - same course, it is inside melp_exposure_days of the first)
@@ -168,7 +175,7 @@ reading of how the rules interact, and the first warehouse run settles it.
 **returning_drug_two_advances** - A drug returns after two advances
 
 - timeline: d+0 MED (1L starts on drug A and drug B); d+200 MED (drug C advances the line to 2L); d+300 MED (drug D advances it again, to 3L); d+450 MED (drug B comes back, during 3L)
-- why it is hard: The count is what separates a drug rejoining its own line from one re-introduced after the regimen has changed twice over.
+- why it is hard: The outcome the study team's note describes for two advances, reached by the scope rather than by the count. Scoped to the previous line the count cannot reach two, so this pins the ANSWER the 'two or more' clause gives and not the clause itself - which is unreachable, and said to be so in the rules and the contract.
 - rule: lot/engine/R/foldin_rule.R | N_ADVANCES
 
 **returning_drug_two_agents_one_line** - Two drugs start one line while a drug is away

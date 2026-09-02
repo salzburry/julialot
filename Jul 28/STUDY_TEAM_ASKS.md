@@ -246,10 +246,15 @@ is the note's own example with both drugs coming back rather than one.
   more"** clause can then never fire. A drug is in a line's regimen only
   through an episode starting at or after that line's start, and the return has
   to be inside the line being built, so exactly one line can ever have opened
-  in between. Scoped this way the count is always nought or one. Nothing
-  observable changed when it was narrowed — every planted patient lands where
-  it did — because the wider set could not reach two either, once a same-drug
-  restart stopped opening a line of its own (ask 6).
+  in between. Scoped this way the count is always nought or one.
+
+  Two statements above are about different things and should not be read as
+  one. **On the planted cases the build carries, narrowing moved nothing** —
+  every one lands where it did, because the wider set could not reach two
+  either once a same-drug restart stopped opening a line of its own (ask 6).
+  **On a case built to tell them apart, the scopes differ** — four lines
+  narrow against three wide. The first is what the regression suite sees; the
+  second is why the choice had to be made rather than assumed.
 - ~~Which rule is applied first where the two meet.~~ **Settled**, from what
   the two notes say rather than from a choice of ours. Both directions now
   hold:

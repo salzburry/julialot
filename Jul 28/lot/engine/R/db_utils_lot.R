@@ -129,16 +129,49 @@ missing_object_error <- function(err) {
     grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found|no such table|does not exist", msg, ignore.case = TRUE)
 }
 
+# Second question, for the callers that turn "not found" into a first-run
+# default: can the namespace that name sits in be read at all?
+#
+# The answer above cannot be trusted on its own. Under Unity Catalog a caller
+# reaching an object it holds no grant on is told TABLE_OR_VIEW_NOT_FOUND -
+# the same words the absent case gives - because reaching one needs USE
+# CATALOG, then USE SCHEMA, then a grant on the object, and a break anywhere in
+# that chain surfaces as not-found rather than as a denial. So the footnote
+# above stops being a footnote the moment the catalog setting moves, and a
+# missing grant reads as a clean first run.
+#
+# Asking the catalogue for the namespace separates the two cases that matter
+# most: a genuinely absent table in a schema this caller can read lists
+# cleanly, while a missing USE CATALOG or USE SCHEMA fails the listing too.
+#
+# What it still cannot see, said plainly rather than papered over: a caller
+# holding USE SCHEMA but no grant on this one table gets an empty listing and
+# is still taken for a first run. Closing that needs the grant check in the
+# runbook, not more code here. NA means the name carried no namespace to ask
+# about, so the caller keeps whatever it did before.
+namespace_readable <- function(con, tbl) {
+  ns <- sub("\\.[^.]+$", "", tbl)
+  if (identical(ns, tbl) || !nzchar(ns)) return(NA)
+  !inherits(tryCatch(db_q(con, paste0("SHOW TABLES IN ", ns)),
+                     error = function(e) e), "condition")
+}
+
 with_retry <- function(fn, max_retries = lot_config()$max_retries,
                        base_sleep = lot_config()$base_sleep) {
   # Errors not worth a retry. Both the Spark class name and the ODBC wording
   # turn up, depending on how the driver surfaces it, so both are listed.
+  # A missing grant is permanent too, and it is worth naming rather than
+  # leaving to the retry budget: waiting out five exponential backoffs before
+  # reporting it costs about half a minute per statement, and no amount of
+  # waiting grants a privilege.
   permanent_error_patterns <- c(
     "AnalysisException", "AMBIGUOUS_REFERENCE", "AMBIGUOUS REFERENCE",
     "ParseException", "Syntax error",
     "TABLE_OR_VIEW_NOT_FOUND", "Table or view not found",
     "UNRESOLVED_COLUMN", "Unresolved column", "cannot resolve",
-    "not supported", "UNSUPPORTED_FEATURE", "not allowed"
+    "not supported", "UNSUPPORTED_FEATURE", "not allowed",
+    "INSUFFICIENT_PERMISSIONS", "PERMISSION_DENIED",
+    "UnauthorizedAccessException", "does not have permission"
   )
   attempt <- 1
   repeat {

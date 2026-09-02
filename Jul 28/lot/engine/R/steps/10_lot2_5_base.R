@@ -85,6 +85,44 @@
 # list from these two names.
 lotn_table <- function(lot_num, stage) sprintf("LOT%d_%s", lot_num, stage)
 
+# Promote the finished staging table to LOT_LONG, then tidy up.
+#
+# Publication is the first statement and nothing else. Only then is the staging
+# table promoted to the final LOT_LONG. Every LOT - 1 to max_lot, or up to the
+# natural break the caller found - appended without error, so this is a
+# complete build. Had any append failed, build_lot_n() would have stop()ped
+# before reaching here, leaving LOT_LONG_STAGE partial and the previous
+# LOT_LONG untouched. So the orchestrator never mistakes a partial build for a
+# finished one.
+#
+# The two statements after it are cleanup, and they are not alike. Dropping the
+# stage used to raise like any other step, so a lock or a missing DROP grant
+# marked a build that had already published a complete LOT_LONG as 'failed' -
+# the one outcome this sequence exists to prevent. The leftover is a real
+# problem, just not this run's: it is a half-built LOT_LONG standing beside the
+# finished one, which is what the note at the end of build_lot2_5() says must
+# not happen. So it is named, not thrown. Repointing the view stays fatal,
+# because the criteria layer and the flag tables read it.
+#
+# A separate function so both of those can be driven by a test. Inline, the
+# only way to reach them was a warehouse.
+publish_lot_long <- function(con) {
+  run_step(con, "L99_publish_lot_long",
+    glue("CREATE OR REPLACE TABLE {lot_out('LOT_LONG')} AS SELECT * FROM {lot_out(.LOT_LONG_STAGE)}"),
+    qc = glue("SELECT count(*) AS n_rows FROM {lot_out('LOT_LONG')}"))
+  drop_err <- tryCatch({
+    db_exec(con, glue("DROP TABLE IF EXISTS {lot_out(.LOT_LONG_STAGE)}"))
+    NULL
+  }, error = conditionMessage)
+  if (!is.null(drop_err))
+    log_msg("WARNING: ", lot_out("LOT_LONG"), " is published and complete, but ",
+            lot_out(.LOT_LONG_STAGE), " could not be dropped (", drop_err,
+            "). That leaves a half-built LOT_LONG beside the real one. Drop it ",
+            "by hand before anyone reads it.")
+  db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW lot_long AS SELECT * FROM {lot_out('LOT_LONG')}"))
+  invisible(TRUE)
+}
+
 # ---- Initialize lot_long from lot1_base_end (no LOT1 rewrite) ----
 
 init_lot_long_from_lot1 <- function(con, meds, classes) {
@@ -608,8 +646,8 @@ build_lot_n <- function(con, lot_num,
         {med_flag_exprs},
         {class_flag_exprs}
       FROM (
-        SELECT PATID, MED_ABBR, MED_CLASS
-        FROM lot{lot_num}_induction_meds{foldin_regimen_union(cfg, lot_num, lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days))}
+        SELECT im0.PATID, im0.MED_ABBR, im0.MED_CLASS
+        FROM lot{lot_num}_induction_meds im0{melp_regimen_filter(cfg, glue('lot{lot_num}_start'), glue('LOT{lot_num}_START_DT'), lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days))}{foldin_regimen_union(cfg, lot_num, lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days))}
       ) im
       GROUP BY im.PATID
     ),
@@ -1424,17 +1462,7 @@ build_lot2_5 <- function(con,
   }
   options(lot_lines_built = built)
 
-  # Publish in one step. Only now is the staging table promoted to the final
-  # LOT_LONG. Every LOT - 1 to max_lot, or up to the natural break above -
-  # appended without error, so this is a complete build. Had any append failed,
-  # build_lot_n() would have stop()ped before reaching here, leaving
-  # LOT_LONG_STAGE partial and the previous LOT_LONG untouched. So the
-  # orchestrator never mistakes a partial build for a finished one.
-  run_step(con, "L99_publish_lot_long",
-    glue("CREATE OR REPLACE TABLE {lot_out('LOT_LONG')} AS SELECT * FROM {lot_out(.LOT_LONG_STAGE)}"),
-    qc = glue("SELECT count(*) AS n_rows FROM {lot_out('LOT_LONG')}"))
-  db_exec(con, glue("DROP TABLE IF EXISTS {lot_out(.LOT_LONG_STAGE)}"))
-  db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW lot_long AS SELECT * FROM {lot_out('LOT_LONG')}"))
+  publish_lot_long(con)
 
   # The final summary, read off the published LOT_LONG.
   summary <- db_q(con, glue("
@@ -1449,9 +1477,10 @@ build_lot2_5 <- function(con,
   # The per-line stage tables stay behind. They are each line's working - its
   # start candidates, its regimen, its transplants, its end reason - and reading
   # one answers why a patient's LOT3 ended where it did, with no re-run.
-  # LOT_LONG_STAGE is the exception and was dropped above. It is a half-built
-  # LOT_LONG, and leaving it would put a table beside the real one that looks
-  # like it and is not.
+  # LOT_LONG_STAGE is the exception and was dropped above, or named in the
+  # warning there if the drop could not run. It is a half-built LOT_LONG, and
+  # leaving it would put a table beside the real one that looks like it and is
+  # not.
   if (length(built))
     log_msg("Per-line stage tables written: LOT", paste(built, collapse = "/LOT"),
             " x {", paste(.LOTN_STAGES, collapse = ", "), "}")

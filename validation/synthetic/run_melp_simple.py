@@ -145,6 +145,26 @@ PATS = [
                    ('MELP', 'ALKY', 110, 110)], ac=[('ALLO', 120)]),
     P('SPnone',   [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 90, 90),
                    ('MELP', 'ALKY', 110, 110)]),
+    # SQ: a CONFIRMED course given as more than one dose, with transplants
+    # ending the line it opened. DARA d95 confirms the d90 course, so the
+    # course advances the line on d90 - and its d110 dose belongs to whatever
+    # line is running by then, never to one of its own.
+    #
+    # Injection stored only the course's first date while suppression expanded
+    # to every dose, so d110 stayed an ordinary candidate and opened a line -
+    # which 4.7 forbids. Holding for it then has to reach only the LATER
+    # doses: a single-dose course has nothing after its boundary to own, and
+    # holding there swallowed an agent that should have opened its own line
+    # (SK).
+    P('SQ', [('LEN', 'IMID', 0, 80), ('DARA', 'MAB', 95, 300),
+             ('MELP', 'ALKY', 90, 90), ('MELP', 'ALKY', 110, 110)],
+       ac=[('ALLO', 100), ('ALLO', 105)]),
+    # SR: a held course spanning a procedure. 4.7 says a held course joins
+    # neither the regimen nor the count, but the induction window collects
+    # every non-steroid episode in it before the verdict is known, so the
+    # post-procedure dose entered the new line's regimen and its drug count.
+    P('SR', [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 195, 195),
+             ('MELP', 'ALKY', 205, 222)], ac=[('CART', 200)]),
 ]
 for _p in PATS:
     if _p['pid'] == 'SJ0':
@@ -167,11 +187,15 @@ def build(mode):
     rs.load(con, PATS)
     rs.run_chain(con, sqldir)
     lines = {}
-    for pid, n, s, e, why in con.execute(
+    # The regimen and drug count come back too: 4.7 says a held course joins
+    # neither, and a line's dates cannot show whether it did.
+    for pid, n, s, e, why, meds, cnt in con.execute(
             "SELECT PATID, LOT_NUM, LOT_START_DT, LOT_BASE_END_DT, "
-            "LOT_BASE_END_REASON FROM lot_long ORDER BY PATID, LOT_NUM").fetchall():
+            "LOT_BASE_END_REASON, coalesce(LOT_BASE_MEDS, ''), LOT_MED_CNT "
+            "FROM lot_long ORDER BY PATID, LOT_NUM").fetchall():
         # duckdb hands some derived dates back as datetimes; keep the day.
-        lines.setdefault(pid, []).append((n, str(s)[:10], str(e)[:10], why))
+        lines.setdefault(pid, []).append((n, str(s)[:10], str(e)[:10], why,
+                                          meds, cnt))
     con.close()
     return lines
 
@@ -272,6 +296,20 @@ def main():
         ok(not owned,
            f"{pid}: ...and every dose of it sits inside a line"
            + (f" - d{owned} in none" if owned else ""))
+    # SQ: no line starts on a dose, and every dose is owned.
+    sq_starts = [str(l[1])[:10] for l in smp['SQ']]
+    ok(rs.d(IX + 110) not in sq_starts,
+       "SQ: a later dose of a CONFIRMED course does not open a line of its own")
+    ok(all(any(l[1] <= rs.d(IX + d) <= l[2] for l in smp['SQ']) for d in (90, 110)),
+       "SQ: ...and both doses of it sit inside a line")
+    ok(rs.d(IX + 90) in sq_starts,
+       "SQ: ...while the course's FIRST day is still the boundary it earns")
+
+    # SR: a held course joins neither the regimen nor the count.
+    sr = [l for l in smp['SR'] if str(l[1])[:10] == rs.d(IX + 200)]
+    ok(len(sr) == 1 and not sr[0][4] and sr[0][5] == 0,
+       "SR: a held course joins neither the line's regimen nor its drug count")
+
     print()
     # SH - one line owns the course, and the earlier line keeps its own end.
     # Bounded only by the observation end, EVERY line claimed EVERY later

@@ -69,11 +69,12 @@ FOLDIN_CELLS <- list(
                      "the current line's regimen window joins that line ",
                      "instead of splitting it, when exactly ONE agent ",
                      "advanced the line between the drug's two doses. The ",
-                     "line's span AND its regimen own the return - the ",
-                     "drug counts do not change - agents of EVERY earlier ",
-                     "line fold, not only the last one's. Those two readings ",
-                     "are open for the study team to confirm. An AGENT is ",
-                     "what is counted because the request is about drugs; ",
+                     "line's span AND its regimen own the return, so ",
+                     "LOT_BASE_MEDS and LOT_MED_CNT both move with it. Only ",
+                     "the IMMEDIATELY PREVIOUS line's agents fold - settled ",
+                     "30 Aug; a drug last given further back is outside the ",
+                     "scope and keeps the engine's ordinary rules. An AGENT ",
+                     "is what is counted because the request is about drugs; ",
                      "transplants keep their own rules and a line one opened ",
                      "overrides the fold")))
 

@@ -76,8 +76,9 @@ signed off. Run the validator.
 ### Supporting the engine refactor
 
 When implementing engine support for a shape, read `rule-shapes.md` for where the
-shape's prototype lives in `Jul 28/lot/engine/` (the melphalan rule is the gap-advancement
-prototype; the SCT machinery is the event-stream prototype). The myeloma-baseline
+shape's implementation lives in `Jul 28/lot/engine/` (the melphalan rule
+implements `short_course_rule`; the SCT machinery is the event-stream
+prototype). The myeloma-baseline
 acceptance rule applies to every kernel change.
 
 ## Validation

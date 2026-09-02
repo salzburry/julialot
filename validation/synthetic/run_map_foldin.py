@@ -311,6 +311,18 @@ PATS = [
               ('POMA', 'IMID', 455, 520)]),
     P('F32n', [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 0, 27),
                ('DARA', 'MAB', 200, 300), ('MELP', 'ALKY', 450, 477)]),
+    # F33: an injected course is a BOUNDARY for a different returning drug.
+    # MELP returns at d450 and POMA d455 confirms it, so the course opens the
+    # next line on d450. BORT - a 1L drug - returns at d451, AFTER that
+    # boundary, so it belongs to the line the boundary opened.
+    #
+    # The fold-in excluded injected MELP from every scan, including the one
+    # that asks what ARRIVED between a returning drug's doses. That hid a real
+    # boundary: BORT saw only DARA behind it, folded into a line that had
+    # already ended, and 2L reported a drug whose only episode began at d451.
+    P('F33', [('LEN', 'IMID', 0, 80), ('BORT', 'PI', 0, 80),
+              ('DARA', 'MAB', 200, 300), ('MELP', 'ALKY', 450, 477),
+              ('BORT', 'PI', 451, 520), ('POMA', 'IMID', 455, 560)]),
     # F28/F29/F30: one scope for "not new". Three patients with the same
     # history and the same short melphalan course at day 600, differing only
     # in how far back the drug returning inside it was last seen.
@@ -517,6 +529,13 @@ def main():
     ok(n(fold, 'F32n') == 2 and fold['F32n'][1][2] == rs.d(IX + 477),
        "F32n: with no confirming agent the course is suppressed, and 2L is "
        "held to its cover as before")
+
+    ok(REGIMEN[(True, 'F33')][2][0] == 'DARA' and n(fold, 'F33') == 3,
+       "F33: an injected course is a boundary, so a drug returning after it "
+       "does not fold into the line before it")
+    ok(fold['F33'][1][2] == rs.d(IX + 300),
+       "F33: ...and that line keeps its own end rather than being carried "
+       "past the boundary")
 
     ok(n(ref, 'F6') == 4 and n(fold, 'F6') == 4,
        "F6: a return from two lines back is outside the fold set, so it "

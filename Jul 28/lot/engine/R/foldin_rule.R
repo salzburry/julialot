@@ -113,19 +113,38 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
   # DATE, so matching on those alone removes whatever else started that day -
   # a returning drug landing on the same date as a judged course was dropped
   # from the fold set and opened a line of its own.
-  melp_judged_dt <- function(alias) paste0("
-                 AND (EXISTS (SELECT 1 FROM melp_suppress_dates msd
-                              WHERE msd.PATID = ", alias, ".PATID
-                                AND msd.SUPPRESS_DT = ", alias, ".MAP_START_DT)
-                      OR EXISTS (SELECT 1 FROM melp_inject mi
-                                 WHERE mi.PATID = ", alias, ".PATID
-                                   AND mi.INJECT_DT = ", alias, ".MAP_START_DT))")
+  # TWO different questions, and they do not take the same answer.
+  #
+  #   "may this row FOLD?"        - neither verdict may. A suppressed course
+  #                                 decides nothing; an injected one starts the
+  #                                 next line. Neither is a drug folding back
+  #                                 into the line before it.
+  #   "did something ARRIVE here?" - a suppressed course did not, but an
+  #                                 INJECTED one did: it opens a line, so it is
+  #                                 a boundary like any other agent.
+  #
+  # Answering the second with the first hides a real boundary from the count.
+  # A returning drug landing just after an injected course then saw only the
+  # advance before it, folded into a line that had already ended, and that
+  # line reported a drug whose only episode began after it.
+  melp_dt <- function(alias, tbl, col) paste0("
+                 AND EXISTS (SELECT 1 FROM ", tbl, " x
+                             WHERE x.PATID = ", alias, ".PATID
+                               AND x.", col, " = ", alias, ".MAP_START_DT)")
+  melp_is <- function(alias, inner) paste0("(upper(trim(", alias,
+                                           ".MAP_MED_TYPE)) = '",
+                                           melp_abbr(cfg), "'", inner, ")")
+  suppressed <- function(a) melp_dt(a, "melp_suppress_dates", "SUPPRESS_DT")
+  injected   <- function(a) melp_dt(a, "melp_inject", "INJECT_DT")
+  # foldin_agent: what may fold, and what stands as a course's previous dose.
+  # Neither verdict qualifies.
   not_supp_ms <- if (!melp_on) "" else paste0("
-      WHERE NOT (upper(trim(ms.MAP_MED_TYPE)) = '", melp_abbr(cfg), "'",
-                 melp_judged_dt("ms"), ")")
+      WHERE NOT ", melp_is("ms", suppressed("ms")), "
+        AND NOT ", melp_is("ms", injected("ms")))
+  # The between-scan: SUPPRESSED only. An injected course stays visible here
+  # because it really did open a line.
   not_supp <- if (!melp_on) "" else paste0("
-          AND NOT (upper(trim(ms.MAP_MED_TYPE)) = '", melp_abbr(cfg), "'",
-                   melp_judged_dt("ms"), ")")
+          AND NOT ", melp_is("ms", suppressed("ms")))
   this_tx <- if (is.null(n_start) || is.null(n_type)) "" else paste0("
       UNION
       SELECT ", n_tbl, ".PATID, ", n_start, " AS OPEN_DT
