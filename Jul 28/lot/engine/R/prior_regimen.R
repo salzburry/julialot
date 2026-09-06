@@ -256,6 +256,33 @@ tandem_interrupt_events_sql <- function() "
         SELECT PATID, TX_DT AS dt FROM tx_allo_cart_dates
         WHERE SCT_TYPE IN ('ALLO', 'CART')"
 
+# Each AUTO with the one before it, and whether anything happened in between.
+#
+# Three statements need exactly this relation and had a copy each - the next
+# line's AUTO start gate in 10_lot2_5_base.R and the two run-out guards that
+# mirror it, in 06_lot1_end.R and again in 10_lot2_5_base.R. They have to agree:
+# the gate decides whether an AUTO opens the next line and the guards decide
+# whether a run-out before it is a confirmed discontinuation, so a copy that
+# drifted would give a line a DEATH end on a run-out the next line does open on.
+# Only the CTE name differed, so the name is the argument.
+autos_with_prev_cte <- function(name) paste0(
+"    ", name, " AS (
+      -- N_BETWEEN: whether anything happened since the previous transplant. A
+      -- pair 180 days apart with a medication in the middle is not a planned
+      -- tandem, so the later transplant is free to start a line.
+      SELECT p.PATID, p.TX_DT, p.PREV_AUTO_DT,
+             coalesce(sum(CASE WHEN x.dt > p.PREV_AUTO_DT AND x.dt < p.TX_DT
+                               THEN 1 ELSE 0 END), 0) AS N_BETWEEN
+      FROM (
+        SELECT a.PATID, a.TX_DT,
+               lag(a.TX_DT) OVER (PARTITION BY a.PATID ORDER BY a.TX_DT) AS PREV_AUTO_DT
+        FROM tx_auto_dates a
+      ) p
+      LEFT JOIN (", tandem_interrupt_events_sql(), "
+      ) x ON p.PATID = x.PATID
+      GROUP BY p.PATID, p.TX_DT, p.PREV_AUTO_DT
+    ),")
+
 # Every transplant and CAR-T, with what the tandem test needs beside each one.
 #
 # Two rules ask which procedures BREAK a line - the melphalan rule, to say

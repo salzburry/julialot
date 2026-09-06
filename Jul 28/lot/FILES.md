@@ -10,13 +10,14 @@ One package writes. The rest read a finished run.
 |---|---|
 | `lot/engine/` | builds the lines. `build.R <COHORT_TABLE> <prefix_>`. The only package here that writes a study run. |
 | `lot/qc/` | thirty-seven checks on a finished run, asked after the fact. Reads only. `run_lot_qc.R`. |
-| `exploration/lot/` | the rule scenarios, machine-checked against the settings that decide them. No warehouse. |
+| `lot/melphalan/` | what the melphalan rule did to the numbers, as two complete builds differenced. Opt-in, its own prefixes. |
+| `lot/validation/` | the rule vignettes — the machine-checked twin of `LOT_RULES.md`. No warehouse. |
 
 ## What is deliberately not here
 
 A cohort, everything derived from a finished run, and every experiment on the
 rules — each sits beside this folder, so the algorithm is one directory with
-three packages in it:
+four packages in it:
 
 | | |
 |---|---|
@@ -24,9 +25,8 @@ three packages in it:
 | `reporting/dashboard/` | one self-contained HTML off a finished run |
 | `analysis/outcomes/` | TTNT, TTD, OS and attrition |
 | `analysis/questions/` | the study team's asks, one script each |
-| `lot/melphalan/` | what the melphalan rule does to the numbers, as two complete builds differenced |
 | `exploration/lot/run_foldin_cells.R` | the MAP fold-in the build applies, measured against a build without it |
-| `exploration/lot/` | benchmarks, definitions, sensitivity, stockpiling, re-challenge, audit counts |
+| `exploration/lot/` | the rule scenarios, benchmarks, definitions, sensitivity, stockpiling, re-challenge, audit counts |
 
 Each area has its own `FILES.md`. Dependencies run one way: those areas resolve
 `lot/engine` and read its modules; nothing in `lot/` resolves back out.

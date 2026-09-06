@@ -14,8 +14,8 @@
 #      not already hold - not from the one randomly stored first-add
 #      medication. Two classes:
 #        AFFECTED            every candidate that day is a previous-line
-#                            agent, so under the proposed fold-in the boundary
-#                            disappears
+#                            agent, so where the fold-in takes the return the
+#                            boundary disappears
 #        SAME_DAY_NEW_AGENT  another engine-valid candidate also started that
 #                            day, so the boundary would remain
 #      ...each under two match bases, EXACT_TOKEN and SUBSTITUTE_FAMILY,
@@ -23,9 +23,13 @@
 #      A per-patient review roster sits beside the counts: prior and current
 #      regimens, the returning drug and its date, the window end, the gap from
 #      the drug's last cover, same-day starters, and the next line.
-#      It is a screen of current boundaries, not the line table the proposed
-#      rule would build - a folded agent changes the regimen, the run-out and
-#      every later window, which needs a rebuild, not arithmetic.
+#      It is a screen of the boundaries in the line table it is pointed at, not
+#      a rebuild - a folded agent changes the regimen, the run-out and every
+#      later window, which arithmetic cannot follow. Written before the rule was
+#      adopted, when the build it read had no fold-in and this sized what the
+#      rule WOULD do. On a build that applies the rule a boundary the fold
+#      removed is no longer there to count, so what it reports now is the
+#      residual: the previous-line returns that still open a line.
 #      The rule itself is NOT changed here. The rebuild exists separately:
 #      exploration/lot/run_foldin_cells.R builds the fold-in as its own
 #      gated cell pair and differences it against the contract build. Both
@@ -41,9 +45,10 @@
 #
 #   2. A pointer to the melphalan comparison. The study adopted the
 #      short-course rule on 2026-08-30 and the build applies it, so this run's
-#      own line table is already built with it. The cells that measured the
-#      choice run separately: the five-branch rule that was not adopted, and
-#      the adopted rule against a build without it.
+#      own line table is already built with it. What measured the choice runs
+#      separately, in lot/melphalan/: the adopted rule against a build without
+#      it. The five-branch rule that was not adopted was removed on the same
+#      day and has no cell any more - STUDY_TEAM_ASKS.md keeps its finding.
 #
 #   3. Patients whose prior line ended with the recorded reason
 #      DISCONTINUATION and who then hold the 12-month continuous-enrollment

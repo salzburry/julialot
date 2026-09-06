@@ -56,8 +56,8 @@ CONTRACT <- list(
   lot_n_induction_window_days = 30L,
   map_discon_gap_days         = 90L,
   # Observation required after a run-out before it counts as a discontinuation.
-  # The LOT1_BASE stage carries this and the later end-date stages do not;
-  # the study team chose the tab that has it. 0 confirms a run-out immediately.
+  # The LOT1_BASE stage carries this and the later end-date stages do not; the
+  # study team chose the reading that has it. 0 confirms a run-out immediately.
   lot_discon_confirm_days     = 90L,
   medical_day_supply          = 28L,
   sct_auto_window_days        = 13L,

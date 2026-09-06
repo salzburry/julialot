@@ -384,22 +384,7 @@ build_lot_n <- function(con, lot_num,
     --
     -- A first-ever AUTO CAN trigger a new LOT here. That is LOT2-5 only; at
     -- LOT1 the first AUTO is part of induction.
-    autos_with_prev AS (
-      -- N_BETWEEN: whether anything happened since the previous transplant. A
-      -- pair 180 days apart with a medication in the middle is not a planned
-      -- tandem, so the later transplant is free to start a line.
-      SELECT p.PATID, p.TX_DT, p.PREV_AUTO_DT,
-             coalesce(sum(CASE WHEN x.dt > p.PREV_AUTO_DT AND x.dt < p.TX_DT
-                               THEN 1 ELSE 0 END), 0) AS N_BETWEEN
-      FROM (
-        SELECT a.PATID, a.TX_DT,
-               lag(a.TX_DT) OVER (PARTITION BY a.PATID ORDER BY a.TX_DT) AS PREV_AUTO_DT
-        FROM tx_auto_dates a
-      ) p
-      LEFT JOIN ({tandem_interrupt_events_sql()}
-      ) x ON p.PATID = x.PATID
-      GROUP BY p.PATID, p.TX_DT, p.PREV_AUTO_DT
-    ),
+{autos_with_prev_cte('autos_with_prev')}
     auto_cand AS (
       SELECT pe.PATID, min(awp.TX_DT) AS d_AUTO
       FROM prev_end pe
@@ -1043,22 +1028,7 @@ build_lot_n <- function(con, lot_num,
         AND (prem.MED_ABBR IS NULL
 {return_release_sql(cfg, 'mr', 'prem')})
     ),
-    post_runout_autos AS (
-      -- N_BETWEEN: whether anything happened since the previous transplant. A
-      -- pair 180 days apart with a medication in the middle is not a planned
-      -- tandem, so the later transplant is free to start a line.
-      SELECT p.PATID, p.TX_DT, p.PREV_AUTO_DT,
-             coalesce(sum(CASE WHEN x.dt > p.PREV_AUTO_DT AND x.dt < p.TX_DT
-                               THEN 1 ELSE 0 END), 0) AS N_BETWEEN
-      FROM (
-        SELECT a.PATID, a.TX_DT,
-               lag(a.TX_DT) OVER (PARTITION BY a.PATID ORDER BY a.TX_DT) AS PREV_AUTO_DT
-        FROM tx_auto_dates a
-      ) p
-      LEFT JOIN ({tandem_interrupt_events_sql()}
-      ) x ON p.PATID = x.PATID
-      GROUP BY p.PATID, p.TX_DT, p.PREV_AUTO_DT
-    ),
+{autos_with_prev_cte('post_runout_autos')}
     post_runout_auto AS (
       SELECT DISTINCT lb.PATID
       FROM lot{lot_num}_base lb

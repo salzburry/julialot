@@ -86,7 +86,7 @@ EXPECTED_FAILURES <- list(
     # The SCT_AUTO_CONT branch and the end_natural CTE it compares against, the
     # post-run-out trigger as existence tests, and the run-out guard on LOT1's
     # own window with the tandem gap.
-    "06_lot1_end.R: differs beyond the approved deviations in 257 line(s) [25de3497]",
+    "06_lot1_end.R: differs beyond the approved deviations in 245 line(s) [09c4a054]",
     "08_persist.R: differs beyond the approved deviations in 111 line(s) [4ef6f10b]",
     # SCT_AUTO_CONT and end_natural at LOT2-5, LOT{n}_AUTO_HOLD_DT, auto_cand
     # reading the previous line's own window, the regimen cutoff, and the tandem
@@ -98,7 +98,7 @@ EXPECTED_FAILURES <- list(
     # complete LOT_LONG, and the short-course break test told that this
     # statement already carries the verdict, so a confirmed course stops a
     # run-out chain. Re-pinned deliberately, which is what this list is for.
-    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 975 line(s) [12edf353]")
+    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 949 line(s) [18277565]")
 )
 
 # How one suite's output is read. Its own suite is validation/hygiene/
