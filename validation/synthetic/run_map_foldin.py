@@ -383,6 +383,31 @@ PATS = [
                    ('MELP', 'ALKY', 600, 627), ('BORT', 'PI', 610, 700)]),
     P('F30', L1 + [('DARA', 'MAB', 200, 280), ('CARF', 'PI', 400, 800),
                    ('MELP', 'ALKY', 600, 627), ('POMA', 'IMID', 610, 700)]),
+    # F36/F36c: a conditioning course inside LINE 1's own window must not be
+    # re-judged by a later line. One melphalan claim on day 0 - 28 days of
+    # imputed cover, which is exactly what a single medical claim gets, and the
+    # canonical transplant-conditioning record - inside line 1's 60 days, so
+    # line 1 holds it and puts it in its regimen as an ordinary drug. DARA
+    # opens line 2 on day 200, and melphalan comes back days 450-500, a 51-day
+    # course. Over the cap, so 4.7 leaves it to the engine; exactly one agent
+    # opened a line between the two doses, so 4.8 folds it into line 2.
+    #
+    # It did not. melp_judged had no lower bound, so line 2 re-judged the day-0
+    # course against ITS OWN window, called it suppressed, and foldin_agent -
+    # which reads melp_suppress_dates to decide what may stand as a returning
+    # drug's PREVIOUS dose - deleted it from melphalan's history. The return had
+    # no previous dose, was dropped before the advance count, and opened a line
+    # of its own: three lines where the rule gives two, line 2 truncated by 151
+    # days and ending MED_ADD, and melphalan absent from its regimen.
+    #
+    # F36c is the same patient with line 1's course 61 days instead of 28. That
+    # course fails SHORT, so it was never suppressed and the fold always fired -
+    # which is what made the defect look like a melphalan-specific rule when it
+    # was a missing bound. The two must land identically.
+    P('F36',  [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 0, 27),
+               ('DARA', 'MAB', 200, 600), ('MELP', 'ALKY', 450, 500)]),
+    P('F36c', [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 0, 60),
+               ('DARA', 'MAB', 200, 600), ('MELP', 'ALKY', 450, 500)]),
 ]
 
 
@@ -407,7 +432,11 @@ def build(foldin):
             "SELECT PATID, LOT_NUM, LOT_START_DT, LOT_BASE_END_DT, "
             "LOT_BASE_END_REASON, coalesce(LOT_BASE_MEDS, ''), LOT_MED_CNT "
             "FROM lot_long ORDER BY PATID, LOT_NUM").fetchall():
-        lines.setdefault(pid, []).append((n, str(s)[:10], str(e)[:10], why))
+        # meds and cnt are appended, not inserted: every assertion below reads
+        # this tuple positionally, and 4.8 puts the returning drug in the
+        # line's REGIMEN as well as its span, which dates alone cannot show.
+        lines.setdefault(pid, []).append((n, str(s)[:10], str(e)[:10], why,
+                                          meds, cnt))
         REGIMEN.setdefault((foldin, pid), {})[n] = (meds, cnt)
     # OWNERSHIP, the two invariants the line table alone cannot show. A drug a
     # line REPORTS has to have an episode inside that line, and every
@@ -524,12 +553,18 @@ def main():
 
     ok(n(ref, 'F4') == 3 and n(fold, 'F4') == 2,
        "F4: the permissible substitute folds exactly like the drug it replaces")
-    ok(fold.get('F4') == fold.get('F4r') and ref.get('F4') == ref.get('F4r'),
-       "F4/F4r: ...and the whole line - dates and end reasons, not just the "
-       "count - is what the reference product gives")
+    # Dates, end reasons and the drug COUNT, but not the regimen string: the
+    # pair is one agent, and each patient's line correctly names the half that
+    # patient was actually given.
+    def shape(rows):
+        return [(r[0], r[1], r[2], r[3], r[5]) for r in rows or []]
+    ok(shape(fold.get('F4')) == shape(fold.get('F4r')) and fold.get('F4')
+       and shape(ref.get('F4')) == shape(ref.get('F4r')),
+       "F4/F4r: ...and the whole line - dates, end reasons and the drug count, "
+       "not just the number of lines - is what the reference product gives")
     ok(not QC, "the shipped QC has no fail on a build with a substitution "
                "pair" + (": " + "; ".join(QC) if QC else ""))
-    ok(n(fold, 'F4d') == 1 and fold.get('F4d') == fold.get('F4e'),
+    ok(n(fold, 'F4d') == 1 and shape(fold.get('F4d')) == shape(fold.get('F4e')),
        "F4d/F4e: the pair is one agent whichever half the regimen names, so "
        "neither half's return opens a line")
     ok(n(ref, 'F4b') == 3 and n(fold, 'F4b') == 2,
@@ -607,6 +642,12 @@ def main():
     ok(ref.get('F13') == fold.get('F13') and ref.get('F13'),
        "F13: two advances in between, so the return starts a line - by the "
        "fold set's scope, not by the two-or-more clause, which cannot fire")
+
+    ok(n(fold, 'F36') == 2 and fold['F36'][1][2] == rs.d(IX + 600)
+       and 'MELP' in fold['F36'][1][4] and fold['F36'][1][3] == 'DISCONTINUATION'
+       and [r[1:] for r in fold['F36']] == [r[1:] for r in fold['F36c']],
+       "F36/F36c: a conditioning course line 1 held is not re-judged by line 2, "
+       "so the later re-challenge folds into it instead of opening a line")
 
     ok(n(ref, 'F14') == 3 and n(fold, 'F14') == 2,
        "F14: the whole returning course folds, not only its first episode")

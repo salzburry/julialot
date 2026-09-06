@@ -212,12 +212,17 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
     -- No lower bound on the confirming agent: it must start after the COURSE,
     -- not after the judged line. With not_new rebuilt per invocation, one
     -- course can therefore meet different sets on different lines and two
-    -- lines can in principle reach two verdicts about it. Reported in review
-    -- and NOT reproduced over four planted shapes; it shares a root with the
-    -- previous-line verdict, which melp_prev_line_ctes derives differently
-    -- again. Whether one course must carry one verdict across every line that
-    -- looks at it is a rule for the study team, and nothing measured turns on
-    -- it today.
+    -- lines reach two verdicts about it.
+    --
+    -- This was written down as reported-but-not-reproduced. It reproduced: an
+    -- adversarial sweep found the patient, and melp_judged is where it landed -
+    -- see the bound there. What is left here is the narrower CONFIRMATION half:
+    -- a course that covers into two lines is judged by both, legitimately, and
+    -- the confirming-agent scan has no lower bound of its own, so the two
+    -- judgements can still disagree about CONFIRMED. No planted shape shows it
+    -- changing a line, and melp_prev_line_ctes derives the previous line's
+    -- verdict differently again. Whether one course must carry one verdict
+    -- across every line entitled to judge it is a rule for the study team.
     melp_confirm AS (
       SELECT DISTINCT mc.PATID, mc.EXPO_DT
       FROM melp_course mc
@@ -315,10 +320,35 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
       INNER JOIN {line_tbl} ON {line_tbl}.PATID = mc.PATID
       LEFT JOIN melp_taken tk
         ON tk.PATID = mc.PATID AND tk.EXPO_DT = mc.EXPO_DT
-      -- No lower bound. Which line OWNS a course is melp_taken's question,
-      -- and asking it again here as a cruder date test let a course split by a
-      -- transplant fall between the two, judged by neither line.
+      -- Bounded by the course's COVER, not by where it starts. A line judges
+      -- the courses it can actually see: one that starts inside it, and one
+      -- that started earlier and still covers into it - the course a
+      -- transplant splits, which 4.7 says is outside the new line's induction
+      -- window and not exempt from its judgement (SPin). Asking instead
+      -- whether the course STARTS after the line let that split course fall
+      -- between this test and melp_taken, judged by neither line.
+      --
+      -- A course whose cover ran out before this line began is a different
+      -- thing: no dose of it is in this line, an earlier line owns it, and
+      -- this line has no business judging it. Unbounded below, every later
+      -- line re-judged it against ITS OWN window - so a conditioning course
+      -- that line 1 held inside its 60 days, and put in its regimen as an
+      -- ordinary drug, came back SUPPRESSED at line 2. Two things then went
+      -- wrong at once, and one bound fixes both:
+      --
+      --   the fold-in reads melp_suppress_dates to decide what may stand as a
+      --   returning drug's PREVIOUS dose, so the deleted course left a later
+      --   melphalan re-challenge with no dose history, no advance count, and a
+      --   line of its own where 4.8 says it folds (F1/F1c in the fold-in
+      --   harness);
+      --
+      --   melp_hold took the same course, and melp_runout_case handed a
+      --   regimen-less transplant line a run-out hundreds of days before its
+      --   own start, which SCT_AUTO_CONT read as a line ending too early and
+      --   clamped to a single day - the state shipped QC check B7 calls a
+      --   failure (SU1/SU2 in the melphalan harness).
       WHERE mc.EXPO_DT <= {span_end}
+        AND mc.COURSE_END_DT >= {line_tbl}.{start_col}
         AND tk.PATID IS NULL
     ),
     -- A short unconfirmed course outside induction neither ends the line nor

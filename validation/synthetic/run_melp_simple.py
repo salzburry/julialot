@@ -208,7 +208,25 @@ PATS = [
     dict(P('ZB3x', [('LEN', 'IMID', 0, 80), ('BORT', 'PI', 0, 80),
                     ('BORT', 'PI', 300, 500)]),
          sct_ac=[('CART', IX + 200)]),
+    # SU1/SU2: a suppressed course must not reach a line that starts after its
+    # cover has run out. LEN to day 80, a short course days 200-227 that 4.7
+    # correctly suppresses and that carries line 1 to day 227, and then a
+    # transplant on day 700 with no drug after it.
+    #
+    # melp_judged had no lower bound, so line 2 took the day-200 course as well;
+    # melp_hold followed, and melp_runout_case handed a regimen-less transplant
+    # line a run-out 473 days BEFORE its own start. SCT_AUTO_CONT read that as a
+    # line ending too early and clamped line 2 to a single day - 500 days of
+    # follow-up lost, and the state shipped QC check B7 calls a failure.
+    #
+    # SU2 is the same patient with no melphalan at all. The two lines 2 must be
+    # identical: the course belongs to line 1 and line 1 alone.
+    P('SU1', [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 200, 227)]),
+    P('SU2', [('LEN', 'IMID', 0, 80)]),
 ]
+for _p in PATS:
+    if _p['pid'] in ('SU1', 'SU2'):
+        _p['sct_auto'] = [IX + 700]
 for _p in PATS:
     if _p['pid'] == 'SJ0':
         _p['sct_auto'] = [IX + 30]
@@ -287,6 +305,12 @@ def main():
        and smp['ZB1'][2][4] == 'BORT POMA',
        "ZB1/ZB2: a new agent arriving after a returning drug opened a line "
        "cannot backdate that line to the melphalan date")
+    ok(len(smp['SU1']) == 2 and smp['SU1'][1] == smp['SU2'][1]
+       and smp['SU1'][1][3] == 'STUDY_END'
+       and smp['SU1'][0][2] == rs.d(IX + 227),
+       "SU1/SU2: line 1 owns the course and is carried to it; the transplant "
+       "line after it is untouched, not clamped to a single day")
+
     ok(smp['ZB3'] == smp['ZB3x'],
        "ZB3/ZB3x: the CAR-T line does not claim a course that falls after the "
        "returning drug opened a line of its own")

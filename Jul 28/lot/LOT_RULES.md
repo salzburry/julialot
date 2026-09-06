@@ -544,6 +544,23 @@ line: that agent ends the line, and what follows belongs to the line it
 started. Distance alone does not disqualify it, so a course long after the
 drugs ran out still belongs to the line when nothing happened in between.
 
+**And a line judges only the courses it can see** — one starting inside it, and
+one that started earlier and still covers into it, which is the course a
+transplant splits. A course whose cover ran out before a line began has no dose
+in that line and belongs to an earlier one, so the later line does not judge it
+at all. Without that bound each line re-judged every earlier course against its
+own window, and two things followed. A conditioning course line 1 held inside
+its 60 days came back **suppressed** at line 2 — so §4.8 lost it as a returning
+drug's previous dose, and a melphalan re-challenge that should have folded
+opened a line of its own (`F36`/`F36c` in the fold-in harness). And the hold
+followed the same course forward, handing a later transplant-opened line with no
+regimen a run-out before its own start, which §7.1's `SCT_AUTO_CONT` branch read
+as a line ending too early and clamped to a single day — the state QC check `B7`
+calls a failure (`SU1`/`SU2` in the melphalan harness).
+
+A course inside the induction window of the line that owns it is inside an
+induction window, and §4.7 asks whether a course is outside **any** of them.
+
 A transplant or CAR-T is that agent only when it **breaks** the line, and the
 three kinds break it differently — the same rules §3.4, §6.3, §6.4 and §6.5
 state:
