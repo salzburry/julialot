@@ -1,9 +1,14 @@
 # Open questions for the study team
 
-Twenty-seven things the Aug 26 2026 protocol, the Optum documentation and the existing
+Twenty-three things the Aug 26 2026 protocol, the Optum documentation and the existing
 build's own record do not settle, each of which changes a count or a definition.
-Ordered by how much they change. **Two are now answered** — Q4 and Q17, both by
-`Jul 28/ndmm/DECISIONS.md` §6, and both are left in place with the answer.
+Ordered by how much they change.
+
+**Five were closed on 03 Sep 2026** by one run against the warehouse
+(`SQL Result.pdf`, from `RUN_ONCE.sql`): Q8, Q10, Q22, Q24 and Q26. They are out
+of the list below and recorded, with their numbers, under *Closed by the
+warehouse*. Two more — Q4 and Q17 — were already settled by
+`Jul 28/ndmm/DECISIONS.md` §6 and are left in place with the answer.
 
 Nothing here is a style preference. Every one of them has two defensible readings and
 the build has to pick one.
@@ -11,61 +16,6 @@ the build has to pick one.
 ---
 
 ## Blocking — a number moves
-
-### Q26. Can `DOD` actually be joined to the claims tables on `PATID`? — **NEW, and the most serious**
-
-The Optum business-rules document says, in a note under its own table inventory:
-
-> "**DOD and SES tables cannot be joined since both tables are encrypted
-> differently.** However the other tables name (MEMBER_ENROLLMENT, MEMBER
-> CONTINUOUS ENROLLMENT, MEDICAL, MED_DIAGNOSIS, MED_PROCEDURE, CONFINEMENT,
-> RX, LABRESULT, PROVIDER, PROVIDER BRIDGE) and variable names same but all are
-> **encrypted differently for DOD and SES table**"
-
-The **join diagram on page 1 of the same document** draws a `PATID` edge from
-Member Enrollment to Death (DOD), and another to Socio-Economic (SES).
-
-The document contradicts itself, and `Jul 28/ndmm/R/steps/00_mm_cohort.R:205`
-takes the diagram's side:
-
-```sql
-LEFT JOIN best b ON q.PATID = b.PATID
-```
-
-Two further observations point the same way as the note. The V9.0 data
-dictionary has a sheet for every table in the CDM — fifteen of them — and
-**none for DOD**. And business rule 12, "Death information", names only the
-column (`ymdod` from `t_dod`) and never a join key, where every other rule
-spells its keys out.
-
-**What turns on it.** `DEATH_DT` sets `FU_END`, censors overall survival,
-gates the time-to-event analysis set, and is the event for OS — a secondary
-objective. If the key is incompatible, every death date in both builds is
-either absent or spurious, and OS is unreportable.
-
-**Ask:** confirm with Optum or the data team whether `DOD.PATID` is in the same
-encryption domain as the claims tables **in this Databricks deployment**. Note
-the business-rules document is from **30-08-2022** and is provably stale on at
-least one other point (Q18), so it cannot simply be taken as current either.
-
-**This one can be costed today, before anyone answers.** `PROFILE_QUERIES.sql`
-block 1 has the decisive version, which needs no cohort — what fraction of DOD
-patients appear in the enrolment table at all. Near zero means the keys are in
-different encryption domains. The cohort-level version is:
-
-```sql
-SELECT count(*) AS n_cohort,
-       count(DEATH_DT) AS n_with_death,
-       round(100.0 * count(DEATH_DT) / count(*), 1) AS pct
-FROM <prefix>NDMM_COHORT;
-```
-
-A 1L NDMM cohort followed from 2019 should show a substantial fraction dead —
-tens of percent, not ~0% and not ~100%. A number near zero means the join
-matches nothing and the note is right. An implausible number means it matches
-the wrong people.
-
----
 
 ### Q1. Does the study period start 01 Jan 2016 or 01 Jan 2018?
 
@@ -224,28 +174,6 @@ agree with one another, and the choice moves the ED rate by a large margin.
 **Ask:** which construction, and is an ED visit that becomes an inpatient admission
 counted as an ED visit, a hospitalisation, or both?
 
-### Q10. What are the `ETHNICITY` code values?
-
-Table 4 wants Hispanic or Latino / Not Hispanic or Latino / Unknown.
-`MEMBER_ENROLLMENT.ETHNICITY` is `varchar(1)` and the CDM V9.0 dictionary marks its
-value list **"Intentionally Blank"**.
-
-The reason it is blank is now clear: `ETHNICITY` is a **V9.0 addition** (the
-dictionary marks it "Added"), so Optum had not published a value list when the
-sheet was written. The column does exist on the deployed table — column 26,
-`varchar(1)` — so this is a profiling question, not an availability one.
-
-The same gap applies to **`RACE`**, which the dictionary describes by label
-only: *"African American, Asian, Caucasian, Other/Unknown"*, in a `varchar(1)`.
-The single characters behind those four labels are documented nowhere, and the
-package's guess (`A`→Asian, `B`→Black, `W`/`C`→White) could silently send
-African American to Asian if the coding is different.
-
-**Ask (or profile):** the value → label mapping for **both** columns.
-`SELECT RACE, ETHNICITY, count(*) FROM t_member_enrollment_2025q4 GROUP BY 1,2`
-settles both in one query, and should be run before either variable is
-promised.
-
 ### Q9. Region — is there a `REGION` column, or do we derive it from `STATE`?
 
 Table 4 wants US Census Bureau regions. The CDM V9.0 dictionary documents `REGION`
@@ -281,6 +209,28 @@ than swapping the columns.
 ---
 
 ## Needs a decision, but does not block a first build
+
+### Q28. What is `DOD.MBR_MATCH_TYPE`, and should low-confidence deaths count? — **NEW**
+
+`DESCRIBE TABLE t_dod_2026q1` returns five columns, and one of them is
+**`MBR_MATCH_TYPE varchar(1)`**. It appears in no Optum document we hold — the
+V9.0 dictionary has a sheet for all fifteen CDM tables and none for DOD, and
+the business rules name only `YMDOD`.
+
+The name suggests how each member was linked to the death record. Death data of
+this kind is usually assembled by matching members to an external source, and
+such matches are commonly graded — exact on identifiers, versus probabilistic.
+If that is what this column is, then some fraction of the 11.5M deaths are
+lower-confidence links, and neither build filters on it.
+
+It matters because overall survival is a secondary objective: including
+low-confidence matches overstates deaths, and excluding them understates.
+
+**Ask:** what the values mean, and whether any should be excluded. A
+`SELECT MBR_MATCH_TYPE, count(*) FROM t_dod_2026q1 GROUP BY 1` shows the
+distribution in seconds; interpreting it needs Optum.
+
+---
 
 ### Q25. Should denied claims count? — **NEW**
 
@@ -354,17 +304,6 @@ evidence of a malignancy prior to 2L"* — a garbled sentence. §7.8.1 settles i
 
 So exclusion X2 does **not** apply to the secondary 2L cohort. Worth one line of
 written confirmation, since it is the only place the two cohorts' criteria diverge.
-
-### Q8. Do `DOD` and `SES` join to the claims tables on `PATID`?
-
-The Optum business rules end with: *"DOD and SES tables cannot be joined since both
-tables are encrypted differently. However the other tables... and variable names same
-but all are encrypted differently for DOD and SES table."* The join diagram on the
-same page nevertheless draws `PATID` edges from MEMBER_ENROLLMENT to both. The current
-build joins `dod` on `PATID` and uses the result.
-
-**Ask:** confirm the DOD join is valid as implemented. If it is not, every OS and
-death-related number in this and prior deliveries is affected.
 
 ### Q12. Why do "Year of initiation" and "Types of SOC by line" span different years?
 
@@ -442,10 +381,12 @@ ownership, poverty status and education level"*. The V9.0 dictionary's SES
 sheet carries **four**, and race is not among them — `RACE` was *"Moved from
 SES file and renamed from D_RACE_CODE"* onto MEMBER_ENROLLMENT.
 
-That matters beyond SES, because the same document is the only source for the
-statement that **DOD cannot be joined** (Q26). Being stale on SES does not make
-it wrong about DOD — the CDM changed underneath it — but it does mean the DOD
-note cannot be taken as current without confirmation.
+And it is wrong about DOD outright. Its note says DOD "cannot be joined since
+both tables are encrypted differently"; the warehouse returns a **100% PATID
+match** on 11,509,828 patients. Two verifiable claims, both false. Treat the
+whole document as a 2022 snapshot: useful for the join keys and the fourteen
+rules, which the dictionary corroborates, and not authoritative on anything the
+CDM has since changed.
 
 ### Q19. Do the days inside a bridged enrolment gap count as person-time?
 
@@ -508,20 +449,6 @@ and 90 is the shortest three calendar months so it is the more permissive readin
 
 The new protocol says "12-month" and "3 months" throughout and never disambiguates.
 
-### Q22. How should a partial death date be constructed?
-
-`DECISIONS.md` §8: `YMDOD` is year and month, sometimes year alone. The build places a
-year-and-month death on the **15th** of that month, a year-only death on **15 July**,
-bumps either to the period end if it would fall before the qualifying diagnosis, and
-never lets it precede `MM_DX_DT`.
-
-> "Status: **open, pending study-team sign-off**. The 15th-of-month rule does not cover
-> a year-only record, or a diagnosis falling after the constructed date. Both occur in
-> the CDM and needed a convention."
-
-This one matters more under the new protocol than it did under the old: **OS is a
-primary reported outcome**, and every OS estimate inherits the ±15-day construction.
-
 ### Q23. Which pregnancy window?
 
 `DECISIONS.md` §9: the build applies the exclusion over the **whole study period**;
@@ -535,19 +462,6 @@ The new protocol says "during the study period" (X3), which is the build's readi
 this is close to settled, but §9 raises a second question the protocol does not answer:
 if the narrower reading were ever adopted, does its follow-up stop at disenrolment?
 That is `Q13` again, in a different place.
-
-### Q24. Should the `ICD_FLAG` finding be gated?
-
-`DECISIONS.md` §11: 16 rows across two CDM tables carried a blank `ICD_FLAG` on the
-first production run. Those rows match no code list, so the cohort does not change — but
-the miss cuts both ways, and `NDMM_ICD_FLAG_MAX_ROWS` (a ceiling that stops the build)
-ships **unset**.
-
-> "Status: **ACCEPTED for 2026q1, unbounded by default. Re-read on each refresh.**
-> Setting `NDMM_ICD_FLAG_MAX_ROWS` is the study team's call and the number is theirs —
-> it is a governance decision, not a coding one, which is why the code ships with none."
-
----
 
 ## What the new protocol closes for the build
 
@@ -584,6 +498,103 @@ paste-and-run against this build's own output.
 For the index-agent bars specifically: `NDMM_INDEX_EXCLUDED_ABBRS` checks every entry
 against the code list and **stops the run on a name that matches nothing**, so a
 misspelled "panobinostat" cannot quietly bar no one.
+
+---
+
+## Closed by the warehouse, 03 Sep 2026
+
+`SQL Result.pdf` — one run of `RUN_ONCE.sql` against
+`hive_metastore.clnprw_optum`. These five are settled and are out of the list
+above. Numbers are recorded here so nobody has to re-run to know them.
+
+### Q26 / Q8 — `DOD` joins on `PATID`. The 2022 note is wrong for this deployment.
+
+| dod_patients | matched in enrollment | match_pct |
+|---|---|---|
+| 11,509,828 | 11,509,828 | **100.0** |
+
+Every DOD patient matches. `DOD.PATID` is `bigint`, the same type and domain as
+the enrolment table's. The business-rules note — *"DOD and SES tables cannot be
+joined since both tables are encrypted differently"* — does not hold here, and
+the join diagram's `PATID` edge is right. **`Jul 28/ndmm`'s
+`LEFT JOIN best b ON q.PATID = b.PATID` is correct, death dates are real, and
+overall survival is reportable.** This was the most serious open item; it is
+closed and the answer is the reassuring one.
+
+### Q22 — every death date has a month. The year-only case does not arise.
+
+| YMDOD length | n | range |
+|---|---|---|
+| 6 | 11,509,828 | 200005 → 202603 |
+
+All 11.5M rows are `YYYYMM`; none is year-only. So the build's constructed day
+is never six months wide, and what remains is only whether the 15th is the
+right day **within a known month** — a ±15 day convention, not a gap.
+
+`DOD` has five columns: `PATID`, `YMDOD`, `EXTRACT_YM`, `VERSION`, and
+**`MBR_MATCH_TYPE varchar(1)`** — see Q28 below.
+
+### Q10 — the RACE and ETHNICITY code values, and the package's mapping is right.
+
+| RACE | ETHNICITY | RACE_SOURCE | n |
+|---|---|---|---|
+| W | N | Self-Reported | 80,804,230 |
+| null | null | null | 56,625,949 |
+| null | N | Self-Reported | 12,817,529 |
+| B | N | Self-Reported | 11,705,159 |
+| W | null | Self-Reported | 8,582,197 |
+| W | H | Self-Reported | 7,796,337 |
+| null | H | Self-Reported | 6,716,562 |
+| B | null | Self-Reported | 5,015,804 |
+| A | N | Self-Reported | 4,460,620 |
+| U | N | Self-Reported | 4,029,585 |
+| U | H | Self-Reported | 3,748,217 |
+| W | U | Self-Reported | 3,022,908 |
+| U | null | Self-Reported | 2,336,562 |
+
+`RACE` is **W, B, A, U** or null; `ETHNICITY` is **N, H, U** or null. The
+package maps `A`→Asian, `B`→Black, `W`→White, `H`→Hispanic, `N`→Not Hispanic,
+everything else Unknown — **all correct**. (`C` is a dead branch; it never
+occurs.) `RACE_SOURCE` is always `Self-Reported`, so the race here is not
+imputed — the concern about imputation does not apply.
+
+**One thing to carry into Table 4**: race is null or `U` on about **42%** of
+enrolment rows and ethnicity on about **36%**. Those are enrolment rows across
+the whole database, not this cohort, but Table 4's race and ethnicity rows will
+be heavily "Unknown" and should say so rather than look like a finding.
+
+`BUS` is confirmed as `COM` and `MCR`, which is exactly what the demographics
+module maps.
+
+### Q24 — an `ICD_FLAG` naming neither family exists, and is negligible.
+
+| ICD_FLAG | n |
+|---|---|
+| 10 | 11,414,536,709 |
+| 9 | 4,975,563,582 |
+| null | **530** |
+
+530 rows out of ~16.4 billion. Reporting them rather than gating on them is
+the right call and needs no change.
+
+### Also settled by the same run, without having been questions
+
+- **`CONFINEMENT.ADMIT_DATE` is a real `date`**, with `_DAY` / `_MONTH` parts
+  beside it — the same conversion Databricks applied to `ELIGEFF`. The
+  documented Optum format is `YYYYMMDD`, and both builds cast to date; had it
+  arrived as an integer the cast would have yielded NULL and dropped every
+  hospitalisation. It did not.
+- **`MEDICAL.CONF_ID` is `varchar(21)`**, so the ED-became-an-admission test
+  (`ED_ADMITTED`) works as written. MEDICAL has 62 columns.
+- **The `2026q1` vintage exists** — every `DESCRIBE` against it returned. The
+  schema holds one table per quarter back to `2016q4`.
+- **`YRDOB` is capped, exactly as the dictionary says.** 12,769,783 members
+  carry 1937 against ~1.4M in each neighbouring year: 2026 − 1937 = 89.
+- **`YRDOB` is `0` on 614 rows.** Unguarded, `year(index) - 0` is an age of
+  about 2026, which lands every one of them in the **75+** band — the band the
+  protocol uses as its transplant-eligibility proxy. `03_demographics.R` now
+  returns NULL age and an Unknown band outside a plausible human range, and
+  `tests/fixtures` carries a patient at the cap and one at zero.
 
 ---
 

@@ -38,6 +38,12 @@ things.
 Every reference below is a **citation**. Nothing in this folder reads any of
 them, and every quotation they support is reproduced inline where it is used.
 
+### The one warehouse run
+
+| file | what it gave |
+|---|---|
+| `SQL Result.pdf` *(in this folder)* | 14 result sets, 03 Sep 2026. The DOD key match, the RACE/ETHNICITY value lists, the ICD_FLAG distribution, the YRDOB cap, and `DESCRIBE` on seven tables |
+
 ### The protocol itself
 
 | file | what it gave |

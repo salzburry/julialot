@@ -15,6 +15,7 @@ says what is cited and what is needed.
 | `VERSION_DIFF.md` | What changed since the June 2026 protocol, why three of the build's settings are a version behind rather than wrong, and a reconstruction of the rows lost on the corrupt photo. |
 | `OPEN_QUESTIONS.md` | Twenty-seven things genuinely undecided, each with both readings and what turns on the answer. Two are answered, one partly. |
 | `SOURCES.md` | What this folder cites and what it needs. The standalone boundary. |
+| `SQL Result.pdf` | The one warehouse run, 03 Sep 2026 — 14 result sets. Closes Q8, Q10, Q22, Q24 and Q26. |
 | `RUN_ONCE.sql` | **Everything worth asking the warehouse, in one sitting** — ordered so a late failure costs least. Two find-and-replaces, then run. |
 | `PROFILE_QUERIES.sql` | The same material as separate blocks, for when there is no one-run constraint. |
 | `ie_criteria.csv` | The criteria as a table, for the study team. |

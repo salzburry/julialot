@@ -31,9 +31,9 @@ EXPECTATIONS = [
      [(1,)]),
 
     # --- cohort membership ------------------------------------------------
-    ("the 1L cohort is the five patients indexed on or after 2019-01-01",
+    ("the 1L cohort is the seven patients indexed on or after 2019-01-01",
      "SELECT count(*) FROM wk.S_COHORT WHERE COHORT='1L' AND IN_COHORT=1",
-     [(5,)]),
+     [(7,)]),
     ("P4 indexes before the 2019 floor and is not in it",
      "SELECT count(*) FROM wk.S_COHORT WHERE COHORT='1L' AND PATID='P4'",
      [(0,)]),
@@ -82,7 +82,7 @@ EXPECTATIONS = [
      "SELECT CCI FROM wk.S_COMORBIDITY WHERE PATID='P5' AND COHORT='1L'",
      [(4.0,)]),
     ("every 1L patient has a comorbidity row, including the zeroes",
-     "SELECT count(*) FROM wk.S_COMORBIDITY WHERE COHORT='1L'", [(5,)]),
+     "SELECT count(*) FROM wk.S_COMORBIDITY WHERE COHORT='1L'", [(7,)]),
 
     # --- SOC: the regimen decides, not the winning agent's row -----------
     ("three agents with an anti-CD38 backbone is the anti-CD38 triplet",
@@ -106,10 +106,22 @@ EXPECTATIONS = [
      "SELECT AGE_YEARS, AGE_BAND FROM wk.S_DEMOGRAPHICS "
      "WHERE PATID='P1' AND COHORT='1L'",
      [(69, "65-74")]),
+    # YRDOB is 0 on 614 rows of the deployed enrolment table. Unguarded,
+    # year(index) - 0 is an age of about 2026, which lands every one of them in
+    # the 75+ band - the band the protocol uses as its transplant-eligibility
+    # proxy.
+    ("a birth year of 0 is an unknown age, not an age of 2020",
+     "SELECT AGE_YEARS, AGE_BAND FROM wk.S_DEMOGRAPHICS "
+     "WHERE PATID='P8' AND COHORT='1L'",
+     [(None, "Unknown")]),
+    ("and a birth year at the 89-year cap is still a real age",
+     "SELECT AGE_YEARS, AGE_BAND FROM wk.S_DEMOGRAPHICS "
+     "WHERE PATID='P7' AND COHORT='1L'",
+     [(83, "75+")]),
     ("the 75+ band is the transplant-eligibility proxy and is not empty",
      "SELECT PATID FROM wk.S_DEMOGRAPHICS "
-     "WHERE COHORT='1L' AND AGE_BAND='75+'",
-     [("P5",)]),
+     "WHERE COHORT='1L' AND AGE_BAND='75+' ORDER BY PATID",
+     [("P5",), ("P7",)]),
     ("the CDM's own BUS codes map to the protocol's insurance types",
      "SELECT DISTINCT INSURANCE_TYPE FROM wk.S_DEMOGRAPHICS "
      "WHERE COHORT='1L' ORDER BY 1",
@@ -163,12 +175,12 @@ EXPECTATIONS = [
      "SELECT N_AT_RISK, round(PERSON_YEARS,4) FROM wk.S_SAFETY_RATES "
      "WHERE COHORT='1L' AND PERIOD='BASELINE' AND LOT_NUM=1 "
      "AND CONDITION='toxic_liver_disease'",
-     [(5, 4.9966)]),
+     [(7, 6.9952)]),
     ("while on treatment the not-at-risk leave it",
      "SELECT N_AT_RISK FROM wk.S_SAFETY_RATES WHERE COHORT='1L' "
      "AND PERIOD='TREATMENT' AND LOT_NUM=1 "
      "AND CONDITION='toxic_liver_disease'",
-     [(4,)]),
+     [(6,)]),
     ("every condition gets a baseline row too, events or not",
      "SELECT count(*) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' "
      "AND PERIOD='BASELINE'",
@@ -176,11 +188,11 @@ EXPECTATIONS = [
     ("and that patient leaves the chronic denominator too",
      "SELECT round(PERSON_YEARS,4) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' "
      "AND PERIOD='TREATMENT' AND LOT_NUM=1 AND CONDITION='toxic_liver_disease'",
-     [(2.5544,)]),
+     [(3.896,)]),
     ("while an acute condition keeps every patient's person-time",
      "SELECT round(PERSON_YEARS,4) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' "
      "AND PERIOD='TREATMENT' AND LOT_NUM=1 AND CONDITION='acute_hepatitis_b'",
-     [(3.5154,)]),
+     [(4.8569,)]),
     ("every condition gets an incidence row, events or not",
      "SELECT count(DISTINCT CONDITION) FROM wk.S_SAFETY_RATES "
      "WHERE COHORT='1L' AND PERIOD='TREATMENT' AND LOT_NUM=1",
