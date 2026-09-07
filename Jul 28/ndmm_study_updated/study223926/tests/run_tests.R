@@ -372,6 +372,36 @@ cat("\nregressions from the adversarial review\n")
   ok("lot_allow_unproven_lineage" %in% names(cfg0()),
      "LOT_ALLOW_UNPROVEN_LINEAGE is a real setting, not just a message")
 
+  # And it is RUN, not read. The three checks above inspect the function's
+  # text, which is how a guard survives being defused - the stop() is still
+  # printed, it just never fires. So the guard is called against a status row
+  # built to be wrong in exactly one field at a time, and each is required to
+  # stop.
+  lin_row <- function(...) {
+    r <- list(RUN_ID = "r1", STATE = "complete",
+              UPDATED_AT = "2026-09-01 00:00:00",
+              COHORT_TABLE = cfg0()$input_cohort_table,
+              STUDY_START = cfg0()$study_start, STUDY_END = cfg0()$study_end,
+              CONTRACT_DEVIATIONS = "")
+    utils::modifyList(r, list(...))
+  }
+  lin_check <- function(...) {
+    row <- lin_row(...)
+    e <- new.env(parent = environment(check_lot_lineage))
+    e$db_q <- function(con, sql) as.data.frame(row, stringsAsFactors = FALSE)
+    f <- check_lot_lineage; environment(f) <- e
+    errs(f(NULL, cfg0()))
+  }
+  ok(is.na(lin_check()), "a matching lineage row is accepted")
+  ok(grepl("STUDY_START", lin_check(STUDY_START = "2016-01-01") %||% ""),
+     "a LOT run whose STUDY_START disagrees with the recorded reading stops")
+  ok(grepl("STUDY_END", lin_check(STUDY_END = "2025-12-31") %||% ""),
+     "and so does one whose STUDY_END disagrees")
+  ok(!is.na(lin_check(STATE = "failed")),
+     "and one that did not finish")
+  ok(!is.na(lin_check(UPDATED_AT = "2026-08-01 00:00:00")),
+     "and one built before the 2026-08-30 rule change")
+
   # 4. A nested cohort takes only patients IN its parent.
   ch <- paste(capture.output(print(mod_cohorts)), collapse = "\n")
   ok(grepl("IN_COHORT = 1", ch),
