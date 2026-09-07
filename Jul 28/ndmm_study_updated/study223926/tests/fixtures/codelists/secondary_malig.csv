@@ -1,28 +1,28 @@
 category,subtype,code_type,code,icd_family
-Hematological,leukemia,ICD10DIAG,C900,ICD10
-Hematological,lymphoma,ICD10DIAG,C900,ICD10
-Genitourinary,prostate,ICD10DIAG,C900,ICD10
-Genitourinary,renal_kidney,ICD10DIAG,C900,ICD10
-Genitourinary,bladder_urothelial,ICD10DIAG,C900,ICD10
-Genitourinary,testicular,ICD10DIAG,C900,ICD10
-Genitourinary,other_gu,ICD10DIAG,C900,ICD10
-Gynecological,ovarian,ICD10DIAG,C900,ICD10
-Gynecological,endometrial_uterine,ICD10DIAG,C900,ICD10
-Gynecological,cervical,ICD10DIAG,C900,ICD10
-Gynecological,vulvar,ICD10DIAG,C900,ICD10
-Gynecological,other_gyn,ICD10DIAG,C900,ICD10
-Head and Neck,mucosal_squamous_cell,ICD10DIAG,C900,ICD10
-Head and Neck,nasopharyngeal_carcinoma,ICD10DIAG,C900,ICD10
-Head and Neck,salivary_gland,ICD10DIAG,C900,ICD10
-Head and Neck,other_hn,ICD10DIAG,C900,ICD10
-Gastrointestinal,colorectal,ICD10DIAG,C900,ICD10
-Gastrointestinal,gastric_esophageal,ICD10DIAG,C900,ICD10
-Gastrointestinal,pancreatic_hepatobiliary,ICD10DIAG,C900,ICD10
-Gastrointestinal,other_gi,ICD10DIAG,C900,ICD10
-Thoracic (non-H&N),lung,ICD10DIAG,C900,ICD10
-Thoracic (non-H&N),other_thoracic,ICD10DIAG,C900,ICD10
-Breast cancer,breast,ICD10DIAG,C900,ICD10
-Melanoma,melanoma,ICD10DIAG,C900,ICD10
-Non-melanoma skin cancer,basal_cell_carcinoma,ICD10DIAG,C900,ICD10
-Non-melanoma skin cancer,squamous_cell_carcinoma,ICD10DIAG,C900,ICD10
-Other,other,ICD10DIAG,C900,ICD10
+Hematological,leukemia,ICD10DIAG,Z200,ICD10
+Hematological,lymphoma,ICD10DIAG,Z201,ICD10
+Genitourinary,prostate,ICD10DIAG,Z202,ICD10
+Genitourinary,renal_kidney,ICD10DIAG,Z203,ICD10
+Genitourinary,bladder_urothelial,ICD10DIAG,Z204,ICD10
+Genitourinary,testicular,ICD10DIAG,Z205,ICD10
+Genitourinary,other_gu,ICD10DIAG,Z206,ICD10
+Gynecological,ovarian,ICD10DIAG,Z207,ICD10
+Gynecological,endometrial_uterine,ICD10DIAG,Z208,ICD10
+Gynecological,cervical,ICD10DIAG,Z209,ICD10
+Gynecological,vulvar,ICD10DIAG,Z210,ICD10
+Gynecological,other_gyn,ICD10DIAG,Z211,ICD10
+Head and Neck,mucosal_squamous_cell,ICD10DIAG,Z212,ICD10
+Head and Neck,nasopharyngeal_carcinoma,ICD10DIAG,Z213,ICD10
+Head and Neck,salivary_gland,ICD10DIAG,Z214,ICD10
+Head and Neck,other_hn,ICD10DIAG,Z215,ICD10
+Gastrointestinal,colorectal,ICD10DIAG,Z216,ICD10
+Gastrointestinal,gastric_esophageal,ICD10DIAG,Z217,ICD10
+Gastrointestinal,pancreatic_hepatobiliary,ICD10DIAG,Z218,ICD10
+Gastrointestinal,other_gi,ICD10DIAG,Z219,ICD10
+Thoracic (non-H&N),lung,ICD10DIAG,Z220,ICD10
+Thoracic (non-H&N),other_thoracic,ICD10DIAG,Z221,ICD10
+Breast cancer,breast,ICD10DIAG,Z222,ICD10
+Melanoma,melanoma,ICD10DIAG,Z223,ICD10
+Non-melanoma skin cancer,basal_cell_carcinoma,ICD10DIAG,Z224,ICD10
+Non-melanoma skin cancer,squamous_cell_carcinoma,ICD10DIAG,Z225,ICD10
+Other,other,ICD10DIAG,Z226,ICD10

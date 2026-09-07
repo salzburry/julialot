@@ -12,12 +12,30 @@
 # cohort. What comes back is every statement the run would have issued, tagged,
 # plus whatever R errors the modules raised on the way.
 
-# A stub result wide enough for every column a module reads off db_q(). The
-# counts are constant so the acute washout loop converges on its first round.
-.stub_result <- function() {
-  data.frame(n = 1L, k = 1L, r = 0L, e = 0L, unmatched = 0L, n_rows = 1L,
-             parts = 1L, whole = 1L, LOT_NUM = 1L, s = "wk",
-             stringsAsFactors = FALSE)
+# A stub result wide enough for every column a module reads off db_q().
+#
+# `n` walks 1, 2, 3, 4, 5, 5, 5... rather than staying constant. The acute
+# washout is a convergence loop - it re-runs a round until the counted-event
+# count stops changing - so a constant makes it converge after ONE round, and
+# only one round of its SQL is ever emitted. The executing harness then counts
+# one event where the protocol's chain counts several, and the whole washout
+# is untested past its first step. Five rounds is more than the fixtures need
+# and the round is idempotent, so extra rounds cost nothing.
+#
+# `parts` and `whole` stay equal: mod_patterns STOPS when they differ, and that
+# is a real guard about real data, not something to trip with a stub.
+.stub_counter <- new.env(parent = emptyenv())
+.stub_counter$seen <- list()
+.stub_result <- function(sql = "") {
+  # Counted per call SITE, not globally: the washout asks the same question
+  # each round, and a global counter is exhausted by the modules that ran
+  # before it. Reset per cohort by the prepare_table stub.
+  k <- sql
+  v <- if (is.null(.stub_counter$seen[[k]])) 1L else .stub_counter$seen[[k]] + 1L
+  .stub_counter$seen[[k]] <- v
+  data.frame(n = min(v, 5L), k = 1L, r = 0L, e = 0L,
+             unmatched = 0L, n_rows = 1L, parts = 1L, whole = 1L,
+             LOT_NUM = 1L, s = "wk", stringsAsFactors = FALSE)
 }
 
 # Loads the package into a fresh environment. Functions sourced into `env` look
@@ -52,6 +70,7 @@ capture_emitted_sql <- function(here = ".", cfg_edit = identity) {
   cfg <- cfg_edit(cfg)
   env$set_study_config(cfg)
 
+  .stub_counter$seen <- list()
   rec <- new.env(parent = emptyenv())
   rec$out <- vector("list", 0)
   add <- function(tag, sql) {
@@ -60,38 +79,36 @@ capture_emitted_sql <- function(here = ".", cfg_edit = identity) {
   }
 
   env$db_exec <- function(con, sql) { add("exec", sql); invisible(0L) }
-  env$db_q    <- function(con, sql) { add("query", sql); .stub_result() }
+  env$db_q    <- function(con, sql) { add("query", sql); .stub_result(sql) }
   env$run_step <- function(con, name, sql, qc = NULL, allow_empty = FALSE) {
     add(paste0("step:", name), sql)
     if (!is.null(qc)) add(paste0("qc:", name), qc)
     invisible(NULL)
   }
-  # prepare_table's own SQL is db_utils' business and is covered by its unit
-  # tests; what matters here is the DDL shape each module declares.
-  env$prepare_table <- function(con, name, schema_sql, cohort_key) {
-    add("ddl", sprintf("CREATE TABLE IF NOT EXISTS %s (%s)", name, schema_sql))
-    add("ddl", sprintf("DELETE FROM %s WHERE COHORT = '%s'", name, cohort_key))
-    invisible(name)
-  }
-  env$ensure_table <- function(con, name, schema_sql) {
-    add("ddl", sprintf("CREATE TABLE IF NOT EXISTS %s (%s)", name, schema_sql))
-    invisible(name)
-  }
-  env$clear_scope <- function(con, name, cohort_key) {
-    add("ddl", sprintf("DELETE FROM %s WHERE COHORT = '%s'", name, cohort_key))
-    invisible(name)
-  }
-  # copy_to needs a session; the view name is all the modules use.
+  # prepare_table, ensure_table and clear_scope are NOT stubbed. They reach the
+  # warehouse only through db_exec, which is, so the real ones run and emit
+  # their real SQL. Stubbing them meant the harness fabricated the DDL for
+  # every table a module DECLARED - so "every declared output is written"
+  # passed on the stub's own output, and a prepare_table that stopped clearing
+  # its scope (a second run doubling every count in the study) was invisible.
+  # Only copy_to needs a session. The column check and the normalisation SQL
+  # do not, so both run for real: the check is exactly the kind of thing this
+  # harness is for, and the SQL is what every code-driven join depends on.
+  # The staged frame is recorded so an executing harness can materialise it.
+  rec$staged <- list()
   env$register_codelist_view <- function(con, df, view_name, cols,
                                          code_col = "code",
                                          family_col = "icd_family") {
-    # The real one stages the frame with copy_to, which needs a session. The
-    # column check does not, and a module asking for a column its code list
-    # lacks is exactly the kind of thing this harness is for.
     missing <- setdiff(cols, names(df))
     if (length(missing))
       stop("CODELIST ERROR: view ", view_name, " asked for column(s) the file ",
            "does not have: ", paste(missing, collapse = ", "), ".", call. = FALSE)
+    keep <- df[, cols, drop = FALSE]
+    keep[] <- lapply(keep, function(x) ifelse(is.na(x), "", as.character(x)))
+    stage <- paste0(tolower(view_name), "_raw")
+    rec$staged[[stage]] <- keep
+    add("codelist", env$codelist_view_sql(stage, view_name, cols, code_col,
+                                          family_col))
     view_name
   }
   env$log_msg <- function(...) invisible(NULL)
@@ -103,21 +120,29 @@ capture_emitted_sql <- function(here = ".", cfg_edit = identity) {
   note <- function(what, e)
     errors[[what]] <<- conditionMessage(e)
 
-  # The inputs the runner builds once, before the module loop.
-  for (b in c("build_enroll_spans", "build_fu_claims", "build_mm_dx_view"))
-    tryCatch(env[[b]](NULL, cfg), error = function(e) note(b, e))
+  # The runner's OWN pre-module path, called rather than re-implemented. This
+  # harness used to list the builders by hand and call build_fu_claims()
+  # directly - which is the one branch of that if/else that works - so the
+  # branch the shipped default takes was never emitted, and the statement it
+  # emitted could not run on Spark at all. A harness that paraphrases the code
+  # it is testing tests the paraphrase.
+  tryCatch(env$build_inputs(NULL, cfg, mods),
+           error = function(e) note("build_inputs", e))
 
   for (m in mods) {
     fn <- env[[m$fn]]
     if (isTRUE(m$per_cohort)) {
-      for (co in cohorts)
+      for (co in cohorts) {
+        # Per cohort, so the washout's convergence counter starts fresh.
+        .stub_counter$seen <- list()
         tryCatch(fn(NULL, cfg, co),
                  error = function(e) note(paste0(m$key, "/", co$key), e))
+      }
     } else {
       tryCatch(fn(NULL, cfg, cohorts), error = function(e) note(m$key, e))
     }
   }
 
-  list(sql = rec$out, errors = errors,
+  list(sql = rec$out, errors = errors, staged = rec$staged,
        cohorts = names(cohorts), modules = names(mods))
 }

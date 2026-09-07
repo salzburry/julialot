@@ -8,6 +8,16 @@ mod_spine <- function(con, cfg, cohorts) {
   src <- lot_tbl("LOT_LONG_FINAL")
   run_step(con, "spine", sprintf("
     CREATE OR REPLACE TABLE %s AS
+    -- MAX_LOT is applied OUTSIDE the window, in an outer query.
+    --
+    -- SQL evaluates WHERE before a window function, so `WHERE LOT_NUM <= 4` in
+    -- the same SELECT as lead() hides line 5 from line 4's lead - and line 4
+    -- then looks like the patient's last line. Its treatment period falls back
+    -- to discontinuation + 30 days and runs INTO line 5, taking line 5's events
+    -- with it; TTNT censors everyone who reached the top line; and
+    -- S_TX_ATTRITION calls them 'discontinued_no_further'. The window has to
+    -- see every line the engine built.
+    SELECT * FROM (
     SELECT
       cast(l.PATID as string)      AS PATID,
       cast(l.LOT_NUM as int)       AS LOT_NUM,
@@ -39,7 +49,8 @@ mod_spine <- function(con, cfg, cohorts) {
               'SCT_CART','SCT_AUTO_CONT')
            THEN 1 ELSE 0 END AS IS_PROTOCOL_DISCON
     FROM %s l
-    WHERE l.LOT_NUM <= %d", wrk("S_SPINE"), src, as.integer(cfg$max_lot)),
+    ) w
+    WHERE w.LOT_NUM <= %d", wrk("S_SPINE"), src, as.integer(cfg$max_lot)),
     qc = sprintf("SELECT count(*) AS n_lines, count(DISTINCT PATID) AS n_pat,
                          min(LOT_NUM) AS min_lot, max(LOT_NUM) AS max_lot
                   FROM %s", wrk("S_SPINE")))

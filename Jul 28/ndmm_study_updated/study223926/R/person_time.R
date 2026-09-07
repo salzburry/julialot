@@ -76,14 +76,14 @@ assert_chronic_set <- function(codelist, condition_col = "condition",
   invisible(TRUE)
 }
 
-# Rule 1. One row per patient, condition and DATE - the same-day collapse.
-distinct_event_dates_sql <- function(src, out, patid = "PATID",
-                                     cond = "CONDITION", dt = "EVENT_DT") {
-  sprintf("CREATE OR REPLACE TEMPORARY VIEW %s AS
-    SELECT DISTINCT %s AS PATID, %s AS CONDITION, cast(%s as date) AS EVENT_DT
-    FROM %s
-    WHERE %s IS NOT NULL", out, patid, cond, dt, src, dt)
-}
+# Rule 1 - the same-day collapse - is not here. It is a DISTINCT on the event
+# select in 06_safety.R and 08_malignancy.R, because it has to happen where the
+# claim rows are read and cannot be applied afterwards.
+#
+# There was a distinct_event_dates_sql() here that expressed the rule and that
+# no module called. Deleting it: a helper that states a protocol rule and is
+# wired to nothing reads, to anyone checking, as the rule being applied
+# centrally - and mutating it breaks no test, because nothing runs it.
 
 # Rule 3, first half. Patients with the condition before their treatment
 # period - not at risk, so out of the numerator AND the denominator.
@@ -93,6 +93,11 @@ chronic_prior_history_sql <- function(events, periods, out) {
     FROM %s p
     INNER JOIN %s e
       ON e.PATID = p.PATID
+     -- On COHORT as well as PATID. Both tables carry every cohort, so without
+     -- it this is a k-fold cross product per patient before the DISTINCT -
+     -- and it is only accidentally right today, because the event table
+     -- happens to hold the same rows under every cohort tag.
+     AND e.COHORT = p.COHORT
      AND e.EVENT_DT < p.PERIOD_START", out, periods, events)
 }
 

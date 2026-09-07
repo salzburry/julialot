@@ -70,10 +70,19 @@ baseline_window_sql <- function(anchor, cfg, include_index = NULL) {
 # "Disenrollment is not censoring" - and it carries both, so this reads
 # ENDDATE_CE or ENDDATE off the cohort rather than recomputing either.
 # ../OPEN_QUESTIONS.md Q13.
-fu_end_sql <- function(cfg, enddate = "c.ENDDATE", enddate_ce = "c.ENDDATE_CE",
-                       death = "c.DEATH_DT") {
+# `ce_end` is the end of the enrolment span covering THIS cohort's own index
+# date, from S_ENROLL_SPANS. It has to be, and it used to not be: ENDDATE_CE on
+# the input cohort table is the end of continuous enrolment measured from the
+# 1L index, and reusing it for 2L, 3L and SEC2L gave every cohort the same
+# follow-up end as 1L. A patient who lapsed after 1L and re-enrolled before 2L
+# then got FU_END < INDEX_DATE - negative follow-up, negative TTNT/TTD/OS - in
+# a cohort whose own MET_N2 had just certified 12 months of continuous
+# enrolment before that index from the same spans. The cohort table's value is
+# kept only as a fallback for a patient no span covers.
+fu_end_sql <- function(cfg, ce_end = "fe.COV_END", enddate = "c.ENDDATE",
+                       enddate_ce = "c.ENDDATE_CE", death = "c.DEATH_DT") {
   horizon <- if (isTRUE(cfg$censor_at_disenrollment))
-    sprintf("coalesce(%s, %s)", enddate_ce, enddate) else enddate
+    sprintf("coalesce(%s, %s, %s)", ce_end, enddate_ce, enddate) else enddate
   # least() ignores nothing: a NULL death would make the whole expression NULL,
   # so it is coalesced to the horizon first.
   sprintf("least(%s, date('%s'), coalesce(%s, %s))",

@@ -3,13 +3,13 @@ line_scope,soc_category,CL_MED_ABBR,role
 1L,Triplet with anti-CD38 backbone,DARA,backbone
 1L,Other triplet (non-anti-CD38),BORT,component
 1L,Doublet/monotherapy,BORT,component
-1L,Other,BORT,component
+1L,Other,OTHR,component
 LATER,Quadruplet with anti-CD38 backbone,DARA,backbone
 LATER,Triplet with anti-CD38 backbone,DARA,backbone
 LATER,Other triplet (non-anti-CD38),BORT,component
-LATER,Other novel agent,BORT,component
-LATER,CAR-T,BORT,component
-LATER,BCMA bispecific,BORT,component
-LATER,Non-BCMA bispecific,BORT,component
+LATER,Other novel agent,SELI,component
+LATER,CAR-T,CILTA,component
+LATER,BCMA bispecific,TECL,component
+LATER,Non-BCMA bispecific,TALQ,component
 LATER,Doublet/monotherapy,BORT,component
-LATER,Other,BORT,component
+LATER,Other,OTHR,component

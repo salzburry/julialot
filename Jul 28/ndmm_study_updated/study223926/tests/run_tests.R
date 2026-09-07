@@ -372,9 +372,10 @@ cat("\nregressions from the adversarial review\n")
   # 5. Code types are compared case-insensitively on both sides.
   ok(grepl("code_type_norm", hc),
      "the ED join uses the normalised code type the R check validates")
-  ok(grepl("code_type_norm", paste(capture.output(print(register_codelist_view)),
-                                   collapse = "\n")),
-     "and register_codelist_view publishes it")
+  cl_sql <- paste(vapply(Filter(function(x) x$tag == "codelist", RUN$sql),
+                         function(x) x$sql, character(1)), collapse = "\n")
+  ok(nzchar(cl_sql) && grepl("code_type_norm", cl_sql, fixed = TRUE),
+     "and the code-list view the run emits publishes it")
 
   # 6. Time-to-event dates and events are clipped to the follow-up end.
   tt <- paste(capture.output(print(mod_tte)), collapse = "\n")
@@ -430,10 +431,15 @@ cat("\nregressions from the adversarial review\n")
   ok(grepl("count\\(\\*\\) AS n_events", hc),
      "the HCRU QC puts a count first so the zero-row guard is not skipped")
 
-  # 13. An unrecognised or blank ICD family matches neither family.
-  rv <- paste(capture.output(print(register_codelist_view)), collapse = "\n")
-  ok(grepl("THEN 'ICD10' END", rv) && !grepl("ELSE 'ICD10' END", rv),
+  # 13. An unrecognised or blank ICD family matches neither family. Read off
+  # the statement the run emits, not the function's source - the normalisation
+  # used to live inside register_codelist_view(), which the harness stubbed
+  # out, so this SQL was never emitted, never parsed and never executed.
+  ok(grepl("THEN 'ICD10' END", cl_sql, fixed = TRUE) &&
+     !grepl("ELSE 'ICD10' END", cl_sql, fixed = TRUE),
      "the code-list side yields NULL for an unknown family, as the claim side does")
+  ok(grepl("upper(regexp_replace(trim(", cl_sql, fixed = TRUE),
+     "and normalises its codes the same way the claim side does")
   tmp <- tempfile(); dir.create(tmp)
   cfgb <- cfg; cfgb$codelist_dir <- tmp
   write.csv(data.frame(condition = "a", domain = "x", acute_chronic = "Acute",
@@ -499,7 +505,10 @@ cat("\nregressions from the adversarial review\n")
      "and a four-agent regimen with no anti-CD38 agent is not called one")
 
   # Mine, not the review's.
-  ok(!grepl("SELECT \\* FROM %s UNION ALL", rv),
+  rv <- paste(capture.output(print(register_codelist_view)), collapse = "\n")
+  cl_all <- paste(vapply(Filter(function(x) x$tag == "codelist", RUN$sql),
+                         function(x) x$sql, character(1)), collapse = "\n")
+  ok(!grepl("UNION ALL", cl_all, fixed = TRUE),
      "the code-list view is not defined in terms of itself when chunked")
   ok(grepl("copy_to", rv),
      "a code list of thousands of rows is copied, not built as SQL text")
@@ -685,17 +694,71 @@ cat("\nthe modules, run against recorders\n")
   # The attrition funnel is monotone by construction: a step can only remove
   # rows. It was not - a criterion applied upstream reset the count to the
   # unfiltered total, so N_REMAINING went back up mid-funnel.
-  counts <- vapply(Filter(function(x)
-      grepl("^SELECT count\\(\\*\\) AS n FROM \\S*S_COHORT WHERE COHORT = '1L'",
-            x$sql), run$sql), function(x) x$sql, character(1))
-  ok(length(counts) == length(COHORTS[["1L"]]$criteria),
-     "the 1L funnel counts once per criterion")
-  ok(any(grepl("MET_N2 = 1", counts, fixed = TRUE)),
+  # --- the statements, executed -----------------------------------------
+  #
+  # Parsing proves a statement is well formed. It cannot prove a rate is
+  # divided by 365.25 rather than 365, that a GROUP BY still carries LOT_NUM,
+  # or that a second run does not double every count. Mutation testing put
+  # this suite's kill rate at 12% for exactly that reason.
+  #
+  # So the statements are run: transpiled to DuckDB and executed against the
+  # fixtures in tests/fixtures/cdm, whose answers are derived by hand in
+  # tests/fixtures/EXPECTED.md. DuckDB is not Spark and this does not replace
+  # a run against the warehouse - it is the arithmetic that is being checked,
+  # not the dialect.
+  sf <- tempfile(fileext = ".sql")
+  con <- file(sf, "w")
+  for (x in run$sql) {
+    cat("-- @@STMT ", x$tag, "\n", sep = "", file = con)
+    cat(x$sql, "\n", file = con)
+  }
+  close(con)
+  sd <- file.path(tempdir(), "staged")
+  unlink(sd, recursive = TRUE); dir.create(sd, showWarnings = FALSE)
+  for (n in names(run$staged))
+    utils::write.csv(run$staged[[n]], file.path(sd, paste0(n, ".csv")),
+                     row.names = FALSE)
+  dout <- suppressWarnings(tryCatch(
+    system2("python3", c("tests/run_duckdb.py", shQuote(sf), shQuote(sd),
+                         "tests/fixtures/cdm", shQuote(cfg0()$object_prefix)),
+            stdout = TRUE, stderr = TRUE),
+    error = function(e) "NO-PYTHON"))
+  dtxt <- paste(dout, collapse = "\n")
+  if (any(grepl("^SKIP:", dout)) || identical(dtxt, "NO-PYTHON") ||
+      !length(dout)) {
+    cat("  SKIP  the emitted SQL executes and its numbers are right",
+        " (python3 + duckdb + sqlglot not available)\n", sep = "")
+  } else {
+    ok(grepl("0 failed", dtxt) && !grepl("skipped", sub(", 0 skipped", "", dtxt)),
+       paste0("every emitted statement executes against the fixtures",
+              if (!grepl("0 failed", dtxt)) paste0("\n", dtxt) else ""))
+    ok(grepl("0 wrong", dtxt),
+       paste0("and every golden number comes out right",
+              if (!grepl("0 wrong", dtxt)) paste0("\n", dtxt) else ""))
+    ok(grepl("0 of \\d+ table\\(s\\) changed row count", dtxt),
+       paste0("and a second run of the whole script doubles nothing",
+              if (!grepl("0 of ", dtxt)) paste0("\n", dtxt) else ""))
+  }
+  unlink(c(sf, sd), recursive = TRUE)
+
+  attr_sql <- vapply(Filter(function(x) x$tag == "step:attrition_1L", run$sql),
+                     function(x) x$sql, character(1))
+  ok(length(attr_sql) == 1,
+     "the 1L funnel is one statement, not a query per criterion")
+  # One arm per criterion, each counting the cohort table under the predicates
+  # accumulated so far.
+  arms <- if (length(attr_sql))
+    regmatches(attr_sql, gregexpr("SELECT count\\(\\*\\) FROM [^)]*",
+                                  attr_sql))[[1]] else character(0)
+  ok(length(arms) == length(COHORTS[["1L"]]$criteria),
+     "with one count per criterion")
+  ok(any(grepl("MET_N2 = 1", arms, fixed = TRUE)),
      "and applies MET_N2, which is I4 re-derived on the line's own index date")
-  # Monotone: once a predicate is in, no later step may drop it.
-  npred <- vapply(counts, function(q)
-    length(gregexpr("MET_", q, fixed = TRUE)[[1]][
-      gregexpr("MET_", q, fixed = TRUE)[[1]] > 0]), integer(1))
+  # Monotone: once a predicate is in, no later arm may drop it. The executing
+  # harness checks the resulting NUMBERS are monotone; this checks the SQL
+  # cannot express anything else.
+  npred <- vapply(arms, function(q)
+    lengths(regmatches(q, gregexpr("MET_", q, fixed = TRUE))), integer(1))
   ok(!is.unsorted(npred),
      "and never drops one, so N_REMAINING cannot go back up mid-funnel")
 }

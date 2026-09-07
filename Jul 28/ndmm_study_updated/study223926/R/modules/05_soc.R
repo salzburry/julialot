@@ -116,7 +116,12 @@ mod_soc <- function(con, cfg, cohort) {
       SELECT s.PATID, p.COHORT, s.LOT_NUM, s.LOT_BASE_MEDS AS REGIMEN,
              explode(split(trim(s.LOT_BASE_MEDS), '\\\\s+')) AS ABBR
       FROM %2$s s
+      -- s.LOT_NUM >= p.LOT_NUM, the same restriction S_LOT_PERIODS applies.
+      -- Without it the 3L cohort's S_SOC carries that cohort's lines 1 and 2 -
+      -- therapy given BEFORE its index - and mod_patterns then reports them
+      -- against the whole 3L denominator as though they were on-study lines.
       INNER JOIN %3$s p ON p.PATID = s.PATID AND p.COHORT = '%4$s'
+                       AND s.LOT_NUM >= p.LOT_NUM
       WHERE s.LOT_BASE_MEDS IS NOT NULL AND trim(s.LOT_BASE_MEDS) <> ''
     ),
     matched AS (

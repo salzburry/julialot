@@ -27,6 +27,41 @@ source_modules <- function(here) {
   invisible(TRUE)
 }
 
+# Everything the modules need that is built once rather than per cohort.
+#
+# A function of its own, and not inline in build_223926(), because the test
+# harness has to walk exactly this path. It used to call build_fu_claims()
+# directly, which is the ONE branch below that works - so the branch the
+# shipped default takes was never emitted and never checked, and it could not
+# run at all.
+build_inputs <- function(con, cfg, mods) {
+  build_enroll_spans(con, cfg)
+
+  # A full medical + rx scan, so only when a follow-up reading actually reads
+  # it. The shipped default's predicate is `1 = 1` and never touches the result.
+  #
+  # The empty stand-in is a TABLE, not a temporary view. Spark refuses a
+  # qualified name for a temp view ("only accept single-part view names"), and
+  # every reader here names tables through wrk(), which is
+  # catalog.schema.prefix_name - so a temp view could not be referred to even
+  # if it could be created. An empty table costs nothing.
+  if (identical(cfg$fu_evidence_rule, "claim_after_index")) {
+    build_fu_claims(con, cfg)
+  } else {
+    db_exec(con, sprintf(
+      "CREATE OR REPLACE TABLE %s
+       (PATID string, N_CLAIMS_AFTER_INDEX int, N_CLAIMS_FROM_INDEX int)",
+      wrk("S_FU_CLAIMS")))
+    log_msg("FU_EVIDENCE_RULE=", cfg$fu_evidence_rule,
+            " does not read claim counts, so the medical+rx scan is skipped.")
+  }
+
+  # Whoever declared mm_dx.csv gets the view: hcru's MM-related hospitalisation
+  # test and comorbidity's MM adjustment both read it.
+  if ("mm_dx.csv" %in% required_codelists(mods)) build_mm_dx_view(con, cfg)
+  invisible(TRUE)
+}
+
 build_223926 <- function(here) {
   cfg <- cfg_defaults()
   cfg$codelist_dir <- resolve_codelist_dir(cfg, here)
@@ -60,24 +95,7 @@ build_223926 <- function(here) {
   lot_run <- check_lot_lineage(con, cfg)
   write_run_metadata(con, cfg, cohorts, mods, lot_run, deviations, "started")
 
-  # Inputs the cohort module needs, built once rather than per cohort.
-  build_enroll_spans(con, cfg)
-  # A full medical + rx scan, so only when a follow-up reading actually reads
-  # it. The shipped default's predicate is `1 = 1` and never touches the result.
-  if (identical(cfg$fu_evidence_rule, "claim_after_index")) {
-    build_fu_claims(con, cfg)
-  } else {
-    db_exec(con, sprintf(
-      "CREATE OR REPLACE TEMPORARY VIEW %s AS
-       SELECT cast(NULL as string) AS PATID, cast(NULL as int) AS N_CLAIMS_AFTER_INDEX,
-              cast(NULL as int) AS N_CLAIMS_FROM_INDEX WHERE 1 = 0",
-      wrk("S_FU_CLAIMS")))
-    log_msg("FU_EVIDENCE_RULE=", cfg$fu_evidence_rule,
-            " does not read claim counts, so the medical+rx scan is skipped.")
-  }
-  # Whoever declared mm_dx.csv gets the view: hcru's MM-related hospitalisation
-  # test and comorbidity's MM adjustment both read it.
-  if ("mm_dx.csv" %in% required_codelists(mods)) build_mm_dx_view(con, cfg)
+  build_inputs(con, cfg, mods)
 
   for (m in mods) {
     log_msg(SEP)

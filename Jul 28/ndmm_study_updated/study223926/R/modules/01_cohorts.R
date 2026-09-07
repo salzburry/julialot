@@ -121,46 +121,54 @@ mod_attrition <- function(con, cfg, cohort) {
     "COHORT string, STEP int, CRITERION string, APPLIED_BY string,
      N_REMAINING int, N_LOST int", cohort$key)
 
-  steps <- lapply(seq_along(cohort$criteria), function(i) {
-    k <- cohort$criteria[i]
-    here <- k %in% names(HERE_PRED)
-    src <- CRITERION_SOURCE[[k]]
-    list(step = i, criterion = k,
-         applied_by = if (here && src != "here") paste0(src, "+here") else src,
-         pred = if (here) HERE_PRED[[k]] else NULL)
-  })
   # The count carried into each step is the population that has passed every
   # criterion at or above it that this package can test. A step whose verdict
   # came from upstream adds no predicate of its own, so it reports the same
   # count as the step before rather than resetting to the unfiltered total -
   # a funnel whose N_REMAINING goes back up is not a funnel.
+  #
+  # Counted in SQL, in one statement, rather than a db_q() per criterion per
+  # cohort. Two reasons, and the second is the one that matters: it is 36
+  # warehouse round-trips otherwise, and a count that comes back into R and is
+  # written out as a literal is a number no test can reach without a
+  # warehouse. In SQL the funnel is checkable against the cohort table it
+  # describes.
   cum <- character(0)
-  for (st in steps) {
-    if (!is.null(st$pred)) cum <- c(cum, st$pred)
-    n_sql <- if (length(cum))
-      sprintf("SELECT count(*) AS n FROM %s WHERE COHORT = '%s' AND %s",
-              wrk("S_COHORT"), cohort$key, paste(cum, collapse = " AND "))
-    else
-      sprintf("SELECT count(*) AS n FROM %s WHERE COHORT = '%s'",
-              wrk("S_COHORT"), cohort$key)
-    n <- as.integer(db_q(con, n_sql)$n[1])
-    db_exec(con, sprintf(
-      "INSERT INTO %s VALUES ('%s', %d, '%s', '%s', %d, NULL)",
-      wrk("S_ATTRITION"), cohort$key, st$step, st$criterion, st$applied_by, n))
+  arms <- character(0)
+  for (i in seq_along(cohort$criteria)) {
+    k <- cohort$criteria[i]
+    here <- k %in% names(HERE_PRED)
+    src <- CRITERION_SOURCE[[k]]
+    applied_by <- if (here && src != "here") paste0(src, "+here") else src
+    if (here) cum <- c(cum, HERE_PRED[[k]])
+    where <- sprintf("COHORT = '%s'%s", cohort$key,
+                     if (length(cum))
+                       paste0(" AND ", paste(cum, collapse = " AND ")) else "")
+    arms <- c(arms, sprintf(
+      "SELECT '%s' AS COHORT, %d AS STEP, '%s' AS CRITERION,
+              '%s' AS APPLIED_BY,
+              (SELECT count(*) FROM %s WHERE %s) AS N_REMAINING",
+      cohort$key, i, k, applied_by, wrk("S_COHORT"), where))
   }
-  # N_LOST as the difference from the row above, filled once every row exists.
-  db_exec(con, sprintf("
-    CREATE OR REPLACE TEMPORARY VIEW s_attr_lost AS
-    SELECT COHORT, STEP,
-           lag(N_REMAINING) OVER (PARTITION BY COHORT ORDER BY STEP)
-             - N_REMAINING AS N_LOST
-    FROM %s WHERE COHORT = '%s'", wrk("S_ATTRITION"), cohort$key))
-  db_exec(con, sprintf("
-    MERGE INTO %s t USING s_attr_lost l
-    ON t.COHORT = l.COHORT AND t.STEP = l.STEP
-    WHEN MATCHED THEN UPDATE SET t.N_LOST = l.N_LOST",
-    wrk("S_ATTRITION")))
-  log_msg("  attrition written for ", cohort$key, ": ", length(steps), " step(s)")
+
+  run_step(con, paste0("attrition_", cohort$key), sprintf("
+    INSERT INTO %s
+    WITH steps AS (
+      %s
+    )
+    -- N_LOST as the difference from the row above, in the same pass. It was a
+    -- MERGE, which needs a Delta table and is the only statement in the
+    -- package that did.
+    SELECT COHORT, STEP, CRITERION, APPLIED_BY, N_REMAINING,
+           cast(lag(N_REMAINING) OVER (PARTITION BY COHORT ORDER BY STEP)
+                - N_REMAINING as int) AS N_LOST
+    FROM steps",
+    wrk("S_ATTRITION"), paste(arms, collapse = "\n      UNION ALL\n      ")),
+    qc = sprintf("SELECT count(*) AS n_steps, max(N_REMAINING) AS n_in
+                  FROM %s WHERE COHORT = '%s'", wrk("S_ATTRITION"),
+                 cohort$key))
+  log_msg("  attrition written for ", cohort$key, ": ",
+          length(cohort$criteria), " step(s)")
 }
 
 # The enrolment spans, built once from the raw table with the protocol's own

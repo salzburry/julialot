@@ -55,11 +55,16 @@ mod_demographics <- function(con, cfg, cohort) {
       WHERE p.COHORT = '%7$s'
     )
     SELECT r.PATID, r.COHORT, r.INDEX_DATE,
-           cast(year(r.INDEX_DATE) - c.YRDOB as int) AS AGE_YEARS,
-           CASE WHEN year(r.INDEX_DATE) - c.YRDOB <  45 THEN '18-44'
-                WHEN year(r.INDEX_DATE) - c.YRDOB <  65 THEN '45-64'
-                WHEN year(r.INDEX_DATE) - c.YRDOB <  75 THEN '65-74'
-                WHEN year(r.INDEX_DATE) - c.YRDOB >= 75 THEN '75+'
+           -- YRDOB is cast, not coerced. The CDM stores it as a character
+           -- column; Spark would coerce a string in arithmetic, but relying on
+           -- that puts the study's only age variable on an implicit rule that
+           -- differs between engines and silently yields NULL on a stray
+           -- space. s7.8.1: age is the index year minus the birth year.
+           cast(year(r.INDEX_DATE) - cast(c.YRDOB as int) as int) AS AGE_YEARS,
+           CASE WHEN year(r.INDEX_DATE) - cast(c.YRDOB as int) <  45 THEN '18-44'
+                WHEN year(r.INDEX_DATE) - cast(c.YRDOB as int) <  65 THEN '45-64'
+                WHEN year(r.INDEX_DATE) - cast(c.YRDOB as int) <  75 THEN '65-74'
+                WHEN year(r.INDEX_DATE) - cast(c.YRDOB as int) >= 75 THEN '75+'
                 ELSE 'Unknown' END AS AGE_BAND,
            CASE upper(coalesce(c.GDR_CD,'U')) WHEN 'M' THEN 'Male'
                 WHEN 'F' THEN 'Female' ELSE 'Unknown' END AS SEX,

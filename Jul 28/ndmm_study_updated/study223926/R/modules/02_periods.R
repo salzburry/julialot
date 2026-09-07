@@ -14,6 +14,11 @@ mod_periods <- function(con, cfg, cohort) {
                              include_index = cfg$comorbidity_baseline_includes_index)
   fu  <- fu_end_sql(cfg)
   tte <- tte_eligible_sql(cfg, index = "co.INDEX_DATE")
+  fu_days <- sprintf("CASE WHEN %s >= co.INDEX_DATE THEN %s END",
+                     fu, interval_days_sql("co.INDEX_DATE", fu, TRUE, TRUE))
+  fu_months <- sprintf("CASE WHEN %s >= co.INDEX_DATE THEN %s END",
+                       fu, days_to_months_sql(
+                         interval_days_sql("co.INDEX_DATE", fu, TRUE, TRUE)))
 
   prepare_table(con, wrk("S_PERIODS"),
     "PATID string, COHORT string, LOT_NUM int, INDEX_DATE date,
@@ -33,18 +38,25 @@ mod_periods <- function(con, cfg, cohort) {
            %10$s AS TTE_ELIGIBLE
     FROM %11$s co
     INNER JOIN %12$s c ON c.PATID = co.PATID
+    -- The enrolment span covering THIS cohort's index date, so follow-up ends
+    -- where this patient's enrolment ends after THIS index - not after 1L's.
+    LEFT JOIN %14$s fe
+           ON fe.PATID = co.PATID
+          AND fe.COV_START <= co.INDEX_DATE AND fe.COV_END >= co.INDEX_DATE
     WHERE co.COHORT = '%13$s' AND co.IN_COHORT = 1",
     wrk("S_PERIODS"), bl$start, bl$end, blc$start, blc$end, fu,
     # s7.1: follow-up runs FROM the index date, index included, to the
-    # follow-up end, included.
-    interval_days_sql("co.INDEX_DATE", fu, TRUE, TRUE),
-    days_to_months_sql(interval_days_sql("co.INDEX_DATE", fu, TRUE, TRUE)),
+    # follow-up end, included. Guarded the same way PERIOD_PY is: a follow-up
+    # end before the index is not negative follow-up, it is none, and a
+    # negative FU_DAYS would be averaged into a mean and drawn on a curve.
+    fu_days, fu_months,
     # The baseline denominator for prevalence. s7.8.1: "the total amount of PY
     # present in the baseline period (i.e., 12 months prior to each LOT),
     # irrespective of prior event history" - so it is the window's own length,
     # the same for every patient, not their observed enrolment inside it.
     person_years_sql(bl$start, bl$end, cfg),
-    tte, wrk("S_COHORT"), cfg$input_cohort_table, cohort$key),
+    tte, wrk("S_COHORT"), cfg$input_cohort_table, cohort$key,
+    wrk("S_ENROLL_SPANS")),
     qc = sprintf("SELECT count(*) AS n_rows, sum(TTE_ELIGIBLE) AS n_tte,
                          round(avg(FU_MONTHS), 2) AS mean_fu_months
                   FROM %s WHERE COHORT = '%s'", wrk("S_PERIODS"), cohort$key))

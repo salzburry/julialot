@@ -303,6 +303,19 @@ register_codelist_view <- function(con, df, view_name, cols,
   stage <- paste0(tolower(view_name), "_raw")
   sparklyr::copy_to(con, keep, name = stage, overwrite = TRUE, memory = FALSE)
 
+  db_exec(con, codelist_view_sql(stage, view_name, cols, code_col, family_col))
+  view_name
+}
+
+# The normalisation, as SQL, separate from the staging that needs a session.
+#
+# A function of its own so the test harness emits the SAME statement the run
+# does. While this lived inside register_codelist_view(), the harness stubbed
+# the whole thing out and this SQL - which every code-driven join depends on -
+# was never emitted, never parsed and never executed. Dropping the upper() here
+# would have zeroed every rate in the study with nothing to catch it.
+codelist_view_sql <- function(stage, view_name, cols, code_col = "code",
+                              family_col = "icd_family") {
   norm_code <- if (code_col %in% cols)
     sprintf("upper(regexp_replace(trim(%s), '[^A-Za-z0-9]', '')) AS code_norm",
             code_col) else "cast(NULL as string) AS code_norm"
@@ -321,8 +334,7 @@ register_codelist_view <- function(con, df, view_name, cols,
     "upper(trim(code_type)) AS code_type_norm"
     else "cast(NULL as string) AS code_type_norm"
 
-  db_exec(con, sprintf("CREATE OR REPLACE TEMPORARY VIEW %s AS
-                        SELECT *, %s, %s, %s FROM %s",
-                       view_name, norm_code, norm_fam, norm_type, stage))
-  view_name
+  sprintf("CREATE OR REPLACE TEMPORARY VIEW %s AS
+           SELECT *, %s, %s, %s FROM %s",
+          view_name, norm_code, norm_fam, norm_type, stage)
 }
