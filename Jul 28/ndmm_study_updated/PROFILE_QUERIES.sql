@@ -1,6 +1,11 @@
 -- Profiling queries for the study team
 -- =====================================
 --
+-- If you get ONE run at the warehouse, use RUN_ONCE.sql instead - same
+-- questions, ordered so a late failure costs least, with the schema discovery
+-- first. This file is the same material split into blocks you can run
+-- separately when there is no such constraint.
+--
 -- Each block answers a specific open question from OPEN_QUESTIONS.md. They are
 -- ordered by how much turns on the answer. Every one is a count or a group-by;
 -- none writes anything.
@@ -12,6 +17,26 @@
 -- The CDM quarter below is written as 2026q1, which is what STUDY_END=2026-03-31
 -- resolves to. Block 0 checks that vintage exists - the describe-table
 -- screenshot in docs/ is 2025q4, so they may not be the same.
+
+
+-- What this file does and does not answer
+-- --------------------------------------
+--
+--   settled by a query here      Q2, Q8, Q9, Q10, Q11, Q13, Q16, Q22, Q24,
+--                                Q25, Q26, Q27
+--   already priced by the build  Q3, Q5, Q6, Q23 - the ndmm build writes
+--                                NDMM_FU_CE_COUNTS, NDMM_PREG_WINDOW_COUNTS,
+--                                NDMM_INDEX_AGENTS and NDMM_OTHER_MALIG_GRAIN
+--                                on every run; read those rather than re-query
+--   arithmetic, no query needed  Q1, Q14, Q19, Q21 - the difference between
+--                                the two readings is a day count
+--   NO query can answer          Q7, Q12, Q15, Q20 - these need the protocol
+--                                author or the missing annexes. Q15 is the
+--                                one that blocks six of thirteen modules.
+--
+-- So: of 27 open questions, 12 are settled below, 4 are already costed by
+-- tables you have, 4 are arithmetic, and 4 need a person. Two (Q4, Q17) are
+-- answered already.
 
 
 -- ---------------------------------------------------------------------------
@@ -205,3 +230,175 @@ WHERE  m.POS IN ('21','51','61','23')
 GROUP BY m.POS, m.TOS_CD
 ORDER BY n_lines DESC
 LIMIT 40;
+
+
+-- ===========================================================================
+--  Blocks 8-13: the rest of the questions a query can actually settle
+-- ===========================================================================
+
+
+-- ---------------------------------------------------------------------------
+-- 8.  Does the "attribute at index" tiebreak matter?  OPEN_QUESTIONS Q16
+-- ---------------------------------------------------------------------------                                                     (~1 minute)
+-- MEMBER_ENROLLMENT gets a new row whenever anything about the member changes,
+-- and a member with two concurrent plans has two rows covering the same index
+-- date. Ranked on ELIGEFF alone, which row wins is arbitrary - so race,
+-- ethnicity, region and insurance could differ between two runs of identical
+-- code. The package now breaks the tie on (ELIGEFF, ELIGEND, PAT_PLANID).
+--
+-- This says whether that was a real problem or a theoretical one, and - the
+-- second query - whether the tied rows actually disagree about anything.
+
+WITH coh AS (
+  SELECT cast(PATID as string) AS PATID, INDEX_DATE
+  FROM <WORK>.<PREFIX>NDMM_COHORT
+),
+spans AS (
+  SELECT c.PATID, c.INDEX_DATE, e.RACE, e.ETHNICITY, e.BUS, e.STATE
+  FROM       coh c
+  INNER JOIN hive_metastore.clnprw_optum.t_member_enrollment_2026q1 e
+          ON cast(e.PATID as string) = c.PATID
+         AND e.ELIGEFF <= c.INDEX_DATE AND e.ELIGEND >= c.INDEX_DATE
+)
+SELECT count(DISTINCT PATID)                                        AS n_cohort,
+       count(*)                                                     AS n_rows_covering_index,
+       count(DISTINCT CASE WHEN n_rows > 1 THEN PATID END)          AS n_with_multiple_rows,
+       count(DISTINCT CASE WHEN n_distinct_race > 1
+                             OR n_distinct_bus  > 1
+                             OR n_distinct_state > 1 THEN PATID END) AS n_where_rows_disagree
+FROM (
+  SELECT PATID,
+         count(*)                    AS n_rows,
+         count(DISTINCT RACE)        AS n_distinct_race,
+         count(DISTINCT BUS)         AS n_distinct_bus,
+         count(DISTINCT STATE)       AS n_distinct_state
+  FROM spans GROUP BY PATID
+) t;
+
+
+-- ---------------------------------------------------------------------------
+-- 9.  How precise are the death dates?        OPEN_QUESTIONS Q22   (~20 seconds)
+-- ---------------------------------------------------------------------------
+-- DOD carries YMDOD - month and year. The existing build constructs a day: the
+-- 15th of the month, pulled to month-end if that would put death before the MM
+-- diagnosis. This shows how many rows have a usable month at all, since a
+-- year-only row makes that construction six months wide.
+--
+-- Run this even if block 1 says the keys do not match - it costs nothing and
+-- tells you what DOD contains.
+
+SELECT length(trim(YMDOD))    AS ymdod_length,
+       count(*)               AS n,
+       min(YMDOD)             AS example_min,
+       max(YMDOD)             AS example_max
+FROM   hive_metastore.clnprw_optum.t_dod_2026q1
+GROUP BY length(trim(YMDOD))
+ORDER BY ymdod_length;
+
+
+-- ---------------------------------------------------------------------------
+-- 10. Does ICD_FLAG ever name neither family?  OPEN_QUESTIONS Q24  (~2 minutes)
+-- ---------------------------------------------------------------------------
+-- Business rule 1 says ICD_FLAG is '9' or '10'. Every code-list join in both
+-- builds treats anything else as matching NEITHER family, so such a row
+-- silently stops qualifying or excluding anyone. The existing build reports
+-- these rather than gating on them; whether that is enough depends on how many
+-- there are.
+
+SELECT ICD_FLAG, count(*) AS n
+FROM   hive_metastore.clnprw_optum.t_diagnosis_2026q1
+GROUP BY ICD_FLAG
+ORDER BY n DESC;
+
+
+-- ---------------------------------------------------------------------------
+-- 11. The two routes to "MM in first or second position"  Q27      (~3 minutes)
+-- ---------------------------------------------------------------------------
+-- Route A - CONFINEMENT.DIAG1/DIAG2, the stay's own first two diagnoses. This
+--           is what the package implements.
+-- Route B - MED_DIAGNOSIS.DIAG_POSITION 1 or 2 on a claim carrying that
+--           CONF_ID, which is the route business rule 13 documents.
+--
+-- Stay positions are five; claim positions are twenty-five. If the two columns
+-- come back close, the choice does not matter. If they differ materially,
+-- somebody has to say which one s7.8.1 means.
+--
+-- Replace the MM code list with the study's own; C90% is the ICD-10 stem.
+
+WITH coh AS (
+  SELECT DISTINCT cast(PATID as string) AS PATID
+  FROM <WORK>.<PREFIX>NDMM_COHORT
+),
+stays AS (
+  SELECT cast(cf.PATID as string) AS PATID, cf.CONF_ID,
+         CASE WHEN upper(regexp_replace(coalesce(cf.DIAG1,''),'[^A-Za-z0-9]','')) LIKE 'C90%'
+                OR upper(regexp_replace(coalesce(cf.DIAG2,''),'[^A-Za-z0-9]','')) LIKE 'C90%'
+              THEN 1 ELSE 0 END AS route_a
+  FROM       hive_metastore.clnprw_optum.t_confinement_2026q1 cf
+  INNER JOIN coh ON coh.PATID = cast(cf.PATID as string)
+),
+claims AS (
+  SELECT DISTINCT cast(m.PATID as string) AS PATID, m.CONF_ID
+  FROM       hive_metastore.clnprw_optum.t_medical_2026q1 m
+  INNER JOIN hive_metastore.clnprw_optum.t_diagnosis_2026q1 d
+          ON d.PATID = m.PATID AND d.CLMID = m.CLMID
+  INNER JOIN coh ON coh.PATID = cast(m.PATID as string)
+  WHERE  m.CONF_ID IS NOT NULL AND trim(m.CONF_ID) <> ''
+    AND  cast(d.DIAG_POSITION as int) IN (1, 2)
+    AND  upper(regexp_replace(d.DIAG,'[^A-Za-z0-9]','')) LIKE 'C90%'
+)
+SELECT count(*)                                              AS n_stays,
+       sum(s.route_a)                                        AS mm_by_confinement_diag1_2,
+       count(c.CONF_ID)                                      AS mm_by_claim_position_1_2,
+       sum(CASE WHEN s.route_a = 1 AND c.CONF_ID IS NULL
+                THEN 1 ELSE 0 END)                           AS route_a_only,
+       sum(CASE WHEN s.route_a = 0 AND c.CONF_ID IS NOT NULL
+                THEN 1 ELSE 0 END)                           AS route_b_only
+FROM      stays s
+LEFT JOIN claims c ON c.PATID = s.PATID AND c.CONF_ID = s.CONF_ID;
+
+
+-- ---------------------------------------------------------------------------
+-- 12. Strict vs broad outpatient MM codes      OPEN_QUESTIONS Q2   (~3 minutes)
+-- ---------------------------------------------------------------------------
+-- I1 needs two outpatient MM diagnoses within 90 days, or one inpatient. The
+-- open question is whether the outpatient arm uses the same strict code set as
+-- the inpatient arm or a broader one. This counts the patients each reading
+-- qualifies, WITHOUT applying any other criterion - so it is an upper bound on
+-- the difference, not a cohort size.
+--
+-- Substitute the study's two code lists for the two LIKE patterns.
+
+WITH dx AS (
+  SELECT cast(d.PATID as string) AS PATID,
+         cast(d.FST_DT as date)  AS dt,
+         CASE WHEN upper(regexp_replace(d.DIAG,'[^A-Za-z0-9]','')) LIKE 'C90%'
+              THEN 1 ELSE 0 END AS strict,
+         CASE WHEN upper(regexp_replace(d.DIAG,'[^A-Za-z0-9]','')) LIKE 'C90%'
+                OR upper(regexp_replace(d.DIAG,'[^A-Za-z0-9]','')) LIKE 'C88%'
+              THEN 1 ELSE 0 END AS broad
+  FROM  hive_metastore.clnprw_optum.t_diagnosis_2026q1 d
+  WHERE d.FST_DT >= date('2018-01-01')
+)
+SELECT count(DISTINCT CASE WHEN strict = 1 THEN PATID END) AS patients_strict,
+       count(DISTINCT CASE WHEN broad  = 1 THEN PATID END) AS patients_broad,
+       count(DISTINCT CASE WHEN broad = 1 AND strict = 0
+                           THEN PATID END)                 AS patients_broad_only
+FROM dx;
+
+
+-- ---------------------------------------------------------------------------
+-- 13. How much follow-up does censoring at disenrolment cost?  Q13 (~1 minute)
+-- ---------------------------------------------------------------------------
+-- The protocol says follow-up ends at the earliest of disenrolment, study end
+-- or death. The LOT engine's primary reading is the opposite - "disenrollment
+-- is not censoring" - and the two builds carry both columns. This prices the
+-- disagreement in person-time rather than in argument.
+
+SELECT count(*)                                                      AS n_cohort,
+       round(avg(datediff(ENDDATE_CE, INDEX_DATE) + 1) / 365.25, 2)  AS mean_years_censored,
+       round(avg(datediff(ENDDATE,    INDEX_DATE) + 1) / 365.25, 2)  AS mean_years_uncensored,
+       sum(CASE WHEN ENDDATE_CE < ENDDATE THEN 1 ELSE 0 END)         AS n_where_it_differs,
+       round(100.0 * sum(CASE WHEN ENDDATE_CE < ENDDATE THEN 1 ELSE 0 END)
+                   / count(*), 1)                                    AS pct_where_it_differs
+FROM <WORK>.<PREFIX>NDMM_COHORT;
