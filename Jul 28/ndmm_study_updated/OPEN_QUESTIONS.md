@@ -10,6 +10,15 @@ of the list below and recorded, with their numbers, under *Closed by the
 warehouse*. Two more — Q4 and Q17 — were already settled by
 `Jul 28/ndmm/DECISIONS.md` §6 and are left in place with the answer.
 
+**A second run is drafted and not yet run.** `RUN_ONCE_2.sql` is one file, about
+ten minutes, no placeholders. It would settle Q1, Q2, Q5, Q9, Q11, Q13, Q14,
+Q16, Q19, Q25, Q27 and Q28 outright, and it *prices* Q3, Q6, Q7, Q21 and Q23 —
+it cannot decide those, because each needs a code list from an annex we do not
+hold, but it says how many patients each reading moves, which is what makes a
+decision possible. It also checks the value lists and columns the package
+assumes and has never seen data for. **Q12, Q15 and Q20 no query will ever
+answer**: they need the protocol author or the annexes themselves.
+
 Nothing here is a style preference. Every one of them has two defensible readings and
 the build has to pick one.
 
