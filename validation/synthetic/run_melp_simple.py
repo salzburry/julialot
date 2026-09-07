@@ -221,12 +221,25 @@ PATS = [
     #
     # SU2 is the same patient with no melphalan at all. The two lines 2 must be
     # identical: the course belongs to line 1 and line 1 alone.
+    # SW1/SW2: the next-line statement must read 3.4's first-transplant
+    # exemption the way line 1's own build does. SW1's only AUTO is on day 100,
+    # outside line 1's window; SW2 moves it inside. A confirmed course at day
+    # 300 opens line 2 on the melphalan date in both, or the two statements
+    # disagree about one course and line 1 ends on a boundary line 2 refuses.
+    P('SW1', [('LEN', 'IMID', 0, 600), ('MELP', 'ALKY', 30, 57),
+              ('MELP', 'ALKY', 300, 327), ('DARA', 'MAB', 305, 600)]),
+    P('SW2', [('LEN', 'IMID', 0, 600), ('MELP', 'ALKY', 30, 57),
+              ('MELP', 'ALKY', 300, 327), ('DARA', 'MAB', 305, 600)]),
     P('SU1', [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 200, 227)]),
     P('SU2', [('LEN', 'IMID', 0, 80)]),
 ]
 for _p in PATS:
     if _p['pid'] in ('SU1', 'SU2'):
         _p['sct_auto'] = [IX + 700]
+    elif _p['pid'] == 'SW1':
+        _p['sct_auto'] = [IX + 100]
+    elif _p['pid'] == 'SW2':
+        _p['sct_auto'] = [IX + 40]
 for _p in PATS:
     if _p['pid'] == 'SJ0':
         _p['sct_auto'] = [IX + 30]
@@ -305,6 +318,12 @@ def main():
        and smp['ZB1'][2][4] == 'BORT POMA',
        "ZB1/ZB2: a new agent arriving after a returning drug opened a line "
        "cannot backdate that line to the melphalan date")
+    ok(len(smp['SW1']) == 2 and smp['SW1'][1][1] == rs.d(IX + 300)
+       and 'MELP' in smp['SW1'][1][4]
+       and [r[1:] for r in smp['SW1']] == [r[1:] for r in smp['SW2']],
+       "SW1/SW2: line 1's first transplant is exempt in the next-line statement "
+       "too, so a confirmed course opens line 2 on the melphalan date")
+
     ok(len(smp['SU1']) == 2 and smp['SU1'][1] == smp['SU2'][1]
        and smp['SU1'][1][3] == 'STUDY_END'
        and smp['SU1'][0][2] == rs.d(IX + 227),

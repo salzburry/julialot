@@ -221,6 +221,17 @@ def planted():
                   ('MELP', 'ALKY', ix, ix + 27, 0),
                   ('MELP', 'ALKY', ix + 80, ix + 107, 0),
                   ('BORT', 'PI', ix + 85, ix + 200, 0)])
+    # P0010: line 1's FIRST and only autologous transplant, outside its 60-day
+    # window, and a confirmed short melphalan course later. 3.4 says that
+    # transplant neither holds line 1 nor ends it wherever it falls, and line
+    # 1's own build honours it - but the next-line statement recomputed the
+    # verdict without the exemption, read the transplant as a break, marked the
+    # course TAKEN and refused to open line 2 on the melphalan date. Line 1
+    # ended there anyway, so the days between belonged to no line.
+    pat('P0010', [('LEN', 'IMID', ix, ix + 600, 0),
+                  ('MELP', 'ALKY', ix + 30, ix + 57, 0),
+                  ('MELP', 'ALKY', ix + 300, ix + 327, 0),
+                  ('DARA', 'MAB', ix + 305, ix + 600, 0)], auto=[ix + 100])
 
     # The melphalan shapes the rule in R/melp_rule.R is written against, one
     # patient each. Nothing here says what their lines should be - the point is

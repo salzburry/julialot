@@ -399,6 +399,33 @@ line moves.
 
 ---
 
+## 7. Which ends a line first — the melphalan carry or an added medication? — OPEN
+
+**Raised by testing (7 Sep), not by the study team.** A short unconfirmed course
+carries the line it belongs to to the last day that course covers (§4.7). An
+agent starting in that carried stretch would ordinarily end the line the day
+before it and open the next one (§7.2). Nothing says which of the two wins, and
+today the carry does: the agent is swallowed and gets no line.
+
+The shape that shows it: lenalidomide to day 80, a 28-day melphalan course from
+day 200, an allograft on day 210, and pomalidomide from day 215. Line 1 owns
+the course, suppresses it and is carried to day 227, ending at the allograft on
+day 209. The allograft line then reads the same course as **confirmed** — the
+pomalidomide starts while it still covers — so it takes no carry of its own and
+ends on its own start date, leaving days 211–214 in no line.
+
+Bounding confirmation by the judged line's own start fixes that half: the
+allograft line is then carried to day 227 like every control. But the carry
+runs straight past the pomalidomide, which loses its line entirely — four
+unassigned days become three hundred and eighty-six. So the fix needs the carry
+capped at the next line-defining agent, and that cap is this question.
+
+**Not changed in the build.** Both halves are recorded in `R/melp_rule.R` above
+`melp_confirm`. What is needed is a decision: does an added medication end a
+line that a melphalan carry is holding open, or does the carry run through it?
+
+---
+
 ## Numbers on this page
 
 Everything quoted here came from the 19 Aug production run, built **before**

@@ -253,6 +253,18 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
       -- The judged line, for the transplant test below: which transplants
       -- break a line is a question about THAT line's window and start.
       INNER JOIN {line_tbl} ON {line_tbl}.PATID = mc.PATID
+      -- No lower bound HERE, and it is not an oversight - see the note above
+      -- melp_confirm. Bounding confirmation by the judged line's start was
+      -- tried, on the shape that argues for it: an allograft line one day after
+      -- a suppressed course, with a new agent five days later, which confirms
+      -- the course, takes its own hold away and collapses back to a single day
+      -- while the line that OWNS the course suppressed it. The bound does carry
+      -- that line to the course's cover - and the hold then runs straight past
+      -- the new agent, which loses its line altogether: four unassigned days
+      -- become three hundred and eighty-six. The missing piece is a cap on the
+      -- hold at the next line-defining agent, and which of that agent and the
+      -- melphalan carry ends the line is 4.7-against-7.2, a rule the study team
+      -- has not been asked. Left as it is, with the shape recorded.
       INNER JOIN map_stacked c
         ON c.PATID = mc.PATID
        AND c.MAP_START_DT >  mc.EXPO_DT
@@ -648,11 +660,21 @@ melp_prev_line_ctes <- function(cfg, prev_med_window, cart_consolidation_days,
   # divergence nothing currently reads is still a divergence.
   cart_from <- if (isTRUE(cfg$apply_cart_induction_rule) &&
                    identical(lot_num, 2L)) ind_end else NULL
+  # 3.4's first-transplant exemption is LOT1's alone in the same way, and the
+  # same argument applies: LOT1's own statement never lets its first AUTO break
+  # the line, wherever it falls, and this recomputation did. So the two
+  # disagreed about one course - line 1's build confirmed it and ended the line
+  # on the melphalan date, while this statement read the transplant as a break,
+  # marked the course TAKEN, and refused to open line 2 there. Line 2 started on
+  # the confirming agent's own later date instead, without the melphalan in its
+  # regimen, and the days between belonged to no line. Moving line 1's only AUTO
+  # from day 59 to day 60 was the whole difference. Planted as P0010.
   paste0(pre, melp_decision_ctes(
     cfg, "prev_end", "PREV_START_DT", "prev_end.OBS_END_DT", ind_end,
     no_regimen_line = "prev_end.PREV_START_TYPE = 'SCT_ALLO'",
     base_tbl = "melp_sc_base", restart_tbl = "melp_sc_restart",
-    cart_from = cart_from))
+    cart_from = cart_from,
+    first_auto_exempt = identical(lot_num, 2L)))
 }
 
 # While the rule is on, melphalan's line-advancing decisions belong to it, so
