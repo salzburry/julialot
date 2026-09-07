@@ -67,8 +67,8 @@ cohorts larger than they are today.
 | 12-month CE (I4) | own spans from `member_enrollment`, gaps ≤ 30 d | same, plus "with medical and pharmacy benefits" | **decide first** — Q4 |
 | Follow-up (I5) | see §2 | see §2 | **change** |
 | Prior MM therapy (X1) | any MM agent in the 365-day baseline, **steroids dropped** | "≥ 1 medical or pharmacy claim for any MM oncology therapy" — no steroid carve-out stated | **decide first** — Q6 |
-| Other cancer (X2) | ≥ 1 inpatient, or 2 outpatient claims **both inside the 365-day baseline**, paired on ICD category | ≥ 1 inpatient, or ≥ 2 outpatient **on separate days within 30 days**, same primary tumour type and/or metastatic | **change** — the 30-day window is new |
-| Pregnancy (X3) | diagnosis and procedure codes, whole study period | diagnosis, procedure **or revenue** code, whole study period | **change** — add revenue codes |
+| Other cancer (X2) | ≥ 1 inpatient, or ≥ 2 outpatient on distinct days **within 30 days** (`04_other_malig.R:270`), paired on the 3-character ICD category, both claims inside the baseline | ≥ 1 inpatient, or ≥ 2 outpatient **on separate days within 30 days**, same primary tumour type and/or metastatic | **matches** — but confirm the four layered readings in `IE_CRITERIA.md` §6, above all that bone metastasis excludes |
+| Pregnancy (X3) | diagnosis, procedure **and revenue** codes (`ICD9DIAG, ICD10DIAG, ICD9PROC, ICD10PROC, HCPCS, REV`), whole study period | same | **matches** |
 | Belantamab (X4) | flag computed in the cohort build, exclusion applied in the LOT build once lines exist | "in any LOT" | **matches** |
 | 2L/3L: received the line (N1) | a LOT 2 / LOT 3 row exists | same | **matches** |
 | 2L/3L: 12-month CE (N2) | `SUBSEQ_PRE_DAYS=365`, gaps ≤ 30 d | same | **matches** |
@@ -85,24 +85,91 @@ These are opposite. Every time-to-event estimate depends on which one holds:
 TTNT, TTD and OS all censor "at their follow-up end date", and that date is
 different under each rule.
 
-The engine already has the switch. Flipping it is a one-line config change plus a
-rerun; deciding to flip it is not. `OPEN_QUESTIONS.md` Q13.
+The engine already computes both. `LOT_RULES.md` §7.6: *"A period ending at
+disenrollment is classified `STUDY_END`. There is no `DISENROLLMENT` end reason; the
+`*_CE_SENS` columns carry the alternative reading."* So
+`LOT_BASE_END_DT_CE_SENS` / `LOT_BASE_END_REASON_CE_SENS` already hold the
+protocol's reading, capped at `ENDDATE_CE`
+(`Jul 28/lot/engine/R/steps/10_lot2_5_base.R:163-170, 1260-1304`).
+
+What has to change is **which pair is primary**. On the protocol's wording the
+`_CE_SENS` columns are the analysis and the current primary columns are the
+sensitivity — the opposite of how the build is set up. That is a labelling and
+config decision, not new code. `OPEN_QUESTIONS.md` Q13.
 
 ## 5. The LOT engine
 
-Broadly aligned. The protocol's LOT text is a summary of the same GSK algorithm the
-engine implements (it cites *"Development of line of therapy rules in multiple
-myeloma: Optum Claims (Study no: 219870)"*, which is the Domino project the code
-lists come from).
+The protocol's LOT text is a four-sentence summary of the same GSK algorithm the engine
+implements — it cites *"Development of line of therapy rules in multiple myeloma: Optum
+Claims (Study no: 219870)"*, which is the Domino project the code lists come from. The
+windows agree exactly. What differs is everything the summary does not say, and some of
+it changes which patients are in a line.
 
 | protocol statement | engine | verdict |
 |---|---|---|
-| 1L = therapies within 60 days of the 1L start | `induction_window_days = 60` (§3.2) | **matches** |
-| 2L+ starts at the earliest of: allogeneic SCT, **unplanned** autologous SCT, CAR-T, or a new agent not in the previous regimen | §4.1 "a later line opens on the earliest of four candidates"; §3.4 line 1's first autologous transplant never ends line 1; §6.3 a second AUTO within 180 days is a planned tandem | **matches**, with the engine supplying the operational meaning of "unplanned" |
-| Subsequent LOT includes therapies within 30 days on and following the start | `lot_n_induction_window_days = 30` (§4.2) | **matches** |
-| Discontinuation = all MM agents stopped, or a new agent / qualifying SCT introduced | §5.1-§5.3 (90-day run-out, 90-day confirmation), §7.1-§7.5 | **matches in substance**; the engine's 90-day run-out and 90-day confirmation are operational detail the protocol does not state |
-| 4L start date and 4L regimen, no 4L cohort | `max_lot = 5` | **matches** |
-| — | §4.3 own-return fold, §4.7 melphalan short course, §4.8 MAP fold-in | **not stated in the protocol.** These are study-team refinements agreed 15-30 Aug 2026 (`Jul 28/STUDY_TEAM_ASKS.md`). They are compatible with "a new MM agent that was not part of the previous LOT regimen" but they are not derivable from it — reconfirm they are still wanted, and get them into Annex 6 |
+| 1L = therapies within 60 days of the 1L start | `induction_window_days = 60`, applied as `MAP_START_DT` in `[LOT1_START_DT, +59]` (`engine/R/steps/04_lot1_base.R:77-80`) | **window matches** |
+| 2L+ starts at the earliest of: allogeneic SCT, **unplanned** autologous SCT, CAR-T, or a new agent not in the previous regimen | the engine computes exactly those four candidates and takes the earliest (`10_lot2_5_base.R:322-491`); `d_AUTO` is where "unplanned" gets its operational meaning — outside the previous line's own window and not a planned tandem (`:388-446`) | **structure matches** |
+| Subsequent LOT includes therapies within 30 days on and following the start | `lot_n_induction_window_days = 30`, applied as `[LOT_n_START_DT, +29]` (`10_lot2_5_base.R:544-553`) | **window matches, with three carve-outs (below)** |
+| Discontinuation = all MM agents stopped, or a new agent / qualifying SCT introduced | `DISCONTINUATION` covers only "all agents stopped"; the other two are `MED_ADD` and the `SCT_*` / `CART_INIT` reasons | **partly matches — see below** |
+| 4L start date and 4L regimen, no 4L cohort | `max_lot = 5`; `LOT_LONG` carries 4L (and 5L) start, type, regimen and count; no cohort table is built in `lot/` at all | **matches**, and the engine is a superset — it also produces a 5L line |
+
+### Divergences that are decisions, not details
+
+1. **"Received" means an episode STARTED, not a claim landed.** A refill arriving under
+   live cover extends the existing episode rather than opening a new one
+   (`03_mma_map.R:293-334`), so it is invisible to every window test. The consequence is
+   spelled out in `LOT_RULES.md` §4.2: a patient continuously on lenalidomide has one
+   episode starting at line 1, and it **can never be seen by a later line's window** —
+   so lenalidomide will not appear in that line's regimen. The engine records this as
+   its own open question. If Annex 2 reads "received" as any claim in the window, the
+   engine disagrees.
+2. **Steroids are excluded everywhere** (`04_lot1_base.R:81`, `10_lot2_5_base.R:555`).
+   If Annex 2's "pre-specified MM therapies" includes dexamethasone, the regimens will
+   not match.
+3. **The induction window is truncated** at `REGIMEN_CUTOFF_DT` — the day before an
+   allogeneic transplant, and before a CAR-T when the induction rule is off. A 1L
+   regimen can therefore be assembled over fewer than 60 days.
+4. **A CAR-T-started line uses 45 days, not 30** (`cart_consolidation_days`), and an
+   **allogeneic-started line gets no regimen at all** and spans a single day.
+5. **Permissible biosimilar substitutes count as the same agent in both directions** — a
+   biosimilar of a previous-line drug does not start a line, and it does not appear in
+   the reported regimen.
+6. **Same-day ties break `SCT_ALLO > CART > SCT_AUTO > MED`.** The protocol says only
+   "earliest".
+7. **A CAR-T inside LOT1's 60-day window does not start LOT2** — an explicit carve-out
+   from "CAR-T cellular therapy starts a line" (`cart_rule.R:57-63`).
+
+### The two that matter most for the outcomes
+
+**Discontinuation is not one end reason.** The protocol's footnote treats "all agents
+stopped", "a new agent introduced" and "a qualifying SCT event" as three faces of one
+concept, and TTD's event is "the date of treatment discontinuation (end of current
+LOT)". The engine splits them: `DISCONTINUATION` is only the first;
+a new agent gives `MED_ADD`; an SCT gives `SCT_AUTO` / `SCT_ALLO` / `SCT_CART` /
+`CART_INIT` / `SCT_AUTO_CONT`. **So TTD's event set is the union of all of them, not the
+rows whose `LOT_BASE_END_REASON` says `DISCONTINUATION`.** Reading that column literally
+would undercount TTD events badly.
+
+**The engine adds a 90-day confirmation buffer the protocol has no concept of.** A
+run-out is not a discontinuation until either 90 days of observation follow it or a
+line-opening trigger arrives (`lot_discon_confirm_days`, `06_lot1_end.R:220-227`).
+Unconfirmed, the date is dropped and the line is censored to `DEATH` or `STUDY_END`.
+This moves end reasons and end dates for **every line near the data cutoff** — which,
+with a study end of 31 Mar 2026, is a large share of the 3L cohort.
+
+### Rules in the engine that the protocol does not state
+
+`LOT_RULES.md` §4.3 (a drug of the line's own regimen returning never starts a line),
+§4.7 (a short melphalan course outside induction does not advance the line) and §4.8
+(a returning prior-line drug joins the line it returns in) were agreed with the study
+team between 15 and 30 August 2026 (`Jul 28/STUDY_TEAM_ASKS.md`). They are compatible
+with "a new MM agent that was not part of the previous LOT regimen" but not derivable
+from it — §4.3 in particular means a patient with a three-month treatment holiday on
+one drug is **one line, not a discontinuation**.
+
+Get all three into Annex 6, or the protocol and the code will disagree on the record.
+Note also `LOT_RULES.md`'s own banner: those three rules changed on 30 August 2026 and
+**LOT numbers produced before that date are superseded**.
 
 ## 6. What is entirely new
 
@@ -160,9 +227,8 @@ These are stated once, in §7.8.1, and are easy to lose:
 
 1. Settle Q1, Q2, Q4, Q6, Q13 with the study team — each changes a count.
 2. Get Annexes 2, 3 and 7, and document pages 31-32.
-3. Cohort build: `LOT1_FROM`, the index-agent exclusions, the 30-day other-cancer
-   window, the follow-up rework (§2), `FU_END`, `TTE_ELIGIBLE`, and the four new
-   demographic columns.
+3. Cohort build: `LOT1_FROM`, the index-agent exclusions, the follow-up rework (§2),
+   `FU_END`, `TTE_ELIGIBLE`, and the four new demographic columns.
 4. Secondary 2L cohort as a fifth build target.
 5. Code lists (`CODELISTS.md` §4) — the long pole, and blocked on Annex 3.
 6. Outcomes package: baseline prevalence, incidence with person-time, HCRU,

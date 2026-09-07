@@ -1,6 +1,6 @@
 # Open questions for the study team
 
-Nineteen things the Aug 26 2026 protocol and the Optum documentation do not settle,
+Twenty things the Aug 26 2026 protocol and the Optum documentation do not settle,
 each of which changes a count or a definition. Ordered by how much they change.
 
 Nothing here is a style preference. Every one of them has two defensible readings and
@@ -97,6 +97,11 @@ TTNT, TTD and OS all censor "at their follow-up end date". Under the protocol's
 wording that date is the disenrollment date; under the current build it is the study
 end or death. Every median and every landmark estimate differs.
 
+The engine already computes both readings — `LOT_BASE_END_DT_CE_SENS` and
+`LOT_BASE_END_REASON_CE_SENS` carry the censor-at-disenrollment version. So the
+question is not whether we can produce it, but **which one is the primary analysis**.
+Right now the protocol's reading is the sensitivity.
+
 **Ask:** confirm follow-up ends at disenrollment, and confirm this is the primary
 analysis rather than a sensitivity.
 
@@ -144,9 +149,17 @@ Table 4 wants US Census Bureau regions. The CDM V9.0 dictionary documents `REGIO
 says `DIVISION` was removed. The deployed 2025q4 table carries `STATE varchar(2)` and
 **no** `REGION` (`DATA_MAPPING.md` §4).
 
+The two are not just different columns, they are different CDM vintages: the deployed
+27-column table is **pre-V9.0** — it has `STATE`, which V9.0 removed, and lacks
+`REGION` and `LIS_DUAL`, which V9.0 added — plus eight Databricks-side date-part
+columns. `DATA_MAPPING.md` §4 has the arithmetic. In V9.0, Census Region is the finest
+geography that survives at all: `DIVISION`, state, ZIP, county and MSA are all gone.
+
 **Ask:** confirm we may derive region from `STATE` with a standard 50-state → 4-region
 crosswalk, and how to classify a patient whose `STATE` changes between enrolment rows
-(take the row covering the index date?).
+(take the row covering the index date?). Also worth asking whether the warehouse is due
+a refresh to a true V9.0 extract, since that would swap `STATE` for `REGION` under the
+same table name and silently break the crosswalk.
 
 ---
 
@@ -261,6 +274,34 @@ Neither Optum document addresses it, and the protocol does not either. The choic
 changes every rate slightly and systematically.
 
 **Ask:** count bridged gap days as covered person-time, or exclude them?
+
+### Q20. Which annex numbering is right?
+
+The Table of Contents (document page 6) lists:
+
+```
+ANNEX 3   TABLES
+ANNEX 4   FIGURES
+ANNEX 5   CODELISTS
+```
+
+Annex 1's own table of stand-alone documents (document page 57) lists:
+
+```
+3.  Codelists to define study outcomes
+4.  Main study table shells
+5.  Main study figures
+```
+
+The body text agrees with Annex 1: §7.3.2 defines the key safety events *"according to
+selected ICD-10-CM codes or healthcare visits (**Annex 3**)"*, §7.8.5 says outcomes are
+defined *"according to pre-defined code lists, as specified in **Annex 3**"*, and §7.8
+puts the shells in *"**Annex 4 and Annex 5**"*. So the ToC has three entries rotated.
+
+Not a data question, but it will cause a wrong file to be sent. The ToC also carries two
+typos: "ALGORITHIM" and "FRAILITY".
+
+**Ask:** confirm Annex 3 is the code lists, and fix the ToC.
 
 ---
 

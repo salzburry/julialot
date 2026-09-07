@@ -121,7 +121,11 @@ transplant-eligible (TE).
 > "Types of SOCs by line" starts **2017**, before the study period on either reading.
 > `OPEN_QUESTIONS.md` Q12.
 
-> **GAP — document screens 31-32 are a corrupt image.** Everything in Table 4 between
+> **GAP — document screens 31-32 are a corrupt image.** `VERSION_DIFF.md` §3
+> reconstructs the lost rows from the June 2026 version of the protocol, which is in the
+> repo with a text layer, and names the three things that have certainly changed since.
+> The counting rules themselves survive in readable form in §7.8.1 (see §5 below), so
+> what is lost is wording and the exact functional forms, not substance. Everything in Table 4 between
 > "Types of 1L, 2L, 3L SOCs or classes by line" and the Primary Objective 3 block is
 > unreadable. From the surrounding rows, what is missing is: the rest of Primary
 > Objective 1 (**background prevalence rates of the Table 3 key safety events at
@@ -143,7 +147,7 @@ transplant-eligible (TE).
 > association with some MM treatments, and will be defined according to selected
 > **ICD-10-CM codes or healthcare visits (Annex 3)**."
 
-All 20 conditions are assessed at **baseline and follow-up, for 1L, 2L and 3L**.
+All 22 rows are assessed at **baseline and follow-up, for 1L, 2L and 3L**.
 
 | group | condition | acute/chronic |
 |---|---|---|
@@ -275,7 +279,7 @@ No adjustment set is required. Nothing needs to be derived for confounding contr
 | Ethnicity | the `ETHNICITY` code values (`DATA_MAPPING.md` §4) |
 | Charlson Comorbidity Index (Quan 2011) | a Quan-2011 ICD-9 + ICD-10 code list and weights, MM-adjusted |
 | Kim Frailty Index | Annex 7 — the CFI variable list and coefficients |
-| All 20 key safety events | Annex 3 — the ICD-10-CM lists |
+| All 22 key safety events | Annex 3 — the ICD-10-CM lists |
 | Secondary malignancy categories | ICD-10-CM lists per Table 2 category |
 | Emergency visits | an agreed claims construction (`DATA_MAPPING.md` §6) |
 | SOC regimen categories | Annex 2 — regimen combinations per category |

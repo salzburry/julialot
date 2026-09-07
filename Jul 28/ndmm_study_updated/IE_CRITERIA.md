@@ -119,13 +119,17 @@ Operationally:
 - the diagnosis date used downstream is the **first** qualifying MM claim (see V-`MM_DX_DT` in `VARIABLES.md`)
 
 > **Ambiguity.** The strict code set (203.0x / C90.0x) is written against the
-> inpatient arm; the outpatient arm says only "medical claims for MM". The Jan-2026
+> inpatient arm; the outpatient arm says only "medical claims for MM". The deployed
+> `mm_dx.csv` holds exactly eight codes — 203.0, 203.00, 203.01, 203.02, C90.0,
+> C90.00, C90.01, C90.02 — and they are matched by **equality on the normalised code,
+> not by prefix**, so the file covers the strict families and nothing else
+> (`CODELISTS.md` §1). The Jan-2026
 > program spec for the earlier study read the outpatient arm as the **broad** set
 > (ICD-9 203.x / ICD-10 C90.x) while the inpatient arm stayed strict
 > (`docs/Part 3/Program Spec/studypoppage_validated.csv`, INDEX_DATE row). The
 > current `Jul 28/ndmm` build applies **one** code list to both arms and additionally
 > requires the strict subset on the inpatient arm
-> (`Jul 28/ndmm/R/steps/00_mm_cohort.R:70-88`). See `OPEN_QUESTIONS.md` Q2.
+> (`Jul 28/ndmm/R/steps/00_mm_cohort.R:56-90`). See `OPEN_QUESTIONS.md` Q2.
 
 > **Ambiguity.** "within 90 days" — the earlier spec also flagged 30- and 60-day
 > pairs as sensitivities. The updated protocol names only 90. See `OPEN_QUESTIONS.md` Q3.
@@ -243,13 +247,28 @@ both J-code administration and pharmacy fill count.
 > within 30 days**, for the **same primary tumor type and/or metastatic cancer** will be
 > excluded"
 
-Four things this pins down that the current build reads differently:
+The current build already implements all four parts of this
+(`Jul 28/ndmm/R/steps/04_other_malig.R:235-280`): `diff_days <= 30` on outpatient pairs
+built from **distinct dates**, one inpatient claim sufficient on its own, and pairing
+per tumour group. Note the 30 is **hard-coded at line 270**, not a config key.
 
-1. the confirming window is **30 days**, not "both claims inside the 365-day baseline";
-2. the pair must be for the **same primary tumour type** — so the code list has to
-   carry a tumour-group column and the pairing is per group;
-3. **metastatic cancer** qualifies on its own;
-4. one **inpatient** claim is enough.
+What the build layers on top, each of which the study team should confirm rather than
+inherit:
+
+| # | the build's reading | why | effect |
+|---|---|---|---|
+| 1 | **Both** claims of a pair must fall inside `[index−365, index−1]` | *"the criterion is another cancer **in** the 1L baseline"*, and the source bounded only the first claim (`DECISIONS.md` §4) | cohort **larger** — a pair straddling the index no longer excludes |
+| 2 | Pairs match on the **first three characters of the ICD code**, not on `tumor_group` | `other_malig.csv` has 1,643 codes and 1,618 distinct `tumor_group` values, so the label is one per code — pairing on it would reduce to needing the identical code twice (`DECISIONS.md` §4) | cohort **smaller** — claims that never paired now do |
+| 3 | Metastatic codes collapse into a single `MET` group — `C77`, `C78`, `C79`, `C7B`, `C800` and ICD-9 `196`, `197`, `198`, `1990` (**not** `C80`, `199`) | "and/or metastatic cancer" is one concept | — |
+| 4 | **Bone metastasis excludes.** `C79.51`, `C79.52` and `198.5` are metastatic cancers and are kept in | *"myeloma bone disease is commonly coded `C79.51`, so some patients removed by this will be MM patients whose lesions were coded as metastases. That concern is real; the decision is that the stated rule governs"* (`DECISIONS.md` §4) | cohort **smaller**, and some of the loss is myeloma miscoded |
+| 5 | Plasma-cell disorders and monoclonal gammopathy do **not** count as another cancer (`NDMM_MM_ADJACENT_OVERRIDE`), and six state-coded labels are still open | they are the index disease showing itself | — |
+
+Reading 4 is the one to put to the study team first: it is a known, deliberate,
+count-moving trade against a real risk of dropping myeloma patients.
+
+Also note the two windows are different numbers and must not be conflated: the
+other-cancer pairing window is **30 days**, the MM-diagnosis outpatient pairing window
+is **90** (`OUTPATIENT_WINDOW`).
 
 ### X3. Pregnancy or childbirth
 
@@ -257,9 +276,12 @@ Four things this pins down that the current build reads differently:
 > revenue code** indicating pregnancy or childbirth **during the study period**"
 
 Three code types, not one, and the window is the **whole study period** — not the
-baseline. The current build already applies it study-period-wide
-(`Jul 28/ndmm/R/steps/05_pregnancy.R`) but its code list is loaded with
-`c("code_type","code")` and needs to admit revenue codes.
+baseline. The current build already does all of this: it applies the rule
+study-period-wide and its scan admits `ICD9DIAG, ICD10DIAG, ICD9PROC, ICD10PROC,
+HCPCS, REV` (`NDMM_PREG_CODE_TYPES`, `Jul 28/ndmm/R/steps/05_pregnancy.R:7-8`). The
+production `pregnancy.csv` visibly carries revenue codes 0720, 0721, 0722, 0724 and
+0729 alongside its ICD and HCPCS rows (`Apr 18 2026/codelist.pdf`, pp.12-18). **No
+change needed.**
 
 ### X4. Belantamab mafodotin in any LOT
 
@@ -360,12 +382,18 @@ on the reading above, step 7 dropped.
 | **Annex 6** — the LOT algorithm | screens 59-64 | never photographed |
 | **Annex 7** — the claims-based frailty (Kim CFI) algorithm | screens 59-64 | never photographed |
 
+Annex numbers above follow the **body text**, which cites Annex 3 for code lists and
+Annex 4-5 for shells. The protocol's Table of Contents disagrees with its own Annex 1
+and says 3 = TABLES, 4 = FIGURES, 5 = CODELISTS. `OPEN_QUESTIONS.md` Q20.
+
 Screens 31-32 sit between the end of Primary Objective 1's baseline block and the
 "*per GSK LoT algorithm definition*" footnote that opens Primary Objective 2's rows,
 so what is missing is: the tail of Primary Objective 1 (baseline prevalence of key
 safety events and baseline healthcare utilisation) and the head of Primary
 Objective 2 (its incidence rows and the LOT treatment-period definition). Their
-shape is recoverable from the surrounding rows; their exact wording is not.
+shape is recoverable from the surrounding rows; their exact wording is not —
+`VERSION_DIFF.md` §3 reconstructs them from the June 2026 version, which is in the
+repo with a text layer, and says what has certainly changed since.
 
 **Ask the study team for the .docx, or at least for Annexes 2, 3, 6 and 7 and
 document pages 31-32.** Annexes 2 and 3 are code lists — nothing can be built

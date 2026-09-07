@@ -27,7 +27,8 @@ decided or sent.
 | **`DATA_MAPPING.md`** | the Optum CDM reference — tables, columns, joins, and the caveats that change what a number means — and the criterion-by-criterion and variable-by-variable mapping |
 | **`CODELISTS.md`** | which code lists the build already reads, in what shape, and every list the protocol needs that does not exist yet |
 | **`BUILD_DELTA.md`** | the difference between what `Jul 28/ndmm` and `Jul 28/lot` do today and what the protocol asks for |
-| **`OPEN_QUESTIONS.md`** | nineteen things that are genuinely undecided, each with the two readings and what turns on the answer |
+| **`VERSION_DIFF.md`** | what changed since the June 2026 version (which is in the repo with a text layer), why three of the build's settings are a version behind rather than wrong, and a reconstruction of the rows lost on the corrupt photo |
+| **`OPEN_QUESTIONS.md`** | twenty things that are genuinely undecided, each with the two readings and what turns on the answer |
 | `ie_criteria.csv` | the criteria as a table, for the study team to work in a spreadsheet |
 | `variables.csv` | the variables as a table — 58 rows, one per variable |
 | `optum_cdm_fields.csv` | the CDM field inventory as a table |
@@ -80,6 +81,14 @@ Annex 1 (page 57) lists all seven annexes, so the inventory is known even though
 contents are not. **Annexes 2 and 3 are code lists — nothing can be built without
 them.** See `CODELISTS.md` §5 for the exact ask.
 
+> The protocol's **Table of Contents and its own Annex 1 disagree about the annex
+> numbers.** The ToC (page 6) reads: 3 TABLES, 4 FIGURES, 5 CODELISTS. Annex 1's table
+> (page 57) reads: 3 Codelists to define study outcomes, 4 Main study table shells,
+> 5 Main study figures. The body text agrees with Annex 1 — §7.3.2 and §7.8.5 both cite
+> **Annex 3** for code lists, and §7.8 cites *"Annex 4 and Annex 5"* for table and
+> figure shells. **This folder uses the body's numbering.** The ToC also spells them
+> "ALGORITHIM" and "FRAILITY". `OPEN_QUESTIONS.md` Q20.
+
 ## Optum documentation reviewed
 
 All of it, and all of it visually — the text layers on these PDFs are OCR noise, so
@@ -101,8 +110,10 @@ byte-identical to the Part 3 copies — the April folder introduced no revision.
    (`OPEN_QUESTIONS.md` Q1).
 2. **1L index from 01 Jan 2019** — the build uses 2017 today, and now has to bar
    panobinostat and elotuzumab as well as belantamab.
-3. **Other-cancer confirmation is a 30-day window**, not "both claims inside the
-   baseline year" as the build reads it.
+3. **Bone metastasis still excludes** — `C79.51` is a metastatic cancer to the rule and
+   myeloma bone disease to a haematologist. The build knows and excludes anyway
+   (`IE_CRITERIA.md` §6). The 30-day pairing window the protocol states is already what
+   the build does.
 4. **Follow-up is three different tests** — an eligibility test, an observation
    window, and a ≥ 3-month analysis-set restriction — where the build has one
    (`BUILD_DELTA.md` §2).

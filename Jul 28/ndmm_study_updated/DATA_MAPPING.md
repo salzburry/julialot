@@ -124,6 +124,18 @@ Observed values in the MM population (`docs/optum enrolment.pdf` p.4):
 So the protocol's **insurance type (Medicare / Commercial Health Plan)** is
 `BUS` — `MCR` / `COM`. `PRODUCT` is the plan form, a different axis.
 
+> **The deployed table is a different CDM vintage from the dictionary.** The V9.0
+> dictionary's MEMBER_ENROLLMENT sheet lists **20** columns: PATID, PAT_PLANID, ASO,
+> BUS, CDHP, ELIGEFF, ELIGEND, GDR_CD, GROUP_NBR, HEALTH_EXCH, **LIS_DUAL**, PRODUCT,
+> YRDOB, EXTRACT_YM, VERSION, FAMILY_ID, ETHNICITY, RACE, RACE_SOURCE, **REGION**. The
+> deployed 2025q4 table has **27**, and the arithmetic is exact:
+> `20 − REGION − LIS_DUAL + STATE + 8 date-part columns = 27`. So the warehouse is
+> serving a **pre-V9.0** extract (it still has `STATE`, which V9.0 removed, and lacks
+> `REGION` and `LIS_DUAL`, which V9.0 has), with `ELIGEFF_DAY/_MONTH/_YEAR/_SASDT` and
+> `ELIGEND_*` decompositions added on the Databricks side. Read the dictionary as
+> documentation of a **different** version from the one you will query, and
+> `describe table` before writing any column into code.
+
 > **The deployed table has `STATE`, not `REGION`.** The CDM V9.0 dictionary's
 > revision note says V9.0 *"Added BILL_PROC_CD, ETHNICITY, PROV_REGION, REGION,
 > FAMILY_ID, RACE_SOURCE... Removed DIVISION and PROV_STATE"*, and its
@@ -147,6 +159,30 @@ column for it reads *"Member's ethnicity flag"* and the value list is marked
 **"Intentionally Blank"** — the code values are not published in this dictionary.
 The protocol wants Hispanic or Latino / Not Hispanic or Latino / Unknown. **Profile
 the column before mapping.** `OPEN_QUESTIONS.md` Q10.
+
+**Medicare markers the dictionary documents but the deployed table does not carry.**
+`LIS_DUAL` ("Indicates whether member policy is Low Income Subsidy (LIS) or
+Medicaid/Medicare (DUAL). **Available on Medicare members only**") would be a direct
+Medicare marker — it is in V9.0 and absent from the deployed table. `RX.FORM_TYP`
+("Type of formulary used to pay a claim... **NULL for Medicare**") is an indirect one
+that *is* available. `ASO` is `Y`/`N` for self-funded commercial. None of these
+replaces `BUS`; they are cross-checks for it.
+
+**The lookup value sets are not supplied.** The dictionary's LOOKUP column names about
+25 code tables — `RACE`, `ETHNICITY`, `REGION`, `BUS_LINE`, `PRODUCT`, `CDHP`,
+`HEALTH_EXCH`, `LIS_DUAL`, `POS`, `LOC_CD`, `DRG`, `DISCHSTATUS`, `ADMIT_TYPE`,
+`ADMIT_CHAN`, `RVNU_CD`, `BILL_TYPE`, `PROVCAT`, `TOS_CD`, `TOS_EXT`, `PAID_STATUS`,
+`IPSTATUS`, `DAW`, `FORM_TYP`, `SPECCLSS`, `AHFSCLSS` and the `D_*` socio-economic
+codes — but only three lookup tabs are actually in the PDF: `LU_DIAGNOSIS`, `LU_NDC`
+and `LU_PROCEDURE`. Every value mapping this study needs for a categorical variable
+(`RACE` → Asian/Black/White, `ETHNICITY` → Hispanic/Not Hispanic, `BUS` →
+Medicare/Commercial) has to come from the lookup tables in the warehouse or by
+profiling the column. `OPEN_QUESTIONS.md` Q10.
+
+**One tie-break the dictionary does give.** On MEMBER_CONTINUOUS_ENROLLMENT, `GDR_CD`
+carries the note *"If more than one value exists, use latest value that is not 'U'
+UNKNOWN"*. Nothing equivalent is documented for `RACE`, `ETHNICITY`, `BUS` or
+`STATE`. `OPEN_QUESTIONS.md` Q16.
 
 `YRDOB` is year of birth, **capped at 89** (dictionary revision 04-14-2025: *"Edit
 YRDOB descriptions from capped 90 to capped at 89 years"*). There is no date of
@@ -172,7 +208,7 @@ document says how to break that tie. `OPEN_QUESTIONS.md` Q16.
 The existing build already faces this for sex and birth year and resolves it by
 ranking rows — a usable birth year first, then a known sex, then the most recent
 `ELIGEND`, then the values themselves for determinism
-(`Jul 28/ndmm/R/steps/00_mm_cohort.R:140-165`). That rule is **not** "the row covering
+(`Jul 28/ndmm/R/steps/00_mm_cohort.R:144-170`). That rule is **not** "the row covering
 the index date", so it will need revisiting for the new demographics.
 
 ### MEMBER_CONTINUOUS_ENROLLMENT
@@ -270,7 +306,7 @@ which is why the protocol marks thrombocytopenia and anaemia
 
 `PATID`, `YMDOD`. **Month and year only.** `YMDOD` is a `CCYYMM` string. The build
 coarsens it to the 15th of the month, or the month end where the 15th would fall
-before the diagnosis (`Jul 28/ndmm/R/steps/00_mm_cohort.R:163-200`). Every
+before the diagnosis (`Jul 28/ndmm/R/steps/00_mm_cohort.R:172-215`). Every
 day-level survival number inherits that ±15-day uncertainty. Note also that this
 table is **not in the CDM V9.0 dictionary** — it is a separate mortality file.
 
@@ -291,7 +327,7 @@ make without documentation:
 | topic | status |
 |---|---|
 | **Valid claims / exclusions** | No definition of a valid claim, and no rule for reversals, denials, duplicates, capitated encounters or adjustments. No claim-status or payment-status filter is named anywhere. The word "unduplicated" appears once, inside the CONFINEMENT bundling description |
-| **Member-months / person-time** | No denominator convention at all. In particular it is **never stated whether the days inside a bridged sub-30-day gap count as covered person-time** — which directly changes every person-year denominator the protocol asks for |
+| **Member-months / person-time** | No denominator convention at all. In particular it is **never stated whether the days inside a bridged sub-30-day gap count as covered person-time** — which directly changes every person-year denominator the protocol asks for (`OPEN_QUESTIONS.md` Q19) |
 | **Overlapping spans** | Never addressed. Sequential non-overlapping rows are implied within a `PAT_PLANID`; overlap across `PAT_PLANID`s for one `PATID` (dual coverage, mid-month switch) is neither asserted nor excluded |
 | **Gap-rule precision** | "less than 30 day break in coverage" is the whole specification. Whether the boundary is `< 30` or `<= 30`, and how the break is computed, are not written |
 | **ICD-9 → ICD-10 transition** | Only `ICD_FLAG` is supplied. No cut-over date, no crosswalk guidance, no instruction to specify a condition in both vocabularies |
@@ -336,7 +372,7 @@ outpatient ⇔  none of the above
 > All other records without a CONF_ID or where CONF_ID is NULL should be considered
 > non-inpatient."*
 
-`Jul 28/ndmm/R/steps/00_mm_cohort.R:26-60` flags a claim inpatient if **either**
+`Jul 28/ndmm/R/steps/00_mm_cohort.R:27-90` flags a claim inpatient if **either**
 holds, and flags it at the claim-line level before `max(POS)` can hide an inpatient
 code. Keep that — it is the conservative reading and it matches how the Jan-2026
 program spec was validated.
@@ -349,6 +385,14 @@ The CDM has **no ED flag**. The usual claims constructions are:
 - `MEDICAL.RVNU_CD` in the 045x range (0450, 0451, 0452, 0456, 0459) and 0981;
 - `MEDICAL.POS = '23'` (emergency room — hospital);
 - `MEDICAL.PROC_CD` in 99281-99285.
+
+`MEDICAL.TOS_EXT` ("the full type of service value derived by the algorithm... most
+specific level of classification") plausibly carries an ED category, but its lookup
+values are not in the dictionary, so it cannot be confirmed from the documentation.
+`MEDICAL.OP_VISIT_ID` can group claim lines into a single outpatient visit, which is
+what stops one ED encounter being counted as several events. The only place the phrase
+"emergency department" appears in the whole dictionary is inside the `MED_DIAGNOSIS.POA`
+description, which is not an ED identifier.
 
 None of these is in a repo code list today. `CODELISTS.md` §3 lists it as
 outstanding, and `OPEN_QUESTIONS.md` Q11 asks the study team which construction
@@ -407,7 +451,7 @@ Grouped as `VARIABLES.md` groups them.
 | Follow-up time from diagnosis / from index | `MM_DX_DT`, index, `member_enrollment` spans, `dod.YMDOD`, study end | months, both endpoints inclusive |
 | Year of 1L / 2L / 3L initiation | LOT output | 2019 → latest data availability |
 | Types of 1L/2L/3L SOCs or classes by line | LOT output + `cl_mma_rollup.csv` | quadruplet / triplet / doublet / anti-CD38 backbone / class — Annex 2 |
-| Key safety events (Table 3, 20 conditions) | `diagnosis.DIAG` (+ `confinement`, `medical` for the hospitalisation-based ones) | ICD-10-CM lists — **Annex 3**, not available |
+| Key safety events (Table 3, 22 conditions) | `diagnosis.DIAG` (+ `confinement`, `medical` for the hospitalisation-based ones) | ICD-10-CM lists — **Annex 3**, not available |
 | All-cause inpatient hospitalisation | `confinement` | `ADMIT_DATE`, `DISCH_DATE`, `LOS`, `CONF_ID` |
 | MM-related hospitalisation | `confinement.DIAG1`/`DIAG2`, or `diagnosis` with `DIAG_POSITION IN (1,2)` | |
 | Emergency visits | `medical.RVNU_CD` / `.POS` / `.PROC_CD` | see §6 — construction not yet agreed |
@@ -434,5 +478,16 @@ Grouped as `VARIABLES.md` groups them.
 8. **ICD-9 → ICD-10 transition** falls inside the study period only if the period is
    read as starting 2016 (Figure 1); on the 2018 reading, everything is ICD-10 and
    the ICD-9 arms of every code list are dead weight. Q1 decides this.
-9. **The quarterly tables are cumulative** — the suffix is chosen from `STUDY_END`,
+9. **No clinical staging exists.** No ISS/R-ISS, no cytogenetics or FISH, no ECOG, no
+   tumour-registry linkage, no treatment intent. Transplant eligibility is why the
+   protocol uses age ≥ 75 as its proxy — there is nothing better in the data.
+10. **No date shifting is documented.** All claim dates are full-precision calendar
+   dates; de-identification is by **encryption of identifiers** (PATID, PAT_PLANID,
+   CLMID, CONF_ID, FAMILY_ID and every provider id), not by perturbing dates. The only
+   deliberate coarsening is `YRDOB` (year, capped at 89) and `EXTRACT_YM`.
+11. **`DOD` is not in the V9.0 dictionary at all.** Vital status is absent from it; the
+   only in-dictionary death signal is a `DSTATUS` of "expired" on a confinement, and
+   even that lookup's values are not supplied. The `dod` table the build reads is a
+   separate mortality file — which is also why its encryption caveat (§3) matters.
+12. **The quarterly tables are cumulative** — the suffix is chosen from `STUDY_END`,
    so a rerun against a newer quarter is a different denominator.

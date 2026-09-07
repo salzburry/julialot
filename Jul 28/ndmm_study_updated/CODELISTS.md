@@ -15,13 +15,17 @@ rows, and records each file's md5 on the run.
 
 ### The NDMM cohort build — `Jul 28/ndmm/R/codelists.R`
 
-| file | required columns | what it drives |
-|---|---|---|
-| `mm_dx.csv` | `dx`, `icd_family` | the MM diagnosis (criterion I1) |
-| `cl_mma_codelist.csv` | `CL_CODE_TYPE`, `CL_CODE`, `CL_MEDICATION_FULL`, `CL_MED_CLASS`, `CL_MED_ABBR` | the 1L index (I3), prior-therapy scan (X1), belantamab (X4) |
-| `other_malig.csv` | `dx`, `icd_family`, `tumor_group` | the other-cancer exclusion (X2) |
-| `pregnancy.csv` | `code_type`, `code` | the pregnancy exclusion (X3) |
-| `clintrial.csv` | `code`, `code_type` | a descriptive trial flag — **not a criterion** |
+| file | required columns | code types it may carry | what it drives |
+|---|---|---|---|
+| `mm_dx.csv` | `dx`, `icd_family` | ICD-9-CM / ICD-10-CM diagnosis | the MM diagnosis (criterion I1) |
+| `cl_mma_codelist.csv` | `CL_CODE_TYPE`, `CL_CODE`, `CL_MEDICATION_FULL`, `CL_MED_CLASS`, `CL_MED_ABBR` | `HCPCS`, `CPT`, `NDC` (`NDMM_MMA_CODE_TYPES`) | the 1L index (I3), prior-therapy scan (X1), belantamab (X4) |
+| `other_malig.csv` | `dx`, `icd_family`, `tumor_group` | ICD-9-CM / ICD-10-CM diagnosis | the other-cancer exclusion (X2) |
+| `pregnancy.csv` | `code_type`, `code` | `ICD9DIAG`, `ICD10DIAG`, `ICD9PROC`, `ICD10PROC`, `HCPCS`, `REV` (`NDMM_PREG_CODE_TYPES`) | the pregnancy exclusion (X3) |
+| `clintrial.csv` | `code`, `code_type` | same six as pregnancy (`NDMM_CLINTRIAL_CODE_TYPES`) | a descriptive trial flag — **not a criterion** |
+
+A code type outside the list a scan names loads cleanly, joins, and matches nothing —
+so the guard exists to stop a rule silently doing nothing. The `overall/` build reads
+the same five files (`Jul 28/overall/R/build_cohort.R:139-146`).
 
 ### The LOT engine — `Jul 28/lot/engine/R/steps/01_codelists.R`
 
@@ -38,7 +42,7 @@ rows, and records each file's md5 on the run.
   so `C90.00` and `C9000` are the same key. `icd_family` must be one of
   `9 / ICD9 / ICD-9 / ICD9DIAG` or `10 / ICD10 / ICD-10 / ICD10DIAG`; anything else
   **stops the run** — deliberately, because an unrecognised family silently reads as
-  ICD-10 and then matches nothing (`Jul 28/ndmm/R/codelists.R:39-70`).
+  ICD-10 and then matches nothing (`Jul 28/ndmm/R/codelists.R:41-65`).
 - **NDC** — keyed on digits only. Eleven digits as they stand; ten padded under the
   4-4-2 assumption; **any other digit count gets no key and does not join**. Optum
   writes `NONE`/`UNK` on medical claims with no NDC — 1.2 bn rows — and those must
@@ -64,13 +68,79 @@ ICD10DIAG,C9002          # C90.02  ...in relapse
 ```
 
 Eight codes — the **strict** 203.0x / C90.0x families only, no broad 203.x / C90.x.
-The first two rows are at the limit of legibility in the photograph; the code count
-and the eight descriptions in `docs/Part 1/codist.pdf` agree, so the reading is the
-sensible one, but confirm against the production file before quoting it.
+Rows 2 and 3 are at the limit of legibility in the photograph (both render as `203`),
+but the eight code slots line up one-for-one with the eight descriptions on
+`docs/Part 1/codist.pdf` page 1, which lists `203.0`, `203.00`, `203.01` (Remission),
+`203.02` (Relapse), `C90.0`, `C90.00`, `C90.01` (Remission), `C90.02` (Relapse). Still
+worth confirming against the production file before quoting it.
+
+Two things follow from this file that are easy to get wrong:
+
+- **The join is equality on the normalised code, not a prefix match.** `ICD9DIAG,2030`
+  matches a claim coded exactly `203.0` and does **not** cover `203.00` — which is why
+  all four codes of each family are listed separately.
+- **The build's separate `mm_dx_strict_flg` currently does nothing.** It is a prefix
+  test (`LIKE '2030%'` / `LIKE 'C900%'`) that the inpatient arm additionally requires
+  (`Jul 28/ndmm/R/steps/00_mm_cohort.R:56-90`, then `WHERE inpatient_flg = 1 AND
+  mm_dx_strict_flg = 1`). Every code in today's eight-row file already satisfies it.
+  The flag only starts to bite the moment `mm_dx.csv` is widened — which is exactly
+  what Q2 would do.
 
 **This matters for `OPEN_QUESTIONS.md` Q2**: if the outpatient arm of criterion I1 is
 meant to use the broad set, this file is short by every 203.x / C90.x code outside
 the `.0` family.
+
+### Where the production files are, and what is visible of them
+
+Nothing in `CODELIST_DIR` is under version control — `Jul 28/RUN_ON_PROD.md` says so
+outright ("Code and docs only. **No code lists**"). A sweep of the repo for any of the
+eight expected filenames returns nothing. What the repo does hold is the loader
+contract, and photographs of the deployed files in `Apr 18 2026/codelist.pdf` (the
+Domino project `219870_mm_optumlot` with each CSV open in the editor):
+
+| production file | what is visible | size |
+|---|---|---|
+| `mm_dx.csv` | the whole file | header + **8 rows** (below) |
+| `clintrial.csv` | the whole file | header + **17 rows** — HCPCS G0276, G0292, G0293, G0294, G2000, G8928, G9057, S9988, S9990, S9991, S9992, S9994, S9996, plus `ICD10DIAG,Z006` and `ICD9DIAG,V707` |
+| `pregnancy.csv` | partial | row numbers reach **≥ 5,319**; carries ICD10PROC, HCPCS **and REV codes 0720, 0721, 0722, 0724, 0729** |
+| `other_malig.csv` | partial | **1,643 code rows, 1,618 distinct `tumor_group`** (stated in `Jul 28/ndmm/DECISIONS.md` §4) |
+| `cl_mma_codelist.csv` | partial | a legible row `HCPCS,C9069,belantamab,ABCMA,BELA` |
+| `permissible_subs.csv` | tab visible, rows not legible | — |
+| `mm_therapy.csv` | tab visible | **on production but read by no current build** — a legacy asset |
+| `cl_sct_codelist.csv`, `cl_mma_rollup.csv` | **not photographed** | — |
+
+`docs/Part 1/codist.pdf` adds two spec-workbook tabs: the MM diagnosis sheet, and tab
+**`40.CL MMA ROLLUP`** — "Codelist Multiple Myeloma Approved and Steroid Medications
+Rollup", columns `CL_MEDICATION_FULL, CL_MED_CLASS, CL_MED_ABBR, MONOMAINTENANCE,
+DUALMAINTENANCE.WITH, CONDITIONING`, **27 medications** from belantamab/BELA/ABCMA to
+venetoclax/VENE/BLC21.
+
+The `dx_codes`, `mm_therapy_ndc`, `mm_therapy_hcpcs` and `permissible_subs` sheets of
+`docs/Part 3/Program Spec/Program_Spec_Workbook.xlsx` are all headed
+**"STATUS: TO BE BUILT"** with every cell `[TO BE BUILT]` — no codes.
+
+### Scaffolding that already exists in the `Aug 14/` fork
+
+`Aug 14/` is a fork of `Jul 28/`, not its successor, and it is the only place in the
+repo carrying safety and HCRU code-list structure:
+
+| file | rows | state |
+|---|---|---|
+| `Aug 14/lot/safety/codelists/safety_events.csv` | 26 | columns `domain, condition, acute_chronic, code_type, code, icd_family, source_note`. **Every code cell is empty** |
+| `Aug 14/lot/safety/codelists/hcru_events.csv` | 13 | columns `event, measure, precedence, code_type, code, source_note`. **9 rows filled** — all-cause hospitalisation via `CONFINEMENT`/`CONF_ID` with `POS` 21/51/61 and `TOS_CD` fallbacks copied verbatim from `00_mm_cohort.R` so cohort and outcome cannot drift, and LOS via `CONFINEMENT`/`LOS`. `inpatient_length_of_stay_mm_related` and `er_visit` are placeholders |
+
+Its loader, `Aug 14/lot/safety/R/codelists_safety.R`, refuses to return anything while
+any condition is unfilled — *"23 of 26 conditions still have no codes, so a rate for
+them would be zero for want of a code list rather than for want of events"*.
+`Jul 28/lot/` has no `safety/` directory at all.
+
+`apr_30_2026/regimen_categories.csv` (47 rows, `regimen,category`, e.g.
+`DARA BORT LENA` → *Quadruplet with anti-CD38 backbone (1L NDMM)*) is the closest
+thing in the repo to the protocol's §7.2.2 categorisation — but it belongs to a
+superseded baseline and keys on a regimen string rather than on `CL_MED_ABBR`.
+
+**These three files are the right starting points for the new lists in §4.** They are
+structure without content; Annexes 2 and 3 are the content.
 
 ## 2. What the protocol needs that no list covers
 
@@ -131,8 +201,7 @@ Quan et al. 2011 in its reference list but supplies no annex for it.
 
 | file | why |
 |---|---|
-| `pregnancy.csv` | criterion X3 names diagnosis, procedure **and revenue** codes. The loader takes `code_type`, `code`, so revenue codes fit the schema — confirm the production file actually carries them |
-| `other_malig.csv` | already carries `tumor_group`, which is what "same primary tumor type" needs. Confirm metastatic codes form their own group and that the grouping is granular enough to distinguish "same primary tumour type" pairs |
+| `other_malig.csv` | 1,643 code rows but **1,618 distinct `tumor_group` values** — the label is one per code, not a grouping, so pairing on it would reduce to needing the same exact code twice. The build therefore pairs on the **first three characters of the ICD code** (C50 breast, C34 lung, C79 secondary neoplasm), which is what "same primary tumour type and/or metastatic cancer" asks for (`Jul 28/ndmm/DECISIONS.md` §4). What still has to change is the **window**: 30 days, not the baseline year |
 | `mm_dx.csv` | see §1 — depends on Q2 |
 | `cl_mma_codelist.csv` | must cover panobinostat and elotuzumab as named `CL_MED_ABBR` values so they can be barred from setting the index; and belantamab as `BELA` (already assumed, `NDMM_BELANTAMAB_ABBR`) |
 
@@ -158,7 +227,11 @@ Every one of these is blocked on Annex 2, Annex 3 or Annex 7 — except
 
 ## 5. What to ask for
 
-In one message to the study team:
+Annex numbers follow the **body text** of the protocol (§7.3.2 and §7.8.5 both cite
+Annex 3 for code lists). Its Table of Contents disagrees and calls the code lists
+Annex 5 — say which you mean when you ask. `OPEN_QUESTIONS.md` Q20.
+
+In one message to the study team (`OPEN_QUESTIONS.md` Q15):
 
 1. **Annex 2** — eligible/expected MM therapies and the SOC regimen categorisation.
 2. **Annex 3** — the ICD-10-CM code lists for every Table 3 condition, the secondary
