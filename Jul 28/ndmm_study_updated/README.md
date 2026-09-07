@@ -28,7 +28,7 @@ decided or sent.
 | **`CODELISTS.md`** | which code lists the build already reads, in what shape, and every list the protocol needs that does not exist yet |
 | **`BUILD_DELTA.md`** | the difference between what `Jul 28/ndmm` and `Jul 28/lot` do today and what the protocol asks for |
 | **`VERSION_DIFF.md`** | what changed since the June 2026 version (which is in the repo with a text layer), why three of the build's settings are a version behind rather than wrong, and a reconstruction of the rows lost on the corrupt photo |
-| **`OPEN_QUESTIONS.md`** | twenty things that are genuinely undecided, each with the two readings and what turns on the answer |
+| **`OPEN_QUESTIONS.md`** | twenty-four things that are genuinely undecided — twenty from the protocol and the Optum docs, four inherited from the build's own record — each with the two readings and what turns on the answer. Two are now answered |
 | `ie_criteria.csv` | the criteria as a table, for the study team to work in a spreadsheet |
 | `variables.csv` | the variables as a table — 58 rows, one per variable |
 | `optum_cdm_fields.csv` | the CDM field inventory as a table |
@@ -103,6 +103,15 @@ anything read from the piped text alone would have been wrong.
 
 The copies at `docs/optum *.pdf` and `Apr 18 2026/Optum - Business Rules/` are
 byte-identical to the Part 3 copies — the April folder introduced no revision.
+
+`Jul 28/ndmm/DECISIONS.md` and `Jul 28/ndmm/README.md` were read in full as well. The
+existing cohort build has already profiled the warehouse, and its §6 answers two things
+the vendor documents leave open: that medical and pharmacy benefits are satisfied by
+construction (no predicate to write, and the claims proxy is a trap), and that
+`MED_PROCEDURE.PROC` is the ICD procedure code — 43.1M of 43.2M rows are seven-character
+ICD-10-PCS — which settles a contradiction inside the business rules. It also marks four
+of its own decisions still open, and the new protocol resolves none of them.
+`OPEN_QUESTIONS.md` carries both.
 
 ## The five things most likely to change a count
 

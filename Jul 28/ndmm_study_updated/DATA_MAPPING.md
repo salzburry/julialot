@@ -12,6 +12,7 @@ Sources reviewed for this document:
 | `docs/optum enrolment.pdf` (4 pp) | Databricks screenshots: `describe table hive_metastore.clnprw_optum.t_member_enrollment_2025q4` (27 columns) and the observed value distributions of `BUS`, `CDHP`, `PRODUCT` in the MM population |
 | `docs/Part 3/Program Spec/*_validated.csv` | the Jan-2026 program spec with an "Optum CDM Implementation" column naming the exact tables and columns used per variable |
 | `Jul 28/ndmm/R/**`, `Jul 28/lot/engine/R/**` | the SQL actually issued today |
+| `Jul 28/ndmm/DECISIONS.md`, `Jul 28/ndmm/README.md` | the build's own record of what it checked in the CDM and why each rule reads as it does. §6 is a profiling of the warehouse, and it settles two things the vendor documents leave open — see §4 and §7 below |
 
 Identical copies of the two Optum PDFs also sit at `docs/optum *.pdf` and
 `Apr 18 2026/Optum - Business Rules/`.
@@ -268,6 +269,14 @@ Claim-level. Columns that matter here:
 `PROC` is the **ICD-9/10 procedure** code. CPT and HCPCS are on `MEDICAL.PROC_CD`.
 Both matter for SCT and CAR-T identification.
 
+This is measured, not assumed. `Jul 28/ndmm/DECISIONS.md` §6: over the study period
+`PROC` is **43,137,224 of ~43.2M rows at `ICD_FLAG='10'` and seven characters** —
+ICD-10-PCS. The five-character tail, the only shape a HCPCS or CPT code could occupy,
+is about **15,000 rows, 0.035%**. That settles the contradiction in the business rules
+(§5 below), and it is why the build still reads `PROC` as a fifth medication source:
+the failure is asymmetric — a therapy the scan cannot see lets a patient pass the
+no-prior-therapy criterion on missing data.
+
 ### CONFINEMENT
 
 `PATID`, `PAT_PLANID`, `CONF_ID`, `ADMIT_DATE`, `DISCH_DATE`, `LOS`,
@@ -343,8 +352,8 @@ Two further points worth carrying into any implementation review:
   `T_MEDICAL` to ICD-9/ICD-10 and `PROC` / `T_MED_PROCEDURE` to HCPCS/CPT — the exact
   inverse of rule 3 (pp.4-5) and of the MEDICAL table description on p.2. Rule 3 is
   corroborated by the rest of the workbook and by the data dictionary, and is what the
-  current build follows. Treat rule 5 as a transcription error, but get it ruled on.
-  `OPEN_QUESTIONS.md` Q17.
+  current build follows — and by that build's own profiling of 43.2M `PROC` rows (§4).
+  **Rule 5 is a transcription error.** `OPEN_QUESTIONS.md` Q17.
 - **Vintage.** The rules are `Final_Business rule doc_OPTUM_V1_30_08_2022.xlsx` — an
   August 2022 rule set being applied to a 2025Q4/2026Q1 extract, against a CDM V9.0
   dictionary released September 2023. No revalidation is recorded.
@@ -412,10 +421,18 @@ benefits". The evidence:
   and pharmacy coverage, allowing analysis of overall healthcare utilization."*
   (screen 38)
 
-So the requirement is either **satisfied by construction** or needs a proxy (e.g.
-≥ 1 pharmacy claim and ≥ 1 medical claim in the baseline), which would be a
-materially different and much stricter criterion. Do not silently pick one.
-`OPEN_QUESTIONS.md` Q4.
+`Jul 28/ndmm/DECISIONS.md` §6 reaches the same conclusion from the same schema, and
+rules out the obvious alternative explicitly:
+
+> "Medical and pharmacy benefits are **satisfied by construction**... A span carries
+> both, so `ELIGEFF`/`ELIGEND` already express the requirement and **a predicate would
+> filter on nothing**."
+
+> "**Do not re-derive this from claims.** Enrolled patients with no pharmacy fill look
+> like a coverage signal and are not: that count is dominated by short spans and by
+> patients whose only MM code is a rule-out."
+
+So there is nothing to write, and the claims proxy is a trap. `OPEN_QUESTIONS.md` Q4.
 
 ## 8. Variable → source, criteria
 
@@ -464,6 +481,10 @@ Grouped as `VARIABLES.md` groups them.
 ## 10. Caveats that change a number
 
 1. **Death is month-precision.** Every OS, TTD and follow-up figure inherits ±15 days.
+   The construction rules — 15th of the month, 15 July for a year-only record, bumped to
+   the period end where that would precede the diagnosis — are `Jul 28/ndmm/DECISIONS.md`
+   §8 and are **still open, pending study-team sign-off** (`OPEN_QUESTIONS.md` Q22). That
+   mattered less when OS was not reported; it is a primary outcome now.
 2. **Enrolment rollup vs protocol gap rule** differ by one day at the boundary (§4).
 3. **`YRDOB` is capped at 89** — the ≥ 75 age band is right-censored in a way that
    understates the very old.

@@ -64,9 +64,9 @@ cohorts larger than they are today.
 | MM diagnosis (I1) | one code list for both arms, plus a strict `203.0x`/`C90.0x` requirement on the inpatient arm; 90-day outpatient pairing | strict on the inpatient arm; outpatient arm says only "medical claims for MM" | **decide first** — Q2 |
 | Age (I2) | `year(MM_DX_DT) - YRDOB >= 18`, applied to the **earliest** qualifying date | ≥ 18 at MM diagnosis by calendar year | **matches** |
 | Eligible 1L treatment (I3) | first non-steroid MM agent on/after diagnosis and on/after `LOT1_FROM`, belantamab barred | same, plus panobinostat and elotuzumab barred, and `LOT1_FROM = 2019-01-01` | **change** |
-| 12-month CE (I4) | own spans from `member_enrollment`, gaps ≤ 30 d | same, plus "with medical and pharmacy benefits" | **decide first** — Q4 |
+| 12-month CE (I4) | own spans from `member_enrollment`, gaps ≤ 30 d | same, plus "with medical and pharmacy benefits" | **matches** — the extract does not separate the benefits, so the requirement is satisfied by construction (`DECISIONS.md` §6, `OPEN_QUESTIONS.md` Q4) |
 | Follow-up (I5) | see §2 | see §2 | **change** |
-| Prior MM therapy (X1) | any MM agent in the 365-day baseline, **steroids dropped** | "≥ 1 medical or pharmacy claim for any MM oncology therapy" — no steroid carve-out stated | **decide first** — Q6 |
+| Prior MM therapy (X1) | any MM agent in the 365-day baseline, **steroids dropped** — but the drop **removes nothing** on the production code list (`DECISIONS.md` §3) | "≥ 1 medical or pharmacy claim for any MM oncology therapy" | **matches today**; becomes a decision when Annex 2's list arrives — Q6 |
 | Other cancer (X2) | ≥ 1 inpatient, or ≥ 2 outpatient on distinct days **within 30 days** (`04_other_malig.R:270`), paired on the 3-character ICD category, both claims inside the baseline | ≥ 1 inpatient, or ≥ 2 outpatient **on separate days within 30 days**, same primary tumour type and/or metastatic | **matches** — but confirm the four layered readings in `IE_CRITERIA.md` §6, above all that bone metastasis excludes |
 | Pregnancy (X3) | diagnosis, procedure **and revenue** codes (`ICD9DIAG, ICD10DIAG, ICD9PROC, ICD10PROC, HCPCS, REV`), whole study period | same | **matches** |
 | Belantamab (X4) | flag computed in the cohort build, exclusion applied in the LOT build once lines exist | "in any LOT" | **matches** |
@@ -223,9 +223,39 @@ These are stated once, in §7.8.1, and are easy to lose:
 11. No imputation. Missing values are reported and dropped where necessary.
 12. No p-values, no log-rank, no hypothesis tests anywhere.
 
+## 7a. What the build already measures, so you do not have to guess
+
+Four of the changes above have a price the build writes into the warehouse on **every**
+run. None of them needs new code to cost.
+
+| table | what it prices |
+|---|---|
+| `<prefix>NDMM_FU_CE_COUNTS` | cohort size at 0, 30, 60 and 90 days of follow-up CE and at exactly three calendar months, with the applied row marked. `N_COHORT` is the whole conjunction at that window — the cohort you would ship, not one criterion's count. **This is the cost of the §2 follow-up rework, already computed.** |
+| `<prefix>NDMM_INDEX_AGENTS` | every `CL_MED_ABBR` on the code list, whether this run lets it set an index, and how many patients it set one for. **Read it before adding the panobinostat and elotuzumab bars** — it says what barring each one costs |
+| `<prefix>NDMM_PREG_WINDOW_COUNTS` | both readings of the pregnancy window, with the incremental exclusions separated from raw claim counts |
+| `<prefix>NDMM_OTHER_MALIG_GROUPS`, `<prefix>NDMM_OTHER_MALIG_GRAIN` | the other-cancer pairing grain, per category, against the per-label grain |
+| `<prefix>NDMM_BELANTAMAB_RECONCILE` | which cohort members the LOT build will remove for belantamab |
+| `Jul 28/ndmm/followup_days.sql` | the follow-up distribution on both definitions, what ended follow-up, and the same by index year — paste-and-run against this build's own output |
+
+Two guards to lean on rather than re-implement:
+
+- `NDMM_INDEX_EXCLUDED_ABBRS` checks every entry against the code list and **stops the
+  run on a name that matches nothing**, so a misspelled "panobinostat" cannot quietly
+  bar nobody.
+- `check_cohort_window()` reads the cohort's actual date range and stops if it falls
+  outside the window the run was given, naming the CDM vintage it would have read. So
+  moving `STUDY_START` to 2018 cannot silently read the wrong quarterly tables.
+
+And one section of `Jul 28/ndmm/README.md` can be struck once the protocol is the
+reference: "Thresholds worth double-checking" lists four thresholds written
+inconsistently across documents — enrolment gaps, the other-cancer counts, adult age and
+the outpatient MM-diagnosis count. **The new protocol states all four, and every one
+agrees with what the build does** (`OPEN_QUESTIONS.md`, "What the new protocol closes").
+
 ## 8. Suggested order of work
 
-1. Settle Q1, Q2, Q4, Q6, Q13 with the study team — each changes a count.
+1. Settle Q1, Q2 and Q13 with the study team — each changes a count. (Q4 and Q17 are
+   now answered by `Jul 28/ndmm/DECISIONS.md` §6; Q6 is moot until Annex 2 lands.)
 2. Get Annexes 2, 3 and 7, and document pages 31-32.
 3. Cohort build: `LOT1_FROM`, the index-agent exclusions, the follow-up rework (§2),
    `FU_END`, `TTE_ELIGIBLE`, and the four new demographic columns.

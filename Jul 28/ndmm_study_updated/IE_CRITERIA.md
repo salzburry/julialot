@@ -49,6 +49,13 @@ period" (screen 37).
 | Follow-up period | from the index date (**index included**) until **end of continuous enrolment, or end of study period, or death — whichever comes first** | 17 |
 | Enrolment gap tolerance | gaps of **≤ 30 days** still count as continuous | 21 |
 
+The build reads every "months" window as a fixed day count — 12 months is
+`[index − 365, index − 1]`, 3 months is 90 days — because `add_months()` would give two
+patients indexed a day apart different windows. That reading is **still unsigned**, and
+the 1L sensitivity put it seven patients from the calendar-month reading
+(`Jul 28/ndmm/DECISIONS.md` §7, `OPEN_QUESTIONS.md` Q21). The protocol says "12-month"
+and "3 months" and never disambiguates.
+
 Two things about the baseline period that decide how the build is wired:
 
 > "1L will have a 12-month baseline relative to 1L start, and 2L will have a
@@ -133,6 +140,9 @@ Operationally:
 
 > **Ambiguity.** "within 90 days" — the earlier spec also flagged 30- and 60-day
 > pairs as sensitivities. The updated protocol names only 90. See `OPEN_QUESTIONS.md` Q3.
+> Do not let the 30 days of the other-cancer rule migrate onto this window: they are
+> different numbers on different criteria, and `Jul 28/ndmm/README.md` flags the
+> conflation as a known hazard.
 
 ### I2. Adult age
 
@@ -169,7 +179,13 @@ Three separate constraints ride on this one bullet:
 
 > **Change from the current build.** `Jul 28/ndmm` bars only belantamab from setting
 > the index (`NDMM_INDEX_EXCLUDED_ABBRS` defaults to empty,
-> `Jul 28/ndmm/R/standalone_constants.R`). Panobinostat and elotuzumab are new.
+> `Jul 28/ndmm/R/standalone_constants.R`), and `DECISIONS.md` §3 is explicit that this
+> was deliberate: *"Exactly one therapy is restricted to later lines: belantamab.
+> Nothing else is... There is no allowlist of first-line regimens. Inventing one would
+> shrink the cohort by a rule nobody could reproduce."* The protocol now supplies that
+> rule, so the two named agents go into `NDMM_INDEX_EXCLUDED_ABBRS` — which validates
+> every entry against the code list and stops the run on a name matching nothing.
+> `<prefix>NDMM_INDEX_AGENTS` says in advance what barring each one costs.
 
 ### I4. Continuous enrolment before index
 
@@ -237,8 +253,11 @@ both J-code administration and pharmacy fill count.
 
 > **Note.** The current build drops steroid rows from this scan
 > (`NDMM_STEROID_ABBRS`, `Jul 28/ndmm/R/ndmm_constants.R`), on the reasoning that a
-> steroid claim alone is supportive care. The protocol does not say so. See
-> `OPEN_QUESTIONS.md` Q6.
+> steroid claim alone is supportive care. The protocol does not say so — but the drop
+> **removes nothing on today's code list**: `Jul 28/ndmm/DECISIONS.md` §3 records 26
+> agents on `cl_mma_codelist.csv`, none of them spelled `DEX`, `DEXA`, `DEXAMETHASONE`,
+> `PRED` or `PREDNISONE`, so the guard fires on no one. It becomes a real decision when
+> Annex 2's therapy list arrives. `OPEN_QUESTIONS.md` Q6.
 
 ### X2. Another cancer in the 1L baseline
 
@@ -279,9 +298,14 @@ Three code types, not one, and the window is the **whole study period** — not 
 baseline. The current build already does all of this: it applies the rule
 study-period-wide and its scan admits `ICD9DIAG, ICD10DIAG, ICD9PROC, ICD10PROC,
 HCPCS, REV` (`NDMM_PREG_CODE_TYPES`, `Jul 28/ndmm/R/steps/05_pregnancy.R:7-8`). The
-production `pregnancy.csv` visibly carries revenue codes 0720, 0721, 0722, 0724 and
-0729 alongside its ICD and HCPCS rows (`Apr 18 2026/codelist.pdf`, pp.12-18). **No
-change needed.**
+production `pregnancy.csv` carries all six types — 3,049 `ICD9DIAG`, 1,549 `ICD10DIAG`,
+447 `ICD9PROC`, 69 `ICD10PROC`, 185 `HCPCS` and 19 `REV`, 5,318 codes in all
+(`Jul 28/ndmm/DECISIONS.md` §6). **No change needed.**
+
+The build's open item here is the *window*, not the codes: it applies the whole study
+period and the narrower patient-specific reading is still unsigned (`DECISIONS.md` §9,
+`OPEN_QUESTIONS.md` Q23). The protocol says "during the study period", which is what the
+build does — so this is close to settled.
 
 ### X4. Belantamab mafodotin in any LOT
 

@@ -42,9 +42,15 @@ the same five files (`Jul 28/overall/R/build_cohort.R:139-146`).
   so `C90.00` and `C9000` are the same key. `icd_family` must be one of
   `9 / ICD9 / ICD-9 / ICD9DIAG` or `10 / ICD10 / ICD-10 / ICD10DIAG`; anything else
   **stops the run** — deliberately, because an unrecognised family silently reads as
-  ICD-10 and then matches nothing (`Jul 28/ndmm/R/codelists.R:41-65`).
-- **NDC** — keyed on digits only. Eleven digits as they stand; ten padded under the
-  4-4-2 assumption; **any other digit count gets no key and does not join**. Optum
+  ICD-10 and then matches nothing (`Jul 28/ndmm/R/codelists.R:41-65`). A **claim** whose
+  `ICD_FLAG` names neither family matches nothing and is reported rather than gated — 16
+  such rows on the first production run, and `NDMM_ICD_FLAG_MAX_ROWS`, the ceiling that
+  would stop a build, ships unset (`OPEN_QUESTIONS.md` Q24).
+- **NDC** — keyed on digits only. Eleven digits as they stand; ten left-padded, which is
+  the 4-4-2 layout; **any other digit count gets no key and does not join**. A ten-digit
+  NDC written 5-3-2 or 5-4-1 pads to the wrong key, so `check_ndc_shape()` profiles both
+  sides of the join every run and stops the build on a malformed **code-list** value
+  (fixable at source) while only reporting a malformed claim value. Optum
   writes `NONE`/`UNK` on medical claims with no NDC — 1.2 bn rows — and those must
   never be padded into a key (`Jul 28/ndmm/R/db_utils.R:65-76`).
 - **HCPCS / CPT / revenue** — punctuation stripped, uppercased, exact match.

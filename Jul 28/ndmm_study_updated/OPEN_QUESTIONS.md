@@ -1,7 +1,9 @@
 # Open questions for the study team
 
-Twenty things the Aug 26 2026 protocol and the Optum documentation do not settle,
-each of which changes a count or a definition. Ordered by how much they change.
+Twenty-four things the Aug 26 2026 protocol, the Optum documentation and the existing
+build's own record do not settle, each of which changes a count or a definition.
+Ordered by how much they change. **Two are now answered** — Q4 and Q17, both by
+`Jul 28/ndmm/DECISIONS.md` §6, and both are left in place with the answer.
 
 Nothing here is a style preference. Every one of them has two defensible readings and
 the build has to pick one.
@@ -25,7 +27,13 @@ qualifying diagnosis is 2016-2017 — including patients whose 1L is in 2019 and
 would otherwise be in. It also decides whether ICD-9 codes are ever in scope (ICD-10
 began Oct 2015, so a 2018 start makes the ICD-9 arms of every code list dead).
 
-The current build uses `STUDY_START = 2016-01-01`.
+The current build uses `STUDY_START = 2016-01-01`, and
+`Jul 28/ndmm/DECISIONS.md` §5 records that window as **signed off** — for the June 2026
+protocol. Mechanically the change is cheap: the window is a **run argument**, not a
+`CONTRACT` setting (*"the algorithm is unchanged and the dates belong to the cohort"*),
+and `check_cohort_window()` makes a cohort/vintage mismatch fatal rather than silent.
+§5 also confirms `2026q1` is *"the same tables and column names as `2025q2` with data
+extended through 2026-03-31"*, so moving the window needs no re-validation.
 
 **Ask:** which is correct, and does the MM diagnosis have to fall inside the study
 period or merely on or before the 1L index?
@@ -47,24 +55,34 @@ strict `203.0x`/`C90.0x`, outpatient = broad `203.x`/`C90.x`
 Broad adds 203.1x (plasma cell leukaemia), 203.8x, C90.1x, C90.2x
 (extramedullary plasmacytoma) — a materially larger cohort.
 
+**The build already has the two-arm mechanism**, so this is a code-list edit, not a code
+change. `Jul 28/ndmm/README.md`, criterion 1:
+
+> "The two arms **do not use the same codes**: strict is required only of the inpatient
+> arm, and the outpatient pair accepts **any code on `mm_dx.csv`**."
+
+Today `mm_dx.csv` carries only the eight strict codes, so both arms are strict in
+practice. Widening the file is all the broad reading needs.
+
 **Ask:** strict on both arms, or strict inpatient / broad outpatient?
 
-### Q4. What does "with medical and pharmacy benefits" mean operationally?
+### Q4. What does "with medical and pharmacy benefits" mean operationally? — **ANSWERED**
 
-Criterion I4 requires 12 months of CE "with medical and pharmacy benefits". But:
+`Jul 28/ndmm/DECISIONS.md` §6 settles it, and rules out the proxy:
 
-- `MEMBER_ENROLLMENT` as deployed carries **no benefit-type flag** (27 columns,
-  `DATA_MAPPING.md` §4);
-- the CDM V9.0 dictionary shows none either;
-- the protocol's own §7.5 says *"All patients in this database have both medical and
-  pharmacy coverage"*.
+> "Medical and pharmacy benefits are **satisfied by construction**. The extract does
+> not separate them: `member_enrollment` has 27 columns and none is a benefit
+> indicator. `ASO`, `BUS`, `CDHP`, `PRODUCT`, `HEALTH_EXCH` and `GROUP_NBR` are plan
+> structure and funding, not coverage type. A span carries both, so `ELIGEFF`/`ELIGEND`
+> already express the requirement and **a predicate would filter on nothing**."
 
-So it is either automatically satisfied, or it needs a claims proxy (≥ 1 medical
-claim **and** ≥ 1 pharmacy claim in the baseline) — which would be a much stricter
-criterion and would drop patients with no pharmacy activity in their baseline year.
+> "**Do not re-derive this from claims.** Enrolled patients with no pharmacy fill look
+> like a coverage signal and are not: that count is dominated by short spans and by
+> patients whose only MM code is a rule-out."
 
-**Ask:** treat as satisfied by construction, or apply a claims proxy? If a proxy,
-which one?
+The same conclusion `DATA_MAPPING.md` §7 reaches from the schema, reached
+independently and with the failure mode of the alternative named. The protocol's own
+§7.5 agrees. **No predicate to write. Closed.**
 
 ### Q6. Do steroid-only claims count as "MM oncology therapy" for the prior-therapy exclusion?
 
@@ -80,7 +98,25 @@ including it would exclude patients on the strength of an unrelated steroid cour
 Note the LOT engine excludes steroids everywhere (`LOT_RULES.md` §2.1), so this
 question is only about the exclusion scan.
 
-**Ask:** confirm steroids alone do not trigger X1.
+**But it is moot on today's code list.** `Jul 28/ndmm/DECISIONS.md` §3, signed off:
+
+> "On the production file: **26 agents, so 25 can set an index. The steroid drop
+> removes nothing** — none of `DEX`, `DEXA`, `DEXAMETHASONE`, `PRED`, `PREDNISONE` is
+> in `CL_MED_ABBR` — and stays as a guard against a later list that carries them."
+
+So no patient is currently affected either way. The question becomes live the moment
+**Annex 2's** therapy list is loaded, because the protocol's own SOC categories are
+dexamethasone-containing regimens.
+
+One thing to check when it is: the rollup tab in `docs/Part 1/codist.pdf` is titled
+*"Codelist Multiple Myeloma Approved **and Steroid** Medications Rollup"* and carries
+**27** medications against the code list's 26 agents. If a steroid is on the list under
+an abbreviation the guard does not name, the guard silently stops guarding.
+`<prefix>NDMM_INDEX_AGENTS` shows every `CL_MED_ABBR` and whether this run would let it
+set an index, so the first run answers it.
+
+**Ask:** confirm steroids alone do not trigger X1, and confirm the steroid abbreviations
+against whatever list Annex 2 delivers.
 
 ### Q13. Does disenrollment censor follow-up?
 
@@ -240,17 +276,26 @@ sex).
 
 **Ask:** confirm "the row covering the index date", and give a tie-break.
 
-### Q17. Which way round are `PROC_CD` and `PROC`?
+### Q17. Which way round are `PROC_CD` and `PROC`? — **ANSWERED**
 
 Rule 5 of the Optum business rules (p.6) assigns `PROC_CD` / `T_MEDICAL` to
 ICD-9/ICD-10 procedure codes and `PROC` / `T_MED_PROCEDURE` to HCPCS/CPT. Rule 3
-(pp.4-5), the MEDICAL table description (p.2) and the CDM V9.0 data dictionary all
-say the opposite: `MEDICAL.PROC_CD` is CPT/HCPCS, `MED_PROCEDURE.PROC` is ICD-9/10.
+(pp.4-5), the MEDICAL description (p.2) and the CDM V9.0 dictionary all say the
+opposite.
 
-The current build follows rule 3, which is almost certainly right. But a J-code
-lookup pointed at the wrong table returns nothing and fails silently.
+`Jul 28/ndmm/DECISIONS.md` §6 settles it **empirically**:
 
-**Ask:** a one-line confirmation that rule 5 is a transcription error.
+> "Measured over the study period, `PROC` is **43,137,224 of ~43.2M rows at
+> `ICD_FLAG='10'` and seven characters** — ICD-10-PCS. The five-character tail, the
+> only shape a HCPCS or CPT code could occupy, is about **15,000 rows: 0.035%**."
+
+So `MED_PROCEDURE.PROC` is the ICD procedure code and `MEDICAL.PROC_CD` is CPT/HCPCS.
+Rule 5 is a transcription error. **Closed.**
+
+Worth carrying into every new outcome scan: the build reads `PROC` as a fifth
+medication source anyway, *"because the failure it guards is asymmetric — a therapy the
+scan cannot see lets a patient pass the no-prior-therapy criterion on missing data, and
+can move the index later than it belongs"*.
 
 ### Q18. Is the 2022 business-rules document still current?
 
@@ -302,6 +347,104 @@ Not a data question, but it will cause a wrong file to be sent. The ToC also car
 typos: "ALGORITHIM" and "FRAILITY".
 
 **Ask:** confirm Annex 3 is the code lists, and fix the ToC.
+
+---
+
+## Inherited from the build, still open, and not touched by the new protocol
+
+`Jul 28/ndmm/DECISIONS.md` marks four of its own decisions **open, pending study-team
+sign-off**. The new protocol resolves none of them, and two of them move outcome
+numbers, so they belong on the same list.
+
+### Q21. Are "months" calendar months or fixed day counts?
+
+`DECISIONS.md` §7: every months window in the package is a fixed day count — 12 months
+is `[index − 365, index − 1]` at 1L, 2L and 3L alike; 3 months is 90 days. The reasoning
+is that `add_months()` would give two patients indexed a day apart different windows,
+and 90 is the shortest three calendar months so it is the more permissive reading.
+
+> "Status: **open, pending study-team sign-off**. 'Months' can be read as calendar
+> months or as fixed days, and the code uses fixed days. The 1L sensitivity put the two
+> readings **seven patients apart**."
+
+The new protocol says "12-month" and "3 months" throughout and never disambiguates.
+
+### Q22. How should a partial death date be constructed?
+
+`DECISIONS.md` §8: `YMDOD` is year and month, sometimes year alone. The build places a
+year-and-month death on the **15th** of that month, a year-only death on **15 July**,
+bumps either to the period end if it would fall before the qualifying diagnosis, and
+never lets it precede `MM_DX_DT`.
+
+> "Status: **open, pending study-team sign-off**. The 15th-of-month rule does not cover
+> a year-only record, or a diagnosis falling after the constructed date. Both occur in
+> the CDM and needed a convention."
+
+This one matters more under the new protocol than it did under the old: **OS is a
+primary reported outcome**, and every OS estimate inherits the ±15-day construction.
+
+### Q23. Which pregnancy window?
+
+`DECISIONS.md` §9: the build applies the exclusion over the **whole study period**;
+the narrower reading is the patient's own baseline and follow-up. The wider window
+excludes more — *"a pregnancy claim years from a patient's index date drops them under
+this reading and would not under the other"*.
+
+> "Status: **open, pending sign-off on the window**."
+
+The new protocol says "during the study period" (X3), which is the build's reading — so
+this is close to settled, but §9 raises a second question the protocol does not answer:
+if the narrower reading were ever adopted, does its follow-up stop at disenrolment?
+That is `Q13` again, in a different place.
+
+### Q24. Should the `ICD_FLAG` finding be gated?
+
+`DECISIONS.md` §11: 16 rows across two CDM tables carried a blank `ICD_FLAG` on the
+first production run. Those rows match no code list, so the cohort does not change — but
+the miss cuts both ways, and `NDMM_ICD_FLAG_MAX_ROWS` (a ceiling that stops the build)
+ships **unset**.
+
+> "Status: **ACCEPTED for 2026q1, unbounded by default. Re-read on each refresh.**
+> Setting `NDMM_ICD_FLAG_MAX_ROWS` is the study team's call and the number is theirs —
+> it is a governance decision, not a coding one, which is why the code ships with none."
+
+---
+
+## What the new protocol closes for the build
+
+`Jul 28/ndmm/README.md` has a section headed "Thresholds worth double-checking" —
+four thresholds *"written down inconsistently in different places"*. **The Aug 2026
+protocol states all four explicitly, and every one agrees with what the build does.**
+
+| criterion | sometimes written as | this build | the new protocol |
+|---|---|---|---|
+| enrolment gaps | `< 30 days` | `<= 30 days` | *"gaps in enrolment of **≤ 30 days**"* ✓ |
+| other cancer | `>1 IP or >2 OP` | `>=1 IP or >=2 OP` | *"either **≥ 1 inpatient or ≥ 2 outpatient**"* ✓ |
+| adult age | `> 18` | `>=18` | *"Aged **≥ 18 years**"* ✓ |
+| outpatient MM diagnosis | `> 2 claims` | `>=2 claims` | *"**≥ 2 outpatient** medical claims"* ✓ |
+
+That section can be struck once the protocol is the reference.
+
+---
+
+## Questions that already have a price on them
+
+Four of the decisions above do not need a new run to cost — the build writes the
+alternative into the warehouse on **every** run:
+
+| table | what it prices | bears on |
+|---|---|---|
+| `<prefix>NDMM_FU_CE_COUNTS` | cohort size at 0, 30, 60 and 90 days and at exactly three calendar months, applied row marked | the follow-up rework, `BUILD_DELTA.md` §2, and Q21 |
+| `<prefix>NDMM_PREG_WINDOW_COUNTS` | both pregnancy-window readings, with the incremental exclusions separated from the raw claim counts | Q23 |
+| `<prefix>NDMM_INDEX_AGENTS` | every `CL_MED_ABBR`, whether this run lets it set an index, and how many patients it set one for | the panobinostat / elotuzumab bars, and Q6 |
+| `<prefix>NDMM_OTHER_MALIG_GROUPS`, `<prefix>NDMM_OTHER_MALIG_GRAIN` | the pairing-grain choice, per category, against the per-label grain | the X2 layered readings |
+
+`Jul 28/ndmm/followup_days.sql` is the follow-up distribution on both definitions,
+paste-and-run against this build's own output.
+
+For the index-agent bars specifically: `NDMM_INDEX_EXCLUDED_ABBRS` checks every entry
+against the code list and **stops the run on a name that matches nothing**, so a
+misspelled "panobinostat" cannot quietly bar no one.
 
 ---
 
