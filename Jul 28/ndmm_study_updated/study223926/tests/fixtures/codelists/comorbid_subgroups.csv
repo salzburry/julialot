@@ -1,0 +1,3 @@
+concept,code_type,code,icd_family
+neuropathy,ICD10DIAG,Z300,ICD10
+lung_parenchymal_disease,ICD10DIAG,Z301,ICD10
