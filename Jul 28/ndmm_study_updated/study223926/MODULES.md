@@ -17,7 +17,7 @@ exists and sparklyr attaches to it, so there is no DSN and no password:
 Rscript build.R                                    # on the cluster
 DRY_RUN=TRUE Rscript build.R                       # print the plan, touch nothing
 MODULES=safety COHORTS=2L Rscript build.R          # one module, one cohort
-Rscript tests/run_tests.R                          # 156 checks, no warehouse
+Rscript tests/run_tests.R                          # 173 checks, no warehouse
 ```
 
 `SPARK_METHOD=databricks_connect` drives a named cluster from outside and is
@@ -89,10 +89,12 @@ lands on the run's own metadata row where no reader can miss it.
 | `R/db_utils_223926.R` | sparklyr connection, logging, table naming, the step runner. |
 | `R/run_223926.R` | Resolves the plan, walks the modules, writes the run metadata. |
 | `R/modules/*.R` | One file per module. Nothing else defines a clinical rule. |
-| `tests/run_tests.R` | 156 checks that need no warehouse. Most read the package's source; the last section RUNS every module for every cohort against recorders and parses every statement it emits. |
-| `tests/emit_sql.R` | That harness. Stubs the four functions that touch Spark, so a module's R and its SQL are both exercised without a cluster. |
-| `tests/parse_sql.py` | Parses each captured statement in the Spark dialect (sqlglot). Reports SKIP, not a pass, when sqlglot is absent. |
-| `tests/fixtures/codelists/` | Filled miniatures of all eleven code lists, so the harness can run the modules that need one. Test data - not codes to use. |
+| `tests/run_tests.R` | 173 checks that need no warehouse. The last sections RUN every module for every cohort, parse every statement they emit, and **execute** them against fixtures. |
+| `tests/emit_sql.R` | The harness. Stubs only what touches Spark, so a module's R and its SQL are both exercised without a cluster. |
+| `tests/parse_sql.py` | Parses each captured statement in the Spark dialect (sqlglot). |
+| `tests/run_duckdb.py` | **Executes** them: transpiles to DuckDB, runs against `tests/fixtures/cdm`, checks 58 golden numbers, then runs the whole script again and checks nothing doubled. |
+| `tests/expectations.py` | Those golden numbers. `tests/fixtures/EXPECTED.md` derives every one by hand. |
+| `tests/fixtures/` | Six synthetic patients, chosen so each makes a protocol rule visible, and filled miniatures of all eleven code lists. Test data — not codes to use. |
 
 ## Modules
 
@@ -105,13 +107,14 @@ lands on the run's own metadata row where no reader can miss it.
 | `demographics` | `S_DEMOGRAPHICS` — age, sex, region, race, ethnicity, insurance | — |
 | `comorbidity` | `S_COMORBIDITY` — Charlson (Quan 2011), MM-adjusted. With `FRAILTY=TRUE` also `S_FRAILTY`; with `COMORBID_SUBGROUPS=TRUE` also `S_COMORB_SUBGROUP` | `charlson_quan2011.csv`, `mm_dx.csv`; plus `frailty_kim2018.csv` (Annex 7) and `comorbid_subgroups.csv` (Annex 3) when those switches are on |
 | `soc` | `S_SOC` — regimen category per line | `soc_regimen_categories.csv` (Annex 2) |
-| `safety` | `S_SAFETY_EVENTS`, `S_SAFETY_COUNTED`, `S_SAFETY_RATES` | `safety_events.csv` (Annex 3) |
+| `safety` | `S_SAFETY_EVENTS`, `S_SAFETY_COUNTED`, `S_SAFETY_RATES` — baseline prevalence and on-treatment incidence, counted the same way | `safety_events.csv` (Annex 3) |
 | `hcru` | `S_HCRU_EVENTS`, `S_HCRU_RATES` | `hcru.csv`, `mm_dx.csv` |
 | `malignancy` | `S_MALIGNANCY`, `S_MALIGNANCY_RATES` | `secondary_malig.csv` (Annex 3) |
 | `tte` | `S_TTE` — TTNT, TTD, OS | — |
 | `patterns` | `S_PATTERNS`, `S_SWITCH`, `S_TX_ATTRITION` | via `soc` |
+| `release` | `S_*_RELEASE` — every rate and percentage table with cells under 25 patients suppressed | — |
 
-**Six of the twelve run today.** `MODULES=spine,cohorts,attrition,periods,demographics,tte`
+**Six of the thirteen run today.** `MODULES=spine,cohorts,attrition,periods,demographics,tte`
 builds all four cohorts, every window, the demographics and the time-to-event
 outcomes, and needs no code list this repo does not already have. The other six
 are blocked on Annexes 2 and 3 (`../CODELISTS.md`), and the preflight says so
@@ -143,6 +146,71 @@ default, because both need annexes that were not delivered — Annex 7 and Annex
 the point of the switch: asking for frailty tells you exactly what is missing,
 rather than producing a column of zeros that reads as a cohort with no frail
 patients.
+
+### The two periods are counted the same way
+
+§7.8.1's counting rules — same-day claims are one event, a ≥ 30 day washout
+between acute events, a chronic condition counted once — apply to **both**
+baseline prevalence and on-treatment incidence. Baseline used to be a bare
+`count(*)` over every event date in the window, so a patient with chronic
+kidney disease coded at twelve visits contributed twelve events to the
+background prevalence of a condition that counts once, and Objective 1 and
+Objective 2 were computed under different rules. They are the same machinery
+now.
+
+Exactly one difference survives, and it is the protocol's: the baseline
+denominator is the window's own person-time *"irrespective of prior event
+history"*, so nobody leaves it and a chronic first occurrence counts for
+everyone. On treatment, a patient with prior history is out of **both** the
+numerator and the denominator, and `N_AT_RISK` on the rates table says how
+many were left.
+
+### The secondary 2L cohort stops the run
+
+§7.4.1.1 wants 2L initiators *"irrespective of whether their 1L initiation
+occurred during the primary cohort ascertainment period"*, and §7.8.1 permits a
+prior malignancy. This package **cannot build that** from its own inputs: every
+cohort is an inner join onto `INPUT_COHORT_TABLE`, which is the primary NDMM
+cohort with the other-cancer exclusion and the 2019 index floor already
+applied, and the LOT run was built over that same population.
+
+`SEC2L_APPLY_OTHER_CANCER=FALSE` used to drop the criterion from a **list** —
+which changed the funnel and changed nothing about who was in the cohort, so
+the baseline malignancy prevalence that is the whole reason the cohort exists
+came out zero by construction. Selecting SEC2L now stops the run and names the
+two ways forward: point `INPUT_COHORT_TABLE` at a cohort and LOT run built
+without those rules and set `SEC2L_INPUT_IS_WIDE=TRUE`, or set
+`SEC2L_APPLY_OTHER_CANCER=TRUE` to build the nested version knowingly — the run
+then records that it did.
+
+### Suppression is applied, not just expressed
+
+*"Stratifications with < 25 patients will not be performed"* (§7.8). The rule
+lived in `R/suppression.R` from the start and **nothing called it**: every
+table left the warehouse with raw cell counts, n = 1 included.
+
+The `release` module applies it in SQL. It does not overwrite the raw tables —
+each suppressed table is written beside its source as `S_*_RELEASE`, so QC can
+still read the counts behind a rate while the thing that leaves the warehouse
+cannot. The suppressed count is nulled along with the values, because
+publishing the *n* a suppressed rate was computed from suppresses nothing. A
+group left with exactly one suppressed row is reported, not silently regrouped.
+
+### A recorded reading is either applied here or labelled
+
+`S_RUN_METADATA.OPEN_QUESTION_READINGS` records every open question's reading.
+Nine of them were settings this package applied **nowhere** — the exact failure
+this document lists as fixed for `INDEX_EXCLUDED_ABBRS`. They are split now:
+`OPEN_QUESTION_SOURCE` marks each `here` or `upstream`, an upstream reading is
+written with that word beside it, and a test emits the whole run twice for
+every `here` setting — once at its default, once at an alternative — and
+**requires the SQL to differ**. A setting that stops being applied fails the
+suite rather than being recorded forever as the reading that produced the
+numbers.
+
+`BRIDGED_GAP_IS_PERSON_TIME` is gone rather than relabelled: it named a
+person-time rule, and `BASELINE_PY` and `PERIOD_PY` are window lengths
+whichever way it was set. `../OPEN_QUESTIONS.md` Q19 is still open.
 
 ## What it refuses to do
 
@@ -269,7 +337,7 @@ Two things are deliberately left as they are: `MEDIAN_LOS` uses
 
 It is not wired into `validation/run_gate.R`, and it has never been run against
 the warehouse — no code lists, and several settings still want the study team's
-answer (`../OPEN_QUESTIONS.md`). The 156 tests check the selection logic, the
+answer (`../OPEN_QUESTIONS.md`). The 173 tests check the selection logic, the
 boundary conventions, the counting rules, and — running every module for every
 cohort against recorders — that each module's R reaches the end of the function
 and every statement it emits parses as Spark SQL. They check no number, because

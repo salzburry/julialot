@@ -30,6 +30,34 @@ CRITERIA_1L <- c("I1_mm_dx", "I2_age", "I3_eligible_1l_tx", "I4_ce_pre",
                  "I5_followup", "X1_prior_mm_tx", "X2_other_cancer",
                  "X3_pregnancy", "X4_belantamab")
 
+# table -> the count the rule reads, and the values that go with it when a cell
+# is suppressed. Spec data, so a module that adds a column cannot quietly leave
+# it unsuppressed - tests/run_tests.R checks every declared column exists and
+# every table with a patient count is declared.
+SUPPRESSION_SPEC <- list(
+  S_SAFETY_RATES = list(
+    n_col = "N_PATIENTS",
+    value_cols = c("N_EVENTS", "N_AT_RISK", "PERSON_YEARS", "RATE",
+                   "RATE_LO", "RATE_HI")),
+  S_HCRU_RATES = list(
+    n_col = "N_PATIENTS",
+    value_cols = c("N_EVENTS", "PERSON_YEARS", "RATE", "MEAN_LOS",
+                   "MEDIAN_LOS", "N_LOS_EXCLUDED")),
+  S_MALIGNANCY_RATES = list(
+    n_col = "N_PATIENTS",
+    value_cols = c("PERSON_YEARS", "RATE")),
+  S_PATTERNS = list(
+    n_col = "N_PATIENTS",
+    value_cols = c("PCT")),
+  S_SWITCH = list(
+    n_col = "N_PATIENTS",
+    value_cols = character(0)),
+  S_TX_ATTRITION = list(
+    n_col = "N_PATIENTS",
+    value_cols = c("N_DENOM", "PCT"))
+)
+
+
 COHORTS <- list(
   `1L` = list(
     key = "1L", label = "1L (NDMM)", lot_num = 1L, nested_in = NA_character_,
@@ -151,7 +179,16 @@ MODULES <- list(
     key = "patterns", label = "Treatment patterns, attrition and switching",
     needs = c("periods", "soc"), codelists = character(0),
     outputs = c("S_PATTERNS", "S_SWITCH", "S_TX_ATTRITION"),
-    per_cohort = TRUE, fn = "mod_patterns", blocked = NA_character_)
+    per_cohort = TRUE, fn = "mod_patterns", blocked = NA_character_),
+
+  release = list(
+    key = "release", label = "Small-cell suppression, applied",
+    # Everything that produces a rate or a percentage.
+    needs = c("safety", "hcru", "malignancy", "patterns"),
+    codelists = character(0),
+    outputs = paste0(names(SUPPRESSION_SPEC), "_RELEASE"),
+    per_cohort = FALSE,
+    fn = "mod_release", blocked = NA_character_)
 )
 
 # ---------------------------------------------------------------------------
@@ -179,9 +216,36 @@ resolve_cohorts <- function(cfg) {
            " - a nested cohort built without its parent is a different ",
            "population.", call. = FALSE)
   }
-  # The one criterion that varies by setting rather than by cohort.
-  if ("SEC2L" %in% want && !isTRUE(cfg$sec2l_apply_other_cancer))
+  # The one criterion that varies by setting rather than by cohort - and the
+  # one place where dropping it from this list is not enough to make it true.
+  #
+  # Membership comes from an INNER JOIN onto INPUT_COHORT_TABLE (01_cohorts.R),
+  # which is the primary NDMM cohort: X2 and the 1L index floor were applied by
+  # the cohort build, upstream, and the LOT run was built over that same
+  # population. Removing the criterion's NAME here changes the funnel and
+  # changes nothing about who is in the cohort.
+  if ("SEC2L" %in% want && !isTRUE(cfg$sec2l_apply_other_cancer)) {
+    if (!isTRUE(cfg$sec2l_input_is_wide))
+      stop("SELECTION ERROR: the secondary 2L cohort cannot be built from ",
+           "this input.\n",
+           "s7.4.1.1 takes 2L initiators irrespective of whether their 1L fell ",
+           "in the primary ascertainment period, and s7.8.1 permits a prior ",
+           "malignancy. But every cohort here is an inner join onto ",
+           "INPUT_COHORT_TABLE (", cfg$input_cohort_table, "), which is the ",
+           "primary NDMM cohort with the other-cancer exclusion and the ",
+           cfg$lot1_index_from, " index floor already applied - and the LOT ",
+           "run was built over that same population. Built from it, SEC2L is ",
+           "nested in the primary cohort and its baseline malignancy ",
+           "prevalence is zero by construction, which is the one number the ",
+           "cohort exists to produce.\n",
+           "Either point INPUT_COHORT_TABLE at a cohort (and a LOT run) built ",
+           "without those two rules and set SEC2L_INPUT_IS_WIDE=TRUE, or set ",
+           "SEC2L_APPLY_OTHER_CANCER=TRUE to build the nested version ",
+           "knowingly - the run then records that it did.\n",
+           "See ../IE_CRITERIA.md section 1 and ../OPEN_QUESTIONS.md Q7.",
+           call. = FALSE)
     out$SEC2L$criteria <- setdiff(out$SEC2L$criteria, "X2_other_cancer")
+  }
 
   # Declaration order, which is 1L, 2L, 3L, SEC2L - parents before the cohorts
   # nested in them, so the attrition table reads top to bottom.

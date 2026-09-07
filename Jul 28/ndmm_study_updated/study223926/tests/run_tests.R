@@ -84,10 +84,19 @@ cat("\nconfig and contract\n")
                           check_settings(cfg_defaults())))),
      "a 1L index floor before the study start stops the run")
   r <- open_question_readings(cfg)
-  ok(length(r) == 20 && all(grepl("=", r)),
+  ok(length(r) == length(OPEN_QUESTION_SOURCE) &&
+     all(nzchar(sub("^[^=]*=", "", r))),
      "every open question's reading is recorded for the run")
   ok(any(grepl("^frailty=", r)) && any(grepl("^comorbid_subgroups=", r)),
      "including whether frailty and the subgroup flags were asked for at all")
+  # A reading this package does not apply must SAY so. Nine of these were
+  # written onto the metadata row as the reading that produced the numbers
+  # while the package applied none of them.
+  ok(all(grepl("\\(upstream\\)$",
+               r[OPEN_QUESTION_SOURCE == "upstream"])),
+     "and a reading applied upstream is labelled, not passed off as this run's")
+  ok(!any(grepl("\\(upstream\\)", r[OPEN_QUESTION_SOURCE == "here"])),
+     "while a reading this package applies is not")
 }
 
 cat("\nselection\n")
@@ -109,9 +118,10 @@ cat("\nselection\n")
   ok(identical(names(resolve_cohorts(cfg0(c(COHORTS = "3L,1L,2L")))),
                c("1L", "2L", "3L")),
      "cohorts come out in line order however they were asked for")
-  s <- resolve_cohorts(cfg0(c(COHORTS = "1L,SEC2L")))$SEC2L
+  s <- resolve_cohorts(cfg0(c(COHORTS = "1L,SEC2L",
+                              SEC2L_INPUT_IS_WIDE = "TRUE")))$SEC2L
   ok(!("X2_other_cancer" %in% s$criteria),
-     "the secondary 2L cohort drops the other-cancer exclusion by default")
+     "the secondary 2L cohort drops the other-cancer exclusion on a wide input")
   s2 <- resolve_cohorts(cfg0(c(COHORTS = "1L,SEC2L",
                                SEC2L_APPLY_OTHER_CANCER = "TRUE")))$SEC2L
   ok("X2_other_cancer" %in% s2$criteria,
@@ -405,7 +415,8 @@ cat("\nregressions from the adversarial review\n")
      "2L inherits the other-cancer exclusion from 1L")
   ok(cohort_applies(COHORTS[["3L"]], "X2_other_cancer"),
      "and so does 3L")
-  sec <- resolve_cohorts(cfg0(c(COHORTS = "1L,SEC2L")))$SEC2L
+  sec <- resolve_cohorts(cfg0(c(COHORTS = "1L,SEC2L",
+                                SEC2L_INPUT_IS_WIDE = "TRUE")))$SEC2L
   ok(!cohort_applies(sec, "X2_other_cancer"),
      "while the secondary 2L cohort, as resolved, does not")
   sec_on <- resolve_cohorts(cfg0(c(COHORTS = "1L,SEC2L",
@@ -656,6 +667,22 @@ cat("\nthe modules, run against recorders\n")
      paste0("the run emits statements to check (", length(run$sql), ")"))
   ok(setequal(run$modules, names(MODULES)) && setequal(run$cohorts, names(COHORTS)),
      "with every registered module and cohort selected")
+  # The secondary 2L cohort cannot be built from a primary-cohort input, and
+  # dropping X2 from its criteria LIST does not change who is in it: membership
+  # is an inner join onto that table. The refusal is the finding.
+  e <- errs(suppressMessages(resolve_cohorts(cfg0(c(COHORTS = "1L,2L,SEC2L")))))
+  ok(!is.na(e) && grepl("nested in the primary cohort", e),
+     "SEC2L stops the run rather than silently building a nested cohort")
+  ok(!is.na(e) && grepl("SEC2L_INPUT_IS_WIDE", e) &&
+     grepl("SEC2L_APPLY_OTHER_CANCER", e),
+     "and names both ways out")
+  ok(is.na(errs(suppressMessages(resolve_cohorts(cfg0(
+       c(COHORTS = "1L,2L,SEC2L", SEC2L_APPLY_OTHER_CANCER = "TRUE")))))),
+     "building the nested version knowingly is allowed")
+  cw <- suppressMessages(resolve_cohorts(cfg0(
+    c(COHORTS = "1L,2L,SEC2L", SEC2L_INPUT_IS_WIDE = "TRUE"))))
+  ok(!("X2_other_cancer" %in% cw$SEC2L$criteria),
+     "and a wide input drops the other-cancer exclusion, as s7.8.1 says")
 
   # A statement no module can have meant: an unfilled sprintf placeholder, or
   # one that stops mid-clause. Both are checked by tests/parse_sql.py, which
@@ -694,6 +721,88 @@ cat("\nthe modules, run against recorders\n")
   # The attrition funnel is monotone by construction: a step can only remove
   # rows. It was not - a criterion applied upstream reset the count to the
   # unfiltered total, so N_REMAINING went back up mid-funnel.
+  # --- suppression is applied, and its spec is complete -------------------
+  #
+  # R/suppression.R expressed the < 25 rule from the start and nothing called
+  # it: every table left the warehouse with raw cell counts. The rule is a
+  # module now, and these check it cannot fall out of step with the tables.
+  rel_sql <- paste(vapply(Filter(function(x) grepl("^step:release_", x$tag),
+                                 run$sql), function(x) x$sql, character(1)),
+                   collapse = "\n")
+  ok(nzchar(rel_sql), "the suppression rule is applied by a module of its own")
+  ok(all(vapply(names(SUPPRESSION_SPEC), function(t)
+           grepl(paste0(t, "_RELEASE"), rel_sql, fixed = TRUE), logical(1))),
+     "and writes a release table for every table it declares")
+  # Every column the spec names must exist on the table it names, or the
+  # suppression silently misses it.
+  ddl <- paste(vapply(Filter(function(x)
+      grepl("^CREATE TABLE IF NOT EXISTS", x$sql), run$sql),
+      function(x) x$sql, character(1)), collapse = "\n")
+  missing_cols <- unlist(lapply(names(SUPPRESSION_SPEC), function(t) {
+    d <- regmatches(ddl, regexpr(paste0("CREATE TABLE IF NOT EXISTS \\S*", t,
+                                        " \\([^;]*?\\)\n"), ddl))
+    if (!length(d)) return(paste0(t, ": no DDL"))
+    cols <- c(SUPPRESSION_SPEC[[t]]$n_col, SUPPRESSION_SPEC[[t]]$value_cols)
+    cols[!vapply(cols, function(cl) grepl(paste0("\\b", cl, "\\b"), d),
+                 logical(1))]
+  }))
+  ok(length(missing_cols) == 0,
+     paste0("and every column it suppresses exists on that table",
+            if (length(missing_cols))
+              paste0(" [missing: ", paste(missing_cols, collapse = ", "), "]")
+            else ""))
+  # And nothing that publishes a patient count escapes the spec.
+  counts <- Filter(function(t) {
+    d <- regmatches(ddl, regexpr(paste0("CREATE TABLE IF NOT EXISTS \\S*", t,
+                                        " \\([^;]*?\\)\n"), ddl))
+    length(d) && grepl("N_PATIENTS", d)
+  }, unique(unlist(lapply(MODULES, `[[`, "outputs"))))
+  ok(all(counts %in% names(SUPPRESSION_SPEC)),
+     paste0("and every table publishing a patient count is in the spec (",
+            paste(setdiff(counts, names(SUPPRESSION_SPEC)), collapse = ", "),
+            ")"))
+
+  # --- a setting marked "here" must actually change the SQL ---------------
+  #
+  # The check that makes the label above true rather than a comment: emit the
+  # whole run twice, once with the setting at its default and once at an
+  # alternative, and require the emitted SQL to DIFFER. A setting that stops
+  # being applied - or was never applied - fails here rather than being
+  # recorded on every run as the reading that produced the numbers.
+  ALTERNATIVES <- list(
+    fu_evidence_rule = function(c) { c$fu_evidence_rule <- "claim_after_index"; c },
+    sec2l_apply_other_cancer = function(c) {
+      c$cohorts <- c("1L", "SEC2L"); c$sec2l_apply_other_cancer <- TRUE; c },
+    sec2l_input_is_wide = function(c) {
+      c$cohorts <- c("1L", "SEC2L"); c$sec2l_input_is_wide <- TRUE; c },
+    censor_at_disenrollment = function(c) { c$censor_at_disenrollment <- FALSE; c },
+    months_as = function(c) { c$months_as <- "calendar"; c },
+    baseline_includes_index = function(c) { c$baseline_includes_index <- TRUE; c },
+    comorbidity_baseline_includes_index =
+      function(c) { c$comorbidity_baseline_includes_index <- FALSE; c },
+    region_source = function(c) { c$region_source <- "region_column"; c },
+    enrol_attr_at = function(c) { c$enrol_attr_at <- "latest_span"; c },
+    ed_definition = function(c) { c$ed_definition <- c("revenue", "pos", "cpt"); c },
+    frailty = function(c) { c$frailty <- TRUE; c },
+    comorbid_subgroups = function(c) { c$comorbid_subgroups <- TRUE; c }
+  )
+  here_keys <- names(OPEN_QUESTION_SOURCE)[OPEN_QUESTION_SOURCE == "here"]
+  ok(setequal(here_keys, names(ALTERNATIVES)),
+     "every setting marked as applied here has an alternative to test it with")
+  base_sql <- emitted_sql(RUN)
+  inert <- character(0)
+  for (k in intersect(here_keys, names(ALTERNATIVES))) {
+    alt <- with_env(base_env, capture_emitted_sql(".", function(cfg) {
+      cfg$sec2l_input_is_wide <- TRUE
+      ALTERNATIVES[[k]](cfg)
+    }))
+    if (identical(emitted_sql(alt), base_sql)) inert <- c(inert, k)
+  }
+  ok(length(inert) == 0,
+     paste0("and changing it changes the SQL the run emits",
+            if (length(inert))
+              paste0(" [inert: ", paste(inert, collapse = ", "), "]") else ""))
+
   # --- the statements, executed -----------------------------------------
   #
   # Parsing proves a statement is well formed. It cannot prove a rate is

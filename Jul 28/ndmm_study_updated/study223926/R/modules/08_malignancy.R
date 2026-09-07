@@ -141,23 +141,38 @@ mod_malignancy <- function(con, cfg, cohort) {
     allow_empty = TRUE)
 
   if (reports_prevalence) {
-    db_exec(con, sprintf("
+    # Driven from the denominator crossed with the category list, like the
+    # incidence block above and for the same reason: a category with no
+    # baseline events produced no row at all, and downstream that is
+    # indistinguishable from the module not having run for it.
+    run_step(con, paste0("malignancy_prevalence_", cohort$key), sprintf("
       INSERT INTO %1$s
-      WITH den AS (
+      WITH cats AS (SELECT DISTINCT category FROM %6$s),
+      den AS (
         SELECT COHORT, LOT_NUM, sum(BASELINE_PY) AS PY
         FROM %4$s WHERE COHORT = '%5$s' GROUP BY COHORT, LOT_NUM
+      ),
+      num AS (
+        SELECT p.COHORT, p.LOT_NUM, m.CATEGORY,
+               count(DISTINCT m.PATID) AS N_PATIENTS
+        FROM %3$s m
+        INNER JOIN %4$s p ON p.PATID = m.PATID AND p.COHORT = m.COHORT
+        WHERE p.COHORT = '%5$s'
+          AND m.FIRST_DT BETWEEN p.BASELINE_START AND p.BASELINE_END
+        GROUP BY p.COHORT, p.LOT_NUM, m.CATEGORY
       )
-      SELECT p.COHORT, p.LOT_NUM, 'BASELINE' AS PERIOD, m.CATEGORY,
-             count(DISTINCT m.PATID), max(den.PY), %2$s
-      FROM %3$s m
-      INNER JOIN %4$s p ON p.PATID = m.PATID AND p.COHORT = m.COHORT
-      INNER JOIN den ON den.COHORT = p.COHORT AND den.LOT_NUM = p.LOT_NUM
-      WHERE p.COHORT = '%5$s'
-        AND m.FIRST_DT BETWEEN p.BASELINE_START AND p.BASELINE_END
-      GROUP BY p.COHORT, p.LOT_NUM, m.CATEGORY",
+      SELECT den.COHORT, den.LOT_NUM, 'BASELINE' AS PERIOD, cats.category,
+             coalesce(num.N_PATIENTS, 0), den.PY, %2$s
+      FROM den
+      CROSS JOIN cats
+      LEFT JOIN num ON num.COHORT = den.COHORT AND num.LOT_NUM = den.LOT_NUM
+                   AND num.CATEGORY = cats.category",
       wrk("S_MALIGNANCY_RATES"),
-      rate_sql("count(DISTINCT m.PATID)", "max(den.PY)", cfg),
-      wrk("S_MALIGNANCY"), wrk("S_PERIODS"), cohort$key))
+      rate_sql("coalesce(num.N_PATIENTS, 0)", "den.PY", cfg),
+      wrk("S_MALIGNANCY"), wrk("S_PERIODS"), cohort$key, "S_CL_MALIG"),
+      qc = sprintf("SELECT count(*) AS n_rows FROM %s
+                    WHERE COHORT='%s' AND PERIOD='BASELINE'",
+                   wrk("S_MALIGNANCY_RATES"), cohort$key))
     log_msg("  ", cohort$key, " permits a prior malignancy, so baseline ",
             "prevalence is reported alongside incidence (s7.8.1).")
   } else {

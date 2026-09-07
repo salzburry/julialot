@@ -15,11 +15,11 @@ the two, so nobody has to guess which is which.
 | the R package | `study223926/` |
 | its settings | `study223926/config.csv` |
 | its code lists | `study223926/codelists/` — the shapes ship with it; the codes do not exist yet anywhere |
-| its tests | `study223926/tests/run_tests.R` — 156 checks, no warehouse. The last section runs every module against recorders using `study223926/tests/fixtures/codelists/`, which ship with it |
+| its tests | `study223926/tests/run_tests.R` — 173 checks, no warehouse. The last section runs every module against recorders using `study223926/tests/fixtures/codelists/`, which ship with it |
 
 One optional external tool: `tests/parse_sql.py` parses the captured statements
 with **sqlglot**, which is a Python package rather than a file in this folder.
-Without it that one check reports `SKIP` — not a pass — and the other 155 run
+Without it that one check reports `SKIP` — not a pass — and the other 172 run
 unchanged.
 
 Two things live outside the folder and always will, because they are not files:

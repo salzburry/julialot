@@ -35,8 +35,15 @@ mod_demographics <- function(con, cfg, cohort) {
   # Which enrolment row supplies the attribute.
   pick <- if (identical(cfg$enrol_attr_at, "index_span"))
     "AND e.ELIGEFF <= p.INDEX_DATE AND e.ELIGEND >= p.INDEX_DATE" else ""
+  # A TOTAL order. MEMBER_ENROLLMENT carries one row per plan segment, and a
+  # member with two concurrent plans - commercial plus Medicare is the common
+  # case, and BUS is one of the columns being read - has two rows with the same
+  # ELIGEFF covering the index. Ranked on that alone, rn = 1 picks arbitrarily
+  # and RACE, ETHNICITY, REGION and INSURANCE_TYPE can differ between two runs
+  # of identical code on identical data.
   ordering <- if (identical(cfg$enrol_attr_at, "index_span"))
-    "e.ELIGEFF DESC" else "e.ELIGEND DESC"
+    "e.ELIGEFF DESC, e.ELIGEND DESC, e.PAT_PLANID"
+    else "e.ELIGEND DESC, e.ELIGEFF DESC, e.PAT_PLANID"
 
   prepare_table(con, wrk("S_DEMOGRAPHICS"),
     "PATID string, COHORT string, INDEX_DATE date,

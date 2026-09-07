@@ -126,24 +126,53 @@ EXPECTATIONS = [
      [(1,)]),
     ("an acute event 9 days after a counted one does not count; 61 days does",
      "SELECT EVENT_DT::VARCHAR FROM wk.S_SAFETY_COUNTED WHERE PATID='P1' "
-     "AND COHORT='1L' AND CONDITION='acute_hepatitis_b' ORDER BY EVENT_DT",
+     "AND COHORT='1L' AND PERIOD='TREATMENT' "
+     "AND CONDITION='acute_hepatitis_b' ORDER BY EVENT_DT",
      [("2019-04-01",), ("2019-06-01",)]),
     ("a chronic condition counts once however many times it is coded",
      "SELECT count(*) FROM wk.S_SAFETY_COUNTED WHERE PATID='P5' "
-     "AND COHORT='1L' AND CONDITION='toxic_liver_disease'",
+     "AND COHORT='1L' AND PERIOD='TREATMENT' "
+     "AND CONDITION='toxic_liver_disease'",
      [(1,)]),
     ("two acute events exactly 30 days apart are two events, not one",
      "SELECT EVENT_DT::VARCHAR FROM wk.S_SAFETY_COUNTED WHERE PATID='P3' "
-     "AND COHORT='1L' AND CONDITION='acute_hepatitis_b' ORDER BY EVENT_DT",
+     "AND COHORT='1L' AND PERIOD='TREATMENT' "
+     "AND CONDITION='acute_hepatitis_b' ORDER BY EVENT_DT",
      [("2020-03-01",), ("2020-03-31",)]),
     ("a chronic code ON the period start is not prior history",
      "SELECT count(*) FROM wk.S_SAFETY_COUNTED WHERE PATID='P2' "
-     "AND COHORT='1L' AND CONDITION='toxic_liver_disease'",
+     "AND COHORT='1L' AND PERIOD='TREATMENT' "
+     "AND CONDITION='toxic_liver_disease'",
      [(1,)]),
-    ("a chronic condition with prior history counts for nobody",
+    ("a chronic condition with prior history counts for nobody on treatment",
      "SELECT count(*) FROM wk.S_SAFETY_COUNTED WHERE PATID='P1' "
-     "AND COHORT='1L' AND CONDITION='toxic_liver_disease'",
+     "AND COHORT='1L' AND PERIOD='TREATMENT' "
+     "AND CONDITION='toxic_liver_disease'",
      [(0,)]),
+    # The baseline period counts the SAME way - washout for acute, once for
+    # chronic - and differs in exactly one thing, which is the protocol's:
+    # s7.8.1 takes the baseline denominator "irrespective of prior event
+    # history", so nobody is dropped from it and a chronic first occurrence
+    # counts for everyone.
+    ("but it does count at baseline, where prior history is irrelevant",
+     "SELECT EVENT_DT::VARCHAR FROM wk.S_SAFETY_COUNTED WHERE PATID='P1' "
+     "AND COHORT='1L' AND PERIOD='BASELINE' "
+     "AND CONDITION='toxic_liver_disease'",
+     [("2018-07-01",)]),
+    ("and nobody leaves the baseline denominator",
+     "SELECT N_AT_RISK, round(PERSON_YEARS,4) FROM wk.S_SAFETY_RATES "
+     "WHERE COHORT='1L' AND PERIOD='BASELINE' AND LOT_NUM=1 "
+     "AND CONDITION='toxic_liver_disease'",
+     [(5, 4.9966)]),
+    ("while on treatment the not-at-risk leave it",
+     "SELECT N_AT_RISK FROM wk.S_SAFETY_RATES WHERE COHORT='1L' "
+     "AND PERIOD='TREATMENT' AND LOT_NUM=1 "
+     "AND CONDITION='toxic_liver_disease'",
+     [(4,)]),
+    ("every condition gets a baseline row too, events or not",
+     "SELECT count(*) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' "
+     "AND PERIOD='BASELINE'",
+     [(23,)]),
     ("and that patient leaves the chronic denominator too",
      "SELECT round(PERSON_YEARS,4) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' "
      "AND PERIOD='TREATMENT' AND LOT_NUM=1 AND CONDITION='toxic_liver_disease'",
@@ -203,6 +232,24 @@ EXPECTATIONS = [
      "WHERE COHORT='1L' AND PATID='P1'",
      [("2019-07-01", "2019-08-01")]),
 
+    # --- small-cell suppression, applied ---------------------------------
+    ("a released row below the threshold carries no numbers at all",
+     "SELECT N_PATIENTS, N_EVENTS, RATE, SUPPRESSED, SUPPRESSION_REASON "
+     "FROM wk.S_SAFETY_RATES_RELEASE WHERE COHORT='1L' AND PERIOD='TREATMENT' "
+     "AND LOT_NUM=1 AND CONDITION='acute_hepatitis_b'",
+     [(None, None, None, 1, "n < 25")]),
+    ("while the raw table keeps them, so QC can still read the counts",
+     "SELECT N_PATIENTS, N_EVENTS FROM wk.S_SAFETY_RATES WHERE COHORT='1L' "
+     "AND PERIOD='TREATMENT' AND LOT_NUM=1 AND CONDITION='acute_hepatitis_b'",
+     [(2, 4)]),
+    ("and nothing below the threshold escapes unsuppressed",
+     "SELECT count(*) FROM wk.S_SAFETY_RATES_RELEASE WHERE SUPPRESSED=0",
+     [(0,)]),
+    ("every rate table gets a release table",
+     "SELECT count(*) FROM wk.S_HCRU_RATES_RELEASE WHERE SUPPRESSED=1 "
+     "AND (N_PATIENTS IS NOT NULL OR RATE IS NOT NULL)",
+     [(0,)]),
+
     # --- time to event ----------------------------------------------------
     ("TTNT counts the index day and stops the day the next line starts",
      "SELECT TTNT_DAYS, TTNT_EVENT FROM wk.S_TTE "
@@ -227,5 +274,7 @@ RERUN_STABLE_TABLES = [
     "wk.S_SAFETY_EVENTS", "wk.S_SAFETY_COUNTED", "wk.S_SAFETY_RATES",
     "wk.S_HCRU_EVENTS", "wk.S_HCRU_RATES", "wk.S_MALIGNANCY",
     "wk.S_MALIGNANCY_RATES", "wk.S_TTE", "wk.S_PATTERNS", "wk.S_SWITCH",
-    "wk.S_TX_ATTRITION",
+    "wk.S_TX_ATTRITION", "wk.S_SAFETY_RATES_RELEASE", "wk.S_HCRU_RATES_RELEASE",
+    "wk.S_MALIGNANCY_RATES_RELEASE", "wk.S_PATTERNS_RELEASE",
+    "wk.S_SWITCH_RELEASE", "wk.S_TX_ATTRITION_RELEASE",
 ]

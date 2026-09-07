@@ -9,7 +9,7 @@
 MODULE_FILES <- c("00_spine.R", "01_cohorts.R", "02_periods.R",
                   "03_demographics.R", "04_comorbidity.R", "05_soc.R",
                   "06_safety.R", "07_hcru.R", "08_malignancy.R",
-                  "09_tte.R", "10_patterns.R")
+                  "09_tte.R", "10_patterns.R", "11_release.R")
 
 source_modules <- function(here) {
   for (f in MODULE_FILES) {

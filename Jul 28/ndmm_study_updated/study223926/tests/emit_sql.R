@@ -66,6 +66,10 @@ capture_emitted_sql <- function(here = ".", cfg_edit = identity) {
   cfg$codelist_dir <- normalizePath(file.path(here, "tests", "fixtures",
                                               "codelists"), mustWork = TRUE)
   cfg$cohorts <- names(env$COHORTS)
+  # SEC2L refuses to build from a primary-cohort input unless told the input is
+  # the wide one. Asserted here so the harness exercises all four cohorts; the
+  # refusal itself is checked in run_tests.R.
+  cfg$sec2l_input_is_wide <- TRUE
   cfg$modules <- names(env$MODULES)
   cfg <- cfg_edit(cfg)
   env$set_study_config(cfg)

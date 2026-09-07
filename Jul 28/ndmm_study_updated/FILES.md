@@ -37,5 +37,5 @@ unfilled one stops the run in its first second naming the annex that owes it.
 
 ```
 DRY_RUN=TRUE Rscript study223926/build.R      # print the plan, touch nothing
-Rscript study223926/tests/run_tests.R         # 156 checks, no warehouse
+Rscript study223926/tests/run_tests.R         # 173 checks, no warehouse
 ```

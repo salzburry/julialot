@@ -35,9 +35,9 @@ OTHER_CANCER_PAIR_GRAIN,icd3,icd3 or tumor_group. What two claims must share to 
 OTHER_CANCER_BOTH_IN_BASELINE,TRUE,Require both claims of a pair inside the baseline window
 PREGNANCY_WINDOW,study_period,study_period or patient_period - OPEN_QUESTIONS Q23
 SEC2L_APPLY_OTHER_CANCER,FALSE,The secondary 2L cohort permits prior malignancy - OPEN_QUESTIONS Q7
+SEC2L_INPUT_IS_WIDE,FALSE,"Asserts INPUT_COHORT_TABLE and its LOT run were built WITHOUT the other-cancer exclusion and the 1L index floor. Selecting SEC2L without it stops the run - the cohort would be nested in the primary one and its baseline malignancy prevalence zero by construction"
 #,,--- follow-up and censoring ---
 CENSOR_AT_DISENROLLMENT,TRUE,Protocol s7.1 ends follow-up at the end of continuous enrolment - OPEN_QUESTIONS Q13
-BRIDGED_GAP_IS_PERSON_TIME,TRUE,Count the days inside a bridged enrolment gap as covered person-time - OPEN_QUESTIONS Q19
 #,,--- demographics ---
 FRAILTY,FALSE,"TRUE computes the Kim 2018 claims-based frailty index. Needs frailty_kim2018.csv, which is Annex 7 and was not delivered - so TRUE stops the run naming it"
 COMORBID_SUBGROUPS,FALSE,"TRUE writes Table 4's baseline subgroup flags (neuropathy, lung parenchymal disease). Needs comorbid_subgroups.csv, which is Annex 3 and was not delivered"

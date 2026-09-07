@@ -112,11 +112,12 @@ chronic_prior_history_sql <- function(events, periods, out) {
 # so the number of rounds needed is the largest number of counted events any
 # one patient has for any one condition. run_acute_washout() loops until a
 # round adds nothing.
-acute_washout_round_sql <- function(events, periods, counted, cfg) {
+acute_washout_round_sql <- function(events, periods, counted, cfg,
+                                    period_label = "TREATMENT") {
   w <- as.integer(cfg$acute_washout_days)
   sprintf("
     INSERT INTO %s
-    SELECT PATID, COHORT, LOT_NUM, CONDITION, EVENT_DT
+    SELECT PATID, COHORT, LOT_NUM, '%s' AS PERIOD, CONDITION, EVENT_DT
     FROM (
       SELECT e.PATID, p.COHORT, p.LOT_NUM, e.CONDITION, e.EVENT_DT,
              row_number() OVER (PARTITION BY e.PATID, p.COHORT, p.LOT_NUM, e.CONDITION
@@ -128,28 +129,33 @@ acute_washout_round_sql <- function(events, periods, counted, cfg) {
       LEFT JOIN %s c
         ON c.PATID = e.PATID AND c.COHORT = p.COHORT
        AND c.LOT_NUM = p.LOT_NUM AND c.CONDITION = e.CONDITION
-       AND c.EVENT_DT = e.EVENT_DT
+       AND c.PERIOD = '%s' AND c.EVENT_DT = e.EVENT_DT
       WHERE c.PATID IS NULL
         AND NOT EXISTS (
           SELECT 1 FROM %s c2
           WHERE c2.PATID = e.PATID AND c2.COHORT = p.COHORT
             AND c2.LOT_NUM = p.LOT_NUM AND c2.CONDITION = e.CONDITION
+            AND c2.PERIOD = '%s'
             AND datediff(e.EVENT_DT, c2.EVENT_DT) < %d
             AND c2.EVENT_DT <= e.EVENT_DT
         )
     ) t
-    WHERE rn = 1", counted, events, periods, counted, counted, w)
+    WHERE rn = 1", counted, period_label, events, periods, counted,
+          period_label, counted, period_label, w)
 }
 
 # The loop. Bounded, because an unbounded loop against a warehouse is a way to
 # spend a night; the bound is generous and being hit is a finding, not a
 # tuning problem.
 run_acute_washout <- function(con, events, periods, counted, cfg,
-                              max_rounds = 60L) {
+                              period_label = "TREATMENT", max_rounds = 60L) {
+  n_sql <- sprintf("SELECT count(*) AS n FROM %s WHERE PERIOD = '%s'",
+                   counted, period_label)
   for (i in seq_len(max_rounds)) {
-    before <- db_q(con, sprintf("SELECT count(*) AS n FROM %s", counted))$n[1]
-    db_exec(con, acute_washout_round_sql(events, periods, counted, cfg))
-    after <- db_q(con, sprintf("SELECT count(*) AS n FROM %s", counted))$n[1]
+    before <- db_q(con, n_sql)$n[1]
+    db_exec(con, acute_washout_round_sql(events, periods, counted, cfg,
+                                         period_label))
+    after <- db_q(con, n_sql)$n[1]
     log_msg("  washout round ", i, ": ", after - before, " event(s) counted")
     if (after == before) return(invisible(i))
   }

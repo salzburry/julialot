@@ -142,6 +142,21 @@ cfg_defaults <- function() {
     pregnancy_window = .env_enum("PREGNANCY_WINDOW", "study_period",
       c("study_period", "patient_period")),
     sec2l_apply_other_cancer = .env_lgl("SEC2L_APPLY_OTHER_CANCER", FALSE),
+    # The secondary 2L cohort is the one thing this package cannot build from
+    # its own inputs. s7.4.1.1 wants 2L initiators "irrespective of whether
+    # their 1L initiation occurred during the primary cohort ascertainment
+    # period", and s7.8.1 permits a prior malignancy - but every cohort here is
+    # an INNER JOIN onto INPUT_COHORT_TABLE, which is the primary NDMM cohort
+    # with X2 and the 2019 floor already applied, and the LOT run this package
+    # reads was built over that same population. No setting can widen it.
+    #
+    # So: TRUE asserts that INPUT_COHORT_TABLE and the LOT run behind it were
+    # built WITHOUT the other-cancer exclusion and without the 1L index floor.
+    # Only the person who ran those builds knows, which is why it is an
+    # assertion and not a test. FALSE with SEC2L selected stops the run rather
+    # than producing a cohort whose baseline malignancy prevalence - the whole
+    # reason s7.8.1 asks for it - is zero by construction.
+    sec2l_input_is_wide = .env_lgl("SEC2L_INPUT_IS_WIDE", FALSE),
     # The 1L index-setting agents are NOT a setting here. Barring belantamab,
     # panobinostat or elotuzumab from setting an index means re-deriving the
     # index date, which is the cohort build's job - ndmm/ already has
@@ -151,8 +166,12 @@ cfg_defaults <- function() {
 
     # --- follow-up and censoring -----------------------------------------
     censor_at_disenrollment  = .env_lgl("CENSOR_AT_DISENROLLMENT", TRUE),
-    bridged_gap_is_person_time =
-      .env_lgl("BRIDGED_GAP_IS_PERSON_TIME", TRUE),
+    # BRIDGED_GAP_IS_PERSON_TIME was here and is gone. It named a person-time
+    # rule - whether a bridged enrolment gap counts as observed time - and
+    # BASELINE_PY and PERIOD_PY are window lengths whichever way it was set, so
+    # flipping it changed no denominator while the run recorded that it had.
+    # ../OPEN_QUESTIONS.md Q19 is still open; it is not answered by a setting
+    # that does nothing.
 
     # --- comorbidity ------------------------------------------------------
     # Both off by default, and both are switches rather than silent omissions.
@@ -241,24 +260,51 @@ check_contract <- function(cfg) {
 # The settings that are NOT in the contract, with the reading each one took.
 # Written to the run's metadata so a number can be traced to the readings that
 # produced it. Ordered, so two runs' rows compare line for line.
+# Every open question's reading, and WHERE it is applied. The distinction is
+# the point, and it was missing: nine of these settings were written onto
+# S_RUN_METADATA as "the reading that produced these numbers" while this
+# package applied none of them - which is the exact failure ../MODULES.md
+# records as fixed for INDEX_EXCLUDED_ABBRS ("reported as applied while
+# applying nothing"). A reader could not tell a 90-day window this run used
+# from one the cohort build used.
+#
+#   "here"      this package's SQL changes when the setting changes.
+#               tests/run_tests.R proves it by emitting both ways and diffing,
+#               so a setting cannot quietly become inert.
+#   "upstream"  the rule belongs to the cohort or LOT build. The value is
+#               recorded because the analytical tables should say which cohort
+#               DEFINITION produced them - but this package applies nothing,
+#               and the row says so.
+OPEN_QUESTION_SOURCE <- c(
+  fu_evidence_rule                    = "here",
+  sec2l_apply_other_cancer            = "here",
+  sec2l_input_is_wide                 = "here",
+  censor_at_disenrollment             = "here",
+  months_as                           = "here",
+  baseline_includes_index             = "here",
+  comorbidity_baseline_includes_index = "here",
+  region_source                       = "here",
+  enrol_attr_at                       = "here",
+  ed_definition                       = "here",
+  frailty                             = "here",
+  comorbid_subgroups                  = "here",
+  # Applied by the cohort build (Jul 28/ndmm), not here. ../BUILD_DELTA.md.
+  study_start                         = "upstream",
+  mm_dx_outpatient_codes              = "upstream",
+  mm_dx_outpatient_window_days        = "upstream",
+  prior_tx_drop_steroids              = "upstream",
+  other_cancer_pair_days              = "upstream",
+  other_cancer_pair_grain             = "upstream",
+  other_cancer_both_in_baseline       = "upstream",
+  pregnancy_window                    = "upstream"
+)
+
 open_question_readings <- function(cfg) {
-  keys <- c("study_start", "mm_dx_outpatient_codes",
-            "mm_dx_outpatient_window_days", "fu_evidence_rule",
-            "prior_tx_drop_steroids", "other_cancer_pair_days",
-            "other_cancer_pair_grain", "other_cancer_both_in_baseline",
-            "pregnancy_window", "sec2l_apply_other_cancer",
-            "censor_at_disenrollment", "bridged_gap_is_person_time",
-            "months_as", "baseline_includes_index",
-            "comorbidity_baseline_includes_index", "region_source",
-            "enrol_attr_at", "ed_definition",
-            # ../OPEN_QUESTIONS.md asks for Annex 7 "or confirmation frailty is
-            # out", and for Annex 3's subgroup codes. FALSE is this run's
-            # answer to both, and a table that does not say so cannot be told
-            # apart from one where nobody was frail.
-            "frailty", "comorbid_subgroups")
-  vapply(keys, function(k) {
-    v <- cfg[[k]]
-    sprintf("%s=%s", k, paste(as.character(v), collapse = "|"))
+  vapply(names(OPEN_QUESTION_SOURCE), function(k) {
+    v <- paste(as.character(cfg[[k]]), collapse = "|")
+    sprintf("%s=%s%s", k, v,
+            if (identical(OPEN_QUESTION_SOURCE[[k]], "upstream"))
+              " (upstream)" else "")
   }, character(1), USE.NAMES = FALSE)
 }
 

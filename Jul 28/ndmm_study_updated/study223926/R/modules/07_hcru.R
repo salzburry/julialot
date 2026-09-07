@@ -23,12 +23,14 @@ HCRU_MEASURES <- c(
   MM_RELATED_HOSPITALISATION = "e.EVENT_TYPE = 'INPATIENT' AND e.MM_RELATED = 1",
   ED_VISIT                   = "e.EVENT_TYPE = 'ED'")
 
-# The CDM's CONFINEMENT carries DIAG1..DIAG5 but no ICD_FLAG, so the family has
-# to come from the admission date. Every window this study reads is after the
-# US transition, but deriving it beats assuming it: an ICD-9 myeloma code
-# (2030) and an ICD-10 one (C900) are different strings, and matching either
-# against a claim of the wrong vintage is a false hit that nothing downstream
-# could see.
+# The family of a confinement diagnosis comes from CONFINEMENT.ICD_FLAG, which
+# the data dictionary lists (../DATA_MAPPING.md section 4) - a comment here
+# once claimed the table had no such column, and read the family off the admit
+# date instead. The date is kept as a FALLBACK for a row whose flag is null or
+# unrecognised, because an unrecognised family matches neither and would drop
+# the row silently. An ICD-9 myeloma code (2030) and an ICD-10 one (C900) are
+# different strings; matching either against a claim of the wrong vintage is a
+# false hit nothing downstream could see.
 ICD10_TRANSITION <- "2015-10-01"
 
 mod_hcru <- function(con, cfg, cohort) {
@@ -60,7 +62,8 @@ mod_hcru <- function(con, cfg, cohort) {
     arms <- c(arms, sprintf(
       "(cl.code_type_norm = 'RVNU' AND upper(regexp_replace(trim(m.RVNU_CD),'[^A-Za-z0-9]','')) = cl.code_norm)"))
   if ("pos" %in% cfg$ed_definition)
-    arms <- c(arms, "(cl.code_type_norm = 'POS' AND trim(m.POS) = cl.code_norm)")
+    arms <- c(arms, sprintf(
+      "(cl.code_type_norm = 'POS' AND upper(regexp_replace(trim(m.POS),'[^A-Za-z0-9]','')) = cl.code_norm)"))
   if ("cpt" %in% cfg$ed_definition)
     arms <- c(arms, sprintf(
       "(cl.code_type_norm = 'CPT' AND upper(regexp_replace(trim(m.PROC_CD),'[^A-Za-z0-9]','')) = cl.code_norm)"))
@@ -97,8 +100,9 @@ mod_hcru <- function(con, cfg, cohort) {
       SELECT DISTINCT d.PATID, d.CONF_ID
       FROM (
         SELECT cast(c2.PATID as string) AS PATID, c2.CONF_ID,
-               CASE WHEN cast(c2.ADMIT_DATE as date) >= date('%10$s')
-                    THEN 'ICD10' ELSE 'ICD9' END AS icd_norm,
+               coalesce(%11$s,
+                        CASE WHEN cast(c2.ADMIT_DATE as date) >= date('%10$s')
+                             THEN 'ICD10' ELSE 'ICD9' END) AS icd_norm,
                dx.code AS raw_code
         FROM %4$s c2
         LATERAL VIEW explode(array(c2.DIAG1, c2.DIAG2)) dx AS code
@@ -126,7 +130,8 @@ mod_hcru <- function(con, cfg, cohort) {
     interval_days_sql("cast(cf.ADMIT_DATE as date)",
                       "cast(cf.DISCH_DATE as date)", TRUE, FALSE),
     wrk("S_PERIODS"), cdm_src("confinement"), "S_CL_MM_DX", cohort$key,
-    cdm_src("medical"), reg, paste(arms, collapse = " OR "), ICD10_TRANSITION),
+    cdm_src("medical"), reg, paste(arms, collapse = " OR "), ICD10_TRANSITION,
+    icd_family_sql("c2.ICD_FLAG")),
     # A count FIRST: run_step's zero-row guard reads the first column, and a
     # string there makes as.numeric() give NA and the guard skip silently.
     qc = sprintf("SELECT count(*) AS n_events,
@@ -172,7 +177,11 @@ mod_hcru <- function(con, cfg, cohort) {
                count(DISTINCT CASE WHEN HIT = 1 THEN PATID END) AS N_PATIENTS,
                sum(HIT) AS N_EVENTS,
                avg(CASE WHEN HIT = 1 THEN LOS_DAYS END) AS MEAN_LOS,
-               percentile_approx(CASE WHEN HIT = 1 THEN LOS_DAYS END, 0.5)
+               -- percentile(), not percentile_approx(): the latter returns an
+               -- observed value of the input type, so with LOS_DAYS an int the
+               -- median of a 3-day and a 4-day stay is 3, never 3.5 - and it
+               -- is approximate as well. Exact costs nothing at this size.
+               percentile(CASE WHEN HIT = 1 THEN LOS_DAYS END, 0.5)
                  AS MEDIAN_LOS,
                sum(CASE WHEN HIT = 1 AND HAS_DISCHARGE = 0 THEN 1 ELSE 0 END)
                  AS N_LOS_EXCLUDED
