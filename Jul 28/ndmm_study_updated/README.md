@@ -32,6 +32,7 @@ decided or sent.
 | `ie_criteria.csv` | the criteria as a table, for the study team to work in a spreadsheet |
 | `variables.csv` | the variables as a table — 58 rows, one per variable |
 | `optum_cdm_fields.csv` | the CDM field inventory as a table |
+| **`study223926/`** | the R package that builds the analytical cohort from a finished LOT run — sparklyr, module-selectable, every open question a setting. `study223926/MODULES.md` is its own page |
 | `ashley study.pdf` | the source |
 
 Read `IE_CRITERIA.md` first. `OPEN_QUESTIONS.md` is what to send the study team.
@@ -129,9 +130,29 @@ of its own decisions still open, and the new protocol resolves none of them.
 5. **Disenrollment censors follow-up** on the protocol's wording; the LOT engine says
    it does not (`OPEN_QUESTIONS.md` Q13).
 
+## The code
+
+`study223926/` is a new package that runs **after** the LOT engine: it reads
+`LOT_LONG_FINAL` and the NDMM cohort table and writes its own `S_*` tables. It builds
+no line and no MM cohort of its own, so it can be re-run against a finished LOT run as
+often as needed.
+
+```
+Rscript study223926/build.R                                   # on a Databricks cluster
+DRY_RUN=TRUE Rscript study223926/build.R                      # print the plan only
+MODULES=safety COHORTS=2L Rscript study223926/build.R         # one module, one cohort
+Rscript study223926/tests/run_tests.R                         # 78 checks, no warehouse
+```
+
+Eleven modules, four cohorts, and every reading this folder records as open is a
+setting with the protocol's answer as its default. Five of the eleven modules run
+today; the other six are blocked on Annexes 2 and 3, and the run says so by name
+before it opens a connection. `study223926/MODULES.md` has the rest.
+
 ## What this folder does not do
 
-It does not change any code. Nothing in `Jul 28/ndmm`, `Jul 28/lot` or
-`Jul 28/analysis` has been touched. `BUILD_DELTA.md` says what would have to change;
-making those changes is a separate piece of work, and several of them are blocked on
-`OPEN_QUESTIONS.md`.
+It does not change any existing code. Nothing in `Jul 28/ndmm`, `Jul 28/lot` or
+`Jul 28/analysis` has been touched, and `study223926/` is not wired into
+`validation/run_gate.R`. `BUILD_DELTA.md` says what would have to change in the
+shipped builds; making those changes is separate work, and several of them are
+blocked on `OPEN_QUESTIONS.md`.

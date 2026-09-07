@@ -1,0 +1,54 @@
+name,value,description
+SPARK_METHOD,databricks,sparklyr connection: databricks (on-cluster) or databricks_connect or local
+SPARK_CLUSTER_ID,,Cluster id - databricks_connect only
+DATABRICKS_HOST,,Workspace URL - databricks_connect only. DATABRICKS_TOKEN stays in the environment
+DATABRICKS_CATALOG,hive_metastore,Catalog for all reads and writes
+OPTUM_CDM_SCHEMA,clnprw_optum,Optum CDM schema
+USE_QUARTERLY_TABLES,TRUE,Read the cumulative quarterly CDM tables
+CODELIST_DIR,/mnt/code/codelist,Where the production code lists live
+INPUT_COHORT_TABLE,,The cohort table the LOT run was built over (e.g. ndmm_NDMM_COHORT)
+OBJECT_PREFIX,,Prefix for every table this package writes
+COHORT_PREFIX,,The cohort build's prefix if it differs from this run's
+LOT_PREFIX,,The LOT build's prefix if it differs from this run's
+#,,--- study periods: OPEN_QUESTIONS Q1 ---
+STUDY_START,2018-01-01,Study period start. Protocol s7.1 text. Figures 1 and 2 say 2016-01-01 - see OPEN_QUESTIONS Q1
+STUDY_END,2026-03-31,Study period end; also picks the quarterly table suffix
+LOT1_INDEX_FROM,2019-01-01,Earliest 1L initiation that may index the 1L cohort
+SEC2L_INDEX_FROM,2020-01-01,Earliest 2L initiation that may index the secondary 2L cohort
+#,,--- windows ---
+BASELINE_DAYS,365,Length of the baseline period before each LOT index
+MONTHS_AS,days,days or calendar. How a months window is measured - OPEN_QUESTIONS Q21
+BASELINE_INCLUDES_INDEX,FALSE,Protocol s7.1 excludes the index date from the baseline - OPEN_QUESTIONS Q14
+COMORBIDITY_BASELINE_INCLUDES_INDEX,TRUE,Protocol s7.8.1 includes it for comorbidities only - OPEN_QUESTIONS Q14
+GAP_DAYS,30,Enrolment gaps of this many days or fewer are still continuous
+CE_PRE_DAYS,365,Days of continuous enrolment required before each cohort index date
+LOT_POST_DISCON_DAYS,30,Days after discontinuation that still belong to that LOT treatment period
+ACUTE_WASHOUT_DAYS,30,Minimum separation between two acute events of the same type
+TTE_MIN_POTENTIAL_FU_DAYS,90,Potential follow-up a patient needs to enter the time-to-event analysis set
+#,,--- criteria switches: each is an OPEN_QUESTIONS entry ---
+MM_DX_OUTPATIENT_CODES,listed,strict or listed. Which codes the outpatient arm accepts - OPEN_QUESTIONS Q2
+MM_DX_OUTPATIENT_WINDOW_DAYS,90,Days within which two outpatient MM claims confirm a diagnosis - OPEN_QUESTIONS Q3
+FU_EVIDENCE_RULE,claim_from_index,claim_from_index or claim_after_index or enrolled_on_index - OPEN_QUESTIONS Q5
+PRIOR_TX_DROP_STEROIDS,TRUE,Drop steroid rows from the prior-therapy scan - OPEN_QUESTIONS Q6
+OTHER_CANCER_PAIR_DAYS,30,Days within which two outpatient cancer claims confirm another cancer
+OTHER_CANCER_PAIR_GRAIN,icd3,icd3 or tumor_group. What two claims must share to confirm each other
+OTHER_CANCER_BOTH_IN_BASELINE,TRUE,Require both claims of a pair inside the baseline window
+PREGNANCY_WINDOW,study_period,study_period or patient_period - OPEN_QUESTIONS Q23
+SEC2L_APPLY_OTHER_CANCER,FALSE,The secondary 2L cohort permits prior malignancy - OPEN_QUESTIONS Q7
+INDEX_EXCLUDED_ABBRS,"BELA,PANO,ELOT",CL_MED_ABBR values that may not set a 1L index - protocol names belantamab panobinostat elotuzumab
+#,,--- follow-up and censoring ---
+CENSOR_AT_DISENROLLMENT,TRUE,Protocol s7.1 ends follow-up at the end of continuous enrolment - OPEN_QUESTIONS Q13
+BRIDGED_GAP_IS_PERSON_TIME,TRUE,Count the days inside a bridged enrolment gap as covered person-time - OPEN_QUESTIONS Q19
+#,,--- demographics ---
+REGION_SOURCE,state_crosswalk,region_column or state_crosswalk - OPEN_QUESTIONS Q9
+ENROL_ATTR_AT,index_span,index_span or latest_span. Which enrolment row supplies a time-varying attribute - OPEN_QUESTIONS Q16
+ED_DEFINITION,"revenue,pos",Any of revenue pos cpt - how an emergency visit is identified - OPEN_QUESTIONS Q11
+#,,--- reporting ---
+SUPPRESS_MIN_N,25,Stratifications with fewer patients than this are not reported
+RATE_MULTIPLIER,100000,Person-year rates are reported per this many person-years
+MAX_LOT,4,Highest line this package describes. The LOT engine builds 5
+#,,--- selection ---
+COHORTS,"1L,2L,3L",Which cohorts to build. Any of 1L 2L 3L SEC2L
+MODULES,all,Which modules to run. all or a comma-separated list of module keys
+SKIP_MODULES,,Modules to leave out of an otherwise-selected set
+DRY_RUN,FALSE,Resolve and print the plan without touching the warehouse

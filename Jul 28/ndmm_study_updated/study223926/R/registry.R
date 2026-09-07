@@ -1,0 +1,247 @@
+# The two registries, and how a run is selected out of them.
+#
+# Everything this package can build is declared here as data, not as a call
+# order. A module names what it needs, what it writes, and which code lists it
+# cannot run without; the runner works out the order and refuses a selection it
+# cannot satisfy. So "run only the safety outcomes over the 2L cohort" is a
+# setting rather than an edit.
+#
+# The rule the whole file exists to enforce: a module that is asked for and
+# cannot run STOPS the run. It never returns an empty table. A rate of zero for
+# want of a code list is indistinguishable from a rate of zero for want of
+# events, and only one of them is a finding.
+
+# ---------------------------------------------------------------------------
+# Cohorts
+# ---------------------------------------------------------------------------
+#
+# key        what the study calls it
+# label      for logs and for the attrition table
+# lot_num    the line whose start is this cohort's index date
+# nested_in  the cohort this one is drawn from, or NA for a standalone one
+# index_from cfg field holding the earliest index date, or NA for no floor
+# criteria   the eligibility criteria that apply, in the order they apply
+#
+# The 1L criteria are the study's own; 2L and 3L add only the two the protocol
+# lists under "Additional eligibility"; SEC2L repeats the 1L set minus the
+# other-cancer exclusion. Nothing here is inferred - see ../IE_CRITERIA.md.
+
+CRITERIA_1L <- c("I1_mm_dx", "I2_age", "I3_eligible_1l_tx", "I4_ce_pre",
+                 "I5_followup", "X1_prior_mm_tx", "X2_other_cancer",
+                 "X3_pregnancy", "X4_belantamab")
+
+COHORTS <- list(
+  `1L` = list(
+    key = "1L", label = "1L (NDMM)", lot_num = 1L, nested_in = NA_character_,
+    index_from = "lot1_index_from", criteria = CRITERIA_1L),
+  `2L` = list(
+    key = "2L", label = "2L (RRMM, nested)", lot_num = 2L, nested_in = "1L",
+    index_from = NA_character_,
+    criteria = c("N1_received_line", "N2_ce_pre", "I5_followup")),
+  `3L` = list(
+    key = "3L", label = "3L (RRMM, nested)", lot_num = 3L, nested_in = "2L",
+    index_from = NA_character_,
+    criteria = c("N1_received_line", "N2_ce_pre", "I5_followup")),
+  SEC2L = list(
+    key = "SEC2L", label = "Secondary 2L (RRMM, not nested)", lot_num = 2L,
+    nested_in = NA_character_, index_from = "sec2l_index_from",
+    # s7.4.1.1: "All inclusion/exclusion criteria will be the same as the
+    # primary cohort, with the exception of the index date", and s7.8.1
+    # confirms prior malignancy is permitted. X2 is dropped by
+    # SEC2L_APPLY_OTHER_CANCER, resolved in resolve_cohorts().
+    criteria = CRITERIA_1L)
+)
+
+# ---------------------------------------------------------------------------
+# Modules
+# ---------------------------------------------------------------------------
+#
+# key        what MODULES= names
+# label      for logs
+# needs      module keys that must run first
+# codelists  code-list files the module cannot run without
+# outputs    the unprefixed table names it writes
+# per_cohort TRUE if it runs once per selected cohort
+# fn         the function name, defined under R/modules/
+# blocked    a reason string if the module cannot run yet, or NA
+
+MODULES <- list(
+  spine = list(
+    key = "spine", label = "Cohort x LOT spine", needs = character(0),
+    codelists = character(0), outputs = "S_SPINE", per_cohort = FALSE,
+    fn = "mod_spine", blocked = NA_character_),
+
+  cohorts = list(
+    key = "cohorts", label = "Cohort membership and attrition",
+    needs = "spine", codelists = character(0),
+    outputs = c("S_COHORT", "S_ATTRITION"), per_cohort = TRUE,
+    fn = "mod_cohorts", blocked = NA_character_),
+
+  periods = list(
+    key = "periods", label = "Baseline, follow-up and treatment periods",
+    needs = "cohorts", codelists = character(0),
+    outputs = c("S_PERIODS", "S_LOT_PERIODS"), per_cohort = TRUE,
+    fn = "mod_periods", blocked = NA_character_),
+
+  demographics = list(
+    key = "demographics", label = "Baseline demographics",
+    needs = "periods", codelists = character(0),
+    outputs = "S_DEMOGRAPHICS", per_cohort = TRUE,
+    fn = "mod_demographics", blocked = NA_character_),
+
+  comorbidity = list(
+    key = "comorbidity", label = "Charlson and frailty",
+    needs = "periods", codelists = "charlson_quan2011.csv",
+    outputs = "S_COMORBIDITY", per_cohort = TRUE,
+    fn = "mod_comorbidity", blocked = NA_character_),
+
+  soc = list(
+    key = "soc", label = "SOC regimen categorisation",
+    needs = "periods", codelists = "soc_regimen_categories.csv",
+    outputs = "S_SOC", per_cohort = TRUE,
+    fn = "mod_soc", blocked = NA_character_),
+
+  safety = list(
+    key = "safety", label = "Key safety events: prevalence and incidence",
+    needs = "periods", codelists = "safety_events.csv",
+    outputs = c("S_SAFETY_EVENTS", "S_SAFETY_RATES"), per_cohort = TRUE,
+    fn = "mod_safety", blocked = NA_character_),
+
+  hcru = list(
+    key = "hcru", label = "Hospitalisation, length of stay and ED visits",
+    needs = "periods", codelists = "hcru.csv",
+    outputs = c("S_HCRU_EVENTS", "S_HCRU_RATES"), per_cohort = TRUE,
+    fn = "mod_hcru", blocked = NA_character_),
+
+  malignancy = list(
+    key = "malignancy", label = "Secondary malignancies",
+    needs = "periods", codelists = "secondary_malig.csv",
+    outputs = c("S_MALIGNANCY", "S_MALIGNANCY_RATES"), per_cohort = TRUE,
+    fn = "mod_malignancy", blocked = NA_character_),
+
+  tte = list(
+    key = "tte", label = "TTNT, TTD and OS",
+    needs = "periods", codelists = character(0),
+    outputs = "S_TTE", per_cohort = TRUE,
+    fn = "mod_tte", blocked = NA_character_),
+
+  patterns = list(
+    key = "patterns", label = "Treatment patterns, attrition and switching",
+    needs = c("periods", "soc"), codelists = character(0),
+    outputs = c("S_PATTERNS", "S_SWITCH", "S_TX_ATTRITION"),
+    per_cohort = TRUE, fn = "mod_patterns", blocked = NA_character_)
+)
+
+# ---------------------------------------------------------------------------
+# Selection
+# ---------------------------------------------------------------------------
+
+resolve_cohorts <- function(cfg) {
+  want <- cfg$cohorts
+  unknown <- setdiff(want, names(COHORTS))
+  if (length(unknown))
+    stop("SELECTION ERROR: COHORTS names ", paste(unknown, collapse = ", "),
+         ". Known cohorts: ", paste(names(COHORTS), collapse = ", "), ".",
+         call. = FALSE)
+  if (!length(want))
+    stop("SELECTION ERROR: COHORTS is empty.", call. = FALSE)
+
+  out <- COHORTS[want]
+  # A nested cohort cannot be built without the one it is drawn from: 2L is
+  # "the subset of the 1L cohort", so a 2L run without 1L would be a different
+  # population under the same name.
+  for (co in out) {
+    if (!is.na(co$nested_in) && !(co$nested_in %in% want))
+      stop("SELECTION ERROR: cohort ", co$key, " is nested in ", co$nested_in,
+           ", which is not selected. Add it to COHORTS, or drop ", co$key,
+           " - a nested cohort built without its parent is a different ",
+           "population.", call. = FALSE)
+  }
+  # The one criterion that varies by setting rather than by cohort.
+  if ("SEC2L" %in% want && !isTRUE(cfg$sec2l_apply_other_cancer))
+    out$SEC2L$criteria <- setdiff(out$SEC2L$criteria, "X2_other_cancer")
+
+  # Declaration order, which is 1L, 2L, 3L, SEC2L - parents before the cohorts
+  # nested in them, so the attrition table reads top to bottom.
+  out[order(match(names(out), names(COHORTS)))]
+}
+
+# Topological order over `needs`. A module asked for pulls in what it needs;
+# a module in SKIP_MODULES that something selected needs is an error, not a
+# silent inclusion, because the caller asked for two incompatible things.
+resolve_modules <- function(cfg) {
+  all_keys <- names(MODULES)
+  want <- if (identical(tolower(cfg$modules), "all")) all_keys else cfg$modules
+  unknown <- setdiff(c(want, cfg$skip_modules), all_keys)
+  if (length(unknown))
+    stop("SELECTION ERROR: unknown module(s) ",
+         paste(unknown, collapse = ", "), ". Known: ",
+         paste(all_keys, collapse = ", "), ".", call. = FALSE)
+
+  want <- setdiff(want, cfg$skip_modules)
+  if (!length(want))
+    stop("SELECTION ERROR: no modules left after SKIP_MODULES.", call. = FALSE)
+
+  # Pull in dependencies, then check none of them was skipped.
+  closure <- character(0)
+  frontier <- want
+  while (length(frontier)) {
+    k <- frontier[1]; frontier <- frontier[-1]
+    if (k %in% closure) next
+    closure <- c(closure, k)
+    frontier <- c(frontier, MODULES[[k]]$needs)
+  }
+  pulled <- setdiff(closure, want)
+  clash <- intersect(pulled, cfg$skip_modules)
+  if (length(clash)) {
+    # Name the modules that needed it, so the caller knows which of the two
+    # asks to drop.
+    needers <- Filter(function(w) length(intersect(MODULES[[w]]$needs, clash)) > 0L,
+                      want)
+    stop("SELECTION ERROR: ", paste(clash, collapse = ", "),
+         " is in SKIP_MODULES but ", paste(needers, collapse = ", "),
+         " needs it. Drop one or the other.", call. = FALSE)
+  }
+  if (length(pulled))
+    message("[registry] pulled in ", paste(pulled, collapse = ", "),
+            " to satisfy ", paste(want, collapse = ", "))
+
+  # Kahn's algorithm over the closure, ties broken by declaration order so the
+  # same selection always runs in the same order.
+  ordered <- character(0)
+  remaining <- closure[order(match(closure, all_keys))]
+  while (length(remaining)) {
+    ready <- remaining[vapply(remaining, function(k)
+      all(MODULES[[k]]$needs %in% ordered), logical(1))]
+    if (!length(ready))
+      stop("SELECTION ERROR: the module graph has a cycle among ",
+           paste(remaining, collapse = ", "), ".", call. = FALSE)
+    ordered <- c(ordered, ready)
+    remaining <- setdiff(remaining, ready)
+  }
+  MODULES[ordered]
+}
+
+# Everything the selected modules need from CODELIST_DIR, deduplicated.
+required_codelists <- function(mods)
+  sort(unique(unlist(lapply(mods, `[[`, "codelists"), use.names = FALSE)))
+
+# A plan a person can read before anything is written. DRY_RUN prints this and
+# stops.
+describe_plan <- function(cfg, cohorts, mods) {
+  lines <- c(
+    "Study 223926 - run plan",
+    sprintf("  cohorts : %s", paste(vapply(cohorts, `[[`, character(1), "label"),
+                                    collapse = "; ")),
+    sprintf("  modules : %s", paste(names(mods), collapse = " -> ")),
+    sprintf("  period  : %s to %s (1L index from %s)",
+            cfg$study_start, cfg$study_end, cfg$lot1_index_from),
+    sprintf("  writes  : %s",
+            paste(paste0(cfg$object_prefix,
+                         unlist(lapply(mods, `[[`, "outputs"),
+                                use.names = FALSE)), collapse = ", ")))
+  cl <- required_codelists(mods)
+  lines <- c(lines, sprintf("  codelists: %s",
+    if (length(cl)) paste(cl, collapse = ", ") else "(none)"))
+  c(lines, "  readings:", paste0("    ", open_question_readings(cfg)))
+}
