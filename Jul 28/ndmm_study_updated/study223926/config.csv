@@ -4,6 +4,8 @@ SPARK_CLUSTER_ID,,Cluster id - databricks_connect only
 DATABRICKS_HOST,,Workspace URL - databricks_connect only. DATABRICKS_TOKEN stays in the environment
 DATABRICKS_CATALOG,hive_metastore,Catalog for all reads and writes
 OPTUM_CDM_SCHEMA,clnprw_optum,Optum CDM schema
+TBL_MED_DIAG,,"CDM diagnosis table base name; blank uses med_diagnosis. The short name the modules use is diagnosis - they are not the same string"
+TBL_MED_PROC,,"CDM procedure table base name; blank uses med_procedure"
 USE_QUARTERLY_TABLES,TRUE,Read the cumulative quarterly CDM tables
 CODELIST_DIR,,Where the code lists are. Empty means this package own codelists/ - set it to /mnt/code/codelist on production
 INPUT_COHORT_TABLE,,The cohort table the LOT run was built over (e.g. ndmm_NDMM_COHORT)

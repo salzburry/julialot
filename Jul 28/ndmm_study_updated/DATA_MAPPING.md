@@ -46,7 +46,7 @@ Base names as the build uses them, CDM names as the dictionary writes them.
 | `member_enrollment` | MEMBER_ENROLLMENT | one row per member per coverage state | a **new row each time anything about the member changes** (state, product) |
 | `member_cont_enrollment` | MEMBER_CONTINUOUS_ENROLLMENT | one row per continuous span | a **rollup** of the above: "one span of continuous enrollment (**less than 30 day break** in coverage) regardless of changes in coverage" |
 | `medical` | MEDICAL | one row per claim line | professional (CPT/HCPCS) **and** facility claims |
-| `diagnosis` | MED_DIAGNOSIS | one row per claim per diagnosis position | diagnoses split out of the claim to keep it narrow |
+| `diagnosis` **→ `med_diagnosis`** | MED_DIAGNOSIS | one row per claim per diagnosis position | diagnoses split out of the claim to keep it narrow |
 | `procedure` | MED_PROCEDURE | one row per claim per procedure position | ICD-9/10 **procedure** codes (CPT/HCPCS live on MEDICAL.PROC_CD) |
 | `confinement` | CONFINEMENT | one row per hospitalisation | "unique record for every hospitalization... all facility detail records are bundled and reported in a single unduplicated row" |
 | `rx` | RX | one row per pharmacy fill | outpatient pharmacy only |
@@ -55,6 +55,15 @@ Base names as the build uses them, CDM names as the dictionary writes them.
 | `ses` | SES | one row per member | education, income, home ownership, net worth |
 | `provider`, `provider_bridge` | PROVIDER / PROVIDER BRIDGE | one row per provider | credentials, taxonomy, state |
 | — | LU_DIAGNOSIS / LU_NDC / LU_PROCEDURE | lookups | code descriptions and groupings |
+
+**The left column is a short name, not the physical table.** The deployed
+tables are `t_<physical>_<quarter>`, and for two of them the physical name is
+not the short one: **`med_diagnosis`** and **`med_procedure`**, per
+`Jul 28/ndmm/R/config.R`, the build that has actually run against this
+warehouse. `study223926` conflated the two and read `t_diagnosis_<q>`, which
+does not exist — every module reading a diagnosis would have failed on its
+first statement. `CDM_TABLE_NAMES` in `R/db_utils_223926.R` now holds the
+mapping and `tests/run_tests.R` pins it.
 
 ## 3. How the tables join
 

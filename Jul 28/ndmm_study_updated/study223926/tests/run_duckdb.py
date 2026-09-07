@@ -62,7 +62,11 @@ def load_fixtures(con, fixture_dir, prefix=""):
     # file stem -> the name the SQL refers to
     mapping = {
         "t_member_enrollment": f"clnprw_optum.t_member_enrollment_{quarter}",
-        "t_diagnosis":         f"clnprw_optum.t_diagnosis_{quarter}",
+        # The fixture stems are the PHYSICAL CDM names, not the short names
+        # the modules use. They differ - med_diagnosis, not diagnosis - and a
+        # fixture named after the short name would make the harness agree with
+        # a wrong table name instead of catching it.
+        "t_med_diagnosis":     f"clnprw_optum.t_med_diagnosis_{quarter}",
         "t_medical":           f"clnprw_optum.t_medical_{quarter}",
         "t_confinement":       f"clnprw_optum.t_confinement_{quarter}",
         "t_rx":                f"clnprw_optum.t_rx_{quarter}",

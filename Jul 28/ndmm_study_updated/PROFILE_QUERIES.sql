@@ -129,8 +129,8 @@ LIMIT 50;
 
 DESCRIBE TABLE hive_metastore.clnprw_optum.t_confinement_2026q1;
 DESCRIBE TABLE hive_metastore.clnprw_optum.t_medical_2026q1;
-DESCRIBE TABLE hive_metastore.clnprw_optum.t_diagnosis_2026q1;
-DESCRIBE TABLE hive_metastore.clnprw_optum.t_procedure_2026q1;
+DESCRIBE TABLE hive_metastore.clnprw_optum.t_med_diagnosis_2026q1;
+DESCRIBE TABLE hive_metastore.clnprw_optum.t_med_procedure_2026q1;
 DESCRIBE TABLE hive_metastore.clnprw_optum.t_rx_2026q1;
 DESCRIBE TABLE hive_metastore.clnprw_optum.t_dod_2026q1;
 
@@ -306,7 +306,7 @@ ORDER BY ymdod_length;
 -- there are.
 
 SELECT ICD_FLAG, count(*) AS n
-FROM   hive_metastore.clnprw_optum.t_diagnosis_2026q1
+FROM   hive_metastore.clnprw_optum.t_med_diagnosis_2026q1
 GROUP BY ICD_FLAG
 ORDER BY n DESC;
 
@@ -340,7 +340,7 @@ stays AS (
 claims AS (
   SELECT DISTINCT cast(m.PATID as string) AS PATID, m.CONF_ID
   FROM       hive_metastore.clnprw_optum.t_medical_2026q1 m
-  INNER JOIN hive_metastore.clnprw_optum.t_diagnosis_2026q1 d
+  INNER JOIN hive_metastore.clnprw_optum.t_med_diagnosis_2026q1 d
           ON d.PATID = m.PATID AND d.CLMID = m.CLMID
   INNER JOIN coh ON coh.PATID = cast(m.PATID as string)
   WHERE  m.CONF_ID IS NOT NULL AND trim(m.CONF_ID) <> ''
@@ -377,7 +377,7 @@ WITH dx AS (
          CASE WHEN upper(regexp_replace(d.DIAG,'[^A-Za-z0-9]','')) LIKE 'C90%'
                 OR upper(regexp_replace(d.DIAG,'[^A-Za-z0-9]','')) LIKE 'C88%'
               THEN 1 ELSE 0 END AS broad
-  FROM  hive_metastore.clnprw_optum.t_diagnosis_2026q1 d
+  FROM  hive_metastore.clnprw_optum.t_med_diagnosis_2026q1 d
   WHERE d.FST_DT >= date('2018-01-01')
 )
 SELECT count(DISTINCT CASE WHEN strict = 1 THEN PATID END) AS patients_strict,

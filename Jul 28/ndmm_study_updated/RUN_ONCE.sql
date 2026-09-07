@@ -43,11 +43,14 @@ SHOW TABLES IN hive_metastore.clnprw_optum;
 --   * what DOD's columns are actually called — the V9 dictionary has a sheet
 --     for all fifteen CDM tables and none for DOD, so this is the only source.
 
+-- Note the names: MED_DIAGNOSIS and MED_PROCEDURE, not DIAGNOSIS and
+-- PROCEDURE. The short names the code uses internally are not the physical
+-- ones, and getting that wrong is exactly what this study package shipped.
 DESCRIBE TABLE hive_metastore.clnprw_optum.t_member_enrollment_2026q1;
 DESCRIBE TABLE hive_metastore.clnprw_optum.t_confinement_2026q1;
 DESCRIBE TABLE hive_metastore.clnprw_optum.t_medical_2026q1;
-DESCRIBE TABLE hive_metastore.clnprw_optum.t_diagnosis_2026q1;
-DESCRIBE TABLE hive_metastore.clnprw_optum.t_procedure_2026q1;
+DESCRIBE TABLE hive_metastore.clnprw_optum.t_med_diagnosis_2026q1;
+DESCRIBE TABLE hive_metastore.clnprw_optum.t_med_procedure_2026q1;
 DESCRIBE TABLE hive_metastore.clnprw_optum.t_rx_2026q1;
 DESCRIBE TABLE hive_metastore.clnprw_optum.t_dod_2026q1;
 DESCRIBE TABLE <COHORT>;
@@ -120,7 +123,7 @@ GROUP BY YRDOB ORDER BY YRDOB LIMIT 12;
 -- gating on them; whether that is enough depends on how many there are.
 
 SELECT ICD_FLAG, count(*) AS n
-FROM   hive_metastore.clnprw_optum.t_diagnosis_2026q1
+FROM   hive_metastore.clnprw_optum.t_med_diagnosis_2026q1
 GROUP BY ICD_FLAG ORDER BY n DESC;
 
 

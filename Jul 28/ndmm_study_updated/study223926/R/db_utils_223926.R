@@ -34,8 +34,42 @@ quarter_suffix <- function(study_end) {
   d <- as.Date(study_end)
   sprintf("%sq%d", format(d, "%Y"), (as.integer(format(d, "%m")) - 1L) %/% 3L + 1L)
 }
-cdm_src <- function(base_tbl) {
+# The CDM's PHYSICAL table names, keyed by the short name the modules use.
+#
+# These are not the same string, and assuming they were is what shipped: the
+# modules ask for "diagnosis" because that is what ../DATA_MAPPING.md calls the
+# table in prose, and cdm_src() pasted that straight into `t_<name>_<quarter>`
+# and produced `t_diagnosis_2026q1`. The table is `t_med_diagnosis_2026q1`.
+# Every module that reads a diagnosis - comorbidity, safety, malignancy, and
+# the MM code view hcru needs - would have failed on its first statement.
+#
+# The names match Jul 28/ndmm/R/config.R, which is the build that has actually
+# run against this warehouse. Each is overridable, because a warehouse can
+# rename a table and a study should not need a code change for that.
+CDM_TABLE_NAMES <- c(
+  medical           = "medical",
+  diagnosis         = "med_diagnosis",
+  procedure         = "med_procedure",
+  rx                = "rx",
+  confinement       = "confinement",
+  member_enrollment = "member_enrollment",
+  member_elig       = "member_cont_enrollment",
+  dod               = "dod"
+)
+
+cdm_table_name <- function(short) {
+  if (!short %in% names(CDM_TABLE_NAMES))
+    stop("CDM ERROR: no physical table name registered for '", short,
+         "'. Known: ", paste(names(CDM_TABLE_NAMES), collapse = ", "), ".",
+         call. = FALSE)
   cfg <- study_config()
+  ov <- cfg[[paste0("tbl_", short)]]
+  if (!is.null(ov) && nzchar(ov)) ov else unname(CDM_TABLE_NAMES[[short]])
+}
+
+cdm_src <- function(short) {
+  cfg <- study_config()
+  base_tbl <- cdm_table_name(short)
   nm <- if (isTRUE(cfg$use_quarterly_tables))
     paste0("t_", base_tbl, "_", quarter_suffix(cfg$study_end)) else base_tbl
   sprintf("%s.%s.%s", cfg$catalog, cfg$cdm_schema, nm)
