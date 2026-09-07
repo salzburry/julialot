@@ -62,11 +62,18 @@ mod_demographics <- function(con, cfg, cohort) {
       WHERE p.COHORT = '%7$s'
     )
     SELECT r.PATID, r.COHORT, r.INDEX_DATE,
-           -- YRDOB is cast, not coerced. The CDM stores it as a character
-           -- column; Spark would coerce a string in arithmetic, but relying on
-           -- that puts the study's only age variable on an implicit rule that
-           -- differs between engines and silently yields NULL on a stray
-           -- space. s7.8.1: age is the index year minus the birth year.
+           -- YRDOB is cast, not coerced. Spark would coerce a string in
+           -- arithmetic, but relying on that puts the study's only age
+           -- variable on an implicit rule that differs between engines and
+           -- silently yields NULL on a stray space.
+           --
+           -- And YRDOB is CAPPED. The V9.0 dictionary gives it as the
+           -- member year of birth capped at 89 years, changed on 14-04-2025
+           -- from a cap at 90. So AGE_YEARS is right-censored: the bands are
+           -- unaffected (the cap sits above 75) but a MEAN or MEDIAN age
+           -- computed from this column is biased downward, and myeloma has a
+           -- real tail above 89. Table 4 reports both; the continuous one
+           -- carries that caveat. ../DATA_MAPPING.md section 4.
            cast(year(r.INDEX_DATE) - cast(c.YRDOB as int) as int) AS AGE_YEARS,
            CASE WHEN year(r.INDEX_DATE) - cast(c.YRDOB as int) <  45 THEN '18-44'
                 WHEN year(r.INDEX_DATE) - cast(c.YRDOB as int) <  65 THEN '45-64'

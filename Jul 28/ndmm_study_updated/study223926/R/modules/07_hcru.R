@@ -125,13 +125,18 @@ mod_hcru <- function(con, cfg, cohort) {
     FROM %3$s p
     INNER JOIN %7$s m ON cast(m.PATID as string) = p.PATID
     INNER JOIN %8$s cl ON %9$s
-    WHERE p.COHORT = '%6$s' AND m.FST_DT IS NOT NULL",
+    WHERE p.COHORT = '%6$s' AND m.FST_DT IS NOT NULL %12$s %13$s",
     wrk("S_HCRU_EVENTS"),
     interval_days_sql("cast(cf.ADMIT_DATE as date)",
                       "cast(cf.DISCH_DATE as date)", TRUE, FALSE),
     wrk("S_PERIODS"), cdm_src("confinement"), "S_CL_MM_DX", cohort$key,
     cdm_src("medical"), reg, paste(arms, collapse = " OR "), ICD10_TRANSITION,
-    icd_family_sql("c2.ICD_FLAG")),
+    icd_family_sql("c2.ICD_FLAG"),
+    # An ED claim that carries a CONF_ID is one that became an admission -
+    # business rule 14: a record without a CONF_ID is non-inpatient.
+    if (identical(cfg$ed_admitted, "inpatient_only"))
+      "AND (m.CONF_ID IS NULL OR trim(m.CONF_ID) = '')" else "",
+    claim_status_sql(cfg, "m")),
     # A count FIRST: run_step's zero-row guard reads the first column, and a
     # string there makes as.numeric() give NA and the guard skip silently.
     qc = sprintf("SELECT count(*) AS n_events,

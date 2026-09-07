@@ -13,7 +13,7 @@ says what is cited and what is needed.
 | `CODELISTS.md` | Which code lists the existing builds read, in what shape, and every list the protocol needs that does not exist yet. |
 | `BUILD_DELTA.md` | The difference between what `Jul 28/ndmm` and `Jul 28/lot` do today and what the protocol asks for. |
 | `VERSION_DIFF.md` | What changed since the June 2026 protocol, why three of the build's settings are a version behind rather than wrong, and a reconstruction of the rows lost on the corrupt photo. |
-| `OPEN_QUESTIONS.md` | Twenty-four things genuinely undecided, each with both readings and what turns on the answer. Two are answered. |
+| `OPEN_QUESTIONS.md` | Twenty-seven things genuinely undecided, each with both readings and what turns on the answer. Two are answered, one partly. |
 | `SOURCES.md` | What this folder cites and what it needs. The standalone boundary. |
 | `ie_criteria.csv` | The criteria as a table, for the study team. |
 | `variables.csv` | The variables as a table — 58 rows. |

@@ -196,6 +196,27 @@ cfg_defaults <- function() {
     enrol_attr_at = .env_enum("ENROL_ATTR_AT", "index_span",
       c("index_span", "latest_span")),
     ed_definition = .env_list("ED_DEFINITION", "revenue,pos"),
+    # An ED visit that becomes an admission: counted as an ED visit, a
+    # hospitalisation, or both? ../OPEN_QUESTIONS.md Q11 asks it and the CDM
+    # answers the mechanics - business rule 14: "All other records without a
+    # CONF_ID or where CONF_ID is NULL should be considered non-inpatient". So
+    # an ED claim carrying a CONF_ID is one that became an admission, and it
+    # can be dropped from the ED count. `both` is the current behaviour and
+    # stays the default; it is not obviously right, which is why it is
+    # recorded rather than assumed.
+    ed_admitted = .env_enum("ED_ADMITTED", "both", c("both", "inpatient_only")),
+
+    # --- claim status -----------------------------------------------------
+    # MEDICAL.PAID_STATUS separates PAID from DENIED, and the CDM fills it in
+    # when the source leaves it null: "PAID if Sum of all Paid Amounts >= $0,
+    # DENIED if Sum of all Paid Amounts < $0" (V9.0 dictionary, MEDICAL row
+    # 28). A denied claim is not evidence the service happened, and nothing in
+    # this package or the cohort build has ever filtered on it.
+    #
+    # `all` is what every number produced so far includes, so it is the
+    # default: changing it silently would make this package disagree with the
+    # cohort table it is built on. ../OPEN_QUESTIONS.md Q25.
+    claim_status = .env_enum("CLAIM_STATUS", "all", c("all", "paid_only")),
 
     # --- reporting --------------------------------------------------------
     suppress_min_n  = .env_int("SUPPRESS_MIN_N", CONTRACT$suppress_min_n),
@@ -286,6 +307,8 @@ OPEN_QUESTION_SOURCE <- c(
   region_source                       = "here",
   enrol_attr_at                       = "here",
   ed_definition                       = "here",
+  ed_admitted                         = "here",
+  claim_status                        = "here",
   frailty                             = "here",
   comorbid_subgroups                  = "here",
   # Applied by the cohort build (Jul 28/ndmm), not here. ../BUILD_DELTA.md.
@@ -309,6 +332,24 @@ open_question_readings <- function(cfg) {
 }
 
 check_settings <- function(cfg) {
+  # REGION does not exist on the deployed enrolment table. The V9.0 dictionary
+  # documents it as Added, and three of the four V9 additions did land on the
+  # 2025q4 extract - ETHNICITY, RACE (moved from the SES file and renamed from
+  # D_RACE_CODE) and RACE_SOURCE, appended at columns 26 and 27. REGION and
+  # LIS_DUAL did not. Verified column by column against the `describe table`
+  # in docs/optum enrolment.pdf; ../DATA_MAPPING.md section 4 has the list.
+  #
+  # Refused here rather than left to Spark, which would say UNRESOLVED_COLUMN
+  # after the session had been opened and the spine built.
+  if (identical(cfg$region_source, "region_column"))
+    stop("SETTING ERROR: REGION_SOURCE=region_column reads ",
+         "MEMBER_ENROLLMENT.REGION, which the deployed extract does not have. ",
+         "It is a V9.0 addition and the deployed table is an earlier vintage: ",
+         "27 columns, carrying STATE (which V9.0 removed) and neither REGION ",
+         "nor LIS_DUAL. Use REGION_SOURCE=state_crosswalk, or confirm the ",
+         "warehouse has been refreshed to a true V9.0 extract first. ",
+         "../OPEN_QUESTIONS.md Q9.", call. = FALSE)
+
   if (!nzchar(cfg$input_cohort_table))
     stop("SETTING ERROR: INPUT_COHORT_TABLE is required - it names the cohort ",
          "the LOT run was built over.", call. = FALSE)

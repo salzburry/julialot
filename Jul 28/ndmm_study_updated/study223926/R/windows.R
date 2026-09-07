@@ -159,3 +159,16 @@ rate_ci_sql <- function(events, pyears, cfg, side = c("lo", "hi")) {
                  "exp(ln(cast(%s as double) / %s) + (%s) * (1.0 / sqrt(cast(%s as double)))) * %d END"),
           events, pyears, events, pyears, z, events, as.integer(cfg$rate_multiplier))
 }
+
+# The claim-status filter, as a WHERE fragment.
+#
+# MEDICAL.PAID_STATUS separates PAID from DENIED. A denied claim is not
+# evidence a service happened, and counting one as an ED visit, a
+# hospitalisation or a diagnosis inflates every rate built on it. Nothing in
+# this package or the cohort build has ever filtered on it, so `all` is the
+# default and the run records which reading it took.
+claim_status_sql <- function(cfg, alias) {
+  if (identical(cfg$claim_status, "paid_only"))
+    sprintf("AND upper(trim(coalesce(%s.PAID_STATUS, ''))) <> 'DENIED'", alias)
+  else ""
+}

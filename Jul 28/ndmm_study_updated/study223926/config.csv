@@ -44,6 +44,8 @@ COMORBID_SUBGROUPS,FALSE,"TRUE writes Table 4's baseline subgroup flags (neuropa
 FRAILTY_FRAIL_CUTOFF,0.25,CFI at or above this is frail. Kim 2018's own cut-point; Annex 7 may say otherwise
 REGION_SOURCE,state_crosswalk,region_column or state_crosswalk - OPEN_QUESTIONS Q9
 ENROL_ATTR_AT,index_span,index_span or latest_span. Which enrolment row supplies a time-varying attribute - OPEN_QUESTIONS Q16
+ED_ADMITTED,both,"both or inpatient_only - is an ED visit that became an admission counted as an ED visit too? A claim carrying a CONF_ID became an admission (business rule 14) - OPEN_QUESTIONS Q11"
+CLAIM_STATUS,all,"all or paid_only - MEDICAL.PAID_STATUS separates PAID from DENIED; nothing has ever filtered on it - OPEN_QUESTIONS Q25"
 ED_DEFINITION,"revenue,pos",Any of revenue pos cpt - how an emergency visit is identified - OPEN_QUESTIONS Q11
 #,,--- reporting ---
 SUPPRESS_MIN_N,25,Stratifications with fewer patients than this are not reported

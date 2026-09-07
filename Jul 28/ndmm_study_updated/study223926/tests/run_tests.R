@@ -783,6 +783,8 @@ cat("\nthe modules, run against recorders\n")
     region_source = function(c) { c$region_source <- "region_column"; c },
     enrol_attr_at = function(c) { c$enrol_attr_at <- "latest_span"; c },
     ed_definition = function(c) { c$ed_definition <- c("revenue", "pos", "cpt"); c },
+    ed_admitted = function(c) { c$ed_admitted <- "inpatient_only"; c },
+    claim_status = function(c) { c$claim_status <- "paid_only"; c },
     frailty = function(c) { c$frailty <- TRUE; c },
     comorbid_subgroups = function(c) { c$comorbid_subgroups <- TRUE; c }
   )

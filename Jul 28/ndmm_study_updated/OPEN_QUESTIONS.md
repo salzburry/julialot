@@ -1,6 +1,6 @@
 # Open questions for the study team
 
-Twenty-four things the Aug 26 2026 protocol, the Optum documentation and the existing
+Twenty-seven things the Aug 26 2026 protocol, the Optum documentation and the existing
 build's own record do not settle, each of which changes a count or a definition.
 Ordered by how much they change. **Two are now answered** — Q4 and Q17, both by
 `Jul 28/ndmm/DECISIONS.md` §6, and both are left in place with the answer.
@@ -11,6 +11,58 @@ the build has to pick one.
 ---
 
 ## Blocking — a number moves
+
+### Q26. Can `DOD` actually be joined to the claims tables on `PATID`? — **NEW, and the most serious**
+
+The Optum business-rules document says, in a note under its own table inventory:
+
+> "**DOD and SES tables cannot be joined since both tables are encrypted
+> differently.** However the other tables name (MEMBER_ENROLLMENT, MEMBER
+> CONTINUOUS ENROLLMENT, MEDICAL, MED_DIAGNOSIS, MED_PROCEDURE, CONFINEMENT,
+> RX, LABRESULT, PROVIDER, PROVIDER BRIDGE) and variable names same but all are
+> **encrypted differently for DOD and SES table**"
+
+The **join diagram on page 1 of the same document** draws a `PATID` edge from
+Member Enrollment to Death (DOD), and another to Socio-Economic (SES).
+
+The document contradicts itself, and `Jul 28/ndmm/R/steps/00_mm_cohort.R:205`
+takes the diagram's side:
+
+```sql
+LEFT JOIN best b ON q.PATID = b.PATID
+```
+
+Two further observations point the same way as the note. The V9.0 data
+dictionary has a sheet for every table in the CDM — fifteen of them — and
+**none for DOD**. And business rule 12, "Death information", names only the
+column (`ymdod` from `t_dod`) and never a join key, where every other rule
+spells its keys out.
+
+**What turns on it.** `DEATH_DT` sets `FU_END`, censors overall survival,
+gates the time-to-event analysis set, and is the event for OS — a secondary
+objective. If the key is incompatible, every death date in both builds is
+either absent or spurious, and OS is unreportable.
+
+**Ask:** confirm with Optum or the data team whether `DOD.PATID` is in the same
+encryption domain as the claims tables **in this Databricks deployment**. Note
+the business-rules document is from **30-08-2022** and is provably stale on at
+least one other point (Q18), so it cannot simply be taken as current either.
+
+**This one can be costed today, before anyone answers.** Run:
+
+```sql
+SELECT count(*) AS n_cohort,
+       count(DEATH_DT) AS n_with_death,
+       round(100.0 * count(DEATH_DT) / count(*), 1) AS pct
+FROM <prefix>NDMM_COHORT;
+```
+
+A 1L NDMM cohort followed from 2019 should show a substantial fraction dead —
+tens of percent, not ~0% and not ~100%. A number near zero means the join
+matches nothing and the note is right. An implausible number means it matches
+the wrong people.
+
+---
 
 ### Q1. Does the study period start 01 Jan 2016 or 01 Jan 2018?
 
@@ -175,8 +227,21 @@ Table 4 wants Hispanic or Latino / Not Hispanic or Latino / Unknown.
 `MEMBER_ENROLLMENT.ETHNICITY` is `varchar(1)` and the CDM V9.0 dictionary marks its
 value list **"Intentionally Blank"**.
 
-**Ask (or profile):** the value → label mapping. A `SELECT ETHNICITY, count(*)` on the
-deployed table would settle it, and should be run before this variable is promised.
+The reason it is blank is now clear: `ETHNICITY` is a **V9.0 addition** (the
+dictionary marks it "Added"), so Optum had not published a value list when the
+sheet was written. The column does exist on the deployed table — column 26,
+`varchar(1)` — so this is a profiling question, not an availability one.
+
+The same gap applies to **`RACE`**, which the dictionary describes by label
+only: *"African American, Asian, Caucasian, Other/Unknown"*, in a `varchar(1)`.
+The single characters behind those four labels are documented nowhere, and the
+package's guess (`A`→Asian, `B`→Black, `W`/`C`→White) could silently send
+African American to Asian if the coding is different.
+
+**Ask (or profile):** the value → label mapping for **both** columns.
+`SELECT RACE, ETHNICITY, count(*) FROM t_member_enrollment_2025q4 GROUP BY 1,2`
+settles both in one query, and should be run before either variable is
+promised.
 
 ### Q9. Region — is there a `REGION` column, or do we derive it from `STATE`?
 
@@ -191,15 +256,75 @@ The two are not just different columns, they are different CDM vintages: the dep
 columns. `DATA_MAPPING.md` §4 has the arithmetic. In V9.0, Census Region is the finest
 geography that survives at all: `DIVISION`, state, ZIP, county and MSA are all gone.
 
-**Ask:** confirm we may derive region from `STATE` with a standard 50-state → 4-region
-crosswalk, and how to classify a patient whose `STATE` changes between enrolment rows
-(take the row covering the index date?). Also worth asking whether the warehouse is due
-a refresh to a true V9.0 extract, since that would swap `STATE` for `REGION` under the
-same table name and silently break the crosswalk.
+**Verified against the `describe table`, column by column.** The deployed
+extract is not simply "a version behind" — it is a hybrid. Of the four V9.0
+additions to MEMBER_ENROLLMENT, **three landed** (`ETHNICITY`, `RACE` moved off
+the SES file, `RACE_SOURCE` — appended at columns 26 and 27) and **`REGION` did
+not**, while `STATE`, which V9.0 removed, is still there. `LIS_DUAL` is also
+absent. `DATA_MAPPING.md` §4b lists all 27 columns.
+
+So `REGION` is specifically the one missing column the region variable needs.
+`REGION_SOURCE=region_column` now refuses rather than reaching Spark and
+failing with `UNRESOLVED_COLUMN` after the spine is built.
+
+**Ask:** confirm we may derive region from `STATE` with a standard 50-state →
+4-region crosswalk, and how to classify a patient whose `STATE` changes between
+enrolment rows (take the row covering the index date?). Also worth asking when
+`REGION` is expected — if a refresh brings it, the crosswalk becomes redundant
+rather than wrong, and since `ETHNICITY` and `RACE_SOURCE` were appended
+without disturbing `STATE`, a refresh would probably append `REGION` too rather
+than swapping the columns.
 
 ---
 
 ## Needs a decision, but does not block a first build
+
+### Q25. Should denied claims count? — **NEW**
+
+`MEDICAL.PAID_STATUS` is *"the payment determination of this service line"*, and
+the CDM fills it in where the source left it null:
+
+> "PAID if Sum of all Paid Amounts >= $0 · DENIED if Sum of all Paid Amounts < $0"
+
+A denied claim is not evidence the service happened. Nothing in this package,
+and nothing in `Jul 28/ndmm`, has ever filtered on it — so every count built so
+far includes denied lines: diagnoses that qualify a patient, ED visits,
+hospitalisations, and the claims that set a line of therapy.
+
+`CLAIM_STATUS` carries the two readings. The default is `all`, which is what
+every number produced to date includes; `paid_only` excludes `DENIED`. The
+default is deliberately the status quo rather than the more defensible option,
+because changing it silently would make this package disagree with the cohort
+table it is built on.
+
+**Ask:** confirm whether the study intends to include denied claims. Most
+claims analyses exclude them.
+
+---
+
+### Q27. Which route defines "a MM diagnosis in first or second position"? — **NEW**
+
+§7.8.1 defines an MM-related hospitalisation as one with *"a MM diagnosis in
+first or second position"*. There are two routes to that in the CDM and they
+are not the same thing:
+
+- **`CONFINEMENT.DIAG1` / `DIAG2`** — *"First ICD-X Diagnosis"* / *"Second ICD-X
+  Diagnosis"* on the bundled, unduplicated confinement record. This is what the
+  package implements.
+- **`MED_DIAGNOSIS.DIAG_POSITION` 1 or 2** on a claim carrying that `CONF_ID` —
+  which is the route business rule 13 documents: merge MED_DIAGNOSIS to MEDICAL
+  on `PATID + CLMID`, then to CONFINEMENT on `PATID + CONF_ID`.
+
+Confinement positions are stay-level and there are five of them; claim
+positions are line-level and there are twenty-five. A stay can carry myeloma at
+confinement position 3 and at claim position 1 on one of its lines.
+
+**Ask:** confirm the confinement record's own first two diagnoses are meant.
+That is the natural reading of "hospitalisation … diagnosis position" and is
+what the package does, but the vendor documents the other route for "diagnoses
+reported within a hospitalization".
+
+---
 
 ### Q3. Are 30- and 60-day outpatient pairing windows still wanted as sensitivities?
 
@@ -297,7 +422,7 @@ medication source anyway, *"because the failure it guards is asymmetric — a th
 scan cannot see lets a patient pass the no-prior-therapy criterion on missing data, and
 can move the index later than it belongs"*.
 
-### Q18. Is the 2022 business-rules document still current?
+### Q18. Is the 2022 business-rules document still current? — **partly answered: no**
 
 `Final_Business rule doc_OPTUM_V1_30_08_2022.xlsx` is dated 30 August 2022. It is
 being applied to a 2025Q4/2026Q1 extract against a CDM **V9.0** dictionary released
@@ -307,6 +432,17 @@ No revalidation of the rules against V9.0 is recorded anywhere in this repo.
 
 **Ask:** is there a newer business-rules document, and has the inpatient/outpatient
 construction been revalidated against V9.0?
+
+**It is demonstrably out of date on a point we can check.** It describes SES as
+*"seven consumer characteristics including race, occupation, income, home
+ownership, poverty status and education level"*. The V9.0 dictionary's SES
+sheet carries **four**, and race is not among them — `RACE` was *"Moved from
+SES file and renamed from D_RACE_CODE"* onto MEMBER_ENROLLMENT.
+
+That matters beyond SES, because the same document is the only source for the
+statement that **DOD cannot be joined** (Q26). Being stale on SES does not make
+it wrong about DOD — the CDM changed underneath it — but it does mean the DOD
+note cannot be taken as current without confirmation.
 
 ### Q19. Do the days inside a bridged enrolment gap count as person-time?
 

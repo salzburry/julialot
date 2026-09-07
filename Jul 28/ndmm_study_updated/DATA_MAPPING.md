@@ -363,6 +363,141 @@ All three copies of the business rules in this repo are byte-identical
 (`md5 f02f37c51797a77a408b81fea30a8f3f`): `docs/Part 3/Optum/`, `docs/`, and
 `Apr 18 2026/Optum - Business Rules/`. The April folder introduced no revision.
 
+## 4b. Read back off the source documents, page by page
+
+Everything in this section was read from the images of
+`docs/Part 3/Optum/optum data dict.pdf` (24 pages, `2025_05_CDM Data Dictionary
+V9 SES.xls`, last modified 18-08-2025), `optum business rules.pdf` (7 pages,
+`Final_Business rule doc_OPTUM_V1_30_08_2022.xlsx`) and the four `describe
+table` screenshots in `docs/optum enrolment.pdf`. The text layers are OCR
+garbage; these are the pictures.
+
+### The deployed enrolment table, all 27 columns
+
+`describe table hive_metastore.clnprw_optum.t_member_enrollment_2025q4` returns
+**27 rows**, in this order:
+
+| # | column | type | | # | column | type |
+|---|---|---|---|---|---|---|
+| 1 | `PATID` | bigint | | 15 | `ELIGEND_SASDT` | int |
+| 2 | `PAT_PLANID` | bigint | | 16 | `FAMILY_ID` | bigint |
+| 3 | `ASO` | varchar(1) | | 17 | `GDR_CD` | varchar(1) |
+| 4 | `BUS` | varchar(5) | | 18 | `GROUP_NBR` | varchar(20) |
+| 5 | `CDHP` | varchar(1) | | 19 | `HEALTH_EXCH` | varchar(1) |
+| 6 | `ELIGEFF` | **date** | | 20 | `PRODUCT` | varchar(5) |
+| 7 | `ELIGEFF_DAY` | smallint | | 21 | `RACE` | varchar(1) |
+| 8 | `ELIGEFF_MONTH` | smallint | | 22 | `STATE` | varchar(2) |
+| 9 | `ELIGEFF_YEAR` | smallint | | 23 | `YRDOB` | smallint |
+| 10 | `ELIGEFF_SASDT` | int | | 24 | `EXTRACT_YM` | varchar(6) |
+| 11 | `ELIGEND` | **date** | | 25 | `VERSION` | varchar(6) |
+| 12 | `ELIGEND_DAY` | smallint | | 26 | `ETHNICITY` | varchar(1) |
+| 13 | `ELIGEND_MONTH` | smallint | | 27 | `RACE_SOURCE` | varchar(15) |
+| 14 | `ELIGEND_YEAR` | smallint | | | | |
+
+Two things follow that the earlier reading got wrong or missed.
+
+**`ETHNICITY` and `RACE_SOURCE` do exist** — appended at 26 and 27, after
+`VERSION`, which is where a later addition lands. The ordering is source order
+with Databricks date-parts interleaved, not alphabetical, so their absence
+could not have been inferred from position.
+
+**`REGION` and `LIS_DUAL` do not.** The V9.0 dictionary annotates four
+MEMBER_ENROLLMENT additions — `ETHNICITY` ("Added", value list *Intentionally
+Blank*), `RACE` ("**Moved from SES file and renamed from D_RACE_CODE**"),
+`RACE_SOURCE` ("Added") and `REGION` ("Added"). Three landed; `REGION` did not,
+and `STATE`, which V9.0 removed, is still there. So the extract is not simply
+"a version behind": it is a hybrid, and `REGION` specifically is the one the
+region variable would need. `REGION_SOURCE=region_column` is refused in
+`R/config_223926.R` for exactly this reason.
+
+The V9 move is also visible from the other side: the **SES** sheet
+(`ses_ses_CCYY`) now carries only `PATID`, `D_EDUCATION_LEVEL_CODE`,
+`D_HOME_OWNERSHIP_CODE`, `D_HOUSEHOLD_INCOME_RANGE_CODE`,
+`D_NETWORTH_RANGE_CODE`, `EXTRACT_YM`, `VERSION` — **no race**. The 2022
+business-rules document still describes SES as "seven consumer characteristics
+**including race**", so that document is demonstrably out of date on a point we
+can check. `OPEN_QUESTIONS.md` Q18.
+
+### `YRDOB` is capped
+
+> "The member's year of birth, **capped at 89 years**."
+
+The TITLE NOTES change log records this being edited on 14-04-2025 *"from
+capped 90 to capped at 89 years"*, so the cap value itself has moved and may
+differ by extract vintage.
+
+The age **bands** are unaffected — the cap sits above the 75 cut-point Table 4
+and §7.8.1 use. A **mean or median** age is not: it is right-censored, and
+myeloma has a real tail above 89. Table 4 asks for both.
+
+### Columns the study does not use and probably should consider
+
+| column | table | what it is | why it matters |
+|---|---|---|---|
+| `PAID_STATUS` | MEDICAL | *"PAID if Sum of all Paid Amounts >= $0, DENIED if Sum of all Paid Amounts < $0"* | a denied claim is not evidence a service happened; nothing here or in the cohort build filters on it. `CLAIM_STATUS` setting, `OPEN_QUESTIONS.md` Q25 |
+| `POA` | MED_DIAGNOSIS | Present on Admission — *"conditions that develop during outpatient encounter, including emergency department, observation, or outpatient surgery, are considered POA"* | separates a condition present at admission from one acquired in hospital; bears directly on "severe infection **resulting in** hospitalization" |
+| `CLMSEQ` | MEDICAL | *"distinguishes between the detail records for a claim. Use with CLMID"* | the documented MED_DIAGNOSIS↔MEDICAL join is `PATID + CLMID + FST_DT + LOC_CD` and omits it, so that join can fan out across a claim's detail lines |
+| `RACE_SOURCE` | MEMBER_ENROLLMENT | *"Member match with race data source"* | Optum imputes race for some members; a race table that does not report the source composition is incomplete |
+| `LST_DT` | MEDICAL | the service **end** date (`FST_DT` is the beginning) | multi-day services have a span this package reads as a point |
+| `ENCTR` | MEDICAL | fee-for-service vs capitated | encounters under capitation can be under-reported |
+| `OP_VISIT_ID` | MEDICAL | an outpatient visit grouper | would be the vendor's own visit grain for ED — but *"generated by the Standard Cost Algorithm upon each run"*, so it is not stable across refreshes. Considered and rejected; this package groups ED claims to one per patient per day instead |
+
+### Confirmations that settle earlier uncertainty
+
+- **`CONFINEMENT.ICD_FLAG` exists** (row 21, *"ICD Version Code – will
+  distinguish between ICD-9 and ICD-10 codes"*). A comment in `07_hcru.R` once
+  claimed it did not and derived the family from the admission date; the flag
+  is read now, with the date kept only as a fallback.
+- **`ICD_FLAG` values are `'9'` and `'10'`** — business rule 1, verbatim.
+- **`DIAG_POSITION` runs 1 to 25**, and *"patients with DIAG_POSITION=1 can be
+  typically considered as the primary diagnosis"* — business rule 1.
+- **`DIAG` is stored without a decimal point** — MED_DIAGNOSIS row 8.
+- **`MEDICAL.PROC_CD` is CPT/HCPCS**; `MED_PROCEDURE.PROC` is ICD-9/ICD-10 with
+  `ICD_FLAG`. The dictionary says so directly (MEDICAL row 30, *"CPT/HCPCS
+  Procedure code that describes the service provided"*) and business rule 3
+  agrees. Business rule **5 says the opposite**; the dictionary wins.
+  `OPEN_QUESTIONS.md` Q17.
+- **`RVNU_CD` is *"Facility Claims only"*.** So the revenue-code arm of the ED
+  construction can only ever match facility claims, while the CPT arm matches
+  professional ones — the three constructions do not merely disagree in number,
+  they select different claim types. One ED visit generating both a facility
+  and a professional claim is collapsed by this package's one-per-patient-per-day
+  grain.
+- **`CLMID`**: *"A provider can bill multiple revenue codes for services
+  rendered on one claim. Each revenue code will generate a claim line.
+  Providers typically submit separate claim for each visit."*
+- **`CONFINEMENT.LOS`** is *"Length of Stay from start of first confinement [to]
+  last confinement record"* — a span over bundled records, not
+  discharge − admit. The protocol wants admit (included) → discharge
+  (excluded), which is what this package computes; it does not read `LOS`.
+- **`ADMIT_DATE` / `DISCH_DATE` are documented `YYYYMMDD`**, not `DATE`. The
+  deployed enrolment table shows Databricks converting Optum's `YYYYMMDD` to a
+  real `date` plus `_DAY`/`_MONTH`/`_YEAR`/`_SASDT` parts, so CONFINEMENT is
+  probably converted too — but that is an inference from one table. See the ask
+  below.
+- **Continuous enrolment**: the rollup bridges *"less than 30 day break in
+  coverage"* (business rule 11 and the table description), while §7.2.1.1
+  allows 30 **or fewer**. And business rule 10 says that from MEMBER_ENROLLMENT
+  *"user will be required to **stitch** the data to find start and end dates for
+  continuous enrollment"*, which is what `build_enroll_spans()` does.
+- **Inpatient identification** — business rule 14 gives two approaches:
+  `POS IN (21, 51, 61)` or `TOS_CD IN ('FAC.IP.ACUTE', 'FAC.IP.REHSNF',
+  'PROF.INPVIS', 'FAC.IP.SNF')`; or `CONF_ID IS NOT NULL`, with *"all other
+  records without a CONF_ID or where CONF_ID is NULL should be considered
+  non-inpatient"*. This package uses CONFINEMENT directly, which is the second.
+- **The CDM has no ED flag, and the vendor says so**: rule 14's own note is
+  *"Non-inpatient records can be classified into various categories **as per the
+  study requirements**"*. Q11 is a study decision, not a lookup.
+
+### One ask this pass generates
+
+There is a `describe table` for **one** of the six CDM tables this study reads.
+Everything above about the deployed shape of MEDICAL, MED_DIAGNOSIS,
+CONFINEMENT, RX and DOD is inferred from the dictionary plus that one example.
+`describe table` on the other five costs a minute each and would settle the
+date types, whether `BILL_PROC_CD` (a V9 addition) is populated, and whether
+`CONFINEMENT.ICD_FLAG` is actually present in this vintage.
+
 ## 5. Identifying inpatient vs outpatient
 
 The protocol leans on this twice (MM diagnosis, other-cancer exclusion). The
