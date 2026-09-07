@@ -61,6 +61,22 @@ check_lot_lineage <- function(con, cfg) {
       "its STUDY_END is %s and this package is set to %s, so the two read ",
       r$STUDY_END, cfg$study_end))
 
+  # STUDY_START is checked for the same reason, even though this package
+  # applies nothing with it. It is marked "upstream" in OPEN_QUESTION_SOURCE,
+  # which means every output records it as the reading that produced the
+  # numbers - and a recorded reading nobody compared to the run is a claim,
+  # not a fact. The status table carries the value, so comparing it costs
+  # nothing.
+  #
+  # It is not idle. Q1 is whether the study period opens in 2016 or 2018, and
+  # the 03 Sep 2026 profile put 17,288 members between the two answers. A
+  # cohort built on one and reported under the other would have passed here.
+  if (nzchar(trimws(as.character(r$STUDY_START %||% ""))) &&
+      !identical(trimws(as.character(r$STUDY_START)), cfg$study_start))
+    problems <- c(problems, sprintf(
+      "its STUDY_START is %s and this package records %s, so the reading on ",
+      r$STUDY_START, cfg$study_start))
+
   upd <- suppressWarnings(as.Date(substr(as.character(r$UPDATED_AT), 1, 10)))
   if (!is.na(upd) && upd < LOT_RULES_EPOCH)
     problems <- c(problems, sprintf(

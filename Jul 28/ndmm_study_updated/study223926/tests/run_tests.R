@@ -372,6 +372,36 @@ cat("\nregressions from the adversarial review\n")
   ok("lot_allow_unproven_lineage" %in% names(cfg0()),
      "LOT_ALLOW_UNPROVEN_LINEAGE is a real setting, not just a message")
 
+  # And it is RUN, not read. The three checks above inspect the function's
+  # text, which is how a guard survives being defused - the stop() is still
+  # printed, it just never fires. So the guard is called against a status row
+  # built to be wrong in exactly one field at a time, and each is required to
+  # stop.
+  lin_row <- function(...) {
+    r <- list(RUN_ID = "r1", STATE = "complete",
+              UPDATED_AT = "2026-09-01 00:00:00",
+              COHORT_TABLE = cfg0()$input_cohort_table,
+              STUDY_START = cfg0()$study_start, STUDY_END = cfg0()$study_end,
+              CONTRACT_DEVIATIONS = "")
+    utils::modifyList(r, list(...))
+  }
+  lin_check <- function(...) {
+    row <- lin_row(...)
+    e <- new.env(parent = environment(check_lot_lineage))
+    e$db_q <- function(con, sql) as.data.frame(row, stringsAsFactors = FALSE)
+    f <- check_lot_lineage; environment(f) <- e
+    errs(f(NULL, cfg0()))
+  }
+  ok(is.na(lin_check()), "a matching lineage row is accepted")
+  ok(grepl("STUDY_START", lin_check(STUDY_START = "2016-01-01") %||% ""),
+     "a LOT run whose STUDY_START disagrees with the recorded reading stops")
+  ok(grepl("STUDY_END", lin_check(STUDY_END = "2025-12-31") %||% ""),
+     "and so does one whose STUDY_END disagrees")
+  ok(!is.na(lin_check(STATE = "failed")),
+     "and one that did not finish")
+  ok(!is.na(lin_check(UPDATED_AT = "2026-08-01 00:00:00")),
+     "and one built before the 2026-08-30 rule change")
+
   # 4. A nested cohort takes only patients IN its parent.
   ch <- paste(capture.output(print(mod_cohorts)), collapse = "\n")
   ok(grepl("IN_COHORT = 1", ch),
@@ -824,6 +854,7 @@ cat("\nthe modules, run against recorders\n")
     enrol_attr_at = function(c) { c$enrol_attr_at <- "latest_span"; c },
     ed_definition = function(c) { c$ed_definition <- c("revenue", "pos", "cpt"); c },
     ed_admitted = function(c) { c$ed_admitted <- "inpatient_only"; c },
+    mm_hosp_position = function(c) { c$mm_hosp_position <- "claim_positions"; c },
     claim_status = function(c) { c$claim_status <- "paid_only"; c },
     frailty = function(c) { c$frailty <- TRUE; c },
     comorbid_subgroups = function(c) { c$comorbid_subgroups <- TRUE; c }
@@ -891,6 +922,46 @@ cat("\nthe modules, run against recorders\n")
               if (!grepl("0 of ", dtxt)) paste0("\n", dtxt) else ""))
   }
   unlink(c(sf, sd), recursive = TRUE)
+
+  # --- and the same, with the Q27 route switched -------------------------
+  #
+  # MM_HOSP_POSITION=claim_positions replaces the whole MM-related subquery
+  # with one that reads MED_DIAGNOSIS instead of CONFINEMENT. That SQL is
+  # never emitted by the default run, so without this it would be the one
+  # statement in the package no harness had ever executed - which is exactly
+  # how t_diagnosis, a table name that does not exist, survived 173 tests.
+  #
+  # Only execution is checked, not the numbers: the fixtures carry no medical
+  # claim linked to a confinement, so route B legitimately finds nothing there
+  # and the MM-related golden numbers belong to route A.
+  altb <- with_env(base_env, capture_emitted_sql(".", function(cfg) {
+    cfg$mm_hosp_position <- "claim_positions"; cfg }))
+  sfb <- tempfile(fileext = ".sql")
+  conb <- file(sfb, "w")
+  for (x in altb$sql) {
+    cat("-- @@STMT ", x$tag, "\n", sep = "", file = conb)
+    cat(x$sql, "\n", file = conb)
+  }
+  close(conb)
+  sdb <- file.path(tempdir(), "staged_b")
+  unlink(sdb, recursive = TRUE); dir.create(sdb, showWarnings = FALSE)
+  for (n in names(altb$staged))
+    utils::write.csv(altb$staged[[n]], file.path(sdb, paste0(n, ".csv")),
+                     row.names = FALSE)
+  boutx <- suppressWarnings(tryCatch(
+    system2("python3", c("tests/run_duckdb.py", shQuote(sfb), shQuote(sdb),
+                         "tests/fixtures/cdm", shQuote(cfg0()$object_prefix)),
+            stdout = TRUE, stderr = TRUE),
+    error = function(e) "NO-PYTHON"))
+  btxt <- paste(boutx, collapse = "\n")
+  if (any(grepl("^SKIP:", boutx)) || identical(btxt, "NO-PYTHON") ||
+      !length(boutx))
+    cat("  SKIP  the claim-position route executes too\n")
+  else
+    ok(grepl("0 failed", btxt),
+       paste0("the claim-position route's SQL executes too",
+              if (!grepl("0 failed", btxt)) paste0("\n", btxt) else ""))
+  unlink(c(sfb, sdb), recursive = TRUE)
 
   attr_sql <- vapply(Filter(function(x) x$tag == "step:attrition_1L", run$sql),
                      function(x) x$sql, character(1))

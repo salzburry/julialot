@@ -68,6 +68,65 @@ mod_hcru <- function(con, cfg, cohort) {
     arms <- c(arms, sprintf(
       "(cl.code_type_norm = 'CPT' AND upper(regexp_replace(trim(m.PROC_CD),'[^A-Za-z0-9]','')) = cl.code_norm)"))
 
+  # Which route decides that a stay is MM-related - open question Q27, and the
+  # one the 03 Sep 2026 profile priced most sharply. Over 241,362 myeloma-
+  # patient stays the two routes disagree by a factor of two: the confinement's
+  # own first two diagnoses find 32,508 stays, the claim positions find 65,206,
+  # and 33,904 of those are found by the claim route alone (../SQL Result 2.pdf,
+  # result 11). A further 33,978 stays carry MM in confinement positions 3-5,
+  # which neither route counts. Nobody has said which s7.8.1 means, so both are
+  # built and the run records which it took. `confinement` is what every number
+  # produced so far used and stays the default.
+  mm_hosp_subq <- if (identical(cfg$mm_hosp_position, "claim_positions")) sprintf(
+    "-- Route B. MM in DIAG_POSITION 1 or 2 on a claim carrying the stay's
+      -- CONF_ID, which is the route business rule 13 documents: twenty-five
+      -- positions, claim-line grain. DIAG_POSITION is stored zero-padded
+      -- ('01'..'25', confirmed 03 Sep 2026), so it is cast rather than compared
+      -- as a string.
+      SELECT DISTINCT cast(m2.PATID as string) AS PATID, m2.CONF_ID
+      FROM       %1$s m2
+      INNER JOIN %2$s dg
+              ON cast(dg.PATID as string) = cast(m2.PATID as string)
+             AND dg.CLMID = m2.CLMID
+      INNER JOIN (SELECT DISTINCT PATID FROM %3$s WHERE COHORT = '%4$s') pc
+              ON pc.PATID = cast(m2.PATID as string)
+      INNER JOIN %5$s mmc
+              ON upper(regexp_replace(coalesce(dg.DIAG,''),'[^A-Za-z0-9]','')) = mmc.code_norm
+             AND mmc.icd_norm = coalesce(%6$s,
+                                         CASE WHEN cast(dg.FST_DT as date) >= date('%7$s')
+                                              THEN 'ICD10' ELSE 'ICD9' END)
+      WHERE m2.CONF_ID IS NOT NULL AND trim(m2.CONF_ID) <> ''
+        AND try_cast(dg.DIAG_POSITION as int) IN (1, 2)",
+    cdm_src("medical"), cdm_src("diagnosis"), wrk("S_PERIODS"), cohort$key,
+    "S_CL_MM_DX", icd_family_sql("dg.ICD_FLAG"), ICD10_TRANSITION)
+  else sprintf(
+    "-- Route A. MM in the first or second diagnosis position on the
+      -- confinement record itself.
+      --
+      -- The two positions are exploded into rows rather than joined with an
+      -- OR: an OR predicate cannot be hashed, so Spark falls back to a nested
+      -- loop over the whole of CONFINEMENT. Restricted to this cohort's own
+      -- patients for the same reason - the outer join throws the rest away
+      -- afterwards, having read them.
+      SELECT DISTINCT d.PATID, d.CONF_ID
+      FROM (
+        SELECT cast(c2.PATID as string) AS PATID, c2.CONF_ID,
+               coalesce(%1$s,
+                        CASE WHEN cast(c2.ADMIT_DATE as date) >= date('%2$s')
+                             THEN 'ICD10' ELSE 'ICD9' END) AS icd_norm,
+               dx.code AS raw_code
+        FROM %3$s c2
+        LATERAL VIEW explode(array(c2.DIAG1, c2.DIAG2)) dx AS code
+        WHERE c2.ADMIT_DATE IS NOT NULL
+      ) d
+      INNER JOIN (SELECT DISTINCT PATID FROM %4$s WHERE COHORT = '%5$s') pc
+              ON pc.PATID = d.PATID
+      INNER JOIN %6$s mmc
+              ON upper(regexp_replace(coalesce(d.raw_code,''),'[^A-Za-z0-9]','')) = mmc.code_norm
+             AND mmc.icd_norm = d.icd_norm",
+    icd_family_sql("c2.ICD_FLAG"), ICD10_TRANSITION, cdm_src("confinement"),
+    wrk("S_PERIODS"), cohort$key, "S_CL_MM_DX")
+
   prepare_table(con, wrk("S_HCRU_EVENTS"),
     "PATID string, COHORT string, EVENT_TYPE string, EVENT_DT date,
      END_DT date, LOS_DAYS int, MM_RELATED int, HAS_DISCHARGE int", cohort$key)
@@ -90,31 +149,9 @@ mod_hcru <- function(con, cfg, cohort) {
     FROM %3$s p
     INNER JOIN %4$s cf ON cast(cf.PATID as string) = p.PATID
     LEFT JOIN (
-      -- MM in the first or second diagnosis position on the confinement.
-      --
-      -- The two positions are exploded into rows rather than joined with an
-      -- OR: an OR predicate cannot be hashed, so Spark falls back to a nested
-      -- loop over the whole of CONFINEMENT. Restricted to this cohort's own
-      -- patients for the same reason - the outer join throws the rest away
-      -- afterwards, having read them.
-      SELECT DISTINCT d.PATID, d.CONF_ID
-      FROM (
-        SELECT cast(c2.PATID as string) AS PATID, c2.CONF_ID,
-               coalesce(%11$s,
-                        CASE WHEN cast(c2.ADMIT_DATE as date) >= date('%10$s')
-                             THEN 'ICD10' ELSE 'ICD9' END) AS icd_norm,
-               dx.code AS raw_code
-        FROM %4$s c2
-        LATERAL VIEW explode(array(c2.DIAG1, c2.DIAG2)) dx AS code
-        WHERE c2.ADMIT_DATE IS NOT NULL
-      ) d
-      INNER JOIN (SELECT DISTINCT PATID FROM %3$s WHERE COHORT = '%6$s') pc
-              ON pc.PATID = d.PATID
-      INNER JOIN %5$s mmc
-              ON upper(regexp_replace(coalesce(d.raw_code,''),'[^A-Za-z0-9]','')) = mmc.code_norm
-             AND mmc.icd_norm = d.icd_norm
+      %11$s
     ) mm ON mm.PATID = p.PATID AND mm.CONF_ID = cf.CONF_ID
-    WHERE p.COHORT = '%6$s' AND cf.ADMIT_DATE IS NOT NULL
+    WHERE p.COHORT = '%5$s' AND cf.ADMIT_DATE IS NOT NULL
     UNION ALL
     -- Emergency visits, grouped to one per patient per day so a multi-line
     -- claim is one visit.
@@ -123,20 +160,19 @@ mod_hcru <- function(con, cfg, cohort) {
            cast(m.FST_DT as date) AS END_DT,
            cast(NULL as int) AS LOS_DAYS, 0 AS MM_RELATED, 1 AS HAS_DISCHARGE
     FROM %3$s p
-    INNER JOIN %7$s m ON cast(m.PATID as string) = p.PATID
-    INNER JOIN %8$s cl ON %9$s
-    WHERE p.COHORT = '%6$s' AND m.FST_DT IS NOT NULL %12$s %13$s",
+    INNER JOIN %6$s m ON cast(m.PATID as string) = p.PATID
+    INNER JOIN %7$s cl ON %8$s
+    WHERE p.COHORT = '%5$s' AND m.FST_DT IS NOT NULL %9$s %10$s",
     wrk("S_HCRU_EVENTS"),
     interval_days_sql("cast(cf.ADMIT_DATE as date)",
                       "cast(cf.DISCH_DATE as date)", TRUE, FALSE),
-    wrk("S_PERIODS"), cdm_src("confinement"), "S_CL_MM_DX", cohort$key,
-    cdm_src("medical"), reg, paste(arms, collapse = " OR "), ICD10_TRANSITION,
-    icd_family_sql("c2.ICD_FLAG"),
+    wrk("S_PERIODS"), cdm_src("confinement"), cohort$key,
+    cdm_src("medical"), reg, paste(arms, collapse = " OR "),
     # An ED claim that carries a CONF_ID is one that became an admission -
     # business rule 14: a record without a CONF_ID is non-inpatient.
     if (identical(cfg$ed_admitted, "inpatient_only"))
       "AND (m.CONF_ID IS NULL OR trim(m.CONF_ID) = '')" else "",
-    claim_status_sql(cfg, "m")),
+    claim_status_sql(cfg, "m"), mm_hosp_subq),
     # A count FIRST: run_step's zero-row guard reads the first column, and a
     # string there makes as.numeric() give NA and the guard skip silently.
     qc = sprintf("SELECT count(*) AS n_events,

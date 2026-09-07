@@ -216,6 +216,26 @@ cfg_defaults <- function() {
     # recorded rather than assumed.
     ed_admitted = .env_enum("ED_ADMITTED", "both", c("both", "inpatient_only")),
 
+    # --- which route makes a stay MM-related --------------------------------
+    # s7.8.1 asks for a myeloma diagnosis "in the first or second position" on
+    # a hospitalisation, and the CDM offers two places to look. `confinement`
+    # reads CONFINEMENT.DIAG1/DIAG2 - the stay's own first two diagnoses, five
+    # positions, stay grain. `claim_positions` reads MED_DIAGNOSIS.DIAG_POSITION
+    # 1 or 2 on a claim carrying that CONF_ID, which is the route business
+    # rule 13 documents: twenty-five positions, claim-line grain.
+    #
+    # The 03 Sep 2026 profile priced it: over 241,362 stays the routes find
+    # 32,508 and 65,206 respectively, and 33,904 stays are found only by the
+    # claim route (../SQL Result 2.pdf, result 11). A further 33,978 carry MM
+    # in confinement positions 3-5, which neither counts. This is the largest
+    # unresolved swing in this package's own SQL. ../OPEN_QUESTIONS.md Q27.
+    #
+    # `confinement` is what every number produced so far used, so it stays the
+    # default; changing it silently would make this package disagree with its
+    # own history.
+    mm_hosp_position = .env_enum("MM_HOSP_POSITION", "confinement",
+                                 c("confinement", "claim_positions")),
+
     # --- claim status -----------------------------------------------------
     # MEDICAL.PAID_STATUS separates PAID from DENIED, and the CDM fills it in
     # when the source leaves it null: "PAID if Sum of all Paid Amounts >= $0,
@@ -318,6 +338,7 @@ OPEN_QUESTION_SOURCE <- c(
   enrol_attr_at                       = "here",
   ed_definition                       = "here",
   ed_admitted                         = "here",
+  mm_hosp_position                    = "here",
   claim_status                        = "here",
   frailty                             = "here",
   comorbid_subgroups                  = "here",

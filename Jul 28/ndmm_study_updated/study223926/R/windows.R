@@ -167,8 +167,19 @@ rate_ci_sql <- function(events, pyears, cfg, side = c("lo", "hi")) {
 # hospitalisation or a diagnosis inflates every rate built on it. Nothing in
 # this package or the cohort build has ever filtered on it, so `all` is the
 # default and the run records which reading it took.
+#
+# The V9.0 dictionary spells the values PAID and DENIED. The warehouse stores
+# them as single characters - P and D - which the 03 Sep 2026 profile confirmed
+# (../SQL Result 2.pdf, result 21: P 1,672,870,316 lines, D 340,788,413, no
+# other value). Testing against the spelled-out word therefore excluded
+# nothing, and paid_only was a silent no-op. Both encodings are matched now.
+#
+# NULL is not treated as denied. It is 3.9% of lines among myeloma patients
+# and the dictionary says the CDM fills the field in, so a null is missing
+# information rather than evidence of a denial.
 claim_status_sql <- function(cfg, alias) {
   if (identical(cfg$claim_status, "paid_only"))
-    sprintf("AND upper(trim(coalesce(%s.PAID_STATUS, ''))) <> 'DENIED'", alias)
+    sprintf("AND upper(trim(coalesce(%s.PAID_STATUS, ''))) NOT IN ('D', 'DENIED')",
+            alias)
   else ""
 }

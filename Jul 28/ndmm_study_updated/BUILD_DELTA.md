@@ -11,6 +11,58 @@ Legend: **matches** · **change** · **new** · **decide first** (blocked on
 
 ---
 
+## 0. How a change gets delivered
+
+**`Jul 28/ndmm/` is not to be edited.** Everything this file calls a *change*
+is delivered either as an environment override on a re-run of that build, or
+inside `Jul 28/ndmm_study_updated/`. Nothing requires a line of the cohort
+build to move, and it was checked rather than assumed.
+
+Every setting in section 1 marked **change** is already read from the
+environment by `ndmm/R/config.R` — `LOT1_FROM`, `STUDY_START`, `FU_CE_DAYS`,
+`NDMM_INDEX_EXCLUDED_ABBRS`, and `SUBSEQ_FU_CE_DAYS` (via `subseq_days()` in
+`build_subsequent.R`). Setting them is a *run-time* decision. The values in
+`ndmm/config.csv` are that build's defaults and stay as they are.
+
+`CENSOR_AT_DISENROLLMENT` is the exception, and it is not an `ndmm/` setting at
+all: nothing in that build censors. Follow-up end is computed in
+`study223926`, where the setting already exists and already defaults to `TRUE`,
+which is the protocol's reading.
+
+### The secondary 2L cohort needs no upstream change either
+
+`NDMM_FLAGS_ALL` is a **declared output** of `ndmm/R/steps/06_flags.R`,
+materialised to the schema by `checkpoint()`. It is built as `ec_l1` — the
+eligible MM cohort (I1, I2) joined to 1L starts (I3) — `LEFT JOIN`ed to every
+exclusion, so **X1, X2, X3 and pre-index belantamab are carried as flag
+columns and no patient is dropped**. Filtering happens one step later, in
+`NDMM_PATIDS`, which ANDs the flags.
+
+`study223926` joins `INPUT_COHORT_TABLE` on `PATID` alone
+(`01_cohorts.R`, `INNER JOIN ... ON c.PATID = s.PATID`) and reads no flag
+column off it. So the wide population `s7.4.1.1` asks for — 2L initiators
+irrespective of when 1L fell, with a prior malignancy permitted — is obtained
+by:
+
+1. re-running `ndmm/` with `LOT1_FROM` set early enough to capture the 1L of
+   anyone initiating 2L from 01 Jan 2020 (env override, no repo change),
+2. pointing `INPUT_COHORT_TABLE` at `NDMM_FLAGS_ALL` rather than the filtered
+   cohort table, and
+3. setting `SEC2L_INPUT_IS_WIDE=TRUE`, which is exactly the assertion that
+   setting exists to record.
+
+The index-date floors are applied by `study223926` per cohort
+(`CRITERION_SOURCE` marks them `here`), so a wide input does not leak into the
+1L, 2L or 3L cohorts.
+
+**What is still genuinely upstream** is that somebody has to *run* the cohort
+and LOT builds again under those settings. The lineage guard in
+`study223926/R/lineage.R` refuses a LOT run whose `STUDY_START`, `STUDY_END`,
+cohort table or completion state disagree with what this package is set to, so
+a stale run cannot be read by accident.
+
+---
+
 ## 1. Settings
 
 | setting | today | protocol | verdict |
@@ -189,8 +241,13 @@ Note also `LOT_RULES.md`'s own banner: those three rules changed on 30 August 20
 | 12 | **Subgroup machinery** — SOC, age ≥ 75, neuropathy, frailty, with the **< 25 patients** suppression rule | §7.2.3, §7.8 |
 | 13 | **`TTE_ELIGIBLE`** flag (≥ 3 months potential follow-up) | §7.8.2 |
 
-`Jul 28/analysis/outcomes/` is the natural home for 5-11; the cohort build owns 1-4
-and 13.
+`study223926` in this folder builds **2 to 13**: demographics, the MM-adjusted
+Charlson, frailty, the 22 safety events, person-time, HCRU, secondary
+malignancies, SOC categorisation, TTNT/TTD/OS, treatment attrition, the
+subgroup machinery with the < 25 suppression rule, and `TTE_ELIGIBLE`
+(`02_periods.R`, `09_tte.R`). Item **1**, the secondary 2L cohort, is obtained
+by pointing the package at `NDMM_FLAGS_ALL` — section 0. **Nothing here
+requires the cohort build to be edited.**
 
 ## 7. The counting rules that will bite
 
@@ -257,9 +314,14 @@ agrees with what the build does** (`OPEN_QUESTIONS.md`, "What the new protocol c
 1. Settle Q1, Q2 and Q13 with the study team — each changes a count. (Q4 and Q17 are
    now answered by `Jul 28/ndmm/DECISIONS.md` §6; Q6 is moot until Annex 2 lands.)
 2. Get Annexes 2, 3 and 7, and document pages 31-32.
-3. Cohort build: `LOT1_FROM`, the index-agent exclusions, the follow-up rework (§2),
-   `FU_END`, `TTE_ELIGIBLE`, and the four new demographic columns.
-4. Secondary 2L cohort as a fifth build target.
+3. Re-run the cohort and LOT builds with the section 1 overrides in the
+   environment — `LOT1_FROM`, `STUDY_START`, `FU_CE_DAYS`,
+   `SUBSEQ_FU_CE_DAYS`, `NDMM_INDEX_EXCLUDED_ABBRS`. No edit to `ndmm/`; see
+   section 0. `FU_END`, `TTE_ELIGIBLE`, the four demographic columns and
+   censoring are all already built in `study223926`.
+4. Point `INPUT_COHORT_TABLE` at `NDMM_FLAGS_ALL` and set
+   `SEC2L_INPUT_IS_WIDE=TRUE` for the secondary 2L cohort — section 0 again.
+   No fifth build target is needed.
 5. Code lists (`CODELISTS.md` §4) — the long pole, and blocked on Annex 3.
 6. Outcomes package: baseline prevalence, incidence with person-time, HCRU,
    secondary malignancies, TTNT/TTD/OS.

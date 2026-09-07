@@ -5,6 +5,12 @@ into something a build can be written from: the eligibility criteria, the variab
 the Optum CDM mapping for each of them, and the list of things that still have to be
 decided or sent.
 
+**Scope: this folder only.** `Jul 28/ndmm/` and `Jul 28/lot/` are not edited by
+this work. Where the protocol needs the cohort or LOT build to behave
+differently, that is delivered as an environment override on a re-run of those
+builds, never as a change to them — `BUILD_DELTA.md` section 0 lists every one
+and shows it is already read from the environment.
+
 ## The protocol
 
 | | |
