@@ -442,14 +442,14 @@ LOT_QC_CHECKS <- list(
 
   list(id = "B9", group = "End reason", severity = "info",
        what = "deaths outranking an earlier run-out",
-       why = paste0("The spec ends a line at the earliest of its ending events, ",
-                    "with the priority order only breaking same-day ties - and ",
-                    "in that tie-break death ranks below discontinuation. The ",
-                    "build instead lets a death outrank an earlier run-out when ",
-                    "nothing between the two would have started the next line. ",
-                    "These are the lines where the two readings give different ",
-                    "answers: under the spec's letter they end DISCONTINUATION ",
-                    "at the run-out date, here they end DEATH."),
+       why = paste0("Read strictly, a line ends at the earliest of its ending ",
+                    "events, with the priority order only breaking same-day ",
+                    "ties - and in that tie-break death ranks below ",
+                    "discontinuation. The build instead lets a death outrank an ",
+                    "earlier run-out when nothing between the two would have ",
+                    "started the next line. These are the lines where the two ",
+                    "readings differ: strictly they end DISCONTINUATION at the ",
+                    "run-out date, here they end DEATH."),
        needs = "final",
        sql = function(t, p) counted(paste0("
     SELECT ", mask("PATID"), " AS pid, LOT_NUM,
@@ -583,7 +583,17 @@ LOT_QC_CHECKS <- list(
                     "It survives only for a comparison build, where ",
                     "apply_own_return_fold is FALSE and the release is back: ",
                     "the settings decide, so the check reads the same switch ",
-                    "the engine does rather than tolerating both."),
+                    "the engine does rather than tolerating both. ",
+                    "MELPHALAN IS THE ONE EXCEPTION, and it is the rule's own. ",
+                    "4.7 advances the line on a confirmed short course's FIRST ",
+                    "DAY, and melp_prior_regimen_exempt in R/melp_rule.R lifts ",
+                    "the prior-regimen veto so that date can be the boundary - ",
+                    "so a line already holding melphalan from an earlier course ",
+                    "can legitimately name melphalan as its added medication. ",
+                    "The shipped fixture SB is exactly that patient, and this ",
+                    "check called it a failure. Exempted only while the rule is ",
+                    "on, and only for melphalan: any other drug in this state ",
+                    "is still the disagreement the check was written for."),
        needs = c("final", "map"),
        sql = function(t, p) counted(paste0("
     WITH ", qc_restart_sql(t), "
@@ -598,7 +608,9 @@ LOT_QC_CHECKS <- list(
       AND array_contains(split(coalesce(f.LOT_BASE_MEDS, ''), ' '),
                          f.LOT_BASE_1ST_ADD_MED)",
     if (isTRUE(p$own_return_fold)) "" else
-      "\n      AND coalesce(r.PREV_DISCON, 0) = 0"),
+      "\n      AND coalesce(r.PREV_DISCON, 0) = 0",
+    if (identical(p$melp_rule, "off")) "" else
+      paste0("\n      AND f.LOT_BASE_1ST_ADD_MED <> '", p$melp_abbr, "'")),
     "concat(pid, ' LOT', LOT_NUM, ': ', med)")),
 
   list(id = "C3", group = "Regimen", severity = "info",
@@ -677,16 +689,14 @@ LOT_QC_CHECKS <- list(
 
   list(id = "D3", group = "Episodes", severity = "warn",
        what = "episodes carrying a steroid",
-       why = paste0("Two spec-consistent states, and this says which one the ",
-                    "run is in. The spec keeps steroid claims in the episode ",
-                    "data - its own worked example is DEXA - and excludes them ",
-                    "from every line decision by class, which the engine does at ",
-                    "each decision point. The rollup itself should not carry ",
-                    "them either. Zero means the list is clean; a count means the ",
-                    "steroid rows are still in the production rollup, and the ",
-                    "class filters are what the exclusion is resting on - correct ",
-                    "in every current step, but resting on sixteen predicates ",
-                    "rather than on the input."),
+       why = paste0("Two states the build tolerates, and this says which one ",
+                    "the run is in. Steroids are excluded from every line ",
+                    "decision by class (LOT_RULES.md 2.1), and the rollup drops ",
+                    "them as it loads. Zero means the list is clean and the ",
+                    "exclusion rests on the input; a count means steroid rows ",
+                    "reached the episodes anyway, and the class predicates are ",
+                    "what the exclusion is resting on - correct in every current ",
+                    "step, but sixteen predicates rather than one filter."),
        needs = "map",
        sql = function(t, p) counted(paste0("
     SELECT DISTINCT MAP_MED_TYPE AS v
@@ -771,15 +781,15 @@ LOT_QC_CHECKS <- list(
 
   list(id = "E3", group = "Transplant", severity = "info",
        what = "tandem pairs sitting exactly on the boundary",
-       why = paste0("The spec says both. Its prose and its LOT2-6 settings table ",
-                    "give the window as 60 to 180 days inclusive, no +1 - which ",
-                    "is what the build tests - while its SCT tab still carries ",
-                    "the older (date2 - date1 + 1) <= 180 formula, one day ",
-                    "tighter, and the autologous windowing step still aims at ",
-                    "that tighter reading. A pair at exactly 180 days is tandem ",
-                    "under one and not the other, and a tandem pair does not end ",
-                    "the line. This is how many patients the disagreement is ",
-                    "worth. Every line, for the reason above E1."),
+       why = paste0("Two formulas are in circulation for the same window. The ",
+                    "one the study team adjudicated, and the one the build ",
+                    "tests, is 60 to 180 days inclusive with no +1; the older ",
+                    "(date2 - date1 + 1) <= 180 is a day tighter, and the ",
+                    "autologous windowing step still aims at that tighter ",
+                    "reading. A pair at exactly 180 days is a tandem under one ",
+                    "and not the other, and a tandem pair does not end the ",
+                    "line. This is how many patients the disagreement is worth. ",
+                    "Every line, for the reason above E1."),
        needs = "long",
        sql = function(t, p) counted(paste0("
     SELECT ", mask("PATID"), " AS pid, LOT_NUM
@@ -1089,12 +1099,18 @@ qc_params <- function(settings, run_id) {
   # OLDER one, where a confirmed gap released the drug; under the rule the
   # study pins there is nothing to exempt.
   ownret <- toupper(trimws(qc_setting(settings, "apply_own_return_fold")))
+  # How melphalan is named, for C2's other exemption. 4.7 lets a CONFIRMED
+  # short course advance the line on its own first day even where the line
+  # already holds melphalan, so under the rule the added medication can be a
+  # regimen drug - and only melphalan can.
+  melp_abbr <- toupper(trimws(qc_setting(settings, "melp_med_abbr")))
   list(run_id   = run_id,
        censor   = identical(censor, "TRUE"),
        cart_exempt = identical(cart_ex, "TRUE"),
        foldin   = identical(foldin, "TRUE"),
        own_return_fold = identical(ownret, "TRUE"),
        melp_rule = if (nzchar(melp)) melp else "off",
+       melp_abbr = if (nzchar(melp_abbr)) melp_abbr else "MELP",
        ind1     = qc_int(settings, "induction_window_days"),
        indn     = qc_int(settings, "lot_n_induction_window_days"),
        cart     = qc_int(settings, "cart_consolidation_days"),

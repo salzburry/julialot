@@ -126,6 +126,14 @@ PATS = [
                    ('MELP', 'ALKY', 400, 427), ('POMA', 'IMID', 405, 600)]),
          sct_ac=[('CART', IX + 200)]),
     P('SJ0', [('LEN', 'IMID', 0, 600), ('MELP', 'ALKY', 500, 527)]),
+    # SJ1: SJ0's transplant moved OUTSIDE LOT1's 60-day window, on a line still
+    # running. 3.4 says the first transplant never ends LOT1 wherever it falls,
+    # so this must read exactly like SJ0. It did not: the boundary helper took
+    # any AUTO past the window as a break at LOT1 too, so the course was marked
+    # TAKEN, LOT1 never judged it, it was never suppressed, and it opened a line
+    # of its own on the melphalan date - which 4.7 forbids outright. SJ0 could
+    # not catch it because its transplant is in-window, which was always right.
+    P('SJ1', [('LEN', 'IMID', 0, 600), ('MELP', 'ALKY', 500, 527)]),
     P('SJ', [('LEN', 'IMID', 0, 600), ('MELP', 'ALKY', 500, 527)]),
     # SP*: one course, with a transplant in three positions around it. The two
     # doses are closer together than melp_exposure_days, so they are ONE
@@ -165,10 +173,94 @@ PATS = [
     # post-procedure dose entered the new line's regimen and its drug count.
     P('SR', [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 195, 195),
              ('MELP', 'ALKY', 205, 222)], ac=[('CART', 200)]),
+    # ZB*: a previous-line drug returning at a PROCEDURE-opened line is
+    # line-defining - the CAR-T it crossed overrides the fold (4.8) - so it is
+    # a boundary like any other, and the melphalan rule has to see it as one.
+    # It did not: the rule reads "not new" straight off the previous line's
+    # regimen, which is right for what may CONFIRM a course and wrong for what
+    # may take one, and both halves went through the same set.
+    #
+    # ZB1 is confirmation. SN's returning BORT arrives on 405 and a drug the
+    # patient never had on 410, both while the day-400 course still covers.
+    # BORT opens the line on its own date (SN), so POMA arrives after that
+    # boundary and belongs to the line BORT opened - it cannot make the earlier
+    # line's course advance. Scanning only for transplants, it did: the line
+    # was backdated to day 400 with BORT swept into a line starting before it.
+    # ZB2 is the same two drugs with no melphalan at all, and the two must give
+    # the same line starts.
+    dict(P('ZB1', [('LEN', 'IMID', 0, 80), ('BORT', 'PI', 0, 80),
+                   ('MELP', 'ALKY', 400, 427), ('BORT', 'PI', 405, 600),
+                   ('POMA', 'IMID', 410, 600)]),
+         sct_ac=[('CART', IX + 200)]),
+    dict(P('ZB2', [('LEN', 'IMID', 0, 80), ('BORT', 'PI', 0, 80),
+                   ('BORT', 'PI', 405, 600), ('POMA', 'IMID', 410, 600)]),
+         sct_ac=[('CART', IX + 200)]),
+    # ZB3 is ownership. BORT returns on day 300 and opens a line there; a lone
+    # short course sits at day 400 with nothing to confirm it. The course
+    # belongs to the line the return opened, not to the CAR-T line before it.
+    # Invisible to that scan, the CAR-T line claimed it too and was carried
+    # from a single day to the day before the return - its SCT_CART end
+    # becoming a MED_ADD. ZB3x is the same patient with the course removed,
+    # which is the shape the CAR-T line must keep.
+    dict(P('ZB3', [('LEN', 'IMID', 0, 80), ('BORT', 'PI', 0, 80),
+                   ('BORT', 'PI', 300, 500), ('MELP', 'ALKY', 400, 427)]),
+         sct_ac=[('CART', IX + 200)]),
+    dict(P('ZB3x', [('LEN', 'IMID', 0, 80), ('BORT', 'PI', 0, 80),
+                    ('BORT', 'PI', 300, 500)]),
+         sct_ac=[('CART', IX + 200)]),
+    # SU1/SU2: a suppressed course must not reach a line that starts after its
+    # cover has run out. LEN to day 80, a short course days 200-227 that 4.7
+    # correctly suppresses and that carries line 1 to day 227, and then a
+    # transplant on day 700 with no drug after it.
+    #
+    # melp_judged had no lower bound, so line 2 took the day-200 course as well;
+    # melp_hold followed, and melp_runout_case handed a regimen-less transplant
+    # line a run-out 473 days BEFORE its own start. SCT_AUTO_CONT read that as a
+    # line ending too early and clamped line 2 to a single day - 500 days of
+    # follow-up lost, and the state shipped QC check B7 calls a failure.
+    #
+    # SU2 is the same patient with no melphalan at all. The two lines 2 must be
+    # identical: the course belongs to line 1 and line 1 alone.
+    # SW1/SW2: the next-line statement must read 3.4's first-transplant
+    # exemption the way line 1's own build does. SW1's only AUTO is on day 100,
+    # outside line 1's window; SW2 moves it inside. A confirmed course at day
+    # 300 opens line 2 on the melphalan date in both, or the two statements
+    # disagree about one course and line 1 ends on a boundary line 2 refuses.
+    P('SW1', [('LEN', 'IMID', 0, 600), ('MELP', 'ALKY', 30, 57),
+              ('MELP', 'ALKY', 300, 327), ('DARA', 'MAB', 305, 600)]),
+    P('SW2', [('LEN', 'IMID', 0, 600), ('MELP', 'ALKY', 30, 57),
+              ('MELP', 'ALKY', 300, 327), ('DARA', 'MAB', 305, 600)]),
+    # SX1/SX2: scenario S11c's patient - three transplants, the first two a
+    # pair OUTSIDE line 1's 60-day window - with a 28-day melphalan course at
+    # day 450. 3.4 gives line 1 its first transplant wherever it falls, so the
+    # pair is line 1's and the engine's end cascade correctly ends line 1 on the
+    # THIRD transplant. The melphalan rule's ownership helper asked the window
+    # instead, read the partner as a break, marked the course TAKEN, and let it
+    # open a melphalan-only line - which 4.7 forbids. SX2 is the same patient
+    # with the pair in-window, which was always right.
+    P('SX1', [('LEN', 'IMID', 0, 700), ('BORT', 'PI', 0, 700),
+              ('MELP', 'ALKY', 450, 477)]),
+    P('SX2', [('LEN', 'IMID', 0, 700), ('BORT', 'PI', 0, 700),
+              ('MELP', 'ALKY', 450, 477)]),
+    P('SU1', [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 200, 227)]),
+    P('SU2', [('LEN', 'IMID', 0, 80)]),
 ]
+for _p in PATS:
+    if _p['pid'] in ('SU1', 'SU2'):
+        _p['sct_auto'] = [IX + 700]
+    elif _p['pid'] == 'SW1':
+        _p['sct_auto'] = [IX + 100]
+    elif _p['pid'] == 'SW2':
+        _p['sct_auto'] = [IX + 40]
+    elif _p['pid'] == 'SX1':
+        _p['sct_auto'] = [IX + 200, IX + 300, IX + 600]
+    elif _p['pid'] == 'SX2':
+        _p['sct_auto'] = [IX + 30, IX + 140, IX + 600]
 for _p in PATS:
     if _p['pid'] == 'SJ0':
         _p['sct_auto'] = [IX + 30]
+    elif _p['pid'] == 'SJ1':
+        _p['sct_auto'] = [IX + 200]
     elif _p['pid'] == 'SJ':
         _p['sct_auto'] = [IX + 30, IX + 180]
 
@@ -236,6 +328,33 @@ def main():
     ok(len(smp['SNn']) == 3 and starts(smp, 'SNn')[2] == rs.d(IX + 400),
        "SNn simplified: ...where a drug never given before confirms the "
        "course, so that line opens on the melphalan date instead")
+
+    ok(starts(smp, 'ZB1') == starts(smp, 'ZB2')
+       and len(smp['ZB1']) == 3 and starts(smp, 'ZB1')[2] == rs.d(IX + 405)
+       and smp['ZB1'][2][4] == 'BORT POMA',
+       "ZB1/ZB2: a new agent arriving after a returning drug opened a line "
+       "cannot backdate that line to the melphalan date")
+    ok(len(smp['SX1']) == 2 and smp['SX1'][0][2] == rs.d(IX + 599)
+       and smp['SX1'][0][3] == 'SCT_AUTO'
+       and [r[1:] for r in smp['SX1']] == [r[1:] for r in smp['SX2']],
+       "SX1/SX2: line 1 owns its tandem pair wherever the first of the two "
+       "falls, so a course after the partner opens no line of its own")
+
+    ok(len(smp['SW1']) == 2 and smp['SW1'][1][1] == rs.d(IX + 300)
+       and 'MELP' in smp['SW1'][1][4]
+       and [r[1:] for r in smp['SW1']] == [r[1:] for r in smp['SW2']],
+       "SW1/SW2: line 1's first transplant is exempt in the next-line statement "
+       "too, so a confirmed course opens line 2 on the melphalan date")
+
+    ok(len(smp['SU1']) == 2 and smp['SU1'][1] == smp['SU2'][1]
+       and smp['SU1'][1][3] == 'STUDY_END'
+       and smp['SU1'][0][2] == rs.d(IX + 227),
+       "SU1/SU2: line 1 owns the course and is carried to it; the transplant "
+       "line after it is untouched, not clamped to a single day")
+
+    ok(smp['ZB3'] == smp['ZB3x'],
+       "ZB3/ZB3x: the CAR-T line does not claim a course that falls after the "
+       "returning drug opened a line of its own")
 
     ok(len(smp['SM']) == 2 and starts(smp, 'SM')[1] == rs.d(IX + 100)
        and smp['SM'][0][3] == 'DISCONTINUATION',
@@ -341,6 +460,9 @@ def main():
        "SJ0 simplified: the in-window AUTO leaves the rule alone - one line")
     ok(smp.get('SJ') == smp.get('SJ0'),
        "SJ simplified: its planned tandem partner does not switch the rule off")
+    ok(smp.get('SJ1') == smp.get('SJ0'),
+       "SJ1 simplified: a FIRST transplant outside the window does not switch "
+       "it off either - 3.4 gives LOT1 that transplant wherever it falls")
 
     if fails:
         print("%d check(s) failed" % len(fails)); sys.exit(1)

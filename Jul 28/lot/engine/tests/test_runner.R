@@ -1758,13 +1758,26 @@ uncomment <- function(lines)
   }, character(1), USE.NAMES = FALSE)
 step_files_all <- list.files(file.path(ROOT, "R", "steps"), "\\.R$", full.names = TRUE)
 all_made <- views_in(unlist(lapply(step_files_all, readLines, warn = FALSE)))
+# A step can read a CTE one of the rule modules emits into it - the melphalan
+# and fold-in chains, and autos_with_prev_cte() - so those files define names
+# too. Read them for CTE names only; nothing there creates a view.
+module_ctes <- unique(unlist(lapply(
+  list.files(file.path(ROOT, "R"), "\\.R$", full.names = TRUE), function(f) {
+    t <- paste(uncomment(readLines(f, warn = FALSE)), collapse = "\n")
+    unlist(regmatches(t, gregexpr("[a-z_][a-z_0-9]*(?=\\s+AS\\s*\\()", t, perl = TRUE)))
+  })))
 dangling <- unlist(lapply(step_files_all, function(f) {
   txt  <- paste(uncomment(readLines(f, warn = FALSE)), collapse = "\n")
   refs <- unique(unlist(regmatches(txt,
     gregexpr("(?<=\\bFROM |\\bJOIN )[a-z_][a-z_0-9]*", txt, perl = TRUE))))
   ctes <- unique(unlist(regmatches(txt,
     gregexpr("[a-z_][a-z_0-9]*(?=\\s+AS\\s*\\()", txt, perl = TRUE))))
-  d <- setdiff(refs, c(all_made, ctes))
+  # A helper that emits a CTE whose NAME the caller chooses defines it here,
+  # even though no literal "<name> AS (" appears in either file:
+  # autos_with_prev_cte('post_runout_autos') is that shape.
+  named <- unique(unlist(regmatches(txt,
+    gregexpr("(?<=_cte\\([\"'])[a-z_][a-z_0-9]*", txt, perl = TRUE))))
+  d <- setdiff(refs, c(all_made, ctes, module_ctes, named))
   if (length(d)) paste0(basename(f), ": ", paste(d, collapse = ", ")) else NULL
 }))
 ok(length(dangling) == 0,
@@ -2565,17 +2578,25 @@ for (h in list(list(hold, "LOT1", "cfg$induction_window_days"),
   ok(grepl("n_between", h[[1]], fixed = TRUE),
      paste0("...and only when nothing happened between the two"))
 }
-# One definition of what breaks a tandem, spliced everywhere it is asked. Five
-# copies is how the five drift apart, and a tandem test that disagrees with the
-# start gate it mirrors puts a transplant in no line at all.
+# One definition of what breaks a tandem, and one of the relation the tandem
+# test is read from. Copies are how the sites drift apart, and a tandem test
+# that disagrees with the start gate it mirrors puts a transplant in no line.
 ok(grepl("tandem_interrupt_events_sql <- function", pr, fixed = TRUE),
    "what breaks a tandem is defined once")
-sites <- sum(vapply(c("05b_lot1_sct.R", "06_lot1_end.R", "10_lot2_5_base.R"),
-  function(f) n_hits("{tandem_interrupt_events_sql()}",
-    paste(readLines(file.path(ROOT, "R", "steps", f), warn = FALSE), collapse = "\n")), integer(1)))
-ok(sites == 5L,
-   paste0("...and spliced into all five places that ask - two tandem flags, the ",
-          "start gate, and its two run-out mirrors (", sites, ")"))
+ok(grepl("autos_with_prev_cte <- function", pr, fixed = TRUE),
+   "...and so is each AUTO with the one before it and what fell in between")
+# Five places ask what breaks a tandem. Two splice it directly - the tandem
+# flags at LOT1 and LOT2-5 - and three reach it through autos_with_prev_cte():
+# the next line's AUTO start gate and the two run-out guards that mirror it.
+step_txt <- function(f) paste(readLines(file.path(ROOT, "R", "steps", f),
+                                        warn = FALSE), collapse = "\n")
+direct <- sum(vapply(c("05b_lot1_sct.R", "06_lot1_end.R", "10_lot2_5_base.R"),
+  function(f) n_hits("{tandem_interrupt_events_sql()}", step_txt(f)), integer(1)))
+via <- sum(vapply(c("05b_lot1_sct.R", "06_lot1_end.R", "10_lot2_5_base.R"),
+  function(f) n_hits("autos_with_prev_cte(", step_txt(f)), integer(1)))
+ok(direct == 2L && via == 3L && n_hits("{tandem_interrupt_events_sql()}", pr) == 1L,
+   paste0("...and all five places that ask reach one definition - two splice it ",
+          "(", direct, "), three through autos_with_prev_cte (", via, ")"))
 
 # One gate, stated three times - reason, date, length. If they drift, a line
 # reports one reason and the date of another.

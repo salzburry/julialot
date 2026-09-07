@@ -76,15 +76,17 @@ EXPECTED_FAILURES <- list(
     # both bounded by it, the same-day add-med tie-break as a row hash rather
     # than a seeded rand, the short-course boundary gate as an anti-join, and
     # the melphalan verdict built here rather than judged again for the break
-    # test alone - the same helper 06 reads, bound one statement earlier.
-    "04_lot1_base.R: differs from 02_lot1.R in 148 line(s) [00080579]",
+    # test alone - the same helper 06 reads, bound one statement earlier and
+    # WITHOUT the half of it that reads lot1_base, which this statement is in
+    # the middle of creating.
+    "04_lot1_base.R: differs from 02_lot1.R in 148 line(s) [435b8d49]",
     # LOT1_AUTO_HOLD_DT, and a tandem that needs a clear gap between its two
     # transplants.
     "05b_lot1_sct.R: differs beyond the approved deviations in 176 line(s) [524fd363]",
     # The SCT_AUTO_CONT branch and the end_natural CTE it compares against, the
     # post-run-out trigger as existence tests, and the run-out guard on LOT1's
     # own window with the tandem gap.
-    "06_lot1_end.R: differs beyond the approved deviations in 257 line(s) [25de3497]",
+    "06_lot1_end.R: differs beyond the approved deviations in 245 line(s) [09c4a054]",
     "08_persist.R: differs beyond the approved deviations in 111 line(s) [4ef6f10b]",
     # SCT_AUTO_CONT and end_natural at LOT2-5, LOT{n}_AUTO_HOLD_DT, auto_cand
     # reading the previous line's own window, the regimen cutoff, and the tandem
@@ -96,7 +98,7 @@ EXPECTED_FAILURES <- list(
     # complete LOT_LONG, and the short-course break test told that this
     # statement already carries the verdict, so a confirmed course stops a
     # run-out chain. Re-pinned deliberately, which is what this list is for.
-    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 976 line(s) [42b7cbbf]")
+    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 952 line(s) [3b7c6844]")
 )
 
 # How one suite's output is read. Its own suite is validation/hygiene/
@@ -181,6 +183,7 @@ EXPECTED_SUITES <- list(
 # The repo-side suites are the same whichever delivery is being gated.
 EXPECTED_HERE <- c(
   "hygiene/codelist_code_types.R",
+  "hygiene/emitted_sql_shape.R",
   "hygiene/gate_semantics.R",
   "hygiene/lot_contract_binding.R",
   "hygiene/lot_selfcontained.R",

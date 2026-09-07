@@ -17,12 +17,7 @@
 # start, and it starts on the melphalan date rather than the later agent's - so
 # the course's first day is injected as the boundary. A course inside induction,
 # or one longer than the cap, is left to the engine untouched.
-# melp_simplified_ctes() below does the work.
-#
-# The study team asked first for a five-branch rule keyed on the gap to the next
-# exposure, in two readings. Both were built, measured against this one, and not
-# adopted; they were removed on 2026-08-30 once the choice was settled, and
-# STUDY_TEAM_ASKS.md keeps the finding.
+# melp_decision_ctes() below does the work.
 # The two values APPLY_MELP_RULE takes. There is one rule, so this is on/off,
 # and it stays a WORD rather than a flag for two reasons: APPLY_MELP_RULE is a
 # CONTRACT axis, and config.csv carries the word.
@@ -39,13 +34,9 @@
 MELP_RULE_ON  <- "simplified"
 MELP_RULE_OFF <- "off"
 
-# Read once, and the only question anything asks. An unrecognised value stops
-# the build rather than quietly acting like the rule is on - which is what the
-# two retired five-branch names now do.
-#
-# This was melp_rule_mode(), returning which of three modes was in force, with
-# melp_rule_on() a wrapper over it. With one rule left, the mode and the
-# predicate were the same question asked twice.
+# Read once, and the only question anything asks. An unrecognised value - a
+# retired mode name included - stops the build rather than quietly acting like
+# the rule is on.
 melp_rule_on <- function(cfg) {
   m <- tolower(trimws(cfg$apply_melp_rule %||% ""))
   if (!nzchar(m) || identical(m, MELP_RULE_OFF)) return(FALSE)
@@ -65,27 +56,11 @@ melp_abbr    <- function(cfg) toupper(trimws(cfg$melp_med_abbr %||% "MELP"))
 #
 # line_tbl / start_col / span_end name that line. induction_end is the step's
 # own induction-end expression for it - 60 days at LOT1, 30 at LOT2-5, 45 on a
-# CART-started line. It is handed in rather than rebuilt here.
-#
-# base_tbl / restart_tbl are read only by the simplified mode - see
-# melp_simplified_ctes. The five-branch modes never ask what else the patient
-# takes, so both stay unused there and their SQL is unchanged.
-# The rule's decision. One reading - the short course the study adopted - so
-# this is a thin front door onto melp_simplified_ctes rather than a switch.
-# It stays a function of its own because every caller splices it by this name
-# and none of them should have to know which reading is in force.
-melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end,
-                               base_tbl = NULL, restart_tbl = NULL,
-                               not_new_ctes = "", cart_from = NULL) {
-  if (!melp_rule_on(cfg)) return("")
-  melp_simplified_ctes(cfg, line_tbl, start_col, span_end, induction_end,
-                       base_tbl, restart_tbl, not_new_ctes, cart_from)
-}
-
-# The simplified rule's decision, emitting the same four CTE names the
-# consumers read - melp_suppress_dates, melp_inject, melp_hold and the chain
-# they hang off - so every splice point downstream is shared with the
-# five-branch modes.
+# CART-started line. It is handed in rather than rebuilt here. base_tbl names
+# (PATID, MED_ABBR, SUBSTITUTE_ONLY) for the judged line and restart_tbl the
+# restart flags (map_restart_sql's shape); each caller passes the ones already
+# in scope in its statement, and melp_prev_line_ctes emits its own pair first
+# because nothing usable exists yet where it splices.
 #
 # Per exposure (doses chained the same way), against the line handed in:
 #
@@ -105,16 +80,14 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
 #                                               the melphalan date, not the
 #                                               confirming agent's later one
 #   everything else                          -> left to the engine
-#
-# base_tbl names (PATID, MED_ABBR, SUBSTITUTE_ONLY) for the judged line and
-# restart_tbl the restart flags (map_restart_sql's shape). Each caller passes
-# the ones already in scope in its statement; melp_prev_line_ctes emits its
-# own pair first, because nothing usable exists yet where it splices.
-melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
-                                 induction_end, base_tbl, restart_tbl,
-                                 not_new_ctes = "", cart_from = NULL) {
+melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end,
+                               base_tbl = NULL, restart_tbl = NULL,
+                               not_new_ctes = "", cart_from = NULL,
+                               first_auto_exempt = FALSE, proc_line = NULL,
+                               prior_held_ctes = "", no_regimen_line = NULL) {
+  if (!melp_rule_on(cfg)) return("")
   if (is.null(base_tbl) || is.null(restart_tbl))
-    stop("The simplified melphalan rule needs the judged line's base set and ",
+    stop("The melphalan short-course rule needs the judged line's base set and ",
          "restart flags to tell a confirming agent from a drug the line ",
          "already holds. This caller handed in neither.", call. = FALSE)
   abbr <- melp_abbr(cfg)
@@ -122,37 +95,77 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
   not_new_join <- if (!nzchar(not_new_ctes)) "" else
     "\n      LEFT JOIN melp_not_new nn
         ON nn.PATID = c.PATID AND nn.MED_ABBR = c.MAP_MED_TYPE"
+  # No exception here, whatever else the returning drug does: "a returning drug
+  # does not confirm a course, even where it opens a line" (LOT_RULES.md 4.7).
+  # The boundary such a drug DOES make is a separate test, in the NOT EXISTS at
+  # the end of melp_confirm.
   not_new_pred <- if (!nzchar(not_new_ctes)) "" else
     "\n        AND nn.MED_ABBR IS NULL"
-  # The same set, for melp_taken's "another agent got here first" scan. A drug
-  # of an earlier line coming back is not another agent taking the course - the
-  # fold-in has put it in this line (LOT_RULES.md 4.8). Reading the working
-  # base set alone missed that, because a folded drug joins the line's REPORTED
-  # regimen and the fold CTEs are spliced after these, so this statement cannot
-  # see them. This set is built from the earlier lines instead, which are
-  # already there.
-  #
-  # It reaches wider than the folded episodes: a previous-line agent whose
-  # return the count does NOT fold is excluded too. That set is not empty, and
-  # this comment used to say it was. A transplant or CAR-T that opened a line
-  # in between overrides the fold (4.8), so the return neither folds nor stays
-  # in the line it left - it opens a line of its own. F9, F10 and F15 in the
-  # fold-in harness are planted patients of exactly that shape.
-  #
-  # So the exclusion here can take a return that DID start a line. Whether that
-  # changes which line owns a later course is open: the timelines tried for it
-  # all came back with the course in the line the return opened, which is the
-  # answer wanted. It is written down because the reach is real, not because a
-  # patient is known to fall in it.
+  # The same set for melp_taken's "another agent got here first" scan: a
+  # returning drug is not another agent, the fold-in has put it in this line
+  # (4.8). Built from the earlier lines because a folded drug joins the
+  # REPORTED regimen and the fold CTEs are spliced after these.
   # An anti-join and a WHERE test, not an EXISTS in the ON clause. `o` is
   # INNER JOINed here, so moving the condition out of the join changes
   # nothing - and Spark does not accept a correlated subquery in a join
   # condition before 4.0 (SPARK-45009).
+  # A course an earlier line held inside its own window is not this line's to
+  # judge. 4.7 asks whether a course is outside ANY window, and this one is
+  # inside the owner's. Needed on top of the cover bound, which misses a course
+  # covering INTO the next line (F37/F37c). A course the owner SUPPRESSED is
+  # not in this set, so a later line still judges it (SPin).
+  no_regimen_pred <- if (is.null(no_regimen_line)) "" else
+    paste0("\n                   AND NOT (", no_regimen_line, ")")
+  prior_held_pred <- if (!nzchar(prior_held_ctes)) "" else
+    "\n        AND NOT EXISTS (SELECT 1 FROM melp_prior_held ph
+                        WHERE ph.PATID = mc.PATID AND ph.EXPO_DT = mc.EXPO_DT)"
+  # A MEDICATION boundary, the same idea as the transplant one at the end of
+  # melp_confirm: an agent arriving after a drug that opened a line belongs to
+  # that line and cannot make this line's course advance. LOT_RULES.md 4.7,
+  # planted as ZB1/ZB2.
+  #
+  # Exactly one kind of drug can be that boundary without confirming the course
+  # itself - a previous-line drug returning at a procedure-opened line, where
+  # 4.8 refuses the fold. Anything else in the interval is either no candidate
+  # at all or a candidate, and a candidate confirms, which makes the boundary
+  # the melphalan date.
+  #
+  # Past the line's own window, because a return inside it joins this line's
+  # regimen and opens nothing. STRICTLY before the agent, where the transplant
+  # test says on-or-before: two drugs starting the same day start one line
+  # together and neither is "after" the other, while a transplant and a same-day
+  # drug are ordered by the engine's tie-break.
+  confirm_med_boundary <- if (!nzchar(not_new_ctes) || is.null(proc_line)) "" else
+    glue("
+        AND NOT EXISTS (
+          SELECT 1
+          FROM map_stacked b
+          INNER JOIN melp_not_new bn
+            ON bn.PATID = b.PATID AND bn.MED_ABBR = b.MAP_MED_TYPE
+          WHERE b.PATID = mc.PATID
+            AND b.MAP_MED_CLASS <> 'STEROID'
+            AND upper(trim(b.MAP_MED_TYPE)) <> '{abbr}'
+            AND b.MAP_START_DT >  mc.EXPO_DT
+            AND b.MAP_START_DT <  c.MAP_START_DT
+            AND b.MAP_START_DT >  {induction_end}
+            AND {proc_line}
+        )")
   taken_not_new_join <- if (!nzchar(not_new_ctes)) "" else
     "\n      LEFT JOIN melp_not_new tnn
         ON tnn.PATID = o.PATID AND tnn.MED_ABBR = o.MAP_MED_TYPE"
+  # ...with one exception, and only here. Where a PROCEDURE opened the judged
+  # line, 4.8 refuses the fold outright, so the returning drug is folded into
+  # nothing: it is line-defining, which is what this scan asks about. Planted
+  # as ZB3/ZB3x.
+  #
+  # The test is the judged line's start type rather than a re-derivation of the
+  # fold - the fold CTEs are spliced after these and cannot be read from here
+  # (R/foldin_rule.R records the same one-way dependency from its side). It
+  # does not need to be: a return inside a procedure-opened line has crossed
+  # that procedure by construction, which is the whole of the override.
   taken_not_new_pred <- if (!nzchar(not_new_ctes)) "" else
-    "\n        AND tnn.MED_ABBR IS NULL"
+    if (is.null(proc_line)) "\n        AND tnn.MED_ABBR IS NULL"
+    else paste0("\n        AND (tnn.MED_ABBR IS NULL OR ", proc_line, ")")
   paste0("\n", glue("
     melp_doses AS (
       SELECT PATID, MAP_START_DT AS DOSE_DT
@@ -160,8 +173,8 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
       WHERE upper(trim(MAP_MED_TYPE)) = '{abbr}'
       GROUP BY PATID, MAP_START_DT
     ),
-    -- Chained, not pairwise, like the five-branch modes: doses closer than
-    -- melp_exposure_days are one administration.
+    -- Chained, not pairwise: doses closer than melp_exposure_days are one
+    -- administration.
     melp_runs AS (
       SELECT PATID, DOSE_DT,
              CASE WHEN datediff(DOSE_DT,
@@ -194,24 +207,33 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
     -- candidate against this line - outside its base set, or a released
     -- restart that is not substitute-only. The same gate the candidate lists
     -- apply, read from the tables handed in, so the two cannot disagree.
-{not_new_ctes}
-    -- The agent that confirms a short course has to be a NEW one. The request
-    -- words it as the patient starting a NEW AGENT; the fold-in request words
-    -- a drug from an earlier line coming back as THE RETURNING DRUG, never a
-    -- new one, and bundles it into the line it returns in. So a returning
-    -- prior-line agent cannot be what confirms a course - one rule would
-    -- otherwise bundle the drug and the other read it as a change.
+{not_new_ctes}{prior_held_ctes}
+    -- The confirming agent has to be a NEW one. A returning prior-line drug is
+    -- the returning drug (4.8), not a change, so it confirms nothing. The join
+    -- is present only with the fold-in on and from LOT2 up, and reads the same
+    -- set the fold does - prior_lines_regimen_ctes() in R/prior_regimen.R.
     --
-    -- The join is present only when the fold-in is on, and only from LOT2 up,
-    -- since LOT1 has no earlier line. melp_not_new comes from the same
-    -- definition the fold set is built from - prior_lines_regimen_ctes() in
-    -- R/prior_regimen.R - so the two cannot drift.
+    -- No lower bound: the agent must start after the COURSE, not after the
+    -- judged line. So a course covering into two lines is judged by both and
+    -- they can disagree about CONFIRMED. Open - see STUDY_TEAM_ASKS.md 7.
     melp_confirm AS (
       SELECT DISTINCT mc.PATID, mc.EXPO_DT
       FROM melp_course mc
       -- The judged line, for the transplant test below: which transplants
       -- break a line is a question about THAT line's window and start.
       INNER JOIN {line_tbl} ON {line_tbl}.PATID = mc.PATID
+      -- No lower bound HERE, and it is not an oversight - see the note above
+      -- melp_confirm. Bounding confirmation by the judged line's start was
+      -- tried, on the shape that argues for it: an allograft line one day after
+      -- a suppressed course, with a new agent five days later, which confirms
+      -- the course, takes its own hold away and collapses back to a single day
+      -- while the line that OWNS the course suppressed it. The bound does carry
+      -- that line to the course's cover - and the hold then runs straight past
+      -- the new agent, which loses its line altogether: four unassigned days
+      -- become three hundred and eighty-six. The missing piece is a cap on the
+      -- hold at the next line-defining agent, and which of that agent and the
+      -- melphalan carry ends the line is 4.7-against-7.2, a rule the study team
+      -- has not been asked. Left as it is, with the shape recorded.
       INNER JOIN map_stacked c
         ON c.PATID = mc.PATID
        AND c.MAP_START_DT >  mc.EXPO_DT
@@ -226,17 +248,11 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
       WHERE (cb.MED_ABBR IS NULL
 {return_release_sql(cfg, 'cr', 'cb')}){not_new_pred}
         -- ...and nothing has ENDED the judged line between the course and the
-        -- agent. A transplant that breaks the line is a boundary of its own,
-        -- so an agent arriving after one belongs to the line that transplant
-        -- opened - it is no candidate against this line, and it cannot make
-        -- this line's course advance. Scanning only for the agent, a course
-        -- on day 100 with an allograft on 102 and a new drug on 105 was
-        -- confirmed by that drug and a line was BACKDATED to day 100, ending
-        -- two days later at the allograft: a line whose whole regimen was a
-        -- course the rule says advances nothing.
-        --
-        -- Same helper melp_taken reads, so ownership and confirmation cannot
-        -- disagree about which transplants are boundaries.
+        -- agent. An agent arriving after a breaking transplant belongs to the
+        -- line that transplant opened, so it cannot make this line's course
+        -- advance. Planted as SK/SKn. Same helper melp_taken reads, so
+        -- ownership and confirmation cannot disagree about which transplants
+        -- are boundaries.
         AND NOT EXISTS (
           SELECT 1
           FROM ({line_break_tx_sql()}
@@ -244,27 +260,27 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
           WHERE ctx.PATID = mc.PATID
             AND ctx.TX_DT >  mc.EXPO_DT
             AND ctx.TX_DT <= c.MAP_START_DT{line_break_window_pred(cfg, 'ctx',
-                  induction_end, paste0(line_tbl, '.', start_col), cart_from)}
-        )
+                  induction_end, paste0(line_tbl, '.', start_col), cart_from,
+                  first_auto_exempt)}
+        ){confirm_med_boundary}
     ),
     -- A course belongs to ONE line: the latest whose start precedes it.
+    -- Without this every line claims every later course and melp_hold takes
+    -- the max, carrying the FIRST line to the LAST suppressed course in the
+    -- record (SH).
     --
-    -- Without this the bounds below - the line start to OBSERVATION end - let
-    -- every line claim every later course, and melp_hold takes the max, so the
-    -- FIRST line is carried to the LAST suppressed course in the record. A
-    -- patient with LEN to day 200, a second line opening at day 300 and a lone
-    -- melphalan course at day 900 had line 1 ending day 299 MED_ADD, its real
-    -- day-200 discontinuation gone, and line 2 carried to day 927.
+    -- The test is an intervening line-defining agent, not a gap: a course long
+    -- after the drugs ran out is still this line's when nothing happened in
+    -- between, which is the request's own case (SE). Same candidate gate as
+    -- melp_confirm below, so ownership and confirmation cannot disagree about
+    -- what counts as an agent.
     --
-    -- The test is an intervening line-defining agent, not a gap. A course long
-    -- after the drugs ran out still belongs to the line when nothing else
-    -- happened in between - that is the request's own case, and the planted SE
-    -- patient pins it. What disqualifies a course is another agent the engine
-    -- would open a line on, arriving first: the line ends there, and what comes
-    -- after belongs to the line that agent started.
-    --
-    -- Same candidate gate as melp_confirm below, so ownership and confirmation
-    -- cannot disagree about what counts as an agent.
+    -- KNOWN GAP. The gate does not ask whether that agent could open a line.
+    -- One past the line's run-out, or landing exactly on its end, opens
+    -- nothing under 4.1 but still disqualifies the course - and then no line
+    -- judges it, so it takes one of its own. Not fixed: the bound wanted is
+    -- the line's run-out, and discon_per_med computes that after these CTEs
+    -- while reading melp_boundary_join from them. See LOT_RULES.md 4.7.
     melp_taken AS (
       SELECT DISTINCT mc.PATID, mc.EXPO_DT
       FROM melp_course mc
@@ -284,22 +300,13 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
 {return_release_sql(cfg, 'orr', 'ob')}){taken_not_new_pred}
       UNION
       -- A line can also be opened by a procedure, and a course after one is
-      -- no more this line's than a course after a new drug. Scanning
-      -- medications alone left exactly that hole: a CAR-T opening line 2 on
-      -- day 100 did not stop line 1 claiming a course on day 200, and line
-      -- 1's own day-50 discontinuation became a day-99 SCT_CART end.
+      -- no more this line's than a course after a new drug (SI).
       --
       -- Measured from the line's INDUCTION END, not its start: a transplant
       -- inside a line's own window belongs to that line and ends nothing
-      -- (LOT_RULES.md 3.4 and 6.5), so it must not disqualify the line from
-      -- a course of its own afterwards. One past the window is a boundary.
-      --
-      -- With one exception, and it is the engine's own: a PLANNED TANDEM. The
-      -- second transplant of a tandem pair need not be in the window and may
-      -- follow the first however far out - the pair continues the line and
-      -- opens nothing. Scanning the raw transplant dates counted it as a
-      -- boundary, so an in-window AUTO with its partner on day 180 switched
-      -- this rule off for every later course that patient had.
+      -- (LOT_RULES.md 3.4 and 6.5). One past the window is a boundary, with
+      -- one exception - a PLANNED TANDEM partner, which need not be in the
+      -- window and continues the line however far out it sits (SJ).
       SELECT DISTINCT mc.PATID, mc.EXPO_DT
       FROM melp_course mc
       INNER JOIN {line_tbl} ON {line_tbl}.PATID = mc.PATID
@@ -307,17 +314,28 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
       ) tx
         ON tx.PATID = mc.PATID
        AND tx.TX_DT <= mc.EXPO_DT{line_break_window_pred(cfg, 'tx', induction_end,
-             paste0(line_tbl, '.', start_col), cart_from)}
+             paste0(line_tbl, '.', start_col), cart_from, first_auto_exempt)}
     ),
     melp_judged AS (
       SELECT mc.PATID, mc.EXPO_DT,
-             -- Outside ANY induction window, in the ask's own words. A
-             -- course that started BEFORE this line is not inside this line's
-             -- window - it is outside it, like any other date before it. It
-             -- used to be dropped from judging instead, and a course a
-             -- transplant split then reached the next line unjudged.
+             -- Outside ANY induction window, in the ask's own words: a
+             -- course starting BEFORE this line is outside its window like any
+             -- other earlier date, not exempt from its judgement (SPin).
+             -- ...and only where the line has an induction window to be
+             -- inside. An ALLOGENEIC line spans its transplant date alone and
+             -- takes no drugs at all - 4.6, and the induction step suppresses
+             -- its regimen rows - so a course starting on that date is not an
+             -- induction drug of it, however the window arithmetic reads.
+             -- Read as INSIDE, the previous-line statement left the course
+             -- unsuppressed and its later dose opened a line, while the new
+             -- line's own statement judged the same course outside its window
+             -- and suppressed it - so the line was started by a dose it then
+             -- held out of its own regimen. Shipped checks A7 and C4 both call
+             -- that a failure. Planted as P0008 in run_synthetic.py, where
+             -- the shipped catalogue runs over every planted patient.
              CASE WHEN mc.EXPO_DT >= {line_tbl}.{start_col}
-                   AND mc.EXPO_DT <= {induction_end} THEN 1 ELSE 0 END AS INSIDE,
+                   AND mc.EXPO_DT <= {induction_end}{no_regimen_pred}
+                  THEN 1 ELSE 0 END AS INSIDE,
              CASE WHEN datediff(mc.COURSE_END_DT, mc.EXPO_DT) + 1
                        <= {cfg$melp_simple_course_days} THEN 1 ELSE 0 END AS SHORT,
              CASE WHEN cf.PATID IS NOT NULL THEN 1 ELSE 0 END AS CONFIRMED
@@ -327,13 +345,24 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
       INNER JOIN {line_tbl} ON {line_tbl}.PATID = mc.PATID
       LEFT JOIN melp_taken tk
         ON tk.PATID = mc.PATID AND tk.EXPO_DT = mc.EXPO_DT
-      -- No lower bound. Which line OWNS a course is melp_taken's question -
-      -- another line-defining agent, or a breaking transplant, arriving
-      -- first - and it was asked twice: once there, and again here as a
-      -- cruder date test. Between the two a course split by a transplant fell
-      -- through, judged by neither line.
+      -- Bounded by the course's COVER, not by where it starts. A line judges
+      -- the courses it can actually see: one that starts inside it, and one
+      -- that started earlier and still covers into it - the course a
+      -- transplant splits, which 4.7 says is outside the new line's induction
+      -- window and not exempt from its judgement (SPin). Asking instead
+      -- whether the course STARTS after the line let that split course fall
+      -- between this test and melp_taken, judged by neither line.
+      --
+      -- A course whose cover ran out before this line began has no dose in it
+      -- and belongs to an earlier line, so this line does not judge it.
+      -- Unbounded, every later line re-judged it against its own window. Two
+      -- defects followed: the fold-in lost the course as a returning drug's
+      -- previous dose (F36/F36c), and the hold gave a transplant line a
+      -- run-out before its own start, which QC check B7 calls a failure
+      -- (SU1/SU2).
       WHERE mc.EXPO_DT <= {span_end}
-        AND tk.PATID IS NULL
+        AND mc.COURSE_END_DT >= {line_tbl}.{start_col}
+        AND tk.PATID IS NULL{prior_held_pred}
     ),
     -- A short unconfirmed course outside induction neither ends the line nor
     -- starts one...
@@ -343,7 +372,7 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
       WHERE INSIDE = 0 AND SHORT = 1 AND CONFIRMED = 0
     ),
     -- ...and every dose in it comes off the candidate list, not just the
-    -- first - same reason as the five-branch modes.
+    -- first.
     melp_suppress_dates AS (
       SELECT DISTINCT d.PATID, d.DOSE_DT AS SUPPRESS_DT
       FROM melp_dose_expo d
@@ -361,15 +390,10 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
       WHERE INSIDE = 0 AND SHORT = 1 AND CONFIRMED = 1
     ),
     -- ONE COURSE, ONE ANSWER - the same statement suppression makes above,
-    -- for the other verdict. The course advances the line on its FIRST day,
-    -- and its later doses belong to the line that day opened; none of them
-    -- may open a line of its own. melp_inject carries the boundary alone,
-    -- because only the first day is one; this carries the rest.
-    --
-    -- Suppression expanded to every dose from the start and injection did
-    -- not, so a course given as more than one dose left its later doses as
-    -- ordinary candidates. Where a transplant then ended the line the course
-    -- had opened, a later dose opened another line - which 4.7 forbids.
+    -- for the other verdict. The course advances the line on its FIRST day and
+    -- its later doses belong to the line that day opened; none of them may
+    -- open a line of its own. melp_inject carries the boundary alone, because
+    -- only the first day is one; this carries the rest (SQ).
     melp_inject_rest AS (
       SELECT DISTINCT d.PATID, d.DOSE_DT
       FROM melp_dose_expo d
@@ -377,32 +401,26 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
         ON i.PATID = d.PATID AND i.INJECT_DT = d.EXPO_DT
       WHERE d.DOSE_DT <> d.EXPO_DT
     ),
-    -- Suppressing and owning are two halves of one statement, exactly as in
-    -- the five-branch modes: the line is carried to the course it refused a
-    -- boundary to. Carried to the course's LAST COVERED DAY, not its first
-    -- dose - 'received for 28 days' is a statement about cover, and the
-    -- short test above already measures cover, so ownership reads the same
-    -- clock. The five-branch modes hold to dose dates because their branch
-    -- table is written in dose dates; this rule is written in days of
-    -- supply. Capped at the line's own span.
+    -- Suppressing and owning are two halves of one statement: the line is
+    -- carried to the course it refused a boundary to, to that course's LAST
+    -- COVERED DAY. 'Received for 28 days' is a statement about cover, and the
+    -- short test above measures cover, so ownership reads the same clock.
+    -- Capped at the line's own span.
     melp_hold AS (
       SELECT s.PATID, max(least(c.COURSE_END_DT, {span_end})) AS MELP_HOLD_DT
       FROM (SELECT PATID, SUPPRESS_DT AS EXPO_DT, 0 AS IS_INJECT
             FROM melp_suppress
             UNION ALL
             -- An INJECTED course too, but ONLY where it has doses after its
-            -- first. Those are refused a line of their own just as a
-            -- suppressed course's are, so the line they fall in has to reach
-            -- them - and that is the line the boundary opened, or whatever a
-            -- transplant left in its place.
+            -- first: those are refused a line of their own like a suppressed
+            -- course's, so the line they fall in has to reach them.
             --
             -- Two things this must not do. Not hold the line the boundary
-            -- ENDS: that would carry it across its own boundary and turn a
-            -- confirmed discontinuation at its run-out into a medication
-            -- addition on the melphalan date. And not hold anything at all
-            -- for a SINGLE-dose course - there is nothing after the boundary
-            -- to own, and holding then swallowed a later agent that should
-            -- have opened a line of its own.
+            -- ENDS, which would carry it across its own boundary and turn a
+            -- confirmed discontinuation into a medication addition on the
+            -- melphalan date. And not hold anything for a SINGLE-dose course,
+            -- where holding swallowed a later agent that should have opened a
+            -- line of its own (SK).
             SELECT DISTINCT i.PATID, i.INJECT_DT AS EXPO_DT, 1 AS IS_INJECT
             FROM melp_inject i
             INNER JOIN melp_dose_expo dz
@@ -411,11 +429,10 @@ melp_simplified_ctes <- function(cfg, line_tbl, start_col, span_end,
       INNER JOIN melp_course c
         ON c.PATID = s.PATID AND c.EXPO_DT = s.EXPO_DT
       INNER JOIN {line_tbl} ON {line_tbl}.PATID = s.PATID
-      -- Bounded the same way melp_judged is, because suppressing and owning
-      -- are two halves of one statement: a course this line refused a
-      -- boundary to is a course this line has to hold. Carrying the lower
-      -- bound here and not there suppressed a transplant-split course
-      -- without giving it to anyone, and its later dose sat in no line.
+      -- Bounded the same way melp_judged is: a course this line refused a
+      -- boundary to is a course this line has to hold. Bounding the two
+      -- differently suppressed a transplant-split course without giving it to
+      -- anyone, and its later dose sat in no line.
       WHERE s.EXPO_DT <= {span_end}
         AND (s.IS_INJECT = 0 OR {line_tbl}.{start_col} >= s.EXPO_DT)
       GROUP BY s.PATID
@@ -607,10 +624,21 @@ melp_prev_line_ctes <- function(cfg, prev_med_window, cart_consolidation_days,
   # divergence nothing currently reads is still a divergence.
   cart_from <- if (isTRUE(cfg$apply_cart_induction_rule) &&
                    identical(lot_num, 2L)) ind_end else NULL
+  # 3.4's first-transplant exemption is LOT1's alone in the same way, and the
+  # same argument applies: LOT1's own statement never lets its first AUTO break
+  # the line, wherever it falls, and this recomputation did. So the two
+  # disagreed about one course - line 1's build confirmed it and ended the line
+  # on the melphalan date, while this statement read the transplant as a break,
+  # marked the course TAKEN, and refused to open line 2 there. Line 2 started on
+  # the confirming agent's own later date instead, without the melphalan in its
+  # regimen, and the days between belonged to no line. Moving line 1's only AUTO
+  # from day 59 to day 60 was the whole difference. Planted as P0010.
   paste0(pre, melp_decision_ctes(
     cfg, "prev_end", "PREV_START_DT", "prev_end.OBS_END_DT", ind_end,
+    no_regimen_line = "prev_end.PREV_START_TYPE = 'SCT_ALLO'",
     base_tbl = "melp_sc_base", restart_tbl = "melp_sc_restart",
-    cart_from = cart_from))
+    cart_from = cart_from,
+    first_auto_exempt = identical(lot_num, 2L)))
 }
 
 # While the rule is on, melphalan's line-advancing decisions belong to it, so
@@ -620,11 +648,9 @@ melp_prev_line_ctes <- function(cfg, prev_med_window, cart_consolidation_days,
 # line. Empty only on a rule-off build, so the study's LOT2-5 candidate list
 # does carry this carve-out from the prior-regimen exclusion.
 #
-# The exemption names the DATES the rule says advance, not the drug. Released
-# by drug, four exposures the branch table refuses a line could open one: both
-# doses of a B.2 pair, B.3's first, and A.1's later. The dates that MAY advance
-# are exactly melp_inject - B.1's first, and the later exposure of an A.2 or
-# B.3 pair - so the exemption reads that list.
+# The exemption names the DATES the rule says advance, not the drug: releasing
+# melphalan wholesale would let exposures the rule refuses a line open one. The
+# dates that MAY advance are exactly melp_inject, so the exemption reads it.
 melp_prior_regimen_exempt <- function(cfg, alias = "ms") {
   if (!melp_rule_on(cfg)) return("")
   glue(" OR (upper(trim({alias}.MAP_MED_TYPE)) = '{melp_abbr(cfg)}'
@@ -640,127 +666,55 @@ melp_prior_regimen_exempt <- function(cfg, alias = "ms") {
 #
 # end_candidates is the one place those columns enter 06, so this is one
 # substitution rather than an edit per reference.
-# Which melphalan episodes must not INTERRUPT a base drug's run-out chain.
+# Which melphalan episodes must not INTERRUPT a base drug's run-out chain: the
+# SHORT courses outside the line's own induction window, minus the confirmed
+# ones. A confirmed course opens a line, so it is a boundary like any other
+# agent and has to break the chain; only a suppressed course refuses a boundary
+# and so refuses to break one. Read the third column and the previous line's
+# chain walks straight through a confirmed course and takes an episode
+# belonging to the line that course opened - H4/H4c are that patient.
 #
-# The SHORT courses outside the line's own induction window, MINUS the ones
-# that turned out to be confirmed. A confirmed course opens a line, so it is a
-# boundary like any other agent and has to break the chain; only a suppressed
-# course refuses a boundary and so refuses to break one. That subtraction is
-# made where the statement already carries the verdict - see the `judged`
-# argument below - and at LOT1, which does not, this set is still every short
-# outside-window course. A course inside induction is in the regimen and the
-# scan already skips it. A course longer than the cap is
-# left to the engine untouched (4.7), so it breaks the chain like any other
-# drug; removing every melphalan row instead made an over-cap course stop
-# ending the line at its own run-out, which is the opposite of untouched.
-#
-# The grouping is the rule's own - doses closer than melp_exposure_days are
-# one administration, and the course covers to its latest supply end - so this
-# and melp_course cannot disagree about what a course is. None of it needs the
-# melphalan DECISION, which is why it can run at LOT1, where that decision does
-# not exist yet: it reads map_stacked and the line's start, nothing else.
-# judged: does this statement already carry the course verdict?
-#
-# melp_no_break below re-derives SHORT and OUTSIDE for itself, and never asked
-# about the third column. A CONFIRMED course opens a line, so it is a boundary
-# like any other agent - and being absent from the break test, the previous
-# line's run-out chain walked straight through it and took an episode that
-# belongs to the line the course opened. The line then ran to the boundary and
-# ended MED_ADD instead of at its own discontinuation, and the drug stood in
-# both lines. H4/H4c are that patient.
-#
-# TRUE only from 10_lot2_5_base.R, where melp_judged and melp_inject are CTEs
-# of the same statement. 04_lot1_base.R has neither: LOT1's verdict is built in
-# 06_lot1_end.R, which runs after. So LOT1 still carries the defect, and it is
-# left carrying it rather than being handed a second derivation of the verdict
-# to disagree with - reconstructing this decision independently is what put it
-# here. Closing LOT1 means moving its verdict ahead of S10, which is the
-# course-verdict work scoped separately; nothing about the verdict needs LOT1's
-# end, so there is no cycle in the way.
-melp_short_course_ctes <- function(cfg, line_tbl, start_col, induction_end,
-                                   verdict = NULL) {
+# A course inside induction is in the regimen and the scan already skips it. A
+# course longer than the cap is left to the engine untouched (4.7), so it
+# breaks the chain like any other drug; removing every melphalan row instead
+# made an over-cap course stop ending the line at its own run-out (SM).
+melp_short_course_ctes <- function(cfg, verdict) {
   if (!melp_rule_on(cfg)) return("")
-  # Where the verdict is in reach, read it. One relation, and the three
-  # questions this test asks are three of its columns rather than a second
-  # chaining of the doses and a second judging of length and window - which is
-  # how a confirmed course came to be treated as no boundary at all: the chain
-  # that knew it was confirmed and the chain that decided the break were
-  # different chains.
+  # One relation, and the three questions this test asks are three of its
+  # columns rather than a second chaining of the doses and a second judging of
+  # length and window - which is how the chain that knew a course was confirmed
+  # and the chain that decided the break came to be different chains. Both
+  # callers pass a verdict, so the argument is required.
   #
-  # AFTER_WINDOW, not INSIDE = 0, because they are not the same question: a
-  # course starting BEFORE the line is INSIDE = 0 and is not after the window.
-  # This test has always asked the second, and merging them would add pre-line
-  # courses to the break set - a behaviour change the study team has not been
-  # asked for.
-  if (!is.null(verdict))
-    return(paste0("\n", glue("
+  # AFTER_WINDOW, not INSIDE = 0, and they are not the same question: a course
+  # starting BEFORE the line is INSIDE = 0 and is not after the window. This
+  # test has always asked the second.
+  #
+  # INSIDE = 0 would take pre-line courses OUT of the break set and stop them
+  # interrupting, which is arguably what 4.7 wants: a course this line judged
+  # and SUPPRESSED decides nothing, so it should refuse to break a chain
+  # wherever it started. Measured rather than argued - swapping this one
+  # predicate changes nothing the validation estate can see, over 618 patients
+  # and every planted melphalan and fold-in case - so it stays a rule question
+  # for the study team rather than a silent edit.
+  paste0("\n", glue("
     melp_no_break AS (
       SELECT DISTINCT PATID, DOSE_DT AS MAP_START_DT
       FROM {verdict}
       WHERE AFTER_WINDOW = 1 AND SHORT = 1
         AND NOT (CONFIRMED = 1 AND TAKEN = 0 AND IN_SPAN = 1
                  AND DOSE_DT = EXPO_DT)
-    ),")))
-  abbr <- melp_abbr(cfg)
-  not_injected <- ""
-  paste0("\n", glue("
-    melp_bg_doses AS (
-      SELECT PATID, MAP_START_DT AS DOSE_DT
-      FROM map_stacked
-      WHERE upper(trim(MAP_MED_TYPE)) = '{abbr}'
-      GROUP BY PATID, MAP_START_DT
-    ),
-    melp_bg_runs AS (
-      SELECT PATID, DOSE_DT,
-             CASE WHEN datediff(DOSE_DT,
-                    lag(DOSE_DT) OVER (PARTITION BY PATID ORDER BY DOSE_DT))
-                       < {cfg$melp_exposure_days}
-                  THEN 0 ELSE 1 END AS IS_NEW
-      FROM melp_bg_doses
-    ),
-    melp_bg_expo AS (
-      SELECT PATID, DOSE_DT,
-             min(DOSE_DT) OVER (PARTITION BY PATID, E) AS EXPO_DT
-      FROM (SELECT PATID, DOSE_DT,
-                   sum(IS_NEW) OVER (PARTITION BY PATID ORDER BY DOSE_DT
-                                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS E
-            FROM melp_bg_runs) r
-    ),
-    melp_bg_course AS (
-      SELECT d.PATID, d.EXPO_DT, d.DOSE_DT, max(m.MAP_END_DT) AS COURSE_END_DT
-      FROM melp_bg_expo d
-      INNER JOIN map_stacked m
-        ON m.PATID = d.PATID AND m.MAP_START_DT = d.DOSE_DT
-       AND upper(trim(m.MAP_MED_TYPE)) = '{abbr}'
-      GROUP BY d.PATID, d.EXPO_DT, d.DOSE_DT
-    ),
-    -- Every dose of a course that is SHORT and starts past this line's own
-    -- induction window. The course's length is judged once, at its first
-    -- dose, so a follow-up dose is in or out with the course it belongs to.
-    melp_no_break AS (
-      SELECT c.PATID, c.DOSE_DT AS MAP_START_DT
-      FROM melp_bg_course c
-      INNER JOIN (SELECT PATID, EXPO_DT, max(COURSE_END_DT) AS COURSE_END_DT
-                  FROM melp_bg_course GROUP BY PATID, EXPO_DT) x
-        ON x.PATID = c.PATID AND x.EXPO_DT = c.EXPO_DT
-      INNER JOIN {line_tbl} ON {line_tbl}.PATID = c.PATID
-      WHERE datediff(x.COURSE_END_DT, c.EXPO_DT) + 1 <= {cfg$melp_simple_course_days}
-        AND c.EXPO_DT > {induction_end}{not_injected}
     ),"))
 }
 
 # How the interrupt scan reads it: an anti-join, and a test on the joined row.
-#
-# NOT an EXISTS in the scan's ON clause, which is what this was. Spark does not
-# accept a correlated subquery in a join condition before 4.0 (SPARK-45009),
-# and prior_regimen.R says as much about correlated subqueries generally - so
-# the form that reads most directly is the one that would not have deployed.
-# duckdb accepts it, so the harnesses could not have caught it either.
+# NOT an EXISTS in the scan's ON clause - Spark does not accept a correlated
+# subquery in a join condition before 4.0 (SPARK-45009), and duckdb does, so
+# the harnesses could not have caught it.
 #
 # The two halves go to discon_per_med_sql together: the join brings the row in,
 # the predicate stops it counting as a break. Equivalent to filtering it out in
-# the ON clause, because BREAKS is a max() over the group - a row that cannot
-# break contributes nothing either way.
+# the ON clause, because BREAKS is a max() over the group.
 melp_boundary_join <- function(cfg) {
   if (!melp_rule_on(cfg)) return("")
   paste0("\n        LEFT JOIN melp_no_break nb2\n",
@@ -784,7 +738,20 @@ melp_boundary_break_pred <- function(cfg) {
 # chain the doses and judge length and window for itself, and never ask whether
 # a course was confirmed, which is why a confirmed course was no boundary there
 # and a boundary in 06.
-melp_lot1_ctes <- function(cfg, line_from = "lot1_base") {
+# end_ctes: emit the half that reads lot1_base itself.
+#
+# Everything from melp_lot1_base down - the held run-out substituted back in,
+# the span it bounds, and the candidate list - belongs to 06, which runs after
+# lot1_base exists. 04 runs while lot1_base is BEING created and must take the
+# decision half alone.
+#
+# Taking the whole helper into 04 put a CTE reading FROM lot1_base inside the
+# statement that creates it. Spark validates a CTE it never uses, so a clean
+# session raises TABLE_OR_VIEW_NOT_FOUND there and a stale relation left over
+# from an earlier run hides it - the worse of the two outcomes. duckdb prunes
+# an unused CTE before binding it, so the harness ran green over SQL Spark
+# would have refused.
+melp_lot1_ctes <- function(cfg, line_from = "lot1_base", end_ctes = TRUE) {
   if (!melp_rule_on(cfg)) return("")
   paste0("\n", glue("
     -- The line's own drugs and their permissible substitutes, carrying WHICH
@@ -823,8 +790,10 @@ melp_lot1_ctes <- function(cfg, line_from = "lot1_base") {
                        # window. One outside it opens the next line as anywhere
                        # else. With the rule off there is no exemption at all.
                        cart_from = if (isTRUE(cfg$apply_cart_induction_rule))
-                                     "melp_line.IND_END_DT" else NULL),
-    glue("
+                                     "melp_line.IND_END_DT" else NULL,
+                       # 3.4: LOT1's first transplant never ends the line.
+                       first_auto_exempt = TRUE),
+    if (!end_ctes) "" else glue("
     -- lot1_base with the held run-out substituted, built ONCE and read by
     -- every CTE in 06 that asks when this line ran out.
     --
@@ -1012,8 +981,46 @@ lotn_induction_end <- function(lot_num, induction_window_days,
             END")
 }
 
+# The courses an EARLIER line held inside its own induction window.
+#
+# lot_long carries lines 1..N-1 by the time line N is built, with each line's
+# start date and start type, so the window each of them owned is a CASE on the
+# same three shapes lotn_induction_end() writes - line 1 keeps its own 60 days,
+# an ALLO line is its start date alone, a CAR-T line gets the consolidation
+# window, and everything else the LOT2-5 window. One reading of the window, in
+# both places.
+#
+# Empty at LOT1, which has no earlier line, exactly like the fold set.
+melp_prior_held_cte <- function(lot_num, induction_window_days,
+                                cart_consolidation_days,
+                                lot1_induction_window_days) {
+  if (lot_num < 2) return("")
+  paste0("\n", glue("
+    melp_prior_held AS (
+      SELECT DISTINCT mc.PATID, mc.EXPO_DT
+      FROM melp_course mc
+      INNER JOIN lot_long pl
+        ON pl.PATID = mc.PATID AND pl.LOT_NUM < {lot_num}
+      -- STRICTLY after the earlier line's start. A course that OPENED a line
+      -- sits on that line's own first day, so it is trivially inside its
+      -- window - and protecting it there would stop the line the transplant
+      -- opened next from suppressing it, leaving its later dose an ordinary
+      -- candidate with a line of its own (SQ). What this set is for is a
+      -- course an earlier line took IN, not one that started it.
+      WHERE mc.EXPO_DT > pl.LOT_START_DT
+        AND mc.EXPO_DT <= CASE
+              WHEN pl.LOT_START_TYPE = 'SCT_ALLO' THEN pl.LOT_START_DT
+              WHEN pl.LOT_START_TYPE = 'CART'
+                THEN date_add(pl.LOT_START_DT, {cart_consolidation_days - 1})
+              WHEN pl.LOT_NUM = 1
+                THEN date_add(pl.LOT_START_DT, {lot1_induction_window_days - 1})
+              ELSE date_add(pl.LOT_START_DT, {induction_window_days - 1})
+            END
+    ),"))
+}
+
 # The verdict CTE for LOT2-5, bound the same way melp_lotn_ctes binds the
-# decision it reads.
+# decision it reads.""
 melp_lotn_verdict_cte <- function(cfg, lot_num, induction_window_days,
                                   cart_consolidation_days) {
   if (!melp_rule_on(cfg)) return("")
@@ -1025,7 +1032,8 @@ melp_lotn_verdict_cte <- function(cfg, lot_num, induction_window_days,
 }
 
 melp_lotn_ctes <- function(cfg, lot_num, induction_window_days,
-                           cart_consolidation_days, allo_lot_span) {
+                           cart_consolidation_days, allo_lot_span,
+                           lot1_induction_window_days = 60L) {
   if (!melp_rule_on(cfg)) return("")
   ls <- glue("lot{lot_num}_start")
   # base_meds and map_restart are this statement's own CTEs, defined before
@@ -1049,5 +1057,11 @@ melp_lotn_ctes <- function(cfg, lot_num, induction_window_days,
     cfg, ls, glue("LOT{lot_num}_START_DT"), glue("{ls}.OBS_END_DT"),
     lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days),
     base_tbl = "base_meds", restart_tbl = "map_restart",
-    not_new_ctes = not_new)
+    not_new_ctes = not_new,
+    proc_line = if (!nzchar(not_new)) NULL else
+      glue("{ls}.LOT{lot_num}_START_TYPE <> 'MED'"),
+    prior_held_ctes = melp_prior_held_cte(lot_num, induction_window_days,
+                                          cart_consolidation_days,
+                                          lot1_induction_window_days),
+    no_regimen_line = glue("{ls}.LOT{lot_num}_START_TYPE = 'SCT_ALLO'"))
 }

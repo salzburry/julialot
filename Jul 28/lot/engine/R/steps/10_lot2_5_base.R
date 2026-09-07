@@ -384,22 +384,7 @@ build_lot_n <- function(con, lot_num,
     --
     -- A first-ever AUTO CAN trigger a new LOT here. That is LOT2-5 only; at
     -- LOT1 the first AUTO is part of induction.
-    autos_with_prev AS (
-      -- N_BETWEEN: whether anything happened since the previous transplant. A
-      -- pair 180 days apart with a medication in the middle is not a planned
-      -- tandem, so the later transplant is free to start a line.
-      SELECT p.PATID, p.TX_DT, p.PREV_AUTO_DT,
-             coalesce(sum(CASE WHEN x.dt > p.PREV_AUTO_DT AND x.dt < p.TX_DT
-                               THEN 1 ELSE 0 END), 0) AS N_BETWEEN
-      FROM (
-        SELECT a.PATID, a.TX_DT,
-               lag(a.TX_DT) OVER (PARTITION BY a.PATID ORDER BY a.TX_DT) AS PREV_AUTO_DT
-        FROM tx_auto_dates a
-      ) p
-      LEFT JOIN ({tandem_interrupt_events_sql()}
-      ) x ON p.PATID = x.PATID
-      GROUP BY p.PATID, p.TX_DT, p.PREV_AUTO_DT
-    ),
+{autos_with_prev_cte('autos_with_prev')}
     auto_cand AS (
       SELECT pe.PATID, min(awp.TX_DT) AS d_AUTO
       FROM prev_end pe
@@ -418,40 +403,34 @@ build_lot_n <- function(con, lot_num,
               END)
         -- (ii) not a planned tandem. tx_auto_dates has already grouped AUTO
         -- claims less than 60 days apart into one event, so only the
-        -- sct_tandem_days upper bound is left to test here, as at LOT1.
+        -- sct_tandem_days upper bound is left here, as at LOT1.
         --
-        -- The exception is the AUTO that ended the previous line. That one has
-        -- already been ruled EXCESS by the previous line's own rule: LOT1
-        -- allows a single AUTO and a tandem pair, and ends the line on the one
-        -- beyond them. Testing it again as a tandem partner of the transplant
-        -- before it leaves the event in no line. AUTO 1 in March, AUTO 2 in
-        -- June as a tandem, AUTO 3 in November ends LOT1 on 31 October - and
-        -- was then rejected here for being within 180 days of AUTO 2, so LOT2
-        -- never opened. The line-ending SCT sits one day after the end date,
-        -- which is exactly where that AUTO is.
+        -- Three conditions guard it, each because dropping it left a
+        -- transplant in no line:
         --
-        -- The pair must also be one the previous line OWNED, which is what the
-        -- window test below asks. The 180-day test on its own says the two
-        -- transplants are close together and nothing more; it does not say a
-        -- line ever held them. Where the earlier AUTO falls outside the
-        -- previous line's window, nothing held that line open to the later one
-        -- - LOT{lot_num}_AUTO_HOLD_DT carries the same window test and goes
-        -- NULL - so refusing the later one HERE as that line's tandem partner
-        -- leaves it in no line at all. AUTO 1 in December outside LOT1's
-        -- window, LOT1 ending on its own run-out in February, AUTO 2 in June:
-        -- LOT1 does not reach it and this rejected it, so it belonged to
-        -- nothing. Same failure as the paragraph above, from the other side of
-        -- the pair.
+        --   the AUTO that ENDED the previous line is exempt - it was already
+        --   ruled excess there, and testing it again as a partner of the one
+        --   before it left it unassigned;
+        --
+        --   the pair must be one the previous line OWNED, which is the window
+        --   test. Being 180 days apart says the two are close together, not
+        --   that a line held them; where the earlier one falls outside the
+        --   window, LOT{lot_num}_AUTO_HOLD_DT goes NULL and nothing reaches
+        --   the later one;
+        --
+        --   an ALLOGENEIC previous line owns nothing. Its window END is its
+        --   start date, so an AUTO on the allograft date reads as inside it,
+        --   but 4.6 gives that line one day and nothing reaches it. Shipped
+        --   check E5 calls the result a failure. Planted as P0007.
         --
         -- Deliberately NOT the wider reading, that a tandem holds the previous
-        -- line open through AUTO 2 wherever AUTO 1 sits. The hold date reaches
-        -- forward, so a line let past its own window swallows what is in
-        -- between - an added medication that should have opened its own line,
-        -- an allograft that should have ended this one. Measured on 2000
-        -- synthetic patients that moved 52 patients, 39 of whom had no
-        -- unowned transplant to fix, and broke B5b. This reading moved 12, all
-        -- of them patients with one.
+        -- line open through AUTO 2 wherever AUTO 1 sits. A hold date reaches
+        -- forward, so a line let past its own window swallows what is between
+        -- - an added medication, an allograft that should have ended it. On
+        -- 2000 synthetic patients that moved 52, 39 with no unowned transplant
+        -- to fix, and broke B5b; this reading moved 12, all with one.
         AND NOT (awp.PREV_AUTO_DT IS NOT NULL
+                 AND pe.PREV_START_TYPE <> 'SCT_ALLO'
                  AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {sct_tandem_days}
                  AND awp.N_BETWEEN = 0
                  AND awp.PREV_AUTO_DT <= date_add(
@@ -600,7 +579,7 @@ build_lot_n <- function(con, lot_num,
     -- So a substitute never ends a line on its own, confirms a run-out or
     -- opens the next one, whatever gaps its own episodes carry.
     base_meds AS ({regimen_with_subs_sql(paste0('lot', lot_num, '_induction_meds'))}
-    ),{melp_lotn_ctes(cfg, lot_num, induction_window_days, cart_consolidation_days, allo_lot_span)}{melp_lotn_verdict_cte(cfg, lot_num, induction_window_days, cart_consolidation_days)}{foldin_lotn_ctes(cfg, lot_num, lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days))}{foldin_base_meds_ctes(cfg)}
+    ),{melp_lotn_ctes(cfg, lot_num, induction_window_days, cart_consolidation_days, allo_lot_span, lot1_induction_window_days)}{melp_lotn_verdict_cte(cfg, lot_num, induction_window_days, cart_consolidation_days)}{foldin_lotn_ctes(cfg, lot_num, lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days))}{foldin_base_meds_ctes(cfg)}
     -- Per drug, the end of ITS cover in this line: the FIRST episode flagged
     -- discontinued. A later episode of the same drug does NOT open the next
     -- line. It was in this line's regimen, so this line extends over it, and
@@ -611,9 +590,7 @@ build_lot_n <- function(con, lot_num,
     -- give a line-level run-out of 144. The restart is then swallowed and LOT2
     -- never opens, because its trigger has to fall strictly after the previous
     -- end.
-{melp_short_course_ctes(cfg, glue('lot{lot_num}_start'), glue('LOT{lot_num}_START_DT'),
-                        lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days),
-                        verdict = 'melp_verdict')}
+{melp_short_course_ctes(cfg, 'melp_verdict')}
     discon_per_med AS (
 {discon_per_med_sql(glue('lot{lot_num}_regimen_cutoff'), glue('LOT{lot_num}_START_DT'),
                     boundary_tbl = foldin_boundary_tbl(cfg), end_col = 'REGIMEN_CUTOFF_DT',
@@ -1045,22 +1022,7 @@ build_lot_n <- function(con, lot_num,
         AND (prem.MED_ABBR IS NULL
 {return_release_sql(cfg, 'mr', 'prem')})
     ),
-    post_runout_autos AS (
-      -- N_BETWEEN: whether anything happened since the previous transplant. A
-      -- pair 180 days apart with a medication in the middle is not a planned
-      -- tandem, so the later transplant is free to start a line.
-      SELECT p.PATID, p.TX_DT, p.PREV_AUTO_DT,
-             coalesce(sum(CASE WHEN x.dt > p.PREV_AUTO_DT AND x.dt < p.TX_DT
-                               THEN 1 ELSE 0 END), 0) AS N_BETWEEN
-      FROM (
-        SELECT a.PATID, a.TX_DT,
-               lag(a.TX_DT) OVER (PARTITION BY a.PATID ORDER BY a.TX_DT) AS PREV_AUTO_DT
-        FROM tx_auto_dates a
-      ) p
-      LEFT JOIN ({tandem_interrupt_events_sql()}
-      ) x ON p.PATID = x.PATID
-      GROUP BY p.PATID, p.TX_DT, p.PREV_AUTO_DT
-    ),
+{autos_with_prev_cte('post_runout_autos')}
     post_runout_auto AS (
       SELECT DISTINCT lb.PATID
       FROM lot{lot_num}_base lb

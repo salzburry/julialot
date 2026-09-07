@@ -10,12 +10,12 @@
 #   1. A sizing SCREEN for the MAP-splitting rule: MED_ADD boundaries where
 #      an agent from the PREVIOUS line's regimen is among the medications that
 #      started on the boundary date. Every boundary is classified from the
-#      engine's own candidate rule - outside-regimen starts plus released
-#      restarts of the line's own drugs - not from the one randomly stored
-#      first-add medication. Two classes:
+#      engine's own candidate rule - starts of a drug the line's regimen does
+#      not already hold - not from the one randomly stored first-add
+#      medication. Two classes:
 #        AFFECTED            every candidate that day is a previous-line
-#                            agent, so under the proposed fold-in the boundary
-#                            disappears
+#                            agent, so where the fold-in takes the return the
+#                            boundary disappears
 #        SAME_DAY_NEW_AGENT  another engine-valid candidate also started that
 #                            day, so the boundary would remain
 #      ...each under two match bases, EXACT_TOKEN and SUBSTITUTE_FAMILY,
@@ -23,24 +23,32 @@
 #      A per-patient review roster sits beside the counts: prior and current
 #      regimens, the returning drug and its date, the window end, the gap from
 #      the drug's last cover, same-day starters, and the next line.
-#      It is a screen of current boundaries, not the line table the proposed
-#      rule would build - a folded agent changes the regimen, the run-out and
-#      every later window, which needs a rebuild, not arithmetic.
+#      It is a screen of the boundaries in the line table it is pointed at, not
+#      a rebuild - a folded agent changes the regimen, the run-out and every
+#      later window, which arithmetic cannot follow. Written before the rule was
+#      adopted, when the build it read had no fold-in and this sized what the
+#      rule WOULD do. On a build that applies the rule a boundary the fold
+#      removed is no longer there to count, so what it reports now is the
+#      residual: the previous-line returns that still open a line.
 #      The rule itself is NOT changed here. The rebuild exists separately:
 #      exploration/lot/run_foldin_cells.R builds the fold-in as its own
-#      gated cell pair and differences it against the contract build. Scope
-#      differs on purpose: this screen counts PREVIOUS-line returns only,
-#      while the cell folds agents of every earlier line - so this count is
-#      a lower bound on the cell's population, not its exact size.
+#      gated cell pair and differences it against the contract build. Both
+#      read PREVIOUS-line returns - the scope the study team settled on
+#      30 Aug - so the two are not a narrow and a wide reading of the same
+#      thing. What this screen counts is CANDIDATE boundaries, before the
+#      fold's own conditions decide them: one advance in between, and no line
+#      a procedure opened. So it is larger than the cell's population, and it
+#      is a screen rather than a prediction of it.
 #      In the roster, GAP_FROM_PRIOR_EPISODE_END_DAYS is one number per
 #      patient and line: the gap from the MOST RECENT prior cover among the
 #      returning medications, not one gap per drug.
 #
 #   2. A pointer to the melphalan comparison. The study adopted the
 #      short-course rule on 2026-08-30 and the build applies it, so this run's
-#      own line table is already built with it. The cells that measured the
-#      choice run separately: the five-branch rule that was not adopted, and
-#      the adopted rule against a build without it.
+#      own line table is already built with it. What measured the choice runs
+#      separately, in lot/melphalan/: the adopted rule against a build without
+#      it. The five-branch rule that was not adopted was removed on the same
+#      day and has no cell any more - STUDY_TEAM_ASKS.md keeps its finding.
 #
 #   3. Patients whose prior line ended with the recorded reason
 #      DISCONTINUATION and who then hold the 12-month continuous-enrollment
@@ -138,12 +146,16 @@ main <- function() {
   # The screen mirrors the engine's own candidate rule, not an approximation
   # of it. On each MED_ADD boundary the pool is every non-steroid episode
   # starting on the add date that the engine would accept as a first-add
-  # candidate: an agent outside the line's regimen (exact token, the way the
-  # engine joins it), or a regimen agent whose PREVIOUS episode of the same
-  # token was flagged discontinued - the released restart. The engine exempts
-  # substitute-only regimen entries from that release; the flag is
-  # engine-internal, so the release here is slightly wider, which can only
-  # move a line OUT of AFFECTED, never into it.
+  # candidate: an agent outside the line's regimen, by exact token, the way the
+  # engine joins it.
+  #
+  # That is the whole rule now. It used to admit a regimen agent as well, where
+  # its previous episode of the same token carried MAP_DISCON_FLG - the engine's
+  # old released restart - with a note that the release here was slightly wider
+  # and could only move a line OUT of AFFECTED. Both halves were wrong once 4.3
+  # was pinned: there is no release to be wider than, and moving lines out of
+  # AFFECTED is precisely the harm, because AFFECTED is the count this screen
+  # exists to produce.
   #
   # Every boundary is classified, not just the ones whose randomly stored
   # first-add medication happens to be the returning drug - the stored pick
@@ -186,14 +198,6 @@ main <- function() {
       FROM ln
       WHERE LOT_BASE_END_REASON = 'MED_ADD' AND ADD_DT IS NOT NULL
     ),
-    restarts AS ( -- each episode, with whether the same token's previous
-                  -- episode was flagged discontinued (the engine's release)
-      SELECT cast(PATID as string) AS PATID, upper(trim(MAP_MED_TYPE)) AS MED,
-             cast(MAP_START_DT as date) AS ST,
-             coalesce(lag(MAP_DISCON_FLG) OVER (PARTITION BY PATID, MAP_MED_TYPE
-                                                ORDER BY MAP_START_DT), 0) AS PREV_DISCON
-      FROM {maps}
-    ),
     pool AS (   -- the engine's candidate pool on the boundary date. The stored
                 -- ADD_MED_DT is the day BEFORE the episode start (it is the
                 -- line-end date), so the start is one day past it.
@@ -207,10 +211,23 @@ main <- function() {
       LEFT JOIN subs sb ON sb.s = upper(trim(mp.MAP_MED_TYPE))
       LEFT JOIN toks cx ON cx.PATID = b.PATID AND cx.LOT_NUM = b.LOT_NUM
                        AND cx.MED = upper(trim(mp.MAP_MED_TYPE))
-      LEFT JOIN restarts mr ON mr.PATID = b.PATID
-                           AND mr.MED = upper(trim(mp.MAP_MED_TYPE))
-                           AND mr.ST = date_add(b.ADD_DT, 1)
-      WHERE cx.MED IS NULL OR coalesce(mr.PREV_DISCON, 0) = 1
+      -- A drug the line's own regimen already holds is NOT a candidate, however
+      -- long it was away. This used to admit one whose previous episode carried
+      -- MAP_DISCON_FLG, on the engine's old release - and 4.3, pinned
+      -- apply_own_return_fold TRUE, withdrew that release: a regimen drug
+      -- coming back never advances the line, whatever the gap. The engine says
+      -- so in its own output on the planted MS8, whose boundary it ends
+      -- MED_ADD with LOT_BASE_1ST_ADD_MED = LEN, the returning previous-line
+      -- agent, and not the same-day restart of its own CARF.
+      --
+      -- Left in, the restart joined the pool, and being no previous-line agent
+      -- it dragged the whole boundary from AFFECTED to SAME_DAY_NEW_AGENT. The
+      -- screen therefore UNDER-counted the boundaries the fold-in removes,
+      -- which is the number this screen exists to size.
+      --
+      -- The release is still real for a comparison build with
+      -- apply_own_return_fold FALSE. This screen sizes the study's build.
+      WHERE cx.MED IS NULL
     ),
     poolx AS (  -- each pool member, previous-line membership by exact token
       SELECT p.PATID, p.LOT_NUM, p.MED_RAW,

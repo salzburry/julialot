@@ -6,12 +6,12 @@
 #
 # The engine's OLDER rule released it once discontinued: map_discon_gap_days
 # flags the episode whose gap to the next reaches the threshold, and an episode
-# after such a gap was a restart that could open a line like any other drug.
-# apply_own_return_fold withdraws that release, and CONTRACT pins it TRUE - so
-# in the study's build a drug of the PREVIOUS regimen never starts a line,
-# whatever the gap. A drug last given further back than that is outside this
-# rule and opens a line like any other agent. The release survives only for comparison builds. See
-# return_release_on() below, which is the one place that decides.
+# after such a gap was a restart that could open a line. apply_own_return_fold
+# withdraws that release and CONTRACT pins it TRUE, so in the study's build a
+# drug of the PREVIOUS regimen never starts a line whatever the gap; a drug
+# last given further back is outside this rule. The release survives only for
+# comparison builds - see return_release_on() below, the one place that
+# decides.
 #
 # The release and the run-out chain are two halves of one rule and neither is
 # safe alone. Release the drug without breaking the chain and a line opens
@@ -22,16 +22,6 @@
 # THE RETURNING-DRUG RELEASE, LOT_RULES.md 4.3 - one definition for all eight
 # places that ask, because a guard reading a different rule from the candidate
 # it mirrors ends a line on an event the next line then refuses to open on.
-#
-# apply_own_return_fold FALSE is the engine's older rule: a gap of
-# map_discon_gap_days releases the drug, and its next episode opens a line like
-# any other agent.
-#
-# TRUE - what CONTRACT pins - withdraws that. A line advances on an agent that
-# was not in the previous regimen, and a drug that WAS in it is not
-# one, whatever the gap. Nothing was given in between, so the drug is returning
-# to the line it left.
-#
 # Both halves move together: return_release_sql() withdraws the release, and
 # own_gap_breaks_chain() stops discon_per_med breaking the line at the same
 # gap.
@@ -59,12 +49,10 @@ prior_regimen_excl_sql <- function() {
 }
 
 # A line's regimen plus the permissible biosimilar substitutes for it, with
-# SUBSTITUTE_ONLY recording WHY each drug is in the set. Four callers need this
-# set - LOT1 and LOT2-5 both build their base_meds from it, and both run-out
-# guards build the drugs they must not accept from it. They read the same rule,
-# so they get it from here. A guard spelling it out differently from the
-# candidate set it mirrors ends a line on an event the next line refuses to
-# open on. min() so a drug that is both a real regimen drug and somebody's
+# SUBSTITUTE_ONLY recording WHY each drug is in the set. Four callers need it -
+# LOT1 and LOT2-5 build their base_meds from it, and both run-out guards build
+# the drugs they must not accept from it - so it lives here for the reason
+# above. min() so a drug that is both a real regimen drug and somebody's
 # substitute counts as the former.
 regimen_with_subs_sql <- function(src) {
   paste0("\n",
@@ -99,9 +87,8 @@ regimen_with_subs_sql <- function(src) {
 # Per patient, drug and episode: did a confirmed discontinuation of the same
 # drug come first? Spliced in as a CTE by every caller that has to tell a
 # restart from a continuation - the start candidates, and the run-out guards
-# that mirror them. One definition for all of them. A guard reading a different
-# rule from the candidate it mirrors ends a line on an event the next line then
-# refuses to open on.
+# that mirror them - and one definition for all of them, again for the reason
+# above.
 map_restart_sql <- function() {
   "
       SELECT ms.PATID, ms.MAP_MED_TYPE, ms.MAP_START_DT,
@@ -269,6 +256,33 @@ tandem_interrupt_events_sql <- function() "
         SELECT PATID, TX_DT AS dt FROM tx_allo_cart_dates
         WHERE SCT_TYPE IN ('ALLO', 'CART')"
 
+# Each AUTO with the one before it, and whether anything happened in between.
+#
+# Three statements need exactly this relation and had a copy each - the next
+# line's AUTO start gate in 10_lot2_5_base.R and the two run-out guards that
+# mirror it, in 06_lot1_end.R and again in 10_lot2_5_base.R. They have to agree:
+# the gate decides whether an AUTO opens the next line and the guards decide
+# whether a run-out before it is a confirmed discontinuation, so a copy that
+# drifted would give a line a DEATH end on a run-out the next line does open on.
+# Only the CTE name differed, so the name is the argument.
+autos_with_prev_cte <- function(name) paste0(
+"    ", name, " AS (
+      -- N_BETWEEN: whether anything happened since the previous transplant. A
+      -- pair 180 days apart with a medication in the middle is not a planned
+      -- tandem, so the later transplant is free to start a line.
+      SELECT p.PATID, p.TX_DT, p.PREV_AUTO_DT,
+             coalesce(sum(CASE WHEN x.dt > p.PREV_AUTO_DT AND x.dt < p.TX_DT
+                               THEN 1 ELSE 0 END), 0) AS N_BETWEEN
+      FROM (
+        SELECT a.PATID, a.TX_DT,
+               lag(a.TX_DT) OVER (PARTITION BY a.PATID ORDER BY a.TX_DT) AS PREV_AUTO_DT
+        FROM tx_auto_dates a
+      ) p
+      LEFT JOIN (", tandem_interrupt_events_sql(), "
+      ) x ON p.PATID = x.PATID
+      GROUP BY p.PATID, p.TX_DT, p.PREV_AUTO_DT
+    ),")
+
 # Every transplant and CAR-T, with what the tandem test needs beside each one.
 #
 # Two rules ask which procedures BREAK a line - the melphalan rule, to say
@@ -302,10 +316,12 @@ line_break_tx_sql <- function() glue("
 #
 #   AUTO   past the line own induction window, and not a planned tandem:
 #          within sct_tandem_days of the AUTO before it, nothing in between,
-#          and that earlier AUTO inside the window. All three are what
-#          auto_cand and the LOT1 post-runout guard test, ownership condition
-#          included - a pair whose first transplant the line never held was
-#          never the line tandem.
+#          and that earlier AUTO inside the window. All three are what auto_cand
+#          and the LOT1 post-runout guard test. The third is the same condition
+#          9.2 (ii) carries and is about the HOLD, not about what a tandem is:
+#          a pair is a pair on its two dates alone (6.3), but one whose first
+#          transplant no line held open cannot keep a line open either, so the
+#          partner is a boundary here like any other transplant.
 #
 #   ALLO   strictly after the line START, no window. That is how
 #          lot{n}_regimen_cutoff cuts a regimen, and how LOT1 does it too.
@@ -317,19 +333,35 @@ line_break_tx_sql <- function() glue("
 #          LOT1 as anywhere else.
 #
 # paste0 around the glue, not glue alone: glue trims a template's leading
-# newline, and this fragment splices straight after another predicate.
+# newline, and this splices straight after another predicate.
+#
+# first_auto_exempt: LOT1 only. 3.4 gives line 1 its first autologous
+# transplant wherever it falls, and the end cascade agrees - ENDING_AUTO_DT in
+# 05b_lot1_sct.R never takes AUTO_DT_1. Without it a short course after such a
+# transplant was marked TAKEN and opened a line 4.7 forbids (W3/W3i). LOT2-5
+# do not get it: there that transplant ends the line like any other (4.1).
 line_break_window_pred <- function(cfg, alias, induction_end, line_start,
-                                   cart_from = NULL) {
+                                   cart_from = NULL, first_auto_exempt = FALSE) {
   cart <- if (is.null(cart_from) || identical(cart_from, line_start)) "" else
     paste0("\n                 AND (", alias, ".SCT_KIND <> 'CART' OR ",
            alias, ".TX_DT > ", cart_from, ")")
+  first_auto <- if (!isTRUE(first_auto_exempt)) "" else
+    paste0("\n                 AND ", alias, ".PREV_AUTO_DT IS NOT NULL")
+  # The tandem exemption's ownership condition, and LOT1 does not get it
+  # either. Elsewhere a pair is the LINE's only where the line held the first
+  # of the two; at LOT1 3.4 already says the pair is line 1's wherever the
+  # first sits. Asking the window there disagreed with the end cascade, which
+  # ends line 1 on the THIRD transplant (S11c), and let a course after the
+  # partner open a melphalan-only line. Planted as SX1/SX2.
+  tandem_owned <- if (isTRUE(first_auto_exempt)) "" else
+    paste0("\n                          AND ", alias, ".PREV_AUTO_DT <= ",
+           induction_end)
   paste0("\n       AND ((", alias, ".SCT_KIND = 'AUTO'
-                 AND ", alias, ".TX_DT > ", induction_end, "
+                 AND ", alias, ".TX_DT > ", induction_end, first_auto, "
                  AND NOT (", alias, ".PREV_AUTO_DT IS NOT NULL
                           AND datediff(", alias, ".TX_DT, ", alias,
                               ".PREV_AUTO_DT) <= ", cfg$sct_tandem_days, "
-                          AND ", alias, ".N_BETWEEN = 0
-                          AND ", alias, ".PREV_AUTO_DT <= ", induction_end, "))
+                          AND ", alias, ".N_BETWEEN = 0", tandem_owned, "))
             OR (", alias, ".SCT_KIND <> 'AUTO'
                  AND ", alias, ".TX_DT > ", line_start, cart, "))")
 }

@@ -61,6 +61,12 @@ Override only if prod differs: `DATABRICKS_DSN=RWDE`,
 `DATABRICKS_CATALOG=hive_metastore`, `OPTUM_CDM_SCHEMA=clnprw_optum`,
 `CODELIST_DIR=/mnt/code/codelist`, `OUTPUT_DIR=/mnt/artifacts/results`.
 
+The engine needs three R packages and nothing else: `DBI`, `odbc` and `glue`.
+The scenario workbook additionally uses `openxlsx` and falls back to CSVs
+without it. A missing one stops on `there is no package called '...'` before any
+of the checks below can speak, so check them first in a terminal you have not
+used before.
+
 ## 1. Count the current warehouse tables — FIRST, before rebuilding
 
 Run this before step 2. The counts read the LOT tables in the warehouse now;
@@ -85,7 +91,7 @@ Drop `AUDIT_EXECUTE` to list what it would count; needs no connection.
 
 ## 1b. The scenario workbook for the study team
 
-How a line is created, thirty-one worked patients with the lines the engine
+How a line is created, thirty-four worked patients with the lines the engine
 builds from them, and how many real patients are in each shape by line
 number.
 
@@ -172,9 +178,13 @@ FOLDIN_EXECUTE=TRUE Rscript exploration/lot/run_foldin_cells.R    # build + read
 `APPLY_MAP_FOLDIN` is TRUE in `CONTRACT`, so the folded cell IS the study's
 algorithm and records no deviation; the reference cell is built with
 `APPLY_MAP_FOLDIN=FALSE` under the override, and no reader accepts it as the
-study's. Read its three `foldin_*.csv` files next to the sizing screen's counts
-from step 8 — that screen was written against a build without the rule, so it
-sizes what the rule has already done.
+study's. Read its three `foldin_*.csv` files for what the rule does. Do NOT read the
+sizing screen from step 8 as that number: the screen was written before the
+rule was adopted, when it sized what the rule WOULD do, and it counts boundaries
+in the line table it is pointed at. A boundary the fold removed is not in a
+build that applies the rule, so on this run the screen reports the residual —
+the previous-line returns that still open a line — not the effect. The cell pair
+is the only place the effect is measured.
 
 In the melphalan output read **melphalan doses in no line** first. No row with
 `AFTER_THE_CAP = no` should be there, `PRIOR_LINE_TYPE` of `CART` or
@@ -206,6 +216,7 @@ Each message below is a check stopping the run, not a crash.
 | `No LOT_BUILD_STATUS row` | nothing has ever been built under that prefix |
 | `No work schema` / `No OBJECT_PREFIX` | an environment variable above is missing |
 | codelist errors in step 2 or 4 | `CODELIST_DIR` is not pointing at the populated folder |
+| `there is no package called '...'` | `DBI`, `odbc` or `glue` is not installed for this R |
 
 A single count failing in step 1 does not stop the others: the CSV is still
 written and the run reports how many failed.

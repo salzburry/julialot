@@ -1,8 +1,9 @@
 # What is in this folder
 
-`lot/` is the lines-of-therapy product. Two documents: `LOT_RULES.md` is the
-rules the build applies, each naming the vignette that tests it; this file is
-what is here and what each file does.
+`lot/` is the lines-of-therapy product. Three documents: `LOT_RULES.md` is the
+rules the build applies, each naming the vignette that tests it; `REVIEW_LOG.md`
+is what was found wrong and fixed, and what is still open; this file is what is
+here and what each file does.
 
 One package writes. The rest read a finished run.
 
@@ -10,13 +11,14 @@ One package writes. The rest read a finished run.
 |---|---|
 | `lot/engine/` | builds the lines. `build.R <COHORT_TABLE> <prefix_>`. The only package here that writes a study run. |
 | `lot/qc/` | thirty-seven checks on a finished run, asked after the fact. Reads only. `run_lot_qc.R`. |
-| `exploration/lot/` | the rule scenarios, machine-checked against the settings that decide them. No warehouse. |
+| `lot/melphalan/` | what the melphalan rule did to the numbers, as two complete builds differenced. Opt-in, its own prefixes. |
+| `lot/validation/` | the rule vignettes — the machine-checked twin of `LOT_RULES.md`. No warehouse. |
 
 ## What is deliberately not here
 
 A cohort, everything derived from a finished run, and every experiment on the
 rules — each sits beside this folder, so the algorithm is one directory with
-three packages in it:
+four packages in it:
 
 | | |
 |---|---|
@@ -24,9 +26,8 @@ three packages in it:
 | `reporting/dashboard/` | one self-contained HTML off a finished run |
 | `analysis/outcomes/` | TTNT, TTD, OS and attrition |
 | `analysis/questions/` | the study team's asks, one script each |
-| `lot/melphalan/` | what the melphalan rule does to the numbers, as two complete builds differenced |
 | `exploration/lot/run_foldin_cells.R` | the MAP fold-in the build applies, measured against a build without it |
-| `exploration/lot/` | benchmarks, definitions, sensitivity, stockpiling, re-challenge, audit counts |
+| `exploration/lot/` | the rule scenarios, benchmarks, definitions, sensitivity, stockpiling, re-challenge, audit counts |
 
 Each area has its own `FILES.md`. Dependencies run one way: those areas resolve
 `lot/engine` and read its modules; nothing in `lot/` resolves back out.
@@ -261,7 +262,6 @@ failure, and none is a published benchmark. Reported, not fatal;
 |---|---|
 | `run_lot_qc.R` | Runs thirty-seven checks against a finished run and refuses one whose own build did not complete. Reads only; writes a report to `out/`. Exit status is 0 when nothing failed and 1 when something did, so it can gate a handover. |
 | `R/checks.R` | The checks as data — one entry per check, each carrying the query that finds violations, so the catalogue can be read without running it. |
-| `run_lot_audit_counts.R` | Real-data frequencies for the LOT assignment findings — the audit's questions put to the real run. |
 | `tests/test_lot_qc.R` | That each check answers the same shape, reads only the tables it declares, masks every patient id, and turns a count into the right verdict. |
 
 Nothing here duplicates a check the build already makes. Three severities:

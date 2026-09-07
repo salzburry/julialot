@@ -348,9 +348,12 @@ regimen.** A drug is in that regimen only through an episode starting at or
 after that line's start (§3.3), and the return has to be inside the line being
 built, so exactly one line can have opened in between. The row is kept because
 it states the rule the study team asked for. The scope is settled at the
-previous line (`STUDY_TEAM_ASKS.md`), so the row is a statement of the rule
-rather than a branch waiting to fire; widening the scope is what would make it
-reachable.
+previous line — decided 30 Aug, recorded in section 2 of `STUDY_TEAM_ASKS.md`
+with why the two readings are not equivalent — so the row is a statement of the
+rule rather than a branch waiting to fire. Widening the scope is what would make
+it reachable, and that is a change to the settled rule, not a defect to fix.
+The fold-in harness pins the outcome the row describes, by the route the narrow
+scope actually takes, and says so where it does (`F13`).
 
 A return only joins the line that actually contains it. While lines are built in
 order the count is relative to the line being built, so a return with another
@@ -470,6 +473,18 @@ cannot reach the later dose at all. Worked example:
 inside, the course was dropped by the transplant's line and its later dose
 opened a line of its own.
 
+**An allogeneic line owns nothing, so nothing is inside its window.** §4.6
+gives that line the transplant date alone and no regimen at all, and the window
+arithmetic alone does not say so — its window *end* is its start date, so an
+event coded on the allograft date reads as inside it. Two rules were reading it
+that way. A melphalan course whose first dose fell on the allograft date was
+judged INSIDE that line, so it went unsuppressed and its later dose opened a
+line the new line then held melphalan out of — QC checks `A7` and `C4` both call
+that a failure. And an autologous transplant coded on the same date was read as
+the in-window first half of a tandem pair, so its partner months later was
+refused a line of its own and belonged to nothing — `E5`. Neither is inside
+anything: the line holds nothing open. Planted as `P0008` and `P0007`.
+
 **A steroid never confirms a course.** Corticosteroids are not oncology agents
 (§2.1), so melphalan given with one is still melphalan on its own: the course
 stays suppressed and the line is carried to its cover. That is what the study
@@ -488,11 +503,35 @@ the earlier start and puts the course in the regimen:
 | a steroid | it does not start — the course is held | — |
 | a drug of the previous regimen | **its own date** | that drug |
 | a drug never given before | **the melphalan date** | the course and that drug |
+| the returning drug first, then a new one | **the returning drug's date** | both drugs; the course is held |
 
 The middle row is a deliberate choice, not a gap. A returning drug is the
 returning drug (§4.8), and a course it arrives beside is still a course nobody
 started a new regimen on — so it opens a line where the engine's own rules give
 it one, and takes nothing back to the melphalan date with it.
+
+**A drug that opened a line is a boundary, and an agent after one belongs to
+the line it opened.** The last row is that rule, not a fourth case: the
+returning drug starts its line on its own date (row two), so the new agent five
+days later arrives inside that line and is no candidate against the one before
+it. It cannot make that line's course advance, and the course is held where it
+falls. This is the same test a transplant already gets — a course on day 100
+with an allograft on 102 and a new drug on 105 is not confirmed by that drug —
+applied to the only medication that can be a boundary here without confirming
+the course itself. Worked example: `ZB1`/`ZB2` in the melphalan harness.
+
+The two drugs starting on the **same** day are not this case. Neither is after
+the other; they open one line together, and the new one confirms as it would
+alone.
+
+**A course belongs to the line the returning drug opened, not the one before
+it.** Ownership asks the same question from the other side and used to answer
+it differently: a return was read as folded into the line before it wherever
+the previous regimen named that drug, so a CAR-T line went on to claim a course
+falling after the return, and was carried from a single day to the day before
+it. Where a procedure opened the line, §4.8 refuses the fold — so the return is
+line-defining there and the course after it is not the procedure line's.
+Worked example: `ZB3`/`ZB3x`.
 
 **"Not new" is the previous line only, the same scope §4.8's fold set reads.**
 A drug last given further back than that is a new agent here and confirms a
@@ -516,6 +555,40 @@ line-defining agent arriving first disqualifies the course from an earlier
 line: that agent ends the line, and what follows belongs to the line it
 started. Distance alone does not disqualify it, so a course long after the
 drugs ran out still belongs to the line when nothing happened in between.
+
+**And a line judges only the courses it can see** — one starting inside it, and
+one that started earlier and still covers into it, which is the course a
+transplant splits. A course whose cover ran out before a line began has no dose
+in that line and belongs to an earlier one, so the later line does not judge it
+at all. Without that bound each line re-judged every earlier course against its
+own window, and two things followed. A conditioning course line 1 held inside
+its 60 days came back **suppressed** at line 2 — so §4.8 lost it as a returning
+drug's previous dose, and a melphalan re-challenge that should have folded
+opened a line of its own (`F36`/`F36c` in the fold-in harness). And the hold
+followed the same course forward, handing a later transplant-opened line with no
+regimen a run-out before its own start, which §7.1's `SCT_AUTO_CONT` branch read
+as a line ending too early and clamped to a single day — the state QC check `B7`
+calls a failure (`SU1`/`SU2` in the melphalan harness).
+
+A course inside the induction window of the line that owns it is inside an
+induction window, and §4.7 asks whether a course is outside **any** of them. So
+a course an **earlier** line took into its own window is never suppressed by a
+later one, whether or not its cover reaches that line — the cover test above
+only settles which line may judge a course at all, and a conditioning course
+covering *into* the next line was still being re-judged and suppressed there
+(`F37`/`F37c`). A course that **opened** a line is not in that set: it sits on
+its own line's first day, and protecting it would stop the line a transplant
+opens next from suppressing it, leaving a later dose a line of its own (`SQ`).
+
+One thing that test does not ask is whether the agent could open a line at all.
+An agent past the line's own run-out, or landing exactly on the line's end, opens
+nothing — but it still disqualifies a later course from that line, and with the
+earlier line's claim gone nothing else judges the course, so it takes a line of
+its own. The shape is an in-window transplant whose tandem partner carries the
+line to its own date, a drug starting exactly there, and a short course after
+it. Disclosed rather than fixed: the bound wanted is the line's run-out, and the
+step computes that after the melphalan decision while reading the decision to do
+it, so closing it is a change to the step's shape.
 
 A transplant or CAR-T is that agent only when it **breaks** the line, and the
 three kinds break it differently — the same rules §3.4, §6.3, §6.4 and §6.5
@@ -689,15 +762,18 @@ Running out of treatment is not an interruption. The clear-gap test asks what
 happened, and an absence of treatment is not an event — see §6.5, which is where
 that matters.
 
-**The pair must be one a line owned.** Being a tandem is what stops the second
-transplant opening a line, so it can only stop it where a line was holding the
-pair in the first place. That means the **first** of the two has to fall inside
-its line's applicable window — the same window §6.5 uses to decide whether a
-transplant holds the line open, and the same one `d_AUTO` measures in §9.2's
-condition (i).
+**Being a tandem does not depend on a window.** The pair is read off the two
+dates and the gap between them, so a pair whose first transplant falls outside
+its line's window is still a tandem and still counts as one event: at line 1 a
+pair on days 200 and 300 leaves the **third** transplant as the one that ends
+the line, exactly as an in-window pair would — scenario `S11c`, and `S11a` and
+`S11b` are the one- and two-transplant cases beside it.
 
-Where it does not, the line never reached the second transplant, and refusing
-that transplant a line of its own leaves it in none at all:
+**What the window decides is whether the pair holds the line OPEN.** Only a
+first transplant inside the line's applicable window can do that (§6.5), and
+without the hold the line ends on its own run-out wherever that falls. A tandem
+cannot keep a line open that has already ended, and that is where the two
+readings come apart:
 
     d1     line 1 starts on its regimen
     d341   AUTO 1 — 341 days out, far outside the 60-day window, so nothing
@@ -705,12 +781,20 @@ that transplant a line of its own leaves it in none at all:
     d400   line 1 ends on its own confirmed run-out
     d520   AUTO 2 — 179 days after AUTO 1, so within sct_tandem_days
     ---
-    line 1 ended 120 days before AUTO 2 and cannot contain it. Treating the
-    pair as a tandem would refuse AUTO 2 a line too, and the transplant
-    would belong to nothing. It opens line 2 as SCT_AUTO instead.
+    line 1 ended 120 days before AUTO 2 and cannot contain it. If nothing
+    else gave AUTO 2 a line, the transplant would belong to nothing. It
+    opens line 2 as SCT_AUTO instead.
 
-QC check `E5` is what finds this: it starts from the processed transplants
-rather than from the lines, so an event in no line has a row to be wrong on.
+What gives it that line is the **next line's** candidate rule, not a refusal to
+call the pair a tandem: §9.2's condition (ii) exempts an AUTO within
+`sct_tandem_days` of the one before it only where **that earlier AUTO is itself
+inside the window**. Here it is not, so AUTO 2 is a candidate and opens line 2.
+Where the earlier AUTO is in the window the exemption holds, the pair stays
+inside the line it belongs to, and no line opens on the partner.
+
+QC check `E5` is what finds an event that falls through both: it starts from the
+processed transplants rather than from the lines, so an event in no line has a
+row to be wrong on.
 The narrower reading — that the tandem holds the earlier line open through the
 second transplant wherever the first one sits — was measured and rejected: it
 moves patients who have no unowned transplant at all, because a hold date

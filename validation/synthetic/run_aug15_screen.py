@@ -13,11 +13,15 @@ against those lines. The cases are the ones a wrong screen gets wrong:
   MS7   returning drug and a new drug on
         one day                            -> SAME_DAY_NEW_AGENT, whichever
                                               medication the engine stored
-  MS8   returning drug and a RELEASED
-        restart of the line's own drug on
-        one day                            -> SAME_DAY_NEW_AGENT - the
-                                              restart is an engine-valid
-                                              candidate, not ignorable
+  MS8   returning drug and a restart of
+        the line's OWN drug on one day     -> AFFECTED. 4.3 refuses the
+                                              restart a line whatever the gap,
+                                              so it is no candidate and cannot
+                                              keep the boundary. The engine
+                                              agrees in its own output: it
+                                              ends the line MED_ADD storing
+                                              LEN, the returning previous-line
+                                              agent, not the same-day CARF
   F1/F2 the discontinued-then-12mo-CE
         funnel, with F2's coverage broken
         inside the baseline window         -> F2 drops at the CE step
@@ -121,9 +125,14 @@ def main():
     ok(verdicts.get(("EXACT_TOKEN", "MS7", 2)) == "SAME_DAY_NEW_AGENT"
        and verdicts.get(("SUBSTITUTE_FAMILY", "MS7", 2)) == "SAME_DAY_NEW_AGENT",
        "MS7: a same-day new agent keeps the boundary, whatever pick was stored")
-    ok(verdicts.get(("EXACT_TOKEN", "MS8", 2)) == "SAME_DAY_NEW_AGENT"
-       and verdicts.get(("SUBSTITUTE_FAMILY", "MS8", 2)) == "SAME_DAY_NEW_AGENT",
-       "MS8: a released restart of the line's own drug keeps the boundary")
+    # Was SAME_DAY_NEW_AGENT, pinned against the engine's OLD release. 4.3
+    # withdrew it - a regimen drug coming back never advances the line - so the
+    # restart is not a candidate and the only candidate that day is the
+    # returning previous-line agent. Under-counting the AFFECTED boundaries is
+    # under-counting the very thing this screen sizes.
+    ok(verdicts.get(("EXACT_TOKEN", "MS8", 2)) == "AFFECTED"
+       and verdicts.get(("SUBSTITUTE_FAMILY", "MS8", 2)) == "AFFECTED",
+       "MS8: a same-day restart of the line's own drug cannot keep the boundary")
 
     q = rs.to_duckdb(fill(ctes) + "\n" + fill(roster_sel))
     cols = None
@@ -135,8 +144,11 @@ def main():
             if m["PATID"] == pid and m["MATCH_BASIS"] == basis:
                 return m[col]
         return None
-    ok(cell("MS8", "EXACT_TOKEN", "OTHER_MEDS_STARTING_SAME_DAY") == "CARF",
-       "MS8 roster: the released restart is visible in the same-day column")
+    # The column lists the candidates that KEEP a boundary, so an AFFECTED
+    # boundary has none by definition. CARF started that day and is absent
+    # because it could not have kept it.
+    ok(cell("MS8", "EXACT_TOKEN", "OTHER_MEDS_STARTING_SAME_DAY") == "",
+       "MS8 roster: the own-drug restart is not listed as keeping the boundary")
     ok(cell("MS1", "EXACT_TOKEN", "RETURNING_PREV_MEDS") == "DARA"
        and cell("MS1", "EXACT_TOKEN", "OTHER_MEDS_STARTING_SAME_DAY") == "",
        "MS1 roster: the returning drug is named and nothing else started")

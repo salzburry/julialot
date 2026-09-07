@@ -110,10 +110,10 @@ phase_lot1_base <- function(con, ctx) {
     -- end.
 {melp_lot1_ctes(cfg, line_from = '(SELECT c.PATID, c.LOT1_START_DT, p.OBS_END_DT
                                    FROM lot1_regimen_cutoff c
-                                   INNER JOIN lot_patient_input p ON p.PATID = c.PATID)')}\
+                                   INNER JOIN lot_patient_input p ON p.PATID = c.PATID)',
+                 end_ctes = FALSE)}\
 {melp_lot1_verdict_cte(cfg)}\
-{melp_short_course_ctes(cfg, 'melp_line', 'LOT1_START_DT',
-                        'melp_line.IND_END_DT', verdict = 'melp_verdict')}
+{melp_short_course_ctes(cfg, 'melp_verdict')}
     discon_per_med AS (
 {discon_per_med_sql('lot1_regimen_cutoff', 'LOT1_START_DT', end_col = 'REGIMEN_CUTOFF_DT',
                     boundary_join = melp_boundary_join(cfg),

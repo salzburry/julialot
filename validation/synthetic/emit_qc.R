@@ -63,6 +63,10 @@ settings <- paste(c(
   "allo_lot_span=single_day",
   paste0("apply_cart_induction_rule=", Sys.getenv("CART_RULE", unset = "TRUE")),
   "belantamab_med_abbr=BELA", "cart_consolidation_days=45",
+  # A real run records every CONTRACT key, and melp_med_abbr is one - C2 reads
+  # it to exempt the melphalan injection 4.7 authorises. Missing here, the
+  # package stopped on a setting a production run does carry.
+  "melp_med_abbr=MELP",
   "censor_at_disenrollment=FALSE", "induction_window_days=60",
   paste0("lot_discon_confirm_days=", Sys.getenv("CONFIRM_DAYS", unset = "90")),
   "lot_n_induction_window_days=30", "map_discon_gap_days=90", "max_lot=5",

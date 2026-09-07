@@ -15,3 +15,13 @@ __pycache__/
 # delivery file does mention would still fail it, which is how an empty
 # artifacts/ broke the gate once.
 spark-warehouse/
+
+# Every package writes its run outputs to its own out/. They are generated, and
+# the documented preview commands - the scenario workbook, the audit counts, the
+# QC report - write them without a warehouse, so running what the runbook says
+# would otherwise leave the tree dirty and a handover unclear about what changed.
+#
+# The catalogues that ARE deliverables (the rule vignettes, the definition
+# concordance) are already tracked, and git does not stop following a file it is
+# already following - so this hides new generated output only.
+out/
