@@ -408,6 +408,26 @@ PATS = [
                ('DARA', 'MAB', 200, 600), ('MELP', 'ALKY', 450, 500)]),
     P('F36c', [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 0, 60),
                ('DARA', 'MAB', 200, 600), ('MELP', 'ALKY', 450, 500)]),
+    # F37/F37c: F36's defect with the conditioning course's COVER reaching into
+    # the next line. A 28-day course on day 40 - inside line 1's own 60 days, so
+    # line 1 holds it and names it in its regimen - and DARA opening line 2 on
+    # day 65, while that cover still runs. Melphalan returns days 450-500, over
+    # the cap, so 4.8 folds it into line 2.
+    #
+    # F36's fix bounded melp_judged by the course's COVER, which removes a
+    # course that ran out before the line began and does nothing for one that
+    # covers into it: line 2 re-judged the day-40 course against its own window,
+    # suppressed it, and the fold lost the dose history exactly as before. What
+    # settles it is 4.7's own words - a course inside the window of the line
+    # that OWNS it is inside an induction window, so no later line may call it
+    # suppressed.
+    #
+    # F37c moves DARA three days later, past the cover, so the cover bound alone
+    # already handled it. The pair is what tells the two bounds apart.
+    P('F37',  [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 40, 67),
+               ('DARA', 'MAB', 65, 600), ('MELP', 'ALKY', 450, 500)]),
+    P('F37c', [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 40, 67),
+               ('DARA', 'MAB', 68, 600), ('MELP', 'ALKY', 450, 500)]),
 ]
 
 
@@ -648,6 +668,12 @@ def main():
        and [r[1:] for r in fold['F36']] == [r[1:] for r in fold['F36c']],
        "F36/F36c: a conditioning course line 1 held is not re-judged by line 2, "
        "so the later re-challenge folds into it instead of opening a line")
+
+    ok(n(fold, 'F37') == 2 and 'MELP' in fold['F37'][1][4]
+       and fold['F37'][1][2] == rs.d(IX + 600)
+       and [r[3:] for r in fold['F37']] == [r[3:] for r in fold['F37c']],
+       "F37/F37c: a course whose cover reaches the next line is still line 1's "
+       "to judge, so the later re-challenge folds instead of opening a line")
 
     ok(n(ref, 'F14') == 3 and n(fold, 'F14') == 2,
        "F14: the whole returning course folds, not only its first episode")

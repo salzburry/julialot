@@ -152,7 +152,8 @@ SUBST <- list(
   # source looked like before either was added.
   "10_lot2_5_base.R" = list(
     list(from = paste0("),{melp_lotn_ctes(cfg, lot_num, induction_window_days, ",
-                       "cart_consolidation_days, allo_lot_span)}",
+                       "cart_consolidation_days, allo_lot_span, ",
+                       "lot1_induction_window_days)}",
                        "{melp_lotn_verdict_cte(cfg, lot_num, ",
                        "induction_window_days, cart_consolidation_days)}",
                        "{foldin_lotn_ctes(cfg, lot_num, lotn_induction_end(",

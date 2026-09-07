@@ -83,7 +83,8 @@ melp_abbr    <- function(cfg) toupper(trimws(cfg$melp_med_abbr %||% "MELP"))
 melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end,
                                base_tbl = NULL, restart_tbl = NULL,
                                not_new_ctes = "", cart_from = NULL,
-                               first_auto_exempt = FALSE, proc_line = NULL) {
+                               first_auto_exempt = FALSE, proc_line = NULL,
+                               prior_held_ctes = "") {
   if (!melp_rule_on(cfg)) return("")
   if (is.null(base_tbl) || is.null(restart_tbl))
     stop("The melphalan short-course rule needs the judged line's base set and ",
@@ -109,6 +110,27 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
   # INNER JOINed here, so moving the condition out of the join changes
   # nothing - and Spark does not accept a correlated subquery in a join
   # condition before 4.0 (SPARK-45009).
+  # ...and a course an EARLIER line held inside its own induction window is not
+  # this line's to judge at all. 4.7 asks whether a course is outside ANY
+  # induction window, so a course inside the window of the line that owns it is
+  # inside one, full stop, and no later line may call it suppressed.
+  #
+  # The cover bound above is not enough on its own: it only removes a course
+  # whose cover ran out before this line began, and a conditioning course
+  # covering INTO the next line is still re-judged against that line's window.
+  # A 28-day course on day 40 with the next line opening on day 65 came back
+  # suppressed at line 2 exactly as it did before that bound - the fold-in lost
+  # it as a returning drug's previous dose and the re-challenge opened a line
+  # of its own. Planted as F37/F37c.
+  #
+  # Not the same test as "suppressed by its owner". Where the owning line put
+  # the course OUTSIDE its window it suppressed it, and a later line has to
+  # reach the same verdict so a dose after a transplant does not open a line of
+  # its own - that is SPin, and it stays working because a course outside every
+  # earlier window is not in this set.
+  prior_held_pred <- if (!nzchar(prior_held_ctes)) "" else
+    "\n        AND NOT EXISTS (SELECT 1 FROM melp_prior_held ph
+                        WHERE ph.PATID = mc.PATID AND ph.EXPO_DT = mc.EXPO_DT)"
   # A MEDICATION boundary, the same idea as the transplant one at the end of
   # melp_confirm: an agent arriving after a drug that opened a line belongs to
   # that line and cannot make this line's course advance. LOT_RULES.md 4.7,
@@ -197,7 +219,7 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
     -- candidate against this line - outside its base set, or a released
     -- restart that is not substitute-only. The same gate the candidate lists
     -- apply, read from the tables handed in, so the two cannot disagree.
-{not_new_ctes}
+{not_new_ctes}{prior_held_ctes}
     -- The agent that confirms a short course has to be a NEW one. The request
     -- words it as the patient starting a NEW AGENT; the fold-in request words
     -- a drug from an earlier line coming back as THE RETURNING DRUG, never a
@@ -349,7 +371,7 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
       --   failure (SU1/SU2 in the melphalan harness).
       WHERE mc.EXPO_DT <= {span_end}
         AND mc.COURSE_END_DT >= {line_tbl}.{start_col}
-        AND tk.PATID IS NULL
+        AND tk.PATID IS NULL{prior_held_pred}
     ),
     -- A short unconfirmed course outside induction neither ends the line nor
     -- starts one...
@@ -957,8 +979,46 @@ lotn_induction_end <- function(lot_num, induction_window_days,
             END")
 }
 
+# The courses an EARLIER line held inside its own induction window.
+#
+# lot_long carries lines 1..N-1 by the time line N is built, with each line's
+# start date and start type, so the window each of them owned is a CASE on the
+# same three shapes lotn_induction_end() writes - line 1 keeps its own 60 days,
+# an ALLO line is its start date alone, a CAR-T line gets the consolidation
+# window, and everything else the LOT2-5 window. One reading of the window, in
+# both places.
+#
+# Empty at LOT1, which has no earlier line, exactly like the fold set.
+melp_prior_held_cte <- function(lot_num, induction_window_days,
+                                cart_consolidation_days,
+                                lot1_induction_window_days) {
+  if (lot_num < 2) return("")
+  paste0("\n", glue("
+    melp_prior_held AS (
+      SELECT DISTINCT mc.PATID, mc.EXPO_DT
+      FROM melp_course mc
+      INNER JOIN lot_long pl
+        ON pl.PATID = mc.PATID AND pl.LOT_NUM < {lot_num}
+      -- STRICTLY after the earlier line's start. A course that OPENED a line
+      -- sits on that line's own first day, so it is trivially inside its
+      -- window - and protecting it there would stop the line the transplant
+      -- opened next from suppressing it, leaving its later dose an ordinary
+      -- candidate with a line of its own (SQ). What this set is for is a
+      -- course an earlier line took IN, not one that started it.
+      WHERE mc.EXPO_DT > pl.LOT_START_DT
+        AND mc.EXPO_DT <= CASE
+              WHEN pl.LOT_START_TYPE = 'SCT_ALLO' THEN pl.LOT_START_DT
+              WHEN pl.LOT_START_TYPE = 'CART'
+                THEN date_add(pl.LOT_START_DT, {cart_consolidation_days - 1})
+              WHEN pl.LOT_NUM = 1
+                THEN date_add(pl.LOT_START_DT, {lot1_induction_window_days - 1})
+              ELSE date_add(pl.LOT_START_DT, {induction_window_days - 1})
+            END
+    ),"))
+}
+
 # The verdict CTE for LOT2-5, bound the same way melp_lotn_ctes binds the
-# decision it reads.
+# decision it reads.""
 melp_lotn_verdict_cte <- function(cfg, lot_num, induction_window_days,
                                   cart_consolidation_days) {
   if (!melp_rule_on(cfg)) return("")
@@ -970,7 +1030,8 @@ melp_lotn_verdict_cte <- function(cfg, lot_num, induction_window_days,
 }
 
 melp_lotn_ctes <- function(cfg, lot_num, induction_window_days,
-                           cart_consolidation_days, allo_lot_span) {
+                           cart_consolidation_days, allo_lot_span,
+                           lot1_induction_window_days = 60L) {
   if (!melp_rule_on(cfg)) return("")
   ls <- glue("lot{lot_num}_start")
   # base_meds and map_restart are this statement's own CTEs, defined before
@@ -996,5 +1057,8 @@ melp_lotn_ctes <- function(cfg, lot_num, induction_window_days,
     base_tbl = "base_meds", restart_tbl = "map_restart",
     not_new_ctes = not_new,
     proc_line = if (!nzchar(not_new)) NULL else
-      glue("{ls}.LOT{lot_num}_START_TYPE <> 'MED'"))
+      glue("{ls}.LOT{lot_num}_START_TYPE <> 'MED'"),
+    prior_held_ctes = melp_prior_held_cte(lot_num, induction_window_days,
+                                          cart_consolidation_days,
+                                          lot1_induction_window_days))
 }

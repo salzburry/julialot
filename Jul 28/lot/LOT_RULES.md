@@ -559,7 +559,14 @@ as a line ending too early and clamped to a single day — the state QC check `B
 calls a failure (`SU1`/`SU2` in the melphalan harness).
 
 A course inside the induction window of the line that owns it is inside an
-induction window, and §4.7 asks whether a course is outside **any** of them.
+induction window, and §4.7 asks whether a course is outside **any** of them. So
+a course an **earlier** line took into its own window is never suppressed by a
+later one, whether or not its cover reaches that line — the cover test above
+only settles which line may judge a course at all, and a conditioning course
+covering *into* the next line was still being re-judged and suppressed there
+(`F37`/`F37c`). A course that **opened** a line is not in that set: it sits on
+its own line's first day, and protecting it would stop the line a transplant
+opens next from suppressing it, leaving a later dose a line of its own (`SQ`).
 
 A transplant or CAR-T is that agent only when it **breaks** the line, and the
 three kinds break it differently — the same rules §3.4, §6.3, §6.4 and §6.5
