@@ -10,14 +10,22 @@ of the list below and recorded, with their numbers, under *Closed by the
 warehouse*. Two more — Q4 and Q17 — were already settled by
 `Jul 28/ndmm/DECISIONS.md` §6 and are left in place with the answer.
 
-**A second run is drafted and not yet run.** `RUN_ONCE_2.sql` is one file, about
-ten minutes, no placeholders. It would settle Q1, Q2, Q5, Q9, Q11, Q13, Q14,
-Q16, Q19, Q25, Q27 and Q28 outright, and it *prices* Q3, Q6, Q7, Q21 and Q23 —
-it cannot decide those, because each needs a code list from an annex we do not
-hold, but it says how many patients each reading moves, which is what makes a
-decision possible. It also checks the value lists and columns the package
-assumes and has never seen data for. **Q12, Q15 and Q20 no query will ever
-answer**: they need the protocol author or the annexes themselves.
+**The second run came back on 07 Sep 2026** (`SQL Result 2.pdf`, from
+`RUN_ONCE_2.sql` — 23 statements, 18m 19s, every one returning). It did not
+close a question outright, because none of the remaining ones is a question
+about the data. What it did is **price** sixteen of them: Q1, Q2, Q3, Q5, Q6,
+Q7, Q9, Q11, Q14, Q16, Q19, Q21, Q23, Q25, Q27 and Q28 now each carry a number
+saying how many patients the decision moves. Those numbers are under *Priced by
+the warehouse* below, ranked, and the largest two are **Q27 (a factor of two)**
+and **Q25 (17.4% of all medical claim lines)**.
+
+It also caught a bug — `CLAIM_STATUS=paid_only` was filtering nothing, because
+the warehouse stores `P`/`D` where the dictionary spells `PAID`/`DENIED` — and
+confirmed the six value domains the package had been assuming.
+
+**Q12, Q15 and Q20 no query will ever answer**: they need the protocol author
+or the annexes themselves. **Q13 is the one still unpriced**, and one more
+query would do it.
 
 Nothing here is a style preference. Every one of them has two defensible readings and
 the build has to pick one.
@@ -507,6 +515,228 @@ paste-and-run against this build's own output.
 For the index-agent bars specifically: `NDMM_INDEX_EXCLUDED_ABBRS` checks every entry
 against the code list and **stops the run on a name that matches nothing**, so a
 misspelled "panobinostat" cannot quietly bar no one.
+
+---
+
+## Priced by the warehouse, 07 Sep 2026
+
+`SQL Result 2.pdf` — one run of `RUN_ONCE_2.sql`, 23 statements, 18m 19s, all
+of them returning. The proxy population is **105,125** members with a C90 code
+since 2016, of whom **93,245** have a first C90 code on or after 01 Jan 2018.
+None of these is the study cohort — no age, enrolment or exclusion criteria —
+so read every number as an order of magnitude, not a cohort count.
+
+Nothing below *decides* a question that needs the protocol author. What each
+does is say how many patients the decision moves, which for most of them is
+the thing that was missing.
+
+### Ranked by how much is at stake
+
+| # | question | the two readings differ by |
+|---|---|---|
+| Q27 | which route makes a stay MM-related | **32,508 vs 65,206 stays — 2×** |
+| Q25 | do denied claims count | **17.4% of all medical lines** |
+| Q7  | prior malignancy in the secondary 2L cohort | 17,964 members (19.3%) |
+| Q1  | study period starts 2016 or 2018 | 17,288 members first diagnosed 2016-17 |
+| Q6  | do steroid-only claims trigger X1 | 10,466 members |
+| Q11 | how an ED visit is identified | 364,272 to 499,272 visit-days (+37%) |
+| Q2  | narrow or broad MM code set | 29,449 C90.01 + 14,127 C90.02 members |
+| Q16 | overlapping enrolment rows | 473 members on STATE, 388 on BUS, 0 on RACE |
+| Q19 | person-time inside bridged gaps | 109,679 days (~300 person-years) |
+| Q3  | 30-day or 60-day pairing window | 589 members net |
+| Q23 | which pregnancy window | 270 members |
+| Q5  | what "evidence of follow-up" excludes | 1,012 members (1.1%) |
+| Q21 | calendar months or 365 days | one day, for 21% of members |
+
+### Q27 — the two routes differ by a factor of two. **Now a setting.**
+
+Over 241,362 stays belonging to myeloma patients since 2018:
+
+| | stays |
+|---|---|
+| route A — MM in `CONFINEMENT.DIAG1/DIAG2` (what the package did) | 32,508 |
+| route B — MM in `DIAG_POSITION` 1-2 on a claim carrying the `CONF_ID` | 65,206 |
+| found by route A only | 1,206 |
+| found by route B only | 33,904 |
+| MM only in `CONFINEMENT.DIAG3-5` — neither route counts these | 33,978 |
+
+Route B finds twice what route A finds, and route A is very nearly a subset of
+it. This is the largest unresolved swing in the package's own SQL, so it is no
+longer assumed: `MM_HOSP_POSITION` takes `confinement` (the default, which is
+what every number so far used) or `claim_positions`. Both are emitted and both
+are executed by the test suite.
+
+**Still needs an answer.** s7.8.1 says "first or second position" without
+saying of what. Route B is the one business rule 13 documents.
+
+### Q25 — 17.4% of medical claim lines among myeloma patients are DENIED
+
+| `PAID_STATUS` | lines | share |
+|---|---|---|
+| P | 85,917,548 | 78.69% |
+| D | 19,018,111 | **17.42%** |
+| null | 4,243,797 | 3.89% |
+
+Table-wide from 2024 the split is 1,672,870,316 P against 340,788,413 D, with
+no nulls. Nothing in either build filters on this, so every rate this study
+reports currently counts denied lines as evidence that a service happened.
+
+This also exposed a bug. `claim_status_sql()` tested
+`PAID_STATUS <> 'DENIED'` because that is how the V9.0 dictionary spells the
+values. **The warehouse stores `P` and `D`**, so `CLAIM_STATUS=paid_only` was a
+silent no-op — it excluded nothing. Fixed to match both encodings. Nulls are
+not treated as denied.
+
+**Still needs an answer**, and it is now the second-largest number on the page.
+
+### Q11 — the three ED constructions, and a third of them became admissions
+
+Distinct patient-days since 2018, among myeloma patients:
+
+| construction | visit-days |
+|---|---|
+| revenue code 045x / 0981 | 385,803 |
+| place of service 23 | 436,495 |
+| CPT 9928x | 364,272 |
+| **any of the three** | **499,272** |
+| revenue *and* CPT on the same day | 229,938 |
+| any of the three, carrying a `CONF_ID` | **162,211** |
+
+The widest construction is 37% above the narrowest, and the three overlap far
+less than their similar totals suggest — revenue and CPT agree on only 229,938
+of the ~400,000 each finds. And 162,211 visit-days (32.5% of the union) are on
+claims that carry a `CONF_ID`, so under business rule 14 they became
+admissions and are at risk of being counted as both an ED visit and a stay.
+`ED_ADMITTED` already exposes that choice; the number now says it is worth 1
+visit in 3.
+
+### Q1 — 17,288 members were first diagnosed in 2016 or 2017
+
+First C90 code by year: 2015 6,963 · 2016 8,335 · 2017 8,953 · 2018 8,709 ·
+2019 8,225 · 2020 8,267 · 2021 9,805 · 2022 10,187 · 2023 11,368 · 2024 10,869
+· 2025 11,521 · 2026 3,212 (to 31 Mar). A 2016 start makes 17,288 more members
+eligible as incident cases than a 2018 start does — roughly a fifth of the
+population. The body text and the two figures still disagree.
+
+### Q2 — what "broad" would add
+
+Forty distinct myeloma-adjacent codes are present, every one of the top
+thirteen flagged ICD-10:
+
+| code | patients | claim lines |
+|---|---|---|
+| C90.00 | 98,302 | 6,934,781 |
+| C90.01 *(in remission)* | 29,449 | 755,195 |
+| C90.02 *(in relapse)* | 14,127 | 611,471 |
+| C88.4 | 12,278 | 239,639 |
+| C88.0 | 8,899 | 385,950 |
+| C90.30 | 8,702 | 148,130 |
+| C88.40 | 4,617 | 43,317 |
+| C88.00 | 4,608 | 81,611 |
+| C90.10 | 4,371 | 55,884 |
+| C90.20 | 1,804 | 30,520 |
+
+The choice that matters is C90.01 and C90.02: 43,576 members carry a remission
+or relapse code, and whether those qualify as the incident diagnosis decides
+whether a prevalent patient enters as newly diagnosed.
+
+### Q7 — 17,964 members (19.3%) carry another cancer in their baseline year
+
+Using any C-code that is not C90 and not C44, paired within the baseline year.
+That is the population the secondary 2L cohort's prior-malignancy allowance
+turns on, and it is a fifth of everyone.
+
+### Q3 — the 60-day window adds 589 members
+
+16,171 members have a paired other-cancer within 30 days; 16,760 within 60.
+1,108 members have at least one cancer category whose only pairing sits in the
+31-60 day window. The sensitivity is real but small.
+
+### Q6 — 10,466 members would be excluded on a steroid claim alone
+
+Of 80,398 members with any baseline treatment claim, 12,033 have a steroid
+J-code, 3,489 have an unambiguous myeloma agent, and **10,466 have a steroid
+and no myeloma agent**. Three times as many patients are decided by the
+steroid reading as by the clear-cut one, which makes this the most expensive
+of the questions that need Annex 2.
+
+### Q5 and Q14 — the follow-up rule excludes nobody; the index day is universal
+
+Of 93,245 members, all 93,245 have a medical claim on or after their index
+date, and all 93,245 have one exactly **on** it. Only 92,233 have one strictly
+after, so the strict reading excludes 1,012 members (1.1%). The literal
+reading of "at least one claim from the index date" excludes nobody, which is
+what Q5 suspected.
+
+### Q9 and Q16 — moving is rare, and the tiebreak matters for 0.8%
+
+6,006,459 of 105,204,737 members — 5.7% — have two distinct `STATE` values
+across their enrolment rows. Nobody has three. Among myeloma patients,
+11,986 (11.4%) have enrolment rows that overlap on different `PAT_PLANID`s,
+and those rows disagree on `STATE` for 473 members and on `BUS` for 388.
+**They never disagree on `RACE` — not once.** The deterministic tiebreak the
+package added is therefore worth about 0.8% of patients, and race was never at
+risk.
+
+### Q19 — bridged gaps are worth about 300 person-years
+
+202,108 span boundaries, 72,239 members. The bridged gaps of 30 days or fewer
+carry **109,679 days** of person-time that is covered on paper and unobserved
+in fact — roughly 300 person-years across the whole myeloma population. 987
+gaps sit at exactly 30 days against 98 at exactly 29, so the threshold itself
+lands on a plan-renewal boundary and moving it by a day is not neutral.
+
+*What this does not answer:* the query counted a boundary as a gap whenever
+the next span started after the previous ended, so a contiguous re-enrolment
+(`gap_days = 0`) is in the 160,945 "bridged" count. The 109,679 days figure is
+unaffected — zeros contribute nothing — but **Q13 is still unpriced**: the
+number of *members* with a genuine gap over 30 days needs one more query.
+
+### Q21 — the two readings differ by at most one day
+
+`add_months(index, -12)` and `index - 365 days` land on the same date for
+73,321 members and one day apart for 19,924. Never two. The question is real
+for 21% of members and worth a single day to each of them.
+
+### Q23 — the two pregnancy windows differ by 270 members
+
+307 members have a proxy pregnancy code anywhere in the study period; 99 have
+one in their own baseline year; 270 are caught by the study-period reading
+alone. 0.29% of the population, using proxy codes because Annex 3 has not been
+delivered.
+
+### Q28 — `MBR_MATCH_TYPE` has exactly two values
+
+| value | rows | share |
+|---|---|---|
+| 2 | 6,782,785 | 58.93% |
+| 1 | 4,727,043 | 41.07% |
+
+Two values, no nulls. So it is a binary flag, not a graded match score — which
+narrows what it can mean but does not say which value is the confident link.
+**Still needs the vendor.** If `1` marks a lower-confidence link, 41% of death
+records carry it and overall survival is a secondary objective.
+
+### The value domains the package assumed, now confirmed
+
+| what | warehouse says | verdict |
+|---|---|---|
+| `MEMBER_ENROLLMENT.GDR_CD` | `F` 108,308,094 · `M` 102,595,572 · `U` 88,388 | package maps M/F and sends `U` to Unknown — correct |
+| `MEMBER_ENROLLMENT.STATE` | **53 distinct values** | `CENSUS_REGION` carries 51 (50 + DC), so **two values fall to region Unknown**. Which two is not yet known |
+| `MED_DIAGNOSIS.DIAG_POSITION` | **zero-padded strings** `01`, `02`, … (26 rows) | anything comparing it as `'1'` would match nothing. Route B casts it; the fixture is now zero-padded so a regression fails |
+| `CONFINEMENT.ICD_FLAG` | **exists** — `10` 23,453,669 · `9` 15,054,996 · null 1,666 | the MM-hospitalisation join may keep reading it; the admit-date fallback stays for the 1,666 |
+| `MEDICAL.PAID_STATUS` | **exists** — values `P` / `D`, not the words | the dictionary's spelling was wrong and the filter was inert. Fixed |
+| `MEDICAL.CONF_ID` | null (182,711,199 lines / 21,932,322 members) or populated (186,547,530 / 2,805,263). **No zero or blank sentinel** | `CONF_ID IS NULL` is the right test; the `trim(...) = ''` branch is dead but harmless |
+
+### Hospitalisation shape
+
+Of 241,362 stays: **zero have a missing discharge date**. So the protocol's
+provision for excluding no-discharge stays from LOS summaries never fires, and
+`N_LOS_EXCLUDED` will be 0 on every table. `CONFINEMENT.LOS` equals
+`datediff(discharge, admit)` for 235,733 stays and differs for 5,629 (2.3%);
+the means are 8.87 against 8.84. The package computes its own rather than
+reading the column, which the dictionary's note about LOS spanning bundled
+records supports.
 
 ---
 

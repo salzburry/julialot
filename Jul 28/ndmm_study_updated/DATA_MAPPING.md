@@ -507,6 +507,44 @@ CONFINEMENT, RX and DOD is inferred from the dictionary plus that one example.
 date types, whether `BILL_PROC_CD` (a V9 addition) is populated, and whether
 `CONFINEMENT.ICD_FLAG` is actually present in this vintage.
 
+*Answered 07 Sep 2026, in part — see section 4c. `CONFINEMENT.ICD_FLAG` is
+present and `MEDICAL.PAID_STATUS` carries `P`/`D` rather than the dictionary's
+`PAID`/`DENIED`. `BILL_PROC_CD` was not profiled and is still unknown.*
+
+## 4c. Value domains, measured 07 Sep 2026
+
+`SQL Result 2.pdf` profiled the columns section 4b could only infer. Everything
+here is a measured value, not a dictionary reading, and three of them contradict
+the dictionary.
+
+| column | values found | consequence |
+|---|---|---|
+| `MEMBER_ENROLLMENT.GDR_CD` | `F` 108,308,094 · `M` 102,595,572 · `U` 88,388 | `U` is 0.04%. The build maps M/F and sends the rest to Unknown, which is right |
+| `MEMBER_ENROLLMENT.STATE` | **53 distinct values** | `CENSUS_REGION` carries 51 (50 states + DC), so two values fall to region Unknown. **Which two is not yet known** — the profile listed by descending count and the tail was not captured |
+| `MED_DIAGNOSIS.DIAG_POSITION` | **zero-padded strings**: `01`, `02`, `03`, … 26 distinct | A string comparison against `'1'` matches nothing. Anything reading this must cast. The test fixture is now zero-padded so a regression fails rather than passing on synthetic data that does not look like the warehouse |
+| `MED_DIAGNOSIS.ICD_FLAG` | `10` and `9` | as documented |
+| `CONFINEMENT.ICD_FLAG` | **present** — `10` 23,453,669 · `9` 15,054,996 · null 1,666 | section 4b could not confirm this column existed. It does. The admit-date fallback still earns its place for the 1,666 nulls |
+| `MEDICAL.PAID_STATUS` | **`P` and `D`** — 2 values, no nulls table-wide since 2024 | **The V9.0 dictionary spells these `PAID` and `DENIED`. The warehouse does not.** Any filter written from the dictionary is inert. Among myeloma patients specifically the split is P 78.69% / D 17.42% / null 3.89% |
+| `MEDICAL.CONF_ID` | null or populated only — no `0`, no blank | Business rule 14's test is `CONF_ID IS NULL` and nothing else. 186,547,530 lines across 2,805,263 members carry one; 182,711,199 lines across 21,932,322 members do not |
+| `DOD.MBR_MATCH_TYPE` | `2` 58.93% · `1` 41.07% | Two values, no nulls: a binary flag, not a graded score. Which value means what is still undocumented anywhere we hold |
+
+### `CONFINEMENT` shape
+
+Across 241,362 stays belonging to myeloma patients since 2018:
+
+* **No stay is missing a discharge date.** Zero. The protocol's provision for
+  excluding such stays from LOS summaries never fires, and `N_LOS_EXCLUDED`
+  will be 0 on every table this study produces.
+* `LOS` equals `datediff(DISCH_DATE, ADMIT_DATE)` on 235,733 stays and differs
+  on 5,629 (2.3%). Means 8.87 against 8.84. The build computes its own, which
+  the dictionary's note about `LOS` spanning bundled records supports.
+
+### The ask in section 4b is now closed
+
+`CONFINEMENT.ICD_FLAG` and `MEDICAL.PAID_STATUS` were the two columns that
+`describe table` had not covered. Both exist. `PAID_STATUS` carries values the
+dictionary spells differently, which is the more useful half of the answer.
+
 ## 5. Identifying inpatient vs outpatient
 
 The protocol leans on this twice (MM diagnosis, other-cancer exclusion). The
