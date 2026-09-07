@@ -1,8 +1,9 @@
 # What is in this folder
 
-`lot/` is the lines-of-therapy product. Two documents: `LOT_RULES.md` is the
-rules the build applies, each naming the vignette that tests it; this file is
-what is here and what each file does.
+`lot/` is the lines-of-therapy product. Three documents: `LOT_RULES.md` is the
+rules the build applies, each naming the vignette that tests it; `REVIEW_LOG.md`
+is what was found wrong and fixed, and what is still open; this file is what is
+here and what each file does.
 
 One package writes. The rest read a finished run.
 

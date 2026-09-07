@@ -333,23 +333,13 @@ line_break_tx_sql <- function() glue("
 #          LOT1 as anywhere else.
 #
 # paste0 around the glue, not glue alone: glue trims a template's leading
-# newline, and this fragment splices straight after another predicate.
-# first_auto_exempt: LOT1 only, where the FIRST autologous transplant is part
-# of the line and never ends it, wherever it falls (LOT_RULES.md 3.4). The
-# engine's own end cascade says so - ENDING_AUTO_DT in 05b_lot1_sct.R takes
-# AUTO_DT_2 in the single case, never AUTO_DT_1 - but this predicate did not,
-# so a first transplant outside the 60-day window was a boundary here while
-# being none there.
+# newline, and this splices straight after another predicate.
 #
-# What that cost: a short unconfirmed melphalan course after such a transplant
-# was marked TAKEN, so LOT1 never judged it, so it was never suppressed, and it
-# opened a line of its own on the melphalan date - which 4.7 forbids outright.
-# The planted W3 pair is that patient, and W3i - the same transplant inside the
-# window - was always right, which is why nothing caught it.
-#
-# LOT2-5 do NOT get this: there the first transplant outside the previous
-# line's window ends the line like any other (4.1), and that asymmetry is 3.4's
-# whole subject.
+# first_auto_exempt: LOT1 only. 3.4 gives line 1 its first autologous
+# transplant wherever it falls, and the end cascade agrees - ENDING_AUTO_DT in
+# 05b_lot1_sct.R never takes AUTO_DT_1. Without it a short course after such a
+# transplant was marked TAKEN and opened a line 4.7 forbids (W3/W3i). LOT2-5
+# do not get it: there that transplant ends the line like any other (4.1).
 line_break_window_pred <- function(cfg, alias, induction_end, line_start,
                                    cart_from = NULL, first_auto_exempt = FALSE) {
   cart <- if (is.null(cart_from) || identical(cart_from, line_start)) "" else
@@ -357,21 +347,12 @@ line_break_window_pred <- function(cfg, alias, induction_end, line_start,
            alias, ".TX_DT > ", cart_from, ")")
   first_auto <- if (!isTRUE(first_auto_exempt)) "" else
     paste0("\n                 AND ", alias, ".PREV_AUTO_DT IS NOT NULL")
-  # The tandem exemption's ownership condition, and LOT1 does not get it.
-  # Everywhere else a pair is only the LINE's tandem where the line held the
-  # first of the two, which the window test asks. At LOT1 3.4 answers it
-  # instead: the first-ever autologous transplant belongs to line 1 wherever it
-  # falls, so the pair is line 1's wherever the first one sits, and its partner
-  # continues the line.
-  #
-  # Asking the window at LOT1 too made this helper disagree with the engine's
-  # own end cascade about one transplant. Scenario S11c is the patient: three
-  # transplants, the first two a pair outside the 60-day window, and the
-  # cascade correctly ends line 1 on the THIRD. This read the partner as a
-  # break, so a short course after it was marked TAKEN, line 1 never judged it,
-  # it was never suppressed, and it opened a melphalan-only line - which 4.7
-  # forbids outright. The same patient with the pair in-window was always right,
-  # which is why nothing caught it. Planted as SX1/SX2.
+  # The tandem exemption's ownership condition, and LOT1 does not get it
+  # either. Elsewhere a pair is the LINE's only where the line held the first
+  # of the two; at LOT1 3.4 already says the pair is line 1's wherever the
+  # first sits. Asking the window there disagreed with the end cascade, which
+  # ends line 1 on the THIRD transplant (S11c), and let a course after the
+  # partner open a melphalan-only line. Planted as SX1/SX2.
   tandem_owned <- if (isTRUE(first_auto_exempt)) "" else
     paste0("\n                          AND ", alias, ".PREV_AUTO_DT <= ",
            induction_end)

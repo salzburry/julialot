@@ -403,48 +403,32 @@ build_lot_n <- function(con, lot_num,
               END)
         -- (ii) not a planned tandem. tx_auto_dates has already grouped AUTO
         -- claims less than 60 days apart into one event, so only the
-        -- sct_tandem_days upper bound is left to test here, as at LOT1.
+        -- sct_tandem_days upper bound is left here, as at LOT1.
         --
-        -- The exception is the AUTO that ended the previous line. That one has
-        -- already been ruled EXCESS by the previous line's own rule: LOT1
-        -- allows a single AUTO and a tandem pair, and ends the line on the one
-        -- beyond them. Testing it again as a tandem partner of the transplant
-        -- before it leaves the event in no line. AUTO 1 in March, AUTO 2 in
-        -- June as a tandem, AUTO 3 in November ends LOT1 on 31 October - and
-        -- was then rejected here for being within 180 days of AUTO 2, so LOT2
-        -- never opened. The line-ending SCT sits one day after the end date,
-        -- which is exactly where that AUTO is.
+        -- Three conditions guard it, each because dropping it left a
+        -- transplant in no line:
         --
-        -- The pair must also be one the previous line OWNED, which is what the
-        -- window test below asks. The 180-day test on its own says the two
-        -- transplants are close together and nothing more; it does not say a
-        -- line ever held them. Where the earlier AUTO falls outside the
-        -- previous line's window, nothing held that line open to the later one
-        -- - LOT{lot_num}_AUTO_HOLD_DT carries the same window test and goes
-        -- NULL - so refusing the later one HERE as that line's tandem partner
-        -- leaves it in no line at all. AUTO 1 in December outside LOT1's
-        -- window, LOT1 ending on its own run-out in February, AUTO 2 in June:
-        -- LOT1 does not reach it and this rejected it, so it belonged to
-        -- nothing. Same failure as the paragraph above, from the other side of
-        -- the pair.
+        --   the AUTO that ENDED the previous line is exempt - it was already
+        --   ruled excess there, and testing it again as a partner of the one
+        --   before it left it unassigned;
+        --
+        --   the pair must be one the previous line OWNED, which is the window
+        --   test. Being 180 days apart says the two are close together, not
+        --   that a line held them; where the earlier one falls outside the
+        --   window, LOT{lot_num}_AUTO_HOLD_DT goes NULL and nothing reaches
+        --   the later one;
+        --
+        --   an ALLOGENEIC previous line owns nothing. Its window END is its
+        --   start date, so an AUTO on the allograft date reads as inside it,
+        --   but 4.6 gives that line one day and nothing reaches it. Shipped
+        --   check E5 calls the result a failure. Planted as P0007.
         --
         -- Deliberately NOT the wider reading, that a tandem holds the previous
-        -- line open through AUTO 2 wherever AUTO 1 sits. The hold date reaches
-        -- forward, so a line let past its own window swallows what is in
-        -- between - an added medication that should have opened its own line,
-        -- an allograft that should have ended this one. Measured on 2000
-        -- synthetic patients that moved 52 patients, 39 of whom had no
-        -- unowned transplant to fix, and broke B5b. This reading moved 12, all
-        -- of them patients with one.
-        --
-        -- An ALLOGENEIC previous line can never own the pair, and the window
-        -- arithmetic alone does not say so: its window end is its start date,
-        -- so an AUTO coded on the allograft date reads as inside it. But 4.6
-        -- gives that line the transplant date alone and nothing reaches it, so
-        -- it holds nothing open - and exempting the partner as its tandem left
-        -- exactly the event in no line that the paragraph above is about.
-        -- Shipped check E5 calls that a failure. Planted as P0007 in
-        -- run_synthetic.py, where the catalogue runs over every patient.
+        -- line open through AUTO 2 wherever AUTO 1 sits. A hold date reaches
+        -- forward, so a line let past its own window swallows what is between
+        -- - an added medication, an allograft that should have ended it. On
+        -- 2000 synthetic patients that moved 52, 39 with no unowned transplant
+        -- to fix, and broke B5b; this reading moved 12, all with one.
         AND NOT (awp.PREV_AUTO_DT IS NOT NULL
                  AND pe.PREV_START_TYPE <> 'SCT_ALLO'
                  AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {sct_tandem_days}

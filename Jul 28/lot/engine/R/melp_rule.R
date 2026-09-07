@@ -101,33 +101,19 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
   # the end of melp_confirm.
   not_new_pred <- if (!nzchar(not_new_ctes)) "" else
     "\n        AND nn.MED_ABBR IS NULL"
-  # The same set, for melp_taken's "another agent got here first" scan. A drug
-  # of an earlier line coming back is not another agent taking the course - the
-  # fold-in has put it in this line (LOT_RULES.md 4.8). It is built from the
-  # earlier lines, not from the working base set: a folded drug joins the
-  # line's REPORTED regimen, and the fold CTEs are spliced after these.
+  # The same set for melp_taken's "another agent got here first" scan: a
+  # returning drug is not another agent, the fold-in has put it in this line
+  # (4.8). Built from the earlier lines because a folded drug joins the
+  # REPORTED regimen and the fold CTEs are spliced after these.
   # An anti-join and a WHERE test, not an EXISTS in the ON clause. `o` is
   # INNER JOINed here, so moving the condition out of the join changes
   # nothing - and Spark does not accept a correlated subquery in a join
   # condition before 4.0 (SPARK-45009).
-  # ...and a course an EARLIER line held inside its own induction window is not
-  # this line's to judge at all. 4.7 asks whether a course is outside ANY
-  # induction window, so a course inside the window of the line that owns it is
-  # inside one, full stop, and no later line may call it suppressed.
-  #
-  # The cover bound above is not enough on its own: it only removes a course
-  # whose cover ran out before this line began, and a conditioning course
-  # covering INTO the next line is still re-judged against that line's window.
-  # A 28-day course on day 40 with the next line opening on day 65 came back
-  # suppressed at line 2 exactly as it did before that bound - the fold-in lost
-  # it as a returning drug's previous dose and the re-challenge opened a line
-  # of its own. Planted as F37/F37c.
-  #
-  # Not the same test as "suppressed by its owner". Where the owning line put
-  # the course OUTSIDE its window it suppressed it, and a later line has to
-  # reach the same verdict so a dose after a transplant does not open a line of
-  # its own - that is SPin, and it stays working because a course outside every
-  # earlier window is not in this set.
+  # A course an earlier line held inside its own window is not this line's to
+  # judge. 4.7 asks whether a course is outside ANY window, and this one is
+  # inside the owner's. Needed on top of the cover bound, which misses a course
+  # covering INTO the next line (F37/F37c). A course the owner SUPPRESSED is
+  # not in this set, so a later line still judges it (SPin).
   no_regimen_pred <- if (is.null(no_regimen_line)) "" else
     paste0("\n                   AND NOT (", no_regimen_line, ")")
   prior_held_pred <- if (!nzchar(prior_held_ctes)) "" else
@@ -222,31 +208,14 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
     -- restart that is not substitute-only. The same gate the candidate lists
     -- apply, read from the tables handed in, so the two cannot disagree.
 {not_new_ctes}{prior_held_ctes}
-    -- The agent that confirms a short course has to be a NEW one. The request
-    -- words it as the patient starting a NEW AGENT; the fold-in request words
-    -- a drug from an earlier line coming back as THE RETURNING DRUG, never a
-    -- new one, and bundles it into the line it returns in. So a returning
-    -- prior-line agent cannot be what confirms a course - one rule would
-    -- otherwise bundle the drug and the other read it as a change.
+    -- The confirming agent has to be a NEW one. A returning prior-line drug is
+    -- the returning drug (4.8), not a change, so it confirms nothing. The join
+    -- is present only with the fold-in on and from LOT2 up, and reads the same
+    -- set the fold does - prior_lines_regimen_ctes() in R/prior_regimen.R.
     --
-    -- The join is present only when the fold-in is on, and only from LOT2 up,
-    -- since LOT1 has no earlier line. melp_not_new comes from the same
-    -- definition the fold set is built from - prior_lines_regimen_ctes() in
-    -- R/prior_regimen.R - so the two cannot drift.
-    -- No lower bound on the confirming agent: it must start after the COURSE,
-    -- not after the judged line. With not_new rebuilt per invocation, one
-    -- course can therefore meet different sets on different lines and two
-    -- lines reach two verdicts about it.
-    --
-    -- This was written down as reported-but-not-reproduced. It reproduced: an
-    -- adversarial sweep found the patient, and melp_judged is where it landed -
-    -- see the bound there. What is left here is the narrower CONFIRMATION half:
-    -- a course that covers into two lines is judged by both, legitimately, and
-    -- the confirming-agent scan has no lower bound of its own, so the two
-    -- judgements can still disagree about CONFIRMED. No planted shape shows it
-    -- changing a line, and melp_prev_line_ctes derives the previous line's
-    -- verdict differently again. Whether one course must carry one verdict
-    -- across every line entitled to judge it is a rule for the study team.
+    -- No lower bound: the agent must start after the COURSE, not after the
+    -- judged line. So a course covering into two lines is judged by both and
+    -- they can disagree about CONFIRMED. Open - see STUDY_TEAM_ASKS.md 7.
     melp_confirm AS (
       SELECT DISTINCT mc.PATID, mc.EXPO_DT
       FROM melp_course mc
@@ -306,22 +275,12 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
     -- melp_confirm below, so ownership and confirmation cannot disagree about
     -- what counts as an agent.
     --
-    -- What the gate does NOT ask is whether that agent could open a line at
-    -- all. An agent past the line's own run-out is no added-medication
-    -- candidate, and one landing exactly ON the line's end opens nothing under
-    -- 4.1 either - but both disqualify a later course here, and with the
-    -- earlier line's claim gone nothing else judges it, so the course opens a
-    -- line of its own. Reproduced: an in-window AUTO with a tandem partner on
-    -- day 150 carries line 1 there as SCT_AUTO_CONT, a drug starting exactly on
-    -- day 150 opens nothing, and a 28-day course at day 160 - which the same
-    -- patient without that drug correctly suppresses - takes a line.
-    --
-    -- Not fixed here, and the reason is structural rather than a judgement.
-    -- The bound wanted is the line's own run-out, and discon_per_med computes
-    -- it AFTER these CTEs while reading melp_boundary_join from them: the
-    -- dependency runs both ways, so the decision cannot simply move. Closing it
-    -- means splitting the run-out from the melphalan hold, which is a change to
-    -- the step's shape rather than to this predicate.
+    -- KNOWN GAP. The gate does not ask whether that agent could open a line.
+    -- One past the line's run-out, or landing exactly on its end, opens
+    -- nothing under 4.1 but still disqualifies the course - and then no line
+    -- judges it, so it takes one of its own. Not fixed: the bound wanted is
+    -- the line's run-out, and discon_per_med computes that after these CTEs
+    -- while reading melp_boundary_join from them. See LOT_RULES.md 4.7.
     melp_taken AS (
       SELECT DISTINCT mc.PATID, mc.EXPO_DT
       FROM melp_course mc
@@ -394,25 +353,13 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
       -- whether the course STARTS after the line let that split course fall
       -- between this test and melp_taken, judged by neither line.
       --
-      -- A course whose cover ran out before this line began is a different
-      -- thing: no dose of it is in this line, an earlier line owns it, and
-      -- this line has no business judging it. Unbounded below, every later
-      -- line re-judged it against ITS OWN window - so a conditioning course
-      -- that line 1 held inside its 60 days, and put in its regimen as an
-      -- ordinary drug, came back SUPPRESSED at line 2. Two things then went
-      -- wrong at once, and one bound fixes both:
-      --
-      --   the fold-in reads melp_suppress_dates to decide what may stand as a
-      --   returning drug's PREVIOUS dose, so the deleted course left a later
-      --   melphalan re-challenge with no dose history, no advance count, and a
-      --   line of its own where 4.8 says it folds (F1/F1c in the fold-in
-      --   harness);
-      --
-      --   melp_hold took the same course, and melp_runout_case handed a
-      --   regimen-less transplant line a run-out hundreds of days before its
-      --   own start, which SCT_AUTO_CONT read as a line ending too early and
-      --   clamped to a single day - the state shipped QC check B7 calls a
-      --   failure (SU1/SU2 in the melphalan harness).
+      -- A course whose cover ran out before this line began has no dose in it
+      -- and belongs to an earlier line, so this line does not judge it.
+      -- Unbounded, every later line re-judged it against its own window. Two
+      -- defects followed: the fold-in lost the course as a returning drug's
+      -- previous dose (F36/F36c), and the hold gave a transplant line a
+      -- run-out before its own start, which QC check B7 calls a failure
+      -- (SU1/SU2).
       WHERE mc.EXPO_DT <= {span_end}
         AND mc.COURSE_END_DT >= {line_tbl}.{start_col}
         AND tk.PATID IS NULL{prior_held_pred}
