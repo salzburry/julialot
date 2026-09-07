@@ -436,7 +436,17 @@ build_lot_n <- function(con, lot_num,
         -- synthetic patients that moved 52 patients, 39 of whom had no
         -- unowned transplant to fix, and broke B5b. This reading moved 12, all
         -- of them patients with one.
+        --
+        -- An ALLOGENEIC previous line can never own the pair, and the window
+        -- arithmetic alone does not say so: its window end is its start date,
+        -- so an AUTO coded on the allograft date reads as inside it. But 4.6
+        -- gives that line the transplant date alone and nothing reaches it, so
+        -- it holds nothing open - and exempting the partner as its tandem left
+        -- exactly the event in no line that the paragraph above is about.
+        -- Shipped check E5 calls that a failure. Planted as P0007 in
+        -- run_synthetic.py, where the catalogue runs over every patient.
         AND NOT (awp.PREV_AUTO_DT IS NOT NULL
+                 AND pe.PREV_START_TYPE <> 'SCT_ALLO'
                  AND datediff(awp.TX_DT, awp.PREV_AUTO_DT) <= {sct_tandem_days}
                  AND awp.N_BETWEEN = 0
                  AND awp.PREV_AUTO_DT <= date_add(

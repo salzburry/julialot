@@ -98,7 +98,7 @@ EXPECTED_FAILURES <- list(
     # complete LOT_LONG, and the short-course break test told that this
     # statement already carries the verdict, so a confirmed course stops a
     # run-out chain. Re-pinned deliberately, which is what this list is for.
-    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 949 line(s) [18277565]")
+    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 952 line(s) [3b7c6844]")
 )
 
 # How one suite's output is read. Its own suite is validation/hygiene/

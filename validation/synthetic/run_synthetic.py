@@ -197,6 +197,30 @@ def planted():
     # it. Its twin - the same mismatch on a patient who never gets a line - is
     # what E5b used to be scoped to on its own.
     pat('P0006', [('LEN', 'IMID', ix + 20, ix + 200, 0)], auto=[ix + 5])
+    # P0007: an AUTO coded on the ALLOGRAFT date, with a partner 100 days
+    # later. The allograft takes the same-day tie, so the AUTO sits on a line
+    # that spans one day and holds nothing open (4.6) - and the tandem
+    # exemption in auto_cand read it as an in-window earlier AUTO anyway, so
+    # the partner was refused a line of its own and belonged to nothing. E5.
+    pat('P0007', [('LEN', 'IMID', ix, ix + 80, 0)],
+        auto=[ix + 200, ix + 300], ac=[('ALLO', ix + 200)])
+    # P0008: a melphalan course whose first dose is on the ALLOGRAFT date and
+    # whose second is 15 days later - one course under melp_exposure_days. The
+    # allograft line's window is that one date, so the course read as INSIDE
+    # it, went unsuppressed, and its later dose opened a line the line itself
+    # then held melphalan out of. A7 and C4.
+    pat('P0008', [('LEN', 'IMID', ix, ix + 80, 0),
+                  ('MELP', 'ALKY', ix + 200, ix + 200, 0),
+                  ('MELP', 'ALKY', ix + 215, ix + 215, 0)],
+        ac=[('ALLO', ix + 200)])
+    # P0009: the SB shape. A melphalan course inside line 1's own window puts
+    # MELP in its regimen, and a later confirmed short course injects the
+    # melphalan date as the boundary - so the added medication is a drug the
+    # regimen already holds, which 4.7 authorises and C2 called a failure.
+    pat('P0009', [('LEN', 'IMID', ix, ix + 400, 0),
+                  ('MELP', 'ALKY', ix, ix + 27, 0),
+                  ('MELP', 'ALKY', ix + 80, ix + 107, 0),
+                  ('BORT', 'PI', ix + 85, ix + 200, 0)])
 
     # The melphalan shapes the rule in R/melp_rule.R is written against, one
     # patient each. Nothing here says what their lines should be - the point is

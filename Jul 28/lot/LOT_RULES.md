@@ -473,6 +473,18 @@ cannot reach the later dose at all. Worked example:
 inside, the course was dropped by the transplant's line and its later dose
 opened a line of its own.
 
+**An allogeneic line owns nothing, so nothing is inside its window.** §4.6
+gives that line the transplant date alone and no regimen at all, and the window
+arithmetic alone does not say so — its window *end* is its start date, so an
+event coded on the allograft date reads as inside it. Two rules were reading it
+that way. A melphalan course whose first dose fell on the allograft date was
+judged INSIDE that line, so it went unsuppressed and its later dose opened a
+line the new line then held melphalan out of — QC checks `A7` and `C4` both call
+that a failure. And an autologous transplant coded on the same date was read as
+the in-window first half of a tandem pair, so its partner months later was
+refused a line of its own and belonged to nothing — `E5`. Neither is inside
+anything: the line holds nothing open. Planted as `P0008` and `P0007`.
+
 **A steroid never confirms a course.** Corticosteroids are not oncology agents
 (§2.1), so melphalan given with one is still melphalan on its own: the course
 stays suppressed and the line is carried to its cover. That is what the study

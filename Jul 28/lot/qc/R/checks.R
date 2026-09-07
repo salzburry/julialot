@@ -583,7 +583,17 @@ LOT_QC_CHECKS <- list(
                     "It survives only for a comparison build, where ",
                     "apply_own_return_fold is FALSE and the release is back: ",
                     "the settings decide, so the check reads the same switch ",
-                    "the engine does rather than tolerating both."),
+                    "the engine does rather than tolerating both. ",
+                    "MELPHALAN IS THE ONE EXCEPTION, and it is the rule's own. ",
+                    "4.7 advances the line on a confirmed short course's FIRST ",
+                    "DAY, and melp_prior_regimen_exempt in R/melp_rule.R lifts ",
+                    "the prior-regimen veto so that date can be the boundary - ",
+                    "so a line already holding melphalan from an earlier course ",
+                    "can legitimately name melphalan as its added medication. ",
+                    "The shipped fixture SB is exactly that patient, and this ",
+                    "check called it a failure. Exempted only while the rule is ",
+                    "on, and only for melphalan: any other drug in this state ",
+                    "is still the disagreement the check was written for."),
        needs = c("final", "map"),
        sql = function(t, p) counted(paste0("
     WITH ", qc_restart_sql(t), "
@@ -598,7 +608,9 @@ LOT_QC_CHECKS <- list(
       AND array_contains(split(coalesce(f.LOT_BASE_MEDS, ''), ' '),
                          f.LOT_BASE_1ST_ADD_MED)",
     if (isTRUE(p$own_return_fold)) "" else
-      "\n      AND coalesce(r.PREV_DISCON, 0) = 0"),
+      "\n      AND coalesce(r.PREV_DISCON, 0) = 0",
+    if (identical(p$melp_rule, "off")) "" else
+      paste0("\n      AND f.LOT_BASE_1ST_ADD_MED <> '", p$melp_abbr, "'")),
     "concat(pid, ' LOT', LOT_NUM, ': ', med)")),
 
   list(id = "C3", group = "Regimen", severity = "info",
@@ -1087,12 +1099,18 @@ qc_params <- function(settings, run_id) {
   # OLDER one, where a confirmed gap released the drug; under the rule the
   # study pins there is nothing to exempt.
   ownret <- toupper(trimws(qc_setting(settings, "apply_own_return_fold")))
+  # How melphalan is named, for C2's other exemption. 4.7 lets a CONFIRMED
+  # short course advance the line on its own first day even where the line
+  # already holds melphalan, so under the rule the added medication can be a
+  # regimen drug - and only melphalan can.
+  melp_abbr <- toupper(trimws(qc_setting(settings, "melp_med_abbr")))
   list(run_id   = run_id,
        censor   = identical(censor, "TRUE"),
        cart_exempt = identical(cart_ex, "TRUE"),
        foldin   = identical(foldin, "TRUE"),
        own_return_fold = identical(ownret, "TRUE"),
        melp_rule = if (nzchar(melp)) melp else "off",
+       melp_abbr = if (nzchar(melp_abbr)) melp_abbr else "MELP",
        ind1     = qc_int(settings, "induction_window_days"),
        indn     = qc_int(settings, "lot_n_induction_window_days"),
        cart     = qc_int(settings, "cart_consolidation_days"),

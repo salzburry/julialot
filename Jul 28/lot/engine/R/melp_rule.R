@@ -84,7 +84,7 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
                                base_tbl = NULL, restart_tbl = NULL,
                                not_new_ctes = "", cart_from = NULL,
                                first_auto_exempt = FALSE, proc_line = NULL,
-                               prior_held_ctes = "") {
+                               prior_held_ctes = "", no_regimen_line = NULL) {
   if (!melp_rule_on(cfg)) return("")
   if (is.null(base_tbl) || is.null(restart_tbl))
     stop("The melphalan short-course rule needs the judged line's base set and ",
@@ -128,6 +128,8 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
   # reach the same verdict so a dose after a transplant does not open a line of
   # its own - that is SPin, and it stays working because a course outside every
   # earlier window is not in this set.
+  no_regimen_pred <- if (is.null(no_regimen_line)) "" else
+    paste0("\n                   AND NOT (", no_regimen_line, ")")
   prior_held_pred <- if (!nzchar(prior_held_ctes)) "" else
     "\n        AND NOT EXISTS (SELECT 1 FROM melp_prior_held ph
                         WHERE ph.PATID = mc.PATID AND ph.EXPO_DT = mc.EXPO_DT)"
@@ -331,8 +333,21 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
              -- Outside ANY induction window, in the ask's own words: a
              -- course starting BEFORE this line is outside its window like any
              -- other earlier date, not exempt from its judgement (SPin).
+             -- ...and only where the line has an induction window to be
+             -- inside. An ALLOGENEIC line spans its transplant date alone and
+             -- takes no drugs at all - 4.6, and the induction step suppresses
+             -- its regimen rows - so a course starting on that date is not an
+             -- induction drug of it, however the window arithmetic reads.
+             -- Read as INSIDE, the previous-line statement left the course
+             -- unsuppressed and its later dose opened a line, while the new
+             -- line's own statement judged the same course outside its window
+             -- and suppressed it - so the line was started by a dose it then
+             -- held out of its own regimen. Shipped checks A7 and C4 both call
+             -- that a failure. Planted as P0008 in run_synthetic.py, where
+             -- the shipped catalogue runs over every planted patient.
              CASE WHEN mc.EXPO_DT >= {line_tbl}.{start_col}
-                   AND mc.EXPO_DT <= {induction_end} THEN 1 ELSE 0 END AS INSIDE,
+                   AND mc.EXPO_DT <= {induction_end}{no_regimen_pred}
+                  THEN 1 ELSE 0 END AS INSIDE,
              CASE WHEN datediff(mc.COURSE_END_DT, mc.EXPO_DT) + 1
                        <= {cfg$melp_simple_course_days} THEN 1 ELSE 0 END AS SHORT,
              CASE WHEN cf.PATID IS NOT NULL THEN 1 ELSE 0 END AS CONFIRMED
@@ -635,6 +650,7 @@ melp_prev_line_ctes <- function(cfg, prev_med_window, cart_consolidation_days,
                    identical(lot_num, 2L)) ind_end else NULL
   paste0(pre, melp_decision_ctes(
     cfg, "prev_end", "PREV_START_DT", "prev_end.OBS_END_DT", ind_end,
+    no_regimen_line = "prev_end.PREV_START_TYPE = 'SCT_ALLO'",
     base_tbl = "melp_sc_base", restart_tbl = "melp_sc_restart",
     cart_from = cart_from))
 }
@@ -1060,5 +1076,6 @@ melp_lotn_ctes <- function(cfg, lot_num, induction_window_days,
       glue("{ls}.LOT{lot_num}_START_TYPE <> 'MED'"),
     prior_held_ctes = melp_prior_held_cte(lot_num, induction_window_days,
                                           cart_consolidation_days,
-                                          lot1_induction_window_days))
+                                          lot1_induction_window_days),
+    no_regimen_line = glue("{ls}.LOT{lot_num}_START_TYPE = 'SCT_ALLO'"))
 }
