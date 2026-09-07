@@ -139,8 +139,12 @@ cfg_defaults <- function() {
     pregnancy_window = .env_enum("PREGNANCY_WINDOW", "study_period",
       c("study_period", "patient_period")),
     sec2l_apply_other_cancer = .env_lgl("SEC2L_APPLY_OTHER_CANCER", FALSE),
-    index_excluded_abbrs =
-      .env_list("INDEX_EXCLUDED_ABBRS", "BELA,PANO,ELOT", upper = TRUE),
+    # The 1L index-setting agents are NOT a setting here. Barring belantamab,
+    # panobinostat or elotuzumab from setting an index means re-deriving the
+    # index date, which is the cohort build's job - ndmm/ already has
+    # NDMM_INDEX_EXCLUDED_ABBRS for exactly this. A second copy here would be
+    # recorded as applied while applying nothing. ../BUILD_DELTA.md section 3.
+    lot_allow_unproven_lineage = .env_lgl("LOT_ALLOW_UNPROVEN_LINEAGE", FALSE),
 
     # --- follow-up and censoring -----------------------------------------
     censor_at_disenrollment  = .env_lgl("CENSOR_AT_DISENROLLMENT", TRUE),
@@ -226,7 +230,7 @@ open_question_readings <- function(cfg) {
             "censor_at_disenrollment", "bridged_gap_is_person_time",
             "months_as", "baseline_includes_index",
             "comorbidity_baseline_includes_index", "region_source",
-            "enrol_attr_at", "ed_definition", "index_excluded_abbrs")
+            "enrol_attr_at", "ed_definition")
   vapply(keys, function(k) {
     v <- cfg[[k]]
     sprintf("%s=%s", k, paste(as.character(v), collapse = "|"))

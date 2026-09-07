@@ -71,7 +71,7 @@ cat("\nconfig and contract\n")
                           check_settings(cfg_defaults())))),
      "a 1L index floor before the study start stops the run")
   r <- open_question_readings(cfg)
-  ok(length(r) == 19 && all(grepl("=", r)),
+  ok(length(r) == 18 && all(grepl("=", r)),
      "every open question's reading is recorded for the run")
 }
 
@@ -299,6 +299,168 @@ cat("\nprotocol readings carried into the SQL\n")
      "a secondary malignancy needs two codes on separate dates - Table 4")
   ok(any(grepl("FIRST_DT", ml)),
      "and is dated at the first of them, not the confirming one")
+}
+
+cat("\nregressions from the adversarial review\n")
+{
+  cfg <- cfg0(); cfg$work_schema <- "wk"; set_study_config(cfg)
+
+  # 1. Every per-cohort module clears its scope before writing, so a re-run
+  #    replaces rather than appends. The claim "re-run as often as needed" is
+  #    only true because of this.
+  per_cohort <- Filter(function(m) isTRUE(m$per_cohort), MODULES)
+  no_clear <- Filter(function(m) {
+    src <- paste(capture.output(print(get(m$fn, mode = "function"))),
+                 collapse = "\n")
+    !grepl("prepare_table|CREATE OR REPLACE TABLE", src)
+  }, per_cohort)
+  ok(length(no_clear) == 0,
+     paste0("every per-cohort module clears before writing (offenders: ",
+            paste(names(no_clear), collapse = ", "), ")"))
+  ok(!any(grepl("CREATE TABLE IF NOT EXISTS",
+                unlist(lapply(MODULES, function(m)
+                  capture.output(print(get(m$fn, mode = "function"))))))),
+     "no module still creates a table inline instead of via prepare_table()")
+
+  # 2. A FROM-clause subquery cannot see a sibling alias.
+  hc <- paste(capture.output(print(mod_hcru)), collapse = "\n")
+  ok(!grepl("sum\\(p\\.(BASELINE|PERIOD)_PY\\)", hc),
+     "the HCRU denominator does not reference an outer alias from a subquery")
+  ok(grepl("GROUP BY COHORT, LOT_NUM", hc),
+     "and it is grouped by line, not summed across the whole cohort")
+
+  # 3. The lineage guard actually stops.
+  lg <- paste(capture.output(print(check_lot_lineage)), collapse = "\n")
+  ok(!grepl("checkable", lg),
+     "the lineage guard has no always-FALSE condition swallowing its stop()")
+  ok(grepl("LINEAGE ERROR: this package will not read", lg, fixed = TRUE),
+     "a checked-and-wrong lineage stops unconditionally")
+  ok(grepl("lot_allow_unproven_lineage", lg),
+     "and the waiver applies only where the status could not be read")
+  ok("lot_allow_unproven_lineage" %in% names(cfg0()),
+     "LOT_ALLOW_UNPROVEN_LINEAGE is a real setting, not just a message")
+
+  # 4. A nested cohort takes only patients IN its parent.
+  ch <- paste(capture.output(print(mod_cohorts)), collapse = "\n")
+  ok(grepl("IN_COHORT = 1", ch),
+     "the nested-cohort parent join requires the parent's IN_COHORT")
+  ok(grepl("s_parent_cohort", ch),
+     "and reads the parent through a view, not the table being written")
+
+  # 5. Code types are compared case-insensitively on both sides.
+  ok(grepl("code_type_norm", hc),
+     "the ED join uses the normalised code type the R check validates")
+  ok(grepl("code_type_norm", paste(capture.output(print(register_codelist_view)),
+                                   collapse = "\n")),
+     "and register_codelist_view publishes it")
+
+  # 6. Time-to-event dates and events are clipped to the follow-up end.
+  tt <- paste(capture.output(print(mod_tte)), collapse = "\n")
+  ok(grepl("obs_death", tt) && grepl("p.FU_END", tt),
+     "OS is clipped to FU_END like TTNT and TTD, not left unbounded")
+  ok(grepl("DEATH_DT <= p.FU_END", tt),
+     "and a death after follow-up ended is a censoring, not an event")
+
+  # 7 and 8. Malignancy: per-line denominator, and the chronic rule applied.
+  ml <- paste(capture.output(print(mod_malignancy)), collapse = "\n")
+  ok(grepl("s_malig_prior", ml),
+     "a prior malignancy removes the patient from numerator and denominator")
+  ok(grepl("GROUP BY p.COHORT, p.LOT_NUM, c.category", ml),
+     "and the denominator is per line, not the cohort total")
+  ok(!grepl("SELECT max\\(l.LOT_NUM\\) FROM", ml),
+     "LOT_AFTER_WHICH is a join, not a non-equality correlated subquery")
+
+  # 9. Patterns knows who died on a LATER line.
+  pt <- paste(capture.output(print(mod_patterns)), collapse = "\n")
+  ok(grepl("s_line_end", pt) && grepl("DIED_ON_LINE", pt),
+     "death is resolved per line, not read off the cohort's index-line TTE row")
+  ok(!grepl("t.OS_EVENT", pt),
+     "so no later line silently reads a NULL death flag")
+
+  # 10. X2 reaches the nested cohorts through the one they are nested in.
+  ok(cohort_applies(COHORTS[["2L"]], "X2_other_cancer"),
+     "2L inherits the other-cancer exclusion from 1L")
+  ok(cohort_applies(COHORTS[["3L"]], "X2_other_cancer"),
+     "and so does 3L")
+  sec <- resolve_cohorts(cfg0(c(COHORTS = "1L,SEC2L")))$SEC2L
+  ok(!cohort_applies(sec, "X2_other_cancer"),
+     "while the secondary 2L cohort, as resolved, does not")
+  sec_on <- resolve_cohorts(cfg0(c(COHORTS = "1L,SEC2L",
+                                   SEC2L_APPLY_OTHER_CANCER = "TRUE")))$SEC2L
+  ok(cohort_applies(sec_on, "X2_other_cancer"),
+     "unless the setting puts it back")
+
+  # 11. Every code list a module loads is declared, so preflight can see it.
+  loaded <- unique(unlist(lapply(names(MODULES), function(k) {
+    src <- paste(capture.output(print(get(MODULES[[k]]$fn, mode = "function"))),
+                 collapse = "\n")
+    regmatches(src, gregexpr('"[a-z0-9_]+\\.csv"', src))[[1]]
+  })))
+  loaded <- gsub('"', "", loaded)
+  ok(all(loaded %in% required_codelists(MODULES)),
+     paste0("every code list a module loads is declared (undeclared: ",
+            paste(setdiff(loaded, required_codelists(MODULES)),
+                  collapse = ", "), ")"))
+  ok("mm_dx.csv" %in% MODULES$hcru$codelists,
+     "hcru declares mm_dx.csv, which its MM-related test loads")
+
+  # 12. run_step's zero-row guard can read the first column.
+  ok(grepl("count\\(\\*\\) AS n_events", hc),
+     "the HCRU QC puts a count first so the zero-row guard is not skipped")
+
+  # 13. An unrecognised or blank ICD family matches neither family.
+  rv <- paste(capture.output(print(register_codelist_view)), collapse = "\n")
+  ok(grepl("THEN 'ICD10' END", rv) && !grepl("ELSE 'ICD10' END", rv),
+     "the code-list side yields NULL for an unknown family, as the claim side does")
+  tmp <- tempfile(); dir.create(tmp)
+  cfgb <- cfg; cfgb$codelist_dir <- tmp
+  write.csv(data.frame(condition = "a", domain = "x", acute_chronic = "Acute",
+                       code_type = "ICD10DIAG", code = "C900", icd_family = ""),
+            file.path(tmp, "safety_events.csv"), row.names = FALSE)
+  ok(grepl("<blank>", errs(load_codelist("safety_events.csv", cfgb))),
+     "a blank icd_family is refused, not silently read as ICD-10")
+  unlink(tmp, recursive = TRUE)
+
+  # 14. S_ATTRITION is written by something.
+  ok("attrition" %in% names(MODULES) &&
+     "S_ATTRITION" %in% MODULES$attrition$outputs,
+     "the attrition funnel is a module of its own")
+  declared <- unlist(lapply(MODULES, `[[`, "outputs"))
+  written <- unlist(lapply(names(MODULES), function(k) {
+    src <- paste(capture.output(print(get(MODULES[[k]]$fn, mode = "function"))),
+                 collapse = "\n")
+    Filter(function(o) grepl(o, src, fixed = TRUE), MODULES[[k]]$outputs)
+  }))
+  ok(setequal(declared, written),
+     paste0("every declared output is actually written (never written: ",
+            paste(setdiff(declared, written), collapse = ", "), ")"))
+
+  # 15. SOC categorisation is deterministic and not alphabetical.
+  sc <- paste(capture.output(print(mod_soc)), collapse = "\n")
+  ok(!grepl("max\\(CASE WHEN cl.CL_MED_ABBR IS NOT NULL THEN cl.soc_category", sc),
+     "SOC does not pick a category with max(), which sorts alphabetically")
+  ok(SOC_PRECEDENCE[1] == "CAR-T",
+     "a CAR-T line is a CAR-T line, whatever it was given alongside")
+  ok(grepl("N_AGENTS >= 4", sc) && grepl("N_AGENTS = 3", sc),
+     "and a size category is decided by the regimen's own agent count")
+
+  # Mine, not the review's.
+  ok(!grepl("SELECT \\* FROM %s UNION ALL", rv),
+     "the code-list view is not defined in terms of itself when chunked")
+  ok(grepl("copy_to", rv),
+     "a code list of thousands of rows is copied, not built as SQL text")
+  sf <- paste(capture.output(print(mod_safety)), collapse = "\n")
+  ok(grepl("canonical_acute_chronic", sf),
+     "acute_chronic is resolved to one rule before it reaches SQL")
+  ok(!grepl("LIKE '%acute%'", sf, fixed = TRUE),
+     "so 'Acute or chronic' is not counted through both counting rules")
+  ok(!("index_excluded_abbrs" %in% names(cfg0())),
+     "the dead 1L index-agent setting is gone - that rule lives in ndmm/")
+  ok("malignancies" %in% PROTOCOL_CHRONIC_CONDITIONS,
+     "the s7.8.1 chronic cross-check covers Objective 3's own condition")
+  cm <- paste(capture.output(print(mod_comorbidity)), collapse = "\n")
+  ok(grepl("supersedes", cm),
+     "Charlson applies Quan's hierarchy where the code list declares it")
 }
 
 cat("\n", .pass, " passed, ", length(.fail), " failed\n", sep = "")

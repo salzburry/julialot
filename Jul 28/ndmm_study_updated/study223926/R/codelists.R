@@ -124,18 +124,54 @@ check_unfilled <- function(df, csv_name, code_col) {
 
 check_icd_family <- function(df, csv_name) {
   raw <- trimws(as.character(df$icd_family))
-  keep <- !is.na(raw)
   ok <- toupper(c(ICD_FAMILY_9, ICD_FAMILY_10))
-  bad <- keep & !(toupper(raw) %in% ok)
+  # A blank cell is NA after read.csv's na.strings, and a blank family is
+  # exactly as unmatchable as a misspelled one - so it is bad, not skipped.
+  bad <- is.na(raw) | !nzchar(raw) | !(toupper(raw) %in% ok)
   if (any(bad))
     stop("CODELIST ERROR: ", csv_name, " has ", sum(bad),
          " row(s) whose icd_family this package does not recognise: ",
-         paste(unique(raw[bad]), collapse = ", "),
+         paste(unique(ifelse(is.na(raw[bad]) | !nzchar(raw[bad]),
+                             "<blank>", raw[bad])), collapse = ", "),
          ". An unrecognised family is joined as neither, so the row matches no ",
          "claim and stops excluding or qualifying anyone, silently. Spell it ",
          "one of: ", paste(c(ICD_FAMILY_9, ICD_FAMILY_10), collapse = ", "), ".",
          call. = FALSE)
   invisible(TRUE)
+}
+
+# Table 3 types two conditions "Acute or chronic" and "Acute/Chronic". A
+# LIKE '%acute%' test and a LIKE '%chronic%' test BOTH match those, so such a
+# condition would be counted twice - once through the acute washout chain and
+# once as a chronic first-occurrence - and its incidence would be the sum of
+# two different rules.
+#
+# So the column is canonicalised to exactly one of acute or chronic, and a
+# value that names both has to be resolved rather than guessed: s7.8.1's own
+# chronic list decides where it can, and anything left over stops the run.
+canonical_acute_chronic <- function(x, condition = NULL) {
+  v <- tolower(trimws(ifelse(is.na(x), "", as.character(x))))
+  has_a <- grepl("acute", v, fixed = TRUE)
+  has_c <- grepl("chronic", v, fixed = TRUE)
+  out <- ifelse(has_a & !has_c, "acute",
+         ifelse(has_c & !has_a, "chronic", NA_character_))
+  both <- has_a & has_c
+  if (any(both) && !is.null(condition)) {
+    cond <- tolower(trimws(as.character(condition)))
+    out[both & cond %in% PROTOCOL_CHRONIC_CONDITIONS] <- "chronic"
+  }
+  unresolved <- is.na(out)
+  if (any(unresolved)) {
+    lbl <- if (is.null(condition)) unique(x[unresolved]) else
+      unique(sprintf("%s (%s)", condition[unresolved], x[unresolved]))
+    stop("CODELIST ERROR: acute_chronic could not be resolved to one rule for: ",
+         paste(lbl, collapse = "; "),
+         ".\nA value naming both is counted twice - once through the acute ",
+         "washout chain and once as a chronic first occurrence - so it has to ",
+         "say which. s7.8.1's chronic list resolves the ones it names; type ",
+         "the rest explicitly.", call. = FALSE)
+  }
+  out
 }
 
 # Checked before any module runs, so a run that cannot finish stops in the
@@ -195,37 +231,36 @@ register_codelist_view <- function(con, df, view_name, cols,
     stop("CODELIST ERROR: view ", view_name, " asked for column(s) the file ",
          "does not have: ", paste(missing, collapse = ", "), ".", call. = FALSE)
   keep <- df[, cols, drop = FALSE]
+  keep[] <- lapply(keep, function(x) ifelse(is.na(x), "", as.character(x)))
 
-  esc <- function(x) gsub("'", "''", ifelse(is.na(x), "", as.character(x)))
-  sel <- vapply(seq_len(nrow(keep)), function(i)
-    paste0("SELECT ", paste(sprintf("'%s' AS %s", esc(keep[i, ]), cols),
-                            collapse = ", ")), character(1))
-  # Chunked so a long list does not become one unparseable statement.
-  chunks <- split(sel, ceiling(seq_along(sel) / 500))
-  stage <- paste0(view_name, "_RAW")
-  first <- TRUE
-  for (ch in chunks) {
-    verb <- if (first) sprintf("CREATE OR REPLACE TEMPORARY VIEW %s AS", stage)
-            else sprintf("INSERT INTO %s", stage)
-    if (first) {
-      db_exec(con, paste(verb, paste(ch, collapse = " UNION ALL ")))
-      first <- FALSE
-    } else {
-      # A temporary view cannot be inserted into; materialise once it is big.
-      db_exec(con, sprintf(
-        "CREATE OR REPLACE TEMPORARY VIEW %s AS SELECT * FROM %s UNION ALL %s",
-        stage, stage, paste(ch, collapse = " UNION ALL ")))
-    }
-  }
+  # sparklyr::copy_to rather than a UNION ALL of one SELECT per row. A code
+  # list runs to thousands of rows - pregnancy.csv is 5,318 - and building that
+  # as SQL text is both enormous and, chunked, wrong: a temporary view cannot
+  # be appended to, and the obvious workaround defines the view in terms of
+  # itself.
+  stage <- paste0(tolower(view_name), "_raw")
+  sparklyr::copy_to(con, keep, name = stage, overwrite = TRUE, memory = FALSE)
+
   norm_code <- if (code_col %in% cols)
     sprintf("upper(regexp_replace(trim(%s), '[^A-Za-z0-9]', '')) AS code_norm",
             code_col) else "cast(NULL as string) AS code_norm"
+  # The SAME strictness as the claim side. An unrecognised or blank family
+  # yields NULL and matches neither, rather than defaulting to ICD-10 and
+  # quietly failing to match a genuine ICD-9 row.
   norm_fam <- if (family_col %in% cols)
     sprintf("CASE WHEN upper(trim(%s)) IN ('9','ICD9','ICD-9','ICD9DIAG')
-                  THEN 'ICD9' ELSE 'ICD10' END AS icd_norm", family_col)
+                  THEN 'ICD9'
+                  WHEN upper(trim(%s)) IN ('10','ICD10','ICD-10','ICD10DIAG')
+                  THEN 'ICD10' END AS icd_norm", family_col, family_col)
     else "cast(NULL as string) AS icd_norm"
+  # Code types are compared case-insensitively everywhere, so they are
+  # normalised here rather than in each module's join.
+  norm_type <- if ("code_type" %in% cols)
+    "upper(trim(code_type)) AS code_type_norm"
+    else "cast(NULL as string) AS code_type_norm"
+
   db_exec(con, sprintf("CREATE OR REPLACE TEMPORARY VIEW %s AS
-                        SELECT *, %s, %s FROM %s",
-                       view_name, norm_code, norm_fam, stage))
+                        SELECT *, %s, %s, %s FROM %s",
+                       view_name, norm_code, norm_fam, norm_type, stage))
   view_name
 }

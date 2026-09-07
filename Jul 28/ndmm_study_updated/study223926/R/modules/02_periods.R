@@ -15,13 +15,13 @@ mod_periods <- function(con, cfg, cohort) {
   fu  <- fu_end_sql(cfg)
   tte <- tte_eligible_sql(cfg, index = "co.INDEX_DATE")
 
+  prepare_table(con, wrk("S_PERIODS"),
+    "PATID string, COHORT string, LOT_NUM int, INDEX_DATE date,
+     BASELINE_START date, BASELINE_END date,
+     COMORB_BASELINE_START date, COMORB_BASELINE_END date,
+     FU_END date, FU_DAYS int, FU_MONTHS double,
+     BASELINE_PY double, TTE_ELIGIBLE int", cohort$key)
   run_step(con, paste0("periods_", cohort$key), sprintf("
-    CREATE TABLE IF NOT EXISTS %1$s (
-      PATID string, COHORT string, LOT_NUM int, INDEX_DATE date,
-      BASELINE_START date, BASELINE_END date,
-      COMORB_BASELINE_START date, COMORB_BASELINE_END date,
-      FU_END date, FU_DAYS int, FU_MONTHS double,
-      BASELINE_PY double, TTE_ELIGIBLE int);
     INSERT INTO %1$s
     SELECT co.PATID, co.COHORT, co.LOT_NUM, co.INDEX_DATE,
            %2$s AS BASELINE_START, %3$s AS BASELINE_END,
@@ -50,11 +50,12 @@ mod_periods <- function(con, cfg, cohort) {
                   FROM %s WHERE COHORT = '%s'", wrk("S_PERIODS"), cohort$key))
 
   per <- lot_period_sql(cfg)
+  prepare_table(con, wrk("S_LOT_PERIODS"),
+    "PATID string, COHORT string, LOT_NUM int,
+     PERIOD_START date, PERIOD_END date, PERIOD_PY double,
+     LOT_START_DT date, LOT_BASE_DISCON_DT date, NEXT_LOT_START_DT date",
+    cohort$key)
   run_step(con, paste0("lot_periods_", cohort$key), sprintf("
-    CREATE TABLE IF NOT EXISTS %1$s (
-      PATID string, COHORT string, LOT_NUM int,
-      PERIOD_START date, PERIOD_END date, PERIOD_PY double,
-      LOT_START_DT date, LOT_BASE_DISCON_DT date, NEXT_LOT_START_DT date);
     INSERT INTO %1$s
     SELECT l.PATID, p.COHORT, l.LOT_NUM,
            %2$s AS PERIOD_START, %3$s AS PERIOD_END,

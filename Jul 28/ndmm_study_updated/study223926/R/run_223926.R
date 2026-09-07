@@ -59,9 +59,21 @@ build_223926 <- function(here) {
   lot_run <- check_lot_lineage(con, cfg)
   write_run_metadata(con, cfg, cohorts, mods, lot_run, deviations, "started")
 
-  # Inputs every cohort module needs, built once rather than per cohort.
+  # Inputs the cohort module needs, built once rather than per cohort.
   build_enroll_spans(con, cfg)
-  build_fu_claims(con, cfg)
+  # A full medical + rx scan, so only when a follow-up reading actually reads
+  # it. The shipped default's predicate is `1 = 1` and never touches the result.
+  if (identical(cfg$fu_evidence_rule, "claim_after_index")) {
+    build_fu_claims(con, cfg)
+  } else {
+    db_exec(con, sprintf(
+      "CREATE OR REPLACE TEMPORARY VIEW %s AS
+       SELECT cast(NULL as string) AS PATID, cast(NULL as int) AS N_CLAIMS_AFTER_INDEX,
+              cast(NULL as int) AS N_CLAIMS_FROM_INDEX WHERE 1 = 0",
+      wrk("S_FU_CLAIMS")))
+    log_msg("FU_EVIDENCE_RULE=", cfg$fu_evidence_rule,
+            " does not read claim counts, so the medical+rx scan is skipped.")
+  }
   if ("hcru" %in% names(mods)) build_mm_dx_view(con, cfg)
 
   for (m in mods) {

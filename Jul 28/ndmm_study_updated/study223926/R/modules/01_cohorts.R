@@ -52,14 +52,29 @@ mod_cohorts <- function(con, cfg, cohort) {
                      AND ce.COV_END >= date_sub(s.LOT_START_DT, 1)",
                     as.integer(cfg$ce_pre_days))
 
+  # The parent must be IN the parent cohort, not merely indexed in it. Without
+  # IN_COHORT = 1 a patient who failed the 1L continuous-enrolment test still
+  # reaches the 2L cohort, and 2L stops being a subset of 1L.
   parent <- if (!is.na(cohort$nested_in))
-    sprintf("INNER JOIN %s par ON par.PATID = s.PATID AND par.COHORT = '%s'",
-            wrk("S_COHORT"), cohort$nested_in) else ""
+    sprintf("INNER JOIN %s par ON par.PATID = s.PATID AND par.COHORT = '%s'
+             AND par.IN_COHORT = 1", wrk("S_COHORT"), cohort$nested_in) else ""
+
+  # A re-run replaces this cohort's rows rather than appending a second copy.
+  # The parent join reads S_COHORT while this statement writes to it, so the
+  # parent's rows are staged into a view first: Spark does not define the
+  # result of reading a table an INSERT is writing.
+  prepare_table(con, wrk("S_COHORT"),
+    "PATID string, COHORT string, LOT_NUM int, INDEX_DATE date,
+     MET_N1 int, MET_N2 int, MET_I5 int, IN_COHORT int", cohort$key)
+  if (!is.na(cohort$nested_in)) {
+    db_exec(con, sprintf(
+      "CREATE OR REPLACE TEMPORARY VIEW s_parent_cohort AS
+       SELECT PATID FROM %s WHERE COHORT = '%s' AND IN_COHORT = 1",
+      wrk("S_COHORT"), cohort$nested_in))
+    parent <- "INNER JOIN s_parent_cohort par ON par.PATID = s.PATID"
+  }
 
   run_step(con, paste0("cohort_", cohort$key), sprintf("
-    CREATE TABLE IF NOT EXISTS %1$s (
-      PATID string, COHORT string, LOT_NUM int, INDEX_DATE date,
-      MET_N1 int, MET_N2 int, MET_I5 int, IN_COHORT int);
     INSERT INTO %1$s
     SELECT s.PATID, '%2$s' AS COHORT, s.LOT_NUM, s.LOT_START_DT AS INDEX_DATE,
            1 AS MET_N1,
@@ -79,6 +94,58 @@ mod_cohorts <- function(con, cfg, cohort) {
     parent, cohort$lot_num, floor_sql),
     qc = sprintf("SELECT count(*) AS n_indexed, sum(IN_COHORT) AS n_in_cohort
                   FROM %s WHERE COHORT = '%s'", wrk("S_COHORT"), cohort$key))
+}
+
+# The funnel. One row per criterion, in the order ../IE_CRITERIA.md section 8
+# sets, each row applying every criterion above it plus its own - so it reads
+# top to bottom and each step's loss is the difference from the row before.
+#
+# Criteria applied upstream (I1 to X4) are reported as counts carried in rather
+# than as losses, because this package cannot re-derive them and a funnel that
+# showed them as zero-loss steps would claim they cost nothing.
+mod_attrition <- function(con, cfg, cohort) {
+  prepare_table(con, wrk("S_ATTRITION"),
+    "COHORT string, STEP int, CRITERION string, APPLIED_BY string,
+     N_REMAINING int, N_LOST int", cohort$key)
+
+  steps <- lapply(seq_along(cohort$criteria), function(i) {
+    k <- cohort$criteria[i]
+    list(step = i, criterion = k, applied_by = CRITERION_SOURCE[[k]])
+  })
+  # Only the criteria this package applies have a per-step count; the rest
+  # carry the population they were handed.
+  here_pred <- c(N1_received_line = "1 = 1", N2_ce_pre = "MET_N2 = 1",
+                 I5_followup = "MET_I5 = 1")
+  cum <- character(0)
+  for (st in steps) {
+    pred <- here_pred[[st$criterion]]
+    if (is.null(pred)) {
+      n_sql <- sprintf("SELECT count(*) AS n FROM %s WHERE COHORT = '%s'",
+                       wrk("S_COHORT"), cohort$key)
+    } else {
+      cum <- c(cum, pred)
+      n_sql <- sprintf("SELECT count(*) AS n FROM %s WHERE COHORT = '%s' AND %s",
+                       wrk("S_COHORT"), cohort$key,
+                       paste(cum, collapse = " AND "))
+    }
+    n <- as.integer(db_q(con, n_sql)$n[1])
+    db_exec(con, sprintf(
+      "INSERT INTO %s VALUES ('%s', %d, '%s', '%s', %d, NULL)",
+      wrk("S_ATTRITION"), cohort$key, st$step, st$criterion, st$applied_by, n))
+  }
+  # N_LOST as the difference from the row above, filled once every row exists.
+  db_exec(con, sprintf("
+    CREATE OR REPLACE TEMPORARY VIEW s_attr_lost AS
+    SELECT COHORT, STEP,
+           lag(N_REMAINING) OVER (PARTITION BY COHORT ORDER BY STEP)
+             - N_REMAINING AS N_LOST
+    FROM %s WHERE COHORT = '%s'", wrk("S_ATTRITION"), cohort$key))
+  db_exec(con, sprintf("
+    MERGE INTO %s t USING s_attr_lost l
+    ON t.COHORT = l.COHORT AND t.STEP = l.STEP
+    WHEN MATCHED THEN UPDATE SET t.N_LOST = l.N_LOST",
+    wrk("S_ATTRITION")))
+  log_msg("  attrition written for ", cohort$key, ": ", length(steps), " step(s)")
 }
 
 # The enrolment spans, built once from the raw table with the protocol's own

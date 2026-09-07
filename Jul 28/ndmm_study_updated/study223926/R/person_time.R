@@ -39,7 +39,11 @@ PROTOCOL_CHRONIC_CONDITIONS <- c(
   "parkinsons_disease",
   "other_movement_disorders",
   "thrombocytopenia",
-  "anemia"
+  "anemia",
+  # Objective 3's own condition. Screen 44 names "malignancies" in the same
+  # list; without it the cross-check cannot catch a secondary_malig.csv that
+  # types the condition acute, which would count every recurrence.
+  "malignancies"
 )
 
 # Stops on a condition s7.8.1 names as chronic that the code list types acute.

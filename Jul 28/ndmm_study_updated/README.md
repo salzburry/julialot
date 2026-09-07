@@ -141,11 +141,11 @@ often as needed.
 Rscript study223926/build.R                                   # on a Databricks cluster
 DRY_RUN=TRUE Rscript study223926/build.R                      # print the plan only
 MODULES=safety COHORTS=2L Rscript study223926/build.R         # one module, one cohort
-Rscript study223926/tests/run_tests.R                         # 78 checks, no warehouse
+Rscript study223926/tests/run_tests.R                         # 118 checks, no warehouse
 ```
 
-Eleven modules, four cohorts, and every reading this folder records as open is a
-setting with the protocol's answer as its default. Five of the eleven modules run
+Twelve modules, four cohorts, and every reading this folder records as open is a
+setting with the protocol's answer as its default. Six of the twelve modules run
 today; the other six are blocked on Annexes 2 and 3, and the run says so by name
 before it opens a connection. `study223926/MODULES.md` has the rest.
 

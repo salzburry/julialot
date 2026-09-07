@@ -17,11 +17,15 @@ mod_malignancy <- function(con, cfg, cohort) {
   reg <- register_codelist_view(con, cl, "S_CL_MALIG",
     cols = c("category", "subtype", "code_type", "code", "icd_family"))
 
+  prepare_table(con, wrk("S_MALIGNANCY"),
+    "PATID string, COHORT string, CATEGORY string, SUBTYPE string,
+     FIRST_DT date, CONFIRM_DT date, N_DATES int,
+     LOT_AFTER_WHICH int, MONTHS_FROM_DX double, MONTHS_FROM_INDEX double",
+    cohort$key)
+  prepare_table(con, wrk("S_MALIGNANCY_RATES"),
+    "COHORT string, LOT_NUM int, PERIOD string, CATEGORY string,
+     N_PATIENTS int, PERSON_YEARS double, RATE double", cohort$key)
   run_step(con, paste0("malignancy_", cohort$key), sprintf("
-    CREATE TABLE IF NOT EXISTS %1$s (
-      PATID string, COHORT string, CATEGORY string, SUBTYPE string,
-      FIRST_DT date, CONFIRM_DT date, N_DATES int,
-      LOT_AFTER_WHICH int, MONTHS_FROM_DX double, MONTHS_FROM_INDEX double);
     INSERT INTO %1$s
     WITH dates AS (
       SELECT DISTINCT p.PATID, p.COHORT, cl.category, cl.subtype,
@@ -45,14 +49,25 @@ mod_malignancy <- function(con, cfg, cohort) {
       GROUP BY PATID, COHORT, category, subtype
       HAVING count(*) >= 2
     )
+    -- The line the malignancy fell after, as a join rather than a correlated
+    -- scalar subquery: Spark rejects a correlation on a non-equality
+    -- predicate, and LOT_START_DT <= FIRST_DT is one.
+    lot_after AS (
+      SELECT c.PATID, c.COHORT, c.category, c.subtype,
+             max(l.LOT_NUM) AS LOT_AFTER_WHICH
+      FROM confirmed c
+      LEFT JOIN %7$s l
+             ON l.PATID = c.PATID AND l.LOT_START_DT <= c.FIRST_DT
+      GROUP BY c.PATID, c.COHORT, c.category, c.subtype
+    )
     SELECT c.PATID, c.COHORT, c.category, c.subtype, c.FIRST_DT, c.CONFIRM_DT,
-           c.N_DATES,
-           (SELECT max(l.LOT_NUM) FROM %7$s l
-             WHERE l.PATID = c.PATID AND l.LOT_START_DT <= c.FIRST_DT)
-             AS LOT_AFTER_WHICH,
+           c.N_DATES, la.LOT_AFTER_WHICH,
            %8$s AS MONTHS_FROM_DX,
            %9$s AS MONTHS_FROM_INDEX
     FROM confirmed c
+    INNER JOIN lot_after la ON la.PATID = c.PATID AND la.COHORT = c.COHORT
+                           AND la.category = c.category
+                           AND la.subtype <=> c.subtype
     INNER JOIN %2$s p ON p.PATID = c.PATID AND p.COHORT = c.COHORT
     INNER JOIN %10$s co ON co.PATID = c.PATID",
     wrk("S_MALIGNANCY"), wrk("S_PERIODS"), cdm_src("diagnosis"), reg,
@@ -70,25 +85,57 @@ mod_malignancy <- function(con, cfg, cohort) {
   # Prevalence is reported only for a cohort whose criteria permit a prior
   # malignancy - for the others it would be zero by construction, which is not
   # a finding.
-  reports_prevalence <- !("X2_other_cancer" %in% cohort$criteria)
+  # Malignancy is on the s7.8.1 chronic list, so a patient with one BEFORE the
+  # treatment period is not at risk and leaves both the numerator and the
+  # person-time denominator. This is Primary Objective 3's own rule and the
+  # module used to state it in a comment without applying it.
+  db_exec(con, sprintf("
+    CREATE OR REPLACE TEMPORARY VIEW s_malig_prior AS
+    SELECT DISTINCT p.PATID, p.COHORT, p.LOT_NUM, m.CATEGORY
+    FROM %s p
+    INNER JOIN %s m ON m.PATID = p.PATID AND m.COHORT = p.COHORT
+    WHERE p.COHORT = '%s' AND m.FIRST_DT < p.PERIOD_START",
+    wrk("S_LOT_PERIODS"), wrk("S_MALIGNANCY"), cohort$key))
+
+  # X2 reaches 2L and 3L through the cohort they are nested in, so the test
+  # walks the chain rather than reading this cohort's own list.
+  reports_prevalence <- !cohort_applies(cohort, "X2_other_cancer")
+
   run_step(con, paste0("malignancy_rates_", cohort$key), sprintf("
-    CREATE TABLE IF NOT EXISTS %1$s (
-      COHORT string, LOT_NUM int, PERIOD string, CATEGORY string,
-      N_PATIENTS int, PERSON_YEARS double, RATE double);
     INSERT INTO %1$s
-    SELECT p.COHORT, p.LOT_NUM, 'TREATMENT' AS PERIOD, m.CATEGORY,
-           count(DISTINCT m.PATID) AS N_PATIENTS,
-           max(den.PY) AS PERSON_YEARS,
+    WITH cats AS (SELECT DISTINCT category FROM %6$s),
+    den AS (
+      SELECT p.COHORT, p.LOT_NUM, c.category,
+             sum(CASE WHEN h.PATID IS NOT NULL THEN 0 ELSE p.PERIOD_PY END) AS PY
+      FROM %4$s p
+      CROSS JOIN cats c
+      LEFT JOIN s_malig_prior h
+             ON h.PATID = p.PATID AND h.COHORT = p.COHORT
+            AND h.LOT_NUM = p.LOT_NUM AND h.CATEGORY = c.category
+      WHERE p.COHORT = '%5$s' AND p.PERIOD_PY IS NOT NULL
+      GROUP BY p.COHORT, p.LOT_NUM, c.category
+    ),
+    num AS (
+      SELECT p.COHORT, p.LOT_NUM, m.CATEGORY,
+             count(DISTINCT m.PATID) AS N_PATIENTS
+      FROM %3$s m
+      INNER JOIN %4$s p ON p.PATID = m.PATID AND p.COHORT = m.COHORT
+      LEFT JOIN s_malig_prior h
+             ON h.PATID = m.PATID AND h.COHORT = p.COHORT
+            AND h.LOT_NUM = p.LOT_NUM AND h.CATEGORY = m.CATEGORY
+      WHERE p.COHORT = '%5$s' AND h.PATID IS NULL
+        AND m.FIRST_DT BETWEEN p.PERIOD_START AND p.PERIOD_END
+      GROUP BY p.COHORT, p.LOT_NUM, m.CATEGORY
+    )
+    SELECT den.COHORT, den.LOT_NUM, 'TREATMENT' AS PERIOD, den.category,
+           coalesce(num.N_PATIENTS, 0) AS N_PATIENTS, den.PY AS PERSON_YEARS,
            %2$s AS RATE
-    FROM %3$s m
-    INNER JOIN %4$s p ON p.PATID = m.PATID AND p.COHORT = m.COHORT
-    CROSS JOIN (SELECT sum(PERIOD_PY) AS PY FROM %4$s WHERE COHORT='%5$s') den
-    WHERE p.COHORT = '%5$s'
-      AND m.FIRST_DT BETWEEN p.PERIOD_START AND p.PERIOD_END
-    GROUP BY p.COHORT, p.LOT_NUM, m.CATEGORY",
+    FROM den
+    LEFT JOIN num ON num.COHORT = den.COHORT AND num.LOT_NUM = den.LOT_NUM
+                 AND num.CATEGORY = den.category",
     wrk("S_MALIGNANCY_RATES"),
-    rate_sql("count(DISTINCT m.PATID)", "max(den.PY)", cfg),
-    wrk("S_MALIGNANCY"), wrk("S_LOT_PERIODS"), cohort$key),
+    rate_sql("coalesce(num.N_PATIENTS, 0)", "den.PY", cfg),
+    wrk("S_MALIGNANCY"), wrk("S_LOT_PERIODS"), cohort$key, "S_CL_MALIG"),
     qc = sprintf("SELECT count(*) AS n_rows FROM %s WHERE COHORT='%s'",
                  wrk("S_MALIGNANCY_RATES"), cohort$key),
     allow_empty = TRUE)
@@ -96,11 +143,15 @@ mod_malignancy <- function(con, cfg, cohort) {
   if (reports_prevalence) {
     db_exec(con, sprintf("
       INSERT INTO %1$s
+      WITH den AS (
+        SELECT COHORT, LOT_NUM, sum(BASELINE_PY) AS PY
+        FROM %4$s WHERE COHORT = '%5$s' GROUP BY COHORT, LOT_NUM
+      )
       SELECT p.COHORT, p.LOT_NUM, 'BASELINE' AS PERIOD, m.CATEGORY,
              count(DISTINCT m.PATID), max(den.PY), %2$s
       FROM %3$s m
       INNER JOIN %4$s p ON p.PATID = m.PATID AND p.COHORT = m.COHORT
-      CROSS JOIN (SELECT sum(BASELINE_PY) AS PY FROM %4$s WHERE COHORT='%5$s') den
+      INNER JOIN den ON den.COHORT = p.COHORT AND den.LOT_NUM = p.LOT_NUM
       WHERE p.COHORT = '%5$s'
         AND m.FIRST_DT BETWEEN p.BASELINE_START AND p.BASELINE_END
       GROUP BY p.COHORT, p.LOT_NUM, m.CATEGORY",

@@ -23,16 +23,31 @@ mod_comorbidity <- function(con, cfg, cohort) {
             "MM adjustment Table 4 asks for cannot be applied. Every patient's ",
             "CCI will carry whatever weight their MM claims attract.")
 
+  # Quan's index is hierarchical: a patient with both mild and severe liver
+  # disease scores the severe weight only, not both, and the same holds for
+  # diabetes with and without complications and for cancer versus metastatic
+  # solid tumour. Summing every matched condition inflates the score.
+  #
+  # The hierarchy is data, not code: an optional `supersedes` column naming the
+  # condition each row overrides. A file without it is summed flat, and the run
+  # says so rather than pretending the adjustment was made.
+  has_hier <- "supersedes" %in% names(cl)
+  if (!has_hier) {
+    cl$supersedes <- ""
+    log_msg("  NOTE: charlson_quan2011.csv has no `supersedes` column, so no ",
+            "Quan hierarchy is applied. A patient with both mild and severe ",
+            "liver disease will score both weights - 6 where Quan gives 4.")
+  }
   reg <- register_codelist_view(con, cl, "S_CL_CHARLSON",
-                                cols = c("condition", "weight", "code_type",
-                                         "code", "icd_family"))
+                                cols = c("condition", "weight", "supersedes",
+                                         "code_type", "code", "icd_family"))
+  prepare_table(con, wrk("S_COMORBIDITY"),
+    "PATID string, COHORT string, CCI double, CCI_BAND string,
+     N_CONDITIONS int", cohort$key)
   run_step(con, paste0("comorbidity_", cohort$key), sprintf("
-    CREATE TABLE IF NOT EXISTS %1$s (
-      PATID string, COHORT string, CCI double, CCI_BAND string,
-      N_CONDITIONS int);
     INSERT INTO %1$s
     WITH hits AS (
-      SELECT DISTINCT p.PATID, p.COHORT, cl.condition,
+      SELECT DISTINCT p.PATID, p.COHORT, cl.condition, cl.supersedes,
              cast(cl.weight as double) AS weight
       FROM %2$s p
       INNER JOIN %3$s d
@@ -45,11 +60,20 @@ mod_comorbidity <- function(con, cfg, cohort) {
       WHERE p.COHORT = '%6$s'
         AND lower(cl.condition) NOT LIKE '%%myeloma%%'
     )
+    kept AS (
+      -- Drop a condition that another matched condition supersedes.
+      SELECT h.* FROM hits h
+      LEFT JOIN hits sup
+             ON sup.PATID = h.PATID AND sup.COHORT = h.COHORT
+            AND lower(trim(sup.supersedes)) = lower(trim(h.condition))
+            AND nullif(trim(sup.supersedes), '') IS NOT NULL
+      WHERE sup.PATID IS NULL
+    )
     SELECT PATID, COHORT, sum(weight) AS CCI,
            CASE WHEN sum(weight) >= 5 THEN '5+' ELSE cast(cast(sum(weight) as int) as string) END
              AS CCI_BAND,
            count(*) AS N_CONDITIONS
-    FROM hits GROUP BY PATID, COHORT",
+    FROM kept GROUP BY PATID, COHORT",
     wrk("S_COMORBIDITY"), wrk("S_PERIODS"), cdm_src("diagnosis"), reg,
     icd_family_sql("d.ICD_FLAG"), cohort$key),
     qc = sprintf("SELECT count(*) AS n_rows, round(avg(CCI),2) AS mean_cci

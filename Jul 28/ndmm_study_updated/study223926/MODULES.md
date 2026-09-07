@@ -17,7 +17,7 @@ exists and sparklyr attaches to it, so there is no DSN and no password:
 Rscript build.R                                    # on the cluster
 DRY_RUN=TRUE Rscript build.R                       # print the plan, touch nothing
 MODULES=safety COHORTS=2L Rscript build.R          # one module, one cohort
-Rscript tests/run_tests.R                          # 78 checks, no warehouse
+Rscript tests/run_tests.R                          # 118 checks, no warehouse
 ```
 
 `SPARK_METHOD=databricks_connect` drives a named cluster from outside and is
@@ -89,14 +89,15 @@ lands on the run's own metadata row where no reader can miss it.
 | `R/db_utils_223926.R` | sparklyr connection, logging, table naming, the step runner. |
 | `R/run_223926.R` | Resolves the plan, walks the modules, writes the run metadata. |
 | `R/modules/*.R` | One file per module. Nothing else defines a clinical rule. |
-| `tests/run_tests.R` | 78 checks that need no warehouse. |
+| `tests/run_tests.R` | 118 checks that need no warehouse, 40 of them regressions from the review below. |
 
 ## Modules
 
 | key | writes | needs a code list |
 |---|---|---|
 | `spine` | `S_SPINE` — one row per patient per line, with the next line beside it | — |
-| `cohorts` | `S_COHORT`, `S_ATTRITION` | — |
+| `cohorts` | `S_COHORT` | — |
+| `attrition` | `S_ATTRITION` — the funnel, one row per criterion | — |
 | `periods` | `S_PERIODS`, `S_LOT_PERIODS` — baseline, follow-up, treatment windows | — |
 | `demographics` | `S_DEMOGRAPHICS` — age, sex, region, race, ethnicity, insurance | — |
 | `comorbidity` | `S_COMORBIDITY` — Charlson (Quan 2011), MM-adjusted | `charlson_quan2011.csv` |
@@ -107,7 +108,7 @@ lands on the run's own metadata row where no reader can miss it.
 | `tte` | `S_TTE` — TTNT, TTD, OS | — |
 | `patterns` | `S_PATTERNS`, `S_SWITCH`, `S_TX_ATTRITION` | via `soc` |
 
-**Five of the eleven run today.** `MODULES=spine,cohorts,periods,demographics,tte`
+**Six of the twelve run today.** `MODULES=spine,cohorts,attrition,periods,demographics,tte`
 builds all four cohorts, every window, the demographics and the time-to-event
 outcomes, and needs no code list this repo does not already have. The other six
 are blocked on Annexes 2 and 3 (`../CODELISTS.md`), and the preflight says so
@@ -156,10 +157,49 @@ patients from **both** the numerator and the denominator. A module that
 computed one denominator and used it twice would be wrong in a way no total
 would reveal.
 
+## What the adversarial review changed
+
+The first version of this package was reviewed at max effort, and **19 defects
+were confirmed**. All are fixed, and each has a regression test — the review's
+own observation stands: the 78-check suite that passed at the time covered none
+of them. The ones worth knowing about, because they would have produced numbers
+rather than errors:
+
+| what | what it would have done |
+|---|---|
+| No module cleared its rows before writing | a second run **doubled every count, person-year and rate** with no error, against a header promising "re-run as often as needed" |
+| The lineage guard's `checkable` flag was always `FALSE` | a LOT run that was incomplete, built over another cohort, contract-deviating or **superseded by the 2026-08-30 rule change** was read and logged as accepted |
+| `LIKE '%acute%'` and `LIKE '%chronic%'` both match "Acute or chronic" | the two conditions Table 3 types that way were counted **through both counting rules at once** |
+| The nested-cohort join did not require the parent's `IN_COHORT` | 2L contained patients **absent from the 1L cohort it is nested in** |
+| `OS_DT` was not clipped to `FU_END` | a patient who disenrolled in 2020 and died in 2022 contributed **two unobserved years as followed time**, and a death outside the window as an observed event |
+| `S_TTE` was joined on `LOT_NUM` for per-line death | everyone who died after line 2 or 3 was drawn on the Sankey as having **stopped therapy alive** |
+| Malignancy's denominator was the cohort total | every per-line incidence was understated **roughly fourfold** |
+| Malignancy never applied the chronic rule its own comment stated | prior-malignancy patients stayed in the at-risk denominator for **Primary Objective 3** |
+| SOC used `max()` over category names | a CAR-T line was categorised **alphabetically** — `Doublet/monotherapy` sorts above `CAR-T` |
+| The code-list view chunked itself into `SELECT * FROM v UNION ALL …` | any list over 500 rows defined a **view in terms of itself** |
+| `X2_other_cancer` was tested against the cohort's own criteria only | 2L and 3L were treated as **permitting a prior malignancy** |
+| `INDEX_EXCLUDED_ABBRS` was recorded on every run and read by nothing | the panobinostat and elotuzumab bars were **reported as applied while applying nothing** |
+
+Four of those twelve the review did not find — the self-referencing view, the
+acute/chronic double count, the dead index setting, and a non-equality
+correlated subquery Spark rejects. The rest are its findings.
+
+Six further defects are fixed the same way: an undeclared code list defeating
+the preflight, a QC whose first column was a string so `run_step`'s zero-row
+guard was skipped, a blank `icd_family` silently read as ICD-10, `S_ATTRITION`
+promised in the plan and never written, an unconditional full CDM scan under a
+setting that never reads it, and the missing ninth condition in the §7.8.1
+chronic cross-check.
+
+Two things are deliberately left as they are: `MEDIAN_LOS` uses
+`percentile_approx`, and Quan's hierarchy is applied only where
+`charlson_quan2011.csv` carries a `supersedes` column — without it the run
+**says so** rather than silently summing mild and severe liver disease together.
+
 ## What this is not
 
 It is not wired into `validation/run_gate.R`, and it has never been run against
 the warehouse — no code lists, and several settings still want the study team's
-answer (`../OPEN_QUESTIONS.md`). The 78 tests check the selection logic, the
+answer (`../OPEN_QUESTIONS.md`). The 118 tests check the selection logic, the
 boundary conventions, the counting rules and the SQL each module emits. They
 check no number, because a number needs the CDM.

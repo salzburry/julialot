@@ -2,8 +2,13 @@
 #
 # Naming: everything this package writes is work schema + OBJECT_PREFIX +
 # table, and it reads the cohort and the LOT tables by their own prefixes. Two
-# runs on different prefixes sit side by side; two on the same prefix would
-# overwrite each other, which is what check_no_active_run() is for.
+# runs on different prefixes sit side by side.
+#
+# Two runs on the SAME prefix are made safe by ensure_table() + clear_scope()
+# rather than by a lock: every per-cohort table is emptied of that cohort's
+# rows before it is written, so a re-run replaces rather than appends. That is
+# what makes "re-run it against a finished LOT run as often as needed" true;
+# without it the second run doubles every count silently.
 
 SEP <- strrep("=", 70)
 
@@ -149,6 +154,26 @@ run_step <- function(con, name, sql, qc = NULL, allow_empty = FALSE) {
 #                       DATABRICKS_HOST, DATABRICKS_TOKEN and SPARK_CLUSTER_ID.
 #   local               a local Spark, for a smoke test over fixtures. It has
 #                       no CDM, so only the framework can be exercised.
+# Create a table if it is not there, then remove the rows this run is about to
+# rewrite. Called by every module that appends rather than replaces.
+#
+# `scope` is the WHERE that identifies this run's rows - usually
+# COHORT = '2L'. A module that writes the whole table in one statement uses
+# CREATE OR REPLACE TABLE instead and does not need either of these.
+ensure_table <- function(con, name, schema_sql) {
+  db_exec(con, sprintf("CREATE TABLE IF NOT EXISTS %s (%s)", name, schema_sql))
+  invisible(name)
+}
+clear_scope <- function(con, name, scope) {
+  db_exec(con, sprintf("DELETE FROM %s WHERE %s", name, scope))
+  invisible(name)
+}
+# The two together, which is what a per-cohort module wants.
+prepare_table <- function(con, name, schema_sql, cohort_key) {
+  ensure_table(con, name, schema_sql)
+  clear_scope(con, name, sprintf("COHORT = '%s'", cohort_key))
+}
+
 connect_db <- function(cfg) {
   if (!requireNamespace("sparklyr", quietly = TRUE))
     stop("CONNECTION ERROR: sparklyr is not installed.", call. = FALSE)

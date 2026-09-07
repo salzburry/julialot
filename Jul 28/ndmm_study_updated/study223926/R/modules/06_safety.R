@@ -14,16 +14,27 @@
 mod_safety <- function(con, cfg, cohort) {
   cl <- load_codelist("safety_events.csv", cfg)
   assert_chronic_set(cl)
+  # Table 3 types two conditions "Acute or chronic" and "Acute/Chronic", and a
+  # LIKE test for either word matches both - so those conditions would be
+  # counted through the acute washout chain AND as a chronic first occurrence,
+  # and their incidence would be the sum of two different rules. Resolved to
+  # one value per row before any of it reaches SQL.
+  cl$acute_chronic <- canonical_acute_chronic(cl$acute_chronic, cl$condition)
   reg <- register_codelist_view(con, cl, "S_CL_SAFETY",
     cols = c("condition", "domain", "acute_chronic", "code_type", "code",
              "icd_family"))
 
   # Every claim of every selected patient that matches the list, collapsed to
   # one row per patient, condition and DATE - s7.8.1 rule 1.
+  prepare_table(con, wrk("S_SAFETY_EVENTS"),
+    "PATID string, COHORT string, CONDITION string, DOMAIN string,
+     ACUTE_CHRONIC string, EVENT_DT date", cohort$key)
+  prepare_table(con, wrk("S_SAFETY_RATES"),
+    "COHORT string, LOT_NUM int, PERIOD string, CONDITION string,
+     DOMAIN string, ACUTE_CHRONIC string, N_PATIENTS int, N_EVENTS int,
+     PERSON_YEARS double, RATE double, RATE_LO double, RATE_HI double",
+    cohort$key)
   run_step(con, paste0("safety_events_", cohort$key), sprintf("
-    CREATE TABLE IF NOT EXISTS %1$s (
-      PATID string, COHORT string, CONDITION string, DOMAIN string,
-      ACUTE_CHRONIC string, EVENT_DT date);
     INSERT INTO %1$s
     SELECT DISTINCT p.PATID, p.COHORT, cl.condition, cl.domain,
                     lower(cl.acute_chronic) AS ACUTE_CHRONIC,
@@ -43,10 +54,6 @@ mod_safety <- function(con, cfg, cohort) {
 
   # --- baseline prevalence ------------------------------------------------
   run_step(con, paste0("safety_prevalence_", cohort$key), sprintf("
-    CREATE TABLE IF NOT EXISTS %1$s (
-      COHORT string, LOT_NUM int, PERIOD string, CONDITION string,
-      DOMAIN string, ACUTE_CHRONIC string, N_PATIENTS int, N_EVENTS int,
-      PERSON_YEARS double, RATE double, RATE_LO double, RATE_HI double);
     INSERT INTO %1$s
     SELECT p.COHORT, p.LOT_NUM, 'BASELINE' AS PERIOD, e.CONDITION, e.DOMAIN,
            e.ACUTE_CHRONIC,
@@ -77,17 +84,14 @@ mod_safety <- function(con, cfg, cohort) {
 
   # Acute events are counted through the greedy washout chain; chronic ones
   # are the first occurrence in the period, so they need no chain.
-  db_exec(con, sprintf("
-    CREATE TABLE IF NOT EXISTS %s
-      (PATID string, COHORT string, LOT_NUM int, CONDITION string, EVENT_DT date)",
-    wrk("S_SAFETY_COUNTED")))
-  db_exec(con, sprintf("DELETE FROM %s WHERE COHORT = '%s'",
-                       wrk("S_SAFETY_COUNTED"), cohort$key))
+  prepare_table(con, wrk("S_SAFETY_COUNTED"),
+    "PATID string, COHORT string, LOT_NUM int, CONDITION string, EVENT_DT date",
+    cohort$key)
 
   db_exec(con, sprintf("
     CREATE OR REPLACE TEMPORARY VIEW s_acute_events AS
     SELECT e.PATID, e.COHORT, e.CONDITION, e.EVENT_DT
-    FROM %s e WHERE e.COHORT = '%s' AND e.ACUTE_CHRONIC LIKE '%%acute%%'",
+    FROM %s e WHERE e.COHORT = '%s' AND e.ACUTE_CHRONIC = 'acute'",
     wrk("S_SAFETY_EVENTS"), cohort$key))
   db_exec(con, sprintf("
     CREATE OR REPLACE TEMPORARY VIEW s_periods_this AS
@@ -107,7 +111,7 @@ mod_safety <- function(con, cfg, cohort) {
     LEFT JOIN s_chronic_prior h
            ON h.PATID = e.PATID AND h.COHORT = p.COHORT
           AND h.LOT_NUM = p.LOT_NUM AND h.CONDITION = e.CONDITION
-    WHERE e.COHORT = '%4$s' AND e.ACUTE_CHRONIC LIKE '%%chronic%%'
+    WHERE e.COHORT = '%4$s' AND e.ACUTE_CHRONIC = 'chronic'
       AND h.PATID IS NULL
     GROUP BY e.PATID, p.COHORT, p.LOT_NUM, e.CONDITION",
     wrk("S_SAFETY_COUNTED"), wrk("S_SAFETY_EVENTS"), wrk("S_LOT_PERIODS"),
@@ -121,9 +125,9 @@ mod_safety <- function(con, cfg, cohort) {
                   FROM %2$s),
     den AS (
       SELECT p.COHORT, p.LOT_NUM, c.condition, c.domain, c.ac,
-             sum(CASE WHEN c.ac LIKE '%%chronic%%' AND h.PATID IS NOT NULL
+             sum(CASE WHEN c.ac = 'chronic' AND h.PATID IS NOT NULL
                       THEN 0 ELSE p.PERIOD_PY END) AS PY,
-             count(DISTINCT CASE WHEN c.ac LIKE '%%chronic%%' AND h.PATID IS NOT NULL
+             count(DISTINCT CASE WHEN c.ac = 'chronic' AND h.PATID IS NOT NULL
                                  THEN NULL ELSE p.PATID END) AS N_AT_RISK
       FROM %3$s p
       CROSS JOIN cond c

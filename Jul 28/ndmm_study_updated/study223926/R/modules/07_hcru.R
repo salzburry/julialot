@@ -22,6 +22,10 @@ mod_hcru <- function(con, cfg, cohort) {
          "../OPEN_QUESTIONS.md Q11 - and a rate of zero would read as a ",
          "finding.", call. = FALSE)
   have <- unique(tolower(trimws(ed$code_type)))
+  # The R check is case-insensitive, so the SQL join must be too - otherwise a
+  # file typed 'rvnu' passes validation and then matches nothing, and the run
+  # reports zero ED visits as if that were a finding. register_codelist_view()
+  # publishes code_type_norm for exactly this.
   want <- c(revenue = "rvnu", pos = "pos", cpt = "cpt")
   chosen <- want[cfg$ed_definition]
   absent <- chosen[!chosen %in% have]
@@ -36,17 +40,21 @@ mod_hcru <- function(con, cfg, cohort) {
   arms <- c()
   if ("revenue" %in% cfg$ed_definition)
     arms <- c(arms, sprintf(
-      "(cl.code_type = 'RVNU' AND upper(regexp_replace(trim(m.RVNU_CD),'[^A-Za-z0-9]','')) = cl.code_norm)"))
+      "(cl.code_type_norm = 'RVNU' AND upper(regexp_replace(trim(m.RVNU_CD),'[^A-Za-z0-9]','')) = cl.code_norm)"))
   if ("pos" %in% cfg$ed_definition)
-    arms <- c(arms, "(cl.code_type = 'POS' AND trim(m.POS) = cl.code_norm)")
+    arms <- c(arms, "(cl.code_type_norm = 'POS' AND trim(m.POS) = cl.code_norm)")
   if ("cpt" %in% cfg$ed_definition)
     arms <- c(arms, sprintf(
-      "(cl.code_type = 'CPT' AND upper(regexp_replace(trim(m.PROC_CD),'[^A-Za-z0-9]','')) = cl.code_norm)"))
+      "(cl.code_type_norm = 'CPT' AND upper(regexp_replace(trim(m.PROC_CD),'[^A-Za-z0-9]','')) = cl.code_norm)"))
 
+  prepare_table(con, wrk("S_HCRU_EVENTS"),
+    "PATID string, COHORT string, EVENT_TYPE string, EVENT_DT date,
+     END_DT date, LOS_DAYS int, MM_RELATED int, HAS_DISCHARGE int", cohort$key)
+  prepare_table(con, wrk("S_HCRU_RATES"),
+    "COHORT string, LOT_NUM int, PERIOD string, MEASURE string,
+     N_PATIENTS int, N_EVENTS int, PERSON_YEARS double, RATE double,
+     MEAN_LOS double, MEDIAN_LOS double, N_LOS_EXCLUDED int", cohort$key)
   run_step(con, paste0("hcru_events_", cohort$key), sprintf("
-    CREATE TABLE IF NOT EXISTS %1$s (
-      PATID string, COHORT string, EVENT_TYPE string, EVENT_DT date,
-      END_DT date, LOS_DAYS int, MM_RELATED int, HAS_DISCHARGE int);
     INSERT INTO %1$s
     -- Inpatient stays. One unduplicated row per hospitalisation, which is what
     -- CONFINEMENT is; the claim-header fallback the cohort build uses for the
@@ -85,51 +93,71 @@ mod_hcru <- function(con, cfg, cohort) {
                       "cast(cf.DISCH_DATE as date)", TRUE, FALSE),
     wrk("S_PERIODS"), cdm_src("confinement"), "S_CL_MM_DX", cohort$key,
     cdm_src("medical"), reg, paste(arms, collapse = " OR ")),
-    qc = sprintf("SELECT EVENT_TYPE, count(*) AS n FROM %s WHERE COHORT='%s'
-                  GROUP BY EVENT_TYPE", wrk("S_HCRU_EVENTS"), cohort$key))
+    # A count FIRST: run_step's zero-row guard reads the first column, and a
+    # string there makes as.numeric() give NA and the guard skip silently.
+    qc = sprintf("SELECT count(*) AS n_events,
+                    sum(CASE WHEN EVENT_TYPE='INPATIENT' THEN 1 ELSE 0 END) AS n_ip,
+                    sum(CASE WHEN EVENT_TYPE='ED' THEN 1 ELSE 0 END) AS n_ed
+                  FROM %s WHERE COHORT='%s'", wrk("S_HCRU_EVENTS"), cohort$key))
 
   # Both periods, in one table, assigned by ADMIT date.
+  #
+  # The denominator is grouped BY LINE, not summed across the cohort. An
+  # uncorrelated total would give every line of a four-line cohort the same
+  # person-time and understate each line's rate roughly fourfold. It is also a
+  # separate CTE rather than a derived table in FROM, because a FROM-clause
+  # subquery cannot see a sibling alias.
   for (per in list(
     list(name = "BASELINE",  start = "p.BASELINE_START", end = "p.BASELINE_END",
-         py = "p.BASELINE_PY", src = wrk("S_PERIODS"), lot = "p.LOT_NUM"),
+         py = "BASELINE_PY", src = wrk("S_PERIODS")),
     list(name = "TREATMENT", start = "p.PERIOD_START",  end = "p.PERIOD_END",
-         py = "p.PERIOD_PY", src = wrk("S_LOT_PERIODS"), lot = "p.LOT_NUM"))) {
+         py = "PERIOD_PY", src = wrk("S_LOT_PERIODS")))) {
     run_step(con, paste0("hcru_rates_", cohort$key, "_", tolower(per$name)),
       sprintf("
-      CREATE TABLE IF NOT EXISTS %1$s (
-        COHORT string, LOT_NUM int, PERIOD string, MEASURE string,
-        N_PATIENTS int, N_EVENTS int, PERSON_YEARS double, RATE double,
-        MEAN_LOS double, MEDIAN_LOS double, N_LOS_EXCLUDED int);
       INSERT INTO %1$s
-      SELECT p.COHORT, %2$s AS LOT_NUM, '%3$s' AS PERIOD, meas.MEASURE,
-             count(DISTINCT CASE WHEN meas.HIT = 1 THEN e.PATID END) AS N_PATIENTS,
-             sum(meas.HIT) AS N_EVENTS,
-             max(den.PY) AS PERSON_YEARS,
-             %4$s AS RATE,
-             avg(CASE WHEN meas.HIT = 1 THEN e.LOS_DAYS END) AS MEAN_LOS,
-             percentile_approx(CASE WHEN meas.HIT = 1 THEN e.LOS_DAYS END, 0.5)
-               AS MEDIAN_LOS,
-             sum(CASE WHEN meas.HIT = 1 AND e.HAS_DISCHARGE = 0 THEN 1 ELSE 0 END)
-               AS N_LOS_EXCLUDED
-      FROM %5$s e
-      INNER JOIN %6$s p ON p.PATID = e.PATID AND p.COHORT = e.COHORT
-      CROSS JOIN (SELECT sum(%7$s) AS PY FROM %6$s WHERE COHORT = '%8$s') den
-      LATERAL VIEW explode(map(
-        'ALL_CAUSE_HOSPITALISATION',
-          CASE WHEN e.EVENT_TYPE = 'INPATIENT' THEN 1 ELSE 0 END,
-        'MM_RELATED_HOSPITALISATION',
-          CASE WHEN e.EVENT_TYPE = 'INPATIENT' AND e.MM_RELATED = 1 THEN 1 ELSE 0 END,
-        'ED_VISIT',
-          CASE WHEN e.EVENT_TYPE = 'ED' THEN 1 ELSE 0 END
-      )) meas AS MEASURE, HIT
-      WHERE p.COHORT = '%8$s'
-        AND e.EVENT_DT BETWEEN %9$s AND %10$s
-      GROUP BY p.COHORT, %2$s, meas.MEASURE",
-      wrk("S_HCRU_RATES"), per$lot, per$name,
-      rate_sql("sum(meas.HIT)", "max(den.PY)", cfg),
-      wrk("S_HCRU_EVENTS"), per$src, per$py, cohort$key, per$start, per$end),
+      WITH den AS (
+        SELECT COHORT, LOT_NUM, sum(%2$s) AS PY
+        FROM %3$s WHERE COHORT = '%4$s' GROUP BY COHORT, LOT_NUM
+      ),
+      hits AS (
+        SELECT p.COHORT, p.LOT_NUM, e.PATID, e.LOS_DAYS, e.HAS_DISCHARGE,
+               meas.MEASURE, meas.HIT
+        FROM %5$s e
+        INNER JOIN %3$s p ON p.PATID = e.PATID AND p.COHORT = e.COHORT
+        LATERAL VIEW explode(map(
+          \'ALL_CAUSE_HOSPITALISATION\',
+            CASE WHEN e.EVENT_TYPE = \'INPATIENT\' THEN 1 ELSE 0 END,
+          \'MM_RELATED_HOSPITALISATION\',
+            CASE WHEN e.EVENT_TYPE = \'INPATIENT\' AND e.MM_RELATED = 1
+                 THEN 1 ELSE 0 END,
+          \'ED_VISIT\',
+            CASE WHEN e.EVENT_TYPE = \'ED\' THEN 1 ELSE 0 END
+        )) meas AS MEASURE, HIT
+        WHERE p.COHORT = \'%4$s\'
+          AND e.EVENT_DT BETWEEN %6$s AND %7$s
+      ),
+      agg AS (
+        SELECT COHORT, LOT_NUM, MEASURE,
+               count(DISTINCT CASE WHEN HIT = 1 THEN PATID END) AS N_PATIENTS,
+               sum(HIT) AS N_EVENTS,
+               avg(CASE WHEN HIT = 1 THEN LOS_DAYS END) AS MEAN_LOS,
+               percentile_approx(CASE WHEN HIT = 1 THEN LOS_DAYS END, 0.5)
+                 AS MEDIAN_LOS,
+               sum(CASE WHEN HIT = 1 AND HAS_DISCHARGE = 0 THEN 1 ELSE 0 END)
+                 AS N_LOS_EXCLUDED
+        FROM hits GROUP BY COHORT, LOT_NUM, MEASURE
+      )
+      SELECT a.COHORT, a.LOT_NUM, \'%8$s\' AS PERIOD, a.MEASURE,
+             a.N_PATIENTS, a.N_EVENTS, d.PY AS PERSON_YEARS,
+             %9$s AS RATE,
+             a.MEAN_LOS, a.MEDIAN_LOS, a.N_LOS_EXCLUDED
+      FROM agg a
+      INNER JOIN den d ON d.COHORT = a.COHORT AND d.LOT_NUM = a.LOT_NUM",
+      wrk("S_HCRU_RATES"), per$py, per$src, cohort$key,
+      wrk("S_HCRU_EVENTS"), per$start, per$end, per$name,
+      rate_sql("a.N_EVENTS", "d.PY", cfg)),
       qc = sprintf("SELECT count(*) AS n_rows FROM %s
-                    WHERE COHORT='%s' AND PERIOD='%s'",
+                    WHERE COHORT=\'%s\' AND PERIOD=\'%s\'",
                    wrk("S_HCRU_RATES"), cohort$key, per$name),
       allow_empty = TRUE)
   }

@@ -38,12 +38,12 @@ mod_demographics <- function(con, cfg, cohort) {
   ordering <- if (identical(cfg$enrol_attr_at, "index_span"))
     "e.ELIGEFF DESC" else "e.ELIGEND DESC"
 
+  prepare_table(con, wrk("S_DEMOGRAPHICS"),
+    "PATID string, COHORT string, INDEX_DATE date,
+     AGE_YEARS int, AGE_BAND string, SEX string, REGION string,
+     RACE string, ETHNICITY string, INSURANCE_TYPE string,
+     ENROL_ROW_FOUND int", cohort$key)
   run_step(con, paste0("demographics_", cohort$key), sprintf("
-    CREATE TABLE IF NOT EXISTS %1$s (
-      PATID string, COHORT string, INDEX_DATE date,
-      AGE_YEARS int, AGE_BAND string, SEX string, REGION string,
-      RACE string, ETHNICITY string, INSURANCE_TYPE string,
-      ENROL_ROW_FOUND int);
     INSERT INTO %1$s
     WITH ranked AS (
       SELECT p.PATID, p.COHORT, p.INDEX_DATE,

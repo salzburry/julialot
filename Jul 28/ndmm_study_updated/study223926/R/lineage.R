@@ -17,11 +17,22 @@ check_lot_lineage <- function(con, cfg) {
       "SELECT RUN_ID, STATE, UPDATED_AT, COHORT_TABLE, STUDY_START, STUDY_END,
               CONTRACT_DEVIATIONS
        FROM %s ORDER BY UPDATED_AT DESC LIMIT 5", st)),
-    error = function(e)
+    error = function(e) {
+      # The one case a flag can waive: the status table could not be READ, so
+      # nothing has been shown to be wrong - only unproven.
+      if (isTRUE(cfg$lot_allow_unproven_lineage)) {
+        log_msg("WARNING: could not read ", st, " - ", conditionMessage(e),
+                ". LOT_ALLOW_UNPROVEN_LINEAGE=TRUE, so the run continues over ",
+                "a lineage nothing checked.")
+        return(NULL)
+      }
       stop("LINEAGE ERROR: could not read ", st, " - ", conditionMessage(e),
            "\nThis package will not read LOT tables it cannot attribute to a ",
            "run. If the LOT build wrote its status somewhere else, set ",
-           "LOT_PREFIX.", call. = FALSE))
+           "LOT_PREFIX; to proceed over an unproven lineage set ",
+           "LOT_ALLOW_UNPROVEN_LINEAGE=TRUE.", call. = FALSE)
+    })
+  if (is.null(rows)) return(list(RUN_ID = "unproven"))
 
   if (!nrow(rows))
     stop("LINEAGE ERROR: ", st, " has no rows, so no LOT run owns the tables ",
@@ -53,19 +64,21 @@ check_lot_lineage <- function(con, cfg) {
   upd <- suppressWarnings(as.Date(substr(as.character(r$UPDATED_AT), 1, 10)))
   if (!is.na(upd) && upd < LOT_RULES_EPOCH)
     problems <- c(problems, sprintf(
-      "it finished %s, before the 2026-08-30 rule change; LOT_RULES.md says ",
-      "LOT numbers produced before that date are superseded", upd))
+      paste0("it finished %s, before the 2026-08-30 rule change, and ",
+             "LOT_RULES.md says LOT numbers produced before that date are ",
+             "superseded"), format(upd)))
 
-  if (length(problems)) {
-    msg <- paste0("LINEAGE ERROR: this package will not read LOT run ",
-                  r$RUN_ID, " because:\n  - ",
-                  paste(problems, collapse = "\n  - "),
-                  "\nSet LOT_ALLOW_UNPROVEN_LINEAGE=TRUE to accept a lineage ",
-                  "that could not be CHECKED. A lineage shown to be wrong is ",
-                  "not accepted by that flag and still stops.")
-    checkable <- !grepl("could not", msg)
-    if (checkable) stop(msg, call. = FALSE)
-  }
+  # Every problem above was CHECKED and found wrong, so every one stops. There
+  # is no flag for these: LOT_ALLOW_UNPROVEN_LINEAGE exists for the case where
+  # the status table could not be read at all, which is handled above by
+  # honouring the setting there and nowhere else.
+  if (length(problems))
+    stop("LINEAGE ERROR: this package will not read LOT run ", r$RUN_ID,
+         " because:\n  - ", paste(problems, collapse = "\n  - "),
+         "\nEach of these was checked against ", st,
+         " and found wrong, so none of them is waived by a flag. Point the run ",
+         "at the LOT build that produced this study's lines, or re-run it.",
+         call. = FALSE)
 
   log_msg("LOT run ", r$RUN_ID, " accepted: ", r$STATE, ", cohort ",
           r$COHORT_TABLE, ", ", r$STUDY_START, " to ", r$STUDY_END)

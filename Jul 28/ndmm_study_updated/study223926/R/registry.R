@@ -72,10 +72,16 @@ MODULES <- list(
     fn = "mod_spine", blocked = NA_character_),
 
   cohorts = list(
-    key = "cohorts", label = "Cohort membership and attrition",
+    key = "cohorts", label = "Cohort membership",
     needs = "spine", codelists = character(0),
-    outputs = c("S_COHORT", "S_ATTRITION"), per_cohort = TRUE,
+    outputs = "S_COHORT", per_cohort = TRUE,
     fn = "mod_cohorts", blocked = NA_character_),
+
+  attrition = list(
+    key = "attrition", label = "The attrition funnel",
+    needs = "cohorts", codelists = character(0),
+    outputs = "S_ATTRITION", per_cohort = TRUE,
+    fn = "mod_attrition", blocked = NA_character_),
 
   periods = list(
     key = "periods", label = "Baseline, follow-up and treatment periods",
@@ -109,7 +115,10 @@ MODULES <- list(
 
   hcru = list(
     key = "hcru", label = "Hospitalisation, length of stay and ED visits",
-    needs = "periods", codelists = "hcru.csv",
+    # mm_dx.csv as well as hcru.csv: the MM-related hospitalisation test reads
+    # it, and a code list a module loads but does not declare cannot be caught
+    # by the preflight - the run would open a session and scan the CDM first.
+    needs = "periods", codelists = c("hcru.csv", "mm_dx.csv"),
     outputs = c("S_HCRU_EVENTS", "S_HCRU_RATES"), per_cohort = TRUE,
     fn = "mod_hcru", blocked = NA_character_),
 
@@ -220,6 +229,27 @@ resolve_modules <- function(cfg) {
     remaining <- setdiff(remaining, ready)
   }
   MODULES[ordered]
+}
+
+# Does this cohort apply a criterion - its own, or one inherited from the
+# cohort it is nested in?
+#
+# 2L and 3L declare only the criteria the protocol lists as ADDITIONAL for
+# them; the 1L exclusions reach them through nested_in. A module that tests
+# `key %in% cohort$criteria` alone concludes that 2L permits a prior
+# malignancy, which is the opposite of the truth.
+cohort_applies <- function(cohort, key) {
+  if (key %in% cohort$criteria) return(TRUE)
+  parent <- cohort$nested_in
+  seen <- character(0)
+  while (!is.na(parent) && !(parent %in% seen)) {
+    seen <- c(seen, parent)
+    p <- COHORTS[[parent]]
+    if (is.null(p)) return(FALSE)
+    if (key %in% p$criteria) return(TRUE)
+    parent <- p$nested_in
+  }
+  FALSE
 }
 
 # Everything the selected modules need from CODELIST_DIR, deduplicated.
