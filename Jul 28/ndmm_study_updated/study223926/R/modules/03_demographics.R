@@ -41,6 +41,24 @@ mod_demographics <- function(con, cfg, cohort) {
   # ELIGEFF covering the index. Ranked on that alone, rn = 1 picks arbitrarily
   # and RACE, ETHNICITY, REGION and INSURANCE_TYPE can differ between two runs
   # of identical code on identical data.
+  # Age, guarded on both ends.
+  #
+  # YRDOB is CAPPED at 89 years (V9.0 dictionary, changed from 90 in Apr 2025).
+  # A profile of the deployed table shows the pile-up exactly where that
+  # predicts - 12.8M members born in 1937 against ~1.4M in each neighbouring
+  # year. The BANDS are unaffected, since the cap sits above the 75 cut-point;
+  # a mean or median age is right-censored and Table 4 reports both.
+  #
+  # And YRDOB is 0 on 614 rows. Unguarded, `year(index) - 0` is an age of about
+  # 2026, which lands every one of them in the 75+ band - the band the protocol
+  # uses as its transplant-eligibility proxy. Anything outside a plausible
+  # human range is Unknown, which is what a missing birth year is.
+  age_expr <- sprintf(
+    "CASE WHEN cast(c.YRDOB as int) BETWEEN %d AND year(r.INDEX_DATE)
+           AND year(r.INDEX_DATE) - cast(c.YRDOB as int) BETWEEN 0 AND 120
+          THEN cast(year(r.INDEX_DATE) - cast(c.YRDOB as int) as int) END",
+    1900L)
+
   ordering <- if (identical(cfg$enrol_attr_at, "index_span"))
     "e.ELIGEFF DESC, e.ELIGEND DESC, e.PAT_PLANID"
     else "e.ELIGEND DESC, e.ELIGEFF DESC, e.PAT_PLANID"
@@ -74,11 +92,12 @@ mod_demographics <- function(con, cfg, cohort) {
            -- computed from this column is biased downward, and myeloma has a
            -- real tail above 89. Table 4 reports both; the continuous one
            -- carries that caveat. ../DATA_MAPPING.md section 4.
-           cast(year(r.INDEX_DATE) - cast(c.YRDOB as int) as int) AS AGE_YEARS,
-           CASE WHEN year(r.INDEX_DATE) - cast(c.YRDOB as int) <  45 THEN '18-44'
-                WHEN year(r.INDEX_DATE) - cast(c.YRDOB as int) <  65 THEN '45-64'
-                WHEN year(r.INDEX_DATE) - cast(c.YRDOB as int) <  75 THEN '65-74'
-                WHEN year(r.INDEX_DATE) - cast(c.YRDOB as int) >= 75 THEN '75+'
+           %11$s AS AGE_YEARS,
+           CASE WHEN %11$s IS NULL THEN 'Unknown'
+                WHEN %11$s <  45 THEN '18-44'
+                WHEN %11$s <  65 THEN '45-64'
+                WHEN %11$s <  75 THEN '65-74'
+                WHEN %11$s >= 75 THEN '75+'
                 ELSE 'Unknown' END AS AGE_BAND,
            CASE upper(coalesce(c.GDR_CD,'U')) WHEN 'M' THEN 'Male'
                 WHEN 'F' THEN 'Female' ELSE 'Unknown' END AS SEX,
@@ -106,7 +125,8 @@ mod_demographics <- function(con, cfg, cohort) {
     INNER JOIN %8$s c ON c.PATID = r.PATID
     WHERE r.rn = 1",
     wrk("S_DEMOGRAPHICS"), region, ordering, wrk("S_PERIODS"),
-    cdm_src("member_enrollment"), pick, cohort$key, cfg$input_cohort_table),
+    cdm_src("member_enrollment"), pick, cohort$key, cfg$input_cohort_table,
+    "", "", age_expr),
     qc = sprintf("SELECT count(*) AS n_rows,
                     sum(CASE WHEN RACE='Unknown' THEN 1 ELSE 0 END) AS n_race_unk,
                     sum(CASE WHEN ETHNICITY='Unknown' THEN 1 ELSE 0 END) AS n_eth_unk,

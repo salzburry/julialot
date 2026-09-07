@@ -93,6 +93,16 @@ cfg_defaults <- function() {
     cdm_schema   = .env_chr("OPTUM_CDM_SCHEMA", "clnprw_optum"),
     work_schema  = .env_chr("WORK_SCHEMA", ""),
     use_quarterly_tables = .env_lgl("USE_QUARTERLY_TABLES", TRUE),
+    # CDM table names, overridable. The defaults are in CDM_TABLE_NAMES and
+    # match the cohort build's; blank here means use those.
+    tbl_medical           = .env_chr("TBL_MEDICAL", ""),
+    tbl_diagnosis         = .env_chr("TBL_MED_DIAG", ""),
+    tbl_procedure         = .env_chr("TBL_MED_PROC", ""),
+    tbl_rx                = .env_chr("TBL_RX", ""),
+    tbl_confinement       = .env_chr("TBL_CONFINEMENT", ""),
+    tbl_member_enrollment = .env_chr("TBL_MEMBER_ENROLLMENT", ""),
+    tbl_member_elig       = .env_chr("TBL_MEMBER_ELIG", ""),
+    tbl_dod               = .env_chr("TBL_DOD", ""),
     # Empty means "this package's own codelists/", resolved against the
     # package directory in build_223926(). The folder ships the shapes so it is
     # complete on its own; production points this at the real directory.

@@ -721,6 +721,46 @@ cat("\nthe modules, run against recorders\n")
   # The attrition funnel is monotone by construction: a step can only remove
   # rows. It was not - a criterion applied upstream reset the count to the
   # unfiltered total, so N_REMAINING went back up mid-funnel.
+  # --- the CDM table names are the warehouse's, not ours -----------------
+  #
+  # The modules ask cdm_src() for a SHORT name ("diagnosis") because that is
+  # what ../DATA_MAPPING.md calls the table in prose. The physical table is
+  # `t_med_diagnosis_<quarter>`. That gap shipped: cdm_src() pasted the short
+  # name straight in and every module reading a diagnosis pointed at a table
+  # that does not exist.
+  #
+  # Nothing in this suite could catch it. The executing harness creates its
+  # fixtures from whatever name the code emits, so it was self-consistently
+  # wrong. The only defence is pinning the physical names against the build
+  # that has actually run against this warehouse - Jul 28/ndmm/R/config.R -
+  # which is why these are literals with a citation rather than derived.
+  expected_cdm <- c(medical           = "t_medical",
+                    diagnosis         = "t_med_diagnosis",
+                    procedure         = "t_med_procedure",
+                    rx                = "t_rx",
+                    confinement       = "t_confinement",
+                    member_enrollment = "t_member_enrollment",
+                    member_elig       = "t_member_cont_enrollment",
+                    dod               = "t_dod")
+  wrong <- Filter(Negate(is.null), lapply(names(expected_cdm), function(k) {
+    got <- with_env(base_env, { set_study_config(cfg0()); cdm_src(k) })
+    want <- paste0(expected_cdm[[k]], "_", quarter_suffix(cfg0()$study_end))
+    if (!endsWith(got, want)) sprintf("%s -> %s (want ...%s)", k, got, want)
+    else NULL
+  }))
+  ok(length(wrong) == 0,
+     paste0("every CDM short name resolves to the warehouse's physical table",
+            if (length(wrong))
+              paste0(" [", paste(unlist(wrong), collapse = "; "), "]") else ""))
+  # And nothing emitted names a table that is not one of them.
+  emitted_cdm <- unique(unlist(regmatches(emitted_sql(RUN),
+    gregexpr("clnprw_optum\\.t_[a-z_]+_[0-9]{4}q[0-9]", emitted_sql(RUN)))))
+  emitted_cdm <- sub("^clnprw_optum\\.", "", emitted_cdm)
+  emitted_cdm <- sub("_[0-9]{4}q[0-9]$", "", emitted_cdm)
+  ok(all(emitted_cdm %in% expected_cdm),
+     paste0("and the run reads no CDM table outside that list (",
+            paste(setdiff(emitted_cdm, expected_cdm), collapse = ", "), ")"))
+
   # --- suppression is applied, and its spec is complete -------------------
   #
   # R/suppression.R expressed the < 25 rule from the start and nothing called
