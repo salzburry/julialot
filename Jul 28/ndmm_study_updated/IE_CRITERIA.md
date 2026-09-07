@@ -1,0 +1,372 @@
+# Inclusion / exclusion criteria — GSK 223926 (Aug 26 2026 protocol)
+
+Every eligibility rule the updated protocol states, in the order a build would
+apply it, with what each one needs from Optum and what is still ambiguous.
+
+Source: `ashley study.pdf` in this folder — photographs of
+`Belantamab_Optum LoT_Unmet_Need_Aug 26 2026 (final).docx`, GSK study **223926**,
+effective **26 August 2026**. Criteria live on document screens 17-24 (§7.1, §7.2,
+§7.2.1.1, §7.2.1.2) and screens 37-38 (§7.4.1.1). Each rule below cites the screen
+it came from. Quoted text is transcribed from the page, not paraphrased.
+
+`DATA_MAPPING.md` turns each rule into tables and columns. `BUILD_DELTA.md` says
+what the `Jul 28/ndmm` build has to change to apply them.
+
+---
+
+## 1. What is being built
+
+Four cohorts, not one.
+
+| cohort | who | index date | protocol |
+|---|---|---|---|
+| **1L (NDMM)** | all patients initiating 1L therapy | start of the 1L regimen, **≥ 01 Jan 2019** | §7.2.1, primary |
+| **2L (RRMM)** | the subset of the 1L cohort initiating 2L | start of the 2L regimen | §7.2.1, primary nested |
+| **3L (RRMM)** | the subset of the 2L cohort initiating 3L | start of the 3L regimen | §7.2.1, primary nested |
+| **Secondary 2L (RRMM)** | all patients initiating an assumed 2L therapy | start of the 2L regimen, **≥ 01 Jan 2020** | §7.4.1.1, sensitivity |
+
+> "Patients may contribute sequentially to multiple cohorts as they progress
+> through lines of therapy. Three cohorts will be assessed: 1L, 2L, 3L. Each
+> subsequent line is a subset of the prior line." — Figure 1 note [1], screen 19
+
+> "There is no 4L cohort. Only the 4L start date and 4L regimen received will be
+> assessed." — Figure 1 note [4], screen 19
+
+The **secondary 2L cohort is not nested**: it takes 2L initiators "irrespective of
+whether their 1L initiation occurred during the primary cohort ascertainment
+period" (screen 37).
+
+---
+
+## 2. Study periods and windows
+
+| period | definition | screen |
+|---|---|---|
+| Study period | **01 Jan 2018 → 31 Mar 2026** ("the most recent date of data availability at time of analysis") | 17 |
+| 1L eligible-treatment period | 1L initiation **on or after 01 Jan 2019** | 17, 21 |
+| Secondary 2L index period | 2L initiation **on or after 01 Jan 2020** | 20, 37 |
+| Baseline period | the **12 months before the index date of that LOT**, **index date excluded** | 17 |
+| Follow-up period | from the index date (**index included**) until **end of continuous enrolment, or end of study period, or death — whichever comes first** | 17 |
+| Enrolment gap tolerance | gaps of **≤ 30 days** still count as continuous | 21 |
+
+Two things about the baseline period that decide how the build is wired:
+
+> "1L will have a 12-month baseline relative to 1L start, and 2L will have a
+> 12-month baseline period relative to 2L start. **Only the 1L baseline period will
+> be used to assess study eligibility.**" — screen 17
+
+> "The baseline periods for 2L and 3L may overlap with time on a prior LOT,
+> depending on the dates of treatment." — Figure 1 note [3], screen 19
+
+So the 2L and 3L 12-month baselines are **descriptive windows**, not eligibility
+windows — except for the continuous-enrolment requirement, which §7.2.1.1 does
+restate for each cohort.
+
+> **Contradiction in the source.** The body text says the study period starts
+> 01 Jan 2018 (screen 17). Figure 1 and Figure 2 are both labelled
+> "Study start 01 Jan 2016" (screens 19, 37). See `OPEN_QUESTIONS.md` Q1.
+
+---
+
+## 3. Line-of-therapy definitions the criteria depend on
+
+Eligibility is stated in terms of LOT start dates, so the LOT algorithm is part of
+the cohort definition, not downstream of it.
+
+> "**1L is defined** as any pre-specified MM therapies received within **60 days** of
+> the 1L start date" — screen 18
+
+> "**Start of 2L and subsequent LOTs are defined as** the earliest of: a stem cell
+> transplant (SCT; **allogeneic or an unplanned autologous SCT**), CAR-T cellular
+> therapy, or the date of the first administration for a **new MM agent that was not
+> part of the previous LOT regimen**. Each subsequent LOT includes all MM therapies
+> received within **30 days** on and following the LOT start date" — screen 18
+
+> "*per GSK LoT algorithm definition, discontinuation of a regimen occurs when all
+> MM agents in the LOT are stopped or when a new agent/qualifying SCT event is
+> introduced*" — Table 4 footnote, screen 33
+
+> "LOT assignment and regimens will be assigned according to prior internal GSK work
+> to define a claims-based LOT regimen (GSK 2026)" — screen 17
+
+These match the engine in `Jul 28/lot/` on the induction windows (60 / 30 days) and
+on what opens a line. See `BUILD_DELTA.md` §3 for the points where they do not.
+
+---
+
+## 4. Inclusion criteria — 1L (NDMM) cohort
+
+§7.2.1.1, "Overall study eligibility, as defined for primary 1L NDMM cohort",
+screens 20-21.
+
+### I1. MM diagnosis
+
+> "At least one **inpatient** medical claim with a diagnosis code for MM in any
+> position (any **ICD-9-CM = 203.0x** or **ICD-10-CM code = C90.0x**) **or ≥ 2
+> outpatient** medical claims for MM in any position on the claim, **on separate days
+> within 90 days**, during the study period"
+
+> "As data in Optum CDM is collected primarily for health insurance and not research
+> purposes, **all MM diagnosis codes are to be considered**. Inclusion will focus on
+> defining NDMM according to patients who are newly treated, defined as the receipt
+> of a 1L treatment, and with no prior MM oncology therapy in the preceding 12
+> months"
+
+Operationally:
+
+- inpatient arm: ≥ 1 inpatient claim, MM code **in any diagnosis position**, code set 203.0x / C90.0x
+- outpatient arm: ≥ 2 outpatient claims, MM code in any position, **different service dates**, **≤ 90 days apart**
+- the diagnosis date used downstream is the **first** qualifying MM claim (see V-`MM_DX_DT` in `VARIABLES.md`)
+
+> **Ambiguity.** The strict code set (203.0x / C90.0x) is written against the
+> inpatient arm; the outpatient arm says only "medical claims for MM". The Jan-2026
+> program spec for the earlier study read the outpatient arm as the **broad** set
+> (ICD-9 203.x / ICD-10 C90.x) while the inpatient arm stayed strict
+> (`docs/Part 3/Program Spec/studypoppage_validated.csv`, INDEX_DATE row). The
+> current `Jul 28/ndmm` build applies **one** code list to both arms and additionally
+> requires the strict subset on the inpatient arm
+> (`Jul 28/ndmm/R/steps/00_mm_cohort.R:70-88`). See `OPEN_QUESTIONS.md` Q2.
+
+> **Ambiguity.** "within 90 days" — the earlier spec also flagged 30- and 60-day
+> pairs as sensitivities. The updated protocol names only 90. See `OPEN_QUESTIONS.md` Q3.
+
+### I2. Adult age
+
+> "Aged **≥ 18 years** at the time of MM diagnosis **according to calendar year**"
+
+Calendar-year arithmetic: `year(MM_DX_DT) − YRDOB`, not a birthday. Optum carries
+year of birth only (`YRDOB`), and it is capped at 89 (CDM V9.0 revision note,
+`docs/Part 3/Optum/optum data dict.pdf` p.1), so a "90+" patient reads as 89.
+
+### I3. Eligible 1L treatment
+
+> "Received an eligible or expected treatment for MM on or after MM diagnosis
+> (**other than belantamab**), occurring **on or after 01 Jan 2019** (eligible treatment
+> period)."
+> - "The 1L cohort index date is the date of the **first claim for MM treatment**
+>   within the identification period"
+> - "Eligible/expected treatments include MM regimens commonly used in the first line
+>   setting, **excluding those restricted to later LOTs**"
+>   - "Exclusions include: **panobinostat** and **elotuzumab**. Other potential therapies
+>     pending review of data may be considered"
+> - "For a full list of eligible/expected MM therapies, see **Annex 2**"
+
+Three separate constraints ride on this one bullet:
+
+1. the treatment must fall **on or after the MM diagnosis date**;
+2. the agent must not be belantamab, panobinostat or elotuzumab — these cannot **set**
+   the 1L index date;
+3. the claim must be **on or after 01 Jan 2019**.
+
+> **Gap.** Annex 2 (the eligible/expected MM therapy list, and the SOC regimen
+> categorisation) is on document screens 59-64, which were **not photographed**. The
+> repo's `cl_mma_codelist.csv` / `cl_mma_rollup.csv` are the nearest existing
+> equivalent. See `CODELISTS.md` §1.
+
+> **Change from the current build.** `Jul 28/ndmm` bars only belantamab from setting
+> the index (`NDMM_INDEX_EXCLUDED_ABBRS` defaults to empty,
+> `Jul 28/ndmm/R/standalone_constants.R`). Panobinostat and elotuzumab are new.
+
+### I4. Continuous enrolment before index
+
+> "CE of at least **12-months** with **medical and pharmacy benefits** before the 1L
+> cohort index date. Patients with gaps in enrolment of **≤ 30 days** are considered
+> to be continuously enrolled"
+
+Two parts, and the second is the one the current build does not do: the protocol
+requires **both** benefit types. Optum CDM V9.0 as deployed carries no per-benefit
+flag on `MEMBER_ENROLLMENT` (see `DATA_MAPPING.md` §4), and §7.5 of the protocol
+itself says "**All patients in this database have both medical and pharmacy
+coverage**" (screen 38) — which, if taken at face value, makes the requirement
+automatically satisfied. See `OPEN_QUESTIONS.md` Q4.
+
+### I5. Evidence of follow-up
+
+> "at least one claim (pharmacy or medical) **from index date** or death"
+
+and, restated per cohort:
+
+> "**CE during follow-up for each cohort:** at least one claim (pharmacy or medical)
+> from index date" — screen 22
+
+This is a claims-presence test, not an enrolment-span test. The index claim itself
+is a medical or pharmacy claim, so on a literal reading every indexed patient passes
+it. See `OPEN_QUESTIONS.md` Q5.
+
+---
+
+## 5. Additional inclusion criteria — nested 2L and 3L cohorts
+
+§7.2.1.1, "Additional eligibility for primary nested 2L and 3L RRMM Cohorts",
+screens 21-22.
+
+> "The subset of patients with evidence of each subsequent LOT will be included in
+> the 2L or 3L cohort at the initiation of 2L/3L."
+
+| # | criterion | text |
+|---|---|---|
+| N1 | Received the line | "Received a subsequent LOT required to qualify for a specific cohort (i.e., received a 2L treatment for 2L, 3L for 3L)" |
+| N2 | CE before that line | "CE of at least **12-months** with medical and pharmacy benefits before the cohort index date (2L or 3L). Patients with gaps in enrolment of ≤ 30 days are considered to be continuously enrolled" |
+| N3 | Follow-up | "CE during follow-up for each cohort: at least one claim (pharmacy or medical) from index date" |
+
+And nothing else. The 1L exclusions are **not** re-applied at 2L or 3L — they were
+already applied when the patient entered the 1L cohort, and §7.1 says only the 1L
+baseline assesses eligibility.
+
+---
+
+## 6. Exclusion criteria — applied on the 1L baseline
+
+§7.2.1.2, screen 22. All four are transcribed in full.
+
+### X1. MM oncology therapy in the 12-month 1L baseline
+
+> "**Evidence of an MM oncology therapy during the 12-month 1L baseline period:**
+> ≥ 1 medical or pharmacy claim for any MM oncology therapy
+> - This is to ensure that treatment exposure and LOT assignments reflect incident
+>   therapy starts at the index date and are not confounded by ongoing or recent
+>   prior MM treatments"
+
+This is the "newly treated" criterion. Note it says **any MM oncology therapy** —
+wider than the eligible-1L list of I3, and it is a *medical or pharmacy* claim, so
+both J-code administration and pharmacy fill count.
+
+> **Note.** The current build drops steroid rows from this scan
+> (`NDMM_STEROID_ABBRS`, `Jul 28/ndmm/R/ndmm_constants.R`), on the reasoning that a
+> steroid claim alone is supportive care. The protocol does not say so. See
+> `OPEN_QUESTIONS.md` Q6.
+
+### X2. Another cancer in the 1L baseline
+
+> "**Evidence of another cancer in the 1L baseline period:** Patients with either
+> **≥ 1 inpatient or ≥ 2 outpatient** ICD-9-CM or ICD-10-CM codes **on separate days,
+> within 30 days**, for the **same primary tumor type and/or metastatic cancer** will be
+> excluded"
+
+Four things this pins down that the current build reads differently:
+
+1. the confirming window is **30 days**, not "both claims inside the 365-day baseline";
+2. the pair must be for the **same primary tumour type** — so the code list has to
+   carry a tumour-group column and the pairing is per group;
+3. **metastatic cancer** qualifies on its own;
+4. one **inpatient** claim is enough.
+
+### X3. Pregnancy or childbirth
+
+> "**Evidence of pregnancy:** ≥ 1 of medical claim with a **diagnosis, procedure, or
+> revenue code** indicating pregnancy or childbirth **during the study period**"
+
+Three code types, not one, and the window is the **whole study period** — not the
+baseline. The current build already applies it study-period-wide
+(`Jul 28/ndmm/R/steps/05_pregnancy.R`) but its code list is loaded with
+`c("code_type","code")` and needs to admit revenue codes.
+
+### X4. Belantamab mafodotin in any LOT
+
+> "**Received belantamab mafodotin (i.e., an ADC) in any LOT**
+> - Note: at the time of study belantamab mafodotin was the only ADC in use for MM"
+
+"In any LOT" means this cannot be evaluated before lines exist. The current build
+already handles it this way: the flag is computed over the whole study period in the
+cohort build and the exclusion is applied in `Jul 28/lot/engine/R/line_criteria.R`
+once LOT membership is known (`Jul 28/lot/LOT_RULES.md` §8).
+
+---
+
+## 7. Secondary 2L cohort
+
+§7.4.1.1, screen 37.
+
+> "A sensitivity analysis in which all patients initiating an assumed 2L therapy on
+> **≥ 01 Jan 2020** will be assessed."
+
+> "All inclusion/exclusion criteria will be the same as the primary cohort, **with the
+> exception of the index date**. Patients in this analysis are analysis are eligible
+> if there is **evidence of a malignancy prior to 2L**."
+
+The second sentence carries a duplication ("are analysis are") in the source. Read
+literally it **reverses X2** for this cohort: a prior malignancy does not exclude.
+That reading is consistent with §7.4.1.2, which says the only modification to
+Primary Objective 3 is that "all malignancies occurring after diagnosis but prior to
+2L will be tabulated, and new malignancies occurring 2L will be assessed" — you
+cannot tabulate prior malignancies in a cohort that excluded them. See
+`OPEN_QUESTIONS.md` Q7.
+
+Also from screen 37: the index is 2L initiation ≥ 01 Jan 2020 "irrespective of
+whether their 1L initiation occurred during the primary cohort ascertainment
+period", so this cohort reaches patients whose 1L falls before 01 Jan 2019.
+
+---
+
+## 7a. The analysis-set restriction that is not an eligibility criterion
+
+§7.8.2, screen 48, adds a restriction that never appears in §7.2.1 and is easy to
+miss:
+
+> "Outcomes will only be assessed in the subset of patients who have **≥ 3 months of
+> potential follow-up (or die before 3 months) from their index date** to ensure
+> adequate time in the database for outcome assessments."
+
+This is scoped to the **time-to-event treatment-related outcomes** (TTNT, TTD, OS).
+It is an analysis set, not a cohort: it must be a flag on the cohort table
+(`TTE_ELIGIBLE`), not a filter in the attrition funnel, or the descriptive
+denominators for Primary Objectives 1-3 will be wrong.
+
+"Potential follow-up" is time in the database, not observed enrolment — so
+`index + 90 days ≤ study end`, OR death before `index + 90 days`. Note this is a
+weaker test than the current build's 2L/3L rule, which requires 90 days of gap-free
+**enrolment** (`SUBSEQ_FU_CE_DAYS = 90`, `Jul 28/ndmm/RULES.md`). See
+`BUILD_DELTA.md` §2.
+
+---
+
+## 8. The order to apply them, and the attrition table
+
+The protocol does not prescribe an order. This one keeps every count reproducible
+and matches the funnel the current build already writes.
+
+| step | criterion | population after it |
+|---|---|---|
+| 0 | any MM diagnosis claim in the study period | MM-coded patients |
+| 1 | **I1** qualifying MM diagnosis (1 IP or 2 OP ≤ 90 d) | diagnosed |
+| 2 | **I2** age ≥ 18 in the diagnosis calendar year | diagnosed adults |
+| 3 | **I3** eligible 1L treatment on/after diagnosis, ≥ 01 Jan 2019, not belantamab / panobinostat / elotuzumab | indexed |
+| 4 | **I4** 12 months CE before index, gaps ≤ 30 d | enrolled at baseline |
+| 5 | **I5** ≥ 1 claim from the index date, or death | observed |
+| 6 | **X1** no MM oncology therapy in the 12-month baseline | newly treated |
+| 7 | **X2** no other cancer in the 12-month baseline | no second cancer |
+| 8 | **X3** no pregnancy or childbirth in the study period | 1L cohort (pre-LOT) |
+| 9 | **X4** no belantamab in any LOT | **1L (NDMM) cohort** |
+| 10 | **N1** received 2L | |
+| 11 | **N2** 12 months CE before the 2L index, gaps ≤ 30 d | **2L cohort** |
+| 12 | **N1** received 3L | |
+| 13 | **N2** 12 months CE before the 3L index, gaps ≤ 30 d | **3L cohort** |
+
+Steps 9-13 need the LOT build to have run. Steps 0-8 do not.
+
+The secondary 2L cohort repeats steps 0-8 with the index at 2L ≥ 01 Jan 2020 and,
+on the reading above, step 7 dropped.
+
+---
+
+## 9. What is not in the photographs
+
+| what | where it should be | status |
+|---|---|---|
+| Table 4 rows between "Types of 1L, 2L, 3L SOCs or classes by line" and the Primary Objective 3 block | document screens 31-32 | photo p17 of the PDF is a **corrupt JPEG** — unreadable |
+| **Annex 2** — eligible/expected MM therapies and SOC regimen categorisation | screens 59-64 | never photographed |
+| **Annex 3** — ICD-10-CM code lists for the key safety events | screens 59-64 | never photographed |
+| **Annex 4-5** — table shells and figures | screens 59-64 | never photographed |
+| **Annex 6** — the LOT algorithm | screens 59-64 | never photographed |
+| **Annex 7** — the claims-based frailty (Kim CFI) algorithm | screens 59-64 | never photographed |
+
+Screens 31-32 sit between the end of Primary Objective 1's baseline block and the
+"*per GSK LoT algorithm definition*" footnote that opens Primary Objective 2's rows,
+so what is missing is: the tail of Primary Objective 1 (baseline prevalence of key
+safety events and baseline healthcare utilisation) and the head of Primary
+Objective 2 (its incidence rows and the LOT treatment-period definition). Their
+shape is recoverable from the surrounding rows; their exact wording is not.
+
+**Ask the study team for the .docx, or at least for Annexes 2, 3, 6 and 7 and
+document pages 31-32.** Annexes 2 and 3 are code lists — nothing can be built
+without them.
