@@ -241,11 +241,29 @@ cfg_defaults <- function() {
     # when the source leaves it null: "PAID if Sum of all Paid Amounts >= $0,
     # DENIED if Sum of all Paid Amounts < $0" (V9.0 dictionary, MEDICAL row
     # 28). A denied claim is not evidence the service happened, and nothing in
-    # this package or the cohort build has ever filtered on it.
+    # this package or the cohort build has ever filtered on it. The 03 Sep 2026
+    # profile put it at 17.4% of medical lines among myeloma patients.
+    #
+    # WHAT IT ACTUALLY COVERS, which is narrower than the name suggests:
+    # claim_status_sql() has ONE call site, the ED arm of 07_hcru.R. It does
+    # NOT reach
+    #   * build_fu_claims() in 01_cohorts.R, the I5 follow-up claim test,
+    #   * the MM-related hospitalisation subquery under
+    #     MM_HOSP_POSITION=claim_positions, which reads MEDICAL too,
+    #   * anything reading CONFINEMENT, which has no paid status at all, or
+    #   * RX. The deployed pharmacy table has NO PAID_STATUS - its columns run
+    #     STD_COST, AHFSCLSS, CHK_DT, DAW, DAYS_SUP - so a denied pharmacy
+    #     claim cannot be excluded by this setting on any reading.
+    #
+    # Widening it is not a config change and is not made here: whether a denied
+    # claim still counts as evidence of an encounter differs by use. A claim
+    # the payer refused is weak evidence that an ED visit happened, and a
+    # perfectly ordinary way to observe that a patient was still in follow-up.
+    # ../OPEN_QUESTIONS.md Q25 carries the decision and the numbers.
     #
     # `all` is what every number produced so far includes, so it is the
     # default: changing it silently would make this package disagree with the
-    # cohort table it is built on. ../OPEN_QUESTIONS.md Q25.
+    # cohort table it is built on.
     claim_status = .env_enum("CLAIM_STATUS", "all", c("all", "paid_only")),
 
     # --- reporting --------------------------------------------------------
