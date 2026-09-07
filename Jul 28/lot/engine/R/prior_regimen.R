@@ -357,13 +357,30 @@ line_break_window_pred <- function(cfg, alias, induction_end, line_start,
            alias, ".TX_DT > ", cart_from, ")")
   first_auto <- if (!isTRUE(first_auto_exempt)) "" else
     paste0("\n                 AND ", alias, ".PREV_AUTO_DT IS NOT NULL")
+  # The tandem exemption's ownership condition, and LOT1 does not get it.
+  # Everywhere else a pair is only the LINE's tandem where the line held the
+  # first of the two, which the window test asks. At LOT1 3.4 answers it
+  # instead: the first-ever autologous transplant belongs to line 1 wherever it
+  # falls, so the pair is line 1's wherever the first one sits, and its partner
+  # continues the line.
+  #
+  # Asking the window at LOT1 too made this helper disagree with the engine's
+  # own end cascade about one transplant. Scenario S11c is the patient: three
+  # transplants, the first two a pair outside the 60-day window, and the
+  # cascade correctly ends line 1 on the THIRD. This read the partner as a
+  # break, so a short course after it was marked TAKEN, line 1 never judged it,
+  # it was never suppressed, and it opened a melphalan-only line - which 4.7
+  # forbids outright. The same patient with the pair in-window was always right,
+  # which is why nothing caught it. Planted as SX1/SX2.
+  tandem_owned <- if (isTRUE(first_auto_exempt)) "" else
+    paste0("\n                          AND ", alias, ".PREV_AUTO_DT <= ",
+           induction_end)
   paste0("\n       AND ((", alias, ".SCT_KIND = 'AUTO'
                  AND ", alias, ".TX_DT > ", induction_end, first_auto, "
                  AND NOT (", alias, ".PREV_AUTO_DT IS NOT NULL
                           AND datediff(", alias, ".TX_DT, ", alias,
                               ".PREV_AUTO_DT) <= ", cfg$sct_tandem_days, "
-                          AND ", alias, ".N_BETWEEN = 0
-                          AND ", alias, ".PREV_AUTO_DT <= ", induction_end, "))
+                          AND ", alias, ".N_BETWEEN = 0", tandem_owned, "))
             OR (", alias, ".SCT_KIND <> 'AUTO'
                  AND ", alias, ".TX_DT > ", line_start, cart, "))")
 }

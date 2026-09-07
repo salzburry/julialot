@@ -230,6 +230,18 @@ PATS = [
               ('MELP', 'ALKY', 300, 327), ('DARA', 'MAB', 305, 600)]),
     P('SW2', [('LEN', 'IMID', 0, 600), ('MELP', 'ALKY', 30, 57),
               ('MELP', 'ALKY', 300, 327), ('DARA', 'MAB', 305, 600)]),
+    # SX1/SX2: scenario S11c's patient - three transplants, the first two a
+    # pair OUTSIDE line 1's 60-day window - with a 28-day melphalan course at
+    # day 450. 3.4 gives line 1 its first transplant wherever it falls, so the
+    # pair is line 1's and the engine's end cascade correctly ends line 1 on the
+    # THIRD transplant. The melphalan rule's ownership helper asked the window
+    # instead, read the partner as a break, marked the course TAKEN, and let it
+    # open a melphalan-only line - which 4.7 forbids. SX2 is the same patient
+    # with the pair in-window, which was always right.
+    P('SX1', [('LEN', 'IMID', 0, 700), ('BORT', 'PI', 0, 700),
+              ('MELP', 'ALKY', 450, 477)]),
+    P('SX2', [('LEN', 'IMID', 0, 700), ('BORT', 'PI', 0, 700),
+              ('MELP', 'ALKY', 450, 477)]),
     P('SU1', [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 200, 227)]),
     P('SU2', [('LEN', 'IMID', 0, 80)]),
 ]
@@ -240,6 +252,10 @@ for _p in PATS:
         _p['sct_auto'] = [IX + 100]
     elif _p['pid'] == 'SW2':
         _p['sct_auto'] = [IX + 40]
+    elif _p['pid'] == 'SX1':
+        _p['sct_auto'] = [IX + 200, IX + 300, IX + 600]
+    elif _p['pid'] == 'SX2':
+        _p['sct_auto'] = [IX + 30, IX + 140, IX + 600]
 for _p in PATS:
     if _p['pid'] == 'SJ0':
         _p['sct_auto'] = [IX + 30]
@@ -318,6 +334,12 @@ def main():
        and smp['ZB1'][2][4] == 'BORT POMA',
        "ZB1/ZB2: a new agent arriving after a returning drug opened a line "
        "cannot backdate that line to the melphalan date")
+    ok(len(smp['SX1']) == 2 and smp['SX1'][0][2] == rs.d(IX + 599)
+       and smp['SX1'][0][3] == 'SCT_AUTO'
+       and [r[1:] for r in smp['SX1']] == [r[1:] for r in smp['SX2']],
+       "SX1/SX2: line 1 owns its tandem pair wherever the first of the two "
+       "falls, so a course after the partner opens no line of its own")
+
     ok(len(smp['SW1']) == 2 and smp['SW1'][1][1] == rs.d(IX + 300)
        and 'MELP' in smp['SW1'][1][4]
        and [r[1:] for r in smp['SW1']] == [r[1:] for r in smp['SW2']],

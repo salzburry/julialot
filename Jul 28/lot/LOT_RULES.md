@@ -580,6 +580,16 @@ covering *into* the next line was still being re-judged and suppressed there
 its own line's first day, and protecting it would stop the line a transplant
 opens next from suppressing it, leaving a later dose a line of its own (`SQ`).
 
+One thing that test does not ask is whether the agent could open a line at all.
+An agent past the line's own run-out, or landing exactly on the line's end, opens
+nothing — but it still disqualifies a later course from that line, and with the
+earlier line's claim gone nothing else judges the course, so it takes a line of
+its own. The shape is an in-window transplant whose tandem partner carries the
+line to its own date, a drug starting exactly there, and a short course after
+it. Disclosed rather than fixed: the bound wanted is the line's run-out, and the
+step computes that after the melphalan decision while reading the decision to do
+it, so closing it is a change to the step's shape.
+
 A transplant or CAR-T is that agent only when it **breaks** the line, and the
 three kinds break it differently — the same rules §3.4, §6.3, §6.4 and §6.5
 state:

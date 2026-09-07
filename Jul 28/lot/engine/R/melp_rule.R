@@ -305,6 +305,23 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
     -- between, which is the request's own case (SE). Same candidate gate as
     -- melp_confirm below, so ownership and confirmation cannot disagree about
     -- what counts as an agent.
+    --
+    -- What the gate does NOT ask is whether that agent could open a line at
+    -- all. An agent past the line's own run-out is no added-medication
+    -- candidate, and one landing exactly ON the line's end opens nothing under
+    -- 4.1 either - but both disqualify a later course here, and with the
+    -- earlier line's claim gone nothing else judges it, so the course opens a
+    -- line of its own. Reproduced: an in-window AUTO with a tandem partner on
+    -- day 150 carries line 1 there as SCT_AUTO_CONT, a drug starting exactly on
+    -- day 150 opens nothing, and a 28-day course at day 160 - which the same
+    -- patient without that drug correctly suppresses - takes a line.
+    --
+    -- Not fixed here, and the reason is structural rather than a judgement.
+    -- The bound wanted is the line's own run-out, and discon_per_med computes
+    -- it AFTER these CTEs while reading melp_boundary_join from them: the
+    -- dependency runs both ways, so the decision cannot simply move. Closing it
+    -- means splitting the run-out from the melphalan hold, which is a change to
+    -- the step's shape rather than to this predicate.
     melp_taken AS (
       SELECT DISTINCT mc.PATID, mc.EXPO_DT
       FROM melp_course mc
