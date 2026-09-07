@@ -1,0 +1,28 @@
+category,subtype,code_type,code,icd_family
+Hematological,leukemia,ICD10DIAG,C900,ICD10
+Hematological,lymphoma,ICD10DIAG,C900,ICD10
+Genitourinary,prostate,ICD10DIAG,C900,ICD10
+Genitourinary,renal_kidney,ICD10DIAG,C900,ICD10
+Genitourinary,bladder_urothelial,ICD10DIAG,C900,ICD10
+Genitourinary,testicular,ICD10DIAG,C900,ICD10
+Genitourinary,other_gu,ICD10DIAG,C900,ICD10
+Gynecological,ovarian,ICD10DIAG,C900,ICD10
+Gynecological,endometrial_uterine,ICD10DIAG,C900,ICD10
+Gynecological,cervical,ICD10DIAG,C900,ICD10
+Gynecological,vulvar,ICD10DIAG,C900,ICD10
+Gynecological,other_gyn,ICD10DIAG,C900,ICD10
+Head and Neck,mucosal_squamous_cell,ICD10DIAG,C900,ICD10
+Head and Neck,nasopharyngeal_carcinoma,ICD10DIAG,C900,ICD10
+Head and Neck,salivary_gland,ICD10DIAG,C900,ICD10
+Head and Neck,other_hn,ICD10DIAG,C900,ICD10
+Gastrointestinal,colorectal,ICD10DIAG,C900,ICD10
+Gastrointestinal,gastric_esophageal,ICD10DIAG,C900,ICD10
+Gastrointestinal,pancreatic_hepatobiliary,ICD10DIAG,C900,ICD10
+Gastrointestinal,other_gi,ICD10DIAG,C900,ICD10
+Thoracic (non-H&N),lung,ICD10DIAG,C900,ICD10
+Thoracic (non-H&N),other_thoracic,ICD10DIAG,C900,ICD10
+Breast cancer,breast,ICD10DIAG,C900,ICD10
+Melanoma,melanoma,ICD10DIAG,C900,ICD10
+Non-melanoma skin cancer,basal_cell_carcinoma,ICD10DIAG,C900,ICD10
+Non-melanoma skin cancer,squamous_cell_carcinoma,ICD10DIAG,C900,ICD10
+Other,other,ICD10DIAG,C900,ICD10

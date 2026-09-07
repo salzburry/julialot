@@ -93,7 +93,10 @@ cfg_defaults <- function() {
     cdm_schema   = .env_chr("OPTUM_CDM_SCHEMA", "clnprw_optum"),
     work_schema  = .env_chr("WORK_SCHEMA", ""),
     use_quarterly_tables = .env_lgl("USE_QUARTERLY_TABLES", TRUE),
-    codelist_dir = .env_chr("CODELIST_DIR", "/mnt/code/codelist"),
+    # Empty means "this package's own codelists/", resolved against the
+    # package directory in build_223926(). The folder ships the shapes so it is
+    # complete on its own; production points this at the real directory.
+    codelist_dir = .env_chr("CODELIST_DIR", ""),
 
     # --- what to read -----------------------------------------------------
     input_cohort_table = .env_chr("INPUT_COHORT_TABLE", ""),
@@ -150,6 +153,23 @@ cfg_defaults <- function() {
     censor_at_disenrollment  = .env_lgl("CENSOR_AT_DISENROLLMENT", TRUE),
     bridged_gap_is_person_time =
       .env_lgl("BRIDGED_GAP_IS_PERSON_TIME", TRUE),
+
+    # --- comorbidity ------------------------------------------------------
+    # Both off by default, and both are switches rather than silent omissions.
+    #
+    # Frailty is "only included pending review of data and mapping" (Table 4)
+    # and its algorithm is Annex 7, which was not delivered. FRAILTY=TRUE asks
+    # for it; the code-list guard then stops the run naming the annex, which is
+    # the honest outcome and not a crash to work around.
+    #
+    # The subgroup flags (neuropathy, lung parenchymal disease) are Table 4's
+    # and need Annex 3's codes. COMORBID_SUBGROUPS=TRUE asks for them on the
+    # same terms.
+    frailty            = .env_lgl("FRAILTY", FALSE),
+    comorbid_subgroups = .env_lgl("COMORBID_SUBGROUPS", FALSE),
+    # Kim 2018's own cut-point. A setting rather than a constant because the
+    # protocol says "CFI >= 0.25 = frail" and Annex 7 may say otherwise.
+    frailty_frail_cutoff = as.numeric(.env_chr("FRAILTY_FRAIL_CUTOFF", "0.25")),
 
     # --- demographics -----------------------------------------------------
     region_source = .env_enum("REGION_SOURCE", "state_crosswalk",
@@ -230,7 +250,12 @@ open_question_readings <- function(cfg) {
             "censor_at_disenrollment", "bridged_gap_is_person_time",
             "months_as", "baseline_includes_index",
             "comorbidity_baseline_includes_index", "region_source",
-            "enrol_attr_at", "ed_definition")
+            "enrol_attr_at", "ed_definition",
+            # ../OPEN_QUESTIONS.md asks for Annex 7 "or confirmation frailty is
+            # out", and for Annex 3's subgroup codes. FALSE is this run's
+            # answer to both, and a table that does not say so cannot be told
+            # apart from one where nobody was frail.
+            "frailty", "comorbid_subgroups")
   vapply(keys, function(k) {
     v <- cfg[[k]]
     sprintf("%s=%s", k, paste(as.character(v), collapse = "|"))

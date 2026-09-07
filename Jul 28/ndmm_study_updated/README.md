@@ -33,6 +33,8 @@ decided or sent.
 | `variables.csv` | the variables as a table — 58 rows, one per variable |
 | `optum_cdm_fields.csv` | the CDM field inventory as a table |
 | **`study223926/`** | the R package that builds the analytical cohort from a finished LOT run — sparklyr, module-selectable, every open question a setting. `study223926/MODULES.md` is its own page |
+| `SOURCES.md` | what this folder cites and what it needs — the standalone boundary |
+| `FILES.md` | one line per file |
 | `ashley study.pdf` | the source |
 
 Read `IE_CRITERIA.md` first. `OPEN_QUESTIONS.md` is what to send the study team.
@@ -141,13 +143,25 @@ often as needed.
 Rscript study223926/build.R                                   # on a Databricks cluster
 DRY_RUN=TRUE Rscript study223926/build.R                      # print the plan only
 MODULES=safety COHORTS=2L Rscript study223926/build.R         # one module, one cohort
-Rscript study223926/tests/run_tests.R                         # 118 checks, no warehouse
+Rscript study223926/tests/run_tests.R                         # 156 checks, no warehouse
 ```
 
 Twelve modules, four cohorts, and every reading this folder records as open is a
 setting with the protocol's answer as its default. Six of the twelve modules run
 today; the other six are blocked on Annexes 2 and 3, and the run says so by name
 before it opens a connection. `study223926/MODULES.md` has the rest.
+
+## Standalone
+
+Nothing in this folder reads a file outside it. The package carries its own code
+lists (`study223926/codelists/` — the shapes, not the codes, which do not exist
+anywhere yet), its own settings and its own tests, and a test asserts that no
+path function in any R file reaches out. The two things it needs that are not
+files are the warehouse and, optionally, the production code-list directory.
+
+The documents cite about ninety files elsewhere in the repository. Those are the
+evidence trail, not dependencies: every quotation they support is reproduced
+inline. `SOURCES.md` separates the two.
 
 ## What this folder does not do
 

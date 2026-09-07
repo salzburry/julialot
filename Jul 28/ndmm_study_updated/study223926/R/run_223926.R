@@ -29,6 +29,7 @@ source_modules <- function(here) {
 
 build_223926 <- function(here) {
   cfg <- cfg_defaults()
+  cfg$codelist_dir <- resolve_codelist_dir(cfg, here)
   set_study_config(cfg)
   check_settings(cfg)
   deviations <- check_contract(cfg)
@@ -74,7 +75,9 @@ build_223926 <- function(here) {
     log_msg("FU_EVIDENCE_RULE=", cfg$fu_evidence_rule,
             " does not read claim counts, so the medical+rx scan is skipped.")
   }
-  if ("hcru" %in% names(mods)) build_mm_dx_view(con, cfg)
+  # Whoever declared mm_dx.csv gets the view: hcru's MM-related hospitalisation
+  # test and comorbidity's MM adjustment both read it.
+  if ("mm_dx.csv" %in% required_codelists(mods)) build_mm_dx_view(con, cfg)
 
   for (m in mods) {
     log_msg(SEP)

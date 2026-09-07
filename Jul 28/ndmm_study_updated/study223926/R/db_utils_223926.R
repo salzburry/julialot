@@ -62,29 +62,55 @@ lot_tbl <- function(base_tbl) {
 # CREATE TABLE IF NOT EXISTS followed by an INSERT, because that reads as one
 # thing, so they are split here rather than in each module.
 #
-# Split on semicolons that are not inside a quoted string. The generated SQL
-# has no semicolons inside literals today; the quote tracking is here so that a
-# code list value containing one cannot quietly truncate a statement.
+# Split on semicolons that are not inside a quoted string or a comment. The
+# generated SQL has no semicolons inside literals today; the quote tracking is
+# here so that a code list value containing one cannot quietly truncate a
+# statement. Comment tracking matters more: the module templates carry `--`
+# notes explaining what a step does, and a `;` in one of those would otherwise
+# chop the statement in half.
 split_statements <- function(sql) {
   chars <- strsplit(sql, "", fixed = TRUE)[[1]]
-  out <- character(0); cur <- character(0); inq <- FALSE
+  n <- length(chars)
+  out <- character(0); cur <- character(0)
+  state <- "code"   # code | quote | line_comment | block_comment
   i <- 1L
-  while (i <= length(chars)) {
+  while (i <= n) {
     ch <- chars[i]
-    if (ch == "'") {
-      # '' inside a quoted string is an escaped quote, not the end of one.
-      if (inq && i < length(chars) && chars[i + 1L] == "'") {
-        cur <- c(cur, ch, ch); i <- i + 2L; next
+    nx <- if (i < n) chars[i + 1L] else ""
+    if (state == "code") {
+      if (ch == "'") {
+        state <- "quote"
+      } else if (ch == "-" && nx == "-") {
+        state <- "line_comment"
+        cur <- c(cur, ch, nx); i <- i + 2L; next
+      } else if (ch == "/" && nx == "*") {
+        state <- "block_comment"
+        cur <- c(cur, ch, nx); i <- i + 2L; next
+      } else if (ch == ";") {
+        out <- c(out, paste(cur, collapse = "")); cur <- character(0)
+        i <- i + 1L; next
       }
-      inq <- !inq
+    } else if (state == "quote") {
+      # '' inside a quoted string is an escaped quote, not the end of one.
+      if (ch == "'" && nx == "'") {
+        cur <- c(cur, ch, nx); i <- i + 2L; next
+      }
+      if (ch == "'") state <- "code"
+    } else if (state == "line_comment") {
+      if (ch == "\n") state <- "code"
+    } else if (state == "block_comment") {
+      if (ch == "*" && nx == "/") {
+        state <- "code"
+        cur <- c(cur, ch, nx); i <- i + 2L; next
+      }
     }
-    if (ch == ";" && !inq) {
-      out <- c(out, paste(cur, collapse = "")); cur <- character(0)
-    } else {
-      cur <- c(cur, ch)
-    }
+    cur <- c(cur, ch)
     i <- i + 1L
   }
+  if (state == "quote")
+    stop("split_statements: unterminated string literal in generated SQL")
+  if (state == "block_comment")
+    stop("split_statements: unterminated block comment in generated SQL")
   out <- c(out, paste(cur, collapse = ""))
   out <- trimws(out)
   out[nzchar(out)]

@@ -17,7 +17,7 @@ exists and sparklyr attaches to it, so there is no DSN and no password:
 Rscript build.R                                    # on the cluster
 DRY_RUN=TRUE Rscript build.R                       # print the plan, touch nothing
 MODULES=safety COHORTS=2L Rscript build.R          # one module, one cohort
-Rscript tests/run_tests.R                          # 118 checks, no warehouse
+Rscript tests/run_tests.R                          # 156 checks, no warehouse
 ```
 
 `SPARK_METHOD=databricks_connect` drives a named cluster from outside and is
@@ -89,7 +89,10 @@ lands on the run's own metadata row where no reader can miss it.
 | `R/db_utils_223926.R` | sparklyr connection, logging, table naming, the step runner. |
 | `R/run_223926.R` | Resolves the plan, walks the modules, writes the run metadata. |
 | `R/modules/*.R` | One file per module. Nothing else defines a clinical rule. |
-| `tests/run_tests.R` | 118 checks that need no warehouse, 40 of them regressions from the review below. |
+| `tests/run_tests.R` | 156 checks that need no warehouse. Most read the package's source; the last section RUNS every module for every cohort against recorders and parses every statement it emits. |
+| `tests/emit_sql.R` | That harness. Stubs the four functions that touch Spark, so a module's R and its SQL are both exercised without a cluster. |
+| `tests/parse_sql.py` | Parses each captured statement in the Spark dialect (sqlglot). Reports SKIP, not a pass, when sqlglot is absent. |
+| `tests/fixtures/codelists/` | Filled miniatures of all eleven code lists, so the harness can run the modules that need one. Test data - not codes to use. |
 
 ## Modules
 
@@ -100,10 +103,10 @@ lands on the run's own metadata row where no reader can miss it.
 | `attrition` | `S_ATTRITION` — the funnel, one row per criterion | — |
 | `periods` | `S_PERIODS`, `S_LOT_PERIODS` — baseline, follow-up, treatment windows | — |
 | `demographics` | `S_DEMOGRAPHICS` — age, sex, region, race, ethnicity, insurance | — |
-| `comorbidity` | `S_COMORBIDITY` — Charlson (Quan 2011), MM-adjusted | `charlson_quan2011.csv` |
+| `comorbidity` | `S_COMORBIDITY` — Charlson (Quan 2011), MM-adjusted. With `FRAILTY=TRUE` also `S_FRAILTY`; with `COMORBID_SUBGROUPS=TRUE` also `S_COMORB_SUBGROUP` | `charlson_quan2011.csv`, `mm_dx.csv`; plus `frailty_kim2018.csv` (Annex 7) and `comorbid_subgroups.csv` (Annex 3) when those switches are on |
 | `soc` | `S_SOC` — regimen category per line | `soc_regimen_categories.csv` (Annex 2) |
-| `safety` | `S_SAFETY_EVENTS`, `S_SAFETY_RATES` | `safety_events.csv` (Annex 3) |
-| `hcru` | `S_HCRU_EVENTS`, `S_HCRU_RATES` | `hcru.csv` |
+| `safety` | `S_SAFETY_EVENTS`, `S_SAFETY_COUNTED`, `S_SAFETY_RATES` | `safety_events.csv` (Annex 3) |
+| `hcru` | `S_HCRU_EVENTS`, `S_HCRU_RATES` | `hcru.csv`, `mm_dx.csv` |
 | `malignancy` | `S_MALIGNANCY`, `S_MALIGNANCY_RATES` | `secondary_malig.csv` (Annex 3) |
 | `tte` | `S_TTE` — TTNT, TTD, OS | — |
 | `patterns` | `S_PATTERNS`, `S_SWITCH`, `S_TX_ATTRITION` | via `soc` |
@@ -114,6 +117,32 @@ outcomes, and needs no code list this repo does not already have. The other six
 are blocked on Annexes 2 and 3 (`../CODELISTS.md`), and the preflight says so
 by name **before** the connection is opened rather than after the expensive
 steps.
+
+### The MM adjustment, and why it is on the codes
+
+Table 4 asks for the CCI *"adjusted for having received a MM diagnosis, such
+that a value of 0 indicates no additional comorbidities beyond MM"*.
+
+Quan's seventeen conditions have no myeloma row. Myeloma is one of the codes
+**under `any_malignancy`**, together with every other cancer — so dropping a
+condition whose *name* matches myeloma drops nothing, and every patient in a
+myeloma study scores `any_malignancy`'s weight of 2. A CCI of 0 becomes
+unreachable and the adjustment is silently not made.
+
+So it is made on the **codes**: a diagnosis whose code is in `mm_dx.csv`
+supports no Charlson condition. A patient with only MM scores 0; a patient with
+MM and breast cancer still scores `any_malignancy`, because the breast code
+carries it. That is why `comorbidity` declares `mm_dx.csv`.
+
+### Two switches, both off
+
+`FRAILTY` (the Kim 2018 claims-based frailty index) and `COMORBID_SUBGROUPS`
+(Table 4's neuropathy and lung-parenchymal-disease flags) are both off by
+default, because both need annexes that were not delivered — Annex 7 and Annex
+3. Switched on, the code-list preflight stops the run naming the annex. That is
+the point of the switch: asking for frailty tells you exactly what is missing,
+rather than producing a column of zeros that reads as a cohort with no frail
+patients.
 
 ## What it refuses to do
 
@@ -157,12 +186,52 @@ patients from **both** the numerator and the denominator. A module that
 computed one denominator and used it twice would be wrong in a way no total
 would reveal.
 
-## What the adversarial review changed
+## What the second adversarial review changed
+
+The package was reviewed a second time, and its headline was not a defect but a
+gap in the tests: **four of the twelve modules could not run at all**, and the
+suite passed anyway, because every check read the package's source text and none
+parsed a statement or executed a module.
+
+So the first fix is `tests/emit_sql.R`: it loads the package into a private
+environment, replaces the four functions that touch Spark with recorders, and
+runs **every module for every cohort**. What comes back is every statement the
+run would have issued — 407 of them — each parsed in the Spark dialect. The four
+blockers were then visible in seconds:
+
+| what | what it did |
+|---|---|
+| `split_statements()` split on `;` inside a SQL `--` comment | three modules' SQL was **chopped in half** by a semicolon in a comment explaining what the step did — `demographics`, `soc`, `hcru`, two of them in the "runs today" selection |
+| `08_malignancy.R` and `04_comorbidity.R` were missing a comma between two CTEs | both statements were a **parse error**, so neither module could run |
+| `here_pred[[st$criterion]]` on a named character vector | `[[` on an absent name **throws** rather than returning `NULL`, so the `is.null()` branch below it was unreachable and `attrition` died for 1L and SEC2L |
+
+Eleven correctness findings came with them. The ones that would have produced
+numbers rather than errors:
+
+| what | what it would have done |
+|---|---|
+| `BEST_CATEGORY LIKE '%anti-CD38%'` | `Other triplet (non-anti-CD38)` **contains that substring**, so every non-anti-CD38 triplet was relabelled as an anti-CD38 one and the category never appeared at all |
+| `WHEN N_AGENTS >= 4 THEN 'Quadruplet with anti-CD38 backbone'`, unconditionally | a four-agent regimen with **no anti-CD38 agent** was reported as having an anti-CD38 backbone |
+| The attrition funnel reset `N_REMAINING` on every criterion applied upstream, and never applied `MET_N2` for 1L or SEC2L | **N_REMAINING went back up mid-funnel**, and the continuous-enrolment step showed no loss |
+| Quan's `myocardial_infarction` weighted 1 | Quan 2011 gives it **0** — the weight 1 is the original 1987 Charlson |
+| The MM adjustment dropped a condition whose NAME matched myeloma | Quan has **no myeloma row**: myeloma sits under `any_malignancy`, so the adjustment dropped nothing and **a CCI of 0 was unreachable** for every patient in a myeloma study |
+| HCRU rates were driven from the aggregate | a line with person-time and **no events produced no row**, which downstream is indistinguishable from the module not having run |
+| The MM-related hospitalisation subquery joined `DIAG1 = code OR DIAG2 = code` with no family test and no cohort restriction | an ICD-9 myeloma code could match an ICD-10 claim, over a **nested loop on the whole of CONFINEMENT** |
+| `preflight_codelists()` only stat-ed each path | the eleven blank templates this package ships **satisfied it**, so the run failed at the module instead of in its first second |
+| `FRAILTY=TRUE` was documented and did not exist; `frailty_kim2018.csv` and `comorbid_subgroups.csv` were read by nothing | two of Table 4's variables were **silently not produced** |
+| `S_SAFETY_COUNTED` was written and not declared | a table nothing downstream knew to look for |
+| `SOC_SIZE_CATEGORIES`' agent counts were never read | the numbers in the table were dead data, and the CASE beside them was the real rule |
+
+The last two of those are now covered by tests that read what the run **emits**
+rather than what the source says: every declared output has to appear in the
+emitted SQL, and every table the SQL writes has to be declared.
+
+## What the first adversarial review changed
 
 The first version of this package was reviewed at max effort, and **19 defects
 were confirmed**. All are fixed, and each has a regression test — the review's
-own observation stands: the 78-check suite that passed at the time covered none
-of them. The ones worth knowing about, because they would have produced numbers
+own observation stood then too: the 78-check suite that passed at the time
+covered none of them. The ones worth knowing about, because they would have produced numbers
 rather than errors:
 
 | what | what it would have done |
@@ -200,6 +269,9 @@ Two things are deliberately left as they are: `MEDIAN_LOS` uses
 
 It is not wired into `validation/run_gate.R`, and it has never been run against
 the warehouse — no code lists, and several settings still want the study team's
-answer (`../OPEN_QUESTIONS.md`). The 118 tests check the selection logic, the
-boundary conventions, the counting rules and the SQL each module emits. They
-check no number, because a number needs the CDM.
+answer (`../OPEN_QUESTIONS.md`). The 156 tests check the selection logic, the
+boundary conventions, the counting rules, and — running every module for every
+cohort against recorders — that each module's R reaches the end of the function
+and every statement it emits parses as Spark SQL. They check no number, because
+a number needs the CDM, and a statement that parses is not a statement that is
+right.

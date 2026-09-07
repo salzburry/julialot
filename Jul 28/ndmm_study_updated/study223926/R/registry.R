@@ -97,8 +97,16 @@ MODULES <- list(
 
   comorbidity = list(
     key = "comorbidity", label = "Charlson and frailty",
-    needs = "periods", codelists = "charlson_quan2011.csv",
-    outputs = "S_COMORBIDITY", per_cohort = TRUE,
+    # mm_dx.csv as well: Table 4 asks for the CCI adjusted for having received
+    # a MM diagnosis, and Quan carries myeloma under `any_malignancy` rather
+    # than as a condition of its own - so the adjustment can only be made on
+    # the CODES, and the module needs the MM code list to make it.
+    needs = "periods", codelists = c("charlson_quan2011.csv", "mm_dx.csv"),
+    # The last two are written only when their switch is on, and are declared
+    # anyway: a table a module can write that the registry does not name is a
+    # table nothing downstream knows to look for.
+    outputs = c("S_COMORBIDITY", "S_COMORB_SUBGROUP", "S_FRAILTY"),
+    per_cohort = TRUE,
     fn = "mod_comorbidity", blocked = NA_character_),
 
   soc = list(
@@ -110,7 +118,12 @@ MODULES <- list(
   safety = list(
     key = "safety", label = "Key safety events: prevalence and incidence",
     needs = "periods", codelists = "safety_events.csv",
-    outputs = c("S_SAFETY_EVENTS", "S_SAFETY_RATES"), per_cohort = TRUE,
+    # S_SAFETY_COUNTED is the washout's own working set - the events that
+    # survived the 30-day rule. Declared because it is a table this module
+    # leaves behind, and because a QC that cannot find it cannot check the
+    # washout against the raw events.
+    outputs = c("S_SAFETY_EVENTS", "S_SAFETY_COUNTED", "S_SAFETY_RATES"),
+    per_cohort = TRUE,
     fn = "mod_safety", blocked = NA_character_),
 
   hcru = list(
@@ -228,7 +241,32 @@ resolve_modules <- function(cfg) {
     ordered <- c(ordered, ready)
     remaining <- setdiff(remaining, ready)
   }
-  MODULES[ordered]
+  apply_optional_features(MODULES[ordered], cfg)
+}
+
+# What a module does only when a switch asks for it: the code list it then
+# needs, and the table it then writes. Declared here rather than in MODULES so
+# a default run's preflight does not demand an undelivered annex - and so the
+# plan DRY_RUN prints names the tables that run will actually write, rather
+# than every table the module could ever write.
+OPTIONAL_FEATURES <- list(
+  comorbidity = list(
+    frailty = list(codelist = "frailty_kim2018.csv", output = "S_FRAILTY"),
+    comorbid_subgroups = list(codelist = "comorbid_subgroups.csv",
+                              output = "S_COMORB_SUBGROUP"))
+)
+
+apply_optional_features <- function(mods, cfg) {
+  for (k in intersect(names(OPTIONAL_FEATURES), names(mods))) {
+    for (setting in names(OPTIONAL_FEATURES[[k]])) {
+      f <- OPTIONAL_FEATURES[[k]][[setting]]
+      if (isTRUE(cfg[[setting]]))
+        mods[[k]]$codelists <- c(mods[[k]]$codelists, f$codelist)
+      else
+        mods[[k]]$outputs <- setdiff(mods[[k]]$outputs, f$output)
+    }
+  }
+  mods
 }
 
 # Does this cohort apply a criterion - its own, or one inherited from the

@@ -48,7 +48,7 @@ mod_malignancy <- function(con, cfg, cohort) {
             FROM dates) t
       GROUP BY PATID, COHORT, category, subtype
       HAVING count(*) >= 2
-    )
+    ),
     -- The line the malignancy fell after, as a join rather than a correlated
     -- scalar subquery: Spark rejects a correlation on a non-equality
     -- predicate, and LOT_START_DT <= FIRST_DT is one.

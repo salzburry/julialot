@@ -13,6 +13,24 @@
 # The CDM has no ED field at all, so an ED visit is a construction and
 # ED_DEFINITION says which. The three usual ones disagree materially -
 # ../OPEN_QUESTIONS.md Q11.
+# The three measures s7.2.4 asks for, and the event each is true of. Data
+# rather than a literal repeated twice, because the rates below are driven from
+# the DENOMINATOR and the measure list is what turns one line's person-time
+# into one row per measure - a list that fell out of step with the map would
+# silently drop a measure.
+HCRU_MEASURES <- c(
+  ALL_CAUSE_HOSPITALISATION  = "e.EVENT_TYPE = 'INPATIENT'",
+  MM_RELATED_HOSPITALISATION = "e.EVENT_TYPE = 'INPATIENT' AND e.MM_RELATED = 1",
+  ED_VISIT                   = "e.EVENT_TYPE = 'ED'")
+
+# The CDM's CONFINEMENT carries DIAG1..DIAG5 but no ICD_FLAG, so the family has
+# to come from the admission date. Every window this study reads is after the
+# US transition, but deriving it beats assuming it: an ICD-9 myeloma code
+# (2030) and an ICD-10 one (C900) are different strings, and matching either
+# against a claim of the wrong vintage is a false hit that nothing downstream
+# could see.
+ICD10_TRANSITION <- "2015-10-01"
+
 mod_hcru <- function(con, cfg, cohort) {
   cl <- load_codelist("hcru.csv", cfg)
   ed <- cl[tolower(trimws(cl$concept)) == "ed_visit", , drop = FALSE]
@@ -70,11 +88,27 @@ mod_hcru <- function(con, cfg, cohort) {
     INNER JOIN %4$s cf ON cast(cf.PATID as string) = p.PATID
     LEFT JOIN (
       -- MM in the first or second diagnosis position on the confinement.
-      SELECT DISTINCT cast(c2.PATID as string) AS PATID, c2.CONF_ID
-      FROM %4$s c2
+      --
+      -- The two positions are exploded into rows rather than joined with an
+      -- OR: an OR predicate cannot be hashed, so Spark falls back to a nested
+      -- loop over the whole of CONFINEMENT. Restricted to this cohort's own
+      -- patients for the same reason - the outer join throws the rest away
+      -- afterwards, having read them.
+      SELECT DISTINCT d.PATID, d.CONF_ID
+      FROM (
+        SELECT cast(c2.PATID as string) AS PATID, c2.CONF_ID,
+               CASE WHEN cast(c2.ADMIT_DATE as date) >= date('%10$s')
+                    THEN 'ICD10' ELSE 'ICD9' END AS icd_norm,
+               dx.code AS raw_code
+        FROM %4$s c2
+        LATERAL VIEW explode(array(c2.DIAG1, c2.DIAG2)) dx AS code
+        WHERE c2.ADMIT_DATE IS NOT NULL
+      ) d
+      INNER JOIN (SELECT DISTINCT PATID FROM %3$s WHERE COHORT = '%6$s') pc
+              ON pc.PATID = d.PATID
       INNER JOIN %5$s mmc
-              ON upper(regexp_replace(coalesce(c2.DIAG1,''),'[^A-Za-z0-9]','')) = mmc.code_norm
-              OR upper(regexp_replace(coalesce(c2.DIAG2,''),'[^A-Za-z0-9]','')) = mmc.code_norm
+              ON upper(regexp_replace(coalesce(d.raw_code,''),'[^A-Za-z0-9]','')) = mmc.code_norm
+             AND mmc.icd_norm = d.icd_norm
     ) mm ON mm.PATID = p.PATID AND mm.CONF_ID = cf.CONF_ID
     WHERE p.COHORT = '%6$s' AND cf.ADMIT_DATE IS NOT NULL
     UNION ALL
@@ -92,7 +126,7 @@ mod_hcru <- function(con, cfg, cohort) {
     interval_days_sql("cast(cf.ADMIT_DATE as date)",
                       "cast(cf.DISCH_DATE as date)", TRUE, FALSE),
     wrk("S_PERIODS"), cdm_src("confinement"), "S_CL_MM_DX", cohort$key,
-    cdm_src("medical"), reg, paste(arms, collapse = " OR ")),
+    cdm_src("medical"), reg, paste(arms, collapse = " OR "), ICD10_TRANSITION),
     # A count FIRST: run_step's zero-row guard reads the first column, and a
     # string there makes as.numeric() give NA and the guard skip silently.
     qc = sprintf("SELECT count(*) AS n_events,
@@ -107,6 +141,11 @@ mod_hcru <- function(con, cfg, cohort) {
   # person-time and understate each line's rate roughly fourfold. It is also a
   # separate CTE rather than a derived table in FROM, because a FROM-clause
   # subquery cannot see a sibling alias.
+  #
+  # And the SELECT is driven from that denominator, not from the events: a line
+  # with person-time and no events is a rate of zero, and it has to appear as
+  # one. Driven from the aggregate it produced no row at all, which downstream
+  # is indistinguishable from the module not having run for that line.
   for (per in list(
     list(name = "BASELINE",  start = "p.BASELINE_START", end = "p.BASELINE_END",
          py = "BASELINE_PY", src = wrk("S_PERIODS")),
@@ -124,15 +163,7 @@ mod_hcru <- function(con, cfg, cohort) {
                meas.MEASURE, meas.HIT
         FROM %5$s e
         INNER JOIN %3$s p ON p.PATID = e.PATID AND p.COHORT = e.COHORT
-        LATERAL VIEW explode(map(
-          \'ALL_CAUSE_HOSPITALISATION\',
-            CASE WHEN e.EVENT_TYPE = \'INPATIENT\' THEN 1 ELSE 0 END,
-          \'MM_RELATED_HOSPITALISATION\',
-            CASE WHEN e.EVENT_TYPE = \'INPATIENT\' AND e.MM_RELATED = 1
-                 THEN 1 ELSE 0 END,
-          \'ED_VISIT\',
-            CASE WHEN e.EVENT_TYPE = \'ED\' THEN 1 ELSE 0 END
-        )) meas AS MEASURE, HIT
+        LATERAL VIEW explode(map(%10$s)) meas AS MEASURE, HIT
         WHERE p.COHORT = \'%4$s\'
           AND e.EVENT_DT BETWEEN %6$s AND %7$s
       ),
@@ -146,16 +177,27 @@ mod_hcru <- function(con, cfg, cohort) {
                sum(CASE WHEN HIT = 1 AND HAS_DISCHARGE = 0 THEN 1 ELSE 0 END)
                  AS N_LOS_EXCLUDED
         FROM hits GROUP BY COHORT, LOT_NUM, MEASURE
-      )
-      SELECT a.COHORT, a.LOT_NUM, \'%8$s\' AS PERIOD, a.MEASURE,
-             a.N_PATIENTS, a.N_EVENTS, d.PY AS PERSON_YEARS,
+      ),
+      meas_list AS (SELECT explode(array(%11$s)) AS MEASURE)
+      SELECT d.COHORT, d.LOT_NUM, \'%8$s\' AS PERIOD, m.MEASURE,
+             coalesce(a.N_PATIENTS, 0) AS N_PATIENTS,
+             coalesce(a.N_EVENTS, 0) AS N_EVENTS,
+             d.PY AS PERSON_YEARS,
              %9$s AS RATE,
-             a.MEAN_LOS, a.MEDIAN_LOS, a.N_LOS_EXCLUDED
-      FROM agg a
-      INNER JOIN den d ON d.COHORT = a.COHORT AND d.LOT_NUM = a.LOT_NUM",
+             -- Left NULL rather than zeroed: the mean length of no stays is
+             -- not zero days, and a zero here would be averaged downstream.
+             a.MEAN_LOS, a.MEDIAN_LOS,
+             coalesce(a.N_LOS_EXCLUDED, 0) AS N_LOS_EXCLUDED
+      FROM den d
+      CROSS JOIN meas_list m
+      LEFT JOIN agg a ON a.COHORT = d.COHORT AND a.LOT_NUM = d.LOT_NUM
+                     AND a.MEASURE = m.MEASURE",
       wrk("S_HCRU_RATES"), per$py, per$src, cohort$key,
       wrk("S_HCRU_EVENTS"), per$start, per$end, per$name,
-      rate_sql("a.N_EVENTS", "d.PY", cfg)),
+      rate_sql("coalesce(a.N_EVENTS, 0)", "d.PY", cfg),
+      paste(sprintf("'%s', CASE WHEN %s THEN 1 ELSE 0 END",
+                    names(HCRU_MEASURES), HCRU_MEASURES), collapse = ", "),
+      paste(sprintf("'%s'", names(HCRU_MEASURES)), collapse = ", ")),
       qc = sprintf("SELECT count(*) AS n_rows FROM %s
                     WHERE COHORT=\'%s\' AND PERIOD=\'%s\'",
                    wrk("S_HCRU_RATES"), cohort$key, per$name),
@@ -167,7 +209,7 @@ mod_hcru <- function(con, cfg, cohort) {
 # Read from the same mm_dx.csv the cohort build used, so the two cannot
 # disagree about what myeloma is.
 build_mm_dx_view <- function(con, cfg) {
-  cl <- load_codelist("mm_dx.csv", cfg, code_col = "dx")
+  cl <- load_codelist("mm_dx.csv", cfg)
   register_codelist_view(con, cl, "S_CL_MM_DX", cols = c("dx", "icd_family"),
                          code_col = "dx")
 }

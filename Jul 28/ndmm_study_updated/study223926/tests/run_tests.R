@@ -42,6 +42,19 @@ with_env <- function(vars, expr) {
 base_env <- c(INPUT_COHORT_TABLE = "ndmm_NDMM_COHORT", OBJECT_PREFIX = "s223926_")
 cfg0 <- function(extra = c()) with_env(c(base_env, extra), cfg_defaults())
 
+# The modules, run against recorders. Computed once here because several checks
+# below read what the run actually emitted rather than what the source says -
+# see the "the modules, run against recorders" section for why.
+source("tests/emit_sql.R")
+RUN <- with_env(base_env, capture_emitted_sql("."))
+# A second run with the two switches on, so the tables they write are covered
+# too. Their code lists are undelivered, so the fixtures stand in.
+RUN_OPT <- with_env(base_env, capture_emitted_sql(".", function(cfg) {
+  cfg$frailty <- TRUE; cfg$comorbid_subgroups <- TRUE; cfg
+}))
+emitted_sql <- function(run = RUN)
+  paste(vapply(run$sql, function(x) x$sql, character(1)), collapse = "\n")
+
 cat("\nconfig and contract\n")
 {
   cfg <- cfg0()
@@ -71,8 +84,10 @@ cat("\nconfig and contract\n")
                           check_settings(cfg_defaults())))),
      "a 1L index floor before the study start stops the run")
   r <- open_question_readings(cfg)
-  ok(length(r) == 18 && all(grepl("=", r)),
+  ok(length(r) == 20 && all(grepl("=", r)),
      "every open question's reading is recorded for the run")
+  ok(any(grepl("^frailty=", r)) && any(grepl("^comorbid_subgroups=", r)),
+     "including whether frailty and the subgroup flags were asked for at all")
 }
 
 cat("\nselection\n")
@@ -226,8 +241,15 @@ cat("\ncode lists\n")
   unlink(empty, recursive = TRUE)
   ok(grepl("Annex 3", e2),
      "a missing code list names the annex that owes it")
-  ok(grepl("MODULES=spine,cohorts,periods,demographics,tte", e2),
-     "and the selection that runs without it")
+  # The escape hatch the message offers, checked rather than pinned as a
+  # string: a message naming a selection that in fact needs a code list is
+  # worse than no message.
+  sugg <- regmatches(e2, regexpr("MODULES=[a-z,]+", e2))
+  ok(length(sugg) == 1, "and the selection that runs without it")
+  ok(length(sugg) == 1 &&
+     length(required_codelists(suppressMessages(resolve_modules(
+       cfg0(c(MODULES = sub("^MODULES=", "", sugg))))))) == 0,
+     "which really does need no code list")
   unlink(tmp, recursive = TRUE)
 }
 
@@ -425,15 +447,36 @@ cat("\nregressions from the adversarial review\n")
   ok("attrition" %in% names(MODULES) &&
      "S_ATTRITION" %in% MODULES$attrition$outputs,
      "the attrition funnel is a module of its own")
-  declared <- unlist(lapply(MODULES, `[[`, "outputs"))
-  written <- unlist(lapply(names(MODULES), function(k) {
-    src <- paste(capture.output(print(get(MODULES[[k]]$fn, mode = "function"))),
-                 collapse = "\n")
-    Filter(function(o) grepl(o, src, fixed = TRUE), MODULES[[k]]$outputs)
-  }))
-  ok(setequal(declared, written),
+  # Read off the statements the run emitted, not the module source: a table
+  # written by a helper the module calls is still written, and a table named
+  # only in a comment is not.
+  declared <- unique(unlist(lapply(MODULES, `[[`, "outputs")))
+  all_sql <- paste(emitted_sql(RUN), emitted_sql(RUN_OPT))
+  never <- Filter(function(o) !grepl(o, all_sql, fixed = TRUE), declared)
+  ok(length(never) == 0,
      paste0("every declared output is actually written (never written: ",
-            paste(setdiff(declared, written), collapse = ", "), ")"))
+            paste(never, collapse = ", "), ")"))
+  # And nothing is written that the registry does not declare: an undeclared
+  # table is one nothing downstream knows to look for.
+  # Only the qualified names, and matched through the work schema rather than
+  # through an `S_` prefix: OBJECT_PREFIX sits between the schema and the name,
+  # and a pattern anchored on `.S_` matches nothing at all once it is set - so
+  # the check passes by finding nothing, which is the worst way to pass.
+  wtgt <- unlist(regmatches(all_sql, gregexpr(
+    "(INSERT INTO|MERGE INTO|DELETE FROM|CREATE OR REPLACE TABLE|CREATE TABLE IF NOT EXISTS)[ \n]+\\S+",
+    all_sql)))
+  written <- unique(sub(paste0("^.*\\.wk\\.", cfg0()$object_prefix), "",
+    grep("\\.wk\\.", wtgt, value = TRUE)))
+  ok(length(written) > 10,
+     paste0("the emitted SQL names the work tables it writes (",
+            length(written), " found)"))
+  # The run's own scaffolding, which the registry does not and should not own:
+  # the metadata row, and the two inputs the runner builds before the modules.
+  written <- setdiff(written, c("S_RUN_METADATA", "S_ENROLL_SPANS",
+                                "S_FU_CLAIMS"))
+  ok(all(written %in% declared),
+     paste0("and nothing is written that the registry does not declare (",
+            paste(setdiff(written, declared), collapse = ", "), ")"))
 
   # 15. SOC categorisation is deterministic and not alphabetical.
   sc <- paste(capture.output(print(mod_soc)), collapse = "\n")
@@ -441,8 +484,19 @@ cat("\nregressions from the adversarial review\n")
      "SOC does not pick a category with max(), which sorts alphabetically")
   ok(SOC_PRECEDENCE[1] == "CAR-T",
      "a CAR-T line is a CAR-T line, whatever it was given alongside")
-  ok(grepl("N_AGENTS >= 4", sc) && grepl("N_AGENTS = 3", sc),
+  soc_sql <- paste(vapply(Filter(function(x) grepl("^step:soc_", x$tag), RUN$sql),
+                          function(x) x$sql, character(1)), collapse = "\n")
+  ok(grepl("N_AGENTS >= 4 AND HAS_CD38_BACKBONE = 1", soc_sql, fixed = TRUE),
      "and a size category is decided by the regimen's own agent count")
+  # Both halves of the category name are claims, and both are tested. A
+  # LIKE '%anti-CD38%' on the NAME also matches 'Other triplet (non-anti-CD38)',
+  # so that category could never be produced.
+  ok(!grepl("LIKE '%anti-CD38%'", soc_sql, fixed = TRUE),
+     "the anti-CD38 backbone is read off the agents, not off the category name")
+  ok(grepl("N_AGENTS  = 3 AND HAS_CD38_BACKBONE = 0", soc_sql, fixed = TRUE),
+     "so a non-anti-CD38 triplet can still be one")
+  ok(!grepl("N_AGENTS >= 4\n", soc_sql),
+     "and a four-agent regimen with no anti-CD38 agent is not called one")
 
   # Mine, not the review's.
   ok(!grepl("SELECT \\* FROM %s UNION ALL", rv),
@@ -461,6 +515,189 @@ cat("\nregressions from the adversarial review\n")
   cm <- paste(capture.output(print(mod_comorbidity)), collapse = "\n")
   ok(grepl("supersedes", cm),
      "Charlson applies Quan's hierarchy where the code list declares it")
+}
+
+cat("\nstandalone\n")
+{
+  # Nothing this package runs may reach outside its own directory. The folder
+  # is meant to be liftable: handed to someone, or moved, without carrying a
+  # trail of siblings it silently needs.
+  r_files <- c(list.files("R", pattern = "[.]R$", full.names = TRUE),
+               list.files("R/modules", pattern = "[.]R$", full.names = TRUE),
+               "build.R")
+  src <- setNames(lapply(r_files, function(f) paste(readLines(f, warn = FALSE),
+                                                    collapse = "\n")), r_files)
+  # Comments and error messages cite sibling documents as evidence, and
+  # ../OPEN_QUESTIONS.md resolves inside ndmm_study_updated/, which is the
+  # boundary that has to hold. What must not happen is a path FUNCTION reaching
+  # outside, so that is what is tested rather than the string ../ anywhere.
+  code_only <- lapply(src, function(x)
+    paste(grep("^\\s*#", strsplit(x, "\n")[[1]], value = TRUE, invert = TRUE),
+          collapse = "\n"))
+  path_fns <- "(file[.]path|source|read[.]csv|readRDS|readLines|list[.]files|file[.]exists|normalizePath|setwd)"
+  escapes <- names(Filter(function(x)
+    grepl(paste0(path_fns, "\\s*\\([^)]*[.][.]/"), x), code_only))
+  ok(length(escapes) == 0,
+     paste0("no path function reaches out of the package (offenders: ",
+            paste(basename(escapes), collapse = ", "), ")"))
+  hard <- names(Filter(function(x)
+    grepl('"(/mnt|/home|/Users|[A-Z]:)', x), code_only))
+  ok(length(hard) == 0,
+     paste0("no absolute path is hard-coded (offenders: ",
+            paste(basename(hard), collapse = ", "), ")"))
+  repo <- names(Filter(function(x)
+    grepl('"(Jul 28|docs|Apr 18|Questions)/', x), code_only))
+  ok(length(repo) == 0,
+     paste0("no code path names a sibling folder (offenders: ",
+            paste(basename(repo), collapse = ", "), ")"))
+  ok(all(file.exists(file.path("R", "modules", MODULE_FILES))),
+     "every module file the runner sources is inside the package")
+  ok(setequal(MODULE_FILES, list.files("R/modules", pattern = "[.]R$")),
+     "and every file in R/modules/ is one the runner sources")
+  ok(FALSE || file.exists("R/load_inputs.R"),
+     "load_inputs.R is a copy in the package, not a source() into a sibling")
+
+  # The code lists ship with the package, so it is complete on its own.
+  ok(dir.exists("codelists"), "the package carries its own codelists/")
+  cfgd <- cfg0()
+  ok(!nzchar(cfgd$codelist_dir),
+     "CODELIST_DIR defaults to empty, meaning the package's own directory")
+  ok(basename(resolve_codelist_dir(cfgd, ".")) == "codelists",
+     "and resolve_codelist_dir() points there")
+  ok(grepl("elsewhere",
+           errs(resolve_codelist_dir(cfg0(c(CODELIST_DIR = "elsewhere")), "."))) ||
+     grepl("not a directory",
+           errs(resolve_codelist_dir(cfg0(c(CODELIST_DIR = "elsewhere")), "."))),
+     "a CODELIST_DIR that does not exist stops the run")
+  shipped <- list.files("codelists", pattern = "[.]csv$")
+  ok(setequal(shipped, names(CODELIST_SPEC)),
+     paste0("every file the spec names ships as a template (missing: ",
+            paste(setdiff(names(CODELIST_SPEC), shipped), collapse = ", "), ")"))
+
+  # And every one of them refuses to load, because none is filled in.
+  cfgl <- cfgd; cfgl$codelist_dir <- resolve_codelist_dir(cfgd, ".")
+  loads <- Filter(function(f) is.na(errs(load_codelist(f, cfgl))),
+                  names(CODELIST_SPEC))
+  ok(length(loads) == 0,
+     paste0("no shipped template loads clean - each is a to-do list the code ",
+            "checks (loaded anyway: ", paste(loads, collapse = ", "), ")"))
+
+  # The guard that let a whole blank list through.
+  ok(all(names(CODELIST_SPEC) %in% names(CODELIST_CODE_COL)),
+     "every code list declares which column carries its code")
+  ok(all(vapply(names(CODELIST_SPEC), function(f)
+    CODELIST_CODE_COL[[f]] %in% CODELIST_SPEC[[f]], logical(1))),
+     "and that column is one of the file's own required columns")
+  tmp <- tempfile(); dir.create(tmp)
+  write.csv(data.frame(dx = "C900", icd_family = "ICD10"),
+            file.path(tmp, "mm_dx.csv"), row.names = FALSE)
+  cfgt <- cfgd; cfgt$codelist_dir <- tmp
+  ok(is.na(errs(load_codelist("mm_dx.csv", cfgt))),
+     "a filled list loads, and the guard reads the column the spec names")
+  write.csv(data.frame(dx = "", icd_family = "ICD10"),
+            file.path(tmp, "mm_dx.csv"), row.names = FALSE)
+  ok(grepl("with no code", errs(load_codelist("mm_dx.csv", cfgt))),
+     "and a blank one is refused on the SAME column, not skipped")
+  unlink(tmp, recursive = TRUE)
+
+  # Protocol structure that ships filled in, because it is the protocol's and
+  # not a code list.
+  se <- read.csv("codelists/safety_events.csv", stringsAsFactors = FALSE)
+  ok(nrow(se) == 23, "safety_events.csv carries all 23 Table 3 rows")
+  ok(all(PROTOCOL_CHRONIC_CONDITIONS[
+    PROTOCOL_CHRONIC_CONDITIONS != "malignancies"] %in% se$condition),
+     "and every condition the s7.8.1 chronic list names, by that name")
+  ok(sum(grepl("or |/", se$acute_chronic)) == 2,
+     "including the two the protocol types as both, which stop the run")
+  qn <- read.csv("codelists/charlson_quan2011.csv", stringsAsFactors = FALSE)
+  ok(nrow(qn) == 17, "charlson_quan2011.csv carries Quan's seventeen conditions")
+  ok(qn$weight[qn$condition == "metastatic_solid_tumour"] == 6 &&
+     qn$supersedes[qn$condition == "metastatic_solid_tumour"] == "any_malignancy",
+     "with Quan's weights and his hierarchy, so mild+severe does not double")
+  sm <- read.csv("codelists/secondary_malig.csv", stringsAsFactors = FALSE)
+  ok(length(unique(sm$category)) == 10,
+     "secondary_malig.csv carries Table 2's ten categories")
+  so <- read.csv("codelists/soc_regimen_categories.csv", stringsAsFactors = FALSE)
+  ok(setequal(so$soc_category[so$line_scope == "1L"], SOC_CATEGORIES_1L) &&
+     setequal(so$soc_category[so$line_scope == "LATER"], SOC_CATEGORIES_LATER),
+     "and soc_regimen_categories.csv carries s7.2.2's, both line scopes")
+}
+
+# ---------------------------------------------------------------------------
+# The modules, actually run.
+# ---------------------------------------------------------------------------
+#
+# Everything above reads source text. Source text cannot tell you whether a
+# module's SQL parses or whether its R reaches the end of the function, and
+# three defects that shipped were exactly that: a statement chopped in half by
+# a semicolon inside a `--` comment, two CTE lists with a comma missing, and a
+# `[[` on a name the vector did not carry. So the modules are run here against
+# recorders, for every cohort, and every statement they emit is parsed.
+
+cat("\nthe modules, run against recorders\n")
+{
+  run <- RUN
+  ok(length(run$errors) == 0,
+     paste0("every module runs for every cohort without an R error",
+            if (length(run$errors))
+              paste0(" [", paste(sprintf("%s: %s", names(run$errors),
+                                         substr(unlist(run$errors), 1, 120)),
+                                 collapse = " | "), "]") else ""))
+  ok(length(run$sql) > 200,
+     paste0("the run emits statements to check (", length(run$sql), ")"))
+  ok(setequal(run$modules, names(MODULES)) && setequal(run$cohorts, names(COHORTS)),
+     "with every registered module and cohort selected")
+
+  # A statement no module can have meant: an unfilled sprintf placeholder, or
+  # one that stops mid-clause. Both are checked by tests/parse_sql.py, which
+  # needs Python and sqlglot; without them this reports SKIP rather than
+  # passing quietly, because a check that cannot run is not a check that passed.
+  f <- tempfile(fileext = ".sql")
+  con <- file(f, "w")
+  for (x in run$sql) {
+    cat("-- @@STMT ", x$tag, "\n", sep = "", file = con)
+    cat(x$sql, "\n", file = con)
+  }
+  close(con)
+  ok(length(RUN_OPT$errors) == 0,
+     paste0("and with FRAILTY and COMORBID_SUBGROUPS on",
+            if (length(RUN_OPT$errors))
+              paste0(" [", paste(sprintf("%s: %s", names(RUN_OPT$errors),
+                                         substr(unlist(RUN_OPT$errors), 1, 120)),
+                                 collapse = " | "), "]") else ""))
+
+  out <- suppressWarnings(tryCatch(
+    system2("python3", c("tests/parse_sql.py", shQuote(f)),
+            stdout = TRUE, stderr = TRUE),
+    error = function(e) "NO-PYTHON"))
+  txt <- paste(out, collapse = "\n")
+  if (any(grepl("^SKIP:", out)) || identical(txt, "NO-PYTHON") ||
+      !length(out)) {
+    cat("  SKIP  every emitted statement parses as Spark SQL",
+        " (python3 + sqlglot not available)\n", sep = "")
+  } else {
+    ok(grepl("0 failure\\(s\\)", txt),
+       paste0("every emitted statement parses as Spark SQL",
+              if (!grepl("0 failure", txt)) paste0("\n", txt) else ""))
+  }
+  unlink(f)
+
+  # The attrition funnel is monotone by construction: a step can only remove
+  # rows. It was not - a criterion applied upstream reset the count to the
+  # unfiltered total, so N_REMAINING went back up mid-funnel.
+  counts <- vapply(Filter(function(x)
+      grepl("^SELECT count\\(\\*\\) AS n FROM \\S*S_COHORT WHERE COHORT = '1L'",
+            x$sql), run$sql), function(x) x$sql, character(1))
+  ok(length(counts) == length(COHORTS[["1L"]]$criteria),
+     "the 1L funnel counts once per criterion")
+  ok(any(grepl("MET_N2 = 1", counts, fixed = TRUE)),
+     "and applies MET_N2, which is I4 re-derived on the line's own index date")
+  # Monotone: once a predicate is in, no later step may drop it.
+  npred <- vapply(counts, function(q)
+    length(gregexpr("MET_", q, fixed = TRUE)[[1]][
+      gregexpr("MET_", q, fixed = TRUE)[[1]] > 0]), integer(1))
+  ok(!is.unsorted(npred),
+     "and never drops one, so N_REMAINING cannot go back up mid-funnel")
 }
 
 cat("\n", .pass, " passed, ", length(.fail), " failed\n", sep = "")

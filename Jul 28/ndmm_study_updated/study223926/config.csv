@@ -5,7 +5,7 @@ DATABRICKS_HOST,,Workspace URL - databricks_connect only. DATABRICKS_TOKEN stays
 DATABRICKS_CATALOG,hive_metastore,Catalog for all reads and writes
 OPTUM_CDM_SCHEMA,clnprw_optum,Optum CDM schema
 USE_QUARTERLY_TABLES,TRUE,Read the cumulative quarterly CDM tables
-CODELIST_DIR,/mnt/code/codelist,Where the production code lists live
+CODELIST_DIR,,Where the code lists are. Empty means this package own codelists/ - set it to /mnt/code/codelist on production
 INPUT_COHORT_TABLE,,The cohort table the LOT run was built over (e.g. ndmm_NDMM_COHORT)
 OBJECT_PREFIX,,Prefix for every table this package writes
 COHORT_PREFIX,,The cohort build's prefix if it differs from this run's
@@ -39,6 +39,9 @@ SEC2L_APPLY_OTHER_CANCER,FALSE,The secondary 2L cohort permits prior malignancy 
 CENSOR_AT_DISENROLLMENT,TRUE,Protocol s7.1 ends follow-up at the end of continuous enrolment - OPEN_QUESTIONS Q13
 BRIDGED_GAP_IS_PERSON_TIME,TRUE,Count the days inside a bridged enrolment gap as covered person-time - OPEN_QUESTIONS Q19
 #,,--- demographics ---
+FRAILTY,FALSE,"TRUE computes the Kim 2018 claims-based frailty index. Needs frailty_kim2018.csv, which is Annex 7 and was not delivered - so TRUE stops the run naming it"
+COMORBID_SUBGROUPS,FALSE,"TRUE writes Table 4's baseline subgroup flags (neuropathy, lung parenchymal disease). Needs comorbid_subgroups.csv, which is Annex 3 and was not delivered"
+FRAILTY_FRAIL_CUTOFF,0.25,CFI at or above this is frail. Kim 2018's own cut-point; Annex 7 may say otherwise
 REGION_SOURCE,state_crosswalk,region_column or state_crosswalk - OPEN_QUESTIONS Q9
 ENROL_ATTR_AT,index_span,index_span or latest_span. Which enrolment row supplies a time-varying attribute - OPEN_QUESTIONS Q16
 ED_DEFINITION,"revenue,pos",Any of revenue pos cpt - how an emergency visit is identified - OPEN_QUESTIONS Q11

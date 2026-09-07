@@ -23,6 +23,19 @@ CRITERION_SOURCE <- c(
   N2_ce_pre         = "here"
 )
 
+# criterion -> the predicate on S_COHORT that tests it here. A criterion can be
+# in both maps: I4/N2 is continuous enrolment before index, which the cohort
+# build applied on ITS index date and this package re-applies on the line's
+# index date with the protocol's own 30-day gap allowance. Naming it here is
+# what makes the 1L and SEC2L funnels show that step's loss instead of
+# carrying the count through untouched.
+HERE_PRED <- list(
+  N1_received_line = "1 = 1",
+  I4_ce_pre        = "MET_N2 = 1",
+  N2_ce_pre        = "MET_N2 = 1",
+  I5_followup      = "MET_I5 = 1"
+)
+
 mod_cohorts <- function(con, cfg, cohort) {
   unknown <- setdiff(cohort$criteria, names(CRITERION_SOURCE))
   if (length(unknown))
@@ -110,24 +123,26 @@ mod_attrition <- function(con, cfg, cohort) {
 
   steps <- lapply(seq_along(cohort$criteria), function(i) {
     k <- cohort$criteria[i]
-    list(step = i, criterion = k, applied_by = CRITERION_SOURCE[[k]])
+    here <- k %in% names(HERE_PRED)
+    src <- CRITERION_SOURCE[[k]]
+    list(step = i, criterion = k,
+         applied_by = if (here && src != "here") paste0(src, "+here") else src,
+         pred = if (here) HERE_PRED[[k]] else NULL)
   })
-  # Only the criteria this package applies have a per-step count; the rest
-  # carry the population they were handed.
-  here_pred <- c(N1_received_line = "1 = 1", N2_ce_pre = "MET_N2 = 1",
-                 I5_followup = "MET_I5 = 1")
+  # The count carried into each step is the population that has passed every
+  # criterion at or above it that this package can test. A step whose verdict
+  # came from upstream adds no predicate of its own, so it reports the same
+  # count as the step before rather than resetting to the unfiltered total -
+  # a funnel whose N_REMAINING goes back up is not a funnel.
   cum <- character(0)
   for (st in steps) {
-    pred <- here_pred[[st$criterion]]
-    if (is.null(pred)) {
-      n_sql <- sprintf("SELECT count(*) AS n FROM %s WHERE COHORT = '%s'",
-                       wrk("S_COHORT"), cohort$key)
-    } else {
-      cum <- c(cum, pred)
-      n_sql <- sprintf("SELECT count(*) AS n FROM %s WHERE COHORT = '%s' AND %s",
-                       wrk("S_COHORT"), cohort$key,
-                       paste(cum, collapse = " AND "))
-    }
+    if (!is.null(st$pred)) cum <- c(cum, st$pred)
+    n_sql <- if (length(cum))
+      sprintf("SELECT count(*) AS n FROM %s WHERE COHORT = '%s' AND %s",
+              wrk("S_COHORT"), cohort$key, paste(cum, collapse = " AND "))
+    else
+      sprintf("SELECT count(*) AS n FROM %s WHERE COHORT = '%s'",
+              wrk("S_COHORT"), cohort$key)
     n <- as.integer(db_q(con, n_sql)$n[1])
     db_exec(con, sprintf(
       "INSERT INTO %s VALUES ('%s', %d, '%s', '%s', %d, NULL)",

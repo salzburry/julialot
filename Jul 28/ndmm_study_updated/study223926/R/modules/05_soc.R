@@ -38,12 +38,47 @@ SOC_PRECEDENCE <- c(
   "CAR-T", "BCMA bispecific", "Non-BCMA bispecific", "Other novel agent",
   "Quadruplet with anti-CD38 backbone", "Triplet with anti-CD38 backbone",
   "Other triplet (non-anti-CD38)", "Doublet/monotherapy", "Other")
-# The categories whose name is a claim about how many agents the regimen has.
+# The categories whose name is a claim about the regimen rather than about any
+# one agent, and the test that claim has to pass. Both halves of a name are
+# tested, because both are claims:
+#
+#   * "Quadruplet with anti-CD38 backbone" says FOUR agents AND an anti-CD38
+#     backbone. Deciding it on the count alone labels a four-agent regimen
+#     with no anti-CD38 agent as having one.
+#   * "Other triplet (non-anti-CD38)" says three agents and NO anti-CD38
+#     backbone - and it contains the substring "anti-CD38", so a
+#     LIKE '%anti-CD38%' test on the category NAME matches it too and relabels
+#     every non-anti-CD38 triplet as an anti-CD38 one. The category then never
+#     appears in the output at all.
+#
+# So the backbone is read off the agents (HAS_CD38_BACKBONE below), never off
+# the category name, and these predicates are the SQL the CASE is built from
+# rather than a table something else has to be kept in step with.
+#
+# A four-agent regimen with no anti-CD38 backbone falls through every arm to
+# 'Other'. s7.2.2 lists no other quadruplet category, and inventing one would
+# report a category the protocol does not define.
 SOC_SIZE_CATEGORIES <- c(
-  "Quadruplet with anti-CD38 backbone" = 4L,
-  "Triplet with anti-CD38 backbone"    = 3L,
-  "Other triplet (non-anti-CD38)"      = 3L,
-  "Doublet/monotherapy"                = 2L)
+  "Quadruplet with anti-CD38 backbone" = "N_AGENTS >= 4 AND HAS_CD38_BACKBONE = 1",
+  "Triplet with anti-CD38 backbone"    = "N_AGENTS  = 3 AND HAS_CD38_BACKBONE = 1",
+  "Other triplet (non-anti-CD38)"      = "N_AGENTS  = 3 AND HAS_CD38_BACKBONE = 0",
+  "Doublet/monotherapy"                = "N_AGENTS <= 2")
+
+# The categories whose agents ARE the anti-CD38 backbone. An agent listed under
+# one of these with role 'backbone' is what makes HAS_CD38_BACKBONE true.
+SOC_CD38_CATEGORIES <- c("Quadruplet with anti-CD38 backbone",
+                         "Triplet with anti-CD38 backbone")
+
+soc_size_case_sql <- function() {
+  arms <- vapply(seq_along(SOC_SIZE_CATEGORIES), function(i)
+    sprintf("             WHEN %s\n               THEN '%s'",
+            SOC_SIZE_CATEGORIES[[i]],
+            gsub("'", "''", names(SOC_SIZE_CATEGORIES)[i])), character(1))
+  paste(arms, collapse = "\n")
+}
+
+sql_in_list <- function(x) paste(sprintf("'%s'", gsub("'", "''", x)),
+                                 collapse = ", ")
 
 soc_rank_sql <- function(col = "cl.soc_category") {
   arms <- vapply(seq_along(SOC_PRECEDENCE), function(i)
@@ -53,7 +88,7 @@ soc_rank_sql <- function(col = "cl.soc_category") {
 }
 
 mod_soc <- function(con, cfg, cohort) {
-  cl <- load_codelist("soc_regimen_categories.csv", cfg, code_col = "CL_MED_ABBR")
+  cl <- load_codelist("soc_regimen_categories.csv", cfg)
   bad <- setdiff(unique(cl$soc_category),
                  union(SOC_CATEGORIES_1L, SOC_CATEGORIES_LATER))
   if (length(bad))
@@ -86,7 +121,9 @@ mod_soc <- function(con, cfg, cohort) {
     ),
     matched AS (
       SELECT a.PATID, a.COHORT, a.LOT_NUM, a.REGIMEN, a.ABBR, cl.soc_category,
-             %6$s AS RANK
+             %6$s AS RANK,
+             CASE WHEN lower(trim(cl.role)) = 'backbone'
+                   AND cl.soc_category IN (%8$s) THEN 1 ELSE 0 END AS CD38
       FROM agents a
       LEFT JOIN %5$s cl
              ON upper(trim(cl.CL_MED_ABBR)) = upper(trim(a.ABBR))
@@ -97,7 +134,8 @@ mod_soc <- function(con, cfg, cohort) {
       SELECT PATID, COHORT, LOT_NUM, REGIMEN,
              count(DISTINCT ABBR) AS N_AGENTS,
              min(CASE WHEN soc_category IS NOT NULL THEN RANK END) AS BEST_RANK,
-             max(CASE WHEN soc_category IS NOT NULL THEN 1 ELSE 0 END) AS MATCHED
+             max(CASE WHEN soc_category IS NOT NULL THEN 1 ELSE 0 END) AS MATCHED,
+             max(CD38) AS HAS_CD38_BACKBONE
       FROM matched
       GROUP BY PATID, COHORT, LOT_NUM, REGIMEN
     ),
@@ -110,24 +148,21 @@ mod_soc <- function(con, cfg, cohort) {
       FROM tagged t
     )
     SELECT PATID, COHORT, LOT_NUM, REGIMEN, N_AGENTS,
-           -- A size category is only kept when the regimen is that size;
-           -- otherwise the count decides, which is what the category names.
+           -- A modality category (CAR-T, a bispecific, another novel agent) is
+           -- a claim about an agent and is kept as the agent's row said. A
+           -- size category is a claim about the REGIMEN, so the regimen's own
+           -- agent count and backbone decide it, not the winning agent's row.
            CASE
              WHEN BEST_CATEGORY IS NULL THEN 'Other'
              WHEN BEST_CATEGORY NOT IN (%7$s) THEN BEST_CATEGORY
-             WHEN N_AGENTS >= 4 THEN 'Quadruplet with anti-CD38 backbone'
-             WHEN N_AGENTS = 3 AND BEST_CATEGORY LIKE '%%anti-CD38%%'
-               THEN 'Triplet with anti-CD38 backbone'
-             WHEN N_AGENTS = 3 THEN 'Other triplet (non-anti-CD38)'
-             WHEN N_AGENTS <= 2 THEN 'Doublet/monotherapy'
+%9$s
              ELSE 'Other'
            END AS SOC_CATEGORY,
            coalesce(MATCHED, 0) AS MATCHED
     FROM named",
     wrk("S_SOC"), wrk("S_SPINE"), wrk("S_PERIODS"), cohort$key, reg,
-    soc_rank_sql(),
-    paste(sprintf("'%s'", gsub("'", "''", names(SOC_SIZE_CATEGORIES))),
-          collapse = ", ")),
+    soc_rank_sql(), sql_in_list(names(SOC_SIZE_CATEGORIES)),
+    sql_in_list(SOC_CD38_CATEGORIES), soc_size_case_sql()),
     qc = sprintf("SELECT count(*) AS n_rows, sum(1 - MATCHED) AS n_uncategorised
                   FROM %s WHERE COHORT = '%s'", wrk("S_SOC"), cohort$key))
 

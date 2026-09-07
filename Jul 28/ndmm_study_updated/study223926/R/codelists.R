@@ -15,6 +15,26 @@
 
 # file -> the columns the loader requires. A file not named here cannot be
 # loaded: a typo would otherwise read an unrelated file cleanly.
+#
+# CODELIST_CODE_COL names which of those columns carries the code, because the
+# unfilled-row guard turns on it. It was a caller argument once, and a caller
+# that named a column the file does not have got NO guard at all - the check
+# returned early and an entirely blank list loaded clean. It is data now, so a
+# call site cannot get it wrong.
+CODELIST_CODE_COL <- c(
+  "mm_dx.csv"                  = "dx",
+  "cl_mma_codelist.csv"        = "CL_CODE",
+  "cl_mma_rollup.csv"          = "CL_MED_ABBR",
+  "cl_sct_codelist.csv"        = "CL_CODE",
+  "safety_events.csv"          = "code",
+  "secondary_malig.csv"        = "code",
+  "charlson_quan2011.csv"      = "code",
+  "frailty_kim2018.csv"        = "code",
+  "hcru.csv"                   = "code",
+  "soc_regimen_categories.csv" = "CL_MED_ABBR",
+  "comorbid_subgroups.csv"     = "code"
+)
+
 CODELIST_SPEC <- list(
   # Already on production, read by the cohort and LOT builds.
   "mm_dx.csv"                 = c("dx", "icd_family"),
@@ -49,6 +69,22 @@ CODELIST_SOURCE <- c(
   comorbid_subgroups.csv     = "Annex 3"
 )
 
+# The two tables have to agree, and a mismatch is a coding error rather than a
+# data one - so it is caught when the file is sourced, not when a run reaches
+# the module that reads it.
+local({
+  missing <- setdiff(names(CODELIST_SPEC), names(CODELIST_CODE_COL))
+  if (length(missing))
+    stop("CODELIST_CODE_COL does not name a code column for: ",
+         paste(missing, collapse = ", "), call. = FALSE)
+  for (f in names(CODELIST_SPEC))
+    if (!CODELIST_CODE_COL[[f]] %in% CODELIST_SPEC[[f]])
+      stop("CODELIST_CODE_COL says ", f, "'s code column is '",
+           CODELIST_CODE_COL[[f]], "', which is not one of its required ",
+           "columns: ", paste(CODELIST_SPEC[[f]], collapse = ", "),
+           call. = FALSE)
+})
+
 ICD_FAMILY_9  <- c("9", "ICD9", "ICD-9", "ICD9DIAG")
 ICD_FAMILY_10 <- c("10", "ICD10", "ICD-10", "ICD10DIAG")
 
@@ -57,11 +93,12 @@ ICD_FAMILY_10 <- c("10", "ICD10", "ICD-10", "ICD10DIAG")
 # Reads one file, checks its shape, and refuses it if it carries no usable
 # codes. Records the md5 and row count so a number can be traced to the file
 # that produced it - the same contract the cohort build's loader keeps.
-load_codelist <- function(csv_name, cfg, code_col = "code") {
+load_codelist <- function(csv_name, cfg) {
   if (!csv_name %in% names(CODELIST_SPEC))
     stop("CODELIST ERROR: ", csv_name, " is not a file this package is defined ",
          "on. Known: ", paste(names(CODELIST_SPEC), collapse = ", "), ".",
          call. = FALSE)
+  code_col <- CODELIST_CODE_COL[[csv_name]]
   path <- file.path(cfg$codelist_dir, csv_name)
   if (!file.exists(path))
     stop("CODELIST ERROR: ", path, " does not exist.",
@@ -101,7 +138,12 @@ load_codelist <- function(csv_name, cfg, code_col = "code") {
 # still being written, and the concepts on those rows would silently report
 # zero.
 check_unfilled <- function(df, csv_name, code_col) {
-  if (!code_col %in% names(df)) return(invisible(TRUE))
+  # Not a silent pass: a code column that is not there means the spec and the
+  # file disagree, and the guard cannot run. That is worse than a blank row.
+  if (!code_col %in% names(df))
+    stop("CODELIST ERROR: ", csv_name, " has no '", code_col, "' column, so ",
+         "the unfilled-row guard cannot run. CODELIST_CODE_COL names it; ",
+         "either the file or that entry is wrong.", call. = FALSE)
   code <- trimws(ifelse(is.na(df[[code_col]]), "", as.character(df[[code_col]])))
   blank <- !nzchar(code)
   if (!any(blank)) return(invisible(TRUE))
@@ -174,25 +216,45 @@ canonical_acute_chronic <- function(x, condition = NULL) {
   out
 }
 
+# Where the code lists are. An unset CODELIST_DIR means this package's own
+# codelists/ - the folder ships every shape it reads, so it is complete without
+# anything outside it. Production sets CODELIST_DIR to the real directory.
+resolve_codelist_dir <- function(cfg, here) {
+  d <- if (nzchar(cfg$codelist_dir)) cfg$codelist_dir
+       else file.path(here, "codelists")
+  if (!dir.exists(d))
+    stop("CODELIST ERROR: ", d, " is not a directory. Set CODELIST_DIR, or ",
+         "restore this package's own codelists/.", call. = FALSE)
+  normalizePath(d, mustWork = TRUE)
+}
+
 # Checked before any module runs, so a run that cannot finish stops in the
 # first second rather than after the expensive steps.
+#
+# This LOADS each file rather than stat-ing its path. A path check passes on
+# this package's own codelists/, which ship as blank templates with the right
+# columns and no codes - so the run would reach the module, fail there, and
+# have spent the warehouse time in between. Loading runs the same shape,
+# unfilled-row and icd_family guards the module would run, at second one.
 preflight_codelists <- function(mods, cfg) {
   want <- required_codelists(mods)
   if (!length(want)) return(invisible(character(0)))
-  missing <- want[!file.exists(file.path(cfg$codelist_dir, want))]
-  if (length(missing)) {
-    detail <- vapply(missing, function(f)
-      sprintf("  %-28s %s", f,
-              if (f %in% names(CODELIST_SOURCE)) CODELIST_SOURCE[[f]] else "unknown source"),
-      character(1))
-    stop("CODELIST ERROR: ", length(missing), " code list(s) the selected ",
-         "modules need are not in ", cfg$codelist_dir, ":\n",
-         paste(detail, collapse = "\n"),
+
+  problems <- character(0)
+  for (f in want) {
+    err <- tryCatch({ load_codelist(f, cfg); NULL },
+                    error = function(e) conditionMessage(e))
+    if (!is.null(err)) problems <- c(problems, sprintf("  %s\n    %s", f,
+      gsub("\n", "\n    ", sub("^CODELIST ERROR: ", "", err))))
+  }
+  if (length(problems))
+    stop("CODELIST ERROR: ", length(problems), " of ", length(want),
+         " code list(s) the selected modules need are not usable:\n",
+         paste(problems, collapse = "\n"),
          "\n\nEither deliver them, or narrow MODULES so nothing needs them - ",
-         "`Rscript build.R` with MODULES=spine,cohorts,periods,demographics,tte ",
+         "`Rscript build.R` with MODULES=spine,cohorts,attrition,periods,demographics,tte ",
          "runs the whole cohort and the time-to-event outcomes with no code ",
          "list this repo does not already have.", call. = FALSE)
-  }
   invisible(want)
 }
 
