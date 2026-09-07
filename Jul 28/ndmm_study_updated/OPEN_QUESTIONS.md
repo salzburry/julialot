@@ -48,7 +48,10 @@ encryption domain as the claims tables **in this Databricks deployment**. Note
 the business-rules document is from **30-08-2022** and is provably stale on at
 least one other point (Q18), so it cannot simply be taken as current either.
 
-**This one can be costed today, before anyone answers.** Run:
+**This one can be costed today, before anyone answers.** `PROFILE_QUERIES.sql`
+block 1 has the decisive version, which needs no cohort — what fraction of DOD
+patients appear in the enrolment table at all. Near zero means the keys are in
+different encryption domains. The cohort-level version is:
 
 ```sql
 SELECT count(*) AS n_cohort,

@@ -15,6 +15,7 @@ says what is cited and what is needed.
 | `VERSION_DIFF.md` | What changed since the June 2026 protocol, why three of the build's settings are a version behind rather than wrong, and a reconstruction of the rows lost on the corrupt photo. |
 | `OPEN_QUESTIONS.md` | Twenty-seven things genuinely undecided, each with both readings and what turns on the answer. Two are answered, one partly. |
 | `SOURCES.md` | What this folder cites and what it needs. The standalone boundary. |
+| `PROFILE_QUERIES.sql` | Seven paste-and-run queries against the warehouse, each closing a named open question. Block 1 is the DOD join. |
 | `ie_criteria.csv` | The criteria as a table, for the study team. |
 | `variables.csv` | The variables as a table — 58 rows. |
 | `optum_cdm_fields.csv` | The CDM field inventory as a table — 64 rows. |
