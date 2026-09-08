@@ -166,7 +166,8 @@ MODULES <- list(
   malignancy = list(
     key = "malignancy", label = "Secondary malignancies",
     needs = "periods", codelists = "secondary_malig.csv",
-    outputs = c("S_MALIGNANCY", "S_MALIGNANCY_RATES"), per_cohort = TRUE,
+    outputs = c("S_MALIGNANCY", "S_MALIGNANCY_DATES", "S_MALIGNANCY_RATES"),
+    per_cohort = TRUE,
     fn = "mod_malignancy", blocked = NA_character_),
 
   tte = list(

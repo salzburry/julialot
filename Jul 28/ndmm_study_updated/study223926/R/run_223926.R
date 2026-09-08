@@ -50,7 +50,8 @@ build_inputs <- function(con, cfg, mods) {
   } else {
     db_exec(con, sprintf(
       "CREATE OR REPLACE TABLE %s
-       (PATID string, N_CLAIMS_AFTER_INDEX int, N_CLAIMS_FROM_INDEX int)",
+       (PATID string, LOT_NUM int,
+        N_CLAIMS_AFTER_INDEX int, N_CLAIMS_FROM_INDEX int)",
       wrk("S_FU_CLAIMS")))
     log_msg("FU_EVIDENCE_RULE=", cfg$fu_evidence_rule,
             " does not read claim counts, so the medical+rx scan is skipped.")

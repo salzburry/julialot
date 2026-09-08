@@ -161,6 +161,17 @@ cat("\nwindow conventions\n")
   ok(grepl("date_add(coalesce(l.PROTOCOL_DISCON_DT, l.LOT_BASE_END_DT), 30)",
            lp$end, fixed = TRUE),
      "the treatment period runs to discontinuation + 30 days")
+  # Follow-up evidence is a per-LINE question. Joined on PATID alone it was
+  # counted once against the 1L index and reused, so one claim between a
+  # patient's 1L and 2L satisfied the after-2L test and the after-3L test too.
+  coh_src <- paste(readLines("R/modules/01_cohorts.R", warn = FALSE),
+                   collapse = "\n")
+  ok(grepl("fu.PATID = s.PATID AND fu.LOT_NUM = s.LOT_NUM", coh_src,
+           fixed = TRUE),
+     "follow-up claim evidence is joined at the line grain, not the patient's")
+  ok(grepl("GROUP BY l.PATID, l.LOT_NUM", coh_src, fixed = TRUE),
+     "and counted at that grain in the first place")
+
   # The engine's LOT_BASE_DISCON_DT is a CANDIDATE run-out; the cascade can
   # select a different reason and date and leave it populated. Reading it put
   # TTD before the transplant that ended the line. Only 00_spine.R may name it,

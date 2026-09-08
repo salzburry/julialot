@@ -99,7 +99,7 @@ mod_cohorts <- function(con, cfg, cohort) {
     LEFT JOIN %7$s ce
            ON ce.PATID = s.PATID
           AND ce.COV_START <= s.LOT_START_DT AND ce.COV_END >= s.LOT_START_DT
-    LEFT JOIN %8$s fu ON fu.PATID = s.PATID
+    LEFT JOIN %8$s fu ON fu.PATID = s.PATID AND fu.LOT_NUM = s.LOT_NUM
     %9$s
     WHERE s.LOT_NUM = %10$d %11$s",
     wrk("S_COHORT"), cohort$key, ce_pre, fu_pred, wrk("S_SPINE"),
@@ -205,24 +205,36 @@ build_enroll_spans <- function(con, cfg) {
                   FROM %s", wrk("S_ENROLL_SPANS")))
 }
 
-# Claims on and after each patient's 1L index, for the I5 readings that need
-# one. Cheap because it counts rather than collecting.
+# Claims on and after EACH LINE'S index, for the I5 readings that need one.
+#
+# Per line, not per patient. It was one row per patient counted against the
+# input cohort's INDEX_DATE - the 1L index - and every cohort read that same
+# row. Under FU_EVIDENCE_RULE=claim_after_index a single claim falling between
+# a patient's 1L and 2L therefore satisfied the after-2L test, and the after-3L
+# test, and SEC2L's: one claim admitted a patient to cohorts whose index it
+# preceded. The grain has to be the grain the criterion is asked at.
+#
+# Bounded above by STUDY_END as well: a claim after the study period is not
+# evidence of follow-up within it.
 build_fu_claims <- function(con, cfg) {
   run_step(con, "fu_claims", sprintf("
-    CREATE OR REPLACE TABLE %s AS
-    SELECT c.PATID,
-           sum(CASE WHEN d.svc_dt >  c.INDEX_DATE THEN 1 ELSE 0 END) AS N_CLAIMS_AFTER_INDEX,
-           sum(CASE WHEN d.svc_dt >= c.INDEX_DATE THEN 1 ELSE 0 END) AS N_CLAIMS_FROM_INDEX
-    FROM %s c
+    CREATE OR REPLACE TABLE %1$s AS
+    SELECT l.PATID, l.LOT_NUM,
+           sum(CASE WHEN d.svc_dt >  l.LOT_START_DT THEN 1 ELSE 0 END) AS N_CLAIMS_AFTER_INDEX,
+           sum(CASE WHEN d.svc_dt >= l.LOT_START_DT THEN 1 ELSE 0 END) AS N_CLAIMS_FROM_INDEX
+    FROM (SELECT cast(PATID as string) AS PATID, cast(LOT_NUM as int) AS LOT_NUM,
+                 LOT_START_DT
+          FROM %2$s WHERE LOT_NUM <= %5$d) l
     LEFT JOIN (
       SELECT cast(PATID as string) AS PATID, cast(FST_DT as date) AS svc_dt
-      FROM %s WHERE FST_DT IS NOT NULL
+      FROM %3$s WHERE FST_DT IS NOT NULL
       UNION ALL
       SELECT cast(PATID as string) AS PATID, cast(FILL_DT as date) AS svc_dt
-      FROM %s WHERE FILL_DT IS NOT NULL
-    ) d ON d.PATID = cast(c.PATID as string)
-    GROUP BY c.PATID",
-    wrk("S_FU_CLAIMS"), cfg$input_cohort_table,
-    cdm_src("medical"), cdm_src("rx")),
-    qc = sprintf("SELECT count(*) AS n_pat FROM %s", wrk("S_FU_CLAIMS")))
+      FROM %4$s WHERE FILL_DT IS NOT NULL
+    ) d ON d.PATID = l.PATID AND d.svc_dt <= date('%6$s')
+    GROUP BY l.PATID, l.LOT_NUM",
+    wrk("S_FU_CLAIMS"), lot_tbl("LOT_LONG_FINAL"),
+    cdm_src("medical"), cdm_src("rx"), as.integer(cfg$max_lot),
+    cfg$study_end),
+    qc = sprintf("SELECT count(*) AS n_rows FROM %s", wrk("S_FU_CLAIMS")))
 }

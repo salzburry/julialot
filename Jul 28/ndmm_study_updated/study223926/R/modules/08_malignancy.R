@@ -36,6 +36,13 @@ mod_malignancy <- function(con, cfg, cohort) {
              ON upper(regexp_replace(d.DIAG, '[^A-Za-z0-9]', '')) = cl.code_norm
             AND cl.icd_norm = %5$s
       WHERE p.COHORT = '%6$s' AND d.FST_DT IS NOT NULL
+        -- Bounded by this cohort's own observation. Unbounded, a second
+        -- diagnosis after disenrollment, after death, or in a later enrolment
+        -- span confirmed an earlier event retrospectively - the study would be
+        -- reporting an occurrence it did not observe. FU_END is per patient
+        -- and per cohort, so the same malignancy can be confirmed for a later
+        -- cohort that did observe it and not for an earlier one that did not.
+        AND cast(d.FST_DT as date) <= p.FU_END
     ),
     confirmed AS (
       SELECT PATID, COHORT, category, subtype,
@@ -79,6 +86,28 @@ mod_malignancy <- function(con, cfg, cohort) {
     qc = sprintf("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_pat
                   FROM %s WHERE COHORT='%s'", wrk("S_MALIGNANCY"), cohort$key),
     allow_empty = TRUE)
+
+  # Every qualifying diagnosis DATE for a confirmed category, not just the
+  # first. Baseline prevalence needs it: a cancer first coded years before
+  # baseline and coded again during it IS present during baseline, and asking
+  # whether the GLOBAL first date falls in the window answers a different
+  # question - new onset - and returns zero for exactly the established
+  # malignancies the secondary 2L cohort exists to describe.
+  db_exec(con, sprintf("
+    CREATE OR REPLACE TABLE %1$s AS
+    SELECT DISTINCT p.PATID, p.COHORT, cl.category AS CATEGORY,
+                    cast(d.FST_DT as date) AS EVENT_DT
+    FROM %2$s p
+    INNER JOIN %3$s d ON cast(d.PATID as string) = p.PATID
+    INNER JOIN %4$s cl
+           ON upper(regexp_replace(d.DIAG, '[^A-Za-z0-9]', '')) = cl.code_norm
+          AND cl.icd_norm = %5$s
+    INNER JOIN %6$s m ON m.PATID = p.PATID AND m.COHORT = p.COHORT
+                     AND m.CATEGORY = cl.category
+    WHERE p.COHORT = '%7$s' AND d.FST_DT IS NOT NULL
+      AND cast(d.FST_DT as date) <= p.FU_END",
+    wrk("S_MALIGNANCY_DATES"), wrk("S_PERIODS"), cdm_src("diagnosis"), reg,
+    icd_family_sql("d.ICD_FLAG"), wrk("S_MALIGNANCY"), cohort$key))
 
   # Malignancies are on the s7.8.1 chronic list, so incidence counts the first
   # occurrence only and a patient with one before the period is not at risk.
@@ -153,12 +182,16 @@ mod_malignancy <- function(con, cfg, cohort) {
         FROM %4$s WHERE COHORT = '%5$s' GROUP BY COHORT, LOT_NUM
       ),
       num AS (
+        -- ANY qualifying date inside the baseline window, not the global first
+        -- one. s7.8.1 baseline is prevalence - what is PRESENT - and it is
+        -- taken irrespective of prior event history, so a malignancy first
+        -- coded before baseline and coded again during it belongs here.
         SELECT p.COHORT, p.LOT_NUM, m.CATEGORY,
                count(DISTINCT m.PATID) AS N_PATIENTS
-        FROM %3$s m
+        FROM %7$s m
         INNER JOIN %4$s p ON p.PATID = m.PATID AND p.COHORT = m.COHORT
         WHERE p.COHORT = '%5$s'
-          AND m.FIRST_DT BETWEEN p.BASELINE_START AND p.BASELINE_END
+          AND m.EVENT_DT BETWEEN p.BASELINE_START AND p.BASELINE_END
         GROUP BY p.COHORT, p.LOT_NUM, m.CATEGORY
       )
       SELECT den.COHORT, den.LOT_NUM, 'BASELINE' AS PERIOD, cats.category,
@@ -169,7 +202,8 @@ mod_malignancy <- function(con, cfg, cohort) {
                    AND num.CATEGORY = cats.category",
       wrk("S_MALIGNANCY_RATES"),
       rate_sql("coalesce(num.N_PATIENTS, 0)", "den.PY", cfg),
-      wrk("S_MALIGNANCY"), wrk("S_PERIODS"), cohort$key, "S_CL_MALIG"),
+      wrk("S_MALIGNANCY"), wrk("S_PERIODS"), cohort$key, "S_CL_MALIG",
+      wrk("S_MALIGNANCY_DATES")),
       qc = sprintf("SELECT count(*) AS n_rows FROM %s
                     WHERE COHORT='%s' AND PERIOD='BASELINE'",
                    wrk("S_MALIGNANCY_RATES"), cohort$key))
