@@ -17,16 +17,32 @@ mod_patterns <- function(con, cfg, cohort) {
   # alive.
   db_exec(con, sprintf("
     CREATE OR REPLACE TEMPORARY VIEW s_line_end AS
-    SELECT s.PATID, p.COHORT, s.LOT_NUM, s.NEXT_LOT_START_DT,
-           s.IS_PROTOCOL_DISCON, p.FU_END,
+    -- Bounded by the cohort's own observation, exactly as 05_soc.R is. A line
+    -- that STARTS after FU_END is not a line this cohort saw, and a next line
+    -- beginning after FU_END is not therapy this cohort observed the patient
+    -- receiving - it is where the patient was censored. s7.8.2 allows
+    -- censoring as a terminal Sankey outcome; calling it `received_next_lot`
+    -- made S_TX_ATTRITION disagree with TTNT, which censors the same patient,
+    -- and with S_SOC, which drops the same line.
+    SELECT s.PATID, p.COHORT, s.LOT_NUM,
+           CASE WHEN s.NEXT_LOT_START_DT IS NOT NULL
+                 AND s.NEXT_LOT_START_DT <= p.FU_END
+                THEN s.NEXT_LOT_START_DT END AS NEXT_LOT_START_DT,
+           -- A discontinuation after follow-up is not an observed
+           -- discontinuation either.
+           CASE WHEN s.IS_PROTOCOL_DISCON = 1
+                 AND coalesce(s.PROTOCOL_DISCON_DT, s.LOT_BASE_END_DT) <= p.FU_END
+                THEN 1 ELSE 0 END AS IS_PROTOCOL_DISCON,
+           p.FU_END,
            CASE WHEN c.DEATH_DT IS NOT NULL AND c.DEATH_DT <= p.FU_END
                  AND (s.NEXT_LOT_START_DT IS NULL
+                      OR s.NEXT_LOT_START_DT > p.FU_END
                       OR c.DEATH_DT < s.NEXT_LOT_START_DT)
                 THEN 1 ELSE 0 END AS DIED_ON_LINE
     FROM %s s
     INNER JOIN %s p ON p.PATID = s.PATID AND p.COHORT = '%s'
     INNER JOIN %s c ON c.PATID = s.PATID
-    WHERE s.LOT_NUM >= p.LOT_NUM",
+    WHERE s.LOT_NUM >= p.LOT_NUM AND s.LOT_START_DT <= p.FU_END",
     wrk("S_SPINE"), wrk("S_PERIODS"), cohort$key, cfg$input_cohort_table))
 
   prepare_table(con, wrk("S_PATTERNS"),

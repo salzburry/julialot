@@ -182,8 +182,19 @@ with_retry <- function(fn, max_retries = study_config()$max_retries,
 # a run on a transient fault, which is recoverable; the alternative is doubled
 # counts nothing downstream can detect.
 sql_is_retry_safe <- function(st) {
-  head <- toupper(trimws(sub("^((--[^\n]*\n)|\\s)*", "", st)))
-  !grepl("^(INSERT|MERGE)\\b", head)
+  # Strip BOTH comment forms before looking at the verb. A line-comment prefix
+  # was handled and a /* block */ prefix was not, so a block-commented INSERT
+  # was classified retry-safe. Nothing emitted here uses that form today, which
+  # is exactly why it would go unnoticed if something started to.
+  head <- st
+  repeat {
+    was <- head
+    head <- sub("^\\s+", "", head)
+    head <- sub("^--[^\n]*(\n|$)", "", head)
+    head <- sub("^/\\*.*?\\*/", "", head)
+    if (identical(head, was)) break
+  }
+  !grepl("^(INSERT|MERGE)\\b", toupper(head))
 }
 
 # Execute. Accepts one statement or several, in one string or a vector.
@@ -240,8 +251,35 @@ run_step <- function(con, name, sql, qc = NULL, allow_empty = FALSE) {
 # `scope` is the WHERE that identifies this run's rows - usually
 # COHORT = '2L'. A module that writes the whole table in one statement uses
 # CREATE OR REPLACE TABLE instead and does not need either of these.
+# CREATE TABLE IF NOT EXISTS does not reconcile an existing table's schema, and
+# every INSERT here is positional. So a prefix carrying tables from an earlier
+# version of this package is a hazard: a table that gained a column fails the
+# insert with a column-count error, and one whose column was RENAMED accepts
+# the insert and keeps the old name with the new meaning - which is worse,
+# because nothing fails.
+#
+# The declared schema is therefore compared with what is there BEFORE the scope
+# is cleared, and a mismatch stops with the difference named. Deleting a
+# cohort's rows and then failing to reinsert them would leave the table short.
 ensure_table <- function(con, name, schema_sql) {
   db_exec(con, sprintf("CREATE TABLE IF NOT EXISTS %s (%s)", name, schema_sql))
+  want <- toupper(trimws(sub("\\s.*$", "", trimws(
+    strsplit(gsub("\n", " ", schema_sql), ",")[[1]]))))
+  have <- tryCatch({
+    d <- db_q(con, sprintf("DESCRIBE %s", name))
+    cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
+    if (length(cn)) toupper(trimws(as.character(d[[cn[1]]]))) else character(0)
+  }, error = function(e) character(0))
+  have <- have[nzchar(have) & !startsWith(have, "#")]
+  if (length(have) && !identical(have[seq_along(want)], want)) {
+    stop("SCHEMA ERROR: ", name, " exists with a different shape.\n",
+         "  declared: ", paste(want, collapse = ", "), "\n",
+         "  found:    ", paste(have, collapse = ", "), "\n",
+         "Inserts here are positional, so writing into it would put values in ",
+         "the wrong columns or fail on the count. This happens when an output ",
+         "prefix is reused across package versions. Drop the table, or run ",
+         "against a fresh OBJECT_PREFIX.", call. = FALSE)
+  }
   invisible(name)
 }
 clear_scope <- function(con, name, scope) {

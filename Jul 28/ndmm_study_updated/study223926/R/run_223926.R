@@ -87,7 +87,22 @@ build_223926 <- function(here) {
   preflight_codelists(mods, cfg)
 
   con <- connect_db(cfg)
-  on.exit(disconnect_db(con), add = TRUE)
+  # ONE cleanup handler, registered once, so ordering cannot go wrong.
+  #
+  # on.exit callbacks run in registration order, so a disconnect registered
+  # here and a failure-status write registered later ran in that order: the
+  # connection was already closed when the failure row was attempted, its
+  # error was swallowed by try(), and the run stayed recorded as `started`.
+  # The status write now happens inside the same handler, before the
+  # disconnect, and the disconnect is guaranteed by its own on.exit.
+  .run_state <- new.env(parent = emptyenv())
+  .run_state$ok <- FALSE
+  .run_state$meta <- NULL
+  on.exit({
+    if (!isTRUE(.run_state$ok) && !is.null(.run_state$meta))
+      try(.run_state$meta(), silent = TRUE)
+    disconnect_db(con)
+  }, add = TRUE)
   if (!nzchar(cfg$work_schema)) {
     cfg$work_schema <- current_work_schema(con)
     set_study_config(cfg)
@@ -100,15 +115,12 @@ build_223926 <- function(here) {
   rid <- new_run_id()
   write_run_metadata(con, cfg, cohorts, mods, lot_run, deviations, "started",
                      run_id = rid)
-  # A build that dies mid-way leaves a `started` row and nothing else, which
-  # reads as a run still going. It gets a `failed` row instead, under the same
-  # id, and the error is re-raised unchanged.
-  ok <- FALSE
-  on.exit({
-    if (!ok) try(write_run_metadata(con, cfg, cohorts, mods, lot_run,
-                                    deviations, "failed", run_id = rid),
-                 silent = TRUE)
-  }, add = TRUE)
+  # A build that dies mid-way would otherwise leave a `started` row and nothing
+  # else, which reads as a run still going. The handler above writes `failed`
+  # under the same id while the connection is still open.
+  .run_state$meta <- function()
+    write_run_metadata(con, cfg, cohorts, mods, lot_run, deviations, "failed",
+                       run_id = rid)
 
   build_inputs(con, cfg, mods)
 
@@ -128,7 +140,7 @@ build_223926 <- function(here) {
 
   write_run_metadata(con, cfg, cohorts, mods, lot_run, deviations, "complete",
                      run_id = rid)
-  ok <- TRUE
+  .run_state$ok <- TRUE
   log_msg(SEP)
   log_msg("complete: ", length(cohorts), " cohort(s), ", length(mods),
           " module(s)")
