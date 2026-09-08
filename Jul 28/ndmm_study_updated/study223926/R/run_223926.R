@@ -35,6 +35,7 @@ source_modules <- function(here) {
 # shipped default takes was never emitted and never checked, and it could not
 # run at all.
 build_inputs <- function(con, cfg, mods) {
+  check_cohort_table(con, cfg)
   build_enroll_spans(con, cfg)
 
   # A full medical + rx scan, so only when a follow-up reading actually reads

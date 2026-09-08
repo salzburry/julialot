@@ -24,7 +24,7 @@ mod_malignancy <- function(con, cfg, cohort) {
     cohort$key)
   prepare_table(con, wrk("S_MALIGNANCY_RATES"),
     "COHORT string, LOT_NUM int, PERIOD string, CATEGORY string,
-     N_PATIENTS int, PERSON_YEARS double, RATE double", cohort$key)
+     N_PATIENTS int, N_AT_RISK int, PERSON_YEARS double, RATE double", cohort$key)
   run_step(con, paste0("malignancy_", cohort$key), sprintf("
     INSERT INTO %1$s
     WITH dates AS (
@@ -135,7 +135,9 @@ mod_malignancy <- function(con, cfg, cohort) {
     WITH cats AS (SELECT DISTINCT category FROM %6$s),
     den AS (
       SELECT p.COHORT, p.LOT_NUM, c.category,
-             sum(CASE WHEN h.PATID IS NOT NULL THEN 0 ELSE p.PERIOD_PY END) AS PY
+             sum(CASE WHEN h.PATID IS NOT NULL THEN 0 ELSE p.PERIOD_PY END) AS PY,
+             count(DISTINCT CASE WHEN h.PATID IS NOT NULL THEN NULL
+                                 ELSE p.PATID END) AS N_AT_RISK
       FROM %4$s p
       CROSS JOIN cats c
       LEFT JOIN s_malig_prior h
@@ -157,8 +159,8 @@ mod_malignancy <- function(con, cfg, cohort) {
       GROUP BY p.COHORT, p.LOT_NUM, m.CATEGORY
     )
     SELECT den.COHORT, den.LOT_NUM, 'TREATMENT' AS PERIOD, den.category,
-           coalesce(num.N_PATIENTS, 0) AS N_PATIENTS, den.PY AS PERSON_YEARS,
-           %2$s AS RATE
+           coalesce(num.N_PATIENTS, 0) AS N_PATIENTS, den.N_AT_RISK,
+           den.PY AS PERSON_YEARS, %2$s AS RATE
     FROM den
     LEFT JOIN num ON num.COHORT = den.COHORT AND num.LOT_NUM = den.LOT_NUM
                  AND num.CATEGORY = den.category",
@@ -178,7 +180,8 @@ mod_malignancy <- function(con, cfg, cohort) {
       INSERT INTO %1$s
       WITH cats AS (SELECT DISTINCT category FROM %6$s),
       den AS (
-        SELECT COHORT, LOT_NUM, sum(BASELINE_PY) AS PY
+        SELECT COHORT, LOT_NUM, sum(BASELINE_PY) AS PY,
+               count(DISTINCT PATID) AS N_AT_RISK
         FROM %4$s WHERE COHORT = '%5$s' GROUP BY COHORT, LOT_NUM
       ),
       num AS (
@@ -195,7 +198,7 @@ mod_malignancy <- function(con, cfg, cohort) {
         GROUP BY p.COHORT, p.LOT_NUM, m.CATEGORY
       )
       SELECT den.COHORT, den.LOT_NUM, 'BASELINE' AS PERIOD, cats.category,
-             coalesce(num.N_PATIENTS, 0), den.PY, %2$s
+             coalesce(num.N_PATIENTS, 0), den.N_AT_RISK, den.PY, %2$s
       FROM den
       CROSS JOIN cats
       LEFT JOIN num ON num.COHORT = den.COHORT AND num.LOT_NUM = den.LOT_NUM

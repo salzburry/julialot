@@ -30,22 +30,34 @@ CRITERIA_1L <- c("I1_mm_dx", "I2_age", "I3_eligible_1l_tx", "I4_ce_pre",
                  "I5_followup", "X1_prior_mm_tx", "X2_other_cancer",
                  "X3_pregnancy", "X4_belantamab")
 
-# table -> the count the rule reads, and the values that go with it when a cell
+# table -> the count the rule TESTS, and the values that go with it when a cell
 # is suppressed. Spec data, so a module that adds a column cannot quietly leave
 # it unsuppressed - tests/run_tests.R checks every declared column exists and
 # every table with a patient count is declared.
+#
+# `n_col` is the POPULATION the row describes, not the number of patients who
+# had the event. s7.2.3 and s7.8 restrict analysis by the number of patients in
+# a cohort or stratum; a rate table's N_PATIENTS is the event-positive count,
+# and testing that instead deleted a perfectly reportable result - one event
+# among a thousand at-risk patients was suppressed as though the stratum held
+# one person - while leaving a small stratum published whenever most of it had
+# the event. The rate tables therefore test N_AT_RISK, which every one of them
+# now carries, and N_PATIENTS is suppressed as a value alongside the rest.
+#
+# The count-only tables (patterns, switching, attrition) have no separate
+# denominator: their N_PATIENTS IS the stratum, so it is both.
 SUPPRESSION_SPEC <- list(
   S_SAFETY_RATES = list(
-    n_col = "N_PATIENTS",
-    value_cols = c("N_EVENTS", "N_AT_RISK", "PERSON_YEARS", "RATE",
+    n_col = "N_AT_RISK",
+    value_cols = c("N_PATIENTS", "N_EVENTS", "PERSON_YEARS", "RATE",
                    "RATE_LO", "RATE_HI")),
   S_HCRU_RATES = list(
-    n_col = "N_PATIENTS",
-    value_cols = c("N_EVENTS", "PERSON_YEARS", "RATE", "MEAN_LOS",
-                   "MEDIAN_LOS", "N_LOS_EXCLUDED")),
+    n_col = "N_AT_RISK",
+    value_cols = c("N_PATIENTS", "N_EVENTS", "PERSON_YEARS", "RATE",
+                   "MEAN_LOS", "MEDIAN_LOS", "N_LOS_EXCLUDED")),
   S_MALIGNANCY_RATES = list(
-    n_col = "N_PATIENTS",
-    value_cols = c("PERSON_YEARS", "RATE")),
+    n_col = "N_AT_RISK",
+    value_cols = c("N_PATIENTS", "PERSON_YEARS", "RATE")),
   S_PATTERNS = list(
     n_col = "N_PATIENTS",
     value_cols = c("PCT")),

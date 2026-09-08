@@ -171,6 +171,39 @@ comorbid_subgroup_flags <- function(con, cfg, cohort) {
 # getting a column of zeros that reads as a cohort with no frail patients.
 frailty_index <- function(con, cfg, cohort) {
   cl <- load_codelist("frailty_kim2018.csv", cfg)
+  # Two things this implementation cannot do, checked before it runs rather
+  # than discovered in the output.
+  #
+  # An INTERCEPT applies to every patient, matched or not. The score below is
+  # built by matching each row to a diagnosis code, so an intercept row can
+  # only be added to a patient who matched it - which no patient does, because
+  # an intercept has no code. It would silently drop out of every score.
+  #
+  # A NON-DIAGNOSIS feature - a procedure, a pharmacy fill, a DME claim - has
+  # to be looked up in its own table. Every row here is matched against
+  # MED_DIAGNOSIS, so a feature typed anything else matches nothing and its
+  # coefficient is silently omitted.
+  #
+  # Either is a wrong score reported as a score, so either stops the run.
+  vv <- tolower(trimws(as.character(cl$variable)))
+  if (any(vv == "intercept"))
+    stop("FRAILTY ERROR: frailty_kim2018.csv carries an `intercept` row, and ",
+         "this implementation matches every row to a diagnosis code - so the ",
+         "intercept would apply to nobody and every score would be short by ",
+         "it. The intercept has to be added to all patients before this ",
+         "module can be used. ../OPEN_QUESTIONS.md Q15 (Annex 7).",
+         call. = FALSE)
+  if ("code_type" %in% names(cl)) {
+    ct <- toupper(trimws(as.character(cl$code_type)))
+    bad <- sort(unique(ct[nzchar(ct) & !ct %in% c("ICD9DIAG", "ICD10DIAG")]))
+    if (length(bad))
+      stop("FRAILTY ERROR: frailty_kim2018.csv carries feature(s) of ",
+           "code_type ", paste(bad, collapse = ", "), ", and this ",
+           "implementation reads MED_DIAGNOSIS only - those coefficients ",
+           "would match nothing and be dropped from every score without a ",
+           "trace. Route them to their own source tables before enabling ",
+           "FRAILTY. ../OPEN_QUESTIONS.md Q15 (Annex 7).", call. = FALSE)
+  }
   reg <- register_codelist_view(con, cl, "S_CL_FRAILTY",
                                 cols = c("variable", "coefficient", "code_type",
                                          "code", "icd_family"))

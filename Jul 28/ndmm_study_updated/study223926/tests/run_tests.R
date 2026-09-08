@@ -608,6 +608,73 @@ cat("\nregressions from the adversarial review\n")
   ok(grepl("copy_to", rv),
      "a code list of thousands of rows is copied, not built as SQL text")
   sf <- paste(capture.output(print(mod_safety)), collapse = "\n")
+  # The input contract. A cohort table of patient ids and eligibility flags -
+  # which BUILD_DELTA once recommended for the secondary 2L cohort - carries no
+  # index date and no end dates, so it cannot drive a single module. It has to
+  # be refused at the first step, by name, not five modules later with an
+  # unresolved-column error that names neither the table nor the setting.
+  flags_only <- c("PATID", "CE_PRE_LOT1_12MO", "CE_LOT1_FU", "NO_BELANTAMAB",
+                  "NO_PRIOR_MM_TX", "NO_OTHER_CANCER_PRE_LOT1", "NO_PREGNANCY")
+  e_thin <- errs(with_env(base_env, {
+    env <- new.env(parent = environment(check_cohort_table))
+    env$db_q <- function(con, sql)
+      data.frame(col_name = flags_only, stringsAsFactors = FALSE)
+    f <- check_cohort_table; environment(f) <- env
+    f(NULL, cfg0())
+  }))
+  ok(!is.na(e_thin) && grepl("INDEX_DATE", e_thin),
+     "a cohort table of ids and flags is refused, naming what it lacks")
+  e_full <- errs(with_env(base_env, {
+    env <- new.env(parent = environment(check_cohort_table))
+    env$db_q <- function(con, sql)
+      data.frame(col_name = c(COHORT_TABLE_REQUIRED, "EXTRA"),
+                 stringsAsFactors = FALSE)
+    f <- check_cohort_table; environment(f) <- env
+    f(NULL, cfg0())
+  }))
+  ok(is.na(e_full), "and a table carrying every required column is accepted")
+
+  # Two endpoints whose DEFINITION this package cannot implement from the code
+  # list alone. Both must stop rather than report something else under the
+  # protocol's name; the fixtures are the valid form, so the invalid one is
+  # constructed here.
+  hosp_cl <- data.frame(
+    condition = c("severe_infection_resulting_in_hospitalisation", "anemia"),
+    domain = c("infectious", "other"), acute_chronic = c("Acute", "Chronic"),
+    code_type = "ICD10DIAG", code = c("Z119", "D649"), icd_family = "ICD10",
+    stringsAsFactors = FALSE)
+  e_hosp <- errs(with_env(base_env, {
+    env <- new.env(parent = environment(mod_safety))
+    env$load_codelist <- function(...) hosp_cl
+    f <- mod_safety; environment(f) <- env
+    f(NULL, cfg0(), COHORTS[["1L"]])
+  }))
+  ok(!is.na(e_hosp) && grepl("defined by an admission", e_hosp),
+     "a hospitalisation-defined endpoint stops rather than counting outpatient codes")
+
+  frail_cl <- data.frame(
+    variable = c("weight_loss", "durable_medical_equipment"),
+    coefficient = c(0.05, 0.1), code_type = c("ICD10DIAG", "HCPCS"),
+    code = c("Z400", "E0143"), icd_family = "ICD10", stringsAsFactors = FALSE)
+  e_frail <- errs(with_env(base_env, {
+    env <- new.env(parent = environment(frailty_index))
+    env$load_codelist <- function(...) frail_cl
+    f <- frailty_index; environment(f) <- env
+    f(NULL, cfg0(), COHORTS[["1L"]])
+  }))
+  ok(!is.na(e_frail) && grepl("code_type HCPCS", e_frail),
+     "a frailty feature this module cannot source stops rather than scoring zero")
+  int_cl <- frail_cl; int_cl$variable <- c("intercept", "weight_loss")
+  int_cl$code_type <- "ICD10DIAG"
+  e_int <- errs(with_env(base_env, {
+    env <- new.env(parent = environment(frailty_index))
+    env$load_codelist <- function(...) int_cl
+    f <- frailty_index; environment(f) <- env
+    f(NULL, cfg0(), COHORTS[["1L"]])
+  }))
+  ok(!is.na(e_int) && grepl("intercept", e_int),
+     "and so does an intercept it would apply to nobody")
+
   ok(grepl("canonical_acute_chronic", sf),
      "acute_chronic is resolved to one rule before it reaches SQL")
   ok(!grepl("LIKE '%acute%'", sf, fixed = TRUE),

@@ -18,7 +18,7 @@ peripheral_neuropathy,neurologic,Chronic,ICD10DIAG,Z115,ICD10
 parkinsons_disease,neurologic,Chronic,ICD10DIAG,Z116,ICD10
 other_movement_disorders,neurologic,Chronic,ICD10DIAG,Z117,ICD10
 seizures,neurologic,Acute,ICD10DIAG,Z118,ICD10
-severe_infection_resulting_in_hospitalisation,infectious,Acute,ICD10DIAG,Z119,ICD10
+severe_infection,infectious,Acute,ICD10DIAG,Z119,ICD10
 lower_respiratory_or_lung_infection,infectious,Acute,ICD10DIAG,Z120,ICD10
 thrombocytopenia,other,Chronic,ICD10DIAG,Z121,ICD10
 anemia,other,Chronic,ICD10DIAG,Z122,ICD10

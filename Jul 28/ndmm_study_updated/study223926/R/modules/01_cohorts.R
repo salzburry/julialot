@@ -173,6 +173,45 @@ mod_attrition <- function(con, cfg, cohort) {
 
 # The enrolment spans, built once from the raw table with the protocol's own
 # gap allowance. Not the CDM rollup - see above.
+# The columns this package reads off INPUT_COHORT_TABLE, checked before any of
+# it runs.
+#
+# Every module indexes on the cohort table: 02_periods reads INDEX_DATE,
+# windows.R reads ENDDATE and ENDDATE_CE and DEATH_DT, 03_demographics reads
+# YRDOB and GDR_CD, 08_malignancy reads MM_DX_DT. A table that does not carry
+# them fails deep inside a module with an unresolved-column error naming
+# neither the table nor the setting that chose it.
+#
+# It also refuses one specific mistake. BUILD_DELTA once recommended pointing
+# this setting at the cohort build's NDMM_FLAGS_ALL to obtain a wider
+# population for the secondary 2L cohort. That table is PATID plus seven
+# eligibility flags and nothing else - no index date, no end dates, no
+# demographics - so it cannot drive this package or the LOT engine, and the
+# recommendation was wrong. The check below is what makes that visible at the
+# first step rather than the fifth module.
+COHORT_TABLE_REQUIRED <- c("PATID", "INDEX_DATE", "ENDDATE", "ENDDATE_CE",
+                           "DEATH_DT", "MM_DX_DT", "YRDOB", "GDR_CD")
+
+check_cohort_table <- function(con, cfg) {
+  cols <- tryCatch({
+    d <- db_q(con, sprintf("DESCRIBE %s", cfg$input_cohort_table))
+    cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
+    if (length(cn)) toupper(trimws(as.character(d[[cn[1]]]))) else character(0)
+  }, error = function(e)
+    stop("INPUT ERROR: could not describe INPUT_COHORT_TABLE '",
+         cfg$input_cohort_table, "': ", conditionMessage(e), call. = FALSE))
+  missing <- setdiff(COHORT_TABLE_REQUIRED, cols)
+  if (length(missing))
+    stop("INPUT ERROR: INPUT_COHORT_TABLE '", cfg$input_cohort_table,
+         "' is missing column(s) this package reads: ",
+         paste(missing, collapse = ", "),
+         ".\nEvery cohort is indexed on this table, so a table carrying only ",
+         "patient ids and eligibility flags cannot drive the run. Point ",
+         "INPUT_COHORT_TABLE at a materialised cohort with the full schema.",
+         call. = FALSE)
+  invisible(cols)
+}
+
 build_enroll_spans <- function(con, cfg) {
   run_step(con, "enroll_spans", sprintf("
     CREATE OR REPLACE TABLE %s AS

@@ -25,6 +25,28 @@ mod_safety <- function(con, cfg, cohort) {
   # alone, so a condition listed under two domains would get a row per domain
   # each carrying the FULL person-time and the FULL event count - and summing
   # the table would double it.
+  # A condition whose DEFINITION is a setting, not just a code.
+  #
+  # s7.8.1 names `severe infection resulting in hospitalization`. Every safety
+  # condition here is extracted from MED_DIAGNOSIS rows alone, with no link to
+  # CONFINEMENT or to an inpatient claim, so an outpatient infection code would
+  # satisfy a hospitalisation-defined endpoint. That is not a code list this
+  # package can be handed - it is a phenotype with a setting requirement the
+  # extraction does not implement.
+  #
+  # Rather than report it wrongly, a condition whose own name says
+  # hospitalisation stops the run until that linkage exists.
+  hosp_named <- unique(trimws(as.character(
+    cl$condition[grepl("hospitali[sz]", cl$condition, ignore.case = TRUE)])))
+  if (length(hosp_named))
+    stop("SAFETY ERROR: ", paste(hosp_named, collapse = ", "),
+         " is defined by an admission, and this module extracts every ",
+         "condition from diagnosis rows alone - so an outpatient claim ",
+         "carrying the code would count as the outcome. The endpoint needs a ",
+         "CONFINEMENT or inpatient-claim linkage before it can be reported. ",
+         "Remove the row to run the other conditions, or supply the ",
+         "phenotype. See OPEN_QUESTIONS Q15 (Annex 3).", call. = FALSE)
+
   grp <- unique(cl[, c("condition", "domain", "acute_chronic")])
   bad <- unique(grp$condition[duplicated(grp$condition)])
   if (length(bad))
