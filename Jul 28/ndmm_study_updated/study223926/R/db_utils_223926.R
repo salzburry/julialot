@@ -261,15 +261,36 @@ run_step <- function(con, name, sql, qc = NULL, allow_empty = FALSE) {
 # The declared schema is therefore compared with what is there BEFORE the scope
 # is cleared, and a mismatch stops with the difference named. Deleting a
 # cohort's rows and then failing to reinsert them would leave the table short.
-# Normalised type names, so a declared `string` and a warehouse `VARCHAR` are
-# the same type and a declared `int` and a stored `bigint` are not.
+# Type names reduced to genuine ALIASES only - spellings of the same type -
+# and nothing else.
+#
+# The first version of this collapsed whole families: FLOAT and REAL became
+# DOUBLE, VARCHAR(n) and CHAR(n) became STRING, TIMESTAMP_NTZ became TIMESTAMP.
+# Those are not spellings of one type. A stored FLOAT is single precision, so
+# accepting it for a declared DOUBLE lets the warehouse silently narrow every
+# person-year and rate written into it - 16,777,217 comes back as 16,777,216.
+# A bounded VARCHAR(n) rejects an over-length write, and it would do so AFTER
+# the cohort scope had been deleted. TIMESTAMP_NTZ carries no zone.
+#
+# So a parameterised type keeps its parameters and therefore never matches an
+# unparameterised declaration, and each family below lists only the names that
+# denote exactly the same storage. Anything unrecognised is left as written, so
+# an unknown type is a mismatch rather than a silent pass.
 .sql_type_norm <- function(x) {
-  x <- toupper(trimws(sub("\\(.*$", "", as.character(x))))
-  x[x %in% c("STRING", "VARCHAR", "TEXT", "CHAR")] <- "STRING"
-  x[x %in% c("INT", "INTEGER")] <- "INT"
-  x[x %in% c("BIGINT", "LONG")] <- "BIGINT"
-  x[x %in% c("DOUBLE", "FLOAT8", "REAL", "FLOAT")] <- "DOUBLE"
-  x[x %in% c("TIMESTAMP", "TIMESTAMP_NTZ", "DATETIME")] <- "TIMESTAMP"
+  x <- toupper(trimws(as.character(x)))
+  x <- gsub("\\s+", " ", x)
+  alias <- function(v, canon, names) ifelse(v %in% names, canon, v)
+  # Unbounded character types only. VARCHAR(2) keeps its length and will not
+  # match a declared STRING, which is the point.
+  x <- alias(x, "STRING",    c("STRING", "VARCHAR", "TEXT"))
+  x <- alias(x, "INT",       c("INT", "INTEGER", "INT4"))
+  x <- alias(x, "BIGINT",    c("BIGINT", "LONG", "INT8"))
+  x <- alias(x, "SMALLINT",  c("SMALLINT", "SHORT", "INT2"))
+  x <- alias(x, "TINYINT",   c("TINYINT", "BYTE"))
+  # DOUBLE and FLOAT are deliberately NOT merged.
+  x <- alias(x, "DOUBLE",    c("DOUBLE", "DOUBLE PRECISION", "FLOAT8"))
+  x <- alias(x, "FLOAT",     c("FLOAT", "REAL", "FLOAT4"))
+  x <- alias(x, "BOOLEAN",   c("BOOLEAN", "BOOL"))
   x
 }
 
@@ -297,9 +318,18 @@ ensure_table <- function(con, name, schema_sql) {
   # DESCRIBE appends partition/metadata blocks after a blank or `#` row.
   keep <- nzchar(have_col) & !startsWith(have_col, "#")
   if (any(!keep)) keep <- keep & cumsum(!keep) == 0
-  have_typ <- if (length(tn))
-    .sql_type_norm(as.character(d[[tn[1]]])[keep]) else NULL
   have_col <- have_col[keep]
+  # A DESCRIBE without a type column is not a licence to compare names only.
+  # Every warehouse this runs against returns data_type; its absence means the
+  # response is not the one this check was written for, and the safe reading of
+  # an unrecognised response is to stop rather than to clear rows on the
+  # strength of half a comparison.
+  if (!length(tn))
+    stop("SCHEMA ERROR: the schema of ", name, " came back without a type ",
+         "column (found: ", paste(names(d), collapse = ", "),
+         "). Column names alone cannot establish that writing into it is ",
+         "safe, so its rows are not cleared.", call. = FALSE)
+  have_typ <- .sql_type_norm(as.character(d[[tn[1]]])[keep])
 
   if (!length(have_col))
     stop("SCHEMA ERROR: ", name, " reported no columns after being created. ",
@@ -310,14 +340,12 @@ ensure_table <- function(con, name, schema_sql) {
   # length(want) names accepted a table with extra trailing columns, and the
   # positional insert then failed on the column count - after the scope had
   # already been deleted.
-  bad <- !identical(have_col, want_col) ||
-    (!is.null(have_typ) && !identical(have_typ, want_typ))
+  bad <- !identical(have_col, want_col) || !identical(have_typ, want_typ)
   if (bad)
     stop("SCHEMA ERROR: ", name, " exists with a different shape.\n",
          "  declared: ", paste(paste(want_col, want_typ), collapse = ", "),
          "\n  found:    ",
-         paste(if (is.null(have_typ)) have_col else paste(have_col, have_typ),
-               collapse = ", "), "\n",
+         paste(paste(have_col, have_typ), collapse = ", "), "\n",
          "Inserts here are positional, so writing into it would put values in ",
          "the wrong columns, fail on the count, or silently reuse a renamed ",
          "one. This happens when an output prefix is reused across package ",

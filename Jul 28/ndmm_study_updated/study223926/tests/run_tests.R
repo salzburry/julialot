@@ -629,21 +629,28 @@ cat("\nregressions from the adversarial review\n")
   # RENAMED accepts the insert and keeps the old name with the new meaning -
   # which is worse, because nothing fails. Both must stop BEFORE the scope is
   # cleared, or the cohort's rows are deleted and not replaced.
-  ens <- function(found)
+  # A warehouse DESCRIBE always returns types, so the fixture does too; the
+  # missing-type response is tested separately below.
+  ens <- function(found, types = NULL) {
+    if (is.null(types))
+      types <- ifelse(found %in% c("N_AT_RISK", "EXTRA"), "int", "string")
     errs(with_env(base_env, {
       env <- new.env(parent = environment(ensure_table))
       env$db_exec <- function(con, sql) invisible(0L)
       env$db_q <- function(con, sql)
-        data.frame(col_name = found, stringsAsFactors = FALSE)
+        data.frame(col_name = found, data_type = types,
+                   stringsAsFactors = FALSE)
       f <- ensure_table; environment(f) <- env
       f(NULL, "t", "PATID string, COHORT string, N_AT_RISK int")
     }))
+  }
   ok(is.na(ens(c("PATID", "COHORT", "N_AT_RISK"))),
      "a table already matching the declared shape is written to")
   ok(!is.na(ens(c("PATID", "COHORT"))),
      "one missing a newly added column stops before its rows are cleared")
-  ok(grepl("LOT_BASE_DISCON_DT", ens(c("PATID", "COHORT", "LOT_BASE_DISCON_DT"))
-           %||% ""),
+  ok(grepl("LOT_BASE_DISCON_DT",
+           ens(c("PATID", "COHORT", "LOT_BASE_DISCON_DT"),
+               c("string", "string", "int")) %||% ""),
      "and a renamed column is caught rather than silently reused")
   ok(!is.na(ens(character(0))),
      "a table whose schema cannot be read is not cleared either")
@@ -666,6 +673,40 @@ cat("\nregressions from the adversarial review\n")
   ok(!is.na(ens_t(c("PATID", "COHORT", "N_AT_RISK"),
                   c("string", "string", "double"))),
      "while an incompatible type is caught, which names alone could not be")
+  # Types that are the same thing spelled differently, against types that are
+  # a different thing. Collapsing whole families let a stored FLOAT satisfy a
+  # declared DOUBLE, which narrows every rate and person-year written into it,
+  # and let a bounded VARCHAR(n) satisfy a declared STRING, which rejects an
+  # over-length write only AFTER the scope has been deleted.
+  ok(is.na(ens_t(c("PATID", "COHORT", "N_AT_RISK"),
+                 c("varchar", "text", "integer"))),
+     "unbounded character and integer spellings are the same type")
+  ok(!is.na(ens_t(c("PATID", "COHORT", "N_AT_RISK"),
+                  c("varchar(2)", "string", "int"))),
+     "a bounded VARCHAR(n) is not an unbounded STRING")
+  ok(!is.na(ens_t(c("PATID", "COHORT", "N_AT_RISK"),
+                  c("char(2)", "string", "int"))),
+     "nor is a fixed CHAR(n)")
+  ok(!identical(.sql_type_norm("float"), .sql_type_norm("double")),
+     "FLOAT is not DOUBLE - single precision would silently narrow a rate")
+  ok(!identical(.sql_type_norm("real"), .sql_type_norm("double")),
+     "and neither is REAL")
+  ok(!identical(.sql_type_norm("timestamp_ntz"), .sql_type_norm("timestamp")),
+     "and a zoneless timestamp is not a timestamp")
+  ok(identical(.sql_type_norm("double precision"), .sql_type_norm("double")),
+     "while genuine spellings of one type still match")
+  e_notype <- errs(with_env(base_env, {
+    env <- new.env(parent = environment(ensure_table))
+    env$db_exec <- function(con, sql) invisible(0L)
+    env$db_q <- function(con, sql)
+      data.frame(col_name = c("PATID", "COHORT", "N_AT_RISK"),
+                 stringsAsFactors = FALSE)
+    f <- ensure_table; environment(f) <- env
+    f(NULL, "t", "PATID string, COHORT string, N_AT_RISK int")
+  }))
+  ok(!is.na(e_notype) && grepl("without a type column", e_notype),
+     "a DESCRIBE with no type column stops rather than comparing names alone")
+
   e_read <- errs(with_env(base_env, {
     env <- new.env(parent = environment(ensure_table))
     env$db_exec <- function(con, sql) invisible(0L)
