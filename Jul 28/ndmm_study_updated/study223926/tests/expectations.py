@@ -207,6 +207,27 @@ EXPECTATIONS = [
     ("a line starting after the cohort's follow-up is not a cohort line",
      "SELECT count(*) FROM wk.S_SOC WHERE COHORT='1L' AND PATID='P6'",
      [(1,)]),
+    # The funnel has to end where the cohort begins. When the exclusions became
+    # effective here, the funnel still accumulated only enrolment and
+    # follow-up, so its last N_REMAINING could exceed the cohort it described.
+    ("the funnel's last step equals the cohort it describes",
+     "SELECT f.N_REMAINING - (SELECT count(*) FROM wk.S_COHORT "
+     "  WHERE COHORT='1L' AND IN_COHORT=1) "
+     "FROM wk.S_ATTRITION f WHERE f.COHORT='1L' "
+     "AND f.STEP = (SELECT max(STEP) FROM wk.S_ATTRITION WHERE COHORT='1L')",
+     [(0,)]),
+    ("and so does the secondary cohort's",
+     "SELECT f.N_REMAINING - (SELECT count(*) FROM wk.S_COHORT "
+     "  WHERE COHORT='SEC2L' AND IN_COHORT=1) "
+     "FROM wk.S_ATTRITION f WHERE f.COHORT='SEC2L' "
+     "AND f.STEP = (SELECT max(STEP) FROM wk.S_ATTRITION WHERE COHORT='SEC2L')",
+     [(0,)]),
+    # And the periods table, which is built from IN_COHORT = 1, agrees too.
+    ("and the periods built from it carry the same patients",
+     "SELECT count(DISTINCT PATID) - (SELECT count(*) FROM wk.S_COHORT "
+     "  WHERE COHORT='1L' AND IN_COHORT=1) "
+     "FROM wk.S_PERIODS WHERE COHORT='1L'",
+     [(0,)]),
     # S_MALIGNANCY_DATES is a per-cohort partition, not a table replaced on
     # every invocation. CREATE OR REPLACE inside a module that runs once per
     # cohort left only the last cohort's rows in a registered output.

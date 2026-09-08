@@ -188,8 +188,23 @@ mod_soc <- function(con, cfg, cohort) {
            -- a transplant line is Annex 2's to give, and this names the
            -- modality without inventing a category.
            CASE
-             WHEN trim(coalesce(REGIMEN, '')) = '' AND CART_FLG = 1
-               THEN 'CAR-T (no regimen recorded)'
+             -- CAR-T FIRST, and not only when the drug string is empty. The
+             -- engine collects non-steroid consolidation drugs in a CAR-T
+             -- line's capture window and keeps LOT_CART_LOT_FLG set, so a
+             -- CAR-T line can carry a regimen - and reading the regimen first
+             -- classified it as an ordinary doublet, which then propagated
+             -- into the SOC counts, the patterns and the switch edges. The
+             -- modality is what the line IS; the consolidation drugs are what
+             -- was given inside it, and REGIMEN still reports them.
+             --
+             -- Unlike the transplant labels below this is not a placeholder:
+             -- s7.2.2 names CAR-T, inclusive of all targets, as a later-line
+             -- SOC category in its own right.
+             WHEN CART_FLG = 1 THEN 'CAR-T'
+             -- The transplant labels stay conditional on an empty regimen,
+             -- because their protocol category is Annex 2's to give and there
+             -- is no basis here for overriding a recorded regimen with a
+             -- provisional name.
              WHEN trim(coalesce(REGIMEN, '')) = '' AND ALLO_FLG = 1
                THEN 'Allogeneic SCT (no regimen recorded)'
              WHEN trim(coalesce(REGIMEN, '')) = '' AND AUTO_FLG = 1

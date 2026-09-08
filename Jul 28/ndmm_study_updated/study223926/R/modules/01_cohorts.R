@@ -84,7 +84,9 @@ mod_cohorts <- function(con, cfg, cohort) {
   # result of reading a table an INSERT is writing.
   prepare_table(con, wrk("S_COHORT"),
     "PATID string, COHORT string, LOT_NUM int, INDEX_DATE date,
-     MET_N1 int, MET_N2 int, MET_I5 int, IN_COHORT int", cohort$key)
+     MET_N1 int, MET_N2 int, MET_I5 int,
+     MET_X1 int, MET_X2 int, MET_X3 int, MET_X4 int, IN_COHORT int",
+    cohort$key)
   if (!is.na(cohort$nested_in)) {
     db_exec(con, sprintf(
       "CREATE OR REPLACE TEMPORARY VIEW s_parent_cohort AS
@@ -99,6 +101,10 @@ mod_cohorts <- function(con, cfg, cohort) {
            1 AS MET_N1,
            CASE WHEN %3$s THEN 1 ELSE 0 END AS MET_N2,
            CASE WHEN %4$s THEN 1 ELSE 0 END AS MET_I5,
+           CASE WHEN %13$s THEN 1 ELSE 0 END AS MET_X1,
+           CASE WHEN %14$s THEN 1 ELSE 0 END AS MET_X2,
+           CASE WHEN %15$s THEN 1 ELSE 0 END AS MET_X3,
+           CASE WHEN %16$s THEN 1 ELSE 0 END AS MET_X4,
            CASE WHEN (%3$s) AND (%4$s) AND (%12$s) THEN 1 ELSE 0 END AS IN_COHORT
     FROM %5$s s
     INNER JOIN %6$s c ON c.PATID = s.PATID
@@ -111,8 +117,11 @@ mod_cohorts <- function(con, cfg, cohort) {
     wrk("S_COHORT"), cohort$key, ce_pre, fu_pred, wrk("S_SPINE"),
     cfg$input_cohort_table, wrk("S_ENROLL_SPANS"), wrk("S_FU_CLAIMS"),
     parent, cohort$lot_num, floor_sql,
-    cohort_flag_pred(cohort, get0("cols", envir = .input_cols,
-                                  ifnotfound = character(0)))),
+    cohort_flag_pred(cohort, .cohort_cols()),
+    cohort_flag_pred_one("X1_prior_mm_tx", .cohort_cols()),
+    cohort_flag_pred_one("X2_other_cancer", .cohort_cols()),
+    cohort_flag_pred_one("X3_pregnancy", .cohort_cols()),
+    cohort_flag_pred_one("X4_belantamab", .cohort_cols())),
     qc = sprintf("SELECT count(*) AS n_indexed, sum(IN_COHORT) AS n_in_cohort
                   FROM %s WHERE COHORT = '%s'", wrk("S_COHORT"), cohort$key))
 }
@@ -146,9 +155,16 @@ mod_attrition <- function(con, cfg, cohort) {
   for (i in seq_along(cohort$criteria)) {
     k <- cohort$criteria[i]
     here <- k %in% names(HERE_PRED)
+    # An exclusion applied here from a retained flag is a step this funnel can
+    # show a loss at. Without it the funnel accumulated only the enrolment and
+    # follow-up predicates, so its final count exceeded the cohort it was
+    # describing: N_REMAINING said 2 where S_COHORT and S_PERIODS said 1.
+    flagged <- k %in% names(FLAG_PRED)
     src <- CRITERION_SOURCE[[k]]
-    applied_by <- if (here && src != "here") paste0(src, "+here") else src
+    applied_by <- if ((here || flagged) && src != "here")
+      paste0(src, "+here") else src
     if (here) cum <- c(cum, HERE_PRED[[k]])
+    if (flagged) cum <- c(cum, FLAG_PRED[[k]])
     where <- sprintf("COHORT = '%s'%s", cohort$key,
                      if (length(cum))
                        paste0(" AND ", paste(cum, collapse = " AND ")) else "")
@@ -216,14 +232,40 @@ CRITERION_FLAG <- c(
   X4_belantamab   = "NO_BELANTAMAB_PRE_LOT1")
 
 .input_cols <- new.env(parent = emptyenv())
+.cohort_cols <- function()
+  get0("cols", envir = .input_cols, ifnotfound = character(0))
+
+# criterion -> the S_COHORT column carrying its verdict, for the funnel. A
+# criterion whose flag the input does not carry writes 1 for everyone, so the
+# step shows no loss - which is the truth: it was applied upstream.
+FLAG_PRED <- list(
+  X1_prior_mm_tx  = "MET_X1 = 1",
+  X2_other_cancer = "MET_X2 = 1",
+  X3_pregnancy    = "MET_X3 = 1",
+  X4_belantamab   = "MET_X4 = 1")
 
 # The predicate that applies this cohort's own exclusions from the flags the
 # input carries. Empty when the input has none, which is the pre-filtered case.
+# One predicate per criterion, so the funnel can attribute each loss to the
+# step that caused it rather than to a single lump at the end.
+#
+# A flag the input does not carry is `1 = 1`: with a pre-filtered input the
+# criterion was applied upstream, every remaining row has passed it, and the
+# funnel reports it as carried in. `coalesce(flag, 1)` treats a NULL as
+# eligible, which is the upstream writer's own contract - its flags are
+# non-null CASE results - and check_cohort_table() is where a custom adapter
+# that breaks that contract has to be caught.
+cohort_flag_pred_one <- function(k, cols) {
+  fl <- CRITERION_FLAG[[k]]
+  if (is.null(fl) || !fl %in% cols) "1 = 1"
+  else sprintf("coalesce(c.%s, 1) = 1", fl)
+}
+
 cohort_flag_pred <- function(cohort, cols) {
-  want <- CRITERION_FLAG[intersect(names(CRITERION_FLAG), cohort$criteria)]
-  have <- want[want %in% cols]
-  if (!length(have)) return("1 = 1")
-  paste(sprintf("coalesce(c.%s, 1) = 1", have), collapse = " AND ")
+  ks <- intersect(names(CRITERION_FLAG), cohort$criteria)
+  preds <- vapply(ks, cohort_flag_pred_one, character(1), cols = cols)
+  preds <- preds[preds != "1 = 1"]
+  if (!length(preds)) "1 = 1" else paste(preds, collapse = " AND ")
 }
 
 check_cohort_table <- function(con, cfg) {

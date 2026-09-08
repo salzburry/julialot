@@ -645,8 +645,36 @@ cat("\nregressions from the adversarial review\n")
   ok(grepl("LOT_BASE_DISCON_DT", ens(c("PATID", "COHORT", "LOT_BASE_DISCON_DT"))
            %||% ""),
      "and a renamed column is caught rather than silently reused")
-  ok(is.na(ens(character(0))),
-     "while a table that did not exist is simply created")
+  ok(!is.na(ens(character(0))),
+     "a table whose schema cannot be read is not cleared either")
+  # The three bypasses the prefix-only comparison allowed.
+  ok(!is.na(ens(c("PATID", "COHORT", "N_AT_RISK", "EXTRA"))),
+     "an extra trailing column is caught, not accepted as a matching prefix")
+  ens_t <- function(cols, types)
+    errs(with_env(base_env, {
+      env <- new.env(parent = environment(ensure_table))
+      env$db_exec <- function(con, sql) invisible(0L)
+      env$db_q <- function(con, sql)
+        data.frame(col_name = cols, data_type = types,
+                   stringsAsFactors = FALSE)
+      f <- ensure_table; environment(f) <- env
+      f(NULL, "t", "PATID string, COHORT string, N_AT_RISK int")
+    }))
+  ok(is.na(ens_t(c("PATID", "COHORT", "N_AT_RISK"),
+                 c("varchar", "string", "integer"))),
+     "and equivalent type spellings still match")
+  ok(!is.na(ens_t(c("PATID", "COHORT", "N_AT_RISK"),
+                  c("string", "string", "double"))),
+     "while an incompatible type is caught, which names alone could not be")
+  e_read <- errs(with_env(base_env, {
+    env <- new.env(parent = environment(ensure_table))
+    env$db_exec <- function(con, sql) invisible(0L)
+    env$db_q <- function(con, sql) stop("describe blew up")
+    f <- ensure_table; environment(f) <- env
+    f(NULL, "t", "PATID string")
+  }))
+  ok(!is.na(e_read) && grepl("could not read the schema", e_read),
+     "and a DESCRIBE that fails stops rather than passing as unverifiable")
 
   # A wide input keeps patients who fail an exclusion so the secondary 2L
   # cohort can have them. IN_COHORT is built from enrolment and follow-up and
@@ -677,6 +705,46 @@ cat("\nregressions from the adversarial review\n")
   ok(grepl("coalesce(c.NO_OTHER_CANCER_PRE_LOT1, 1) = 1",
            emitted_sql(RUN), fixed = TRUE),
      "the emitted cohort SQL carries that predicate")
+
+  # CAR-T is a protocol SOC category in its own right (s7.2.2), and the LOT
+  # engine keeps LOT_CART_LOT_FLG set on a CAR-T line that also carries
+  # non-steroid consolidation drugs. Reading the drug string first classified
+  # such a line as an ordinary doublet, and that category then propagated into
+  # the SOC counts, the patterns and the switch edges. The modality wins.
+  soc_src <- paste(readLines("R/modules/05_soc.R", warn = FALSE),
+                   collapse = "\n")
+  ok(grepl("WHEN CART_FLG = 1 THEN 'CAR-T'", soc_src, fixed = TRUE),
+     "a CAR-T line is CAR-T whether or not it recorded consolidation drugs")
+  # Order inside the emitted CASE, not inside the file: BEST_CATEGORY is named
+  # earlier in the source, in the CTE that computes it.
+  soc_sql <- vapply(Filter(function(x) x$tag == "step:soc_1L", RUN$sql),
+                    function(x) x$sql, character(1))
+  cart_i <- regexpr("WHEN CART_FLG = 1", soc_sql, fixed = TRUE)
+  drug_i <- regexpr("WHEN BEST_CATEGORY IS NULL", soc_sql, fixed = TRUE)
+  ok(length(soc_sql) == 1 && cart_i > 0 && drug_i > 0 && cart_i < drug_i,
+     "and that branch is reached before the drug-category logic")
+
+  # The funnel has to APPLY the exclusions it reports, not merely list them.
+  # Membership applies the retained flags; the funnel accumulated only the
+  # enrolment and follow-up predicates, so its final N_REMAINING could exceed
+  # the cohort it described. The executed reconciliation checks in
+  # expectations.py cannot see this on a fixture where every flag is 1, so the
+  # accumulation itself is asserted here.
+  attr1 <- vapply(Filter(function(x) x$tag == "step:attrition_1L", RUN$sql),
+                  function(x) x$sql, character(1))
+  ok(length(attr1) == 1 &&
+       all(vapply(c("MET_X1 = 1", "MET_X2 = 1", "MET_X3 = 1", "MET_X4 = 1"),
+                  function(p) grepl(p, attr1, fixed = TRUE), logical(1))),
+     "the 1L funnel applies every exclusion it reports a step for")
+  last_arm <- if (length(attr1))
+    tail(strsplit(attr1, "UNION ALL", fixed = TRUE)[[1]], 1) else ""
+  ok(grepl("MET_X2 = 1", last_arm, fixed = TRUE) &&
+       grepl("MET_I5 = 1", last_arm, fixed = TRUE),
+     "and its last step carries every criterion above it, so it ends at the cohort")
+  attrS <- vapply(Filter(function(x) x$tag == "step:attrition_SEC2L", RUN$sql),
+                  function(x) x$sql, character(1))
+  ok(length(attrS) == 1 && !grepl("MET_X2 = 1", attrS, fixed = TRUE),
+     "while the secondary cohort's funnel does not apply the one it drops")
 
   # The input contract. A cohort table of patient ids and eligibility flags -
   # which BUILD_DELTA once recommended for the secondary 2L cohort - carries no

@@ -26,6 +26,7 @@
 # is a real guard about real data, not something to trip with a stub.
 .stub_counter <- new.env(parent = emptyenv())
 .stub_counter$seen <- list()
+.stub_counter$schemas <- list()
 .stub_result <- function(sql = "") {
   # DESCRIBE is a schema question, not a count, and the package asks one before
   # it does anything: check_cohort_table() refuses an INPUT_COHORT_TABLE that
@@ -33,16 +34,17 @@
   # it with a count would make that guard fire on every emit, so the harness
   # answers it the way the warehouse would for a well-formed cohort table.
   if (grepl("^\\s*DESCRIBE\\b", sql, ignore.case = TRUE)) {
-    # ensure_table() also DESCRIBEs each output before writing it, to refuse a
-    # prefix carrying an incompatible table from an older version. In a
-    # recorder every output is new, so those answer with no rows - which is
-    # what "nothing to compare" looks like. Only the input cohort table gets
-    # the column list.
-    if (grepl("_S_[A-Z_]+\\s*$", sql))
-      return(data.frame(col_name = character(0), stringsAsFactors = FALSE))
+    # ensure_table() DESCRIBEs each output after creating it, and refuses to
+    # clear rows from a table whose shape it could not establish. A recorder
+    # that answered with no rows would make every output unverifiable, so it
+    # answers the way a warehouse would: with the schema the CREATE just
+    # declared, remembered by the db_exec recorder below.
+    tbl <- toupper(trimws(sub("^\\s*DESCRIBE\\s+", "", sql, ignore.case = TRUE)))
+    known <- .stub_counter$schemas[[tbl]]
+    if (!is.null(known)) return(known)
     return(data.frame(col_name = c(COHORT_TABLE_REQUIRED,
                                    unname(CRITERION_FLAG)),
-                      stringsAsFactors = FALSE))
+                      data_type = "string", stringsAsFactors = FALSE))
   }
   # Counted per call SITE, not globally: the washout asks the same question
   # each round, and a global counter is exhausted by the modules that ran
@@ -99,7 +101,22 @@ capture_emitted_sql <- function(here = ".", cfg_edit = identity) {
       rec$out[[length(rec$out) + 1L]] <- list(tag = tag, sql = s)
   }
 
-  env$db_exec <- function(con, sql) { add("exec", sql); invisible(0L) }
+  env$db_exec <- function(con, sql) {
+    # Remember what each CREATE declared, so a later DESCRIBE can answer with
+    # it - the recorder's stand-in for the warehouse's own catalogue.
+    m <- regmatches(sql, regexec(
+      "(?is)CREATE\\s+TABLE\\s+IF\\s+NOT\\s+EXISTS\\s+(\\S+)\\s*\\((.*)\\)\\s*$",
+      sql, perl = TRUE))[[1]]
+    if (length(m) == 3L) {
+      decl <- trimws(strsplit(gsub("\n", " ", m[3]), ",")[[1]])
+      decl <- decl[nzchar(decl)]
+      .stub_counter$schemas[[toupper(trimws(m[2]))]] <- data.frame(
+        col_name  = toupper(sub("\\s.*$", "", decl)),
+        data_type = sub("^\\S+\\s+", "", decl),
+        stringsAsFactors = FALSE)
+    }
+    add("exec", sql); invisible(0L)
+  }
   env$db_q    <- function(con, sql) { add("query", sql); .stub_result(sql) }
   env$run_step <- function(con, name, sql, qc = NULL, allow_empty = FALSE) {
     add(paste0("step:", name), sql)
