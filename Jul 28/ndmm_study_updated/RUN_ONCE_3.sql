@@ -37,6 +37,22 @@
 --
 --  NO PLACEHOLDERS. Block 0 rebuilds the same proxy population round two used,
 --  so every number is directly comparable to SQL Result 2.pdf.
+--
+--  RUN 08 SEP 2026. Results in `sql result 31.pdf` and `sql 32.pdf`; every
+--  number is written up under "Answered by the warehouse, 08 Sep 2026" in
+--  ../OPEN_QUESTIONS.md. This file is kept as the record of what was asked.
+--
+--  ONE STATEMENT EARNED A RE-TEST. Block 5 imputes the 15th of the month from
+--  YMDOD, which is month-precision, so a patient who died on the 25th with a
+--  claim on the 20th is flagged as "death before last claim" wrongly. It
+--  returned 9,705 such members and 348 whose death precedes their index date.
+--  Both are UPPER BOUNDS. The right test compares at month granularity:
+--
+--    ... WHERE substr(trim(d.YMDOD),1,6) < date_format(lc.last_dt, 'yyyyMM')
+--
+--  which cannot be fooled by the imputed day. Worth one statement in a fourth
+--  round, alongside splitting the result by DOD.MBR_MATCH_TYPE - if the
+--  low-confidence link value carries these, that answers Q28 at the same time.
 
 
 -- =========================================================================
