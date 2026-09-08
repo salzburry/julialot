@@ -65,6 +65,10 @@ build_inputs <- function(con, cfg, mods) {
 }
 
 build_223926 <- function(here) {
+  # First, before anything reads it. A second build in the same R session
+  # would otherwise start holding the first's config, its code-list manifest
+  # and the columns of its input table.
+  reset_run_state()
   cfg <- cfg_defaults()
   cfg$codelist_dir <- resolve_codelist_dir(cfg, here)
   set_study_config(cfg)
@@ -110,17 +114,20 @@ build_223926 <- function(here) {
   }
 
   lot_run <- check_lot_lineage(con, cfg)
+  # What the cohort build applied, so the readings this run records for its
+  # rules are the ones that shaped the data rather than this run's own copy.
+  upstream <- read_upstream_settings(con, cfg)
   # One id for the whole build, so `started`, `failed` and `complete` are rows
   # about the same run rather than three unrelated ones.
   rid <- new_run_id()
   write_run_metadata(con, cfg, cohorts, mods, lot_run, deviations, "started",
-                     run_id = rid)
+                     run_id = rid, upstream = upstream)
   # A build that dies mid-way would otherwise leave a `started` row and nothing
   # else, which reads as a run still going. The handler above writes `failed`
   # under the same id while the connection is still open.
   .run_state$meta <- function()
     write_run_metadata(con, cfg, cohorts, mods, lot_run, deviations, "failed",
-                       run_id = rid)
+                       run_id = rid, upstream = upstream)
 
   build_inputs(con, cfg, mods)
 
@@ -139,7 +146,7 @@ build_223926 <- function(here) {
   }
 
   write_run_metadata(con, cfg, cohorts, mods, lot_run, deviations, "complete",
-                     run_id = rid)
+                     run_id = rid, upstream = upstream)
   .run_state$ok <- TRUE
   log_msg(SEP)
   log_msg("complete: ", length(cohorts), " cohort(s), ", length(mods),
@@ -158,7 +165,7 @@ new_run_id <- function()
   Sys.getenv("DOMINO_RUN_ID", unset = format(Sys.time(), "%Y%m%d%H%M%S"))
 
 write_run_metadata <- function(con, cfg, cohorts, mods, lot_run, deviations,
-                               state, run_id = NULL) {
+                               state, run_id = NULL, upstream = NULL) {
   rid <- if (is.null(run_id) || !nzchar(run_id)) new_run_id() else run_id
   esc <- function(x) gsub("'", "''", paste(as.character(x), collapse = "; "))
   db_exec(con, sprintf("
@@ -181,6 +188,6 @@ write_run_metadata <- function(con, cfg, cohorts, mods, lot_run, deviations,
     esc(names(cohorts)), esc(names(mods)),
     esc(lot_run$RUN_ID %||% ""), cfg$study_start, cfg$study_end,
     esc(if (length(deviations)) deviations else "none"),
-    esc(open_question_readings(cfg)), esc(cl_str)))
+    esc(open_question_readings(cfg, upstream)), esc(cl_str)))
   invisible(rid)
 }

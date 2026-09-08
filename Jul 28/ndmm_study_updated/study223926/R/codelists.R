@@ -88,7 +88,17 @@ local({
 ICD_FAMILY_9  <- c("9", "ICD9", "ICD-9", "ICD9DIAG")
 ICD_FAMILY_10 <- c("10", "ICD10", "ICD-10", "ICD10DIAG")
 
+# What each file this build read actually was, so a number can be traced to
+# it. Package-level, so a second build in the same R session would otherwise
+# inherit the first's entries - and report an md5 for a file it never opened,
+# because a different module selection needs different lists. Cleared per
+# build by reset_run_state().
 .codelist_seen <- new.env(parent = emptyenv())
+
+reset_codelist_manifest <- function() {
+  rm(list = ls(.codelist_seen), envir = .codelist_seen)
+  invisible(TRUE)
+}
 
 # Reads one file, checks its shape, and refuses it if it carries no usable
 # codes. Records the md5 and row count so a number can be traced to the file
@@ -258,6 +268,8 @@ preflight_codelists <- function(mods, cfg) {
   invisible(want)
 }
 
+# One row per file THIS build read. Empty is a real answer: a module selection
+# needing no code list reads none.
 codelist_metadata <- function() {
   ks <- ls(.codelist_seen)
   if (!length(ks)) return(data.frame())

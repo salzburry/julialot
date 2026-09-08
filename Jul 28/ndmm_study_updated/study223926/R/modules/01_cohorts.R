@@ -219,9 +219,18 @@ CRITERION_FLAG <- c(
   X3_pregnancy    = "NO_PREGNANCY",
   X4_belantamab   = "NO_BELANTAMAB_PRE_LOT1")
 
+# The input's columns, as check_cohort_table() found them. The cohort SQL
+# reads this to decide which exclusion flags it can apply, so a stale answer
+# from a previous build would apply a flag the current input does not carry -
+# or skip one it does. Cleared per build by reset_run_state().
 .input_cols <- new.env(parent = emptyenv())
 .cohort_cols <- function()
   get0("cols", envir = .input_cols, ifnotfound = character(0))
+
+reset_cohort_columns <- function() {
+  rm(list = ls(.input_cols), envir = .input_cols)
+  invisible(TRUE)
+}
 
 # criterion -> the S_COHORT column carrying its verdict, for the funnel. A
 # criterion whose flag the input does not carry writes 1 for everyone, so the

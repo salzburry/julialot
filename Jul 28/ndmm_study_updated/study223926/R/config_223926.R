@@ -324,12 +324,41 @@ OPEN_QUESTION_SOURCE <- c(
   pregnancy_window                    = "upstream"
 )
 
-open_question_readings <- function(cfg) {
+# The upstream settings this package can CHECK, and the cohort build's own name
+# for each. Its NDMM_RUN_METADATA.CONTRACT_SETTINGS carries its whole CONTRACT
+# as `k=v|k=v`, which is what the run actually applied.
+#
+# The rest of the "upstream" list is not in that contract - it is fixed in the
+# cohort build's code, pinned by its CODE_MD5 - so there is nothing to read
+# back and those readings stay assertions.
+UPSTREAM_SETTING_MAP <- c(
+  study_start                  = "study_start",
+  mm_dx_outpatient_window_days = "outpatient_window")
+
+# The readings behind a run's numbers, for its metadata row.
+#
+# An "upstream" reading is not this package's to apply, and recording the
+# setting alone said nothing about whether the cohort build agreed. Where the
+# upstream contract can be read, the value that shaped the data is recorded and
+# marked verified; where the two disagree, both are, because the number came
+# from the upstream one. Everything else is marked unverified, which is what it
+# has always been.
+open_question_readings <- function(cfg, upstream = NULL) {
   vapply(names(OPEN_QUESTION_SOURCE), function(k) {
     v <- paste(as.character(cfg[[k]]), collapse = "|")
-    sprintf("%s=%s%s", k, v,
-            if (identical(OPEN_QUESTION_SOURCE[[k]], "upstream"))
-              " (upstream)" else "")
+    if (!identical(OPEN_QUESTION_SOURCE[[k]], "upstream"))
+      return(sprintf("%s=%s", k, v))
+    # `[[` on a named vector raises for a name it does not carry, and most of
+    # the upstream list is not mappable, so both lookups are guarded.
+    up <- if (k %in% names(UPSTREAM_SETTING_MAP)) UPSTREAM_SETTING_MAP[[k]] else NULL
+    got <- if (!is.null(up) && !is.null(upstream) && up %in% names(upstream))
+      upstream[[up]] else NULL
+    if (is.null(got) || !nzchar(got))
+      return(sprintf("%s=%s (upstream, unverified)", k, v))
+    if (identical(trimws(got), trimws(v)))
+      sprintf("%s=%s (upstream, verified)", k, got)
+    else
+      sprintf("%s=%s (upstream, verified; this run was set to %s)", k, got, v)
   }, character(1), USE.NAMES = FALSE)
 }
 

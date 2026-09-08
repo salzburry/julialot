@@ -84,7 +84,7 @@ lands on the run's own metadata row where no reader can miss it.
 | `R/windows.R` | The period algebra — every window and every boundary convention, once. |
 | `R/person_time.R` | The counting rules: same-day collapse, chronic-once, the acute washout chain. |
 | `R/codelists.R` | Code-list loading, the unfilled-row guard, and the preflight. |
-| `R/lineage.R` | Refuses a LOT run it cannot vouch for. |
+| `R/lineage.R` | Refuses a LOT run it cannot vouch for, and reads back what the cohort build applied. |
 | `R/db_utils_223926.R` | sparklyr connection, logging, table naming, the step runner. |
 | `R/run_223926.R` | Resolves the plan, walks the modules, writes the run metadata. |
 | `R/modules/*.R` | One file per module. Nothing else defines a clinical rule. |
@@ -181,6 +181,34 @@ two ways forward: point `INPUT_COHORT_TABLE` at a cohort and LOT run built
 without those rules and set `SEC2L_INPUT_IS_WIDE=TRUE`, or set
 `SEC2L_APPLY_OTHER_CANCER=TRUE` to build the nested version knowingly — the run
 then records that it did.
+
+### A build in a session inherits nothing from the one before it
+
+Three things outlive a build: the config, the code-list manifest, and the input
+table's columns. `reset_run_state()` clears all three at the top of
+`build_223926()`, so a second build cannot report an md5 for a file it never
+opened, or apply an exclusion flag its own input does not carry.
+
+The config lives in a private environment rather than a global `cfg`. The LOT
+engine keeps its own config the same way under the same name, so while both
+used the global, sourcing them in one session left whichever arrived second
+holding the name and the other's `wrk()` reading a config that was not its own.
+
+### An upstream reading is recorded as verified or as an assertion
+
+Eight settings are the cohort build's rules, not this package's. Recording the
+setting alone asserted a reading nothing had checked.
+
+`NDMM_RUN_METADATA.CONTRACT_SETTINGS` is the cohort build's whole contract as
+`k=v|k=v`, written by the run that made the cohort. `read_upstream_settings()`
+reads it, so `STUDY_START` and `MM_DX_OUTPATIENT_WINDOW_DAYS` are recorded as
+what the cohort was actually built with. The rest are fixed in that build's
+code rather than its contract, so they stay marked `(upstream, unverified)`.
+
+The two defaults disagree today: this package reads §7.1's body
+(01 Jan 2018) and the cohort build reads Figures 1 and 2 (01 Jan 2016), which
+is `OPEN_QUESTIONS.md` Q1. That is not fatal — the cohort is what it is — so
+the run names the disagreement, records both values, and carries on.
 
 ### The input's shape is checked before its columns are used
 
