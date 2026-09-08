@@ -250,12 +250,19 @@ db_q <- function(con, sql) {
 # step. materialize() uses that to write a table and repoint its view before
 # the QC below reads it. The QC names the view, so repointing afterwards would
 # have it read the query the table was just written to replace.
-run_step <- function(con, name, sql, qc = NULL) {
+#
+# Each statement is retried on its own, which is right only where each one is
+# safe to run twice. A step whose statements are safe to run twice only as a
+# SEQUENCE - a DELETE clearing what the INSERT after it writes - passes
+# retry_as_unit = TRUE and is retried from the first statement through
+# db_replace(). Retried apart, an INSERT whose answer was lost is sent twice
+# and the DELETE that would have cleared the first has already run.
+run_step <- function(con, name, sql, qc = NULL, retry_as_unit = FALSE) {
   log_msg(SEP)
   log_msg("STEP ", name)
   log_msg(SEP)
   t0 <- proc.time()
-  for (s in sql) db_exec(con, s)
+  if (retry_as_unit) db_replace(con, sql) else for (s in sql) db_exec(con, s)
   elapsed <- (proc.time() - t0)[["elapsed"]]
   log_msg("  Completed in ", round(elapsed, 1), "s")
   if (!is.null(qc) && nzchar(qc)) {

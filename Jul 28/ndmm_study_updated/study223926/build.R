@@ -41,7 +41,7 @@ if (!requireNamespace("sparklyr", quietly = TRUE) &&
 source(file.path(here, "R", "load_inputs.R"))
 load_pipeline_inputs(here, "config.csv")
 for (f in c("config_223926.R", "db_utils_223926.R", "registry.R", "windows.R",
-            "person_time.R", "suppression.R", "codelists.R", "lineage.R",
+            "person_time.R", "codelists.R", "lineage.R",
             "run_223926.R"))
   source(file.path(here, "R", f))
 

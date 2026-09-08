@@ -1,10 +1,19 @@
 # Small-cell suppression, applied.
 #
-# "Stratifications with < 25 patients will not be performed" (s7.8, Table 1's
-# footnote). R/suppression.R has expressed that rule since the package was
-# written and NOTHING called it: every S_* table left the warehouse with raw
-# cell counts, n = 1 included. That is a disclosure-control failure rather than
-# a wrong number, which is why it gets its own module rather than a footnote.
+# The rule, twice, and the two sentences differ:
+#   s7.2.3 "Stratifications with <25 patients will not be performed or may be
+#          regrouped due to low volumes."
+#   s7.8   "If there are less than 25 patients in a particular stratifications
+#          or cohort, analyses will not be conducted (unless specific to SOC)."
+#
+# What runs below is the first: suppress every cell under the floor, SOC
+# included. s7.8's SOC exemption is NOT applied - see OPEN_QUESTIONS.md Q29.
+# Suppressing more than required loses a stratum the protocol may permit; the
+# other way round would publish one it forbids.
+#
+# This is the only place the rule exists. It lived in an R helper as well,
+# which nothing called and which applied the exemption - a tested policy that
+# was not the shipped one. Removed; tests/run_tests.R asserts this SQL.
 #
 # The raw tables are not overwritten. Each suppressed table is written beside
 # its source as S_*_RELEASE, so QC can still read the counts that produced a

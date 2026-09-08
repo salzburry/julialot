@@ -239,6 +239,35 @@ than swapping the columns.
 
 ## Needs a decision, but does not block a first build
 
+### Q29. Does the small-cell floor exempt SOC strata? — **NEW**
+
+The protocol states the 25-patient floor twice, and the two sentences differ.
+
+> §7.2.3: "Stratifications with <25 patients will not be performed or may be
+> regrouped due to low volumes."
+
+> §7.8: "If there are less than 25 patients in a particular stratifications or
+> cohort, analyses will not be conducted **(unless specific to SOC)**."
+
+Only §7.8 carries the exemption, and it does not say which analyses are
+"specific to SOC" — every SOC-keyed table, or only the SOC distribution itself.
+
+`R/modules/11_release.R` applies §7.2.3: every cell under 25 is suppressed, SOC
+included. That is the conservative reading. Suppressing more than required
+loses a stratum the protocol may permit; the other way round publishes one it
+forbids.
+
+It matters for the SOC tables specifically. `S_SOC` is keyed on regimen
+category, and a category held by fewer than 25 patients in a line is exactly
+what §7.8 might be exempting — the rarer regimens are the ones the study is
+about.
+
+**Ask:** whether the SOC exemption applies, and if so to which tables. A one-
+line change to `SUPPRESSION_SPEC` adds an exemption predicate once it is
+decided.
+
+---
+
 ### Q28. What is `DOD.MBR_MATCH_TYPE`, and should low-confidence deaths count? — **NEW**
 
 `DESCRIBE TABLE t_dod_2026q1` returns five columns, and one of them is

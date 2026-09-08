@@ -83,7 +83,6 @@ lands on the run's own metadata row where no reader can miss it.
 | `R/registry.R` | The cohort and module registries, and the selection logic. |
 | `R/windows.R` | The period algebra — every window and every boundary convention, once. |
 | `R/person_time.R` | The counting rules: same-day collapse, chronic-once, the acute washout chain. |
-| `R/suppression.R` | The 25-patient rule, and the complementary-disclosure check. |
 | `R/codelists.R` | Code-list loading, the unfilled-row guard, and the preflight. |
 | `R/lineage.R` | Refuses a LOT run it cannot vouch for. |
 | `R/db_utils_223926.R` | sparklyr connection, logging, table naming, the step runner. |
@@ -183,11 +182,27 @@ without those rules and set `SEC2L_INPUT_IS_WIDE=TRUE`, or set
 `SEC2L_APPLY_OTHER_CANCER=TRUE` to build the nested version knowingly — the run
 then records that it did.
 
-### Suppression is applied, not just expressed
+### The input's shape is checked before its columns are used
 
-*"Stratifications with < 25 patients will not be performed"* (§7.8). The rule
-lived in `R/suppression.R` from the start and **nothing called it**: every
-table left the warehouse with raw cell counts, n = 1 included.
+`check_cohort_table()` runs first, before any module. It refuses a table
+missing a column every cohort indexes on, and it refuses two things a column
+list cannot show:
+
+- **more rows than patients.** The package reads `INPUT_COHORT_TABLE` as one
+  row per patient. A duplicate multiplies that patient through every join, so
+  the cohort counts come out high and nothing downstream notices.
+- **an exclusion flag that is NULL or not 0/1.** The membership predicate is
+  `coalesce(flag, 1) = 1`, which reads a NULL as eligible. On a table this
+  check accepted, that coalesce cannot fire.
+
+Both are for custom inputs. The cohort build's own writer emits non-null CASE
+results at patient grain, so a run against it never sees either.
+
+### Suppression is applied in one place, and that place is tested
+
+*"Stratifications with < 25 patients will not be performed"* (§7.2.3). The rule
+lived in `R/suppression.R` from the start and **nothing called it**: every table
+left the warehouse with raw cell counts, n = 1 included.
 
 The `release` module applies it in SQL. It does not overwrite the raw tables —
 each suppressed table is written beside its source as `S_*_RELEASE`, so QC can
@@ -195,6 +210,13 @@ still read the counts behind a rate while the thing that leaves the warehouse
 cannot. The suppressed count is nulled along with the values, because
 publishing the *n* a suppressed rate was computed from suppresses nothing. A
 group left with exactly one suppressed row is reported, not silently regrouped.
+
+`R/suppression.R` is gone. It survived the module by being loaded but never
+called, and its policy had drifted: it applied §7.8's *"(unless specific to
+SOC)"* exemption, which the shipped SQL does not. So the suite was green on a
+rule that never ran. The tests now assert the emitted release SQL — the
+threshold, the nulled count, the marking, and the absence of the exemption.
+Whether the exemption should apply is `OPEN_QUESTIONS.md` Q29.
 
 ### A recorded reading is either applied here or labelled
 

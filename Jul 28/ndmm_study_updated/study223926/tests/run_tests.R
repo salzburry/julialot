@@ -16,7 +16,7 @@ here <- local({
 setwd(here)
 suppressMessages({
   for (f in c("config_223926.R", "db_utils_223926.R", "registry.R", "windows.R",
-              "person_time.R", "suppression.R", "codelists.R", "lineage.R",
+              "person_time.R", "codelists.R", "lineage.R",
               "run_223926.R"))
     source(file.path("R", f))
   for (f in list.files("R/modules", full.names = TRUE)) source(f)
@@ -227,24 +227,14 @@ cat("\ncounting rules\n")
 
 cat("\nsuppression\n")
 {
+  # The threshold itself. The policy it drives is asserted on the emitted
+  # release SQL further down - there is no R implementation to test, and a
+  # second one would be a policy that does not ship.
   cfg <- cfg0()
-  df <- data.frame(STRATUM = c("a", "b"), N_PATIENTS = c(30, 10),
-                   RATE = c(1.5, 9.9), stringsAsFactors = FALSE)
-  out <- suppressMessages(apply_suppression(df, cfg = cfg))
-  ok(out$SUPPRESSED[2] == 1 && is.na(out$RATE[2]),
-     "a stratum below 25 patients is suppressed, values and all")
-  ok(out$SUPPRESSED[1] == 0 && out$RATE[1] == 1.5,
-     "one above it is untouched")
-  ok(nrow(out) == 2,
-     "a suppressed row is marked, not deleted - absent and suppressed differ")
-  out2 <- suppressMessages(apply_suppression(df, cfg = cfg,
-                                             exempt = c(FALSE, TRUE)))
-  ok(out2$SUPPRESSED[2] == 0 && out2$RATE[2] == 9.9,
-     "the SOC exemption in s7.8 keeps a small stratum")
-  ok(grepl("SOC-exempt", out2$SUPPRESSION_REASON[2]),
-     "and says why it was kept")
-  ok(grepl("no column", errs(apply_suppression(df, "NOPE", cfg))),
-     "suppressing on a column that is not there stops the run")
+  ok(identical(as.integer(cfg$suppress_min_n), 25L),
+     "the small-cell floor is 25 patients, as s7.2.3 and s7.8 both say")
+  ok("release" %in% vapply(MODULES, `[[`, character(1), "key"),
+     "and a module of its own applies it")
 }
 
 cat("\ncode lists\n")
@@ -813,6 +803,59 @@ cat("\nregressions from the adversarial review\n")
   }))
   ok(is.na(e_full), "and a table carrying every required column is accepted")
 
+  # Columns are not the contract. The package reads this table as one row per
+  # patient and its flags as clean 0/1 verdicts, and both ways of breaking that
+  # are silent: a duplicated PATID multiplies that patient through every join,
+  # and a NULL flag passes `coalesce(flag, 1) = 1` and admits a patient the
+  # exclusion should have dropped.
+  cohort_stub <- function(cols = c(COHORT_TABLE_REQUIRED, unname(CRITERION_FLAG)),
+                          n_rows = 8, n_patients = 8, n_null_patid = 0,
+                          bad = character(0)) {
+    function(con, sql) {
+      if (grepl("^\\s*DESCRIBE", sql))
+        return(data.frame(col_name = cols, stringsAsFactors = FALSE))
+      d <- data.frame(n_rows = n_rows, n_patients = n_patients,
+                      n_null_patid = n_null_patid)
+      for (f in intersect(unname(CRITERION_FLAG), cols))
+        d[[paste0("bad_", f)]] <- if (f %in% bad) 3L else 0L
+      d
+    }
+  }
+  chk <- function(...) errs(with_env(base_env, {
+    env <- new.env(parent = environment(check_cohort_table))
+    env$db_q <- cohort_stub(...)
+    f <- check_cohort_table; environment(f) <- env
+    f(NULL, cfg0())
+  }))
+  ok(is.na(chk()), "a well-formed cohort table passes the value checks too")
+  e_dup <- chk(n_rows = 11, n_patients = 8)
+  ok(!is.na(e_dup) && grepl("11 rows for 8 patients", e_dup, fixed = TRUE),
+     "a duplicated patient is refused, with both counts named")
+  e_np <- chk(n_null_patid = 2)
+  ok(!is.na(e_np) && grepl("NULL PATID", e_np, fixed = TRUE),
+     "and a NULL PATID, which joins to nothing but is counted anyway")
+  e_fl <- chk(bad = "NO_PREGNANCY")
+  ok(!is.na(e_fl) && grepl("NO_PREGNANCY (3 row(s))", e_fl, fixed = TRUE),
+     "a NULL or non-0/1 exclusion flag is refused, naming the column and the count")
+  ok(!is.na(e_fl) && grepl("reads as eligible", e_fl, fixed = TRUE),
+     "...and says what it would have done: admitted a patient it should exclude")
+  # A pre-filtered input carries no flags, so there is nothing to check there.
+  ok(is.na(chk(cols = COHORT_TABLE_REQUIRED)),
+     "an input carrying no flags is not asked about flags it does not have")
+  # The predicate itself, off the query the run really issues. The stubs above
+  # answer with a count and cannot see inside the SQL, so a check narrowed to
+  # IS NULL - which would let a 2 or a -1 through - passes them.
+  shape_q <- Filter(function(x) x$tag == "query" &&
+                      grepl("n_null_patid", x$sql, fixed = TRUE), RUN$sql)
+  ok(length(shape_q) >= 1 &&
+       grepl("count(DISTINCT PATID) AS n_patients", shape_q[[1]]$sql, fixed = TRUE),
+     "the run asks its input's grain before building a cohort")
+  ok(length(shape_q) >= 1 &&
+       all(vapply(unname(CRITERION_FLAG), function(f)
+         grepl(sprintf("%1$s IS NULL OR %1$s NOT IN (0, 1)", f),
+               shape_q[[1]]$sql, fixed = TRUE), logical(1))),
+     "...and tests every exclusion flag for NULL and for a value outside 0/1")
+
   # Two endpoints whose DEFINITION this package cannot implement from the code
   # list alone. Both must stop rather than report something else under the
   # protocol's name; the fixtures are the valid form, so the invalid one is
@@ -1093,9 +1136,9 @@ cat("\nthe modules, run against recorders\n")
 
   # --- suppression is applied, and its spec is complete -------------------
   #
-  # R/suppression.R expressed the < 25 rule from the start and nothing called
-  # it: every table left the warehouse with raw cell counts. The rule is a
-  # module now, and these check it cannot fall out of step with the tables.
+  # The < 25 rule lived in an R helper that nothing called: every table left
+  # the warehouse with raw cell counts. It is a module now, and these check it
+  # cannot fall out of step with the tables it suppresses.
   rel_sql <- paste(vapply(Filter(function(x) grepl("^step:release_", x$tag),
                                  run$sql), function(x) x$sql, character(1)),
                    collapse = "\n")
@@ -1103,6 +1146,50 @@ cat("\nthe modules, run against recorders\n")
   ok(all(vapply(names(SUPPRESSION_SPEC), function(t)
            grepl(paste0(t, "_RELEASE"), rel_sql, fixed = TRUE), logical(1))),
      "and writes a release table for every table it declares")
+
+  # The policy, not just the plumbing. This SQL is the only place the rule
+  # exists - an R helper expressed a DIFFERENT one (it applied s7.8's SOC
+  # exemption) and nothing called it, so the suite was green on a policy that
+  # never shipped. Asserted here against what the module actually emits.
+  min_n <- as.integer(cfg0()$suppress_min_n)
+  pol <- lapply(names(SUPPRESSION_SPEC), function(tb) {
+    sp  <- SUPPRESSION_SPEC[[tb]]
+    hit <- sprintf("%s IS NOT NULL AND %s < %d", sp$n_col, sp$n_col, min_n)
+    # Every column the spec names - the count included - nulled on the same
+    # predicate. Publishing the n a suppressed rate came from suppresses
+    # nothing.
+    nulled <- vapply(c(sp$n_col, sp$value_cols), function(cl)
+      grepl(sprintf("CASE WHEN %s THEN NULL ELSE %s END AS %s", hit, cl, cl),
+            rel_sql, fixed = TRUE), logical(1))
+    list(tbl = tb, hit = grepl(hit, rel_sql, fixed = TRUE),
+         unnulled = names(nulled)[!nulled])
+  })
+  bad_hit <- vapply(pol, function(x) !x$hit, logical(1))
+  ok(!any(bad_hit),
+     paste0("every release table suppresses on its own n below ", min_n,
+            if (any(bad_hit)) paste0(" [not: ",
+              paste(vapply(pol[bad_hit], `[[`, character(1), "tbl"),
+                    collapse = ", "), "]") else ""))
+  unnulled <- unlist(lapply(pol, function(x)
+    if (length(x$unnulled)) paste0(x$tbl, ".", x$unnulled)))
+  ok(is.null(unnulled),
+     paste0("and nulls the count with the values, on that same predicate",
+            if (!is.null(unnulled))
+              paste0(" [left readable: ", paste(unnulled, collapse = ", "), "]")
+            else ""))
+  ok(grepl("AS SUPPRESSED", rel_sql, fixed = TRUE) &&
+       grepl("AS SUPPRESSION_REASON", rel_sql, fixed = TRUE),
+     "...and marks the row rather than dropping it - absent and suppressed differ")
+  # s7.8's "(unless specific to SOC)" is not applied. Q29. Pinned so adding it
+  # is a deliberate change to a tested rule, not a quiet one.
+  ok(!grepl("exempt", rel_sql, ignore.case = TRUE),
+     "the SOC exemption is not applied, which is Q29 and not an oversight")
+  # The raw table is the one QC reads. Suppressing in place would leave no
+  # counts to check a rate against.
+  ok(!any(vapply(names(SUPPRESSION_SPEC), function(tb)
+            grepl(sprintf("CREATE OR REPLACE TABLE \\S*%s\\b(?!_RELEASE)", tb),
+                  rel_sql, perl = TRUE), logical(1))),
+     "and writes beside the source table, never over it")
   # Every column the spec names must exist on the table it names, or the
   # suppression silently misses it.
   ddl <- paste(vapply(Filter(function(x)
