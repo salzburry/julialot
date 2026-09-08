@@ -70,15 +70,11 @@ baseline_window_sql <- function(anchor, cfg, include_index = NULL) {
 # "Disenrollment is not censoring" - and it carries both, so this reads
 # ENDDATE_CE or ENDDATE off the cohort rather than recomputing either.
 # ../OPEN_QUESTIONS.md Q13.
-# `ce_end` is the end of the enrolment span covering THIS cohort's own index
-# date, from S_ENROLL_SPANS. It has to be, and it used to not be: ENDDATE_CE on
-# the input cohort table is the end of continuous enrolment measured from the
-# 1L index, and reusing it for 2L, 3L and SEC2L gave every cohort the same
-# follow-up end as 1L. A patient who lapsed after 1L and re-enrolled before 2L
-# then got FU_END < INDEX_DATE - negative follow-up, negative TTNT/TTD/OS - in
-# a cohort whose own MET_N2 had just certified 12 months of continuous
-# enrolment before that index from the same spans. The cohort table's value is
-# kept only as a fallback for a patient no span covers.
+# `ce_end` is the end of the span covering THIS cohort's index date, from
+# S_ENROLL_SPANS. ENDDATE_CE on the cohort table is measured from the 1L index,
+# so reusing it gave a patient who re-enrolled before 2L a follow-up end before
+# their own index - negative follow-up and negative TTNT/TTD/OS. The cohort
+# table's value is a fallback for a patient no span covers.
 fu_end_sql <- function(cfg, ce_end = "fe.COV_END", enddate = "c.ENDDATE",
                        enddate_ce = "c.ENDDATE_CE", death = "c.DEATH_DT") {
   horizon <- if (isTRUE(cfg$censor_at_disenrollment))
@@ -91,7 +87,7 @@ fu_end_sql <- function(cfg, ce_end = "fe.COV_END", enddate = "c.ENDDATE",
 
 # The treatment period a safety event is attributed to.
 #
-# s7.3.2, screen 29: "An event will be attributed to a LOT if it occurs between
+# s7.3.2: "An event will be attributed to a LOT if it occurs between
 # the LOT's start date (included) and the start date (excluded) of a subsequent
 # LOT, or discontinuation date of the prior LOT + 30 days of discontinuation,
 # whichever comes first. If the patient experiences an event > 30 days after
@@ -126,7 +122,7 @@ lot_period_sql <- function(cfg, start = "l.LOT_START_DT",
 
 # The time-to-event analysis set.
 #
-# s7.8.2, screen 48: "Outcomes will only be assessed in the subset of patients
+# s7.8.2: "Outcomes will only be assessed in the subset of patients
 # who have >=3 months of potential follow-up (or die before 3 months) from
 # their index date".
 #
@@ -166,21 +162,14 @@ rate_ci_sql <- function(events, pyears, cfg, side = c("lo", "hi")) {
 
 # The claim-status filter, as a WHERE fragment.
 #
-# MEDICAL.PAID_STATUS separates PAID from DENIED. A denied claim is not
-# evidence a service happened, and counting one as an ED visit, a
-# hospitalisation or a diagnosis inflates every rate built on it. Nothing in
-# this package or the cohort build has ever filtered on it, so `all` is the
-# default and the run records which reading it took.
+# A denied claim is not evidence a service happened. Nothing has ever filtered
+# on it, so `all` is the default and the run records the reading it took.
 #
-# The V9.0 dictionary spells the values PAID and DENIED. The warehouse stores
-# them as single characters - P and D - which the 03 Sep 2026 profile confirmed
-# (../SQL Result 2.pdf, result 21: P 1,672,870,316 lines, D 340,788,413, no
-# other value). Testing against the spelled-out word therefore excluded
-# nothing, and paid_only was a silent no-op. Both encodings are matched now.
+# The dictionary spells the values PAID and DENIED; the warehouse stores P and
+# D. Testing the spelled-out word excluded nothing, so paid_only was a silent
+# no-op. Both encodings match now.
 #
-# NULL is not treated as denied. It is 3.9% of lines among myeloma patients
-# and the dictionary says the CDM fills the field in, so a null is missing
-# information rather than evidence of a denial.
+# NULL is not treated as denied - it is missing information, not a denial.
 claim_status_sql <- function(cfg, alias) {
   if (identical(cfg$claim_status, "paid_only"))
     sprintf("AND upper(trim(coalesce(%s.PAID_STATUS, ''))) NOT IN ('D', 'DENIED')",

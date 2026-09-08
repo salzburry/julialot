@@ -152,7 +152,7 @@ def _match_paren(sql, open_idx):
 def lift_lateral(sql):
     """`LATERAL VIEW explode(...) alias AS cols` -> a DuckDB UNNEST.
 
-    Scanned rather than matched with a regex: the map body contains nested
+    Parsed character by character rather than matched with a regex: the map body contains nested
     parentheses (every value is a CASE expression), and a non-greedy `.*?`
     stops at the first `))` inside one.
     """

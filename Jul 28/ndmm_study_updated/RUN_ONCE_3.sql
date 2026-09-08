@@ -36,10 +36,10 @@
 --      exist and then applies it to RX, where only the money is there.
 --
 --  NO PLACEHOLDERS. Block 0 rebuilds the same proxy population round two used,
---  so every number is directly comparable to SQL Result 2.pdf.
+--  so every number is directly comparable to round two's.
 --
---  RUN 08 SEP 2026. Results in `sql result 31.pdf` and `sql 32.pdf`; every
---  number is written up under "Answered by the warehouse, 08 Sep 2026" in
+--  RUN 08 SEP 2026. Every returned number is written up under
+--  "Answered by the warehouse, 08 Sep 2026" in
 --  ../OPEN_QUESTIONS.md. This file is kept as the record of what was asked.
 --
 --  ONE STATEMENT EARNED A RE-TEST. Block 5 imputes the 15th of the month from

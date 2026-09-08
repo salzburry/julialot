@@ -9,10 +9,10 @@
 --  TWO EDITS BEFORE RUNNING
 --    1. <COHORT>   -> the cohort table, e.g. myschema.ndmm_NDMM_COHORT
 --    2. _2026q1    -> whatever block A says actually exists. The config
---                     resolves to 2026q1; the only describe-table screenshot
---                     in docs/ is 2025q4. Block A tells you; if you can only
---                     run once, do a find-replace to the vintage you believe
---                     is right and let block A confirm it.
+--                     resolves to 2026q1; the only documented vintage is
+--                     2025q4. Block A tells you; if you can only run once,
+--                     find-replace to the vintage you believe is right and
+--                     let block A confirm it.
 --
 --  IF A STATEMENT ERRORS and the editor stops: everything above it is still
 --  valid output — send that. Each block is independent.

@@ -68,15 +68,13 @@ mod_hcru <- function(con, cfg, cohort) {
     arms <- c(arms, sprintf(
       "(cl.code_type_norm = 'CPT' AND upper(regexp_replace(trim(m.PROC_CD),'[^A-Za-z0-9]','')) = cl.code_norm)"))
 
-  # Which route decides that a stay is MM-related - open question Q27, and the
-  # one the 03 Sep 2026 profile priced most sharply. Over 241,362 myeloma-
-  # patient stays the two routes disagree by a factor of two: the confinement's
-  # own first two diagnoses find 32,508 stays, the claim positions find 65,206,
-  # and 33,904 of those are found by the claim route alone (../SQL Result 2.pdf,
-  # result 11). A further 33,978 stays carry MM in confinement positions 3-5,
-  # which neither route counts. Nobody has said which s7.8.1 means, so both are
-  # built and the run records which it took. `confinement` is what every number
-  # produced so far used and stays the default.
+  # Which route decides that a stay is MM-related - open question Q27. The two
+  # routes disagree by a factor of two: over 241,362 myeloma-patient stays the
+  # confinement's own first two diagnoses find 32,508, the claim positions find
+  # 65,206, and 33,904 of those only the claim route finds. Another 33,978 carry
+  # MM in confinement positions 3-5, which neither route counts.
+  # s7.8.1 does not say which it means, so both are built and the run records
+  # which it took. `confinement` is the default every number so far used.
   mm_hosp_subq <- if (identical(cfg$mm_hosp_position, "claim_positions")) sprintf(
     "-- Route B. MM in DIAG_POSITION 1 or 2 on a claim carrying the stay's
       -- CONF_ID, which is the route business rule 13 documents: twenty-five
@@ -198,16 +196,11 @@ mod_hcru <- function(con, cfg, cohort) {
 
   # Both periods, in one table, assigned by ADMIT date.
   #
-  # The denominator is grouped BY LINE, not summed across the cohort. An
-  # uncorrelated total would give every line of a four-line cohort the same
-  # person-time and understate each line's rate roughly fourfold. It is also a
-  # separate CTE rather than a derived table in FROM, because a FROM-clause
-  # subquery cannot see a sibling alias.
+  # Grouped BY LINE, not summed across the cohort - a total would give every
+  # line the same person-time and understate each rate.
   #
-  # And the SELECT is driven from that denominator, not from the events: a line
-  # with person-time and no events is a rate of zero, and it has to appear as
-  # one. Driven from the aggregate it produced no row at all, which downstream
-  # is indistinguishable from the module not having run for that line.
+  # The SELECT is driven from the denominator, not the events, so a line with
+  # person-time and no events appears as a rate of zero rather than no row.
   for (per in list(
     list(name = "BASELINE",  start = "p.BASELINE_START", end = "p.BASELINE_END",
          py = "BASELINE_PY", src = wrk("S_PERIODS")),

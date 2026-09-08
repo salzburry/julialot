@@ -7,14 +7,14 @@ Sources reviewed for this document:
 
 | document | what it gave |
 |---|---|
-| `docs/Part 3/Optum/optum data dict.pdf` (24 pp) | **Clinformatics Data Mart Data Dictionary, CDM V9.0**, SES view. Photographed Excel; text layer is OCR garbage, so it was read page by page as images. Sheets: TITLE NOTES, MEMBER_CONTINUOUS_ENROLLMENT, MEMBER_ENROLLMENT, MEDICAL, MED_DIAGNOSIS, MED_PROCEDURE, CONFINEMENT, RX, LABRESULT, PROVIDER, PROVIDER BRIDGE, SES, LU_DIAGNOSIS, LU_NDC, LU_PROCEDURE |
-| `docs/Part 3/Optum/optum business rules.pdf` (7 pp) | `Final_Business rule doc_OPTUM_V1_30_08_2022.xlsx` — the table-join diagram, the table inventory, and the 14 "information required → variables → tables → steps" rules |
-| `docs/optum enrolment.pdf` (4 pp) | Databricks screenshots: `describe table hive_metastore.clnprw_optum.t_member_enrollment_2025q4` (27 columns) and the observed value distributions of `BUS`, `CDHP`, `PRODUCT` in the MM population |
+| the Optum CDM V9.0 data dictionary (24 pp) | **Clinformatics Data Mart Data Dictionary, CDM V9.0**, SES view. Sheets: TITLE NOTES, MEMBER_CONTINUOUS_ENROLLMENT, MEMBER_ENROLLMENT, MEDICAL, MED_DIAGNOSIS, MED_PROCEDURE, CONFINEMENT, RX, LABRESULT, PROVIDER, PROVIDER BRIDGE, SES, LU_DIAGNOSIS, LU_NDC, LU_PROCEDURE |
+| the Optum business rules document (7 pp) | `Final_Business rule doc_OPTUM_V1_30_08_2022.xlsx` — the table-join diagram, the table inventory, and the 14 "information required → variables → tables → steps" rules |
+| the Optum enrolment documentation (4 pp) | `describe table hive_metastore.clnprw_optum.t_member_enrollment_2025q4` (27 columns) and the observed value distributions of `BUS`, `CDHP`, `PRODUCT` in the MM population |
 | `docs/Part 3/Program Spec/*_validated.csv` | the Jan-2026 program spec with an "Optum CDM Implementation" column naming the exact tables and columns used per variable |
 | `Jul 28/ndmm/R/**`, `Jul 28/lot/engine/R/**` | the SQL actually issued today |
 | `Jul 28/ndmm/DECISIONS.md`, `Jul 28/ndmm/README.md` | the build's own record of what it checked in the CDM and why each rule reads as it does. §6 is a profiling of the warehouse, and it settles two things the vendor documents leave open — see §4 and §7 below |
 
-Identical copies of the two Optum PDFs also sit at `docs/optum *.pdf` and
+Identical copies of the two Optum documents also sit under
 `Apr 18 2026/Optum - Business Rules/`.
 
 ---
@@ -31,8 +31,8 @@ table    t_<base>_<yyyy>q<n>        # cumulative quarterly tables, suffix from S
 ```
 
 so `member_enrollment` with `STUDY_END = 2026-03-31` resolves to
-`hive_metastore.clnprw_optum.t_member_enrollment_2026q1`. The enrolment screenshots
-in `docs/optum enrolment.pdf` show the 2025q4 vintage of the same table.
+`hive_metastore.clnprw_optum.t_member_enrollment_2026q1`. The Optum enrolment
+documentation describes the 2025q4 vintage of the same table.
 
 Code lists are **not** in the warehouse. They are CSVs under `CODELIST_DIR`,
 defaulting to `/mnt/code/codelist` — see `CODELISTS.md`.
@@ -104,7 +104,7 @@ diagnosis to the claim header on `PATID, CLMID, FST_DT` with null-safe equality 
 ### MEMBER_ENROLLMENT — as deployed
 
 `describe table hive_metastore.clnprw_optum.t_member_enrollment_2025q4`,
-27 columns, from `docs/optum enrolment.pdf` pp.1-3:
+27 columns, from the Optum enrolment documentation pp.1-3:
 
 | # | column | type | # | column | type |
 |---|---|---|---|---|---|
@@ -123,7 +123,7 @@ diagnosis to the claim header on `PATID, CLMID, FST_DT` with null-safe equality 
 | 13 | `ELIGEND_MONTH` | smallint | 27 | `RACE_SOURCE` | varchar(15) |
 | 14 | `ELIGEND_YEAR` | smallint | | | |
 
-Observed values in the MM population (`docs/optum enrolment.pdf` p.4):
+Observed values in the MM population (the Optum enrolment documentation p.4):
 
 | field | values (n patients) |
 |---|---|
@@ -205,7 +205,7 @@ asks for ("according to calendar year").
 
 `MEMBER_ENROLLMENT` carries **one row per member per change of anything**, so `BUS`,
 `PRODUCT`, `CDHP`, `STATE` and even `GDR_CD` are **span-level attributes**, not
-patient-level ones. The distributions on `docs/optum enrolment.pdf` p.4 prove it: each
+patient-level ones. The distributions on the Optum enrolment documentation p.4 prove it: each
 is a `count(DISTINCT PATID)` grouped by value, and the three totals disagree —
 `BUS` sums to 23,632, `CDHP` to 26,114, `PRODUCT` to 30,651. A patient appearing under
 two values of one field must hold two enrolment rows with different attributes.
@@ -372,14 +372,13 @@ All three copies of the business rules in this repo are byte-identical
 (`md5 f02f37c51797a77a408b81fea30a8f3f`): `docs/Part 3/Optum/`, `docs/`, and
 `Apr 18 2026/Optum - Business Rules/`. The April folder introduced no revision.
 
-## 4b. Read back off the source documents, page by page
+## 4b. Read back off the source documents
 
-Everything in this section was read from the images of
-`docs/Part 3/Optum/optum data dict.pdf` (24 pages, `2025_05_CDM Data Dictionary
-V9 SES.xls`, last modified 18-08-2025), `optum business rules.pdf` (7 pages,
-`Final_Business rule doc_OPTUM_V1_30_08_2022.xlsx`) and the four `describe
-table` screenshots in `docs/optum enrolment.pdf`. The text layers are OCR
-garbage; these are the pictures.
+Everything in this section comes from the Optum CDM V9.0 data dictionary (24 pages,
+`2025_05_CDM Data Dictionary V9 SES.xls`, last modified 18-08-2025), the Optum
+business rules document (7 pages, `Final_Business rule
+doc_OPTUM_V1_30_08_2022.xlsx`) and the `describe table` output in the Optum
+enrolment documentation.
 
 ### The deployed enrolment table, all 27 columns
 
@@ -513,7 +512,7 @@ present and `MEDICAL.PAID_STATUS` carries `P`/`D` rather than the dictionary's
 
 ## 4c. Value domains, measured 07 Sep 2026
 
-`SQL Result 2.pdf` profiled the columns section 4b could only infer. Everything
+The 07 Sep 2026 profile measured the columns section 4b could only infer. Everything
 here is a measured value, not a dictionary reading, and three of them contradict
 the dictionary.
 
@@ -618,7 +617,6 @@ benefits". The evidence:
   member table.
 - The protocol's own §7.5 says: *"All patients in this database have both medical
   and pharmacy coverage, allowing analysis of overall healthcare utilization."*
-  (screen 38)
 
 `Jul 28/ndmm/DECISIONS.md` §6 reaches the same conclusion from the same schema, and
 rules out the obvious alternative explicitly:

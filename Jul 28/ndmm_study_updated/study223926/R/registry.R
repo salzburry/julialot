@@ -35,17 +35,15 @@ CRITERIA_1L <- c("I1_mm_dx", "I2_age", "I3_eligible_1l_tx", "I4_ce_pre",
 # it unsuppressed - tests/run_tests.R checks every declared column exists and
 # every table with a patient count is declared.
 #
-# `n_col` is the POPULATION the row describes, not the number of patients who
-# had the event. s7.2.3 and s7.8 restrict analysis by the number of patients in
-# a cohort or stratum; a rate table's N_PATIENTS is the event-positive count,
-# and testing that instead deleted a perfectly reportable result - one event
-# among a thousand at-risk patients was suppressed as though the stratum held
-# one person - while leaving a small stratum published whenever most of it had
-# the event. The rate tables therefore test N_AT_RISK, which every one of them
-# now carries, and N_PATIENTS is suppressed as a value alongside the rest.
+# `n_col` is the POPULATION the row describes, not the patients who had the
+# event. s7.2.3 and s7.8 restrict by stratum size; testing the event-positive
+# count instead suppressed one event among a thousand at-risk patients as
+# though the stratum held one, and published a small stratum whenever most of
+# it had the event. The rate tables test N_AT_RISK and suppress N_PATIENTS as a
+# value.
 #
-# The count-only tables (patterns, switching, attrition) have no separate
-# denominator: their N_PATIENTS IS the stratum, so it is both.
+# The count-only tables have no separate denominator: their N_PATIENTS is the
+# stratum, so it is both.
 SUPPRESSION_SPEC <- list(
   S_SAFETY_RATES = list(
     n_col = "N_AT_RISK",

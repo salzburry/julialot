@@ -27,15 +27,10 @@ mod_safety <- function(con, cfg, cohort) {
   # the table would double it.
   # A condition whose DEFINITION is a setting, not just a code.
   #
-  # s7.8.1 names `severe infection resulting in hospitalization`. Every safety
-  # condition here is extracted from MED_DIAGNOSIS rows alone, with no link to
-  # CONFINEMENT or to an inpatient claim, so an outpatient infection code would
-  # satisfy a hospitalisation-defined endpoint. That is not a code list this
-  # package can be handed - it is a phenotype with a setting requirement the
-  # extraction does not implement.
-  #
-  # Rather than report it wrongly, a condition whose own name says
-  # hospitalisation stops the run until that linkage exists.
+  # Every condition here is extracted from diagnosis rows alone, so an
+  # outpatient code would satisfy `severe infection resulting in
+  # hospitalization`. That needs an admission linkage this module does not
+  # implement, so a condition whose name says hospitalisation stops the run.
   hosp_named <- unique(trimws(as.character(
     cl$condition[grepl("hospitali[sz]", cl$condition, ignore.case = TRUE)])))
   if (length(hosp_named))
@@ -96,18 +91,13 @@ mod_safety <- function(con, cfg, cohort) {
 
   # The two periods, counted the SAME way.
   #
-  # Baseline prevalence used to be a bare count(*) over every event date in the
-  # window: no washout, no chronic collapse. So a patient with chronic kidney
-  # disease coded at twelve visits contributed twelve events to the background
-  # prevalence of a condition s7.8.1 says counts once, and the acute events had
-  # no washout at baseline but did on treatment. Objective 1's prevalence and
-  # Objective 2's incidence were then computed under different rules and could
-  # not be compared - which is the comparison the study exists to make.
+  # Both periods run the same washout and chronic-collapse machinery. Counted
+  # differently, Objective 1's prevalence and Objective 2's incidence could not
+  # be compared - which is the comparison the study exists to make.
   #
-  # One difference between the periods survives, and it is the protocol's:
-  # the baseline denominator is the window's own person-time "irrespective of
-  # prior event history" (s7.8.1), so no patient is dropped from it, and a
-  # chronic condition's baseline first-occurrence counts for everyone.
+  # One protocol difference survives: the baseline denominator is the window's
+  # own person-time "irrespective of prior event history", so nobody is dropped
+  # from it and a chronic condition's first occurrence counts for everyone.
   prepare_table(con, wrk("S_SAFETY_COUNTED"),
     "PATID string, COHORT string, LOT_NUM int, PERIOD string,
      CONDITION string, EVENT_DT date", cohort$key)
@@ -175,17 +165,13 @@ mod_safety <- function(con, cfg, cohort) {
     # Only the treatment denominator drops the not-at-risk; s7.8.1 says the
     # baseline one is taken irrespective of prior event history.
     #
-    # And a chronic condition is counted ONCE, at first instance - so a patient
-    # who has that first event stops being at risk of a first event there. The
-    # denominator has to end with them. Summing the whole PERIOD_PY regardless
-    # gave an incidence rate one event over the full period, including the part
-    # of it where a first event was no longer possible, which understates every
-    # chronic rate. The at-risk end is the earlier of the first counted event
-    # and the period end, on the same both-endpoints-included convention
-    # PERIOD_PY itself uses.
+    # A chronic condition counts ONCE, at first instance, so a patient who has
+    # that event stops being at risk and the denominator ends with them.
+    # Summing the whole PERIOD_PY counted time in which a first event was no
+    # longer possible, understating every chronic rate. At-risk ends at the
+    # earlier of first counted event and period end.
     #
-    # Baseline is deliberately untouched: s7.8.1 takes the baseline denominator
-    # as the window's own length "irrespective of prior event history".
+    # Baseline is untouched: s7.8.1 takes it irrespective of prior history.
     py_expr <- if (per$exclude_prior)
       sprintf("sum(CASE
                      WHEN c.ac = 'chronic' AND h.PATID IS NOT NULL THEN 0

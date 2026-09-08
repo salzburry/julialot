@@ -1,14 +1,9 @@
 # SOC regimen categorisation - s7.2.2.
 #
 # The categories are the protocol's; which regimens fall in each is Annex 2,
-# which was not delivered. soc_regimen_categories.csv is the shape
-# ../CODELISTS.md section 4 proposes: one row per (line scope, category, agent,
-# role), so a regimen is categorised by the set of agents it contains rather
-# than by a regimen string, which is what makes it survive a new combination.
-#
-# apr_30_2026/regimen_categories.csv is the nearest existing asset - 47 rows
-# keyed on a regimen STRING - and is not read here, because a string key misses
-# every permutation the LOT engine can emit.
+# undelivered. soc_regimen_categories.csv is one row per (line scope, category,
+# agent, role), so a regimen is categorised by the agents it contains rather
+# than by a regimen string - which is what survives a new combination.
 
 SOC_CATEGORIES_1L <- c(
   "Quadruplet with anti-CD38 backbone", "Triplet with anti-CD38 backbone",
@@ -20,44 +15,33 @@ SOC_CATEGORIES_LATER <- c(
 
 # Which category wins when a regimen's agents map to more than one.
 #
-# A regimen containing a CAR-T agent alongside a companion agent matches both
-# 'CAR-T' and whatever the companion maps to, so something has to choose. An
-# aggregate like max() chooses alphabetically, which puts 'Doublet/monotherapy'
-# and 'Other' above 'CAR-T' - a silent, stable, wrong answer.
+# A CAR-T agent beside a companion matches two categories, so something has to
+# choose. max() would choose alphabetically and put 'Other' above 'CAR-T'.
 #
-# The modality categories take precedence over the size categories, because a
-# CAR-T given with a bridging agent is a CAR-T line and not a doublet. Among
-# the size categories the regimen's OWN agent count decides, not any single
-# agent's row - which is what "categorised by the set of agents it contains"
-# has to mean. 'Other' is last, so it is only ever a fallback.
+# Modality beats size: a CAR-T with a bridging agent is a CAR-T line, not a
+# doublet. Among size categories the regimen's own agent count decides.
+# 'Other' is last, so it is only ever a fallback.
 #
-# This precedence is this package's, not the protocol's: Annex 2 was not
-# delivered and s7.2.2 lists the categories without saying how to resolve a
-# regimen that spans two. It is written here so it can be argued with.
+# This precedence is this package's own - s7.2.2 lists the categories without
+# saying how to resolve a regimen spanning two. Written here so it can be
+# argued with.
 SOC_PRECEDENCE <- c(
   "CAR-T", "BCMA bispecific", "Non-BCMA bispecific", "Other novel agent",
   "Quadruplet with anti-CD38 backbone", "Triplet with anti-CD38 backbone",
   "Other triplet (non-anti-CD38)", "Doublet/monotherapy", "Other")
-# The categories whose name is a claim about the regimen rather than about any
-# one agent, and the test that claim has to pass. Both halves of a name are
-# tested, because both are claims:
+# Categories whose NAME is a claim about the regimen, and the test each claim
+# has to pass. Both halves are tested, because both are claims:
 #
-#   * "Quadruplet with anti-CD38 backbone" says FOUR agents AND an anti-CD38
-#     backbone. Deciding it on the count alone labels a four-agent regimen
-#     with no anti-CD38 agent as having one.
-#   * "Other triplet (non-anti-CD38)" says three agents and NO anti-CD38
-#     backbone - and it contains the substring "anti-CD38", so a
-#     LIKE '%anti-CD38%' test on the category NAME matches it too and relabels
-#     every non-anti-CD38 triplet as an anti-CD38 one. The category then never
-#     appears in the output at all.
+#   * "Quadruplet with anti-CD38 backbone" says four agents AND a backbone.
+#   * "Other triplet (non-anti-CD38)" says three agents and NO backbone - and
+#     it contains the substring "anti-CD38", so matching on the name relabels
+#     every non-anti-CD38 triplet and the category vanishes from the output.
 #
-# So the backbone is read off the agents (HAS_CD38_BACKBONE below), never off
-# the category name, and these predicates are the SQL the CASE is built from
-# rather than a table something else has to be kept in step with.
+# So the backbone is read off the agents, never off the category name.
 #
-# A four-agent regimen with no anti-CD38 backbone falls through every arm to
-# 'Other'. s7.2.2 lists no other quadruplet category, and inventing one would
-# report a category the protocol does not define.
+# A four-agent regimen with no backbone falls through to 'Other'; s7.2.2 lists
+# no other quadruplet category and inventing one would report what the protocol
+# does not define.
 SOC_SIZE_CATEGORIES <- c(
   "Quadruplet with anti-CD38 backbone" = "N_AGENTS >= 4 AND HAS_CD38_BACKBONE = 1",
   "Triplet with anti-CD38 backbone"    = "N_AGENTS  = 3 AND HAS_CD38_BACKBONE = 1",
@@ -94,7 +78,7 @@ mod_soc <- function(con, cfg, cohort) {
   if (length(bad))
     stop("CODELIST ERROR: soc_regimen_categories.csv names categories the ",
          "protocol does not: ", paste(bad, collapse = "; "),
-         ".\nProtocol categories are s7.2.2, screens 23-24. Rename them or say ",
+         ".\nProtocol categories are s7.2.2. Rename them or say ",
          "why the study is reporting a category the protocol does not define.",
          call. = FALSE)
   bad_scope <- setdiff(toupper(unique(cl$line_scope)), c("1L", "LATER"))

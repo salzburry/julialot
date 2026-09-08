@@ -1,8 +1,8 @@
 # The small-cell rule.
 #
-# s7.2.3, screen 24: "Stratifications with <25 patients will not be performed
+# s7.2.3: "Stratifications with <25 patients will not be performed
 # or may be regrouped due to low volumes."
-# s7.8, screen 41: "If there are less than 25 patients in a particular
+# s7.8: "If there are less than 25 patients in a particular
 # stratifications or cohort, analyses will not be conducted (unless specific to
 # SOC)."
 #

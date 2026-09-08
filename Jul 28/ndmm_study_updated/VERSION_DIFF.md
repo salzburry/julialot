@@ -1,16 +1,14 @@
 # What changed since the June 2026 protocol
 
-The version this one supersedes is in the repo with a real text layer:
-`Questions/July 30 2026/Updated NNDM cohort.pdf` — a scan of
+The version this one supersedes is
 `Belantamab_Optum LoT_Unmet_Need_CoAuth Rev Round 2 (June 16 2026).docx`, 58 pages.
 
-It matters for two reasons. First, several of the current build's settings are
-correct against **that** version and wrong against this one — knowing which is which
-saves arguing about whether the build has a bug. Second, its Table 3 is the best
-available stand-in for the rows lost on the corrupt photo (§3).
+It matters for two reasons. Several of the current build's settings are correct
+against **that** version and wrong against this one, which saves arguing about
+whether the build has a bug. And its Table 3 is the best available stand-in for
+the rows this version does not carry (§3).
 
-There is also an older one, `docs/june_22_2026/NNDM/SUPERSEDED_nmdmprotocol_do_not_use.pdf`,
-which the repo marks superseded. It is not used here.
+An older version exists too, marked superseded. It is not used here.
 
 ---
 
@@ -129,20 +127,21 @@ None of them is a defect. All three are a protocol version behind.
 
 ---
 
-## 3. The rows lost on the corrupt photo, reconstructed
+## 3. The rows missing from pages 31-32, reconstructed
 
-Photo p17 (document pages 31-32) is a truncated JPEG that renders as noise at any
-resolution — there is no partial text at either edge. The gap is bounded exactly:
+Pages 31-32 are unreadable in the copy supplied, with no partial text at either
+edge. The gap is bounded exactly:
 
-- **last visible on p16**: Table 4's *"Types of 1L, 2L, 3L SOCs or classes by line"*
-- **first visible on p18**: the two footnotes belonging to the on-treatment incidence
-  row, then *"Healthcare utilization events / Same as Primary Objective 1"*
+- **last readable row before the gap**: Table 4's *"Types of 1L, 2L, 3L SOCs or
+  classes by line"*
+- **first readable row after it**: the two footnotes belonging to the on-treatment
+  incidence row, then *"Healthcare utilization events / Same as Primary Objective 1"*
 
 So the gap holds: the background-rates block, the baseline healthcare-utilisation
 block, the Primary Objective 2 banner, and the body of the on-treatment incidence row.
 
-The June version's Table 3 covers exactly that span. **This is a reconstruction, not a
-transcription** — treat it as the shape of what is missing, not its wording.
+The June version's Table 3 covers exactly that span. **This is a reconstruction, not
+the wording itself** — treat it as the shape of what is missing.
 
 | variable / outcome (June wording) | definition | timing |
 |---|---|---|

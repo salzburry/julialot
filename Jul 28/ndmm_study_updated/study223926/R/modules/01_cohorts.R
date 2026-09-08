@@ -138,18 +138,13 @@ mod_attrition <- function(con, cfg, cohort) {
     "COHORT string, STEP int, CRITERION string, APPLIED_BY string,
      N_REMAINING int, N_LOST int", cohort$key)
 
-  # The count carried into each step is the population that has passed every
-  # criterion at or above it that this package can test. A step whose verdict
-  # came from upstream adds no predicate of its own, so it reports the same
-  # count as the step before rather than resetting to the unfiltered total -
-  # a funnel whose N_REMAINING goes back up is not a funnel.
+  # Each step carries the population that passed every criterion at or above
+  # it. A step whose verdict came from upstream adds no predicate, so it
+  # repeats the count above rather than resetting - a funnel whose N_REMAINING
+  # goes back up is not a funnel.
   #
-  # Counted in SQL, in one statement, rather than a db_q() per criterion per
-  # cohort. Two reasons, and the second is the one that matters: it is 36
-  # warehouse round-trips otherwise, and a count that comes back into R and is
-  # written out as a literal is a number no test can reach without a
-  # warehouse. In SQL the funnel is checkable against the cohort table it
-  # describes.
+  # One SQL statement, not a query per criterion per cohort: 36 round-trips
+  # otherwise, and a count returned into R is a literal no test can reach.
   cum <- character(0)
   arms <- character(0)
   for (i in seq_along(cohort$criteria)) {
@@ -197,22 +192,15 @@ mod_attrition <- function(con, cfg, cohort) {
 
 # The enrolment spans, built once from the raw table with the protocol's own
 # gap allowance. Not the CDM rollup - see above.
-# The columns this package reads off INPUT_COHORT_TABLE, checked before any of
-# it runs.
+# The columns this package reads off INPUT_COHORT_TABLE, checked before
+# anything runs.
 #
-# Every module indexes on the cohort table: 02_periods reads INDEX_DATE,
-# windows.R reads ENDDATE and ENDDATE_CE and DEATH_DT, 03_demographics reads
-# YRDOB and GDR_CD, 08_malignancy reads MM_DX_DT. A table that does not carry
-# them fails deep inside a module with an unresolved-column error naming
-# neither the table nor the setting that chose it.
+# Every module indexes on this table - INDEX_DATE, the end dates, DEATH_DT,
+# YRDOB, GDR_CD, MM_DX_DT. Without them a module fails on an unresolved column
+# naming neither the table nor the setting that chose it.
 #
-# It also refuses one specific mistake. BUILD_DELTA once recommended pointing
-# this setting at the cohort build's NDMM_FLAGS_ALL to obtain a wider
-# population for the secondary 2L cohort. That table is PATID plus seven
-# eligibility flags and nothing else - no index date, no end dates, no
-# demographics - so it cannot drive this package or the LOT engine, and the
-# recommendation was wrong. The check below is what makes that visible at the
-# first step rather than the fifth module.
+# It also refuses a table of patient ids and eligibility flags, which carries
+# none of them and cannot drive this package or the LOT engine.
 COHORT_TABLE_REQUIRED <- c("PATID", "INDEX_DATE", "ENDDATE", "ENDDATE_CE",
                            "DEATH_DT", "MM_DX_DT", "YRDOB", "GDR_CD")
 

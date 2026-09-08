@@ -7,14 +7,12 @@
 #   2. config.csv               - the defaults, filled only where 1 is unset
 #   3. cfg_defaults() below     - the fallback, if a row is missing from the CSV
 #
-# Layer 3 exists so a truncated config.csv cannot silently change a definition:
-# every setting has a value here even when the file has none.
+# Layer 3 means a truncated config.csv cannot silently change a definition.
 #
-# CONTRACT is the subset the protocol states outright. Changing one of those is
-# a different study, so it needs SETTINGS_OVERRIDE=TRUE and lands in
-# CONTRACT_DEVIATIONS on the run's own status row. Everything outside CONTRACT
-# is a reading the protocol leaves open - each one is an entry in
-# ../OPEN_QUESTIONS.md, and every run records which reading it used.
+# CONTRACT is the subset the protocol states outright. Changing one is a
+# different study: it needs SETTINGS_OVERRIDE=TRUE and lands in
+# CONTRACT_DEVIATIONS on the run's status row. Everything else is a reading the
+# protocol leaves open, and every run records which one it used.
 
 .env_chr <- function(name, default) {
   v <- trimws(Sys.getenv(name, unset = ""))
@@ -63,19 +61,18 @@
   v
 }
 
-# The protocol's own numbers. Section references are to the Aug 26 2026
-# document; screen numbers are the photographs in ../ashley study.pdf.
+# The protocol's own numbers, with the section each comes from.
 CONTRACT <- list(
-  baseline_days             = 365L,   # s7.1, screen 17
-  ce_pre_days               = 365L,   # s7.2.1.1, screen 21
-  gap_days                  = 30L,    # s7.2.1.1, screen 21
-  lot_post_discon_days      = 30L,    # Figure 1 note 2, screen 19
-  acute_washout_days        = 30L,    # s7.3.2, screen 29
-  tte_min_potential_fu_days = 90L,    # s7.8.2, screen 48
-  suppress_min_n            = 25L,    # s7.2.3, screen 24
-  lot1_index_from           = "2019-01-01",  # s7.1, screen 17
-  sec2l_index_from          = "2020-01-01",  # s7.4, screen 37
-  study_end                 = "2026-03-31"   # s7.1, screen 17
+  baseline_days             = 365L,   # s7.1
+  ce_pre_days               = 365L,   # s7.2.1.1
+  gap_days                  = 30L,    # s7.2.1.1
+  lot_post_discon_days      = 30L,    # Figure 1 note 2
+  acute_washout_days        = 30L,    # s7.3.2
+  tte_min_potential_fu_days = 90L,    # s7.8.2
+  suppress_min_n            = 25L,    # s7.2.3
+  lot1_index_from           = "2019-01-01",  # s7.1
+  sec2l_index_from          = "2020-01-01",  # s7.4
+  study_end                 = "2026-03-31"   # s7.1
 )
 
 cfg_defaults <- function() {
@@ -152,20 +149,13 @@ cfg_defaults <- function() {
     pregnancy_window = .env_enum("PREGNANCY_WINDOW", "study_period",
       c("study_period", "patient_period")),
     sec2l_apply_other_cancer = .env_lgl("SEC2L_APPLY_OTHER_CANCER", FALSE),
-    # The secondary 2L cohort is the one thing this package cannot build from
-    # its own inputs. s7.4.1.1 wants 2L initiators "irrespective of whether
-    # their 1L initiation occurred during the primary cohort ascertainment
-    # period", and s7.8.1 permits a prior malignancy - but every cohort here is
-    # an INNER JOIN onto INPUT_COHORT_TABLE, which is the primary NDMM cohort
-    # with X2 and the 2019 floor already applied, and the LOT run this package
-    # reads was built over that same population. No setting can widen it.
+    # s7.4.1.1 wants 2L initiators regardless of when their 1L fell, and
+    # s7.8.1 permits a prior malignancy. Every cohort here joins onto
+    # INPUT_COHORT_TABLE, so no setting can widen that input.
     #
-    # So: TRUE asserts that INPUT_COHORT_TABLE and the LOT run behind it were
-    # built WITHOUT the other-cancer exclusion and without the 1L index floor.
-    # Only the person who ran those builds knows, which is why it is an
-    # assertion and not a test. FALSE with SEC2L selected stops the run rather
-    # than producing a cohort whose baseline malignancy prevalence - the whole
-    # reason s7.8.1 asks for it - is zero by construction.
+    # TRUE asserts the input was built without X2 and without the 1L floor.
+    # Only whoever ran it knows, so it is an assertion, not a test. FALSE with
+    # SEC2L selected stops rather than reporting a prevalence of zero.
     sec2l_input_is_wide = .env_lgl("SEC2L_INPUT_IS_WIDE", FALSE),
     # The 1L index-setting agents are NOT a setting here. Barring belantamab,
     # panobinostat or elotuzumab from setting an index means re-deriving the
@@ -185,15 +175,8 @@ cfg_defaults <- function() {
 
     # --- comorbidity ------------------------------------------------------
     # Both off by default, and both are switches rather than silent omissions.
-    #
-    # Frailty is "only included pending review of data and mapping" (Table 4)
-    # and its algorithm is Annex 7, which was not delivered. FRAILTY=TRUE asks
-    # for it; the code-list guard then stops the run naming the annex, which is
-    # the honest outcome and not a crash to work around.
-    #
-    # The subgroup flags (neuropathy, lung parenchymal disease) are Table 4's
-    # and need Annex 3's codes. COMORBID_SUBGROUPS=TRUE asks for them on the
-    # same terms.
+    # Frailty needs Annex 7 and the subgroup flags need Annex 3; neither has
+    # been delivered, so asking for either stops the run naming the annex.
     frailty            = .env_lgl("FRAILTY", FALSE),
     comorbid_subgroups = .env_lgl("COMORBID_SUBGROUPS", FALSE),
     # Kim 2018's own cut-point. A setting rather than a constant because the
@@ -217,68 +200,31 @@ cfg_defaults <- function() {
     ed_admitted = .env_enum("ED_ADMITTED", "both", c("both", "inpatient_only")),
 
     # --- which route makes a stay MM-related --------------------------------
-    # s7.8.1 asks for a myeloma diagnosis "in the first or second position" on
-    # a hospitalisation, and the CDM offers two places to look. `confinement`
-    # reads CONFINEMENT.DIAG1/DIAG2 - the stay's own first two diagnoses, five
-    # positions, stay grain. `claim_positions` reads MED_DIAGNOSIS.DIAG_POSITION
-    # 1 or 2 on a claim carrying that CONF_ID, which is the route business
-    # rule 13 documents: twenty-five positions, claim-line grain.
+    # s7.8.1 says "first or second position" without saying of what.
+    # `confinement` reads CONFINEMENT.DIAG1/DIAG2; `claim_positions` reads
+    # MED_DIAGNOSIS.DIAG_POSITION 1-2 on a claim carrying the CONF_ID, which is
+    # the route business rule 13 documents.
     #
-    # The 03 Sep 2026 profile priced it: over 241,362 stays the routes find
-    # 32,508 and 65,206 respectively, and 33,904 stays are found only by the
-    # claim route (../SQL Result 2.pdf, result 11). A further 33,978 carry MM
-    # in confinement positions 3-5, which neither counts. This is the largest
-    # unresolved swing in this package's own SQL. ../OPEN_QUESTIONS.md Q27.
-    #
-    # `confinement` is what every number produced so far used, so it stays the
-    # default; changing it silently would make this package disagree with its
-    # own history.
+    # Over 241,362 stays they find 32,508 and 65,206, and 33,904 stays only the
+    # claim route finds. Largest unresolved swing here. See OPEN_QUESTIONS Q27.
+    # `confinement` is what every number so far used, so it stays the default.
     mm_hosp_position = .env_enum("MM_HOSP_POSITION", "confinement",
                                  c("confinement", "claim_positions")),
 
     # --- claim status -----------------------------------------------------
-    # MEDICAL.PAID_STATUS separates PAID from DENIED, and the CDM fills it in
-    # when the source leaves it null: "PAID if Sum of all Paid Amounts >= $0,
-    # DENIED if Sum of all Paid Amounts < $0" (V9.0 dictionary, MEDICAL row
-    # 28). A denied claim is not evidence the service happened, and nothing in
-    # this package or the cohort build has ever filtered on it. The 03 Sep 2026
-    # profile put it at 17.4% of medical lines among myeloma patients - but the
-    # 08 Sep run showed that headline is misleading. Denials concentrate in
-    # ordinary outpatient claims (21.65%) and are thin in the claims this study
-    # counts as events: ED-shaped 7.52%, inpatient-linked 5.83%. At the event
-    # grain it is smaller still - of 499,272 ED patient-days, only 2,630 have
-    # every line denied. So paid_only removes ONE ED VISIT IN 200, not one in
-    # six.
+    # MEDICAL.PAID_STATUS separates PAID from DENIED. Nothing has ever filtered
+    # on it, and `all` keeps it that way by default.
     #
-    # WHAT IT ACTUALLY COVERS, which is narrower than the name suggests:
-    # claim_status_sql() has ONE call site, the ED arm of 07_hcru.R. It does
-    # NOT reach
-    #   * build_fu_claims() in 01_cohorts.R, the I5 follow-up claim test,
-    #   * the MM-related hospitalisation subquery under
-    #     MM_HOSP_POSITION=claim_positions, which reads MEDICAL too,
-    #   * anything reading CONFINEMENT, which has no paid status at all, or
-    #   * RX. The deployed pharmacy table has NO PAID_STATUS - its columns run
-    #     STD_COST, AHFSCLSS, CHK_DT, DAW, DAYS_SUP - so a denied pharmacy
-    #     claim cannot be excluded by this setting on any reading.
+    # Denials are 17.4% of medical lines but concentrate in ordinary outpatient
+    # claims. At the event grain only 2,630 of 499,272 ED patient-days have
+    # every line denied, so paid_only removes one ED visit in 200.
     #
-    # And it cannot be recovered from the money either. STD_COST looked like a
-    # stand-in, since the dictionary's paid/denied rule is arithmetic on paid
-    # amounts, but the 08 Sep run tested it where both columns exist and it
-    # does not hold: 14,891,418 DENIED medical lines carry a POSITIVE STD_COST
-    # and 1,034,482 paid lines carry a negative one. STD_COST is a standardised
-    # price, not an amount paid. On RX there are no negative rows at all.
-    # Denied pharmacy claims are unidentifiable in this extract, and that is a
-    # limitation to state rather than a gap to close.
-    #
-    # Widening it is not a config change and is not made here: whether a denied
-    # claim still counts as evidence of an encounter differs by use. A claim
-    # the payer refused is weak evidence that an ED visit happened, and a
-    # perfectly ordinary way to observe that a patient was still in follow-up.
-    # ../OPEN_QUESTIONS.md Q25 carries the decision and the numbers.
-    #
-    # `all` is what every number produced so far includes, so it is the
-    # default: changing it silently would make this package disagree with the
-    # cohort table it is built on.
+    # It is narrower than its name: claim_status_sql() has one call site, the
+    # ED arm of 07_hcru.R. It does not reach the I5 follow-up test, the
+    # MM-hospitalisation subquery, CONFINEMENT, or RX - the pharmacy table has
+    # no paid status, and STD_COST cannot stand in for one (14.9M denied lines
+    # carry a positive value). Widening it is a study decision, not a config
+    # change. See OPEN_QUESTIONS Q25.
     claim_status = .env_enum("CLAIM_STATUS", "all", c("all", "paid_only")),
 
     # --- reporting --------------------------------------------------------
@@ -341,24 +287,16 @@ check_contract <- function(cfg) {
   dev
 }
 
-# The settings that are NOT in the contract, with the reading each one took.
-# Written to the run's metadata so a number can be traced to the readings that
-# produced it. Ordered, so two runs' rows compare line for line.
-# Every open question's reading, and WHERE it is applied. The distinction is
-# the point, and it was missing: nine of these settings were written onto
-# S_RUN_METADATA as "the reading that produced these numbers" while this
-# package applied none of them - which is the exact failure ../MODULES.md
-# records as fixed for INDEX_EXCLUDED_ABBRS ("reported as applied while
-# applying nothing"). A reader could not tell a 90-day window this run used
-# from one the cohort build used.
+# Every open question's reading, and WHERE it is applied. Written to the run's
+# metadata so a number can be traced to the readings behind it.
 #
-#   "here"      this package's SQL changes when the setting changes.
-#               tests/run_tests.R proves it by emitting both ways and diffing,
-#               so a setting cannot quietly become inert.
-#   "upstream"  the rule belongs to the cohort or LOT build. The value is
-#               recorded because the analytical tables should say which cohort
-#               DEFINITION produced them - but this package applies nothing,
-#               and the row says so.
+# The distinction matters: without it a reader cannot tell a window this
+# package applied from one the cohort build applied.
+#
+#   "here"      this package's SQL changes when the setting changes, and
+#               tests/run_tests.R proves it by emitting both ways.
+#   "upstream"  the rule belongs to the cohort or LOT build. Recorded so the
+#               tables say which definition produced them; applied elsewhere.
 OPEN_QUESTION_SOURCE <- c(
   fu_evidence_rule                    = "here",
   sec2l_apply_other_cancer            = "here",
@@ -401,7 +339,7 @@ check_settings <- function(cfg) {
   # 2025q4 extract - ETHNICITY, RACE (moved from the SES file and renamed from
   # D_RACE_CODE) and RACE_SOURCE, appended at columns 26 and 27. REGION and
   # LIS_DUAL did not. Verified column by column against the `describe table`
-  # in docs/optum enrolment.pdf; ../DATA_MAPPING.md section 4 has the list.
+  # in the Optum enrolment documentation; ../DATA_MAPPING.md section 4 has the list.
   #
   # Refused here rather than left to Spark, which would say UNRESOLVED_COLUMN
   # after the session had been opened and the spine built.
