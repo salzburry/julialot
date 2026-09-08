@@ -587,7 +587,25 @@ values. **The warehouse stores `P` and `D`**, so `CLAIM_STATUS=paid_only` was a
 silent no-op — it excluded nothing. Fixed to match both encodings. Nulls are
 not treated as denied.
 
-**Still needs an answer**, and it is now the second-largest number on the page.
+**And the setting is narrower than its name.** `claim_status_sql()` has one
+call site — the ED arm of `07_hcru.R`. `CLAIM_STATUS=paid_only` does not touch
+the I5 follow-up claim test, the MM-hospitalisation subquery, `CONFINEMENT`
+(which has no paid status), or `RX`. **The deployed pharmacy table has no
+`PAID_STATUS` at all** — its columns run `STD_COST`, `AHFSCLSS`, `CHK_DT`,
+`DAW`, `DAYS_SUP` — so a denied pharmacy claim cannot be excluded on any
+reading of this setting.
+
+That may be recoverable. The dictionary's own rule for MEDICAL is arithmetic on
+money — "PAID if Sum of all Paid Amounts >= $0, DENIED if < $0" — and `RX`
+carries `STD_COST`. `RUN_ONCE_3.sql` block 7 tests that rule against
+`PAID_STATUS` on the medical side, where both exist, and then applies it to
+`RX`, where only the money is there. A clean result makes the filter symmetric;
+anything else makes the asymmetry permanent and worth stating in the SAP.
+
+**So the decision has three parts, not one:** whether to exclude denied claims
+at all; if so, whether the exclusion reaches beyond emergency visits; and
+whether pharmacy claims can join it. **Still needs an answer**, and it is the
+second-largest number on the page.
 
 ### Q11 — the three ED constructions, and a third of them became admissions
 

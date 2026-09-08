@@ -525,6 +525,7 @@ the dictionary.
 | `MED_DIAGNOSIS.ICD_FLAG` | `10` and `9` | as documented |
 | `CONFINEMENT.ICD_FLAG` | **present** — `10` 23,453,669 · `9` 15,054,996 · null 1,666 | section 4b could not confirm this column existed. It does. The admit-date fallback still earns its place for the 1,666 nulls |
 | `MEDICAL.PAID_STATUS` | **`P` and `D`** — 2 values, no nulls table-wide since 2024 | **The V9.0 dictionary spells these `PAID` and `DENIED`. The warehouse does not.** Any filter written from the dictionary is inert. Among myeloma patients specifically the split is P 78.69% / D 17.42% / null 3.89% |
+| `RX.PAID_STATUS` | **does not exist** | The deployed pharmacy table has no paid status. Its columns include `STD_COST`, `AHFSCLSS`, `CHK_DT`, `DAW`, `DAYS_SUP` — and `STD_COST` and `CHK_DT` are absent from the V9.0 field list in `optum_cdm_fields.csv`, so that list is **incomplete for RX**, the same way it was for `DOD.MBR_MATCH_TYPE`. A denied pharmacy claim cannot be excluded by `CLAIM_STATUS` on any reading |
 | `MEDICAL.CONF_ID` | null or populated only — no `0`, no blank | Business rule 14's test is `CONF_ID IS NULL` and nothing else. 186,547,530 lines across 2,805,263 members carry one; 182,711,199 lines across 21,932,322 members do not |
 | `DOD.MBR_MATCH_TYPE` | `2` 58.93% · `1` 41.07% | Two values, no nulls: a binary flag, not a graded score. Which value means what is still undocumented anywhere we hold |
 
@@ -538,6 +539,20 @@ Across 241,362 stays belonging to myeloma patients since 2018:
 * `LOS` equals `datediff(DISCH_DATE, ADMIT_DATE)` on 235,733 stays and differs
   on 5,629 (2.3%). Means 8.87 against 8.84. The build computes its own, which
   the dictionary's note about `LOS` spanning bundled records supports.
+
+### What `CLAIM_STATUS=paid_only` actually filters
+
+Narrower than the name. `claim_status_sql()` has **one call site** — the ED arm
+of `07_hcru.R`. It does not reach `build_fu_claims()` (the I5 follow-up claim
+test), the MM-hospitalisation subquery under `MM_HOSP_POSITION=claim_positions`,
+anything reading `CONFINEMENT` (no paid status there), or `RX` (no paid status
+at all). So the setting governs emergency visits and nothing else, while
+recording itself on every run as though it governed claims generally.
+
+Whether to widen it is a decision, not a config change: a claim the payer
+refused is weak evidence that an ED visit happened, and a perfectly ordinary
+way to observe that a patient was still in follow-up. `OPEN_QUESTIONS.md` Q25
+carries it.
 
 ### The ask in section 4b is now closed
 

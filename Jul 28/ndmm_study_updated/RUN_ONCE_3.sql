@@ -1,5 +1,5 @@
 -- =========================================================================
---  RUN_ONCE_3.sql — round three.                        ~25 minutes, 13 stmts
+--  RUN_ONCE_3.sql — round three.                        ~27 minutes, 14 stmts
 -- =========================================================================
 --
 --  Round two priced sixteen questions. This closes the two loose ends it left,
@@ -29,11 +29,11 @@
 --      corrupt overall survival - a secondary objective.
 --    * DIAG_POSITION's 26th value.
 --
---  LAST, BECAUSE AN ERROR IS THE ANSWER
---    RX was profiled in round one with a DESCRIBE whose output was truncated
---    on screen - the same way CONFINEMENT.ICD_FLAG and MEDICAL.PAID_STATUS
---    went unconfirmed until round two had to re-ask. The package reads
---    RX.FILL_DT and RX.PATID. Neither is confirmed present.
+--    * whether a denied PHARMACY claim can be identified at all. RX has no
+--      PAID_STATUS - its columns include STD_COST, AHFSCLSS, CHK_DT, DAW and
+--      DAYS_SUP. The dictionary's paid/denied rule for MEDICAL is arithmetic
+--      on money, so block 7 proves that rule against PAID_STATUS where both
+--      exist and then applies it to RX, where only the money is there.
 --
 --  NO PLACEHOLDERS. Block 0 rebuilds the same proxy population round two used,
 --  so every number is directly comparable to SQL Result 2.pdf.
@@ -334,28 +334,61 @@ FROM (
 
 
 -- =========================================================================
--- BLOCK 7 — RX. LAST, because an error is the answer.          ~3 minutes
+-- BLOCK 7 — RX, and whether a denied pharmacy claim can be found at all.
 -- =========================================================================
--- The package reads RX.FILL_DT and RX.PATID in build_fu_claims(), and neither
--- has been confirmed present: round one's probe was a DESCRIBE whose output
--- was truncated on screen, which is exactly how CONFINEMENT.ICD_FLAG and
--- MEDICAL.PAID_STATUS went unconfirmed until round two had to re-ask.
+-- RX HAS NO PAID_STATUS. Confirmed by inspection of the deployed table, whose
+-- columns include STD_COST, AHFSCLSS, CHK_DT, DAW and DAYS_SUP - and note that
+-- STD_COST and CHK_DT are not in the V9.0 field list we hold, so that list is
+-- incomplete for RX the same way it was for DOD.MBR_MATCH_TYPE.
 --
--- If this errors, the column is absent and 01_cohorts.R needs the real name.
+-- That matters for Q25. The dictionary's own rule for MEDICAL is arithmetic on
+-- money: "PAID if Sum of all Paid Amounts >= $0, DENIED if < $0". If that rule
+-- reproduces PAID_STATUS on the medical side, the same sign test can stand in
+-- for it on the pharmacy side, and CLAIM_STATUS=paid_only can be made
+-- symmetric. If it does not, pharmacy claims cannot be filtered at all and the
+-- asymmetry is real and permanent.
+--
+-- So: prove the proxy where the truth is known, then apply it where it is not.
 
-SELECT count(*)                            AS rx_lines,
-       count(DISTINCT cast(PATID as string)) AS members,
-       min(cast(FILL_DT as date))          AS earliest_fill,
-       max(cast(FILL_DT as date))          AS latest_fill,
-       sum(CASE WHEN FILL_DT IS NULL THEN 1 ELSE 0 END) AS fill_dt_null,
-       sum(CASE WHEN NDC IS NULL THEN 1 ELSE 0 END)     AS ndc_null
+-- The shape of RX, using only columns the package needs. build_fu_claims()
+-- reads FILL_DT and PATID and neither has been confirmed present - round one's
+-- probe was a DESCRIBE truncated on screen, which is how CONFINEMENT.ICD_FLAG
+-- and MEDICAL.PAID_STATUS went unconfirmed until round two had to re-ask.
+SELECT count(*)                              AS rx_lines,
+       count(DISTINCT cast(r.PATID as string)) AS members,
+       min(cast(r.FILL_DT as date))          AS earliest_fill,
+       max(cast(r.FILL_DT as date))          AS latest_fill,
+       sum(CASE WHEN r.FILL_DT  IS NULL THEN 1 ELSE 0 END) AS fill_dt_null,
+       sum(CASE WHEN r.NDC      IS NULL THEN 1 ELSE 0 END) AS ndc_null,
+       sum(CASE WHEN r.DAYS_SUP IS NULL THEN 1 ELSE 0 END) AS days_sup_null
 FROM       hive_metastore.clnprw_optum.t_rx_2026q1 r
 INNER JOIN mm_pts p ON p.PATID = cast(r.PATID as string);
 
--- And whether a denied PHARMACY claim can be excluded at all. The V9.0 field
--- list gives RX no PAID_STATUS, which would mean CLAIM_STATUS=paid_only can
--- only ever apply to the medical side - an asymmetry the study team should
--- know about before choosing it. An error here IS that answer.
-SELECT PAID_STATUS, count(*) AS n
-FROM   hive_metastore.clnprw_optum.t_rx_2026q1
-GROUP BY PAID_STATUS ORDER BY n DESC;
+-- Does the sign of STD_COST reproduce PAID_STATUS? This is the validation
+-- step, on the table where both exist. A clean diagonal - every negative line
+-- flagged D, every non-negative line flagged P - means the sign test IS the
+-- paid/denied rule and can be trusted on RX. Anything else means it is not.
+SELECT upper(trim(coalesce(m.PAID_STATUS, '(null)'))) AS paid_status,
+       CASE WHEN m.STD_COST IS NULL THEN 'null'
+            WHEN m.STD_COST <  0    THEN 'negative'
+            WHEN m.STD_COST =  0    THEN 'zero'
+            ELSE 'positive' END                       AS std_cost_sign,
+       count(*)                                       AS lines
+FROM       hive_metastore.clnprw_optum.t_medical_2026q1 m
+INNER JOIN mm_pts p ON p.PATID = cast(m.PATID as string)
+WHERE  cast(m.FST_DT as date) >= date('2018-01-01')
+GROUP BY 1, 2 ORDER BY lines DESC;
+
+-- And the same sign test on RX, where there is no PAID_STATUS to check it
+-- against. `negative` is the population CLAIM_STATUS=paid_only would exclude
+-- from the pharmacy side IF the statement above shows the rule holds.
+SELECT CASE WHEN r.STD_COST IS NULL THEN 'null'
+            WHEN r.STD_COST <  0    THEN 'negative'
+            WHEN r.STD_COST =  0    THEN 'zero'
+            ELSE 'positive' END                       AS std_cost_sign,
+       count(*)                                       AS lines,
+       count(DISTINCT cast(r.PATID as string))        AS members
+FROM       hive_metastore.clnprw_optum.t_rx_2026q1 r
+INNER JOIN mm_pts p ON p.PATID = cast(r.PATID as string)
+WHERE  cast(r.FILL_DT as date) >= date('2018-01-01')
+GROUP BY 1 ORDER BY lines DESC;

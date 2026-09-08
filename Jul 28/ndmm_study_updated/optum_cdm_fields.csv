@@ -59,6 +59,8 @@ RX,rx,QUANTITY; STRENGTH,-,Dispensed quantity and strength,dose checks,dict
 RX,rx,BRND_NM; GNRC_NM; GNRC_IND,-,Brand / generic naming,code-list QC,dict
 RX,rx,AHFSCLSS; SPECCLSS; SPCLT_IND,-,Therapeutic and specialty classification,code-list QC,dict
 RX,rx,PRESCRIBER_PROV; NPI; PHARM; PRESCRIPT_ID; RFL_NBR; FST_FILL; DAW; MAIL_IND,-,"Prescriber, pharmacy and fill attributes",-,dict
+RX,rx,STD_COST,-,"Standardized cost; not in the V9.0 field list we hold, present in the deployed table",the only paid/denied signal RX carries - OPEN_QUESTIONS.md Q25,"deployed table, 07 Sep 2026"
+RX,rx,CHK_DT,-,"Check date; not in the V9.0 field list we hold, present in the deployed table",unused,"deployed table, 07 Sep 2026"
 LABRESULT,lab,LOINC_CD; TST_DESC; RSLT_TXT; RSLT_NBR; HI_NRML; LOW_NRML; FST_DT,-,Lab results; coverage limited to certain laboratory networks,"thrombocytopenia and anaemia, if data allows",dict + business rules p.6
 DOD,dod,PATID; YMDOD,CCYYMM,Month and year of death only,OS; follow-up end; death-based criteria,business rules p.3
 SES,ses,PATID; D_EDUCATION_LEVEL_CODE; D_HOUSEHOLD_INCOME_RANGE_CODE; D_HOME_OWNERSHIP_CODE; D_NETWORTH_RANGE_CODE,-,Socio-economic attributes,nothing this protocol asks for,dict
