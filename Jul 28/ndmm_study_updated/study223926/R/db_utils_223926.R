@@ -261,27 +261,71 @@ run_step <- function(con, name, sql, qc = NULL, allow_empty = FALSE) {
 # The declared schema is therefore compared with what is there BEFORE the scope
 # is cleared, and a mismatch stops with the difference named. Deleting a
 # cohort's rows and then failing to reinsert them would leave the table short.
+# Normalised type names, so a declared `string` and a warehouse `VARCHAR` are
+# the same type and a declared `int` and a stored `bigint` are not.
+.sql_type_norm <- function(x) {
+  x <- toupper(trimws(sub("\\(.*$", "", as.character(x))))
+  x[x %in% c("STRING", "VARCHAR", "TEXT", "CHAR")] <- "STRING"
+  x[x %in% c("INT", "INTEGER")] <- "INT"
+  x[x %in% c("BIGINT", "LONG")] <- "BIGINT"
+  x[x %in% c("DOUBLE", "FLOAT8", "REAL", "FLOAT")] <- "DOUBLE"
+  x[x %in% c("TIMESTAMP", "TIMESTAMP_NTZ", "DATETIME")] <- "TIMESTAMP"
+  x
+}
+
 ensure_table <- function(con, name, schema_sql) {
   db_exec(con, sprintf("CREATE TABLE IF NOT EXISTS %s (%s)", name, schema_sql))
-  want <- toupper(trimws(sub("\\s.*$", "", trimws(
-    strsplit(gsub("\n", " ", schema_sql), ",")[[1]]))))
-  have <- tryCatch({
-    d <- db_q(con, sprintf("DESCRIBE %s", name))
-    cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
-    if (length(cn)) toupper(trimws(as.character(d[[cn[1]]]))) else character(0)
-  }, error = function(e) character(0))
-  have <- have[nzchar(have) & !startsWith(have, "#")]
-  if (length(have) && !identical(have[seq_along(want)], want)) {
+  decl <- trimws(strsplit(gsub("\n", " ", schema_sql), ",")[[1]])
+  decl <- decl[nzchar(decl)]
+  want_col <- toupper(sub("\\s.*$", "", decl))
+  want_typ <- .sql_type_norm(sub("^\\S+\\s+", "", decl))
+
+  # The table was just created if it was absent, so it HAS a schema now. A
+  # DESCRIBE that errors or comes back empty means the schema could not be
+  # established, and that is a stop - not a pass. Treating it as "nothing to
+  # compare" let an unverified table reach the DELETE below.
+  d <- tryCatch(db_q(con, sprintf("DESCRIBE %s", name)),
+                error = function(e)
+                  stop("SCHEMA ERROR: could not read the schema of ", name,
+                       " - ", conditionMessage(e),
+                       "\nIt is not safe to clear rows from a table whose ",
+                       "shape has not been established.", call. = FALSE))
+  cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
+  tn <- intersect(c("data_type", "DATA_TYPE", "type", "TYPE"), names(d))
+  have_col <- if (length(cn)) toupper(trimws(as.character(d[[cn[1]]]))) else
+    character(0)
+  # DESCRIBE appends partition/metadata blocks after a blank or `#` row.
+  keep <- nzchar(have_col) & !startsWith(have_col, "#")
+  if (any(!keep)) keep <- keep & cumsum(!keep) == 0
+  have_typ <- if (length(tn))
+    .sql_type_norm(as.character(d[[tn[1]]])[keep]) else NULL
+  have_col <- have_col[keep]
+
+  if (!length(have_col))
+    stop("SCHEMA ERROR: ", name, " reported no columns after being created. ",
+         "Its shape could not be established, so its rows are not cleared.",
+         call. = FALSE)
+
+  # The WHOLE ordered schema, not a prefix of it. Comparing only the first
+  # length(want) names accepted a table with extra trailing columns, and the
+  # positional insert then failed on the column count - after the scope had
+  # already been deleted.
+  bad <- !identical(have_col, want_col) ||
+    (!is.null(have_typ) && !identical(have_typ, want_typ))
+  if (bad)
     stop("SCHEMA ERROR: ", name, " exists with a different shape.\n",
-         "  declared: ", paste(want, collapse = ", "), "\n",
-         "  found:    ", paste(have, collapse = ", "), "\n",
+         "  declared: ", paste(paste(want_col, want_typ), collapse = ", "),
+         "\n  found:    ",
+         paste(if (is.null(have_typ)) have_col else paste(have_col, have_typ),
+               collapse = ", "), "\n",
          "Inserts here are positional, so writing into it would put values in ",
-         "the wrong columns or fail on the count. This happens when an output ",
-         "prefix is reused across package versions. Drop the table, or run ",
-         "against a fresh OBJECT_PREFIX.", call. = FALSE)
-  }
+         "the wrong columns, fail on the count, or silently reuse a renamed ",
+         "one. This happens when an output prefix is reused across package ",
+         "versions. Drop the table, or run against a fresh OBJECT_PREFIX.",
+         call. = FALSE)
   invisible(name)
 }
+
 clear_scope <- function(con, name, scope) {
   db_exec(con, sprintf("DELETE FROM %s WHERE %s", name, scope))
   invisible(name)
