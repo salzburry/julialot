@@ -242,7 +242,13 @@ cfg_defaults <- function() {
     # DENIED if Sum of all Paid Amounts < $0" (V9.0 dictionary, MEDICAL row
     # 28). A denied claim is not evidence the service happened, and nothing in
     # this package or the cohort build has ever filtered on it. The 03 Sep 2026
-    # profile put it at 17.4% of medical lines among myeloma patients.
+    # profile put it at 17.4% of medical lines among myeloma patients - but the
+    # 08 Sep run showed that headline is misleading. Denials concentrate in
+    # ordinary outpatient claims (21.65%) and are thin in the claims this study
+    # counts as events: ED-shaped 7.52%, inpatient-linked 5.83%. At the event
+    # grain it is smaller still - of 499,272 ED patient-days, only 2,630 have
+    # every line denied. So paid_only removes ONE ED VISIT IN 200, not one in
+    # six.
     #
     # WHAT IT ACTUALLY COVERS, which is narrower than the name suggests:
     # claim_status_sql() has ONE call site, the ED arm of 07_hcru.R. It does
@@ -254,6 +260,15 @@ cfg_defaults <- function() {
     #   * RX. The deployed pharmacy table has NO PAID_STATUS - its columns run
     #     STD_COST, AHFSCLSS, CHK_DT, DAW, DAYS_SUP - so a denied pharmacy
     #     claim cannot be excluded by this setting on any reading.
+    #
+    # And it cannot be recovered from the money either. STD_COST looked like a
+    # stand-in, since the dictionary's paid/denied rule is arithmetic on paid
+    # amounts, but the 08 Sep run tested it where both columns exist and it
+    # does not hold: 14,891,418 DENIED medical lines carry a POSITIVE STD_COST
+    # and 1,034,482 paid lines carry a negative one. STD_COST is a standardised
+    # price, not an amount paid. On RX there are no negative rows at all.
+    # Denied pharmacy claims are unidentifiable in this extract, and that is a
+    # limitation to state rather than a gap to close.
     #
     # Widening it is not a config change and is not made here: whether a denied
     # claim still counts as evidence of an encounter differs by use. A claim

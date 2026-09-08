@@ -110,10 +110,32 @@ collapse them, which is why this pair is here.
 
 - **P5** has it twice during treatment → **one** event;
 - **P1** has it at 2018-07-01, before its treatment period → not at risk, so it
-  counts for nobody **and** P1's person-time leaves the denominator. The chronic
-  denominator is **2.5544** person-years against the acute **3.5154**;
+  counts for nobody **and** P1's person-time leaves the denominator;
 - **P2** has it *on* 2019-06-01, its period start. The prior-history window is
   `< PERIOD_START`, so this is **not** prior history and it counts.
+
+A chronic condition is counted once, at first instance, so a patient stops
+being at risk of a first event there and the denominator ends with them. The
+1L line-1 treatment denominator is therefore, per patient:
+
+| patient | period | at-risk end | person-years |
+|---|---|---|---|
+| P1 | 2019-03-01 → 2020-02-14 | prior history | **0** |
+| P2 | 2019-06-01 → 2020-01-31 | first event 2019-06-01 | 1/365.25 = 0.002738 |
+| P3 | 2020-02-01 → 2020-07-01 | no event | 0.416153 |
+| P5 | 2019-01-15 → 2019-12-01 | first event 2019-04-01 | 77/365.25 = 0.210815 |
+| P6 | 2019-03-01 → 2019-10-01 | no event | 0.588638 |
+| P7 | 2020-06-01 → 2021-01-31 | no event | 0.670773 |
+| P8 | 2020-06-01 → 2021-01-31 | no event | 0.670773 |
+
+Total **2.5599** person-years, against the acute **4.8569**, which keeps every
+patient's whole period because an acute event can recur. Summing `PERIOD_PY`
+regardless gave 3.8960 — it counted P2 and P5 for the whole period, including
+the part in which a first event was no longer possible.
+
+Baseline is deliberately different: §7.8.1 takes the baseline denominator as
+the window's own length "irrespective of prior event history", so it is not
+truncated and prior history does not remove anyone from it.
 
 Every one of the 23 conditions gets an incidence row whether or not it had an
 event, because the rate is driven from the denominator.

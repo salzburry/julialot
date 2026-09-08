@@ -122,6 +122,17 @@ mod_soc <- function(con, cfg, cohort) {
       -- against the whole 3L denominator as though they were on-study lines.
       INNER JOIN %3$s p ON p.PATID = s.PATID AND p.COHORT = '%4$s'
                        AND s.LOT_NUM >= p.LOT_NUM
+                       -- ...and bounded ABOVE by the cohort's follow-up. The
+                       -- LOT engine deliberately continues through enrolment
+                       -- gaps, so it builds lines that start after this cohort
+                       -- stopped observing the patient. Unbounded, a 2L
+                       -- beginning after the 1L cohort's FU_END appeared in
+                       -- the 1L treatment-pattern tables while TTNT had
+                       -- already censored that patient: two outputs
+                       -- disagreeing about the same line. s7.1 observes within
+                       -- follow-up and s7.8.2 allows censoring as a terminal
+                       -- Sankey outcome, so the line is dropped, not reported.
+                       AND s.LOT_START_DT <= p.FU_END
       WHERE s.LOT_BASE_MEDS IS NOT NULL AND trim(s.LOT_BASE_MEDS) <> ''
     ),
     matched AS (

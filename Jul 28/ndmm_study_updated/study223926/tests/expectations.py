@@ -185,10 +185,48 @@ EXPECTATIONS = [
      "SELECT count(*) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' "
      "AND PERIOD='BASELINE'",
      [(23,)]),
+    # Chronic person-time ends at the first occurrence, so a patient who has
+    # the event contributes only up to it. Derived by hand in EXPECTED.md:
+    # P1 0 (prior history) + P2 1/365.25 + P3 0.416153 + P5 77/365.25
+    # + P6 0.588638 + P7 0.670773 + P8 0.670773 = 2.5599.
+    # Suppression tests the stratum, not the event-positive count. A condition
+    # with one patient among a 7-patient at-risk stratum is below 25 either
+    # way, so the fixture cannot separate the two by size - but the released
+    # row must be suppressed on N_AT_RISK and must carry N_PATIENTS among the
+    # values it nulls, which is what testing the wrong column got wrong.
+    ("release suppresses on the stratum and nulls the event count with it",
+     "SELECT SUPPRESSED, N_AT_RISK, N_PATIENTS FROM wk.S_SAFETY_RATES_RELEASE "
+     "WHERE COHORT='1L' AND PERIOD='TREATMENT' AND LOT_NUM=1 "
+     "AND CONDITION='toxic_liver_disease'",
+     [(1, None, None)]),
+    # P6's 1L follow-up ends 2019-12-31; its 2L starts 2022-06-01, two and a
+    # half years later. The LOT engine builds that line because it continues
+    # through enrolment gaps, but this cohort stopped observing P6 long before
+    # it, so it belongs in neither the treatment patterns nor the terminal
+    # state. Unbounded, S_SOC carried ('P6', 2) while TTNT censored P6.
+    ("a line starting after the cohort's follow-up is not a cohort line",
+     "SELECT count(*) FROM wk.S_SOC WHERE COHORT='1L' AND PATID='P6'",
+     [(1,)]),
+    ("and it is censoring, not receipt of a next line",
+     "SELECT OUTCOME FROM wk.S_TX_ATTRITION t WHERE t.COHORT='1L' "
+     "AND t.LOT_NUM=1 AND t.OUTCOME='received_next_lot' "
+     "AND t.N_PATIENTS >= 99",
+     []),
     ("and that patient leaves the chronic denominator too",
      "SELECT round(PERSON_YEARS,4) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' "
      "AND PERIOD='TREATMENT' AND LOT_NUM=1 AND CONDITION='toxic_liver_disease'",
-     [(3.896,)]),
+     [(2.5599,)]),
+    # The same denominator with P5's first event moved 31 days earlier must
+    # fall by exactly 31/365.25. Guarding the rule, not just the number:
+    # summing PERIOD_PY regardless made this difference zero.
+    ("and moving a first chronic event earlier shortens that denominator",
+     "SELECT round(("
+     "  SELECT PERSON_YEARS FROM wk.S_SAFETY_RATES WHERE COHORT='1L' "
+     "  AND PERIOD='TREATMENT' AND LOT_NUM=1 "
+     "  AND CONDITION='toxic_liver_disease') "
+     " - (SELECT sum(CASE WHEN PATID='P5' THEN 31.0/365.25 ELSE 0 END) "
+     "    FROM wk.S_LOT_PERIODS WHERE COHORT='1L' AND LOT_NUM=1), 4)",
+     [(2.4750,)]),
     ("while an acute condition keeps every patient's person-time",
      "SELECT round(PERSON_YEARS,4) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' "
      "AND PERIOD='TREATMENT' AND LOT_NUM=1 AND CONDITION='acute_hepatitis_b'",

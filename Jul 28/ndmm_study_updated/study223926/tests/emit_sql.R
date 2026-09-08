@@ -27,6 +27,14 @@
 .stub_counter <- new.env(parent = emptyenv())
 .stub_counter$seen <- list()
 .stub_result <- function(sql = "") {
+  # DESCRIBE is a schema question, not a count, and the package asks one before
+  # it does anything: check_cohort_table() refuses an INPUT_COHORT_TABLE that
+  # does not carry the columns every module indexes on. A recorder that answers
+  # it with a count would make that guard fire on every emit, so the harness
+  # answers it the way the warehouse would for a well-formed cohort table.
+  if (grepl("^\\s*DESCRIBE\\b", sql, ignore.case = TRUE))
+    return(data.frame(col_name = COHORT_TABLE_REQUIRED,
+                      stringsAsFactors = FALSE))
   # Counted per call SITE, not globally: the washout asks the same question
   # each round, and a global counter is exhausted by the modules that ran
   # before it. Reset per cohort by the prepare_table stub.

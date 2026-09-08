@@ -23,9 +23,21 @@ It also caught a bug — `CLAIM_STATUS=paid_only` was filtering nothing, because
 the warehouse stores `P`/`D` where the dictionary spells `PAID`/`DENIED` — and
 confirmed the six value domains the package had been assuming.
 
+**A third run came back on 08 Sep 2026** (`sql result 31.pdf`, `sql 32.pdf`).
+**Q13 is answered**: `CENSOR_AT_DISENROLLMENT` decides the follow-up of **at
+most** 30,392 patients — 29% — while the 30-day bridging rule touches only
+6,221. (Upper bound: the query merged spans with `lag()` where the package uses
+a running max, which over-counts breaks on nested spans. Corrected in
+`RUN_ONCE_3.sql`; one re-run makes it exact.)
+**Q25 shrank**: the 17.4% headline is concentrated in ordinary outpatient
+claims, and excluding denied claims would remove 0.53% of ED visits, not 17%.
+It also measured the **largest attrition step in the study** — only 62.1% of
+myeloma patients have 12 months of continuous enrolment before index — and
+killed a proposal of mine: `STD_COST` does not encode paid/denied, so denied
+pharmacy claims cannot be identified at all.
+
 **Q12, Q15 and Q20 no query will ever answer**: they need the protocol author
-or the annexes themselves. **Q13 is the one still unpriced**, and one more
-query would do it.
+or the annexes themselves.
 
 Nothing here is a style preference. Every one of them has two defensible readings and
 the build has to pick one.
@@ -518,6 +530,182 @@ misspelled "panobinostat" cannot quietly bar no one.
 
 ---
 
+## Answered by the warehouse, 08 Sep 2026
+
+`sql result 31.pdf` and `sql 32.pdf`, from `RUN_ONCE_3.sql`. Same proxy
+population as round two — 105,125 members with a C90 code since 2016, of whom
+93,245 have a first one from 2018. Every statement returned.
+
+### Q13 — CLOSED. Censoring moves 29% of patients; the bridging rule moves 6%.
+
+| | members |
+|---|---|
+| any myeloma patient | 105,125 |
+| contiguous re-enrolment only, no real gap | 61,526 |
+| **a bridged gap of 1–30 days** | **6,221** |
+| **a break of more than 30 days** | **30,392** |
+| mean length of those breaks | **1,361.6 days** |
+
+41,163 breaks over 30 days — which reconciles exactly with round two's
+202,108 boundaries minus 160,945 in the `<= 30` bucket, confirming that bucket
+was almost entirely `gap_days = 0`.
+
+> **These are upper bounds on the breaks, and the direction is known.** The
+> query merged spans with `lag(ELIGEND)` — the immediately preceding row. The
+> package's `build_enroll_spans()` uses a running `max(ELIGEND)` over *all*
+> prior rows, which is the difference between the two on **nested** spans: a
+> short span sitting inside a longer earlier one. Round two found 11,986
+> myeloma members (11.4%) with overlapping enrolment rows, so the shape is
+> common. Every nested span the `lag()` form mistakes for a gap **inflates the
+> break count and deflates coverage**, so the true figures are **at most
+> 30,392 members with a break** and **at least 62.1% passing continuous
+> enrolment**. The 30-day threshold itself is identical in both forms
+> (`elig_eff <= max_end + 31` ⟺ gap ≤ 30), so only nesting differs.
+> `RUN_ONCE_3.sql` now builds `mm_spans` with the package's own logic verbatim;
+> one re-run replaces both bounds with the number the build will actually
+> produce.
+
+Two things follow. **`CENSOR_AT_DISENROLLMENT` decides the follow-up of 30,392
+patients**, 29% of the population — it is not a technicality. And the 30-day
+bridging rule itself touches only 6,221 (5.9%), so Q19's 109,679 bridged days
+are spread thinly. A mean break of 3.7 years also says what these are: people
+who left the plan and came back years later, not brief administrative lapses.
+Bridging them would be indefensible; the rule correctly does not.
+
+### I4 / N2 — NEW. The largest attrition step in the study, at 38%.
+
+| | members |
+|---|---|
+| with a first myeloma diagnosis from 2018 | 93,245 |
+| **pass 12 months of continuous enrolment before index** | **57,933 (62.1%)** |
+| pass it through the index date as well | 57,932 |
+| **lost to this criterion** | **35,312** |
+
+**A lower bound** — see the note under Q13. Nested spans read as breaks here
+too, so the true pass rate is at or above 62.1% and the loss at or below
+35,312. Nobody had measured this. It is the single biggest loss in the funnel, larger
+than any exclusion, and it is a criterion this package applies itself. Whether
+the index day is included changes it by **one patient** — so Q14, on this
+criterion at least, is decided: it does not matter.
+
+### Q25 — the 17.4% headline was misleading. The real cost is 0.53%.
+
+Denials by the shape of the claim, among myeloma patients since 2018:
+
+| claim shape | lines | denied | % |
+|---|---|---|---|
+| other outpatient | 70,523,049 | 15,266,931 | **21.65%** |
+| ED-shaped | 1,298,697 | 97,635 | 7.52% |
+| inpatient-linked | 9,882,844 | 575,950 | 5.83% |
+
+Denials concentrate in ordinary outpatient claims and are **thin in exactly the
+claims this study counts as events**. And at the event level rather than the
+line level:
+
+| | ED patient-days |
+|---|---|
+| all | 499,272 |
+| with at least one paid line | 496,642 |
+| **every line denied — the visits that would vanish** | **2,630 (0.53%)** |
+
+So `CLAIM_STATUS=paid_only` would remove **one ED visit in 200**, not one in
+six. The decision is real but small, and it should be made on 0.53% rather than
+on 17.4%. (499,272 matches round two's `any_of_three` exactly.)
+
+### The STD_COST proxy is dead — the validation step killed it
+
+The idea was that the dictionary's paid/denied rule is arithmetic on money, so
+the sign of `STD_COST` might stand in for `PAID_STATUS` on the pharmacy side.
+Tested where both exist:
+
+| `PAID_STATUS` | `STD_COST` | lines |
+|---|---|---|
+| P | positive | 60,231,696 |
+| **D** | **positive** | **14,891,418** |
+| P | zero | 3,275,108 |
+| (null) | positive | 1,221,969 |
+| D | zero | 1,042,809 |
+| **P** | **negative** | **1,034,482** |
+| D | negative | 6,289 |
+| (null) | zero | 819 |
+
+**93% of denied lines carry a positive `STD_COST`, and a million paid lines
+carry a negative one.** There is no relationship. `STD_COST` is a *standardised*
+price — an imputed benchmark for the service — not the amount anyone paid, so
+the dictionary's rule about "Sum of all Paid Amounts" never applied to it.
+
+On RX the same test returns **no negative rows at all** (positive 14,230,204
+lines / 91,272 members; null 726; zero 332), which is consistent.
+
+**So denied pharmacy claims cannot be identified, and the asymmetry is
+permanent.** `CLAIM_STATUS=paid_only` filters medical claims only, and that
+belongs in the SAP as a stated limitation rather than a silent one.
+
+### RX — `FILL_DT` confirmed, and clean
+
+22,107,537 lines across 99,155 members, 2000-05-01 to 2026-03-31, with **zero
+nulls** in `FILL_DT`, `NDC` or `DAYS_SUP`. `build_fu_claims()` is safe.
+
+### Age — the guard costs nothing here, and I2 excludes 93 patients
+
+Of 93,245 members, 93,236 have an enrolment row. Among those: **no null
+`YRDOB`, no zero `YRDOB`, and not one member carrying two different birth
+years.** Age is usable for 100% of them. The round-one `YRDOB = 0` rows are
+real but fall outside the myeloma population, so the guard is protection that
+currently costs nothing.
+
+| band at first diagnosis | members |
+|---|---|
+| under 18 — **excluded by I2** | **93** |
+| 18–64 | 18,535 |
+| 65–74 | 34,387 |
+| 75+ | 40,221 |
+
+### Death dates — one clean finding and one that needs a better test
+
+33,800 of 93,245 (36.2%) carry a death record. Mean gap from last claim to
+death, where the order is sane, is 190.6 days.
+
+**348 members have a death date before their index date** — before their first
+myeloma diagnosis, which is not possible — and **9,705 have one before their
+last claim**.
+
+*This is an upper bound, not a finding.* `YMDOD` is month-precision and the
+query imputed the 15th, so a patient who died on the 25th with a claim on the
+20th is flagged wrongly. Roughly half of same-month cases would be. The right
+test compares at month granularity, and until it is run the honest statement is
+that **up to 9,705 patients have a death/claim ordering problem, and at least
+some of that is the imputation**. The 348 pre-index deaths deserve the same
+re-test and are the more troubling half. Both bear on overall survival, a
+secondary objective, and on `MBR_MATCH_TYPE` (Q28) — if the low-confidence
+link value is the one carrying these, that is the answer to both questions.
+
+### The two truncated tails, closed
+
+**STATE.** Exactly two values fall outside the 51-entry census crosswalk:
+
+| | enrolment rows | members |
+|---|---|---|
+| `NULL` | 3,829,750 | **2,570,332** |
+| `PR` | 14,151 | 11,795 |
+
+So region Unknown is overwhelmingly **missing state**, not territories — 2.4%
+of all members. Puerto Rico is a genuine gap in the crosswalk but a small one.
+Neither is a bug; both belong in the Table 4 footnote.
+
+**DIAG_POSITION.** The 26th value is `NULL` (1,576,237 rows). No junk, nothing
+non-numeric, so `try_cast(... as int)` is safe and the zero-padding is the only
+trap — which the fixture now reproduces.
+
+### ICD-9 myeloma codes — effectively none
+
+Since 2016: 105,125 members carry an ICD-10 C90 code, **1 carries an ICD-9
+203.0x code, and that 1 carries only ICD-9.** So `mm_dx.csv` can be authored
+ICD-10-only with a one-line footnote, and the ICD-9 arm of every code-list join
+is dead weight for this study period rather than a risk.
+
+---
+
 ## Priced by the warehouse, 07 Sep 2026
 
 `SQL Result 2.pdf` — one run of `RUN_ONCE_2.sql`, 23 statements, 18m 19s, all
@@ -696,7 +884,7 @@ and those rows disagree on `STATE` for 473 members and on `BUS` for 388.
 package added is therefore worth about 0.8% of patients, and race was never at
 risk.
 
-### Q19 — bridged gaps are worth about 300 person-years
+### Q19 — bridged gaps are worth about 300 person-years *(upper bound)*
 
 202,108 span boundaries, 72,239 members. The bridged gaps of 30 days or fewer
 carry **109,679 days** of person-time that is covered on paper and unobserved
@@ -707,8 +895,11 @@ lands on a plan-renewal boundary and moving it by a day is not neutral.
 *What this does not answer:* the query counted a boundary as a gap whenever
 the next span started after the previous ended, so a contiguous re-enrolment
 (`gap_days = 0`) is in the 160,945 "bridged" count. The 109,679 days figure is
-unaffected — zeros contribute nothing — but **Q13 is still unpriced**: the
-number of *members* with a genuine gap over 30 days needs one more query.
+unaffected by those — zeros contribute nothing. **Q13 was answered on 08 Sep**;
+see above. But this query shares the `lag(ELIGEND)` flaw described there, so
+**109,679 is itself an upper bound**: a nested span produces a spurious gap
+whose days are not really unobserved. The corrected `mm_spans` view carries
+`MAX_BRIDGED_GAP` and settles it on the next run.
 
 ### Q21 — the two readings differ by at most one day
 

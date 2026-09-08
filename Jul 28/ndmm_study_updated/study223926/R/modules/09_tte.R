@@ -26,10 +26,12 @@ mod_tte <- function(con, cfg, cohort) {
   obs_next  <- "CASE WHEN s.NEXT_LOT_START_DT IS NOT NULL
                       AND s.NEXT_LOT_START_DT <= p.FU_END
                      THEN s.NEXT_LOT_START_DT END"
+  # The selected end date, from 00_spine.R - see there for why the engine's
+  # LOT_BASE_DISCON_DT is the wrong column to read.
   obs_disc  <- "CASE WHEN s.IS_PROTOCOL_DISCON = 1
-                      AND coalesce(s.LOT_BASE_DISCON_DT, s.LOT_BASE_END_DT)
+                      AND coalesce(s.PROTOCOL_DISCON_DT, s.LOT_BASE_END_DT)
                           <= p.FU_END
-                     THEN coalesce(s.LOT_BASE_DISCON_DT, s.LOT_BASE_END_DT) END"
+                     THEN coalesce(s.PROTOCOL_DISCON_DT, s.LOT_BASE_END_DT) END"
 
   ttnt_dt <- sprintf("least(coalesce(%s, p.FU_END), coalesce(%s, p.FU_END), p.FU_END)",
                      obs_next, obs_death)

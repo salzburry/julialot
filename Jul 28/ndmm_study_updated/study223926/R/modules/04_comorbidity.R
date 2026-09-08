@@ -89,6 +89,12 @@ mod_comorbidity <- function(con, cfg, cohort) {
     FROM kept GROUP BY PATID, COHORT",
     wrk("S_COMORBIDITY"), wrk("S_PERIODS"), cdm_src("diagnosis"), reg,
     icd_family_sql("d.ICD_FLAG"), cohort$key, mm_view),
+    # A cohort in which nobody has a qualifying comorbidity is a valid result -
+    # every patient is CCI 0 - and the backfill immediately below is what turns
+    # that into rows. Stopping here on zero matched conditions meant the
+    # backfill was never reached and an all-CCI-0 cohort could not be built.
+    # The check that matters is the row count AFTER the backfill, below.
+    allow_empty = TRUE,
     qc = sprintf("SELECT count(*) AS n_rows, round(avg(CCI),2) AS mean_cci
                   FROM %s WHERE COHORT = '%s'", wrk("S_COMORBIDITY"), cohort$key))
 
@@ -101,6 +107,12 @@ mod_comorbidity <- function(con, cfg, cohort) {
     LEFT JOIN %1$s c ON c.PATID = p.PATID AND c.COHORT = p.COHORT
     WHERE p.COHORT = '%3$s' AND c.PATID IS NULL",
     wrk("S_COMORBIDITY"), wrk("S_PERIODS"), cohort$key))
+
+  # And now the check that cannot legitimately come back empty: after the
+  # backfill every patient in the cohort has exactly one comorbidity row.
+  run_step(con, paste0("comorbidity_complete_", cohort$key), "SELECT 1",
+    qc = sprintf("SELECT count(*) AS n_rows FROM %s WHERE COHORT = '%s'",
+                 wrk("S_COMORBIDITY"), cohort$key))
 
   if (isTRUE(cfg$comorbid_subgroups)) comorbid_subgroup_flags(con, cfg, cohort)
   if (isTRUE(cfg$frailty))            frailty_index(con, cfg, cohort)
@@ -159,6 +171,39 @@ comorbid_subgroup_flags <- function(con, cfg, cohort) {
 # getting a column of zeros that reads as a cohort with no frail patients.
 frailty_index <- function(con, cfg, cohort) {
   cl <- load_codelist("frailty_kim2018.csv", cfg)
+  # Two things this implementation cannot do, checked before it runs rather
+  # than discovered in the output.
+  #
+  # An INTERCEPT applies to every patient, matched or not. The score below is
+  # built by matching each row to a diagnosis code, so an intercept row can
+  # only be added to a patient who matched it - which no patient does, because
+  # an intercept has no code. It would silently drop out of every score.
+  #
+  # A NON-DIAGNOSIS feature - a procedure, a pharmacy fill, a DME claim - has
+  # to be looked up in its own table. Every row here is matched against
+  # MED_DIAGNOSIS, so a feature typed anything else matches nothing and its
+  # coefficient is silently omitted.
+  #
+  # Either is a wrong score reported as a score, so either stops the run.
+  vv <- tolower(trimws(as.character(cl$variable)))
+  if (any(vv == "intercept"))
+    stop("FRAILTY ERROR: frailty_kim2018.csv carries an `intercept` row, and ",
+         "this implementation matches every row to a diagnosis code - so the ",
+         "intercept would apply to nobody and every score would be short by ",
+         "it. The intercept has to be added to all patients before this ",
+         "module can be used. ../OPEN_QUESTIONS.md Q15 (Annex 7).",
+         call. = FALSE)
+  if ("code_type" %in% names(cl)) {
+    ct <- toupper(trimws(as.character(cl$code_type)))
+    bad <- sort(unique(ct[nzchar(ct) & !ct %in% c("ICD9DIAG", "ICD10DIAG")]))
+    if (length(bad))
+      stop("FRAILTY ERROR: frailty_kim2018.csv carries feature(s) of ",
+           "code_type ", paste(bad, collapse = ", "), ", and this ",
+           "implementation reads MED_DIAGNOSIS only - those coefficients ",
+           "would match nothing and be dropped from every score without a ",
+           "trace. Route them to their own source tables before enabling ",
+           "FRAILTY. ../OPEN_QUESTIONS.md Q15 (Annex 7).", call. = FALSE)
+  }
   reg <- register_codelist_view(con, cl, "S_CL_FRAILTY",
                                 cols = c("variable", "coefficient", "code_type",
                                          "code", "icd_family"))

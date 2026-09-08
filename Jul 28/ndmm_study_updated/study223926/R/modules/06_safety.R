@@ -25,6 +25,28 @@ mod_safety <- function(con, cfg, cohort) {
   # alone, so a condition listed under two domains would get a row per domain
   # each carrying the FULL person-time and the FULL event count - and summing
   # the table would double it.
+  # A condition whose DEFINITION is a setting, not just a code.
+  #
+  # s7.8.1 names `severe infection resulting in hospitalization`. Every safety
+  # condition here is extracted from MED_DIAGNOSIS rows alone, with no link to
+  # CONFINEMENT or to an inpatient claim, so an outpatient infection code would
+  # satisfy a hospitalisation-defined endpoint. That is not a code list this
+  # package can be handed - it is a phenotype with a setting requirement the
+  # extraction does not implement.
+  #
+  # Rather than report it wrongly, a condition whose own name says
+  # hospitalisation stops the run until that linkage exists.
+  hosp_named <- unique(trimws(as.character(
+    cl$condition[grepl("hospitali[sz]", cl$condition, ignore.case = TRUE)])))
+  if (length(hosp_named))
+    stop("SAFETY ERROR: ", paste(hosp_named, collapse = ", "),
+         " is defined by an admission, and this module extracts every ",
+         "condition from diagnosis rows alone - so an outpatient claim ",
+         "carrying the code would count as the outcome. The endpoint needs a ",
+         "CONFINEMENT or inpatient-claim linkage before it can be reported. ",
+         "Remove the row to run the other conditions, or supply the ",
+         "phenotype. See OPEN_QUESTIONS Q15 (Annex 3).", call. = FALSE)
+
   grp <- unique(cl[, c("condition", "domain", "acute_chronic")])
   bad <- unique(grp$condition[duplicated(grp$condition)])
   if (length(bad))
@@ -61,6 +83,12 @@ mod_safety <- function(con, cfg, cohort) {
     WHERE p.COHORT = '%6$s' AND d.FST_DT IS NOT NULL",
     wrk("S_SAFETY_EVENTS"), wrk("S_PERIODS"), cdm_src("diagnosis"), reg,
     icd_family_sql("d.ICD_FLAG"), cohort$key),
+    # A cohort with no safety event at all is a valid study result, not a
+    # broken step. The rates below are driven from the DENOMINATOR, so every
+    # condition still gets a row saying zero - but only if the run reaches
+    # them, and the zero-row guard stopped it here first. The guard that
+    # matters is on the denominator, which cannot legitimately be empty.
+    allow_empty = TRUE,
     qc = sprintf("SELECT count(*) AS n_events,
                          count(DISTINCT CONDITION) AS n_conditions
                   FROM %s WHERE COHORT = '%s'",
@@ -146,17 +174,42 @@ mod_safety <- function(con, cfg, cohort) {
          exclude_prior = TRUE))) {
     # Only the treatment denominator drops the not-at-risk; s7.8.1 says the
     # baseline one is taken irrespective of prior event history.
+    #
+    # And a chronic condition is counted ONCE, at first instance - so a patient
+    # who has that first event stops being at risk of a first event there. The
+    # denominator has to end with them. Summing the whole PERIOD_PY regardless
+    # gave an incidence rate one event over the full period, including the part
+    # of it where a first event was no longer possible, which understates every
+    # chronic rate. The at-risk end is the earlier of the first counted event
+    # and the period end, on the same both-endpoints-included convention
+    # PERIOD_PY itself uses.
+    #
+    # Baseline is deliberately untouched: s7.8.1 takes the baseline denominator
+    # as the window's own length "irrespective of prior event history".
     py_expr <- if (per$exclude_prior)
-      "sum(CASE WHEN c.ac = 'chronic' AND h.PATID IS NOT NULL
-                THEN 0 ELSE p.PERIOD_PY END)" else "sum(p.PERIOD_PY)"
+      sprintf("sum(CASE
+                     WHEN c.ac = 'chronic' AND h.PATID IS NOT NULL THEN 0
+                     WHEN c.ac = 'chronic' AND fc.FIRST_DT IS NOT NULL
+                       THEN %s
+                     ELSE p.PERIOD_PY END)",
+              person_years_sql("p.PERIOD_START",
+                               "least(fc.FIRST_DT, p.PERIOD_END)", cfg))
+      else "sum(p.PERIOD_PY)"
     at_risk_expr <- if (per$exclude_prior)
       "count(DISTINCT CASE WHEN c.ac = 'chronic' AND h.PATID IS NOT NULL
                            THEN NULL ELSE p.PATID END)" else
       "count(DISTINCT p.PATID)"
     prior_join <- if (per$exclude_prior)
-      "LEFT JOIN s_chronic_prior h
+      sprintf("LEFT JOIN s_chronic_prior h
               ON h.PATID = p.PATID AND h.COHORT = p.COHORT
-             AND h.LOT_NUM = p.LOT_NUM AND h.CONDITION = c.condition" else ""
+             AND h.LOT_NUM = p.LOT_NUM AND h.CONDITION = c.condition
+       LEFT JOIN (SELECT PATID, COHORT, LOT_NUM, CONDITION,
+                         min(EVENT_DT) AS FIRST_DT
+                  FROM %s WHERE COHORT = '%s' AND PERIOD = '%s'
+                  GROUP BY PATID, COHORT, LOT_NUM, CONDITION) fc
+              ON fc.PATID = p.PATID AND fc.COHORT = p.COHORT
+             AND fc.LOT_NUM = p.LOT_NUM AND fc.CONDITION = c.condition",
+              wrk("S_SAFETY_COUNTED"), cohort$key, per$label) else ""
 
     run_step(con, paste0("safety_", tolower(per$label), "_", cohort$key),
       sprintf("

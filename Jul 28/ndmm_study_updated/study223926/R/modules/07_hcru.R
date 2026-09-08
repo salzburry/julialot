@@ -85,9 +85,18 @@ mod_hcru <- function(con, cfg, cohort) {
       -- as a string.
       SELECT DISTINCT cast(m2.PATID as string) AS PATID, m2.CONF_ID
       FROM       %1$s m2
+      -- The FULL documented key. The Optum join diagram gives MEDICAL to
+      -- MED_DIAGNOSIS as (PATID | PAT_PLANID, CLMID, FST_DT, LOC_CD); joining
+      -- on patient and claim id alone let a claim id that repeats on another
+      -- service date carry its myeloma diagnosis onto the wrong admission, so
+      -- a stay a year away became MM-related. LOC_CD is compared null-safely
+      -- because it is nullable on both sides and a plain = would drop the row.
       INNER JOIN %2$s dg
               ON cast(dg.PATID as string) = cast(m2.PATID as string)
+             AND dg.PAT_PLANID <=> m2.PAT_PLANID
              AND dg.CLMID = m2.CLMID
+             AND cast(dg.FST_DT as date) = cast(m2.FST_DT as date)
+             AND dg.LOC_CD <=> m2.LOC_CD
       INNER JOIN (SELECT DISTINCT PATID FROM %3$s WHERE COHORT = '%4$s') pc
               ON pc.PATID = cast(m2.PATID as string)
       INNER JOIN %5$s mmc
@@ -132,7 +141,8 @@ mod_hcru <- function(con, cfg, cohort) {
      END_DT date, LOS_DAYS int, MM_RELATED int, HAS_DISCHARGE int", cohort$key)
   prepare_table(con, wrk("S_HCRU_RATES"),
     "COHORT string, LOT_NUM int, PERIOD string, MEASURE string,
-     N_PATIENTS int, N_EVENTS int, PERSON_YEARS double, RATE double,
+     N_PATIENTS int, N_EVENTS int, N_AT_RISK int,
+     PERSON_YEARS double, RATE double,
      MEAN_LOS double, MEDIAN_LOS double, N_LOS_EXCLUDED int", cohort$key)
   run_step(con, paste0("hcru_events_", cohort$key), sprintf("
     INSERT INTO %1$s
@@ -201,7 +211,11 @@ mod_hcru <- function(con, cfg, cohort) {
       sprintf("
       INSERT INTO %1$s
       WITH den AS (
-        SELECT COHORT, LOT_NUM, sum(%2$s) AS PY
+        -- N_AT_RISK is the STRATUM size - everyone contributing person-time -
+        -- as against N_PATIENTS, which counts only those with the event. The
+        -- suppression rule is about the stratum, so it needs this column.
+        SELECT COHORT, LOT_NUM, sum(%2$s) AS PY,
+               count(DISTINCT PATID) AS N_AT_RISK
         FROM %3$s WHERE COHORT = '%4$s' GROUP BY COHORT, LOT_NUM
       ),
       hits AS (
@@ -232,6 +246,7 @@ mod_hcru <- function(con, cfg, cohort) {
       SELECT d.COHORT, d.LOT_NUM, \'%8$s\' AS PERIOD, m.MEASURE,
              coalesce(a.N_PATIENTS, 0) AS N_PATIENTS,
              coalesce(a.N_EVENTS, 0) AS N_EVENTS,
+             d.N_AT_RISK,
              d.PY AS PERSON_YEARS,
              %9$s AS RATE,
              -- Left NULL rather than zeroed: the mean length of no stays is

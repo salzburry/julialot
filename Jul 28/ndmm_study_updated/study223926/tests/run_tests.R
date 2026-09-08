@@ -158,9 +158,38 @@ cat("\nwindow conventions\n")
   ok(grepl("date_add(p.INDEX_DATE, 90)", tte_eligible_sql(cfg), fixed = TRUE),
      "the analysis set uses 3 months of potential follow-up")
   lp <- lot_period_sql(cfg)
-  ok(grepl("date_add(coalesce(l.LOT_BASE_DISCON_DT, l.LOT_BASE_END_DT), 30)",
+  ok(grepl("date_add(coalesce(l.PROTOCOL_DISCON_DT, l.LOT_BASE_END_DT), 30)",
            lp$end, fixed = TRUE),
      "the treatment period runs to discontinuation + 30 days")
+  # Follow-up evidence is a per-LINE question. Joined on PATID alone it was
+  # counted once against the 1L index and reused, so one claim between a
+  # patient's 1L and 2L satisfied the after-2L test and the after-3L test too.
+  coh_src <- paste(readLines("R/modules/01_cohorts.R", warn = FALSE),
+                   collapse = "\n")
+  ok(grepl("fu.PATID = s.PATID AND fu.LOT_NUM = s.LOT_NUM", coh_src,
+           fixed = TRUE),
+     "follow-up claim evidence is joined at the line grain, not the patient's")
+  ok(grepl("GROUP BY l.PATID, l.LOT_NUM", coh_src, fixed = TRUE),
+     "and counted at that grain in the first place")
+
+  # The engine's LOT_BASE_DISCON_DT is a CANDIDATE run-out; the cascade can
+  # select a different reason and date and leave it populated. Reading it put
+  # TTD before the transplant that ended the line. Only 00_spine.R may name it,
+  # and only to derive PROTOCOL_DISCON_DT from the selected end.
+  discon_readers <- Filter(function(f)
+    grepl("LOT_BASE_DISCON_DT", paste(readLines(f, warn = FALSE),
+                                      collapse = "\n"), fixed = TRUE),
+    c(list.files("R", pattern = "[.]R$", full.names = TRUE),
+      list.files("R/modules", pattern = "[.]R$", full.names = TRUE)))
+  stray <- setdiff(basename(discon_readers), c("00_spine.R", "windows.R",
+                                               "09_tte.R"))
+  ok(length(stray) == 0,
+     paste0("only the spine derives the discontinuation date from the engine's ",
+            "candidate run-out (offenders: ", paste(stray, collapse = ", "), ")"))
+  ok(grepl("PROTOCOL_DISCON_DT", paste(readLines("R/modules/09_tte.R",
+                                                 warn = FALSE), collapse = "\n"),
+           fixed = TRUE),
+     "and TTD reads the selected end, not that candidate")
   ok(grepl("date_sub(l.NEXT_LOT_START_DT, 1)", lp$end, fixed = TRUE),
      "or the day before the next line, whichever is earlier")
   ok(grepl("p.FU_END", lp$end, fixed = TRUE),
@@ -377,12 +406,37 @@ cat("\nregressions from the adversarial review\n")
   # printed, it just never fires. So the guard is called against a status row
   # built to be wrong in exactly one field at a time, and each is required to
   # stop.
+  # The columns the LOT engine's BUILD_STATUS_COLS actually declares, pinned as
+  # literals. This list is the contract, and it is written out here rather than
+  # derived from what lineage.R asks for - because the previous version of this
+  # test built its fixture from the column names the SELECT used, so it agreed
+  # with the SELECT instead of checking it, and a query naming two columns the
+  # writer does not create passed every run of this suite.
+  LOT_STATUS_COLS <- c("RUN_ID", "INPUT_COHORT_TABLE", "OBJECT_PREFIX", "STATE",
+                       "STUDY_END", "CODELIST_WAIVERS_REQUESTED",
+                       "CODELIST_WAIVERS_APPLIED", "CONTRACT_DEVIATIONS",
+                       "UPDATED_AT")
+  lin_sql <- regmatches(lg, regexpr("SELECT[^\"]*FROM %s", lg))
+  asked <- if (length(lin_sql)) {
+    body <- sub("\\s*FROM %s$", "", sub("^SELECT\\s*", "", lin_sql))
+    # The deparsed source carries literal backslash-n where the SQL wrapped.
+    body <- gsub("\\\\n", " ", body)
+    toupper(trimws(strsplit(gsub("\\s+", " ", body), ",")[[1]]))
+  } else character(0)
+  ok(length(asked) > 0 && all(asked %in% LOT_STATUS_COLS),
+     paste0("the lineage query names only columns the LOT writer declares",
+            if (length(setdiff(asked, LOT_STATUS_COLS)))
+              paste0(" [absent upstream: ",
+                     paste(setdiff(asked, LOT_STATUS_COLS), collapse = ", "),
+                     "]") else ""))
+
   lin_row <- function(...) {
-    r <- list(RUN_ID = "r1", STATE = "complete",
-              UPDATED_AT = "2026-09-01 00:00:00",
-              COHORT_TABLE = cfg0()$input_cohort_table,
-              STUDY_START = cfg0()$study_start, STUDY_END = cfg0()$study_end,
-              CONTRACT_DEVIATIONS = "")
+    # Built from the pinned upstream list, so a fixture cannot invent a column.
+    r <- as.list(setNames(rep("", length(LOT_STATUS_COLS)), LOT_STATUS_COLS))
+    r$RUN_ID <- "r1"; r$STATE <- "complete"
+    r$UPDATED_AT <- "2026-09-01 00:00:00"
+    r$INPUT_COHORT_TABLE <- cfg0()$input_cohort_table
+    r$STUDY_END <- cfg0()$study_end
     utils::modifyList(r, list(...))
   }
   lin_check <- function(...) {
@@ -393,8 +447,8 @@ cat("\nregressions from the adversarial review\n")
     errs(f(NULL, cfg0()))
   }
   ok(is.na(lin_check()), "a matching lineage row is accepted")
-  ok(grepl("STUDY_START", lin_check(STUDY_START = "2016-01-01") %||% ""),
-     "a LOT run whose STUDY_START disagrees with the recorded reading stops")
+  ok(grepl("built over", lin_check(INPUT_COHORT_TABLE = "other_tbl") %||% ""),
+     "a LOT run built over a different cohort table stops")
   ok(grepl("STUDY_END", lin_check(STUDY_END = "2025-12-31") %||% ""),
      "and so does one whose STUDY_END disagrees")
   ok(!is.na(lin_check(STATE = "failed")),
@@ -554,6 +608,73 @@ cat("\nregressions from the adversarial review\n")
   ok(grepl("copy_to", rv),
      "a code list of thousands of rows is copied, not built as SQL text")
   sf <- paste(capture.output(print(mod_safety)), collapse = "\n")
+  # The input contract. A cohort table of patient ids and eligibility flags -
+  # which BUILD_DELTA once recommended for the secondary 2L cohort - carries no
+  # index date and no end dates, so it cannot drive a single module. It has to
+  # be refused at the first step, by name, not five modules later with an
+  # unresolved-column error that names neither the table nor the setting.
+  flags_only <- c("PATID", "CE_PRE_LOT1_12MO", "CE_LOT1_FU", "NO_BELANTAMAB",
+                  "NO_PRIOR_MM_TX", "NO_OTHER_CANCER_PRE_LOT1", "NO_PREGNANCY")
+  e_thin <- errs(with_env(base_env, {
+    env <- new.env(parent = environment(check_cohort_table))
+    env$db_q <- function(con, sql)
+      data.frame(col_name = flags_only, stringsAsFactors = FALSE)
+    f <- check_cohort_table; environment(f) <- env
+    f(NULL, cfg0())
+  }))
+  ok(!is.na(e_thin) && grepl("INDEX_DATE", e_thin),
+     "a cohort table of ids and flags is refused, naming what it lacks")
+  e_full <- errs(with_env(base_env, {
+    env <- new.env(parent = environment(check_cohort_table))
+    env$db_q <- function(con, sql)
+      data.frame(col_name = c(COHORT_TABLE_REQUIRED, "EXTRA"),
+                 stringsAsFactors = FALSE)
+    f <- check_cohort_table; environment(f) <- env
+    f(NULL, cfg0())
+  }))
+  ok(is.na(e_full), "and a table carrying every required column is accepted")
+
+  # Two endpoints whose DEFINITION this package cannot implement from the code
+  # list alone. Both must stop rather than report something else under the
+  # protocol's name; the fixtures are the valid form, so the invalid one is
+  # constructed here.
+  hosp_cl <- data.frame(
+    condition = c("severe_infection_resulting_in_hospitalisation", "anemia"),
+    domain = c("infectious", "other"), acute_chronic = c("Acute", "Chronic"),
+    code_type = "ICD10DIAG", code = c("Z119", "D649"), icd_family = "ICD10",
+    stringsAsFactors = FALSE)
+  e_hosp <- errs(with_env(base_env, {
+    env <- new.env(parent = environment(mod_safety))
+    env$load_codelist <- function(...) hosp_cl
+    f <- mod_safety; environment(f) <- env
+    f(NULL, cfg0(), COHORTS[["1L"]])
+  }))
+  ok(!is.na(e_hosp) && grepl("defined by an admission", e_hosp),
+     "a hospitalisation-defined endpoint stops rather than counting outpatient codes")
+
+  frail_cl <- data.frame(
+    variable = c("weight_loss", "durable_medical_equipment"),
+    coefficient = c(0.05, 0.1), code_type = c("ICD10DIAG", "HCPCS"),
+    code = c("Z400", "E0143"), icd_family = "ICD10", stringsAsFactors = FALSE)
+  e_frail <- errs(with_env(base_env, {
+    env <- new.env(parent = environment(frailty_index))
+    env$load_codelist <- function(...) frail_cl
+    f <- frailty_index; environment(f) <- env
+    f(NULL, cfg0(), COHORTS[["1L"]])
+  }))
+  ok(!is.na(e_frail) && grepl("code_type HCPCS", e_frail),
+     "a frailty feature this module cannot source stops rather than scoring zero")
+  int_cl <- frail_cl; int_cl$variable <- c("intercept", "weight_loss")
+  int_cl$code_type <- "ICD10DIAG"
+  e_int <- errs(with_env(base_env, {
+    env <- new.env(parent = environment(frailty_index))
+    env$load_codelist <- function(...) int_cl
+    f <- frailty_index; environment(f) <- env
+    f(NULL, cfg0(), COHORTS[["1L"]])
+  }))
+  ok(!is.na(e_int) && grepl("intercept", e_int),
+     "and so does an intercept it would apply to nobody")
+
   ok(grepl("canonical_acute_chronic", sf),
      "acute_chronic is resolved to one rule before it reaches SQL")
   ok(!grepl("LIKE '%acute%'", sf, fixed = TRUE),

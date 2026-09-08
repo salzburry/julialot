@@ -99,7 +99,7 @@ mod_cohorts <- function(con, cfg, cohort) {
     LEFT JOIN %7$s ce
            ON ce.PATID = s.PATID
           AND ce.COV_START <= s.LOT_START_DT AND ce.COV_END >= s.LOT_START_DT
-    LEFT JOIN %8$s fu ON fu.PATID = s.PATID
+    LEFT JOIN %8$s fu ON fu.PATID = s.PATID AND fu.LOT_NUM = s.LOT_NUM
     %9$s
     WHERE s.LOT_NUM = %10$d %11$s",
     wrk("S_COHORT"), cohort$key, ce_pre, fu_pred, wrk("S_SPINE"),
@@ -173,6 +173,45 @@ mod_attrition <- function(con, cfg, cohort) {
 
 # The enrolment spans, built once from the raw table with the protocol's own
 # gap allowance. Not the CDM rollup - see above.
+# The columns this package reads off INPUT_COHORT_TABLE, checked before any of
+# it runs.
+#
+# Every module indexes on the cohort table: 02_periods reads INDEX_DATE,
+# windows.R reads ENDDATE and ENDDATE_CE and DEATH_DT, 03_demographics reads
+# YRDOB and GDR_CD, 08_malignancy reads MM_DX_DT. A table that does not carry
+# them fails deep inside a module with an unresolved-column error naming
+# neither the table nor the setting that chose it.
+#
+# It also refuses one specific mistake. BUILD_DELTA once recommended pointing
+# this setting at the cohort build's NDMM_FLAGS_ALL to obtain a wider
+# population for the secondary 2L cohort. That table is PATID plus seven
+# eligibility flags and nothing else - no index date, no end dates, no
+# demographics - so it cannot drive this package or the LOT engine, and the
+# recommendation was wrong. The check below is what makes that visible at the
+# first step rather than the fifth module.
+COHORT_TABLE_REQUIRED <- c("PATID", "INDEX_DATE", "ENDDATE", "ENDDATE_CE",
+                           "DEATH_DT", "MM_DX_DT", "YRDOB", "GDR_CD")
+
+check_cohort_table <- function(con, cfg) {
+  cols <- tryCatch({
+    d <- db_q(con, sprintf("DESCRIBE %s", cfg$input_cohort_table))
+    cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
+    if (length(cn)) toupper(trimws(as.character(d[[cn[1]]]))) else character(0)
+  }, error = function(e)
+    stop("INPUT ERROR: could not describe INPUT_COHORT_TABLE '",
+         cfg$input_cohort_table, "': ", conditionMessage(e), call. = FALSE))
+  missing <- setdiff(COHORT_TABLE_REQUIRED, cols)
+  if (length(missing))
+    stop("INPUT ERROR: INPUT_COHORT_TABLE '", cfg$input_cohort_table,
+         "' is missing column(s) this package reads: ",
+         paste(missing, collapse = ", "),
+         ".\nEvery cohort is indexed on this table, so a table carrying only ",
+         "patient ids and eligibility flags cannot drive the run. Point ",
+         "INPUT_COHORT_TABLE at a materialised cohort with the full schema.",
+         call. = FALSE)
+  invisible(cols)
+}
+
 build_enroll_spans <- function(con, cfg) {
   run_step(con, "enroll_spans", sprintf("
     CREATE OR REPLACE TABLE %s AS
@@ -205,24 +244,36 @@ build_enroll_spans <- function(con, cfg) {
                   FROM %s", wrk("S_ENROLL_SPANS")))
 }
 
-# Claims on and after each patient's 1L index, for the I5 readings that need
-# one. Cheap because it counts rather than collecting.
+# Claims on and after EACH LINE'S index, for the I5 readings that need one.
+#
+# Per line, not per patient. It was one row per patient counted against the
+# input cohort's INDEX_DATE - the 1L index - and every cohort read that same
+# row. Under FU_EVIDENCE_RULE=claim_after_index a single claim falling between
+# a patient's 1L and 2L therefore satisfied the after-2L test, and the after-3L
+# test, and SEC2L's: one claim admitted a patient to cohorts whose index it
+# preceded. The grain has to be the grain the criterion is asked at.
+#
+# Bounded above by STUDY_END as well: a claim after the study period is not
+# evidence of follow-up within it.
 build_fu_claims <- function(con, cfg) {
   run_step(con, "fu_claims", sprintf("
-    CREATE OR REPLACE TABLE %s AS
-    SELECT c.PATID,
-           sum(CASE WHEN d.svc_dt >  c.INDEX_DATE THEN 1 ELSE 0 END) AS N_CLAIMS_AFTER_INDEX,
-           sum(CASE WHEN d.svc_dt >= c.INDEX_DATE THEN 1 ELSE 0 END) AS N_CLAIMS_FROM_INDEX
-    FROM %s c
+    CREATE OR REPLACE TABLE %1$s AS
+    SELECT l.PATID, l.LOT_NUM,
+           sum(CASE WHEN d.svc_dt >  l.LOT_START_DT THEN 1 ELSE 0 END) AS N_CLAIMS_AFTER_INDEX,
+           sum(CASE WHEN d.svc_dt >= l.LOT_START_DT THEN 1 ELSE 0 END) AS N_CLAIMS_FROM_INDEX
+    FROM (SELECT cast(PATID as string) AS PATID, cast(LOT_NUM as int) AS LOT_NUM,
+                 LOT_START_DT
+          FROM %2$s WHERE LOT_NUM <= %5$d) l
     LEFT JOIN (
       SELECT cast(PATID as string) AS PATID, cast(FST_DT as date) AS svc_dt
-      FROM %s WHERE FST_DT IS NOT NULL
+      FROM %3$s WHERE FST_DT IS NOT NULL
       UNION ALL
       SELECT cast(PATID as string) AS PATID, cast(FILL_DT as date) AS svc_dt
-      FROM %s WHERE FILL_DT IS NOT NULL
-    ) d ON d.PATID = cast(c.PATID as string)
-    GROUP BY c.PATID",
-    wrk("S_FU_CLAIMS"), cfg$input_cohort_table,
-    cdm_src("medical"), cdm_src("rx")),
-    qc = sprintf("SELECT count(*) AS n_pat FROM %s", wrk("S_FU_CLAIMS")))
+      FROM %4$s WHERE FILL_DT IS NOT NULL
+    ) d ON d.PATID = l.PATID AND d.svc_dt <= date('%6$s')
+    GROUP BY l.PATID, l.LOT_NUM",
+    wrk("S_FU_CLAIMS"), lot_tbl("LOT_LONG_FINAL"),
+    cdm_src("medical"), cdm_src("rx"), as.integer(cfg$max_lot),
+    cfg$study_end),
+    qc = sprintf("SELECT count(*) AS n_rows FROM %s", wrk("S_FU_CLAIMS")))
 }

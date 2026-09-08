@@ -29,31 +29,40 @@ all: nothing in that build censors. Follow-up end is computed in
 `study223926`, where the setting already exists and already defaults to `TRUE`,
 which is the protocol's reading.
 
-### The secondary 2L cohort needs no upstream change either
+### The secondary 2L cohort — RETRACTED, 08 Sep 2026
 
-`NDMM_FLAGS_ALL` is a **declared output** of `ndmm/R/steps/06_flags.R`,
-materialised to the schema by `checkpoint()`. It is built as `ec_l1` — the
-eligible MM cohort (I1, I2) joined to 1L starts (I3) — `LEFT JOIN`ed to every
-exclusion, so **X1, X2, X3 and pre-index belantamab are carried as flag
-columns and no patient is dropped**. Filtering happens one step later, in
-`NDMM_PATIDS`, which ANDs the flags.
+**An earlier version of this section was wrong and is corrected here.** It said
+that pointing `INPUT_COHORT_TABLE` at the cohort build's `NDMM_FLAGS_ALL` would
+supply the wide population `s7.4.1.1` asks for, on the grounds that
+`study223926` joins that table on `PATID` alone. That last part is true of
+`01_cohorts.R` and false of everything downstream, and I checked only the join
+I had opened.
 
-`study223926` joins `INPUT_COHORT_TABLE` on `PATID` alone
-(`01_cohorts.R`, `INNER JOIN ... ON c.PATID = s.PATID`) and reads no flag
-column off it. So the wide population `s7.4.1.1` asks for — 2L initiators
-irrespective of when 1L fell, with a prior malignancy permitted — is obtained
-by:
+`NDMM_FLAGS_ALL` projects `ec_l1.PATID` and seven flags. It has **no
+`INDEX_DATE`, `ENDDATE`, `ENDDATE_CE`, `DEATH_DT`, `MM_DX_DT` or
+demographics**. `02_periods.R` indexes every cohort on `co.INDEX_DATE`;
+`windows.R` reads `ENDDATE` and `ENDDATE_CE`; `03_demographics.R` reads
+`YRDOB` and `GDR_CD`; `08_malignancy.R` reads `MM_DX_DT`. The LOT engine's own
+required-input check rejects it as well. So the recipe could not have run, and
+`study223926/R/modules/01_cohorts.R` now refuses such a table at the first
+step, by name, rather than failing five modules later on an unresolved column.
 
-1. re-running `ndmm/` with `LOT1_FROM` set early enough to capture the 1L of
-   anyone initiating 2L from 01 Jan 2020 (env override, no repo change),
-2. pointing `INPUT_COHORT_TABLE` at `NDMM_FLAGS_ALL` rather than the filtered
-   cohort table, and
-3. setting `SEC2L_INPUT_IS_WIDE=TRUE`, which is exactly the assertion that
-   setting exists to record.
+**And a schema fix alone would not be enough.** `01_cohorts.R` computes
+membership from continuous enrolment and follow-up and then joins the supplied
+cohort on `PATID`; it does not read the eligibility flags in
+`CRITERION_SOURCE`, because with an ordinary pre-filtered NDMM input those
+exclusions were already applied upstream. Against a wide input that assumption
+fails: a record with `NO_PREGNANCY = 0` would enter the secondary 2L cohort,
+and selecting the primary cohorts in the same run would admit records failing
+the prior-cancer exclusion. Document pages 22 and 37 keep those criteria for
+every cohort except where the protocol specifically permits otherwise.
 
-The index-date floors are applied by `study223926` per cohort
-(`CRITERION_SOURCE` marks them `here`), so a wide input does not leak into the
-1L, 2L or 3L cohorts.
+**What the secondary 2L cohort actually needs**, therefore, is a materialised
+wide-cohort adapter: the full cohort schema above, correctly anchored dates,
+and the eligibility evidence retained per patient so each cohort can apply its
+own criteria. The LOT engine is then run over that adapter. That is a build to
+write, not a setting to flip, and `SEC2L_INPUT_IS_WIDE` asserts a property of
+the input rather than supplying one.
 
 **What is still genuinely upstream** is that somebody has to *run* the cohort
 and LOT builds again under those settings. The lineage guard in
@@ -319,9 +328,9 @@ agrees with what the build does** (`OPEN_QUESTIONS.md`, "What the new protocol c
    `SUBSEQ_FU_CE_DAYS`, `NDMM_INDEX_EXCLUDED_ABBRS`. No edit to `ndmm/`; see
    section 0. `FU_END`, `TTE_ELIGIBLE`, the four demographic columns and
    censoring are all already built in `study223926`.
-4. Point `INPUT_COHORT_TABLE` at `NDMM_FLAGS_ALL` and set
-   `SEC2L_INPUT_IS_WIDE=TRUE` for the secondary 2L cohort — section 0 again.
-   No fifth build target is needed.
+4. Build the wide-cohort adapter the secondary 2L cohort needs — the full
+   cohort schema with eligibility evidence retained — and run the LOT engine
+   over it. Section 0 says why a table of ids and flags cannot stand in.
 5. Code lists (`CODELISTS.md` §4) — the long pole, and blocked on Annex 3.
 6. Outcomes package: baseline prevalence, incidence with person-time, HCRU,
    secondary malignancies, TTNT/TTD/OS.
