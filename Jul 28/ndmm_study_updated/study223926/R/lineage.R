@@ -1,27 +1,18 @@
 # Which LOT run these numbers rest on, and whether it can be vouched for.
 #
-# This package derives everything from a finished LOT run. A number read off a
-# run that failed part-way, that was built over a different cohort, or that
-# deviated from the LOT contract is not this study's number, and nothing
-# downstream can tell. So the run is identified before anything is read.
+# Everything here derives from a finished LOT run, so the run is identified
+# before anything is read. A run that failed part-way, was built over a
+# different cohort, or deviated from the LOT contract is refused.
 #
-# LOT_RULES.md carries a banner: three rules changed on 2026-08-30 and "LOT
-# numbers produced before that date are superseded". A run older than that is
-# refused by date as well as by status.
+# LOT rules changed on 2026-08-30 and earlier numbers are superseded, so a run
+# older than that is refused by date as well as by status.
 #
-# THE COLUMN NAMES ARE THE WRITER'S, NOT THIS PACKAGE'S. BUILD_STATUS_COLS in
-# the LOT engine declares RUN_ID, INPUT_COHORT_TABLE, OBJECT_PREFIX, STATE,
-# STUDY_END, CODELIST_WAIVERS_REQUESTED, CODELIST_WAIVERS_APPLIED,
-# CONTRACT_DEVIATIONS and UPDATED_AT. There is no COHORT_TABLE and no
-# STUDY_START. This SELECT asked for both, so it raised unresolved columns on
-# the first real run and never reached the check it was guarding - and the test
-# covering it built its fixture from the column names expected here rather than
-# from the writer, so it agreed with the mistake instead of catching it.
+# The column names are the WRITER'S. BUILD_STATUS_COLS declares
+# INPUT_COHORT_TABLE and no STUDY_START; asking for COHORT_TABLE and
+# STUDY_START raised unresolved columns before the check could run.
 #
-# STUDY_START is therefore NOT checked: the status row does not carry it, and a
-# check that cannot be sourced is worse than an absent one. cfg$study_start is
-# marked "upstream" in OPEN_QUESTION_SOURCE, so it is recorded on every run as
-# the reading the numbers were produced under, and Q1 remains open.
+# STUDY_START is therefore not checked - the status row does not carry it. It
+# is recorded as an upstream reading instead, and Q1 stays open.
 LOT_RULES_EPOCH <- as.Date("2026-08-30")
 
 check_lot_lineage <- function(con, cfg) {

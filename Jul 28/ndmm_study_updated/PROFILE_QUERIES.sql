@@ -15,8 +15,8 @@
 --   <PREFIX>   OBJECT_PREFIX from Jul 28/ndmm/config.csv e.g. ndmm_
 --
 -- The CDM quarter below is written as 2026q1, which is what STUDY_END=2026-03-31
--- resolves to. Block 0 checks that vintage exists - the describe-table
--- screenshot in docs/ is 2025q4, so they may not be the same.
+-- resolves to. Block 0 checks that vintage exists - the only documented
+-- vintage is 2025q4, so they may not be the same.
 
 
 -- What this file does and does not answer
@@ -118,9 +118,9 @@ LIMIT 50;
 -- ---------------------------------------------------------------------------
 -- 3.  The deployed shape of the other five tables               (10 seconds)
 -- ---------------------------------------------------------------------------
--- There is a describe-table screenshot for member_enrollment and nothing else.
--- Everything this study assumes about the other five is inferred from the
--- dictionary plus that one example. These settle:
+-- Only member_enrollment has a documented describe-table output. Everything
+-- this study assumes about the other five is inferred from the dictionary
+-- plus that one example. These settle:
 --   * whether ADMIT_DATE / DISCH_DATE / FST_DT are DATE or the documented
 --     YYYYMMDD - the package casts them to date, which silently yields NULL
 --     for an integer and would drop every hospitalisation;

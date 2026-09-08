@@ -4,11 +4,9 @@
 # table, and it reads the cohort and the LOT tables by their own prefixes. Two
 # runs on different prefixes sit side by side.
 #
-# Two runs on the SAME prefix are made safe by ensure_table() + clear_scope()
-# rather than by a lock: every per-cohort table is emptied of that cohort's
-# rows before it is written, so a re-run replaces rather than appends. That is
-# what makes "re-run it against a finished LOT run as often as needed" true;
-# without it the second run doubles every count silently.
+# Two runs on the SAME prefix are safe because every per-cohort table is
+# emptied of that cohort's rows before it is written, so a re-run replaces
+# rather than appends.
 
 SEP <- strrep("=", 70)
 
@@ -36,16 +34,10 @@ quarter_suffix <- function(study_end) {
 }
 # The CDM's PHYSICAL table names, keyed by the short name the modules use.
 #
-# These are not the same string, and assuming they were is what shipped: the
-# modules ask for "diagnosis" because that is what ../DATA_MAPPING.md calls the
-# table in prose, and cdm_src() pasted that straight into `t_<name>_<quarter>`
-# and produced `t_diagnosis_2026q1`. The table is `t_med_diagnosis_2026q1`.
-# Every module that reads a diagnosis - comorbidity, safety, malignancy, and
-# the MM code view hcru needs - would have failed on its first statement.
-#
-# The names match Jul 28/ndmm/R/config.R, which is the build that has actually
-# run against this warehouse. Each is overridable, because a warehouse can
-# rename a table and a study should not need a code change for that.
+# The two differ: modules say "diagnosis", the table is `t_med_diagnosis`.
+# Pasting the short name straight into `t_<name>_<quarter>` produced a table
+# that does not exist. Names match the cohort build's config, and each is
+# overridable so a renamed table needs no code change.
 CDM_TABLE_NAMES <- c(
   medical           = "medical",
   diagnosis         = "med_diagnosis",
@@ -96,12 +88,9 @@ lot_tbl <- function(base_tbl) {
 # CREATE TABLE IF NOT EXISTS followed by an INSERT, because that reads as one
 # thing, so they are split here rather than in each module.
 #
-# Split on semicolons that are not inside a quoted string or a comment. The
-# generated SQL has no semicolons inside literals today; the quote tracking is
-# here so that a code list value containing one cannot quietly truncate a
-# statement. Comment tracking matters more: the module templates carry `--`
-# notes explaining what a step does, and a `;` in one of those would otherwise
-# chop the statement in half.
+# Split on semicolons outside quotes and comments. The module templates carry
+# `--` notes, and a `;` in one of those would otherwise chop the statement in
+# half; the quote tracking guards against a code-list value doing the same.
 split_statements <- function(sql) {
   chars <- strsplit(sql, "", fixed = TRUE)[[1]]
   n <- length(chars)
@@ -171,16 +160,10 @@ with_retry <- function(fn, max_retries = study_config()$max_retries,
 
 # Is re-running this statement safe if the first attempt's answer was lost?
 #
-# CREATE OR REPLACE, DROP, DELETE and DDL all land in the same state whether
-# they ran once or twice. INSERT does not: a statement that committed and then
-# lost its acknowledgement is inserted a second time by the retry, and the
-# table quietly carries every row twice. The cohort-scope DELETE that would
-# have cleaned it up ran earlier, outside the retry, so a normal re-run does
-# not fix it either.
-#
-# So an INSERT or a MERGE is executed once and its error is raised. That costs
-# a run on a transient fault, which is recoverable; the alternative is doubled
-# counts nothing downstream can detect.
+# CREATE OR REPLACE, DROP and DELETE land in the same state either way. INSERT
+# does not: one that commits and loses its acknowledgement is inserted twice by
+# the retry, and the cohort-scope DELETE ran earlier, outside the retry.
+# So INSERT and MERGE run once and raise.
 sql_is_retry_safe <- function(st) {
   # Strip BOTH comment forms before looking at the verb. A line-comment prefix
   # was handled and a /* block */ prefix was not, so a block-commented INSERT
@@ -251,25 +234,33 @@ run_step <- function(con, name, sql, qc = NULL, allow_empty = FALSE) {
 # `scope` is the WHERE that identifies this run's rows - usually
 # COHORT = '2L'. A module that writes the whole table in one statement uses
 # CREATE OR REPLACE TABLE instead and does not need either of these.
-# CREATE TABLE IF NOT EXISTS does not reconcile an existing table's schema, and
-# every INSERT here is positional. So a prefix carrying tables from an earlier
-# version of this package is a hazard: a table that gained a column fails the
-# insert with a column-count error, and one whose column was RENAMED accepts
-# the insert and keeps the old name with the new meaning - which is worse,
-# because nothing fails.
+# CREATE TABLE IF NOT EXISTS reconciles nothing, and every INSERT here is
+# positional. A gained column fails on the count; a renamed one inserts cleanly
+# and keeps the old name with the new meaning, which is worse.
 #
-# The declared schema is therefore compared with what is there BEFORE the scope
-# is cleared, and a mismatch stops with the difference named. Deleting a
-# cohort's rows and then failing to reinsert them would leave the table short.
-# Normalised type names, so a declared `string` and a warehouse `VARCHAR` are
-# the same type and a declared `int` and a stored `bigint` are not.
+# The schema is therefore compared BEFORE the scope is cleared, so a mismatch
+# cannot leave the table short.
+# Aliases only - different spellings of one type, never a different type.
+#
+# FLOAT is not DOUBLE: single precision turns 16,777,217 into 16,777,216.
+# VARCHAR(n) is not STRING: it rejects an over-length write. TIMESTAMP_NTZ
+# carries no zone. A parameterised type keeps its parameters, so it never
+# matches an unparameterised declaration.
 .sql_type_norm <- function(x) {
-  x <- toupper(trimws(sub("\\(.*$", "", as.character(x))))
-  x[x %in% c("STRING", "VARCHAR", "TEXT", "CHAR")] <- "STRING"
-  x[x %in% c("INT", "INTEGER")] <- "INT"
-  x[x %in% c("BIGINT", "LONG")] <- "BIGINT"
-  x[x %in% c("DOUBLE", "FLOAT8", "REAL", "FLOAT")] <- "DOUBLE"
-  x[x %in% c("TIMESTAMP", "TIMESTAMP_NTZ", "DATETIME")] <- "TIMESTAMP"
+  x <- toupper(trimws(as.character(x)))
+  x <- gsub("\\s+", " ", x)
+  alias <- function(v, canon, names) ifelse(v %in% names, canon, v)
+  # Unbounded character types only. VARCHAR(2) keeps its length and will not
+  # match a declared STRING, which is the point.
+  x <- alias(x, "STRING",    c("STRING", "VARCHAR", "TEXT"))
+  x <- alias(x, "INT",       c("INT", "INTEGER", "INT4"))
+  x <- alias(x, "BIGINT",    c("BIGINT", "LONG", "INT8"))
+  x <- alias(x, "SMALLINT",  c("SMALLINT", "SHORT", "INT2"))
+  x <- alias(x, "TINYINT",   c("TINYINT", "BYTE"))
+  # DOUBLE and FLOAT are deliberately NOT merged.
+  x <- alias(x, "DOUBLE",    c("DOUBLE", "DOUBLE PRECISION", "FLOAT8"))
+  x <- alias(x, "FLOAT",     c("FLOAT", "REAL", "FLOAT4"))
+  x <- alias(x, "BOOLEAN",   c("BOOLEAN", "BOOL"))
   x
 }
 
@@ -297,9 +288,18 @@ ensure_table <- function(con, name, schema_sql) {
   # DESCRIBE appends partition/metadata blocks after a blank or `#` row.
   keep <- nzchar(have_col) & !startsWith(have_col, "#")
   if (any(!keep)) keep <- keep & cumsum(!keep) == 0
-  have_typ <- if (length(tn))
-    .sql_type_norm(as.character(d[[tn[1]]])[keep]) else NULL
   have_col <- have_col[keep]
+  # A DESCRIBE without a type column is not a licence to compare names only.
+  # Every warehouse this runs against returns data_type; its absence means the
+  # response is not the one this check was written for, and the safe reading of
+  # an unrecognised response is to stop rather than to clear rows on the
+  # strength of half a comparison.
+  if (!length(tn))
+    stop("SCHEMA ERROR: the schema of ", name, " came back without a type ",
+         "column (found: ", paste(names(d), collapse = ", "),
+         "). Column names alone cannot establish that writing into it is ",
+         "safe, so its rows are not cleared.", call. = FALSE)
+  have_typ <- .sql_type_norm(as.character(d[[tn[1]]])[keep])
 
   if (!length(have_col))
     stop("SCHEMA ERROR: ", name, " reported no columns after being created. ",
@@ -310,14 +310,12 @@ ensure_table <- function(con, name, schema_sql) {
   # length(want) names accepted a table with extra trailing columns, and the
   # positional insert then failed on the column count - after the scope had
   # already been deleted.
-  bad <- !identical(have_col, want_col) ||
-    (!is.null(have_typ) && !identical(have_typ, want_typ))
+  bad <- !identical(have_col, want_col) || !identical(have_typ, want_typ)
   if (bad)
     stop("SCHEMA ERROR: ", name, " exists with a different shape.\n",
          "  declared: ", paste(paste(want_col, want_typ), collapse = ", "),
          "\n  found:    ",
-         paste(if (is.null(have_typ)) have_col else paste(have_col, have_typ),
-               collapse = ", "), "\n",
+         paste(paste(have_col, have_typ), collapse = ", "), "\n",
          "Inserts here are positional, so writing into it would put values in ",
          "the wrong columns, fail on the count, or silently reuse a renamed ",
          "one. This happens when an output prefix is reused across package ",

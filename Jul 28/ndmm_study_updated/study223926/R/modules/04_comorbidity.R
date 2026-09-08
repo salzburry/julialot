@@ -3,24 +3,16 @@
 # Table 4 asks for the CCI "adjusted for having received a MM diagnosis, such
 # that a value of 0 indicates no additional comorbidities beyond MM".
 #
-# That adjustment cannot be made by name. Quan's seventeen conditions have no
-# myeloma row: myeloma is one of the codes UNDER `any_malignancy`, together
-# with every other cancer. Dropping a condition whose NAME matches myeloma
-# therefore drops nothing, and every patient in a myeloma study scores the
-# any_malignancy weight of 2 - so a CCI of 0 becomes unreachable and the
-# adjustment Table 4 asks for is silently not made.
+# It cannot be made by name: Quan has no myeloma row, only `any_malignancy`,
+# so dropping a condition named myeloma drops nothing and every patient scores
+# a weight of 2. A CCI of 0 becomes unreachable.
 #
-# So it is made on the CODES: a diagnosis whose code is in mm_dx.csv cannot
-# support any Charlson condition. A patient with only MM scores 0. A patient
-# with MM and breast cancer still scores any_malignancy, because the breast
-# code carries it. The name test is kept as well, for a code list that does
-# name a myeloma condition of its own.
+# So it is made on the CODES - a diagnosis in mm_dx.csv supports no Charlson
+# condition. MM alone scores 0; MM plus breast cancer still scores
+# any_malignancy. The name test stays for a list that does name myeloma.
 #
-# Frailty (Table 4, "only included pending review of data and mapping") and the
-# neuropathy / lung-parenchymal subgroup flags both need annexes that were not
-# delivered, so both are switches - FRAILTY and COMORBID_SUBGROUPS, off by
-# default. Switched on, the code-list guard stops the run naming the annex,
-# which is the honest outcome and is what asking for them means today.
+# Frailty and the subgroup flags need annexes that were not delivered, so both
+# are switches, off by default. Switched on, the guard stops naming the annex.
 mod_comorbidity <- function(con, cfg, cohort) {
   cl <- load_codelist("charlson_quan2011.csv", cfg)
   if (!"weight" %in% names(cl))
@@ -171,18 +163,12 @@ comorbid_subgroup_flags <- function(con, cfg, cohort) {
 # getting a column of zeros that reads as a cohort with no frail patients.
 frailty_index <- function(con, cfg, cohort) {
   cl <- load_codelist("frailty_kim2018.csv", cfg)
-  # Two things this implementation cannot do, checked before it runs rather
-  # than discovered in the output.
+  # Two inputs this implementation cannot honour, checked before it runs.
   #
-  # An INTERCEPT applies to every patient, matched or not. The score below is
-  # built by matching each row to a diagnosis code, so an intercept row can
-  # only be added to a patient who matched it - which no patient does, because
-  # an intercept has no code. It would silently drop out of every score.
-  #
-  # A NON-DIAGNOSIS feature - a procedure, a pharmacy fill, a DME claim - has
-  # to be looked up in its own table. Every row here is matched against
-  # MED_DIAGNOSIS, so a feature typed anything else matches nothing and its
-  # coefficient is silently omitted.
+  # An intercept applies to every patient, but the score is built by matching
+  # rows to diagnosis codes and an intercept has none - it would drop out of
+  # every score. A non-diagnosis feature needs its own source table, and every
+  # row here is matched against MED_DIAGNOSIS.
   #
   # Either is a wrong score reported as a score, so either stops the run.
   vv <- tolower(trimws(as.character(cl$variable)))

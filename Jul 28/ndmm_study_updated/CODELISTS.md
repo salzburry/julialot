@@ -1,9 +1,9 @@
 # Code lists — what exists, what the protocol needs, what is missing
 
 The protocol defines almost every criterion and every outcome by reference to a code
-list, and puts the lists themselves in Annexes 2 and 3 — **neither of which is in the
-photographs**. This file says exactly which lists the build already reads, what shape
-they are in, and what still has to be authored.
+list, and puts the lists themselves in Annexes 2 and 3 — **neither of which was
+supplied**. This file says which lists the build already reads, what shape they are
+in, and what still has to be authored.
 
 ## 1. What the build reads today
 
@@ -57,9 +57,8 @@ the same five files (`Jul 28/overall/R/build_cohort.R:139-146`).
 
 ### What the deployed `mm_dx.csv` actually holds
 
-Visible in `Apr 18 2026/codelist.pdf` (a photograph of the Domino project
-`219870_mm_optumlot` with `mm_dx.csv` open) and cross-checked against
-`docs/Part 1/codist.pdf`:
+Recorded in the Apr 2026 code list record for the Domino project
+`219870_mm_optumlot`, and cross-checked against the Part 1 code list workbook:
 
 ```
 icd_family,dx
@@ -74,11 +73,11 @@ ICD10DIAG,C9002          # C90.02  ...in relapse
 ```
 
 Eight codes — the **strict** 203.0x / C90.0x families only, no broad 203.x / C90.x.
-Rows 2 and 3 are at the limit of legibility in the photograph (both render as `203`),
-but the eight code slots line up one-for-one with the eight descriptions on
-`docs/Part 1/codist.pdf` page 1, which lists `203.0`, `203.00`, `203.01` (Remission),
-`203.02` (Relapse), `C90.0`, `C90.00`, `C90.01` (Remission), `C90.02` (Relapse). Still
-worth confirming against the production file before quoting it.
+Rows 2 and 3 are indistinct in the record (both read as `203`), but the eight code
+slots line up one-for-one with the eight descriptions in the Part 1 code list
+workbook: `203.0`, `203.00`, `203.01` (Remission), `203.02` (Relapse), `C90.0`,
+`C90.00`, `C90.01` (Remission), `C90.02` (Relapse). Worth confirming against the
+production file before quoting it.
 
 Two things follow from this file that are easy to get wrong:
 
@@ -96,26 +95,26 @@ Two things follow from this file that are easy to get wrong:
 meant to use the broad set, this file is short by every 203.x / C90.x code outside
 the `.0` family.
 
-### Where the production files are, and what is visible of them
+### Where the production files are, and what is known of them
 
 Nothing in `CODELIST_DIR` is under version control — `Jul 28/RUN_ON_PROD.md` says so
 outright ("Code and docs only. **No code lists**"). A sweep of the repo for any of the
 eight expected filenames returns nothing. What the repo does hold is the loader
-contract, and photographs of the deployed files in `Apr 18 2026/codelist.pdf` (the
-Domino project `219870_mm_optumlot` with each CSV open in the editor):
+contract and the Apr 2026 code list record of the deployed files in the Domino
+project `219870_mm_optumlot`:
 
-| production file | what is visible | size |
+| production file | what is known | size |
 |---|---|---|
 | `mm_dx.csv` | the whole file | header + **8 rows** (below) |
 | `clintrial.csv` | the whole file | header + **17 rows** — HCPCS G0276, G0292, G0293, G0294, G2000, G8928, G9057, S9988, S9990, S9991, S9992, S9994, S9996, plus `ICD10DIAG,Z006` and `ICD9DIAG,V707` |
 | `pregnancy.csv` | partial | row numbers reach **≥ 5,319**; carries ICD10PROC, HCPCS **and REV codes 0720, 0721, 0722, 0724, 0729** |
 | `other_malig.csv` | partial | **1,643 code rows, 1,618 distinct `tumor_group`** (stated in `Jul 28/ndmm/DECISIONS.md` §4) |
-| `cl_mma_codelist.csv` | partial | a legible row `HCPCS,C9069,belantamab,ABCMA,BELA` |
-| `permissible_subs.csv` | tab visible, rows not legible | — |
-| `mm_therapy.csv` | tab visible | **on production but read by no current build** — a legacy asset |
-| `cl_sct_codelist.csv`, `cl_mma_rollup.csv` | **not photographed** | — |
+| `cl_mma_codelist.csv` | partial | one recorded row `HCPCS,C9069,belantamab,ABCMA,BELA` |
+| `permissible_subs.csv` | file present, rows not recorded | — |
+| `mm_therapy.csv` | file present | **on production but read by no current build** — a legacy asset |
+| `cl_sct_codelist.csv`, `cl_mma_rollup.csv` | **not recorded** | — |
 
-`docs/Part 1/codist.pdf` adds two spec-workbook tabs: the MM diagnosis sheet, and tab
+The Part 1 code list workbook adds two spec-workbook tabs: the MM diagnosis sheet, and tab
 **`40.CL MMA ROLLUP`** — "Codelist Multiple Myeloma Approved and Steroid Medications
 Rollup", columns `CL_MEDICATION_FULL, CL_MED_CLASS, CL_MED_ABBR, MONOMAINTENANCE,
 DUALMAINTENANCE.WITH, CONDITIONING`, **27 medications** from belantamab/BELA/ABCMA to

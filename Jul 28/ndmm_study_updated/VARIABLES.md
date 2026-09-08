@@ -1,11 +1,10 @@
 # Variables — GSK 223926 (Aug 26 2026 protocol)
 
-Everything the protocol asks to be derived, transcribed from §7.2.2, §7.2.3,
-§7.2.4, §7.3 and Tables 1-6, with the timing each variable is collected at.
-`DATA_MAPPING.md` says where each one comes from in Optum.
+Everything the protocol asks to be derived, from §7.2.2, §7.2.3, §7.2.4, §7.3 and
+Tables 1-6, with the timing each variable is collected at. `DATA_MAPPING.md` says
+where each one comes from in Optum.
 
-Provenance: document screens 23-38 of `ashley study.pdf`. Table 4 is **incomplete**
-— see §4 and `IE_CRITERIA.md` §9.
+Table 4 is **incomplete** — see §4 and `IE_CRITERIA.md` §9.
 
 ---
 
@@ -16,7 +15,7 @@ The exposure is the cohort itself:
 > "The exposure of interest is defined as the LOT-based cohort of eligible patients
 > (see Section 7.2.1 for eligibility criteria). Time-to-event treatment outcomes and
 > safety rates during each LOT will be assessed according to SOC regimens and select
-> patient subgroups." — §7.3.1, screen 26
+> patient subgroups." — §7.3.1
 
 | variable | definition | timing |
 |---|---|---|
@@ -34,7 +33,7 @@ The exposure is the cohort itself:
 | `SCT_DT`, `SCT_TYPE` | autologous / allogeneic; planned vs unplanned | — |
 | `CART_DT` | CAR-T cellular therapy date | — |
 
-## 2. SOC categorisation (§7.2.2, screens 22-24)
+## 2. SOC categorisation (§7.2.2)
 
 > "To assess treatment patterns and time-to-event treatment outcomes according to
 > LOT cohorts and SOC regimen, regimens will potentially be grouped according to
@@ -61,7 +60,7 @@ The repo's `cl_mma_rollup.csv` carries `CL_MED_CLASS` and `CL_MED_ABBR`, which i
 raw material for these groupings, but **no regimen-category column exists today**.
 `CODELISTS.md` §2.
 
-## 3. Subgroup stratifications (§7.2.3, Table 1, screens 24-25)
+## 3. Subgroup stratifications (§7.2.3, Table 1)
 
 > "results from the primary and secondary objectives will be stratified by patient
 > subgroups of interest **among the 1L and 2L primary nested patient cohorts only**...
@@ -87,7 +86,7 @@ derived baseline flags:
 `Age ≥ 75` is explicitly a proxy for transplant-ineligible (TI) status, `< 75` for
 transplant-eligible (TE).
 
-## 4. Primary Objective 1 — baseline characteristics (Table 4, screens 29-30)
+## 4. Primary Objective 1 — baseline characteristics (Table 4)
 
 > "**Primary Objective 1:** demographics and clinical characteristics of the NDMM (1L)
 > and RRMM (2L and 3L) populations, including background prevalence rates of key
@@ -121,11 +120,11 @@ transplant-eligible (TE).
 > "Types of SOCs by line" starts **2017**, before the study period on either reading.
 > `OPEN_QUESTIONS.md` Q12.
 
-> **GAP — document screens 31-32 are a corrupt image.** `VERSION_DIFF.md` §3
-> reconstructs the lost rows from the June 2026 version of the protocol, which is in the
-> repo with a text layer, and names the three things that have certainly changed since.
-> The counting rules themselves survive in readable form in §7.8.1 (see §5 below), so
-> what is lost is wording and the exact functional forms, not substance. Everything in Table 4 between
+> **GAP — pages 31-32 are unreadable in the copy supplied.** `VERSION_DIFF.md` §3
+> reconstructs the missing rows from the June 2026 version and names the three things
+> that have certainly changed since. The counting rules themselves survive in §7.8.1
+> (see §5 below), so what is lost is wording and exact functional forms, not
+> substance. Everything in Table 4 between
 > "Types of 1L, 2L, 3L SOCs or classes by line" and the Primary Objective 3 block is
 > unreadable. From the surrounding rows, what is missing is: the rest of Primary
 > Objective 1 (**background prevalence rates of the Table 3 key safety events at
@@ -138,10 +137,10 @@ transplant-eligible (TE).
 > | *(footnote carried over)* | *"per GSK LoT algorithm definition, discontinuation of a regimen occurs when all MM agents in the LOT are stopped or when a new agent/qualifying SCT event is introduced"*; *"See Primary Objective 3 for similar calculation of secondary malignancies"* | |
 > | Healthcare utilization events | Same as Primary Objective 1 | During LOT treatment period (1L, 2L, 3L) |
 >
-> Primary Objective 2 itself is stated on screen 27: *"assess incidence rates of key
+> Primary Objective 2 itself is stated in §7.1: *"assess incidence rates of key
 > safety events while on each LOT (i.e., during the treatment periods)"*.
 
-## 5. Key safety outcomes (Table 3, screens 27-28)
+## 5. Key safety outcomes (Table 3)
 
 > "Key safety events of interest, as defined in **Table 3**, were selected due to their
 > association with some MM treatments, and will be defined according to selected
@@ -196,7 +195,7 @@ That defines the **LOT treatment period** — the risk window for Primary Object
 > "Health care utilization outcomes include: (1) **All-cause inpatient
 > hospitalizations** and (2) **Emergency visits**."
 
-## 6. Primary Objective 3 — secondary malignancies (Table 4 cont., screens 33-34)
+## 6. Primary Objective 3 — secondary malignancies (Table 4 cont.)
 
 > "**Primary Objective 3:** describe the occurrence of secondary malignancies following
 > the receipt of therapy"
@@ -211,7 +210,7 @@ That defines the **LOT treatment period** — the risk window for Primary Object
 | LoT after which the malignancy occurred | "Defined according to the LoT after which the malignancy is identified" | Follow-up period (1L, 2L, 3L) |
 | Top treatment sequences among those with malignancy | "Tabulation of the **top 5-10 sequences** among those with a malignancy occurring after treatment. For sensitivity analysis — this will be tabulated among those with a new malignancy occurring only after 2L" | Follow-up period (1L, 2L, 3L) |
 
-### Table 2 — example categorisation of secondary malignancies (§7.2.4, screens 25-26)
+### Table 2 — example categorisation of secondary malignancies (§7.2.4)
 
 > "Occurrence of secondary malignancies will be categorized according to clinical
 > relevance. The final groupings will be dependent on review of the data but may
@@ -230,7 +229,7 @@ That defines the **LOT treatment period** — the risk window for Primary Object
 | Non-melanoma skin cancer | Basal cell carcinoma, squamous cell carcinoma |
 | Other | Other category dependent on final categorization |
 
-## 7. Secondary Objective — treatment patterns and outcomes (Table 5, screens 35-36)
+## 7. Secondary Objective — treatment patterns and outcomes (Table 5)
 
 > "**Secondary Objective 1:** describe treatment patterns and treatment-related outcomes
 > (e.g., treatment attrition, TTNT, TTD, OS) as a proxy for effectiveness and
@@ -255,7 +254,7 @@ That defines the **LOT treatment period** — the risk window for Primary Object
 | **TTD** — time to treatment discontinuation | Time from index LOT start date (included) to the date of treatment discontinuation (excluded). The discontinuation date is the **earliest of** the date of treatment discontinuation (end of current LOT), initiation of the next LOT, or death. Patients without treatment discontinuation, next LOT or death are **censored at their follow-up end date**.<br>*per GSK LoT algorithm definition, discontinuation of a regimen occurs when all MM agents in the LOT are stopped or when a new agent/qualifying SCT event is introduced* | During each LOT (1L, 2L, 3L) |
 | **OS** — overall survival | Time from LOT start date (included) to date of death (excluded). Patients without a recorded date of death are censored at their follow-up end date | Follow-up period |
 
-## 8. Exploratory Objective (Table 6, screen 36)
+## 8. Exploratory Objective (Table 6)
 
 > "**Exploratory Objective 1:** assess trends in the use of SCT over time, overall and
 > according to SOC. Rationale: there is internal need to understand SCT trends and
@@ -265,7 +264,7 @@ That defines the **LOT treatment period** — the risk window for Primary Object
 |---|---|---|
 | Trends in the use of SCT | Number of patients with an SCT in 1L-4L by year, according to SOC type | Follow-up period |
 
-## 9. Confounders and effect modifiers (§7.3.3, screen 36)
+## 9. Confounders and effect modifiers (§7.3.3)
 
 > "N/A: This analysis is descriptive only."
 

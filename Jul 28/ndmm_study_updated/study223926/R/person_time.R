@@ -17,20 +17,18 @@
 #      will be counted as an incident event", with "a >=30 day washout between
 #      acute events of the same type".
 #
-# Rule 2 and rule 3 have different denominators. A module that computes one
-# denominator and uses it for both is wrong in a way no total will reveal.
+# Rules 2 and 3 have DIFFERENT denominators. Using one for both is wrong in a
+# way no total will reveal.
 
-# The nine s7.8.1 names as read from screen 44: "Chronic events that should
+# The nine s7.8.1 names as read from: "Chronic events that should
 # only be captured once, at first instance: Chronic kidney disease, Moderate to
 # severe renal impairment or end stage renal disease, Pulmonary hypertension,
 # Peripheral neuropathy, Parkinson's disease, Other movement disorders,
 # malignancies, Thrombocytopenia, Anemia".
 #
-# Table 3 marks more conditions chronic than this list names (fibrosis and
-# cirrhosis, non-alcoholic steatohepatitis). The code list's own
-# `acute_chronic` column is the authority, because it comes from the same annex
-# as the codes; this list is a cross-check that catches a mistyped column, not
-# a second definition.
+# Table 3 marks more conditions chronic than this list names. The code list's
+# own `acute_chronic` column is the authority; this list is a cross-check for a
+# mistyped column, not a second definition.
 PROTOCOL_CHRONIC_CONDITIONS <- c(
   "chronic_kidney_disease",
   "moderate_to_severe_renal_impairment_or_esrd",
@@ -40,9 +38,9 @@ PROTOCOL_CHRONIC_CONDITIONS <- c(
   "other_movement_disorders",
   "thrombocytopenia",
   "anemia",
-  # Objective 3's own condition. Screen 44 names "malignancies" in the same
-  # list; without it the cross-check cannot catch a secondary_malig.csv that
-  # types the condition acute, which would count every recurrence.
+  # Objective 3's own condition, and named chronic alongside the rest. Without
+  # it the cross-check misses a secondary_malig.csv that types the condition
+  # acute, which would count every recurrence.
   "malignancies"
 )
 
@@ -103,15 +101,12 @@ chronic_prior_history_sql <- function(events, periods, out) {
 
 # Rule 4. One round of the washout chain.
 #
-# The washout is between COUNTED events, not between observed ones, so it
-# cannot be done with lag(): events on days 0, 20 and 40 with a 30-day washout
-# are two counted events (0 and 40), and lag() gives one, because it compares
-# each event with its predecessor rather than with the last one that counted.
+# The washout is between COUNTED events, so lag() cannot do it: days 0, 20 and
+# 40 are two counted events, and lag() gives one because it compares each event
+# with its predecessor rather than the last one that counted.
 #
 # Each round adds the earliest still-eligible event per patient and condition,
-# so the number of rounds needed is the largest number of counted events any
-# one patient has for any one condition. run_acute_washout() loops until a
-# round adds nothing.
+# and run_acute_washout() loops until a round adds nothing.
 acute_washout_round_sql <- function(events, periods, counted, cfg,
                                     period_label = "TREATMENT") {
   w <- as.integer(cfg$acute_washout_days)
@@ -144,18 +139,15 @@ acute_washout_round_sql <- function(events, periods, counted, cfg,
           period_label, counted, period_label, w)
 }
 
-# The loop. Bounded, because an unbounded loop against a warehouse is a way to
-# spend a night - but the bound has to come from the data, not from a guess.
+# The loop, bounded from the data rather than a guess.
 #
-# It was a fixed 60, and one round is spent confirming convergence, so a
-# patient with exactly 60 qualifying events failed and a longer history failed
-# with them. Sixty events 30 days apart is five years, which fits inside this
-# study's observation window: that is a legitimate history, not a runaway loop.
+# A fixed 60 failed a patient with exactly 60 events, since one round confirms
+# convergence - and 60 events 30 days apart is five years, well inside the
+# observation window.
 #
-# Within a period of D days, acute events separated by at least w days number
-# at most floor(D / w) + 1. The bound is that, over the longest period in
-# scope, plus the confirming round and one of slack. Hitting it is then a real
-# non-convergence and still stops.
+# Within D days, events at least w apart number at most floor(D/w) + 1. The
+# bound is that over the longest period in scope, plus slack; hitting it is a
+# real non-convergence and still stops.
 run_acute_washout <- function(con, events, periods, counted, cfg,
                               period_label = "TREATMENT", max_rounds = NULL) {
   if (is.null(max_rounds)) {

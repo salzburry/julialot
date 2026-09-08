@@ -5,13 +5,13 @@ build's own record do not settle, each of which changes a count or a definition.
 Ordered by how much they change.
 
 **Five were closed on 03 Sep 2026** by one run against the warehouse
-(`SQL Result.pdf`, from `RUN_ONCE.sql`): Q8, Q10, Q22, Q24 and Q26. They are out
+(`RUN_ONCE.sql`): Q8, Q10, Q22, Q24 and Q26. They are out
 of the list below and recorded, with their numbers, under *Closed by the
 warehouse*. Two more — Q4 and Q17 — were already settled by
 `Jul 28/ndmm/DECISIONS.md` §6 and are left in place with the answer.
 
-**The second run came back on 07 Sep 2026** (`SQL Result 2.pdf`, from
-`RUN_ONCE_2.sql` — 23 statements, 18m 19s, every one returning). It did not
+**The second run came back on 07 Sep 2026** (`RUN_ONCE_2.sql` — 23 statements,
+18m 19s, every one returning). It did not
 close a question outright, because none of the remaining ones is a question
 about the data. What it did is **price** sixteen of them: Q1, Q2, Q3, Q5, Q6,
 Q7, Q9, Q11, Q14, Q16, Q19, Q21, Q23, Q25, Q27 and Q28 now each carry a number
@@ -23,7 +23,7 @@ It also caught a bug — `CLAIM_STATUS=paid_only` was filtering nothing, because
 the warehouse stores `P`/`D` where the dictionary spells `PAID`/`DENIED` — and
 confirmed the six value domains the package had been assuming.
 
-**A third run came back on 08 Sep 2026** (`sql result 31.pdf`, `sql 32.pdf`).
+**A third run came back on 08 Sep 2026** (`RUN_ONCE_3.sql`).
 **Q13 is answered**: `CENSOR_AT_DISENROLLMENT` decides the follow-up of **at
 most** 30,392 patients — 29% — while the 30-day bridging rule touches only
 6,221. (Upper bound: the query merged spans with `lag()` where the package uses
@@ -48,11 +48,11 @@ the build has to pick one.
 
 ### Q1. Does the study period start 01 Jan 2016 or 01 Jan 2018?
 
-The body text (§7.1, screen 17) says:
+The body text (§7.1) says:
 
 > "The study period will span from **01 Jan 2018** through 31 Mar 2026"
 
-Figure 1 (screen 19) and Figure 2 (screen 37) are both labelled **"Study start
+Figure 1 and Figure 2 are both labelled **"Study start
 01 Jan 2016"**.
 
 This is not cosmetic. Criterion I1 says the qualifying MM diagnosis must fall
@@ -74,7 +74,7 @@ period or merely on or before the 1L index?
 
 ### Q2. Does the outpatient arm of the MM diagnosis use the broad code set?
 
-§7.2.1.1 (screen 21):
+§7.2.1.1:
 
 > "At least one inpatient medical claim with a diagnosis code for MM in any position
 > (any ICD-9-CM = **203.0x** or ICD-10-CM code = **C90.0x**) or ≥ 2 outpatient medical
@@ -142,7 +142,7 @@ So no patient is currently affected either way. The question becomes live the mo
 **Annex 2's** therapy list is loaded, because the protocol's own SOC categories are
 dexamethasone-containing regimens.
 
-One thing to check when it is: the rollup tab in `docs/Part 1/codist.pdf` is titled
+One thing to check when it is: the rollup tab in the Part 1 code list workbook is titled
 *"Codelist Multiple Myeloma Approved **and Steroid** Medications Rollup"* and carries
 **27** medications against the code list's 26 agents. If a steroid is on the list under
 an abbreviation the guard does not name, the guard silently stops guarding.
@@ -154,7 +154,7 @@ against whatever list Annex 2 delivers.
 
 ### Q13. Does disenrollment censor follow-up?
 
-§7.1 (screen 17):
+§7.1:
 
 > "The patient **follow-up period** will be defined as the period starting from the
 > index date... until the **end of continuous enrollment** or end of study period or
@@ -188,7 +188,7 @@ analysis rather than a sensitivity.
   cannot be computed without it.
 - **Annex 6** — the LOT algorithm, to reconcile against `Jul 28/lot/LOT_RULES.md`.
 - **Annex 7** — the Kim CFI algorithm and code lists, or confirmation frailty is out.
-- **Document pages 31-32** are a corrupt image in the PDF; they carry the rest of
+- **Pages 31-32** are unreadable in the copy supplied; they carry the rest of
   Primary Objective 1's Table 4 rows and most of Primary Objective 2's.
 
 The `.docx` would supply all of it at once.
@@ -346,9 +346,9 @@ reach back further than the cohort?
 
 ### Q14. Does the baseline period include the index date?
 
-§7.1 (screen 17): *"the 12-month period prior to the index date for each LOT (**does
+§7.1: *"the 12-month period prior to the index date for each LOT (**does
 not include index date**)"*.
-§7.8.1 (screen 42): *"Comorbidities will be assessed over the 12-month baseline
+§7.8.1: *"Comorbidities will be assessed over the 12-month baseline
 period, **including the index date**"*.
 
 **Ask:** which, and does it differ between comorbidities and the key safety events?
@@ -359,7 +359,7 @@ period, or in neither.
 
 `BUS`, `PRODUCT`, `CDHP`, `STATE` and `GDR_CD` live on `MEMBER_ENROLLMENT`, which
 carries a new row every time anything about the member changes. The value
-distributions on `docs/optum enrolment.pdf` p.4 prove patients hold rows with
+distributions on the Optum enrolment documentation p.4 prove patients hold rows with
 different values: the three `count(DISTINCT PATID)` totals disagree (`BUS` 23,632,
 `CDHP` 26,114, `PRODUCT` 30,651) against a cohort that cannot be that large three
 different ways.
@@ -532,7 +532,7 @@ misspelled "panobinostat" cannot quietly bar no one.
 
 ## Answered by the warehouse, 08 Sep 2026
 
-`sql result 31.pdf` and `sql 32.pdf`, from `RUN_ONCE_3.sql`. Same proxy
+From `RUN_ONCE_3.sql`. Same proxy
 population as round two — 105,125 members with a C90 code since 2016, of whom
 93,245 have a first one from 2018. Every statement returned.
 
@@ -708,7 +708,7 @@ is dead weight for this study period rather than a risk.
 
 ## Priced by the warehouse, 07 Sep 2026
 
-`SQL Result 2.pdf` — one run of `RUN_ONCE_2.sql`, 23 statements, 18m 19s, all
+One run of `RUN_ONCE_2.sql`, 23 statements, 18m 19s, all
 of them returning. The proxy population is **105,125** members with a C90 code
 since 2016, of whom **93,245** have a first C90 code on or after 01 Jan 2018.
 None of these is the study cohort — no age, enrolment or exclusion criteria —
@@ -951,7 +951,7 @@ records supports.
 
 ## Closed by the warehouse, 03 Sep 2026
 
-`SQL Result.pdf` — one run of `RUN_ONCE.sql` against
+One run of `RUN_ONCE.sql` against
 `hive_metastore.clnprw_optum`. These five are settled and are out of the list
 above. Numbers are recorded here so nobody has to re-run to know them.
 

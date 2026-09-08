@@ -35,24 +35,18 @@ mod_demographics <- function(con, cfg, cohort) {
   # Which enrolment row supplies the attribute.
   pick <- if (identical(cfg$enrol_attr_at, "index_span"))
     "AND e.ELIGEFF <= p.INDEX_DATE AND e.ELIGEND >= p.INDEX_DATE" else ""
-  # A TOTAL order. MEMBER_ENROLLMENT carries one row per plan segment, and a
-  # member with two concurrent plans - commercial plus Medicare is the common
-  # case, and BUS is one of the columns being read - has two rows with the same
-  # ELIGEFF covering the index. Ranked on that alone, rn = 1 picks arbitrarily
-  # and RACE, ETHNICITY, REGION and INSURANCE_TYPE can differ between two runs
-  # of identical code on identical data.
+  # A TOTAL order. A member on two concurrent plans has two rows with the same
+  # ELIGEFF covering the index, so ranking on ELIGEFF alone picks arbitrarily
+  # and the attributes can differ between two runs of identical code.
   # Age, guarded on both ends.
   #
-  # YRDOB is CAPPED at 89 years (V9.0 dictionary, changed from 90 in Apr 2025).
-  # A profile of the deployed table shows the pile-up exactly where that
-  # predicts - 12.8M members born in 1937 against ~1.4M in each neighbouring
-  # year. The BANDS are unaffected, since the cap sits above the 75 cut-point;
-  # a mean or median age is right-censored and Table 4 reports both.
+  # YRDOB is capped at 89 years, and the deployed table shows the pile-up that
+  # predicts. The bands are unaffected - the cap sits above the 75 cut-point -
+  # but a mean or median age is right-censored, and Table 4 reports both.
   #
-  # And YRDOB is 0 on 614 rows. Unguarded, `year(index) - 0` is an age of about
-  # 2026, which lands every one of them in the 75+ band - the band the protocol
-  # uses as its transplant-eligibility proxy. Anything outside a plausible
-  # human range is Unknown, which is what a missing birth year is.
+  # YRDOB is also 0 on some rows. Unguarded that is an age of about 2026, which
+  # lands them in the 75+ transplant-eligibility band. Anything outside a
+  # plausible human range is Unknown.
   age_expr <- sprintf(
     "CASE WHEN cast(c.YRDOB as int) BETWEEN %d AND year(r.INDEX_DATE)
            AND year(r.INDEX_DATE) - cast(c.YRDOB as int) BETWEEN 0 AND 120

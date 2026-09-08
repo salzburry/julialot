@@ -212,6 +212,35 @@ numbers.
 person-time rule, and `BASELINE_PY` and `PERIOD_PY` are window lengths
 whichever way it was set. `../OPEN_QUESTIONS.md` Q19 is still open.
 
+## The output prefix, and why a reused one now stops the run
+
+`OBJECT_PREFIX` selects the namespace this package writes into. Before writing
+any table it compares the declared schema — ordered column names and types —
+against what is already there, and **stops if they differ, before clearing a
+single row**. There is no automatic migration.
+
+That matters right now: `S_COHORT` gained `MET_X1`–`MET_X4`, `S_HCRU_RATES` and
+`S_MALIGNANCY_RATES` gained `N_AT_RISK`, `S_LOT_PERIODS` renamed
+`LOT_BASE_DISCON_DT` to `PROTOCOL_DISCON_DT`, and `S_MALIGNANCY_DATES` is new.
+**A prefix written by an earlier version of this package will therefore stop
+this one.** Drop those tables, or run against a fresh prefix.
+
+The check is strict on purpose, because the inserts are positional:
+
+* a table that gained a column fails on the count — *after* the delete, if the
+  check did not run first;
+* a table whose column was renamed accepts the insert and keeps the old name
+  with the new meaning, which is worse, because nothing fails;
+* a narrower stored type silently truncates. `float` is not `double` — single
+  precision turns 16,777,217 into 16,777,216 — and a bounded `varchar(n)` is
+  not an unbounded `string`, because it rejects an over-length write once the
+  scope has already been cleared.
+
+Genuine spellings of one type still match: `varchar` and `string`, `integer`
+and `int`, `double precision` and `double`. A type the check does not recognise
+is treated as a mismatch rather than folded into a neighbouring family, and a
+`DESCRIBE` that returns no type column stops rather than comparing names alone.
+
 ## What it refuses to do
 
 A module that is asked for and cannot run **stops the run**. It never returns an
