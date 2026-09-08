@@ -65,6 +65,44 @@ FROM   hive_metastore.clnprw_optum.t_med_diagnosis_2026q1
 WHERE  cast(FST_DT as date) >= date('2016-01-01')
   AND  upper(regexp_replace(DIAG, '[^A-Za-z0-9]', '')) LIKE 'C90%';
 
+-- Enrolment spans merged EXACTLY as 01_cohorts.R build_enroll_spans() does:
+-- a running max(ELIGEND) over all prior rows, not lag() over the immediately
+-- preceding one. The difference is nested spans - a short span sitting inside
+-- a longer earlier one - and round two found 11,986 myeloma members (11.4%)
+-- with overlapping enrolment rows, so it is not a rare shape.
+--
+-- The 08 Sep run used lag() and therefore over-counted breaks and
+-- under-counted continuous enrolment. This is the corrected form.
+CREATE OR REPLACE TEMPORARY VIEW mm_spans AS
+WITH base AS (
+  SELECT cast(e.PATID as string) AS PATID,
+         cast(e.ELIGEFF as date) AS elig_eff, cast(e.ELIGEND as date) AS elig_end
+  FROM       hive_metastore.clnprw_optum.t_member_enrollment_2026q1 e
+  INNER JOIN mm_pts m ON m.PATID = cast(e.PATID as string)
+  WHERE  e.ELIGEFF IS NOT NULL AND e.ELIGEND IS NOT NULL
+),
+ordered AS (
+  SELECT *, max(elig_end) OVER (PARTITION BY PATID ORDER BY elig_eff, elig_end
+            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS max_end
+  FROM base
+),
+flagged AS (
+  SELECT *, CASE WHEN max_end IS NULL                          THEN 1
+                 WHEN elig_eff <= date_add(max_end, 30 + 1)    THEN 0
+                 ELSE 1 END AS new_grp
+  FROM ordered
+),
+grouped AS (
+  SELECT *, sum(new_grp) OVER (PARTITION BY PATID ORDER BY elig_eff, elig_end
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS grp
+  FROM flagged
+)
+SELECT PATID, grp AS SPAN_ID, min(elig_eff) AS COV_START, max(elig_end) AS COV_END,
+       -- a real gap the merge bridged: inside the group, but not contiguous
+       max(CASE WHEN new_grp = 0 AND elig_eff > date_add(max_end, 1)
+                THEN datediff(elig_eff, max_end) - 1 ELSE 0 END) AS MAX_BRIDGED_GAP
+FROM grouped GROUP BY PATID, grp;
+
 -- The index date round two used, so the windows below match it exactly.
 CREATE OR REPLACE TEMPORARY VIEW mm_idx AS
 SELECT cast(PATID as string) AS PATID, min(cast(FST_DT as date)) AS ix
@@ -77,96 +115,70 @@ GROUP BY cast(PATID as string);
 -- =========================================================================
 -- BLOCK 1 — Q13. Members with a real break in enrolment.       ~2 minutes
 -- =========================================================================
--- A boundary is only a gap if the next span starts more than one day after
--- the last one ended. Round two's `gap_days <= 30` bucket counted the
--- contiguous case (gap_days = 0) as bridged, which is why 160,945 of 202,108
--- boundaries landed in it. This splits them properly and counts MEMBERS,
--- which is the unit censoring applies to.
+-- Merged spans are separated by more than 30 days BY CONSTRUCTION, so every
+-- boundary between two of them is a real break and nothing has to be
+-- re-derived. A bridged gap of 1-30 days is one the merge swallowed, which is
+-- what MAX_BRIDGED_GAP carries out of the view.
 --
 -- `members_with_a_break_over_30` is the population Q13 moves: censor at
--- disenrollment and they lose their follow-up from that point; bridge and
--- they keep it.
+-- disenrollment and they lose their follow-up from that point; bridge and they
+-- keep it.
+--
+-- The 08 Sep run answered this with lag() rather than a running max, so its
+-- 30,392 was an UPPER bound - a span nested inside a longer earlier one read
+-- as a break. This is the number that matches what the package computes.
 
-WITH spans AS (
-  SELECT cast(e.PATID as string) AS PATID,
-         cast(e.ELIGEFF as date) AS s,
-         lag(cast(e.ELIGEND as date)) OVER (PARTITION BY e.PATID
-                                            ORDER BY e.ELIGEFF) AS prev_end
-  FROM       hive_metastore.clnprw_optum.t_member_enrollment_2026q1 e
-  INNER JOIN mm_pts m ON m.PATID = cast(e.PATID as string)
+WITH per_member AS (
+  SELECT PATID,
+         count(*)                                     AS n_spans,
+         max(CASE WHEN MAX_BRIDGED_GAP > 0 THEN 1 ELSE 0 END) AS had_a_bridged_gap,
+         max(MAX_BRIDGED_GAP)                         AS biggest_bridged_gap
+  FROM   mm_spans GROUP BY PATID
 ),
-gaps AS (
-  SELECT PATID, datediff(s, prev_end) - 1 AS gap_days
-  FROM   spans WHERE prev_end IS NOT NULL AND s > prev_end
+breaks AS (
+  SELECT PATID, datediff(COV_START, prev_end) - 1 AS break_days
+  FROM ( SELECT PATID, COV_START,
+                lag(COV_END) OVER (PARTITION BY PATID ORDER BY COV_START) AS prev_end
+         FROM   mm_spans )
+  WHERE prev_end IS NOT NULL
 )
-SELECT n.mm_members,
-       count(DISTINCT CASE WHEN g.gap_days = 0 THEN g.PATID END)          AS members_contiguous_only,
-       count(DISTINCT CASE WHEN g.gap_days BETWEEN 1 AND 30
-                           THEN g.PATID END)                             AS members_with_a_bridged_gap,
-       count(DISTINCT CASE WHEN g.gap_days > 30 THEN g.PATID END)        AS members_with_a_break_over_30,
-       sum(CASE WHEN g.gap_days BETWEEN 1 AND 30 THEN 1 ELSE 0 END)      AS n_bridged_gaps,
-       sum(CASE WHEN g.gap_days > 30 THEN 1 ELSE 0 END)                  AS n_breaks_over_30,
-       round(avg(CASE WHEN g.gap_days > 30 THEN g.gap_days END), 1)      AS mean_break_days
-FROM      (SELECT count(*) AS mm_members FROM mm_pts) n
-LEFT JOIN gaps g ON true
-GROUP BY n.mm_members;
+SELECT (SELECT count(*) FROM mm_pts)                                   AS mm_members,
+       (SELECT count(*) FROM per_member WHERE n_spans = 1)             AS members_one_unbroken_span,
+       (SELECT sum(had_a_bridged_gap) FROM per_member)                 AS members_with_a_bridged_gap,
+       (SELECT count(*) FROM per_member WHERE n_spans > 1)             AS members_with_a_break_over_30,
+       (SELECT count(*) FROM breaks)                                   AS n_breaks_over_30,
+       (SELECT round(avg(break_days), 1) FROM breaks)                  AS mean_break_days,
+       (SELECT round(avg(biggest_bridged_gap), 1) FROM per_member
+        WHERE biggest_bridged_gap > 0)                                 AS mean_bridged_gap_days;
 
 
 -- =========================================================================
--- BLOCK 2 — I4 / N2. Does anyone actually have 12 months of CE?  ~3 minutes
+-- BLOCK 2 — I4 / N2. Does anyone actually have 12 months of CE?  ~2 minutes
 -- =========================================================================
--- The criterion this package applies itself, and whose pass rate nobody has
--- ever measured. Spans are merged across gaps of 30 days or fewer - the
--- protocol's own bridging rule - and the merged span must cover the whole
--- baseline year. Gaps-and-islands, so the merge is done once rather than
--- pairwise.
+-- The criterion this package applies itself, over the spans the package itself
+-- would build. The 08 Sep run merged with lag() and returned 62.1%, which was
+-- a LOWER bound: a nested span read as a break and split a member's coverage
+-- that the package would have kept whole.
 --
--- If this passes 90% the criterion is a formality. If it passes 50% it is the
--- single largest attrition step in the funnel and the study team should know
--- that before the first build, not after.
---
--- max(ELIGEND) within an island assumes spans do not nest. For a feasibility
--- count that is the standard simplification and is noted rather than hidden.
+-- If this passes 90% the criterion is a formality. At 62% it is the single
+-- largest attrition step in the funnel, larger than any exclusion, and the
+-- study team should see that before the first build rather than after.
 
-WITH spans AS (
-  SELECT cast(e.PATID as string) AS PATID,
-         cast(e.ELIGEFF as date) AS s, cast(e.ELIGEND as date) AS e_end,
-         lag(cast(e.ELIGEND as date)) OVER (PARTITION BY e.PATID
-                                            ORDER BY e.ELIGEFF) AS prev_end
-  FROM       hive_metastore.clnprw_optum.t_member_enrollment_2026q1 e
-  INNER JOIN mm_pts m ON m.PATID = cast(e.PATID as string)
-),
-marked AS (
-  SELECT PATID, s, e_end,
-         CASE WHEN prev_end IS NULL OR datediff(s, prev_end) - 1 > 30
-              THEN 1 ELSE 0 END AS new_island
-  FROM spans
-),
-islands AS (
-  SELECT PATID, s, e_end,
-         sum(new_island) OVER (PARTITION BY PATID ORDER BY s
-                               ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS grp
-  FROM marked
-),
-merged AS (
-  SELECT PATID, grp, min(s) AS cov_start, max(e_end) AS cov_end
-  FROM   islands GROUP BY PATID, grp
-),
-per_member AS (
+WITH per_member AS (
   SELECT i.PATID,
-         max(CASE WHEN m.cov_start <= date_sub(i.ix, 365)
-                   AND m.cov_end   >= date_sub(i.ix, 1)
+         max(CASE WHEN m.COV_START <= date_sub(i.ix, 365)
+                   AND m.COV_END   >= date_sub(i.ix, 1)
                   THEN 1 ELSE 0 END)                             AS ce_12mo_bridged,
-         max(CASE WHEN m.cov_start <= date_sub(i.ix, 365)
-                   AND m.cov_end   >= i.ix
+         max(CASE WHEN m.COV_START <= date_sub(i.ix, 365)
+                   AND m.COV_END   >= i.ix
                   THEN 1 ELSE 0 END)                             AS ce_12mo_incl_index
   FROM      mm_idx i
-  LEFT JOIN merged m ON m.PATID = i.PATID
+  LEFT JOIN mm_spans m ON m.PATID = i.PATID
   GROUP BY i.PATID
 )
-SELECT count(*)                     AS mm_members,
-       sum(ce_12mo_bridged)         AS pass_12mo_ce_before_index,
-       sum(ce_12mo_incl_index)      AS pass_12mo_ce_through_index,
+SELECT count(*)                        AS mm_members,
+       sum(ce_12mo_bridged)            AS pass_12mo_ce_before_index,
+       sum(ce_12mo_incl_index)         AS pass_12mo_ce_through_index,
        count(*) - sum(ce_12mo_bridged) AS lost_to_this_criterion,
        round(100.0 * sum(ce_12mo_bridged) / count(*), 1) AS pct_passing
 FROM per_member;

@@ -24,8 +24,11 @@ the warehouse stores `P`/`D` where the dictionary spells `PAID`/`DENIED` — and
 confirmed the six value domains the package had been assuming.
 
 **A third run came back on 08 Sep 2026** (`sql result 31.pdf`, `sql 32.pdf`).
-**Q13 is now closed**: `CENSOR_AT_DISENROLLMENT` decides the follow-up of
-30,392 patients — 29% — while the 30-day bridging rule touches only 6,221.
+**Q13 is answered**: `CENSOR_AT_DISENROLLMENT` decides the follow-up of **at
+most** 30,392 patients — 29% — while the 30-day bridging rule touches only
+6,221. (Upper bound: the query merged spans with `lag()` where the package uses
+a running max, which over-counts breaks on nested spans. Corrected in
+`RUN_ONCE_3.sql`; one re-run makes it exact.)
 **Q25 shrank**: the 17.4% headline is concentrated in ordinary outpatient
 claims, and excluding denied claims would remove 0.53% of ED visits, not 17%.
 It also measured the **largest attrition step in the study** — only 62.1% of
@@ -547,6 +550,21 @@ population as round two — 105,125 members with a C90 code since 2016, of whom
 202,108 boundaries minus 160,945 in the `<= 30` bucket, confirming that bucket
 was almost entirely `gap_days = 0`.
 
+> **These are upper bounds on the breaks, and the direction is known.** The
+> query merged spans with `lag(ELIGEND)` — the immediately preceding row. The
+> package's `build_enroll_spans()` uses a running `max(ELIGEND)` over *all*
+> prior rows, which is the difference between the two on **nested** spans: a
+> short span sitting inside a longer earlier one. Round two found 11,986
+> myeloma members (11.4%) with overlapping enrolment rows, so the shape is
+> common. Every nested span the `lag()` form mistakes for a gap **inflates the
+> break count and deflates coverage**, so the true figures are **at most
+> 30,392 members with a break** and **at least 62.1% passing continuous
+> enrolment**. The 30-day threshold itself is identical in both forms
+> (`elig_eff <= max_end + 31` ⟺ gap ≤ 30), so only nesting differs.
+> `RUN_ONCE_3.sql` now builds `mm_spans` with the package's own logic verbatim;
+> one re-run replaces both bounds with the number the build will actually
+> produce.
+
 Two things follow. **`CENSOR_AT_DISENROLLMENT` decides the follow-up of 30,392
 patients**, 29% of the population — it is not a technicality. And the 30-day
 bridging rule itself touches only 6,221 (5.9%), so Q19's 109,679 bridged days
@@ -563,7 +581,9 @@ Bridging them would be indefensible; the rule correctly does not.
 | pass it through the index date as well | 57,932 |
 | **lost to this criterion** | **35,312** |
 
-Nobody had measured this. It is the single biggest loss in the funnel, larger
+**A lower bound** — see the note under Q13. Nested spans read as breaks here
+too, so the true pass rate is at or above 62.1% and the loss at or below
+35,312. Nobody had measured this. It is the single biggest loss in the funnel, larger
 than any exclusion, and it is a criterion this package applies itself. Whether
 the index day is included changes it by **one patient** — so Q14, on this
 criterion at least, is decided: it does not matter.
@@ -864,7 +884,7 @@ and those rows disagree on `STATE` for 473 members and on `BUS` for 388.
 package added is therefore worth about 0.8% of patients, and race was never at
 risk.
 
-### Q19 — bridged gaps are worth about 300 person-years
+### Q19 — bridged gaps are worth about 300 person-years *(upper bound)*
 
 202,108 span boundaries, 72,239 members. The bridged gaps of 30 days or fewer
 carry **109,679 days** of person-time that is covered on paper and unobserved
@@ -875,8 +895,11 @@ lands on a plan-renewal boundary and moving it by a day is not neutral.
 *What this does not answer:* the query counted a boundary as a gap whenever
 the next span started after the previous ended, so a contiguous re-enrolment
 (`gap_days = 0`) is in the 160,945 "bridged" count. The 109,679 days figure is
-unaffected — zeros contribute nothing — but **Q13 is still unpriced**: the
-number of *members* with a genuine gap over 30 days needs one more query.
+unaffected by those — zeros contribute nothing. **Q13 was answered on 08 Sep**;
+see above. But this query shares the `lag(ELIGEND)` flaw described there, so
+**109,679 is itself an upper bound**: a nested span produces a spurious gap
+whose days are not really unobserved. The corrected `mm_spans` view carries
+`MAX_BRIDGED_GAP` and settles it on the next run.
 
 ### Q21 — the two readings differ by at most one day
 
