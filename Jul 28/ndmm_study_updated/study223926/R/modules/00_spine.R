@@ -47,7 +47,27 @@ mod_spine <- function(con, cfg, cohorts) {
       CASE WHEN l.LOT_BASE_END_REASON IN
              ('DISCONTINUATION','MED_ADD','CART_INIT','SCT_AUTO','SCT_ALLO',
               'SCT_CART','SCT_AUTO_CONT')
-           THEN 1 ELSE 0 END AS IS_PROTOCOL_DISCON
+           THEN 1 ELSE 0 END AS IS_PROTOCOL_DISCON,
+      -- The DATE that goes with the reason above, derived once here so TTD and
+      -- the treatment window cannot disagree.
+      --
+      -- NOT LOT_BASE_DISCON_DT. In the engine that column is a CANDIDATE - the
+      -- medication run-out - and the end cascade may select a different reason
+      -- and a different date while leaving the run-out populated. A line whose
+      -- selected end is a MED_ADD on 31 May can carry a run-out of 30 June, and
+      -- one continued by an in-window AUTO transplant carries a run-out days
+      -- after the line started. Reading the candidate put TTD before the
+      -- transplant that caused it and closed the treatment window ahead of the
+      -- event it was meant to contain, losing the event and its person-time.
+      --
+      -- LOT_BASE_END_DT is by construction the date matching the selected
+      -- LOT_BASE_END_REASON, so where the reason is a protocol discontinuation
+      -- the end date IS the discontinuation date. Where the engine's own
+      -- DISCONTINUATION wins, the two agree anyway.
+      CASE WHEN l.LOT_BASE_END_REASON IN
+             ('DISCONTINUATION','MED_ADD','CART_INIT','SCT_AUTO','SCT_ALLO',
+              'SCT_CART','SCT_AUTO_CONT')
+           THEN l.LOT_BASE_END_DT END AS PROTOCOL_DISCON_DT
     FROM %s l
     ) w
     WHERE w.LOT_NUM <= %d", wrk("S_SPINE"), src, as.integer(cfg$max_lot)),

@@ -65,14 +65,14 @@ mod_periods <- function(con, cfg, cohort) {
   prepare_table(con, wrk("S_LOT_PERIODS"),
     "PATID string, COHORT string, LOT_NUM int,
      PERIOD_START date, PERIOD_END date, PERIOD_PY double,
-     LOT_START_DT date, LOT_BASE_DISCON_DT date, NEXT_LOT_START_DT date",
+     LOT_START_DT date, PROTOCOL_DISCON_DT date, NEXT_LOT_START_DT date",
     cohort$key)
   run_step(con, paste0("lot_periods_", cohort$key), sprintf("
     INSERT INTO %1$s
     SELECT l.PATID, p.COHORT, l.LOT_NUM,
            %2$s AS PERIOD_START, %3$s AS PERIOD_END,
            CASE WHEN %3$s >= %2$s THEN %4$s END AS PERIOD_PY,
-           l.LOT_START_DT, l.LOT_BASE_DISCON_DT, l.NEXT_LOT_START_DT
+           l.LOT_START_DT, l.PROTOCOL_DISCON_DT, l.NEXT_LOT_START_DT
     FROM %5$s l
     INNER JOIN %6$s p ON p.PATID = l.PATID AND p.COHORT = '%7$s'
     WHERE l.LOT_NUM >= p.LOT_NUM",

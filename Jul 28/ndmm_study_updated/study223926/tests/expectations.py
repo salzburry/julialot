@@ -185,10 +185,25 @@ EXPECTATIONS = [
      "SELECT count(*) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' "
      "AND PERIOD='BASELINE'",
      [(23,)]),
+    # Chronic person-time ends at the first occurrence, so a patient who has
+    # the event contributes only up to it. Derived by hand in EXPECTED.md:
+    # P1 0 (prior history) + P2 1/365.25 + P3 0.416153 + P5 77/365.25
+    # + P6 0.588638 + P7 0.670773 + P8 0.670773 = 2.5599.
     ("and that patient leaves the chronic denominator too",
      "SELECT round(PERSON_YEARS,4) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' "
      "AND PERIOD='TREATMENT' AND LOT_NUM=1 AND CONDITION='toxic_liver_disease'",
-     [(3.896,)]),
+     [(2.5599,)]),
+    # The same denominator with P5's first event moved 31 days earlier must
+    # fall by exactly 31/365.25. Guarding the rule, not just the number:
+    # summing PERIOD_PY regardless made this difference zero.
+    ("and moving a first chronic event earlier shortens that denominator",
+     "SELECT round(("
+     "  SELECT PERSON_YEARS FROM wk.S_SAFETY_RATES WHERE COHORT='1L' "
+     "  AND PERIOD='TREATMENT' AND LOT_NUM=1 "
+     "  AND CONDITION='toxic_liver_disease') "
+     " - (SELECT sum(CASE WHEN PATID='P5' THEN 31.0/365.25 ELSE 0 END) "
+     "    FROM wk.S_LOT_PERIODS WHERE COHORT='1L' AND LOT_NUM=1), 4)",
+     [(2.4750,)]),
     ("while an acute condition keeps every patient's person-time",
      "SELECT round(PERSON_YEARS,4) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' "
      "AND PERIOD='TREATMENT' AND LOT_NUM=1 AND CONDITION='acute_hepatitis_b'",

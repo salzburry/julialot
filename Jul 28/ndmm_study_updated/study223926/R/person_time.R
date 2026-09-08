@@ -145,10 +145,30 @@ acute_washout_round_sql <- function(events, periods, counted, cfg,
 }
 
 # The loop. Bounded, because an unbounded loop against a warehouse is a way to
-# spend a night; the bound is generous and being hit is a finding, not a
-# tuning problem.
+# spend a night - but the bound has to come from the data, not from a guess.
+#
+# It was a fixed 60, and one round is spent confirming convergence, so a
+# patient with exactly 60 qualifying events failed and a longer history failed
+# with them. Sixty events 30 days apart is five years, which fits inside this
+# study's observation window: that is a legitimate history, not a runaway loop.
+#
+# Within a period of D days, acute events separated by at least w days number
+# at most floor(D / w) + 1. The bound is that, over the longest period in
+# scope, plus the confirming round and one of slack. Hitting it is then a real
+# non-convergence and still stops.
 run_acute_washout <- function(con, events, periods, counted, cfg,
-                              period_label = "TREATMENT", max_rounds = 60L) {
+                              period_label = "TREATMENT", max_rounds = NULL) {
+  if (is.null(max_rounds)) {
+    w <- max(1L, as.integer(cfg$acute_washout_days))
+    d <- suppressWarnings(as.numeric(db_q(con, sprintf(
+      "SELECT max(datediff(PERIOD_END, PERIOD_START)) AS d FROM %s",
+      periods))[[1]][1]))
+    max_rounds <- if (is.na(d) || d < 0) 3L else
+      as.integer(floor(d / w) + 3L)
+    log_msg("  washout bound for ", period_label, ": ", max_rounds,
+            " round(s) from a longest period of ",
+            if (is.na(d)) "unknown" else format(d), " day(s)")
+  }
   n_sql <- sprintf("SELECT count(*) AS n FROM %s WHERE PERIOD = '%s'",
                    counted, period_label)
   for (i in seq_len(max_rounds)) {

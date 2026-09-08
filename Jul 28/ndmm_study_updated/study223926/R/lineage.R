@@ -8,13 +8,27 @@
 # LOT_RULES.md carries a banner: three rules changed on 2026-08-30 and "LOT
 # numbers produced before that date are superseded". A run older than that is
 # refused by date as well as by status.
+#
+# THE COLUMN NAMES ARE THE WRITER'S, NOT THIS PACKAGE'S. BUILD_STATUS_COLS in
+# the LOT engine declares RUN_ID, INPUT_COHORT_TABLE, OBJECT_PREFIX, STATE,
+# STUDY_END, CODELIST_WAIVERS_REQUESTED, CODELIST_WAIVERS_APPLIED,
+# CONTRACT_DEVIATIONS and UPDATED_AT. There is no COHORT_TABLE and no
+# STUDY_START. This SELECT asked for both, so it raised unresolved columns on
+# the first real run and never reached the check it was guarding - and the test
+# covering it built its fixture from the column names expected here rather than
+# from the writer, so it agreed with the mistake instead of catching it.
+#
+# STUDY_START is therefore NOT checked: the status row does not carry it, and a
+# check that cannot be sourced is worse than an absent one. cfg$study_start is
+# marked "upstream" in OPEN_QUESTION_SOURCE, so it is recorded on every run as
+# the reading the numbers were produced under, and Q1 remains open.
 LOT_RULES_EPOCH <- as.Date("2026-08-30")
 
 check_lot_lineage <- function(con, cfg) {
   st <- lot_tbl("LOT_BUILD_STATUS")
   rows <- tryCatch(
     db_q(con, sprintf(
-      "SELECT RUN_ID, STATE, UPDATED_AT, COHORT_TABLE, STUDY_START, STUDY_END,
+      "SELECT RUN_ID, STATE, UPDATED_AT, INPUT_COHORT_TABLE, STUDY_END,
               CONTRACT_DEVIATIONS
        FROM %s ORDER BY UPDATED_AT DESC LIMIT 5", st)),
     error = function(e) {
@@ -45,12 +59,12 @@ check_lot_lineage <- function(con, cfg) {
     problems <- c(problems, sprintf(
       "the newest run (%s) is '%s', not 'complete'", r$RUN_ID, r$STATE))
 
-  if (nzchar(trimws(as.character(r$COHORT_TABLE %||% ""))) &&
-      !identical(trimws(as.character(r$COHORT_TABLE)),
+  if (nzchar(trimws(as.character(r$INPUT_COHORT_TABLE %||% ""))) &&
+      !identical(trimws(as.character(r$INPUT_COHORT_TABLE)),
                  trimws(cfg$input_cohort_table)))
     problems <- c(problems, sprintf(
       "it was built over '%s', not the cohort this run was given ('%s')",
-      r$COHORT_TABLE, cfg$input_cohort_table))
+      r$INPUT_COHORT_TABLE, cfg$input_cohort_table))
 
   dev <- trimws(as.character(r$CONTRACT_DEVIATIONS %||% ""))
   if (nzchar(dev) && !identical(tolower(dev), "na"))
@@ -60,22 +74,6 @@ check_lot_lineage <- function(con, cfg) {
     problems <- c(problems, sprintf(
       "its STUDY_END is %s and this package is set to %s, so the two read ",
       r$STUDY_END, cfg$study_end))
-
-  # STUDY_START is checked for the same reason, even though this package
-  # applies nothing with it. It is marked "upstream" in OPEN_QUESTION_SOURCE,
-  # which means every output records it as the reading that produced the
-  # numbers - and a recorded reading nobody compared to the run is a claim,
-  # not a fact. The status table carries the value, so comparing it costs
-  # nothing.
-  #
-  # It is not idle. Q1 is whether the study period opens in 2016 or 2018, and
-  # the 03 Sep 2026 profile put 17,288 members between the two answers. A
-  # cohort built on one and reported under the other would have passed here.
-  if (nzchar(trimws(as.character(r$STUDY_START %||% ""))) &&
-      !identical(trimws(as.character(r$STUDY_START)), cfg$study_start))
-    problems <- c(problems, sprintf(
-      "its STUDY_START is %s and this package records %s, so the reading on ",
-      r$STUDY_START, cfg$study_start))
 
   upd <- suppressWarnings(as.Date(substr(as.character(r$UPDATED_AT), 1, 10)))
   if (!is.na(upd) && upd < LOT_RULES_EPOCH)
@@ -97,7 +95,7 @@ check_lot_lineage <- function(con, cfg) {
          call. = FALSE)
 
   log_msg("LOT run ", r$RUN_ID, " accepted: ", r$STATE, ", cohort ",
-          r$COHORT_TABLE, ", ", r$STUDY_START, " to ", r$STUDY_END)
+          r$INPUT_COHORT_TABLE, ", study end ", r$STUDY_END)
   as.list(r)
 }
 

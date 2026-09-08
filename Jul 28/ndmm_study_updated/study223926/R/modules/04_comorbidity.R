@@ -89,6 +89,12 @@ mod_comorbidity <- function(con, cfg, cohort) {
     FROM kept GROUP BY PATID, COHORT",
     wrk("S_COMORBIDITY"), wrk("S_PERIODS"), cdm_src("diagnosis"), reg,
     icd_family_sql("d.ICD_FLAG"), cohort$key, mm_view),
+    # A cohort in which nobody has a qualifying comorbidity is a valid result -
+    # every patient is CCI 0 - and the backfill immediately below is what turns
+    # that into rows. Stopping here on zero matched conditions meant the
+    # backfill was never reached and an all-CCI-0 cohort could not be built.
+    # The check that matters is the row count AFTER the backfill, below.
+    allow_empty = TRUE,
     qc = sprintf("SELECT count(*) AS n_rows, round(avg(CCI),2) AS mean_cci
                   FROM %s WHERE COHORT = '%s'", wrk("S_COMORBIDITY"), cohort$key))
 
@@ -101,6 +107,12 @@ mod_comorbidity <- function(con, cfg, cohort) {
     LEFT JOIN %1$s c ON c.PATID = p.PATID AND c.COHORT = p.COHORT
     WHERE p.COHORT = '%3$s' AND c.PATID IS NULL",
     wrk("S_COMORBIDITY"), wrk("S_PERIODS"), cohort$key))
+
+  # And now the check that cannot legitimately come back empty: after the
+  # backfill every patient in the cohort has exactly one comorbidity row.
+  run_step(con, paste0("comorbidity_complete_", cohort$key), "SELECT 1",
+    qc = sprintf("SELECT count(*) AS n_rows FROM %s WHERE COHORT = '%s'",
+                 wrk("S_COMORBIDITY"), cohort$key))
 
   if (isTRUE(cfg$comorbid_subgroups)) comorbid_subgroup_flags(con, cfg, cohort)
   if (isTRUE(cfg$frailty))            frailty_index(con, cfg, cohort)

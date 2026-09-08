@@ -169,11 +169,31 @@ with_retry <- function(fn, max_retries = study_config()$max_retries,
   }
 }
 
+# Is re-running this statement safe if the first attempt's answer was lost?
+#
+# CREATE OR REPLACE, DROP, DELETE and DDL all land in the same state whether
+# they ran once or twice. INSERT does not: a statement that committed and then
+# lost its acknowledgement is inserted a second time by the retry, and the
+# table quietly carries every row twice. The cohort-scope DELETE that would
+# have cleaned it up ran earlier, outside the retry, so a normal re-run does
+# not fix it either.
+#
+# So an INSERT or a MERGE is executed once and its error is raised. That costs
+# a run on a transient fault, which is recoverable; the alternative is doubled
+# counts nothing downstream can detect.
+sql_is_retry_safe <- function(st) {
+  head <- toupper(trimws(sub("^((--[^\n]*\n)|\\s)*", "", st)))
+  !grepl("^(INSERT|MERGE)\\b", head)
+}
+
 # Execute. Accepts one statement or several, in one string or a vector.
 db_exec <- function(con, sql) {
   stmts <- unlist(lapply(sql, split_statements), use.names = FALSE)
-  for (st in stmts)
-    with_retry(function() sparklyr::invoke(sparklyr::spark_session(con), "sql", st))
+  for (st in stmts) {
+    run1 <- function()
+      sparklyr::invoke(sparklyr::spark_session(con), "sql", st)
+    if (sql_is_retry_safe(st)) with_retry(run1) else run1()
+  }
   invisible(length(stmts))
 }
 

@@ -158,9 +158,27 @@ cat("\nwindow conventions\n")
   ok(grepl("date_add(p.INDEX_DATE, 90)", tte_eligible_sql(cfg), fixed = TRUE),
      "the analysis set uses 3 months of potential follow-up")
   lp <- lot_period_sql(cfg)
-  ok(grepl("date_add(coalesce(l.LOT_BASE_DISCON_DT, l.LOT_BASE_END_DT), 30)",
+  ok(grepl("date_add(coalesce(l.PROTOCOL_DISCON_DT, l.LOT_BASE_END_DT), 30)",
            lp$end, fixed = TRUE),
      "the treatment period runs to discontinuation + 30 days")
+  # The engine's LOT_BASE_DISCON_DT is a CANDIDATE run-out; the cascade can
+  # select a different reason and date and leave it populated. Reading it put
+  # TTD before the transplant that ended the line. Only 00_spine.R may name it,
+  # and only to derive PROTOCOL_DISCON_DT from the selected end.
+  discon_readers <- Filter(function(f)
+    grepl("LOT_BASE_DISCON_DT", paste(readLines(f, warn = FALSE),
+                                      collapse = "\n"), fixed = TRUE),
+    c(list.files("R", pattern = "[.]R$", full.names = TRUE),
+      list.files("R/modules", pattern = "[.]R$", full.names = TRUE)))
+  stray <- setdiff(basename(discon_readers), c("00_spine.R", "windows.R",
+                                               "09_tte.R"))
+  ok(length(stray) == 0,
+     paste0("only the spine derives the discontinuation date from the engine's ",
+            "candidate run-out (offenders: ", paste(stray, collapse = ", "), ")"))
+  ok(grepl("PROTOCOL_DISCON_DT", paste(readLines("R/modules/09_tte.R",
+                                                 warn = FALSE), collapse = "\n"),
+           fixed = TRUE),
+     "and TTD reads the selected end, not that candidate")
   ok(grepl("date_sub(l.NEXT_LOT_START_DT, 1)", lp$end, fixed = TRUE),
      "or the day before the next line, whichever is earlier")
   ok(grepl("p.FU_END", lp$end, fixed = TRUE),
@@ -377,12 +395,37 @@ cat("\nregressions from the adversarial review\n")
   # printed, it just never fires. So the guard is called against a status row
   # built to be wrong in exactly one field at a time, and each is required to
   # stop.
+  # The columns the LOT engine's BUILD_STATUS_COLS actually declares, pinned as
+  # literals. This list is the contract, and it is written out here rather than
+  # derived from what lineage.R asks for - because the previous version of this
+  # test built its fixture from the column names the SELECT used, so it agreed
+  # with the SELECT instead of checking it, and a query naming two columns the
+  # writer does not create passed every run of this suite.
+  LOT_STATUS_COLS <- c("RUN_ID", "INPUT_COHORT_TABLE", "OBJECT_PREFIX", "STATE",
+                       "STUDY_END", "CODELIST_WAIVERS_REQUESTED",
+                       "CODELIST_WAIVERS_APPLIED", "CONTRACT_DEVIATIONS",
+                       "UPDATED_AT")
+  lin_sql <- regmatches(lg, regexpr("SELECT[^\"]*FROM %s", lg))
+  asked <- if (length(lin_sql)) {
+    body <- sub("\\s*FROM %s$", "", sub("^SELECT\\s*", "", lin_sql))
+    # The deparsed source carries literal backslash-n where the SQL wrapped.
+    body <- gsub("\\\\n", " ", body)
+    toupper(trimws(strsplit(gsub("\\s+", " ", body), ",")[[1]]))
+  } else character(0)
+  ok(length(asked) > 0 && all(asked %in% LOT_STATUS_COLS),
+     paste0("the lineage query names only columns the LOT writer declares",
+            if (length(setdiff(asked, LOT_STATUS_COLS)))
+              paste0(" [absent upstream: ",
+                     paste(setdiff(asked, LOT_STATUS_COLS), collapse = ", "),
+                     "]") else ""))
+
   lin_row <- function(...) {
-    r <- list(RUN_ID = "r1", STATE = "complete",
-              UPDATED_AT = "2026-09-01 00:00:00",
-              COHORT_TABLE = cfg0()$input_cohort_table,
-              STUDY_START = cfg0()$study_start, STUDY_END = cfg0()$study_end,
-              CONTRACT_DEVIATIONS = "")
+    # Built from the pinned upstream list, so a fixture cannot invent a column.
+    r <- as.list(setNames(rep("", length(LOT_STATUS_COLS)), LOT_STATUS_COLS))
+    r$RUN_ID <- "r1"; r$STATE <- "complete"
+    r$UPDATED_AT <- "2026-09-01 00:00:00"
+    r$INPUT_COHORT_TABLE <- cfg0()$input_cohort_table
+    r$STUDY_END <- cfg0()$study_end
     utils::modifyList(r, list(...))
   }
   lin_check <- function(...) {
@@ -393,8 +436,8 @@ cat("\nregressions from the adversarial review\n")
     errs(f(NULL, cfg0()))
   }
   ok(is.na(lin_check()), "a matching lineage row is accepted")
-  ok(grepl("STUDY_START", lin_check(STUDY_START = "2016-01-01") %||% ""),
-     "a LOT run whose STUDY_START disagrees with the recorded reading stops")
+  ok(grepl("built over", lin_check(INPUT_COHORT_TABLE = "other_tbl") %||% ""),
+     "a LOT run built over a different cohort table stops")
   ok(grepl("STUDY_END", lin_check(STUDY_END = "2025-12-31") %||% ""),
      "and so does one whose STUDY_END disagrees")
   ok(!is.na(lin_check(STATE = "failed")),

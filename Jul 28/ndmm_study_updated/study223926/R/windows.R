@@ -104,12 +104,16 @@ fu_end_sql <- function(cfg, ce_end = "fe.COV_END", enddate = "c.ENDDATE",
 # observed after observation stopped.
 lot_period_sql <- function(cfg, start = "l.LOT_START_DT",
                            next_start = "l.NEXT_LOT_START_DT",
-                           discon = "l.LOT_BASE_DISCON_DT",
+                           discon = "l.PROTOCOL_DISCON_DT",
                            line_end = "l.LOT_BASE_END_DT",
                            fu_end = "p.FU_END") {
-  # Discontinuation is only populated where the line actually discontinued;
-  # where it is NULL the line ended for another reason and its own end date
-  # bounds it.
+  # PROTOCOL_DISCON_DT, derived in 00_spine.R from the SELECTED end reason -
+  # not LOT_BASE_DISCON_DT, which is the engine's candidate medication run-out
+  # and can be populated while a different reason and date won the cascade.
+  # 00_spine.R carries the reasoning.
+  #
+  # It is only populated where the line protocol-discontinued; where it is NULL
+  # the line ended for another reason and its own end date bounds it.
   discon_bound <- sprintf("date_add(coalesce(%s, %s), %d)",
                           discon, line_end, as.integer(cfg$lot_post_discon_days))
   next_bound <- sprintf("date_sub(%s, 1)", next_start)

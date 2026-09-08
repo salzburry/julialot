@@ -93,7 +93,20 @@ build_223926 <- function(here) {
   }
 
   lot_run <- check_lot_lineage(con, cfg)
-  write_run_metadata(con, cfg, cohorts, mods, lot_run, deviations, "started")
+  # One id for the whole build, so `started`, `failed` and `complete` are rows
+  # about the same run rather than three unrelated ones.
+  rid <- new_run_id()
+  write_run_metadata(con, cfg, cohorts, mods, lot_run, deviations, "started",
+                     run_id = rid)
+  # A build that dies mid-way leaves a `started` row and nothing else, which
+  # reads as a run still going. It gets a `failed` row instead, under the same
+  # id, and the error is re-raised unchanged.
+  ok <- FALSE
+  on.exit({
+    if (!ok) try(write_run_metadata(con, cfg, cohorts, mods, lot_run,
+                                    deviations, "failed", run_id = rid),
+                 silent = TRUE)
+  }, add = TRUE)
 
   build_inputs(con, cfg, mods)
 
@@ -111,7 +124,9 @@ build_223926 <- function(here) {
     }
   }
 
-  write_run_metadata(con, cfg, cohorts, mods, lot_run, deviations, "complete")
+  write_run_metadata(con, cfg, cohorts, mods, lot_run, deviations, "complete",
+                     run_id = rid)
+  ok <- TRUE
   log_msg(SEP)
   log_msg("complete: ", length(cohorts), " cohort(s), ", length(mods),
           " module(s)")
@@ -121,10 +136,16 @@ build_223926 <- function(here) {
 # What produced these numbers, on the numbers' own row. Every setting outside
 # the contract is a reading someone chose, and a table that does not say which
 # reading cannot be reproduced from the table alone.
+# Allocated ONCE per build and passed to every status write. Generating it
+# inside each write gave a build lasting more than a second a `started` row
+# under one id and a `complete` row under another, so the first looked like a
+# run that never finished and neither could be traced to the other.
+new_run_id <- function()
+  Sys.getenv("DOMINO_RUN_ID", unset = format(Sys.time(), "%Y%m%d%H%M%S"))
+
 write_run_metadata <- function(con, cfg, cohorts, mods, lot_run, deviations,
-                               state) {
-  rid <- Sys.getenv("DOMINO_RUN_ID",
-                    unset = format(Sys.time(), "%Y%m%d%H%M%S"))
+                               state, run_id = NULL) {
+  rid <- if (is.null(run_id) || !nzchar(run_id)) new_run_id() else run_id
   esc <- function(x) gsub("'", "''", paste(as.character(x), collapse = "; "))
   db_exec(con, sprintf("
     CREATE TABLE IF NOT EXISTS %s (
