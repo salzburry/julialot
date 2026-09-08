@@ -114,6 +114,9 @@ mod_soc <- function(con, cfg, cohort) {
     INSERT INTO %1$s
     WITH agents AS (
       SELECT s.PATID, p.COHORT, s.LOT_NUM, s.LOT_BASE_MEDS AS REGIMEN,
+             coalesce(s.LOT_ALLO_LOT_FLG, 0) AS ALLO_FLG,
+             coalesce(s.LOT_CART_LOT_FLG, 0) AS CART_FLG,
+             coalesce(s.LOT_TX_AUTO_FLG, 0)  AS AUTO_FLG,
              explode(split(trim(s.LOT_BASE_MEDS), '\\\\s+')) AS ABBR
       FROM %2$s s
       -- s.LOT_NUM >= p.LOT_NUM, the same restriction S_LOT_PERIODS applies.
@@ -133,10 +136,21 @@ mod_soc <- function(con, cfg, cohort) {
                        -- follow-up and s7.8.2 allows censoring as a terminal
                        -- Sankey outcome, so the line is dropped, not reported.
                        AND s.LOT_START_DT <= p.FU_END
-      WHERE s.LOT_BASE_MEDS IS NOT NULL AND trim(s.LOT_BASE_MEDS) <> ''
+      -- An empty regimen string is NOT a malformed line. The LOT engine emits
+      -- a single-day allogeneic transplant line with no medication string on
+      -- purpose (LOT_RULES 4.6), and dropping it deleted a real line: the
+      -- preceding line's switch became `(no further therapy)` even though the
+      -- patient had a transplant and a further line after it. The line is kept
+      -- and its modality is read off the engine's own transplant flags; only a
+      -- line that is neither drugs nor a transplant is dropped.
+      WHERE (trim(coalesce(s.LOT_BASE_MEDS, '')) <> ''
+          OR coalesce(s.LOT_ALLO_LOT_FLG, 0) = 1
+          OR coalesce(s.LOT_CART_LOT_FLG, 0) = 1
+          OR coalesce(s.LOT_TX_AUTO_FLG, 0) = 1)
     ),
     matched AS (
-      SELECT a.PATID, a.COHORT, a.LOT_NUM, a.REGIMEN, a.ABBR, cl.soc_category,
+      SELECT a.PATID, a.COHORT, a.LOT_NUM, a.REGIMEN,
+             a.ALLO_FLG, a.CART_FLG, a.AUTO_FLG, a.ABBR, cl.soc_category,
              %6$s AS RANK,
              CASE WHEN lower(trim(cl.role)) = 'backbone'
                    AND cl.soc_category IN (%8$s) THEN 1 ELSE 0 END AS CD38
@@ -148,7 +162,10 @@ mod_soc <- function(con, cfg, cohort) {
     ),
     tagged AS (
       SELECT PATID, COHORT, LOT_NUM, REGIMEN,
-             count(DISTINCT ABBR) AS N_AGENTS,
+             max(ALLO_FLG) AS ALLO_FLG, max(CART_FLG) AS CART_FLG,
+             max(AUTO_FLG) AS AUTO_FLG,
+             count(DISTINCT CASE WHEN trim(coalesce(ABBR,'')) <> ''
+                                 THEN ABBR END) AS N_AGENTS,
              min(CASE WHEN soc_category IS NOT NULL THEN RANK END) AS BEST_RANK,
              max(CASE WHEN soc_category IS NOT NULL THEN 1 ELSE 0 END) AS MATCHED,
              max(CD38) AS HAS_CD38_BACKBONE
@@ -164,11 +181,23 @@ mod_soc <- function(con, cfg, cohort) {
       FROM tagged t
     )
     SELECT PATID, COHORT, LOT_NUM, REGIMEN, N_AGENTS,
+           -- A transplant-only line has no drug string to classify, and its
+           -- modality is what the line IS. Reported from the engine's own
+           -- flags rather than left to fall through to Other, and MATCHED
+           -- stays 0 because no code list produced it - the protocol label for
+           -- a transplant line is Annex 2's to give, and this names the
+           -- modality without inventing a category.
+           CASE
+             WHEN trim(coalesce(REGIMEN, '')) = '' AND CART_FLG = 1
+               THEN 'CAR-T (no regimen recorded)'
+             WHEN trim(coalesce(REGIMEN, '')) = '' AND ALLO_FLG = 1
+               THEN 'Allogeneic SCT (no regimen recorded)'
+             WHEN trim(coalesce(REGIMEN, '')) = '' AND AUTO_FLG = 1
+               THEN 'Autologous SCT (no regimen recorded)'
            -- A modality category (CAR-T, a bispecific, another novel agent) is
            -- a claim about an agent and is kept as the agent's row said. A
            -- size category is a claim about the REGIMEN, so the regimen's own
            -- agent count and backbone decide it, not the winning agent's row.
-           CASE
              WHEN BEST_CATEGORY IS NULL THEN 'Other'
              WHEN BEST_CATEGORY NOT IN (%7$s) THEN BEST_CATEGORY
 %9$s

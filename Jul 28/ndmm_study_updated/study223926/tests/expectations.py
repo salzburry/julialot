@@ -207,11 +207,27 @@ EXPECTATIONS = [
     ("a line starting after the cohort's follow-up is not a cohort line",
      "SELECT count(*) FROM wk.S_SOC WHERE COHORT='1L' AND PATID='P6'",
      [(1,)]),
+    # S_MALIGNANCY_DATES is a per-cohort partition, not a table replaced on
+    # every invocation. CREATE OR REPLACE inside a module that runs once per
+    # cohort left only the last cohort's rows in a registered output.
+    ("malignancy date evidence survives every cohort, not just the last",
+     "SELECT count(DISTINCT COHORT) FROM wk.S_MALIGNANCY_DATES",
+     [(4,)]),
+    # NOT a `>= 99` filter on an eight-patient fixture - that expects no rows
+    # and passes whatever the code does, which is why it missed this.
+    #
+    # P1, P3 and P5 start a 2L inside their 1L follow-up; P6 starts one
+    # 2022-06-01, two and a half years after its 1L follow-up ended. So
+    # `received_next_lot` on line 1 is 3, and line 2 carries those same 3
+    # patients. Both are 4 if the follow-up bound is removed.
     ("and it is censoring, not receipt of a next line",
-     "SELECT OUTCOME FROM wk.S_TX_ATTRITION t WHERE t.COHORT='1L' "
-     "AND t.LOT_NUM=1 AND t.OUTCOME='received_next_lot' "
-     "AND t.N_PATIENTS >= 99",
-     []),
+     "SELECT N_PATIENTS FROM wk.S_TX_ATTRITION WHERE COHORT='1L' "
+     "AND LOT_NUM=1 AND OUTCOME='received_next_lot'",
+     [(3,)]),
+    ("and the unobserved line adds nobody to the next line's attrition",
+     "SELECT sum(N_PATIENTS) FROM wk.S_TX_ATTRITION WHERE COHORT='1L' "
+     "AND LOT_NUM=2",
+     [(3,)]),
     ("and that patient leaves the chronic denominator too",
      "SELECT round(PERSON_YEARS,4) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' "
      "AND PERIOD='TREATMENT' AND LOT_NUM=1 AND CONDITION='toxic_liver_disease'",

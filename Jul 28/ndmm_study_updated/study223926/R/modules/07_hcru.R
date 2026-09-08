@@ -183,6 +183,12 @@ mod_hcru <- function(con, cfg, cohort) {
     if (identical(cfg$ed_admitted, "inpatient_only"))
       "AND (m.CONF_ID IS NULL OR trim(m.CONF_ID) = '')" else "",
     claim_status_sql(cfg, "m"), mm_hosp_subq),
+    # A cohort with no hospitalisation and no ED visit is a valid study result.
+    # The rates below are driven from the DENOMINATOR, so every measure still
+    # gets a row saying zero - but only if the run reaches them, and the
+    # zero-row guard stopped it here first. Safety and comorbidity allow their
+    # equivalent empty intermediates; this one was missed.
+    allow_empty = TRUE,
     # A count FIRST: run_step's zero-row guard reads the first column, and a
     # string there makes as.numeric() give NA and the guard skip silently.
     qc = sprintf("SELECT count(*) AS n_events,
@@ -214,8 +220,16 @@ mod_hcru <- function(con, cfg, cohort) {
         -- N_AT_RISK is the STRATUM size - everyone contributing person-time -
         -- as against N_PATIENTS, which counts only those with the event. The
         -- suppression rule is about the stratum, so it needs this column.
+        -- Both restricted to the SAME observed periods. sum() skips NULL
+        -- person-time but count(DISTINCT PATID) did not, and S_LOT_PERIODS
+        -- keeps later lines whose period is empty with PERIOD_PY NULL - so a
+        -- patient contributing no observed time still counted towards the
+        -- stratum size, and a stratum that should have failed the fewer-than-25
+        -- rule was released. Safety and malignancy already scope both to the
+        -- at-risk set; this now matches them.
         SELECT COHORT, LOT_NUM, sum(%2$s) AS PY,
-               count(DISTINCT PATID) AS N_AT_RISK
+               count(DISTINCT CASE WHEN %2$s IS NOT NULL THEN PATID END)
+                 AS N_AT_RISK
         FROM %3$s WHERE COHORT = '%4$s' GROUP BY COHORT, LOT_NUM
       ),
       hits AS (

@@ -55,7 +55,13 @@ mod_cohorts <- function(con, cfg, cohort) {
   fu_pred <- switch(cfg$fu_evidence_rule,
     claim_from_index  = "1 = 1",
     claim_after_index = "fu.N_CLAIMS_AFTER_INDEX > 0 OR c.DEATH_DT IS NOT NULL",
-    enrolled_on_index = "c.ENDDATE_CE >= s.LOT_START_DT")
+    # ce.COV_END, not c.ENDDATE_CE. ENDDATE_CE is the input cohort's own
+    # enrolment episode - the 1L one - so a later cohort was tested against a
+    # date belonging to a different index, and a patient who disenrolled after
+    # 1L and re-enrolled before their 2L failed a test they satisfy. `ce` is
+    # already joined here as the span covering THIS cohort's index date, which
+    # is the span the question is about.
+    enrolled_on_index = "ce.COV_END >= s.LOT_START_DT")
 
   # N2. Continuous enrolment before this cohort's own index date, rebuilt from
   # the raw spans because the CDM rollup bridges gaps of LESS than 30 days
@@ -93,7 +99,7 @@ mod_cohorts <- function(con, cfg, cohort) {
            1 AS MET_N1,
            CASE WHEN %3$s THEN 1 ELSE 0 END AS MET_N2,
            CASE WHEN %4$s THEN 1 ELSE 0 END AS MET_I5,
-           CASE WHEN (%3$s) AND (%4$s) THEN 1 ELSE 0 END AS IN_COHORT
+           CASE WHEN (%3$s) AND (%4$s) AND (%12$s) THEN 1 ELSE 0 END AS IN_COHORT
     FROM %5$s s
     INNER JOIN %6$s c ON c.PATID = s.PATID
     LEFT JOIN %7$s ce
@@ -104,7 +110,9 @@ mod_cohorts <- function(con, cfg, cohort) {
     WHERE s.LOT_NUM = %10$d %11$s",
     wrk("S_COHORT"), cohort$key, ce_pre, fu_pred, wrk("S_SPINE"),
     cfg$input_cohort_table, wrk("S_ENROLL_SPANS"), wrk("S_FU_CLAIMS"),
-    parent, cohort$lot_num, floor_sql),
+    parent, cohort$lot_num, floor_sql,
+    cohort_flag_pred(cohort, get0("cols", envir = .input_cols,
+                                  ifnotfound = character(0)))),
     qc = sprintf("SELECT count(*) AS n_indexed, sum(IN_COHORT) AS n_in_cohort
                   FROM %s WHERE COHORT = '%s'", wrk("S_COHORT"), cohort$key))
 }
@@ -192,6 +200,32 @@ mod_attrition <- function(con, cfg, cohort) {
 COHORT_TABLE_REQUIRED <- c("PATID", "INDEX_DATE", "ENDDATE", "ENDDATE_CE",
                            "DEATH_DT", "MM_DX_DT", "YRDOB", "GDR_CD")
 
+# The exclusion flags a WIDE cohort table retains, and the criterion each one
+# carries. Named after the cohort build's own columns.
+#
+# With an ordinary pre-filtered input these are absent and nothing needs them:
+# the criteria were applied upstream and every row in the table has passed
+# them. With a wide input - one that keeps patients failing an exclusion so the
+# secondary 2L cohort can have them - they are the only thing standing between
+# a 1L cohort and a patient with a prior cancer, because IN_COHORT below is
+# built from enrolment and follow-up and reads no flag at all.
+CRITERION_FLAG <- c(
+  X1_prior_mm_tx  = "NO_PRIOR_MM_TX",
+  X2_other_cancer = "NO_OTHER_CANCER_PRE_LOT1",
+  X3_pregnancy    = "NO_PREGNANCY",
+  X4_belantamab   = "NO_BELANTAMAB_PRE_LOT1")
+
+.input_cols <- new.env(parent = emptyenv())
+
+# The predicate that applies this cohort's own exclusions from the flags the
+# input carries. Empty when the input has none, which is the pre-filtered case.
+cohort_flag_pred <- function(cohort, cols) {
+  want <- CRITERION_FLAG[intersect(names(CRITERION_FLAG), cohort$criteria)]
+  have <- want[want %in% cols]
+  if (!length(have)) return("1 = 1")
+  paste(sprintf("coalesce(c.%s, 1) = 1", have), collapse = " AND ")
+}
+
 check_cohort_table <- function(con, cfg) {
   cols <- tryCatch({
     d <- db_q(con, sprintf("DESCRIBE %s", cfg$input_cohort_table))
@@ -200,6 +234,7 @@ check_cohort_table <- function(con, cfg) {
   }, error = function(e)
     stop("INPUT ERROR: could not describe INPUT_COHORT_TABLE '",
          cfg$input_cohort_table, "': ", conditionMessage(e), call. = FALSE))
+  assign("cols", cols, envir = .input_cols)
   missing <- setdiff(COHORT_TABLE_REQUIRED, cols)
   if (length(missing))
     stop("INPUT ERROR: INPUT_COHORT_TABLE '", cfg$input_cohort_table,
@@ -209,6 +244,20 @@ check_cohort_table <- function(con, cfg) {
          "patient ids and eligibility flags cannot drive the run. Point ",
          "INPUT_COHORT_TABLE at a materialised cohort with the full schema.",
          call. = FALSE)
+  # A wide input is one that deliberately keeps patients failing an exclusion.
+  # Asserting it without the flags to filter by would let those patients into
+  # every cohort, which is the opposite of what the assertion is for.
+  if (isTRUE(cfg$sec2l_input_is_wide)) {
+    absent <- setdiff(unname(CRITERION_FLAG), cols)
+    if (length(absent))
+      stop("INPUT ERROR: SEC2L_INPUT_IS_WIDE=TRUE says '",
+           cfg$input_cohort_table, "' retains patients who fail an exclusion, ",
+           "but it does not carry the flag(s) needed to apply that exclusion ",
+           "per cohort: ", paste(absent, collapse = ", "),
+           ".\nWithout them a patient with a prior cancer enters the primary ",
+           "1L cohort as readily as the secondary 2L one. Supply a wide ",
+           "cohort that retains its eligibility evidence.", call. = FALSE)
+  }
   invisible(cols)
 }
 

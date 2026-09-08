@@ -608,6 +608,76 @@ cat("\nregressions from the adversarial review\n")
   ok(grepl("copy_to", rv),
      "a code list of thousands of rows is copied, not built as SQL text")
   sf <- paste(capture.output(print(mod_safety)), collapse = "\n")
+  # Retry safety, through every comment form a statement can start with. A
+  # block-comment prefix was classified safe while the line-comment form was
+  # not, so an INSERT written that way would have been retried.
+  ok(!sql_is_retry_safe("INSERT INTO t VALUES (1)"),
+     "a bare INSERT is not retried")
+  ok(!sql_is_retry_safe("-- why\nINSERT INTO t VALUES (1)"),
+     "nor one behind a line comment")
+  ok(!sql_is_retry_safe("/* why */ INSERT INTO t VALUES (1)"),
+     "nor one behind a block comment")
+  ok(!sql_is_retry_safe("/* a */\n-- b\n  MERGE INTO t USING s ON 1=1"),
+     "nor a MERGE behind both")
+  ok(sql_is_retry_safe("CREATE OR REPLACE TABLE t AS SELECT 1"),
+     "while an idempotent statement still is")
+  ok(sql_is_retry_safe("-- note\nDELETE FROM t WHERE COHORT = 'x'"),
+     "and so is a scoped delete")
+
+  # Reusing an output prefix across package versions. Inserts are positional,
+  # so a table that gained a column fails on the count and one whose column was
+  # RENAMED accepts the insert and keeps the old name with the new meaning -
+  # which is worse, because nothing fails. Both must stop BEFORE the scope is
+  # cleared, or the cohort's rows are deleted and not replaced.
+  ens <- function(found)
+    errs(with_env(base_env, {
+      env <- new.env(parent = environment(ensure_table))
+      env$db_exec <- function(con, sql) invisible(0L)
+      env$db_q <- function(con, sql)
+        data.frame(col_name = found, stringsAsFactors = FALSE)
+      f <- ensure_table; environment(f) <- env
+      f(NULL, "t", "PATID string, COHORT string, N_AT_RISK int")
+    }))
+  ok(is.na(ens(c("PATID", "COHORT", "N_AT_RISK"))),
+     "a table already matching the declared shape is written to")
+  ok(!is.na(ens(c("PATID", "COHORT"))),
+     "one missing a newly added column stops before its rows are cleared")
+  ok(grepl("LOT_BASE_DISCON_DT", ens(c("PATID", "COHORT", "LOT_BASE_DISCON_DT"))
+           %||% ""),
+     "and a renamed column is caught rather than silently reused")
+  ok(is.na(ens(character(0))),
+     "while a table that did not exist is simply created")
+
+  # A wide input keeps patients who fail an exclusion so the secondary 2L
+  # cohort can have them. IN_COHORT is built from enrolment and follow-up and
+  # reads no flag, so without this the SAME record entered the primary 1L
+  # cohort - which still excludes prior cancer - alongside SEC2L.
+  wide_cols <- c(COHORT_TABLE_REQUIRED, unname(CRITERION_FLAG))
+  p1L <- cohort_flag_pred(COHORTS[["1L"]], wide_cols)
+  ok(grepl("NO_OTHER_CANCER_PRE_LOT1", p1L, fixed = TRUE),
+     "the primary 1L cohort applies its prior-cancer exclusion from the flags")
+  sec <- COHORTS[["SEC2L"]]
+  sec$criteria <- setdiff(sec$criteria, "X2_other_cancer")
+  ok(!grepl("NO_OTHER_CANCER_PRE_LOT1", cohort_flag_pred(sec, wide_cols),
+            fixed = TRUE),
+     "and the secondary 2L cohort, which permits it, does not")
+  ok(grepl("NO_PREGNANCY", cohort_flag_pred(sec, wide_cols), fixed = TRUE),
+     "while still applying the exclusions it keeps")
+  ok(identical(cohort_flag_pred(COHORTS[["1L"]], COHORT_TABLE_REQUIRED), "1 = 1"),
+     "a pre-filtered input carrying no flags is unaffected")
+  e_wide <- errs(with_env(base_env, {
+    env <- new.env(parent = environment(check_cohort_table))
+    env$db_q <- function(con, sql)
+      data.frame(col_name = COHORT_TABLE_REQUIRED, stringsAsFactors = FALSE)
+    f <- check_cohort_table; environment(f) <- env
+    f(NULL, cfg0(c(SEC2L_INPUT_IS_WIDE = "TRUE")))
+  }))
+  ok(!is.na(e_wide) && grepl("NO_OTHER_CANCER_PRE_LOT1", e_wide),
+     "and asserting a wide input without those flags is refused")
+  ok(grepl("coalesce(c.NO_OTHER_CANCER_PRE_LOT1, 1) = 1",
+           emitted_sql(RUN), fixed = TRUE),
+     "the emitted cohort SQL carries that predicate")
+
   # The input contract. A cohort table of patient ids and eligibility flags -
   # which BUILD_DELTA once recommended for the secondary 2L cohort - carries no
   # index date and no end dates, so it cannot drive a single module. It has to

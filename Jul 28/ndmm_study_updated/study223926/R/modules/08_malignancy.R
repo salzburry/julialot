@@ -93,17 +93,33 @@ mod_malignancy <- function(con, cfg, cohort) {
   # whether the GLOBAL first date falls in the window answers a different
   # question - new onset - and returns zero for exactly the established
   # malignancies the secondary 2L cohort exists to describe.
+  # prepare_table + INSERT, not CREATE OR REPLACE. This module runs once per
+  # cohort, so replacing the whole table each time left only the last cohort's
+  # rows in a registered, persisted output - the earlier cohorts' evidence was
+  # gone by the end of a four-cohort run. prepare_table clears this cohort's
+  # partition and leaves the others, which is what every other per-cohort
+  # output here does.
+  prepare_table(con, wrk("S_MALIGNANCY_DATES"),
+    "PATID string, COHORT string, CATEGORY string, SUBTYPE string,
+     EVENT_DT date",
+    cohort$key)
   db_exec(con, sprintf("
-    CREATE OR REPLACE TABLE %1$s AS
+    INSERT INTO %1$s
     SELECT DISTINCT p.PATID, p.COHORT, cl.category AS CATEGORY,
+                    cl.subtype AS SUBTYPE,
                     cast(d.FST_DT as date) AS EVENT_DT
     FROM %2$s p
     INNER JOIN %3$s d ON cast(d.PATID as string) = p.PATID
     INNER JOIN %4$s cl
            ON upper(regexp_replace(d.DIAG, '[^A-Za-z0-9]', '')) = cl.code_norm
           AND cl.icd_norm = %5$s
+    -- Matched on SUBTYPE as well as category, which is the grain confirmation
+    -- was established at. On category alone a single baseline code of one
+    -- subtype borrowed the two-date confirmation of a different subtype in the
+    -- same category and was reported as baseline prevalence on its own.
     INNER JOIN %6$s m ON m.PATID = p.PATID AND m.COHORT = p.COHORT
                      AND m.CATEGORY = cl.category
+                     AND m.SUBTYPE <=> cl.subtype
     WHERE p.COHORT = '%7$s' AND d.FST_DT IS NOT NULL
       AND cast(d.FST_DT as date) <= p.FU_END",
     wrk("S_MALIGNANCY_DATES"), wrk("S_PERIODS"), cdm_src("diagnosis"), reg,
@@ -134,12 +150,27 @@ mod_malignancy <- function(con, cfg, cohort) {
     INSERT INTO %1$s
     WITH cats AS (SELECT DISTINCT category FROM %6$s),
     den AS (
+      -- Malignancy is on the s7.8.1 chronic list, so it is counted once at
+      -- first occurrence - and a patient who has that first occurrence stops
+      -- being at risk of a first one there. The denominator has to end with
+      -- them, exactly as 06_safety.R does for the other chronic conditions.
+      -- Summing the whole PERIOD_PY regardless kept counting time in which a
+      -- first event was no longer possible, which overstates at-risk time and
+      -- understates incidence.
       SELECT p.COHORT, p.LOT_NUM, c.category,
-             sum(CASE WHEN h.PATID IS NOT NULL THEN 0 ELSE p.PERIOD_PY END) AS PY,
+             sum(CASE
+                   WHEN h.PATID IS NOT NULL THEN 0
+                   WHEN fm.FIRST_DT IS NOT NULL THEN %11$s
+                   ELSE p.PERIOD_PY END) AS PY,
              count(DISTINCT CASE WHEN h.PATID IS NOT NULL THEN NULL
                                  ELSE p.PATID END) AS N_AT_RISK
       FROM %4$s p
       CROSS JOIN cats c
+      LEFT JOIN (SELECT PATID, COHORT, CATEGORY, min(FIRST_DT) AS FIRST_DT
+                 FROM %10$s WHERE COHORT = '%5$s'
+                 GROUP BY PATID, COHORT, CATEGORY) fm
+             ON fm.PATID = p.PATID AND fm.COHORT = p.COHORT
+            AND fm.CATEGORY = c.category
       LEFT JOIN s_malig_prior h
              ON h.PATID = p.PATID AND h.COHORT = p.COHORT
             AND h.LOT_NUM = p.LOT_NUM AND h.CATEGORY = c.category
@@ -166,7 +197,11 @@ mod_malignancy <- function(con, cfg, cohort) {
                  AND num.CATEGORY = den.category",
     wrk("S_MALIGNANCY_RATES"),
     rate_sql("coalesce(num.N_PATIENTS, 0)", "den.PY", cfg),
-    wrk("S_MALIGNANCY"), wrk("S_LOT_PERIODS"), cohort$key, "S_CL_MALIG"),
+    wrk("S_MALIGNANCY"), wrk("S_LOT_PERIODS"), cohort$key, "S_CL_MALIG",
+    "", "", "", wrk("S_MALIGNANCY"),
+    # At-risk time to the first confirmed occurrence, both endpoints included -
+    # the same convention PERIOD_PY uses.
+    person_years_sql("p.PERIOD_START", "least(fm.FIRST_DT, p.PERIOD_END)", cfg)),
     qc = sprintf("SELECT count(*) AS n_rows FROM %s WHERE COHORT='%s'",
                  wrk("S_MALIGNANCY_RATES"), cohort$key),
     allow_empty = TRUE)

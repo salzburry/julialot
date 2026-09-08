@@ -32,9 +32,18 @@
   # does not carry the columns every module indexes on. A recorder that answers
   # it with a count would make that guard fire on every emit, so the harness
   # answers it the way the warehouse would for a well-formed cohort table.
-  if (grepl("^\\s*DESCRIBE\\b", sql, ignore.case = TRUE))
-    return(data.frame(col_name = COHORT_TABLE_REQUIRED,
+  if (grepl("^\\s*DESCRIBE\\b", sql, ignore.case = TRUE)) {
+    # ensure_table() also DESCRIBEs each output before writing it, to refuse a
+    # prefix carrying an incompatible table from an older version. In a
+    # recorder every output is new, so those answer with no rows - which is
+    # what "nothing to compare" looks like. Only the input cohort table gets
+    # the column list.
+    if (grepl("_S_[A-Z_]+\\s*$", sql))
+      return(data.frame(col_name = character(0), stringsAsFactors = FALSE))
+    return(data.frame(col_name = c(COHORT_TABLE_REQUIRED,
+                                   unname(CRITERION_FLAG)),
                       stringsAsFactors = FALSE))
+  }
   # Counted per call SITE, not globally: the washout asks the same question
   # each round, and a global counter is exhausted by the modules that ran
   # before it. Reset per cohort by the prepare_table stub.
