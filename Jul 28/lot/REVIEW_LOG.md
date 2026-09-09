@@ -104,17 +104,34 @@ reports "pass" on a real defect for ever.
 `qc/tests/run_duckdb.py` now runs them. Each check is executed twice: against a
 clean fixture, where it must count nothing, and against the same fixture with
 the defect it describes planted in it, where it must count that and name it.
-The 13 checks that read only `LOT_LONG_FINAL` are covered — every
-`fail`-severity structural and end-reason check. All 13 pass both halves.
+**All 37 are covered**, and a test fails if a check is added without a case —
+coverage is part of the claim, not a footnote to it.
 
-Five deliberate sabotages of the checks confirm the harness bites: inverting a
-predicate, making one that can never be true, widening an allowed set, dropping
-half a condition, and removing the id masking. Each is caught.
+The clean fixture is one patient with two lines, and it has to satisfy all
+thirty-seven at once: the funnel reconciles with the published table, every
+regimen drug has an episode inside its line, every episode inside a line is in
+that line's regimen, every transplant belongs to a line, and there is no
+steroid and no death — so the `warn` and `info` checks read zero on it too,
+and "counts nothing on clean data" is true of all of them rather than only the
+failures.
 
-Two of the first plants were wrong, not the checks — B6 and B7 test a date
-against the line's own start, not against the end reason, and both stayed
-silent until the plant was corrected. That is the argument for running them
-rather than reading them, made against the person writing the fixtures.
+Eight deliberate sabotages confirm the harness bites: inverting a predicate,
+making one that can never be true, widening an allowed set, dropping half a
+condition, removing the id masking, comparing against the earlier of two
+run-out dates instead of the later, turning a mutual exclusion into an OR, and
+accepting any number of metadata rows. Each is caught.
+
+Four of the plants were wrong, not the checks. B6 and B7 test a date against
+the line's own start rather than the end reason; C3 looks on the day *after*
+the added-medication date; and E5's transplant was planted inside the line it
+was supposed to be orphaned from. All four checks were right to stay silent.
+That is the argument for running them rather than reading them, made four
+times against the person writing the fixtures.
+
+A ninth sabotage was NOT caught at first: deleting one of B3's three disjuncts
+still left the check counting something, and "more than zero" could not see
+that a third of it had gone. A case may now state how many violations it
+planted, and B3 plants all three.
 
 | what was wrong | now |
 |---|---|

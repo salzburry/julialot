@@ -513,14 +513,12 @@ cat("\n-- the checks, RUN rather than read --\n")
   # and text cannot tell a working one from a WHERE that can never be true.
   source(file.path(ROOT, "tests", "exec_harness.R"))
   source(file.path(ROOT, "tests", "exec_cases.R"))
-  P <- list(induction_window_days = 60L, lot_n_induction_window_days = 30L,
-            max_lot = 5L, sct_tandem_days = 180L, cart_consolidation_days = 45L,
-            sct_auto_window_days = 30L, sct_auto_gap_days = 180L,
-            lot_discon_confirm_days = 90L, apply_cart_induction_rule = FALSE,
-            medical_day_supply = 30L, map_discon_gap_days = 30L,
-            sct_extra = list(), allo_lot_span = 100L)
-  res <- run_exec_cases(LOT_QC_CHECKS, EXEC_CASES, CLEAN_ROWS,
-                        list(final = "LOT_LONG_FINAL"), P, ROOT)
+  # The run's OWN parameters, the ones the text tests above already build from
+  # the recorded settings - not a hand-made list. A check interpolates
+  # p$obs_end, p$confirm and the rest into its SQL, and a list with the wrong
+  # field names leaves those slots empty: the SQL still runs, and tests a
+  # weaker condition than the check states.
+  res <- run_exec_cases(LOT_QC_CHECKS, EXEC_CASES, CLEAN_FIXTURE, P, ROOT)
   if (is.null(res)) {
     cat("  SKIP    the execution harness could not be run\n")
   } else if (identical(res, "skip")) {
@@ -528,6 +526,14 @@ cat("\n-- the checks, RUN rather than read --\n")
   } else {
     ok(nrow(res) == length(EXEC_CASES),
        sprintf("every planted case ran (%d of %d)", nrow(res), length(EXEC_CASES)))
+    # Coverage is part of the claim. A catalogue that grows without a case
+    # growing with it is a catalogue back to being read rather than run.
+    uncovered <- setdiff(vapply(LOT_QC_CHECKS, function(c_i) c_i$id, character(1)),
+                         names(EXEC_CASES))
+    ok(length(uncovered) == 0,
+       paste0("every check in the catalogue has a planted case",
+              if (length(uncovered))
+                paste0(" [missing: ", paste(uncovered, collapse = ", "), "]") else ""))
     for (i in seq_len(nrow(res))) {
       r <- res[i, ]
       id <- r$id
@@ -537,9 +543,15 @@ cat("\n-- the checks, RUN rather than read --\n")
       }
       ok(identical(r$n_clean, "0"),
          sprintf("%s counts nothing on clean data", id))
-      ok(!is.na(suppressWarnings(as.numeric(r$n_planted))) &&
-           as.numeric(r$n_planted) > 0,
-         sprintf("%s counts %s", id, EXEC_CASES[[id]]$what))
+      # A case may state how many violations it planted. Where it does, the
+      # count has to match: a check with several disjuncts still counts
+      # something after one of them is deleted, and "more than zero" cannot
+      # tell that a third of it has gone.
+      want <- EXEC_CASES[[id]]$n
+      got <- suppressWarnings(as.numeric(r$n_planted))
+      ok(!is.na(got) && (if (is.null(want)) got > 0 else got == want),
+         sprintf("%s counts %s%s", id, EXEC_CASES[[id]]$what,
+                 if (is.null(want)) "" else sprintf(" (all %d of them)", want)))
       ok(nzchar(r$detail),
          sprintf("%s names the row it found, so the report can be acted on", id))
     }

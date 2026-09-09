@@ -18,8 +18,13 @@ replacement for a run against the warehouse.
 
 Usage:  run_duckdb.py <cases.json>
 
-cases.json: {"table": "...", "columns": {...}, "clean": [row, ...],
-             "cases": [{"id","sql","planted":[row,...]}, ...]}
+cases.json: {"tables": {name: {"columns": {...}}, ...},
+             "clean":  {name: [row, ...], ...},
+             "cases":  [{"id", "sql", "planted": {name: [row, ...]}}, ...]}
+
+A check reads several tables - a line against the cohort it came from, a
+regimen against the episodes behind it - so the fixture is a set of them, and
+a case plants into whichever ones its defect lives in.
 Prints one TSV line per case: id, n_clean, n_planted, detail, error.
 """
 import json, sys
@@ -32,20 +37,33 @@ except ImportError as ex:                       # pragma: no cover
 
 
 def load(spec):
+    """One table per entry in `tables`: {name: {columns: {...}}}."""
     con = duckdb.connect()
-    cols = ", ".join(f'"{c}" {t}' for c, t in spec["columns"].items())
-    con.execute(f'CREATE TABLE "{spec["table"]}" ({cols})')
+    for name, tab in spec["tables"].items():
+        cols = ", ".join(f'"{c}" {ty}' for c, ty in tab["columns"].items())
+        con.execute(f'CREATE TABLE "{name}" ({cols})')
     return con
 
 
-def fill(con, spec, rows):
-    con.execute(f'DELETE FROM "{spec["table"]}"')
-    names = list(spec["columns"])
-    for r in rows:
-        vals = [r.get(n) for n in names]
-        ph = ", ".join("?" for _ in names)
-        q = ", ".join(f'"{n}"' for n in names)
-        con.execute(f'INSERT INTO "{spec["table"]}" ({q}) VALUES ({ph})', vals)
+def fill(con, spec, data):
+    """`data` is {table: [row, ...]}. A table absent from it is emptied."""
+    for name, tab in spec["tables"].items():
+        con.execute(f'DELETE FROM "{name}"')
+        names = list(tab["columns"])
+        for r in data.get(name, []):
+            vals = [r.get(n) for n in names]
+            ph = ", ".join("?" for _ in names)
+            q = ", ".join(f'"{n}"' for n in names)
+            con.execute(f'INSERT INTO "{name}" ({q}) VALUES ({ph})', vals)
+
+
+def merge(clean, planted):
+    """The clean fixture with each planted table's rows appended to it."""
+    out = {k: list(v) for k, v in clean.items()}
+    for k, rows in planted.items():
+        out.setdefault(k, [])
+        out[k] = out[k] + rows
+    return out
 
 
 def run(con, sql):
@@ -64,7 +82,7 @@ def main():
         try:
             fill(con, spec, spec["clean"])
             n_clean, _ = run(con, case["sql"])
-            fill(con, spec, spec["clean"] + case["planted"])
+            fill(con, spec, merge(spec["clean"], case["planted"]))
             n_planted, detail = run(con, case["sql"])
             print("\t".join([case["id"], str(n_clean), str(n_planted),
                              str(detail or ""), ""]))
