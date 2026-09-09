@@ -40,6 +40,23 @@ runs  <- function(expr, what) ok(is.null(tryCatch({ expr; NULL },
                                  error = conditionMessage)), what)
 stops <- function(expr, what) ok(!is.null(tryCatch({ expr; NULL },
                                  error = conditionMessage)), what)
+# stops() accepts ANY error, and that is not enough for a guard.
+#
+# Every check_vignettes() guard below was tested with stops(), and mutation
+# testing showed that disabling most of them individually changed nothing:
+# another guard caught the same fixture, or - worse - the function crashed on
+# an NA before it could report at all, and "a parameter missing from the
+# config stops the catalogue" was passing on "missing value where TRUE/FALSE
+# needed". A guard test has to name the guard.
+stops_with <- function(expr, pattern, what) {
+  msg <- tryCatch({ expr; NULL }, error = conditionMessage)
+  ok(!is.null(msg) && grepl(pattern, msg),
+     paste0(what,
+            if (is.null(msg)) "  [nothing was raised]"
+            else if (!grepl(pattern, msg))
+              paste0("  [raised something else: ", substr(msg, 1, 90), "]")
+            else ""))
+}
 
 source(file.path(ROOT, "R", "vignettes.R"))
 
@@ -85,29 +102,78 @@ ok(grepl("365", render_vignettes(P2)[render_vignettes(P2)$id == "tandem_within",
 cat("\n-- and fails rather than describing a rule that is gone --\n")
 # A renamed setting is the failure this is built to catch: the prose would
 # still read fine while naming a setting the build does not have.
-stops(check_vignettes(modifyList(P, list(sct_tandem_days = NA_integer_))),
-      "a parameter missing from the config stops the catalogue")
+stops_with(check_vignettes(modifyList(P, list(sct_tandem_days = NA_integer_))),
+      "is not set in this run's config",
+      "a parameter missing from the config stops the catalogue, and says which")
+# ...and a case that READS that setting without naming it in `param` is
+# reported for what it is, rather than taking the whole check down with an
+# arithmetic NA.
+stops_with(check_vignettes(modifyList(P, list(sct_tandem_days = NA_integer_))),
+      "not a number",
+      "...including a case whose timeline reads it without naming it")
 bogus <- c(VIGNETTES, list(list(id = "x", title = "x", param = "no_such_setting",
                                 confidence = "derived", where = "nowhere",
                                 events = function(p) ev(0, "MED"),
                                 expected = function(p) "x", why = "x")))
-stops(check_vignettes(P, bogus), "...and so does a vignette naming a setting that does not exist")
+stops_with(check_vignettes(P, bogus), "which is not one this catalogue knows",
+      "...and so does a vignette naming a setting that does not exist")
 dup <- c(VIGNETTES, VIGNETTES[1])
-stops(check_vignettes(P, dup), "...and a duplicate id")
+stops_with(check_vignettes(P, dup), "duplicate id", "...and a duplicate id")
+
+# The guards nothing reached. Each is disabled one at a time by mutation, and
+# every one of these survived: another guard caught the fixture, so the
+# catalogue would have gone on holding with the check removed.
+one_of <- function(id, field, value) lapply(VIGNETTES, function(x) {
+  if (identical(x$id, id)) x[[field]] <- value
+  x
+})
+stops_with(check_vignettes(P, one_of("tandem_within", "confidence", "probably")),
+      "is not one of derived/to_confirm",
+      "a confidence outside derived/to_confirm is refused")
+stops_with(check_vignettes(P, one_of("tandem_within", "events",
+                                     function(p) ev(integer(0), character(0)))),
+      "produced nothing",
+      "...and a vignette with no events at all")
+# One side of a boundary is not a boundary: the pair is what makes the
+# catalogue move when the setting does.
+stops_with(check_vignettes(P, Filter(function(x) !identical(x$id, "tandem_beyond"),
+                                     VIGNETTES)),
+      "a boundary needs both",
+      "...and a parameter with only one side of its boundary")
+# 'beyond' has to be later than 'within', and ADJACENT to it. A pair two days
+# apart tests that the rule exists, not where its edge is - which is where
+# every off-by-one this catalogue has carried has sat.
+swapped <- lapply(VIGNETTES, function(x) {
+  if (identical(x$id, "tandem_beyond")) x$pair <- "within"
+  else if (identical(x$id, "tandem_within")) x$pair <- "beyond"
+  x
+})
+stops_with(check_vignettes(P, swapped), "is not later than the 'within' case",
+      "...and a pair whose two sides are the wrong way round")
+gapped <- lapply(VIGNETTES, function(x) {
+  if (identical(x$id, "tandem_beyond")) {
+    inner <- x$events
+    x$events <- function(p) { e <- inner(p); e$day[nrow(e)] <- e$day[nrow(e)] + 5L; e }
+  }
+  x
+})
+stops_with(check_vignettes(P, gapped), "must be consecutive days",
+      "...and a pair straddling its value from five days out, which pins no edge")
 # A boundary where both sides expect the same thing tests nothing.
 same <- lapply(VIGNETTES, function(x) {
   if (identical(x$id, "tandem_beyond")) x$expected <- function(p)
     "The two AUTOs are one tandem pair. A tandem is allowed, so LOT1 is not ended by the second one."
   x
 })
-stops(check_vignettes(P, same),
+stops_with(check_vignettes(P, same), "both sides expect the same thing",
       "...and a boundary whose two sides agree, which would be testing nothing")
 notime <- lapply(VIGNETTES, function(x) {
   if (identical(x$id, "allo_single_day"))
     x$events <- function(p) rbind(ev(10, "MED"), ev(2, "ALLO"))
   x
 })
-stops(check_vignettes(P, notime), "...and a timeline that runs backwards")
+stops_with(check_vignettes(P, notime), "not in time order",
+      "...and a timeline that runs backwards")
 
 cat("\n-- every rule it quotes is somewhere a reader can go --\n")
 # A citation is "path | anchor", and the anchor is a literal that has to appear

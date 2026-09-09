@@ -28,6 +28,12 @@ mask <- function(col) sprintf(MASK_PATID, col, col)
 # A one-row answer from a query that may match nothing. Wrapping the body in a
 # subquery and aggregating outside it means an empty match gives 0 and NULL
 # rather than no row at all, which the runner would have to special-case.
+#
+# max() picks the example the report names. Which one is arbitrary - any
+# offending row is a row an operator can go and look at - so min() would serve
+# equally, and a mutation between the two is not something a test should pin.
+# What the report needs is that there IS an example and that it is the same
+# one every run, which max() over a deterministic expression gives.
 counted <- function(body, detail = "NULL") {
   paste0("SELECT count(*) AS N_BAD, max(", detail, ") AS DETAIL FROM (\n",
          body, "\n) q")
@@ -103,6 +109,9 @@ qc_window_sql <- function(t, p, per_line = FALSE) {
 #
 # No leading newline or indent, so each call site keeps its own layout and the
 # emitted SQL is byte-identical to the two copies this replaced.
+# The coalesce is belt and braces: both readers of PREV_DISCON wrap it in
+# coalesce(..., 0) of their own, so dropping this one changes no answer. It
+# stays because a third reader should not have to know that.
 qc_restart_sql <- function(t) paste0("restart AS (
       SELECT cast(PATID as string) AS PATID, MAP_MED_TYPE, MAP_START_DT,
              coalesce(lag(MAP_DISCON_FLG) OVER (PARTITION BY PATID, MAP_MED_TYPE
