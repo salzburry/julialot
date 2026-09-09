@@ -99,6 +99,11 @@ km_estimate <- function(time, event) {
   keep <- !is.na(time) & !is.na(event) & time >= 0
   time <- as.numeric(time)[keep]; event <- as.integer(event)[keep]
   if (!length(time)) return(data.frame())
+  # A cohort with no event at all is a RESULT: everyone is still event-free at
+  # the end of their follow-up. Returning a bare data.frame() made the panel
+  # say "Nothing to show", which reads as missing data. The rows are empty
+  # because there is no step to draw, but the sample size and the follow-up it
+  # was observed over come back so the curve can be drawn flat across it.
   o <- order(time, -event)
   time <- time[o]; event <- event[o]
   ut <- sort(unique(time[event == 1L]))
@@ -127,10 +132,34 @@ km_estimate <- function(time, event) {
                stringsAsFactors = FALSE)
   })
   out <- do.call(rbind, Filter(Negate(is.null), rows))
-  if (is.null(out)) return(data.frame())
+  if (is.null(out)) out <- data.frame(
+    TIME = numeric(0), N_RISK = numeric(0), N_EVENT = numeric(0),
+    SURV = numeric(0), LOWER = numeric(0), UPPER = numeric(0))
   attr(out, "n") <- n
   attr(out, "n_event") <- sum(event == 1L)
+  # How far the cohort was actually observed. A curve drawn to the last EVENT
+  # stops early whenever the last subjects are censored, and stops at zero
+  # when none had an event at all.
+  attr(out, "follow_up") <- max(time)
   out
+}
+
+# The step function as points to draw: survival starts at 1 before the first
+# event and holds its last value to the end of observed follow-up.
+#
+# Separate from km_estimate() so that function still returns exactly one row
+# per event time - which is what the survival:: cross-check compares, and what
+# km_median() reads.
+km_steps <- function(km) {
+  fu <- attr(km, "follow_up") %||% NA_real_
+  if (is.null(km) || !nrow(km))
+    return(if (is.na(fu)) data.frame(TIME = numeric(0), SURV = numeric(0))
+           else data.frame(TIME = c(0, fu), SURV = c(1, 1)))
+  t <- c(0, km$TIME); v <- c(1, km$SURV)
+  if (!is.na(fu) && fu > km$TIME[nrow(km)]) {
+    t <- c(t, fu); v <- c(v, km$SURV[nrow(km)])
+  }
+  data.frame(TIME = t, SURV = v)
 }
 
 # Survival at a landmark, read off the step function.
@@ -212,7 +241,13 @@ drop_identifiers <- function(d) {
   d[, keep, drop = FALSE]
 }
 
-summarise_subject <- function(d, spec, min_n = 25L) {
+# n_population is the number of PATIENTS this stratum rests on, and the
+# caller works it out with population_n() because only it knows the grain.
+# nrow() is that number only at patient grain: on LOT_LONG_FINAL, which is one
+# row per patient AND line, ten patients with three lines each came to 30 and
+# published a summary the floor should have withheld. NULL keeps the old
+# reading for a caller that has not been given a population.
+summarise_subject <- function(d, spec, min_n = 25L, n_population = NULL) {
   if (is.null(d) || !nrow(d)) return(data.frame())
   cats <- intersect(spec$categorical %||% character(0), names(d))
   nums <- intersect(spec$continuous %||% character(0), names(d))
@@ -223,7 +258,7 @@ summarise_subject <- function(d, spec, min_n = 25L) {
     nums <- rest[vapply(rest, function(cl) is.numeric(d[[cl]]), logical(1))]
     cats <- setdiff(rest, nums)
   }
-  n_stratum <- nrow(d)
+  n_stratum <- n_population %||% nrow(d)
   rows <- list()
   for (cl in cats) {
     tb <- tabulate_cat(d, cl, min_n = min_n)
@@ -244,8 +279,10 @@ summarise_subject <- function(d, spec, min_n = 25L) {
   if (!length(rows)) return(data.frame())
   out <- do.call(rbind, rows)
   # The whole stratum under the floor: nothing about it may be published, not
-  # even a level that happens to hold more than the floor on its own.
-  if (n_stratum < min_n) {
+  # even a level that happens to hold more than the floor on its own. An
+  # uncountable population is withheld too - it has not been shown to reach
+  # the floor.
+  if (is.na(n_stratum) || n_stratum < min_n) {
     out$N <- NA; out$PCT <- NA; out$MEAN <- NA; out$SD <- NA; out$MEDIAN <- NA
     out$SUPPRESSED <- 1L
   }

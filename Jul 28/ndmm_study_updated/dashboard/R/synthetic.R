@@ -147,7 +147,14 @@ synthetic_one <- function(prefix, settings) {
     COHORT = rep(COHORT_KEYS, length.out = n_sub),
     LOT_NUM = rep(1:3, length.out = n_sub),
     INDEX_DATE = as.Date("2019-01-01") + as.integer(r(n_sub, 0, 2200)),
-    TTE_ELIGIBLE = 1L, stringsAsFactors = FALSE)
+    # Not everyone is in the survival analysis. The producer keeps the whole
+    # cohort in S_TTE and marks the restricted population with this flag - see
+    # study223926/R/modules/09_tte.R - so a fixture where everyone is eligible
+    # cannot show the difference between a descriptive summary of the table
+    # and a curve over the analysis set, and a panel drawn over the wrong one
+    # looks right.
+    TTE_ELIGIBLE = as.integer(seq_len(n_sub) %% 5L != 0L),
+    stringsAsFactors = FALSE)
   for (ep in c("TTNT", "TTD", "OS")) {
     scale <- c(TTNT = 14, TTD = 11, OS = 34)[[ep]] * fu_scale
     mo <- round(stats::rexp(n_sub, rate = 1 / scale), 2)

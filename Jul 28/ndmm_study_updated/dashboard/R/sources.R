@@ -85,6 +85,28 @@ warehouse_source <- function(cfg, con) {
            "cannot be built.", call. = FALSE)
     sprintf("%s.%s.%s%s", cfg$catalog, sch, prefix, table)
   }
+  # Does the LOT prefix hold the run this scenario named, and did that run
+  # finish? Asked once per run id and remembered, because every LOT panel asks
+  # it and the answer cannot change inside a session.
+  .lot_seen <- new.env(parent = emptyenv())
+  lot_ok <- function(lot_run_id) {
+    id <- trimws(lot_run_id %||% "")
+    if (!nzchar(id) || !nzchar(cfg$lot_prefix)) return(FALSE)
+    key <- paste0("r_", id)
+    hit <- get0(key, envir = .lot_seen, ifnotfound = NULL)
+    if (!is.null(hit)) return(hit)
+    st <- tryCatch(db_q(con, sprintf("SELECT * FROM %s",
+                                     full(cfg$lot_prefix, "LOT_BUILD_STATUS"))),
+                   error = function(e) NULL)
+    # Complete, and this run. A prefix mid-rebuild holds whatever that build
+    # has written so far, which is not a run's numbers either.
+    val <- !is.null(st) && nrow(st) > 0L &&
+      all(c("RUN_ID", "STATE") %in% names(st)) &&
+      any(as.character(st$RUN_ID) == id &
+          tolower(trimws(as.character(st$STATE))) == "complete")
+    assign(key, isTRUE(val), envir = .lot_seen)
+    isTRUE(val)
+  }
   list(
     kind = "warehouse", synthetic = FALSE,
     origin = sprintf("%s.%s", cfg$catalog, cfg$work_schema),
@@ -107,10 +129,22 @@ warehouse_source <- function(cfg, con) {
                error = function(e) NULL),
     # The LOT build wrote under its own prefix, which S_RUN_METADATA does not
     # carry - it records the run id, not where the run wrote. DASH_LOT_PREFIX
-    # names it, and the run id is then checked against LOT_BUILD_STATUS so a
-    # prefix pointing at a DIFFERENT run is caught rather than drawn.
+    # names it, and the prefix is checked against LOT_BUILD_STATUS before any
+    # of its tables is read, so a prefix pointing at a DIFFERENT run is caught
+    # rather than drawn.
+    #
+    # The check has to come FIRST, not per column. Filtering on RUN_ID where
+    # the table happens to carry that column bound only the tables that do -
+    # and LOT_LONG_FINAL, which is the one the panels are about, does not.
+    # Asking for an old run returned the current lines, and the mismatching
+    # status was never read at all.
+    lot_run_ok = function(lot_run_id) lot_ok(lot_run_id),
     read_lot = function(lot_run_id, table) {
       if (!nzchar(cfg$lot_prefix)) return(NULL)
+      # Fails closed. A run that cannot be shown to be the one under this
+      # prefix is not read: an unbound LOT table is another build's numbers
+      # under this scenario's label.
+      if (!lot_ok(lot_run_id)) return(NULL)
       d <- tryCatch(db_q(con, sprintf("SELECT * FROM %s",
                                       full(cfg$lot_prefix, table))),
                     error = function(e) NULL)
@@ -172,6 +206,30 @@ read_table <- function(src, prefix, table, prefer_release = TRUE) {
   mark_source(raw, "raw")
 }
 
+# The run a prefix holds RIGHT NOW, as opposed to the one read at startup.
+#
+# The scenarios are loaded once, when the app starts; a table is read when a
+# viewer opens a panel. A refresh in between replaces the snapshot, and the
+# page then shows the new run's rows under the old run's metadata - the
+# settings the sidebar names, the LOT run the Compare tab checks - with
+# nothing saying so.
+current_run_id <- function(src, prefix) {
+  md <- tryCatch(src$read(prefix, "S_RUN_METADATA"), error = function(e) NULL)
+  if (is.null(md) || !nrow(md) || !"RUN_ID" %in% names(md)) return(NA_character_)
+  if ("UPDATED_AT" %in% names(md))
+    md <- md[order(md$UPDATED_AT, decreasing = TRUE), , drop = FALSE]
+  trimws(as.character(md$RUN_ID[1]))
+}
+
+# Is this scenario still the run the app read at startup? NA where neither
+# side records a run, which is the same answer same_lot_run() gives.
+scenario_is_current <- function(src, scenario) {
+  was <- trimws(scenario$run_id %||% "")
+  now <- current_run_id(src, scenario$prefix)
+  if (!nzchar(was) || is.na(now) || !nzchar(now)) return(NA)
+  identical(was, now)
+}
+
 mark_source <- function(d, which) { attr(d, "table_source") <- which; d }
 
 SUPPRESSION_SPEC_NAMES <- function() {
@@ -190,6 +248,14 @@ SUPPRESSION_SPEC_NAMES <- function() {
 read_lot_table <- function(src, scenario, table) {
   if (is.null(src$read_lot)) return(NULL)
   src$read_lot(scenario$lot_run_id, table)
+}
+
+# Whether a source can bind this scenario's LOT run at all, for a panel that
+# has to say WHY it is empty. A source that does not bind runs (the snapshot
+# keys them by directory, so it already has) answers TRUE.
+lot_run_bound <- function(src, scenario) {
+  if (is.null(src$lot_run_ok)) return(TRUE)
+  isTRUE(src$lot_run_ok(scenario$lot_run_id))
 }
 
 # Do two scenarios rest on the SAME lines?

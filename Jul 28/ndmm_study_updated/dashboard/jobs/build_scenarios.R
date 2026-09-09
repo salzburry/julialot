@@ -41,6 +41,8 @@ set_cols <- grep("^[A-Z][A-Z0-9_]*$", names(grid), value = TRUE)
 message("Scenario grid: ", nrow(grid), " run(s), ", length(set_cols),
         " setting(s) each: ", paste(set_cols, collapse = ", "))
 
+source(file.path(here, "jobs", "export_lib.R"))
+
 # Which tables to export. Read off the package's own registry rather than
 # listed, so a module added there is exported without editing this file.
 local({
@@ -60,14 +62,8 @@ LOT_EXPORT <- c("LOT_LONG_FINAL", "LOT_LONG", "LOT_ATTRITION",
 
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
-run_one <- function(row) {
+run_one <- function(row, env) {
   prefix <- trimws(row[["prefix"]])
-  env <- character(0)
-  for (k in set_cols) {
-    v <- trimws(as.character(row[[k]]))
-    if (nzchar(v) && !identical(v, "NA")) env[[k]] <- v
-  }
-  env[["OBJECT_PREFIX"]] <- prefix
   message("\n=== ", prefix, " ===")
   for (k in names(env)) message("  ", k, "=", env[[k]])
 
@@ -85,30 +81,66 @@ run_one <- function(row) {
   list(prefix = prefix, ok = ok, log = res)
 }
 
-export_one <- function(prefix) {
+export_one <- function(prefix, env) {
   # Read back what the run wrote and put it beside the others as CSV, which is
   # what a Domino App can read without a warehouse session per viewer.
-  d <- file.path(out_dir, prefix)
-  dir.create(d, recursive = TRUE, showWarnings = FALSE)
+  #
+  # Written to a STAGING directory and swapped in at the end. Writing into the
+  # live one meant a refresh that failed halfway left the new tables it had
+  # managed beside the old ones it had not, under one run's metadata - and the
+  # app, which reads the metadata at startup and the tables later, presented
+  # that mixture as one run.
+  d     <- file.path(out_dir, prefix)
+  stage <- file.path(out_dir, paste0(".", prefix, ".staging"))
+  unlink(stage, recursive = TRUE)
+  dir.create(stage, recursive = TRUE, showWarnings = FALSE)
+  on.exit(unlink(stage, recursive = TRUE), add = TRUE)
+  # The row's own settings, exactly as the child build received them, plus the
+  # package's config.csv defaults - which the child gets from
+  # load_pipeline_inputs() and this did not load at all.
+  old_env <- Sys.getenv(names(env), unset = NA_character_, names = TRUE)
+  do.call(Sys.setenv, as.list(env))
+  on.exit({
+    for (k in names(old_env))
+      if (is.na(old_env[[k]])) Sys.unsetenv(k) else
+        do.call(Sys.setenv, stats::setNames(list(old_env[[k]]), k))
+  }, add = TRUE)
   cfg <- local({
-    Sys.setenv(OBJECT_PREFIX = prefix)
-    for (f in c("config_223926.R", "db_utils_223926.R", "registry.R"))
+    for (f in c("load_inputs.R", "config_223926.R", "db_utils_223926.R",
+                "registry.R"))
       source(file.path(pkg_dir, "R", f))
+    load_pipeline_inputs(pkg_dir, "config.csv")
     cfg_defaults()
   })
   con <- connect_db(cfg)
   on.exit(try(disconnect_db(con), silent = TRUE), add = TRUE)
+  # WORK_SCHEMA unset means "wherever the session lands", and the build
+  # resolves it that way too (run_223926.R). Left blank, wrk() built a name
+  # with an empty schema in it.
+  if (!nzchar(cfg$work_schema)) cfg$work_schema <- current_work_schema(con)
   set_study_config(cfg)
-  n <- 0L
+  n <- 0L; bad <- character(0)
   for (tb in EXPORT) {
-    got <- tryCatch(db_q(con, sprintf("SELECT * FROM %s", wrk(tb))),
-                    error = function(e) NULL)
-    if (is.null(got) || !nrow(got)) next
-    utils::write.csv(got, file.path(d, paste0(tb, ".csv")), row.names = FALSE,
-                     na = "")
+    r <- read_export(con, wrk(tb), optional = TRUE)
+    if (identical(r$state, "failed")) { bad <- c(bad, paste0(tb, ": ", r$why)); next }
+    if (identical(r$state, "absent")) next
+    # A table that legitimately holds no rows is exported as its header, so
+    # the snapshot says "none" rather than saying nothing.
+    utils::write.csv(r$data, file.path(stage, paste0(tb, ".csv")),
+                     row.names = FALSE, na = "")
     n <- n + 1L
   }
-  message("  exported ", n, " table(s) to ", d)
+  if (length(bad))
+    stop("could not read ", length(bad), " table(s): ",
+         paste(utils::head(bad, 3), collapse = "; "), call. = FALSE)
+  # The manifest: what this snapshot claims to hold, and which run wrote it.
+  # The reader binds its metadata and its tables to the same published run
+  # rather than trusting that a directory holds one.
+  meta <- read_export(con, wrk("S_RUN_METADATA"))
+  if (!identical(meta$state, "ok") || !nrow(meta$data))
+    stop("the run wrote no S_RUN_METADATA, so this snapshot cannot be ",
+         "attributed to a run", call. = FALSE)
+  message("  exported ", n, " table(s) for ", prefix)
 
   # The lines this scenario read. Filed by LOT run id, and skipped when
   # another scenario already exported the same run.
@@ -119,40 +151,67 @@ export_one <- function(prefix) {
   }, error = function(e) "")
   if (!nzchar(lot_id) || identical(lot_id, "NA") || identical(lot_id, "unproven")) {
     message("  no LOT run recorded, so no LOT tables exported")
-    return(n)
+    return(publish(stage, d, n, prefix, ""))
   }
   ld <- file.path(out_dir, "lot", lot_id)
   if (dir.exists(ld) && length(list.files(ld, pattern = "[.]csv$"))) {
     message("  LOT run ", lot_id, " already exported by an earlier scenario")
-    return(n)
+    return(publish(stage, d, n, prefix, lot_id))
   }
-  dir.create(ld, recursive = TRUE, showWarnings = FALSE)
-  ln <- 0L
+  lstage <- file.path(out_dir, "lot", paste0(".", lot_id, ".staging"))
+  unlink(lstage, recursive = TRUE)
+  dir.create(lstage, recursive = TRUE, showWarnings = FALSE)
+  on.exit(unlink(lstage, recursive = TRUE), add = TRUE)
+  ln <- 0L; lbad <- character(0)
   for (tb in LOT_EXPORT) {
-    got <- tryCatch(db_q(con, sprintf("SELECT * FROM %s", lot_tbl(tb))),
-                    error = function(e) NULL)
-    if (is.null(got) || !nrow(got)) next
-    utils::write.csv(got, file.path(ld, paste0(tb, ".csv")), row.names = FALSE,
-                     na = "")
+    r <- read_export(con, lot_tbl(tb), optional = TRUE)
+    if (identical(r$state, "failed")) { lbad <- c(lbad, tb); next }
+    if (identical(r$state, "absent")) next
+    utils::write.csv(r$data, file.path(lstage, paste0(tb, ".csv")),
+                     row.names = FALSE, na = "")
     ln <- ln + 1L
   }
-  message("  exported ", ln, " LOT table(s) for run ", lot_id, " to ", ld)
-  n
+  if (length(lbad))
+    stop("could not read ", length(lbad), " LOT table(s) for run ", lot_id,
+         ": ", paste(lbad, collapse = ", "), call. = FALSE)
+  message("  read ", ln, " LOT table(s) for run ", lot_id)
+  publish(stage, d, n, prefix, lot_id, lstage, ld)
 }
 
-results <- lapply(seq_len(nrow(grid)), function(i) run_one(grid[i, ]))
-exported <- lapply(results, function(r)
-  if (r$ok) tryCatch(export_one(r$prefix), error = function(e) {
-    message("  export failed: ", conditionMessage(e)); 0L }) else 0L)
+`%||%` <- function(a, b) if (is.null(a)) b else a
+
+envs     <- lapply(seq_len(nrow(grid)), function(i) scenario_env(grid[i, ], set_cols))
+results  <- lapply(seq_len(nrow(grid)), function(i) run_one(grid[i, ], envs[[i]]))
+exports  <- lapply(seq_along(results), function(i) {
+  r <- results[[i]]
+  if (!r$ok) return(list(ok = FALSE, n = 0L, why = "the build failed"))
+  tryCatch(list(ok = TRUE, n = export_one(r$prefix, envs[[i]]), why = ""),
+           error = function(e) {
+             message("  export FAILED: ", conditionMessage(e))
+             list(ok = FALSE, n = 0L, why = conditionMessage(e))
+           })
+})
 
 message("\n", strrep("-", 60))
 for (i in seq_along(results))
-  message(sprintf("%-16s %-8s %d table(s)", results[[i]]$prefix,
-                  if (results[[i]]$ok) "ok" else "FAILED", exported[[i]]))
+  message(sprintf("%-16s %-8s %-9s %d table(s)", results[[i]]$prefix,
+                  if (results[[i]]$ok) "built" else "FAILED",
+                  if (exports[[i]]$ok) "exported" else "NOT PUBLISHED",
+                  exports[[i]]$n))
+# An export that failed is a failed job. It used to become a zero-table count,
+# and the footer then said "built and exported" and exited 0 while a scenario
+# had published nothing - or, worse, had left the previous snapshot in place
+# under the new run's name.
 failed <- vapply(results, function(r) !r$ok, logical(1))
-if (any(failed)) {
-  message(sum(failed), " scenario(s) failed. The dashboard will show the ones ",
-          "that finished and mark the rest.")
+ex_failed <- vapply(exports, function(e) !e$ok, logical(1)) & !failed
+if (any(failed) || any(ex_failed)) {
+  if (any(failed))
+    message(sum(failed), " scenario(s) failed to build.")
+  if (any(ex_failed))
+    message(sum(ex_failed), " scenario(s) built but were NOT published; the ",
+            "snapshot each would have replaced is unchanged and still carries ",
+            "its own run.")
+  message("The dashboard will show the ones that published and mark the rest.")
   quit(status = 1L)
 }
-message("All ", nrow(grid), " scenario(s) built and exported to ", out_dir)
+message("All ", nrow(grid), " scenario(s) built and published to ", out_dir)

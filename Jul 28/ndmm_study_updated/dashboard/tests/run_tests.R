@@ -252,6 +252,373 @@ cat("\nKaplan-Meier\n")
   }
 }
 
+cat("\nwhat a panel is allowed to show\n")
+# One preparation layer answers four questions for every renderer: which rows
+# are the analysis set, how many PATIENTS that is, whether that clears the
+# floor, and what to say when it does not. Each renderer used to answer them
+# for itself, and each got at least one wrong.
+{
+  # --- grain: a row is not always a patient ---
+  lot <- data.frame(
+    PATID = rep(sprintf("P%02d", 1:10), each = 3),
+    LOT_NUM = rep(1:3, times = 10),
+    LOT_START_TYPE = "MED", LOT_BASE_MEDS = "BORT LEN",
+    LOT_MED_CNT = 2L, LOT_BASE_LENGTH = 100L,
+    stringsAsFactors = FALSE)
+  sp_lot <- table_spec("LOT_LONG_FINAL", names(lot))
+  ok(identical(table_grain(sp_lot), "line"),
+     "LOT_LONG_FINAL is one row per patient and LINE, and says so")
+  ok(identical(population_n(lot, sp_lot), 10L),
+     "...so ten patients with three lines each is ten patients, not thirty")
+  pp <- prepare_panel(lot, sp_lot, floor_n = 25L)
+  ok(!pp$released,
+     "...and at a floor of 25 that stratum is withheld, where 30 rows would have passed")
+  h <- panel_table_html(lot, sp_lot, floor_n = 25L)
+  ok(grepl("Withheld", h, fixed = TRUE) && grepl("10 patients", h, fixed = TRUE),
+     "...the caption says 10 patients and withholds, rather than claiming 30")
+  ok(!grepl("30 patients", h, fixed = TRUE),
+     "...and never calls a count of lines a count of patients")
+  # 40 patients clear the floor, and the caption still separates the two counts.
+  lot2 <- data.frame(
+    PATID = rep(sprintf("P%03d", 1:40), each = 3),
+    LOT_NUM = rep(1:3, times = 40),
+    LOT_START_TYPE = "MED", LOT_BASE_MEDS = "BORT LEN",
+    LOT_MED_CNT = 2L, LOT_BASE_LENGTH = 100L, stringsAsFactors = FALSE)
+  h2 <- panel_table_html(lot2, table_spec("LOT_LONG_FINAL", names(lot2)),
+                         floor_n = 25L)
+  ok(grepl("40 patients", h2, fixed = TRUE) && grepl("120 lines", h2, fixed = TRUE),
+     "a released line table reports both counts, each named for what it is")
+  ok(identical(population_n(data.frame(), sp_lot), 0L),
+     "no rows is no patients, not an error")
+  # A table carrying neither an identifier nor a count cannot be shown to
+  # clear the floor, and is withheld rather than published.
+  blind <- data.frame(LEVEL = c("a", "b"), STUFF = c(1, 2),
+                      stringsAsFactors = FALSE)
+  sp_blind <- list(name = "X", shape = "subject", id = "PATID",
+                   categorical = "LEVEL")
+  ok(is.na(population_n(blind, sp_blind)),
+     "a table with no identifier and no count has no countable population")
+  ok(!prepare_panel(blind, sp_blind, floor_n = 25L)$released,
+     "...so it is withheld: an uncountable population has not cleared the floor")
+
+  # --- the analysis set ---
+  tte <- rbind(
+    data.frame(PATID = sprintf("E%02d", 1:25), COHORT = "1L", LOT_NUM = 1L,
+               TTE_ELIGIBLE = 1L, TTNT_MONTHS = 10, TTNT_EVENT = 1L,
+               stringsAsFactors = FALSE),
+    data.frame(PATID = sprintf("N%02d", 1:25), COHORT = "1L", LOT_NUM = 1L,
+               TTE_ELIGIBLE = 0L, TTNT_MONTHS = 1, TTNT_EVENT = 1L,
+               stringsAsFactors = FALSE))
+  sp_tte <- table_spec("S_TTE", names(tte))
+  pt <- prepare_panel(tte, sp_tte, floor_n = 25L, purpose = "tte")
+  ok(identical(pt$n, 25L),
+     "a survival panel is the 25 eligible patients, not all 50 rows in the table")
+  km <- km_estimate(pt$rows$TTNT_MONTHS, pt$rows$TTNT_EVENT)
+  ok(nrow(km) == 1 && abs(km$TIME[1] - 10) < 1e-9,
+     "...so its first event is at month 10, not the month 1 of an excluded patient")
+  ok(identical(attr(km, "n"), 25L), "...over 25 subjects")
+  # The same table, described rather than analysed, keeps everyone.
+  ok(identical(prepare_panel(tte, sp_tte, floor_n = 25L)$n, 50L),
+     "a descriptive summary of the same table still covers the whole cohort")
+  # Fails closed where the flag is absent.
+  ok(nrow(analysis_rows(tte[, setdiff(names(tte), "TTE_ELIGIBLE")], sp_tte,
+                        "tte")) == 0,
+     "a table with no eligibility flag yields no analysis set, not all of it")
+
+  # --- an event-free cohort is a result ---
+  free <- km_estimate(rep(c(4, 8, 12), times = 10), rep(0L, 30))
+  ok(nrow(free) == 0 && identical(attr(free, "n"), 30L) &&
+       abs(attr(free, "follow_up") - 12) < 1e-9,
+     "thirty patients with no event carry their size and their follow-up")
+  st <- km_steps(free)
+  ok(nrow(st) == 2 && all(abs(st$SURV - 1) < 1e-9) &&
+       abs(max(st$TIME) - 12) < 1e-9,
+     "...and draw a flat curve across the follow-up actually observed")
+  ok(nrow(km_steps(km_estimate(numeric(0), numeric(0)))) == 0,
+     "no subjects at all is still an empty curve")
+  k1 <- km_estimate(c(1, 2, 3, 4, 5), c(1, 0, 1, 0, 0))
+  s1 <- km_steps(k1)
+  ok(abs(s1$SURV[1] - 1) < 1e-9 && abs(s1$TIME[1]) < 1e-9,
+     "a curve with events starts at 1")
+  ok(abs(max(s1$TIME) - 5) < 1e-9,
+     "...and is carried to the last follow-up, not to the last event at 3")
+
+  # --- finished rates are not averaged across strata ---
+  rates <- data.frame(
+    COHORT = "1L", LOT_NUM = 1L, PERIOD = c("BASELINE", "FOLLOWUP"),
+    CONDITION = "NEUTROPENIA", DOMAIN = "HAEM", ACUTE_CHRONIC = "ACUTE",
+    N_AT_RISK = c(500L, 500L), N_EVENTS = c(10L, 10L),
+    PERSON_YEARS = c(10, 1000), RATE = c(1000, 10),
+    stringsAsFactors = FALSE)
+  sp_r <- table_spec("S_SAFETY_RATES", names(rates))
+  L <- stratum_label(rates, sp_r, "CONDITION")
+  ok(length(unique(L)) == 2L && all(grepl("PERIOD=", L, fixed = TRUE)),
+     "two periods of one condition are two labelled bars, not one")
+  ok(!any(grepl("^NEUTROPENIA$", L)),
+     "...and neither bar is left carrying the bare condition name")
+  # The old reading. 505 is the mean of 1000 and 10 - neither rate, and not
+  # the pooled 19.8 either.
+  ok(abs(mean(rates$RATE) - 505) < 1e-9,
+     "the average of the two rates is 505, which is what the chart used to draw")
+  ok(!any(abs(c(1000, 10) - 505) < 1e-9),
+     "...and 505 is not either stratum's rate")
+
+  # --- the floor, in the places that skipped it ---
+  fl <- effective_floor(100L, 25L)
+  ok(identical(fl, 100L), "the viewer's floor is taken where it is higher")
+  ok(identical(effective_floor(5L, 25L), 25L),
+     "...and the package's where the viewer's would lower it")
+  ok(identical(effective_floor(NA, 25L), 25L),
+     "...and an unusable viewer floor falls back to the package's")
+  ok(!released(30, 100) && released(100, 100) && !released(NA, 100),
+     "release is one test: at or above the floor, and never on an unknown count")
+
+  small <- data.frame(COHORT = "1L", LOT_NUM = 1L, PERIOD = "FOLLOWUP",
+                      CONDITION = "X", DOMAIN = "H", ACUTE_CHRONIC = "A",
+                      N_AT_RISK = 30L, N_EVENTS = 5L, PERSON_YEARS = 10,
+                      RATE = 120, stringsAsFactors = FALSE)
+  smb <- small; smb$RATE <- 140
+  cm <- compare_tables(small, smb, sp_r, "RATE")
+  ok(nrow(cm) == 1 && abs(cm$DELTA[1] - 20) < 1e-9,
+     "the comparison finds the stratum and its difference")
+  cs <- suppress_comparison(cm, small, smb, sp_r, floor_n = 100L,
+                            package_min_n = 25L)
+  ok(is.na(cs$A[1]) && is.na(cs$B[1]) && is.na(cs$DELTA[1]),
+     "...and at a floor of 100 a 30-patient stratum shows neither value nor delta")
+  ok(identical(cs$RELEASED[1], 0L), "...and says on the row that it was withheld")
+  cs2 <- suppress_comparison(cm, small, smb, sp_r, floor_n = 25L,
+                             package_min_n = 25L)
+  ok(!is.na(cs2$A[1]) && abs(cs2$DELTA[1] - 20) < 1e-9,
+     "...while a stratum that clears the floor still compares")
+  # No count column at all: withhold rather than publish an untested delta.
+  sp_nc <- utils::modifyList(sp_r, list(n_col = NULL))
+  nc_a <- small[, setdiff(names(small), "N_AT_RISK")]
+  nc_b <- smb[, setdiff(names(smb), "N_AT_RISK")]
+  cs3 <- suppress_comparison(compare_tables(nc_a, nc_b, sp_nc, "RATE"),
+                             nc_a, nc_b, sp_nc, floor_n = 25L)
+  ok(all(is.na(cs3$DELTA)),
+     "a comparison with no population to test is withheld, not published")
+
+  # A bar chart of counts withholds a level that rests on too few patients.
+  # The count itself is of LINES, which is a legitimate figure - it is the
+  # floor that is about patients.
+  ok(is.function(plot_count_bars) && is.function(plot_stratum_bars),
+     "the bar preparation is a function the tests can drive, not server wiring")
+  tiny <- data.frame(PATID = c("A", "B", "C"), LOT_NUM = 1L,
+                     LOT_START_TYPE = "MED", stringsAsFactors = FALSE)
+  ok(identical(population_n(tiny, table_spec("LOT_LONG_FINAL", names(tiny))), 3L),
+     "three patients are three patients however many lines they have")
+
+  # The headline row, through the function the app actually calls.
+  att <- data.frame(COHORT = c("1L", "2L"), STEP = 9L,
+                    N_REMAINING = c(3L, 400L), stringsAsFactors = FALSE)
+  k <- kpi_row_html(att, floor_n = 25L)
+  ok(grepl("withheld", k, fixed = TRUE) && grepl("400", k, fixed = TRUE),
+     "a three-patient cohort is withheld from the headline row and a large one is not")
+  ok(!grepl(">3<", k, fixed = TRUE),
+     "...and the three never reaches the page")
+  ok(grepl("400", kpi_row_html(att, floor_n = 5L), fixed = TRUE) &&
+       grepl("withheld", kpi_row_html(att, floor_n = 5L), fixed = TRUE),
+     "a viewer cannot lower the headline floor below the package's own 25")
+}
+
+cat("\nthe snapshot job publishes a run, or nothing\n")
+source(file.path(here, "jobs", "export_lib.R"))
+{
+  # --- the export runs under the ROW's settings ---
+  row <- list(prefix = "sc_a_", WORK_SCHEMA = "scenario_schema",
+              LOT_PREFIX = "scenario_lot_", note = "not a setting",
+              MONTHS_AS = "NA")
+  e <- scenario_env(row)
+  ok(identical(e[["OBJECT_PREFIX"]], "sc_a_"),
+     "the row's prefix is what the scenario writes under")
+  ok(identical(e[["WORK_SCHEMA"]], "scenario_schema") &&
+       identical(e[["LOT_PREFIX"]], "scenario_lot_"),
+     "...and every other setting on the row travels with it")
+  ok(!"MONTHS_AS" %in% names(e),
+     "a blank cell written as NA is not a setting of \"NA\"")
+  ok(!"note" %in% names(e),
+     "and a lower-case column is documentation, not a setting to export")
+  # One env for both halves is the whole point: the export used to rebuild the
+  # configuration with only OBJECT_PREFIX changed and read the PARENT's schema.
+  jb <- paste(readLines(file.path(here, "jobs", "build_scenarios.R"),
+                        warn = FALSE), collapse = "\n")
+  ok(grepl("run_one(grid[i, ], envs[[i]])", jb, fixed = TRUE) &&
+       grepl("export_one(r$prefix, envs[[i]])", jb, fixed = TRUE),
+     "the build and the export are handed the same settings, not two readings")
+  ok(grepl("current_work_schema(con)", jb, fixed = TRUE),
+     "...and an unset WORK_SCHEMA is resolved the way the build resolves it")
+
+  # --- an empty read, an absent table and a failed read are three things ---
+  con <- structure(list(), class = "fake")
+  assign("db_q", function(con, sql)
+    if (grepl("EMPTY", sql)) data.frame(A = character(0))
+    else if (grepl("GONE", sql)) stop("Table or view not found: GONE")
+    else if (grepl("BROKEN", sql)) stop("connection reset by peer")
+    else data.frame(A = 1), envir = globalenv())
+  ok(identical(read_export(con, "FULL")$state, "ok"), "a table with rows reads ok")
+  r_empty <- read_export(con, "EMPTY")
+  ok(identical(r_empty$state, "ok") && nrow(r_empty$data) == 0L,
+     "a table that legitimately holds no rows is still a successful read")
+  ok(identical(read_export(con, "GONE", optional = TRUE)$state, "absent"),
+     "a table an unselected module never wrote is absent, not a failure")
+  ok(identical(read_export(con, "BROKEN", optional = TRUE)$state, "failed"),
+     "...while a read that errored for any other reason is a failure")
+  ok(identical(read_export(con, "GONE", optional = FALSE)$state, "failed"),
+     "and a table that is NOT optional missing is a failure too")
+  rm("db_q", envir = globalenv())
+
+  # --- a snapshot becomes visible whole, or not at all ---
+  root <- file.path(tempdir(), paste0("snap_", as.integer(runif(1) * 1e8)))
+  dir.create(file.path(root, "sc_a_"), recursive = TRUE)
+  writeLines("PATID\nOLD", file.path(root, "sc_a_", "S_TTE.csv"))
+  writeLines("RUN_ID\nold_run", file.path(root, "sc_a_", "S_RUN_METADATA.csv"))
+  stage <- file.path(root, ".sc_a_.staging")
+  dir.create(stage)
+  writeLines("RUN_ID\nnew_run", file.path(stage, "S_RUN_METADATA.csv"))
+  publish(stage, file.path(root, "sc_a_"), 1L, "sc_a_", "")
+  got <- list.files(file.path(root, "sc_a_"))
+  ok(identical(sort(got), "S_RUN_METADATA.csv"),
+     "publishing replaces the directory whole - the old S_TTE does not survive")
+  ok(identical(readLines(file.path(root, "sc_a_", "S_RUN_METADATA.csv"))[2],
+               "new_run"),
+     "...and what is there is the new run")
+  ok(!dir.exists(file.path(root, "sc_a_.previous")),
+     "...with no half-swapped directory left beside it")
+
+  # A refresh that never reaches publish() leaves the previous snapshot as it
+  # was, under its own identity.
+  dir.create(file.path(root, "sc_b_"), recursive = TRUE)
+  writeLines("RUN_ID\nold_run", file.path(root, "sc_b_", "S_RUN_METADATA.csv"))
+  publish(NULL, file.path(root, "sc_b_"), 0L, "sc_b_", "")
+  ok(identical(readLines(file.path(root, "sc_b_", "S_RUN_METADATA.csv"))[2],
+               "old_run"),
+     "a refresh that produced nothing leaves the older snapshot untouched")
+  ok(grepl("NOT PUBLISHED", jb, fixed = TRUE) &&
+       grepl("ex_failed", jb, fixed = TRUE),
+     "an export that failed is reported as unpublished, not as zero tables")
+  # The emitted string, not the word anywhere in the file - the comment above
+  # the change quotes the old wording on purpose.
+  ok(grepl('" scenario(s) built and published to "', jb, fixed = TRUE) &&
+       !grepl('" scenario(s) built and exported to "', jb, fixed = TRUE),
+     "...and the footer claims success only for what actually reached the snapshot")
+  unlink(root, recursive = TRUE)
+}
+
+cat("\na LOT table is bound to the run the scenario named\n")
+# The warehouse source reads LOT tables from a prefix a setting names, and
+# nothing in those tables says which run wrote them - LOT_LONG_FINAL has no
+# RUN_ID column. So the prefix's build status is what binds them, and it has
+# to be read BEFORE the tables rather than a column being filtered where one
+# happens to exist.
+#
+# db_q is replaced for this block: what is under test is which statements are
+# issued and what comes back, and there is no connection here.
+local({
+  asked <- character(0)
+  status <- data.frame(RUN_ID = "new_run", STATE = "complete",
+                       stringsAsFactors = FALSE)
+  lines <- data.frame(PATID = "P1", LOT_NUM = 1L, LOT_START_TYPE = "MED",
+                      stringsAsFactors = FALSE)
+  assign("db_q", function(con, sql) {
+    asked <<- c(asked, sql)
+    if (grepl("LOT_BUILD_STATUS", sql, fixed = TRUE)) status else lines
+  }, envir = globalenv())
+  cfg <- utils::modifyList(DASH_CFG, list(
+    source = "warehouse", catalog = "cat", work_schema = "wrk",
+    lot_prefix = "lot_"))
+  src <- warehouse_source(cfg, con = structure(list(), class = "fake"))
+
+  d <- src$read_lot("new_run", "LOT_LONG_FINAL")
+  ok(!is.null(d) && nrow(d) == 1L,
+     "the run the prefix actually holds reads its lines")
+  ok(any(grepl("LOT_BUILD_STATUS", asked, fixed = TRUE)),
+     "...and the build status was read to establish that")
+
+  asked <- character(0)
+  ok(is.null(src$read_lot("old_run", "LOT_LONG_FINAL")),
+     "a DIFFERENT run reads nothing, where before it got the current lines")
+  ok(!isTRUE(src$lot_run_ok("old_run")),
+     "...and the source says the run is not bound, so a panel can explain itself")
+
+  # Asked once per run and remembered: every LOT panel asks.
+  asked <- character(0)
+  invisible(src$read_lot("new_run", "LOT_LONG"))
+  invisible(src$read_lot("new_run", "LOT_ATTRITION"))
+  ok(!any(grepl("LOT_BUILD_STATUS", asked, fixed = TRUE)),
+     "the status is read once per run, not once per panel")
+
+  # A prefix mid-rebuild is not a run's numbers either.
+  status <- data.frame(RUN_ID = "new_run", STATE = "started",
+                       stringsAsFactors = FALSE)
+  src2 <- warehouse_source(cfg, con = structure(list(), class = "fake"))
+  ok(is.null(src2$read_lot("new_run", "LOT_LONG_FINAL")),
+     "a build that has not finished is refused, not read as far as it got")
+
+  # No status table at all: fail closed.
+  assign("db_q", function(con, sql)
+    if (grepl("LOT_BUILD_STATUS", sql, fixed = TRUE)) stop("no such table")
+    else lines, envir = globalenv())
+  src3 <- warehouse_source(cfg, con = structure(list(), class = "fake"))
+  ok(is.null(src3$read_lot("new_run", "LOT_LONG_FINAL")),
+     "a prefix with no build status cannot be bound, so nothing is read from it")
+  rm("db_q", envir = globalenv())
+})
+# The snapshot source keys LOT tables by run directory, so it is bound already.
+ok(lot_run_bound(SRC, SCENARIOS[[1]]),
+   "a source that binds runs by construction needs no second check")
+
+# ...and the tables a panel reads still belong to the run the sidebar names.
+{
+  s1 <- SCENARIOS[[1]]
+  ok(isTRUE(scenario_is_current(SRC, s1)),
+     "a scenario nothing has rebuilt is still the run the app read")
+  moved <- utils::modifyList(s1, list(run_id = "a_previous_run"))
+  ok(isFALSE(scenario_is_current(SRC, moved)),
+     "...and one whose snapshot now holds a different run is not")
+  ok(is.na(scenario_is_current(SRC, utils::modifyList(s1, list(run_id = "")))),
+     "a scenario that records no run cannot be said to have moved")
+  src_none <- list(read = function(prefix, table) NULL)
+  ok(is.na(scenario_is_current(src_none, s1)),
+     "...and neither can one whose snapshot has no metadata to read")
+  app <- paste(readLines("app.R", warn = FALSE), collapse = "\n")
+  ok(grepl("if (isTRUE(scenario_moved())) return(NULL)", app, fixed = TRUE),
+     "a panel reads no rows once its snapshot has moved under it")
+  ok(grepl("rebuilt since the page was opened", app, fixed = TRUE),
+     "...and says so, rather than showing an empty table")
+}
+
+cat("\nthe readings survive the trip from the producer\n")
+# parse_readings() reads a string the STUDY PACKAGE writes, and the two live
+# in different folders. So the producer is driven here rather than a string
+# being retyped: a note the writer emits and the reader mangles is a defect
+# neither package's own tests can see.
+{
+  cfg <- as.list(stats::setNames(rep("x", length(OPEN_QUESTION_SOURCE)),
+                                 names(OPEN_QUESTION_SOURCE)))
+  cfg$study_start <- "2018-01-01"
+  # The upstream contract disagrees, which is when the note gets a semicolon.
+  txt <- paste(open_question_readings(cfg, list(study_start = "2016-01-01")),
+               collapse = "; ")
+  ok(grepl("verified; this run was set to", txt, fixed = TRUE),
+     "the writer records both readings when the cohort build disagrees")
+  r <- parse_readings(txt)
+  ok(identical(r$study_start$value, "2016-01-01"),
+     "...and the value read back is the upstream one that shaped the data")
+  ok(grepl("2018-01-01", r$study_start$note, fixed = TRUE),
+     "...with the configured reading kept in the note, not lost at the semicolon")
+  ok(!grepl("upstream", r$study_start$value, fixed = TRUE),
+     "...and the provenance never ends up inside the value")
+  ok(length(r) == length(OPEN_QUESTION_SOURCE),
+     "...and every other setting still parses as its own entry")
+  # The shape that broke it, minimally.
+  r2 <- parse_readings("a=1 (note; with a semicolon); b=2")
+  ok(length(r2) == 2 && identical(r2$a$value, "1") && identical(r2$b$value, "2"),
+     "a semicolon inside a note does not start a new entry")
+  ok(identical(r2$a$note, "note; with a semicolon"),
+     "...and the note keeps it")
+}
+
 cat("\ncomparing two scenarios\n")
 {
   sp <- table_spec("S_HCRU_RATES")
@@ -646,6 +1013,29 @@ cat("\napp.R is wiring, and the wiring matches the registries\n")
      "and app.R declares no panel of its own")
   ok(grepl("DASH_CFG$suppress_min_n", src, fixed = TRUE),
      "the floor the app applies is the configured one, not a literal")
+
+  # Every renderer goes through the preparation layer rather than deciding the
+  # population, the floor and the caption for itself. This is a text check
+  # because the wiring is what it is about - the decisions themselves are
+  # driven directly above, and each has its own fixture there.
+  ok(grepl('prepare_panel(d, sp, input$floor, purpose = "tte"', src, fixed = TRUE),
+     "the survival panel asks for the tte analysis set, not the whole table")
+  ok(grepl("kpi_row_html(last, input$floor", src, fixed = TRUE),
+     "the headline row goes through the function that applies the floor")
+  ok(grepl("suppress_comparison(cm, da, db, sp, input$floor", src, fixed = TRUE),
+     "the comparison is suppressed before it is rendered")
+  ok(grepl("plot_stratum_bars(d, sp, lab, val", src, fixed = TRUE) &&
+       !grepl("FUN = function(x) mean(x, na.rm = TRUE)", src, fixed = TRUE),
+     "a rate chart preserves its strata rather than averaging them")
+  ok(grepl("plot_count_bars(d, sp, lab, p$label, input$floor)", src, fixed = TRUE),
+     "and a count chart withholds a bar resting on too few patients")
+  # The one place a renderer may still read rows straight from the source is
+  # the KPI, and it hands them to kpi_row_html(). Anything else calling
+  # SRC$read() without going through a prepared panel is worth noticing.
+  raw <- length(gregexpr("SRC$read(", src, fixed = TRUE)[[1]])
+  ok(raw <= 2L,
+     paste0("rows reach a renderer through panel_data(), not read straight (",
+            raw, " direct reads)"))
 }
 
 cat("\n", strrep("-", 52), "\n", sep = "")
