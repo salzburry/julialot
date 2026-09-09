@@ -672,12 +672,16 @@ melp_prior_regimen_exempt <- function(cfg, alias = "ms") {
 # agent and has to break the chain; only a suppressed course refuses a boundary
 # and so refuses to break one. Read the third column and the previous line's
 # chain walks straight through a confirmed course and takes an episode
-# belonging to the line that course opened - H4/H4c are that patient.
+# belonging to the line that course opened. R03, R04, R07 and R11 in
+# lot/melphalan/tests/exec_rule.R are the courses that must NOT be in the set.
 #
 # A course inside induction is in the regimen and the scan already skips it. A
 # course longer than the cap is left to the engine untouched (4.7), so it
 # breaks the chain like any other drug; removing every melphalan row instead
 # made an over-cap course stop ending the line at its own run-out (SM).
+#
+# The set is executed in lot/melphalan/tests/exec_rule.R, where NO_BREAK_EXPECT
+# names the dose each planted patient contributes.
 melp_short_course_ctes <- function(cfg, verdict) {
   if (!melp_rule_on(cfg)) return("")
   # One relation, and the three questions this test asks are three of its
@@ -688,15 +692,17 @@ melp_short_course_ctes <- function(cfg, verdict) {
   #
   # AFTER_WINDOW, not INSIDE = 0, and they are not the same question: a course
   # starting BEFORE the line is INSIDE = 0 and is not after the window. This
-  # test has always asked the second.
+  # test has always asked the second, so a pre-line course is NOT in
+  # melp_no_break and does break the chain.
   #
-  # INSIDE = 0 would take pre-line courses OUT of the break set and stop them
-  # interrupting, which is arguably what 4.7 wants: a course this line judged
-  # and SUPPRESSED decides nothing, so it should refuse to break a chain
-  # wherever it started. Measured rather than argued - swapping this one
-  # predicate changes nothing the validation estate can see, over 618 patients
-  # and every planted melphalan and fold-in case - so it stays a rule question
-  # for the study team rather than a silent edit.
+  # INSIDE = 0 would put those courses in and stop them interrupting, which is
+  # arguably what 4.7 wants: a course this line judged and SUPPRESSED decides
+  # nothing, so it should refuse to break a chain wherever it started. No
+  # patient the validation estate builds tells the two apart, over 618 patients
+  # and every planted melphalan and fold-in case, so it stays a rule question
+  # for the study team rather than a silent edit. R14 and R15 in
+  # lot/melphalan/tests/exec_rule.R are the shape that does tell them apart,
+  # and they pin the reading that ships.
   paste0("\n", glue("
     melp_no_break AS (
       SELECT DISTINCT PATID, DOSE_DT AS MAP_START_DT

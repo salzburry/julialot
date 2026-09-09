@@ -291,7 +291,10 @@ the rule runs, not the threshold it runs at.
 | `run_melp_simple.R` | Builds the two cells and reads them. Prints the plan by default; `MELP_SIMPLE_EXECUTE=TRUE` builds, `MELP_SIMPLE_READ=TRUE` reads cells already built. |
 | `read_melp_asks.R` | The study team's three questions, off built cells: the change in each line's duration, how many lines contain melphalan and how many are melphalan alone, and how many patients receive a transplant in a melphalan-containing line, by line. |
 | `R/cells.R` | The cell plan, the provenance checks that hold both cells to one cohort and one build of the engine, and the metrics read off each. |
-| `tests/test_melp_simple.R` | That `off` really is the absence of the rule, that every spliced fragment opens with its own newline, and that a cell cannot write over the study's tables. |
+| `tests/test_melp_simple.R` | That `off` really is the absence of the rule, that every spliced fragment opens with its own newline, that a cell cannot write over the study's tables or be read from a build it does not match, and — where duckdb and sqlglot are installed — that the metrics and the rule's decision chain return the answers the fixtures work out by hand. |
+| `tests/run_duckdb.py` | Executes a statement against a fixture, transpiling Spark to DuckDB. Reports a statement it could not run rather than reading it as an empty result. |
+| `tests/exec_cells.R` | Nine patients and sixteen lines, and what every metric must count over them. |
+| `tests/exec_rule.R` | Fifteen patients, one line each, one branch of 4.7 apiece — the boundaries a whole-patient harness cannot reach cheaply: a confirming agent on the course's last covered day, a hold capped at the line's span, a course an earlier line owned. |
 
 Until 2026-08-30 this package also carried the five-branch rule the study team
 asked for first, as a third cell. That rule was measured, not adopted, and
