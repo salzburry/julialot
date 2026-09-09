@@ -145,6 +145,12 @@ person_years_sql <- function(from, to, cfg)
           interval_days_sql(from, to, from_incl = TRUE, to_incl = TRUE))
 
 # A rate per RATE_MULTIPLIER person-years, NULL rather than a division by zero.
+#
+# Both Spark (ANSI mode off) and DuckDB already return NULL for x/0, so the
+# guard and the engines agree and removing it changes no answer either would
+# give. It stays because the intent should be in the SQL rather than in what
+# two engines happen to do; tests/exec_fragments.R holds the OUTCOME - a
+# stratum with no person-time publishes no rate - rather than the guard.
 rate_sql <- function(events, pyears, cfg)
   sprintf("CASE WHEN %s > 0 THEN (cast(%s as double) / %s) * %d END",
           pyears, events, pyears, as.integer(cfg$rate_multiplier))

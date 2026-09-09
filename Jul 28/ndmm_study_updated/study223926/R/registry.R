@@ -44,26 +44,36 @@ CRITERIA_1L <- c("I1_mm_dx", "I2_age", "I3_eligible_1l_tx", "I4_ce_pre",
 #
 # The count-only tables have no separate denominator: their N_PATIENTS is the
 # stratum, so it is both.
+# `group_by` is the stratum a table's rows divide up - the columns whose
+# combination one row of it is a slice of. mod_release() reads it to find the
+# groups where exactly one row was suppressed, because that row is recoverable
+# by subtracting the published rest from the group's own total.
 SUPPRESSION_SPEC <- list(
   S_SAFETY_RATES = list(
     n_col = "N_AT_RISK",
+    group_by = c("COHORT", "LOT_NUM", "PERIOD"),
     value_cols = c("N_PATIENTS", "N_EVENTS", "PERSON_YEARS", "RATE",
                    "RATE_LO", "RATE_HI")),
   S_HCRU_RATES = list(
     n_col = "N_AT_RISK",
+    group_by = c("COHORT", "LOT_NUM", "PERIOD"),
     value_cols = c("N_PATIENTS", "N_EVENTS", "PERSON_YEARS", "RATE",
                    "MEAN_LOS", "MEDIAN_LOS", "N_LOS_EXCLUDED")),
   S_MALIGNANCY_RATES = list(
     n_col = "N_AT_RISK",
+    group_by = c("COHORT", "LOT_NUM", "PERIOD"),
     value_cols = c("N_PATIENTS", "PERSON_YEARS", "RATE")),
   S_PATTERNS = list(
     n_col = "N_PATIENTS",
+    group_by = c("COHORT", "LOT_NUM"),
     value_cols = c("PCT")),
   S_SWITCH = list(
     n_col = "N_PATIENTS",
+    group_by = c("COHORT", "FROM_LOT"),
     value_cols = character(0)),
   S_TX_ATTRITION = list(
     n_col = "N_PATIENTS",
+    group_by = c("COHORT", "LOT_NUM"),
     value_cols = c("N_DENOM", "PCT"))
 )
 

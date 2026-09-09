@@ -132,6 +132,17 @@ acute_washout_round_sql <- function(events, periods, counted, cfg,
             AND c2.LOT_NUM = p.LOT_NUM AND c2.CONDITION = e.CONDITION
             AND c2.PERIOD = '%s'
             AND datediff(e.EVENT_DT, c2.EVENT_DT) < %d
+            -- Counted events BEFORE this one. datediff is signed, so
+            -- without this a counted event LATER than e is within w days of
+            -- it by a negative margin and would suppress e.
+            --
+            -- Unreachable as the round is written, and kept anyway. Each
+            -- round takes rn = 1, the EARLIEST still-eligible event, so the
+            -- counted set only ever grows forwards: a candidate far enough
+            -- from every earlier counted event would have been picked before
+            -- the later one was. Removing this changes no answer the suite
+            -- can produce - which is a fact about how candidates are chosen,
+            -- not about the rule, so the rule keeps saying what it means.
             AND c2.EVENT_DT <= e.EVENT_DT
         )
     ) t

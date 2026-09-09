@@ -31,7 +31,16 @@ mod_release <- function(con, cfg, cohorts) {
     spec <- SUPPRESSION_SPEC[[tbl]]
     src  <- wrk(tbl)
     out  <- wrk(paste0(tbl, "_RELEASE"))
-    hit  <- sprintf("%s IS NOT NULL AND %s < %d", spec$n_col, spec$n_col, min_n)
+    # A count that cannot be read has not been shown to clear the floor.
+    #
+    # This was `n IS NOT NULL AND n < min`, so a row whose denominator came
+    # back NULL was left alone and published its rate - the one gate between a
+    # small cell and the outside, failing open on exactly the row that says
+    # "we do not know how many patients this rests on". Every denominator the
+    # modules write today is non-NULL by construction, but the registry is
+    # built so a new module appears here without an edit, and this is not a
+    # rule that should wait for the module that breaks it.
+    hit  <- sprintf("(%s IS NULL OR %s < %d)", spec$n_col, spec$n_col, min_n)
 
     # The count itself is nulled too. Suppressing the rate and publishing the
     # n it was computed from suppresses nothing.
@@ -44,30 +53,44 @@ mod_release <- function(con, cfg, cohorts) {
       SELECT * EXCEPT (%s),
              %s,
              CASE WHEN %s THEN 1 ELSE 0 END AS SUPPRESSED,
-             CASE WHEN %s THEN 'n < %d' END AS SUPPRESSION_REASON
+             CASE WHEN %s IS NULL THEN 'n unknown'
+                  WHEN %s < %d THEN 'n < %d' END AS SUPPRESSION_REASON
       FROM %s",
       out, paste(c(spec$n_col, spec$value_cols), collapse = ", "),
       paste(nulled, collapse = ",\n             "),
-      hit, hit, min_n, src),
+      hit, spec$n_col, spec$n_col, min_n, min_n, src),
       qc = sprintf("SELECT count(*) AS n_rows, sum(SUPPRESSED) AS n_suppressed
                     FROM %s", out),
       allow_empty = TRUE)
   }
 
-  # A group with exactly one suppressed row gives that row away by subtraction.
-  # Reported, not fixed: regrouping is the analyst's call, and silently merging
-  # categories would change what the table means.
-  db_exec(con, sprintf("
-    CREATE OR REPLACE TEMPORARY VIEW s_complementary_risk AS
-    SELECT COHORT, LOT_NUM, PERIOD, count(*) AS n_suppressed
-    FROM %s WHERE SUPPRESSED = 1
-    GROUP BY COHORT, LOT_NUM, PERIOD HAVING count(*) = 1",
-    wrk("S_SAFETY_RATES_RELEASE")))
-  n <- db_q(con, "SELECT count(*) AS n FROM s_complementary_risk")$n[1]
-  if (!is.na(n) && n > 0)
-    log_msg("  WARNING: ", n, " group(s) in S_SAFETY_RATES_RELEASE have ",
-            "exactly one suppressed row, so that row is recoverable by ",
-            "subtraction. Regroup before the table leaves the warehouse.")
+  # A group with exactly one suppressed row gives that row away by
+  # subtraction: every other row in the group is published, and the group's
+  # own total is too, so the withheld cell is the difference.
+  #
+  # Reported, not fixed: regrouping is the analyst's call, and silently
+  # merging categories would change what the table means.
+  #
+  # EVERY suppressed table, not only S_SAFETY_RATES. The check was written for
+  # one and named the other five nowhere, so five tables published a
+  # recoverable cell with nothing said - and the decision on record was to
+  # report it, not to report it for one table. The group is the stratum a
+  # table's rows divide up, which differs per table, so SUPPRESSION_SPEC
+  # declares it beside the count column it is about.
+  for (tbl in names(SUPPRESSION_SPEC)) {
+    grp <- SUPPRESSION_SPEC[[tbl]]$group_by
+    if (!length(grp)) next
+    rel <- wrk(paste0(tbl, "_RELEASE"))
+    n <- db_q(con, sprintf(
+      "SELECT count(*) AS n FROM (SELECT %1$s FROM %2$s WHERE SUPPRESSED = 1
+         GROUP BY %1$s HAVING count(*) = 1)",
+      paste(grp, collapse = ", "), rel))$n[1]
+    if (!is.na(n) && n > 0)
+      log_msg("  WARNING: ", n, " group(s) in ", tbl, "_RELEASE have exactly ",
+              "one suppressed row, so that row is recoverable by subtraction ",
+              "from the rest of its ", paste(grp, collapse = "/"),
+              " group. Regroup before the table leaves the warehouse.")
+  }
   log_msg("  released ", length(SUPPRESSION_SPEC), " table(s) with n < ",
           min_n, " suppressed")
 }
