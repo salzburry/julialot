@@ -342,7 +342,15 @@ server <- function(input, output, session) {
         da <- apply_keys(read_table(SRC, s$prefix, tb, DASH_CFG$prefer_release), sp, selection())
         db <- apply_keys(read_table(SRC, b$prefix, tb, DASH_CFG$prefer_release), sp, selection())
         cm <- compare_tables(da, db, sp, sp$rate)
-        if (!nrow(cm)) return("")
+        # An empty comparison because the two are not comparable is not the
+        # same as an empty one because nothing was selected, and only the
+        # first is worth a sentence.
+        if (!nrow(cm)) {
+          why <- attr(cm, "why")
+          return(if (is.null(why)) "" else paste0(
+            "<h5>", html_escape(sp$label), "</h5>",
+            '<div class="alert">', html_escape(why), "</div>"))
+        }
         # The comparison is a released number too. It was built from the two
         # scenarios' rows and rendered straight to the page, so a stratum both
         # normal panels withheld came back here as A, B and their delta.

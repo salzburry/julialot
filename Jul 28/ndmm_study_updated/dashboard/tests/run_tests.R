@@ -208,6 +208,259 @@ cat("\nsummaries\n")
      "and is withheld when the stratum is under the floor")
 }
 
+cat("\nwithholding a cell is not the same as hiding it\n")
+# Everything above was reached by mutating the source and seeing whether this
+# suite noticed. These are the places it did not.
+{
+  # --- an identifier is dropped whatever case the warehouse returned it in ---
+  ok(!"patid" %in% names(drop_identifiers(
+       data.frame(patid = "P000001", X = 1, stringsAsFactors = FALSE))),
+     "a lower-case patid is an identifier too, and is dropped")
+  ok(!"PatId" %in% names(drop_identifiers(
+       data.frame(PatId = "P000001", X = 1, stringsAsFactors = FALSE))),
+     "...and so is a mixed-case one")
+  ok(identical(names(drop_identifiers(
+       data.frame(patid = 1, KEEP = 2, clmid = 3))), "KEEP"),
+     "...every identifier the warehouse uses, in any case, and nothing else")
+  # The two readers have to agree about the same column.
+  low <- data.frame(patid = c("A", "B", "A"), X = 1, stringsAsFactors = FALSE)
+  ok(identical(population_n(low, list(name = "T", shape = "subject",
+                                      id = "PATID")), 2L),
+     "the population is counted off that column whatever its case")
+
+  # --- a suppressed level cannot be recovered by subtraction ---
+  # 100 patients, 97 in one level and 3 in the other. The caption publishes
+  # the stratum size, so withholding only the 3 hides nothing.
+  two <- tabulate_cat(data.frame(SEX = c(rep("F", 97), rep("M", 3))),
+                      "SEX", min_n = 25L)
+  ok(all(two$SUPPRESSED == 1L) && all(is.na(two$N)),
+     "one of two levels cannot be withheld alone, so both are")
+  three <- tabulate_cat(
+    data.frame(G = c(rep("a", 60), rep("b", 37), rep("c", 3))), "G",
+    min_n = 25L)
+  ok(sum(three$SUPPRESSED) == 2L,
+     "a single small level takes the next-smallest with it")
+  ok(is.na(three$N[three$LEVEL == "c"]) && is.na(three$N[three$LEVEL == "b"]) &&
+       identical(three$N[three$LEVEL == "a"], 60L),
+     "...the smallest of the others, so the largest level still publishes")
+  ok(sum(three$N, na.rm = TRUE) < 100,
+     "...and the published levels no longer add to the stratum")
+  none <- tabulate_cat(data.frame(G = c(rep("a", 60), rep("b", 40))), "G",
+                       min_n = 25L)
+  ok(sum(none$SUPPRESSED) == 0L,
+     "where nothing was withheld in the first place, nothing else is")
+  both <- tabulate_cat(
+    data.frame(G = c(rep("a", 60), rep("b", 3), rep("c", 4))), "G",
+    min_n = 25L)
+  ok(sum(both$SUPPRESSED) == 2L,
+     "two levels already below the floor need no third")
+
+  # --- a suppressed continuous summary does not publish its own count ---
+  sn <- summarise_num(data.frame(CCI = c(1, 2, 3, rep(NA, 97))), "CCI",
+                      min_n = 25L)
+  ok(sn$SUPPRESSED == 1L && is.na(sn$N),
+     "three patients with a value is a count of three, and is withheld")
+  ok(is.na(sn$N_MISSING),
+     "...and so is the number missing, which subtracts to the same thing")
+  sn2 <- summarise_num(data.frame(CCI = as.numeric(1:40)), "CCI", min_n = 25L)
+  ok(identical(sn2$N, 40L) && !is.na(sn2$MEDIAN),
+     "a stratum that clears the floor reports its count and its summary")
+
+  # --- escaping ---
+  # The ampersand FIRST, or every other substitution is undone by it: a value
+  # of "&lt;script&gt;" would otherwise reach the page as markup.
+  ok(identical(html_escape("&lt;script&gt;"), "&amp;lt;script&amp;gt;"),
+     "an ampersand is escaped, so an already-escaped value cannot be unescaped")
+  ok(identical(html_escape("<b>"), "&lt;b&gt;"), "angle brackets are escaped")
+  ok(identical(html_escape('a"b'), "a&quot;b"),
+     "and a double quote, which is what closes an attribute")
+  ok(identical(html_escape("a'b"), "a&#39;b"), "and a single quote")
+  ok(identical(html_escape(NA), ""), "a missing value escapes to nothing")
+  ok(!grepl("<script>", html_table(data.frame(X = "<script>alert(1)</script>")),
+            fixed = TRUE),
+     "a cell value that looks like a script does not reach the page as one")
+
+  # --- a withheld number never reads as a zero ---
+  ok(identical(fmt_num(NA_real_, 0), "—"),
+     "a withheld cell shows the em dash, not a zero")
+  ok(identical(fmt_num(0, 0), "0"), "...and an actual zero shows as one")
+  ok(identical(fmt_num(1234, 0), "1,234"), "a count is grouped")
+  ok(identical(fmt_num(12.345, 2), "12.35"), "and a rate is rounded")
+
+  # --- the floor's own boundary ---
+  sp_r <- table_spec("S_SAFETY_RATES")
+  at <- function(n) data.frame(
+    COHORT = "1L", LOT_NUM = 1L, PERIOD = "FOLLOWUP", CONDITION = "X",
+    N_AT_RISK = as.integer(n), N_EVENTS = 5L, PERSON_YEARS = 10, RATE = 120,
+    stringsAsFactors = FALSE)
+  ok(is.na(apply_floor(at(24), sp_r, 25L)$RATE[1]),
+     "one patient below the floor is withheld")
+  ok(!is.na(apply_floor(at(25), sp_r, 25L)$RATE[1]),
+     "...and exactly at the floor is published - the rule is at-or-above")
+
+  # --- a comparison needs BOTH sides ---
+  a <- at(500); b <- at(30); b$RATE <- 140
+  cs <- suppress_comparison(compare_tables(a, b, sp_r, "RATE"), a, b, sp_r,
+                            floor_n = 100L)
+  ok(is.na(cs$DELTA[1]),
+     "a stratum one side of which is under the floor publishes no difference")
+  ok(identical(cs$RELEASED[1], 0L),
+     "...even though the other side is far above it")
+
+  # --- the bar decisions, without a plot device ---
+  rates <- data.frame(
+    COHORT = "1L", LOT_NUM = 1L, PERIOD = c("BASELINE", "FOLLOWUP"),
+    CONDITION = "NEUTROPENIA", N_AT_RISK = 500L, N_EVENTS = 10L,
+    PERSON_YEARS = c(10, 1000), RATE = c(1000, 10), stringsAsFactors = FALSE)
+  bd <- stratum_bar_data(rates, sp_r, "CONDITION", "RATE")
+  ok(isTRUE(bd$ok) && length(bd$values) == 2L,
+     "two strata are two bars")
+  ok(identical(sort(bd$values), c(10, 1000)),
+     "...each carrying its own rate, and neither their average")
+  ok(!any(abs(bd$values - 505) < 1e-9), "...so 505 is never drawn")
+  dup <- rbind(rates[1, ], rates[1, ])
+  ok(isFALSE(stratum_bar_data(dup, sp_r, "CONDITION", "RATE")$ok),
+     "two rows on one stratum are refused, not combined")
+  ok(isFALSE(stratum_bar_data(
+       transform(rates, RATE = NA_real_), sp_r, "CONDITION", "RATE")$ok),
+     "and a selection whose values are all withheld draws nothing")
+
+  sp_lot <- table_spec("LOT_LONG_FINAL")
+  lot <- rbind(
+    data.frame(PATID = rep(sprintf("B%02d", 1:40), each = 2), LOT_NUM = 1L,
+               stringsAsFactors = FALSE),
+    data.frame(PATID = rep(sprintf("S%02d", 1:3), each = 2), LOT_NUM = 2L,
+               stringsAsFactors = FALSE))
+  cb <- count_bar_data(lot, sp_lot, "LOT_NUM", floor_n = 25L)
+  ok(isTRUE(cb$ok) && identical(cb$labels, "1"),
+     "a line count is drawn for the group that clears the patient floor")
+  ok(identical(unname(cb$values), 80L),
+     "...counting LINES, which is what a row of that table is")
+  ok(identical(cb$patients, 40L),
+     "...while the floor was tested on the 40 patients behind them")
+  ok(isFALSE(count_bar_data(lot, sp_lot, "LOT_NUM", floor_n = 100L)$ok),
+     "and where no group clears it, nothing is drawn")
+
+  # --- a caller that hands in a population is believed over nrow() ---
+  sub <- data.frame(PATID = rep("P1", 40), AGE_BAND = "65-74",
+                    stringsAsFactors = FALSE)
+  sp_d <- table_spec("S_DEMOGRAPHICS")
+  ok(all(summarise_subject(sub, sp_d, min_n = 25L, n_population = 1L)$SUPPRESSED == 1L),
+     "forty rows for one patient is one patient, and is withheld")
+  ok(identical(attr(summarise_subject(sub, sp_d, min_n = 25L,
+                                      n_population = 1L), "n_stratum"), 1L),
+     "...and the stratum reported is the population, not the row count")
+
+  # --- a count that cannot be read is not a count that cleared the floor ---
+  # released() has always failed closed on an unknown population. apply_floor()
+  # failed open on the same question, and the two decide it in different
+  # panels.
+  unreadable <- function(v) { x <- at(500); x$N_AT_RISK <- v; x }
+  ok(is.na(apply_floor(unreadable(NA), sp_r, 25L)$RATE[1]),
+     "a row whose denominator is missing publishes no rate")
+  ok(is.na(apply_floor(unreadable("<25"), sp_r, 25L)$RATE[1]),
+     "...nor one whose denominator arrived as a pre-suppression marker")
+  ok(!is.na(apply_floor(unreadable("500"), sp_r, 25L)$RATE[1]),
+     "...while a count that reads as a number is still just a number")
+  ok(identical(apply_floor(unreadable(NA), sp_r, 25L)$SUPPRESSED[1], 1L),
+     "...and the row says it was withheld")
+
+  # --- two readings have to be stratified the same way ---
+  ka <- at(500); kb <- ka[, setdiff(names(ka), "PERIOD")]
+  cmk <- compare_tables(ka, kb, sp_r, "RATE")
+  ok(nrow(cmk) == 0L,
+     "a comparison whose two sides carry different keys produces no rows")
+  ok(!is.null(attr(cmk, "why")) && grepl("PERIOD", attr(cmk, "why")),
+     "...and says which key is on one side only")
+  ok(nrow(compare_tables(ka, at(500), sp_r, "RATE")) == 1L,
+     "while two readings keyed the same way compare as one row")
+
+  # --- a number that is not a number ---
+  ok(identical(fmt_num("n/a", 0), "—"),
+     "a value that is not a number reads as withheld, not as zero")
+  ok(identical(fmt_num(c(1, NA, 3), 0), c("1", "—", "3")),
+     "...and a vector keeps its positions")
+
+  # --- the command a viewer is told to run ---
+  # Printed for someone to paste into a shell, so a setting value is a shell
+  # injection surface. These pass today; nothing held them to it.
+  ok(identical(sh_quote("a; rm -rf /"), "'a; rm -rf /'"),
+     "a shell metacharacter in a setting is quoted, not passed through")
+  ok(identical(sh_quote("a'b"), "'a'\\''b'"),
+     "...and an embedded quote closes and reopens rather than escaping the string")
+  ok(identical(sh_quote(c("a", "b")), "'a,b'"),
+     "a multi-valued setting is one quoted argument")
+  sc <- scenario_command(list(months_as = 30, nope = 1), prefix = "s_new_")
+  ok(grepl("export OBJECT_PREFIX='s_new_'", sc$command, fixed = TRUE),
+     "the command names the prefix the scenario would write under")
+  ok(identical(sc$unsupported, "nope"),
+     "...and a setting the package has no variable for is reported, not emitted")
+  ok(!grepl("nope", sc$command, fixed = TRUE),
+     "...and never reaches the command as an export")
+
+  # --- a panel switched off by a typo would be invisible ---
+  local({
+    old <- Sys.getenv("SHOW_HEADLINE", unset = NA)
+    on.exit(if (is.na(old)) Sys.unsetenv("SHOW_HEADLINE") else
+              Sys.setenv(SHOW_HEADLINE = old), add = TRUE)
+    Sys.setenv(SHOW_HEADLINE = "yes")
+    ok(!is.na(errs(panel_enabled(list(name = "headline")))),
+       "SHOW_<PANEL> set to anything but TRUE or FALSE stops startup")
+    Sys.setenv(SHOW_HEADLINE = "FALSE")
+    ok(isFALSE(panel_enabled(list(name = "headline"))), "...FALSE hides it")
+    Sys.unsetenv("SHOW_HEADLINE")
+    ok(isTRUE(panel_enabled(list(name = "headline"))), "...and unset shows it")
+  })
+
+  # --- a run that did not finish is not a scenario ---
+  ok(isTRUE(scenario_is_usable(SCENARIOS[[1]])), "a complete run is usable")
+  for (st in c("failed", "started", "")) {
+    ok(isFALSE(scenario_is_usable(utils::modifyList(SCENARIOS[[1]],
+                                                    list(state = st)))),
+       paste0("...and a run recorded as '", st, "' is not"))
+  }
+
+  # --- path segments ---
+  ok(!safe_segment("../../etc"), "a path segment cannot climb out of the root")
+  ok(!safe_segment(".."), "...nor be the climb itself")
+  ok(!safe_segment("a/b"), "...nor carry a separator")
+  ok(!safe_segment(""), "...nor be empty")
+  ok(!safe_segment(c("a", "b")), "...nor be two things")
+  ok(!safe_segment(".hidden"), "...nor start with a dot")
+  ok(safe_segment("s223926_") && safe_segment("S_TTE"),
+     "while an ordinary prefix and table name are fine")
+
+  # --- the run a prefix holds is the NEWEST one it recorded ---
+  src_md <- list(read = function(prefix, table) data.frame(
+    RUN_ID = c("older", "newer"),
+    UPDATED_AT = c("2026-01-01 00:00:00", "2026-06-01 00:00:00"),
+    stringsAsFactors = FALSE))
+  ok(identical(current_run_id(src_md, "p_"), "newer"),
+     "a prefix re-run reports its latest run, not whichever row came back first")
+  src_one <- list(read = function(prefix, table) data.frame(
+    RUN_ID = "only", stringsAsFactors = FALSE))
+  ok(identical(current_run_id(src_one, "p_"), "only"),
+     "...and a table with no timestamp still reports its run")
+
+  # --- the released table is preferred over the raw one ---
+  rel_name <- names(SUPPRESSION_SPEC_NAMES())[1]
+  if (!is.null(rel_name)) {
+    base <- sub("_RELEASE$", "", rel_name)
+    src_rel <- list(read = function(prefix, table)
+      data.frame(WHICH = if (endsWith(table, "_RELEASE")) "release" else "raw",
+                 stringsAsFactors = FALSE))
+    ok(identical(read_table(src_rel, "p_", base, TRUE)$WHICH, "release"),
+       "a table with a released form is read from that form")
+    ok(identical(read_table(src_rel, "p_", base, FALSE)$WHICH, "raw"),
+       "...and only a caller that asks for the raw one gets it")
+    ok(identical(attr(read_table(src_rel, "p_", base, TRUE), "table_source"),
+                 "release"),
+       "...with the page able to say which it was given")
+  } else {
+    ok(FALSE, "the package declares no suppression spec to test the preference against")
+  }
+}
+
 cat("\nKaplan-Meier\n")
 {
   # Hand-worked: 5 subjects, events at 1 and 3, censored at 2, 4, 5.
@@ -586,6 +839,8 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
      "a panel reads no rows once its snapshot has moved under it")
   ok(grepl("rebuilt since the page was opened", app, fixed = TRUE),
      "...and says so, rather than showing an empty table")
+  ok(grepl('why <- attr(cm, "why")', app, fixed = TRUE),
+     "and a comparison refused for being incomparable says why, not nothing")
 }
 
 cat("\nthe readings survive the trip from the producer\n")

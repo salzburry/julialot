@@ -167,26 +167,41 @@ stratum_label <- function(d, spec, lab) {
     else paste0(k, "=", as.character(d[[k]]))), sep = " · "))
 }
 
-plot_stratum_bars <- function(d, spec, lab, val, main) {
+# What the bars ARE, separately from drawing them.
+#
+# The decision lived inside the plot call, and a plot returns nothing a test
+# can read - so the two rules that matter here, that strata are never averaged
+# and that a bar resting on too few patients is not drawn, were reachable only
+# through Shiny. Same reason panel_table_html() and kpi_row_html() left the
+# server.
+#
+# Returns labels and values to draw, or ok = FALSE and the reason not to.
+stratum_bar_data <- function(d, spec, lab, val) {
   L <- stratum_label(d, spec, lab)
   v <- suppressWarnings(as.numeric(d[[val]]))
   keep <- !is.na(v)
   L <- L[keep]; v <- v[keep]
-  if (!length(v)) return(plot_empty("Every value in this selection is withheld."))
+  if (!length(v))
+    return(list(ok = FALSE, why = "Every value in this selection is withheld."))
   if (anyDuplicated(L))
-    return(plot_empty(paste0(
+    return(list(ok = FALSE, why = paste0(
       "This selection holds more than one row per stratum, so a bar would ",
       "have to combine them. The table beside this panel shows them separately.")))
   o <- order(-v)
-  plot_bar(L[o], v[o], main = main, xlab = val)
+  list(ok = TRUE, labels = L[o], values = v[o], xlab = val)
+}
+
+plot_stratum_bars <- function(d, spec, lab, val, main) {
+  b <- stratum_bar_data(d, spec, lab, val)
+  if (!b$ok) return(plot_empty(b$why))
+  plot_bar(b$labels, b$values, main = main, xlab = b$xlab)
 }
 
 # A count of rows, broken down. The bar counts what the table's rows ARE -
 # lines, where the table is one row per patient and line - and that is a
 # legitimate figure. The FLOOR is still about patients, so the patients behind
 # each bar are counted and a bar below the floor is dropped rather than drawn.
-plot_count_bars <- function(d, spec, lab, main, floor_n,
-                            package_min_n = 25L) {
+count_bar_data <- function(d, spec, lab, floor_n, package_min_n = 25L) {
   fl  <- effective_floor(floor_n, package_min_n)
   gr  <- table_grain(spec)
   lv  <- as.character(d[[lab]])
@@ -197,12 +212,19 @@ plot_count_bars <- function(d, spec, lab, main, floor_n,
   n_row <- vapply(parts, length, integer(1))
   ok_bar <- vapply(n_pat, released, logical(1), fl)
   if (!any(ok_bar))
-    return(plot_empty(sprintf(
+    return(list(ok = FALSE, why = sprintf(
       "Every %s here rests on fewer than %s patients, so none is shown.",
       sub("s$", "", grain_noun(gr)), fmt_num(fl, 0))))
   o <- order(-n_row[ok_bar])
-  plot_bar(names(parts)[ok_bar][o], n_row[ok_bar][o], main = main,
-           xlab = grain_noun(gr))
+  list(ok = TRUE, labels = names(parts)[ok_bar][o], values = n_row[ok_bar][o],
+       patients = unname(n_pat[ok_bar][o]), xlab = grain_noun(gr))
+}
+
+plot_count_bars <- function(d, spec, lab, main, floor_n,
+                            package_min_n = 25L) {
+  b <- count_bar_data(d, spec, lab, floor_n, package_min_n)
+  if (!b$ok) return(plot_empty(b$why))
+  plot_bar(b$labels, b$values, main = main, xlab = b$xlab)
 }
 
 # ---- comparisons ------------------------------------------------------------

@@ -23,6 +23,10 @@
 safe_segment <- function(x) {
   x <- as.character(x %||% "")
   length(x) == 1L && nzchar(x) && !is.na(x) &&
+    # The anchor already refuses "." and ".." - the first character has to be
+    # alphanumeric - so the second test is redundant and provably cannot fire.
+    # Kept as the explicit statement of what this is for, since the anchor is
+    # doing that work by accident rather than by saying so.
     grepl("^[A-Za-z0-9][A-Za-z0-9._-]*$", x) && !grepl("^[.]{1,2}$", x)
 }
 
