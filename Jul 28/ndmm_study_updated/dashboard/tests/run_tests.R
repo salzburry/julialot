@@ -16,6 +16,15 @@ setwd(here)
 
 pass <- 0L; fail <- 0L
 ok <- function(cond, what) {
+  # `cond` is evaluated HERE, not by the caller, so an assertion whose
+  # expression raises is a FAILED assertion rather than a dead run. It used to
+  # propagate: one mutation made split_statements() throw and the suite
+  # stopped with a stack trace, losing every result after it and reporting no
+  # count at all.
+  cond <- tryCatch(cond, error = function(e) {
+    what <<- paste0(what, "  [raised: ", conditionMessage(e), "]")
+    FALSE
+  })
   if (isTRUE(cond)) { pass <<- pass + 1L; cat("  ok    ", what, "\n") }
   else { fail <<- fail + 1L; cat("  FAIL  ", what, "\n") }
 }

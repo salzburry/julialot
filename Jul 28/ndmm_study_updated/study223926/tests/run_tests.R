@@ -24,6 +24,15 @@ suppressMessages({
 
 .pass <- 0L; .fail <- character(0)
 ok <- function(cond, what) {
+  # `cond` is evaluated HERE, not by the caller, so an assertion whose
+  # expression raises is a FAILED assertion rather than a dead run. It used to
+  # propagate: one mutation made split_statements() throw and the suite
+  # stopped with a stack trace, losing every result after it and reporting no
+  # count at all.
+  cond <- tryCatch(cond, error = function(e) {
+    what <<- paste0(what, "  [raised: ", conditionMessage(e), "]")
+    FALSE
+  })
   if (isTRUE(cond)) { .pass <<- .pass + 1L; cat("  ok   ", what, "\n") }
   else { .fail <<- c(.fail, what); cat("  FAIL ", what, "\n") }
 }
@@ -333,6 +342,52 @@ cat("\nsparklyr plumbing\n")
      "a `*/` before a `/*` does not steal the slash the opener needs")
   ok(identical(split_statements("a b*/*-/'*/"), "a b*/*-/'*/"),
      "...and the comment it opens still closes at the next `*/`")
+
+  # Two latent traps, found by an adversarial pass and closed before anything
+  # emitted the shape that would have hit them.
+  #
+  # 1. Only `'` was tracked. Spark writes a quoted identifier in BACKTICKS and
+  #    this package's SQL already uses them; under ANSI mode a double quote is
+  #    an identifier too. A `;` inside either cut the statement in half.
+  ok(identical(split_statements("SELECT `a;b` AS x"), "SELECT `a;b` AS x"),
+     "a semicolon inside a backtick identifier does not split the statement")
+  ok(identical(split_statements("SELECT \"a;b\" AS x"), "SELECT \"a;b\" AS x"),
+     "nor one inside a double-quoted run")
+  ok(identical(split_statements("SELECT `a--b`, \"c/*d\" FROM t"),
+               "SELECT `a--b`, \"c/*d\" FROM t"),
+     "and a comment marker inside either is not a comment")
+  ok(identical(split_statements("SELECT `a``b`; SELECT 2"),
+               c("SELECT `a``b`", "SELECT 2")),
+     "a doubled backtick is an escaped one, and the real semicolon still splits")
+  ok(identical(split_statements("SELECT \"\"\"\" AS x"), "SELECT \"\"\"\" AS x"),
+     "a doubled double-quote likewise")
+  ok(grepl("unterminated string", errs(split_statements("SELECT `abc"))),
+     "an unterminated backtick stops, the same as an unterminated quote")
+  # Each quote closes on ITSELF. A backtick does not end a single-quoted
+  # literal, or `WHERE x = 'a`b'` would have become two statements at a
+  # semicolon after it.
+  ok(identical(split_statements("SELECT 'a`b;c' AS x"), "SELECT 'a`b;c' AS x"),
+     "a backtick inside a string literal does not close it")
+  ok(identical(split_statements("SELECT `a'b;c` AS x"), "SELECT `a'b;c` AS x"),
+     "and a quote inside a backtick identifier does not close that")
+
+  # 2. A template ending in a comment emitted that comment as a statement of
+  #    its own, and the warehouse would reject it. It surfaces as a failing
+  #    run, not as a bug here, which is why it is worth closing early.
+  ok(identical(split_statements("SELECT 1; -- trailing note"), "SELECT 1"),
+     "a trailing line comment is not sent as a statement of its own")
+  ok(identical(split_statements("SELECT 1;\n/* tail */\n"), "SELECT 1"),
+     "nor a trailing block comment")
+  ok(length(split_statements("-- only a comment")) == 0,
+     "a string that is nothing but a comment yields no statement")
+  ok(identical(split_statements("-- why\nSELECT 1"), "-- why\nSELECT 1"),
+     "while a comment BEFORE code keeps the statement, comment and all")
+  ok(identical(split_statements("SELECT '-- not a comment'"),
+               "SELECT '-- not a comment'"),
+     "and a comment marker inside a literal does not make a statement empty")
+  ok(identical(split_statements("/* a */ SELECT 1; /* b */ SELECT 2; /* c */"),
+               c("/* a */ SELECT 1", "/* b */ SELECT 2")),
+     "so a run of commented statements keeps the two with SQL in them")
   # The split walks the positions that can change state, not every character.
   # Written the other way - append each character to a growing vector - it was
   # quadratic: 30 KB took nearly three seconds, and a run emits 565 statements.

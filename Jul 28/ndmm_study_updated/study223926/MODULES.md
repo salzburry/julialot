@@ -182,6 +182,26 @@ without those rules and set `SEC2L_INPUT_IS_WIDE=TRUE`, or set
 `SEC2L_APPLY_OTHER_CANCER=TRUE` to build the nested version knowingly — the run
 then records that it did.
 
+### The statement splitter tracks all three quote characters
+
+Spark's `sql()` takes one statement, so templates written as a `CREATE` plus an
+`INSERT` are split on semicolons outside quotes and comments.
+
+All three quote characters are tracked: `'`, `"` and backtick. Only `'` was,
+and the package's own SQL already uses backticks — a `;` inside one would have
+cut a statement in half. Each closes on **itself**, and doubled inside means an
+escaped one, so a backtick in a string literal does not end it.
+
+A statement that is only comments and whitespace is dropped rather than sent.
+A template ending in a comment used to emit that comment as a statement, and
+the warehouse would reject it — surfacing as a failed run rather than as a bug
+here.
+
+Neither shape is emitted today, which is exactly why both were worth closing
+before something started to. The 565 statements a default run emits are
+byte-identical across the change, and 60,000 fuzzed strings over the full
+quote-and-comment alphabet agree with an independently written reference.
+
 ### A build in a session inherits nothing from the one before it
 
 Three things outlive a build: the config, the code-list manifest, and the input

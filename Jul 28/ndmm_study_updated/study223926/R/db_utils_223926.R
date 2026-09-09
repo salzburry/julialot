@@ -124,63 +124,105 @@ lot_tbl <- function(base_tbl) {
 # scanner reads the block-comment OPENER at the third character, and one
 # alternation matching left to right would take `*/` at the second and swallow
 # the `/`. Where a block comment closes is looked up separately, below.
-.SQL_TOKENS <- "--|/\\*|'|;|\n"
+#
+# All three quote characters are tracked, not just `'`. Spark writes a quoted
+# identifier in BACKTICKS and this package's own SQL already uses them; under
+# ANSI mode a double quote is an identifier too, and without it a `;` inside
+# either would have cut a statement in half. Each is closed by itself, and
+# doubled inside means an escaped one - the same rule for all three.
+.SQL_TOKENS <- "--|/\\*|'|\"|`|;|\n"
+.SQL_QUOTES <- c("'", "\"", "`")
 
 split_statements <- function(sql) {
   g   <- gregexpr(.SQL_TOKENS, sql)
   pos <- g[[1L]]
-  if (pos[1L] == -1L) return(.slice_statements(sql, integer(0), "code"))
+  if (pos[1L] == -1L)
+    return(.slice_statements(sql, integer(0), "code"))
   tok <- regmatches(sql, g)[[1L]]
   n <- length(pos)
   close_at <- gregexpr("\\*/", sql)[[1L]]
   close_at <- if (close_at[1L] == -1L) integer(0) else as.integer(close_at)
 
   cuts <- integer(0)
+  # Where each comment runs from and to, so a statement that is nothing but
+  # comments can be told from one that has SQL in it.
+  cs <- integer(0); ce <- integer(0); open_at <- NA_integer_
   state <- "code"   # code | quote | line_comment | block_comment
+  qch <- ""
   i <- 1L
   while (i <= n) {
     ch <- tok[i]
     if (state == "code") {
       if (ch == ";") {
         cuts <- c(cuts, pos[i])
-      } else if (ch == "'") {
-        state <- "quote"
+      } else if (ch %in% .SQL_QUOTES) {
+        state <- "quote"; qch <- ch
       } else if (ch == "--") {
-        state <- "line_comment"
+        state <- "line_comment"; open_at <- pos[i]
       } else if (ch == "/*") {
         # Jump to where the comment closes rather than walking its text. No
         # close is the unterminated case; `state` carries that to the error.
         q <- close_at[close_at >= pos[i] + 2L]
-        if (!length(q)) { state <- "block_comment"; break }
+        if (!length(q)) { state <- "block_comment"; open_at <- pos[i]; break }
+        cs <- c(cs, pos[i]); ce <- c(ce, q[1L] + 1L)
         resume <- q[1L] + 2L
         while (i < n && pos[i + 1L] < resume) i <- i + 1L
       }
     } else if (state == "quote") {
-      # '' inside a quoted string is an escaped quote, not the end of one.
+      # A doubled quote inside a quoted run is an escaped one, not the end.
       # Adjacent by POSITION, not merely the next token: 'a' || 'b' has two
       # quotes in a row with text between them, and the first string closes.
-      if (ch == "'") {
-        if (i < n && tok[i + 1L] == "'" && pos[i + 1L] == pos[i] + 1L)
+      if (ch == qch) {
+        if (i < n && tok[i + 1L] == qch && pos[i + 1L] == pos[i] + 1L)
           i <- i + 1L
         else state <- "code"
       }
     } else if (state == "line_comment") {
-      if (ch == "\n") state <- "code"
+      if (ch == "\n") {
+        state <- "code"; cs <- c(cs, open_at); ce <- c(ce, pos[i] - 1L)
+      }
     }
     i <- i + 1L
   }
-  .slice_statements(sql, cuts, state)
+  if (identical(state, "line_comment")) {
+    cs <- c(cs, open_at); ce <- c(ce, nchar(sql)); state <- "code"
+  }
+  .slice_statements(sql, cuts, state, cs, ce)
+}
+
+# Is there any SQL in this span, or only comments and whitespace?
+#
+# A template ending in a comment used to emit that comment as a statement of
+# its own, and the warehouse would reject it. Nothing writes one today, which
+# is why it would have surfaced as a failing run rather than as a bug here.
+.span_has_code <- function(sql, s, e, cs, ce) {
+  if (s > e) return(FALSE)
+  ov <- which(ce >= s & cs <= e)
+  if (!length(ov)) return(nzchar(trimws(substring(sql, s, e))))
+  ov <- ov[order(cs[ov])]
+  cur <- s
+  for (k in ov) {
+    a <- max(cs[k], s); b <- min(ce[k], e)
+    if (a > cur && nzchar(trimws(substring(sql, cur, a - 1L)))) return(TRUE)
+    cur <- max(cur, b + 1L)
+  }
+  cur <= e && nzchar(trimws(substring(sql, cur, e)))
 }
 
 # The statements are cut out of the original string rather than reassembled
 # character by character, so a split costs one substring per statement.
-.slice_statements <- function(sql, cuts, state) {
+.slice_statements <- function(sql, cuts, state, cs = integer(0), ce = integer(0)) {
   if (state == "quote")
     stop("split_statements: unterminated string literal in generated SQL")
   if (state == "block_comment")
     stop("split_statements: unterminated block comment in generated SQL")
-  out <- trimws(substring(sql, c(1L, cuts + 1L), c(cuts - 1L, nchar(sql))))
-  out[nzchar(out)]
+  starts <- c(1L, cuts + 1L)
+  ends   <- c(cuts - 1L, nchar(sql))
+  out <- trimws(substring(sql, starts, ends))
+  keep <- nzchar(out) &
+    vapply(seq_along(starts), function(k)
+      .span_has_code(sql, starts[k], ends[k], cs, ce), logical(1))
+  out[keep]
 }
 
 with_retry <- function(fn, max_retries = study_config()$max_retries,
