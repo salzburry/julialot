@@ -231,6 +231,9 @@ reset_cohort_columns <- function() {
   rm(list = ls(.input_cols), envir = .input_cols)
   invisible(TRUE)
 }
+# Registered rather than called by name from reset_run_state(): that runs
+# before this file is sourced, so it cannot reach anything defined here.
+register_run_reset("cohort_columns", reset_cohort_columns)
 
 # criterion -> the S_COHORT column carrying its verdict, for the funnel. A
 # criterion whose flag the input does not carry writes 1 for everyone, so the

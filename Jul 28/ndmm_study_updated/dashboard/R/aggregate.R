@@ -42,7 +42,14 @@ apply_floor <- function(d, spec, min_n, package_min_n = 25L) {
   if (is.null(n_col)) return(d)
   floor_n <- max(as.integer(min_n), as.integer(package_min_n))
   n <- suppressWarnings(as.numeric(d[[n_col]]))
-  hit <- !is.na(n) & n < floor_n
+  # A count that cannot be read is not a count that cleared the floor.
+  #
+  # This tested `!is.na(n) & n < floor_n`, so a row whose denominator came back
+  # NA - or as text, which is what a pre-suppressed marker like "<25" looks
+  # like - was left alone and published its rate. released() in R/prepare.R
+  # answers the same question the other way, and the two decide the same thing
+  # in different panels, so they cannot disagree about which way to fail.
+  hit <- is.na(n) | n < floor_n
   if (!any(hit)) return(d)
   vals <- intersect(c(spec$numerator, spec$events, spec$py, spec$rate,
                       spec$lo, spec$hi, spec$denom, spec$pct, spec$extra,
@@ -65,6 +72,20 @@ tabulate_cat <- function(d, col, min_n = 25L) {
                     stringsAsFactors = FALSE)
   out$PCT <- round(100 * out$N / sum(out$N), 1)
   out$SUPPRESSED <- as.integer(out$N < min_n)
+  # SECONDARY suppression. Withholding one level and publishing the rest is not
+  # withholding anything: the caption gives the stratum's size and the table
+  # gives every other level, so the hidden cell is the subtraction. A stratum
+  # of 100 with levels 97 and 3 published "97" beside "100 patients", and the 3
+  # was there for anyone who took the difference.
+  #
+  # So where exactly one level is withheld, the smallest of the others goes
+  # with it. Two unknowns cannot be recovered from one total. With only two
+  # levels that withholds the variable entirely, which is the right answer:
+  # one of two levels cannot be hidden at all.
+  if (sum(out$SUPPRESSED) == 1L && nrow(out) > 1L) {
+    open <- which(out$SUPPRESSED == 0L)
+    out$SUPPRESSED[open[which.min(out$N[open])]] <- 1L
+  }
   out$N[out$SUPPRESSED == 1L] <- NA
   out$PCT[out$SUPPRESSED == 1L] <- NA
   out
@@ -88,6 +109,15 @@ summarise_num <- function(d, col, min_n = 25L) {
     out$MIN <- round(min(x, na.rm = TRUE), 2); out$MAX <- round(max(x, na.rm = TRUE), 2)
   }
   out$SUPPRESSED <- as.integer(n < min_n)
+  # ...including the counts themselves. N is the number of patients with a
+  # value, and a suppressed row published it: a variable with three non-missing
+  # values in a stratum of a hundred reported "N = 3" beside every summary
+  # statistic withheld. N_MISSING goes too, because the stratum's size is in
+  # the caption and the two subtract.
+  #
+  # tabulate_cat() has always withheld N for a suppressed level. This is the
+  # same rule on the other half of the same table.
+  if (out$SUPPRESSED == 1L) { out$N <- NA_integer_; out$N_MISSING <- NA_integer_ }
   out
 }
 
@@ -99,6 +129,11 @@ km_estimate <- function(time, event) {
   keep <- !is.na(time) & !is.na(event) & time >= 0
   time <- as.numeric(time)[keep]; event <- as.integer(event)[keep]
   if (!length(time)) return(data.frame())
+  # A cohort with no event at all is a RESULT: everyone is still event-free at
+  # the end of their follow-up. Returning a bare data.frame() made the panel
+  # say "Nothing to show", which reads as missing data. The rows are empty
+  # because there is no step to draw, but the sample size and the follow-up it
+  # was observed over come back so the curve can be drawn flat across it.
   o <- order(time, -event)
   time <- time[o]; event <- event[o]
   ut <- sort(unique(time[event == 1L]))
@@ -127,10 +162,34 @@ km_estimate <- function(time, event) {
                stringsAsFactors = FALSE)
   })
   out <- do.call(rbind, Filter(Negate(is.null), rows))
-  if (is.null(out)) return(data.frame())
+  if (is.null(out)) out <- data.frame(
+    TIME = numeric(0), N_RISK = numeric(0), N_EVENT = numeric(0),
+    SURV = numeric(0), LOWER = numeric(0), UPPER = numeric(0))
   attr(out, "n") <- n
   attr(out, "n_event") <- sum(event == 1L)
+  # How far the cohort was actually observed. A curve drawn to the last EVENT
+  # stops early whenever the last subjects are censored, and stops at zero
+  # when none had an event at all.
+  attr(out, "follow_up") <- max(time)
   out
+}
+
+# The step function as points to draw: survival starts at 1 before the first
+# event and holds its last value to the end of observed follow-up.
+#
+# Separate from km_estimate() so that function still returns exactly one row
+# per event time - which is what the survival:: cross-check compares, and what
+# km_median() reads.
+km_steps <- function(km) {
+  fu <- attr(km, "follow_up") %||% NA_real_
+  if (is.null(km) || !nrow(km))
+    return(if (is.na(fu)) data.frame(TIME = numeric(0), SURV = numeric(0))
+           else data.frame(TIME = c(0, fu), SURV = c(1, 1)))
+  t <- c(0, km$TIME); v <- c(1, km$SURV)
+  if (!is.na(fu) && fu > km$TIME[nrow(km)]) {
+    t <- c(t, fu); v <- c(v, km$SURV[nrow(km)])
+  }
+  data.frame(TIME = t, SURV = v)
 }
 
 # Survival at a landmark, read off the step function.
@@ -158,10 +217,28 @@ km_median <- function(km) {
 # moves a stratum below the floor is exactly the thing worth seeing.
 compare_tables <- function(a, b, spec, value = NULL) {
   value <- value %||% spec$rate %||% spec$n_col
-  keys <- intersect(c(spec$keys, spec$facet, spec$groups), names(a))
+  want <- c(spec$keys, spec$facet, spec$groups)
+  keys <- intersect(want, names(a))
   if (is.null(a) || is.null(b) || !nrow(a) || !nrow(b) || !length(keys) ||
       !value %in% names(a) || !value %in% names(b))
     return(data.frame())
+  # Both sides have to be stratified the same way.
+  #
+  # The keys came off `a` alone, and b[[k]] for a key b does not carry is NULL
+  # - which paste() drops rather than complains about, so b's rows were keyed
+  # on fewer columns than a's. One row against one row came back as TWO, one
+  # of them a key that exists on neither side. Two scenarios whose tables have
+  # different columns are not comparable, and that is worth saying rather than
+  # joining on whatever they happen to share.
+  missing_b <- setdiff(keys, names(b))
+  if (length(missing_b)) {
+    out <- data.frame()
+    attr(out, "why") <- paste0(
+      "These two readings are not stratified the same way: ",
+      paste(missing_b, collapse = ", "),
+      " is on one side and not the other, so their rows do not correspond.")
+    return(out)
+  }
   ka <- do.call(paste, c(lapply(keys, function(k) as.character(a[[k]])), sep = "\r"))
   kb <- do.call(paste, c(lapply(keys, function(k) as.character(b[[k]])), sep = "\r"))
   all_k <- union(ka, kb)
@@ -206,13 +283,29 @@ ID_COLUMNS <- c("PATID", "PAT_PLANID", "PATIENT_ID", "MEMBER_ID", "CLMID")
 
 # Never rendered, whatever a spec says. An identifier that reaches the page is
 # a disclosure whether or not anything asked for it.
+# Matched case-insensitively, and subset by POSITION.
+#
+# The test was built in upper case and then subtracted against the original
+# names: intersect(toupper(names(d)), ID_COLUMNS) found "PATID" in a column
+# actually called `patid`, and setdiff(names(d), "PATID") then removed
+# nothing. A lower-case identifier reached the page - and warehouses do return
+# them that way; PERMISSIBLE_SUBS in the LOT build is written lower case, and
+# the melphalan reader already has to accept tableName or table_name.
+#
+# population_n() finds the identifier whatever its case, so the two disagreed
+# about the same column: one counted patients off it, the other published it.
 drop_identifiers <- function(d) {
   if (is.null(d) || !ncol(d)) return(d)
-  keep <- setdiff(names(d), intersect(toupper(names(d)), ID_COLUMNS))
-  d[, keep, drop = FALSE]
+  d[, !toupper(names(d)) %in% ID_COLUMNS, drop = FALSE]
 }
 
-summarise_subject <- function(d, spec, min_n = 25L) {
+# n_population is the number of PATIENTS this stratum rests on, and the
+# caller works it out with population_n() because only it knows the grain.
+# nrow() is that number only at patient grain: on LOT_LONG_FINAL, which is one
+# row per patient AND line, ten patients with three lines each came to 30 and
+# published a summary the floor should have withheld. NULL keeps the old
+# reading for a caller that has not been given a population.
+summarise_subject <- function(d, spec, min_n = 25L, n_population = NULL) {
   if (is.null(d) || !nrow(d)) return(data.frame())
   cats <- intersect(spec$categorical %||% character(0), names(d))
   nums <- intersect(spec$continuous %||% character(0), names(d))
@@ -223,7 +316,7 @@ summarise_subject <- function(d, spec, min_n = 25L) {
     nums <- rest[vapply(rest, function(cl) is.numeric(d[[cl]]), logical(1))]
     cats <- setdiff(rest, nums)
   }
-  n_stratum <- nrow(d)
+  n_stratum <- n_population %||% nrow(d)
   rows <- list()
   for (cl in cats) {
     tb <- tabulate_cat(d, cl, min_n = min_n)
@@ -244,8 +337,10 @@ summarise_subject <- function(d, spec, min_n = 25L) {
   if (!length(rows)) return(data.frame())
   out <- do.call(rbind, rows)
   # The whole stratum under the floor: nothing about it may be published, not
-  # even a level that happens to hold more than the floor on its own.
-  if (n_stratum < min_n) {
+  # even a level that happens to hold more than the floor on its own. An
+  # uncountable population is withheld too - it has not been shown to reach
+  # the floor.
+  if (is.na(n_stratum) || n_stratum < min_n) {
     out$N <- NA; out$PCT <- NA; out$MEAN <- NA; out$SD <- NA; out$MEDIAN <- NA
     out$SUPPRESSED <- 1L
   }

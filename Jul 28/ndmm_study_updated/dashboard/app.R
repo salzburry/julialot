@@ -134,9 +134,23 @@ server <- function(input, output, session) {
               div(class = "alert", sprintf("This run is '%s', not complete.", s$state)))
   })
 
+  # Has the snapshot been replaced since the app read it?
+  #
+  # Checked once per render rather than once per session: the scenarios are
+  # loaded at startup and a table is read when a panel opens, so a refresh in
+  # between put the new run's rows under the old run's metadata. Cached by
+  # Shiny's own reactive machinery, so it is one read per invalidation.
+  scenario_moved <- reactive({
+    s <- scn()
+    isFALSE(scenario_is_current(SRC, s))
+  })
+
   # One table, read and filtered the way every panel wants it.
   panel_data <- function(p, scenario) {
     if (is.na(p$table)) return(NULL)
+    # Fail closed: rows from a run the sidebar is not describing are not this
+    # scenario's, whatever the directory is called.
+    if (isTRUE(scenario_moved())) return(NULL)
     # A LOT panel reads the run this scenario named, not the scenario's own
     # prefix - the lines were built by a different build.
     d <- if (identical(p$source %||% "study", "lot"))
@@ -152,6 +166,12 @@ server <- function(input, output, session) {
     s <- scn()
     if (!isTRUE(p$available))
       return(div(class = "alert", html_escape(p$why)))
+    # Said once, on every panel, rather than a page of empty tables.
+    if (isTRUE(scenario_moved()))
+      return(tagList(h4(p$label), div(class = "alert", paste0(
+        "This snapshot has been rebuilt since the page was opened, so the ",
+        "settings and the LOT run named beside it belong to the previous run. ",
+        "Nothing is shown until the page is reloaded.")), tags$hr()))
     body <- switch(p$render,
       kpi    = ui_kpi(p, s),
       table  = ui_table(p, s),
@@ -193,6 +213,10 @@ server <- function(input, output, session) {
     uiOutput(id)
   }
 
+  # A headline count is a released number like any other. This one went
+  # straight from S_ATTRITION to the page, so a three-patient cohort was
+  # displayed at a floor of 25 while every table beside it withheld the same
+  # stratum.
   ui_kpi <- function(p, s) {
     id <- paste0("kpi_", p$name)
     output[[id]] <- renderUI({
@@ -200,8 +224,7 @@ server <- function(input, output, session) {
       if (is.null(d) || !nrow(d)) return(HTML(html_table(NULL)))
       last <- do.call(rbind, lapply(split(d, d$COHORT), function(x)
         x[which.max(x$STEP), , drop = FALSE]))
-      HTML(html_kpis(stats::setNames(
-        as.list(fmt_num(last$N_REMAINING, 0)), paste0(last$COHORT, " cohort"))))
+      HTML(kpi_row_html(last, input$floor, DASH_CFG$suppress_min_n))
     })
     uiOutput(id)
   }
@@ -233,11 +256,20 @@ server <- function(input, output, session) {
       sp <- table_spec(p$table, names(d %||% data.frame()))
       if (identical(p$render, "km")) {
         if (is.null(d) || !nrow(d)) return(plot_empty())
+        # The ANALYSIS set, not the table. S_TTE deliberately keeps the whole
+        # cohort and marks the restricted population with TTE_ELIGIBLE; the
+        # curve drawn over every row was a different cohort from the one the
+        # producer defined, with a first event that belonged to patients the
+        # analysis excludes.
+        pp <- prepare_panel(d, sp, input$floor, purpose = "tte",
+                            package_min_n = DASH_CFG$suppress_min_n)
+        if (!pp$released) return(plot_empty(pp$note))
         eps <- sp$endpoints
         curves <- stats::setNames(lapply(names(eps), function(e)
-          km_estimate(d[[eps[[e]][["time"]]]], d[[eps[[e]][["event"]]]])),
+          km_estimate(pp$rows[[eps[[e]][["time"]]]],
+                      pp$rows[[eps[[e]][["event"]]]])),
           names(eps))
-        return(plot_km(curves, main = p$label))
+        return(plot_km(curves, main = paste0(p$label, "  (n = ", pp$n, ")")))
       }
       if (is.null(d) || !nrow(d)) return(plot_empty())
       # A panel may name the column to break down by; otherwise the spec's
@@ -246,14 +278,9 @@ server <- function(input, output, session) {
       lab <- p$by %||% sp$facet %||% sp$keys[1]
       val <- sp$rate %||% sp$pct %||% sp$n_col
       if (is.null(lab) || !lab %in% names(d)) return(plot_empty())
-      if (is.null(val) || !val %in% names(d)) {
-        tb <- sort(table(as.character(d[[lab]])), decreasing = TRUE)
-        return(plot_bar(names(tb), as.integer(tb), main = p$label,
-                        xlab = "lines"))
-      }
-      agg <- stats::aggregate(d[[val]], by = list(L = as.character(d[[lab]])),
-                              FUN = function(x) mean(x, na.rm = TRUE))
-      plot_bar(agg$L, agg$x, main = p$label, xlab = val)
+      if (is.null(val) || !val %in% names(d))
+        return(plot_count_bars(d, sp, lab, p$label, input$floor))
+      plot_stratum_bars(d, sp, lab, val, p$label)
     }, height = 420)
     plotOutput(id, height = "420px")
   }
@@ -315,7 +342,20 @@ server <- function(input, output, session) {
         da <- apply_keys(read_table(SRC, s$prefix, tb, DASH_CFG$prefer_release), sp, selection())
         db <- apply_keys(read_table(SRC, b$prefix, tb, DASH_CFG$prefer_release), sp, selection())
         cm <- compare_tables(da, db, sp, sp$rate)
-        if (!nrow(cm)) return("")
+        # An empty comparison because the two are not comparable is not the
+        # same as an empty one because nothing was selected, and only the
+        # first is worth a sentence.
+        if (!nrow(cm)) {
+          why <- attr(cm, "why")
+          return(if (is.null(why)) "" else paste0(
+            "<h5>", html_escape(sp$label), "</h5>",
+            '<div class="alert">', html_escape(why), "</div>"))
+        }
+        # The comparison is a released number too. It was built from the two
+        # scenarios' rows and rendered straight to the page, so a stratum both
+        # normal panels withheld came back here as A, B and their delta.
+        cm <- suppress_comparison(cm, da, db, sp, input$floor,
+                                  DASH_CFG$suppress_min_n)
         paste0("<h5>", html_escape(sp$label), "</h5>",
                html_table(cm, max_rows = DASH_CFG$max_rows))
       })

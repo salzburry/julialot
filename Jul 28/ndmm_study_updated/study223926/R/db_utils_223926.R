@@ -38,12 +38,32 @@ study_config <- function() {
   .study_state$cfg
 }
 
+# A module's own per-build state, registered by the module that owns it.
+#
+# This runs BEFORE source_modules(), which is the whole point: the first build
+# in a process has no module loaded, so there is nothing of theirs to clear,
+# and the second has them all. Naming a module's function here instead meant
+# the reset called something that did not exist yet, and every fresh build
+# stopped on it before reading a single setting - the bundled suite could not
+# see it because it sources every module first.
+#
+# Registration is by name, so re-sourcing a module replaces its hook rather
+# than stacking another copy.
+register_run_reset <- function(name, fn) {
+  if (is.null(.study_state$resets)) .study_state$resets <- list()
+  .study_state$resets[[name]] <- fn
+  invisible(TRUE)
+}
+
 # Everything a build accumulates and a second build in the same session must
 # not inherit. Called once, at the top of build_223926().
+#
+# The two helpers named directly live in files build.R always sources, so they
+# are always there. Anything in R/modules/ registers itself instead.
 reset_run_state <- function() {
   .study_state$cfg <- NULL
   reset_codelist_manifest()
-  reset_cohort_columns()
+  for (f in .study_state$resets) f()
   invisible(TRUE)
 }
 

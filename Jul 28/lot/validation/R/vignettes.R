@@ -524,28 +524,60 @@ check_vignettes <- function(p, v = VIGNETTES) {
   if (anyDuplicated(ids))
     bad <- c(bad, paste0("duplicate id: ", paste(unique(ids[duplicated(ids)]), collapse = ", ")))
 
-  for (x in v) {
+  # A vignette whose PARAMETER is unusable is recorded and then left alone.
+  #
+  # It used to fall through to its own events(), which compute their offsets
+  # from that parameter - so an unset one produced a day of NA, and the pair
+  # comparison below then raised "missing value where TRUE/FALSE needed"
+  # before this function could report anything. The catalogue's whole job here
+  # is to say WHICH rule stopped holding, and it was dying with an R error
+  # instead. The suite did not notice, because its test for this only asked
+  # that something was raised.
+  usable <- rep(TRUE, length(v))
+  for (i in seq_along(v)) {
+    x  <- v[[i]]
     at <- paste0("'", x$id, "'")
     if (!x$confidence %in% c("derived", "to_confirm"))
       bad <- c(bad, paste0(at, ": confidence '", x$confidence, "' is not one of derived/to_confirm"))
     # A renamed parameter must break this, not silently describe a rule that
     # no longer exists.
     if (!is.na(x$param)) {
-      if (!x$param %in% names(VIGNETTE_PARAMS))
+      if (!x$param %in% names(VIGNETTE_PARAMS)) {
         bad <- c(bad, paste0(at, ": names parameter '", x$param, "', which is not one this catalogue knows"))
-      else if (is.null(p[[x$param]]) || is.na(p[[x$param]]))
+        usable[i] <- FALSE
+      } else if (is.null(p[[x$param]]) || is.na(p[[x$param]])) {
         bad <- c(bad, paste0(at, ": parameter '", x$param, "' is not set in this run's config"))
+        usable[i] <- FALSE
+      }
     }
+    # Redundant with the anyNA() branch below, which catches the same timeline
+    # and reports it - so removing this changes no verdict. It stays because
+    # events() is a function the catalogue supplies, and running one against a
+    # parameter already known to be unusable invites whatever error it happens
+    # to raise rather than the one this function means to give.
+    if (!usable[i]) next
     e <- tryCatch(x$events(p), error = function(err) NULL)
-    if (is.null(e) || !nrow(e))
+    if (is.null(e) || !nrow(e)) {
       bad <- c(bad, paste0(at, ": events() produced nothing"))
-    else if (is.unsorted(e$day))
+      usable[i] <- FALSE
+    } else if (anyNA(e$day)) {
+      # A vignette can hinge on a setting it does not name in `param` - the
+      # excess-AUTO case reads the tandem window without being about it - so
+      # an unset setting reaches the timeline through a case the parameter
+      # check above has nothing to say about. Named for what it is.
+      bad <- c(bad, paste0(at, ": events() produced a day that is not a number, ",
+                           "so a setting its timeline reads is unset"))
+      usable[i] <- FALSE
+    } else if (is.unsorted(e$day)) {
       bad <- c(bad, paste0(at, ": events are not in time order"))
+    }
   }
 
   # Each pair straddles its parameter, and the two sides disagree. This is what
   # makes the catalogue move when a setting does.
-  paired <- Filter(function(x) !is.null(x$pair), v)
+  # Only the vignettes that resolved. Pairing one whose timeline could not be
+  # computed is what turned a reportable problem into a crash.
+  paired <- Filter(function(x) !is.null(x$pair), v[usable])
   by_param <- split(paired, vapply(paired, function(x) x$param, character(1)))
   for (nm in names(by_param)) {
     grp   <- by_param[[nm]]

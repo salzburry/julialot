@@ -1451,16 +1451,41 @@ cat("\nthe modules, run against recorders\n")
   # exists - an R helper expressed a DIFFERENT one (it applied s7.8's SOC
   # exemption) and nothing called it, so the suite was green on a policy that
   # never shipped. Asserted here against what the module actually emits.
+  #
+  # The predicate is READ OUT of the emitted SQL rather than rebuilt here. It
+  # used to be rebuilt, and a test that constructs the same string it looks for
+  # only ever asserts that the code has not changed - it cannot say the policy
+  # is right, and it passed for as long as the rule failed open on a NULL
+  # count. What the policy IS is asserted separately, below and by execution.
   min_n <- as.integer(cfg0()$suppress_min_n)
+  # Per table, not over the concatenation. Searching all six statements at
+  # once found the FIRST "... ELSE N_PATIENTS END" anywhere - which belongs to
+  # S_SAFETY_RATES, where N_PATIENTS is a value column suppressed on
+  # N_AT_RISK - and read it as S_PATTERNS's own predicate.
+  rel_one <- function(tb) {
+    hit <- Filter(function(x) identical(x$tag, paste0("step:release_", tolower(tb))),
+                  run$sql)
+    if (length(hit)) hit[[1]]$sql else ""
+  }
+  hit_of <- function(tb, sp) {
+    txt <- rel_one(tb)
+    m <- regmatches(txt, regexpr(
+      sprintf("CASE WHEN \\((?:[^()]|\\([^()]*\\))*\\) THEN NULL ELSE %s END", sp$n_col),
+      txt, perl = TRUE))
+    if (!length(m)) return(NA_character_)
+    sub("^CASE WHEN ", "", sub(sprintf(" THEN NULL ELSE %s END$", sp$n_col), "", m[1]))
+  }
   pol <- lapply(names(SUPPRESSION_SPEC), function(tb) {
     sp  <- SUPPRESSION_SPEC[[tb]]
-    hit <- sprintf("%s IS NOT NULL AND %s < %d", sp$n_col, sp$n_col, min_n)
+    hit <- hit_of(tb, sp)
+    if (is.na(hit)) return(list(tbl = tb, hit = FALSE,
+                                unnulled = c(sp$n_col, sp$value_cols)))
     # Every column the spec names - the count included - nulled on the same
     # predicate. Publishing the n a suppressed rate came from suppresses
     # nothing.
     nulled <- vapply(c(sp$n_col, sp$value_cols), function(cl)
       grepl(sprintf("CASE WHEN %s THEN NULL ELSE %s END AS %s", hit, cl, cl),
-            rel_sql, fixed = TRUE), logical(1))
+            rel_one(tb), fixed = TRUE), logical(1))
     list(tbl = tb, hit = grepl(hit, rel_sql, fixed = TRUE),
          unnulled = names(nulled)[!nulled])
   })
@@ -1477,6 +1502,33 @@ cat("\nthe modules, run against recorders\n")
             if (!is.null(unnulled))
               paste0(" [left readable: ", paste(unnulled, collapse = ", "), "]")
             else ""))
+  # What that predicate SAYS, rather than that it is the same everywhere.
+  # A count that cannot be read has not been shown to clear the floor, and
+  # this is the last gate before a table leaves the warehouse.
+  hits <- vapply(names(SUPPRESSION_SPEC),
+                 function(tb) hit_of(tb, SUPPRESSION_SPEC[[tb]]) %||% NA_character_,
+                 character(1))
+  ok(all(!is.na(hits) & grepl("IS NULL", hits, fixed = TRUE)),
+     "a row whose count is NULL is suppressed, not published")
+  ok(all(!is.na(hits) & grepl(paste0("< ", min_n), hits, fixed = TRUE)),
+     paste0("...and so is one below ", min_n))
+  ok(!any(grepl("IS NOT NULL", hits, fixed = TRUE)),
+     "...and no table still reads an unknown count as one that passed")
+  # Every suppressed table is checked for a group that gives its withheld row
+  # away by subtraction. The check was written for S_SAFETY_RATES and named
+  # the other five nowhere.
+  ok(all(vapply(names(SUPPRESSION_SPEC), function(tb)
+           length(SUPPRESSION_SPEC[[tb]]$group_by) > 0L, logical(1))),
+     "every suppressed table declares the stratum its rows divide up")
+  # The scan is a db_q(), not a step, so it is read off the module's source.
+  # What matters is that it walks the spec rather than naming one table.
+  mod_src <- paste(readLines("R/modules/11_release.R", warn = FALSE),
+                   collapse = "\n")
+  ok(grepl("for (tbl in names(SUPPRESSION_SPEC))", mod_src, fixed = TRUE) &&
+       grepl("SUPPRESSION_SPEC[[tbl]]$group_by", mod_src, fixed = TRUE),
+     "and the recoverable-row scan walks every suppressed table, not one of them")
+  ok(!grepl('"S_SAFETY_RATES_RELEASE"', mod_src, fixed = TRUE),
+     "...naming none of them, so a new one is covered without an edit here")
   ok(grepl("AS SUPPRESSED", rel_sql, fixed = TRUE) &&
        grepl("AS SUPPRESSION_REASON", rel_sql, fixed = TRUE),
      "...and marks the row rather than dropping it - absent and suppressed differ")
@@ -1670,6 +1722,151 @@ cat("\nthe modules, run against recorders\n")
     lengths(regmatches(q, gregexpr("MET_", q, fixed = TRUE))), integer(1))
   ok(!is.unsorted(npred),
      "and never drops one, so N_REMAINING cannot go back up mid-funnel")
+}
+
+cat("\n-- the entry point, in a process that has loaded nothing --\n")
+# THIS FILE sources every module before it asserts anything, and that is
+# exactly what a production run does not do: build.R loads the common helpers
+# and calls build_223926(), which loads the modules itself. So a helper that
+# reaches into a module before source_modules() runs is invisible to every
+# other assertion here, however many there are - and one did exactly that,
+# stopping every fresh build before it read a setting.
+#
+# The only check that can see it is a real process. DRY_RUN prints the plan
+# and returns without a connection, so this costs one R startup and needs no
+# warehouse.
+local({
+  rs <- file.path(R.home("bin"), "Rscript")
+  out <- suppressWarnings(system2(rs, shQuote(file.path(here, "build.R")),
+    env = c("DRY_RUN=TRUE", "INPUT_COHORT_TABLE=t", "OBJECT_PREFIX=s223926_"),
+    stdout = TRUE, stderr = TRUE))
+  code <- attr(out, "status")
+  ok(is.null(code) || identical(as.integer(code), 0L),
+     paste0("build.R resolves and prints a plan in a fresh R process",
+            if (!is.null(code))
+              paste0("  [exit ", code, ": ",
+                     paste(utils::tail(out, 3), collapse = " / "), "]") else ""))
+  ok(any(grepl("DRY_RUN=TRUE", out, fixed = TRUE)),
+     "...and reaches the dry-run line, rather than exiting somewhere earlier")
+  # The failure this replaces was a missing function, which R reports this
+  # way. Named so a regression is recognisable rather than just a bad exit.
+  ok(!any(grepl("could not find function", out, fixed = TRUE)),
+     "...with no helper reaching for something the process has not loaded")
+})
+
+cat("\n-- the arithmetic, executed on its own --\n")
+# The whole-script harness runs over a seven-patient fixture, so every stratum
+# in it is under the 25-patient floor and every rate is suppressed to NULL
+# before a golden number could read one. Mutation testing showed what that
+# leaves unheld: the rate could be a MULTIPLICATION, the interval a 90% one,
+# its bounds swapped, the months divisor 31, the time-to-event boundary off by
+# a day with its death arm deleted - and every one of those passed.
+#
+# So the fragments are executed here against rows built for the rule each one
+# states. tests/exec_fragments.R carries the rows and the answers.
+source(file.path(here, "tests", "exec_fragments.R"))
+local({
+  cfg <- cfg0()
+  cs  <- frag_cases(cfg)
+  qs  <- lapply(cs, function(x)
+    sprintf("SELECT ID, %s AS V FROM d ORDER BY ID", x$sql))
+  res <- run_fragments(qs, list(d = FRAG_ROWS), root = here)
+  if (is.null(res) || identical(res, "skip")) {
+    cat("  SKIP  the emitted arithmetic executes",
+        " (python3 + duckdb + sqlglot not available)\n", sep = "")
+    return(invisible(NULL))
+  }
+  errs_found <- frag_errors(res)
+  ok(!length(errs_found),
+     if (length(errs_found))
+       paste0("a fragment did not run: ", paste(errs_found, collapse = "; "))
+     else "every fragment transpiles and runs on its own")
+  for (id in names(cs)) {
+    sub  <- res[res$id == id, , drop = FALSE]
+    vals <- stats::setNames(sub$value[sub$col == "V"],
+                            sub$value[sub$col == "ID"])
+    want <- cs[[id]]$want
+    bad <- character(0)
+    for (k in names(want)) {
+      w <- want[[k]]
+      g <- if (k %in% names(vals)) vals[[k]] else NA_character_
+      same <- if (is.null(w)) identical(g, "")
+              else if (is.numeric(w)) {
+                gn <- suppressWarnings(as.numeric(g))
+                !is.na(gn) && abs(gn - w) < 1e-9
+              } else identical(g, as.character(w))
+      if (!isTRUE(same))
+        bad <- c(bad, sprintf("%s wanted %s, got %s", k,
+                              if (is.null(w)) "no value" else format(w),
+                              if (is.na(g) || !nzchar(g)) "no value" else g))
+    }
+    ok(!length(bad), paste0(id, ": ", cs[[id]]$what %||%
+                              paste(names(want), collapse = "/"),
+                            if (length(bad))
+                              paste0("  [", paste(bad, collapse = "; "), "]")
+                            else ""))
+  }
+
+  # The washout chain, run to convergence the way the module runs it.
+  #
+  # Days 0, 20 and 40: TWO counted events by a lag() and THREE by the chain,
+  # because day 40 is measured against day 0 - the last event that COUNTED -
+  # and not against day 20, which did not. That is the whole reason this is a
+  # loop, and a single round counts only the first event of each patient and
+  # condition.
+  w_cfg <- utils::modifyList(cfg, list(acute_washout_days = 30L))
+  rounds <- lapply(1:5, function(i)
+    acute_washout_round_sql("ev", "pe", "ct", w_cfg, "TREATMENT"))
+  qs2 <- stats::setNames(
+    c(rounds, list("SELECT cast(EVENT_DT as string) AS DT FROM ct ORDER BY EVENT_DT")),
+    c(paste0("round", 1:5), "counted"))
+  res2 <- run_fragments(qs2, list(ev = WASHOUT_EVENTS, pe = WASHOUT_PERIODS,
+                                  ct = list()), root = here)
+  if (is.null(res2) || identical(res2, "skip")) return(invisible(NULL))
+  ok(!length(frag_errors(res2)),
+     if (length(frag_errors(res2)))
+       paste0("the washout round did not run: ",
+              paste(frag_errors(res2), collapse = "; "))
+     else "the washout round transpiles and runs")
+  got <- res2$value[res2$id == "counted" & res2$col == "DT"]
+  ok(identical(got, WASHOUT_EXPECT),
+     paste0("a >= 30 day washout is measured from the last COUNTED event",
+            if (!identical(got, WASHOUT_EXPECT))
+              paste0("  [got ", paste(got, collapse = ", "), "]") else ""))
+  ok(length(got) == 3L,
+     "...so days 0, 20 and 40 are three counted events, where lag() gives two")
+  ok(!any(c("2019-12-01", "2020-12-01") %in% got),
+     "...and an event outside the period is not counted at either end")
+  # One round is not the rule. Re-run from empty with a single round.
+  res3 <- run_fragments(
+    stats::setNames(list(rounds[[1]],
+                         "SELECT cast(EVENT_DT as string) AS DT FROM ct ORDER BY EVENT_DT"),
+                    c("round1", "counted")),
+    list(ev = WASHOUT_EVENTS, pe = WASHOUT_PERIODS, ct = list()), root = here)
+  if (!is.null(res3) && !identical(res3, "skip"))
+    ok(length(res3$value[res3$id == "counted" & res3$col == "DT"]) == 1L,
+       "...and one round finds only the first, which is why it is a loop")
+})
+
+# The two readings of the same rule, over vectors. count_acute_lag() is the
+# sensitivity alternative and MUST differ from the chain on this shape, or the
+# comparison it exists for is comparing nothing.
+{
+  d <- WASHOUT_VECTOR
+  ok(identical(count_acute_greedy(d, 30), WASHOUT_VECTOR_KEPT),
+     "the chain counts days 0 and 40, measuring from the last COUNTED event")
+  ok(identical(count_acute_lag(d, 30), d[1]),
+     "and the single-pass reading counts only day 0, measuring from the last event")
+  ok(!identical(count_acute_greedy(d, 30), count_acute_lag(d, 30)),
+     "...so the two readings are genuinely different rules")
+  # Day 60 is what separates them: 20 days after the event that counted, and
+  # 40 after the one that did not. Three dates cannot tell the two apart.
+  ok(!"2020-03-01" %in% as.character(count_acute_greedy(d, 30)),
+     "...and the chain measures the fourth event from day 40, so it does not count")
+  e <- as.Date(c("2020-01-01", "2020-01-31"))
+  ok(identical(count_acute_greedy(e, 30), e),
+     "exactly 30 days apart is two events - the washout is >= 30, not > 30")
+  ok(identical(count_acute_lag(e, 30), e), "...on either reading")
 }
 
 cat("\n", .pass, " passed, ", length(.fail), " failed\n", sep = "")

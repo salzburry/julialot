@@ -150,7 +150,11 @@ handed it to whoever opened the page.
 Rscript "Jul 28/ndmm_study_updated/dashboard/tests/run_tests.R"
 ```
 
-163 checks, no Shiny and no warehouse. Every number the app puts on a page comes
-from a function in `R/` that runs without Shiny, which is what makes that
-possible; `app.R` is wiring, and the last section reads it as text to hold the
-wiring to the registries.
+No Shiny and no warehouse. Every number the app puts on a page comes from a
+function in `R/` that runs without Shiny, which is what makes that possible;
+`app.R` is wiring, and the last section reads it as text to hold the wiring to
+the registries.
+
+The count is not repeated here. It was, and it drifted from what the suite
+actually reports - a number in prose is a second copy of a fact nothing checks.
+The suite prints its own total.

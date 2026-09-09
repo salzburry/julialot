@@ -112,28 +112,39 @@ plot_bar <- function(labels, values, main = "", xlab = "", horizontal = TRUE) {
 }
 
 # One or more KM curves, with the step function and its band.
+# A curve with no step in it is still a curve. Filtering on nrow() dropped
+# every event-free cohort and the panel said "Nothing to show", which reads as
+# absent data rather than as thirty patients none of whom had the event.
+# km_steps() supplies the points either way, so what is kept here is any curve
+# that was observed at all.
 plot_km <- function(curves, main = "", xlab = "Months", ylab = "Survival") {
-  curves <- Filter(function(k) !is.null(k) && nrow(k), curves)
+  curves <- Filter(function(k)
+    !is.null(k) && (nrow(k) > 0 || !is.na(attr(k, "follow_up") %||% NA_real_)),
+    curves)
   if (!length(curves)) { plot_empty(); return(invisible()) }
   op <- graphics::par(mar = c(4.5, 4.5, 3, 2), bg = PALETTE[["paper"]],
                       col.axis = PALETTE[["slate"]], col.lab = PALETTE[["slate"]],
                       col.main = PALETTE[["ink"]])
   on.exit(graphics::par(op), add = TRUE)
-  xmax <- max(vapply(curves, function(k) max(k$TIME), numeric(1)), na.rm = TRUE)
+  steps <- lapply(curves, km_steps)
+  xmax <- max(vapply(steps, function(k)
+    if (nrow(k)) max(k$TIME) else 0, numeric(1)), na.rm = TRUE)
+  if (!is.finite(xmax) || xmax <= 0) xmax <- 1
   cols <- series_colours(length(curves))
   plot(NA, xlim = c(0, xmax), ylim = c(0, 1), main = main, xlab = xlab,
        ylab = ylab, las = 1, bty = "n")
   graphics::grid(col = PALETTE[["line"]], lty = 1)
   for (i in seq_along(curves)) {
-    k <- curves[[i]]
-    x <- c(0, k$TIME); y <- c(1, k$SURV)
-    if (!all(is.na(k$LOWER))) {
+    k <- curves[[i]]; st <- steps[[i]]
+    if (nrow(k) && !all(is.na(k$LOWER))) {
+      x <- c(0, k$TIME)
       graphics::polygon(c(x, rev(x)),
                         c(c(1, k$UPPER), rev(c(1, k$LOWER))),
                         col = grDevices::adjustcolor(cols[i], alpha.f = 0.12),
                         border = NA)
     }
-    graphics::lines(x, y, type = "s", col = cols[i], lwd = 2)
+    if (nrow(st)) graphics::lines(st$TIME, st$SURV, type = "s", col = cols[i],
+                                  lwd = 2)
   }
   if (length(curves) > 1)
     graphics::legend("topright", legend = names(curves), col = cols, lwd = 2,
@@ -187,15 +198,44 @@ plot_empty <- function(msg = "Nothing to show for this selection.") {
 # whole suite, because the only check was that the word "summarise_subject"
 # still appeared in the file.
 #
+# The headline counts, and the floor applied to them.
+#
+# Pure for the same reason panel_table_html() is: this lived inside the
+# server, so the only thing a test could reach was whether the file still
+# mentioned S_ATTRITION - and it did, while displaying a three-patient cohort
+# at a floor of 25.
+kpi_row_html <- function(d, floor_n = 25L, package_min_n = 25L,
+                         col = "N_REMAINING", by = "COHORT") {
+  if (is.null(d) || !nrow(d) || !all(c(col, by) %in% names(d)))
+    return(html_table(NULL))
+  fl <- effective_floor(floor_n, package_min_n)
+  n  <- suppressWarnings(as.numeric(d[[col]]))
+  rel <- vapply(n, released, logical(1), fl)
+  paste0(
+    html_kpis(stats::setNames(as.list(ifelse(rel, fmt_num(n, 0), "withheld")),
+                              paste0(as.character(d[[by]]), " cohort"))),
+    if (all(rel)) "" else sprintf(
+      '<p class="note">A cohort below the floor of %s is withheld.</p>',
+      fmt_num(fl, 0)))
+}
+
 # Pure, so tests/run_tests.R drives the real thing.
-panel_table_html <- function(d, spec, floor_n = 25L, max_rows = 5000L) {
+#
+# The population, the floor and the caption all come from prepare_panel(), so
+# this cannot disagree with the KPI, the curve or the comparison about how
+# many patients a selection holds. The caption used to say "N patients" off
+# nrow(), which on a table that is one row per patient and LINE named a number
+# of lines - and the same number decided the suppression.
+panel_table_html <- function(d, spec, floor_n = 25L, max_rows = 5000L,
+                             purpose = "descriptive") {
   if (is.null(d) || !nrow(d)) return(html_table(NULL))
   if (identical(spec$shape, "subject")) {
-    out <- summarise_subject(d, spec, min_n = floor_n)
-    n <- attr(out, "n_stratum") %||% nrow(d)
+    pp <- prepare_panel(d, spec, floor_n, purpose = purpose)
+    out <- summarise_subject(pp$rows, spec, min_n = pp$floor_n,
+                             n_population = pp$n)
     return(paste0(
-      sprintf('<p class="note">%s patients in this selection, summarised. Per-patient rows are never shown.</p>',
-              fmt_num(n, 0)),
+      sprintf('<p class="note">%s%s</p>', html_escape(pp$note),
+              if (pp$released) " Per-patient rows are never shown." else ""),
       html_table(out, max_rows = max_rows)))
   }
   html_table(drop_identifiers(d), max_rows = max_rows)

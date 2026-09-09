@@ -14,10 +14,30 @@
 # OPEN_QUESTION_READINGS is written as "k=v; k=v (upstream, verified); ...".
 # Parsed back so the readings can be compared setting by setting rather than as
 # one string that differs somewhere.
+#
+# The separator is a semicolon and a NOTE MAY CONTAIN ONE. The producer writes
+# "study_start=2016-01-01 (upstream, verified; this run was set to 2018-01-01)"
+# exactly when the two disagree - and a plain strsplit() cut that in half, so
+# the value became "2016-01-01 (upstream, verified", the note was lost, and
+# the configured reading vanished from the comparison. The disagreement is
+# precisely when the provenance is worth reading, so the split has to know
+# where the note is.
+.split_entries <- function(s) {
+  ch <- strsplit(s, "", fixed = TRUE)[[1]]
+  depth <- 0L; out <- character(0); cur <- character(0)
+  for (c in ch) {
+    if (identical(c, "(")) depth <- depth + 1L
+    else if (identical(c, ")")) depth <- max(0L, depth - 1L)
+    if (identical(c, ";") && depth == 0L) { out <- c(out, paste(cur, collapse = "")); cur <- character(0) }
+    else cur <- c(cur, c)
+  }
+  c(out, paste(cur, collapse = ""))
+}
+
 parse_readings <- function(s) {
   s <- trimws(as.character(s %||% ""))
   if (!length(s) || !nzchar(s)) return(list())
-  parts <- trimws(strsplit(s, ";", fixed = TRUE)[[1]])
+  parts <- trimws(.split_entries(s))
   parts <- parts[nzchar(parts)]
   out <- lapply(parts, function(p) {
     # "key=value (note)" - the note is provenance, not part of the value.

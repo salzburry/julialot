@@ -28,8 +28,8 @@ for (f in c("config_223926.R", "db_utils_223926.R", "registry.R", "windows.R"))
 source(file.path(.pkg_dir, "R", "modules", "01_cohorts.R"))
 
 source(file.path(.dash_dir, "config", "dashboard_config.R"))
-for (f in c("spec.R", "scenarios.R", "aggregate.R", "synthetic.R", "sources.R",
-            "render.R", "panels.R"))
+for (f in c("spec.R", "scenarios.R", "aggregate.R", "prepare.R", "synthetic.R",
+            "sources.R", "render.R", "panels.R"))
   source(file.path(.dash_dir, "R", f))
 
 SETTING_ENV <- setting_env_map()
@@ -45,7 +45,29 @@ UPSTREAM_SETTINGS <- names(OPEN_QUESTION_SOURCE)[OPEN_QUESTION_SOURCE == "upstre
 
 DASH_TABLES <- dashboard_tables()
 
-SRC <- new_source(DASH_CFG)
+# The warehouse source needs a live connection, and nothing opened one: the
+# mode stopped at startup with "needs a connection", which its own error text
+# blamed on app.R. It is opened HERE, where the source is built, because the
+# source is what holds it for the life of the process.
+#
+# The package's own connect_db(), so the dashboard cannot connect a different
+# way from the runs it is reading. Closed when the process ends; a Shiny app
+# has no earlier moment, since every session shares this one.
+# The package's own settings, resolved the way a run resolves them, so the
+# dashboard cannot connect a different way from the runs it reads. Only in
+# warehouse mode: the other two sources read files or generate rows and must
+# not require a Spark method to be configured at all.
+DASH_CON <- NULL
+if (identical(DASH_CFG$source, "warehouse")) {
+  source(file.path(.pkg_dir, "R", "load_inputs.R"))
+  load_pipeline_inputs(.pkg_dir, "config.csv")
+  set_study_config(cfg_defaults())
+  DASH_CON <- connect_db(study_config())
+  reg.finalizer(environment(), function(e) try(disconnect_db(DASH_CON),
+                                               silent = TRUE), onexit = TRUE)
+}
+
+SRC <- new_source(DASH_CFG, DASH_CON)
 SCENARIOS <- load_scenarios(SRC)
 SCENARIO_DIFFS <- scenario_diff_keys(SCENARIOS)
 

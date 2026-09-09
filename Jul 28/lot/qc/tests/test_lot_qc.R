@@ -62,6 +62,8 @@ ok(length(LOT_QC_CHECKS) > 0, "there are checks")
 ok(isTRUE(check_qc_catalogue()), "the shipped catalogue passes its own validation")
 # Ids end up in a report and in a sign-off. Two rows with one id is two
 # findings nobody can tell apart afterwards.
+stops(check_qc_catalogue(list(modifyList(LOT_QC_CHECKS[[1]], list(id = "")))),
+      "a check with no id at all is refused - two of them would be one row")
 stops(check_qc_catalogue(c(LOT_QC_CHECKS, LOT_QC_CHECKS[1])),
       "...and a duplicate id is refused")
 stops(check_qc_catalogue(list(modifyList(LOT_QC_CHECKS[[1]], list(severity = "minor")))),
@@ -558,10 +560,29 @@ cat("\n-- the checks, RUN rather than read --\n")
     # The masking is what makes a QC report circulatable, and it is only
     # provable by running: the DETAIL is built in SQL.
     dets <- res$detail[nzchar(res$detail)]
-    ok(length(dets) > 0 && !any(grepl("P0000", dets, fixed = TRUE)),
+    # Case-INSENSITIVE, and the mask is what makes it necessary: the
+    # expression lowercases, so a search for the fixture's own "P000001" could
+    # never match whatever the mask emitted. Widening the mask to reveal the
+    # whole id therefore changed nothing the suite could see.
+    ok(length(dets) > 0 && !any(grepl("p000001", tolower(dets), fixed = TRUE)),
        "and no DETAIL carries a whole patient id - every one is masked")
     ok(all(grepl("^[.][.][.]", dets[grepl("[.][.][.]", dets)])),
        "with the mask in the shape the runner documents")
+    # ...and it TRUNCATES. Shape alone is not the control: an expression that
+    # concatenates "..." onto the whole identifier still starts with the three
+    # dots and still passes both checks above. What the rule says is the last
+    # six characters, so that is what is asserted - on the masked token, which
+    # is the "..." and the run of characters after it. A DETAIL carries
+    # context beyond it ("...000009 LOT1: length 999"), and that context is
+    # not the identifier.
+    tok <- regmatches(dets, regexpr("^[.][.][.][^ ]*", dets))
+    kept <- nchar(sub("^[.][.][.]", "", tok))
+    ok(length(kept) > 0 && all(kept <= 6L),
+       paste0("...and no more than six characters of the id survive the mask",
+              if (length(kept) && any(kept > 6L))
+                paste0(" [", max(kept), " did: ",
+                       paste(utils::head(tok[kept > 6L], 2), collapse = ", "), "]")
+              else ""))
   }
 }
 
