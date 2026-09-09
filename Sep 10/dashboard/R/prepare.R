@@ -138,10 +138,23 @@ prepare_panel <- function(d, spec, floor_n, purpose = "descriptive",
     sprintf("Withheld: the number of patients behind this could not be established, so it cannot be shown to reach the floor of %s.",
             fmt_num(fl, 0))
   else
-    sprintf("Withheld: %s patients, below the floor of %s.",
-            fmt_num(n, 0), fmt_num(fl, 0))
+    # The threshold only. "Withheld: 3 patients" hides the cells and prints
+    # the one number the floor exists to protect.
+    sprintf("Withheld: fewer than %s patients in this selection.",
+            fmt_num(fl, 0))
   list(rows = rows, n = n, grain = gr, floor_n = fl, released = rel,
        note = note, purpose = purpose)
+}
+
+# The key columns a selection still varies over. A survival curve needs
+# exactly one cohort and one line: a patient sits in several nested cohorts
+# with a different index date in each, so a curve over "all cohorts" counts
+# them once per row - 25 patients became a 50-row risk set with an event at
+# month 1 that belonged to none of the cohorts on its own.
+strata_of <- function(d, keys = c("COHORT", "LOT_NUM")) {
+  ks <- intersect(keys, names(d))
+  ks[vapply(ks, function(k) length(unique(as.character(d[[k]]))) > 1L,
+            logical(1))]
 }
 
 # ---- bars -------------------------------------------------------------------

@@ -121,7 +121,7 @@ checked with instead is its test suites, which need no warehouse at all.
 | `engine/tests/test_line_criteria.R` | 57 |
 | `qc/tests/test_lot_qc.R` | 295 |
 | `melphalan/tests/test_melp_simple.R` | 161 |
-| `validation/tests/test_vignettes.R` | 32 |
+| `validation/tests/test_vignettes.R` | 36 |
 
 None needs a warehouse. Where `duckdb` and `sqlglot` are installed, the suites
 also execute the emitted SQL against fixtures and check the numbers that come
@@ -159,6 +159,8 @@ mistaken for the study's numbers.
 `REVIEW_LOG.md` records the defects found in review and what closed each one.
 `FILES.md` is the fuller file-by-file index.
 
-Some documents cite paths beginning `Jul 28/` — the earlier working tree, which
-is not part of this delivery. Those citations are for traceability; nothing in
-the code reaches outside these three folders.
+Some documents and code comments cite files from the earlier working tree —
+paths beginning `Jul 28/`, `exploration/` or `analysis/`, and
+`STUDY_TEAM_ASKS.md` — which is not part of this delivery. Those citations
+record where a decision was made and are kept for traceability; nothing in the
+code reaches outside these three folders.

@@ -527,8 +527,10 @@ cat("\nwhat a panel is allowed to show\n")
   ok(!pp$released,
      "...and at a floor of 25 that stratum is withheld, where 30 rows would have passed")
   h <- panel_table_html(lot, sp_lot, floor_n = 25L)
-  ok(grepl("Withheld", h, fixed = TRUE) && grepl("10 patients", h, fixed = TRUE),
-     "...the caption says 10 patients and withholds, rather than claiming 30")
+  ok(grepl("Withheld", h, fixed = TRUE) && !grepl("10 patients", h, fixed = TRUE),
+     "...the caption withholds, and does not print the count it is withholding")
+  ok(grepl("fewer than 25", h, fixed = TRUE),
+     "...naming the threshold instead - the one number the floor protects is the count")
   ok(!grepl("30 patients", h, fixed = TRUE),
      "...and never calls a count of lines a count of patients")
   # 40 patients clear the floor, and the caption still separates the two counts.
@@ -543,6 +545,58 @@ cat("\nwhat a panel is allowed to show\n")
      "a released line table reports both counts, each named for what it is")
   ok(identical(population_n(data.frame(), sp_lot), 0L),
      "no rows is no patients, not an error")
+  # Each LEVEL's floor is on its patients too. 100 patients and 120 lines: a
+  # category holding three lines from each of ten patients is thirty rows and
+  # ten people, and it was published as N = 30.
+  # Three levels, so the withheld one is not given away by the other: with
+  # two, the ten patients would be 100 minus 90 and secondary suppression
+  # rightly takes the second level as well.
+  lot3 <- rbind(
+    data.frame(PATID = sprintf("A%03d", 1:80), LOT_NUM = 1L,
+               LOT_START_TYPE = "MED", stringsAsFactors = FALSE),
+    data.frame(PATID = rep(sprintf("B%02d", 1:10), each = 3), LOT_NUM = 1:3,
+               LOT_START_TYPE = "SCT_AUTO", stringsAsFactors = FALSE),
+    data.frame(PATID = sprintf("C%02d", 1:10), LOT_NUM = 1L,
+               LOT_START_TYPE = "CART", stringsAsFactors = FALSE))
+  sp3 <- table_spec("LOT_LONG_FINAL", names(lot3))
+  ok(identical(population_n(lot3, sp3), 100L), "the selection is 100 patients")
+  sm <- summarise_subject(lot3, sp3, min_n = 25L, n_population = 100L)
+  auto <- sm[sm$VARIABLE == "LOT_START_TYPE" & sm$LEVEL == "SCT_AUTO", ]
+  ok(nrow(auto) == 1L && identical(auto$SUPPRESSED, 1L) && is.na(auto$N),
+     "a category of thirty lines resting on ten patients is withheld")
+  med <- sm[sm$VARIABLE == "LOT_START_TYPE" & sm$LEVEL == "MED", ]
+  ok(nrow(med) == 1L && identical(med$SUPPRESSED, 0L) && identical(med$N, 80L),
+     "...while eighty lines from eighty patients publish, counted as lines")
+  tc <- tabulate_cat(lot3, "LOT_START_TYPE", min_n = 25L, id_col = "PATID")
+  ok(identical(tc$SUPPRESSED[tc$LEVEL == "SCT_AUTO"], 1L),
+     "...and the level test itself counts distinct patients when told the id column")
+  # Without an identifier the floor can only be on rows. On lot3 that is not
+  # the same as "SCT_AUTO publishes": CART's ten rows are withheld, and with one
+  # level gone secondary suppression takes the next smallest. So the fallback
+  # is shown on a table with no such neighbour.
+  tr <- tabulate_cat(data.frame(X = c(rep("a", 30), rep("b", 40))), "X", min_n = 25L)
+  ok(all(tr$SUPPRESSED == 0L) && identical(sort(tr$N), c(30L, 40L)),
+     "...falling back to rows only where no identifier is given")
+
+  # A survival curve is one cohort and one line. The same 25 patients with a
+  # 1L row (event at month 10) and a 2L row (event at month 1) are 50 rows
+  # and one population, and a curve over both is nobody's curve.
+  both <- rbind(
+    data.frame(PATID = sprintf("E%02d", 1:25), COHORT = "1L", LOT_NUM = 1L,
+               TTE_ELIGIBLE = 1L, TTNT_MONTHS = 10, TTNT_EVENT = 1L,
+               stringsAsFactors = FALSE),
+    data.frame(PATID = sprintf("E%02d", 1:25), COHORT = "2L", LOT_NUM = 2L,
+               TTE_ELIGIBLE = 1L, TTNT_MONTHS = 1, TTNT_EVENT = 1L,
+               stringsAsFactors = FALSE))
+  ok(identical(population_n(both, table_spec("S_TTE", names(both))), 25L),
+     "25 patients in two cohorts are 25 patients")
+  ok(identical(strata_of(both), c("COHORT", "LOT_NUM")),
+     "...and the selection spans two cohorts and two lines, which a curve cannot pool")
+  ok(!length(strata_of(both[both$COHORT == "1L", ])),
+     "...while one cohort is one stratum and may be drawn")
+  ok(grepl("multi <- strata_of(pp$rows)", paste(readLines("app.R", warn = FALSE),
+                                                collapse = "\n"), fixed = TRUE),
+     "and the survival panel asks before it draws")
   # A table carrying neither an identifier nor a count cannot be shown to
   # clear the floor, and is withheld rather than published.
   blind <- data.frame(LEVEL = c("a", "b"), STUFF = c(1, 2),
@@ -747,6 +801,24 @@ source(file.path(here, "jobs", "export_lib.R"))
   ok(identical(readLines(file.path(root, "sc_b_", "S_RUN_METADATA.csv"))[2],
                "old_run"),
      "a refresh that produced nothing leaves the older snapshot untouched")
+  # The LOT prefix has to be owned by the run whose id the directory will
+  # carry, at the moment of the copy. The exporter filed a rebuilt prefix's
+  # lines under the previous run's id, and the reader trusts that name.
+  assign("db_q", function(con, sql) data.frame(
+    RUN_ID = c("old_lot", "new_lot"), STATE = "complete",
+    UPDATED_AT = c("2026-01-01", "2026-06-01"), stringsAsFactors = FALSE),
+    envir = globalenv())
+  ok(!lot_prefix_owner_ok(con, "wk.LOT_BUILD_STATUS", "old_lot"),
+     "a LOT prefix rebuilt since the study ran is not copied under the old run's id")
+  ok(lot_prefix_owner_ok(con, "wk.LOT_BUILD_STATUS", "new_lot"),
+     "...and is copied under the run that owns it now")
+  assign("db_q", function(con, sql) stop("no status"), envir = globalenv())
+  ok(!lot_prefix_owner_ok(con, "wk.LOT_BUILD_STATUS", "new_lot"),
+     "...and a prefix whose ownership cannot be read is not copied at all")
+  rm("db_q", envir = globalenv())
+  ok(grepl("owner <- function() lot_prefix_owner_ok(", jb, fixed = TRUE) &&
+       length(gregexpr("if (!owner())", jb, fixed = TRUE)[[1]]) == 2L,
+     "...checked before the copy and again after it, so a rebuild in between is caught")
   ok(grepl("NOT PUBLISHED", jb, fixed = TRUE) &&
        grepl("ex_failed", jb, fixed = TRUE),
      "an export that failed is reported as unpublished, not as zero tables")
@@ -794,12 +866,31 @@ local({
   ok(!isTRUE(src$lot_run_ok("old_run")),
      "...and the source says the run is not bound, so a panel can explain itself")
 
-  # Asked once per run and remembered: every LOT panel asks.
-  asked <- character(0)
-  invisible(src$read_lot("new_run", "LOT_LONG"))
-  invisible(src$read_lot("new_run", "LOT_ATTRITION"))
-  ok(!any(grepl("LOT_BUILD_STATUS", asked, fixed = TRUE)),
-     "the status is read once per run, not once per panel")
+  # Ownership is the NEWEST row, not any row. The producer keeps every run's
+  # status and replaces the output tables in place, so an old completed row
+  # beside a new one means the old run's tables are gone.
+  status <- data.frame(RUN_ID = c("old_run", "new_run"), STATE = "complete",
+                       UPDATED_AT = c("2026-01-01 00:00:00", "2026-06-01 00:00:00"),
+                       stringsAsFactors = FALSE)
+  ok(is.null(src$read_lot("old_run", "LOT_LONG_FINAL")),
+     "a run with a completed row that is no longer the newest owns nothing")
+  ok(!is.null(src$read_lot("new_run", "LOT_LONG_FINAL")),
+     "...and the newest completed run does")
+  # ...and it is asked again every time, so a rebuild after a yes is seen.
+  status <- data.frame(RUN_ID = c("new_run", "newer_run"), STATE = "complete",
+                       UPDATED_AT = c("2026-06-01 00:00:00", "2026-07-01 00:00:00"),
+                       stringsAsFactors = FALSE)
+  ok(is.null(src$read_lot("new_run", "LOT_LONG_FINAL")),
+     "a prefix rebuilt after a successful check is refused on the next read")
+  ok(isTRUE(lot_status_owner(data.frame(RUN_ID = c("b", "a"), STATE = "complete",
+                                        stringsAsFactors = FALSE), "a")),
+     "without a timestamp the last row written is the newest")
+  ok(!lot_status_owner(data.frame(RUN_ID = "a", STATE = "started",
+                                  UPDATED_AT = "2026-01-01",
+                                  stringsAsFactors = FALSE), "a"),
+     "...and a newest row that is not complete owns nothing either")
+  status <- data.frame(RUN_ID = "new_run", STATE = "complete",
+                       stringsAsFactors = FALSE)
 
   # A prefix mid-rebuild is not a run's numbers either.
   status <- data.frame(RUN_ID = "new_run", STATE = "started",
@@ -834,9 +925,41 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
   src_none <- list(read = function(prefix, table) NULL)
   ok(is.na(scenario_is_current(src_none, s1)),
      "...and neither can one whose snapshot has no metadata to read")
+  # The read itself, with the snapshot swapped underneath it. The source below
+  # serves run A's metadata on the first ask and run B's from then on, which
+  # is what a refresh landing mid-render looks like from inside a read.
+  local({
+    asks <- 0L
+    flip <- list(read = function(prefix, table) {
+      if (identical(table, "S_RUN_METADATA")) {
+        asks <<- asks + 1L
+        return(data.frame(RUN_ID = if (asks == 1L) "A" else "B",
+                          stringsAsFactors = FALSE))
+      }
+      data.frame(RATE = 770, stringsAsFactors = FALSE)
+    })
+    sc <- list(prefix = "p_", run_id = "A")
+    ok(is.null(read_scenario_table(flip, sc, "S_SAFETY_RATES", FALSE)),
+       "a table read while its snapshot is being replaced is refused, not shown under the old run")
+    steady <- list(read = function(prefix, table)
+      if (identical(table, "S_RUN_METADATA"))
+        data.frame(RUN_ID = "A", stringsAsFactors = FALSE)
+      else data.frame(RATE = 770, stringsAsFactors = FALSE))
+    ok(identical(read_scenario_table(steady, sc, "S_SAFETY_RATES", FALSE)$RATE, 770),
+       "...while a snapshot that is still the same run reads normally")
+    ok(is.null(read_scenario_table(steady, list(prefix = "p_", run_id = "Z"),
+                                   "S_SAFETY_RATES", FALSE)),
+       "...and one that is a different run from the sidebar's reads nothing")
+  })
   app <- paste(readLines("app.R", warn = FALSE), collapse = "\n")
-  ok(grepl("if (isTRUE(scenario_moved())) return(NULL)", app, fixed = TRUE),
-     "a panel reads no rows once its snapshot has moved under it")
+  ok(grepl("read_scenario_table(SRC, scenario, p$table", app, fixed = TRUE) &&
+       !grepl("read_table(SRC, scenario$prefix", app, fixed = TRUE),
+     "a panel reads its table bound to the run the sidebar names, on every read")
+  ok(!grepl("scenario_moved <- reactive(", app, fixed = TRUE),
+     "...and the check is not a reactive, which a file read cannot invalidate")
+  ok(grepl("read_scenario_table(SRC, b, tb", app, fixed = TRUE) &&
+       grepl("scenario_moved(s) || scenario_moved(b)", app, fixed = TRUE),
+     "and Compare binds BOTH sides, not only the one it was already checking")
   ok(grepl("rebuilt since the page was opened", app, fixed = TRUE),
      "...and says so, rather than showing an empty table")
   ok(grepl('why <- attr(cm, "why")', app, fixed = TRUE),

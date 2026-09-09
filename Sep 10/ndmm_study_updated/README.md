@@ -25,24 +25,10 @@ and shows it is already read from the environment.
 
 ## Files
 
-| file | what it is |
-|---|---|
-| **`IE_CRITERIA.md`** | every inclusion and exclusion criterion, per cohort, quoted and operationalised, plus the order to apply them and the attrition funnel |
-| **`VARIABLES.md`** | every variable the protocol asks to be derived, by objective, with its definition, functional form and collection timing |
-| **`DATA_MAPPING.md`** | the Optum CDM reference — tables, columns, joins, and the caveats that change what a number means — and the criterion-by-criterion and variable-by-variable mapping |
-| **`CODELISTS.md`** | which code lists the build already reads, in what shape, and every list the protocol needs that does not exist yet |
-| **`BUILD_DELTA.md`** | the difference between what `Jul 28/ndmm` and `Sep 10/lot` do today and what the protocol asks for |
-| **`VERSION_DIFF.md`** | what changed since the June 2026 version, why three of the build's settings are a version behind rather than wrong, and a reconstruction of the rows the source does not carry |
-| **`OPEN_QUESTIONS.md`** | twenty-four things that are genuinely undecided — twenty from the protocol and the Optum docs, four inherited from the build's own record — each with the two readings and what turns on the answer. Two are now answered |
-| `ie_criteria.csv` | the criteria as a table, for the study team to work in a spreadsheet |
-| `variables.csv` | the variables as a table — 58 rows, one per variable |
-| `optum_cdm_fields.csv` | the CDM field inventory as a table |
-| **`study223926/`** | the R package that builds the analytical cohort from a finished LOT run — sparklyr, module-selectable, every open question a setting. `study223926/MODULES.md` is its own page |
-| `SOURCES.md` | what this folder cites and what it needs — the standalone boundary |
-| **`dashboard/`** | the Shiny scenario explorer: pick a run, change what is selectable, and compare two runs to see what an open question costs. Deploys on Domino |
-| `FILES.md` | one line per file |
-
-Read `IE_CRITERIA.md` first. `OPEN_QUESTIONS.md` is what to send the study team.
+`CONTENTS.md` lists every file in this folder and what each is for. Read
+`IE_CRITERIA.md` first; `IE_CRITERIA_APPLIED.md` says which of its rules this
+build applies and how to change one. `OPEN_QUESTIONS.md` is what to send the
+study team.
 
 ## The cohorts, in one table
 
@@ -127,7 +113,7 @@ often as needed.
 Rscript study223926/build.R                                   # on a Databricks cluster
 DRY_RUN=TRUE Rscript study223926/build.R                      # print the plan only
 MODULES=safety COHORTS=2L Rscript study223926/build.R         # one module, one cohort
-Rscript study223926/tests/run_tests.R                         # 173 checks, no warehouse
+Rscript study223926/tests/run_tests.R                         # 337 checks, no warehouse
 ```
 
 Twelve modules, four cohorts, and every reading this folder records as open is a
@@ -149,8 +135,8 @@ inline. `SOURCES.md` separates the two.
 
 ## What this folder does not do
 
-It does not change any existing code. Nothing in `Jul 28/ndmm`, `Sep 10/lot` or
-`Jul 28/analysis` has been touched, and `study223926/` is not wired into
-`validation/run_gate.R`. `BUILD_DELTA.md` says what would have to change in the
-shipped builds; making those changes is separate work, and several of them are
-blocked on `OPEN_QUESTIONS.md`.
+It does not change the cohort build. `study223926/` runs after it and after
+the LOT engine, and reads what they wrote. `BUILD_DELTA.md` says what would
+have to change in the cohort build to match this protocol; making those
+changes is separate work, and several of them are blocked on
+`OPEN_QUESTIONS.md`.

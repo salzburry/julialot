@@ -1,9 +1,10 @@
 # What is in this folder
 
-`lot/` is the lines-of-therapy product. Three documents: `LOT_RULES.md` is the
-rules the build applies, each naming the vignette that tests it; `REVIEW_LOG.md`
-is what was found wrong and fixed, and what is still open; this file is what is
-here and what each file does.
+`lot/` is the lines-of-therapy product. `CONTENTS.md` is the short page;
+`LOT_RULES_EXPLAINED.md` walks every rule with a patient timeline;
+`LOT_RULES.md` is the rules as a reference, each naming the vignette that
+tests it; `REVIEW_LOG.md` is what was found wrong and fixed, and what is still
+open; this file is every file and what it does.
 
 One package writes. The rest read a finished run.
 
@@ -16,50 +17,21 @@ One package writes. The rest read a finished run.
 
 ## What is deliberately not here
 
-A cohort, everything derived from a finished run, and every experiment on the
-rules — each sits beside this folder, so the algorithm is one directory with
-four packages in it:
-
-| | |
-|---|---|
-| `ndmm/`, `overall/` | the cohort builds. A cohort is what the engine is pointed at, so it comes before LOT rather than under it |
-| `reporting/dashboard/` | one self-contained HTML off a finished run |
-| `analysis/outcomes/` | TTNT, TTD, OS and attrition |
-| `analysis/questions/` | the study team's asks, one script each |
-| `exploration/lot/run_foldin_cells.R` | the MAP fold-in the build applies, measured against a build without it |
-| `exploration/lot/` | the rule scenarios, benchmarks, definitions, sensitivity, stockpiling, re-challenge, audit counts |
-
-Each area has its own `FILES.md`. Dependencies run one way: those areas resolve
-`lot/engine` and read its modules; nothing in `lot/` resolves back out.
-`reporting/` and `analysis/outcomes/` read a run's tables and carry their own
-helpers.
-
-## What a study run uses
-
-`lot/engine/`, then `reporting/dashboard/`, `analysis/outcomes/` and
-`analysis/questions/` over what it wrote. `lot/qc/` signs it off.
-
-Nothing under `exploration/` is part of a run. The two things there that build
-are opt-in and write to throwaway prefixes of their own.
+The cohort, and everything derived from a finished run. A cohort is what the
+engine is pointed at — `build.R` takes the cohort table by name — so it comes
+before LOT rather than under it, and no cohort is named anywhere in this
+folder. The study package in `../ndmm_study_updated/` reads a finished run and
+builds the study's cohorts and variables on it; the app in `../dashboard/`
+shows what both produced. Dependencies run one way: those two read the
+tables a run wrote, and the dashboard's tests read `engine/R/build_lot.R` as
+text to hold the two table lists to each other; nothing in `lot/` resolves
+back out.
 
 ## Why the engine is its own folder
 
 It is copied into other projects as-is, so it may not reach outside itself: no
 sibling on its path, no cohort named anywhere in it, and `DBI`, `odbc` and
-`glue` its only outside dependencies. A check outside the study folder holds
-every file to that.
-
-## The cohorts are not here
-
-`overall/` and `ndmm/` build them. `build.R` takes the cohort table by name, so
-a cohort comes before LOT rather than under it, and neither cohort build reads
-this folder at run time.
-
-Two crossings. `ndmm/build_subsequent_cohorts.R` runs *after* a LOT run — the
-2L and 3L index dates are line starts — and still lives with the cohorts. And
-`ndmm/tests/` reads `lot/engine/R/build_lot.R` as a source file, to pin the
-interface: the columns the engine requires of a cohort, and the columns its
-status table really has.
+`glue` its only outside dependencies.
 
 ## Settings
 
@@ -110,7 +82,7 @@ per patient, and must fit the study window the run was given.
 | `R/line_criteria.R` | Extra criteria on finished lines, declared as data. Every one is computed into `LOT_LONG_ALLFLAGS`; only the enabled ones are applied to `LOT_LONG_FINAL`. |
 | `R/cart_rule.R` | The CAR-T induction rule: an infusion inside line 1's window belongs to line 1 and neither ends nor starts a line. |
 | `R/melp_rule.R` | The melphalan rule: a short course outside induction does not advance a line on its own (`LOT_RULES.md` 4.7). It lives here because it needs each line's own induction window. `APPLY_MELP_RULE=off` builds without it, which is the reference arm `lot/melphalan/` measures against. |
-| `R/foldin_rule.R` | The MAP fold-in. A drug from the immediately previous line coming back joins the line it returns in — its span and its regimen — when exactly ONE agent advanced the line between that drug's two doses; two or more and the return starts a line (`LOT_RULES.md` 4.8). It counts AGENTS, so one drug opening two lines is one advance; transplants stay outside the count and a line one opened overrides the fold. `APPLY_MAP_FOLDIN=FALSE` builds without it, as a comparison — `exploration/lot/run_foldin_cells.R`. |
+| `R/foldin_rule.R` | The MAP fold-in. A drug from the immediately previous line coming back joins the line it returns in — its span and its regimen — when exactly ONE agent advanced the line between that drug's two doses; two or more and the return starts a line (`LOT_RULES.md` 4.8). It counts AGENTS, so one drug opening two lines is one advance; transplants stay outside the count and a line one opened overrides the fold. `APPLY_MAP_FOLDIN=FALSE` builds without it, as a comparison. |
 | `R/prior_regimen.R` | The prior-regimen rule and each line's run-out. A drug in the previous regimen cannot start the next line; the line it belongs to extends over its later episodes instead, stopping at any other agent arriving in between. Narrowed by the fold-in above for drugs of EARLIER lines. |
 | `R/steps/01_codelists.R` | Code lists into views, then the consistency checks between them — which are fatal, which are waivable through `CODELIST_WAIVERS`, and why. |
 | `R/steps/02_patient_input.R` | The cohort as the build reads it, snapshotted into `LOT_PATIENT_INPUT`. Sets the observation end date every later gap and window is measured against. |
@@ -298,7 +270,7 @@ the rule runs, not the threshold it runs at.
 
 Until 2026-08-30 this package also carried the five-branch rule the study team
 asked for first, as a third cell. That rule was measured, not adopted, and
-removed; `STUDY_TEAM_ASKS.md` keeps the finding.
+removed.
 
 ## `lot/validation/` — the rule vignettes, machine-checked
 
@@ -308,12 +280,12 @@ this is where that id lives. It is a **specification**, not observed data —
 nothing here has been run against a warehouse.
 
 It stays with the rules because it states what the build's rules say rather than
-measuring the build. The measurements are in `exploration/lot/`.
+measuring the build.
 
 | path | what it does |
 |---|---|
 | `R/vignettes.R` | The edge cases the algorithm is hardest on, each with the assignment the rules give. Every offset is derived from the parameter that decides it, so a case moves when a setting moves and a renamed setting fails the catalogue rather than leaving prose describing a rule that is gone. |
-| `run_vignettes.R` | Renders the catalogue. No warehouse and no connection; writes a CSV and a markdown table to `out/`. Both are committed, and the merge gate re-renders them and fails on any difference — so the tracked catalogue cannot drift from the code that generates it. `OUTPUT_DIR` redirects the render, which is how the gate compares without touching the working tree. |
+| `run_vignettes.R` | Renders the catalogue. No warehouse and no connection; writes a CSV and a markdown table to `out/`. Both are committed, so re-run it after any change to `R/vignettes.R` and commit what it writes — the run stops if the catalogue disagrees with the config it was resolved against. `OUTPUT_DIR` redirects the render. |
 | `tests/test_vignettes.R` | The catalogue cannot drift: the parameters have to exist, the boundary pairs have to straddle them and expect different things, the timelines have to run forwards, and the files the rules are quoted from have to be there. It also holds `LOT_RULES.md` and the catalogue to each other in both directions — a rule citing a vignette that does not exist fails, and a vignette no rule cites fails too. |
 | `out/` | Generated. Nothing reads it back. |
 
@@ -325,15 +297,16 @@ interact and the first real run settles it.
 
 # Tests
 
-None needs a connection. The merge gate runs every suite with a single exit
-status, so "all suites pass" is recorded against a commit rather than reported
-by whoever ran them.
+None needs a connection.
 
 ```
-Rscript lot/engine/tests/test_runner.R           # and test_line_criteria.R
+Rscript lot/engine/tests/test_runner.R
+Rscript lot/engine/tests/test_line_criteria.R
 Rscript lot/qc/tests/test_lot_qc.R
+Rscript lot/melphalan/tests/test_melp_simple.R
 Rscript lot/validation/tests/test_vignettes.R
 ```
 
-The suites for everything outside this folder are listed in the study folder's
-`README.md`, in one block.
+`CONTENTS.md` gives each suite's count. The suites for the other two folders
+are listed in `../ndmm_study_updated/CONTENTS.md` and
+`../dashboard/DASHBOARD.md`.

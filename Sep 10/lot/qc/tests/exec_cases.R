@@ -15,8 +15,6 @@
 # it too - otherwise "counts nothing on clean data" would only be true of the
 # failures.
 
-.D <- function(x) x   # dates as ISO strings; DuckDB casts them
-
 FINAL_1 <- list(PATID = "P000001", LOT_NUM = 1L,
   LOT_START_DT = "2020-01-01", LOT_START_TYPE = "MED",
   LOT_BASE_MEDS = "BORT LEN", LOT_MED_CNT = 2L,

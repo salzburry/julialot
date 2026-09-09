@@ -1741,8 +1741,16 @@ cat("\n-- the entry point, in a process that has loaded nothing --\n")
 # warehouse.
 local({
   rs <- file.path(R.home("bin"), "Rscript")
+  # The settings go into THIS process's environment, which the child inherits.
+  # system2(env = ...) prefixes them onto the command line, and on Windows that
+  # form exited 5 with no output while the same command with an inherited
+  # environment reached the dry run.
+  keys <- c("DRY_RUN", "INPUT_COHORT_TABLE", "OBJECT_PREFIX")
+  old_env <- Sys.getenv(keys, unset = NA)
+  Sys.setenv(DRY_RUN = "TRUE", INPUT_COHORT_TABLE = "t", OBJECT_PREFIX = "s223926_")
+  on.exit(for (k in keys) if (is.na(old_env[[k]])) Sys.unsetenv(k) else
+            do.call(Sys.setenv, stats::setNames(list(old_env[[k]]), k)), add = TRUE)
   out <- suppressWarnings(system2(rs, shQuote(file.path(here, "build.R")),
-    env = c("DRY_RUN=TRUE", "INPUT_COHORT_TABLE=t", "OBJECT_PREFIX=s223926_"),
     stdout = TRUE, stderr = TRUE))
   code <- attr(out, "status")
   ok(is.null(code) || identical(as.integer(code), 0L),
@@ -1757,6 +1765,31 @@ local({
   ok(!any(grepl("could not find function", out, fixed = TRUE)),
      "...with no helper reaching for something the process has not loaded")
 })
+
+cat("\n-- membership follows the criteria list --\n")
+# Removing a criterion from a cohort's list has to remove it from membership,
+# not only from the funnel. It did not: IN_COHORT hard-coded continuous
+# enrolment and follow-up, so a list without I4 produced a funnel ending at
+# two and a cohort of one.
+{
+  coh_sql <- vapply(Filter(function(x) grepl("^step:cohort_1L", x$tag), run$sql),
+                    function(x) x$sql, character(1))
+  ok(length(coh_sql) == 1L, "the 1L membership statement is emitted once")
+  # The enrolment predicate carries a newline, so the CASE spans two lines.
+  in_coh <- regmatches(coh_sql, regexpr(
+    "(?s)CASE WHEN \\(.*?\\) THEN 1 ELSE 0 END AS IN_COHORT", coh_sql, perl = TRUE))
+  ok(length(in_coh) == 1L && grepl("COV_START|ce\\.", in_coh),
+     "with I4 in the 1L list, membership tests continuous enrolment")
+  ok(grepl("MET_I5|fu\\.", in_coh) || grepl("1 = 1", in_coh),
+     "...and follow-up, where I5 is in the list")
+  msrc <- paste(readLines("R/modules/01_cohorts.R", warn = FALSE), collapse = "\n")
+  ok(grepl('in_ce <- if (any(c("I4_ce_pre", "N2_ce_pre") %in% cohort$criteria))', msrc, fixed = TRUE) &&
+       grepl('in_fu <- if ("I5_followup" %in% cohort$criteria)', msrc, fixed = TRUE) &&
+       grepl("(%17$s) AND (%18$s) AND (%12$s) THEN 1 ELSE 0 END AS IN_COHORT", msrc, fixed = TRUE),
+     "...and each of those tests is present only because its criterion is listed")
+  ok(identical(CRITERION_SOURCE[["X4_belantamab"]], "cohort"),
+     "the pre-1L belantamab flag is read off the cohort table, like the other exclusions")
+}
 
 cat("\n-- the arithmetic, executed on its own --\n")
 # The whole-script harness runs over a seven-patient fixture, so every stratum

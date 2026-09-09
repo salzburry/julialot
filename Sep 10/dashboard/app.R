@@ -134,28 +134,21 @@ server <- function(input, output, session) {
               div(class = "alert", sprintf("This run is '%s', not complete.", s$state)))
   })
 
-  # Has the snapshot been replaced since the app read it?
-  #
-  # Checked once per render rather than once per session: the scenarios are
-  # loaded at startup and a table is read when a panel opens, so a refresh in
-  # between put the new run's rows under the old run's metadata. Cached by
-  # Shiny's own reactive machinery, so it is one read per invalidation.
-  scenario_moved <- reactive({
-    s <- scn()
-    isFALSE(scenario_is_current(SRC, s))
-  })
+  # Has the snapshot been replaced since the app read it? Asked at the moment
+  # of each read, never remembered: this was a reactive() over the selected
+  # scenario, and a file read inside a reactive is not a reactive input, so a
+  # floor change re-read replacement tables under a guard that still said no.
+  scenario_moved <- function(s) isFALSE(scenario_is_current(SRC, s))
 
-  # One table, read and filtered the way every panel wants it.
+  # One table, read and filtered the way every panel wants it. Bound to the
+  # run the sidebar describes on every read - see read_scenario_table().
   panel_data <- function(p, scenario) {
     if (is.na(p$table)) return(NULL)
-    # Fail closed: rows from a run the sidebar is not describing are not this
-    # scenario's, whatever the directory is called.
-    if (isTRUE(scenario_moved())) return(NULL)
     # A LOT panel reads the run this scenario named, not the scenario's own
     # prefix - the lines were built by a different build.
     d <- if (identical(p$source %||% "study", "lot"))
       read_lot_table(SRC, scenario, p$table)
-    else read_table(SRC, scenario$prefix, p$table, DASH_CFG$prefer_release)
+    else read_scenario_table(SRC, scenario, p$table, DASH_CFG$prefer_release)
     if (is.null(d) || !nrow(d)) return(d)
     sp <- table_spec(p$table, names(d))
     d <- apply_keys(d, sp, selection())
@@ -167,7 +160,7 @@ server <- function(input, output, session) {
     if (!isTRUE(p$available))
       return(div(class = "alert", html_escape(p$why)))
     # Said once, on every panel, rather than a page of empty tables.
-    if (isTRUE(scenario_moved()))
+    if (scenario_moved(s))
       return(tagList(h4(p$label), div(class = "alert", paste0(
         "This snapshot has been rebuilt since the page was opened, so the ",
         "settings and the LOT run named beside it belong to the previous run. ",
@@ -264,6 +257,16 @@ server <- function(input, output, session) {
         pp <- prepare_panel(d, sp, input$floor, purpose = "tte",
                             package_min_n = DASH_CFG$suppress_min_n)
         if (!pp$released) return(plot_empty(pp$note))
+        # One cohort and one line, or no curve. A patient is in every nested
+        # cohort they reached, with a different index date in each, so rows
+        # from two cohorts are the same people counted twice.
+        multi <- strata_of(pp$rows)
+        if (length(multi))
+          return(plot_empty(paste0(
+            "This selection spans more than one ", paste(multi, collapse = " and "),
+            ". A patient appears in each nested cohort they reached, with a ",
+            "different index date in each, so one curve over them would count ",
+            "them more than once. Pick one.")))
         eps <- sp$endpoints
         curves <- stats::setNames(lapply(names(eps), function(e)
           km_estimate(pp$rows[[eps[[e]][["time"]]]],
@@ -317,6 +320,13 @@ server <- function(input, output, session) {
       b <- scn_b()
       if (is.null(b))
         return(div(class = "note", "Pick a scenario in 'Against' to compare."))
+      # Both sides have to still be the runs the sidebar names. A was
+      # checked on every read; B was read straight, so a rebuilt B showed its
+      # new numbers under its old label and settings.
+      if (scenario_moved(s) || scenario_moved(b))
+        return(div(class = "alert", paste0(
+          "One of these snapshots has been rebuilt since the page was opened, ",
+          "so its settings no longer describe its numbers. Reload the page.")))
       rd <- compare_readings(s, b)
       # Before any difference is drawn: do these two rest on the SAME lines?
       # Two scenarios sharing a LOT run differ only in what this package did.
@@ -339,8 +349,8 @@ server <- function(input, output, session) {
         DASH_TABLES$TABLE)
       blocks <- lapply(rate_tables, function(tb) {
         sp <- table_spec(tb)
-        da <- apply_keys(read_table(SRC, s$prefix, tb, DASH_CFG$prefer_release), sp, selection())
-        db <- apply_keys(read_table(SRC, b$prefix, tb, DASH_CFG$prefer_release), sp, selection())
+        da <- apply_keys(read_scenario_table(SRC, s, tb, DASH_CFG$prefer_release), sp, selection())
+        db <- apply_keys(read_scenario_table(SRC, b, tb, DASH_CFG$prefer_release), sp, selection())
         cm <- compare_tables(da, db, sp, sp$rate)
         # An empty comparison because the two are not comparable is not the
         # same as an empty one because nothing was selected, and only the

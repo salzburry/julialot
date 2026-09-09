@@ -534,7 +534,7 @@ melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP",
   # Under the rule these lines should not exist: melp_hold carries the previous
   # line to the second dose, so nothing is left to start a line on it. So this
   # is a check on the hold, not the open question it was when the hold did not
-  # ship - see "What B.2 does" in exploration/FILES.md.
+  # ship.
   b2 <- function(extra, alias) paste0(mx_with, "
     SELECT count(*) AS ", alias, "
     FROM (SELECT l.PATID, l.LOT_NUM, l.LOT_START_DT, l.LOT_START_TYPE,

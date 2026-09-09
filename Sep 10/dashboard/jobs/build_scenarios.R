@@ -159,6 +159,14 @@ export_one <- function(prefix, env) {
     message("  LOT run ", lot_id, " already exported by an earlier scenario")
     return(publish(stage, d, n, prefix, lot_id))
   }
+  # The prefix has to be owned by THIS run before a table is copied under its
+  # name, and still owned by it afterwards - a rebuild landing between the two
+  # reads would otherwise file the new lines under the old id.
+  owner <- function() lot_prefix_owner_ok(con, lot_tbl("LOT_BUILD_STATUS"), lot_id)
+  if (!owner())
+    stop("the LOT prefix does not currently belong to run ", lot_id,
+         " (its newest status row names another run, or is not complete), so ",
+         "its tables cannot be filed under that run's id", call. = FALSE)
   lstage <- file.path(out_dir, "lot", paste0(".", lot_id, ".staging"))
   unlink(lstage, recursive = TRUE)
   dir.create(lstage, recursive = TRUE, showWarnings = FALSE)
@@ -175,6 +183,9 @@ export_one <- function(prefix, env) {
   if (length(lbad))
     stop("could not read ", length(lbad), " LOT table(s) for run ", lot_id,
          ": ", paste(lbad, collapse = ", "), call. = FALSE)
+  if (!owner())
+    stop("the LOT prefix was rebuilt while run ", lot_id, "'s tables were ",
+         "being read, so what was read is not one run's", call. = FALSE)
   message("  read ", ln, " LOT table(s) for run ", lot_id)
   publish(stage, d, n, prefix, lot_id, lstage, ld)
 }

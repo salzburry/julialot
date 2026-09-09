@@ -52,11 +52,19 @@ ev <- function(day, event, detail = "") {
 # so a case is pinned to the rule rather than to a number. `pair` marks the two
 # sides of a boundary: "within" is inside the value, "beyond" is the first day
 # outside it.
+#
+# `measure` is the quantity the parameter bounds, read off the events - the
+# gap between two transplants, the days from an addition to the CAR-T - and
+# `bound` says whether "within" means <= the value ("le") or < it ("lt").
+# check_vignettes() holds each pair to the VALUE with these. Adjacency and
+# ordering alone did not: a pair shifted ten days late was still adjacent,
+# still ordered, still disagreed - and both its sides were outside.
 VIGNETTES <- list(
 
   # ---- tandem transplant, the idea's first named case ---------------------
   list(id = "tandem_within", title = "Second AUTO inside the tandem window",
        param = "sct_tandem_days", pair = "within", confidence = "to_confirm",
+       measure = function(e) diff(e$day[e$event == "AUTO"]), bound = "le",
        where = "lot/engine/R/steps/05_sct.R | {cfg$sct_tandem_days}",
        events = function(p) rbind(
          ev(0,   "MED",  "1L regimen starts"),
@@ -72,6 +80,7 @@ VIGNETTES <- list(
 
   list(id = "tandem_beyond", title = "Second AUTO past the tandem window",
        param = "sct_tandem_days", pair = "beyond", confidence = "to_confirm",
+       measure = function(e) diff(e$day[e$event == "AUTO"]), bound = "le",
        where = "lot/engine/R/steps/05_sct.R | Single AUTO allowed; tandem pair allowed; excess AUTO ends LOT1",
        events = function(p) rbind(
          ev(0,   "MED",  "1L regimen starts"),
@@ -84,6 +93,7 @@ VIGNETTES <- list(
   # ---- AUTO windowing ------------------------------------------------------
   list(id = "auto_window_within", title = "Two AUTO codes inside the grouping window",
        param = "sct_auto_window_days", pair = "within", confidence = "derived",
+       measure = function(e) diff(e$day[e$event == "AUTO"]), bound = "le",
        where = "lot/engine/R/steps/05_sct.R | datediff(x, s.cur_start) <= {cfg$sct_auto_window_days}",
        events = function(p) rbind(
          ev(0,  "MED",  "1L regimen starts"),
@@ -97,6 +107,7 @@ VIGNETTES <- list(
 
   list(id = "auto_window_beyond", title = "Two AUTO codes past the grouping window",
        param = "sct_auto_window_days", pair = "beyond", confidence = "derived",
+       measure = function(e) diff(e$day[e$event == "AUTO"]), bound = "le",
        where = "lot/engine/R/steps/05_sct.R | datediff(x, s.cur_start) <= {cfg$sct_auto_window_days}",
        events = function(p) rbind(
          ev(0,  "MED",  "1L regimen starts"),
@@ -113,6 +124,7 @@ VIGNETTES <- list(
   # which the engine cannot produce.
   list(id = "cart_bridge_within", title = "CAR-T inside the consolidation window",
        param = "cart_consolidation_days", pair = "within", confidence = "derived",
+       measure = function(e) e$day[e$event == "CART"] - e$day[e$event == "MED_ADD"], bound = "le",
        where = "lot/engine/R/steps/06_lot1_end.R | BETWEEN 0 AND {cfg$cart_consolidation_days}",
        events = function(p) rbind(
          ev(0,  "MED",     "1L regimen starts"),
@@ -128,6 +140,7 @@ VIGNETTES <- list(
 
   list(id = "cart_bridge_beyond", title = "CAR-T past the consolidation window",
        param = "cart_consolidation_days", pair = "beyond", confidence = "to_confirm",
+       measure = function(e) e$day[e$event == "CART"] - e$day[e$event == "MED_ADD"], bound = "le",
        where = "lot/engine/R/steps/06_lot1_end.R | BETWEEN 0 AND {cfg$cart_consolidation_days}",
        events = function(p) rbind(
          ev(0,  "MED",     "1L regimen starts"),
@@ -142,6 +155,7 @@ VIGNETTES <- list(
   # ---- administrative gaps, the idea's named case -------------------------
   list(id = "map_gap_within", title = "Treatment gap below the discontinuation threshold",
        param = "map_discon_gap_days", pair = "within", confidence = "derived",
+       measure = function(e) e$day[nrow(e)] - e$day[e$event == "MAP_END"], bound = "lt",
        where = "lot/engine/R/steps/03_mma_map.R | datediff(w.NEXT_MAP_START_DT, w.MAP_END_DT) >= {cfg$map_discon_gap_days}",
        events = function(p) rbind(
          ev(0,   "MED", "1L regimen starts"),
@@ -154,6 +168,7 @@ VIGNETTES <- list(
 
   list(id = "map_gap_beyond", title = "Treatment gap at the discontinuation threshold",
        param = "map_discon_gap_days", pair = "beyond", confidence = "derived",
+       measure = function(e) e$day[nrow(e)] - e$day[e$event == "MAP_END"], bound = "lt",
        where = "lot/engine/R/steps/03_mma_map.R | datediff(w.NEXT_MAP_START_DT, w.MAP_END_DT) >= {cfg$map_discon_gap_days}",
        events = function(p) rbind(
          ev(0,  "MED", "1L regimen starts"),
@@ -168,6 +183,7 @@ VIGNETTES <- list(
   # ---- induction windows ---------------------------------------------------
   list(id = "induction_lot1_within", title = "Agent added on the last day of LOT1 induction",
        param = "induction_window_days", pair = "within", confidence = "derived",
+       measure = function(e) e$day[e$event == "MED_ADD"] - e$day[1], bound = "lt",
        where = "lot/engine/R/steps/10_lot2_5_base.R | ELSE {induction_window_days - 1} END)",
        events = function(p) rbind(
          ev(0, "MED", "1L regimen starts"),
@@ -179,6 +195,7 @@ VIGNETTES <- list(
 
   list(id = "induction_lot1_beyond", title = "Agent added the day after LOT1 induction closes",
        param = "induction_window_days", pair = "beyond", confidence = "derived",
+       measure = function(e) e$day[e$event == "MED_ADD"] - e$day[1], bound = "lt",
        where = "lot/engine/R/steps/10_lot2_5_base.R | ELSE {induction_window_days - 1} END)",
        events = function(p) rbind(
          ev(0, "MED", "1L regimen starts"),
@@ -188,6 +205,7 @@ VIGNETTES <- list(
 
   list(id = "induction_lotn_within", title = "Agent added on the last day of a later line's induction",
        param = "lot_n_induction_window_days", pair = "within", confidence = "derived",
+       measure = function(e) e$day[e$event == "MED_ADD"] - e$day[1], bound = "lt",
        where = "lot/engine/R/steps/10_lot2_5_base.R | prev_med_window <- if (lot_num == 2L) lot1_induction_window_days",
        events = function(p) rbind(
          ev(0, "MED", "LOT2 starts"),
@@ -199,6 +217,7 @@ VIGNETTES <- list(
 
   list(id = "induction_lotn_beyond", title = "Agent added the day after a later line's induction closes",
        param = "lot_n_induction_window_days", pair = "beyond", confidence = "derived",
+       measure = function(e) e$day[e$event == "MED_ADD"] - e$day[1], bound = "lt",
        where = "lot/engine/R/steps/10_lot2_5_base.R | ELSE {induction_window_days - 1} END)",
        events = function(p) rbind(
          ev(0, "MED", "LOT2 starts"),
@@ -249,6 +268,7 @@ VIGNETTES <- list(
 
   list(id = "melp_short_course", title = "Brief melphalan course outside induction",
        param = "melp_simple_course_days", pair = "within", confidence = "to_confirm",
+       measure = function(e) e$day[e$event == "MAP_END"] - e$day[e$event == "MED"][2] + 1L, bound = "le",
        where = "lot/engine/R/melp_rule.R | WHERE INSIDE = 0 AND SHORT = 1 AND CONFIRMED = 0",
        events = function(p) rbind(
          ev(0,   "MED", "1L regimen starts"),
@@ -266,6 +286,7 @@ VIGNETTES <- list(
 
   list(id = "melp_long_course", title = "Melphalan course past the short cap",
        param = "melp_simple_course_days", pair = "beyond", confidence = "to_confirm",
+       measure = function(e) e$day[e$event == "MAP_END"] - e$day[e$event == "MED"][2] + 1L, bound = "le",
        where = "lot/engine/R/melp_rule.R | datediff(mc.COURSE_END_DT, mc.EXPO_DT) + 1",
        events = function(p) rbind(
          ev(0,   "MED", "1L regimen starts"),
@@ -604,9 +625,29 @@ check_vignettes <- function(p, v = VIGNETTES) {
     if (identical(w$expected(p), b$expected(p)))
       bad <- c(bad, paste0("parameter '", nm, "': both sides expect the same thing, ",
                            "so the boundary is not being tested"))
+    # ...and against the VALUE. Adjacent, ordered and disagreeing is the shape
+    # of a boundary; it is not the boundary. The measured quantity has to fall
+    # inside the setting on one side and outside it on the other.
+    if (is.null(w$measure) || is.null(b$measure)) {
+      bad <- c(bad, paste0("parameter '", nm, "': its pair declares no measure, so ",
+                           "nothing holds it to the value"))
+    } else {
+      val <- p[[nm]]
+      mw <- tryCatch(as.numeric(w$measure(w$events(p)))[1], error = function(e) NA_real_)
+      mb <- tryCatch(as.numeric(b$measure(b$events(p)))[1], error = function(e) NA_real_)
+      le <- !identical(w$bound %||% "le", "lt")
+      if (!isTRUE(if (le) mw <= val else mw < val))
+        bad <- c(bad, paste0("parameter '", nm, "': the 'within' case measures ", mw,
+                             " against a value of ", val, ", so it is not inside"))
+      if (!isTRUE(if (le) mb > val else mb >= val))
+        bad <- c(bad, paste0("parameter '", nm, "': the 'beyond' case measures ", mb,
+                             " against a value of ", val, ", so it is not outside"))
+    }
   }
   if (length(bad))
     stop("The vignette catalogue does not hold:\n  ", paste(bad, collapse = "\n  "),
          call. = FALSE)
   invisible(TRUE)
 }
+
+`%||%` <- function(a, b) if (is.null(a)) b else a

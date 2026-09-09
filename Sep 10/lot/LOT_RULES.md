@@ -3,9 +3,9 @@
 Every rule the build applies: what it does, the setting that governs it, the
 file it lives in, and a worked example.
 
-Behaviour only. Open clinical questions live on the Open questions sheet of the
-scenario workbook (`exploration/lot/run_lot_scenarios.R`). What each file does
-is `FILES.md`. What the study team asked for is `STUDY_TEAM_ASKS.md`.
+Behaviour only. Which readings follow from the rules and which await the
+first warehouse run is `LOT_RULES_EXPLAINED.md` section 9. What each file does
+is `FILES.md`.
 
 Worked examples are cases in `lot/validation/R/`, not prose, and their
 structure is machine-checked: every offset is derived from the setting that

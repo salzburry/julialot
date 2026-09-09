@@ -78,3 +78,25 @@ publish <- function(stage, dest, n, prefix, lot_id, lstage = NULL, ldest = NULL)
 
 
 `%||%` <- function(a, b) if (is.null(a)) b else a
+
+# Whether the LOT prefix is owned, RIGHT NOW, by the run this scenario read.
+#
+# The exporter copied whatever sat under the LOT prefix into lot/<run id>/ and
+# the reader trusts that directory name. A prefix rebuilt between the study
+# run and the export therefore filed the NEW build's lines under the OLD run's
+# id. The status table keeps every run's row, so "a row says this run
+# completed" is history; only the newest row says whose tables are there.
+# Same rule the warehouse reader applies (lot_status_owner in R/sources.R),
+# written out here because the job does not load the app.
+lot_prefix_owner_ok <- function(con, status_tbl, lot_id) {
+  st <- tryCatch(db_q(con, sprintf("SELECT * FROM %s", status_tbl)),
+                 error = function(e) NULL)
+  id <- trimws(lot_id %||% "")
+  if (!nzchar(id) || is.null(st) || !nrow(st) ||
+      !all(c("RUN_ID", "STATE") %in% names(st))) return(FALSE)
+  o <- if ("UPDATED_AT" %in% names(st))
+    order(as.character(st$UPDATED_AT), decreasing = TRUE) else rev(seq_len(nrow(st)))
+  newest <- st[o[1], , drop = FALSE]
+  identical(trimws(as.character(newest$RUN_ID)), id) &&
+    identical(tolower(trimws(as.character(newest$STATE))), "complete")
+}

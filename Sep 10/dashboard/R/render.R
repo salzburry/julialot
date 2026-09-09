@@ -151,37 +151,6 @@ plot_km <- function(curves, main = "", xlab = "Months", ylab = "Survival") {
                      bty = "n", cex = 0.85, text.col = PALETTE[["slate"]])
 }
 
-# A scenario against another, as a dot plot of the difference. The point of the
-# whole dashboard, so it gets the clearest form: one row per stratum, the two
-# values joined by a line, sorted by how far apart they are.
-plot_delta <- function(d, label_col, a_lab = "A", b_lab = "B", main = "",
-                       top_n = 20L) {
-  if (is.null(d) || !nrow(d)) { plot_empty(); return(invisible()) }
-  d <- d[!is.na(d$A) | !is.na(d$B), , drop = FALSE]
-  if (!nrow(d)) { plot_empty(); return(invisible()) }
-  d <- utils::head(d[order(-abs(ifelse(is.na(d$DELTA), 0, d$DELTA))), , drop = FALSE], top_n)
-  d <- d[rev(seq_len(nrow(d))), , drop = FALSE]
-  labs <- if (label_col %in% names(d)) as.character(d[[label_col]]) else
-    seq_len(nrow(d))
-  op <- graphics::par(mar = c(4.5, 16, 3, 2), bg = PALETTE[["paper"]],
-                      col.axis = PALETTE[["slate"]], col.lab = PALETTE[["slate"]],
-                      col.main = PALETTE[["ink"]])
-  on.exit(graphics::par(op), add = TRUE)
-  rng <- range(c(d$A, d$B), na.rm = TRUE)
-  if (!all(is.finite(rng))) { plot_empty(); return(invisible()) }
-  y <- seq_len(nrow(d))
-  plot(NA, xlim = rng, ylim = c(0.5, nrow(d) + 0.5), yaxt = "n", bty = "n",
-       main = main, xlab = "", ylab = "")
-  graphics::axis(2, at = y, labels = labs, las = 1, cex.axis = 0.8, tick = FALSE)
-  graphics::grid(ny = NA, col = PALETTE[["line"]], lty = 1)
-  graphics::segments(d$A, y, d$B, y, col = PALETTE[["line"]], lwd = 3)
-  graphics::points(d$A, y, pch = 19, col = PALETTE[["slate"]], cex = 1.1)
-  graphics::points(d$B, y, pch = 19, col = PALETTE[["orange"]], cex = 1.1)
-  graphics::legend("topright", legend = c(a_lab, b_lab),
-                   col = c(PALETTE[["slate"]], PALETTE[["orange"]]), pch = 19,
-                   bty = "n", cex = 0.85, text.col = PALETTE[["slate"]])
-}
-
 plot_empty <- function(msg = "Nothing to show for this selection.") {
   op <- graphics::par(mar = c(0, 0, 0, 0), bg = PALETTE[["paper"]])
   on.exit(graphics::par(op), add = TRUE)

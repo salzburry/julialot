@@ -18,7 +18,13 @@ CRITERION_SOURCE <- c(
   I1_mm_dx          = "cohort", I2_age            = "cohort",
   I3_eligible_1l_tx = "cohort", I4_ce_pre         = "cohort",
   X1_prior_mm_tx    = "cohort", X2_other_cancer   = "cohort",
-  X3_pregnancy      = "cohort", X4_belantamab     = "lot",
+  # X4 is read off the cohort table like the other three exclusions - the
+  # flag is NO_BELANTAMAB_PRE_LOT1, a pre-index criterion the cohort build
+  # computed. It was recorded as "lot" here, which confused it with the LOT
+  # engine's own belantamab rule: that one removes a patient with belantamab in
+  # ANY line, after the lines are built, and is a different criterion.
+  # Rebuilding the LOT run does not recreate this flag.
+  X3_pregnancy      = "cohort", X4_belantamab     = "cohort",
   I5_followup       = "here",   N1_received_line  = "here",
   N2_ce_pre         = "here"
 )
@@ -95,6 +101,13 @@ mod_cohorts <- function(con, cfg, cohort) {
     parent <- "INNER JOIN s_parent_cohort par ON par.PATID = s.PATID"
   }
 
+  # IN_COHORT follows the cohort's own criteria list. It hard-coded continuous
+  # enrolment and follow-up, so removing I4 from the list dropped the step from
+  # the funnel while membership still applied it: the funnel said two remained
+  # and one was admitted. The two now read the same list. MET_N2 and MET_I5 are
+  # still written whatever the list says, so the evidence is on the row.
+  in_ce <- if (any(c("I4_ce_pre", "N2_ce_pre") %in% cohort$criteria)) ce_pre else "1 = 1"
+  in_fu <- if ("I5_followup" %in% cohort$criteria) fu_pred else "1 = 1"
   run_step(con, paste0("cohort_", cohort$key), sprintf("
     INSERT INTO %1$s
     SELECT s.PATID, '%2$s' AS COHORT, s.LOT_NUM, s.LOT_START_DT AS INDEX_DATE,
@@ -105,7 +118,7 @@ mod_cohorts <- function(con, cfg, cohort) {
            CASE WHEN %14$s THEN 1 ELSE 0 END AS MET_X2,
            CASE WHEN %15$s THEN 1 ELSE 0 END AS MET_X3,
            CASE WHEN %16$s THEN 1 ELSE 0 END AS MET_X4,
-           CASE WHEN (%3$s) AND (%4$s) AND (%12$s) THEN 1 ELSE 0 END AS IN_COHORT
+           CASE WHEN (%17$s) AND (%18$s) AND (%12$s) THEN 1 ELSE 0 END AS IN_COHORT
     FROM %5$s s
     INNER JOIN %6$s c ON c.PATID = s.PATID
     LEFT JOIN %7$s ce
@@ -121,7 +134,8 @@ mod_cohorts <- function(con, cfg, cohort) {
     cohort_flag_pred_one("X1_prior_mm_tx", .cohort_cols()),
     cohort_flag_pred_one("X2_other_cancer", .cohort_cols()),
     cohort_flag_pred_one("X3_pregnancy", .cohort_cols()),
-    cohort_flag_pred_one("X4_belantamab", .cohort_cols())),
+    cohort_flag_pred_one("X4_belantamab", .cohort_cols()),
+    in_ce, in_fu),
     qc = sprintf("SELECT count(*) AS n_indexed, sum(IN_COHORT) AS n_in_cohort
                   FROM %s WHERE COHORT = '%s'", wrk("S_COHORT"), cohort$key))
 }

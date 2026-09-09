@@ -12,9 +12,11 @@ It is one of three folders delivered together, and they are siblings:
 | `ndmm_study_updated/` | the study cohorts and variables it reads |
 | `lot/` | the lines-of-therapy engine behind those |
 
-They have to stay siblings. The app finds the study package at
-`../ndmm_study_updated/study223926` and the engine at `../lot/engine`; both can
-be overridden with `DASH_PACKAGE_DIR`.
+They have to stay siblings. The app loads the study package's registries from
+`../ndmm_study_updated/study223926` (overridable with `DASH_PACKAGE_DIR`). It
+does **not** load the engine's code: LOT results reach it as tables — from the
+snapshot or the warehouse — and its test suite reads `../lot/engine` only to
+hold the two table lists to each other.
 
 ---
 
@@ -68,7 +70,7 @@ secondary, on an off-white ground.
 | **HCRU** | hospitalisation, length of stay and ED visits |
 | **Malignancy** | secondary malignancies |
 | **Outcomes** | TTNT, TTD and overall survival as Kaplan-Meier curves, and the endpoints as a table |
-| **Patterns** | regimen categories by line; what happened on each line; regimen transitions as a flow |
+| **Patterns** | regimen categories by line; what happened on each line; regimen transitions as a from → to table |
 | **Compare** | one scenario against another, stratum by stratum; and every open question with where it is answered |
 | **LOT engine** | the LOT run these lines came from; the LOT funnel; lines by line number; what opened each line; how each line ended |
 | **LOT validation** | face-validity checks; the 37 QC checks; build status; before and after the line criteria |
@@ -76,6 +78,19 @@ secondary, on an off-white ground.
 A tab whose module did not run is **reported, not hidden**. "The safety module
 did not run" is something a viewer needs to know; a silently absent tab does
 not say it.
+
+### The LOT tabs describe the lineage, not the scenario
+
+The LOT tables were written by a **different build**, under its own prefix,
+and a study scenario records which run it read in `S_RUN_METADATA.LOT_RUN_ID`.
+Several scenarios normally share one run — none of the study's open questions
+changes how a line is counted — so two scenarios sharing a LOT run show
+identical numbers on these tabs. That is the truth, not a bug.
+
+`LOT_LONG` is only on the validation tab. It is the same table *before* the
+line criteria, and a truncate criterion makes the two hold different patients
+— so a panel drawn on it would describe people the study excluded, with
+nothing on the page saying so.
 
 ---
 
@@ -86,7 +101,9 @@ lies.
 
 ### Live — answered instantly
 
-**Cohort, line, period, stratum** filter numbers that are already computed.
+**Cohort, line and period** — the keys each table declares — filter numbers
+that are already computed. There is no free-form stratum control: a table's
+other columns are what its panel shows, not something to filter on.
 **Suppress cells below N** raises the suppression threshold, and the control
 says beside itself that it can be raised and never lowered.
 
@@ -99,17 +116,15 @@ An open question changes the SQL, so it cannot be applied to a finished table.
 filter recovers another.
 
 So the scenario picker lists the runs that **exist**. A scenario nobody has run
-does not appear — and the app prints the command that would produce it:
+does not appear. The settings panel says, for every open question, whether it
+is applied by this package or upstream, what this run answered, which
+environment variable sets it, and that it is **not** a live control. A switch
+that quietly did nothing would be worse than no switch.
 
-```
-export OBJECT_PREFIX='s223926_ms_cal_'
-export MONTHS_AS='calendar'
-Rscript build.R
-```
-
-The settings panel says, for every open question, whether it is applied by this
-package or upstream, what this run answered, and that it is **not** a live
-control. A switch that quietly did nothing would be worse than no switch.
+To produce a scenario, add a row to `scenarios.csv` and run the snapshot job
+(below). `R/scenarios.R` also carries `scenario_command()`, which turns a set
+of readings into the `export ...; Rscript build.R` lines a build needs; it is
+tested and not wired to the page.
 
 ---
 
@@ -147,6 +162,10 @@ every identifier column is dropped whatever the spec says. Where one level of a
 variable is withheld, a second goes with it, because otherwise the hidden one
 is the difference between the total and the rest.
 
+A table with no declared denominator is still suppressed: the floor finds a
+count column when the spec names none, so a module that appears in the
+dashboard on its own does not also skip suppression.
+
 ---
 
 ## Where the numbers come from
@@ -178,18 +197,19 @@ previous snapshot in place under its own identity rather than mixing the two.
 ## Running it
 
 ```bash
-# a demo with generated data, no warehouse
+# a demo with generated data, no warehouse - from this folder
 DASH_SOURCE=synthetic Rscript -e "shiny::runApp('.', port = 8888)"
 
-# the normal deployment
-DASH_SOURCE=snapshot DASH_SNAPSHOT_DIR=/mnt/artifacts/results ./app.sh
+# the normal deployment - app.sh expects to be run from the folder ABOVE
+# Sep 10, which is how a Domino App launches it (DEPLOY_DOMINO.md)
+DASH_SOURCE=snapshot DASH_SNAPSHOT_DIR=/mnt/artifacts/results "Sep 10/dashboard/app.sh"
 ```
 
 `DEPLOY_DOMINO.md` has the Domino App setup: which files, which environment
 variables, and what the job that refreshes the snapshot needs.
 
 ```bash
-Rscript tests/run_tests.R      # 319 checks, no Shiny and no warehouse
+Rscript tests/run_tests.R      # 342 checks, no Shiny and no warehouse
 ```
 
 Every number the app puts on a page comes from a function in `R/` that runs
@@ -199,13 +219,63 @@ registries.
 
 ---
 
+## Adding to it
+
+Three registries, and none of them is in this folder twice.
+
+| to add | edit |
+|---|---|
+| a panel | one entry in `R/panels.R` |
+| a better view of a table | one entry in `TABLE_SPEC`, `R/spec.R` |
+| a scenario | one row in `scenarios.csv` |
+| a LOT table | one entry in `TABLE_SPEC` with `source = "lot"`, and one in `LOT_DASHBOARD_TABLES` |
+| a module, a cohort, an open question | the **package** — it appears here on its own |
+
+`SHOW_<PANEL>=FALSE` drops a panel. Anything other than `TRUE` or `FALSE`
+stops startup — a panel dropped by a typo is invisible on the page, and a halt
+is easier to notice than a gap.
+
+---
+
+## What it does not do
+
+It **reads**. It creates, replaces and drops nothing, so it can be pointed at
+a finished study as often as anyone likes.
+
+Asking for a scenario nobody has run therefore prints the command that would
+produce it rather than running it. Running one writes to the warehouse and
+belongs to whoever owns the schema. That block is meant to be pasted into a
+shell, so every value in it is shell-quoted, and a prefix or LOT run id is
+only ever used as one path segment — a run id of `../../PRIVATE`, which comes
+from a metadata table anyone with warehouse write access controls, cannot
+reach a file outside the snapshot root.
+
+---
+
 ## What it reads, and what it does not restate
 
 The study package is the authority on what exists: which cohorts, which
 modules, which tables, which open questions and what each may be set to. The
-dashboard imports those rather than restating them — so a module or a question
-added to the package appears here **without an edit**, and a table it does not
-know gets a plain grid until someone writes three lines of spec for it.
+dashboard imports those rather than restating them. A new open question appears
+in the settings panel and the scenario labels without an edit. A new **table**
+is known to the dashboard without an edit, but is only *shown* once a panel in
+`R/panels.R` points at it — the panel list is deliberately fixed, so a page
+cannot grow a tab nobody designed. A table with no spec gets a plain grid.
 
-`README.md` in this folder is the developer's version of this page: the file
-layout, the panel registry, and how to add a panel.
+| file | what it is |
+|---|---|
+| `app.R` | the Shiny wiring: the sidebar, the tabs, and which panel goes where |
+| `global.R` | loaded once at startup: the package's registries, then the dashboard's, then the data source |
+| `config/dashboard_config.R` | every `DASH_*` environment variable, validated |
+| `R/spec.R` | `TABLE_SPEC` — how each table is best shown, and which columns identify a patient |
+| `R/panels.R` | the panel registry — what is on each tab |
+| `R/scenarios.R` | a scenario from a run's metadata, the settings that differ between two, and the command that would produce one |
+| `R/sources.R` | the three data sources, and the run-ownership check every read is bound to |
+| `R/prepare.R` | the release check applied to everything drawn |
+| `R/aggregate.R` | counts, percentages and distributions over a patient-level table |
+| `R/render.R` | the HTML tables, headline counts and charts |
+| `R/synthetic.R` | the generated rows behind the demo |
+| `jobs/build_scenarios.R`, `jobs/export_lib.R` | the snapshot job |
+| `scenarios.csv` | one row per scenario the job builds |
+| `app.sh` | the Domino launcher |
+| `tests/run_tests.R` | the suite |

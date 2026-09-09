@@ -159,6 +159,36 @@ gapped <- lapply(VIGNETTES, function(x) {
 })
 stops_with(check_vignettes(P, gapped), "must be consecutive days",
       "...and a pair straddling its value from five days out, which pins no edge")
+# Adjacent, ordered and disagreeing is the SHAPE of a boundary, not the
+# boundary. Both tandem cases moved ten days later are still all three, and
+# both sit outside a 180-day window.
+shifted <- lapply(VIGNETTES, function(x) {
+  if (x$id %in% c("tandem_within", "tandem_beyond")) {
+    inner <- x$events
+    x$events <- function(p) { e <- inner(p); e$day[nrow(e)] <- e$day[nrow(e)] + 10L; e }
+  }
+  x
+})
+stops_with(check_vignettes(P, shifted), "is not inside",
+      "a pair moved past its value is refused, however well-formed it still looks")
+early <- lapply(VIGNETTES, function(x) {
+  if (x$id %in% c("tandem_within", "tandem_beyond")) {
+    inner <- x$events
+    x$events <- function(p) { e <- inner(p); e$day[nrow(e)] <- e$day[nrow(e)] - 10L; e }
+  }
+  x
+})
+stops_with(check_vignettes(P, early), "is not outside",
+      "...and one moved short of it, whose 'beyond' side is still inside")
+unmeasured <- lapply(VIGNETTES, function(x) {
+  if (identical(x$id, "tandem_within")) x$measure <- NULL
+  x
+})
+stops_with(check_vignettes(P, unmeasured), "declares no measure",
+      "...and a pair that says nothing about what its parameter measures")
+ok(all(vapply(Filter(function(x) !is.null(x$pair), VIGNETTES),
+              function(x) is.function(x$measure), logical(1))),
+   "every boundary pair in the catalogue says what its parameter measures")
 # A boundary where both sides expect the same thing tests nothing.
 same <- lapply(VIGNETTES, function(x) {
   if (identical(x$id, "tandem_beyond")) x$expected <- function(p)
