@@ -204,3 +204,127 @@ synthetic_one <- function(prefix, settings) {
        S_MALIGNANCY_RATES = malig, S_PATTERNS = patterns,
        S_TX_ATTRITION = txattr, S_SWITCH = switch_tbl)
 }
+
+# --- the LOT run behind every synthetic scenario -----------------------------
+#
+# One run, shared. That is the normal case: none of the study's open questions
+# changes how a line is counted, so several study scenarios rest on the same
+# lines. Made up like the rest, and the page says so.
+
+SYNTH_LOT_RUN_ID <- "synthetic-lot"
+
+LOT_START_TYPES <- c("MED", "SCT_AUTO", "SCT_ALLO", "CART", "SCT_CART",
+                     "SCT_AUTO_CONT")
+LOT_END_REASONS <- c("DISCONTINUATION", "MED_ADD", "CART_INIT", "SCT_AUTO",
+                     "SCT_ALLO", "DEATH", "STUDY_END", "DISENROLLMENT")
+
+synthetic_lot_run <- function() {
+  r <- .synth_rng()
+  n_pat <- 1200L
+  pid <- sprintf("P%06d", seq_len(n_pat))
+  # Lines per patient thin out the way real ones do: everyone has a 1L, and
+  # each later line holds a fraction of the one before it.
+  keep <- c(1, .49, .30, .16, .07)
+  rows <- do.call(rbind, lapply(1:5, function(n) {
+    take <- pid[seq_len(round(n_pat * keep[n]))]
+    if (!length(take)) return(NULL)
+    st <- if (n == 1L) rep("MED", length(take)) else
+      sample(LOT_START_TYPES, length(take), TRUE, c(.72, .12, .04, .07, .03, .02))
+    start <- as.Date("2019-01-01") + as.integer(r(length(take), 0, 1500)) +
+      (n - 1L) * 210L
+    len <- as.integer(r(length(take), 25, 640))
+    data.frame(
+      PATID = take, LOT_NUM = n, LOT_START_DT = start,
+      LOT_START_TYPE = st,
+      LOT_BASE_MEDS = sample(c("BORT|LEN|DEX", "DARA|LEN|DEX", "LEN|DEX",
+                              "CARF|DEX", "BORT|CYCLO|DEX", "DARA|BORT|LEN|DEX"),
+                             length(take), TRUE),
+      LOT_MED_CNT = as.integer(r(length(take), 1, 4)),
+      LOT_BASE_END_DT = start + len,
+      LOT_BASE_END_REASON = sample(LOT_END_REASONS, length(take), TRUE,
+                                   c(.34, .18, .05, .07, .02, .11, .19, .04)),
+      LOT_BASE_LENGTH = len,
+      LOT_ALLO_LOT_FLG = as.integer(st == "SCT_ALLO"),
+      LOT_CART_LOT_FLG = as.integer(st %in% c("CART", "SCT_CART")),
+      stringsAsFactors = FALSE)
+  }))
+  rownames(rows) <- NULL
+
+  # The line criteria remove some lines. LOT_LONG is before them and
+  # LOT_LONG_FINAL after, which is why the two are different tables and why
+  # only the validation panel reads the first.
+  drop <- r(nrow(rows), 0, 1) < 0.06
+  final <- rows[!drop, , drop = FALSE]
+
+  n_start <- n_pat
+  steps <- list(
+    list(KIND = "input", STEP = "cohort as LOT read it", n = n_start),
+    list(KIND = "criterion", STEP = "line starts inside the study period",
+         n = round(n_start * .97)),
+    list(KIND = "criterion", STEP = "regimen is not empty", n = round(n_start * .95)),
+    list(KIND = "criterion", STEP = "line ends on or before study end",
+         n = round(n_start * .94)),
+    list(KIND = "progression", STEP = "reached 2L", n = round(n_start * .49)),
+    list(KIND = "progression", STEP = "reached 3L", n = round(n_start * .30)),
+    list(KIND = "reconciliation", STEP = "patients with at least one line",
+         n = round(n_start * .94)),
+    list(KIND = "final", STEP = "study population", n = round(n_start * .94)))
+  attrition <- do.call(rbind, lapply(seq_along(steps), function(i) {
+    s <- steps[[i]]
+    prev <- if (i > 1) steps[[i - 1]]$n else s$n
+    data.frame(RUN_ID = SYNTH_LOT_RUN_ID, STEP_NUM = i, KIND = s$KIND,
+               STEP = s$STEP, N_PATIENTS = as.integer(s$n),
+               N_LINES = as.integer(s$n * 1.9),
+               PCT_OF_START = round(100 * s$n / n_start, 1),
+               PCT_OF_PREV = round(100 * s$n / max(prev, 1), 1),
+               RECORDED_AT = "2026-09-08 11:00:00", stringsAsFactors = FALSE)
+  }))
+
+  # Face validity reports the number and its expected range; the verdict is
+  # read off them. One deliberately outside its range, so the panel that shows
+  # a LOOK is exercised rather than only ever drawing greens.
+  fv <- data.frame(
+    RUN_ID = SYNTH_LOT_RUN_ID,
+    CHECK_NAME = c("pct_1l_bortezomib", "median_1l_length", "pct_reaching_2l",
+                   "pct_auto_sct_1l", "mean_meds_per_lot"),
+    WHAT = c("1L regimens containing bortezomib",
+             "median 1L length in days", "patients reaching 2L",
+             "1L lines ending in an autologous transplant",
+             "agents per line"),
+    VALUE = c(58.4, 331, 49.0, 18.2, 2.6),
+    EXPECT_LO = c(45, 200, 35, 10, 2),
+    EXPECT_HI = c(70, 420, 55, 30, 4),
+    stringsAsFactors = FALSE)
+  fv$VALUE[2] <- 512                       # outside 200-420 on purpose
+  fv$VERDICT <- ifelse(fv$VALUE >= fv$EXPECT_LO & fv$VALUE <= fv$EXPECT_HI,
+                       "ok", "LOOK")
+  fv$RECORDED_AT <- "2026-09-08 11:00:00"
+
+  qc <- data.frame(
+    CHECK_NAME = c("LOT_LONG duplicate PATID x LOT_NUM", "lines with no regimen",
+                   "line ending before it starts", "LOT_NUM not contiguous",
+                   "start date outside the study period"),
+    CHECK_VALUE = c(0L, 0L, 0L, 0L, 0L),
+    CHECK_STATUS = "PASS", RUN_ID = SYNTH_LOT_RUN_ID, stringsAsFactors = FALSE)
+
+  meta <- data.frame(
+    RUN_ID = SYNTH_LOT_RUN_ID, RUN_TIMESTAMP = "2026-09-08 11:00:00",
+    LOT_LONG_BY_LINE = "1:1200|2:588|3:360|4:192|5:84",
+    N_LOT_FINAL_ROWS = nrow(final),
+    N_LOT_FINAL_PATIENTS = length(unique(final$PATID)),
+    CODE_MD5 = "synthetic", CONTRACT_SETTINGS = "induction_window_days=60|lot_n_induction_window_days=30",
+    STUDY_START = "2016-01-01", STUDY_END = "2026-03-31",
+    LINE_CRITERIA_APPLIED = "line_in_study_period; regimen_not_empty",
+    stringsAsFactors = FALSE)
+
+  status <- data.frame(
+    RUN_ID = SYNTH_LOT_RUN_ID, INPUT_COHORT_TABLE = "ndmm_NDMM_COHORT",
+    OBJECT_PREFIX = "lot_", STATE = "complete", STUDY_END = "2026-03-31",
+    CODELIST_WAIVERS_REQUESTED = "", CODELIST_WAIVERS_APPLIED = "",
+    CONTRACT_DEVIATIONS = "none", UPDATED_AT = "2026-09-08 11:05:00",
+    stringsAsFactors = FALSE)
+
+  list(LOT_LONG = rows, LOT_LONG_FINAL = final, LOT_ATTRITION = attrition,
+       LOT_FACE_VALIDITY = fv, LOT_QC_SUMMARY = qc,
+       LOT_RUN_METADATA = meta, LOT_BUILD_STATUS = status)
+}

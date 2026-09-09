@@ -45,8 +45,12 @@ others — the summary at the end says which failed, because a grid that quietly
 came back four-of-five would be read as five.
 
 The Job then exports every table each run wrote to
-`/mnt/artifacts/results/<prefix>/<TABLE>.csv`. Domino persists Job artifacts
-there. Re-run on each data refresh.
+`/mnt/artifacts/results/<prefix>/<TABLE>.csv`, and the LOT build's outputs to
+`/mnt/artifacts/results/lot/<LOT_RUN_ID>/<TABLE>.csv`. LOT tables are filed by
+**run**, not by scenario: scenarios normally share one LOT run, so a copy each
+would waste the space and suggest they differ. A run a previous scenario
+already exported is skipped. Domino persists Job artifacts there. Re-run on
+each data refresh.
 
 Cost: one full study run per scenario. Five scenarios is five runs — start with
 two or three, and add rows as questions come up.
@@ -73,7 +77,10 @@ Anything a stakeholder might quote belongs behind it.
 
 `DASH_SOURCE=warehouse` with `DASH_WORK_SCHEMA` and `DASH_CATALOG` set reads
 the `S_*` tables live, and scenarios are discovered by looking for tables whose
-name ends in `S_RUN_METADATA`. It needs a cluster per viewer and re-queries on
+name ends in `S_RUN_METADATA`. Add `DASH_LOT_PREFIX` for the LOT tabs — the
+study's metadata records which LOT *run* a scenario read, not where that run
+wrote, and rows are then filtered to that run id so a prefix pointing at a
+different one is caught rather than drawn. It needs a cluster per viewer and re-queries on
 every control change, so the snapshot is the better default for anything more
 than one person.
 

@@ -137,7 +137,11 @@ server <- function(input, output, session) {
   # One table, read and filtered the way every panel wants it.
   panel_data <- function(p, scenario) {
     if (is.na(p$table)) return(NULL)
-    d <- read_table(SRC, scenario$prefix, p$table, DASH_CFG$prefer_release)
+    # A LOT panel reads the run this scenario named, not the scenario's own
+    # prefix - the lines were built by a different build.
+    d <- if (identical(p$source %||% "study", "lot"))
+      read_lot_table(SRC, scenario, p$table)
+    else read_table(SRC, scenario$prefix, p$table, DASH_CFG$prefer_release)
     if (is.null(d) || !nrow(d)) return(d)
     sp <- table_spec(p$table, names(d))
     d <- apply_keys(d, sp, selection())
@@ -155,6 +159,7 @@ server <- function(input, output, session) {
       bar    = ui_plot(p, s),
       km     = ui_plot(p, s),
       flow   = ui_table(p, s),
+      check  = ui_check(p, s),
       delta  = ui_delta(p, s),
       ui_table(p, s))
     tagList(h4(p$label),
@@ -186,16 +191,24 @@ server <- function(input, output, session) {
     uiOutput(id)
   }
 
+  # Two funnels with different column names - this package's S_ATTRITION and
+  # the LOT build's LOT_ATTRITION - drawn by one panel, off the spec.
   ui_funnel <- function(p, s) {
     id <- paste0("fun_", p$name)
     output[[id]] <- renderPlot({
       d <- panel_data(p, s)
       if (is.null(d) || !nrow(d)) return(plot_empty())
-      d <- d[order(d$STEP), , drop = FALSE]
-      plot_bar(paste0(d$STEP, ". ", d$CRITERION), d$N_REMAINING,
-               main = "Patients remaining", xlab = "patients")
-    }, height = 380)
-    plotOutput(id, height = "380px")
+      sp <- table_spec(p$table, names(d))
+      ord <- sp$order %||% "STEP"
+      lab <- sp$facet %||% "CRITERION"
+      val <- intersect(sp$values, names(d))[1]
+      if (!all(c(ord, lab) %in% names(d)) || is.na(val)) return(plot_empty())
+      d <- d[order(d[[ord]]), , drop = FALSE]
+      tag <- if ("KIND" %in% names(d)) paste0(" [", d$KIND, "]") else ""
+      plot_bar(paste0(d[[ord]], ". ", d[[lab]], tag), d[[val]],
+               main = p$label, xlab = val)
+    }, height = 420)
+    plotOutput(id, height = "420px")
   }
 
   ui_plot <- function(p, s) {
@@ -212,15 +225,48 @@ server <- function(input, output, session) {
         return(plot_km(curves, main = p$label))
       }
       if (is.null(d) || !nrow(d)) return(plot_empty())
-      lab <- sp$facet %||% sp$keys[1]
+      # A panel may name the column to break down by; otherwise the spec's
+      # facet. A patient-level table has no value column, so the bar is a
+      # count of rows - which is what "lines by line number" is.
+      lab <- p$by %||% sp$facet %||% sp$keys[1]
       val <- sp$rate %||% sp$pct %||% sp$n_col
-      if (is.null(lab) || !lab %in% names(d) || !val %in% names(d))
-        return(plot_empty())
+      if (is.null(lab) || !lab %in% names(d)) return(plot_empty())
+      if (is.null(val) || !val %in% names(d)) {
+        tb <- sort(table(as.character(d[[lab]])), decreasing = TRUE)
+        return(plot_bar(names(tb), as.integer(tb), main = p$label,
+                        xlab = "lines"))
+      }
       agg <- stats::aggregate(d[[val]], by = list(L = as.character(d[[lab]])),
                               FUN = function(x) mean(x, na.rm = TRUE))
       plot_bar(agg$L, agg$x, main = p$label, xlab = val)
     }, height = 420)
     plotOutput(id, height = "420px")
+  }
+
+  # A check table: what was found, what was expected, and the verdict. The
+  # number is shown beside the range rather than replaced by a tick, because a
+  # verdict without its value cannot be argued with.
+  ui_check <- function(p, s) {
+    id <- paste0("chk_", p$name)
+    output[[id]] <- renderUI({
+      d <- panel_data(p, s)
+      if (is.null(d) || !nrow(d)) return(HTML(html_table(NULL)))
+      sp <- table_spec(p$table, names(d))
+      v <- sp$verdict
+      if (!is.null(v) && v %in% names(d)) {
+        # Anything not a clean pass first: a page of greens with one LOOK
+        # buried at the bottom is a page nobody reads to the bottom of.
+        bad <- !toupper(trimws(as.character(d[[v]]))) %in% c("OK", "PASS")
+        d <- rbind(d[bad, , drop = FALSE], d[!bad, , drop = FALSE])
+        n_bad <- sum(bad)
+      } else n_bad <- 0L
+      HTML(paste0(
+        if (n_bad > 0) sprintf(
+          '<div class="alert">%d check(s) did not come back clean. They are listed first.</div>',
+          n_bad) else "",
+        html_table(d, max_rows = DASH_CFG$max_rows)))
+    })
+    uiOutput(id)
   }
 
   ui_delta <- function(p, s) {
@@ -230,8 +276,22 @@ server <- function(input, output, session) {
       if (is.null(b))
         return(div(class = "note", "Pick a scenario in 'Against' to compare."))
       rd <- compare_readings(s, b)
-      diff_html <- html_table(rd[rd$DIFFERS, c("SETTING", "A", "B")],
-                              caption = "Settings that differ")
+      # Before any difference is drawn: do these two rest on the SAME lines?
+      # Two scenarios sharing a LOT run differ only in what this package did.
+      # Two reading different runs differ in the lines as well, and a delta
+      # between them carries both without saying so.
+      same <- same_lot_run(s, b)
+      lot_html <- if (isTRUE(same))
+        sprintf('<p class="note">Both rest on LOT run <b>%s</b>, so every difference below is this package\'s.</p>',
+                html_escape(s$lot_run_id))
+      else if (isFALSE(same))
+        sprintf('<div class="alert"><b>Different LOT runs.</b> A is %s and B is %s, so the lines themselves differ. A difference below carries both that and the settings, and the two cannot be told apart here.</div>',
+                html_escape(s$lot_run_id), html_escape(b$lot_run_id))
+      else
+        '<div class="alert">At least one of these scenarios records no LOT run, so it cannot be said whether they rest on the same lines.</div>'
+      diff_html <- paste0(lot_html,
+        html_table(rd[rd$DIFFERS, c("SETTING", "A", "B")],
+                   caption = "Settings that differ"))
       rate_tables <- intersect(
         c("S_SAFETY_RATES", "S_HCRU_RATES", "S_MALIGNANCY_RATES"),
         DASH_TABLES$TABLE)
@@ -269,7 +329,7 @@ server <- function(input, output, session) {
   for (tb in PANEL_TABS()) local({
     this_tab <- tb
     output[[paste0("tab_", make.names(this_tab))]] <- renderUI({
-      ps <- Filter(function(p) identical(p$tab, this_tab), resolve_panels(scn()))
+      ps <- Filter(function(p) identical(p$tab, this_tab), resolve_panels(scn(), src = SRC))
       if (!length(ps)) return(div(class = "note", "No panel on this tab."))
       do.call(tagList, lapply(ps, render_panel))
     })

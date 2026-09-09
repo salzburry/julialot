@@ -42,10 +42,25 @@ cat("\nthe dashboard is driven by the package, not by a second copy of it\n")
   ok(isFALSE(s$declared), "and is marked as undeclared rather than pretending")
   ok(all(vapply(PANELS, function(p) p$render %in% PANEL_RENDER, logical(1))),
      "every panel asks for a renderer that exists")
-  ok(all(vapply(PANELS, function(p)
-    is.na(p$table) || p$table %in% c(DASH_TABLES$TABLE, "S_RUN_METADATA"),
-    logical(1))),
-     "and reads a table the package actually writes")
+  # A panel reads either this package's tables or the LOT build's, and which
+  # one it declares has to match where its table actually comes from. A study
+  # panel pointed at a LOT table would be read from the wrong prefix.
+  wrong <- Filter(function(p) {
+    if (is.na(p$table)) return(FALSE)
+    src <- p$source %||% "study"
+    if (identical(src, "lot")) !p$table %in% LOT_DASHBOARD_TABLES
+    else !p$table %in% c(DASH_TABLES$TABLE, "S_RUN_METADATA")
+  }, PANELS)
+  ok(length(wrong) == 0,
+     paste0("every panel reads a table its declared source actually writes",
+            if (length(wrong)) paste0(" [", paste(vapply(wrong, `[[`,
+              character(1), "name"), collapse = ", "), "]") else ""))
+  ok(all(vapply(PANELS, function(p) (p$source %||% "study") %in% PANEL_SOURCE,
+                logical(1))),
+     "and declares a source that exists")
+  # The two sets do not overlap, so "which build wrote this" is never ambiguous.
+  ok(!length(intersect(LOT_DASHBOARD_TABLES, DASH_TABLES$TABLE)),
+     "no table is claimed by both builds")
 }
 
 cat("\nthe settings map comes from the package's own source\n")
@@ -278,6 +293,114 @@ cat("\nwhat a panel can draw, and what it says when it cannot\n")
      "and anything else stops rather than dropping it silently")
   if (is.na(old)) Sys.unsetenv("SHOW_SAFETY_RATES") else
     Sys.setenv(SHOW_SAFETY_RATES = old)
+}
+
+cat("\nthe LOT engine's outputs, which belong to the LOT run\n")
+{
+  s <- SCENARIOS[["s223926_"]]
+  ok(nzchar(s$lot_run_id), "a scenario records the LOT run it read")
+  d <- read_lot_table(SRC, s, "LOT_LONG_FINAL")
+  ok(!is.null(d) && nrow(d) > 0, "and that run's lines read back")
+  ok(all(c("PATID", "LOT_NUM", "LOT_START_TYPE", "LOT_BASE_END_REASON") %in% names(d)),
+     "with the columns the engine's own append writes")
+  ok(max(d$LOT_NUM) <= 5L, "and no line beyond the engine's five-line cap")
+  # Lines thin out: every patient has a 1L and fewer reach each later line.
+  n_by <- table(d$LOT_NUM)
+  ok(all(diff(as.integer(n_by)) < 0),
+     "each later line holds fewer patients than the one before it")
+
+  # LOT_LONG is the same table BEFORE the line criteria, so it holds more.
+  raw <- read_lot_table(SRC, s, "LOT_LONG")
+  ok(nrow(raw) > nrow(d),
+     "LOT_LONG holds more lines than LOT_LONG_FINAL - the criteria removed some")
+
+  # A LOT panel does not depend on which of THIS package's modules ran.
+  s2 <- s; s2$modules <- c("spine", "cohorts")
+  lot_p <- Filter(function(p) identical(p$name, "lot_attrition"),
+                  resolve_panels(s2, src = SRC))[[1]]
+  ok(isTRUE(lot_p$available),
+     "a LOT panel is available even when this package ran almost no module")
+  # It does depend on the scenario naming a run, and on reaching it.
+  s3 <- s; s3$lot_run_id <- ""
+  p3 <- Filter(function(p) identical(p$name, "lot_attrition"),
+               resolve_panels(s3, src = SRC))[[1]]
+  ok(!isTRUE(p3$available) && grepl("records no LOT run", p3$why),
+     "a scenario naming no LOT run says so rather than drawing an empty funnel")
+  s4 <- s; s4$lot_run_id <- "a-run-nothing-exported"
+  p4 <- Filter(function(p) identical(p$name, "lot_attrition"),
+               resolve_panels(s4, src = SRC))[[1]]
+  ok(!isTRUE(p4$available) && grepl("could not be read from this source", p4$why),
+     "and a run that was not exported is a different message from one not recorded")
+  ok(grepl("DASH_LOT_PREFIX", p4$why) && grepl("build_scenarios", p4$why),
+     "which names what to do about it, for either source")
+
+  # The funnel spec: two funnels, different column names, one panel.
+  sp_s <- table_spec("S_ATTRITION"); sp_l <- table_spec("LOT_ATTRITION")
+  ok(identical(sp_s$order, "STEP") && identical(sp_l$order, "STEP_NUM"),
+     "each funnel declares the column it is ordered by")
+  ok(identical(sp_s$facet, "CRITERION") && identical(sp_l$facet, "STEP"),
+     "and the column that labels a step")
+  la <- read_lot_table(SRC, s, "LOT_ATTRITION")
+  ok(all(intersect(sp_l$values, names(la)) == sp_l$values),
+     "every value the LOT funnel declares is on the table")
+  ok("progression" %in% la$KIND && "reconciliation" %in% la$KIND,
+     "and the kinds that are not attrition are marked as such")
+
+  # Face validity: the number and its range, not a bare verdict.
+  fv <- read_lot_table(SRC, s, "LOT_FACE_VALIDITY")
+  spf <- table_spec("LOT_FACE_VALIDITY")
+  ok(all(c(spf$value, spf$lo, spf$hi, spf$verdict) %in% names(fv)),
+     "a face-validity check carries what it found and what was expected")
+  ok(sum(fv$VERDICT != "ok") >= 1,
+     "and at least one check is outside its range, so the panel that shows one is exercised")
+  outside <- fv[fv$VERDICT != "ok", ]
+  ok(all(outside$VALUE < outside$EXPECT_LO | outside$VALUE > outside$EXPECT_HI),
+     "a LOOK is a value genuinely outside its range, not a label")
+  ok(all(fv$VALUE[fv$VERDICT == "ok"] >= fv$EXPECT_LO[fv$VERDICT == "ok"] &
+           fv$VALUE[fv$VERDICT == "ok"] <= fv$EXPECT_HI[fv$VERDICT == "ok"]),
+     "and an ok is genuinely inside it")
+}
+
+cat("\nwhether two scenarios rest on the same lines\n")
+{
+  a <- SCENARIOS[["s223926_"]]; b <- SCENARIOS[["s223926_q27_"]]
+  ok(isTRUE(same_lot_run(a, b)),
+     "scenarios sharing a LOT run are reported as sharing it")
+  b2 <- b; b2$lot_run_id <- "another-lot-run"
+  ok(isFALSE(same_lot_run(a, b2)),
+     "and two reading different runs are reported as differing")
+  b3 <- b; b3$lot_run_id <- ""
+  ok(is.na(same_lot_run(a, b3)),
+     "while a scenario naming no run gives NA - not knowing is not the same as knowing they match")
+  # This is what makes a delta readable. Two scenarios on one LOT run differ
+  # only in what this package did; on two runs the lines differ too, and the
+  # comparison carries both without being able to separate them.
+  src <- paste(readLines("app.R", warn = FALSE), collapse = "\n")
+  ok(grepl("same_lot_run(s, b)", src, fixed = TRUE),
+     "the Compare tab asks the question before it draws a difference")
+  ok(grepl("Different LOT runs", src, fixed = TRUE),
+     "and says so when the answer is no")
+}
+
+cat("\nthe LOT table list matches the engine's own\n")
+{
+  eng <- file.path("..", "..", "lot", "engine", "R", "build_lot.R")
+  if (file.exists(eng)) {
+    txt <- paste(readLines(eng, warn = FALSE), collapse = "\n")
+    blk <- regmatches(txt, regexpr("LOT_TABLES <- c\\((?:[^()]|\\([^()]*\\))*\\)",
+                                   txt, perl = TRUE))
+    declared <- unique(regmatches(blk, gregexpr('"[A-Z0-9_]+"', blk))[[1]])
+    declared <- gsub('"', "", declared)
+    unknown <- setdiff(LOT_DASHBOARD_TABLES, declared)
+    ok(length(unknown) == 0,
+       paste0("every LOT table this dashboard reads is one the engine declares",
+              if (length(unknown)) paste0(" [not: ", paste(unknown, collapse = ", "), "]")
+              else ""))
+    ok(length(declared) > length(LOT_DASHBOARD_TABLES),
+       "and the engine writes more than the dashboard shows, which is expected")
+  } else {
+    cat("  SKIP   lot/engine is not beside this folder\n")
+  }
 }
 
 cat("\nthe source refuses to make numbers up when it was told not to\n")

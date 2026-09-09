@@ -32,6 +32,10 @@ dashboard_config <- function() {
     # Scenario prefixes to offer. Empty means discover them.
     prefixes        = .env_vec("DASH_PREFIXES", character(0)),
     prefix_pattern  = .env_chr("DASH_PREFIX_PATTERN", "^s223926"),
+    # Where the LOT build wrote. S_RUN_METADATA records which LOT RUN a
+    # scenario read, not where that run wrote, so warehouse mode needs telling.
+    # The snapshot does not: the export job files LOT tables by run id.
+    lot_prefix      = .env_chr("DASH_LOT_PREFIX", ""),
 
     # --- what is shown ------------------------------------------------------
     # The floor the dashboard applies on top of what it reads. The package

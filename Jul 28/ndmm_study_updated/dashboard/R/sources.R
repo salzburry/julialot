@@ -43,6 +43,16 @@ snapshot_source <- function(cfg) {
       if (!file.exists(p)) return(NULL)
       utils::read.csv(p, stringsAsFactors = FALSE, check.names = FALSE,
                       na.strings = c("", "NA"))
+    },
+    # LOT tables sit under lot/<LOT_RUN_ID>/, not under a scenario. Several
+    # scenarios normally read ONE LOT run, and a copy per scenario would both
+    # waste the space and suggest they differ.
+    read_lot = function(lot_run_id, table) {
+      if (!nzchar(lot_run_id %||% "")) return(NULL)
+      p <- file.path(root, "lot", lot_run_id, paste0(table, ".csv"))
+      if (!file.exists(p)) return(NULL)
+      utils::read.csv(p, stringsAsFactors = FALSE, check.names = FALSE,
+                      na.strings = c("", "NA"))
     })
 }
 
@@ -77,16 +87,35 @@ warehouse_source <- function(cfg, con) {
     },
     read = function(prefix, table)
       tryCatch(db_q(con, sprintf("SELECT * FROM %s", full(prefix, table))),
-               error = function(e) NULL))
+               error = function(e) NULL),
+    # The LOT build wrote under its own prefix, which S_RUN_METADATA does not
+    # carry - it records the run id, not where the run wrote. DASH_LOT_PREFIX
+    # names it, and the run id is then checked against LOT_BUILD_STATUS so a
+    # prefix pointing at a DIFFERENT run is caught rather than drawn.
+    read_lot = function(lot_run_id, table) {
+      if (!nzchar(cfg$lot_prefix)) return(NULL)
+      d <- tryCatch(db_q(con, sprintf("SELECT * FROM %s",
+                                      full(cfg$lot_prefix, table))),
+                    error = function(e) NULL)
+      if (is.null(d)) return(NULL)
+      if ("RUN_ID" %in% names(d) && nzchar(lot_run_id %||% ""))
+        d <- d[as.character(d$RUN_ID) == lot_run_id, , drop = FALSE]
+      d
+    })
 }
 
 # --- synthetic --------------------------------------------------------------
 synthetic_source <- function(cfg) {
   data <- synthetic_scenarios(cfg)
+  lot <- synthetic_lot_run()
   list(
     kind = "synthetic", synthetic = TRUE, origin = "generated in-process",
     prefixes = function() names(data),
-    read = function(prefix, table) data[[prefix]][[table]])
+    read = function(prefix, table) data[[prefix]][[table]],
+    # One LOT run behind every scenario, which is the normal case: none of the
+    # study's open questions changes how a line is counted.
+    read_lot = function(lot_run_id, table)
+      if (identical(lot_run_id, SYNTH_LOT_RUN_ID)) lot[[table]] else NULL)
 }
 
 # --- the layer everything above uses ----------------------------------------
@@ -132,4 +161,28 @@ SUPPRESSION_SPEC_NAMES <- function() {
   if (!exists("SUPPRESSION_SPEC")) return(character(0))
   stats::setNames(as.list(paste0(names(SUPPRESSION_SPEC), "_RELEASE")),
                   paste0(names(SUPPRESSION_SPEC), "_RELEASE"))
+}
+
+
+# One LOT table for the run a scenario read.
+#
+# NULL when the scenario names no LOT run, or when this source cannot reach it.
+# Both are reported by the panel rather than drawn as an empty table: "the LOT
+# tables were not exported" and "the LOT run built nothing" look identical on a
+# page and mean different things.
+read_lot_table <- function(src, scenario, table) {
+  if (is.null(src$read_lot)) return(NULL)
+  src$read_lot(scenario$lot_run_id, table)
+}
+
+# Do two scenarios rest on the SAME lines?
+#
+# The question the Compare tab has to answer before it draws a difference. Two
+# scenarios sharing a LOT run differ only in what this package did; two reading
+# different runs differ in the lines as well, and a delta between them carries
+# both without saying so.
+same_lot_run <- function(a, b) {
+  ra <- trimws(a$lot_run_id %||% ""); rb <- trimws(b$lot_run_id %||% "")
+  if (!nzchar(ra) || !nzchar(rb)) return(NA)
+  identical(ra, rb)
 }

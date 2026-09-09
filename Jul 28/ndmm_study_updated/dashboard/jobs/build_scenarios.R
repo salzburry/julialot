@@ -50,6 +50,14 @@ local({
 EXPORT <- unique(c("S_RUN_METADATA",
                    unlist(lapply(MODULES, `[[`, "outputs"), use.names = FALSE)))
 
+# The LOT build's own outputs, exported once per LOT RUN rather than once per
+# scenario. Scenarios normally share a LOT run - none of the study's open
+# questions changes how a line is counted - so a copy each would waste the
+# space and, worse, suggest they differ.
+LOT_EXPORT <- c("LOT_LONG_FINAL", "LOT_LONG", "LOT_ATTRITION",
+                "LOT_FACE_VALIDITY", "LOT_QC_SUMMARY", "LOT_RUN_METADATA",
+                "LOT_BUILD_STATUS")
+
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
 run_one <- function(row) {
@@ -101,6 +109,34 @@ export_one <- function(prefix) {
     n <- n + 1L
   }
   message("  exported ", n, " table(s) to ", d)
+
+  # The lines this scenario read. Filed by LOT run id, and skipped when
+  # another scenario already exported the same run.
+  lot_id <- tryCatch({
+    md <- db_q(con, sprintf("SELECT LOT_RUN_ID FROM %s ORDER BY UPDATED_AT DESC LIMIT 1",
+                            wrk("S_RUN_METADATA")))
+    trimws(as.character(md$LOT_RUN_ID[1]))
+  }, error = function(e) "")
+  if (!nzchar(lot_id) || identical(lot_id, "NA") || identical(lot_id, "unproven")) {
+    message("  no LOT run recorded, so no LOT tables exported")
+    return(n)
+  }
+  ld <- file.path(out_dir, "lot", lot_id)
+  if (dir.exists(ld) && length(list.files(ld, pattern = "[.]csv$"))) {
+    message("  LOT run ", lot_id, " already exported by an earlier scenario")
+    return(n)
+  }
+  dir.create(ld, recursive = TRUE, showWarnings = FALSE)
+  ln <- 0L
+  for (tb in LOT_EXPORT) {
+    got <- tryCatch(db_q(con, sprintf("SELECT * FROM %s", lot_tbl(tb))),
+                    error = function(e) NULL)
+    if (is.null(got) || !nrow(got)) next
+    utils::write.csv(got, file.path(ld, paste0(tb, ".csv")), row.names = FALSE,
+                     na = "")
+    ln <- ln + 1L
+  }
+  message("  exported ", ln, " LOT table(s) for run ", lot_id, " to ", ld)
   n
 }
 

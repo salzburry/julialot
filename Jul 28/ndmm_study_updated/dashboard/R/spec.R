@@ -103,6 +103,50 @@ TABLE_SPEC <- list(
     keys = "COHORT", id = "PATID",
     categorical = c("CONDITION", "DOMAIN", "ACUTE_CHRONIC")),
 
+  # --- the LOT engine's own outputs ---------------------------------------
+  #
+  # A different build wrote these, under its own prefix, and a study scenario
+  # records which run in S_RUN_METADATA.LOT_RUN_ID. Several scenarios normally
+  # share ONE LOT run, because none of this package's open questions changes
+  # how a line is counted - so these describe a scenario's lineage rather than
+  # the scenario.
+  LOT_LONG_FINAL = list(
+    shape = "subject", label = "Lines of therapy, after the line criteria",
+    source = "lot", keys = "LOT_NUM", id = "PATID",
+    categorical = c("LOT_START_TYPE", "LOT_BASE_END_REASON", "LOT_ALLO_LOT_FLG",
+                    "LOT_CART_LOT_FLG", "LOT_BASE_MEDS"),
+    continuous = c("LOT_MED_CNT", "LOT_BASE_LENGTH")),
+
+  LOT_LONG = list(
+    shape = "subject", label = "Lines of therapy, BEFORE the line criteria",
+    source = "lot", keys = "LOT_NUM", id = "PATID",
+    categorical = c("LOT_START_TYPE", "LOT_BASE_END_REASON"),
+    continuous = c("LOT_MED_CNT", "LOT_BASE_LENGTH")),
+
+  LOT_ATTRITION = list(
+    shape = "funnel", label = "LOT funnel: cohort to study population",
+    source = "lot", keys = character(0), order = "STEP_NUM",
+    facet = "STEP", groups = "KIND",
+    values = c("N_PATIENTS", "N_LINES", "PCT_OF_START", "PCT_OF_PREV")),
+
+  LOT_FACE_VALIDITY = list(
+    shape = "check", label = "Face validity",
+    source = "lot", keys = character(0), facet = "WHAT",
+    value = "VALUE", lo = "EXPECT_LO", hi = "EXPECT_HI", verdict = "VERDICT"),
+
+  LOT_QC_SUMMARY = list(
+    shape = "check", label = "QC checks",
+    source = "lot", keys = character(0), facet = "CHECK_NAME",
+    value = "CHECK_VALUE", verdict = "CHECK_STATUS"),
+
+  LOT_RUN_METADATA = list(
+    shape = "grid", label = "What produced these lines", source = "lot",
+    keys = character(0)),
+
+  LOT_BUILD_STATUS = list(
+    shape = "grid", label = "LOT build status", source = "lot",
+    keys = character(0)),
+
   S_HCRU_EVENTS = list(
     shape = "subject", label = "HCRU events, per patient",
     keys = "COHORT", id = "PATID",
@@ -116,11 +160,22 @@ GENERIC_KEYS <- c("COHORT", "LOT_NUM", "PERIOD")
 
 table_spec <- function(name, cols = character(0)) {
   s <- TABLE_SPEC[[name]]
-  if (!is.null(s)) return(utils::modifyList(list(name = name), s))
+  if (!is.null(s))
+    return(utils::modifyList(list(name = name, source = "study"), s))
   list(name = name, shape = "grid",
        label = gsub("_", " ", sub("^S_", "", name)),
+       source = if (startsWith(name, "LOT")) "lot" else "study",
        keys = intersect(GENERIC_KEYS, cols), declared = FALSE)
 }
+
+# The LOT engine's deliverables and its own record. Named here rather than
+# imported: lot/engine/R/build_lot.R is a sibling folder, and reaching into it
+# would break this folder standing alone (../SOURCES.md). tests/run_tests.R
+# compares this list to LOT_TABLES whenever the engine is beside us, so one
+# gaining a table and not the other is caught.
+LOT_DASHBOARD_TABLES <- c("LOT_LONG_FINAL", "LOT_LONG", "LOT_ATTRITION",
+                          "LOT_FACE_VALIDITY", "LOT_QC_SUMMARY",
+                          "LOT_RUN_METADATA", "LOT_BUILD_STATUS")
 
 # Every table the package can write, with the module that writes it. Read off
 # the package's own registry, so this cannot drift from what a run produces.

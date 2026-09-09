@@ -42,6 +42,31 @@ every run records its answer to each open question. Two runs under two prefixes
 - **Compare** — two runs side by side: the settings that differ, then every
   measure under both with the difference. This is the tab the dashboard exists
   for.
+- **LOT engine** — the lines these numbers rest on: the LOT funnel, lines per
+  line number, what opened each line and how each ended.
+- **LOT validation** — face validity, the QC checks, the build status, and
+  `LOT_LONG` before the line criteria against `LOT_LONG_FINAL` after them.
+
+### The LOT tabs describe the lineage, not the scenario
+
+The LOT tables were written by a **different build**, under its own prefix, and
+a study scenario records which run it read in `S_RUN_METADATA.LOT_RUN_ID`.
+Several scenarios normally share one run — none of the study's open questions
+changes how a line is counted — so two scenarios sharing a LOT run show
+identical numbers on these tabs. That is the truth, not a bug.
+
+It matters on **Compare**, which asks the question before drawing anything:
+
+- same LOT run → every difference below is this package's;
+- different runs → said loudly, because the lines differ too and a delta
+  carries both without being able to separate them;
+- one of them naming no run → said, because not knowing is not the same as
+  knowing they match.
+
+`LOT_LONG` is only on the validation tab. It is the same table *before* the
+line criteria, and a truncate criterion makes the two hold different patients —
+so a panel drawn on it describes people the study excluded, with nothing on the
+page saying so. The same caution `Jul 28/reporting/FILES.md` gives.
 
 ## Adding to it
 
@@ -52,6 +77,7 @@ Three registries, and none of them is in this folder twice.
 | a panel | one entry in `R/panels.R` |
 | a better view of a table | one entry in `TABLE_SPEC`, `R/spec.R` |
 | a scenario | one row in `scenarios.csv` |
+| a LOT table | one entry in `TABLE_SPEC` with `source = "lot"`, and one in `LOT_DASHBOARD_TABLES` |
 | a module, a cohort, an open question | the **package** — it appears here on its own |
 
 A table the package writes that nothing here declares is still shown, as a
@@ -71,8 +97,12 @@ easier to notice than a gap.
   a first deploy comes up and can be clicked through before any run exists.
   Every page says so. `DASH_ALLOW_SYNTHETIC=FALSE` refuses to start on it.
 - **`snapshot`** — CSVs `jobs/build_scenarios.R` exported. What a deployed App
-  normally reads: no warehouse session per viewer.
+  normally reads: no warehouse session per viewer. Scenario tables sit under
+  `<prefix>/`, and LOT tables under `lot/<LOT_RUN_ID>/` — filed by run, not by
+  scenario, so a shared run is exported once rather than copied per scenario.
 - **`warehouse`** — the `S_*` tables live, for a session that has a cluster.
+  `DASH_LOT_PREFIX` names where the LOT build wrote, since `S_RUN_METADATA`
+  records which LOT *run* a scenario read and not where that run wrote.
 
 ## Suppression
 
@@ -101,7 +131,7 @@ belongs to whoever owns the schema.
 Rscript "Jul 28/ndmm_study_updated/dashboard/tests/run_tests.R"
 ```
 
-89 checks, no Shiny and no warehouse. Every number the app puts on a page comes
+117 checks, no Shiny and no warehouse. Every number the app puts on a page comes
 from a function in `R/` that runs without Shiny, which is what makes that
 possible; `app.R` is wiring, and the last section reads it as text to hold the
 wiring to the registries.
