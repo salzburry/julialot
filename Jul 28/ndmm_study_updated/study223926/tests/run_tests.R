@@ -1672,6 +1672,36 @@ cat("\nthe modules, run against recorders\n")
      "and never drops one, so N_REMAINING cannot go back up mid-funnel")
 }
 
+cat("\n-- the entry point, in a process that has loaded nothing --\n")
+# THIS FILE sources every module before it asserts anything, and that is
+# exactly what a production run does not do: build.R loads the common helpers
+# and calls build_223926(), which loads the modules itself. So a helper that
+# reaches into a module before source_modules() runs is invisible to every
+# other assertion here, however many there are - and one did exactly that,
+# stopping every fresh build before it read a setting.
+#
+# The only check that can see it is a real process. DRY_RUN prints the plan
+# and returns without a connection, so this costs one R startup and needs no
+# warehouse.
+local({
+  rs <- file.path(R.home("bin"), "Rscript")
+  out <- suppressWarnings(system2(rs, shQuote(file.path(here, "build.R")),
+    env = c("DRY_RUN=TRUE", "INPUT_COHORT_TABLE=t", "OBJECT_PREFIX=s223926_"),
+    stdout = TRUE, stderr = TRUE))
+  code <- attr(out, "status")
+  ok(is.null(code) || identical(as.integer(code), 0L),
+     paste0("build.R resolves and prints a plan in a fresh R process",
+            if (!is.null(code))
+              paste0("  [exit ", code, ": ",
+                     paste(utils::tail(out, 3), collapse = " / "), "]") else ""))
+  ok(any(grepl("DRY_RUN=TRUE", out, fixed = TRUE)),
+     "...and reaches the dry-run line, rather than exiting somewhere earlier")
+  # The failure this replaces was a missing function, which R reports this
+  # way. Named so a regression is recognisable rather than just a bad exit.
+  ok(!any(grepl("could not find function", out, fixed = TRUE)),
+     "...with no helper reaching for something the process has not loaded")
+})
+
 cat("\n", .pass, " passed, ", length(.fail), " failed\n", sep = "")
 if (length(.fail)) {
   cat("failed:\n", paste0("  ", .fail, collapse = "\n"), "\n", sep = "")
