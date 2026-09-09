@@ -22,7 +22,7 @@ uses an absolute path.
 
 | read this | for |
 |---|---|
-| `README.md` | how to run a build, and what it needs |
+| `README.md` | the protocol, how it was read, and what the source does not cover |
 | `IE_CRITERIA_APPLIED.md` | which eligibility rules are applied, by whom, and how to change them |
 | `study223926/MODULES.md` | what each module computes |
 | `OPEN_QUESTIONS.md` | every question still open with the study team, and the reading this build takes meanwhile |
@@ -49,7 +49,7 @@ writes only its own `S_*` tables.
 | `R/run_223926.R` | the runner: resolve the plan, refuse what it cannot vouch for, walk the modules |
 | `R/modules/` | one file per module, in the order they run |
 | `codelists/` | the code lists this package ships. Production overrides the directory |
-| `tests/` | 332 checks. `Rscript tests/run_tests.R` |
+| `tests/` | 337 checks. `Rscript tests/run_tests.R` |
 
 ### The modules
 
@@ -103,11 +103,12 @@ content as tables, for anyone who would rather filter than read.
 
 ## The working files
 
-`RUN_ONCE.sql`, `RUN_ONCE_2.sql`, `RUN_ONCE_3.sql` and `PROFILE_QUERIES.sql`
-are the profiling queries used to establish what the data actually holds —
-which columns exist, how they are coded, how complete they are. They are not
-part of a build and nothing runs them automatically. They are kept because the
-answers in `DATA_MAPPING.md` came from them.
+`RUN_ONCE.sql`, `RUN_ONCE_2.sql` and `RUN_ONCE_3.sql` are the three rounds of
+profiling queries run against the warehouse to establish what the data actually
+holds — which columns exist, how they are coded, how complete they are. They
+are not part of a build and nothing runs them automatically. They are kept
+because the answers in `DATA_MAPPING.md` and `OPEN_QUESTIONS.md` came from
+them, and the result PDFs beside them are what each round returned.
 
 The PDFs are the source documents: the protocol, the Optum dictionary extracts,
 and the query results the profiling produced. They are references, not inputs.
@@ -134,7 +135,7 @@ open question's reading, and stops before opening a connection. It is the
 fastest way to see what a run *would* do.
 
 ```bash
-Rscript tests/run_tests.R      # 332 checks, no warehouse
+Rscript tests/run_tests.R      # 337 checks, no warehouse
 ```
 
 The suite runs the modules without a warehouse, executes the SQL they emit

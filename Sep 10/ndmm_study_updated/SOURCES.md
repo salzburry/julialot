@@ -13,11 +13,13 @@ trail, not a dependency. This file separates the two.
 | the R package | `study223926/` |
 | its settings | `study223926/config.csv` |
 | its code lists | `study223926/codelists/` — the shapes ship with it; the codes do not exist yet anywhere |
-| its tests | `study223926/tests/run_tests.R` — 224 checks, no warehouse. The last section runs every module against recorders using `study223926/tests/fixtures/codelists/` |
+| its tests | `study223926/tests/run_tests.R` — 337 checks, no warehouse. The last section runs every module against recorders using `study223926/tests/fixtures/codelists/` |
 
-One optional external tool: `tests/parse_sql.py` parses the captured statements
-with **sqlglot**, a Python package rather than a file in this folder. Without it
-that one check reports `SKIP` — not a pass — and the rest run unchanged.
+Two optional external tools, both Python packages rather than files in this
+folder: **sqlglot**, which `tests/parse_sql.py` uses to parse the captured
+statements and `tests/run_duckdb.py` uses to transpile them, and **duckdb**,
+which executes them against the fixtures. Without them those checks report
+`SKIP` — not a pass — and the rest run unchanged.
 
 Two things live outside the folder and always will, because they are not files:
 
