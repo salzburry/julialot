@@ -39,6 +39,7 @@ and shows it is already read from the environment.
 | `optum_cdm_fields.csv` | the CDM field inventory as a table |
 | **`study223926/`** | the R package that builds the analytical cohort from a finished LOT run — sparklyr, module-selectable, every open question a setting. `study223926/MODULES.md` is its own page |
 | `SOURCES.md` | what this folder cites and what it needs — the standalone boundary |
+| **`dashboard/`** | the Shiny scenario explorer: pick a run, change what is selectable, and compare two runs to see what an open question costs. Deploys on Domino |
 | `FILES.md` | one line per file |
 
 Read `IE_CRITERIA.md` first. `OPEN_QUESTIONS.md` is what to send the study team.
