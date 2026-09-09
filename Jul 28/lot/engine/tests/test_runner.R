@@ -2897,4 +2897,88 @@ ok(length(loose) == 0,
 if (is.null(old_cfg)) rm("cfg", envir = globalenv()) else assign("cfg", old_cfg, envir = globalenv())
 
 
+cat("\n-- found by an adversarial pass --\n")
+{
+  # 1. An integer setting of all digits that as.integer() cannot hold.
+  #    The pattern check exists because "60.5" was silently truncated; the one
+  #    input it let through overflows to NA, which is the same failure the
+  #    comment beside it warns about - a window that quietly becomes NA.
+  clear()
+  Sys.setenv(INDUCTION_WINDOW_DAYS = "99999999999999999999")
+  e1 <- tryCatch({ check_settings(); NULL }, error = conditionMessage)
+  ok(!is.null(e1) && grepl("too large for an integer", e1),
+     "an integer setting too large to hold is refused, not left to become NA")
+  Sys.setenv(INDUCTION_WINDOW_DAYS = "60")
+  ok(is.null(tryCatch({ check_settings(); NULL }, error = conditionMessage)),
+     "while an ordinary window still passes")
+  clear()
+
+  # 2. OBJECT_PREFIX is pasted into a table name, and was unchecked while
+  #    PROJECT_WORK_SCHEMA beside it was checked for exactly this.
+  pfx_ok <- function(v) {
+    Sys.setenv(OBJECT_PREFIX = v)
+    r <- is.null(tryCatch({ check_settings(); NULL }, error = conditionMessage))
+    clear(); r
+  }
+  ok(pfx_ok("lot_") && pfx_ok("coh_a_"), "a real prefix is accepted")
+  for (bad in c("a.b.c", "lot_ x", "lot_;DROP", "../x", "9lot", "_lot"))
+    ok(!pfx_ok(bad), paste0("a prefix that is not a table name is refused: ", bad))
+
+  # 3. sql_count() is for counts. Inf reached SQL as the word "Inf" and 1.5 as
+  #    "1.5" - one the warehouse rejects, the other it truncates in silence.
+  ok(identical(sql_count(1e5), "100000"), "a count is written as plain digits")
+  ok(identical(sql_count(NA), "NULL"), "and a missing one as NULL")
+  ok(identical(sql_count(Inf), "NULL") && identical(sql_count(-Inf), "NULL"),
+     "an infinite count is NULL, not the word Inf")
+  ok(identical(sql_count(1.5), "NULL"),
+     "and a non-integer is NULL rather than truncated into a BIGINT column")
+  ok(identical(sql_count(0), "0") && identical(sql_count(-1), "-1"),
+     "while zero and a negative are written as they are")
+
+  # 4. Two of the permanent patterns are ordinary English - "not supported"
+  #    and "not allowed" - and appear inside transient messages. Read as
+  #    permanent they killed a recoverable run; read as retryable the worst
+  #    case is a few backoffs before the same error, so the explicit hint wins.
+  retries <- function(msg, max_retries = 3L) {
+    n <- 0L
+    e <- new.env(parent = environment(with_retry))
+    e$log_msg <- function(...) invisible(NULL)
+    e$lot_config <- function() list(max_retries = max_retries, base_sleep = 0)
+    f <- with_retry; environment(f) <- e
+    tryCatch(f(function() { n <<- n + 1L; stop(msg) }), error = function(x) NULL)
+    n
+  }
+  ok(retries("Connection reset by peer") > 1L, "a transport failure is retried")
+  ok(retries("AnalysisException: no such column") == 1L,
+     "a query the warehouse cannot plan is sent once")
+  ok(retries("PERMISSION_DENIED on table t") == 1L,
+     "and so is a missing grant - no amount of waiting grants a privilege")
+  ok(retries("[RETRIABLE] the operation is not supported on this node") > 1L,
+     "a message saying RETRIABLE is retried even though it says 'not supported'")
+  ok(retries("java.io.IOException: Operation not allowed: transient lock") > 1L,
+     "and one saying 'transient' even though it says 'not allowed'")
+  ok(retries("Task failed, please retry: value not supported") > 1L,
+     "and one asking to retry")
+  ok(retries("UNSUPPORTED_FEATURE: this is not supported") == 1L,
+     "while a plain unsupported feature, with no hint, is still sent once")
+
+  # 5. A criterion's name becomes a view name and an alias. Only one criterion
+  #    is declared and its name is fine, so this cannot fire today - which is
+  #    why a later one with a hyphen would fail in the warehouse's words.
+  lc <- new.env(parent = globalenv())
+  sys.source(file.path(ROOT, "R", "line_criteria.R"), envir = lc)
+  criterion_patients_view <- lc$criterion_patients_view
+  LINE_CRITERIA <- lc$LINE_CRITERIA
+  ok(identical(criterion_patients_view(list(name = "no_belantamab")),
+               "lc_no_belantamab_patients"),
+     "a plain criterion name makes its view name")
+  for (bad in c("a b", "a-b", "a;DROP", "1a", ""))
+    ok(!is.na(tryCatch({ criterion_patients_view(list(name = bad)); NA_character_ },
+                       error = function(e) conditionMessage(e))),
+       paste0("a criterion name that is not an identifier is refused: ", sQuote(bad)))
+  ok(all(grepl("^[A-Za-z][A-Za-z0-9_]*$",
+               vapply(LINE_CRITERIA, `[[`, character(1), "name"))),
+     "and every criterion this build declares already passes it")
+}
+
 report()

@@ -7,8 +7,22 @@
 # `patients`: SQL making one row per PATID. That view is LEFT JOINed into the
 # allflags view, so the criterion's own sql can read its columns. Both names are
 # built from the criterion's name, so nothing has to be kept in step by hand.
-criterion_patients_view <- function(c_i) paste0("lc_", c_i$name, "_patients")
-criterion_alias         <- function(c_i) paste0("p_", c_i$name)
+# A criterion's name becomes a view name and a table alias, so it has to be a
+# name SQL accepts. Declared in code rather than set by an operator, so this
+# cannot fire today - and that is exactly why a criterion added later with a
+# hyphen or a space in its name would fail in the warehouse's words rather
+# than ours, halfway through a build.
+.check_criterion_name <- function(nm) {
+  if (length(nm) != 1L || is.na(nm) || !grepl("^[A-Za-z][A-Za-z0-9_]*$", nm))
+    stop("LINE CRITERIA ERROR: criterion name '", nm,
+         "' is not a plain identifier. It becomes a view name and an alias, ",
+         "so it wants letters, digits and underscore, starting with a letter.",
+         call. = FALSE)
+  nm
+}
+
+criterion_patients_view <- function(c_i) paste0("lc_", .check_criterion_name(c_i$name), "_patients")
+criterion_alias         <- function(c_i) paste0("p_", .check_criterion_name(c_i$name))
 
 # Belantamab (an ADC) received in any LOT. It lives here, not in the cohort
 # build, because lines do not exist until this package has run. A cohort-time

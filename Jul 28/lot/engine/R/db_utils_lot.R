@@ -173,12 +173,25 @@ with_retry <- function(fn, max_retries = lot_config()$max_retries,
     "INSUFFICIENT_PERMISSIONS", "PERMISSION_DENIED",
     "UnauthorizedAccessException", "does not have permission"
   )
+  # A message that says outright it can be retried. The patterns above are
+  # substrings, and two of them - "not supported" and "not allowed" - are
+  # ordinary English that turns up inside genuinely transient messages
+  # ("Operation not allowed: transient lock", "[RETRIABLE] ... not supported").
+  # Read as permanent, those killed a recoverable run; read as retryable, the
+  # worst case is five backoffs before the same error. The cheaper mistake
+  # wins, so an explicit hint from the server beats a generic substring.
+  retryable_markers <- c("RETRIABLE", "RETRYABLE", "please retry", "try again",
+                         "temporarily", "transient", "Connection reset",
+                         "timed out", "timeout")
   attempt <- 1
   repeat {
     out <- tryCatch(fn(), error = function(e) e)
     if (!inherits(out, "error")) return(out)
     msg <- conditionMessage(out)
-    is_permanent <- any(vapply(permanent_error_patterns, function(p) grepl(p, msg, ignore.case = TRUE), logical(1)))
+    said_retry <- any(vapply(retryable_markers, function(p)
+      grepl(p, msg, ignore.case = TRUE), logical(1)))
+    is_permanent <- !said_retry &&
+      any(vapply(permanent_error_patterns, function(p) grepl(p, msg, ignore.case = TRUE), logical(1)))
     if (is_permanent || attempt >= max_retries) {
       if (is_permanent && attempt < max_retries) {
         log_msg("Permanent error (not retrying): ", msg)
@@ -208,7 +221,16 @@ db_exec <- function(con, sql) {
 # untested here. Sending digits removes the question either way.
 sql_count <- function(x) {
   if (length(x) != 1L || is.na(x)) return("NULL")
-  format(x, scientific = FALSE, trim = TRUE)
+  # A count, so it has to BE one. Inf came out as the word "Inf" and 1.5 as
+  # "1.5", and both reach a BIGINT column - one the warehouse rejects, the
+  # other it truncates without saying so. Neither can arrive from a count(*),
+  # which is why it would surface as a puzzling failure rather than here.
+  n <- suppressWarnings(as.numeric(x))
+  if (!is.finite(n)) return("NULL")
+  # A fraction is not a count. NULL rather than a truncation, so a column that
+  # should hold a count never holds a rounded-off one.
+  if (n != round(n)) return("NULL")
+  format(round(n), scientific = FALSE, trim = TRUE)
 }
 
 # A string as a SQL literal: quoted, inner quotes doubled, and NULL rather than

@@ -65,6 +65,33 @@ and the tandem window rule were each wrong and are corrected. Generated output n
 longer dirties the working tree, and the runbook names the three R packages the
 engine needs.
 
+## A later sweep, on the plumbing rather than the rules
+
+The sweeps above attacked the line rules. This one attacked what surrounds them
+— settings, escaping, retries, generated names — where a defect is silent
+because nothing clinical looks wrong.
+
+| what was wrong | the shape | now |
+|---|---|---|
+| An integer setting of all digits that `as.integer()` cannot hold passed the check and became `NA` | `INDUCTION_WINDOW_DAYS=99999999999999999999` | refused, naming the overflow |
+| `OBJECT_PREFIX` was pasted into every table name unchecked, while `PROJECT_WORK_SCHEMA` beside it was checked for exactly this | `OBJECT_PREFIX=a.b.c` makes a five-part name, found only after the session opened | refused unless it is a name a table can start with |
+| `sql_count()` wrote `Inf` as the word and `1.5` as a decimal into BIGINT columns | one the warehouse rejects, the other it truncates in silence | both `NULL` |
+| Two permanent-error patterns are ordinary English and appear inside transient messages | `Operation not allowed: transient lock` killed a recoverable run | an explicit retry hint from the server beats a generic substring |
+| A criterion's name becomes a view name and an alias, unchecked | a criterion named `a-b` would fail in the warehouse's words, mid-build | refused at the name |
+| An assertion whose expression *raised* took the whole suite down — no count, every later result lost | a mutation read as "not caught" because there was no `FAIL` line to find | `ok()` evaluates the condition itself and reports a raise as a failure |
+
+The last one is why the others are worth recording: the harness was hiding how
+well it worked.
+
+Four surfaces were attacked and found already sound, which is worth as much as
+the findings. The generated column names are guarded against collision,
+quote injection and the reserved `CNT` — punctuation and spaces both become
+`_`, and two abbreviations that would make one column stop the run. A fatal
+code-list check cannot be waived from the environment. The contract override
+records its deviation rather than hiding it. And a `DELETE`+`INSERT` retried as
+one unit re-runs the `DELETE` on every attempt, so a lost acknowledgement
+leaves one copy.
+
 ## What this does not prove
 
 The harnesses run the real emitted SQL, but through DuckDB rather than Spark, so
