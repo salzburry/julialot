@@ -1268,7 +1268,13 @@ build_lot_n <- function(con, lot_num,
     sprintf("lbe.LOT%d_CLASS_%s AS LOT_CLASS_%s", lot_num, sc, sc)
   }, character(1)), collapse = ",\n      ")
 
-  run_step(con, paste0(pfx, "_lot", lot_num, "_append_long"), glue("
+  # DELETE then INSERT, retried as one unit. An INSERT alone is not safe to
+  # run twice: if it commits and the answer is lost, the retry appends this
+  # line a second time. The DELETE owns exactly the rows the INSERT writes -
+  # this line's, and no other's - so the pair is safe to run from the start.
+  run_step(con, paste0(pfx, "_lot", lot_num, "_append_long"), c(
+    glue("DELETE FROM {lot_out(.LOT_LONG_STAGE)} WHERE LOT_NUM = {lot_num}"),
+    glue("
     INSERT INTO {lot_out(.LOT_LONG_STAGE)}
     SELECT
       lbe.PATID,
@@ -1345,7 +1351,8 @@ build_lot_n <- function(con, lot_num,
       {med_insert},
       {class_insert}
     FROM lot{lot_num}_base_end lbe
-  "), qc = glue("SELECT count(*) AS n_appended FROM {lot_out(.LOT_LONG_STAGE)} WHERE LOT_NUM = {lot_num}"))
+  ")), qc = glue("SELECT count(*) AS n_appended FROM {lot_out(.LOT_LONG_STAGE)} WHERE LOT_NUM = {lot_num}"),
+    retry_as_unit = TRUE)
 
   # Refresh the lot_long view so it picks up the rows just inserted.
   db_exec(con, glue("CREATE OR REPLACE TEMPORARY VIEW lot_long AS SELECT * FROM {lot_out(.LOT_LONG_STAGE)}"))

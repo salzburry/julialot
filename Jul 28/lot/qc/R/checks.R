@@ -1131,6 +1131,13 @@ qc_params <- function(settings, run_id) {
 # What a count means for a check of this severity. Its own function because
 # "zero is a pass" is the one rule the whole report rests on.
 qc_outcome <- function(n, severity) {
+  # No count at all - a query that returned no N_BAD column, which every check
+  # here produces through counted() and a later one might not. It used to
+  # reach `if (is.na(n))` with a zero-length value and stop the runner with
+  # "argument is of length zero", losing every check after it. The runner's own
+  # rule is that a check which could not run is reported as its own outcome
+  # rather than read as one that found nothing, so this is that outcome.
+  if (length(n) != 1L) return("error")
   if (is.na(n)) return("error")
   if (n == 0) return("pass")
   switch(severity, fail = "FAIL", warn = "warn", info = "info")

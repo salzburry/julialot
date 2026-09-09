@@ -11,8 +11,10 @@
 # INPUT_COHORT_TABLE and no STUDY_START; asking for COHORT_TABLE and
 # STUDY_START raised unresolved columns before the check could run.
 #
-# STUDY_START is therefore not checked - the status row does not carry it. It
-# is recorded as an upstream reading instead, and Q1 stays open.
+# STUDY_START is therefore not checked HERE - the LOT status row does not carry
+# it. The cohort build records its own contract, so read_upstream_settings()
+# below reads it there instead. Q1 stays open either way: what that answers is
+# which date the data was built on, not which date is right.
 LOT_RULES_EPOCH <- as.Date("2026-08-30")
 
 check_lot_lineage <- function(con, cfg) {
@@ -91,3 +93,56 @@ check_lot_lineage <- function(con, cfg) {
 }
 
 `%||%` <- function(a, b) if (is.null(a) || (length(a) == 1L && is.na(a))) b else a
+
+# What the cohort build actually applied.
+#
+# Eight of this package's settings are the cohort build's rules, recorded so a
+# number can be traced to the definition behind it. Recording the setting alone
+# asserted a reading nothing had checked - and the two defaults disagree today:
+# this package reads s7.1's body ("study start 01 Jan 2018") and the cohort
+# build reads Figures 1 and 2 ("Study start 01 Jan 2016"), which is Q1.
+#
+# NDMM_RUN_METADATA.CONTRACT_SETTINGS is that build's whole CONTRACT as
+# `k=v|k=v`, written by the run that made the cohort. Read here so the study's
+# metadata records what shaped the data rather than what this run was told.
+#
+# Not fatal. A disagreement is an open question, not a broken run, and the
+# cohort is what it is either way - so it is named, recorded, and left to the
+# study team.
+read_upstream_settings <- function(con, cfg) {
+  tbl <- cohort_tbl("NDMM_RUN_METADATA")
+  rows <- tryCatch(
+    db_q(con, sprintf("SELECT CONTRACT_SETTINGS FROM %s
+                       ORDER BY RECORDED_AT DESC LIMIT 1", tbl)),
+    error = function(e) {
+      log_msg("  upstream settings unverified: could not read ", tbl, " - ",
+              conditionMessage(e))
+      NULL
+    })
+  if (is.null(rows) || !nrow(rows)) return(NULL)
+  s <- trimws(as.character(rows$CONTRACT_SETTINGS[1]))
+  if (!nzchar(s) || identical(tolower(s), "na")) return(NULL)
+  kv <- strsplit(strsplit(s, "|", fixed = TRUE)[[1]], "=", fixed = TRUE)
+  kv <- Filter(function(x) length(x) >= 2L, kv)
+  if (!length(kv)) return(NULL)
+  out <- setNames(vapply(kv, function(x) paste(x[-1], collapse = "="),
+                         character(1)),
+                  vapply(kv, `[`, character(1), 1L))
+  disagree <- Filter(Negate(is.null), lapply(names(UPSTREAM_SETTING_MAP), function(k) {
+    up <- UPSTREAM_SETTING_MAP[[k]]
+    got <- if (up %in% names(out)) out[[up]] else NULL
+    mine <- paste(as.character(cfg[[k]]), collapse = "|")
+    if (is.null(got) || identical(trimws(got), trimws(mine))) NULL
+    else sprintf("%s: the cohort was built with %s, this run is set to %s",
+                 k, got, mine)
+  }))
+  if (length(disagree))
+    log_msg("WARNING: this run's upstream readings disagree with the cohort ",
+            "build that made its input:\n  - ",
+            paste(disagree, collapse = "\n  - "),
+            "\n  The cohort is what the cohort build made it, so the numbers ",
+            "follow ITS values. Both are recorded in S_RUN_METADATA.")
+  else
+    log_msg("  upstream settings verified against ", tbl)
+  out
+}

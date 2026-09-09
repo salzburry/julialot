@@ -65,6 +65,87 @@ and the tandem window rule were each wrong and are corrected. Generated output n
 longer dirties the working tree, and the runbook names the three R packages the
 engine needs.
 
+## A later sweep, on the plumbing rather than the rules
+
+The sweeps above attacked the line rules. This one attacked what surrounds them
+— settings, escaping, retries, generated names — where a defect is silent
+because nothing clinical looks wrong.
+
+| what was wrong | the shape | now |
+|---|---|---|
+| An integer setting of all digits that `as.integer()` cannot hold passed the check and became `NA` | `INDUCTION_WINDOW_DAYS=99999999999999999999` | refused, naming the overflow |
+| `OBJECT_PREFIX` was pasted into every table name unchecked, while `PROJECT_WORK_SCHEMA` beside it was checked for exactly this | `OBJECT_PREFIX=a.b.c` makes a five-part name, found only after the session opened | refused unless it is a name a table can start with |
+| `sql_count()` wrote `Inf` as the word and `1.5` as a decimal into BIGINT columns | one the warehouse rejects, the other it truncates in silence | both `NULL` |
+| Two permanent-error patterns are ordinary English and appear inside transient messages | `Operation not allowed: transient lock` killed a recoverable run | an explicit retry hint from the server beats a generic substring |
+| A criterion's name becomes a view name and an alias, unchecked | a criterion named `a-b` would fail in the warehouse's words, mid-build | refused at the name |
+| An assertion whose expression *raised* took the whole suite down — no count, every later result lost | a mutation read as "not caught" because there was no `FAIL` line to find | `ok()` evaluates the condition itself and reports a raise as a failure |
+
+The last one is why the others are worth recording: the harness was hiding how
+well it worked.
+
+Four surfaces were attacked and found already sound, which is worth as much as
+the findings. The generated column names are guarded against collision,
+quote injection and the reserved `CNT` — punctuation and spaces both become
+`_`, and two abbreviations that would make one column stop the run. A fatal
+code-list check cannot be waived from the environment. The contract override
+records its deviation rather than hiding it. And a `DELETE`+`INSERT` retried as
+one unit re-runs the `DELETE` on every attempt, so a lost acknowledgement
+leaves one copy.
+
+## The QC checks, run rather than read
+
+The QC suite said it outright: *"Nothing here has run against a warehouse, so
+what can be tested is the SQL as a string... The checks are generated with fake
+table names and inspected."* All 37 checks — the ones that decide whether a LOT
+build is trustworthy — were verified only as text. Text cannot tell a working
+check from a `WHERE` that can never be true, and a check that cannot fail
+reports "pass" on a real defect for ever.
+
+`qc/tests/run_duckdb.py` now runs them. Each check is executed twice: against a
+clean fixture, where it must count nothing, and against the same fixture with
+the defect it describes planted in it, where it must count that and name it.
+**All 37 are covered**, and a test fails if a check is added without a case —
+coverage is part of the claim, not a footnote to it.
+
+The clean fixture is one patient with two lines, and it has to satisfy all
+thirty-seven at once: the funnel reconciles with the published table, every
+regimen drug has an episode inside its line, every episode inside a line is in
+that line's regimen, every transplant belongs to a line, and there is no
+steroid and no death — so the `warn` and `info` checks read zero on it too,
+and "counts nothing on clean data" is true of all of them rather than only the
+failures.
+
+Eight deliberate sabotages confirm the harness bites: inverting a predicate,
+making one that can never be true, widening an allowed set, dropping half a
+condition, removing the id masking, comparing against the earlier of two
+run-out dates instead of the later, turning a mutual exclusion into an OR, and
+accepting any number of metadata rows. Each is caught.
+
+Four of the plants were wrong, not the checks. B6 and B7 test a date against
+the line's own start rather than the end reason; C3 looks on the day *after*
+the added-medication date; and E5's transplant was planted inside the line it
+was supposed to be orphaned from. All four checks were right to stay silent.
+That is the argument for running them rather than reading them, made four
+times against the person writing the fixtures.
+
+A ninth sabotage was NOT caught at first: deleting one of B3's three disjuncts
+still left the check counting something, and "more than zero" could not see
+that a third of it had gone. A case may now state how many violations it
+planted, and B3 plants all three.
+
+| what was wrong | now |
+|---|---|
+| `qc_outcome()` stopped the runner outright when a check returned no `N_BAD` column, losing every check after it | reported as that check's own error, which is the runner's own rule |
+| An assertion whose expression raised took the suite down — no count, later results lost | `ok()` evaluates the condition and reports a raise as a failure, in the qc and validation harnesses as well |
+
+Four surfaces were attacked and found already sound. Every check masks the
+patient id it reports, proven by running rather than by reading. A duplicate
+check id or an unknown severity is refused at load. The vignette catalogue
+refuses a pair whose sides agree, an offset that does not straddle its
+parameter, a parameter that does not exist and an anchor absent from the file
+it cites. And `LOT_START_TYPE` really is the four values A5 allows —
+`SCT_CART` and `SCT_AUTO_CONT` are end reasons, not start types.
+
 ## What this does not prove
 
 The harnesses run the real emitted SQL, but through DuckDB rather than Spark, so

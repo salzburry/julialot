@@ -83,9 +83,8 @@ lands on the run's own metadata row where no reader can miss it.
 | `R/registry.R` | The cohort and module registries, and the selection logic. |
 | `R/windows.R` | The period algebra — every window and every boundary convention, once. |
 | `R/person_time.R` | The counting rules: same-day collapse, chronic-once, the acute washout chain. |
-| `R/suppression.R` | The 25-patient rule, and the complementary-disclosure check. |
 | `R/codelists.R` | Code-list loading, the unfilled-row guard, and the preflight. |
-| `R/lineage.R` | Refuses a LOT run it cannot vouch for. |
+| `R/lineage.R` | Refuses a LOT run it cannot vouch for, and reads back what the cohort build applied. |
 | `R/db_utils_223926.R` | sparklyr connection, logging, table naming, the step runner. |
 | `R/run_223926.R` | Resolves the plan, walks the modules, writes the run metadata. |
 | `R/modules/*.R` | One file per module. Nothing else defines a clinical rule. |
@@ -183,11 +182,75 @@ without those rules and set `SEC2L_INPUT_IS_WIDE=TRUE`, or set
 `SEC2L_APPLY_OTHER_CANCER=TRUE` to build the nested version knowingly — the run
 then records that it did.
 
-### Suppression is applied, not just expressed
+### The statement splitter tracks all three quote characters
 
-*"Stratifications with < 25 patients will not be performed"* (§7.8). The rule
-lived in `R/suppression.R` from the start and **nothing called it**: every
-table left the warehouse with raw cell counts, n = 1 included.
+Spark's `sql()` takes one statement, so templates written as a `CREATE` plus an
+`INSERT` are split on semicolons outside quotes and comments.
+
+All three quote characters are tracked: `'`, `"` and backtick. Only `'` was,
+and the package's own SQL already uses backticks — a `;` inside one would have
+cut a statement in half. Each closes on **itself**, and doubled inside means an
+escaped one, so a backtick in a string literal does not end it.
+
+A statement that is only comments and whitespace is dropped rather than sent.
+A template ending in a comment used to emit that comment as a statement, and
+the warehouse would reject it — surfacing as a failed run rather than as a bug
+here.
+
+Neither shape is emitted today, which is exactly why both were worth closing
+before something started to. The 565 statements a default run emits are
+byte-identical across the change, and 60,000 fuzzed strings over the full
+quote-and-comment alphabet agree with an independently written reference.
+
+### A build in a session inherits nothing from the one before it
+
+Three things outlive a build: the config, the code-list manifest, and the input
+table's columns. `reset_run_state()` clears all three at the top of
+`build_223926()`, so a second build cannot report an md5 for a file it never
+opened, or apply an exclusion flag its own input does not carry.
+
+The config lives in a private environment rather than a global `cfg`. The LOT
+engine keeps its own config the same way under the same name, so while both
+used the global, sourcing them in one session left whichever arrived second
+holding the name and the other's `wrk()` reading a config that was not its own.
+
+### An upstream reading is recorded as verified or as an assertion
+
+Eight settings are the cohort build's rules, not this package's. Recording the
+setting alone asserted a reading nothing had checked.
+
+`NDMM_RUN_METADATA.CONTRACT_SETTINGS` is the cohort build's whole contract as
+`k=v|k=v`, written by the run that made the cohort. `read_upstream_settings()`
+reads it, so `STUDY_START` and `MM_DX_OUTPATIENT_WINDOW_DAYS` are recorded as
+what the cohort was actually built with. The rest are fixed in that build's
+code rather than its contract, so they stay marked `(upstream, unverified)`.
+
+The two defaults disagree today: this package reads §7.1's body
+(01 Jan 2018) and the cohort build reads Figures 1 and 2 (01 Jan 2016), which
+is `OPEN_QUESTIONS.md` Q1. That is not fatal — the cohort is what it is — so
+the run names the disagreement, records both values, and carries on.
+
+### The input's shape is checked before its columns are used
+
+`check_cohort_table()` runs first, before any module. It refuses a table
+missing a column every cohort indexes on, and it refuses two things a column
+list cannot show:
+
+- **more rows than patients.** The package reads `INPUT_COHORT_TABLE` as one
+  row per patient. A duplicate multiplies that patient through every join, so
+  the cohort counts come out high and nothing downstream notices.
+- **an exclusion flag that is NULL or not 0/1.** The membership predicate is
+  `coalesce(flag, 1) = 1`, which reads a NULL as eligible. On a table this
+  check accepted, that coalesce cannot fire.
+
+Both are for custom inputs. The cohort build's own writer emits non-null CASE
+results at patient grain, so a run against it never sees either.
+
+### Suppression is applied in one place, and that place is tested
+
+*"Stratifications with < 25 patients will not be performed"* (§7.2.3). The rule
+lived in `R/suppression.R` from the start and **nothing called it**: every table
+left the warehouse with raw cell counts, n = 1 included.
 
 The `release` module applies it in SQL. It does not overwrite the raw tables —
 each suppressed table is written beside its source as `S_*_RELEASE`, so QC can
@@ -195,6 +258,13 @@ still read the counts behind a rate while the thing that leaves the warehouse
 cannot. The suppressed count is nulled along with the values, because
 publishing the *n* a suppressed rate was computed from suppresses nothing. A
 group left with exactly one suppressed row is reported, not silently regrouped.
+
+`R/suppression.R` is gone. It survived the module by being loaded but never
+called, and its policy had drifted: it applied §7.8's *"(unless specific to
+SOC)"* exemption, which the shipped SQL does not. So the suite was green on a
+rule that never ran. The tests now assert the emitted release SQL — the
+threshold, the nulled count, the marking, and the absence of the exemption.
+Whether the exemption should apply is `OPEN_QUESTIONS.md` Q29.
 
 ### A recorded reading is either applied here or labelled
 

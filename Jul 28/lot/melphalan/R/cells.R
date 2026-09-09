@@ -668,11 +668,18 @@ melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP",
     # advance counts above cannot see this, and neither can a line-length
     # median, which reports the effect without attributing it.
     #
-    # Melphalan's cover is read from MAP_STACKED and bounded to the line, so a
-    # dose in a neighbouring line cannot claim this one's date. The multi-agent
-    # split is the one worth reading: on a melphalan-only line melphalan sets
-    # the date by construction, and only where another agent is in the regimen
-    # does this say melphalan outlasted it.
+    # Melphalan's cover is read from MAP_STACKED and bounded to the line at
+    # BOTH ends, so a dose in a neighbouring line cannot claim this one's date.
+    # Bounded below only, a patient taking melphalan in two consecutive lines
+    # had the SECOND line's episode folded into the first line's cover: where
+    # the first line's episode was not flagged discontinued and the second's
+    # was, min() over the flagged ones returned a date from the wrong line and
+    # the first line stopped counting. Same bound melp_by_line_sql() puts on
+    # melp_in_line, so the two cannot disagree about which line a dose is in.
+    #
+    # The multi-agent split is the one worth reading: on a melphalan-only line
+    # melphalan sets the date by construction, and only where another agent is
+    # in the regimen does this say melphalan outlasted it.
     hold    = if (is.null(map_tbl)) no_map("n_melp_sets_runout")
               else paste0("
     WITH melp_cover AS (
@@ -689,6 +696,7 @@ melp_metric_sql <- function(final_tbl, attrition_tbl, run_id, abbr = "MELP",
               ON cast(m.PATID as string) = cast(l.PATID as string)
              AND upper(trim(m.MAP_MED_TYPE)) = '", abbr, "'
              AND m.MAP_START_DT >= l.LOT_START_DT
+             AND m.MAP_START_DT <= l.LOT_BASE_END_DT
       WHERE l.LOT_BASE_DISCON_DT IS NOT NULL AND ", in_melp, "
       GROUP BY 1, 2, 3, 4
     )

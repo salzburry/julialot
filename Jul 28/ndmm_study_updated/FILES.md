@@ -22,6 +22,7 @@ says what is cited and what is needed.
 | `variables.csv` | The variables as a table — 58 rows. |
 | `optum_cdm_fields.csv` | The CDM field inventory as a table — 64 rows. |
 | **`study223926/`** | The R package. `study223926/MODULES.md` is its own page. |
+| **`dashboard/`** | The Shiny scenario explorer over what a run wrote. `dashboard/README.md` is its own page. |
 | `study223926/codelists/` | The eleven code-list shapes, shipped blank. `study223926/codelists/README.md` says which annex owes each. |
 | `study223926/tests/` | `run_tests.R`, the `emit_sql.R` harness that runs every module without a warehouse, `parse_sql.py`, and filled fixtures for the harness. |
 

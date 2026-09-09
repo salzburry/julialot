@@ -2721,4 +2721,264 @@ ok(nchar(pra10_code) > 0 && grepl("awp.PREV_AUTO_DT <= date_add(", pra10_code, f
 ok(grepl("WHEN 'CART'     THEN {cart_consolidation_days} - 1", pra10_code, fixed = TRUE),
    "...which is the start-type CASE, since a CAR-T line's window is not 30 days")
 
+cat("\n-- a lost acknowledgement must not write a step twice --\n")
+# db_exec() retries each statement on its own. That is safe for a statement
+# that is safe to run twice - a CREATE OR REPLACE, a DELETE - and wrong for an
+# INSERT: if the INSERT commits and the answer is lost on the way back, the
+# retry writes the rows a second time.
+#
+# Driven through the real run_step / db_replace / with_retry chain. Only
+# db_exec_once - the one line that reaches the driver - is replaced, by a
+# store that records what commits and drops the answer to a chosen statement.
+retry_env <- new.env(parent = globalenv())
+sys.source(file.path(ROOT, "R", "db_utils_lot.R"), envir = retry_env)
+assign("log_msg", function(...) invisible(NULL), envir = retry_env)
+
+# A store of committed rows. `lose_ack_on` names the statement whose answer
+# goes missing: it commits, then the call raises a connection error, which
+# with_retry() treats as retryable.
+driver <- function(lose_ack_on) {
+  rows <- character(0); calls <- character(0); lost <- FALSE
+  exec <- function(con, sql) {
+    calls <<- c(calls, sql)
+    if (grepl("^\\s*DELETE", sql)) {
+      keep <- !grepl("LOT_NUM=2", rows, fixed = TRUE)
+      rows <<- rows[keep]
+    } else if (grepl("^\\s*INSERT", sql)) {
+      rows <<- c(rows, "PATID=1,LOT_NUM=2")
+    }
+    if (!lost && nzchar(lose_ack_on) && grepl(lose_ack_on, sql)) {
+      lost <<- TRUE
+      stop("Connection reset by peer")
+    }
+    invisible(1L)
+  }
+  list(exec = exec, rows = function() rows, calls = function() calls)
+}
+
+# with_retry() reads max_retries and base_sleep off the shared config.
+old_cfg <- if (exists("cfg", envir = globalenv())) get("cfg", envir = globalenv())
+assign("cfg", list(max_retries = 3, base_sleep = 0), envir = globalenv())
+
+INS <- "INSERT INTO wk.LOT_LONG_STAGE SELECT 1, 2"
+DEL <- "DELETE FROM wk.LOT_LONG_STAGE WHERE LOT_NUM = 2"
+
+# The defect, held in place: a bare INSERT retried on its own writes twice.
+d <- driver("INSERT")
+assign("db_exec_once", d$exec, envir = retry_env)
+retry_env$run_step(NULL, "bare_insert", INS)
+ok(length(d$rows()) == 2 && sum(grepl("^\\s*INSERT", d$calls())) == 2,
+   "an INSERT retried on its own does append the same line twice")
+
+# The fix: the same lost answer, with the DELETE and the INSERT as one unit.
+d <- driver("INSERT")
+assign("db_exec_once", d$exec, envir = retry_env)
+retry_env$run_step(NULL, "append_long", c(DEL, INS), retry_as_unit = TRUE)
+ok(length(d$rows()) == 1,
+   "...while the pair retried as one unit leaves exactly one copy")
+ok(sum(grepl("^\\s*INSERT", d$calls())) == 2 &&
+     sum(grepl("^\\s*DELETE", d$calls())) == 2,
+   "...because the retry runs the DELETE again before the INSERT, not the INSERT alone")
+
+# A lost answer on the DELETE half is survivable the same way.
+d <- driver("DELETE")
+assign("db_exec_once", d$exec, envir = retry_env)
+retry_env$run_step(NULL, "append_long", c(DEL, INS), retry_as_unit = TRUE)
+ok(length(d$rows()) == 1,
+   "...and a DELETE whose answer is lost still ends with one copy")
+
+# Nothing lost: the unit runs once through.
+d <- driver("")
+assign("db_exec_once", d$exec, envir = retry_env)
+retry_env$run_step(NULL, "append_long", c(DEL, INS), retry_as_unit = TRUE)
+ok(length(d$rows()) == 1 && length(d$calls()) == 2,
+   "...and with no failure it is two statements, not four")
+
+# A permanent error is not retried, unit or not.
+d <- driver("")
+assign("db_exec_once", function(con, sql) stop("AnalysisException: no such column"),
+       envir = retry_env)
+stops(retry_env$run_step(NULL, "append_long", c(DEL, INS), retry_as_unit = TRUE),
+      "...and a permanent error still stops rather than spending the retry budget")
+
+# And the three writes that need it ask for it. Driven, not grepped: the
+# statements the real call sites emit are captured and put through the same
+# chain, so the assertion is on what reaches the warehouse.
+cap_env <- function(files, ...) {
+  e <- new.env(parent = globalenv())
+  assign("%||%", function(a, b) if (is.null(a)) b else a, envir = e)
+  for (f in files) sys.source(file.path(ROOT, "R", f), envir = e)
+  assign("log_msg", function(...) invisible(NULL), envir = e)
+  assign("lot_out", function(x) paste0("wk.p_", x), envir = e)
+  assign("db_exec", function(con, sql) invisible(TRUE), envir = e)
+  assign("db_q", function(con, sql)
+    data.frame(n = 1, col_name = "INDUCTION_WINDOW_DAYS_LOT_N"), envir = e)
+  assign("materialize", function(con, step, view, name, body, qc = NULL) invisible(TRUE),
+         envir = e)
+  for (nm in names(list(...))) assign(nm, list(...)[[nm]], envir = e)
+  e
+}
+STEPS <- list()
+recorder <- function(con, name, sql, qc = NULL, retry_as_unit = FALSE) {
+  STEPS[[length(STEPS) + 1L]] <<- list(name = name, sql = sql, unit = retry_as_unit)
+  invisible(TRUE)
+}
+step_named <- function(pat) {
+  hit <- Filter(function(s) grepl(pat, s$name), STEPS)
+  if (length(hit)) hit[[1]] else NULL
+}
+
+# The LOT2-5 append, for two different lines.
+drive_append <- function(lot_num) {
+  STEPS <<- list()
+  ae <- cap_env(c("cart_rule.R", "prior_regimen.R", "melp_rule.R", "foldin_rule.R",
+                  "steps/10_lot2_5_base.R"))
+  assign("run_step", recorder, envir = ae)
+  assign("cfg", list(max_lot = 5L), envir = globalenv())
+  err <- tryCatch({ ae$build_lot_n(NULL, lot_num, 30, 45, 180, 100, c("BORT"), c("PI"))
+                    NULL }, error = conditionMessage)
+  list(err = err, step = step_named("append_long"))
+}
+a2 <- drive_append(2L)
+ok(is.null(a2$err) && !is.null(a2$step) && length(a2$step$sql) == 2L && isTRUE(a2$step$unit),
+   "the LOT2 append sends two statements as one retry unit, not a bare INSERT")
+ok(!is.null(a2$step) &&
+     grepl("^DELETE FROM wk\\.p_LOT_LONG_STAGE WHERE LOT_NUM = 2$", trimws(a2$step$sql[1])) &&
+     grepl("^INSERT INTO wk\\.p_LOT_LONG_STAGE", trimws(a2$step$sql[2])),
+   "...a DELETE of this line's rows, then the INSERT that rewrites them")
+a3 <- drive_append(3L)
+ok(!is.null(a3$step) &&
+     grepl("WHERE LOT_NUM = 3$", trimws(a3$step$sql[1])),
+   "...and the DELETE tracks the line, so LOT3's retry cannot clear LOT2's rows")
+
+# Those exact statements, through the real chain, with the answer to the
+# INSERT lost. One copy, not two.
+d <- driver("INSERT")
+assign("db_exec_once", d$exec, envir = retry_env)
+assign("cfg", list(max_retries = 3, base_sleep = 0), envir = globalenv())
+retry_env$run_step(NULL, a2$step$name, a2$step$sql, retry_as_unit = a2$step$unit)
+ok(length(d$rows()) == 1,
+   "...and the statements the append really emits leave one copy when the answer is lost")
+
+# Both persist writes: the metadata row and the QC summary.
+STEPS <- list()
+persist <- cap_env(c("db_utils_lot.R", "steps/08_persist.R"))
+assign("run_step", recorder, envir = persist)
+assign("run_id", "R1", envir = globalenv())
+assign("cfg", list(persist_to_schema = TRUE, cdm_schema = "c", work_schema = "w",
+                   input_cohort_table = "t", induction_window_days = 60,
+                   lot_n_induction_window_days = 30, map_discon_gap_days = 30,
+                   medical_day_supply = 30), envir = globalenv())
+perr <- tryCatch({ persist$phase_persist(NULL, list()); NULL }, error = conditionMessage)
+paired <- Filter(function(s) any(grepl("^\\s*INSERT", s$sql)), STEPS)
+ok(is.null(perr) && length(paired) == 2L &&
+     all(vapply(paired, function(s) isTRUE(s$unit) && length(s$sql) == 2L &&
+                  grepl("^\\s*DELETE", s$sql[1]), logical(1))),
+   "both persist writes pair their DELETE with their INSERT in one retry unit")
+ok(all(vapply(paired, function(s) grepl("WHERE RUN_ID = 'R1'", s$sql[1], fixed = TRUE),
+              logical(1))),
+   "...each scoped to this run's id, so a retry clears only what it rewrites")
+rm("run_id", envir = globalenv())
+
+# No standalone INSERT is left anywhere a retry can reach it.
+srcs <- list.files(file.path(ROOT, "R"), pattern = "[.]R$", recursive = TRUE,
+                   full.names = TRUE)
+loose <- Filter(function(f) {
+  txt <- paste(grep("^\\s*#", readLines(f, warn = FALSE), value = TRUE, invert = TRUE),
+               collapse = "\n")
+  n_hits("INSERT INTO", txt) > 0 &&
+    n_hits("retry_as_unit = TRUE", txt) + n_hits("db_replace(", txt) == 0
+}, srcs)
+ok(length(loose) == 0,
+   if (length(loose)) paste0("an INSERT with no replacement unit around it: ",
+                             paste(basename(loose), collapse = ", "))
+   else "and every file that writes an INSERT retries it as a replacement unit")
+
+if (is.null(old_cfg)) rm("cfg", envir = globalenv()) else assign("cfg", old_cfg, envir = globalenv())
+
+
+cat("\n-- found by an adversarial pass --\n")
+{
+  # 1. An integer setting of all digits that as.integer() cannot hold.
+  #    The pattern check exists because "60.5" was silently truncated; the one
+  #    input it let through overflows to NA, which is the same failure the
+  #    comment beside it warns about - a window that quietly becomes NA.
+  clear()
+  Sys.setenv(INDUCTION_WINDOW_DAYS = "99999999999999999999")
+  e1 <- tryCatch({ check_settings(); NULL }, error = conditionMessage)
+  ok(!is.null(e1) && grepl("too large for an integer", e1),
+     "an integer setting too large to hold is refused, not left to become NA")
+  Sys.setenv(INDUCTION_WINDOW_DAYS = "60")
+  ok(is.null(tryCatch({ check_settings(); NULL }, error = conditionMessage)),
+     "while an ordinary window still passes")
+  clear()
+
+  # 2. OBJECT_PREFIX is pasted into a table name, and was unchecked while
+  #    PROJECT_WORK_SCHEMA beside it was checked for exactly this.
+  pfx_ok <- function(v) {
+    Sys.setenv(OBJECT_PREFIX = v)
+    r <- is.null(tryCatch({ check_settings(); NULL }, error = conditionMessage))
+    clear(); r
+  }
+  ok(pfx_ok("lot_") && pfx_ok("coh_a_"), "a real prefix is accepted")
+  for (bad in c("a.b.c", "lot_ x", "lot_;DROP", "../x", "9lot", "_lot"))
+    ok(!pfx_ok(bad), paste0("a prefix that is not a table name is refused: ", bad))
+
+  # 3. sql_count() is for counts. Inf reached SQL as the word "Inf" and 1.5 as
+  #    "1.5" - one the warehouse rejects, the other it truncates in silence.
+  ok(identical(sql_count(1e5), "100000"), "a count is written as plain digits")
+  ok(identical(sql_count(NA), "NULL"), "and a missing one as NULL")
+  ok(identical(sql_count(Inf), "NULL") && identical(sql_count(-Inf), "NULL"),
+     "an infinite count is NULL, not the word Inf")
+  ok(identical(sql_count(1.5), "NULL"),
+     "and a non-integer is NULL rather than truncated into a BIGINT column")
+  ok(identical(sql_count(0), "0") && identical(sql_count(-1), "-1"),
+     "while zero and a negative are written as they are")
+
+  # 4. Two of the permanent patterns are ordinary English - "not supported"
+  #    and "not allowed" - and appear inside transient messages. Read as
+  #    permanent they killed a recoverable run; read as retryable the worst
+  #    case is a few backoffs before the same error, so the explicit hint wins.
+  retries <- function(msg, max_retries = 3L) {
+    n <- 0L
+    e <- new.env(parent = environment(with_retry))
+    e$log_msg <- function(...) invisible(NULL)
+    e$lot_config <- function() list(max_retries = max_retries, base_sleep = 0)
+    f <- with_retry; environment(f) <- e
+    tryCatch(f(function() { n <<- n + 1L; stop(msg) }), error = function(x) NULL)
+    n
+  }
+  ok(retries("Connection reset by peer") > 1L, "a transport failure is retried")
+  ok(retries("AnalysisException: no such column") == 1L,
+     "a query the warehouse cannot plan is sent once")
+  ok(retries("PERMISSION_DENIED on table t") == 1L,
+     "and so is a missing grant - no amount of waiting grants a privilege")
+  ok(retries("[RETRIABLE] the operation is not supported on this node") > 1L,
+     "a message saying RETRIABLE is retried even though it says 'not supported'")
+  ok(retries("java.io.IOException: Operation not allowed: transient lock") > 1L,
+     "and one saying 'transient' even though it says 'not allowed'")
+  ok(retries("Task failed, please retry: value not supported") > 1L,
+     "and one asking to retry")
+  ok(retries("UNSUPPORTED_FEATURE: this is not supported") == 1L,
+     "while a plain unsupported feature, with no hint, is still sent once")
+
+  # 5. A criterion's name becomes a view name and an alias. Only one criterion
+  #    is declared and its name is fine, so this cannot fire today - which is
+  #    why a later one with a hyphen would fail in the warehouse's words.
+  lc <- new.env(parent = globalenv())
+  sys.source(file.path(ROOT, "R", "line_criteria.R"), envir = lc)
+  criterion_patients_view <- lc$criterion_patients_view
+  LINE_CRITERIA <- lc$LINE_CRITERIA
+  ok(identical(criterion_patients_view(list(name = "no_belantamab")),
+               "lc_no_belantamab_patients"),
+     "a plain criterion name makes its view name")
+  for (bad in c("a b", "a-b", "a;DROP", "1a", ""))
+    ok(!is.na(tryCatch({ criterion_patients_view(list(name = bad)); NA_character_ },
+                       error = function(e) conditionMessage(e))),
+       paste0("a criterion name that is not an identifier is refused: ", sQuote(bad)))
+  ok(all(grepl("^[A-Za-z][A-Za-z0-9_]*$",
+               vapply(LINE_CRITERIA, `[[`, character(1), "name"))),
+     "and every criterion this build declares already passes it")
+}
+
 report()

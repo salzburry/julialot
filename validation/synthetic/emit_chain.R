@@ -88,7 +88,10 @@ assign("materialize", function(con, step, view, name, body, qc = NULL) {
                  paste0("CREATE OR REPLACE TEMPORARY VIEW ", view,
                         " AS SELECT * FROM T_", name))
   invisible(paste0("T_", name)) }, e)
-assign("run_step", function(con, name, sql, qc = NULL) { SQL <<- c(SQL, sql); TRUE }, e)
+# retry_as_unit is the engine's "these statements retry together" marker.
+# Collected the same way either way: the harness replays them in order.
+assign("run_step", function(con, name, sql, qc = NULL, retry_as_unit = FALSE)
+  { SQL <<- c(SQL, sql); TRUE }, e)
 assign("db_exec", function(con, sql) { SQL <<- c(SQL, sql); invisible(NULL) }, e)
 assign("lot_out", function(n) paste0("T_", n), e)
 assign("log_msg", function(...) invisible(NULL), e)

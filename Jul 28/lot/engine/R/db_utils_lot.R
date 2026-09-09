@@ -173,12 +173,25 @@ with_retry <- function(fn, max_retries = lot_config()$max_retries,
     "INSUFFICIENT_PERMISSIONS", "PERMISSION_DENIED",
     "UnauthorizedAccessException", "does not have permission"
   )
+  # A message that says outright it can be retried. The patterns above are
+  # substrings, and two of them - "not supported" and "not allowed" - are
+  # ordinary English that turns up inside genuinely transient messages
+  # ("Operation not allowed: transient lock", "[RETRIABLE] ... not supported").
+  # Read as permanent, those killed a recoverable run; read as retryable, the
+  # worst case is five backoffs before the same error. The cheaper mistake
+  # wins, so an explicit hint from the server beats a generic substring.
+  retryable_markers <- c("RETRIABLE", "RETRYABLE", "please retry", "try again",
+                         "temporarily", "transient", "Connection reset",
+                         "timed out", "timeout")
   attempt <- 1
   repeat {
     out <- tryCatch(fn(), error = function(e) e)
     if (!inherits(out, "error")) return(out)
     msg <- conditionMessage(out)
-    is_permanent <- any(vapply(permanent_error_patterns, function(p) grepl(p, msg, ignore.case = TRUE), logical(1)))
+    said_retry <- any(vapply(retryable_markers, function(p)
+      grepl(p, msg, ignore.case = TRUE), logical(1)))
+    is_permanent <- !said_retry &&
+      any(vapply(permanent_error_patterns, function(p) grepl(p, msg, ignore.case = TRUE), logical(1)))
     if (is_permanent || attempt >= max_retries) {
       if (is_permanent && attempt < max_retries) {
         log_msg("Permanent error (not retrying): ", msg)
@@ -208,7 +221,16 @@ db_exec <- function(con, sql) {
 # untested here. Sending digits removes the question either way.
 sql_count <- function(x) {
   if (length(x) != 1L || is.na(x)) return("NULL")
-  format(x, scientific = FALSE, trim = TRUE)
+  # A count, so it has to BE one. Inf came out as the word "Inf" and 1.5 as
+  # "1.5", and both reach a BIGINT column - one the warehouse rejects, the
+  # other it truncates without saying so. Neither can arrive from a count(*),
+  # which is why it would surface as a puzzling failure rather than here.
+  n <- suppressWarnings(as.numeric(x))
+  if (!is.finite(n)) return("NULL")
+  # A fraction is not a count. NULL rather than a truncation, so a column that
+  # should hold a count never holds a rounded-off one.
+  if (n != round(n)) return("NULL")
+  format(round(n), scientific = FALSE, trim = TRUE)
 }
 
 # A string as a SQL literal: quoted, inner quotes doubled, and NULL rather than
@@ -250,12 +272,19 @@ db_q <- function(con, sql) {
 # step. materialize() uses that to write a table and repoint its view before
 # the QC below reads it. The QC names the view, so repointing afterwards would
 # have it read the query the table was just written to replace.
-run_step <- function(con, name, sql, qc = NULL) {
+#
+# Each statement is retried on its own, which is right only where each one is
+# safe to run twice. A step whose statements are safe to run twice only as a
+# SEQUENCE - a DELETE clearing what the INSERT after it writes - passes
+# retry_as_unit = TRUE and is retried from the first statement through
+# db_replace(). Retried apart, an INSERT whose answer was lost is sent twice
+# and the DELETE that would have cleared the first has already run.
+run_step <- function(con, name, sql, qc = NULL, retry_as_unit = FALSE) {
   log_msg(SEP)
   log_msg("STEP ", name)
   log_msg(SEP)
   t0 <- proc.time()
-  for (s in sql) db_exec(con, s)
+  if (retry_as_unit) db_replace(con, sql) else for (s in sql) db_exec(con, s)
   elapsed <- (proc.time() - t0)[["elapsed"]]
   log_msg("  Completed in ", round(elapsed, 1), "s")
   if (!is.null(qc) && nzchar(qc)) {

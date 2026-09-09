@@ -152,9 +152,26 @@ check_settings <- function() {
     # The text, not what coercion makes of it: as.integer("60.5") is 60, not
     # NA, so a decimal passed this and was silently truncated - the run used 60
     # while the operator had asked for 60.5. "6e1" is the same story.
-    if (nzchar(x) && !grepl("^[0-9]+$", x))
+    if (nzchar(x) && !grepl("^[0-9]+$", x)) {
       bad <- c(bad, paste0(v, "='", x, "' (want a whole number)"))
+    } else if (nzchar(x) && is.na(suppressWarnings(as.integer(x)))) {
+      # Digits are not enough. "99999999999999999999" passes the pattern and
+      # as.integer() overflows it to NA - which is the very thing the comment
+      # above warns about, a window that silently becomes NA, reached by the
+      # one input the pattern lets through.
+      bad <- c(bad, paste0(v, "='", x,
+                           "' is too large for an integer and would become NA"))
+    }
   }
+  # The same reasoning for the prefix as for the schema below: it is pasted
+  # into a table name, so a dot makes a five-part name and a space or a quote
+  # makes one no warehouse will parse - and either way the run has already
+  # opened a session and started work before it finds out.
+  pfx <- Sys.getenv("OBJECT_PREFIX", unset = "")
+  if (nzchar(pfx) && !grepl("^[A-Za-z][A-Za-z0-9_]*$", pfx))
+    bad <- c(bad, paste0("OBJECT_PREFIX='", pfx,
+                         "' is not a name a table can start with ",
+                         "(letters, digits and underscore, starting with a letter)"))
   s <- Sys.getenv("PROJECT_WORK_SCHEMA", unset = "")
   if (grepl(".", s, fixed = TRUE))
     bad <- c(bad, paste0("PROJECT_WORK_SCHEMA='", s,

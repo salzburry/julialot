@@ -56,14 +56,18 @@ phase_persist <- function(con, ctx) {
       } else {
         log_msg("  Metadata schema: INDUCTION_WINDOW_DAYS_LOT_N already present (no migration needed)")
       }
-      # Delete any earlier row for this run_id, so a re-run is safe.
-      run_step(con, "S22b_dedup_metadata", glue("
-        DELETE FROM {lot_out('LOT_RUN_METADATA')} WHERE RUN_ID = '{run_id}'
-      "))
-      # Name the columns. ALTER TABLE adds new ones at the end rather than in
-      # place, and an older table may still carry columns since removed. So
-      # position cannot be trusted.
-      run_step(con, "S22c_insert_run_metadata", glue("
+      # The DELETE clears any earlier row for this run_id and the INSERT
+      # writes the new one. One step, retried from the DELETE: split into two
+      # steps they are retried apart, and an INSERT whose answer was lost is
+      # sent twice after the DELETE that would have cleared the first has
+      # already run.
+      #
+      # The INSERT names its columns. ALTER TABLE adds new ones at the end
+      # rather than in place, and an older table may still carry columns since
+      # removed, so position cannot be trusted.
+      run_step(con, "S22b_write_run_metadata", c(
+        glue("DELETE FROM {lot_out('LOT_RUN_METADATA')} WHERE RUN_ID = '{run_id}'"),
+        glue("
         INSERT INTO {lot_out('LOT_RUN_METADATA')} (
           RUN_ID, RUN_TIMESTAMP, CDM_SCHEMA, WORK_SCHEMA, INPUT_COHORT_TABLE,
           INDUCTION_WINDOW_DAYS, INDUCTION_WINDOW_DAYS_LOT_N,
@@ -84,7 +88,7 @@ phase_persist <- function(con, ctx) {
           {sql_count(mma_n)},
           {sql_count(map_n)},
           {sql_count(lot1_n)}
-      "))
+      ")), retry_as_unit = TRUE)
     }, error = function(e) {
       log_msg("  WARNING: Run metadata persist failed: ", conditionMessage(e))
     })
@@ -118,13 +122,13 @@ phase_persist <- function(con, ctx) {
           CHECK_NAME STRING, CHECK_VALUE BIGINT, CHECK_STATUS STRING, RUN_ID STRING
         )
       "))
-      run_step(con, "S23b_dedup_qc", glue("
-        DELETE FROM {lot_out('LOT_QC_SUMMARY')} WHERE RUN_ID = '{run_id}'
-      "))
-      run_step(con, "S23c_insert_qc_summary", glue("
+      # One step for the same reason as the metadata write above.
+      run_step(con, "S23b_write_qc_summary", c(
+        glue("DELETE FROM {lot_out('LOT_QC_SUMMARY')} WHERE RUN_ID = '{run_id}'"),
+        glue("
         INSERT INTO {lot_out('LOT_QC_SUMMARY')}
         {qc_union}
-      "))
+      ")), retry_as_unit = TRUE)
     }, error = function(e) {
       log_msg("  WARNING: QC summary persist failed: ", conditionMessage(e))
     })

@@ -219,9 +219,18 @@ CRITERION_FLAG <- c(
   X3_pregnancy    = "NO_PREGNANCY",
   X4_belantamab   = "NO_BELANTAMAB_PRE_LOT1")
 
+# The input's columns, as check_cohort_table() found them. The cohort SQL
+# reads this to decide which exclusion flags it can apply, so a stale answer
+# from a previous build would apply a flag the current input does not carry -
+# or skip one it does. Cleared per build by reset_run_state().
 .input_cols <- new.env(parent = emptyenv())
 .cohort_cols <- function()
   get0("cols", envir = .input_cols, ifnotfound = character(0))
+
+reset_cohort_columns <- function() {
+  rm(list = ls(.input_cols), envir = .input_cols)
+  invisible(TRUE)
+}
 
 # criterion -> the S_COHORT column carrying its verdict, for the funnel. A
 # criterion whose flag the input does not carry writes 1 for everyone, so the
@@ -241,8 +250,8 @@ FLAG_PRED <- list(
 # criterion was applied upstream, every remaining row has passed it, and the
 # funnel reports it as carried in. `coalesce(flag, 1)` treats a NULL as
 # eligible, which is the upstream writer's own contract - its flags are
-# non-null CASE results - and check_cohort_table() is where a custom adapter
-# that breaks that contract has to be caught.
+# non-null CASE results. check_cohort_table() enforces that contract, so the
+# coalesce cannot fire on a table this package accepted.
 cohort_flag_pred_one <- function(k, cols) {
   fl <- CRITERION_FLAG[[k]]
   if (is.null(fl) || !fl %in% cols) "1 = 1"
@@ -274,6 +283,48 @@ check_cohort_table <- function(con, cfg) {
          "patient ids and eligibility flags cannot drive the run. Point ",
          "INPUT_COHORT_TABLE at a materialised cohort with the full schema.",
          call. = FALSE)
+  # Column presence is not the contract. The values matter too, and both ways
+  # of breaking them are silent: a duplicated PATID multiplies that patient
+  # through every join and inflates the cohort, and a NULL flag passes
+  # `coalesce(flag, 1) = 1` and admits a patient the exclusion should have
+  # dropped. Checked in one query, once, before any cohort is built.
+  flags <- intersect(unname(CRITERION_FLAG), cols)
+  flag_sel <- if (length(flags)) paste0(", ", paste(vapply(flags, function(f)
+    sprintf("sum(CASE WHEN %1$s IS NULL OR %1$s NOT IN (0, 1) THEN 1 ELSE 0 END) AS bad_%1$s",
+            f), character(1)), collapse = ", ")) else ""
+  g <- db_q(con, sprintf(
+    "SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients,
+            sum(CASE WHEN PATID IS NULL THEN 1 ELSE 0 END) AS n_null_patid%s
+     FROM %s", flag_sel, cfg$input_cohort_table))
+  # A driver that answers the aggregate with nothing usable leaves the value
+  # checks unable to say anything. Reads as 0 - the preflight is not the place
+  # to fail a run over a driver quirk - and the column checks above still hold.
+  nm <- function(x) {
+    v <- suppressWarnings(as.numeric(g[[x]]))
+    if (!length(v) || is.na(v[1])) 0 else v[1]
+  }
+  if (nm("n_null_patid") > 0)
+    stop("INPUT ERROR: INPUT_COHORT_TABLE '", cfg$input_cohort_table, "' has ",
+         nm("n_null_patid"), " row(s) with a NULL PATID. Every cohort is ",
+         "indexed by patient, so those rows join to nothing and are counted ",
+         "by the funnel anyway.", call. = FALSE)
+  if (nm("n_rows") != nm("n_patients"))
+    stop("INPUT ERROR: INPUT_COHORT_TABLE '", cfg$input_cohort_table, "' holds ",
+         nm("n_rows"), " rows for ", nm("n_patients"), " patients. This package ",
+         "reads it as one row per patient: a duplicate multiplies that patient ",
+         "through every join, so the cohort counts come out high and nothing ",
+         "downstream says so.", call. = FALSE)
+  bad <- Filter(function(f) nm(paste0("bad_", f)) > 0, flags)
+  if (length(bad))
+    stop("INPUT ERROR: INPUT_COHORT_TABLE '", cfg$input_cohort_table,
+         "' carries a NULL or non-0/1 value in: ",
+         paste(vapply(bad, function(f)
+           sprintf("%s (%d row(s))", f, as.integer(nm(paste0("bad_", f)))),
+           character(1)), collapse = ", "),
+         ".\nThese are exclusion verdicts. A NULL reads as eligible, so a ",
+         "patient the exclusion should have dropped enters the cohort ",
+         "silently. Write 0 or 1.", call. = FALSE)
+
   # A wide input is one that deliberately keeps patients failing an exclusion.
   # Asserting it without the flags to filter by would let those patients into
   # every cohort, which is the opposite of what the assertion is for.

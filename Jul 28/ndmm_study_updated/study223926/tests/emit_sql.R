@@ -46,6 +46,16 @@
                                    unname(CRITERION_FLAG)),
                       data_type = "string", stringsAsFactors = FALSE))
   }
+  # check_cohort_table() also asks the input's shape - row count against
+  # distinct patients, and whether any exclusion flag is NULL or not 0/1. The
+  # generic counter below would answer 1 row for 0 patients and fail every
+  # emit, so this is answered the way a warehouse would for a well-formed
+  # cohort table: one row per patient, every flag a clean 0 or 1.
+  if (grepl("\\bn_patients\\b", sql) && grepl("\\bn_null_patid\\b", sql)) {
+    d <- data.frame(n_rows = 8L, n_patients = 8L, n_null_patid = 0L)
+    for (f in unname(CRITERION_FLAG)) d[[paste0("bad_", f)]] <- 0L
+    return(d)
+  }
   # Counted per call SITE, not globally: the washout asks the same question
   # each round, and a global counter is exhausted by the modules that ran
   # before it. Reset per cohort by the prepare_table stub.
@@ -63,7 +73,7 @@
 load_package_env <- function(here) {
   env <- new.env(parent = globalenv())
   files <- c("config_223926.R", "db_utils_223926.R", "registry.R", "windows.R",
-             "person_time.R", "suppression.R", "codelists.R", "lineage.R",
+             "person_time.R", "codelists.R", "lineage.R",
              "run_223926.R")
   for (f in files) sys.source(file.path(here, "R", f), envir = env)
   for (f in env$MODULE_FILES)

@@ -18,12 +18,33 @@ log_msg <- function(...) {
   flush.console()
 }
 
-set_study_config <- function(x) { assign("cfg", x, envir = globalenv()); invisible(x) }
+# The run's own state, private to this package.
+#
+# It used to be a variable called `cfg` in the global environment. The LOT
+# engine keeps its config the same way, under the same name, so sourcing both
+# in one session left whichever ran second holding the name and the other's
+# wrk() and cdm_src() reading a config that was not theirs. Here the name
+# cannot be reached from outside, and a second package cannot take it.
+#
+# Every read goes through study_config(), so this is the only place that
+# knows where the config lives.
+.study_state <- new.env(parent = emptyenv())
+
+set_study_config <- function(x) { .study_state$cfg <- x; invisible(x) }
 study_config <- function() {
-  if (!exists("cfg", envir = globalenv()))
+  if (is.null(.study_state$cfg))
     stop("No config. build_223926() calls set_study_config() before any step.",
          call. = FALSE)
-  get("cfg", envir = globalenv())
+  .study_state$cfg
+}
+
+# Everything a build accumulates and a second build in the same session must
+# not inherit. Called once, at the top of build_223926().
+reset_run_state <- function() {
+  .study_state$cfg <- NULL
+  reset_codelist_manifest()
+  reset_cohort_columns()
+  invisible(TRUE)
 }
 
 # A CDM table, with the quarterly suffix picked from STUDY_END - the same
@@ -91,52 +112,117 @@ lot_tbl <- function(base_tbl) {
 # Split on semicolons outside quotes and comments. The module templates carry
 # `--` notes, and a `;` in one of those would otherwise chop the statement in
 # half; the quote tracking guards against a code-list value doing the same.
+#
+# Only the positions that can change state are looked at - a quote, a comment
+# opener or closer, a newline, a semicolon - found in one pass by the regex
+# engine. Everything between them is ordinary SQL that nothing can hide in.
+#
+# The first version walked every character and appended each one to a growing
+# vector, which is quadratic in statement length: the 565 statements a default
+# run emits took 3.4 CPU seconds, and a single 30 KB statement took 2.9.
+# `*/` is not in this list. It can share a `/` with a `/*`: in `**/*` the
+# scanner reads the block-comment OPENER at the third character, and one
+# alternation matching left to right would take `*/` at the second and swallow
+# the `/`. Where a block comment closes is looked up separately, below.
+#
+# All three quote characters are tracked, not just `'`. Spark writes a quoted
+# identifier in BACKTICKS and this package's own SQL already uses them; under
+# ANSI mode a double quote is an identifier too, and without it a `;` inside
+# either would have cut a statement in half. Each is closed by itself, and
+# doubled inside means an escaped one - the same rule for all three.
+.SQL_TOKENS <- "--|/\\*|'|\"|`|;|\n"
+.SQL_QUOTES <- c("'", "\"", "`")
+
 split_statements <- function(sql) {
-  chars <- strsplit(sql, "", fixed = TRUE)[[1]]
-  n <- length(chars)
-  out <- character(0); cur <- character(0)
+  g   <- gregexpr(.SQL_TOKENS, sql)
+  pos <- g[[1L]]
+  if (pos[1L] == -1L)
+    return(.slice_statements(sql, integer(0), "code"))
+  tok <- regmatches(sql, g)[[1L]]
+  n <- length(pos)
+  close_at <- gregexpr("\\*/", sql)[[1L]]
+  close_at <- if (close_at[1L] == -1L) integer(0) else as.integer(close_at)
+
+  cuts <- integer(0)
+  # Where each comment runs from and to, so a statement that is nothing but
+  # comments can be told from one that has SQL in it.
+  cs <- integer(0); ce <- integer(0); open_at <- NA_integer_
   state <- "code"   # code | quote | line_comment | block_comment
+  qch <- ""
   i <- 1L
   while (i <= n) {
-    ch <- chars[i]
-    nx <- if (i < n) chars[i + 1L] else ""
+    ch <- tok[i]
     if (state == "code") {
-      if (ch == "'") {
-        state <- "quote"
-      } else if (ch == "-" && nx == "-") {
-        state <- "line_comment"
-        cur <- c(cur, ch, nx); i <- i + 2L; next
-      } else if (ch == "/" && nx == "*") {
-        state <- "block_comment"
-        cur <- c(cur, ch, nx); i <- i + 2L; next
-      } else if (ch == ";") {
-        out <- c(out, paste(cur, collapse = "")); cur <- character(0)
-        i <- i + 1L; next
+      if (ch == ";") {
+        cuts <- c(cuts, pos[i])
+      } else if (ch %in% .SQL_QUOTES) {
+        state <- "quote"; qch <- ch
+      } else if (ch == "--") {
+        state <- "line_comment"; open_at <- pos[i]
+      } else if (ch == "/*") {
+        # Jump to where the comment closes rather than walking its text. No
+        # close is the unterminated case; `state` carries that to the error.
+        q <- close_at[close_at >= pos[i] + 2L]
+        if (!length(q)) { state <- "block_comment"; open_at <- pos[i]; break }
+        cs <- c(cs, pos[i]); ce <- c(ce, q[1L] + 1L)
+        resume <- q[1L] + 2L
+        while (i < n && pos[i + 1L] < resume) i <- i + 1L
       }
     } else if (state == "quote") {
-      # '' inside a quoted string is an escaped quote, not the end of one.
-      if (ch == "'" && nx == "'") {
-        cur <- c(cur, ch, nx); i <- i + 2L; next
+      # A doubled quote inside a quoted run is an escaped one, not the end.
+      # Adjacent by POSITION, not merely the next token: 'a' || 'b' has two
+      # quotes in a row with text between them, and the first string closes.
+      if (ch == qch) {
+        if (i < n && tok[i + 1L] == qch && pos[i + 1L] == pos[i] + 1L)
+          i <- i + 1L
+        else state <- "code"
       }
-      if (ch == "'") state <- "code"
     } else if (state == "line_comment") {
-      if (ch == "\n") state <- "code"
-    } else if (state == "block_comment") {
-      if (ch == "*" && nx == "/") {
-        state <- "code"
-        cur <- c(cur, ch, nx); i <- i + 2L; next
+      if (ch == "\n") {
+        state <- "code"; cs <- c(cs, open_at); ce <- c(ce, pos[i] - 1L)
       }
     }
-    cur <- c(cur, ch)
     i <- i + 1L
   }
+  if (identical(state, "line_comment")) {
+    cs <- c(cs, open_at); ce <- c(ce, nchar(sql)); state <- "code"
+  }
+  .slice_statements(sql, cuts, state, cs, ce)
+}
+
+# Is there any SQL in this span, or only comments and whitespace?
+#
+# A template ending in a comment used to emit that comment as a statement of
+# its own, and the warehouse would reject it. Nothing writes one today, which
+# is why it would have surfaced as a failing run rather than as a bug here.
+.span_has_code <- function(sql, s, e, cs, ce) {
+  if (s > e) return(FALSE)
+  ov <- which(ce >= s & cs <= e)
+  if (!length(ov)) return(nzchar(trimws(substring(sql, s, e))))
+  ov <- ov[order(cs[ov])]
+  cur <- s
+  for (k in ov) {
+    a <- max(cs[k], s); b <- min(ce[k], e)
+    if (a > cur && nzchar(trimws(substring(sql, cur, a - 1L)))) return(TRUE)
+    cur <- max(cur, b + 1L)
+  }
+  cur <= e && nzchar(trimws(substring(sql, cur, e)))
+}
+
+# The statements are cut out of the original string rather than reassembled
+# character by character, so a split costs one substring per statement.
+.slice_statements <- function(sql, cuts, state, cs = integer(0), ce = integer(0)) {
   if (state == "quote")
     stop("split_statements: unterminated string literal in generated SQL")
   if (state == "block_comment")
     stop("split_statements: unterminated block comment in generated SQL")
-  out <- c(out, paste(cur, collapse = ""))
-  out <- trimws(out)
-  out[nzchar(out)]
+  starts <- c(1L, cuts + 1L)
+  ends   <- c(cuts - 1L, nchar(sql))
+  out <- trimws(substring(sql, starts, ends))
+  keep <- nzchar(out) &
+    vapply(seq_along(starts), function(k)
+      .span_has_code(sql, starts[k], ends[k], cs, ce), logical(1))
+  out[keep]
 }
 
 with_retry <- function(fn, max_retries = study_config()$max_retries,
@@ -177,16 +263,33 @@ sql_is_retry_safe <- function(st) {
     head <- sub("^/\\*.*?\\*/", "", head)
     if (identical(head, was)) break
   }
-  !grepl("^(INSERT|MERGE)\\b", toupper(head))
+  head <- toupper(head)
+  # A leading WITH does not make a statement a read. `WITH a AS (...) INSERT
+  # INTO t SELECT * FROM a` is a write whose first verb is WITH, and reading
+  # the first verb alone classified it retry-safe - the same lost-acknowledged
+  # duplicate the LOT append had. Nothing emits that form today, which is
+  # exactly why it would go unnoticed if something started to.
+  if (grepl("^WITH\\b", head))
+    return(!grepl("\\b(INSERT|MERGE)\\s+INTO\\b", head))
+  !grepl("^(INSERT|MERGE)\\b", head)
 }
 
+# The one call that reaches the driver. Separate so what surrounds it - which
+# statement is retried and which is not - can be driven by a test without a
+# warehouse.
+db_exec_once <- function(con, sql)
+  sparklyr::invoke(sparklyr::spark_session(con), "sql", sql)
+
 # Execute. Accepts one statement or several, in one string or a vector.
+#
+# A statement is retried only if it is safe to run twice. An INSERT that
+# committed and lost its answer would be sent again, and the rows written
+# twice, so those are sent once and a failure is a failure.
 db_exec <- function(con, sql) {
   stmts <- unlist(lapply(sql, split_statements), use.names = FALSE)
   for (st in stmts) {
-    run1 <- function()
-      sparklyr::invoke(sparklyr::spark_session(con), "sql", st)
-    if (sql_is_retry_safe(st)) with_retry(run1) else run1()
+    if (sql_is_retry_safe(st)) with_retry(function() db_exec_once(con, st))
+    else db_exec_once(con, st)
   }
   invisible(length(stmts))
 }

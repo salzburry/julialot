@@ -21,6 +21,12 @@ LOT <- file.path(dirname(ROOT), "engine")
 
 pass <- 0L; fail <- 0L
 ok <- function(cond, what) {
+  # An assertion that RAISES is a failure, not the end of the run. Without
+  # this the first one to error takes the script down and every check after it
+  # is simply never made - and the summary line that would have said so is
+  # never printed either.
+  cond <- tryCatch(cond, error = function(e) {
+    what <<- paste0(what, "  [raised: ", conditionMessage(e), "]"); FALSE })
   if (isTRUE(cond)) { pass <<- pass + 1L; cat("  ok     ", what, "\n") }
   else              { fail <<- fail + 1L; cat("  FAIL   ", what, "\n") }
 }
@@ -231,6 +237,209 @@ local({
         "a listing with no recognisable name column stops rather than dropping nothing quietly")
 })
 
+cat("\n-- what a cell has to be before its numbers are read --\n")
+# Every guard in cells.R exists because a comparison can look right and be
+# between two different worlds. None of them was exercised until now.
+
+# "a=1|b=2" to a named list, splitting on the FIRST = only.
+ps <- melp_parse_settings("apply_melp_rule=simplified|melp_med_abbr=MELP")
+ok(identical(ps$apply_melp_rule, "simplified") && identical(ps$melp_med_abbr, "MELP"),
+   "settings parse back out of the pipe-separated string the build records")
+ok(identical(melp_parse_settings("note=a=b")$note, "a=b"),
+   "...and a value with an = in it survives, because only the first one splits")
+ok(length(melp_parse_settings(NA)) == 0L && length(melp_parse_settings("")) == 0L,
+   "...while nothing recorded parses to nothing, rather than to a bad row")
+
+row <- function(...) { d <- list(...); lapply(d, function(x) x) }
+inp <- function(cohort = "C1", stamp = "S1", start = "2016-01-01",
+                end = "2023-12-31", code = "M1", cl = "L1", dev = NA,
+                set = "apply_melp_rule=simplified|melp_med_abbr=MELP") 
+  row(COHORT_RUN_ID = cohort, COHORT_STAMP = stamp, STUDY_START = start,
+      STUDY_END = end, CODE_MD5 = code, CODELIST_MD5 = cl,
+      CONTRACT_DEVIATIONS = dev, CONTRACT_SETTINGS = set)
+
+runs(melp_check_inputs(list(reference = inp(), simplified = inp())),
+     "two cells built over the same cohort, code and code lists compare")
+stops(melp_check_inputs(list(reference = inp(), simplified = inp(stamp = "S2"))),
+      "a cohort re-run between the cells stops the read")
+stops(melp_check_inputs(list(reference = inp(code = "M1"),
+                             simplified = inp(code = "M2"))),
+      "...and so does a cell built by different code")
+stops(melp_check_inputs(list(reference = inp(cl = NA), simplified = inp(cl = NA))),
+      "a field NEITHER cell recorded is not agreement - there is nothing to compare")
+
+# Which cell deviates flipped when the study adopted the rule, so this is
+# checked off each cell's own `mode` rather than off its name.
+devs <- function(ref, sim)
+  list(reference = inp(dev = ref), simplified = inp(dev = sim))
+runs(melp_check_deviations(devs("apply_melp_rule=off (simplified)", NA), MELP_CELLS),
+     "the rule-off cell records its deviation and the contract cell records none")
+stops(melp_check_deviations(devs("apply_melp_rule=off (simplified)",
+                                 "max_lot=3 (5)"), MELP_CELLS),
+      "a contract cell that deviates at all is not the contract build")
+stops(melp_check_deviations(devs(NA, NA), MELP_CELLS),
+      "a cell built without the rule that records no deviation is refused")
+stops(melp_check_deviations(devs("apply_melp_rule=as_asked (simplified)", NA), MELP_CELLS),
+      "...and one recording a different value for it is not the cell it claims")
+stops(melp_check_deviations(devs(paste0("apply_melp_rule=off (simplified)",
+                                        "|max_lot=3 (5)"), NA), MELP_CELLS),
+      "a cell that changed something ELSE is measuring more than the rule")
+# The fold-in package passes its own key. A deviation on apply_melp_rule would
+# then be the "something else" this refuses.
+stops(melp_check_deviations(devs("apply_melp_rule=off (simplified)", NA),
+                            MELP_CELLS, key = "apply_map_foldin"),
+      "the setting the cells differ on is the caller's to name")
+
+st <- function(a, b) list(reference = inp(set = a), simplified = inp(set = b))
+SET <- paste0("apply_melp_rule=simplified|melp_med_abbr=MELP|",
+              "melp_exposure_days=30|induction_window_days=60|",
+              "lot_n_induction_window_days=30|cart_consolidation_days=45")
+got <- melp_settings(st(sub("simplified", "off", SET), SET))
+ok(identical(got$abbr, "MELP") && identical(got$expo_days, 30L) &&
+     identical(got$ind1, 60L) && identical(got$indn, 30L) &&
+     identical(got$cart, 45L),
+   "the windows the numbers are read under come off the cells, as whole numbers")
+stops(melp_settings(st("", SET)),
+      "a cell that recorded no settings has no record of what it was built under")
+stops(melp_settings(st(paste0(SET, "|max_lot=3"), paste0(SET, "|max_lot=5"))),
+      "cells differing on a setting no metric reads are still not one experiment")
+runs(melp_settings(st(sub("simplified", "off", SET), SET), vary = "apply_melp_rule"),
+     "...while the setting they exist to differ on is allowed to differ")
+stops(melp_settings(st(sub("melp_exposure_days=30", "melp_exposure_days=30.5", SET),
+                       sub("melp_exposure_days=30", "melp_exposure_days=30.5", SET))),
+      "a window recorded as 30.5 stops rather than being truncated to 30")
+stops(melp_settings(st(sub("melp_exposure_days=30", "melp_exposure_days=3e1", SET),
+                       sub("melp_exposure_days=30", "melp_exposure_days=3e1", SET))),
+      "...and so does 3e1, which as.integer() would also read as 30")
+stops(melp_settings(st(sub("melp_med_abbr=MELP", "melp_med_abbr=ME'LP", SET),
+                       sub("melp_med_abbr=MELP", "melp_med_abbr=ME'LP", SET))),
+      "an abbreviation with a quote in it is refused, not escaped")
+stops(melp_settings(st(sub("\\|cart_consolidation_days=45", "", SET),
+                       sub("\\|cart_consolidation_days=45", "", SET))),
+      "a cell missing a window this package reads is refused by name")
+
+res <- data.frame(cell = c("reference", "simplified"),
+                  stringsAsFactors = FALSE)
+for (m in names(MELP_METRICS)) res[[m]] <- c(10, 15)
+cmp <- melp_compare(res, MELP_CELLS)
+ok(nrow(cmp) == length(MELP_METRICS) &&
+     all(cmp$change == 5) && all(cmp$pct_change == 50),
+   "each cell is reported against the reference, as a change and a percentage")
+ok(!any(cmp$cell == "reference"), "...and the reference is not compared with itself")
+res0 <- res; for (m in names(MELP_METRICS)) res0[[m]] <- c(0, 3)
+ok(all(is.na(melp_compare(res0, MELP_CELLS)$pct_change)),
+   "a percentage off a zero reference is not reported rather than being infinite")
+stops(melp_compare(res[, setdiff(names(res), "n_melp_add")], MELP_CELLS),
+      "a metric named in MELP_METRICS that no statement selects is named, not silently dropped")
+stops(melp_compare(res[res$cell != "reference", , drop = FALSE], MELP_CELLS),
+      "and a result set with no reference cell in it stops")
+
+stamped <- melp_stamp(data.frame(x = 1:2), list(reference = inp(), simplified = inp()),
+                      list(reference = list(run_id = "R1"),
+                           simplified = list(run_id = "R2")))
+ok(all(c("COHORT_RUN_ID", "COHORT_STAMP", "CODE_MD5", "LOT_RUN_IDS", "READ_AT")
+         %in% names(stamped)) && identical(stamped$LOT_RUN_IDS[1], "R1/R2"),
+   "every CSV carries the cohort, the code and both runs it was read from")
+ok(is.null(melp_stamp(NULL, list(), list())),
+   "...and nothing to stamp is not an error")
+
+ok(identical(melp_out_dir("/tmp/x"), file.path("/tmp/x", "out")),
+   "both scripts write beside the script by default")
+local({
+  old <- Sys.getenv("OUTPUT_DIR", unset = NA)
+  Sys.setenv(OUTPUT_DIR = "/tmp/elsewhere")
+  ok(identical(melp_out_dir("/tmp/x"), "/tmp/elsewhere"),
+     "...and OUTPUT_DIR moves the runner and the recovery read together")
+  if (is.na(old)) Sys.unsetenv("OUTPUT_DIR") else Sys.setenv(OUTPUT_DIR = old)
+})
+
+# Which run owns a prefix, and whether it moved while it was being read.
+local({
+  answer <- NULL
+  assign("db_q", function(con, sql) answer, envir = globalenv())
+  assign("wrk", function(x) x, envir = globalenv())
+  cell <- list(id = "reference", prefix = "melp_reference_")
+
+  answer <- data.frame(RUN_ID = "R1", STATE = "complete", UPDATED_AT = "T1",
+                       stringsAsFactors = FALSE)
+  s1 <- cell_status(NULL, cell)
+  ok(identical(s1$run_id, "R1") && identical(s1$updated_at, "T1"),
+     "a completed run is the cell, and the read carries which run it was")
+  answer <- data.frame(RUN_ID = "R1", STATE = "started", UPDATED_AT = "T1",
+                       stringsAsFactors = FALSE)
+  stops(cell_status(NULL, cell),
+        "a prefix being rebuilt right now is not a cell")
+  answer <- data.frame(RUN_ID = "R1", STATE = "failed", UPDATED_AT = "T1",
+                       stringsAsFactors = FALSE)
+  stops(cell_status(NULL, cell), "...and neither is one a build died in")
+  answer <- data.frame(RUN_ID = character(0), STATE = character(0),
+                       UPDATED_AT = character(0), stringsAsFactors = FALSE)
+  stops(cell_status(NULL, cell), "a prefix nothing has ever built has no numbers")
+  assign("db_q", function(con, sql) stop("no such table"), envir = globalenv())
+  stops(cell_status(NULL, cell),
+        "a status table that cannot be read is reported as that, not as a missing row")
+
+  # ...and again immediately before anything is written.
+  answer <- data.frame(RUN_ID = "R1", STATE = "complete", UPDATED_AT = "T1",
+                       stringsAsFactors = FALSE)
+  assign("db_q", function(con, sql) answer, envir = globalenv())
+  before <- list(reference = cell_status(NULL, cell))
+  runs(melp_status_unchanged(NULL, list(cell), before),
+       "a cell that did not move while it was read publishes")
+  answer <- data.frame(RUN_ID = "R2", STATE = "complete", UPDATED_AT = "T2",
+                       stringsAsFactors = FALSE)
+  stops(melp_status_unchanged(NULL, list(cell), before),
+        "...and one rebuilt underneath the read stops before anything is written")
+  answer <- data.frame(RUN_ID = "R1", STATE = "complete", UPDATED_AT = "T2",
+                       stringsAsFactors = FALSE)
+  stops(melp_status_unchanged(NULL, list(cell), before),
+        "...including a re-run that kept the run id and only moved the stamp")
+
+  # One statement failing is the whole read failing: the answer is the
+  # comparison, not a best effort at one cell.
+  assign("db_q", function(con, sql) stop("optimizer died"), envir = globalenv())
+  stops(melp_metrics(NULL, "f", "a", "R1", "MELP", map_tbl = "m"),
+        "a metrics statement that fails names itself and the warehouse's message")
+  assign("db_q", function(con, sql) data.frame(), envir = globalenv())
+  ok(is.null(melp_metrics(NULL, "f", "a", "R1", "MELP", map_tbl = "m")),
+     "...and one that comes back empty is no answer either")
+  rm("db_q", "wrk", envir = globalenv())
+})
+
+sq <- melp_inputs_sql("META", "CODES", "STATUS", "R1")
+ok(has(sq, "FROM META") && has(sq, "FROM CODES") && has(sq, "FROM STATUS") &&
+     has(sq, "m.RUN_ID = 'R1'"),
+   "what a cell was built over is read from all three tables the run wrote it to")
+ok(has(sq, "max(s.CONTRACT_DEVIATIONS)"),
+   "...with the deviations taken from LOT_BUILD_STATUS, which is the column that has them")
+
+cat("\n-- the headline row is exactly MELP_METRICS --\n")
+# The claim cells.R makes about this suite, now true: every lower-case alias
+# melp_metric_sql() selects is a metric, and every metric is selected. A
+# statement that loses an alias fails here rather than in melp_compare(), and
+# an alias nothing names cannot be added without saying what it counts.
+aliases <- local({
+  qs <- melp_metric_sql("F", "A", "R1", "MELP", map_tbl = "M")
+  unique(unlist(regmatches(qs, gregexpr(
+    "(?<=AS )(n_|median_|pct_)[a-z0-9_]+", qs, perl = TRUE))))
+})
+ok(setequal(aliases, names(MELP_METRICS)),
+   paste0("every metric is selected and every alias is a metric (",
+          length(aliases), ")"))
+extra <- setdiff(aliases, names(MELP_METRICS))
+gone  <- setdiff(names(MELP_METRICS), aliases)
+ok(!length(extra), if (length(extra))
+     paste0("an alias no metric names: ", paste(extra, collapse = ", "))
+   else "...no alias is unnamed")
+ok(!length(gone), if (length(gone))
+     paste0("a metric no statement selects: ", paste(gone, collapse = ", "))
+   else "...and no metric is unselected")
+# The by-line table's aliases are upper case for exactly this reason.
+bl <- unlist(regmatches(melp_by_line_sql("F", "M"), gregexpr(
+  "(?<=AS )(n_|median_|pct_)[a-z0-9_]+", melp_by_line_sql("F", "M"), perl = TRUE)))
+ok(!length(bl),
+   "the by-line table names nothing the headline row would read as a metric")
+
 cat("\n-- the runner builds under its own prefixes --\n")
 rs <- paste(readLines(file.path(ROOT, "run_melp_simple.R"), warn = FALSE),
             collapse = "\n")
@@ -245,6 +454,161 @@ ok(!has(rs, 'env, "APPLY_MELP_RULE="') &&
 ok(has(rs, "melp_status_unchanged") && has(rs, "melp_check_code") &&
      has(rs, "melp_read_inputs"),
    "the read carries the package's run-ownership checks")
+
+cat("\n-- and both are RUN, not just read --\n")
+# Everything above inspects SQL as text. Text cannot tell you that a join lost
+# a bound, that a CASE can never be true, or that a count is measuring
+# something other than what its alias says - and these statements produce the
+# numbers the comparison is published from.
+#
+# So the measurement SQL and the rule's own decision chain are executed
+# against fixtures whose answers are worked out by hand, in tests/exec_cells.R
+# and tests/exec_rule.R. Skipped where duckdb and sqlglot are not installed;
+# the transpile to duckdb is a compromise, not a substitute for a warehouse
+# run.
+source(file.path(ROOT, "tests", "exec_cells.R"))
+source(file.path(ROOT, "tests", "exec_rule.R"))
+
+XCFG <- list(apply_melp_rule = "simplified", melp_med_abbr = "MELP",
+             melp_exposure_days = 30L, melp_simple_course_days = 28L,
+             sct_tandem_days = 180L, map_discon_gap_days = 90L)
+
+MQ <- melp_metric_sql(EXEC_TABLES$final, EXEC_TABLES$attrition, "RUN1", "MELP",
+                      map_tbl = EXEC_TABLES$map, expo_days = 30L, ind1 = 60L,
+                      indn = 30L, cart = 45L)
+MQ[["by_line"]]  <- melp_by_line_sql(EXEC_TABLES$final, EXEC_TABLES$map, "MELP")
+MQ[["patients"]] <- melp_modes_patients_sql(EXEC_TABLES$final,
+                                            EXEC_TABLES$final_b)
+mres <- run_exec_queries(MQ, ROOT)
+rres <- run_exec_queries(list(rule = rule_query(XCFG),
+                              no_break = no_break_query(XCFG)),
+                         ROOT, schema = RULE_SCHEMA, data = rule_data())
+
+if (identical(mres, "skip") || identical(rres, "skip") ||
+      is.null(mres) || is.null(rres)) {
+  cat("  SKIP   duckdb/sqlglot not installed - the SQL was not executed\n")
+} else {
+  ok(!length(exec_errors(mres)),
+     if (length(exec_errors(mres)))
+       paste0("a metrics statement did not run: ",
+              paste(exec_errors(mres), collapse = "; "))
+     else "every metrics statement transpiles and runs")
+  ok(!length(exec_errors(rres)),
+     if (length(exec_errors(rres)))
+       paste0("the rule's chain did not run: ",
+              paste(exec_errors(rres), collapse = "; "))
+     else "the rule's decision chain transpiles and runs on its own")
+
+  # Which statement each metric comes back in - the read cbinds them, so a
+  # metric only has to be found somewhere.
+  found <- function(m) {
+    for (id in names(MQ)) {
+      v <- exec_cell(mres, id, m)
+      if (!is.na(v)) return(v)
+    }
+    NA_character_
+  }
+  for (m in names(EXEC_EXPECT_METRICS)) {
+    want <- EXEC_EXPECT_METRICS[[m]]
+    got  <- suppressWarnings(as.numeric(found(m)))
+    ok(!is.na(got) && isTRUE(all.equal(got, want)),
+       sprintf("%-20s = %s%s", m, format(want),
+               if (is.na(got)) "  [not returned]"
+               else if (!isTRUE(all.equal(got, want)))
+                 paste0("  [got ", format(got), "]") else ""))
+  }
+
+  # ...and by line, where the row is the LOT number rather than the position.
+  lot_row <- function(n) {
+    hit <- mres$row[mres$id == "by_line" & mres$col == "LOT_NUM" &
+                      mres$value == n]
+    if (length(hit)) hit[1] else NA_character_
+  }
+  for (n in names(EXEC_EXPECT_BY_LINE)) {
+    r <- lot_row(n)
+    for (cl in names(EXEC_EXPECT_BY_LINE[[n]])) {
+      want <- EXEC_EXPECT_BY_LINE[[n]][[cl]]
+      got  <- if (is.na(r)) NA_real_ else exec_num(mres, "by_line", cl, r)
+      ok(!is.na(got) && isTRUE(all.equal(got, want)),
+         sprintf("LOT%s %-18s = %s%s", n, cl, format(want),
+                 if (is.na(got)) "  [not returned]"
+                 else if (!isTRUE(all.equal(got, want)))
+                   paste0("  [got ", format(got), "]") else ""))
+    }
+  }
+
+  for (cl in names(EXEC_EXPECT_PATIENTS)) {
+    want <- EXEC_EXPECT_PATIENTS[[cl]]
+    got  <- exec_num(mres, "patients", cl)
+    ok(!is.na(got) && isTRUE(all.equal(got, want)),
+       sprintf("two readings: %-28s = %s%s", cl, format(want),
+               if (is.na(got)) "  [not returned]"
+               else if (!isTRUE(all.equal(got, want)))
+                 paste0("  [got ", format(got), "]") else ""))
+  }
+
+  # The rule, patient by patient. Each row is one branch of 4.7.
+  rule_row <- function(pat) {
+    hit <- rres$row[rres$id == "rule" & rres$col == "PATID" &
+                      rres$value == pat]
+    if (length(hit)) hit[1] else NA_character_
+  }
+  for (pat in names(RULE_CASES)) {
+    c_i <- RULE_CASES[[pat]]
+    r   <- rule_row(pat)
+    bad <- character(0)
+    for (cl in names(c_i$expect)) {
+      want <- c_i$expect[[cl]]
+      got  <- if (is.na(r)) NA_character_ else exec_cell(rres, "rule", cl, r)
+      same <- if (length(want) == 1L && is.na(want)) !nzchar(got %||% "")
+              else if (is.character(want)) identical(got, want)
+              else identical(suppressWarnings(as.numeric(got)), as.numeric(want))
+      if (!isTRUE(same))
+        bad <- c(bad, paste0(cl, " wanted ",
+                             if (length(want) == 1L && is.na(want)) "none"
+                             else format(want), ", got ",
+                             if (is.na(got) || !nzchar(got)) "none" else got))
+    }
+    ok(!is.na(r) && !length(bad),
+       paste0(pat, ": ", c_i$what,
+              if (is.na(r)) "  [no course judged at all]"
+              else if (length(bad)) paste0("  [", paste(bad, collapse = "; "), "]")
+              else ""))
+  }
+
+  # The doses the run-out chain must not break at, as a set.
+  nb <- local({
+    r <- rres[rres$id == "no_break", , drop = FALSE]
+    if (!nrow(r)) return(character(0))
+    sort(vapply(unique(r$row), function(i)
+      paste(r$value[r$row == i & r$col == "PATID"],
+            r$value[r$row == i & r$col == "DOSE_DT"]), character(1)))
+  })
+  ok(setequal(nb, NO_BREAK_EXPECT),
+     if (setequal(nb, NO_BREAK_EXPECT))
+       paste0("the run-out chain refuses a boundary at exactly these doses (",
+              length(nb), ")")
+     else paste0("the no-break set is wrong -- extra: ",
+                 paste(setdiff(nb, NO_BREAK_EXPECT), collapse = ", "),
+                 " | missing: ",
+                 paste(setdiff(NO_BREAK_EXPECT, nb), collapse = ", ")))
+
+  # Every case in the fixture is a case somebody wrote an expectation for, and
+  # every rule branch keeps one. A patient added without an expectation, or an
+  # expectation for a patient nobody plants, is caught here rather than
+  # passing silently.
+  ok(all(vapply(RULE_CASES, function(c_i) length(c_i$expect) > 0L, logical(1))),
+     "every planted patient carries an expectation")
+}
+
+# The suppression predicate carries BOTH halves. Executing the decision chain
+# cannot see this one: the predicate is spliced into the STEPS' candidate
+# lists, not into the chain. A suppressed course's later doses and an injected
+# course's later doses are refused a line for the same reason, and dropping
+# either half gives one of them a line of its own.
+sp <- melp_suppress_predicate(on)
+ok(has(sp, "melp_suppress_dates") && has(sp, "melp_inject_rest"),
+   "no melphalan dose the rule refused a line is left on the candidate list")
 
 cat("\n", strrep("-", 52), "\n", sep = "")
 cat(sprintf("%d passed, %d failed\n", pass, fail))

@@ -16,7 +16,7 @@ here <- local({
 setwd(here)
 suppressMessages({
   for (f in c("config_223926.R", "db_utils_223926.R", "registry.R", "windows.R",
-              "person_time.R", "suppression.R", "codelists.R", "lineage.R",
+              "person_time.R", "codelists.R", "lineage.R",
               "run_223926.R"))
     source(file.path("R", f))
   for (f in list.files("R/modules", full.names = TRUE)) source(f)
@@ -24,6 +24,15 @@ suppressMessages({
 
 .pass <- 0L; .fail <- character(0)
 ok <- function(cond, what) {
+  # `cond` is evaluated HERE, not by the caller, so an assertion whose
+  # expression raises is a FAILED assertion rather than a dead run. It used to
+  # propagate: one mutation made split_statements() throw and the suite
+  # stopped with a stack trace, losing every result after it and reporting no
+  # count at all.
+  cond <- tryCatch(cond, error = function(e) {
+    what <<- paste0(what, "  [raised: ", conditionMessage(e), "]")
+    FALSE
+  })
   if (isTRUE(cond)) { .pass <<- .pass + 1L; cat("  ok   ", what, "\n") }
   else { .fail <<- c(.fail, what); cat("  FAIL ", what, "\n") }
 }
@@ -92,9 +101,27 @@ cat("\nconfig and contract\n")
   # A reading this package does not apply must SAY so. Nine of these were
   # written onto the metadata row as the reading that produced the numbers
   # while the package applied none of them.
-  ok(all(grepl("\\(upstream\\)$",
-               r[OPEN_QUESTION_SOURCE == "upstream"])),
+  ok(all(grepl("\\(upstream, ", r[OPEN_QUESTION_SOURCE == "upstream"], fixed = FALSE)),
      "and a reading applied upstream is labelled, not passed off as this run's")
+  # ...and labelled with whether anything CHECKED it. With no upstream contract
+  # to read, every one is an assertion, and says so.
+  ok(all(grepl("\\(upstream, unverified\\)$", r[OPEN_QUESTION_SOURCE == "upstream"])),
+     "with nothing to check it against, an upstream reading is marked unverified")
+  # With the cohort build's own contract in hand, the value that shaped the
+  # data is recorded - and where the two disagree, both are, because the
+  # numbers followed the upstream one. STUDY_START is exactly that case today:
+  # this package reads s7.1's body, the cohort build reads Figures 1 and 2.
+  up <- c(study_start = "2016-01-01", outpatient_window = "90")
+  r2 <- open_question_readings(cfg, up)
+  ok(any(grepl("^study_start=2016-01-01 \\(upstream, verified; this run was set to 2018-01-01\\)$",
+               r2)),
+     "a disagreement records the value the cohort was built with, and this run's")
+  ok(any(grepl("^mm_dx_outpatient_window_days=90 \\(upstream, verified\\)$", r2)),
+     "and an agreement is recorded as verified, with no second value")
+  ok(any(grepl("^pregnancy_window=.* \\(upstream, unverified\\)$", r2)),
+     "while a rule the upstream contract does not carry stays an assertion")
+  ok(length(r2) == length(r) && !any(grepl("upstream", r2[OPEN_QUESTION_SOURCE == "here"])),
+     "and nothing this package applies is relabelled by any of it")
   ok(!any(grepl("\\(upstream\\)", r[OPEN_QUESTION_SOURCE == "here"])),
      "while a reading this package applies is not")
 }
@@ -227,24 +254,14 @@ cat("\ncounting rules\n")
 
 cat("\nsuppression\n")
 {
+  # The threshold itself. The policy it drives is asserted on the emitted
+  # release SQL further down - there is no R implementation to test, and a
+  # second one would be a policy that does not ship.
   cfg <- cfg0()
-  df <- data.frame(STRATUM = c("a", "b"), N_PATIENTS = c(30, 10),
-                   RATE = c(1.5, 9.9), stringsAsFactors = FALSE)
-  out <- suppressMessages(apply_suppression(df, cfg = cfg))
-  ok(out$SUPPRESSED[2] == 1 && is.na(out$RATE[2]),
-     "a stratum below 25 patients is suppressed, values and all")
-  ok(out$SUPPRESSED[1] == 0 && out$RATE[1] == 1.5,
-     "one above it is untouched")
-  ok(nrow(out) == 2,
-     "a suppressed row is marked, not deleted - absent and suppressed differ")
-  out2 <- suppressMessages(apply_suppression(df, cfg = cfg,
-                                             exempt = c(FALSE, TRUE)))
-  ok(out2$SUPPRESSED[2] == 0 && out2$RATE[2] == 9.9,
-     "the SOC exemption in s7.8 keeps a small stratum")
-  ok(grepl("SOC-exempt", out2$SUPPRESSION_REASON[2]),
-     "and says why it was kept")
-  ok(grepl("no column", errs(apply_suppression(df, "NOPE", cfg))),
-     "suppressing on a column that is not there stops the run")
+  ok(identical(as.integer(cfg$suppress_min_n), 25L),
+     "the small-cell floor is 25 patients, as s7.2.3 and s7.8 both say")
+  ok("release" %in% vapply(MODULES, `[[`, character(1), "key"),
+     "and a module of its own applies it")
 }
 
 cat("\ncode lists\n")
@@ -303,6 +320,86 @@ cat("\nsparklyr plumbing\n")
      "an escaped quote inside a literal does not end the string early")
   ok(length(split_statements("SELECT 1;  ;\n")) == 1,
      "empty statements between semicolons are dropped")
+  ok(identical(split_statements("-- a; b\nSELECT 1"), "-- a; b\nSELECT 1"),
+     "a semicolon in a line comment does not split it either")
+  ok(identical(split_statements("/* a; b */ SELECT 1"), "/* a; b */ SELECT 1"),
+     "nor one in a block comment")
+  ok(identical(split_statements("/* ' */ SELECT 1;SELECT 2"),
+               c("/* ' */ SELECT 1", "SELECT 2")),
+     "a lone quote inside a block comment does not swallow the rest")
+  ok(identical(split_statements("SELECT 'a' || 'b'; SELECT 2"),
+               c("SELECT 'a' || 'b'", "SELECT 2")),
+     "two literals in a row are two literals, not one escaped quote")
+  ok(grepl("unterminated string", errs(split_statements("SELECT 'abc"))),
+     "an unterminated literal stops rather than running as SQL")
+  ok(grepl("unterminated block", errs(split_statements("/* abc"))),
+     "and so does an unterminated block comment")
+  # `*/` and `/*` can share a `/`. Read left to right as tokens, the `*/` at
+  # the second character takes the `/` the opener needs, and the block comment
+  # is never opened - which turns an unterminated comment into an unterminated
+  # string. Where a comment closes is looked up separately for this reason.
+  ok(grepl("unterminated block", errs(split_statements("**/*'"))),
+     "a `*/` before a `/*` does not steal the slash the opener needs")
+  ok(identical(split_statements("a b*/*-/'*/"), "a b*/*-/'*/"),
+     "...and the comment it opens still closes at the next `*/`")
+
+  # Two latent traps, found by an adversarial pass and closed before anything
+  # emitted the shape that would have hit them.
+  #
+  # 1. Only `'` was tracked. Spark writes a quoted identifier in BACKTICKS and
+  #    this package's SQL already uses them; under ANSI mode a double quote is
+  #    an identifier too. A `;` inside either cut the statement in half.
+  ok(identical(split_statements("SELECT `a;b` AS x"), "SELECT `a;b` AS x"),
+     "a semicolon inside a backtick identifier does not split the statement")
+  ok(identical(split_statements("SELECT \"a;b\" AS x"), "SELECT \"a;b\" AS x"),
+     "nor one inside a double-quoted run")
+  ok(identical(split_statements("SELECT `a--b`, \"c/*d\" FROM t"),
+               "SELECT `a--b`, \"c/*d\" FROM t"),
+     "and a comment marker inside either is not a comment")
+  ok(identical(split_statements("SELECT `a``b`; SELECT 2"),
+               c("SELECT `a``b`", "SELECT 2")),
+     "a doubled backtick is an escaped one, and the real semicolon still splits")
+  ok(identical(split_statements("SELECT \"\"\"\" AS x"), "SELECT \"\"\"\" AS x"),
+     "a doubled double-quote likewise")
+  ok(grepl("unterminated string", errs(split_statements("SELECT `abc"))),
+     "an unterminated backtick stops, the same as an unterminated quote")
+  # Each quote closes on ITSELF. A backtick does not end a single-quoted
+  # literal, or `WHERE x = 'a`b'` would have become two statements at a
+  # semicolon after it.
+  ok(identical(split_statements("SELECT 'a`b;c' AS x"), "SELECT 'a`b;c' AS x"),
+     "a backtick inside a string literal does not close it")
+  ok(identical(split_statements("SELECT `a'b;c` AS x"), "SELECT `a'b;c` AS x"),
+     "and a quote inside a backtick identifier does not close that")
+
+  # 2. A template ending in a comment emitted that comment as a statement of
+  #    its own, and the warehouse would reject it. It surfaces as a failing
+  #    run, not as a bug here, which is why it is worth closing early.
+  ok(identical(split_statements("SELECT 1; -- trailing note"), "SELECT 1"),
+     "a trailing line comment is not sent as a statement of its own")
+  ok(identical(split_statements("SELECT 1;\n/* tail */\n"), "SELECT 1"),
+     "nor a trailing block comment")
+  ok(length(split_statements("-- only a comment")) == 0,
+     "a string that is nothing but a comment yields no statement")
+  ok(identical(split_statements("-- why\nSELECT 1"), "-- why\nSELECT 1"),
+     "while a comment BEFORE code keeps the statement, comment and all")
+  ok(identical(split_statements("SELECT '-- not a comment'"),
+               "SELECT '-- not a comment'"),
+     "and a comment marker inside a literal does not make a statement empty")
+  ok(identical(split_statements("/* a */ SELECT 1; /* b */ SELECT 2; /* c */"),
+               c("/* a */ SELECT 1", "/* b */ SELECT 2")),
+     "so a run of commented statements keeps the two with SQL in them")
+  # The split walks the positions that can change state, not every character.
+  # Written the other way - append each character to a growing vector - it was
+  # quadratic: 30 KB took nearly three seconds, and a run emits 565 statements.
+  big <- substr(paste(rep("SELECT a, b FROM t WHERE x = 1 AND y = 2 ", 800),
+                      collapse = ""), 1, 30000)
+  el <- function(s) min(replicate(3, system.time(split_statements(s))[["elapsed"]]))
+  t1 <- el(substr(big, 1, 7500)); t4 <- el(big)
+  ok(identical(split_statements(big), trimws(big)),
+     "a statement with no semicolon comes back whole")
+  ok(t4 < 0.25 && (t1 < 0.02 || t4 < t1 * 12),
+     sprintf("and the cost grows with its length, not with its square (7.5KB %.3fs, 30KB %.3fs)",
+             t1, t4))
   ok(grepl("one statement", errs(db_q(NULL, "SELECT 1; SELECT 2"))),
      "db_q refuses more than one statement rather than running the first")
   ok(grepl("SPARK_METHOD", errs(cfg0(c(SPARK_METHOD = "carrier_pigeon")))),
@@ -339,6 +436,44 @@ cat("\nmodule wiring\n")
      "the LOT tables are read by the LOT build's own prefix")
 }
 
+cat("\na second build in the same session inherits nothing from the first\n")
+{
+  # Three pieces of package-level state outlive a build: the config, the
+  # code-list manifest, and the input table's columns. A second build that
+  # picked any of them up would report an md5 for a file it never opened, or
+  # apply an exclusion flag its own input does not carry.
+  set_study_config(cfg0())
+  assign("mm_dx.csv", list(md5 = "stale", n_rows = 8, n_codes = 8),
+         envir = .codelist_seen)
+  assign("cols", c("PATID", "NO_PREGNANCY"), envir = .input_cols)
+  ok(nrow(codelist_metadata()) == 1 && length(.cohort_cols()) == 2,
+     "the state a build leaves behind is readable after it")
+  reset_run_state()
+  ok(nrow(codelist_metadata()) == 0,
+     "reset_run_state() empties the code-list manifest, so nothing is claimed twice")
+  ok(identical(.cohort_cols(), character(0)),
+     "and forgets the previous input's columns, so no flag carries over")
+  ok(grepl("No config", errs(study_config())),
+     "and the config, so a step run before set_study_config() says so")
+  ok(grepl("reset_run_state\\(\\)",
+           paste(deparse(build_223926), collapse = "\n")),
+     "and build_223926() calls it before it reads anything")
+
+  # The config is private to this package. The LOT engine keeps its own under
+  # the name `cfg` in the global environment; while this one did too, sourcing
+  # both in a session left the second to arrive holding the name.
+  set_study_config(cfg0())
+  assign("cfg", list(catalog = "LOT_ENGINE_CONFIG", work_schema = "lot",
+                     object_prefix = "lot_"), envir = globalenv())
+  on.exit(rm("cfg", envir = globalenv()), add = TRUE)
+  ok(identical(study_config()$catalog, "hive_metastore"),
+     "a global `cfg` belonging to another package does not become this one's")
+  set_study_config(local({ c2 <- cfg0(); c2$work_schema <- "wk"; c2 }))
+  ok(wrk("S_TTE") == "hive_metastore.wk.s223926_S_TTE",
+     "...and the table names still resolve off this package's own config")
+  rm("cfg", envir = globalenv())
+}
+
 cat("\nprotocol readings carried into the SQL\n")
 {
   cfg <- cfg0(); cfg$work_schema <- "wk"; set_study_config(cfg)
@@ -366,18 +501,60 @@ cat("\nregressions from the adversarial review\n")
 {
   cfg <- cfg0(); cfg$work_schema <- "wk"; set_study_config(cfg)
 
-  # 1. Every per-cohort module clears its scope before writing, so a re-run
-  #    replaces rather than appends. The claim "re-run as often as needed" is
-  #    only true because of this.
+  # 1. Every per-cohort module clears its OWN scope before writing, so a
+  #    re-run replaces its rows and leaves the other cohorts' alone. The claim
+  #    "re-run as often as needed" is only true because of this.
+  #
+  #    Read off the emitted SQL, not the source. Grepping the function text for
+  #    "prepare_table|CREATE OR REPLACE TABLE" accepted the second - which
+  #    replaces the WHOLE table, so the 2L pass would delete the 1L rows. That
+  #    is the exact failure the check exists to prevent, and it passed.
   per_cohort <- Filter(function(m) isTRUE(m$per_cohort), MODULES)
-  no_clear <- Filter(function(m) {
-    src <- paste(capture.output(print(get(m$fn, mode = "function"))),
-                 collapse = "\n")
-    !grepl("prepare_table|CREATE OR REPLACE TABLE", src)
-  }, per_cohort)
-  ok(length(no_clear) == 0,
-     paste0("every per-cohort module clears before writing (offenders: ",
-            paste(names(no_clear), collapse = ", "), ")"))
+  pc_declared <- unique(unlist(lapply(per_cohort, `[[`, "outputs")))
+  # Both runs, so the tables the two optional modules write are covered too -
+  # the default selection never writes S_FRAILTY or S_COMORB_SUBGROUP.
+  emitted <- c(vapply(RUN$sql, function(x) x$sql, character(1)),
+               vapply(RUN_OPT$sql, function(x) x$sql, character(1)))
+  ran <- unique(sub("^step:[^_]*_", "",
+                    grep("^step:cohort_", vapply(RUN$sql, function(x) x$tag,
+                                                 character(1)), value = TRUE)))
+  # Only the outputs these runs actually wrote. A declared table nothing wrote
+  # has no rows to scope, and a module can be deselected.
+  pc_outputs <- Filter(function(tb)
+    any(grepl(sprintf("INSERT INTO \\S*%s(\\s|$)", tb), emitted)), pc_declared)
+  ok(length(pc_outputs) >= 15,
+     sprintf("the two runs write %d of the %d per-cohort outputs, so what follows is not vacuous",
+             length(pc_outputs), length(pc_declared)))
+  # The table name ends the identifier, so the pattern requires whitespace or
+  # end after it. `\b` does not work here: `_` is a word character, so there is
+  # no boundary between the prefix and S_COHORT, and the check matched nothing
+  # at all - passing whatever the modules did.
+  wiped <- Filter(function(tb)
+    any(grepl(sprintf("CREATE OR REPLACE TABLE \\S*%s(\\s|$)", tb), emitted)),
+    pc_outputs)
+  ok(length(wiped) == 0,
+     paste0("no per-cohort output is written with CREATE OR REPLACE, which ",
+            "would drop the other cohorts' rows",
+            if (length(wiped)) paste0(" [", paste(wiped, collapse = ", "), "]")
+            else ""))
+  # And each one is cleared for each cohort that ran, by that cohort's key.
+  unscoped <- unlist(lapply(pc_outputs, function(tb) {
+    miss <- Filter(function(c1) !any(grepl(
+      sprintf("DELETE FROM \\S*%s WHERE COHORT = '%s'", tb, c1), emitted)),
+      ran)
+    if (length(miss)) paste0(tb, " (", paste(miss, collapse = ", "), ")")
+  }))
+  ok(is.null(unscoped),
+     paste0("and every one is cleared for each cohort by that cohort's own key",
+            if (!is.null(unscoped))
+              paste0(" [not: ", paste(unscoped, collapse = "; "), "]") else ""))
+  # The delete a re-run issues names one cohort. An unscoped DELETE against a
+  # shared output empties it for everyone.
+  bare <- Filter(function(s)
+    grepl("^\\s*DELETE FROM", s) && !grepl("WHERE", s), emitted)
+  ok(length(bare) == 0,
+     paste0("and no output is emptied outright by a DELETE with no WHERE (",
+            length(bare), ")"))
   ok(!any(grepl("CREATE TABLE IF NOT EXISTS",
                 unlist(lapply(MODULES, function(m)
                   capture.output(print(get(m$fn, mode = "function"))))))),
@@ -453,6 +630,42 @@ cat("\nregressions from the adversarial review\n")
      "and so does one whose STUDY_END disagrees")
   ok(!is.na(lin_check(STATE = "failed")),
      "and one that did not finish")
+
+  # The cohort build's own contract, read back. Driven the same way: the
+  # function is given a CONTRACT_SETTINGS string and its answer is checked,
+  # rather than its source read.
+  up_read <- function(s, cfg = cfg0()) {
+    e <- new.env(parent = environment(read_upstream_settings))
+    said <- character(0)
+    e$log_msg <- function(...) said <<- c(said, paste0(...))
+    e$db_q <- if (is.null(s)) function(con, sql) stop("TABLE_OR_VIEW_NOT_FOUND")
+              else function(con, sql)
+                data.frame(CONTRACT_SETTINGS = s, stringsAsFactors = FALSE)
+    f <- read_upstream_settings; environment(f) <- e
+    list(out = f(NULL, cfg), said = said)
+  }
+  CS <- "gap_days=30|outpatient_window=90|study_end=2026-03-31|study_start=2016-01-01"
+  a <- up_read(CS)
+  ok(identical(a$out[["study_start"]], "2016-01-01") &&
+       identical(a$out[["outpatient_window"]], "90"),
+     "the cohort build's contract string is parsed into its settings")
+  ok(any(grepl("the cohort was built with 2016-01-01, this run is set to 2018-01-01",
+               a$said, fixed = TRUE)),
+     "and a disagreement is named, with both values")
+  ok(!any(grepl("outpatient_window", a$said, fixed = TRUE)),
+     "while a setting the two agree on is not reported as a disagreement")
+  b <- up_read(CS, cfg0(c(STUDY_START = "2016-01-01")))
+  ok(!any(grepl("WARNING", b$said)) && any(grepl("verified", b$said)),
+     "a run set to the same values as the cohort build reports no disagreement")
+  # Not fatal, and not silent. The cohort is what it is; a mismatch is Q1.
+  ok(!is.null(a$out), "a disagreement does not stop the run")
+  c1 <- up_read(NULL)
+  ok(is.null(c1$out) && any(grepl("unverified", c1$said)),
+     "an unreadable metadata table leaves the readings unverified, and says so")
+  ok(is.null(up_read("")$out) && is.null(up_read("NA")$out),
+     "and so does a run that recorded no contract string")
+  ok(is.null(up_read("nonsense with no equals")$out),
+     "a string in no recognisable shape is not guessed at")
   ok(!is.na(lin_check(UPDATED_AT = "2026-08-01 00:00:00")),
      "and one built before the 2026-08-30 rule change")
 
@@ -623,6 +836,83 @@ cat("\nregressions from the adversarial review\n")
      "while an idempotent statement still is")
   ok(sql_is_retry_safe("-- note\nDELETE FROM t WHERE COHORT = 'x'"),
      "and so is a scoped delete")
+  # Found by an adversarial pass. The classifier read the first verb, and a
+  # leading WITH is not a verb: `WITH a AS (...) INSERT INTO t SELECT ...` is
+  # a write that read as safe, so it would be RETRIED - the duplicate-on-a-
+  # lost-acknowledgement defect this whole guard exists to prevent. Nothing
+  # emits that form today, which is exactly why it would go unnoticed.
+  ok(!sql_is_retry_safe("WITH a AS (SELECT 1) INSERT INTO t SELECT * FROM a"),
+     "a CTE in front of an INSERT does not make it retry-safe")
+  ok(!sql_is_retry_safe("WITH a AS (SELECT 1) MERGE INTO t USING a ON 1=1"),
+     "nor in front of a MERGE")
+  ok(!sql_is_retry_safe("-- c\n/* d */ WITH a AS (SELECT 1) INSERT INTO t SELECT 1"),
+     "nor one behind comments as well")
+  ok(sql_is_retry_safe("WITH a AS (SELECT 1) SELECT * FROM a"),
+     "while a CTE in front of a SELECT still is")
+  ok(sql_is_retry_safe("CREATE OR REPLACE TABLE t AS WITH a AS (SELECT 1) SELECT * FROM a"),
+     "and a CREATE OR REPLACE whose body happens to use one is unaffected")
+
+  # And db_exec() HONOURS it. The predicate above can be right while the caller
+  # ignores it, which is a lost acknowledgement writing the rows twice. Driven
+  # through the real db_exec / with_retry: only db_exec_once, the one call that
+  # reaches the driver, is replaced.
+  exec_calls <- function(sql, fail_times = 0L) {
+    seen <- character(0); left <- fail_times
+    e <- new.env(parent = environment(db_exec))
+    e$db_exec_once <- function(con, s) {
+      seen <<- c(seen, s)
+      if (left > 0L) { left <<- left - 1L; stop("Connection reset by peer") }
+      invisible(1L)
+    }
+    e$with_retry <- function(fn, ...) {
+      repeat {
+        out <- tryCatch(fn(), error = function(x) x)
+        if (!inherits(out, "error")) return(out)
+        if (left <= 0L && !grepl("Connection reset", conditionMessage(out))) stop(out)
+        if (left <= 0L && length(seen) > 20L) stop(out)
+      }
+    }
+    f <- db_exec; environment(f) <- e
+    err <- tryCatch({ f(NULL, sql); NULL }, error = conditionMessage)
+    list(seen = seen, err = err)
+  }
+  a <- exec_calls("INSERT INTO t VALUES (1)", fail_times = 1L)
+  ok(length(a$seen) == 1L && !is.null(a$err),
+     "an INSERT that fails is sent once and the run stops, never sent again")
+  b <- exec_calls("DELETE FROM t WHERE COHORT = 'x'", fail_times = 1L)
+  ok(length(b$seen) == 2L && is.null(b$err),
+     "while a scoped DELETE that fails the same way is retried and succeeds")
+  c1 <- exec_calls("CREATE TABLE t (x int); INSERT INTO t VALUES (1)")
+  ok(length(c1$seen) == 2L && grepl("^CREATE", c1$seen[1]) &&
+       grepl("^INSERT", c1$seen[2]),
+     "and a two-statement template reaches the driver as two statements, in order")
+
+  # run_step's own guard: a step whose check comes back zero-rowed stops,
+  # because nothing downstream can tell that from a real zero.
+  step_run <- function(qc_n, allow_empty = FALSE) {
+    e <- new.env(parent = environment(run_step))
+    e$log_msg <- function(...) invisible(NULL)
+    e$db_exec <- function(con, sql) invisible(1L)
+    e$db_q <- function(con, sql) data.frame(n = qc_n)
+    f <- run_step; environment(f) <- e
+    tryCatch({ f(NULL, "s", "SELECT 1", qc = "SELECT count(*) AS n FROM t",
+                 allow_empty = allow_empty); NULL },
+             error = conditionMessage)
+  }
+  ok(grepl("produced 0 rows", step_run(0) %||% ""),
+     "a step whose check returns zero rows stops the run")
+  ok(is.null(step_run(7)),
+     "one that returns rows carries on")
+  ok(is.null(step_run(0, allow_empty = TRUE)),
+     "and a step declared able to produce nothing is allowed to")
+  # A step with no check is not a step that passed its check.
+  e0 <- new.env(parent = environment(run_step))
+  e0$log_msg <- function(...) invisible(NULL)
+  e0$db_exec <- function(con, sql) invisible(1L)
+  e0$db_q <- function(con, sql) stop("db_q must not be called with no qc")
+  f0 <- run_step; environment(f0) <- e0
+  ok(is.null(tryCatch({ f0(NULL, "s", "SELECT 1"); NULL }, error = conditionMessage)),
+     "and a step given no check does not invent one")
 
   # Reusing an output prefix across package versions. Inserts are positional,
   # so a table that gained a column fails on the count and one whose column was
@@ -812,6 +1102,59 @@ cat("\nregressions from the adversarial review\n")
     f(NULL, cfg0())
   }))
   ok(is.na(e_full), "and a table carrying every required column is accepted")
+
+  # Columns are not the contract. The package reads this table as one row per
+  # patient and its flags as clean 0/1 verdicts, and both ways of breaking that
+  # are silent: a duplicated PATID multiplies that patient through every join,
+  # and a NULL flag passes `coalesce(flag, 1) = 1` and admits a patient the
+  # exclusion should have dropped.
+  cohort_stub <- function(cols = c(COHORT_TABLE_REQUIRED, unname(CRITERION_FLAG)),
+                          n_rows = 8, n_patients = 8, n_null_patid = 0,
+                          bad = character(0)) {
+    function(con, sql) {
+      if (grepl("^\\s*DESCRIBE", sql))
+        return(data.frame(col_name = cols, stringsAsFactors = FALSE))
+      d <- data.frame(n_rows = n_rows, n_patients = n_patients,
+                      n_null_patid = n_null_patid)
+      for (f in intersect(unname(CRITERION_FLAG), cols))
+        d[[paste0("bad_", f)]] <- if (f %in% bad) 3L else 0L
+      d
+    }
+  }
+  chk <- function(...) errs(with_env(base_env, {
+    env <- new.env(parent = environment(check_cohort_table))
+    env$db_q <- cohort_stub(...)
+    f <- check_cohort_table; environment(f) <- env
+    f(NULL, cfg0())
+  }))
+  ok(is.na(chk()), "a well-formed cohort table passes the value checks too")
+  e_dup <- chk(n_rows = 11, n_patients = 8)
+  ok(!is.na(e_dup) && grepl("11 rows for 8 patients", e_dup, fixed = TRUE),
+     "a duplicated patient is refused, with both counts named")
+  e_np <- chk(n_null_patid = 2)
+  ok(!is.na(e_np) && grepl("NULL PATID", e_np, fixed = TRUE),
+     "and a NULL PATID, which joins to nothing but is counted anyway")
+  e_fl <- chk(bad = "NO_PREGNANCY")
+  ok(!is.na(e_fl) && grepl("NO_PREGNANCY (3 row(s))", e_fl, fixed = TRUE),
+     "a NULL or non-0/1 exclusion flag is refused, naming the column and the count")
+  ok(!is.na(e_fl) && grepl("reads as eligible", e_fl, fixed = TRUE),
+     "...and says what it would have done: admitted a patient it should exclude")
+  # A pre-filtered input carries no flags, so there is nothing to check there.
+  ok(is.na(chk(cols = COHORT_TABLE_REQUIRED)),
+     "an input carrying no flags is not asked about flags it does not have")
+  # The predicate itself, off the query the run really issues. The stubs above
+  # answer with a count and cannot see inside the SQL, so a check narrowed to
+  # IS NULL - which would let a 2 or a -1 through - passes them.
+  shape_q <- Filter(function(x) x$tag == "query" &&
+                      grepl("n_null_patid", x$sql, fixed = TRUE), RUN$sql)
+  ok(length(shape_q) >= 1 &&
+       grepl("count(DISTINCT PATID) AS n_patients", shape_q[[1]]$sql, fixed = TRUE),
+     "the run asks its input's grain before building a cohort")
+  ok(length(shape_q) >= 1 &&
+       all(vapply(unname(CRITERION_FLAG), function(f)
+         grepl(sprintf("%1$s IS NULL OR %1$s NOT IN (0, 1)", f),
+               shape_q[[1]]$sql, fixed = TRUE), logical(1))),
+     "...and tests every exclusion flag for NULL and for a value outside 0/1")
 
   # Two endpoints whose DEFINITION this package cannot implement from the code
   # list alone. Both must stop rather than report something else under the
@@ -1093,9 +1436,9 @@ cat("\nthe modules, run against recorders\n")
 
   # --- suppression is applied, and its spec is complete -------------------
   #
-  # R/suppression.R expressed the < 25 rule from the start and nothing called
-  # it: every table left the warehouse with raw cell counts. The rule is a
-  # module now, and these check it cannot fall out of step with the tables.
+  # The < 25 rule lived in an R helper that nothing called: every table left
+  # the warehouse with raw cell counts. It is a module now, and these check it
+  # cannot fall out of step with the tables it suppresses.
   rel_sql <- paste(vapply(Filter(function(x) grepl("^step:release_", x$tag),
                                  run$sql), function(x) x$sql, character(1)),
                    collapse = "\n")
@@ -1103,6 +1446,50 @@ cat("\nthe modules, run against recorders\n")
   ok(all(vapply(names(SUPPRESSION_SPEC), function(t)
            grepl(paste0(t, "_RELEASE"), rel_sql, fixed = TRUE), logical(1))),
      "and writes a release table for every table it declares")
+
+  # The policy, not just the plumbing. This SQL is the only place the rule
+  # exists - an R helper expressed a DIFFERENT one (it applied s7.8's SOC
+  # exemption) and nothing called it, so the suite was green on a policy that
+  # never shipped. Asserted here against what the module actually emits.
+  min_n <- as.integer(cfg0()$suppress_min_n)
+  pol <- lapply(names(SUPPRESSION_SPEC), function(tb) {
+    sp  <- SUPPRESSION_SPEC[[tb]]
+    hit <- sprintf("%s IS NOT NULL AND %s < %d", sp$n_col, sp$n_col, min_n)
+    # Every column the spec names - the count included - nulled on the same
+    # predicate. Publishing the n a suppressed rate came from suppresses
+    # nothing.
+    nulled <- vapply(c(sp$n_col, sp$value_cols), function(cl)
+      grepl(sprintf("CASE WHEN %s THEN NULL ELSE %s END AS %s", hit, cl, cl),
+            rel_sql, fixed = TRUE), logical(1))
+    list(tbl = tb, hit = grepl(hit, rel_sql, fixed = TRUE),
+         unnulled = names(nulled)[!nulled])
+  })
+  bad_hit <- vapply(pol, function(x) !x$hit, logical(1))
+  ok(!any(bad_hit),
+     paste0("every release table suppresses on its own n below ", min_n,
+            if (any(bad_hit)) paste0(" [not: ",
+              paste(vapply(pol[bad_hit], `[[`, character(1), "tbl"),
+                    collapse = ", "), "]") else ""))
+  unnulled <- unlist(lapply(pol, function(x)
+    if (length(x$unnulled)) paste0(x$tbl, ".", x$unnulled)))
+  ok(is.null(unnulled),
+     paste0("and nulls the count with the values, on that same predicate",
+            if (!is.null(unnulled))
+              paste0(" [left readable: ", paste(unnulled, collapse = ", "), "]")
+            else ""))
+  ok(grepl("AS SUPPRESSED", rel_sql, fixed = TRUE) &&
+       grepl("AS SUPPRESSION_REASON", rel_sql, fixed = TRUE),
+     "...and marks the row rather than dropping it - absent and suppressed differ")
+  # s7.8's "(unless specific to SOC)" is not applied. Q29. Pinned so adding it
+  # is a deliberate change to a tested rule, not a quiet one.
+  ok(!grepl("exempt", rel_sql, ignore.case = TRUE),
+     "the SOC exemption is not applied, which is Q29 and not an oversight")
+  # The raw table is the one QC reads. Suppressing in place would leave no
+  # counts to check a rate against.
+  ok(!any(vapply(names(SUPPRESSION_SPEC), function(tb)
+            grepl(sprintf("CREATE OR REPLACE TABLE \\S*%s\\b(?!_RELEASE)", tb),
+                  rel_sql, perl = TRUE), logical(1))),
+     "and writes beside the source table, never over it")
   # Every column the spec names must exist on the table it names, or the
   # suppression silently misses it.
   ddl <- paste(vapply(Filter(function(x)
