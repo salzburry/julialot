@@ -69,8 +69,16 @@ writes only its own `S_*` tables.
 | `patterns` | `S_PATTERNS`, `S_SWITCH`, `S_TX_ATTRITION` |
 | `release` | `S_*_RELEASE` — the same tables with cells under 25 patients suppressed |
 
-**Only the `_RELEASE` tables leave the warehouse.** The raw ones keep their
-counts so QC can still read what produced a rate.
+**The `_RELEASE` tables are the released aggregates** — the ones with every
+cell under 25 patients suppressed. The raw ones keep their counts so QC can
+still read what produced a rate.
+
+Two things read the raw tables outside the warehouse, and both are controlled
+outputs rather than releases: the QC report, and the dashboard's snapshot job,
+which exports every `S_*` table and the LOT tables to a directory the app
+reads. The app itself shows the `_RELEASE` form where one exists and applies
+its own floor on top; the snapshot directory is patient-level data and is
+handled as such.
 
 ---
 

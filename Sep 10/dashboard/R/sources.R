@@ -89,28 +89,20 @@ warehouse_source <- function(cfg, con) {
            "cannot be built.", call. = FALSE)
     sprintf("%s.%s.%s%s", cfg$catalog, sch, prefix, table)
   }
-  # Does the LOT prefix hold the run this scenario named, and did that run
-  # finish? Asked once per run id and remembered, because every LOT panel asks
-  # it and the answer cannot change inside a session.
-  .lot_seen <- new.env(parent = emptyenv())
-  lot_ok <- function(lot_run_id) {
-    id <- trimws(lot_run_id %||% "")
-    if (!nzchar(id) || !nzchar(cfg$lot_prefix)) return(FALSE)
-    key <- paste0("r_", id)
-    hit <- get0(key, envir = .lot_seen, ifnotfound = NULL)
-    if (!is.null(hit)) return(hit)
-    st <- tryCatch(db_q(con, sprintf("SELECT * FROM %s",
+  # Does the LOT prefix hold the run this scenario named, RIGHT NOW?
+  #
+  # The status table keeps every run's row and the output tables are replaced
+  # in place, so "some row says this run completed" is history, not
+  # ownership: with an old and a new completed row both present, asking for
+  # the old run returned the new run's lines. Only the NEWEST row says whose
+  # tables sit under the prefix, and it is read on every call - the answer
+  # can change inside a session, whenever the prefix is rebuilt, so a
+  # remembered yes was a yes for as long as the app stayed up.
+  lot_ok <- function(lot_run_id)
+    lot_status_owner(tryCatch(db_q(con, sprintf("SELECT * FROM %s",
                                      full(cfg$lot_prefix, "LOT_BUILD_STATUS"))),
-                   error = function(e) NULL)
-    # Complete, and this run. A prefix mid-rebuild holds whatever that build
-    # has written so far, which is not a run's numbers either.
-    val <- !is.null(st) && nrow(st) > 0L &&
-      all(c("RUN_ID", "STATE") %in% names(st)) &&
-      any(as.character(st$RUN_ID) == id &
-          tolower(trimws(as.character(st$STATE))) == "complete")
-    assign(key, isTRUE(val), envir = .lot_seen)
-    isTRUE(val)
-  }
+                              error = function(e) NULL),
+                     lot_run_id, cfg$lot_prefix)
   list(
     kind = "warehouse", synthetic = FALSE,
     origin = sprintf("%s.%s", cfg$catalog, cfg$work_schema),
@@ -208,6 +200,44 @@ read_table <- function(src, prefix, table, prefer_release = TRUE) {
   raw <- src$read(prefix, table)
   if (is.null(raw)) return(NULL)
   mark_source(raw, "raw")
+}
+
+# Whether the NEWEST row of a LOT_BUILD_STATUS table names this run, complete.
+#
+# Pure, so the warehouse reader and the snapshot exporter decide ownership the
+# same way, and a test can drive it with a frame. Newest by UPDATED_AT where
+# the table carries it; otherwise the last row written.
+lot_status_owner <- function(st, lot_run_id, lot_prefix = "x") {
+  id <- trimws(lot_run_id %||% "")
+  if (!nzchar(id) || !nzchar(lot_prefix %||% "")) return(FALSE)
+  if (is.null(st) || !nrow(st) || !all(c("RUN_ID", "STATE") %in% names(st)))
+    return(FALSE)
+  o <- if ("UPDATED_AT" %in% names(st))
+    order(as.character(st$UPDATED_AT), decreasing = TRUE) else rev(seq_len(nrow(st)))
+  newest <- st[o[1], , drop = FALSE]
+  identical(trimws(as.character(newest$RUN_ID)), id) &&
+    identical(tolower(trimws(as.character(newest$STATE))), "complete")
+}
+
+# A study table, bound to the run the scenario describes.
+#
+# The scenarios are read once, at startup; a table is read when a panel
+# opens. A refresh in between replaces the snapshot, and a reactive guard that
+# read the metadata file once per selected scenario could not see it: a file
+# is not a reactive input, so a later floor or tab change re-read the new
+# tables under the old run's settings. The identity is checked around EVERY
+# read instead - before, so a moved snapshot yields nothing, and after, so a
+# swap landing between the check and the read is caught too.
+read_scenario_table <- function(src, scenario, table, prefer_release = TRUE) {
+  was <- trimws(scenario$run_id %||% "")
+  same <- function() {
+    now <- current_run_id(src, scenario$prefix)
+    !nzchar(was) || (!is.na(now) && identical(now, was))
+  }
+  if (!same()) return(NULL)
+  d <- read_table(src, scenario$prefix, table, prefer_release)
+  if (!same()) return(NULL)
+  d
 }
 
 # The run a prefix holds RIGHT NOW, as opposed to the one read at startup.

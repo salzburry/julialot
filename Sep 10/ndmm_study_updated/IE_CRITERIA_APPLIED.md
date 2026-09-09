@@ -42,7 +42,7 @@ already recorded as a flag, and this package reads it.
 | `X1_prior_mm_tx` | no prior myeloma therapy | the cohort build (flag `NO_PRIOR_MM_TX`) |
 | `X2_other_cancer` | no other cancer before 1L | the cohort build (flag `NO_OTHER_CANCER_PRE_LOT1`) |
 | `X3_pregnancy` | no pregnancy | the cohort build (flag `NO_PREGNANCY`) |
-| `X4_belantamab` | no belantamab before 1L | the **LOT engine** (flag `NO_BELANTAMAB_PRE_LOT1`) |
+| `X4_belantamab` | no belantamab before 1L | the cohort build (flag `NO_BELANTAMAB_PRE_LOT1`) |
 | `N1_received_line` | received the line this cohort indexes on | **here** |
 | `N2_ce_pre` | continuous enrolment before *this line's* index | **here** |
 
@@ -51,10 +51,24 @@ cohort build tested continuous enrolment before the **1L** index, and a 2L or
 3L patient indexes later. Re-applying it here is what makes the 2L funnel show
 that step's loss instead of carrying the count through untouched.
 
-**A criterion whose evidence is not in the cohort or LOT tables stops the run.**
-It is never silently skipped. If the input table does not carry
-`NO_PREGNANCY`, the run says so and halts rather than reporting a funnel with
-no pregnancy step in it.
+The LOT engine has a belantamab rule of its own — a patient with belantamab
+in **any** line is removed after the lines are built — and it is a different
+criterion from `X4`. Rebuilding the LOT run does not recreate the cohort flag.
+
+**Two input contracts, and the flags mean different things under each.**
+
+- A **pre-filtered** cohort table has already had `X1`–`X4` applied and may
+  carry no flag columns at all. That is accepted: a criterion whose flag is
+  absent is treated as applied upstream, its funnel step shows no loss, and
+  `APPLIED_BY` says so on the row.
+- A **wide** cohort table keeps the patients who fail an exclusion and carries
+  the flags to apply it per cohort. `SEC2L_INPUT_IS_WIDE=TRUE` declares this,
+  and a wide table missing any flag **stops the run** — without the flags,
+  the patients it kept would enter every cohort.
+
+What always stops the run, under either contract: a flag that is present but
+null or not 0/1, a duplicate or null patient id, and a criterion in a cohort's
+list that `CRITERION_SOURCE` does not know.
 
 ### Where these live in the code
 
@@ -107,7 +121,7 @@ open question behind it. Nothing is hard-coded in a module.
 | `COMORBIDITY_BASELINE_INCLUDES_INDEX` | TRUE | §7.8.1 says yes, **for comorbidities only**. The two windows genuinely differ — Q14 |
 | `CE_PRE_DAYS` | 365 | days of continuous enrolment required before index |
 | `GAP_DAYS` | 30 | an enrolment gap this long or shorter is still continuous |
-| `MONTHS_AS` | fixed | whether a "12-month" window is 365 days or 12 calendar months — Q21 |
+| `MONTHS_AS` | `days` | `days` or `calendar`: whether a "12-month" window is 365 days or 12 calendar months — Q21 |
 
 ### The criteria themselves
 
@@ -124,6 +138,13 @@ open question behind it. Nothing is hard-coded in a module.
 | `MAX_LOT` | 4 | the highest line this package describes |
 
 Set any of them in the environment or in `config.csv`; the environment wins.
+
+The settings the protocol states outright — the study dates, the window
+lengths, the enrolment requirement, the suppression floor — are the
+**contract**. Changing one of those stops the run unless `SETTINGS_OVERRIDE=TRUE`
+is set as well, and the run is then stamped as a deviation in its metadata so
+no reader mistakes it for the study's numbers. The open-question readings
+above change freely; the contract does not.
 
 ```bash
 # a build with the 2016 study start and calendar-month windows
@@ -146,9 +167,15 @@ CRITERIA_1L <- c("I1_mm_dx", "I2_age", "I3_eligible_1l_tx", "I4_ce_pre",
 ```
 
 and give the new criterion an entry in `CRITERION_SOURCE` saying where its
-verdict comes from. A criterion in a cohort's list with no source stops the run
-naming it. The funnel, the attrition table and the dashboard all follow from
-that list — none of them needs a separate edit.
+verdict comes from, and — where this package applies it — a predicate in
+`HERE_PRED`. A criterion in a cohort's list with no source stops the run naming
+it. The funnel, cohort membership (`IN_COHORT`), the attrition table and the
+dashboard all follow from that list. Membership used to hard-code continuous
+enrolment and follow-up whatever the list said, so removing `I4` dropped the
+step from the funnel while still applying it; the two read the same list now.
+
+A criterion applied **upstream** cannot be added or removed here at all —
+see §5.
 
 ### What every run records
 
@@ -189,4 +216,5 @@ Q13 (disenrolment as censoring), Q14 (index date in the baseline) and
 Q21 (calendar months).
 
 Each has a default above, each default is recorded in the run's metadata, and
-each can be changed with one setting. None of them is a code change.
+each can be changed with one setting — with `SETTINGS_OVERRIDE=TRUE` beside it
+where the setting is part of the contract. None of them is a code change.

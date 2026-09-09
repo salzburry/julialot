@@ -122,7 +122,15 @@ line that did not happen.
 calendar days inclusive of the first.
 
 > **d+40** AUTO code · **d+53** second code → **one** transplant
-> **d+40** AUTO code · **d+54** second code → **two** events
+> **d+40** AUTO code · **d+54** second code → **two** windows
+
+Two windows are not yet two transplants. A second rule then runs over the
+finalised windows: `SCT_AUTO_GAP_DAYS` = **60**, and a window closer than 60
+days to the last transplant kept is **dropped**, not counted. So the d+54
+window above is a second billing episode, not a second transplant; the tandem
+rule below only sees windows that survived the gap. The catalogue's own
+wording is exact: *two separate AUTO events, subject to the gap and tandem
+rules.*
 
 *Why it matters:* a single admission often bills more than one code.
 
@@ -144,7 +152,7 @@ identical in claims. The only thing separating them is the gap, and a patient
 sitting on it goes either way. This is one of the readings marked
 **to confirm** — the first warehouse run settles it.
 
-### An allograft is a one-day line
+### An allograft is a one-day line — with one exception
 
 > **d+0** LOT1 · **d+200** allogeneic transplant · **d+201** medication
 > → the ALLO line **starts and ends on d+200**. The next day's medication
@@ -157,6 +165,12 @@ will miss it, which is the shape that broke the earlier transition diagrams.
 > **d+0** 1L · **d+40** AUTO · **d+240** ALLO after relapse
 > → the AUTO sits inside line 1; the ALLO ends the line it falls in and opens
 > its own one-day line.
+
+The exception is melphalan. An allograft is usually conditioned with it, and
+a short course the allograft's line refuses a boundary to (§4) is **owned** by
+that line, which is carried to the course's last covered day. So an allograft
+line with a suppressed melphalan course around it is not one day long — in the
+split-course example in §4 it runs **d+100 to d+110**, with an empty regimen.
 
 ### CAR-T closes the line it consolidates
 
@@ -203,9 +217,17 @@ is *where* it changed.
 
 ### One course, one boundary
 
-> **d+90** melphalan · **d+110** a second dose of the same course
-> → the course opens a line on **d+90**. The d+110 dose opens nothing: only the
-> first day of a course is a boundary.
+> **d+90** melphalan, outside 1L's induction · **d+95** a new agent starts
+> inside the course's cover · **d+100** allograft · **d+110** a second dose
+> of the same course
+> → the agent at d+95 **confirms** the course, so it opens a line on
+> **d+90** — the melphalan date. The d+110 dose opens nothing: only the first
+> day of a course is a boundary. The allograft's line is carried to d+110 and
+> owns that dose.
+
+Without the confirming agent this is a different case: an unconfirmed short
+course opens **no** line at all, and the existing line is carried to d+110
+instead. The agent is what makes d+90 a boundary.
 
 ### A transplant inside a course changes nothing
 
@@ -247,17 +269,31 @@ an extra line every time a doublet starts a line.
 
 ## 6. How a line ends
 
-A line ends for exactly one reason, and the reasons have a priority:
+A line ends for exactly one reason. The reasons are **ranked**, highest
+first, and each is gated on its own date — the ranking is not "whichever comes
+first":
 
-| reason | what happened |
-|---|---|
-| `DEATH` | the patient died |
-| `SCT_ALLO` | an allogeneic transplant |
-| `SCT_CART` / `CART_INIT` | a CAR-T infusion |
-| `SCT_AUTO` | an autologous transplant that breaks the line |
-| `MED_ADD` | an agent was added after the induction window |
-| `DISCONTINUATION` | every agent's cover ran out and the gap confirmed it |
-| `STUDY_END` | still on treatment when observation stopped |
+| rank | reason | what happened | fires only when |
+|---|---|---|---|
+| 1 | `SCT_AUTO_CONT` | a planned tandem partner continues the line | it falls after every other branch's date |
+| 2 | `SCT_ALLO` | an allogeneic transplant | on or before the run-out |
+| 3 | `SCT_CART` | a CAR-T infusion | on or before the run-out |
+| 4 | `SCT_AUTO` | an excess autologous transplant | on or before the run-out |
+| 5 | `CART_INIT` | a CAR-T that consolidates the line | on or before the run-out |
+| 6 | `MED_ADD` | an agent added after the induction window | on or before the run-out |
+| 7 | `DEATH` | the patient died | no next-line trigger sits between the run-out and the death |
+| 8 | `DISCONTINUATION` | every agent's cover ran out and the gap confirmed it | |
+| 9 | `STUDY_END` | still on treatment when observation stopped | |
+
+Death is **not** first. It outranks an *earlier* discontinuation only where
+nothing that could open the next line happened in between — and a medication
+addition that opened a line is exactly such a trigger.
+
+> Agent A covers **d+0 – d+150** · agent B added at **d+100** · death at
+> **d+180**
+> → line 1 ends **MED_ADD on d+99**, the day before B; line 2 (B) ends
+> **DEATH on d+180**. The death belongs to the line the patient was on when
+> they died, not to the first one.
 
 A line ended by `DISCONTINUATION` ends on the **run-out**, not on the day the
 gap was confirmed — the patient stopped when their drugs did.

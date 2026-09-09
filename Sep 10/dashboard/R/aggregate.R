@@ -63,7 +63,13 @@ apply_floor <- function(d, spec, min_n, package_min_n = 25L) {
 
 # Counts and percentages for a categorical column, with a (Missing) row so an
 # absent value is visible rather than dropped.
-tabulate_cat <- function(d, col, min_n = 25L) {
+# `id_col` is the patient identifier, when the table has one. N stays what a
+# row of the table is - on a line-grain table it is a count of lines, which is
+# a legitimate figure - but the FLOOR is about patients, and a level was being
+# released on its row count: three lines each from ten patients read as
+# N = 30 and cleared a floor of 25, while the bar drawn from the same rows
+# correctly withheld it.
+tabulate_cat <- function(d, col, min_n = 25L, id_col = NULL) {
   if (is.null(d) || !nrow(d) || !col %in% names(d)) return(data.frame())
   v <- as.character(d[[col]])
   v[is.na(v) | !nzchar(trimws(v))] <- "(Missing)"
@@ -71,7 +77,12 @@ tabulate_cat <- function(d, col, min_n = 25L) {
   out <- data.frame(LEVEL = names(tb), N = as.integer(tb),
                     stringsAsFactors = FALSE)
   out$PCT <- round(100 * out$N / sum(out$N), 1)
-  out$SUPPRESSED <- as.integer(out$N < min_n)
+  pop <- if (!is.null(id_col) && id_col %in% names(d)) {
+    ids <- as.character(d[[id_col]])
+    vapply(out$LEVEL, function(l)
+      length(unique(ids[v == l & !is.na(ids) & nzchar(ids)])), integer(1))
+  } else out$N
+  out$SUPPRESSED <- as.integer(pop < min_n)
   # SECONDARY suppression. Withholding one level and publishing the rest is not
   # withholding anything: the caption gives the stratum's size and the table
   # gives every other level, so the hidden cell is the subtraction. A stratum
@@ -317,9 +328,13 @@ summarise_subject <- function(d, spec, min_n = 25L, n_population = NULL) {
     cats <- setdiff(rest, nums)
   }
   n_stratum <- n_population %||% nrow(d)
+  # The identifier, whatever case the source returned it in, so each level's
+  # floor is on its patients rather than its rows.
+  idc <- names(d)[match(toupper(spec$id %||% "PATID"), toupper(names(d)))]
+  if (length(idc) != 1L || is.na(idc)) idc <- NULL
   rows <- list()
   for (cl in cats) {
-    tb <- tabulate_cat(d, cl, min_n = min_n)
+    tb <- tabulate_cat(d, cl, min_n = min_n, id_col = idc)
     if (!nrow(tb)) next
     rows[[length(rows) + 1L]] <- data.frame(
       VARIABLE = cl, LEVEL = tb$LEVEL, N = tb$N, PCT = tb$PCT,
