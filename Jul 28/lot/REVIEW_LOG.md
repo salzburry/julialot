@@ -92,6 +92,43 @@ records its deviation rather than hiding it. And a `DELETE`+`INSERT` retried as
 one unit re-runs the `DELETE` on every attempt, so a lost acknowledgement
 leaves one copy.
 
+## The QC checks, run rather than read
+
+The QC suite said it outright: *"Nothing here has run against a warehouse, so
+what can be tested is the SQL as a string... The checks are generated with fake
+table names and inspected."* All 37 checks — the ones that decide whether a LOT
+build is trustworthy — were verified only as text. Text cannot tell a working
+check from a `WHERE` that can never be true, and a check that cannot fail
+reports "pass" on a real defect for ever.
+
+`qc/tests/run_duckdb.py` now runs them. Each check is executed twice: against a
+clean fixture, where it must count nothing, and against the same fixture with
+the defect it describes planted in it, where it must count that and name it.
+The 13 checks that read only `LOT_LONG_FINAL` are covered — every
+`fail`-severity structural and end-reason check. All 13 pass both halves.
+
+Five deliberate sabotages of the checks confirm the harness bites: inverting a
+predicate, making one that can never be true, widening an allowed set, dropping
+half a condition, and removing the id masking. Each is caught.
+
+Two of the first plants were wrong, not the checks — B6 and B7 test a date
+against the line's own start, not against the end reason, and both stayed
+silent until the plant was corrected. That is the argument for running them
+rather than reading them, made against the person writing the fixtures.
+
+| what was wrong | now |
+|---|---|
+| `qc_outcome()` stopped the runner outright when a check returned no `N_BAD` column, losing every check after it | reported as that check's own error, which is the runner's own rule |
+| An assertion whose expression raised took the suite down — no count, later results lost | `ok()` evaluates the condition and reports a raise as a failure, in the qc and validation harnesses as well |
+
+Four surfaces were attacked and found already sound. Every check masks the
+patient id it reports, proven by running rather than by reading. A duplicate
+check id or an unknown severity is refused at load. The vignette catalogue
+refuses a pair whose sides agree, an offset that does not straddle its
+parameter, a parameter that does not exist and an anchor absent from the file
+it cites. And `LOT_START_TYPE` really is the four values A5 allows —
+`SCT_CART` and `SCT_AUTO_CONT` are end reasons, not start types.
+
 ## What this does not prove
 
 The harnesses run the real emitted SQL, but through DuckDB rather than Spark, so

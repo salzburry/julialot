@@ -16,6 +16,14 @@ ROOT <- local({
 
 pass <- 0L; fail <- 0L
 ok <- function(cond, what) {
+  # `cond` is evaluated HERE, not by the caller, so an assertion whose
+  # expression raises is a FAILED assertion rather than a dead run. It used to
+  # propagate: a mutation that made qc_outcome() stop took the whole suite
+  # down, printing no count and losing every result after it.
+  cond <- tryCatch(cond, error = function(e) {
+    what <<- paste0(what, "  [raised: ", conditionMessage(e), "]")
+    FALSE
+  })
   if (isTRUE(cond)) { pass <<- pass + 1L; cat("  ok     ", what, "\n") }
   else              { fail <<- fail + 1L; cat("  FAIL   ", what, "\n") }
 }
@@ -479,5 +487,71 @@ ok(has(RUNNER, "if (n_fail + n_error + n_skip > 0) quit(status = 1L)"),
    "failures, errors AND skips decide the exit status")
 
 cat("\n", strrep("-", 52), "\n", sep = "")
+cat("\n-- a check that could not run is not a check that passed --\n")
+{
+  # The runner reports an error as its own outcome so a check that could not
+  # run cannot be read as one that found nothing. One path missed that: a
+  # query returning no N_BAD column reached qc_outcome() with a zero-length
+  # value and stopped the runner outright, losing every check after it.
+  ok(identical(qc_outcome(0, "fail"), "pass"), "no violations is a pass")
+  ok(identical(qc_outcome(3, "fail"), "FAIL"), "a violation of a fail check is a failure")
+  ok(identical(qc_outcome(3, "warn"), "warn") &&
+       identical(qc_outcome(3, "info"), "info"),
+     "and the softer severities score as themselves")
+  ok(identical(qc_outcome(NA_real_, "fail"), "error"),
+     "a count that came back NA is an error, not a pass")
+  ok(identical(qc_outcome(numeric(0), "fail"), "error"),
+     "and so is no count at all, rather than stopping the whole run")
+  ok(identical(qc_outcome(NULL, "fail"), "error"),
+     "including a NULL, which is what a missing column reads as")
+}
+
+cat("\n-- the checks, RUN rather than read --\n")
+{
+  # Found by an adversarial pass: every check in this suite was verified as
+  # text. These are the checks that decide whether a LOT build is trustworthy,
+  # and text cannot tell a working one from a WHERE that can never be true.
+  source(file.path(ROOT, "tests", "exec_harness.R"))
+  source(file.path(ROOT, "tests", "exec_cases.R"))
+  P <- list(induction_window_days = 60L, lot_n_induction_window_days = 30L,
+            max_lot = 5L, sct_tandem_days = 180L, cart_consolidation_days = 45L,
+            sct_auto_window_days = 30L, sct_auto_gap_days = 180L,
+            lot_discon_confirm_days = 90L, apply_cart_induction_rule = FALSE,
+            medical_day_supply = 30L, map_discon_gap_days = 30L,
+            sct_extra = list(), allo_lot_span = 100L)
+  res <- run_exec_cases(LOT_QC_CHECKS, EXEC_CASES, CLEAN_ROWS,
+                        list(final = "LOT_LONG_FINAL"), P, ROOT)
+  if (is.null(res)) {
+    cat("  SKIP    the execution harness could not be run\n")
+  } else if (identical(res, "skip")) {
+    cat("  SKIP    duckdb or sqlglot is not installed\n")
+  } else {
+    ok(nrow(res) == length(EXEC_CASES),
+       sprintf("every planted case ran (%d of %d)", nrow(res), length(EXEC_CASES)))
+    for (i in seq_len(nrow(res))) {
+      r <- res[i, ]
+      id <- r$id
+      if (!is.na(r$error) && nzchar(r$error)) {
+        ok(FALSE, sprintf("%s ran: %s", id, substr(r$error, 1, 60)))
+        next
+      }
+      ok(identical(r$n_clean, "0"),
+         sprintf("%s counts nothing on clean data", id))
+      ok(!is.na(suppressWarnings(as.numeric(r$n_planted))) &&
+           as.numeric(r$n_planted) > 0,
+         sprintf("%s counts %s", id, EXEC_CASES[[id]]$what))
+      ok(nzchar(r$detail),
+         sprintf("%s names the row it found, so the report can be acted on", id))
+    }
+    # The masking is what makes a QC report circulatable, and it is only
+    # provable by running: the DETAIL is built in SQL.
+    dets <- res$detail[nzchar(res$detail)]
+    ok(length(dets) > 0 && !any(grepl("P0000", dets, fixed = TRUE)),
+       "and no DETAIL carries a whole patient id - every one is masked")
+    ok(all(grepl("^[.][.][.]", dets[grepl("[.][.][.]", dets)])),
+       "with the mask in the shape the runner documents")
+  }
+}
+
 cat(sprintf("%d passed, %d failed\n", pass, fail))
 if (fail > 0L) quit(status = 1L)
