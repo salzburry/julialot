@@ -781,6 +781,21 @@ cat("\nregressions from the adversarial review\n")
      "while an idempotent statement still is")
   ok(sql_is_retry_safe("-- note\nDELETE FROM t WHERE COHORT = 'x'"),
      "and so is a scoped delete")
+  # Found by an adversarial pass. The classifier read the first verb, and a
+  # leading WITH is not a verb: `WITH a AS (...) INSERT INTO t SELECT ...` is
+  # a write that read as safe, so it would be RETRIED - the duplicate-on-a-
+  # lost-acknowledgement defect this whole guard exists to prevent. Nothing
+  # emits that form today, which is exactly why it would go unnoticed.
+  ok(!sql_is_retry_safe("WITH a AS (SELECT 1) INSERT INTO t SELECT * FROM a"),
+     "a CTE in front of an INSERT does not make it retry-safe")
+  ok(!sql_is_retry_safe("WITH a AS (SELECT 1) MERGE INTO t USING a ON 1=1"),
+     "nor in front of a MERGE")
+  ok(!sql_is_retry_safe("-- c\n/* d */ WITH a AS (SELECT 1) INSERT INTO t SELECT 1"),
+     "nor one behind comments as well")
+  ok(sql_is_retry_safe("WITH a AS (SELECT 1) SELECT * FROM a"),
+     "while a CTE in front of a SELECT still is")
+  ok(sql_is_retry_safe("CREATE OR REPLACE TABLE t AS WITH a AS (SELECT 1) SELECT * FROM a"),
+     "and a CREATE OR REPLACE whose body happens to use one is unaffected")
 
   # And db_exec() HONOURS it. The predicate above can be right while the caller
   # ignores it, which is a lost acknowledgement writing the rows twice. Driven

@@ -29,10 +29,20 @@ parse_readings <- function(s) {
     }
     eq <- regexpr("=", p, fixed = TRUE)
     if (eq < 1) return(NULL)
-    list(key = substr(p, 1, eq - 1), value = substring(p, eq + 1), note = note)
+    # The key is trimmed and must be non-empty. Untrimmed, "months_as " and
+    # "months_as" read as two different settings and scenario_diff_keys()
+    # reported a difference that was whitespace.
+    key <- trimws(substr(p, 1, eq - 1))
+    if (!nzchar(key)) return(NULL)
+    list(key = key, value = trimws(substring(p, eq + 1)), note = note)
   })
   out <- Filter(Negate(is.null), out)
-  stats::setNames(out, vapply(out, `[[`, character(1), "key"))
+  keys <- vapply(out, `[[`, character(1), "key")
+  # A key repeated in one string keeps its first reading only, so names() and
+  # [[ ]] agree - a list with duplicate names looks up the first, and leaving
+  # the duplicates in made scenario_diff_keys() see one setting several times.
+  keep <- !duplicated(keys)
+  stats::setNames(out[keep], keys[keep])
 }
 
 scenario_from_row <- function(prefix, row) {
@@ -122,17 +132,27 @@ compare_readings <- function(a, b) {
 #
 # Printed, never executed. The dashboard reads; a run writes to the warehouse
 # and belongs to whoever owns the schema.
+# Every value is single-quoted, with any inner quote escaped the shell's way.
+#
+# Unquoted, this block was an injection: the page invites a viewer to paste it,
+# and a value carrying a newline put its own line in - `MONTHS_AS=days`, then
+# `rm -rf /`. A ';' did the same on one line. Values reach here from the
+# scenario grid and from the page, so neither is trustworthy.
+sh_quote <- function(x) {
+  x <- paste(as.character(x), collapse = ",")
+  paste0("'", gsub("'", "'\\''", x, fixed = TRUE), "'")
+}
+
 scenario_command <- function(settings, cfg = dashboard_config(),
                              prefix = NULL, env_map = SETTING_ENV) {
   settings <- settings[!vapply(settings, is.null, logical(1))]
   known <- intersect(names(settings), names(env_map))
   unknown <- setdiff(names(settings), names(env_map))
   lines <- c(
-    sprintf("export OBJECT_PREFIX=%s",
-            if (is.null(prefix)) "<a prefix nothing has used>" else prefix),
+    if (is.null(prefix)) "export OBJECT_PREFIX=<a prefix nothing has used>"
+    else sprintf("export OBJECT_PREFIX=%s", sh_quote(prefix)),
     vapply(known, function(k)
-      sprintf("export %s=%s", env_map[[k]],
-              paste(as.character(settings[[k]]), collapse = ",")),
+      sprintf("export %s=%s", env_map[[k]], sh_quote(settings[[k]])),
       character(1)),
     cfg$run_cmd)
   list(command = paste(lines, collapse = "\n"),

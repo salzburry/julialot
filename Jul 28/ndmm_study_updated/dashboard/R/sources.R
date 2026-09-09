@@ -10,6 +10,22 @@
 # A source answers two questions: which scenarios are there, and give me one
 # table from one of them. Everything above this line is the same either way.
 
+# A name that may be used as ONE path segment, and nothing else.
+#
+# Prefixes and LOT run ids are pasted into a file path. A run id of
+# "../../PRIVATE" read a file outside the snapshot root - it came from a
+# metadata TABLE, which anyone who can write to the warehouse controls, and
+# the dashboard then handed its contents to whoever opened the page.
+#
+# Rejected rather than sanitised: a name that needs cleaning up is not a name
+# this dashboard wrote, and silently reading a different file than the one
+# asked for is worse than reading none.
+safe_segment <- function(x) {
+  x <- as.character(x %||% "")
+  length(x) == 1L && nzchar(x) && !is.na(x) &&
+    grepl("^[A-Za-z0-9][A-Za-z0-9._-]*$", x) && !grepl("^[.]{1,2}$", x)
+}
+
 new_source <- function(cfg = dashboard_config(), con = NULL) {
   s <- switch(cfg$source,
     snapshot  = snapshot_source(cfg),
@@ -35,10 +51,11 @@ snapshot_source <- function(cfg) {
     prefixes = function() {
       if (!dir.exists(root)) return(character(0))
       d <- list.dirs(root, full.names = FALSE, recursive = FALSE)
-      d <- d[nzchar(d)]
+      d <- d[nzchar(d) & vapply(d, safe_segment, logical(1)) & d != "lot"]
       if (length(cfg$prefixes)) intersect(d, cfg$prefixes) else d
     },
     read = function(prefix, table) {
+      if (!safe_segment(prefix) || !safe_segment(table)) return(NULL)
       p <- file.path(root, prefix, paste0(table, ".csv"))
       if (!file.exists(p)) return(NULL)
       utils::read.csv(p, stringsAsFactors = FALSE, check.names = FALSE,
@@ -48,7 +65,7 @@ snapshot_source <- function(cfg) {
     # scenarios normally read ONE LOT run, and a copy per scenario would both
     # waste the space and suggest they differ.
     read_lot = function(lot_run_id, table) {
-      if (!nzchar(lot_run_id %||% "")) return(NULL)
+      if (!safe_segment(lot_run_id) || !safe_segment(table)) return(NULL)
       p <- file.path(root, "lot", lot_run_id, paste0(table, ".csv"))
       if (!file.exists(p)) return(NULL)
       utils::read.csv(p, stringsAsFactors = FALSE, check.names = FALSE,

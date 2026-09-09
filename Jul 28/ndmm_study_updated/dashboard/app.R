@@ -167,13 +167,28 @@ server <- function(input, output, session) {
             body, tags$hr())
   }
 
+  # A table panel NEVER renders one row per patient.
+  #
+  # A `subject` table is one row per PATID, and putting it on the page as a
+  # grid is a line listing with the identifier attached. It is summarised
+  # instead - counts and percentages per level, mean/median for the continuous
+  # columns - and every identifier column is dropped whatever shape the table
+  # is, so a spec that forgets to declare one cannot leak it.
   ui_table <- function(p, s) {
     id <- paste0("tbl_", p$name)
     output[[id]] <- renderUI({
+      if (identical(p$name, "settings"))
+        return(HTML(html_table(settings_table(s), max_rows = DASH_CFG$max_rows)))
+      if (identical(p$table, "S_RUN_METADATA"))
+        return(HTML(html_table(drop_identifiers(SRC$read(s$prefix, "S_RUN_METADATA")),
+                               max_rows = DASH_CFG$max_rows)))
       d <- panel_data(p, s)
-      if (identical(p$table, "S_RUN_METADATA")) d <- SRC$read(s$prefix, "S_RUN_METADATA")
-      if (identical(p$name, "settings")) d <- settings_table(s)
-      HTML(html_table(d, max_rows = DASH_CFG$max_rows))
+      if (is.null(d) || !nrow(d)) return(HTML(html_table(NULL)))
+      HTML(panel_table_html(
+        d, table_spec(p$table, names(d)),
+        floor_n = max(as.integer(input$floor),
+                      as.integer(DASH_CFG$suppress_min_n)),
+        max_rows = DASH_CFG$max_rows))
     })
     uiOutput(id)
   }
@@ -264,7 +279,7 @@ server <- function(input, output, session) {
         if (n_bad > 0) sprintf(
           '<div class="alert">%d check(s) did not come back clean. They are listed first.</div>',
           n_bad) else "",
-        html_table(d, max_rows = DASH_CFG$max_rows)))
+        html_table(drop_identifiers(d), max_rows = DASH_CFG$max_rows)))
     })
     uiOutput(id)
   }

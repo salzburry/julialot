@@ -221,7 +221,15 @@ sql_is_retry_safe <- function(st) {
     head <- sub("^/\\*.*?\\*/", "", head)
     if (identical(head, was)) break
   }
-  !grepl("^(INSERT|MERGE)\\b", toupper(head))
+  head <- toupper(head)
+  # A leading WITH does not make a statement a read. `WITH a AS (...) INSERT
+  # INTO t SELECT * FROM a` is a write whose first verb is WITH, and reading
+  # the first verb alone classified it retry-safe - the same lost-acknowledged
+  # duplicate the LOT append had. Nothing emits that form today, which is
+  # exactly why it would go unnoticed if something started to.
+  if (grepl("^WITH\\b", head))
+    return(!grepl("\\b(INSERT|MERGE)\\s+INTO\\b", head))
+  !grepl("^(INSERT|MERGE)\\b", head)
 }
 
 # The one call that reaches the driver. Separate so what surrounds it - which

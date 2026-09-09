@@ -35,8 +35,11 @@ apply_keys <- function(d, spec, sel) {
 # cannot turn the dashboard into a disclosure route.
 apply_floor <- function(d, spec, min_n, package_min_n = 25L) {
   if (is.null(d) || !nrow(d)) return(d)
-  n_col <- spec$n_col
-  if (is.null(n_col) || !n_col %in% names(d)) return(d)
+  # The spec's column when it names one, otherwise a count the table carries.
+  # Returning early on "no n_col declared" left every undeclared table
+  # unsuppressed.
+  n_col <- infer_n_col(spec, names(d))
+  if (is.null(n_col)) return(d)
   floor_n <- max(as.integer(min_n), as.integer(package_min_n))
   n <- suppressWarnings(as.numeric(d[[n_col]]))
   hit <- !is.na(n) & n < floor_n
@@ -164,8 +167,15 @@ compare_tables <- function(a, b, spec, value = NULL) {
   all_k <- union(ka, kb)
   out <- do.call(rbind, lapply(strsplit(all_k, "\r", fixed = TRUE), function(p)
     stats::setNames(as.data.frame(as.list(p), stringsAsFactors = FALSE), keys)))
+  # match() takes the FIRST row for a key. A table with a duplicated stratum
+  # therefore compared one of its rows and dropped the other without saying so
+  # - and a duplicated stratum is a real failure mode, which is why the package
+  # has a grain check at all. Counted, and reported on the row.
+  dup_a <- table(ka)[all_k]; dup_b <- table(kb)[all_k]
   out$A <- suppressWarnings(as.numeric(a[[value]][match(all_k, ka)]))
   out$B <- suppressWarnings(as.numeric(b[[value]][match(all_k, kb)]))
+  n_dup <- pmax(ifelse(is.na(dup_a), 0L, dup_a), ifelse(is.na(dup_b), 0L, dup_b))
+  if (any(n_dup > 1L)) out$N_ROWS_FOR_KEY <- as.integer(n_dup)
   out$DELTA <- out$B - out$A
   out$PCT_CHANGE <- ifelse(!is.na(out$A) & out$A != 0,
                            round(100 * (out$B - out$A) / out$A, 1), NA_real_)
@@ -174,4 +184,87 @@ compare_tables <- function(a, b, spec, value = NULL) {
   out$VALUE_COL <- value
   rownames(out) <- NULL
   out[order(-abs(out$DELTA %||% 0), na.last = TRUE), ]
+}
+
+# --- a subject-level table, aggregated ---------------------------------------
+#
+# A `subject` table is one row per PATID. Rendering it as a grid is a LINE
+# LISTING: every patient, with their identifier, on a page several people can
+# open. That is what this dashboard did until an adversarial pass found it -
+# five panels, 1,200 rows each, PATID included.
+#
+# So a subject table is summarised instead, never listed. The spec already
+# names which of its columns are categorical and which continuous, and
+# tabulate_cat() and summarise_num() already knew how to summarise them - they
+# were written, tested, and called by nothing, which is exactly the defect the
+# release module's review found in the old R suppression helper.
+#
+# Suppression is on the STRATUM: a level or a summary computed from fewer than
+# the floor is withheld, because the stratum is the population the rule is
+# about.
+ID_COLUMNS <- c("PATID", "PAT_PLANID", "PATIENT_ID", "MEMBER_ID", "CLMID")
+
+# Never rendered, whatever a spec says. An identifier that reaches the page is
+# a disclosure whether or not anything asked for it.
+drop_identifiers <- function(d) {
+  if (is.null(d) || !ncol(d)) return(d)
+  keep <- setdiff(names(d), intersect(toupper(names(d)), ID_COLUMNS))
+  d[, keep, drop = FALSE]
+}
+
+summarise_subject <- function(d, spec, min_n = 25L) {
+  if (is.null(d) || !nrow(d)) return(data.frame())
+  cats <- intersect(spec$categorical %||% character(0), names(d))
+  nums <- intersect(spec$continuous %||% character(0), names(d))
+  # A table declaring neither still gets a summary rather than a listing: every
+  # column that is not an identifier or a key is summarised by its type.
+  if (!length(cats) && !length(nums)) {
+    rest <- setdiff(names(drop_identifiers(d)), c(spec$keys, "SUPPRESSED"))
+    nums <- rest[vapply(rest, function(cl) is.numeric(d[[cl]]), logical(1))]
+    cats <- setdiff(rest, nums)
+  }
+  n_stratum <- nrow(d)
+  rows <- list()
+  for (cl in cats) {
+    tb <- tabulate_cat(d, cl, min_n = min_n)
+    if (!nrow(tb)) next
+    rows[[length(rows) + 1L]] <- data.frame(
+      VARIABLE = cl, LEVEL = tb$LEVEL, N = tb$N, PCT = tb$PCT,
+      MEAN = NA_real_, SD = NA_real_, MEDIAN = NA_real_,
+      SUPPRESSED = tb$SUPPRESSED, stringsAsFactors = FALSE)
+  }
+  for (cl in nums) {
+    s <- summarise_num(d, cl, min_n = min_n)
+    if (!nrow(s)) next
+    rows[[length(rows) + 1L]] <- data.frame(
+      VARIABLE = cl, LEVEL = "(continuous)", N = s$N, PCT = NA_real_,
+      MEAN = s$MEAN, SD = s$SD, MEDIAN = s$MEDIAN,
+      SUPPRESSED = s$SUPPRESSED, stringsAsFactors = FALSE)
+  }
+  if (!length(rows)) return(data.frame())
+  out <- do.call(rbind, rows)
+  # The whole stratum under the floor: nothing about it may be published, not
+  # even a level that happens to hold more than the floor on its own.
+  if (n_stratum < min_n) {
+    out$N <- NA; out$PCT <- NA; out$MEAN <- NA; out$SD <- NA; out$MEDIAN <- NA
+    out$SUPPRESSED <- 1L
+  }
+  attr(out, "n_stratum") <- n_stratum
+  rownames(out) <- NULL
+  out
+}
+
+# A count column to suppress on, when the spec did not name one.
+#
+# apply_floor() used to be a no-op on any table whose spec had no n_col - which
+# is every subject, funnel, check and undeclared table. An undeclared table
+# publishing N_PATIENTS therefore reached the page raw, and "a new module
+# appears in the dashboard on its own" quietly meant "and skips suppression".
+COUNT_COLUMNS <- c("N_AT_RISK", "N_PATIENTS", "N_REMAINING", "N", "N_DENOM")
+
+infer_n_col <- function(spec, cols) {
+  if (!is.null(spec$n_col) && spec$n_col %in% cols) return(spec$n_col)
+  hit <- intersect(COUNT_COLUMNS, toupper(cols))
+  if (!length(hit)) return(NULL)
+  cols[match(hit[1], toupper(cols))]
 }

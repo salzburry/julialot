@@ -119,10 +119,10 @@ cat("\nthe command for a scenario nobody has run\n")
 {
   cm <- scenario_command(list(mm_hosp_position = "claim_positions",
                               claim_status = "all"), prefix = "s223926_new_")
-  ok(grepl("export OBJECT_PREFIX=s223926_new_", cm$command, fixed = TRUE),
-     "the command sets the prefix the new scenario would write under")
-  ok(grepl("export MM_HOSP_POSITION=claim_positions", cm$command, fixed = TRUE) &&
-       grepl("export CLAIM_STATUS=all", cm$command, fixed = TRUE),
+  ok(grepl("export OBJECT_PREFIX='s223926_new_'", cm$command, fixed = TRUE),
+     "the command sets the prefix the new scenario would write under, quoted")
+  ok(grepl("export MM_HOSP_POSITION='claim_positions'", cm$command, fixed = TRUE) &&
+       grepl("export CLAIM_STATUS='all'", cm$command, fixed = TRUE),
      "and exports each setting under the name the package reads")
   ok(!length(cm$unsupported), "with nothing unsupported when all are known")
   cm2 <- scenario_command(list(not_a_setting = "x"))
@@ -417,6 +417,177 @@ cat("\nthe source refuses to make numbers up when it was told not to\n")
   cfg3 <- DASH_CFG; cfg3$source <- "warehouse"
   ok(grepl("needs a connection", errs(new_source(cfg3)) %||% ""),
      "the warehouse source without a connection stops, rather than reading nothing")
+}
+
+cat("\nfound by an adversarial pass: no per-patient row reaches the page\n")
+{
+  # Five table panels rendered a `subject` table as a grid - one row per
+  # patient, PATID included, 1,200 rows at a time. A line listing with an
+  # identifier, on a dashboard several people can open.
+  d <- read_table(SRC, "s223926_", "S_DEMOGRAPHICS")
+  ok("PATID" %in% names(d), "the underlying table does carry PATID")
+  sp <- table_spec("S_DEMOGRAPHICS")
+  out <- summarise_subject(d, sp, min_n = 25L)
+  ok(nrow(out) > 0 && nrow(out) < nrow(d),
+     "a subject table is summarised to levels, not listed per patient")
+  ok(!"PATID" %in% names(out), "and the summary carries no identifier")
+  ok(!grepl("P[0-9]{6}", html_table(out)),
+     "so no patient id reaches the rendered HTML")
+  ok(all(c("VARIABLE", "LEVEL", "N", "PCT") %in% names(out)),
+     "the summary is counts and percentages per level")
+  # It uses the two helpers that existed, were tested, and were called by
+  # nothing - the same defect the release module's review found in the old R
+  # suppression helper, reintroduced here.
+  src_all <- paste(vapply(list.files("R", "[.]R$", full.names = TRUE),
+                          function(f) paste(readLines(f, warn = FALSE), collapse = "\n"),
+                          character(1)), collapse = "\n")
+  ok(grepl("tabulate_cat(", src_all, fixed = TRUE) &&
+       grepl("summarise_num(", src_all, fixed = TRUE),
+     "and the summary helpers are called by something, not only by tests")
+  # Driven, not grepped. The branch used to live inside server(), where no test
+  # could reach it: a mutation sending subject tables back to a raw grid passed
+  # the whole suite because the word "summarise_subject" was still in the file.
+  h <- panel_table_html(d, sp, floor_n = 25L)
+  ok(!grepl("P[0-9]{6}", h),
+     "the panel renderer emits no patient id for a subject table")
+  ok(grepl("Per-patient rows are never shown", h, fixed = TRUE),
+     "and says on the page that it summarised rather than listed")
+  ok(grepl("AGE_BAND", h, fixed = TRUE) && grepl("<td>", h, fixed = TRUE),
+     "while still showing the breakdown")
+  # A rate table is NOT summarised - it is already aggregated.
+  hr <- panel_table_html(read_table(SRC, "s223926_", "S_SAFETY_RATES"),
+                         table_spec("S_SAFETY_RATES"), floor_n = 25L)
+  ok(!grepl("Per-patient rows", hr, fixed = TRUE) && grepl("CONDITION", hr, fixed = TRUE),
+     "and an already-aggregated table is shown as itself")
+  # Even a non-subject table gives up an identifier column.
+  hid <- panel_table_html(data.frame(PATID = "P000001", N_AT_RISK = 900L),
+                          table_spec("S_ODD", c("N_AT_RISK")), floor_n = 25L)
+  ok(!grepl("P000001", hid, fixed = TRUE),
+     "and an id column on any shape of table is dropped before rendering")
+  ok(grepl("panel_table_html", paste(readLines("app.R", warn = FALSE), collapse = "\n"),
+           fixed = TRUE),
+     "with app.R calling that renderer rather than deciding for itself")
+  ok(!"PATID" %in% names(drop_identifiers(d)), "drop_identifiers removes an id column")
+  ok(!any(toupper(names(drop_identifiers(
+       data.frame(PATID = 1, PAT_PLANID = 2, CLMID = 3, KEEP = 4)))) %in%
+       c("PATID", "PAT_PLANID", "CLMID")),
+     "and every identifier this warehouse uses, not only PATID")
+  small <- summarise_subject(d[1:3, ], sp, min_n = 25L)
+  ok(all(small$SUPPRESSED == 1L) && all(is.na(small$N)),
+     "a stratum of 3 publishes nothing about itself, level by level or overall")
+}
+
+cat("\nfound by an adversarial pass: nothing escapes the suppression floor\n")
+{
+  # apply_floor() returned early whenever the spec named no n_col - which is
+  # every subject, funnel, check and undeclared table. So "a new module appears
+  # in the dashboard on its own" also meant "and skips suppression".
+  sp <- table_spec("S_BRAND_NEW", c("COHORT", "N_PATIENTS", "RATE"))
+  g <- apply_floor(data.frame(COHORT = "1L", N_PATIENTS = 2L, RATE = 99.9),
+                   sp, 25L, 25L)
+  ok(identical(g$SUPPRESSED, 1L) && is.na(g$N_PATIENTS[1]),
+     "an undeclared table publishing a small count is suppressed, not shown raw")
+  ok(identical(infer_n_col(list(), c("COHORT", "N_AT_RISK", "N_PATIENTS")), "N_AT_RISK"),
+     "the population column is preferred over the event count when both are there")
+  ok(is.null(infer_n_col(list(), c("COHORT", "RATE"))),
+     "and a table carrying no count at all is left alone rather than guessed at")
+  ok(identical(infer_n_col(list(n_col = "N_DENOM"), c("N_DENOM", "N_PATIENTS")),
+               "N_DENOM"),
+     "a spec that names its denominator is honoured over the guess")
+}
+
+cat("\nfound by an adversarial pass: the pasteable command cannot inject\n")
+{
+  # The page invites a viewer to paste this block. Unquoted, a value carrying a
+  # newline put its own line in it - MONTHS_AS=days, then rm -rf /.
+  payload <- "days\nrm -rf /\necho pwned"
+  cm <- scenario_command(list(months_as = payload), prefix = "p_")
+  ok(sum(grepl("^export ", strsplit(cm$command, "\n", fixed = TRUE)[[1]])) == 2L,
+     "the injected newlines did not become extra export lines")
+  # The property that matters is the shell's, so a shell decides it: run the
+  # block and read back what the variable actually holds. Checking the text's
+  # shape instead is how the first version of this passed a payload that a
+  # shell would have executed.
+  shell_value <- function(value, var = "MONTHS_AS") {
+    if (!nzchar(Sys.which("bash"))) return(NULL)
+    blk <- sub("\nRscript.*$", "", scenario_command(list(months_as = value),
+                                                    prefix = "p_")$command)
+    f <- tempfile(fileext = ".sh")
+    writeLines(c(blk, sprintf("printf %%s \"$%s\"", var)), f)
+    out <- suppressWarnings(system2("bash", f, stdout = TRUE, stderr = TRUE))
+    paste(out, collapse = "\n")
+  }
+  got <- shell_value(payload)
+  if (is.null(got)) cat("  SKIP   no bash, so the shell round-trip did not run\n")
+  else {
+    ok(identical(got, payload),
+       "a shell assigns the whole payload as the value, executing none of it")
+    tw <- file.path(tempdir(), "TRIPWIRE_A")
+    file.create(tw)
+    hostile <- sprintf("a'; rm -f %s; echo '", tw)
+    got2 <- shell_value(hostile)
+    ok(identical(got2, hostile) && file.exists(tw),
+       "and a value trying to close the quote is still just a value - the tripwire survives")
+    unlink(tw)
+  }
+  ok(identical(sh_quote("plain"), "'plain'"), "an ordinary value is simply quoted")
+  ok(identical(sh_quote(c("a", "b")), "'a,b'"), "and a vector joins before quoting")
+  cm3 <- scenario_command(list(), prefix = "p_; rm -rf ~")
+  ok(grepl("OBJECT_PREFIX='p_; rm -rf ~'", cm3$command, fixed = TRUE),
+     "the prefix is quoted too")
+}
+
+cat("\nfound by an adversarial pass: a path segment cannot leave the snapshot\n")
+{
+  # A LOT run id of "../../PRIVATE" read a file outside the snapshot root. It
+  # comes from a metadata TABLE, so anyone who can write to the warehouse chose
+  # it, and the dashboard handed the contents to whoever opened the page.
+  ok(safe_segment("s223926_") && safe_segment("run-1.2_3"),
+     "an ordinary prefix or run id is accepted")
+  for (bad in list("../PRIVATE", "..", ".", "a/b", "/etc/passwd", "", NA_character_,
+                   "~root", "-rf", "a\nb"))
+    ok(!safe_segment(bad),
+       paste0("rejected as a path segment: ",
+              if (is.na(bad)) "NA" else sprintf("'%s'", gsub("\n", "\\\\n", bad))))
+  root <- tempfile("snap"); dir.create(file.path(root, "lot"), recursive = TRUE)
+  outside <- file.path(dirname(root), "OUTSIDE"); dir.create(outside, showWarnings = FALSE)
+  utils::write.csv(data.frame(secret = 1), file.path(outside, "LOT_LONG.csv"),
+                   row.names = FALSE)
+  cfg <- DASH_CFG; cfg$source <- "snapshot"; cfg$snapshot_dir <- root
+  s <- new_source(cfg)
+  ok(is.null(s$read_lot("../../OUTSIDE", "LOT_LONG")),
+     "read_lot refuses a run id that would climb out of the snapshot root")
+  ok(is.null(s$read("../OUTSIDE", "LOT_LONG")),
+     "and read refuses a prefix that would")
+  ok(is.null(s$read("s223926_", "../../OUTSIDE/LOT_LONG")),
+     "and a table name cannot climb either")
+}
+
+cat("\nfound by an adversarial pass: a duplicated stratum is not silent\n")
+{
+  sph <- table_spec("S_HCRU_RATES")
+  d <- data.frame(COHORT = "1L", LOT_NUM = 1L, PERIOD = "p", MEASURE = c("m", "m"),
+                  N_AT_RISK = 100L, N_PATIENTS = 1L, N_EVENTS = 1L,
+                  PERSON_YEARS = 1, RATE = c(10, 90), stringsAsFactors = FALSE)
+  cm <- compare_tables(d, d, sph, "RATE")
+  ok("N_ROWS_FOR_KEY" %in% names(cm) && cm$N_ROWS_FOR_KEY[1] == 2L,
+     "a key matching two rows says so - match() takes the first and dropped the other")
+  clean <- read_table(SRC, "s223926_", "S_HCRU_RATES")
+  ok(!"N_ROWS_FOR_KEY" %in% names(compare_tables(clean, clean, sph, "RATE")),
+     "and a table with one row per key carries no such column")
+}
+
+cat("\nfound by an adversarial pass: readings parse to clean keys\n")
+{
+  ok(identical(names(parse_readings("  spaced  =  value  ")), "spaced"),
+     "a key with padding is trimmed - untrimmed it read as a different setting")
+  ok(identical(parse_readings("  k  =  v  ")[["k"]]$value, "v"), "and so is the value")
+  ok(length(parse_readings("=novalue")) == 0,
+     "a reading with an empty key is dropped, not kept under the name ''")
+  ok(length(parse_readings("a=1;;b=2")) == 2, "empty parts between separators are skipped")
+  r <- parse_readings("x=1;x=2;y=3")
+  ok(length(r) == 2 && identical(r[["x"]]$value, "1"),
+     "a repeated key keeps one reading, the first - so names() and [[ ]] agree")
 }
 
 cat("\nHTML the app writes\n")

@@ -177,3 +177,26 @@ plot_empty <- function(msg = "Nothing to show for this selection.") {
   plot(NA, xlim = 0:1, ylim = 0:1, axes = FALSE, xlab = "", ylab = "")
   graphics::text(0.5, 0.5, msg, col = PALETTE[["slate"]], cex = 1)
 }
+
+# What a table panel renders, decided here rather than inside the server.
+#
+# The decision is the disclosure control: a `subject` table is one row per
+# patient, and rendering it as a grid is a line listing with the identifier
+# attached. Keeping the branch inside app.R's server() meant no test could
+# reach it - a mutation that sent subject tables back to a raw grid passed the
+# whole suite, because the only check was that the word "summarise_subject"
+# still appeared in the file.
+#
+# Pure, so tests/run_tests.R drives the real thing.
+panel_table_html <- function(d, spec, floor_n = 25L, max_rows = 5000L) {
+  if (is.null(d) || !nrow(d)) return(html_table(NULL))
+  if (identical(spec$shape, "subject")) {
+    out <- summarise_subject(d, spec, min_n = floor_n)
+    n <- attr(out, "n_stratum") %||% nrow(d)
+    return(paste0(
+      sprintf('<p class="note">%s patients in this selection, summarised. Per-patient rows are never shown.</p>',
+              fmt_num(n, 0)),
+      html_table(out, max_rows = max_rows)))
+  }
+  html_table(drop_identifiers(d), max_rows = max_rows)
+}

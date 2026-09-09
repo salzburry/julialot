@@ -115,6 +115,18 @@ so a mis-set environment variable cannot turn this into a disclosure route.
 A withheld row is shaded, not dropped. An absent stratum and a suppressed one
 mean different things and only one of them is "we could not say".
 
+Three rules an adversarial pass added, after it got past all three:
+
+- **No per-patient row is ever rendered.** A `subject` table — one row per
+  `PATID` — is summarised into counts, percentages and distributions. Five
+  panels used to list 1,200 patients each, identifier included.
+- **Identifier columns are dropped whatever the shape.** `PATID`,
+  `PAT_PLANID`, `CLMID` and the rest never reach the HTML, so a spec that
+  forgets to declare one cannot leak it.
+- **A table with no declared denominator is still suppressed.** The floor now
+  finds a count column when the spec names none, so "a new module appears in
+  the dashboard on its own" no longer also means "and skips suppression".
+
 ## What it does not do
 
 It **reads**. It creates, replaces and drops nothing, so it can be pointed at a
@@ -125,13 +137,20 @@ Asking for a scenario nobody has run therefore prints the command that would
 produce it rather than running it. Running one writes to the warehouse and
 belongs to whoever owns the schema.
 
+That block is meant to be pasted into a shell, so every value in it is
+shell-quoted: a setting value carrying a newline or a `;` used to put its own
+line in it. And a prefix or LOT run id is only ever used as one path segment —
+a run id of `../../PRIVATE`, which comes from a metadata table anyone with
+warehouse write access controls, read a file outside the snapshot root and
+handed it to whoever opened the page.
+
 ## Tests
 
 ```
 Rscript "Jul 28/ndmm_study_updated/dashboard/tests/run_tests.R"
 ```
 
-117 checks, no Shiny and no warehouse. Every number the app puts on a page comes
+163 checks, no Shiny and no warehouse. Every number the app puts on a page comes
 from a function in `R/` that runs without Shiny, which is what makes that
 possible; `app.R` is wiring, and the last section reads it as text to hold the
 wiring to the registries.
