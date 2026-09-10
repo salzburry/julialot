@@ -72,8 +72,21 @@ secondary, on an off-white ground.
 | **Outcomes** | TTNT, TTD and overall survival as Kaplan-Meier curves, and the endpoints as a table |
 | **Patterns** | regimen categories by line; what happened on each line; regimen transitions as a from → to table |
 | **Compare** | one scenario against another, stratum by stratum; and every open question with where it is answered |
-| **LOT engine** | the LOT run these lines came from; the LOT funnel; lines by line number; what opened each line; how each line ended |
+| **LOT engine** | the LOT run these lines came from; the LOT funnel; lines by line number; how a line ended against how the next one opened; the commonest line sequences; the regimen of a line against the next; what opened each line; how each line ended |
 | **LOT validation** | face-validity checks; the 37 QC checks; build status; before and after the line criteria |
+
+**The line-to-line panels are the ones for checking that the lines make
+sense together.** Each pairs a patient's consecutive lines and counts
+patients per pair: the reason line n ended against what opened line n+1, the
+agents of line n against the agents of line n+1, and each patient's whole
+sequence of line openings. A line that ran out of treatment followed by a
+transplant-opened line, a CAR-T consolidation end with no CAR-T start behind
+it, or a regimen returning in full one line later shows up here and nowhere
+else. Picking a line in the sidebar narrows the pairs to those from that
+line. Counts are distinct patients; pairs under the floor are folded into one
+"(other pairs)" row per line, and where one withheld cell could be read off a
+published total, the smallest open cell goes with it. No patient is ever
+listed: the pairs are aggregated before anything reaches the page.
 
 A tab whose module did not run is **reported, not hidden**. "The safety module
 did not run" is something a viewer needs to know; a silently absent tab does
@@ -90,6 +103,18 @@ A run that is `started` or `failed` is listed, with its settings and the LOT
 run it read, and none of its tables is shown: the producer writes the
 metadata row before it replaces a table, so under such a run the tables are
 the previous build's, or part of this one. Compare needs two complete runs.
+
+And a run shows only what it built. A run writes the modules it selected,
+for the cohorts it selected, and leaves everything else under its prefix as
+the previous run left it — so a completed partial re-run's prefix can hold a
+safety table it never wrote, a 2L partition it never built, or a released
+table from before its raw one was rebuilt. None of that is this run's. Every
+read is bound to the run's own metadata: a table whose module the run did
+not select is not shown, drawn, offered to select on or compared (Compare
+says which side lacks it); rows of cohorts the run did not select are left
+out; and the released copy of a table is preferred only where the run ran
+the release module. The snapshot job applies the same rules, so a snapshot
+holds only what its run wrote.
 
 ### The LOT tabs describe the lineage, not the scenario
 
@@ -234,7 +259,7 @@ DASH_SOURCE=snapshot DASH_SNAPSHOT_DIR=/mnt/artifacts/results "Sep 10/dashboard/
 variables, and what the job that refreshes the snapshot needs.
 
 ```bash
-Rscript tests/run_tests.R      # 383 checks, no Shiny and no warehouse
+Rscript tests/run_tests.R      # 418 checks, no Shiny and no warehouse
 ```
 
 Every number the app puts on a page comes from a function in `R/` that runs

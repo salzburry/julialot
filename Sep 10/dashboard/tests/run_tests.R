@@ -857,6 +857,14 @@ source(file.path(here, "jobs", "export_lib.R"))
      "...files LOT tables by build and binds the prefix to that build")
   ok(grepl("if (nzchar(lot_version) || owner())", jb, fixed = TRUE),
      "...and reuses a run-only directory only while the prefix still belongs to the run")
+  ok(grepl("scen <- scenario_from_row(prefix, pin)", jb, fixed = TRUE) &&
+       grepl("if (!scenario_wrote(scen, tb)) { not_this_run", jb, fixed = TRUE) &&
+       grepl("restrict_to_cohorts(r$data, scen)", jb, fixed = TRUE) &&
+       regexpr("scen <- scenario_from_row(prefix, pin)", jb, fixed = TRUE) <
+         regexpr("for (tb in EXPORT)", jb, fixed = TRUE),
+     "the job exports only the tables the pinned run's metadata says it wrote, and only its cohorts' rows")
+  ok(grepl("recorded no modules or no cohorts", jb, fixed = TRUE),
+     "...and a run that recorded neither exports nothing")
   ok(grepl("with_env(env, system2(", jb, fixed = TRUE) &&
        !grepl("env = paste0(names(env)", jb, fixed = TRUE),
      "the child build inherits its settings from the process, not from a system2 env= Windows ignores")
@@ -1030,7 +1038,8 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
       }
       data.frame(RATE = 770, stringsAsFactors = FALSE)
     })
-    sc <- list(prefix = "p_", run_id = "A", state = "complete")
+    full <- list(modules = names(MODULES), cohorts = COHORT_KEYS)
+    sc <- c(list(prefix = "p_", run_id = "A", state = "complete"), full)
     ok(is.null(read_scenario_table(flip, sc, "S_SAFETY_RATES", FALSE)),
        "a table read while its snapshot is being replaced is refused, not shown under the old run")
     steady <- list(read = function(prefix, table)
@@ -1039,7 +1048,7 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
       else data.frame(RATE = 770, stringsAsFactors = FALSE))
     ok(identical(read_scenario_table(steady, sc, "S_SAFETY_RATES", FALSE)$RATE, 770),
        "...while a snapshot that is still the same run reads normally")
-    ok(is.null(read_scenario_table(steady, list(prefix = "p_", run_id = "Z", state = "complete"),
+    ok(is.null(read_scenario_table(steady, c(list(prefix = "p_", run_id = "Z", state = "complete"), full),
                                    "S_SAFETY_RATES", FALSE)),
        "...and one that is a different run from the sidebar's reads nothing")
     # A run that did not finish. Its metadata row matches - it is the newest,
@@ -1049,7 +1058,7 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
         if (identical(table, "S_RUN_METADATA"))
           data.frame(RUN_ID = "A", STATE = st, stringsAsFactors = FALSE)
         else data.frame(RATE = 120, stringsAsFactors = FALSE))
-      sc_st <- list(prefix = "p_", run_id = "A", state = st)
+      sc_st <- c(list(prefix = "p_", run_id = "A", state = st), full)
       ok(is.null(read_scenario_table(md_st, sc_st, "S_SAFETY_RATES", FALSE)),
          paste0("a run recorded as '", st, "' reads no result, though its metadata matches"))
       ok(!is.null(read_scenario_table(md_st, sc_st, "S_RUN_METADATA", FALSE)),
@@ -1060,8 +1069,8 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
     # move. Bound by id alone, the page showed the re-run's rows - first a
     # build still going, then a finished one - under the earlier build's
     # settings.
-    sc2 <- list(prefix = "p_", run_id = "A", state = "complete",
-                updated_at = "2026-09-08 12:00:00")
+    sc2 <- c(list(prefix = "p_", run_id = "A", state = "complete",
+                  updated_at = "2026-09-08 12:00:00"), full)
     md_at <- function(state, at) list(read = function(prefix, table)
       if (identical(table, "S_RUN_METADATA"))
         data.frame(RUN_ID = "A", STATE = state, UPDATED_AT = at,
@@ -1081,6 +1090,44 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
     ok(isTRUE(scenario_is_current(md_at("complete", "2026-09-09 08:30:00"),
                                   list(prefix = "p_", run_id = "A"))),
        "while a scenario that recorded no state or timestamp is bound by id, which is all it can be")
+    # What a run WROTE. A run writes only the modules it selected, for the
+    # cohorts it selected, and leaves the rest of the prefix as the previous
+    # run left it - so a completed run's prefix can hold a safety table it
+    # never wrote, a 2L partition it never built, and a released table from
+    # before its raw one was rebuilt. Each drew as this run's.
+    ok(identical(table_owner("S_SAFETY_RATES"), "safety") &&
+         identical(table_owner("S_SAFETY_RATES_RELEASE"), "release") &&
+         is.na(table_owner("S_NOTHING")),
+       "a table's owner is the module the registry says writes it")
+    part <- c(list(prefix = "p_", run_id = "A", state = "complete"),
+              list(modules = c("spine", "cohorts", "attrition", "hcru"), cohorts = "1L"))
+    kept <- list(read = function(prefix, table)
+      if (identical(table, "S_RUN_METADATA"))
+        data.frame(RUN_ID = "A", STATE = "complete", stringsAsFactors = FALSE)
+      else if (identical(table, "S_HCRU_RATES"))
+        data.frame(COHORT = c("1L", "2L"), RATE = c(120, 990), stringsAsFactors = FALSE)
+      else if (identical(table, "S_HCRU_RATES_RELEASE"))
+        data.frame(COHORT = c("1L", "2L"), RATE = c(60, 900), stringsAsFactors = FALSE)
+      else data.frame(COHORT = "1L", RATE = 120, stringsAsFactors = FALSE))
+    ok(is.null(read_scenario_table(kept, part, "S_SAFETY_RATES", FALSE)),
+       "a table whose module this run did not select is not read, whatever the prefix holds")
+    ok(!scenario_wrote(part, "S_SAFETY_RATES") && scenario_wrote(part, "S_HCRU_RATES") &&
+         scenario_wrote(part, "S_RUN_METADATA") &&
+         !scenario_wrote(utils::modifyList(part, list(modules = character(0))), "S_HCRU_RATES"),
+       "...because the run's own metadata says which modules it ran, and none means nothing")
+    h <- read_scenario_table(kept, part, "S_HCRU_RATES", TRUE)
+    ok(!is.null(h) && identical(h$COHORT, "1L") && identical(h$RATE, 120),
+       "a table this run wrote reads only the rows of the cohorts it built - the retained 2L partition stays out")
+    ok(identical(attr(h, "table_source"), "raw"),
+       "...and the raw table, because this run did not run release: the released copy is the previous run's")
+    part_rel <- utils::modifyList(part, list(modules = c(part$modules, "safety", "release")))
+    hr <- read_scenario_table(kept, part_rel, "S_HCRU_RATES", TRUE)
+    ok(identical(attr(hr, "table_source"), "release") && identical(hr$RATE, 60),
+       "...while a run that did run release reads its released copy")
+    ok(nrow(restrict_to_cohorts(data.frame(COHORT = "1L", X = 1),
+                                utils::modifyList(part, list(cohorts = character(0))))) == 0L &&
+         identical(restrict_to_cohorts(data.frame(X = 1), part)$X, 1),
+       "a run recording no cohorts owns no per-cohort rows, and a table without cohorts passes whole")
     ok(identical(scenario_from_row("p_", data.frame(
          RUN_ID = "A", LOT_RUN_ID = "L", LOT_RUN_VERSION = "20260908T110500Z",
          stringsAsFactors = FALSE))$lot_run_version, "20260908T110500Z") &&
@@ -1097,6 +1144,12 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
   ok(grepl("read_scenario_table(SRC, b, tb", app, fixed = TRUE) &&
        grepl("scenario_moved(s) || scenario_moved(b)", app, fixed = TRUE),
      "and Compare binds BOTH sides, not only the one it was already checking")
+  ok(grepl("read_scenario_table(SRC, s, tb, DASH_CFG$prefer_release)", app, fixed = TRUE) &&
+       !grepl("read_table(SRC, s$prefix, tb", app, fixed = TRUE),
+     "the cohorts offered to select on are the ones this run built, read bound")
+  ok(grepl('if (!scenario_wrote(s, tb)) "A", if (!scenario_wrote(b, tb)) "B"', app, fixed = TRUE) &&
+       grepl("has no %s of its own to compare", app, fixed = TRUE),
+     "and Compare names the side that did not run a table's module rather than comparing what an earlier run left")
   ok(grepl("scenario_is_current <- function(src, scenario) scenario_matches_now(src, scenario)",
            paste(readLines("R/sources.R", warn = FALSE), collapse = "\n"), fixed = TRUE),
      "...and the guard and the reader ask the same question, of the build and not only the id")
@@ -1270,6 +1323,113 @@ cat("\nthe LOT engine's outputs, which belong to the LOT run\n")
   ok(all(fv$VALUE[fv$VERDICT == "ok"] >= fv$EXPECT_LO[fv$VERDICT == "ok"] &
            fv$VALUE[fv$VERDICT == "ok"] <= fv$EXPECT_HI[fv$VERDICT == "ok"]),
      "and an ok is genuinely inside it")
+}
+
+cat("\nline against the next line\n")
+# The per-line panels cannot show that a line which ran out was followed the
+# next day by an allograft line, or that a regimen came back in full one line
+# later. These views pair each patient's consecutive lines and count patients
+# per pair, under the floor, with no identifier in what comes back.
+{
+  lf <- data.frame(
+    PATID = c("P1", "P1", "P1", "P2", "P2", "P3", "P3", "P4"),
+    LOT_NUM = c(1L, 2L, 3L, 1L, 2L, 1L, 3L, 1L),
+    LOT_START_TYPE = c("MED", "SCT_AUTO", "MED", "MED", "MED", "MED", "MED", "MED"),
+    LOT_BASE_END_REASON = c("SCT_AUTO", "MED_ADD", "STUDY_END", "DISCONTINUATION",
+                            "STUDY_END", "MED_ADD", "STUDY_END", "STUDY_END"),
+    LOT_BASE_MEDS = c("BORT LEN", "MELP", "LEN", "BORT LEN", "DARA", "BORT", "LEN", "BORT LEN"),
+    stringsAsFactors = FALSE)
+  pr <- lot_pairs(lf, "LOT_BASE_END_REASON", "LOT_START_TYPE")
+  ok(nrow(pr) == 3L && all(pr$TO_LOT == pr$FROM_LOT + 1L),
+     "consecutive lines of one patient are paired, one row per pair")
+  ok(!"P3" %in% pr$ID && !"P4" %in% pr$ID,
+     "...a patient whose lines skip a number is not paired across the gap, and one line pairs with nothing")
+  ok(identical(pr$FROM[pr$ID == "P1" & pr$FROM_LOT == 1L], "SCT_AUTO") &&
+       identical(pr$TO[pr$ID == "P1" & pr$FROM_LOT == 1L], "SCT_AUTO"),
+     "...with the earlier line's end reason against the later line's start type")
+  # Shuffled input pairs the same, so the order rows arrive in cannot matter.
+  pr2 <- lot_pairs(lf[c(8, 3, 5, 1, 7, 2, 6, 4), ], "LOT_BASE_END_REASON", "LOT_START_TYPE")
+  ok(identical(pr2[order(pr2$ID, pr2$FROM_LOT), c("ID", "FROM", "TO")],
+               pr[order(pr$ID, pr$FROM_LOT), c("ID", "FROM", "TO")]),
+     "...whatever order the rows arrive in")
+
+  t1 <- lot_transitions(lf, "LOT_BASE_END_REASON", "LOT_START_TYPE", min_n = 1L)
+  ok(nrow(t1) == 3L && all(t1$N_PATIENTS == 1L) && all(t1$SUPPRESSED == 0L) &&
+       !"ID" %in% names(t1) && !"PATID" %in% names(t1),
+     "counted per pair on distinct patients, with no identifier in the result")
+  t2 <- lot_transitions(lf, "LOT_BASE_END_REASON", "LOT_START_TYPE", min_n = 2L)
+  f1 <- t2[t2$FROM_LOT == 1L, ]; f2 <- t2[t2$FROM_LOT == 2L, ]
+  ok(nrow(f1) == 1L && grepl("^\\(2 other pair", f1$FROM) && identical(f1$N_PATIENTS, 2L) && f1$SUPPRESSED == 0L,
+     "pairs under the floor are folded into one row per line whose count is their sum")
+  ok(nrow(f2) == 1L && is.na(f2$N_PATIENTS) && f2$SUPPRESSED == 1L,
+     "...and that row is withheld when the sum is still under the floor")
+  ok(all(lot_transitions(lf, "LOT_BASE_END_REASON", "LOT_START_TYPE", min_n = 1L,
+                         from_lot = 1L)$FROM_LOT == 1L),
+     "the line selector keeps the pairs FROM that line")
+  # The TO-group total is published ("what opened each line"), so a single
+  # withheld cell in it would be the subtraction: 33 MED starts at line 2,
+  # 30 of them after end A, and the 3 after end B would be there to read.
+  leak <- data.frame(
+    PATID = c(sprintf("A%02d", 1:30), sprintf("B%d", 1:3), sprintf("A%02d", 1:30), sprintf("B%d", 1:3)),
+    LOT_NUM = c(rep(1L, 33), rep(2L, 33)),
+    LOT_START_TYPE = c(rep("MED", 33), rep("MED", 33)),
+    LOT_BASE_END_REASON = c(rep("A", 30), rep("B", 3), rep("STUDY_END", 33)),
+    LOT_BASE_MEDS = "X", stringsAsFactors = FALSE)
+  tl <- lot_transitions(leak, "LOT_BASE_END_REASON", "LOT_START_TYPE", min_n = 25L)
+  ok(!"A" %in% tl$FROM && nrow(tl) == 1L && identical(tl$N_PATIENTS, 33L),
+     "where one cell of a published group is withheld, the smallest open one goes with it, so the pair is not the subtraction")
+
+  sq <- lot_sequences(lf, "LOT_START_TYPE", min_n = 1L)
+  ok(identical(sq$SEQUENCE[1], "MED > MED") && identical(sq$N_PATIENTS[1], 2L) &&
+       identical(sq$N_LINES[1], 2L) && identical(sq$PCT[1], 50),
+     "a sequence is what opened each of a patient's lines, in order, counted on patients")
+  ok("MED > SCT_AUTO > MED" %in% sq$SEQUENCE && "MED" %in% sq$SEQUENCE && nrow(sq) == 3L,
+     "...one row per distinct sequence")
+  sq2 <- lot_sequences(lf, "LOT_START_TYPE", min_n = 2L)
+  ok(nrow(sq2) == 2L && identical(sq2$SEQUENCE[1], "MED > MED") &&
+       grepl("^\\(2 other sequences", sq2$SEQUENCE[2]) && identical(sq2$N_PATIENTS[2], 2L),
+     "rare sequences are folded into one row rather than listed shaded")
+  seq_leak <- data.frame(PATID = c(sprintf("A%02d", 1:30), "B1", "B2", "B3"), LOT_NUM = 1L,
+                         LOT_START_TYPE = c(rep("MED", 30), rep("SCT_AUTO", 3)),
+                         stringsAsFactors = FALSE)
+  sl <- lot_sequences(seq_leak, "LOT_START_TYPE", min_n = 25L)
+  ok(nrow(sl) == 1L && grepl("other sequences", sl$SEQUENCE) && identical(sl$N_PATIENTS, 33L),
+     "...and a single rare sequence takes the smallest common one with it, because the total is published")
+
+  v <- lot_sequence_view(lf, "end_to_start", 25)
+  ok(!v$released && !nrow(v$rows) && grepl("Withheld: fewer than 25", v$note),
+     "a view over fewer patients than the floor is withheld whole, before any cell is looked at")
+  v1 <- lot_sequence_view(lf, "end_to_start", 1, package_min_n = 1L)
+  ok(v1$released && nrow(v1$rows) == 3L && identical(v1$n, 2L) &&
+       grepl("2 patients with a line and the one after it", v1$note),
+     "...and one over enough is released, with the patients (not the pairs) in the caption")
+  ok(identical(lot_sequence_view(lf, "end_to_start", 1, from_lot = 1L, package_min_n = 1L)$n, 2L),
+     "...counting only the patients whose pairs are from the selected line")
+  ok(identical(lot_sequence_view(lf, "sequences", 1, package_min_n = 1L)$n, 4L),
+     "...and every patient with a line, for the sequences")
+  ok(!is.na(errs(lot_sequence_view(lf, "not_a_view", 1))),
+     "a view nobody registered stops rather than drawing something")
+  d_syn <- read_lot_table(SRC, SCENARIOS[[1]], "LOT_LONG_FINAL")
+  for (vw in LOT_SEQUENCE_VIEWS) {
+    r <- lot_sequence_view(d_syn, vw, 25)
+    ok(r$released && nrow(r$rows) > 0 && !any(c("PATID", "ID") %in% names(r$rows)) &&
+         "SUPPRESSED" %in% names(r$rows),
+       paste0("the '", vw, "' view over the synthetic run is released, carries the shading column and no identifier"))
+  }
+
+  # Registered and wired.
+  seq_panels <- Filter(function(p) identical(p$render, "sequence"), PANELS)
+  ok(length(seq_panels) == 3L && all(vapply(seq_panels, `[[`, character(1), "tab") == "LOT engine") &&
+       setequal(vapply(seq_panels, `[[`, character(1), "view"), LOT_SEQUENCE_VIEWS) &&
+       all(vapply(seq_panels, `[[`, character(1), "table") == "LOT_LONG_FINAL") &&
+       "sequence" %in% PANEL_RENDER,
+     "three line-to-line panels sit on the LOT engine tab, one per view, off LOT_LONG_FINAL")
+  app_seq <- paste(readLines("app.R", warn = FALSE), collapse = "\n")
+  ok(grepl("sequence = ui_sequence(p, s)", app_seq, fixed = TRUE) &&
+       grepl("d <- read_lot_table(SRC, s, p$table)", app_seq, fixed = TRUE) &&
+       grepl("lot_sequence_view(d, p$view, input$floor, from_lot", app_seq, fixed = TRUE) &&
+       grepl("if (!v$released) return(div(class = \"note\", v$note))", app_seq, fixed = TRUE),
+     "...drawn off the bound LOT read, through the view that applies the floor, and withheld with a reason")
 }
 
 cat("\nwhether two scenarios rest on the same lines\n")

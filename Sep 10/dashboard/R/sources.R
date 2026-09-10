@@ -264,6 +264,48 @@ lot_status_owner <- function(st, lot_run_id, lot_prefix = "x",
 # tables under the old run's settings. The identity is checked around EVERY
 # read instead - before, so a moved snapshot yields nothing, and after, so a
 # swap landing between the check and the read is caught too.
+# --- the scope of a run --------------------------------------------------
+#
+# A run writes only the modules it selected, for the cohorts it selected, and
+# leaves every other table and every other cohort's rows under the prefix as
+# the previous run left them: prepare_table() clears one cohort's rows of one
+# table. That is what makes a partial re-run cheap, and it means a completed
+# run's prefix can hold tables the run never wrote and rows it never built.
+# Its metadata says what it did write - MODULES and COHORTS - and these three
+# rules bind what is shown, compared and exported to that. The reader and the
+# snapshot job both apply them, so the two cannot drift.
+
+# The module that writes a table, off the package's own registry; NA for a
+# table no module declares. Release tables are the release module's.
+table_owner <- function(table, modules = MODULES) {
+  for (m in modules) if (table %in% (m$outputs %||% character(0))) return(m$key)
+  NA_character_
+}
+
+# Did THIS run write this table? Only if its metadata names the module that
+# writes it. A retained safety table under a run that omitted safety is the
+# previous run's; a release table under a run that omitted release is too. A
+# run that recorded no modules can vouch for nothing but its metadata.
+scenario_wrote <- function(scenario, table, modules = MODULES) {
+  if (identical(table, "S_RUN_METADATA")) return(TRUE)
+  ran <- trimws(as.character(scenario$modules %||% character(0)))
+  ran <- ran[nzchar(ran)]
+  own <- table_owner(table, modules)
+  !is.na(own) && length(ran) > 0 && own %in% ran
+}
+
+# The rows of a table that belong to this run: the cohorts it selected. A
+# 2L partition a previous run built sits beside a 1L this run rebuilt, and a
+# panel over "all cohorts" drew both. A table with no COHORT column is not
+# per cohort and passes whole; a run that recorded no cohorts owns no rows.
+restrict_to_cohorts <- function(d, scenario) {
+  if (is.null(d) || !"COHORT" %in% names(d)) return(d)
+  co <- trimws(as.character(scenario$cohorts %||% character(0)))
+  co <- co[nzchar(co)]
+  if (!length(co)) return(d[0, , drop = FALSE])
+  d[as.character(d$COHORT) %in% co, , drop = FALSE]
+}
+
 read_scenario_table <- function(src, scenario, table, prefer_release = TRUE) {
   # A run that did not finish has no numbers of its own. The producer writes
   # its metadata row BEFORE it replaces a table, and a failure leaves what was
@@ -273,6 +315,12 @@ read_scenario_table <- function(src, scenario, table, prefer_release = TRUE) {
   # the previous build's rate under the new run's settings.
   if (!identical(table, "S_RUN_METADATA") && !scenario_is_usable(scenario))
     return(NULL)
+  # ...and only what it wrote. A table under the prefix that this run's
+  # metadata does not claim is a previous run's, and the released copy is
+  # preferred only where this run ran the release module - otherwise the
+  # rebuilt raw table is this run's and the released one is not.
+  if (!scenario_wrote(scenario, table)) return(NULL)
+  prefer_release <- prefer_release && scenario_wrote(scenario, paste0(table, "_RELEASE"))
   same <- function() {
     m <- scenario_matches_now(src, scenario)
     # Unanswerable two ways: a scenario that recorded no run is not bound and
@@ -283,7 +331,7 @@ read_scenario_table <- function(src, scenario, table, prefer_release = TRUE) {
   if (!same()) return(NULL)
   d <- read_table(src, scenario$prefix, table, prefer_release)
   if (!same()) return(NULL)
-  d
+  restrict_to_cohorts(d, scenario)
 }
 
 # The metadata row a prefix holds RIGHT NOW, as opposed to the one read at

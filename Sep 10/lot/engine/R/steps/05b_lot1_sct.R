@@ -238,10 +238,12 @@ phase_lot1_sct <- function(con, ctx) {
         ELSE NULL
       END AS LOT1_TX_ENDDATE,
       -- LOT1_TX_ENDDATE_REASON: 1 = AUTO, 2 = ALLO, 3 = CART - whichever came
-      -- first. On an exact same-day tie AUTO wins here, then ALLO, then CART -
-      -- the opposite order from LOT2-5, which tests ALLO first. The end DATE
-      -- is the same either way; only the recorded reason differs. Open
-      -- question Q4 on the scenario workbook's Open questions sheet.
+      -- first. The AUTO arm cannot win a same-day tie: auto_in_lot1 keeps
+      -- only AUTOs strictly before the first ALLO or line-ending CAR-T, so an
+      -- AUTO on their date is gone before this compares. The one tie that can
+      -- be reached is ALLO with CART, and ALLO takes it - the same answer
+      -- 10_lot2_5_base.R gives, though its CASE lists ALLO first. The end
+      -- DATE is the same either way. Open question Q4 records the wording.
       CASE
         WHEN coalesce(sd.ENDING_AUTO_DT, sd.FIRST_ALLO_DT, sd.ENDING_CART_DT) IS NULL THEN NULL
         WHEN coalesce(sd.ENDING_AUTO_DT, cast('9999-12-31' as date))

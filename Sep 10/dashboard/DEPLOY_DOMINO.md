@@ -52,8 +52,10 @@ run, so a copy each would waste the space and suggest they differ, and the
 build is in the name because the engine can build one run id more than once.
 A build a previous scenario already exported is reused. A scenario is
 exported only from a `complete` run, pinned before its first table is read
-and checked again after its last. Domino persists Job artifacts there.
-Re-run on each data refresh.
+and checked again after its last — and only the tables that run's own
+metadata says it wrote, with only the rows of the cohorts it selected: what
+an earlier run left under the prefix stays out of the snapshot. Domino
+persists Job artifacts there. Re-run on each data refresh.
 
 Cost: one full study run per scenario. Five scenarios is five runs — start with
 two or three, and add rows as questions come up.

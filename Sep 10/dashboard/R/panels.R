@@ -12,7 +12,7 @@
 # because the page still renders and nobody can see what is missing.
 
 PANEL_RENDER <- c("table", "kpi", "bar", "km", "delta", "flow", "funnel",
-                  "check")
+                  "check", "sequence")
 
 # A panel reads either what THIS package wrote or what the LOT build wrote.
 # The difference is not cosmetic: a study scenario records which LOT run it
@@ -125,6 +125,36 @@ PANELS <- list(
   list(name = "lot_lines", tab = "LOT engine", render = "bar",
        source = "lot", label = "Lines built, by line number",
        table = "LOT_LONG_FINAL"),
+
+  # Line against the next line. The per-line panels cannot show that a
+  # line ending by running out was followed the next day by an allograft
+  # line, or that a CAR-T consolidation end has no CAR-T start behind it;
+  # these can. The `view` names which of the three line-to-line views
+  # (R/aggregate.R, lot_sequence_view) the panel draws.
+  list(name = "lot_end_to_start", tab = "LOT engine", render = "sequence",
+       source = "lot", label = "How a line ended, against how the next one opened",
+       table = "LOT_LONG_FINAL", view = "end_to_start",
+       note = paste("One row per pair of consecutive lines of one patient:",
+                    "the reason line n ended, and what opened line n+1.",
+                    "A DISCONTINUATION followed by a transplant-opened line,",
+                    "or a CART_INIT end not followed by a CART start, is a",
+                    "pair to question. Pick a line in the sidebar to see",
+                    "the pairs from that line only.")),
+  list(name = "lot_sequences", tab = "LOT engine", render = "sequence",
+       source = "lot", label = "The commonest line sequences",
+       table = "LOT_LONG_FINAL", view = "sequences",
+       note = paste("What opened each of a patient's lines, in order, as one",
+                    "sequence per patient - MED > SCT_AUTO > MED is a",
+                    "medication first line, a transplant-opened second and",
+                    "a new agent third. Rare sequences are folded into one",
+                    "row.")),
+  list(name = "lot_regimen_pairs", tab = "LOT engine", render = "sequence",
+       source = "lot", label = "Regimen of a line, against the regimen of the next",
+       table = "LOT_LONG_FINAL", view = "regimen",
+       note = paste("The agents of line n beside the agents of line n+1, for",
+                    "the pairs common enough to show. A regimen returning in",
+                    "full one line later is the fold-in and re-challenge",
+                    "rules at work, and this is where to look at them.")),
 
   list(name = "lot_start_types", tab = "LOT engine", render = "bar",
        source = "lot", label = "What opened each line", table = "LOT_LONG_FINAL",

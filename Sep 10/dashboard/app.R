@@ -99,8 +99,10 @@ server <- function(input, output, session) {
     tabs <- unique(stats::na.omit(vapply(PANELS, function(p)
       as.character(p$table), character(1))))
     lv <- list()
+    # Bound like every other read, so the choices offered are the cohorts
+    # this run built rather than every partition under the prefix.
     for (tb in intersect(tabs, DASH_TABLES$TABLE)) {
-      d <- read_table(SRC, s$prefix, tb, DASH_CFG$prefer_release)
+      d <- read_scenario_table(SRC, s, tb, DASH_CFG$prefer_release)
       if (is.null(d) || !nrow(d)) next
       for (k in intersect(GENERIC_KEYS, names(d)))
         lv[[k]] <- sort(unique(c(lv[[k]], as.character(d[[k]]))))
@@ -178,6 +180,7 @@ server <- function(input, output, session) {
       flow   = ui_table(p, s),
       check  = ui_check(p, s),
       delta  = ui_delta(p, s),
+      sequence = ui_sequence(p, s),
       ui_table(p, s))
     tagList(h4(p$label),
             if (!is.null(p$note)) div(class = "note", p$note) else NULL,
@@ -300,6 +303,26 @@ server <- function(input, output, session) {
     plotOutput(id, height = "420px")
   }
 
+  # Line against the next line, off the LOT table read bound to the run the
+  # sidebar names. Not through panel_data(): that filters the table to the
+  # selected line before anything is drawn, and a pair needs both lines. The
+  # line selector is applied afterwards, as "pairs FROM this line".
+  ui_sequence <- function(p, s) {
+    id <- paste0("seq_", p$name)
+    output[[id]] <- renderUI({
+      d <- read_lot_table(SRC, s, p$table)
+      if (is.null(d) || !nrow(d)) return(HTML(html_table(NULL)))
+      sel <- selection()[["LOT_NUM"]]
+      from_lot <- if (is.null(sel) || identical(sel, "all")) NA_integer_ else
+        suppressWarnings(as.integer(sel))
+      v <- lot_sequence_view(d, p$view, input$floor, from_lot,
+                             package_min_n = DASH_CFG$suppress_min_n)
+      if (!v$released) return(div(class = "note", v$note))
+      HTML(html_table(v$rows, caption = v$note, max_rows = DASH_CFG$max_rows))
+    })
+    uiOutput(id)
+  }
+
   # A check table: what was found, what was expected, and the verdict. The
   # number is shown beside the range rather than replaced by a tick, because a
   # verdict without its value cannot be argued with.
@@ -381,6 +404,16 @@ server <- function(input, output, session) {
         DASH_TABLES$TABLE)
       blocks <- lapply(rate_tables, function(tb) {
         sp <- table_spec(tb)
+        # A side that did not run this table's module has nothing of its own
+        # here, whatever an earlier run left under its prefix - said, rather
+        # than compared against the previous run's numbers.
+        missing <- c(if (!scenario_wrote(s, tb)) "A", if (!scenario_wrote(b, tb)) "B")
+        if (length(missing))
+          return(paste0("<h5>", html_escape(sp$label), "</h5>",
+                        '<div class="alert">', html_escape(sprintf(
+                          "%s did not run the '%s' module, so it has no %s of its own to compare.",
+                          paste(missing, collapse = " and "), table_owner(tb),
+                          tolower(sp$label))), "</div>"))
         da <- apply_keys(read_scenario_table(SRC, s, tb, DASH_CFG$prefer_release), sp, selection())
         db <- apply_keys(read_scenario_table(SRC, b, tb, DASH_CFG$prefer_release), sp, selection())
         cm <- compare_tables(da, db, sp, sp$rate)

@@ -24,6 +24,13 @@ Rscript tests/run_tests.R                          # 376 checks, no warehouse
 the only mode that needs `DATABRICKS_HOST`, `DATABRICKS_TOKEN` and
 `SPARK_CLUSTER_ID`.
 
+A partial run - one module, one cohort - writes only that, and leaves every
+other table and every other cohort's rows under the prefix as the previous
+run left them. Its `S_RUN_METADATA` row records the modules and cohorts it
+did write, and the dashboard and its snapshot job show a run only those:
+a table its metadata does not claim, or rows of a cohort it did not select,
+are an earlier run's whatever sits under the prefix.
+
 ---
 
 ## The three things that make it selectable

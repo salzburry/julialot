@@ -47,6 +47,7 @@ source(file.path(here, "jobs", "export_lib.R"))
 # and whether a LOT prefix belongs to a run - so the job files a snapshot the
 # way the app will read it.
 source(file.path(here, "R", "sources.R"))
+source(file.path(here, "R", "scenarios.R"))
 
 # Which tables to export. Read off the package's own registry rather than
 # listed, so a module added there is exported without editing this file.
@@ -138,17 +139,32 @@ export_one <- function(prefix, env) {
   if (!identical(tolower(gen$state), "complete"))
     stop("the newest run under ", prefix, " is '", gen$state, "', not ",
          "complete, so there is nothing finished to export", call. = FALSE)
-  n <- 0L; bad <- character(0)
+  # What the run WROTE, off its own row: the modules it ran and the cohorts
+  # it built. A run writes only those and leaves the rest of the prefix as
+  # the previous run left it, so a table its metadata does not claim, and
+  # rows of cohorts it did not select, are not this run's and do not enter
+  # its snapshot - whatever sits under the prefix. The same rules the app
+  # reads by (scenario_wrote, restrict_to_cohorts in R/sources.R).
+  scen <- scenario_from_row(prefix, pin)
+  if (!length(scen$modules) || !length(scen$cohorts))
+    stop("the run under ", prefix, " recorded no modules or no cohorts, so ",
+         "nothing under the prefix can be attributed to it", call. = FALSE)
+  n <- 0L; bad <- character(0); not_this_run <- character(0)
   for (tb in EXPORT) {
+    if (!scenario_wrote(scen, tb)) { not_this_run <- c(not_this_run, tb); next }
     r <- read_export(con, wrk(tb), optional = TRUE)
     if (identical(r$state, "failed")) { bad <- c(bad, paste0(tb, ": ", r$why)); next }
     if (identical(r$state, "absent")) next
     # A table that legitimately holds no rows is exported as its header, so
     # the snapshot says "none" rather than saying nothing.
-    utils::write.csv(r$data, file.path(stage, paste0(tb, ".csv")),
+    utils::write.csv(restrict_to_cohorts(r$data, scen),
+                     file.path(stage, paste0(tb, ".csv")),
                      row.names = FALSE, na = "")
     n <- n + 1L
   }
+  if (length(not_this_run))
+    message("  ", length(not_this_run), " table(s) left out as not written by ",
+            "this run (modules: ", paste(scen$modules, collapse = ", "), ")")
   if (length(bad))
     stop("could not read ", length(bad), " table(s): ",
          paste(utils::head(bad, 3), collapse = "; "), call. = FALSE)
