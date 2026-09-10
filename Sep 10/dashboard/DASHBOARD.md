@@ -83,10 +83,13 @@ sequence of line openings. A line that ran out of treatment followed by a
 transplant-opened line, a CAR-T consolidation end with no CAR-T start behind
 it, or a regimen returning in full one line later shows up here and nowhere
 else. Picking a line in the sidebar narrows the pairs to those from that
-line. Counts are distinct patients; pairs under the floor are folded into one
-"(other pairs)" row per line, and where one withheld cell could be read off a
-published total, the smallest open cell goes with it. No patient is ever
-listed: the pairs are aggregated before anything reaches the page.
+line. Counts are distinct patients. A pair under the floor is not shown on its
+own, and neither is any pair whose count could be read off a published total
+— what opened line n+1, or the pairs from a line — once the others are
+known; those are grouped into one row per line whose count is their sum. So a line with one common pair and one rare one shows a single
+grouped row, because showing the common pair beside the line's population
+would give the rare one away. No patient is ever listed: the pairs are
+aggregated before anything reaches the page.
 
 A tab whose module did not run is **reported, not hidden**. "The safety module
 did not run" is something a viewer needs to know; a silently absent tab does
@@ -259,7 +262,7 @@ DASH_SOURCE=snapshot DASH_SNAPSHOT_DIR=/mnt/artifacts/results "Sep 10/dashboard/
 variables, and what the job that refreshes the snapshot needs.
 
 ```bash
-Rscript tests/run_tests.R      # 418 checks, no Shiny and no warehouse
+Rscript tests/run_tests.R      # 431 checks, no Shiny and no warehouse
 ```
 
 Every number the app puts on a page comes from a function in `R/` that runs

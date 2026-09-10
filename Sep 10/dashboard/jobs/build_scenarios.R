@@ -135,17 +135,16 @@ export_one <- function(prefix, env) {
   if (is.null(pin))
     stop("the run wrote no S_RUN_METADATA, so this snapshot cannot be ",
          "attributed to a run", call. = FALSE)
-  gen <- run_identity(pin)
-  if (!identical(tolower(gen$state), "complete"))
-    stop("the newest run under ", prefix, " is '", gen$state, "', not ",
-         "complete, so there is nothing finished to export", call. = FALSE)
-  # What the run WROTE, off its own row: the modules it ran and the cohorts
-  # it built. A run writes only those and leaves the rest of the prefix as
-  # the previous run left it, so a table its metadata does not claim, and
-  # rows of cohorts it did not select, are not this run's and do not enter
-  # its snapshot - whatever sits under the prefix. The same rules the app
-  # reads by (scenario_wrote, restrict_to_cohorts in R/sources.R).
+  # The run as the app will read it: its identity, and what it WROTE - the
+  # modules it ran and the cohorts it built. A run writes only those and
+  # leaves the rest of the prefix as the previous run left it, so a table its
+  # metadata does not claim, and rows of cohorts it did not select, are not
+  # this run's and do not enter its snapshot - whatever sits under the prefix.
+  # The same rules the app reads by (scenario_wrote, restrict_to_cohorts).
   scen <- scenario_from_row(prefix, pin)
+  if (!scenario_is_usable(scen))
+    stop("the newest run under ", prefix, " is '", scen$state, "', not ",
+         "complete, so there is nothing finished to export", call. = FALSE)
   if (!length(scen$modules) || !length(scen$cohorts))
     stop("the run under ", prefix, " recorded no modules or no cohorts, so ",
          "nothing under the prefix can be attributed to it", call. = FALSE)
@@ -169,24 +168,22 @@ export_one <- function(prefix, env) {
     stop("could not read ", length(bad), " table(s): ",
          paste(utils::head(bad, 3), collapse = "; "), call. = FALSE)
   # Still the build that was pinned? Any rebuild moves UPDATED_AT, and a
-  # build in progress moves STATE, so a change in either means the tables
-  # above are not one build's.
-  now <- run_identity(newest_metadata_row(meta_src, prefix))
-  if (!identical(now, gen))
+  # build in progress moves STATE - the reader's own currency check.
+  if (!isTRUE(scenario_is_current(meta_src, scen))) {
+    now <- newest_metadata_row(meta_src, prefix)
     stop("the run under ", prefix, " changed while its tables were being ",
-         "read (", gen$run_id, " ", gen$state, " ", gen$updated_at, " -> ",
-         now$run_id, " ", now$state, " ", now$updated_at, "), so what was ",
-         "read is not one build's", call. = FALSE)
+         "read (", scen$run_id, " ", scen$state, " ", scen$updated_at, " -> ",
+         row_field(now, "RUN_ID"), " ", row_field(now, "STATE"), " ",
+         row_field(now, "UPDATED_AT"), "), so what was read is not one build's",
+         call. = FALSE)
+  }
   message("  exported ", n, " table(s) for ", prefix)
 
-  # The lines this scenario read: the LOT run, and the BUILD of it, off the
-  # pinned row. Filed by both, and skipped when another scenario already
-  # exported that build.
-  lot_id <- trimws(as.character(pin$LOT_RUN_ID[1] %||% ""))
-  lot_version <- if ("LOT_RUN_VERSION" %in% names(pin))
-    trimws(as.character(pin$LOT_RUN_VERSION[1] %||% "")) else ""
-  if (identical(lot_version, "NA")) lot_version <- ""
-  if (!nzchar(lot_id) || identical(lot_id, "NA") || identical(lot_id, "unproven")) {
+  # The lines this scenario read: the LOT run, and the BUILD of it. Filed by
+  # both, and skipped when another scenario already exported that build.
+  lot_id <- scen$lot_run_id
+  lot_version <- scen$lot_run_version
+  if (!nzchar(lot_id) || identical(lot_id, "unproven")) {
     message("  no LOT run recorded, so no LOT tables exported")
     return(publish(stage, d, n, prefix, ""))
   }
@@ -197,25 +194,26 @@ export_one <- function(prefix, env) {
   owner <- function() lot_prefix_owner_ok(con, lot_tbl("LOT_BUILD_STATUS"),
                                           lot_id, lot_version)
   ld <- file.path(out_dir, "lot", lot_dir_name(lot_id, lot_version))
-  if (dir.exists(ld) && length(list.files(ld, pattern = "[.]csv$"))) {
-    # A directory named by run AND build is that build, whoever exported it,
-    # and cannot be anything else. One named by run alone was written before
-    # builds were recorded; the prefix may since have been rebuilt under the
-    # same id, so it is reused only while the prefix still belongs to that
-    # run, and the run is re-exported into a build-named directory otherwise.
-    if (nzchar(lot_version) || owner()) {
-      message("  LOT run ", lot_id, if (nzchar(lot_version))
-        paste0(" build ", lot_version) else "",
-        " already exported by an earlier scenario")
-      return(publish(stage, d, n, prefix, lot_id))
-    }
+  cached <- dir.exists(ld) && length(list.files(ld, pattern = "[.]csv$")) > 0
+  reuse <- function() {
+    message("  LOT run ", lot_id, if (nzchar(lot_version))
+      paste0(" build ", lot_version) else "",
+      " already exported by an earlier scenario")
+    publish(stage, d, n, prefix, lot_id)
   }
+  # A directory named by run AND build is that build, whoever exported it,
+  # and cannot be anything else. One named by run alone was written before
+  # builds were recorded; the prefix may since have been rebuilt under the
+  # same id, so it is reused only while the prefix still belongs to that
+  # run, and the run is re-exported into a build-named directory otherwise.
+  if (cached && nzchar(lot_version)) return(reuse())
   if (!owner())
     stop("the LOT prefix does not currently belong to run ", lot_id,
          if (nzchar(lot_version)) paste0(" build ", lot_version) else "",
          " (its newest status row names another run or another build of it, ",
          "or is not complete), so its tables cannot be filed under that ",
          "run's name", call. = FALSE)
+  if (cached) return(reuse())
   lstage <- file.path(out_dir, "lot",
                       paste0(".", lot_dir_name(lot_id, lot_version), ".staging"))
   unlink(lstage, recursive = TRUE)
@@ -239,8 +237,6 @@ export_one <- function(prefix, env) {
   message("  read ", ln, " LOT table(s) for run ", lot_id)
   publish(stage, d, n, prefix, lot_id, lstage, ld)
 }
-
-`%||%` <- function(a, b) if (is.null(a)) b else a
 
 envs     <- lapply(seq_len(nrow(grid)), function(i) scenario_env(grid[i, ], set_cols))
 results  <- lapply(seq_len(nrow(grid)), function(i) run_one(grid[i, ], envs[[i]]))

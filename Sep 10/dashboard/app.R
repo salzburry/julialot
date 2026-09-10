@@ -107,6 +107,15 @@ server <- function(input, output, session) {
       for (k in intersect(GENERIC_KEYS, names(d)))
         lv[[k]] <- sort(unique(c(lv[[k]], as.character(d[[k]]))))
     }
+    # The LOT table's own lines as well. The engine builds up to its MAX_LOT
+    # and the study package describes up to its own, which is lower, so a
+    # selector drawn from the study tables alone could not name the line a
+    # LOT panel's last pair starts from.
+    lot <- read_lot_table(SRC, s, "LOT_LONG_FINAL")
+    if (!is.null(lot) && nrow(lot) && "LOT_NUM" %in% names(lot))
+      lv[["LOT_NUM"]] <- unique(c(lv[["LOT_NUM"]], as.character(lot$LOT_NUM)))
+    if (!is.null(lv[["LOT_NUM"]]))
+      lv[["LOT_NUM"]] <- lv[["LOT_NUM"]][order(suppressWarnings(as.integer(lv[["LOT_NUM"]])))]
     lv
   })
 
@@ -145,6 +154,10 @@ server <- function(input, output, session) {
     "This snapshot has been rebuilt since the page was opened, so the ",
     "settings and the LOT run named beside it belong to the previous run. ",
     "Nothing is shown until the page is reloaded."))
+  # What a renderer shows when its bound read came back empty: the notice
+  # where the snapshot has moved, an empty table otherwise.
+  nothing_or_moved <- function(s)
+    if (scenario_moved(s)) moved_alert() else HTML(html_table(NULL))
 
   # One table, read and filtered the way every panel wants it. Bound to the
   # run the sidebar describes on every read - see read_scenario_table().
@@ -201,8 +214,7 @@ server <- function(input, output, session) {
         return(HTML(html_table(settings_table(s), max_rows = DASH_CFG$max_rows)))
       if (identical(p$table, "S_RUN_METADATA")) {
         md <- read_scenario_table(SRC, s, "S_RUN_METADATA", FALSE)
-        if (is.null(md))
-          return(if (scenario_moved(s)) moved_alert() else HTML(html_table(NULL)))
+        if (is.null(md)) return(nothing_or_moved(s))
         return(HTML(html_table(drop_identifiers(md), max_rows = DASH_CFG$max_rows)))
       }
       d <- panel_data(p, s)
@@ -227,8 +239,7 @@ server <- function(input, output, session) {
     id <- paste0("kpi_", p$name)
     output[[id]] <- renderUI({
       d <- read_scenario_table(SRC, s, "S_ATTRITION", FALSE)
-      if (is.null(d))
-        return(if (scenario_moved(s)) moved_alert() else HTML(html_table(NULL)))
+      if (is.null(d)) return(nothing_or_moved(s))
       if (!nrow(d)) return(HTML(html_table(NULL)))
       last <- do.call(rbind, lapply(split(d, d$COHORT), function(x)
         x[which.max(x$STEP), , drop = FALSE]))
@@ -377,25 +388,19 @@ server <- function(input, output, session) {
       # Two reading different runs differ in the lines as well, and a delta
       # between them carries both without saying so.
       same <- same_lot_run(s, b)
-      same_id <- identical(trimws(s$lot_run_id %||% ""), trimws(b$lot_run_id %||% "")) &&
-        nzchar(trimws(s$lot_run_id %||% ""))
-      lot_html <- if (isTRUE(same))
-        sprintf('<p class="note">Both rest on LOT run <b>%s</b>, so every difference below is this package\'s.</p>',
-                html_escape(s$lot_run_id))
-      else if (isFALSE(same) && same_id)
+      lot_html <- switch(attr(same, "why"),
+        same = sprintf('<p class="note">Both rest on LOT run <b>%s</b>, so every difference below is this package\'s.</p>',
+                       html_escape(s$lot_run_id)),
         # One id, two builds: the engine keeps a run id for a session, and the
         # two scenarios read the tables it wrote at different times.
-        sprintf('<div class="alert"><b>Different LOT builds.</b> Both name LOT run %s, but A read build %s and B read build %s, so the lines themselves differ. A difference below carries both that and the settings, and the two cannot be told apart here.</div>',
-                html_escape(s$lot_run_id), html_escape(s$lot_run_version),
-                html_escape(b$lot_run_version))
-      else if (isFALSE(same))
-        sprintf('<div class="alert"><b>Different LOT runs.</b> A is %s and B is %s, so the lines themselves differ. A difference below carries both that and the settings, and the two cannot be told apart here.</div>',
-                html_escape(s$lot_run_id), html_escape(b$lot_run_id))
-      else if (same_id)
-        sprintf('<div class="alert">Both name LOT run %s, but only one of them records which build of it, so it cannot be said whether they rest on the same lines.</div>',
-                html_escape(s$lot_run_id))
-      else
-        '<div class="alert">At least one of these scenarios records no LOT run, so it cannot be said whether they rest on the same lines.</div>'
+        different_build = sprintf('<div class="alert"><b>Different LOT builds.</b> Both name LOT run %s, but A read build %s and B read build %s, so the lines themselves differ. A difference below carries both that and the settings, and the two cannot be told apart here.</div>',
+                                  html_escape(s$lot_run_id), html_escape(s$lot_run_version),
+                                  html_escape(b$lot_run_version)),
+        different_run = sprintf('<div class="alert"><b>Different LOT runs.</b> A is %s and B is %s, so the lines themselves differ. A difference below carries both that and the settings, and the two cannot be told apart here.</div>',
+                                html_escape(s$lot_run_id), html_escape(b$lot_run_id)),
+        unknown_build = sprintf('<div class="alert">Both name LOT run %s, but only one of them records which build of it, so it cannot be said whether they rest on the same lines.</div>',
+                                html_escape(s$lot_run_id)),
+        '<div class="alert">At least one of these scenarios records no LOT run, so it cannot be said whether they rest on the same lines.</div>')
       diff_html <- paste0(lot_html,
         html_table(rd[rd$DIFFERS, c("SETTING", "A", "B")],
                    caption = "Settings that differ"))
@@ -459,7 +464,11 @@ server <- function(input, output, session) {
   for (tb in PANEL_TABS()) local({
     this_tab <- tb
     output[[paste0("tab_", make.names(this_tab))]] <- renderUI({
-      ps <- Filter(function(p) identical(p$tab, this_tab), resolve_panels(scn(), src = SRC))
+      # This tab's panels only: resolving a LOT panel reads its table to
+      # see whether the run can be reached, and every tab was paying for
+      # every LOT panel on the page.
+      ps <- resolve_panels(scn(), panels = Filter(function(p) identical(p$tab, this_tab), PANELS),
+                           src = SRC)
       if (!length(ps)) return(div(class = "note", "No panel on this tab."))
       do.call(tagList, lapply(ps, render_panel))
     })

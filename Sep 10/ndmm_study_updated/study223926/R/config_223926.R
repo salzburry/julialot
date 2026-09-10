@@ -418,3 +418,30 @@ check_settings <- function(cfg) {
             "lengths. See ../OPEN_QUESTIONS.md Q21.")
   invisible(TRUE)
 }
+
+
+# --- two helpers every reader of these settings shares ----------------------
+# NA-aware: a metadata field read back as NA is "not recorded", the same as
+# one that is absent. Defined once, here, because every package that reads
+# these settings - the study, the snapshot job, the dashboard - sources this
+# file first, and four copies with two semantics had the job running the
+# dashboard's readers under the wrong one.
+`%||%` <- function(a, b) if (is.null(a) || (length(a) == 1L && is.na(a))) b else a
+
+# Run `expr` with these environment variables set in THIS process, restored
+# afterwards. The settings above are read from the environment, so this is
+# how a caller hands a run its settings - a test resolving a configuration,
+# or the snapshot job starting a child build, which inherits them on every
+# platform where system2(env = ...) is a command-line prefix Windows ignores.
+with_env <- function(env, expr) {
+  env <- env[nzchar(names(env) %||% character(0))]
+  if (!length(env)) return(force(expr))
+  old <- Sys.getenv(names(env), unset = NA_character_, names = TRUE)
+  do.call(Sys.setenv, as.list(env))
+  on.exit({
+    for (k in names(old))
+      if (is.na(old[[k]])) Sys.unsetenv(k) else
+        do.call(Sys.setenv, stats::setNames(list(old[[k]]), k))
+  }, add = TRUE)
+  force(expr)
+}

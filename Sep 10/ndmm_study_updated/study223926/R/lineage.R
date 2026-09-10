@@ -106,10 +106,9 @@ check_lot_lineage <- function(con, cfg) {
 # accepted build - another run, a build in progress, or the same run built
 # again - stops the run here, and the failure handler records it `failed`
 # under its own id instead of `complete`.
-check_lot_lineage_unchanged <- function(con, cfg, accepted) {
+check_lot_lineage_unchanged <- function(con, accepted) {
   id <- trimws(as.character(accepted$RUN_ID %||% ""))
-  if (is.null(accepted) || !nzchar(id) || identical(id, "unproven"))
-    return(invisible(TRUE))
+  if (!nzchar(id) || identical(id, "unproven")) return(invisible(TRUE))
   st <- lot_tbl("LOT_BUILD_STATUS")
   now <- tryCatch(
     db_q(con, sprintf("SELECT RUN_ID, STATE, UPDATED_AT FROM %s
@@ -120,12 +119,9 @@ check_lot_lineage_unchanged <- function(con, cfg, accepted) {
          "so it cannot be shown that LOT run ", id, " was still the build ",
          "under the prefix while this run read it. The run is recorded as ",
          "failed.", call. = FALSE)
-  was_v <- run_version_stamp(accepted$UPDATED_AT %||% "")
+  was_v <- lot_run_version(accepted)
   now_v <- run_version_stamp(now$UPDATED_AT[1])
-  same <- identical(trimws(as.character(now$RUN_ID[1])), id) &&
-    identical(tolower(trimws(as.character(now$STATE[1]))), "complete") &&
-    identical(now_v, was_v)
-  if (!same)
+  if (!lot_build_owns(now, id, was_v))
     stop("LINEAGE ERROR: the LOT prefix was rebuilt while this run was reading ",
          "it. Accepted LOT run ", id, " build ", was_v, "; the prefix now holds ",
          "run ", now$RUN_ID[1], " (", now$STATE[1], ") build ", now_v, ". The ",
@@ -136,7 +132,13 @@ check_lot_lineage_unchanged <- function(con, cfg, accepted) {
   invisible(TRUE)
 }
 
-`%||%` <- function(a, b) if (is.null(a) || (length(a) == 1L && is.na(a))) b else a
+# Which BUILD of the LOT run a study run rests on - see run_version_stamp().
+# LOT_RUN_ID alone names a run the engine may have built more than once; the
+# version is the stamp of the `complete` status row this run vouched for, and
+# the dashboard and its snapshot job refuse LOT tables under that id whose
+# newest status row carries any other stamp.
+lot_run_version <- function(lot_run)
+  run_version_stamp(lot_run$UPDATED_AT %||% "")
 
 # What the cohort build actually applied.
 #

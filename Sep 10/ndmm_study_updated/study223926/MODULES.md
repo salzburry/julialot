@@ -17,7 +17,7 @@ exists and sparklyr attaches to it, so there is no DSN and no password:
 Rscript build.R                                    # on the cluster
 DRY_RUN=TRUE Rscript build.R                       # print the plan, touch nothing
 MODULES=safety COHORTS=2L Rscript build.R          # one module, one cohort
-Rscript tests/run_tests.R                          # 376 checks, no warehouse
+Rscript tests/run_tests.R                          # 377 checks, no warehouse
 ```
 
 `SPARK_METHOD=databricks_connect` drives a named cluster from outside and is
@@ -95,7 +95,7 @@ lands on the run's own metadata row where no reader can miss it.
 | `R/db_utils_223926.R` | sparklyr connection, logging, table naming, the step runner. |
 | `R/run_223926.R` | Resolves the plan, walks the modules, writes the run metadata. |
 | `R/modules/*.R` | One file per module. Nothing else defines a clinical rule. |
-| `tests/run_tests.R` | 376 checks that need no warehouse. The last sections RUN every module for every cohort, parse every statement they emit, and **execute** them against fixtures. |
+| `tests/run_tests.R` | 377 checks that need no warehouse. The last sections RUN every module for every cohort, parse every statement they emit, and **execute** them against fixtures. |
 | `tests/emit_sql.R` | The harness. Stubs only what touches Spark, so a module's R and its SQL are both exercised without a cluster. |
 | `tests/parse_sql.py` | Parses each captured statement in the Spark dialect (sqlglot). |
 | `tests/run_duckdb.py` | **Executes** them: transpiles to DuckDB, runs against `tests/fixtures/cdm`, checks 58 golden numbers, then runs the whole script again and checks nothing doubled. |
@@ -122,7 +122,7 @@ lands on the run's own metadata row where no reader can miss it.
 
 **Six of the thirteen run today.** `MODULES=spine,cohorts,attrition,periods,demographics,tte`
 builds all four cohorts, every window, the demographics and the time-to-event
-outcomes, and needs no code list this repo does not already have. The other six
+outcomes, and needs no code list this repo does not already have. The other seven
 are blocked on Annexes 2 and 3 (`../CODELISTS.md`), and the preflight says so
 by name **before** the connection is opened rather than after the expensive
 steps.
@@ -442,7 +442,7 @@ Two things are deliberately left as they are: `MEDIAN_LOS` uses
 ## What this is not
 
 It has never been run against the warehouse — no code lists, and several
-settings still want the study team's answer (`../OPEN_QUESTIONS.md`). The 376
+settings still want the study team's answer (`../OPEN_QUESTIONS.md`). The 377
 tests check the selection logic, the boundary conventions and the counting
 rules; run every module for every cohort against recorders, so that each
 module's R reaches the end of the function and every statement it emits parses

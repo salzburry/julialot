@@ -38,15 +38,16 @@ ok <- function(cond, what) {
 }
 errs <- function(expr) tryCatch({ expr; NA_character_ },
                                 error = function(e) conditionMessage(e))
-with_env <- function(vars, expr) {
-  old <- Sys.getenv(names(vars), unset = NA)
-  do.call(Sys.setenv, as.list(vars))
-  on.exit({
-    for (n in names(vars))
-      if (is.na(old[[n]])) Sys.unsetenv(n) else do.call(Sys.setenv,
-                                                        setNames(list(old[[n]]), n))
-  }, add = TRUE)
-  force(expr)
+# with_env() is the package's own (R/config_223926.R).
+# A function with its warehouse calls answered by `env`: the function itself
+# and the helpers it reaches the warehouse through, each re-homed in `env` so
+# their db_q/db_exec resolve to the stubs. A stub placed on the function alone
+# does not reach describe_columns(), and the real db_q then sits through four
+# retries for a package that is not installed.
+stubbed <- function(fn, env, also = c("describe_columns", "ensure_columns", "ensure_table")) {
+  for (nm in also) { g <- get(nm); environment(g) <- env; assign(nm, g, envir = env) }
+  environment(fn) <- env
+  fn
 }
 base_env <- c(INPUT_COHORT_TABLE = "ndmm_NDMM_COHORT", OBJECT_PREFIX = "s223926_")
 cfg0 <- function(extra = c()) with_env(c(base_env, extra), cfg_defaults())
@@ -930,7 +931,7 @@ cat("\nregressions from the adversarial review\n")
       env$db_q <- function(con, sql)
         data.frame(col_name = found, data_type = types,
                    stringsAsFactors = FALSE)
-      f <- ensure_table; environment(f) <- env
+      f <- stubbed(ensure_table, env)
       f(NULL, "t", "PATID string, COHORT string, N_AT_RISK int")
     }))
   }
@@ -954,7 +955,7 @@ cat("\nregressions from the adversarial review\n")
       env$db_q <- function(con, sql)
         data.frame(col_name = cols, data_type = types,
                    stringsAsFactors = FALSE)
-      f <- ensure_table; environment(f) <- env
+      f <- stubbed(ensure_table, env)
       f(NULL, "t", "PATID string, COHORT string, N_AT_RISK int")
     }))
   ok(is.na(ens_t(c("PATID", "COHORT", "N_AT_RISK"),
@@ -991,7 +992,7 @@ cat("\nregressions from the adversarial review\n")
     env$db_q <- function(con, sql)
       data.frame(col_name = c("PATID", "COHORT", "N_AT_RISK"),
                  stringsAsFactors = FALSE)
-    f <- ensure_table; environment(f) <- env
+    f <- stubbed(ensure_table, env)
     f(NULL, "t", "PATID string, COHORT string, N_AT_RISK int")
   }))
   ok(!is.na(e_notype) && grepl("without a type column", e_notype),
@@ -1001,7 +1002,7 @@ cat("\nregressions from the adversarial review\n")
     env <- new.env(parent = environment(ensure_table))
     env$db_exec <- function(con, sql) invisible(0L)
     env$db_q <- function(con, sql) stop("describe blew up")
-    f <- ensure_table; environment(f) <- env
+    f <- stubbed(ensure_table, env)
     f(NULL, "t", "PATID string")
   }))
   ok(!is.na(e_read) && grepl("could not read the schema", e_read),
@@ -1029,7 +1030,7 @@ cat("\nregressions from the adversarial review\n")
     env <- new.env(parent = environment(check_cohort_table))
     env$db_q <- function(con, sql)
       data.frame(col_name = COHORT_TABLE_REQUIRED, stringsAsFactors = FALSE)
-    f <- check_cohort_table; environment(f) <- env
+    f <- stubbed(check_cohort_table, env)
     f(NULL, cfg0(c(SEC2L_INPUT_IS_WIDE = "TRUE")))
   }))
   ok(!is.na(e_wide) && grepl("NO_OTHER_CANCER_PRE_LOT1", e_wide),
@@ -1089,7 +1090,7 @@ cat("\nregressions from the adversarial review\n")
     env <- new.env(parent = environment(check_cohort_table))
     env$db_q <- function(con, sql)
       data.frame(col_name = flags_only, stringsAsFactors = FALSE)
-    f <- check_cohort_table; environment(f) <- env
+    f <- stubbed(check_cohort_table, env)
     f(NULL, cfg0())
   }))
   ok(!is.na(e_thin) && grepl("INDEX_DATE", e_thin),
@@ -1099,7 +1100,7 @@ cat("\nregressions from the adversarial review\n")
     env$db_q <- function(con, sql)
       data.frame(col_name = c(COHORT_TABLE_REQUIRED, "EXTRA"),
                  stringsAsFactors = FALSE)
-    f <- check_cohort_table; environment(f) <- env
+    f <- stubbed(check_cohort_table, env)
     f(NULL, cfg0())
   }))
   ok(is.na(e_full), "and a table carrying every required column is accepted")
@@ -1125,7 +1126,7 @@ cat("\nregressions from the adversarial review\n")
   chk <- function(...) errs(with_env(base_env, {
     env <- new.env(parent = environment(check_cohort_table))
     env$db_q <- cohort_stub(...)
-    f <- check_cohort_table; environment(f) <- env
+    f <- stubbed(check_cohort_table, env)
     f(NULL, cfg0())
   }))
   ok(is.na(chk()), "a well-formed cohort table passes the value checks too")
@@ -1748,13 +1749,9 @@ local({
   # system2(env = ...) prefixes them onto the command line, and on Windows that
   # form exited 5 with no output while the same command with an inherited
   # environment reached the dry run.
-  keys <- c("DRY_RUN", "INPUT_COHORT_TABLE", "OBJECT_PREFIX")
-  old_env <- Sys.getenv(keys, unset = NA)
-  Sys.setenv(DRY_RUN = "TRUE", INPUT_COHORT_TABLE = "t", OBJECT_PREFIX = "s223926_")
-  on.exit(for (k in keys) if (is.na(old_env[[k]])) Sys.unsetenv(k) else
-            do.call(Sys.setenv, stats::setNames(list(old_env[[k]]), k)), add = TRUE)
-  out <- suppressWarnings(system2(rs, shQuote(file.path(here, "build.R")),
-    stdout = TRUE, stderr = TRUE))
+  out <- with_env(c(DRY_RUN = "TRUE", INPUT_COHORT_TABLE = "t", OBJECT_PREFIX = "s223926_"),
+    suppressWarnings(system2(rs, shQuote(file.path(here, "build.R")),
+      stdout = TRUE, stderr = TRUE)))
   code <- attr(out, "status")
   ok(is.null(code) || identical(as.integer(code), 0L),
      paste0("build.R resolves and prints a plan in a fresh R process",
@@ -1812,11 +1809,12 @@ step_sql <- function(r, tag) {
               " [", paste(met_set(m), collapse = " "), "]"))
   }
   msrc <- paste(readLines("R/modules/01_cohorts.R", warn = FALSE), collapse = "\n")
-  ok(grepl("membership_predicate(cohort),", msrc, fixed = TRUE) &&
-       grepl("HERE_PRED[intersect(ks, names(HERE_PRED))]", msrc, fixed = TRUE) &&
-       grepl("FLAG_PRED[intersect(ks, names(FLAG_PRED))]", msrc, fixed = TRUE) &&
-       !grepl("in_ce <- ", msrc, fixed = TRUE),
-     "...because membership is derived from the two maps the funnel reads, not written by hand")
+  ok(identical(criterion_predicates("I4_ce_pre"), "MET_N2 = 1") &&
+       identical(criterion_predicates("X2_other_cancer"), "MET_X2 = 1") &&
+       is.null(criterion_predicates("I1_mm_dx")) &&
+       identical(membership_predicate(COHORTS[["1L"]]),
+                 and_predicates(unlist(lapply(COHORTS[["1L"]]$criteria, criterion_predicates)))),
+     "...because membership is the funnel's own per-criterion predicate list, composed once")
   ok(identical(CRITERION_SOURCE[["X4_belantamab"]], "cohort"),
      "the pre-1L belantamab flag is read off the cohort table, like the other exclusions")
 
@@ -1926,6 +1924,12 @@ cat("\n-- a run's version is its build, not its id --\n")
                "20260901T000000Z") &&
        identical(lot_run_version(list(RUN_ID = "unproven")), ""),
      "the LOT build's version is its status row's stamp, and an unproven lineage has none")
+  st_row <- data.frame(RUN_ID = "r1", STATE = "complete", UPDATED_AT = "2026-09-01 00:00:00",
+                       stringsAsFactors = FALSE)
+  ok(lot_build_owns(st_row, "r1", "20260901T000000Z") && lot_build_owns(st_row, "r1", "") &&
+       !lot_build_owns(st_row, "r1", "20260902T000000Z") && !lot_build_owns(st_row, "r2") &&
+       !lot_build_owns(transform(st_row, STATE = "started"), "r1") && !lot_build_owns(NULL, "r1"),
+     "one rule says whether a status row is the accepted build: this id, complete, this stamp where recorded")
 
   # The metadata write: names its columns, carries the version, and upgrades
   # an older table rather than inserting into it positionally.
@@ -1939,8 +1943,7 @@ cat("\n-- a run's version is its build, not its id --\n")
       stringsAsFactors = FALSE)
     env$log_msg <- function(...) invisible(NULL)
     # The column upgrade reads db_q through its own environment.
-    ec <- ensure_columns; environment(ec) <- env; env$ensure_columns <- ec
-    f <- write_run_metadata; environment(f) <- env
+    f <- stubbed(write_run_metadata, env)
     with_env(base_env, f(NULL, cfg0(), COHORTS["1L"], MODULES["spine"],
                          list(RUN_ID = "r1", UPDATED_AT = "2026-09-01 00:00:00"),
                          character(0), "complete", run_id = "rid1"))
@@ -1971,7 +1974,7 @@ cat("\n-- a run's version is its build, not its id --\n")
       col_name = names(RUN_METADATA_COLS),
       data_type = ifelse(names(RUN_METADATA_COLS) == "STATE", "int",
                          unname(RUN_METADATA_COLS)), stringsAsFactors = FALSE)
-    f <- ensure_columns; environment(f) <- env
+    f <- stubbed(ensure_columns, env)
     f(NULL, "wk.t", RUN_METADATA_COLS)
   }))
   ok(!is.na(e_typ) && grepl("STATE is INT where this package writes STRING", e_typ),
@@ -1986,7 +1989,8 @@ cat("\n-- a predicate with an OR in it --\n")
 {
   msrc <- paste(readLines("R/modules/01_cohorts.R", warn = FALSE), collapse = "\n")
   ok(grepl('paste0(" AND ", and_predicates(cum))', msrc, fixed = TRUE) &&
-       grepl("and_predicates(c(unlist(HERE_PRED", msrc, fixed = TRUE),
+       grepl("cum <- c(cum, preds)", msrc, fixed = TRUE) &&
+       grepl("and_predicates(unlist(lapply(cohort$criteria, criterion_predicates)))", msrc, fixed = TRUE),
      "membership and the funnel compose their predicates through one helper")
   ok(identical(and_predicates(c("MET_N2 = 1 OR MET_I5 = 1", "MET_X1 = 1")),
                "(MET_N2 = 1 OR MET_I5 = 1) AND (MET_X1 = 1)"),
@@ -2087,7 +2091,8 @@ cat("\n-- the controller re-checks the LOT build before recording complete --\n"
     env$resolve_modules <- function(cfg) list()
     env$describe_plan <- function(cfg, cohorts, mods) character(0)
     for (nm in c("check_lot_lineage", "check_lot_lineage_unchanged",
-                 "read_upstream_settings", "write_run_metadata", "ensure_columns")) {
+                 "read_upstream_settings", "write_run_metadata", "ensure_columns",
+                 "describe_columns")) {
       g <- get(nm); environment(g) <- env; env[[nm]] <- g
     }
     f <- build_223926; environment(f) <- env
@@ -2121,10 +2126,10 @@ cat("\n-- the controller re-checks the LOT build before recording complete --\n"
   ok(!is.na(other$err) && grepl("now holds run lot2", other$err),
      "and another run altogether")
   rsrc <- paste(readLines("R/run_223926.R", warn = FALSE), collapse = "\n")
-  ok(regexpr("check_lot_lineage_unchanged(con, cfg, lot_run)", rsrc, fixed = TRUE) <
+  ok(regexpr("check_lot_lineage_unchanged(con, lot_run)", rsrc, fixed = TRUE) <
        regexpr('deviations, "complete"', rsrc, fixed = TRUE) &&
        regexpr("for (m in mods) {", rsrc, fixed = TRUE) <
-       regexpr("check_lot_lineage_unchanged(con, cfg, lot_run)", rsrc, fixed = TRUE),
+       regexpr("check_lot_lineage_unchanged(con, lot_run)", rsrc, fixed = TRUE),
      "the re-check sits after the last module and before the complete row")
 }
 

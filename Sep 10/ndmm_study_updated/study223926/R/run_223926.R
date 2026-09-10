@@ -147,7 +147,7 @@ build_223926 <- function(here) {
 
   # Still the build that was accepted? Every module read the LOT tables over
   # the minutes above; only now can the run vouch that they were one build's.
-  check_lot_lineage_unchanged(con, cfg, lot_run)
+  check_lot_lineage_unchanged(con, lot_run)
   write_run_metadata(con, cfg, cohorts, mods, lot_run, deviations, "complete",
                      run_id = rid, upstream = upstream)
   .run_state$ok <- TRUE
@@ -177,14 +177,6 @@ RUN_METADATA_COLS <- c(
   STUDY_START = "string", STUDY_END = "string",
   CONTRACT_DEVIATIONS = "string", OPEN_QUESTION_READINGS = "string",
   CODELISTS = "string")
-
-# Which BUILD of the LOT run these numbers rest on - see run_version_stamp().
-# LOT_RUN_ID alone names a run the engine may have built more than once; the
-# version is the stamp of the `complete` status row this run vouched for, and
-# the dashboard and its snapshot job refuse LOT tables under that id whose
-# newest status row carries any other stamp.
-lot_run_version <- function(lot_run)
-  run_version_stamp(lot_run$UPDATED_AT %||% "")
 
 write_run_metadata <- function(con, cfg, cohorts, mods, lot_run, deviations,
                                state, run_id = NULL, upstream = NULL) {

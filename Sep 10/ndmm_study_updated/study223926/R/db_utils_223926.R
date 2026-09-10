@@ -154,6 +154,40 @@ run_version_stamp <- function(x) {
   gsub("[^A-Za-z0-9]", "", s)
 }
 
+# One DESCRIBE, read the way every caller needs it: the column names in
+# order, upper-cased, with the partition and metadata blocks Spark appends
+# after a blank or `#` row cut off, and the normalised types beside them
+# where the response carried a type column (`typed`). Three callers parsed
+# the response three ways; the raw column names travel along for a message.
+describe_columns <- function(con, name) {
+  d <- db_q(con, sprintf("DESCRIBE %s", name))
+  cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
+  tn <- intersect(c("data_type", "DATA_TYPE", "type", "TYPE"), names(d))
+  col <- if (length(cn)) toupper(trimws(as.character(d[[cn[1]]]))) else character(0)
+  keep <- nzchar(col) & !startsWith(col, "#")
+  if (any(!keep)) keep <- keep & cumsum(!keep) == 0
+  out <- data.frame(
+    COL = col[keep],
+    TYPE = if (length(tn)) .sql_type_norm(as.character(d[[tn[1]]])[keep])
+           else rep(NA_character_, sum(keep)),
+    stringsAsFactors = FALSE)
+  attr(out, "typed") <- length(tn) > 0L
+  attr(out, "raw_names") <- names(d)
+  out
+}
+
+# Whether one LOT status row is the build a reader accepted: this run id,
+# complete, and - where the reader recorded which build - this stamp. The
+# dashboard's readers, its snapshot job and this package's own end-of-run
+# re-check all decide it here, beside the stamp they compare.
+lot_build_owns <- function(row, run_id, version = "") {
+  id <- trimws(as.character(run_id %||% "")); v <- trimws(as.character(version %||% ""))
+  if (is.null(row) || !nrow(row) || !nzchar(id)) return(FALSE)
+  identical(trimws(as.character(row$RUN_ID[1])), id) &&
+    identical(tolower(trimws(as.character(row$STATE[1]))), "complete") &&
+    (!nzchar(v) || identical(run_version_stamp(row$UPDATED_AT[1] %||% ""), v))
+}
+
 # Columns a table gained after it was first created, added in place.
 #
 # S_RUN_METADATA is CREATE IF NOT EXISTS, so a prefix that was first written
@@ -163,26 +197,17 @@ run_version_stamp <- function(x) {
 # DESCRIBE has to succeed, because the named insert that follows needs every
 # column to exist.
 ensure_columns <- function(con, name, cols) {
-  d <- db_q(con, sprintf("DESCRIBE %s", name))
-  cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
-  tn <- intersect(c("data_type", "DATA_TYPE", "type", "TYPE"), names(d))
-  have <- if (length(cn)) toupper(trimws(as.character(d[[cn[1]]]))) else
-    character(0)
-  # DESCRIBE appends partition/metadata blocks after a blank or `#` row.
-  keep <- nzchar(have) & !startsWith(have, "#")
-  if (any(!keep)) keep <- keep & cumsum(!keep) == 0
-  have <- have[keep]
-  if (!length(have))
+  d <- describe_columns(con, name)
+  want <- toupper(names(cols))
+  if (!nrow(d))
     stop("SCHEMA ERROR: could not establish the columns of ", name,
          ", so a column cannot be added to it.", call. = FALSE)
   # An existing column keeps its type - and a type this writer cannot insert
   # into is found HERE, before the DELETE that precedes the insert, rather
   # than by the insert failing after the row is already gone.
-  if (length(tn)) {
-    have_typ <- .sql_type_norm(as.character(d[[tn[1]]])[keep])
-    want <- toupper(names(cols))
-    for (m in intersect(have, want)) {
-      ht <- have_typ[match(m, have)]
+  if (isTRUE(attr(d, "typed")))
+    for (m in intersect(d$COL, want)) {
+      ht <- d$TYPE[match(m, d$COL)]
       wt <- .sql_type_norm(cols[[match(m, want)]])
       if (!identical(ht, wt))
         stop("SCHEMA ERROR: ", name, ".", m, " is ", ht, " where this package ",
@@ -191,11 +216,10 @@ ensure_columns <- function(con, name, cols) {
              "output prefix is reused across package versions: run against a ",
              "fresh OBJECT_PREFIX, or drop the table.", call. = FALSE)
     }
-  }
-  missing <- setdiff(want, have)
+  missing <- setdiff(want, d$COL)
   for (m in missing) {
     db_exec(con, sprintf("ALTER TABLE %s ADD COLUMNS (%s %s)", name, m,
-                         cols[[match(m, toupper(names(cols)))]]))
+                         cols[[match(m, want)]]))
     log_msg("  schema evolution on ", name, ": added ", m)
   }
   invisible(missing)
@@ -474,31 +498,24 @@ ensure_table <- function(con, name, schema_sql) {
   # DESCRIBE that errors or comes back empty means the schema could not be
   # established, and that is a stop - not a pass. Treating it as "nothing to
   # compare" let an unverified table reach the DELETE below.
-  d <- tryCatch(db_q(con, sprintf("DESCRIBE %s", name)),
+  d <- tryCatch(describe_columns(con, name),
                 error = function(e)
                   stop("SCHEMA ERROR: could not read the schema of ", name,
                        " - ", conditionMessage(e),
                        "\nIt is not safe to clear rows from a table whose ",
                        "shape has not been established.", call. = FALSE))
-  cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
-  tn <- intersect(c("data_type", "DATA_TYPE", "type", "TYPE"), names(d))
-  have_col <- if (length(cn)) toupper(trimws(as.character(d[[cn[1]]]))) else
-    character(0)
-  # DESCRIBE appends partition/metadata blocks after a blank or `#` row.
-  keep <- nzchar(have_col) & !startsWith(have_col, "#")
-  if (any(!keep)) keep <- keep & cumsum(!keep) == 0
-  have_col <- have_col[keep]
+  have_col <- d$COL
   # A DESCRIBE without a type column is not a licence to compare names only.
   # Every warehouse this runs against returns data_type; its absence means the
   # response is not the one this check was written for, and the safe reading of
   # an unrecognised response is to stop rather than to clear rows on the
   # strength of half a comparison.
-  if (!length(tn))
+  if (!isTRUE(attr(d, "typed")))
     stop("SCHEMA ERROR: the schema of ", name, " came back without a type ",
-         "column (found: ", paste(names(d), collapse = ", "),
+         "column (found: ", paste(attr(d, "raw_names"), collapse = ", "),
          "). Column names alone cannot establish that writing into it is ",
          "safe, so its rows are not cleared.", call. = FALSE)
-  have_typ <- .sql_type_norm(as.character(d[[tn[1]]])[keep])
+  have_typ <- d$TYPE
 
   if (!length(have_col))
     stop("SCHEMA ERROR: ", name, " reported no columns after being created. ",
