@@ -857,6 +857,14 @@ source(file.path(here, "jobs", "export_lib.R"))
      "...files LOT tables by build and binds the prefix to that build")
   ok(grepl("if (nzchar(lot_version) || owner())", jb, fixed = TRUE),
      "...and reuses a run-only directory only while the prefix still belongs to the run")
+  ok(grepl("scen <- scenario_from_row(prefix, pin)", jb, fixed = TRUE) &&
+       grepl("if (!scenario_wrote(scen, tb)) { not_this_run", jb, fixed = TRUE) &&
+       grepl("restrict_to_cohorts(r$data, scen)", jb, fixed = TRUE) &&
+       regexpr("scen <- scenario_from_row(prefix, pin)", jb, fixed = TRUE) <
+         regexpr("for (tb in EXPORT)", jb, fixed = TRUE),
+     "the job exports only the tables the pinned run's metadata says it wrote, and only its cohorts' rows")
+  ok(grepl("recorded no modules or no cohorts", jb, fixed = TRUE),
+     "...and a run that recorded neither exports nothing")
   ok(grepl("with_env(env, system2(", jb, fixed = TRUE) &&
        !grepl("env = paste0(names(env)", jb, fixed = TRUE),
      "the child build inherits its settings from the process, not from a system2 env= Windows ignores")
@@ -1030,7 +1038,8 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
       }
       data.frame(RATE = 770, stringsAsFactors = FALSE)
     })
-    sc <- list(prefix = "p_", run_id = "A", state = "complete")
+    full <- list(modules = names(MODULES), cohorts = COHORT_KEYS)
+    sc <- c(list(prefix = "p_", run_id = "A", state = "complete"), full)
     ok(is.null(read_scenario_table(flip, sc, "S_SAFETY_RATES", FALSE)),
        "a table read while its snapshot is being replaced is refused, not shown under the old run")
     steady <- list(read = function(prefix, table)
@@ -1039,7 +1048,7 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
       else data.frame(RATE = 770, stringsAsFactors = FALSE))
     ok(identical(read_scenario_table(steady, sc, "S_SAFETY_RATES", FALSE)$RATE, 770),
        "...while a snapshot that is still the same run reads normally")
-    ok(is.null(read_scenario_table(steady, list(prefix = "p_", run_id = "Z", state = "complete"),
+    ok(is.null(read_scenario_table(steady, c(list(prefix = "p_", run_id = "Z", state = "complete"), full),
                                    "S_SAFETY_RATES", FALSE)),
        "...and one that is a different run from the sidebar's reads nothing")
     # A run that did not finish. Its metadata row matches - it is the newest,
@@ -1049,7 +1058,7 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
         if (identical(table, "S_RUN_METADATA"))
           data.frame(RUN_ID = "A", STATE = st, stringsAsFactors = FALSE)
         else data.frame(RATE = 120, stringsAsFactors = FALSE))
-      sc_st <- list(prefix = "p_", run_id = "A", state = st)
+      sc_st <- c(list(prefix = "p_", run_id = "A", state = st), full)
       ok(is.null(read_scenario_table(md_st, sc_st, "S_SAFETY_RATES", FALSE)),
          paste0("a run recorded as '", st, "' reads no result, though its metadata matches"))
       ok(!is.null(read_scenario_table(md_st, sc_st, "S_RUN_METADATA", FALSE)),
@@ -1060,8 +1069,8 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
     # move. Bound by id alone, the page showed the re-run's rows - first a
     # build still going, then a finished one - under the earlier build's
     # settings.
-    sc2 <- list(prefix = "p_", run_id = "A", state = "complete",
-                updated_at = "2026-09-08 12:00:00")
+    sc2 <- c(list(prefix = "p_", run_id = "A", state = "complete",
+                  updated_at = "2026-09-08 12:00:00"), full)
     md_at <- function(state, at) list(read = function(prefix, table)
       if (identical(table, "S_RUN_METADATA"))
         data.frame(RUN_ID = "A", STATE = state, UPDATED_AT = at,
@@ -1081,6 +1090,44 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
     ok(isTRUE(scenario_is_current(md_at("complete", "2026-09-09 08:30:00"),
                                   list(prefix = "p_", run_id = "A"))),
        "while a scenario that recorded no state or timestamp is bound by id, which is all it can be")
+    # What a run WROTE. A run writes only the modules it selected, for the
+    # cohorts it selected, and leaves the rest of the prefix as the previous
+    # run left it - so a completed run's prefix can hold a safety table it
+    # never wrote, a 2L partition it never built, and a released table from
+    # before its raw one was rebuilt. Each drew as this run's.
+    ok(identical(table_owner("S_SAFETY_RATES"), "safety") &&
+         identical(table_owner("S_SAFETY_RATES_RELEASE"), "release") &&
+         is.na(table_owner("S_NOTHING")),
+       "a table's owner is the module the registry says writes it")
+    part <- c(list(prefix = "p_", run_id = "A", state = "complete"),
+              list(modules = c("spine", "cohorts", "attrition", "hcru"), cohorts = "1L"))
+    kept <- list(read = function(prefix, table)
+      if (identical(table, "S_RUN_METADATA"))
+        data.frame(RUN_ID = "A", STATE = "complete", stringsAsFactors = FALSE)
+      else if (identical(table, "S_HCRU_RATES"))
+        data.frame(COHORT = c("1L", "2L"), RATE = c(120, 990), stringsAsFactors = FALSE)
+      else if (identical(table, "S_HCRU_RATES_RELEASE"))
+        data.frame(COHORT = c("1L", "2L"), RATE = c(60, 900), stringsAsFactors = FALSE)
+      else data.frame(COHORT = "1L", RATE = 120, stringsAsFactors = FALSE))
+    ok(is.null(read_scenario_table(kept, part, "S_SAFETY_RATES", FALSE)),
+       "a table whose module this run did not select is not read, whatever the prefix holds")
+    ok(!scenario_wrote(part, "S_SAFETY_RATES") && scenario_wrote(part, "S_HCRU_RATES") &&
+         scenario_wrote(part, "S_RUN_METADATA") &&
+         !scenario_wrote(utils::modifyList(part, list(modules = character(0))), "S_HCRU_RATES"),
+       "...because the run's own metadata says which modules it ran, and none means nothing")
+    h <- read_scenario_table(kept, part, "S_HCRU_RATES", TRUE)
+    ok(!is.null(h) && identical(h$COHORT, "1L") && identical(h$RATE, 120),
+       "a table this run wrote reads only the rows of the cohorts it built - the retained 2L partition stays out")
+    ok(identical(attr(h, "table_source"), "raw"),
+       "...and the raw table, because this run did not run release: the released copy is the previous run's")
+    part_rel <- utils::modifyList(part, list(modules = c(part$modules, "safety", "release")))
+    hr <- read_scenario_table(kept, part_rel, "S_HCRU_RATES", TRUE)
+    ok(identical(attr(hr, "table_source"), "release") && identical(hr$RATE, 60),
+       "...while a run that did run release reads its released copy")
+    ok(nrow(restrict_to_cohorts(data.frame(COHORT = "1L", X = 1),
+                                utils::modifyList(part, list(cohorts = character(0))))) == 0L &&
+         identical(restrict_to_cohorts(data.frame(X = 1), part)$X, 1),
+       "a run recording no cohorts owns no per-cohort rows, and a table without cohorts passes whole")
     ok(identical(scenario_from_row("p_", data.frame(
          RUN_ID = "A", LOT_RUN_ID = "L", LOT_RUN_VERSION = "20260908T110500Z",
          stringsAsFactors = FALSE))$lot_run_version, "20260908T110500Z") &&
@@ -1097,6 +1144,12 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
   ok(grepl("read_scenario_table(SRC, b, tb", app, fixed = TRUE) &&
        grepl("scenario_moved(s) || scenario_moved(b)", app, fixed = TRUE),
      "and Compare binds BOTH sides, not only the one it was already checking")
+  ok(grepl("read_scenario_table(SRC, s, tb, DASH_CFG$prefer_release)", app, fixed = TRUE) &&
+       !grepl("read_table(SRC, s$prefix, tb", app, fixed = TRUE),
+     "the cohorts offered to select on are the ones this run built, read bound")
+  ok(grepl('if (!scenario_wrote(s, tb)) "A", if (!scenario_wrote(b, tb)) "B"', app, fixed = TRUE) &&
+       grepl("has no %s of its own to compare", app, fixed = TRUE),
+     "and Compare names the side that did not run a table's module rather than comparing what an earlier run left")
   ok(grepl("scenario_is_current <- function(src, scenario) scenario_matches_now(src, scenario)",
            paste(readLines("R/sources.R", warn = FALSE), collapse = "\n"), fixed = TRUE),
      "...and the guard and the reader ask the same question, of the build and not only the id")

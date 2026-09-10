@@ -99,8 +99,10 @@ server <- function(input, output, session) {
     tabs <- unique(stats::na.omit(vapply(PANELS, function(p)
       as.character(p$table), character(1))))
     lv <- list()
+    # Bound like every other read, so the choices offered are the cohorts
+    # this run built rather than every partition under the prefix.
     for (tb in intersect(tabs, DASH_TABLES$TABLE)) {
-      d <- read_table(SRC, s$prefix, tb, DASH_CFG$prefer_release)
+      d <- read_scenario_table(SRC, s, tb, DASH_CFG$prefer_release)
       if (is.null(d) || !nrow(d)) next
       for (k in intersect(GENERIC_KEYS, names(d)))
         lv[[k]] <- sort(unique(c(lv[[k]], as.character(d[[k]]))))
@@ -381,6 +383,16 @@ server <- function(input, output, session) {
         DASH_TABLES$TABLE)
       blocks <- lapply(rate_tables, function(tb) {
         sp <- table_spec(tb)
+        # A side that did not run this table's module has nothing of its own
+        # here, whatever an earlier run left under its prefix - said, rather
+        # than compared against the previous run's numbers.
+        missing <- c(if (!scenario_wrote(s, tb)) "A", if (!scenario_wrote(b, tb)) "B")
+        if (length(missing))
+          return(paste0("<h5>", html_escape(sp$label), "</h5>",
+                        '<div class="alert">', html_escape(sprintf(
+                          "%s did not run the '%s' module, so it has no %s of its own to compare.",
+                          paste(missing, collapse = " and "), table_owner(tb),
+                          tolower(sp$label))), "</div>"))
         da <- apply_keys(read_scenario_table(SRC, s, tb, DASH_CFG$prefer_release), sp, selection())
         db <- apply_keys(read_scenario_table(SRC, b, tb, DASH_CFG$prefer_release), sp, selection())
         cm <- compare_tables(da, db, sp, sp$rate)

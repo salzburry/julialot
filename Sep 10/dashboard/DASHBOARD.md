@@ -91,6 +91,18 @@ run it read, and none of its tables is shown: the producer writes the
 metadata row before it replaces a table, so under such a run the tables are
 the previous build's, or part of this one. Compare needs two complete runs.
 
+And a run shows only what it built. A run writes the modules it selected,
+for the cohorts it selected, and leaves everything else under its prefix as
+the previous run left it — so a completed partial re-run's prefix can hold a
+safety table it never wrote, a 2L partition it never built, or a released
+table from before its raw one was rebuilt. None of that is this run's. Every
+read is bound to the run's own metadata: a table whose module the run did
+not select is not shown, drawn, offered to select on or compared (Compare
+says which side lacks it); rows of cohorts the run did not select are left
+out; and the released copy of a table is preferred only where the run ran
+the release module. The snapshot job applies the same rules, so a snapshot
+holds only what its run wrote.
+
 ### The LOT tabs describe the lineage, not the scenario
 
 The LOT tables were written by a **different build**, under its own prefix,
@@ -234,7 +246,7 @@ DASH_SOURCE=snapshot DASH_SNAPSHOT_DIR=/mnt/artifacts/results "Sep 10/dashboard/
 variables, and what the job that refreshes the snapshot needs.
 
 ```bash
-Rscript tests/run_tests.R      # 383 checks, no Shiny and no warehouse
+Rscript tests/run_tests.R      # 394 checks, no Shiny and no warehouse
 ```
 
 Every number the app puts on a page comes from a function in `R/` that runs
