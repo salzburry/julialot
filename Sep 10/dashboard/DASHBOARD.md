@@ -264,8 +264,9 @@ already exported by an earlier scenario is reused, never rewritten.
 # a demo with generated data, no warehouse - from this folder
 DASH_SOURCE=synthetic Rscript -e "shiny::runApp('.', port = 8888)"
 
-# the normal deployment - app.sh expects to be run from the folder ABOVE
-# Sep 10, which is how a Domino App launches it (DEPLOY_DOMINO.md)
+# the normal deployment - app.sh can be started from anywhere: it changes to
+# the folder above dashboard/ itself, which is how a Domino App launches it
+# (DEPLOY_DOMINO.md)
 DASH_SOURCE=snapshot DASH_SNAPSHOT_DIR=/mnt/artifacts/results "Sep 10/dashboard/app.sh"
 ```
 

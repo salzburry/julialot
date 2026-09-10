@@ -67,9 +67,11 @@ two or three, and add rows as questions come up.
 
 ## 3. Publish the dashboard — Domino **App**
 
-Domino launches `app.sh` from the **project root** and expects the process on
-`0.0.0.0:8888`; `app.sh` does that. Either copy it to the project root or set
-the App command to `bash "Sep 10/dashboard/app.sh"`.
+Domino launches the App command from the **project root** and expects the
+process on `0.0.0.0:8888`; `app.sh` does that. Set the App command to
+`bash "Sep 10/dashboard/app.sh"`, with the path from the project root to
+wherever the three folders sit. `app.sh` changes to the folder above
+`dashboard/` itself, so nothing else depends on where that is.
 
 Set the App's environment variables:
 
