@@ -122,7 +122,7 @@ lands on the run's own metadata row where no reader can miss it.
 
 **Six of the thirteen run today.** `MODULES=spine,cohorts,attrition,periods,demographics,tte`
 builds all four cohorts, every window, the demographics and the time-to-event
-outcomes, and needs no code list this repo does not already have. The other six
+outcomes, and needs no code list this repo does not already have. The other seven
 are blocked on Annexes 2 and 3 (`../CODELISTS.md`), and the preflight says so
 by name **before** the connection is opened rather than after the expensive
 steps.

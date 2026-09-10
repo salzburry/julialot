@@ -107,6 +107,15 @@ server <- function(input, output, session) {
       for (k in intersect(GENERIC_KEYS, names(d)))
         lv[[k]] <- sort(unique(c(lv[[k]], as.character(d[[k]]))))
     }
+    # The LOT table's own lines as well. The engine builds up to its MAX_LOT
+    # and the study package describes up to its own, which is lower, so a
+    # selector drawn from the study tables alone could not name the line a
+    # LOT panel's last pair starts from.
+    lot <- read_lot_table(SRC, s, "LOT_LONG_FINAL")
+    if (!is.null(lot) && nrow(lot) && "LOT_NUM" %in% names(lot))
+      lv[["LOT_NUM"]] <- sort(unique(c(lv[["LOT_NUM"]], as.character(lot$LOT_NUM))))
+    if (!is.null(lv[["LOT_NUM"]]))
+      lv[["LOT_NUM"]] <- lv[["LOT_NUM"]][order(suppressWarnings(as.integer(lv[["LOT_NUM"]])))]
     lv
   })
 

@@ -1124,6 +1124,24 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
     hr <- read_scenario_table(kept, part_rel, "S_HCRU_RATES", TRUE)
     ok(identical(attr(hr, "table_source"), "release") && identical(hr$RATE, 60),
        "...while a run that did run release reads its released copy")
+    # An optional output is the module's only when its switch was on. The
+    # comorbidity module with COMORBID_SUBGROUPS=FALSE runs and is recorded,
+    # and leaves S_COMORB_SUBGROUP as an earlier run left it.
+    rd <- function(v) list(comorbid_subgroups = list(key = "comorbid_subgroups", value = v, note = ""))
+    com_on  <- c(list(prefix = "p_", run_id = "A", state = "complete"),
+                 list(modules = c("spine", "cohorts", "comorbidity"), cohorts = "1L", readings = rd("TRUE")))
+    com_off <- utils::modifyList(com_on, list(readings = rd("FALSE")))
+    com_na  <- com_on; com_na$readings <- list()
+    ok(identical(optional_output_setting("S_COMORB_SUBGROUP"), "comorbid_subgroups") &&
+         identical(optional_output_setting("S_FRAILTY"), "frailty") &&
+         is.na(optional_output_setting("S_COMORBIDITY")),
+       "the registry says which switch turns an optional output on")
+    ok(scenario_wrote(com_on, "S_COMORB_SUBGROUP") && scenario_wrote(com_on, "S_COMORBIDITY"),
+       "a run that recorded the switch on wrote the optional table")
+    ok(!scenario_wrote(com_off, "S_COMORB_SUBGROUP") && scenario_wrote(com_off, "S_COMORBIDITY"),
+       "...one that recorded it off did not, though it ran the module and wrote the module's other table")
+    ok(!scenario_wrote(com_na, "S_COMORB_SUBGROUP"),
+       "...and one that recorded no reading cannot attest it")
     ok(nrow(restrict_to_cohorts(data.frame(COHORT = "1L", X = 1),
                                 utils::modifyList(part, list(cohorts = character(0))))) == 0L &&
          identical(restrict_to_cohorts(data.frame(X = 1), part)$X, 1),
@@ -1147,6 +1165,9 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
   ok(grepl("read_scenario_table(SRC, s, tb, DASH_CFG$prefer_release)", app, fixed = TRUE) &&
        !grepl("read_table(SRC, s$prefix, tb", app, fixed = TRUE),
      "the cohorts offered to select on are the ones this run built, read bound")
+  ok(grepl('lot <- read_lot_table(SRC, s, "LOT_LONG_FINAL")', app, fixed = TRUE) &&
+       grepl('lv[["LOT_NUM"]] <- sort(unique(c(lv[["LOT_NUM"]], as.character(lot$LOT_NUM))))', app, fixed = TRUE),
+     "...and the line selector offers the LOT table's own lines, so a pair from the engine's last line can be picked")
   ok(grepl('if (!scenario_wrote(s, tb)) "A", if (!scenario_wrote(b, tb)) "B"', app, fixed = TRUE) &&
        grepl("has no %s of its own to compare", app, fixed = TRUE),
      "and Compare names the side that did not run a table's module rather than comparing what an earlier run left")
@@ -1359,8 +1380,8 @@ cat("\nline against the next line\n")
      "counted per pair on distinct patients, with no identifier in the result")
   t2 <- lot_transitions(lf, "LOT_BASE_END_REASON", "LOT_START_TYPE", min_n = 2L)
   f1 <- t2[t2$FROM_LOT == 1L, ]; f2 <- t2[t2$FROM_LOT == 2L, ]
-  ok(nrow(f1) == 1L && grepl("^\\(2 other pair", f1$FROM) && identical(f1$N_PATIENTS, 2L) && f1$SUPPRESSED == 0L,
-     "pairs under the floor are folded into one row per line whose count is their sum")
+  ok(nrow(f1) == 1L && grepl("^\\(2 pairs, grouped\\)", f1$FROM) && identical(f1$N_PATIENTS, 2L) && f1$SUPPRESSED == 0L,
+     "pairs under the floor are grouped into one row per line whose count is their sum")
   ok(nrow(f2) == 1L && is.na(f2$N_PATIENTS) && f2$SUPPRESSED == 1L,
      "...and that row is withheld when the sum is still under the floor")
   ok(all(lot_transitions(lf, "LOT_BASE_END_REASON", "LOT_START_TYPE", min_n = 1L,
@@ -1378,6 +1399,42 @@ cat("\nline against the next line\n")
   tl <- lot_transitions(leak, "LOT_BASE_END_REASON", "LOT_START_TYPE", min_n = 25L)
   ok(!"A" %in% tl$FROM && nrow(tl) == 1L && identical(tl$N_PATIENTS, 33L),
      "where one cell of a published group is withheld, the smallest open one goes with it, so the pair is not the subtraction")
+  ok(grepl("grouped", tl$FROM) && !grepl("under the floor", tl$FROM) && !grepl("under the floor", tl$TO),
+     "...and the grouped row does not claim that every pair in it was under the floor - the 30 was not")
+  # The pairs' population is published in the caption and as "lines by line
+  # number", so a line with one common pair and one rare one showed the
+  # common count beside the total: 50 patients, 49 shown, the rare 1 was the
+  # subtraction. Its source and destination were its own, so no group rule
+  # caught it. Now the line's own total is a published group too.
+  two_pairs <- function(common, rare) data.frame(
+    PATID = rep(c(sprintf("C%03d", seq_len(common)), sprintf("R%03d", seq_len(rare))), 2),
+    LOT_NUM = rep(1:2, each = common + rare),
+    LOT_START_TYPE = c(rep("MED", common + rare), rep("MED", common), rep("SCT_ALLO", rare)),
+    LOT_BASE_END_REASON = c(rep("MED_ADD", common), rep("SCT_ALLO", rare), rep("STUDY_END", common + rare)),
+    LOT_BASE_MEDS = c(rep("BORT LEN", common), rep("MELP", rare), rep("DARA", common), rep("", rare)),
+    stringsAsFactors = FALSE)
+  v49 <- lot_sequence_view(two_pairs(49, 1), "end_to_start", 25)
+  ok(v49$released && identical(v49$n, 50L) && nrow(v49$rows) == 1L &&
+       identical(v49$rows$N_PATIENTS, 50L) && !49 %in% v49$rows$N_PATIENTS,
+     "one common pair beside one rare pair is shown only as a group, so the rare count is not the caption minus the common one")
+  html49 <- html_table(v49$rows, caption = v49$note)
+  ok(grepl("50 patients", html49, fixed = TRUE) && !grepl(">49<", html49, fixed = TRUE) &&
+       !grepl(">49.00<", html49, fixed = TRUE) && !grepl(">1<", html49, fixed = TRUE),
+     "...and the rendered panel carries neither the common count nor the rare one")
+  leaky <- 0L
+  for (common in c(25L, 49L, 100L)) for (rare in c(1L, 12L, 24L)) {
+    r <- lot_transitions(two_pairs(common, rare), "LOT_BASE_END_REASON", "LOT_START_TYPE", min_n = 25L)
+    if (any(r$N_PATIENTS %in% c(common, rare), na.rm = TRUE)) leaky <- leaky + 1L
+    r2 <- lot_transitions(two_pairs(common, rare), "LOT_BASE_MEDS", "LOT_BASE_MEDS", min_n = 25L)
+    if (any(r2$N_PATIENTS %in% c(common, rare), na.rm = TRUE)) leaky <- leaky + 1L
+  }
+  ok(leaky == 0L,
+     "...for every combination of a common and a rare pair, in the end-to-start and the regimen views alike")
+  ok(identical(lot_transitions(two_pairs(30, 30), "LOT_BASE_END_REASON", "LOT_START_TYPE", min_n = 25L)$N_PATIENTS, c(30L, 30L)),
+     "while two pairs both over the floor are both shown - nothing is hidden that need not be")
+  rg <- lot_sequence_view(two_pairs(30, 30), "regimen", 25)$rows
+  ok("(no regimen)" %in% rg$TO && !"(Missing)" %in% rg$TO,
+     "an allograft or CAR-T line's empty regimen reads as no regimen, not as missing data")
 
   sq <- lot_sequences(lf, "LOT_START_TYPE", min_n = 1L)
   ok(identical(sq$SEQUENCE[1], "MED > MED") && identical(sq$N_PATIENTS[1], 2L) &&
@@ -1387,13 +1444,20 @@ cat("\nline against the next line\n")
      "...one row per distinct sequence")
   sq2 <- lot_sequences(lf, "LOT_START_TYPE", min_n = 2L)
   ok(nrow(sq2) == 2L && identical(sq2$SEQUENCE[1], "MED > MED") &&
-       grepl("^\\(2 other sequences", sq2$SEQUENCE[2]) && identical(sq2$N_PATIENTS[2], 2L),
-     "rare sequences are folded into one row rather than listed shaded")
+       grepl("^\\(2 sequences, grouped\\)", sq2$SEQUENCE[2]) && identical(sq2$N_PATIENTS[2], 2L),
+     "rare sequences are grouped into one row rather than listed shaded")
+  sq49 <- lot_sequences(two_pairs(49, 1), "LOT_START_TYPE", min_n = 25L)
+  ok(nrow(sq49) == 1L && identical(sq49$N_PATIENTS, 50L) && grepl("grouped", sq49$SEQUENCE),
+     "...and one common sequence beside one rare one is shown only as a group, for the same reason")
+  ok(identical(hide_for_disclosure(c(40L, 30L, 15L, 12L), list(rep("a", 4)), 25L), c(FALSE, FALSE, TRUE, TRUE)),
+     "two rare rows whose sum clears the floor hide nothing else")
+  ok(identical(hide_for_disclosure(c(60L, 45L, 3L, 2L), list(rep("a", 4)), 25L), c(FALSE, TRUE, TRUE, TRUE)),
+     "...but when their sum is under the floor the smallest open row goes with them until it is not")
   seq_leak <- data.frame(PATID = c(sprintf("A%02d", 1:30), "B1", "B2", "B3"), LOT_NUM = 1L,
                          LOT_START_TYPE = c(rep("MED", 30), rep("SCT_AUTO", 3)),
                          stringsAsFactors = FALSE)
   sl <- lot_sequences(seq_leak, "LOT_START_TYPE", min_n = 25L)
-  ok(nrow(sl) == 1L && grepl("other sequences", sl$SEQUENCE) && identical(sl$N_PATIENTS, 33L),
+  ok(nrow(sl) == 1L && grepl("sequences, grouped", sl$SEQUENCE) && identical(sl$N_PATIENTS, 33L),
      "...and a single rare sequence takes the smallest common one with it, because the total is published")
 
   v <- lot_sequence_view(lf, "end_to_start", 25)

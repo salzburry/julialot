@@ -291,7 +291,25 @@ scenario_wrote <- function(scenario, table, modules = MODULES) {
   ran <- trimws(as.character(scenario$modules %||% character(0)))
   ran <- ran[nzchar(ran)]
   own <- table_owner(table, modules)
-  !is.na(own) && length(ran) > 0 && own %in% ran
+  if (is.na(own) || !length(ran) || !own %in% ran) return(FALSE)
+  # A module's OPTIONAL output is written only when its switch was on. The
+  # comorbidity module with COMORBID_SUBGROUPS=FALSE runs, is recorded, and
+  # leaves S_COMORB_SUBGROUP exactly as an earlier run left it - so the
+  # module's name is not enough, and the run's recorded reading of the
+  # switch decides. A run that recorded no reading cannot attest it.
+  setting <- optional_output_setting(table)
+  if (is.na(setting)) return(TRUE)
+  r <- scenario$readings[[setting]]
+  !is.null(r) && identical(toupper(trimws(as.character(r$value %||% ""))), "TRUE")
+}
+
+# The switch that turns a table on, where the registry declares one
+# (OPTIONAL_FEATURES in the package's registry.R); NA for every other table.
+optional_output_setting <- function(table) {
+  feats <- if (exists("OPTIONAL_FEATURES")) OPTIONAL_FEATURES else list()
+  for (m in feats) for (setting in names(m))
+    if (identical(m[[setting]]$output, table)) return(setting)
+  NA_character_
 }
 
 # The rows of a table that belong to this run: the cohorts it selected. A
