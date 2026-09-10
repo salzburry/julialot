@@ -119,7 +119,7 @@ mod_demographics <- function(con, cfg, cohort) {
     INNER JOIN %8$s c ON c.PATID = r.PATID
     WHERE r.rn = 1",
     wrk("S_DEMOGRAPHICS"), region, ordering, wrk("S_PERIODS"),
-    cdm_src("member_enrollment"), pick, cohort$key, cfg$input_cohort_table,
+    cdm_src("member_enrollment"), pick, cohort$key, input_cohort_tbl(),
     "", "", age_expr),
     qc = sprintf("SELECT count(*) AS n_rows,
                     sum(CASE WHEN RACE='Unknown' THEN 1 ELSE 0 END) AS n_race_unk,

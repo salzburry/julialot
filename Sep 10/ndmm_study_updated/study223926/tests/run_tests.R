@@ -368,6 +368,27 @@ cat("\ncode lists\n")
   unlink(tmp, recursive = TRUE)
 }
 
+cat("\nthe cohort table, as SQL names it\n")
+{
+  # Bare, the name resolved against the session's current schema: the working
+  # schema on a cluster session, `default` over the ODBC warehouse - and every
+  # scenario stopped at DESCRIBE with ndmm_NDMM_COHORT "cannot be found".
+  set_study_config(local({ c1 <- cfg0(); c1$work_schema <- "osk02156"; c1 }))
+  ok(identical(input_cohort_tbl(), "hive_metastore.osk02156.ndmm_NDMM_COHORT"),
+     "the input cohort table is read under the run's catalog and schema, like every other table")
+  ok(identical(cfg0()$input_cohort_table, "ndmm_NDMM_COHORT"),
+     "...while the setting itself stays the bare name the LOT status row records, for the lineage comparison")
+  set_study_config(local({ c1 <- cfg0(c(INPUT_COHORT_TABLE = "other_cat.their_schema.NDMM_COHORT")); c1$work_schema <- "osk02156"; c1 }))
+  ok(identical(input_cohort_tbl(), "other_cat.their_schema.NDMM_COHORT"),
+     "...and a name given already qualified is used as it is")
+  set_study_config(cfg0())
+  bare <- Filter(function(x) grepl("(^|[^.A-Za-z0-9_])ndmm_NDMM_COHORT", x$sql), RUN$sql)
+  ok(!length(bare),
+     paste0("no emitted statement names the cohort table bare (", length(bare), " did)"))
+  ok(sum(grepl("hive_metastore.wk.ndmm_NDMM_COHORT", vapply(RUN$sql, function(x) x$sql, character(1)), fixed = TRUE)) >= 6,
+     "...and every module that reads it names it under the work schema")
+}
+
 cat("\nthe connection layer\n")
 {
   ok(length(split_statements("CREATE TABLE a (x int); INSERT INTO a VALUES (1)")) == 2,

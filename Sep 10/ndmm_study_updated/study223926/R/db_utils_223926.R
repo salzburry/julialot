@@ -124,6 +124,22 @@ lot_tbl <- function(base_tbl) {
   p <- if (nzchar(cfg$lot_prefix)) cfg$lot_prefix else cfg$object_prefix
   sprintf("%s.%s.%s%s", cfg$catalog, cfg$work_schema, p, base_tbl)
 }
+# The cohort table the study was pointed at, as SQL names it.
+#
+# INPUT_COHORT_TABLE is the bare name the cohort build wrote it under - the
+# name the LOT status row records and the lineage check compares, so that
+# stays bare in cfg. In SQL the run's own catalog and schema go in front of
+# it, as the LOT engine does with the same name. Used bare, it resolved
+# against the session's current schema: on a cluster session that was the
+# working schema, over the ODBC warehouse it was `default`, and every
+# scenario stopped at DESCRIBE with the table "cannot be found". A name given
+# already qualified is used as it is.
+input_cohort_tbl <- function() {
+  cfg <- study_config()
+  nm <- trimws(cfg$input_cohort_table)
+  if (grepl(".", nm, fixed = TRUE)) nm
+  else sprintf("%s.%s.%s", cfg$catalog, cfg$work_schema, nm)
+}
 
 # One string for one BUILD of a run, from the timestamp its status row carries.
 #

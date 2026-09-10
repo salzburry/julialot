@@ -150,7 +150,7 @@ mod_cohorts <- function(con, cfg, cohort) {
       WHERE s.LOT_NUM = %10$d %11$s
     ) m",
     wrk("S_COHORT"), cohort$key, ce_pre, fu_pred, wrk("S_SPINE"),
-    cfg$input_cohort_table, wrk("S_ENROLL_SPANS"), wrk("S_FU_CLAIMS"),
+    input_cohort_tbl(), wrk("S_ENROLL_SPANS"), wrk("S_FU_CLAIMS"),
     parent, cohort$lot_num, floor_sql,
     membership_predicate(cohort),
     cohort_flag_pred_one("X1_prior_mm_tx", .cohort_cols()),
@@ -324,7 +324,7 @@ and_predicates <- function(preds) {
 }
 
 check_cohort_table <- function(con, cfg) {
-  cols <- tryCatch(describe_columns(con, cfg$input_cohort_table)$COL,
+  cols <- tryCatch(describe_columns(con, input_cohort_tbl())$COL,
                    error = function(e)
     stop("INPUT ERROR: could not describe INPUT_COHORT_TABLE '",
          cfg$input_cohort_table, "': ", conditionMessage(e), call. = FALSE))
@@ -350,7 +350,7 @@ check_cohort_table <- function(con, cfg) {
   g <- db_q(con, sprintf(
     "SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_patients,
             sum(CASE WHEN PATID IS NULL THEN 1 ELSE 0 END) AS n_null_patid%s
-     FROM %s", flag_sel, cfg$input_cohort_table))
+     FROM %s", flag_sel, input_cohort_tbl()))
   # A driver that answers the aggregate with nothing usable leaves the value
   # checks unable to say anything. Reads as 0 - the preflight is not the place
   # to fail a run over a driver quirk - and the column checks above still hold.

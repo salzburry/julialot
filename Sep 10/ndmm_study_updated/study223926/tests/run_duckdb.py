@@ -78,7 +78,10 @@ def load_fixtures(con, fixture_dir, prefix=""):
         "t_rx":                f"clnprw_optum.t_rx_{quarter}",
         # lot_tbl() carries OBJECT_PREFIX too.
         "LOT_LONG_FINAL":      "wk.%sLOT_LONG_FINAL" % prefix,
-        "ndmm_NDMM_COHORT":    "ndmm_NDMM_COHORT",
+        # input_cohort_tbl() puts the run's catalog and schema in front of the
+        # bare name, and the catalog is stripped above, so the SQL reads it
+        # under the work schema.
+        "ndmm_NDMM_COHORT":    "wk.ndmm_NDMM_COHORT",
     }
     for stem, target in mapping.items():
         path = os.path.join(fixture_dir, stem + ".csv")
