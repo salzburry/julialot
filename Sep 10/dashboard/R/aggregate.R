@@ -499,6 +499,12 @@ hide_for_disclosure <- function(n, groups, min_n, hidden = n < min_n) {
 # withheld when that sum is still under the floor. A regimen table has a
 # long tail of rare pairs, and forty shaded rows say less than one row that
 # says how many patients they hold between them.
+#
+# The row does not say HOW MANY cells it holds. That number is a published
+# fact like any other, and it was the one that picked the allocation out:
+# with 99 patients grouped, the published source and destination totals
+# left fifty ways to fill the hidden cells, and "3 pairs" fitted exactly
+# one of them - the one with the rare pair at 1.
 fold_hidden <- function(out, hidden, min_n, by, make_row) {
   shown <- out[!hidden, , drop = FALSE]
   shown$SUPPRESSED <- rep(0L, nrow(shown))
@@ -510,9 +516,6 @@ fold_hidden <- function(out, hidden, min_n, by, make_row) {
   shown$N_PATIENTS[shown$SUPPRESSED == 1L] <- NA
   shown
 }
-
-grouped_label <- function(n, noun)
-  sprintf("(%d %s%s, grouped)", n, noun, if (n == 1L) "" else "s")
 
 # Pairs counted, with what cannot be shown on its own folded into one row
 # per line.
@@ -562,7 +565,7 @@ count_transitions <- function(pr, min_n = 25L, ends = NULL) {
   # and their sum is a count of distinct patients.
   shown <- fold_hidden(out, hidden, min_n, by = out$FROM_LOT, make_row = function(g)
     data.frame(FROM_LOT = g$FROM_LOT[1], TO_LOT = g$TO_LOT[1],
-               FROM = grouped_label(nrow(g), "pair"), TO = "(shown only as a group)",
+               FROM = "(grouped pairs)", TO = "(shown only as a group)",
                N_PATIENTS = sum(g$N_PATIENTS), stringsAsFactors = FALSE))
   shown <- shown[order(shown$FROM_LOT, startsWith(shown$FROM, "("), shown$FROM,
                        -shown$N_PATIENTS, shown$TO), , drop = FALSE]
@@ -602,7 +605,7 @@ lot_sequences <- function(d, col = "LOT_START_TYPE", min_n = 25L) {
   total <- sum(out$N_PATIENTS)
   hidden <- hide_for_disclosure(out$N_PATIENTS, list(rep("all", nrow(out))), min_n)
   shown <- fold_hidden(out, hidden, min_n, by = rep("all", nrow(out)), make_row = function(g)
-    data.frame(SEQUENCE = grouped_label(nrow(g), "sequence"), N_LINES = NA_integer_,
+    data.frame(SEQUENCE = "(grouped sequences)", N_LINES = NA_integer_,
                N_PATIENTS = sum(g$N_PATIENTS), stringsAsFactors = FALSE))
   shown$PCT <- round(100 * shown$N_PATIENTS / total, 1)   # NA where withheld
   shown <- shown[, c("SEQUENCE", "N_LINES", "N_PATIENTS", "PCT", "SUPPRESSED")]

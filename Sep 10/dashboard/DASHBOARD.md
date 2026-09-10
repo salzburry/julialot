@@ -95,10 +95,12 @@ each line ended" publishes. Lines that ended a given way with no line after
 them are the part of that total the pairs do not account for, and they count
 with the hidden pairs: where there are enough of them the pairs from that end
 reason have cover, and where there are few or none pairs are grouped until
-what is hidden reaches the floor. Each total is held on its own, which is the
-subtraction a reader makes; it is not an audit of every total taken together.
-No patient is ever listed: the pairs are aggregated before anything reaches
-the page.
+what is hidden reaches the floor. The grouped row does not say how many pairs
+it holds: with the published totals, that number alone picked out the one way
+of filling the hidden cells that fitted. Each total is held on its own, which
+is the subtraction a reader makes; it is not an audit of every total taken
+together. No patient is ever listed: the pairs are aggregated before anything
+reaches the page.
 
 A tab whose module did not run is **reported, not hidden**. "The safety module
 did not run" is something a viewer needs to know; a silently absent tab does
@@ -271,7 +273,7 @@ DASH_SOURCE=snapshot DASH_SNAPSHOT_DIR=/mnt/artifacts/results "Sep 10/dashboard/
 variables, and what the job that refreshes the snapshot needs.
 
 ```bash
-Rscript tests/run_tests.R      # 440 checks, no Shiny and no warehouse
+Rscript tests/run_tests.R      # 443 checks, no Shiny and no warehouse
 ```
 
 Every number the app puts on a page comes from a function in `R/` that runs
