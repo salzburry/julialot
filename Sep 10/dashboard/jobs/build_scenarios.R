@@ -86,7 +86,12 @@ run_one <- function(row, env) {
                                stdout = TRUE, stderr = TRUE))
   status <- attr(res, "status")
   ok <- is.null(status) || identical(status, 0L)
-  if (!ok) message("  FAILED: ", paste(utils::tail(res, 8), collapse = "\n  "))
+  # The child's whole output, kept beside the snapshot: eight lines in the
+  # summary say what failed, the file says why.
+  log_file <- file.path(out_dir, paste0(prefix, "build.log"))
+  writeLines(as.character(res), log_file)
+  if (!ok) message("  FAILED: ", paste(utils::tail(res, 8), collapse = "\n  "),
+                   "\n  full output: ", log_file)
   list(prefix = prefix, ok = ok, log = res)
 }
 
