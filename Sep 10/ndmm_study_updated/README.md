@@ -110,16 +110,17 @@ no line and no MM cohort of its own, so it can be re-run against a finished LOT 
 often as needed.
 
 ```
-Rscript study223926/build.R                                   # on a Databricks cluster
+DATABRICKS_PWD=... Rscript study223926/build.R                # over the Databricks ODBC DSN
 DRY_RUN=TRUE Rscript study223926/build.R                      # print the plan only
 MODULES=safety COHORTS=2L Rscript study223926/build.R         # one module, one cohort
-Rscript study223926/tests/run_tests.R                         # 378 checks, no warehouse
+Rscript study223926/tests/run_tests.R                         # 395 checks, no warehouse
 ```
 
 Thirteen modules, four cohorts, and every reading this folder records as open is
 a setting with the protocol's answer as its default. Six of the thirteen modules
-run today; the other seven are blocked on Annexes 2 and 3, and the run says so by name
-before it opens a connection. `study223926/MODULES.md` has the rest.
+run today - the cohorts, their attrition, windows, demographics and outcomes need
+no code list; the other seven are blocked on Annexes 2 and 3, and a default run
+leaves them out by name rather than stopping. `study223926/MODULES.md` has the rest.
 
 ## Standalone
 

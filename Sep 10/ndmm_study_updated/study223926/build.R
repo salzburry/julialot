@@ -2,11 +2,14 @@
 # Study 223926 - the analytical cohort and its variables, from a finished LOT
 # run.
 #
-#   Rscript build.R                          on a Databricks cluster
-#   INPUT_COHORT_TABLE=ndmm_NDMM_COHORT OBJECT_PREFIX=s223926_ Rscript build.R
+#   DATABRICKS_PWD=... INPUT_COHORT_TABLE=ndmm_NDMM_COHORT OBJECT_PREFIX=s223926_ Rscript build.R
 #
-# SPARK_METHOD=databricks_connect drives a named cluster from outside and is
-# the only mode that needs DATABRICKS_HOST, DATABRICKS_TOKEN and
+# The connection is the Databricks ODBC driver through DBI, on the DSN in
+# DATABRICKS_DSN (default RWDE) with the password in DATABRICKS_PWD - the same
+# environment the cohort and LOT builds connect with. SPARK_METHOD=databricks
+# attaches to the Spark session of the cluster the script runs on instead,
+# and SPARK_METHOD=databricks_connect drives a named cluster from outside and
+# is the only mode that needs DATABRICKS_HOST, DATABRICKS_TOKEN and
 # SPARK_CLUSTER_ID.
 #
 # Everything is a setting; config.csv lists them all with what each one does,
@@ -28,18 +31,20 @@ here <- local({
                                   fixed = TRUE)))
 })
 
-# sparklyr for the session. No DBI/odbc: on a Databricks cluster the Spark
-# session already exists and sparklyr attaches to it, so there is no DSN and no
-# password to hold.
-#
-# Loaded lazily rather than with library(), so DRY_RUN=TRUE resolves and prints
-# a plan on a machine that has no Spark - which is where a plan is usually read.
-if (!requireNamespace("sparklyr", quietly = TRUE) &&
-    !identical(toupper(Sys.getenv("DRY_RUN", unset = "FALSE")), "TRUE"))
-  stop("sparklyr is not installed. DRY_RUN=TRUE prints the plan without it.",
-       call. = FALSE)
 source(file.path(here, "R", "load_inputs.R"))
 load_pipeline_inputs(here, "config.csv")
+# The driver packages are loaded lazily rather than with library(), so
+# DRY_RUN=TRUE resolves and prints a plan on a machine that has none - which
+# is where a plan is usually read. Checked after config.csv is loaded, since
+# that is where SPARK_METHOD may be set.
+if (!identical(toupper(Sys.getenv("DRY_RUN", unset = "FALSE")), "TRUE")) {
+  need <- if (identical(tolower(Sys.getenv("SPARK_METHOD", unset = "odbc")), "odbc"))
+    c("DBI", "odbc") else "sparklyr"
+  for (pkg in need)
+    if (!requireNamespace(pkg, quietly = TRUE))
+      stop(pkg, " is not installed. DRY_RUN=TRUE prints the plan without it.",
+           call. = FALSE)
+}
 for (f in c("config_223926.R", "db_utils_223926.R", "registry.R", "windows.R",
             "person_time.R", "codelists.R", "lineage.R",
             "run_223926.R"))

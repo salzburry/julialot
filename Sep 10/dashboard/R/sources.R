@@ -3,7 +3,8 @@
 #   snapshot   CSVs a Domino Job exported. What a deployed App normally reads:
 #              no warehouse session per viewer, and the numbers are fixed at
 #              the moment the Job ran.
-#   warehouse  the S_* tables over sparklyr. For a session that has a cluster.
+#   warehouse  the S_* tables live, over the study package's own connection.
+#              For a session that has one.
 #   synthetic  generated here. No warehouse and no files, so the App can be
 #              deployed and clicked through before any run exists.
 #

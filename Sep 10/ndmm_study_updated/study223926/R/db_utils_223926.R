@@ -402,11 +402,35 @@ sql_is_retry_safe <- function(st) {
   !grepl("^(INSERT|MERGE)\\b", head)
 }
 
+# The connection is one of two things, and every statement is SQL text, so
+# they differ only here: a DBI connection - the Databricks ODBC driver, the
+# connection the cohort and LOT builds use - or a sparklyr session.
+is_dbi_con <- function(con) inherits(con, "DBIConnection")
+
+# The calls that reach the DBI driver, separate so a test can answer them
+# without DBI installed.
+dbi_exec       <- function(con, sql) DBI::dbExecute(con, sql)
+dbi_query      <- function(con, sql) DBI::dbGetQuery(con, sql)
+dbi_disconnect <- function(con) DBI::dbDisconnect(con)
+
+# A BIGINT comes back from the ODBC driver as bit64::integer64, a 64-bit
+# integer stored in a double's bit pattern; pasted or compared without bit64
+# attached, a count of 1780 reads as 8.794368e-321. Converted once, here.
+# Every count this package reads is far below 2^53, so nothing is lost.
+.unint64 <- function(d) {
+  if (!is.data.frame(d) || !ncol(d)) return(d)
+  for (j in seq_along(d))
+    if (inherits(d[[j]], "integer64")) d[[j]] <- as.numeric(d[[j]])
+  d
+}
+
 # The one call that reaches the driver. Separate so what surrounds it - which
 # statement is retried and which is not - can be driven by a test without a
 # warehouse.
-db_exec_once <- function(con, sql)
-  sparklyr::invoke(sparklyr::spark_session(con), "sql", sql)
+db_exec_once <- function(con, sql) {
+  if (is_dbi_con(con)) dbi_exec(con, sql)
+  else sparklyr::invoke(sparklyr::spark_session(con), "sql", sql)
+}
 
 # Execute. Accepts one statement or several, in one string or a vector.
 #
@@ -429,7 +453,9 @@ db_q <- function(con, sql) {
   if (length(stmts) != 1L)
     stop("QUERY ERROR: db_q() takes one statement, got ", length(stmts),
          ". Use db_exec() for DDL.", call. = FALSE)
-  with_retry(function() sparklyr::sdf_collect(sparklyr::sdf_sql(con, stmts[1])))
+  with_retry(function()
+    if (is_dbi_con(con)) .unint64(dbi_query(con, stmts[1]))
+    else sparklyr::sdf_collect(sparklyr::sdf_sql(con, stmts[1])))
 }
 
 # One named step: run it, then run its check. A step whose check comes back
@@ -450,15 +476,6 @@ run_step <- function(con, name, sql, qc = NULL, allow_empty = FALSE) {
   invisible(res)
 }
 
-# The Spark connection.
-#
-#   databricks          running ON a Databricks cluster or notebook - the
-#                       session already exists and sparklyr attaches to it.
-#                       Nothing to authenticate.
-#   databricks_connect  running outside it, against a named cluster. Needs
-#                       DATABRICKS_HOST, DATABRICKS_TOKEN and SPARK_CLUSTER_ID.
-#   local               a local Spark, for a smoke test over fixtures. It has
-#                       no CDM, so only the framework can be exercised.
 # Create a table if it is not there, then remove the rows this run is about to
 # rewrite. Called by every module that appends rather than replaces.
 #
@@ -558,7 +575,22 @@ prepare_table <- function(con, name, schema_sql, cohort_key) {
   clear_scope(con, name, sprintf("COHORT = '%s'", cohort_key))
 }
 
+# The connection, by SPARK_METHOD.
+#
+#   odbc                the Databricks ODBC driver through DBI: the DSN in
+#                       DATABRICKS_DSN and the password in DATABRICKS_PWD,
+#                       exactly as the cohort and LOT builds connect. The
+#                       default, and the one a server without a Spark
+#                       session can run.
+#   databricks          running ON a Databricks cluster or notebook - the
+#                       session already exists and sparklyr attaches to it.
+#                       Nothing to authenticate.
+#   databricks_connect  running outside it, against a named cluster. Needs
+#                       DATABRICKS_HOST, DATABRICKS_TOKEN and SPARK_CLUSTER_ID.
+#   local               a local Spark, for a smoke test over fixtures. It has
+#                       no CDM, so only the framework can be exercised.
 connect_db <- function(cfg) {
+  if (identical(cfg$spark_method, "odbc")) return(connect_odbc(cfg))
   if (!requireNamespace("sparklyr", quietly = TRUE))
     stop("CONNECTION ERROR: sparklyr is not installed.", call. = FALSE)
   sc <- switch(cfg$spark_method,
@@ -575,7 +607,7 @@ connect_db <- function(cfg) {
     },
     local = sparklyr::spark_connect(master = "local"),
     stop("CONNECTION ERROR: SPARK_METHOD '", cfg$spark_method,
-         "' is not one of databricks, databricks_connect, local.",
+         "' is not one of odbc, databricks, databricks_connect, local.",
          call. = FALSE))
   log_msg("connected: ", cfg$spark_method, ", Spark ",
           tryCatch(as.character(sparklyr::spark_version(sc)),
@@ -583,8 +615,27 @@ connect_db <- function(cfg) {
   sc
 }
 
-disconnect_db <- function(con)
-  try(sparklyr::spark_disconnect(con), silent = TRUE)
+connect_odbc <- function(cfg) {
+  for (pkg in c("DBI", "odbc"))
+    if (!requireNamespace(pkg, quietly = TRUE))
+      stop("CONNECTION ERROR: ", pkg, " is not installed.", call. = FALSE)
+  if (!nzchar(cfg$pwd))
+    stop("CONNECTION ERROR: DATABRICKS_PWD environment variable is not set.",
+         call. = FALSE)
+  con <- odbc_connect(cfg$dsn, cfg$pwd)
+  log_msg("connected: odbc, DSN ", cfg$dsn)
+  con
+}
+
+# The one call that opens the driver, separate so connect_odbc() can be
+# driven by a test without a DSN.
+odbc_connect <- function(dsn, pwd)
+  DBI::dbConnect(odbc::odbc(), dsn = dsn, pwd = pwd, timeout = 120)
+
+disconnect_db <- function(con) {
+  if (is_dbi_con(con)) try(dbi_disconnect(con), silent = TRUE)
+  else try(sparklyr::spark_disconnect(con), silent = TRUE)
+}
 
 # The schema a run writes into, when WORK_SCHEMA is not set. current_database()
 # is the portable spelling; current_schema() exists only on newer Spark.

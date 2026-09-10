@@ -1,5 +1,6 @@
 name,value,description
-SPARK_METHOD,databricks,sparklyr connection: databricks (on-cluster) or databricks_connect or local
+SPARK_METHOD,odbc,"Connection: odbc (the Databricks ODBC DSN through DBI, as the cohort and LOT builds connect) or a sparklyr session - databricks (on-cluster), databricks_connect, local"
+DATABRICKS_DSN,RWDE,ODBC data source name - odbc only. DATABRICKS_PWD stays in the environment and is refused from this file
 SPARK_CLUSTER_ID,,Cluster id - databricks_connect only
 DATABRICKS_HOST,,Workspace URL - databricks_connect only. DATABRICKS_TOKEN stays in the environment
 DATABRICKS_CATALOG,hive_metastore,Catalog for all reads and writes

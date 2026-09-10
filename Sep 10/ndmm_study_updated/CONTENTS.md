@@ -49,7 +49,7 @@ writes only its own `S_*` tables.
 | `R/run_223926.R` | the runner: resolve the plan, refuse what it cannot vouch for, walk the modules |
 | `R/modules/` | one file per module, in the order they run |
 | `codelists/` | the code lists this package ships. Production overrides the directory |
-| `tests/` | 378 checks. `Rscript tests/run_tests.R` |
+| `tests/` | 395 checks. `Rscript tests/run_tests.R` |
 
 ### The modules
 
@@ -126,8 +126,8 @@ nothing in the code reaches outside these three folders.
 DRY_RUN=TRUE INPUT_COHORT_TABLE=ndmm_NDMM_COHORT OBJECT_PREFIX=s223926_ \
   Rscript build.R
 
-# a real build
-INPUT_COHORT_TABLE=ndmm_NDMM_COHORT OBJECT_PREFIX=s223926_ Rscript build.R
+# a real build, over the Databricks ODBC DSN the cohort and LOT builds use
+DATABRICKS_PWD=... INPUT_COHORT_TABLE=ndmm_NDMM_COHORT OBJECT_PREFIX=s223926_ Rscript build.R
 ```
 
 `DRY_RUN=TRUE` resolves every setting, prints the cohorts, the modules and each
@@ -135,7 +135,7 @@ open question's reading, and stops before opening a connection. It is the
 fastest way to see what a run *would* do.
 
 ```bash
-Rscript tests/run_tests.R      # 378 checks, no warehouse
+Rscript tests/run_tests.R      # 395 checks, no warehouse
 ```
 
 The suite runs the modules without a warehouse, executes the SQL they emit

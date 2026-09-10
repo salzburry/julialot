@@ -246,26 +246,75 @@ resolve_codelist_dir <- function(cfg, here) {
 # columns and no codes - so the run would reach the module, fail there, and
 # have spent the warehouse time in between. Loading runs the same shape,
 # unfilled-row and icd_family guards the module would run, at second one.
+# What a run does about a code list it cannot use depends on how the module
+# was asked for.
+#
+# MODULES=all asks for everything that CAN run, not for everything: a module
+# whose list is unfilled or missing is left out by name, and so is anything
+# that needs it, and the run carries on. The cohort, its attrition, its
+# windows, demographics and outcomes need no list at all, and a run should
+# not fail for want of a list that only a safety rate needs. What was left
+# out is in the plan, in the log and - because S_RUN_METADATA records the
+# modules that ran - on the dashboard, which reports a module that did not
+# run rather than hiding it.
+#
+# A module named in MODULES was asked for. Then its list is required and the
+# run stops here, in its first second, naming the file and the annex.
+#
+# Either way no module ever runs on an unusable list: a rate of zero for want
+# of a code list is indistinguishable downstream from a rate of zero for
+# want of events. Returns the modules that will run.
 preflight_codelists <- function(mods, cfg) {
   want <- required_codelists(mods)
-  if (!length(want)) return(invisible(character(0)))
+  if (!length(want)) return(invisible(mods))
 
-  problems <- character(0)
+  unusable <- list()
   for (f in want) {
     err <- tryCatch({ load_codelist(f, cfg); NULL },
                     error = function(e) conditionMessage(e))
-    if (!is.null(err)) problems <- c(problems, sprintf("  %s\n    %s", f,
-      gsub("\n", "\n    ", sub("^CODELIST ERROR: ", "", err))))
+    if (!is.null(err)) unusable[[f]] <- sub("^CODELIST ERROR: ", "", err)
   }
-  if (length(problems))
+  if (!length(unusable)) return(invisible(mods))
+
+  if (!identical(tolower(cfg$modules), "all")) {
+    problems <- sprintf("  %s\n    %s", names(unusable),
+                        gsub("\n", "\n    ", unlist(unusable, use.names = FALSE)))
     stop("CODELIST ERROR: ", length(problems), " of ", length(want),
          " code list(s) the selected modules need are not usable:\n",
          paste(problems, collapse = "\n"),
          "\n\nEither deliver them, or narrow MODULES so nothing needs them - ",
-         "`Rscript build.R` with MODULES=spine,cohorts,attrition,periods,demographics,tte ",
-         "runs the whole cohort and the time-to-event outcomes with no code ",
-         "list this repo does not already have.", call. = FALSE)
-  invisible(want)
+         "MODULES=spine,cohorts,attrition,periods,demographics,tte runs the whole ",
+         "cohort and the time-to-event outcomes with no code list this repo does ",
+         "not already have - or run with MODULES=all, which leaves out by name ",
+         "whatever has no usable list.", call. = FALSE)
+  }
+
+  # Left out: the modules on an unusable list, then whatever needs one of
+  # those, to a fixed point.
+  dropped <- character(0)
+  repeat {
+    more <- names(Filter(function(m)
+      any(m$codelists %in% names(unusable)) || any(m$needs %in% dropped), mods))
+    more <- setdiff(more, dropped)
+    if (!length(more)) break
+    dropped <- c(dropped, more)
+  }
+  # The plan names the files; the log carries each list's reason in full.
+  first_line <- function(x) sub("\n.*$", "", x)
+  why <- vapply(dropped, function(k) {
+    lists <- intersect(mods[[k]]$codelists, names(unusable))
+    if (length(lists)) paste(lists, collapse = ", ")
+    else paste0("needs ", paste(intersect(mods[[k]]$needs, dropped), collapse = ", "))
+  }, character(1))
+  for (k in dropped) {
+    lists <- intersect(mods[[k]]$codelists, names(unusable))
+    log_msg("module ", k, " left out - ", if (length(lists))
+      paste(sprintf("%s: %s", lists, first_line(unlist(unusable[lists]))), collapse = "; ")
+      else why[[k]])
+  }
+  keep <- mods[setdiff(names(mods), dropped)]
+  attr(keep, "left_out") <- why
+  invisible(keep)
 }
 
 # One row per file THIS build read. Empty is a real answer: a module selection
@@ -307,16 +356,33 @@ register_codelist_view <- function(con, df, view_name, cols,
   keep <- df[, cols, drop = FALSE]
   keep[] <- lapply(keep, function(x) ifelse(is.na(x), "", as.character(x)))
 
-  # sparklyr::copy_to rather than a UNION ALL of one SELECT per row. A code
-  # list runs to thousands of rows - pregnancy.csv is 5,318 - and building that
-  # as SQL text is both enormous and, chunked, wrong: a temporary view cannot
-  # be appended to, and the obvious workaround defines the view in terms of
-  # itself.
+  # Over a Spark session, sparklyr::copy_to. Over the ODBC driver there is no
+  # copy_to, so the list is one VALUES statement behind a temporary view -
+  # the way the cohort build loads its own lists over the same driver,
+  # pregnancy.csv's 5,318 rows included. One statement, never chunked: a
+  # temporary view cannot be appended to, and the obvious workaround defines
+  # the view in terms of itself.
   stage <- paste0(tolower(view_name), "_raw")
-  sparklyr::copy_to(con, keep, name = stage, overwrite = TRUE, memory = FALSE)
+  if (is_dbi_con(con)) db_exec(con, codelist_stage_sql(stage, keep))
+  else sparklyr::copy_to(con, keep, name = stage, overwrite = TRUE, memory = FALSE)
 
   db_exec(con, codelist_view_sql(stage, view_name, cols, code_col, family_col))
   view_name
+}
+
+# A code list as one statement: a temporary view over a VALUES list, every
+# cell a string literal with its quotes doubled, in the frame's column order.
+# An empty list is an empty view of the same shape rather than a VALUES with
+# nothing in it, which is a syntax error.
+codelist_stage_sql <- function(stage, df) {
+  lit  <- function(x) paste0("'", gsub("'", "''", as.character(x), fixed = TRUE), "'")
+  cols <- paste(names(df), collapse = ", ")
+  if (!nrow(df))
+    return(sprintf("CREATE OR REPLACE TEMPORARY VIEW %s AS\nSELECT * FROM (VALUES (%s)) AS t(%s) WHERE 1 = 0",
+                   stage, paste(rep("''", ncol(df)), collapse = ", "), cols))
+  rows <- paste0("(", do.call(paste, c(lapply(df, lit), sep = ", ")), ")")
+  sprintf("CREATE OR REPLACE TEMPORARY VIEW %s AS\nSELECT * FROM (VALUES\n  %s\n) AS t(%s)",
+          stage, paste(rows, collapse = ",\n  "), cols)
 }
 
 # The normalisation, as SQL, separate from the staging that needs a session.

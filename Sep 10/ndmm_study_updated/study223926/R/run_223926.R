@@ -78,6 +78,10 @@ build_223926 <- function(here) {
   cohorts <- resolve_cohorts(cfg)
   mods    <- resolve_modules(cfg)
   source_modules(here)
+  # Code lists before the plan and before the connection. MODULES=all leaves
+  # out, by name, what has no usable list; a module asked for by name stops
+  # the run here, in its first second, rather than after the expensive steps.
+  mods <- preflight_codelists(mods, cfg)
 
   cat(SEP, "\n", paste(describe_plan(cfg, cohorts, mods), collapse = "\n"),
       "\n", SEP, "\n", sep = "")
@@ -85,10 +89,6 @@ build_223926 <- function(here) {
     log_msg("DRY_RUN=TRUE - nothing was read and nothing was written.")
     return(invisible(list(cfg = cfg, cohorts = cohorts, modules = mods)))
   }
-
-  # Code lists before the connection: a run that cannot finish should stop in
-  # the first second, not after the expensive steps.
-  preflight_codelists(mods, cfg)
 
   con <- connect_db(cfg)
   # ONE cleanup handler, registered once, so ordering cannot go wrong.

@@ -292,12 +292,39 @@ cat("\ncode lists\n")
   empty <- tempfile(); dir.create(empty)
   cfg_empty <- cfg; cfg_empty$codelist_dir <- empty
   mods <- suppressMessages(resolve_modules(cfg0(c(MODULES = "safety"))))
+  cfg_empty$modules <- "safety"
   e2 <- errs(preflight_codelists(mods, cfg_empty))
   ok(grepl("safety_events.csv", e2),
      "preflight names the missing file before the connection is opened")
-  unlink(empty, recursive = TRUE)
   ok(grepl("Annex 3", e2),
      "a missing code list names the annex that owes it")
+  # MODULES=all asks for everything that CAN run. A module whose list is not
+  # usable is left out by name, with what needs it, and the rest runs: the
+  # cohort and its attrition need no list and must not wait on Annex 3.
+  cfg_all <- cfg_empty; cfg_all$modules <- "all"
+  mods_all <- suppressMessages(resolve_modules(cfg_all))
+  ran <- suppressMessages(preflight_codelists(mods_all, cfg_all))
+  no_list <- c("spine", "cohorts", "attrition", "periods", "demographics", "tte")
+  ok(identical(names(ran), no_list),
+     "with MODULES=all and no usable list, the six modules that need none run, in order, and nothing stops")
+  lo <- attr(ran, "left_out")
+  ok(setequal(names(lo), setdiff(names(mods_all), no_list)) &&
+       grepl("safety_events.csv", lo[["safety"]]) && grepl("needs", lo[["release"]]) &&
+       grepl("soc", lo[["patterns"]]),
+     "...the other seven are left out by name: those on an unusable list with the file, and those that need one of them with the module")
+  ok(any(grepl("left out: ", describe_plan(cfg_all, resolve_cohorts(cfg_all), ran))),
+     "...and the plan says so before anything is read")
+  # The shipped code lists are shapes without content, so a default run over
+  # the package's own codelists/ is exactly this: the cohort, its attrition,
+  # windows, demographics and outcomes, and nothing on an unfilled list.
+  ran_shipped <- suppressMessages(preflight_codelists(suppressMessages(resolve_modules(cfg0())), cfg))
+  ok(identical(names(ran_shipped), no_list) && length(attr(ran_shipped, "left_out")) == 7L,
+     "a default run over the shipped lists runs those six and leaves the seven blocked on the annexes out by name")
+  ok(identical(names(suppressMessages(preflight_codelists(
+       suppressMessages(resolve_modules(cfg0(c(MODULES = "attrition")))), cfg))),
+       c("spine", "cohorts", "attrition")),
+     "...and asking for the attrition by name needs no list at all")
+  unlink(empty, recursive = TRUE)
   # The escape hatch the message offers, checked rather than pinned as a
   # string: a message naming a selection that in fact needs a code list is
   # worse than no message.
@@ -310,7 +337,7 @@ cat("\ncode lists\n")
   unlink(tmp, recursive = TRUE)
 }
 
-cat("\nsparklyr plumbing\n")
+cat("\nthe connection layer\n")
 {
   ok(length(split_statements("CREATE TABLE a (x int); INSERT INTO a VALUES (1)")) == 2,
      "a CREATE + INSERT template is split - Spark sql() takes one statement")
@@ -405,10 +432,93 @@ cat("\nsparklyr plumbing\n")
      "db_q refuses more than one statement rather than running the first")
   ok(grepl("SPARK_METHOD", errs(cfg0(c(SPARK_METHOD = "carrier_pigeon")))),
      "an unknown SPARK_METHOD stops at config time, before any connection")
-  ok(identical(cfg0()$spark_method, "databricks"),
-     "the default is the on-cluster session, which authenticates nothing")
-  ok(!("pwd" %in% names(cfg0())),
-     "no password setting survives the move off ODBC")
+  ok(identical(cfg0()$spark_method, "odbc"),
+     "the default connection is the Databricks ODBC driver - the one the cohort and LOT builds use")
+  ok(identical(cfg0()$dsn, "RWDE") && identical(cfg0(c(DATABRICKS_DSN = "OTHER"))$dsn, "OTHER"),
+     "...on the DSN the cohort build defaults to, overridable")
+  ok(identical(cfg0(c(DATABRICKS_PWD = "s3cret"))$pwd, "s3cret") && identical(cfg0()$pwd, ""),
+     "...with the password from the environment alone")
+
+  # connect_db() over odbc opens the driver through odbc_connect(), the one
+  # call a test cannot make, and stops by name when the password is missing.
+  dbi_con <- structure(list(), class = c("fake", "DBIConnection"))
+  opened <- NULL
+  cenv <- new.env(parent = environment(connect_db))
+  cenv$odbc_connect <- function(dsn, pwd) { opened <<- list(dsn = dsn, pwd = pwd); dbi_con }
+  cenv$requireNamespace <- function(...) TRUE   # DBI and odbc need not be installed here
+  cenv$log_msg <- function(...) invisible(NULL)
+  cdb <- stubbed(connect_db, cenv, also = "connect_odbc")
+  con <- cdb(cfg0(c(DATABRICKS_PWD = "pw")))
+  ok(is_dbi_con(con) && identical(opened, list(dsn = "RWDE", pwd = "pw")),
+     "SPARK_METHOD=odbc opens the Databricks ODBC DSN with the password from the environment, and nothing of Spark")
+  ok(grepl("DATABRICKS_PWD", errs(cdb(cfg0()))),
+     "...and stops, naming the variable, when the password is not set")
+
+  # db_exec_once() and db_q() dispatch on the connection: a DBI connection is
+  # sent through DBI, anything else through sparklyr, and a BIGINT the driver
+  # returns as integer64 is a plain number by the time a caller sees it.
+  said <- character(0)
+  denv <- new.env(parent = environment(db_exec_once))
+  denv$dbi_exec  <- function(con, sql) { said <<- c(said, sql); 1L }
+  denv$dbi_query <- function(con, sql) data.frame(n = structure(1780, class = "integer64"))
+  denv$with_retry <- function(fn, ...) fn()
+  ok(identical(stubbed(db_exec_once, denv, also = character(0))(dbi_con, "CREATE TABLE t (x int)"), 1L) &&
+       identical(said, "CREATE TABLE t (x int)"),
+     "a DBI connection executes through DBI")
+  q <- stubbed(db_q, denv, also = character(0))(dbi_con, "SELECT count(*) AS n FROM t")
+  ok(is.numeric(q$n) && !inherits(q$n, "integer64"),
+     "...and a BIGINT it reads comes back as a plain number, not a 64-bit bit pattern")
+  said <- character(0)
+  e_sp <- errs(stubbed(db_exec_once, denv, also = character(0))(
+    structure(list(), class = "spark_connection"), "SELECT 1"))
+  ok(!is.na(e_sp) && !length(said),
+     "...while a connection that is not DBI is never sent through DBI")
+  closed <- FALSE
+  xenv <- new.env(parent = environment(disconnect_db))
+  xenv$dbi_disconnect <- function(con) closed <<- TRUE
+  stubbed(disconnect_db, xenv, also = character(0))(dbi_con)
+  ok(closed, "...and a DBI connection is closed through DBI")
+
+  # Over ODBC a code list is staged as one VALUES statement in a temporary
+  # view, the way the cohort build loads its lists over the same driver.
+  cl <- data.frame(code = c("C90.0", "it's"), icd_family = c("10", ""), stringsAsFactors = FALSE)
+  st <- codelist_stage_sql("cl_x_raw", cl)
+  ok(grepl("^CREATE OR REPLACE TEMPORARY VIEW cl_x_raw AS", st) &&
+       grepl("('C90.0', '10')", st, fixed = TRUE) && grepl("('it''s', '')", st, fixed = TRUE) &&
+       grepl("AS t(code, icd_family)", st, fixed = TRUE),
+     "over ODBC a code list is one VALUES statement behind a temporary view - every cell a string literal, quotes doubled, in the file's column order")
+  st0 <- codelist_stage_sql("e_raw", cl[0, , drop = FALSE])
+  ok(grepl("WHERE 1 = 0", st0, fixed = TRUE) && grepl("AS t(code, icd_family)", st0, fixed = TRUE),
+     "...and an empty list is an empty view of the same shape, not a VALUES with nothing in it")
+  big <- data.frame(code = sprintf("C%05d", 1:5318), icd_family = "10", stringsAsFactors = FALSE)
+  t0 <- proc.time()[["elapsed"]]
+  sb <- codelist_stage_sql("big_raw", big)
+  tb <- proc.time()[["elapsed"]] - t0
+  ok(length(gregexpr("\n  (", sb, fixed = TRUE)[[1]]) == 5318L && tb < 2,
+     sprintf("...pregnancy.csv's 5,318 rows in one statement, built in %.2fs", tb))
+  said <- character(0)
+  renv <- new.env(parent = environment(register_codelist_view))
+  renv$db_exec <- function(con, sql) { said <<- c(said, sql); invisible(1L) }
+  v <- stubbed(register_codelist_view, renv, also = character(0))(dbi_con, cl, "CL_X", c("code", "icd_family"))
+  ok(identical(v, "CL_X") && length(said) == 2L &&
+       grepl("TEMPORARY VIEW cl_x_raw AS", said[1], fixed = TRUE) &&
+       grepl("TEMPORARY VIEW CL_X AS", said[2], fixed = TRUE) && grepl("FROM cl_x_raw", said[2], fixed = TRUE),
+     "...staged first, then normalised into the view every module joins on, both over the same connection")
+  # The stage statement is Spark SQL, checked by the same parser the emitted
+  # statements go through; SKIP rather than pass where it cannot run.
+  sf <- tempfile(fileext = ".sql")
+  writeLines(c("-- @@STMT codelist_stage", st, "-- @@STMT codelist_stage_empty", st0), sf)
+  pout <- suppressWarnings(tryCatch(
+    system2("python3", c("tests/parse_sql.py", shQuote(sf)), stdout = TRUE, stderr = TRUE),
+    error = function(e) "NO-PYTHON"))
+  ptxt <- paste(pout, collapse = "\n")
+  if (any(grepl("^SKIP:", pout)) || identical(ptxt, "NO-PYTHON") || !length(pout)) {
+    cat("  SKIP  the staged code list parses as Spark SQL (python3 + sqlglot not available)\n")
+  } else {
+    ok(grepl("0 failure\\(s\\)", ptxt),
+       paste0("the staged code list parses as Spark SQL",
+              if (!grepl("0 failure", ptxt)) paste0("\n", ptxt) else ""))
+  }
 }
 
 cat("\nmodule wiring\n")
@@ -819,8 +929,8 @@ cat("\nregressions from the adversarial review\n")
                          function(x) x$sql, character(1)), collapse = "\n")
   ok(!grepl("UNION ALL", cl_all, fixed = TRUE),
      "the code-list view is not defined in terms of itself when chunked")
-  ok(grepl("copy_to", rv),
-     "a code list of thousands of rows is copied, not built as SQL text")
+  ok(grepl("copy_to", rv) && grepl("codelist_stage_sql", rv) && grepl("is_dbi_con(con)", rv, fixed = TRUE),
+     "a code list of thousands of rows is copied over a Spark session and staged as one statement over the ODBC driver - never chunked")
   sf <- paste(capture.output(print(mod_safety)), collapse = "\n")
   # Retry safety, through every comment form a statement can start with. A
   # block-comment prefix was classified safe while the line-comment form was
@@ -2097,7 +2207,7 @@ cat("\n-- the controller re-checks the LOT build before recording complete --\n"
     env$connect_db <- function(cfg) structure(list(), class = "fake")
     env$disconnect_db <- function(con) invisible(NULL)
     env$current_work_schema <- function(con) "wk"
-    env$preflight_codelists <- function(mods, cfg) invisible(TRUE)
+    env$preflight_codelists <- function(mods, cfg) mods
     env$source_modules <- function(here) invisible(TRUE)
     env$build_inputs <- function(con, cfg, mods) invisible(TRUE)
     env$resolve_modules <- function(cfg) list()

@@ -12,7 +12,8 @@ silently produce nothing.
 ```r
 install.packages("shiny")
 install.packages("survival")   # optional: only the test cross-check uses it
-install.packages("sparklyr")   # only for the Job, and only for DASH_SOURCE=warehouse
+install.packages(c("DBI", "odbc"))   # only for the Job, and for DASH_SOURCE=warehouse
+install.packages("sparklyr")          # only if SPARK_METHOD names a Spark session instead of the ODBC DSN
 ```
 
 Bake them into the environment's Dockerfile so the App starts fast.
@@ -82,7 +83,9 @@ Anything a stakeholder might quote belongs behind it.
 
 `DASH_SOURCE=warehouse` with `DASH_WORK_SCHEMA` and `DASH_CATALOG` set reads
 the `S_*` tables live, and scenarios are discovered by looking for tables whose
-name ends in `S_RUN_METADATA`. Add `DASH_LOT_PREFIX` for the LOT tabs — the
+name ends in `S_RUN_METADATA`. The connection is the study package's own, over
+the Databricks ODBC DSN by default, so the App then needs `DATABRICKS_PWD` as
+well. Add `DASH_LOT_PREFIX` for the LOT tabs — the
 study's metadata records which LOT *run* a scenario read, not where that run
 wrote, and rows are then filtered to that run id so a prefix pointing at a
 different one is caught rather than drawn. It needs a cluster per viewer and re-queries on
