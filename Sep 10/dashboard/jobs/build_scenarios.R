@@ -43,6 +43,10 @@ message("Scenario grid: ", nrow(grid), " run(s), ", length(set_cols),
         " setting(s) each: ", paste(set_cols, collapse = ", "))
 
 source(file.path(here, "jobs", "export_lib.R"))
+# The reader's own binding rules - which metadata row is the current build,
+# and whether a LOT prefix belongs to a run - so the job files a snapshot the
+# way the app will read it.
+source(file.path(here, "R", "sources.R"))
 
 # Which tables to export. Read off the package's own registry rather than
 # listed, so a module added there is exported without editing this file.
@@ -74,8 +78,11 @@ run_one <- function(row, env) {
   # mid-run would still leave a session the next one inherits. A process per
   # run cannot.
   code <- sprintf("setwd(%s); source('build.R')", shQuote(pkg_dir))
-  res <- system2("Rscript", c("-e", shQuote(code)), env = paste0(names(env), "=", env),
-                 stdout = TRUE, stderr = TRUE)
+  # The settings go into this process's environment for the duration, which
+  # the child inherits everywhere; system2's env= is a command-line prefix
+  # that Windows ignores.
+  res <- with_env(env, system2("Rscript", c("-e", shQuote(code)),
+                               stdout = TRUE, stderr = TRUE))
   status <- attr(res, "status")
   ok <- is.null(status) || identical(status, 0L)
   if (!ok) message("  FAILED: ", paste(utils::tail(res, 8), collapse = "\n  "))
@@ -99,20 +106,13 @@ export_one <- function(prefix, env) {
   # The row's own settings, exactly as the child build received them, plus the
   # package's config.csv defaults - which the child gets from
   # load_pipeline_inputs() and this did not load at all.
-  old_env <- Sys.getenv(names(env), unset = NA_character_, names = TRUE)
-  do.call(Sys.setenv, as.list(env))
-  on.exit({
-    for (k in names(old_env))
-      if (is.na(old_env[[k]])) Sys.unsetenv(k) else
-        do.call(Sys.setenv, stats::setNames(list(old_env[[k]]), k))
-  }, add = TRUE)
-  cfg <- local({
+  cfg <- with_env(env, local({
     for (f in c("load_inputs.R", "config_223926.R", "db_utils_223926.R",
                 "registry.R"))
       source(file.path(pkg_dir, "R", f))
     load_pipeline_inputs(pkg_dir, "config.csv")
     cfg_defaults()
-  })
+  }))
   con <- connect_db(cfg)
   on.exit(try(disconnect_db(con), silent = TRUE), add = TRUE)
   # WORK_SCHEMA unset means "wherever the session lands", and the build
@@ -120,6 +120,24 @@ export_one <- function(prefix, env) {
   # with an empty schema in it.
   if (!nzchar(cfg$work_schema)) cfg$work_schema <- current_work_schema(con)
   set_study_config(cfg)
+  # The build being exported, pinned BEFORE any table is read: the newest
+  # metadata row, and it has to be complete. Every table is read against
+  # that pin and the row is read again after the last one. Metadata used to
+  # be exported first and re-read only to see that A row existed, so a
+  # rebuild landing mid-export published one build's metadata beside
+  # another's rows - and the app, which binds a snapshot to the identity its
+  # own metadata carries, read that mixture as one run.
+  meta_src <- list(read = function(prefix, table)
+    tryCatch(db_q(con, sprintf("SELECT * FROM %s", wrk(table))),
+             error = function(e) NULL))
+  pin <- newest_metadata_row(meta_src, prefix)
+  if (is.null(pin))
+    stop("the run wrote no S_RUN_METADATA, so this snapshot cannot be ",
+         "attributed to a run", call. = FALSE)
+  gen <- run_identity(pin)
+  if (!identical(tolower(gen$state), "complete"))
+    stop("the newest run under ", prefix, " is '", gen$state, "', not ",
+         "complete, so there is nothing finished to export", call. = FALSE)
   n <- 0L; bad <- character(0)
   for (tb in EXPORT) {
     r <- read_export(con, wrk(tb), optional = TRUE)
@@ -134,40 +152,56 @@ export_one <- function(prefix, env) {
   if (length(bad))
     stop("could not read ", length(bad), " table(s): ",
          paste(utils::head(bad, 3), collapse = "; "), call. = FALSE)
-  # The manifest: what this snapshot claims to hold, and which run wrote it.
-  # The reader binds its metadata and its tables to the same published run
-  # rather than trusting that a directory holds one.
-  meta <- read_export(con, wrk("S_RUN_METADATA"))
-  if (!identical(meta$state, "ok") || !nrow(meta$data))
-    stop("the run wrote no S_RUN_METADATA, so this snapshot cannot be ",
-         "attributed to a run", call. = FALSE)
+  # Still the build that was pinned? Any rebuild moves UPDATED_AT, and a
+  # build in progress moves STATE, so a change in either means the tables
+  # above are not one build's.
+  now <- run_identity(newest_metadata_row(meta_src, prefix))
+  if (!identical(now, gen))
+    stop("the run under ", prefix, " changed while its tables were being ",
+         "read (", gen$run_id, " ", gen$state, " ", gen$updated_at, " -> ",
+         now$run_id, " ", now$state, " ", now$updated_at, "), so what was ",
+         "read is not one build's", call. = FALSE)
   message("  exported ", n, " table(s) for ", prefix)
 
-  # The lines this scenario read. Filed by LOT run id, and skipped when
-  # another scenario already exported the same run.
-  lot_id <- tryCatch({
-    md <- db_q(con, sprintf("SELECT LOT_RUN_ID FROM %s ORDER BY UPDATED_AT DESC LIMIT 1",
-                            wrk("S_RUN_METADATA")))
-    trimws(as.character(md$LOT_RUN_ID[1]))
-  }, error = function(e) "")
+  # The lines this scenario read: the LOT run, and the BUILD of it, off the
+  # pinned row. Filed by both, and skipped when another scenario already
+  # exported that build.
+  lot_id <- trimws(as.character(pin$LOT_RUN_ID[1] %||% ""))
+  lot_version <- if ("LOT_RUN_VERSION" %in% names(pin))
+    trimws(as.character(pin$LOT_RUN_VERSION[1] %||% "")) else ""
+  if (identical(lot_version, "NA")) lot_version <- ""
   if (!nzchar(lot_id) || identical(lot_id, "NA") || identical(lot_id, "unproven")) {
     message("  no LOT run recorded, so no LOT tables exported")
     return(publish(stage, d, n, prefix, ""))
   }
-  ld <- file.path(out_dir, "lot", lot_id)
+  # The prefix has to be owned by THIS run - this build of it - before a
+  # table is copied under its name, and still owned by it afterwards; a
+  # rebuild landing between the two reads would otherwise file the new lines
+  # under the old id.
+  owner <- function() lot_prefix_owner_ok(con, lot_tbl("LOT_BUILD_STATUS"),
+                                          lot_id, lot_version)
+  ld <- file.path(out_dir, "lot", lot_dir_name(lot_id, lot_version))
   if (dir.exists(ld) && length(list.files(ld, pattern = "[.]csv$"))) {
-    message("  LOT run ", lot_id, " already exported by an earlier scenario")
-    return(publish(stage, d, n, prefix, lot_id))
+    # A directory named by run AND build is that build, whoever exported it,
+    # and cannot be anything else. One named by run alone was written before
+    # builds were recorded; the prefix may since have been rebuilt under the
+    # same id, so it is reused only while the prefix still belongs to that
+    # run, and the run is re-exported into a build-named directory otherwise.
+    if (nzchar(lot_version) || owner()) {
+      message("  LOT run ", lot_id, if (nzchar(lot_version))
+        paste0(" build ", lot_version) else "",
+        " already exported by an earlier scenario")
+      return(publish(stage, d, n, prefix, lot_id))
+    }
   }
-  # The prefix has to be owned by THIS run before a table is copied under its
-  # name, and still owned by it afterwards - a rebuild landing between the two
-  # reads would otherwise file the new lines under the old id.
-  owner <- function() lot_prefix_owner_ok(con, lot_tbl("LOT_BUILD_STATUS"), lot_id)
   if (!owner())
     stop("the LOT prefix does not currently belong to run ", lot_id,
-         " (its newest status row names another run, or is not complete), so ",
-         "its tables cannot be filed under that run's id", call. = FALSE)
-  lstage <- file.path(out_dir, "lot", paste0(".", lot_id, ".staging"))
+         if (nzchar(lot_version)) paste0(" build ", lot_version) else "",
+         " (its newest status row names another run or another build of it, ",
+         "or is not complete), so its tables cannot be filed under that ",
+         "run's name", call. = FALSE)
+  lstage <- file.path(out_dir, "lot",
+                      paste0(".", lot_dir_name(lot_id, lot_version), ".staging"))
   unlink(lstage, recursive = TRUE)
   dir.create(lstage, recursive = TRUE, showWarnings = FALSE)
   on.exit(unlink(lstage, recursive = TRUE), add = TRUE)

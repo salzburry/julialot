@@ -269,25 +269,49 @@ an extra line every time a doublet starts a line.
 
 ## 6. How a line ends
 
-A line ends for exactly one reason. The reasons are **ranked**, highest
-first, and each is gated on its own date — the ranking is not "whichever comes
-first":
+A line ends for exactly one reason, and the reason is decided in **two
+stages**: first *when*, then *what to call it*.
 
-| rank | reason | what happened | fires only when |
-|---|---|---|---|
-| 1 | `SCT_AUTO_CONT` | a planned tandem partner continues the line | it falls after every other branch's date |
-| 2 | `SCT_ALLO` | an allogeneic transplant | on or before the run-out |
-| 3 | `SCT_CART` | a CAR-T infusion | on or before the run-out |
-| 4 | `SCT_AUTO` | an excess autologous transplant | on or before the run-out |
-| 5 | `CART_INIT` | a CAR-T that consolidates the line | on or before the run-out |
-| 6 | `MED_ADD` | an agent added after the induction window | on or before the run-out |
-| 7 | `DEATH` | the patient died | no next-line trigger sits between the run-out and the death |
-| 8 | `DISCONTINUATION` | every agent's cover ran out and the gap confirmed it | |
-| 9 | `STUDY_END` | still on treatment when observation stopped | |
+**Stage one: the earliest qualifying event ends the line.** Each kind of
+event has its own date — the day before a transplant or CAR-T, the day before
+an added agent, the confirmed run-out, the end of observation — and the line
+ends on the earliest of them. A later event never displaces an earlier one.
+The one exception is death, which is not gated on a date: a death displaces
+an earlier confirmed run-out where nothing that could open the next line
+happened between the two (§7.5 of `LOT_RULES.md`).
 
-Death is **not** first. It outranks an *earlier* discontinuation only where
-nothing that could open the next line happened in between — and a medication
-addition that opened a line is exactly such a trigger.
+**Stage two: the event that won is named.** The name is the kind of event it
+was — `SCT_AUTO`, `SCT_ALLO`, `SCT_CART`, `CART_INIT`, `MED_ADD`, `DEATH`,
+`DISCONTINUATION`, `STUDY_END`. There is **no ranking between kinds**: an
+allograft does not outrank an earlier autograft, and a CAR-T does not outrank
+an earlier added agent. The order the reasons are tested in matters only on an
+exact same-day tie, where it decides which name is recorded — and the line's
+end date is the same whichever name wins.
+
+> Agent A covers **d+0 – d+300** · first AUTO at **d+30** · a second AUTO at
+> **d+211** · agent B added at **d+220** · ALLO at **d+250**
+> → line 1 ends **`SCT_AUTO` on d+210**. The first AUTO is line 1's own and
+> never ends it (§3.4); the second is 181 days after it, past the 180-day
+> tandem window, so it is an excess transplant. Its day-before, d+210, is
+> earlier than B's (d+219) and the ALLO's (d+249), so it wins — the ALLO does
+> not reach back to end line 1 merely for being an allograft. Line 2 opens at
+> the second AUTO and ends **`SCT_ALLO` on d+249**; the allograft is line 3, a
+> one-day line on d+250.
+
+A global rank — ALLO before CAR-T before AUTO — gives that patient the wrong
+first boundary even though every one of those events precedes the run-out.
+The transplant kinds are one branch with one date rule: earliest first.
+
+**The one branch that looks forward.** `SCT_AUTO_CONT` — a planned tandem
+partner *continuing* the line — is tested first, but it fires only when its
+transplant falls strictly *after* the date every other branch would have
+produced. Where it fires, the line was going to end too early and is carried
+to the transplant; where it does not, it changes nothing. Death is excluded
+from it explicitly.
+
+**Death is not first either.** It outranks an *earlier* discontinuation only
+where nothing that could open the next line happened in between — and a
+medication addition that opened a line is exactly such a trigger.
 
 > Agent A covers **d+0 – d+150** · agent B added at **d+100** · death at
 > **d+180**
@@ -301,6 +325,11 @@ gap was confirmed — the patient stopped when their drugs did.
 `STUDY_END` matters for what it prevents: a patient still covered at the end of
 observation has **not** discontinued, and recording one there would turn
 treatment-active-at-censoring into a stop that did not happen.
+
+The same-day tie order is the one place the two line-1 and lines-2-to-5
+statements differ — line 1 records AUTO, then ALLO, then CAR-T; later lines
+ALLO, then CAR-T, then AUTO — and it is recorded as an open question in
+`LOT_RULES.md` §7.2 because it changes a label, never a date.
 
 ---
 

@@ -79,24 +79,36 @@ publish <- function(stage, dest, n, prefix, lot_id, lstage = NULL, ldest = NULL)
 
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
-# Whether the LOT prefix is owned, RIGHT NOW, by the run this scenario read.
+# Whether the LOT prefix is owned, RIGHT NOW, by the run - and the BUILD of
+# it - this scenario read.
 #
 # The exporter copied whatever sat under the LOT prefix into lot/<run id>/ and
 # the reader trusts that directory name. A prefix rebuilt between the study
 # run and the export therefore filed the NEW build's lines under the OLD run's
 # id. The status table keeps every run's row, so "a row says this run
-# completed" is history; only the newest row says whose tables are there.
-# Same rule the warehouse reader applies (lot_status_owner in R/sources.R),
-# written out here because the job does not load the app.
-lot_prefix_owner_ok <- function(con, status_tbl, lot_id) {
+# completed" is history; only the newest row says whose tables are there -
+# and, since the engine keeps a run id for a session, its stamp says which
+# build. The rule itself is the warehouse reader's (lot_status_owner in
+# R/sources.R, which the job loads), so the two cannot drift.
+lot_prefix_owner_ok <- function(con, status_tbl, lot_id, lot_version = "") {
   st <- tryCatch(db_q(con, sprintf("SELECT * FROM %s", status_tbl)),
                  error = function(e) NULL)
-  id <- trimws(lot_id %||% "")
-  if (!nzchar(id) || is.null(st) || !nrow(st) ||
-      !all(c("RUN_ID", "STATE") %in% names(st))) return(FALSE)
-  o <- if ("UPDATED_AT" %in% names(st))
-    order(as.character(st$UPDATED_AT), decreasing = TRUE) else rev(seq_len(nrow(st)))
-  newest <- st[o[1], , drop = FALSE]
-  identical(trimws(as.character(newest$RUN_ID)), id) &&
-    identical(tolower(trimws(as.character(newest$STATE))), "complete")
+  lot_status_owner(st, lot_id, "x", lot_version)
+}
+
+# Run `expr` with these environment variables set in THIS process, restored
+# afterwards. The child build inherits them, on every platform: passing them
+# as system2(env = ...) prefixes `NAME=value` onto the command line, which
+# Windows does not do, and the job's child then built with none of its
+# settings and produced no output.
+with_env <- function(env, expr) {
+  env <- env[nzchar(names(env))]
+  old <- Sys.getenv(names(env), unset = NA_character_, names = TRUE)
+  do.call(Sys.setenv, as.list(env))
+  on.exit({
+    for (k in names(old))
+      if (is.na(old[[k]])) Sys.unsetenv(k) else
+        do.call(Sys.setenv, stats::setNames(list(old[[k]]), k))
+  }, add = TRUE)
+  force(expr)
 }

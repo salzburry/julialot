@@ -139,6 +139,10 @@ server <- function(input, output, session) {
   # scenario, and a file read inside a reactive is not a reactive input, so a
   # floor change re-read replacement tables under a guard that still said no.
   scenario_moved <- function(s) isFALSE(scenario_is_current(SRC, s))
+  moved_alert <- function() div(class = "alert", paste0(
+    "This snapshot has been rebuilt since the page was opened, so the ",
+    "settings and the LOT run named beside it belong to the previous run. ",
+    "Nothing is shown until the page is reloaded."))
 
   # One table, read and filtered the way every panel wants it. Bound to the
   # run the sidebar describes on every read - see read_scenario_table().
@@ -159,12 +163,12 @@ server <- function(input, output, session) {
     s <- scn()
     if (!isTRUE(p$available))
       return(div(class = "alert", html_escape(p$why)))
-    # Said once, on every panel, rather than a page of empty tables.
+    # Said once, on every panel, rather than a page of empty tables. Asked
+    # again inside each renderer that reads: this guard runs when the tab is
+    # drawn, and a renderer re-runs on its own inputs - the floor, say -
+    # without coming back through here.
     if (scenario_moved(s))
-      return(tagList(h4(p$label), div(class = "alert", paste0(
-        "This snapshot has been rebuilt since the page was opened, so the ",
-        "settings and the LOT run named beside it belong to the previous run. ",
-        "Nothing is shown until the page is reloaded.")), tags$hr()))
+      return(tagList(h4(p$label), moved_alert(), tags$hr()))
     body <- switch(p$render,
       kpi    = ui_kpi(p, s),
       table  = ui_table(p, s),
@@ -192,9 +196,12 @@ server <- function(input, output, session) {
     output[[id]] <- renderUI({
       if (identical(p$name, "settings"))
         return(HTML(html_table(settings_table(s), max_rows = DASH_CFG$max_rows)))
-      if (identical(p$table, "S_RUN_METADATA"))
-        return(HTML(html_table(drop_identifiers(SRC$read(s$prefix, "S_RUN_METADATA")),
-                               max_rows = DASH_CFG$max_rows)))
+      if (identical(p$table, "S_RUN_METADATA")) {
+        md <- read_scenario_table(SRC, s, "S_RUN_METADATA", FALSE)
+        if (is.null(md))
+          return(if (scenario_moved(s)) moved_alert() else HTML(html_table(NULL)))
+        return(HTML(html_table(drop_identifiers(md), max_rows = DASH_CFG$max_rows)))
+      }
       d <- panel_data(p, s)
       if (is.null(d) || !nrow(d)) return(HTML(html_table(NULL)))
       HTML(panel_table_html(
@@ -209,12 +216,17 @@ server <- function(input, output, session) {
   # A headline count is a released number like any other. This one went
   # straight from S_ATTRITION to the page, so a three-patient cohort was
   # displayed at a floor of 25 while every table beside it withheld the same
-  # stratum.
+  # stratum. And it read the table straight from the source: a floor change
+  # re-ran this renderer alone, past the panel guard, and put a rebuilt
+  # snapshot's cohort count under the old run's settings. Bound to the run
+  # on every read, like every other renderer.
   ui_kpi <- function(p, s) {
     id <- paste0("kpi_", p$name)
     output[[id]] <- renderUI({
-      d <- SRC$read(s$prefix, "S_ATTRITION")
-      if (is.null(d) || !nrow(d)) return(HTML(html_table(NULL)))
+      d <- read_scenario_table(SRC, s, "S_ATTRITION", FALSE)
+      if (is.null(d))
+        return(if (scenario_moved(s)) moved_alert() else HTML(html_table(NULL)))
+      if (!nrow(d)) return(HTML(html_table(NULL)))
       last <- do.call(rbind, lapply(split(d, d$COHORT), function(x)
         x[which.max(x$STEP), , drop = FALSE]))
       HTML(kpi_row_html(last, input$floor, DASH_CFG$suppress_min_n))
@@ -333,12 +345,23 @@ server <- function(input, output, session) {
       # Two reading different runs differ in the lines as well, and a delta
       # between them carries both without saying so.
       same <- same_lot_run(s, b)
+      same_id <- identical(trimws(s$lot_run_id %||% ""), trimws(b$lot_run_id %||% "")) &&
+        nzchar(trimws(s$lot_run_id %||% ""))
       lot_html <- if (isTRUE(same))
         sprintf('<p class="note">Both rest on LOT run <b>%s</b>, so every difference below is this package\'s.</p>',
                 html_escape(s$lot_run_id))
+      else if (isFALSE(same) && same_id)
+        # One id, two builds: the engine keeps a run id for a session, and the
+        # two scenarios read the tables it wrote at different times.
+        sprintf('<div class="alert"><b>Different LOT builds.</b> Both name LOT run %s, but A read build %s and B read build %s, so the lines themselves differ. A difference below carries both that and the settings, and the two cannot be told apart here.</div>',
+                html_escape(s$lot_run_id), html_escape(s$lot_run_version),
+                html_escape(b$lot_run_version))
       else if (isFALSE(same))
         sprintf('<div class="alert"><b>Different LOT runs.</b> A is %s and B is %s, so the lines themselves differ. A difference below carries both that and the settings, and the two cannot be told apart here.</div>',
                 html_escape(s$lot_run_id), html_escape(b$lot_run_id))
+      else if (same_id)
+        sprintf('<div class="alert">Both name LOT run %s, but only one of them records which build of it, so it cannot be said whether they rest on the same lines.</div>',
+                html_escape(s$lot_run_id))
       else
         '<div class="alert">At least one of these scenarios records no LOT run, so it cannot be said whether they rest on the same lines.</div>'
       diff_html <- paste0(lot_html,

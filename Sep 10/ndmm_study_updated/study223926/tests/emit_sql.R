@@ -85,9 +85,13 @@ load_package_env <- function(here) {
 #
 # `cfg_edit` is applied to the configuration before the run, so a caller can
 # exercise a setting other than the shipped default - the follow-up readings
-# and the treatment-pattern switches each emit different SQL.
-capture_emitted_sql <- function(here = ".", cfg_edit = identity) {
-  env <- load_package_env(here)
+# and the treatment-pattern switches each emit different SQL. `env_edit` is
+# applied to the loaded package before anything reads it, so a caller can
+# change a REGISTRY - add a criterion, drop one from a cohort's list - and see
+# what the modules emit for it, which no setting reaches.
+capture_emitted_sql <- function(here = ".", cfg_edit = identity,
+                                env_edit = identity) {
+  env <- env_edit(load_package_env(here))
 
   cfg <- env$cfg_defaults()
   cfg$work_schema  <- "wk"

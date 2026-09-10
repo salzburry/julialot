@@ -79,6 +79,9 @@ scenario_from_row <- function(prefix, row) {
     cohorts = trimws(strsplit(g("COHORTS"), ";")[[1]]),
     modules = trimws(strsplit(g("MODULES"), ";")[[1]]),
     lot_run_id = g("LOT_RUN_ID"),
+    # Which BUILD of that run - the stamp of the status row the run vouched
+    # for. Empty on metadata written before it was recorded.
+    lot_run_version = g("LOT_RUN_VERSION"),
     study_start = g("STUDY_START"),
     study_end = g("STUDY_END"),
     deviations = g("CONTRACT_DEVIATIONS"),
