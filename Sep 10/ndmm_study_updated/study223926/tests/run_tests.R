@@ -382,6 +382,25 @@ cat("\nthe connection layer\n")
   ok(identical(split_statements("/* ' */ SELECT 1;SELECT 2"),
                c("/* ' */ SELECT 1", "SELECT 2")),
      "a lone quote inside a block comment does not swallow the rest")
+  # Spark's escape inside a string is the backslash, which is how a staged
+  # code list writes its values. The splitter read \' as the end of the
+  # string: 'Alzheimer\'s disease' was refused as unterminated before it
+  # reached the driver, and a label with two apostrophes and a ; between them
+  # was cut into two statements.
+  ok(identical(split_statements("SELECT 'Alzheimer\\'s disease' AS v; SELECT 2"),
+               c("SELECT 'Alzheimer\\'s disease' AS v", "SELECT 2")),
+     "a backslash-escaped quote does not end the string")
+  ok(identical(split_statements("SELECT 'Patient\\'s symptom; clinician\\'s note' AS v"),
+               "SELECT 'Patient\\'s symptom; clinician\\'s note' AS v"),
+     "...so a semicolon between two of them stays inside the statement")
+  ok(identical(split_statements("SELECT 'a\\\\'; SELECT 2"), c("SELECT 'a\\\\'", "SELECT 2")),
+     "...while a quote behind a doubled backslash - a backslash in the value - does end it")
+  ok(identical(split_statements("SELECT 'a\\\\\\''; SELECT 2"), c("SELECT 'a\\\\\\''", "SELECT 2")),
+     "...and behind three, it is escaped again: what counts is whether the run is odd")
+  ok(!is.na(errs(split_statements("SELECT 'a\\'"))),
+     "...and a string that ends in an escaped quote is still unterminated")
+  ok(identical(split_statements("SELECT `a\\`; SELECT 2"), c("SELECT `a\\`", "SELECT 2")),
+     "a backtick identifier has no backslash escape, so a backslash before its closing backtick means nothing")
   ok(identical(split_statements("SELECT 'a' || 'b'; SELECT 2"),
                c("SELECT 'a' || 'b'", "SELECT 2")),
      "two literals in a row are two literals, not one escaped quote")
@@ -543,6 +562,27 @@ cat("\nthe connection layer\n")
   e_cp <- errs(stubbed(register_codelist_view, renv, also = character(0))(spark_con, cl, "CL_Y", c("code", "icd_family")))
   ok(!is.na(e_cp) && !any(grepl("VALUES", said, fixed = TRUE)),
      "...and over a Spark session a code list is copied, never staged as SQL text")
+  # The whole path from the list to the driver - register_codelist_view(),
+  # db_exec(), the splitter - with only the driver call answered. The
+  # encoder wrote the apostrophe correctly and the splitter then refused the
+  # statement as unterminated, so a label with an apostrophe never reached
+  # the warehouse; one with two and a semicolon between them reached it in
+  # three pieces.
+  reached <- character(0)
+  penv <- new.env(parent = environment(register_codelist_view))
+  penv$dbi_exec <- function(con, sql) { reached <<- c(reached, sql); 1L }
+  penv$with_retry <- function(fn, ...) fn()
+  penv$log_msg <- function(...) invisible(NULL)
+  stage_path <- stubbed(register_codelist_view, penv, also = c("db_exec", "db_exec_once"))
+  labels <- c("Alzheimer's disease", "Patient's symptom; clinician's note", "plain")
+  cl_lab <- data.frame(condition = labels, code = c("G30", "R69", "Z00"), stringsAsFactors = FALSE)
+  v <- stage_path(dbi_con, cl_lab, "CL_LAB", c("condition", "code"))
+  ok(identical(v, "CL_LAB") && length(reached) == 2L &&
+       grepl("TEMPORARY VIEW cl_lab_raw AS", reached[1], fixed = TRUE) &&
+       grepl("('Alzheimer\\'s disease', 'G30')", reached[1], fixed = TRUE) &&
+       grepl("('Patient\\'s symptom; clinician\\'s note', 'R69')", reached[1], fixed = TRUE) &&
+       grepl("TEMPORARY VIEW CL_LAB AS", reached[2], fixed = TRUE),
+     "from the list to the driver, an apostrophe in a label and a semicolon between two of them reach it as two whole statements: the stage and the view")
   # The stage statement is Spark SQL, checked by the same parser the emitted
   # statements go through; SKIP rather than pass where it cannot run.
   sf <- tempfile(fileext = ".sql")
