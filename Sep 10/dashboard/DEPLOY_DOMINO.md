@@ -75,9 +75,11 @@ DASH_SNAPSHOT_DIR=/mnt/artifacts/results
 DASH_ALLOW_SYNTHETIC=FALSE
 ```
 
-The last one matters. Without it, an App that cannot find its snapshot falls
-back to generated numbers; with it, the App refuses to start and says why.
-Anything a stakeholder might quote belongs behind it.
+The last one matters. It makes an App configured for synthetic numbers refuse
+to start and say why, so nobody quotes generated data because the default was
+left in place. A snapshot source whose directory is missing or empty lists no
+scenarios; it never falls back to synthetic data. Anything a stakeholder might
+quote belongs behind it.
 
 ## Reading the warehouse directly instead
 
@@ -88,9 +90,9 @@ the Databricks ODBC DSN by default, so the App then needs `DATABRICKS_PWD` as
 well. Add `DASH_LOT_PREFIX` for the LOT tabs — the
 study's metadata records which LOT *run* a scenario read, not where that run
 wrote, and rows are then filtered to that run id so a prefix pointing at a
-different one is caught rather than drawn. It needs a cluster per viewer and re-queries on
-every control change, so the snapshot is the better default for anything more
-than one person.
+different one is caught rather than drawn. The App opens one connection as it
+starts and every viewer shares it, re-querying on every control change, so the
+snapshot is the better default for anything more than one person.
 
 ## What the App can and cannot do
 

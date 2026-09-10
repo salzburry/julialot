@@ -11,8 +11,12 @@
 #               numerator and the person-time denominator" (s7.8.1)
 #
 # The counting rules live in R/person_time.R.
-mod_safety <- function(con, cfg, cohort) {
-  cl <- load_codelist("safety_events.csv", cfg)
+# What the safety list must satisfy beyond its shape: the protocol's chronic
+# set typed chronic, no condition defined by an admission, one domain and
+# one type per condition. The module runs it as it starts; the preflight
+# runs it before the connection is opened. Returns the list with its
+# acute/chronic types resolved to one value per row.
+check_safety_list <- function(cfg, cl = load_codelist("safety_events.csv", cfg)) {
   assert_chronic_set(cl)
   # Table 3 types two conditions "Acute or chronic" and "Acute/Chronic", and a
   # LIKE test for either word matches both - so those conditions would be
@@ -51,6 +55,12 @@ mod_safety <- function(con, cfg, cohort) {
          "the numerator is per condition, so such a condition is reported ",
          "twice at its full person-time. Give each condition one domain and ",
          "one type.", call. = FALSE)
+  invisible(cl)
+}
+
+mod_safety <- function(con, cfg, cohort) {
+  cl <- load_codelist("safety_events.csv", cfg)
+  cl <- check_safety_list(cfg, cl)
   reg <- register_codelist_view(con, cl, "S_CL_SAFETY",
     cols = c("condition", "domain", "acute_chronic", "code_type", "code",
              "icd_family"))

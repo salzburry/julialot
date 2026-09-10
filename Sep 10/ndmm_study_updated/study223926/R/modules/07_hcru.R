@@ -33,8 +33,10 @@ HCRU_MEASURES <- c(
 # false hit nothing downstream could see.
 ICD10_TRANSITION <- "2015-10-01"
 
-mod_hcru <- function(con, cfg, cohort) {
-  cl <- load_codelist("hcru.csv", cfg)
+# What the HCRU list must satisfy beyond its shape: ED_VISIT rows, of every
+# code type ED_DEFINITION reads. The module runs it as it starts; the
+# preflight runs it before the connection is opened. Returns the ED rows.
+check_hcru_list <- function(cfg, cl = load_codelist("hcru.csv", cfg)) {
   ed <- cl[tolower(trimws(cl$concept)) == "ed_visit", , drop = FALSE]
   if (!nrow(ed))
     stop("CODELIST ERROR: hcru.csv carries no ED_VISIT rows, so no emergency ",
@@ -54,6 +56,12 @@ mod_hcru <- function(con, cfg, cohort) {
          paste(names(absent), collapse = ", "), " but hcru.csv has no rows of ",
          "code_type ", paste(absent, collapse = ", "), ". Fill them or narrow ",
          "ED_DEFINITION.", call. = FALSE)
+  invisible(ed)
+}
+
+mod_hcru <- function(con, cfg, cohort) {
+  cl <- load_codelist("hcru.csv", cfg)
+  ed <- check_hcru_list(cfg, cl)
   reg <- register_codelist_view(con, ed, "S_CL_ED",
                                 cols = c("concept", "code_type", "code"))
 

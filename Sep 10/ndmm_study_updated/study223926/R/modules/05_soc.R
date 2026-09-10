@@ -71,8 +71,10 @@ soc_rank_sql <- function(col = "cl.soc_category") {
   paste0("CASE ", paste(arms, collapse = " "), " ELSE 999 END")
 }
 
-mod_soc <- function(con, cfg, cohort) {
-  cl <- load_codelist("soc_regimen_categories.csv", cfg)
+# What the SOC list must satisfy beyond its shape: the protocol's categories
+# and the two line scopes. The module runs it as it starts; the preflight
+# runs it before the connection is opened.
+check_soc_list <- function(cfg, cl = load_codelist("soc_regimen_categories.csv", cfg)) {
   bad <- setdiff(unique(cl$soc_category),
                  union(SOC_CATEGORIES_1L, SOC_CATEGORIES_LATER))
   if (length(bad))
@@ -85,6 +87,12 @@ mod_soc <- function(con, cfg, cohort) {
   if (length(bad_scope))
     stop("CODELIST ERROR: line_scope must be 1L or LATER; found ",
          paste(bad_scope, collapse = ", "), ".", call. = FALSE)
+  invisible(cl)
+}
+
+mod_soc <- function(con, cfg, cohort) {
+  cl <- load_codelist("soc_regimen_categories.csv", cfg)
+  check_soc_list(cfg, cl)
 
   reg <- register_codelist_view(con, cl, "S_CL_SOC",
                                 cols = c("line_scope", "soc_category",

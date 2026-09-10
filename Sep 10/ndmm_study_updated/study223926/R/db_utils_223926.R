@@ -405,7 +405,10 @@ sql_is_retry_safe <- function(st) {
 # The connection is one of two things, and every statement is SQL text, so
 # they differ only here: a DBI connection - the Databricks ODBC driver, the
 # connection the cohort and LOT builds use - or a sparklyr session.
-is_dbi_con <- function(con) inherits(con, "DBIConnection")
+# A sparklyr session inherits DBIConnection too, so it is told apart first:
+# over it every statement goes through sparklyr, as before.
+is_spark_con <- function(con) inherits(con, "spark_connection")
+is_dbi_con   <- function(con) inherits(con, "DBIConnection") && !is_spark_con(con)
 
 # The calls that reach the DBI driver, separate so a test can answer them
 # without DBI installed.
