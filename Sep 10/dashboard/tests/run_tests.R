@@ -743,6 +743,43 @@ source(file.path(here, "jobs", "export_lib.R"))
      "a blank cell written as NA is not a setting of \"NA\"")
   ok(!"note" %in% names(e),
      "and a lower-case column is documentation, not a setting to export")
+
+  # --- the shipped grid, row by row, through the package's own config ---
+  # Every scenario failed on the cluster because ED_DEFINITION said
+  # rev_or_pos, a word the package never read: it takes a comma list of
+  # revenue, pos and cpt. A grid value the package refuses is found here.
+  grid <- read.csv(file.path(here, "scenarios.csv"), stringsAsFactors = FALSE,
+                   check.names = FALSE)
+  grid_base <- c(INPUT_COHORT_TABLE = "ndmm_NDMM_COHORT", WORK_SCHEMA = "",
+                 PROJECT_WORK_SCHEMA = "", DOMINO_USER_NAME = "",
+                 DOMINO_STARTING_USERNAME = "")
+  # Through cfg_defaults() AND check_settings(): the list settings are read
+  # by the first and refused by the second, and a test of the first alone
+  # accepted rev_or_pos.
+  grid_cfg <- function(row) with_env(c(grid_base, scenario_env(row)),
+                                     { cfg <- cfg_defaults(); check_settings(cfg); cfg })
+  refused <- character(0)
+  for (i in seq_len(nrow(grid))) {
+    msg <- tryCatch({ grid_cfg(grid[i, ]); NA_character_ },
+                    error = function(x) conditionMessage(x))
+    if (!is.na(msg)) refused <- c(refused, paste0(grid$prefix[i], ": ", msg))
+  }
+  ok(!length(refused),
+     paste0("every row of the shipped grid is a setting the package accepts",
+            if (length(refused)) paste0(" [", paste(refused, collapse = " | "), "]") else ""))
+  base_cfg <- grid_cfg(grid[1, ])
+  ok(identical(base_cfg$ed_definition, c("revenue", "pos")),
+     "...and the base case's emergency-visit definition is the package's own: revenue code or place of service")
+  # Where the base case departs from the package's defaults, its description
+  # says so by name: a reader comparing it with a plain run has to be told.
+  dflt <- with_env(grid_base, cfg_defaults())
+  cols <- grep("^[A-Z][A-Z0-9_]*$", names(grid), value = TRUE)
+  departs <- cols[vapply(cols, function(k)
+    !identical(dflt[[tolower(k)]], base_cfg[[tolower(k)]]), logical(1))]
+  ok(length(departs) > 0 && all(vapply(departs, function(k)
+       grepl(k, grid$description[1], fixed = TRUE), logical(1))),
+     paste0("the base case names every setting on which it departs from the package's defaults (",
+            paste(departs, collapse = ", "), ")"))
   # One env for both halves is the whole point: the export used to rebuild the
   # configuration with only OBJECT_PREFIX changed and read the PARENT's schema.
   jb <- paste(readLines(file.path(here, "jobs", "build_scenarios.R"),

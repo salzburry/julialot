@@ -1,6 +1,6 @@
 prefix,label,description,MM_HOSP_POSITION,CLAIM_STATUS,MONTHS_AS,CENSOR_AT_DISENROLLMENT,BASELINE_INCLUDES_INDEX,ED_DEFINITION,FU_EVIDENCE_RULE
-s223926_,Base case,Every open question at the reading the package defaults to,confinement,paid_only,days,TRUE,FALSE,rev_or_pos,claim_from_index
-s223926_q27_,Q27 claim-position hospitalisations,MM-related stays found from claim diagnosis positions rather than the confinement's own,claim_positions,paid_only,days,TRUE,FALSE,rev_or_pos,claim_from_index
-s223926_q25_,Q25 denied claims counted,Denied claim lines counted as evidence rather than dropped,confinement,all,days,TRUE,FALSE,rev_or_pos,claim_from_index
-s223926_q13_,Q13 no disenrolment censoring,Follow-up runs to study end or death rather than stopping at a coverage gap,confinement,paid_only,days,FALSE,FALSE,rev_or_pos,claim_from_index
-s223926_q5_,Q5 calendar months,Months measured as calendar months rather than 30.4375-day units,confinement,paid_only,calendar,TRUE,FALSE,rev_or_pos,claim_from_index
+s223926_,Base case,"The protocol's readings: the package's defaults, except CLAIM_STATUS=paid_only - the package itself counts every claim line, denied ones included, as every build so far has (Q25)",confinement,paid_only,days,TRUE,FALSE,"revenue,pos",claim_from_index
+s223926_q27_,Q27 claim-position hospitalisations,MM-related stays found from claim diagnosis positions rather than the confinement's own,claim_positions,paid_only,days,TRUE,FALSE,"revenue,pos",claim_from_index
+s223926_q25_,Q25 denied claims counted,Denied claim lines counted as evidence rather than dropped,confinement,all,days,TRUE,FALSE,"revenue,pos",claim_from_index
+s223926_q13_,Q13 no disenrolment censoring,Follow-up runs to study end or death rather than stopping at a coverage gap,confinement,paid_only,days,FALSE,FALSE,"revenue,pos",claim_from_index
+s223926_q5_,Q5 calendar months,Months measured as calendar months rather than 30.4375-day units,confinement,paid_only,calendar,TRUE,FALSE,"revenue,pos",claim_from_index

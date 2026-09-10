@@ -39,7 +39,11 @@ Rscript "Sep 10/dashboard/jobs/build_scenarios.R"
 One row of `scenarios.csv` is one run. `prefix` is the `OBJECT_PREFIX` it
 writes under; every other upper-case column is set as an environment variable
 for that run and nothing else, so **the column name is the variable name** and
-a new open question becomes available the moment the package reads it.
+a new open question becomes available the moment the package reads it. A value
+that is itself a list, such as `ED_DEFINITION`'s `revenue,pos`, is quoted in
+the file. The dashboard's test suite runs every row through the package's
+config, so a value the package would refuse fails there rather than on the
+cluster.
 
 Each scenario runs in its own R process, and one that fails does not stop the
 others — the summary at the end says which failed, because a grid that quietly
