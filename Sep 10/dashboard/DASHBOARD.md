@@ -267,7 +267,7 @@ DASH_SOURCE=synthetic Rscript -e "shiny::runApp('.', port = 8888)"
 # the normal deployment - app.sh can be started from anywhere: it changes to
 # the folder above dashboard/ itself, which is how a Domino App launches it
 # (DEPLOY_DOMINO.md)
-DASH_SOURCE=snapshot DASH_SNAPSHOT_DIR=/mnt/artifacts/results "Sep 10/dashboard/app.sh"
+DASH_SOURCE=snapshot DASH_SNAPSHOT_DIR=/mnt/data/NDMM "Sep 10/dashboard/app.sh"
 ```
 
 `DEPLOY_DOMINO.md` has the Domino App setup: which files, which environment

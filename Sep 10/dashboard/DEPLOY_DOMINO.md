@@ -32,7 +32,7 @@ Run the cohort build and the LOT build first, then:
 export DATABRICKS_PWD=...              # a Domino secret, never a config file
 export INPUT_COHORT_TABLE=ndmm_NDMM_COHORT
 export PROJECT_WORK_SCHEMA=...
-export DASH_SNAPSHOT_DIR=/mnt/artifacts/results
+export DASH_SNAPSHOT_DIR=/mnt/data/NDMM        # a Domino Dataset, mounted under /mnt/data
 Rscript "Sep 10/dashboard/jobs/build_scenarios.R"
 ```
 
@@ -50,8 +50,8 @@ others — the summary at the end says which failed, because a grid that quietly
 came back four-of-five would be read as five.
 
 The Job then exports every table each run wrote to
-`/mnt/artifacts/results/<prefix>/<TABLE>.csv`, and the LOT build's outputs to
-`/mnt/artifacts/results/lot/<LOT_RUN_ID>.<build>/<TABLE>.csv`. LOT tables are
+`/mnt/data/NDMM/<prefix>/<TABLE>.csv`, and the LOT build's outputs to
+`/mnt/data/NDMM/lot/<LOT_RUN_ID>.<build>/<TABLE>.csv`. LOT tables are
 filed by **run and build**, not by scenario: scenarios normally share one LOT
 run, so a copy each would waste the space and suggest they differ, and the
 build is in the name because the engine can build one run id more than once.
@@ -59,8 +59,8 @@ A build a previous scenario already exported is reused. A scenario is
 exported only from a `complete` run, pinned before its first table is read
 and checked again after its last — and only the tables that run's own
 metadata says it wrote, with only the rows of the cohorts it selected: what
-an earlier run left under the prefix stays out of the snapshot. Domino
-persists Job artifacts there. Re-run on each data refresh.
+an earlier run left under the prefix stays out of the snapshot. Re-run on each data refresh; the App reads the new snapshot on
+restart.
 
 Cost: one full study run per scenario. Five scenarios is five runs — start with
 two or three, and add rows as questions come up.
@@ -77,9 +77,14 @@ Set the App's environment variables:
 
 ```
 DASH_SOURCE=snapshot
-DASH_SNAPSHOT_DIR=/mnt/artifacts/results
+DASH_SNAPSHOT_DIR=/mnt/data/NDMM
 DASH_ALLOW_SYNTHETIC=FALSE
 ```
+
+The snapshot lives in a Domino **Dataset** rather than in the Job's artifacts,
+because an App reads a Dataset it has attached and does not see another run's
+artifacts. Attach the Dataset to the App (the Data step of the publish
+dialog) and to the Job that writes it; both see it under `/mnt/data/<name>`.
 
 The last one matters. It makes an App configured for synthetic numbers refuse
 to start and say why, so nobody quotes generated data because the default was

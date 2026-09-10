@@ -22,7 +22,7 @@ if (!nzchar(here) || is.na(here)) here <- getwd()
 
 grid_csv <- if (length(args) >= 1) args[1] else file.path(here, "scenarios.csv")
 out_dir  <- if (length(args) >= 2) args[2] else
-  Sys.getenv("DASH_SNAPSHOT_DIR", "/mnt/artifacts/results")
+  Sys.getenv("DASH_SNAPSHOT_DIR", "/mnt/data/NDMM")
 pkg_dir  <- Sys.getenv("DASH_PACKAGE_DIR",
                        file.path(dirname(here), "ndmm_study_updated", "study223926"))
 
