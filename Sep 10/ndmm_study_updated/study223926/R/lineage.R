@@ -48,9 +48,16 @@ check_lot_lineage <- function(con, cfg) {
   r <- rows[1, ]
   problems <- character(0)
 
+  # A LOT run that did not finish. Its status row carries no reason - the LOT
+  # build's own log does - so the message says where to look rather than
+  # leaving the reader to find that out.
   if (!identical(tolower(trimws(as.character(r$STATE))), "complete"))
     problems <- c(problems, sprintf(
-      "the newest run (%s) is '%s', not 'complete'", r$RUN_ID, r$STATE))
+      paste0("the newest run (%s) is '%s', not 'complete'. The status row ",
+             "does not say why; the LOT build's own log does, under the ",
+             "OUTPUT_DIR that build ran with. Fix what it reports there and ",
+             "re-run the LOT build"),
+      r$RUN_ID, r$STATE))
 
   if (nzchar(trimws(as.character(r$INPUT_COHORT_TABLE %||% ""))) &&
       !identical(trimws(as.character(r$INPUT_COHORT_TABLE)),

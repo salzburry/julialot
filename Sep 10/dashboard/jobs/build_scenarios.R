@@ -116,9 +116,10 @@ export_one <- function(prefix, env) {
   }))
   con <- connect_db(cfg)
   on.exit(try(disconnect_db(con), silent = TRUE), add = TRUE)
-  # WORK_SCHEMA unset means "wherever the session lands", and the build
-  # resolves it that way too (run_223926.R). Left blank, wrk() built a name
-  # with an empty schema in it.
+  # No schema from the environment - WORK_SCHEMA, PROJECT_WORK_SCHEMA, the
+  # Domino user - means "wherever the session lands", and the build resolves
+  # it that way too (run_223926.R). Left blank, wrk() built a name with an
+  # empty schema in it.
   if (!nzchar(cfg$work_schema)) cfg$work_schema <- current_work_schema(con)
   set_study_config(cfg)
   # The build being exported, pinned BEFORE any table is read: the newest

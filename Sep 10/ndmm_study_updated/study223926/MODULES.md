@@ -18,7 +18,7 @@ serves all three:
 DATABRICKS_PWD=... Rscript build.R                 # DSN from DATABRICKS_DSN, default RWDE
 DRY_RUN=TRUE Rscript build.R                       # print the plan, touch nothing
 MODULES=safety COHORTS=1L,2L Rscript build.R       # one module; 2L is nested in 1L, so 1L comes too
-Rscript tests/run_tests.R                          # 409 checks, no warehouse
+Rscript tests/run_tests.R                          # 412 checks, no warehouse
 ```
 
 `SPARK_METHOD` picks the connection, and `odbc` is the default. The other
@@ -30,6 +30,12 @@ smoke test. Every statement is SQL text, so the modes differ only in the
 connection layer of `R/db_utils_223926.R`; over ODBC a code list is staged as
 one VALUES statement behind a temporary view, as the cohort build stages its
 own.
+
+The schema a run writes into, and reads the cohort and LOT tables from,
+resolves as the cohort and LOT builds resolve theirs: `WORK_SCHEMA`, then
+`PROJECT_WORK_SCHEMA`, then `DOMINO_USER_NAME`, else the session's current
+schema. Give the schema alone - `osk02156`, not `hive_metastore.osk02156` -
+though the second form is accepted when the catalog is `DATABRICKS_CATALOG`.
 
 A partial run - one module, one cohort - writes only that, and leaves every
 other table and every other cohort's rows under the prefix as the previous
@@ -102,7 +108,7 @@ lands on the run's own metadata row where no reader can miss it.
 | `R/db_utils_223926.R` | the connection - ODBC through DBI, or a sparklyr session - logging, table naming, the step runner. |
 | `R/run_223926.R` | Resolves the plan, walks the modules, writes the run metadata. |
 | `R/modules/*.R` | One file per module. Nothing else defines a clinical rule. |
-| `tests/run_tests.R` | 409 checks that need no warehouse. The last sections RUN every module for every cohort, parse every statement they emit, and **execute** them against fixtures. |
+| `tests/run_tests.R` | 412 checks that need no warehouse. The last sections RUN every module for every cohort, parse every statement they emit, and **execute** them against fixtures. |
 | `tests/emit_sql.R` | The harness. Stubs only what touches Spark, so a module's R and its SQL are both exercised without a cluster. |
 | `tests/parse_sql.py` | Parses each captured statement in the Spark dialect (sqlglot). |
 | `tests/run_duckdb.py` | **Executes** them: transpiles to DuckDB, runs against `tests/fixtures/cdm`, checks 58 golden numbers, then runs the whole script again and checks nothing doubled. |
@@ -461,7 +467,7 @@ Two things are deliberately left as they are: `MEDIAN_LOS` uses
 ## What this is not
 
 It has never been run against the warehouse — no code lists, and several
-settings still want the study team's answer (`../OPEN_QUESTIONS.md`). The 409
+settings still want the study team's answer (`../OPEN_QUESTIONS.md`). The 412
 tests check the selection logic, the boundary conventions and the counting
 rules; run every module for every cohort against recorders, so that each
 module's R reaches the end of the function and every statement it emits parses

@@ -49,7 +49,11 @@ stubbed <- function(fn, env, also = c("describe_columns", "ensure_columns", "ens
   environment(fn) <- env
   fn
 }
-base_env <- c(INPUT_COHORT_TABLE = "ndmm_NDMM_COHORT", OBJECT_PREFIX = "s223926_")
+# The schema variables blank, so a host that carries one of them does not
+# decide what a test sees.
+base_env <- c(INPUT_COHORT_TABLE = "ndmm_NDMM_COHORT", OBJECT_PREFIX = "s223926_",
+              WORK_SCHEMA = "", PROJECT_WORK_SCHEMA = "", DOMINO_USER_NAME = "",
+              DOMINO_STARTING_USERNAME = "")
 cfg0 <- function(extra = c()) with_env(c(base_env, extra), cfg_defaults())
 
 # The modules, run against recorders. Computed once here because several checks
@@ -484,6 +488,25 @@ cat("\nthe connection layer\n")
      "...on the DSN the cohort build defaults to, overridable")
   ok(identical(cfg0(c(DATABRICKS_PWD = "s3cret"))$pwd, "s3cret") && identical(cfg0()$pwd, ""),
      "...with the password from the environment alone")
+  # The schema a run writes into, resolved as the cohort and LOT builds
+  # resolve theirs. The deploy guide had the Job export PROJECT_WORK_SCHEMA
+  # and this package did not read it; and a schema given with its catalog,
+  # as it reads on the warehouse, was prefixed with the catalog again.
+  ok(identical(cfg0()$work_schema, "") &&
+       identical(cfg0(c(WORK_SCHEMA = "osk02156"))$work_schema, "osk02156") &&
+       identical(cfg0(c(PROJECT_WORK_SCHEMA = "proj"))$work_schema, "proj") &&
+       identical(cfg0(c(DOMINO_USER_NAME = "usr00000"))$work_schema, "usr00000") &&
+       identical(cfg0(c(WORK_SCHEMA = "w", PROJECT_WORK_SCHEMA = "p", DOMINO_USER_NAME = "u"))$work_schema, "w"),
+     "the work schema resolves as the cohort and LOT builds resolve theirs: WORK_SCHEMA, then PROJECT_WORK_SCHEMA, then the Domino user's own schema, else the session's")
+  ok(identical(cfg0(c(WORK_SCHEMA = "hive_metastore.osk02156"))$work_schema, "osk02156") &&
+       identical(with_env(c(base_env, WORK_SCHEMA = "hive_metastore.osk02156"),
+                          { set_study_config(cfg_defaults()); wrk("S_SPINE") }),
+                 "hive_metastore.osk02156.s223926_S_SPINE"),
+     "...a schema given with its catalog is read as the schema - handed over whole it became hive_metastore.hive_metastore.osk02156, a name with too many parts")
+  set_study_config(cfg0())
+  ok(grepl("DATABRICKS_CATALOG", errs(cfg0(c(WORK_SCHEMA = "other.osk02156")))) &&
+       grepl("not a schema name", errs(cfg0(c(PROJECT_WORK_SCHEMA = "a.b.c")))),
+     "...while a catalog that is not the run's, or a name that is not a schema, stops at config time")
 
   # connect_db() over odbc opens the driver through odbc_connect(), the one
   # call a test cannot make, and stops by name when the password is missing.
@@ -818,8 +841,10 @@ cat("\nregressions from the adversarial review\n")
      "a LOT run built over a different cohort table stops")
   ok(grepl("STUDY_END", lin_check(STUDY_END = "2025-12-31") %||% ""),
      "and so does one whose STUDY_END disagrees")
-  ok(!is.na(lin_check(STATE = "failed")),
-     "and one that did not finish")
+  e_failed <- lin_check(STATE = "failed")
+  ok(!is.na(e_failed) && grepl("not 'complete'", e_failed) &&
+       grepl("LOT build's own log", e_failed),
+     "and one that did not finish, saying where that build recorded why")
 
   # The cohort build's own contract, read back. Driven the same way: the
   # function is given a CONTRACT_SETTINGS string and its answer is checked,
