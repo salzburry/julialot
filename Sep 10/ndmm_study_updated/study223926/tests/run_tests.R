@@ -1713,9 +1713,11 @@ cat("\nthe modules, run against recorders\n")
      "the 1L funnel is one statement, not a query per criterion")
   # One arm per criterion, each counting the cohort table under the predicates
   # accumulated so far.
+  # Up to the arm's own close, not the first ')': every accumulated predicate
+  # is parenthesised, so the WHERE carries parentheses of its own.
   arms <- if (length(attr_sql))
-    regmatches(attr_sql, gregexpr("SELECT count\\(\\*\\) FROM [^)]*",
-                                  attr_sql))[[1]] else character(0)
+    regmatches(attr_sql, gregexpr("(?s)SELECT count\\(\\*\\) FROM .*?\\) AS N_REMAINING",
+                                  attr_sql, perl = TRUE))[[1]] else character(0)
   ok(length(arms) == length(COHORTS[["1L"]]$criteria),
      "with one count per criterion")
   ok(any(grepl("MET_N2 = 1", arms, fixed = TRUE)),
@@ -1780,7 +1782,8 @@ in_cohort_pred <- function(sql)
                           sql, perl = TRUE))
 met_set <- function(x) sort(unique(regmatches(x, gregexpr("MET_[A-Z0-9]+ = 1", x))[[1]]))
 last_arm_where <- function(attr_sql) {
-  arms <- regmatches(attr_sql, gregexpr("SELECT count\\(\\*\\) FROM [^)]*", attr_sql))[[1]]
+  arms <- regmatches(attr_sql, gregexpr("(?s)SELECT count\\(\\*\\) FROM .*?\\) AS N_REMAINING",
+                                        attr_sql, perl = TRUE))[[1]]
   arms[length(arms)]
 }
 step_sql <- function(r, tag) {
@@ -1930,9 +1933,10 @@ cat("\n-- a run's version is its build, not its id --\n")
     said <- character(0)
     env <- new.env(parent = environment(write_run_metadata))
     env$db_exec <- function(con, sql) { said <<- c(said, sql); invisible(0L) }
-    env$db_q <- function(con, sql) data.frame(col_name = schema_cols,
-                                              data_type = "string",
-                                              stringsAsFactors = FALSE)
+    env$db_q <- function(con, sql) data.frame(
+      col_name = schema_cols,
+      data_type = unname(RUN_METADATA_COLS[match(schema_cols, names(RUN_METADATA_COLS))]),
+      stringsAsFactors = FALSE)
     env$log_msg <- function(...) invisible(NULL)
     # The column upgrade reads db_q through its own environment.
     ec <- ensure_columns; environment(ec) <- env; env$ensure_columns <- ec
@@ -1958,6 +1962,170 @@ cat("\n-- a run's version is its build, not its id --\n")
      "...before the insert that needs it")
   ok(identical(names(RUN_METADATA_COLS)[1:3], c("RUN_ID", "STATE", "UPDATED_AT")),
      "the columns every reader binds a run by come first, unchanged")
+  # A column that exists with a type this writer cannot insert into is found
+  # before the DELETE, not by the insert failing after the row is gone.
+  e_typ <- errs(with_env(base_env, {
+    env <- new.env(parent = environment(ensure_columns))
+    env$db_exec <- function(con, sql) stop("nothing may be executed")
+    env$db_q <- function(con, sql) data.frame(
+      col_name = names(RUN_METADATA_COLS),
+      data_type = ifelse(names(RUN_METADATA_COLS) == "STATE", "int",
+                         unname(RUN_METADATA_COLS)), stringsAsFactors = FALSE)
+    f <- ensure_columns; environment(f) <- env
+    f(NULL, "wk.t", RUN_METADATA_COLS)
+  }))
+  ok(!is.na(e_typ) && grepl("STATE is INT where this package writes STRING", e_typ),
+     "...and a column of the wrong type stops the write before any row is cleared")
+}
+
+cat("\n-- a predicate with an OR in it --\n")
+# Membership parenthesised each predicate and the funnel joined them bare, so
+# `MET_N2 = 1 OR MET_I5 = 1` bound the funnel's cohort filter to its left arm
+# only and the last step counted other cohorts' rows: membership 2, funnel 8.
+# One composer now, for both.
+{
+  msrc <- paste(readLines("R/modules/01_cohorts.R", warn = FALSE), collapse = "\n")
+  ok(grepl('paste0(" AND ", and_predicates(cum))', msrc, fixed = TRUE) &&
+       grepl("and_predicates(c(unlist(HERE_PRED", msrc, fixed = TRUE),
+     "membership and the funnel compose their predicates through one helper")
+  ok(identical(and_predicates(c("MET_N2 = 1 OR MET_I5 = 1", "MET_X1 = 1")),
+               "(MET_N2 = 1 OR MET_I5 = 1) AND (MET_X1 = 1)"),
+     "...which parenthesises each one, so an OR cannot reach the cohort filter")
+  orrun <- with_env(base_env, capture_emitted_sql(".", env_edit = function(env) {
+    env$CRITERION_SOURCE[["I4_custom_or"]] <- "here"
+    env$HERE_PRED[["I4_custom_or"]] <- "MET_N2 = 1 OR MET_I5 = 1"
+    env$COHORTS[["1L"]]$criteria <-
+      sub("^I4_ce_pre$", "I4_custom_or", env$COHORTS[["1L"]]$criteria)
+    env
+  }))
+  ok(length(orrun$errors) == 0, "a cohort listing an OR criterion still builds")
+  oa <- step_sql(orrun, "step:attrition_1L")
+  om <- in_cohort_pred(step_sql(orrun, "step:cohort_1L"))
+  ok(grepl("AND (MET_N2 = 1 OR MET_I5 = 1)", last_arm_where(oa), fixed = TRUE) &&
+       grepl("(MET_N2 = 1 OR MET_I5 = 1)", om, fixed = TRUE),
+     "the OR reaches both, parenthesised in both")
+  # Executed: on the four-cohort fixture, every cohort's membership is its
+  # funnel's last step and no step counts more than the one above it. The
+  # shipped goldens do not describe this registry, so the run carries its
+  # own.
+  gold <- tempfile(fileext = ".py")
+  eq <- function(ck) sprintf(
+    '    ("%s: membership equals the funnel\'s last step", "SELECT f.N_REMAINING - (SELECT count(*) FROM wk.S_COHORT WHERE COHORT=\'%s\' AND IN_COHORT=1) FROM wk.S_ATTRITION f WHERE f.COHORT=\'%s\' AND f.STEP=(SELECT max(STEP) FROM wk.S_ATTRITION WHERE COHORT=\'%s\')", [(0,)]),',
+    ck, ck, ck, ck)
+  writeLines(c(
+    "EXPECTATIONS = [",
+    vapply(names(COHORTS), eq, character(1)),
+    '    ("no funnel step counts more than the one above it", "SELECT count(*) FROM (SELECT N_REMAINING - lag(N_REMAINING) OVER (PARTITION BY COHORT ORDER BY STEP) AS d FROM wk.S_ATTRITION) t WHERE d > 0", [(0,)]),',
+    '    ("the OR admits the 1L patients continuous enrolment admitted, and more or the same", "SELECT count(*) >= (SELECT count(*) FROM wk.S_COHORT WHERE COHORT=\'1L\' AND MET_N2 = 1) FROM wk.S_COHORT WHERE COHORT=\'1L\' AND IN_COHORT=1", [(True,)]),',
+    "]"), gold)
+  sfo <- tempfile(fileext = ".sql")
+  cono <- file(sfo, "w")
+  for (x in orrun$sql) {
+    cat("-- @@STMT ", x$tag, "\n", sep = "", file = cono)
+    cat(x$sql, "\n", file = cono)
+  }
+  close(cono)
+  sdo <- file.path(tempdir(), "staged_or")
+  unlink(sdo, recursive = TRUE); dir.create(sdo, showWarnings = FALSE)
+  for (n in names(orrun$staged))
+    utils::write.csv(orrun$staged[[n]], file.path(sdo, paste0(n, ".csv")),
+                     row.names = FALSE)
+  ooutx <- suppressWarnings(tryCatch(
+    system2("python3", c("tests/run_duckdb.py", shQuote(sfo), shQuote(sdo),
+                         "tests/fixtures/cdm", shQuote(cfg0()$object_prefix),
+                         shQuote(gold)),
+            stdout = TRUE, stderr = TRUE),
+    error = function(e) "NO-PYTHON"))
+  otxt <- paste(ooutx, collapse = "\n")
+  if (any(grepl("^SKIP:", ooutx)) || identical(otxt, "NO-PYTHON") || !length(ooutx)) {
+    cat("  SKIP  executed, an OR criterion keeps membership equal to the funnel",
+        " (python3 + duckdb + sqlglot not available)\n", sep = "")
+  } else {
+    ok(grepl("0 failed", otxt) && grepl("0 wrong", otxt),
+       paste0("executed, an OR criterion keeps every cohort's membership equal to its funnel's last step, and the funnel never rises",
+              if (!grepl("0 failed", otxt) || !grepl("0 wrong", otxt))
+                paste0("\n", otxt) else ""))
+  }
+  unlink(c(sfo, sdo, gold), recursive = TRUE)
+}
+
+cat("\n-- the controller re-checks the LOT build before recording complete --\n")
+# check_lot_lineage() accepted a build once, before any table was read; the
+# modules then read the LOT tables for minutes, and a LOT rebuild landing in
+# between replaced them under the same prefix. The run built its spine from
+# the new lines and recorded the OLD build as its lineage, with one lineage
+# check ever made. The real controller is driven here, with every warehouse
+# call answered by a fake and every module stubbed out.
+{
+  drive <- function(later = list()) {
+    said <- character(0); asks <- 0L
+    rowA <- list(RUN_ID = "lot1", STATE = "complete",
+                 UPDATED_AT = "2026-09-10 05:00:00",
+                 INPUT_COHORT_TABLE = base_env[["INPUT_COHORT_TABLE"]],
+                 STUDY_END = cfg0()$study_end, CONTRACT_DEVIATIONS = "")
+    env <- new.env(parent = environment(build_223926))
+    env$db_q <- function(con, sql) {
+      if (grepl("LOT_BUILD_STATUS", sql, fixed = TRUE)) {
+        asks <<- asks + 1L
+        r <- if (asks == 1L) rowA else utils::modifyList(rowA, later)
+        return(as.data.frame(r, stringsAsFactors = FALSE))
+      }
+      if (grepl("^\\s*DESCRIBE", sql))
+        return(data.frame(col_name = names(RUN_METADATA_COLS),
+                          data_type = unname(RUN_METADATA_COLS),
+                          stringsAsFactors = FALSE))
+      stop("no such table")
+    }
+    env$db_exec <- function(con, sql) { said <<- c(said, sql); invisible(0L) }
+    env$log_msg <- function(...) invisible(NULL)
+    env$connect_db <- function(cfg) structure(list(), class = "fake")
+    env$disconnect_db <- function(con) invisible(NULL)
+    env$current_work_schema <- function(con) "wk"
+    env$preflight_codelists <- function(mods, cfg) invisible(TRUE)
+    env$source_modules <- function(here) invisible(TRUE)
+    env$build_inputs <- function(con, cfg, mods) invisible(TRUE)
+    env$resolve_modules <- function(cfg) list()
+    env$describe_plan <- function(cfg, cohorts, mods) character(0)
+    for (nm in c("check_lot_lineage", "check_lot_lineage_unchanged",
+                 "read_upstream_settings", "write_run_metadata", "ensure_columns")) {
+      g <- get(nm); environment(g) <- env; env[[nm]] <- g
+    }
+    f <- build_223926; environment(f) <- env
+    err <- NA_character_
+    utils::capture.output(err <- errs(with_env(base_env, f("."))))
+    list(err = err, sql = said, asks = asks)
+  }
+  state_of <- function(sql) {
+    ins <- grep("^INSERT INTO", sql, value = TRUE)
+    regmatches(ins, regexpr("'(started|complete|failed)'", ins))
+  }
+  steady <- drive()
+  ok(is.na(steady$err) && identical(state_of(steady$sql), c("'started'", "'complete'")),
+     paste0("a build whose LOT prefix stays put is recorded started, then complete",
+            if (!is.na(steady$err)) paste0(" [", steady$err, "]") else ""))
+  ok(steady$asks == 2L,
+     "...with the LOT status read twice: once to accept the build, once before completing")
+  ok(any(grepl("'20260910T050000Z'", steady$sql, fixed = TRUE)),
+     "...and the accepted build's version on the metadata row")
+  raced <- drive(list(UPDATED_AT = "2026-09-10 05:01:00"))
+  ok(!is.na(raced$err) && grepl("LINEAGE ERROR", raced$err) && grepl("rebuilt while", raced$err),
+     "a LOT rebuild completing under the same id while the modules ran stops the run")
+  ok(identical(state_of(raced$sql), c("'started'", "'failed'")),
+     "...which is recorded failed under its own id, never complete")
+  ok(grepl("build 20260910T050000Z", raced$err) && grepl("build 20260910T050100Z", raced$err),
+     "...naming the build it accepted and the one it found")
+  going <- drive(list(STATE = "started", UPDATED_AT = "2026-09-10 05:01:00"))
+  ok(!is.na(going$err) && identical(state_of(going$sql), c("'started'", "'failed'")),
+     "and so does a rebuild still in progress")
+  other <- drive(list(RUN_ID = "lot2", UPDATED_AT = "2026-09-10 05:01:00"))
+  ok(!is.na(other$err) && grepl("now holds run lot2", other$err),
+     "and another run altogether")
+  rsrc <- paste(readLines("R/run_223926.R", warn = FALSE), collapse = "\n")
+  ok(regexpr("check_lot_lineage_unchanged(con, cfg, lot_run)", rsrc, fixed = TRUE) <
+       regexpr('deviations, "complete"', rsrc, fixed = TRUE) &&
+       regexpr("for (m in mods) {", rsrc, fixed = TRUE) <
+       regexpr("check_lot_lineage_unchanged(con, cfg, lot_run)", rsrc, fixed = TRUE),
+     "the re-check sits after the last module and before the complete row")
 }
 
 cat("\n-- the arithmetic, executed on its own --\n")

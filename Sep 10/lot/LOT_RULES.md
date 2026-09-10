@@ -904,11 +904,19 @@ nothing. Death is excluded from it explicitly rather than by the ordering.
 
 The reason names which type it was — `SCT_AUTO`, `SCT_ALLO` or `SCT_CART`. On
 different dates there is no priority between the three; an ALLO does not
-outrank an earlier AUTO. On an exact same-day tie the recorded reason follows
-the order the CASE tests in, and the two sites disagree: line 1 records AUTO,
-then ALLO, then CAR-T (`05b_lot1_sct.R`); lines 2–5 record ALLO, then CAR-T,
-then AUTO (`10_lot2_5_base.R`). The end date is identical either way — open
-question Q4 in the scenario workbook.
+outrank an earlier AUTO.
+
+An AUTO on the same day as an ALLO or a CAR-T is not a tie. Both sites drop
+every AUTO on or after the first ALLO or line-ending CAR-T before any date is
+compared (`05b_lot1_sct.R`, `10_lot2_5_base.R`): the line ended the day
+before, and that AUTO belongs to whatever follows. A same-day AUTO and ALLO
+therefore end the line `SCT_ALLO`, and a same-day AUTO and CAR-T end it
+`SCT_CART`, at both sites. The one tie that can be reached is an ALLO and a
+CAR-T on one day, and both sites record `SCT_ALLO`. The two CASE statements
+list their reasons in different orders — line 1 tests AUTO first, lines 2–5
+test ALLO first — but neither AUTO arm is reachable on a tie, so the
+difference is one of wording, not of behaviour; the end date is identical
+either way. Recorded as open question Q4.
 
 `SCT_CART` therefore arises two ways: a line that ends at a CAR-T, and a
 CAR-T-started line with no consolidation agent, which spans a single day.

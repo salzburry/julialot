@@ -195,9 +195,12 @@ mod_attrition <- function(con, cfg, cohort) {
       paste0(src, "+here") else src
     if (here) cum <- c(cum, HERE_PRED[[k]])
     if (flagged) cum <- c(cum, FLAG_PRED[[k]])
+    # Composed by the SAME helper membership uses. Joined bare, a predicate
+    # carrying an OR - `MET_N2 = 1 OR MET_I5 = 1` - bound the cohort filter
+    # to its left arm only, and the funnel's last step counted other cohorts'
+    # rows: membership 2, funnel 8.
     where <- sprintf("COHORT = '%s'%s", cohort$key,
-                     if (length(cum))
-                       paste0(" AND ", paste(cum, collapse = " AND ")) else "")
+                     if (length(cum)) paste0(" AND ", and_predicates(cum)) else "")
     arms <- c(arms, sprintf(
       "SELECT '%s' AS COHORT, %d AS STEP, '%s' AS CRITERION,
               '%s' AS APPLIED_BY,
@@ -308,8 +311,15 @@ cohort_flag_pred_one <- function(k, cols) {
 # for everyone, which is the same reading the funnel gives it.
 membership_predicate <- function(cohort) {
   ks <- cohort$criteria
-  preds <- c(unlist(HERE_PRED[intersect(ks, names(HERE_PRED))], use.names = FALSE),
-             unlist(FLAG_PRED[intersect(ks, names(FLAG_PRED))], use.names = FALSE))
+  and_predicates(c(unlist(HERE_PRED[intersect(ks, names(HERE_PRED))], use.names = FALSE),
+                   unlist(FLAG_PRED[intersect(ks, names(FLAG_PRED))], use.names = FALSE)))
+}
+
+# Predicates ANDed, each in its own parentheses. The one place a list of
+# predicates becomes SQL, for membership and for the funnel alike: a
+# predicate may carry an OR, and unparenthesised that OR takes everything to
+# its left - the cohort filter included - as one arm.
+and_predicates <- function(preds) {
   preds <- preds[preds != "1 = 1"]
   if (!length(preds)) "1 = 1" else paste0("(", preds, ")", collapse = " AND ")
 }

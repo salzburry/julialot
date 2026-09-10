@@ -15,11 +15,17 @@ The transpile is the compromise, and it is a real one: DuckDB is not Spark, and
 a statement Spark would reject can still run here. It is complementary to
 parse_sql.py, not a replacement for a run against the warehouse.
 
-Usage:  run_duckdb.py <emitted.sql> <staged-dir> <fixture-dir> [prefix]
+Usage:  run_duckdb.py <emitted.sql> <staged-dir> <fixture-dir> [prefix] [goldens.py]
 
 `prefix` is OBJECT_PREFIX, which sits between the schema and the table name.
 The golden queries are written without it and it is substituted in, so the
 same expectations hold whatever a run is configured to call its tables.
+
+`goldens.py` names a file defining EXPECTATIONS in place of
+tests/expectations.py, for a run over a registry other than the shipped one
+- a custom criterion, say - whose numbers the shipped goldens do not
+describe. RERUN_STABLE_TABLES is taken from the shipped module unless the
+file defines its own.
 """
 import csv, os, re, sys
 
@@ -216,9 +222,24 @@ def split_top_level(s):
     return out
 
 
+def load_goldens(path=None):
+    """tests/expectations.py, or the file a caller names (see the usage)."""
+    import importlib, importlib.util
+    base = importlib.import_module("expectations")
+    if not path:
+        return base
+    spec = importlib.util.spec_from_file_location("expectations_custom", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    if not hasattr(mod, "RERUN_STABLE_TABLES"):
+        mod.RERUN_STABLE_TABLES = base.RERUN_STABLE_TABLES
+    return mod
+
+
 def main():
     emitted, staged_dir, fixture_dir = sys.argv[1], sys.argv[2], sys.argv[3]
     prefix = sys.argv[4] if len(sys.argv) > 4 else ""
+    goldens = load_goldens(sys.argv[5] if len(sys.argv) > 5 else None)
     try:
         import duckdb, sqlglot  # noqa: F401
     except ImportError as e:
@@ -252,11 +273,11 @@ def main():
         print("\n".join("    " + l for l in sql.splitlines()[:12]))
     if failed:
         return 1
-    rc = check(con, prefix)
-    return rerun(con, statements, prefix) or rc
+    rc = check(con, prefix, goldens)
+    return rerun(con, statements, prefix, goldens) or rc
 
 
-def rerun(con, statements, prefix=""):
+def rerun(con, statements, prefix="", goldens=None):
     """Runs the whole script again and checks nothing doubled.
 
     The package's header promises it can be "re-run against a finished LOT run
@@ -264,8 +285,7 @@ def rerun(con, statements, prefix=""):
     keeps that promise syntactically and doubles every count, person-year and
     rate, with no error anywhere. Nothing that reads text can see it.
     """
-    from expectations import RERUN_STABLE_TABLES
-    tables = [qualify(t, prefix) for t in RERUN_STABLE_TABLES]
+    tables = [qualify(t, prefix) for t in (goldens or load_goldens()).RERUN_STABLE_TABLES]
     before = {t: con.execute("SELECT count(*) FROM " + t).fetchone()[0]
               for t in tables}
     for tag, sql in statements:
@@ -289,9 +309,9 @@ def qualify(sql, prefix):
     return sql.replace("wk.S_", "wk." + prefix + "S_") if prefix else sql
 
 
-def check(con, prefix=""):
+def check(con, prefix="", goldens=None):
     """The golden numbers. tests/fixtures/EXPECTED.md derives every one."""
-    from expectations import EXPECTATIONS
+    EXPECTATIONS = (goldens or load_goldens()).EXPECTATIONS
     bad = []
     for name, sql, want in EXPECTATIONS:
         try:

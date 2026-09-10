@@ -176,7 +176,9 @@ table and the dashboard all follow from that list.
 **Membership and the funnel are generated from the same two maps**, so they
 cannot disagree: `IN_COHORT` is the AND of every `HERE_PRED` predicate and
 every retained-flag predicate the cohort's list names, and the funnel's last
-step accumulates exactly those. A predicate in `HERE_PRED` is written over
+step accumulates exactly those - composed by one helper that parenthesises
+each predicate, so a predicate may carry an `OR` without reaching past its
+own parentheses into the cohort filter. A predicate in `HERE_PRED` is written over
 `S_COHORT`'s own columns — `MET_N2`, `MET_I5`, `MET_X1` to `MET_X4`,
 `INDEX_DATE`, `LOT_NUM` — which are computed for every indexed patient
 whatever the list says. So a new criterion such as

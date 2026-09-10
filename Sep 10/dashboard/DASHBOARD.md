@@ -86,6 +86,11 @@ once per page: a snapshot rebuilt after the page was opened shows a notice in
 place of each panel, the headline counts and the metadata table included,
 until the page is reloaded.
 
+A run that is `started` or `failed` is listed, with its settings and the LOT
+run it read, and none of its tables is shown: the producer writes the
+metadata row before it replaces a table, so under such a run the tables are
+the previous build's, or part of this one. Compare needs two complete runs.
+
 ### The LOT tabs describe the lineage, not the scenario
 
 The LOT tables were written by a **different build**, under its own prefix,
@@ -229,7 +234,7 @@ DASH_SOURCE=snapshot DASH_SNAPSHOT_DIR=/mnt/artifacts/results "Sep 10/dashboard/
 variables, and what the job that refreshes the snapshot needs.
 
 ```bash
-Rscript tests/run_tests.R      # 372 checks, no Shiny and no warehouse
+Rscript tests/run_tests.R      # 383 checks, no Shiny and no warehouse
 ```
 
 Every number the app puts on a page comes from a function in `R/` that runs

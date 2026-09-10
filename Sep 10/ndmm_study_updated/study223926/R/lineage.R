@@ -95,6 +95,47 @@ check_lot_lineage <- function(con, cfg) {
   as.list(r)
 }
 
+# The same build, still? Asked once every module has run and before the run
+# is recorded complete.
+#
+# check_lot_lineage() accepts a build before any table is read. The modules
+# then read the LOT tables for minutes, and the engine replaces them in place
+# under the same prefix - so a LOT rebuild landing in between gave a run
+# whose spine was built from the NEW lines and whose metadata vouched for the
+# OLD build, with one lineage check ever made. A row that is no longer the
+# accepted build - another run, a build in progress, or the same run built
+# again - stops the run here, and the failure handler records it `failed`
+# under its own id instead of `complete`.
+check_lot_lineage_unchanged <- function(con, cfg, accepted) {
+  id <- trimws(as.character(accepted$RUN_ID %||% ""))
+  if (is.null(accepted) || !nzchar(id) || identical(id, "unproven"))
+    return(invisible(TRUE))
+  st <- lot_tbl("LOT_BUILD_STATUS")
+  now <- tryCatch(
+    db_q(con, sprintf("SELECT RUN_ID, STATE, UPDATED_AT FROM %s
+                       ORDER BY UPDATED_AT DESC LIMIT 1", st)),
+    error = function(e) NULL)
+  if (is.null(now) || !nrow(now))
+    stop("LINEAGE ERROR: ", st, " could not be re-read after the modules ran, ",
+         "so it cannot be shown that LOT run ", id, " was still the build ",
+         "under the prefix while this run read it. The run is recorded as ",
+         "failed.", call. = FALSE)
+  was_v <- run_version_stamp(accepted$UPDATED_AT %||% "")
+  now_v <- run_version_stamp(now$UPDATED_AT[1])
+  same <- identical(trimws(as.character(now$RUN_ID[1])), id) &&
+    identical(tolower(trimws(as.character(now$STATE[1]))), "complete") &&
+    identical(now_v, was_v)
+  if (!same)
+    stop("LINEAGE ERROR: the LOT prefix was rebuilt while this run was reading ",
+         "it. Accepted LOT run ", id, " build ", was_v, "; the prefix now holds ",
+         "run ", now$RUN_ID[1], " (", now$STATE[1], ") build ", now_v, ". The ",
+         "lines this run read are not one build's, so it is recorded as failed ",
+         "rather than complete. Re-run it once the LOT build has finished.",
+         call. = FALSE)
+  log_msg("LOT run ", id, " build ", was_v, " still owns the prefix; lineage holds")
+  invisible(TRUE)
+}
+
 `%||%` <- function(a, b) if (is.null(a) || (length(a) == 1L && is.na(a))) b else a
 
 # What the cohort build actually applied.

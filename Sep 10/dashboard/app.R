@@ -332,6 +332,15 @@ server <- function(input, output, session) {
       b <- scn_b()
       if (is.null(b))
         return(div(class = "note", "Pick a scenario in 'Against' to compare."))
+      # Both sides have to be finished runs. Under a run that is not, the
+      # tables are the previous build's or part of this one, and a difference
+      # drawn against them describes neither.
+      if (!scenario_is_usable(s) || !scenario_is_usable(b))
+        return(div(class = "alert", sprintf(paste(
+          "Only complete runs can be compared: A is '%s' and B is '%s'.",
+          "The settings of both are still listed in the sidebar."),
+          if (nzchar(s$state %||% "")) s$state else "unrecorded",
+          if (nzchar(b$state %||% "")) b$state else "unrecorded")))
       # Both sides have to still be the runs the sidebar names. A was
       # checked on every read; B was read straight, so a rebuilt B showed its
       # new numbers under its old label and settings.
