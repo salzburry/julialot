@@ -13,11 +13,18 @@
 #
 # Frailty and the subgroup flags need annexes that were not delivered, so both
 # are switches, off by default. Switched on, the guard stops naming the annex.
-mod_comorbidity <- function(con, cfg, cohort) {
-  cl <- load_codelist("charlson_quan2011.csv", cfg)
+# What the Charlson list must carry beyond its shape. The module runs it as
+# it starts; the preflight runs it before the connection is opened.
+check_charlson_list <- function(cfg, cl = load_codelist("charlson_quan2011.csv", cfg)) {
   if (!"weight" %in% names(cl))
     stop("CODELIST ERROR: charlson_quan2011.csv has no weight column.",
          call. = FALSE)
+  invisible(cl)
+}
+
+mod_comorbidity <- function(con, cfg, cohort) {
+  cl <- load_codelist("charlson_quan2011.csv", cfg)
+  check_charlson_list(cfg, cl)
   # The MM adjustment's own code list, registered by the runner before any
   # module ran. Named here so the SQL below reads as one thing.
   mm_view <- "S_CL_MM_DX"

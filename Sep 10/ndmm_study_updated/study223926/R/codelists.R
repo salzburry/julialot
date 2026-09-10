@@ -264,6 +264,15 @@ resolve_codelist_dir <- function(cfg, here) {
 # Either way no module ever runs on an unusable list: a rate of zero for want
 # of a code list is indistinguishable downstream from a rate of zero for
 # want of events. Returns the modules that will run.
+#
+# Two checks on each list. That it loads at all - the file, its columns, its
+# codes, its ICD families. Then what the module asks of it together with the
+# settings: an ED definition the HCRU list has no rows for, a SOC category
+# the protocol does not name, a safety condition defined by an admission.
+# Each of those is the module's own check, the one it makes as it starts,
+# named in the registry as `check` and run here too - so a list the module
+# would refuse is found before the connection is opened, not after the
+# modules before it have run and left the run recorded as failed.
 preflight_codelists <- function(mods, cfg) {
   want <- required_codelists(mods)
   if (!length(want)) return(invisible(mods))
@@ -274,13 +283,25 @@ preflight_codelists <- function(mods, cfg) {
                     error = function(e) conditionMessage(e))
     if (!is.null(err)) unusable[[f]] <- sub("^CODELIST ERROR: ", "", err)
   }
-  if (!length(unusable)) return(invisible(mods))
+  refused <- list()
+  for (k in names(mods)) {
+    chk <- mods[[k]]$check
+    if (is.null(chk) || any(mods[[k]]$codelists %in% names(unusable))) next
+    if (!exists(chk, mode = "function"))
+      stop("BUILD ERROR: module '", k, "' registers ", chk, "() as its check ",
+           "and it is not defined.", call. = FALSE)
+    err <- tryCatch({ get(chk, mode = "function")(cfg); NULL },
+                    error = function(e) conditionMessage(e))
+    if (!is.null(err)) refused[[k]] <- sub("^[A-Z]+ ERROR: ", "", err)
+  }
+  if (!length(unusable) && !length(refused)) return(invisible(mods))
 
   if (!identical(tolower(cfg$modules), "all")) {
-    problems <- sprintf("  %s\n    %s", names(unusable),
-                        gsub("\n", "\n    ", unlist(unusable, use.names = FALSE)))
-    stop("CODELIST ERROR: ", length(problems), " of ", length(want),
-         " code list(s) the selected modules need are not usable:\n",
+    indent <- function(x) gsub("\n", "\n    ", unlist(x, use.names = FALSE))
+    problems <- c(sprintf("  %s\n    %s", names(unusable), indent(unusable)),
+                  sprintf("  module %s\n    %s", names(refused), indent(refused)))
+    stop("CODELIST ERROR: ", length(problems), " code list(s) the selected ",
+         "modules need are not usable:\n",
          paste(problems, collapse = "\n"),
          "\n\nEither deliver them, or narrow MODULES so nothing needs them - ",
          "MODULES=spine,cohorts,attrition,periods,demographics,tte runs the whole ",
@@ -289,12 +310,13 @@ preflight_codelists <- function(mods, cfg) {
          "whatever has no usable list.", call. = FALSE)
   }
 
-  # Left out: the modules on an unusable list, then whatever needs one of
-  # those, to a fixed point.
+  # Left out: the modules on an unusable list or refusing their own, then
+  # whatever needs one of those, to a fixed point.
   dropped <- character(0)
   repeat {
     more <- names(Filter(function(m)
-      any(m$codelists %in% names(unusable)) || any(m$needs %in% dropped), mods))
+      any(m$codelists %in% names(unusable)) || m$key %in% names(refused) ||
+        any(m$needs %in% dropped), mods))
     more <- setdiff(more, dropped)
     if (!length(more)) break
     dropped <- c(dropped, more)
@@ -304,6 +326,7 @@ preflight_codelists <- function(mods, cfg) {
   why <- vapply(dropped, function(k) {
     lists <- intersect(mods[[k]]$codelists, names(unusable))
     if (length(lists)) paste(lists, collapse = ", ")
+    else if (k %in% names(refused)) first_line(refused[[k]])
     else paste0("needs ", paste(intersect(mods[[k]]$needs, dropped), collapse = ", "))
   }, character(1))
   for (k in dropped) {
@@ -356,26 +379,36 @@ register_codelist_view <- function(con, df, view_name, cols,
   keep <- df[, cols, drop = FALSE]
   keep[] <- lapply(keep, function(x) ifelse(is.na(x), "", as.character(x)))
 
-  # Over a Spark session, sparklyr::copy_to. Over the ODBC driver there is no
-  # copy_to, so the list is one VALUES statement behind a temporary view -
+  # Over a Spark session, sparklyr::copy_to - and a Spark session inherits
+  # DBIConnection, which is why it is tested for first. Over the ODBC driver
+  # there is no copy_to, so the list is one VALUES statement behind a temporary view -
   # the way the cohort build loads its own lists over the same driver,
   # pregnancy.csv's 5,318 rows included. One statement, never chunked: a
   # temporary view cannot be appended to, and the obvious workaround defines
   # the view in terms of itself.
   stage <- paste0(tolower(view_name), "_raw")
-  if (is_dbi_con(con)) db_exec(con, codelist_stage_sql(stage, keep))
-  else sparklyr::copy_to(con, keep, name = stage, overwrite = TRUE, memory = FALSE)
+  if (is_spark_con(con) || !is_dbi_con(con))
+    sparklyr::copy_to(con, keep, name = stage, overwrite = TRUE, memory = FALSE)
+  else db_exec(con, codelist_stage_sql(stage, keep))
 
   db_exec(con, codelist_view_sql(stage, view_name, cols, code_col, family_col))
   view_name
 }
 
 # A code list as one statement: a temporary view over a VALUES list, every
-# cell a string literal with its quotes doubled, in the frame's column order.
-# An empty list is an empty view of the same shape rather than a VALUES with
-# nothing in it, which is a syntax error.
+# cell a string literal, in the frame's column order. An empty list is an
+# empty view of the same shape rather than a VALUES with nothing in it, which
+# is a syntax error.
+#
+# The literal follows Spark's rules, not the SQL standard's. Spark reads two
+# adjacent literals as one string joined, so 'Alzheimer''s' is Alzheimers -
+# the apostrophe gone, and no error to say so. Its escape is the backslash:
+# \' for a quote, \\ for a backslash itself. (That is the parser's default,
+# spark.sql.parser.escapedStringLiterals=false.) tests/run_tests.R sends a
+# staged list through the parser and reads every value back.
 codelist_stage_sql <- function(stage, df) {
-  lit  <- function(x) paste0("'", gsub("'", "''", as.character(x), fixed = TRUE), "'")
+  lit  <- function(x) paste0("'", gsub("'", "\\'", gsub("\\", "\\\\", as.character(x), fixed = TRUE),
+                                       fixed = TRUE), "'")
   cols <- paste(names(df), collapse = ", ")
   if (!nrow(df))
     return(sprintf("CREATE OR REPLACE TEMPORARY VIEW %s AS\nSELECT * FROM (VALUES (%s)) AS t(%s) WHERE 1 = 0",

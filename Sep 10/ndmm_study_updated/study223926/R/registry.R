@@ -155,13 +155,13 @@ MODULES <- list(
     # table nothing downstream knows to look for.
     outputs = c("S_COMORBIDITY", "S_COMORB_SUBGROUP", "S_FRAILTY"),
     per_cohort = TRUE,
-    fn = "mod_comorbidity", blocked = NA_character_),
+    fn = "mod_comorbidity", check = "check_charlson_list", blocked = NA_character_),
 
   soc = list(
     key = "soc", label = "SOC regimen categorisation",
     needs = "periods", codelists = "soc_regimen_categories.csv",
     outputs = "S_SOC", per_cohort = TRUE,
-    fn = "mod_soc", blocked = NA_character_),
+    fn = "mod_soc", check = "check_soc_list", blocked = NA_character_),
 
   safety = list(
     key = "safety", label = "Key safety events: prevalence and incidence",
@@ -172,7 +172,7 @@ MODULES <- list(
     # washout against the raw events.
     outputs = c("S_SAFETY_EVENTS", "S_SAFETY_COUNTED", "S_SAFETY_RATES"),
     per_cohort = TRUE,
-    fn = "mod_safety", blocked = NA_character_),
+    fn = "mod_safety", check = "check_safety_list", blocked = NA_character_),
 
   hcru = list(
     key = "hcru", label = "Hospitalisation, length of stay and ED visits",
@@ -181,7 +181,7 @@ MODULES <- list(
     # by the preflight - the run would open a session and scan the CDM first.
     needs = "periods", codelists = c("hcru.csv", "mm_dx.csv"),
     outputs = c("S_HCRU_EVENTS", "S_HCRU_RATES"), per_cohort = TRUE,
-    fn = "mod_hcru", blocked = NA_character_),
+    fn = "mod_hcru", check = "check_hcru_list", blocked = NA_character_),
 
   malignancy = list(
     key = "malignancy", label = "Secondary malignancies",

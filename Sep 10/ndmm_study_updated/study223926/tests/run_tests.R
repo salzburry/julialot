@@ -324,6 +324,33 @@ cat("\ncode lists\n")
        suppressMessages(resolve_modules(cfg0(c(MODULES = "attrition")))), cfg))),
        c("spine", "cohorts", "attrition")),
      "...and asking for the attrition by name needs no list at all")
+  # A list that loads but that its module would refuse: the HCRU list with a
+  # CPT row only, under the default ED definition (revenue, pos). Found here,
+  # before the connection - not by mod_hcru() after spine, cohorts, attrition,
+  # periods and demographics have run for three cohorts and the run is left
+  # recorded as failed.
+  cdir <- tempfile(); dir.create(cdir)
+  file.copy(list.files("codelists", full.names = TRUE), cdir)
+  file.copy("tests/fixtures/codelists/mm_dx.csv", file.path(cdir, "mm_dx.csv"), overwrite = TRUE)
+  writeLines(c("concept,code_type,code", "ED_VISIT,CPT,99285"), file.path(cdir, "hcru.csv"))
+  cfg_cpt <- cfg; cfg_cpt$codelist_dir <- cdir; cfg_cpt$modules <- "all"
+  ran_cpt <- suppressMessages(preflight_codelists(suppressMessages(resolve_modules(cfg_cpt)), cfg_cpt))
+  ok(!"hcru" %in% names(ran_cpt) &&
+       grepl("ED_DEFINITION asks for revenue, pos", attr(ran_cpt, "left_out")[["hcru"]]),
+     "a list its module would refuse - an ED definition the HCRU list has no rows for - is left out by name before the connection, not after the modules before it have run")
+  cfg_cpt$modules <- "hcru"
+  e_cpt <- errs(preflight_codelists(suppressMessages(resolve_modules(cfg_cpt)), cfg_cpt))
+  ok(grepl("module hcru", e_cpt) && grepl("ED_DEFINITION asks for revenue, pos", e_cpt),
+     "...and asked for by name it stops there, with the module's own reason")
+  ok(setequal(vapply(Filter(function(m) !is.null(m$check), MODULES), `[[`, character(1), "check"),
+              c("check_charlson_list", "check_soc_list", "check_safety_list", "check_hcru_list")) &&
+       all(vapply(c("mod_comorbidity", "mod_soc", "mod_safety", "mod_hcru"), function(f)
+         grepl("check_[a-z]+_list\\(cfg, cl\\)", paste(deparse(get(f)), collapse = "\n")), logical(1))),
+     "...the same check each list-driven module makes as it starts, registered beside it")
+  # The lists these preflights loaded are in the manifest; a later check
+  # reads that manifest on its own terms.
+  rm(list = ls(.codelist_seen), envir = .codelist_seen)
+  unlink(cdir, recursive = TRUE)
   unlink(empty, recursive = TRUE)
   # The escape hatch the message offers, checked rather than pinned as a
   # string: a message naming a selection that in fact needs a code list is
@@ -468,11 +495,13 @@ cat("\nthe connection layer\n")
   q <- stubbed(db_q, denv, also = character(0))(dbi_con, "SELECT count(*) AS n FROM t")
   ok(is.numeric(q$n) && !inherits(q$n, "integer64"),
      "...and a BIGINT it reads comes back as a plain number, not a 64-bit bit pattern")
+  spark_con <- structure(list(), class = c("spark_connection", "spark_shell_connection", "DBIConnection"))
+  ok(is_spark_con(spark_con) && !is_dbi_con(spark_con) && is_dbi_con(dbi_con),
+     "...a sparklyr session inherits DBIConnection as well, and is told apart from a DBI connection")
   said <- character(0)
-  e_sp <- errs(stubbed(db_exec_once, denv, also = character(0))(
-    structure(list(), class = "spark_connection"), "SELECT 1"))
+  e_sp <- errs(stubbed(db_exec_once, denv, also = character(0))(spark_con, "SELECT 1"))
   ok(!is.na(e_sp) && !length(said),
-     "...while a connection that is not DBI is never sent through DBI")
+     "...so a Spark session is never sent through DBI")
   closed <- FALSE
   xenv <- new.env(parent = environment(disconnect_db))
   xenv$dbi_disconnect <- function(con) closed <<- TRUE
@@ -484,9 +513,15 @@ cat("\nthe connection layer\n")
   cl <- data.frame(code = c("C90.0", "it's"), icd_family = c("10", ""), stringsAsFactors = FALSE)
   st <- codelist_stage_sql("cl_x_raw", cl)
   ok(grepl("^CREATE OR REPLACE TEMPORARY VIEW cl_x_raw AS", st) &&
-       grepl("('C90.0', '10')", st, fixed = TRUE) && grepl("('it''s', '')", st, fixed = TRUE) &&
+       grepl("('C90.0', '10')", st, fixed = TRUE) && grepl("('it\\'s', '')", st, fixed = TRUE) &&
        grepl("AS t(code, icd_family)", st, fixed = TRUE),
-     "over ODBC a code list is one VALUES statement behind a temporary view - every cell a string literal, quotes doubled, in the file's column order")
+     "over ODBC a code list is one VALUES statement behind a temporary view - every cell a string literal, in the file's column order")
+  esc <- codelist_stage_sql("e_raw", data.frame(v = c("a\\b", "x\\", "back\\nslash", "Alzheimer's disease"),
+                                                stringsAsFactors = FALSE))
+  ok(grepl("('a\\\\b')", esc, fixed = TRUE) && grepl("('x\\\\')", esc, fixed = TRUE) &&
+       grepl("('back\\\\nslash')", esc, fixed = TRUE) && grepl("('Alzheimer\\'s disease')", esc, fixed = TRUE) &&
+       !grepl("''", esc, fixed = TRUE),
+     "...a backslash doubled and an apostrophe escaped with one, Spark's rules - '' is two literals joined there, and would have made Alzheimers")
   st0 <- codelist_stage_sql("e_raw", cl[0, , drop = FALSE])
   ok(grepl("WHERE 1 = 0", st0, fixed = TRUE) && grepl("AS t(code, icd_family)", st0, fixed = TRUE),
      "...and an empty list is an empty view of the same shape, not a VALUES with nothing in it")
@@ -504,6 +539,10 @@ cat("\nthe connection layer\n")
        grepl("TEMPORARY VIEW cl_x_raw AS", said[1], fixed = TRUE) &&
        grepl("TEMPORARY VIEW CL_X AS", said[2], fixed = TRUE) && grepl("FROM cl_x_raw", said[2], fixed = TRUE),
      "...staged first, then normalised into the view every module joins on, both over the same connection")
+  said <- character(0)
+  e_cp <- errs(stubbed(register_codelist_view, renv, also = character(0))(spark_con, cl, "CL_Y", c("code", "icd_family")))
+  ok(!is.na(e_cp) && !any(grepl("VALUES", said, fixed = TRUE)),
+     "...and over a Spark session a code list is copied, never staged as SQL text")
   # The stage statement is Spark SQL, checked by the same parser the emitted
   # statements go through; SKIP rather than pass where it cannot run.
   sf <- tempfile(fileext = ".sql")
@@ -1309,8 +1348,9 @@ cat("\nregressions from the adversarial review\n")
   ok(!is.na(e_int) && grepl("intercept", e_int),
      "and so does an intercept it would apply to nobody")
 
-  ok(grepl("canonical_acute_chronic", sf),
-     "acute_chronic is resolved to one rule before it reaches SQL")
+  sfc <- paste(capture.output(print(check_safety_list)), collapse = "\n")
+  ok(grepl("canonical_acute_chronic", sfc) && grepl("cl <- check_safety_list(cfg, cl)", sf, fixed = TRUE),
+     "acute_chronic is resolved to one rule before it reaches SQL - in the check the module takes its list from")
   ok(!grepl("LIKE '%acute%'", sf, fixed = TRUE),
      "so 'Acute or chronic' is not counted through both counting rules")
   ok(!("index_excluded_abbrs" %in% names(cfg0())),
@@ -2266,6 +2306,25 @@ cat("\n-- the arithmetic, executed on its own --\n")
 # So the fragments are executed here against rows built for the rule each one
 # states. tests/exec_fragments.R carries the rows and the answers.
 source(file.path(here, "tests", "exec_fragments.R"))
+
+cat("\na staged code list survives the trip through the parser\n")
+{
+  rt <- data.frame(code = c("C900", "D649", "E11", "F1", "G2"),
+                   condition = c("Alzheimer's disease", "a\\b", "x\\", "back\\nslash", "plain (1/2)"),
+                   stringsAsFactors = FALSE)
+  qs <- list(stage = codelist_stage_sql("cl_rt_raw", rt),
+             read = "SELECT code, condition FROM cl_rt_raw ORDER BY code")
+  res <- run_fragments(qs, list(), schema = list(), root = here)
+  if (is.null(res) || identical(res, "skip")) {
+    cat("  SKIP  a staged code list reads back as it went in (python3 + duckdb + sqlglot not available)\n")
+  } else {
+    got <- res[res$id == "read" & res$col == "condition", , drop = FALSE]
+    got <- got$value[order(as.integer(got$row))]
+    ok(!length(frag_errors(res)) && identical(got, rt$condition),
+       paste0("every value reads back as it went in - an apostrophe, a backslash, a trailing backslash, a backslash before an n",
+              if (!identical(got, rt$condition)) paste0(" [read back: ", paste(got, collapse = " | "), "]") else ""))
+  }
+}
 local({
   cfg <- cfg0()
   cs  <- frag_cases(cfg)
