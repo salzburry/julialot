@@ -1979,6 +1979,18 @@ cat("\n-- a run's version is its build, not its id --\n")
   }))
   ok(!is.na(e_typ) && grepl("STATE is INT where this package writes STRING", e_typ),
      "...and a column of the wrong type stops the write before any row is cleared")
+  # Names alone cannot say whether the columns can take the insert, so a
+  # DESCRIBE without a type column stops here as it does in ensure_table().
+  e_untyped <- errs(with_env(base_env, {
+    env <- new.env(parent = environment(ensure_columns))
+    env$db_exec <- function(con, sql) stop("nothing may be executed")
+    env$db_q <- function(con, sql) data.frame(col_name = names(RUN_METADATA_COLS),
+                                              stringsAsFactors = FALSE)
+    f <- stubbed(ensure_columns, env)
+    f(NULL, "wk.t", RUN_METADATA_COLS)
+  }))
+  ok(!is.na(e_untyped) && grepl("without a type column", e_untyped),
+     "...as does a DESCRIBE that carries no type column: names alone are not a licence to write")
 }
 
 cat("\n-- a predicate with an OR in it --\n")

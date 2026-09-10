@@ -1433,6 +1433,81 @@ cat("\nline against the next line\n")
   ok("(no regimen)" %in% rg$TO && !"(Missing)" %in% rg$TO,
      "an allograft or CAR-T line's empty regimen reads as no regimen, not as missing data")
 
+  # "How each line ended" publishes, for the selected line, the count of
+  # lines ending each way - with or without a line after them - and the
+  # pairs from an end reason sum to it less the lines with none. Producer-
+  # shaped: four histories weighted 1, 49, 49 and 51, every patient with
+  # exactly two lines. 50 DISCONTINUATION endings, 49 of them shown as
+  # DISCONTINUATION -> MED beside the per-line counts saying every line 1
+  # had a line 2, read the hidden pair off as 1. `alone` adds line-1
+  # DISCONTINUATION endings with no line after them.
+  histories <- function(w = c(1L, 49L, 49L, 51L), alone = 0L) {
+    from <- c("DISCONTINUATION", "DISCONTINUATION", "SCT_AUTO", "MED_ADD")
+    to <- c("SCT_AUTO", "MED", "SCT_AUTO", "MED")
+    id <- unlist(lapply(seq_along(w), function(i) sprintf("H%d_%03d", i, seq_len(w[i]))))
+    d <- data.frame(
+      PATID = c(id, id, sprintf("X%03d", seq_len(alone))),
+      LOT_NUM = c(rep(1L, length(id)), rep(2L, length(id)), rep(1L, alone)),
+      LOT_START_TYPE = c(rep("MED", length(id)), rep(to, w), rep("MED", alone)),
+      LOT_BASE_END_REASON = c(rep(from, w), rep("STUDY_END", length(id)), rep("DISCONTINUATION", alone)),
+      LOT_BASE_MEDS = "X", stringsAsFactors = FALSE)
+    d[order(d$LOT_NUM, decreasing = TRUE), ]   # line 2 first: order cannot matter
+  }
+  # The subtraction a reader makes: every total the other panels publish for
+  # these lines, less the pairs shown beside it. A difference under the floor
+  # and above zero is a count under the floor read off the page.
+  read_off <- function(d, tr, from_col = "LOT_BASE_END_REASON", to_col = "LOT_START_TYPE", min_n = 25L) {
+    open <- tr[tr$SUPPRESSED == 0L & !startsWith(tr$FROM, "("), , drop = FALSE]
+    pub <- function(rows, col) { t <- tabulate_cat(rows, col, min_n); t[!is.na(t$N), , drop = FALSE] }
+    l1 <- d[d$LOT_NUM == 1L, ]; l2 <- d[d$LOT_NUM == 2L, ]
+    ends <- pub(l1, from_col); starts <- pub(l2, to_col)
+    diffs <- c(
+      ends$N - vapply(ends$LEVEL, function(l) sum(open$N_PATIENTS[open$FROM == l]), numeric(1)),
+      starts$N - vapply(starts$LEVEL, function(l) sum(open$N_PATIENTS[open$TO == l]), numeric(1)),
+      nrow(l2) - sum(open$N_PATIENTS))
+    diffs[diffs > 0 & diffs < min_n]
+  }
+  h <- histories()
+  ends1 <- tabulate_cat(h[h$LOT_NUM == 1L, ], "LOT_BASE_END_REASON", 25L)
+  ok(identical(ends1$N[ends1$LEVEL == "DISCONTINUATION"], 50L) && nrow(h[h$LOT_NUM == 1L, ]) == nrow(h[h$LOT_NUM == 2L, ]),
+     "the selected-line summary publishes 50 DISCONTINUATION endings at line 1, and the per-line counts say every line 1 had a line 2")
+  th <- lot_transitions(h, "LOT_BASE_END_REASON", "LOT_START_TYPE", min_n = 25L)
+  shown <- th[!startsWith(th$FROM, "("), ]
+  ok(nrow(shown) == 1L && identical(shown$FROM, "MED_ADD") && identical(shown$TO, "MED") &&
+       identical(shown$N_PATIENTS, 51L) && !"DISCONTINUATION" %in% shown$FROM,
+     "so DISCONTINUATION -> MED is not shown on its own beside that total: only MED_ADD -> MED is")
+  ok(sum(startsWith(th$FROM, "(")) == 1L && grepl("^\\(3 pairs, grouped\\)", th$FROM[startsWith(th$FROM, "(")]) &&
+       identical(th$N_PATIENTS[startsWith(th$FROM, "(")], 99L),
+     "...and the other three pairs are one grouped row of 99")
+  ok(!length(read_off(h, th)),
+     "...so no total the other panels publish - an end reason, a start type, the line - less what is shown is under the floor")
+  hv <- html_table(lot_sequence_view(h, "end_to_start", 25)$rows)
+  counts <- regmatches(hv, gregexpr("<td>[^<]*</td></tr>", hv))[[1]]   # the last cell of each row
+  ok(setequal(counts, c("<td>51.00</td></tr>", "<td>99.00</td></tr>")),
+     "...and the rendered panel's counts are 51 and 99 - neither 49 nor 1")
+  # Lines that ended that way with no line after them are the part of the
+  # total the pairs do not account for. Thirty of them are cover enough for
+  # the 49 to show; five are not.
+  h30 <- histories(alone = 30L)
+  t30 <- lot_transitions(h30, "LOT_BASE_END_REASON", "LOT_START_TYPE", min_n = 25L)
+  ok(any(t30$FROM == "DISCONTINUATION" & t30$TO == "MED" & t30$N_PATIENTS == 49L & t30$SUPPRESSED == 0L) &&
+       !length(read_off(h30, t30)),
+     "with thirty line-1 DISCONTINUATION endings that had no line 2, the 49 has cover and is shown - and nothing is read off")
+  h5 <- histories(alone = 5L)
+  t5 <- lot_transitions(h5, "LOT_BASE_END_REASON", "LOT_START_TYPE", min_n = 25L)
+  ok(!any(t5$FROM == "DISCONTINUATION") && !length(read_off(h5, t5)),
+     "...with five it is not, because 55 less 49 is the six that had no line 2 or went somewhere rare")
+  le <- lot_line_ends(h30, "LOT_BASE_END_REASON")
+  ok(identical(le$N[le$FROM_LOT == 1L & le$FROM == "DISCONTINUATION"], 30L) &&
+       identical(le$N[le$FROM_LOT == 2L & le$FROM == "STUDY_END"], 150L) && !any(le$FROM_LOT == 1L & le$FROM != "DISCONTINUATION"),
+     "the lines with no line after them are counted by line and end reason, on distinct patients")
+  unread <- TRUE
+  for (case in list(two_pairs(49, 1), two_pairs(30, 3), two_pairs(30, 30), leak, h, h30, h5))
+    for (cols in list(c("LOT_BASE_END_REASON", "LOT_START_TYPE"), c("LOT_BASE_MEDS", "LOT_BASE_MEDS")))
+      unread <- unread && !length(read_off(case, lot_transitions(case, cols[1], cols[2], min_n = 25L), cols[1], cols[2]))
+  ok(unread,
+     "no fixture, in either view, lets an end reason, a start type, a regimen or a line total be read down to a count under the floor")
+
   sq <- lot_sequences(lf, "LOT_START_TYPE", min_n = 1L)
   ok(identical(sq$SEQUENCE[1], "MED > MED") && identical(sq$N_PATIENTS[1], 2L) &&
        identical(sq$N_LINES[1], 2L) && identical(sq$PCT[1], 50),

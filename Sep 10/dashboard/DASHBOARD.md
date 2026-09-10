@@ -85,11 +85,20 @@ it, or a regimen returning in full one line later shows up here and nowhere
 else. Picking a line in the sidebar narrows the pairs to those from that
 line. Counts are distinct patients. A pair under the floor is not shown on its
 own, and neither is any pair whose count could be read off a published total
-— what opened line n+1, or the pairs from a line — once the others are
-known; those are grouped into one row per line whose count is their sum. So a line with one common pair and one rare one shows a single
+— what opened line n+1, the pairs from a line, or how line n ended — once
+the others are known; those are grouped into one row per line whose count is
+their sum. So a line with one common pair and one rare one shows a single
 grouped row, because showing the common pair beside the line's population
-would give the rare one away. No patient is ever listed: the pairs are
-aggregated before anything reaches the page.
+would give the rare one away; and a line that ended one way 50 times, 49 of
+them into the same next line, does not show the 49 beside the 50 that "how
+each line ended" publishes. Lines that ended a given way with no line after
+them are the part of that total the pairs do not account for, and they count
+with the hidden pairs: where there are enough of them the pairs from that end
+reason have cover, and where there are few or none pairs are grouped until
+what is hidden reaches the floor. Each total is held on its own, which is the
+subtraction a reader makes; it is not an audit of every total taken together.
+No patient is ever listed: the pairs are aggregated before anything reaches
+the page.
 
 A tab whose module did not run is **reported, not hidden**. "The safety module
 did not run" is something a viewer needs to know; a silently absent tab does
@@ -262,7 +271,7 @@ DASH_SOURCE=snapshot DASH_SNAPSHOT_DIR=/mnt/artifacts/results "Sep 10/dashboard/
 variables, and what the job that refreshes the snapshot needs.
 
 ```bash
-Rscript tests/run_tests.R      # 431 checks, no Shiny and no warehouse
+Rscript tests/run_tests.R      # 440 checks, no Shiny and no warehouse
 ```
 
 Every number the app puts on a page comes from a function in `R/` that runs

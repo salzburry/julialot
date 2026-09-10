@@ -406,6 +406,16 @@ lot_rows <- function(d) {
   list(d = d[o, , drop = FALSE], id = id[o], ln = ln[o])
 }
 
+# The rows in order, and for each whether the next row is the same patient's
+# next line: a line's successor is the next row of the same patient, one
+# number on.
+lot_succession <- function(d) {
+  r <- lot_rows(d); n <- length(r$id)
+  r$nxt <- if (n > 1L) c(r$id[-1] == r$id[-n] & r$ln[-1] == r$ln[-n] + 1L, FALSE)
+           else rep(FALSE, n)
+  r
+}
+
 # The consecutive-line pairs of a table, one row per patient and pair, with
 # the level of `from_col` on the earlier line and of `to_col` on the later.
 lot_pairs <- function(d, from_col, to_col, blank = "(Missing)") {
@@ -413,51 +423,70 @@ lot_pairs <- function(d, from_col, to_col, blank = "(Missing)") {
                       FROM = character(0), TO = character(0), stringsAsFactors = FALSE)
   if (is.null(d) || !nrow(d) || !all(c("PATID", "LOT_NUM", from_col, to_col) %in% names(d)))
     return(empty)
-  r <- lot_rows(d)
-  n <- length(r$id)
-  if (n < 2L) return(empty)
-  # A line's successor is the next row of the same patient, one number on.
-  nxt <- c(r$id[-1] == r$id[-n] & r$ln[-1] == r$ln[-n] + 1L, FALSE)
-  i <- which(nxt); j <- i + 1L
+  r <- lot_succession(d)
+  i <- which(r$nxt); j <- i + 1L
   if (!length(i)) return(empty)
   data.frame(ID = r$id[i], FROM_LOT = r$ln[i], TO_LOT = r$ln[j],
              FROM = blank_level(r$d[[from_col]][i], blank),
              TO = blank_level(r$d[[to_col]][j], blank), stringsAsFactors = FALSE)
 }
 
+# The lines with NO line after them, counted by line number and the level of
+# `from_col`: the part of "how each line ended" that is not a pair. What
+# count_transitions() needs to know how much of a published end-reason total
+# the pairs from it account for.
+lot_line_ends <- function(d, from_col, blank = "(Missing)") {
+  empty <- data.frame(FROM_LOT = integer(0), FROM = character(0), N = integer(0),
+                      stringsAsFactors = FALSE)
+  if (is.null(d) || !nrow(d) || !all(c("PATID", "LOT_NUM", from_col) %in% names(d)))
+    return(empty)
+  r <- lot_succession(d)
+  i <- which(!r$nxt)
+  if (!length(i)) return(empty)
+  from <- blank_level(r$d[[from_col]][i], blank)
+  key <- paste(r$ln[i], from, sep = "\r")
+  first <- !duplicated(key)
+  data.frame(FROM_LOT = r$ln[i][first], FROM = from[first],
+             N = as.integer(tapply(r$id[i], key, function(x) length(unique(x)))[key[first]]),
+             stringsAsFactors = FALSE)
+}
+
 # Which cells of a count table have to be hidden so that no count under the
-# floor can be READ OFF, given which totals are published.
+# floor can be READ OFF any one of the totals that are published.
 #
 # `n` are the counts, `groups` a list of groupings (each a vector of group
-# ids, one per cell) whose totals are published, and `min_n` the floor. A
-# cell under the floor is hidden. Then, to a fixed point:
-#
-#   * a group with exactly one hidden cell has that cell recoverable as the
-#     group total minus the open cells, so the smallest open cell of the
-#     group is hidden with it;
-#   * a group whose hidden cells sum to less than the floor has that sum
-#     recoverable the same way - and a sum under the floor is a count under
-#     the floor - so the smallest open cell of the group is hidden until the
-#     hidden sum reaches the floor or nothing is left open.
+# ids, one per cell, NA for a cell outside that grouping) whose totals are
+# published, and `min_n` the floor. A cell under the floor is hidden, and so
+# is any cell `hidden` marks from the start. Then, to a fixed point: a
+# group's hidden cells sum to the group total minus its open cells, so where
+# that sum is under the floor it is a count under the floor that can be read
+# off, and the smallest open cell of the group is hidden until the sum
+# reaches the floor or nothing is left open. One hidden cell under the floor
+# is the case of one; one hidden cell at or above it is a count that may be
+# read, so nothing more is hidden for it.
 #
 # Hiding only ever adds, so this terminates. What it returns is which cells
 # are hidden; the caller folds them into one row whose count is their sum,
 # which is at or above the floor whenever an open cell remains beside it and
 # is therefore not a count under the floor.
 #
-# The first version had only the first rule, and only over the source and
-# destination groupings. Its caption published the pairs' whole population,
-# and a line with one common pair and one rare one showed the common count
-# beside that total: the rare count was the subtraction.
-hide_for_disclosure <- function(n, groups, min_n) {
-  hidden <- n < min_n
+# Each total is held on its own. That is the subtraction a reader makes -
+# one published total less the cells shown beside it - and not a full
+# audit of every total taken together, which is a linear programme this
+# panel does not run.
+#
+# The first version protected only the source and destination groupings,
+# and its caption published the pairs' whole population: a line with one
+# common pair and one rare one showed the common count beside that total,
+# and the rare count was the subtraction.
+hide_for_disclosure <- function(n, groups, min_n, hidden = n < min_n) {
   repeat {
     before <- hidden
-    for (grp in groups) for (g in unique(grp)) {
-      w <- which(grp == g)
+    for (grp in groups) for (g in unique(grp[!is.na(grp)])) {
+      w <- which(!is.na(grp) & grp == g)
       open <- w[!hidden[w]]
       if (!any(hidden[w]) || !length(open)) next
-      if (sum(hidden[w]) == 1L || sum(n[w][hidden[w]]) < min_n)
+      if (sum(n[w][hidden[w]]) < min_n)
         hidden[open[which.min(n[open])]] <- TRUE
     }
     if (identical(hidden, before)) break
@@ -489,16 +518,27 @@ grouped_label <- function(n, noun)
 # per line.
 #
 # Every count is distinct patients. The floor is applied per pair; then the
-# disclosure rules above, over the two totals that ARE published: what
-# opened line n+1 (every line n+1 has a predecessor, so the pairs INTO a
-# start type sum to the count "what opened each line" publishes), and the
-# pairs FROM each line, which the caption publishes and "lines by line
-# number" publishes as the count of line n+1. How line n ended is not one:
-# "how each line ended" counts every line n, with or without a successor,
-# and the pairs from one end reason are not recoverable from it - and
-# holding it anyway grouped four of five open cells on the synthetic run,
-# because most end reasons have one rare destination.
-count_transitions <- function(pr, min_n = 25L) {
+# disclosure rule above, over the three totals the other panels publish:
+#
+#   * what opened line n+1 - every line n+1 has a predecessor, so the pairs
+#     INTO a start type sum to the count "what opened each line" gives;
+#   * the pairs FROM each line, which the caption gives and "lines by line
+#     number" gives as the count of line n+1;
+#   * how line n ended. "How each line ended" counts every line n ending a
+#     given way, with or without a line after it, and the pairs from that
+#     end reason sum to that count MINUS the lines with none. Those lines
+#     join the group as a cell that is never shown: the reader does not
+#     have their count, so where there are enough of them a hidden pair can
+#     stand on them, and where there are few or none (every line n has a
+#     next line, which the per-line counts say when they agree) pairs are
+#     hidden until the pairs and the lines together reach the floor. A
+#     published end-reason count of 50, a shown pair of 49 from it and
+#     every line 1 with a line 2 gave the hidden pair away as 1 when this
+#     group was not held.
+#
+# `ends` is lot_line_ends() for the same table and column, over the lines
+# the pairs came from.
+count_transitions <- function(pr, min_n = 25L, ends = NULL) {
   empty <- data.frame(FROM_LOT = integer(0), TO_LOT = integer(0), FROM = character(0),
                       TO = character(0), N_PATIENTS = integer(0), SUPPRESSED = integer(0),
                       stringsAsFactors = FALSE)
@@ -507,9 +547,17 @@ count_transitions <- function(pr, min_n = 25L) {
   first <- !duplicated(key)
   out <- pr[first, c("FROM_LOT", "TO_LOT", "FROM", "TO"), drop = FALSE]
   out$N_PATIENTS <- as.integer(tapply(pr$ID, key, function(x) length(unique(x)))[key[first]])
-  hidden <- hide_for_disclosure(out$N_PATIENTS, list(
-    paste(out$TO_LOT, out$TO, sep = "\r"),
-    as.character(out$FROM_LOT)), min_n)
+  from_key <- function(lot, from) paste(lot, from, sep = "\r")
+  if (is.null(ends)) ends <- lot_line_ends(NULL, "")
+  cover <- ends[ends$N > 0L & from_key(ends$FROM_LOT, ends$FROM) %in%
+                  from_key(out$FROM_LOT, out$FROM), , drop = FALSE]
+  k <- nrow(out); m <- nrow(cover)
+  hidden <- hide_for_disclosure(
+    c(out$N_PATIENTS, cover$N),
+    list(c(paste(out$TO_LOT, out$TO, sep = "\r"), rep(NA, m)),
+         c(as.character(out$FROM_LOT), rep(NA, m)),
+         c(from_key(out$FROM_LOT, out$FROM), from_key(cover$FROM_LOT, cover$FROM))),
+    min_n, hidden = c(out$N_PATIENTS < min_n, rep(TRUE, m)))[seq_len(k)]
   # A patient has one pair per FROM_LOT, so the folded cells are disjoint
   # and their sum is a count of distinct patients.
   shown <- fold_hidden(out, hidden, min_n, by = out$FROM_LOT, make_row = function(g)
@@ -526,7 +574,7 @@ lot_transitions <- function(d, from_col, to_col, min_n = 25L, from_lot = NA,
                             blank = "(Missing)") {
   pr <- lot_pairs(d, from_col, to_col, blank)
   if (!is.na(from_lot)) pr <- pr[pr$FROM_LOT == as.integer(from_lot), , drop = FALSE]
-  count_transitions(pr, min_n)
+  count_transitions(pr, min_n, lot_line_ends(d, from_col, blank))
 }
 
 # The whole sequence of one column across a patient's lines, counted.
@@ -580,12 +628,13 @@ lot_sequence_view <- function(d, view, floor_n, from_lot = NA, package_min_n = 2
     n <- if ("PATID" %in% names(d)) length(unique(as.character(d$PATID))) else NA_integer_
     what <- "patients, every line counted; the line selector does not apply here"
   } else {
-    pr <- if (identical(view, "end_to_start"))
-      lot_pairs(d, "LOT_BASE_END_REASON", "LOT_START_TYPE")
-    else lot_pairs(d, "LOT_BASE_MEDS", "LOT_BASE_MEDS", blank = "(no regimen)")
+    cols <- if (identical(view, "end_to_start"))
+      c("LOT_BASE_END_REASON", "LOT_START_TYPE") else c("LOT_BASE_MEDS", "LOT_BASE_MEDS")
+    blank <- if (identical(view, "regimen")) "(no regimen)" else "(Missing)"
+    pr <- lot_pairs(d, cols[1], cols[2], blank)
     if (!is.na(from_lot)) pr <- pr[pr$FROM_LOT == as.integer(from_lot), , drop = FALSE]
     n <- length(unique(pr$ID))
-    rows <- count_transitions(pr, fl)
+    rows <- count_transitions(pr, fl, lot_line_ends(d, cols[1], blank))
     what <- sprintf("patients with a line and the one after it%s",
                     if (is.na(from_lot)) "" else sprintf(", from line %d", as.integer(from_lot)))
   }

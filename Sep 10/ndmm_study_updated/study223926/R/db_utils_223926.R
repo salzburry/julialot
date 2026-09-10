@@ -202,20 +202,28 @@ ensure_columns <- function(con, name, cols) {
   if (!nrow(d))
     stop("SCHEMA ERROR: could not establish the columns of ", name,
          ", so a column cannot be added to it.", call. = FALSE)
+  # A DESCRIBE without a type column cannot say whether the columns that
+  # exist can take what this writer inserts, and the same reading as in
+  # ensure_table() applies: an unrecognised response is a stop, not a pass
+  # on names alone.
+  if (!isTRUE(attr(d, "typed")))
+    stop("SCHEMA ERROR: the schema of ", name, " came back without a type ",
+         "column (found: ", paste(attr(d, "raw_names"), collapse = ", "),
+         "). Column names alone cannot establish that writing into it is ",
+         "safe, so nothing is written.", call. = FALSE)
   # An existing column keeps its type - and a type this writer cannot insert
   # into is found HERE, before the DELETE that precedes the insert, rather
   # than by the insert failing after the row is already gone.
-  if (isTRUE(attr(d, "typed")))
-    for (m in intersect(d$COL, want)) {
-      ht <- d$TYPE[match(m, d$COL)]
-      wt <- .sql_type_norm(cols[[match(m, want)]])
-      if (!identical(ht, wt))
-        stop("SCHEMA ERROR: ", name, ".", m, " is ", ht, " where this package ",
-             "writes ", wt, ". The insert would fail after the run's own row ",
-             "had been cleared, so nothing is written. This happens when an ",
-             "output prefix is reused across package versions: run against a ",
-             "fresh OBJECT_PREFIX, or drop the table.", call. = FALSE)
-    }
+  for (m in intersect(d$COL, want)) {
+    ht <- d$TYPE[match(m, d$COL)]
+    wt <- .sql_type_norm(cols[[match(m, want)]])
+    if (!identical(ht, wt))
+      stop("SCHEMA ERROR: ", name, ".", m, " is ", ht, " where this package ",
+           "writes ", wt, ". The insert would fail after the run's own row ",
+           "had been cleared, so nothing is written. This happens when an ",
+           "output prefix is reused across package versions: run against a ",
+           "fresh OBJECT_PREFIX, or drop the table.", call. = FALSE)
+  }
   missing <- setdiff(want, d$COL)
   for (m in missing) {
     db_exec(con, sprintf("ALTER TABLE %s ADD COLUMNS (%s %s)", name, m,
