@@ -78,11 +78,17 @@ CONTRACT <- list(
 cfg_defaults <- function() {
   list(
     # --- connection -------------------------------------------------------
-    # sparklyr. On a Databricks cluster the session already exists, so nothing
-    # is authenticated here; databricks_connect is for driving one from
-    # outside and is the only mode that needs a token.
-    spark_method = .env_enum("SPARK_METHOD", "databricks",
-                             c("databricks", "databricks_connect", "local")),
+    # odbc, the default: the Databricks ODBC driver through DBI, on the same
+    # DSN and DATABRICKS_PWD the cohort and LOT builds connect with. The
+    # password comes from the environment alone - load_inputs() refuses it
+    # from config.csv. The other three are sparklyr sessions: on a Databricks
+    # cluster the session already exists and nothing is authenticated here;
+    # databricks_connect drives one from outside and is the only mode that
+    # needs a token.
+    spark_method = .env_enum("SPARK_METHOD", "odbc",
+                             c("odbc", "databricks", "databricks_connect", "local")),
+    dsn = .env_chr("DATABRICKS_DSN", "RWDE"),
+    pwd = Sys.getenv("DATABRICKS_PWD", unset = ""),
     databricks_host       = .env_chr("DATABRICKS_HOST", ""),
     databricks_token      = Sys.getenv("DATABRICKS_TOKEN", unset = ""),
     databricks_cluster_id = .env_chr("SPARK_CLUSTER_ID", ""),

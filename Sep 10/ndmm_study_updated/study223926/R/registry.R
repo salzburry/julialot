@@ -387,6 +387,9 @@ describe_plan <- function(cfg, cohorts, mods) {
     sprintf("  cohorts : %s", paste(vapply(cohorts, `[[`, character(1), "label"),
                                     collapse = "; ")),
     sprintf("  modules : %s", paste(names(mods), collapse = " -> ")),
+    if (length(attr(mods, "left_out")))
+      sprintf("  left out: %s", paste(sprintf("%s (%s)", names(attr(mods, "left_out")),
+                                              attr(mods, "left_out")), collapse = "; ")),
     sprintf("  period  : %s to %s (1L index from %s)",
             cfg$study_start, cfg$study_end, cfg$lot1_index_from),
     sprintf("  writes  : %s",

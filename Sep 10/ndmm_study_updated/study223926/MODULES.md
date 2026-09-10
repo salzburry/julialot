@@ -10,19 +10,26 @@ makes the lines, and this reads both.
 raw Optum CDM ──────────────► NDMM_COHORT ──────────► LOT_LONG_FINAL ──────────► S_*
 ```
 
-Connection is **sparklyr**. On a Databricks cluster the Spark session already
-exists and sparklyr attaches to it, so there is no DSN and no password:
+Connection is the **Databricks ODBC driver through DBI** - the same DSN and
+`DATABRICKS_PWD` the cohort and LOT builds connect with, so one environment
+serves all three:
 
 ```
-Rscript build.R                                    # on the cluster
+DATABRICKS_PWD=... Rscript build.R                 # DSN from DATABRICKS_DSN, default RWDE
 DRY_RUN=TRUE Rscript build.R                       # print the plan, touch nothing
 MODULES=safety COHORTS=2L Rscript build.R          # one module, one cohort
-Rscript tests/run_tests.R                          # 378 checks, no warehouse
+Rscript tests/run_tests.R                          # 395 checks, no warehouse
 ```
 
-`SPARK_METHOD=databricks_connect` drives a named cluster from outside and is
-the only mode that needs `DATABRICKS_HOST`, `DATABRICKS_TOKEN` and
-`SPARK_CLUSTER_ID`.
+`SPARK_METHOD` picks the connection, and `odbc` is the default. The other
+three are sparklyr sessions: `databricks` attaches to the session of the
+cluster the script runs on, with no DSN and no password; `databricks_connect`
+drives a named cluster from outside and is the only mode that needs
+`DATABRICKS_HOST`, `DATABRICKS_TOKEN` and `SPARK_CLUSTER_ID`; `local` is a
+smoke test. Every statement is SQL text, so the modes differ only in the
+connection layer of `R/db_utils_223926.R`; over ODBC a code list is staged as
+one VALUES statement behind a temporary view, as the cohort build stages its
+own.
 
 A partial run - one module, one cohort - writes only that, and leaves every
 other table and every other cohort's rows under the prefix as the previous
@@ -92,10 +99,10 @@ lands on the run's own metadata row where no reader can miss it.
 | `R/person_time.R` | The counting rules: same-day collapse, chronic-once, the acute washout chain. |
 | `R/codelists.R` | Code-list loading, the unfilled-row guard, and the preflight. |
 | `R/lineage.R` | Refuses a LOT run it cannot vouch for, and reads back what the cohort build applied. |
-| `R/db_utils_223926.R` | sparklyr connection, logging, table naming, the step runner. |
+| `R/db_utils_223926.R` | the connection - ODBC through DBI, or a sparklyr session - logging, table naming, the step runner. |
 | `R/run_223926.R` | Resolves the plan, walks the modules, writes the run metadata. |
 | `R/modules/*.R` | One file per module. Nothing else defines a clinical rule. |
-| `tests/run_tests.R` | 378 checks that need no warehouse. The last sections RUN every module for every cohort, parse every statement they emit, and **execute** them against fixtures. |
+| `tests/run_tests.R` | 395 checks that need no warehouse. The last sections RUN every module for every cohort, parse every statement they emit, and **execute** them against fixtures. |
 | `tests/emit_sql.R` | The harness. Stubs only what touches Spark, so a module's R and its SQL are both exercised without a cluster. |
 | `tests/parse_sql.py` | Parses each captured statement in the Spark dialect (sqlglot). |
 | `tests/run_duckdb.py` | **Executes** them: transpiles to DuckDB, runs against `tests/fixtures/cdm`, checks 58 golden numbers, then runs the whole script again and checks nothing doubled. |
@@ -120,13 +127,16 @@ lands on the run's own metadata row where no reader can miss it.
 | `patterns` | `S_PATTERNS`, `S_SWITCH`, `S_TX_ATTRITION` | via `soc` |
 | `release` | `S_*_RELEASE` — every rate and percentage table with cells under 25 patients suppressed | — |
 
-**Six of the thirteen run today.** `MODULES=spine,cohorts,attrition,periods,demographics,tte`
-builds the cohorts `COHORTS` names (the config default is `1L,2L,3L`; `SEC2L`
-is opt-in), every window, the demographics and the time-to-event outcomes, and
-needs no code list this repo does not already have. The other seven
-are blocked on Annexes 2 and 3 (`../CODELISTS.md`), and the preflight says so
-by name **before** the connection is opened rather than after the expensive
-steps.
+**Six of the thirteen run today.** `MODULES=all`, the default, runs everything
+that has a usable code list. `spine`, `cohorts`, `attrition`, `periods`,
+`demographics` and `tte` need none, so they always run: the cohorts `COHORTS`
+names (the config default is `1L,2L,3L`; `SEC2L` is opt-in), every window, the
+demographics and the time-to-event outcomes. The other seven are blocked on
+Annexes 2 and 3 (`../CODELISTS.md`) and are **left out by name** - in the plan,
+in the log and in `S_RUN_METADATA`, so the dashboard reports them as not run -
+rather than stopping the run. Naming a module in `MODULES` asks for it: then
+its list is required, and the run stops in its first second, **before** the
+connection is opened, saying which file and which annex.
 
 ### The MM adjustment, and why it is on the codes
 
@@ -149,7 +159,8 @@ carries it. That is why `comorbidity` declares `mm_dx.csv`.
 `FRAILTY` (the Kim 2018 claims-based frailty index) and `COMORBID_SUBGROUPS`
 (Table 4's neuropathy and lung-parenchymal-disease flags) are both off by
 default, because both need annexes that were not delivered — Annex 7 and Annex
-3. Switched on, the code-list preflight stops the run naming the annex. That is
+3. Switched on, the code-list preflight names the annex: `comorbidity` is left
+out with the reason under `MODULES=all`, and a run that named it stops. That is
 the point of the switch: asking for frailty tells you exactly what is missing,
 rather than producing a column of zeros that reads as a cohort with no frail
 patients.
@@ -443,7 +454,7 @@ Two things are deliberately left as they are: `MEDIAN_LOS` uses
 ## What this is not
 
 It has never been run against the warehouse — no code lists, and several
-settings still want the study team's answer (`../OPEN_QUESTIONS.md`). The 378
+settings still want the study team's answer (`../OPEN_QUESTIONS.md`). The 395
 tests check the selection logic, the boundary conventions and the counting
 rules; run every module for every cohort against recorders, so that each
 module's R reaches the end of the function and every statement it emits parses

@@ -1377,7 +1377,7 @@ cat("\nline against the next line\n")
      "counted per pair on distinct patients, with no identifier in the result")
   t2 <- lot_transitions(lf, "LOT_BASE_END_REASON", "LOT_START_TYPE", min_n = 2L)
   f1 <- t2[t2$FROM_LOT == 1L, ]; f2 <- t2[t2$FROM_LOT == 2L, ]
-  ok(nrow(f1) == 1L && grepl("^\\(2 pairs, grouped\\)", f1$FROM) && identical(f1$N_PATIENTS, 2L) && f1$SUPPRESSED == 0L,
+  ok(nrow(f1) == 1L && identical(f1$FROM, "(grouped pairs)") && identical(f1$N_PATIENTS, 2L) && f1$SUPPRESSED == 0L,
      "pairs under the floor are grouped into one row per line whose count is their sum")
   ok(nrow(f2) == 1L && is.na(f2$N_PATIENTS) && f2$SUPPRESSED == 1L,
      "...and that row is withheld when the sum is still under the floor")
@@ -1476,15 +1476,61 @@ cat("\nline against the next line\n")
   ok(nrow(shown) == 1L && identical(shown$FROM, "MED_ADD") && identical(shown$TO, "MED") &&
        identical(shown$N_PATIENTS, 51L) && !"DISCONTINUATION" %in% shown$FROM,
      "so DISCONTINUATION -> MED is not shown on its own beside that total: only MED_ADD -> MED is")
-  ok(sum(startsWith(th$FROM, "(")) == 1L && grepl("^\\(3 pairs, grouped\\)", th$FROM[startsWith(th$FROM, "(")]) &&
+  ok(sum(startsWith(th$FROM, "(")) == 1L && identical(th$FROM[startsWith(th$FROM, "(")], "(grouped pairs)") &&
        identical(th$N_PATIENTS[startsWith(th$FROM, "(")], 99L),
-     "...and the other three pairs are one grouped row of 99")
+     "...and the other three pairs are one grouped row of 99 that does not say it holds three")
   ok(!length(read_off(h, th)),
      "...so no total the other panels publish - an end reason, a start type, the line - less what is shown is under the floor")
   hv <- html_table(lot_sequence_view(h, "end_to_start", 25)$rows)
   counts <- regmatches(hv, gregexpr("<td>[^<]*</td></tr>", hv))[[1]]   # the last cell of each row
   ok(setequal(counts, c("<td>51.00</td></tr>", "<td>99.00</td></tr>")),
      "...and the rendered panel's counts are 51 and 99 - neither 49 nor 1")
+  # What the three tables say TOGETHER. From the published end-reason and
+  # start-type totals less the one shown pair, a reader has the row and
+  # column totals of the hidden cells, and every way of filling them with
+  # whole numbers is a candidate. The grouped row used to say how many
+  # pairs it held, and of the fifty candidates exactly one had three
+  # non-empty cells: the one with the rare pair at 1.
+  fillings <- function(rows, cols) {
+    # Every non-negative integer matrix with these margins, one row per candidate.
+    fill <- function(r, remaining_cols) {
+      if (r > length(rows)) return(if (all(remaining_cols == 0)) list(integer(0)) else list())
+      if (r == length(rows)) {
+        if (sum(remaining_cols) != rows[r]) return(list())
+        return(list(remaining_cols))
+      }
+      out <- list()
+      parts <- function(k, left, acc) {
+        if (k > length(cols)) { if (left == 0) out[[length(out) + 1L]] <<- acc; return(invisible()) }
+        for (v in 0:min(left, remaining_cols[k])) parts(k + 1L, left - v, c(acc, v))
+      }
+      parts(1L, rows[r], integer(0))
+      unlist(lapply(out, function(cells) lapply(fill(r + 1L, remaining_cols - cells), function(rest) c(cells, rest))),
+             recursive = FALSE)
+    }
+    do.call(rbind, fill(1L, cols))
+  }
+  hidden_margins <- function(d, tr) {
+    open <- tr[tr$SUPPRESSED == 0L & !startsWith(tr$FROM, "("), , drop = FALSE]
+    ends <- tabulate_cat(d[d$LOT_NUM == 1L, ], "LOT_BASE_END_REASON", 25L)
+    starts <- tabulate_cat(d[d$LOT_NUM == 2L, ], "LOT_START_TYPE", 25L)
+    rows <- setNames(ends$N - vapply(ends$LEVEL, function(l) sum(open$N_PATIENTS[open$FROM == l]), numeric(1)), ends$LEVEL)
+    cols <- setNames(starts$N - vapply(starts$LEVEL, function(l) sum(open$N_PATIENTS[open$TO == l]), numeric(1)), starts$LEVEL)
+    list(rows = rows[rows > 0], cols = cols[cols > 0])
+  }
+  hm <- hidden_margins(h, th)
+  cand <- fillings(hm$rows, hm$cols)
+  cell_names <- paste(rep(names(hm$rows), each = length(hm$cols)), names(hm$cols), sep = " -> ")
+  colnames(cand) <- cell_names   # row-major, as fillings() lays them out
+  ok(nrow(cand) == 50L && sum(rowSums(cand > 0) == 3L) == 1L &&
+       cand[rowSums(cand > 0) == 3L, "DISCONTINUATION -> SCT_AUTO"] == 1,
+     "fifty fillings fit the published totals, and saying the grouped row held three pairs left exactly one - the rare pair at 1")
+  pinned <- vapply(cell_names, function(cl) length(unique(cand[, cl])) == 1L, logical(1))
+  ok(!any(pinned & cand[1, ] > 0 & cand[1, ] < 25),
+     "...without that number, no hidden cell is pinned to a count under the floor by the three tables together")
+  ok(!grepl("[0-9]", th$FROM[startsWith(th$FROM, "(")]) &&
+       !grepl("[0-9]", lot_sequences(two_pairs(49, 1), "LOT_START_TYPE", min_n = 25L)$SEQUENCE),
+     "...because neither grouped row carries a number of any kind")
   # Lines that ended that way with no line after them are the part of the
   # total the pairs do not account for. Thirty of them are cover enough for
   # the 49 to show; five are not.
@@ -1516,7 +1562,7 @@ cat("\nline against the next line\n")
      "...one row per distinct sequence")
   sq2 <- lot_sequences(lf, "LOT_START_TYPE", min_n = 2L)
   ok(nrow(sq2) == 2L && identical(sq2$SEQUENCE[1], "MED > MED") &&
-       grepl("^\\(2 sequences, grouped\\)", sq2$SEQUENCE[2]) && identical(sq2$N_PATIENTS[2], 2L),
+       identical(sq2$SEQUENCE[2], "(grouped sequences)") && identical(sq2$N_PATIENTS[2], 2L),
      "rare sequences are grouped into one row rather than listed shaded")
   sq49 <- lot_sequences(two_pairs(49, 1), "LOT_START_TYPE", min_n = 25L)
   ok(nrow(sq49) == 1L && identical(sq49$N_PATIENTS, 50L) && grepl("grouped", sq49$SEQUENCE),
@@ -1529,7 +1575,7 @@ cat("\nline against the next line\n")
                          LOT_START_TYPE = c(rep("MED", 30), rep("SCT_AUTO", 3)),
                          stringsAsFactors = FALSE)
   sl <- lot_sequences(seq_leak, "LOT_START_TYPE", min_n = 25L)
-  ok(nrow(sl) == 1L && grepl("sequences, grouped", sl$SEQUENCE) && identical(sl$N_PATIENTS, 33L),
+  ok(nrow(sl) == 1L && identical(sl$SEQUENCE, "(grouped sequences)") && identical(sl$N_PATIENTS, 33L),
      "...and a single rare sequence takes the smallest common one with it, because the total is published")
 
   v <- lot_sequence_view(lf, "end_to_start", 25)
