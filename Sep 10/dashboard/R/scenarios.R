@@ -65,11 +65,15 @@ parse_readings <- function(s) {
   stats::setNames(out[keep], keys[keep])
 }
 
+# One field of a metadata row as the string a scenario carries: trimmed,
+# and "" where the row lacks it or holds NA - "not recorded", either way.
+row_field <- function(row, k) {
+  v <- if (!is.null(row) && k %in% names(row)) row[[k]] else NULL
+  if (!length(v) || is.na(v[1])) "" else trimws(as.character(v[1]))
+}
+
 scenario_from_row <- function(prefix, row) {
-  g <- function(k) {
-    v <- if (k %in% names(row)) row[[k]][1] else NA
-    if (is.null(v) || is.na(v)) "" else trimws(as.character(v))
-  }
+  g <- function(k) row_field(row, k)
   readings <- parse_readings(g("OPEN_QUESTION_READINGS"))
   list(
     prefix = prefix,
@@ -181,8 +185,6 @@ scenario_command <- function(settings, cfg = dashboard_config(),
   list(command = paste(lines, collapse = "\n"),
        unsupported = unknown)
 }
-
-`%||%` <- function(a, b) if (is.null(a) || (length(a) == 1L && is.na(a))) b else a
 
 # The environment variable behind each setting, read off cfg_defaults() itself.
 #

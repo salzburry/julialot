@@ -113,7 +113,7 @@ often as needed.
 Rscript study223926/build.R                                   # on a Databricks cluster
 DRY_RUN=TRUE Rscript study223926/build.R                      # print the plan only
 MODULES=safety COHORTS=2L Rscript study223926/build.R         # one module, one cohort
-Rscript study223926/tests/run_tests.R                         # 376 checks, no warehouse
+Rscript study223926/tests/run_tests.R                         # 377 checks, no warehouse
 ```
 
 Thirteen modules, four cohorts, and every reading this folder records as open is

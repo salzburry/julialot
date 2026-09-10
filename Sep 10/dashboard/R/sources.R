@@ -116,10 +116,9 @@ warehouse_source <- function(cfg, con) {
   # can change inside a session, whenever the prefix is rebuilt, so a
   # remembered yes was a yes for as long as the app stayed up.
   lot_ok <- function(lot_run_id, lot_run_version = "")
-    lot_status_owner(tryCatch(db_q(con, sprintf("SELECT * FROM %s",
-                                     full(cfg$lot_prefix, "LOT_BUILD_STATUS"))),
-                              error = function(e) NULL),
-                     lot_run_id, cfg$lot_prefix, lot_run_version)
+    nzchar(cfg$lot_prefix) &&
+      lot_prefix_owner_ok(con, full(cfg$lot_prefix, "LOT_BUILD_STATUS"),
+                          lot_run_id, lot_run_version)
   list(
     kind = "warehouse", synthetic = FALSE,
     origin = sprintf("%s.%s", cfg$catalog, cfg$work_schema),
@@ -151,8 +150,7 @@ warehouse_source <- function(cfg, con) {
     # and LOT_LONG_FINAL, which is the one the panels are about, does not.
     # Asking for an old run returned the current lines, and the mismatching
     # status was never read at all.
-    lot_run_ok = function(lot_run_id, lot_run_version = "")
-      lot_ok(lot_run_id, lot_run_version),
+    lot_run_ok = lot_ok,
     read_lot = function(lot_run_id, table, lot_run_version = "") {
       if (!nzchar(cfg$lot_prefix)) return(NULL)
       # Fails closed. A run that cannot be shown to be the one under this
@@ -196,13 +194,10 @@ synthetic_source <- function(cfg) {
 load_scenarios <- function(src) {
   pfx <- src$prefixes()
   if (!length(pfx)) return(list())
+  # The newest row, so a prefix re-run shows its latest run.
   out <- lapply(pfx, function(p) {
-    md <- src$read(p, "S_RUN_METADATA")
-    if (is.null(md) || !nrow(md)) return(NULL)
-    # Newest first, so a prefix re-run shows its latest run.
-    if ("UPDATED_AT" %in% names(md))
-      md <- md[order(md$UPDATED_AT, decreasing = TRUE), , drop = FALSE]
-    scenario_from_row(p, md[1, , drop = FALSE])
+    md <- newest_metadata_row(src, p)
+    if (is.null(md)) NULL else scenario_from_row(p, md)
   })
   out <- Filter(Negate(is.null), out)
   if (!length(out)) return(list())
@@ -241,18 +236,26 @@ read_table <- function(src, prefix, table, prefer_release = TRUE) {
 # the table carries it; otherwise the last row written.
 lot_status_owner <- function(st, lot_run_id, lot_prefix = "x",
                              lot_run_version = "") {
-  id <- trimws(lot_run_id %||% "")
-  if (!nzchar(id) || !nzchar(lot_prefix %||% "")) return(FALSE)
-  if (is.null(st) || !nrow(st) || !all(c("RUN_ID", "STATE") %in% names(st)))
-    return(FALSE)
-  o <- if ("UPDATED_AT" %in% names(st))
-    order(as.character(st$UPDATED_AT), decreasing = TRUE) else rev(seq_len(nrow(st)))
-  newest <- st[o[1], , drop = FALSE]
-  if (!identical(trimws(as.character(newest$RUN_ID)), id) ||
-      !identical(tolower(trimws(as.character(newest$STATE))), "complete"))
-    return(FALSE)
-  v <- trimws(as.character(lot_run_version %||% ""))
-  !nzchar(v) || identical(run_version_stamp(newest$UPDATED_AT %||% ""), v)
+  if (!nzchar(lot_prefix %||% "") || is.null(st) || !nrow(st) ||
+      !all(c("RUN_ID", "STATE") %in% names(st))) return(FALSE)
+  lot_build_owns(newest_row(st), lot_run_id, lot_run_version)
+}
+
+# The same question asked of a table by name. The snapshot job asks it of
+# the LOT prefix around its copy; the warehouse source asks it around each
+# read.
+lot_prefix_owner_ok <- function(con, status_tbl, lot_id, lot_version = "") {
+  st <- tryCatch(db_q(con, sprintf("SELECT * FROM %s", status_tbl)),
+                 error = function(e) NULL)
+  lot_status_owner(st, lot_id, "x", lot_version)
+}
+
+# The newest row of a status or metadata table: by UPDATED_AT where the table
+# carries it, otherwise the last row written.
+newest_row <- function(df) {
+  o <- if ("UPDATED_AT" %in% names(df))
+    order(as.character(df$UPDATED_AT), decreasing = TRUE) else rev(seq_len(nrow(df)))
+  df[o[1], , drop = FALSE]
 }
 
 # A study table, bound to the run the scenario describes.
@@ -282,23 +285,47 @@ table_owner <- function(table, modules = MODULES) {
   NA_character_
 }
 
-# Did THIS run write this table? Only if its metadata names the module that
-# writes it. A retained safety table under a run that omitted safety is the
-# previous run's; a release table under a run that omitted release is too. A
-# run that recorded no modules can vouch for nothing but its metadata.
-scenario_wrote <- function(scenario, table, modules = MODULES) {
-  if (identical(table, "S_RUN_METADATA")) return(TRUE)
-  ran <- trimws(as.character(scenario$modules %||% character(0)))
-  ran <- ran[nzchar(ran)]
+# Is this table THIS run's, and if not, why not - in the words a panel shows.
+#
+# One verdict for every site that asks: the reader, the panel resolver, the
+# Compare tab and the snapshot job. Its metadata is always the run's own. A
+# result is the run's only if the run finished (its metadata row is written
+# before its tables are replaced, so under a `started` or `failed` run the
+# tables are the previous build's, or part of this one), if the run's own
+# metadata names the module that writes the table (a retained safety table
+# under a run that omitted safety is the previous run's; so is a release
+# table under a run that omitted release), and - for a module's OPTIONAL
+# output - if the run recorded that output's switch on: comorbidity with
+# COMORBID_SUBGROUPS=FALSE runs, is recorded, and leaves S_COMORB_SUBGROUP
+# exactly as an earlier run left it. A run that recorded no modules, or no
+# reading of a switch, can vouch for nothing that depends on them.
+scenario_table_status <- function(scenario, table, modules = MODULES) {
+  if (identical(table, "S_RUN_METADATA")) return(list(ok = TRUE, why = ""))
+  no <- function(why) list(ok = FALSE, why = why)
+  if (!scenario_is_usable(scenario))
+    return(no(sprintf(paste(
+      "This run is '%s', not complete, so its tables are not shown: they",
+      "may be the previous build's, or part of this one. Its settings and",
+      "the LOT run it read are on the Overview tab."),
+      if (nzchar(scenario$state %||% "")) scenario$state else "unrecorded")))
   own <- table_owner(table, modules)
-  if (is.na(own) || !length(ran) || !own %in% ran) return(FALSE)
-  # A module's OPTIONAL output is written only when its switch was on. The
-  # comorbidity module with COMORBID_SUBGROUPS=FALSE runs, is recorded, and
-  # leaves S_COMORB_SUBGROUP exactly as an earlier run left it - so the
-  # module's name is not enough, and the run's recorded reading of the
-  # switch decides. A run that recorded no reading cannot attest it.
+  if (is.na(own)) return(no(sprintf("%s is not a table this package writes.", table)))
+  ran <- trimws(as.character(scenario$modules %||% character(0)))
+  if (!own %in% ran[nzchar(ran)])
+    return(no(sprintf("The '%s' module did not run in this scenario, so %s is empty.",
+                      own, table)))
   setting <- optional_output_setting(table)
-  if (is.na(setting)) return(TRUE)
+  if (!is.na(setting) && !reading_is_true(scenario, setting))
+    return(no(sprintf("%s is written only when %s is on, which this run did not record.",
+                      table, toupper(setting))))
+  list(ok = TRUE, why = "")
+}
+
+scenario_wrote <- function(scenario, table, modules = MODULES)
+  scenario_table_status(scenario, table, modules)$ok
+
+# Whether the run recorded a setting as TRUE. Missing is not TRUE.
+reading_is_true <- function(scenario, setting) {
   r <- scenario$readings[[setting]]
   !is.null(r) && identical(toupper(trimws(as.character(r$value %||% ""))), "TRUE")
 }
@@ -325,22 +352,13 @@ restrict_to_cohorts <- function(d, scenario) {
 }
 
 read_scenario_table <- function(src, scenario, table, prefer_release = TRUE) {
-  # A run that did not finish has no numbers of its own. The producer writes
-  # its metadata row BEFORE it replaces a table, and a failure leaves what was
-  # there - the previous build's tables, or part of the new one - so a
-  # `started` or `failed` scenario, or one whose state is not recorded, reads
-  # only its metadata and never a result. A fresh page over such a run drew
-  # the previous build's rate under the new run's settings.
-  if (!identical(table, "S_RUN_METADATA") && !scenario_is_usable(scenario))
-    return(NULL)
-  # ...and only what it wrote. A table under the prefix that this run's
-  # metadata does not claim is a previous run's, and the released copy is
-  # preferred only where this run ran the release module - otherwise the
-  # rebuilt raw table is this run's and the released one is not.
+  # Only what this run wrote - scenario_table_status() says what that is: a
+  # finished run's own tables, and the released copy only where it ran the
+  # release module, otherwise the rebuilt raw table.
   if (!scenario_wrote(scenario, table)) return(NULL)
   prefer_release <- prefer_release && scenario_wrote(scenario, paste0(table, "_RELEASE"))
   same <- function() {
-    m <- scenario_matches_now(src, scenario)
+    m <- scenario_is_current(src, scenario)
     # Unanswerable two ways: a scenario that recorded no run is not bound and
     # reads freely; one that did, over a prefix whose metadata cannot be read
     # now, is refused - a run that cannot be shown to be there is not there.
@@ -363,53 +381,31 @@ read_scenario_table <- function(src, scenario, table, prefer_release = TRUE) {
 newest_metadata_row <- function(src, prefix) {
   md <- tryCatch(src$read(prefix, "S_RUN_METADATA"), error = function(e) NULL)
   if (is.null(md) || !nrow(md) || !"RUN_ID" %in% names(md)) return(NULL)
-  if ("UPDATED_AT" %in% names(md))
-    md <- md[order(md$UPDATED_AT, decreasing = TRUE), , drop = FALSE]
-  md[1, , drop = FALSE]
+  newest_row(md)
 }
 
-current_run_id <- function(src, prefix) {
-  r <- newest_metadata_row(src, prefix)
-  if (is.null(r)) NA_character_ else trimws(as.character(r$RUN_ID[1]))
-}
-
-# The fields every reader binds a run by, off one metadata row: the id, and
-# the state and timestamp that tell one BUILD under that id from another.
-run_identity <- function(row) {
-  g <- function(k) {
-    v <- if (!is.null(row) && k %in% names(row)) row[[k]] else NULL
-    # Absent, NULL, empty and NA all read as "not recorded".
-    if (!length(v) || is.na(v[1])) "" else trimws(as.character(v[1]))
-  }
-  list(run_id = g("RUN_ID"), state = g("STATE"), updated_at = g("UPDATED_AT"))
-}
+# The identity every reader binds a run by, off one metadata row: the id,
+# and the state and timestamp that tell one BUILD under that id from
+# another, as one key. A run id is not a build: the study package reuses
+# DOMINO_RUN_ID for every build inside one Domino run, so a re-run keeps the
+# id while its state goes to `started` and back and its UPDATED_AT moves.
+# Bound by id alone, the page showed the re-run's rows under the earlier
+# build's metadata.
+run_identity <- function(row)
+  paste(row_field(row, "RUN_ID"), row_field(row, "STATE"),
+        row_field(row, "UPDATED_AT"), sep = "\r")
 
 # Is the build under this prefix, right now, the one the scenario describes?
-#
-# By id, and by state and timestamp where the scenario recorded them. A run
-# id is not a build: the study package reuses DOMINO_RUN_ID for every build
-# inside one Domino run, so a re-run keeps the id while its state goes to
-# `started` and back and its UPDATED_AT moves. Bound by id alone, the page
-# showed the re-run's rows - first a build still going, then a finished one
-# with possibly different settings - under the earlier build's metadata.
-#
 # NA where it cannot be said: the scenario records no run, or the prefix has
 # no metadata to read. The same answer same_lot_run() gives.
-scenario_matches_now <- function(src, scenario) {
-  was <- run_identity(list(RUN_ID = scenario$run_id, STATE = scenario$state,
-                           UPDATED_AT = scenario$updated_at))
-  if (!nzchar(was$run_id)) return(NA)
+scenario_is_current <- function(src, scenario) {
+  if (!nzchar(trimws(scenario$run_id %||% ""))) return(NA)
   row <- newest_metadata_row(src, scenario$prefix)
   if (is.null(row)) return(NA)
-  now <- run_identity(row)
-  if (!nzchar(now$run_id) || !identical(now$run_id, was$run_id)) return(FALSE)
-  for (k in c("state", "updated_at"))
-    if (nzchar(was[[k]]) && !identical(now[[k]], was[[k]])) return(FALSE)
-  TRUE
+  identical(run_identity(row),
+            run_identity(list(RUN_ID = scenario$run_id, STATE = scenario$state,
+                              UPDATED_AT = scenario$updated_at)))
 }
-
-# Is this scenario still the build the app read at startup?
-scenario_is_current <- function(src, scenario) scenario_matches_now(src, scenario)
 
 mark_source <- function(d, which) { attr(d, "table_source") <- which; d }
 
@@ -450,11 +446,15 @@ lot_run_bound <- function(src, scenario) {
 # are, so where both scenarios recorded which build they read, the builds
 # have to match too. Where only one did, it cannot be said - NA, like a
 # missing id - rather than claimed.
+#
+# The answer carries WHY as an attribute, so the Compare tab can say which
+# case it is without working the ids and builds out a second time.
 same_lot_run <- function(a, b) {
   ra <- trimws(a$lot_run_id %||% ""); rb <- trimws(b$lot_run_id %||% "")
-  if (!nzchar(ra) || !nzchar(rb)) return(NA)
-  if (!identical(ra, rb)) return(FALSE)
+  if (!nzchar(ra) || !nzchar(rb)) return(structure(NA, why = "no_run"))
+  if (!identical(ra, rb)) return(structure(FALSE, why = "different_run"))
   va <- trimws(a$lot_run_version %||% ""); vb <- trimws(b$lot_run_version %||% "")
-  if (nzchar(va) != nzchar(vb)) return(NA)
-  identical(va, vb)
+  if (nzchar(va) != nzchar(vb)) return(structure(NA, why = "unknown_build"))
+  if (!identical(va, vb)) return(structure(FALSE, why = "different_build"))
+  structure(TRUE, why = "same")
 }

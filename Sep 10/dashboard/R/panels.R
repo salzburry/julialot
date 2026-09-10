@@ -216,13 +216,21 @@ panel_enabled <- function(p) {
 # scenario's modules wrote. A panel whose table is missing is REPORTED, not
 # hidden - "the safety module did not run" is a thing a viewer needs to know,
 # and a silently absent tab does not say it.
-resolve_panels <- function(scenario, panels = PANELS, tables = DASH_TABLES,
-                           src = NULL) {
+resolve_panels <- function(scenario, panels = PANELS, src = NULL) {
+  # Several LOT panels read one table; whether it can be reached is asked
+  # once per table per resolve, not once per panel.
+  reached <- new.env(parent = emptyenv())
+  lot_reachable <- function(table) {
+    if (is.null(reached[[table]]))
+      reached[[table]] <- !is.null(src) && isTRUE(tryCatch({
+        got <- read_lot_table(src, scenario, table)
+        !is.null(got) && nrow(got) > 0
+      }, error = function(e) FALSE))
+    reached[[table]]
+  }
   lapply(Filter(panel_enabled, panels), function(p) {
     p$source <- p$source %||% "study"
-    if (is.na(p$table) || identical(p$table, "S_RUN_METADATA")) {
-      p$available <- TRUE; return(p)
-    }
+    if (is.na(p$table)) { p$available <- TRUE; return(p) }
     # A LOT panel does not depend on which modules this package ran. It depends
     # on the scenario naming a LOT run, and on this source being able to reach
     # that run's tables. Both failures are reported, and they are different:
@@ -236,9 +244,7 @@ resolve_panels <- function(scenario, panels = PANELS, tables = DASH_TABLES,
                        "lineage reads as 'unproven' here.")
         return(p)
       }
-      got <- if (is.null(src)) NULL else
-        tryCatch(read_lot_table(src, scenario, p$table), error = function(e) NULL)
-      p$available <- !is.null(got) && nrow(got) > 0
+      p$available <- lot_reachable(p$table)
       p$why <- if (p$available) "" else sprintf(
         paste("LOT run '%s' is recorded, but %s could not be read from this",
               "source. For a snapshot, jobs/build_scenarios.R exports LOT",
@@ -247,28 +253,12 @@ resolve_panels <- function(scenario, panels = PANELS, tables = DASH_TABLES,
         scenario$lot_run_id, p$table)
       return(p)
     }
-    # A study table is a result only of a run that finished. The metadata row
-    # is written before the tables are replaced, so under a `started` or
-    # `failed` run the tables are the previous build's, or part of this one;
-    # neither belongs under this run's settings. Reported, not hidden - and
-    # the metadata panel above is still shown, because what the run set out
-    # to do is exactly what a viewer needs to see.
-    if (!scenario_is_usable(scenario)) {
-      p$available <- FALSE
-      p$why <- sprintf(paste(
-        "This run is '%s', not complete, so its tables are not shown: they",
-        "may be the previous build's, or part of this one. Its settings and",
-        "the LOT run it read are on the Overview tab."),
-        if (nzchar(scenario$state %||% "")) scenario$state else "unrecorded")
-      return(p)
-    }
-    mod <- tables$MODULE[match(p$table, tables$TABLE)]
-    ran <- !is.na(mod) && mod %in% scenario$modules
-    p$available <- isTRUE(ran)
-    p$why <- if (p$available) "" else if (is.na(mod))
-      sprintf("%s is not a table this package writes.", p$table)
-    else sprintf("The '%s' module did not run in this scenario, so %s is empty.",
-                 mod, p$table)
+    # A study table: the same verdict the reader gives, in the same words -
+    # reported, not hidden. The metadata panel always shows, because what the
+    # run set out to do is exactly what a viewer needs to see.
+    st <- scenario_table_status(scenario, p$table)
+    p$available <- st$ok
+    p$why <- st$why
     p
   })
 }

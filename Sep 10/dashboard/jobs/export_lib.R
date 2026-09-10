@@ -77,38 +77,5 @@ publish <- function(stage, dest, n, prefix, lot_id, lstage = NULL, ldest = NULL)
 }
 
 
-`%||%` <- function(a, b) if (is.null(a)) b else a
-
-# Whether the LOT prefix is owned, RIGHT NOW, by the run - and the BUILD of
-# it - this scenario read.
-#
-# The exporter copied whatever sat under the LOT prefix into lot/<run id>/ and
-# the reader trusts that directory name. A prefix rebuilt between the study
-# run and the export therefore filed the NEW build's lines under the OLD run's
-# id. The status table keeps every run's row, so "a row says this run
-# completed" is history; only the newest row says whose tables are there -
-# and, since the engine keeps a run id for a session, its stamp says which
-# build. The rule itself is the warehouse reader's (lot_status_owner in
-# R/sources.R, which the job loads), so the two cannot drift.
-lot_prefix_owner_ok <- function(con, status_tbl, lot_id, lot_version = "") {
-  st <- tryCatch(db_q(con, sprintf("SELECT * FROM %s", status_tbl)),
-                 error = function(e) NULL)
-  lot_status_owner(st, lot_id, "x", lot_version)
-}
-
-# Run `expr` with these environment variables set in THIS process, restored
-# afterwards. The child build inherits them, on every platform: passing them
-# as system2(env = ...) prefixes `NAME=value` onto the command line, which
-# Windows does not do, and the job's child then built with none of its
-# settings and produced no output.
-with_env <- function(env, expr) {
-  env <- env[nzchar(names(env))]
-  old <- Sys.getenv(names(env), unset = NA_character_, names = TRUE)
-  do.call(Sys.setenv, as.list(env))
-  on.exit({
-    for (k in names(old))
-      if (is.na(old[[k]])) Sys.unsetenv(k) else
-        do.call(Sys.setenv, stats::setNames(list(old[[k]]), k))
-  }, add = TRUE)
-  force(expr)
-}
+# with_env() and `%||%` are the study package's own (R/config_223926.R);
+# lot_prefix_owner_ok() is the reader's (R/sources.R). The job loads both.

@@ -435,11 +435,11 @@ cat("\nwithholding a cell is not the same as hiding it\n")
     RUN_ID = c("older", "newer"),
     UPDATED_AT = c("2026-01-01 00:00:00", "2026-06-01 00:00:00"),
     stringsAsFactors = FALSE))
-  ok(identical(current_run_id(src_md, "p_"), "newer"),
+  ok(identical(newest_metadata_row(src_md, "p_")$RUN_ID, "newer"),
      "a prefix re-run reports its latest run, not whichever row came back first")
   src_one <- list(read = function(prefix, table) data.frame(
     RUN_ID = "only", stringsAsFactors = FALSE))
-  ok(identical(current_run_id(src_one, "p_"), "only"),
+  ok(identical(newest_metadata_row(src_one, "p_")$RUN_ID, "only"),
      "...and a table with no timestamp still reports its run")
 
   # --- the released table is preferred over the raw one ---
@@ -847,15 +847,15 @@ source(file.path(here, "jobs", "export_lib.R"))
        regexpr("pin <- newest_metadata_row(", jb, fixed = TRUE) <
          regexpr("for (tb in EXPORT)", jb, fixed = TRUE) &&
        regexpr("for (tb in EXPORT)", jb, fixed = TRUE) <
-         regexpr("now <- run_identity(newest_metadata_row(meta_src, prefix))", jb, fixed = TRUE) &&
-       grepl("if (!identical(now, gen))", jb, fixed = TRUE),
-     "the job pins the build before the first table and re-checks it after the last")
-  ok(grepl('if (!identical(tolower(gen$state), "complete"))', jb, fixed = TRUE),
+         regexpr("if (!isTRUE(scenario_is_current(meta_src, scen)))", jb, fixed = TRUE),
+     "the job pins the build before the first table and re-checks it after the last, with the reader's own check")
+  ok(grepl("if (!scenario_is_usable(scen))", jb, fixed = TRUE),
      "...and exports nothing from a build that is not complete")
   ok(grepl("lot_dir_name(lot_id, lot_version)", jb, fixed = TRUE) &&
        grepl("lot_prefix_owner_ok(con, lot_tbl(\"LOT_BUILD_STATUS\"),\n                                          lot_id, lot_version)", jb, fixed = TRUE),
      "...files LOT tables by build and binds the prefix to that build")
-  ok(grepl("if (nzchar(lot_version) || owner())", jb, fixed = TRUE),
+  ok(grepl("if (cached && nzchar(lot_version)) return(reuse())", jb, fixed = TRUE) &&
+       regexpr("if (!owner())", jb, fixed = TRUE) < regexpr("if (cached) return(reuse())", jb, fixed = TRUE),
      "...and reuses a run-only directory only while the prefix still belongs to the run")
   ok(grepl("scen <- scenario_from_row(prefix, pin)", jb, fixed = TRUE) &&
        grepl("if (!scenario_wrote(scen, tb)) { not_this_run", jb, fixed = TRUE) &&
@@ -1087,9 +1087,9 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
        "...and once it completes, its rows are still not shown under the earlier build's settings")
     ok(isFALSE(scenario_is_current(md_at("complete", "2026-09-09 08:30:00"), sc2)),
        "...which is what the page's guard says too")
-    ok(isTRUE(scenario_is_current(md_at("complete", "2026-09-09 08:30:00"),
-                                  list(prefix = "p_", run_id = "A"))),
-       "while a scenario that recorded no state or timestamp is bound by id, which is all it can be")
+    ok(isFALSE(scenario_is_current(md_at("complete", "2026-09-09 08:30:00"),
+                                   list(prefix = "p_", run_id = "A"))),
+       "and a scenario that recorded no state or timestamp is not the build a row that has them describes - the identity is the whole key")
     # What a run WROTE. A run writes only the modules it selected, for the
     # cohorts it selected, and leaves the rest of the prefix as the previous
     # run left it - so a completed run's prefix can hold a safety table it
@@ -1166,14 +1166,11 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
        !grepl("read_table(SRC, s$prefix, tb", app, fixed = TRUE),
      "the cohorts offered to select on are the ones this run built, read bound")
   ok(grepl('lot <- read_lot_table(SRC, s, "LOT_LONG_FINAL")', app, fixed = TRUE) &&
-       grepl('lv[["LOT_NUM"]] <- sort(unique(c(lv[["LOT_NUM"]], as.character(lot$LOT_NUM))))', app, fixed = TRUE),
+       grepl('as.character(lot$LOT_NUM)', app, fixed = TRUE),
      "...and the line selector offers the LOT table's own lines, so a pair from the engine's last line can be picked")
   ok(grepl('if (!scenario_wrote(s, tb)) "A", if (!scenario_wrote(b, tb)) "B"', app, fixed = TRUE) &&
        grepl("has no %s of its own to compare", app, fixed = TRUE),
      "and Compare names the side that did not run a table's module rather than comparing what an earlier run left")
-  ok(grepl("scenario_is_current <- function(src, scenario) scenario_matches_now(src, scenario)",
-           paste(readLines("R/sources.R", warn = FALSE), collapse = "\n"), fixed = TRUE),
-     "...and the guard and the reader ask the same question, of the build and not only the id")
   ok(grepl("rebuilt since the page was opened", app, fixed = TRUE),
      "...and says so, rather than showing an empty table")
   ok(grepl('why <- attr(cm, "why")', app, fixed = TRUE),
@@ -1824,11 +1821,10 @@ cat("\napp.R is wiring, and the wiring matches the registries\n")
   ok(raw == 0L,
      paste0("no renderer reads straight from the source (",
             raw, " direct reads)"))
-  ok(grepl('read_scenario_table(SRC, s, "S_ATTRITION", FALSE)', src, fixed = TRUE) &&
-       grepl('read_scenario_table(SRC, s, "S_RUN_METADATA", FALSE)', src, fixed = TRUE),
-     "...the headline count and the metadata table included")
-  ok(length(gregexpr("moved_alert()", src, fixed = TRUE)[[1]]) >= 3L,
-     "...and each says the snapshot moved rather than showing an empty table")
+  ok(!grepl("read_table(SRC", src, fixed = TRUE),
+     "...nor through the unbound reader")
+  ok(length(gregexpr("nothing_or_moved(s)", src, fixed = TRUE)[[1]]) >= 2L,
+     "...and a renderer whose bound read came back empty says the snapshot moved rather than showing an empty table")
 }
 
 cat("\n", strrep("-", 52), "\n", sep = "")

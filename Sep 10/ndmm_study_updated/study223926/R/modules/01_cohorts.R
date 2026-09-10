@@ -184,17 +184,14 @@ mod_attrition <- function(con, cfg, cohort) {
   arms <- character(0)
   for (i in seq_along(cohort$criteria)) {
     k <- cohort$criteria[i]
-    here <- k %in% names(HERE_PRED)
     # An exclusion applied here from a retained flag is a step this funnel can
     # show a loss at. Without it the funnel accumulated only the enrolment and
     # follow-up predicates, so its final count exceeded the cohort it was
     # describing: N_REMAINING said 2 where S_COHORT and S_PERIODS said 1.
-    flagged <- k %in% names(FLAG_PRED)
+    preds <- criterion_predicates(k)
     src <- CRITERION_SOURCE[[k]]
-    applied_by <- if ((here || flagged) && src != "here")
-      paste0(src, "+here") else src
-    if (here) cum <- c(cum, HERE_PRED[[k]])
-    if (flagged) cum <- c(cum, FLAG_PRED[[k]])
+    applied_by <- if (length(preds) && src != "here") paste0(src, "+here") else src
+    cum <- c(cum, preds)
     # Composed by the SAME helper membership uses. Joined bare, a predicate
     # carrying an OR - `MET_N2 = 1 OR MET_I5 = 1` - bound the cohort filter
     # to its left arm only, and the funnel's last step counted other cohorts'
@@ -309,11 +306,13 @@ cohort_flag_pred_one <- function(k, cols) {
 # A criterion the list names that is in neither map was applied upstream and
 # has nothing to test here; a flag the input does not carry has MET_X* = 1
 # for everyone, which is the same reading the funnel gives it.
-membership_predicate <- function(cohort) {
-  ks <- cohort$criteria
-  and_predicates(c(unlist(HERE_PRED[intersect(ks, names(HERE_PRED))], use.names = FALSE),
-                   unlist(FLAG_PRED[intersect(ks, names(FLAG_PRED))], use.names = FALSE)))
-}
+membership_predicate <- function(cohort)
+  and_predicates(unlist(lapply(cohort$criteria, criterion_predicates)))
+
+# What one criterion tests here: its HERE_PRED predicate, its retained-flag
+# predicate, both or neither. The one list membership and the funnel both
+# build from, so the two cannot name the maps differently.
+criterion_predicates <- function(k) unname(c(HERE_PRED[[k]], FLAG_PRED[[k]]))
 
 # Predicates ANDed, each in its own parentheses. The one place a list of
 # predicates becomes SQL, for membership and for the funnel alike: a
@@ -325,11 +324,8 @@ and_predicates <- function(preds) {
 }
 
 check_cohort_table <- function(con, cfg) {
-  cols <- tryCatch({
-    d <- db_q(con, sprintf("DESCRIBE %s", cfg$input_cohort_table))
-    cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
-    if (length(cn)) toupper(trimws(as.character(d[[cn[1]]]))) else character(0)
-  }, error = function(e)
+  cols <- tryCatch(describe_columns(con, cfg$input_cohort_table)$COL,
+                   error = function(e)
     stop("INPUT ERROR: could not describe INPUT_COHORT_TABLE '",
          cfg$input_cohort_table, "': ", conditionMessage(e), call. = FALSE))
   assign("cols", cols, envir = .input_cols)

@@ -27,7 +27,7 @@ tests/expectations.py, for a run over a registry other than the shipped one
 describe. RERUN_STABLE_TABLES is taken from the shipped module unless the
 file defines its own.
 """
-import csv, os, re, sys
+import csv, functools, os, re, sys
 
 DELIM = "-- @@STMT "
 
@@ -119,6 +119,7 @@ def load_staged(con, staged_dir):
             f"header=true, all_varchar=true)")
 
 
+@functools.lru_cache(maxsize=None)   # rerun() transpiles the same strings again
 def to_duckdb(sql):
     """Spark -> DuckDB, plus the rewrites sqlglot does not do for us."""
     import sqlglot
@@ -277,7 +278,7 @@ def main():
     return rerun(con, statements, prefix, goldens) or rc
 
 
-def rerun(con, statements, prefix="", goldens=None):
+def rerun(con, statements, prefix, goldens):
     """Runs the whole script again and checks nothing doubled.
 
     The package's header promises it can be "re-run against a finished LOT run
@@ -285,7 +286,7 @@ def rerun(con, statements, prefix="", goldens=None):
     keeps that promise syntactically and doubles every count, person-year and
     rate, with no error anywhere. Nothing that reads text can see it.
     """
-    tables = [qualify(t, prefix) for t in (goldens or load_goldens()).RERUN_STABLE_TABLES]
+    tables = [qualify(t, prefix) for t in goldens.RERUN_STABLE_TABLES]
     before = {t: con.execute("SELECT count(*) FROM " + t).fetchone()[0]
               for t in tables}
     for tag, sql in statements:
@@ -309,9 +310,9 @@ def qualify(sql, prefix):
     return sql.replace("wk.S_", "wk." + prefix + "S_") if prefix else sql
 
 
-def check(con, prefix="", goldens=None):
+def check(con, prefix, goldens):
     """The golden numbers. tests/fixtures/EXPECTED.md derives every one."""
-    EXPECTATIONS = (goldens or load_goldens()).EXPECTATIONS
+    EXPECTATIONS = goldens.EXPECTATIONS
     bad = []
     for name, sql, want in EXPECTATIONS:
         try:
