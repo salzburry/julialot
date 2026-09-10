@@ -203,15 +203,6 @@ km_steps <- function(km) {
   data.frame(TIME = t, SURV = v)
 }
 
-# Survival at a landmark, read off the step function.
-km_at <- function(km, t) {
-  if (!nrow(km)) return(c(SURV = NA_real_, LOWER = NA_real_, UPPER = NA_real_))
-  prior <- km[km$TIME <= t, , drop = FALSE]
-  if (!nrow(prior)) return(c(SURV = 1, LOWER = NA_real_, UPPER = NA_real_))
-  r <- prior[nrow(prior), ]
-  c(SURV = r$SURV, LOWER = r$LOWER, UPPER = r$UPPER)
-}
-
 # Median survival: the first time the curve is at or below 0.5. NA when it
 # never gets there, which is a real answer and not a missing one.
 km_median <- function(km) {

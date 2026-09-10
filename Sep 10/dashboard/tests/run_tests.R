@@ -472,9 +472,6 @@ cat("\nKaplan-Meier\n")
   ok(abs(k$SURV[2] - 0.5333333) < 1e-6,
      "and the second accounts for the censoring between them")
   ok(k$N_RISK[2] == 3, "with the risk set reduced by the censored subject")
-  ok(abs(km_at(k, 2)[["SURV"]] - 0.8) < 1e-9,
-     "survival between two event times is the earlier step, not interpolated")
-  ok(identical(km_at(k, 0.5)[["SURV"]], 1), "and is 1 before the first event")
   # S(3) is 0.533, so this curve never reaches 0.5 and has NO median. Worth
   # pinning: the first version of this check asserted 3, reading the last
   # event time as the median.
@@ -815,7 +812,57 @@ source(file.path(here, "jobs", "export_lib.R"))
   assign("db_q", function(con, sql) stop("no status"), envir = globalenv())
   ok(!lot_prefix_owner_ok(con, "wk.LOT_BUILD_STATUS", "new_lot"),
      "...and a prefix whose ownership cannot be read is not copied at all")
+  assign("db_q", function(con, sql) data.frame(
+    RUN_ID = "new_lot", STATE = "complete",
+    UPDATED_AT = as.POSIXct("2026-06-01 00:00:00", tz = "UTC"),
+    stringsAsFactors = FALSE), envir = globalenv())
+  ok(lot_prefix_owner_ok(con, "wk.LOT_BUILD_STATUS", "new_lot", "20260601T000000Z"),
+     "the build the scenario recorded owns the prefix")
+  ok(!lot_prefix_owner_ok(con, "wk.LOT_BUILD_STATUS", "new_lot", "20260101T000000Z"),
+     "...and another build of the same run does not, so it is not filed under this scenario's name")
   rm("db_q", envir = globalenv())
+  ok(identical(lot_dir_name("new_lot", "20260601T000000Z"), "new_lot.20260601T000000Z") &&
+       identical(lot_dir_name("new_lot", ""), "new_lot") &&
+       safe_segment(lot_dir_name("new_lot", "20260601T000000Z")),
+     "a LOT export is filed by run and build, in one path segment")
+  # ...and the snapshot reader looks in exactly that directory.
+  local({
+    r2 <- file.path(tempdir(), "snap_builds")
+    unlink(r2, recursive = TRUE)
+    dir.create(file.path(r2, "lot", "L1.20260601T000000Z"), recursive = TRUE)
+    writeLines("PATID,LOT_NUM\nP1,1", file.path(r2, "lot", "L1.20260601T000000Z", "LOT_LONG_FINAL.csv"))
+    ss <- snapshot_source(utils::modifyList(DASH_CFG, list(snapshot_dir = r2)))
+    ok(!is.null(ss$read_lot("L1", "LOT_LONG_FINAL", "20260601T000000Z")),
+       "a snapshot filed by build is read by build")
+    ok(is.null(ss$read_lot("L1", "LOT_LONG_FINAL", "20260901T000000Z")) &&
+         is.null(ss$read_lot("L1", "LOT_LONG_FINAL", "")),
+       "...and another build, or no build, does not read it")
+    ok(is.null(ss$read_lot("L1", "LOT_LONG_FINAL", "../x")),
+       "...nor can a build stamp climb out of the root")
+    unlink(r2, recursive = TRUE)
+  })
+  # The job pins the build before it reads a table and checks it again after
+  # the last one, and it will not export a build that is not complete.
+  ok(grepl("pin <- newest_metadata_row(meta_src, prefix)", jb, fixed = TRUE) &&
+       regexpr("pin <- newest_metadata_row(", jb, fixed = TRUE) <
+         regexpr("for (tb in EXPORT)", jb, fixed = TRUE) &&
+       regexpr("for (tb in EXPORT)", jb, fixed = TRUE) <
+         regexpr("now <- run_identity(newest_metadata_row(meta_src, prefix))", jb, fixed = TRUE) &&
+       grepl("if (!identical(now, gen))", jb, fixed = TRUE),
+     "the job pins the build before the first table and re-checks it after the last")
+  ok(grepl('if (!identical(tolower(gen$state), "complete"))', jb, fixed = TRUE),
+     "...and exports nothing from a build that is not complete")
+  ok(grepl("lot_dir_name(lot_id, lot_version)", jb, fixed = TRUE) &&
+       grepl("lot_prefix_owner_ok(con, lot_tbl(\"LOT_BUILD_STATUS\"),\n                                          lot_id, lot_version)", jb, fixed = TRUE),
+     "...files LOT tables by build and binds the prefix to that build")
+  ok(grepl("if (nzchar(lot_version) || owner())", jb, fixed = TRUE),
+     "...and reuses a run-only directory only while the prefix still belongs to the run")
+  ok(grepl("with_env(env, system2(", jb, fixed = TRUE) &&
+       !grepl("env = paste0(names(env)", jb, fixed = TRUE),
+     "the child build inherits its settings from the process, not from a system2 env= Windows ignores")
+  ok(identical(with_env(c(DASH_WITH_ENV_T = "seen"), Sys.getenv("DASH_WITH_ENV_T")), "seen") &&
+       !nzchar(Sys.getenv("DASH_WITH_ENV_T")),
+     "...and with_env sets them for the call and takes them away after")
   ok(grepl("owner <- function() lot_prefix_owner_ok(", jb, fixed = TRUE) &&
        length(gregexpr("if (!owner())", jb, fixed = TRUE)[[1]]) == 2L,
      "...checked before the copy and again after it, so a rebuild in between is caught")
@@ -889,6 +936,14 @@ local({
                                   UPDATED_AT = "2026-01-01",
                                   stringsAsFactors = FALSE), "a"),
      "...and a newest row that is not complete owns nothing either")
+  st_a <- data.frame(RUN_ID = "a", STATE = "complete",
+                     UPDATED_AT = "2026-06-01 00:00:00", stringsAsFactors = FALSE)
+  ok(isTRUE(lot_status_owner(st_a, "a", "x", "20260601T000000Z")) &&
+       !lot_status_owner(st_a, "a", "x", "20260101T000000Z"),
+     "a recorded build has to match the newest row's stamp")
+  ok(!lot_status_owner(data.frame(RUN_ID = "a", STATE = "complete",
+                                  stringsAsFactors = FALSE), "a", "x", "20260601T000000Z"),
+     "...and a status table with no timestamp cannot vouch for a build at all")
   status <- data.frame(RUN_ID = "new_run", STATE = "complete",
                        stringsAsFactors = FALSE)
 
@@ -898,6 +953,43 @@ local({
   src2 <- warehouse_source(cfg, con = structure(list(), class = "fake"))
   ok(is.null(src2$read_lot("new_run", "LOT_LONG_FINAL")),
      "a build that has not finished is refused, not read as far as it got")
+
+  # A rebuild landing DURING the read. Ownership was asked once, before the
+  # data query, so the replacement rows came back under the old run's name
+  # with one status query ever issued - the one that had said yes.
+  local({
+    n_status <- 0L
+    assign("db_q", function(con, sql) {
+      if (grepl("LOT_BUILD_STATUS", sql, fixed = TRUE)) {
+        n_status <<- n_status + 1L
+        return(data.frame(RUN_ID = if (n_status == 1L) "new_run" else "newer_run",
+                          STATE = "complete", stringsAsFactors = FALSE))
+      }
+      lines
+    }, envir = globalenv())
+    src4 <- warehouse_source(cfg, con = structure(list(), class = "fake"))
+    ok(is.null(src4$read_lot("new_run", "LOT_LONG_FINAL")) && n_status == 2L,
+       "a prefix rebuilt while its table was being read is refused - ownership is asked after the read as well as before")
+  })
+  # The same run id, another BUILD. The engine keeps its run id for a
+  # session, so the newest row can name this run and still not be the build
+  # the scenario read; the scenario's recorded build has to match its stamp.
+  status <- data.frame(RUN_ID = "new_run", STATE = "complete",
+                       UPDATED_AT = as.POSIXct("2026-06-01 00:00:00", tz = "UTC"),
+                       stringsAsFactors = FALSE)
+  assign("db_q", function(con, sql)
+    if (grepl("LOT_BUILD_STATUS", sql, fixed = TRUE)) status else lines,
+    envir = globalenv())
+  src5 <- warehouse_source(cfg, con = structure(list(), class = "fake"))
+  ok(!is.null(src5$read_lot("new_run", "LOT_LONG_FINAL", "20260601T000000Z")),
+     "the build the scenario recorded reads its lines")
+  ok(is.null(src5$read_lot("new_run", "LOT_LONG_FINAL", "20260101T000000Z")),
+     "...and another build of the same run reads nothing")
+  ok(!is.null(src5$read_lot("new_run", "LOT_LONG_FINAL", "")),
+     "...while a scenario that recorded no build is bound by id alone")
+  ok(isTRUE(src5$lot_run_ok("new_run", "20260601T000000Z")) &&
+       !isTRUE(src5$lot_run_ok("new_run", "20260101T000000Z")),
+     "and the source says which, so a panel can explain itself")
 
   # No status table at all: fail closed.
   assign("db_q", function(con, sql)
@@ -950,6 +1042,38 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
     ok(is.null(read_scenario_table(steady, list(prefix = "p_", run_id = "Z"),
                                    "S_SAFETY_RATES", FALSE)),
        "...and one that is a different run from the sidebar's reads nothing")
+    # The same id, rebuilt. DOMINO_RUN_ID is reused by every build inside one
+    # Domino run, so a re-run keeps the id while its state and timestamp
+    # move. Bound by id alone, the page showed the re-run's rows - first a
+    # build still going, then a finished one - under the earlier build's
+    # settings.
+    sc2 <- list(prefix = "p_", run_id = "A", state = "complete",
+                updated_at = "2026-09-08 12:00:00")
+    md_at <- function(state, at) list(read = function(prefix, table)
+      if (identical(table, "S_RUN_METADATA"))
+        data.frame(RUN_ID = "A", STATE = state, UPDATED_AT = at,
+                   stringsAsFactors = FALSE)
+      else data.frame(RATE = 990, stringsAsFactors = FALSE))
+    ok(identical(read_scenario_table(md_at("complete", "2026-09-08 12:00:00"),
+                                     sc2, "S_SAFETY_RATES", FALSE)$RATE, 990),
+       "the build the scenario describes reads")
+    ok(is.null(read_scenario_table(md_at("started", "2026-09-09 08:00:00"),
+                                   sc2, "S_SAFETY_RATES", FALSE)),
+       "a re-run under the same id, still going, reads nothing")
+    ok(is.null(read_scenario_table(md_at("complete", "2026-09-09 08:30:00"),
+                                   sc2, "S_SAFETY_RATES", FALSE)),
+       "...and once it completes, its rows are still not shown under the earlier build's settings")
+    ok(isFALSE(scenario_is_current(md_at("complete", "2026-09-09 08:30:00"), sc2)),
+       "...which is what the page's guard says too")
+    ok(isTRUE(scenario_is_current(md_at("complete", "2026-09-09 08:30:00"),
+                                  list(prefix = "p_", run_id = "A"))),
+       "while a scenario that recorded no state or timestamp is bound by id, which is all it can be")
+    ok(identical(scenario_from_row("p_", data.frame(
+         RUN_ID = "A", LOT_RUN_ID = "L", LOT_RUN_VERSION = "20260908T110500Z",
+         stringsAsFactors = FALSE))$lot_run_version, "20260908T110500Z") &&
+         identical(scenario_from_row("p_", data.frame(RUN_ID = "A", LOT_RUN_ID = "L",
+                                                      stringsAsFactors = FALSE))$lot_run_version, ""),
+       "a scenario carries which build of its LOT run it read, and none where the run did not record it")
   })
   app <- paste(readLines("app.R", warn = FALSE), collapse = "\n")
   ok(grepl("read_scenario_table(SRC, scenario, p$table", app, fixed = TRUE) &&
@@ -960,6 +1084,9 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
   ok(grepl("read_scenario_table(SRC, b, tb", app, fixed = TRUE) &&
        grepl("scenario_moved(s) || scenario_moved(b)", app, fixed = TRUE),
      "and Compare binds BOTH sides, not only the one it was already checking")
+  ok(grepl("scenario_is_current <- function(src, scenario) scenario_matches_now(src, scenario)",
+           paste(readLines("R/sources.R", warn = FALSE), collapse = "\n"), fixed = TRUE),
+     "...and the guard and the reader ask the same question, of the build and not only the id")
   ok(grepl("rebuilt since the page was opened", app, fixed = TRUE),
      "...and says so, rather than showing an empty table")
   ok(grepl('why <- attr(cm, "why")', app, fixed = TRUE),
@@ -1126,6 +1253,19 @@ cat("\nwhether two scenarios rest on the same lines\n")
   b3 <- b; b3$lot_run_id <- ""
   ok(is.na(same_lot_run(a, b3)),
      "while a scenario naming no run gives NA - not knowing is not the same as knowing they match")
+  a4 <- a; a4$lot_run_version <- "20260601T000000Z"
+  b4 <- b; b4$lot_run_version <- "20260601T000000Z"
+  b5 <- b; b5$lot_run_version <- "20260901T000000Z"
+  ok(isTRUE(same_lot_run(a4, b4)),
+     "one run id and one build is the same lines")
+  ok(isFALSE(same_lot_run(a4, b5)),
+     "...one run id and two builds is not - the engine keeps its id for a session")
+  b6 <- b; b6$lot_run_version <- ""
+  ok(is.na(same_lot_run(a4, b6)),
+     "...and where only one of them recorded its build, it cannot be said")
+  ok(grepl("Different LOT builds", paste(readLines("app.R", warn = FALSE), collapse = "\n"),
+           fixed = TRUE),
+     "and the Compare tab names that case rather than calling it a different run")
   # This is what makes a delta readable. Two scenarios on one LOT run differ
   # only in what this package did; on two runs the lines differ too, and the
   # comparison carries both without being able to separate them.
@@ -1422,13 +1562,19 @@ cat("\napp.R is wiring, and the wiring matches the registries\n")
      "a rate chart preserves its strata rather than averaging them")
   ok(grepl("plot_count_bars(d, sp, lab, p$label, input$floor)", src, fixed = TRUE),
      "and a count chart withholds a bar resting on too few patients")
-  # The one place a renderer may still read rows straight from the source is
-  # the KPI, and it hands them to kpi_row_html(). Anything else calling
-  # SRC$read() without going through a prepared panel is worth noticing.
-  raw <- length(gregexpr("SRC$read(", src, fixed = TRUE)[[1]])
-  ok(raw <= 2L,
-     paste0("rows reach a renderer through panel_data(), not read straight (",
+  # No renderer reads straight from the source. The KPI and the metadata
+  # table did, and a floor change re-ran the KPI alone - past the panel
+  # guard - putting a rebuilt snapshot's cohort count under the old run's
+  # settings. Every read now goes through read_scenario_table().
+  raw <- sum(gregexpr("SRC$read(", src, fixed = TRUE)[[1]] > 0)
+  ok(raw == 0L,
+     paste0("no renderer reads straight from the source (",
             raw, " direct reads)"))
+  ok(grepl('read_scenario_table(SRC, s, "S_ATTRITION", FALSE)', src, fixed = TRUE) &&
+       grepl('read_scenario_table(SRC, s, "S_RUN_METADATA", FALSE)', src, fixed = TRUE),
+     "...the headline count and the metadata table included")
+  ok(length(gregexpr("moved_alert()", src, fixed = TRUE)[[1]]) >= 3L,
+     "...and each says the snapshot moved rather than showing an empty table")
 }
 
 cat("\n", strrep("-", 52), "\n", sep = "")

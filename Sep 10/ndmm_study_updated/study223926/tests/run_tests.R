@@ -1012,18 +1012,19 @@ cat("\nregressions from the adversarial review\n")
   # reads no flag, so without this the SAME record entered the primary 1L
   # cohort - which still excludes prior cancer - alongside SEC2L.
   wide_cols <- c(COHORT_TABLE_REQUIRED, unname(CRITERION_FLAG))
-  p1L <- cohort_flag_pred(COHORTS[["1L"]], wide_cols)
-  ok(grepl("NO_OTHER_CANCER_PRE_LOT1", p1L, fixed = TRUE),
+  p1L <- membership_predicate(COHORTS[["1L"]])
+  ok(grepl("MET_X2 = 1", p1L, fixed = TRUE) &&
+       grepl("coalesce(c.NO_OTHER_CANCER_PRE_LOT1, 1) = 1",
+             cohort_flag_pred_one("X2_other_cancer", wide_cols), fixed = TRUE),
      "the primary 1L cohort applies its prior-cancer exclusion from the flags")
   sec <- COHORTS[["SEC2L"]]
   sec$criteria <- setdiff(sec$criteria, "X2_other_cancer")
-  ok(!grepl("NO_OTHER_CANCER_PRE_LOT1", cohort_flag_pred(sec, wide_cols),
-            fixed = TRUE),
+  ok(!grepl("MET_X2 = 1", membership_predicate(sec), fixed = TRUE),
      "and the secondary 2L cohort, which permits it, does not")
-  ok(grepl("NO_PREGNANCY", cohort_flag_pred(sec, wide_cols), fixed = TRUE),
+  ok(grepl("MET_X3 = 1", membership_predicate(sec), fixed = TRUE),
      "while still applying the exclusions it keeps")
-  ok(identical(cohort_flag_pred(COHORTS[["1L"]], COHORT_TABLE_REQUIRED), "1 = 1"),
-     "a pre-filtered input carrying no flags is unaffected")
+  ok(identical(cohort_flag_pred_one("X2_other_cancer", COHORT_TABLE_REQUIRED), "1 = 1"),
+     "a pre-filtered input carrying no flags is unaffected: its MET_X* is 1 for everyone")
   e_wide <- errs(with_env(base_env, {
     env <- new.env(parent = environment(check_cohort_table))
     env$db_q <- function(con, sql)
@@ -1770,25 +1771,193 @@ cat("\n-- membership follows the criteria list --\n")
 # Removing a criterion from a cohort's list has to remove it from membership,
 # not only from the funnel. It did not: IN_COHORT hard-coded continuous
 # enrolment and follow-up, so a list without I4 produced a funnel ending at
-# two and a cohort of one.
+# two and a cohort of one. Then a criterion ADDED to the list - declared
+# `here`, with its own HERE_PRED entry - was applied by the funnel and ignored
+# by membership, which read only the names it already knew. Both now read the
+# same two maps, and the checks below hold the emitted SQL to that.
+in_cohort_pred <- function(sql)
+  regmatches(sql, regexpr("(?s)CASE WHEN (.*?) THEN 1 ELSE 0 END AS IN_COHORT",
+                          sql, perl = TRUE))
+met_set <- function(x) sort(unique(regmatches(x, gregexpr("MET_[A-Z0-9]+ = 1", x))[[1]]))
+last_arm_where <- function(attr_sql) {
+  arms <- regmatches(attr_sql, gregexpr("SELECT count\\(\\*\\) FROM [^)]*", attr_sql))[[1]]
+  arms[length(arms)]
+}
+step_sql <- function(r, tag) {
+  x <- vapply(Filter(function(x) identical(x$tag, tag), r$sql),
+              function(x) x$sql, character(1))
+  if (length(x) == 1L) x else NA_character_
+}
 {
-  coh_sql <- vapply(Filter(function(x) grepl("^step:cohort_1L", x$tag), run$sql),
-                    function(x) x$sql, character(1))
-  ok(length(coh_sql) == 1L, "the 1L membership statement is emitted once")
-  # The enrolment predicate carries a newline, so the CASE spans two lines.
-  in_coh <- regmatches(coh_sql, regexpr(
-    "(?s)CASE WHEN \\(.*?\\) THEN 1 ELSE 0 END AS IN_COHORT", coh_sql, perl = TRUE))
-  ok(length(in_coh) == 1L && grepl("COV_START|ce\\.", in_coh),
-     "with I4 in the 1L list, membership tests continuous enrolment")
-  ok(grepl("MET_I5|fu\\.", in_coh) || grepl("1 = 1", in_coh),
+  coh_sql <- step_sql(run, "step:cohort_1L")
+  ok(!is.na(coh_sql), "the 1L membership statement is emitted once")
+  in_coh <- in_cohort_pred(coh_sql)
+  ok(length(in_coh) == 1L && grepl("MET_N2 = 1", in_coh, fixed = TRUE),
+     "with I4 in the 1L list, membership tests continuous enrolment on the line's index")
+  ok(grepl("MET_I5 = 1", in_coh, fixed = TRUE),
      "...and follow-up, where I5 is in the list")
+  ok(all(c("MET_X1 = 1", "MET_X2 = 1", "MET_X3 = 1", "MET_X4 = 1") %in% met_set(in_coh)),
+     "...and every exclusion the list names, off the MET_X* columns")
+  # Membership IS the funnel's last step: the same set of predicates, for
+  # every cohort. The executing harness checks the two NUMBERS agree on the
+  # fixture; this checks the SQL cannot express anything else.
+  for (ck in names(COHORTS)) {
+    m <- in_cohort_pred(step_sql(run, paste0("step:cohort_", ck)))
+    a <- last_arm_where(step_sql(run, paste0("step:attrition_", ck)))
+    ok(length(m) == 1L && identical(met_set(m), met_set(a)),
+       paste0(ck, ": IN_COHORT and the funnel's last step apply the same predicates",
+              " [", paste(met_set(m), collapse = " "), "]"))
+  }
   msrc <- paste(readLines("R/modules/01_cohorts.R", warn = FALSE), collapse = "\n")
-  ok(grepl('in_ce <- if (any(c("I4_ce_pre", "N2_ce_pre") %in% cohort$criteria))', msrc, fixed = TRUE) &&
-       grepl('in_fu <- if ("I5_followup" %in% cohort$criteria)', msrc, fixed = TRUE) &&
-       grepl("(%17$s) AND (%18$s) AND (%12$s) THEN 1 ELSE 0 END AS IN_COHORT", msrc, fixed = TRUE),
-     "...and each of those tests is present only because its criterion is listed")
+  ok(grepl("membership_predicate(cohort),", msrc, fixed = TRUE) &&
+       grepl("HERE_PRED[intersect(ks, names(HERE_PRED))]", msrc, fixed = TRUE) &&
+       grepl("FLAG_PRED[intersect(ks, names(FLAG_PRED))]", msrc, fixed = TRUE) &&
+       !grepl("in_ce <- ", msrc, fixed = TRUE),
+     "...because membership is derived from the two maps the funnel reads, not written by hand")
   ok(identical(CRITERION_SOURCE[["X4_belantamab"]], "cohort"),
      "the pre-1L belantamab flag is read off the cohort table, like the other exclusions")
+
+  # --- a criterion nobody wrote code for --------------------------------
+  # The guide says a criterion is added by listing it, naming its source and
+  # giving it a predicate. So it is: the reviewer's I4_custom_ce - `here`,
+  # `MET_N2 = 1`, in place of I4 - reaches membership as well as the funnel.
+  custom <- with_env(base_env, capture_emitted_sql(".", env_edit = function(env) {
+    env$CRITERION_SOURCE[["I4_custom_ce"]] <- "here"
+    env$HERE_PRED[["I4_custom_ce"]] <- "MET_N2 = 1"
+    env$COHORTS[["1L"]]$criteria <-
+      sub("^I4_ce_pre$", "I4_custom_ce", env$COHORTS[["1L"]]$criteria)
+    env
+  }))
+  ok(length(custom$errors) == 0,
+     paste0("a cohort listing a custom `here` criterion still builds",
+            if (length(custom$errors))
+              paste0(" [", paste(names(custom$errors), collapse = ", "), "]") else ""))
+  cm <- in_cohort_pred(step_sql(custom, "step:cohort_1L"))
+  ca <- step_sql(custom, "step:attrition_1L")
+  ok(length(cm) == 1L && grepl("MET_N2 = 1", cm, fixed = TRUE),
+     "the custom criterion's predicate reaches membership")
+  ok(grepl("'I4_custom_ce'", ca, fixed = TRUE) &&
+       grepl("'here' AS APPLIED_BY", ca, fixed = TRUE),
+     "...and the funnel reports it as a step this package applied")
+  ok(identical(met_set(cm), met_set(last_arm_where(ca))),
+     "...and the two agree on what admits a patient")
+  # Declared `here` with nothing to apply: a criterion in name only. Stopped
+  # before any table is touched, naming the map that is missing it.
+  e_np <- errs(with_env(base_env, {
+    env <- new.env(parent = environment(mod_cohorts))
+    env$CRITERION_SOURCE <- c(CRITERION_SOURCE, I9_unwritten = "here")
+    f <- mod_cohorts; environment(f) <- env
+    co <- COHORTS[["1L"]]; co$criteria <- c(co$criteria, "I9_unwritten")
+    f(NULL, cfg0(), co)
+  }))
+  ok(!is.na(e_np) && grepl("HERE_PRED gives no predicate", e_np) &&
+       grepl("I9_unwritten", e_np),
+     "a criterion declared `here` with no predicate stops the run, naming itself")
+  ok(is.na(errs(with_env(base_env, {
+    env <- new.env(parent = environment(mod_cohorts))
+    env$db_exec <- function(con, sql) invisible(0L)
+    env$db_q <- function(con, sql) data.frame(col_name = c("PATID", "COHORT"),
+                                              data_type = "string")
+    env$run_step <- function(con, name, sql, qc = NULL, allow_empty = FALSE) invisible(NULL)
+    env$ensure_table <- function(con, name, schema_sql) invisible(name)
+    env$prepare_table <- function(con, name, schema_sql, cohort_key) invisible(name)
+    f <- mod_cohorts; environment(f) <- env
+    f(NULL, cfg0(), COHORTS[["1L"]])
+  }))), "...while the shipped list, every `here` criterion with a predicate, does not")
+
+  # The same script, executed: the custom criterion re-derives what I4 did,
+  # so every golden number - including the two that hold the funnel's last
+  # step to count(IN_COHORT = 1) - has to come out unchanged.
+  sfc <- tempfile(fileext = ".sql")
+  conc <- file(sfc, "w")
+  for (x in custom$sql) {
+    cat("-- @@STMT ", x$tag, "\n", sep = "", file = conc)
+    cat(x$sql, "\n", file = conc)
+  }
+  close(conc)
+  sdc <- file.path(tempdir(), "staged_custom")
+  unlink(sdc, recursive = TRUE); dir.create(sdc, showWarnings = FALSE)
+  for (n in names(custom$staged))
+    utils::write.csv(custom$staged[[n]], file.path(sdc, paste0(n, ".csv")),
+                     row.names = FALSE)
+  coutx <- suppressWarnings(tryCatch(
+    system2("python3", c("tests/run_duckdb.py", shQuote(sfc), shQuote(sdc),
+                         "tests/fixtures/cdm", shQuote(cfg0()$object_prefix)),
+            stdout = TRUE, stderr = TRUE),
+    error = function(e) "NO-PYTHON"))
+  ctxt <- paste(coutx, collapse = "\n")
+  if (any(grepl("^SKIP:", coutx)) || identical(ctxt, "NO-PYTHON") || !length(coutx)) {
+    cat("  SKIP  a custom criterion admits exactly the funnel's last step",
+        " (python3 + duckdb + sqlglot not available)\n", sep = "")
+  } else {
+    ok(grepl("0 failed", ctxt) && grepl("0 wrong", ctxt),
+       paste0("executed, a custom criterion admits exactly the funnel's last step",
+              if (!grepl("0 failed", ctxt) || !grepl("0 wrong", ctxt))
+                paste0("\n", ctxt) else ""))
+  }
+  unlink(c(sfc, sdc), recursive = TRUE)
+}
+
+cat("\n-- a run's version is its build, not its id --\n")
+# DOMINO_RUN_ID is reused by every build inside one Domino run, and the LOT
+# engine keeps its run id for a session. Two builds under one id are told
+# apart by the timestamp their status row carries, and S_RUN_METADATA now
+# records the LOT build's beside its id.
+{
+  ok(identical(run_version_stamp(as.POSIXct("2026-09-08 11:05:00", tz = "UTC")),
+               "20260908T110500Z"),
+     "a timestamp becomes one UTC stamp")
+  ok(identical(run_version_stamp(as.POSIXct("2026-09-08 13:05:00", tz = "Europe/Berlin")),
+               "20260908T110500Z"),
+     "...the same stamp for the same instant, whatever zone it was read in")
+  ok(identical(run_version_stamp("2026-09-08 11:05:00"), "20260908T110500Z") &&
+       identical(run_version_stamp("2026-09-08T11:05:00"), "20260908T110500Z"),
+     "...and from the string forms a CSV or a driver returns")
+  ok(identical(run_version_stamp(""), "") && identical(run_version_stamp(NULL), "") &&
+       identical(run_version_stamp(NA), ""),
+     "nothing is not a version")
+  ok(identical(run_version_stamp("build 7"), "build7") &&
+       grepl("^[A-Za-z0-9]+$", run_version_stamp("2026-09-08 11:05:00")),
+     "and a stamp is always one path segment")
+  ok(identical(lot_run_version(list(RUN_ID = "r1", UPDATED_AT = "2026-09-01 00:00:00")),
+               "20260901T000000Z") &&
+       identical(lot_run_version(list(RUN_ID = "unproven")), ""),
+     "the LOT build's version is its status row's stamp, and an unproven lineage has none")
+
+  # The metadata write: names its columns, carries the version, and upgrades
+  # an older table rather than inserting into it positionally.
+  meta_run <- function(schema_cols) {
+    said <- character(0)
+    env <- new.env(parent = environment(write_run_metadata))
+    env$db_exec <- function(con, sql) { said <<- c(said, sql); invisible(0L) }
+    env$db_q <- function(con, sql) data.frame(col_name = schema_cols,
+                                              data_type = "string",
+                                              stringsAsFactors = FALSE)
+    env$log_msg <- function(...) invisible(NULL)
+    # The column upgrade reads db_q through its own environment.
+    ec <- ensure_columns; environment(ec) <- env; env$ensure_columns <- ec
+    f <- write_run_metadata; environment(f) <- env
+    with_env(base_env, f(NULL, cfg0(), COHORTS["1L"], MODULES["spine"],
+                         list(RUN_ID = "r1", UPDATED_AT = "2026-09-01 00:00:00"),
+                         character(0), "complete", run_id = "rid1"))
+    said
+  }
+  full <- meta_run(names(RUN_METADATA_COLS))
+  ins <- grep("^INSERT INTO", full, value = TRUE)
+  ok(length(ins) == 1L && grepl("(RUN_ID, STATE, UPDATED_AT, ", ins, fixed = TRUE),
+     "the metadata insert names its columns")
+  ok(grepl("LOT_RUN_VERSION", ins, fixed = TRUE) && grepl("'20260901T000000Z'", ins, fixed = TRUE),
+     "...and records which build of the LOT run these numbers rest on")
+  ok(!any(grepl("ALTER TABLE", full, fixed = TRUE)),
+     "a table already in shape is not altered")
+  older <- meta_run(setdiff(names(RUN_METADATA_COLS), "LOT_RUN_VERSION"))
+  alt <- grep("^ALTER TABLE", older, value = TRUE)
+  ok(length(alt) == 1L && grepl("ADD COLUMNS (LOT_RUN_VERSION string)", alt, fixed = TRUE),
+     "...while one written by an earlier version gains the column in place")
+  ok(which(grepl("^ALTER TABLE", older)) < which(grepl("^INSERT INTO", older)),
+     "...before the insert that needs it")
+  ok(identical(names(RUN_METADATA_COLS)[1:3], c("RUN_ID", "STATE", "UPDATED_AT")),
+     "the columns every reader binds a run by come first, unchanged")
 }
 
 cat("\n-- the arithmetic, executed on its own --\n")

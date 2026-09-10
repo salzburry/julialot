@@ -35,6 +35,12 @@ CRITERION_SOURCE <- c(
 # index date with the protocol's own 30-day gap allowance. Naming it here is
 # what makes the 1L and SEC2L funnels show that step's loss instead of
 # carrying the count through untouched.
+#
+# This map is read by BOTH membership (IN_COHORT) and the funnel, so a
+# criterion added here - with its CRITERION_SOURCE entry saying `here` - is
+# applied by both without further code. Its predicate is over S_COHORT's
+# columns (MET_N2, MET_I5, MET_X1..MET_X4, INDEX_DATE, LOT_NUM), which are
+# computed for every row whatever the list says.
 HERE_PRED <- list(
   N1_received_line = "1 = 1",
   I4_ce_pre        = "MET_N2 = 1",
@@ -47,6 +53,17 @@ mod_cohorts <- function(con, cfg, cohort) {
   if (length(unknown))
     stop("COHORT ERROR: ", cohort$key, " names criteria this package cannot ",
          "source: ", paste(unknown, collapse = ", "), ".", call. = FALSE)
+  # A criterion this package applies has to say HOW. Declared `here` with no
+  # predicate, it would be a funnel step that removes nobody and a membership
+  # test that is not there - a criterion in name only, under a name the
+  # attrition table would print as if it had been applied.
+  here_ks <- cohort$criteria[CRITERION_SOURCE[cohort$criteria] == "here"]
+  no_pred <- setdiff(here_ks, names(HERE_PRED))
+  if (length(no_pred))
+    stop("COHORT ERROR: ", cohort$key, " lists ", paste(no_pred, collapse = ", "),
+         " as applied by this package, but HERE_PRED gives no predicate for it. ",
+         "A criterion applied here is a predicate over S_COHORT's columns; ",
+         "membership and the funnel both read it from HERE_PRED.", call. = FALSE)
 
   floor_sql <- if (!is.na(cohort$index_from))
     sprintf("AND s.LOT_START_DT >= date('%s')", cfg[[cohort$index_from]]) else ""
@@ -101,41 +118,45 @@ mod_cohorts <- function(con, cfg, cohort) {
     parent <- "INNER JOIN s_parent_cohort par ON par.PATID = s.PATID"
   }
 
-  # IN_COHORT follows the cohort's own criteria list. It hard-coded continuous
-  # enrolment and follow-up, so removing I4 from the list dropped the step from
-  # the funnel while membership still applied it: the funnel said two remained
-  # and one was admitted. The two now read the same list. MET_N2 and MET_I5 are
-  # still written whatever the list says, so the evidence is on the row.
-  in_ce <- if (any(c("I4_ce_pre", "N2_ce_pre") %in% cohort$criteria)) ce_pre else "1 = 1"
-  in_fu <- if ("I5_followup" %in% cohort$criteria) fu_pred else "1 = 1"
+  # IN_COHORT is the funnel's last step, by construction. Every MET_* column
+  # is computed in the inner query whatever the list says, so the evidence is
+  # on the row; membership is then the AND of the predicates the cohort's
+  # list names - HERE_PRED for what this package applies, FLAG_PRED for the
+  # exclusions read off the input - over those columns. That is the same map
+  # the funnel accumulates. It was a hand-written pair of tests instead, and a
+  # criterion declared `here` with its own HERE_PRED entry was applied by the
+  # funnel and ignored by membership: two admitted, a funnel ending at one.
   run_step(con, paste0("cohort_", cohort$key), sprintf("
     INSERT INTO %1$s
-    SELECT s.PATID, '%2$s' AS COHORT, s.LOT_NUM, s.LOT_START_DT AS INDEX_DATE,
-           1 AS MET_N1,
-           CASE WHEN %3$s THEN 1 ELSE 0 END AS MET_N2,
-           CASE WHEN %4$s THEN 1 ELSE 0 END AS MET_I5,
-           CASE WHEN %13$s THEN 1 ELSE 0 END AS MET_X1,
-           CASE WHEN %14$s THEN 1 ELSE 0 END AS MET_X2,
-           CASE WHEN %15$s THEN 1 ELSE 0 END AS MET_X3,
-           CASE WHEN %16$s THEN 1 ELSE 0 END AS MET_X4,
-           CASE WHEN (%17$s) AND (%18$s) AND (%12$s) THEN 1 ELSE 0 END AS IN_COHORT
-    FROM %5$s s
-    INNER JOIN %6$s c ON c.PATID = s.PATID
-    LEFT JOIN %7$s ce
-           ON ce.PATID = s.PATID
-          AND ce.COV_START <= s.LOT_START_DT AND ce.COV_END >= s.LOT_START_DT
-    LEFT JOIN %8$s fu ON fu.PATID = s.PATID AND fu.LOT_NUM = s.LOT_NUM
-    %9$s
-    WHERE s.LOT_NUM = %10$d %11$s",
+    SELECT PATID, COHORT, LOT_NUM, INDEX_DATE,
+           MET_N1, MET_N2, MET_I5, MET_X1, MET_X2, MET_X3, MET_X4,
+           CASE WHEN %12$s THEN 1 ELSE 0 END AS IN_COHORT
+    FROM (
+      SELECT s.PATID, '%2$s' AS COHORT, s.LOT_NUM, s.LOT_START_DT AS INDEX_DATE,
+             1 AS MET_N1,
+             CASE WHEN %3$s THEN 1 ELSE 0 END AS MET_N2,
+             CASE WHEN %4$s THEN 1 ELSE 0 END AS MET_I5,
+             CASE WHEN %13$s THEN 1 ELSE 0 END AS MET_X1,
+             CASE WHEN %14$s THEN 1 ELSE 0 END AS MET_X2,
+             CASE WHEN %15$s THEN 1 ELSE 0 END AS MET_X3,
+             CASE WHEN %16$s THEN 1 ELSE 0 END AS MET_X4
+      FROM %5$s s
+      INNER JOIN %6$s c ON c.PATID = s.PATID
+      LEFT JOIN %7$s ce
+             ON ce.PATID = s.PATID
+            AND ce.COV_START <= s.LOT_START_DT AND ce.COV_END >= s.LOT_START_DT
+      LEFT JOIN %8$s fu ON fu.PATID = s.PATID AND fu.LOT_NUM = s.LOT_NUM
+      %9$s
+      WHERE s.LOT_NUM = %10$d %11$s
+    ) m",
     wrk("S_COHORT"), cohort$key, ce_pre, fu_pred, wrk("S_SPINE"),
     cfg$input_cohort_table, wrk("S_ENROLL_SPANS"), wrk("S_FU_CLAIMS"),
     parent, cohort$lot_num, floor_sql,
-    cohort_flag_pred(cohort, .cohort_cols()),
+    membership_predicate(cohort),
     cohort_flag_pred_one("X1_prior_mm_tx", .cohort_cols()),
     cohort_flag_pred_one("X2_other_cancer", .cohort_cols()),
     cohort_flag_pred_one("X3_pregnancy", .cohort_cols()),
-    cohort_flag_pred_one("X4_belantamab", .cohort_cols()),
-    in_ce, in_fu),
+    cohort_flag_pred_one("X4_belantamab", .cohort_cols())),
     qc = sprintf("SELECT count(*) AS n_indexed, sum(IN_COHORT) AS n_in_cohort
                   FROM %s WHERE COHORT = '%s'", wrk("S_COHORT"), cohort$key))
 }
@@ -225,8 +246,9 @@ COHORT_TABLE_REQUIRED <- c("PATID", "INDEX_DATE", "ENDDATE", "ENDDATE_CE",
 # the criteria were applied upstream and every row in the table has passed
 # them. With a wide input - one that keeps patients failing an exclusion so the
 # secondary 2L cohort can have them - they are the only thing standing between
-# a 1L cohort and a patient with a prior cancer, because IN_COHORT below is
-# built from enrolment and follow-up and reads no flag at all.
+# a 1L cohort and a patient with a prior cancer: MET_X* is read off them, and
+# membership_predicate() applies MET_X* = 1 for every exclusion the cohort's
+# list names.
 CRITERION_FLAG <- c(
   X1_prior_mm_tx  = "NO_PRIOR_MM_TX",
   X2_other_cancer = "NO_OTHER_CANCER_PRE_LOT1",
@@ -275,11 +297,21 @@ cohort_flag_pred_one <- function(k, cols) {
   else sprintf("coalesce(c.%s, 1) = 1", fl)
 }
 
-cohort_flag_pred <- function(cohort, cols) {
-  ks <- intersect(names(CRITERION_FLAG), cohort$criteria)
-  preds <- vapply(ks, cohort_flag_pred_one, character(1), cols = cols)
+# The predicate that admits a patient to a cohort, over S_COHORT's own
+# columns: the AND of every predicate the cohort's list names, in list order.
+# HERE_PRED for the criteria this package applies, FLAG_PRED for the
+# exclusions read off the input's flags - the two maps mod_attrition()
+# accumulates, so the funnel's last step and IN_COHORT are the same test.
+#
+# A criterion the list names that is in neither map was applied upstream and
+# has nothing to test here; a flag the input does not carry has MET_X* = 1
+# for everyone, which is the same reading the funnel gives it.
+membership_predicate <- function(cohort) {
+  ks <- cohort$criteria
+  preds <- c(unlist(HERE_PRED[intersect(ks, names(HERE_PRED))], use.names = FALSE),
+             unlist(FLAG_PRED[intersect(ks, names(FLAG_PRED))], use.names = FALSE))
   preds <- preds[preds != "1 = 1"]
-  if (!length(preds)) "1 = 1" else paste(preds, collapse = " AND ")
+  if (!length(preds)) "1 = 1" else paste0("(", preds, ")", collapse = " AND ")
 }
 
 check_cohort_table <- function(con, cfg) {

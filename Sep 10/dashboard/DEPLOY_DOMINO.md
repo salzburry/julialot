@@ -46,11 +46,14 @@ came back four-of-five would be read as five.
 
 The Job then exports every table each run wrote to
 `/mnt/artifacts/results/<prefix>/<TABLE>.csv`, and the LOT build's outputs to
-`/mnt/artifacts/results/lot/<LOT_RUN_ID>/<TABLE>.csv`. LOT tables are filed by
-**run**, not by scenario: scenarios normally share one LOT run, so a copy each
-would waste the space and suggest they differ. A run a previous scenario
-already exported is skipped. Domino persists Job artifacts there. Re-run on
-each data refresh.
+`/mnt/artifacts/results/lot/<LOT_RUN_ID>.<build>/<TABLE>.csv`. LOT tables are
+filed by **run and build**, not by scenario: scenarios normally share one LOT
+run, so a copy each would waste the space and suggest they differ, and the
+build is in the name because the engine can build one run id more than once.
+A build a previous scenario already exported is reused. A scenario is
+exported only from a `complete` run, pinned before its first table is read
+and checked again after its last. Domino persists Job artifacts there.
+Re-run on each data refresh.
 
 Cost: one full study run per scenario. Five scenarios is five runs — start with
 two or three, and add rows as questions come up.

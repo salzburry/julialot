@@ -88,7 +88,10 @@ check_lot_lineage <- function(con, cfg) {
          call. = FALSE)
 
   log_msg("LOT run ", r$RUN_ID, " accepted: ", r$STATE, ", cohort ",
-          r$INPUT_COHORT_TABLE, ", study end ", r$STUDY_END)
+          r$INPUT_COHORT_TABLE, ", study end ", r$STUDY_END,
+          ", build ", run_version_stamp(r$UPDATED_AT))
+  # UPDATED_AT stays in what is returned: it is the version of this build of
+  # the run, and S_RUN_METADATA records it beside the id (LOT_RUN_VERSION).
   as.list(r)
 }
 

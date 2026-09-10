@@ -79,6 +79,13 @@ A tab whose module did not run is **reported, not hidden**. "The safety module
 did not run" is something a viewer needs to know; a silently absent tab does
 not say it.
 
+Every number on every tab is read **bound to the build the sidebar describes**
+— the run id, and its state and timestamp, since a run id is reused by a
+re-run inside one Domino run. The binding is checked around each read, not
+once per page: a snapshot rebuilt after the page was opened shows a notice in
+place of each panel, the headline counts and the metadata table included,
+until the page is reloaded.
+
 ### The LOT tabs describe the lineage, not the scenario
 
 The LOT tables were written by a **different build**, under its own prefix,
@@ -135,8 +142,9 @@ rate table is shown stratum by stratum: A, B, the difference, and the
 percentage change, sorted by how far apart they are.
 
 Before it draws anything it answers one question: **do these two rest on the
-same lines?** Two scenarios sharing a LOT run differ only in what the study
-package did. Two reading different LOT runs differ in the lines as well, and a
+same lines?** Two scenarios sharing a LOT run — the same run *and the same
+build of it* — differ only in what the study package did. Two reading
+different runs, or two builds of one run, differ in the lines as well, and a
 difference between them carries both without saying so — so the panel says
 which case it is, in a banner, above the numbers.
 
@@ -188,9 +196,21 @@ and a deployment meant to show real ones refuses to fall back to it.
 scenario: `prefix` is what it writes under, and every upper-case column is a
 setting for that run and nothing else. **Adding a scenario is adding a row.**
 
-A snapshot becomes visible only once everything it holds has been read: tables
+A snapshot is one **build**, not a directory that happens to hold one. The job
+pins the run's newest metadata row before it reads a table — and only a
+`complete` one — reads every table against that pin, and reads the row again
+after the last table; a rebuild landing in between stops the export rather
+than publishing one build's metadata beside another's rows. Then the tables
 are staged and the directory swapped whole, so a refresh that fails leaves the
-previous snapshot in place under its own identity rather than mixing the two.
+previous snapshot in place under its own identity.
+
+LOT tables are filed under `lot/<LOT_RUN_ID>.<build>/`, by run **and** by
+build, because the engine keeps a run id for the life of a session and can
+build it more than once: the study run records which build it read
+(`S_RUN_METADATA.LOT_RUN_VERSION`, the stamp of the status row it vouched
+for), the job copies the LOT prefix only while its newest status row is that
+build, and each scenario reads the directory of the build it read. A build
+already exported by an earlier scenario is reused, never rewritten.
 
 ---
 
@@ -209,7 +229,7 @@ DASH_SOURCE=snapshot DASH_SNAPSHOT_DIR=/mnt/artifacts/results "Sep 10/dashboard/
 variables, and what the job that refreshes the snapshot needs.
 
 ```bash
-Rscript tests/run_tests.R      # 342 checks, no Shiny and no warehouse
+Rscript tests/run_tests.R      # 372 checks, no Shiny and no warehouse
 ```
 
 Every number the app puts on a page comes from a function in `R/` that runs
@@ -242,13 +262,16 @@ is easier to notice than a gap.
 It **reads**. It creates, replaces and drops nothing, so it can be pointed at
 a finished study as often as anyone likes.
 
-Asking for a scenario nobody has run therefore prints the command that would
-produce it rather than running it. Running one writes to the warehouse and
-belongs to whoever owns the schema. That block is meant to be pasted into a
-shell, so every value in it is shell-quoted, and a prefix or LOT run id is
-only ever used as one path segment — a run id of `../../PRIVATE`, which comes
-from a metadata table anyone with warehouse write access controls, cannot
-reach a file outside the snapshot root.
+It therefore cannot produce a scenario. One nobody has run does not appear in
+the picker, and running one writes to the warehouse and belongs to whoever
+owns the schema. `scenario_command()` in `R/scenarios.R` turns a set of
+readings into the shell lines such a run needs; it is a helper for that
+person, tested and not wired to the page. Its output is meant to be pasted
+into a shell, so every value in it is shell-quoted.
+
+A prefix or LOT run id is only ever used as one path segment — a run id of
+`../../PRIVATE`, which comes from a metadata table anyone with warehouse write
+access controls, cannot reach a file outside the snapshot root.
 
 ---
 

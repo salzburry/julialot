@@ -169,10 +169,29 @@ CRITERIA_1L <- c("I1_mm_dx", "I2_age", "I3_eligible_1l_tx", "I4_ce_pre",
 and give the new criterion an entry in `CRITERION_SOURCE` saying where its
 verdict comes from, and — where this package applies it — a predicate in
 `HERE_PRED`. A criterion in a cohort's list with no source stops the run naming
-it. The funnel, cohort membership (`IN_COHORT`), the attrition table and the
-dashboard all follow from that list. Membership used to hard-code continuous
-enrolment and follow-up whatever the list said, so removing `I4` dropped the
-step from the funnel while still applying it; the two read the same list now.
+it; one declared `here` with no predicate stops it too, naming the map that
+is missing it. The funnel, cohort membership (`IN_COHORT`), the attrition
+table and the dashboard all follow from that list.
+
+**Membership and the funnel are generated from the same two maps**, so they
+cannot disagree: `IN_COHORT` is the AND of every `HERE_PRED` predicate and
+every retained-flag predicate the cohort's list names, and the funnel's last
+step accumulates exactly those. A predicate in `HERE_PRED` is written over
+`S_COHORT`'s own columns — `MET_N2`, `MET_I5`, `MET_X1` to `MET_X4`,
+`INDEX_DATE`, `LOT_NUM` — which are computed for every indexed patient
+whatever the list says. So a new criterion such as
+
+```r
+CRITERION_SOURCE[["I4_custom_ce"]] <- "here"
+HERE_PRED[["I4_custom_ce"]]        <- "MET_N2 = 1"
+```
+
+listed in place of `I4_ce_pre` is applied by membership *and* reported by the
+funnel, and the suite executes exactly that case and holds the cohort count
+to the funnel's last step. (Membership used to hard-code continuous enrolment
+and follow-up whatever the list said, so removing `I4` dropped the step from
+the funnel while still applying it, and a criterion added to the list was
+applied by the funnel and ignored by membership.)
 
 A criterion applied **upstream** cannot be added or removed here at all —
 see §5.
@@ -201,9 +220,10 @@ exclusion had already removed those patients. Selecting `SEC2L` without
 
 **Eligibility applied upstream cannot be undone here.** If the cohort table
 arrives with a patient already removed, no setting in this package brings them
-back. Changing `X1` through `X3` means rebuilding the cohort table; changing
-`X4` means rebuilding the LOT run. The settings above change what this package
-applies and what it reports — they do not reach backwards.
+back. Changing `X1` through `X4` means rebuilding the cohort table — `X4`
+included: its flag, `NO_BELANTAMAB_PRE_LOT1`, is the cohort build's, and
+rebuilding the LOT run does not recreate it (§2). The settings above change
+what this package applies and what it reports — they do not reach backwards.
 
 ---
 

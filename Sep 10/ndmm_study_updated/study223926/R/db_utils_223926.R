@@ -125,6 +125,60 @@ lot_tbl <- function(base_tbl) {
   sprintf("%s.%s.%s%s", cfg$catalog, cfg$work_schema, p, base_tbl)
 }
 
+# One string for one BUILD of a run, from the timestamp its status row carries.
+#
+# A run id is not a build. This package reuses DOMINO_RUN_ID for every build
+# inside one Domino run, and the LOT engine keeps its run id for the life of
+# an R session, so two builds under one id can each leave a `complete` row -
+# with different settings, different rows, and nothing but UPDATED_AT to tell
+# them apart. The dashboard bound a scenario to its run id alone, and a re-run
+# under the same id showed its new numbers beneath the old run's settings.
+#
+# Formatted in UTC and reduced to alphanumerics, so the same instant reads the
+# same wherever it is compared and can stand as one path segment. A value
+# that is not a timestamp is not a version: it comes back as the string it
+# was, stripped, rather than being mistaken for the empty one.
+run_version_stamp <- function(x) {
+  if (is.null(x) || !length(x)) return("")
+  x <- x[[1L]]
+  if (length(x) != 1L || is.na(x)) return("")
+  if (inherits(x, "POSIXt")) return(format(x, "%Y%m%dT%H%M%SZ", tz = "UTC"))
+  s <- trimws(as.character(x))
+  if (!nzchar(s)) return("")
+  t <- suppressWarnings(tryCatch(
+    as.POSIXct(s, tz = "UTC", tryFormats = c("%Y-%m-%d %H:%M:%OS",
+                                             "%Y-%m-%dT%H:%M:%OS",
+                                             "%Y-%m-%d")),
+    error = function(e) NA))
+  if (!is.na(t)) return(format(t, "%Y%m%dT%H%M%SZ", tz = "UTC"))
+  gsub("[^A-Za-z0-9]", "", s)
+}
+
+# Columns a table gained after it was first created, added in place.
+#
+# S_RUN_METADATA is CREATE IF NOT EXISTS, so a prefix that was first written
+# by an earlier version of this package keeps the earlier shape, and a
+# positional insert then fails on the count - or worse, lands a value in the
+# wrong column. Only ever ADDS: an existing column keeps its type. The
+# DESCRIBE has to succeed, because the named insert that follows needs every
+# column to exist.
+ensure_columns <- function(con, name, cols) {
+  d <- db_q(con, sprintf("DESCRIBE %s", name))
+  cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
+  have <- if (length(cn)) toupper(trimws(as.character(d[[cn[1]]]))) else
+    character(0)
+  if (!length(have))
+    stop("SCHEMA ERROR: could not establish the columns of ", name,
+         ", so a column cannot be added to it.", call. = FALSE)
+  missing <- setdiff(toupper(names(cols)), have)
+  for (m in missing) {
+    db_exec(con, sprintf("ALTER TABLE %s ADD COLUMNS (%s %s)", name, m,
+                         cols[[match(m, toupper(names(cols)))]]))
+    log_msg("  schema evolution on ", name, ": added ", m)
+  }
+  invisible(missing)
+}
+
 # Spark's sql() takes ONE statement. Several module templates are written as a
 # CREATE TABLE IF NOT EXISTS followed by an INSERT, because that reads as one
 # thing, so they are split here rather than in each module.

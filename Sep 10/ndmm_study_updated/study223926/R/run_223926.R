@@ -164,30 +164,58 @@ build_223926 <- function(here) {
 new_run_id <- function()
   Sys.getenv("DOMINO_RUN_ID", unset = format(Sys.time(), "%Y%m%d%H%M%S"))
 
+# The metadata row's shape, declared once. The CREATE, the column upgrade and
+# the INSERT all read this, so a column added here reaches all three - and the
+# insert names its columns, so an older table that gained one keeps working.
+RUN_METADATA_COLS <- c(
+  RUN_ID = "string", STATE = "string", UPDATED_AT = "timestamp",
+  COHORTS = "string", MODULES = "string",
+  LOT_RUN_ID = "string", LOT_RUN_VERSION = "string",
+  STUDY_START = "string", STUDY_END = "string",
+  CONTRACT_DEVIATIONS = "string", OPEN_QUESTION_READINGS = "string",
+  CODELISTS = "string")
+
+# Which BUILD of the LOT run these numbers rest on - see run_version_stamp().
+# LOT_RUN_ID alone names a run the engine may have built more than once; the
+# version is the stamp of the `complete` status row this run vouched for, and
+# the dashboard and its snapshot job refuse LOT tables under that id whose
+# newest status row carries any other stamp.
+lot_run_version <- function(lot_run)
+  run_version_stamp(lot_run$UPDATED_AT %||% "")
+
 write_run_metadata <- function(con, cfg, cohorts, mods, lot_run, deviations,
                                state, run_id = NULL, upstream = NULL) {
   rid <- if (is.null(run_id) || !nzchar(run_id)) new_run_id() else run_id
   esc <- function(x) gsub("'", "''", paste(as.character(x), collapse = "; "))
-  db_exec(con, sprintf("
-    CREATE TABLE IF NOT EXISTS %s (
-      RUN_ID string, STATE string, UPDATED_AT timestamp,
-      COHORTS string, MODULES string, LOT_RUN_ID string,
-      STUDY_START string, STUDY_END string,
-      CONTRACT_DEVIATIONS string, OPEN_QUESTION_READINGS string,
-      CODELISTS string)", wrk("S_RUN_METADATA")))
-  db_exec(con, sprintf("DELETE FROM %s WHERE RUN_ID = '%s'",
-                       wrk("S_RUN_METADATA"), rid))
+  q   <- function(x) paste0("'", esc(x), "'")
+  tbl <- wrk("S_RUN_METADATA")
+  db_exec(con, sprintf("CREATE TABLE IF NOT EXISTS %s (%s)", tbl,
+                       paste(names(RUN_METADATA_COLS), RUN_METADATA_COLS,
+                             collapse = ", ")))
+  ensure_columns(con, tbl, RUN_METADATA_COLS)
+  db_exec(con, sprintf("DELETE FROM %s WHERE RUN_ID = '%s'", tbl, rid))
   cl <- codelist_metadata()
   cl_str <- if (nrow(cl))
     paste(sprintf("%s(%s,%d rows)", cl$CODELIST, substr(cl$MD5, 1, 8),
                   cl$N_ROWS), collapse = "; ") else ""
-  db_exec(con, sprintf("
-    INSERT INTO %s VALUES ('%s','%s',current_timestamp(),'%s','%s','%s','%s',
-                           '%s','%s','%s','%s')",
-    wrk("S_RUN_METADATA"), rid, state,
-    esc(names(cohorts)), esc(names(mods)),
-    esc(lot_run$RUN_ID %||% ""), cfg$study_start, cfg$study_end,
-    esc(if (length(deviations)) deviations else "none"),
-    esc(open_question_readings(cfg, upstream)), esc(cl_str)))
+  vals <- c(RUN_ID                 = q(rid),
+            STATE                  = q(state),
+            UPDATED_AT             = "current_timestamp()",
+            COHORTS                = q(names(cohorts)),
+            MODULES                = q(names(mods)),
+            LOT_RUN_ID             = q(lot_run$RUN_ID %||% ""),
+            LOT_RUN_VERSION        = q(lot_run_version(lot_run)),
+            STUDY_START            = q(cfg$study_start),
+            STUDY_END              = q(cfg$study_end),
+            CONTRACT_DEVIATIONS    = q(if (length(deviations)) deviations else "none"),
+            OPEN_QUESTION_READINGS = q(open_question_readings(cfg, upstream)),
+            CODELISTS              = q(cl_str))
+  # One declaration drives all three statements; a column declared with no
+  # value, or a value with no column, stops the build here rather than in the
+  # warehouse's words.
+  stopifnot(identical(names(vals), names(RUN_METADATA_COLS)))
+  db_exec(con, sprintf("INSERT INTO %s (%s) VALUES (%s)", tbl,
+                       paste(names(vals), collapse = ", "),
+                       paste(vals, collapse = ", ")))
   invisible(rid)
 }
