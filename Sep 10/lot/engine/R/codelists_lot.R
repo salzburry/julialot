@@ -5,6 +5,39 @@
 CODELIST_FILES <- c("cl_mma_rollup.csv", "cl_mma_codelist.csv",
                     "permissible_subs.csv", "cl_sct_codelist.csv")
 
+# permissible_subs.csv, read flat.
+#
+# One row makes a pair one agent in BOTH directions: every site that expands
+# a regimen through the table unions the two directions (prior_regimen.R,
+# foldin_rule.R, 10_lot2_5_base.R), so a second row the other way adds no
+# direction the engine does not already take. It does break the sites that
+# collapse a drug to its original - coalesce(ps.original_med, ...) - because
+# with A -> B and B -> A both present A collapses to B and B to A, and the
+# pair reads as two agents that swapped names. The chain check refuses that,
+# and the study team's file lists bortezomib and ixazomib both ways, and
+# daratumumab as its own substitute.
+#
+# So the mirror of a pair listed both ways is dropped - the row whose
+# original sorts first is the one kept, so the choice does not depend on row
+# order - and a drug standing in for itself is dropped, since it changes no
+# expansion and no collapse. Each dropped row is logged. A chain A -> B -> C,
+# or a star, is left exactly as the file has it, for the check to refuse.
+normalise_permissible_subs <- function(df) {
+  o <- toupper(trimws(as.character(df$original_med)))
+  s <- toupper(trimws(as.character(df$substitute_med)))
+  known <- !is.na(o) & !is.na(s) & nzchar(o) & nzchar(s)
+  self   <- known & o == s
+  mirror <- known & !self & paste(s, o) %in% paste(o, s)[known] & o > s
+  for (i in which(self))
+    log_msg("  permissible_subs.csv: ", o[i], " is listed as its own ",
+            "substitute; the row is dropped, it changes nothing")
+  for (i in which(mirror))
+    log_msg("  permissible_subs.csv: ", o[i], " -> ", s[i], " is the mirror of ",
+            s[i], " -> ", o[i], ", which already makes the pair one agent both ",
+            "ways; the mirror is dropped")
+  df[!(self | mirror), , drop = FALSE]
+}
+
 load_codelist_csv <- function(csv_name, col_spec) {
   cfg <- lot_config()
   if (!dir.exists(cfg$codelist_dir)) {
@@ -42,6 +75,8 @@ load_codelist_csv <- function(csv_name, col_spec) {
     stop(glue("CODELIST ERROR: CSV {csv_name} missing required columns: {paste(missing, collapse=', ')}. Found: {paste(names(df), collapse=', ')}"))
   }
   df <- df[, col_spec, drop = FALSE]
+  if (identical(csv_name, "permissible_subs.csv"))
+    df <- normalise_permissible_subs(df)
   if (nrow(df) == 0) {
     stop(glue("CODELIST ERROR: CSV {csv_name} has no data rows"))
   }

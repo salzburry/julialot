@@ -117,7 +117,7 @@ checked with instead is its test suites, which need no warehouse at all.
 
 | suite | checks |
 |---|---|
-| `engine/tests/test_runner.R` | 523 |
+| `engine/tests/test_runner.R` | 527 |
 | `engine/tests/test_line_criteria.R` | 57 |
 | `qc/tests/test_lot_qc.R` | 295 |
 | `melphalan/tests/test_melp_simple.R` | 161 |

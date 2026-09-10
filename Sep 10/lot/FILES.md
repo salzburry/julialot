@@ -174,8 +174,16 @@ always zero:
 
 ```
 code_to_med  bad_ndc  rollup_defs  blank_keys  ndc_shape
-multi_class  multi_original  class_agreement
+multi_class  multi_original  class_agreement  subs_chain  subs_star
 ```
+
+`subs_chain` and `subs_star` hold the substitution table flat: one hop each
+way is exact for a pair and wrong for a chain `A -> B -> C` or a star. Before
+the check runs, `permissible_subs.csv` is read flat by the loader: a pair the
+file lists both ways is read once (the row whose original sorts first), and a
+drug listed as its own substitute is dropped, each with a log line. One row
+already makes a pair one agent in both directions, and the mirror made the
+sites that collapse a drug to its original swap the two instead.
 
 Naming one of the second group is refused before the build starts.
 `multi_class` is fatal because `min(MED_CLASS)` picks lexically, not clinically,

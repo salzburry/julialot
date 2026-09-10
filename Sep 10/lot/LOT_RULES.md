@@ -393,7 +393,9 @@ Worked example: `biosimilar_switch`.
 
 The substitute is unioned into the previous line's regimen for this test, so it
 is excluded from `d_MED` the same way the reference product is.
-`permissible_subs.csv` names the pairs.
+`permissible_subs.csv` names the pairs, one row per pair: a row makes the pair
+one agent in both directions, so a pair the file lists both ways is read once,
+and a drug listed as its own substitute is dropped. The loader logs each.
 
 ### 4.5 Same-day starts break `SCT_ALLO > CART > SCT_AUTO > MED`
 
