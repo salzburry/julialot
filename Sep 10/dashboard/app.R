@@ -180,6 +180,7 @@ server <- function(input, output, session) {
       flow   = ui_table(p, s),
       check  = ui_check(p, s),
       delta  = ui_delta(p, s),
+      sequence = ui_sequence(p, s),
       ui_table(p, s))
     tagList(h4(p$label),
             if (!is.null(p$note)) div(class = "note", p$note) else NULL,
@@ -300,6 +301,26 @@ server <- function(input, output, session) {
       plot_stratum_bars(d, sp, lab, val, p$label)
     }, height = 420)
     plotOutput(id, height = "420px")
+  }
+
+  # Line against the next line, off the LOT table read bound to the run the
+  # sidebar names. Not through panel_data(): that filters the table to the
+  # selected line before anything is drawn, and a pair needs both lines. The
+  # line selector is applied afterwards, as "pairs FROM this line".
+  ui_sequence <- function(p, s) {
+    id <- paste0("seq_", p$name)
+    output[[id]] <- renderUI({
+      d <- read_lot_table(SRC, s, p$table)
+      if (is.null(d) || !nrow(d)) return(HTML(html_table(NULL)))
+      sel <- selection()[["LOT_NUM"]]
+      from_lot <- if (is.null(sel) || identical(sel, "all")) NA_integer_ else
+        suppressWarnings(as.integer(sel))
+      v <- lot_sequence_view(d, p$view, input$floor, from_lot,
+                             package_min_n = DASH_CFG$suppress_min_n)
+      if (!v$released) return(div(class = "note", v$note))
+      HTML(html_table(v$rows, caption = v$note, max_rows = DASH_CFG$max_rows))
+    })
+    uiOutput(id)
   }
 
   # A check table: what was found, what was expected, and the verdict. The
