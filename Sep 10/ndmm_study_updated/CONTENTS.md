@@ -44,12 +44,12 @@ writes only its own `S_*` tables.
 | `R/windows.R` | every period the protocol defines, as SQL. Baseline, follow-up, treatment period, the time-to-event analysis set |
 | `R/person_time.R` | person-time and the acute-event washout chain |
 | `R/codelists.R` | reading and checking the code lists, and the manifest a run records |
-| `R/lineage.R` | which LOT run these numbers rest on, and whether it can be vouched for |
+| `R/lineage.R` | which LOT run - and which build of it - these numbers rest on, and whether it can be vouched for. Checked when the run starts and again before it is recorded complete, so a LOT rebuild landing in between fails the run rather than being attested |
 | `R/load_inputs.R` | settings from `config.csv` and the environment |
 | `R/run_223926.R` | the runner: resolve the plan, refuse what it cannot vouch for, walk the modules |
 | `R/modules/` | one file per module, in the order they run |
 | `codelists/` | the code lists this package ships. Production overrides the directory |
-| `tests/` | 361 checks. `Rscript tests/run_tests.R` |
+| `tests/` | 376 checks. `Rscript tests/run_tests.R` |
 
 ### The modules
 
@@ -135,7 +135,7 @@ open question's reading, and stops before opening a connection. It is the
 fastest way to see what a run *would* do.
 
 ```bash
-Rscript tests/run_tests.R      # 361 checks, no warehouse
+Rscript tests/run_tests.R      # 376 checks, no warehouse
 ```
 
 The suite runs the modules without a warehouse, executes the SQL they emit

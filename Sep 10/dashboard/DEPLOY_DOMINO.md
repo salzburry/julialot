@@ -90,6 +90,9 @@ than one person.
 ## What the App can and cannot do
 
 It reads. It creates, replaces and drops nothing, so an App left running cannot
-affect a study run. Asking for a scenario nobody has built prints the command
-rather than running it — running one writes to the warehouse, and that belongs
-to whoever owns the schema.
+affect a study run. A scenario nobody has built does not appear; the helper
+that prints the command such a run needs (`scenario_command()` in
+`R/scenarios.R`) is not wired to the page — running one writes to the
+warehouse, and that belongs to whoever owns the schema. A run that is
+`started` or `failed` is listed with its settings, and its tables are not
+shown.

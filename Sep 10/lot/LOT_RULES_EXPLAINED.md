@@ -286,7 +286,8 @@ was — `SCT_AUTO`, `SCT_ALLO`, `SCT_CART`, `CART_INIT`, `MED_ADD`, `DEATH`,
 allograft does not outrank an earlier autograft, and a CAR-T does not outrank
 an earlier added agent. The order the reasons are tested in matters only on an
 exact same-day tie, where it decides which name is recorded — and the line's
-end date is the same whichever name wins.
+end date is the same whichever name wins. Which ties can be reached at all is
+narrower than the list of reasons suggests; see the end of this section.
 
 > Agent A covers **d+0 – d+300** · first AUTO at **d+30** · a second AUTO at
 > **d+211** · agent B added at **d+220** · ALLO at **d+250**
@@ -302,12 +303,22 @@ A global rank — ALLO before CAR-T before AUTO — gives that patient the wrong
 first boundary even though every one of those events precedes the run-out.
 The transplant kinds are one branch with one date rule: earliest first.
 
-**The one branch that looks forward.** `SCT_AUTO_CONT` — a planned tandem
-partner *continuing* the line — is tested first, but it fires only when its
-transplant falls strictly *after* the date every other branch would have
-produced. Where it fires, the line was going to end too early and is carried
-to the transplant; where it does not, it changes nothing. Death is excluded
-from it explicitly.
+**The one branch that looks forward.** An autologous transplant inside the
+line's own window belongs to the line — a single transplant, or a tandem pair
+whose *first* transplant is inside the window, in which case the partner
+follows it however far out it sits. Where the cascade above would have ended
+the line *before* that transplant, the line runs to it and ends **on** it as
+`SCT_AUTO_CONT`; where it would not, the branch changes nothing. It is tested
+first but fires only when its transplant falls strictly after the date every
+other branch would have produced, and death is excluded from it explicitly.
+
+> Agent A covers **d+0 – d+27** · a single AUTO at **d+59**, the last day of
+> line 1's 60-day window
+> → line 1 ends **`SCT_AUTO_CONT` on d+59**. A's cover ran out on d+27 and
+> the gap confirmed a discontinuation, but the transplant is the line's own,
+> so the line is carried to it rather than closed before it. No tandem is
+> needed for this: a first in-window transplant holds the line open by
+> itself.
 
 **Death is not first either.** It outranks an *earlier* discontinuation only
 where nothing that could open the next line happened in between — and a
@@ -326,10 +337,25 @@ gap was confirmed — the patient stopped when their drugs did.
 observation has **not** discontinued, and recording one there would turn
 treatment-active-at-censoring into a stop that did not happen.
 
-The same-day tie order is the one place the two line-1 and lines-2-to-5
-statements differ — line 1 records AUTO, then ALLO, then CAR-T; later lines
-ALLO, then CAR-T, then AUTO — and it is recorded as an open question in
-`LOT_RULES.md` §7.2 because it changes a label, never a date.
+**Which same-day ties can happen.** An autograft on the same day as an
+allograft or a CAR-T is not a tie. Before any date is compared, both the
+line-1 and the lines-2-to-5 statements drop every AUTO on or after the first
+ALLO or line-ending CAR-T: the line ended the day before, and that AUTO
+belongs to whatever follows. So an AUTO and an ALLO on one day end the line
+`SCT_ALLO`, and an AUTO and a CAR-T on one day end it `SCT_CART` — at both
+sites, never `SCT_AUTO`.
+
+> Agent A covers **d+0 – d+300** · first AUTO at **d+30** · a second AUTO
+> **and** an ALLO, both at **d+211**
+> → line 1 ends **`SCT_ALLO` on d+210**. The second AUTO is dropped before
+> the comparison, not outranked in it. With a CAR-T at d+211 instead of the
+> ALLO the line ends `SCT_CART` on d+210.
+
+The only tie that survives to the comparison is an allograft and a CAR-T on
+one day, and both sites record `SCT_ALLO`. The two statements list their
+reasons in different orders — line 1 tests AUTO first, later lines test ALLO
+first — but the AUTO arm of either cannot be reached on a tie, so the
+difference is one of wording, and `LOT_RULES.md` §7.2 records it as such.
 
 ---
 

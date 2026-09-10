@@ -46,8 +46,10 @@ dashboard_config <- function() {
     default_cohort  = .env_chr("DASH_DEFAULT_COHORT", "1L"),
     max_rows        = .env_int("DASH_MAX_ROWS", 5000L),
 
-    # --- how a viewer asks for a scenario that does not exist ---------------
-    # The dashboard never writes to the warehouse. It prints the command.
+    # --- the command a scenario needs, for whoever owns the schema ----------
+    # The dashboard never writes to the warehouse. scenario_command() builds
+    # the shell lines a run needs from this; it is a tested helper, not a
+    # control on the page, and a scenario nobody has run does not appear.
     run_cmd         = .env_chr("DASH_RUN_CMD", "Rscript build.R"),
     package_dir     = .env_chr("DASH_PACKAGE_DIR",
                               "../ndmm_study_updated/study223926"),

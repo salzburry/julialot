@@ -145,6 +145,9 @@ build_223926 <- function(here) {
     }
   }
 
+  # Still the build that was accepted? Every module read the LOT tables over
+  # the minutes above; only now can the run vouch that they were one build's.
+  check_lot_lineage_unchanged(con, cfg, lot_run)
   write_run_metadata(con, cfg, cohorts, mods, lot_run, deviations, "complete",
                      run_id = rid, upstream = upstream)
   .run_state$ok <- TRUE

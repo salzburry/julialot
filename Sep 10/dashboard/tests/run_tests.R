@@ -1030,18 +1030,31 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
       }
       data.frame(RATE = 770, stringsAsFactors = FALSE)
     })
-    sc <- list(prefix = "p_", run_id = "A")
+    sc <- list(prefix = "p_", run_id = "A", state = "complete")
     ok(is.null(read_scenario_table(flip, sc, "S_SAFETY_RATES", FALSE)),
        "a table read while its snapshot is being replaced is refused, not shown under the old run")
     steady <- list(read = function(prefix, table)
       if (identical(table, "S_RUN_METADATA"))
-        data.frame(RUN_ID = "A", stringsAsFactors = FALSE)
+        data.frame(RUN_ID = "A", STATE = "complete", stringsAsFactors = FALSE)
       else data.frame(RATE = 770, stringsAsFactors = FALSE))
     ok(identical(read_scenario_table(steady, sc, "S_SAFETY_RATES", FALSE)$RATE, 770),
        "...while a snapshot that is still the same run reads normally")
-    ok(is.null(read_scenario_table(steady, list(prefix = "p_", run_id = "Z"),
+    ok(is.null(read_scenario_table(steady, list(prefix = "p_", run_id = "Z", state = "complete"),
                                    "S_SAFETY_RATES", FALSE)),
        "...and one that is a different run from the sidebar's reads nothing")
+    # A run that did not finish. Its metadata row matches - it is the newest,
+    # under this id and state - and its tables are the previous build's.
+    for (st in c("started", "failed", "")) {
+      md_st <- list(read = function(prefix, table)
+        if (identical(table, "S_RUN_METADATA"))
+          data.frame(RUN_ID = "A", STATE = st, stringsAsFactors = FALSE)
+        else data.frame(RATE = 120, stringsAsFactors = FALSE))
+      sc_st <- list(prefix = "p_", run_id = "A", state = st)
+      ok(is.null(read_scenario_table(md_st, sc_st, "S_SAFETY_RATES", FALSE)),
+         paste0("a run recorded as '", st, "' reads no result, though its metadata matches"))
+      ok(!is.null(read_scenario_table(md_st, sc_st, "S_RUN_METADATA", FALSE)),
+         "...while its metadata - what it set out to do - still reads")
+    }
     # The same id, rebuilt. DOMINO_RUN_ID is reused by every build inside one
     # Domino run, so a re-run keeps the id while its state and timestamp
     # move. Bound by id alone, the page showed the re-run's rows - first a
@@ -1164,6 +1177,23 @@ cat("\nwhat a panel can draw, and what it says when it cannot\n")
      "and says the table is empty rather than hiding the tab")
   attr1 <- Filter(function(p) identical(p$name, "attrition"), ps2)[[1]]
   ok(isTRUE(attr1$available), "while a panel whose module did run is available")
+  # A run that did not finish: every study panel says so, the metadata panel
+  # and the LOT panels still show.
+  s3 <- s; s3$state <- "started"
+  ps3 <- resolve_panels(s3, src = SRC)
+  get <- function(nm) Filter(function(p) identical(p$name, nm), ps3)[[1]]
+  ok(!isTRUE(get("hcru_rates")$available) && grepl("'started', not complete", get("hcru_rates")$why),
+     "under a run that is not complete, a result panel is unavailable and says why")
+  ok(!isTRUE(get("headline")$available) && !isTRUE(get("attrition")$available),
+     "...the headline count and the funnel included")
+  ok(isTRUE(get("provenance")$available),
+     "...while the metadata panel still shows what the run set out to do")
+  ok(isTRUE(get("lot_attrition")$available),
+     "...and the LOT panels, which describe the lineage the run recorded")
+  app3 <- paste(readLines("app.R", warn = FALSE), collapse = "\n")
+  ok(grepl("if (!scenario_is_usable(s) || !scenario_is_usable(b))", app3, fixed = TRUE) &&
+       grepl("Only complete runs can be compared", app3, fixed = TRUE),
+     "and Compare refuses to draw a difference unless both runs are complete")
 
   old <- Sys.getenv("SHOW_SAFETY_RATES", unset = NA)
   Sys.setenv(SHOW_SAFETY_RATES = "FALSE")

@@ -265,6 +265,14 @@ lot_status_owner <- function(st, lot_run_id, lot_prefix = "x",
 # read instead - before, so a moved snapshot yields nothing, and after, so a
 # swap landing between the check and the read is caught too.
 read_scenario_table <- function(src, scenario, table, prefer_release = TRUE) {
+  # A run that did not finish has no numbers of its own. The producer writes
+  # its metadata row BEFORE it replaces a table, and a failure leaves what was
+  # there - the previous build's tables, or part of the new one - so a
+  # `started` or `failed` scenario, or one whose state is not recorded, reads
+  # only its metadata and never a result. A fresh page over such a run drew
+  # the previous build's rate under the new run's settings.
+  if (!identical(table, "S_RUN_METADATA") && !scenario_is_usable(scenario))
+    return(NULL)
   same <- function() {
     m <- scenario_matches_now(src, scenario)
     # Unanswerable two ways: a scenario that recorded no run is not bound and

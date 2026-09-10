@@ -165,12 +165,34 @@ run_version_stamp <- function(x) {
 ensure_columns <- function(con, name, cols) {
   d <- db_q(con, sprintf("DESCRIBE %s", name))
   cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
+  tn <- intersect(c("data_type", "DATA_TYPE", "type", "TYPE"), names(d))
   have <- if (length(cn)) toupper(trimws(as.character(d[[cn[1]]]))) else
     character(0)
+  # DESCRIBE appends partition/metadata blocks after a blank or `#` row.
+  keep <- nzchar(have) & !startsWith(have, "#")
+  if (any(!keep)) keep <- keep & cumsum(!keep) == 0
+  have <- have[keep]
   if (!length(have))
     stop("SCHEMA ERROR: could not establish the columns of ", name,
          ", so a column cannot be added to it.", call. = FALSE)
-  missing <- setdiff(toupper(names(cols)), have)
+  # An existing column keeps its type - and a type this writer cannot insert
+  # into is found HERE, before the DELETE that precedes the insert, rather
+  # than by the insert failing after the row is already gone.
+  if (length(tn)) {
+    have_typ <- .sql_type_norm(as.character(d[[tn[1]]])[keep])
+    want <- toupper(names(cols))
+    for (m in intersect(have, want)) {
+      ht <- have_typ[match(m, have)]
+      wt <- .sql_type_norm(cols[[match(m, want)]])
+      if (!identical(ht, wt))
+        stop("SCHEMA ERROR: ", name, ".", m, " is ", ht, " where this package ",
+             "writes ", wt, ". The insert would fail after the run's own row ",
+             "had been cleared, so nothing is written. This happens when an ",
+             "output prefix is reused across package versions: run against a ",
+             "fresh OBJECT_PREFIX, or drop the table.", call. = FALSE)
+    }
+  }
+  missing <- setdiff(want, have)
   for (m in missing) {
     db_exec(con, sprintf("ALTER TABLE %s ADD COLUMNS (%s %s)", name, m,
                          cols[[match(m, toupper(names(cols)))]]))
