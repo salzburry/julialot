@@ -144,16 +144,27 @@ main <- function() {
   # Which run owns the prefix: the latest status row, the same answer every
   # other reader in this folder resolves. STATE and UPDATED_AT are this
   # table's columns.
-  st <- db_q(con, glue("
-    SELECT RUN_ID, STATE, CONTRACT_DEVIATIONS
-    FROM {lot_out('LOT_BUILD_STATUS')}
-    ORDER BY UPDATED_AT DESC LIMIT 1"))
+  #
+  # UPDATED_AT is read as well as the id, and kept, because the id alone does
+  # not identify a BUILD: the engine keeps one run id for a session, so a
+  # rebuild can leave a second complete row under the same id. The pin is the
+  # whole identity (foldin_trace_build_pin, in R/foldin_trace.R), and it is
+  # asked again after the reads - the same shape the snapshot exporter uses
+  # around its copy (dashboard/jobs/build_scenarios.R).
+  status_row <- function()
+    db_q(con, glue("
+      SELECT RUN_ID, STATE, UPDATED_AT, CONTRACT_DEVIATIONS
+      FROM {lot_out('LOT_BUILD_STATUS')}
+      ORDER BY UPDATED_AT DESC LIMIT 1"))
+  build_pin <- foldin_trace_build_pin
+  st <- status_row()
   if (!nrow(st))
     stop("No row in ", lot_out("LOT_BUILD_STATUS"), ", so there is no run to ",
          "trace under prefix '", pfx, "'.", call. = FALSE)
   run_id <- as.character(st$RUN_ID[1])
   status <- as.character(st$STATE[1])
   devs   <- trimws(as.character(st$CONTRACT_DEVIATIONS[1] %||% ""))
+  pinned <- build_pin(st)
 
   if (!identical(status, "complete"))
     stop("The run owning this prefix is '", status, "', not complete. Its ",
@@ -206,7 +217,6 @@ main <- function() {
         "refuses a fold there, so these are build defects to raise, not folds\n", sep = "")
 
   summary <- foldin_trace_summary(cands, totals$N_PATIENTS[1], totals$N_LINES[1])
-  utils::write.csv(summary, file.path(out_dir, "foldin_trace_summary.csv"), row.names = FALSE)
 
   # Who gets traced. Never a silent truncation: the console says how many
   # there were and how many are in the file.
@@ -250,6 +260,21 @@ main <- function() {
     eps_out   <- data.frame(PATID = character(0))
   }
 
+  # Still the same build? Eight reads have happened since the status row was
+  # taken, and a rebuild under this prefix during them would have replaced
+  # what the later ones returned: the report would name the pinned run while
+  # showing another build's lines. Any rebuild moves UPDATED_AT and a build in
+  # progress moves STATE, so the whole pin is compared, not the id - the id is
+  # reused by design. Checked BEFORE anything is written, so a run that lost
+  # its build leaves the previous trace on disk rather than half-replacing it.
+  now <- build_pin(status_row())
+  if (!identical(now, pinned))
+    stop("The run under prefix '", pfx, "' changed while its tables were being ",
+         "read (", pinned, " -> ", now, "), so what was read is not one ",
+         "build's. Nothing was written; run the trace again against the ",
+         "finished build.", call. = FALSE)
+
+  utils::write.csv(summary, file.path(out_dir, "foldin_trace_summary.csv"), row.names = FALSE)
   utils::write.csv(lines_out, file.path(out_dir, "foldin_trace_lines.csv"), row.names = FALSE)
   utils::write.csv(eps_out, file.path(out_dir, "foldin_trace_episodes.csv"), row.names = FALSE)
   md <- foldin_trace_markdown(run_id, pfx, p, summary, sections, masked,

@@ -136,10 +136,60 @@ ok(has(RUNNER, "foldin_trace_subs_sql(t)") && has(RUNNER, "subs = subs"),
    "the substitute pairs are read and handed to the renderer")
 ok(has(RUNNER, "TRACE_PATIDS refused") && has(RUNNER, "TRACE_N refused"),
    "a refused list or count is printed in the plan, not swallowed")
+ok(has(RUNNER, "SELECT RUN_ID, STATE, UPDATED_AT, CONTRACT_DEVIATIONS") &&
+     has(RUNNER, "build_pin <- foldin_trace_build_pin"),
+   "the status read carries UPDATED_AT, and the pin is the module's")
+# The pin itself: a rebuild under the SAME run id moves UPDATED_AT and
+# nothing else, so a pin that ignored it would call the replacement the same
+# build - which is the attribution this guards against.
+.row <- function(id, state, upd) data.frame(RUN_ID = id, STATE = state, UPDATED_AT = upd,
+                                            stringsAsFactors = FALSE)
+ok(!identical(foldin_trace_build_pin(.row("r1", "complete", "2026-09-10 10:00:00")),
+              foldin_trace_build_pin(.row("r1", "complete", "2026-09-10 12:00:00"))),
+   "the pin separates two builds of one run id: only UPDATED_AT tells them apart")
+ok(!identical(foldin_trace_build_pin(.row("r1", "complete", "2026-09-10 10:00:00")),
+              foldin_trace_build_pin(.row("r2", "complete", "2026-09-10 10:00:00"))) &&
+     !identical(foldin_trace_build_pin(.row("r1", "complete", "2026-09-10 10:00:00")),
+                foldin_trace_build_pin(.row("r1", "started", "2026-09-10 10:00:00"))),
+   "...and a different run, or the same one rebuilding, is a different pin too")
+ok(identical(foldin_trace_build_pin(.row("r1", "complete", "2026-09-10 10:00:00")),
+             foldin_trace_build_pin(.row("r1", "complete", "2026-09-10 10:00:00"))) &&
+     identical(foldin_trace_build_pin(.row("r1", "complete", "x")[0, ]), "(no row)"),
+   "an unchanged build pins the same both times, and a vanished status row is not a match")
+# ...and it is asked again after the reads and before anything is written. By
+# position, because that is the whole of the guarantee: a check that ran after
+# the first write would already have published a mixed read.
+ok(regexpr("now <- build_pin(status_row())", RUNNER, fixed = TRUE) >
+     regexpr("foldin_trace_episodes_sql(t, ids)", RUNNER, fixed = TRUE) &&
+     regexpr("now <- build_pin(status_row())", RUNNER, fixed = TRUE) <
+     regexpr("utils::write.csv(summary", RUNNER, fixed = TRUE) &&
+     regexpr("now <- build_pin(status_row())", RUNNER, fixed = TRUE) <
+     regexpr("writeLines(md", RUNNER, fixed = TRUE),
+   "the build is re-checked after every read and before every write, so nothing mixed is published")
+ok(has(RUNNER, "changed while its tables were being") && has(RUNNER, "Nothing was written"),
+   "...and a build that moved under the trace stops it, saying nothing was written")
+
 # The plan itself, run: a bad list is named and the exit is still 0.
-plan <- suppressWarnings(system2("Rscript", shQuote(file.path(ROOT, "trace_foldin.R")),
-                                 env = c(paste0("TRACE_PATIDS=", shQuote("P1'x")), "TRACE_N=x", "TRACE_EXECUTE="),
-                                 stdout = TRUE, stderr = TRUE))
+#
+# The environment is set here and restored, rather than handed to system2()
+# as `env`: that argument is a Unix one, and where it is not supported the
+# child comes back with a status and no output at all - which reads as the
+# runner failing when it is this launch that did.
+with_env <- function(vars, expr) {
+  old <- Sys.getenv(names(vars), unset = NA, names = TRUE)
+  do.call(Sys.setenv, as.list(vars))
+  on.exit({
+    keep <- old[!is.na(old)]
+    if (length(keep)) do.call(Sys.setenv, as.list(keep))
+    gone <- names(old)[is.na(old)]
+    if (length(gone)) Sys.unsetenv(gone)
+  }, add = TRUE)
+  force(expr)
+}
+plan <- with_env(
+  c(TRACE_PATIDS = "P1'x", TRACE_N = "x", TRACE_EXECUTE = ""),
+  suppressWarnings(system2("Rscript", shQuote(file.path(ROOT, "trace_foldin.R")),
+                           stdout = TRUE, stderr = TRUE)))
 ok(any(has(plan, "TRACE_PATIDS refused")) && any(has(plan, "TRACE_N refused")) &&
      any(has(plan, "Nothing was read")) && is.null(attr(plan, "status")),
    "...and the dry run says which knob it would refuse, then exits 0 without reading")
@@ -360,6 +410,50 @@ ok(has(foldin_trace_narrative(F_CART2[1, ], L_CART, EPS, P), "build defect"),
 F_CUT <- FOLDS; F_CUT$ELIGIBLE_END <- as.Date("2020-07-10")
 ok(has(foldin_trace_narrative(F_CUT[1, ], LINES, EPS, P), "cut short by a transplant"),
    "a window ending before its nominal day says a transplant cut it")
+
+# TWO drugs returning into one line. Without the rule the FIRST return ends
+# the line and opens another, so the second return is not in LOT 2 at all and
+# a boundary computed for it as if it were contradicts the first paragraph.
+# One report cannot give a patient two alternative histories.
+FOLDS_2 <- rbind(FOLDS, utils::modifyList(FOLDS, list(MED_ABBR = "BORT",
+                                                      RETURN_DT = as.Date("2020-10-15"))))
+LINES_2 <- LINES; LINES_2$LOT_BASE_MEDS[2] <- "CARF LEN BORT"
+EPS_2 <- rbind(EPS_COV, epi("BORT", "2020-10-15", "2020-11-15"))
+N_1ST <- foldin_trace_narrative(FOLDS_2[1, ], LINES_2, EPS_2, P, all_folds = FOLDS_2)
+N_2ND <- foldin_trace_narrative(FOLDS_2[2, ], LINES_2, EPS_2, P, all_folds = FOLDS_2)
+ok(has(N_1ST, "MED_ADD on 2020-08-14") && !has(N_1ST, "already parted"),
+   "the earliest return still gets the boundary: up to it the two histories are the same")
+ok(has(N_2ND, "already parted from this one at the earlier return of LEN on 2020-08-15") &&
+     has(N_2ND, "would not be LOT 2") && has(N_2ND, "APPLY_MAP_FOLDIN=FALSE"),
+   "a later return says where the history parted and where an exact one comes from")
+ok(!has(N_2ND, "MED_ADD") && !has(N_2ND, "DISCONTINUATION") && !has(N_2ND, "CART_INIT") &&
+     !has(N_2ND, "would have ended LOT"),
+   "...and asserts no end date of its own, which is the finding: LOT 2 cannot end twice")
+ok(has(N_2ND, "BORT was in LOT 1's regimen") && has(N_2ND, "returned on 2020-10-15") &&
+     has(N_2ND, "joined LOT 2's regimen"),
+   "...while still describing the fold itself, which is what the observed tables do say")
+# Same day: one divergence, not two. Both would have arrived together.
+FOLDS_SD <- FOLDS_2; FOLDS_SD$RETURN_DT[2] <- as.Date("2020-08-15")
+N_SD1 <- foldin_trace_narrative(FOLDS_SD[1, ], LINES_2, EPS_2, P, all_folds = FOLDS_SD)
+N_SD2 <- foldin_trace_narrative(FOLDS_SD[2, ], LINES_2, EPS_2, P, all_folds = FOLDS_SD)
+ok(has(N_SD1, "MED_ADD on 2020-08-14") && has(N_SD1, "BORT returned the same day") &&
+     has(N_SD2, "MED_ADD on 2020-08-14") && has(N_SD2, "LEN returned the same day") &&
+     !has(N_SD1, "already parted") && !has(N_SD2, "already parted"),
+   "two returns on one day are one boundary, and each paragraph names the other drug")
+# The single-fold reading is unchanged, so a patient with one fold reads as
+# it did: the divergence clause costs nothing where nothing diverges.
+ok(identical(foldin_trace_narrative(FOLDS[1, ], LINES, EPS, P, all_folds = FOLDS),
+             foldin_trace_narrative(FOLDS[1, ], LINES, EPS, P)),
+   "one fold: the paragraph is what it was, with or without the fold set")
+SEC2 <- foldin_trace_patient_md("P000001", FOLDS_2[c(2, 1), , drop = FALSE], LINES_2, EPS_2,
+                                foldin_trace_annotate(LINES_2, EPS_2, NULL, FOLDS_2, P), P)
+ok(min(grep("LEN was in", SEC2)) < min(grep("BORT was in", SEC2)) &&
+     any(grepl("already parted", SEC2)) &&
+     min(grep("already parted", SEC2)) > min(grep("MED_ADD on 2020-08-14", SEC2)),
+   "the section puts the returns in date order, so the boundary is stated before the divergence")
+ok(sum(grepl("already parted", SEC2)) == 1 &&
+     sum(grepl("would have ended (MED_ADD|DISCONTINUATION|CART_INIT)", SEC2)) == 1,
+   "...and one patient gets one dated end, whatever order the folds arrived in")
 
 cat("\n-- rendering and masking --\n")
 ok(identical(mask_patid_r("P0000ABCDEF"), "...abcdef"), "mask: '...' and the last six characters, lower case")
