@@ -132,7 +132,7 @@ checked with instead is its test suites, which need no warehouse at all.
 | `engine/tests/test_runner.R` | 527 |
 | `engine/tests/test_line_criteria.R` | 57 |
 | `qc/tests/test_lot_qc.R` | 295 |
-| `qc/tests/test_foldin_trace.R` | 128 |
+| `qc/tests/test_foldin_trace.R` | 142 |
 | `melphalan/tests/test_melp_simple.R` | 161 |
 | `validation/tests/test_vignettes.R` | 36 |
 

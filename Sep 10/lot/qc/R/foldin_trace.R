@@ -160,6 +160,19 @@ foldin_trace_sql <- function(t, p) {
 foldin_trace_subs_sql <- function(t) paste0("
     SELECT original_med, substitute_med FROM ", t$subs)
 
+# WHICH BUILD the trace is reading, as one string to compare before and after
+# the reads. The run id alone does not identify a build: the engine keeps one
+# id for a session, so a rebuild can leave a second complete row under the
+# same id and a reader comparing ids would see no change. UPDATED_AT moves on
+# every rebuild and STATE moves while one is running, so the pin carries all
+# three. Here rather than in the runner so it can be tested without a
+# connection; the same question the snapshot exporter asks around its copy.
+foldin_trace_build_pin <- function(row) {
+  if (is.null(row) || !nrow(row)) return("(no row)")
+  g <- function(nm) if (is.null(row[[nm]])) "" else as.character(row[[nm]][1])
+  paste(g("RUN_ID"), g("STATE"), g("UPDATED_AT"))
+}
+
 # How big the run is, so the summary can say what share the rule touched.
 foldin_trace_totals_sql <- function(t) paste0("
     SELECT count(DISTINCT cast(PATID as string)) AS N_PATIENTS, count(*) AS N_LINES
@@ -432,7 +445,28 @@ foldin_trace_annotate <- function(lines, episodes, tx, folds, p, subs = NULL) {
 #
 # A line a transplant or CAR-T opened gets no such paragraph: 4.8 refuses the
 # fold there, so the signature is a defect and the paragraph says that.
-foldin_trace_narrative <- function(fold_row, lines, episodes, p, tx = NULL, subs = NULL) {
+#
+# AND IT IS STATED ONCE PER PATIENT. The reading above is local: it asks what
+# the engine would have made of THIS return in the line as built. That holds
+# only while the two histories are still the same, which is up to the first
+# return the rule folded. After that one they part - without the rule it would
+# have ended its line and opened another, so every later return happens in a
+# line with a different number, a different start and a different regimen, and
+# nothing about its boundary can be read off tables built WITH the rule. A
+# patient whose LOT2 folds A in May and B ten days later is the case: the
+# paragraph for A is right, and a paragraph for B saying LOT2 would have ended
+# ten days later contradicts it, in the same report, about the same patient.
+#
+# So `all_folds` is the patient's whole fold set, and only the earliest return
+# in it carries a boundary. The rest say where the history parted and where an
+# exact alternative comes from, which is a build of the same cohort with
+# APPLY_MAP_FOLDIN=FALSE differenced against this one - the engine's own
+# answer, not a second copy of the end cascade written here. Returns sharing
+# the earliest date are one divergence and are named together: without the
+# rule they would have been added medications on that same day, so they would
+# have ended the line on the same date and opened the next one together.
+foldin_trace_narrative <- function(fold_row, lines, episodes, p, tx = NULL, subs = NULL,
+                                   all_folds = NULL) {
   f <- fold_row
   n <- as.integer(f$LOT_NUM)
   drug <- as.character(f$MED_ABBR)
@@ -500,7 +534,39 @@ foldin_trace_narrative <- function(fold_row, lines, episodes, p, tx = NULL, subs
   cart_bridge <- !is.na(cart_dt) && as.integer(cart_dt - ret) >= 0L &&
     as.integer(cart_dt - ret) <= p$cart
 
-  pre <- if (is.na(own_end)) {
+  # Where this patient's two histories part, and whether this return is at it.
+  # Folds of THIS patient only; a frame without RETURN_DT (or no frame at all)
+  # is read as this return being the only one.
+  fr <- if (!is.null(all_folds) && nrow(all_folds) && !is.null(all_folds$RETURN_DT))
+    all_folds[as.character(all_folds$PATID) == as.character(f$PATID), , drop = FALSE]
+  else NULL
+  first_ret <- ret; peers <- character(0); first_drugs <- drug
+  if (!is.null(fr) && nrow(fr)) {
+    rd <- .as_date(fr$RETURN_DT)
+    keep <- !is.na(rd)
+    if (any(keep)) {
+      first_ret <- min(rd[keep])
+      first_drugs <- sort(unique(as.character(fr$MED_ABBR)[keep & rd == first_ret]))
+      peers <- setdiff(first_drugs, drug)
+    }
+  }
+  diverged <- !is.na(first_ret) && !is.na(ret) && ret > first_ret
+  # The same day as another fold: one divergence, and the other drug is named
+  # so the two paragraphs read as one boundary rather than two.
+  also <- if (!diverged && length(peers))
+    paste0(" ", paste(peers, collapse = " and "), " returned the same day, so ",
+           if (length(peers) > 1L) "they" else "it",
+           " would have arrived with it.") else ""
+
+  pre <- if (diverged) {
+    paste0("Without the rule this patient's history had already parted from ",
+           "this one at the earlier return of ", paste(first_drugs, collapse = " and "),
+           " on ", format(first_ret), ": that return would have ended its line and ",
+           "opened another, so the line holding this return would not be LOT ", n,
+           " and no end date for it can be read off tables built with the rule. ",
+           "A build of the same cohort with APPLY_MAP_FOLDIN=FALSE, differenced ",
+           "against this one, is where an exact alternative history comes from.")
+  } else if (is.na(own_end)) {
     paste0("Without the rule this return would not have joined LOT ", n, ". ",
            "The episodes read here show no cover for LOT ", n, "'s own regimen (", own_txt,
            "), so which end it would have had cannot be said from them: an added ",
@@ -530,6 +596,7 @@ foldin_trace_narrative <- function(fold_row, lines, episodes, p, tx = NULL, subs
            ", the day before the return, and a new line would have opened on ",
            format(ret), " with ", drug, ".")
   }
+  pre <- paste0(pre, also)
 
   paste0(
     drug, " was in LOT ", n - 1L, "'s regimen (", prev, "). ",
@@ -584,9 +651,14 @@ foldin_trace_patient_md <- function(shown_id, folds_p, lines_p, episodes_p, ann_
             "induction window, an episode inside the line). Listed by request; the ",
             "lines and episodes are shown as they are.", "")
   } else {
-    for (i in seq_len(nrow(folds_p)))
+    # In return order, and each paragraph is given the patient's whole fold
+    # set: the without-rule reading holds only up to the first return that
+    # folded, and a paragraph has to know whether it is that one.
+    ord <- order(.as_date(folds_p$RETURN_DT), as.character(folds_p$MED_ABBR),
+                 method = "radix")
+    for (i in ord)
       ln <- c(ln, foldin_trace_narrative(folds_p[i, , drop = FALSE], lines_p, episodes_p, p,
-                                         tx = tx_p, subs = subs), "")
+                                         tx = tx_p, subs = subs, all_folds = folds_p), "")
   }
   ln <- c(ln, "Lines (LOT_LONG_FINAL):", "",
           foldin_trace_md_table(lines_p, TRACE_LINE_COLS), "",
@@ -622,6 +694,15 @@ foldin_trace_markdown <- function(run_id, pfx, p, summary, patients_sections, ma
                  "check C1 accepts, and nothing else produces it. On a line a ",
                  "transplant or CAR-T opened the same signature is not a fold, since ",
                  "4.8 refuses one there; such rows are counted apart as a build defect."),
+          "",
+          paste0("Each section also says what the reading before the rule would ",
+                 "have made of the return. That is a local reading of these tables ",
+                 "and it is stated only for the FIRST return the rule folded in a ",
+                 "patient: after that one the two histories have parted, so a later ",
+                 "return sits in a line the without-rule build numbers differently ",
+                 "and its paragraph says so instead of guessing. An exact ",
+                 "alternative history comes from a build of the same cohort with ",
+                 "APPLY_MAP_FOLDIN=FALSE, differenced against this one."),
           "",
           paste0(if (is.na(n_candidates)) "" else paste0(n_candidates, " patient(s) carry a fold. "),
                  n_traced, " traced",
