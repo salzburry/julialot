@@ -471,10 +471,15 @@ foldin_trace_annotate <- function(lines, episodes, tx, folds, p, subs = NULL) {
 # the numbering does not. What the paragraph says instead is only that the
 # answer is not in these tables.
 #
-# Returns sharing the earliest date are one divergence and are named together:
-# without the rule they would have been added medications on that same day, so
-# they would have ended the line on the same date and arrived in the next one
-# together.
+# Returns sharing the earliest date are one divergence, and that is all the
+# sharing establishes: the engine would have judged both on the one date, so
+# whatever its reading of that date is covers them both. WHICH reading it is
+# depends on the rule that applies - an added medication on the day, a
+# run-out the day confirmed, a CAR-T bridging past it - and this says none of
+# them, because the paragraph above has already said it once. Reading them as
+# two drugs arriving together in a new line was the same over-claim in
+# miniature: under bridging no line opens on the return date at all, the
+# CAR-T opens the next one on its own date.
 foldin_trace_narrative <- function(fold_row, lines, episodes, p, tx = NULL, subs = NULL,
                                    all_folds = NULL) {
   f <- fold_row
@@ -562,11 +567,13 @@ foldin_trace_narrative <- function(fold_row, lines, episodes, p, tx = NULL, subs
   }
   diverged <- !is.na(first_ret) && !is.na(ret) && ret > first_ret
   # The same day as another fold: one divergence, and the other drug is named
-  # so the two paragraphs read as one boundary rather than two.
+  # so the two paragraphs read as one boundary rather than two. What the
+  # boundary IS has just been said; this adds only that it covers both, which
+  # is what sharing the date establishes and the whole of it.
   also <- if (!diverged && length(peers))
-    paste0(" ", paste(peers, collapse = " and "), " returned the same day, so ",
-           if (length(peers) > 1L) "they" else "it",
-           " would have arrived with it.") else ""
+    paste0(" ", paste(peers, collapse = " and "), " returned the same day, so the ",
+           "same reading covers ", if (length(peers) > 1L) "them" else "it",
+           ": one date, one boundary.") else ""
 
   pre <- if (diverged) {
     paste0("Without the rule this return cannot be read from these tables alone. ",

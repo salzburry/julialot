@@ -464,6 +464,12 @@ ok(has(N_SD1, "MED_ADD on 2020-08-14") && has(N_SD1, "BORT returned the same day
      !has(N_SD1, "cannot be read from these tables alone") &&
      !has(N_SD2, "cannot be read from these tables alone"),
    "two returns on one day are one boundary, and each paragraph names the other drug")
+# ...and the same-day clause says only that the boundary covers both. "They
+# would have arrived together in the next line" is the same over-claim in
+# miniature: under bridging nothing opens a line on the return date.
+ok(!grepl("arrived with", N_SD1) && !grepl("arrive", N_SD2) &&
+     has(N_SD1, "one date, one boundary"),
+   "...and claims nothing about where the two of them would have gone")
 # The single-fold reading is unchanged, so a patient with one fold reads as
 # it did: the divergence clause costs nothing where nothing diverges.
 ok(identical(foldin_trace_narrative(FOLDS[1, ], LINES, EPS, P, all_folds = FOLDS),
@@ -500,6 +506,13 @@ ok(has(N_BR1, "CART_INIT on 2020-06-28") && has(N_BR1, "CAR-T on 2020-06-29"),
 ok(!grepl("would not be LOT", N_BR2) && !grepl("LOT 3", N_BR2) &&
      has(N_BR2, "cannot be read from these tables alone"),
    "...and the second return is told nothing about its line, because here the numbering does not move")
+FOLDS_SDB <- F_BR; FOLDS_SDB$RETURN_DT <- as.Date(c("2020-05-20", "2020-05-20"))
+E_SDB <- rbind(epi("CARF", "2020-04-10", "2020-08-15"), epi("LEN", "2020-05-20", "2020-06-20"),
+               epi("BORT", "2020-05-20", "2020-06-20"))
+N_SDB <- foldin_trace_narrative(FOLDS_SDB[1, ], L_BR, E_SDB, P, tx = TX_BR, all_folds = FOLDS_SDB)
+ok(has(N_SDB, "CART_INIT on 2020-06-28") && has(N_SDB, "one date, one boundary") &&
+     !grepl("opened on 2020-05-20", N_SDB) && !grepl("arrived", N_SDB),
+   "same day and bridged: the boundary is the infusion's eve, and no line opens on the return date")
 
 cat("\n-- rendering and masking --\n")
 ok(identical(mask_patid_r("P0000ABCDEF"), "...abcdef"), "mask: '...' and the last six characters, lower case")
