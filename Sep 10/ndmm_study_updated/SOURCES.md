@@ -13,7 +13,7 @@ trail, not a dependency. This file separates the two.
 | the R package | `study223926/` |
 | its settings | `study223926/config.csv` |
 | its code lists | `study223926/codelists/` — the shapes ship with it; the codes do not exist yet anywhere |
-| its tests | `study223926/tests/run_tests.R` — 402 checks, no warehouse. The last section runs every module against recorders using `study223926/tests/fixtures/codelists/` |
+| its tests | `study223926/tests/run_tests.R` — 417 checks, no warehouse. The last section runs every module against recorders using `study223926/tests/fixtures/codelists/` |
 
 Two optional external tools, both Python packages rather than files in this
 folder: **sqlglot**, which `tests/parse_sql.py` uses to parse the captured

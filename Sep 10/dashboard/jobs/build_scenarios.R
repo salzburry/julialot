@@ -22,7 +22,7 @@ if (!nzchar(here) || is.na(here)) here <- getwd()
 
 grid_csv <- if (length(args) >= 1) args[1] else file.path(here, "scenarios.csv")
 out_dir  <- if (length(args) >= 2) args[2] else
-  Sys.getenv("DASH_SNAPSHOT_DIR", "/mnt/artifacts/results")
+  Sys.getenv("DASH_SNAPSHOT_DIR", "/mnt/data/NDMM")
 pkg_dir  <- Sys.getenv("DASH_PACKAGE_DIR",
                        file.path(dirname(here), "ndmm_study_updated", "study223926"))
 
@@ -86,7 +86,12 @@ run_one <- function(row, env) {
                                stdout = TRUE, stderr = TRUE))
   status <- attr(res, "status")
   ok <- is.null(status) || identical(status, 0L)
-  if (!ok) message("  FAILED: ", paste(utils::tail(res, 8), collapse = "\n  "))
+  # The child's whole output, kept beside the snapshot: eight lines in the
+  # summary say what failed, the file says why.
+  log_file <- file.path(out_dir, paste0(prefix, "build.log"))
+  writeLines(as.character(res), log_file)
+  if (!ok) message("  FAILED: ", paste(utils::tail(res, 8), collapse = "\n  "),
+                   "\n  full output: ", log_file)
   list(prefix = prefix, ok = ok, log = res)
 }
 
@@ -116,9 +121,10 @@ export_one <- function(prefix, env) {
   }))
   con <- connect_db(cfg)
   on.exit(try(disconnect_db(con), silent = TRUE), add = TRUE)
-  # WORK_SCHEMA unset means "wherever the session lands", and the build
-  # resolves it that way too (run_223926.R). Left blank, wrk() built a name
-  # with an empty schema in it.
+  # No schema from the environment - WORK_SCHEMA, PROJECT_WORK_SCHEMA, the
+  # Domino user - means "wherever the session lands", and the build resolves
+  # it that way too (run_223926.R). Left blank, wrk() built a name with an
+  # empty schema in it.
   if (!nzchar(cfg$work_schema)) cfg$work_schema <- current_work_schema(con)
   set_study_config(cfg)
   # The build being exported, pinned BEFORE any table is read: the newest

@@ -68,7 +68,7 @@ mod_tte <- function(con, cfg, cohort) {
     ttnt_dt, days(ttnt_dt), mons(ttnt_dt),
     ttd_dt,  days(ttd_dt),  mons(ttd_dt),
     os_dt,   days(os_dt),   mons(os_dt),
-    wrk("S_PERIODS"), wrk("S_SPINE"), cfg$input_cohort_table, cohort$key,
+    wrk("S_PERIODS"), wrk("S_SPINE"), input_cohort_tbl(), cohort$key,
     obs_next, obs_death, obs_disc),
     qc = sprintf("SELECT count(*) AS n_rows, sum(TTE_ELIGIBLE) AS n_tte,
                          sum(OS_EVENT) AS n_deaths FROM %s WHERE COHORT='%s'",

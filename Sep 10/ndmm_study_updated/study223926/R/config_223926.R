@@ -75,6 +75,38 @@ CONTRACT <- list(
   study_end                 = "2026-03-31"   # s7.1
 )
 
+# The schema a run writes into, resolved the way the cohort and LOT builds
+# resolve theirs, so one environment serves all three: WORK_SCHEMA, else
+# PROJECT_WORK_SCHEMA, else the Domino user's own schema, else blank - and
+# blank is "wherever the session lands" (run_223926.R asks the connection).
+#
+# `catalog.schema` is accepted when the catalog is the run's own, because
+# that is how a schema reads on the warehouse. wrk() adds the catalog
+# itself, and `hive_metastore.osk02156` handed over whole became
+# hive_metastore.hive_metastore.osk02156 - a name with too many parts, and
+# the LOT status table unreadable.
+resolve_work_schema <- function(catalog) {
+  v <- ""
+  for (nm in c("WORK_SCHEMA", "PROJECT_WORK_SCHEMA", "DOMINO_USER_NAME",
+               "DOMINO_STARTING_USERNAME")) {
+    v <- .env_chr(nm, "")
+    if (nzchar(v)) break
+  }
+  if (!nzchar(v)) return("")
+  parts <- strsplit(v, ".", fixed = TRUE)[[1]]
+  if (length(parts) == 2L) {
+    if (!identical(parts[1], catalog))
+      stop("SETTING ERROR: ", nm, " = '", v, "' names catalog '", parts[1],
+           "' but DATABRICKS_CATALOG is '", catalog, "'. Give the schema ",
+           "alone, or set DATABRICKS_CATALOG to match.", call. = FALSE)
+    v <- parts[2]
+  }
+  if (!grepl("^[A-Za-z_][A-Za-z0-9_]*$", v))
+    stop("SETTING ERROR: ", nm, " = '", v, "' is not a schema name.",
+         call. = FALSE)
+  v
+}
+
 cfg_defaults <- function() {
   list(
     # --- connection -------------------------------------------------------
@@ -94,7 +126,7 @@ cfg_defaults <- function() {
     databricks_cluster_id = .env_chr("SPARK_CLUSTER_ID", ""),
     catalog      = .env_chr("DATABRICKS_CATALOG", "hive_metastore"),
     cdm_schema   = .env_chr("OPTUM_CDM_SCHEMA", "clnprw_optum"),
-    work_schema  = .env_chr("WORK_SCHEMA", ""),
+    work_schema  = resolve_work_schema(.env_chr("DATABRICKS_CATALOG", "hive_metastore")),
     use_quarterly_tables = .env_lgl("USE_QUARTERLY_TABLES", TRUE),
     # CDM table names, overridable. The defaults are in CDM_TABLE_NAMES and
     # match the cohort build's; blank here means use those.

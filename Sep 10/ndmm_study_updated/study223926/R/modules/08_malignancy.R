@@ -82,7 +82,7 @@ mod_malignancy <- function(con, cfg, cohort) {
     # Table 4: diagnosis date (included) until the malignancy date (included).
     days_to_months_sql(interval_days_sql("co.MM_DX_DT", "c.FIRST_DT", TRUE, TRUE)),
     days_to_months_sql(interval_days_sql("p.INDEX_DATE", "c.FIRST_DT", TRUE, TRUE)),
-    cfg$input_cohort_table),
+    input_cohort_tbl()),
     qc = sprintf("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_pat
                   FROM %s WHERE COHORT='%s'", wrk("S_MALIGNANCY"), cohort$key),
     allow_empty = TRUE)

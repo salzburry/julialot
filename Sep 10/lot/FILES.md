@@ -11,7 +11,7 @@ One package writes. The rest read a finished run.
 | | |
 |---|---|
 | `lot/engine/` | builds the lines. `build.R <COHORT_TABLE> <prefix_>`. The only package here that writes a study run. |
-| `lot/qc/` | thirty-seven checks on a finished run, asked after the fact. Reads only. `run_lot_qc.R`. |
+| `lot/qc/` | thirty-seven checks on a finished run, asked after the fact, and the fold-in trace. Reads only. `run_lot_qc.R`, `trace_foldin.R`. |
 | `lot/melphalan/` | what the melphalan rule did to the numbers, as two complete builds differenced. Opt-in, its own prefixes. |
 | `lot/validation/` | the rule vignettes — the machine-checked twin of `LOT_RULES.md`. No warehouse. |
 
@@ -174,8 +174,16 @@ always zero:
 
 ```
 code_to_med  bad_ndc  rollup_defs  blank_keys  ndc_shape
-multi_class  multi_original  class_agreement
+multi_class  multi_original  class_agreement  subs_chain  subs_star
 ```
+
+`subs_chain` and `subs_star` hold the substitution table flat: one hop each
+way is exact for a pair and wrong for a chain `A -> B -> C` or a star. Before
+the check runs, `permissible_subs.csv` is read flat by the loader: a pair the
+file lists both ways is read once (the row whose original sorts first), and a
+drug listed as its own substitute is dropped, each with a log line. One row
+already makes a pair one agent in both directions, and the mirror made the
+sites that collapse a drug to its original swap the two instead.
 
 Naming one of the second group is refused before the build starts.
 `multi_class` is fatal because `min(MED_CLASS)` picks lexically, not clinically,
@@ -235,6 +243,10 @@ failure, and none is a published benchmark. Reported, not fatal;
 | `run_lot_qc.R` | Runs thirty-seven checks against a finished run and refuses one whose own build did not complete. Reads only; writes a report to `out/`. Exit status is 0 when nothing failed and 1 when something did, so it can gate a handover. |
 | `R/checks.R` | The checks as data — one entry per check, each carrying the query that finds violations, so the catalogue can be read without running it. |
 | `tests/test_lot_qc.R` | That each check answers the same shape, reads only the tables it declares, masks every patient id, and turns a count into the right verdict. |
+| `trace_foldin.R` | Finds the patients the fold-in rule (`LOT_RULES.md` 4.8) touched in a finished run and writes each one's raw MAP episodes beside the final lines, the folded episode marked, to `out/`. Reads only. Prints its plan without `TRACE_EXECUTE=TRUE`. `TRACE_N` is how many patients to trace, `TRACE_PATIDS` names them instead, `TRACE_MASK_PATID=TRUE` masks the ids. Unmasked by default, because it exists so a patient can be looked up, so the file stays inside the study environment. |
+| `R/foldin_trace.R` | The queries, the sample and the rendering behind the trace. Connection-free, so every piece of it is tested. |
+| `tests/test_foldin_trace.R` | That the trace reads the fold's signature and nothing else, samples the same patients every time, and renders what the fixtures say it should. |
+| `tests/run_duckdb_rows.py` | Executes a statement against fixture rows, transpiling Spark to DuckDB, for the trace suite. Reports a statement it could not run rather than reading it as an empty result. |
 
 Nothing here duplicates a check the build already makes. Three severities:
 `fail` is something the algorithm's own definition says cannot happen, `warn` is
@@ -303,6 +315,7 @@ None needs a connection.
 Rscript lot/engine/tests/test_runner.R
 Rscript lot/engine/tests/test_line_criteria.R
 Rscript lot/qc/tests/test_lot_qc.R
+Rscript lot/qc/tests/test_foldin_trace.R
 Rscript lot/melphalan/tests/test_melp_simple.R
 Rscript lot/validation/tests/test_vignettes.R
 ```

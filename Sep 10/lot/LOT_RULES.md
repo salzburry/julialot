@@ -374,6 +374,10 @@ drug the rule says is part of the line should read as part of it. The line's
 run-out is carried to the last day the drug's supply reaches, capped at
 observation, so the treatment the rule refuses a line to still sits inside one.
 
+To see the rule on real patients, `qc/trace_foldin.R` writes the raw episodes
+and final lines of the patients it touched in a finished run, the folded
+episode marked.
+
 The regimen names the drug **actually given** — a permissible substitute enters
 under its own abbreviation, not the one it stands in for.
 
@@ -393,7 +397,9 @@ Worked example: `biosimilar_switch`.
 
 The substitute is unioned into the previous line's regimen for this test, so it
 is excluded from `d_MED` the same way the reference product is.
-`permissible_subs.csv` names the pairs.
+`permissible_subs.csv` names the pairs, one row per pair: a row makes the pair
+one agent in both directions, so a pair the file lists both ways is read once,
+and a drug listed as its own substitute is dropped. The loader logs each.
 
 ### 4.5 Same-day starts break `SCT_ALLO > CART > SCT_AUTO > MED`
 

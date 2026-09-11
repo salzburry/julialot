@@ -43,7 +43,7 @@ mod_patterns <- function(con, cfg, cohort) {
     INNER JOIN %s p ON p.PATID = s.PATID AND p.COHORT = '%s'
     INNER JOIN %s c ON c.PATID = s.PATID
     WHERE s.LOT_NUM >= p.LOT_NUM AND s.LOT_START_DT <= p.FU_END",
-    wrk("S_SPINE"), wrk("S_PERIODS"), cohort$key, cfg$input_cohort_table))
+    wrk("S_SPINE"), wrk("S_PERIODS"), cohort$key, input_cohort_tbl()))
 
   prepare_table(con, wrk("S_PATTERNS"),
     "COHORT string, LOT_NUM int, SOC_CATEGORY string,

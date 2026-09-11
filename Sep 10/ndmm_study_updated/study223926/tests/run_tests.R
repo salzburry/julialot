@@ -49,7 +49,11 @@ stubbed <- function(fn, env, also = c("describe_columns", "ensure_columns", "ens
   environment(fn) <- env
   fn
 }
-base_env <- c(INPUT_COHORT_TABLE = "ndmm_NDMM_COHORT", OBJECT_PREFIX = "s223926_")
+# The schema variables blank, so a host that carries one of them does not
+# decide what a test sees.
+base_env <- c(INPUT_COHORT_TABLE = "ndmm_NDMM_COHORT", OBJECT_PREFIX = "s223926_",
+              WORK_SCHEMA = "", PROJECT_WORK_SCHEMA = "", DOMINO_USER_NAME = "",
+              DOMINO_STARTING_USERNAME = "")
 cfg0 <- function(extra = c()) with_env(c(base_env, extra), cfg_defaults())
 
 # The modules, run against recorders. Computed once here because several checks
@@ -364,6 +368,27 @@ cat("\ncode lists\n")
   unlink(tmp, recursive = TRUE)
 }
 
+cat("\nthe cohort table, as SQL names it\n")
+{
+  # Bare, the name resolved against the session's current schema: the working
+  # schema on a cluster session, `default` over the ODBC warehouse - and every
+  # scenario stopped at DESCRIBE with ndmm_NDMM_COHORT "cannot be found".
+  set_study_config(local({ c1 <- cfg0(); c1$work_schema <- "osk02156"; c1 }))
+  ok(identical(input_cohort_tbl(), "hive_metastore.osk02156.ndmm_NDMM_COHORT"),
+     "the input cohort table is read under the run's catalog and schema, like every other table")
+  ok(identical(cfg0()$input_cohort_table, "ndmm_NDMM_COHORT"),
+     "...while the setting itself stays the bare name the LOT status row records, for the lineage comparison")
+  set_study_config(local({ c1 <- cfg0(c(INPUT_COHORT_TABLE = "other_cat.their_schema.NDMM_COHORT")); c1$work_schema <- "osk02156"; c1 }))
+  ok(identical(input_cohort_tbl(), "other_cat.their_schema.NDMM_COHORT"),
+     "...and a name given already qualified is used as it is")
+  set_study_config(cfg0())
+  bare <- Filter(function(x) grepl("(^|[^.A-Za-z0-9_])ndmm_NDMM_COHORT", x$sql), RUN$sql)
+  ok(!length(bare),
+     paste0("no emitted statement names the cohort table bare (", length(bare), " did)"))
+  ok(sum(grepl("hive_metastore.wk.ndmm_NDMM_COHORT", vapply(RUN$sql, function(x) x$sql, character(1)), fixed = TRUE)) >= 6,
+     "...and every module that reads it names it under the work schema")
+}
+
 cat("\nthe connection layer\n")
 {
   ok(length(split_statements("CREATE TABLE a (x int); INSERT INTO a VALUES (1)")) == 2,
@@ -382,6 +407,25 @@ cat("\nthe connection layer\n")
   ok(identical(split_statements("/* ' */ SELECT 1;SELECT 2"),
                c("/* ' */ SELECT 1", "SELECT 2")),
      "a lone quote inside a block comment does not swallow the rest")
+  # Spark's escape inside a string is the backslash, which is how a staged
+  # code list writes its values. The splitter read \' as the end of the
+  # string: 'Alzheimer\'s disease' was refused as unterminated before it
+  # reached the driver, and a label with two apostrophes and a ; between them
+  # was cut into two statements.
+  ok(identical(split_statements("SELECT 'Alzheimer\\'s disease' AS v; SELECT 2"),
+               c("SELECT 'Alzheimer\\'s disease' AS v", "SELECT 2")),
+     "a backslash-escaped quote does not end the string")
+  ok(identical(split_statements("SELECT 'Patient\\'s symptom; clinician\\'s note' AS v"),
+               "SELECT 'Patient\\'s symptom; clinician\\'s note' AS v"),
+     "...so a semicolon between two of them stays inside the statement")
+  ok(identical(split_statements("SELECT 'a\\\\'; SELECT 2"), c("SELECT 'a\\\\'", "SELECT 2")),
+     "...while a quote behind a doubled backslash - a backslash in the value - does end it")
+  ok(identical(split_statements("SELECT 'a\\\\\\''; SELECT 2"), c("SELECT 'a\\\\\\''", "SELECT 2")),
+     "...and behind three, it is escaped again: what counts is whether the run is odd")
+  ok(!is.na(errs(split_statements("SELECT 'a\\'"))),
+     "...and a string that ends in an escaped quote is still unterminated")
+  ok(identical(split_statements("SELECT `a\\`; SELECT 2"), c("SELECT `a\\`", "SELECT 2")),
+     "a backtick identifier has no backslash escape, so a backslash before its closing backtick means nothing")
   ok(identical(split_statements("SELECT 'a' || 'b'; SELECT 2"),
                c("SELECT 'a' || 'b'", "SELECT 2")),
      "two literals in a row are two literals, not one escaped quote")
@@ -465,6 +509,25 @@ cat("\nthe connection layer\n")
      "...on the DSN the cohort build defaults to, overridable")
   ok(identical(cfg0(c(DATABRICKS_PWD = "s3cret"))$pwd, "s3cret") && identical(cfg0()$pwd, ""),
      "...with the password from the environment alone")
+  # The schema a run writes into, resolved as the cohort and LOT builds
+  # resolve theirs. The deploy guide had the Job export PROJECT_WORK_SCHEMA
+  # and this package did not read it; and a schema given with its catalog,
+  # as it reads on the warehouse, was prefixed with the catalog again.
+  ok(identical(cfg0()$work_schema, "") &&
+       identical(cfg0(c(WORK_SCHEMA = "osk02156"))$work_schema, "osk02156") &&
+       identical(cfg0(c(PROJECT_WORK_SCHEMA = "proj"))$work_schema, "proj") &&
+       identical(cfg0(c(DOMINO_USER_NAME = "usr00000"))$work_schema, "usr00000") &&
+       identical(cfg0(c(WORK_SCHEMA = "w", PROJECT_WORK_SCHEMA = "p", DOMINO_USER_NAME = "u"))$work_schema, "w"),
+     "the work schema resolves as the cohort and LOT builds resolve theirs: WORK_SCHEMA, then PROJECT_WORK_SCHEMA, then the Domino user's own schema, else the session's")
+  ok(identical(cfg0(c(WORK_SCHEMA = "hive_metastore.osk02156"))$work_schema, "osk02156") &&
+       identical(with_env(c(base_env, WORK_SCHEMA = "hive_metastore.osk02156"),
+                          { set_study_config(cfg_defaults()); wrk("S_SPINE") }),
+                 "hive_metastore.osk02156.s223926_S_SPINE"),
+     "...a schema given with its catalog is read as the schema - handed over whole it became hive_metastore.hive_metastore.osk02156, a name with too many parts")
+  set_study_config(cfg0())
+  ok(grepl("DATABRICKS_CATALOG", errs(cfg0(c(WORK_SCHEMA = "other.osk02156")))) &&
+       grepl("not a schema name", errs(cfg0(c(PROJECT_WORK_SCHEMA = "a.b.c")))),
+     "...while a catalog that is not the run's, or a name that is not a schema, stops at config time")
 
   # connect_db() over odbc opens the driver through odbc_connect(), the one
   # call a test cannot make, and stops by name when the password is missing.
@@ -543,6 +606,27 @@ cat("\nthe connection layer\n")
   e_cp <- errs(stubbed(register_codelist_view, renv, also = character(0))(spark_con, cl, "CL_Y", c("code", "icd_family")))
   ok(!is.na(e_cp) && !any(grepl("VALUES", said, fixed = TRUE)),
      "...and over a Spark session a code list is copied, never staged as SQL text")
+  # The whole path from the list to the driver - register_codelist_view(),
+  # db_exec(), the splitter - with only the driver call answered. The
+  # encoder wrote the apostrophe correctly and the splitter then refused the
+  # statement as unterminated, so a label with an apostrophe never reached
+  # the warehouse; one with two and a semicolon between them reached it in
+  # three pieces.
+  reached <- character(0)
+  penv <- new.env(parent = environment(register_codelist_view))
+  penv$dbi_exec <- function(con, sql) { reached <<- c(reached, sql); 1L }
+  penv$with_retry <- function(fn, ...) fn()
+  penv$log_msg <- function(...) invisible(NULL)
+  stage_path <- stubbed(register_codelist_view, penv, also = c("db_exec", "db_exec_once"))
+  labels <- c("Alzheimer's disease", "Patient's symptom; clinician's note", "plain")
+  cl_lab <- data.frame(condition = labels, code = c("G30", "R69", "Z00"), stringsAsFactors = FALSE)
+  v <- stage_path(dbi_con, cl_lab, "CL_LAB", c("condition", "code"))
+  ok(identical(v, "CL_LAB") && length(reached) == 2L &&
+       grepl("TEMPORARY VIEW cl_lab_raw AS", reached[1], fixed = TRUE) &&
+       grepl("('Alzheimer\\'s disease', 'G30')", reached[1], fixed = TRUE) &&
+       grepl("('Patient\\'s symptom; clinician\\'s note', 'R69')", reached[1], fixed = TRUE) &&
+       grepl("TEMPORARY VIEW CL_LAB AS", reached[2], fixed = TRUE),
+     "from the list to the driver, an apostrophe in a label and a semicolon between two of them reach it as two whole statements: the stage and the view")
   # The stage statement is Spark SQL, checked by the same parser the emitted
   # statements go through; SKIP rather than pass where it cannot run.
   sf <- tempfile(fileext = ".sql")
@@ -778,8 +862,10 @@ cat("\nregressions from the adversarial review\n")
      "a LOT run built over a different cohort table stops")
   ok(grepl("STUDY_END", lin_check(STUDY_END = "2025-12-31") %||% ""),
      "and so does one whose STUDY_END disagrees")
-  ok(!is.na(lin_check(STATE = "failed")),
-     "and one that did not finish")
+  e_failed <- lin_check(STATE = "failed")
+  ok(!is.na(e_failed) && grepl("not 'complete'", e_failed) &&
+       grepl("LOT build's own log", e_failed),
+     "and one that did not finish, saying where that build recorded why")
 
   # The cohort build's own contract, read back. Driven the same way: the
   # function is given a CONTRACT_SETTINGS string and its answer is checked,

@@ -72,6 +72,18 @@ identifier masked to its last six characters so the file can be circulated.
 executed against planted data: once clean, where it must count nothing, and
 once with the defect it describes planted, where it must count that.
 
+`qc/trace_foldin.R` is for seeing the fold-in rule (`LOT_RULES.md` 4.8) on
+real patients: the study team asked to look at patients the rule touched, their
+raw MAP episodes beside the final lines. The persisted tables carry no fold
+flag, so it reads the fold's signature instead: a regimen drug the previous
+line carried, no episode inside the line's induction window, and an episode
+inside the line. That is the same route check C1 accepts. It writes one trace
+per patient to `qc/out/`, ids unmasked so the patient can be looked up.
+
+```bash
+OBJECT_PREFIX=ndmm_ TRACE_EXECUTE=TRUE Rscript qc/trace_foldin.R
+```
+
 ### `validation/` — the edge-case catalogue
 
 Thirty vignettes: the patients the algorithm is hardest on, each with the
@@ -117,9 +129,10 @@ checked with instead is its test suites, which need no warehouse at all.
 
 | suite | checks |
 |---|---|
-| `engine/tests/test_runner.R` | 523 |
+| `engine/tests/test_runner.R` | 527 |
 | `engine/tests/test_line_criteria.R` | 57 |
 | `qc/tests/test_lot_qc.R` | 295 |
+| `qc/tests/test_foldin_trace.R` | 128 |
 | `melphalan/tests/test_melp_simple.R` | 161 |
 | `validation/tests/test_vignettes.R` | 36 |
 

@@ -1814,6 +1814,43 @@ ok(setequal(loaded_files, CLFILES),
    paste0("the declared code lists are exactly the ones read (",
           length(CLFILES), ")"))
 
+# 5. permissible_subs.csv is read flat. The study team's file lists one pair
+#    both ways and one drug as its own substitute. One row already makes a
+#    pair one agent in both directions, and the mirror made the sites that
+#    collapse a drug to its original swap the two instead - the chain check
+#    refused the file, which the earlier build had accepted. A genuine chain
+#    or star is left for the check.
+cl_env$log_msg <- function(...) invisible(NULL)
+norm <- get("normalise_permissible_subs", envir = cl_env)
+subs <- data.frame(original_med   = c("BORT", "IXAZ", "DARA", "LEN",  "A", "B"),
+                   substitute_med = c("IXAZ", "BORT", "DARA", "LENB", "B", "C"),
+                   stringsAsFactors = FALSE)
+flat <- norm(subs)
+ok(identical(paste(flat$original_med, flat$substitute_med),
+             c("BORT IXAZ", "LEN LENB", "A B", "B C")),
+   "a pair listed both ways is read once, a drug as its own substitute not at all, and a chain is left for the check")
+rev <- norm(subs[nrow(subs):1, ])
+ok(setequal(paste(rev$original_med, rev$substitute_med),
+            paste(flat$original_med, flat$substitute_med)),
+   "...and the row kept does not depend on the order the file lists them in")
+said <- character(0)
+cl_env$log_msg <- function(...) said <<- c(said, paste0(...))
+invisible(norm(subs))
+ok(sum(grepl("mirror of BORT -> IXAZ", said)) == 1 && sum(grepl("DARA is listed as its own", said)) == 1,
+   "...each dropped row is logged by name")
+# Through the loader itself, over a file shaped like the production one.
+cldir <- tempfile(); dir.create(cldir)
+writeLines(c("original_med,substitute_med", "BORT,IXAZ", "IXAZ,BORT", "DARA,DARA"),
+           file.path(cldir, "permissible_subs.csv"))
+cl_env$lot_config <- function() list(codelist_dir = cldir)
+cl_env$log_msg <- function(...) invisible(NULL)
+subs_sql <- get("load_codelist_csv", envir = cl_env)("permissible_subs.csv",
+                                                     c("original_med", "substitute_med"))
+ok(grepl("('BORT', 'IXAZ')", subs_sql, fixed = TRUE) && !grepl("('IXAZ', 'BORT')", subs_sql, fixed = TRUE) &&
+     !grepl("('DARA', 'DARA')", subs_sql, fixed = TRUE),
+   "...so the view the engine builds carries one row for the pair and none for the self-row")
+unlink(cldir, recursive = TRUE)
+
 cat("\n-- config.csv and CONTRACT say the same thing --\n")
 # These were compared against a third copy of the values kept in this file, so
 # CONTRACT could drift from both and nothing said so - changing max_lot to 6L

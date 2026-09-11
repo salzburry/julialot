@@ -124,6 +124,22 @@ lot_tbl <- function(base_tbl) {
   p <- if (nzchar(cfg$lot_prefix)) cfg$lot_prefix else cfg$object_prefix
   sprintf("%s.%s.%s%s", cfg$catalog, cfg$work_schema, p, base_tbl)
 }
+# The cohort table the study was pointed at, as SQL names it.
+#
+# INPUT_COHORT_TABLE is the bare name the cohort build wrote it under - the
+# name the LOT status row records and the lineage check compares, so that
+# stays bare in cfg. In SQL the run's own catalog and schema go in front of
+# it, as the LOT engine does with the same name. Used bare, it resolved
+# against the session's current schema: on a cluster session that was the
+# working schema, over the ODBC warehouse it was `default`, and every
+# scenario stopped at DESCRIBE with the table "cannot be found". A name given
+# already qualified is used as it is.
+input_cohort_tbl <- function() {
+  cfg <- study_config()
+  nm <- trimws(cfg$input_cohort_table)
+  if (grepl(".", nm, fixed = TRUE)) nm
+  else sprintf("%s.%s.%s", cfg$catalog, cfg$work_schema, nm)
+}
 
 # One string for one BUILD of a run, from the timestamp its status row carries.
 #
@@ -258,8 +274,23 @@ ensure_columns <- function(con, name, cols) {
 # ANSI mode a double quote is an identifier too, and without it a `;` inside
 # either would have cut a statement in half. Each is closed by itself, and
 # doubled inside means an escaped one - the same rule for all three.
+#
+# Inside a string literal Spark's escape is the backslash, and a staged code
+# list writes its values that way (codelist_stage_sql): \' is a quote in the
+# value, \\ a backslash, so a quote preceded by an ODD number of backslashes
+# does not close the string. Without that rule 'Alzheimer\'s disease' closed
+# at the apostrophe and the statement was refused as unterminated, and a
+# label with two apostrophes and a semicolon between them was cut in half.
+# A backtick identifier has no backslash escape, so the rule is for the two
+# string quotes only.
 .SQL_TOKENS <- "--|/\\*|'|\"|`|;|\n"
 .SQL_QUOTES <- c("'", "\"", "`")
+
+.escaped_by_backslash <- function(sql, p) {
+  k <- 0L; j <- p - 1L
+  while (j >= 1L && substr(sql, j, j) == "\\") { k <- k + 1L; j <- j - 1L }
+  k %% 2L == 1L
+}
 
 split_statements <- function(sql) {
   g   <- gregexpr(.SQL_TOKENS, sql)
@@ -300,8 +331,11 @@ split_statements <- function(sql) {
       # A doubled quote inside a quoted run is an escaped one, not the end.
       # Adjacent by POSITION, not merely the next token: 'a' || 'b' has two
       # quotes in a row with text between them, and the first string closes.
+      # So is a string quote behind an odd run of backslashes.
       if (ch == qch) {
-        if (i < n && tok[i + 1L] == qch && pos[i + 1L] == pos[i] + 1L)
+        if (qch != "`" && .escaped_by_backslash(sql, pos[i])) {
+          # escaped: the string goes on
+        } else if (i < n && tok[i + 1L] == qch && pos[i + 1L] == pos[i] + 1L)
           i <- i + 1L
         else state <- "code"
       }

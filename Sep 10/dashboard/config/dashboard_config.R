@@ -26,7 +26,7 @@ dashboard_config <- function() {
     # warehouse  read the S_* tables live over sparklyr/DBI
     # synthetic  generated in-process; no warehouse, no files
     source          = .env_chr("DASH_SOURCE", "synthetic"),
-    snapshot_dir    = .env_chr("DASH_SNAPSHOT_DIR", "/mnt/artifacts/results"),
+    snapshot_dir    = .env_chr("DASH_SNAPSHOT_DIR", "/mnt/data/NDMM"),
     catalog         = .env_chr("DASH_CATALOG", "hive_metastore"),
     work_schema     = .env_chr("DASH_WORK_SCHEMA", ""),
     # Scenario prefixes to offer. Empty means discover them.

@@ -13,6 +13,7 @@ INPUT_COHORT_TABLE,,The cohort table the LOT run was built over (e.g. ndmm_NDMM_
 OBJECT_PREFIX,,Prefix for every table this package writes
 COHORT_PREFIX,,The cohort build's prefix if it differs from this run's
 LOT_PREFIX,,The LOT build's prefix if it differs from this run's
+WORK_SCHEMA,,"Schema the study writes into, and reads the cohort and LOT tables from. Blank: PROJECT_WORK_SCHEMA, then DOMINO_USER_NAME, then the session's current schema - as the cohort and LOT builds resolve theirs. catalog.schema is accepted when the catalog is DATABRICKS_CATALOG"
 #,,--- study periods: OPEN_QUESTIONS Q1 ---
 STUDY_START,2018-01-01,Study period start. Protocol s7.1 text. Figures 1 and 2 say 2016-01-01 - see OPEN_QUESTIONS Q1
 STUDY_END,2026-03-31,Study period end; also picks the quarterly table suffix
