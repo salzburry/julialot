@@ -374,6 +374,10 @@ drug the rule says is part of the line should read as part of it. The line's
 run-out is carried to the last day the drug's supply reaches, capped at
 observation, so the treatment the rule refuses a line to still sits inside one.
 
+To see the rule on real patients, `qc/trace_foldin.R` writes the raw episodes
+and final lines of the patients it touched in a finished run, the folded
+episode marked.
+
 The regimen names the drug **actually given** — a permissible substitute enters
 under its own abbreviation, not the one it stands in for.
 
