@@ -136,6 +136,13 @@ ok(has(RUNNER, "foldin_trace_subs_sql(t)") && has(RUNNER, "subs = subs"),
    "the substitute pairs are read and handed to the renderer")
 ok(has(RUNNER, "TRACE_PATIDS refused") && has(RUNNER, "TRACE_N refused"),
    "a refused list or count is printed in the plan, not swallowed")
+# The rendering is given the traced patients' folds, not the run's. The counts
+# and the sample keep the whole frame: those are population questions.
+ok(has(RUNNER, "folds <- cands[as.character(cands$PATID) %in% ids, , drop = FALSE]") &&
+     has(RUNNER, "foldin_trace_annotate(lines, eps, tx, folds, p") &&
+     has(RUNNER, "foldin_trace_summary(cands,") &&
+     has(RUNNER, "foldin_trace_sample(cands,"),
+   "annotation reads the traced patients' folds; the counts and the sample read them all")
 ok(has(RUNNER, "SELECT RUN_ID, STATE, UPDATED_AT, CONTRACT_DEVIATIONS") &&
      has(RUNNER, "build_pin <- foldin_trace_build_pin"),
    "the status read carries UPDATED_AT, and the pin is the module's")
@@ -309,6 +316,16 @@ ok(!is.unsorted(A$MAP_START_DT) && nrow(A) == nrow(EPS), "rows come back in date
 ok(identical(names(A), c("PATID", "MAP_START_DT", "MAP_END_DT", "MAP_MED_RUNOUT_DT", "MAP_MED_TYPE",
                          "MAP_MED_CLASS", "MAP_CNT", "MAP_DISCON_FLG", "line", "note")),
    "the columns are the ones the CSV and the markdown table name")
+# The runner hands in the traced patients' folds rather than the run's, which
+# is a whole-population frame asked once per episode. The answer is the same
+# either way, and that is what makes the narrowing safe rather than a change.
+FOLDS_MANY <- rbind(FOLDS, data.frame(
+  PATID = paste0("Q", 1:50), LOT_NUM = 2L, MED_ABBR = "LEN",
+  LOT_START_DT = as.Date("2020-07-01"), ELIGIBLE_END = as.Date("2020-07-30"),
+  LOT_BASE_END_DT = as.Date("2020-12-31"), PREV_BASE_MEDS = "BORT LEN",
+  RETURN_DT = as.Date("2020-08-15"), stringsAsFactors = FALSE))
+ok(identical(foldin_trace_annotate(LINES, EPS, NULL, FOLDS_MANY, P), A),
+   "another patient's folds in the frame change nothing, so the narrowed input is the same answer")
 # A transplant event: interleaved as a row of its own, and it opens the line
 # it started.
 LINES_TX <- LINES; LINES_TX$LOT_START_TYPE[2] <- "SCT_AUTO"
@@ -421,14 +438,20 @@ LINES_2 <- LINES; LINES_2$LOT_BASE_MEDS[2] <- "CARF LEN BORT"
 EPS_2 <- rbind(EPS_COV, epi("BORT", "2020-10-15", "2020-11-15"))
 N_1ST <- foldin_trace_narrative(FOLDS_2[1, ], LINES_2, EPS_2, P, all_folds = FOLDS_2)
 N_2ND <- foldin_trace_narrative(FOLDS_2[2, ], LINES_2, EPS_2, P, all_folds = FOLDS_2)
-ok(has(N_1ST, "MED_ADD on 2020-08-14") && !has(N_1ST, "already parted"),
+ok(has(N_1ST, "MED_ADD on 2020-08-14") && !has(N_1ST, "cannot be read from these tables alone"),
    "the earliest return still gets the boundary: up to it the two histories are the same")
-ok(has(N_2ND, "already parted from this one at the earlier return of LEN on 2020-08-15") &&
-     has(N_2ND, "would not be LOT 2") && has(N_2ND, "APPLY_MAP_FOLDIN=FALSE"),
-   "a later return says where the history parted and where an exact one comes from")
+ok(has(N_2ND, "cannot be read from these tables alone") &&
+     has(N_2ND, "earlier return of LEN on 2020-08-15") && has(N_2ND, "APPLY_MAP_FOLDIN=FALSE"),
+   "a later return says the reading stops at the earlier one, and what settles it")
 ok(!has(N_2ND, "MED_ADD") && !has(N_2ND, "DISCONTINUATION") && !has(N_2ND, "CART_INIT") &&
      !has(N_2ND, "would have ended LOT"),
    "...and asserts no end date of its own, which is the finding: LOT 2 cannot end twice")
+# ...and no line NUMBER either. Saying the earlier return would have opened a
+# line, so this one is elsewhere, is the same guess in the other direction -
+# and it is wrong under bridging, where the numbering is the same either way.
+ok(!grepl("would not be LOT", N_2ND) && !grepl("opened another", N_2ND) &&
+     !grepl("numbered differently", N_2ND) && !grepl("different (line|LOT) number", N_2ND),
+   "...and claims nothing about which line the later return would have been in")
 ok(has(N_2ND, "BORT was in LOT 1's regimen") && has(N_2ND, "returned on 2020-10-15") &&
      has(N_2ND, "joined LOT 2's regimen"),
    "...while still describing the fold itself, which is what the observed tables do say")
@@ -438,7 +461,8 @@ N_SD1 <- foldin_trace_narrative(FOLDS_SD[1, ], LINES_2, EPS_2, P, all_folds = FO
 N_SD2 <- foldin_trace_narrative(FOLDS_SD[2, ], LINES_2, EPS_2, P, all_folds = FOLDS_SD)
 ok(has(N_SD1, "MED_ADD on 2020-08-14") && has(N_SD1, "BORT returned the same day") &&
      has(N_SD2, "MED_ADD on 2020-08-14") && has(N_SD2, "LEN returned the same day") &&
-     !has(N_SD1, "already parted") && !has(N_SD2, "already parted"),
+     !has(N_SD1, "cannot be read from these tables alone") &&
+     !has(N_SD2, "cannot be read from these tables alone"),
    "two returns on one day are one boundary, and each paragraph names the other drug")
 # The single-fold reading is unchanged, so a patient with one fold reads as
 # it did: the divergence clause costs nothing where nothing diverges.
@@ -448,12 +472,34 @@ ok(identical(foldin_trace_narrative(FOLDS[1, ], LINES, EPS, P, all_folds = FOLDS
 SEC2 <- foldin_trace_patient_md("P000001", FOLDS_2[c(2, 1), , drop = FALSE], LINES_2, EPS_2,
                                 foldin_trace_annotate(LINES_2, EPS_2, NULL, FOLDS_2, P), P)
 ok(min(grep("LEN was in", SEC2)) < min(grep("BORT was in", SEC2)) &&
-     any(grepl("already parted", SEC2)) &&
-     min(grep("already parted", SEC2)) > min(grep("MED_ADD on 2020-08-14", SEC2)),
+     any(grepl("cannot be read from these tables alone", SEC2)) &&
+     min(grep("cannot be read from these tables alone", SEC2)) > min(grep("MED_ADD on 2020-08-14", SEC2)),
    "the section puts the returns in date order, so the boundary is stated before the divergence")
-ok(sum(grepl("already parted", SEC2)) == 1 &&
+ok(sum(grepl("cannot be read from these tables alone", SEC2)) == 1 &&
      sum(grepl("would have ended (MED_ADD|DISCONTINUATION|CART_INIT)", SEC2)) == 1,
    "...and one patient gets one dated end, whatever order the folds arrived in")
+# BRIDGING, where the line numbering does NOT change. Two returns inside one
+# CAR-T's consolidation window: LOT 2 ends on the infusion's eve and the CAR-T
+# opens the next line with the rule off as well as on, so the later return is
+# in LOT 2 in both builds. A paragraph promising it a different line would be
+# wrong here, which is why the deferral names no line at all.
+L_BR <- LINES; L_BR$LOT_BASE_END_DT[2] <- as.Date("2020-06-28")
+L_BR$LOT_BASE_MEDS[2] <- "CARF LEN BORT"; L_BR$LOT_BASE_END_REASON[2] <- "CART_INIT"
+L_BR$ELIGIBLE_END[2] <- as.Date("2020-04-19"); L_BR$LOT_START_DT[2] <- as.Date("2020-04-10")
+F_BR <- FOLDS_2; F_BR$LOT_START_DT <- as.Date("2020-04-10")
+F_BR$ELIGIBLE_END <- as.Date("2020-04-19"); F_BR$LOT_BASE_END_DT <- as.Date("2020-06-28")
+F_BR$RETURN_DT <- as.Date(c("2020-05-20", "2020-05-30"))
+E_BR <- rbind(epi("CARF", "2020-04-10", "2020-08-15"), epi("LEN", "2020-05-20", "2020-06-20"),
+              epi("BORT", "2020-05-30", "2020-06-30"))
+TX_BR <- data.frame(PATID = "P000001", TX_DT = as.Date("2020-06-29"), TX_TYPE = "CART",
+                    stringsAsFactors = FALSE)
+N_BR1 <- foldin_trace_narrative(F_BR[1, ], L_BR, E_BR, P, tx = TX_BR, all_folds = F_BR)
+N_BR2 <- foldin_trace_narrative(F_BR[2, ], L_BR, E_BR, P, tx = TX_BR, all_folds = F_BR)
+ok(has(N_BR1, "CART_INIT on 2020-06-28") && has(N_BR1, "CAR-T on 2020-06-29"),
+   "bridging: the first return's line ends on the infusion's eve, which is what the build does either way")
+ok(!grepl("would not be LOT", N_BR2) && !grepl("LOT 3", N_BR2) &&
+     has(N_BR2, "cannot be read from these tables alone"),
+   "...and the second return is told nothing about its line, because here the numbering does not move")
 
 cat("\n-- rendering and masking --\n")
 ok(identical(mask_patid_r("P0000ABCDEF"), "...abcdef"), "mask: '...' and the last six characters, lower case")

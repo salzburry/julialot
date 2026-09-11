@@ -86,12 +86,20 @@ because an App reads a Dataset it has attached and does not see another run's
 artifacts. Attach the Dataset to the App (the Data step of the publish
 dialog) and to the Job that writes it; both see it under `/mnt/data/<name>`.
 
-`/mnt/data/NDMM` is the path a **local** Dataset of this project takes, which is
-what the Job creates. A Dataset imported from another project, or a deployment
-on a different file system, mounts somewhere else and under a name the platform
-chooses. So read the mount path off the Data step of the publish dialog rather
-than assuming this one, and give `DASH_SNAPSHOT_DIR` what it says. The two only
-have to agree with each other: nothing in the app requires a particular path.
+Create the Dataset first. The Job does not make one: it writes directories and
+files into whatever is already mounted at `DASH_SNAPSHOT_DIR`, so with no
+writable Dataset attached there it either writes into the run's own container,
+which disappears with it, or fails on a read-only path. Create or select a
+writable Dataset in the project, attach it to the Job and to the App, and point
+`DASH_SNAPSHOT_DIR` at its mount; the Job then fills in the scenario
+directories under it.
+
+`/mnt/data/NDMM` is the path a **local** Dataset of this project takes. A
+Dataset imported from another project, or a deployment on a different file
+system, mounts somewhere else and under a name the platform chooses. So read
+the mount path off the Data step of the publish dialog rather than assuming
+this one, and give `DASH_SNAPSHOT_DIR` what it says. The two only have to agree
+with each other: nothing in the app requires a particular path.
 
 The last one matters. It makes an App configured for synthetic numbers refuse
 to start and say why, so nobody quotes generated data because the default was

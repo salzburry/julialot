@@ -236,9 +236,18 @@ main <- function() {
     lines <- db_q(con, foldin_trace_lines_sql(t, ids, p))
     eps   <- db_q(con, foldin_trace_episodes_sql(t, ids))
     tx    <- db_q(con, foldin_trace_tx_sql(t, ids))
-    ann   <- foldin_trace_annotate(lines, eps, tx, cands, p, subs = subs)
+    # The folds of the traced patients, and ALL of each one's folds: the
+    # rendering needs the whole set per patient, since a paragraph has to know
+    # whether its return is the patient's first. The full frame stays as it
+    # is for the counts and the sample, which are population questions.
+    #
+    # Narrowed because the annotation asks the fold set once per episode, so
+    # the whole run's folds were rescanned for every episode of ten patients -
+    # the same notes, off a frame three orders of magnitude too big.
+    folds <- cands[as.character(cands$PATID) %in% ids, , drop = FALSE]
+    ann   <- foldin_trace_annotate(lines, eps, tx, folds, p, subs = subs)
     for (id in ids) {
-      folds_p <- cands[as.character(cands$PATID) == id, , drop = FALSE]
+      folds_p <- folds[as.character(folds$PATID) == id, , drop = FALSE]
       lines_p <- lines[as.character(lines$PATID) == id, , drop = FALSE]
       eps_p   <- eps[as.character(eps$PATID) == id, , drop = FALSE]
       tx_p    <- tx[as.character(tx$PATID) == id, , drop = FALSE]
