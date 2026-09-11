@@ -449,22 +449,32 @@ foldin_trace_annotate <- function(lines, episodes, tx, folds, p, subs = NULL) {
 # AND IT IS STATED ONCE PER PATIENT. The reading above is local: it asks what
 # the engine would have made of THIS return in the line as built. That holds
 # only while the two histories are still the same, which is up to the first
-# return the rule folded. After that one they part - without the rule it would
-# have ended its line and opened another, so every later return happens in a
-# line with a different number, a different start and a different regimen, and
-# nothing about its boundary can be read off tables built WITH the rule. A
-# patient whose LOT2 folds A in May and B ten days later is the case: the
-# paragraph for A is right, and a paragraph for B saying LOT2 would have ended
-# ten days later contradicts it, in the same report, about the same patient.
+# return the rule folded. From that one on, the line holding a later return
+# depends on what the engine would have done with the EARLIER one, and that is
+# not in these tables. A patient whose LOT2 folds A in May and B ten days
+# later is the case: the paragraph for A is right, and a paragraph for B
+# saying LOT2 would have ended ten days later contradicts it, in the same
+# report, about the same patient.
 #
 # So `all_folds` is the patient's whole fold set, and only the earliest return
-# in it carries a boundary. The rest say where the history parted and where an
-# exact alternative comes from, which is a build of the same cohort with
-# APPLY_MAP_FOLDIN=FALSE differenced against this one - the engine's own
-# answer, not a second copy of the end cascade written here. Returns sharing
-# the earliest date are one divergence and are named together: without the
-# rule they would have been added medications on that same day, so they would
-# have ended the line on the same date and opened the next one together.
+# in it carries a boundary. The rest name where the reading stops and what
+# settles it, which is a build of the same cohort with APPLY_MAP_FOLDIN=FALSE
+# differenced against this one - the engine's own answer, not a second copy of
+# the end cascade written here.
+#
+# AND THEY CLAIM NOTHING ABOUT THE LINE NUMBER. Saying the earlier return
+# "would have opened a line, so this one is not in LOT n" is a guess of the
+# same kind, and it is wrong where the earlier return is bridged: two returns
+# inside the consolidation window of one CAR-T end LOT n on the infusion's eve
+# either way (7.3), the CAR-T opens the next line either way, and the later
+# return is in LOT n in both builds - the regimen and the end reason differ,
+# the numbering does not. What the paragraph says instead is only that the
+# answer is not in these tables.
+#
+# Returns sharing the earliest date are one divergence and are named together:
+# without the rule they would have been added medications on that same day, so
+# they would have ended the line on the same date and arrived in the next one
+# together.
 foldin_trace_narrative <- function(fold_row, lines, episodes, p, tx = NULL, subs = NULL,
                                    all_folds = NULL) {
   f <- fold_row
@@ -559,13 +569,15 @@ foldin_trace_narrative <- function(fold_row, lines, episodes, p, tx = NULL, subs
            " would have arrived with it.") else ""
 
   pre <- if (diverged) {
-    paste0("Without the rule this patient's history had already parted from ",
-           "this one at the earlier return of ", paste(first_drugs, collapse = " and "),
-           " on ", format(first_ret), ": that return would have ended its line and ",
-           "opened another, so the line holding this return would not be LOT ", n,
-           " and no end date for it can be read off tables built with the rule. ",
-           "A build of the same cohort with APPLY_MAP_FOLDIN=FALSE, differenced ",
-           "against this one, is where an exact alternative history comes from.")
+    paste0("Without the rule this return cannot be read from these tables alone. ",
+           "The earlier return of ", paste(first_drugs, collapse = " and "), " on ",
+           format(first_ret), " is the first thing the rule decided for this patient, ",
+           "and whatever the engine would have made of THAT one is what the line ",
+           "holding this return depends on - its regimen, its end, and the lines ",
+           "after it. So no boundary is stated for this return here: one computed ",
+           "from a line built WITH the rule would belong to a history that may not ",
+           "be the one without it. A build of the same cohort with ",
+           "APPLY_MAP_FOLDIN=FALSE, differenced against this one, is what settles it.")
   } else if (is.na(own_end)) {
     paste0("Without the rule this return would not have joined LOT ", n, ". ",
            "The episodes read here show no cover for LOT ", n, "'s own regimen (", own_txt,
@@ -698,11 +710,13 @@ foldin_trace_markdown <- function(run_id, pfx, p, summary, patients_sections, ma
           paste0("Each section also says what the reading before the rule would ",
                  "have made of the return. That is a local reading of these tables ",
                  "and it is stated only for the FIRST return the rule folded in a ",
-                 "patient: after that one the two histories have parted, so a later ",
-                 "return sits in a line the without-rule build numbers differently ",
-                 "and its paragraph says so instead of guessing. An exact ",
-                 "alternative history comes from a build of the same cohort with ",
-                 "APPLY_MAP_FOLDIN=FALSE, differenced against this one."),
+                 "patient: what a later return would have been depends on what the ",
+                 "engine would have done with the earlier one, which these tables ",
+                 "do not record, so its paragraph says that rather than guess. It ",
+                 "does not say the line would have been numbered differently ",
+                 "either, since that is the same guess. A build of the same cohort ",
+                 "with APPLY_MAP_FOLDIN=FALSE, differenced against this one, is ",
+                 "what settles an alternative history."),
           "",
           paste0(if (is.na(n_candidates)) "" else paste0(n_candidates, " patient(s) carry a fold. "),
                  n_traced, " traced",
