@@ -70,7 +70,7 @@ phase_sct <- function(con, ctx) {
          paste(sct_dup$CL_CODE, collapse = ", "),
          " - one claim would become several transplants.", call. = FALSE)
   }
-  # ...and again ignoring the code type, for the types that share a claim
+  # The same again ignoring the code type, for the types that share a claim
   # column. The med_procedure join takes ICD10PROC, ICD9PROC or HCPCS against
   # mp.PROC, so one code under two of them matches the same row twice.
   sct_cross <- db_q(con, "
@@ -90,10 +90,9 @@ phase_sct <- function(con, ctx) {
   log_msg("  OK: Each SCT code names exactly one transplant type.")
 
   # The CASE above maps the spellings it knows and passes anything else
-  # through unchanged. Only AUTO, ALLO and CART are ever selected from.
-  # UNKNOWN is a bucket nothing reads. So an unmapped spelling raises no error.
-  # It simply never matches, those transplants stop existing, and no count says
-  # so.
+  # through unchanged. Only AUTO, ALLO and CART are ever selected from, so an
+  # unmapped spelling raises no error - those transplants simply stop existing,
+  # and no count says so.
   sct_unmapped <- db_q(con, "
     SELECT SCT_TYPE, count(*) AS n_codes
     FROM sct_codelist
@@ -267,20 +266,17 @@ phase_sct <- function(con, ctx) {
   #         The first claims are workup; the last is the transplant.
   #
   # Tandem boundary adjustment. When a 14-day window straddles the 180-day
-  # tandem boundary, measured from the previous finalized TX date, take the
-  # date closest to the boundary instead of the window's last. That is what
-  # makes the tandem call right. It is min |date - boundary| over the dates in
-  # the window. Worked example: TX_AUTO1 = 09MAY2018, the 180-day mark is
-  # ~05NOV2018, and the window 06NOV-20NOV picks 07NOV rather than 20NOV.
+  # tandem boundary, measured from the previous finalized TX date, take the date
+  # closest to the boundary instead of the window's last: min |date - boundary|
+  # over the dates in the window. Worked example: TX_AUTO1 = 09MAY2018, the
+  # 180-day mark is 05NOV2018, and the window 06NOV-20NOV picks 07NOV rather
+  # than 20NOV.
   #
-  # The boundary is prev + sct_tandem_days: the last day that still counts as a
-  # tandem. It has to be the same day the classification uses, and every
+  # The boundary is prev + sct_tandem_days, the last day that still counts as a
+  # tandem, and it has to be the same day the classification uses: every
   # classification site tests datediff(AUTO_DT_2, AUTO_DT_1) <= sct_tandem_days
-  # - see 05b_lot1_sct.R and 10_lot2_5_base.R. This target was prev + 179 while
-  # they tested <= 180, so a window across the seam was pulled to the wrong
-  # side. With claims on day 178 and day 181, aiming at 179 picks 178 and calls
-  # it a tandem; aiming at 180 picks 181 and opens a new line. The worked
-  # example says 180 too: 09MAY2018 + 180 is 05NOV2018.
+  # - see 05b_lot1_sct.R and 10_lot2_5_base.R. Aimed one day short, a window
+  # across the seam is pulled to the wrong side.
   #
   # Step 2: apply the 60-day minimum gap between events, merging anything
   # closer. The result is the finalized AUTO TX dates per patient.

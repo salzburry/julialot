@@ -31,8 +31,8 @@ clear <- function() for (v in paste0("APPLY_", toupper(c("c1","c2","c3","c4"))))
 
 cat("\n-- the shipped registry --\n")
 runs(validate_line_criteria(), "the shipped registry validates")
-# One criterion ships: the belantamab exclusion, applied here because
-# lines do not exist when the NDMM cohort is built. See ndmm/DECISIONS.md #2.
+# One criterion ships: the belantamab exclusion. It is applied here because
+# lines do not yet exist when the cohort build runs.
 ok(length(LINE_CRITERIA) == 1 &&
      identical(LINE_CRITERIA[[1]]$name, "no_belantamab"),
    "the belantamab exclusion is the one criterion shipped")
@@ -46,10 +46,9 @@ ok(identical(LINE_CRITERIA[[1]]$on_fail, "truncate") &&
 ok(grepl("GROUP BY s.PATID", LINE_CRITERIA[[1]]$patients, fixed = TRUE) &&
      grepl("p_no_belantamab.", LINE_CRITERIA[[1]]$sql, fixed = TRUE),
    "...and it is patient-level, so the patient goes, not just the line")
-# The point of the whole criterion: "any LOT" cannot mean "any LOT the build got
-# round to constructing". Reading LOT_BASE_MEDS or LOT_BASE_1ST_ADD_MED bounds
-# it by MAX_LOT and by which position in the line the drug held; asking the
-# claims does not.
+# "any LOT" must not collapse to "any LOT the build got round to constructing".
+# Reading LOT_BASE_MEDS or LOT_BASE_1ST_ADD_MED bounds it by MAX_LOT and by the
+# drug's position in the line; asking the claims does not.
 ok(!grepl("LOT_BASE_MEDS", LINE_CRITERIA[[1]]$sql, fixed = TRUE) &&
      !grepl("LOT_BASE_1ST_ADD_MED", LINE_CRITERIA[[1]]$sql, fixed = TRUE) &&
      grepl("map_stacked", LINE_CRITERIA[[1]]$patients, fixed = TRUE),
@@ -87,8 +86,7 @@ ok(!grepl("LEFT JOIN", line_criteria_flags_sql(cfg, "lot_long", "out", list(C_AN
    "a criterion that declares none is unchanged - no join, no alias")
 # Both names are built from the criterion's, so a rename that touches one and
 # not the other builds a view nothing joins, or reads an alias nothing defines.
-# Either way the predicate is NULL, the flag is 0... and with truncate that
-# silently removes every patient. Caught rather than run.
+# The predicate is then NULL, the flag 0, and truncate removes every patient.
 badmsg2 <- function(expr, want, what) {
   e <- tryCatch(expr, error = function(e) e)
   ok(inherits(e, "error") && grepl(want, conditionMessage(e), fixed = TRUE), what)
@@ -206,9 +204,8 @@ clear()
 
 cat("\n-- the belantamab abbreviation has to match the code list --\n")
 # The criterion tests LOT_BASE_MEDS for one MED_ABBR token. If the code list
-# does not use that token it matches nothing and excludes nobody - and "no
-# patient had belantamab" looks exactly like "the abbreviation is wrong". This
-# is the check that tells them apart, so it is driven, not read.
+# does not use that token it matches nothing and excludes nobody, which looks
+# exactly like a cohort in which no patient had belantamab.
 be <- new.env(parent = globalenv())
 assign("enabled_line_criteria", function(...) LINE_CRITERIA, envir = be)
 assign("log_msg", function(...) invisible(NULL), envir = be)

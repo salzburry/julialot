@@ -1,10 +1,7 @@
 #!/usr/bin/env Rscript
-# The melphalan rule the study adopted, against a build without it.
-#
-# This is the evidence the adoption decision rests on, kept runnable. It was
-# the comparison that produced the choice, and it is now the comparison that
-# shows what the choice did: the study build against one with no melphalan
-# rule at all.
+# The melphalan rule the study adopted, against a build without it. Kept
+# runnable: the comparison that produced the choice is the one that shows what
+# the choice did.
 #
 #   # print the plan; touches nothing, needs no connection
 #   INPUT_COHORT_TABLE=ndmm_NDMM_COHORT Rscript lot/melphalan/run_melp_simple.R
@@ -16,35 +13,24 @@
 #   # read cells already built, without rebuilding (after a failure in the read)
 #   ... MELP_SIMPLE_READ=TRUE Rscript lot/melphalan/run_melp_simple.R
 #
-# The rule under test, from the study team's follow-up note: melphalan received
-# for 28 days or fewer outside any induction window does not advance the line
-# on its own. If a new agent starts while
-# that course still covers, the next line starts on the MELPHALAN date, not
-# the agent's later one - their day-100/105 example.
+# The rule: melphalan received for 28 days or fewer outside any induction
+# window does not advance the line on its own. If a new agent starts while that
+# course still covers, the next line starts on the melphalan date, not the
+# agent's later one.
 #
 # Two complete LOT builds under their own melp_simple_* prefixes: one with no
-# melphalan rule, and the contract's short-course rule. The difference between
-# them is what the rule does, in patients.
+# melphalan rule, one with the contract's short-course rule. The difference
+# between them is what the rule does, in patients.
 #
-# Which cell is the deviation flipped when the rule was adopted. 'simplified'
-# is now the contract algorithm and carries no deviation; 'reference' is built
-# with APPLY_MELP_RULE=off under LOT_CONTRACT_OVERRIDE, is stamped in
+# 'simplified' is the contract algorithm and carries no deviation; 'reference'
+# is built with APPLY_MELP_RULE=off under LOT_CONTRACT_OVERRIDE, is stamped in
 # CONTRACT_DEVIATIONS, and every reader that resolves run ownership refuses it
-# as the study's numbers. That is correct: a build without the study's
-# melphalan rule is no longer the study's.
+# as the study's numbers. Both cells carry the contract's 28-day cap, so the
+# only difference between them is whether the rule runs.
 #
-# The course cap is the contract's 28 days and this package does not vary it.
-# Both cells are built at the contract value, so the only difference between
-# them is whether the rule runs at all.
-#
-# One thing is not settled by running this:
-#   - what "melphalan mono" should mean where MELP+DEX was collapsed to
-#     melphalan by the code list - steroids are not captured, so a
-#     melphalan-with-steroid line reads as melphalan alone here.
-#
-# The rule's branch behaviour, the day-100/105 case included, is pinned
-# against the engine's own SQL by a planted-patient harness in the
-# repository's check suite - see the checks list in the repository README.
+# Not settled by running this: what "melphalan mono" should mean where MELP+DEX
+# was collapsed to melphalan by the code list - steroids are not captured, so a
+# melphalan-with-steroid line reads as melphalan alone here.
 
 .script_dir <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -57,11 +43,10 @@ LOT_ROOT <- normalizePath(file.path(.script_dir, "..", "..", "lot", "engine"), m
 env_flag <- function(nm) identical(toupper(trimws(Sys.getenv(nm, unset = ""))), "TRUE")
 out_dir  <- melp_out_dir(.script_dir)
 
-# `mode` is the deviation a cell must record, and NA marks the contract build.
-# Both moved when the study adopted the rule: the simplified cell IS the
-# contract now, and the cell without the rule is the one that deviates.
-# `melp` is what each hands to APPLY_MELP_RULE, which is a separate thing -
-# the contract cell names its mode too, so an ambient setting cannot reach it.
+# `mode` is the deviation a cell must record, and NA marks the contract build:
+# the simplified cell is the contract, and the cell without the rule deviates.
+# `melp` is what each hands to APPLY_MELP_RULE - the contract cell names its
+# mode too, so an ambient setting cannot reach it.
 MELP_SIMPLE_CELLS <- list(
   list(id = "reference", mode = "off", melp = "off",
        what = "no melphalan rule - what the build did before the study adopted one"),
@@ -89,17 +74,12 @@ run_cell <- function(c_i, cohort, cohort_pfx) {
   st   <- trimws(Sys.getenv("COHORT_STATUS_TABLE", unset = ""))
   if (nzchar(st)) env <- c(env, paste0("COHORT_STATUS_TABLE=", st))
   # Both cells name their settings rather than inheriting the shell: a child
-  # gets the parent's exports, so an ambient value would otherwise reach one
-  # arm of the comparison and not the other.
-  #
-  # 'off' rather than an empty value, and that is not a style choice.
-  # load_inputs.R fills any variable that is unset OR empty from config.csv,
-  # which now carries the contract mode - so APPLY_MELP_RULE= would reach the
-  # child as 'simplified' and this cell would measure the contract against
-  # itself, with no error anywhere to say so.
-  #
-  # Both cells carry the contract's cap: the package varies the rule, not the
-  # threshold.
+  # gets the parent's exports, so an ambient value would reach one arm of the
+  # comparison and not the other. 'off' rather than an empty value, because
+  # load_inputs.R fills any variable that is unset or empty from config.csv,
+  # which carries the contract mode - APPLY_MELP_RULE= would reach the child as
+  # 'simplified' and measure the contract against itself. Both cells carry the
+  # contract's cap: the package varies the rule, not the threshold.
   env <- c(env, paste0("APPLY_MELP_RULE=", c_i$melp),
            "MELP_SIMPLE_COURSE_DAYS=28")
   # The override goes on the cell that is not the contract build - the

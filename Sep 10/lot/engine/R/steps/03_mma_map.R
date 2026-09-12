@@ -142,10 +142,9 @@ phase_mma_map <- function(con, ctx) {
   # Enrich + dedup.
   #
   # Written to a table rather than left as a view. Beneath it, mma_med_raw is
-  # the four-arm scan of `medical` and `rx` above. This is read six times over
-  # a run: map_med, the imputation check below, phase_qc's coverage table, and
-  # the two counts in phase_persist. Left lazy, that is six passes over the raw
-  # claim tables for one extraction.
+  # the four-arm scan of `medical` and `rx` above, and this is read six times
+  # over a run - so left lazy it is six passes over the raw claim tables for one
+  # extraction.
   materialize(con, "S05_mma_med_processed", view = "mma_med_processed", name = "MMA_MED_PROCESSED", body = glue("
     WITH enriched AS (
       SELECT

@@ -1,18 +1,15 @@
 # Edge-case vignettes for LOT assignment.
 #
 # A catalogue of the patients the algorithm is hardest on, each with the
-# assignment its rules give. It is a SPECIFICATION, not a set of observed
-# outputs: nothing here has been run against a warehouse, so a vignette says
-# what the rules say and marks how far that is from having been seen.
+# assignment its rules give. It is a specification, not a set of observed
+# outputs: a vignette says what the rules say and marks how far that is from
+# having been seen.
 #
-# The days that make a case hard are the configured parameters - 180 for a
-# tandem, 45 for CAR-T consolidation. A document quoting "day 181" is wrong the
-# moment one of them moves, and nothing says so.
-#
-# So every offset is DERIVED from the parameter that decides it, and the cases
-# come in pairs straddling it. check_vignettes() holds the catalogue to that:
-# the parameter has to exist, the pair has to straddle the value, and the two
-# sides have to disagree.
+# The days that make a case hard are configured parameters - 180 for a tandem,
+# 45 for CAR-T consolidation - so every offset is derived from the parameter
+# that decides it and the cases come in pairs straddling it. check_vignettes()
+# requires the parameter to exist, the pair to straddle the value, and the two
+# sides to disagree.
 #
 # Two confidence levels:
 #
@@ -22,10 +19,9 @@
 #               settles it. A claim about us, not about the algorithm.
 #
 # `where` is "path | anchor": the file, and a literal that has to appear in it.
-# It was "path:line", and line numbers do not survive editing - twelve of the
-# fourteen ended up pointing at whatever had drifted into their slot. The
-# anchor moves with the code it names, and test_vignettes.R greps for it, so a
-# citation whose rule has gone fails rather than misleading a reader.
+# A line number would not survive editing; an anchor moves with the code it
+# names, and test_vignettes.R greps for it, so a citation whose rule has gone
+# fails rather than misleading a reader.
 
 # The parameters a vignette may hinge on. Named rather than inlined, so a
 # renamed setting breaks the catalogue.
@@ -56,9 +52,9 @@ ev <- function(day, event, detail = "") {
 # `measure` is the quantity the parameter bounds, read off the events - the
 # gap between two transplants, the days from an addition to the CAR-T - and
 # `bound` says whether "within" means <= the value ("le") or < it ("lt").
-# check_vignettes() holds each pair to the VALUE with these. Adjacency and
-# ordering alone did not: a pair shifted ten days late was still adjacent,
-# still ordered, still disagreed - and both its sides were outside.
+# check_vignettes() holds each pair to the value with these; adjacency and
+# ordering alone would pass a pair shifted ten days late, with both sides
+# outside.
 VIGNETTES <- list(
 
   # ---- tandem transplant, the idea's first named case ---------------------
@@ -118,10 +114,9 @@ VIGNETTES <- list(
 
   # ---- CAR-T bridging, the idea's named 45-day case -----------------------
   # The addition sits on induction_window_days, not earlier: a LOT1 MED_ADD is
-  # an agent absent from the regimen, and the regimen is exactly the agents whose
-  # episode started inside that window - so an agent added inside it is in the
-  # regimen and is not an addition at all. Both cases carried an addition on d20,
-  # which the engine cannot produce.
+  # an agent absent from the regimen, and the regimen is exactly the agents
+  # whose episode started inside that window, so an agent added inside it is in
+  # the regimen and is not an addition at all.
   list(id = "cart_bridge_within", title = "CAR-T inside the consolidation window",
        param = "cart_consolidation_days", pair = "within", confidence = "derived",
        measure = function(e) e$day[e$event == "CART"] - e$day[e$event == "MED_ADD"], bound = "le",
@@ -545,15 +540,10 @@ check_vignettes <- function(p, v = VIGNETTES) {
   if (anyDuplicated(ids))
     bad <- c(bad, paste0("duplicate id: ", paste(unique(ids[duplicated(ids)]), collapse = ", ")))
 
-  # A vignette whose PARAMETER is unusable is recorded and then left alone.
-  #
-  # It used to fall through to its own events(), which compute their offsets
-  # from that parameter - so an unset one produced a day of NA, and the pair
-  # comparison below then raised "missing value where TRUE/FALSE needed"
-  # before this function could report anything. The catalogue's whole job here
-  # is to say WHICH rule stopped holding, and it was dying with an R error
-  # instead. The suite did not notice, because its test for this only asked
-  # that something was raised.
+  # A vignette whose parameter is unusable is recorded and then left alone.
+  # Its events() compute their offsets from that parameter, so an unset one
+  # gives a day of NA and the pair comparison below raises "missing value where
+  # TRUE/FALSE needed" instead of naming the rule that stopped holding.
   usable <- rep(TRUE, length(v))
   for (i in seq_along(v)) {
     x  <- v[[i]]
@@ -571,11 +561,10 @@ check_vignettes <- function(p, v = VIGNETTES) {
         usable[i] <- FALSE
       }
     }
-    # Redundant with the anyNA() branch below, which catches the same timeline
-    # and reports it - so removing this changes no verdict. It stays because
-    # events() is a function the catalogue supplies, and running one against a
-    # parameter already known to be unusable invites whatever error it happens
-    # to raise rather than the one this function means to give.
+    # Redundant with the anyNA() branch below, which catches the same timeline.
+    # It stays because events() is a function the catalogue supplies, and
+    # running one against a parameter already known to be unusable invites
+    # whatever error it happens to raise rather than this function's own.
     if (!usable[i]) next
     e <- tryCatch(x$events(p), error = function(err) NULL)
     if (is.null(e) || !nrow(e)) {
@@ -614,10 +603,9 @@ check_vignettes <- function(p, v = VIGNETTES) {
       bad <- c(bad, paste0("parameter '", nm, "': the 'beyond' case (d", db,
                            ") is not later than the 'within' case (d", dw, ")"))
     # Later is not enough. A pair that straddles the value from two days out
-    # tests that the rule exists, not where its edge is - and every off-by-one
-    # this catalogue has carried sat in that slack. The two sides must be
-    # ADJACENT, so 'within' is the last day inside and 'beyond' the first day
-    # outside. If that is wrong, one of them is on the wrong side of the edge.
+    # tests that the rule exists, not where its edge is, so the two sides must
+    # be adjacent: 'within' the last day inside, 'beyond' the first day
+    # outside.
     if (db > dw && db - dw != 1L)
       bad <- c(bad, paste0("parameter '", nm, "': the two sides are ", db - dw,
                            " days apart (d", dw, " and d", db, "), so neither is ",

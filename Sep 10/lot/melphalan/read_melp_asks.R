@@ -43,11 +43,8 @@ out_dir <- melp_out_dir(.script_dir)
 dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
 # The previous answers are removed before this read starts, not when it
-# finishes writing. Every check below can stop the read - a rebuilt cell, a code
-# fingerprint that does not match, a different cohort attempt - and each one
-# would otherwise leave older files in out/ with nothing marking them as old.
-# Removed up front, an interrupted read leaves no answer rather than a wrong
-# one.
+# finishes writing. Any check below can stop the read, and an interrupted read
+# should leave no answer rather than an older one that looks current.
 ASK_CSVS <- c("melp_ask1_line_duration.csv",
               "melp_ask1_paired_line_change.csv",
               "melp_ask1_line_count_change.csv",
@@ -68,24 +65,18 @@ cells <- melp_cell_plan(MELP_CELLS,
 tbl <- function(cell, name) paste0(cfg$catalog, ".", schema, ".", cell$prefix, name)
 
 # Provenance, through the package's own checks rather than a second set here.
-# Readable tables and a CAR-T setting are not enough to make two cells
-# comparable: melp_read_inputs / melp_check_inputs hold them to one cohort
-# attempt, one code hash, one code-list set and one study window, and
-# melp_check_deviations holds each to exactly its own intended deviation and
-# the reference to none. Without those, two cells built over two cohort
-# attempts read as a melphalan effect.
+# melp_read_inputs / melp_check_inputs hold the cells to one cohort attempt,
+# one code fingerprint, one code-list set and one study window, and
+# melp_check_deviations holds each to its own intended deviation. Without
+# those, two cells built over two cohort attempts read as a melphalan effect.
 status <- setNames(lapply(cells, function(c_i) cell_status(con, c_i)),
                    vapply(cells, function(c_i) c_i$id, character(1)))
 inputs <- melp_read_inputs(con, cells, status)
 
-# A code-fingerprint mismatch stops the read. This script reads cells an earlier
-# run built, and a cell built by different engine code answers the question
-# about that engine rather than this one.
-#
-# The two cells differ in ONE thing - whether the melphalan rule runs - and
-# that only holds while both are built by the same engine code. Built weeks
-# apart across an engine change, a difference between them is two changes at
-# once and nothing in the CSVs would say so.
+# A code-fingerprint mismatch stops the read. The cells must differ in one
+# thing only - whether the melphalan rule runs - and that holds only while both
+# are built by the same engine code. Built across an engine change, a
+# difference between them is two changes at once.
 melp_check_code(inputs, LOT_ROOT)
 st <- melp_settings(inputs)
 cat("All ", length(cells), " cells: cohort attempt ", inputs[[1]]$COHORT_RUN_ID[1],
@@ -131,17 +122,12 @@ per_cell <- function(body) do.call(rbind, lapply(cells, function(c_i) {
 }))
 
 # --- 1. duration of each line ------------------------------------------------
-# Three tables, because one of them cannot answer the question on its own.
-#
-# This first one is the marginal: each cell's own median at each line. It is
-# what a reader expects to see, and it is not the change. The rule moves
-# boundaries, so the set of patients who HAVE a LOT2 is not the same in two
-# cells, and a difference between two medians over two different populations
-# mixes "the lines got longer" with "different people have a second line". The
-# change columns are named UNPAIRED for that reason.
-#
-# 1b pairs the patients. 1c counts the lines. Between them they say which of the
-# two happened.
+# The marginal: each cell's own median at each line. The rule moves boundaries,
+# so the set of patients with a LOT2 is not the same in two cells, and a
+# difference between two medians over two populations mixes "the lines got
+# longer" with "different people have a second line" - hence the UNPAIRED
+# column names. 1b pairs the patients and 1c counts the lines, which between
+# them say which of the two happened.
 q1 <- per_cell(function(c_i) paste0("
   SELECT l.LOT_NUM,
          count(DISTINCT l.PATID)                   AS N_PATIENTS,
@@ -179,15 +165,11 @@ vs_ref <- function(body) do.call(rbind, lapply(
 # --- 1b. the same duration, patient-paired -----------------------------------
 # The same patient's LOT n in both cells, so the difference is a difference in
 # that patient's line rather than in who has one. Lines present in only one cell
-# are counted rather than dropped: they are the rest of the answer, and a paired
-# median computed over the overlap alone would hide them.
-#
-# NAMED, because it limits what this table says: the pairing is on the line
-# NUMBER, not on the treatment. Where the rule inserts a boundary, everything
-# after it shifts up by one, so a patient's LOT3 in the rule cell can be the
-# treatment their LOT2 was in the reference. That makes a per-line change here
-# an upper bound on how much any one line really moved, and it is why 1c counts
-# lines separately - a line-count change is not open to that reading.
+# are counted rather than dropped.
+# The pairing is on the line number, not on the treatment: where the rule
+# inserts a boundary everything after it shifts up by one, so a per-line change
+# here is an upper bound on how much any one line moved. 1c counts lines
+# separately, which is not open to that reading.
 q1_paired <- vs_ref(function(c_i) paste0("
   WITH exposed AS ", denom, ",
   a AS (
@@ -222,10 +204,9 @@ q1_paired <- vs_ref(function(c_i) paste0("
   FROM paired GROUP BY LOT_NUM ORDER BY LOT_NUM"))
 
 # --- 1c. how many lines each patient ends up with ----------------------------
-# The change that is not open to a renumbering reading. Every melphalan-exposed
-# patient is on both sides, counted as 0 lines where a cell gives them none, so
-# the rows add up to the whole population and a patient who lost their only
-# line shows as -1 rather than disappearing.
+# Every melphalan-exposed patient is on both sides, counted as 0 lines where a
+# cell gives them none, so the rows add up to the whole population and a
+# patient who lost their only line shows as -1 rather than disappearing.
 q1_lines <- vs_ref(function(c_i) paste0("
   WITH exposed AS ", denom, ",
   a AS (SELECT cast(PATID as string) AS PATID, count(*) AS N
@@ -243,21 +224,15 @@ q1_lines <- vs_ref(function(c_i) paste0("
   FROM per_pat GROUP BY 1 ORDER BY 1"))
 
 # --- 2. the distribution of regimens at each line ----------------------------
-# The question is what's the dist of regimens for each line (how many pts
-# receive 2L MELP mono still) - so the answer is the distribution, one row per
-# regimen per line, with the melphalan-only row it names among them rather than
-# instead of them. A two-column any-melphalan / melphalan-only summary answers
-# the parenthesis and drops the question.
-#
+# The distribution of regimens for each line: one row per regimen per line,
+# with the melphalan-only row among them rather than instead of them.
 # PCT_OF_LINE is within the line, so a line's rows sum to 100. IS_MELP_MONO
-# marks the row the question calls out; IS_ANY_MELP marks a regimen holding
-# melphalan among other drugs, so the two summary numbers are still recoverable
-# by summing.
-#
+# marks melphalan alone and IS_ANY_MELP a regimen holding melphalan among other
+# drugs, so both summary numbers are recoverable by summing.
 # array_contains over the split string, not LIKE, so a drug whose abbreviation
 # merely contains MELP cannot match. A blank regimen is kept and labelled: an
 # ALLO line has one by construction (allo_lot_span is single_day), and dropping
-# it would make the percentages of a line that has such patients wrong.
+# it would skew the percentages of a line that has such patients.
 q2 <- per_cell(function(c_i) paste0("
   WITH r AS (
     SELECT l.LOT_NUM,
@@ -280,17 +255,13 @@ q2 <- per_cell(function(c_i) paste0("
   ORDER BY r.LOT_NUM, N_PATIENTS DESC, r.REGIMEN"))
 
 # --- 3. an SCT inside a melphalan-containing LOT -----------------------------
-# A melphalan LOT here is one with a melphalan DOSE between its start and end,
-# not one whose regimen string holds melphalan. The two differ, and the regimen
-# string is the wrong one for this question: a melphalan dose outside the
-# induction window never reaches LOT_BASE_MEDS, and an ALLO line has a blank
-# regimen by construction - allo_lot_span is single_day - so a dose given on
-# that day would be dropped by a regimen test.
-#
-# The transplant expression is melp_sct_sql(), the package's own. It counts
-# AUTO anywhere in the line and ALLO as the line's start type, and leaves CAR-T
-# out: a one-day ALLO line has no inside for a transplant to sit in, and CAR-T
-# is a separate question rather than a third term in this total.
+# A melphalan LOT here is one with a melphalan dose between its start and end,
+# not one whose regimen string holds melphalan: a dose outside the induction
+# window never reaches LOT_BASE_MEDS, and an ALLO line has a blank regimen by
+# construction, so a regimen test would drop both.
+# The transplant expression is melp_sct_sql(). It counts AUTO anywhere in the
+# line and ALLO as the line's start type, and leaves CAR-T out as a separate
+# question.
 q3 <- per_cell(function(c_i) paste0("
   SELECT l.LOT_NUM,
          count(DISTINCT l.PATID) AS N_PATIENTS_MELP_LOT,

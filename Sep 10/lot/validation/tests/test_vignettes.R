@@ -1,11 +1,10 @@
 #!/usr/bin/env Rscript
 # Checks on the edge-case vignette catalogue.
 #
-# The catalogue's whole claim is that it cannot drift from the algorithm. These
-# are the checks that make that true rather than aspirational: the parameters
-# have to exist, the offsets have to move when a setting moves, the files the
-# rules are quoted from have to be there, and a boundary that stops being a
-# boundary has to fail.
+# The catalogue's claim is that it cannot drift from the algorithm: the
+# parameters have to exist, the offsets have to move when a setting moves, the
+# files the rules are quoted from have to be there, and a boundary that stops
+# being a boundary has to fail.
 #
 #   Rscript "lot/validation/tests/test_vignettes.R"
 
@@ -25,10 +24,9 @@ STUDY  <- dirname(PARENT)
 
 pass <- 0L; fail <- 0L
 ok <- function(cond, what) {
-  # `cond` is evaluated HERE, not by the caller, so an assertion whose
-  # expression raises is a FAILED assertion rather than a dead run. It used to
-  # propagate: a mutation that made qc_outcome() stop took the whole suite
-  # down, printing no count and losing every result after it.
+  # `cond` is evaluated here, not by the caller, so an assertion whose
+  # expression raises counts as a failure instead of aborting the run and
+  # losing every result after it.
   cond <- tryCatch(cond, error = function(e) {
     what <<- paste0(what, "  [raised: ", conditionMessage(e), "]")
     FALSE
@@ -40,14 +38,11 @@ runs  <- function(expr, what) ok(is.null(tryCatch({ expr; NULL },
                                  error = conditionMessage)), what)
 stops <- function(expr, what) ok(!is.null(tryCatch({ expr; NULL },
                                  error = conditionMessage)), what)
-# stops() accepts ANY error, and that is not enough for a guard.
-#
-# Every check_vignettes() guard below was tested with stops(), and mutation
-# testing showed that disabling most of them individually changed nothing:
-# another guard caught the same fixture, or - worse - the function crashed on
-# an NA before it could report at all, and "a parameter missing from the
-# config stops the catalogue" was passing on "missing value where TRUE/FALSE
-# needed". A guard test has to name the guard.
+# stops() accepts any error, which is not enough for a guard: another guard can
+# catch the same fixture, or the function can crash on an NA before it reports
+# at all, so "a parameter missing from the config stops the catalogue" would
+# pass on "missing value where TRUE/FALSE needed". A guard test names its
+# guard.
 stops_with <- function(expr, pattern, what) {
   msg <- tryCatch({ expr; NULL }, error = conditionMessage)
   ok(!is.null(msg) && grepl(pattern, msg),
@@ -105,9 +100,8 @@ cat("\n-- and fails rather than describing a rule that is gone --\n")
 stops_with(check_vignettes(modifyList(P, list(sct_tandem_days = NA_integer_))),
       "is not set in this run's config",
       "a parameter missing from the config stops the catalogue, and says which")
-# ...and a case that READS that setting without naming it in `param` is
-# reported for what it is, rather than taking the whole check down with an
-# arithmetic NA.
+# A case that reads that setting without naming it in `param` is reported for
+# what it is, rather than taking the whole check down with an arithmetic NA.
 stops_with(check_vignettes(modifyList(P, list(sct_tandem_days = NA_integer_))),
       "not a number",
       "...including a case whose timeline reads it without naming it")
@@ -120,9 +114,8 @@ stops_with(check_vignettes(P, bogus), "which is not one this catalogue knows",
 dup <- c(VIGNETTES, VIGNETTES[1])
 stops_with(check_vignettes(P, dup), "duplicate id", "...and a duplicate id")
 
-# The guards nothing reached. Each is disabled one at a time by mutation, and
-# every one of these survived: another guard caught the fixture, so the
-# catalogue would have gone on holding with the check removed.
+# Each guard below gets a fixture of its own, so none of them rests on another
+# guard happening to catch the same case.
 one_of <- function(id, field, value) lapply(VIGNETTES, function(x) {
   if (identical(x$id, id)) x[[field]] <- value
   x
@@ -140,9 +133,8 @@ stops_with(check_vignettes(P, Filter(function(x) !identical(x$id, "tandem_beyond
                                      VIGNETTES)),
       "a boundary needs both",
       "...and a parameter with only one side of its boundary")
-# 'beyond' has to be later than 'within', and ADJACENT to it. A pair two days
-# apart tests that the rule exists, not where its edge is - which is where
-# every off-by-one this catalogue has carried has sat.
+# 'beyond' has to be later than 'within' and adjacent to it. A pair two days
+# apart tests that the rule exists, not where its edge is.
 swapped <- lapply(VIGNETTES, function(x) {
   if (identical(x$id, "tandem_beyond")) x$pair <- "within"
   else if (identical(x$id, "tandem_within")) x$pair <- "beyond"
@@ -159,7 +151,7 @@ gapped <- lapply(VIGNETTES, function(x) {
 })
 stops_with(check_vignettes(P, gapped), "must be consecutive days",
       "...and a pair straddling its value from five days out, which pins no edge")
-# Adjacent, ordered and disagreeing is the SHAPE of a boundary, not the
+# Adjacent, ordered and disagreeing is the shape of a boundary, not the
 # boundary. Both tandem cases moved ten days later are still all three, and
 # both sit outside a 180-day window.
 shifted <- lapply(VIGNETTES, function(x) {
@@ -207,10 +199,8 @@ stops_with(check_vignettes(P, notime), "not in time order",
 
 cat("\n-- every rule it quotes is somewhere a reader can go --\n")
 # A citation is "path | anchor", and the anchor is a literal that has to appear
-# in that file. It used to be "path:line", and line numbers do not survive
-# editing: twelve of the fourteen pointed at whatever had drifted into their
-# slot, and nothing here noticed because only the FILE was checked. An anchor
-# moves with the code it names, and when the code goes the citation fails.
+# in that file. A line number would not survive editing; an anchor moves with
+# the code it names, and when the code goes the citation fails.
 missing <- character(0)
 adrift  <- character(0)
 for (v in VIGNETTES) {
@@ -244,8 +234,9 @@ ok(any(grepl('on_fail = "truncate"', lc, fixed = TRUE)) &&
    "...and so is the patient-level belantamab truncate")
 
 cat("\n-- what has been seen, and what has only been read --\n")
-# Confidence is a claim about US, not about the algorithm. Keeping the two
-# apart is what stops the catalogue reading as a set of results.
+# Confidence is a claim about how far an expectation is from having been seen,
+# not about the algorithm. Keeping the two apart stops the catalogue reading as
+# a set of results.
 ok(all(df$confidence %in% c("derived", "to_confirm")),
    "every vignette says how far its expectation is from having been seen")
 ok(sum(df$confidence == "to_confirm") > 0,

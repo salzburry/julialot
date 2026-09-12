@@ -66,9 +66,8 @@ phase_codelists <- function(con) {
   "), qc = "SELECT count(*) AS n_rows, count(DISTINCT CL_MED_ABBR) AS n_meds, count(DISTINCT CL_CODE_TYPE) AS n_code_types FROM mma_codelist")
 
   # Written out, not left as a temporary view. The QC package runs against the
-  # tables a finished build left behind, so a view it cannot see forces it to
-  # guess at which drugs are one agent - and C1 failed a legitimately folded
-  # biosimilar for want of this table. The view of the same name is created
+  # tables a finished build left behind, so a view it cannot see would leave it
+  # guessing which drugs are one agent. The view of the same name is created
   # beside it, so every reference below is unchanged.
   materialize(con, "S02_permissible_subs", view = "permissible_subs",
               name = "PERMISSIBLE_SUBS", body = glue("
@@ -79,8 +78,8 @@ phase_codelists <- function(con) {
     WHERE original_med IS NOT NULL AND substitute_med IS NOT NULL
   "), qc = "SELECT count(*) AS n_rows, count(DISTINCT original_med) AS n_orig_meds FROM permissible_subs")
 
-  # Check the code lists before treatment extraction. Reviewable findings need
-  # a named waiver. The rest always stop the build.
+  # Check the code lists before treatment extraction. Findings a study team can
+  # accept need a named waiver; the rest always stop the build.
   log_msg("Checking codelist <-> rollup consistency...")
   problems <- data.frame(check = character(0), detail = character(0),
                          stringsAsFactors = FALSE)
@@ -184,7 +183,7 @@ phase_codelists <- function(con) {
   }
 
   # An NDC of '0' passes the digit guard on the join, then pads to eleven
-  # zeros - which is what a claim with no NDC looks like.
+  # zeros - the same key a claim with no NDC produces.
   bad_ndc <- db_q(con, "
     SELECT CL_CODE, CL_MED_ABBR
     FROM mma_codelist
@@ -287,21 +286,14 @@ phase_codelists <- function(con) {
   else
     log_msg("  OK: No blank medication or class.")
 
-  # A space inside an abbreviation makes it two agents everywhere downstream.
+  # A space inside an abbreviation makes it two agents everywhere downstream. A
+  # regimen is stored as one space-joined string and every reader splits it back
+  # on that space, so 'DRUG A' is written once and read back as DRUG and A,
+  # neither of which names a medication.
   #
-  # A regimen is stored as ONE space-joined string - concat_ws(' ',
-  # sort_array(collect_set(MED_ABBR))) in 04_lot1_base.R and 10_lot2_5_base.R -
-  # and every reader splits it back on that space: prior_regimen.R and
-  # 10_lot2_5_base.R for the previous regimen, foldin_rule.R for the fold set,
-  # melp_rule.R for the confirm gate. So 'DRUG A' is written once and read back
-  # as DRUG and A, neither of which names a medication. The previous-regimen
-  # test, the fold set, the substitution pair and the medication count all miss
-  # it, quietly and in different directions.
-  #
-  # The load upper()s and trim()s the value, which takes the ends only, so an
-  # internal space arrives intact. Checked here because that is where the
-  # abbreviation enters and the only place it can still be refused; the split
-  # itself has no way to tell one agent from two.
+  # trim() takes the ends only, so an internal space arrives intact. Checked
+  # here because that is where the abbreviation enters and the only place it can
+  # still be refused.
   spaced_meds <- db_q(con, "
     SELECT DISTINCT CL_MED_ABBR
     FROM mma_extractable_codelist
@@ -336,11 +328,10 @@ phase_codelists <- function(con) {
   }
 
   # One substitute standing in for two different drugs. The fold set and the
-  # fold-in's agent grouping both collapse a substitute to the drug it
-  # replaces, and with two candidates min() picks lexically and says nothing -
-  # so a returning drug could be read as the wrong agent's return. Fatal for
-  # the same reason multi_class is: the pick is arbitrary and it reaches the
-  # lines.
+  # fold-in's agent grouping both collapse a substitute to the drug it replaces,
+  # and with two candidates min() picks lexically and says nothing, so a
+  # returning drug could be read as the wrong agent's return. Fatal for the same
+  # reason multi_class is: the pick is arbitrary and it reaches the lines.
   multi_original <- db_q(con, "
     SELECT substitute_med, count(DISTINCT original_med) AS n_originals,
            concat_ws(', ', collect_set(original_med)) AS originals
@@ -359,19 +350,14 @@ phase_codelists <- function(con) {
     log_msg("  OK: Each substitute stands in for exactly one drug.")
   }
 
-  # A drug that is BOTH somebody's substitute and somebody else's original -
-  # a chain A -> B -> C, or a cycle. Every place that treats a pair as one
-  # agent expands one hop in each direction, which is exact for a flat pair
-  # and wrong for a chain: A and C would be the same agent through B, and no
-  # single hop reaches from one to the other. Rather than canonicalize whole
-  # components everywhere, the topology is held flat here, where saying so is
-  # cheap and the failure is one clear message instead of a line count nobody
-  # can explain.
+  # A drug that is both somebody's substitute and somebody else's original - a
+  # chain A -> B -> C, or a cycle. Every place that treats a pair as one agent
+  # expands one hop in each direction, which is exact for a flat pair and wrong
+  # for a chain. Rather than canonicalize whole components everywhere, the
+  # topology is held flat here.
   #
   # The star A -> B, A -> C is the same problem without a chain, and it is
-  # caught below: B and C are one agent through A, and expanding from B
-  # reaches A but never its sibling C, so a later C opened a line the pair
-  # should never have allowed.
+  # caught below: expanding from B reaches A but never its sibling C.
   subs_chain <- db_q(con, "
     SELECT a.substitute_med AS med,
            concat_ws(', ', collect_set(a.original_med))   AS stands_in_for,
@@ -391,12 +377,10 @@ phase_codelists <- function(con) {
     log_msg("  OK: No substitution chains - every pair stands on its own.")
   }
 
-  # One original with SEVERAL substitutes. The siblings are one agent through
-  # the drug they replace, but a one-hop expansion from either reaches only
-  # that drug, never the other sibling - so the line's regimen naming one of
-  # them did not exclude the other, and the sibling opened a line of its own.
-  # Held to one substitute per original for the same reason chains are held
-  # flat: the alternative is canonicalizing whole components in five places.
+  # One original with several substitutes. The siblings are one agent through
+  # the drug they replace, but a one-hop expansion from either reaches only that
+  # drug, so a regimen naming one sibling would not exclude the other. Held to
+  # one substitute per original for the same reason chains are held flat.
   subs_star <- db_q(con, "
     SELECT original_med, count(DISTINCT substitute_med) AS n_substitutes,
            concat_ws(', ', collect_set(substitute_med)) AS substitutes
@@ -463,9 +447,9 @@ phase_codelists <- function(con) {
     log_msg("  OK: Every substitute_med is a medication the code list produces.")
   }
 
-  # The other side does less harm. The join simply never matches, so the
-  # substitution is dead rather than wrong. But it is still a rule the study
-  # team believes is running.
+  # The other side does less harm: the join never matches, so the substitution
+  # is dead rather than wrong. It is still a rule the study team believes is
+  # running.
   subs_orig <- db_q(con, "
     SELECT DISTINCT p.original_med AS med
     FROM permissible_subs p

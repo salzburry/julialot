@@ -11,13 +11,12 @@
 #
 # Reads and writes nothing to the warehouse. The report lands in out/.
 #
-# What this is for: the build already refuses a LOT_LONG whose lines overlap,
-# run backwards or skip a number. Those are the checks it can afford to make on
-# every run. This asks the slower questions - does each end reason agree with
-# its own date, does every drug in a regimen have a treatment episode inside
-# that line's window, do the funnel and the table describe the same run - and
-# it asks them after the fact, so a run already on disk can be signed off
-# without rebuilding it.
+# The build already refuses a LOT_LONG whose lines overlap, run backwards or
+# skip a number - the checks it can afford on every run. This asks the slower
+# questions: does each end reason agree with its own date, does every drug in a
+# regimen have a treatment episode inside that line's window, do the funnel and
+# the table describe the same run. It asks them after the fact, so a run
+# already on disk can be checked without rebuilding it.
 #
 # Exit status is 0 when nothing failed, 1 when something did. A failure means
 # the build produced something its own definition says it cannot.
@@ -69,8 +68,8 @@ main <- function() {
          "into, or PROJECT_WORK_SCHEMA to override.", call. = FALSE)
   cfg$work_schema <- schema
 
-  # The prefix names WHICH run is being checked. Blank would ask for unprefixed
-  # tables and report on whatever happens to be there.
+  # The prefix names which run is being checked. Blank would ask for
+  # unprefixed tables and report on whatever happens to be there.
   pfx <- trimws(Sys.getenv("OBJECT_PREFIX", unset = ""))
   if (!nzchar(pfx))
     stop("No OBJECT_PREFIX. It is what names the run's tables, so without it ",
@@ -179,28 +178,18 @@ main <- function() {
     cat("  absent: ", paste(names(have)[!have], collapse = ", "),
         " - checks needing them are skipped\n", sep = "")
 
-  # The per-line raw SCT tables, for the lines this run actually built. E1 has
-  # to read the raw flags - LOT_LONG derives its single flag as the negation of
-  # its tandem flag, so both being 1 cannot survive the projection and a check
-  # over the published columns can never fail.
+  # The per-line raw SCT tables, for the lines this run built. E1 reads the raw
+  # flags because LOT_LONG derives its single flag as the negation of its
+  # tandem flag, so both being 1 cannot survive the projection.
   #
-  # The line numbers come from the run's own published table, because max_lot is
-  # a CONTRACT SETTING and not a property of the run. Looping seq(2, max_lot)
-  # and taking any readable table counts retained ones: per-line stage tables
-  # are kept on purpose, and a run only replaces the lines it builds.
+  # The line numbers come from the run's own published table, not from max_lot:
+  # per-line stage tables are kept on purpose and a run replaces only the lines
+  # it builds, so a LOT4_SCT left by an earlier run would put that run's
+  # patients into this run's result.
   #
-  #   prior run reached LOT5  -> LOT4_SCT and LOT5_SCT remain
-  #   this run reached LOT3   -> it rewrites neither
-  #   E1 read LOT1..LOT5      -> judged THIS run on the previous one's patients
-  #
-  # So a retained LOT4_SCT is ignored because this run has no LOT4 - a reason,
-  # not the accident of whether the table happened to read.
-  #
-  # AND AN EXPECTED TABLE THAT WILL NOT READ IS AN ERROR. `tryCatch(FALSE)`
-  # makes "the table is not there" and "the table is there and broken"
-  # indistinguishable, and both shorten the union silently - so the check
-  # reports a clean result over the lines it managed to read. A line this run
-  # BUILT must have its raw SCT table readable, or QC stops and says which.
+  # A line this run did build must have its raw SCT table readable, or QC
+  # stops. Treating an unreadable table as absent would shorten E1's union and
+  # report a clean result over the lines it managed to read.
   p$sct_extra <- local({
     lots <- tryCatch(
       db_q(con, paste0("SELECT DISTINCT LOT_NUM FROM ", t$final,

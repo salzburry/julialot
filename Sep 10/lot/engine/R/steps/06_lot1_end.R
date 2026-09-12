@@ -9,9 +9,10 @@ phase_lot1_end <- function(con, ctx) {
 
   # S16b: contains_mtx_reg. Maintenance as a flag and nothing else.
   #
-  # Does LOT1's induction regimen hold a valid maintenance-approved subset, mono
-  # or dual, PLUS an anchor drug - any other induction drug outside that subset?
-  # The anchor may itself be maintenance-eligible in another context.
+  # Set where LOT1's induction regimen holds a valid maintenance-approved
+  # subset, mono or dual, plus an anchor drug - any other induction drug
+  # outside that subset. The anchor may itself be maintenance-eligible in
+  # another context.
   #
   # A table, because it self-joins lot1_induction_meds four times and S16 below
   # reads it again. One row per patient, so the write is small either way.
@@ -78,11 +79,10 @@ phase_lot1_end <- function(con, ctx) {
   # before the run-out.
   #
   # Disenrollment is not a censoring criterion, so a period ending at
-  # disenrollment is STUDY_END. There is no DISENROLLMENT reason.
-  # MAINTENANCE_END and SCT_NO_MAINT are not final values either. Those cases
-  # route by their earliest applicable event. CART_INIT - a MED_ADD followed by
-  # a CART within cart_consolidation_days - ends LOT1 on ENDING_CART_DT - 1,
-  # the day before the infusion.
+  # disenrollment is STUDY_END; there is no DISENROLLMENT reason. MAINTENANCE_END
+  # and SCT_NO_MAINT are not final values either - those cases route by their
+  # earliest applicable event. CART_INIT, a MED_ADD followed by a CART within
+  # cart_consolidation_days, ends LOT1 on ENDING_CART_DT - 1.
   #
   # A table, because it is read nine times downstream and each read would
   # otherwise re-run the post-runout guard below, which scans map_stacked
@@ -454,5 +454,5 @@ phase_lot1_end <- function(con, ctx) {
     ORDER BY LOT1_BASE_END_REASON")
 
 
-  # NDC format QC. Do the code list and the claims agree on length?
+  # NDC format QC: whether the code list and the claims agree on length.
 }

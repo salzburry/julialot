@@ -3,74 +3,67 @@
 # every hook here emits nothing and the statements are what they were before
 # this file.
 #
-# The rule in one sentence: a drug of the IMMEDIATELY PREVIOUS line that comes
+# The rule in one sentence: a drug of the immediately previous line that comes
 # back joins the line it returns in rather than starting one, when exactly one
 # agent opened a line between its two doses. Two or more and it starts a line;
-# none and this rule says nothing. LOT_RULES.md 4.8 has the wording, the worked
-# examples and the boundaries; this file is how it is measured.
+# none and this rule says nothing. LOT_RULES.md 4.8 has the wording and the
+# boundaries; this file is how it is measured.
 #
-# The FOLD SET is the previous line's regimen and their permissible
+# The fold set is the previous line's regimen and their permissible
 # substitutes, minus this line's own base drugs - a drug in both regimens is
 # this line's drug, and its restarts are 4.3's question - and then only the
-# EPISODES the count folds. foldin_count_ctes() does the counting; everything
+# episodes the count folds. foldin_count_ctes() does the counting; everything
 # else reads foldin_episodes.
 #
 # Four hooks, which is all the rest of this file is:
 #
-#   SUPPRESS   a fold-set episode is never an added-medication candidate, so it
+#   suppress   a fold-set episode is never an added-medication candidate, so it
 #              cannot end the line - released restart or not.
 #
-#   NEVER TRIGGER   a folded drug cannot start the next line either, but only
-#              where 4.3's release is ON. With the release withdrawn, which is
-#              what CONTRACT pins, 4.3 already refuses the previous line's
-#              whole regimen a line of its own and the fold set is a subset of
-#              that, so this hook emits nothing in the contract build.
+#   never trigger   a folded drug cannot start the next line either, but only
+#              where 4.3's release is on. With the release withdrawn, which is
+#              what CONTRACT pins, 4.3 already refuses the previous line's whole
+#              regimen a line of its own, so this hook emits nothing.
 #
-#   HOLD       suppressing and owning are two halves of one statement. The
-#              line's run-out is carried to the last day any folded episode's
-#              supply reaches, capped at observation. Same shape as melp_hold
-#              in R/melp_rule.R, and it rides the same runout so the whole end
-#              cascade still applies.
+#   hold       the line's run-out is carried to the last day any folded
+#              episode's supply reaches, capped at observation. Same shape as
+#              melp_hold in R/melp_rule.R, and it rides the same runout so the
+#              whole end cascade still applies.
 #
-#   CHAIN      a folded episode must not break a base drug's run-out chain:
+#   chain      a folded episode must not break a base drug's run-out chain:
 #              discon_per_med's interrupt scan reads a boundary source with the
 #              folded drugs taken out.
 #
 # Untouched: LOT1 (no earlier line), transplant and CAR-T triggers, the
-# tandem-interrupt rule.
-#
-# A FALSE build records the deviation in LOT_BUILD_STATUS and every reader that
-# resolves run ownership refuses it as the study's. Measured against a build
-# without it by exploration/lot/run_foldin_cells.R.
+# tandem-interrupt rule. A FALSE build records the deviation in
+# LOT_BUILD_STATUS and every reader that resolves run ownership refuses it as
+# the study's.
 
 foldin_on <- function(cfg) isTRUE(cfg$apply_map_foldin)
 
 # The fold set and the hold, for the statement that builds line N's base.
 # lot_long holds lines 1..N-1 at this point, so the previous line's regimen is
 # a scan of it. The set itself comes from prior_lines_regimen_ctes() in
-# R/prior_regimen.R - one definition, so this and the melphalan rule's
-# "is this agent NEW" test cannot disagree about the same pair of drugs.
+# R/prior_regimen.R, so this and the melphalan rule's "is this agent new" test
+# cannot disagree about the same pair of drugs. The hold keeps own-base drugs
+# out and takes episodes starting in the line - an episode already running when
+# the line began belongs to the line that collected it.
 #
-# base_meds and lot{n}_start are this statement's own; the hold keeps
-# own-base drugs out so a drug in both regimens stays under the engine's
-# rules, and takes episodes STARTING in the line - an episode already running
-# when the line began belongs to the line that collected it.
-# THE COUNT - LOT_RULES.md 4.8 for why each measure is the one it is. What the
+# The count - LOT_RULES.md 4.8 for why each measure is the one it is. What the
 # SQL below needs stated:
 #
-#   The interval is DOSE TO DOSE, not cover-end to dose. A drug's cover often
+#   The interval is dose to dose, not cover-end to dose. A drug's cover often
 #   runs past the line it belonged to, so measuring from where it stopped puts
 #   the advance that ended that line before the interval.
 #
-#   What is counted is DIFFERENT AGENTS that opened a line, not lines. One
+#   What is counted is different agents that opened a line, not lines. One
 #   agent opening two lines is one advance; two drugs opening a line together
 #   are one advance too.
 #
-#   TRANSPLANTS AND CAR-T ARE NOT IN THE COUNT - it counts drugs. They keep the
-#   engine's own rules, and one that OPENED A LINE between the two doses
-#   OVERRIDES the fold whatever the count says. One the line OWNS - an AUTO
-#   inside its own window, a planned tandem partner - opens no line, so it
-#   never reaches the test.
+#   Transplants and CAR-T are not in the count, which counts drugs. They keep
+#   the engine's own rules, and one that opened a line between the two doses
+#   overrides the fold whatever the count says. One the line owns opens no
+#   line, so it never reaches the test.
 #
 #   count = 0 is not this rule's case. Only 1 folds.
 #
@@ -81,26 +74,21 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
                               n_induction = NULL, n_type = NULL,
                               meds = "foldin_meds",
                               line_pred, melp_on = FALSE) {
-  # A melphalan course the melphalan rule SUPPRESSED is not a line-defining
+  # A melphalan course the melphalan rule suppressed is not a line-defining
   # agent, so it must not disqualify a return from folding. Only this direction
-  # can be read: the melphalan CTEs are spliced BEFORE these, and each rule
-  # reading the other has no order that works. What remains is written down in
-  # STUDY_TEAM_ASKS.md.
-  # The same exclusion, in the WHERE of foldin_agent rather than a join, and
-  # covering BOTH melphalan verdicts for opposite reasons: a SUPPRESSED course
-  # opens nothing so it is no arriving agent, and an INJECTED one starts the
-  # next line so it is no drug folding back into the line before it. Covering
-  # only the suppressed half let an injected course be claimed by both rules at
-  # once - melp_injected_starts_the_line in the vignettes.
+  # can be read: the melphalan CTEs are spliced before these.
   #
-  # The MELP test is not decoration: both date tables carry a patient and a
-  # DATE, so matching on those alone removed whatever else started that day.
-  # TWO different questions, and they do not take the same answer. "May this
-  # row FOLD?" - neither verdict may. "Did something ARRIVE here?" - a
-  # suppressed course did not, but an INJECTED one did, because it opens a
-  # line. Answering the second with the first hid a real boundary from the
-  # count, and a return landing just after an injected course folded into a
-  # line that had already ended.
+  # Both melphalan verdicts are excluded, for opposite reasons: a suppressed
+  # course opens nothing so it is no arriving agent, and an injected one starts
+  # the next line so it is no drug folding back into the line before it.
+  # Covering only the suppressed half would let an injected course be claimed
+  # by both rules at once.
+  #
+  # The MELP test matters because both date tables carry only a patient and a
+  # date, so matching on those alone would remove whatever else started that
+  # day. The two questions take different answers: nothing either verdict
+  # touches may fold, but an injected course did arrive, because it opens a
+  # line.
   melp_dt <- function(alias, tbl, col) paste0("
                  AND EXISTS (SELECT 1 FROM ", tbl, " x
                              WHERE x.PATID = ", alias, ".PATID
@@ -119,12 +107,11 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
   # because it really did open a line.
   not_supp <- if (!melp_on) "" else paste0("
           AND NOT ", melp_is("ms", suppressed("ms")))
-  # ...and staying visible takes TWO changes, not one. The scan drops any
-  # fold-set drug before it reads the line above, and where melphalan is ITSELF
-  # a fold-set drug that exclusion reached an injected course first (F34, which
-  # is F33 with melphalan moved into the earlier regimen). An injected course is
-  # an advance whoever else has given the drug, so it is let back past the
-  # fold-set test rather than filtered later, when the row is already gone.
+  # Staying visible takes two changes, not one. The scan drops any fold-set
+  # drug before it reads the line above, and where melphalan is itself a
+  # fold-set drug that exclusion would reach an injected course first. An
+  # injected course is an advance whoever else has given the drug, so it is let
+  # back past the fold-set test rather than filtered later.
   inject_or <- if (!melp_on) "" else paste0("
                OR ", melp_is("ms", injected("ms")))
   this_tx <- if (is.null(n_start) || is.null(n_type)) "" else paste0("
@@ -148,19 +135,16 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
   # read "FROM foldin_course_prev kINNER JOIN ...".
   join_n <- if (is.null(n_tbl)) "" else
     paste0("\n      INNER JOIN ", n_tbl, " ON ", n_tbl, ".PATID = k.PATID")
-  # The in-this-line test, and only where there IS a line being built. The
-  # start-candidate statement has none and needs none: lot_long has grown by
-  # the time it judges a later line.
+  # The in-this-line test, and only where there is a line being built. The
+  # start-candidate statement has none and needs none. Procedures are in it as
+  # well as medications, since a CAR-T opening the next line is not a
+  # medication row.
   #
-  # Procedures are in it as well as medications - a CAR-T opening the next line
-  # is not a medication row, and scanning map_stacked alone let an earlier line
-  # go on claiming a return that arrived after it.
-  #
-  # The two arms take different bounds, each its own rule's. A DRUG that is
+  # The two arms take different bounds, each its own rule's. A drug that is
   # neither this line's regimen nor a fold-set agent is a boundary from the
-  # line's START; a TRANSPLANT only past its INDUCTION END, because one inside
+  # line's start; a transplant only past its induction end, because one inside
   # the line's own window belongs to it and opens nothing (LOT_RULES.md 3.4 and
-  # 6.5) - the same bound melp_taken uses, off the same lotn_induction_end().
+  # 6.5).
   induction <- if (is.null(n_induction)) n_start else n_induction
   between_sel <- if (is.null(n_start)) "" else
     ",\n             max(CASE WHEN o.PATID IS NOT NULL THEN 1 ELSE 0 END) AS N_BETWEEN"
@@ -410,31 +394,25 @@ foldin_lotn_ctes <- function(cfg, lot_num, induction_end = NULL) {
     ),"))
 }
 
-# The folded episodes as REGIMEN rows, for med_summary. A drug this rule bundles
-# into a line joins that line's regimen string and its drug count - and its med
-# and class flags with them, since all four come off the same set.
+# The folded episodes as regimen rows, for med_summary. A drug this rule
+# bundles into a line joins that line's regimen string and its drug count, and
+# its med and class flags with them, since all four come off the same set.
 #
 # Bounded like foldin_hold, and cut short the same way the induction step is:
-# episodes of a fold-set drug STARTING inside the line, own-base drugs excluded
+# episodes of a fold-set drug starting inside the line, own-base drugs excluded
 # because they are in the regimen already, and nothing past a transplant that
 # ended the line. Without that cutoff a folded episode after the line closed
-# still named itself in the regimen, and QC C1 caught it - a regimen drug with
-# no episode anywhere inside its line.
+# would still name itself in the regimen.
 #
-# base_meds ITSELF is not rewritten. It is built before these CTEs and the fold
-# consults it, so feeding the fold back into that table has no order that
-# works. What the readers get instead is foldin_base_meds() below - base_meds
-# with the folded drugs taken out, which is what discon_per_med's boundary scan
-# reads, and which exists exactly because part of the line must not break the
-# line. So the working set the readers see does change; the table it is
-# derived from does not.
+# base_meds itself is not rewritten: it is built before these CTEs and the fold
+# consults it, so there is no order in which it could be. What the readers get
+# instead is foldin_base_meds() below.
 foldin_regimen_union <- function(cfg, lot_num, induction_end) {
   if (!foldin_on(cfg)) return("")
-  # A melphalan course the melphalan rule SUPPRESSED, by date. Two things here
-  # have to know about it, and for one reason: that rule has already decided
-  # the course opens nothing, so this one must not read the same rows as a
-  # drug arriving. Same test foldin_count_ctes uses, so the count and the
-  # regimen cannot disagree about one episode.
+  # A melphalan course the melphalan rule suppressed, by date. That rule has
+  # already decided the course opens nothing, so this one must not read the
+  # same rows as a drug arriving. Same test foldin_count_ctes uses, so the
+  # count and the regimen cannot disagree about one episode.
   supp <- function(alias) if (!melp_rule_on(cfg)) "" else paste0("
         AND NOT (upper(trim(", alias, ".MAP_MED_TYPE)) = '", cfg$melp_med_abbr, "'
                  AND (EXISTS (SELECT 1 FROM melp_suppress_dates msd
@@ -500,22 +478,16 @@ foldin_regimen_union <- function(cfg, lot_num, induction_end) {
         )"))
 }
 
-# The line's WORKING base set with the folded drugs in it. discon_per_med reads
+# The line's working base set with the folded drugs in it. discon_per_med reads
 # this, so a folded drug's cover chains the line's run-out the way any regimen
-# drug's does.
+# drug's does. Without it the two halves of §4.3 come apart: the reported
+# regimen carries the drug, so the next line refuses it a line of its own,
+# while the line it folded into stops at its own drugs' cover and a second
+# return falls in no line at all.
 #
-# Without it the two halves of §4.3 came apart on a folded drug. The reported
-# regimen carries it, so the NEXT line refuses it a line of its own - correctly.
-# But the working set did not, so the line it folded into stopped at its own
-# drugs' cover, and a SECOND return of that drug fell after the line had ended
-# and before the next one could open: treatment in no line at all.
-#
-# base_meds itself is untouched, and the fold is computed from it, so there is
-# no circle: base_meds -> the fold -> this.
-#
-# SUBSTITUTE_ONLY = 0. A folded drug is in the line on its own account, not as
-# somebody's stand-in, and the release the flag gates is switched off for it
-# anyway.
+# base_meds itself is untouched and the fold is computed from it, so there is
+# no circle. SUBSTITUTE_ONLY = 0, because a folded drug is in the line on its
+# own account rather than as somebody's stand-in.
 foldin_base_meds <- function(cfg) {
   if (!foldin_on(cfg)) return("base_meds")
   "foldin_base_meds_eff"
@@ -572,15 +544,14 @@ foldin_boundary_tbl <- function(cfg) {
 # they are told apart:
 #
 #   the regimen's cover runs past observation (a discon_per_med row exists,
-#   capped away) - the hold must NOT replace it, or the line ends on the
+#   capped away) - the hold must not replace it, or the line ends on the
 #   folded cover while a base drug is still being taken;
 #
-#   the line has NO regimen at all - a single-day ALLO, or a CAR-T with no
-#   consolidation drug, where discon_per_med produced no row - so there is
-#   no run-out to extend and the hold has to SUPPLY one, or the guard below
-#   lifts the short-circuit and the line falls through to study end with the
-#   folded treatment dangling inside it. F9/F10 in the planted harness pin
-#   this shape.
+#   the line has no regimen at all - a single-day ALLO, or a CAR-T with no
+#   consolidation drug, where discon_per_med produced no row - so there is no
+#   run-out to extend and the hold has to supply one, or the guard below lifts
+#   the short-circuit and the line falls through to study end with the folded
+#   treatment dangling inside it.
 #
 # `no_regimen` is the caller's test for the second case; the one call site
 # passes the discon_raw join alias.
@@ -605,12 +576,10 @@ foldin_hold_join <- function(cfg, on_alias, alias = "fh") {
 }
 
 # A line whose type ends it on its own start date - a single-day ALLO, or a
-# CAR-T line with no consolidation drug - is short-circuited before any
-# run-out is read, so a hold hanging on the run-out could not reach it and
-# the folded treatment would sit in no line. The hold overrides the
-# short-circuit, exactly as melp_line_type_guard does - melp_rule.R carries
-# the shape's full reasoning - and every other end still outranks the held
-# run-out.
+# CAR-T line with no consolidation drug - is short-circuited before any run-out
+# is read, so a hold hanging on the run-out could not reach it. The hold
+# overrides the short-circuit, as melp_line_type_guard does, and every other
+# end still outranks the held run-out.
 foldin_line_type_guard <- function(cfg, lot_num, alias = "ec") {
   if (!foldin_on(cfg)) return("")
   paste0("\n", glue("           AND NOT ({alias}.FOLDIN_HOLD_DT IS NOT NULL
