@@ -2,11 +2,11 @@
 
 An R package that turns a finished lines-of-therapy run into the analytical
 cohort and variables the Aug 26 2026 protocol asks for. It builds no line and
-no MM cohort of its own: `Jul 28/ndmm/` makes the population, `Sep 10/lot/`
-makes the lines, and this reads both.
+no MM cohort of its own: the cohort build makes the population, `lot/` makes
+the lines, and this reads both.
 
 ```
-                ndmm/build.R          lot/engine/build.R        study223926/build.R
+                cohort build          lot/engine/build.R        study223926/build.R
 raw Optum CDM ──────────────► NDMM_COHORT ──────────► LOT_LONG_FINAL ──────────► S_*
 ```
 
@@ -171,12 +171,12 @@ carries it. That is why `comorbidity` declares `mm_dx.csv`.
 
 `FRAILTY` (the Kim 2018 claims-based frailty index) and `COMORBID_SUBGROUPS`
 (Table 4's neuropathy and lung-parenchymal-disease flags) are both off by
-default, because both need annexes that were not delivered — Annex 7 and Annex
-3. Switched on, the code-list preflight names the annex: `comorbidity` is left
-out with the reason under `MODULES=all`, and a run that named it stops. That is
-the point of the switch: asking for frailty tells you exactly what is missing,
-rather than producing a column of zeros that reads as a cohort with no frail
-patients.
+default, because both need code lists that carry no codes yet — Annex 7's and
+Annex 3's. Switched on, the code-list preflight names the annex: `comorbidity`
+is left out with the reason under `MODULES=all`, and a run that named it stops.
+That is the point of the switch: asking for frailty says exactly what is
+missing, rather than producing a column of zeros that reads as a cohort with no
+frail patients.
 
 ### The two periods are counted the same way
 
@@ -219,20 +219,14 @@ then records that it did.
 Spark's `sql()` takes one statement, so templates written as a `CREATE` plus an
 `INSERT` are split on semicolons outside quotes and comments.
 
-All three quote characters are tracked: `'`, `"` and backtick. Only `'` was,
-and the package's own SQL already uses backticks — a `;` inside one would have
-cut a statement in half. Each closes on **itself**, and doubled inside means an
-escaped one, so a backtick in a string literal does not end it.
+All three quote characters are tracked: `'`, `"` and backtick. The package's
+own SQL uses backticks, and a `;` inside one would cut a statement in half.
+Each closes on **itself**, and doubled inside means an escaped one, so a
+backtick in a string literal does not end it.
 
-A statement that is only comments and whitespace is dropped rather than sent.
-A template ending in a comment used to emit that comment as a statement, and
-the warehouse would reject it — surfacing as a failed run rather than as a bug
-here.
-
-Neither shape is emitted today, which is exactly why both were worth closing
-before something started to. The 565 statements a default run emits are
-byte-identical across the change, and 60,000 fuzzed strings over the full
-quote-and-comment alphabet agree with an independently written reference.
+A statement that is only comments and whitespace is dropped rather than sent:
+a template ending in a comment would otherwise emit that comment as a statement
+of its own, which the warehouse rejects.
 
 ### A build in a session inherits nothing from the one before it
 
@@ -242,14 +236,14 @@ table's columns. `reset_run_state()` clears all three at the top of
 opened, or apply an exclusion flag its own input does not carry.
 
 The config lives in a private environment rather than a global `cfg`. The LOT
-engine keeps its own config the same way under the same name, so while both
-used the global, sourcing them in one session left whichever arrived second
-holding the name and the other's `wrk()` reading a config that was not its own.
+engine keeps its own config under the same name, so a global would leave
+whichever was sourced second holding the name, and the other's `wrk()` reading
+a config that was not its own.
 
 ### An upstream reading is recorded as verified or as an assertion
 
-Eight settings are the cohort build's rules, not this package's. Recording the
-setting alone asserted a reading nothing had checked.
+Eight settings are the cohort build's rules, not this package's, so recording
+this package's own value alone would assert a reading nothing had checked.
 
 `NDMM_RUN_METADATA.CONTRACT_SETTINGS` is the cohort build's whole contract as
 `k=v|k=v`, written by the run that made the cohort. `read_upstream_settings()`
@@ -278,11 +272,9 @@ list cannot show:
 Both are for custom inputs. The cohort build's own writer emits non-null CASE
 results at patient grain, so a run against it never sees either.
 
-### Suppression is applied in one place, and that place is tested
+### Suppression is applied in one place
 
-*"Stratifications with < 25 patients will not be performed"* (§7.2.3). The rule
-lived in `R/suppression.R` from the start and **nothing called it**: every table
-left the warehouse with raw cell counts, n = 1 included.
+*"Stratifications with < 25 patients will not be performed"* (§7.2.3).
 
 The `release` module applies it in SQL. It does not overwrite the raw tables —
 each suppressed table is written beside its source as `S_*_RELEASE`, so QC can
@@ -291,20 +283,17 @@ cannot. The suppressed count is nulled along with the values, because
 publishing the *n* a suppressed rate was computed from suppresses nothing. A
 group left with exactly one suppressed row is reported, not silently regrouped.
 
-`R/suppression.R` is gone. It survived the module by being loaded but never
-called, and its policy had drifted: it applied §7.8's *"(unless specific to
-SOC)"* exemption, which the shipped SQL does not. So the suite was green on a
-rule that never ran. The tests now assert the emitted release SQL — the
-threshold, the nulled count, the marking, and the absence of the exemption.
-Whether the exemption should apply is `OPEN_QUESTIONS.md` Q29.
+That SQL is the only place the rule exists, and the tests assert what it emits
+— the threshold, the nulled count, the marking, and the absence of §7.8's
+*"(unless specific to SOC)"* exemption. Whether that exemption should apply is
+`OPEN_QUESTIONS.md` Q29.
 
 ### A recorded reading is either applied here or labelled
 
-`S_RUN_METADATA.OPEN_QUESTION_READINGS` records every open question's reading.
-Nine of them were settings this package applied **nowhere** — the exact failure
-this document lists as fixed for `INDEX_EXCLUDED_ABBRS`. They are split now:
-`OPEN_QUESTION_SOURCE` marks each `here` or `upstream`, an upstream reading is
-written with that word beside it, and a test emits the whole run twice for
+`S_RUN_METADATA.OPEN_QUESTION_READINGS` records every open question's reading,
+and a reading recorded but applied nowhere is worse than none.
+`OPEN_QUESTION_SOURCE` marks each one `here` or `upstream`, an upstream reading
+is written with that word beside it, and a test emits the whole run twice for
 every `here` setting — once at its default, once at an alternative — and
 **requires the SQL to differ**. A setting that stops being applied fails the
 suite rather than being recorded forever as the reading that produced the
@@ -314,7 +303,7 @@ numbers.
 person-time rule, and `BASELINE_PY` and `PERIOD_PY` are window lengths
 whichever way it was set. `../OPEN_QUESTIONS.md` Q19 is still open.
 
-## The output prefix, and why a reused one now stops the run
+## The output prefix, and why a reused one stops the run
 
 `OBJECT_PREFIX` selects the namespace this package writes into. Before writing
 any table it compares the declared schema — ordered column names and types —
@@ -385,84 +374,12 @@ patients from **both** the numerator and the denominator. A module that
 computed one denominator and used it twice would be wrong in a way no total
 would reveal.
 
-## What the second adversarial review changed
+## Two things left as they are
 
-The package was reviewed a second time, and its headline was not a defect but a
-gap in the tests: **four of the twelve modules could not run at all**, and the
-suite passed anyway, because every check read the package's source text and none
-parsed a statement or executed a module.
-
-So the first fix is `tests/emit_sql.R`: it loads the package into a private
-environment, replaces the four functions that touch Spark with recorders, and
-runs **every module for every cohort**. What comes back is every statement the
-run would have issued — 407 of them — each parsed in the Spark dialect. The four
-blockers were then visible in seconds:
-
-| what | what it did |
-|---|---|
-| `split_statements()` split on `;` inside a SQL `--` comment | three modules' SQL was **chopped in half** by a semicolon in a comment explaining what the step did — `demographics`, `soc`, `hcru`, two of them in the "runs today" selection |
-| `08_malignancy.R` and `04_comorbidity.R` were missing a comma between two CTEs | both statements were a **parse error**, so neither module could run |
-| `here_pred[[st$criterion]]` on a named character vector | `[[` on an absent name **throws** rather than returning `NULL`, so the `is.null()` branch below it was unreachable and `attrition` died for 1L and SEC2L |
-
-Eleven correctness findings came with them. The ones that would have produced
-numbers rather than errors:
-
-| what | what it would have done |
-|---|---|
-| `BEST_CATEGORY LIKE '%anti-CD38%'` | `Other triplet (non-anti-CD38)` **contains that substring**, so every non-anti-CD38 triplet was relabelled as an anti-CD38 one and the category never appeared at all |
-| `WHEN N_AGENTS >= 4 THEN 'Quadruplet with anti-CD38 backbone'`, unconditionally | a four-agent regimen with **no anti-CD38 agent** was reported as having an anti-CD38 backbone |
-| The attrition funnel reset `N_REMAINING` on every criterion applied upstream, and never applied `MET_N2` for 1L or SEC2L | **N_REMAINING went back up mid-funnel**, and the continuous-enrolment step showed no loss |
-| Quan's `myocardial_infarction` weighted 1 | Quan 2011 gives it **0** — the weight 1 is the original 1987 Charlson |
-| The MM adjustment dropped a condition whose NAME matched myeloma | Quan has **no myeloma row**: myeloma sits under `any_malignancy`, so the adjustment dropped nothing and **a CCI of 0 was unreachable** for every patient in a myeloma study |
-| HCRU rates were driven from the aggregate | a line with person-time and **no events produced no row**, which downstream is indistinguishable from the module not having run |
-| The MM-related hospitalisation subquery joined `DIAG1 = code OR DIAG2 = code` with no family test and no cohort restriction | an ICD-9 myeloma code could match an ICD-10 claim, over a **nested loop on the whole of CONFINEMENT** |
-| `preflight_codelists()` only stat-ed each path | the eleven blank templates this package ships **satisfied it**, so the run failed at the module instead of in its first second |
-| `FRAILTY=TRUE` was documented and did not exist; `frailty_kim2018.csv` and `comorbid_subgroups.csv` were read by nothing | two of Table 4's variables were **silently not produced** |
-| `S_SAFETY_COUNTED` was written and not declared | a table nothing downstream knew to look for |
-| `SOC_SIZE_CATEGORIES`' agent counts were never read | the numbers in the table were dead data, and the CASE beside them was the real rule |
-
-The last two of those are now covered by tests that read what the run **emits**
-rather than what the source says: every declared output has to appear in the
-emitted SQL, and every table the SQL writes has to be declared.
-
-## What the first adversarial review changed
-
-The first version of this package was reviewed at max effort, and **19 defects
-were confirmed**. All are fixed, and each has a regression test — the review's
-own observation stood then too: the 78-check suite that passed at the time
-covered none of them. The ones worth knowing about, because they would have produced numbers
-rather than errors:
-
-| what | what it would have done |
-|---|---|
-| No module cleared its rows before writing | a second run **doubled every count, person-year and rate** with no error, against a header promising "re-run as often as needed" |
-| The lineage guard's `checkable` flag was always `FALSE` | a LOT run that was incomplete, built over another cohort, contract-deviating or **superseded by the 2026-08-30 rule change** was read and logged as accepted |
-| `LIKE '%acute%'` and `LIKE '%chronic%'` both match "Acute or chronic" | the two conditions Table 3 types that way were counted **through both counting rules at once** |
-| The nested-cohort join did not require the parent's `IN_COHORT` | 2L contained patients **absent from the 1L cohort it is nested in** |
-| `OS_DT` was not clipped to `FU_END` | a patient who disenrolled in 2020 and died in 2022 contributed **two unobserved years as followed time**, and a death outside the window as an observed event |
-| `S_TTE` was joined on `LOT_NUM` for per-line death | everyone who died after line 2 or 3 was drawn on the Sankey as having **stopped therapy alive** |
-| Malignancy's denominator was the cohort total | every per-line incidence was understated **roughly fourfold** |
-| Malignancy never applied the chronic rule its own comment stated | prior-malignancy patients stayed in the at-risk denominator for **Primary Objective 3** |
-| SOC used `max()` over category names | a CAR-T line was categorised **alphabetically** — `Doublet/monotherapy` sorts above `CAR-T` |
-| The code-list view chunked itself into `SELECT * FROM v UNION ALL …` | any list over 500 rows defined a **view in terms of itself** |
-| `X2_other_cancer` was tested against the cohort's own criteria only | 2L and 3L were treated as **permitting a prior malignancy** |
-| `INDEX_EXCLUDED_ABBRS` was recorded on every run and read by nothing | the panobinostat and elotuzumab bars were **reported as applied while applying nothing** |
-
-Four of those twelve the review did not find — the self-referencing view, the
-acute/chronic double count, the dead index setting, and a non-equality
-correlated subquery Spark rejects. The rest are its findings.
-
-Six further defects are fixed the same way: an undeclared code list defeating
-the preflight, a QC whose first column was a string so `run_step`'s zero-row
-guard was skipped, a blank `icd_family` silently read as ICD-10, `S_ATTRITION`
-promised in the plan and never written, an unconditional full CDM scan under a
-setting that never reads it, and the missing ninth condition in the §7.8.1
-chronic cross-check.
-
-Two things are deliberately left as they are: `MEDIAN_LOS` uses
-`percentile_approx`, and Quan's hierarchy is applied only where
-`charlson_quan2011.csv` carries a `supersedes` column — without it the run
-**says so** rather than silently summing mild and severe liver disease together.
+`MEDIAN_LOS` uses `percentile_approx`, and Quan's hierarchy is applied only
+where `charlson_quan2011.csv` carries a `supersedes` column — without it the
+run **says so** rather than silently summing mild and severe liver disease
+together.
 
 ## What this is not
 

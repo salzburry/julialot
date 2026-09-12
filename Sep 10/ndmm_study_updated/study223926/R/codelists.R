@@ -105,7 +105,7 @@ load_codelist <- function(csv_name, cfg) {
     stop("CODELIST ERROR: ", path, " does not exist.",
          if (csv_name %in% names(CODELIST_SOURCE))
            paste0("\nIt comes from ", CODELIST_SOURCE[[csv_name]],
-                  ", which has not been delivered - see ../CODELISTS.md.")
+                  " - see ../CODELISTS.md.")
          else "", call. = FALSE)
 
   md5 <- unname(tools::md5sum(path))

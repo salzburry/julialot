@@ -60,7 +60,7 @@ cfg0 <- function(extra = c()) with_env(c(base_env, extra), cfg_defaults())
 source("tests/emit_sql.R")
 RUN <- with_env(base_env, capture_emitted_sql("."))
 # A second run with the two switches on, so the tables they write are covered
-# too. Their code lists are undelivered, so the fixtures stand in.
+# too. Their code lists carry no codes yet, so the fixtures stand in.
 RUN_OPT <- with_env(base_env, capture_emitted_sql(".", function(cfg) {
   cfg$frailty <- TRUE; cfg$comorbid_subgroups <- TRUE; cfg
 }))
@@ -887,7 +887,7 @@ cat("\nthe rules that hold the numbers up\n")
   ok(!is.null(a$out), "a disagreement does not stop the run")
   c1 <- up_read(NULL)
   ok(is.null(c1$out) && any(grepl("unverified", c1$said)),
-     "an unreadable metadata table leaves the readings unverified, and says so")
+     "a metadata table that cannot be read leaves the readings unverified, and says so")
   ok(is.null(up_read("")$out) && is.null(up_read("NA")$out),
      "and so does a run that recorded no contract string")
   ok(is.null(up_read("nonsense with no equals")$out),
@@ -1466,7 +1466,7 @@ cat("\nstandalone\n")
   own_dirs <- c("R", "modules", "tests", "codelists", "fixtures")
   named <- lapply(code_only, function(x)
     sub("/.*$", "", sub('^"', "", unlist(regmatches(x, gregexpr(
-      '"[A-Za-z][A-Za-z0-9_ -]*/[A-Za-z0-9_.-]*[/.]', x))))))
+      '"[A-Za-z][A-Za-z0-9_ -]*/[A-Za-z0-9_. -]*[/.]', x))))))
   repo <- names(Filter(function(v) length(setdiff(v, own_dirs)) > 0, named))
   ok(length(repo) == 0,
      paste0("no code path names a directory outside the package (offenders: ",
