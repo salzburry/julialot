@@ -366,7 +366,7 @@ local({
   stops(cell_status(NULL, cell),
         "a status table that cannot be read is reported as that, not as a missing row")
 
-  # ...and again immediately before anything is written.
+  # And again immediately before anything is written.
   answer <- data.frame(RUN_ID = "R1", STATE = "complete", UPDATED_AT = "T1",
                        stringsAsFactors = FALSE)
   assign("db_q", function(con, sql) answer, envir = globalenv())
@@ -502,7 +502,7 @@ if (identical(mres, "skip") || identical(rres, "skip") ||
                  paste0("  [got ", format(got), "]") else ""))
   }
 
-  # ...and by line, where the row is the LOT number rather than the position.
+  # And by line, where the row is the LOT number rather than the position.
   lot_row <- function(n) {
     hit <- mres$row[mres$id == "by_line" & mres$col == "LOT_NUM" &
                       mres$value == n]

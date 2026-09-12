@@ -42,7 +42,7 @@ The lines themselves. One `Rscript build.R` produces every table.
 | `R/foldin_rule.R` | the returning-drug rule |
 | `R/prior_regimen.R` | what counts as a new agent, a restart, and a line-breaking transplant |
 | `R/cart_rule.R` | the CAR-T consolidation rule |
-| `tests/` | 580 checks across two files |
+| `tests/` | 584 checks across two files |
 
 **Outputs.** `LOT_LONG` is every line the engine built. `LOT_LONG_FINAL` is the
 same after the patient-level criteria — a patient excluded by one is absent

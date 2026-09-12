@@ -29,7 +29,7 @@ return_release_sql <- function(cfg, restart, base, extra = "") {
          base, ".SUBSTITUTE_ONLY = 0)", extra)
 }
 
-# Whether a drug's OWN gap breaks its line's run-out chain. Off under the
+# Whether a drug's own gap breaks its line's run-out chain. Off under the
 # rule: the line runs over the gap, so the returning episode sits inside the
 # line it left rather than in no line at all. Another drug interrupting still
 # breaks it - that is the `interrupts` scan, and it is untouched.
@@ -107,7 +107,8 @@ map_restart_sql <- function() {
 #
 # Transplant and CAR-T are left out. One that ends a line outranks
 # DISCONTINUATION, so a run-out chained past it never shows, and one that does
-# not end a line must not break the chain anyway.
+# not end a line - LOT1's induction AUTO, a tandem inside 180 days, CAR-T
+# inside LOT1's window - must not break the chain anyway.
 #
 # LEFT JOIN and aggregates rather than EXISTS: a correlated subquery fails
 # under spark.sql.crossJoin.enabled=false, and one in a JOIN's ON clause is not

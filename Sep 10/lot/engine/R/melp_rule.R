@@ -204,7 +204,7 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
     --
     -- No lower bound: the agent must start after the COURSE, not after the
     -- judged line. So a course covering into two lines is judged by both and
-    -- they can disagree about CONFIRMED. Open - see STUDY_TEAM_ASKS.md 7.
+    -- they can disagree about CONFIRMED. Open question.
     melp_confirm AS (
       SELECT DISTINCT mc.PATID, mc.EXPO_DT
       FROM melp_course mc
@@ -239,7 +239,7 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
         -- ...and nothing has ENDED the judged line between the course and the
         -- agent. An agent arriving after a breaking transplant belongs to the
         -- line that transplant opened, so it cannot make this line's course
-        -- advance. Planted as SK/SKn. Same helper melp_taken reads, so
+        -- advance. Same helper melp_taken reads, so
         -- ownership and confirmation cannot disagree about which transplants
         -- are boundaries.
         AND NOT EXISTS (
@@ -309,7 +309,7 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
       SELECT mc.PATID, mc.EXPO_DT,
              -- Outside ANY induction window, in the ask's own words: a
              -- course starting BEFORE this line is outside its window like any
-             -- other earlier date, not exempt from its judgement (SPin).
+             -- other earlier date, not exempt from its judgement.
              -- ...and only where the line has an induction window to be
              -- inside. An ALLOGENEIC line spans its transplant date alone and
              -- takes no drugs at all - 4.6, and the induction step suppresses
@@ -320,8 +320,7 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
              -- line's own statement judged the same course outside its window
              -- and suppressed it - so the line was started by a dose it then
              -- held out of its own regimen. Shipped checks A7 and C4 both call
-             -- that a failure. Planted as P0008 in run_synthetic.py, where
-             -- the shipped catalogue runs over every planted patient.
+             -- that a failure.
              CASE WHEN mc.EXPO_DT >= {line_tbl}.{start_col}
                    AND mc.EXPO_DT <= {induction_end}{no_regimen_pred}
                   THEN 1 ELSE 0 END AS INSIDE,
@@ -338,7 +337,7 @@ melp_decision_ctes <- function(cfg, line_tbl, start_col, span_end, induction_end
       -- the courses it can actually see: one that starts inside it, and one
       -- that started earlier and still covers into it - the course a
       -- transplant splits, which 4.7 says is outside the new line's induction
-      -- window and not exempt from its judgement (SPin). Asking instead
+      -- window and not exempt from its judgement. Asking instead
       -- whether the course STARTS after the line let that split course fall
       -- between this test and melp_taken, judged by neither line.
       --
@@ -477,11 +476,6 @@ melp_verdict_cte <- function(cfg, line_tbl, start_col, span_end, induction_end) 
          "\n    ),")
 }
 
-# Takes a suppressed melphalan row off the engine's own candidate list. Empty
-# when the rule is off, so the predicate chain it sits in is unchanged.
-# Melphalan rows only, and dose dates rather than exposure dates: a date-only
-# match would also remove any other drug starting on a suppressed date.
-
 # Whether melphalan belongs in a line's regimen, for the statement that builds
 # LOT_BASE_MEDS and LOT_MED_CNT. A held course joins neither (LOT_RULES.md
 # 4.7). The induction-meds table is built one step earlier and carries drug
@@ -508,6 +502,10 @@ melp_regimen_filter <- function(cfg, line_tbl, start_col, induction_end) {
                                          AND sz.SUPPRESS_DT = mz.MAP_START_DT)))"))
 }
 
+# Takes a suppressed melphalan row off the engine's own candidate list. Empty
+# when the rule is off, so the predicate chain it sits in is unchanged.
+# Melphalan rows only, and dose dates rather than exposure dates: a date-only
+# match would also remove any other drug starting on a suppressed date.
 melp_suppress_predicate <- function(cfg, alias = "ms") {
   if (!melp_rule_on(cfg)) return("")
   paste0("\n", glue("
@@ -666,7 +664,8 @@ melp_short_course_ctes <- function(cfg, verdict) {
 
 # How the interrupt scan reads it: an anti-join, and a test on the joined row,
 # not an EXISTS in the scan's ON clause - Spark does not accept a correlated
-# subquery in a join condition before 4.0 (SPARK-45009).
+# subquery in a join condition before 4.0 (SPARK-45009), and DuckDB does, so
+# the suite cannot catch it.
 #
 # The two halves go to discon_per_med_sql together: the join brings the row in,
 # the predicate stops it counting as a break. Equivalent to filtering it out in
@@ -697,7 +696,8 @@ melp_boundary_break_pred <- function(cfg) {
 # being created and must take the decision half alone: a CTE reading FROM
 # lot1_base inside the statement that creates it raises
 # TABLE_OR_VIEW_NOT_FOUND on a clean session, because Spark validates a CTE it
-# never uses.
+# never uses. DuckDB prunes an unused CTE before binding it, so the suite
+# cannot catch it, and a stale relation left from an earlier run hides it.
 melp_lot1_ctes <- function(cfg, line_from = "lot1_base", end_ctes = TRUE) {
   if (!melp_rule_on(cfg)) return("")
   paste0("\n", glue("

@@ -16,7 +16,7 @@ read from the environment.
 |---|---|
 | GSK study | **223926** · asset GSK2857916, Belantamab Mafodotin (Blenrep) |
 | title | *Unmet Needs and Rates of Key Background Safety Events of Interest Relating to Treatment Use among Newly Treated and Relapsed/Refractory Patients with Multiple Myeloma* |
-| accountable | Ashley Holub, Director Epidemiology, Oncology |
+| accountable | Epidemiology, Oncology |
 | effective | 26 August 2026 |
 | classification | Non-PASS · Tier 2 · secondary data collection · no safety objective |
 | data source | Optum Clinformatics Data Mart (CDM) |

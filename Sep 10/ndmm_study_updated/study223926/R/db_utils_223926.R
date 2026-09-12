@@ -36,7 +36,7 @@ study_config <- function() {
 
 # A module's own per-build state, registered by the module that owns it.
 #
-# reset_run_state() runs BEFORE source_modules(), so it cannot name a module's
+# reset_run_state() runs before source_modules(), so it cannot name a module's
 # function directly: in a fresh process that function does not exist yet.
 # Registration is by name, so re-sourcing a module replaces its hook rather
 # than stacking another copy.
@@ -210,7 +210,7 @@ ensure_columns <- function(con, name, cols) {
          "). Column names alone cannot establish that writing into it is ",
          "safe, so nothing is written.", call. = FALSE)
   # An existing column keeps its type, and a type this writer cannot insert
-  # into is found HERE - before the DELETE that precedes the insert, rather
+  # into is found here - before the DELETE that precedes the insert, rather
   # than by the insert failing after the row is already gone.
   for (m in intersect(d$COL, want)) {
     ht <- d$TYPE[match(m, d$COL)]
@@ -477,7 +477,9 @@ run_step <- function(con, name, sql, qc = NULL, allow_empty = FALSE) {
 # TABLE and needs neither.
 #
 # CREATE TABLE IF NOT EXISTS reconciles nothing and every INSERT here is
-# positional, so the schema is compared BEFORE the scope is cleared.
+# positional, so the schema is compared before the scope is cleared. A gained
+# column fails on the count; a renamed one inserts cleanly and keeps the old
+# name with the new meaning, which is worse.
 # Aliases only - different spellings of one type, never a different type.
 #
 # FLOAT is not DOUBLE: single precision turns 16,777,217 into 16,777,216.

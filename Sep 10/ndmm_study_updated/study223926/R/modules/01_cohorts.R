@@ -33,7 +33,7 @@ CRITERION_SOURCE <- c(
 # build applied on ITS index date and this package re-applies on the line's,
 # with the protocol's own 30-day gap allowance.
 #
-# Read by BOTH membership (IN_COHORT) and the funnel, so a criterion added here
+# Read by both membership (IN_COHORT) and the funnel, so a criterion added here
 # with a `here` CRITERION_SOURCE entry is applied by both without further code.
 # Its predicate is over S_COHORT's own columns, which are computed for every
 # row whatever the list says.

@@ -3,8 +3,7 @@
 
 Everything else in the suite reads text: the source, or the emitted statement.
 Text cannot tell you that a rate is divided by 365 instead of 365.25, that a
-GROUP BY lost LOT_NUM, or that a re-run doubles every count. Mutation testing
-put the suite's kill rate at 12% for exactly that reason.
+GROUP BY lost LOT_NUM, or that a re-run doubles every count.
 
 So this runs the statements. It cannot run Spark, so it transpiles each one to
 DuckDB with sqlglot and executes it against tiny fixture tables whose answers

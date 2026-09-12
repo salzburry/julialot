@@ -366,7 +366,7 @@ FROM (
 -- =========================================================================
 -- RX HAS NO PAID_STATUS. Confirmed by inspection of the deployed table, whose
 -- columns include STD_COST, AHFSCLSS, CHK_DT, DAW and DAYS_SUP - and note that
--- STD_COST and CHK_DT are not in the V9.0 field list we hold, so that list is
+-- STD_COST and CHK_DT are not in the V9.0 field list, so that list is
 -- incomplete for RX the same way it was for DOD.MBR_MATCH_TYPE.
 --
 -- That matters for Q25. The dictionary's own rule for MEDICAL is arithmetic on
@@ -380,8 +380,9 @@ FROM (
 
 -- The shape of RX, using only columns the package needs. build_fu_claims()
 -- reads FILL_DT and PATID and neither has been confirmed present - round one's
--- probe was a DESCRIBE truncated on screen, which is how CONFINEMENT.ICD_FLAG
--- and MEDICAL.PAID_STATUS went unconfirmed until round two had to re-ask.
+-- probe was a DESCRIBE that returned an incomplete column list, which is how
+-- CONFINEMENT.ICD_FLAG and MEDICAL.PAID_STATUS went unconfirmed until round
+-- two had to re-ask.
 SELECT count(*)                              AS rx_lines,
        count(DISTINCT cast(r.PATID as string)) AS members,
        min(cast(r.FILL_DT as date))          AS earliest_fill,

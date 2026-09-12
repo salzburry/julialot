@@ -1,16 +1,11 @@
 # Drawing, in base R only.
 #
-# Same discipline as reporting/dashboard/R/render.R: a missing plotting package
-# must not silently produce nothing, so nothing here needs one. Shiny renders
-# the HTML these build; the plots are base graphics.
+# A missing plotting package must not silently produce nothing, so nothing here
+# needs one. Shiny renders the HTML these build; the plots are base graphics.
 
-# GSK colours. A SECOND copy - reporting/dashboard/R/render.R holds the first.
-#
-# Copied rather than sourced on purpose: ndmm_study_updated/ is self-contained
-# (see ../SOURCES.md), and reaching into a sibling folder for a colour would
-# break that for the sake of eleven strings. tests/run_tests.R compares the two
-# whenever the sibling is present, so a palette swap that changes one and not
-# the other is caught rather than left to be noticed.
+# GSK colours, written out here rather than read from a sibling folder: this
+# folder has to stand on its own, and reaching across for eleven strings would
+# end that.
 PALETTE <- c(
   orange      = "#F36633",
   orange_dark = "#D14E1F",
@@ -112,11 +107,10 @@ plot_bar <- function(labels, values, main = "", xlab = "", horizontal = TRUE) {
 }
 
 # One or more KM curves, with the step function and its band.
-# A curve with no step in it is still a curve. Filtering on nrow() dropped
-# every event-free cohort and the panel said "Nothing to show", which reads as
-# absent data rather than as thirty patients none of whom had the event.
-# km_steps() supplies the points either way, so what is kept here is any curve
-# that was observed at all.
+#
+# A curve with no step in it is still a curve: thirty patients none of whom had
+# the event is a result, not absent data. So any curve that was observed at all
+# is kept, and km_steps() supplies the points either way.
 plot_km <- function(curves, main = "", xlab = "Months", ylab = "Survival") {
   curves <- Filter(function(k)
     !is.null(k) && (nrow(k) > 0 || !is.na(attr(k, "follow_up") %||% NA_real_)),
@@ -158,21 +152,10 @@ plot_empty <- function(msg = "Nothing to show for this selection.") {
   graphics::text(0.5, 0.5, msg, col = PALETTE[["slate"]], cex = 1)
 }
 
-# What a table panel renders, decided here rather than inside the server.
-#
-# The decision is the disclosure control: a `subject` table is one row per
-# patient, and rendering it as a grid is a line listing with the identifier
-# attached. Keeping the branch inside app.R's server() meant no test could
-# reach it - a mutation that sent subject tables back to a raw grid passed the
-# whole suite, because the only check was that the word "summarise_subject"
-# still appeared in the file.
-#
 # The headline counts, and the floor applied to them.
 #
-# Pure for the same reason panel_table_html() is: this lived inside the
-# server, so the only thing a test could reach was whether the file still
-# mentioned S_ATTRITION - and it did, while displaying a three-patient cohort
-# at a floor of 25.
+# Pure rather than part of the server, so the floor these go through is decided
+# where a test can drive it.
 kpi_row_html <- function(d, floor_n = 25L, package_min_n = 25L,
                          col = "N_REMAINING", by = "COHORT") {
   if (is.null(d) || !nrow(d) || !all(c(col, by) %in% names(d)))
@@ -188,13 +171,13 @@ kpi_row_html <- function(d, floor_n = 25L, package_min_n = 25L,
       fmt_num(fl, 0)))
 }
 
-# Pure, so tests/run_tests.R drives the real thing.
+# What a table panel renders. A `subject` table is one row per patient, so it
+# is summarised rather than drawn as a grid: a grid of it is a line listing
+# with the identifier attached.
 #
 # The population, the floor and the caption all come from prepare_panel(), so
-# this cannot disagree with the KPI, the curve or the comparison about how
-# many patients a selection holds. The caption used to say "N patients" off
-# nrow(), which on a table that is one row per patient and LINE named a number
-# of lines - and the same number decided the suppression.
+# this cannot disagree with the KPI, the curve or the comparison about how many
+# patients a selection holds.
 panel_table_html <- function(d, spec, floor_n = 25L, max_rows = 5000L,
                              purpose = "descriptive") {
   if (is.null(d) || !nrow(d)) return(html_table(NULL))

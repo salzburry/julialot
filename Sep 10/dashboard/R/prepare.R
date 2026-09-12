@@ -1,19 +1,14 @@
 # What a panel is allowed to show, decided once.
 #
-# Every renderer used to answer four questions for itself: which rows are the
-# analysis set, how many PATIENTS that is, whether that number clears the
-# floor, and what to draw when it does not. Six closures answered them six
-# ways, and five of them got at least one wrong - a survival curve over the
-# whole cohort instead of the eligible subset, a KPI and a comparison with no
-# floor at all, a caption calling lines patients.
+# Four questions are answered here rather than by each renderer for itself:
+# which rows are the analysis set, how many patients that is, whether that
+# number clears the floor, and what to draw when it does not.
 #
-# So the questions are asked here, and a renderer receives the answers.
-#
-# Nothing in this file loosens anything. The package suppressed into its
-# S_*_RELEASE tables at its own threshold before any of this ran, and
-# apply_floor() still holds every released cell to the viewer's floor as well.
-# This is the population test that has to happen AFTER aggregation, on the
-# thing being drawn, and it can only ever withhold more.
+# Nothing here loosens anything. The package suppressed into its S_*_RELEASE
+# tables at its own threshold before any of this ran, and apply_floor() holds
+# every released cell to the viewer's floor as well. This is the population
+# test that has to happen after aggregation, on the thing being drawn, and it
+# can only ever withhold more.
 
 # ---- grain ------------------------------------------------------------------
 # How many rows a table has per patient. A count of rows is a count of
@@ -44,16 +39,14 @@ grain_noun <- function(grain)
          "rows")
 
 # ---- population -------------------------------------------------------------
-# The number of PATIENTS a rendered result rests on, which is the number the
+# The number of patients a rendered result rests on, which is the number the
 # suppression rule is about.
 #
 # Counted off the identifier where the table carries one, because that is the
-# only reading that is right at every grain. nrow() is right only at patient
-# grain, and using it at line grain called ten patients with three lines each
-# "30 patients" and published a category summary the floor should have
-# withheld.
+# only reading right at every grain: nrow() is right at patient grain alone,
+# and at line grain ten patients with three lines each read as 30.
 #
-# NA where it cannot be established. A caller must treat NA as "withhold":
+# NA where it cannot be established, and a caller must treat NA as "withhold":
 # a population that cannot be counted has not been shown to clear the floor.
 population_n <- function(d, spec) {
   if (is.null(d) || !nrow(d)) return(0L)
@@ -146,11 +139,10 @@ prepare_panel <- function(d, spec, floor_n, purpose = "descriptive",
        note = note, purpose = purpose)
 }
 
-# The key columns a selection still varies over. A survival curve needs
-# exactly one cohort and one line: a patient sits in several nested cohorts
-# with a different index date in each, so a curve over "all cohorts" counts
-# them once per row - 25 patients became a 50-row risk set with an event at
-# month 1 that belonged to none of the cohorts on its own.
+# The key columns a selection still varies over. A survival curve needs exactly
+# one cohort and one line: a patient sits in several nested cohorts with a
+# different index date in each, so a curve over "all cohorts" counts them once
+# per row and its risk set belongs to no cohort.
 strata_of <- function(d, keys = c("COHORT", "LOT_NUM")) {
   ks <- intersect(keys, names(d))
   ks[vapply(ks, function(k) length(unique(as.character(d[[k]]))) > 1L,
@@ -158,19 +150,16 @@ strata_of <- function(d, keys = c("COHORT", "LOT_NUM")) {
 }
 
 # ---- bars -------------------------------------------------------------------
-# A bar chart of a FINISHED rate, with the strata preserved.
+# A bar chart of a finished rate, with the strata preserved.
 #
-# The previous version grouped by the facet alone and took mean() of the rate.
-# Selecting every period therefore drew one unlabelled bar averaging distinct
-# strata: 10 events in 10 person-years and 10 in 1,000 are rates of 1,000 and
-# 10 per 1,000 PY, and the bar said 505 - a number that is neither, and not
-# the pooled rate either. Baseline and follow-up person-time cannot be pooled
-# by averaging, and the populations behind two strata overlap.
+# Rates are never averaged across strata: 10 events in 10 person-years and 10
+# in 1,000 are 1,000 and 10 per 1,000 PY, and the mean of the two is neither
+# rate and not the pooled one. Baseline and follow-up person-time cannot be
+# pooled by averaging, and the populations behind two strata overlap.
 #
 # So the label carries every column that varies in the selection, and each bar
-# is one row of the table. Where that still leaves two rows on one label the
-# table has a duplicated stratum - a real failure the package has its own
-# grain check for - and it is reported rather than averaged away.
+# is one row of the table. Two rows left on one label means a duplicated
+# stratum, and that is reported rather than averaged away.
 stratum_label <- function(d, spec, lab) {
   cols <- unique(c(lab, intersect(c(spec$keys, spec$groups), names(d))))
   cols <- Filter(function(k)
@@ -180,13 +169,9 @@ stratum_label <- function(d, spec, lab) {
     else paste0(k, "=", as.character(d[[k]]))), sep = " · "))
 }
 
-# What the bars ARE, separately from drawing them.
-#
-# The decision lived inside the plot call, and a plot returns nothing a test
-# can read - so the two rules that matter here, that strata are never averaged
-# and that a bar resting on too few patients is not drawn, were reachable only
-# through Shiny. Same reason panel_table_html() and kpi_row_html() left the
-# server.
+# What the bars are, separately from drawing them. A plot returns nothing a
+# test can read, so the two rules that matter - strata are never averaged, and
+# a bar resting on too few patients is not drawn - are decided here.
 #
 # Returns labels and values to draw, or ok = FALSE and the reason not to.
 stratum_bar_data <- function(d, spec, lab, val) {
@@ -244,12 +229,10 @@ plot_count_bars <- function(d, spec, lab, main, floor_n,
 # The floor, applied to a two-scenario comparison.
 #
 # compare_tables() joins two readings on the spec's keys and reports A, B and
-# the difference. Both sides had already been through apply_floor(), but the
-# comparison was built from the rows rather than from the suppressed values,
-# so a stratum both normal panels withheld came back here in full - with its
-# delta, which is a second disclosure the panels never made.
+# the difference, built from the rows rather than from the suppressed values -
+# so the floor is applied again here, to the difference as well.
 #
-# A stratum is shown only where BOTH sides clear the floor. One side alone is
+# A stratum is shown only where both sides clear the floor. One side alone is
 # still a fact worth seeing - a scenario that moves a stratum under the floor
 # is exactly what someone is looking for - so the row stays and says so.
 suppress_comparison <- function(cm, a, b, spec, floor_n, package_min_n = 25L) {

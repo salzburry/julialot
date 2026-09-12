@@ -25,14 +25,9 @@ SYNTH_SCENARIOS <- list(
     months_as = "calendar", censor_at_disenrollment = "FALSE")
 )
 
-# ONE stream, shared by every scenario.
-#
-# Not a stream per scenario. With a stream each, every measure differed between
-# any two scenarios - including the ones the setting does not touch - and the
-# comparison view then taught a viewer that changing the washout moves the ED
-# rate. The base draw is identical across scenarios and the setting scales only
-# what it actually reaches, so a difference on this page is a difference the
-# setting made.
+# One stream, shared by every scenario, rather than a stream each. The base
+# draw is identical across scenarios and a setting scales only what it actually
+# reaches, so a difference on this page is a difference the setting made.
 .SYNTH_SEED <- 20260908L
 
 .synth_rng <- function(seed = .SYNTH_SEED) {
@@ -147,12 +142,11 @@ synthetic_one <- function(prefix, settings) {
     COHORT = rep(COHORT_KEYS, length.out = n_sub),
     LOT_NUM = rep(1:3, length.out = n_sub),
     INDEX_DATE = as.Date("2019-01-01") + as.integer(r(n_sub, 0, 2200)),
-    # Not everyone is in the survival analysis. The producer keeps the whole
-    # cohort in S_TTE and marks the restricted population with this flag - see
-    # study223926/R/modules/09_tte.R - so a fixture where everyone is eligible
-    # cannot show the difference between a descriptive summary of the table
-    # and a curve over the analysis set, and a panel drawn over the wrong one
-    # looks right.
+    # Not everyone is in the survival analysis: the producer keeps the whole
+    # cohort in S_TTE and marks the restricted population with this flag (see
+    # study223926/R/modules/09_tte.R). A fixture where everyone is eligible
+    # cannot tell a descriptive summary of the table from a curve over the
+    # analysis set.
     TTE_ELIGIBLE = as.integer(seq_len(n_sub) %% 5L != 0L),
     stringsAsFactors = FALSE)
   for (ep in c("TTNT", "TTD", "OS")) {

@@ -188,7 +188,7 @@ mod_hcru <- function(con, cfg, cohort) {
     # The rates below are driven from the DENOMINATOR, so every measure still
     # gets a row saying zero.
     allow_empty = TRUE,
-    # A count FIRST: run_step's zero-row guard reads the first column, and a
+    # A count first: run_step's zero-row guard reads the first column, and a
     # string there makes as.numeric() give NA and the guard skip silently.
     qc = sprintf("SELECT count(*) AS n_events,
                     sum(CASE WHEN EVENT_TYPE='INPATIENT' THEN 1 ELSE 0 END) AS n_ip,

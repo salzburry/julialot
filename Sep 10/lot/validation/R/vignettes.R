@@ -613,9 +613,9 @@ check_vignettes <- function(p, v = VIGNETTES) {
     if (identical(w$expected(p), b$expected(p)))
       bad <- c(bad, paste0("parameter '", nm, "': both sides expect the same thing, ",
                            "so the boundary is not being tested"))
-    # ...and against the VALUE. Adjacent, ordered and disagreeing is the shape
-    # of a boundary; it is not the boundary. The measured quantity has to fall
-    # inside the setting on one side and outside it on the other.
+    # And against the value. Adjacent, ordered and disagreeing is the shape of
+    # a boundary, not the boundary: the measured quantity has to fall inside
+    # the setting on one side and outside it on the other.
     if (is.null(w$measure) || is.null(b$measure)) {
       bad <- c(bad, paste0("parameter '", nm, "': its pair declares no measure, so ",
                            "nothing holds it to the value"))

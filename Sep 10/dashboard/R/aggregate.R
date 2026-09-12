@@ -1,18 +1,11 @@
-# The live controls: what a viewer can change and see answered at once.
+# The live controls: a selection over numbers already computed - which cohort,
+# which line, which period, which stratum, what floor to suppress at. Answered
+# here, instantly, because nothing has to be re-derived.
 #
-# There are two kinds of control, and confusing them is the one way a
-# dashboard like this lies.
-#
-#   Live      a selection over numbers already computed - which cohort, which
-#             line, which period, which stratum, what floor to suppress at.
-#             Answered here, instantly, because nothing has to be re-derived.
-#
-#   Scenario  an open question. It changes the SQL, so it cannot be applied to
-#             a finished table: S_SAFETY_RATES was computed under ONE reading
-#             of the washout and no filter recovers another. Changing one
-#             means reading a different scenario, or running one.
-#
-# Everything in this file is the first kind. The second is scenarios.R.
+# The other kind of control is an open question. It changes the SQL, so it
+# cannot be applied to a finished table: S_SAFETY_RATES was computed under one
+# reading of the washout and no filter recovers another. That kind is
+# scenarios.R.
 
 # Filter a table by the keys the spec declares. A key the viewer left at "all"
 # is not filtered on.
@@ -28,27 +21,22 @@ apply_keys <- function(d, spec, sel) {
 
 # A second suppression floor, applied on what was read.
 #
-# The package already suppressed into S_*_RELEASE at its own threshold. This
-# can only ever hide MORE: a viewer may raise the floor, and lowering it below
-# what the package applied would not reveal anything anyway, because those
-# cells arrived NULL. Enforced rather than trusted, so a mis-set env var
-# cannot turn the dashboard into a disclosure route.
+# The package already suppressed into S_*_RELEASE at its own threshold, and
+# this can only ever hide more: lowering the floor below the package's reveals
+# nothing, because those cells arrived NULL. Enforced rather than trusted, so a
+# mis-set env var cannot turn the dashboard into a disclosure route.
 apply_floor <- function(d, spec, min_n, package_min_n = 25L) {
   if (is.null(d) || !nrow(d)) return(d)
-  # The spec's column when it names one, otherwise a count the table carries.
-  # Returning early on "no n_col declared" left every undeclared table
-  # unsuppressed.
+  # The spec's column when it names one, otherwise a count the table carries,
+  # so a table that declared none is suppressed too.
   n_col <- infer_n_col(spec, names(d))
   if (is.null(n_col)) return(d)
   floor_n <- max(as.integer(min_n), as.integer(package_min_n))
   n <- suppressWarnings(as.numeric(d[[n_col]]))
-  # A count that cannot be read is not a count that cleared the floor.
-  #
-  # This tested `!is.na(n) & n < floor_n`, so a row whose denominator came back
-  # NA - or as text, which is what a pre-suppressed marker like "<25" looks
-  # like - was left alone and published its rate. released() in R/prepare.R
-  # answers the same question the other way, and the two decide the same thing
-  # in different panels, so they cannot disagree about which way to fail.
+  # A count that cannot be read is not a count that cleared the floor: a
+  # denominator that comes back NA, or as text such as the pre-suppressed
+  # marker "<25", is withheld. released() in R/prepare.R decides it the same
+  # way, so two panels cannot disagree about which way to fail.
   hit <- is.na(n) | n < floor_n
   if (!any(hit)) return(d)
   vals <- intersect(c(spec$numerator, spec$events, spec$py, spec$rate,
@@ -63,12 +51,11 @@ apply_floor <- function(d, spec, min_n, package_min_n = 25L) {
 
 # Counts and percentages for a categorical column, with a (Missing) row so an
 # absent value is visible rather than dropped.
+#
 # `id_col` is the patient identifier, when the table has one. N stays what a
-# row of the table is - on a line-grain table it is a count of lines, which is
-# a legitimate figure - but the FLOOR is about patients, and a level was being
-# released on its row count: three lines each from ten patients read as
-# N = 30 and cleared a floor of 25, while the bar drawn from the same rows
-# correctly withheld it.
+# row of the table is - on a line-grain table that is a count of lines, which
+# is a legitimate figure - but the floor is about patients: three lines each
+# from ten patients is N = 30 and ten people.
 tabulate_cat <- function(d, col, min_n = 25L, id_col = NULL) {
   if (is.null(d) || !nrow(d) || !col %in% names(d)) return(data.frame())
   v <- as.character(d[[col]])
@@ -83,16 +70,13 @@ tabulate_cat <- function(d, col, min_n = 25L, id_col = NULL) {
       length(unique(ids[v == l & !is.na(ids) & nzchar(ids)])), integer(1))
   } else out$N
   out$SUPPRESSED <- as.integer(pop < min_n)
-  # SECONDARY suppression. Withholding one level and publishing the rest is not
-  # withholding anything: the caption gives the stratum's size and the table
-  # gives every other level, so the hidden cell is the subtraction. A stratum
-  # of 100 with levels 97 and 3 published "97" beside "100 patients", and the 3
-  # was there for anyone who took the difference.
+  # Secondary suppression. Withholding one level and publishing the rest hides
+  # nothing: the caption gives the stratum's size, so a stratum of 100 with
+  # levels 97 and 3 gives the 3 away as the difference.
   #
   # So where exactly one level is withheld, the smallest of the others goes
-  # with it. Two unknowns cannot be recovered from one total. With only two
-  # levels that withholds the variable entirely, which is the right answer:
-  # one of two levels cannot be hidden at all.
+  # with it - two unknowns cannot be recovered from one total. With only two
+  # levels that withholds the variable entirely, which is the right answer.
   if (sum(out$SUPPRESSED) == 1L && nrow(out) > 1L) {
     open <- which(out$SUPPRESSED == 0L)
     out$SUPPRESSED[open[which.min(out$N[open])]] <- 1L
@@ -120,14 +104,10 @@ summarise_num <- function(d, col, min_n = 25L) {
     out$MIN <- round(min(x, na.rm = TRUE), 2); out$MAX <- round(max(x, na.rm = TRUE), 2)
   }
   out$SUPPRESSED <- as.integer(n < min_n)
-  # ...including the counts themselves. N is the number of patients with a
-  # value, and a suppressed row published it: a variable with three non-missing
-  # values in a stratum of a hundred reported "N = 3" beside every summary
-  # statistic withheld. N_MISSING goes too, because the stratum's size is in
-  # the caption and the two subtract.
-  #
-  # tabulate_cat() has always withheld N for a suppressed level. This is the
-  # same rule on the other half of the same table.
+  # The counts go with them. N is the number of patients with a value, and
+  # "N = 3" beside withheld statistics publishes the number the floor exists to
+  # protect; N_MISSING goes too, because it subtracts against the stratum size
+  # in the caption. tabulate_cat() applies the same rule to a suppressed level.
   if (out$SUPPRESSED == 1L) { out$N <- NA_integer_; out$N_MISSING <- NA_integer_ }
   out
 }
@@ -140,11 +120,10 @@ km_estimate <- function(time, event) {
   keep <- !is.na(time) & !is.na(event) & time >= 0
   time <- as.numeric(time)[keep]; event <- as.integer(event)[keep]
   if (!length(time)) return(data.frame())
-  # A cohort with no event at all is a RESULT: everyone is still event-free at
-  # the end of their follow-up. Returning a bare data.frame() made the panel
-  # say "Nothing to show", which reads as missing data. The rows are empty
-  # because there is no step to draw, but the sample size and the follow-up it
-  # was observed over come back so the curve can be drawn flat across it.
+  # A cohort with no event at all is a result: everyone is still event-free at
+  # the end of their follow-up. There is no step to draw, so the rows are
+  # empty, but the sample size and the follow-up it was observed over come back
+  # so the curve can be drawn flat across it.
   o <- order(time, -event)
   time <- time[o]; event <- event[o]
   ut <- sort(unique(time[event == 1L]))
@@ -159,10 +138,8 @@ km_estimate <- function(time, event) {
     if (at_risk > d) var_sum <<- var_sum + d / (at_risk * (at_risk - d))
     # Log-log band. se is sd(log(-log S)) = sqrt(Greenwood) / |log S|.
     #
-    # The sign matters and is easy to invert: log(S) is NEGATIVE, so writing
-    # the exponent as se/log(surv) flips it. Spelled with abs() and an explicit
-    # sign, because the first version divided by log(surv) and put the upper
-    # bound in the lower column - a band drawn upside down.
+    # log(S) is negative, so an exponent written as se/log(surv) inverts the
+    # band. Spelled with abs() and an explicit sign instead.
     se <- if (surv > 0 && surv < 1 && var_sum > 0)
       sqrt(var_sum) / abs(log(surv)) else NA_real_
     # exponent > 1 pushes S down (the lower bound); < 1 pulls it up.
@@ -224,14 +201,10 @@ compare_tables <- function(a, b, spec, value = NULL) {
   if (is.null(a) || is.null(b) || !nrow(a) || !nrow(b) || !length(keys) ||
       !value %in% names(a) || !value %in% names(b))
     return(data.frame())
-  # Both sides have to be stratified the same way.
-  #
-  # The keys came off `a` alone, and b[[k]] for a key b does not carry is NULL
-  # - which paste() drops rather than complains about, so b's rows were keyed
-  # on fewer columns than a's. One row against one row came back as TWO, one
-  # of them a key that exists on neither side. Two scenarios whose tables have
-  # different columns are not comparable, and that is worth saying rather than
-  # joining on whatever they happen to share.
+  # Both sides have to be stratified the same way. Keys taken off `a` alone
+  # leave b keyed on fewer columns, because paste() drops a NULL rather than
+  # complaining, and one row against one row then comes back as two. Two
+  # scenarios whose tables have different columns are not comparable.
   missing_b <- setdiff(keys, names(b))
   if (length(missing_b)) {
     out <- data.frame()
@@ -246,10 +219,9 @@ compare_tables <- function(a, b, spec, value = NULL) {
   all_k <- union(ka, kb)
   out <- do.call(rbind, lapply(strsplit(all_k, "\r", fixed = TRUE), function(p)
     stats::setNames(as.data.frame(as.list(p), stringsAsFactors = FALSE), keys)))
-  # match() takes the FIRST row for a key. A table with a duplicated stratum
-  # therefore compared one of its rows and dropped the other without saying so
-  # - and a duplicated stratum is a real failure mode, which is why the package
-  # has a grain check at all. Counted, and reported on the row.
+  # match() takes the first row for a key, so a duplicated stratum would be
+  # compared on one of its rows with the other dropped silently. Counted, and
+  # reported on the row.
   dup_a <- table(ka)[all_k]; dup_b <- table(kb)[all_k]
   out$A <- suppressWarnings(as.numeric(a[[value]][match(all_k, ka)]))
   out$B <- suppressWarnings(as.numeric(b[[value]][match(all_k, kb)]))
@@ -267,46 +239,34 @@ compare_tables <- function(a, b, spec, value = NULL) {
 
 # --- a subject-level table, aggregated ---------------------------------------
 #
-# A `subject` table is one row per PATID. Rendering it as a grid is a LINE
-# LISTING: every patient, with their identifier, on a page several people can
-# open. That is what this dashboard did until an adversarial pass found it -
-# five panels, 1,200 rows each, PATID included.
+# A `subject` table is one row per PATID, and a grid of it is a line listing:
+# every patient, with their identifier, on a page several people can open. So
+# it is summarised instead, never listed, over the columns the spec names as
+# categorical and continuous.
 #
-# So a subject table is summarised instead, never listed. The spec already
-# names which of its columns are categorical and which continuous, and
-# tabulate_cat() and summarise_num() already knew how to summarise them - they
-# were written, tested, and called by nothing, which is exactly the defect the
-# release module's review found in the old R suppression helper.
-#
-# Suppression is on the STRATUM: a level or a summary computed from fewer than
+# Suppression is on the stratum: a level or a summary computed from fewer than
 # the floor is withheld, because the stratum is the population the rule is
 # about.
 ID_COLUMNS <- c("PATID", "PAT_PLANID", "PATIENT_ID", "MEMBER_ID", "CLMID")
 
 # Never rendered, whatever a spec says. An identifier that reaches the page is
 # a disclosure whether or not anything asked for it.
-# Matched case-insensitively, and subset by POSITION.
 #
-# The test was built in upper case and then subtracted against the original
-# names: intersect(toupper(names(d)), ID_COLUMNS) found "PATID" in a column
-# actually called `patid`, and setdiff(names(d), "PATID") then removed
-# nothing. A lower-case identifier reached the page - and warehouses do return
-# them that way; PERMISSIBLE_SUBS in the LOT build is written lower case, and
-# the melphalan reader already has to accept tableName or table_name.
-#
-# population_n() finds the identifier whatever its case, so the two disagreed
-# about the same column: one counted patients off it, the other published it.
+# Matched case-insensitively and subset by position, because a warehouse does
+# return a column as `patid`: matching on the upper-cased names and then
+# subtracting against the original ones removes nothing. population_n() finds
+# the identifier whatever its case, and the two have to agree about the same
+# column.
 drop_identifiers <- function(d) {
   if (is.null(d) || !ncol(d)) return(d)
   d[, !toupper(names(d)) %in% ID_COLUMNS, drop = FALSE]
 }
 
-# n_population is the number of PATIENTS this stratum rests on, and the
-# caller works it out with population_n() because only it knows the grain.
-# nrow() is that number only at patient grain: on LOT_LONG_FINAL, which is one
-# row per patient AND line, ten patients with three lines each came to 30 and
-# published a summary the floor should have withheld. NULL keeps the old
-# reading for a caller that has not been given a population.
+# n_population is the number of patients this stratum rests on; the caller
+# works it out with population_n(), because only it knows the grain. nrow() is
+# that number only at patient grain - on LOT_LONG_FINAL, one row per patient
+# and line, ten patients with three lines each is 30 rows. NULL falls back to
+# nrow() for a caller given no population.
 summarise_subject <- function(d, spec, min_n = 25L, n_population = NULL) {
   if (is.null(d) || !nrow(d)) return(data.frame())
   cats <- intersect(spec$categorical %||% character(0), names(d))
@@ -355,12 +315,9 @@ summarise_subject <- function(d, spec, min_n = 25L, n_population = NULL) {
   out
 }
 
-# A count column to suppress on, when the spec did not name one.
-#
-# apply_floor() used to be a no-op on any table whose spec had no n_col - which
-# is every subject, funnel, check and undeclared table. An undeclared table
-# publishing N_PATIENTS therefore reached the page raw, and "a new module
-# appears in the dashboard on its own" quietly meant "and skips suppression".
+# A count column to suppress on, when the spec did not name one - which is
+# every subject, funnel, check and undeclared table. Without it, a module that
+# appears in the dashboard on its own would skip suppression as well.
 COUNT_COLUMNS <- c("N_AT_RISK", "N_PATIENTS", "N_REMAINING", "N", "N_DENOM")
 
 infer_n_col <- function(spec, cols) {
@@ -374,19 +331,17 @@ infer_n_col <- function(spec, cols) {
 # ---- line to line ------------------------------------------------------------
 # How one line relates to the next, per patient.
 #
-# Every LOT panel above describes lines one at a time - what opened them, how
-# they ended, what was in them - and a line that is fine on its own can be
-# nonsense beside its neighbour: a line that ran out of treatment followed
-# the next day by an allograft line, a CAR-T consolidation end with no CAR-T
-# start behind it, a regimen returning in full one line later. This is the
-# view a reviewer needs to see that, and it is the one view the per-line
-# panels cannot give.
+# The per-line panels describe lines one at a time, and a line that is fine on
+# its own can be nonsense beside its neighbour: a line that ran out of
+# treatment followed the next day by an allograft line, a CAR-T consolidation
+# end with no CAR-T start behind it, a regimen returning in full one line
+# later. These views are where that shows.
 #
 # Pairs the consecutive lines (n, n+1) of one patient, in LOT_NUM order; a
 # patient whose lines skip a number is not paired across the gap, because the
 # engine builds lines contiguously and a gap is a table to question, not a
-# transition. Every count is distinct PATIENTS. Nothing here carries an
-# identifier out: the pairs are aggregated before anything is returned.
+# transition. Every count is distinct patients, and the pairs are aggregated
+# before anything is returned, so no identifier leaves here.
 
 # A level as a label: "(Missing)" where it is empty, unless the caller says
 # what empty means - an empty regimen is a real thing, an allograft or
@@ -452,33 +407,24 @@ lot_line_ends <- function(d, from_col, blank = "(Missing)") {
 }
 
 # Which cells of a count table have to be hidden so that no count under the
-# floor can be READ OFF any one of the totals that are published.
+# floor can be read off any one of the totals that are published.
 #
-# `n` are the counts, `groups` a list of groupings (each a vector of group
-# ids, one per cell, NA for a cell outside that grouping) whose totals are
-# published, and `min_n` the floor. A cell under the floor is hidden, and so
-# is any cell `hidden` marks from the start. Then, to a fixed point: a
-# group's hidden cells sum to the group total minus its open cells, so where
-# that sum is under the floor it is a count under the floor that can be read
-# off, and the smallest open cell of the group is hidden until the sum
-# reaches the floor or nothing is left open. One hidden cell under the floor
-# is the case of one; one hidden cell at or above it is a count that may be
-# read, so nothing more is hidden for it.
+# `n` are the counts, `groups` a list of groupings (each a vector of group ids,
+# one per cell, NA for a cell outside that grouping) whose totals are
+# published, and `min_n` the floor. A cell under the floor is hidden, as is any
+# cell `hidden` marks from the start. Then, to a fixed point: a group's hidden
+# cells sum to the group total less its open cells, so where that sum is under
+# the floor the smallest open cell of the group is hidden too, until the sum
+# reaches the floor or nothing is left open. One hidden cell under the floor is
+# the case of one; one hidden cell at or above it is a count that may be read,
+# so nothing more is hidden for it. Hiding only ever adds, so this terminates.
 #
-# Hiding only ever adds, so this terminates. What it returns is which cells
-# are hidden; the caller folds them into one row whose count is their sum,
-# which is at or above the floor whenever an open cell remains beside it and
-# is therefore not a count under the floor.
-#
-# Each total is held on its own. That is the subtraction a reader makes -
-# one published total less the cells shown beside it - and not a full
-# audit of every total taken together, which is a linear programme this
-# panel does not run.
-#
-# The first version protected only the source and destination groupings,
-# and its caption published the pairs' whole population: a line with one
-# common pair and one rare one showed the common count beside that total,
-# and the rare count was the subtraction.
+# The caller folds the hidden cells into one row whose count is their sum,
+# which is at or above the floor whenever an open cell remains beside it and is
+# therefore not a count under the floor. Each total is held on its own - one
+# published total less the cells shown beside it, which is the subtraction a
+# reader makes - rather than every total taken together, which is a linear
+# programme this panel does not run.
 hide_for_disclosure <- function(n, groups, min_n, hidden = n < min_n) {
   repeat {
     before <- hidden
@@ -500,11 +446,9 @@ hide_for_disclosure <- function(n, groups, min_n, hidden = n < min_n) {
 # long tail of rare pairs, and forty shaded rows say less than one row that
 # says how many patients they hold between them.
 #
-# The row does not say HOW MANY cells it holds. That number is a published
-# fact like any other, and it was the one that picked the allocation out:
-# with 99 patients grouped, the published source and destination totals
-# left fifty ways to fill the hidden cells, and "3 pairs" fitted exactly
-# one of them - the one with the rare pair at 1.
+# The row does not say how many cells it holds. That number is a published fact
+# like any other, and with the other totals beside it, it can pick out the one
+# way of filling the hidden cells that fits.
 fold_hidden <- function(out, hidden, min_n, by, make_row) {
   shown <- out[!hidden, , drop = FALSE]
   shown$SUPPRESSED <- rep(0L, nrow(shown))
@@ -524,20 +468,17 @@ fold_hidden <- function(out, hidden, min_n, by, make_row) {
 # disclosure rule above, over the three totals the other panels publish:
 #
 #   * what opened line n+1 - every line n+1 has a predecessor, so the pairs
-#     INTO a start type sum to the count "what opened each line" gives;
-#   * the pairs FROM each line, which the caption gives and "lines by line
+#     into a start type sum to the count "what opened each line" gives;
+#   * the pairs from each line, which the caption gives and "lines by line
 #     number" gives as the count of line n+1;
-#   * how line n ended. "How each line ended" counts every line n ending a
-#     given way, with or without a line after it, and the pairs from that
-#     end reason sum to that count MINUS the lines with none. Those lines
-#     join the group as a cell that is never shown: the reader does not
-#     have their count, so where there are enough of them a hidden pair can
-#     stand on them, and where there are few or none (every line n has a
-#     next line, which the per-line counts say when they agree) pairs are
-#     hidden until the pairs and the lines together reach the floor. A
-#     published end-reason count of 50, a shown pair of 49 from it and
-#     every line 1 with a line 2 gave the hidden pair away as 1 when this
-#     group was not held.
+#   * how line n ended - that total counts every line n ending a given way,
+#     with or without a line after it, so the pairs from an end reason sum to
+#     it less the lines with none. Those lines join the group as a cell that is
+#     never shown: the reader does not have their count, so where there are
+#     enough of them a hidden pair can stand on them, and where there are few
+#     or none - every line n has a next line, which the per-line counts say
+#     when they agree - pairs are hidden until the pairs and the lines together
+#     reach the floor.
 #
 # `ends` is lot_line_ends() for the same table and column, over the lines
 # the pairs came from.

@@ -1,18 +1,16 @@
 # Runs the checks, rather than reading them.
 #
-# Everything else in this suite inspects the SQL as a string. Text cannot tell
-# you that a WHERE can never be true, that a predicate was inverted, or that a
-# check lost the half of its condition that made it bite - and a check that
-# cannot fail reports "pass" on a real defect for ever.
+# Everything else in this suite inspects the SQL as a string, which cannot tell
+# that a WHERE can never be true, that a predicate was inverted, or that a
+# check lost the half of its condition that made it bite.
 #
 # So each check here is executed twice: against a clean fixture, where it must
-# count nothing, and against the same fixture with the defect it describes
-# planted in it, where it must count that and name it.
+# count nothing, and against the same fixture carrying the defect it describes,
+# where it must count that and name it.
 #
-# The compromise is real. The checks are written for Spark and are transpiled
-# to DuckDB to run at all, so a statement Spark would reject can still run
-# here. This is complementary to the text tests and to a run against the
-# warehouse, not a replacement for either.
+# The checks are written for Spark and transpiled to DuckDB to run at all, so a
+# statement Spark would reject can still run here. This complements the text
+# tests and a run against the warehouse rather than replacing either.
 
 # The tables a check may read, with the columns the catalogue actually uses.
 # Named for the key the runner hands in (`final`, `long`, ...) rather than for

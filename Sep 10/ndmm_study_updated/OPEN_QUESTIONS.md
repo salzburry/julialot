@@ -154,7 +154,8 @@ analysis rather than a sensitivity.
 - **Annex 7** — the Kim CFI algorithm and code lists, or confirmation frailty is out.
 
 The rest of Primary Objective 1's Table 4 rows and most of Primary Objective 2's
-are also still to be specified.
+are specified in the protocol but have not come through in a form that can be
+read — a clean version of that section closes it, not new specification.
 
 ### Q11. How is an emergency department visit identified?
 
@@ -183,7 +184,7 @@ The deployed extract is not simply "a version behind" — it is a hybrid. Of the
 four V9.0 additions to MEMBER_ENROLLMENT, **three landed** (`ETHNICITY`, `RACE`
 moved off the SES file, `RACE_SOURCE` — appended at columns 26 and 27) and
 **`REGION` did not**, while `STATE`, which V9.0 removed, is still there.
-`LIS_DUAL` is also absent. `DATA_MAPPING.md` §4b lists all 27 columns.
+`LIS_DUAL` is also absent. `DATA_MAPPING.md` §4 lists all 27 columns.
 
 So `REGION` is specifically the one missing column the region variable needs.
 `REGION_SOURCE=region_column` refuses rather than reaching Spark and failing
@@ -988,11 +989,11 @@ Not questions — recorded here so nobody reopens them.
 
 | point | where it is settled |
 |---|---|
-| Melphalan short-course cap is `≤ 28` days, inclusive | confirmed 30 Aug 2026 |
-| A confirmed melphalan course beats the MAP fold-in | confirmed 30 Aug 2026 |
+| Melphalan short-course cap is `≤ 28` days, inclusive | `../lot/LOT_RULES.md` §4.7 |
+| A confirmed melphalan course beats the MAP fold-in | `../lot/LOT_RULES.md` §4.7 |
 | A returning prior-line drug joins the line it returns in | `../lot/LOT_RULES.md` §4.8 |
 | A drug of the previous regimen never starts a line | `../lot/LOT_RULES.md` §4.3 |
-| Discontinued 1L then a 12-month baseline before 2L/3L | settled with the study team |
+| Discontinued 1L then a 12-month baseline before 2L/3L | `IE_CRITERIA.md` |
 | Melphalan mono when melphalan came with a steroid | `../lot/LOT_RULES.md` §2.1 |
 
 Three of the engine rules (§4.3, §4.7, §4.8) are **not** in the protocol text.

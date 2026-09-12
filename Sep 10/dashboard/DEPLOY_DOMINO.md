@@ -1,7 +1,7 @@
 # Running the scenario explorer on Domino
 
-Two pieces, the same pattern the LOT pipeline and `cohort_explorer` already
-use: a **Job** builds the scenarios, an **App** serves them.
+Two pieces, the same pattern the LOT pipeline already uses: a **Job** builds
+the scenarios, an **App** serves them.
 
 ## 0. Compute environment (once)
 
@@ -33,7 +33,7 @@ export DATABRICKS_PWD=...              # a Domino secret, never a config file
 export INPUT_COHORT_TABLE=ndmm_NDMM_COHORT
 export PROJECT_WORK_SCHEMA=...
 export DASH_SNAPSHOT_DIR=/mnt/data/NDMM        # a Domino Dataset, mounted under /mnt/data
-Rscript "Sep 10/dashboard/jobs/build_scenarios.R"
+Rscript dashboard/jobs/build_scenarios.R       # from wherever the folders sit
 ```
 
 One row of `scenarios.csv` is one run. `prefix` is the `OBJECT_PREFIX` it
@@ -68,10 +68,10 @@ two or three, and add rows as questions come up.
 ## 3. Publish the dashboard — Domino **App**
 
 Domino launches the App command from the **project root** and expects the
-process on `0.0.0.0:8888`; `app.sh` does that. Set the App command to
-`bash "Sep 10/dashboard/app.sh"`, with the path from the project root to
-wherever the three folders sit. `app.sh` changes to the folder above
-`dashboard/` itself, so nothing else depends on where that is.
+process on `0.0.0.0:8888`; `app.sh` does that. Set the App command to `bash
+<folders>/dashboard/app.sh`, giving the path from the project root to wherever
+the three folders sit. `app.sh` changes to the folder above `dashboard/`
+itself, so nothing else depends on where that is.
 
 Set the App's environment variables:
 

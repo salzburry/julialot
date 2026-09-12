@@ -1464,9 +1464,13 @@ cat("\nstandalone\n")
   # one at all: what ships alongside is reached relatively, and anything else is
   # a working directory that does not travel with the package.
   own_dirs <- c("R", "modules", "tests", "codelists", "fixtures")
+  # Two shapes: a path with a second segment that carries an extension or a
+  # further slash, and a first segment with a space in it, which no directory
+  # this package reaches ever has.
   named <- lapply(code_only, function(x)
     sub("/.*$", "", sub('^"', "", unlist(regmatches(x, gregexpr(
-      '"[A-Za-z][A-Za-z0-9_ -]*/[A-Za-z0-9_. -]*[/.]', x))))))
+      paste0('"[A-Za-z][A-Za-z0-9_ -]*/[A-Za-z0-9_. -]*[/.]',
+             '|"[A-Za-z][A-Za-z0-9_-]* [A-Za-z0-9_ -]*/'), x))))))
   repo <- names(Filter(function(v) length(setdiff(v, own_dirs)) > 0, named))
   ok(length(repo) == 0,
      paste0("no code path names a directory outside the package (offenders: ",

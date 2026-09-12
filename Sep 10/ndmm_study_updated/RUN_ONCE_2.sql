@@ -47,7 +47,7 @@ SELECT count(*) AS mm_patients FROM mm_pts;
 -- =========================================================================
 -- BLOCK 1 — Q28. What is DOD.MBR_MATCH_TYPE?                   ~5 seconds
 -- =========================================================================
--- The fifth DOD column, in no Optum document we hold. If it grades how each
+-- The fifth DOD column, in no published Optum schema. If it grades how each
 -- member was linked to the death record, some fraction of those 11.5M deaths
 -- are lower-confidence links and nothing filters on them. Overall survival is
 -- a secondary objective.
@@ -483,8 +483,8 @@ GROUP BY DIAG_POSITION ORDER BY n DESC LIMIT 30;
 -- =========================================================================
 -- BLOCK 15 — the two columns round one could not see.             ~3 minutes
 -- =========================================================================
--- The DESCRIBE results were truncated to the first rows on screen, so neither
--- of these was confirmed. Both are load-bearing, and both are LAST in the file
+-- The earlier DESCRIBE returned an incomplete column list, so neither of these
+-- was confirmed. Both are load-bearing, and both are LAST in the file
 -- because if a column does not exist the statement errors - and that error is
 -- itself the answer.
 

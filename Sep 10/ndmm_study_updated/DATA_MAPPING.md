@@ -326,6 +326,10 @@ Two further points worth carrying into any implementation:
 
 ## 4b. What the deployed schema settles
 
+The 27-column list in §4 answers what the V9.0 field list left open about
+MEMBER_ENROLLMENT: which of V9.0's additions actually landed, and what the
+extract kept that V9.0 removed.
+
 **`ETHNICITY` and `RACE_SOURCE` do exist** - appended at 26 and 27, after `VERSION`,
 which is where a later addition lands. The ordering is source order with Databricks
 date-parts interleaved, not alphabetical, so their absence could not have been

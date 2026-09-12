@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """Runs statements against fixture rows and prints what each one returned.
 
-run_duckdb.py, beside this, answers one question of a QC check: how many rows
-did it count. The fold-in trace is not a check. Its candidate query has to
-return THESE rows and no others - the right line, the right drug, the right
-return date - and its per-patient reads have to come back in the shape the
-renderer expects. So this prints the rows.
+run_duckdb.py, beside this, answers how many rows a QC check counted. The
+fold-in trace is not a check: its candidate query has to return one set of rows
+and no others - the right line, the right drug, the right return date - and its
+per-patient reads have to come back in the shape the renderer expects. So this
+prints the rows.
 
 It cannot run Spark, so each statement is transpiled to DuckDB with sqlglot.
-The transpile is a real compromise: DuckDB is not Spark, and a statement Spark
-would reject can still run here. Complementary to the text tests, not a
-replacement for a run against the warehouse.
+The transpile is a compromise: DuckDB is not Spark, and a statement Spark would
+reject can still run here. Complementary to the text tests, not a replacement
+for a run against the warehouse.
 
 Usage:  run_duckdb_rows.py <spec.json>
 

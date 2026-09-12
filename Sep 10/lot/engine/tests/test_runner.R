@@ -2837,7 +2837,7 @@ ok(length(loose) == 0,
 if (is.null(old_cfg)) rm("cfg", envir = globalenv()) else assign("cfg", old_cfg, envir = globalenv())
 
 
-cat("\n-- found by an adversarial pass --\n")
+cat("\n-- settings and literals that fail quietly rather than loudly --\n")
 {
   # 1. An integer setting of all digits that as.integer() cannot hold. The
   #    pattern check catches "60.5"; an all-digit value too large overflows to

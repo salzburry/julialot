@@ -3,9 +3,9 @@
 #
 #   Rscript "lot/qc/tests/test_lot_qc.R"
 #
-# Nothing here has run against a warehouse, so what can be tested is the SQL as
-# a string, the settings parsing, and the rules that turn a count into a
-# verdict. The checks are generated with fake table names and inspected.
+# What can be tested without a warehouse is the SQL as a string, the settings
+# parsing, and the rules that turn a count into a verdict. The checks are
+# generated with fake table names and inspected.
 
 ROOT <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -16,10 +16,9 @@ ROOT <- local({
 
 pass <- 0L; fail <- 0L
 ok <- function(cond, what) {
-  # `cond` is evaluated HERE, not by the caller, so an assertion whose
-  # expression raises is a FAILED assertion rather than a dead run. It used to
-  # propagate: a mutation that made qc_outcome() stop took the whole suite
-  # down, printing no count and losing every result after it.
+  # `cond` is evaluated here, not by the caller, so an assertion whose
+  # expression raises counts as a failure instead of aborting the run and
+  # losing every result after it.
   cond <- tryCatch(cond, error = function(e) {
     what <<- paste0(what, "  [raised: ", conditionMessage(e), "]")
     FALSE
@@ -60,8 +59,8 @@ names(SQL) <- vapply(LOT_QC_CHECKS, function(c_i) c_i$id, character(1))
 cat("\n-- the catalogue holds together --\n")
 ok(length(LOT_QC_CHECKS) > 0, "there are checks")
 ok(isTRUE(check_qc_catalogue()), "the shipped catalogue passes its own validation")
-# Ids end up in a report and in a sign-off. Two rows with one id is two
-# findings nobody can tell apart afterwards.
+# Ids end up in a report. Two rows with one id is two findings nobody can tell
+# apart afterwards.
 stops(check_qc_catalogue(list(modifyList(LOT_QC_CHECKS[[1]], list(id = "")))),
       "a check with no id at all is refused - two of them would be one row")
 stops(check_qc_catalogue(c(LOT_QC_CHECKS, LOT_QC_CHECKS[1])),
@@ -96,8 +95,8 @@ ok(all(unlist(lapply(LOT_QC_CHECKS, function(c_i) c_i$needs)) %in% keys),
 
 cat("\n-- no patient id leaves in the clear --\n")
 # The report is a file that gets circulated. Every check that names a patient
-# names the last six characters of the id, and the test is that the masking
-# expression is present wherever a raw PATID is selected.
+# names the last six characters of the id, so the masking expression has to be
+# present wherever a raw PATID is selected.
 for (id in names(SQL)) {
   s <- SQL[[id]]
   # A raw PATID reaching the output would be selected as an alias. The masked
@@ -114,12 +113,10 @@ ok(P$tandem == 180 && P$auto_gap == 60,
    "...and so do the transplant thresholds")
 ok(P$confirm == 90 && P$max_lot == 5,
    "...and so do B8's confirmation window and the line cap it stops at")
-# induction_window_days is a suffix of lot_n_induction_window_days. The real
-# string is sorted, so the short key happens to come first and would be found
-# correctly even by a search with no anchor on it - which means asking it of
-# the real string proves nothing. Asked of a string with the long key first,
-# an unanchored search reads LOT1's 60-day window as the later-line 30, and
-# C1 then passes on every LOT1 regimen drug that joined after day 30.
+# induction_window_days is a suffix of lot_n_induction_window_days, and the
+# real string is sorted so the short key comes first - which an unanchored
+# search would find correctly by luck. Asked of a string with the long key
+# first, an unanchored search reads LOT1's 60-day window as the later-line 30.
 REVERSED <- "lot_n_induction_window_days=30|induction_window_days=60"
 ok(qc_setting(REVERSED, "induction_window_days") == "60" &&
      qc_setting(REVERSED, "lot_n_induction_window_days") == "30",
@@ -178,26 +175,23 @@ ok(!has(SQL$B5, "'SUBSTITUTION'") && !has(SQL$B5, "'MAINTENANCE_END'"),
 ok(has(SQL$B6, "LOT_BASE_1ST_ADD_MED_DT < LOT_START_DT"),
    "B6 catches an added-medication date before its own line")
 # A7 asks about MED starts and nothing else. An AUTO can open a line at LOT2-5
-# and no drug need join its 30-day window, so that line legitimately carries no
-# regimen - a shape the build really produces, and one A7 failed while its
-# allowed list named only SCT_ALLO and CART. Asking about 'MED' is what stops
-# the next start type reopening it; A5 pins the enum so one cannot appear
-# unnoticed.
+# with no drug joining its 30-day window, so that line legitimately carries no
+# regimen. Asking about 'MED' is what stops the next start type reopening this;
+# A5 pins the enum so one cannot appear unnoticed.
 ok(has(SQL$A7, "LOT_START_TYPE = 'MED'") && !has(SQL$A7, "NOT IN ('SCT_ALLO'"),
    "A7 asks only whether a medication-started line carries a regimen")
 ok(has(SQL$A5, "NOT IN ('MED', 'SCT_ALLO', 'SCT_AUTO', 'CART')"),
    "...and A5 still pins the four start types A7 leans on")
-# C2's exemption belongs to the OLDER returning-drug rule, where a confirmed
-# gap released the drug so that it could be both in the regimen and the added
+# C2's exemption belongs to the earlier returning-drug rule, where a confirmed
+# gap released the drug so it could be both in the regimen and the added
 # medication. LOT_RULES.md 4.3 withdrew that release, so under the settings the
-# study pins there is nothing to exempt - and an exemption for output the
-# contract cannot produce would have passed a regression recreating it.
+# study pins there is nothing to exempt.
 ok(has(SQL$C2, "array_contains(split(coalesce(f.LOT_BASE_MEDS, ''), ' ')"),
    "C2 still catches an added medication that is already in the regimen")
 ok(!has(SQL$C2, "coalesce(r.PREV_DISCON, 0) = 0"),
    "...with no exemption, because the pinned rule releases no such drug")
-# ...and the exemption comes back for a comparison build, where the release is
-# back too. The check reads the run's own setting rather than tolerating both.
+# The exemption comes back for a comparison build, where the release is back
+# too. The check reads the run's own setting rather than tolerating both.
 ok(has(c_i_sql_off <- LOT_QC_CHECKS[[which(vapply(LOT_QC_CHECKS,
          function(c_i) identical(c_i$id, "C2"), logical(1)))]]$sql(
            TBL, modifyList(P, list(own_return_fold = FALSE))),
@@ -232,13 +226,10 @@ ok(has(SQL$C4, "AS ELIGIBLE_END") && has(SQL$C4, "NOT array_contains"),
 ok(has(SQL$C4, "ms.MAP_MED_CLASS <> 'STEROID'") &&
      has(SQL$C4, "l.LOT_START_TYPE <> 'SCT_ALLO'"),
    "...over the episodes the induction step would have taken, and no others")
-# The two share one window definition. Two copies is how they stop describing
-# the same rule, which is the state C1 was already in against the engine.
-#
+# The two share one window definition, or they stop describing the same rule.
 # Asked by feeding the helper a value neither check could produce on its own
-# and looking for it in both. Comparing qc_window_sql(TBL, P) with itself, as
-# this did, is true however the checks are written - it never mentioned C1 or
-# C4 at all.
+# and looking for it in both; comparing qc_window_sql(TBL, P) with itself would
+# be true however the checks are written.
 marked <- qc_params(sub("induction_window_days=60", "induction_window_days=61",
                         SETTINGS, fixed = TRUE), "r")
 c1m <- LOT_QC_CHECKS[[which(names(SQL) == "C1")]]$sql(TBL, marked)
@@ -305,10 +296,9 @@ ok(has(SQL$B5c, "x.TX_DT <= a.TX_DT"),
    "...only for an event at or before the transplant it is judging")
 # And from the day the build censors from. 05b_lot1_sct.R reads LOT1's boundary
 # events with >= the line start; 10_lot2_5_base.R reads a later line's with >,
-# so the transplant that STARTED that line is not a censor on it. Taking LOT1's
-# rule everywhere switched this check off for every CAR-T-started and
-# ALLO-started line: the start event sits on the start date and censored
-# everything after it, so no orphan could ever be reported.
+# so the transplant that started that line is not a censor on it. LOT1's rule
+# applied everywhere would switch this check off for every CAR-T- and
+# ALLO-started line, since the start event would censor everything after it.
 ok(has(SQL$B5c, "(l.LOT_NUM = 1  AND x.TX_DT >= l.LOT_START_DT)"),
    "...censoring LOT1 from its start date, as 05b_lot1_sct.R does")
 ok(has(SQL$B5c, "(l.LOT_NUM  > 1 AND x.TX_DT >  l.LOT_START_DT)"),
@@ -325,10 +315,9 @@ ok(!noexempt$cart_exempt &&
      !has(b5c$sql(TBL, noexempt), "x.SCT_TYPE = 'CART' AND l.LOT_NUM = 1"),
    "...and does not, when the run did not")
 # E5 has one excuse with two conditions, both needed: the build ran out of
-# lines AND the event trails the last one. Negated, that is the OR below.
-# Joined the other way the two cancelled: a trailing event on a patient with
-# room for another line failed the date half and went unreported - the orphan
-# the check exists to find.
+# lines and the event trails the last one. Negated, that is the OR below.
+# Joined the other way, a trailing event on a patient with room for another
+# line fails the date half and goes unreported.
 ok(has(SQL$E5, "AND (a.n_lines < 5\n            OR a.dt <= max(l.LOT_BASE_END_DT))"),
    "E5 reports an unassigned transplant unless BOTH conditions excuse it")
 # Every claim source in 05_sct.R is bounded to [INDEX_DATE, OBS_END_DT], so
@@ -339,10 +328,9 @@ ok(identical(e5$severity, "fail"),
    "...and a row in it fails the run, since no row can be explained by follow-up")
 sct_src <- paste(readLines(file.path(dirname(ROOT), "engine", "R", "steps", "05_sct.R"),
                            warn = FALSE), collapse = "\n")
-# Each arm on its own, not a count of the two bounds across the file. Counting
-# them proved nothing this claim needs: delete BOTH predicates from one arm and
-# the totals still match, delete every lower bound and the totals still match.
-# Cut each CTE out by name and ask it directly.
+# Each arm on its own, not a count of the two bounds across the file: totals
+# still match after both predicates go from one arm, or after every lower bound
+# goes. Each CTE is cut out by name and asked directly.
 #
 # The arms and the alias each one bounds on. A source added to the union
 # without an entry here fails the count below rather than passing unexamined.
@@ -367,11 +355,10 @@ ok(!length(unbounded),
      paste0("...but an SCT claim source is not bounded at both ends: ",
             paste(unbounded, collapse = "; "))
    else "...which rests on each of the four SCT claim sources being bounded at both ends")
-# And that those four ARE the sources. Counting arms was not enough: four
+# And that those four are the sources. Counting arms is not enough: four
 # occurrences of "SELECT * FROM" is equally true of a union that names medproc
-# twice and med_diag not at all, and every named CTE would still be present and
-# correctly bounded above while one of them never reached the output. So the
-# names are pulled out and compared as a multiset.
+# twice and med_diag not at all. So the names are pulled out and compared as a
+# multiset.
 sct_union <- substring(sct_src, regexpr("combined AS (", sct_src, fixed = TRUE))
 sct_union <- substring(sct_union, 1, regexpr("\n    ),", sct_union, fixed = TRUE))
 union_arms <- sort(trimws(gsub("^SELECT \\* FROM ", "",
@@ -386,12 +373,11 @@ ok(identical(union_arms, sort(names(SCT_ARMS))),
 # disagreement into a red run indistinguishable from a real orphan.
 ok(has(SQL$E5, "WHERE a.n_lines > 0"),
    "E5 asks only about patients who have a line at all")
-# ...and only from the first line onward. The SCT step keeps claims from
+# And only from the first line onward. The SCT step keeps claims from
 # INDEX_DATE and LOT1 opens on the first non-steroid episode, so a transplant
 # can land before any line exists. Splitting on whether the patient has a line
-# at all made that same mismatch a blocking defect for one patient and a
-# reported number for another, on a difference that is nothing to do with the
-# transplant.
+# at all would make that mismatch a blocking defect for one patient and a
+# reported number for another.
 ok(has(SQL$E5, "AND a.dt >= a.first_start"),
    "...and only from the day their first line starts")
 e5b <- Filter(function(c_i) identical(c_i$id, "E5b"), LOT_QC_CHECKS)[[1]]
@@ -510,16 +496,14 @@ cat("\n-- a check that could not run is not a check that passed --\n")
 
 cat("\n-- the checks, RUN rather than read --\n")
 {
-  # Found by an adversarial pass: every check in this suite was verified as
-  # text. These are the checks that decide whether a LOT build is trustworthy,
-  # and text cannot tell a working one from a WHERE that can never be true.
+  # These are the checks that decide whether a LOT build is trustworthy, and
+  # text cannot tell a working one from a WHERE that can never be true.
   source(file.path(ROOT, "tests", "exec_harness.R"))
   source(file.path(ROOT, "tests", "exec_cases.R"))
-  # The run's OWN parameters, the ones the text tests above already build from
-  # the recorded settings - not a hand-made list. A check interpolates
-  # p$obs_end, p$confirm and the rest into its SQL, and a list with the wrong
-  # field names leaves those slots empty: the SQL still runs, and tests a
-  # weaker condition than the check states.
+  # The run's own parameters, built from the recorded settings by the text
+  # tests above rather than written out by hand. A list with the wrong field
+  # names would leave p$obs_end, p$confirm and the rest empty in the SQL, which
+  # still runs and tests a weaker condition than the check states.
   res <- run_exec_cases(LOT_QC_CHECKS, EXEC_CASES, CLEAN_FIXTURE, P, ROOT)
   if (is.null(res)) {
     cat("  SKIP    the execution harness could not be run\n")
@@ -545,10 +529,10 @@ cat("\n-- the checks, RUN rather than read --\n")
       }
       ok(identical(r$n_clean, "0"),
          sprintf("%s counts nothing on clean data", id))
-      # A case may state how many violations it planted. Where it does, the
-      # count has to match: a check with several disjuncts still counts
-      # something after one of them is deleted, and "more than zero" cannot
-      # tell that a third of it has gone.
+      # A case may state how many violations its fixture carries. Where it
+      # does, the count has to match: a check with several disjuncts still
+      # counts something after one of them goes, and "more than zero" cannot
+      # tell that a third of it is missing.
       want <- EXEC_CASES[[id]]$n
       got <- suppressWarnings(as.numeric(r$n_planted))
       ok(!is.na(got) && (if (is.null(want)) got > 0 else got == want),
@@ -568,13 +552,11 @@ cat("\n-- the checks, RUN rather than read --\n")
        "and no DETAIL carries a whole patient id - every one is masked")
     ok(all(grepl("^[.][.][.]", dets[grepl("[.][.][.]", dets)])),
        "with the mask in the shape the runner documents")
-    # ...and it TRUNCATES. Shape alone is not the control: an expression that
-    # concatenates "..." onto the whole identifier still starts with the three
-    # dots and still passes both checks above. What the rule says is the last
-    # six characters, so that is what is asserted - on the masked token, which
-    # is the "..." and the run of characters after it. A DETAIL carries
-    # context beyond it ("...000009 LOT1: length 999"), and that context is
-    # not the identifier.
+    # And it truncates. Shape alone is not the control: an expression that
+    # concatenates "..." onto the whole identifier passes both checks above.
+    # The rule is the last six characters, so that is asserted on the masked
+    # token - the "..." and the run of characters after it - rather than on the
+    # rest of the DETAIL ("...000009 LOT1: length 999").
     tok <- regmatches(dets, regexpr("^[.][.][.][^ ]*", dets))
     kept <- nchar(sub("^[.][.][.]", "", tok))
     ok(length(kept) > 0 && all(kept <= 6L),

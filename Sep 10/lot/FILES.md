@@ -155,11 +155,11 @@ mismatch stops the build, as does a step larger than the one above it.
 
 ### The code-list checks
 
-Three consistency checks are waivable: a code-list med with no rollup row
-(`orphan_meds`), a rollup med with no extractable NDC/HCPCS code
-(`uncoded_meds`), and a code type other than NDC or HCPCS (`code_types`). Each
-stops the build unless named in `CODELIST_WAIVERS`, because each has a reading
-a study team can accept. The full waivable set:
+Three of the waivable checks have a reading a study team can accept: a
+code-list med with no rollup row (`orphan_meds`), a rollup med with no
+extractable NDC/HCPCS code (`uncoded_meds`), and a code type other than NDC or
+HCPCS (`code_types`). Each stops the build unless named in `CODELIST_WAIVERS`.
+The full waivable set:
 
 ```
 orphan_meds  uncoded_meds  code_types  subs_substitute  subs_original

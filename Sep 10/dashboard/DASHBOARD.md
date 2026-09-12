@@ -4,7 +4,7 @@ An R Shiny app that shows what the study build and the LOT engine produced, and
 lets a stakeholder change what they are looking at without anyone re-running
 anything.
 
-It is one of three folders delivered together, and they are siblings:
+It is one of three sibling folders:
 
 | folder | what it does |
 |---|---|
@@ -82,25 +82,23 @@ agents of line n against the agents of line n+1, and each patient's whole
 sequence of line openings. A line that ran out of treatment followed by a
 transplant-opened line, a CAR-T consolidation end with no CAR-T start behind
 it, or a regimen returning in full one line later shows up here and nowhere
-else. Picking a line in the sidebar narrows the pairs to those from that
-line. Counts are distinct patients. A pair under the floor is not shown on its
-own, and neither is any pair whose count could be read off a published total
-— what opened line n+1, the pairs from a line, or how line n ended — once
-the others are known; those are grouped into one row per line whose count is
-their sum. So a line with one common pair and one rare one shows a single
-grouped row, because showing the common pair beside the line's population
-would give the rare one away; and a line that ended one way 50 times, 49 of
-them into the same next line, does not show the 49 beside the 50 that "how
-each line ended" publishes. Lines that ended a given way with no line after
-them are the part of that total the pairs do not account for, and they count
-with the hidden pairs: where there are enough of them the pairs from that end
-reason have cover, and where there are few or none pairs are grouped until
-what is hidden reaches the floor. The grouped row does not say how many pairs
-it holds: with the published totals, that number alone picked out the one way
-of filling the hidden cells that fitted. Each total is held on its own, which
-is the subtraction a reader makes; it is not an audit of every total taken
-together. No patient is ever listed: the pairs are aggregated before anything
-reaches the page.
+else. Picking a line in the sidebar narrows the pairs to those from that line.
+
+Counts are distinct patients. A pair under the floor is not shown on its own,
+and neither is any pair whose count could be read off a published total — what
+opened line n+1, the pairs from a line, or how line n ended — once the others
+are known; those are grouped into one row per line whose count is their sum. So
+a line that ended one way 50 times, 49 of them into the same next line, does not
+show the 49 beside the 50 that "how each line ended" publishes. Lines that ended
+a given way with no line after them are the part of that total the pairs do not
+account for, and they count with the hidden pairs: where there are enough of
+them the pairs from that end reason have cover, and where there are few or none
+pairs are grouped until what is hidden reaches the floor. The grouped row does
+not say how many pairs it holds, because with the published totals that number
+alone can pick out the one way of filling the hidden cells that fits. Each total
+is held on its own, which is the subtraction a reader makes; it is not an audit
+of every total taken together. No patient is ever listed: the pairs are
+aggregated before anything reaches the page.
 
 A tab whose module did not run is **reported, not hidden**. "The safety module
 did not run" is something a viewer needs to know; a silently absent tab does
@@ -267,7 +265,7 @@ DASH_SOURCE=synthetic Rscript -e "shiny::runApp('.', port = 8888)"
 # the normal deployment - app.sh can be started from anywhere: it changes to
 # the folder above dashboard/ itself, which is how a Domino App launches it
 # (DEPLOY_DOMINO.md)
-DASH_SOURCE=snapshot DASH_SNAPSHOT_DIR=/mnt/data/NDMM "Sep 10/dashboard/app.sh"
+DASH_SOURCE=snapshot DASH_SNAPSHOT_DIR=/mnt/data/NDMM ./app.sh
 ```
 
 `DEPLOY_DOMINO.md` has the Domino App setup: which files, which environment

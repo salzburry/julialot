@@ -548,8 +548,9 @@ check_cohort_window <- function(con, tbl, cfg) {
 # force it is the rule-off build (APPLY_MELP_RULE=off) that deviates.
 #
 # A deviating run cannot pass for the study's: the deviations go into
-# LOT_BUILD_STATUS, every reader refuses them, and CONTRACT_SETTINGS records
-# what the run used rather than what CONTRACT pins.
+# LOT_BUILD_STATUS, every reader refuses them, CONTRACT_SETTINGS records what
+# the run used rather than what CONTRACT pins, and the sweep will not write to
+# the study's prefix.
 #
 # Unset, which is every production run, nothing here changes.
 check_lot_contract <- function(cfg) {
@@ -935,8 +936,8 @@ BUILD_STATUS_COLS <- c(
 # column added to a *_COLS list reaches a fresh prefix and no other. Each table
 # is created, then brought up to its list.
 #
-# Look before adding: ADD COLUMNS on a column that exists is an error, and an
-# a DESCRIBE that cannot be read is no answer rather than a table with no
+# Look before adding: ADD COLUMNS on a column that exists is an error, and a
+# DESCRIBE that cannot be read is no answer rather than a table with no
 # columns.
 lot_ensure_cols <- function(con, tbl, spec) {
   have <- tryCatch({
