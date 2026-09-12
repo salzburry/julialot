@@ -7,14 +7,11 @@
 # LOT rules changed on 2026-08-30 and earlier numbers are superseded, so a run
 # older than that is refused by date as well as by status.
 #
-# The column names are the WRITER'S. BUILD_STATUS_COLS declares
-# INPUT_COHORT_TABLE and no STUDY_START; asking for COHORT_TABLE and
-# STUDY_START raised unresolved columns before the check could run.
-#
-# STUDY_START is therefore not checked HERE - the LOT status row does not carry
-# it. The cohort build records its own contract, so read_upstream_settings()
-# below reads it there instead. Q1 stays open either way: what that answers is
-# which date the data was built on, not which date is right.
+# The column names are the WRITER'S: BUILD_STATUS_COLS declares
+# INPUT_COHORT_TABLE and no STUDY_START, so asking for COHORT_TABLE or
+# STUDY_START raises unresolved columns before the check can run. STUDY_START
+# is read from the cohort build's own contract instead, by
+# read_upstream_settings() below.
 LOT_RULES_EPOCH <- as.Date("2026-08-30")
 
 check_lot_lineage <- function(con, cfg) {
@@ -49,8 +46,7 @@ check_lot_lineage <- function(con, cfg) {
   problems <- character(0)
 
   # A LOT run that did not finish. Its status row carries no reason - the LOT
-  # build's own log does - so the message says where to look rather than
-  # leaving the reader to find that out.
+  # build's own log does - so the message says where to look.
   if (!identical(tolower(trimws(as.character(r$STATE))), "complete"))
     problems <- c(problems, sprintf(
       paste0("the newest run (%s) is '%s', not 'complete'. The status row ",
@@ -82,10 +78,9 @@ check_lot_lineage <- function(con, cfg) {
              "LOT_RULES.md says LOT numbers produced before that date are ",
              "superseded"), format(upd)))
 
-  # Every problem above was CHECKED and found wrong, so every one stops. There
-  # is no flag for these: LOT_ALLOW_UNPROVEN_LINEAGE exists for the case where
-  # the status table could not be read at all, which is handled above by
-  # honouring the setting there and nowhere else.
+  # Every problem above was CHECKED and found wrong, so every one stops.
+  # LOT_ALLOW_UNPROVEN_LINEAGE covers only the case where the status table
+  # could not be read at all, which is handled above.
   if (length(problems))
     stop("LINEAGE ERROR: this package will not read LOT run ", r$RUN_ID,
          " because:\n  - ", paste(problems, collapse = "\n  - "),
@@ -102,17 +97,14 @@ check_lot_lineage <- function(con, cfg) {
   as.list(r)
 }
 
-# The same build, still? Asked once every module has run and before the run
-# is recorded complete.
+# The same build, still? Asked once every module has run and before the run is
+# recorded complete.
 #
-# check_lot_lineage() accepts a build before any table is read. The modules
-# then read the LOT tables for minutes, and the engine replaces them in place
-# under the same prefix - so a LOT rebuild landing in between gave a run
-# whose spine was built from the NEW lines and whose metadata vouched for the
-# OLD build, with one lineage check ever made. A row that is no longer the
-# accepted build - another run, a build in progress, or the same run built
-# again - stops the run here, and the failure handler records it `failed`
-# under its own id instead of `complete`.
+# check_lot_lineage() accepts a build before any table is read, and the modules
+# then read the LOT tables for minutes while the engine can replace them in
+# place under the same prefix. A row that is no longer the accepted build -
+# another run, a build in progress, or the same run built again - stops the run
+# here, and the failure handler records it `failed` rather than `complete`.
 check_lot_lineage_unchanged <- function(con, accepted) {
   id <- trimws(as.character(accepted$RUN_ID %||% ""))
   if (!nzchar(id) || identical(id, "unproven")) return(invisible(TRUE))
@@ -142,26 +134,22 @@ check_lot_lineage_unchanged <- function(con, accepted) {
 # Which BUILD of the LOT run a study run rests on - see run_version_stamp().
 # LOT_RUN_ID alone names a run the engine may have built more than once; the
 # version is the stamp of the `complete` status row this run vouched for, and
-# the dashboard and its snapshot job refuse LOT tables under that id whose
-# newest status row carries any other stamp.
+# every downstream reader refuses LOT tables under that id whose newest status
+# row carries any other stamp.
 lot_run_version <- function(lot_run)
   run_version_stamp(lot_run$UPDATED_AT %||% "")
 
 # What the cohort build actually applied.
 #
-# Eight of this package's settings are the cohort build's rules, recorded so a
-# number can be traced to the definition behind it. Recording the setting alone
-# asserted a reading nothing had checked - and the two defaults disagree today:
-# this package reads s7.1's body ("study start 01 Jan 2018") and the cohort
-# build reads Figures 1 and 2 ("Study start 01 Jan 2016"), which is Q1.
-#
+# Eight of this package's settings are the cohort build's rules, and the two
+# defaults disagree today: this package reads s7.1's body (01 Jan 2018) and the
+# cohort build reads Figures 1 and 2 (01 Jan 2016), which is Q1.
 # NDMM_RUN_METADATA.CONTRACT_SETTINGS is that build's whole CONTRACT as
-# `k=v|k=v`, written by the run that made the cohort. Read here so the study's
-# metadata records what shaped the data rather than what this run was told.
+# `k=v|k=v`, so the study's metadata records what shaped the data rather than
+# what this run was told.
 #
-# Not fatal. A disagreement is an open question, not a broken run, and the
-# cohort is what it is either way - so it is named, recorded, and left to the
-# study team.
+# Not fatal: the cohort is what it is, so a disagreement is named, recorded and
+# left to the study team.
 read_upstream_settings <- function(con, cfg) {
   tbl <- cohort_tbl("NDMM_RUN_METADATA")
   rows <- tryCatch(

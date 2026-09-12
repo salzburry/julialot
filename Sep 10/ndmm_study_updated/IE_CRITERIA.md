@@ -3,13 +3,12 @@
 Every eligibility rule the updated protocol states, in the order a build would
 apply it, with what each one needs from Optum and what is still ambiguous.
 
-Source: GSK study **223926**,
-`Belantamab_Optum LoT_Unmet_Need_Aug 26 2026 (final).docx`, effective
-**26 August 2026**. The criteria are in §7.1, §7.2, §7.2.1.1, §7.2.1.2 and
-§7.4.1.1; each rule below cites its section. Quoted text is verbatim.
+Source: the GSK **223926** protocol, effective **26 August 2026**. The criteria are
+in §7.1, §7.2, §7.2.1.1, §7.2.1.2 and §7.4.1.1; each rule below cites its section.
+Quoted text is verbatim.
 
 `DATA_MAPPING.md` turns each rule into tables and columns. `BUILD_DELTA.md` says
-what the `Jul 28/ndmm` build has to change to apply them.
+what the cohort build has to change to apply them.
 
 ---
 
@@ -39,21 +38,20 @@ period".
 
 ## 2. Study periods and windows
 
-| period | definition | screen |
-|---|---|---|
-| Study period | **01 Jan 2018 → 31 Mar 2026** ("the most recent date of data availability at time of analysis") | 17 |
-| 1L eligible-treatment period | 1L initiation **on or after 01 Jan 2019** | 17, 21 |
-| Secondary 2L index period | 2L initiation **on or after 01 Jan 2020** | 20, 37 |
-| Baseline period | the **12 months before the index date of that LOT**, **index date excluded** | 17 |
-| Follow-up period | from the index date (**index included**) until **end of continuous enrolment, or end of study period, or death — whichever comes first** | 17 |
-| Enrolment gap tolerance | gaps of **≤ 30 days** still count as continuous | 21 |
+| period | definition |
+|---|---|
+| Study period | **01 Jan 2018 → 31 Mar 2026** ("the most recent date of data availability at time of analysis") |
+| 1L eligible-treatment period | 1L initiation **on or after 01 Jan 2019** |
+| Secondary 2L index period | 2L initiation **on or after 01 Jan 2020** |
+| Baseline period | the **12 months before the index date of that LOT**, **index date excluded** |
+| Follow-up period | from the index date (**index included**) until **end of continuous enrolment, or end of study period, or death — whichever comes first** |
+| Enrolment gap tolerance | gaps of **≤ 30 days** still count as continuous |
 
 The build reads every "months" window as a fixed day count — 12 months is
 `[index − 365, index − 1]`, 3 months is 90 days — because `add_months()` would give two
-patients indexed a day apart different windows. That reading is **still unsigned**, and
-the 1L sensitivity put it seven patients from the calendar-month reading
-(`Jul 28/ndmm/DECISIONS.md` §7, `OPEN_QUESTIONS.md` Q21). The protocol says "12-month"
-and "3 months" and never disambiguates.
+patients indexed a day apart different windows. The protocol says "12-month" and
+"3 months" and never disambiguates, so the reading is still open; the 1L sensitivity put
+it seven patients from the calendar-month reading (`OPEN_QUESTIONS.md` Q21).
 
 Two things about the baseline period that decide how the build is wired:
 
@@ -95,7 +93,7 @@ the cohort definition, not downstream of it.
 > "LOT assignment and regimens will be assigned according to prior internal GSK work
 > to define a claims-based LOT regimen (GSK 2026)" — §7.2
 
-These match the engine in `Sep 10/lot/` on the induction windows (60 / 30 days) and
+These match the engine in `../lot/` on the induction windows (60 / 30 days) and
 on what opens a line. See `BUILD_DELTA.md` §3 for the points where they do not.
 
 ---
@@ -126,29 +124,24 @@ Operationally:
 > **Ambiguity.** The strict code set (203.0x / C90.0x) is written against the
 > inpatient arm; the outpatient arm says only "medical claims for MM". The deployed
 > `mm_dx.csv` holds exactly eight codes — 203.0, 203.00, 203.01, 203.02, C90.0,
-> C90.00, C90.01, C90.02 — and they are matched by **equality on the normalised code,
-> not by prefix**, so the file covers the strict families and nothing else
-> (`CODELISTS.md` §1). The Jan-2026
-> program spec for the earlier study read the outpatient arm as the **broad** set
-> (ICD-9 203.x / ICD-10 C90.x) while the inpatient arm stayed strict
-> (`docs/Part 3/Program Spec/studypoppage_validated.csv`, INDEX_DATE row). The
-> current `Jul 28/ndmm` build applies **one** code list to both arms and additionally
-> requires the strict subset on the inpatient arm
-> (`Jul 28/ndmm/R/steps/00_mm_cohort.R:56-90`). See `OPEN_QUESTIONS.md` Q2.
+> C90.00, C90.01, C90.02 — matched by **equality on the normalised code, not by
+> prefix**, so it covers the strict families and nothing else (`CODELISTS.md` §1). The
+> alternative reading is the **broad** set (ICD-9 203.x / ICD-10 C90.x) on the
+> outpatient arm with the inpatient arm left strict. The cohort build applies **one**
+> code list to both arms and additionally requires the strict subset on the inpatient
+> arm. See `OPEN_QUESTIONS.md` Q2.
 
-> **Ambiguity.** "within 90 days" — the earlier spec also flagged 30- and 60-day
-> pairs as sensitivities. The updated protocol names only 90. See `OPEN_QUESTIONS.md` Q3.
-> Do not let the 30 days of the other-cancer rule migrate onto this window: they are
-> different numbers on different criteria, and `Jul 28/ndmm/README.md` flags the
-> conflation as a known hazard.
+> **Ambiguity.** "within 90 days" — 30- and 60-day pairs have also been raised as
+> sensitivities; the protocol names only 90. See `OPEN_QUESTIONS.md` Q3. Do not let the
+> 30 days of the other-cancer rule migrate onto this window: they are different numbers
+> on different criteria.
 
 ### I2. Adult age
 
 > "Aged **≥ 18 years** at the time of MM diagnosis **according to calendar year**"
 
 Calendar-year arithmetic: `year(MM_DX_DT) − YRDOB`, not a birthday. Optum carries
-year of birth only (`YRDOB`), and it is capped at 89 (CDM V9.0 revision note,
-the Optum CDM V9.0 data dictionary p.1), so a "90+" patient reads as 89.
+year of birth only (`YRDOB`), capped at 89 in CDM V9.0, so a "90+" patient reads as 89.
 
 ### I3. Eligible 1L treatment
 
@@ -171,17 +164,15 @@ Three separate constraints ride on this one bullet:
 3. the claim must be **on or after 01 Jan 2019**.
 
 > **Gap.** Annex 2 — the eligible/expected MM therapy list and the SOC regimen
-> categorisation — **was not supplied**. The repo's `cl_mma_codelist.csv` and
+> categorisation — is still **outstanding**. `cl_mma_codelist.csv` and
 > `cl_mma_rollup.csv` are the nearest existing equivalent. See `CODELISTS.md` §1.
 
-> **Change from the current build.** `Jul 28/ndmm` bars only belantamab from setting
-> the index (`NDMM_INDEX_EXCLUDED_ABBRS` defaults to empty,
-> `Jul 28/ndmm/R/standalone_constants.R`), and `DECISIONS.md` §3 is explicit that this
-> was deliberate: *"Exactly one therapy is restricted to later lines: belantamab.
-> Nothing else is... There is no allowlist of first-line regimens. Inventing one would
-> shrink the cohort by a rule nobody could reproduce."* The protocol now supplies that
-> rule, so the two named agents go into `NDMM_INDEX_EXCLUDED_ABBRS` — which validates
-> every entry against the code list and stops the run on a name matching nothing.
+> **Change from the current build.** The cohort build bars only belantamab from setting
+> the index (`NDMM_INDEX_EXCLUDED_ABBRS` defaults to empty) and keeps no allowlist of
+> first-line regimens, deliberately: inventing one would shrink the cohort by a rule
+> nobody could reproduce. The protocol now supplies the rule, so the two named agents go
+> into `NDMM_INDEX_EXCLUDED_ABBRS`, which validates every entry against the code list and
+> stops the run on a name matching nothing.
 > `<prefix>NDMM_INDEX_AGENTS` says in advance what barring each one costs.
 
 ### I4. Continuous enrolment before index
@@ -247,13 +238,12 @@ This is the "newly treated" criterion. Note it says **any MM oncology therapy** 
 wider than the eligible-1L list of I3, and it is a *medical or pharmacy* claim, so
 both J-code administration and pharmacy fill count.
 
-> **Note.** The current build drops steroid rows from this scan
-> (`NDMM_STEROID_ABBRS`, `Jul 28/ndmm/R/ndmm_constants.R`), on the reasoning that a
-> steroid claim alone is supportive care. The protocol does not say so — but the drop
-> **removes nothing on today's code list**: `Jul 28/ndmm/DECISIONS.md` §3 records 26
-> agents on `cl_mma_codelist.csv`, none of them spelled `DEX`, `DEXA`, `DEXAMETHASONE`,
-> `PRED` or `PREDNISONE`, so the guard fires on no one. It becomes a real decision when
-> Annex 2's therapy list arrives. `OPEN_QUESTIONS.md` Q6.
+> **Note.** The cohort build drops steroid rows from this scan (`NDMM_STEROID_ABBRS`),
+> on the reasoning that a steroid claim alone is supportive care. The protocol does not
+> say so, but the drop **removes nothing on today's code list**: of the 26 agents on
+> `cl_mma_codelist.csv`, none is spelled `DEX`, `DEXA`, `DEXAMETHASONE`, `PRED` or
+> `PREDNISONE`, so the guard fires on no one. It becomes a real decision when Annex 2's
+> therapy list arrives. `OPEN_QUESTIONS.md` Q6.
 
 ### X2. Another cancer in the 1L baseline
 
@@ -262,20 +252,19 @@ both J-code administration and pharmacy fill count.
 > within 30 days**, for the **same primary tumor type and/or metastatic cancer** will be
 > excluded"
 
-The current build already implements all four parts of this
-(`Jul 28/ndmm/R/steps/04_other_malig.R:235-280`): `diff_days <= 30` on outpatient pairs
-built from **distinct dates**, one inpatient claim sufficient on its own, and pairing
-per tumour group. Note the 30 is **hard-coded at line 270**, not a config key.
+The cohort build already implements all four parts of this: `diff_days <= 30` on
+outpatient pairs built from **distinct dates**, one inpatient claim sufficient on its
+own, and pairing per tumour group. The 30 is **hard-coded** there, not a config key.
 
 What the build layers on top, each of which the study team should confirm rather than
 inherit:
 
 | # | the build's reading | why | effect |
 |---|---|---|---|
-| 1 | **Both** claims of a pair must fall inside `[index−365, index−1]` | *"the criterion is another cancer **in** the 1L baseline"*, and the source bounded only the first claim (`DECISIONS.md` §4) | cohort **larger** — a pair straddling the index no longer excludes |
-| 2 | Pairs match on the **first three characters of the ICD code**, not on `tumor_group` | `other_malig.csv` has 1,643 codes and 1,618 distinct `tumor_group` values, so the label is one per code — pairing on it would reduce to needing the identical code twice (`DECISIONS.md` §4) | cohort **smaller** — claims that never paired now do |
+| 1 | **Both** claims of a pair must fall inside `[index−365, index−1]` | the criterion is another cancer **in** the 1L baseline, and the source bounded only the first claim | cohort **larger** — a pair straddling the index no longer excludes |
+| 2 | Pairs match on the **first three characters of the ICD code**, not on `tumor_group` | `other_malig.csv` has 1,643 codes and 1,618 distinct `tumor_group` values, so the label is one per code — pairing on it would reduce to needing the identical code twice | cohort **smaller** — claims that never paired now do |
 | 3 | Metastatic codes collapse into a single `MET` group — `C77`, `C78`, `C79`, `C7B`, `C800` and ICD-9 `196`, `197`, `198`, `1990` (**not** `C80`, `199`) | "and/or metastatic cancer" is one concept | — |
-| 4 | **Bone metastasis excludes.** `C79.51`, `C79.52` and `198.5` are metastatic cancers and are kept in | *"myeloma bone disease is commonly coded `C79.51`, so some patients removed by this will be MM patients whose lesions were coded as metastases. That concern is real; the decision is that the stated rule governs"* (`DECISIONS.md` §4) | cohort **smaller**, and some of the loss is myeloma miscoded |
+| 4 | **Bone metastasis excludes.** `C79.51`, `C79.52` and `198.5` are metastatic cancers and are kept in | myeloma bone disease is commonly coded `C79.51`, so some patients removed by this will be MM patients whose lesions were coded as metastases; the decision is that the stated rule governs | cohort **smaller**, and some of the loss is myeloma miscoded |
 | 5 | Plasma-cell disorders and monoclonal gammopathy do **not** count as another cancer (`NDMM_MM_ADJACENT_OVERRIDE`), and six state-coded labels are still open | they are the index disease showing itself | — |
 
 Reading 4 is the one to put to the study team first: it is a known, deliberate,
@@ -290,18 +279,16 @@ is **90** (`OUTPATIENT_WINDOW`).
 > "**Evidence of pregnancy:** ≥ 1 of medical claim with a **diagnosis, procedure, or
 > revenue code** indicating pregnancy or childbirth **during the study period**"
 
-Three code types, not one, and the window is the **whole study period** — not the
-baseline. The current build already does all of this: it applies the rule
+Three code types, not one, and the window is the **whole study period**, not the
+baseline. The cohort build already does all of this: it applies the rule
 study-period-wide and its scan admits `ICD9DIAG, ICD10DIAG, ICD9PROC, ICD10PROC,
-HCPCS, REV` (`NDMM_PREG_CODE_TYPES`, `Jul 28/ndmm/R/steps/05_pregnancy.R:7-8`). The
-production `pregnancy.csv` carries all six types — 3,049 `ICD9DIAG`, 1,549 `ICD10DIAG`,
-447 `ICD9PROC`, 69 `ICD10PROC`, 185 `HCPCS` and 19 `REV`, 5,318 codes in all
-(`Jul 28/ndmm/DECISIONS.md` §6). **No change needed.**
+HCPCS, REV` (`NDMM_PREG_CODE_TYPES`). The production `pregnancy.csv` carries all six
+types — 3,049 `ICD9DIAG`, 1,549 `ICD10DIAG`, 447 `ICD9PROC`, 69 `ICD10PROC`, 185
+`HCPCS` and 19 `REV`, 5,318 codes in all. **No change needed.**
 
-The build's open item here is the *window*, not the codes: it applies the whole study
-period and the narrower patient-specific reading is still unsigned (`DECISIONS.md` §9,
-`OPEN_QUESTIONS.md` Q23). The protocol says "during the study period", which is what the
-build does — so this is close to settled.
+The open item is the *window*, not the codes: the narrower patient-specific reading is
+still undecided (`OPEN_QUESTIONS.md` Q23). The protocol says "during the study period";
+the build applies that.
 
 ### X4. Belantamab mafodotin in any LOT
 
@@ -310,8 +297,8 @@ build does — so this is close to settled.
 
 "In any LOT" means this cannot be evaluated before lines exist. The current build
 already handles it this way: the flag is computed over the whole study period in the
-cohort build and the exclusion is applied in `Sep 10/lot/engine/R/line_criteria.R`
-once LOT membership is known (`Sep 10/lot/LOT_RULES.md` §8).
+cohort build and the exclusion is applied in `../lot/engine/R/line_criteria.R` once LOT
+membership is known (`../lot/LOT_RULES.md` §8).
 
 ---
 
@@ -356,9 +343,8 @@ denominators for Primary Objectives 1-3 will be wrong.
 
 "Potential follow-up" is time in the database, not observed enrolment — so
 `index + 90 days ≤ study end`, OR death before `index + 90 days`. Note this is a
-weaker test than the current build's 2L/3L rule, which requires 90 days of gap-free
-**enrolment** (`SUBSEQ_FU_CE_DAYS = 90`, `Jul 28/ndmm/RULES.md`). See
-`BUILD_DELTA.md` §2.
+weaker test than the current 2L/3L rule, which requires 90 days of gap-free
+**enrolment** (`SUBSEQ_FU_CE_DAYS = 90`). See `BUILD_DELTA.md` §2.
 
 ---
 
@@ -395,25 +381,24 @@ on the reading above, step 7 dropped.
 
 | what | where it should be | status |
 |---|---|---|
-| Table 4 rows between "Types of 1L, 2L, 3L SOCs or classes by line" and the Primary Objective 3 block | §7.3, Table 4 | the source is unreadable there |
-| **Annex 2** — eligible/expected MM therapies and SOC regimen categorisation | the annexes | not supplied |
-| **Annex 3** — ICD-10-CM code lists for the key safety events | the annexes | not supplied |
-| **Annex 4-5** — table shells and figures | the annexes | not supplied |
-| **Annex 6** — the LOT algorithm | the annexes | not supplied |
-| **Annex 7** — the claims-based frailty (Kim CFI) algorithm | the annexes | not supplied |
+| Table 4 rows between "Types of 1L, 2L, 3L SOCs or classes by line" and the Primary Objective 3 block | §7.3, Table 4 | not available |
+| **Annex 2** — eligible/expected MM therapies and SOC regimen categorisation | the annexes | outstanding |
+| **Annex 3** — ICD-10-CM code lists for the key safety events | the annexes | outstanding |
+| **Annex 4-5** — table shells and figures | the annexes | outstanding |
+| **Annex 6** — the LOT algorithm | the annexes | outstanding |
+| **Annex 7** — the claims-based frailty (Kim CFI) algorithm | the annexes | outstanding |
 
 Annex numbers above follow the **body text**, which cites Annex 3 for code lists and
 Annex 4-5 for shells. The protocol's Table of Contents disagrees with its own Annex 1
 and says 3 = TABLES, 4 = FIGURES, 5 = CODELISTS. `OPEN_QUESTIONS.md` Q20.
 
-The unreadable rows sit between the end of Primary Objective 1's baseline block and the
-"*per GSK LoT algorithm definition*" footnote that opens Primary Objective 2's rows,
-so what is missing is: the tail of Primary Objective 1 (baseline prevalence of key
-safety events and baseline healthcare utilisation) and the head of Primary
-Objective 2 (its incidence rows and the LOT treatment-period definition). Their
-shape is recoverable from the surrounding rows; their exact wording is not —
-`VERSION_DIFF.md` §3 reconstructs them from the June 2026 version and says what has
-certainly changed since.
+The missing rows sit between the end of Primary Objective 1's baseline block and the
+"*per GSK LoT algorithm definition*" footnote that opens Primary Objective 2's rows, so
+what is absent is the tail of Primary Objective 1 (baseline prevalence of key safety
+events and baseline healthcare utilisation) and the head of Primary Objective 2 (its
+incidence rows and the LOT treatment-period definition). Their shape is recoverable from
+the surrounding rows; their exact wording is not. `VERSION_DIFF.md` §3 reconstructs them
+from the June 2026 version and says what has certainly changed since.
 
-**Ask the study team for Annexes 2, 3, 6 and 7 and for pages 31-32.** Annexes 2 and 3 are code lists — nothing can be built
-without them.
+**Ask the study team for Annexes 2, 3, 6 and 7, and for the missing Table 4 rows.**
+Annexes 2 and 3 are code lists — nothing can be built without them.

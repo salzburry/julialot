@@ -1,9 +1,9 @@
 # SOC regimen categorisation - s7.2.2.
 #
-# The categories are the protocol's; which regimens fall in each is Annex 2,
-# undelivered. soc_regimen_categories.csv is one row per (line scope, category,
-# agent, role), so a regimen is categorised by the agents it contains rather
-# than by a regimen string - which is what survives a new combination.
+# The categories are the protocol's; which regimens fall in each is Annex 2.
+# The code list is one row per (line scope, category, agent, role), so a
+# regimen is categorised by the agents it contains rather than by a regimen
+# string - which is what survives a new combination.
 
 SOC_CATEGORIES_1L <- c(
   "Quadruplet with anti-CD38 backbone", "Triplet with anti-CD38 backbone",
@@ -13,31 +13,23 @@ SOC_CATEGORIES_LATER <- c(
   "Other triplet (non-anti-CD38)", "Other novel agent", "CAR-T",
   "BCMA bispecific", "Non-BCMA bispecific", "Doublet/monotherapy", "Other")
 
-# Which category wins when a regimen's agents map to more than one.
+# Which category wins when a regimen's agents map to more than one. Modality
+# beats size: a CAR-T with a bridging agent is a CAR-T line, not a doublet.
+# Among size categories the regimen's own agent count decides, and 'Other' is
+# last so it is only ever a fallback.
 #
-# A CAR-T agent beside a companion matches two categories, so something has to
-# choose. max() would choose alphabetically and put 'Other' above 'CAR-T'.
-#
-# Modality beats size: a CAR-T with a bridging agent is a CAR-T line, not a
-# doublet. Among size categories the regimen's own agent count decides.
-# 'Other' is last, so it is only ever a fallback.
-#
-# This precedence is this package's own - s7.2.2 lists the categories without
-# saying how to resolve a regimen spanning two. Written here so it can be
-# argued with.
+# The precedence is this package's own - s7.2.2 lists the categories without
+# saying how to resolve a regimen spanning two - and is written here so it can
+# be argued with.
 SOC_PRECEDENCE <- c(
   "CAR-T", "BCMA bispecific", "Non-BCMA bispecific", "Other novel agent",
   "Quadruplet with anti-CD38 backbone", "Triplet with anti-CD38 backbone",
   "Other triplet (non-anti-CD38)", "Doublet/monotherapy", "Other")
 # Categories whose NAME is a claim about the regimen, and the test each claim
-# has to pass. Both halves are tested, because both are claims:
-#
-#   * "Quadruplet with anti-CD38 backbone" says four agents AND a backbone.
-#   * "Other triplet (non-anti-CD38)" says three agents and NO backbone - and
-#     it contains the substring "anti-CD38", so matching on the name relabels
-#     every non-anti-CD38 triplet and the category vanishes from the output.
-#
-# So the backbone is read off the agents, never off the category name.
+# has to pass. Both halves are tested: "Quadruplet with anti-CD38 backbone"
+# says four agents AND a backbone, and "Other triplet (non-anti-CD38)" says
+# three agents and NO backbone while containing the substring "anti-CD38". So
+# the backbone is read off the agents, never off the category name.
 #
 # A four-agent regimen with no backbone falls through to 'Other'; s7.2.2 lists
 # no other quadruplet category and inventing one would report what the protocol
@@ -225,6 +217,6 @@ mod_soc <- function(con, cfg, cohort) {
     log_msg("  WARNING: ", n$unmatched[1], " of ", n$n[1], " regimens in ",
             cohort$key, " matched no category and fell to 'Other'. 'Other' is ",
             "a protocol category, so this does not fail - but a tenth of the ",
-            "cohort landing there means Annex 2 is short of the regimens the ",
-            "data actually contains.")
+            "cohort landing there means the SOC code list is short of the ",
+            "regimens the data actually contains.")
 }

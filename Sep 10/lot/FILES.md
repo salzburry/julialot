@@ -3,8 +3,7 @@
 `lot/` is the lines-of-therapy product. `CONTENTS.md` is the short page;
 `LOT_RULES_EXPLAINED.md` walks every rule with a patient timeline;
 `LOT_RULES.md` is the rules as a reference, each naming the vignette that
-tests it; `REVIEW_LOG.md` is what was found wrong and fixed, and what is still
-open; this file is every file and what it does.
+tests it; this file is every file and what it does.
 
 One package writes. The rest read a finished run.
 
@@ -44,8 +43,7 @@ Settings that change what a build *means* are pinned in `CONTRACT`
 (`lot/engine/R/build_lot.R`) and refused if changed: a different threshold is a
 different algorithm. `LOT_CONTRACT_OVERRIDE=TRUE` exists for the sensitivity
 sweep and the rule cells. A run that uses it records what it deviated on in
-`CONTRACT_DEVIATIONS`, and every reader in the delivery refuses it as the
-study's numbers.
+`CONTRACT_DEVIATIONS`, and every reader refuses it as the study's numbers.
 
 Code lists live outside version control on a mounted path (`CODELIST_DIR`),
 hashed either side of each read so a run records which version it used.
@@ -157,7 +155,7 @@ mismatch stops the build, as does a step larger than the one above it.
 
 ### The code-list checks
 
-Three consistency checks are reviewable: a code-list med with no rollup row
+Three consistency checks are waivable: a code-list med with no rollup row
 (`orphan_meds`), a rollup med with no extractable NDC/HCPCS code
 (`uncoded_meds`), and a code type other than NDC or HCPCS (`code_types`). Each
 stops the build unless named in `CODELIST_WAIVERS`, because each has a reading
@@ -263,9 +261,9 @@ evidence the adoption rests on, kept runnable rather than written down once.
 Opt-in, and it cannot become a study run by accident. Cells write to
 `melp_simple_` prefixes of their own, a plan that would write to the study's
 prefix is refused, and the rule-off cell launches with `LOT_CONTRACT_OVERRIDE`
-and is stamped in `CONTRACT_DEVIATIONS` — so every reader in the delivery
-refuses it as the study's numbers. The cell that DOES carry the rule is the
-contract build and deviates from nothing.
+and is stamped in `CONTRACT_DEVIATIONS`, so every reader refuses it as the
+study's numbers. The cell that does carry the rule is the contract build and
+deviates from nothing.
 
 Both cells carry the contract's 28-day course cap. The package varies whether
 the rule runs, not the threshold it runs at.
@@ -278,7 +276,7 @@ the rule runs, not the threshold it runs at.
 | `tests/test_melp_simple.R` | That `off` really is the absence of the rule, that every spliced fragment opens with its own newline, that a cell cannot write over the study's tables or be read from a build it does not match, and — where duckdb and sqlglot are installed — that the metrics and the rule's decision chain return the answers the fixtures work out by hand. |
 | `tests/run_duckdb.py` | Executes a statement against a fixture, transpiling Spark to DuckDB. Reports a statement it could not run rather than reading it as an empty result. |
 | `tests/exec_cells.R` | Nine patients and sixteen lines, and what every metric must count over them. |
-| `tests/exec_rule.R` | Fifteen patients, one line each, one branch of 4.7 apiece — the boundaries a whole-patient harness cannot reach cheaply: a confirming agent on the course's last covered day, a hold capped at the line's span, a course an earlier line owned. |
+| `tests/exec_rule.R` | Fifteen patients, one line each, one branch of 4.7 apiece — the boundaries the whole-patient fixtures do not reach cheaply: a confirming agent on the course's last covered day, a hold capped at the line's span, a course an earlier line owned. |
 
 Until 2026-08-30 this package also carried the five-branch rule the study team
 asked for first, as a third cell. That rule was measured, not adopted, and

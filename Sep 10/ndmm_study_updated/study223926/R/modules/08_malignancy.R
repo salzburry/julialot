@@ -3,9 +3,8 @@
 # Table 4: "Occurrence of malignancy to be confirmed through the presence of at
 # least 2 diagnosis codes occurring on separate dates. The date of the first
 # ICD code will be used." So a single code is not an occurrence, and the date
-# is the FIRST of the confirming pair, not the second - which puts the event
-# earlier than the confirmation, and is what makes the time-to-malignancy
-# figures shorter than a confirmation-dated version would give.
+# is the FIRST of the confirming pair - which puts the event earlier than its
+# confirmation and shortens every time-to-malignancy figure.
 #
 # s7.8.1 also splits the two cohorts:
 #   1L nested - prior malignancy is excluded by X2, so incidence only
@@ -89,16 +88,13 @@ mod_malignancy <- function(con, cfg, cohort) {
 
   # Every qualifying diagnosis DATE for a confirmed category, not just the
   # first. Baseline prevalence needs it: a cancer first coded years before
-  # baseline and coded again during it IS present during baseline, and asking
-  # whether the GLOBAL first date falls in the window answers a different
-  # question - new onset - and returns zero for exactly the established
-  # malignancies the secondary 2L cohort exists to describe.
-  # prepare_table + INSERT, not CREATE OR REPLACE. This module runs once per
-  # cohort, so replacing the whole table each time left only the last cohort's
-  # rows in a registered, persisted output - the earlier cohorts' evidence was
-  # gone by the end of a four-cohort run. prepare_table clears this cohort's
-  # partition and leaves the others, which is what every other per-cohort
-  # output here does.
+  # baseline and coded again during it IS present during baseline, whereas the
+  # GLOBAL first date answers a different question - new onset - and returns
+  # zero for the established malignancies the secondary 2L cohort describes.
+  #
+  # prepare_table + INSERT, not CREATE OR REPLACE: this module runs once per
+  # cohort, so replacing the whole table would leave only the last cohort's
+  # rows.
   prepare_table(con, wrk("S_MALIGNANCY_DATES"),
     "PATID string, COHORT string, CATEGORY string, SUBTYPE string,
      EVENT_DT date",
@@ -125,15 +121,11 @@ mod_malignancy <- function(con, cfg, cohort) {
     wrk("S_MALIGNANCY_DATES"), wrk("S_PERIODS"), cdm_src("diagnosis"), reg,
     icd_family_sql("d.ICD_FLAG"), wrk("S_MALIGNANCY"), cohort$key))
 
-  # Malignancies are on the s7.8.1 chronic list, so incidence counts the first
-  # occurrence only and a patient with one before the period is not at risk.
+  # Malignancy is on the s7.8.1 chronic list, so incidence counts the first
+  # occurrence only and a patient with one BEFORE the treatment period is not
+  # at risk: they leave both the numerator and the person-time denominator.
   # Prevalence is reported only for a cohort whose criteria permit a prior
-  # malignancy - for the others it would be zero by construction, which is not
-  # a finding.
-  # Malignancy is on the s7.8.1 chronic list, so a patient with one BEFORE the
-  # treatment period is not at risk and leaves both the numerator and the
-  # person-time denominator. This is Primary Objective 3's own rule and the
-  # module used to state it in a comment without applying it.
+  # malignancy - for the others it would be zero by construction.
   db_exec(con, sprintf("
     CREATE OR REPLACE TEMPORARY VIEW s_malig_prior AS
     SELECT DISTINCT p.PATID, p.COHORT, p.LOT_NUM, m.CATEGORY
@@ -208,9 +200,9 @@ mod_malignancy <- function(con, cfg, cohort) {
 
   if (reports_prevalence) {
     # Driven from the denominator crossed with the category list, like the
-    # incidence block above and for the same reason: a category with no
-    # baseline events produced no row at all, and downstream that is
-    # indistinguishable from the module not having run for it.
+    # incidence block above: a category with no baseline events would otherwise
+    # produce no row, which downstream cannot be told from the module not
+    # having run for it.
     run_step(con, paste0("malignancy_prevalence_", cohort$key), sprintf("
       INSERT INTO %1$s
       WITH cats AS (SELECT DISTINCT category FROM %6$s),

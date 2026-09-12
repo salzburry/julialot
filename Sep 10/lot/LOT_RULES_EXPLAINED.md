@@ -160,7 +160,7 @@ sitting on it goes either way. This is one of the readings marked
 
 An allograft line carries **no regimen string** — its induction rows are
 suppressed. Anything reading `LOT_BASE_MEDS` to decide whether a line exists
-will miss it, which is the shape that broke the earlier transition diagrams.
+will miss it.
 
 > **d+0** 1L · **d+40** AUTO · **d+240** ALLO after relapse
 > → the AUTO sits inside line 1; the ALLO ends the line it falls in and opens

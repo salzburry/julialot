@@ -11,10 +11,9 @@
 # they cannot overlap and cannot leave a patient out.
 mod_patterns <- function(con, cfg, cohort) {
   # Death per LINE, not per cohort index. S_TTE carries only the cohort's own
-  # index line (S_PERIODS has one LOT_NUM per cohort), so joining it on
-  # LOT_NUM leaves every later line with a NULL death flag - and a patient who
-  # died after line 2 would be drawn on the Sankey as having stopped therapy
-  # alive.
+  # index line, so joining it on LOT_NUM would leave every later line with a
+  # NULL death flag and draw a patient who died after line 2 on the Sankey as
+  # having stopped therapy alive.
   db_exec(con, sprintf("
     CREATE OR REPLACE TEMPORARY VIEW s_line_end AS
     -- Bounded by the cohort's own observation, exactly as 05_soc.R is. A line

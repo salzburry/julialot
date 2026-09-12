@@ -1,14 +1,11 @@
 # What changed since the June 2026 protocol
 
-The version this one supersedes is
-`Belantamab_Optum LoT_Unmet_Need_CoAuth Rev Round 2 (June 16 2026).docx`, 58 pages.
+The version this one supersedes is the **June 16 2026** protocol.
 
-It matters for two reasons. Several of the current build's settings are correct
-against **that** version and wrong against this one, which saves arguing about
-whether the build has a bug. And its Table 3 is the best available stand-in for
-the rows this version does not carry (§3).
-
-An older version exists too, marked superseded. It is not used here.
+It matters for two reasons. Several of the current build's settings are correct against
+that version and wrong against this one, so they are a version behind rather than a bug.
+And its Table 3 is the best available stand-in for the rows this version does not carry
+(§3).
 
 ---
 
@@ -33,8 +30,8 @@ second opinion. `OPEN_QUESTIONS.md` Q1.
 | 1L follow-up | *"CE from index date until the earliest of **3-months post index or death** with no gaps in enrollment"* | *"at least one claim (pharmacy or medical) from index date or death"* |
 | 2L/3L follow-up | *"CE of at least **3-months** during follow-up or death with no gaps in enrollment"* | *"at least one claim (pharmacy or medical) from index date"* |
 
-`SUBSEQ_FU_CE_DAYS = 90` in `Jul 28/ndmm/config.csv` is a faithful implementation of
-the **June** rule. It is not a bug; it is the previous protocol. The new protocol drops
+`SUBSEQ_FU_CE_DAYS = 90` in the cohort build is a faithful implementation of the
+**June** rule, not a bug. The new protocol drops
 the enrolment test to a claims-presence test, and moves the 90 days to §7.8.2 as an
 analysis-set restriction on the time-to-event outcomes only —
 *"≥ 3 months of **potential** follow-up (or die before 3 months)"*, which is calendar
@@ -114,7 +111,7 @@ end of study, or death, whichever first).
 
 ## 2. Why this matters for the build
 
-Three settings in `Jul 28/` that look like divergences are actually the June protocol
+Three settings in the cohort build that look like divergences are the June protocol
 faithfully implemented:
 
 | setting | implements | now needs |
@@ -123,14 +120,13 @@ faithfully implemented:
 | `STUDY_START = 2016-01-01` | June's study period | 2018, if Q1 resolves to the text |
 | `SUBSEQ_FU_CE_DAYS = 90` | June's 3-month gap-free CE follow-up | replace with the claims test; move 90 days to a `TTE_ELIGIBLE` flag |
 
-None of them is a defect. All three are a protocol version behind.
+None of them is wrong. All three are a protocol version behind.
 
 ---
 
-## 3. The rows missing from pages 31-32, reconstructed
+## 3. The missing Table 4 rows, reconstructed
 
-Pages 31-32 are unreadable in the copy supplied, with no partial text at either
-edge. The gap is bounded exactly:
+The gap is bounded exactly:
 
 - **last readable row before the gap**: Table 4's *"Types of 1L, 2L, 3L SOCs or
   classes by line"*
@@ -155,20 +151,19 @@ the wording itself** — treat it as the shape of what is missing.
 | **Primary Objective 2** (banner) | incidence of key safety and healthcare utilization events while on 1L, 2L, and 3L, within each LOT, by categories of SOC regimens, and by patient subgroups of interest | |
 | On-treatment incidence of safety events | Numerator = number of each new event; denominator = total person-time at risk. Chronic conditions counted at first occurrence only and stop contributing person-time at that point. Acute conditions may occur at any time and contribute multiple events, separated by ≥ 30 days. An event is attributed to a LOT if it occurs between the LOT's start date and the start of a subsequent LOT, or discontinuation + 30 days, whichever comes first | During LOT treatment period (1L, 2L, 3L) |
 
-Three reasons the lost rows are **not** a byte-for-byte copy of the above:
+Three reasons the lost rows are **not** a verbatim copy of the above:
 
 1. The Primary Objective 2 statement lost the phrase *"by categories of SOC regimens"*
    in the new version (§6.2.1 objective 2 now reads *"within each LOT and by patient
    subgroups of interest"*); SOC stratification moved to Table 1.
 2. The on-treatment-incidence row gained a second footnote in the new version —
-   *"See Primary Objective 3 for similar calculation of secondary malignancies"* — whose
-   tail is visible at the top of p18.
+   *"See Primary Objective 3 for similar calculation of secondary malignancies"*.
 3. The included/excluded conventions were flipped throughout (above), so the counting
    prose was almost certainly re-cast the same way.
 
 Everything in the gap is also stated, in different words, in **§7.8.1** of the new
-protocol (document pages 41-46), which *is* readable and which `VARIABLES.md` §5 and
-`BUILD_DELTA.md` §7 take their counting rules from. So the loss costs wording, not
-substance — with one exception: the exact **functional forms** of the baseline
+protocol, which `VARIABLES.md` §5 and `BUILD_DELTA.md` §7 take their counting rules
+from. So the loss costs wording, not substance — with one exception: the exact
+**functional forms** of the baseline
 hospitalisation and ER-visit variables (the June version's "0, 1, 2, 3, 4+" banding) are
 not restated anywhere readable in the new protocol.

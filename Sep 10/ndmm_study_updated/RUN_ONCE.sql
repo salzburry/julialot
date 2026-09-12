@@ -2,20 +2,18 @@
 --  RUN_ONCE.sql — everything worth asking the warehouse, in one sitting
 -- =========================================================================
 --
---  Ordered so that a failure late costs the least. Blocks A and B are
---  instant, cannot fail on a column name, and answer several questions on
---  their own. The expensive scans are last on purpose.
+--  Ordered so that a failure late costs the least: blocks A and B are instant
+--  and cannot fail on a column name; the expensive scans are last.
 --
---  TWO EDITS BEFORE RUNNING
+--  Two edits before running:
 --    1. <COHORT>   -> the cohort table, e.g. myschema.ndmm_NDMM_COHORT
 --    2. _2026q1    -> whatever block A says actually exists. The config
 --                     resolves to 2026q1; the only documented vintage is
---                     2025q4. Block A tells you; if you can only run once,
---                     find-replace to the vintage you believe is right and
---                     let block A confirm it.
+--                     2025q4. If you can only run once, find-replace to the
+--                     vintage you believe is right and let block A confirm it.
 --
---  IF A STATEMENT ERRORS and the editor stops: everything above it is still
---  valid output — send that. Each block is independent.
+--  Each block is independent, so if a statement errors and the editor stops,
+--  everything above it is still valid output.
 --
 --  Roughly 10-15 minutes end to end, almost all of it in blocks G and H.
 

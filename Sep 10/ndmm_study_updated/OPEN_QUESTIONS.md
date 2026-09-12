@@ -1,46 +1,20 @@
 # Open questions for the study team
 
-Twenty-three things the Aug 26 2026 protocol, the Optum documentation and the existing
-build's own record do not settle, each of which changes a count or a definition.
-Ordered by how much they change.
+Twenty-three decisions the protocol and the Optum documentation do not settle,
+each of which changes a count or a definition. Ordered by how much they change.
+Every one has two defensible readings and the build has to pick one; the reading
+it takes meanwhile is a setting in `study223926/config.csv`.
 
-**Five were closed on 03 Sep 2026** by one run against the warehouse
-(`RUN_ONCE.sql`): Q8, Q10, Q22, Q24 and Q26. They are out
-of the list below and recorded, with their numbers, under *Closed by the
-warehouse*. Two more — Q4 and Q17 — were already settled by
-`Jul 28/ndmm/DECISIONS.md` §6 and are left in place with the answer.
+Q8, Q10, Q22, Q24 and Q26 are closed and their numbers are recorded under
+*Settled against the warehouse* below. Q4 and Q17 were settled by the cohort
+build and are left in place with the answer. Q13 is answered.
 
-**The second run came back on 07 Sep 2026** (`RUN_ONCE_2.sql` — 23 statements,
-18m 19s, every one returning). It did not
-close a question outright, because none of the remaining ones is a question
-about the data. What it did is **price** sixteen of them: Q1, Q2, Q3, Q5, Q6,
-Q7, Q9, Q11, Q14, Q16, Q19, Q21, Q23, Q25, Q27 and Q28 now each carry a number
-saying how many patients the decision moves. Those numbers are under *Priced by
-the warehouse* below, ranked, and the largest two are **Q27 (a factor of two)**
-and **Q25 (17.4% of all medical claim lines)**.
+Sixteen of the rest carry a measured price - how many patients the decision
+moves - under *What each decision is worth*. The largest two are **Q27 (a
+factor of two)** and **Q25 (17.4% of all medical claim lines)**.
 
-It also caught a bug — `CLAIM_STATUS=paid_only` was filtering nothing, because
-the warehouse stores `P`/`D` where the dictionary spells `PAID`/`DENIED` — and
-confirmed the six value domains the package had been assuming.
-
-**A third run came back on 08 Sep 2026** (`RUN_ONCE_3.sql`).
-**Q13 is answered**: `CENSOR_AT_DISENROLLMENT` decides the follow-up of **at
-most** 30,392 patients — 29% — while the 30-day bridging rule touches only
-6,221. (Upper bound: the query merged spans with `lag()` where the package uses
-a running max, which over-counts breaks on nested spans. Corrected in
-`RUN_ONCE_3.sql`; one re-run makes it exact.)
-**Q25 shrank**: the 17.4% headline is concentrated in ordinary outpatient
-claims, and excluding denied claims would remove 0.53% of ED visits, not 17%.
-It also measured the **largest attrition step in the study** — only 62.1% of
-myeloma patients have 12 months of continuous enrolment before index — and
-killed a proposal of mine: `STD_COST` does not encode paid/denied, so denied
-pharmacy claims cannot be identified at all.
-
-**Q12, Q15 and Q20 no query will ever answer**: they need the protocol author
-or the annexes themselves.
-
-Nothing here is a style preference. Every one of them has two defensible readings and
-the build has to pick one.
+Q12, Q15 and Q20 cannot be answered from the data at all; they need the
+protocol author or the annexes themselves.
 
 ---
 
@@ -61,13 +35,12 @@ qualifying diagnosis is 2016-2017 — including patients whose 1L is in 2019 and
 would otherwise be in. It also decides whether ICD-9 codes are ever in scope (ICD-10
 began Oct 2015, so a 2018 start makes the ICD-9 arms of every code list dead).
 
-The current build uses `STUDY_START = 2016-01-01`, and
-`Jul 28/ndmm/DECISIONS.md` §5 records that window as **signed off** — for the June 2026
-protocol. Mechanically the change is cheap: the window is a **run argument**, not a
-`CONTRACT` setting (*"the algorithm is unchanged and the dates belong to the cohort"*),
-and `check_cohort_window()` makes a cohort/vintage mismatch fatal rather than silent.
-§5 also confirms `2026q1` is *"the same tables and column names as `2025q2` with data
-extended through 2026-03-31"*, so moving the window needs no re-validation.
+The cohort build uses `STUDY_START = 2016-01-01`, settled against the June 2026
+protocol. Mechanically the change is cheap: the window is a **run argument**,
+not a `CONTRACT` setting, and `check_cohort_window()` makes a cohort/vintage
+mismatch fatal rather than silent. The `2026q1` vintage is the same tables and
+column names as `2025q2` with data extended through 2026-03-31, so moving the
+window needs no re-validation.
 
 **Ask:** which is correct, and does the MM diagnosis have to fall inside the study
 period or merely on or before the 1L index?
@@ -81,71 +54,59 @@ period or merely on or before the 1L index?
 > claims **for MM** in any position on the claim, on separate days within 90 days"
 
 The strict code set is attached to the inpatient arm. The outpatient arm says only
-"for MM". The Jan-2026 program spec for the earlier study read this as inpatient =
-strict `203.0x`/`C90.0x`, outpatient = broad `203.x`/`C90.x`
-(`docs/Part 3/Program Spec/studypoppage_validated.csv`, INDEX_DATE). The production
+"for MM". An earlier reading of the same criterion took inpatient = strict
+`203.0x`/`C90.0x` and outpatient = broad `203.x`/`C90.x`. The production
 `mm_dx.csv` holds only the eight strict codes (`CODELISTS.md` §1).
 
 Broad adds 203.1x (plasma cell leukaemia), 203.8x, C90.1x, C90.2x
 (extramedullary plasmacytoma) — a materially larger cohort.
 
-**The build already has the two-arm mechanism**, so this is a code-list edit, not a code
-change. `Jul 28/ndmm/README.md`, criterion 1:
-
-> "The two arms **do not use the same codes**: strict is required only of the inpatient
-> arm, and the outpatient pair accepts **any code on `mm_dx.csv`**."
-
-Today `mm_dx.csv` carries only the eight strict codes, so both arms are strict in
-practice. Widening the file is all the broad reading needs.
+**The build already has the two-arm mechanism**, so this is a code-list edit, not a
+code change: strict is required only of the inpatient arm, and the outpatient pair
+accepts any code on `mm_dx.csv`. Today that file carries only the eight strict
+codes, so both arms are strict in practice. Widening the file is all the broad
+reading needs.
 
 **Ask:** strict on both arms, or strict inpatient / broad outpatient?
 
 ### Q4. What does "with medical and pharmacy benefits" mean operationally? — **ANSWERED**
 
-`Jul 28/ndmm/DECISIONS.md` §6 settles it, and rules out the proxy:
+Medical and pharmacy benefits are **satisfied by construction**. The extract does
+not separate them: `member_enrollment` has 27 columns and none is a benefit
+indicator. `ASO`, `BUS`, `CDHP`, `PRODUCT`, `HEALTH_EXCH` and `GROUP_NBR` are plan
+structure and funding, not coverage type. A span carries both, so `ELIGEFF`/`ELIGEND`
+already express the requirement and a predicate would filter on nothing.
 
-> "Medical and pharmacy benefits are **satisfied by construction**. The extract does
-> not separate them: `member_enrollment` has 27 columns and none is a benefit
-> indicator. `ASO`, `BUS`, `CDHP`, `PRODUCT`, `HEALTH_EXCH` and `GROUP_NBR` are plan
-> structure and funding, not coverage type. A span carries both, so `ELIGEFF`/`ELIGEND`
-> already express the requirement and **a predicate would filter on nothing**."
+**Do not re-derive this from claims.** Enrolled patients with no pharmacy fill look
+like a coverage signal and are not: that count is dominated by short spans and by
+patients whose only MM code is a rule-out.
 
-> "**Do not re-derive this from claims.** Enrolled patients with no pharmacy fill look
-> like a coverage signal and are not: that count is dominated by short spans and by
-> patients whose only MM code is a rule-out."
-
-The same conclusion `DATA_MAPPING.md` §7 reaches from the schema, reached
-independently and with the failure mode of the alternative named. The protocol's own
-§7.5 agrees. **No predicate to write. Closed.**
+`DATA_MAPPING.md` §7 reaches the same conclusion from the schema, and the
+protocol's own §7.5 agrees. **No predicate to write. Closed.**
 
 ### Q6. Do steroid-only claims count as "MM oncology therapy" for the prior-therapy exclusion?
 
 Exclusion X1: *"≥ 1 medical or pharmacy claim for **any MM oncology therapy**"* during
 the 12-month baseline.
 
-The current build drops dexamethasone and prednisone from that scan
-(`NDMM_STEROID_ABBRS`, `Jul 28/ndmm/R/ndmm_constants.R`), on the reasoning that a
-steroid claim alone is supportive care and does not make someone previously treated.
-The protocol does not say so. Dexamethasone is prescribed for many non-MM reasons, so
-including it would exclude patients on the strength of an unrelated steroid course.
+The cohort build drops dexamethasone and prednisone from that scan, on the
+reasoning that a steroid claim alone is supportive care and does not make someone
+previously treated. The protocol does not say so. Dexamethasone is prescribed for
+many non-MM reasons, so including it would exclude patients on the strength of an
+unrelated steroid course.
 
-Note the LOT engine excludes steroids everywhere (`LOT_RULES.md` §2.1), so this
+The LOT engine excludes steroids everywhere (`../lot/LOT_RULES.md` §2.1), so this
 question is only about the exclusion scan.
 
-**But it is moot on today's code list.** `Jul 28/ndmm/DECISIONS.md` §3, signed off:
-
-> "On the production file: **26 agents, so 25 can set an index. The steroid drop
-> removes nothing** — none of `DEX`, `DEXA`, `DEXAMETHASONE`, `PRED`, `PREDNISONE` is
-> in `CL_MED_ABBR` — and stays as a guard against a later list that carries them."
+**It is moot on today's code list.** The production file carries 26 agents, so 25
+can set an index, and none of `DEX`, `DEXA`, `DEXAMETHASONE`, `PRED`, `PREDNISONE`
+is in `CL_MED_ABBR` — the steroid drop removes nothing. It stays as a guard
+against a later list that carries them.
 
 So no patient is currently affected either way. The question becomes live the moment
 **Annex 2's** therapy list is loaded, because the protocol's own SOC categories are
-dexamethasone-containing regimens.
-
-One thing to check when it is: the rollup tab in the Part 1 code list workbook is titled
-*"Codelist Multiple Myeloma Approved **and Steroid** Medications Rollup"* and carries
-**27** medications against the code list's 26 agents. If a steroid is on the list under
-an abbreviation the guard does not name, the guard silently stops guarding.
+dexamethasone-containing regimens. If a steroid arrives under an abbreviation the
+guard does not name, the guard silently stops guarding.
 `<prefix>NDMM_INDEX_AGENTS` shows every `CL_MED_ABBR` and whether this run would let it
 set an index, so the first run answers it.
 
@@ -160,7 +121,7 @@ against whatever list Annex 2 delivers.
 > index date... until the **end of continuous enrollment** or end of study period or
 > death, whichever occurs first."
 
-`Sep 10/lot/LOT_RULES.md` §7.6 says **"Disenrollment is not censoring"**, and
+`../lot/LOT_RULES.md` §7.6 says **"Disenrollment is not censoring"**, and
 `CENSOR_AT_DISENROLLMENT = FALSE` is the primary-analysis setting.
 
 TTNT, TTD and OS all censor "at their follow-up end date". Under the protocol's
@@ -172,6 +133,9 @@ The engine already computes both readings — `LOT_BASE_END_DT_CE_SENS` and
 question is not whether we can produce it, but **which one is the primary analysis**.
 Right now the protocol's reading is the sensitivity.
 
+The setting decides the follow-up of at most 30,392 patients (29%), while the
+30-day bridging rule touches only 6,221. The numbers are below.
+
 **Ask:** confirm follow-up ends at disenrollment, and confirm this is the primary
 analysis rather than a sensitivity.
 
@@ -179,19 +143,18 @@ analysis rather than a sensitivity.
 
 ## Blocking — a definition is unbuildable without an answer
 
-### Q15. Please send Annexes 2, 3, 6 and 7, and document pages 31-32.
+### Q15. Annexes 2, 3, 6 and 7 are outstanding
 
 - **Annex 2** — eligible/expected MM therapies and SOC regimen categorisation.
   Criterion I3 cannot be applied without it.
 - **Annex 3** — ICD-10-CM code lists for all 22 Table 3 conditions, the secondary
   malignancy categories, and the healthcare-utilisation definitions. Objectives 1-3
   cannot be computed without it.
-- **Annex 6** — the LOT algorithm, to reconcile against `Sep 10/lot/LOT_RULES.md`.
+- **Annex 6** — the LOT algorithm, to reconcile against `../lot/LOT_RULES.md`.
 - **Annex 7** — the Kim CFI algorithm and code lists, or confirmation frailty is out.
-- **Pages 31-32** are unreadable in the copy supplied; they carry the rest of
-  Primary Objective 1's Table 4 rows and most of Primary Objective 2's.
 
-The `.docx` would supply all of it at once.
+The rest of Primary Objective 1's Table 4 rows and most of Primary Objective 2's
+are also still to be specified.
 
 ### Q11. How is an emergency department visit identified?
 
@@ -216,16 +179,15 @@ The two are not just different columns, they are different CDM vintages: the dep
 columns. `DATA_MAPPING.md` §4 has the arithmetic. In V9.0, Census Region is the finest
 geography that survives at all: `DIVISION`, state, ZIP, county and MSA are all gone.
 
-**Verified against the `describe table`, column by column.** The deployed
-extract is not simply "a version behind" — it is a hybrid. Of the four V9.0
-additions to MEMBER_ENROLLMENT, **three landed** (`ETHNICITY`, `RACE` moved off
-the SES file, `RACE_SOURCE` — appended at columns 26 and 27) and **`REGION` did
-not**, while `STATE`, which V9.0 removed, is still there. `LIS_DUAL` is also
-absent. `DATA_MAPPING.md` §4b lists all 27 columns.
+The deployed extract is not simply "a version behind" — it is a hybrid. Of the
+four V9.0 additions to MEMBER_ENROLLMENT, **three landed** (`ETHNICITY`, `RACE`
+moved off the SES file, `RACE_SOURCE` — appended at columns 26 and 27) and
+**`REGION` did not**, while `STATE`, which V9.0 removed, is still there.
+`LIS_DUAL` is also absent. `DATA_MAPPING.md` §4b lists all 27 columns.
 
 So `REGION` is specifically the one missing column the region variable needs.
-`REGION_SOURCE=region_column` now refuses rather than reaching Spark and
-failing with `UNRESOLVED_COLUMN` after the spine is built.
+`REGION_SOURCE=region_column` refuses rather than reaching Spark and failing
+with `UNRESOLVED_COLUMN` after the spine is built.
 
 **Ask:** confirm we may derive region from `STATE` with a standard 50-state →
 4-region crosswalk, and how to classify a patient whose `STATE` changes between
@@ -239,7 +201,7 @@ than swapping the columns.
 
 ## Needs a decision, but does not block a first build
 
-### Q29. Does the small-cell floor exempt SOC strata? — **NEW**
+### Q29. Does the small-cell floor exempt SOC strata?
 
 The protocol states the 25-patient floor twice, and the two sentences differ.
 
@@ -268,12 +230,12 @@ decided.
 
 ---
 
-### Q28. What is `DOD.MBR_MATCH_TYPE`, and should low-confidence deaths count? — **NEW**
+### Q28. What is `DOD.MBR_MATCH_TYPE`, and should low-confidence deaths count?
 
-`DESCRIBE TABLE t_dod_2026q1` returns five columns, and one of them is
-**`MBR_MATCH_TYPE varchar(1)`**. It appears in no Optum document we hold — the
-V9.0 dictionary has a sheet for all fifteen CDM tables and none for DOD, and
-the business rules name only `YMDOD`.
+`t_dod_2026q1` has five columns, and one of them is **`MBR_MATCH_TYPE
+varchar(1)`**. No Optum documentation covers it: the V9.0 dictionary has a sheet
+for all fifteen CDM tables and none for DOD, and the business rules name only
+`YMDOD`.
 
 The name suggests how each member was linked to the death record. Death data of
 this kind is usually assembled by matching members to an external source, and
@@ -282,25 +244,25 @@ If that is what this column is, then some fraction of the 11.5M deaths are
 lower-confidence links, and neither build filters on it.
 
 It matters because overall survival is a secondary objective: including
-low-confidence matches overstates deaths, and excluding them understates.
+low-confidence matches overstates deaths, and excluding them understates. The
+column has exactly two values, so it is a binary flag rather than a graded
+score; which value is the confident link is not derivable from the data.
 
-**Ask:** what the values mean, and whether any should be excluded. A
-`SELECT MBR_MATCH_TYPE, count(*) FROM t_dod_2026q1 GROUP BY 1` shows the
-distribution in seconds; interpreting it needs Optum.
+**Ask:** what the values mean, and whether any should be excluded.
 
 ---
 
-### Q25. Should denied claims count? — **NEW**
+### Q25. Should denied claims count?
 
 `MEDICAL.PAID_STATUS` is *"the payment determination of this service line"*, and
 the CDM fills it in where the source left it null:
 
 > "PAID if Sum of all Paid Amounts >= $0 · DENIED if Sum of all Paid Amounts < $0"
 
-A denied claim is not evidence the service happened. Nothing in this package,
-and nothing in `Jul 28/ndmm`, has ever filtered on it — so every count built so
-far includes denied lines: diagnoses that qualify a patient, ED visits,
-hospitalisations, and the claims that set a line of therapy.
+A denied claim is not evidence the service happened. Neither this package nor
+the cohort build filters on it, so every count built so far includes denied
+lines: diagnoses that qualify a patient, ED visits, hospitalisations, and the
+claims that set a line of therapy.
 
 `CLAIM_STATUS` carries the two readings. The default is `all`, which is what
 every number produced to date includes; `paid_only` excludes `DENIED`. The
@@ -313,7 +275,7 @@ claims analyses exclude them.
 
 ---
 
-### Q27. Which route defines "a MM diagnosis in first or second position"? — **NEW**
+### Q27. Which route defines "a MM diagnosis in first or second position"?
 
 §7.8.1 defines an MM-related hospitalisation as one with *"a MM diagnosis in
 first or second position"*. There are two routes to that in the CDM and they
@@ -339,7 +301,7 @@ reported within a hospitalization".
 
 ### Q3. Are 30- and 60-day outpatient pairing windows still wanted as sensitivities?
 
-The protocol names only 90 days. The Jan-2026 program spec flagged 30- and 60-day
+The protocol names only 90 days. An earlier specification flagged 30- and 60-day
 pairs as well, and the current build reports one cohort at 90 with 30/60 available
 as sensitivities.
 
@@ -387,15 +349,14 @@ period, or in neither.
 ### Q16. How is a time-varying enrolment attribute resolved "at index"?
 
 `BUS`, `PRODUCT`, `CDHP`, `STATE` and `GDR_CD` live on `MEMBER_ENROLLMENT`, which
-carries a new row every time anything about the member changes. The value
-distributions on the Optum enrolment documentation p.4 prove patients hold rows with
-different values: the three `count(DISTINCT PATID)` totals disagree (`BUS` 23,632,
-`CDHP` 26,114, `PRODUCT` 30,651) against a cohort that cannot be that large three
-different ways.
+carries a new row every time anything about the member changes. The observed value
+distributions prove patients hold rows with different values: the three
+`count(DISTINCT PATID)` totals disagree (`BUS` 23,632, `CDHP` 26,114, `PRODUCT`
+30,651) against a cohort that cannot be that large three different ways.
 
 Table 4 times race, ethnicity, region, sex and insurance type "at index". The natural
 rule is **the enrolment row covering the index date**, but neither Optum document says
-how to break a tie when more than one row covers it, and the current build uses a
+how to break a tie when more than one row covers it, and the cohort build uses a
 different rule (most recent `ELIGEND`, after preferring a usable `YRDOB` and a known
 sex).
 
@@ -403,48 +364,45 @@ sex).
 
 ### Q17. Which way round are `PROC_CD` and `PROC`? — **ANSWERED**
 
-Rule 5 of the Optum business rules (p.6) assigns `PROC_CD` / `T_MEDICAL` to
-ICD-9/ICD-10 procedure codes and `PROC` / `T_MED_PROCEDURE` to HCPCS/CPT. Rule 3
-(pp.4-5), the MEDICAL description (p.2) and the CDM V9.0 dictionary all say the
-opposite.
+Rule 5 of the Optum business rules assigns `PROC_CD` / `T_MEDICAL` to
+ICD-9/ICD-10 procedure codes and `PROC` / `T_MED_PROCEDURE` to HCPCS/CPT. Rule 3,
+the MEDICAL description and the CDM V9.0 dictionary all say the opposite.
 
-`Jul 28/ndmm/DECISIONS.md` §6 settles it **empirically**:
-
-> "Measured over the study period, `PROC` is **43,137,224 of ~43.2M rows at
-> `ICD_FLAG='10'` and seven characters** — ICD-10-PCS. The five-character tail, the
-> only shape a HCPCS or CPT code could occupy, is about **15,000 rows: 0.035%**."
+The data settles it. Measured over the study period, `PROC` is **43,137,224 of
+~43.2M rows at `ICD_FLAG='10'` and seven characters** — ICD-10-PCS. The
+five-character tail, the only shape a HCPCS or CPT code could occupy, is about
+**15,000 rows: 0.035%**.
 
 So `MED_PROCEDURE.PROC` is the ICD procedure code and `MEDICAL.PROC_CD` is CPT/HCPCS.
 Rule 5 is a transcription error. **Closed.**
 
 Worth carrying into every new outcome scan: the build reads `PROC` as a fifth
-medication source anyway, *"because the failure it guards is asymmetric — a therapy the
-scan cannot see lets a patient pass the no-prior-therapy criterion on missing data, and
-can move the index later than it belongs"*.
+medication source anyway, because the failure it guards is asymmetric — a therapy the
+scan cannot see lets a patient pass the no-prior-therapy criterion on missing data,
+and can move the index later than it belongs.
 
 ### Q18. Is the 2022 business-rules document still current? — **partly answered: no**
 
-`Final_Business rule doc_OPTUM_V1_30_08_2022.xlsx` is dated 30 August 2022. It is
-being applied to a 2025Q4/2026Q1 extract against a CDM **V9.0** dictionary released
+The Optum business rules document is dated 30 August 2022. It is being applied
+to a 2025Q4/2026Q1 extract against a CDM **V9.0** dictionary released
 September 2023 — a version that moved `RACE` off the SES file, added `ETHNICITY`,
 `REGION`, `FAMILY_ID` and `BILL_PROC_CD`, and removed `DIVISION` and `PROV_STATE`.
-No revalidation of the rules against V9.0 is recorded anywhere in this repo.
+No revalidation of the rules against V9.0 is recorded anywhere.
+
+**It is demonstrably out of date on two points we can check.** It describes SES
+as *"seven consumer characteristics including race, occupation, income, home
+ownership, poverty status and education level"*; the V9.0 dictionary's SES
+sheet carries **four**, and race is not among them — `RACE` was *"Moved from
+SES file and renamed from D_RACE_CODE"* onto MEMBER_ENROLLMENT. And its note
+says DOD "cannot be joined since both tables are encrypted differently", where
+the warehouse returns a **100% PATID match** on 11,509,828 patients.
+
+Treat it as a 2022 statement: useful for the join keys and the fourteen rules,
+which the dictionary corroborates, and not authoritative on anything the CDM has
+since changed.
 
 **Ask:** is there a newer business-rules document, and has the inpatient/outpatient
 construction been revalidated against V9.0?
-
-**It is demonstrably out of date on a point we can check.** It describes SES as
-*"seven consumer characteristics including race, occupation, income, home
-ownership, poverty status and education level"*. The V9.0 dictionary's SES
-sheet carries **four**, and race is not among them — `RACE` was *"Moved from
-SES file and renamed from D_RACE_CODE"* onto MEMBER_ENROLLMENT.
-
-And it is wrong about DOD outright. Its note says DOD "cannot be joined since
-both tables are encrypted differently"; the warehouse returns a **100% PATID
-match** on 11,509,828 patients. Two verifiable claims, both false. Treat the
-whole document as a 2022 snapshot: useful for the join keys and the fourteen
-rules, which the dictionary corroborates, and not authoritative on anything the
-CDM has since changed.
 
 ### Q19. Do the days inside a bridged enrolment gap count as person-time?
 
@@ -460,7 +418,7 @@ changes every rate slightly and systematically.
 
 ### Q20. Which annex numbering is right?
 
-The Table of Contents (document page 6) lists:
+The protocol's contents list gives:
 
 ```
 ANNEX 3   TABLES
@@ -468,7 +426,7 @@ ANNEX 4   FIGURES
 ANNEX 5   CODELISTS
 ```
 
-Annex 1's own table of stand-alone documents (document page 57) lists:
+Annex 1's own table of stand-alone documents gives:
 
 ```
 3.  Codelists to define study outcomes
@@ -479,68 +437,60 @@ Annex 1's own table of stand-alone documents (document page 57) lists:
 The body text agrees with Annex 1: §7.3.2 defines the key safety events *"according to
 selected ICD-10-CM codes or healthcare visits (**Annex 3**)"*, §7.8.5 says outcomes are
 defined *"according to pre-defined code lists, as specified in **Annex 3**"*, and §7.8
-puts the shells in *"**Annex 4 and Annex 5**"*. So the ToC has three entries rotated.
-
-Not a data question, but it will cause a wrong file to be sent. The ToC also carries two
+puts the shells in *"**Annex 4 and Annex 5**"*. So the contents list has three
+entries rotated, and it will cause a wrong file to be sent. It also carries two
 typos: "ALGORITHIM" and "FRAILITY".
 
-**Ask:** confirm Annex 3 is the code lists, and fix the ToC.
+**Ask:** confirm Annex 3 is the code lists, and fix the contents list.
 
 ---
 
-## Inherited from the build, still open, and not touched by the new protocol
+## Inherited from the cohort build, still open
 
-`Jul 28/ndmm/DECISIONS.md` marks four of its own decisions **open, pending study-team
-sign-off**. The new protocol resolves none of them, and two of them move outcome
-numbers, so they belong on the same list.
+The cohort build leaves four of its own decisions open pending the study team.
+The protocol resolves none of them, and two move outcome numbers.
 
 ### Q21. Are "months" calendar months or fixed day counts?
 
-`DECISIONS.md` §7: every months window in the package is a fixed day count — 12 months
-is `[index − 365, index − 1]` at 1L, 2L and 3L alike; 3 months is 90 days. The reasoning
-is that `add_months()` would give two patients indexed a day apart different windows,
-and 90 is the shortest three calendar months so it is the more permissive reading.
+Every months window in the package is a fixed day count — 12 months is
+`[index − 365, index − 1]` at 1L, 2L and 3L alike; 3 months is 90 days. The
+reasoning is that `add_months()` would give two patients indexed a day apart
+different windows, and 90 is the shortest three calendar months so it is the
+more permissive reading. The 1L sensitivity put the two readings **seven
+patients apart**.
 
-> "Status: **open, pending study-team sign-off**. 'Months' can be read as calendar
-> months or as fixed days, and the code uses fixed days. The 1L sensitivity put the two
-> readings **seven patients apart**."
-
-The new protocol says "12-month" and "3 months" throughout and never disambiguates.
+The protocol says "12-month" and "3 months" throughout and never disambiguates.
 
 ### Q23. Which pregnancy window?
 
-`DECISIONS.md` §9: the build applies the exclusion over the **whole study period**;
-the narrower reading is the patient's own baseline and follow-up. The wider window
-excludes more — *"a pregnancy claim years from a patient's index date drops them under
-this reading and would not under the other"*.
+The build applies the exclusion over the **whole study period**; the narrower
+reading is the patient's own baseline and follow-up. The wider window excludes
+more - a pregnancy claim years from a patient's index date drops them under this
+reading and would not under the other.
 
-> "Status: **open, pending sign-off on the window**."
+The protocol says "during the study period" (X3), which is the build's reading, so
+this is close to settled. A second question stays open: if the narrower reading were
+ever adopted, does its follow-up stop at disenrolment? That is Q13 again, in a
+different place.
 
-The new protocol says "during the study period" (X3), which is the build's reading — so
-this is close to settled, but §9 raises a second question the protocol does not answer:
-if the narrower reading were ever adopted, does its follow-up stop at disenrolment?
-That is `Q13` again, in a different place.
+## What the protocol settles for the build
 
-## What the new protocol closes for the build
+Four thresholds the cohort build had written down inconsistently in different
+places are stated explicitly by the protocol, and every one agrees with what the
+build does.
 
-`Jul 28/ndmm/README.md` has a section headed "Thresholds worth double-checking" —
-four thresholds *"written down inconsistently in different places"*. **The Aug 2026
-protocol states all four explicitly, and every one agrees with what the build does.**
-
-| criterion | sometimes written as | this build | the new protocol |
+| criterion | sometimes written as | this build | the protocol |
 |---|---|---|---|
 | enrolment gaps | `< 30 days` | `<= 30 days` | *"gaps in enrolment of **≤ 30 days**"* ✓ |
 | other cancer | `>1 IP or >2 OP` | `>=1 IP or >=2 OP` | *"either **≥ 1 inpatient or ≥ 2 outpatient**"* ✓ |
 | adult age | `> 18` | `>=18` | *"Aged **≥ 18 years**"* ✓ |
 | outpatient MM diagnosis | `> 2 claims` | `>=2 claims` | *"**≥ 2 outpatient** medical claims"* ✓ |
 
-That section can be struck once the protocol is the reference.
-
 ---
 
-## Questions that already have a price on them
+## Questions the build prices on every run
 
-Four of the decisions above do not need a new run to cost — the build writes the
+Four of the decisions above need no extra query to cost — the build writes the
 alternative into the warehouse on **every** run:
 
 | table | what it prices | bears on |
@@ -550,22 +500,39 @@ alternative into the warehouse on **every** run:
 | `<prefix>NDMM_INDEX_AGENTS` | every `CL_MED_ABBR`, whether this run lets it set an index, and how many patients it set one for | the panobinostat / elotuzumab bars, and Q6 |
 | `<prefix>NDMM_OTHER_MALIG_GROUPS`, `<prefix>NDMM_OTHER_MALIG_GRAIN` | the pairing-grain choice, per category, against the per-label grain | the X2 layered readings |
 
-`Jul 28/ndmm/followup_days.sql` is the follow-up distribution on both definitions,
-paste-and-run against this build's own output.
-
 For the index-agent bars specifically: `NDMM_INDEX_EXCLUDED_ABBRS` checks every entry
 against the code list and **stops the run on a name that matches nothing**, so a
 misspelled "panobinostat" cannot quietly bar no one.
 
 ---
 
-## Answered by the warehouse, 08 Sep 2026
+## What each decision is worth
 
-From `RUN_ONCE_3.sql`. Same proxy
-population as round two — 105,125 members with a C90 code since 2016, of whom
-93,245 have a first one from 2018. Every statement returned.
+Measured against the CDM with the profiling queries in `RUN_ONCE_2.sql` and
+`RUN_ONCE_3.sql`. The proxy population is **105,125** members with a C90 code
+since 2016, of whom **93,245** have a first C90 code on or after 01 Jan 2018.
+None of these is the study cohort — no age, enrolment or exclusion criteria —
+so read every number as an order of magnitude, not a cohort count.
 
-### Q13 — CLOSED. Censoring moves 29% of patients; the bridging rule moves 6%.
+### Ranked by how much is at stake
+
+| # | question | the two readings differ by |
+|---|---|---|
+| Q27 | which route makes a stay MM-related | **32,508 vs 65,206 stays — 2×** |
+| Q25 | do denied claims count | **17.4% of all medical lines** |
+| Q7  | prior malignancy in the secondary 2L cohort | 17,964 members (19.3%) |
+| Q1  | study period starts 2016 or 2018 | 17,288 members first diagnosed 2016-17 |
+| Q6  | do steroid-only claims trigger X1 | 10,466 members |
+| Q11 | how an ED visit is identified | 364,272 to 499,272 visit-days (+37%) |
+| Q2  | narrow or broad MM code set | 29,449 C90.01 + 14,127 C90.02 members |
+| Q16 | overlapping enrolment rows | 473 members on STATE, 388 on BUS, 0 on RACE |
+| Q19 | person-time inside bridged gaps | 109,679 days (~300 person-years) |
+| Q3  | 30-day or 60-day pairing window | 589 members net |
+| Q23 | which pregnancy window | 270 members |
+| Q5  | what "evidence of follow-up" excludes | 1,012 members (1.1%) |
+| Q21 | calendar months or 365 days | one day, for 21% of members |
+
+### Q13 — censoring moves 29% of patients; the bridging rule moves 6%
 
 | | members |
 |---|---|
@@ -575,33 +542,32 @@ population as round two — 105,125 members with a C90 code since 2016, of whom
 | **a break of more than 30 days** | **30,392** |
 | mean length of those breaks | **1,361.6 days** |
 
-41,163 breaks over 30 days — which reconciles exactly with round two's
-202,108 boundaries minus 160,945 in the `<= 30` bucket, confirming that bucket
-was almost entirely `gap_days = 0`.
+41,163 breaks over 30 days, which reconciles exactly with the 202,108 span
+boundaries minus 160,945 in the `<= 30` bucket, confirming that bucket was
+almost entirely `gap_days = 0`.
 
 > **These are upper bounds on the breaks, and the direction is known.** The
 > query merged spans with `lag(ELIGEND)` — the immediately preceding row. The
 > package's `build_enroll_spans()` uses a running `max(ELIGEND)` over *all*
 > prior rows, which is the difference between the two on **nested** spans: a
-> short span sitting inside a longer earlier one. Round two found 11,986
-> myeloma members (11.4%) with overlapping enrolment rows, so the shape is
-> common. Every nested span the `lag()` form mistakes for a gap **inflates the
-> break count and deflates coverage**, so the true figures are **at most
-> 30,392 members with a break** and **at least 62.1% passing continuous
-> enrolment**. The 30-day threshold itself is identical in both forms
+> short span sitting inside a longer earlier one. 11,986 myeloma members
+> (11.4%) have overlapping enrolment rows, so the shape is common. Every
+> nested span the `lag()` form mistakes for a gap **inflates the break count
+> and deflates coverage**, so the true figures are **at most 30,392 members
+> with a break** and **at least 62.1% passing continuous enrolment**. The
+> 30-day threshold itself is identical in both forms
 > (`elig_eff <= max_end + 31` ⟺ gap ≤ 30), so only nesting differs.
-> `RUN_ONCE_3.sql` now builds `mm_spans` with the package's own logic verbatim;
-> one re-run replaces both bounds with the number the build will actually
-> produce.
+> `RUN_ONCE_3.sql` builds `mm_spans` with the package's own logic verbatim;
+> one re-run replaces both bounds with the number the build will produce.
 
-Two things follow. **`CENSOR_AT_DISENROLLMENT` decides the follow-up of 30,392
-patients**, 29% of the population — it is not a technicality. And the 30-day
-bridging rule itself touches only 6,221 (5.9%), so Q19's 109,679 bridged days
-are spread thinly. A mean break of 3.7 years also says what these are: people
-who left the plan and came back years later, not brief administrative lapses.
-Bridging them would be indefensible; the rule correctly does not.
+So `CENSOR_AT_DISENROLLMENT` decides the follow-up of 30,392 patients, 29% of
+the population. The 30-day bridging rule itself touches only 6,221 (5.9%), so
+Q19's 109,679 bridged days are spread thinly. A mean break of 3.7 years also
+says what these are: people who left the plan and came back years later, not
+brief administrative lapses. Bridging them would be indefensible; the rule
+correctly does not.
 
-### I4 / N2 — NEW. The largest attrition step in the study, at 38%.
+### I4 / N2 — the largest attrition step in the study, at 38%
 
 | | members |
 |---|---|
@@ -612,12 +578,12 @@ Bridging them would be indefensible; the rule correctly does not.
 
 **A lower bound** — see the note under Q13. Nested spans read as breaks here
 too, so the true pass rate is at or above 62.1% and the loss at or below
-35,312. Nobody had measured this. It is the single biggest loss in the funnel, larger
-than any exclusion, and it is a criterion this package applies itself. Whether
-the index day is included changes it by **one patient** — so Q14, on this
-criterion at least, is decided: it does not matter.
+35,312. It is the single biggest loss in the funnel, larger than any exclusion,
+and it is a criterion this package applies itself. Whether the index day is
+included changes it by **one patient**, so Q14 does not matter on this
+criterion.
 
-### Q25 — the 17.4% headline was misleading. The real cost is 0.53%.
+### Q25 — the 17.4% headline is misleading; the real cost is 0.53%
 
 Denials by the shape of the claim, among myeloma patients since 2018:
 
@@ -639,13 +605,29 @@ line level:
 
 So `CLAIM_STATUS=paid_only` would remove **one ED visit in 200**, not one in
 six. The decision is real but small, and it should be made on 0.53% rather than
-on 17.4%. (499,272 matches round two's `any_of_three` exactly.)
+on 17.4%.
 
-### The STD_COST proxy is dead — the validation step killed it
+Table-wide, `PAID_STATUS` among myeloma patients splits P 85,917,548 (78.69%),
+D 19,018,111 (**17.42%**), null 4,243,797 (3.89%); from 2024 the whole table
+runs 1,672,870,316 P against 340,788,413 D with no nulls.
 
-The idea was that the dictionary's paid/denied rule is arithmetic on money, so
-the sign of `STD_COST` might stand in for `PAID_STATUS` on the pharmacy side.
-Tested where both exist:
+**The setting is narrower than its name.** `claim_status_sql()` has one call
+site — the ED arm of `07_hcru.R`. `CLAIM_STATUS=paid_only` does not touch the
+I5 follow-up claim test, the MM-hospitalisation subquery, `CONFINEMENT` (which
+has no paid status), or `RX`. The warehouse stores `P` and `D` where the V9.0
+dictionary spells the values `PAID` and `DENIED`, so `claim_status_sql()`
+matches both encodings; nulls are not treated as denied.
+
+**So the decision has three parts, not one:** whether to exclude denied claims
+at all; if so, whether the exclusion reaches beyond emergency visits; and
+whether pharmacy claims can join it.
+
+### `STD_COST` cannot stand in for `PAID_STATUS` on the pharmacy side
+
+The deployed pharmacy table has no `PAID_STATUS` at all — its columns run
+`STD_COST`, `AHFSCLSS`, `CHK_DT`, `DAW`, `DAYS_SUP`. Since the dictionary's
+paid/denied rule is arithmetic on money, the sign of `STD_COST` looked like a
+substitute. Tested on the medical side where both exist:
 
 | `PAID_STATUS` | `STD_COST` | lines |
 |---|---|---|
@@ -670,159 +652,26 @@ lines / 91,272 members; null 726; zero 332), which is consistent.
 permanent.** `CLAIM_STATUS=paid_only` filters medical claims only, and that
 belongs in the SAP as a stated limitation rather than a silent one.
 
-### RX — `FILL_DT` confirmed, and clean
-
-22,107,537 lines across 99,155 members, 2000-05-01 to 2026-03-31, with **zero
-nulls** in `FILL_DT`, `NDC` or `DAYS_SUP`. `build_fu_claims()` is safe.
-
-### Age — the guard costs nothing here, and I2 excludes 93 patients
-
-Of 93,245 members, 93,236 have an enrolment row. Among those: **no null
-`YRDOB`, no zero `YRDOB`, and not one member carrying two different birth
-years.** Age is usable for 100% of them. The round-one `YRDOB = 0` rows are
-real but fall outside the myeloma population, so the guard is protection that
-currently costs nothing.
-
-| band at first diagnosis | members |
-|---|---|
-| under 18 — **excluded by I2** | **93** |
-| 18–64 | 18,535 |
-| 65–74 | 34,387 |
-| 75+ | 40,221 |
-
-### Death dates — one clean finding and one that needs a better test
-
-33,800 of 93,245 (36.2%) carry a death record. Mean gap from last claim to
-death, where the order is sane, is 190.6 days.
-
-**348 members have a death date before their index date** — before their first
-myeloma diagnosis, which is not possible — and **9,705 have one before their
-last claim**.
-
-*This is an upper bound, not a finding.* `YMDOD` is month-precision and the
-query imputed the 15th, so a patient who died on the 25th with a claim on the
-20th is flagged wrongly. Roughly half of same-month cases would be. The right
-test compares at month granularity, and until it is run the honest statement is
-that **up to 9,705 patients have a death/claim ordering problem, and at least
-some of that is the imputation**. The 348 pre-index deaths deserve the same
-re-test and are the more troubling half. Both bear on overall survival, a
-secondary objective, and on `MBR_MATCH_TYPE` (Q28) — if the low-confidence
-link value is the one carrying these, that is the answer to both questions.
-
-### The two truncated tails, closed
-
-**STATE.** Exactly two values fall outside the 51-entry census crosswalk:
-
-| | enrolment rows | members |
-|---|---|---|
-| `NULL` | 3,829,750 | **2,570,332** |
-| `PR` | 14,151 | 11,795 |
-
-So region Unknown is overwhelmingly **missing state**, not territories — 2.4%
-of all members. Puerto Rico is a genuine gap in the crosswalk but a small one.
-Neither is a bug; both belong in the Table 4 footnote.
-
-**DIAG_POSITION.** The 26th value is `NULL` (1,576,237 rows). No junk, nothing
-non-numeric, so `try_cast(... as int)` is safe and the zero-padding is the only
-trap — which the fixture now reproduces.
-
-### ICD-9 myeloma codes — effectively none
-
-Since 2016: 105,125 members carry an ICD-10 C90 code, **1 carries an ICD-9
-203.0x code, and that 1 carries only ICD-9.** So `mm_dx.csv` can be authored
-ICD-10-only with a one-line footnote, and the ICD-9 arm of every code-list join
-is dead weight for this study period rather than a risk.
-
----
-
-## Priced by the warehouse, 07 Sep 2026
-
-One run of `RUN_ONCE_2.sql`, 23 statements, 18m 19s, all
-of them returning. The proxy population is **105,125** members with a C90 code
-since 2016, of whom **93,245** have a first C90 code on or after 01 Jan 2018.
-None of these is the study cohort — no age, enrolment or exclusion criteria —
-so read every number as an order of magnitude, not a cohort count.
-
-Nothing below *decides* a question that needs the protocol author. What each
-does is say how many patients the decision moves, which for most of them is
-the thing that was missing.
-
-### Ranked by how much is at stake
-
-| # | question | the two readings differ by |
-|---|---|---|
-| Q27 | which route makes a stay MM-related | **32,508 vs 65,206 stays — 2×** |
-| Q25 | do denied claims count | **17.4% of all medical lines** |
-| Q7  | prior malignancy in the secondary 2L cohort | 17,964 members (19.3%) |
-| Q1  | study period starts 2016 or 2018 | 17,288 members first diagnosed 2016-17 |
-| Q6  | do steroid-only claims trigger X1 | 10,466 members |
-| Q11 | how an ED visit is identified | 364,272 to 499,272 visit-days (+37%) |
-| Q2  | narrow or broad MM code set | 29,449 C90.01 + 14,127 C90.02 members |
-| Q16 | overlapping enrolment rows | 473 members on STATE, 388 on BUS, 0 on RACE |
-| Q19 | person-time inside bridged gaps | 109,679 days (~300 person-years) |
-| Q3  | 30-day or 60-day pairing window | 589 members net |
-| Q23 | which pregnancy window | 270 members |
-| Q5  | what "evidence of follow-up" excludes | 1,012 members (1.1%) |
-| Q21 | calendar months or 365 days | one day, for 21% of members |
-
-### Q27 — the two routes differ by a factor of two. **Now a setting.**
+### Q27 — the two routes differ by a factor of two
 
 Over 241,362 stays belonging to myeloma patients since 2018:
 
 | | stays |
 |---|---|
-| route A — MM in `CONFINEMENT.DIAG1/DIAG2` (what the package did) | 32,508 |
+| route A — MM in `CONFINEMENT.DIAG1/DIAG2` (the default) | 32,508 |
 | route B — MM in `DIAG_POSITION` 1-2 on a claim carrying the `CONF_ID` | 65,206 |
 | found by route A only | 1,206 |
 | found by route B only | 33,904 |
 | MM only in `CONFINEMENT.DIAG3-5` — neither route counts these | 33,978 |
 
 Route B finds twice what route A finds, and route A is very nearly a subset of
-it. This is the largest unresolved swing in the package's own SQL, so it is no
-longer assumed: `MM_HOSP_POSITION` takes `confinement` (the default, which is
-what every number so far used) or `claim_positions`. Both are emitted and both
-are executed by the test suite.
+it. This is the largest unresolved swing in the package's own SQL, so it is a
+setting rather than an assumption: `MM_HOSP_POSITION` takes `confinement` (the
+default, which is what every number so far used) or `claim_positions`. Both are
+emitted and both are executed by the test suite.
 
-**Still needs an answer.** s7.8.1 says "first or second position" without
-saying of what. Route B is the one business rule 13 documents.
-
-### Q25 — 17.4% of medical claim lines among myeloma patients are DENIED
-
-| `PAID_STATUS` | lines | share |
-|---|---|---|
-| P | 85,917,548 | 78.69% |
-| D | 19,018,111 | **17.42%** |
-| null | 4,243,797 | 3.89% |
-
-Table-wide from 2024 the split is 1,672,870,316 P against 340,788,413 D, with
-no nulls. Nothing in either build filters on this, so every rate this study
-reports currently counts denied lines as evidence that a service happened.
-
-This also exposed a bug. `claim_status_sql()` tested
-`PAID_STATUS <> 'DENIED'` because that is how the V9.0 dictionary spells the
-values. **The warehouse stores `P` and `D`**, so `CLAIM_STATUS=paid_only` was a
-silent no-op — it excluded nothing. Fixed to match both encodings. Nulls are
-not treated as denied.
-
-**And the setting is narrower than its name.** `claim_status_sql()` has one
-call site — the ED arm of `07_hcru.R`. `CLAIM_STATUS=paid_only` does not touch
-the I5 follow-up claim test, the MM-hospitalisation subquery, `CONFINEMENT`
-(which has no paid status), or `RX`. **The deployed pharmacy table has no
-`PAID_STATUS` at all** — its columns run `STD_COST`, `AHFSCLSS`, `CHK_DT`,
-`DAW`, `DAYS_SUP` — so a denied pharmacy claim cannot be excluded on any
-reading of this setting.
-
-That may be recoverable. The dictionary's own rule for MEDICAL is arithmetic on
-money — "PAID if Sum of all Paid Amounts >= $0, DENIED if < $0" — and `RX`
-carries `STD_COST`. `RUN_ONCE_3.sql` block 7 tests that rule against
-`PAID_STATUS` on the medical side, where both exist, and then applies it to
-`RX`, where only the money is there. A clean result makes the filter symmetric;
-anything else makes the asymmetry permanent and worth stating in the SAP.
-
-**So the decision has three parts, not one:** whether to exclude denied claims
-at all; if so, whether the exclusion reaches beyond emergency visits; and
-whether pharmacy claims can join it. **Still needs an answer**, and it is the
-second-largest number on the page.
+**Still needs an answer.** §7.8.1 says "first or second position" without saying
+of what. Route B is the one business rule 13 documents.
 
 ### Q11 — the three ED constructions, and a third of them became admissions
 
@@ -842,8 +691,7 @@ less than their similar totals suggest — revenue and CPT agree on only 229,938
 of the ~400,000 each finds. And 162,211 visit-days (32.5% of the union) are on
 claims that carry a `CONF_ID`, so under business rule 14 they became
 admissions and are at risk of being counted as both an ED visit and a stay.
-`ED_ADMITTED` already exposes that choice; the number now says it is worth 1
-visit in 3.
+`ED_ADMITTED` exposes that choice; the number says it is worth 1 visit in 3.
 
 ### Q1 — 17,288 members were first diagnosed in 2016 or 2017
 
@@ -910,8 +758,8 @@ across their enrolment rows. Nobody has three. Among myeloma patients,
 11,986 (11.4%) have enrolment rows that overlap on different `PAT_PLANID`s,
 and those rows disagree on `STATE` for 473 members and on `BUS` for 388.
 **They never disagree on `RACE` — not once.** The deterministic tiebreak the
-package added is therefore worth about 0.8% of patients, and race was never at
-risk.
+package applies is therefore worth about 0.8% of patients, and race was never
+at risk.
 
 ### Q19 — bridged gaps are worth about 300 person-years *(upper bound)*
 
@@ -921,13 +769,11 @@ in fact — roughly 300 person-years across the whole myeloma population. 987
 gaps sit at exactly 30 days against 98 at exactly 29, so the threshold itself
 lands on a plan-renewal boundary and moving it by a day is not neutral.
 
-*What this does not answer:* the query counted a boundary as a gap whenever
-the next span started after the previous ended, so a contiguous re-enrolment
-(`gap_days = 0`) is in the 160,945 "bridged" count. The 109,679 days figure is
-unaffected by those — zeros contribute nothing. **Q13 was answered on 08 Sep**;
-see above. But this query shares the `lag(ELIGEND)` flaw described there, so
-**109,679 is itself an upper bound**: a nested span produces a spurious gap
-whose days are not really unobserved. The corrected `mm_spans` view carries
+This query counted a boundary as a gap whenever the next span started after the
+previous ended, so a contiguous re-enrolment (`gap_days = 0`) is in the 160,945
+"bridged" count; the 109,679 days figure is unaffected, since zeros contribute
+nothing. It shares the `lag(ELIGEND)` limitation described under Q13, so
+**109,679 is itself an upper bound**. The corrected `mm_spans` view carries
 `MAX_BRIDGED_GAP` and settles it on the next run.
 
 ### Q21 — the two readings differ by at most one day
@@ -955,16 +801,68 @@ narrows what it can mean but does not say which value is the confident link.
 **Still needs the vendor.** If `1` marks a lower-confidence link, 41% of death
 records carry it and overall survival is a secondary objective.
 
-### The value domains the package assumed, now confirmed
+### Death dates — one clean finding and one that needs a better test
 
-| what | warehouse says | verdict |
+33,800 of 93,245 (36.2%) carry a death record. Mean gap from last claim to
+death, where the order is sane, is 190.6 days.
+
+**348 members have a death date before their index date** — before their first
+myeloma diagnosis, which is not possible — and **9,705 have one before their
+last claim**.
+
+*This is an upper bound, not a finding.* `YMDOD` is month-precision and the
+query imputed the 15th, so a patient who died on the 25th with a claim on the
+20th is flagged wrongly. Roughly half of same-month cases would be. The right
+test compares at month granularity, and until it is run the honest statement is
+that **up to 9,705 patients have a death/claim ordering problem, and at least
+some of that is the imputation**. The 348 pre-index deaths deserve the same
+re-test and are the more troubling half. Both bear on overall survival, a
+secondary objective, and on `MBR_MATCH_TYPE` (Q28) — if the low-confidence
+link value is the one carrying these, that is the answer to both questions.
+
+### Age — the guard costs nothing here, and I2 excludes 93 patients
+
+Of 93,245 members, 93,236 have an enrolment row. Among those: **no null
+`YRDOB`, no zero `YRDOB`, and not one member carrying two different birth
+years.** Age is usable for 100% of them. The `YRDOB = 0` rows are real but fall
+outside the myeloma population, so the guard is protection that currently costs
+nothing.
+
+| band at first diagnosis | members |
+|---|---|
+| under 18 — **excluded by I2** | **93** |
+| 18–64 | 18,535 |
+| 65–74 | 34,387 |
+| 75+ | 40,221 |
+
+### RX — `FILL_DT` confirmed, and clean
+
+22,107,537 lines across 99,155 members, 2000-05-01 to 2026-03-31, with **zero
+nulls** in `FILL_DT`, `NDC` or `DAYS_SUP`. `build_fu_claims()` is safe.
+
+### The two truncated tails, closed
+
+**STATE.** Exactly two values fall outside the 51-entry census crosswalk:
+
+| | enrolment rows | members |
 |---|---|---|
-| `MEMBER_ENROLLMENT.GDR_CD` | `F` 108,308,094 · `M` 102,595,572 · `U` 88,388 | package maps M/F and sends `U` to Unknown — correct |
-| `MEMBER_ENROLLMENT.STATE` | **53 distinct values** | `CENSUS_REGION` carries 51 (50 + DC), so **two values fall to region Unknown**. Which two is not yet known |
-| `MED_DIAGNOSIS.DIAG_POSITION` | **zero-padded strings** `01`, `02`, … (26 rows) | anything comparing it as `'1'` would match nothing. Route B casts it; the fixture is now zero-padded so a regression fails |
-| `CONFINEMENT.ICD_FLAG` | **exists** — `10` 23,453,669 · `9` 15,054,996 · null 1,666 | the MM-hospitalisation join may keep reading it; the admit-date fallback stays for the 1,666 |
-| `MEDICAL.PAID_STATUS` | **exists** — values `P` / `D`, not the words | the dictionary's spelling was wrong and the filter was inert. Fixed |
-| `MEDICAL.CONF_ID` | null (182,711,199 lines / 21,932,322 members) or populated (186,547,530 / 2,805,263). **No zero or blank sentinel** | `CONF_ID IS NULL` is the right test; the `trim(...) = ''` branch is dead but harmless |
+| `NULL` | 3,829,750 | **2,570,332** |
+| `PR` | 14,151 | 11,795 |
+
+So region Unknown is overwhelmingly **missing state**, not territories — 2.4%
+of all members. Puerto Rico is a genuine gap in the crosswalk but a small one.
+Neither is a bug; both belong in the Table 4 footnote.
+
+**DIAG_POSITION.** The 26th value is `NULL` (1,576,237 rows). No junk, nothing
+non-numeric, so `try_cast(... as int)` is safe and the zero-padding is the only
+trap.
+
+### ICD-9 myeloma codes — effectively none
+
+Since 2016: 105,125 members carry an ICD-10 C90 code, **1 carries an ICD-9
+203.0x code, and that 1 carries only ICD-9.** So `mm_dx.csv` can be authored
+ICD-10-only with a one-line footnote, and the ICD-9 arm of every code-list join
+is dead weight for this study period rather than a risk.
 
 ### Hospitalisation shape
 
@@ -978,13 +876,12 @@ records supports.
 
 ---
 
-## Closed by the warehouse, 03 Sep 2026
+## Settled against the warehouse
 
-One run of `RUN_ONCE.sql` against
-`hive_metastore.clnprw_optum`. These five are settled and are out of the list
-above. Numbers are recorded here so nobody has to re-run to know them.
+These are out of the list above. Numbers are recorded here so nobody has to
+re-run to know them.
 
-### Q26 / Q8 — `DOD` joins on `PATID`. The 2022 note is wrong for this deployment.
+### Q26 / Q8 — `DOD` joins on `PATID`
 
 | dod_patients | matched in enrollment | match_pct |
 |---|---|---|
@@ -992,13 +889,12 @@ above. Numbers are recorded here so nobody has to re-run to know them.
 
 Every DOD patient matches. `DOD.PATID` is `bigint`, the same type and domain as
 the enrolment table's. The business-rules note — *"DOD and SES tables cannot be
-joined since both tables are encrypted differently"* — does not hold here, and
-the join diagram's `PATID` edge is right. **`Jul 28/ndmm`'s
+joined since both tables are encrypted differently"* — does not hold for this
+deployment, and the join diagram's `PATID` edge is right. The cohort build's
 `LEFT JOIN best b ON q.PATID = b.PATID` is correct, death dates are real, and
-overall survival is reportable.** This was the most serious open item; it is
-closed and the answer is the reassuring one.
+overall survival is reportable.
 
-### Q22 — every death date has a month. The year-only case does not arise.
+### Q22 — every death date has a month; the year-only case does not arise
 
 | YMDOD length | n | range |
 |---|---|---|
@@ -1009,9 +905,9 @@ is never six months wide, and what remains is only whether the 15th is the
 right day **within a known month** — a ±15 day convention, not a gap.
 
 `DOD` has five columns: `PATID`, `YMDOD`, `EXTRACT_YM`, `VERSION`, and
-**`MBR_MATCH_TYPE varchar(1)`** — see Q28 below.
+**`MBR_MATCH_TYPE varchar(1)`** — see Q28.
 
-### Q10 — the RACE and ETHNICITY code values, and the package's mapping is right.
+### Q10 — the RACE and ETHNICITY code values, and the package's mapping is right
 
 | RACE | ETHNICITY | RACE_SOURCE | n |
 |---|---|---|---|
@@ -1033,7 +929,7 @@ right day **within a known month** — a ±15 day convention, not a gap.
 package maps `A`→Asian, `B`→Black, `W`→White, `H`→Hispanic, `N`→Not Hispanic,
 everything else Unknown — **all correct**. (`C` is a dead branch; it never
 occurs.) `RACE_SOURCE` is always `Self-Reported`, so the race here is not
-imputed — the concern about imputation does not apply.
+imputed.
 
 **One thing to carry into Table 4**: race is null or `U` on about **42%** of
 enrolment rows and ethnicity on about **36%**. Those are enrolment rows across
@@ -1043,7 +939,7 @@ be heavily "Unknown" and should say so rather than look like a finding.
 `BUS` is confirmed as `COM` and `MCR`, which is exactly what the demographics
 module maps.
 
-### Q24 — an `ICD_FLAG` naming neither family exists, and is negligible.
+### Q24 — an `ICD_FLAG` naming neither family exists, and is negligible
 
 | ICD_FLAG | n |
 |---|---|
@@ -1054,7 +950,18 @@ module maps.
 530 rows out of ~16.4 billion. Reporting them rather than gating on them is
 the right call and needs no change.
 
-### Also settled by the same run, without having been questions
+### The value domains the package assumed, now confirmed
+
+| what | warehouse says | verdict |
+|---|---|---|
+| `MEMBER_ENROLLMENT.GDR_CD` | `F` 108,308,094 · `M` 102,595,572 · `U` 88,388 | package maps M/F and sends `U` to Unknown — correct |
+| `MEMBER_ENROLLMENT.STATE` | **53 distinct values** | `CENSUS_REGION` carries 51 (50 + DC), so **two values fall to region Unknown** |
+| `MED_DIAGNOSIS.DIAG_POSITION` | **zero-padded strings** `01`, `02`, … (26 rows) | anything comparing it as `'1'` would match nothing. Route B casts it, and the fixture carries the zero-padded form |
+| `CONFINEMENT.ICD_FLAG` | **exists** — `10` 23,453,669 · `9` 15,054,996 · null 1,666 | the MM-hospitalisation join may keep reading it; the admit-date fallback stays for the 1,666 |
+| `MEDICAL.PAID_STATUS` | **exists** — values `P` / `D`, not the words | `claim_status_sql()` matches both encodings |
+| `MEDICAL.CONF_ID` | null (182,711,199 lines / 21,932,322 members) or populated (186,547,530 / 2,805,263). **No zero or blank sentinel** | `CONF_ID IS NULL` is the right test; the `trim(...) = ''` branch is dead but harmless |
+
+### Also settled, without having been questions
 
 - **`CONFINEMENT.ADMIT_DATE` is a real `date`**, with `_DAY` / `_MONTH` parts
   beside it — the same conversion Databricks applied to `ELIGEFF`. The
@@ -1069,24 +976,24 @@ the right call and needs no change.
   carry 1937 against ~1.4M in each neighbouring year: 2026 − 1937 = 89.
 - **`YRDOB` is `0` on 614 rows.** Unguarded, `year(index) - 0` is an age of
   about 2026, which lands every one of them in the **75+** band — the band the
-  protocol uses as its transplant-eligibility proxy. `03_demographics.R` now
+  protocol uses as its transplant-eligibility proxy. `03_demographics.R`
   returns NULL age and an Unknown band outside a plausible human range, and
   `tests/fixtures` carries a patient at the cap and one at zero.
 
 ---
 
-## Already answered by the repo's own record
+## Already settled elsewhere
 
 Not questions — recorded here so nobody reopens them.
 
-| point | where it was settled |
+| point | where it is settled |
 |---|---|
-| Melphalan short-course cap is `≤ 28` days, inclusive | `Jul 28/STUDY_TEAM_ASKS.md` #1, confirmed 30 Aug 2026 |
-| A confirmed melphalan course beats the MAP fold-in | same, settled 30 Aug 2026 |
-| A returning prior-line drug joins the line it returns in | `STUDY_TEAM_ASKS.md` #2, `LOT_RULES.md` §4.8 |
-| A drug of the previous regimen never starts a line | `STUDY_TEAM_ASKS.md` #6, `LOT_RULES.md` §4.3 |
-| Discontinued 1L then a 12-month baseline before 2L/3L | `STUDY_TEAM_ASKS.md` #4 |
-| Melphalan mono when melphalan came with a steroid | `STUDY_TEAM_ASKS.md` #5, `LOT_RULES.md` §2.1 |
+| Melphalan short-course cap is `≤ 28` days, inclusive | confirmed 30 Aug 2026 |
+| A confirmed melphalan course beats the MAP fold-in | confirmed 30 Aug 2026 |
+| A returning prior-line drug joins the line it returns in | `../lot/LOT_RULES.md` §4.8 |
+| A drug of the previous regimen never starts a line | `../lot/LOT_RULES.md` §4.3 |
+| Discontinued 1L then a 12-month baseline before 2L/3L | settled with the study team |
+| Melphalan mono when melphalan came with a steroid | `../lot/LOT_RULES.md` §2.1 |
 
-These three engine rules (§4.3, §4.7, §4.8) are **not** in the protocol text. They
-should go into Annex 6 so the protocol and the code agree on the record.
+Three of the engine rules (§4.3, §4.7, §4.8) are **not** in the protocol text.
+They should go into Annex 6 so the protocol and the code agree on the record.

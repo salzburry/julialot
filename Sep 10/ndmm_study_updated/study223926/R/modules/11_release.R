@@ -9,19 +9,15 @@
 # What runs below is the first: suppress every cell under the floor, SOC
 # included. s7.8's SOC exemption is NOT applied - see OPEN_QUESTIONS.md Q29.
 # Suppressing more than required loses a stratum the protocol may permit; the
-# other way round would publish one it forbids.
-#
-# This is the only place the rule exists. It lived in an R helper as well,
-# which nothing called and which applied the exemption - a tested policy that
-# was not the shipped one. Removed; tests/run_tests.R asserts this SQL.
+# other way round would publish one it forbids. This SQL is the only place the
+# rule exists.
 #
 # The raw tables are not overwritten. Each suppressed table is written beside
 # its source as S_*_RELEASE, so QC can still read the counts that produced a
-# rate while the thing that leaves the warehouse cannot. Overwriting in place
-# would also make the rule un-checkable: you cannot tell a suppressed cell from
-# a cell that was always empty.
+# rate while the thing that leaves the warehouse cannot - and a suppressed cell
+# stays tellable from one that was always empty.
 
-# The spec - which table, which count, which values - is in R/registry.R with
+# The spec - which table, which count, which values - is in R/registry.R beside
 # the module that writes it, because the registry has to name the outputs and
 # is sourced first.
 
@@ -31,15 +27,9 @@ mod_release <- function(con, cfg, cohorts) {
     spec <- SUPPRESSION_SPEC[[tbl]]
     src  <- wrk(tbl)
     out  <- wrk(paste0(tbl, "_RELEASE"))
-    # A count that cannot be read has not been shown to clear the floor.
-    #
-    # This was `n IS NOT NULL AND n < min`, so a row whose denominator came
-    # back NULL was left alone and published its rate - the one gate between a
-    # small cell and the outside, failing open on exactly the row that says
-    # "we do not know how many patients this rests on". Every denominator the
-    # modules write today is non-NULL by construction, but the registry is
-    # built so a new module appears here without an edit, and this is not a
-    # rule that should wait for the module that breaks it.
+    # A count that cannot be read has not been shown to clear the floor, so a
+    # NULL suppresses too. Every denominator the modules write today is
+    # non-NULL by construction, but a new module reaches here without an edit.
     hit  <- sprintf("(%s IS NULL OR %s < %d)", spec$n_col, spec$n_col, min_n)
 
     # The count itself is nulled too. Suppressing the rate and publishing the
@@ -64,17 +54,12 @@ mod_release <- function(con, cfg, cohorts) {
       allow_empty = TRUE)
   }
 
-  # A group with exactly one suppressed row gives that row away by
-  # subtraction: every other row in the group is published, and the group's
-  # own total is too, so the withheld cell is the difference.
+  # A group with exactly one suppressed row gives that row away by subtraction:
+  # every other row in the group is published, and so is the group's own total,
+  # so the withheld cell is the difference.
   #
-  # Reported, not fixed: regrouping is the analyst's call, and silently
-  # merging categories would change what the table means.
-  #
-  # EVERY suppressed table, not only S_SAFETY_RATES. The check was written for
-  # one and named the other five nowhere, so five tables published a
-  # recoverable cell with nothing said - and the decision on record was to
-  # report it, not to report it for one table. The group is the stratum a
+  # Reported, not fixed: regrouping is the analyst's call, and silently merging
+  # categories would change what the table means. The group is the stratum a
   # table's rows divide up, which differs per table, so SUPPRESSION_SPEC
   # declares it beside the count column it is about.
   for (tbl in names(SUPPRESSION_SPEC)) {

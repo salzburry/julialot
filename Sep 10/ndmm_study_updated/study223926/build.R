@@ -16,7 +16,7 @@
 # and the environment beats the file. Three worth knowing before the first run:
 #
 #   MODULES=spine,cohorts,periods,demographics,tte   the parts that need no
-#                                                    code list this repo lacks
+#                                                    code list at all
 #   COHORTS=1L,2L,3L,SEC2L                           which cohorts to build
 #   DRY_RUN=TRUE                                     print the plan and stop
 #

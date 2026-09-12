@@ -4,7 +4,7 @@ The lines-of-therapy engine. It reads a myeloma cohort and the Optum claims
 behind it, and produces one row per patient and line: when the line started,
 what started it, what was in its regimen, when and why it ended.
 
-It is one of three folders delivered together, and they are siblings:
+It sits beside two sibling folders:
 
 | folder | what it does |
 |---|---|
@@ -68,17 +68,16 @@ tables it needs. A `fail` is a defect, a `warn` is worth reading, an `info` is
 context. The report names an example row for each finding, with the patient
 identifier masked to its last six characters so the file can be circulated.
 
-`Rscript qc/tests/test_lot_qc.R` — 295 checks, including every one of the 37
-executed against planted data: once clean, where it must count nothing, and
-once with the defect it describes planted, where it must count that.
+`Rscript qc/tests/test_lot_qc.R` — 295 checks. Every one of the 37 runs twice
+against fixtures: clean, where it must count nothing, and carrying the defect
+it describes, where it must count it.
 
-`qc/trace_foldin.R` is for seeing the fold-in rule (`LOT_RULES.md` 4.8) on
-real patients: the study team asked to look at patients the rule touched, their
-raw MAP episodes beside the final lines. The persisted tables carry no fold
-flag, so it reads the fold's signature instead: a regimen drug the previous
-line carried, no episode inside the line's induction window, and an episode
-inside the line. That is the same route check C1 accepts. It writes one trace
-per patient to `qc/out/`, ids unmasked so the patient can be looked up.
+`qc/trace_foldin.R` shows the fold-in rule (`LOT_RULES.md` 4.8) on real
+patients: their raw MAP episodes beside the final lines. The persisted tables
+carry no fold flag, so it reads the fold's signature instead: a regimen drug
+the previous line carried, no episode inside the line's induction window, and
+an episode inside the line. That is the same route check C1 accepts. One trace
+per patient goes to `qc/out/`, ids unmasked so the patient can be looked up.
 
 ```bash
 OBJECT_PREFIX=ndmm_ TRACE_EXECUTE=TRUE Rscript qc/trace_foldin.R
@@ -120,10 +119,9 @@ INPUT_COHORT_TABLE=ndmm_NDMM_COHORT OBJECT_PREFIX=lot_ Rscript engine/build.R
 OBJECT_PREFIX=lot_ Rscript qc/run_lot_qc.R
 ```
 
-The engine needs a connection — it has no dry-run mode, so there is no way to
-print its plan without one. (The study package does: `DRY_RUN=TRUE` there
-resolves every setting and stops before connecting.) What the engine can be
-checked with instead is its test suites, which need no warehouse at all.
+The engine needs a connection and has no dry-run mode. (The study package does:
+`DRY_RUN=TRUE` there resolves every setting and stops before connecting.) Its
+test suites need no warehouse.
 
 ### The test suites
 
@@ -169,11 +167,4 @@ mistaken for the study's numbers.
 
 ## Also here
 
-`REVIEW_LOG.md` records the defects found in review and what closed each one.
 `FILES.md` is the fuller file-by-file index.
-
-Some documents and code comments cite files from the earlier working tree —
-paths beginning `Jul 28/`, `exploration/` or `analysis/`, and
-`STUDY_TEAM_ASKS.md` — which is not part of this delivery. Those citations
-record where a decision was made and are kept for traceability; nothing in the
-code reaches outside these three folders.

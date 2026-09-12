@@ -3,13 +3,8 @@
 # Every window in the protocol is built here and nowhere else, so a boundary
 # convention is written once. The protocol is explicit about which end of an
 # interval is included and which excluded, and it REVERSED those conventions
-# from the June 2026 version (../VERSION_DIFF.md section 1). Carrying the old
-# ones forward shifts every duration by a day, silently, so they are named in
-# the argument list rather than assumed.
-#
-# These emit SQL rather than computing in R because the warehouse holds the
-# data; tests/test_windows.R checks the emitted text, and the arithmetic is
-# checked against a reference implementation over hand-made cases.
+# from its June 2026 version (../VERSION_DIFF.md section 1), so each end is
+# named in the argument list rather than assumed.
 
 # Days between two dates, with each endpoint declared.
 #
@@ -70,11 +65,12 @@ baseline_window_sql <- function(anchor, cfg, include_index = NULL) {
 # "Disenrollment is not censoring" - and it carries both, so this reads
 # ENDDATE_CE or ENDDATE off the cohort rather than recomputing either.
 # ../OPEN_QUESTIONS.md Q13.
+#
 # `ce_end` is the end of the span covering THIS cohort's index date, from
 # S_ENROLL_SPANS. ENDDATE_CE on the cohort table is measured from the 1L index,
-# so reusing it gave a patient who re-enrolled before 2L a follow-up end before
-# their own index - negative follow-up and negative TTNT/TTD/OS. The cohort
-# table's value is a fallback for a patient no span covers.
+# so reusing it would give a patient who re-enrolled before 2L a follow-up end
+# before their own index. The cohort table's value is a fallback for a patient
+# no span covers.
 fu_end_sql <- function(cfg, ce_end = "fe.COV_END", enddate = "c.ENDDATE",
                        enddate_ce = "c.ENDDATE_CE", death = "c.DEATH_DT") {
   horizon <- if (isTRUE(cfg$censor_at_disenrollment))
@@ -105,11 +101,9 @@ lot_period_sql <- function(cfg, start = "l.LOT_START_DT",
                            fu_end = "p.FU_END") {
   # PROTOCOL_DISCON_DT, derived in 00_spine.R from the SELECTED end reason -
   # not LOT_BASE_DISCON_DT, which is the engine's candidate medication run-out
-  # and can be populated while a different reason and date won the cascade.
-  # 00_spine.R carries the reasoning.
-  #
-  # It is only populated where the line protocol-discontinued; where it is NULL
-  # the line ended for another reason and its own end date bounds it.
+  # and can be populated while a different reason won the cascade. It is only
+  # populated where the line protocol-discontinued; where it is NULL the line
+  # ended for another reason and its own end date bounds it.
   discon_bound <- sprintf("date_add(coalesce(%s, %s), %d)",
                           discon, line_end, as.integer(cfg$lot_post_discon_days))
   next_bound <- sprintf("date_sub(%s, 1)", next_start)
@@ -145,12 +139,9 @@ person_years_sql <- function(from, to, cfg)
           interval_days_sql(from, to, from_incl = TRUE, to_incl = TRUE))
 
 # A rate per RATE_MULTIPLIER person-years, NULL rather than a division by zero.
-#
 # Both Spark (ANSI mode off) and DuckDB already return NULL for x/0, so the
-# guard and the engines agree and removing it changes no answer either would
-# give. It stays because the intent should be in the SQL rather than in what
-# two engines happen to do; tests/exec_fragments.R holds the OUTCOME - a
-# stratum with no person-time publishes no rate - rather than the guard.
+# guard changes no answer either would give; it stays because the intent
+# belongs in the SQL rather than in what two engines happen to do.
 rate_sql <- function(events, pyears, cfg)
   sprintf("CASE WHEN %s > 0 THEN (cast(%s as double) / %s) * %d END",
           pyears, events, pyears, as.integer(cfg$rate_multiplier))
@@ -172,8 +163,8 @@ rate_ci_sql <- function(events, pyears, cfg, side = c("lo", "hi")) {
 # on it, so `all` is the default and the run records the reading it took.
 #
 # The dictionary spells the values PAID and DENIED; the warehouse stores P and
-# D. Testing the spelled-out word excluded nothing, so paid_only was a silent
-# no-op. Both encodings match now.
+# D, so both encodings are matched - testing the spelled-out word alone would
+# exclude nothing.
 #
 # NULL is not treated as denied - it is missing information, not a denial.
 claim_status_sql <- function(cfg, alias) {

@@ -1,6 +1,6 @@
 # What the existing build has to change
 
-The `Jul 28/` delivery already builds an NDMM 1L cohort, 2L and 3L cohorts, and a
+The cohort build already produces an NDMM 1L cohort, 2L and 3L cohorts, and a
 lines-of-therapy assignment. This file is the difference between what it does today
 and what the Aug 26 2026 protocol asks for — nothing else.
 
@@ -11,64 +11,55 @@ Legend: **matches** · **change** · **new** · **decide first** (blocked on
 
 ---
 
-## 0. How a change gets delivered
+## 0. How a change reaches the build
 
-**`Jul 28/ndmm/` is not to be edited.** Everything this file calls a *change*
-is delivered either as an environment override on a re-run of that build, or
-inside `Sep 10/ndmm_study_updated/`. Nothing requires a line of the cohort
-build to move, and it was checked rather than assumed.
+**The cohort build is not to be edited.** Everything this file calls a *change*
+is applied either as an environment override on a re-run of that build, or
+inside this folder. Nothing requires a line of the cohort build to move.
 
 Every setting in section 1 marked **change** is already read from the
-environment by `ndmm/R/config.R` — `LOT1_FROM`, `STUDY_START`, `FU_CE_DAYS`,
-`NDMM_INDEX_EXCLUDED_ABBRS`, and `SUBSEQ_FU_CE_DAYS` (via `subseq_days()` in
-`build_subsequent.R`). Setting them is a *run-time* decision. The values in
-`ndmm/config.csv` are that build's defaults and stay as they are.
+environment by the cohort build — `LOT1_FROM`, `STUDY_START`, `FU_CE_DAYS`,
+`NDMM_INDEX_EXCLUDED_ABBRS`, and `SUBSEQ_FU_CE_DAYS`. Setting them is a
+*run-time* decision; that build's own defaults stay as they are.
 
-`CENSOR_AT_DISENROLLMENT` is the exception, and it is not an `ndmm/` setting at
-all: nothing in that build censors. Follow-up end is computed in
-`study223926`, where the setting already exists and already defaults to `TRUE`,
-which is the protocol's reading.
+`CENSOR_AT_DISENROLLMENT` is the exception: it is not a cohort-build setting at
+all, and nothing in that build censors. Follow-up end is computed in
+`study223926`, where the setting already exists and defaults to `TRUE`, the
+protocol's reading.
 
-### The secondary 2L cohort — RETRACTED, 08 Sep 2026
+### The secondary 2L cohort
 
-**An earlier version of this section was wrong and is corrected here.** It said
-that pointing `INPUT_COHORT_TABLE` at the cohort build's `NDMM_FLAGS_ALL` would
-supply the wide population `s7.4.1.1` asks for, on the grounds that
-`study223926` joins that table on `PATID` alone. That last part is true of
-`01_cohorts.R` and false of everything downstream, and I checked only the join
-I had opened.
+Pointing `INPUT_COHORT_TABLE` at the cohort build's `NDMM_FLAGS_ALL` does **not**
+supply the wide population §7.4.1.1 asks for. `NDMM_FLAGS_ALL` projects
+`ec_l1.PATID` and seven flags, with no `INDEX_DATE`, `ENDDATE`, `ENDDATE_CE`,
+`DEATH_DT`, `MM_DX_DT` or demographics: `02_periods.R` indexes every cohort on
+`co.INDEX_DATE`, `windows.R` reads `ENDDATE` and `ENDDATE_CE`,
+`03_demographics.R` reads `YRDOB` and `GDR_CD`, `08_malignancy.R` reads
+`MM_DX_DT`, and the LOT engine's required-input check rejects it as well.
+`study223926/R/modules/01_cohorts.R` refuses such a table at the first step, by
+name, rather than failing five modules later on an unresolved column.
 
-`NDMM_FLAGS_ALL` projects `ec_l1.PATID` and seven flags. It has **no
-`INDEX_DATE`, `ENDDATE`, `ENDDATE_CE`, `DEATH_DT`, `MM_DX_DT` or
-demographics**. `02_periods.R` indexes every cohort on `co.INDEX_DATE`;
-`windows.R` reads `ENDDATE` and `ENDDATE_CE`; `03_demographics.R` reads
-`YRDOB` and `GDR_CD`; `08_malignancy.R` reads `MM_DX_DT`. The LOT engine's own
-required-input check rejects it as well. So the recipe could not have run, and
-`study223926/R/modules/01_cohorts.R` now refuses such a table at the first
-step, by name, rather than failing five modules later on an unresolved column.
+A schema fix alone would not be enough. `01_cohorts.R` computes membership from
+continuous enrolment and follow-up and then joins the supplied cohort on
+`PATID`; it does not read the eligibility flags in `CRITERION_SOURCE`, because
+with an ordinary pre-filtered NDMM input those exclusions were already applied
+before it. Against a wide input that assumption fails: a record with
+`NO_PREGNANCY = 0` would enter the secondary 2L cohort, and selecting the
+primary cohorts in the same run would admit records failing the prior-cancer
+exclusion. The protocol keeps those criteria for every cohort except where it
+specifically permits otherwise.
 
-**And a schema fix alone would not be enough.** `01_cohorts.R` computes
-membership from continuous enrolment and follow-up and then joins the supplied
-cohort on `PATID`; it does not read the eligibility flags in
-`CRITERION_SOURCE`, because with an ordinary pre-filtered NDMM input those
-exclusions were already applied upstream. Against a wide input that assumption
-fails: a record with `NO_PREGNANCY = 0` would enter the secondary 2L cohort,
-and selecting the primary cohorts in the same run would admit records failing
-the prior-cancer exclusion. Document pages 22 and 37 keep those criteria for
-every cohort except where the protocol specifically permits otherwise.
+So the secondary 2L cohort needs a materialised wide-cohort adapter: the full
+cohort schema above, correctly anchored dates, and the eligibility evidence
+retained per patient so each cohort can apply its own criteria. The LOT engine
+is then run over that adapter. That is a build to write, not a setting to flip,
+and `SEC2L_INPUT_IS_WIDE` asserts a property of the input rather than supplying
+one.
 
-**What the secondary 2L cohort actually needs**, therefore, is a materialised
-wide-cohort adapter: the full cohort schema above, correctly anchored dates,
-and the eligibility evidence retained per patient so each cohort can apply its
-own criteria. The LOT engine is then run over that adapter. That is a build to
-write, not a setting to flip, and `SEC2L_INPUT_IS_WIDE` asserts a property of
-the input rather than supplying one.
-
-**What is still genuinely upstream** is that somebody has to *run* the cohort
-and LOT builds again under those settings. The lineage guard in
-`study223926/R/lineage.R` refuses a LOT run whose `STUDY_START`, `STUDY_END`,
-cohort table or completion state disagree with what this package is set to, so
-a stale run cannot be read by accident.
+Somebody still has to *run* the cohort and LOT builds again under those
+settings. The lineage guard in `study223926/R/lineage.R` refuses a LOT run whose
+`STUDY_START`, `STUDY_END`, cohort table or completion state disagree with what
+this package is set to, so a stale run cannot be read by accident.
 
 ---
 
@@ -125,10 +116,10 @@ cohorts larger than they are today.
 | MM diagnosis (I1) | one code list for both arms, plus a strict `203.0x`/`C90.0x` requirement on the inpatient arm; 90-day outpatient pairing | strict on the inpatient arm; outpatient arm says only "medical claims for MM" | **decide first** — Q2 |
 | Age (I2) | `year(MM_DX_DT) - YRDOB >= 18`, applied to the **earliest** qualifying date | ≥ 18 at MM diagnosis by calendar year | **matches** |
 | Eligible 1L treatment (I3) | first non-steroid MM agent on/after diagnosis and on/after `LOT1_FROM`, belantamab barred | same, plus panobinostat and elotuzumab barred, and `LOT1_FROM = 2019-01-01` | **change** |
-| 12-month CE (I4) | own spans from `member_enrollment`, gaps ≤ 30 d | same, plus "with medical and pharmacy benefits" | **matches** — the extract does not separate the benefits, so the requirement is satisfied by construction (`DECISIONS.md` §6, `OPEN_QUESTIONS.md` Q4) |
+| 12-month CE (I4) | own spans from `member_enrollment`, gaps ≤ 30 d | same, plus "with medical and pharmacy benefits" | **matches** — the extract does not separate the benefits, so the requirement is satisfied by construction (`OPEN_QUESTIONS.md` Q4) |
 | Follow-up (I5) | see §2 | see §2 | **change** |
-| Prior MM therapy (X1) | any MM agent in the 365-day baseline, **steroids dropped** — but the drop **removes nothing** on the production code list (`DECISIONS.md` §3) | "≥ 1 medical or pharmacy claim for any MM oncology therapy" | **matches today**; becomes a decision when Annex 2's list arrives — Q6 |
-| Other cancer (X2) | ≥ 1 inpatient, or ≥ 2 outpatient on distinct days **within 30 days** (`04_other_malig.R:270`), paired on the 3-character ICD category, both claims inside the baseline | ≥ 1 inpatient, or ≥ 2 outpatient **on separate days within 30 days**, same primary tumour type and/or metastatic | **matches** — but confirm the four layered readings in `IE_CRITERIA.md` §6, above all that bone metastasis excludes |
+| Prior MM therapy (X1) | any MM agent in the 365-day baseline, **steroids dropped** — but the drop **removes nothing** on the production code list | "≥ 1 medical or pharmacy claim for any MM oncology therapy" | **matches today**; becomes a decision when Annex 2's list arrives — Q6 |
+| Other cancer (X2) | ≥ 1 inpatient, or ≥ 2 outpatient on distinct days **within 30 days**, paired on the 3-character ICD category, both claims inside the baseline | ≥ 1 inpatient, or ≥ 2 outpatient **on separate days within 30 days**, same primary tumour type and/or metastatic | **matches** — but confirm the four layered readings in `IE_CRITERIA.md` §6, above all that bone metastasis excludes |
 | Pregnancy (X3) | diagnosis, procedure **and revenue** codes (`ICD9DIAG, ICD10DIAG, ICD9PROC, ICD10PROC, HCPCS, REV`), whole study period | same | **matches** |
 | Belantamab (X4) | flag computed in the cohort build, exclusion applied in the LOT build once lines exist | "in any LOT" | **matches** |
 | 2L/3L: received the line (N1) | a LOT 2 / LOT 3 row exists | same | **matches** |
@@ -137,7 +128,7 @@ cohorts larger than they are today.
 
 ## 4. Follow-up end and disenrollment
 
-`Sep 10/lot/LOT_RULES.md` §7.6 says **"Disenrollment is not censoring"**, and
+`../lot/LOT_RULES.md` §7.6 says **"Disenrollment is not censoring"**, and
 `CENSOR_AT_DISENROLLMENT=FALSE` is the primary-analysis setting. The protocol's §7.1
 says the follow-up period runs "until the **end of continuous enrollment** or end of
 study period or death, whichever occurs first".
@@ -151,7 +142,7 @@ disenrollment is classified `STUDY_END`. There is no `DISENROLLMENT` end reason;
 `*_CE_SENS` columns carry the alternative reading."* So
 `LOT_BASE_END_DT_CE_SENS` / `LOT_BASE_END_REASON_CE_SENS` already hold the
 protocol's reading, capped at `ENDDATE_CE`
-(`Sep 10/lot/engine/R/steps/10_lot2_5_base.R:163-170, 1260-1304`).
+(`../lot/engine/R/steps/10_lot2_5_base.R`).
 
 What has to change is **which pair is primary**. On the protocol's wording the
 `_CE_SENS` columns are the analysis and the current primary columns are the
@@ -162,9 +153,9 @@ config decision, not new code. `OPEN_QUESTIONS.md` Q13.
 
 The protocol's LOT text is a four-sentence summary of the same GSK algorithm the engine
 implements — it cites *"Development of line of therapy rules in multiple myeloma: Optum
-Claims (Study no: 219870)"*, which is the Domino project the code lists come from. The
-windows agree exactly. What differs is everything the summary does not say, and some of
-it changes which patients are in a line.
+Claims (Study no: 219870)"*, the earlier study the code lists come from. The windows
+agree exactly. What differs is everything the summary does not say, and some of it
+changes which patients are in a line.
 
 | protocol statement | engine | verdict |
 |---|---|---|
@@ -223,7 +214,7 @@ with a study end of 31 Mar 2026, is a large share of the 3L cohort.
 `LOT_RULES.md` §4.3 (a drug of the line's own regimen returning never starts a line),
 §4.7 (a short melphalan course outside induction does not advance the line) and §4.8
 (a returning prior-line drug joins the line it returns in) were agreed with the study
-team between 15 and 30 August 2026 (`Jul 28/STUDY_TEAM_ASKS.md`). They are compatible
+team between 15 and 30 August 2026. They are compatible
 with "a new MM agent that was not part of the previous LOT regimen" but not derivable
 from it — §4.3 in particular means a patient with a three-month treatment holiday on
 one drug is **one line, not a discontinuation**.
@@ -237,7 +228,7 @@ Note also `LOT_RULES.md`'s own banner: those three rules changed on 30 August 20
 | # | what | why |
 |---|---|---|
 | 1 | **Secondary 2L cohort** — non-nested, index = 2L initiation ≥ 01 Jan 2020, prior malignancy permitted, 1L may fall outside the primary ascertainment period | §7.4. No equivalent exists |
-| 2 | **Demographics**: race, ethnicity, region, insurance type | Table 4. Nothing in the repo reads `RACE`, `ETHNICITY`, `REGION`/`STATE` or `BUS` today — grep confirms zero references |
+| 2 | **Demographics**: race, ethnicity, region, insurance type | Table 4. Nothing reads `RACE`, `ETHNICITY`, `REGION`/`STATE` or `BUS` today |
 | 3 | **Charlson Comorbidity Index (Quan 2011)**, MM-adjusted | Table 4 |
 | 4 | **Kim Frailty Index** | Table 4, Table 1 row 4 — pending feasibility |
 | 5 | **22 key safety events**, at baseline and during each LOT treatment period | Table 3, Objectives 1 and 2 |
@@ -254,9 +245,9 @@ Note also `LOT_RULES.md`'s own banner: those three rules changed on 30 August 20
 Charlson, frailty, the 22 safety events, person-time, HCRU, secondary
 malignancies, SOC categorisation, TTNT/TTD/OS, treatment attrition, the
 subgroup machinery with the < 25 suppression rule, and `TTE_ELIGIBLE`
-(`02_periods.R`, `09_tte.R`). Item **1**, the secondary 2L cohort, is obtained
-by pointing the package at `NDMM_FLAGS_ALL` — section 0. **Nothing here
-requires the cohort build to be edited.**
+(`02_periods.R`, `09_tte.R`). Item **1**, the secondary 2L cohort, needs the
+wide-cohort adapter described in section 0. **Nothing here requires the cohort
+build to be edited.**
 
 ## 7. The counting rules that will bite
 
@@ -301,7 +292,7 @@ run. None of them needs new code to cost.
 | `<prefix>NDMM_PREG_WINDOW_COUNTS` | both readings of the pregnancy window, with the incremental exclusions separated from raw claim counts |
 | `<prefix>NDMM_OTHER_MALIG_GROUPS`, `<prefix>NDMM_OTHER_MALIG_GRAIN` | the other-cancer pairing grain, per category, against the per-label grain |
 | `<prefix>NDMM_BELANTAMAB_RECONCILE` | which cohort members the LOT build will remove for belantamab |
-| `Jul 28/ndmm/followup_days.sql` | the follow-up distribution on both definitions, what ended follow-up, and the same by index year — paste-and-run against this build's own output |
+| the cohort build's follow-up query | the follow-up distribution on both definitions, what ended follow-up, and the same by index year |
 
 Two guards to lean on rather than re-implement:
 
@@ -312,22 +303,21 @@ Two guards to lean on rather than re-implement:
   outside the window the run was given, naming the CDM vintage it would have read. So
   moving `STUDY_START` to 2018 cannot silently read the wrong quarterly tables.
 
-And one section of `Jul 28/ndmm/README.md` can be struck once the protocol is the
-reference: "Thresholds worth double-checking" lists four thresholds written
-inconsistently across documents — enrolment gaps, the other-cancer counts, adult age and
-the outpatient MM-diagnosis count. **The new protocol states all four, and every one
-agrees with what the build does** (`OPEN_QUESTIONS.md`, "What the new protocol closes").
+Four thresholds have been written inconsistently across documents in the past —
+enrolment gaps, the other-cancer counts, adult age and the outpatient MM-diagnosis
+count. **The new protocol states all four, and every one agrees with what the build
+does** (`OPEN_QUESTIONS.md`, "What the new protocol closes").
 
 ## 8. Suggested order of work
 
 1. Settle Q1, Q2 and Q13 with the study team — each changes a count. (Q4 and Q17 are
-   now answered by `Jul 28/ndmm/DECISIONS.md` §6; Q6 is moot until Annex 2 lands.)
-2. Get Annexes 2, 3 and 7, and document pages 31-32.
+   now answered; Q6 is moot until Annex 2 lands.)
+2. Get Annexes 2, 3 and 7, and the missing Table 4 rows.
 3. Re-run the cohort and LOT builds with the section 1 overrides in the
    environment — `LOT1_FROM`, `STUDY_START`, `FU_CE_DAYS`,
-   `SUBSEQ_FU_CE_DAYS`, `NDMM_INDEX_EXCLUDED_ABBRS`. No edit to `ndmm/`; see
-   section 0. `FU_END`, `TTE_ELIGIBLE`, the four demographic columns and
-   censoring are all already built in `study223926`.
+   `SUBSEQ_FU_CE_DAYS`, `NDMM_INDEX_EXCLUDED_ABBRS`. No edit to the cohort
+   build; see section 0. `FU_END`, `TTE_ELIGIBLE`, the four demographic columns
+   and censoring are all already built in `study223926`.
 4. Build the wide-cohort adapter the secondary 2L cohort needs — the full
    cohort schema with eligibility evidence retained — and run the LOT engine
    over it. Section 0 says why a table of ids and flags cannot stand in.
