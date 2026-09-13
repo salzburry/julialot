@@ -10,7 +10,7 @@
 # renders, with nobody able to see what is missing.
 
 PANEL_RENDER <- c("table", "kpi", "bar", "km", "delta", "flow", "funnel",
-                  "check", "sequence")
+                  "check", "sequence", "shell")
 
 # A panel reads either what this package wrote or what the LOT build wrote.
 # The difference is not cosmetic: a study scenario records which LOT run it
@@ -89,6 +89,26 @@ PANELS <- list(
 
   list(name = "switch", tab = "Patterns", render = "flow",
        label = "Regimen transitions", table = "S_SWITCH"),
+
+  # --- the requested table shells ------------------------------------------
+  #
+  # These name no table of their own: the shells say which study tables each
+  # row reads, so the panel is always offered and each row reports what it
+  # could not find. `view` names which of the two the panel draws.
+  list(name = "shell_tables", tab = "Tables", render = "shell",
+       source = "study", label = "The requested table shells, filled",
+       table = NA_character_, view = "tables",
+       note = paste("The shells are five CSV files - which tables exist, what",
+                    "each column selects, what each row reads - filled from",
+                    "this scenario at the sidebar's floor. A row nothing in",
+                    "this run could fill says so rather than reading as a",
+                    "zero.")),
+
+  list(name = "shell_classes", tab = "Tables", render = "shell",
+       source = "study", label = "What each regimen class column holds",
+       table = NA_character_, view = "classes",
+       note = paste("The columns of the table above, and the one file that",
+                    "decides them.")),
 
   list(name = "compare", tab = "Compare", render = "delta",
        label = "One scenario against another", table = NA_character_,

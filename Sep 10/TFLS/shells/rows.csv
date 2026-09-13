@@ -1,0 +1,380 @@
+table_id,order,section,label,indent,stat,source,measure,filter,note
+F1,1,TRUE,INCLUSION CRITERIA,0,,,,,
+F1,2,FALSE,"At least one inpatient medical claim with a diagnosis code for MM in any position (any ICD-9-CM=203.0x or ICD-10-CM code=C90.0x) or ≥ 2 outpatient medical claims for MM in any position on the claim, on separate days within 90 days, during the study period",1,n,S_ATTRITION,N_REMAINING,CRITERION=I1_mm_dx,
+F1,3,FALSE,Aged ≥18 years at the time of MM diagnosis according to calendar year,1,n,S_ATTRITION,N_REMAINING,CRITERION=I2_age,
+F1,4,FALSE,"Received an eligible or expected treatment for MM on or after MM diagnosis (other than belantamab), occurring on or after 01 Jan 2017 (eligible treatment period).",1,n,S_ATTRITION,N_REMAINING,CRITERION=I3_eligible_1l_tx,the belantamab half of this criterion is a separate step in the study funnel - CRITERION=X4_belantamab
+F1,5,FALSE,Exclusions include: panobinostat and elotuzumab. Other potential therapies pending review of data may be considered,2,,,,,"a note on the criterion above rather than a step of its own, and the study funnel has no panobinostat or elotuzumab step"
+F1,6,FALSE,CE of at least 12-months with medical and pharmacy benefits before the 1L cohort index date. Patients with gaps in enrolment of ≤ 30 days are considered to be continuously enrolled,1,n,S_ATTRITION,N_REMAINING,CRITERION=I4_ce_pre,the study re-applies this on each cohort's own index date as CRITERION=N2_ce_pre
+T1,1,TRUE,Demographic characteristics at MM diagnosis (overall)/ at index,0,,,,,footnote 2
+T1,2,TRUE,Sex (N%),0,,,,,
+T1,3,FALSE,Male,1,n_pct,S_DEMOGRAPHICS,SEX=Male,,
+T1,4,FALSE,Female,1,n_pct,S_DEMOGRAPHICS,SEX=Female,,"S_DEMOGRAPHICS.SEX also carries Unknown, which the shell has no row for"
+T1,5,TRUE,Age at index,0,,,,,
+T1,6,FALSE,Mean and SD,1,mean_sd,S_DEMOGRAPHICS,AGE_YEARS,,"AGE_YEARS is right-censored - the source year of birth is capped, so a mean or median age is biased downward"
+T1,7,FALSE,Median and IQR,1,median_iqr,S_DEMOGRAPHICS,AGE_YEARS,,"AGE_YEARS is right-censored - the source year of birth is capped, so a mean or median age is biased downward"
+T1,8,FALSE,Min and Max,1,min_max,S_DEMOGRAPHICS,AGE_YEARS,,
+T1,9,TRUE,Age distribution at index (N%),0,,,,,
+T1,10,FALSE,<75 years,1,n_pct,S_DEMOGRAPHICS,AGE_BAND=18-44|45-64|65-74,,"rolled up - S_DEMOGRAPHICS has no <75 band, it has the three bands below"
+T1,11,FALSE,18 to 44 years,2,n_pct,S_DEMOGRAPHICS,AGE_BAND=18-44,,
+T1,12,FALSE,45 to 64 years,2,n_pct,S_DEMOGRAPHICS,AGE_BAND=45-64,,
+T1,13,FALSE,65 to 74 years,2,n_pct,S_DEMOGRAPHICS,AGE_BAND=65-74,,
+T1,14,FALSE,≥ 75 years,1,n_pct,S_DEMOGRAPHICS,AGE_BAND=75+,,"S_DEMOGRAPHICS.AGE_BAND also carries Unknown, which the shell has no row for"
+T1,15,TRUE,Race (N%),0,,,,,
+T1,16,FALSE,White,1,n_pct,S_DEMOGRAPHICS,RACE=White,,
+T1,17,FALSE,Black,1,n_pct,S_DEMOGRAPHICS,RACE=Black,,
+T1,18,FALSE,Asian,1,n_pct,S_DEMOGRAPHICS,RACE=Asian,,
+T1,19,FALSE,Other,1,n_pct,,,,S_DEMOGRAPHICS.RACE has no Other value - the study sends Other to Unknown
+T1,20,FALSE,Unknown/missing,1,n_pct,S_DEMOGRAPHICS,RACE=Unknown,,"carries the shell's Other row as well, because the study folds Other into Unknown"
+T1,21,TRUE,Ethnicity (N%),0,,,,,
+T1,22,FALSE,Hispanic/Latino,1,n_pct,S_DEMOGRAPHICS,ETHNICITY=Hispanic or Latino,,
+T1,23,FALSE,Non-Hispanic/Latino,1,n_pct,S_DEMOGRAPHICS,ETHNICITY=Not Hispanic or Latino,,
+T1,24,FALSE,Unknown/missing,1,n_pct,S_DEMOGRAPHICS,ETHNICITY=Unknown,,
+T1,25,TRUE,Insurance type at index (N%),0,,,,,
+T1,26,FALSE,Commercial Health Plan,1,n_pct,S_DEMOGRAPHICS,INSURANCE_TYPE=Commercial Health Plan,,
+T1,27,FALSE,Medicare Advantage,1,n_pct,S_DEMOGRAPHICS,INSURANCE_TYPE=Medicare,,"the study publishes Medicare, which is not restricted to Medicare Advantage; it also carries Unknown, which the shell has no row for"
+T1,28,TRUE,Region (N%),0,,,,,
+T1,29,FALSE,Midwest,1,n_pct,S_DEMOGRAPHICS,REGION=Midwest,,
+T1,30,FALSE,South,1,n_pct,S_DEMOGRAPHICS,REGION=South,,
+T1,31,FALSE,West,1,n_pct,S_DEMOGRAPHICS,REGION=West,,
+T1,32,FALSE,Northeast,1,n_pct,S_DEMOGRAPHICS,REGION=Northeast,,
+T1,33,FALSE,Unknown,1,n_pct,S_DEMOGRAPHICS,REGION=Unknown,,
+T1,34,TRUE,Comorbidities and clinical characteristics during baseline,0,,,,,footnote 3
+T1,35,TRUE,CCI score during baseline,0,,,,,footnote 4
+T1,36,FALSE,Mean and SD,1,mean_sd,S_COMORBIDITY,CCI,,
+T1,37,FALSE,Median and IQR,1,median_iqr,S_COMORBIDITY,CCI,,
+T1,38,FALSE,Min and Max,1,min_max,S_COMORBIDITY,CCI,,
+T1,39,TRUE,CCI categorical score (N%),0,,,,,footnote 4
+T1,40,FALSE,0,1,n_pct,S_COMORBIDITY,CCI_BAND=0,,
+T1,41,FALSE,1,1,n_pct,S_COMORBIDITY,CCI_BAND=1,,
+T1,42,FALSE,2,1,n_pct,S_COMORBIDITY,CCI_BAND=2,,
+T1,43,FALSE,3,1,n_pct,S_COMORBIDITY,CCI_BAND=3,,
+T1,44,FALSE,4,1,n_pct,S_COMORBIDITY,CCI_BAND=4,,
+T1,45,FALSE,5+,1,n_pct,S_COMORBIDITY,CCI_BAND=5+,,
+T1,46,TRUE,MM diagnosis and follow-up from 1L information,0,,,,,
+T1,47,TRUE,Age at diagnosis,0,,,,,
+T1,48,FALSE,Mean and SD,1,mean_sd,,,,no study output publishes age at MM diagnosis - MM_DX_DT is in the study's input cohort table but S_DEMOGRAPHICS.AGE_YEARS is age at index
+T1,49,FALSE,Median and IQR,1,median_iqr,,,,no study output publishes age at MM diagnosis - MM_DX_DT is in the study's input cohort table but S_DEMOGRAPHICS.AGE_YEARS is age at index
+T1,50,FALSE,Min and max,1,min_max,,,,no study output publishes age at MM diagnosis - MM_DX_DT is in the study's input cohort table but S_DEMOGRAPHICS.AGE_YEARS is age at index - the shell prints max in lower case here
+T1,51,TRUE,Age distribution at diagnosis (N%),0,,,,,
+T1,52,FALSE,<75 years,1,n_pct,,,,no study output publishes age at MM diagnosis - MM_DX_DT is in the study's input cohort table but S_DEMOGRAPHICS.AGE_YEARS is age at index
+T1,53,FALSE,18 to 44 years,2,n_pct,,,,no study output publishes age at MM diagnosis - MM_DX_DT is in the study's input cohort table but S_DEMOGRAPHICS.AGE_YEARS is age at index
+T1,54,FALSE,45 to 64 years,2,n_pct,,,,no study output publishes age at MM diagnosis - MM_DX_DT is in the study's input cohort table but S_DEMOGRAPHICS.AGE_YEARS is age at index
+T1,55,FALSE,65 to 74 years,2,n_pct,,,,no study output publishes age at MM diagnosis - MM_DX_DT is in the study's input cohort table but S_DEMOGRAPHICS.AGE_YEARS is age at index
+T1,56,FALSE,≥ 75 years,1,n_pct,,,,no study output publishes age at MM diagnosis - MM_DX_DT is in the study's input cohort table but S_DEMOGRAPHICS.AGE_YEARS is age at index
+T1,57,TRUE,Year of MM diagnosis (overall) / start of LoT (N%),0,,,,,
+T1,58,FALSE,2016,1,n_pct,,,,no year of diagnosis in the study output - the shell prints na across this row
+T1,59,FALSE,2017,1,n_pct,,,,no year of diagnosis in the study output
+T1,60,FALSE,2018,1,n_pct,,,,no year of diagnosis in the study output
+T1,61,FALSE,2019,1,n_pct,,,,no year of diagnosis in the study output
+T1,62,FALSE,2020,1,n_pct,,,,no year of diagnosis in the study output
+T1,63,FALSE,2021,1,n_pct,,,,no year of diagnosis in the study output
+T1,64,FALSE,2022,1,n_pct,,,,no year of diagnosis in the study output
+T1,65,FALSE,2023,1,n_pct,,,,no year of diagnosis in the study output
+T1,66,FALSE,2024,1,n_pct,,,,no year of diagnosis in the study output
+T1,67,FALSE,2025,1,n_pct,,,,no year of diagnosis in the study output
+T1,68,TRUE,Total follow up time from diagnosis to each index,0,,,,,
+T1,69,FALSE,Mean and SD,1,mean_sd,,,,no study output publishes time from MM diagnosis to index - S_PERIODS.FU_MONTHS is follow-up after index
+T1,70,FALSE,Median and IQR,1,median_iqr,,,,no study output publishes time from MM diagnosis to index - S_PERIODS.FU_MONTHS is follow-up after index
+T1,71,FALSE,Min and Max,1,min_max,,,,no study output publishes time from MM diagnosis to index - S_PERIODS.FU_MONTHS is follow-up after index
+T1,72,TRUE,Time from diagnosis to 1L initiation (overall) / between each index (months),0,,,,,the shell marks this row 4; footnote 5 is the one that defines it
+T1,73,FALSE,Mean and SD,1,mean_sd,,,,"no study output publishes time from MM diagnosis to 1L, nor the time between consecutive LoT indices"
+T1,74,FALSE,Median and IQR,1,median_iqr,,,,"no study output publishes time from MM diagnosis to 1L, nor the time between consecutive LoT indices"
+T1,75,FALSE,Min and Max,1,min_max,,,,"no study output publishes time from MM diagnosis to 1L, nor the time between consecutive LoT indices"
+T1b,1,TRUE,Demographic characteristics at MM diagnosis (overall)/ at index,0,,,,,footnote 2
+T1b,2,TRUE,Sex (N%),0,,,,,
+T1b,3,FALSE,Male,1,n_pct,S_DEMOGRAPHICS,SEX=Male,,
+T1b,4,FALSE,Female,1,n_pct,S_DEMOGRAPHICS,SEX=Female,,"S_DEMOGRAPHICS.SEX also carries Unknown, which the shell has no row for"
+T1b,5,TRUE,Age at index,0,,,,,
+T1b,6,FALSE,Mean and SD,1,mean_sd,S_DEMOGRAPHICS,AGE_YEARS,,"AGE_YEARS is right-censored - the source year of birth is capped, so a mean or median age is biased downward"
+T1b,7,FALSE,Median and IQR,1,median_iqr,S_DEMOGRAPHICS,AGE_YEARS,,"AGE_YEARS is right-censored - the source year of birth is capped, so a mean or median age is biased downward"
+T1b,8,FALSE,Min and Max,1,min_max,S_DEMOGRAPHICS,AGE_YEARS,,
+T1b,9,TRUE,Age distribution at index (N%),0,,,,,
+T1b,10,FALSE,<75 years,1,n_pct,S_DEMOGRAPHICS,AGE_BAND=18-44|45-64|65-74,,"rolled up - S_DEMOGRAPHICS has no <75 band, it has the three bands below"
+T1b,11,FALSE,18 to 44 years,2,n_pct,S_DEMOGRAPHICS,AGE_BAND=18-44,,
+T1b,12,FALSE,45 to 64 years,2,n_pct,S_DEMOGRAPHICS,AGE_BAND=45-64,,
+T1b,13,FALSE,65 to 74 years,2,n_pct,S_DEMOGRAPHICS,AGE_BAND=65-74,,
+T1b,14,FALSE,≥ 75 years,1,n_pct,S_DEMOGRAPHICS,AGE_BAND=75+,,"S_DEMOGRAPHICS.AGE_BAND also carries Unknown, which the shell has no row for"
+T1b,15,TRUE,Race (N%),0,,,,,
+T1b,16,FALSE,White,1,n_pct,S_DEMOGRAPHICS,RACE=White,,
+T1b,17,FALSE,Black,1,n_pct,S_DEMOGRAPHICS,RACE=Black,,
+T1b,18,FALSE,Asian,1,n_pct,S_DEMOGRAPHICS,RACE=Asian,,
+T1b,19,FALSE,Other,1,n_pct,,,,S_DEMOGRAPHICS.RACE has no Other value - the study sends Other to Unknown
+T1b,20,FALSE,Unknown/missing,1,n_pct,S_DEMOGRAPHICS,RACE=Unknown,,"carries the shell's Other row as well, because the study folds Other into Unknown"
+T1b,21,TRUE,Ethnicity (N%),0,,,,,
+T1b,22,FALSE,Hispanic/Latino,1,n_pct,S_DEMOGRAPHICS,ETHNICITY=Hispanic or Latino,,
+T1b,23,FALSE,Non-Hispanic/Latino,1,n_pct,S_DEMOGRAPHICS,ETHNICITY=Not Hispanic or Latino,,
+T1b,24,FALSE,Unknown/missing,1,n_pct,S_DEMOGRAPHICS,ETHNICITY=Unknown,,
+T1b,25,TRUE,Insurance type at index (N%),0,,,,,
+T1b,26,FALSE,Commercial Health Plan,1,n_pct,S_DEMOGRAPHICS,INSURANCE_TYPE=Commercial Health Plan,,
+T1b,27,FALSE,Medicare Advantage,1,n_pct,S_DEMOGRAPHICS,INSURANCE_TYPE=Medicare,,"the study publishes Medicare, which is not restricted to Medicare Advantage; it also carries Unknown, which the shell has no row for"
+T1b,28,TRUE,Region (N%),0,,,,,
+T1b,29,FALSE,Midwest,1,n_pct,S_DEMOGRAPHICS,REGION=Midwest,,
+T1b,30,FALSE,South,1,n_pct,S_DEMOGRAPHICS,REGION=South,,
+T1b,31,FALSE,West,1,n_pct,S_DEMOGRAPHICS,REGION=West,,
+T1b,32,FALSE,Northeast,1,n_pct,S_DEMOGRAPHICS,REGION=Northeast,,
+T1b,33,FALSE,Unknown,1,n_pct,S_DEMOGRAPHICS,REGION=Unknown,,
+T1b,34,TRUE,Comorbidities and clinical characteristics during baseline,0,,,,,footnote 3
+T1b,35,TRUE,CCI score during baseline,0,,,,,footnote 4
+T1b,36,FALSE,Mean and SD,1,mean_sd,S_COMORBIDITY,CCI,,
+T1b,37,FALSE,Median and IQR,1,median_iqr,S_COMORBIDITY,CCI,,
+T1b,38,FALSE,Min and Max,1,min_max,S_COMORBIDITY,CCI,,
+T1b,39,TRUE,CCI categorical score (N%),0,,,,,footnote 4
+T1b,40,FALSE,0,1,n_pct,S_COMORBIDITY,CCI_BAND=0,,
+T1b,41,FALSE,1,1,n_pct,S_COMORBIDITY,CCI_BAND=1,,
+T1b,42,FALSE,2,1,n_pct,S_COMORBIDITY,CCI_BAND=2,,
+T1b,43,FALSE,3,1,n_pct,S_COMORBIDITY,CCI_BAND=3,,
+T1b,44,FALSE,4,1,n_pct,S_COMORBIDITY,CCI_BAND=4,,
+T1b,45,FALSE,5+,1,n_pct,S_COMORBIDITY,CCI_BAND=5+,,
+T1b,46,TRUE,MM diagnosis and follow-up from 1L information,0,,,,,
+T1b,47,TRUE,Age at diagnosis,0,,,,,
+T1b,48,FALSE,Mean and SD,1,mean_sd,,,,no study output publishes age at MM diagnosis - MM_DX_DT is in the study's input cohort table but S_DEMOGRAPHICS.AGE_YEARS is age at index
+T1b,49,FALSE,Median and IQR,1,median_iqr,,,,no study output publishes age at MM diagnosis - MM_DX_DT is in the study's input cohort table but S_DEMOGRAPHICS.AGE_YEARS is age at index
+T1b,50,FALSE,Min and max,1,min_max,,,,no study output publishes age at MM diagnosis - MM_DX_DT is in the study's input cohort table but S_DEMOGRAPHICS.AGE_YEARS is age at index - the shell prints max in lower case here
+T1b,51,TRUE,Age distribution at diagnosis (N%),0,,,,,
+T1b,52,FALSE,<75 years,1,n_pct,,,,no study output publishes age at MM diagnosis - MM_DX_DT is in the study's input cohort table but S_DEMOGRAPHICS.AGE_YEARS is age at index
+T1b,53,FALSE,18 to 44 years,2,n_pct,,,,no study output publishes age at MM diagnosis - MM_DX_DT is in the study's input cohort table but S_DEMOGRAPHICS.AGE_YEARS is age at index
+T1b,54,FALSE,45 to 64 years,2,n_pct,,,,no study output publishes age at MM diagnosis - MM_DX_DT is in the study's input cohort table but S_DEMOGRAPHICS.AGE_YEARS is age at index
+T1b,55,FALSE,65 to 74 years,2,n_pct,,,,no study output publishes age at MM diagnosis - MM_DX_DT is in the study's input cohort table but S_DEMOGRAPHICS.AGE_YEARS is age at index
+T1b,56,FALSE,≥ 75 years,1,n_pct,,,,no study output publishes age at MM diagnosis - MM_DX_DT is in the study's input cohort table but S_DEMOGRAPHICS.AGE_YEARS is age at index
+T1b,57,TRUE,Year of MM diagnosis (overall) / start of LoT (N%),0,,,,,
+T1b,58,FALSE,2016,1,n_pct,,,,no year of diagnosis in the study output - the shell prints na across this row
+T1b,59,FALSE,2017,1,n_pct,,,,no year of diagnosis in the study output
+T1b,60,FALSE,2018,1,n_pct,,,,no year of diagnosis in the study output
+T1b,61,FALSE,2019,1,n_pct,,,,no year of diagnosis in the study output
+T1b,62,FALSE,2020,1,n_pct,,,,no year of diagnosis in the study output
+T1b,63,FALSE,2021,1,n_pct,,,,no year of diagnosis in the study output
+T1b,64,FALSE,2022,1,n_pct,,,,no year of diagnosis in the study output
+T1b,65,FALSE,2023,1,n_pct,,,,no year of diagnosis in the study output
+T1b,66,FALSE,2024,1,n_pct,,,,no year of diagnosis in the study output
+T1b,67,FALSE,2025,1,n_pct,,,,no year of diagnosis in the study output
+T1b,68,TRUE,Total follow up time from diagnosis to each index,0,,,,,
+T1b,69,FALSE,Mean and SD,1,mean_sd,,,,no study output publishes time from MM diagnosis to index - S_PERIODS.FU_MONTHS is follow-up after index
+T1b,70,FALSE,Median and IQR,1,median_iqr,,,,no study output publishes time from MM diagnosis to index - S_PERIODS.FU_MONTHS is follow-up after index
+T1b,71,FALSE,Min and Max,1,min_max,,,,no study output publishes time from MM diagnosis to index - S_PERIODS.FU_MONTHS is follow-up after index
+T1b,72,TRUE,Time from diagnosis to 1L initiation (overall) / between each index (months),0,,,,,the shell marks this row 4; footnote 5 is the one that defines it
+T1b,73,FALSE,Mean and SD,1,mean_sd,,,,"no study output publishes time from MM diagnosis to 1L, nor the time between consecutive LoT indices"
+T1b,74,FALSE,Median and IQR,1,median_iqr,,,,"no study output publishes time from MM diagnosis to 1L, nor the time between consecutive LoT indices"
+T1b,75,FALSE,Min and Max,1,min_max,,,,"no study output publishes time from MM diagnosis to 1L, nor the time between consecutive LoT indices"
+T2a,1,TRUE,Rates of key safety events,0,,,,,
+T2a,2,TRUE,Liver/hepatic events,1,,,,,DOMAIN=hepatologic
+T2a,3,FALSE,Acute hepatitis,2,n_pct,S_SAFETY_RATES,CONDITION=acute_hepatitis_b,DOMAIN=hepatologic,"the study code list names acute hepatitis B only, so this row is narrower than its label"
+T2a,4,FALSE,Abnormal liver function,2,n_pct,,,,no such CONDITION in the study safety code list - adding it needs a code set
+T2a,5,FALSE,Toxic liver disease,2,n_pct,S_SAFETY_RATES,CONDITION=toxic_liver_disease,DOMAIN=hepatologic,
+T2a,6,FALSE,Hepatic failure,2,n_pct,S_SAFETY_RATES,CONDITION=hepatic_failure,DOMAIN=hepatologic,
+T2a,7,FALSE,Chronic hepatitis,2,n_pct,,,,no such CONDITION in the study safety code list - adding it needs a code set
+T2a,8,FALSE,Fibrosis and cirrhosis,2,n_pct,S_SAFETY_RATES,CONDITION=fibrosis_and_cirrhosis,DOMAIN=hepatologic,
+T2a,9,FALSE,Non-alcoholic steatohepatitis,2,n_pct,S_SAFETY_RATES,CONDITION=non_alcoholic_steatohepatitis,DOMAIN=hepatologic,
+T2a,10,TRUE,Renal impairment events,1,,,,,DOMAIN=renal
+T2a,11,FALSE,Acute kidney injury or acute kidney disease,2,n_pct,S_SAFETY_RATES,CONDITION=acute_kidney_injury_or_acute_kidney_disease,DOMAIN=renal,
+T2a,12,FALSE,Chronic kidney disease,2,n_pct,S_SAFETY_RATES,CONDITION=chronic_kidney_disease,DOMAIN=renal,
+T2a,13,FALSE,Moderate to severe renal impairment or end stage renal disease,2,n_pct,S_SAFETY_RATES,CONDITION=moderate_to_severe_renal_impairment_or_esrd,DOMAIN=renal,
+T2a,14,TRUE,Ocular events,1,,,,,DOMAIN=ocular
+T2a,15,FALSE,Corneal ulcer,2,n_pct,S_SAFETY_RATES,CONDITION=corneal_ulcer,DOMAIN=ocular,
+T2a,16,FALSE,Keratopathies (including ulcerative and infective),2,n_pct,S_SAFETY_RATES,CONDITION=keratopathies,DOMAIN=ocular,
+T2a,17,TRUE,Cardiovascular events,1,,,,,DOMAIN=cardiovascular
+T2a,18,FALSE,Myocardial infarction/unstable angina,2,n_pct,S_SAFETY_RATES,CONDITION=myocardial_infarction_or_unstable_angina,DOMAIN=cardiovascular,
+T2a,19,FALSE,Valvopathy,2,n_pct,,,,no such CONDITION in the study safety code list - adding it needs a code set
+T2a,20,FALSE,Pulmonary hypertension,2,n_pct,S_SAFETY_RATES,CONDITION=pulmonary_hypertension,DOMAIN=cardiovascular,
+T2a,21,FALSE,Cerebrovascular events/stroke and transient ischemic attack (TIA),2,n_pct,S_SAFETY_RATES,CONDITION=cerebrovascular_events_stroke_and_tia,DOMAIN=cardiovascular,
+T2a,22,FALSE,Peripheral arterial thromboembolism,2,n_pct,S_SAFETY_RATES,CONDITION=peripheral_arterial_thromboembolism,DOMAIN=cardiovascular,
+T2a,23,FALSE,Deep venous thrombosis/pulmonary embolism,2,n_pct,S_SAFETY_RATES,CONDITION=deep_venous_thrombosis_or_pulmonary_embolism,DOMAIN=cardiovascular,
+T2a,24,FALSE,Peripheral arterial hypertension,2,n_pct,,,,no such CONDITION in the study safety code list - adding it needs a code set
+T2a,25,TRUE,Neurologic conditions,1,,,,,DOMAIN=neurologic
+T2a,26,FALSE,Peripheral neuropathy,2,n_pct,S_SAFETY_RATES,CONDITION=peripheral_neuropathy,DOMAIN=neurologic,
+T2a,27,FALSE,Parkinson's disease,2,n_pct,S_SAFETY_RATES,CONDITION=parkinsons_disease,DOMAIN=neurologic,
+T2a,28,FALSE,Cognitive impairment/dementia,2,n_pct,,,,no such CONDITION in the study safety code list - adding it needs a code set
+T2a,29,FALSE,Other movement disorders,2,n_pct,S_SAFETY_RATES,CONDITION=other_movement_disorders,DOMAIN=neurologic,
+T2a,30,FALSE,Seizures,2,n_pct,S_SAFETY_RATES,CONDITION=seizures,DOMAIN=neurologic,
+T2a,31,TRUE,"Infectious, N (%)",1,,,,,"DOMAIN=infectious - the study code list also carries lower_respiratory_or_lung_infection, which the shell has no row for"
+T2a,32,FALSE,Severe infection resulting in hospitalization,2,n_pct,S_SAFETY_RATES,CONDITION=severe_infection_resulting_in_hospitalisation,DOMAIN=infectious,the study spells the condition hospitalisation
+T2a,33,TRUE,"Other, N (%)",1,,,,,DOMAIN=other
+T2a,34,FALSE,Thrombocytopenia,2,n_pct,S_SAFETY_RATES,CONDITION=thrombocytopenia,DOMAIN=other,
+T2a,35,FALSE,Anemia,2,n_pct,S_SAFETY_RATES,CONDITION=anemia,DOMAIN=other,
+T2a,36,TRUE,Inpatient hospitalizations,0,,,,,"S_HCRU_RATES also carries MEASURE=MM_RELATED_HOSPITALISATION, which the shell has no row for"
+T2a,37,TRUE,Number of inpatient hospitalizations by patient,1,,,,,
+T2a,38,FALSE,Mean and SD,2,mean_sd,S_HCRU_RATES,MEASURE=ALL_CAUSE_HOSPITALISATION,,the mean is N_EVENTS over N_PATIENTS; no SD in the study output
+T2a,39,FALSE,Median and IQR,2,median_iqr,,,,S_HCRU_RATES is aggregated - no per-patient distribution of visit counts
+T2a,40,FALSE,Min and Max,2,min_max,,,,S_HCRU_RATES is aggregated - no per-patient distribution of visit counts
+T2a,41,TRUE,"Number of hospitalizations, categorically (N%)",1,,,,,
+T2a,42,FALSE,1 hospitalization,2,n_pct,,,,no categorical count bands in S_HCRU_RATES
+T2a,43,FALSE,2 hospitalizations,2,n_pct,,,,no categorical count bands in S_HCRU_RATES
+T2a,44,FALSE,3 hospitalizations,2,n_pct,,,,no categorical count bands in S_HCRU_RATES
+T2a,45,FALSE,4+ hospitalizations,2,n_pct,,,,no categorical count bands in S_HCRU_RATES
+T2a,46,TRUE,Length of stay among patients with ≥1 hospitalization (N=),1,,,,,S_HCRU_RATES.N_LOS_EXCLUDED records the stays left out of the length of stay figures
+T2a,47,FALSE,Mean and SD,2,mean_sd,S_HCRU_RATES,MEAN_LOS,MEASURE=ALL_CAUSE_HOSPITALISATION,MEAN_LOS is published; no SD in the study output
+T2a,48,FALSE,Median and IQR,2,median_iqr,S_HCRU_RATES,MEDIAN_LOS,MEASURE=ALL_CAUSE_HOSPITALISATION,MEDIAN_LOS is published; no IQR in the study output
+T2a,49,FALSE,Min and Max,2,min_max,,,,no minimum or maximum length of stay in the study output
+T2a,50,TRUE,Emergency department (ED) visits,0,,,,,
+T2a,51,TRUE,Number of ER vists by patient,1,,,MEASURE=ED_VISIT,,the shell spells it vists; kept as printed
+T2a,52,FALSE,Mean and SD,2,mean_sd,S_HCRU_RATES,MEASURE=ED_VISIT,,the mean is N_EVENTS over N_PATIENTS; no SD in the study output
+T2a,53,FALSE,Median and IQR,2,median_iqr,,,,S_HCRU_RATES is aggregated - no per-patient distribution of visit counts
+T2a,54,FALSE,Min and Max,2,min_max,,,,S_HCRU_RATES is aggregated - no per-patient distribution of visit counts
+T2a,55,TRUE,"Number of hospitalizations, categorically (N%)",1,,,MEASURE=ED_VISIT,,the shell repeats the hospitalization label here; this block counts ED visits
+T2a,56,FALSE,1 hospitalization,2,n_pct,,MEASURE=ED_VISIT,,the shell repeats the hospitalization label here; this counts ED visits - no categorical count bands in S_HCRU_RATES
+T2a,57,FALSE,2 hospitalizations,2,n_pct,,MEASURE=ED_VISIT,,the shell repeats the hospitalization label here; this counts ED visits - no categorical count bands in S_HCRU_RATES
+T2a,58,FALSE,3 hospitalizations,2,n_pct,,MEASURE=ED_VISIT,,the shell repeats the hospitalization label here; this counts ED visits - no categorical count bands in S_HCRU_RATES
+T2a,59,FALSE,4+ hospitalizations,2,n_pct,,MEASURE=ED_VISIT,,the shell repeats the hospitalization label here; this counts ED visits - no categorical count bands in S_HCRU_RATES
+T2b,1,TRUE,Rates of key safety events,0,,,,,
+T2b,2,TRUE,Liver/hepatic events,1,,,,,DOMAIN=hepatologic
+T2b,3,FALSE,Acute hepatitis,2,n_pct,S_SAFETY_RATES,CONDITION=acute_hepatitis_b,DOMAIN=hepatologic,"the study code list names acute hepatitis B only, so this row is narrower than its label"
+T2b,4,FALSE,Abnormal liver function,2,n_pct,,,,no such CONDITION in the study safety code list - adding it needs a code set
+T2b,5,FALSE,Toxic liver disease,2,n_pct,S_SAFETY_RATES,CONDITION=toxic_liver_disease,DOMAIN=hepatologic,
+T2b,6,FALSE,Hepatic failure,2,n_pct,S_SAFETY_RATES,CONDITION=hepatic_failure,DOMAIN=hepatologic,
+T2b,7,FALSE,Chronic hepatitis,2,n_pct,,,,no such CONDITION in the study safety code list - adding it needs a code set
+T2b,8,FALSE,Fibrosis and cirrhosis,2,n_pct,S_SAFETY_RATES,CONDITION=fibrosis_and_cirrhosis,DOMAIN=hepatologic,
+T2b,9,FALSE,Non-alcoholic steatohepatitis,2,n_pct,S_SAFETY_RATES,CONDITION=non_alcoholic_steatohepatitis,DOMAIN=hepatologic,
+T2b,10,TRUE,Renal impairment events,1,,,,,DOMAIN=renal
+T2b,11,FALSE,Acute kidney injury or acute kidney disease,2,n_pct,S_SAFETY_RATES,CONDITION=acute_kidney_injury_or_acute_kidney_disease,DOMAIN=renal,
+T2b,12,FALSE,Chronic kidney disease,2,n_pct,S_SAFETY_RATES,CONDITION=chronic_kidney_disease,DOMAIN=renal,
+T2b,13,FALSE,Moderate to severe renal impairment or end stage renal disease,2,n_pct,S_SAFETY_RATES,CONDITION=moderate_to_severe_renal_impairment_or_esrd,DOMAIN=renal,
+T2b,14,TRUE,Ocular events,1,,,,,DOMAIN=ocular
+T2b,15,FALSE,Corneal ulcer,2,n_pct,S_SAFETY_RATES,CONDITION=corneal_ulcer,DOMAIN=ocular,
+T2b,16,FALSE,Keratopathies (including ulcerative and infective),2,n_pct,S_SAFETY_RATES,CONDITION=keratopathies,DOMAIN=ocular,
+T2b,17,TRUE,Cardiovascular events,1,,,,,DOMAIN=cardiovascular
+T2b,18,FALSE,Myocardial infarction/unstable angina,2,n_pct,S_SAFETY_RATES,CONDITION=myocardial_infarction_or_unstable_angina,DOMAIN=cardiovascular,
+T2b,19,FALSE,Valvopathy,2,n_pct,,,,no such CONDITION in the study safety code list - adding it needs a code set
+T2b,20,FALSE,Pulmonary hypertension,2,n_pct,S_SAFETY_RATES,CONDITION=pulmonary_hypertension,DOMAIN=cardiovascular,
+T2b,21,FALSE,Cerebrovascular events/stroke and transient ischemic attack (TIA),2,n_pct,S_SAFETY_RATES,CONDITION=cerebrovascular_events_stroke_and_tia,DOMAIN=cardiovascular,
+T2b,22,FALSE,Peripheral arterial thromboembolism,2,n_pct,S_SAFETY_RATES,CONDITION=peripheral_arterial_thromboembolism,DOMAIN=cardiovascular,
+T2b,23,FALSE,Deep venous thrombosis/pulmonary embolism,2,n_pct,S_SAFETY_RATES,CONDITION=deep_venous_thrombosis_or_pulmonary_embolism,DOMAIN=cardiovascular,
+T2b,24,FALSE,Peripheral arterial hypertension,2,n_pct,,,,no such CONDITION in the study safety code list - adding it needs a code set
+T2b,25,TRUE,Neurologic conditions,1,,,,,DOMAIN=neurologic
+T2b,26,FALSE,Peripheral neuropathy,2,n_pct,S_SAFETY_RATES,CONDITION=peripheral_neuropathy,DOMAIN=neurologic,
+T2b,27,FALSE,Parkinson's disease,2,n_pct,S_SAFETY_RATES,CONDITION=parkinsons_disease,DOMAIN=neurologic,
+T2b,28,FALSE,Cognitive impairment/dementia,2,n_pct,,,,no such CONDITION in the study safety code list - adding it needs a code set
+T2b,29,FALSE,Other movement disorders,2,n_pct,S_SAFETY_RATES,CONDITION=other_movement_disorders,DOMAIN=neurologic,
+T2b,30,FALSE,Seizures,2,n_pct,S_SAFETY_RATES,CONDITION=seizures,DOMAIN=neurologic,
+T2b,31,TRUE,"Infectious, N (%)",1,,,,,"DOMAIN=infectious - the study code list also carries lower_respiratory_or_lung_infection, which the shell has no row for"
+T2b,32,FALSE,Severe infection resulting in hospitalization,2,n_pct,S_SAFETY_RATES,CONDITION=severe_infection_resulting_in_hospitalisation,DOMAIN=infectious,the study spells the condition hospitalisation
+T2b,33,TRUE,"Other, N (%)",1,,,,,DOMAIN=other
+T2b,34,FALSE,Secondary malignancies,2,n_pct,S_MALIGNANCY_RATES,N_PATIENTS,,"the secondary malignancy row T2a does not carry - S_MALIGNANCY_RATES is one row per CATEGORY and carries no any-malignancy row, so the total needs distinct patients counted across categories"
+T2b,35,FALSE,Thrombocytopenia,2,n_pct,S_SAFETY_RATES,CONDITION=thrombocytopenia,DOMAIN=other,
+T2b,36,FALSE,Anemia,2,n_pct,S_SAFETY_RATES,CONDITION=anemia,DOMAIN=other,
+T2b,37,TRUE,Inpatient hospitalizations,0,,,,,"S_HCRU_RATES also carries MEASURE=MM_RELATED_HOSPITALISATION, which the shell has no row for"
+T2b,38,TRUE,Number of inpatient hospitalizations by patient,1,,,,,
+T2b,39,FALSE,Mean and SD,2,mean_sd,S_HCRU_RATES,MEASURE=ALL_CAUSE_HOSPITALISATION,,the mean is N_EVENTS over N_PATIENTS; no SD in the study output
+T2b,40,FALSE,Median and IQR,2,median_iqr,,,,S_HCRU_RATES is aggregated - no per-patient distribution of visit counts
+T2b,41,FALSE,Min and Max,2,min_max,,,,S_HCRU_RATES is aggregated - no per-patient distribution of visit counts
+T2b,42,TRUE,"Number of hospitalizations, categorically (N%)",1,,,,,
+T2b,43,FALSE,1 hospitalization,2,n_pct,,,,no categorical count bands in S_HCRU_RATES
+T2b,44,FALSE,2 hospitalizations,2,n_pct,,,,no categorical count bands in S_HCRU_RATES
+T2b,45,FALSE,3 hospitalizations,2,n_pct,,,,no categorical count bands in S_HCRU_RATES
+T2b,46,FALSE,4+ hospitalizations,2,n_pct,,,,no categorical count bands in S_HCRU_RATES
+T2b,47,TRUE,Length of stay among patients with ≥1 hospitalization (N=),1,,,,,S_HCRU_RATES.N_LOS_EXCLUDED records the stays left out of the length of stay figures
+T2b,48,FALSE,Mean and SD,2,mean_sd,S_HCRU_RATES,MEAN_LOS,MEASURE=ALL_CAUSE_HOSPITALISATION,MEAN_LOS is published; no SD in the study output
+T2b,49,FALSE,Median and IQR,2,median_iqr,S_HCRU_RATES,MEDIAN_LOS,MEASURE=ALL_CAUSE_HOSPITALISATION,MEDIAN_LOS is published; no IQR in the study output
+T2b,50,FALSE,Min and Max,2,min_max,,,,no minimum or maximum length of stay in the study output
+T2b,51,TRUE,Emergency department (ED) visits,0,,,,,
+T2b,52,TRUE,Number of ER vists by patient,1,,,MEASURE=ED_VISIT,,the shell spells it vists; kept as printed
+T2b,53,FALSE,Mean and SD,2,mean_sd,S_HCRU_RATES,MEASURE=ED_VISIT,,the mean is N_EVENTS over N_PATIENTS; no SD in the study output
+T2b,54,FALSE,Median and IQR,2,median_iqr,,,,S_HCRU_RATES is aggregated - no per-patient distribution of visit counts
+T2b,55,FALSE,Min and Max,2,min_max,,,,S_HCRU_RATES is aggregated - no per-patient distribution of visit counts
+T2b,56,TRUE,"Number of hospitalizations, categorically (N%)",1,,,MEASURE=ED_VISIT,,the shell repeats the hospitalization label here; this block counts ED visits
+T2b,57,FALSE,1 hospitalization,2,n_pct,,MEASURE=ED_VISIT,,the shell repeats the hospitalization label here; this counts ED visits - no categorical count bands in S_HCRU_RATES
+T2b,58,FALSE,2 hospitalizations,2,n_pct,,MEASURE=ED_VISIT,,the shell repeats the hospitalization label here; this counts ED visits - no categorical count bands in S_HCRU_RATES
+T2b,59,FALSE,3 hospitalizations,2,n_pct,,MEASURE=ED_VISIT,,the shell repeats the hospitalization label here; this counts ED visits - no categorical count bands in S_HCRU_RATES
+T2b,60,FALSE,4+ hospitalizations,2,n_pct,,MEASURE=ED_VISIT,,the shell repeats the hospitalization label here; this counts ED visits - no categorical count bands in S_HCRU_RATES
+T3,1,FALSE,Total number with a secondary malignancy,0,n_pct,S_MALIGNANCY_RATES,N_PATIENTS,,"S_MALIGNANCY_RATES is one row per CATEGORY and carries no any-malignancy row, so the total needs distinct patients counted across categories"
+T3,2,TRUE,Time since diagnosis,0,,,,,
+T3,3,FALSE,Mean and SD,1,mean_sd,S_MALIGNANCY,MONTHS_FROM_DX,,
+T3,4,FALSE,Median and IQR,1,median_iqr,S_MALIGNANCY,MONTHS_FROM_DX,,
+T3,5,FALSE,Min and Max,1,min_max,S_MALIGNANCY,MONTHS_FROM_DX,,
+T3,6,TRUE,Time from 1L/2L index to malignancy,0,,,,,
+T3,7,FALSE,Mean and SD,1,mean_sd,S_MALIGNANCY,MONTHS_FROM_INDEX,,
+T3,8,FALSE,Median and IQR,1,median_iqr,S_MALIGNANCY,MONTHS_FROM_INDEX,,
+T3,9,FALSE,Min and Max,1,min_max,S_MALIGNANCY,MONTHS_FROM_INDEX,,
+T3,10,TRUE,Type of malignancy,0,,,,,
+T3,11,FALSE,X,1,n_pct,S_MALIGNANCY,CATEGORY,,"placeholder - the shell does not name the types; the study carries ten CATEGORY values and a finer SUBTYPE, so three rows will not hold them"
+T3,12,FALSE,X,1,n_pct,S_MALIGNANCY,CATEGORY,,"placeholder - the shell does not name the types; the study carries ten CATEGORY values and a finer SUBTYPE, so three rows will not hold them"
+T3,13,FALSE,X,1,n_pct,S_MALIGNANCY,CATEGORY,,"placeholder - the shell does not name the types; the study carries ten CATEGORY values and a finer SUBTYPE, so three rows will not hold them"
+T4,1,TRUE,Time-to-next treatment (rwTTNT),0,,,,,
+T4,2,TRUE,rwTTNT from index date,1,,,TTNT,,
+T4,3,FALSE,"Events, n (%)",2,km_events,S_TTE,TTNT,TTE_ELIGIBLE=1,
+T4,4,FALSE,"Censored, n (%)",2,km_censored,S_TTE,TTNT,TTE_ELIGIBLE=1,
+T4,5,FALSE,"Median, months (95% CI)",2,km_median,S_TTE,TTNT,TTE_ELIGIBLE=1,
+T4,6,TRUE,"Survival probability estimates, 95% CI",1,,,TTNT,,
+T4,7,FALSE,3 months,2,km_prob,S_TTE,TTNT,TTE_ELIGIBLE=1&MONTHS=3,
+T4,8,FALSE,6 months,2,km_prob,S_TTE,TTNT,TTE_ELIGIBLE=1&MONTHS=6,
+T4,9,FALSE,9 months,2,km_prob,S_TTE,TTNT,TTE_ELIGIBLE=1&MONTHS=9,
+T4,10,FALSE,12 months,2,km_prob,S_TTE,TTNT,TTE_ELIGIBLE=1&MONTHS=12,
+T4,11,FALSE,18 months,2,km_prob,S_TTE,TTNT,TTE_ELIGIBLE=1&MONTHS=18,
+T4,12,FALSE,24 months,2,km_prob,S_TTE,TTNT,TTE_ELIGIBLE=1&MONTHS=24,
+T4,13,TRUE,Time to treatment discontinuation (rwTTD),0,,,,,
+T4,14,TRUE,rwTTD from index date,1,,,TTD,,
+T4,15,FALSE,"Events, n (%)",2,km_events,S_TTE,TTD,TTE_ELIGIBLE=1,
+T4,16,FALSE,"Censored, n (%)",2,km_censored,S_TTE,TTD,TTE_ELIGIBLE=1,
+T4,17,FALSE,"Median, months (95% CI)",2,km_median,S_TTE,TTD,TTE_ELIGIBLE=1,
+T4,18,TRUE,"Survival probability estimates, 95% CI",1,,,TTD,,
+T4,19,FALSE,3 months,2,km_prob,S_TTE,TTD,TTE_ELIGIBLE=1&MONTHS=3,
+T4,20,FALSE,6 months,2,km_prob,S_TTE,TTD,TTE_ELIGIBLE=1&MONTHS=6,
+T4,21,FALSE,9 months,2,km_prob,S_TTE,TTD,TTE_ELIGIBLE=1&MONTHS=9,
+T4,22,FALSE,12 months,2,km_prob,S_TTE,TTD,TTE_ELIGIBLE=1&MONTHS=12,
+T4,23,FALSE,18 months,2,km_prob,S_TTE,TTD,TTE_ELIGIBLE=1&MONTHS=18,
+T4,24,FALSE,24 months,2,km_prob,S_TTE,TTD,TTE_ELIGIBLE=1&MONTHS=24,
+T4,25,TRUE,Overall survival (rwOS),0,,,,,
+T4,26,TRUE,rwTTNT from index date,1,,,OS,,the shell repeats the rwTTNT label here; this block is overall survival
+T4,27,FALSE,"Events, n (%)",2,km_events,S_TTE,OS,TTE_ELIGIBLE=1,
+T4,28,FALSE,"Censored, n (%)",2,km_censored,S_TTE,OS,TTE_ELIGIBLE=1,
+T4,29,FALSE,"Median, months (95% CI)",2,km_median,S_TTE,OS,TTE_ELIGIBLE=1,
+T4,30,TRUE,"Survival probability estimates, 95% CI",1,,,OS,,
+T4,31,FALSE,3 months,2,km_prob,S_TTE,OS,TTE_ELIGIBLE=1&MONTHS=3,
+T4,32,FALSE,6 months,2,km_prob,S_TTE,OS,TTE_ELIGIBLE=1&MONTHS=6,
+T4,33,FALSE,9 months,2,km_prob,S_TTE,OS,TTE_ELIGIBLE=1&MONTHS=9,
+T4,34,FALSE,12 months,2,km_prob,S_TTE,OS,TTE_ELIGIBLE=1&MONTHS=12,
+T4,35,FALSE,18 months,2,km_prob,S_TTE,OS,TTE_ELIGIBLE=1&MONTHS=18,
+T4,36,FALSE,24 months,2,km_prob,S_TTE,OS,TTE_ELIGIBLE=1&MONTHS=24,
+T5c,1,TRUE,Time-to-next treatment (rwTTNT),0,,,,,
+T5c,2,TRUE,rwTTNT from index date,1,,,TTNT,,
+T5c,3,FALSE,"Events, n (%)",2,km_events,S_TTE,TTNT,TTE_ELIGIBLE=1,
+T5c,4,FALSE,"Censored, n (%)",2,km_censored,S_TTE,TTNT,TTE_ELIGIBLE=1,
+T5c,5,FALSE,"Median, months (95% CI)",2,km_median,S_TTE,TTNT,TTE_ELIGIBLE=1,
+T5c,6,TRUE,"Survival probability estimates, 95% CI",1,,,TTNT,,
+T5c,7,FALSE,3 months,2,km_prob,S_TTE,TTNT,TTE_ELIGIBLE=1&MONTHS=3,
+T5c,8,FALSE,6 months,2,km_prob,S_TTE,TTNT,TTE_ELIGIBLE=1&MONTHS=6,
+T5c,9,FALSE,9 months,2,km_prob,S_TTE,TTNT,TTE_ELIGIBLE=1&MONTHS=9,
+T5c,10,FALSE,12 months,2,km_prob,S_TTE,TTNT,TTE_ELIGIBLE=1&MONTHS=12,
+T5c,11,FALSE,18 months,2,km_prob,S_TTE,TTNT,TTE_ELIGIBLE=1&MONTHS=18,
+T5c,12,FALSE,24 months,2,km_prob,S_TTE,TTNT,TTE_ELIGIBLE=1&MONTHS=24,
+T5c,13,TRUE,Time to treatment discontinuation (rwTTD),0,,,,,
+T5c,14,TRUE,rwTTD from index date,1,,,TTD,,
+T5c,15,FALSE,"Events, n (%)",2,km_events,S_TTE,TTD,TTE_ELIGIBLE=1,
+T5c,16,FALSE,"Censored, n (%)",2,km_censored,S_TTE,TTD,TTE_ELIGIBLE=1,
+T5c,17,FALSE,"Median, months (95% CI)",2,km_median,S_TTE,TTD,TTE_ELIGIBLE=1,
+T5c,18,TRUE,"Survival probability estimates, 95% CI",1,,,TTD,,
+T5c,19,FALSE,3 months,2,km_prob,S_TTE,TTD,TTE_ELIGIBLE=1&MONTHS=3,
+T5c,20,FALSE,6 months,2,km_prob,S_TTE,TTD,TTE_ELIGIBLE=1&MONTHS=6,
+T5c,21,FALSE,9 months,2,km_prob,S_TTE,TTD,TTE_ELIGIBLE=1&MONTHS=9,
+T5c,22,FALSE,12 months,2,km_prob,S_TTE,TTD,TTE_ELIGIBLE=1&MONTHS=12,
+T5c,23,FALSE,18 months,2,km_prob,S_TTE,TTD,TTE_ELIGIBLE=1&MONTHS=18,
+T5c,24,FALSE,24 months,2,km_prob,S_TTE,TTD,TTE_ELIGIBLE=1&MONTHS=24,
+T5c,25,TRUE,Overall survival (rwOS),0,,,,,
+T5c,26,TRUE,rwTTNT from index date,1,,,OS,,the shell repeats the rwTTNT label here; this block is overall survival
+T5c,27,FALSE,"Events, n (%)",2,km_events,S_TTE,OS,TTE_ELIGIBLE=1,
+T5c,28,FALSE,"Censored, n (%)",2,km_censored,S_TTE,OS,TTE_ELIGIBLE=1,
+T5c,29,FALSE,"Median, months (95% CI)",2,km_median,S_TTE,OS,TTE_ELIGIBLE=1,
+T5c,30,TRUE,"Survival probability estimates, 95% CI",1,,,OS,,
+T5c,31,FALSE,3 months,2,km_prob,S_TTE,OS,TTE_ELIGIBLE=1&MONTHS=3,
+T5c,32,FALSE,6 months,2,km_prob,S_TTE,OS,TTE_ELIGIBLE=1&MONTHS=6,
+T5c,33,FALSE,9 months,2,km_prob,S_TTE,OS,TTE_ELIGIBLE=1&MONTHS=9,
+T5c,34,FALSE,12 months,2,km_prob,S_TTE,OS,TTE_ELIGIBLE=1&MONTHS=12,
+T5c,35,FALSE,18 months,2,km_prob,S_TTE,OS,TTE_ELIGIBLE=1&MONTHS=18,
+T5c,36,FALSE,24 months,2,km_prob,S_TTE,OS,TTE_ELIGIBLE=1&MONTHS=24,
+T2x,1,TRUE,General information,0,,,,,
+T2x,2,FALSE,Patients eligible,1,n,S_TX_ATTRITION,N_DENOM,,footnote 1
+T2x,3,FALSE,Patients attrition,1,n_pct,S_TX_ATTRITION,N_PATIENTS,OUTCOME=died|discontinued_no_further|lost_to_followup,footnote 1 - attrition read as every S_TX_ATTRITION outcome but received_next_lot
+T2x,4,TRUE,Treatment received (N and %),0,,,,,
+T2x,5,FALSE,Quadruplets with anti-CD38 backbone,1,n_pct,S_PATTERNS,SOC_CATEGORY=Quadruplet with anti-CD38 backbone,,
+T2x,6,FALSE,Triplets with anti-CD38 backbone,1,n_pct,S_PATTERNS,SOC_CATEGORY=Triplet with anti-CD38 backbone,,
+T2x,7,FALSE,Other triplets,1,n_pct,S_PATTERNS,SOC_CATEGORY=Other triplet (non-anti-CD38),,
+T2x,8,FALSE,Doublets/monotherapies,1,n_pct,S_PATTERNS,SOC_CATEGORY=Doublet/monotherapy,,
+T2x,9,FALSE,Pomalidomide aCD38 backbone,1,n_pct,,,,the study vocabulary has no pomalidomide category - these lines sit inside Other triplet (non-anti-CD38); see class POM_TRIP in regimen_classes.csv
+T2x,10,FALSE,BCMA,1,n_pct,S_PATTERNS,SOC_CATEGORY=CAR-T,,"The cell therapies. A BCMA-directed bispecific is counted on the Bispecifics row below, so the two rows do not overlap."
+T2x,11,FALSE,Bispecifics,1,n_pct,S_PATTERNS,SOC_CATEGORY=BCMA bispecific|Non-BCMA bispecific,,"two SOC_CATEGORY values, and BCMA bispecific is also claimed by the BCMA row above"
+T2x,12,FALSE,"Other novel agents (e.g., Selinexor)",1,n_pct,S_PATTERNS,SOC_CATEGORY=Other novel agent,,
+T2x,13,TRUE,Common sequences received,0,,,,,
+T2x,14,FALSE,Total number of unique regimens,1,n,S_SOC,REGIMEN,,distinct REGIMEN strings in the line; the study publishes no ready made count of them
+T2x,15,FALSE,Regimen 1,1,n_pct,S_SOC,REGIMEN,RANK=1,"the shell does not name the regimen; read by ranking REGIMEN, which the study publishes no ranked list of"
+T2x,16,FALSE,Regimen 2,1,n_pct,S_SOC,REGIMEN,RANK=2,"the shell does not name the regimen; read by ranking REGIMEN, which the study publishes no ranked list of"
+T2x,17,FALSE,Regimen 3,1,n_pct,S_SOC,REGIMEN,RANK=3,"the shell does not name the regimen; read by ranking REGIMEN, which the study publishes no ranked list of"
+T2x,18,FALSE,Regimen 4,1,n_pct,S_SOC,REGIMEN,RANK=4,"the shell does not name the regimen; read by ranking REGIMEN, which the study publishes no ranked list of"
+T2x,19,FALSE,Regimen 5,1,n_pct,S_SOC,REGIMEN,RANK=5,"the shell does not name the regimen; read by ranking REGIMEN, which the study publishes no ranked list of"

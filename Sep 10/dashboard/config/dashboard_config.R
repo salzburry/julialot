@@ -53,6 +53,10 @@ dashboard_config <- function() {
     run_cmd         = .env_chr("DASH_RUN_CMD", "Rscript build.R"),
     package_dir     = .env_chr("DASH_PACKAGE_DIR",
                               "../ndmm_study_updated/study223926"),
+    # The table shells, which are a sibling folder like the package. Unset
+    # means the one beside this one; a deployment without it loses that tab
+    # and nothing else.
+    tfls_dir        = .env_chr("DASH_TFLS_DIR", "../TFLS"),
 
     # --- provenance ---------------------------------------------------------
     allow_synthetic = .env_lgl("DASH_ALLOW_SYNTHETIC", TRUE),

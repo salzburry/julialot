@@ -4,19 +4,27 @@ An R Shiny app that shows what the study build and the LOT engine produced, and
 lets a stakeholder change what they are looking at without anyone re-running
 anything.
 
-It is one of three sibling folders:
+It is one of four sibling folders:
 
 | folder | what it does |
 |---|---|
 | `dashboard/` | **this folder** — the app |
 | `ndmm_study_updated/` | the study cohorts and variables it reads |
 | `lot/` | the lines-of-therapy engine behind those |
+| `TFLS/` | the requested table shells, and the code that fills them |
 
 They have to stay siblings. The app loads the study package's registries from
 `../ndmm_study_updated/study223926` (overridable with `DASH_PACKAGE_DIR`). It
 does **not** load the engine's code: LOT results reach it as tables — from the
 snapshot or the warehouse — and its test suite reads `../lot/engine` only to
 hold the two table lists to each other.
+
+It does load the shells' code, from `../TFLS` (overridable with
+`DASH_TFLS_DIR`), because filling a shell is what that folder is for and a
+second copy of it here would be a second answer to the same question. That is
+the only code the dashboard loads from outside itself besides the package's
+registries, it is loaded on first use, and a deployment without that folder
+loses the Tables tab and nothing else.
 
 ---
 
@@ -71,6 +79,7 @@ secondary, on an off-white ground.
 | **Malignancy** | secondary malignancies |
 | **Outcomes** | TTNT, TTD and overall survival as Kaplan-Meier curves, and the endpoints as a table |
 | **Patterns** | regimen categories by line; what happened on each line; regimen transitions as a from → to table |
+| **Tables** | the requested table shells, filled from this scenario; and the class mapping behind their columns |
 | **Compare** | one scenario against another, stratum by stratum; and every open question with where it is answered |
 | **LOT engine** | the LOT run these lines came from; the LOT funnel; lines by line number; how a line ended against how the next one opened; the commonest line sequences; the regimen of a line against the next; what opened each line; how each line ended |
 | **LOT validation** | face-validity checks; the 37 QC checks; build status; before and after the line criteria |
@@ -127,6 +136,46 @@ says which side lacks it); rows of cohorts the run did not select are left
 out; and the released copy of a table is preferred only where the run ran
 the release module. The snapshot job applies the same rules, so a snapshot
 holds only what its run wrote.
+
+### The Tables tab is the requested shells, filled
+
+The shells are the sibling `TFLS/` folder: five CSV files saying which tables
+exist, what each column selects and what each row reads, and the code that
+fills them from a finished study run. The tab loads that code - from
+`DASH_TFLS_DIR`, or the folder beside this one - and hands it **this
+dashboard's own reader**, bound to the run the sidebar names like every other
+panel. So a shell cell and the same figure on another tab are one table, read
+one way.
+
+Three controls sit in the panel, because they say what to fill rather than
+what to select:
+
+| control | what it does |
+|---|---|
+| **Table** | which shell to fill, by the title `shells/tables.csv` gives it |
+| **Apply the time-to-event eligibility flag** | off by default. The study writes the whole cohort into its time-to-event table and marks the restricted analysis with `TTE_ELIGIBLE`, leaving the restriction to the reader - so applying it is a decision, and the table says which way it went |
+| **Show the rows nothing could fill** | lists them with the reason, grouped by whose gap it is: the run did not write it, the shell does not say enough, or the statistic cannot be made from what the table holds |
+
+The floor is **the sidebar's**, not one of this tab's own. It is raised by the
+package's floor and then by the engine's, three tests that can only ever
+withhold more. Every number goes through the engine's suppression at that
+floor: a withheld cell prints as `<25` - or whatever floor is in force - never
+as a blank, and the line under each table says how many cells were withheld
+and at what floor. A row nothing could fill reads as *not filled*, never as a
+zero, because a zero there would be a claim that nobody is in it.
+
+The second panel is the **class mapping**, from `shells/regimen_classes.csv`.
+It is the thing to change: a class is a column heading and the study's own
+categories it rolls up, so editing one line of that file changes the columns
+of every table above it, with no code to edit. Nothing there classifies a
+regimen - the study package already assigned a category to each line - so a
+category the study does not write is refused by name rather than quietly
+emptying a column, and a heading the study's vocabulary cannot separate yet
+says so in every cell instead of counting nobody.
+
+If the shells are not beside the dashboard, **this tab says so and the rest of
+the page is unaffected**: a deployment that left one folder out is not a
+dashboard that will not start.
 
 ### The LOT tabs describe the lineage, not the scenario
 
@@ -272,7 +321,7 @@ DASH_SOURCE=snapshot DASH_SNAPSHOT_DIR=/mnt/data/NDMM ./app.sh
 variables, and what the job that refreshes the snapshot needs.
 
 ```bash
-Rscript tests/run_tests.R      # 446 checks, no Shiny and no warehouse
+Rscript tests/run_tests.R      # 486 checks, no Shiny and no warehouse
 ```
 
 Every number the app puts on a page comes from a function in `R/` that runs
@@ -291,6 +340,7 @@ Three registries, and none of them is in this folder twice.
 | a panel | one entry in `R/panels.R` |
 | a better view of a table | one entry in `TABLE_SPEC`, `R/spec.R` |
 | a scenario | one row in `scenarios.csv` |
+| a table shell, a row of one, or what a class column holds | one row in the shells beside this folder, and no code at all |
 | a LOT table | one entry in `TABLE_SPEC` with `source = "lot"`, and one in `LOT_DASHBOARD_TABLES` |
 | a module, a cohort, an open question | the **package** — it appears here on its own |
 
@@ -338,6 +388,7 @@ cannot grow a tab nobody designed. A table with no spec gets a plain grid.
 | `R/scenarios.R` | a scenario from a run's metadata, the settings that differ between two, and the command that would produce one |
 | `R/sources.R` | the three data sources, and the run-ownership check every read is bound to |
 | `R/prepare.R` | the release check applied to everything drawn |
+| `R/tfls.R` | the table shells: loading the engine beside this folder, filling a shell and drawing it |
 | `R/aggregate.R` | counts, percentages and distributions over a patient-level table |
 | `R/render.R` | the HTML tables, headline counts and charts |
 | `R/synthetic.R` | the generated rows behind the demo |

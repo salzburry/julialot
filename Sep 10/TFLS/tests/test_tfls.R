@@ -1,0 +1,865 @@
+#!/usr/bin/env Rscript
+# The shells, the statistics and the disclosure rule, checked without a
+# warehouse.
+#
+#   Rscript TFLS/tests/test_tfls.R
+#
+# Four kinds of test. The shell files as data: what is refused, and that the
+# refusal names the file and the row, because these files are edited by hand.
+# The statistics against numbers worked out by hand, Kaplan-Meier included.
+# The disclosure rule, cell by cell, including the floor that may only rise and
+# the second cell that goes with a lone withheld one. And a whole table filled
+# from frames small enough to count on one page, to see that a row nothing can
+# fill says so and that nothing patient-level reaches the output.
+#
+# Nothing here connects to anything. Exit status is 1 if any check fails.
+
+ROOT <- local({
+  a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
+  # Rscript renders a space in a path as ~+~, so a folder with one in its name
+  # resolves to nothing without this.
+  d <- if (length(a)) dirname(normalizePath(gsub("~+~", " ", sub("^--file=", "", a[1]),
+                                                 fixed = TRUE))) else getwd()
+  dirname(d)
+})
+
+pass <- 0L; fail <- 0L
+ok <- function(cond, what) {
+  # Evaluated HERE, so an assertion whose expression raises is a failed
+  # assertion rather than a dead run.
+  cond <- tryCatch(cond, error = function(e) {
+    what <<- paste0(what, "  [raised: ", conditionMessage(e), "]")
+    FALSE
+  })
+  if (isTRUE(cond)) { pass <<- pass + 1L; cat("  ok     ", what, "\n") }
+  else              { fail <<- fail + 1L; cat("  FAIL   ", what, "\n") }
+}
+stops <- function(expr, what)
+  ok(inherits(tryCatch(expr, error = function(e) e), "error"), what)
+stops_with <- function(expr, txt, what) {
+  e <- tryCatch(expr, error = function(e) e)
+  ok(inherits(e, "error") && all(vapply(txt, function(s)
+    grepl(s, conditionMessage(e), fixed = TRUE), logical(1))),
+    paste0(what, if (inherits(e, "error")) "" else "  [did not stop]"))
+}
+has <- function(x, s) grepl(s, x, fixed = TRUE)
+near <- function(a, b, tol = 1e-6) !is.na(a) && !is.na(b) && abs(a - b) < tol
+
+for (f in c("classes.R", "shells.R", "stats.R", "suppress.R", "fill.R",
+            "render.R"))
+  source(file.path(ROOT, "R", f))
+
+# --- a shell set, written to a temporary directory ---------------------------
+#
+# Small enough to read, and every test that needs a broken shell starts from
+# this one and breaks exactly one thing.
+
+BASE <- list(
+  tables = c(
+    "table_id,sheet,title,objective,notes",
+    "T1,T1,Baseline,Primary objective,Rows are the shell's own."),
+  columns = c(
+    "table_id,col_id,group,label,order,cohort,lot_num,class,subgroup,period",
+    "T1,C1,1L (N=),Overall,1,1L,1,OVERALL,,",
+    "T1,C2,1L (N=),Quad,2,1L,1,ACD38_QUAD,,",
+    "T1,C3,1L (N=),Pom triplet,3,1L,1,POM_TRIP,,",
+    "T1,C4,1L (N=),Gap,4,1L,1,GAP,,"),
+  rows = c(
+    "table_id,order,section,label,indent,stat,source,measure,filter,note",
+    "T1,1,TRUE,Sex,0,,,,,",
+    "T1,2,FALSE,Female,1,n_pct,S_DEMOGRAPHICS,SEX=Female,,",
+    "T1,3,FALSE,Male,1,n_pct,S_DEMOGRAPHICS,SEX=Male,,",
+    "T1,4,TRUE,Race,0,,,,,",
+    "T1,5,FALSE,White,1,n_pct,S_DEMOGRAPHICS,RACE=White,,",
+    "T1,6,FALSE,Black,1,n_pct,S_DEMOGRAPHICS,RACE=Black,,",
+    "T1,7,FALSE,Asian,1,n_pct,S_DEMOGRAPHICS,RACE=Asian,,",
+    "T1,8,TRUE,Age,0,,,,,",
+    "T1,9,FALSE,Mean (SD),1,mean_sd,S_DEMOGRAPHICS,AGE_YEARS,,a",
+    "T1,10,FALSE,Height,1,n_pct,S_DEMOGRAPHICS,HEIGHT_CM=tall,,",
+    "T1,11,FALSE,Nothing behind this,1,n,,,,"),
+  regimen_classes = c(
+    "class_id,label,order,soc_categories,requires_drug,note",
+    "OVERALL,Overall,1,,,The column total.",
+    "ACD38_QUAD,Quad,2,Quadruplet with anti-CD38 backbone,,",
+    "POM_TRIP,Pom triplet,3,Other triplet (non-anti-CD38),POM,",
+    "BOTH,Quad or doublet,4,Quadruplet with anti-CD38 backbone|Doublet/monotherapy,,",
+    "GAP,Gap,5,,,No category covers this heading yet."),
+  footnotes = c("table_id,marker,text", "T1,a,Age is age at index."))
+
+write_shells <- function(parts = list(), dir = tempfile("tfls_shells")) {
+  dir.create(dir, recursive = TRUE, showWarnings = FALSE)
+  spec <- utils::modifyList(BASE, parts)
+  for (nm in names(TFLS_SHELL_FILES))
+    writeLines(spec[[nm]], file.path(dir, TFLS_SHELL_FILES[[nm]]))
+  dir
+}
+
+# One line of a CSV with one field replaced, so a broken shell differs from the
+# good one in exactly the thing being tested.
+edit_field <- function(line, i, value) {
+  f <- strsplit(line, ",", fixed = TRUE)[[1]]
+  f[i] <- value
+  paste(f, collapse = ",")
+}
+
+cat("\n-- the shells load, and say what is wrong when they do not --\n")
+SH <- load_shells(write_shells())
+ok(nrow(SH$tables) == 1 && nrow(SH$rows) == 11 && nrow(SH$columns) == 4,
+   "a shell set loads: one table, eleven rows, four columns")
+ok(identical(SH$rows$order_n, 1:11) && identical(SH$columns$order_n, 1:4),
+   "the orders come back as whole numbers, in the shell's order")
+ok(identical(SH$rows$section_flag, c(TRUE, FALSE, FALSE, TRUE, FALSE, FALSE,
+                                     FALSE, TRUE, FALSE, FALSE, FALSE)),
+   "the section flags are read as TRUE and FALSE, not as text")
+stops_with(load_shells(write_shells(list(rows = c(BASE$rows[1:2],
+             edit_field(BASE$rows[3], 6, "geometric_mean"), BASE$rows[4:12])))),
+  c("shells/rows.csv row 2", "geometric_mean", "not implemented"),
+  "a statistic the code does not implement stops the run, naming the file, the row and what is available")
+stops_with(load_shells(write_shells(list(columns = c(BASE$columns[1:2],
+             edit_field(BASE$columns[3], 8, "NOT_A_CLASS"), BASE$columns[4:5])))),
+  c("shells/columns.csv row 2", "NOT_A_CLASS"),
+  "a column naming a class that is neither defined nor a SOC category stops the run")
+stops_with(load_shells(write_shells(list(rows = c(BASE$rows[1:3],
+             edit_field(BASE$rows[4], 2, "2"), BASE$rows[5:12])))),
+  c("shells/rows.csv", "order 2"),
+  "two rows at one order in one table stop the run")
+stops_with(load_shells(write_shells(list(columns = c(BASE$columns[1:3],
+             edit_field(BASE$columns[4], 5, "2"), BASE$columns[5])))),
+  c("shells/columns.csv", "order 2"),
+  "...and so do two columns at one order")
+stops_with(load_shells(write_shells(list(rows = c(BASE$rows[1:2],
+             edit_field(BASE$rows[3], 8, "=Female"), BASE$rows[4:12])))),
+  c("shells/rows.csv row 2", "measure that cannot be read"),
+  "a measure with no column on the left of its comparison stops the run")
+stops_with(load_shells(write_shells(list(rows = c(BASE$rows[1:2],
+             edit_field(BASE$rows[3], 9, "PERIOD="), BASE$rows[4:12])))),
+  c("shells/rows.csv row 2", "filter that cannot be read"),
+  "...and a filter naming no value does too")
+stops_with(load_shells(write_shells(list(
+             tables = c(BASE$tables, "T2,T2,A table with no rows,,")))),
+  c("shells/tables.csv", "T2", "no rows"),
+  "a table_id with no rows stops the run")
+stops_with(load_shells(write_shells(list(regimen_classes = c(
+             BASE$regimen_classes[1:2],
+             "ACD38_QUAD,Quad,2,Quadruplet with an anti-CD38 backbone,,",
+             BASE$regimen_classes[4:6])))),
+  c("shells/regimen_classes.csv row 2", "which the study does not write"),
+  "a class mapped to a category the study never writes stops the run, so a typo cannot empty a column quietly")
+stops_with(load_shells(write_shells(list(regimen_classes = c(
+             BASE$regimen_classes[1:5], "POMONLY,Pom only,6,,POM,")))),
+  c("shells/regimen_classes.csv row 5", "names no SOC category"),
+  "a class that requires a drug but names no category stops the run: a drug alone is a second classifier")
+stops_with(load_shells(write_shells(list(regimen_classes = c(
+             BASE$regimen_classes[1:3],
+             "POM2,Pom triplet,4,Other triplet (non-anti-CD38),POM BORT,",
+             BASE$regimen_classes[5:6])))),
+  c("shells/regimen_classes.csv row 3", "not a single drug abbreviation"),
+  "...and so does a requires_drug holding two abbreviations")
+stops_with(load_shells(write_shells(list(rows = c(BASE$rows[1:2],
+             edit_field(BASE$rows[3], 1, "T9"), BASE$rows[4:12])))),
+  c("shells/rows.csv row 2", "T9", "not in tables.csv"),
+  "a row belonging to no table stops the run")
+stops_with(load_shells(write_shells(list(rows = c(BASE$rows[1:2],
+             edit_field(BASE$rows[3], 5, "7"), BASE$rows[4:12])))),
+  c("shells/rows.csv row 2", "indent"),
+  "an indent outside 0 to 2 stops the run")
+stops_with(load_shells(write_shells(list(rows = c(BASE$rows[1:2],
+             edit_field(BASE$rows[3], 3, "maybe"), BASE$rows[4:12])))),
+  c("shells/rows.csv row 2", "not TRUE or FALSE"),
+  "a section flag that is neither TRUE nor FALSE stops the run")
+ok(inherits(tryCatch(load_shells(tempfile("nothing_here")),
+                     error = function(e) e), "tfls_missing_shells"),
+   "a shells directory that is not written yet is a condition of its own, so a runner can tell it from a broken file")
+
+cat("\n-- measures, filters and subgroups --\n")
+ok({ m <- parse_measure("SEX=Female")
+     m$ok && m$column == "SEX" && m$op == "=" && identical(m$value, "Female") },
+   "a measure splits into a column and a value")
+ok({ m <- parse_measure("AGE_YEARS"); m$ok && m$column == "AGE_YEARS" &&
+       !length(m$value) }, "a measure may be a column on its own")
+ok({ m <- parse_measure("AGE_BAND=18-44|45-64|65-74")
+     m$ok && identical(m$value, c("18-44", "45-64", "65-74")) },
+   "a measure may name a union of values, which is how a shell asks for a band the study does not have")
+ok({ m <- parse_measure("AGE_BAND=<75 years")
+     m$ok && m$column == "AGE_BAND" && m$op == "=" &&
+       identical(m$value, "<75 years") },
+   "a value that looks like a comparison is a value: the band is not cut at its own '<'")
+ok({ m <- parse_measure("AGE_YEARS>=75")
+     m$ok && m$op == ">=" && identical(m$value, "75") },
+   "a comparison on a number is read as one")
+ok(!parse_measure("=Female")$ok && !parse_measure("SEX=")$ok &&
+     !parse_measure("A B=1")$ok,
+   "a measure with no column, no value, or a column that is not a name is refused")
+ok({ f <- parse_filter("TTE_ELIGIBLE=1&MONTHS=12")
+     length(f) == 2 && f[[2]]$column == "MONTHS" && f[[2]]$value == "12" },
+   "a filter is any number of terms, separated by & or ;")
+ok({ s <- parse_subgroup("S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=1")
+     s$ok && s$table == "S_COMORB_SUBGROUP" && length(s$terms) == 2 },
+   "a subgroup may name the table it is on and several restrictions on it")
+ok({ s <- parse_subgroup("S_MALIGNANCY:LOT_AFTER_WHICH>=2")
+     s$ok && s$table == "S_MALIGNANCY" && s$terms[[1]]$op == ">=" },
+   "...and the restriction may be a comparison on a number, not only a flag")
+ok(!parse_subgroup("S_X:")$ok,
+   "a subgroup naming a table and no restriction on it is refused")
+
+cat("\n-- the regimen classes are a mapping onto the study's own categories --\n")
+CL <- SH$classes
+ok(identical(class_selection("OVERALL", CL)$kind, "all"),
+   "OVERALL matches by definition: it is the column total, not a rule")
+ok({ s <- class_selection("ACD38_QUAD", CL)
+     identical(s$kind, "categories") &&
+       identical(s$categories, "Quadruplet with anti-CD38 backbone") },
+   "a class resolves to the SOC category it maps to")
+ok({ s <- class_selection("BOTH", CL)
+     identical(s$kind, "categories") && length(s$categories) == 2 },
+   "a class may map to more than one category")
+ok({ s <- class_selection("Doublet/monotherapy", CL)
+     identical(s$kind, "categories") &&
+       identical(s$categories, "Doublet/monotherapy") },
+   "a column may name a SOC category straight out, without a class for it")
+ok({ s <- class_selection("GAP", CL)
+     identical(s$kind, "unmapped") && has(s$why, "no SOC category") },
+   "a class mapped to nothing is unmapped, not empty: the cells say so rather than printing a zero")
+ok(identical(class_selection("Quadruplet", CL)$kind, "unknown"),
+   "a name that is neither a class nor a category is a defect in the shell")
+ok({ s <- class_selection("POM_TRIP", CL)
+     identical(s$categories, "Other triplet (non-anti-CD38)") && s$drug == "POM" },
+   "a class may refine the study's category with a drug the regimen has to hold")
+ok(identical(regimen_has_drug(c("POM BORT DEX", "BORT LEN DEX", "POMX DEX"), "POM"),
+             c(TRUE, FALSE, FALSE)),
+   "the drug is matched as a whole agent, so POM does not match POMX")
+ok(identical(regimen_has_drug("dara bort len dex", "DARA"), TRUE),
+   "...and the regimen is read whatever case it is written in")
+ok(identical(class_categories("ACD38_QUAD", CL), "Quadruplet with anti-CD38 backbone") &&
+     identical(class_label("ACD38_QUAD", CL), "Quad"),
+   "a class carries the heading it prints under")
+
+cat("\n-- the statistics, against numbers worked out by hand --\n")
+ok({ s <- stat_n_pct(c(TRUE, TRUE, FALSE, FALSE, FALSE))
+     s$n == 2 && s$denom == 5 && near(s$low, 40) && s$text == "2 (40.0%)" },
+   "n_pct over five rows, two of them the level: 2 (40.0%)")
+ok({ s <- stat_n_pct(3, denom = 12); s$text == "3 (25.0%)" },
+   "...or from a count and a denominator the study table already carries")
+ok({ s <- stat_n(c(TRUE, TRUE, FALSE)); s$n == 2 && s$text == "2" },
+   "n is the count alone")
+ok({ s <- stat_mean_sd(c(1, 2, 3, 4, 5))
+     near(s$value, 3) && near(s$low, sqrt(2.5)) && s$text == "3.0 (1.6)" },
+   "mean_sd of 1..5 is 3 and the sample SD sqrt(2.5) = 1.58")
+ok(!stat_mean_sd(numeric(0))$ok, "a mean over nothing is refused, not zero")
+ok({ s <- stat_median_iqr(c(1, 2, 3, 4, 5))
+     near(s$value, 3) && near(s$low, 2) && near(s$high, 4) &&
+       s$text == "3.0 (2.0, 4.0)" },
+   "median_iqr of 1..5 is 3 (2, 4)")
+ok({ s <- stat_median_iqr(c(1, 2, 3, 4))
+     near(s$value, 2.5) && near(s$low, 1.75) && near(s$high, 3.25) },
+   "...and of 1..4 is 2.5 (1.75, 3.25), the quantiles R's default gives")
+ok({ s <- stat_min_max(c(4, 1, 9))
+     near(s$value, 1) && near(s$high, 9) && s$text == "1.0, 9.0" },
+   "min_max is the two ends")
+ok({ s <- stat_rate(events = 20, person_years = 200)
+     near(s$value, 100) && s$text == "100.00" },
+   "a rate from 20 events in 200 person-years is 100 per 1,000")
+ok({ s <- stat_rate(rate = 12.5, events = 1, person_years = 2)
+     near(s$value, 12.5) },
+   "where the study table carries the rate, that is the rate: it is not recomputed from rounded parts")
+ok(!stat_rate()$ok, "a rate with nothing behind it is refused")
+
+cat("\n-- Kaplan-Meier, on a curve that can be checked by hand --\n")
+# Six subjects, an event at each of 1..6. The estimator multiplies 5/6, 4/5,
+# 3/4, 2/3, 1/2, 0/1, so survival is 5/6, 2/3, 1/2, 1/3, 1/6, 0.
+K <- km_estimate(1:6, rep(1, 6))
+ok(nrow(K) == 6 && identical(K$TIME, as.numeric(1:6)) &&
+     all(K$N_RISK == c(6, 5, 4, 3, 2, 1)),
+   "one row per event time, with the number still at risk at each")
+ok(all(vapply(seq_len(6), function(i)
+       near(K$SURV[i], c(5/6, 2/3, 1/2, 1/3, 1/6, 0)[i]), logical(1))),
+   "the survival at each step is the running product of (1 - d/n)")
+ok(near(km_median(K), 3),
+   "the median is the first time the curve is at or below 0.5, which is 3")
+# Greenwood at t = 1 is 1/(6*5) = 0.0333; se on the log-log scale is
+# sqrt(0.0333)/|log(5/6)| = 1.0014, so the band is S^exp(+/-1.96 se) =
+# 0.8333^7.1197 = 0.2731 and 0.8333^0.1405 = 0.9747.
+ok(near(K$LOWER[1], 0.2731, 1e-4) && near(K$UPPER[1], 0.9747, 1e-4),
+   "the band at the first step is Greenwood's variance on the log-log scale: 0.2731 to 0.9747")
+ok({ ci <- km_median_ci(K)
+     near(ci[1], 1) && is.na(ci[2]) },
+   "the interval around the median runs from the first time the band's lower limit reaches 0.5 (t = 1) and has no upper end here, because the band's upper limit never does")
+ok({ s <- stat_km_median(1:6, rep(1, 6))
+     s$text == "3.0 (1.0, not reached)" },
+   "...and the cell says so rather than inventing a bound the follow-up does not reach")
+# Five subjects, events at 1 and 3, the rest censored: 4/5 then 2/3 of that.
+C <- km_estimate(c(1, 2, 3, 4, 5), c(1, 0, 1, 0, 0))
+ok(nrow(C) == 2 && near(C$SURV[1], 0.8) && near(C$SURV[2], 0.8 * 2/3) &&
+     C$N_RISK[2] == 3,
+   "a censored subject leaves the risk set without a step: S is 0.8 then 0.533")
+ok(is.na(km_median(C)) && stat_km_median(c(1,2,3,4,5), c(1,0,1,0,0))$text ==
+     "not reached",
+   "a curve that never reaches 0.5 has no median, which is an answer and not a gap")
+ok({ p <- km_prob_at(C, 2); isTRUE(p$ok) && near(p$surv, 0.8) },
+   "the probability at a month is the step in force then")
+ok({ p <- km_prob_at(C, 0.5)
+     isTRUE(p$ok) && near(p$surv, 1) && is.na(p$lower) },
+   "before the first event the estimate is 1 and the band is not a pair of ones")
+ok(!isTRUE(km_prob_at(C, 9)$ok),
+   "past the observed follow-up there is nothing to read, and the caller is told rather than handed the last step")
+ok({ s <- stat_km_prob(c(1, 2, 3, 4, 5), c(1, 0, 1, 0, 0), 2)
+     near(s$value, 80) && s$text == "80.0 (20.4, 96.9)" },
+   "km_prob at 2 months is 80.0% with the Greenwood band 20.4 to 96.9")
+ok({ e <- stat_km_events(c(1, 2, 3, 4, 5), c(1, 0, 1, 0, 0))
+     cs <- stat_km_censored(c(1, 2, 3, 4, 5), c(1, 0, 1, 0, 0))
+     e$n == 2 && cs$n == 3 && e$text == "2 (40.0%)" && cs$text == "3 (60.0%)" },
+   "the events and the censorings are counted, and they sum to the curve's population")
+T2 <- km_estimate(c(2, 2, 5, 5, 9), c(1, 1, 0, 1, 0))
+ok(nrow(T2) == 2 && near(T2$SURV[1], 0.6) && near(T2$SURV[2], 0.4) &&
+     T2$N_EVENT[1] == 2,
+   "two events at one time are one step of 2/5, and a censoring at an event time stays at risk for it")
+N0 <- km_estimate(c(4, 8, 12), c(0, 0, 0))
+ok(nrow(N0) == 0 && attr(N0, "n") == 3 && attr(N0, "n_event") == 0 &&
+     near(attr(N0, "follow_up"), 12),
+   "a cohort with no event at all is a result: no steps, but the size and the follow-up come back")
+ok(near(km_prob_at(N0, 6)$surv, 1) && is.na(km_median(N0)),
+   "...and everyone is still event-free at six months")
+ok(nrow(km_estimate(numeric(0), numeric(0))) == 0,
+   "an empty curve is empty rather than an error")
+
+cat("\n-- the disclosure rule --\n")
+ok(tfls_floor(NA) == 25 && tfls_floor(10) == 25 && tfls_floor(3) == 25,
+   "the floor is the protocol's 25 when nothing raises it")
+ok(tfls_floor(40) == 40 && tfls_floor(26) == 26,
+   "a higher floor is honoured")
+ok(tfls_floor_from_env("10") == 25 && tfls_floor_from_env("") == 25 &&
+     tfls_floor_from_env("40") == 40,
+   "TFLS_MIN_N may raise the floor and may NEVER lower it")
+stops_with(tfls_floor_from_env("banana"), "TFLS_MIN_N",
+   "a TFLS_MIN_N that is not a whole number is refused rather than ignored")
+ok(suppressed_text(25) == "<25" && suppressed_text(40) == "<40",
+   "a withheld cell prints as the floor it did not reach, never as a blank")
+
+mk_cells <- function(stat, n, denom, section_label = "S", column = "C1") {
+  data.frame(TABLE_ID = "T1", ROW_ORDER = seq_along(n),
+             ROW_LABEL = paste0("r", seq_along(n)), INDENT = 1L, SECTION = 0L,
+             SECTION_LABEL = section_label, NOTE = "", STAT = stat,
+             SOURCE = "S_X", MEASURE = "", COLUMN_ORDER = 1L,
+             COLUMN_ID = column, COLUMN_LABEL = "Overall", COLUMN_GROUP = "",
+             VALUE = n, LOW = NA_real_, HIGH = NA_real_, N = n, DENOM = denom,
+             TEXT = as.character(n), FILLED = 1L, SUPPRESSED = 0L, REASON = "",
+             REASON_KIND = "", stringsAsFactors = FALSE)
+}
+S1 <- suppress_cells(mk_cells("n_pct", c(30, 10, 60), c(100, 100, 100)), 25)
+ok(S1$SUPPRESSED[2] == 1L && is.na(S1$N[2]) && is.na(S1$VALUE[2]) &&
+     S1$TEXT[2] == "<25",
+   "a cell resting on fewer than the floor is withheld, and the count it was computed from goes with it")
+ok(S1$SUPPRESSED[1] == 1L && S1$SUPPRESSED[3] == 0L,
+   "exactly one withheld cell in a group takes the smallest of the others with it, because the total less the rest would give it away")
+S2 <- suppress_cells(mk_cells("n_pct", c(30, 10, 5), c(100, 100, 100)), 25)
+ok(sum(S2$SUPPRESSED) == 2L && S2$SUPPRESSED[1] == 0L,
+   "two withheld cells cannot be recovered from one total, so nothing more is withheld")
+S3 <- suppress_cells(mk_cells("n_pct", c(30, 60), c(20, 20)), 25)
+ok(all(S3$SUPPRESSED == 1L),
+   "a population under the floor withholds every cell resting on it, however large the cell")
+S4 <- suppress_cells(mk_cells("n_pct", c(30, 60), c(NA, 100)), 25)
+ok(S4$SUPPRESSED[1] == 1L && has(S4$REASON[1], "could not be counted"),
+   "a population that cannot be counted has not been shown to reach the floor, so it is withheld too")
+S5 <- suppress_cells(mk_cells("rate", c(3, 4), c(300, 300)), 25)
+ok(all(S5$SUPPRESSED == 0L),
+   "a rate is withheld on its at-risk count, as the package withholds it, so the few events inside a large population are published")
+S6 <- suppress_cells(rbind(mk_cells("n_pct", c(30, 10), c(100, 100), column = "C1"),
+                           mk_cells("n_pct", c(30, 10), c(100, 100), column = "C2")), 25)
+ok(sum(S6$SUPPRESSED) == 4L,
+   "the groups are per column, so a lone withheld cell pairs up inside its own column")
+S7 <- suppress_cells(mk_cells("n_pct", c(30, 10), c(100, 100)), 50)
+ok(all(S7$SUPPRESSED == 1L) && all(S7$TEXT == "<50"),
+   "a raised floor withholds more, and the cells say which floor they did not reach")
+
+cat("\n-- nothing patient-level is written --\n")
+ok(identical(names(drop_identifiers(data.frame(PATID = "P1", N = 1))), "N"),
+   "an identifier column is dropped whatever else is in the frame")
+stops_with(assert_no_identifiers(data.frame(patid = "P1", N = 1), "a frame"),
+  "DISCLOSURE", "a frame carrying an identifier is refused, whatever case it is spelled in")
+stops_with(tfls_write_csv(data.frame(PATID = "P1"), file.path(tempdir(), "no.csv")),
+  "DISCLOSURE", "...and the writer refuses it, so no code path can put one in out/")
+
+cat("\n-- filling a table --\n")
+# Forty patients in one cohort and one line. Thirty are female, ten are male;
+# thirty are white and the other ten split five and five. Twenty-six are on a
+# quadruplet and fourteen on a pomalidomide triplet.
+IDS <- sprintf("P%02d", 1:40)
+DEMO <- data.frame(
+  PATID = IDS, COHORT = "1L",
+  SEX = c(rep("Female", 30), rep("Male", 10)),
+  RACE = c(rep("White", 30), rep("Black", 5), rep("Asian", 5)),
+  AGE_YEARS = c(rep(70, 20), rep(80, 20)), stringsAsFactors = FALSE)
+SOC <- data.frame(
+  PATID = IDS, COHORT = "1L", LOT_NUM = 1L,
+  REGIMEN = c(rep("DARA BORT LEN DEX", 26), rep("POM BORT DEX", 14)),
+  SOC_CATEGORY = c(rep("Quadruplet with anti-CD38 backbone", 26),
+                   rep("Other triplet (non-anti-CD38)", 14)),
+  stringsAsFactors = FALSE)
+TABLES <- list(S_DEMOGRAPHICS = DEMO, S_SOC = SOC)
+READER <- function(name) TABLES[[toupper(name)]]
+CTX <- fill_context(READER, SH$classes)
+F1 <- fill_table(SH, "T1", CTX, floor_n = 25)
+cell <- function(f, order, col) {
+  i <- which(f$cells$ROW_ORDER == order & f$cells$COLUMN_ID == col)
+  f$cells[i[1], , drop = FALSE]
+}
+ok(nrow(F1$cells) == 11 * 4,
+   "every row of the shell meets every column of it, headings included")
+ok(near(cell(F1, 9, "C1")$VALUE, 75) && cell(F1, 9, "C1")$TEXT == "75.0 (5.1)",
+   "the mean age over the forty is 75.0 with an SD of 5.06, computed from the rows the column selects")
+ok(cell(F1, 5, "C1")$TEXT == "30 (75.0%)" && cell(F1, 5, "C1")$SUPPRESSED == 0L,
+   "a level holding thirty of forty is published as 30 (75.0%)")
+ok(cell(F1, 6, "C1")$TEXT == "<25" && cell(F1, 7, "C1")$TEXT == "<25" &&
+     cell(F1, 5, "C1")$SUPPRESSED == 0L,
+   "two levels of five are withheld, and the level of thirty beside them stays: two unknowns cannot be read off one total")
+ok(cell(F1, 2, "C1")$SUPPRESSED == 1L && cell(F1, 3, "C1")$SUPPRESSED == 1L,
+   "the ten men are withheld and the thirty women go with them, because a lone withheld level is the total less the rest")
+ok(near(cell(F1, 2, "C2")$DENOM, 26) || cell(F1, 2, "C2")$SUPPRESSED == 1L,
+   "the quadruplet column is the twenty-six lines the study put in that category")
+ok(cell(F1, 2, "C4")$FILLED == 0L &&
+     has(cell(F1, 2, "C4")$REASON, "no SOC category") &&
+     cell(F1, 2, "C4")$REASON_KIND == "shell",
+   "a column whose class maps to no category is reported unfilled, not filled with a zero")
+ok({ p <- soc_patients(CTX, line = "1", cohort = "1L",
+                       categories = "Other triplet (non-anti-CD38)", drug = "POM")
+     length(p) == 14 },
+   "a class that refines the study's category with a drug selects the lines whose regimen holds it")
+ok({ p <- soc_patients(CTX, line = "1", cohort = "1L",
+                       categories = "Other triplet (non-anti-CD38)", drug = "DARA")
+     length(p) == 0 },
+   "...and none where no regimen in that category holds it")
+ok(cell(F1, 10, "C1")$FILLED == 0L && cell(F1, 10, "C1")$TEXT == "not filled" &&
+     has(cell(F1, 10, "C1")$REASON, "HEIGHT_CM is not a column of S_DEMOGRAPHICS") &&
+     cell(F1, 10, "C1")$REASON_KIND == "not_in_run",
+   "a row naming a measure the study does not produce is reported with its reason, never left blank")
+ok(cell(F1, 11, "C1")$FILLED == 0L &&
+     has(cell(F1, 11, "C1")$REASON, "no source table") &&
+     cell(F1, 11, "C1")$REASON_KIND == "shell",
+   "a row with no source is the shell's gap to close, and it says so")
+ok(all(c("HEIGHT_CM is not a column of S_DEMOGRAPHICS") %in% F1$unfilled$REASON) &&
+     all(F1$unfilled$REASON_KIND %in% TFLS_REASON_KINDS),
+   "every unfilled row reaches the unfilled list, each with the kind of gap it is")
+ok(sum(F1$unfilled$COLUMN_ID == "(all)") == 2,
+   "a row nothing could fill in any column is listed once, against every column")
+ok(all(F1$cells$SECTION[F1$cells$ROW_ORDER %in% c(1, 4, 8)] == 1L) &&
+     all(F1$cells$TEXT[F1$cells$SECTION == 1L] == ""),
+   "a heading is a heading: it carries no number and is not reported as unfilled")
+ok(!any(toupper(names(render_csv(F1))) %in% TFLS_ID_COLUMNS) &&
+     !any(toupper(names(all_unfilled(list(F1)))) %in% TFLS_ID_COLUMNS),
+   "no output frame carries a PATID column")
+ok({ tf <- tempfile(fileext = ".csv"); tfls_write_csv(render_csv(F1), tf)
+     back <- utils::read.csv(tf, colClasses = "character")
+     nrow(back) == 44 && !any(toupper(names(back)) %in% TFLS_ID_COLUMNS) },
+   "...and the written CSV carries none either")
+ok(!any(grepl("P0[0-9]", unlist(lapply(render_csv(F1), as.character)))),
+   "no identifier appears in any cell of the output, under any column name")
+
+cat("\n-- the subgroups, off the tables the study writes them on --\n")
+SUB <- data.frame(PATID = IDS, COHORT = "1L", CONCEPT = "neuropathy",
+                  HAS_HISTORY = c(rep(1L, 30), rep(0L, 10)),
+                  stringsAsFactors = FALSE)
+FRAIL <- data.frame(PATID = IDS, COHORT = "1L", CFI = 0.3,
+                    FRAIL = c(rep(1L, 26), rep(0L, 14)), stringsAsFactors = FALSE)
+MALIG <- data.frame(PATID = IDS[1:20], COHORT = "1L",
+                    CATEGORY = "haematologic",
+                    LOT_AFTER_WHICH = c(rep(1L, 12), rep(2L, 8)),
+                    stringsAsFactors = FALSE)
+TABLES2 <- c(TABLES, list(S_COMORB_SUBGROUP = SUB, S_FRAILTY = FRAIL,
+                          S_MALIGNANCY = MALIG))
+CTX2 <- fill_context(function(n) TABLES2[[toupper(n)]], SH$classes)
+sub_rows <- function(d, sg, ctx = CTX2, where = "S_DEMOGRAPHICS") {
+  r <- restrict_to_subgroup(d, sg, ctx, where, "1L")
+  if (!isTRUE(r$ok)) return(r)
+  nrow(r$rows)
+}
+ok(identical(sub_rows(DEMO, "NEUROPATHY=YES"), 30L) &&
+     identical(sub_rows(DEMO, "NEUROPATHY=NO"), 10L),
+   "a neuropathy subgroup is the patients the study's own baseline flag holds")
+ok(identical(sub_rows(DEMO, "S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=0"), 10L),
+   "...and the column may say the same thing by naming the table and the flag")
+ok(identical(sub_rows(DEMO, "FRAILTY=YES"), 26L) &&
+     identical(sub_rows(DEMO, "FRAILTY=NO"), 14L),
+   "a frailty subgroup is the patients the study's own index marks")
+ok(identical(sub_rows(DEMO, "AGE=GE75"), 20L) &&
+     identical(sub_rows(DEMO, "AGE=LT75"), 20L),
+   "an age subgroup is a band of the age the study recorded at index")
+ok(identical(sub_rows(DEMO, "S_MALIGNANCY:LOT_AFTER_WHICH>=2"), 8L) &&
+     identical(sub_rows(DEMO, "S_MALIGNANCY:LOT_AFTER_WHICH=1"), 12L),
+   "a subgroup may be a comparison on a number, which is how an interval column selects")
+ok({ r <- restrict_to_subgroup(DEMO, "S_FRAILTY:FRAIL=1", CTX, "S_DEMOGRAPHICS", "1L")
+     !isTRUE(r$ok) && identical(r$kind, "not_in_run") &&
+       has(r$why, "was not read by this run") },
+   "a subgroup on a table the run did not write is the study run's gap, and the reason says which table")
+
+cat("\n-- the eligibility flag is a flag, not a filter --\n")
+TT <- data.frame(PATID = IDS, COHORT = "1L", LOT_NUM = 1L,
+                 TTE_ELIGIBLE = c(rep(1L, 20), rep(0L, 20)),
+                 OS_MONTHS = seq_len(40), OS_EVENT = 1L,
+                 stringsAsFactors = FALSE)
+ok({ e <- km_analysis_rows(TT); nrow(e) == 40 },
+   "a curve is over every row of the time-to-event table by default: the study leaves the restriction to the reader")
+ok({ e <- km_analysis_rows(TT, TRUE); nrow(e) == 20 },
+   "...and over the marked analysis set only when the run was set to apply it, which the caption then says")
+
+cat("\n-- rendering --\n")
+MD <- render_markdown(F1, SH)
+ok(has(MD[1], "## T1. Baseline"), "the table prints under its own title")
+LAB <- grep("^\\|", MD, value = TRUE)
+ord <- vapply(c("Sex", "Female", "Male", "Race", "White", "Black", "Asian",
+                "Age", "Mean (SD)", "Height", "Nothing behind this"),
+              function(l) which(vapply(LAB, has, logical(1), l))[1], numeric(1))
+ok(!any(is.na(ord)) && identical(order(ord), seq_along(ord)),
+   "the renderer keeps the shell's row order, heading by heading")
+ok(has(LAB[which(vapply(LAB, has, logical(1), "Female"))[1]], "&nbsp;&nbsp;Female"),
+   "a row at indent 1 prints indented, because markdown drops the leading spaces")
+ok(!has(LAB[which(vapply(LAB, has, logical(1), "| **Sex"))[1]], "&nbsp;&nbsp;Sex"),
+   "...and a heading at indent 0 is not indented")
+ok(has(LAB[1], "1L (N=)<br>Overall") && has(LAB[1], "1L (N=)<br>Quad"),
+   "the column heading carries the group the shell put it in")
+ok(any(vapply(MD, has, logical(1), "a. Age is age at index.")),
+   "the footnotes print under the table")
+ok(has(LAB[which(vapply(LAB, has, logical(1), "Mean (SD)"))[1]], "Mean (SD) [a]"),
+   "a row carrying a footnote marker prints it")
+ok(!any(vapply(MD, has, logical(1), "reads the S_ATTRITION")),
+   "a note that is not a marker is not printed as one")
+ok(any(vapply(MD, has, logical(1), "withheld and print as <25")) &&
+     any(vapply(MD, has, logical(1), "could not be filled")),
+   "the caption says what the floor was, how much it withheld and how much could not be filled")
+ok({ cs <- render_csv(F1)
+     identical(cs$ROW_ORDER, rep(1:11, each = 4)) &&
+       identical(cs$COLUMN_ID[1:4], c("C1", "C2", "C3", "C4")) },
+   "the tidy CSV is one row per cell, in the shell's order")
+ok(all(c("REASON", "REASON_KIND", "SUPPRESSED", "FILLED") %in% names(render_csv(F1))),
+   "...and carries why each cell is what it is")
+
+cat("\n-- the runner --\n")
+RUNNER <- paste(readLines(file.path(ROOT, "run_tfls.R")), collapse = "\n")
+ok(has(RUNNER, 'gsub("~+~", " "'),
+   "the script directory survives a space in a folder name")
+ok(all(vapply(c("classes.R", "shells.R", "stats.R", "suppress.R", "fill.R",
+                "render.R"), function(f) has(RUNNER, f), logical(1))),
+   "it sources the six files that are in R/, and no file that is not")
+ok(regexpr('if (!nzchar(src))', RUNNER, fixed = TRUE) <
+     regexpr("library(DBI)", RUNNER, fixed = TRUE),
+   "the source gate comes before library(DBI), so the plan prints where no driver is installed")
+ok(!has(RUNNER, 'Sys.getenv("DATABRICKS_PWD"'),
+   "the password is read only through the study package's own configuration, never by the runner")
+ok(has(RUNNER, "tfls_floor_from_env()"),
+   "the floor comes from the one function that will not let it fall below the protocol's")
+ok(all(vapply(c("tfls_unfilled.csv", "tfls.md", "tfls_<table>.csv"),
+              function(f) has(RUNNER, f), logical(1))),
+   "it writes the files the documentation names")
+ok(has(RUNNER, "tfls_write_csv"), "...through the writer that refuses an identifier")
+ok(has(RUNNER, "run_identity(recheck())"),
+   "the run is checked again after the tables were read, so a rebuild landing mid-read is caught")
+ok(has(RUNNER, "TFLS_TTE_ELIGIBLE_ONLY") && has(RUNNER, "TFLS_COHORT_TABLE"),
+   "the two settings that change what a number means are read, and the run says which way it went")
+ok(has(RUNNER, "safe_segment(prefix)"),
+   "a prefix is refused unless it is a plain name, because it is pasted into a path and a table name")
+
+
+# ---------------------------------------------------------------------------
+# A second pass over the same code, written against the shells as data rather
+# than against the functions: a broken shell file has to be refused by name, a
+# curve small enough to check on paper has to come out right, and the
+# disclosure rule has to hold at its edges. Kept in its own scope so the two
+# passes cannot lend each other a fixture.
+# ---------------------------------------------------------------------------
+local({
+  SHELL_DIR <- file.path(ROOT, "shells")
+  # This pass asks whether a string appears anywhere in a rendered page, so it
+  # needs the any() form rather than the host's single-string test.
+  has <- function(x, s) any(grepl(s, x, fixed = TRUE))
+
+  # A shell directory of our own, so a test can break a file without touching
+  # the shipped one.
+  scratch_shells <- function(edit = function(f) invisible(NULL)) {
+    d <- file.path(tempdir(), paste0("tfls_", sample.int(1e6, 1)))
+    dir.create(d, showWarnings = FALSE, recursive = TRUE)
+    for (f in TFLS_SHELL_FILES) file.copy(file.path(SHELL_DIR, f), file.path(d, f))
+    edit(d)
+    d
+  }
+  # Append one raw line to a shell file.
+  add_line <- function(d, f, line) {
+    p <- file.path(d, TFLS_SHELL_FILES[[f]])
+    writeLines(c(readLines(p), line), p)
+  }
+
+  cat("\n-- the shipped shells load --\n")
+  SH <- load_shells(SHELL_DIR)
+  ok(nrow(SH$tables) > 0 && nrow(SH$rows) > 0 && nrow(SH$columns) > 0,
+     "the shells that ship with this folder load without complaint")
+  ok(all(SH$rows$table_id %in% SH$tables$table_id) &&
+       all(SH$columns$table_id %in% SH$tables$table_id),
+     "every row and column belongs to a declared table")
+  ok(all(nzchar(SH$rows$label)), "every row has a label to print")
+  ok(all(SH$rows$stat[!SH$rows$section_flag & nzchar(SH$rows$source)] %in% tfls_stat_names()),
+     "every row that reads something names a statistic the code implements")
+  # The gap list is the point of the exercise, so it has to be non-empty and
+  # every one of its rows has to say why.
+  gap <- SH$rows[!SH$rows$section_flag & !nzchar(SH$rows$source), , drop = FALSE]
+  ok(nrow(gap) > 0 && all(nzchar(gap$note)),
+     sprintf("all %d rows with no source carry a reason", nrow(gap)))
+
+  cat("\n-- a bad edit is refused, by file and row --\n")
+  stops(load_shells(scratch_shells(function(d)
+          add_line(d, "rows", "T1,9999,FALSE,Invented,1,mystery_stat,S_DEMOGRAPHICS,SEX=Male,,"))),
+        "a row naming a statistic the code does not implement")
+  stops(load_shells(scratch_shells(function(d)
+          add_line(d, "columns", "T1,INVENTED,1L (N=),Invented,99,1L,1,NO_SUCH_CLASS,,"))),
+        "a column naming a class that regimen_classes.csv does not define")
+  stops(load_shells(scratch_shells(function(d)
+          add_line(d, "classes", "BAD_CLASS,Bad,11,Not A Study Category,"))),
+        "a class mapping onto a category the study does not produce")
+  stops(load_shells(scratch_shells(function(d)
+          add_line(d, "rows", "T1,1,FALSE,Duplicate order,1,n,S_DEMOGRAPHICS,SEX=Male,,"))),
+        "two rows of one table claiming the same position")
+  stops(load_shells(scratch_shells(function(d)
+          add_line(d, "tables", "T9,T9. Nothing,A table with no rows,,"))),
+        "a table with no rows, which would print as a title over an empty page")
+  stops(load_shells(file.path(tempdir(), "tfls_absent")),
+        "a shell directory that is not there at all")
+
+  cat("\n-- measures, filters and unions --\n")
+  ok(identical(parse_measure("SEX=Female")$column, "SEX") &&
+       identical(parse_measure("SEX=Female")$value, "Female"),
+     "an equality reads as a column and a value")
+  ok(identical(parse_measure("AGE_BAND=18-44|45-64|65-74")$value,
+               c("18-44", "45-64", "65-74")),
+     "a union reads as several values, which is how the shell's '<75 years' is asked for")
+  ok(identical(parse_measure("MONTHS>=12")$op, ">="),
+     "a comparison keeps its operator, which T3's interval columns need")
+  ok(!nzchar(parse_measure("")$column), "an empty measure names no column, so the row reads its table whole")
+
+  cat("\n-- classes map onto the study's own categories --\n")
+  CL <- SH$classes
+  ok(class_is_overall("OVERALL"), "the overall column is not a category test")
+  ok(identical(class_categories("ACD38_QUAD", CL), "Quadruplet with anti-CD38 backbone"),
+     "a class resolves to the study category it maps onto")
+  ok(length(class_categories("BISPECIFIC", CL)) == 2,
+     "a class may roll up more than one category")
+  ok(!any(class_categories("BCMA", CL) %in% class_categories("BISPECIFIC", CL)),
+     "BCMA and Bi-specific share no category, so a patient is counted in one column only")
+  ok(in_class("Doublet/monotherapy", "DOUBLET_MONO", CL) &&
+       !in_class("Doublet/monotherapy", "ACD38_QUAD", CL),
+     "membership is decided by the category the study assigned")
+  ok(length(class_categories("POM_TRIP", CL)) == 0,
+     "the pomalidomide column maps onto nothing, because the study vocabulary has no such category")
+  ok(length(unknown_soc_categories("CAR-T|Doublet/monotherapy")) == 0,
+     "the study's own categories are recognised")
+  ok(length(unknown_soc_categories("Quadruplet with anti-CD39 backbone")) == 1,
+     "...and a misspelled one is caught, since it would silently empty a column")
+
+  cat("\n-- the statistics, against numbers worked out by hand --\n")
+  ok(identical(stat_n_pct(c(TRUE, TRUE, FALSE, FALSE), denom = 4)$text, "2 (50.0%)"),
+     "n_pct: 2 of 4 is 2 (50.0%)")
+  ok(identical(stat_n_pct(logical(0), denom = 10)$text, "0 (0.0%)"),
+     "...and nobody is zero, not a blank")
+  ok(identical(stat_n(c(TRUE, TRUE, TRUE))$text, "3"), "n counts the hits")
+  # mean 3, sd of 1..5 = sqrt(2.5) = 1.5811
+  ok(identical(stat_mean_sd(1:5)$text, "3.0 (1.6)"), "mean_sd: 1..5 is 3.0 (1.6)")
+  # median 3, quartiles of 1..5 are 2 and 4 under R's default type-7
+  ok(identical(stat_median_iqr(1:5)$text, "3.0 (2.0, 4.0)"),
+     "median_iqr: 1..5 is 3.0 (2.0, 4.0)")
+  ok(identical(stat_min_max(c(4, 1, 9))$text, "1.0, 9.0"), "min_max takes the ends")
+  ok(near(stat_mean_sd(c(2, NA, 4))$value, 3), "a missing value is left out rather than read as zero")
+  ok(!stat_mean_sd(numeric(0))$ok && nzchar(stat_mean_sd(numeric(0))$why),
+     "nothing to average is refused with a reason, not reported as zero")
+
+  cat("\n-- Kaplan-Meier, on a curve small enough to check by hand --\n")
+  # Five patients: events at 1 and 4, censored at 2, 3 and 5.
+  #   t=1: at risk 5, 1 event -> S = 4/5 = 0.8
+  #   t=4: at risk 2, 1 event -> S = 0.8 * 1/2 = 0.4
+  T5 <- c(1, 2, 3, 4, 5); E5 <- c(1, 0, 0, 1, 0)
+  km <- km_estimate(T5, E5)
+  ok(nrow(km) == 2 && near(km$SURV[1], 0.8) && near(km$SURV[2], 0.4),
+     "the curve steps only at events: 0.8 then 0.4")
+  ok(km$N_RISK[1] == 5 && km$N_RISK[2] == 2,
+     "the risk set drops for censored patients as well as for events")
+  ok(near(km_prob_at(km, 1)$surv, 0.8) && near(km_prob_at(km, 3)$surv, 0.8) &&
+       near(km_prob_at(km, 4)$surv, 0.4),
+     "the probability between two events is the earlier one, not an interpolation")
+  ok(!km_prob_at(km, 99)$ok && has(km_prob_at(km, 99)$why, "past the observed follow-up"),
+     "a landmark past the observed follow-up is refused rather than extrapolated")
+  ok(near(km_median(km), 4),
+     "the median is the first time the curve reaches or passes one half")
+  ok(is.na(km_median(km_estimate(c(1, 2, 3), c(1, 0, 0)))),
+     "a curve that never reaches one half has no median, and says so")
+  ok(identical(stat_km_median(c(1, 2, 3), c(1, 0, 0))$text, "not reached"),
+     "...which prints as 'not reached', never as a blank or a zero")
+  ok(identical(stat_km_events(T5, E5)$text, "2 (40.0%)") &&
+       identical(stat_km_censored(T5, E5)$text, "3 (60.0%)"),
+     "events and censored are counted against the same denominator and sum to it")
+  ok(has(stat_km_median(T5, E5)$text, "4.0"),
+     "the median cell prints the median it computed")
+  ci <- km_median_ci(km)
+  ok(near(ci[1], 1) && is.na(ci[2]),
+     "the median interval reaches its lower bound and says the upper is not reached")
+  ok(all(km$LOWER <= km$SURV + 1e-9) && all(km$UPPER >= km$SURV - 1e-9),
+     "the confidence band contains its own estimate")
+  ok(all(km$LOWER >= 0) && all(km$UPPER <= 1),
+     "...and stays inside nought and one, which a naive band does not")
+
+  cat("\n-- the disclosure rule --\n")
+  ok(tfls_floor(5) == 25L, "a floor under the package's own is raised to it")
+  ok(tfls_floor(50) == 50L, "a higher floor is taken as asked")
+  ok(tfls_floor(NA) == 25L, "an unreadable floor falls back to the package's")
+  stops(tfls_floor_from_env("banana"), "a floor that is not a number is refused rather than ignored")
+  ok(tfls_floor_from_env("40") == 40L, "a floor from the environment is honoured when it raises")
+  ok(tfls_floor_from_env("3") == 25L, "...and cannot be used to lower the floor")
+  ok(!tfls_released(24, 25) && tfls_released(25, 25),
+     "the floor is a minimum, so exactly the floor is released")
+  ok(!tfls_released(NA, 25),
+     "a denominator nobody can read has not been shown to clear the floor")
+  ok(identical(suppressed_text(25), "<25"),
+     "a withheld cell prints as '<25', which cannot be read as zero")
+
+  # Three levels of one variable, down one column: 100, 10 and 90 of 200. The
+  # middle one is under the floor, and publishing the other two beside the
+  # column total would give it away as the difference.
+  cells <- empty_cells()
+  for (i in 1:3) cells <- rbind(cells, data.frame(
+    TABLE_ID = "T", ROW_ORDER = i, ROW_LABEL = c("Male", "Female", "Unknown")[i],
+    INDENT = 1L, SECTION = 0L, SECTION_LABEL = "Sex (N%)", NOTE = "",
+    STAT = "n_pct", SOURCE = "S_X", MEASURE = "M", COLUMN_ORDER = 1L,
+    COLUMN_ID = "a", COLUMN_LABEL = "Overall", COLUMN_GROUP = "1L",
+    VALUE = c(100, 10, 90)[i], LOW = NA_real_, HIGH = NA_real_,
+    N = c(100, 10, 90)[i], DENOM = 200, TEXT = "x", FILLED = 1L,
+    SUPPRESSED = 0L, REASON = "", REASON_KIND = "", stringsAsFactors = FALSE))
+  sup <- suppress_cells(cells, 25)
+  ok(sup$SUPPRESSED[2] == 1L, "a cell of ten patients is withheld at a floor of 25")
+  ok(sum(sup$SUPPRESSED) >= 2,
+     "...and a second cell goes with it, or the withheld one is the column total minus the rest")
+  ok(sup$SUPPRESSED[3] == 1L,
+     "the second is the smallest of those left, which is the one that hides the most")
+  ok(all(sup$TEXT[sup$SUPPRESSED == 1L] == "<25"),
+     "every withheld cell says so in the same words")
+  ok(all(nzchar(sup$REASON[sup$SUPPRESSED == 1L])),
+     "...and carries the reason it was withheld")
+  ok(all(is.na(sup$N[sup$SUPPRESSED == 1L])) && all(is.na(sup$VALUE[sup$SUPPRESSED == 1L])),
+     "a withheld cell keeps no number behind the text")
+  # Two levels: withholding one has to withhold the other, which takes the whole
+  # variable with it. That is the right answer, not an over-reaction.
+  two <- suppress_cells(cells[1:2, , drop = FALSE], 25)
+  ok(all(two$SUPPRESSED == 1L),
+     "with only two levels, one under the floor takes the variable with it")
+
+  cat("\n-- nothing patient-level can be written --\n")
+  ok(identical(names(drop_identifiers(data.frame(PATID = 1, N = 2))), "N"),
+     "an identifier column is dropped on the way out")
+  stops(assert_no_identifiers(data.frame(PATID = "x", N = 1)),
+     "and a frame that still carries one stops the run rather than being written")
+  ok(isTRUE(assert_no_identifiers(data.frame(COHORT = "1L", N = 1))) ||
+       is.null(assert_no_identifiers(data.frame(COHORT = "1L", N = 1))),
+     "a frame with no identifier passes")
+
+  cat("\n-- filling a table, from a reader that is not a warehouse --\n")
+  # One cohort, six patients, three of them women; four in a doublet, two in a
+  # quad. Small enough to hand-count, and under the floor on purpose.
+  DEMO <- data.frame(
+    PATID = sprintf("p%02d", 1:6), COHORT = "1L", LOT_NUM = 1L,
+    AGE_YEARS = c(60, 70, 80, 55, 66, 77),
+    AGE_BAND = c("45-64", "65-74", "75+", "45-64", "65-74", "75+"),
+    SEX = c("Female", "Female", "Female", "Male", "Male", "Male"),
+    stringsAsFactors = FALSE)
+  SOC <- data.frame(
+    PATID = sprintf("p%02d", 1:6), COHORT = "1L", LOT_NUM = 1L,
+    REGIMEN = c("DARA BORT LENA DEX", "DARA BORT LENA DEX", "LENA DEX",
+                "LENA DEX", "POM DEX", "POM DEX"),
+    N_AGENTS = c(4L, 4L, 2L, 2L, 2L, 2L),
+    SOC_CATEGORY = c(rep("Quadruplet with anti-CD38 backbone", 2),
+                     rep("Doublet/monotherapy", 4)),
+    MATCHED = 1L, stringsAsFactors = FALSE)
+  reader <- function(name) switch(toupper(name),
+    S_DEMOGRAPHICS = DEMO, S_SOC = SOC, NULL)
+  ctx <- fill_context(reader, SH$classes)
+
+  write_shells <- function(rows_extra = character(0), rows_edit = identity) {
+    d <- file.path(tempdir(), paste0("tfls_x_", sample.int(1e6, 1)))
+    dir.create(d, showWarnings = FALSE, recursive = TRUE)
+    writeLines(c("table_id,sheet,title,objective,notes",
+                 "X,x,A test table,,"), file.path(d, "tables.csv"))
+    writeLines(c("table_id,col_id,group,label,order,cohort,lot_num,class,subgroup,period",
+                 "X,ALL,1L (N=),Overall,1,1L,1,OVERALL,,",
+                 "X,QUAD,1L (N=),aCD38 Quad,2,1L,1,ACD38_QUAD,,"),
+               file.path(d, "columns.csv"))
+    rows <- rows_edit(c(
+      "table_id,order,section,label,indent,stat,source,measure,filter,note",
+      "X,1,TRUE,Sex (N%),0,,,,,",
+      "X,2,FALSE,Female,1,n_pct,S_DEMOGRAPHICS,SEX=Female,,",
+      "X,3,FALSE,Male,1,n_pct,S_DEMOGRAPHICS,SEX=Male,,",
+      "X,4,FALSE,Age at index,0,mean_sd,S_DEMOGRAPHICS,AGE_YEARS,,"))
+    writeLines(c(rows, rows_extra), file.path(d, "rows.csv"))
+    file.copy(file.path(SHELL_DIR, "regimen_classes.csv"), file.path(d, "regimen_classes.csv"))
+    writeLines("table_id,marker,text", file.path(d, "footnotes.csv"))
+    load_shells(d)
+  }
+  sh1 <- write_shells()
+  f1 <- fill_table(sh1, "X", ctx, floor_n = 1)
+  cell_of <- function(f, ord, col) {
+    r <- f$cells[f$cells$ROW_ORDER == ord & f$cells$COLUMN_ID == col, , drop = FALSE]
+    if (!nrow(r)) NA_character_ else r$TEXT[1]
+  }
+  ok(identical(cell_of(f1, 2, "ALL"), "3 (50.0%)"),
+     "three women of six is 3 (50.0%) in the overall column")
+  ok(identical(cell_of(f1, 3, "ALL"), "3 (50.0%)"), "and three men likewise")
+  # The quad column holds two patients, both women, so the men are none. At a
+  # floor of 1 the empty cell is withheld, and withholding one of two levels
+  # would give it away against the column total, so the other goes too. Both
+  # cells of that block are withheld, which is the rule working rather than a
+  # lost number.
+  ok(identical(cell_of(f1, 3, "QUAD"), "<1"),
+     "a column where nobody has the level withholds it rather than printing a zero")
+  ok(identical(cell_of(f1, 2, "QUAD"), "<1"),
+     "...and the one remaining level goes with it, since the column total would give it away")
+  ok(identical(cell_of(f1, 2, "ALL"), "3 (50.0%)") && identical(cell_of(f1, 3, "ALL"), "3 (50.0%)"),
+     "the overall column, where both levels clear the floor, publishes both")
+  ok(identical(cell_of(f1, 4, "ALL"), "68.0 (9.7)"),
+     "the mean age of the six is 68.0 with an SD of 9.7")
+  ok(!any(f1$cells$ROW_ORDER == 1 & f1$cells$SECTION == 0L),
+     "a heading row occupies no cell of its own")
+  ok(!"PATID" %in% names(f1$cells) && !"PATID" %in% names(f1$unfilled),
+     "nothing the filler returns carries a patient identifier")
+
+  f2 <- fill_table(sh1, "X", ctx, floor_n = 25)
+  live2 <- f2$cells$FILLED == 1L & f2$cells$SECTION == 0L
+  ok(all(f2$cells$SUPPRESSED[live2] == 1L) && all(f2$cells$TEXT[live2] == "<25"),
+     "the same table under the real floor withholds every cell, since six patients is under it")
+
+  cat("\n-- a row nothing can fill is reported, never blanked --\n")
+  sh2 <- write_shells(rows_extra =
+    "X,5,FALSE,Year of MM diagnosis,1,n_pct,,,,the study output carries no diagnosis date")
+  f3 <- fill_table(sh2, "X", ctx, floor_n = 1)
+  ok(nrow(f3$unfilled) >= 1, "the row with no source comes back on the unfilled list")
+  ok(has(paste(f3$unfilled$REASON, f3$unfilled$REASON_KIND), "no source") ||
+       has(f3$unfilled$REASON, "diagnosis"),
+     "...with a reason, so the gap is readable rather than a blank line")
+  sh3 <- write_shells(rows_edit = function(r) sub("SEX=Female", "SEX=Nonexistent", r, fixed = TRUE))
+  f4 <- fill_table(sh3, "X", ctx, floor_n = 1)
+  ok(identical(cell_of(f4, 2, "ALL"), "<1") || identical(cell_of(f4, 2, "ALL"), "0 (0.0%)"),
+     "a measure that matches nobody is a withheld or an explicit zero, never a blank")
+  sh4 <- write_shells(rows_edit = function(r)
+    sub(",S_DEMOGRAPHICS,SEX=Female", ",S_NOT_A_TABLE,SEX=Female", r, fixed = TRUE))
+  f5 <- fill_table(sh4, "X", ctx, floor_n = 1)
+  ok(nrow(f5$unfilled) >= 1 && has(f5$unfilled$SOURCE, "S_NOT_A_TABLE"),
+     "a row naming a table the run did not write names it in the reason")
+
+  cat("\n-- rendering keeps the shell's shape --\n")
+  md <- render_markdown(f1, sh1)
+  ok(has(md, "Sex (N%)") && has(md, "Female") && has(md, "Male"),
+     "every row of the shell reaches the page")
+  ok(which(grepl("Sex (N%)", md, fixed = TRUE))[1] <
+       which(grepl("Female", md, fixed = TRUE))[1],
+     "in the shell's order, heading before its rows")
+  ok(has(md, "Overall") && has(md, "aCD38 Quad"), "and both columns are headed")
+  cap <- render_caption(f2)
+  ok(has(cap, "25"), "the caption names the floor the table was built under")
+  csv <- render_csv(f1)
+  ok(is.data.frame(csv) && nrow(csv) > 0 && !"PATID" %in% names(csv),
+     "the CSV rendering carries the same cells and no identifier")
+  invisible(NULL)
+})
+
+cat(sprintf("%d passed, %d failed\n", pass, fail))
+if (fail > 0L) quit(status = 1L)

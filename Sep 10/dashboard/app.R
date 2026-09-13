@@ -19,7 +19,9 @@ body{background:var(--wa);color:var(--ink);font:14px/1.5 -apple-system,BlinkMacS
 table.grid{border-collapse:collapse;width:100%%;font-size:13px;background:var(--pa)}
 table.grid th{background:var(--opl);text-align:left;padding:7px 9px;border-bottom:1px solid var(--ln);font-weight:600}
 table.grid td{padding:6px 9px;border-bottom:1px solid var(--ln)}
-table.grid tr.supp td{background:var(--ab);color:var(--ai)}
+table.grid tr.supp td,table.grid td.supp{background:var(--ab);color:var(--ai)}
+table.grid tr.sec td{background:var(--opl);font-weight:600}
+.wide{overflow-x:auto}
 .kpis{display:flex;flex-wrap:wrap;gap:12px;margin:6px 0 14px}
 .kpi{background:var(--pa);border:1px solid var(--ln);border-radius:6px;padding:12px 16px;min-width:130px}
 .kpi-v{font-size:22px;font-weight:600;color:var(--o)}
@@ -194,6 +196,7 @@ server <- function(input, output, session) {
       check  = ui_check(p, s),
       delta  = ui_delta(p, s),
       sequence = ui_sequence(p, s),
+      shell  = ui_shell(p, s),
       ui_table(p, s))
     tagList(h4(p$label),
             if (!is.null(p$note)) div(class = "note", p$note) else NULL,
@@ -332,6 +335,60 @@ server <- function(input, output, session) {
       HTML(html_table(v$rows, caption = v$note, max_rows = DASH_CFG$max_rows))
     })
     uiOutput(id)
+  }
+
+  # The requested table shells, filled from this scenario.
+  #
+  # The shells and the code that fills them are a sibling delivery, loaded on
+  # first use by R/tfls.R. Where that folder is not there the panel says so and
+  # every other tab is unaffected.
+  #
+  # The controls belong to the panel rather than the sidebar, because they say
+  # what to fill rather than what to select, and they sit outside the renderUI
+  # so that changing one does not rebuild the controls under the pointer. The
+  # floor is the sidebar's: this tab does not get one of its own.
+  ui_shell <- function(p, s) {
+    ready <- tfls_ready()
+    if (!isTRUE(ready$ok)) return(div(class = "alert", html_escape(ready$why)))
+    id <- paste0("shl_", p$name)
+    if (identical(p$view %||% "tables", "classes")) {
+      output[[id]] <- renderUI(HTML(shell_class_html(ready, DASH_CFG$max_rows)))
+      return(uiOutput(id))
+    }
+    choices <- shell_table_choices(ready)
+    output[[id]] <- renderUI({
+      # Asked again here: this renderer re-runs on its own controls and on the
+      # floor, without coming back through the panel guard.
+      if (scenario_moved(s)) return(moved_alert())
+      tid <- input$shell_table
+      if (is.null(tid) || !tid %in% choices) tid <- choices[[1]]
+      filled <- tryCatch(
+        shell_fill(ready, tid, SRC, s, input$floor,
+                   tte_eligible_only = isTRUE(input$shell_tte),
+                   prefer_release = DASH_CFG$prefer_release,
+                   package_min_n = DASH_CFG$suppress_min_n),
+        error = function(e) e)
+      # A refusal - a shell file that is wrong, or an identifier where none may
+      # be - is shown rather than swallowed. It names what to fix.
+      if (inherits(filled, "error"))
+        return(div(class = "alert", html_escape(conditionMessage(filled))))
+      if (!nrow(filled$cells)) return(nothing_or_moved(s))
+      HTML(paste0(shell_panel_html(ready, filled),
+                  if (isTRUE(input$shell_unfilled))
+                    shell_unfilled_html(ready, filled, DASH_CFG$max_rows)
+                  else ""))
+    })
+    tagList(
+      selectInput("shell_table", "Table", choices = choices, width = "100%"),
+      checkboxInput("shell_tte",
+                    "Apply the study's time-to-event eligibility flag", FALSE),
+      checkboxInput("shell_unfilled", "Show the rows nothing could fill", FALSE),
+      helpText("The study writes the whole cohort into its time-to-event",
+               "table and marks the restricted analysis with TTE_ELIGIBLE,",
+               "leaving the restriction to the reader - so it is applied only",
+               "when this is ticked, or where a shell row's own filter names",
+               "it, and the table says which way it went."),
+      uiOutput(id))
   }
 
   # A check table: what was found, what was expected, and the verdict. The

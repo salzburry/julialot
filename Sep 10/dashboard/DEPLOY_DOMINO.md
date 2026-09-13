@@ -81,6 +81,11 @@ DASH_SNAPSHOT_DIR=/mnt/data/NDMM
 DASH_ALLOW_SYNTHETIC=FALSE
 ```
 
+The **Tables** tab fills the requested table shells from the `TFLS/` folder
+beside `dashboard/`. An App published from a checkout that carries it needs
+nothing set; where that folder sits somewhere else, `DASH_TFLS_DIR` names it.
+Without it, that one tab says so and every other tab is unaffected.
+
 The snapshot lives in a Domino **Dataset** rather than in the Job's artifacts,
 because an App reads a Dataset it has attached and does not see another run's
 artifacts. Attach the Dataset to the App (the Data step of the publish
