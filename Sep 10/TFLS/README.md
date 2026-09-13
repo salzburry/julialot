@@ -1,4 +1,4 @@
-# TFLS — the requested table shells, filled
+# TFLS - the requested table shells, filled
 
 The study team asked for a set of table shells: sample selection, baseline
 characteristics by line of therapy and by subgroup, safety and healthcare
@@ -58,12 +58,20 @@ edit that asks for something the study does not produce says so.
 
 ### `regimen_classes.csv`
 
-A class is matched against the line's regimen, which is a list of drug
-abbreviations. `require_all` and `require_any` are space-separated lists,
-`exclude_any` likewise, and `n_agents_min` / `n_agents_max` bound the count.
-`priority` breaks ties: the lowest-numbered matching class wins, so BCMA and
-bispecific claim a regimen before the size-based classes do. `OVERALL` is the
-column total and matches by definition.
+Nothing here classifies a regimen. The study package already does that, and a
+second classifier over the drug list would be a second opinion of the same
+question. This file is a MAPPING: `soc_categories` names the study categories
+that roll into a column, separated by `|`, and `requires_drug` narrows a
+category further where a column asks for something the study's vocabulary does
+not separate.
+
+So a column is changed by editing one line here, and a category the study does
+not produce is refused by name rather than quietly emptying the column.
+
+Two consequences the tables state rather than hide. `BCMA` holds the cell
+therapies and `Bi-specific` holds both bispecific categories, so the columns are
+disjoint and a patient is counted once. And the transplant-only lines belong to
+no column at all, so the class columns do not sum to `Overall`.
 
 ## Disclosure
 
@@ -85,9 +93,9 @@ withheld.
 The tables are counts over a claims database and carry its limits: a code is
 evidence of a claim, not of a diagnosis, and an absence is evidence of neither.
 
-## The dashboard
+## What is not here yet
 
-The same shells drive a tab in the dashboard, where the table, the line, the
-regimen class definitions, the subgroup and the floor are controls. The
-requestor can move a definition and watch the table move, which is the point of
-having the classes in a CSV rather than in the code.
+The dashboard does not read these shells. The intention is a tab where the
+table, the line, the class definitions, the subgroup and the floor are
+controls, so a definition can be moved and the table watched to move with it.
+That is the point of keeping the classes in a CSV, and it is not built.

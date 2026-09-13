@@ -368,7 +368,7 @@ T2x,6,FALSE,Triplets with anti-CD38 backbone,1,n_pct,S_PATTERNS,SOC_CATEGORY=Tri
 T2x,7,FALSE,Other triplets,1,n_pct,S_PATTERNS,SOC_CATEGORY=Other triplet (non-anti-CD38),,
 T2x,8,FALSE,Doublets/monotherapies,1,n_pct,S_PATTERNS,SOC_CATEGORY=Doublet/monotherapy,,
 T2x,9,FALSE,Pomalidomide aCD38 backbone,1,n_pct,,,,the study vocabulary has no pomalidomide category - these lines sit inside Other triplet (non-anti-CD38); see class POM_TRIP in regimen_classes.csv
-T2x,10,FALSE,BCMA,1,n_pct,S_PATTERNS,SOC_CATEGORY=CAR-T|BCMA bispecific,,"two SOC_CATEGORY values, and BCMA bispecific is also claimed by the Bispecifics row below"
+T2x,10,FALSE,BCMA,1,n_pct,S_PATTERNS,SOC_CATEGORY=CAR-T,,"The cell therapies. A BCMA-directed bispecific is counted on the Bispecifics row below, so the two rows do not overlap."
 T2x,11,FALSE,Bispecifics,1,n_pct,S_PATTERNS,SOC_CATEGORY=BCMA bispecific|Non-BCMA bispecific,,"two SOC_CATEGORY values, and BCMA bispecific is also claimed by the BCMA row above"
 T2x,12,FALSE,"Other novel agents (e.g., Selinexor)",1,n_pct,S_PATTERNS,SOC_CATEGORY=Other novel agent,,
 T2x,13,TRUE,Common sequences received,0,,,,,
