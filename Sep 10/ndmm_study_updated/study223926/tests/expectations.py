@@ -106,21 +106,34 @@ EXPECTATIONS = [
      "SELECT AGE_YEARS, AGE_BAND FROM wk.S_DEMOGRAPHICS "
      "WHERE PATID='P1' AND COHORT='1L'",
      [(69, "65-74")]),
+    # Two different questions on one table. AGE_BAND is Table 1's descriptive
+    # distribution, four bands wide; AGE_GROUP is the protocol's
+    # stratification, which is two groups and is what the rate tables carry -
+    # a rate is not the sum of its strata's rates, so an age group split over
+    # three bands could report no rate at all.
+    ("...and the protocol's two age groups sit beside the four bands",
+     "SELECT AGE_GROUP FROM wk.S_DEMOGRAPHICS "
+     "WHERE PATID='P1' AND COHORT='1L'",
+     [("<75",)]),
+    ("every band maps into the group its cut-point puts it in",
+     "SELECT count(*) FROM wk.S_DEMOGRAPHICS "
+     "WHERE (AGE_BAND = '75+') <> (AGE_GROUP = '75+')",
+     [(0,)]),
     # YRDOB is 0 on 614 rows of the deployed enrolment table. Unguarded,
     # year(index) - 0 is an age of about 2026, which lands every one of them in
     # the 75+ band - the band the protocol uses as its transplant-eligibility
     # proxy.
     ("a birth year of 0 is an unknown age, not an age of 2020",
-     "SELECT AGE_YEARS, AGE_BAND FROM wk.S_DEMOGRAPHICS "
+     "SELECT AGE_YEARS, AGE_GROUP FROM wk.S_DEMOGRAPHICS "
      "WHERE PATID='P8' AND COHORT='1L'",
      [(None, "Unknown")]),
     ("and a birth year at the 89-year cap is still a real age",
-     "SELECT AGE_YEARS, AGE_BAND FROM wk.S_DEMOGRAPHICS "
+     "SELECT AGE_YEARS, AGE_GROUP FROM wk.S_DEMOGRAPHICS "
      "WHERE PATID='P7' AND COHORT='1L'",
      [(83, "75+")]),
     ("the 75+ band is the transplant-eligibility proxy and is not empty",
      "SELECT PATID FROM wk.S_DEMOGRAPHICS "
-     "WHERE COHORT='1L' AND AGE_BAND='75+' ORDER BY PATID",
+     "WHERE COHORT='1L' AND AGE_GROUP='75+' ORDER BY PATID",
      [("P5",), ("P7",)]),
     ("the CDM's own BUS codes map to the protocol's insurance types",
      "SELECT DISTINCT INSURANCE_TYPE FROM wk.S_DEMOGRAPHICS "
@@ -174,16 +187,16 @@ EXPECTATIONS = [
     ("and nobody leaves the baseline denominator",
      "SELECT N_AT_RISK, round(PERSON_YEARS,4) FROM wk.S_SAFETY_RATES "
      "WHERE COHORT='1L' AND PERIOD='BASELINE' AND LOT_NUM=1 "
-     "AND SOC_CATEGORY='(all categories)' AND AGE_BAND='(all ages)' AND CONDITION='toxic_liver_disease'",
+     "AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)' AND CONDITION='toxic_liver_disease'",
      [(7, 6.9952)]),
     ("while on treatment the not-at-risk leave it",
      "SELECT N_AT_RISK FROM wk.S_SAFETY_RATES WHERE COHORT='1L' "
      "AND PERIOD='TREATMENT' AND LOT_NUM=1 "
-     "AND SOC_CATEGORY='(all categories)' AND AGE_BAND='(all ages)' AND CONDITION='toxic_liver_disease'",
+     "AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)' AND CONDITION='toxic_liver_disease'",
      [(6,)]),
     ("every condition gets a baseline row too, events or not",
      "SELECT count(*) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' "
-     "AND PERIOD='BASELINE' AND SOC_CATEGORY='(all categories)' AND AGE_BAND='(all ages)'",
+     "AND PERIOD='BASELINE' AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)'",
      [(23,)]),
     # Chronic person-time ends at the first occurrence, so a patient who has
     # the event contributes only up to it. Derived by hand in EXPECTED.md:
@@ -197,7 +210,7 @@ EXPECTATIONS = [
     ("release suppresses on the stratum and nulls the event count with it",
      "SELECT SUPPRESSED, N_AT_RISK, N_PATIENTS FROM wk.S_SAFETY_RATES_RELEASE "
      "WHERE COHORT='1L' AND PERIOD='TREATMENT' AND LOT_NUM=1 "
-     "AND SOC_CATEGORY='(all categories)' AND AGE_BAND='(all ages)' AND CONDITION='toxic_liver_disease'",
+     "AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)' AND CONDITION='toxic_liver_disease'",
      [(1, None, None)]),
     # P6's 1L follow-up ends 2019-12-31; its 2L starts 2022-06-01, two and a
     # half years later. The LOT engine builds that line because it continues
@@ -243,15 +256,15 @@ EXPECTATIONS = [
     # patients. Both are 4 if the follow-up bound is removed.
     ("and it is censoring, not receipt of a next line",
      "SELECT N_PATIENTS FROM wk.S_TX_ATTRITION WHERE COHORT='1L' "
-     "AND LOT_NUM=1 AND SOC_CATEGORY='(all categories)' AND AGE_BAND='(all ages)' AND OUTCOME='received_next_lot'",
+     "AND LOT_NUM=1 AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)' AND OUTCOME='received_next_lot'",
      [(3,)]),
     ("and the unobserved line adds nobody to the next line's attrition",
      "SELECT sum(N_PATIENTS) FROM wk.S_TX_ATTRITION WHERE COHORT='1L' "
-     "AND LOT_NUM=2 AND SOC_CATEGORY='(all categories)' AND AGE_BAND='(all ages)'",
+     "AND LOT_NUM=2 AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)'",
      [(3,)]),
     ("and that patient leaves the chronic denominator too",
      "SELECT round(PERSON_YEARS,4) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' "
-     "AND PERIOD='TREATMENT' AND LOT_NUM=1 AND SOC_CATEGORY='(all categories)' AND AGE_BAND='(all ages)' "
+     "AND PERIOD='TREATMENT' AND LOT_NUM=1 AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)' "
      "AND CONDITION='toxic_liver_disease'",
      [(2.5599,)]),
     # The same denominator with P5's first event moved 31 days earlier must
@@ -261,13 +274,13 @@ EXPECTATIONS = [
      "SELECT round(("
      "  SELECT PERSON_YEARS FROM wk.S_SAFETY_RATES WHERE COHORT='1L' "
      "  AND PERIOD='TREATMENT' AND LOT_NUM=1 "
-     "  AND SOC_CATEGORY='(all categories)' AND AGE_BAND='(all ages)' AND CONDITION='toxic_liver_disease') "
+     "  AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)' AND CONDITION='toxic_liver_disease') "
      " - (SELECT sum(CASE WHEN PATID='P5' THEN 31.0/365.25 ELSE 0 END) "
      "    FROM wk.S_LOT_PERIODS WHERE COHORT='1L' AND LOT_NUM=1), 4)",
      [(2.4750,)]),
     ("while an acute condition keeps every patient's person-time",
      "SELECT round(PERSON_YEARS,4) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' "
-     "AND PERIOD='TREATMENT' AND LOT_NUM=1 AND SOC_CATEGORY='(all categories)' AND AGE_BAND='(all ages)'"
+     "AND PERIOD='TREATMENT' AND LOT_NUM=1 AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)'"
      "AND CONDITION='acute_hepatitis_b'",
      [(4.8569,)]),
     # --- the regimen-category stratification ------------------------------
@@ -286,60 +299,60 @@ EXPECTATIONS = [
      "        THEN 'soc' ELSE 'age' END AS which "
      " FROM wk.S_SAFETY_RATES WHERE COHORT='1L' AND PERIOD='TREATMENT' "
      " AND LOT_NUM=1 AND CONDITION='toxic_liver_disease' "
-     " AND NOT (SOC_CATEGORY='(all categories)' AND AGE_BAND='(all ages)'))",
+     " AND NOT (SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)'))",
      [(1,)]),
     ("nothing falls outside either stratification",
      "SELECT count(*) FROM wk.S_SAFETY_RATES "
      "WHERE SOC_CATEGORY='(uncategorised)' "
-     "OR AGE_BAND='(no demographics row)'",
+     "OR AGE_GROUP='(no demographics row)'",
      [(0,)]),
     ("they are margins, not a cross: no row names a real value in both",
      "SELECT count(*) FROM wk.S_SAFETY_RATES "
-     "WHERE SOC_CATEGORY <> '(all categories)' AND AGE_BAND <> '(all ages)'",
+     "WHERE SOC_CATEGORY <> '(all categories)' AND AGE_GROUP <> '(all ages)'",
      [(0,)]),
     ("the categories' at-risk counts sum to the line's",
-     "SELECT sum(CASE WHEN SOC_CATEGORY='(all categories)' THEN 0 ELSE N_AT_RISK END) - max(CASE WHEN SOC_CATEGORY='(all categories)' THEN N_AT_RISK END) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' AND PERIOD='TREATMENT' AND LOT_NUM=1 AND CONDITION='toxic_liver_disease' AND AGE_BAND='(all ages)'",
+     "SELECT sum(CASE WHEN SOC_CATEGORY='(all categories)' THEN 0 ELSE N_AT_RISK END) - max(CASE WHEN SOC_CATEGORY='(all categories)' THEN N_AT_RISK END) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' AND PERIOD='TREATMENT' AND LOT_NUM=1 AND CONDITION='toxic_liver_disease' AND AGE_GROUP='(all ages)'",
      [(0,)]),
     ('...and their person-time does too',
-     "SELECT round(sum(CASE WHEN SOC_CATEGORY='(all categories)' THEN 0 ELSE PERSON_YEARS END) - max(CASE WHEN SOC_CATEGORY='(all categories)' THEN PERSON_YEARS END), 6) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' AND PERIOD='TREATMENT' AND LOT_NUM=1 AND CONDITION='toxic_liver_disease' AND AGE_BAND='(all ages)'",
+     "SELECT round(sum(CASE WHEN SOC_CATEGORY='(all categories)' THEN 0 ELSE PERSON_YEARS END) - max(CASE WHEN SOC_CATEGORY='(all categories)' THEN PERSON_YEARS END), 6) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' AND PERIOD='TREATMENT' AND LOT_NUM=1 AND CONDITION='toxic_liver_disease' AND AGE_GROUP='(all ages)'",
      [(0.0,)]),
     ('...and the patients who had the event',
-     "SELECT sum(CASE WHEN SOC_CATEGORY='(all categories)' THEN 0 ELSE N_PATIENTS END) - max(CASE WHEN SOC_CATEGORY='(all categories)' THEN N_PATIENTS END) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' AND PERIOD='TREATMENT' AND LOT_NUM=1 AND CONDITION='acute_hepatitis_b' AND AGE_BAND='(all ages)'",
+     "SELECT sum(CASE WHEN SOC_CATEGORY='(all categories)' THEN 0 ELSE N_PATIENTS END) - max(CASE WHEN SOC_CATEGORY='(all categories)' THEN N_PATIENTS END) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' AND PERIOD='TREATMENT' AND LOT_NUM=1 AND CONDITION='acute_hepatitis_b' AND AGE_GROUP='(all ages)'",
      [(0,)]),
     ('the age bands sum to the line just as the categories do',
-     "SELECT sum(CASE WHEN AGE_BAND='(all ages)' THEN 0 ELSE N_AT_RISK END) - max(CASE WHEN AGE_BAND='(all ages)' THEN N_AT_RISK END) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' AND PERIOD='TREATMENT' AND LOT_NUM=1 AND CONDITION='toxic_liver_disease' AND SOC_CATEGORY='(all categories)'",
+     "SELECT sum(CASE WHEN AGE_GROUP='(all ages)' THEN 0 ELSE N_AT_RISK END) - max(CASE WHEN AGE_GROUP='(all ages)' THEN N_AT_RISK END) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' AND PERIOD='TREATMENT' AND LOT_NUM=1 AND CONDITION='toxic_liver_disease' AND SOC_CATEGORY='(all categories)'",
      [(0,)]),
     ('...and their person-time as well',
-     "SELECT round(sum(CASE WHEN AGE_BAND='(all ages)' THEN 0 ELSE PERSON_YEARS END) - max(CASE WHEN AGE_BAND='(all ages)' THEN PERSON_YEARS END), 6) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' AND PERIOD='TREATMENT' AND LOT_NUM=1 AND CONDITION='toxic_liver_disease' AND SOC_CATEGORY='(all categories)'",
+     "SELECT round(sum(CASE WHEN AGE_GROUP='(all ages)' THEN 0 ELSE PERSON_YEARS END) - max(CASE WHEN AGE_GROUP='(all ages)' THEN PERSON_YEARS END), 6) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' AND PERIOD='TREATMENT' AND LOT_NUM=1 AND CONDITION='toxic_liver_disease' AND SOC_CATEGORY='(all categories)'",
      [(0.0,)]),
     ('the same holds for healthcare resource use',
-     "SELECT sum(CASE WHEN SOC_CATEGORY='(all categories)' THEN 0 ELSE N_EVENTS END) - max(CASE WHEN SOC_CATEGORY='(all categories)' THEN N_EVENTS END) FROM wk.S_HCRU_RATES WHERE COHORT='1L' AND PERIOD='TREATMENT' AND LOT_NUM=1 AND MEASURE='ALL_CAUSE_HOSPITALISATION' AND AGE_BAND='(all ages)'",
+     "SELECT sum(CASE WHEN SOC_CATEGORY='(all categories)' THEN 0 ELSE N_EVENTS END) - max(CASE WHEN SOC_CATEGORY='(all categories)' THEN N_EVENTS END) FROM wk.S_HCRU_RATES WHERE COHORT='1L' AND PERIOD='TREATMENT' AND LOT_NUM=1 AND MEASURE='ALL_CAUSE_HOSPITALISATION' AND AGE_GROUP='(all ages)'",
      [(0,)]),
     ('...by age too',
-     "SELECT sum(CASE WHEN AGE_BAND='(all ages)' THEN 0 ELSE N_EVENTS END) - max(CASE WHEN AGE_BAND='(all ages)' THEN N_EVENTS END) FROM wk.S_HCRU_RATES WHERE COHORT='1L' AND PERIOD='TREATMENT' AND LOT_NUM=1 AND MEASURE='ALL_CAUSE_HOSPITALISATION' AND SOC_CATEGORY='(all categories)'",
+     "SELECT sum(CASE WHEN AGE_GROUP='(all ages)' THEN 0 ELSE N_EVENTS END) - max(CASE WHEN AGE_GROUP='(all ages)' THEN N_EVENTS END) FROM wk.S_HCRU_RATES WHERE COHORT='1L' AND PERIOD='TREATMENT' AND LOT_NUM=1 AND MEASURE='ALL_CAUSE_HOSPITALISATION' AND SOC_CATEGORY='(all categories)'",
      [(0,)]),
     ('and for what happened at the end of each line',
-     "SELECT sum(CASE WHEN SOC_CATEGORY='(all categories)' THEN 0 ELSE N_PATIENTS END) - max(CASE WHEN SOC_CATEGORY='(all categories)' THEN N_PATIENTS END) FROM wk.S_TX_ATTRITION WHERE COHORT='1L' AND LOT_NUM=1 AND OUTCOME='received_next_lot' AND AGE_BAND='(all ages)'",
+     "SELECT sum(CASE WHEN SOC_CATEGORY='(all categories)' THEN 0 ELSE N_PATIENTS END) - max(CASE WHEN SOC_CATEGORY='(all categories)' THEN N_PATIENTS END) FROM wk.S_TX_ATTRITION WHERE COHORT='1L' AND LOT_NUM=1 AND OUTCOME='received_next_lot' AND AGE_GROUP='(all ages)'",
      [(0,)]),
     ('...by age there as well',
-     "SELECT sum(CASE WHEN AGE_BAND='(all ages)' THEN 0 ELSE N_PATIENTS END) - max(CASE WHEN AGE_BAND='(all ages)' THEN N_PATIENTS END) FROM wk.S_TX_ATTRITION WHERE COHORT='1L' AND LOT_NUM=1 AND OUTCOME='received_next_lot' AND SOC_CATEGORY='(all categories)'",
+     "SELECT sum(CASE WHEN AGE_GROUP='(all ages)' THEN 0 ELSE N_PATIENTS END) - max(CASE WHEN AGE_GROUP='(all ages)' THEN N_PATIENTS END) FROM wk.S_TX_ATTRITION WHERE COHORT='1L' AND LOT_NUM=1 AND OUTCOME='received_next_lot' AND SOC_CATEGORY='(all categories)'",
      [(0,)]),
     ("a stratum's percentage is out of that stratum, not the line",
      "SELECT count(*) FROM wk.S_TX_ATTRITION WHERE COHORT='1L' AND LOT_NUM=1 "
-     "AND NOT (SOC_CATEGORY='(all categories)' AND AGE_BAND='(all ages)') "
+     "AND NOT (SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)') "
      "AND N_DENOM > (SELECT max(N_DENOM) FROM wk.S_TX_ATTRITION "
      " WHERE COHORT='1L' AND LOT_NUM=1 "
-     " AND SOC_CATEGORY='(all categories)' AND AGE_BAND='(all ages)')",
+     " AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)')",
      [(0,)]),
     ("and a stratum below the floor is suppressed like any other",
      "SELECT count(*) FROM wk.S_SAFETY_RATES_RELEASE "
-     "WHERE NOT (SOC_CATEGORY='(all categories)' AND AGE_BAND='(all ages)') "
+     "WHERE NOT (SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)') "
      "AND SUPPRESSED = 0",
      [(0,)]),
 
     ("every condition gets an incidence row, events or not",
      "SELECT count(DISTINCT CONDITION) FROM wk.S_SAFETY_RATES "
-     "WHERE COHORT='1L' AND PERIOD='TREATMENT' AND LOT_NUM=1 AND SOC_CATEGORY='(all categories)' AND AGE_BAND='(all ages)'",
+     "WHERE COHORT='1L' AND PERIOD='TREATMENT' AND LOT_NUM=1 AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)'",
      [(23,)]),
 
     # --- HCRU -------------------------------------------------------------
@@ -358,7 +371,7 @@ EXPECTATIONS = [
     ("and is excluded from the LOS summary while still counting as an event",
      "SELECT N_EVENTS, MEAN_LOS, N_LOS_EXCLUDED FROM wk.S_HCRU_RATES "
      "WHERE COHORT='1L' AND PERIOD='TREATMENT' AND LOT_NUM=1 "
-     "AND SOC_CATEGORY='(all categories)' AND AGE_BAND='(all ages)' AND MEASURE='MM_RELATED_HOSPITALISATION'",
+     "AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)' AND MEASURE='MM_RELATED_HOSPITALISATION'",
      [(2, 5.0, 1)]),
     ("two ED claim lines on one day are one visit",
      "SELECT count(*) FROM wk.S_HCRU_EVENTS WHERE PATID='P1' "
@@ -367,15 +380,15 @@ EXPECTATIONS = [
     ("N_PATIENTS counts patients and N_EVENTS counts events",
      "SELECT N_PATIENTS, N_EVENTS FROM wk.S_HCRU_RATES WHERE COHORT='1L' "
      "AND PERIOD='TREATMENT' AND LOT_NUM=1 "
-     "AND SOC_CATEGORY='(all categories)' AND AGE_BAND='(all ages)' AND MEASURE='ALL_CAUSE_HOSPITALISATION'",
+     "AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)' AND MEASURE='ALL_CAUSE_HOSPITALISATION'",
      [(2, 3)]),
     ("a line with person-time and no events still gets a row per measure",
      "SELECT count(*) FROM wk.S_HCRU_RATES WHERE COHORT='1L' "
-     "AND PERIOD='TREATMENT' AND N_EVENTS=0 AND SOC_CATEGORY='(all categories)' AND AGE_BAND='(all ages)'",
+     "AND PERIOD='TREATMENT' AND N_EVENTS=0 AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)'",
      [(9,)]),
     ("person-time is per line, not the whole cohort's repeated",
      "SELECT count(DISTINCT PERSON_YEARS) FROM wk.S_HCRU_RATES "
-     "WHERE COHORT='1L' AND PERIOD='TREATMENT' AND SOC_CATEGORY='(all categories)' AND AGE_BAND='(all ages)'",
+     "WHERE COHORT='1L' AND PERIOD='TREATMENT' AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)'",
      [(4,)]),
 
     # --- secondary malignancy --------------------------------------------
@@ -392,11 +405,11 @@ EXPECTATIONS = [
     ("a released row below the threshold carries no numbers at all",
      "SELECT N_PATIENTS, N_EVENTS, RATE, SUPPRESSED, SUPPRESSION_REASON "
      "FROM wk.S_SAFETY_RATES_RELEASE WHERE COHORT='1L' AND PERIOD='TREATMENT' "
-     "AND LOT_NUM=1 AND SOC_CATEGORY='(all categories)' AND AGE_BAND='(all ages)' AND CONDITION='acute_hepatitis_b'",
+     "AND LOT_NUM=1 AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)' AND CONDITION='acute_hepatitis_b'",
      [(None, None, None, 1, "n < 25")]),
     ("while the raw table keeps them, so QC can still read the counts",
      "SELECT N_PATIENTS, N_EVENTS FROM wk.S_SAFETY_RATES WHERE COHORT='1L' "
-     "AND PERIOD='TREATMENT' AND LOT_NUM=1 AND SOC_CATEGORY='(all categories)' AND AGE_BAND='(all ages)'"
+     "AND PERIOD='TREATMENT' AND LOT_NUM=1 AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)'"
      "AND CONDITION='acute_hepatitis_b'",
      [(2, 4)]),
     ("and nothing below the threshold escapes unsuppressed",

@@ -66,7 +66,7 @@ mod_safety <- function(con, cfg, cohort) {
      ACUTE_CHRONIC string, EVENT_DT date", cohort$key)
   prepare_table(con, wrk("S_SAFETY_RATES"),
     "COHORT string, LOT_NUM int, PERIOD string,
-     SOC_CATEGORY string, AGE_BAND string,
+     SOC_CATEGORY string, AGE_GROUP string,
      CONDITION string, DOMAIN string, ACUTE_CHRONIC string,
      N_PATIENTS int, N_EVENTS int,
      N_AT_RISK int, PERSON_YEARS double, RATE double, RATE_LO double,
@@ -228,7 +228,7 @@ mod_safety <- function(con, cfg, cohort) {
         GROUP BY n.COHORT, n.LOT_NUM, n.CONDITION%18$s
       )
       SELECT den.COHORT, den.LOT_NUM, '%12$s' AS PERIOD,
-             den.SOC_CATEGORY, den.AGE_BAND,
+             den.SOC_CATEGORY, den.AGE_GROUP,
              den.condition, den.domain, den.ac,
              coalesce(num.N_PATIENTS, 0) AS N_PATIENTS,
              coalesce(num.N_EVENTS, 0) AS N_EVENTS,
@@ -238,7 +238,7 @@ mod_safety <- function(con, cfg, cohort) {
       LEFT JOIN num ON num.COHORT = den.COHORT AND num.LOT_NUM = den.LOT_NUM
                    AND num.CONDITION = den.condition
                    AND num.SOC_CATEGORY = den.SOC_CATEGORY
-                   AND num.AGE_BAND = den.AGE_BAND",
+                   AND num.AGE_GROUP = den.AGE_GROUP",
       wrk("S_SAFETY_RATES"), "S_CL_SAFETY", per$view, cohort$key,
       wrk("S_SAFETY_COUNTED"),
       rate_sql("coalesce(num.N_EVENTS, 0)", "den.PY", cfg),

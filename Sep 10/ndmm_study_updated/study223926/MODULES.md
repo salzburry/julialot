@@ -136,9 +136,9 @@ lands on the run's own metadata row where no reader can miss it.
 ### The rate tables are stratified
 
 `S_SAFETY_RATES`, `S_HCRU_RATES`, `S_MALIGNANCY_RATES` and `S_TX_ATTRITION`
-carry a `SOC_CATEGORY` and an `AGE_BAND` column. Each table is written once for
+carry a `SOC_CATEGORY` and an `AGE_GROUP` column. Each table is written once for
 the line as a whole — `(all categories)` and `(all ages)` — then once per
-regimen category where the `soc` module ran, and once per age band. Every pass
+regimen category where the `soc` module ran, and once per age group. Every pass
 is the same query with one more column in the `GROUP BY`, so the washout, the
 person-time, the at-risk rule and the confidence intervals are unchanged and
 each stratification is a partition of the line. `mod_patterns()` checks that
@@ -151,18 +151,32 @@ no row — the honest answer rather than a zero.
 
 **Anything reading these tables must say which grouping it wants.** A query
 written before these columns existed now sees the line and its parts together
-and will double count. `WHERE SOC_CATEGORY = '(all categories)' AND AGE_BAND =
+and will double count. `WHERE SOC_CATEGORY = '(all categories)' AND AGE_GROUP =
 '(all ages)'` is the old behaviour.
+
+**`AGE_GROUP` is not `AGE_BAND`.** `S_DEMOGRAPHICS` carries both: `AGE_BAND` is
+Table 1's descriptive distribution, four bands wide, and `AGE_GROUP` is the
+protocol's stratification — `<75` and `75+`, stratification 2 in
+`../VARIABLES.md`. The rate tables are grouped by the second, because a rate is
+not the sum of its strata's rates: a grouping that spread `<75` over three
+bands could report a count for it but never a rate.
 
 Two labels distinguish a gap from a value. `(uncategorised)` is a line the
 `soc` module wrote no row for; `(no demographics row)` is a patient the
 `demographics` module wrote none for. Neither is `Unknown`, which that module
-writes as a real age band for a patient whose age it could not read.
+writes as a real age group for a patient whose age it could not read.
 
 Suppression is unchanged in kind and tighter in effect: a stratum is smaller
 than the line, so more of them fall under the floor. `mod_release()` warns
 where exactly one stratum of a group is suppressed, because the total less the
 published rest gives it away.
+
+That finding is also a column. `S_RUN_METADATA.RELEASE_RECOVERABLE` records
+it — the table and the grouping, or `none`, or `release module did not run`,
+which is a third answer and not the second: a run without the module has not
+been shown to have no recoverable cell, it has not looked. Whether to regroup
+or withhold a second stratum stays the analyst's call; a publication gate can
+read the column and refuse rather than rely on someone having read a log.
 
 **Six of the thirteen run today.** `MODULES=all`, the default, runs everything
 that has a usable code list. `spine`, `cohorts`, `attrition`, `periods`,

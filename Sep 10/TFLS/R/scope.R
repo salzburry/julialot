@@ -199,18 +199,49 @@ run_cohort_rows <- function(d, scope) {
 # rules over it are the ones above: a table the run's metadata does not claim
 # reads as absent, a released copy is preferred only where the run ran the
 # release module that writes it, and the rows are the cohorts the run selected.
-run_reader <- function(read_one, scope) function(table) {
-  t <- toupper(chr(table))
-  if (!isTRUE(run_table_status(scope, t)$ok)) return(NULL)
-  d <- NULL
-  # Where the run published a released copy, that is what is read, so the
-  # suppression is the package's own and not a second opinion of it. A release
-  # a previous run left behind is not this run's and is not preferred.
-  if (!grepl("_RELEASE$", t) &&
-      isTRUE(run_table_status(scope, paste0(t, "_RELEASE"))$ok)) {
-    d <- read_one(paste0(t, "_RELEASE"))
-    if (!is.null(d) && !nrow(d)) d <- NULL
+run_reader <- function(read_one, scope) {
+  # Why a read was refused, for the unfilled list. A refusal the status alone
+  # cannot state - a declared release that is not there - is recorded here as
+  # the read happens, because only the read knows.
+  refused <- new.env(parent = emptyenv())
+  f <- function(table) {
+    t <- toupper(chr(table))
+    st <- run_table_status(scope, t)
+    if (!isTRUE(st$ok)) return(NULL)
+    rel <- paste0(t, "_RELEASE")
+    # Where the run published a released copy, that is what is read, so the
+    # suppression is the package's own and not a second opinion of it. A
+    # release a previous run left behind is not this run's and is not
+    # preferred.
+    if (!grepl("_RELEASE$", t) && isTRUE(run_table_status(scope, rel)$ok)) {
+      d <- read_one(rel)
+      # FAIL CLOSED. "The run never released" and "the run says it released
+      # and the copy is not there" are different, and only the first may read
+      # the raw table. Falling back on the second would publish the numbers
+      # the release was run to remove, under a run that says it removed them -
+      # a partial write or a deleted table would quietly undo the release.
+      if (is.null(d) || !nrow(d)) {
+        assign(t, paste0(
+          "this run released ", t, ", so its released copy is what may be ",
+          "read - and that copy is ",
+          if (is.null(d)) "not under the prefix" else "there with no rows",
+          ". The raw table is not read in its place: it holds what the ",
+          "release was run to remove"), envir = refused)
+        return(NULL)
+      }
+      return(run_cohort_rows(d, scope))
+    }
+    run_cohort_rows(read_one(t), scope)
   }
-  if (is.null(d)) d <- read_one(t)
-  run_cohort_rows(d, scope)
+  attr(f, "refusals") <- refused
+  f
+}
+
+# What a reader refused to read, and why, in its own words. Empty for a table
+# it never refused.
+reader_refusal <- function(reader, table) {
+  e <- attr(reader, "refusals")
+  t <- toupper(chr(table))
+  if (is.null(e) || !exists(t, envir = e, inherits = FALSE)) return("")
+  get(t, envir = e, inherits = FALSE)
 }

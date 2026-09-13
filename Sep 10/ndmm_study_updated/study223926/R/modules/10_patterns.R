@@ -89,7 +89,7 @@ mod_patterns <- function(con, cfg, cohort) {
                  wrk("S_SWITCH"), cohort$key))
 
   prepare_table(con, wrk("S_TX_ATTRITION"),
-    "COHORT string, LOT_NUM int, SOC_CATEGORY string, AGE_BAND string,
+    "COHORT string, LOT_NUM int, SOC_CATEGORY string, AGE_GROUP string,
      OUTCOME string, N_PATIENTS int, N_DENOM int, PCT double", cohort$key)
   # The line as a whole, then each regimen category. The denominator and the
   # percentage are the pass's own: within a category they are out of that
@@ -109,14 +109,14 @@ mod_patterns <- function(con, cfg, cohort) {
       %4$s
       WHERE e.COHORT = '%2$s'
     )
-    SELECT COHORT, LOT_NUM, SOC_CATEGORY, AGE_BAND, OUTCOME,
+    SELECT COHORT, LOT_NUM, SOC_CATEGORY, AGE_GROUP, OUTCOME,
            count(*) AS N_PATIENTS,
            sum(count(*)) OVER (PARTITION BY COHORT, LOT_NUM, SOC_CATEGORY,
-                                            AGE_BAND) AS N_DENOM,
+                                            AGE_GROUP) AS N_DENOM,
            round(100.0 * count(*) /
                  sum(count(*)) OVER (PARTITION BY COHORT, LOT_NUM,
-                                     SOC_CATEGORY, AGE_BAND), 1) AS PCT
-    FROM cat GROUP BY COHORT, LOT_NUM, SOC_CATEGORY, AGE_BAND, OUTCOME",
+                                     SOC_CATEGORY, AGE_GROUP), 1) AS PCT
+    FROM cat GROUP BY COHORT, LOT_NUM, SOC_CATEGORY, AGE_GROUP, OUTCOME",
     wrk("S_TX_ATTRITION"), cohort$key, sp$cols, sp$join),
     qc = sprintf("SELECT count(*) AS n_rows FROM %s WHERE COHORT='%s'",
                  wrk("S_TX_ATTRITION"), cohort$key))
@@ -125,9 +125,9 @@ mod_patterns <- function(con, cfg, cohort) {
   # The four categories partition the denominator. Checked rather than
   # asserted, because a CASE that stops partitioning is a silent double count.
   chk <- db_q(con, sprintf(
-    "SELECT LOT_NUM, SOC_CATEGORY, AGE_BAND, sum(N_PATIENTS) AS parts,
+    "SELECT LOT_NUM, SOC_CATEGORY, AGE_GROUP, sum(N_PATIENTS) AS parts,
             max(N_DENOM) AS whole
-     FROM %s WHERE COHORT='%s' GROUP BY LOT_NUM, SOC_CATEGORY, AGE_BAND",
+     FROM %s WHERE COHORT='%s' GROUP BY LOT_NUM, SOC_CATEGORY, AGE_GROUP",
     wrk("S_TX_ATTRITION"), cohort$key))
   bad <- chk[chk$parts != chk$whole, , drop = FALSE]
   if (nrow(bad))
@@ -143,7 +143,7 @@ mod_patterns <- function(con, cfg, cohort) {
   # total label in the category column and the other way round.
   for (nm in names(STRATUM_TOTALS)) {
     if (identical(nm, "SOC_CATEGORY") && !soc_stratified(cfg)) next
-    if (identical(nm, "AGE_BAND") && !age_stratified(cfg)) next
+    if (identical(nm, "AGE_GROUP") && !age_stratified(cfg)) next
     others <- setdiff(names(STRATUM_TOTALS), nm)
     only_this <- paste(sprintf("%s = '%s'", others, STRATUM_TOTALS[others]),
                        collapse = " AND ")

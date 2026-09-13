@@ -60,8 +60,14 @@ split_soc_categories <- function(x) {
 #
 # They are MARGINS: a row is cut by regimen category or by age, never by both,
 # so a column naming one leaves the other at its total.
+#
+# The age one is AGE_GROUP, the protocol's two groups, and not
+# S_DEMOGRAPHICS.AGE_BAND's four descriptive bands. A column covering several
+# strata is their counts added, which is exact, but a RATE is not the sum of
+# its strata's rates - so an age group spread over three bands could report no
+# rate at all, and the package groups by the two the protocol asks for.
 TFLS_STRATUM_TOTALS <- c(SOC_CATEGORY = "(all categories)",
-                         AGE_BAND = "(all ages)")
+                         AGE_GROUP = "(all ages)")
 
 soc_key <- function(x) toupper(gsub("[[:space:]]+", " ", trimws(chr(x))))
 

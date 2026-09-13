@@ -516,6 +516,11 @@ TFLS_SOC_SUMMABLE <- c("N_PATIENTS", "N_EVENTS", "N_AT_RISK", "N_DENOM",
 TFLS_STRATUM_KEYS <- c("COHORT", "LOT_NUM", "PERIOD", "CONDITION", "MEASURE",
                        "CATEGORY", "OUTCOME", "DOMAIN", "ACUTE_CHRONIC")
 
+# The subgroup a shell column names may be the protocol's age grouping, which
+# the rate tables carry as a column of their own and the per-patient tables
+# carry beside the descriptive bands. Either way the string is the same, so a
+# column reads the same group whichever table answers it.
+
 collapse_strata <- function(d, stat) {
   if (is.null(d) || nrow(d) < 2L || !stat %in% c("n_pct", "n")) return(d)
   for (nm in names(TFLS_STRATUM_TOTALS)) {
