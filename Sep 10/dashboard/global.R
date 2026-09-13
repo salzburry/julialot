@@ -30,7 +30,7 @@ source(file.path(.pkg_dir, "R", "modules", "01_cohorts.R"))
 
 source(file.path(.dash_dir, "config", "dashboard_config.R"))
 for (f in c("spec.R", "scenarios.R", "aggregate.R", "prepare.R", "synthetic.R",
-            "sources.R", "render.R", "panels.R"))
+            "sources.R", "render.R", "tfls.R", "panels.R"))
   source(file.path(.dash_dir, "R", f))
 
 SETTING_ENV <- setting_env_map()
