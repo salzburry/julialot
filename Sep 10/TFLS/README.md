@@ -99,6 +99,6 @@ The dashboard's **Tables** tab fills these shells from whichever scenario is
 selected, so the table, the scenario and the floor are controls and a shell can
 be watched to move as a definition moves. It reads this folder - `DASH_TFLS_DIR`
 names it where the two are not side by side - and nothing is duplicated there:
-the loader, the statistics and the suppression are the ones in `R/`. Rows
-nothing could fill are listed under the table rather than left blank, with the
-same reason `tfls_unfilled.csv` gives.
+the loader, the statistics and the suppression are the ones in `R/`. A toggle
+lists the rows nothing could fill under the table, with the same reason
+`tfls_unfilled.csv` gives, so a gap is visible rather than blank.
