@@ -2181,11 +2181,31 @@ cat("\n-- a run's version is its build, not its id --\n")
     release_recoverable_reset()
     ok(!length(release_recoverable()),
        "...which starts empty, so a second build under one run id does not inherit the first's finding")
-    release_recoverable_note("S_SAFETY_RATES_RELEASE: 3 COHORT/LOT_NUM group(s)")
+    ok(!length(release_recoverable_tables()),
+       "...both of it, the sentence and the list of tables it is about")
+    release_recoverable_note(
+      "S_SAFETY_RATES", "S_SAFETY_RATES_RELEASE: 3 COHORT/LOT_NUM group(s)")
     ok(length(release_recoverable()) == 1L &&
          grepl("S_SAFETY_RATES_RELEASE", release_recoverable()[[1]], fixed = TRUE),
        "...and names the table and the grouping, not just a count")
+    # The sentence is for a person; the list is what a gate refuses on. A gate
+    # that has to find table names inside a sentence is guessing, and the guess
+    # fails open in one direction and shut in the other: a reworded warning
+    # names no table, and a blanket refusal then follows from a change of
+    # wording rather than from a change of risk.
+    ok(identical(release_recoverable_tables(), "S_SAFETY_RATES"),
+       "...and says which table in a field of its own, so a gate does not have to read the sentence")
+    release_recoverable_note(
+      "S_SAFETY_RATES", "S_SAFETY_RATES_RELEASE: 1 group with one suppressed AGE_GROUP")
+    ok(length(release_recoverable()) == 2L &&
+         identical(release_recoverable_tables(), "S_SAFETY_RATES"),
+       "...and one table found twice is two findings and one table, not two")
+    release_recoverable_note("S_SWITCH", "S_SWITCH_RELEASE: 2 COHORT group(s)")
+    ok(setequal(release_recoverable_tables(), c("S_SAFETY_RATES", "S_SWITCH")),
+       "...while a second table is a second name")
     release_recoverable_reset()
+    ok(!length(release_recoverable()) && !length(release_recoverable_tables()),
+       "...and the reset clears both, so a second build under one run id inherits neither")
   })
   # "none" and "not run" are different answers and a gate must tell them
   # apart: a run without the release module has not been shown to have no
@@ -2207,6 +2227,10 @@ cat("\n-- a run's version is its build, not its id --\n")
      "...so a run with no release module says it did not look")
   ok(grepl("'none'", meta_of(MODULES[c("periods", "release")]), fixed = TRUE),
      "...and one that ran it and found nothing says none")
+  ok("RELEASE_RECOVERABLE_TABLES" %in% names(RUN_METADATA_COLS) &&
+       grepl("RELEASE_RECOVERABLE_TABLES", meta_of(MODULES[c("periods", "release")]),
+             fixed = TRUE),
+     "...and the tables that finding is about are a column of their own, written on every run")
   # A column that exists with a type this writer cannot insert into is found
   # before the DELETE, not by the insert failing after the row is gone.
   e_typ <- errs(with_env(base_env, {

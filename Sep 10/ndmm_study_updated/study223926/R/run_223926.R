@@ -172,7 +172,8 @@ RUN_METADATA_COLS <- c(
   LOT_RUN_ID = "string", LOT_RUN_VERSION = "string",
   STUDY_START = "string", STUDY_END = "string",
   CONTRACT_DEVIATIONS = "string", OPEN_QUESTION_READINGS = "string",
-  CODELISTS = "string", RELEASE_RECOVERABLE = "string")
+  CODELISTS = "string", RELEASE_RECOVERABLE = "string",
+  RELEASE_RECOVERABLE_TABLES = "string")
 
 write_run_metadata <- function(con, cfg, cohorts, mods, lot_run, deviations,
                                state, run_id = NULL, upstream = NULL) {
@@ -207,7 +208,16 @@ write_run_metadata <- function(con, cfg, cohorts, mods, lot_run, deviations,
             RELEASE_RECOVERABLE    = q(
               if (!"release" %in% names(mods)) "release module did not run"
               else if (length(release_recoverable()))
-                release_recoverable() else "none"))
+                release_recoverable() else "none"),
+            # The same finding as a list of table names, so a gate refuses the
+            # tables the module named rather than the ones it can find in that
+            # sentence. Empty where there is nothing to name AND where the
+            # module did not run: a reader that sees no list falls back to the
+            # sentence, which names no table and so refuses every released one.
+            # Empty therefore never narrows a refusal, only a real list does.
+            RELEASE_RECOVERABLE_TABLES = q(
+              if (!"release" %in% names(mods)) character(0)
+              else release_recoverable_tables()))
   # One declaration drives all three statements; a column declared with no
   # value, or a value with no column, stops the build here rather than in the
   # warehouse's words.

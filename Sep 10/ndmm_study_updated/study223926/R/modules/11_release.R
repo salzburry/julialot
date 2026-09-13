@@ -78,8 +78,9 @@ mod_release <- function(con, cfg, cohorts) {
               "one suppressed row, so that row is recoverable by subtraction ",
               "from the rest of its ", paste(grp, collapse = "/"),
               " group. Regroup before the table leaves the warehouse.")
-      release_recoverable_note(sprintf("%s_RELEASE: %d %s group(s)", tbl, n,
-                                       paste(grp, collapse = "/")))
+      release_recoverable_note(tbl,
+        sprintf("%s_RELEASE: %d %s group(s)", tbl, n,
+                paste(grp, collapse = "/")))
     }
   }
   # The stronger relation, where a table carries a stratification: the strata
@@ -110,7 +111,7 @@ mod_release <- function(con, cfg, cohorts) {
                 STRATUM_TOTALS[[nm]], "' row, so that one is the total less ",
                 "the published rest. Regroup, or withhold a second stratum, ",
                 "before the table leaves the warehouse.")
-        release_recoverable_note(sprintf(
+        release_recoverable_note(tbl, sprintf(
           "%s_RELEASE: %d %s group(s) with one suppressed %s", tbl, n,
           paste(c(spec$group_by, spec$facet), collapse = "/"), nm))
       }

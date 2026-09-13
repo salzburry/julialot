@@ -333,6 +333,11 @@ synthetic_one <- function(prefix, settings, min_n = 25L) {
     # the generator arranges, since every synthetic stratum is either well
     # over the floor or well under it.
     RELEASE_RECOVERABLE = "none",
+    # ...and the list of tables that goes with it, empty because there are
+    # none. Written so a synthetic scenario carries the same metadata shape a
+    # real one does, not so the reader narrows on it - "none" has already
+    # settled that there is nothing to refuse.
+    RELEASE_RECOVERABLE_TABLES = "",
     stringsAsFactors = FALSE)
 
   # The study's own per-line categorisation, which is how a class or a line

@@ -39,8 +39,8 @@
                                             fixed = TRUE))) else getwd()
 })
 
-TFLS_R_FILES <- c("classes.R", "shells.R", "stats.R", "suppress.R", "fill.R",
-                  "scope.R", "render.R")
+TFLS_R_FILES <- c("classes.R", "shells.R", "names.R", "stats.R", "suppress.R",
+                  "fill.R", "scope.R", "render.R")
 for (f in TFLS_R_FILES) source(file.path(.script_dir, "R", f))
 
 shells_dir <- file.path(.script_dir, "shells")
@@ -48,22 +48,6 @@ out_dir <- file.path(.script_dir, "out")
 
 env_chr <- function(nm, unset = "") trimws(Sys.getenv(nm, unset = unset))
 env_flag <- function(nm) identical(toupper(env_chr(nm)), "TRUE")
-
-# A name that may be used as one path segment or one table name, and nothing
-# else. A prefix is pasted into a file path and into a table name, so one
-# holding a slash or a quote would read something other than what was asked
-# for. Refused rather than repaired.
-safe_segment <- function(x) {
-  x <- chr(x)
-  length(x) == 1L && nzchar(x) && grepl("^[A-Za-z0-9][A-Za-z0-9._-]*$", x)
-}
-
-# A warehouse table name: one to three plain segments separated by dots.
-safe_table_name <- function(x) {
-  parts <- strsplit(chr(x), ".", fixed = TRUE)[[1]]
-  length(parts) >= 1L && length(parts) <= 3L &&
-    all(vapply(parts, safe_segment, logical(1)))
-}
 
 need_env <- function(nm, why) {
   v <- env_chr(nm)
@@ -152,13 +136,21 @@ snapshot_reader <- function(root, prefix, lot_dir = "") {
 
 warehouse_reader <- function(con, catalog, schema, prefix, cohort_table = "") {
   function(table) {
-    if (!safe_segment(table) || !safe_segment(prefix)) return(NULL)
     # The input cohort table is not one of the run's outputs and carries no
-    # prefix: it is read only where the run was told where it is.
+    # prefix: it is read only where the run was told where it is, and it comes
+    # already qualified, so it is quoted part by part.
+    #
+    # The prefix and the table are ONE identifier - "s223926_S_SAFETY_RATES" -
+    # so those two are quoted together.
     full <- if (toupper(table) %in% TFLS_COHORT_TABLE_NAMES) {
       if (!nzchar(cohort_table)) return(NULL)
-      cohort_table
-    } else sprintf("%s.%s.%s%s", catalog, schema, prefix, table)
+      sql_qualified_name(cohort_table)
+    } else {
+      q <- c(sql_name(catalog), sql_name(schema),
+             sql_name(paste0(prefix, table)))
+      if (anyNA(q)) NA_character_ else paste(q, collapse = ".")
+    }
+    if (is.na(full)) return(NULL)
     tryCatch(db_q(con, sprintf("SELECT * FROM %s", full)),
              error = function(e) NULL)
   }
@@ -273,16 +265,20 @@ main <- function() {
       stop("TFLS_PACKAGE_DIR '", pkg, "' holds no R/ directory.", call. = FALSE)
     schema <- need_env("PROJECT_WORK_SCHEMA",
                        "It is the schema the run wrote its tables into.")
-    if (!safe_segment(schema))
-      stop("PROJECT_WORK_SCHEMA '", schema, "' is not a plain name.",
+    # These three are warehouse names and nothing else - no path is built from
+    # them - so each is gated on whether quoting can hold it rather than on a
+    # pattern, which would refuse names this warehouse takes.
+    if (is.na(sql_name(schema)))
+      stop("PROJECT_WORK_SCHEMA '", schema, "' cannot be quoted as a name.",
            call. = FALSE)
     catalog <- env_chr("TFLS_CATALOG", unset = "hive_metastore")
-    if (!safe_segment(catalog))
-      stop("TFLS_CATALOG '", catalog, "' is not a plain name.", call. = FALSE)
-    cohort_table <- env_chr("TFLS_COHORT_TABLE")
-    if (nzchar(cohort_table) && !safe_table_name(cohort_table))
-      stop("TFLS_COHORT_TABLE '", cohort_table, "' is not a plain table name.",
+    if (is.na(sql_name(catalog)))
+      stop("TFLS_CATALOG '", catalog, "' cannot be quoted as a name.",
            call. = FALSE)
+    cohort_table <- env_chr("TFLS_COHORT_TABLE")
+    if (nzchar(cohort_table) && is.na(sql_qualified_name(cohort_table)))
+      stop("TFLS_COHORT_TABLE '", cohort_table, "' is not one to three ",
+           "quotable name parts.", call. = FALSE)
     library(DBI); library(odbc)
     for (f in c("config_223926.R", "db_utils_223926.R"))
       source(file.path(pkg, "R", f))

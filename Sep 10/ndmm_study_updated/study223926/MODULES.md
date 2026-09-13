@@ -171,12 +171,20 @@ than the line, so more of them fall under the floor. `mod_release()` warns
 where exactly one stratum of a group is suppressed, because the total less the
 published rest gives it away.
 
-That finding is also a column. `S_RUN_METADATA.RELEASE_RECOVERABLE` records
-it — the table and the grouping, or `none`, or `release module did not run`,
-which is a third answer and not the second: a run without the module has not
-been shown to have no recoverable cell, it has not looked. Whether to regroup
-or withhold a second stratum stays the analyst's call; a publication gate can
-read the column and refuse rather than rely on someone having read a log.
+That finding is also two columns. `S_RUN_METADATA.RELEASE_RECOVERABLE` records
+it in words — the table and the grouping, or `none`, or `release module did not
+run`, which is a third answer and not the second: a run without the module has
+not been shown to have no recoverable cell, it has not looked.
+`S_RUN_METADATA.RELEASE_RECOVERABLE_TABLES` records the same finding as a
+semicolon-separated list of table names. The sentence is for a person; the list
+is what a gate refuses on, because finding table names inside a sentence is a
+guess that fails in both directions — reword the warning and it names none, and
+a blanket refusal then follows from a change of wording rather than a change of
+risk. The list is empty where there is nothing to name **and** where the module
+did not run, so an empty list never narrows a refusal: a reader that sees none
+falls back to the sentence. Whether to regroup or withhold a second stratum
+stays the analyst's call; a publication gate reads the columns and refuses
+rather than relying on someone having read a log.
 
 **Six of the thirteen run today.** `MODULES=all`, the default, runs everything
 that has a usable code list. `spine`, `cohorts`, `attrition`, `periods`,

@@ -45,8 +45,8 @@ stops_with <- function(expr, txt, what) {
 has <- function(x, s) grepl(s, x, fixed = TRUE)
 near <- function(a, b, tol = 1e-6) !is.na(a) && !is.na(b) && abs(a - b) < tol
 
-for (f in c("classes.R", "shells.R", "stats.R", "suppress.R", "fill.R",
-            "scope.R", "render.R"))
+for (f in c("classes.R", "shells.R", "names.R", "stats.R", "suppress.R",
+            "fill.R", "scope.R", "render.R"))
   source(file.path(ROOT, "R", f))
 
 # --- a shell set, written to a temporary directory ---------------------------
@@ -928,9 +928,13 @@ cat("\n-- the runner --\n")
 RUNNER <- paste(readLines(file.path(ROOT, "run_tfls.R")), collapse = "\n")
 ok(has(RUNNER, 'gsub("~+~", " "'),
    "the script directory survives a space in a folder name")
-ok(all(vapply(c("classes.R", "shells.R", "stats.R", "suppress.R", "fill.R",
-                "scope.R", "render.R"), function(f) has(RUNNER, f), logical(1))),
-   "it sources the seven files that are in R/, and no file that is not")
+ok(all(vapply(c("classes.R", "shells.R", "names.R", "stats.R", "suppress.R",
+                "fill.R", "scope.R", "render.R"),
+              function(f) has(RUNNER, f), logical(1))) &&
+     setequal(list.files(file.path(ROOT, "R"), pattern = "[.]R$"),
+              c("classes.R", "shells.R", "names.R", "stats.R", "suppress.R",
+                "fill.R", "scope.R", "render.R")),
+   "it sources the eight files that are in R/, and no file that is not")
 ok(regexpr('if (!nzchar(src))', RUNNER, fixed = TRUE) <
      regexpr("library(DBI)", RUNNER, fixed = TRUE),
    "the source gate comes before library(DBI), so the plan prints where no driver is installed")
@@ -955,6 +959,30 @@ ok(has(RUNNER, "TFLS_TTE_ELIGIBLE_ONLY") && has(RUNNER, "TFLS_COHORT_TABLE"),
    "the two settings that change what a number means are read, and the run says which way it went")
 ok(has(RUNNER, "safe_segment(prefix)"),
    "a prefix is refused unless it is a plain name, because it is pasted into a path and a table name")
+
+# A FILE path and a TABLE name are different problems and safe_segment() only
+# answers the first. It allows a dot, which is a second identifier in a table
+# name, and it refuses names this warehouse takes once they are quoted.
+ok(identical(sql_name("s223926_"), "`s223926_`") &&
+     !is.na(sql_name("_wk")) && !is.na(sql_name("wk-1")) &&
+     !is.na(sql_name("2024")) && !is.na(sql_name("select")),
+   "a table name is quoted rather than matched, so a leading underscore, a hyphen, an all-digit name and a reserved word all read")
+ok(identical(sql_name("x; DROP TABLE p; --"), "`x; DROP TABLE p; --`"),
+   "...and a statement comes out as one identifier with that name, which no warehouse has")
+ok(is.na(sql_name("has`tick")) && is.na(sql_name("")) && is.na(sql_name(NA)),
+   "...while a backtick, an empty name and a missing one are refused, because quoting cannot hold them")
+ok(identical(sql_qualified_name("cat.sch.t"), "`cat`.`sch`.`t`") &&
+     identical(sql_qualified_name("t"), "`t`"),
+   "the input cohort table comes already qualified, and is quoted part by part")
+ok(is.na(sql_qualified_name("a.b.c.d")) && is.na(sql_qualified_name("a.`b")),
+   "...but no more than three parts, and none of them unquotable")
+ok(has(RUNNER, "is.na(sql_name(schema))") && has(RUNNER, "is.na(sql_name(catalog))") &&
+     has(RUNNER, "is.na(sql_qualified_name(cohort_table))") &&
+     !has(RUNNER, "safe_segment(schema)") && !has(RUNNER, "safe_segment(catalog)") &&
+     !has(RUNNER, "safe_table_name("),
+   "the three names that are only ever warehouse names are gated on quoting, not on a pattern")
+ok(has(RUNNER, "safe_segment(prefix)") && has(RUNNER, "file.path(root, prefix)"),
+   "...while the prefix keeps the path rule, because a path is built from it")
 
 
 # ---------------------------------------------------------------------------
