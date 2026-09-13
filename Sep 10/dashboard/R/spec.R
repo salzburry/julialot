@@ -47,14 +47,14 @@ TABLE_SPEC <- list(
 
   S_SAFETY_RATES = list(
     shape = "rate", label = "Key safety events",
-    keys = c("COHORT", "LOT_NUM", "PERIOD"),
+    keys = c("COHORT", "LOT_NUM", "PERIOD", "SOC_CATEGORY"),
     facet = "CONDITION", groups = c("DOMAIN", "ACUTE_CHRONIC"),
     n_col = "N_AT_RISK", rate = "RATE", lo = "RATE_LO", hi = "RATE_HI",
     numerator = "N_PATIENTS", events = "N_EVENTS", py = "PERSON_YEARS"),
 
   S_HCRU_RATES = list(
     shape = "rate", label = "Healthcare resource use",
-    keys = c("COHORT", "LOT_NUM", "PERIOD"),
+    keys = c("COHORT", "LOT_NUM", "PERIOD", "SOC_CATEGORY"),
     facet = "MEASURE",
     n_col = "N_AT_RISK", rate = "RATE",
     numerator = "N_PATIENTS", events = "N_EVENTS", py = "PERSON_YEARS",
@@ -62,7 +62,7 @@ TABLE_SPEC <- list(
 
   S_MALIGNANCY_RATES = list(
     shape = "rate", label = "Secondary malignancies",
-    keys = c("COHORT", "LOT_NUM", "PERIOD"),
+    keys = c("COHORT", "LOT_NUM", "PERIOD", "SOC_CATEGORY"),
     facet = "CATEGORY",
     n_col = "N_AT_RISK", rate = "RATE",
     numerator = "N_PATIENTS", py = "PERSON_YEARS"),
@@ -74,7 +74,7 @@ TABLE_SPEC <- list(
 
   S_TX_ATTRITION = list(
     shape = "count", label = "Treatment attrition",
-    keys = c("COHORT", "LOT_NUM"), facet = "OUTCOME",
+    keys = c("COHORT", "LOT_NUM", "SOC_CATEGORY"), facet = "OUTCOME",
     n_col = "N_PATIENTS", denom = "N_DENOM", pct = "PCT"),
 
   S_SWITCH = list(
@@ -156,7 +156,18 @@ TABLE_SPEC <- list(
 
 # A table nothing declared. Its keys are the columns the package uses as keys
 # everywhere, its numbers are whatever is numeric, and it is shown as a grid.
-GENERIC_KEYS <- c("COHORT", "LOT_NUM", "PERIOD")
+# The package writes the rate and count tables once for each line as a whole,
+# labelled (all categories), and once per regimen category. SOC_CATEGORY is a
+# key rather than a facet on those tables: a viewer selects a category the way
+# they select a line, and the default is the line's own row, because a chart
+# over every row would draw the line and its parts together.
+SOC_ALL_CATEGORIES <- "(all categories)"
+
+GENERIC_KEYS <- c("COHORT", "LOT_NUM", "PERIOD", "SOC_CATEGORY")
+
+# What a key starts at. Anything not named here starts at "all".
+key_default <- function(k, cohort_default)
+  switch(k, COHORT = cohort_default, SOC_CATEGORY = SOC_ALL_CATEGORIES, "all")
 
 table_spec <- function(name, cols = character(0)) {
   s <- TABLE_SPEC[[name]]

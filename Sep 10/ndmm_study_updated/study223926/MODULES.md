@@ -133,6 +133,26 @@ lands on the run's own metadata row where no reader can miss it.
 | `patterns` | `S_PATTERNS`, `S_SWITCH`, `S_TX_ATTRITION` | via `soc` |
 | `release` | `S_*_RELEASE` — every rate and percentage table with cells under 25 patients suppressed | — |
 
+### The rate tables are written twice
+
+`S_SAFETY_RATES`, `S_HCRU_RATES`, `S_MALIGNANCY_RATES` and `S_TX_ATTRITION`
+carry a `SOC_CATEGORY` column. Each is written once for the line as a whole,
+on rows labelled `(all categories)`, and once more per regimen category where
+the `soc` module ran. Both passes are the same query with one more column in
+the `GROUP BY`, so the washout, the person-time, the at-risk rule and the
+confidence intervals are unchanged and the categories are a partition of the
+line — `mod_patterns()` checks that they sum back to it and stops if they do
+not.
+
+**Anything reading these tables must say which it wants.** A query written
+before this column existed now sees the line and its parts together and will
+double count. `WHERE SOC_CATEGORY = '(all categories)'` is the old behaviour.
+
+Suppression is unchanged in kind and tighter in effect: a category is a
+smaller stratum, so more of them fall under the floor. `mod_release()` warns
+where exactly one category of a stratum is suppressed, because the total less
+the published rest gives it away.
+
 **Six of the thirteen run today.** `MODULES=all`, the default, runs everything
 that has a usable code list. `spine`, `cohorts`, `attrition`, `periods`,
 `demographics` and `tte` need none, so they always run: the cohorts `COHORTS`

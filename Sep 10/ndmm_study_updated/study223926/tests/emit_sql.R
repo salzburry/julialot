@@ -167,6 +167,10 @@ capture_emitted_sql <- function(here = ".", cfg_edit = identity,
 
   cohorts <- env$resolve_cohorts(cfg)
   mods    <- env$resolve_modules(cfg)
+  # The runner records which modules actually run, and a module that stratifies
+  # by another's output reads it off the config. Emitting without it would emit
+  # a different script from the one a run executes.
+  cfg$modules_run <- names(mods)
 
   errors <- character(0)
   note <- function(what, e)

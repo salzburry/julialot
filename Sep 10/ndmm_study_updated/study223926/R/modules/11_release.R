@@ -76,6 +76,32 @@ mod_release <- function(con, cfg, cohorts) {
               "from the rest of its ", paste(grp, collapse = "/"),
               " group. Regroup before the table leaves the warehouse.")
   }
+  # The stronger relation, where a table carries SOC_CATEGORY: the regimen
+  # categories of one facet value are a partition of that value's own
+  # (all categories) row, so one suppressed category is the total less the
+  # published rest. Reported for the same reason as above - regrouping is the
+  # analyst's call - but named precisely, because this one really does subtract.
+  for (tbl in names(SUPPRESSION_SPEC)) {
+    spec <- SUPPRESSION_SPEC[[tbl]]
+    if (is.null(spec$facet)) next
+    rel <- wrk(paste0(tbl, "_RELEASE"))
+    cols <- db_q(con, sprintf("SELECT * FROM %s LIMIT 0", rel))
+    if (!"SOC_CATEGORY" %in% names(cols)) next
+    grp <- paste(c(spec$group_by, spec$facet), collapse = ", ")
+    n <- db_q(con, sprintf(
+      "SELECT count(*) AS n FROM (
+         SELECT %1$s FROM %2$s WHERE SOC_CATEGORY <> '%3$s'
+         GROUP BY %1$s HAVING sum(SUPPRESSED) = 1)",
+      grp, rel, SOC_ALL_CATEGORIES))$n[1]
+    if (!is.na(n) && n > 0)
+      log_msg("  WARNING: ", n, " ", paste(c(spec$group_by, spec$facet),
+              collapse = "/"), " group(s) in ", tbl, "_RELEASE have exactly ",
+              "one suppressed regimen category. The categories sum to the ",
+              "'", SOC_ALL_CATEGORIES, "' row, so that one is the total less ",
+              "the published rest. Regroup, or withhold a second category, ",
+              "before the table leaves the warehouse.")
+  }
+
   log_msg("  released ", length(SUPPRESSION_SPEC), " table(s) with n < ",
           min_n, " suppressed")
 }

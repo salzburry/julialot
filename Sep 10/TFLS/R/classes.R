@@ -53,6 +53,12 @@ split_soc_categories <- function(x) {
 # Matched on the text as the package writes it, with case and spacing ignored,
 # so a heading that says "CAR-T" and a file that says "CAR-t" are the same
 # category and a file that says "CAR T" is not.
+# The label the study package writes on the row that is the line as a whole,
+# beside the rows that are its regimen categories. SOC_ALL_CATEGORIES in the
+# package's R/registry.R is the authority; it is restated here because a
+# snapshot is filled where the package is not installed.
+TFLS_SOC_ALL_CATEGORIES <- "(all categories)"
+
 soc_key <- function(x) toupper(gsub("[[:space:]]+", " ", trimws(chr(x))))
 
 unknown_soc_categories <- function(x) {

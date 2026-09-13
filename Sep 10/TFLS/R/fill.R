@@ -240,9 +240,27 @@ soc_patients <- function(ctx, line = "", cohort = "", categories = NULL,
 
 # The study assigns a category to a line, so a column naming a regimen class
 # has to name the line as well; the category of "the patient" is not a thing.
+# Whether this table is written once for the line as a whole and once per
+# regimen category, as against carrying SOC_CATEGORY as the thing its rows
+# enumerate. The total row is what tells the two apart, and it is looked for in
+# the data rather than assumed from the table's name.
+soc_stratified_table <- function(d) {
+  cl <- col_of(d, "SOC_CATEGORY")
+  !is.na(cl) && any(soc_key(d[[cl]]) %in% soc_key(TFLS_SOC_ALL_CATEGORIES))
+}
+
 restrict_to_class <- function(d, spec, ctx, where) {
   sel <- class_selection(spec$class, ctx$classes)
-  if (identical(sel$kind, "all")) return(list(ok = TRUE, rows = d))
+  if (identical(sel$kind, "all")) {
+    # An Overall column over a stratified table means the line's own row, not
+    # the line's row and every category of it added to itself.
+    if (soc_stratified_table(d)) {
+      cl <- col_of(d, "SOC_CATEGORY")
+      d <- d[soc_key(d[[cl]]) %in% soc_key(TFLS_SOC_ALL_CATEGORIES), ,
+             drop = FALSE]
+    }
+    return(list(ok = TRUE, rows = d))
+  }
   # A class the shell maps to nothing is the shell's gap to close: the study's
   # category, or that category narrowed by a drug, is how it would be closed.
   if (!identical(sel$kind, "categories")) return(refuse(sel$why, "shell"))
@@ -449,6 +467,42 @@ translate_class_term <- function(term, ctx) {
   list(ok = TRUE, term = term)
 }
 
+# Several regimen categories under one column heading.
+#
+# The study writes these tables once per category and checks that the
+# categories partition the line, so a column mapped to two of them is the two
+# counts added - exactly, not approximately. Only counts: a rate is not the sum
+# of its strata's rates and an interval is not the sum of theirs, so a rate
+# over more than one category is refused rather than invented.
+#
+# A suppressed row arrives with its count NULL, and the sum of an unknown is
+# unknown: the cell then has no denominator and is withheld, which is the safe
+# way round.
+TFLS_SOC_SUMMABLE <- c("N_PATIENTS", "N_EVENTS", "N_AT_RISK", "N_DENOM",
+                       "N_REMAINING", "PERSON_YEARS")
+
+# The columns that say WHICH stratum a row is. Everything else is a value, and
+# values are expected to differ between categories.
+TFLS_STRATUM_KEYS <- c("COHORT", "LOT_NUM", "PERIOD", "CONDITION", "MEASURE",
+                       "CATEGORY", "OUTCOME", "DOMAIN", "ACUTE_CHRONIC")
+
+collapse_soc_strata <- function(d, stat) {
+  if (is.null(d) || nrow(d) < 2L || !stat %in% c("n_pct", "n")) return(d)
+  cl <- col_of(d, "SOC_CATEGORY")
+  if (is.na(cl)) return(d)
+  cats <- chr(d[[cl]])
+  # One row per category of one stratum, or this is not a partition to add up.
+  if (anyDuplicated(cats) ||
+      any(soc_key(cats) %in% soc_key(TFLS_SOC_ALL_CATEGORIES))) return(d)
+  for (nm in intersect(TFLS_STRATUM_KEYS, names(d)))
+    if (length(unique(chr(d[[nm]]))) > 1L) return(d)
+  out <- d[1, , drop = FALSE]
+  for (nm in intersect(TFLS_SOC_SUMMABLE, names(d)))
+    out[[nm]] <- sum(suppressWarnings(as.numeric(d[[nm]])), na.rm = FALSE)
+  out[[cl]] <- paste(cats, collapse = " + ")
+  out
+}
+
 # --- one cell ---------------------------------------------------------------
 
 TFLS_NUMERATOR_COLUMNS <- c("N_PATIENTS", "N_REMAINING", "N_EVENTS", "N")
@@ -603,10 +657,17 @@ compute_cell <- function(pop, stat, measure, terms, where,
   if (!nrow(d))
     return(stat_refused(stat, paste0("no row of ", where, " matches ",
                                      measure$raw), "not_in_run"))
-  if (nrow(d) > 1L)
+  d <- collapse_soc_strata(d, stat)
+  if (nrow(d) > 1L) {
+    if (!is.na(col_of(d, "SOC_CATEGORY")) && identical(stat, "rate"))
+      return(stat_refused(stat, paste0("this column covers ", nrow(d),
+        " of the study's regimen categories and ", where, " carries a rate ",
+        "for each; a rate is not the sum of theirs, so the package would have ",
+        "to publish the pair"), "not_computable"))
     return(stat_refused(stat, paste0(nrow(d), " rows of ", where,
       " match this column and measure; the shell needs a filter that picks one"),
       "shell"))
+  }
   if (identical(stat, "rate")) {
     r <- num_col_value(d, "RATE")
     ev <- num_col_value(d, c("N_EVENTS", "N_PATIENTS"))

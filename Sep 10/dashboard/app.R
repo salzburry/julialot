@@ -127,7 +127,7 @@ server <- function(input, output, session) {
     lapply(names(lv), function(k)
       selectInput(paste0("key_", k), gsub("_", " ", k),
                   choices = c("all", lv[[k]]),
-                  selected = if (k == "COHORT") DASH_CFG$default_cohort else "all"))
+                  selected = key_default(k, DASH_CFG$default_cohort)))
   })
 
   selection <- reactive({

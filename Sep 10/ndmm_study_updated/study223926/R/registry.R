@@ -42,20 +42,28 @@ CRITERIA_1L <- c("I1_mm_dx", "I2_age", "I3_eligible_1l_tx", "I4_ce_pre",
 # `group_by` is the stratum a table's rows divide up. mod_release() reads it to
 # find the groups where exactly one row was suppressed, because that row is
 # recoverable by subtracting the published rest from the group's own total.
+# `facet` is the column whose values a table's rows enumerate. With
+# SOC_CATEGORY beside it the regimen categories of one facet value DO sum to
+# that value's (all categories) row, so a single suppressed category is
+# recoverable from the total less the published rest - a stronger relation than
+# the group above, and checked separately in mod_release().
 SUPPRESSION_SPEC <- list(
   S_SAFETY_RATES = list(
     n_col = "N_AT_RISK",
     group_by = c("COHORT", "LOT_NUM", "PERIOD"),
+    facet = "CONDITION",
     value_cols = c("N_PATIENTS", "N_EVENTS", "PERSON_YEARS", "RATE",
                    "RATE_LO", "RATE_HI")),
   S_HCRU_RATES = list(
     n_col = "N_AT_RISK",
     group_by = c("COHORT", "LOT_NUM", "PERIOD"),
+    facet = "MEASURE",
     value_cols = c("N_PATIENTS", "N_EVENTS", "PERSON_YEARS", "RATE",
                    "MEAN_LOS", "MEDIAN_LOS", "N_LOS_EXCLUDED")),
   S_MALIGNANCY_RATES = list(
     n_col = "N_AT_RISK",
     group_by = c("COHORT", "LOT_NUM", "PERIOD"),
+    facet = "CATEGORY",
     value_cols = c("N_PATIENTS", "PERSON_YEARS", "RATE")),
   S_PATTERNS = list(
     n_col = "N_PATIENTS",
@@ -68,9 +76,48 @@ SUPPRESSION_SPEC <- list(
   S_TX_ATTRITION = list(
     n_col = "N_PATIENTS",
     group_by = c("COHORT", "LOT_NUM"),
+    facet = "OUTCOME",
     value_cols = c("N_DENOM", "PCT"))
 )
 
+
+# --- the SOC stratification -------------------------------------------------
+#
+# The rate and count tables are written once for each line as a whole and, where
+# the soc module ran, once more for each regimen category. Both passes run the
+# SAME query with one more column in the GROUP BY, so the categories are a
+# partition of the line and sum back to its total: the counting rules, the
+# washout, the person-time and the confidence intervals are the ones above,
+# unchanged.
+#
+# The total keeps a row of its own rather than being left to be added up,
+# because a rate is not the sum of its strata's rates and a confidence interval
+# is not the sum of theirs. It is labelled, not blank: a NULL there would be
+# read as a missing category.
+SOC_ALL_CATEGORIES <- "(all categories)"
+
+# A line the soc module wrote no row for. It cannot happen while soc runs over
+# the same spine, and it is named rather than dropped so that the categories
+# still sum to the total if it ever does.
+SOC_UNCATEGORISED <- "(uncategorised)"
+
+soc_stratified <- function(cfg) isTRUE("soc" %in% cfg$modules_run)
+
+# The passes a module makes over its own query: the line's total, and the
+# categories where they can be had. `on` is the alias of the table in that
+# query carrying PATID, COHORT and LOT_NUM.
+soc_passes <- function(cfg, on) {
+  total <- list(key = "total", expr = sprintf("'%s'", SOC_ALL_CATEGORIES),
+                join = "", group = "")
+  if (!soc_stratified(cfg)) return(list(total))
+  expr <- sprintf("coalesce(soc.SOC_CATEGORY, '%s')", SOC_UNCATEGORISED)
+  list(total, list(
+    key = "by_soc", expr = expr,
+    join = sprintf("LEFT JOIN %s soc ON soc.PATID = %s.PATID
+                    AND soc.COHORT = %s.COHORT AND soc.LOT_NUM = %s.LOT_NUM",
+                   wrk("S_SOC"), on, on, on),
+    group = paste0(", ", expr)))
+}
 
 COHORTS <- list(
   `1L` = list(
