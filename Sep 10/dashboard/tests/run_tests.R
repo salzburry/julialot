@@ -142,8 +142,33 @@ cat("\nselection: what a viewer can change without a run\n")
   sp <- table_spec("S_HCRU_RATES")
   d <- read_table(SRC, "s223926_", "S_HCRU_RATES")
   ok(!is.null(d) && nrow(d) > 0, "a rate table reads back")
-  f <- apply_keys(d, sp, list(COHORT = "1L", LOT_NUM = "1", PERIOD = "follow_up"))
+  # The strata are pinned the way the page pins them: a rate table is written
+  # once for the line and once per stratum, so a selection that named neither
+  # would take the line and its own parts together.
+  line <- list(COHORT = "1L", LOT_NUM = "1", PERIOD = "TREATMENT",
+               SOC_CATEGORY = key_default("SOC_CATEGORY", "1L"),
+               AGE_BAND = key_default("AGE_BAND", "1L"))
+  f <- apply_keys(d, sp, line)
   ok(nrow(f) == 3 && all(f$COHORT == "1L"), "selecting on the spec's keys filters")
+  ok(identical(unique(f$SOC_CATEGORY), "(all categories)") &&
+       identical(unique(f$AGE_BAND), "(all ages)"),
+     "...and a stratum the viewer never touched is the line's own row")
+  by_soc <- apply_keys(d, sp, utils::modifyList(
+    line, list(SOC_CATEGORY = "Doublet/monotherapy")))
+  ok(nrow(by_soc) == 3 && all(by_soc$AGE_BAND == "(all ages)"),
+     "...and naming a regimen category leaves age at the line's own row")
+  # What the package guarantees and the shells add up on: the strata of one
+  # measure sum back to the line.
+  one <- function(x) x[x$MEASURE == "ALL_CAUSE_HOSPITALISATION", ]
+  parts <- one(apply_keys(d, sp, utils::modifyList(
+    line, list(SOC_CATEGORY = NULL))))
+  parts <- parts[parts$SOC_CATEGORY != "(all categories)", ]
+  ok(sum(parts$N_EVENTS) == one(f)$N_EVENTS,
+     "...and the synthetic categories sum to the line, as a real run's do")
+  aparts <- one(apply_keys(d, sp, utils::modifyList(line, list(AGE_BAND = NULL))))
+  aparts <- aparts[aparts$AGE_BAND != "(all ages)", ]
+  ok(sum(aparts$N_EVENTS) == one(f)$N_EVENTS,
+     "...and so do the age bands")
   ok(nrow(apply_keys(d, sp, list(COHORT = "all"))) == nrow(d),
      "and 'all' filters nothing rather than matching a cohort called all")
   ok(nrow(apply_keys(d, sp, list())) == nrow(d),
@@ -1238,7 +1263,8 @@ cat("\nthe readings survive the trip from the producer\n")
 cat("\ncomparing two scenarios\n")
 {
   sp <- table_spec("S_HCRU_RATES")
-  sel <- list(COHORT = "1L", LOT_NUM = "1", PERIOD = "follow_up")
+  sel <- list(COHORT = "1L", LOT_NUM = "1", PERIOD = "TREATMENT",
+              SOC_CATEGORY = "(all categories)", AGE_BAND = "(all ages)")
   g <- function(p) apply_keys(read_table(SRC, p, "S_HCRU_RATES"), sp, sel)
   cm <- compare_tables(g("s223926_"), g("s223926_q27_"), sp, "RATE")
   ok(nrow(cm) == 3, "every stratum in either scenario appears once")
@@ -1246,10 +1272,10 @@ cat("\ncomparing two scenarios\n")
      "with both values and the difference")
   ok("MEASURE" %in% names(cm) && length(unique(cm$MEASURE)) == 3,
      "and the table's own MEASURE column survives - it is not the value's name")
-  mm <- cm[cm$MEASURE == "mm_related_hospitalisation", ]
+  mm <- cm[cm$MEASURE == "MM_RELATED_HOSPITALISATION", ]
   ok(abs(mm$PCT_CHANGE - 100) < 2,
      "Q27 roughly doubles the MM-related rate, which is what the profile found")
-  ok(all(abs(cm$DELTA[cm$MEASURE != "mm_related_hospitalisation"]) < 1e-9),
+  ok(all(abs(cm$DELTA[cm$MEASURE != "MM_RELATED_HOSPITALISATION"]) < 1e-9),
      "and moves nothing it does not reach - a difference here IS the setting")
   cm2 <- compare_tables(g("s223926_"), g("s223926_q25_"), sp, "RATE")
   ok(all(abs(cm2$PCT_CHANGE - 17) < 1),

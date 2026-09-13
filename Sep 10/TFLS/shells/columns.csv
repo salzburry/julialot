@@ -1,5 +1,7 @@
 table_id,col_id,group,label,order,cohort,lot_num,class,subgroup,period
-F1,N,,N,1,,,OVERALL,,
+F1,N_1L,Patients remaining,1L (NDMM),1,1L,,OVERALL,,
+F1,N_2L,Patients remaining,2L (RRMM),2,2L,,OVERALL,,
+F1,N_3L,Patients remaining,3L (RRMM),3,3L,,OVERALL,,
 T1,1L_OVERALL,1L (N=),Overall,1,1L,1,OVERALL,,
 T1,1L_ACD38_QUAD,1L (N=),aCD38 Quad,2,1L,1,ACD38_QUAD,,
 T1,1L_ACD38_TRIP,1L (N=),aCD38 Triplet,3,1L,1,ACD38_TRIP,,
