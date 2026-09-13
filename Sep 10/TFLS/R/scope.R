@@ -143,6 +143,10 @@ run_table_owner <- function(table) {
 # disagree. A table is the run's only if the run's own metadata names the
 # module that writes it, and - for a module's optional output - if the run
 # recorded that output's switch on.
+#
+# The run's STATE is not asked here. The dashboard asks it per table because it
+# draws several runs at once; a run that is not complete stops this command in
+# bind_run() instead, since a document half from one build is not one to write.
 run_table_status <- function(scope, table) {
   t <- toupper(chr(table))
   yes <- list(ok = TRUE, why = "")

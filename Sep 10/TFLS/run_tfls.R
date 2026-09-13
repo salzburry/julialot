@@ -296,11 +296,10 @@ main <- function() {
     con <- connect_db(cfg)
     on.exit(try(disconnect_db(con), silent = TRUE), add = TRUE)
     where <- sprintf("%s.%s.%s", catalog, schema, prefix)
-    md <- bind_run(warehouse_reader(con, catalog, schema, prefix, cohort_table),
-                   where)
+    under_prefix <- warehouse_reader(con, catalog, schema, prefix, cohort_table)
+    md <- bind_run(under_prefix, where)
     scope <- run_scope(md)
-    reader <- run_reader(warehouse_reader(con, catalog, schema, prefix,
-                                          cohort_table), scope)
+    reader <- run_reader(under_prefix, scope)
     recheck <- function()
       bind_run(warehouse_reader(con, catalog, schema, prefix), where)
   }

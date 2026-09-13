@@ -99,6 +99,30 @@ therapies and `Bi-specific` holds both bispecific categories, so the columns are
 disjoint and a patient is counted once. And the transplant-only lines belong to
 no column at all, so the class columns do not sum to `Overall`.
 
+## What the study does not stratify, and what that empties
+
+A row can only be cut the way the table it reads is cut. The package writes
+`S_SAFETY_RATES`, `S_HCRU_RATES`, `S_MALIGNANCY_RATES`, `S_PATTERNS` and
+`S_TX_ATTRITION` grouped by cohort, line and period - no SOC category, and no
+patient id to carry a subgroup by. So every column of a shell that names a
+regimen class or a subgroup reads as not filled against those five tables, and
+says which of the two it was:
+
+- **T2a and T2b** fill in the Overall column of each period. The regimen class
+  columns, and the age columns the protocol asks for, cannot be filled until
+  the package groups safety and HCRU by those as well.
+- **T2x** fills its treatment and outcome rows in the Overall columns; its
+  subgroup columns fill only the rows that read a per-patient table.
+
+Everything reading a per-patient table - demographics, comorbidity, frailty,
+periods, SOC and the time-to-event outcomes - takes both, because a subgroup is
+a set of patients and those tables name patients. That is the whole of T1, T1b,
+T4, T5c and most of T3.
+
+This is one study-side change, not a shell edit, which is why the columns are
+left in place: they state what was asked for, and `tfls_unfilled.csv` names the
+table that cannot answer it.
+
 ## Disclosure
 
 Every cell goes through the same small-cell rule the study package applies, at
