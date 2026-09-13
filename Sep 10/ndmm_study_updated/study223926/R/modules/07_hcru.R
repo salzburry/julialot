@@ -14,23 +14,20 @@
 # ED_DEFINITION says which. The three usual ones disagree materially -
 # ../OPEN_QUESTIONS.md Q11.
 # The three measures s7.2.4 asks for, and the event each is true of. Data
-# rather than a literal repeated twice, because the rates below are driven from
-# the DENOMINATOR and the measure list is what turns one line's person-time
-# into one row per measure - a list that fell out of step with the map would
-# silently drop a measure.
+# rather than a literal repeated twice: the rates below are driven from the
+# DENOMINATOR, and this list is what turns one line's person-time into one row
+# per measure.
 HCRU_MEASURES <- c(
   ALL_CAUSE_HOSPITALISATION  = "e.EVENT_TYPE = 'INPATIENT'",
   MM_RELATED_HOSPITALISATION = "e.EVENT_TYPE = 'INPATIENT' AND e.MM_RELATED = 1",
   ED_VISIT                   = "e.EVENT_TYPE = 'ED'")
 
-# The family of a confinement diagnosis comes from CONFINEMENT.ICD_FLAG, which
-# the data dictionary lists (../DATA_MAPPING.md section 4) - a comment here
-# once claimed the table had no such column, and read the family off the admit
-# date instead. The date is kept as a FALLBACK for a row whose flag is null or
-# unrecognised, because an unrecognised family matches neither and would drop
-# the row silently. An ICD-9 myeloma code (2030) and an ICD-10 one (C900) are
-# different strings; matching either against a claim of the wrong vintage is a
-# false hit nothing downstream could see.
+# The family of a confinement diagnosis comes from CONFINEMENT.ICD_FLAG
+# (../DATA_MAPPING.md section 4). The admit date is a FALLBACK for a row whose
+# flag is null or unrecognised, because an unrecognised family matches neither
+# and would drop the row silently. An ICD-9 myeloma code (2030) and an ICD-10
+# one (C900) are different strings, and matching either against a claim of the
+# wrong vintage is a false hit nothing downstream could see.
 ICD10_TRANSITION <- "2015-10-01"
 
 # What the HCRU list must satisfy beyond its shape: ED_VISIT rows, of every
@@ -47,7 +44,7 @@ check_hcru_list <- function(cfg, cl = load_codelist("hcru.csv", cfg)) {
   # The R check is case-insensitive, so the SQL join must be too - otherwise a
   # file typed 'rvnu' passes validation and then matches nothing, and the run
   # reports zero ED visits as if that were a finding. register_codelist_view()
-  # publishes code_type_norm for exactly this.
+  # publishes code_type_norm for it.
   want <- c(revenue = "rvnu", pos = "pos", cpt = "cpt")
   chosen <- want[cfg$ed_definition]
   absent <- chosen[!chosen %in% have]
@@ -77,12 +74,10 @@ mod_hcru <- function(con, cfg, cohort) {
       "(cl.code_type_norm = 'CPT' AND upper(regexp_replace(trim(m.PROC_CD),'[^A-Za-z0-9]','')) = cl.code_norm)"))
 
   # Which route decides that a stay is MM-related - open question Q27. The two
-  # routes disagree by a factor of two: over 241,362 myeloma-patient stays the
-  # confinement's own first two diagnoses find 32,508, the claim positions find
-  # 65,206, and 33,904 of those only the claim route finds. Another 33,978 carry
-  # MM in confinement positions 3-5, which neither route counts.
-  # s7.8.1 does not say which it means, so both are built and the run records
-  # which it took. `confinement` is the default every number so far used.
+  # disagree by a factor of two: over 241,362 myeloma-patient stays the
+  # confinement's own first two diagnoses find 32,508 and the claim positions
+  # find 65,206, of which 33,904 only the claim route finds. s7.8.1 does not say
+  # which it means, so both are built and the run records which it took.
   mm_hosp_subq <- if (identical(cfg$mm_hosp_position, "claim_positions")) sprintf(
     "-- Route B. MM in DIAG_POSITION 1 or 2 on a claim carrying the stay's
       -- CONF_ID, which is the route business rule 13 documents: twenty-five
@@ -191,24 +186,19 @@ mod_hcru <- function(con, cfg, cohort) {
     claim_status_sql(cfg, "m"), mm_hosp_subq),
     # A cohort with no hospitalisation and no ED visit is a valid study result.
     # The rates below are driven from the DENOMINATOR, so every measure still
-    # gets a row saying zero - but only if the run reaches them, and the
-    # zero-row guard stopped it here first. Safety and comorbidity allow their
-    # equivalent empty intermediates; this one was missed.
+    # gets a row saying zero.
     allow_empty = TRUE,
-    # A count FIRST: run_step's zero-row guard reads the first column, and a
+    # A count first: run_step's zero-row guard reads the first column, and a
     # string there makes as.numeric() give NA and the guard skip silently.
     qc = sprintf("SELECT count(*) AS n_events,
                     sum(CASE WHEN EVENT_TYPE='INPATIENT' THEN 1 ELSE 0 END) AS n_ip,
                     sum(CASE WHEN EVENT_TYPE='ED' THEN 1 ELSE 0 END) AS n_ed
                   FROM %s WHERE COHORT='%s'", wrk("S_HCRU_EVENTS"), cohort$key))
 
-  # Both periods, in one table, assigned by ADMIT date.
-  #
-  # Grouped BY LINE, not summed across the cohort - a total would give every
-  # line the same person-time and understate each rate.
-  #
-  # The SELECT is driven from the denominator, not the events, so a line with
-  # person-time and no events appears as a rate of zero rather than no row.
+  # Both periods, in one table, assigned by ADMIT date. Grouped BY LINE, not
+  # summed across the cohort, since a total would give every line the same
+  # person-time. The SELECT is driven from the denominator, not the events, so
+  # a line with person-time and no events is a rate of zero rather than no row.
   for (per in list(
     list(name = "BASELINE",  start = "p.BASELINE_START", end = "p.BASELINE_END",
          py = "BASELINE_PY", src = wrk("S_PERIODS")),
@@ -286,7 +276,7 @@ mod_hcru <- function(con, cfg, cohort) {
 }
 
 # The MM diagnosis codes, as a view, for the MM-related hospitalisation test.
-# Read from the same mm_dx.csv the cohort build used, so the two cannot
+# Read from the same code list the cohort build used, so the two cannot
 # disagree about what myeloma is.
 build_mm_dx_view <- function(con, cfg) {
   cl <- load_codelist("mm_dx.csv", cfg)

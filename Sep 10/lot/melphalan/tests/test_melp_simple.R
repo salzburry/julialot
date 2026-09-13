@@ -4,11 +4,9 @@
 #
 #   Rscript "lot/melphalan/tests/test_melp_simple.R"
 #
-# This replaces test_aug1_melp.R, which was the suite for the five-branch rule
-# the study did not adopt. What is kept from it is everything that was really
-# about melp_rule.R rather than about that rule: the off-path hooks, the
-# newline discipline every spliced fragment needs, and the cell machinery's
-# refusal to write over the study's own tables.
+# What is covered: the off-path hooks, the newline discipline every spliced
+# fragment needs, and the cell machinery's refusal to write over the study's
+# own tables.
 
 ROOT   <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -79,17 +77,11 @@ sf <- function(f) paste(readLines(file.path(LOT, "R", "steps", f), warn = FALSE)
 ok(has(sf("06_lot1_end.R"), "FROM {melp_lot1_base_from(cfg)}") &&
      has(sf("06_lot1_end.R"), "WITH{melp_lot1_ctes(cfg)}"),
    "LOT1 has exactly two decision hooks, both in 06")
-# 04 carries the decision too, and that is the point. It used to carry only the
-# short-course gate, on the reasoning that the decision reads lot1_base and
-# lot1_base is what 04 builds. That reasoning was wrong: the decision reads
+# 04 carries the decision as well as the short-course gate. The decision reads
 # LOT1_START_DT and OBS_END_DT and nothing else of the line, and both exist a
-# statement earlier - lot1_regimen_cutoff has the start, the cohort has the
-# observation end. Believing otherwise is what left 04 chaining the doses and
-# judging length and window for itself, and never asking whether a course was
-# confirmed, so a confirmed course was a boundary in 06 and no boundary here.
-#
-# Same helper as 06, differing only in where the line comes from, so the two
-# statements cannot judge a course differently.
+# statement earlier: lot1_regimen_cutoff has the start, the cohort has the
+# observation end. It is the same helper as 06, differing only in where the
+# line comes from, so the two statements cannot judge a course differently.
 ok(has(sf("04_lot1_base.R"), "melp_lot1_ctes(cfg, line_from =") &&
      has(sf("04_lot1_base.R"), "melp_lot1_verdict_cte(cfg)") &&
      has(sf("04_lot1_base.R"), "melp_short_course_ctes(cfg, 'melp_verdict')") &&
@@ -103,14 +95,11 @@ ok(has(sf("10_lot2_5_base.R"), "{melp_lotn_ctes(cfg, lot_num, induction_window_d
 
 cat("\n-- and every fragment opens with its own newline --\n")
 # Each one splices straight after a {} in the step template, and glue() trims a
-# template's leading blank line - so a fragment that does not open with one
-# welds onto the text before it.
-#
-# Not a formatting nit. A fragment without its own newline produces
+# template's leading blank line, so a fragment that does not open with one
+# welds onto the text before it:
 #   AND i.INJECT_DT <= lot2_start.OBS_END_DTAND lot2_start.LOT2_START_TYPE ...
-# which parses as an identifier OBS_END_DTAND followed by a table name, and
-# kills the build in Spark. The off-path tests above cannot catch it: off emits
-# nothing, and nothing is what they check.
+# which Spark parses as an identifier OBS_END_DTAND followed by a table name.
+# The off-path tests above cannot catch it, since off emits nothing.
 FRAGMENTS <- list(
   melp_lot1_ctes           = list(on),
   melp_lotn_ctes           = list(on, 2, 30L, 45L, "single_day"),
@@ -145,9 +134,8 @@ ok(has(melp_boundary_break_pred(on), "nb2.PATID IS NOT NULL"),
 
 cat("\n-- the rule the study adopted --\n")
 # A short course outside induction advances nothing on its own; a new agent
-# starting inside the course advances it on the MELPHALAN date. Branch
-# behaviour on real patients is proved end to end by the repository's
-# planted-patient harnesses; these pin the shape of the SQL.
+# starting inside the course advances it on the melphalan date. These
+# assertions pin the shape of the SQL.
 ok(identical(MELP_RULE_ON, "simplified") && identical(MELP_RULE_OFF, "off"),
    "one rule is left, and APPLY_MELP_RULE is on or off")
 stops(melp_decision_ctes(on, "L", "S", "E", "L.IND_END"),
@@ -183,11 +171,10 @@ cells <- melp_cell_plan()
 ok(length(cells) == 2L, "two builds: the study's, and one without the rule")
 ok(identical(cells[[2]]$id, "simplified") && is.na(cells[[2]]$mode),
    "the cell carrying the rule IS the contract build, so it deviates from nothing")
-# Since the study adopted the rule, the cell WITHOUT it is the deviating one.
+# Since the study adopted the rule, the cell without it is the deviating one.
 # A cell asking for no rule has to say the word: load_inputs.R fills an empty
 # variable from config.csv, which carries the contract value, so a blank
-# APPLY_MELP_RULE would build the contract and the package would compare it
-# with itself.
+# APPLY_MELP_RULE would build the contract and compare it with itself.
 ok(identical(cells[[1]]$mode, "off") && identical(cells[[1]]$melp, "off"),
    "...and the rule-off cell names the word rather than asking with a blank")
 runs(check_melp_plan(cells, "ndmm_"), "the plan is safe to run beside the study")
@@ -239,9 +226,9 @@ local({
 
 cat("\n-- what a cell has to be before its numbers are read --\n")
 # Every guard in cells.R exists because a comparison can look right and be
-# between two different worlds. None of them was exercised until now.
+# between two different worlds.
 
-# "a=1|b=2" to a named list, splitting on the FIRST = only.
+# "a=1|b=2" to a named list, splitting on the first = only.
 ps <- melp_parse_settings("apply_melp_rule=simplified|melp_med_abbr=MELP")
 ok(identical(ps$apply_melp_rule, "simplified") && identical(ps$melp_med_abbr, "MELP"),
    "settings parse back out of the pipe-separated string the build records")
@@ -379,7 +366,7 @@ local({
   stops(cell_status(NULL, cell),
         "a status table that cannot be read is reported as that, not as a missing row")
 
-  # ...and again immediately before anything is written.
+  # And again immediately before anything is written.
   answer <- data.frame(RUN_ID = "R1", STATE = "complete", UPDATED_AT = "T1",
                        stringsAsFactors = FALSE)
   assign("db_q", function(con, sql) answer, envir = globalenv())
@@ -456,16 +443,13 @@ ok(has(rs, "melp_status_unchanged") && has(rs, "melp_check_code") &&
    "the read carries the package's run-ownership checks")
 
 cat("\n-- and both are RUN, not just read --\n")
-# Everything above inspects SQL as text. Text cannot tell you that a join lost
-# a bound, that a CASE can never be true, or that a count is measuring
-# something other than what its alias says - and these statements produce the
-# numbers the comparison is published from.
-#
-# So the measurement SQL and the rule's own decision chain are executed
-# against fixtures whose answers are worked out by hand, in tests/exec_cells.R
-# and tests/exec_rule.R. Skipped where duckdb and sqlglot are not installed;
-# the transpile to duckdb is a compromise, not a substitute for a warehouse
-# run.
+# Everything above inspects SQL as text, which cannot tell that a join lost a
+# bound, that a CASE can never be true, or that a count measures something
+# other than what its alias says. So the measurement SQL and the rule's
+# decision chain are executed against fixtures whose answers are worked out by
+# hand, in tests/exec_cells.R and tests/exec_rule.R. Skipped where duckdb and
+# sqlglot are not installed; the transpile to duckdb is a compromise, not a
+# substitute for a warehouse run.
 source(file.path(ROOT, "tests", "exec_cells.R"))
 source(file.path(ROOT, "tests", "exec_rule.R"))
 
@@ -518,7 +502,7 @@ if (identical(mres, "skip") || identical(rres, "skip") ||
                  paste0("  [got ", format(got), "]") else ""))
   }
 
-  # ...and by line, where the row is the LOT number rather than the position.
+  # And by line, where the row is the LOT number rather than the position.
   lot_row <- function(n) {
     hit <- mres$row[mres$id == "by_line" & mres$col == "LOT_NUM" &
                       mres$value == n]
@@ -593,19 +577,17 @@ if (identical(mres, "skip") || identical(rres, "skip") ||
                  " | missing: ",
                  paste(setdiff(NO_BREAK_EXPECT, nb), collapse = ", ")))
 
-  # Every case in the fixture is a case somebody wrote an expectation for, and
-  # every rule branch keeps one. A patient added without an expectation, or an
-  # expectation for a patient nobody plants, is caught here rather than
-  # passing silently.
+  # Every case in the fixture carries an expectation and every rule branch
+  # keeps one, so a patient added without an expectation is caught here.
   ok(all(vapply(RULE_CASES, function(c_i) length(c_i$expect) > 0L, logical(1))),
      "every planted patient carries an expectation")
 }
 
-# The suppression predicate carries BOTH halves. Executing the decision chain
-# cannot see this one: the predicate is spliced into the STEPS' candidate
-# lists, not into the chain. A suppressed course's later doses and an injected
-# course's later doses are refused a line for the same reason, and dropping
-# either half gives one of them a line of its own.
+# The suppression predicate carries both halves. The decision chain cannot show
+# this: the predicate is spliced into the steps' candidate lists, not into the
+# chain. A suppressed course's later doses and an injected course's later doses
+# are refused a line for the same reason, and dropping either half gives one of
+# them a line of its own.
 sp <- melp_suppress_predicate(on)
 ok(has(sp, "melp_suppress_dates") && has(sp, "melp_inject_rest"),
    "no melphalan dose the rule refused a line is left on the candidate list")

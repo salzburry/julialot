@@ -73,8 +73,8 @@ rather than a result.
 
 Pinned in `CONTRACT`, `lot/engine/R/build_lot.R`. A run that changes any of them
 needs `LOT_CONTRACT_OVERRIDE=TRUE` and records the change in
-`CONTRACT_DEVIATIONS` on its status row, which every reader in this repo refuses
-as the study's numbers.
+`CONTRACT_DEVIATIONS` on its status row, which every reader refuses as the
+study's numbers.
 
 | Setting | Value | What it governs |
 |---|---|---|
@@ -205,13 +205,6 @@ opens on the transplant date.
 Lines 2 to 5 do not keep this convention: there the first transplant outside the
 previous line's window ends the line (§4.1).
 
-> Until 2026-09-02 this section said a first transplant outside the window ended
-> line 1 and opened line 2. The build has never done that — a lone first
-> transplant leaves a live line 1 byte-for-byte unchanged — and `S03` in the
-> scenario catalogue pins the build's answer, so the sentence contradicted both
-> the code and the test that guards it. Corrected to the code, on the study
-> team's decision that the code is right.
-
 ---
 
 ## 4. Lines 2 to 5
@@ -263,9 +256,7 @@ start to offer. That is a different gate from §4.3, which stops the same agent
 *starting* a line and is unconditional.
 
 Whether membership should be an episode start or any fill in the window is an
-open question - Q1 on the scenario workbook's Open questions sheet.
-`run_scenario_counts.R`'s `4.2-prior-agent-covered-but-not-in-the-regimen`
-sizes it.
+open question.
 
 ### 4.3 A drug of the previous regimen never starts a line
 
@@ -347,13 +338,9 @@ a line start and never reaches the test.
 regimen.** A drug is in that regimen only through an episode starting at or
 after that line's start (§3.3), and the return has to be inside the line being
 built, so exactly one line can have opened in between. The row is kept because
-it states the rule the study team asked for. The scope is settled at the
-previous line — decided 30 Aug, recorded in section 2 of `STUDY_TEAM_ASKS.md`
-with why the two readings are not equivalent — so the row is a statement of the
-rule rather than a branch waiting to fire. Widening the scope is what would make
-it reachable, and that is a change to the settled rule, not a defect to fix.
-The fold-in harness pins the outcome the row describes, by the route the narrow
-scope actually takes, and says so where it does (`F13`).
+it states the rule the study team asked for, with the scope settled at the
+previous line. Widening that scope is what would make it reachable, and that is
+a change to the settled rule.
 
 A return only joins the line that actually contains it. While lines are built in
 order the count is relative to the line being built, so a return with another
@@ -489,7 +476,7 @@ line the new line then held melphalan out of — QC checks `A7` and `C4` both ca
 that a failure. And an autologous transplant coded on the same date was read as
 the in-window first half of a tandem pair, so its partner months later was
 refused a line of its own and belonged to nothing — `E5`. Neither is inside
-anything: the line holds nothing open. Planted as `P0008` and `P0007`.
+anything: the line holds nothing open.
 
 **A steroid never confirms a course.** Corticosteroids are not oncology agents
 (§2.1), so melphalan given with one is still melphalan on its own: the course
@@ -524,7 +511,7 @@ it. It cannot make that line's course advance, and the course is held where it
 falls. This is the same test a transplant already gets — a course on day 100
 with an allograft on 102 and a new drug on 105 is not confirmed by that drug —
 applied to the only medication that can be a boundary here without confirming
-the course itself. Worked example: `ZB1`/`ZB2` in the melphalan harness.
+the course itself.
 
 The two drugs starting on the **same** day are not this case. Neither is after
 the other; they open one line together, and the new one confirms as it would
@@ -537,7 +524,6 @@ the previous regimen named that drug, so a CAR-T line went on to claim a course
 falling after the return, and was carried from a single day to the day before
 it. Where a procedure opened the line, §4.8 refuses the fold — so the return is
 line-defining there and the course after it is not the procedure line's.
-Worked example: `ZB3`/`ZB3x`.
 
 **"Not new" is the previous line only, the same scope §4.8's fold set reads.**
 A drug last given further back than that is a new agent here and confirms a
@@ -570,21 +556,20 @@ at all. Without that bound each line re-judged every earlier course against its
 own window, and two things followed. A conditioning course line 1 held inside
 its 60 days came back **suppressed** at line 2 — so §4.8 lost it as a returning
 drug's previous dose, and a melphalan re-challenge that should have folded
-opened a line of its own (`F36`/`F36c` in the fold-in harness). And the hold
-followed the same course forward, handing a later transplant-opened line with no
-regimen a run-out before its own start, which §7.1's `SCT_AUTO_CONT` branch read
-as a line ending too early and clamped to a single day — the state QC check `B7`
-calls a failure (`SU1`/`SU2` in the melphalan harness).
+opened a line of its own. And the hold followed the same course forward,
+handing a later transplant-opened line with no regimen a run-out before its own
+start, which §7.1's `SCT_AUTO_CONT` branch read as a line ending too early and
+clamped to a single day — the state QC check `B7` calls a failure.
 
 A course inside the induction window of the line that owns it is inside an
 induction window, and §4.7 asks whether a course is outside **any** of them. So
 a course an **earlier** line took into its own window is never suppressed by a
 later one, whether or not its cover reaches that line — the cover test above
 only settles which line may judge a course at all, and a conditioning course
-covering *into* the next line was still being re-judged and suppressed there
-(`F37`/`F37c`). A course that **opened** a line is not in that set: it sits on
-its own line's first day, and protecting it would stop the line a transplant
-opens next from suppressing it, leaving a later dose a line of its own (`SQ`).
+covering *into* the next line was still being re-judged and suppressed there.
+A course that **opened** a line is not in that set: it sits on its own line's
+first day, and protecting it would stop the line a transplant opens next from
+suppressing it, leaving a later dose a line of its own.
 
 One thing that test does not ask is whether the agent could open a line at all.
 An agent past the line's own run-out, or landing exactly on the line's end, opens
@@ -772,8 +757,7 @@ that matters.
 dates and the gap between them, so a pair whose first transplant falls outside
 its line's window is still a tandem and still counts as one event: at line 1 a
 pair on days 200 and 300 leaves the **third** transplant as the one that ends
-the line, exactly as an in-window pair would — scenario `S11c`, and `S11a` and
-`S11b` are the one- and two-transplant cases beside it.
+the line, exactly as an in-window pair would.
 
 **What the window decides is whether the pair holds the line OPEN.** Only a
 first transplant inside the line's applicable window can do that (§6.5), and
@@ -922,7 +906,7 @@ CAR-T on one day, and both sites record `SCT_ALLO`. The two CASE statements
 list their reasons in different orders — line 1 tests AUTO first, lines 2–5
 test ALLO first — but neither AUTO arm is reachable on a tie, so the
 difference is one of wording, not of behaviour; the end date is identical
-either way. Recorded as open question Q4.
+either way.
 
 `SCT_CART` therefore arises two ways: a line that ends at a CAR-T, and a
 CAR-T-started line with no consolidation agent, which spans a single day.
@@ -1050,7 +1034,6 @@ reasons, and those cases route by their earliest applicable event.
 | Line criteria and truncation | `lot/engine/R/line_criteria.R` |
 | The CAR-T induction rule | `lot/engine/R/cart_rule.R` |
 | The scenarios above, machine-checked | `lot/validation/R/vignettes.R` |
-| The patients the CAR-T rule touches | `analysis/questions/jul20_studyteam_qs.R` |
 
 ## 12. What stops a run
 

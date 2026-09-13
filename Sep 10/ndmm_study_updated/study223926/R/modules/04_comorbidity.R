@@ -11,10 +11,12 @@
 # condition. MM alone scores 0; MM plus breast cancer still scores
 # any_malignancy. The name test stays for a list that does name myeloma.
 #
-# Frailty and the subgroup flags need annexes that were not delivered, so both
-# are switches, off by default. Switched on, the guard stops naming the annex.
-# What the Charlson list must carry beyond its shape. The module runs it as
-# it starts; the preflight runs it before the connection is opened.
+# Frailty and the subgroup flags need code lists that carry no codes yet, so
+# both are switches, off by default. Switched on, the guard stops and names the
+# annex the codes come from.
+
+# What the Charlson list must carry beyond its shape. The module runs it as it
+# starts; the preflight runs it before the connection is opened.
 check_charlson_list <- function(cfg, cl = load_codelist("charlson_quan2011.csv", cfg)) {
   if (!"weight" %in% names(cl))
     stop("CODELIST ERROR: charlson_quan2011.csv has no weight column.",
@@ -30,9 +32,8 @@ mod_comorbidity <- function(con, cfg, cohort) {
   mm_view <- "S_CL_MM_DX"
 
   # Quan's index is hierarchical: a patient with both mild and severe liver
-  # disease scores the severe weight only, not both, and the same holds for
-  # diabetes with and without complications and for cancer versus metastatic
-  # solid tumour. Summing every matched condition inflates the score.
+  # disease scores the severe weight only, and the same holds for diabetes with
+  # and without complications and for cancer versus metastatic solid tumour.
   #
   # The hierarchy is data, not code: an optional `supersedes` column naming the
   # condition each row overrides. A file without it is summed flat, and the run
@@ -89,10 +90,8 @@ mod_comorbidity <- function(con, cfg, cohort) {
     wrk("S_COMORBIDITY"), wrk("S_PERIODS"), cdm_src("diagnosis"), reg,
     icd_family_sql("d.ICD_FLAG"), cohort$key, mm_view),
     # A cohort in which nobody has a qualifying comorbidity is a valid result -
-    # every patient is CCI 0 - and the backfill immediately below is what turns
-    # that into rows. Stopping here on zero matched conditions meant the
-    # backfill was never reached and an all-CCI-0 cohort could not be built.
-    # The check that matters is the row count AFTER the backfill, below.
+    # every patient is CCI 0 - and the backfill below is what turns that into
+    # rows. The check that matters is the row count after it.
     allow_empty = TRUE,
     qc = sprintf("SELECT count(*) AS n_rows, round(avg(CCI),2) AS mean_cci
                   FROM %s WHERE COHORT = '%s'", wrk("S_COMORBIDITY"), cohort$key))
@@ -118,8 +117,8 @@ mod_comorbidity <- function(con, cfg, cohort) {
 }
 
 # Table 4's subgroup flags - baseline history of neuropathy, of lung
-# parenchymal disease, and of whatever else Annex 3 names. One row per patient
-# per concept, so a concept added to the code list needs no change here.
+# parenchymal disease, and of whatever else the code list names. One row per
+# patient per concept, so a concept added to it needs no change here.
 comorbid_subgroup_flags <- function(con, cfg, cohort) {
   cl <- load_codelist("comorbid_subgroups.csv", cfg)
   reg <- register_codelist_view(con, cl, "S_CL_SUBGROUPS",
@@ -165,19 +164,16 @@ comorbid_subgroup_flags <- function(con, cfg, cohort) {
 # indicators, frail at >= 0.25.
 #
 # The variable list, the coefficients and the codes behind them are all Annex
-# 7. load_codelist() stops here naming it. That is the point of the switch: a
-# run that asks for frailty is told exactly what is missing, rather than
-# getting a column of zeros that reads as a cohort with no frail patients.
+# 7, so load_codelist() stops here and names it. That is the point of the
+# switch: asking for frailty says exactly what is missing rather than producing
+# a column of zeros that reads as a cohort with no frail patients.
 frailty_index <- function(con, cfg, cohort) {
   cl <- load_codelist("frailty_kim2018.csv", cfg)
-  # Two inputs this implementation cannot honour, checked before it runs.
-  #
-  # An intercept applies to every patient, but the score is built by matching
-  # rows to diagnosis codes and an intercept has none - it would drop out of
-  # every score. A non-diagnosis feature needs its own source table, and every
-  # row here is matched against MED_DIAGNOSIS.
-  #
-  # Either is a wrong score reported as a score, so either stops the run.
+  # Two inputs this implementation cannot honour, and either is a wrong score
+  # reported as a score. An intercept applies to every patient, but the score
+  # matches rows to diagnosis codes and an intercept has none. A non-diagnosis
+  # feature needs its own source table, and every row here is matched against
+  # MED_DIAGNOSIS.
   vv <- tolower(trimws(as.character(cl$variable)))
   if (any(vv == "intercept"))
     stop("FRAILTY ERROR: frailty_kim2018.csv carries an `intercept` row, and ",
@@ -203,10 +199,9 @@ frailty_index <- function(con, cfg, cohort) {
   prepare_table(con, wrk("S_FRAILTY"),
     "PATID string, COHORT string, CFI double, FRAIL int, N_VARIABLES int",
     cohort$key)
-  # The intercept is Annex 7's too. Without it the score is the sum of the
-  # matched coefficients, which is the model minus its constant - so it is
-  # carried as a row named `intercept` in the code list rather than assumed,
-  # and its absence is visible in N_VARIABLES.
+  # The intercept is Annex 7's too. Without it the score is the model minus its
+  # constant, so it is carried as a row named `intercept` in the code list
+  # rather than assumed, and its absence is visible in N_VARIABLES.
   run_step(con, paste0("frailty_", cohort$key), sprintf("
     INSERT INTO %1$s
     WITH matched AS (

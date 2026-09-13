@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
-"""Runs the QC checks against planted data, and reports what each one counted.
+"""Runs the QC checks against fixture data, and reports what each one counted.
 
-The rest of the QC suite reads the checks as TEXT: generated with fake table
-names and inspected. Text cannot tell you that a WHERE can never be true, that
-a predicate was inverted, or that a check lost the half of its condition that
-made it bite. A check that cannot fail reports "pass" on a real defect for
-ever, and these are the checks that decide whether a LOT build is trustworthy.
+The rest of the QC suite reads the checks as text: generated with fake table
+names and inspected. Text cannot tell that a WHERE can never be true, that a
+predicate was inverted, or that a check lost the half of its condition that
+made it bite.
 
 So this runs them. It cannot run Spark, so it transpiles each check to DuckDB
 with sqlglot and executes it against a tiny fixture - once clean, where the
-check must count nothing, and once with the defect that check describes planted
-in it, where it must count that.
+check must count nothing, and once with the defect that check describes, where
+it must count that.
 
-The transpile is a real compromise: DuckDB is not Spark, and a statement Spark
-would reject can still run here. Complementary to the text tests, not a
-replacement for a run against the warehouse.
+The transpile is a compromise: DuckDB is not Spark, and a statement Spark would
+reject can still run here. Complementary to the text tests, not a replacement
+for a run against the warehouse.
 
 Usage:  run_duckdb.py <cases.json>
 
@@ -24,7 +23,9 @@ cases.json: {"tables": {name: {"columns": {...}}, ...},
 
 A check reads several tables - a line against the cohort it came from, a
 regimen against the episodes behind it - so the fixture is a set of them, and
-a case plants into whichever ones its defect lives in.
+a case supplies rows for whichever ones its defect lives in. The "planted" key
+and the n_planted column are those rows, under the name the harness has always
+used for them.
 Prints one TSV line per case: id, n_clean, n_planted, detail, error.
 """
 import json, sys

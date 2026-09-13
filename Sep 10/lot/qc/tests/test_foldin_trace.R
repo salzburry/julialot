@@ -3,13 +3,12 @@
 #
 #   Rscript "lot/qc/tests/test_foldin_trace.R"
 #
-# Three kinds of test. The SQL as text: which tables it reads, which columns
-# it joins on, that an id with a quote in it is refused. The SQL RUN, through
-# DuckDB, against fixtures that differ from each other in one thing each - a
+# Three kinds of test. The SQL as text: which tables it reads, which columns it
+# joins on, that an id with a quote in it is refused. The SQL executed through
+# DuckDB against fixtures that differ from each other in one thing each - a
 # return inside the window, a drug from two lines back, a substitute, a CAR-T
-# window, a return after the line ended - so a wrong predicate is caught by
-# the fixture built to catch it. And the R that samples, summarises, annotates
-# and renders, on frames small enough to work out by hand.
+# window, a return after the line ended. And the R that samples, summarises,
+# annotates and renders, on frames small enough to work out by hand.
 
 ROOT <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
@@ -163,9 +162,9 @@ ok(identical(foldin_trace_build_pin(.row("r1", "complete", "2026-09-10 10:00:00"
              foldin_trace_build_pin(.row("r1", "complete", "2026-09-10 10:00:00"))) &&
      identical(foldin_trace_build_pin(.row("r1", "complete", "x")[0, ]), "(no row)"),
    "an unchanged build pins the same both times, and a vanished status row is not a match")
-# ...and it is asked again after the reads and before anything is written. By
-# position, because that is the whole of the guarantee: a check that ran after
-# the first write would already have published a mixed read.
+# And it is asked again after the reads and before anything is written. By
+# position, because a check running after the first write would already have
+# published a mixed read.
 ok(regexpr("now <- build_pin(status_row())", RUNNER, fixed = TRUE) >
      regexpr("foldin_trace_episodes_sql(t, ids)", RUNNER, fixed = TRUE) &&
      regexpr("now <- build_pin(status_row())", RUNNER, fixed = TRUE) <
@@ -176,12 +175,10 @@ ok(regexpr("now <- build_pin(status_row())", RUNNER, fixed = TRUE) >
 ok(has(RUNNER, "changed while its tables were being") && has(RUNNER, "Nothing was written"),
    "...and a build that moved under the trace stops it, saying nothing was written")
 
-# The plan itself, run: a bad list is named and the exit is still 0.
-#
-# The environment is set here and restored, rather than handed to system2()
-# as `env`: that argument is a Unix one, and where it is not supported the
-# child comes back with a status and no output at all - which reads as the
-# runner failing when it is this launch that did.
+# The plan itself, run: a bad list is named and the exit is still 0. The
+# environment is set here and restored rather than handed to system2() as
+# `env`, which is a Unix-only argument - where it is unsupported the child
+# comes back with a status and no output, which reads as the runner failing.
 with_env <- function(vars, expr) {
   old <- Sys.getenv(names(vars), unset = NA, names = TRUE)
   do.call(Sys.setenv, as.list(vars))
@@ -428,7 +425,7 @@ F_CUT <- FOLDS; F_CUT$ELIGIBLE_END <- as.Date("2020-07-10")
 ok(has(foldin_trace_narrative(F_CUT[1, ], LINES, EPS, P), "cut short by a transplant"),
    "a window ending before its nominal day says a transplant cut it")
 
-# TWO drugs returning into one line. Without the rule the FIRST return ends
+# Two drugs returning into one line. Without the rule the first return ends
 # the line and opens another, so the second return is not in LOT 2 at all and
 # a boundary computed for it as if it were contradicts the first paragraph.
 # One report cannot give a patient two alternative histories.
@@ -446,9 +443,9 @@ ok(has(N_2ND, "cannot be read from these tables alone") &&
 ok(!has(N_2ND, "MED_ADD") && !has(N_2ND, "DISCONTINUATION") && !has(N_2ND, "CART_INIT") &&
      !has(N_2ND, "would have ended LOT"),
    "...and asserts no end date of its own, which is the finding: LOT 2 cannot end twice")
-# ...and no line NUMBER either. Saying the earlier return would have opened a
-# line, so this one is elsewhere, is the same guess in the other direction -
-# and it is wrong under bridging, where the numbering is the same either way.
+# And no line number either. Saying the earlier return would have opened a
+# line, so this one is elsewhere, is the same guess in the other direction, and
+# it is wrong under bridging, where the numbering is the same either way.
 ok(!grepl("would not be LOT", N_2ND) && !grepl("opened another", N_2ND) &&
      !grepl("numbered differently", N_2ND) && !grepl("different (line|LOT) number", N_2ND),
    "...and claims nothing about which line the later return would have been in")
@@ -464,9 +461,9 @@ ok(has(N_SD1, "MED_ADD on 2020-08-14") && has(N_SD1, "BORT returned the same day
      !has(N_SD1, "cannot be read from these tables alone") &&
      !has(N_SD2, "cannot be read from these tables alone"),
    "two returns on one day are one boundary, and each paragraph names the other drug")
-# ...and the same-day clause says only that the boundary covers both. "They
-# would have arrived together in the next line" is the same over-claim in
-# miniature: under bridging nothing opens a line on the return date.
+# The same-day clause says only that the boundary covers both. "They would
+# have arrived together in the next line" would be the same over-claim: under
+# bridging nothing opens a line on the return date.
 ok(!grepl("arrived with", N_SD1) && !grepl("arrive", N_SD2) &&
      has(N_SD1, "one date, one boundary"),
    "...and claims nothing about where the two of them would have gone")
@@ -484,11 +481,10 @@ ok(min(grep("LEN was in", SEC2)) < min(grep("BORT was in", SEC2)) &&
 ok(sum(grepl("cannot be read from these tables alone", SEC2)) == 1 &&
      sum(grepl("would have ended (MED_ADD|DISCONTINUATION|CART_INIT)", SEC2)) == 1,
    "...and one patient gets one dated end, whatever order the folds arrived in")
-# BRIDGING, where the line numbering does NOT change. Two returns inside one
+# Bridging, where the line numbering does not change. Two returns inside one
 # CAR-T's consolidation window: LOT 2 ends on the infusion's eve and the CAR-T
 # opens the next line with the rule off as well as on, so the later return is
-# in LOT 2 in both builds. A paragraph promising it a different line would be
-# wrong here, which is why the deferral names no line at all.
+# in LOT 2 in both builds. That is why the deferral names no line at all.
 L_BR <- LINES; L_BR$LOT_BASE_END_DT[2] <- as.Date("2020-06-28")
 L_BR$LOT_BASE_MEDS[2] <- "CARF LEN BORT"; L_BR$LOT_BASE_END_REASON[2] <- "CART_INIT"
 L_BR$ELIGIBLE_END[2] <- as.Date("2020-04-19"); L_BR$LOT_START_DT[2] <- as.Date("2020-04-10")
@@ -609,7 +605,7 @@ cat("\n-- the candidate query, RUN rather than read --\n")
   err <- function(r) attr(r, "error")
   cands_of <- function(data) run_rows(list(c = foldin_trace_sql(EXEC_TABLES, P)), data)
 
-  # (a) the planted fold. LOT1 BORT LEN, LOT2 opened by CARF, LEN back on
+  # (a) the fold itself. LOT1 BORT LEN, LOT2 opened by CARF, LEN back on
   # 2020-08-15 - after the 30-day window that ends 2020-07-30, inside the line.
   BASE <- list(
     final = list(fin(1L, "2020-01-01", "MED", "BORT LEN", "2020-06-28", "DISCONTINUATION"),
@@ -656,8 +652,8 @@ cat("\n-- the candidate query, RUN rather than read --\n")
                   ep("LEN", "2020-11-20", "2020-12-20"))
     r <- cands_of(C)$c
     ok(is.null(err(r)) && nrow(r) == 0, "(c) a drug from two lines back is not reported")
-    # ...and the control that proves (c) is the scope and not the shape: give
-    # LOT2 LEN as well and the LOT3 return IS a fold.
+    # The control that proves (c) is the scope and not the shape: give LOT2
+    # LEN as well and the LOT3 return is a fold.
     C2 <- C; C2$final[[2]]$LOT_BASE_MEDS <- "CARF LEN"; C2$final[[2]]$LOT_MED_CNT <- 2L
     C2$map[[6]] <- ep("LEN", "2020-07-05", "2020-08-05")
     r <- cands_of(C2)$c
@@ -722,12 +718,11 @@ cat("\n-- the candidate query, RUN rather than read --\n")
     ok(is.null(err(r)) && nrow(r) == 1 && r$RETURN_DT == "2020-08-15",
        "(g) two doses past the window give one row, dated at the first")
 
-    # The per-patient reads, run on the planted fold and fed to the renderer -
-    # the whole chain from warehouse shape to marked row, without a warehouse.
-    # Twice: the MED line, where the fold is the rule's, and the CAR-T line,
-    # where the same signature is a defect. The renderer calls sit inside
-    # ok() so a query that returns nothing is a FAIL with a count line, not
-    # a halted suite.
+    # The per-patient reads, run on the fixture's fold and fed to the
+    # renderer: the whole chain from warehouse shape to marked row, without a
+    # warehouse. Twice, for the MED line where the fold is the rule's and the
+    # CAR-T line where the same signature is a defect. The renderer calls sit
+    # inside ok() so a query returning nothing is a FAIL with a count line.
     Q <- list(lines = foldin_trace_lines_sql(EXEC_TABLES, "P000001", P),
               eps = foldin_trace_episodes_sql(EXEC_TABLES, "P000001"),
               tx = foldin_trace_tx_sql(EXEC_TABLES, "P000001"),
@@ -762,8 +757,8 @@ cat("\n-- the candidate query, RUN rather than read --\n")
       nrow(rr$c) == 1 && has(nn, "was opened by a transplant (CART)") && has(nn, "50 days after LOT 2") &&
         has(nn, "45-day") && has(nn, "build defect")
     }, "...and the narrative off the same rows reports the CAR-T line's signature as a defect")
-    # The MED line: the planted fold, whole chain. CARF's cover ends
-    # 2020-08-01, before LEN's return, so the pre-rule reading is the run-out.
+    # The MED line, whole chain. CARF's cover ends 2020-08-01, before LEN's
+    # return, so the pre-rule reading is the run-out.
     G2 <- BASE; G2$auto <- list(list(PATID = "P000001", TX_DT = "2019-06-01"))
     G2$subs <- list(subs_row("BORT", "BORTBS"))
     r2 <- run_rows(Q, G2)

@@ -2,8 +2,8 @@
 #
 # Every later module joins to this, so the "which line comes next" arithmetic
 # is done once. LOT_LONG_FINAL is the LOT engine's output after its own line
-# criteria; LOT_LONG is the same lines before them, and reading it here would
-# count patients the study removed.
+# criteria; LOT_LONG is the same lines before them, so reading that one here
+# would count patients the study removed.
 mod_spine <- function(con, cfg, cohorts) {
   src <- lot_tbl("LOT_LONG_FINAL")
   run_step(con, "spine", sprintf("

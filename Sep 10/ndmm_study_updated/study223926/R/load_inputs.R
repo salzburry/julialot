@@ -3,7 +3,7 @@
 # The environment wins: a row is applied only when that variable is unset, so
 # the file never overrides a shell export or a value Domino injected. A blank
 # value, a blank name or a '#' name is skipped, and DATABRICKS_PWD is never
-# read from the file. Source before config_lot.R reads Sys.getenv().
+# read from the file. Source before the settings file reads Sys.getenv().
 
 # Coerce a date string to YYYY-MM-DD. Accepts ISO (pass-through) plus
 # the common Excel reformats (DD-MM-YYYY, DD/MM/YYYY, MM/DD/YYYY,

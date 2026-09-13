@@ -8,7 +8,7 @@
 #   P2  a melphalan-only LOT2 a medication started, and melphalan's own cover
 #       is what LOT2 ran out on
 #   P3  melphalan beside another agent, outlasting it
-#   P4  a melphalan-only LOT2 the TRANSPLANT started - conditioning, so it is
+#   P4  a melphalan-only LOT2 the transplant started - conditioning, so it is
 #       not melphalan advancing a line
 #   P5  melphalan given on the allograft date, in a line whose regimen is
 #       blank - invisible to any test on LOT_BASE_MEDS
@@ -18,8 +18,8 @@
 #   P8  the same shape with another agent starting that day, so it is a B.2
 #       line start but not one melphalan alone made
 #   P9  melphalan in two consecutive lines, the first episode not flagged
-#       discontinued - which is where an unbounded cover join reads the
-#       SECOND line's date as the first line's run-out
+#       discontinued - where an unbounded cover join reads the second line's
+#       date as the first line's run-out
 #
 # The dates are all 2020, and every length is inclusive of both ends.
 EXEC_SCHEMA <- list(
@@ -283,9 +283,9 @@ exec_cell <- function(res, id, col, row = "0") {
 exec_num <- function(res, id, col, row = "0")
   suppressWarnings(as.numeric(exec_cell(res, id, col, row)))
 
-# paste0() recycles a zero-length argument against a length-one one and
-# returns ": " - so with no errors at all this reported one. The subset is
-# taken first and its emptiness is the answer.
+# The subset is taken first and its emptiness is the answer: paste0() recycles
+# a zero-length argument against a length-one one and would return ": ", which
+# reads as one error where there are none.
 exec_errors <- function(res) {
   if (is.null(res) || identical(res, "skip")) return(character(0))
   bad <- res[res$row == "ERROR", , drop = FALSE]

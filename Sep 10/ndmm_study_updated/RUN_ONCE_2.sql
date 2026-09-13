@@ -2,30 +2,28 @@
 --  RUN_ONCE_2.sql — round two. Everything a query can still settle.
 -- =========================================================================
 --
---  NO PLACEHOLDERS. Block 0 builds a proxy MM population as a temporary view
---  and everything else reuses it, so the whole file runs as-is.
---
---  IF YOU HAVE THE COHORT TABLE, say so by replacing block 0's body with
+--  No placeholders: block 0 builds a proxy MM population as a temporary view
+--  and everything else reuses it, so the whole file runs as-is. If you have
+--  the cohort table, replace block 0's body with
 --      SELECT DISTINCT cast(PATID as string) AS PATID FROM <your cohort table>
 --  Four answers get sharper; nothing else changes. Round one skipped every
 --  cohort-dependent query, which is why Q11, Q13, Q16 and Q25 are still open.
 --
 --  Round one already closed Q8, Q10, Q22, Q24 and Q26.
 --
---  Blocks 1-9 SETTLE:  Q1, Q2, Q5, Q9, Q11, Q13, Q14, Q16, Q19, Q25, Q27, Q28
---  Blocks 10-13 PRICE: Q21, Q23, Q7, Q3, Q6 - they cannot decide these, but
---      they say how many patients each reading moves, which is usually what
---      the study team needs in order to decide at all. Proxy code lists
---      stand in for Annexes 2 and 3; the order of magnitude does not turn
---      on the exact list.
---  Blocks 14-16 CHECK the value lists and columns the package assumes but has
---      never seen data for. No open question, but a wrong assumption here is
---      silent - a value outside the expected set is dropped, not flagged.
+--  Blocks 1-9 settle:  Q1, Q2, Q5, Q9, Q11, Q13, Q14, Q16, Q19, Q25, Q27, Q28
+--  Blocks 10-13 price: Q21, Q23, Q7, Q3, Q6 - they cannot decide these, but
+--      they say how many patients each reading moves. Proxy code lists stand
+--      in for Annexes 2 and 3; the order of magnitude does not turn on the
+--      exact list.
+--  Blocks 14-16 check the value lists and columns the package assumes but has
+--      never seen data for. A wrong assumption here is silent - a value
+--      outside the expected set is dropped, not flagged.
 --
---  What NO query can answer, now or ever:
---      Q12, Q15, Q20 - the protocol author, or annexes we do not hold.
---  Q3, Q6, Q7 and Q23 need those annexes to DECIDE; blocks 10-13 only size
---  them. Q21 is arithmetic rather than data - block 10 shows the days at stake.
+--  No query can answer Q12, Q15 or Q20 - they need the protocol author or
+--  annexes we do not hold. Q3, Q6, Q7 and Q23 need those annexes to decide;
+--  blocks 10-13 only size them. Q21 is arithmetic rather than data - block 10
+--  shows the days at stake.
 --
 --  The 2026q1 vintage is confirmed to exist. Roughly 10 minutes.
 
@@ -49,7 +47,7 @@ SELECT count(*) AS mm_patients FROM mm_pts;
 -- =========================================================================
 -- BLOCK 1 — Q28. What is DOD.MBR_MATCH_TYPE?                   ~5 seconds
 -- =========================================================================
--- The fifth DOD column, in no Optum document we hold. If it grades how each
+-- The fifth DOD column, in no published Optum schema. If it grades how each
 -- member was linked to the death record, some fraction of those 11.5M deaths
 -- are lower-confidence links and nothing filters on them. Overall survival is
 -- a secondary objective.
@@ -485,8 +483,8 @@ GROUP BY DIAG_POSITION ORDER BY n DESC LIMIT 30;
 -- =========================================================================
 -- BLOCK 15 — the two columns round one could not see.             ~3 minutes
 -- =========================================================================
--- The DESCRIBE results were truncated to the first rows on screen, so neither
--- of these was confirmed. Both are load-bearing, and both are LAST in the file
+-- The earlier DESCRIBE returned an incomplete column list, so neither of these
+-- was confirmed. Both are load-bearing, and both are LAST in the file
 -- because if a column does not exist the statement errors - and that error is
 -- itself the answer.
 

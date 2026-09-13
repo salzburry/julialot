@@ -2,9 +2,8 @@
 #
 # The package already does all of this. Every table it writes carries the run's
 # prefix, and every run records its cohorts, its modules, the LOT run it read,
-# and its answer to each open question. So two runs under two prefixes ARE two
-# scenarios, and comparing them needs no new concept - only somewhere to read
-# both.
+# and its answer to each open question. So two runs under two prefixes are two
+# scenarios, and comparing them needs only somewhere to read both.
 #
 # The dashboard never writes. A scenario a viewer asks for that nobody has run
 # does not appear; scenario_command() prints what would produce it.
@@ -15,13 +14,11 @@
 # Parsed back so the readings can be compared setting by setting rather than as
 # one string that differs somewhere.
 #
-# The separator is a semicolon and a NOTE MAY CONTAIN ONE. The producer writes
+# The separator is a semicolon and a note may contain one: the producer writes
 # "study_start=2016-01-01 (upstream, verified; this run was set to 2018-01-01)"
-# exactly when the two disagree - and a plain strsplit() cut that in half, so
-# the value became "2016-01-01 (upstream, verified", the note was lost, and
-# the configured reading vanished from the comparison. The disagreement is
-# precisely when the provenance is worth reading, so the split has to know
-# where the note is.
+# when the two disagree, which is exactly when the provenance is worth reading.
+# So the split has to know where the note is rather than cutting on every
+# semicolon.
 .split_entries <- function(s) {
   ch <- strsplit(s, "", fixed = TRUE)[[1]]
   depth <- 0L; out <- character(0); cur <- character(0)
@@ -49,9 +46,8 @@ parse_readings <- function(s) {
     }
     eq <- regexpr("=", p, fixed = TRUE)
     if (eq < 1) return(NULL)
-    # The key is trimmed and must be non-empty. Untrimmed, "months_as " and
-    # "months_as" read as two different settings and scenario_diff_keys()
-    # reported a difference that was whitespace.
+    # The key is trimmed and must be non-empty: untrimmed, "months_as " and
+    # "months_as" read as two settings differing on whitespace alone.
     key <- trimws(substr(p, 1, eq - 1))
     if (!nzchar(key)) return(NULL)
     list(key = key, value = trimws(substring(p, eq + 1)), note = note)
@@ -59,8 +55,7 @@ parse_readings <- function(s) {
   out <- Filter(Negate(is.null), out)
   keys <- vapply(out, `[[`, character(1), "key")
   # A key repeated in one string keeps its first reading only, so names() and
-  # [[ ]] agree - a list with duplicate names looks up the first, and leaving
-  # the duplicates in made scenario_diff_keys() see one setting several times.
+  # [[ ]] agree: a list with duplicate names looks up the first.
   keep <- !duplicated(keys)
   stats::setNames(out[keep], keys[keep])
 }
@@ -159,12 +154,11 @@ compare_readings <- function(a, b) {
 #
 # Printed, never executed. The dashboard reads; a run writes to the warehouse
 # and belongs to whoever owns the schema.
-# Every value is single-quoted, with any inner quote escaped the shell's way.
 #
-# Unquoted, this block was an injection: the page invites a viewer to paste it,
-# and a value carrying a newline put its own line in - `MONTHS_AS=days`, then
-# `rm -rf /`. A ';' did the same on one line. Values reach here from the
-# scenario grid and from the page, so neither is trustworthy.
+# Every value is single-quoted, with any inner quote escaped the shell's way.
+# The page invites a viewer to paste the block, and the values reach it from
+# the scenario grid and from the page, so an unquoted newline or ';' in one
+# would add a command of its own.
 sh_quote <- function(x) {
   x <- paste(as.character(x), collapse = ",")
   paste0("'", gsub("'", "'\\''", x, fixed = TRUE), "'")

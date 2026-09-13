@@ -99,10 +99,9 @@ export_one <- function(prefix, env) {
   # Read back what the run wrote and put it beside the others as CSV, which is
   # what a Domino App can read without a warehouse session per viewer.
   #
-  # Written to a STAGING directory and swapped in at the end. Writing into the
-  # live one meant a refresh that failed halfway left the new tables it had
-  # managed beside the old ones it had not, under one run's metadata - and the
-  # app, which reads the metadata at startup and the tables later, presented
+  # Written to a staging directory and swapped in at the end: a refresh that
+  # fails halfway would otherwise leave the new tables it managed beside the
+  # old ones it did not, under one run's metadata, and the app would present
   # that mixture as one run.
   d     <- file.path(out_dir, prefix)
   stage <- file.path(out_dir, paste0(".", prefix, ".staging"))
@@ -127,13 +126,11 @@ export_one <- function(prefix, env) {
   # empty schema in it.
   if (!nzchar(cfg$work_schema)) cfg$work_schema <- current_work_schema(con)
   set_study_config(cfg)
-  # The build being exported, pinned BEFORE any table is read: the newest
-  # metadata row, and it has to be complete. Every table is read against
-  # that pin and the row is read again after the last one. Metadata used to
-  # be exported first and re-read only to see that A row existed, so a
-  # rebuild landing mid-export published one build's metadata beside
-  # another's rows - and the app, which binds a snapshot to the identity its
-  # own metadata carries, read that mixture as one run.
+  # The build being exported, pinned before any table is read: the newest
+  # metadata row, and it has to be complete. Every table is read against that
+  # pin and the row is read again after the last one, so a rebuild landing
+  # mid-export stops the export rather than publishing one build's metadata
+  # beside another's rows.
   meta_src <- list(read = function(prefix, table)
     tryCatch(db_q(con, sprintf("SELECT * FROM %s", wrk(table))),
              error = function(e) NULL))
@@ -262,10 +259,9 @@ for (i in seq_along(results))
                   if (results[[i]]$ok) "built" else "FAILED",
                   if (exports[[i]]$ok) "exported" else "NOT PUBLISHED",
                   exports[[i]]$n))
-# An export that failed is a failed job. It used to become a zero-table count,
-# and the footer then said "built and exported" and exited 0 while a scenario
-# had published nothing - or, worse, had left the previous snapshot in place
-# under the new run's name.
+# An export that failed is a failed job, not a zero-table count: the footer
+# must not report success for a scenario that published nothing, or that left
+# the previous snapshot in place under the new run's name.
 failed <- vapply(results, function(r) !r$ok, logical(1))
 ex_failed <- vapply(exports, function(e) !e$ok, logical(1)) & !failed
 if (any(failed) || any(ex_failed)) {

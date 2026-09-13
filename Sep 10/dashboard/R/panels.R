@@ -1,20 +1,18 @@
 # What the dashboard shows. This file is the dashboard.
 #
-# Same shape as reporting/dashboard/R/sections.R: every panel is one entry - a
-# name, a tab, a label, the table it reads and how to draw it. Adding a panel
-# is adding an entry. The difference is what a panel reads: there it is SQL
-# against a finished LOT run, here it is one of the study package's own S_*
-# tables, so the panel says which table and the renderer works out the rest
-# from TABLE_SPEC.
+# Every panel is one entry - a name, a tab, a label, the table it reads and how
+# to draw it - so adding a panel is adding an entry. A panel names one of the
+# study package's S_* tables and the renderer works the rest out from
+# TABLE_SPEC.
 #
 # The switch is SHOW_<NAME>, from the environment. Anything but TRUE or FALSE
-# stops startup: a typo that drops a panel silently is worse than a halt,
-# because the page still renders and nobody can see what is missing.
+# stops startup: a typo that drops a panel silently leaves a page that still
+# renders, with nobody able to see what is missing.
 
 PANEL_RENDER <- c("table", "kpi", "bar", "km", "delta", "flow", "funnel",
                   "check", "sequence")
 
-# A panel reads either what THIS package wrote or what the LOT build wrote.
+# A panel reads either what this package wrote or what the LOT build wrote.
 # The difference is not cosmetic: a study scenario records which LOT run it
 # read, several scenarios normally share one, and a LOT panel therefore
 # describes a scenario's lineage rather than the scenario.

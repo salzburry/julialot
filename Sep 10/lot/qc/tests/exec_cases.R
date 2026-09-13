@@ -1,15 +1,14 @@
 # What each check is given to find, and what it must not find.
 #
-# One entry per check. Each plants exactly the defect its `what` describes.
-# The clean fixture must count 0 for every check and the planted one must count
-# more than 0 for its own - a check that cannot tell them apart is a check that
-# reports "pass" on a real defect.
+# One entry per check, each carrying exactly the defect its `what` describes.
+# The clean fixture must count 0 for every check and the defective one must
+# count more than 0 for its own; a check that cannot tell them apart reports
+# "pass" on a real defect.
 #
-# The clean fixture is one patient with two lines, and it has to satisfy all
-# thirty-seven checks at once: the funnel has to reconcile with the published
-# table, every regimen drug needs an episode inside its line, every episode
-# inside a line has to be in that line's regimen, and every transplant has to
-# belong to a line. That is most of what makes it a fixture worth having.
+# The clean fixture is one patient with two lines and has to satisfy all
+# thirty-seven checks at once: the funnel reconciles with the published table,
+# every regimen drug has an episode inside its line, every episode inside a
+# line is in that line's regimen, and every transplant belongs to a line.
 #
 # No steroid episode and no death, so the `warn` and `info` checks read zero on
 # it too - otherwise "counts nothing on clean data" would only be true of the
@@ -85,8 +84,8 @@ CLEAN_FIXTURE <- list(
   subs = list()
 )
 
-# A planted row is the clean one with the defect in it, under a patient id of
-# its own so it cannot disturb the clean patient's reconciliation.
+# The defective row is the clean one with the defect in it, under a patient id
+# of its own so it cannot disturb the clean patient's reconciliation.
 .f <- function(base, ...) utils::modifyList(
   utils::modifyList(base, list(PATID = "P000009")), list(...))
 .l <- function(base, ...) utils::modifyList(.long(.f(base)), list(...))
@@ -115,9 +114,8 @@ EXEC_CASES <- list(
             planted = list(final = list(.f(FINAL_1, LOT_BASE_DISCON_DT = "2020-05-01")))),
   B5 = list(what = "an end reason the build cannot write",
             planted = list(final = list(.f(FINAL_1, LOT_BASE_END_REASON = "GAVE_UP")))),
-  # These two read the DATE against the line's own start, not the end reason.
-  # The first plants here got that wrong and both checks stayed silent - which
-  # is the whole reason for running them rather than reading them.
+  # These two read the date against the line's own start, not the end reason,
+  # so the fixture rows have to move the date rather than the reason.
   B6 = list(what = "an added-medication date BEFORE the line started",
             planted = list(final = list(.f(FINAL_2, LOT_BASE_1ST_ADD_MED_DT = "2020-06-01")))),
   B7 = list(what = "a run-out date BEFORE the line started",
@@ -128,9 +126,9 @@ EXEC_CASES <- list(
 
   # --- the checks that read more than the published table --------------------
 
-  # Three disjuncts, so three planted rows and an exact expected count. With
-  # one row the check still counted something after a disjunct was deleted,
-  # and "more than zero" could not tell that a third of it had gone.
+  # Three disjuncts, so three rows and an exact expected count. With one row
+  # the check still counts something after a disjunct goes, and "more than
+  # zero" cannot tell that a third of it is missing.
   B3 = list(what = "DEATH ending anywhere but on a death date inside observation",
             n = 3L,
             planted = list(
@@ -177,9 +175,9 @@ EXEC_CASES <- list(
                                            list(PATID = "P000009"))))),
   C2 = list(what = "an added medication that is already in the regimen",
             planted = list(final = list(.f(FINAL_2, LOT_BASE_1ST_ADD_MED = "CARF")))),
-  # The tie is looked for on the day AFTER the added-medication date -
-  # date_add(LOT_BASE_1ST_ADD_MED_DT, 1) - so episodes on the date itself find
-  # nothing. The first plant used the date and the check stayed silent.
+  # The tie is looked for on the day after the added-medication date -
+  # date_add(LOT_BASE_1ST_ADD_MED_DT, 1) - so an episode on the date itself
+  # finds nothing and the fixture has to use the day after.
   C3 = list(what = "a line where more than one drug could have been the added one",
             planted = list(
               final = list(.f(FINAL_2)),
@@ -219,9 +217,8 @@ EXEC_CASES <- list(
             planted = list(sct = list(list(PATID = "P000009",
               LOT1_START_DT = "2020-01-01", LOT1_TX_ENDDATE = "2019-12-01",
               LOT1_SCT_AUTO_SING_FLG = 0L, LOT1_SCT_AUTO_TAND_FLG = 0L)))),
-  # AFTER the only line ends, not inside it. The first plant put the transplant
-  # within the line, where it belongs to one, and the check was right to say
-  # nothing.
+  # After the only line ends, not inside it: a transplant within the line
+  # belongs to one, and the check is right to say nothing about it.
   E5 = list(what = "a processed transplant belonging to no line",
             planted = list(
               long = list(.l(FINAL_1)),

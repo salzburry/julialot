@@ -20,14 +20,10 @@ log_msg <- function(...) {
 
 # The run's own state, private to this package.
 #
-# It used to be a variable called `cfg` in the global environment. The LOT
-# engine keeps its config the same way, under the same name, so sourcing both
-# in one session left whichever ran second holding the name and the other's
-# wrk() and cdm_src() reading a config that was not theirs. Here the name
-# cannot be reached from outside, and a second package cannot take it.
-#
-# Every read goes through study_config(), so this is the only place that
-# knows where the config lives.
+# In a private environment rather than a global `cfg`: the LOT engine keeps its
+# own config under that name, so sourcing both in one session left whichever
+# arrived second holding the name and the other's wrk() reading a config that
+# was not its own. Every read goes through study_config().
 .study_state <- new.env(parent = emptyenv())
 
 set_study_config <- function(x) { .study_state$cfg <- x; invisible(x) }
@@ -40,13 +36,8 @@ study_config <- function() {
 
 # A module's own per-build state, registered by the module that owns it.
 #
-# This runs BEFORE source_modules(), which is the whole point: the first build
-# in a process has no module loaded, so there is nothing of theirs to clear,
-# and the second has them all. Naming a module's function here instead meant
-# the reset called something that did not exist yet, and every fresh build
-# stopped on it before reading a single setting - the bundled suite could not
-# see it because it sources every module first.
-#
+# reset_run_state() runs before source_modules(), so it cannot name a module's
+# function directly: in a fresh process that function does not exist yet.
 # Registration is by name, so re-sourcing a module replaces its hook rather
 # than stacking another copy.
 register_run_reset <- function(name, fn) {
@@ -75,10 +66,10 @@ quarter_suffix <- function(study_end) {
 }
 # The CDM's PHYSICAL table names, keyed by the short name the modules use.
 #
-# The two differ: modules say "diagnosis", the table is `t_med_diagnosis`.
-# Pasting the short name straight into `t_<name>_<quarter>` produced a table
-# that does not exist. Names match the cohort build's config, and each is
-# overridable so a renamed table needs no code change.
+# The two differ: modules say "diagnosis", the table is `t_med_diagnosis`, so
+# the short name cannot be pasted straight into `t_<name>_<quarter>`. Names
+# match the cohort build's, and each is overridable so a renamed table needs no
+# code change.
 CDM_TABLE_NAMES <- c(
   medical           = "medical",
   diagnosis         = "med_diagnosis",
@@ -127,13 +118,11 @@ lot_tbl <- function(base_tbl) {
 # The cohort table the study was pointed at, as SQL names it.
 #
 # INPUT_COHORT_TABLE is the bare name the cohort build wrote it under - the
-# name the LOT status row records and the lineage check compares, so that
-# stays bare in cfg. In SQL the run's own catalog and schema go in front of
-# it, as the LOT engine does with the same name. Used bare, it resolved
-# against the session's current schema: on a cluster session that was the
-# working schema, over the ODBC warehouse it was `default`, and every
-# scenario stopped at DESCRIBE with the table "cannot be found". A name given
-# already qualified is used as it is.
+# name the LOT status row records and the lineage check compares - so it stays
+# bare in cfg. In SQL the run's own catalog and schema go in front of it, as
+# the LOT engine does with the same name; used bare it resolves against the
+# session's current schema, which over the ODBC warehouse is `default`. A name
+# given already qualified is used as it is.
 input_cohort_tbl <- function() {
   cfg <- study_config()
   nm <- trimws(cfg$input_cohort_table)
@@ -143,17 +132,14 @@ input_cohort_tbl <- function() {
 
 # One string for one BUILD of a run, from the timestamp its status row carries.
 #
-# A run id is not a build. This package reuses DOMINO_RUN_ID for every build
-# inside one Domino run, and the LOT engine keeps its run id for the life of
-# an R session, so two builds under one id can each leave a `complete` row -
-# with different settings, different rows, and nothing but UPDATED_AT to tell
-# them apart. The dashboard bound a scenario to its run id alone, and a re-run
-# under the same id showed its new numbers beneath the old run's settings.
+# A run id is not a build. DOMINO_RUN_ID is reused for every build inside one
+# Domino run, so two builds under one id can each leave a `complete` row with
+# different settings and nothing but UPDATED_AT to tell them apart.
 #
 # Formatted in UTC and reduced to alphanumerics, so the same instant reads the
-# same wherever it is compared and can stand as one path segment. A value
-# that is not a timestamp is not a version: it comes back as the string it
-# was, stripped, rather than being mistaken for the empty one.
+# same wherever it is compared and can stand as one path segment. A value that
+# is not a timestamp comes back as the string it was, stripped, rather than as
+# the empty one.
 run_version_stamp <- function(x) {
   if (is.null(x) || !length(x)) return("")
   x <- x[[1L]]
@@ -170,11 +156,11 @@ run_version_stamp <- function(x) {
   gsub("[^A-Za-z0-9]", "", s)
 }
 
-# One DESCRIBE, read the way every caller needs it: the column names in
-# order, upper-cased, with the partition and metadata blocks Spark appends
-# after a blank or `#` row cut off, and the normalised types beside them
-# where the response carried a type column (`typed`). Three callers parsed
-# the response three ways; the raw column names travel along for a message.
+# One DESCRIBE, read the way every caller needs it: the column names in order,
+# upper-cased, with the partition and metadata blocks Spark appends after a
+# blank or `#` row cut off, and the normalised types beside them where the
+# response carried a type column (`typed`). The raw column names travel along
+# for a message.
 describe_columns <- function(con, name) {
   d <- db_q(con, sprintf("DESCRIBE %s", name))
   cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
@@ -193,9 +179,8 @@ describe_columns <- function(con, name) {
 }
 
 # Whether one LOT status row is the build a reader accepted: this run id,
-# complete, and - where the reader recorded which build - this stamp. The
-# dashboard's readers, its snapshot job and this package's own end-of-run
-# re-check all decide it here, beside the stamp they compare.
+# complete, and - where the reader recorded which build - this stamp. Every
+# reader decides it here, beside the stamp it compares.
 lot_build_owns <- function(row, run_id, version = "") {
   id <- trimws(as.character(run_id %||% "")); v <- trimws(as.character(version %||% ""))
   if (is.null(row) || !nrow(row) || !nzchar(id)) return(FALSE)
@@ -206,29 +191,26 @@ lot_build_owns <- function(row, run_id, version = "") {
 
 # Columns a table gained after it was first created, added in place.
 #
-# S_RUN_METADATA is CREATE IF NOT EXISTS, so a prefix that was first written
-# by an earlier version of this package keeps the earlier shape, and a
-# positional insert then fails on the count - or worse, lands a value in the
-# wrong column. Only ever ADDS: an existing column keeps its type. The
-# DESCRIBE has to succeed, because the named insert that follows needs every
-# column to exist.
+# S_RUN_METADATA is CREATE IF NOT EXISTS, so a prefix first written by an
+# earlier version of this package keeps the earlier shape. Only ever ADDS: an
+# existing column keeps its type. The DESCRIBE has to succeed, because the
+# named insert that follows needs every column to exist.
 ensure_columns <- function(con, name, cols) {
   d <- describe_columns(con, name)
   want <- toupper(names(cols))
   if (!nrow(d))
     stop("SCHEMA ERROR: could not establish the columns of ", name,
          ", so a column cannot be added to it.", call. = FALSE)
-  # A DESCRIBE without a type column cannot say whether the columns that
-  # exist can take what this writer inserts, and the same reading as in
-  # ensure_table() applies: an unrecognised response is a stop, not a pass
-  # on names alone.
+  # A DESCRIBE without a type column cannot say whether the columns that exist
+  # can take what this writer inserts, so an unrecognised response stops rather
+  # than passing on names alone - the same reading as in ensure_table().
   if (!isTRUE(attr(d, "typed")))
     stop("SCHEMA ERROR: the schema of ", name, " came back without a type ",
          "column (found: ", paste(attr(d, "raw_names"), collapse = ", "),
          "). Column names alone cannot establish that writing into it is ",
          "safe, so nothing is written.", call. = FALSE)
-  # An existing column keeps its type - and a type this writer cannot insert
-  # into is found HERE, before the DELETE that precedes the insert, rather
+  # An existing column keeps its type, and a type this writer cannot insert
+  # into is found here - before the DELETE that precedes the insert, rather
   # than by the insert failing after the row is already gone.
   for (m in intersect(d$COL, want)) {
     ht <- d$TYPE[match(m, d$COL)]
@@ -249,40 +231,24 @@ ensure_columns <- function(con, name, cols) {
   invisible(missing)
 }
 
-# Spark's sql() takes ONE statement. Several module templates are written as a
-# CREATE TABLE IF NOT EXISTS followed by an INSERT, because that reads as one
-# thing, so they are split here rather than in each module.
+# Spark's sql() takes ONE statement, and several module templates are written
+# as a CREATE TABLE IF NOT EXISTS followed by an INSERT, so they are split here
+# on semicolons outside quotes and comments - the templates carry `--` notes,
+# and a `;` in one of those would chop a statement in half.
 #
-# Split on semicolons outside quotes and comments. The module templates carry
-# `--` notes, and a `;` in one of those would otherwise chop the statement in
-# half; the quote tracking guards against a code-list value doing the same.
+# Only the positions that can change state are matched - a quote, a comment
+# opener, a newline, a semicolon - because walking every character is quadratic
+# in statement length. `*/` is deliberately absent: it can share a `/` with a
+# `/*`, since in `**/*` the block-comment opener starts at the third character,
+# so where a block comment closes is looked up separately below.
 #
-# Only the positions that can change state are looked at - a quote, a comment
-# opener or closer, a newline, a semicolon - found in one pass by the regex
-# engine. Everything between them is ordinary SQL that nothing can hide in.
-#
-# The first version walked every character and appended each one to a growing
-# vector, which is quadratic in statement length: the 565 statements a default
-# run emits took 3.4 CPU seconds, and a single 30 KB statement took 2.9.
-# `*/` is not in this list. It can share a `/` with a `/*`: in `**/*` the
-# scanner reads the block-comment OPENER at the third character, and one
-# alternation matching left to right would take `*/` at the second and swallow
-# the `/`. Where a block comment closes is looked up separately, below.
-#
-# All three quote characters are tracked, not just `'`. Spark writes a quoted
-# identifier in BACKTICKS and this package's own SQL already uses them; under
-# ANSI mode a double quote is an identifier too, and without it a `;` inside
-# either would have cut a statement in half. Each is closed by itself, and
-# doubled inside means an escaped one - the same rule for all three.
-#
-# Inside a string literal Spark's escape is the backslash, and a staged code
-# list writes its values that way (codelist_stage_sql): \' is a quote in the
-# value, \\ a backslash, so a quote preceded by an ODD number of backslashes
-# does not close the string. Without that rule 'Alzheimer\'s disease' closed
-# at the apostrophe and the statement was refused as unterminated, and a
-# label with two apostrophes and a semicolon between them was cut in half.
-# A backtick identifier has no backslash escape, so the rule is for the two
-# string quotes only.
+# All three quote characters are tracked, not just `'`: Spark writes a quoted
+# identifier in BACKTICKS and this package's own SQL uses them, and under ANSI
+# mode a double quote is an identifier too. Each closes on itself, and doubled
+# inside means an escaped one. In a string literal Spark's escape is also the
+# backslash, which is how codelist_stage_sql() writes its values, so a quote
+# behind an ODD number of backslashes does not close the literal - otherwise
+# 'Alzheimer\'s disease' ends at the apostrophe. A backtick has no such escape.
 .SQL_TOKENS <- "--|/\\*|'|\"|`|;|\n"
 .SQL_QUOTES <- c("'", "\"", "`")
 
@@ -352,11 +318,9 @@ split_statements <- function(sql) {
   .slice_statements(sql, cuts, state, cs, ce)
 }
 
-# Is there any SQL in this span, or only comments and whitespace?
-#
-# A template ending in a comment used to emit that comment as a statement of
-# its own, and the warehouse would reject it. Nothing writes one today, which
-# is why it would have surfaced as a failing run rather than as a bug here.
+# Is there any SQL in this span, or only comments and whitespace? A template
+# ending in a comment would otherwise emit that comment as a statement of its
+# own, which the warehouse rejects.
 .span_has_code <- function(sql, s, e, cs, ce) {
   if (s > e) return(FALSE)
   ov <- which(ce >= s & cs <= e)
@@ -371,8 +335,8 @@ split_statements <- function(sql) {
   cur <= e && nzchar(trimws(substring(sql, cur, e)))
 }
 
-# The statements are cut out of the original string rather than reassembled
-# character by character, so a split costs one substring per statement.
+# Cut out of the original string rather than reassembled character by
+# character, so a split costs one substring per statement.
 .slice_statements <- function(sql, cuts, state, cs = integer(0), ce = integer(0)) {
   if (state == "quote")
     stop("split_statements: unterminated string literal in generated SQL")
@@ -413,10 +377,8 @@ with_retry <- function(fn, max_retries = study_config()$max_retries,
 # the retry, and the cohort-scope DELETE ran earlier, outside the retry.
 # So INSERT and MERGE run once and raise.
 sql_is_retry_safe <- function(st) {
-  # Strip BOTH comment forms before looking at the verb. A line-comment prefix
-  # was handled and a /* block */ prefix was not, so a block-commented INSERT
-  # was classified retry-safe. Nothing emitted here uses that form today, which
-  # is exactly why it would go unnoticed if something started to.
+  # BOTH comment forms are stripped before the verb is read, so a
+  # block-commented INSERT is not classified retry-safe.
   head <- st
   repeat {
     was <- head
@@ -426,21 +388,18 @@ sql_is_retry_safe <- function(st) {
     if (identical(head, was)) break
   }
   head <- toupper(head)
-  # A leading WITH does not make a statement a read. `WITH a AS (...) INSERT
-  # INTO t SELECT * FROM a` is a write whose first verb is WITH, and reading
-  # the first verb alone classified it retry-safe - the same lost-acknowledged
-  # duplicate the LOT append had. Nothing emits that form today, which is
-  # exactly why it would go unnoticed if something started to.
+  # A leading WITH does not make a statement a read: `WITH a AS (...) INSERT
+  # INTO t SELECT * FROM a` is a write whose first verb is WITH, so the first
+  # verb alone cannot decide it.
   if (grepl("^WITH\\b", head))
     return(!grepl("\\b(INSERT|MERGE)\\s+INTO\\b", head))
   !grepl("^(INSERT|MERGE)\\b", head)
 }
 
-# The connection is one of two things, and every statement is SQL text, so
-# they differ only here: a DBI connection - the Databricks ODBC driver, the
-# connection the cohort and LOT builds use - or a sparklyr session.
-# A sparklyr session inherits DBIConnection too, so it is told apart first:
-# over it every statement goes through sparklyr, as before.
+# The connection is one of two things, and every statement is SQL text, so they
+# differ only here: a DBI connection - the Databricks ODBC driver the cohort
+# and LOT builds use - or a sparklyr session. A sparklyr session inherits
+# DBIConnection too, so it is told apart first.
 is_spark_con <- function(con) inherits(con, "spark_connection")
 is_dbi_con   <- function(con) inherits(con, "DBIConnection") && !is_spark_con(con)
 
@@ -461,9 +420,8 @@ dbi_disconnect <- function(con) DBI::dbDisconnect(con)
   d
 }
 
-# The one call that reaches the driver. Separate so what surrounds it - which
-# statement is retried and which is not - can be driven by a test without a
-# warehouse.
+# The one call that reaches the driver, separate so what surrounds it - which
+# statement is retried and which is not - can be driven without a warehouse.
 db_exec_once <- function(con, sql) {
   if (is_dbi_con(con)) dbi_exec(con, sql)
   else sparklyr::invoke(sparklyr::spark_session(con), "sql", sql)
@@ -514,17 +472,14 @@ run_step <- function(con, name, sql, qc = NULL, allow_empty = FALSE) {
 }
 
 # Create a table if it is not there, then remove the rows this run is about to
-# rewrite. Called by every module that appends rather than replaces.
+# rewrite. `scope` is the WHERE that identifies them, usually COHORT = '2L'; a
+# module that writes the whole table in one statement uses CREATE OR REPLACE
+# TABLE and needs neither.
 #
-# `scope` is the WHERE that identifies this run's rows - usually
-# COHORT = '2L'. A module that writes the whole table in one statement uses
-# CREATE OR REPLACE TABLE instead and does not need either of these.
-# CREATE TABLE IF NOT EXISTS reconciles nothing, and every INSERT here is
-# positional. A gained column fails on the count; a renamed one inserts cleanly
-# and keeps the old name with the new meaning, which is worse.
-#
-# The schema is therefore compared BEFORE the scope is cleared, so a mismatch
-# cannot leave the table short.
+# CREATE TABLE IF NOT EXISTS reconciles nothing and every INSERT here is
+# positional, so the schema is compared before the scope is cleared. A gained
+# column fails on the count; a renamed one inserts cleanly and keeps the old
+# name with the new meaning, which is worse.
 # Aliases only - different spellings of one type, never a different type.
 #
 # FLOAT is not DOUBLE: single precision turns 16,777,217 into 16,777,216.
@@ -558,8 +513,8 @@ ensure_table <- function(con, name, schema_sql) {
 
   # The table was just created if it was absent, so it HAS a schema now. A
   # DESCRIBE that errors or comes back empty means the schema could not be
-  # established, and that is a stop - not a pass. Treating it as "nothing to
-  # compare" let an unverified table reach the DELETE below.
+  # established, which is a stop: rows are not cleared from a table whose shape
+  # is unknown.
   d <- tryCatch(describe_columns(con, name),
                 error = function(e)
                   stop("SCHEMA ERROR: could not read the schema of ", name,
@@ -568,10 +523,8 @@ ensure_table <- function(con, name, schema_sql) {
                        "shape has not been established.", call. = FALSE))
   have_col <- d$COL
   # A DESCRIBE without a type column is not a licence to compare names only.
-  # Every warehouse this runs against returns data_type; its absence means the
-  # response is not the one this check was written for, and the safe reading of
-  # an unrecognised response is to stop rather than to clear rows on the
-  # strength of half a comparison.
+  # Every warehouse this runs against returns data_type, so its absence means
+  # an unrecognised response, and that stops.
   if (!isTRUE(attr(d, "typed")))
     stop("SCHEMA ERROR: the schema of ", name, " came back without a type ",
          "column (found: ", paste(attr(d, "raw_names"), collapse = ", "),
@@ -584,10 +537,9 @@ ensure_table <- function(con, name, schema_sql) {
          "Its shape could not be established, so its rows are not cleared.",
          call. = FALSE)
 
-  # The WHOLE ordered schema, not a prefix of it. Comparing only the first
-  # length(want) names accepted a table with extra trailing columns, and the
-  # positional insert then failed on the column count - after the scope had
-  # already been deleted.
+  # The WHOLE ordered schema, not a prefix of it: comparing only the first
+  # length(want) names accepts a table with extra trailing columns, which the
+  # positional insert then fails on.
   bad <- !identical(have_col, want_col) || !identical(have_typ, want_typ)
   if (bad)
     stop("SCHEMA ERROR: ", name, " exists with a different shape.\n",

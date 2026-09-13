@@ -3,11 +3,9 @@
 
 pass <- 0L; fail <- 0L
 ok <- function(cond, what) {
-  # `cond` is evaluated HERE, not by the caller, so an assertion whose
-  # expression raises is a FAILED assertion rather than a dead run. It used to
-  # propagate: one mutation made split_statements() throw and the suite
-  # stopped with a stack trace, losing every result after it and reporting no
-  # count at all.
+  # `cond` is evaluated here, not by the caller, so an assertion whose
+  # expression raises counts as a failure instead of aborting the run and
+  # losing every result after it.
   cond <- tryCatch(cond, error = function(e) {
     what <<- paste0(what, "  [raised: ", conditionMessage(e), "]")
     FALSE
@@ -27,10 +25,9 @@ report <- function() {
 
 # glue is not installed everywhere; the templates only use {expr}, so a small
 # stand-in keeps the tests runnable offline. Where the real package is present
-# it has to be attached rather than merely loadable: the suites sys.source()
-# each file into environments parented on globalenv, so glue() is found on the
-# search path or not at all, and requireNamespace() alone does not put it
-# there. Loadable-but-not-attached is why these ran only where glue was absent.
+# it must be attached, not merely loadable: the suites sys.source() each file
+# into environments parented on globalenv, so glue() is found on the search
+# path or not at all.
 if (requireNamespace("glue", quietly = TRUE)) {
   library(glue)
 } else {

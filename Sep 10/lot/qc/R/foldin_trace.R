@@ -3,33 +3,30 @@
 # The study team asked to see the fold-in rule (LOT_RULES.md 4.8) on real
 # patients: their raw MAP episodes beside the final lines, so a reader can
 # check that a drug which came back after one other agent opened a line was
-# put where the rule says. This file is the queries that find such patients,
-# the sample that picks a spread of them, and the rendering that lays a
-# patient out. Kept apart from the runner (trace_foldin.R) so every piece can
-# run without a connection, which is the only way anything here gets tested.
+# put where the rule says. Kept apart from the runner (trace_foldin.R) so
+# every piece can run without a connection.
 #
-# HOW A FOLD IS FOUND. The engine does not persist a fold flag: foldin_episodes
-# is a CTE inside the statement that builds each line, and it is gone when the
-# statement is. What survives is the fold's signature in the published tables,
-# and it is exactly the route check C1 accepts (R/checks.R):
+# The engine does not persist a fold flag - foldin_episodes is a CTE inside the
+# statement that builds each line - so a fold is recognised by its signature in
+# the published tables, which is the route check C1 accepts (R/checks.R):
 #
 #   (a) the drug is in line n's LOT_BASE_MEDS, n >= 2, and line n-1's
 #       LOT_BASE_MEDS carried it - a permissible substitute and the drug it
 #       replaces being one agent in both directions (4.4);
-#   (b) it has NO episode starting inside line n's induction window,
+#   (b) it has no episode starting inside line n's induction window,
 #       [LOT_START_DT, ELIGIBLE_END] as qc_window_sql() computes it;
 #   (c) it has an episode starting inside the line, on or after LOT_START_DT
 #       and on or before LOT_BASE_END_DT.
 #
 # A regimen is otherwise built only from episodes starting inside the window,
-# so nothing but a fold produces (a)+(b)+(c). Two shapes are deliberately NOT
-# reported: a previous-line drug returning INSIDE the window, which is an
+# so nothing but a fold produces (a)+(b)+(c). Two shapes are deliberately not
+# reported: a previous-line drug returning inside the window, which is an
 # ordinary induction-window regimen drug; and a drug from two lines back,
 # which 4.8 puts out of scope.
 #
-# Patient ids are NOT masked by default here, unlike every other report in
-# this folder. The trace exists so a patient can be looked up, and a masked
-# id cannot be. The runner masks on request, in R, after the reads.
+# Patient ids are not masked by default here, unlike every other report in this
+# folder: the trace exists so a patient can be looked up. The runner masks on
+# request, in R, after the reads.
 
 `%||%` <- function(a, b) if (is.null(a)) b else a
 
@@ -45,10 +42,9 @@ mask_patid_r <- function(x) {
 }
 
 # A patient list as a SQL IN list. Ids are alphanumeric, so anything else is
-# refused rather than escaped: doubling a quote is not how Spark escapes, and
-# a list that reached the warehouse with a quote in it would be a statement
-# nobody wrote. Validated here, and again in every query that takes ids, so a
-# caller cannot get past it by building the list itself.
+# refused rather than escaped: doubling a quote is not how Spark escapes.
+# Validated here and again in every query that takes ids, so a caller cannot
+# get past it by building the list itself.
 foldin_trace_check_patids <- function(patids) {
   patids <- unique(trimws(as.character(patids)))
   patids <- patids[!is.na(patids) & nzchar(patids)]
@@ -78,16 +74,15 @@ foldin_trace_in_list <- function(patids)
 # 4.4 makes the pair one agent whichever half a line happens to report.
 # prev_carried also keeps the previous line's regimen string, because the
 # narrative quotes it. Written here rather than exported from checks.R so the
-# QC catalogue stays frozen; a change to C1's shape should be made here too.
+# QC catalogue stays frozen; a change to C1's shape belongs here too.
 #
 # One hop only: a substitute reaches the drug it replaces and a drug reaches
 # its substitutes, never a sibling substitute of the same drug. That matches
-# the engine's fold set (prior_lines_regimen_ctes in engine/R/prior_regimen.R
-# collapses to the agent and re-expands) only because the build refuses a
-# star - one original with several substitutes - in 01_codelists.R
-# (subs_star). If that check is ever waived, both this and C1's prev_carried
-# have to collapse to the agent on both sides, coalesce(ps.original_med,
-# MED_ABBR), instead of aliasing.
+# the engine's fold set (prior_lines_regimen_ctes in engine/R/prior_regimen.R)
+# only because 01_codelists.R refuses a star - one original with several
+# substitutes - under subs_star. If that check is ever
+# waived, both this and C1's prev_carried have to collapse to the agent on
+# both sides, coalesce(ps.original_med, MED_ABBR), instead of aliasing.
 .foldin_alias_ctes <- function(t) paste0("
     w_alias AS (
       SELECT PATID, LOT_NUM, MED_ABBR, MED_ABBR AS ALIAS FROM reg
@@ -115,11 +110,11 @@ foldin_trace_in_list <- function(patids)
 # cutoff) and the substitute pairs. Masks nothing.
 #
 # LOT_START_TYPE comes out with the row because the signature on a line a
-# transplant or CAR-T opened is NOT the rule's doing: 4.8 refuses a fold
-# across a procedure that opened a line, and the engine's foldin_tx_opened
-# counts the line's own start (engine/R/foldin_rule.R, this_tx). Such a row
-# is a build defect that C1 would accept, so the narrative and the summary
-# say so rather than read it as 4.8 at work.
+# transplant or CAR-T opened is not the rule's doing: 4.8 refuses a fold across
+# a procedure that opened a line, and the engine's foldin_tx_opened counts the
+# line's own start (engine/R/foldin_rule.R, this_tx). Such a row is a build
+# defect that C1 would accept, so the narrative and the summary say so rather
+# than read it as 4.8.
 foldin_trace_sql <- function(t, p) {
   .need_checks()
   paste0("
@@ -160,13 +155,11 @@ foldin_trace_sql <- function(t, p) {
 foldin_trace_subs_sql <- function(t) paste0("
     SELECT original_med, substitute_med FROM ", t$subs)
 
-# WHICH BUILD the trace is reading, as one string to compare before and after
-# the reads. The run id alone does not identify a build: the engine keeps one
-# id for a session, so a rebuild can leave a second complete row under the
-# same id and a reader comparing ids would see no change. UPDATED_AT moves on
-# every rebuild and STATE moves while one is running, so the pin carries all
-# three. Here rather than in the runner so it can be tested without a
-# connection; the same question the snapshot exporter asks around its copy.
+# Which build the trace is reading, as one string to compare before and after
+# the reads. The run id alone does not identify a build - the engine keeps one
+# id for a session, so a rebuild can leave a second complete row under it - so
+# the pin carries UPDATED_AT, which moves on every rebuild, and STATE, which
+# moves while one is running.
 foldin_trace_build_pin <- function(row) {
   if (is.null(row) || !nrow(row)) return("(no row)")
   g <- function(nm) if (is.null(row[[nm]])) "" else as.character(row[[nm]][1])
@@ -230,15 +223,13 @@ foldin_trace_tx_sql <- function(t, patids) {
 
 # ---- The sample ----------------------------------------------------------------
 # Deterministic, and a spread rather than the first n ids: ranked within each
-# (LOT_NUM, MED_ABBR) group by PATID and taken round-robin - rank 1 of every
-# group, then rank 2 - so ten patients show the rule on several drugs and
-# several lines rather than ten LEN folds at LOT2. A patient with two folds
-# sits in two groups and is taken once, at the first group that reaches them.
-# An explicit list bypasses the sample: the ids are traced as given.
+# (LOT_NUM, MED_ABBR) group by PATID and taken round-robin, so ten patients
+# show the rule on several drugs and several lines rather than ten LEN folds at
+# LOT2. A patient with two folds is taken once. An explicit list bypasses the
+# sample.
 #
-# The orderings are radix sorts: order() on a character column otherwise
-# collates by the session locale, and the same run on the platform and on a
-# laptop could then pick different patients for mixed-case ids.
+# The orderings are radix sorts: order() on a character column collates by the
+# session locale, so two machines could otherwise pick different patients.
 foldin_trace_sample <- function(cands, n, patids = NULL) {
   if (!is.null(patids) && length(patids))
     return(foldin_trace_check_patids(patids))
@@ -258,7 +249,7 @@ foldin_trace_sample <- function(cands, n, patids = NULL) {
 }
 
 # ---- The summary ---------------------------------------------------------------
-# Over ALL folds, never the sample: the sample is for reading, the counts are
+# Over every fold, never the sample: the sample is for reading, the counts are
 # for scale. The published table's own totals sit beside them.
 #
 # A signature row on a line a transplant or CAR-T opened is not a fold (see
@@ -310,12 +301,12 @@ foldin_trace_summary <- function(cands, n_patients_total, n_lines_total) {
 # A steroid is shown and never marked: steroids are excluded from every line
 # decision by class (LOT_RULES.md 2.1), so no note applies to one.
 #
-# 'opens LOT n' is NOT every non-steroid episode on the start date. A drug of
-# the previous line's regimen cannot open a line (4.3), under any of its names
-# (4.4), and the engine's foldin_openers leaves it out for that reason; so an
-# episode of one starting on the start date is 'induction' here. `subs` is the
-# substitute pairs (original_med, substitute_med) for the name test; without
-# them a drug is matched by its own name only.
+# 'opens LOT n' is not every non-steroid episode on the start date: a drug of
+# the previous line's regimen cannot open a line (4.3) under any of its names
+# (4.4), and the engine's foldin_openers leaves it out for that reason, so an
+# episode of one starting on the start date is 'induction' here.
+# `subs` is the substitute pairs (original_med, substitute_med) for the name
+# test; without them a drug is matched by its own name only.
 #
 # On a line a transplant or CAR-T opened the fold's signature is not a fold
 # (see foldin_trace_sql), and the note says so instead of crediting 4.8.
@@ -330,7 +321,7 @@ foldin_trace_summary <- function(cands, n_patients_total, n_lines_total) {
   unique(c(med, o[u == med], u[o == med]))
 }
 
-# Does a space-separated regimen string carry a drug, under any of its names?
+# Whether a space-separated regimen string carries a drug, under any of its names.
 .regimen_carries <- function(regimen, med, subs = NULL) {
   r <- strsplit(trimws(as.character(regimen %||% "")), " ", fixed = TRUE)[[1]]
   any(.drug_aliases(med, subs) %in% r[nzchar(r)])
@@ -415,71 +406,56 @@ foldin_trace_annotate <- function(lines, episodes, tx, folds, p, subs = NULL) {
 # ---- The narrative -------------------------------------------------------------
 # One paragraph per folded (line, drug), in plain sentences: where the drug
 # was, what opened the line it returned in, when it came back, and what the
-# reading before 4.8 would have done with it. That last part is the point of
-# the trace - the study team asked to see that these patients are now
-# classified as the rule says, which needs the alternative stated.
+# reading before 4.8 would have done with it. The study team asked to see that
+# these patients are classified as the rule says, which needs the alternative
+# stated.
 #
-# THE PRE-RULE OUTCOME is not one sentence, because the engine has three
-# readings of an agent arriving outside the window, and which one applies
-# turns on where the line's OWN regimen had got to (engine/R/steps/
-# 10_lot2_5_base.R, first_add_candidates and the end-reason cascade):
+# The pre-rule outcome is not one sentence, because the engine has three
+# readings of an agent arriving outside the window, and which one applies turns
+# on where the line's own regimen had got to (engine/R/steps/10_lot2_5_base.R,
+# first_add_candidates and the end-reason cascade):
 #
 #   - the own drugs still covered the return date: the return is an added
 #     medication, the line ends MED_ADD the day before it (date_sub) and the
 #     next line opens on it (7.4);
-#   - ...and a CAR-T follows within cart_consolidation_days of the return:
+#   - the same, with a CAR-T within cart_consolidation_days of the return:
 #     bridging, the line ends CART_INIT the day before the infusion (7.3);
 #   - the own drugs had run out before the return: the return is no candidate
 #     at all - the added-medication window closes at the raw run-out - and it
-#     CONFIRMS the run-out instead (5.3), so the line ends DISCONTINUATION on
+#     confirms the run-out instead (5.3), so the line ends DISCONTINUATION on
 #     that date and the next line opens on the return.
 #
 # The persisted line cannot say which, because the fold's hold has already
 # carried its run-out to the folded supply. So the own cover is read off the
-# episodes shown: the own regimen is the regimen drugs WITH an episode inside
+# episodes shown: the own regimen is the regimen drugs with an episode inside
 # the window (a folded drug has none, by the signature), and its cover is the
-# last MAP_END_DT of their episodes starting in the line before the return -
-# the engine chains cover forward the same way, and a foreign drug that would
-# have broken the chain before the return would have ended the line earlier
-# still. Where the read shows no own episode the paragraph says so and hedges.
+# last MAP_END_DT of their episodes starting in the line before the return, the
+# way the engine chains cover forward - a foreign drug that would have broken
+# the chain before the return would have ended the line earlier still. Where
+# the read shows no own episode the paragraph says so and hedges.
 #
 # A line a transplant or CAR-T opened gets no such paragraph: 4.8 refuses the
 # fold there, so the signature is a defect and the paragraph says that.
 #
-# AND IT IS STATED ONCE PER PATIENT. The reading above is local: it asks what
-# the engine would have made of THIS return in the line as built. That holds
-# only while the two histories are still the same, which is up to the first
-# return the rule folded. From that one on, the line holding a later return
-# depends on what the engine would have done with the EARLIER one, and that is
-# not in these tables. A patient whose LOT2 folds A in May and B ten days
-# later is the case: the paragraph for A is right, and a paragraph for B
-# saying LOT2 would have ended ten days later contradicts it, in the same
-# report, about the same patient.
+# The reading is local, so a boundary is stated once per patient. It asks what
+# the engine would have made of this return in the line as built, which holds
+# only up to the first return the rule folded; after that, the line holding a
+# later return depends on what the engine would have done with the earlier one,
+# and that is not in these tables. So `all_folds` is the patient's whole fold
+# set and only the earliest return in it carries a boundary. The rest name
+# where the reading stops and what settles it: a build of the same cohort with
+# APPLY_MAP_FOLDIN=FALSE, differenced against this one.
 #
-# So `all_folds` is the patient's whole fold set, and only the earliest return
-# in it carries a boundary. The rest name where the reading stops and what
-# settles it, which is a build of the same cohort with APPLY_MAP_FOLDIN=FALSE
-# differenced against this one - the engine's own answer, not a second copy of
-# the end cascade written here.
+# No paragraph claims anything about the line number. Saying the earlier return
+# would have opened a line, so this one is not in LOT n, is wrong where the
+# earlier return is bridged: two returns inside one CAR-T's consolidation
+# window end LOT n on the infusion's eve either way (7.3), so the regimen and
+# the end reason differ and the numbering does not. The paragraph says only
+# that the answer is not in these tables.
 #
-# AND THEY CLAIM NOTHING ABOUT THE LINE NUMBER. Saying the earlier return
-# "would have opened a line, so this one is not in LOT n" is a guess of the
-# same kind, and it is wrong where the earlier return is bridged: two returns
-# inside the consolidation window of one CAR-T end LOT n on the infusion's eve
-# either way (7.3), the CAR-T opens the next line either way, and the later
-# return is in LOT n in both builds - the regimen and the end reason differ,
-# the numbering does not. What the paragraph says instead is only that the
-# answer is not in these tables.
-#
-# Returns sharing the earliest date are one divergence, and that is all the
-# sharing establishes: the engine would have judged both on the one date, so
-# whatever its reading of that date is covers them both. WHICH reading it is
-# depends on the rule that applies - an added medication on the day, a
-# run-out the day confirmed, a CAR-T bridging past it - and this says none of
-# them, because the paragraph above has already said it once. Reading them as
-# two drugs arriving together in a new line was the same over-claim in
-# miniature: under bridging no line opens on the return date at all, the
-# CAR-T opens the next one on its own date.
+# Returns sharing the earliest date are one divergence: the engine would have
+# judged both on the one date, so its reading of that date covers them both.
+# Which reading it is goes unsaid, the paragraph above having said it once.
 foldin_trace_narrative <- function(fold_row, lines, episodes, p, tx = NULL, subs = NULL,
                                    all_folds = NULL) {
   f <- fold_row
@@ -550,7 +526,7 @@ foldin_trace_narrative <- function(fold_row, lines, episodes, p, tx = NULL, subs
     as.integer(cart_dt - ret) <= p$cart
 
   # Where this patient's two histories part, and whether this return is at it.
-  # Folds of THIS patient only; a frame without RETURN_DT (or no frame at all)
+  # Folds of this patient only; a frame without RETURN_DT (or no frame at all)
   # is read as this return being the only one.
   fr <- if (!is.null(all_folds) && nrow(all_folds) && !is.null(all_folds$RETURN_DT))
     all_folds[as.character(all_folds$PATID) == as.character(f$PATID), , drop = FALSE]
@@ -567,9 +543,8 @@ foldin_trace_narrative <- function(fold_row, lines, episodes, p, tx = NULL, subs
   }
   diverged <- !is.na(first_ret) && !is.na(ret) && ret > first_ret
   # The same day as another fold: one divergence, and the other drug is named
-  # so the two paragraphs read as one boundary rather than two. What the
-  # boundary IS has just been said; this adds only that it covers both, which
-  # is what sharing the date establishes and the whole of it.
+  # so the two paragraphs read as one boundary rather than two. The boundary
+  # itself has just been stated; this adds only that it covers both.
   also <- if (!diverged && length(peers))
     paste0(" ", paste(peers, collapse = " and "), " returned the same day, so the ",
            "same reading covers ", if (length(peers) > 1L) "them" else "it",

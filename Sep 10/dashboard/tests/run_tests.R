@@ -16,11 +16,9 @@ setwd(here)
 
 pass <- 0L; fail <- 0L
 ok <- function(cond, what) {
-  # `cond` is evaluated HERE, not by the caller, so an assertion whose
-  # expression raises is a FAILED assertion rather than a dead run. It used to
-  # propagate: one mutation made split_statements() throw and the suite
-  # stopped with a stack trace, losing every result after it and reporting no
-  # count at all.
+  # `cond` is evaluated here, not by the caller, so an assertion whose
+  # expression raises is a failed assertion rather than a dead run that stops
+  # with a stack trace and reports no count at all.
   cond <- tryCatch(cond, error = function(e) {
     what <<- paste0(what, "  [raised: ", conditionMessage(e), "]")
     FALSE
@@ -162,10 +160,9 @@ cat("\nthe suppression floor can be raised and never lowered\n")
      "and takes the count with the values - publishing the n suppresses nothing")
   ok(nrow(hi) == nrow(d),
      "a withheld row is marked, not dropped: absent and suppressed differ")
-  # A stratum the package's own floor covers. The synthetic table has none -
-  # every stratum in it runs to thousands - so asking for a floor of 1 there
-  # suppressed nothing either way and the check passed on a mutation that
-  # honoured the viewer's floor outright. Built here instead.
+  # A stratum the package's own floor covers. Every stratum in the synthetic
+  # table runs to thousands, so a floor of 1 there suppresses nothing either
+  # way and the check would hold nothing. Built here instead.
   small <- data.frame(COHORT = "1L", LOT_NUM = 1L, PERIOD = "follow_up",
                       CONDITION = c("rare", "common"), DOMAIN = "d",
                       ACUTE_CHRONIC = "acute",
@@ -209,8 +206,8 @@ cat("\nsummaries\n")
 }
 
 cat("\nwithholding a cell is not the same as hiding it\n")
-# Everything above was reached by mutating the source and seeing whether this
-# suite noticed. These are the places it did not.
+# The rules that are easiest to lose: an identifier that reaches the page, a
+# cell recoverable by subtraction, a floor that is not applied.
 {
   # --- an identifier is dropped whatever case the warehouse returned it in ---
   ok(!"patid" %in% names(drop_identifiers(
@@ -352,9 +349,8 @@ cat("\nwithholding a cell is not the same as hiding it\n")
      "...and the stratum reported is the population, not the row count")
 
   # --- a count that cannot be read is not a count that cleared the floor ---
-  # released() has always failed closed on an unknown population. apply_floor()
-  # failed open on the same question, and the two decide it in different
-  # panels.
+  # released() fails closed on an unknown population, and apply_floor() has to
+  # decide the same question the same way - they run in different panels.
   unreadable <- function(v) { x <- at(500); x$N_AT_RISK <- v; x }
   ok(is.na(apply_floor(unreadable(NA), sp_r, 25L)$RATE[1]),
      "a row whose denominator is missing publishes no rate")
@@ -383,7 +379,7 @@ cat("\nwithholding a cell is not the same as hiding it\n")
 
   # --- the command a viewer is told to run ---
   # Printed for someone to paste into a shell, so a setting value is a shell
-  # injection surface. These pass today; nothing held them to it.
+  # injection surface.
   ok(identical(sh_quote("a; rm -rf /"), "'a; rm -rf /'"),
      "a shell metacharacter in a setting is quoted, not passed through")
   ok(identical(sh_quote("a'b"), "'a'\\''b'"),
@@ -472,9 +468,8 @@ cat("\nKaplan-Meier\n")
   ok(abs(k$SURV[2] - 0.5333333) < 1e-6,
      "and the second accounts for the censoring between them")
   ok(k$N_RISK[2] == 3, "with the risk set reduced by the censored subject")
-  # S(3) is 0.533, so this curve never reaches 0.5 and has NO median. Worth
-  # pinning: the first version of this check asserted 3, reading the last
-  # event time as the median.
+  # S(3) is 0.533, so this curve never reaches 0.5 and has no median - which is
+  # not the same thing as its last event time.
   ok(is.na(km_median(k)),
      "a curve that never reaches 0.5 has no median, and does not report its last event")
   # One that does: 4 subjects, events at 1 and 2 -> 0.75 then 0.5.
@@ -504,9 +499,8 @@ cat("\nKaplan-Meier\n")
 
 cat("\nwhat a panel is allowed to show\n")
 # One preparation layer answers four questions for every renderer: which rows
-# are the analysis set, how many PATIENTS that is, whether that clears the
-# floor, and what to say when it does not. Each renderer used to answer them
-# for itself, and each got at least one wrong.
+# are the analysis set, how many patients that is, whether that clears the
+# floor, and what to say when it does not.
 {
   # --- grain: a row is not always a patient ---
   lot <- data.frame(
@@ -745,17 +739,16 @@ source(file.path(here, "jobs", "export_lib.R"))
      "and a lower-case column is documentation, not a setting to export")
 
   # --- the shipped grid, row by row, through the package's own config ---
-  # Every scenario failed on the cluster because ED_DEFINITION said
-  # rev_or_pos, a word the package never read: it takes a comma list of
-  # revenue, pos and cpt. A grid value the package refuses is found here.
+  # A grid value the package would refuse is found here rather than on the
+  # cluster: ED_DEFINITION takes a comma list of revenue, pos and cpt, and a
+  # word such as rev_or_pos is never read.
   grid <- read.csv(file.path(here, "scenarios.csv"), stringsAsFactors = FALSE,
                    check.names = FALSE)
   grid_base <- c(INPUT_COHORT_TABLE = "ndmm_NDMM_COHORT", WORK_SCHEMA = "",
                  PROJECT_WORK_SCHEMA = "", DOMINO_USER_NAME = "",
                  DOMINO_STARTING_USERNAME = "")
-  # Through cfg_defaults() AND check_settings(): the list settings are read
-  # by the first and refused by the second, and a test of the first alone
-  # accepted rev_or_pos.
+  # Through cfg_defaults() and check_settings(): the list settings are read by
+  # the first and refused by the second, so both have to run.
   grid_cfg <- function(row) with_env(c(grid_base, scenario_env(row)),
                                      { cfg <- cfg_defaults(); check_settings(cfg); cfg })
   refused <- character(0)
@@ -780,8 +773,8 @@ source(file.path(here, "jobs", "export_lib.R"))
        grepl(k, grid$description[1], fixed = TRUE), logical(1))),
      paste0("the base case names every setting on which it departs from the package's defaults (",
             paste(departs, collapse = ", "), ")"))
-  # One env for both halves is the whole point: the export used to rebuild the
-  # configuration with only OBJECT_PREFIX changed and read the PARENT's schema.
+  # One env for both halves: an export that rebuilt the configuration with only
+  # OBJECT_PREFIX changed would read the parent's schema.
   jb <- paste(readLines(file.path(here, "jobs", "build_scenarios.R"),
                         warn = FALSE), collapse = "\n")
   ok(grepl("run_one(grid[i, ], envs[[i]])", jb, fixed = TRUE) &&
@@ -836,8 +829,7 @@ source(file.path(here, "jobs", "export_lib.R"))
                "old_run"),
      "a refresh that produced nothing leaves the older snapshot untouched")
   # The LOT prefix has to be owned by the run whose id the directory will
-  # carry, at the moment of the copy. The exporter filed a rebuilt prefix's
-  # lines under the previous run's id, and the reader trusts that name.
+  # carry, at the moment of the copy: the reader trusts that name.
   assign("db_q", function(con, sql) data.frame(
     RUN_ID = c("old_lot", "new_lot"), STATE = "complete",
     UPDATED_AT = c("2026-01-01", "2026-06-01"), stringsAsFactors = FALSE),
@@ -862,7 +854,7 @@ source(file.path(here, "jobs", "export_lib.R"))
        identical(lot_dir_name("new_lot", ""), "new_lot") &&
        safe_segment(lot_dir_name("new_lot", "20260601T000000Z")),
      "a LOT export is filed by run and build, in one path segment")
-  # ...and the snapshot reader looks in exactly that directory.
+  # And the snapshot reader looks in exactly that directory.
   local({
     r2 <- file.path(tempdir(), "snap_builds")
     unlink(r2, recursive = TRUE)
@@ -914,8 +906,7 @@ source(file.path(here, "jobs", "export_lib.R"))
   ok(grepl("NOT PUBLISHED", jb, fixed = TRUE) &&
        grepl("ex_failed", jb, fixed = TRUE),
      "an export that failed is reported as unpublished, not as zero tables")
-  # The emitted string, not the word anywhere in the file - the comment above
-  # the change quotes the old wording on purpose.
+  # The emitted string, not the word anywhere in the file.
   ok(grepl('" scenario(s) built and published to "', jb, fixed = TRUE) &&
        !grepl('" scenario(s) built and exported to "', jb, fixed = TRUE),
      "...and the footer claims success only for what actually reached the snapshot")
@@ -968,7 +959,7 @@ local({
      "a run with a completed row that is no longer the newest owns nothing")
   ok(!is.null(src$read_lot("new_run", "LOT_LONG_FINAL")),
      "...and the newest completed run does")
-  # ...and it is asked again every time, so a rebuild after a yes is seen.
+  # And it is asked again every time, so a rebuild after a yes is seen.
   status <- data.frame(RUN_ID = c("new_run", "newer_run"), STATE = "complete",
                        UPDATED_AT = c("2026-06-01 00:00:00", "2026-07-01 00:00:00"),
                        stringsAsFactors = FALSE)
@@ -1049,7 +1040,7 @@ local({
 ok(lot_run_bound(SRC, SCENARIOS[[1]]),
    "a source that binds runs by construction needs no second check")
 
-# ...and the tables a panel reads still belong to the run the sidebar names.
+# And the tables a panel reads still belong to the run the sidebar names.
 {
   s1 <- SCENARIOS[[1]]
   ok(isTRUE(scenario_is_current(SRC, s1)),
@@ -1102,10 +1093,9 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
          "...while its metadata - what it set out to do - still reads")
     }
     # The same id, rebuilt. DOMINO_RUN_ID is reused by every build inside one
-    # Domino run, so a re-run keeps the id while its state and timestamp
-    # move. Bound by id alone, the page showed the re-run's rows - first a
-    # build still going, then a finished one - under the earlier build's
-    # settings.
+    # Domino run, so a re-run keeps the id while its state and timestamp move;
+    # bound by id alone, the page would show the re-run's rows under the
+    # earlier build's settings.
     sc2 <- c(list(prefix = "p_", run_id = "A", state = "complete",
                   updated_at = "2026-09-08 12:00:00"), full)
     md_at <- function(state, at) list(read = function(prefix, table)
@@ -1131,7 +1121,7 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
     # cohorts it selected, and leaves the rest of the prefix as the previous
     # run left it - so a completed run's prefix can hold a safety table it
     # never wrote, a 2L partition it never built, and a released table from
-    # before its raw one was rebuilt. Each drew as this run's.
+    # before its raw one was rebuilt.
     ok(identical(table_owner("S_SAFETY_RATES"), "safety") &&
          identical(table_owner("S_SAFETY_RATES_RELEASE"), "release") &&
          is.na(table_owner("S_NOTHING")),
@@ -1215,10 +1205,10 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
 }
 
 cat("\nthe readings survive the trip from the producer\n")
-# parse_readings() reads a string the STUDY PACKAGE writes, and the two live
-# in different folders. So the producer is driven here rather than a string
-# being retyped: a note the writer emits and the reader mangles is a defect
-# neither package's own tests can see.
+# parse_readings() reads a string the study package writes, and the two live in
+# different folders. So the producer is driven here rather than a string being
+# retyped: a note the writer emits and the reader mangles is something neither
+# package's own tests can see.
 {
   cfg <- as.list(stats::setNames(rep("x", length(OPEN_QUESTION_SOURCE)),
                                  names(OPEN_QUESTION_SOURCE)))
@@ -1237,7 +1227,7 @@ cat("\nthe readings survive the trip from the producer\n")
      "...and the provenance never ends up inside the value")
   ok(length(r) == length(OPEN_QUESTION_SOURCE),
      "...and every other setting still parses as its own entry")
-  # The shape that broke it, minimally.
+  # The minimal shape that needs the note-aware split.
   r2 <- parse_readings("a=1 (note; with a semicolon); b=2")
   ok(length(r2) == 2 && identical(r2$a$value, "1") && identical(r2$b$value, "2"),
      "a semicolon inside a note does not start a new entry")
@@ -1436,10 +1426,9 @@ cat("\nline against the next line\n")
   ok(grepl("grouped", tl$FROM) && !grepl("under the floor", tl$FROM) && !grepl("under the floor", tl$TO),
      "...and the grouped row does not claim that every pair in it was under the floor - the 30 was not")
   # The pairs' population is published in the caption and as "lines by line
-  # number", so a line with one common pair and one rare one showed the
-  # common count beside the total: 50 patients, 49 shown, the rare 1 was the
-  # subtraction. Its source and destination were its own, so no group rule
-  # caught it. Now the line's own total is a published group too.
+  # number", so a line with one common pair and one rare one would show the
+  # common count beside that total: 50 patients, 49 shown, and the rare 1 is
+  # the subtraction. So the line's own total is a published group too.
   two_pairs <- function(common, rare) data.frame(
     PATID = rep(c(sprintf("C%03d", seq_len(common)), sprintf("R%03d", seq_len(rare))), 2),
     LOT_NUM = rep(1:2, each = common + rare),
@@ -1470,14 +1459,13 @@ cat("\nline against the next line\n")
   ok("(no regimen)" %in% rg$TO && !"(Missing)" %in% rg$TO,
      "an allograft or CAR-T line's empty regimen reads as no regimen, not as missing data")
 
-  # "How each line ended" publishes, for the selected line, the count of
-  # lines ending each way - with or without a line after them - and the
-  # pairs from an end reason sum to it less the lines with none. Producer-
-  # shaped: four histories weighted 1, 49, 49 and 51, every patient with
-  # exactly two lines. 50 DISCONTINUATION endings, 49 of them shown as
-  # DISCONTINUATION -> MED beside the per-line counts saying every line 1
-  # had a line 2, read the hidden pair off as 1. `alone` adds line-1
-  # DISCONTINUATION endings with no line after them.
+  # "How each line ended" publishes, for the selected line, the count of lines
+  # ending each way - with or without a line after them - and the pairs from an
+  # end reason sum to it less the lines with none. The fixture is four
+  # histories weighted 1, 49, 49 and 51, every patient with exactly two lines:
+  # 50 DISCONTINUATION endings, 49 of them shown, and the hidden pair readable
+  # as 1 unless this group is held. `alone` adds line-1 DISCONTINUATION
+  # endings with no line after them.
   histories <- function(w = c(1L, 49L, 49L, 51L), alone = 0L) {
     from <- c("DISCONTINUATION", "DISCONTINUATION", "SCT_AUTO", "MED_ADD")
     to <- c("SCT_AUTO", "MED", "SCT_AUTO", "MED")
@@ -1522,12 +1510,11 @@ cat("\nline against the next line\n")
   counts <- regmatches(hv, gregexpr("<td>[^<]*</td></tr>", hv))[[1]]   # the last cell of each row
   ok(setequal(counts, c("<td>51.00</td></tr>", "<td>99.00</td></tr>")),
      "...and the rendered panel's counts are 51 and 99 - neither 49 nor 1")
-  # What the three tables say TOGETHER. From the published end-reason and
-  # start-type totals less the one shown pair, a reader has the row and
-  # column totals of the hidden cells, and every way of filling them with
-  # whole numbers is a candidate. The grouped row used to say how many
-  # pairs it held, and of the fifty candidates exactly one had three
-  # non-empty cells: the one with the rare pair at 1.
+  # What the three tables say together. From the published end-reason and
+  # start-type totals less the one shown pair, a reader has the row and column
+  # totals of the hidden cells, and every way of filling them with whole
+  # numbers is a candidate. A grouped row saying how many pairs it held would
+  # pick one of the fifty candidates out.
   fillings <- function(rows, cols) {
     # Every non-negative integer matrix with these margins, one row per candidate.
     fill <- function(r, remaining_cols) {
@@ -1687,8 +1674,7 @@ cat("\nwhether two scenarios rest on the same lines\n")
 
 cat("\nthe LOT table list matches the engine's own\n")
 {
-  # lot/ is a sibling of this folder in the delivery, so one hop up. It used
-  # to be two, when the dashboard sat inside the study package.
+  # lot/ is a sibling of this folder, so one hop up.
   eng <- file.path("..", "lot", "engine", "R", "build_lot.R")
   if (file.exists(eng)) {
     txt <- paste(readLines(eng, warn = FALSE), collapse = "\n")
@@ -1724,11 +1710,10 @@ cat("\nthe source refuses to make numbers up when it was told not to\n")
      "the warehouse source without a connection stops, rather than reading nothing")
 }
 
-cat("\nfound by an adversarial pass: no per-patient row reaches the page\n")
+cat("\nno per-patient row reaches the page\n")
 {
-  # Five table panels rendered a `subject` table as a grid - one row per
-  # patient, PATID included, 1,200 rows at a time. A line listing with an
-  # identifier, on a dashboard several people can open.
+  # A `subject` table drawn as a grid is a line listing: one row per patient,
+  # PATID included, on a dashboard several people can open.
   d <- read_table(SRC, "s223926_", "S_DEMOGRAPHICS")
   ok("PATID" %in% names(d), "the underlying table does carry PATID")
   sp <- table_spec("S_DEMOGRAPHICS")
@@ -1740,18 +1725,17 @@ cat("\nfound by an adversarial pass: no per-patient row reaches the page\n")
      "so no patient id reaches the rendered HTML")
   ok(all(c("VARIABLE", "LEVEL", "N", "PCT") %in% names(out)),
      "the summary is counts and percentages per level")
-  # It uses the two helpers that existed, were tested, and were called by
-  # nothing - the same defect the release module's review found in the old R
-  # suppression helper, reintroduced here.
+  # It goes through the two helpers that summarise a column, so they are
+  # called rather than merely tested.
   src_all <- paste(vapply(list.files("R", "[.]R$", full.names = TRUE),
                           function(f) paste(readLines(f, warn = FALSE), collapse = "\n"),
                           character(1)), collapse = "\n")
   ok(grepl("tabulate_cat(", src_all, fixed = TRUE) &&
        grepl("summarise_num(", src_all, fixed = TRUE),
      "and the summary helpers are called by something, not only by tests")
-  # Driven, not grepped. The branch used to live inside server(), where no test
-  # could reach it: a mutation sending subject tables back to a raw grid passed
-  # the whole suite because the word "summarise_subject" was still in the file.
+  # Driven, not grepped. A branch inside server() can only be checked by
+  # looking for the word "summarise_subject" in the file, which says nothing
+  # about what the branch does.
   h <- panel_table_html(d, sp, floor_n = 25L)
   ok(!grepl("P[0-9]{6}", h),
      "the panel renderer emits no patient id for a subject table")
@@ -1782,11 +1766,11 @@ cat("\nfound by an adversarial pass: no per-patient row reaches the page\n")
      "a stratum of 3 publishes nothing about itself, level by level or overall")
 }
 
-cat("\nfound by an adversarial pass: nothing escapes the suppression floor\n")
+cat("\nnothing escapes the suppression floor\n")
 {
-  # apply_floor() returned early whenever the spec named no n_col - which is
-  # every subject, funnel, check and undeclared table. So "a new module appears
-  # in the dashboard on its own" also meant "and skips suppression".
+  # A spec that names no n_col - every subject, funnel, check and undeclared
+  # table - must not mean the floor is skipped, or "a new module appears in the
+  # dashboard on its own" would also mean "and publishes raw".
   sp <- table_spec("S_BRAND_NEW", c("COHORT", "N_PATIENTS", "RATE"))
   g <- apply_floor(data.frame(COHORT = "1L", N_PATIENTS = 2L, RATE = 99.9),
                    sp, 25L, 25L)
@@ -1801,18 +1785,17 @@ cat("\nfound by an adversarial pass: nothing escapes the suppression floor\n")
      "a spec that names its denominator is honoured over the guess")
 }
 
-cat("\nfound by an adversarial pass: the pasteable command cannot inject\n")
+cat("\nthe pasteable command cannot inject\n")
 {
-  # The page invites a viewer to paste this block. Unquoted, a value carrying a
-  # newline put its own line in it - MONTHS_AS=days, then rm -rf /.
+  # The page invites a viewer to paste this block, so an unquoted value
+  # carrying a newline would put a line of its own in it.
   payload <- "days\nrm -rf /\necho pwned"
   cm <- scenario_command(list(months_as = payload), prefix = "p_")
   ok(sum(grepl("^export ", strsplit(cm$command, "\n", fixed = TRUE)[[1]])) == 2L,
      "the injected newlines did not become extra export lines")
   # The property that matters is the shell's, so a shell decides it: run the
-  # block and read back what the variable actually holds. Checking the text's
-  # shape instead is how the first version of this passed a payload that a
-  # shell would have executed.
+  # block and read back what the variable actually holds, rather than checking
+  # the shape of the text.
   shell_value <- function(value, var = "MONTHS_AS") {
     if (!nzchar(Sys.which("bash"))) return(NULL)
     blk <- sub("\nRscript.*$", "", scenario_command(list(months_as = value),
@@ -1842,11 +1825,11 @@ cat("\nfound by an adversarial pass: the pasteable command cannot inject\n")
      "the prefix is quoted too")
 }
 
-cat("\nfound by an adversarial pass: a path segment cannot leave the snapshot\n")
+cat("\na path segment cannot leave the snapshot\n")
 {
-  # A LOT run id of "../../PRIVATE" read a file outside the snapshot root. It
-  # comes from a metadata TABLE, so anyone who can write to the warehouse chose
-  # it, and the dashboard handed the contents to whoever opened the page.
+  # A LOT run id comes from a metadata table, so anyone who can write to the
+  # warehouse chooses it: "../../PRIVATE" must not reach a file outside the
+  # snapshot root.
   ok(safe_segment("s223926_") && safe_segment("run-1.2_3"),
      "an ordinary prefix or run id is accepted")
   for (bad in list("../PRIVATE", "..", ".", "a/b", "/etc/passwd", "", NA_character_,
@@ -1868,7 +1851,7 @@ cat("\nfound by an adversarial pass: a path segment cannot leave the snapshot\n"
      "and a table name cannot climb either")
 }
 
-cat("\nfound by an adversarial pass: a duplicated stratum is not silent\n")
+cat("\na duplicated stratum is not silent\n")
 {
   sph <- table_spec("S_HCRU_RATES")
   d <- data.frame(COHORT = "1L", LOT_NUM = 1L, PERIOD = "p", MEASURE = c("m", "m"),
@@ -1882,7 +1865,7 @@ cat("\nfound by an adversarial pass: a duplicated stratum is not silent\n")
      "and a table with one row per key carries no such column")
 }
 
-cat("\nfound by an adversarial pass: readings parse to clean keys\n")
+cat("\nreadings parse to clean keys\n")
 {
   ok(identical(names(parse_readings("  spaced  =  value  ")), "spaced"),
      "a key with padding is trimmed - untrimmed it read as a different setting")
@@ -1914,13 +1897,9 @@ cat("\nHTML the app writes\n")
 
 cat("\nthe palette is this folder's own\n")
 {
-  # It was a copy of an earlier reporting dashboard's, and this compared the
-  # two whenever that folder was beside us. It is not part of this delivery,
-  # so the comparison could only ever skip - and a check that cannot run is
-  # worse than no check, because the skip line reads like coverage.
-  #
-  # What is held instead is that the palette is complete and usable: every
-  # colour the renderer names is defined, and each is a hex colour.
+  # The palette is this folder's own, so what is held is that it is complete
+  # and usable: every colour the renderer names is defined, and each one is a
+  # hex colour.
   used <- c("orange", "orange_dark", "orange_pale", "paper", "ink", "slate",
             "line", "wash", "alert_ink", "alert_bg", "alert_line")
   ok(all(used %in% names(PALETTE)),
@@ -1971,10 +1950,10 @@ cat("\napp.R is wiring, and the wiring matches the registries\n")
      "a rate chart preserves its strata rather than averaging them")
   ok(grepl("plot_count_bars(d, sp, lab, p$label, input$floor)", src, fixed = TRUE),
      "and a count chart withholds a bar resting on too few patients")
-  # No renderer reads straight from the source. The KPI and the metadata
-  # table did, and a floor change re-ran the KPI alone - past the panel
-  # guard - putting a rebuilt snapshot's cohort count under the old run's
-  # settings. Every read now goes through read_scenario_table().
+  # No renderer reads straight from the source. A floor change can re-run one
+  # renderer past the panel guard, which would put a rebuilt snapshot's counts
+  # under the old run's settings, so every read goes through
+  # read_scenario_table().
   raw <- sum(gregexpr("SRC$read(", src, fixed = TRUE)[[1]] > 0)
   ok(raw == 0L,
      paste0("no renderer reads straight from the source (",

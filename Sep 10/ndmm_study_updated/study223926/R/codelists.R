@@ -1,26 +1,19 @@
 # Code-list loading, and the guard that matters more than the loading.
 #
-# Every code list this package needs is a CSV under CODELIST_DIR. None of them
-# is in version control - the delivery's own rule: "Code and docs only. No code
-# lists". Four of them do not exist anywhere yet, because they come out of the
-# protocol's Annex 2, Annex 3 and Annex 7, which were never delivered
-# (../CODELISTS.md).
+# Every code list this package needs is a CSV under CODELIST_DIR, and none of
+# them is in version control. Four have no codes yet: they come out of the
+# protocol's Annex 2, Annex 3 and Annex 7 (../CODELISTS.md).
 #
 # The guard: a code list that exists but is UNFILLED stops the module that
-# needs it. An unfilled row joins to nothing, and a rate of zero for want of a
-# code list is indistinguishable in every downstream table from a rate of zero
-# for want of events. The Aug 14 fork's safety loader takes the same line, and
-# its wording is the right one: "a rate for them would be zero for want of a
-# code list rather than for want of events".
+# needs it. A rate of zero for want of a code list is indistinguishable in
+# every downstream table from a rate of zero for want of events.
 
 # file -> the columns the loader requires. A file not named here cannot be
 # loaded: a typo would otherwise read an unrelated file cleanly.
 #
 # CODELIST_CODE_COL names which of those columns carries the code, because the
-# unfilled-row guard turns on it. It was a caller argument once, and a caller
-# that named a column the file does not have got NO guard at all - the check
-# returned early and an entirely blank list loaded clean. It is data now, so a
-# call site cannot get it wrong.
+# unfilled-row guard turns on it. It is data rather than a caller argument, so
+# a call site naming a column the file does not have cannot disable the guard.
 CODELIST_CODE_COL <- c(
   "mm_dx.csv"                  = "dx",
   "cl_mma_codelist.csv"        = "CL_CODE",
@@ -88,11 +81,9 @@ local({
 ICD_FAMILY_9  <- c("9", "ICD9", "ICD-9", "ICD9DIAG")
 ICD_FAMILY_10 <- c("10", "ICD10", "ICD-10", "ICD10DIAG")
 
-# What each file this build read actually was, so a number can be traced to
-# it. Package-level, so a second build in the same R session would otherwise
-# inherit the first's entries - and report an md5 for a file it never opened,
-# because a different module selection needs different lists. Cleared per
-# build by reset_run_state().
+# What each file this build read actually was, so a number can be traced to it.
+# Package-level, so a second build in the same R session does not inherit the
+# first's entries. Cleared per build by reset_run_state().
 .codelist_seen <- new.env(parent = emptyenv())
 
 reset_codelist_manifest <- function() {
@@ -114,7 +105,7 @@ load_codelist <- function(csv_name, cfg) {
     stop("CODELIST ERROR: ", path, " does not exist.",
          if (csv_name %in% names(CODELIST_SOURCE))
            paste0("\nIt comes from ", CODELIST_SOURCE[[csv_name]],
-                  ", which has not been delivered - see ../CODELISTS.md.")
+                  " - see ../CODELISTS.md.")
          else "", call. = FALSE)
 
   md5 <- unname(tools::md5sum(path))
@@ -192,15 +183,11 @@ check_icd_family <- function(df, csv_name) {
   invisible(TRUE)
 }
 
-# Table 3 types two conditions "Acute or chronic" and "Acute/Chronic". A
-# LIKE '%acute%' test and a LIKE '%chronic%' test BOTH match those, so such a
-# condition would be counted twice - once through the acute washout chain and
-# once as a chronic first-occurrence - and its incidence would be the sum of
-# two different rules.
-#
-# So the column is canonicalised to exactly one of acute or chronic, and a
-# value that names both has to be resolved rather than guessed: s7.8.1's own
-# chronic list decides where it can, and anything left over stops the run.
+# Table 3 types two conditions "Acute or chronic" and "Acute/Chronic", and a
+# LIKE '%acute%' test and a LIKE '%chronic%' test both match those - the
+# condition would be counted once through the acute washout chain and once as a
+# chronic first occurrence. So the column is canonicalised to exactly one rule:
+# s7.8.1's own chronic list resolves what it names, and the rest stops the run.
 canonical_acute_chronic <- function(x, condition = NULL) {
   v <- tolower(trimws(ifelse(is.na(x), "", as.character(x))))
   has_a <- grepl("acute", v, fixed = TRUE)
@@ -239,40 +226,21 @@ resolve_codelist_dir <- function(cfg, here) {
 }
 
 # Checked before any module runs, so a run that cannot finish stops in the
-# first second rather than after the expensive steps.
+# first second rather than after the expensive steps. Each list is LOADED
+# rather than stat-ed: codelists/ ships templates with the right columns and no
+# codes, which a path check would accept.
 #
-# This LOADS each file rather than stat-ing its path. A path check passes on
-# this package's own codelists/, which ship as blank templates with the right
-# columns and no codes - so the run would reach the module, fail there, and
-# have spent the warehouse time in between. Loading runs the same shape,
-# unfilled-row and icd_family guards the module would run, at second one.
-# What a run does about a code list it cannot use depends on how the module
-# was asked for.
+# MODULES=all asks for everything that CAN run: a module whose list is unusable
+# is left out by name, along with anything that needs it, and the run carries
+# on - the plan, the log and S_RUN_METADATA all name it. A module named in
+# MODULES was asked for, so its list is required and the run stops here. Either
+# way no module runs on an unusable list.
 #
-# MODULES=all asks for everything that CAN run, not for everything: a module
-# whose list is unfilled or missing is left out by name, and so is anything
-# that needs it, and the run carries on. The cohort, its attrition, its
-# windows, demographics and outcomes need no list at all, and a run should
-# not fail for want of a list that only a safety rate needs. What was left
-# out is in the plan, in the log and - because S_RUN_METADATA records the
-# modules that ran - on the dashboard, which reports a module that did not
-# run rather than hiding it.
-#
-# A module named in MODULES was asked for. Then its list is required and the
-# run stops here, in its first second, naming the file and the annex.
-#
-# Either way no module ever runs on an unusable list: a rate of zero for want
-# of a code list is indistinguishable downstream from a rate of zero for
-# want of events. Returns the modules that will run.
-#
-# Two checks on each list. That it loads at all - the file, its columns, its
-# codes, its ICD families. Then what the module asks of it together with the
-# settings: an ED definition the HCRU list has no rows for, a SOC category
-# the protocol does not name, a safety condition defined by an admission.
-# Each of those is the module's own check, the one it makes as it starts,
-# named in the registry as `check` and run here too - so a list the module
-# would refuse is found before the connection is opened, not after the
-# modules before it have run and left the run recorded as failed.
+# Each list is also put through the module's own registry `check` against the
+# settings - an ED definition the HCRU list has no rows for, a SOC category the
+# protocol does not name, a safety condition defined by an admission - so a
+# list the module would refuse is found before the connection is opened.
+# Returns the modules that will run.
 preflight_codelists <- function(mods, cfg) {
   want <- required_codelists(mods)
   if (!length(want)) return(invisible(mods))
@@ -303,11 +271,11 @@ preflight_codelists <- function(mods, cfg) {
     stop("CODELIST ERROR: ", length(problems), " code list(s) the selected ",
          "modules need are not usable:\n",
          paste(problems, collapse = "\n"),
-         "\n\nEither deliver them, or narrow MODULES so nothing needs them - ",
+         "\n\nEither fill them, or narrow MODULES so nothing needs them - ",
          "MODULES=spine,cohorts,attrition,periods,demographics,tte runs the whole ",
-         "cohort and the time-to-event outcomes with no code list this repo does ",
-         "not already have - or run with MODULES=all, which leaves out by name ",
-         "whatever has no usable list.", call. = FALSE)
+         "cohort and the time-to-event outcomes with no code list at all - or ",
+         "run with MODULES=all, which leaves out by name whatever has no ",
+         "usable list.", call. = FALSE)
   }
 
   # Left out: the modules on an unusable list or refusing their own, then
@@ -356,9 +324,8 @@ codelist_metadata <- function() {
 #
 # Anything that is not one of the ICD-9 spellings yields NULL rather than
 # ICD-10. Reading a blank flag as ICD-10 mis-classes a genuine ICD-9 claim,
-# which then fails the family join silently - a missed diagnosis on one code
-# list, a missed exclusion on another. The CDM does carry blanks: the cohort
-# build found 16 on its first production run (ndmm/DECISIONS.md section 11).
+# which then fails the family join silently. The CDM does carry blanks - the
+# cohort build found 16 on its first production run.
 icd_family_sql <- function(col) {
   q <- function(v) paste(sprintf("'%s'", v), collapse = ",")
   sprintf("CASE WHEN upper(trim(%s)) IN (%s) THEN 'ICD9'
@@ -381,11 +348,10 @@ register_codelist_view <- function(con, df, view_name, cols,
 
   # Over a Spark session, sparklyr::copy_to - and a Spark session inherits
   # DBIConnection, which is why it is tested for first. Over the ODBC driver
-  # there is no copy_to, so the list is one VALUES statement behind a temporary view -
-  # the way the cohort build loads its own lists over the same driver,
-  # pregnancy.csv's 5,318 rows included. One statement, never chunked: a
-  # temporary view cannot be appended to, and the obvious workaround defines
-  # the view in terms of itself.
+  # there is no copy_to, so the list is one VALUES statement behind a temporary
+  # view, the way the cohort build loads its own lists over the same driver.
+  # Never chunked: a temporary view cannot be appended to, and the obvious
+  # workaround defines the view in terms of itself.
   stage <- paste0(tolower(view_name), "_raw")
   if (is_spark_con(con) || !is_dbi_con(con))
     sparklyr::copy_to(con, keep, name = stage, overwrite = TRUE, memory = FALSE)
@@ -401,11 +367,9 @@ register_codelist_view <- function(con, df, view_name, cols,
 # is a syntax error.
 #
 # The literal follows Spark's rules, not the SQL standard's. Spark reads two
-# adjacent literals as one string joined, so 'Alzheimer''s' is Alzheimers -
-# the apostrophe gone, and no error to say so. Its escape is the backslash:
-# \' for a quote, \\ for a backslash itself. (That is the parser's default,
-# spark.sql.parser.escapedStringLiterals=false.) tests/run_tests.R sends a
-# staged list through the parser and reads every value back.
+# adjacent literals as one string joined, so 'Alzheimer''s' is Alzheimers, with
+# no error to say so. Its escape is the backslash: \' for a quote, \\ for a
+# backslash itself (spark.sql.parser.escapedStringLiterals=false).
 codelist_stage_sql <- function(stage, df) {
   lit  <- function(x) paste0("'", gsub("'", "\\'", gsub("\\", "\\\\", as.character(x), fixed = TRUE),
                                        fixed = TRUE), "'")
@@ -418,13 +382,10 @@ codelist_stage_sql <- function(stage, df) {
           stage, paste(rows, collapse = ",\n  "), cols)
 }
 
-# The normalisation, as SQL, separate from the staging that needs a session.
-#
-# A function of its own so the test harness emits the SAME statement the run
-# does. While this lived inside register_codelist_view(), the harness stubbed
-# the whole thing out and this SQL - which every code-driven join depends on -
-# was never emitted, never parsed and never executed. Dropping the upper() here
-# would have zeroed every rate in the study with nothing to catch it.
+# The normalisation, as SQL, separate from the staging that needs a session, so
+# the same statement is emitted whether or not a session is there to stage
+# into. Every code-driven join depends on it: without the upper() here, every
+# rate in the study would be zero.
 codelist_view_sql <- function(stage, view_name, cols, code_col = "code",
                               family_col = "icd_family") {
   norm_code <- if (code_col %in% cols)

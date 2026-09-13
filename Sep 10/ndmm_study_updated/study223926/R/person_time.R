@@ -38,9 +38,9 @@ PROTOCOL_CHRONIC_CONDITIONS <- c(
   "other_movement_disorders",
   "thrombocytopenia",
   "anemia",
-  # Objective 3's own condition, and named chronic alongside the rest. Without
-  # it the cross-check misses a secondary_malig.csv that types the condition
-  # acute, which would count every recurrence.
+  # Objective 3's own condition, named chronic alongside the rest. Without it
+  # the cross-check misses a malignancy list that types it acute, which would
+  # count every recurrence.
   "malignancies"
 )
 
@@ -76,12 +76,9 @@ assert_chronic_set <- function(codelist, condition_col = "condition",
 
 # Rule 1 - the same-day collapse - is not here. It is a DISTINCT on the event
 # select in 06_safety.R and 08_malignancy.R, because it has to happen where the
-# claim rows are read and cannot be applied afterwards.
-#
-# There was a distinct_event_dates_sql() here that expressed the rule and that
-# no module called. Deleting it: a helper that states a protocol rule and is
-# wired to nothing reads, to anyone checking, as the rule being applied
-# centrally - and mutating it breaks no test, because nothing runs it.
+# claim rows are read and cannot be applied afterwards. A helper here that
+# stated the rule and was wired to nothing would read as the rule being applied
+# centrally.
 
 # Rule 3, first half. Patients with the condition before their treatment
 # period - not at risk, so out of the numerator AND the denominator.
@@ -103,10 +100,9 @@ chronic_prior_history_sql <- function(events, periods, out) {
 #
 # The washout is between COUNTED events, so lag() cannot do it: days 0, 20 and
 # 40 are two counted events, and lag() gives one because it compares each event
-# with its predecessor rather than the last one that counted.
-#
-# Each round adds the earliest still-eligible event per patient and condition,
-# and run_acute_washout() loops until a round adds nothing.
+# with its predecessor rather than with the last one that counted. Each round
+# adds the earliest still-eligible event per patient and condition, and
+# run_acute_washout() loops until a round adds nothing.
 acute_washout_round_sql <- function(events, periods, counted, cfg,
                                     period_label = "TREATMENT") {
   w <- as.integer(cfg$acute_washout_days)
@@ -150,15 +146,10 @@ acute_washout_round_sql <- function(events, periods, counted, cfg,
           period_label, counted, period_label, w)
 }
 
-# The loop, bounded from the data rather than a guess.
-#
-# A fixed 60 failed a patient with exactly 60 events, since one round confirms
-# convergence - and 60 events 30 days apart is five years, well inside the
-# observation window.
-#
-# Within D days, events at least w apart number at most floor(D/w) + 1. The
-# bound is that over the longest period in scope, plus slack; hitting it is a
-# real non-convergence and still stops.
+# The loop, bounded from the data rather than a guess: within D days, events at
+# least w apart number at most floor(D/w) + 1, so the bound is that over the
+# longest period in scope plus slack. A fixed bound fails a patient who happens
+# to have exactly that many events, since one round confirms convergence.
 run_acute_washout <- function(con, events, periods, counted, cfg,
                               period_label = "TREATMENT", max_rounds = NULL) {
   if (is.null(max_rounds)) {
@@ -189,9 +180,9 @@ run_acute_washout <- function(con, events, periods, counted, cfg,
        call. = FALSE)
 }
 
-# A reference implementation of the same rule, over vectors, used by
-# tests/test_person_time.R. Two implementations of one rule is a cost; the
-# alternative is a SQL loop nothing checks.
+# A reference implementation of the same rule, over vectors. Two
+# implementations of one rule is a cost; the alternative is a SQL loop nothing
+# can check.
 count_acute_greedy <- function(dates, washout_days) {
   d <- sort(unique(as.Date(dates)))
   if (!length(d)) return(as.Date(character(0)))

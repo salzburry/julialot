@@ -11,30 +11,24 @@
 #               numerator and the person-time denominator" (s7.8.1)
 #
 # The counting rules live in R/person_time.R.
+
 # What the safety list must satisfy beyond its shape: the protocol's chronic
-# set typed chronic, no condition defined by an admission, one domain and
-# one type per condition. The module runs it as it starts; the preflight
-# runs it before the connection is opened. Returns the list with its
-# acute/chronic types resolved to one value per row.
+# set typed chronic, no condition defined by an admission, one domain and one
+# type per condition. The module runs it as it starts; the preflight runs it
+# before the connection is opened. Returns the list with its acute/chronic
+# types resolved to one value per row.
 check_safety_list <- function(cfg, cl = load_codelist("safety_events.csv", cfg)) {
   assert_chronic_set(cl)
   # Table 3 types two conditions "Acute or chronic" and "Acute/Chronic", and a
-  # LIKE test for either word matches both - so those conditions would be
-  # counted through the acute washout chain AND as a chronic first occurrence,
-  # and their incidence would be the sum of two different rules. Resolved to
-  # one value per row before any of it reaches SQL.
+  # LIKE test for either word matches both - so each would be counted through
+  # the acute washout chain AND as a chronic first occurrence. Resolved to one
+  # value per row before any of it reaches SQL.
   cl$acute_chronic <- canonical_acute_chronic(cl$acute_chronic, cl$condition)
-  # One domain and one type per condition. The incidence denominator is built
-  # per (condition, domain, type) and the numerator joins back on CONDITION
-  # alone, so a condition listed under two domains would get a row per domain
-  # each carrying the FULL person-time and the FULL event count - and summing
-  # the table would double it.
-  # A condition whose DEFINITION is a setting, not just a code.
-  #
-  # Every condition here is extracted from diagnosis rows alone, so an
-  # outpatient code would satisfy `severe infection resulting in
-  # hospitalization`. That needs an admission linkage this module does not
-  # implement, so a condition whose name says hospitalisation stops the run.
+  # A condition whose DEFINITION needs more than a code. Every condition here
+  # is extracted from diagnosis rows alone, so an outpatient code would satisfy
+  # `severe infection resulting in hospitalization`. That needs an admission
+  # linkage this module does not implement, so a condition whose name says
+  # hospitalisation stops the run.
   hosp_named <- unique(trimws(as.character(
     cl$condition[grepl("hospitali[sz]", cl$condition, ignore.case = TRUE)])))
   if (length(hosp_named))
@@ -88,26 +82,21 @@ mod_safety <- function(con, cfg, cohort) {
     WHERE p.COHORT = '%6$s' AND d.FST_DT IS NOT NULL",
     wrk("S_SAFETY_EVENTS"), wrk("S_PERIODS"), cdm_src("diagnosis"), reg,
     icd_family_sql("d.ICD_FLAG"), cohort$key),
-    # A cohort with no safety event at all is a valid study result, not a
-    # broken step. The rates below are driven from the DENOMINATOR, so every
-    # condition still gets a row saying zero - but only if the run reaches
-    # them, and the zero-row guard stopped it here first. The guard that
-    # matters is on the denominator, which cannot legitimately be empty.
+    # A cohort with no safety event at all is a valid study result. The rates
+    # below are driven from the DENOMINATOR, so every condition still gets a
+    # row saying zero; the guard that matters is on the denominator, which
+    # cannot legitimately be empty.
     allow_empty = TRUE,
     qc = sprintf("SELECT count(*) AS n_events,
                          count(DISTINCT CONDITION) AS n_conditions
                   FROM %s WHERE COHORT = '%s'",
                  wrk("S_SAFETY_EVENTS"), cohort$key))
 
-  # The two periods, counted the SAME way.
-  #
-  # Both periods run the same washout and chronic-collapse machinery. Counted
-  # differently, Objective 1's prevalence and Objective 2's incidence could not
-  # be compared - which is the comparison the study exists to make.
-  #
-  # One protocol difference survives: the baseline denominator is the window's
-  # own person-time "irrespective of prior event history", so nobody is dropped
-  # from it and a chronic condition's first occurrence counts for everyone.
+  # The two periods, counted the SAME way: both run the same washout and
+  # chronic-collapse machinery, because Objective 1's prevalence and Objective
+  # 2's incidence have to be comparable. One protocol difference survives - the
+  # baseline denominator is the window's own person-time "irrespective of prior
+  # event history", so nobody is dropped from it.
   prepare_table(con, wrk("S_SAFETY_COUNTED"),
     "PATID string, COHORT string, LOT_NUM int, PERIOD string,
      CONDITION string, EVENT_DT date", cohort$key)
@@ -172,16 +161,12 @@ mod_safety <- function(con, cfg, cohort) {
          exclude_prior = FALSE),
     list(label = "TREATMENT", view = "s_periods_this",
          exclude_prior = TRUE))) {
-    # Only the treatment denominator drops the not-at-risk; s7.8.1 says the
-    # baseline one is taken irrespective of prior event history.
+    # Only the treatment denominator drops the not-at-risk; s7.8.1 takes the
+    # baseline one irrespective of prior event history.
     #
     # A chronic condition counts ONCE, at first instance, so a patient who has
-    # that event stops being at risk and the denominator ends with them.
-    # Summing the whole PERIOD_PY counted time in which a first event was no
-    # longer possible, understating every chronic rate. At-risk ends at the
-    # earlier of first counted event and period end.
-    #
-    # Baseline is untouched: s7.8.1 takes it irrespective of prior history.
+    # that event stops being at risk and the denominator ends with them: at-risk
+    # time runs to the earlier of the first counted event and the period end.
     py_expr <- if (per$exclude_prior)
       sprintf("sum(CASE
                      WHEN c.ac = 'chronic' AND h.PATID IS NOT NULL THEN 0

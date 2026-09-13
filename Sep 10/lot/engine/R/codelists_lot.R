@@ -7,21 +7,16 @@ CODELIST_FILES <- c("cl_mma_rollup.csv", "cl_mma_codelist.csv",
 
 # permissible_subs.csv, read flat.
 #
-# One row makes a pair one agent in BOTH directions: every site that expands
-# a regimen through the table unions the two directions (prior_regimen.R,
-# foldin_rule.R, 10_lot2_5_base.R), so a second row the other way adds no
-# direction the engine does not already take. It does break the sites that
-# collapse a drug to its original - coalesce(ps.original_med, ...) - because
-# with A -> B and B -> A both present A collapses to B and B to A, and the
-# pair reads as two agents that swapped names. The chain check refuses that,
-# and the study team's file lists bortezomib and ixazomib both ways, and
-# daratumumab as its own substitute.
+# One row makes a pair one agent in both directions: every site that expands a
+# regimen through the table unions the two directions, so a second row the
+# other way adds nothing. It does break the sites that collapse a drug to its
+# original, where A -> B and B -> A together read as two agents that swapped
+# names.
 #
-# So the mirror of a pair listed both ways is dropped - the row whose
-# original sorts first is the one kept, so the choice does not depend on row
-# order - and a drug standing in for itself is dropped, since it changes no
-# expansion and no collapse. Each dropped row is logged. A chain A -> B -> C,
-# or a star, is left exactly as the file has it, for the check to refuse.
+# So the mirror of a pair listed both ways is dropped, keeping the row whose
+# original sorts first so the choice does not depend on row order, and a drug
+# standing in for itself is dropped. Each dropped row is logged. A chain
+# A -> B -> C, or a star, is left as the file has it for the check to refuse.
 normalise_permissible_subs <- function(df) {
   o <- toupper(trimws(as.character(df$original_med)))
   s <- toupper(trimws(as.character(df$substitute_med)))
@@ -51,14 +46,13 @@ load_codelist_csv <- function(csv_name, col_spec) {
     stop("CODELIST ERROR: ", csv_name, " is not one of the files this build is ",
          "defined on: ", paste(CODELIST_FILES, collapse = ", "), call. = FALSE)
   # The code lists live outside version control, so the name alone does not say
-  # which version a run used. Hash the file, then hash it again after the read.
-  # Swapped mid-read, the logged hash would describe a file this run never
+  # which version a run used. Hash the file, then hash it again after the read:
+  # swapped mid-read, the logged hash would describe a file this run never
   # loaded.
   md5 <- unname(tools::md5sum(csv_path))
   # NA when the file could not be opened for hashing. Left alone, the re-hash
-  # below would compare NA with NA and pass, so the swap check would be quietly
-  # off. And 'NA' would be written to LOT_CODELIST_METADATA in the shape of a
-  # hash. grepl is FALSE on NA, so this catches both.
+  # would compare NA with NA and pass, and 'NA' would be written to
+  # LOT_CODELIST_METADATA. grepl is FALSE on NA, so this catches both.
   if (!grepl("^[0-9a-f]{32}$", md5))
     stop("CODELIST ERROR: could not hash ", csv_name, ", so this run cannot ",
          "record or re-check which version of it was read", call. = FALSE)

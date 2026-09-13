@@ -24,21 +24,15 @@ phase_lot1_base <- function(con, ctx) {
   #
   # A line picks its regimen over the whole induction window. Without a cutoff
   # it keeps collecting past its own end: where an allogeneic transplant ends
-  # LOT1 early, the rest of the window would still gather drugs into the regimen
-  # of a line already over. A drug first dispensed after the line ended would
-  # count in its regimen AND start a later line - counted twice - and it would
-  # move the run-out with it, because a regimen drug is a base drug.
+  # LOT1 early, a drug first dispensed afterwards would count in that line's
+  # regimen and start a later line, and would move the run-out with it.
   #
-  # ALLO always. CAR-T only when the induction exemption is off.
-  #
-  # With the exemption on - the pinned setting - a CAR-T inside the window is
-  # part of LOT1 and ends nothing, and one outside the window is outside the
-  # regimen window too, so it has nothing to strand. With the exemption off the
-  # CAR-T ends LOT1 the day before, and the rest of the window would collect
-  # into a line already over. So the cutoff follows the exemption.
-  #
-  # An AUTO cannot strand anything either way. It only ever extends the line
-  # (LOT_RULES.md §6.5). LOT2-5 has no exemption, so CAR-T always counts there.
+  # ALLO always. CAR-T only when the induction exemption is off: with the
+  # exemption on, a CAR-T inside the window is part of LOT1 and one outside it
+  # is outside the regimen window too, so there is nothing to strand. An AUTO
+  # cannot strand anything either way - it only ever extends the line
+  # (LOT_RULES.md §6.5). LOT2-5 has no exemption, so CAR-T always counts
+  # there.
   #
   # Floored at the line start. An ALLO on day one then gives a one-day line
   # whose regimen is that day's drugs, not an empty regimen with a cutoff

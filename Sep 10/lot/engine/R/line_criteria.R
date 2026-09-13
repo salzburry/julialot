@@ -4,14 +4,13 @@
 #   <prefix>LOT_LONG_FINAL     the enabled ones applied
 
 # A criterion may need patient-level facts lot_long does not carry. It declares
-# `patients`: SQL making one row per PATID. That view is LEFT JOINed into the
-# allflags view, so the criterion's own sql can read its columns. Both names are
-# built from the criterion's name, so nothing has to be kept in step by hand.
-# A criterion's name becomes a view name and a table alias, so it has to be a
-# name SQL accepts. Declared in code rather than set by an operator, so this
-# cannot fire today - and that is exactly why a criterion added later with a
-# hyphen or a space in its name would fail in the warehouse's words rather
-# than ours, halfway through a build.
+# `patients`: SQL making one row per PATID, LEFT JOINed into the allflags view
+# so the criterion's own sql can read its columns. Both names are built from
+# the criterion's name, so nothing has to be kept in step by hand.
+#
+# That name becomes a view name and an alias, so it has to be one SQL accepts.
+# Without this check a criterion added later with a hyphen or a space in its
+# name would fail in the warehouse's words, halfway through a build.
 .check_criterion_name <- function(nm) {
   if (length(nm) != 1L || is.na(nm) || !grepl("^[A-Za-z][A-Za-z0-9_]*$", nm))
     stop("LINE CRITERIA ERROR: criterion name '", nm,
@@ -25,25 +24,18 @@ criterion_patients_view <- function(c_i) paste0("lc_", .check_criterion_name(c_i
 criterion_alias         <- function(c_i) paste0("p_", .check_criterion_name(c_i$name))
 
 # Belantamab (an ADC) received in any LOT. It lives here, not in the cohort
-# build, because lines do not exist until this package has run. A cohort-time
-# rule could only be a claims proxy nobody could check.
+# build, because lines do not exist until this package has run.
 #
-# Asked of the CLAIMS, not of the built lines. That is what makes it exact.
-# Reading LOT_BASE_MEDS would bound the question by what the build produced, and
-# the build stops at max_lot lines. Belantamab in a sixth line, or as a line's
-# second added med, would be invisible.
-#
-# map_stacked is one row per patient, drug and treatment episode, already
-# bounded to the patient's observation. A belantamab MAP overlapping the
-# patient's LOT-covered span is belantamab received in a line. Inside a built
-# line it is that line's; after the last one it is a line the build would have
-# started. So the answer does not depend on max_lot.
+# Asked of the claims, not of the built lines: reading LOT_BASE_MEDS would
+# bound the question by what the build produced, and the build stops at max_lot
+# lines. map_stacked is one row per patient, drug and treatment episode,
+# already bounded to the patient's observation, so a belantamab MAP overlapping
+# the patient's LOT-covered span is belantamab received in a line whatever
+# max_lot is.
 #
 # Patient-level, not line-level. The predicate is false on every line of an
-# affected patient, so the truncate below leaves them with none.
-#
-# The MED_ABBR test matches the whole value, not a LIKE. An abbreviation that
-# merely contains BELA cannot match.
+# affected patient, so the truncate below leaves them with none. The MED_ABBR
+# test matches the whole value, not a LIKE.
 LINE_CRITERIA <- list(
   list(
     name    = "no_belantamab",
@@ -133,9 +125,8 @@ validate_line_criteria <- function(crit = LINE_CRITERIA, max_lot = NULL) {
     }
 
     # A patient-level view is wired in by name, and both names come from the
-    # criterion's name. The SQL is written out in the criterion so it reads as
-    # SQL, and checked here. Without the check, a renamed criterion could build
-    # a view nothing joins, or read an alias nothing defines. Either one is a
+    # criterion's name. Without this check a renamed criterion could build a
+    # view nothing joins, or read an alias nothing defines - either way a
     # criterion that matches nobody and looks satisfied.
     if (!is.null(c_i$patients)) {
       if (!.is_str(c_i$patients))
@@ -171,12 +162,12 @@ validate_line_criteria <- function(crit = LINE_CRITERIA, max_lot = NULL) {
 # APPLY_<NAME> in config.csv. Anything other than TRUE or FALSE stops the build.
 # A typo that quietly drops an intended criterion is worse than a halt.
 #
-# When it is unset the default is the criterion's own, not FALSE for everything.
-# no_belantamab is a study exclusion and is pinned TRUE in CONTRACT. So
-# an unset variable leaves it on, and an explicit FALSE is a contract deviation
-# that check_contract() records. Under a blanket FALSE default, a config.csv
-# that lost the row gave a complete run with the exclusion off and nothing said
-# so. A criterion that is not in CONTRACT still defaults off.
+# When it is unset the default is the criterion's own, not FALSE for
+# everything. no_belantamab is a study exclusion pinned TRUE in CONTRACT, so an
+# unset variable leaves it on and an explicit FALSE is a recorded deviation.
+# Under a blanket FALSE default a config.csv that lost the row would give a
+# complete run with the exclusion off. A criterion not in CONTRACT still
+# defaults off.
 CRITERION_DEFAULT <- c(no_belantamab = "TRUE")
 
 criterion_enabled <- function(c_i) {

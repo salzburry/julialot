@@ -80,11 +80,10 @@ CONTRACT <- list(
 # PROJECT_WORK_SCHEMA, else the Domino user's own schema, else blank - and
 # blank is "wherever the session lands" (run_223926.R asks the connection).
 #
-# `catalog.schema` is accepted when the catalog is the run's own, because
-# that is how a schema reads on the warehouse. wrk() adds the catalog
-# itself, and `hive_metastore.osk02156` handed over whole became
-# hive_metastore.hive_metastore.osk02156 - a name with too many parts, and
-# the LOT status table unreadable.
+# `catalog.schema` is accepted when the catalog is the run's own, because that
+# is how a schema reads on the warehouse. wrk() adds the catalog itself, so
+# `hive_metastore.osk02156` handed over whole would become
+# hive_metastore.hive_metastore.osk02156 - a name with too many parts.
 resolve_work_schema <- function(catalog) {
   v <- ""
   for (nm in c("WORK_SCHEMA", "PROJECT_WORK_SCHEMA", "DOMINO_USER_NAME",
@@ -197,24 +196,22 @@ cfg_defaults <- function() {
     sec2l_input_is_wide = .env_lgl("SEC2L_INPUT_IS_WIDE", FALSE),
     # The 1L index-setting agents are NOT a setting here. Barring belantamab,
     # panobinostat or elotuzumab from setting an index means re-deriving the
-    # index date, which is the cohort build's job - ndmm/ already has
+    # index date, which is the cohort build's job - it already has
     # NDMM_INDEX_EXCLUDED_ABBRS for exactly this. A second copy here would be
     # recorded as applied while applying nothing. ../BUILD_DELTA.md section 3.
     lot_allow_unproven_lineage = .env_lgl("LOT_ALLOW_UNPROVEN_LINEAGE", FALSE),
 
     # --- follow-up and censoring -----------------------------------------
     censor_at_disenrollment  = .env_lgl("CENSOR_AT_DISENROLLMENT", TRUE),
-    # BRIDGED_GAP_IS_PERSON_TIME was here and is gone. It named a person-time
-    # rule - whether a bridged enrolment gap counts as observed time - and
-    # BASELINE_PY and PERIOD_PY are window lengths whichever way it was set, so
-    # flipping it changed no denominator while the run recorded that it had.
-    # ../OPEN_QUESTIONS.md Q19 is still open; it is not answered by a setting
-    # that does nothing.
+    # BRIDGED_GAP_IS_PERSON_TIME was here and is gone: BASELINE_PY and
+    # PERIOD_PY are window lengths whichever way it was set, so flipping it
+    # changed no denominator while the run recorded that it had.
+    # ../OPEN_QUESTIONS.md Q19 is still open.
 
     # --- comorbidity ------------------------------------------------------
     # Both off by default, and both are switches rather than silent omissions.
-    # Frailty needs Annex 7 and the subgroup flags need Annex 3; neither has
-    # been delivered, so asking for either stops the run naming the annex.
+    # Frailty needs Annex 7 and the subgroup flags need Annex 3; neither code
+    # list carries codes yet, so asking for either stops the run naming it.
     frailty            = .env_lgl("FRAILTY", FALSE),
     comorbid_subgroups = .env_lgl("COMORBID_SUBGROUPS", FALSE),
     # Kim 2018's own cut-point. A setting rather than a constant because the
@@ -227,14 +224,12 @@ cfg_defaults <- function() {
     enrol_attr_at = .env_enum("ENROL_ATTR_AT", "index_span",
       c("index_span", "latest_span")),
     ed_definition = .env_list("ED_DEFINITION", "revenue,pos"),
-    # An ED visit that becomes an admission: counted as an ED visit, a
-    # hospitalisation, or both? ../OPEN_QUESTIONS.md Q11 asks it and the CDM
-    # answers the mechanics - business rule 14: "All other records without a
-    # CONF_ID or where CONF_ID is NULL should be considered non-inpatient". So
-    # an ED claim carrying a CONF_ID is one that became an admission, and it
-    # can be dropped from the ED count. `both` is the current behaviour and
-    # stays the default; it is not obviously right, which is why it is
-    # recorded rather than assumed.
+    # Whether an ED visit that became an admission is still an ED visit is
+    # ../OPEN_QUESTIONS.md Q11. Business rule 14 gives the mechanics: "All
+    # other records without a CONF_ID or where CONF_ID is NULL should be
+    # considered non-inpatient", so an ED claim carrying a CONF_ID can be
+    # dropped from the ED count. `both` is the default and is recorded rather
+    # than assumed.
     ed_admitted = .env_enum("ED_ADMITTED", "both", c("both", "inpatient_only")),
 
     # --- which route makes a stay MM-related --------------------------------
@@ -244,8 +239,8 @@ cfg_defaults <- function() {
     # the route business rule 13 documents.
     #
     # Over 241,362 stays they find 32,508 and 65,206, and 33,904 stays only the
-    # claim route finds. Largest unresolved swing here. See OPEN_QUESTIONS Q27.
-    # `confinement` is what every number so far used, so it stays the default.
+    # claim route finds - the largest unresolved swing here, OPEN_QUESTIONS
+    # Q27. `confinement` is what every number so far used, so it is the default.
     mm_hosp_position = .env_enum("MM_HOSP_POSITION", "confinement",
                                  c("confinement", "claim_positions")),
 
@@ -320,7 +315,7 @@ check_contract <- function(cfg) {
          paste(dev, collapse = "\n  "),
          "\nThe protocol states these outright, so a run that changes one is a ",
          "different study. Set SETTINGS_OVERRIDE=TRUE to proceed; the run will ",
-         "record every deviation on its status row and no reader in this repo ",
+         "record every deviation on its status row and no reader downstream ",
          "will accept it as the study's numbers.", call. = FALSE)
   dev
 }
@@ -331,8 +326,7 @@ check_contract <- function(cfg) {
 # The distinction matters: without it a reader cannot tell a window this
 # package applied from one the cohort build applied.
 #
-#   "here"      this package's SQL changes when the setting changes, and
-#               tests/run_tests.R proves it by emitting both ways.
+#   "here"      this package's SQL changes when the setting changes.
 #   "upstream"  the rule belongs to the cohort or LOT build. Recorded so the
 #               tables say which definition produced them; applied elsewhere.
 OPEN_QUESTION_SOURCE <- c(
@@ -375,12 +369,10 @@ UPSTREAM_SETTING_MAP <- c(
 
 # The readings behind a run's numbers, for its metadata row.
 #
-# An "upstream" reading is not this package's to apply, and recording the
-# setting alone said nothing about whether the cohort build agreed. Where the
-# upstream contract can be read, the value that shaped the data is recorded and
-# marked verified; where the two disagree, both are, because the number came
-# from the upstream one. Everything else is marked unverified, which is what it
-# has always been.
+# An "upstream" reading is not this package's to apply. Where the upstream
+# contract can be read, the value that shaped the data is recorded and marked
+# verified; where the two disagree, both are, because the number came from the
+# upstream one. Everything else is marked unverified.
 open_question_readings <- function(cfg, upstream = NULL) {
   vapply(names(OPEN_QUESTION_SOURCE), function(k) {
     v <- paste(as.character(cfg[[k]]), collapse = "|")
@@ -402,11 +394,9 @@ open_question_readings <- function(cfg, upstream = NULL) {
 
 check_settings <- function(cfg) {
   # REGION does not exist on the deployed enrolment table. The V9.0 dictionary
-  # documents it as Added, and three of the four V9 additions did land on the
-  # 2025q4 extract - ETHNICITY, RACE (moved from the SES file and renamed from
-  # D_RACE_CODE) and RACE_SOURCE, appended at columns 26 and 27. REGION and
-  # LIS_DUAL did not. Verified column by column against the `describe table`
-  # in the Optum enrolment documentation; ../DATA_MAPPING.md section 4 has the list.
+  # documents it as added, and three of the four V9 additions did land on the
+  # 2025q4 extract - ETHNICITY, RACE and RACE_SOURCE - while REGION and
+  # LIS_DUAL did not. ../DATA_MAPPING.md section 4 has the column list.
   #
   # Refused here rather than left to Spark, which would say UNRESOLVED_COLUMN
   # after the session had been opened and the spine built.
@@ -459,18 +449,17 @@ check_settings <- function(cfg) {
 
 
 # --- two helpers every reader of these settings shares ----------------------
-# NA-aware: a metadata field read back as NA is "not recorded", the same as
-# one that is absent. Defined once, here, because every package that reads
-# these settings - the study, the snapshot job, the dashboard - sources this
-# file first, and four copies with two semantics had the job running the
-# dashboard's readers under the wrong one.
+# NA-aware: a metadata field read back as NA is "not recorded", the same as one
+# that is absent. Defined once, here, because everything that reads these
+# settings sources this file first - separate copies drifted into two different
+# readings of NA.
 `%||%` <- function(a, b) if (is.null(a) || (length(a) == 1L && is.na(a))) b else a
 
 # Run `expr` with these environment variables set in THIS process, restored
-# afterwards. The settings above are read from the environment, so this is
-# how a caller hands a run its settings - a test resolving a configuration,
-# or the snapshot job starting a child build, which inherits them on every
-# platform where system2(env = ...) is a command-line prefix Windows ignores.
+# afterwards. The settings above are read from the environment, so this is how
+# a caller hands a run its settings. Setting them in the process rather than
+# through system2(env = ...) is what lets a child build inherit them on every
+# platform.
 with_env <- function(env, expr) {
   env <- env[nzchar(names(env) %||% character(0))]
   if (!length(env)) return(force(expr))

@@ -11,23 +11,20 @@
 # A source answers two questions: which scenarios are there, and give me one
 # table from one of them. Everything above this line is the same either way.
 
-# A name that may be used as ONE path segment, and nothing else.
+# A name that may be used as one path segment, and nothing else.
 #
-# Prefixes and LOT run ids are pasted into a file path. A run id of
-# "../../PRIVATE" read a file outside the snapshot root - it came from a
-# metadata TABLE, which anyone who can write to the warehouse controls, and
-# the dashboard then handed its contents to whoever opened the page.
+# Prefixes and LOT run ids are pasted into a file path, and they come from a
+# metadata table that anyone with warehouse write access controls: a run id of
+# "../../PRIVATE" would read a file outside the snapshot root.
 #
-# Rejected rather than sanitised: a name that needs cleaning up is not a name
-# this dashboard wrote, and silently reading a different file than the one
-# asked for is worse than reading none.
+# Rejected rather than sanitised, because silently reading a different file
+# from the one asked for is worse than reading none.
 safe_segment <- function(x) {
   x <- as.character(x %||% "")
   length(x) == 1L && nzchar(x) && !is.na(x) &&
     # The anchor already refuses "." and ".." - the first character has to be
-    # alphanumeric - so the second test is redundant and provably cannot fire.
-    # Kept as the explicit statement of what this is for, since the anchor is
-    # doing that work by accident rather than by saying so.
+    # alphanumeric - so the second test cannot fire. Kept as the explicit
+    # statement of what this is for.
     grepl("^[A-Za-z0-9][A-Za-z0-9._-]*$", x) && !grepl("^[.]{1,2}$", x)
 }
 
@@ -68,7 +65,7 @@ snapshot_source <- function(cfg) {
     },
     # LOT tables sit under lot/<run>.<build>/ (lot/<run>/ where the scenario
     # recorded no build), not under a scenario. Several scenarios normally
-    # read ONE LOT run, and a copy per scenario would both waste the space and
+    # read one LOT run, and a copy per scenario would both waste the space and
     # suggest they differ. Filed by build as well as run because the engine
     # may build a run id more than once - see lot_dir_name().
     read_lot = function(lot_run_id, table, lot_run_version = "") {
@@ -81,14 +78,13 @@ snapshot_source <- function(cfg) {
     })
 }
 
-# Where a LOT build's tables are filed in a snapshot: by run id, and by BUILD
-# where the scenario recorded one. The LOT engine keeps its run id for the
-# life of a session, so one id can name two builds with different lines; a
-# directory named by run alone held whichever was exported last, and a
-# scenario that read the other was shown it. The version is the stamp of
-# the build's status row (run_version_stamp), alphanumeric, so the pair is
-# one path segment. Older snapshots, exported before builds were recorded,
-# keep their run-only directories and scenarios without a version read them.
+# Where a LOT build's tables are filed in a snapshot: by run id, and by build
+# where the scenario recorded one. The engine keeps its run id for the life of
+# a session, so one id can name two builds with different lines, and a
+# directory named by run alone holds whichever was exported last. The version
+# is the stamp of the build's status row (run_version_stamp), alphanumeric, so
+# the pair is one path segment. A snapshot exported before builds were recorded
+# keeps its run-only directories, and a scenario without a version reads them.
 lot_dir_name <- function(lot_run_id, lot_run_version = "") {
   id <- trimws(as.character(lot_run_id %||% ""))
   v  <- trimws(as.character(lot_run_version %||% ""))
@@ -107,15 +103,12 @@ warehouse_source <- function(cfg, con) {
            "cannot be built.", call. = FALSE)
     sprintf("%s.%s.%s%s", cfg$catalog, sch, prefix, table)
   }
-  # Does the LOT prefix hold the run this scenario named, RIGHT NOW?
+  # Whether the LOT prefix holds the run this scenario named, right now.
   #
   # The status table keeps every run's row and the output tables are replaced
-  # in place, so "some row says this run completed" is history, not
-  # ownership: with an old and a new completed row both present, asking for
-  # the old run returned the new run's lines. Only the NEWEST row says whose
-  # tables sit under the prefix, and it is read on every call - the answer
-  # can change inside a session, whenever the prefix is rebuilt, so a
-  # remembered yes was a yes for as long as the app stayed up.
+  # in place, so "some row says this run completed" is history, not ownership.
+  # Only the newest row says whose tables sit under the prefix, and it is read
+  # on every call, because the answer changes whenever the prefix is rebuilt.
   lot_ok <- function(lot_run_id, lot_run_version = "")
     nzchar(cfg$lot_prefix) &&
       lot_prefix_owner_ok(con, full(cfg$lot_prefix, "LOT_BUILD_STATUS"),
@@ -143,14 +136,12 @@ warehouse_source <- function(cfg, con) {
     # The LOT build wrote under its own prefix, which S_RUN_METADATA does not
     # carry - it records the run id, not where the run wrote. DASH_LOT_PREFIX
     # names it, and the prefix is checked against LOT_BUILD_STATUS before any
-    # of its tables is read, so a prefix pointing at a DIFFERENT run is caught
+    # of its tables is read, so a prefix pointing at a different run is caught
     # rather than drawn.
     #
-    # The check has to come FIRST, not per column. Filtering on RUN_ID where
-    # the table happens to carry that column bound only the tables that do -
-    # and LOT_LONG_FINAL, which is the one the panels are about, does not.
-    # Asking for an old run returned the current lines, and the mismatching
-    # status was never read at all.
+    # The check comes first, not per column: filtering on RUN_ID binds only the
+    # tables that carry that column, and LOT_LONG_FINAL, the one the panels are
+    # about, does not.
     lot_run_ok = lot_ok,
     read_lot = function(lot_run_id, table, lot_run_version = "") {
       if (!nzchar(cfg$lot_prefix)) return(NULL)
@@ -158,11 +149,9 @@ warehouse_source <- function(cfg, con) {
       # prefix is not read: an unbound LOT table is another build's numbers
       # under this scenario's label.
       #
-      # Asked before the read AND after it. The output tables are replaced in
-      # place, so a rebuild landing during the read handed back the new
-      # build's rows with only one status query ever issued - the one that
-      # had said yes. The snapshot exporter checks both sides of its copy
-      # for the same reason.
+      # Asked before the read and again after it, because the output tables
+      # are replaced in place and a rebuild can land in between. The snapshot
+      # exporter checks both sides of its copy for the same reason.
       if (!lot_ok(lot_run_id, lot_run_version)) return(NULL)
       d <- tryCatch(db_q(con, sprintf("SELECT * FROM %s",
                                       full(cfg$lot_prefix, table))),
@@ -223,18 +212,17 @@ read_table <- function(src, prefix, table, prefer_release = TRUE) {
   mark_source(raw, "raw")
 }
 
-# Whether the NEWEST row of a LOT_BUILD_STATUS table names this run, complete
-# - and, where the scenario recorded which BUILD of the run it read, that
-# build. The engine keeps a run id for a session, so a second build under
-# the same id leaves a second `complete` row under it; the study run records
-# the stamp of the row it vouched for (S_RUN_METADATA.LOT_RUN_VERSION), and a
-# newest row carrying any other stamp is a different build's tables under
-# this run's name. A scenario that recorded no build is bound by id alone,
-# which is all it can be.
+# Whether the newest row of a LOT_BUILD_STATUS table names this run, complete,
+# and - where the scenario recorded which build of the run it read - that
+# build. The engine keeps a run id for a session, so a second build leaves a
+# second `complete` row under the same id; the study run records the stamp of
+# the row it vouched for (S_RUN_METADATA.LOT_RUN_VERSION), and a newest row
+# carrying another stamp is a different build's tables under this run's name. A
+# scenario that recorded no build is bound by id alone, which is all it can be.
 #
 # Pure, so the warehouse reader and the snapshot exporter decide ownership the
-# same way, and a test can drive it with a frame. Newest by UPDATED_AT where
-# the table carries it; otherwise the last row written.
+# same way. Newest by UPDATED_AT where the table carries it; otherwise the last
+# row written.
 lot_status_owner <- function(st, lot_run_id, lot_prefix = "x",
                              lot_run_version = "") {
   if (!nzchar(lot_prefix %||% "") || is.null(st) || !nrow(st) ||
@@ -261,23 +249,20 @@ newest_row <- function(df) {
 
 # A study table, bound to the run the scenario describes.
 #
-# The scenarios are read once, at startup; a table is read when a panel
-# opens. A refresh in between replaces the snapshot, and a reactive guard that
-# read the metadata file once per selected scenario could not see it: a file
-# is not a reactive input, so a later floor or tab change re-read the new
-# tables under the old run's settings. The identity is checked around EVERY
-# read instead - before, so a moved snapshot yields nothing, and after, so a
-# swap landing between the check and the read is caught too.
+# The scenarios are read once, at startup; a table is read when a panel opens,
+# and a refresh in between replaces the snapshot. So the identity is checked
+# around every read - before, so a moved snapshot yields nothing, and after, so
+# a swap landing between the check and the read is caught too.
+
 # --- the scope of a run --------------------------------------------------
 #
 # A run writes only the modules it selected, for the cohorts it selected, and
 # leaves every other table and every other cohort's rows under the prefix as
-# the previous run left them: prepare_table() clears one cohort's rows of one
-# table. That is what makes a partial re-run cheap, and it means a completed
-# run's prefix can hold tables the run never wrote and rows it never built.
-# Its metadata says what it did write - MODULES and COHORTS - and these three
-# rules bind what is shown, compared and exported to that. The reader and the
-# snapshot job both apply them, so the two cannot drift.
+# the previous run left them. That is what makes a partial re-run cheap, and it
+# means a completed run's prefix can hold tables the run never wrote and rows
+# it never built. Its metadata says what it did write - MODULES and COHORTS -
+# and the three rules below bind what is shown, compared and exported to that.
+# The reader and the snapshot job both apply them, so the two cannot drift.
 
 # The module that writes a table, off the package's own registry; NA for a
 # table no module declares. Release tables are the release module's.
@@ -286,20 +271,17 @@ table_owner <- function(table, modules = MODULES) {
   NA_character_
 }
 
-# Is this table THIS run's, and if not, why not - in the words a panel shows.
+# Whether this table is this run's, and if not why not - in the words a panel
+# shows.
 #
 # One verdict for every site that asks: the reader, the panel resolver, the
-# Compare tab and the snapshot job. Its metadata is always the run's own. A
-# result is the run's only if the run finished (its metadata row is written
-# before its tables are replaced, so under a `started` or `failed` run the
-# tables are the previous build's, or part of this one), if the run's own
-# metadata names the module that writes the table (a retained safety table
-# under a run that omitted safety is the previous run's; so is a release
-# table under a run that omitted release), and - for a module's OPTIONAL
-# output - if the run recorded that output's switch on: comorbidity with
-# COMORBID_SUBGROUPS=FALSE runs, is recorded, and leaves S_COMORB_SUBGROUP
-# exactly as an earlier run left it. A run that recorded no modules, or no
-# reading of a switch, can vouch for nothing that depends on them.
+# Compare tab and the snapshot job. A table is the run's only if the run
+# finished (its metadata row is written before its tables are replaced, so
+# under a `started` or `failed` run the tables are the previous build's, or
+# part of this one), if the run's own metadata names the module that writes it,
+# and - for a module's optional output - if the run recorded that output's
+# switch on. A run that recorded no modules, or no reading of a switch, can
+# vouch for nothing that depends on them.
 scenario_table_status <- function(scenario, table, modules = MODULES) {
   if (identical(table, "S_RUN_METADATA")) return(list(ok = TRUE, why = ""))
   no <- function(why) list(ok = FALSE, why = why)
@@ -371,32 +353,27 @@ read_scenario_table <- function(src, scenario, table, prefer_release = TRUE) {
   restrict_to_cohorts(d, scenario)
 }
 
-# The metadata row a prefix holds RIGHT NOW, as opposed to the one read at
-# startup: the newest by UPDATED_AT, or the last one written.
-#
-# The scenarios are loaded once, when the app starts; a table is read when a
-# viewer opens a panel. A refresh in between replaces the snapshot, and the
-# page then shows the new run's rows under the old run's metadata - the
-# settings the sidebar names, the LOT run the Compare tab checks - with
-# nothing saying so.
+# The metadata row a prefix holds right now, as opposed to the one read at
+# startup: the newest by UPDATED_AT, or the last one written. A refresh between
+# the two replaces the snapshot, and the page would otherwise show the new
+# run's rows under the old run's metadata.
 newest_metadata_row <- function(src, prefix) {
   md <- tryCatch(src$read(prefix, "S_RUN_METADATA"), error = function(e) NULL)
   if (is.null(md) || !nrow(md) || !"RUN_ID" %in% names(md)) return(NULL)
   newest_row(md)
 }
 
-# The identity every reader binds a run by, off one metadata row: the id,
-# and the state and timestamp that tell one BUILD under that id from
-# another, as one key. A run id is not a build: the study package reuses
-# DOMINO_RUN_ID for every build inside one Domino run, so a re-run keeps the
-# id while its state goes to `started` and back and its UPDATED_AT moves.
-# Bound by id alone, the page showed the re-run's rows under the earlier
-# build's metadata.
+# The identity every reader binds a run by, off one metadata row: the id, and
+# the state and timestamp that tell one build under that id from another, as
+# one key. A run id is not a build - the study package reuses DOMINO_RUN_ID for
+# every build inside one Domino run, so a re-run keeps the id while its state
+# goes to `started` and back and its UPDATED_AT moves.
 run_identity <- function(row)
   paste(row_field(row, "RUN_ID"), row_field(row, "STATE"),
         row_field(row, "UPDATED_AT"), sep = "\r")
 
-# Is the build under this prefix, right now, the one the scenario describes?
+# Whether the build under this prefix, right now, is the one the scenario
+# describes.
 # NA where it cannot be said: the scenario records no run, or the prefix has
 # no metadata to read. The same answer same_lot_run() gives.
 scenario_is_current <- function(src, scenario) {
@@ -436,20 +413,17 @@ lot_run_bound <- function(src, scenario) {
   isTRUE(src$lot_run_ok(scenario$lot_run_id, scenario$lot_run_version %||% ""))
 }
 
-# Do two scenarios rest on the SAME lines?
+# Whether two scenarios rest on the same lines.
 #
 # The question the Compare tab has to answer before it draws a difference. Two
 # scenarios sharing a LOT run differ only in what this package did; two reading
 # different runs differ in the lines as well, and a delta between them carries
-# both without saying so.
+# both without saying so. One run id under two builds is two sets of lines as
+# surely as two ids are, so where both scenarios recorded which build they
+# read, the builds have to match too; where only one did, it cannot be said.
 #
-# The same run id under two BUILDS is two sets of lines as surely as two ids
-# are, so where both scenarios recorded which build they read, the builds
-# have to match too. Where only one did, it cannot be said - NA, like a
-# missing id - rather than claimed.
-#
-# The answer carries WHY as an attribute, so the Compare tab can say which
-# case it is without working the ids and builds out a second time.
+# The answer carries why as an attribute, so the Compare tab can say which case
+# it is without working the ids and builds out again.
 same_lot_run <- function(a, b) {
   ra <- trimws(a$lot_run_id %||% ""); rb <- trimws(b$lot_run_id %||% "")
   if (!nzchar(ra) || !nzchar(rb)) return(structure(NA, why = "no_run"))

@@ -1,14 +1,12 @@
 # The arithmetic in R/windows.R and R/person_time.R, executed.
 #
-# Every other executable check in this suite runs the WHOLE emitted script over
+# Every other executable check in this suite runs the whole emitted script over
 # tests/fixtures/cdm and reads golden numbers off the finished tables. That is
-# the right shape for the counting rules, and it cannot reach these: the
-# fixture is seven patients, so every stratum falls under the 25-patient floor,
-# so every rate is suppressed to NULL before anything can look at it. Mutation
-# testing put the point plainly - the rate formula could be a MULTIPLICATION
-# instead of a division, the confidence interval could be a 90% one, its two
-# bounds could be swapped, the time-to-event boundary could be off by a day and
-# its death arm could be deleted outright, and 295 checks stayed green.
+# the right shape for the counting rules, and it cannot reach these: the fixture
+# is seven patients, so every stratum falls under the 25-patient floor and every
+# rate is suppressed to NULL before anything can look at it. A wrong rate
+# formula, a 90% confidence interval, swapped bounds or a time-to-event boundary
+# off by a day are all invisible that way.
 #
 # So each fragment is run on its own, over rows built for the rule it states.
 # The expected values are worked out here from the protocol section the

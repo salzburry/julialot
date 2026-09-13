@@ -4,11 +4,11 @@ GSK study **223926** (belantamab mafodotin, NDMM/RRMM), against Optum
 Clinformatics Data Mart V9.0. This folder turns a finished lines-of-therapy run
 into the study's analytical cohort and its variables.
 
-It is one of three folders delivered together, and they are siblings:
+Three folders sit side by side:
 
 | folder | what it does |
 |---|---|
-| `ndmm_study_updated/` | **this folder** — the cohorts, the variables, the released tables |
+| `ndmm_study_updated/` | **this folder** - the cohorts, the variables, the released tables |
 | `lot/` | the lines-of-therapy engine that produces the lines this reads |
 | `dashboard/` | the R Shiny app that shows what both produced |
 
@@ -22,7 +22,7 @@ uses an absolute path.
 
 | read this | for |
 |---|---|
-| `README.md` | the protocol, how it was read, and what the source does not cover |
+| `README.md` | the protocol, the cohorts, and what the protocol does not yet specify |
 | `IE_CRITERIA_APPLIED.md` | which eligibility rules are applied, by whom, and how to change them |
 | `study223926/MODULES.md` | what each module computes |
 | `OPEN_QUESTIONS.md` | every question still open with the study team, and the reading this build takes meanwhile |
@@ -92,9 +92,8 @@ handled as such.
 | `VARIABLES.md` | every variable the protocol asks for and where it comes from |
 | `CODELISTS.md` | which code lists are needed, which are present, and which are still outstanding |
 | `OPEN_QUESTIONS.md` | the questions still with the study team, each with the reading this build takes |
-| `SOURCES.md` | what this folder depends on, and what it deliberately does not |
 | `VERSION_DIFF.md` | what changed between the earlier protocol and the August 2026 one |
-| `BUILD_DELTA.md` | what the upstream cohort build has to change to match this protocol |
+| `BUILD_DELTA.md` | what the cohort build has to change to match this protocol |
 
 `ie_criteria.csv`, `variables.csv` and `optum_cdm_fields.csv` are the same
 content as tables, for anyone who would rather filter than read.
@@ -103,19 +102,11 @@ content as tables, for anyone who would rather filter than read.
 
 ## The working files
 
-`RUN_ONCE.sql`, `RUN_ONCE_2.sql` and `RUN_ONCE_3.sql` are the three rounds of
-profiling queries run against the warehouse to establish what the data actually
-holds — which columns exist, how they are coded, how complete they are. They
-are not part of a build and nothing runs them automatically. They are kept
-because the answers in `DATA_MAPPING.md` and `OPEN_QUESTIONS.md` came from
-them, and the result PDFs beside them are what each round returned.
-
-The PDFs are the source documents: the protocol, the Optum dictionary extracts,
-and the query results the profiling produced. They are references, not inputs.
-
-Some documents cite paths beginning `Jul 28/` — that is the earlier working
-tree, which is not part of this delivery. Those citations are for traceability;
-nothing in the code reaches outside these three folders.
+`RUN_ONCE.sql`, `RUN_ONCE_2.sql` and `RUN_ONCE_3.sql` are three rounds of
+profiling queries against the warehouse: which columns exist, how they are
+coded, how complete they are. They are not part of a build and nothing runs
+them automatically. They are kept because the answers in `DATA_MAPPING.md` and
+`OPEN_QUESTIONS.md` came from them.
 
 ---
 

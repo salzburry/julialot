@@ -1,13 +1,12 @@
 # Table 4's baseline demographics.
 #
-# Four of the six are new to this package: no earlier build read RACE,
-# ETHNICITY, STATE or BUS today. The two that exist - age and sex - are read
-# off the cohort table so the two builds cannot disagree.
+# Four of the six are this package's own: RACE, ETHNICITY, STATE and BUS. Age
+# and sex are read off the cohort table so the two builds cannot disagree.
 #
-# Every one of these is timed "At index", and MEMBER_ENROLLMENT carries a new
-# row each time anything about a member changes, so they are span-level
-# attributes and "at index" means the span covering the index date. ENROL_ATTR_AT
-# switches to the latest span for comparison. ../OPEN_QUESTIONS.md Q16.
+# All six are timed "At index", and MEMBER_ENROLLMENT carries a new row each
+# time anything about a member changes, so they are span-level attributes and
+# "at index" means the span covering the index date. ENROL_ATTR_AT switches to
+# the latest span for comparison. ../OPEN_QUESTIONS.md Q16.
 
 # The US Census Bureau's four regions. Used when REGION_SOURCE=state_crosswalk,
 # which is what the deployed extract needs: it carries STATE and no REGION.
@@ -38,15 +37,12 @@ mod_demographics <- function(con, cfg, cohort) {
   # A TOTAL order. A member on two concurrent plans has two rows with the same
   # ELIGEFF covering the index, so ranking on ELIGEFF alone picks arbitrarily
   # and the attributes can differ between two runs of identical code.
-  # Age, guarded on both ends.
-  #
-  # YRDOB is capped at 89 years, and the deployed table shows the pile-up that
-  # predicts. The bands are unaffected - the cap sits above the 75 cut-point -
-  # but a mean or median age is right-censored, and Table 4 reports both.
-  #
-  # YRDOB is also 0 on some rows. Unguarded that is an age of about 2026, which
-  # lands them in the 75+ transplant-eligibility band. Anything outside a
-  # plausible human range is Unknown.
+
+  # Age, guarded on both ends. YRDOB is capped at 89 years, so a mean or median
+  # age is right-censored (the bands are unaffected - the cap sits above the 75
+  # cut-point). It is also 0 on some rows, which unguarded is an age of about
+  # 2026 and lands those patients in the 75+ band. Anything outside a plausible
+  # human range is Unknown.
   age_expr <- sprintf(
     "CASE WHEN cast(c.YRDOB as int) BETWEEN %d AND year(r.INDEX_DATE)
            AND year(r.INDEX_DATE) - cast(c.YRDOB as int) BETWEEN 0 AND 120
@@ -130,7 +126,7 @@ mod_demographics <- function(con, cfg, cohort) {
                  wrk("S_DEMOGRAPHICS"), cohort$key))
 
   # A high Unknown rate on RACE or ETHNICITY means the code values are not the
-  # ones assumed above, not that the population is unknown. Said out loud
+  # ones assumed above, not that the population is unknown. Said out loud,
   # because a silently-Unknown column reads as a finding.
   chk <- db_q(con, sprintf(
     "SELECT count(*) AS n, sum(CASE WHEN RACE='Unknown' THEN 1 ELSE 0 END) AS r,

@@ -43,8 +43,8 @@ SEC2L_INPUT_IS_WIDE,FALSE,"Asserts INPUT_COHORT_TABLE and its LOT run were built
 #,,--- follow-up and censoring ---
 CENSOR_AT_DISENROLLMENT,TRUE,Protocol s7.1 ends follow-up at the end of continuous enrolment - OPEN_QUESTIONS Q13
 #,,--- demographics ---
-FRAILTY,FALSE,"TRUE computes the Kim 2018 claims-based frailty index. Needs frailty_kim2018.csv, which is Annex 7 and was not delivered - so TRUE stops the run naming it"
-COMORBID_SUBGROUPS,FALSE,"TRUE writes Table 4's baseline subgroup flags (neuropathy, lung parenchymal disease). Needs comorbid_subgroups.csv, which is Annex 3 and was not delivered"
+FRAILTY,FALSE,"TRUE computes the Kim 2018 claims-based frailty index. Needs frailty_kim2018.csv, which is Annex 7 and carries no codes yet - so TRUE stops the run naming it"
+COMORBID_SUBGROUPS,FALSE,"TRUE writes Table 4's baseline subgroup flags (neuropathy, lung parenchymal disease). Needs comorbid_subgroups.csv, which is Annex 3 and carries no codes yet"
 FRAILTY_FRAIL_CUTOFF,0.25,CFI at or above this is frail. Kim 2018's own cut-point; Annex 7 may say otherwise
 REGION_SOURCE,state_crosswalk,region_column or state_crosswalk - OPEN_QUESTIONS Q9
 ENROL_ATTR_AT,index_span,index_span or latest_span. Which enrolment row supplies a time-varying attribute - OPEN_QUESTIONS Q16

@@ -32,22 +32,16 @@ CRITERIA_1L <- c("I1_mm_dx", "I2_age", "I3_eligible_1l_tx", "I4_ce_pre",
 
 # table -> the count the rule TESTS, and the values that go with it when a cell
 # is suppressed. Spec data, so a module that adds a column cannot quietly leave
-# it unsuppressed - tests/run_tests.R checks every declared column exists and
-# every table with a patient count is declared.
+# it unsuppressed.
 #
 # `n_col` is the POPULATION the row describes, not the patients who had the
-# event. s7.2.3 and s7.8 restrict by stratum size; testing the event-positive
-# count instead suppressed one event among a thousand at-risk patients as
-# though the stratum held one, and published a small stratum whenever most of
-# it had the event. The rate tables test N_AT_RISK and suppress N_PATIENTS as a
-# value.
+# event: s7.2.3 and s7.8 restrict by stratum size. So the rate tables test
+# N_AT_RISK and suppress N_PATIENTS as a value; the count-only tables have no
+# separate denominator, and their N_PATIENTS is both.
 #
-# The count-only tables have no separate denominator: their N_PATIENTS is the
-# stratum, so it is both.
-# `group_by` is the stratum a table's rows divide up - the columns whose
-# combination one row of it is a slice of. mod_release() reads it to find the
-# groups where exactly one row was suppressed, because that row is recoverable
-# by subtracting the published rest from the group's own total.
+# `group_by` is the stratum a table's rows divide up. mod_release() reads it to
+# find the groups where exactly one row was suppressed, because that row is
+# recoverable by subtracting the published rest from the group's own total.
 SUPPRESSION_SPEC <- list(
   S_SAFETY_RATES = list(
     n_col = "N_AT_RISK",
@@ -145,14 +139,13 @@ MODULES <- list(
 
   comorbidity = list(
     key = "comorbidity", label = "Charlson and frailty",
-    # mm_dx.csv as well: Table 4 asks for the CCI adjusted for having received
-    # a MM diagnosis, and Quan carries myeloma under `any_malignancy` rather
-    # than as a condition of its own - so the adjustment can only be made on
-    # the CODES, and the module needs the MM code list to make it.
+    # The MM code list as well: Quan carries myeloma under `any_malignancy`
+    # rather than as a condition of its own, so Table 4's MM adjustment can
+    # only be made on the CODES.
     needs = "periods", codelists = c("charlson_quan2011.csv", "mm_dx.csv"),
     # The last two are written only when their switch is on, and are declared
-    # anyway: a table a module can write that the registry does not name is a
-    # table nothing downstream knows to look for.
+    # anyway: a table the registry does not name is one nothing downstream
+    # knows to look for.
     outputs = c("S_COMORBIDITY", "S_COMORB_SUBGROUP", "S_FRAILTY"),
     per_cohort = TRUE,
     fn = "mod_comorbidity", check = "check_charlson_list", blocked = NA_character_),
@@ -167,18 +160,16 @@ MODULES <- list(
     key = "safety", label = "Key safety events: prevalence and incidence",
     needs = "periods", codelists = "safety_events.csv",
     # S_SAFETY_COUNTED is the washout's own working set - the events that
-    # survived the 30-day rule. Declared because it is a table this module
-    # leaves behind, and because a QC that cannot find it cannot check the
-    # washout against the raw events.
+    # survived the 30-day rule. Declared because a QC that cannot find it
+    # cannot check the washout against the raw events.
     outputs = c("S_SAFETY_EVENTS", "S_SAFETY_COUNTED", "S_SAFETY_RATES"),
     per_cohort = TRUE,
     fn = "mod_safety", check = "check_safety_list", blocked = NA_character_),
 
   hcru = list(
     key = "hcru", label = "Hospitalisation, length of stay and ED visits",
-    # mm_dx.csv as well as hcru.csv: the MM-related hospitalisation test reads
-    # it, and a code list a module loads but does not declare cannot be caught
-    # by the preflight - the run would open a session and scan the CDM first.
+    # The MM code list as well: the MM-related hospitalisation test reads it,
+    # and a list a module loads without declaring is invisible to the preflight.
     needs = "periods", codelists = c("hcru.csv", "mm_dx.csv"),
     outputs = c("S_HCRU_EVENTS", "S_HCRU_RATES"), per_cohort = TRUE,
     fn = "mod_hcru", check = "check_hcru_list", blocked = NA_character_),
@@ -237,14 +228,11 @@ resolve_cohorts <- function(cfg) {
            " - a nested cohort built without its parent is a different ",
            "population.", call. = FALSE)
   }
-  # The one criterion that varies by setting rather than by cohort - and the
-  # one place where dropping it from this list is not enough to make it true.
-  #
-  # Membership comes from an INNER JOIN onto INPUT_COHORT_TABLE (01_cohorts.R),
-  # which is the primary NDMM cohort: X2 and the 1L index floor were applied by
-  # the cohort build, upstream, and the LOT run was built over that same
-  # population. Removing the criterion's NAME here changes the funnel and
-  # changes nothing about who is in the cohort.
+  # The one criterion that varies by setting rather than by cohort, and the one
+  # place where dropping it from this list is not enough to make it true:
+  # membership is an INNER JOIN onto INPUT_COHORT_TABLE, where the cohort build
+  # already applied X2 and the 1L index floor. Removing the name here changes
+  # the funnel and changes nothing about who is in the cohort.
   if ("SEC2L" %in% want && !isTRUE(cfg$sec2l_apply_other_cancer)) {
     if (!isTRUE(cfg$sec2l_input_is_wide))
       stop("SELECTION ERROR: the secondary 2L cohort cannot be built from ",
@@ -331,9 +319,8 @@ resolve_modules <- function(cfg) {
 
 # What a module does only when a switch asks for it: the code list it then
 # needs, and the table it then writes. Declared here rather than in MODULES so
-# a default run's preflight does not demand an undelivered annex - and so the
-# plan DRY_RUN prints names the tables that run will actually write, rather
-# than every table the module could ever write.
+# a default run's preflight does not demand a list it will never read, and so
+# the plan DRY_RUN prints names the tables that run will actually write.
 OPTIONAL_FEATURES <- list(
   comorbidity = list(
     frailty = list(codelist = "frailty_kim2018.csv", output = "S_FRAILTY"),
@@ -355,12 +342,10 @@ apply_optional_features <- function(mods, cfg) {
 }
 
 # Does this cohort apply a criterion - its own, or one inherited from the
-# cohort it is nested in?
-#
-# 2L and 3L declare only the criteria the protocol lists as ADDITIONAL for
-# them; the 1L exclusions reach them through nested_in. A module that tests
-# `key %in% cohort$criteria` alone concludes that 2L permits a prior
-# malignancy, which is the opposite of the truth.
+# cohort it is nested in? 2L and 3L declare only the criteria the protocol
+# lists as ADDITIONAL for them, and the 1L exclusions reach them through
+# nested_in, so `key %in% cohort$criteria` alone would conclude that 2L permits
+# a prior malignancy.
 cohort_applies <- function(cohort, key) {
   if (key %in% cohort$criteria) return(TRUE)
   parent <- cohort$nested_in

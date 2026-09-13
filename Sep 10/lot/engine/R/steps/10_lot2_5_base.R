@@ -68,14 +68,10 @@
 #
 # Tables rather than temporary views, because a view is a query: Spark inlines
 # its plan at every reference and re-runs it, and these stages sit on top of
-# each other, so the cost compounds. lotN_base reads lotN_induction_meds three
-# times and is itself read six times; lotN_base_end reads lotN_base four more.
-# Through the chain, the start-candidate query - four aggregates and a window
-# function over every patient - would be planned about a hundred times per
-# line, for each of LOT2 to LOT5.
-#
-# Written to a table, each stage is planned once and every later reference is a
-# scan. The SQL is identical either way; only where the rows live differs.
+# each other, so the cost compounds. Through the chain the start-candidate
+# query would be planned about a hundred times per line. Written to a table,
+# each stage is planned once and every later reference is a scan; the SQL is
+# identical either way.
 .LOTN_STAGES <- c("START_CANDIDATES", "START", "INDUCTION_MEDS", "BASE",
                   "SCT", "CONTAINS_MTX_REG", "BASE_END")
 
@@ -87,25 +83,17 @@ lotn_table <- function(lot_num, stage) sprintf("LOT%d_%s", lot_num, stage)
 
 # Promote the finished staging table to LOT_LONG, then tidy up.
 #
-# Publication is the first statement and nothing else. Only then is the staging
-# table promoted to the final LOT_LONG. Every LOT - 1 to max_lot, or up to the
-# natural break the caller found - appended without error, so this is a
-# complete build. Had any append failed, build_lot_n() would have stop()ped
-# before reaching here, leaving LOT_LONG_STAGE partial and the previous
-# LOT_LONG untouched. So the orchestrator never mistakes a partial build for a
-# finished one.
+# Publication is the first statement and nothing else. Every LOT appended
+# without error before this point, since build_lot_n() would otherwise have
+# stopped and left LOT_LONG_STAGE partial with the previous LOT_LONG untouched.
 #
 # The two statements after it are cleanup, and they are not alike. Dropping the
-# stage used to raise like any other step, so a lock or a missing DROP grant
-# marked a build that had already published a complete LOT_LONG as 'failed' -
-# the one outcome this sequence exists to prevent. The leftover is a real
-# problem, just not this run's: it is a half-built LOT_LONG standing beside the
-# finished one, which is what the note at the end of build_lot2_5() says must
-# not happen. So it is named, not thrown. Repointing the view stays fatal,
-# because the criteria layer and the flag tables read it.
+# stage is named, not thrown: a lock or a missing DROP grant would otherwise
+# mark a build that had already published a complete LOT_LONG as 'failed'. The
+# leftover is a real problem, just not this run's. Repointing the view stays
+# fatal, because the criteria layer and the flag tables read it.
 #
-# A separate function so both of those can be driven by a test. Inline, the
-# only way to reach them was a warehouse.
+# A separate function so both of those can be driven by a test.
 publish_lot_long <- function(con) {
   run_step(con, "L99_publish_lot_long",
     glue("CREATE OR REPLACE TABLE {lot_out('LOT_LONG')} AS SELECT * FROM {lot_out(.LOT_LONG_STAGE)}"),
@@ -247,16 +235,13 @@ build_lot_n <- function(con, lot_num,
     "A CAR-T inside LOT1's induction window is part of LOT1 and starts nothing."
   else "No CAR-T exclusion at this line."
 
-  # The window of the line auto_cand looks BACK at, in the MED-started case. At
+  # The window of the line auto_cand looks back at, in the MED-started case. At
   # LOT2 the previous line is always LOT1 - prev_end filters LOT_NUM = 1, and
   # LOT1 goes into lot_long as 'MED' - so the window is LOT1's own 60 days, not
-  # the 30 that LOT2-5 use for themselves.
-  #
-  # It read 30 for every MED-started predecessor, LOT1 included. That left the
-  # gate 30 days short of the window LOT1 really owns an AUTO over. A
-  # transplant on days 30 to 59 was refused as a LOT2 start while LOT1 no
-  # longer covered it. The SCT_AUTO_CONT branch in 06_lot1_end.R is the other
-  # half of the same rule, and holds LOT1 open across exactly that range.
+  # the 30 that LOT2-5 use for themselves. Read as 30, the gate would refuse a
+  # transplant on days 30 to 59 as a LOT2 start while LOT1 no longer covered
+  # it. The SCT_AUTO_CONT branch in 06_lot1_end.R is the other half of the same
+  # rule.
   prev_med_window <- if (lot_num == 2L) lot1_induction_window_days
                      else               induction_window_days
 
@@ -421,7 +406,7 @@ build_lot_n <- function(con, lot_num,
         --   an ALLOGENEIC previous line owns nothing. Its window END is its
         --   start date, so an AUTO on the allograft date reads as inside it,
         --   but 4.6 gives that line one day and nothing reaches it. Shipped
-        --   check E5 calls the result a failure. Planted as P0007.
+        --   check E5 calls the result a failure.
         --
         -- Deliberately NOT the wider reading, that a tandem holds the previous
         -- line open through AUTO 2 wherever AUTO 1 sits. A hold date reaches
@@ -491,17 +476,13 @@ build_lot_n <- function(con, lot_num,
                  ORDER BY LOT{lot_num}_START_TYPE"))
 
   # The last day this line's regimen may collect a drug on. Same rule as
-  # lot1_regimen_cutoff in 04_lot1_base.R. Without it a line keeps collecting
-  # drugs across a window it has already been cut short in, so a drug first
-  # dispensed after the line ended counts in its regimen and can start a later
-  # line as well.
+  # lot1_regimen_cutoff in 04_lot1_base.R: without it a drug first dispensed
+  # after the line ended counts in its regimen and can start a later line as
+  # well.
   #
-  # ALLO and CAR-T here, where LOT1 has ALLO only. LOT1's induction exemption
-  # keeps an in-window CAR-T inside the line and closes that door. LOT2-5 has no
-  # such exemption, and a CAR-T ends the line the day before the infusion
-  # whatever the regimen window says.
-  #
-  # A transplant that STARTED this line is not a cutoff on it. The exclusion
+  # ALLO and CAR-T here, where LOT1 has ALLO only - LOT1's induction exemption
+  # keeps an in-window CAR-T inside the line, and LOT2-5 has no such exemption.
+  # A transplant that started this line is not a cutoff on it: the exclusion
   # takes only transplants strictly after the start date.
   run_step(con, paste0(pfx, "_lot", lot_num, "_regimen_cutoff"), glue("
     CREATE OR REPLACE TEMPORARY VIEW lot{lot_num}_regimen_cutoff AS
@@ -1446,12 +1427,11 @@ build_lot2_5 <- function(con,
   print(summary)
 
   # The per-line stage tables stay behind. They are each line's working - its
-  # start candidates, its regimen, its transplants, its end reason - and reading
+  # start candidates, its regimen, its transplants, its end reason - so reading
   # one answers why a patient's LOT3 ended where it did, with no re-run.
   # LOT_LONG_STAGE is the exception and was dropped above, or named in the
-  # warning there if the drop could not run. It is a half-built LOT_LONG, and
-  # leaving it would put a table beside the real one that looks like it and is
-  # not.
+  # warning there: it is a half-built LOT_LONG, and leaving it would put a
+  # table beside the real one that looks like it and is not.
   if (length(built))
     log_msg("Per-line stage tables written: LOT", paste(built, collapse = "/LOT"),
             " x {", paste(.LOTN_STAGES, collapse = ", "), "}")

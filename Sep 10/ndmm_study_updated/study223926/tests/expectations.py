@@ -351,10 +351,9 @@ EXPECTATIONS = [
      [(0,)]),
 ]
 
-# Checked after the whole script is executed a SECOND time. A module that does
-# not clear its scope before writing doubles every count in every table, with
-# no error - the single most expensive defect the mutation testing found, and
-# the one the suite had a named regression test for and could not catch.
+# Checked after the whole script is executed a second time. A module that does
+# not clear its scope before writing doubles every count in every table, with no
+# error at all, so it has to be checked on a re-run rather than on one pass.
 RERUN_STABLE_TABLES = [
     "wk.S_SPINE", "wk.S_COHORT", "wk.S_ATTRITION", "wk.S_PERIODS",
     "wk.S_LOT_PERIODS", "wk.S_DEMOGRAPHICS", "wk.S_COMORBIDITY", "wk.S_SOC",

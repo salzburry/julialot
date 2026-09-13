@@ -1,20 +1,19 @@
 # The parts of jobs/build_scenarios.R a test can drive.
 #
-# The job itself is a script: it reads a grid, starts a child R process per
-# row and connects to a warehouse, so nothing in it could be reached from the
-# suite. What the review found wrong was in these three pieces - which
-# settings the export runs under, what a read that came back empty means, and
-# when a snapshot becomes visible - so they live here and the job sources
-# them. Same reason panel_table_html() left app.R's server.
+# The job itself is a script: it reads a grid, starts a child R process per row
+# and connects to a warehouse, so nothing in it can be reached from a test. The
+# three decisions that matter - which settings the export runs under, what a
+# read that came back empty means, and when a snapshot becomes visible - live
+# here instead, and the job sources them.
 
-# The settings this row runs under. Computed once and given to BOTH the build
-# and the export, because they have to be the same settings: the export used
-# to rebuild the configuration with only OBJECT_PREFIX changed, so a row
-# setting WORK_SCHEMA or LOT_PREFIX built in one place and read from another,
-# and the CSVs published under that scenario were the parent's tables.
-# `set_cols` defaults to the row's own upper-case names, which is the job's
-# convention for "this column is a setting". Passed in by the job so the grid
-# decides once; defaulted here so the function stands on its own.
+# The settings this row runs under. Computed once and given to both the build
+# and the export, because they have to be the same settings: a row setting
+# WORK_SCHEMA or LOT_PREFIX would otherwise build in one place and be read from
+# another.
+#
+# `set_cols` defaults to the row's own upper-case names, the job's convention
+# for "this column is a setting". The job passes it in so the grid decides
+# once; the default lets the function stand on its own.
 scenario_env <- function(row,
                          set_cols = grep("^[A-Z][A-Z0-9_]*$", names(row),
                                          value = TRUE)) {
@@ -27,16 +26,15 @@ scenario_env <- function(row,
   env
 }
 
-# One table, read back. Three outcomes, and they are NOT the same:
+# One table, read back. Three outcomes, and they are not the same:
 #
 #   ok      rows, or a table that legitimately holds none
 #   absent  the table was never written - an optional module was not selected
 #   failed  the read itself errored
 #
-# Collapsing all three into "skip" is what let a stale CSV survive a refresh:
-# an empty or failed read wrote nothing, the previous file stayed where it
-# was, and the snapshot published a new run's metadata beside an old run's
-# rows.
+# Collapsed into "skip", an empty or failed read writes nothing, the previous
+# CSV survives the refresh, and the snapshot publishes a new run's metadata
+# beside an old run's rows.
 read_export <- function(con, name, optional = FALSE) {
   got <- tryCatch(db_q(con, sprintf("SELECT * FROM %s", name)),
                   error = function(e) conditionMessage(e))

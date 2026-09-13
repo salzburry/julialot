@@ -12,12 +12,11 @@
 # Reads only. The traces land in out/: foldin_trace.md, and the same rows as
 # foldin_trace_lines.csv, foldin_trace_episodes.csv, foldin_trace_summary.csv.
 #
-# What this is for: the study team asked to look at patients the fold-in
-# rule touched - a drug of the immediately previous line that came back after
-# exactly one other agent opened a line, and joined that line's regimen
-# instead of ending it - with their raw MAP episodes beside the final lines,
-# to see that they are now classified as the rule says. Not a check: nothing
-# here passes or fails. R/foldin_trace.R says how a fold is recognised in the
+# The study team asked to look at patients the fold-in rule touched - a drug of
+# the immediately previous line that came back after exactly one other agent
+# opened a line, and joined that line's regimen instead of ending it - with
+# their raw MAP episodes beside the final lines. Not a check: nothing here
+# passes or fails. R/foldin_trace.R says how a fold is recognised in the
 # published tables, since the engine keeps no flag.
 #
 #   TRACE_N            how many patients to trace (default 10), sampled
@@ -142,15 +141,10 @@ main <- function() {
             meta  = lot_out("LOT_RUN_METADATA"))
 
   # Which run owns the prefix: the latest status row, the same answer every
-  # other reader in this folder resolves. STATE and UPDATED_AT are this
-  # table's columns.
-  #
-  # UPDATED_AT is read as well as the id, and kept, because the id alone does
-  # not identify a BUILD: the engine keeps one run id for a session, so a
-  # rebuild can leave a second complete row under the same id. The pin is the
-  # whole identity (foldin_trace_build_pin, in R/foldin_trace.R), and it is
-  # asked again after the reads - the same shape the snapshot exporter uses
-  # around its copy (dashboard/jobs/build_scenarios.R).
+  # other reader in this folder resolves. UPDATED_AT is kept as well as the id,
+  # because the id alone does not identify a build - the engine keeps one run
+  # id for a session, so a rebuild can leave a second complete row under it.
+  # The whole pin (foldin_trace_build_pin) is asked again after the reads.
   status_row <- function()
     db_q(con, glue("
       SELECT RUN_ID, STATE, UPDATED_AT, CONTRACT_DEVIATIONS
@@ -236,14 +230,11 @@ main <- function() {
     lines <- db_q(con, foldin_trace_lines_sql(t, ids, p))
     eps   <- db_q(con, foldin_trace_episodes_sql(t, ids))
     tx    <- db_q(con, foldin_trace_tx_sql(t, ids))
-    # The folds of the traced patients, and ALL of each one's folds: the
-    # rendering needs the whole set per patient, since a paragraph has to know
-    # whether its return is the patient's first. The full frame stays as it
-    # is for the counts and the sample, which are population questions.
-    #
-    # Narrowed because the annotation asks the fold set once per episode, so
-    # the whole run's folds were rescanned for every episode of ten patients -
-    # the same notes, off a frame three orders of magnitude too big.
+    # The folds of the traced patients, and every one of each patient's folds:
+    # a paragraph has to know whether its return is the patient's first. The
+    # full frame stays as it is for the counts and the sample, which are
+    # population questions. Narrowed here because the annotation asks the fold
+    # set once per episode.
     folds <- cands[as.character(cands$PATID) %in% ids, , drop = FALSE]
     ann   <- foldin_trace_annotate(lines, eps, tx, folds, p, subs = subs)
     for (id in ids) {
@@ -269,13 +260,12 @@ main <- function() {
     eps_out   <- data.frame(PATID = character(0))
   }
 
-  # Still the same build? Eight reads have happened since the status row was
-  # taken, and a rebuild under this prefix during them would have replaced
-  # what the later ones returned: the report would name the pinned run while
-  # showing another build's lines. Any rebuild moves UPDATED_AT and a build in
-  # progress moves STATE, so the whole pin is compared, not the id - the id is
-  # reused by design. Checked BEFORE anything is written, so a run that lost
-  # its build leaves the previous trace on disk rather than half-replacing it.
+  # Still the same build. A rebuild under this prefix during the reads would
+  # have replaced what the later ones returned, and the report would name the
+  # pinned run while showing another build's lines. The whole pin is compared
+  # rather than the id, which is reused by design, and it is compared before
+  # anything is written, so a run that lost its build leaves the previous trace
+  # on disk rather than half-replacing it.
   now <- build_pin(status_row())
   if (!identical(now, pinned))
     stop("The run under prefix '", pfx, "' changed while its tables were being ",

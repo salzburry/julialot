@@ -25,10 +25,8 @@ suppressMessages({
 .pass <- 0L; .fail <- character(0)
 ok <- function(cond, what) {
   # `cond` is evaluated HERE, not by the caller, so an assertion whose
-  # expression raises is a FAILED assertion rather than a dead run. It used to
-  # propagate: one mutation made split_statements() throw and the suite
-  # stopped with a stack trace, losing every result after it and reporting no
-  # count at all.
+  # expression raises is a FAILED assertion rather than a dead run that loses
+  # every result after it.
   cond <- tryCatch(cond, error = function(e) {
     what <<- paste0(what, "  [raised: ", conditionMessage(e), "]")
     FALSE
@@ -41,9 +39,9 @@ errs <- function(expr) tryCatch({ expr; NA_character_ },
 # with_env() is the package's own (R/config_223926.R).
 # A function with its warehouse calls answered by `env`: the function itself
 # and the helpers it reaches the warehouse through, each re-homed in `env` so
-# their db_q/db_exec resolve to the stubs. A stub placed on the function alone
-# does not reach describe_columns(), and the real db_q then sits through four
-# retries for a package that is not installed.
+# their db_q/db_exec resolve to the stubs. A stub on the function alone does
+# not reach describe_columns(), whose real db_q then sits through four retries
+# for a package that is not installed.
 stubbed <- function(fn, env, also = c("describe_columns", "ensure_columns", "ensure_table")) {
   for (nm in also) { g <- get(nm); environment(g) <- env; assign(nm, g, envir = env) }
   environment(fn) <- env
@@ -62,7 +60,7 @@ cfg0 <- function(extra = c()) with_env(c(base_env, extra), cfg_defaults())
 source("tests/emit_sql.R")
 RUN <- with_env(base_env, capture_emitted_sql("."))
 # A second run with the two switches on, so the tables they write are covered
-# too. Their code lists are undelivered, so the fixtures stand in.
+# too. Their code lists carry no codes yet, so the fixtures stand in.
 RUN_OPT <- with_env(base_env, capture_emitted_sql(".", function(cfg) {
   cfg$frailty <- TRUE; cfg$comorbid_subgroups <- TRUE; cfg
 }))
@@ -160,7 +158,7 @@ cat("\nselection\n")
      "and applies it when the setting says to")
   ok(setequal(required_codelists(resolve_modules(cfg0(
        c(MODULES = "spine,cohorts,periods,demographics,tte")))), character(0)),
-     "the cohort-and-TTE selection needs no code list this repo lacks")
+     "the cohort-and-TTE selection needs no code list at all")
 }
 
 cat("\nwindow conventions\n")
@@ -442,12 +440,10 @@ cat("\nthe connection layer\n")
   ok(identical(split_statements("a b*/*-/'*/"), "a b*/*-/'*/"),
      "...and the comment it opens still closes at the next `*/`")
 
-  # Two latent traps, found by an adversarial pass and closed before anything
-  # emitted the shape that would have hit them.
-  #
-  # 1. Only `'` was tracked. Spark writes a quoted identifier in BACKTICKS and
-  #    this package's SQL already uses them; under ANSI mode a double quote is
-  #    an identifier too. A `;` inside either cut the statement in half.
+  # All three quote characters, not just `'`: Spark writes a quoted identifier
+  # in BACKTICKS and this package's SQL uses them, and under ANSI mode a double
+  # quote is an identifier too. A `;` inside either would cut a statement in
+  # half.
   ok(identical(split_statements("SELECT `a;b` AS x"), "SELECT `a;b` AS x"),
      "a semicolon inside a backtick identifier does not split the statement")
   ok(identical(split_statements("SELECT \"a;b\" AS x"), "SELECT \"a;b\" AS x"),
@@ -607,11 +603,9 @@ cat("\nthe connection layer\n")
   ok(!is.na(e_cp) && !any(grepl("VALUES", said, fixed = TRUE)),
      "...and over a Spark session a code list is copied, never staged as SQL text")
   # The whole path from the list to the driver - register_codelist_view(),
-  # db_exec(), the splitter - with only the driver call answered. The
-  # encoder wrote the apostrophe correctly and the splitter then refused the
-  # statement as unterminated, so a label with an apostrophe never reached
-  # the warehouse; one with two and a semicolon between them reached it in
-  # three pieces.
+  # db_exec(), the splitter - with only the driver call answered. The encoder
+  # and the splitter have to agree about the backslash escape, or a label with
+  # an apostrophe never reaches the warehouse.
   reached <- character(0)
   penv <- new.env(parent = environment(register_codelist_view))
   penv$dbi_exec <- function(con, sql) { reached <<- c(reached, sql); 1L }
@@ -731,7 +725,7 @@ cat("\nprotocol readings carried into the SQL\n")
      "and is dated at the first of them, not the confirming one")
 }
 
-cat("\nregressions from the adversarial review\n")
+cat("\nthe rules that hold the numbers up\n")
 {
   cfg <- cfg0(); cfg$work_schema <- "wk"; set_study_config(cfg)
 
@@ -739,10 +733,9 @@ cat("\nregressions from the adversarial review\n")
   #    re-run replaces its rows and leaves the other cohorts' alone. The claim
   #    "re-run as often as needed" is only true because of this.
   #
-  #    Read off the emitted SQL, not the source. Grepping the function text for
-  #    "prepare_table|CREATE OR REPLACE TABLE" accepted the second - which
-  #    replaces the WHOLE table, so the 2L pass would delete the 1L rows. That
-  #    is the exact failure the check exists to prevent, and it passed.
+  #    Read off the emitted SQL, not the source: grepping the function text for
+  #    "prepare_table|CREATE OR REPLACE TABLE" accepts the second, which
+  #    replaces the WHOLE table, so the 2L pass would delete the 1L rows.
   per_cohort <- Filter(function(m) isTRUE(m$per_cohort), MODULES)
   pc_declared <- unique(unlist(lapply(per_cohort, `[[`, "outputs")))
   # Both runs, so the tables the two optional modules write are covered too -
@@ -814,15 +807,12 @@ cat("\nregressions from the adversarial review\n")
 
   # And it is RUN, not read. The three checks above inspect the function's
   # text, which is how a guard survives being defused - the stop() is still
-  # printed, it just never fires. So the guard is called against a status row
-  # built to be wrong in exactly one field at a time, and each is required to
-  # stop.
+  # there, it just never fires. So the guard is called against a status row
+  # built to be wrong in one field at a time, and each is required to stop.
   # The columns the LOT engine's BUILD_STATUS_COLS actually declares, pinned as
-  # literals. This list is the contract, and it is written out here rather than
-  # derived from what lineage.R asks for - because the previous version of this
-  # test built its fixture from the column names the SELECT used, so it agreed
-  # with the SELECT instead of checking it, and a query naming two columns the
-  # writer does not create passed every run of this suite.
+  # literals. Written out here rather than derived from what lineage.R asks
+  # for: a fixture built from the column names the SELECT uses agrees with the
+  # SELECT instead of checking it.
   LOT_STATUS_COLS <- c("RUN_ID", "INPUT_COHORT_TABLE", "OBJECT_PREFIX", "STATE",
                        "STUDY_END", "CODELIST_WAIVERS_REQUESTED",
                        "CODELIST_WAIVERS_APPLIED", "CONTRACT_DEVIATIONS",
@@ -897,7 +887,7 @@ cat("\nregressions from the adversarial review\n")
   ok(!is.null(a$out), "a disagreement does not stop the run")
   c1 <- up_read(NULL)
   ok(is.null(c1$out) && any(grepl("unverified", c1$said)),
-     "an unreadable metadata table leaves the readings unverified, and says so")
+     "a metadata table that cannot be read leaves the readings unverified, and says so")
   ok(is.null(up_read("")$out) && is.null(up_read("NA")$out),
      "and so does a run that recorded no contract string")
   ok(is.null(up_read("nonsense with no equals")$out),
@@ -1010,8 +1000,8 @@ cat("\nregressions from the adversarial review\n")
   # table is one nothing downstream knows to look for.
   # Only the qualified names, and matched through the work schema rather than
   # through an `S_` prefix: OBJECT_PREFIX sits between the schema and the name,
-  # and a pattern anchored on `.S_` matches nothing at all once it is set - so
-  # the check passes by finding nothing, which is the worst way to pass.
+  # so a pattern anchored on `.S_` would match nothing once it is set and the
+  # check would pass by finding nothing.
   wtgt <- unlist(regmatches(all_sql, gregexpr(
     "(INSERT INTO|MERGE INTO|DELETE FROM|CREATE OR REPLACE TABLE|CREATE TABLE IF NOT EXISTS)[ \n]+\\S+",
     all_sql)))
@@ -1048,7 +1038,6 @@ cat("\nregressions from the adversarial review\n")
   ok(!grepl("N_AGENTS >= 4\n", soc_sql),
      "and a four-agent regimen with no anti-CD38 agent is not called one")
 
-  # Mine, not the review's.
   rv <- paste(capture.output(print(register_codelist_view)), collapse = "\n")
   cl_all <- paste(vapply(Filter(function(x) x$tag == "codelist", RUN$sql),
                          function(x) x$sql, character(1)), collapse = "\n")
@@ -1057,9 +1046,8 @@ cat("\nregressions from the adversarial review\n")
   ok(grepl("copy_to", rv) && grepl("codelist_stage_sql", rv) && grepl("is_dbi_con(con)", rv, fixed = TRUE),
      "a code list of thousands of rows is copied over a Spark session and staged as one statement over the ODBC driver - never chunked")
   sf <- paste(capture.output(print(mod_safety)), collapse = "\n")
-  # Retry safety, through every comment form a statement can start with. A
-  # block-comment prefix was classified safe while the line-comment form was
-  # not, so an INSERT written that way would have been retried.
+  # Retry safety, through every comment form a statement can start with: a
+  # block-commented INSERT must be classified the same way a bare one is.
   ok(!sql_is_retry_safe("INSERT INTO t VALUES (1)"),
      "a bare INSERT is not retried")
   ok(!sql_is_retry_safe("-- why\nINSERT INTO t VALUES (1)"),
@@ -1072,11 +1060,10 @@ cat("\nregressions from the adversarial review\n")
      "while an idempotent statement still is")
   ok(sql_is_retry_safe("-- note\nDELETE FROM t WHERE COHORT = 'x'"),
      "and so is a scoped delete")
-  # Found by an adversarial pass. The classifier read the first verb, and a
-  # leading WITH is not a verb: `WITH a AS (...) INSERT INTO t SELECT ...` is
-  # a write that read as safe, so it would be RETRIED - the duplicate-on-a-
-  # lost-acknowledgement defect this whole guard exists to prevent. Nothing
-  # emits that form today, which is exactly why it would go unnoticed.
+  # A leading WITH is not a verb: `WITH a AS (...) INSERT INTO t SELECT ...`
+  # is a write, and reading the first verb alone would call it retry-safe -
+  # which is the duplicate-on-a-lost-acknowledgement this guard exists to
+  # prevent.
   ok(!sql_is_retry_safe("WITH a AS (SELECT 1) INSERT INTO t SELECT * FROM a"),
      "a CTE in front of an INSERT does not make it retry-safe")
   ok(!sql_is_retry_safe("WITH a AS (SELECT 1) MERGE INTO t USING a ON 1=1"),
@@ -1152,9 +1139,8 @@ cat("\nregressions from the adversarial review\n")
 
   # Reusing an output prefix across package versions. Inserts are positional,
   # so a table that gained a column fails on the count and one whose column was
-  # RENAMED accepts the insert and keeps the old name with the new meaning -
-  # which is worse, because nothing fails. Both must stop BEFORE the scope is
-  # cleared, or the cohort's rows are deleted and not replaced.
+  # RENAMED accepts the insert and keeps the old name with the new meaning.
+  # Both must stop BEFORE the scope is cleared.
   # A warehouse DESCRIBE always returns types, so the fixture does too; the
   # missing-type response is tested separately below.
   ens <- function(found, types = NULL) {
@@ -1292,11 +1278,9 @@ cat("\nregressions from the adversarial review\n")
   ok(length(soc_sql) == 1 && cart_i > 0 && drug_i > 0 && cart_i < drug_i,
      "and that branch is reached before the drug-category logic")
 
-  # The funnel has to APPLY the exclusions it reports, not merely list them.
-  # Membership applies the retained flags; the funnel accumulated only the
-  # enrolment and follow-up predicates, so its final N_REMAINING could exceed
-  # the cohort it described. The executed reconciliation checks in
-  # expectations.py cannot see this on a fixture where every flag is 1, so the
+  # The funnel has to APPLY the exclusions it reports, not merely list them,
+  # or its final N_REMAINING can exceed the cohort it describes. The executed
+  # reconciliation cannot see this on a fixture where every flag is 1, so the
   # accumulation itself is asserted here.
   attr1 <- vapply(Filter(function(x) x$tag == "step:attrition_1L", RUN$sql),
                   function(x) x$sql, character(1))
@@ -1440,7 +1424,7 @@ cat("\nregressions from the adversarial review\n")
   ok(!grepl("LIKE '%acute%'", sf, fixed = TRUE),
      "so 'Acute or chronic' is not counted through both counting rules")
   ok(!("index_excluded_abbrs" %in% names(cfg0())),
-     "the dead 1L index-agent setting is gone - that rule lives in ndmm/")
+     "the dead 1L index-agent setting is gone - that rule is the cohort build's")
   ok("malignancies" %in% PROTOCOL_CHRONIC_CONDITIONS,
      "the s7.8.1 chronic cross-check covers Objective 3's own condition")
   cm <- paste(capture.output(print(mod_comorbidity)), collapse = "\n")
@@ -1451,14 +1435,14 @@ cat("\nregressions from the adversarial review\n")
 cat("\nstandalone\n")
 {
   # Nothing this package runs may reach outside its own directory. The folder
-  # is meant to be liftable: handed to someone, or moved, without carrying a
-  # trail of siblings it silently needs.
+  # is meant to be liftable - moved, or handed on, without carrying a trail of
+  # neighbours it silently needs.
   r_files <- c(list.files("R", pattern = "[.]R$", full.names = TRUE),
                list.files("R/modules", pattern = "[.]R$", full.names = TRUE),
                "build.R")
   src <- setNames(lapply(r_files, function(f) paste(readLines(f, warn = FALSE),
                                                     collapse = "\n")), r_files)
-  # Comments and error messages cite sibling documents as evidence, and
+  # Comments and error messages cite the documents beside the package, and
   # ../OPEN_QUESTIONS.md resolves inside ndmm_study_updated/, which is the
   # boundary that has to hold. What must not happen is a path FUNCTION reaching
   # outside, so that is what is tested rather than the string ../ anywhere.
@@ -1476,14 +1460,20 @@ cat("\nstandalone\n")
   ok(length(hard) == 0,
      paste0("no absolute path is hard-coded (offenders: ",
             paste(basename(hard), collapse = ", "), ")"))
-  # A folder outside this delivery. Named as a set rather than as one name,
-  # because the point is that no code path reaches out of the package at all -
-  # the three folders that ship together are reached relatively, and anything
-  # else was a working folder that does not travel.
-  repo <- names(Filter(function(x)
-    grepl('"(Jul 28|Sep 10|docs|Apr 18|Questions)/', x), code_only))
+  # A directory the package does not own. The point is that no code path names
+  # one at all: what ships alongside is reached relatively, and anything else is
+  # a working directory that does not travel with the package.
+  own_dirs <- c("R", "modules", "tests", "codelists", "fixtures")
+  # Two shapes: a path with a second segment that carries an extension or a
+  # further slash, and a first segment with a space in it, which no directory
+  # this package reaches ever has.
+  named <- lapply(code_only, function(x)
+    sub("/.*$", "", sub('^"', "", unlist(regmatches(x, gregexpr(
+      paste0('"[A-Za-z][A-Za-z0-9_ -]*/[A-Za-z0-9_. -]*[/.]',
+             '|"[A-Za-z][A-Za-z0-9_-]* [A-Za-z0-9_ -]*/'), x))))))
+  repo <- names(Filter(function(v) length(setdiff(v, own_dirs)) > 0, named))
   ok(length(repo) == 0,
-     paste0("no code path names a sibling folder (offenders: ",
+     paste0("no code path names a directory outside the package (offenders: ",
             paste(basename(repo), collapse = ", "), ")"))
   ok(all(file.exists(file.path("R", "modules", MODULE_FILES))),
      "every module file the runner sources is inside the package")
@@ -1562,12 +1552,11 @@ cat("\nstandalone\n")
 # The modules, actually run.
 # ---------------------------------------------------------------------------
 #
-# Everything above reads source text. Source text cannot tell you whether a
-# module's SQL parses or whether its R reaches the end of the function, and
-# three defects that shipped were exactly that: a statement chopped in half by
-# a semicolon inside a `--` comment, two CTE lists with a comma missing, and a
-# `[[` on a name the vector did not carry. So the modules are run here against
-# recorders, for every cohort, and every statement they emit is parsed.
+# Everything above reads source text, which cannot say whether a module's SQL
+# parses or whether its R reaches the end of the function - a semicolon inside
+# a `--` comment, a missing comma between two CTEs and a `[[` on an absent name
+# are all invisible to it. So the modules are run here against recorders, for
+# every cohort, and every statement they emit is parsed.
 
 cat("\nthe modules, run against recorders\n")
 {
@@ -1634,21 +1623,17 @@ cat("\nthe modules, run against recorders\n")
   unlink(f)
 
   # The attrition funnel is monotone by construction: a step can only remove
-  # rows. It was not - a criterion applied upstream reset the count to the
-  # unfiltered total, so N_REMAINING went back up mid-funnel.
+  # rows, so N_REMAINING can never go back up mid-funnel.
   # --- the CDM table names are the warehouse's, not ours -----------------
   #
   # The modules ask cdm_src() for a SHORT name ("diagnosis") because that is
-  # what ../DATA_MAPPING.md calls the table in prose. The physical table is
-  # `t_med_diagnosis_<quarter>`. That gap shipped: cdm_src() pasted the short
-  # name straight in and every module reading a diagnosis pointed at a table
-  # that does not exist.
+  # what ../DATA_MAPPING.md calls the table in prose, while the physical table
+  # is `t_med_diagnosis_<quarter>`.
   #
-  # Nothing in this suite could catch it. The executing harness creates its
-  # fixtures from whatever name the code emits, so it was self-consistently
-  # wrong. The only defence is pinning the physical names against the build
-  # that has actually run against this warehouse - the cohort build's own config -
-  # which is why these are literals with a citation rather than derived.
+  # The executing harness creates its fixtures from whatever name the code
+  # emits, so it cannot see that gap. The physical names are therefore pinned
+  # here as literals, against the cohort build's own config - the one that has
+  # actually run against this warehouse.
   expected_cdm <- c(medical           = "t_medical",
                     diagnosis         = "t_med_diagnosis",
                     procedure         = "t_med_procedure",
@@ -1689,21 +1674,16 @@ cat("\nthe modules, run against recorders\n")
            grepl(paste0(t, "_RELEASE"), rel_sql, fixed = TRUE), logical(1))),
      "and writes a release table for every table it declares")
 
-  # The policy, not just the plumbing. This SQL is the only place the rule
-  # exists - an R helper expressed a DIFFERENT one (it applied s7.8's SOC
-  # exemption) and nothing called it, so the suite was green on a policy that
-  # never shipped. Asserted here against what the module actually emits.
+  # The policy, not just the plumbing: this SQL is the only place the rule
+  # exists, so it is asserted against what the module actually emits.
   #
-  # The predicate is READ OUT of the emitted SQL rather than rebuilt here. It
-  # used to be rebuilt, and a test that constructs the same string it looks for
-  # only ever asserts that the code has not changed - it cannot say the policy
-  # is right, and it passed for as long as the rule failed open on a NULL
-  # count. What the policy IS is asserted separately, below and by execution.
+  # The predicate is READ OUT of the emitted SQL rather than rebuilt here. A
+  # test that constructs the same string it looks for only asserts that the
+  # code has not changed; what the policy IS is asserted below and by execution.
   min_n <- as.integer(cfg0()$suppress_min_n)
-  # Per table, not over the concatenation. Searching all six statements at
-  # once found the FIRST "... ELSE N_PATIENTS END" anywhere - which belongs to
-  # S_SAFETY_RATES, where N_PATIENTS is a value column suppressed on
-  # N_AT_RISK - and read it as S_PATTERNS's own predicate.
+  # Per table, not over the concatenation: searching all six statements at once
+  # finds the FIRST "... ELSE N_PATIENTS END" anywhere, which belongs to
+  # S_SAFETY_RATES where N_PATIENTS is a value column suppressed on N_AT_RISK.
   rel_one <- function(tb) {
     hit <- Filter(function(x) identical(x$tag, paste0("step:release_", tolower(tb))),
                   run$sql)
@@ -1757,8 +1737,7 @@ cat("\nthe modules, run against recorders\n")
   ok(!any(grepl("IS NOT NULL", hits, fixed = TRUE)),
      "...and no table still reads an unknown count as one that passed")
   # Every suppressed table is checked for a group that gives its withheld row
-  # away by subtraction. The check was written for S_SAFETY_RATES and named
-  # the other five nowhere.
+  # away by subtraction, not just the first one.
   ok(all(vapply(names(SUPPRESSION_SPEC), function(tb)
            length(SUPPRESSION_SPEC[[tb]]$group_by) > 0L, logical(1))),
      "every suppressed table declares the stratum its rows divide up")
@@ -1817,9 +1796,9 @@ cat("\nthe modules, run against recorders\n")
   #
   # The check that makes the label above true rather than a comment: emit the
   # whole run twice, once with the setting at its default and once at an
-  # alternative, and require the emitted SQL to DIFFER. A setting that stops
-  # being applied - or was never applied - fails here rather than being
-  # recorded on every run as the reading that produced the numbers.
+  # alternative, and require the emitted SQL to DIFFER. A setting that is not
+  # applied fails here rather than being recorded on every run as the reading
+  # that produced the numbers.
   ALTERNATIVES <- list(
     fu_evidence_rule = function(c) { c$fu_evidence_rule <- "claim_after_index"; c },
     sec2l_apply_other_cancer = function(c) {
@@ -1861,14 +1840,12 @@ cat("\nthe modules, run against recorders\n")
   #
   # Parsing proves a statement is well formed. It cannot prove a rate is
   # divided by 365.25 rather than 365, that a GROUP BY still carries LOT_NUM,
-  # or that a second run does not double every count. Mutation testing put
-  # this suite's kill rate at 12% for exactly that reason.
+  # or that a second run does not double every count.
   #
   # So the statements are run: transpiled to DuckDB and executed against the
   # fixtures in tests/fixtures/cdm, whose answers are derived by hand in
-  # tests/fixtures/EXPECTED.md. DuckDB is not Spark and this does not replace
-  # a run against the warehouse - it is the arithmetic that is being checked,
-  # not the dialect.
+  # tests/fixtures/EXPECTED.md. DuckDB is not Spark, so what is checked here is
+  # the arithmetic, not the dialect.
   sf <- tempfile(fileext = ".sql")
   con <- file(sf, "w")
   for (x in run$sql) {
@@ -1907,10 +1884,9 @@ cat("\nthe modules, run against recorders\n")
   # --- and the same, with the Q27 route switched -------------------------
   #
   # MM_HOSP_POSITION=claim_positions replaces the whole MM-related subquery
-  # with one that reads MED_DIAGNOSIS instead of CONFINEMENT. That SQL is
-  # never emitted by the default run, so without this it would be the one
-  # statement in the package no harness had ever executed - which is exactly
-  # how t_diagnosis, a table name that does not exist, survived 173 tests.
+  # with one that reads MED_DIAGNOSIS instead of CONFINEMENT. That SQL is never
+  # emitted by the default run, so without this it would be the one statement
+  # in the package nothing had ever executed.
   #
   # Only execution is checked, not the numbers: the fixtures carry no medical
   # claim linked to a confinement, so route B legitimately finds nothing there
@@ -1969,22 +1945,18 @@ cat("\nthe modules, run against recorders\n")
 }
 
 cat("\n-- the entry point, in a process that has loaded nothing --\n")
-# THIS FILE sources every module before it asserts anything, and that is
-# exactly what a production run does not do: build.R loads the common helpers
-# and calls build_223926(), which loads the modules itself. So a helper that
-# reaches into a module before source_modules() runs is invisible to every
-# other assertion here, however many there are - and one did exactly that,
-# stopping every fresh build before it read a setting.
+# THIS FILE sources every module before it asserts anything, and a production
+# run does not: build.R loads the common helpers and calls build_223926(),
+# which loads the modules itself. A helper that reaches into a module before
+# source_modules() runs is invisible to every other assertion here.
 #
-# The only check that can see it is a real process. DRY_RUN prints the plan
-# and returns without a connection, so this costs one R startup and needs no
-# warehouse.
+# Only a real process can see it. DRY_RUN prints the plan and returns without a
+# connection, so this costs one R startup and needs no warehouse.
 local({
   rs <- file.path(R.home("bin"), "Rscript")
   # The settings go into THIS process's environment, which the child inherits.
-  # system2(env = ...) prefixes them onto the command line, and on Windows that
-  # form exited 5 with no output while the same command with an inherited
-  # environment reached the dry run.
+  # system2(env = ...) prefixes them onto the command line instead, which on
+  # Windows exits 5 with no output.
   out <- with_env(c(DRY_RUN = "TRUE", INPUT_COHORT_TABLE = "t", OBJECT_PREFIX = "s223926_"),
     suppressWarnings(system2(rs, shQuote(file.path(here, "build.R")),
       stdout = TRUE, stderr = TRUE)))
@@ -1997,19 +1969,16 @@ local({
   ok(any(grepl("DRY_RUN=TRUE", out, fixed = TRUE)),
      "...and reaches the dry-run line, rather than exiting somewhere earlier")
   # The failure this replaces was a missing function, which R reports this
-  # way. Named so a regression is recognisable rather than just a bad exit.
+  # way, so the failure reads as itself rather than as a bad exit code.
   ok(!any(grepl("could not find function", out, fixed = TRUE)),
      "...with no helper reaching for something the process has not loaded")
 })
 
 cat("\n-- membership follows the criteria list --\n")
 # Removing a criterion from a cohort's list has to remove it from membership,
-# not only from the funnel. It did not: IN_COHORT hard-coded continuous
-# enrolment and follow-up, so a list without I4 produced a funnel ending at
-# two and a cohort of one. Then a criterion ADDED to the list - declared
-# `here`, with its own HERE_PRED entry - was applied by the funnel and ignored
-# by membership, which read only the names it already knew. Both now read the
-# same two maps, and the checks below hold the emitted SQL to that.
+# not only from the funnel, and adding one has to add it to both. IN_COHORT and
+# the funnel read the same two maps, and the checks below hold the emitted SQL
+# to that.
 in_cohort_pred <- function(sql)
   regmatches(sql, regexpr("(?s)CASE WHEN (.*?) THEN 1 ELSE 0 END AS IN_COHORT",
                           sql, perl = TRUE))
@@ -2056,8 +2025,8 @@ step_sql <- function(r, tag) {
 
   # --- a criterion nobody wrote code for --------------------------------
   # The guide says a criterion is added by listing it, naming its source and
-  # giving it a predicate. So it is: the reviewer's I4_custom_ce - `here`,
-  # `MET_N2 = 1`, in place of I4 - reaches membership as well as the funnel.
+  # giving it a predicate. So it is: I4_custom_ce - `here`, `MET_N2 = 1`, in
+  # place of I4 - reaches membership as well as the funnel.
   custom <- with_env(base_env, capture_emitted_sql(".", env_edit = function(env) {
     env$CRITERION_SOURCE[["I4_custom_ce"]] <- "here"
     env$HERE_PRED[["I4_custom_ce"]] <- "MET_N2 = 1"
@@ -2302,11 +2271,9 @@ cat("\n-- a predicate with an OR in it --\n")
 }
 
 cat("\n-- the controller re-checks the LOT build before recording complete --\n")
-# check_lot_lineage() accepted a build once, before any table was read; the
-# modules then read the LOT tables for minutes, and a LOT rebuild landing in
-# between replaced them under the same prefix. The run built its spine from
-# the new lines and recorded the OLD build as its lineage, with one lineage
-# check ever made. The real controller is driven here, with every warehouse
+# check_lot_lineage() accepts a build before any table is read, and a LOT
+# rebuild landing while the modules read those tables would replace them under
+# the same prefix. The real controller is driven here, with every warehouse
 # call answered by a fake and every module stubbed out.
 {
   drive <- function(later = list()) {
@@ -2384,10 +2351,9 @@ cat("\n-- the controller re-checks the LOT build before recording complete --\n"
 cat("\n-- the arithmetic, executed on its own --\n")
 # The whole-script harness runs over a seven-patient fixture, so every stratum
 # in it is under the 25-patient floor and every rate is suppressed to NULL
-# before a golden number could read one. Mutation testing showed what that
-# leaves unheld: the rate could be a MULTIPLICATION, the interval a 90% one,
-# its bounds swapped, the months divisor 31, the time-to-event boundary off by
-# a day with its death arm deleted - and every one of those passed.
+# before a golden number could read one. That leaves the rate arithmetic
+# itself - the multiplier, the interval bounds, the months divisor, the
+# time-to-event boundary - unheld.
 #
 # So the fragments are executed here against rows built for the rule each one
 # states. tests/exec_fragments.R carries the rows and the answers.
@@ -2453,13 +2419,10 @@ local({
                             else ""))
   }
 
-  # The washout chain, run to convergence the way the module runs it.
-  #
-  # Days 0, 20 and 40: TWO counted events by a lag() and THREE by the chain,
-  # because day 40 is measured against day 0 - the last event that COUNTED -
-  # and not against day 20, which did not. That is the whole reason this is a
-  # loop, and a single round counts only the first event of each patient and
-  # condition.
+  # The washout chain, run to convergence the way the module runs it. Days 0,
+  # 20 and 40 are TWO counted events by a lag() and THREE by the chain, because
+  # day 40 is measured against day 0 - the last event that COUNTED - and not
+  # against day 20, which did not.
   w_cfg <- utils::modifyList(cfg, list(acute_washout_days = 30L))
   rounds <- lapply(1:5, function(i)
     acute_washout_round_sql("ev", "pe", "ct", w_cfg, "TREATMENT"))

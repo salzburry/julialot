@@ -46,18 +46,15 @@ UPSTREAM_SETTINGS <- names(OPEN_QUESTION_SOURCE)[OPEN_QUESTION_SOURCE == "upstre
 
 DASH_TABLES <- dashboard_tables()
 
-# The warehouse source needs a live connection, and nothing opened one: the
-# mode stopped at startup with "needs a connection", which its own error text
-# blamed on app.R. It is opened HERE, where the source is built, because the
-# source is what holds it for the life of the process.
+# The warehouse source needs a live connection. It is opened here, where the
+# source is built, because the source holds it for the life of the process:
+# the package's own connect_db() with the package's own settings, resolved the
+# way a run resolves them, so the dashboard cannot connect differently from the
+# runs it reads. Closed when the process ends; a Shiny app has no earlier
+# moment, since every session shares this one.
 #
-# The package's own connect_db(), so the dashboard cannot connect a different
-# way from the runs it is reading. Closed when the process ends; a Shiny app
-# has no earlier moment, since every session shares this one.
-# The package's own settings, resolved the way a run resolves them, so the
-# dashboard cannot connect a different way from the runs it reads. Only in
-# warehouse mode: the other two sources read files or generate rows and must
-# not require a Spark method to be configured at all.
+# Only in warehouse mode: the other two sources read files or generate rows,
+# and must not require a Spark method to be configured at all.
 DASH_CON <- NULL
 if (identical(DASH_CFG$source, "warehouse")) {
   source(file.path(.pkg_dir, "R", "load_inputs.R"))

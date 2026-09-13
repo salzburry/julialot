@@ -27,25 +27,19 @@ source_modules <- function(here) {
   invisible(TRUE)
 }
 
-# Everything the modules need that is built once rather than per cohort.
-#
-# A function of its own, and not inline in build_223926(), because the test
-# harness has to walk exactly this path. It used to call build_fu_claims()
-# directly, which is the ONE branch below that works - so the branch the
-# shipped default takes was never emitted and never checked, and it could not
-# run at all.
+# Everything the modules need that is built once rather than per cohort. A
+# function of its own, and not inline in build_223926(), so that both branches
+# below are reachable from outside a full run.
 build_inputs <- function(con, cfg, mods) {
   check_cohort_table(con, cfg)
   build_enroll_spans(con, cfg)
 
-  # A full medical + rx scan, so only when a follow-up reading actually reads
-  # it. The shipped default's predicate is `1 = 1` and never touches the result.
+  # A full medical + rx read, so only when a follow-up rule actually needs it -
+  # the default's predicate is `1 = 1` and never touches the result.
   #
-  # The empty stand-in is a TABLE, not a temporary view. Spark refuses a
-  # qualified name for a temp view ("only accept single-part view names"), and
-  # every reader here names tables through wrk(), which is
-  # catalog.schema.prefix_name - so a temp view could not be referred to even
-  # if it could be created. An empty table costs nothing.
+  # The empty stand-in is a TABLE, not a temporary view: Spark refuses a
+  # qualified name for a temp view, and every reader here names tables through
+  # wrk(), which is catalog.schema.prefix_name.
   if (identical(cfg$fu_evidence_rule, "claim_after_index")) {
     build_fu_claims(con, cfg)
   } else {
@@ -65,9 +59,9 @@ build_inputs <- function(con, cfg, mods) {
 }
 
 build_223926 <- function(here) {
-  # First, before anything reads it. A second build in the same R session
-  # would otherwise start holding the first's config, its code-list manifest
-  # and the columns of its input table.
+  # First, before anything reads it: a second build in the same R session would
+  # otherwise start holding the first's config, code-list manifest and input
+  # columns.
   reset_run_state()
   cfg <- cfg_defaults()
   cfg$codelist_dir <- resolve_codelist_dir(cfg, here)
@@ -91,14 +85,11 @@ build_223926 <- function(here) {
   }
 
   con <- connect_db(cfg)
-  # ONE cleanup handler, registered once, so ordering cannot go wrong.
-  #
-  # on.exit callbacks run in registration order, so a disconnect registered
-  # here and a failure-status write registered later ran in that order: the
-  # connection was already closed when the failure row was attempted, its
-  # error was swallowed by try(), and the run stayed recorded as `started`.
-  # The status write now happens inside the same handler, before the
-  # disconnect, and the disconnect is guaranteed by its own on.exit.
+  # ONE cleanup handler, registered once, so ordering cannot go wrong. on.exit
+  # callbacks run in registration order, so a failure-status write registered
+  # after the disconnect would find the connection already closed and its error
+  # swallowed by try(). The status write happens inside the same handler,
+  # before the disconnect.
   .run_state <- new.env(parent = emptyenv())
   .run_state$ok <- FALSE
   .run_state$meta <- NULL
@@ -160,10 +151,10 @@ build_223926 <- function(here) {
 # What produced these numbers, on the numbers' own row. Every setting outside
 # the contract is a reading someone chose, and a table that does not say which
 # reading cannot be reproduced from the table alone.
-# Allocated ONCE per build and passed to every status write. Generating it
-# inside each write gave a build lasting more than a second a `started` row
-# under one id and a `complete` row under another, so the first looked like a
-# run that never finished and neither could be traced to the other.
+
+# Allocated ONCE per build and passed to every status write. Generated inside
+# each write, a build lasting more than a second would get a `started` row
+# under one id and a `complete` row under another.
 new_run_id <- function()
   Sys.getenv("DOMINO_RUN_ID", unset = format(Sys.time(), "%Y%m%d%H%M%S"))
 

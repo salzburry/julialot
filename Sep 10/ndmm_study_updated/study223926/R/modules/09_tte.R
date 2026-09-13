@@ -1,32 +1,26 @@
 # TTNT, TTD and OS - Table 5.
 #
 # The endpoint conventions REVERSED between the June and August 2026 versions
-# (../VERSION_DIFF.md section 1). The August ones are: the interval opens ON the
-# index (included) and closes BEFORE the event (excluded), so every duration is
-# datediff(event, index) with no adjustment.
+# (../VERSION_DIFF.md section 1). The August ones open the interval ON the
+# index (included) and close it BEFORE the event (excluded), so every duration
+# is datediff(event, index) with no adjustment.
 #
-# The one that will bite: TTD's event is "the date of treatment
-# discontinuation", and the protocol's footnote defines discontinuation as all
-# agents stopped OR a new agent OR a qualifying SCT. The engine spells those as
-# three different LOT_BASE_END_REASON values, so the event set is the union -
-# IS_PROTOCOL_DISCON on the spine. Reading LOT_BASE_END_REASON = 'DISCONTINUATION'
-# would undercount TTD badly. ../BUILD_DELTA.md section 5.
+# TTD's event is the union of three LOT_BASE_END_REASON values, because the
+# protocol's footnote defines discontinuation as all agents stopped OR a new
+# agent OR a qualifying SCT - IS_PROTOCOL_DISCON on the spine.
+# ../BUILD_DELTA.md section 5.
 mod_tte <- function(con, cfg, cohort) {
-  # Each event date is written once and reused, so the date column and the
-  # days column can never describe different events.
-  # Every date is clipped to FU_END, and every event flag is gated on the same
-  # boundary. Without the clip on OS, a patient who disenrolled in 2020 and
-  # died in 2022 contributes two unobserved years as followed time and a death
-  # outside the observation window as an observed event.
-  #
-  # The gate matters as much as the clip: an event that falls after FU_END is a
-  # censoring, not an event, whichever column it came from.
+  # Each event date is written once and reused, so the date column and the days
+  # column cannot describe different events. Every date is clipped to FU_END
+  # and every event flag is gated on the same boundary: without the clip, a
+  # patient who disenrolled in 2020 and died in 2022 contributes two unobserved
+  # years as followed time. An event after FU_END is a censoring, not an event.
   obs_death <- "CASE WHEN c.DEATH_DT IS NOT NULL AND c.DEATH_DT <= p.FU_END
                      THEN c.DEATH_DT END"
   obs_next  <- "CASE WHEN s.NEXT_LOT_START_DT IS NOT NULL
                       AND s.NEXT_LOT_START_DT <= p.FU_END
                      THEN s.NEXT_LOT_START_DT END"
-  # The selected end date, from 00_spine.R - see there for why the engine's
+  # The selected end date, from 00_spine.R - which says why the engine's
   # LOT_BASE_DISCON_DT is the wrong column to read.
   obs_disc  <- "CASE WHEN s.IS_PROTOCOL_DISCON = 1
                       AND coalesce(s.PROTOCOL_DISCON_DT, s.LOT_BASE_END_DT)

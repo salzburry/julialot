@@ -5,11 +5,9 @@
 # flags. All four can be real tables, so the chain runs on its own here - no
 # engine, no build - and each patient below pins one branch of it.
 #
-# Why in this package. The rule's behaviour on whole patients is proved by the
-# repository's planted-patient harnesses, which build every statement the
-# engine issues. What they cannot do cheaply is a boundary: a course whose
-# confirming agent lands exactly on its last covered day, a hold that has to
-# be capped at the line's span end. Each of those is one row here.
+# These cases are the boundaries: a course whose confirming agent lands
+# exactly on its last covered day, a hold that has to be capped at the line's
+# span end. Each of those is one row here.
 #
 # Thirteen patients, one line each. The line is 2020-01-01 with a 60-day
 # induction window unless the case says otherwise, and every course is 28 days
@@ -115,16 +113,10 @@ RULE_CASES <- list(
                 .rm("R05", "DARA", "MAB",  "2020-06-01", "2020-09-01")),
     base = list(.rb("R05", "LEN")),
     # Two drugs starting the same day start one line together; neither began
-    # "while the other still covered", so the agent confirms nothing.
-    #
-    # And the course is not this line's either. melp_taken owns a course only
-    # up to and including the exposure date, so an agent landing exactly on it
-    # is one that got there first - the line it opens is the course's line,
-    # and that line's own statement judges the course from its start date.
-    # This is why the strict > in melp_confirm cannot be observed from
-    # outside: an agent close enough to be excluded by it is one that has
-    # already taken the course, and it passes the same candidate gate in both
-    # places.
+    # "while the other still covered", so the agent confirms nothing. The
+    # course is not this line's either: melp_taken owns a course only up to and
+    # including the exposure date, so an agent landing exactly on it got there
+    # first and the line it opens is the course's line.
     expect = list(SHORT = 1, INSIDE = 0, CONFIRMED = 0, TAKEN = 1,
                   SUPPRESSED = 0, INJECTED = 0, HOLD = NA)),
 
@@ -150,7 +142,7 @@ RULE_CASES <- list(
     # 14 days apart, under the 30-day exposure gap, so the course runs 06-01
     # to 06-28 and is short. The confirming agent is inside it.
     #
-    # No hold on THIS line: the boundary is the course's first day, and
+    # No hold on this line: the boundary is the course's first day, and
     # holding the line the boundary ends would carry it across its own
     # boundary. The 06-15 dose is refused a line of its own instead, which is
     # what REST records.
@@ -170,7 +162,7 @@ RULE_CASES <- list(
     # An allograft line takes no drugs at all, so a course on its date is not
     # an induction drug of it however the window arithmetic reads - INSIDE is
     # 0 and the course is judged. Confirmed, so it is injected, and this line
-    # IS the one that day opens, so the hold applies and reaches the later
+    # is the one that day opens, so the hold applies and reaches the later
     # dose.
     expect = list(SHORT = 1, INSIDE = 0, CONFIRMED = 1, TAKEN = 0,
                   SUPPRESSED = 0, INJECTED = 1, HOLD = "2020-06-28",
@@ -314,9 +306,9 @@ rule_query <- function(cfg) {
 # The doses the run-out chain must not break at, as the chain itself reads
 # them: the verdict relation, then melp_no_break over it.
 #
-# This is a different question from the one above and asks a different
-# induction test - AFTER_WINDOW rather than INSIDE - so it is executed
-# separately rather than inferred from the verdicts.
+# A different question from the one above, asking a different induction test -
+# AFTER_WINDOW rather than INSIDE - so it is executed separately rather than
+# inferred from the verdicts.
 NO_BREAK_EXPECT <- c(
   "R01 2020-06-01",   # suppressed outright
   "R05 2020-06-01",   # the same-day agent took the course; it still refuses

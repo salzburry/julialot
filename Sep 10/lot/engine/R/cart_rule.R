@@ -5,9 +5,8 @@
 #
 # The window test runs per row, before any aggregate. So lot1_sct carries two
 # dates: FIRST_CART_DT, the earliest infusion of any kind, and ENDING_CART_DT,
-# the earliest one allowed to end the line. Every boundary reads the second.
-# Gate the aggregate instead and a later CAR-T that should have ended the line
-# is lost.
+# the earliest one allowed to end the line. Gating the aggregate instead would
+# lose a later CAR-T that should have ended the line.
 #
 # It does not reopen a line that had already ended for another reason.
 
@@ -42,18 +41,14 @@ cart_censor_predicate <- function(on, type_col, cart_col, lot1_start_col,
 
 # Keeps the same infusion out of LOT2's start candidates. Empty when off.
 #
-# `active_through` is the last day LOT1 was still running - its end date. The
-# exemption depends on it, because "part of LOT1" means nothing for an infusion
-# arriving after LOT1 has ended. Without it the window outlives the line. A LOT1
-# that discontinued inside its own 60 days left a CAR-T that this predicate
-# refused as a LOT2 start and no other rule could place. The infusion belonged
-# to no line at all.
+# `active_through` is the last day LOT1 was still running. The exemption
+# depends on it, because "part of LOT1" means nothing for an infusion arriving
+# after LOT1 has ended: without it a LOT1 that discontinued inside its own 60
+# days leaves a CAR-T no rule can place.
 #
-# cart_cand already requires TX_DT > PREV_END_DT, so the condition makes the
-# predicate inert there. That is the point: every CAR-T reaching it is one LOT1
-# has already ended before. Written as a condition rather than deleted, so the
-# rule reads as the rule, and so a caller with a different frame cannot reopen
-# the gap by accident.
+# cart_cand already requires TX_DT > PREV_END_DT, so the condition is inert
+# there. It is written out rather than dropped so a caller with a different
+# frame cannot reopen the gap by accident.
 cart_exclude_predicate <- function(on, cart_col, lot1_start_col, window_days,
                                    active_through) {
   if (!isTRUE(on)) return("")

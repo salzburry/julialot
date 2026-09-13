@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Runs this package's SQL against planted data, and reports what came back.
+"""Runs this package's SQL against fixture data, and reports what came back.
 
-The rest of the suite reads the SQL as TEXT: generated with fake table names
+The rest of the suite reads the SQL as text: generated with fake table names
 and inspected. Text cannot tell you that a join lost a bound, that a CASE can
 never be true, or that a count is measuring something other than what its
 alias says. These statements produce the numbers the melphalan comparison is

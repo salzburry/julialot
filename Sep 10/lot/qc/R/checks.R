@@ -5,8 +5,7 @@
 # a connection.
 #
 # Every check answers the same shape: N_BAD, and DETAIL naming one example.
-# N_BAD = 0 is a pass. That uniformity is what lets the runner treat them all
-# alike and lets the tests check them all alike.
+# N_BAD = 0 is a pass, so the runner can treat them all alike.
 #
 # severity:
 #   fail   the algorithm's own definition says this cannot happen. A non-zero
@@ -30,10 +29,9 @@ mask <- function(col) sprintf(MASK_PATID, col, col)
 # rather than no row at all, which the runner would have to special-case.
 #
 # max() picks the example the report names. Which one is arbitrary - any
-# offending row is a row an operator can go and look at - so min() would serve
-# equally, and a mutation between the two is not something a test should pin.
-# What the report needs is that there IS an example and that it is the same
-# one every run, which max() over a deterministic expression gives.
+# offending row is one an operator can go and look at - so what matters is that
+# there is an example and that it is the same one every run, which max() over a
+# deterministic expression gives.
 counted <- function(body, detail = "NULL") {
   paste0("SELECT count(*) AS N_BAD, max(", detail, ") AS DETAIL FROM (\n",
          body, "\n) q")
@@ -42,20 +40,17 @@ counted <- function(body, detail = "NULL") {
 # The days a line may take a regimen drug from, as the induction step bounds
 # them - the induction window AND the transplant cutoff, whichever is earlier.
 #
-# One definition because C1 and C4 ask opposite directions of the same set, and
-# two copies of a window is how the two stop describing the same rule. C1 asked
-# the window alone, which is the weaker half: a regimen drug whose episode
-# started after the transplant that ended the line is still inside the nominal
-# 30, 45 or 60 days, so C1 passed on exactly the shape REGIMEN_CUTOFF_DT was
-# added to prevent.
+# One definition, because C1 and C4 ask opposite directions of the same set and
+# two copies of a window drift apart. The window alone is the weaker half: a
+# regimen drug whose episode started after the transplant that ended the line
+# is still inside the nominal 30, 45 or 60 days.
 #
 # The cutoff is read the way 04_lot1_base.R and 10_lot2_5_base.R build it. LOT1
 # takes an allograft from its start date, and takes a CAR-T only where the
-# induction exemption is off - with the rule on, an in-window CAR-T is part of
-# LOT1 and cuts nothing. Later lines take both, and only strictly after their
-# own start, so the transplant that STARTED the line is not a cutoff on it.
-# Floored at the line start, so a transplant on day one leaves a one-day window
-# rather than one that closes before it opens.
+# induction exemption is off, since with the rule on an in-window CAR-T is part
+# of LOT1. Later lines take both, and only strictly after their own start, so
+# the transplant that started the line is not a cutoff on it. Floored at the
+# line start, so a transplant on day one leaves a one-day window.
 #
 # per_line = TRUE gives one row per line (`lines`); FALSE gives one row per
 # line and regimen drug (`reg`).
@@ -103,15 +98,11 @@ qc_window_sql <- function(t, p, per_line = FALSE) {
 # to be the immediately-preceding episode; this is the one copy of the SQL.
 #
 # One definition for the same reason qc_window_sql() has one: C2 and C3 both
-# lean on this exemption, and two copies of a rule is how the two stop
-# describing the same rule. They were still byte-identical when this was
-# extracted, which is the moment to do it rather than after they have drifted.
+# lean on this exemption, and two copies of a rule drift apart.
 #
-# No leading newline or indent, so each call site keeps its own layout and the
-# emitted SQL is byte-identical to the two copies this replaced.
-# The coalesce is belt and braces: both readers of PREV_DISCON wrap it in
-# coalesce(..., 0) of their own, so dropping this one changes no answer. It
-# stays because a third reader should not have to know that.
+# No leading newline or indent, so each call site keeps its own layout. The
+# coalesce is belt and braces - both readers of PREV_DISCON wrap PREV_DISCON in
+# a coalesce of their own - and stays so a third reader need not know that.
 qc_restart_sql <- function(t) paste0("restart AS (
       SELECT cast(PATID as string) AS PATID, MAP_MED_TYPE, MAP_START_DT,
              coalesce(lag(MAP_DISCON_FLG) OVER (PARTITION BY PATID, MAP_MED_TYPE
@@ -524,10 +515,9 @@ LOT_QC_CHECKS <- list(
        if (isTRUE(p$foldin)) "greatest(w.ELIGIBLE_END, w.LOT_BASE_END_DT)"
        else "w.ELIGIBLE_END", "
     WHERE ms.PATID IS NULL",
-    # ...and the wider range is allowed only where a fold could have put the
-    # drug there: it has to be an agent of the line BEFORE this one. Widening
-    # for every regimen drug would have let unrelated post-induction pollution
-    # through, since anything inside the line would pass.
+    # The wider range is allowed only where a fold could have put the drug
+    # there: it has to be an agent of the line before this one. Widening it for
+    # every regimen drug would let anything inside the line pass.
     if (!isTRUE(p$foldin)) "" else paste0("
        OR NOT EXISTS (
             SELECT 1 FROM prev_carried pc
@@ -728,17 +718,13 @@ LOT_QC_CHECKS <- list(
   # ---- E. Transplants ------------------------------------------------------
 
   # E2 and E3 read LOT_LONG, which carries the per-line transplant columns for
-  # EVERY line. They read LOT1_SCT once, which answered them for LOT1 alone -
-  # and LOT2-5 has its own SCT implementation in 10_lot2_5_base.R, so proving
-  # LOT1 proved nothing about the code that actually builds the later lines. A
-  # LOT2 tandem pair 230 days apart with the flag set passed both.
+  # every line. LOT1_SCT alone would answer for LOT1 only, and LOT2-5 has its
+  # own SCT implementation in 10_lot2_5_base.R.
   #
-  # E1 cannot follow them, and the reason is worth stating rather than
-  # discovering twice. LOT_LONG does not carry the two flags, it DERIVES them:
-  # SING is written as "an in-LOT DT_1 that is not a TAND". Both being 1 is
-  # unsatisfiable there, so E1 over LOT_LONG is a tautology - it was moved
-  # there and stopped being able to fail, at LOT1 as well as later. It reads
-  # the raw tables instead.
+  # E1 cannot follow them. LOT_LONG derives the two flags rather than carrying
+  # them - SING is written as "an in-LOT DT_1 that is not a TAND" - so both
+  # being 1 is unsatisfiable there and E1 over LOT_LONG would be a tautology.
+  # It reads the raw tables instead.
   list(id = "E1", group = "Transplant", severity = "fail",
        what = "tandem and single autologous flags are mutually exclusive",
        why = paste0("A line is one or the other, and the raw step builds them ",
@@ -1006,7 +992,7 @@ LOT_QC_CHECKS <- list(
       -- count reconciled. The 'correct' synthetic fixture demonstrated it:
       -- three patients over five lines were written as LOT1 3/5, LOT2 1/3,
       -- LOT3 1/1 and labelled a good progression set, when the lines say
-      -- 3/3, 1/1, 1/1. An external review found both the gap and the fixture.
+      -- 3/3, 1/1, 1/1.
       SELECT LOT_NUM, count(DISTINCT PATID) AS n, count(*) AS n_lines
       FROM ", t$final, " GROUP BY LOT_NUM
     ),
@@ -1140,12 +1126,10 @@ qc_params <- function(settings, run_id) {
 # What a count means for a check of this severity. Its own function because
 # "zero is a pass" is the one rule the whole report rests on.
 qc_outcome <- function(n, severity) {
-  # No count at all - a query that returned no N_BAD column, which every check
-  # here produces through counted() and a later one might not. It used to
-  # reach `if (is.na(n))` with a zero-length value and stop the runner with
-  # "argument is of length zero", losing every check after it. The runner's own
-  # rule is that a check which could not run is reported as its own outcome
-  # rather than read as one that found nothing, so this is that outcome.
+  # No count at all - a query that returned no N_BAD column. A zero-length
+  # value reaching `if (is.na(n))` would stop the runner with "argument is of
+  # length zero" and lose every check after it. A check that could not run is
+  # reported as its own outcome rather than as one that found nothing.
   if (length(n) != 1L) return("error")
   if (is.na(n)) return("error")
   if (n == 0) return("pass")
@@ -1154,9 +1138,9 @@ qc_outcome <- function(n, severity) {
 
 QC_SEVERITIES <- c("fail", "warn", "info")
 
-# Catalogue hygiene, checked at load rather than trusted. A duplicate id makes
-# two rows in the report indistinguishable; an unknown severity would be
-# scored as neither a pass nor a failure.
+# Catalogue hygiene, checked at load. A duplicate id makes two rows in the
+# report indistinguishable; an unknown severity would be scored as neither a
+# pass nor a failure.
 check_qc_catalogue <- function(checks = LOT_QC_CHECKS) {
   ids <- vapply(checks, function(c_i) c_i$id %||% "", character(1))
   if (any(!nzchar(ids))) stop("A check has no id.", call. = FALSE)
@@ -1176,7 +1160,7 @@ check_qc_catalogue <- function(checks = LOT_QC_CHECKS) {
   invisible(TRUE)
 }
 
-# The report a reviewer reads. Here rather than in the runner so a test can
+# The report the study team reads. Here rather than in the runner so a test can
 # check what it says without a warehouse behind it.
 qc_markdown <- function(res, run_id, pfx, p, devs) {
   ln <- c(paste0("# LOT QC - ", pfx),

@@ -107,7 +107,7 @@ TABLE_SPEC <- list(
   #
   # A different build wrote these, under its own prefix, and a study scenario
   # records which run in S_RUN_METADATA.LOT_RUN_ID. Several scenarios normally
-  # share ONE LOT run, because none of this package's open questions changes
+  # share one LOT run, because none of this package's open questions changes
   # how a line is counted - so these describe a scenario's lineage rather than
   # the scenario.
   LOT_LONG_FINAL = list(
@@ -168,11 +168,10 @@ table_spec <- function(name, cols = character(0)) {
        keys = intersect(GENERIC_KEYS, cols), declared = FALSE)
 }
 
-# The LOT engine's deliverables and its own record. Named here rather than
-# imported: lot/engine/R/build_lot.R is a sibling folder, and reaching into it
-# would break this folder standing alone (../SOURCES.md). tests/run_tests.R
-# compares this list to LOT_TABLES whenever the engine is beside us, so one
-# gaining a table and not the other is caught.
+# The LOT engine's output tables and its own record. Named here rather than
+# imported from lot/engine/R/build_lot.R, because this folder has to stand on
+# its own. tests/run_tests.R compares this list to LOT_TABLES whenever the
+# engine is beside us, so one gaining a table and not the other is caught.
 LOT_DASHBOARD_TABLES <- c("LOT_LONG_FINAL", "LOT_LONG", "LOT_ATTRITION",
                           "LOT_FACE_VALIDITY", "LOT_QC_SUMMARY",
                           "LOT_RUN_METADATA", "LOT_BUILD_STATUS")

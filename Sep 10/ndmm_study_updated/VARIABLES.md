@@ -56,8 +56,8 @@ Tentative categories:
 | **1L (NDMM)** | Quadruplets with anti-CD38 backbone · Triplets with anti-CD38 backbone · Other triplets (non-anti-CD38) · Doublets/monotherapies · Other (if applicable) |
 | **Later lines (2L, 3L, 4L)** | Quadruplets with anti-CD38 backbone (off-label; some use expected) · Triplets with anti-CD38 backbone · Other triplets (non-anti-CD38) · Other novel agents (e.g. Selinexor) · CAR-T (inclusive of all targets) · BCMA bispecific · Non-BCMA bispecifics · Doublets/monotherapies (expected to be rare in 2L+) · Other (if applicable) |
 
-The repo's `cl_mma_rollup.csv` carries `CL_MED_CLASS` and `CL_MED_ABBR`, which is the
-raw material for these groupings, but **no regimen-category column exists today**.
+`cl_mma_rollup.csv` carries `CL_MED_CLASS` and `CL_MED_ABBR`, the raw material for
+these groupings, but **no regimen-category column exists today**.
 `CODELISTS.md` §2.
 
 ## 3. Subgroup stratifications (§7.2.3, Table 1)
@@ -120,17 +120,14 @@ transplant-eligible (TE).
 > "Types of SOCs by line" starts **2017**, before the study period on either reading.
 > `OPEN_QUESTIONS.md` Q12.
 
-> **GAP — pages 31-32 are unreadable in the copy supplied.** `VERSION_DIFF.md` §3
-> reconstructs the missing rows from the June 2026 version and names the three things
-> that have certainly changed since. The counting rules themselves survive in §7.8.1
-> (see §5 below), so what is lost is wording and exact functional forms, not
-> substance. Everything in Table 4 between
-> "Types of 1L, 2L, 3L SOCs or classes by line" and the Primary Objective 3 block is
-> unreadable. From the surrounding rows, what is missing is: the rest of Primary
-> Objective 1 (**background prevalence rates of the Table 3 key safety events at
-> baseline**, and **baseline healthcare utilization events**), and the whole of
-> **Primary Objective 2** except its two closing rows. The Primary Objective 2 rows
-> that survive are:
+> **Gap.** Everything in Table 4 between "Types of 1L, 2L, 3L SOCs or classes by line"
+> and the Primary Objective 3 block is missing: the rest of Primary Objective 1
+> (**background prevalence rates of the Table 3 key safety events at baseline**, and
+> **baseline healthcare utilization events**), and the whole of **Primary Objective 2**
+> except its two closing rows. `VERSION_DIFF.md` §3 reconstructs those rows from the
+> June 2026 version and names the three things that have certainly changed since. The
+> counting rules survive in §7.8.1 (see §5 below), so what is lost is wording and exact
+> functional forms, not substance. The Primary Objective 2 rows that survive are:
 >
 > | variable | definition | timing |
 > |---|---|---|
@@ -270,7 +267,7 @@ That defines the **LOT treatment period** — the risk window for Primary Object
 
 No adjustment set is required. Nothing needs to be derived for confounding control.
 
-## 10. Variables that need something the repo does not have
+## 10. Variables that need something that does not exist yet
 
 | variable | what is missing |
 |---|---|
