@@ -741,7 +741,7 @@ LOT2_5_INPUT_VIEWS <- c("lot_patient_input", "mma_rollup", "permissible_subs",
 # really pass to lot_out(), so a table added to a step without being declared
 # fails there rather than turning up unannounced in a schema.
 LOT_TABLES <- c(
-  # the deliverables
+  # the output tables
   "LOT_LONG", "LOT_LONG_ALLFLAGS", "LOT_LONG_FINAL", "LOT_ATTRITION",
   "LOT_FACE_VALIDITY",
   # the run's own record

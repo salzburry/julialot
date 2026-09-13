@@ -295,7 +295,7 @@ measuring the build.
 | path | what it does |
 |---|---|
 | `R/vignettes.R` | The edge cases the algorithm is hardest on, each with the assignment the rules give. Every offset is derived from the parameter that decides it, so a case moves when a setting moves and a renamed setting fails the catalogue rather than leaving prose describing a rule that is gone. |
-| `run_vignettes.R` | Renders the catalogue. No warehouse and no connection; writes a CSV and a markdown table to `out/`. Both are committed, so re-run it after any change to `R/vignettes.R` and commit what it writes — the run stops if the catalogue disagrees with the config it was resolved against. `OUTPUT_DIR` redirects the render. |
+| `run_vignettes.R` | Renders the catalogue. No warehouse and no connection; writes a CSV and a markdown table to `out/`. Both are kept beside it, so re-run it after any change to `R/vignettes.R` and keep what it writes — the run stops if the catalogue disagrees with the config it was resolved against. `OUTPUT_DIR` redirects the render. |
 | `tests/test_vignettes.R` | The catalogue cannot drift: the parameters have to exist, the boundary pairs have to straddle them and expect different things, the timelines have to run forwards, and the files the rules are quoted from have to be there. It also holds `LOT_RULES.md` and the catalogue to each other in both directions — a rule citing a vignette that does not exist fails, and a vignette no rule cites fails too. |
 | `out/` | Generated. Nothing reads it back. |
 
