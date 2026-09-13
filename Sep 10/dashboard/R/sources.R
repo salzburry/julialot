@@ -33,13 +33,47 @@
 # the column existed, and "release module did not run" is a run that has not
 # been shown to have no recoverable cell because it never looked - neither is
 # the same as none, and neither may pass.
+RELEASE_NOT_RECORDED <- "nothing recorded - a build from before this column existed"
+
 release_recoverable_blocks <- function(recoverable) {
   v <- trimws(as.character(recoverable %||% "")[1])
+  # NA is not a value to interpolate into a refusal. as.character(NA) is
+  # NA_character_, nzchar() of which is TRUE, so an unnormalised NA used to
+  # fall through this function and come back out in the message.
+  if (is.na(v) || !nzchar(v) || identical(v, "NA"))
+    return(RELEASE_NOT_RECORDED)
   if (identical(v, "none")) return("")
-  if (!nzchar(v) || identical(v, "NA"))
-    return("nothing recorded - a build from before this column existed")
   v
 }
+
+# Which of a run's tables its own release verdict refuses.
+#
+# The verdict names the tables it found - "S_SAFETY_RATES_RELEASE: 3 ...
+# group(s)" - so a run with one recoverable group loses that table and not the
+# page. A verdict this reader cannot parse into table names refuses every
+# released table, because an answer that cannot be read is not one that clears.
+#
+# A run with NO record is the one case this does not refuse. The snapshot job
+# is the gate - it blocks an export whose record is absent, so what reaches a
+# Dataset has been through it - and refusing here as well would blank every
+# snapshot taken before the column existed, which is a large harm against a
+# risk the banner states on the page instead. Re-exporting such a run through
+# the job is what actually settles it.
+release_refused_tables <- function(recoverable) {
+  blocked <- release_recoverable_blocks(recoverable)
+  if (!nzchar(blocked) || identical(blocked, RELEASE_NOT_RECORDED))
+    return(character(0))
+  known <- sub("_RELEASE$", "", names(SUPPRESSION_SPEC_NAMES()))
+  named <- known[vapply(known, function(t)
+    grepl(t, blocked, fixed = TRUE), logical(1))]
+  if (length(named)) named else known
+}
+
+# Whether this deployment has been told to show them anyway. The snapshot job
+# has the same switch under its own name; a warehouse App is a second way in
+# and needs its own, because nothing it reads has been through that job.
+release_recoverable_allowed <- function()
+  isTRUE(as.logical(Sys.getenv("DASH_ALLOW_RECOVERABLE", "FALSE")))
 
 safe_segment <- function(x) {
   x <- as.character(x %||% "")
@@ -225,22 +259,29 @@ load_scenarios <- function(src) {
 # first case, so the release version is the default and reading the raw one is
 # a deliberate choice.
 read_table <- function(src, prefix, table, prefer_release = TRUE,
-                       raw_fallback = TRUE) {
+                       raw_fallback = FALSE) {
   if (prefer_release && paste0(table, "_RELEASE") %in% names(SUPPRESSION_SPEC_NAMES())) {
     rel <- src$read(prefix, paste0(table, "_RELEASE"))
     if (!is.null(rel) && nrow(rel)) return(mark_source(rel, "release"))
     # The released copy was asked for and is not there. Whether the raw table
     # may stand in is the CALLER'S to say, and only a caller that knows the
     # run never released one may say yes - the raw table holds exactly what
-    # the release was run to remove. Asked as an argument rather than decided
-    # here, so a future caller has to answer it rather than inherit a default
-    # that happens to be safe for today's one.
+    # the release was run to remove. The default is no, so a caller that has
+    # not thought about it gets the safe answer; read_raw_table() below is the
+    # way to ask for the other one, and it says what it is in its name.
     if (!isTRUE(raw_fallback)) return(NULL)
   }
   raw <- src$read(prefix, table)
   if (is.null(raw)) return(NULL)
   mark_source(raw, "raw")
 }
+
+# The raw table, where the caller has established that it may have it: a run
+# that never released this one, or a QC path that has asked for the unreleased
+# numbers on purpose. Named rather than reached by an argument, so a call site
+# reads as what it is.
+read_raw_table <- function(src, prefix, table)
+  read_table(src, prefix, table, prefer_release = FALSE, raw_fallback = TRUE)
 
 # Whether the newest row of a LOT_BUILD_STATUS table names this run, complete,
 # and - where the scenario recorded which build of the run it read - that
@@ -381,6 +422,15 @@ read_scenario_table <- function(src, scenario, table, prefer_release = TRUE) {
     if (is.na(m)) !nzchar(trimws(scenario$run_id %||% "")) else m
   }
   if (!same()) return(NULL)
+  # THE RELEASE VERDICT, on the read path as well as in the snapshot job.
+  #
+  # The job is one way a run reaches people and a live warehouse App is
+  # another, and only the first was checking. A run whose own metadata says a
+  # withheld cell is still its group's total less the published rest must not
+  # show that table here either, whatever route it came by.
+  if (released && !release_recoverable_allowed() &&
+      toupper(table) %in% release_refused_tables(scenario$release_recoverable))
+    return(NULL)
   # FAIL CLOSED where this run released. The raw table may stand in only for a
   # run that never released one; where the run says it did and the copy is
   # missing or empty, reading the raw one would undo the release quietly, and
