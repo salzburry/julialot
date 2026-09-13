@@ -125,14 +125,18 @@ withhold_cell <- function(cells, i, floor_n, reason) {
 #                    column header. This is the relation this file has always
 #                    applied, and it is kept as one relation among the rest.
 #
-# Only counts take part. A median, a rate and a curve do not sum to a total, so
-# hiding a second one of them protects nothing and loses a number.
+# Only counts of patients take part. A median, a rate, a curve and a count of
+# distinct values do not sum to a total, so hiding a second one of them
+# protects nothing and loses a number.
 TFLS_GROUPED_STATS <- c("n_pct", "n")
 
 # The statistics whose own N is a count of patients, and so is a population the
 # floor is about. For the rest the floor is on the denominator alone, which is
 # what the package applies to a rate: N_AT_RISK decides, and the events inside
-# it are published with it or withheld with it.
+# it are published with it or withheld with it. A count of distinct values is
+# not a count of patients either - three regimens among a hundred patients
+# tells a reader about the regimens - so it goes with the population it was
+# read over rather than being tested as though it were one.
 TFLS_COUNT_FLOOR_STATS <- c("n_pct", "n", "mean_sd", "median_iqr", "min_max")
 
 cell_group_key <- function(cells)

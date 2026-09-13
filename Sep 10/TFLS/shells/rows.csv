@@ -372,7 +372,7 @@ T2x,10,FALSE,BCMA,1,n_pct,S_PATTERNS,SOC_CATEGORY=CAR-T,,"The cell therapies. A 
 T2x,11,FALSE,Bispecifics,1,n_pct,S_PATTERNS,SOC_CATEGORY=BCMA bispecific|Non-BCMA bispecific,,"two SOC_CATEGORY values, and BCMA bispecific is also claimed by the BCMA row above"
 T2x,12,FALSE,"Other novel agents (e.g., Selinexor)",1,n_pct,S_PATTERNS,SOC_CATEGORY=Other novel agent,,
 T2x,13,TRUE,Common sequences received,0,,,,,
-T2x,14,FALSE,Total number of unique regimens,1,n,S_SOC,REGIMEN,,distinct REGIMEN strings in the line; the study publishes no ready made count of them
+T2x,14,FALSE,Total number of unique regimens,1,n_distinct,S_SOC,REGIMEN,,"counts how many different REGIMEN strings the lines in this column hold, not how many patients are on them; the study publishes no ready made count of them"
 T2x,15,FALSE,Regimen 1,1,n_pct,S_SOC,REGIMEN,RANK=1,"the shell does not name the regimen; read by ranking REGIMEN, which the study publishes no ranked list of"
 T2x,16,FALSE,Regimen 2,1,n_pct,S_SOC,REGIMEN,RANK=2,"the shell does not name the regimen; read by ranking REGIMEN, which the study publishes no ranked list of"
 T2x,17,FALSE,Regimen 3,1,n_pct,S_SOC,REGIMEN,RANK=3,"the shell does not name the regimen; read by ranking REGIMEN, which the study publishes no ranked list of"

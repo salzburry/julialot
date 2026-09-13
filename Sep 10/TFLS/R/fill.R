@@ -72,9 +72,13 @@ TFLS_SUBJECT_TABLES <- c("S_DEMOGRAPHICS", "S_COMORBIDITY", "S_COMORB_SUBGROUP",
 # only be filled where the run was told where that table is.
 TFLS_COHORT_TABLE_NAMES <- c("COHORT_TABLE", "INPUT_COHORT", "INPUT_COHORT_TABLE")
 
+# `absent_why` is optional and says WHY a table is not there, in the reader's
+# own words: a reader bound to one run knows that a table under the prefix is a
+# previous run's, and that is a different gap from a table nobody wrote. Where
+# no reader says, an absent table is reported as absent and nothing more.
 fill_context <- function(reader, classes, soc_table = "S_SOC",
                          subject_tables = TFLS_SUBJECT_TABLES,
-                         tte_eligible_only = FALSE) {
+                         tte_eligible_only = FALSE, absent_why = NULL) {
   cache <- new.env(parent = emptyenv())
   get_table <- function(name) {
     key <- toupper(chr(name))
@@ -83,9 +87,14 @@ fill_context <- function(reader, classes, soc_table = "S_SOC",
       assign(key, tryCatch(reader(key), error = function(e) NULL), envir = cache)
     get(key, envir = cache, inherits = FALSE)
   }
+  why_absent <- function(name) {
+    if (!is.function(absent_why)) return("")
+    chr(tryCatch(absent_why(toupper(chr(name))), error = function(e) ""))[1]
+  }
   list(get = get_table, classes = classes, soc_table = soc_table,
        subject_tables = subject_tables,
-       tte_eligible_only = isTRUE(tte_eligible_only))
+       tte_eligible_only = isTRUE(tte_eligible_only),
+       absent_why = why_absent)
 }
 
 # --- the population a column stands for -------------------------------------
@@ -547,6 +556,16 @@ compute_cell <- function(pop, stat, measure, terms, where,
       return(if (identical(stat, "n_pct")) stat_n_pct(hit, denom = denom)
              else stat_n(hit, denom = denom))
     }
+    if (identical(stat, "n_distinct")) {
+      if (is.na(mcol))
+        return(stat_refused(stat, paste0("the shell names no column to count ",
+                                         "the distinct values of"), "shell"))
+      # A measure naming a value narrows the rows first, so a row asking for
+      # the regimens inside one category counts those and not all of them.
+      sel <- apply_term(pop, measure, where)
+      if (!isTRUE(sel$ok)) return(stat_refused(stat, sel$why))
+      return(stat_n_distinct(sel$rows[[mcol]], denom = denom))
+    }
     if (stat %in% c("mean_sd", "median_iqr", "min_max")) {
       if (is.na(mcol))
         return(stat_refused(stat, "the shell names no column to summarise",
@@ -565,6 +584,14 @@ compute_cell <- function(pop, stat, measure, terms, where,
         " is per patient and carries no rate; a rate is read from the table ",
         "the package computed it in"), "not_computable"))
   }
+
+  # A distinct count needs the values themselves, and a stratum table holds one
+  # row per group the package already counted: the values in it are the groups
+  # it wrote rather than what this population holds.
+  if (identical(stat, "n_distinct"))
+    return(stat_refused(stat, paste0(where, " is a table of totals, so the ",
+      "distinct values in it are the strata the package wrote and not the ",
+      "values this population holds"), "not_computable"))
 
   # Aggregated: one row of a stratum table is the answer, so the shell has to
   # pick exactly one. Two rows left is a shell that needs another filter, and
@@ -700,10 +727,16 @@ fill_table <- function(sh, tid, ctx, floor_n = TFLS_PACKAGE_MIN_N) {
         row_why <- "the shell names no source table"
         row_kind <- "shell"
       } else if (is.null(d) || !nrow(d)) {
-        row_why <- if (toupper(chr(row$source)) %in% TFLS_COHORT_TABLE_NAMES)
-          paste0("the diagnosis date is on the input cohort table, which no ",
-                 "study output carries; in warehouse mode TFLS_COHORT_TABLE ",
-                 "names it, and nothing else here can stand in for it")
+        # Why it is absent, where the reader can say: a table this run's own
+        # metadata does not claim is a previous run's, and saying so names the
+        # declaration the row was read against.
+        scoped <- if (is.function(ctx$absent_why))
+          ctx$absent_why(row$source) else ""
+        row_why <- if (nzchar(scoped)) scoped
+          else if (toupper(chr(row$source)) %in% TFLS_COHORT_TABLE_NAMES)
+            paste0("the diagnosis date is on the input cohort table, which no ",
+                   "study output carries; in warehouse mode TFLS_COHORT_TABLE ",
+                   "names it, and nothing else here can stand in for it")
           else paste0(chr(row$source), " was not read by this run, so nothing ",
                       "can fill this row")
         row_kind <- "not_in_run"

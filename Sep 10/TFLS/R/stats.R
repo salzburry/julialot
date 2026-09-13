@@ -12,8 +12,8 @@
 # shell cell and the same figure on a page cannot disagree about a tie, a
 # censoring at the last event time, or a cohort with no event at all.
 
-TFLS_STATS <- c("n_pct", "mean_sd", "median_iqr", "min_max", "n", "rate",
-                "km_median", "km_prob", "km_events", "km_censored")
+TFLS_STATS <- c("n_pct", "mean_sd", "median_iqr", "min_max", "n", "n_distinct",
+                "rate", "km_median", "km_prob", "km_events", "km_censored")
 
 # The four that read a curve. Their measure names an endpoint rather than a
 # column, so the columns behind it are resolved in km_columns().
@@ -26,6 +26,7 @@ tfls_stat_names <- function() TFLS_STATS
 TFLS_STAT_NEEDS <- c(
   n_pct = "a count and the population it is out of",
   n = "a count",
+  n_distinct = "a column, whose distinct values are counted",
   mean_sd = "a numeric column",
   median_iqr = "a numeric column",
   min_max = "a numeric column",
@@ -103,6 +104,24 @@ stat_n <- function(hit, denom = NA) {
   d <- suppressWarnings(as.numeric(denom))
   if (is.logical(hit) && (length(d) != 1L || is.na(d))) d <- length(hit)
   stat_cell("n", value = n, n = n, denom = d, text = fmt_count(n))
+}
+
+# How many different values a column takes, which is a different question from
+# how many patients hold them: a hundred patients on one regimen are one
+# regimen, and counting the patients there answers "how many lines", not "how
+# many regimens".
+#
+# `x` is the column itself, over the rows the column's population selects. A
+# blank is not a value: a row the study left empty names no regimen, and
+# counting it would add one that nobody was on. The count is of values and not
+# of people, so the floor is tested on the population this was read over and
+# not on the count - see TFLS_COUNT_FLOOR_STATS in R/suppress.R.
+stat_n_distinct <- function(x, denom = NA) {
+  v <- chr(x)
+  n <- length(unique(v[nzchar(v)]))
+  d <- suppressWarnings(as.numeric(denom))
+  if (length(d) != 1L) d <- NA_real_
+  stat_cell("n_distinct", value = n, n = n, denom = d, text = fmt_count(n))
 }
 
 # --- continuous -------------------------------------------------------------
@@ -278,6 +297,11 @@ km_prob_at <- function(km, months) {
        n_risk = km$N_RISK[i])
 }
 
+# A bound of the interval, or the follow-up not reaching it. Never a blank: a
+# blank between two brackets reads as a number nobody wrote down.
+km_bound_text <- function(x)
+  if (is.na(x)) "not reached" else fmt_dec(x, 1)
+
 # The four statistics a shell may ask of a curve. Each is given the times and
 # the event flags, so a row reads a study table and nothing else.
 stat_km_median <- function(time, event, denom = NA) {
@@ -286,16 +310,18 @@ stat_km_median <- function(time, event, denom = NA) {
   d <- suppressWarnings(as.numeric(denom))
   if (length(d) != 1L || is.na(d)) d <- n
   med <- km_median(km)
-  if (is.na(med))
-    return(stat_cell("km_median", n = attr(km, "n_event"), denom = d,
-                     text = "not reached"))
   ci <- km_median_ci(km)
+  # The median can be out of reach while a bound of it is not: with 45 events
+  # among 100 subjects the band's lower limit passes 0.5 without the curve
+  # itself getting there, and that lower bound is what the data supports. So
+  # the interval is printed whenever either end is estimable, and "not reached"
+  # stands in for the median as it does for a bound. An interval with neither
+  # end is left off rather than printed as a pair of words.
   band <- if (all(is.na(ci))) "" else
-    paste0(" (", if (is.na(ci[1])) "not reached" else fmt_dec(ci[1], 1), ", ",
-           if (is.na(ci[2])) "not reached" else fmt_dec(ci[2], 1), ")")
+    paste0(" (", km_bound_text(ci[1]), ", ", km_bound_text(ci[2]), ")")
   stat_cell("km_median", value = med, low = ci[1], high = ci[2],
             n = attr(km, "n_event"), denom = d,
-            text = paste0(fmt_dec(med, 1), band))
+            text = paste0(km_bound_text(med), band))
 }
 
 stat_km_prob <- function(time, event, months, denom = NA) {

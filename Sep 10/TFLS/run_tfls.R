@@ -40,7 +40,7 @@
 })
 
 TFLS_R_FILES <- c("classes.R", "shells.R", "stats.R", "suppress.R", "fill.R",
-                  "render.R")
+                  "scope.R", "render.R")
 for (f in TFLS_R_FILES) source(file.path(.script_dir, "R", f))
 
 shells_dir <- file.path(.script_dir, "shells")
@@ -122,18 +122,9 @@ report_plan <- function(sh, floor_n) {
 # --- sources ----------------------------------------------------------------
 #
 # Two of them, one interface: a function of a table name that gives back a data
-# frame or NULL. Where the package published a released copy of a table, that
-# is what is read, so the suppression is the package's own and not a second
-# opinion of it.
-
-release_first <- function(read_one) function(table) {
-  table <- toupper(chr(table))
-  if (!grepl("_RELEASE$", table)) {
-    rel <- read_one(paste0(table, "_RELEASE"))
-    if (!is.null(rel) && nrow(rel)) return(rel)
-  }
-  read_one(table)
-}
+# frame or NULL, over whatever sits under the prefix. Which of that is this
+# run's is not theirs to decide: run_reader() in R/scope.R binds them to the
+# run's own declaration, and nothing here is handed to a fill unwrapped.
 
 # Where a build's lines are filed in a snapshot: by run id, and by build where
 # the run recorded one. The engine keeps one run id for a session, so an id can
@@ -148,7 +139,7 @@ lot_dir_name <- function(run_id, version = "") {
 # lines sit under lot/<run>[.<build>]/ instead, because several runs normally
 # read one build of them and a copy per run would suggest they differ.
 snapshot_reader <- function(root, prefix, lot_dir = "") {
-  read_one <- function(table) {
+  function(table) {
     if (!safe_segment(prefix) || !safe_segment(table)) return(NULL)
     p <- file.path(root, prefix, paste0(table, ".csv"))
     if (!file.exists(p) && nzchar(lot_dir) && safe_segment(lot_dir))
@@ -157,11 +148,10 @@ snapshot_reader <- function(root, prefix, lot_dir = "") {
     utils::read.csv(p, stringsAsFactors = FALSE, check.names = FALSE,
                     na.strings = c("", "NA"))
   }
-  release_first(read_one)
 }
 
 warehouse_reader <- function(con, catalog, schema, prefix, cohort_table = "") {
-  read_one <- function(table) {
+  function(table) {
     if (!safe_segment(table) || !safe_segment(prefix)) return(NULL)
     # The input cohort table is not one of the run's outputs and carries no
     # prefix: it is read only where the run was told where it is.
@@ -172,28 +162,16 @@ warehouse_reader <- function(con, catalog, schema, prefix, cohort_table = "") {
     tryCatch(db_q(con, sprintf("SELECT * FROM %s", full)),
              error = function(e) NULL)
   }
-  release_first(read_one)
 }
 
-# The newest row of a metadata table: by UPDATED_AT where it carries one,
-# otherwise the last row written.
-newest_row <- function(df) {
-  if (is.null(df) || !nrow(df)) return(NULL)
-  o <- if ("UPDATED_AT" %in% names(df))
-    order(as.character(df$UPDATED_AT), decreasing = TRUE) else rev(seq_len(nrow(df)))
-  df[o[1], , drop = FALSE]
-}
-
-row_field <- function(row, nm)
-  if (is.null(row) || !nm %in% names(row)) "" else chr(row[[nm]][1])
-
-# The identity a run is bound by: the id, and the state and timestamp that tell
-# one build under that id from another. A run id is not a build - the same id
-# is kept for every build inside one session - so all three are compared.
-run_identity <- function(row)
-  paste(row_field(row, "RUN_ID"), row_field(row, "STATE"),
-        row_field(row, "UPDATED_AT"), sep = "\r")
-
+# The run these shells are filled from: its metadata row, and the two checks
+# that make it one to read.
+#
+# The state, because a run's metadata row is written before its tables are
+# replaced, so under a `started` or `failed` run the tables are the previous
+# build's or part of this one. And its own declaration, because a prefix holds
+# whatever every run before this one left under it: a run that recorded no
+# modules, or no cohorts, can vouch for none of it.
 bind_run <- function(reader, where) {
   md <- newest_row(reader("S_RUN_METADATA"))
   if (is.null(md))
@@ -204,6 +182,14 @@ bind_run <- function(reader, where) {
     stop("The run under ", where, " is '", state, "', not complete, so its ",
          "tables may be the previous build's or part of this one. Nothing ",
          "was filled.", call. = FALSE)
+  scope <- run_scope(md)
+  missing <- c(if (!length(scope$modules)) "MODULES",
+               if (!length(scope$cohorts)) "COHORTS")
+  if (length(missing))
+    stop("The run under ", where, " records no ",
+         paste(missing, collapse = " and no "), ", so nothing under this ",
+         "prefix can be shown to be its own rather than a previous run's. ",
+         "Nothing was filled.", call. = FALSE)
   md
 }
 
@@ -270,11 +256,13 @@ main <- function() {
       stop("TFLS_SNAPSHOT_DIR '", root, "' is not a directory.", call. = FALSE)
     where <- file.path(root, prefix)
     md <- bind_run(snapshot_reader(root, prefix), where)
+    scope <- run_scope(md)
     # The lines sit under their own run, not under this one, so reading them
     # needs the build this run recorded reading.
-    reader <- snapshot_reader(root, prefix,
-                              lot_dir_name(row_field(md, "LOT_RUN_ID"),
-                                           row_field(md, "LOT_RUN_VERSION")))
+    reader <- run_reader(
+      snapshot_reader(root, prefix, lot_dir_name(row_field(md, "LOT_RUN_ID"),
+                                                 row_field(md, "LOT_RUN_VERSION"))),
+      scope)
     recheck <- function() bind_run(snapshot_reader(root, prefix), where)
   } else {
     # Nothing above this line needs a driver, so the plan prints on a machine
@@ -307,9 +295,12 @@ main <- function() {
       stop("DATABRICKS_PWD environment variable is not set.", call. = FALSE)
     con <- connect_db(cfg)
     on.exit(try(disconnect_db(con), silent = TRUE), add = TRUE)
-    reader <- warehouse_reader(con, catalog, schema, prefix, cohort_table)
     where <- sprintf("%s.%s.%s", catalog, schema, prefix)
-    md <- bind_run(reader, where)
+    md <- bind_run(warehouse_reader(con, catalog, schema, prefix, cohort_table),
+                   where)
+    scope <- run_scope(md)
+    reader <- run_reader(warehouse_reader(con, catalog, schema, prefix,
+                                          cohort_table), scope)
     recheck <- function()
       bind_run(warehouse_reader(con, catalog, schema, prefix), where)
   }
@@ -317,9 +308,17 @@ main <- function() {
   run_id <- row_field(md, "RUN_ID")
   pinned <- run_identity(md)
   cat("\nRun ", run_id, " under ", where, "\n", sep = "")
+  # What binds every read below. A prefix holds what earlier runs left under
+  # it, so the cohorts and modules this run declared are printed beside its id:
+  # a row reported unfilled against them is read against what is on the screen.
+  cat("  built   ", paste(scope$cohorts, collapse = ", "), " with the module(s) ",
+      run_modules_text(scope), "; every other table and cohort under this ",
+      "prefix is a previous run's and reads as absent\n", sep = "")
 
   ctx <- fill_context(reader, sh$classes,
-                      tte_eligible_only = env_flag("TFLS_TTE_ELIGIBLE_ONLY"))
+                      tte_eligible_only = env_flag("TFLS_TTE_ELIGIBLE_ONLY"),
+                      absent_why = function(table)
+                        run_table_status(scope, table)$why)
   cat("  curves  ", if (env_flag("TFLS_TTE_ELIGIBLE_ONLY"))
       "over TTE_ELIGIBLE = 1 (TFLS_TTE_ELIGIBLE_ONLY is on)"
       else paste0("over every row of the time-to-event table; TTE_ELIGIBLE is ",

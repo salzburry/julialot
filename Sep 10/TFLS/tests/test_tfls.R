@@ -46,7 +46,7 @@ has <- function(x, s) grepl(s, x, fixed = TRUE)
 near <- function(a, b, tol = 1e-6) !is.na(a) && !is.na(b) && abs(a - b) < tol
 
 for (f in c("classes.R", "shells.R", "stats.R", "suppress.R", "fill.R",
-            "render.R"))
+            "scope.R", "render.R"))
   source(file.path(ROOT, "R", f))
 
 # --- a shell set, written to a temporary directory ---------------------------
@@ -242,6 +242,13 @@ ok({ s <- stat_n_pct(3, denom = 12); s$text == "3 (25.0%)" },
    "...or from a count and a denominator the study table already carries")
 ok({ s <- stat_n(c(TRUE, TRUE, FALSE)); s$n == 2 && s$text == "2" },
    "n is the count alone")
+ok({ s <- stat_n_distinct(c("LEN DEX", "LEN DEX", "POM DEX"))
+     s$n == 2 && s$text == "2" },
+   "n_distinct counts the values a column takes, not the rows holding them: two regimens over three lines")
+ok(stat_n_distinct(rep("LEN DEX", 100))$n == 1,
+   "...so a hundred patients all on one regimen are one regimen")
+ok(stat_n_distinct(c("LEN DEX", "", NA, "POM DEX"))$n == 2,
+   "a line the study left empty names no regimen, so it is not counted as one")
 ok({ s <- stat_mean_sd(c(1, 2, 3, 4, 5))
      near(s$value, 3) && near(s$low, sqrt(2.5)) && s$text == "3.0 (1.6)" },
    "mean_sd of 1..5 is 3 and the sample SD sqrt(2.5) = 1.58")
@@ -293,8 +300,21 @@ ok(nrow(C) == 2 && near(C$SURV[1], 0.8) && near(C$SURV[2], 0.8 * 2/3) &&
      C$N_RISK[2] == 3,
    "a censored subject leaves the risk set without a step: S is 0.8 then 0.533")
 ok(is.na(km_median(C)) && stat_km_median(c(1,2,3,4,5), c(1,0,1,0,0))$text ==
-     "not reached",
-   "a curve that never reaches 0.5 has no median, which is an answer and not a gap")
+     "not reached (1.0, not reached)",
+   "a curve that never reaches 0.5 has no median, which is an answer and not a gap - and the interval keeps the bound the band does reach")
+# The reviewer's case. A hundred subjects, 45 events - 35 in the first month
+# and ten in the second - and 55 censored at ten months. The curve floors at
+# 0.55 and never reaches a half, so there is no median; the band's lower limit
+# passes 0.5 at the second month, and that is a bound the data supports.
+R100 <- c(rep(1, 35), rep(2, 10), rep(10, 55))
+E100 <- c(rep(1, 45), rep(0, 55))
+ok({ ci <- km_median_ci(km_estimate(R100, E100)); near(ci[1], 2) && is.na(ci[2]) },
+   "a median out of reach can still have a lower bound: the band reaches 0.5 at two months where the curve never does")
+ok(identical(stat_km_median(R100, E100)$text, "not reached (2.0, not reached)"),
+   "...and the cell keeps it, rather than dropping the whole interval and throwing away the one bound the follow-up supports")
+ok({ s <- stat_km_median(R100, E100)
+     is.na(s$value) && near(s$low, 2) && is.na(s$high) && s$n == 45 },
+   "the bound reaches the cell's own columns as well as its text, so the CSV carries it too")
 ok({ p <- km_prob_at(C, 2); isTRUE(p$ok) && near(p$surv, 0.8) },
    "the probability at a month is the step in force then")
 ok({ p <- km_prob_at(C, 0.5)
@@ -713,6 +733,142 @@ ok({ e <- km_analysis_rows(TT); nrow(e) == 40 },
 ok({ e <- km_analysis_rows(TT, TRUE); nrow(e) == 20 },
    "...and over the marked analysis set only when the run was set to apply it, which the caption then says")
 
+cat("\n-- a count of regimens is not a count of patients --\n")
+# The shell row asks how many different regimens the lines in a column hold.
+# The table it reads is one row per patient and line, so counting the patients
+# there answers a different question, and a hundred patients on one regimen
+# would render a hundred.
+REG_SH <- load_shells(write_shells(list(
+  tables = c("table_id,sheet,title,objective,notes",
+             "T1,T1,Regimens,Primary objective,"),
+  columns = c("table_id,col_id,group,label,order,cohort,lot_num,class,subgroup,period",
+              "T1,C1,1L (N=),Overall,1,1L,1,OVERALL,,"),
+  rows = c("table_id,order,section,label,indent,stat,source,measure,filter,note",
+           "T1,1,FALSE,Total number of unique regimens,0,n_distinct,S_SOC,REGIMEN,,",
+           "T1,2,FALSE,Patients treated,0,n,S_SOC,REGIMEN,,"),
+  footnotes = "table_id,marker,text")))
+reg_fill <- function(regimens) {
+  soc <- data.frame(PATID = sprintf("r%03d", seq_along(regimens)), COHORT = "1L",
+                    LOT_NUM = 1L, REGIMEN = regimens, stringsAsFactors = FALSE)
+  fill_table(REG_SH, "T1", fill_context(
+    function(n) if (identical(toupper(chr(n)), "S_SOC")) soc else NULL,
+    REG_SH$classes), floor_n = 25)
+}
+REG_ONE <- reg_fill(rep("LEN DEX", 100))
+REG_THREE <- reg_fill(rep(c("LEN DEX", "POM DEX", "DARA BORT LEN DEX"),
+                          length.out = 99))
+ok(cell(REG_ONE, 1, "C1")$TEXT == "1",
+   "a hundred patients all on one regimen render 1, which is how many regimens there are")
+ok(cell(REG_THREE, 1, "C1")$TEXT == "3",
+   "three regimens over ninety-nine patients render 3")
+ok(cell(REG_ONE, 2, "C1")$TEXT == "100",
+   "...while n over the same table still counts the patients, which is the other question and the other statistic")
+ok({ r <- fill_table(load_shells(write_shells(list(
+       tables = c("table_id,sheet,title,objective,notes",
+                  "T1,T1,Regimens,Primary objective,"),
+       columns = c("table_id,col_id,group,label,order,cohort,lot_num,class,subgroup,period",
+                   "T1,C1,1L (N=),Overall,1,1L,1,OVERALL,,"),
+       rows = c("table_id,order,section,label,indent,stat,source,measure,filter,note",
+                "T1,1,FALSE,Unique regimens,0,n_distinct,S_PATTERNS,SOC_CATEGORY,,"),
+       footnotes = "table_id,marker,text"))), "T1", fill_context(
+         function(n) if (identical(toupper(chr(n)), "S_PATTERNS"))
+           data.frame(COHORT = "1L", LOT_NUM = 1L,
+                      SOC_CATEGORY = c("Doublet/monotherapy", "Other"),
+                      N_PATIENTS = c(60, 40), N_DENOM = 100,
+                      stringsAsFactors = FALSE) else NULL,
+         SH$classes), floor_n = 25)
+     r$cells$FILLED[1] == 0L && has(r$cells$REASON[1], "table of totals") },
+   "and over a table of totals it is refused with its reason: the values there are the strata the package wrote, not what the population holds")
+
+cat("\n-- a run is bound by what it declared, not by what sits under the prefix --\n")
+# One prefix, two runs. This one selected the 1L cohort and two modules. The
+# 2L rows, the safety table and the released copy beside S_PATTERNS are what an
+# earlier run left under the same prefix, and none of them is this run's.
+md_row <- function(cohorts, modules, readings = "") data.frame(
+  RUN_ID = "r2", STATE = "complete", UPDATED_AT = "2026-09-10 09:00:00",
+  COHORTS = cohorts, MODULES = modules, OPEN_QUESTION_READINGS = readings,
+  stringsAsFactors = FALSE)
+RUN <- run_scope(md_row("1L", "cohorts; demographics"))
+LEFT <- list(
+  S_DEMOGRAPHICS = data.frame(
+    PATID = sprintf("q%03d", 1:70), COHORT = c(rep("1L", 30), rep("2L", 40)),
+    AGE_YEARS = c(rep(70, 30), rep(80, 40)), stringsAsFactors = FALSE),
+  S_SAFETY_RATES = data.frame(
+    COHORT = "1L", LOT_NUM = 1L, PERIOD = "TREATMENT", EVENT = "Neutropenia",
+    N_AT_RISK = 30, N_PATIENTS = 12, N_EVENTS = 12, PERSON_YEARS = 20,
+    RATE = 600, stringsAsFactors = FALSE),
+  S_PATTERNS = data.frame(
+    COHORT = "1L", LOT_NUM = 1L, SOC_CATEGORY = "Doublet/monotherapy",
+    N_PATIENTS = 30, N_DENOM = 30, PCT = 100, stringsAsFactors = FALSE),
+  S_PATTERNS_RELEASE = data.frame(
+    COHORT = "1L", LOT_NUM = 1L, SOC_CATEGORY = "Doublet/monotherapy",
+    N_PATIENTS = 70, N_DENOM = 70, PCT = 100, stringsAsFactors = FALSE))
+UNDER_PREFIX <- function(name) LEFT[[toupper(chr(name))]]
+BOUND <- run_reader(UNDER_PREFIX, RUN)
+
+ok({ st <- run_table_status(RUN, "S_SAFETY_RATES")
+     !isTRUE(st$ok) && has(st$why, "safety module, which this run did not run") &&
+       has(st$why, "cohorts, demographics") },
+   "a table whose module the run's own MODULES does not name is not this run's, and the reason names both the module and what the run did record")
+ok(is.null(BOUND("S_SAFETY_RATES")) && !is.null(UNDER_PREFIX("S_SAFETY_RATES")),
+   "...so it reads as absent, though the table an earlier run left under the prefix is right there")
+ok({ d <- BOUND("S_DEMOGRAPHICS")
+     !is.null(d) && nrow(d) == 30 && all(chr(d$COHORT) == "1L") },
+   "a table the run did write comes back with the cohorts it selected, and with none of the 2L rows an earlier run built")
+ok(is.null(BOUND("S_NOT_A_TABLE")) &&
+     has(run_table_status(RUN, "S_NOT_A_TABLE")$why, "not a table the study package writes"),
+   "a name no module in the package's registry writes is refused by name rather than read from whatever sits under the prefix")
+RAW_RUN <- run_scope(md_row("1L", "cohorts; periods; soc; patterns"))
+REL_RUN <- run_scope(md_row("1L", "cohorts; periods; soc; patterns; release"))
+ok(run_reader(UNDER_PREFIX, RAW_RUN)("S_PATTERNS")$N_PATIENTS == 30,
+   "a released copy an earlier run left behind is not preferred where this run did not run the release module: the rebuilt raw table is what is read")
+ok(run_reader(UNDER_PREFIX, REL_RUN)("S_PATTERNS")$N_PATIENTS == 70,
+   "...and where the run did run it, the released copy is read, so the suppression stays the package's own")
+FRAIL_OFF <- run_scope(md_row("1L", "cohorts; periods; comorbidity", "frailty=FALSE"))
+FRAIL_ON <- run_scope(md_row("1L", "cohorts; periods; comorbidity", "frailty=TRUE"))
+ok({ st <- run_table_status(FRAIL_OFF, "S_FRAILTY")
+     !isTRUE(st$ok) && has(st$why, "FRAILTY") },
+   "an output a switch turns on is not the run's where the run recorded the switch off")
+ok(isTRUE(run_table_status(FRAIL_ON, "S_FRAILTY")$ok),
+   "...and is the run's where it recorded it on")
+ok(isTRUE(run_table_status(run_scope(md_row("1L", "cohorts; periods; comorbidity",
+     "study_start=2016-01-01 (upstream, verified; this run was set to 2018-01-01); frailty=TRUE")),
+     "S_FRAILTY")$ok),
+   "a reading whose note carries a semicolon of its own does not hide the reading written after it")
+
+# The same prefix, read through a shell: one column for the cohort the run
+# selected and one for the cohort it did not, and a row reading a module that
+# did not run.
+SCOPE_SH <- load_shells(write_shells(list(
+  tables = c("table_id,sheet,title,objective,notes",
+             "T1,T1,Baseline by cohort,Primary objective,"),
+  columns = c("table_id,col_id,group,label,order,cohort,lot_num,class,subgroup,period",
+              "T1,C1,1L (N=),1L,1,1L,,OVERALL,,",
+              "T1,C2,2L (N=),2L,2,2L,,OVERALL,,"),
+  rows = c("table_id,order,section,label,indent,stat,source,measure,filter,note",
+           "T1,1,FALSE,Mean age (SD),0,mean_sd,S_DEMOGRAPHICS,AGE_YEARS,,",
+           "T1,2,FALSE,Neutropenia,0,n,S_SAFETY_RATES,N_PATIENTS,,"),
+  footnotes = "table_id,marker,text")))
+SCOPE_F <- fill_table(SCOPE_SH, "T1", fill_context(
+  BOUND, SCOPE_SH$classes,
+  absent_why = function(table) run_table_status(RUN, table)$why), floor_n = 25)
+ok(cell(SCOPE_F, 1, "C1")$TEXT == "70.0 (0.0)" &&
+     cell(SCOPE_F, 1, "C1")$FILLED == 1L,
+   "the column of the cohort the run selected is filled from the run's own thirty rows")
+ok(cell(SCOPE_F, 1, "C2")$FILLED == 0L &&
+     cell(SCOPE_F, 1, "C2")$TEXT == "not filled" &&
+     is.na(cell(SCOPE_F, 1, "C2")$VALUE) && is.na(cell(SCOPE_F, 1, "C2")$N),
+   "the cohort the run did not select contributes nothing: no mean age of forty rows it never built, and no zero either")
+ok(cell(SCOPE_F, 2, "C1")$FILLED == 0L &&
+     cell(SCOPE_F, 2, "C1")$TEXT == "not filled" &&
+     has(cell(SCOPE_F, 2, "C1")$REASON, "safety module, which this run did not run") &&
+     has(cell(SCOPE_F, 2, "C1")$REASON, "cohorts, demographics") &&
+     cell(SCOPE_F, 2, "C1")$REASON_KIND == "not_in_run",
+   "a row reading a module that did not run says so, naming the run's own declaration, rather than counting the table left behind")
+ok(any(vapply(SCOPE_F$unfilled$REASON, has, logical(1), "safety module")) &&
+     !any(SCOPE_F$cells$FILLED == 1L & SCOPE_F$cells$SOURCE == "S_SAFETY_RATES"),
+   "...and it reaches the unfilled list once, with no cell of that table filled anywhere in the table")
+
 cat("\n-- rendering --\n")
 MD <- render_markdown(F1, SH)
 ok(has(MD[1], "## T1. Baseline"), "the table prints under its own title")
@@ -749,8 +905,8 @@ RUNNER <- paste(readLines(file.path(ROOT, "run_tfls.R")), collapse = "\n")
 ok(has(RUNNER, 'gsub("~+~", " "'),
    "the script directory survives a space in a folder name")
 ok(all(vapply(c("classes.R", "shells.R", "stats.R", "suppress.R", "fill.R",
-                "render.R"), function(f) has(RUNNER, f), logical(1))),
-   "it sources the six files that are in R/, and no file that is not")
+                "scope.R", "render.R"), function(f) has(RUNNER, f), logical(1))),
+   "it sources the seven files that are in R/, and no file that is not")
 ok(regexpr('if (!nzchar(src))', RUNNER, fixed = TRUE) <
      regexpr("library(DBI)", RUNNER, fixed = TRUE),
    "the source gate comes before library(DBI), so the plan prints where no driver is installed")
@@ -764,6 +920,13 @@ ok(all(vapply(c("tfls_unfilled.csv", "tfls.md", "tfls_<table>.csv"),
 ok(has(RUNNER, "tfls_write_csv"), "...through the writer that refuses an identifier")
 ok(has(RUNNER, "run_identity(recheck())"),
    "the run is checked again after the tables were read, so a rebuild landing mid-read is caught")
+ok(has(RUNNER, "reader <- run_reader(") && !has(RUNNER, "reader <- snapshot_reader(") &&
+     !has(RUNNER, "reader <- warehouse_reader("),
+   "every fill reads through the run-scoped reader, so neither source is handed to a fill unwrapped")
+ok(has(RUNNER, "run_table_status(scope, table)$why"),
+   "...and a row nothing could fill is told why in the run's own declaration")
+ok(has(RUNNER, "run_scope(md)"),
+   "the run is bound by what its metadata says it built, not only by its state")
 ok(has(RUNNER, "TFLS_TTE_ELIGIBLE_ONLY") && has(RUNNER, "TFLS_COHORT_TABLE"),
    "the two settings that change what a number means are read, and the run says which way it went")
 ok(has(RUNNER, "safe_segment(prefix)"),
@@ -813,6 +976,10 @@ local({
   gap <- SH$rows[!SH$rows$section_flag & !nzchar(SH$rows$source), , drop = FALSE]
   ok(nrow(gap) > 0 && all(nzchar(gap$note)),
      sprintf("all %d rows with no source carry a reason", nrow(gap)))
+  uniq <- SH$rows[SH$rows$label == "Total number of unique regimens", , drop = FALSE]
+  ok(nrow(uniq) == 1 && identical(uniq$stat[1], "n_distinct") &&
+       grepl("not how many patients", uniq$note[1], fixed = TRUE),
+     "the row asking how many regimens asks for a count of distinct values, and its note says what it counts")
 
   cat("\n-- a bad edit is refused, by file and row --\n")
   stops(load_shells(scratch_shells(function(d)
@@ -898,8 +1065,9 @@ local({
      "the median is the first time the curve reaches or passes one half")
   ok(is.na(km_median(km_estimate(c(1, 2, 3), c(1, 0, 0)))),
      "a curve that never reaches one half has no median, and says so")
-  ok(identical(stat_km_median(c(1, 2, 3), c(1, 0, 0))$text, "not reached"),
-     "...which prints as 'not reached', never as a blank or a zero")
+  ok(identical(stat_km_median(c(1, 2, 3), c(1, 0, 0))$text,
+               "not reached (1.0, not reached)"),
+     "...which prints as 'not reached', never as a blank or a zero, and beside the interval's own bounds")
   ok(identical(stat_km_events(T5, E5)$text, "2 (40.0%)") &&
        identical(stat_km_censored(T5, E5)$text, "3 (60.0%)"),
      "events and censored are counted against the same denominator and sum to it")

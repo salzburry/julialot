@@ -26,6 +26,32 @@ TFLS_SOURCE=warehouse DATABRICKS_PWD=... PROJECT_WORK_SCHEMA=... \
 Output lands in `out/`: one CSV per table, one markdown rendering of all of
 them, and `tfls_unfilled.csv` naming every row nothing could fill and why.
 
+## It fills from one run, and reads only what that run wrote
+
+A prefix is not a run. A run writes the modules it selected, for the cohorts it
+selected, and leaves every other table and every other cohort's rows under the
+prefix as the previous run left them, which is what makes a partial re-run
+cheap. So what binds every read here is the run's own record of what it did:
+`MODULES`, `COHORTS` and the readings behind its optional outputs, all on the
+`S_RUN_METADATA` row.
+
+- A table the run's own metadata does not claim reads as absent. Its rows are
+  reported in `tfls_unfilled.csv`, naming the module that writes it and the
+  modules the run recorded - never as a number, and never as a zero.
+- A cohort the run did not select contributes no rows, so a column asking for
+  it is reported unfilled rather than filled from the partition an earlier run
+  built under the same prefix.
+- A `_RELEASE` table is preferred only where the run ran the release module.
+- A run that recorded no modules, or no cohorts, can vouch for nothing under
+  the prefix, and the command stops rather than filling the shells from it.
+
+These are the rules the dashboard applies in `dashboard/R/sources.R`, applied
+here rather than a second set invented beside them, so a shell cell and the
+same figure on a page cannot rest on different rows. Which module writes which
+table is the study package's own registry (`R/registry.R`), restated as data in
+`R/scope.R` because a snapshot is filled where the package is not installed and
+cannot be asked.
+
 ## The shells are CSV, so they can be edited without touching code
 
 | file | one row per | what it decides |
@@ -50,7 +76,7 @@ edit that asks for something the study does not produce says so.
 | `section` | `TRUE` for a heading that spans the table |
 | `label` | the row label, exactly as it should print |
 | `indent` | 0, 1 or 2, for nesting under a heading |
-| `stat` | `n_pct`, `mean_sd`, `median_iqr`, `min_max`, `n`, `rate`, `km_median`, `km_prob`, `km_events`, `km_censored` |
+| `stat` | `n_pct`, `mean_sd`, `median_iqr`, `min_max`, `n`, `n_distinct`, `rate`, `km_median`, `km_prob`, `km_events`, `km_censored`. `n` counts patients; `n_distinct` counts the different values a column holds |
 | `source` | the study table it reads, e.g. `S_DEMOGRAPHICS` |
 | `measure` | the column or facet value, e.g. `SEX=Female`, `AGE_YEARS`, `CONDITION=Acute hepatitis` |
 | `filter` | any extra restriction, e.g. `PERIOD=FOLLOWUP`, `MONTHS=12` |
@@ -97,8 +123,10 @@ withheld.
 - A suppressed cell prints as `<25` (or the floor in force), never as a blank
   that could be read as zero.
 - Nothing patient-level is read or written. No identifier reaches `out/`.
-- Where the study package published a `_RELEASE` table, that is what is read,
-  so the suppression is the package's own and not a second opinion of it.
+- Where the run published a `_RELEASE` table, that is what is read, so the
+  suppression is the package's own and not a second opinion of it. A released
+  table left by an earlier run is not preferred, because a run that did not run
+  the release module did not publish one.
 
 The tables are counts over a claims database and carry its limits: a code is
 evidence of a claim, not of a diagnosis, and an absence is evidence of neither.
