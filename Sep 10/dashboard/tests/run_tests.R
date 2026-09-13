@@ -143,22 +143,44 @@ cat("\nevery part of a warehouse table name is checked before it is a query\n")
   # this one took the same values from the same places - DASH_PREFIXES,
   # DASH_LOT_PREFIX, or a prefix read back off SHOW TABLES - and checked
   # nothing.
-  ok(safe_sql_identifier("s223926_") && safe_sql_identifier("main") &&
-       safe_sql_identifier("wk-1"),
-     "an ordinary catalog, schema or prefix is a name a query can hold")
-  ok(!safe_sql_identifier("x; DROP TABLE p; --") &&
-       !safe_sql_identifier("a b") && !safe_sql_identifier(""),
-     "...and a statement, a space or nothing at all is not")
-  ok(!safe_sql_identifier("other_schema.secret"),
-     "...nor is a dotted name, which is two identifiers where one was expected")
-  ok(!safe_sql_identifier(c("a", "b")) && !safe_sql_identifier(NA),
-     "...and neither is a vector or a missing value")
+  # Quoted, not matched against a grammar. The grammar let through names this
+  # warehouse needs quoting for and refused names that are ordinary here, so
+  # a deployment could pass validation and then fail to parse, or be turned
+  # away for a leading underscore.
+  ok(identical(sql_name("s223926_"), "`s223926_`") &&
+       identical(sql_name("main"), "`main`"),
+     "an ordinary catalog, schema or prefix comes back quoted")
+  ok(!is.na(sql_name("wk-1")) && !is.na(sql_name("2024")) &&
+       !is.na(sql_name("_schema")) && !is.na(sql_name("select")),
+     "...and so do a hyphen, an all-digit name, a leading underscore and a reserved word, all of which quoting settles")
+  ok(identical(sql_name("x; DROP TABLE p; --"), "`x; DROP TABLE p; --`"),
+     "...and a statement becomes one identifier with that name, which no warehouse has, rather than a statement")
+  ok(is.na(sql_name("has`backtick")) && is.na(sql_name("two\nlines")) &&
+       is.na(sql_name("")),
+     "what quoting cannot survive is refused: a backtick, a line break, nothing at all")
+  ok(is.na(sql_name(c("a", "b"))) && is.na(sql_name(NA)),
+     "...and so are a vector and a missing value")
+  # What actually reaches the driver, for the case the review probed.
+  local({
+    seen <- NULL
+    ws <- warehouse_source(
+      utils::modifyList(DASH_CFG, list(catalog = "cat", work_schema = "sch")),
+      con = structure(list(), class = "fake"))
+    env <- new.env(parent = environment(ws$read))
+    env$db_q <- function(con, sql) { seen <<- sql; data.frame(X = 1) }
+    f <- ws$read; environment(f) <- env
+    f("x; DROP TABLE p; --", "S_SAFETY_RATES")
+    ok(identical(seen, "SELECT * FROM `cat`.`sch`.`x; DROP TABLE p; --S_SAFETY_RATES`"),
+       "the statement a hostile prefix builds is one quoted identifier, not a second statement")
+    f("s223926_", "S_SAFETY_RATES")
+    ok(identical(seen, "SELECT * FROM `cat`.`sch`.`s223926_S_SAFETY_RATES`"),
+       "...and an ordinary read is the same name, quoted")
+  })
   e <- errs(warehouse_source(
     utils::modifyList(DASH_CFG, list(catalog = "cat", work_schema = "sch")),
-    con = structure(list(), class = "fake"))$read("x; DROP TABLE p; --",
-                                                  "S_SAFETY_RATES"))
-  ok(!is.na(e) && grepl("not a name this can put in a query", e, fixed = TRUE),
-     "a prefix that is a statement stops the read by name, rather than reaching the driver")
+    con = structure(list(), class = "fake"))$read("has`backtick", "S_X"))
+  ok(!is.na(e) && grepl("cannot go in a query", e, fixed = TRUE),
+     "a name quoting cannot survive stops the read, rather than reaching the driver")
 }
 
 cat("\none vocabulary, stated in three folders\n")
@@ -1047,6 +1069,24 @@ source(file.path(here, "jobs", "export_lib.R"))
      "...and the job asks before it writes the first table, not after")
   ok(grepl("SNAPSHOT_ALLOW_RECOVERABLE", jb, fixed = TRUE),
      "...with one named way past it, so exporting anyway is a decision someone made and not a default")
+  # What a reader is told to do INSTEAD of handing the Dataset out. The advice
+  # used to be "share the S_*_RELEASE tables from it", which is wrong twice:
+  # six tables have a released copy and the rest of what a panel draws has
+  # none, so that extract is incomplete for a reader and unsuppressed wherever
+  # it is not. The shells are the artefact that is neither.
+  ok(grepl("run_tfls.R", jb, fixed = TRUE) &&
+       grepl("carrying no identifier", jb, fixed = TRUE),
+     "...and every export names the shareable artefact, since a Dataset nobody may share needs one")
+  local({
+    dep <- paste(readLines(file.path(here, "DEPLOY_DOMINO.md"), warn = FALSE),
+                 collapse = "\n")
+    ok(!grepl("share the `S_*_RELEASE` tables from it", dep, fixed = TRUE),
+       "...and the deployment note no longer says a cut-down Dataset is one")
+    ok(grepl("TFLS/run_tfls.R", dep, fixed = TRUE),
+       "...it points at the shells, which are filled at a floor that may only rise")
+    ok(grepl("RELEASE_RECOVERABLE_TABLES", dep, fixed = TRUE),
+       "...and the verdict table names what the App actually refuses on")
+  })
   ok(grepl("lot_dir_name(lot_id, lot_version)", jb, fixed = TRUE) &&
        grepl("lot_prefix_owner_ok(con, lot_tbl(\"LOT_BUILD_STATUS\"),\n                                          lot_id, lot_version)", jb, fixed = TRUE),
      "...files LOT tables by build and binds the prefix to that build")
@@ -1317,6 +1357,50 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
     ok(identical(release_recoverable_blocks(NA), RELEASE_NOT_RECORDED) &&
          identical(release_recoverable_blocks(NA_character_), RELEASE_NOT_RECORDED),
        "...and a literal NA is normalised rather than interpolated into the refusal")
+
+    # Which table the verdict is about, taken from the run's own list rather
+    # than found in its sentence. Reading table names out of prose is a guess:
+    # reword the warning and it names none, and a blanket refusal follows from
+    # a change of wording rather than from a change of risk.
+    rel_src2 <- function(rec, tabs) list(read = function(prefix, table) {
+      if (identical(table, "S_RUN_METADATA"))
+        return(data.frame(RUN_ID = "A", STATE = "complete",
+                          COHORTS = paste(COHORT_KEYS, collapse = "; "),
+                          MODULES = paste(names(MODULES), collapse = "; "),
+                          RELEASE_RECOVERABLE = rec,
+                          RELEASE_RECOVERABLE_TABLES = tabs,
+                          stringsAsFactors = FALSE))
+      data.frame(RATE = 770, stringsAsFactors = FALSE)
+    })
+    scen2 <- function(rec, tabs)
+      scenario_from_row("p_", rel_src2(rec, tabs)$read("p_", "S_RUN_METADATA"))
+    reworded <- "one group in the safety release is recoverable by subtraction"
+    ok(setequal(release_refused_tables(reworded, ""),
+                sub("_RELEASE$", "", names(SUPPRESSION_SPEC_NAMES()))),
+       "a reworded verdict with no list behind it refuses every released table, which is the old behaviour and the safe one")
+    ok(identical(release_refused_tables(reworded, "S_SAFETY_RATES"),
+                 "S_SAFETY_RATES"),
+       "...and the same verdict with the run's own list behind it refuses that table only, so a rewording cannot blank the page")
+    ok(is.null(read_scenario_table(rel_src2(reworded, "S_SAFETY_RATES"),
+                                   scen2(reworded, "S_SAFETY_RATES"),
+                                   "S_SAFETY_RATES", TRUE)) &&
+         !is.null(read_scenario_table(rel_src2(reworded, "S_SAFETY_RATES"),
+                                      scen2(reworded, "S_SAFETY_RATES"),
+                                      "S_HCRU_RATES", TRUE)),
+       "...which is what the read path acts on, table by table")
+    ok(setequal(release_refused_tables(bad, "S_HCRU_RATES; S_SWITCH"),
+                c("S_HCRU_RATES", "S_SWITCH")),
+       "the list is the answer where there is one, not a second opinion beside the sentence")
+    ok(setequal(release_refused_tables(reworded, "not a table name!"),
+                sub("_RELEASE$", "", names(SUPPRESSION_SPEC_NAMES()))) &&
+         setequal(release_refused_tables(reworded, NA),
+                  sub("_RELEASE$", "", names(SUPPRESSION_SPEC_NAMES()))),
+       "...but a list that is not one - unreadable, or absent on an older build - falls back to the sentence rather than narrowing on it")
+    ok(!length(release_refused_tables("none", "S_SAFETY_RATES")),
+       "a list under a clean verdict refuses nothing: 'none' has already settled that there is nothing to refuse")
+    ok(identical(release_named_tables(" s_safety_rates ; S_SWITCH "),
+                 c("S_SAFETY_RATES", "S_SWITCH")),
+       "the list is read case-insensitively and trimmed, because it is a metadata field somebody may have edited")
     withr <- function(v, f) { old <- Sys.getenv("DASH_ALLOW_RECOVERABLE")
       Sys.setenv(DASH_ALLOW_RECOVERABLE = v); on.exit(Sys.setenv(DASH_ALLOW_RECOVERABLE = old)); f() }
     ok(withr("TRUE", function()

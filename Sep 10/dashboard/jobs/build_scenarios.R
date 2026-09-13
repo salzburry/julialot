@@ -193,7 +193,13 @@ export_one <- function(prefix, env) {
           "copies, and the per-patient ones among them carry PATID. It is as ",
           "sensitive as the warehouse tables it came from: keep the Dataset ",
           "private to the App and Job, and do not share it as a published ",
-          "extract. DEPLOY_DOMINO.md says the same under Deployment controls.")
+          "extract. Cutting it down to the S_*_RELEASE tables does not make ",
+          "one - six tables have a released copy and the rest of what a panel ",
+          "draws has none, so that extract is incomplete AND still ",
+          "unsuppressed. TFLS/run_tfls.R fills the shells from this run at a ",
+          "floor that may only rise and writes tables carrying no identifier: ",
+          "those are the shareable artefact. DEPLOY_DOMINO.md says the same ",
+          "under Deployment controls.")
   n <- 0L; bad <- character(0); not_this_run <- character(0)
   for (tb in EXPORT) {
     if (!scenario_wrote(scen, tb)) { not_this_run <- c(not_this_run, tb); next }

@@ -46,12 +46,38 @@ release_recoverable_blocks <- function(recoverable) {
   v
 }
 
+# The tables a verdict names, read from the run's own list rather than out of
+# its prose.
+#
+# RELEASE_RECOVERABLE is a sentence, written to be read by a person, and
+# recovering table names from a sentence is a guess in both directions: a
+# reworded warning names none, which silently turns a targeted refusal into a
+# blanket one, and a table whose name is a substring of another's is refused
+# along with it. So the producer writes the names it found in a field of their
+# own - RELEASE_RECOVERABLE_TABLES, semicolon separated - and this reads that.
+#
+# The list is believed only where it IS one. Empty, absent, or holding anything
+# that is not a plain table name, this returns nothing and the caller falls
+# back to the sentence - which refuses every released table when it names none.
+# A build from before the column existed takes that path, and so does a run
+# whose release module never ran. An empty list therefore never narrows a
+# refusal; only a real list does.
+release_named_tables <- function(tables) {
+  v <- trimws(as.character(tables %||% "")[1])
+  if (is.na(v) || !nzchar(v) || identical(v, "NA")) return(character(0))
+  parts <- toupper(trimws(strsplit(v, ";", fixed = TRUE)[[1]]))
+  parts <- parts[nzchar(parts)]
+  if (!length(parts) || !all(grepl("^[A-Z0-9_]+$", parts)))
+    return(character(0))
+  unique(parts)
+}
+
 # Which of a run's tables its own release verdict refuses.
 #
-# The verdict names the tables it found - "S_SAFETY_RATES_RELEASE: 3 ...
-# group(s)" - so a run with one recoverable group loses that table and not the
-# page. A verdict this reader cannot parse into table names refuses every
-# released table, because an answer that cannot be read is not one that clears.
+# A run with one recoverable group loses that table and not the page. Which
+# table comes from the run's own list where it wrote one, and from the sentence
+# otherwise; a verdict that names no table refuses every released table,
+# because an answer that cannot be read is not one that clears.
 #
 # A run with NO record is the one case this does not refuse. The snapshot job
 # is the gate - it blocks an export whose record is absent, so what reaches a
@@ -59,14 +85,16 @@ release_recoverable_blocks <- function(recoverable) {
 # snapshot taken before the column existed, which is a large harm against a
 # risk the banner states on the page instead. Re-exporting such a run through
 # the job is what actually settles it.
-release_refused_tables <- function(recoverable) {
+release_refused_tables <- function(recoverable, tables = "") {
   blocked <- release_recoverable_blocks(recoverable)
   if (!nzchar(blocked) || identical(blocked, RELEASE_NOT_RECORDED))
     return(character(0))
+  named <- release_named_tables(tables)
+  if (length(named)) return(named)
   known <- sub("_RELEASE$", "", names(SUPPRESSION_SPEC_NAMES()))
-  named <- known[vapply(known, function(t)
+  from_prose <- known[vapply(known, function(t)
     grepl(t, blocked, fixed = TRUE), logical(1))]
-  if (length(named)) named else known
+  if (length(from_prose)) from_prose else known
 }
 
 # Whether this deployment has been told to show them anyway. The snapshot job
@@ -75,17 +103,26 @@ release_refused_tables <- function(recoverable) {
 release_recoverable_allowed <- function()
   isTRUE(as.logical(Sys.getenv("DASH_ALLOW_RECOVERABLE", "FALSE")))
 
-# A name that may go into a SQL statement unquoted: a catalog, a schema, a
-# table, or the prefix in front of one.
+# A catalog, schema, prefix or table, ready to go into a statement: quoted,
+# not checked against a grammar. NA where the name cannot be quoted safely.
 #
-# Stricter than safe_segment(), which allows a dot because a file name has one.
-# A dot here is a second identifier - "other_schema.secret" pasted where one
-# name was expected - so it is refused along with everything that is not a
-# letter, a digit, an underscore or a hyphen.
-safe_sql_identifier <- function(x) {
+# The grammar was the wrong tool, and wrong in both directions. It let through
+# names this warehouse needs quoting for - a hyphen, an all-digit name - so
+# validation passed and the query then failed to parse; and it refused names
+# that are perfectly ordinary here, like a leading underscore. A reserved word
+# is the same problem again. Backticks are Spark's delimited identifier and
+# answer all of it at once, so what is left to refuse is only what quoting
+# cannot survive: a backtick of its own, a line break, a control character,
+# and nothing at all.
+#
+# Injection is closed by the same change rather than by the list: a prefix of
+# "x; DROP TABLE p; --" comes out as one identifier with that name, which no
+# warehouse has, so the read finds nothing instead of running it.
+sql_name <- function(x) {
   v <- as.character(x %||% "")
-  length(v) == 1L && !is.na(v) && nzchar(v) &&
-    grepl("^[A-Za-z0-9][A-Za-z0-9_-]*$", v)
+  if (length(v) != 1L || is.na(v) || !nzchar(v) ||
+      grepl("[`]", v) || grepl("[[:cntrl:]]", v)) return(NA_character_)
+  sprintf("`%s`", v)
 }
 
 safe_segment <- function(x) {
@@ -170,19 +207,22 @@ warehouse_source <- function(cfg, con) {
     sch <- if (nzchar(cfg$work_schema)) cfg$work_schema else
       stop("DASHBOARD ERROR: DASH_WORK_SCHEMA is not set, so a table name ",
            "cannot be built.", call. = FALSE)
-    # Every part of the name, checked before it is pasted into SQL. The
-    # snapshot reader has checked its path segments since it was written and
-    # this one never did, though the two take the same values from the same
-    # places: DASH_PREFIXES, DASH_LOT_PREFIX, or a prefix read back off SHOW
-    # TABLES. A prefix of "x; DROP TABLE p; --" built a statement that said so.
+    # Every part quoted before it is pasted into SQL. The snapshot reader has
+    # checked its path segments since it was written and this one never did,
+    # though the two take the same values from the same places: DASH_PREFIXES,
+    # DASH_LOT_PREFIX, or a prefix read back off SHOW TABLES.
+    #
+    # The prefix and the table are ONE identifier - "s223926_S_SAFETY_RATES" -
+    # so they are quoted together, not each in turn.
     for (part in list(c("DASH_CATALOG", cfg$catalog), c("DASH_WORK_SCHEMA", sch),
                       c("the prefix", prefix), c("the table name", table)))
-      if (!safe_sql_identifier(part[[2]]))
-        stop("DASHBOARD ERROR: ", part[[1]], " is '", part[[2]], "', which is ",
-             "not a name this can put in a query. A catalog, schema, prefix ",
-             "or table is letters, digits, underscore and hyphen, starting ",
-             "with a letter or a digit.", call. = FALSE)
-    sprintf("%s.%s.%s%s", cfg$catalog, sch, prefix, table)
+      if (is.na(sql_name(part[[2]])))
+        stop("DASHBOARD ERROR: ", part[[1]], " is '", part[[2]], "', which ",
+             "cannot go in a query: a name here may not hold a backtick, a ",
+             "line break or a control character, and may not be empty.",
+             call. = FALSE)
+    sprintf("%s.%s.%s", sql_name(cfg$catalog), sql_name(sch),
+            sql_name(paste0(prefix, table)))
   }
   # Whether the LOT prefix holds the run this scenario named, right now.
   #
@@ -201,14 +241,14 @@ warehouse_source <- function(cfg, con) {
       if (length(cfg$prefixes)) return(cfg$prefixes)
       # Every run wrote S_RUN_METADATA under its own prefix, so the prefixes
       # ARE the tables whose name ends in it.
-      if (!safe_sql_identifier(cfg$catalog) ||
-          !safe_sql_identifier(cfg$work_schema))
-        stop("DASHBOARD ERROR: DASH_CATALOG and DASH_WORK_SCHEMA have to be ",
-             "names a query can hold - letters, digits, underscore and ",
-             "hyphen. They are '", cfg$catalog, "' and '", cfg$work_schema,
-             "'.", call. = FALSE)
-      d <- tryCatch(db_q(con, sprintf("SHOW TABLES IN %s.%s", cfg$catalog,
-                                      cfg$work_schema)),
+      if (is.na(sql_name(cfg$catalog)) || is.na(sql_name(cfg$work_schema)))
+        stop("DASHBOARD ERROR: DASH_CATALOG and DASH_WORK_SCHEMA cannot go in ",
+             "a query - a backtick, a line break, a control character or an ",
+             "empty value. They are '", cfg$catalog, "' and '",
+             cfg$work_schema, "'.", call. = FALSE)
+      d <- tryCatch(db_q(con, sprintf("SHOW TABLES IN %s.%s",
+                                      sql_name(cfg$catalog),
+                                      sql_name(cfg$work_schema))),
                     error = function(e) NULL)
       if (is.null(d) || !nrow(d)) return(character(0))
       nm <- unlist(d[, intersect(c("tableName", "TABLENAME", "table_name",
@@ -474,7 +514,8 @@ read_scenario_table <- function(src, scenario, table, prefer_release = TRUE) {
   # such a run for exactly that reason, and reading it here would make the two
   # paths disagree about the same run.
   if (!release_recoverable_allowed() &&
-      toupper(table) %in% release_refused_tables(scenario$release_recoverable))
+      toupper(table) %in% release_refused_tables(
+        scenario$release_recoverable, scenario$release_recoverable_tables))
     return(NULL)
   # FAIL CLOSED where this run released. The raw table may stand in only for a
   # run that never released one; where the run says it did and the copy is

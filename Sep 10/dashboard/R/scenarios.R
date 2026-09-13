@@ -90,6 +90,10 @@ scenario_from_row <- function(prefix, row) {
     # here so the reader can refuse those tables, the way the snapshot job
     # refuses to export them.
     release_recoverable = g("RELEASE_RECOVERABLE"),
+    # ...and the same finding as the run's own list of table names, which is
+    # what the reader actually refuses on. Blank on a build from before that
+    # column existed, and the reader then falls back to the sentence.
+    release_recoverable_tables = g("RELEASE_RECOVERABLE_TABLES"),
     readings = readings,
     # A label a stakeholder can pick out of a list. The prefix is the identity;
     # what makes one scenario interesting is where its readings differ, and

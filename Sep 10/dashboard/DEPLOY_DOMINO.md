@@ -123,13 +123,30 @@ table with no released copy has only its raw form and the App needs it. Several
 are one row per patient and carry `PATID`. The App drops identifiers and
 prefers released copies; a person with filesystem or project access to the
 Dataset is not going through the App. So keep the Dataset **private to the App
-and the Job**, and do not hand it out as a published extract. If an extract has
-to be shared, share the `S_*_RELEASE` tables from it and nothing else.
+and the Job**, and do not hand it out as a published extract.
+
+A shareable extract is not a subset of this one. The `S_*_RELEASE` tables are
+the six that have a released copy; the rest of what a panel draws — the
+attrition steps, the demographics, the line patterns, the time-to-event
+summaries — has no released copy at all, so an extract cut down to
+`S_*_RELEASE` is both **incomplete** for a reader and still **unsuppressed**
+wherever it is not. The way to produce something shareable is the shells:
+`TFLS/run_tfls.R` fills them from the run at a floor that may only rise and
+writes tables that carry no identifier and no cell under it. Share those.
+Where a raw table itself has to go out, it is a disclosure review, not a file
+copy.
 
 **A release that gives a withheld cell away does not leave the warehouse.**
 `mod_release()` withholds every cell under the floor, then records in
 `S_RUN_METADATA.RELEASE_RECOVERABLE` the groups where one withheld cell is
-still the group's total less the published rest. The snapshot job refuses to
+still the group's total less the published rest, and in
+`S_RUN_METADATA.RELEASE_RECOVERABLE_TABLES` the tables those groups are in.
+The first is the sentence a person reads; the second is what a gate refuses
+on, because recovering table names from a sentence is a guess — reword the
+warning and it names none, and a blanket refusal follows from a change of
+wording rather than a change of risk. A run written before that column existed
+has no list, and the App falls back to the sentence, which refuses every
+released table when it names none. The snapshot job refuses to
 export such a run, and refuses a run whose record is absent or says the release
 module did not run. `SNAPSHOT_ALLOW_RECOVERABLE=TRUE` exports anyway and logs
 that it did. Whether to regroup or withhold a second stratum is the analyst's
@@ -142,7 +159,7 @@ same verdict on the read, in the same three cases the job does:
 | the run's record says | the App shows |
 |---|---|
 | `none` | everything |
-| a named finding, e.g. `S_SAFETY_RATES_RELEASE: 3 …` | everything except the tables it names |
+| a named finding, e.g. `S_SAFETY_RATES_RELEASE: 3 …` | everything except the tables `RELEASE_RECOVERABLE_TABLES` lists |
 | `release module did not run` | everything except the six that would have had a released copy — they have none, so what is under the prefix is the working table the release was meant to replace |
 | nothing at all | everything, with a notice: the job is the gate for that case, and re-exporting through it is what settles it |
 
@@ -153,12 +170,21 @@ unreleased run wants; it is not one to leave on for a shared App.
 Prefer the snapshot for anything more than one analyst: it has been through the
 gate, the App has not.
 
-**Names that reach a query are checked.** `DASH_CATALOG`, `DASH_WORK_SCHEMA`,
-`DASH_PREFIXES` and `DASH_LOT_PREFIX` are pasted into SQL, so each has to be
-letters, digits, underscore or hyphen, starting with a letter or a digit. A
-value that is not stops the read and names itself, rather than reaching the
-driver. A dot is refused too: it is a second identifier where one was
-expected.
+**Names that reach a query are quoted, not matched.** `DASH_CATALOG`,
+`DASH_WORK_SCHEMA`, `DASH_PREFIXES` and `DASH_LOT_PREFIX` reach SQL, so each
+goes in backtick-quoted — Spark's delimited identifier. That is what makes a
+leading underscore, a hyphen, an all-digit name or a reserved word read
+correctly, all of which a grammar used to refuse; and it is what closes
+injection, since a prefix of `x; DROP TABLE p; --` becomes one identifier with
+that name, which no warehouse has, so the read finds nothing instead of running
+it. What is still refused is only what quoting cannot survive: a backtick of
+its own, a control character, and an empty name.
+
+`DASH_PREFIXES` is the exception, and is checked as well as quoted: a snapshot
+source pastes it into a **file path**, where there is no quoting and a segment
+holding a slash or a dot-dot reads somewhere else. So a prefix has to be
+letters, digits, underscore, dot or hyphen, starting with a letter or a digit.
+`TFLS_PREFIX` is the same name for the same reason.
 
 ## Reading the warehouse directly instead
 

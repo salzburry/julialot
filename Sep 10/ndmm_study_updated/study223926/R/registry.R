@@ -166,14 +166,29 @@ stratum_passes <- function(cfg, on) {
 # own metadata says so, in a column a check can read.
 .release_state <- new.env(parent = emptyenv())
 
-release_recoverable_reset <- function()
+# Two records of the same finding, because they answer to two readers. The
+# sentence is for a person reading the metadata row. The list of table names is
+# for the gate: a gate that has to recover table names out of a sentence is
+# guessing - a reworded warning names none and turns a targeted refusal into a
+# blanket one, and a table whose name is a substring of another's is refused
+# with it - so the producer, which knows exactly which table it found, says so
+# in a field of its own.
+release_recoverable_reset <- function() {
   assign("groups", character(0), envir = .release_state)
+  assign("tables", character(0), envir = .release_state)
+}
 
-release_recoverable_note <- function(txt)
+release_recoverable_note <- function(table, txt) {
   assign("groups", c(release_recoverable(), txt), envir = .release_state)
+  assign("tables", unique(c(release_recoverable_tables(), table)),
+         envir = .release_state)
+}
 
 release_recoverable <- function()
   get0("groups", envir = .release_state, ifnotfound = character(0))
+
+release_recoverable_tables <- function()
+  get0("tables", envir = .release_state, ifnotfound = character(0))
 
 COHORTS <- list(
   `1L` = list(
