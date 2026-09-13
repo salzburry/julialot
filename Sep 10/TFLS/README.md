@@ -163,6 +163,30 @@ withheld.
   one and it is not there, or is there with no rows, nothing is read at all:
   the raw table is not a substitute for the copy meant to replace it, and the
   unfilled list says which of the two it was.
+- **And where the run's own record says its release left a cell recoverable,
+  that table is not read here either.** `mod_release()` withholds every cell
+  under the floor and then records what it could not close — the groups where
+  one withheld cell is still the group's total less the published rest — in
+  `S_RUN_METADATA.RELEASE_RECOVERABLE`, with the tables it is about in
+  `RELEASE_RECOVERABLE_TABLES`. Filling a shell at a higher floor does **not**
+  close that: the subtraction is inside the released copy this reads *from*,
+  and it happened before anything here looked. Nor is the raw table a way
+  round it — that holds everything the release was run to remove. So the rows
+  resting on such a table are reported unfilled, in the run's own words.
+
+  Four answers, and the run says which on screen before a shell is filled:
+
+  | the run's record says | these shells |
+  |---|---|
+  | `none` | fill from everything |
+  | a finding | fill from everything except the tables `RELEASE_RECOVERABLE_TABLES` names — or, where that list is absent or names anything that is not one of the six released tables, except all six |
+  | `release module did not run` | fill from nothing that would have had a released copy: that run has not been shown to have no recoverable cell, it has not looked |
+  | nothing at all | fill from everything, and say so: that is the snapshot job's gate, and re-exporting through it is what settles it |
+
+  `TFLS_ALLOW_RECOVERABLE=TRUE` fills them anyway and prints that it did. The
+  dashboard and the snapshot job each carry the same switch under their own
+  name, because each is a separate way a run reaches people and none of them
+  has been through the others.
 
 The tables are counts over a claims database and carry its limits: a code is
 evidence of a claim, not of a diagnosis, and an absence is evidence of neither.

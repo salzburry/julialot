@@ -848,6 +848,63 @@ ok(has(reader_refusal(MISSING_READER, "S_PATTERNS"), "not under the prefix") &&
    "...and the refusal says which of the two it was, because a missing table and an empty one are different failures")
 ok(!nzchar(reader_refusal(RAW_READER, "S_PATTERNS")),
    "...while a run that never released refuses nothing, since the raw table is what it has")
+
+# The run's own verdict on its release, applied here and not only by the
+# dashboard. These shells are what a study hands out, and filling them at a
+# higher floor does not close a recoverable cell: the subtraction is inside the
+# released copy this reads FROM, and it happened before anything here looked.
+md_rel <- function(rec, tabs = "") {
+  d <- md_row("1L", "cohorts; periods; soc; patterns; release")
+  d$RELEASE_RECOVERABLE <- rec
+  d$RELEASE_RECOVERABLE_TABLES <- tabs
+  d
+}
+BAD_TXT <- "S_PATTERNS_RELEASE: 1 COHORT/LOT_NUM group(s) with one suppressed SOC_CATEGORY"
+ok(!nzchar(release_verdict(run_scope(md_rel("none")))) &&
+     !length(release_refused(run_scope(md_rel("none")))),
+   "a run whose release left nothing recoverable is read as it always was")
+ok(identical(release_verdict(run_scope(md_rel(""))), TFLS_RELEASE_NOT_RECORDED) &&
+     !length(release_refused(run_scope(md_rel("")))),
+   "...and a build from before the column existed is not refused here: the snapshot job is the gate for that one")
+ok(setequal(release_refused(run_scope(md_rel("release module did not run"))),
+            TFLS_RELEASED_TABLES),
+   "...while a run that never ran the release module loses every released table, because it has not been shown to have no recoverable cell - it has not looked")
+ok(identical(release_refused(run_scope(md_rel(BAD_TXT, "S_PATTERNS"))), "S_PATTERNS"),
+   "a finding refuses the table the run itself named, read from its list rather than out of its sentence")
+ok(setequal(release_refused(run_scope(md_rel(
+     "one group in the patterns release is recoverable by subtraction"))),
+     TFLS_RELEASED_TABLES),
+   "...a reworded finding with no list behind it refuses every released table, since an answer that cannot be read is not one that clears")
+ok(setequal(release_refused(run_scope(md_rel(BAD_TXT, "S_NOT_A_TABLE"))), "S_PATTERNS") &&
+     setequal(release_refused(run_scope(md_rel(BAD_TXT, "S_PATTERNS; S_NOT_A_TABLE"))),
+              "S_PATTERNS"),
+   "...and a list naming anything that is not a released table is discarded whole, so a stale field cannot narrow the refusal onto a table that does not exist")
+local({
+  blocked <- run_reader(UNDER_PREFIX, run_scope(md_rel(BAD_TXT, "S_PATTERNS")))
+  d <- blocked("S_PATTERNS")
+  ok(is.null(d),
+     "the reader gives nothing for a table the run's own record says has a recoverable withheld cell")
+  ok(is.null(blocked("S_PATTERNS_RELEASE")),
+     "...under either spelling, so asking for the released copy by name is not the way round it")
+  ok(has(reader_refusal(blocked, "S_PATTERNS"), BAD_TXT) &&
+       has(reader_refusal(blocked, "S_PATTERNS"), "TFLS_ALLOW_RECOVERABLE=TRUE"),
+     "...and the row resting on it is reported unfilled in the run's own words, with the one named way past it")
+  # A verdict naming one table refuses only that one. S_SWITCH is refused here
+  # too, but for the reason it always was - this run released it and the copy
+  # is not under the prefix - and not by the verdict.
+  invisible(blocked("S_SWITCH"))
+  ok(has(reader_refusal(blocked, "S_SWITCH"), "not under the prefix") &&
+       !has(reader_refusal(blocked, "S_SWITCH"), "TFLS_ALLOW_RECOVERABLE"),
+     "...while a verdict naming one table refuses only that one: every other table fails or reads for its own reasons")
+})
+local({
+  old <- Sys.getenv("TFLS_ALLOW_RECOVERABLE")
+  Sys.setenv(TFLS_ALLOW_RECOVERABLE = "TRUE")
+  on.exit(Sys.setenv(TFLS_ALLOW_RECOVERABLE = old))
+  allowed <- run_reader(UNDER_PREFIX, run_scope(md_rel(BAD_TXT, "S_PATTERNS")))
+  ok(!is.null(allowed("S_PATTERNS")),
+     "...and one named switch fills them anyway, so doing it knowing that is a decision someone made")
+})
 FRAIL_OFF <- run_scope(md_row("1L", "cohorts; periods; comorbidity", "frailty=FALSE"))
 FRAIL_ON <- run_scope(md_row("1L", "cohorts; periods; comorbidity", "frailty=TRUE"))
 ok({ st <- run_table_status(FRAIL_OFF, "S_FRAILTY")
@@ -983,6 +1040,9 @@ ok(has(RUNNER, "is.na(sql_name(schema))") && has(RUNNER, "is.na(sql_name(catalog
    "the three names that are only ever warehouse names are gated on quoting, not on a pattern")
 ok(has(RUNNER, "safe_segment(prefix)") && has(RUNNER, "file.path(root, prefix)"),
    "...while the prefix keeps the path rule, because a path is built from it")
+ok(has(RUNNER, "release_verdict(scope)") && has(RUNNER, "release_refused(scope)") &&
+     has(RUNNER, "TFLS_ALLOW_RECOVERABLE is on"),
+   "every run says on screen what its source's release left recoverable, since these tables are what a study hands out")
 
 
 # ---------------------------------------------------------------------------

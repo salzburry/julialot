@@ -151,7 +151,11 @@ server <- function(input, output, session) {
     # names whatever route they came by; this says so, rather than leaving a
     # panel to read as though the run had simply written nothing.
     verdict <- release_recoverable_blocks(s$release_recoverable)
-    refused <- release_refused_tables(s$release_recoverable)
+    # Both halves of the verdict, the same way the read path takes them. The
+    # banner saying six tables are hidden while one actually is would be a
+    # notice that misreports the page it is on.
+    refused <- release_refused_tables(s$release_recoverable,
+                                      s$release_recoverable_tables)
     tagList(
       if (length(bits))
         div(class = "scn", HTML(paste(html_escape(bits), collapse = "<br>"))),

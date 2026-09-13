@@ -56,19 +56,27 @@ release_recoverable_blocks <- function(recoverable) {
 # along with it. So the producer writes the names it found in a field of their
 # own - RELEASE_RECOVERABLE_TABLES, semicolon separated - and this reads that.
 #
-# The list is believed only where it IS one. Empty, absent, or holding anything
-# that is not a plain table name, this returns nothing and the caller falls
-# back to the sentence - which refuses every released table when it names none.
-# A build from before the column existed takes that path, and so does a run
-# whose release module never ran. An empty list therefore never narrows a
-# refusal; only a real list does.
+# The list is believed only where it IS one, and the test is membership, not
+# spelling. Every name has to be one of the tables that HAS a released copy -
+# the six of SUPPRESSION_SPEC - because this field is what narrows a refusal,
+# and a name matched on shape alone narrows it to nothing: a stale or hand-
+# edited "S_NOT_A_TABLE" is a perfectly well-formed name, and believing it
+# would refuse a table that does not exist while leaving the recoverable one
+# readable. So one unrecognised name discards the whole list rather than part
+# of it - a field that is partly wrong is not one to act on the rest of.
+#
+# Empty, absent, unreadable or unrecognised, this returns nothing and the
+# caller falls back to the sentence, which refuses every released table when it
+# names none. A build from before the column existed takes that path, and so
+# does a run whose release module never ran. An empty list therefore never
+# narrows a refusal; only a list of known released tables does.
 release_named_tables <- function(tables) {
   v <- trimws(as.character(tables %||% "")[1])
   if (is.na(v) || !nzchar(v) || identical(v, "NA")) return(character(0))
   parts <- toupper(trimws(strsplit(v, ";", fixed = TRUE)[[1]]))
   parts <- parts[nzchar(parts)]
-  if (!length(parts) || !all(grepl("^[A-Z0-9_]+$", parts)))
-    return(character(0))
+  known <- toupper(sub("_RELEASE$", "", names(SUPPRESSION_SPEC_NAMES())))
+  if (!length(parts) || !all(parts %in% known)) return(character(0))
   unique(parts)
 }
 

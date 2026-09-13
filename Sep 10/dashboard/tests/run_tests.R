@@ -1074,6 +1074,14 @@ source(file.path(here, "jobs", "export_lib.R"))
   # six tables have a released copy and the rest of what a panel draws has
   # none, so that extract is incomplete for a reader and unsuppressed wherever
   # it is not. The shells are the artefact that is neither.
+  local({
+    ap <- paste(readLines(file.path(here, "app.R"), warn = FALSE), collapse = "\n")
+    ok(grepl("release_refused_tables(s$release_recoverable,\n                                      s$release_recoverable_tables)",
+             ap, fixed = TRUE),
+       "the banner counts the same refusal the read path makes, not one of its own")
+    ok(!grepl("release_refused_tables(s$release_recoverable)", ap, fixed = TRUE),
+       "...since a notice saying six tables are hidden where one is misreports the page it sits on")
+  })
   ok(grepl("run_tfls.R", jb, fixed = TRUE) &&
        grepl("carrying no identifier", jb, fixed = TRUE),
      "...and every export names the shareable artefact, since a Dataset nobody may share needs one")
@@ -1401,6 +1409,34 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
     ok(identical(release_named_tables(" s_safety_rates ; S_SWITCH "),
                  c("S_SAFETY_RATES", "S_SWITCH")),
        "the list is read case-insensitively and trimmed, because it is a metadata field somebody may have edited")
+    # ...and, being a field somebody may have edited, it is checked against the
+    # tables that HAVE a released copy rather than against the shape of a name.
+    # "S_NOT_A_TABLE" is perfectly well-formed, and believing it would narrow
+    # the refusal onto a table that does not exist and leave the recoverable
+    # one readable - the narrowing field turned into the way past the gate.
+    ok(!length(release_named_tables("S_NOT_A_TABLE")) &&
+         identical(release_refused_tables(bad, "S_NOT_A_TABLE"), "S_SAFETY_RATES") &&
+         setequal(release_refused_tables(reworded, "S_NOT_A_TABLE"),
+                  sub("_RELEASE$", "", names(SUPPRESSION_SPEC_NAMES()))),
+       "a name that is not one of the released tables discards the list, and the sentence answers again - narrowing where it names a table, refusing all six where it names none")
+    ok(!is.null(read_scenario_table(rel_src2(bad, "S_NOT_A_TABLE"),
+                                    scen2(bad, "S_NOT_A_TABLE"),
+                                    "S_DEMOGRAPHICS", TRUE)) &&
+         is.null(read_scenario_table(rel_src2(bad, "S_NOT_A_TABLE"),
+                                     scen2(bad, "S_NOT_A_TABLE"),
+                                     "S_SAFETY_RATES", TRUE)),
+       "...which is what the read path acts on: the table the run really found is still refused, and a table with no released copy still reads")
+    ok(!length(release_named_tables("S_SAFETY_RATES; S_NOT_A_TABLE")),
+       "one unrecognised name discards the whole list, because a field that is partly wrong is not one to act on the rest of")
+    ok(!length(release_named_tables("S_SAFETY_RATES_RELEASE")),
+       "...and the list names the table, not its released copy, so the two spellings cannot mean different refusals")
+    # The Tables tab fills the same shells the sibling delivery does, and it
+    # does it through this reader rather than one of its own - so the verdict
+    # reaches a shell cell by the same route it reaches a panel, and the two
+    # cannot show a number the other refuses.
+    ok(is.null(shell_reader(rel_src2(bad, "S_SAFETY_RATES"),
+                            scen2(bad, "S_SAFETY_RATES"))("S_SAFETY_RATES")),
+       "a shell cell resting on a refused table is refused too, since the shells are filled through the bound reader")
     withr <- function(v, f) { old <- Sys.getenv("DASH_ALLOW_RECOVERABLE")
       Sys.setenv(DASH_ALLOW_RECOVERABLE = v); on.exit(Sys.setenv(DASH_ALLOW_RECOVERABLE = old)); f() }
     ok(withr("TRUE", function()
