@@ -82,8 +82,18 @@ withheld.
 - A cell whose denominator is under the floor is suppressed, and so is the
   count it was computed from. The default floor is 25, the protocol's, and
   `TFLS_MIN_N` can only raise it.
-- Where exactly one cell in a group is suppressed, a second one goes with it.
-  Otherwise the withheld cell is the group total minus the published rest.
+- A withheld cell must not be recoverable by subtraction, so the sums the
+  table itself draws are closed: a subtotal and the rows indented under it, a
+  total column and the columns it splits into, and the column's denominator
+  against the rows that divide it. Where one of those sums has exactly one
+  withheld term, its smallest published term goes too, and the closing repeats
+  until no sum has a lone unknown left.
+- Two things the table cannot close, and states rather than hides. The regimen
+  class columns do not exhaust a line - the transplant-only lines belong to no
+  class - so `Overall` less the classes bounds a withheld class from above
+  rather than fixing it. And the sums are drawn inside one table: two tables
+  from the same run share populations, and a reader holding both can subtract
+  across them.
 - A suppressed cell prints as `<25` (or the floor in force), never as a blank
   that could be read as zero.
 - Nothing patient-level is read or written. No identifier reaches `out/`.

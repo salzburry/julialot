@@ -144,6 +144,12 @@ cell_group_key <- function(cells)
 relation_terms <- function(cells)
   cells$FILLED == 1L & cells$SECTION == 0L & cells$STAT %in% TFLS_GROUPED_STATS
 
+# The row of the shell a cell sits in, for reading the table across its rows. A
+# frame that does not carry the shell's own order is read in the order it came
+# in, which is the order fill.R writes it in.
+cell_row_order <- function(cells)
+  if ("ROW_ORDER" %in% names(cells)) cells$ROW_ORDER else seq_len(nrow(cells))
+
 # One relation: the rows of the cell frame one sum ties together, and the words
 # for why a cell of it was withheld.
 tfls_relation <- function(members, why)
@@ -206,10 +212,13 @@ relations_down_column <- function(cells, ok) {
          else rep(FALSE, nrow(cells))
   lab <- if ("SECTION_LABEL" %in% names(cells)) chr(cells$SECTION_LABEL)
          else rep("", nrow(cells))
+  rlab <- if ("ROW_LABEL" %in% names(cells)) chr(cells$ROW_LABEL)
+          else rep("", nrow(cells))
+  ord <- cell_row_order(cells)
   key <- paste(cells$TABLE_ID, cells$COLUMN_ID, sep = "\r")
   for (k in unique(key)) {
     idx <- which(key == k)
-    idx <- idx[order(cells$ROW_ORDER[idx], idx)]
+    idx <- idx[order(ord[idx], idx)]
     for (a in seq_along(idx)) {
       i <- idx[a]
       if (sec[i] || !ok[i]) next
@@ -226,7 +235,7 @@ relations_down_column <- function(cells, ok) {
       if (!length(kids)) next
       out[[length(out) + 1L]] <- tfls_relation(c(i, kids), paste0(
         "withheld with the one other cell under the subtotal '",
-        chr(cells$ROW_LABEL[i]), "' in this column, which that subtotal less ",
+        rlab[i], "' in this column, which that subtotal less ",
         "the published rest would otherwise give away"))
     }
   }
@@ -242,7 +251,8 @@ relations_across_row <- function(cells, ok, shell) {
   out <- list()
   cols <- relation_columns(shell)
   if (is.null(cols)) return(out)
-  at <- paste(cells$TABLE_ID, cells$ROW_ORDER, cells$COLUMN_ID, sep = "\r")
+  ord <- cell_row_order(cells)
+  at <- paste(cells$TABLE_ID, ord, cells$COLUMN_ID, sep = "\r")
   for (tid in unique(chr(cells$TABLE_ID))) {
     cd <- cols[chr(cols$table_id) == tid, , drop = FALSE]
     if (nrow(cd) < 3L) next
@@ -253,9 +263,12 @@ relations_across_row <- function(cells, ok, shell) {
     lvl <- vapply(sub, `[[`, character(1), "level")
     is_total <- !nzchar(chr(cd$subgroup))
     is_level <- !is_total & nzchar(varn) & nzchar(lvl)
-    rows <- unique(cells$ROW_ORDER[chr(cells$TABLE_ID) == tid &
-                                     cells$SECTION == 0L])
+    rows <- unique(ord[chr(cells$TABLE_ID) == tid & cells$SECTION == 0L])
     for (t in which(is_total)) {
+      # The header the total prints under, for the reason. A frame with no
+      # labels in it names the column by its id instead of by nothing.
+      tlab <- chr(cd$label[t])
+      if (!nzchar(tlab)) tlab <- chr(cd$column_id[t])
       for (v in unique(varn[is_level & pop == pop[t]])) {
         part <- unique(chr(cd$column_id[is_level & pop == pop[t] & varn == v]))
         if (length(part) < 2L) next
@@ -268,7 +281,7 @@ relations_across_row <- function(cells, ok, shell) {
           if (!length(pi)) next
           out[[length(out) + 1L]] <- tfls_relation(c(ti, pi), paste0(
             "withheld with the one other cell on this row that the total ",
-            "column '", chr(cd$label[t]), "' sums, which that total less the ",
+            "column '", tlab, "' sums, which that total less the ",
             "published rest would otherwise give away"))
         }
       }
