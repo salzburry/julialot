@@ -92,7 +92,11 @@ report_plan <- function(sh, floor_n) {
           "every line in the column's population"
         else if (!length(cats))
           "no SOC category: every cell in this column is reported unfilled"
-        else paste(cats, collapse = "; "), "\n", sep = "")
+        else paste0(paste(cats, collapse = "; "),
+                    if (nzchar(class_requires_drug(sh$classes$class_id[i], sh$classes)))
+                      paste0(", narrowed to the lines holding ",
+                             class_requires_drug(sh$classes$class_id[i], sh$classes))
+                    else ""), "\n", sep = "")
   }
   for (tid in shell_table_ids(sh)) {
     cols <- shell_columns_of(sh, tid); rows <- shell_rows_of(sh, tid)
