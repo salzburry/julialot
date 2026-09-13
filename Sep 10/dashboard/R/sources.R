@@ -19,6 +19,28 @@
 #
 # Rejected rather than sanitised, because silently reading a different file
 # from the one asked for is worse than reading none.
+# Whether a run's own record says its release left a withheld cell that the
+# rest of its group gives away, and if so in what words.
+#
+# mod_release() withholds every cell under the floor and then records the
+# groups where exactly one withheld cell is still the group's total less the
+# published rest. Whether to regroup or withhold a second stratum is the
+# analyst's call and the package does not make it - so the check lives at the
+# point where a run stops being the warehouse's and becomes something other
+# people read, which is the snapshot job.
+#
+# "none" is the only answer that clears. An empty value is a build from before
+# the column existed, and "release module did not run" is a run that has not
+# been shown to have no recoverable cell because it never looked - neither is
+# the same as none, and neither may pass.
+release_recoverable_blocks <- function(recoverable) {
+  v <- trimws(as.character(recoverable %||% "")[1])
+  if (identical(v, "none")) return("")
+  if (!nzchar(v) || identical(v, "NA"))
+    return("nothing recorded - a build from before this column existed")
+  v
+}
+
 safe_segment <- function(x) {
   x <- as.character(x %||% "")
   length(x) == 1L && nzchar(x) && !is.na(x) &&
@@ -202,10 +224,18 @@ load_scenarios <- function(src) {
 # The raw one is what QC reads. A dashboard several people can open is the
 # first case, so the release version is the default and reading the raw one is
 # a deliberate choice.
-read_table <- function(src, prefix, table, prefer_release = TRUE) {
+read_table <- function(src, prefix, table, prefer_release = TRUE,
+                       raw_fallback = TRUE) {
   if (prefer_release && paste0(table, "_RELEASE") %in% names(SUPPRESSION_SPEC_NAMES())) {
     rel <- src$read(prefix, paste0(table, "_RELEASE"))
     if (!is.null(rel) && nrow(rel)) return(mark_source(rel, "release"))
+    # The released copy was asked for and is not there. Whether the raw table
+    # may stand in is the CALLER'S to say, and only a caller that knows the
+    # run never released one may say yes - the raw table holds exactly what
+    # the release was run to remove. Asked as an argument rather than decided
+    # here, so a future caller has to answer it rather than inherit a default
+    # that happens to be safe for today's one.
+    if (!isTRUE(raw_fallback)) return(NULL)
   }
   raw <- src$read(prefix, table)
   if (is.null(raw)) return(NULL)
@@ -351,15 +381,13 @@ read_scenario_table <- function(src, scenario, table, prefer_release = TRUE) {
     if (is.na(m)) !nzchar(trimws(scenario$run_id %||% "")) else m
   }
   if (!same()) return(NULL)
-  d <- read_table(src, scenario$prefix, table, prefer_release)
+  # FAIL CLOSED where this run released. The raw table may stand in only for a
+  # run that never released one; where the run says it did and the copy is
+  # missing or empty, reading the raw one would undo the release quietly, and
+  # a partial write or a deleted table is exactly that case.
+  d <- read_table(src, scenario$prefix, table, prefer_release,
+                  raw_fallback = !released)
   if (!same()) return(NULL)
-  # FAIL CLOSED. read_table() falls back to the raw table when the released
-  # one is missing or empty, which is right where the run never released and
-  # wrong where it did: the raw table holds what the release was run to
-  # remove, and reading it under a run that says it released would undo the
-  # release quietly. A partial write or a deleted table is exactly that case.
-  if (prefer_release && !is.null(d) &&
-      !identical(attr(d, "table_source"), "release")) return(NULL)
   restrict_to_cohorts(d, scenario)
 }
 

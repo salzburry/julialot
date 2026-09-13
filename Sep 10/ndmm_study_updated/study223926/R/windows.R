@@ -107,6 +107,15 @@ lot_period_sql <- function(cfg, start = "l.LOT_START_DT",
   discon_bound <- sprintf("date_add(coalesce(%s, %s), %d)",
                           discon, line_end, as.integer(cfg$lot_post_discon_days))
   next_bound <- sprintf("date_sub(%s, 1)", next_start)
+  # `discon_bound` appears twice on purpose, and the pair is not a
+  # simplification waiting to happen.
+  #
+  # least() does NOT skip NULLs here - fu_end_sql() below turns on the same
+  # fact - so `least(next_bound, discon_bound, fu_end)` would be NULL for
+  # every line that has no next one, which is every patient's last line. The
+  # coalesce supplies the bound where there is no next line; the second
+  # mention applies it as well as the next line's where there is one. Both
+  # readings are needed and neither covers the other.
   list(
     start = start,
     end = sprintf("least(coalesce(%s, %s), %s, %s)",

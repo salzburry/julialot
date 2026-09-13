@@ -25,8 +25,13 @@ TABLE_SPEC <- list(
   S_DEMOGRAPHICS = list(
     shape = "subject", label = "Baseline demographics",
     keys = c("COHORT"), id = "PATID",
-    categorical = c("AGE_BAND", "SEX", "REGION", "RACE", "ETHNICITY",
-                    "INSURANCE_TYPE"),
+    # Both age columns, because the table carries both and they answer
+    # different questions: AGE_BAND is the four-band distribution Table 1
+    # reports, AGE_GROUP the protocol's two-group stratification that the rate
+    # tables are cut by. Showing only the first would leave the grouping every
+    # subgroup column depends on impossible to look at.
+    categorical = c("AGE_BAND", "AGE_GROUP", "SEX", "REGION", "RACE",
+                    "ETHNICITY", "INSURANCE_TYPE"),
     continuous = "AGE_YEARS"),
 
   S_COMORBIDITY = list(

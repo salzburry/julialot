@@ -112,15 +112,18 @@ added, which is exact because the categories partition the line and the package
 checks that they do. A **rate** over more than one category is refused rather
 than invented: a rate is not the sum of its strata's rates.
 
-**By age: yes, on the same four tables.** They carry an `AGE_BAND` column
-written the same way, so an age column reads its bands and a column covering
-three of them - `<75 years` - is the three counts added. Neuropathy and frailty
-are not there: those stay a set of patients, so a column naming one against an
-aggregated table reads as not filled and says so.
+**By age: yes, on the same four tables.** They carry an `AGE_GROUP` column
+written the same way - `<75` and `75+`, the protocol's own stratification, and
+not the four descriptive bands `S_DEMOGRAPHICS.AGE_BAND` carries for Table 1.
+The grouping is the point: a column covering several strata is their counts
+added, which is exact, but a RATE is not the sum of its strata's rates, so an
+age group spread over three bands could report a count and never a rate.
+Neuropathy and frailty are not there: those stay a set of patients, so a column
+naming one against an aggregated table reads as not filled and says so.
 
 The two stratifications are **margins**, not a cross. A column names a regimen
 class or an age, and the other stratification stays at the line's own row, so
-the categories add up to the line and so do the age bands.
+the categories add up to the line and so do the age groups.
 
 Everything reading a per-patient table - demographics, comorbidity, frailty,
 periods, SOC and the time-to-event outcomes - takes both. That is the whole of

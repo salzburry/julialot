@@ -328,6 +328,11 @@ synthetic_one <- function(prefix, settings, min_n = 25L) {
     STUDY_END = "2026-03-31", CONTRACT_DEVIATIONS = "none",
     OPEN_QUESTION_READINGS = readings,
     CODELISTS = "safety_events.csv(synthetic,42 rows)",
+    # What a publication gate reads. "none" here says this run's release left
+    # no withheld cell that the rest of its group gives away - which is what
+    # the generator arranges, since every synthetic stratum is either well
+    # over the floor or well under it.
+    RELEASE_RECOVERABLE = "none",
     stringsAsFactors = FALSE)
 
   # The study's own per-line categorisation, which is how a class or a line
