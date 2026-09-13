@@ -137,13 +137,89 @@ cat("\nthe command for a scenario nobody has run\n")
      "a setting the package does not have is reported, not silently exported")
 }
 
+cat("\nthe synthetic run stands in for a real one\n")
+{
+  syn <- synthetic_one("s223926_", SYNTH_SCENARIOS[[1]], 25L)
+  ok(setequal(setdiff(names(syn), "S_RUN_METADATA"), DASH_TABLES$TABLE),
+     "every table the registry declares is written, and nothing else is")
+  ok(all(vapply(syn, nrow, integer(1)) > 0L),
+     "...and none of them is empty")
+  # The metadata says which modules ran. A scenario claiming one and writing
+  # none of its tables is a run the page cannot demonstrate on.
+  claimed <- trimws(strsplit(syn$S_RUN_METADATA$MODULES, ";")[[1]])
+  owed <- unlist(lapply(MODULES[claimed], `[[`, "outputs"))
+  ok(all(owed %in% names(syn)),
+     "...and every module the metadata claims wrote its outputs")
+  # An optional output needs its switch recorded, or the run's own reader
+  # refuses it - under a prefix that table could be a previous run's.
+  switches <- unlist(lapply(OPTIONAL_FEATURES, names), use.names = FALSE)
+  ok(length(switches) > 0L && all(vapply(switches, function(k)
+       grepl(paste0(k, "=TRUE"), syn$S_RUN_METADATA$OPEN_QUESTION_READINGS,
+             fixed = TRUE), logical(1))),
+     "...and the switch behind each optional output is recorded on")
+
+  # One patient set, so a line selected on one table is the same patients on
+  # another.
+  ok(setequal(syn$S_PERIODS$PATID, syn$S_TTE$PATID) &&
+       setequal(syn$S_SOC$PATID, syn$S_TTE$PATID),
+     "the per-patient tables describe one set of patients")
+  ok(all(syn$S_PERIODS$BASELINE_END < syn$S_PERIODS$INDEX_DATE),
+     "baseline ends before the index it is baseline for")
+  ok(all(syn$S_LOT_PERIODS$PERIOD_END >= syn$S_LOT_PERIODS$PERIOD_START),
+     "and no treatment window ends before it starts")
+  # The exclusion N_LOS_EXCLUDED counts has to be there to be excluded.
+  ok(any(syn$S_HCRU_EVENTS$HAS_DISCHARGE == 0L) &&
+       all(is.na(syn$S_HCRU_EVENTS$LOS_DAYS[syn$S_HCRU_EVENTS$HAS_DISCHARGE == 0L])),
+     "a stay with no discharge carries no length of stay")
+  # Both levels of a subgroup, or the denominator behind a percentage drifts.
+  ok(setequal(unique(syn$S_COMORB_SUBGROUP$HAS_HISTORY), c(0L, 1L)),
+     "a comorbidity subgroup carries the patients without it as well")
+
+  # The released copies apply the package's own spec, at its own floor.
+  rel <- syn$S_SAFETY_RATES_RELEASE
+  sp <- SUPPRESSION_SPEC$S_SAFETY_RATES
+  ok(all(c("SUPPRESSED", "SUPPRESSION_REASON") %in% names(rel)),
+     "a released table says which rows were withheld and why")
+  ok(all(is.na(rel[[sp$n_col]][rel$SUPPRESSED == 1L])) &&
+       all(vapply(sp$value_cols, function(cl)
+         all(is.na(rel[[cl]][rel$SUPPRESSED == 1L])), logical(1))),
+     "...and a withheld row carries neither its count nor anything computed from it")
+  ok(all(rel[[sp$n_col]][rel$SUPPRESSED == 0L] >= 25L),
+     "...and nothing under the floor was published")
+}
+
 cat("\nselection: what a viewer can change without a run\n")
 {
   sp <- table_spec("S_HCRU_RATES")
   d <- read_table(SRC, "s223926_", "S_HCRU_RATES")
   ok(!is.null(d) && nrow(d) > 0, "a rate table reads back")
-  f <- apply_keys(d, sp, list(COHORT = "1L", LOT_NUM = "1", PERIOD = "follow_up"))
+  # The strata are pinned the way the page pins them: a rate table is written
+  # once for the line and once per stratum, so a selection that named neither
+  # would take the line and its own parts together.
+  line <- list(COHORT = "1L", LOT_NUM = "1", PERIOD = "TREATMENT",
+               SOC_CATEGORY = key_default("SOC_CATEGORY", "1L"),
+               AGE_BAND = key_default("AGE_BAND", "1L"))
+  f <- apply_keys(d, sp, line)
   ok(nrow(f) == 3 && all(f$COHORT == "1L"), "selecting on the spec's keys filters")
+  ok(identical(unique(f$SOC_CATEGORY), "(all categories)") &&
+       identical(unique(f$AGE_BAND), "(all ages)"),
+     "...and a stratum the viewer never touched is the line's own row")
+  by_soc <- apply_keys(d, sp, utils::modifyList(
+    line, list(SOC_CATEGORY = "Doublet/monotherapy")))
+  ok(nrow(by_soc) == 3 && all(by_soc$AGE_BAND == "(all ages)"),
+     "...and naming a regimen category leaves age at the line's own row")
+  # What the package guarantees and the shells add up on: the strata of one
+  # measure sum back to the line.
+  one <- function(x) x[x$MEASURE == "ALL_CAUSE_HOSPITALISATION", ]
+  parts <- one(apply_keys(d, sp, utils::modifyList(
+    line, list(SOC_CATEGORY = NULL))))
+  parts <- parts[parts$SOC_CATEGORY != "(all categories)", ]
+  ok(sum(parts$N_EVENTS) == one(f)$N_EVENTS,
+     "...and the synthetic categories sum to the line, as a real run's do")
+  aparts <- one(apply_keys(d, sp, utils::modifyList(line, list(AGE_BAND = NULL))))
+  aparts <- aparts[aparts$AGE_BAND != "(all ages)", ]
+  ok(sum(aparts$N_EVENTS) == one(f)$N_EVENTS,
+     "...and so do the age bands")
   ok(nrow(apply_keys(d, sp, list(COHORT = "all"))) == nrow(d),
      "and 'all' filters nothing rather than matching a cohort called all")
   ok(nrow(apply_keys(d, sp, list())) == nrow(d),
@@ -1238,7 +1314,8 @@ cat("\nthe readings survive the trip from the producer\n")
 cat("\ncomparing two scenarios\n")
 {
   sp <- table_spec("S_HCRU_RATES")
-  sel <- list(COHORT = "1L", LOT_NUM = "1", PERIOD = "follow_up")
+  sel <- list(COHORT = "1L", LOT_NUM = "1", PERIOD = "TREATMENT",
+              SOC_CATEGORY = "(all categories)", AGE_BAND = "(all ages)")
   g <- function(p) apply_keys(read_table(SRC, p, "S_HCRU_RATES"), sp, sel)
   cm <- compare_tables(g("s223926_"), g("s223926_q27_"), sp, "RATE")
   ok(nrow(cm) == 3, "every stratum in either scenario appears once")
@@ -1246,10 +1323,10 @@ cat("\ncomparing two scenarios\n")
      "with both values and the difference")
   ok("MEASURE" %in% names(cm) && length(unique(cm$MEASURE)) == 3,
      "and the table's own MEASURE column survives - it is not the value's name")
-  mm <- cm[cm$MEASURE == "mm_related_hospitalisation", ]
+  mm <- cm[cm$MEASURE == "MM_RELATED_HOSPITALISATION", ]
   ok(abs(mm$PCT_CHANGE - 100) < 2,
      "Q27 roughly doubles the MM-related rate, which is what the profile found")
-  ok(all(abs(cm$DELTA[cm$MEASURE != "mm_related_hospitalisation"]) < 1e-9),
+  ok(all(abs(cm$DELTA[cm$MEASURE != "MM_RELATED_HOSPITALISATION"]) < 1e-9),
      "and moves nothing it does not reach - a difference here IS the setting")
   cm2 <- compare_tables(g("s223926_"), g("s223926_q25_"), sp, "RATE")
   ok(all(abs(cm2$PCT_CHANGE - 17) < 1),
@@ -1809,6 +1886,64 @@ cat("\nthe shells are filled at the sidebar's floor, and no lower\n")
   }
 }
 
+cat("\nthe snapshot is rebuilt while a shell table is being filled\n")
+{
+  ready <- tfls_ready()
+  if (!isTRUE(ready$ok)) {
+    cat("  SKIP   the shells are not beside this folder\n")
+  } else {
+    # shiny is not installed in this environment, so the panel is not driven
+    # through testServer(). The decision it makes is driven directly instead:
+    # scenario_moved() in app.R is isFALSE(scenario_is_current()), and the
+    # fill it is asked about here is a real one.
+    s <- SCENARIOS[["s223926_"]]
+    # A source whose run is rebuilt once the fill's first table has been read.
+    # read_scenario_table() asks the metadata twice per table, before the read
+    # and after it, so the third question is the second table's.
+    md <- 0L
+    moving <- list(read = function(prefix, table) {
+      if (identical(table, "S_RUN_METADATA")) {
+        md <<- md + 1L
+        return(data.frame(RUN_ID = s$run_id, STATE = s$state,
+                          UPDATED_AT = if (md > 2L) "2026-09-09 13:00:00"
+                                       else s$updated_at,
+                          stringsAsFactors = FALSE))
+      }
+      SRC$read(prefix, table)
+    })
+    f <- shell_fill(ready, "T4", moving, s, 25L)
+    ok(sum(f$cells$FILLED == 1L) > 0 && nrow(f$cells) > 0,
+       "a run rebuilt mid-fill leaves the rows read before it in the filled table")
+    ok(isFALSE(scenario_is_current(moving, s)),
+       "...and the check the panel makes is the one that says the run has moved")
+    ok(grepl('table class="grid"', shell_panel_html(ready, f), fixed = TRUE),
+       "...so a filled table drawn from it would put the previous run's rows on the page")
+    # What keeps them off it: the same check, asked again between the fill and
+    # anything being drawn. A text check, because the placement is the fix -
+    # the answer itself is driven above.
+    app <- paste(readLines("app.R", warn = FALSE), collapse = "\n")
+    after <- substring(app, regexpr("shell_fill(ready, tid", app, fixed = TRUE))
+    at <- function(x) regexpr(x, after, fixed = TRUE)
+    ok(at("scenario_moved(s)") > 0 &&
+         at("scenario_moved(s)") < at("shell_panel_html(ready, filled)"),
+       "the panel asks again once the fill is back, before the grid is built")
+    ok(at("scenario_moved(s)") < at("shell_unfilled_html(ready, filled"),
+       "...and before the rows nothing could fill, which are read off the same fill")
+    ok(grepl("if (scenario_moved(s)) return(moved_alert())", after, fixed = TRUE),
+       "...and shows the notice the other panels show, not a second one of its own")
+    # The class mapping is the exception, and it is one for a reason: it is
+    # read off the shells folder's file, not off the run, so a rebuild changes
+    # nothing in it.
+    hc <- shell_class_html(ready)
+    ok(identical(hc, shell_class_html(tfls_ready())),
+       "the class mapping is the same table whatever the run has done since")
+    ok(!grepl("SRC", paste(deparse(shell_class_table), collapse = "\n"), fixed = TRUE) &&
+         !grepl("read_scenario_table",
+                paste(deparse(shell_class_html), collapse = "\n"), fixed = TRUE),
+       "...because it reads the shells folder's own file and never the run's tables")
+  }
+}
+
 cat("\nthe class mapping is the thing to edit\n")
 {
   ready <- tfls_ready()
@@ -2048,6 +2183,49 @@ cat("\nthe palette is this folder's own\n")
             length(PALETTE), ")"))
   ok(all(grepl("^#[0-9A-Fa-f]{6}$", PALETTE)),
      "...and each one is a hex colour")
+
+  # Three colours and nothing else. Every entry has to be grey - white, black
+  # or a neutral step between them - or the GSK orange at some lightness. A
+  # fourth hue added here would pass every other test in this file and put the
+  # page off the brand, so it is held as arithmetic rather than as a comment.
+  hue_of <- function(hx) {
+    v <- grDevices::col2rgb(hx)[, 1] / 255
+    mx <- max(v); mn <- min(v); d <- mx - mn
+    if (d < 0.02) return(NA_real_)          # grey: no hue to be wrong about
+    h <- if (mx == v[1]) ((v[2] - v[3]) / d) %% 6
+         else if (mx == v[2]) ((v[3] - v[1]) / d) + 2
+         else ((v[1] - v[2]) / d) + 4
+    (60 * h) %% 360
+  }
+  hues <- vapply(PALETTE, hue_of, numeric(1))
+  brand <- hue_of(PALETTE[["orange"]])
+  off <- names(hues)[!is.na(hues) & abs(hues - brand) > 1]
+  ok(!length(off),
+     paste0("every colour is grey or the GSK orange, and no third hue",
+            if (length(off)) paste0(" [", paste(off, collapse = ", "), "]") else ""))
+  ok(identical(unname(PALETTE[["ink"]]), "#000000") &&
+       identical(unname(PALETTE[["paper"]]), "#FFFFFF") &&
+       identical(unname(PALETTE[["wash"]]), "#FFFFFF"),
+     "...text is black and the page is white")
+
+  # Contrast, where the brand puts text on the orange. White on this orange is
+  # 3.1:1 and fails at the size the header subtitle is set in; black is 6.8:1.
+  relative_luminance <- function(hx) {
+    v <- grDevices::col2rgb(hx)[, 1] / 255
+    v <- ifelse(v <= 0.03928, v / 12.92, ((v + 0.055) / 1.055) ^ 2.4)
+    sum(c(0.2126, 0.7152, 0.0722) * v)
+  }
+  contrast <- function(a, b) {
+    l <- sort(c(relative_luminance(a), relative_luminance(b)))
+    (l[2] + 0.05) / (l[1] + 0.05)
+  }
+  ok(contrast(PALETTE[["ink"]], PALETTE[["orange"]]) >= 4.5,
+     "black on the orange header clears 4.5:1")
+  ok(contrast(PALETTE[["ink"]], PALETTE[["alert_bg"]]) >= 4.5 &&
+       contrast(PALETTE[["ink"]], PALETTE[["orange_pale"]]) >= 4.5,
+     "...and on both tints a table uses")
+  ok(contrast(PALETTE[["slate"]], PALETTE[["paper"]]) >= 4.5,
+     "...and second-rank text on the page")
   src_all <- paste(vapply(list.files("R", "[.]R$", full.names = TRUE),
                           function(f) paste(readLines(f, warn = FALSE),
                                             collapse = "\n"), character(1)),

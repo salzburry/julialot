@@ -960,7 +960,7 @@ the right call and needs no change.
 | `MED_DIAGNOSIS.DIAG_POSITION` | **zero-padded strings** `01`, `02`, … (26 rows) | anything comparing it as `'1'` would match nothing. Route B casts it, and the fixture carries the zero-padded form |
 | `CONFINEMENT.ICD_FLAG` | **exists** — `10` 23,453,669 · `9` 15,054,996 · null 1,666 | the MM-hospitalisation join may keep reading it; the admit-date fallback stays for the 1,666 |
 | `MEDICAL.PAID_STATUS` | **exists** — values `P` / `D`, not the words | `claim_status_sql()` matches both encodings |
-| `MEDICAL.CONF_ID` | null (182,711,199 lines / 21,932,322 members) or populated (186,547,530 / 2,805,263). **No zero or blank sentinel** | `CONF_ID IS NULL` is the right test; the `trim(...) = ''` branch is dead but harmless |
+| `MEDICAL.CONF_ID` | null (182,711,199 lines / 21,932,322 members) or populated (186,547,530 / 2,805,263). **No zero or blank sentinel** | the plain null test is enough for the non-inpatient side; the `trim(...) = ''` branch is dead but harmless |
 
 ### Also settled, without having been questions
 

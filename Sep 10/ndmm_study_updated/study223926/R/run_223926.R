@@ -76,6 +76,11 @@ build_223926 <- function(here) {
   # out, by name, what has no usable list; a module asked for by name stops
   # the run here, in its first second, rather than after the expensive steps.
   mods <- preflight_codelists(mods, cfg)
+  # Which modules actually run, for the modules that read another's output
+  # where it is there and do without it where it is not. soc is the one today:
+  # the rate tables stratify by regimen category when it ran.
+  cfg$modules_run <- names(mods)
+  set_study_config(cfg)
 
   cat(SEP, "\n", paste(describe_plan(cfg, cohorts, mods), collapse = "\n"),
       "\n", SEP, "\n", sep = "")

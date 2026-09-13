@@ -36,24 +36,111 @@ SYNTH_SCENARIOS <- list(
 }
 
 COHORT_KEYS <- c("1L", "2L", "3L", "SEC2L")
-SYNTH_CONDITIONS <- c("ocular_toxicity", "thrombocytopenia", "anemia",
-                      "severe_infection", "peripheral_neuropathy",
-                      "renal_impairment", "second_primary_malignancy")
-SYNTH_MEASURES <- c("all_cause_hospitalisation", "mm_related_hospitalisation",
-                    "emergency_department_visit")
-SYNTH_SOC <- c("Quadruplet", "Triplet", "Doublet", "Anti-CD38 backbone",
-               "CAR-T", "BCMA bispecific", "Other")
+# Every vocabulary below is the package's own, not a paraphrase of it. A shell
+# row names a condition, a measure or a period by its exact string, so a
+# generator that invented its own would leave the Tables tab empty and the
+# page would demonstrate the opposite of what it does on a real run.
+SYNTH_CONDITIONS <- c(
+  "acute_hepatitis_b", "toxic_liver_disease", "hepatic_failure",
+  "fibrosis_and_cirrhosis", "non_alcoholic_steatohepatitis",
+  "acute_kidney_injury_or_acute_kidney_disease", "chronic_kidney_disease",
+  "moderate_to_severe_renal_impairment_or_esrd", "corneal_ulcer",
+  "keratopathies", "myocardial_infarction_or_unstable_angina",
+  "pulmonary_hypertension", "cerebrovascular_events_stroke_and_tia",
+  "peripheral_arterial_thromboembolism",
+  "deep_venous_thrombosis_or_pulmonary_embolism", "peripheral_neuropathy",
+  "parkinsons_disease", "other_movement_disorders", "seizures",
+  "severe_infection_resulting_in_hospitalisation",
+  "lower_respiratory_or_lung_infection", "thrombocytopenia", "anemia")
+SYNTH_DOMAINS <- c(
+  rep("hepatologic", 5), rep("renal", 3), rep("ocular", 2),
+  rep("cardiovascular", 5), rep("neurologic", 4), "infectious", "infectious",
+  "other", "other")
+SYNTH_MEASURES <- c("ALL_CAUSE_HOSPITALISATION", "MM_RELATED_HOSPITALISATION",
+                    "ED_VISIT")
+SYNTH_PERIODS <- c("BASELINE", "TREATMENT")
+SYNTH_MALIG <- c("Hematological", "Genitourinary", "Gynecological",
+                 "Head and Neck", "Gastrointestinal", "Thoracic (non-H&N)",
+                 "Breast cancer", "Melanoma", "Non-melanoma skin cancer",
+                 "Other")
+SYNTH_OUTCOMES <- c("received_next_lot", "died", "discontinued_no_further",
+                    "lost_to_followup")
+# The package's own vocabulary, not a paraphrase of it. A shell column maps a
+# regimen class to these strings by name, so a synthetic table spelling them
+# differently would leave every class column empty and demonstrate the opposite
+# of what the page does on a real run.
+SYNTH_SOC <- c("Quadruplet with anti-CD38 backbone",
+               "Triplet with anti-CD38 backbone",
+               "Other triplet (non-anti-CD38)", "Doublet/monotherapy",
+               "Other novel agent", "CAR-T", "BCMA bispecific",
+               "Non-BCMA bispecific", "Other",
+               "Autologous SCT (no regimen recorded)",
+               "Allogeneic SCT (no regimen recorded)")
+
+# The stratifications the package writes into its rate and count tables, and
+# the bands its demographics module writes.
+SYNTH_SOC_ALL <- "(all categories)"
+SYNTH_AGE_ALL <- "(all ages)"
+SYNTH_AGE_BANDS <- c("18-44", "45-64", "65-74", "75+")
+
+# Fixed weights, not draws: the split must not move the RNG stream that
+# produces the totals, or every number on the page would change with it.
+SYNTH_SOC_W <- c(16, 22, 14, 18, 6, 5, 6, 4, 6, 2, 1)
+SYNTH_AGE_W <- c(4, 24, 34, 38)
+
+# A total cut into parts that sum back to it EXACTLY. The package guarantees
+# its strata partition the line, the shells add margins up on that basis, and
+# a demonstration whose parts did not add up would show something the study
+# cannot do. The rounding remainder goes to the largest part.
+split_total <- function(total, w, int = TRUE) {
+  if (is.na(total) || total <= 0) return(rep(if (int) 0L else 0, length(w)))
+  p <- w / sum(w)
+  out <- if (int) floor(total * p) else round(total * p, 1)
+  i <- which.max(p)
+  out[i] <- out[i] + (total - sum(out))
+  if (int) as.integer(out) else round(out, 4)
+}
+
+# One margin: the line's rows repeated once per stratum, every count cut into
+# parts that add back up, and the other stratification left at its total -
+# margins, not a cross, which is how the package writes them.
+synth_margin <- function(d, col, levels, other, counts, nums, w) {
+  out <- d[rep(seq_len(nrow(d)), each = length(levels)), , drop = FALSE]
+  out[[col]] <- rep(levels, nrow(d))
+  out[[other]] <- if (identical(other, "SOC_CATEGORY")) SYNTH_SOC_ALL
+                  else SYNTH_AGE_ALL
+  for (nm in counts)
+    out[[nm]] <- as.integer(unlist(lapply(d[[nm]], split_total, w, TRUE)))
+  for (nm in nums)
+    out[[nm]] <- unlist(lapply(d[[nm]], split_total, w, FALSE))
+  rownames(out) <- NULL
+  out
+}
+
+# The line as a whole, then each stratification, then the derived columns
+# recomputed from the parts rather than copied from the line.
+synth_stratify <- function(d, counts, nums, recompute) {
+  d$SOC_CATEGORY <- SYNTH_SOC_ALL
+  d$AGE_BAND <- SYNTH_AGE_ALL
+  recompute(rbind(
+    d,
+    synth_margin(d, "SOC_CATEGORY", SYNTH_SOC, "AGE_BAND", counts, nums,
+                 SYNTH_SOC_W),
+    synth_margin(d, "AGE_BAND", SYNTH_AGE_BANDS, "SOC_CATEGORY", counts, nums,
+                 SYNTH_AGE_W)))
+}
 
 synthetic_scenarios <- function(cfg = dashboard_config()) {
   out <- list()
   for (i in seq_along(SYNTH_SCENARIOS)) {
     pfx <- names(SYNTH_SCENARIOS)[i]
-    out[[pfx]] <- synthetic_one(pfx, SYNTH_SCENARIOS[[pfx]])
+    out[[pfx]] <- synthetic_one(pfx, SYNTH_SCENARIOS[[pfx]],
+                                as.integer(cfg$suppress_min_n))
   }
   out
 }
 
-synthetic_one <- function(prefix, settings) {
+synthetic_one <- function(prefix, settings, min_n = 25L) {
   r <- .synth_rng()
   # A scale per scenario, so the open questions visibly move the numbers the
   # way the profile said they do: Q27 roughly doubles MM hospitalisations,
@@ -63,47 +150,64 @@ synthetic_one <- function(prefix, settings) {
   fu_scale <- if (identical(settings$censor_at_disenrollment, "FALSE")) 1.29 else 1.0
 
   n_by <- c("1L" = 10514L, "2L" = 5179L, "3L" = 3127L, "SEC2L" = 6042L)
-  periods <- c("baseline", "follow_up", "on_treatment")
+  periods <- SYNTH_PERIODS
 
   grid <- function(...) expand.grid(..., stringsAsFactors = FALSE,
                                     KEEP.OUT.ATTRS = FALSE)
 
   safety <- grid(COHORT = COHORT_KEYS, LOT_NUM = 1:3, PERIOD = periods,
                  CONDITION = SYNTH_CONDITIONS)
-  safety$DOMAIN <- c("ocular", "haematologic", "haematologic", "infectious",
-                     "neurologic", "renal", "oncologic")[
-                       match(safety$CONDITION, SYNTH_CONDITIONS)]
+  safety$DOMAIN <- SYNTH_DOMAINS[match(safety$CONDITION, SYNTH_CONDITIONS)]
   safety$ACUTE_CHRONIC <- ifelse(
-    safety$CONDITION %in% c("severe_infection", "thrombocytopenia"),
+    safety$CONDITION %in% c("severe_infection_resulting_in_hospitalisation",
+                            "thrombocytopenia"),
     "acute", "chronic")
   safety$N_AT_RISK <- as.integer(n_by[safety$COHORT] *
     r(nrow(safety), .25, .85) / safety$LOT_NUM)
   safety$PERSON_YEARS <- round(safety$N_AT_RISK * r(nrow(safety), .7, 2.6) * fu_scale, 1)
   safety$N_PATIENTS <- as.integer(safety$N_AT_RISK * r(nrow(safety), .01, .28) * claim_scale)
   safety$N_EVENTS <- as.integer(safety$N_PATIENTS * r(nrow(safety), 1, 2.4))
-  safety$RATE <- round(1000 * safety$N_EVENTS / pmax(safety$PERSON_YEARS, 1), 2)
-  safety$RATE_LO <- round(safety$RATE * 0.86, 2)
-  safety$RATE_HI <- round(safety$RATE * 1.16, 2)
+  safety <- synth_stratify(safety,
+    counts = c("N_AT_RISK", "N_PATIENTS", "N_EVENTS"), nums = "PERSON_YEARS",
+    recompute = function(d) {
+      d$RATE <- round(1000 * d$N_EVENTS / pmax(d$PERSON_YEARS, 1), 2)
+      d$RATE_LO <- round(d$RATE * 0.86, 2)
+      d$RATE_HI <- round(d$RATE * 1.16, 2)
+      d
+    })
 
   hcru <- grid(COHORT = COHORT_KEYS, LOT_NUM = 1:3, PERIOD = periods,
                MEASURE = SYNTH_MEASURES)
   hcru$N_AT_RISK <- as.integer(n_by[hcru$COHORT] * r(nrow(hcru), .3, .9) / hcru$LOT_NUM)
   hcru$PERSON_YEARS <- round(hcru$N_AT_RISK * r(nrow(hcru), .7, 2.6) * fu_scale, 1)
-  mmrel <- hcru$MEASURE == "mm_related_hospitalisation"
+  mmrel <- hcru$MEASURE == "MM_RELATED_HOSPITALISATION"
   hcru$N_PATIENTS <- as.integer(hcru$N_AT_RISK * r(nrow(hcru), .05, .42) *
                                 ifelse(mmrel, hosp_scale, 1) * claim_scale)
   hcru$N_EVENTS <- as.integer(hcru$N_PATIENTS * r(nrow(hcru), 1, 2.9))
-  hcru$RATE <- round(1000 * hcru$N_EVENTS / pmax(hcru$PERSON_YEARS, 1), 2)
   hcru$MEAN_LOS <- round(r(nrow(hcru), 3.1, 11.4), 1)
   hcru$MEDIAN_LOS <- round(hcru$MEAN_LOS * 0.82, 1)
   hcru$N_LOS_EXCLUDED <- as.integer(hcru$N_EVENTS * r(nrow(hcru), 0, .04))
+  # A length of stay is not a count and does not divide up, so a stratum keeps
+  # the line's, which is what a mean of a subset looks like anyway.
+  hcru <- synth_stratify(hcru,
+    counts = c("N_AT_RISK", "N_PATIENTS", "N_EVENTS", "N_LOS_EXCLUDED"),
+    nums = "PERSON_YEARS",
+    recompute = function(d) {
+      d$RATE <- round(1000 * d$N_EVENTS / pmax(d$PERSON_YEARS, 1), 2)
+      d
+    })
 
   malig <- grid(COHORT = COHORT_KEYS, LOT_NUM = 1:3, PERIOD = periods,
-                CATEGORY = c("haematologic", "solid_tumour", "skin"))
+                CATEGORY = SYNTH_MALIG)
   malig$N_AT_RISK <- as.integer(n_by[malig$COHORT] * r(nrow(malig), .3, .9) / malig$LOT_NUM)
   malig$PERSON_YEARS <- round(malig$N_AT_RISK * r(nrow(malig), .7, 2.6) * fu_scale, 1)
   malig$N_PATIENTS <- as.integer(malig$N_AT_RISK * r(nrow(malig), .002, .05))
-  malig$RATE <- round(1000 * malig$N_PATIENTS / pmax(malig$PERSON_YEARS, 1), 2)
+  malig <- synth_stratify(malig,
+    counts = c("N_AT_RISK", "N_PATIENTS"), nums = "PERSON_YEARS",
+    recompute = function(d) {
+      d$RATE <- round(1000 * d$N_PATIENTS / pmax(d$PERSON_YEARS, 1), 2)
+      d
+    })
 
   patterns <- grid(COHORT = COHORT_KEYS, LOT_NUM = 1:3, SOC_CATEGORY = SYNTH_SOC)
   patterns$N_DENOM <- as.integer(n_by[patterns$COHORT] / patterns$LOT_NUM)
@@ -111,11 +215,15 @@ synthetic_one <- function(prefix, settings) {
   patterns$PCT <- round(100 * patterns$N_PATIENTS / pmax(patterns$N_DENOM, 1), 1)
 
   txattr <- grid(COHORT = COHORT_KEYS, LOT_NUM = 1:3,
-                 OUTCOME = c("discontinued", "progressed_to_next_lot",
-                             "died", "still_on_treatment", "censored"))
+                 OUTCOME = SYNTH_OUTCOMES)
   txattr$N_DENOM <- as.integer(n_by[txattr$COHORT] / txattr$LOT_NUM)
   txattr$N_PATIENTS <- as.integer(txattr$N_DENOM * r(nrow(txattr), .04, .35))
-  txattr$PCT <- round(100 * txattr$N_PATIENTS / pmax(txattr$N_DENOM, 1), 1)
+  txattr <- synth_stratify(txattr,
+    counts = c("N_DENOM", "N_PATIENTS"), nums = character(0),
+    recompute = function(d) {
+      d$PCT <- round(100 * d$N_PATIENTS / pmax(d$N_DENOM, 1), 1)
+      d
+    })
 
   switch_tbl <- grid(COHORT = COHORT_KEYS, FROM_LOT = 1:2,
                      FROM_CATEGORY = SYNTH_SOC, TO_CATEGORY = SYNTH_SOC)
@@ -169,8 +277,10 @@ synthetic_one <- function(prefix, settings) {
                        c(.09, .8, .11)),
     INSURANCE_TYPE = sample(c("Commercial", "Medicare"), n_sub, TRUE, c(.42, .58)),
     ENROL_ROW_FOUND = 1L, stringsAsFactors = FALSE)
+  # The package's own band labels: 03_demographics.R writes '75+', and a shell
+  # column selecting it would match nothing spelled any other way.
   demo$AGE_BAND <- cut(demo$AGE_YEARS, c(-Inf, 44, 64, 74, Inf),
-                       labels = c("18-44", "45-64", "65-74", ">=75"))
+                       labels = SYNTH_AGE_BANDS)
   demo$AGE_BAND <- as.character(demo$AGE_BAND)
 
   comorb <- data.frame(
@@ -184,6 +294,11 @@ synthetic_one <- function(prefix, settings) {
   readings <- paste(c(
     vapply(names(settings), function(k) sprintf("%s=%s", k, settings[[k]]),
            character(1)),
+    # The two optional outputs. A module's switch is what says the table was
+    # written, and a run that wrote S_FRAILTY without recording the switch is
+    # one whose own reader refuses to read it - correctly, because under a
+    # prefix that table could be a previous run's.
+    "frailty=TRUE", "comorbid_subgroups=TRUE",
     "study_start=2016-01-01 (upstream, verified; this run was set to 2018-01-01)",
     "pregnancy_window=study_period (upstream, unverified)"),
     collapse = "; ")
@@ -200,11 +315,225 @@ synthetic_one <- function(prefix, settings) {
     CODELISTS = "safety_events.csv(synthetic,42 rows)",
     stringsAsFactors = FALSE)
 
-  list(S_RUN_METADATA = meta, S_ATTRITION = attrition,
-       S_DEMOGRAPHICS = demo, S_COMORBIDITY = comorb, S_TTE = tte,
-       S_SAFETY_RATES = safety, S_HCRU_RATES = hcru,
-       S_MALIGNANCY_RATES = malig, S_PATTERNS = patterns,
-       S_TX_ATTRITION = txattr, S_SWITCH = switch_tbl)
+  # The study's own per-line categorisation, which is how a class or a line
+  # reaches a table that carries neither: S_DEMOGRAPHICS has no LOT_NUM, so a
+  # column headed by a line and a regimen class is answered by the patients
+  # this table puts in it. The scenario's metadata says the soc module ran, and
+  # a scenario that said so and wrote nothing was not one the page could
+  # demonstrate on.
+  soc <- data.frame(
+    PATID = tte$PATID, COHORT = tte$COHORT, LOT_NUM = tte$LOT_NUM,
+    SOC_CATEGORY = rep(SYNTH_SOC, length.out = n_sub),
+    REGIMEN = rep(c("DVRd", "DRd", "VRd", "Rd", "Kd", "Cilta-cel", "Tec",
+                    "Tal", "PVd", "ASCT", "AlloSCT"), length.out = n_sub),
+    N_AGENTS = rep(c(4L, 3L, 3L, 2L, 2L, 1L, 1L, 1L, 3L, 1L, 1L),
+                   length.out = n_sub),
+    MATCHED = 1L, stringsAsFactors = FALSE)
+
+  # One row per patient who had a secondary malignancy, which is the grain the
+  # T3 shell reads: the rates table beside it is per stratum and cannot answer
+  # a question about when the malignancy fell relative to the line.
+  mi <- seq_len(n_sub) %% 17L == 0L
+  malig_pt <- data.frame(
+    PATID = tte$PATID[mi], COHORT = tte$COHORT[mi],
+    CATEGORY = rep(SYNTH_MALIG, length.out = sum(mi)),
+    SUBTYPE = rep(c("lymphoma", "prostate", "ovarian", "other_hn", "colorectal",
+                    "lung", "breast", "melanoma", "basal_cell_carcinoma",
+                    "other"), length.out = sum(mi)),
+    LOT_AFTER_WHICH = rep(1:3, length.out = sum(mi)),
+    N_DATES = 2L,
+    MONTHS_FROM_DX = round(r(sum(mi), 6, 96), 1),
+    MONTHS_FROM_INDEX = round(r(sum(mi), 1, 54), 1),
+    stringsAsFactors = FALSE)
+
+  # --- the windows, the spine and the membership ----------------------------
+  #
+  # Everything below hangs off the same 1,200 patients, so a line selected on
+  # one table is the same patients on every other. The dates are consistent
+  # rather than merely present: baseline ends the day before index, the
+  # treatment window starts at index, and a line's next start is the following
+  # line's own.
+  fu_days <- as.integer(r(n_sub, 90, 2000) * fu_scale)
+  periods_tbl <- data.frame(
+    PATID = tte$PATID, COHORT = tte$COHORT, LOT_NUM = tte$LOT_NUM,
+    INDEX_DATE = tte$INDEX_DATE,
+    BASELINE_START = tte$INDEX_DATE - 365L,
+    BASELINE_END = tte$INDEX_DATE - 1L,
+    COMORB_BASELINE_START = tte$INDEX_DATE - 365L,
+    COMORB_BASELINE_END = tte$INDEX_DATE - 1L,
+    FU_END = tte$INDEX_DATE + fu_days,
+    FU_DAYS = fu_days,
+    FU_MONTHS = round(fu_days / 30.4375, 2),
+    BASELINE_PY = round(366 / 365.25, 4),
+    TTE_ELIGIBLE = tte$TTE_ELIGIBLE, stringsAsFactors = FALSE)
+
+  # One row per patient per line, which is the grain the treatment period and
+  # the spine share. The line's own start walks forward from the index.
+  lines <- do.call(rbind, lapply(1:3, function(k) {
+    st <- tte$INDEX_DATE + as.integer((k - 1) * 420)
+    en <- st + as.integer(r(n_sub, 60, 700) * fu_scale)
+    data.frame(PATID = tte$PATID, COHORT = tte$COHORT, LOT_NUM = k,
+               PERIOD_START = st, PERIOD_END = en,
+               PERIOD_PY = round(as.integer(en - st) / 365.25, 4),
+               LOT_START_DT = st,
+               PROTOCOL_DISCON_DT = en,
+               NEXT_LOT_START_DT = if (k < 3) st + 420L else as.Date(NA),
+               stringsAsFactors = FALSE)
+  }))
+  lines <- lines[order(lines$PATID, lines$LOT_NUM), ]
+  rownames(lines) <- NULL
+
+  # The engine's own line table, as the package republishes it. The transplant
+  # flags live here and nowhere else, which is what the exploratory objective
+  # would read.
+  spine <- data.frame(
+    PATID = lines$PATID, LOT_NUM = lines$LOT_NUM,
+    LOT_START_DT = lines$LOT_START_DT,
+    LOT_START_TYPE = ifelse(lines$LOT_NUM == 1L, "FIRST_LINE", "NEW_LINE"),
+    LOT_BASE_MEDS = rep(c("DAR BOR LEN DEX", "LEN DEX", "CAR DEX"),
+                        length.out = nrow(lines)),
+    LOT_MED_CNT = rep(c(4L, 2L, 2L), length.out = nrow(lines)),
+    LOT_BASE_DISCON_DT = lines$PROTOCOL_DISCON_DT,
+    LOT_BASE_END_DT = lines$PROTOCOL_DISCON_DT,
+    LOT_BASE_END_REASON = rep(c("DISCONTINUATION", "MED_ADD", "SCT_AUTO",
+                                "CENSORED"), length.out = nrow(lines)),
+    LOT_ALLO_LOT_FLG = as.integer(seq_len(nrow(lines)) %% 97L == 0L),
+    LOT_CART_LOT_FLG = as.integer(seq_len(nrow(lines)) %% 41L == 0L),
+    LOT_TX_AUTO_FLG = as.integer(seq_len(nrow(lines)) %% 7L == 0L),
+    LOT_TX_AUTO_TAND_FLG = as.integer(seq_len(nrow(lines)) %% 53L == 0L),
+    LOT_TX_AUTO_MAX_DT = as.Date(ifelse(seq_len(nrow(lines)) %% 7L == 0L,
+                                        lines$LOT_START_DT + 120L, NA),
+                                 origin = "1970-01-01"),
+    NEXT_LOT_START_DT = lines$NEXT_LOT_START_DT,
+    IS_PROTOCOL_DISCON = as.integer(
+      rep(c(1L, 1L, 1L, 0L), length.out = nrow(lines))),
+    PROTOCOL_DISCON_DT = lines$PROTOCOL_DISCON_DT,
+    stringsAsFactors = FALSE)
+
+  # Per-criterion verdicts per patient, which is the grain the funnel is
+  # aggregated from. Everyone here is in their cohort - the funnel above is
+  # what says how many were not.
+  cohort_tbl <- data.frame(
+    PATID = tte$PATID, COHORT = tte$COHORT, LOT_NUM = tte$LOT_NUM,
+    INDEX_DATE = tte$INDEX_DATE,
+    MET_N1 = 1L, MET_N2 = 1L, MET_I5 = 1L,
+    MET_X1 = 0L, MET_X2 = 0L, MET_X3 = 0L, MET_X4 = 0L,
+    IN_COHORT = 1L, stringsAsFactors = FALSE)
+
+  # --- the two comorbidity subgroups and the frailty index -------------------
+  #
+  # One row per patient per concept, including the patients who do NOT have it:
+  # the flag is the numerator and the concept's own rows are the denominator,
+  # which is how a shell row reads it without the denominator drifting.
+  subgroup <- do.call(rbind, lapply(
+    c("neuropathy", "lung_parenchymal_disease"), function(cc) {
+      has <- as.integer(
+        if (identical(cc, "neuropathy")) seq_len(n_sub) %% 4L == 0L
+        else seq_len(n_sub) %% 9L == 0L)
+      data.frame(PATID = tte$PATID, COHORT = tte$COHORT, CONCEPT = cc,
+                 HAS_HISTORY = has,
+                 FIRST_DT = as.Date(ifelse(has == 1L,
+                                           tte$INDEX_DATE - 200L, NA),
+                                    origin = "1970-01-01"),
+                 stringsAsFactors = FALSE)
+    }))
+
+  cfi <- round(r(n_sub, 0.05, 0.45), 3)
+  frailty <- data.frame(
+    PATID = tte$PATID, COHORT = tte$COHORT, CFI = cfi,
+    FRAIL = as.integer(cfi >= 0.25), N_VARIABLES = 93L,
+    stringsAsFactors = FALSE)
+
+  # --- the event tables the rates were computed from -------------------------
+  #
+  # Not a re-derivation of the rates above: these are the working sets QC reads
+  # to check a rate against the events behind it, and they are here so that a
+  # page showing one can show the other.
+  ei <- seq_len(n_sub) %% 3L == 0L
+  safety_ev <- data.frame(
+    PATID = tte$PATID[ei], COHORT = tte$COHORT[ei],
+    CONDITION = rep(SYNTH_CONDITIONS, length.out = sum(ei)),
+    stringsAsFactors = FALSE)
+  safety_ev$DOMAIN <- SYNTH_DOMAINS[match(safety_ev$CONDITION, SYNTH_CONDITIONS)]
+  safety_ev$ACUTE_CHRONIC <- ifelse(
+    safety_ev$CONDITION %in% c("severe_infection_resulting_in_hospitalisation",
+                               "thrombocytopenia"), "chronic", "acute")
+  safety_ev$EVENT_DT <- tte$INDEX_DATE[ei] + as.integer(r(sum(ei), -300, 900))
+
+  safety_counted <- data.frame(
+    PATID = safety_ev$PATID, COHORT = safety_ev$COHORT,
+    LOT_NUM = tte$LOT_NUM[ei],
+    PERIOD = ifelse(safety_ev$EVENT_DT < tte$INDEX_DATE[ei],
+                    "BASELINE", "TREATMENT"),
+    CONDITION = safety_ev$CONDITION, EVENT_DT = safety_ev$EVENT_DT,
+    stringsAsFactors = FALSE)
+
+  hi <- seq_len(n_sub) %% 2L == 0L
+  los <- as.integer(r(sum(hi), 1, 21))
+  # A stay with no discharge date is what N_LOS_EXCLUDED counts, so some have
+  # none - a fixture where every stay had one could not show the exclusion.
+  no_disch <- seq_len(sum(hi)) %% 23L == 0L
+  hcru_ev <- data.frame(
+    PATID = tte$PATID[hi], COHORT = tte$COHORT[hi],
+    EVENT_TYPE = rep(c("INPATIENT", "ED"), length.out = sum(hi)),
+    EVENT_DT = tte$INDEX_DATE[hi] + as.integer(r(sum(hi), -200, 800)),
+    stringsAsFactors = FALSE)
+  hcru_ev$END_DT <- as.Date(ifelse(no_disch, NA, hcru_ev$EVENT_DT + los),
+                            origin = "1970-01-01")
+  hcru_ev$LOS_DAYS <- ifelse(no_disch, NA_integer_, los)
+  hcru_ev$MM_RELATED <- as.integer(seq_len(sum(hi)) %% 3L == 0L)
+  hcru_ev$HAS_DISCHARGE <- as.integer(!no_disch)
+
+  # Every qualifying date, not only the first: the rates table is dated at the
+  # first and this is what a baseline prevalence would be read from.
+  malig_dates <- do.call(rbind, lapply(0:1, function(k)
+    data.frame(PATID = malig_pt$PATID, COHORT = malig_pt$COHORT,
+               CATEGORY = malig_pt$CATEGORY, SUBTYPE = malig_pt$SUBTYPE,
+               EVENT_DT = tte$INDEX_DATE[mi] + as.integer(k * 45) +
+                 as.integer(malig_pt$MONTHS_FROM_INDEX * 30),
+               stringsAsFactors = FALSE)))
+
+  tables <- list(
+    S_RUN_METADATA = meta, S_SPINE = spine, S_COHORT = cohort_tbl,
+    S_ATTRITION = attrition, S_PERIODS = periods_tbl, S_LOT_PERIODS = lines,
+    S_SOC = soc, S_COMORB_SUBGROUP = subgroup, S_FRAILTY = frailty,
+    S_SAFETY_EVENTS = safety_ev, S_SAFETY_COUNTED = safety_counted,
+    S_HCRU_EVENTS = hcru_ev, S_MALIGNANCY = malig_pt,
+    S_MALIGNANCY_DATES = malig_dates,
+    S_DEMOGRAPHICS = demo, S_COMORBIDITY = comorb, S_TTE = tte,
+    S_SAFETY_RATES = safety, S_HCRU_RATES = hcru,
+    S_MALIGNANCY_RATES = malig, S_PATTERNS = patterns,
+    S_TX_ATTRITION = txattr, S_SWITCH = switch_tbl)
+
+  # The released copies, from the package's own spec rather than a second
+  # statement of the rule: which count decides, and which values go with it.
+  # The scenario's metadata says the release module ran, so a page that
+  # prefers the released table was falling back to the raw one and showing
+  # numbers no release had passed.
+  c(tables, synth_release(tables, min_n))
+}
+
+# One released table per entry of the package's SUPPRESSION_SPEC: the count
+# column and everything computed from it set to NULL wherever the stratum is
+# under the floor, and the reason recorded beside it. A count that cannot be
+# read has not been shown to clear the floor, so a NULL suppresses too - the
+# same reading mod_release() takes.
+synth_release <- function(tables, min_n) {
+  out <- list()
+  for (tbl in names(SUPPRESSION_SPEC)) {
+    d <- tables[[tbl]]
+    if (is.null(d)) next
+    spec <- SUPPRESSION_SPEC[[tbl]]
+    n <- suppressWarnings(as.numeric(d[[spec$n_col]]))
+    hit <- is.na(n) | n < min_n
+    for (cl in intersect(c(spec$n_col, spec$value_cols), names(d)))
+      d[[cl]][hit] <- NA
+    d$SUPPRESSED <- as.integer(hit)
+    d$SUPPRESSION_REASON <- ifelse(is.na(n), "n unknown",
+                            ifelse(n < min_n, paste0("n < ", min_n), NA))
+    out[[paste0(tbl, "_RELEASE")]] <- d
+  }
+  out
 }
 
 # --- the LOT run behind every synthetic scenario -----------------------------

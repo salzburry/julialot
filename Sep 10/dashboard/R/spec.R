@@ -47,14 +47,14 @@ TABLE_SPEC <- list(
 
   S_SAFETY_RATES = list(
     shape = "rate", label = "Key safety events",
-    keys = c("COHORT", "LOT_NUM", "PERIOD"),
+    keys = c("COHORT", "LOT_NUM", "PERIOD", "SOC_CATEGORY", "AGE_BAND"),
     facet = "CONDITION", groups = c("DOMAIN", "ACUTE_CHRONIC"),
     n_col = "N_AT_RISK", rate = "RATE", lo = "RATE_LO", hi = "RATE_HI",
     numerator = "N_PATIENTS", events = "N_EVENTS", py = "PERSON_YEARS"),
 
   S_HCRU_RATES = list(
     shape = "rate", label = "Healthcare resource use",
-    keys = c("COHORT", "LOT_NUM", "PERIOD"),
+    keys = c("COHORT", "LOT_NUM", "PERIOD", "SOC_CATEGORY", "AGE_BAND"),
     facet = "MEASURE",
     n_col = "N_AT_RISK", rate = "RATE",
     numerator = "N_PATIENTS", events = "N_EVENTS", py = "PERSON_YEARS",
@@ -62,7 +62,7 @@ TABLE_SPEC <- list(
 
   S_MALIGNANCY_RATES = list(
     shape = "rate", label = "Secondary malignancies",
-    keys = c("COHORT", "LOT_NUM", "PERIOD"),
+    keys = c("COHORT", "LOT_NUM", "PERIOD", "SOC_CATEGORY", "AGE_BAND"),
     facet = "CATEGORY",
     n_col = "N_AT_RISK", rate = "RATE",
     numerator = "N_PATIENTS", py = "PERSON_YEARS"),
@@ -74,7 +74,8 @@ TABLE_SPEC <- list(
 
   S_TX_ATTRITION = list(
     shape = "count", label = "Treatment attrition",
-    keys = c("COHORT", "LOT_NUM"), facet = "OUTCOME",
+    keys = c("COHORT", "LOT_NUM", "SOC_CATEGORY", "AGE_BAND"),
+    facet = "OUTCOME",
     n_col = "N_PATIENTS", denom = "N_DENOM", pct = "PCT"),
 
   S_SWITCH = list(
@@ -157,6 +158,29 @@ TABLE_SPEC <- list(
 # A table nothing declared. Its keys are the columns the package uses as keys
 # everywhere, its numbers are whatever is numeric, and it is shown as a grid.
 GENERIC_KEYS <- c("COHORT", "LOT_NUM", "PERIOD")
+
+# The package writes its rate and count tables once for each line as a whole
+# and once per stratum, with the line's own row labelled below. These are keys
+# rather than facets on those tables: a viewer selects a stratum the way they
+# select a line.
+#
+# They are NOT in GENERIC_KEYS, which is what a table with no spec of its own
+# falls back to. A table carrying the column without carrying the total row -
+# S_SOC, S_PATTERNS, S_DEMOGRAPHICS - would be filtered to a value it does not
+# have and come back empty. The four tables that do carry it name it in their
+# own spec.
+STRATUM_TOTALS <- c(SOC_CATEGORY = "(all categories)", AGE_BAND = "(all ages)")
+
+# The keys a viewer is offered, which is the generic ones plus the strata.
+SELECTABLE_KEYS <- c(GENERIC_KEYS, names(STRATUM_TOTALS))
+
+# What a key starts at. A stratum starts at the line's own row, because a chart
+# over every row would draw the line beside its own parts.
+key_default <- function(k, cohort_default) {
+  if (identical(k, "COHORT")) return(cohort_default)
+  if (k %in% names(STRATUM_TOTALS)) return(unname(STRATUM_TOTALS[[k]]))
+  "all"
+}
 
 table_spec <- function(name, cols = character(0)) {
   s <- TABLE_SPEC[[name]]

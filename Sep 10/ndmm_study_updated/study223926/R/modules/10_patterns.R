@@ -89,12 +89,16 @@ mod_patterns <- function(con, cfg, cohort) {
                  wrk("S_SWITCH"), cohort$key))
 
   prepare_table(con, wrk("S_TX_ATTRITION"),
-    "COHORT string, LOT_NUM int, OUTCOME string, N_PATIENTS int,
-     N_DENOM int, PCT double", cohort$key)
-  run_step(con, paste0("tx_attrition_", cohort$key), sprintf("
+    "COHORT string, LOT_NUM int, SOC_CATEGORY string, AGE_BAND string,
+     OUTCOME string, N_PATIENTS int, N_DENOM int, PCT double", cohort$key)
+  # The line as a whole, then each regimen category. The denominator and the
+  # percentage are the pass's own: within a category they are out of that
+  # category, which is what a column headed by one asks for.
+  for (sp in stratum_passes(cfg, "e")) {
+    run_step(con, paste0("tx_attrition_", cohort$key, "_", sp$key), sprintf("
     INSERT INTO %1$s
     WITH cat AS (
-      SELECT e.COHORT, e.LOT_NUM, e.PATID,
+      SELECT e.COHORT, e.LOT_NUM, e.PATID, %3$s,
              CASE
                WHEN e.NEXT_LOT_START_DT IS NOT NULL THEN 'received_next_lot'
                WHEN e.DIED_ON_LINE = 1              THEN 'died'
@@ -102,26 +106,59 @@ mod_patterns <- function(con, cfg, cohort) {
                ELSE 'lost_to_followup'
              END AS OUTCOME
       FROM s_line_end e
+      %4$s
       WHERE e.COHORT = '%2$s'
     )
-    SELECT COHORT, LOT_NUM, OUTCOME, count(*) AS N_PATIENTS,
-           sum(count(*)) OVER (PARTITION BY COHORT, LOT_NUM) AS N_DENOM,
+    SELECT COHORT, LOT_NUM, SOC_CATEGORY, AGE_BAND, OUTCOME,
+           count(*) AS N_PATIENTS,
+           sum(count(*)) OVER (PARTITION BY COHORT, LOT_NUM, SOC_CATEGORY,
+                                            AGE_BAND) AS N_DENOM,
            round(100.0 * count(*) /
-                 sum(count(*)) OVER (PARTITION BY COHORT, LOT_NUM), 1) AS PCT
-    FROM cat GROUP BY COHORT, LOT_NUM, OUTCOME",
-    wrk("S_TX_ATTRITION"), cohort$key),
+                 sum(count(*)) OVER (PARTITION BY COHORT, LOT_NUM,
+                                     SOC_CATEGORY, AGE_BAND), 1) AS PCT
+    FROM cat GROUP BY COHORT, LOT_NUM, SOC_CATEGORY, AGE_BAND, OUTCOME",
+    wrk("S_TX_ATTRITION"), cohort$key, sp$cols, sp$join),
     qc = sprintf("SELECT count(*) AS n_rows FROM %s WHERE COHORT='%s'",
                  wrk("S_TX_ATTRITION"), cohort$key))
+  }
 
   # The four categories partition the denominator. Checked rather than
   # asserted, because a CASE that stops partitioning is a silent double count.
   chk <- db_q(con, sprintf(
-    "SELECT LOT_NUM, sum(N_PATIENTS) AS parts, max(N_DENOM) AS whole
-     FROM %s WHERE COHORT='%s' GROUP BY LOT_NUM", wrk("S_TX_ATTRITION"),
-    cohort$key))
+    "SELECT LOT_NUM, SOC_CATEGORY, AGE_BAND, sum(N_PATIENTS) AS parts,
+            max(N_DENOM) AS whole
+     FROM %s WHERE COHORT='%s' GROUP BY LOT_NUM, SOC_CATEGORY, AGE_BAND",
+    wrk("S_TX_ATTRITION"), cohort$key))
   bad <- chk[chk$parts != chk$whole, , drop = FALSE]
   if (nrow(bad))
     stop("PATTERNS ERROR: the attrition categories do not sum to the ",
          "denominator for line(s) ", paste(bad$LOT_NUM, collapse = ", "),
          " of ", cohort$key, ". They are meant to partition it.", call. = FALSE)
+
+  # And each stratification partitions the line. This is the claim the whole
+  # thing rests on - a stratum's rows and the line's own row are the same
+  # patients counted two ways - so it is checked here rather than assumed
+  # wherever the two are read together. Checked on every stratification the run
+  # wrote, one at a time, because they are margins: a by-age row carries the
+  # total label in the category column and the other way round.
+  for (nm in names(STRATUM_TOTALS)) {
+    if (identical(nm, "SOC_CATEGORY") && !soc_stratified(cfg)) next
+    if (identical(nm, "AGE_BAND") && !age_stratified(cfg)) next
+    others <- setdiff(names(STRATUM_TOTALS), nm)
+    only_this <- paste(sprintf("%s = '%s'", others, STRATUM_TOTALS[others]),
+                       collapse = " AND ")
+    part <- db_q(con, sprintf(
+      "SELECT LOT_NUM, OUTCOME,
+              sum(CASE WHEN %4$s = '%3$s' THEN 0 ELSE N_PATIENTS END) AS parts,
+              max(CASE WHEN %4$s = '%3$s' THEN N_PATIENTS END) AS whole
+       FROM %1$s WHERE COHORT='%2$s' AND %5$s GROUP BY LOT_NUM, OUTCOME",
+      wrk("S_TX_ATTRITION"), cohort$key, STRATUM_TOTALS[[nm]], nm, only_this))
+    off <- part[!is.na(part$whole) & part$parts != part$whole, , drop = FALSE]
+    if (nrow(off))
+      stop("PATTERNS ERROR: the ", nm, " strata do not sum to the line for ",
+           nrow(off), " outcome(s) of ", cohort$key,
+           ", so a stratum column and the line's own column would disagree. ",
+           "Every line the spine carries needs exactly one row to take ", nm,
+           " from.", call. = FALSE)
+  }
 }

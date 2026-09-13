@@ -72,9 +72,13 @@ TFLS_SUBJECT_TABLES <- c("S_DEMOGRAPHICS", "S_COMORBIDITY", "S_COMORB_SUBGROUP",
 # only be filled where the run was told where that table is.
 TFLS_COHORT_TABLE_NAMES <- c("COHORT_TABLE", "INPUT_COHORT", "INPUT_COHORT_TABLE")
 
+# `absent_why` is optional and says WHY a table is not there, in the reader's
+# own words: a reader bound to one run knows that a table under the prefix is a
+# previous run's, and that is a different gap from a table nobody wrote. Where
+# no reader says, an absent table is reported as absent and nothing more.
 fill_context <- function(reader, classes, soc_table = "S_SOC",
                          subject_tables = TFLS_SUBJECT_TABLES,
-                         tte_eligible_only = FALSE) {
+                         tte_eligible_only = FALSE, absent_why = NULL) {
   cache <- new.env(parent = emptyenv())
   get_table <- function(name) {
     key <- toupper(chr(name))
@@ -83,9 +87,14 @@ fill_context <- function(reader, classes, soc_table = "S_SOC",
       assign(key, tryCatch(reader(key), error = function(e) NULL), envir = cache)
     get(key, envir = cache, inherits = FALSE)
   }
+  why_absent <- function(name) {
+    if (!is.function(absent_why)) return("")
+    chr(tryCatch(absent_why(toupper(chr(name))), error = function(e) ""))[1]
+  }
   list(get = get_table, classes = classes, soc_table = soc_table,
        subject_tables = subject_tables,
-       tte_eligible_only = isTRUE(tte_eligible_only))
+       tte_eligible_only = isTRUE(tte_eligible_only),
+       absent_why = why_absent)
 }
 
 # --- the population a column stands for -------------------------------------
@@ -183,17 +192,52 @@ select_population <- function(d, spec, ctx, where) {
                          ", so the column's ", tolower(k), " ", v,
                          " cannot be selected from it"), "not_in_run"))
   }
+  named <- character(0)
   if (nzchar(spec$class)) {
     r <- restrict_to_class(d, spec, ctx, where)
     if (!isTRUE(r$ok)) return(r)
     d <- r$rows
+    if (!identical(class_selection(spec$class, ctx$classes)$kind, "all"))
+      named <- c(named, "SOC_CATEGORY")
   }
   if (nzchar(spec$subgroup)) {
     r <- restrict_to_subgroup(d, spec$subgroup, ctx, where, spec$cohort)
     if (!isTRUE(r$ok)) return(r)
     d <- r$rows
+    named <- c(named, subgroup_columns(spec$subgroup))
   }
-  list(ok = TRUE, rows = d)
+  list(ok = TRUE, rows = restrict_unnamed_strata(d, named))
+}
+
+# The columns a subgroup restricts, for deciding which stratifications the
+# column left alone.
+subgroup_columns <- function(subgroup) {
+  sg <- parse_subgroup(subgroup)
+  if (!isTRUE(sg$ok) || !length(sg$terms)) return(character(0))
+  toupper(vapply(sg$terms, function(t) chr(t$column), character(1)))
+}
+
+# A stratification the column did not name is the table's own total row.
+#
+# The package writes these tables once for the line as a whole and once per
+# stratum, so reading them all would be the line drawn beside its own parts. A
+# column that names a regimen class takes the categories and leaves age at its
+# total, and the other way round - which is also what makes the margins add up.
+#
+# A table that carries the column without carrying the total row is not one of
+# these: SOC_CATEGORY on S_PATTERNS is the thing its rows enumerate, and is
+# left alone.
+restrict_unnamed_strata <- function(d, named) {
+  if (is.null(d) || !nrow(d)) return(d)
+  for (nm in setdiff(names(TFLS_STRATUM_TOTALS), toupper(named))) {
+    cl <- col_of(d, nm)
+    if (is.na(cl)) next
+    tot <- TFLS_STRATUM_TOTALS[[nm]]
+    hit <- soc_key(d[[cl]]) %in% soc_key(tot)
+    if (!any(hit)) next
+    d <- d[hit, , drop = FALSE]
+  }
+  d
 }
 
 # The patients of one line, and optionally of one regimen class, off the
@@ -233,6 +277,8 @@ soc_patients <- function(ctx, line = "", cohort = "", categories = NULL,
 # has to name the line as well; the category of "the patient" is not a thing.
 restrict_to_class <- function(d, spec, ctx, where) {
   sel <- class_selection(spec$class, ctx$classes)
+  # An Overall column names no category, so the stratification is left for
+  # restrict_unnamed_strata() to take to the line's own row.
   if (identical(sel$kind, "all")) return(list(ok = TRUE, rows = d))
   # A class the shell maps to nothing is the shell's gap to close: the study's
   # category, or that category narrowed by a drug, is how it would be closed.
@@ -366,6 +412,17 @@ restrict_to_subgroup <- function(d, subgroup, ctx, where, cohort = "") {
   # and the interval a malignancy fell in are on different tables and neither
   # is on the table being summarised.
   if (nzchar(sg$table)) {
+    # Where the table being summarised carries the column itself, the
+    # restriction is a filter on it and no patient is needed. That is how a
+    # rate table stratified by age answers an age column.
+    if (all(vapply(sg$terms, function(t) has_col(d, t$column), logical(1)))) {
+      for (t in sg$terms) {
+        r <- apply_term(d, t, where)
+        if (!isTRUE(r$ok)) return(r)
+        d <- r$rows
+      }
+      return(list(ok = TRUE, rows = d))
+    }
     s <- ctx$get(sg$table)
     if (is.null(s) || !nrow(s))
       return(refuse(paste0(sg$table, " was not read by this run, so the ",
@@ -438,6 +495,48 @@ translate_class_term <- function(term, ctx) {
   }
   term$value <- unique(out)
   list(ok = TRUE, term = term)
+}
+
+# Several strata of one stratification under one column heading.
+#
+# The study writes these tables once per stratum and checks that the strata
+# partition the line, so a column mapped to two of them is the two counts
+# added - exactly, not approximately. Only counts: a rate is not the sum of its
+# strata's rates and an interval is not the sum of theirs, so a rate over more
+# than one stratum is refused rather than invented.
+#
+# A suppressed row arrives with its count NULL, and the sum of an unknown is
+# unknown: the cell then has no denominator and is withheld, which is the safe
+# way round.
+TFLS_SOC_SUMMABLE <- c("N_PATIENTS", "N_EVENTS", "N_AT_RISK", "N_DENOM",
+                       "N_REMAINING", "PERSON_YEARS")
+
+# The columns that say WHICH stratum a row is. Everything else is a value, and
+# values are expected to differ between categories.
+TFLS_STRATUM_KEYS <- c("COHORT", "LOT_NUM", "PERIOD", "CONDITION", "MEASURE",
+                       "CATEGORY", "OUTCOME", "DOMAIN", "ACUTE_CHRONIC")
+
+collapse_strata <- function(d, stat) {
+  if (is.null(d) || nrow(d) < 2L || !stat %in% c("n_pct", "n")) return(d)
+  for (nm in names(TFLS_STRATUM_TOTALS)) {
+    cl <- col_of(d, nm)
+    if (is.na(cl)) next
+    v <- chr(d[[cl]])
+    # One row per stratum of one cell, and none of them the total, or this is
+    # not a partition to add up.
+    if (anyDuplicated(v) ||
+        any(soc_key(v) %in% soc_key(TFLS_STRATUM_TOTALS[[nm]]))) next
+    rest <- setdiff(intersect(c(TFLS_STRATUM_KEYS, names(TFLS_STRATUM_TOTALS)),
+                              names(d)), nm)
+    if (any(vapply(rest, function(k) length(unique(chr(d[[k]]))) > 1L,
+                   logical(1)))) next
+    out <- d[1, , drop = FALSE]
+    for (vc in intersect(TFLS_SOC_SUMMABLE, names(d)))
+      out[[vc]] <- sum(suppressWarnings(as.numeric(d[[vc]])), na.rm = FALSE)
+    out[[cl]] <- paste(v, collapse = " + ")
+    return(out)
+  }
+  d
 }
 
 # --- one cell ---------------------------------------------------------------
@@ -547,6 +646,16 @@ compute_cell <- function(pop, stat, measure, terms, where,
       return(if (identical(stat, "n_pct")) stat_n_pct(hit, denom = denom)
              else stat_n(hit, denom = denom))
     }
+    if (identical(stat, "n_distinct")) {
+      if (is.na(mcol))
+        return(stat_refused(stat, paste0("the shell names no column to count ",
+                                         "the distinct values of"), "shell"))
+      # A measure naming a value narrows the rows first, so a row asking for
+      # the regimens inside one category counts those and not all of them.
+      sel <- apply_term(pop, measure, where)
+      if (!isTRUE(sel$ok)) return(stat_refused(stat, sel$why))
+      return(stat_n_distinct(sel$rows[[mcol]], denom = denom))
+    }
     if (stat %in% c("mean_sd", "median_iqr", "min_max")) {
       if (is.na(mcol))
         return(stat_refused(stat, "the shell names no column to summarise",
@@ -566,6 +675,14 @@ compute_cell <- function(pop, stat, measure, terms, where,
         "the package computed it in"), "not_computable"))
   }
 
+  # A distinct count needs the values themselves, and a stratum table holds one
+  # row per group the package already counted: the values in it are the groups
+  # it wrote rather than what this population holds.
+  if (identical(stat, "n_distinct"))
+    return(stat_refused(stat, paste0(where, " is a table of totals, so the ",
+      "distinct values in it are the strata the package wrote and not the ",
+      "values this population holds"), "not_computable"))
+
   # Aggregated: one row of a stratum table is the answer, so the shell has to
   # pick exactly one. Two rows left is a shell that needs another filter, and
   # averaging them would average strata.
@@ -576,10 +693,19 @@ compute_cell <- function(pop, stat, measure, terms, where,
   if (!nrow(d))
     return(stat_refused(stat, paste0("no row of ", where, " matches ",
                                      measure$raw), "not_in_run"))
-  if (nrow(d) > 1L)
+  d <- collapse_strata(d, stat)
+  if (nrow(d) > 1L) {
+    if (identical(stat, "rate") &&
+        any(vapply(names(TFLS_STRATUM_TOTALS),
+                   function(nm) !is.na(col_of(d, nm)), logical(1))))
+      return(stat_refused(stat, paste0("this column covers ", nrow(d),
+        " of the study's strata and ", where, " carries a rate for each; a ",
+        "rate is not the sum of theirs, so the package would have to publish ",
+        "the group"), "not_computable"))
     return(stat_refused(stat, paste0(nrow(d), " rows of ", where,
       " match this column and measure; the shell needs a filter that picks one"),
       "shell"))
+  }
   if (identical(stat, "rate")) {
     r <- num_col_value(d, "RATE")
     ev <- num_col_value(d, c("N_EVENTS", "N_PATIENTS"))
@@ -700,10 +826,16 @@ fill_table <- function(sh, tid, ctx, floor_n = TFLS_PACKAGE_MIN_N) {
         row_why <- "the shell names no source table"
         row_kind <- "shell"
       } else if (is.null(d) || !nrow(d)) {
-        row_why <- if (toupper(chr(row$source)) %in% TFLS_COHORT_TABLE_NAMES)
-          paste0("the diagnosis date is on the input cohort table, which no ",
-                 "study output carries; in warehouse mode TFLS_COHORT_TABLE ",
-                 "names it, and nothing else here can stand in for it")
+        # Why it is absent, where the reader can say: a table this run's own
+        # metadata does not claim is a previous run's, and saying so names the
+        # declaration the row was read against.
+        scoped <- if (is.function(ctx$absent_why))
+          ctx$absent_why(row$source) else ""
+        row_why <- if (nzchar(scoped)) scoped
+          else if (toupper(chr(row$source)) %in% TFLS_COHORT_TABLE_NAMES)
+            paste0("the diagnosis date is on the input cohort table, which no ",
+                   "study output carries; in warehouse mode TFLS_COHORT_TABLE ",
+                   "names it, and nothing else here can stand in for it")
           else paste0(chr(row$source), " was not read by this run, so nothing ",
                       "can fill this row")
         row_kind <- "not_in_run"
@@ -778,7 +910,10 @@ fill_table <- function(sh, tid, ctx, floor_n = TFLS_PACKAGE_MIN_N) {
     }
   }
   out <- if (length(cells)) do.call(rbind, cells) else empty_cells()
-  out <- suppress_cells(out, floor_n)
+  # The shell goes with the cells: the sums a withheld cell could be read
+  # off - a subtotal down a column, a total across a row - are drawn by the
+  # shell's own indentation and columns.
+  out <- suppress_cells(out, floor_n, sh)
   # A cell nothing could fill says so, rather than printing as an empty string
   # a reader could take for a zero.
   blankable <- out$FILLED == 0L & out$SECTION == 0L

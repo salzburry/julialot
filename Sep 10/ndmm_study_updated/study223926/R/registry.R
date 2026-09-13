@@ -42,20 +42,28 @@ CRITERIA_1L <- c("I1_mm_dx", "I2_age", "I3_eligible_1l_tx", "I4_ce_pre",
 # `group_by` is the stratum a table's rows divide up. mod_release() reads it to
 # find the groups where exactly one row was suppressed, because that row is
 # recoverable by subtracting the published rest from the group's own total.
+# `facet` is the column whose values a table's rows enumerate. With
+# SOC_CATEGORY beside it the regimen categories of one facet value DO sum to
+# that value's (all categories) row, so a single suppressed category is
+# recoverable from the total less the published rest - a stronger relation than
+# the group above, and checked separately in mod_release().
 SUPPRESSION_SPEC <- list(
   S_SAFETY_RATES = list(
     n_col = "N_AT_RISK",
     group_by = c("COHORT", "LOT_NUM", "PERIOD"),
+    facet = "CONDITION",
     value_cols = c("N_PATIENTS", "N_EVENTS", "PERSON_YEARS", "RATE",
                    "RATE_LO", "RATE_HI")),
   S_HCRU_RATES = list(
     n_col = "N_AT_RISK",
     group_by = c("COHORT", "LOT_NUM", "PERIOD"),
+    facet = "MEASURE",
     value_cols = c("N_PATIENTS", "N_EVENTS", "PERSON_YEARS", "RATE",
                    "MEAN_LOS", "MEDIAN_LOS", "N_LOS_EXCLUDED")),
   S_MALIGNANCY_RATES = list(
     n_col = "N_AT_RISK",
     group_by = c("COHORT", "LOT_NUM", "PERIOD"),
+    facet = "CATEGORY",
     value_cols = c("N_PATIENTS", "PERSON_YEARS", "RATE")),
   S_PATTERNS = list(
     n_col = "N_PATIENTS",
@@ -68,9 +76,80 @@ SUPPRESSION_SPEC <- list(
   S_TX_ATTRITION = list(
     n_col = "N_PATIENTS",
     group_by = c("COHORT", "LOT_NUM"),
+    facet = "OUTCOME",
     value_cols = c("N_DENOM", "PCT"))
 )
 
+
+# --- the stratifications ----------------------------------------------------
+#
+# The rate and count tables are written once for each line as a whole and then
+# once per stratum of each stratification. Every pass runs the SAME query with
+# one more column in the GROUP BY, so the counting rules, the washout, the
+# person-time and the confidence intervals are the ones stated above,
+# unchanged: a stratum's numbers are the line's own arithmetic over a subset of
+# its patients.
+#
+# The total keeps a row of its own rather than being left to be added up,
+# because a rate is not the sum of its strata's rates and a confidence interval
+# is not the sum of theirs. It is labelled, not blank: a NULL there would be
+# read as a missing stratum.
+#
+# MARGINS, NOT A CROSS. A row is stratified by regimen category or by age, not
+# by both at once: no table the protocol asks for crosses them, and every cell
+# of the cross would fall under the floor. So a query naming a real value in
+# both columns finds no row, which is the honest answer rather than a zero.
+STRATUM_TOTALS <- c(SOC_CATEGORY = "(all categories)", AGE_BAND = "(all ages)")
+
+# A line the soc module wrote no row for, and a patient the demographics module
+# found no enrolment row for. Neither can happen while those modules run over
+# the same spine, and both are named rather than dropped so that the strata
+# still sum to the total if either ever does.
+SOC_UNCATEGORISED <- "(uncategorised)"
+# Not "Unknown": the demographics module writes that as a real age band, for a
+# patient whose age it could not read. This one means there was no row to read
+# at all, which is a different thing and must not be folded into it.
+AGE_NO_ROW <- "(no demographics row)"
+
+soc_stratified <- function(cfg) isTRUE("soc" %in% cfg$modules_run)
+age_stratified <- function(cfg) isTRUE("demographics" %in% cfg$modules_run)
+
+# One pass: the SELECT list for the stratum columns, the GROUP BY fragment for
+# the ones that vary, and the join that carries them. `on` is the alias in that
+# query of the table holding PATID, COHORT and LOT_NUM.
+.stratum_pass <- function(key, exprs, vary, join) {
+  nms <- names(STRATUM_TOTALS)
+  list(key = key,
+       cols = paste(sprintf("%s AS %s", exprs[nms], nms), collapse = ", "),
+       group = if (length(vary)) paste0(", ", paste(exprs[vary], collapse = ", "))
+               else "",
+       join = join)
+}
+
+stratum_passes <- function(cfg, on) {
+  lit <- vapply(STRATUM_TOTALS, function(v) sprintf("'%s'", v), character(1))
+  out <- list(.stratum_pass("total", lit, character(0), ""))
+  if (soc_stratified(cfg)) {
+    e <- lit
+    e[["SOC_CATEGORY"]] <- sprintf("coalesce(soc.SOC_CATEGORY, '%s')",
+                                   SOC_UNCATEGORISED)
+    out <- c(out, list(.stratum_pass("by_soc", e, "SOC_CATEGORY",
+      sprintf("LEFT JOIN %s soc ON soc.PATID = %s.PATID
+               AND soc.COHORT = %s.COHORT AND soc.LOT_NUM = %s.LOT_NUM",
+              wrk("S_SOC"), on, on, on))))
+  }
+  if (age_stratified(cfg)) {
+    e <- lit
+    e[["AGE_BAND"]] <- sprintf("coalesce(age.AGE_BAND, '%s')", AGE_NO_ROW)
+    # Age is the cohort's own index age, so the join is on the patient and the
+    # cohort: S_DEMOGRAPHICS is one row per patient per cohort, not per line.
+    out <- c(out, list(.stratum_pass("by_age", e, "AGE_BAND",
+      sprintf("LEFT JOIN %s age ON age.PATID = %s.PATID
+               AND age.COHORT = %s.COHORT",
+              wrk("S_DEMOGRAPHICS"), on, on))))
+  }
+  out
+}
 
 COHORTS <- list(
   `1L` = list(

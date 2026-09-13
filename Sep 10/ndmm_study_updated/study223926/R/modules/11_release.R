@@ -76,6 +76,37 @@ mod_release <- function(con, cfg, cohorts) {
               "from the rest of its ", paste(grp, collapse = "/"),
               " group. Regroup before the table leaves the warehouse.")
   }
+  # The stronger relation, where a table carries a stratification: the strata
+  # of one facet value are a partition of that value's own total row, so one
+  # suppressed stratum is the total less the published rest. Reported for the
+  # same reason as above - regrouping is the analyst's call - but named
+  # precisely, because this one really does subtract.
+  for (tbl in names(SUPPRESSION_SPEC)) {
+    spec <- SUPPRESSION_SPEC[[tbl]]
+    if (is.null(spec$facet)) next
+    rel <- wrk(paste0(tbl, "_RELEASE"))
+    cols <- names(db_q(con, sprintf("SELECT * FROM %s LIMIT 0", rel)))
+    for (nm in intersect(names(STRATUM_TOTALS), cols)) {
+      others <- setdiff(intersect(names(STRATUM_TOTALS), cols), nm)
+      only_this <- paste(c(sprintf("%s <> '%s'", nm, STRATUM_TOTALS[[nm]]),
+                           sprintf("%s = '%s'", others, STRATUM_TOTALS[others])),
+                         collapse = " AND ")
+      grp <- paste(c(spec$group_by, spec$facet), collapse = ", ")
+      n <- db_q(con, sprintf(
+        "SELECT count(*) AS n FROM (
+           SELECT %1$s FROM %2$s WHERE %3$s
+           GROUP BY %1$s HAVING sum(SUPPRESSED) = 1)",
+        grp, rel, only_this))$n[1]
+      if (!is.na(n) && n > 0)
+        log_msg("  WARNING: ", n, " ", paste(c(spec$group_by, spec$facet),
+                collapse = "/"), " group(s) in ", tbl, "_RELEASE have exactly ",
+                "one suppressed ", nm, ". The strata sum to the '",
+                STRATUM_TOTALS[[nm]], "' row, so that one is the total less ",
+                "the published rest. Regroup, or withhold a second stratum, ",
+                "before the table leaves the warehouse.")
+    }
+  }
+
   log_msg("  released ", length(SUPPRESSION_SPEC), " table(s) with n < ",
           min_n, " suppressed")
 }

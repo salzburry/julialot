@@ -128,10 +128,41 @@ lands on the run's own metadata row where no reader can miss it.
 | `soc` | `S_SOC` — regimen category per line | `soc_regimen_categories.csv` (Annex 2) |
 | `safety` | `S_SAFETY_EVENTS`, `S_SAFETY_COUNTED`, `S_SAFETY_RATES` — baseline prevalence and on-treatment incidence, counted the same way | `safety_events.csv` (Annex 3) |
 | `hcru` | `S_HCRU_EVENTS`, `S_HCRU_RATES` | `hcru.csv`, `mm_dx.csv` |
-| `malignancy` | `S_MALIGNANCY`, `S_MALIGNANCY_RATES` | `secondary_malig.csv` (Annex 3) |
+| `malignancy` | `S_MALIGNANCY`, `S_MALIGNANCY_DATES` — every qualifying date, not only the first — and `S_MALIGNANCY_RATES` | `secondary_malig.csv` (Annex 3) |
 | `tte` | `S_TTE` — TTNT, TTD, OS | — |
 | `patterns` | `S_PATTERNS`, `S_SWITCH`, `S_TX_ATTRITION` | via `soc` |
 | `release` | `S_*_RELEASE` — every rate and percentage table with cells under 25 patients suppressed | — |
+
+### The rate tables are stratified
+
+`S_SAFETY_RATES`, `S_HCRU_RATES`, `S_MALIGNANCY_RATES` and `S_TX_ATTRITION`
+carry a `SOC_CATEGORY` and an `AGE_BAND` column. Each table is written once for
+the line as a whole — `(all categories)` and `(all ages)` — then once per
+regimen category where the `soc` module ran, and once per age band. Every pass
+is the same query with one more column in the `GROUP BY`, so the washout, the
+person-time, the at-risk rule and the confidence intervals are unchanged and
+each stratification is a partition of the line. `mod_patterns()` checks that
+both sum back to it and stops if either does not.
+
+**Margins, not a cross.** A row is cut by regimen category or by age, never by
+both: no table the protocol asks for crosses them, and every cell of the cross
+would fall under the floor. A query naming a real value in both columns finds
+no row — the honest answer rather than a zero.
+
+**Anything reading these tables must say which grouping it wants.** A query
+written before these columns existed now sees the line and its parts together
+and will double count. `WHERE SOC_CATEGORY = '(all categories)' AND AGE_BAND =
+'(all ages)'` is the old behaviour.
+
+Two labels distinguish a gap from a value. `(uncategorised)` is a line the
+`soc` module wrote no row for; `(no demographics row)` is a patient the
+`demographics` module wrote none for. Neither is `Unknown`, which that module
+writes as a real age band for a patient whose age it could not read.
+
+Suppression is unchanged in kind and tighter in effect: a stratum is smaller
+than the line, so more of them fall under the floor. `mod_release()` warns
+where exactly one stratum of a group is suppressed, because the total less the
+published rest gives it away.
 
 **Six of the thirteen run today.** `MODULES=all`, the default, runs everything
 that has a usable code list. `spine`, `cohorts`, `attrition`, `periods`,
