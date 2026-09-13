@@ -93,9 +93,12 @@ withheld.
 The tables are counts over a claims database and carry its limits: a code is
 evidence of a claim, not of a diagnosis, and an absence is evidence of neither.
 
-## What is not here yet
+## The same shells in the dashboard
 
-The dashboard does not read these shells. The intention is a tab where the
-table, the line, the class definitions, the subgroup and the floor are
-controls, so a definition can be moved and the table watched to move with it.
-That is the point of keeping the classes in a CSV, and it is not built.
+The dashboard's **Tables** tab fills these shells from whichever scenario is
+selected, so the table, the scenario and the floor are controls and a shell can
+be watched to move as a definition moves. It reads this folder - `DASH_TFLS_DIR`
+names it where the two are not side by side - and nothing is duplicated there:
+the loader, the statistics and the suppression are the ones in `R/`. Rows
+nothing could fill are listed under the table rather than left blank, with the
+same reason `tfls_unfilled.csv` gives.

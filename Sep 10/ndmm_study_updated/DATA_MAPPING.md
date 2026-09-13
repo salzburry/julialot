@@ -417,7 +417,7 @@ documented one.
 | `RX.FILL_DT`, `NDC`, `DAYS_SUP` | present, **zero nulls** - 22,107,537 lines, 99,155 members, 2000-05-01 to 2026-03-31 | `build_fu_claims()` reads `FILL_DT`; confirmed safe |
 | `STD_COST` (both tables) | **does not encode paid/denied.** 14,891,418 denied medical lines carry a positive `STD_COST`, and 1,034,482 paid lines a negative one; on RX there are no negative rows at all | It is a *standardised* price, not an amount paid, so the "sum of all paid amounts" rule never applied to it. **Denied pharmacy claims cannot be identified by any column in this extract** |
 | `RX.PAID_STATUS` | **does not exist** | The deployed pharmacy table has no paid status. Its columns include `STD_COST`, `AHFSCLSS`, `CHK_DT`, `DAW`, `DAYS_SUP` - and `STD_COST` and `CHK_DT` are absent from the V9.0 field list in `optum_cdm_fields.csv`, so that list is **incomplete for RX**, as it was for `DOD.MBR_MATCH_TYPE`. A denied pharmacy claim cannot be excluded by `CLAIM_STATUS` on any reading |
-| `MEDICAL.CONF_ID` | null or populated only - no `0`, no blank | The inpatient test is `CONF_ID IS NULL` and nothing else. 186,547,530 lines across 2,805,263 members carry one; 182,711,199 lines across 21,932,322 members do not |
+| `MEDICAL.CONF_ID` | null or populated only - no `0`, no blank | Business rule 14 reads inpatient as `CONF_ID IS NOT NULL`, so the plain null test carries non-inpatient and no blank-string branch is needed. 186,547,530 lines across 2,805,263 members carry one; 182,711,199 lines across 21,932,322 members do not |
 | `DOD.MBR_MATCH_TYPE` | `2` 58.93% · `1` 41.07% | Two values, no nulls: a binary flag, not a graded score. Which value means what is undocumented |
 
 ### `CONFINEMENT` shape
