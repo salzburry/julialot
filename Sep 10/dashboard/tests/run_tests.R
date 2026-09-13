@@ -137,6 +137,50 @@ cat("\nthe command for a scenario nobody has run\n")
      "a setting the package does not have is reported, not silently exported")
 }
 
+cat("\nthe synthetic run stands in for a real one\n")
+{
+  syn <- synthetic_one("s223926_", SYNTH_SCENARIOS[[1]], 25L)
+  ok(setequal(setdiff(names(syn), "S_RUN_METADATA"), DASH_TABLES$TABLE),
+     "every table the registry declares is written, and nothing else is")
+  ok(all(vapply(syn, nrow, integer(1)) > 0L),
+     "...and none of them is empty")
+  # The metadata says which modules ran. A scenario claiming one and writing
+  # none of its tables is a run the page cannot demonstrate on.
+  claimed <- trimws(strsplit(syn$S_RUN_METADATA$MODULES, ";")[[1]])
+  owed <- unlist(lapply(MODULES[claimed], `[[`, "outputs"))
+  ok(all(owed %in% names(syn)),
+     "...and every module the metadata claims wrote its outputs")
+
+  # One patient set, so a line selected on one table is the same patients on
+  # another.
+  ok(setequal(syn$S_PERIODS$PATID, syn$S_TTE$PATID) &&
+       setequal(syn$S_SOC$PATID, syn$S_TTE$PATID),
+     "the per-patient tables describe one set of patients")
+  ok(all(syn$S_PERIODS$BASELINE_END < syn$S_PERIODS$INDEX_DATE),
+     "baseline ends before the index it is baseline for")
+  ok(all(syn$S_LOT_PERIODS$PERIOD_END >= syn$S_LOT_PERIODS$PERIOD_START),
+     "and no treatment window ends before it starts")
+  # The exclusion N_LOS_EXCLUDED counts has to be there to be excluded.
+  ok(any(syn$S_HCRU_EVENTS$HAS_DISCHARGE == 0L) &&
+       all(is.na(syn$S_HCRU_EVENTS$LOS_DAYS[syn$S_HCRU_EVENTS$HAS_DISCHARGE == 0L])),
+     "a stay with no discharge carries no length of stay")
+  # Both levels of a subgroup, or the denominator behind a percentage drifts.
+  ok(setequal(unique(syn$S_COMORB_SUBGROUP$HAS_HISTORY), c(0L, 1L)),
+     "a comorbidity subgroup carries the patients without it as well")
+
+  # The released copies apply the package's own spec, at its own floor.
+  rel <- syn$S_SAFETY_RATES_RELEASE
+  sp <- SUPPRESSION_SPEC$S_SAFETY_RATES
+  ok(all(c("SUPPRESSED", "SUPPRESSION_REASON") %in% names(rel)),
+     "a released table says which rows were withheld and why")
+  ok(all(is.na(rel[[sp$n_col]][rel$SUPPRESSED == 1L])) &&
+       all(vapply(sp$value_cols, function(cl)
+         all(is.na(rel[[cl]][rel$SUPPRESSED == 1L])), logical(1))),
+     "...and a withheld row carries neither its count nor anything computed from it")
+  ok(all(rel[[sp$n_col]][rel$SUPPRESSED == 0L] >= 25L),
+     "...and nothing under the floor was published")
+}
+
 cat("\nselection: what a viewer can change without a run\n")
 {
   sp <- table_spec("S_HCRU_RATES")

@@ -134,12 +134,13 @@ synthetic_scenarios <- function(cfg = dashboard_config()) {
   out <- list()
   for (i in seq_along(SYNTH_SCENARIOS)) {
     pfx <- names(SYNTH_SCENARIOS)[i]
-    out[[pfx]] <- synthetic_one(pfx, SYNTH_SCENARIOS[[pfx]])
+    out[[pfx]] <- synthetic_one(pfx, SYNTH_SCENARIOS[[pfx]],
+                                as.integer(cfg$suppress_min_n))
   }
   out
 }
 
-synthetic_one <- function(prefix, settings) {
+synthetic_one <- function(prefix, settings, min_n = 25L) {
   r <- .synth_rng()
   # A scale per scenario, so the open questions visibly move the numbers the
   # way the profile said they do: Q27 roughly doubles MM hospitalisations,
@@ -340,12 +341,194 @@ synthetic_one <- function(prefix, settings) {
     MONTHS_FROM_INDEX = round(r(sum(mi), 1, 54), 1),
     stringsAsFactors = FALSE)
 
-  list(S_RUN_METADATA = meta, S_ATTRITION = attrition, S_SOC = soc,
-       S_MALIGNANCY = malig_pt,
-       S_DEMOGRAPHICS = demo, S_COMORBIDITY = comorb, S_TTE = tte,
-       S_SAFETY_RATES = safety, S_HCRU_RATES = hcru,
-       S_MALIGNANCY_RATES = malig, S_PATTERNS = patterns,
-       S_TX_ATTRITION = txattr, S_SWITCH = switch_tbl)
+  # --- the windows, the spine and the membership ----------------------------
+  #
+  # Everything below hangs off the same 1,200 patients, so a line selected on
+  # one table is the same patients on every other. The dates are consistent
+  # rather than merely present: baseline ends the day before index, the
+  # treatment window starts at index, and a line's next start is the following
+  # line's own.
+  fu_days <- as.integer(r(n_sub, 90, 2000) * fu_scale)
+  periods_tbl <- data.frame(
+    PATID = tte$PATID, COHORT = tte$COHORT, LOT_NUM = tte$LOT_NUM,
+    INDEX_DATE = tte$INDEX_DATE,
+    BASELINE_START = tte$INDEX_DATE - 365L,
+    BASELINE_END = tte$INDEX_DATE - 1L,
+    COMORB_BASELINE_START = tte$INDEX_DATE - 365L,
+    COMORB_BASELINE_END = tte$INDEX_DATE - 1L,
+    FU_END = tte$INDEX_DATE + fu_days,
+    FU_DAYS = fu_days,
+    FU_MONTHS = round(fu_days / 30.4375, 2),
+    BASELINE_PY = round(366 / 365.25, 4),
+    TTE_ELIGIBLE = tte$TTE_ELIGIBLE, stringsAsFactors = FALSE)
+
+  # One row per patient per line, which is the grain the treatment period and
+  # the spine share. The line's own start walks forward from the index.
+  lines <- do.call(rbind, lapply(1:3, function(k) {
+    st <- tte$INDEX_DATE + as.integer((k - 1) * 420)
+    en <- st + as.integer(r(n_sub, 60, 700) * fu_scale)
+    data.frame(PATID = tte$PATID, COHORT = tte$COHORT, LOT_NUM = k,
+               PERIOD_START = st, PERIOD_END = en,
+               PERIOD_PY = round(as.integer(en - st) / 365.25, 4),
+               LOT_START_DT = st,
+               PROTOCOL_DISCON_DT = en,
+               NEXT_LOT_START_DT = if (k < 3) st + 420L else as.Date(NA),
+               stringsAsFactors = FALSE)
+  }))
+  lines <- lines[order(lines$PATID, lines$LOT_NUM), ]
+  rownames(lines) <- NULL
+
+  # The engine's own line table, as the package republishes it. The transplant
+  # flags live here and nowhere else, which is what the exploratory objective
+  # would read.
+  spine <- data.frame(
+    PATID = lines$PATID, LOT_NUM = lines$LOT_NUM,
+    LOT_START_DT = lines$LOT_START_DT,
+    LOT_START_TYPE = ifelse(lines$LOT_NUM == 1L, "FIRST_LINE", "NEW_LINE"),
+    LOT_BASE_MEDS = rep(c("DAR BOR LEN DEX", "LEN DEX", "CAR DEX"),
+                        length.out = nrow(lines)),
+    LOT_MED_CNT = rep(c(4L, 2L, 2L), length.out = nrow(lines)),
+    LOT_BASE_DISCON_DT = lines$PROTOCOL_DISCON_DT,
+    LOT_BASE_END_DT = lines$PROTOCOL_DISCON_DT,
+    LOT_BASE_END_REASON = rep(c("DISCONTINUATION", "MED_ADD", "SCT_AUTO",
+                                "CENSORED"), length.out = nrow(lines)),
+    LOT_ALLO_LOT_FLG = as.integer(seq_len(nrow(lines)) %% 97L == 0L),
+    LOT_CART_LOT_FLG = as.integer(seq_len(nrow(lines)) %% 41L == 0L),
+    LOT_TX_AUTO_FLG = as.integer(seq_len(nrow(lines)) %% 7L == 0L),
+    LOT_TX_AUTO_TAND_FLG = as.integer(seq_len(nrow(lines)) %% 53L == 0L),
+    LOT_TX_AUTO_MAX_DT = as.Date(ifelse(seq_len(nrow(lines)) %% 7L == 0L,
+                                        lines$LOT_START_DT + 120L, NA),
+                                 origin = "1970-01-01"),
+    NEXT_LOT_START_DT = lines$NEXT_LOT_START_DT,
+    IS_PROTOCOL_DISCON = as.integer(
+      rep(c(1L, 1L, 1L, 0L), length.out = nrow(lines))),
+    PROTOCOL_DISCON_DT = lines$PROTOCOL_DISCON_DT,
+    stringsAsFactors = FALSE)
+
+  # Per-criterion verdicts per patient, which is the grain the funnel is
+  # aggregated from. Everyone here is in their cohort - the funnel above is
+  # what says how many were not.
+  cohort_tbl <- data.frame(
+    PATID = tte$PATID, COHORT = tte$COHORT, LOT_NUM = tte$LOT_NUM,
+    INDEX_DATE = tte$INDEX_DATE,
+    MET_N1 = 1L, MET_N2 = 1L, MET_I5 = 1L,
+    MET_X1 = 0L, MET_X2 = 0L, MET_X3 = 0L, MET_X4 = 0L,
+    IN_COHORT = 1L, stringsAsFactors = FALSE)
+
+  # --- the two comorbidity subgroups and the frailty index -------------------
+  #
+  # One row per patient per concept, including the patients who do NOT have it:
+  # the flag is the numerator and the concept's own rows are the denominator,
+  # which is how a shell row reads it without the denominator drifting.
+  subgroup <- do.call(rbind, lapply(
+    c("neuropathy", "lung_parenchymal_disease"), function(cc) {
+      has <- as.integer(
+        if (identical(cc, "neuropathy")) seq_len(n_sub) %% 4L == 0L
+        else seq_len(n_sub) %% 9L == 0L)
+      data.frame(PATID = tte$PATID, COHORT = tte$COHORT, CONCEPT = cc,
+                 HAS_HISTORY = has,
+                 FIRST_DT = as.Date(ifelse(has == 1L,
+                                           tte$INDEX_DATE - 200L, NA),
+                                    origin = "1970-01-01"),
+                 stringsAsFactors = FALSE)
+    }))
+
+  cfi <- round(r(n_sub, 0.05, 0.45), 3)
+  frailty <- data.frame(
+    PATID = tte$PATID, COHORT = tte$COHORT, CFI = cfi,
+    FRAIL = as.integer(cfi >= 0.25), N_VARIABLES = 93L,
+    stringsAsFactors = FALSE)
+
+  # --- the event tables the rates were computed from -------------------------
+  #
+  # Not a re-derivation of the rates above: these are the working sets QC reads
+  # to check a rate against the events behind it, and they are here so that a
+  # page showing one can show the other.
+  ei <- seq_len(n_sub) %% 3L == 0L
+  safety_ev <- data.frame(
+    PATID = tte$PATID[ei], COHORT = tte$COHORT[ei],
+    CONDITION = rep(SYNTH_CONDITIONS, length.out = sum(ei)),
+    stringsAsFactors = FALSE)
+  safety_ev$DOMAIN <- SYNTH_DOMAINS[match(safety_ev$CONDITION, SYNTH_CONDITIONS)]
+  safety_ev$ACUTE_CHRONIC <- ifelse(
+    safety_ev$CONDITION %in% c("severe_infection_resulting_in_hospitalisation",
+                               "thrombocytopenia"), "chronic", "acute")
+  safety_ev$EVENT_DT <- tte$INDEX_DATE[ei] + as.integer(r(sum(ei), -300, 900))
+
+  safety_counted <- data.frame(
+    PATID = safety_ev$PATID, COHORT = safety_ev$COHORT,
+    LOT_NUM = tte$LOT_NUM[ei],
+    PERIOD = ifelse(safety_ev$EVENT_DT < tte$INDEX_DATE[ei],
+                    "BASELINE", "TREATMENT"),
+    CONDITION = safety_ev$CONDITION, EVENT_DT = safety_ev$EVENT_DT,
+    stringsAsFactors = FALSE)
+
+  hi <- seq_len(n_sub) %% 2L == 0L
+  los <- as.integer(r(sum(hi), 1, 21))
+  # A stay with no discharge date is what N_LOS_EXCLUDED counts, so some have
+  # none - a fixture where every stay had one could not show the exclusion.
+  no_disch <- seq_len(sum(hi)) %% 23L == 0L
+  hcru_ev <- data.frame(
+    PATID = tte$PATID[hi], COHORT = tte$COHORT[hi],
+    EVENT_TYPE = rep(c("INPATIENT", "ED"), length.out = sum(hi)),
+    EVENT_DT = tte$INDEX_DATE[hi] + as.integer(r(sum(hi), -200, 800)),
+    stringsAsFactors = FALSE)
+  hcru_ev$END_DT <- as.Date(ifelse(no_disch, NA, hcru_ev$EVENT_DT + los),
+                            origin = "1970-01-01")
+  hcru_ev$LOS_DAYS <- ifelse(no_disch, NA_integer_, los)
+  hcru_ev$MM_RELATED <- as.integer(seq_len(sum(hi)) %% 3L == 0L)
+  hcru_ev$HAS_DISCHARGE <- as.integer(!no_disch)
+
+  # Every qualifying date, not only the first: the rates table is dated at the
+  # first and this is what a baseline prevalence would be read from.
+  malig_dates <- do.call(rbind, lapply(0:1, function(k)
+    data.frame(PATID = malig_pt$PATID, COHORT = malig_pt$COHORT,
+               CATEGORY = malig_pt$CATEGORY, SUBTYPE = malig_pt$SUBTYPE,
+               EVENT_DT = tte$INDEX_DATE[mi] + as.integer(k * 45) +
+                 as.integer(malig_pt$MONTHS_FROM_INDEX * 30),
+               stringsAsFactors = FALSE)))
+
+  tables <- list(
+    S_RUN_METADATA = meta, S_SPINE = spine, S_COHORT = cohort_tbl,
+    S_ATTRITION = attrition, S_PERIODS = periods_tbl, S_LOT_PERIODS = lines,
+    S_SOC = soc, S_COMORB_SUBGROUP = subgroup, S_FRAILTY = frailty,
+    S_SAFETY_EVENTS = safety_ev, S_SAFETY_COUNTED = safety_counted,
+    S_HCRU_EVENTS = hcru_ev, S_MALIGNANCY = malig_pt,
+    S_MALIGNANCY_DATES = malig_dates,
+    S_DEMOGRAPHICS = demo, S_COMORBIDITY = comorb, S_TTE = tte,
+    S_SAFETY_RATES = safety, S_HCRU_RATES = hcru,
+    S_MALIGNANCY_RATES = malig, S_PATTERNS = patterns,
+    S_TX_ATTRITION = txattr, S_SWITCH = switch_tbl)
+
+  # The released copies, from the package's own spec rather than a second
+  # statement of the rule: which count decides, and which values go with it.
+  # The scenario's metadata says the release module ran, so a page that
+  # prefers the released table was falling back to the raw one and showing
+  # numbers no release had passed.
+  c(tables, synth_release(tables, min_n))
+}
+
+# One released table per entry of the package's SUPPRESSION_SPEC: the count
+# column and everything computed from it set to NULL wherever the stratum is
+# under the floor, and the reason recorded beside it. A count that cannot be
+# read has not been shown to clear the floor, so a NULL suppresses too - the
+# same reading mod_release() takes.
+synth_release <- function(tables, min_n) {
+  out <- list()
+  for (tbl in names(SUPPRESSION_SPEC)) {
+    d <- tables[[tbl]]
+    if (is.null(d)) next
+    spec <- SUPPRESSION_SPEC[[tbl]]
+    n <- suppressWarnings(as.numeric(d[[spec$n_col]]))
+    hit <- is.na(n) | n < min_n
+    for (cl in intersect(c(spec$n_col, spec$value_cols), names(d)))
+      d[[cl]][hit] <- NA
+    d$SUPPRESSED <- as.integer(hit)
+    d$SUPPRESSION_REASON <- ifelse(is.na(n), "n unknown",
+                            ifelse(n < min_n, paste0("n < ", min_n), NA))
+    out[[paste0(tbl, "_RELEASE")]] <- d
+  }
+  out
 }
 
 # --- the LOT run behind every synthetic scenario -----------------------------
