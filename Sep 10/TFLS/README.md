@@ -99,29 +99,30 @@ therapies and `Bi-specific` holds both bispecific categories, so the columns are
 disjoint and a patient is counted once. And the transplant-only lines belong to
 no column at all, so the class columns do not sum to `Overall`.
 
-## What the study does not stratify, and what that empties
+## What a column can be cut by
 
-A row can only be cut the way the table it reads is cut. The package writes
-`S_SAFETY_RATES`, `S_HCRU_RATES`, `S_MALIGNANCY_RATES`, `S_PATTERNS` and
-`S_TX_ATTRITION` grouped by cohort, line and period - no SOC category, and no
-patient id to carry a subgroup by. So every column of a shell that names a
-regimen class or a subgroup reads as not filled against those five tables, and
-says which of the two it was:
+A row can only be cut the way the table it reads is cut.
 
-- **T2a and T2b** fill in the Overall column of each period. The regimen class
-  columns, and the age columns the protocol asks for, cannot be filled until
-  the package groups safety and HCRU by those as well.
-- **T2x** fills its treatment and outcome rows in the Overall columns; its
-  subgroup columns fill only the rows that read a per-patient table.
+**By regimen class: yes.** `S_SAFETY_RATES`, `S_HCRU_RATES`,
+`S_MALIGNANCY_RATES` and `S_TX_ATTRITION` are written once for each line as a
+whole and once per SOC category, so an Overall column reads the line's own row
+and a class column reads its categories. A class mapped to one category is that
+category; a class mapped to two - `Bi-specific`, `Other` - is the two counts
+added, which is exact because the categories partition the line and the package
+checks that they do. A **rate** over more than one category is refused rather
+than invented: a rate is not the sum of its strata's rates.
+
+**By subgroup: not on those tables.** They carry no patient id, and a subgroup
+is a set of patients, so an age, neuropathy or frailty column against them reads
+as not filled and says so. Closing that needs the package to group them by the
+subgroup as well, the way it now groups by SOC category.
 
 Everything reading a per-patient table - demographics, comorbidity, frailty,
-periods, SOC and the time-to-event outcomes - takes both, because a subgroup is
-a set of patients and those tables name patients. That is the whole of T1, T1b,
-T4, T5c and most of T3.
+periods, SOC and the time-to-event outcomes - takes both. That is the whole of
+T1, T1b, T4, T5c and most of T3.
 
-This is one study-side change, not a shell edit, which is why the columns are
-left in place: they state what was asked for, and `tfls_unfilled.csv` names the
-table that cannot answer it.
+The columns that cannot be filled are left in place: they state what was asked
+for, and `tfls_unfilled.csv` names the table that cannot answer it.
 
 ## Disclosure
 
