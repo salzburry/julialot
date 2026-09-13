@@ -1740,72 +1740,72 @@ cat("\nthe shells are filled at the sidebar's floor, and no lower\n")
   if (!isTRUE(ready$ok)) {
     cat("  SKIP   the shells are not beside this folder\n")
   } else {
-  s <- SCENARIOS[["s223926_"]]
-  ok(nrow(ready$shells$tables) > 0 && nrow(ready$shells$classes) > 0,
-     "the shells beside the dashboard load, tables and classes")
-  ok(length(shell_table_choices(ready)) == nrow(ready$shells$tables) &&
-       all(ready$shells$tables$table_id %in% shell_table_choices(ready)),
-     "and every table in the file is one a viewer can pick, by its title")
+    s <- SCENARIOS[["s223926_"]]
+    ok(nrow(ready$shells$tables) > 0 && nrow(ready$shells$classes) > 0,
+       "the shells beside the dashboard load, tables and classes")
+    ok(length(shell_table_choices(ready)) == nrow(ready$shells$tables) &&
+         all(ready$shells$tables$table_id %in% shell_table_choices(ready)),
+       "and every table in the file is one a viewer can pick, by its title")
 
-  f <- shell_fill(ready, "T4", SRC, s, 25L)
-  ok(sum(f$cells$FILLED == 1L) > 0,
-     "a table filled from this scenario has cells in it")
-  ok(identical(f$floor_n, 25L), "the floor reaching the engine is the sidebar's")
-  ok(identical(shell_fill(ready, "T4", SRC, s, 1L)$floor_n, 25L),
-     "asking for 1 fills at the package's 25, not at the 1")
-  ok(identical(shell_floor(1L, 25L, ready), 25L) &&
-       identical(shell_floor(60L, 25L, ready), 60L),
-     "the floor a viewer may only raise is decided in one place")
-  hi <- shell_fill(ready, "T4", SRC, s, 60000L)
-  ok(identical(hi$floor_n, 60000L), "and a viewer raising it is honoured")
+    f <- shell_fill(ready, "T4", SRC, s, 25L)
+    ok(sum(f$cells$FILLED == 1L) > 0,
+       "a table filled from this scenario has cells in it")
+    ok(identical(f$floor_n, 25L), "the floor reaching the engine is the sidebar's")
+    ok(identical(shell_fill(ready, "T4", SRC, s, 1L)$floor_n, 25L),
+       "asking for 1 fills at the package's 25, not at the 1")
+    ok(identical(shell_floor(1L, 25L, ready), 25L) &&
+         identical(shell_floor(60L, 25L, ready), 60L),
+       "the floor a viewer may only raise is decided in one place")
+    hi <- shell_fill(ready, "T4", SRC, s, 60000L)
+    ok(identical(hi$floor_n, 60000L), "and a viewer raising it is honoured")
 
-  # A withheld cell reaches the page as the engine's own text.
-  shown <- f$cells$TEXT[f$cells$FILLED == 1L & f$cells$SECTION == 0L][1]
-  h <- shell_panel_html(ready, f)
-  hh <- shell_panel_html(ready, hi)
-  ok(nzchar(shown) && grepl(shown, h, fixed = TRUE),
-     "a cell the floor allows is on the page")
-  ok(!grepl(shown, hh, fixed = TRUE),
-     "...and is gone once the floor covers it")
-  ok(grepl("&lt;60000", hh, fixed = TRUE) && !grepl("<60000", hh, fixed = TRUE),
-     "...replaced by the engine's withheld text, escaped, never by a blank")
-  supp <- hi$cells[hi$cells$SUPPRESSED == 1L, , drop = FALSE]
-  ok(nrow(supp) > 0 && all(supp$TEXT == "<60000") &&
-       all(is.na(supp$N)) && all(is.na(supp$DENOM)),
-     "and the withheld cell carries no number at all, its denominator included")
-  ok(grepl("withheld at a floor of 60,000", hh, fixed = TRUE),
-     "the page says how many cells were withheld and at what floor")
-  ok(!grepl("P[0-9]{6}", h), "no patient id reaches the filled table")
-  ok(grepl("DISCLOSURE", errs(ready$env$assert_no_identifiers(
-       data.frame(PATID = "P000001"), "a cell frame")) %||% ""),
-     "and the engine's own identifier guard is the one in the path")
-  ok(grepl("assert_no_identifiers", paste(readLines("R/tfls.R", warn = FALSE),
-                                          collapse = "\n"), fixed = TRUE),
-     "...called on the way to the page, not only on the way to a file")
+    # A withheld cell reaches the page as the engine's own text.
+    shown <- f$cells$TEXT[f$cells$FILLED == 1L & f$cells$SECTION == 0L][1]
+    h <- shell_panel_html(ready, f)
+    hh <- shell_panel_html(ready, hi)
+    ok(nzchar(shown) && grepl(shown, h, fixed = TRUE),
+       "a cell the floor allows is on the page")
+    ok(!grepl(shown, hh, fixed = TRUE),
+       "...and is gone once the floor covers it")
+    ok(grepl("&lt;60000", hh, fixed = TRUE) && !grepl("<60000", hh, fixed = TRUE),
+       "...replaced by the engine's withheld text, escaped, never by a blank")
+    supp <- hi$cells[hi$cells$SUPPRESSED == 1L, , drop = FALSE]
+    ok(nrow(supp) > 0 && all(supp$TEXT == "<60000") &&
+         all(is.na(supp$N)) && all(is.na(supp$DENOM)),
+       "and the withheld cell carries no number at all, its denominator included")
+    ok(grepl("withheld at a floor of 60,000", hh, fixed = TRUE),
+       "the page says how many cells were withheld and at what floor")
+    ok(!grepl("P[0-9]{6}", h), "no patient id reaches the filled table")
+    ok(grepl("DISCLOSURE", errs(ready$env$assert_no_identifiers(
+         data.frame(PATID = "P000001"), "a cell frame")) %||% ""),
+       "and the engine's own identifier guard is the one in the path")
+    ok(grepl("assert_no_identifiers", paste(readLines("R/tfls.R", warn = FALSE),
+                                            collapse = "\n"), fixed = TRUE),
+       "...called on the way to the page, not only on the way to a file")
 
-  # The reader is the dashboard's own, bound to the run - not a second one.
-  cut <- s; cut$modules <- c("spine", "cohorts", "attrition")
-  fc <- shell_fill(ready, "T4", SRC, cut, 25L)
-  ok(sum(fc$cells$FILLED == 1L) == 0 &&
-       any(grepl("S_TTE was not read by this run", fc$unfilled$REASON, fixed = TRUE)),
-     "a table this run did not write fills nothing here either, and says so")
+    # The reader is the dashboard's own, bound to the run - not a second one.
+    cut <- s; cut$modules <- c("spine", "cohorts", "attrition")
+    fc <- shell_fill(ready, "T4", SRC, cut, 25L)
+    ok(sum(fc$cells$FILLED == 1L) == 0 &&
+         any(grepl("S_TTE was not read by this run", fc$unfilled$REASON, fixed = TRUE)),
+       "a table this run did not write fills nothing here either, and says so")
 
-  # The eligibility flag is a decision, and the table says which way it went.
-  ft <- shell_fill(ready, "T4", SRC, s, 25L, tte_eligible_only = TRUE)
-  ok(any(grepl("TTE_ELIGIBLE = 1", ft$notes, fixed = TRUE)),
-     "applying the eligibility flag is stated on the page")
-  ok(any(grepl("leaves to the reader", f$notes, fixed = TRUE)),
-     "and leaving it off, which is the default, says that instead")
+    # The eligibility flag is a decision, and the table says which way it went.
+    ft <- shell_fill(ready, "T4", SRC, s, 25L, tte_eligible_only = TRUE)
+    ok(any(grepl("TTE_ELIGIBLE = 1", ft$notes, fixed = TRUE)),
+       "applying the eligibility flag is stated on the page")
+    ok(any(grepl("leaves to the reader", f$notes, fixed = TRUE)),
+       "and leaving it off, which is the default, says that instead")
 
-  # What nothing could fill, and whose gap each one is.
-  u <- shell_unfilled_html(ready, f)
-  ok(all(unique(f$unfilled$REASON_KIND) %in% ready$env$TFLS_REASON_KINDS),
-     "every unfilled row carries one of the three kinds the engine records")
-  ok(all(vapply(unique(f$unfilled$REASON_KIND), function(k)
-    grepl(paste0("<h5>", k), u, fixed = TRUE), logical(1))),
-     "and the listing groups them under it")
-  ok(grepl("not filled", h, fixed = TRUE),
-     "a row nothing could fill reads as unfilled in the table, not as a blank")
+    # What nothing could fill, and whose gap each one is.
+    u <- shell_unfilled_html(ready, f)
+    ok(all(unique(f$unfilled$REASON_KIND) %in% ready$env$TFLS_REASON_KINDS),
+       "every unfilled row carries one of the three kinds the engine records")
+    ok(all(vapply(unique(f$unfilled$REASON_KIND), function(k)
+      grepl(paste0("<h5>", k), u, fixed = TRUE), logical(1))),
+       "and the listing groups them under it")
+    ok(grepl("not filled", h, fixed = TRUE),
+       "a row nothing could fill reads as unfilled in the table, not as a blank")
   }
 }
 
@@ -1815,23 +1815,23 @@ cat("\nthe class mapping is the thing to edit\n")
   if (!isTRUE(ready$ok)) {
     cat("  SKIP   the shells are not beside this folder\n")
   } else {
-  cm <- shell_class_table(ready)
-  ok(nrow(cm) == nrow(ready$shells$classes),
-     "the class mapping lists every class in the file")
-  hc <- shell_class_html(ready)
-  ok(all(vapply(ready$shells$classes$class_id, function(id)
-    grepl(id, hc, fixed = TRUE), logical(1))),
-     "and every one of them reaches the page")
-  ok(all(c("CLASS", "STUDY_CATEGORIES", "DRUG_REFINEMENT") %in% names(cm)),
-     "with the study categories it rolls up and any drug refinement beside it")
-  ok(grepl("regimen_classes.csv", hc, fixed = TRUE) &&
-       grepl("the columns change with it", hc, fixed = TRUE),
-     "the panel says which file to edit and that editing it changes the columns")
-  # A class the study's vocabulary cannot separate yet is not an empty column.
-  gap <- cm$STUDY_CATEGORIES[cm$CLASS_ID == "POM_TRIP"]
-  ok(length(gap) == 1L && grepl("unfilled", gap, fixed = TRUE),
-     "a class mapped to no category says so rather than reading as nobody")
-  ok(!grepl("P[0-9]{6}", hc), "and the mapping carries nothing patient-level")
+    cm <- shell_class_table(ready)
+    ok(nrow(cm) == nrow(ready$shells$classes),
+       "the class mapping lists every class in the file")
+    hc <- shell_class_html(ready)
+    ok(all(vapply(ready$shells$classes$class_id, function(id)
+      grepl(id, hc, fixed = TRUE), logical(1))),
+       "and every one of them reaches the page")
+    ok(all(c("CLASS", "STUDY_CATEGORIES", "DRUG_REFINEMENT") %in% names(cm)),
+       "with the study categories it rolls up and any drug refinement beside it")
+    ok(grepl("regimen_classes.csv", hc, fixed = TRUE) &&
+         grepl("the columns change with it", hc, fixed = TRUE),
+       "the panel says which file to edit and that editing it changes the columns")
+    # A class the study's vocabulary cannot separate yet is not an empty column.
+    gap <- cm$STUDY_CATEGORIES[cm$CLASS_ID == "POM_TRIP"]
+    ok(length(gap) == 1L && grepl("unfilled", gap, fixed = TRUE),
+       "a class mapped to no category says so rather than reading as nobody")
+    ok(!grepl("P[0-9]{6}", hc), "and the mapping carries nothing patient-level")
   }
 }
 

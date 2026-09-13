@@ -32,7 +32,8 @@ tfls_dir <- function(dir = DASH_CFG$tfls_dir) {
   if (!nzchar(dir %||% "")) dir <- "../TFLS"
   if (dir.exists(dir)) return(dir)
   # The dashboard's own folder, as global.R resolved it at startup.
-  root <- mget(".dash_dir", envir = globalenv(), ifnotfound = list(getwd()))[[1]]
+  root <- mget(".dash_dir", envir = globalenv(),
+               ifnotfound = list(getwd()))[[1]]
   alt <- file.path(dirname(root), "TFLS")
   if (dir.exists(alt)) return(alt)
   dir
@@ -131,10 +132,15 @@ shell_grid_html <- function(ready, filled) {
   cols <- e$filled_columns(cells)
   rows <- e$filled_rows(cells)
   markers <- e$chr(e$shell_footnotes_of(ready$shells, filled$table_id)$marker)
-  label_html <- function(i)
+  # A marker prints only where the table has a footnote of that name: the note
+  # column also carries why a row reads what it reads, and a paragraph of that
+  # in a label is not a marker.
+  label_html <- function(i) {
+    n <- e$chr(rows$NOTE[i])
     paste0(e$indent_prefix(rows$INDENT[i]), html_escape(rows$ROW_LABEL[i]),
-           if (e$chr(rows$NOTE[i]) %in% markers)
-             paste0(" [", html_escape(rows$NOTE[i]), "]") else "")
+           if (nzchar(n) && n %in% markers) paste0(" [", html_escape(n), "]")
+           else "")
+  }
   head_html <- paste0("<th></th>", paste(vapply(seq_len(nrow(cols)), function(i)
     sprintf("<th>%s%s</th>",
             if (nzchar(e$chr(cols$COLUMN_GROUP[i])))
@@ -226,7 +232,8 @@ shell_unfilled_html <- function(ready, filled, max_rows = 5000L) {
     d <- u[u$REASON_KIND == k, , drop = FALSE]
     if (!nrow(d)) return("")
     paste0(sprintf("<h5>%s (%s)</h5>", html_escape(k), fmt_num(nrow(d), 0)),
-           sprintf('<p class="note">%s</p>', html_escape(SHELL_REASON_LABEL[[k]])),
+           sprintf('<p class="note">%s</p>',
+                   html_escape(SHELL_REASON_LABEL[[k]])),
            html_table(d[, show, drop = FALSE], max_rows = max_rows))
   })
   paste(unlist(out), collapse = "")
@@ -257,7 +264,8 @@ shell_class_table <- function(ready) {
     }),
     DRUG_REFINEMENT = per(function(i) {
       d <- e$class_requires_drug(cl$class_id[i], cl)
-      if (nzchar(d)) paste0("only the lines whose regimen holds ", d) else "none"
+      if (nzchar(d)) paste0("only the lines whose regimen holds ", d)
+      else "none"
     }),
     NOTE = e$chr(cl$note),
     stringsAsFactors = FALSE)
