@@ -352,6 +352,11 @@ server <- function(input, output, session) {
     if (!isTRUE(ready$ok)) return(div(class = "alert", html_escape(ready$why)))
     id <- paste0("shl_", p$name)
     if (identical(p$view %||% "tables", "classes")) {
+      # No check after this one, and none to make: the class mapping is read
+      # off the shells folder's own file and names no figure from the run, so
+      # a rebuild does not change a word of it. It takes no control of its own
+      # either, so it never re-runs past the panel guard the way the filled
+      # table does.
       output[[id]] <- renderUI(HTML(shell_class_html(ready, DASH_CFG$max_rows)))
       return(uiOutput(id))
     }
@@ -368,6 +373,13 @@ server <- function(input, output, session) {
                    prefer_release = DASH_CFG$prefer_release,
                    package_min_n = DASH_CFG$suppress_min_n),
         error = function(e) e)
+      # And asked again now the fill is back, before anything is drawn. A fill
+      # reads several tables and the reader checks the run around each one, so
+      # a rebuild part way through refuses the later reads while the rows
+      # already read stay in `filled`. Those rows are the previous run's, and
+      # the list of rows nothing could fill is read off the same object, so
+      # both give way to the notice every other panel shows.
+      if (scenario_moved(s)) return(moved_alert())
       # A refusal - a shell file that is wrong, or an identifier where none may
       # be - is shown rather than swallowed. It names what to fix.
       if (inherits(filled, "error"))

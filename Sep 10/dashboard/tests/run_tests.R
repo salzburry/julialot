@@ -1809,6 +1809,64 @@ cat("\nthe shells are filled at the sidebar's floor, and no lower\n")
   }
 }
 
+cat("\nthe snapshot is rebuilt while a shell table is being filled\n")
+{
+  ready <- tfls_ready()
+  if (!isTRUE(ready$ok)) {
+    cat("  SKIP   the shells are not beside this folder\n")
+  } else {
+    # shiny is not installed in this environment, so the panel is not driven
+    # through testServer(). The decision it makes is driven directly instead:
+    # scenario_moved() in app.R is isFALSE(scenario_is_current()), and the
+    # fill it is asked about here is a real one.
+    s <- SCENARIOS[["s223926_"]]
+    # A source whose run is rebuilt once the fill's first table has been read.
+    # read_scenario_table() asks the metadata twice per table, before the read
+    # and after it, so the third question is the second table's.
+    md <- 0L
+    moving <- list(read = function(prefix, table) {
+      if (identical(table, "S_RUN_METADATA")) {
+        md <<- md + 1L
+        return(data.frame(RUN_ID = s$run_id, STATE = s$state,
+                          UPDATED_AT = if (md > 2L) "2026-09-09 13:00:00"
+                                       else s$updated_at,
+                          stringsAsFactors = FALSE))
+      }
+      SRC$read(prefix, table)
+    })
+    f <- shell_fill(ready, "T4", moving, s, 25L)
+    ok(sum(f$cells$FILLED == 1L) > 0 && nrow(f$cells) > 0,
+       "a run rebuilt mid-fill leaves the rows read before it in the filled table")
+    ok(isFALSE(scenario_is_current(moving, s)),
+       "...and the check the panel makes is the one that says the run has moved")
+    ok(grepl('table class="grid"', shell_panel_html(ready, f), fixed = TRUE),
+       "...so a filled table drawn from it would put the previous run's rows on the page")
+    # What keeps them off it: the same check, asked again between the fill and
+    # anything being drawn. A text check, because the placement is the fix -
+    # the answer itself is driven above.
+    app <- paste(readLines("app.R", warn = FALSE), collapse = "\n")
+    after <- substring(app, regexpr("shell_fill(ready, tid", app, fixed = TRUE))
+    at <- function(x) regexpr(x, after, fixed = TRUE)
+    ok(at("scenario_moved(s)") > 0 &&
+         at("scenario_moved(s)") < at("shell_panel_html(ready, filled)"),
+       "the panel asks again once the fill is back, before the grid is built")
+    ok(at("scenario_moved(s)") < at("shell_unfilled_html(ready, filled"),
+       "...and before the rows nothing could fill, which are read off the same fill")
+    ok(grepl("if (scenario_moved(s)) return(moved_alert())", after, fixed = TRUE),
+       "...and shows the notice the other panels show, not a second one of its own")
+    # The class mapping is the exception, and it is one for a reason: it is
+    # read off the shells folder's file, not off the run, so a rebuild changes
+    # nothing in it.
+    hc <- shell_class_html(ready)
+    ok(identical(hc, shell_class_html(tfls_ready())),
+       "the class mapping is the same table whatever the run has done since")
+    ok(!grepl("SRC", paste(deparse(shell_class_table), collapse = "\n"), fixed = TRUE) &&
+         !grepl("read_scenario_table",
+                paste(deparse(shell_class_html), collapse = "\n"), fixed = TRUE),
+       "...because it reads the shells folder's own file and never the run's tables")
+  }
+}
+
 cat("\nthe class mapping is the thing to edit\n")
 {
   ready <- tfls_ready()
