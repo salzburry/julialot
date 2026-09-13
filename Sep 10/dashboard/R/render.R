@@ -6,25 +6,42 @@
 # GSK colours, written out here rather than read from a sibling folder: this
 # folder has to stand on its own, and reaching across for eleven strings would
 # end that.
+#
+# Three colours and nothing else: GSK orange, white, black. Every other entry
+# is one of the three, the orange mixed with the page, or a neutral grey of the
+# black. Mixing towards white leaves the hue exactly where it was, so the tints
+# are the orange and not a neighbour of it - the suite checks that every entry
+# is either grey or within a degree of the orange.
+#
+# Text is black wherever it sits, including on the orange header. White on
+# this orange is 3.1:1, which fails at the size the subtitle is set in; black
+# on it is 6.8:1 and passes at every size.
 PALETTE <- c(
   orange      = "#F36633",
-  orange_dark = "#D14E1F",
-  orange_pale = "#FDEDE6",
+  orange_dark = "#D14E1F",   # orange dark enough to read as text on white
+  orange_pale = "#FEF0EB",   # the tint under a table head and a section row
   paper       = "#FFFFFF",
-  ink         = "#1B1B1B",
-  slate       = "#5A5A64",
-  line        = "#E6E6E6",
-  wash        = "#FBF9F8",
-  alert_ink   = "#7A4A1C",
-  alert_bg    = "#FDF1E9",
-  alert_line  = "#F6D8C4"
+  ink         = "#000000",
+  slate       = "#4D4D4D",   # a neutral grey of the black, for second-rank text
+  line        = "#E0E0E0",
+  wash        = "#FFFFFF",
+  alert_ink   = "#000000",
+  alert_bg    = "#FCDDD2",   # a stronger tint, so a withheld cell reads as one
+  alert_line  = "#FABAA3"
 )
 
-# A categorical ramp for series that are not the primary. Derived from the
-# palette rather than written out, so a swap carries.
+# A categorical ramp for series that are not the primary.
+#
+# Orange and black, and a tint of each towards the page, because the brand is
+# two colours and a chart drawn in a third is not in it. Six steps that can be
+# told apart; past that the ramp interpolates and the legend is doing the work.
+# Derived from the palette rather than written out, so a swap carries.
 series_colours <- function(n) {
-  base <- c(PALETTE[["orange"]], PALETTE[["slate"]], PALETTE[["orange_dark"]],
-            "#8C6D9C", "#3F7F7A", "#B58A3C", "#6B7FA8")
+  toward_paper <- function(from)
+    grDevices::colorRampPalette(c(from, PALETTE[["paper"]]))(4)[2]
+  base <- c(PALETTE[["orange"]], PALETTE[["ink"]], PALETTE[["orange_dark"]],
+            PALETTE[["slate"]], toward_paper(PALETTE[["orange"]]),
+            toward_paper(PALETTE[["ink"]]))
   if (n <= length(base)) return(base[seq_len(n)])
   grDevices::colorRampPalette(base)(n)
 }

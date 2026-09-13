@@ -2183,6 +2183,49 @@ cat("\nthe palette is this folder's own\n")
             length(PALETTE), ")"))
   ok(all(grepl("^#[0-9A-Fa-f]{6}$", PALETTE)),
      "...and each one is a hex colour")
+
+  # Three colours and nothing else. Every entry has to be grey - white, black
+  # or a neutral step between them - or the GSK orange at some lightness. A
+  # fourth hue added here would pass every other test in this file and put the
+  # page off the brand, so it is held as arithmetic rather than as a comment.
+  hue_of <- function(hx) {
+    v <- grDevices::col2rgb(hx)[, 1] / 255
+    mx <- max(v); mn <- min(v); d <- mx - mn
+    if (d < 0.02) return(NA_real_)          # grey: no hue to be wrong about
+    h <- if (mx == v[1]) ((v[2] - v[3]) / d) %% 6
+         else if (mx == v[2]) ((v[3] - v[1]) / d) + 2
+         else ((v[1] - v[2]) / d) + 4
+    (60 * h) %% 360
+  }
+  hues <- vapply(PALETTE, hue_of, numeric(1))
+  brand <- hue_of(PALETTE[["orange"]])
+  off <- names(hues)[!is.na(hues) & abs(hues - brand) > 1]
+  ok(!length(off),
+     paste0("every colour is grey or the GSK orange, and no third hue",
+            if (length(off)) paste0(" [", paste(off, collapse = ", "), "]") else ""))
+  ok(identical(unname(PALETTE[["ink"]]), "#000000") &&
+       identical(unname(PALETTE[["paper"]]), "#FFFFFF") &&
+       identical(unname(PALETTE[["wash"]]), "#FFFFFF"),
+     "...text is black and the page is white")
+
+  # Contrast, where the brand puts text on the orange. White on this orange is
+  # 3.1:1 and fails at the size the header subtitle is set in; black is 6.8:1.
+  relative_luminance <- function(hx) {
+    v <- grDevices::col2rgb(hx)[, 1] / 255
+    v <- ifelse(v <= 0.03928, v / 12.92, ((v + 0.055) / 1.055) ^ 2.4)
+    sum(c(0.2126, 0.7152, 0.0722) * v)
+  }
+  contrast <- function(a, b) {
+    l <- sort(c(relative_luminance(a), relative_luminance(b)))
+    (l[2] + 0.05) / (l[1] + 0.05)
+  }
+  ok(contrast(PALETTE[["ink"]], PALETTE[["orange"]]) >= 4.5,
+     "black on the orange header clears 4.5:1")
+  ok(contrast(PALETTE[["ink"]], PALETTE[["alert_bg"]]) >= 4.5 &&
+       contrast(PALETTE[["ink"]], PALETTE[["orange_pale"]]) >= 4.5,
+     "...and on both tints a table uses")
+  ok(contrast(PALETTE[["slate"]], PALETTE[["paper"]]) >= 4.5,
+     "...and second-rank text on the page")
   src_all <- paste(vapply(list.files("R", "[.]R$", full.names = TRUE),
                           function(f) paste(readLines(f, warn = FALSE),
                                             collapse = "\n"), character(1)),

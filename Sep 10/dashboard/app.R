@@ -12,9 +12,9 @@ source("global.R")
 CSS <- sprintf('
 :root{--o:%s;--od:%s;--opl:%s;--pa:%s;--ink:%s;--sl:%s;--ln:%s;--wa:%s;--ai:%s;--ab:%s;--al:%s}
 body{background:var(--wa);color:var(--ink);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
-.hdr{background:var(--o);color:var(--pa);padding:18px 24px;margin:-15px -15px 16px}
+.hdr{background:var(--o);color:var(--ink);padding:18px 24px;margin:-15px -15px 16px}
 .hdr h1{margin:0;font-size:19px;font-weight:600}
-.hdr p{margin:4px 0 0;font-size:13px;opacity:.92}
+.hdr p{margin:4px 0 0;font-size:13px}
 .well,.panel{background:var(--pa);border:1px solid var(--ln);border-radius:6px}
 table.grid{border-collapse:collapse;width:100%%;font-size:13px;background:var(--pa)}
 table.grid th{background:var(--opl);text-align:left;padding:7px 9px;border-bottom:1px solid var(--ln);font-weight:600}
@@ -24,13 +24,13 @@ table.grid tr.sec td{background:var(--opl);font-weight:600}
 .wide{overflow-x:auto}
 .kpis{display:flex;flex-wrap:wrap;gap:12px;margin:6px 0 14px}
 .kpi{background:var(--pa);border:1px solid var(--ln);border-radius:6px;padding:12px 16px;min-width:130px}
-.kpi-v{font-size:22px;font-weight:600;color:var(--o)}
+.kpi-v{font-size:22px;font-weight:600;color:var(--od)}
 .kpi-k{font-size:12px;color:var(--sl);margin-top:2px}
 .note,.cap{font-size:12px;color:var(--sl);margin:6px 0}
 .empty{color:var(--sl);font-style:italic;padding:14px 0}
 .alert{background:var(--ab);border:1px solid var(--al);color:var(--ai);padding:10px 13px;border-radius:6px;font-size:13px;margin-bottom:12px}
 .scn{font-size:12px;color:var(--sl);border-left:3px solid var(--o);padding-left:9px;margin:8px 0}
-pre.cmd{background:#1B1B1B;color:#EDEDED;padding:11px;border-radius:6px;font-size:12px;white-space:pre-wrap}
+pre.cmd{background:var(--ink);color:var(--pa);padding:11px;border-radius:6px;font-size:12px;white-space:pre-wrap}
 ',
 .p[["orange"]], .p[["orange_dark"]], .p[["orange_pale"]], .p[["paper"]],
 .p[["ink"]], .p[["slate"]], .p[["line"]], .p[["wash"]], .p[["alert_ink"]],
