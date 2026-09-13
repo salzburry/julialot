@@ -778,7 +778,10 @@ fill_table <- function(sh, tid, ctx, floor_n = TFLS_PACKAGE_MIN_N) {
     }
   }
   out <- if (length(cells)) do.call(rbind, cells) else empty_cells()
-  out <- suppress_cells(out, floor_n)
+  # The shell goes with the cells: the sums a withheld cell could be read
+  # off - a subtotal down a column, a total across a row - are drawn by the
+  # shell's own indentation and columns.
+  out <- suppress_cells(out, floor_n, sh)
   # A cell nothing could fill says so, rather than printing as an empty string
   # a reader could take for a zero.
   blankable <- out$FILLED == 0L & out$SECTION == 0L

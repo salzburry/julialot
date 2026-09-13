@@ -371,6 +371,218 @@ S7 <- suppress_cells(mk_cells("n_pct", c(30, 10), c(100, 100)), 50)
 ok(all(S7$SUPPRESSED == 1L) && all(S7$TEXT == "<50"),
    "a raised floor withholds more, and the cells say which floor they did not reach")
 
+cat("\n-- the sums a reader can subtract within --\n")
+#
+# A withheld cell is no secret while the shell prints a sum it is the last
+# unknown of. Three sums are read off the shell itself - a subtotal down a
+# column, a total across a row, and the levels of a variable against the
+# column's own N - and each fixture below is one of them.
+
+# A frame of cells with the shell's shape in it: one cell per row and column,
+# carrying the indentation the shell gives the row. A row may name its own
+# section and its own statistic, because a section is what the sums are read
+# within and only counts take part in one.
+shaped_cells <- function(tid, section, columns, rows, denom, stat = "n_pct") {
+  denom <- rep_len(denom, length(columns))
+  out <- list()
+  for (ri in seq_along(rows)) {
+    r <- rows[[ri]]
+    for (ci in seq_along(columns))
+      out[[length(out) + 1L]] <- data.frame(
+        TABLE_ID = tid, ROW_ORDER = ri, ROW_LABEL = r$label,
+        INDENT = as.integer(r$indent), SECTION = 0L,
+        SECTION_LABEL = if (is.null(r$section)) section else r$section,
+        NOTE = "", STAT = if (is.null(r$stat)) stat else r$stat, SOURCE = "S_X",
+        MEASURE = "", COLUMN_ORDER = ci, COLUMN_ID = columns[ci],
+        COLUMN_LABEL = columns[ci], COLUMN_GROUP = "", VALUE = r$n[ci],
+        LOW = NA_real_, HIGH = NA_real_, N = r$n[ci], DENOM = denom[ci],
+        TEXT = as.character(r$n[ci]), FILLED = 1L, SUPPRESSED = 0L,
+        REASON = "", REASON_KIND = "", stringsAsFactors = FALSE)
+  }
+  do.call(rbind, out)
+}
+
+# What a reader of the finished table can see of one cell: its count, or
+# nothing at all where the cell was withheld.
+seen <- function(s, label, column = s$COLUMN_ID[1]) {
+  i <- which(s$ROW_LABEL == label & s$COLUMN_ID == column)[1]
+  if (is.na(i) || s$SUPPRESSED[i] == 1L) NA_real_ else s$N[i]
+}
+
+# A sum gives a cell away when exactly one of its terms is missing from the
+# page: that one term IS the sum less the published rest. Every term goes in,
+# the total among them, and a total that is printed in the column header rather
+# than in a cell goes in as the number it is.
+gives_away <- function(terms) sum(is.na(terms)) == 1L
+
+# The same test, over every sum the engine itself reads off the shell rather
+# than over one written out by hand: no relation may be left with exactly one
+# withheld member. This is the whole property of the pass.
+no_lone_unknown <- function(s, shell = NULL)
+  all(vapply(cell_relations(s, shell),
+             function(r) sum(s$SUPPRESSED[r$members] == 1L) != 1L, logical(1)))
+
+# 1. The reviewer's first fixture, as numbers: the age block of T1 down one
+# column. The three bands are indented under the subtotal and sum to it.
+AGE <- shaped_cells("T1", "Age distribution at index (N%)", "1L_OVERALL",
+  list(list(label = "<75 years",        indent = 1, n = 121),
+       list(label = "18 to 44 years",   indent = 2, n = 1),
+       list(label = "45 to 64 years",   indent = 2, n = 60),
+       list(label = "65 to 74 years",   indent = 2, n = 60),
+       list(label = "75 years or more", indent = 1, n = 4)), 125)
+ok(121 - 60 - 60 == 1 && 125 - 121 == 4,
+   "the fixture is the reviewer's: the subtotal less its two published bands is the band of one, and the column N less the subtotal is the row of four")
+SA <- suppress_cells(AGE, 25)
+ok(seen(SA, "18 to 44 years") %in% NA_real_ &&
+     seen(SA, "75 years or more") %in% NA_real_,
+   "the two cells under the floor are withheld, as they were before")
+ok(!gives_away(c(seen(SA, "<75 years"), seen(SA, "18 to 44 years"),
+                 seen(SA, "45 to 64 years"), seen(SA, "65 to 74 years"))),
+   "121 - 60 - 60 is a subtraction the published table no longer allows: the subtotal down the column has more than one term missing")
+ok(!gives_away(c(125, seen(SA, "<75 years"), seen(SA, "75 years or more"))),
+   "...and neither does 125 - 121, the column N against the rows outside the subtotal")
+ok(sum(SA$SUPPRESSED) > 2L,
+   "closing those two sums withheld more than the floor alone did, which is the only direction this rule may move in")
+ok(all(is.na(SA$N[SA$SUPPRESSED == 1L])) &&
+     all(is.na(SA$DENOM[SA$SUPPRESSED == 1L])) &&
+     all(SA$TEXT[SA$SUPPRESSED == 1L] == "<25"),
+   "every cell withheld by a sum keeps no number behind its text, and prints as the floor")
+ok(has(SA$REASON[SA$ROW_LABEL == "45 to 64 years"], "subtotal '<75 years'"),
+   "the reason names the sum that forced it, not the floor it does clear")
+ok(no_lone_unknown(SA),
+   "no sum the engine reads off this table is left with exactly one withheld member")
+ok(identical(suppress_cells(SA, 25)$SUPPRESSED, SA$SUPPRESSED),
+   "and the answer is a fixed point: running the rule again withholds nothing further")
+
+# 2. The reviewer's second fixture, as numbers: one row of T1b across its
+# columns. The two subgroup columns partition the overall one.
+NEURO_COLUMNS <- data.frame(
+  table_id = "T1b", label = c("Overall", "Baseline Neuropathy = Yes",
+                              "Baseline Neuropathy = No"),
+  order = 1:3, column_id = c("1L_OVERALL", "1L_NEURO_YES", "1L_NEURO_NO"),
+  group = "1L (N=)", cohort = "1L", line = "1", class = "OVERALL",
+  subgroup = c("", "S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=1",
+               "S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=0"),
+  period = "", note = "", stringsAsFactors = FALSE)
+NEU <- shaped_cells("T1b", "Sex (N%)",
+  c("1L_OVERALL", "1L_NEURO_YES", "1L_NEURO_NO"),
+  list(list(label = "Male", indent = 1, n = c(60, 1, 59))), c(200, 30, 170))
+ok(60 - 59 == 1,
+   "the fixture is the reviewer's: the overall column less the published subgroup is the withheld one")
+SN <- suppress_cells(NEU, 25, list(columns = NEURO_COLUMNS))
+ok(seen(SN, "Male", "1L_NEURO_YES") %in% NA_real_,
+   "the subgroup of one is withheld by the floor")
+ok(!gives_away(c(seen(SN, "Male", "1L_OVERALL"), seen(SN, "Male", "1L_NEURO_YES"),
+                 seen(SN, "Male", "1L_NEURO_NO"))),
+   "60 - 59 is a subtraction the published table no longer allows: the total across the row has more than one term missing")
+ok(has(SN$REASON[SN$COLUMN_ID == "1L_NEURO_NO"], "'Overall'"),
+   "the reason names the total column that forced it")
+ok(no_lone_unknown(SN, list(columns = NEURO_COLUMNS)),
+   "no sum the engine reads off this table is left with exactly one withheld member either")
+ok(sum(suppress_cells(NEU, 25)$SUPPRESSED) == 1L &&
+     sum(SN$SUPPRESSED) > sum(suppress_cells(NEU, 25)$SUPPRESSED),
+   "a caller that passes no shell still withholds everything the floor asks for, and the shell only ever adds to it")
+
+# The same row again, with the shell's columns held as columns.csv spells them
+# - col_id and lot_num - rather than as load_shells() renames them. The sum is
+# the same sum and has to be read either way.
+RAW_COLUMNS <- data.frame(
+  table_id = "T1b", col_id = c("1L_OVERALL", "1L_NEURO_YES", "1L_NEURO_NO"),
+  label = c("Overall", "Baseline Neuropathy = Yes", "Baseline Neuropathy = No"),
+  cohort = "1L", lot_num = "1", class = "OVERALL",
+  subgroup = c("", "NEUROPATHY=YES", "NEUROPATHY=NO"), period = "",
+  stringsAsFactors = FALSE)
+SR <- suppress_cells(NEU, 25, list(columns = RAW_COLUMNS))
+ok(identical(SR$SUPPRESSED, SN$SUPPRESSED) && no_lone_unknown(SR, list(columns = RAW_COLUMNS)),
+   "the columns read the same under the CSV's own spellings, so 60 - 59 is closed there too")
+ok(sum(suppress_cells(NEU, 25, list(columns = RAW_COLUMNS[, c("table_id", "col_id")]))$SUPPRESSED) >= 1L,
+   "and a columns frame carrying nothing to split the table by still withholds what the floor asks")
+
+# The sum across a row holds within one row and not down a column. A second
+# row, in a section of its own so that no sum down a column reaches it, is
+# untouched by what the first row gave up.
+TWO_ROW <- rbind(NEU, shaped_cells("T1b", "Race (N%)",
+  c("1L_OVERALL", "1L_NEURO_YES", "1L_NEURO_NO"),
+  list(list(label = "White", indent = 1, n = c(140, 40, 100))), c(200, 30, 170)))
+TWO_ROW$ROW_ORDER[TWO_ROW$ROW_LABEL == "White"] <- 2L
+S2R <- suppress_cells(TWO_ROW, 25, list(columns = NEURO_COLUMNS))
+ok(sum(S2R$SUPPRESSED) == 2L && all(S2R$SUPPRESSED[S2R$ROW_LABEL == "White"] == 0L),
+   "the row with a cell under the floor loses a second cell of its own row, and the row beside it loses nothing")
+
+# 3. Three levels, two of them under the floor. The total less the published
+# level is the two withheld ones together, and nothing says how it splits, so
+# no third cell is lost for nothing.
+THREE <- shaped_cells("T1b", "Sex (N%)",
+  c("1L_OVERALL", "1L_NEURO_YES", "1L_NEURO_NO"),
+  list(list(label = "Male", indent = 1, n = c(100, 10, 10))), c(300, 30, 30))
+THREE <- rbind(THREE, shaped_cells("T1b", "Sex (N%)", "1L_OTHER",
+  list(list(label = "Male", indent = 1, n = 80)), 240))
+THREE$COLUMN_ORDER[THREE$COLUMN_ID == "1L_OTHER"] <- 4L
+THREE_COLUMNS <- rbind(NEURO_COLUMNS, data.frame(
+  table_id = "T1b", label = "Baseline Neuropathy = Unknown", order = 4L,
+  column_id = "1L_OTHER", group = "1L (N=)", cohort = "1L", line = "1",
+  class = "OVERALL",
+  subgroup = "S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=unknown",
+  period = "", note = "", stringsAsFactors = FALSE))
+S3L <- suppress_cells(THREE, 25, list(columns = THREE_COLUMNS))
+ok(sum(S3L$SUPPRESSED) == 2L,
+   "two levels under the floor are withheld and no third cell goes with them")
+ok(!gives_away(c(seen(S3L, "Male", "1L_OVERALL"), seen(S3L, "Male", "1L_NEURO_YES"),
+                 seen(S3L, "Male", "1L_NEURO_NO"), seen(S3L, "Male", "1L_OTHER"))),
+   "100 - 80 = 20 is the two withheld levels together, and the arithmetic cannot isolate either of them")
+ok(no_lone_unknown(S3L, list(columns = THREE_COLUMNS)),
+   "...and no sum of this table is left with one member missing")
+
+# 4. The parent of a subtotal, withheld itself. The bands published under it
+# would sum to it, so one band goes with it. The shell draws the sum, not the
+# numbers: the subtotal row is rolled up from a different source than its
+# bands, so it is withheld on its own count rather than on theirs.
+PARENT <- shaped_cells("T1", "Age distribution at index (N%)", "C1",
+  list(list(label = "<75 years",      indent = 1, n = 20),
+       list(label = "18 to 44 years", indent = 2, n = 30),
+       list(label = "45 to 64 years", indent = 2, n = 40)), 200)
+SP <- suppress_cells(PARENT, 25)
+ok(seen(SP, "<75 years") %in% NA_real_,
+   "the subtotal row under the floor is withheld")
+ok(sum(SP$SUPPRESSED) == 2L && seen(SP, "18 to 44 years") %in% NA_real_,
+   "...and the smallest band goes with it, because the published bands would add up to the withheld parent")
+ok(!gives_away(c(seen(SP, "<75 years"), seen(SP, "18 to 44 years"),
+                 seen(SP, "45 to 64 years"))),
+   "so the subtotal has two terms missing and gives neither away")
+ok(no_lone_unknown(SP),
+   "...and no sum of this table is left with one member missing")
+
+# 5. A table the shell draws no sum in: one level on its own under each
+# heading, and statistics that do not add up to a total. Nothing beyond the
+# floor may be withheld here - the rule withholds to close a sum, and there is
+# no sum to close.
+FLAT <- shaped_cells("T1", "Sex (N%)", "C1",
+  list(list(label = "Male", indent = 1, n = 40),
+       list(label = "Mean and SD", indent = 1, n = 100, section = "Age at index",
+            stat = "mean_sd"),
+       list(label = "Median and IQR", indent = 1, n = 100,
+            section = "Age at index", stat = "median_iqr")), 200)
+SF <- suppress_cells(FLAT, 25)
+ok(sum(SF$SUPPRESSED) == 0L,
+   "where the shell draws no sum among the cells, nothing beyond the floor is withheld")
+ok(sum(suppress_cells(FLAT, 25, list(columns = NEURO_COLUMNS))$SUPPRESSED) == 0L,
+   "...and a shell whose columns do not split this table's own adds no sum either")
+
+# 6. A cascade that ends with the whole table withheld: the column N gives the
+# subtotal away, and the subtotal then gives its one band away. The sweeps have
+# to see the second sum only after the first has been closed, and then stop.
+CASCADE <- shaped_cells("T1", "Age distribution at index (N%)", "C1",
+  list(list(label = "<75 years",        indent = 1, n = 40),
+       list(label = "18 to 44 years",   indent = 2, n = 40),
+       list(label = "75 years or more", indent = 1, n = 10)), 50)
+SC <- suppress_cells(CASCADE, 25)
+ok(all(SC$SUPPRESSED == 1L) && all(SC$TEXT == "<25") && all(is.na(SC$N)),
+   "the sweeps run until every cell of the table is withheld, and stop there rather than going round again")
+ok(identical(suppress_cells(SC, 25)$SUPPRESSED, SC$SUPPRESSED),
+   "a table with nothing left to publish is the fixed point of the rule")
+ok(has(SC$REASON[SC$ROW_LABEL == "18 to 44 years"], "subtotal '<75 years'"),
+   "the last cell to go says which sum forced it, and it is the one closed on the second sweep")
+
 cat("\n-- nothing patient-level is written --\n")
 ok(identical(names(drop_identifiers(data.frame(PATID = "P1", N = 1))), "N"),
    "an identifier column is dropped whatever else is in the frame")
