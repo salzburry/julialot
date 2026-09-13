@@ -22,8 +22,8 @@ mod_malignancy <- function(con, cfg, cohort) {
      LOT_AFTER_WHICH int, MONTHS_FROM_DX double, MONTHS_FROM_INDEX double",
     cohort$key)
   prepare_table(con, wrk("S_MALIGNANCY_RATES"),
-    "COHORT string, LOT_NUM int, PERIOD string, SOC_CATEGORY string,
-     CATEGORY string,
+    "COHORT string, LOT_NUM int, PERIOD string,
+     SOC_CATEGORY string, AGE_BAND string, CATEGORY string,
      N_PATIENTS int, N_AT_RISK int, PERSON_YEARS double, RATE double", cohort$key)
   run_step(con, paste0("malignancy_", cohort$key), sprintf("
     INSERT INTO %1$s
@@ -140,7 +140,7 @@ mod_malignancy <- function(con, cfg, cohort) {
   reports_prevalence <- !cohort_applies(cohort, "X2_other_cancer")
 
   # The line as a whole, then each regimen category, from the same query.
-  for (sp in soc_passes(cfg, "p")) {
+  for (sp in stratum_passes(cfg, "p")) {
   run_step(con, paste0("malignancy_rates_", cohort$key, "_", sp$key), sprintf("
     INSERT INTO %1$s
     WITH cats AS (SELECT DISTINCT category FROM %6$s),
@@ -152,7 +152,7 @@ mod_malignancy <- function(con, cfg, cohort) {
       -- Summing the whole PERIOD_PY regardless kept counting time in which a
       -- first event was no longer possible, which overstates at-risk time and
       -- understates incidence.
-      SELECT p.COHORT, p.LOT_NUM, %12$s AS SOC_CATEGORY, c.category,
+      SELECT p.COHORT, p.LOT_NUM, %12$s, c.category,
              sum(CASE
                    WHEN h.PATID IS NOT NULL THEN 0
                    WHEN fm.FIRST_DT IS NOT NULL THEN %11$s
@@ -174,7 +174,7 @@ mod_malignancy <- function(con, cfg, cohort) {
       GROUP BY p.COHORT, p.LOT_NUM, c.category%14$s
     ),
     num AS (
-      SELECT p.COHORT, p.LOT_NUM, %12$s AS SOC_CATEGORY, m.CATEGORY,
+      SELECT p.COHORT, p.LOT_NUM, %12$s, m.CATEGORY,
              count(DISTINCT m.PATID) AS N_PATIENTS
       FROM %3$s m
       INNER JOIN %4$s p ON p.PATID = m.PATID AND p.COHORT = m.COHORT
@@ -186,14 +186,15 @@ mod_malignancy <- function(con, cfg, cohort) {
         AND m.FIRST_DT BETWEEN p.PERIOD_START AND p.PERIOD_END
       GROUP BY p.COHORT, p.LOT_NUM, m.CATEGORY%14$s
     )
-    SELECT den.COHORT, den.LOT_NUM, 'TREATMENT' AS PERIOD, den.SOC_CATEGORY,
-           den.category,
+    SELECT den.COHORT, den.LOT_NUM, 'TREATMENT' AS PERIOD,
+           den.SOC_CATEGORY, den.AGE_BAND, den.category,
            coalesce(num.N_PATIENTS, 0) AS N_PATIENTS, den.N_AT_RISK,
            den.PY AS PERSON_YEARS, %2$s AS RATE
     FROM den
     LEFT JOIN num ON num.COHORT = den.COHORT AND num.LOT_NUM = den.LOT_NUM
                  AND num.CATEGORY = den.category
-                 AND num.SOC_CATEGORY = den.SOC_CATEGORY",
+                 AND num.SOC_CATEGORY = den.SOC_CATEGORY
+                 AND num.AGE_BAND = den.AGE_BAND",
     wrk("S_MALIGNANCY_RATES"),
     rate_sql("coalesce(num.N_PATIENTS, 0)", "den.PY", cfg),
     wrk("S_MALIGNANCY"), wrk("S_LOT_PERIODS"), cohort$key, "S_CL_MALIG",
@@ -201,7 +202,7 @@ mod_malignancy <- function(con, cfg, cohort) {
     # At-risk time to the first confirmed occurrence, both endpoints included -
     # the same convention PERIOD_PY uses.
     person_years_sql("p.PERIOD_START", "least(fm.FIRST_DT, p.PERIOD_END)", cfg),
-    sp$expr, sp$join, sp$group),
+    sp$cols, sp$join, sp$group),
     qc = sprintf("SELECT count(*) AS n_rows FROM %s WHERE COHORT='%s'",
                  wrk("S_MALIGNANCY_RATES"), cohort$key),
     allow_empty = TRUE)
@@ -212,13 +213,13 @@ mod_malignancy <- function(con, cfg, cohort) {
     # incidence block above: a category with no baseline events would otherwise
     # produce no row, which downstream cannot be told from the module not
     # having run for it.
-    for (sp in soc_passes(cfg, "p")) {
+    for (sp in stratum_passes(cfg, "p")) {
     run_step(con, paste0("malignancy_prevalence_", cohort$key, "_", sp$key),
       sprintf("
       INSERT INTO %1$s
       WITH cats AS (SELECT DISTINCT category FROM %6$s),
       den AS (
-        SELECT p.COHORT, p.LOT_NUM, %8$s AS SOC_CATEGORY,
+        SELECT p.COHORT, p.LOT_NUM, %8$s,
                sum(p.BASELINE_PY) AS PY,
                count(DISTINCT p.PATID) AS N_AT_RISK
         FROM %4$s p
@@ -230,7 +231,7 @@ mod_malignancy <- function(con, cfg, cohort) {
         -- one. s7.8.1 baseline is prevalence - what is PRESENT - and it is
         -- taken irrespective of prior event history, so a malignancy first
         -- coded before baseline and coded again during it belongs here.
-        SELECT p.COHORT, p.LOT_NUM, %8$s AS SOC_CATEGORY, m.CATEGORY,
+        SELECT p.COHORT, p.LOT_NUM, %8$s, m.CATEGORY,
                count(DISTINCT m.PATID) AS N_PATIENTS
         FROM %7$s m
         INNER JOIN %4$s p ON p.PATID = m.PATID AND p.COHORT = m.COHORT
@@ -239,18 +240,19 @@ mod_malignancy <- function(con, cfg, cohort) {
           AND m.EVENT_DT BETWEEN p.BASELINE_START AND p.BASELINE_END
         GROUP BY p.COHORT, p.LOT_NUM, m.CATEGORY%10$s
       )
-      SELECT den.COHORT, den.LOT_NUM, 'BASELINE' AS PERIOD, den.SOC_CATEGORY,
-             cats.category,
+      SELECT den.COHORT, den.LOT_NUM, 'BASELINE' AS PERIOD,
+             den.SOC_CATEGORY, den.AGE_BAND, cats.category,
              coalesce(num.N_PATIENTS, 0), den.N_AT_RISK, den.PY, %2$s
       FROM den
       CROSS JOIN cats
       LEFT JOIN num ON num.COHORT = den.COHORT AND num.LOT_NUM = den.LOT_NUM
                    AND num.CATEGORY = cats.category
-                   AND num.SOC_CATEGORY = den.SOC_CATEGORY",
+                   AND num.SOC_CATEGORY = den.SOC_CATEGORY
+                   AND num.AGE_BAND = den.AGE_BAND",
       wrk("S_MALIGNANCY_RATES"),
       rate_sql("coalesce(num.N_PATIENTS, 0)", "den.PY", cfg),
       wrk("S_MALIGNANCY"), wrk("S_PERIODS"), cohort$key, "S_CL_MALIG",
-      wrk("S_MALIGNANCY_DATES"), sp$expr, sp$join, sp$group),
+      wrk("S_MALIGNANCY_DATES"), sp$cols, sp$join, sp$group),
       qc = sprintf("SELECT count(*) AS n_rows FROM %s
                     WHERE COHORT='%s' AND PERIOD='BASELINE'",
                    wrk("S_MALIGNANCY_RATES"), cohort$key))

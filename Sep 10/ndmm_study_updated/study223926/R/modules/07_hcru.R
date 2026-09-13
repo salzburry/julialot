@@ -141,8 +141,8 @@ mod_hcru <- function(con, cfg, cohort) {
     "PATID string, COHORT string, EVENT_TYPE string, EVENT_DT date,
      END_DT date, LOS_DAYS int, MM_RELATED int, HAS_DISCHARGE int", cohort$key)
   prepare_table(con, wrk("S_HCRU_RATES"),
-    "COHORT string, LOT_NUM int, PERIOD string, SOC_CATEGORY string,
-     MEASURE string,
+    "COHORT string, LOT_NUM int, PERIOD string,
+     SOC_CATEGORY string, AGE_BAND string, MEASURE string,
      N_PATIENTS int, N_EVENTS int, N_AT_RISK int,
      PERSON_YEARS double, RATE double,
      MEAN_LOS double, MEDIAN_LOS double, N_LOS_EXCLUDED int", cohort$key)
@@ -206,7 +206,7 @@ mod_hcru <- function(con, cfg, cohort) {
     list(name = "TREATMENT", start = "p.PERIOD_START",  end = "p.PERIOD_END",
          py = "PERIOD_PY", src = wrk("S_LOT_PERIODS")))) {
     # The line as a whole, then each regimen category, from the same query.
-    for (sp in soc_passes(cfg, "p")) {
+    for (sp in stratum_passes(cfg, "p")) {
     run_step(con, paste0("hcru_rates_", cohort$key, "_", tolower(per$name),
                          "_", sp$key),
       sprintf("
@@ -222,7 +222,7 @@ mod_hcru <- function(con, cfg, cohort) {
         -- stratum size, and a stratum that should have failed the fewer-than-25
         -- rule was released. Safety and malignancy already scope both to the
         -- at-risk set; this now matches them.
-        SELECT p.COHORT, p.LOT_NUM, %12$s AS SOC_CATEGORY, sum(p.%2$s) AS PY,
+        SELECT p.COHORT, p.LOT_NUM, %12$s, sum(p.%2$s) AS PY,
                count(DISTINCT CASE WHEN p.%2$s IS NOT NULL THEN p.PATID END)
                  AS N_AT_RISK
         FROM %3$s p
@@ -230,7 +230,7 @@ mod_hcru <- function(con, cfg, cohort) {
         WHERE p.COHORT = '%4$s' GROUP BY p.COHORT, p.LOT_NUM%14$s
       ),
       hits AS (
-        SELECT p.COHORT, p.LOT_NUM, %12$s AS SOC_CATEGORY,
+        SELECT p.COHORT, p.LOT_NUM, %12$s,
                e.PATID, e.LOS_DAYS, e.HAS_DISCHARGE,
                meas.MEASURE, meas.HIT
         FROM %5$s e
@@ -241,7 +241,7 @@ mod_hcru <- function(con, cfg, cohort) {
           AND e.EVENT_DT BETWEEN %6$s AND %7$s
       ),
       agg AS (
-        SELECT COHORT, LOT_NUM, SOC_CATEGORY, MEASURE,
+        SELECT COHORT, LOT_NUM, SOC_CATEGORY, AGE_BAND, MEASURE,
                count(DISTINCT CASE WHEN HIT = 1 THEN PATID END) AS N_PATIENTS,
                sum(HIT) AS N_EVENTS,
                avg(CASE WHEN HIT = 1 THEN LOS_DAYS END) AS MEAN_LOS,
@@ -253,11 +253,11 @@ mod_hcru <- function(con, cfg, cohort) {
                  AS MEDIAN_LOS,
                sum(CASE WHEN HIT = 1 AND HAS_DISCHARGE = 0 THEN 1 ELSE 0 END)
                  AS N_LOS_EXCLUDED
-        FROM hits GROUP BY COHORT, LOT_NUM, SOC_CATEGORY, MEASURE
+        FROM hits GROUP BY COHORT, LOT_NUM, SOC_CATEGORY, AGE_BAND, MEASURE
       ),
       meas_list AS (SELECT explode(array(%11$s)) AS MEASURE)
-      SELECT d.COHORT, d.LOT_NUM, \'%8$s\' AS PERIOD, d.SOC_CATEGORY,
-             m.MEASURE,
+      SELECT d.COHORT, d.LOT_NUM, \'%8$s\' AS PERIOD,
+             d.SOC_CATEGORY, d.AGE_BAND, m.MEASURE,
              coalesce(a.N_PATIENTS, 0) AS N_PATIENTS,
              coalesce(a.N_EVENTS, 0) AS N_EVENTS,
              d.N_AT_RISK,
@@ -271,14 +271,15 @@ mod_hcru <- function(con, cfg, cohort) {
       CROSS JOIN meas_list m
       LEFT JOIN agg a ON a.COHORT = d.COHORT AND a.LOT_NUM = d.LOT_NUM
                      AND a.MEASURE = m.MEASURE
-                     AND a.SOC_CATEGORY = d.SOC_CATEGORY",
+                     AND a.SOC_CATEGORY = d.SOC_CATEGORY
+                     AND a.AGE_BAND = d.AGE_BAND",
       wrk("S_HCRU_RATES"), per$py, per$src, cohort$key,
       wrk("S_HCRU_EVENTS"), per$start, per$end, per$name,
       rate_sql("coalesce(a.N_EVENTS, 0)", "d.PY", cfg),
       paste(sprintf("'%s', CASE WHEN %s THEN 1 ELSE 0 END",
                     names(HCRU_MEASURES), HCRU_MEASURES), collapse = ", "),
       paste(sprintf("'%s'", names(HCRU_MEASURES)), collapse = ", "),
-      sp$expr, sp$join, sp$group),
+      sp$cols, sp$join, sp$group),
       qc = sprintf("SELECT count(*) AS n_rows FROM %s
                     WHERE COHORT=\'%s\' AND PERIOD=\'%s\'",
                    wrk("S_HCRU_RATES"), cohort$key, per$name),

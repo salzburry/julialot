@@ -133,25 +133,36 @@ lands on the run's own metadata row where no reader can miss it.
 | `patterns` | `S_PATTERNS`, `S_SWITCH`, `S_TX_ATTRITION` | via `soc` |
 | `release` | `S_*_RELEASE` — every rate and percentage table with cells under 25 patients suppressed | — |
 
-### The rate tables are written twice
+### The rate tables are stratified
 
 `S_SAFETY_RATES`, `S_HCRU_RATES`, `S_MALIGNANCY_RATES` and `S_TX_ATTRITION`
-carry a `SOC_CATEGORY` column. Each is written once for the line as a whole,
-on rows labelled `(all categories)`, and once more per regimen category where
-the `soc` module ran. Both passes are the same query with one more column in
-the `GROUP BY`, so the washout, the person-time, the at-risk rule and the
-confidence intervals are unchanged and the categories are a partition of the
-line — `mod_patterns()` checks that they sum back to it and stops if they do
-not.
+carry a `SOC_CATEGORY` and an `AGE_BAND` column. Each table is written once for
+the line as a whole — `(all categories)` and `(all ages)` — then once per
+regimen category where the `soc` module ran, and once per age band. Every pass
+is the same query with one more column in the `GROUP BY`, so the washout, the
+person-time, the at-risk rule and the confidence intervals are unchanged and
+each stratification is a partition of the line. `mod_patterns()` checks that
+both sum back to it and stops if either does not.
 
-**Anything reading these tables must say which it wants.** A query written
-before this column existed now sees the line and its parts together and will
-double count. `WHERE SOC_CATEGORY = '(all categories)'` is the old behaviour.
+**Margins, not a cross.** A row is cut by regimen category or by age, never by
+both: no table the protocol asks for crosses them, and every cell of the cross
+would fall under the floor. A query naming a real value in both columns finds
+no row — the honest answer rather than a zero.
 
-Suppression is unchanged in kind and tighter in effect: a category is a
-smaller stratum, so more of them fall under the floor. `mod_release()` warns
-where exactly one category of a stratum is suppressed, because the total less
-the published rest gives it away.
+**Anything reading these tables must say which grouping it wants.** A query
+written before these columns existed now sees the line and its parts together
+and will double count. `WHERE SOC_CATEGORY = '(all categories)' AND AGE_BAND =
+'(all ages)'` is the old behaviour.
+
+Two labels distinguish a gap from a value. `(uncategorised)` is a line the
+`soc` module wrote no row for; `(no demographics row)` is a patient the
+`demographics` module wrote none for. Neither is `Unknown`, which that module
+writes as a real age band for a patient whose age it could not read.
+
+Suppression is unchanged in kind and tighter in effect: a stratum is smaller
+than the line, so more of them fall under the floor. `mod_release()` warns
+where exactly one stratum of a group is suppressed, because the total less the
+published rest gives it away.
 
 **Six of the thirteen run today.** `MODULES=all`, the default, runs everything
 that has a usable code list. `spine`, `cohorts`, `attrition`, `periods`,

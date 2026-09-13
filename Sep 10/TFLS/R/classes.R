@@ -53,11 +53,15 @@ split_soc_categories <- function(x) {
 # Matched on the text as the package writes it, with case and spacing ignored,
 # so a heading that says "CAR-T" and a file that says "CAR-t" are the same
 # category and a file that says "CAR T" is not.
-# The label the study package writes on the row that is the line as a whole,
-# beside the rows that are its regimen categories. SOC_ALL_CATEGORIES in the
-# package's R/registry.R is the authority; it is restated here because a
+# The stratifications the package writes into its rate and count tables, and
+# the label each puts on the row that is the line as a whole. STRATUM_TOTALS in
+# the package's R/registry.R is the authority; it is restated here because a
 # snapshot is filled where the package is not installed.
-TFLS_SOC_ALL_CATEGORIES <- "(all categories)"
+#
+# They are MARGINS: a row is cut by regimen category or by age, never by both,
+# so a column naming one leaves the other at its total.
+TFLS_STRATUM_TOTALS <- c(SOC_CATEGORY = "(all categories)",
+                         AGE_BAND = "(all ages)")
 
 soc_key <- function(x) toupper(gsub("[[:space:]]+", " ", trimws(chr(x))))
 

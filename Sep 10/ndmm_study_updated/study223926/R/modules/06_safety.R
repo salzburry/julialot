@@ -65,7 +65,8 @@ mod_safety <- function(con, cfg, cohort) {
     "PATID string, COHORT string, CONDITION string, DOMAIN string,
      ACUTE_CHRONIC string, EVENT_DT date", cohort$key)
   prepare_table(con, wrk("S_SAFETY_RATES"),
-    "COHORT string, LOT_NUM int, PERIOD string, SOC_CATEGORY string,
+    "COHORT string, LOT_NUM int, PERIOD string,
+     SOC_CATEGORY string, AGE_BAND string,
      CONDITION string, DOMAIN string, ACUTE_CHRONIC string,
      N_PATIENTS int, N_EVENTS int,
      N_AT_RISK int, PERSON_YEARS double, RATE double, RATE_LO double,
@@ -197,8 +198,8 @@ mod_safety <- function(con, cfg, cohort) {
     # soc module ran. The query is the same both times - one more column in
     # the GROUP BY - so a category's person-time, washout and interval are the
     # line's own arithmetic over a subset of its patients.
-    den_pass <- soc_passes(cfg, "p")
-    num_pass <- soc_passes(cfg, "n")
+    den_pass <- stratum_passes(cfg, "p")
+    num_pass <- stratum_passes(cfg, "n")
     for (si in seq_along(den_pass)) {
       sd <- den_pass[[si]]; sn <- num_pass[[si]]
       run_step(con, paste0("safety_", tolower(per$label), "_", sd$key, "_",
@@ -208,7 +209,7 @@ mod_safety <- function(con, cfg, cohort) {
       WITH cond AS (SELECT DISTINCT condition, domain, lower(acute_chronic) AS ac
                     FROM %2$s),
       den AS (
-        SELECT p.COHORT, p.LOT_NUM, %14$s AS SOC_CATEGORY,
+        SELECT p.COHORT, p.LOT_NUM, %14$s,
                c.condition, c.domain, c.ac,
                %9$s AS PY, %10$s AS N_AT_RISK
         FROM %3$s p
@@ -219,14 +220,15 @@ mod_safety <- function(con, cfg, cohort) {
         GROUP BY p.COHORT, p.LOT_NUM, c.condition, c.domain, c.ac%15$s
       ),
       num AS (
-        SELECT n.COHORT, n.LOT_NUM, %17$s AS SOC_CATEGORY, n.CONDITION,
+        SELECT n.COHORT, n.LOT_NUM, %17$s, n.CONDITION,
                count(*) AS N_EVENTS, count(DISTINCT n.PATID) AS N_PATIENTS
         FROM %5$s n
         %16$s
         WHERE n.COHORT = '%4$s' AND n.PERIOD = '%12$s'
         GROUP BY n.COHORT, n.LOT_NUM, n.CONDITION%18$s
       )
-      SELECT den.COHORT, den.LOT_NUM, '%12$s' AS PERIOD, den.SOC_CATEGORY,
+      SELECT den.COHORT, den.LOT_NUM, '%12$s' AS PERIOD,
+             den.SOC_CATEGORY, den.AGE_BAND,
              den.condition, den.domain, den.ac,
              coalesce(num.N_PATIENTS, 0) AS N_PATIENTS,
              coalesce(num.N_EVENTS, 0) AS N_EVENTS,
@@ -235,14 +237,15 @@ mod_safety <- function(con, cfg, cohort) {
       FROM den
       LEFT JOIN num ON num.COHORT = den.COHORT AND num.LOT_NUM = den.LOT_NUM
                    AND num.CONDITION = den.condition
-                   AND num.SOC_CATEGORY = den.SOC_CATEGORY",
+                   AND num.SOC_CATEGORY = den.SOC_CATEGORY
+                   AND num.AGE_BAND = den.AGE_BAND",
       wrk("S_SAFETY_RATES"), "S_CL_SAFETY", per$view, cohort$key,
       wrk("S_SAFETY_COUNTED"),
       rate_sql("coalesce(num.N_EVENTS, 0)", "den.PY", cfg),
       rate_ci_sql("coalesce(num.N_EVENTS, 0)", "den.PY", cfg, "lo"),
       rate_ci_sql("coalesce(num.N_EVENTS, 0)", "den.PY", cfg, "hi"),
       py_expr, at_risk_expr, prior_join, per$label,
-      sd$join, sd$expr, sd$group, sn$join, sn$expr, sn$group),
+      sd$join, sd$cols, sd$group, sn$join, sn$cols, sn$group),
       qc = sprintf("SELECT count(*) AS n_rows FROM %s
                     WHERE COHORT='%s' AND PERIOD='%s'",
                    wrk("S_SAFETY_RATES"), cohort$key, per$label))

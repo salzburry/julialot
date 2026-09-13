@@ -192,17 +192,52 @@ select_population <- function(d, spec, ctx, where) {
                          ", so the column's ", tolower(k), " ", v,
                          " cannot be selected from it"), "not_in_run"))
   }
+  named <- character(0)
   if (nzchar(spec$class)) {
     r <- restrict_to_class(d, spec, ctx, where)
     if (!isTRUE(r$ok)) return(r)
     d <- r$rows
+    if (!identical(class_selection(spec$class, ctx$classes)$kind, "all"))
+      named <- c(named, "SOC_CATEGORY")
   }
   if (nzchar(spec$subgroup)) {
     r <- restrict_to_subgroup(d, spec$subgroup, ctx, where, spec$cohort)
     if (!isTRUE(r$ok)) return(r)
     d <- r$rows
+    named <- c(named, subgroup_columns(spec$subgroup))
   }
-  list(ok = TRUE, rows = d)
+  list(ok = TRUE, rows = restrict_unnamed_strata(d, named))
+}
+
+# The columns a subgroup restricts, for deciding which stratifications the
+# column left alone.
+subgroup_columns <- function(subgroup) {
+  sg <- parse_subgroup(subgroup)
+  if (!isTRUE(sg$ok) || !length(sg$terms)) return(character(0))
+  toupper(vapply(sg$terms, function(t) chr(t$column), character(1)))
+}
+
+# A stratification the column did not name is the table's own total row.
+#
+# The package writes these tables once for the line as a whole and once per
+# stratum, so reading them all would be the line drawn beside its own parts. A
+# column that names a regimen class takes the categories and leaves age at its
+# total, and the other way round - which is also what makes the margins add up.
+#
+# A table that carries the column without carrying the total row is not one of
+# these: SOC_CATEGORY on S_PATTERNS is the thing its rows enumerate, and is
+# left alone.
+restrict_unnamed_strata <- function(d, named) {
+  if (is.null(d) || !nrow(d)) return(d)
+  for (nm in setdiff(names(TFLS_STRATUM_TOTALS), toupper(named))) {
+    cl <- col_of(d, nm)
+    if (is.na(cl)) next
+    tot <- TFLS_STRATUM_TOTALS[[nm]]
+    hit <- soc_key(d[[cl]]) %in% soc_key(tot)
+    if (!any(hit)) next
+    d <- d[hit, , drop = FALSE]
+  }
+  d
 }
 
 # The patients of one line, and optionally of one regimen class, off the
@@ -240,27 +275,11 @@ soc_patients <- function(ctx, line = "", cohort = "", categories = NULL,
 
 # The study assigns a category to a line, so a column naming a regimen class
 # has to name the line as well; the category of "the patient" is not a thing.
-# Whether this table is written once for the line as a whole and once per
-# regimen category, as against carrying SOC_CATEGORY as the thing its rows
-# enumerate. The total row is what tells the two apart, and it is looked for in
-# the data rather than assumed from the table's name.
-soc_stratified_table <- function(d) {
-  cl <- col_of(d, "SOC_CATEGORY")
-  !is.na(cl) && any(soc_key(d[[cl]]) %in% soc_key(TFLS_SOC_ALL_CATEGORIES))
-}
-
 restrict_to_class <- function(d, spec, ctx, where) {
   sel <- class_selection(spec$class, ctx$classes)
-  if (identical(sel$kind, "all")) {
-    # An Overall column over a stratified table means the line's own row, not
-    # the line's row and every category of it added to itself.
-    if (soc_stratified_table(d)) {
-      cl <- col_of(d, "SOC_CATEGORY")
-      d <- d[soc_key(d[[cl]]) %in% soc_key(TFLS_SOC_ALL_CATEGORIES), ,
-             drop = FALSE]
-    }
-    return(list(ok = TRUE, rows = d))
-  }
+  # An Overall column names no category, so the stratification is left for
+  # restrict_unnamed_strata() to take to the line's own row.
+  if (identical(sel$kind, "all")) return(list(ok = TRUE, rows = d))
   # A class the shell maps to nothing is the shell's gap to close: the study's
   # category, or that category narrowed by a drug, is how it would be closed.
   if (!identical(sel$kind, "categories")) return(refuse(sel$why, "shell"))
@@ -393,6 +412,17 @@ restrict_to_subgroup <- function(d, subgroup, ctx, where, cohort = "") {
   # and the interval a malignancy fell in are on different tables and neither
   # is on the table being summarised.
   if (nzchar(sg$table)) {
+    # Where the table being summarised carries the column itself, the
+    # restriction is a filter on it and no patient is needed. That is how a
+    # rate table stratified by age answers an age column.
+    if (all(vapply(sg$terms, function(t) has_col(d, t$column), logical(1)))) {
+      for (t in sg$terms) {
+        r <- apply_term(d, t, where)
+        if (!isTRUE(r$ok)) return(r)
+        d <- r$rows
+      }
+      return(list(ok = TRUE, rows = d))
+    }
     s <- ctx$get(sg$table)
     if (is.null(s) || !nrow(s))
       return(refuse(paste0(sg$table, " was not read by this run, so the ",
@@ -467,13 +497,13 @@ translate_class_term <- function(term, ctx) {
   list(ok = TRUE, term = term)
 }
 
-# Several regimen categories under one column heading.
+# Several strata of one stratification under one column heading.
 #
-# The study writes these tables once per category and checks that the
-# categories partition the line, so a column mapped to two of them is the two
-# counts added - exactly, not approximately. Only counts: a rate is not the sum
-# of its strata's rates and an interval is not the sum of theirs, so a rate
-# over more than one category is refused rather than invented.
+# The study writes these tables once per stratum and checks that the strata
+# partition the line, so a column mapped to two of them is the two counts
+# added - exactly, not approximately. Only counts: a rate is not the sum of its
+# strata's rates and an interval is not the sum of theirs, so a rate over more
+# than one stratum is refused rather than invented.
 #
 # A suppressed row arrives with its count NULL, and the sum of an unknown is
 # unknown: the cell then has no denominator and is withheld, which is the safe
@@ -486,21 +516,27 @@ TFLS_SOC_SUMMABLE <- c("N_PATIENTS", "N_EVENTS", "N_AT_RISK", "N_DENOM",
 TFLS_STRATUM_KEYS <- c("COHORT", "LOT_NUM", "PERIOD", "CONDITION", "MEASURE",
                        "CATEGORY", "OUTCOME", "DOMAIN", "ACUTE_CHRONIC")
 
-collapse_soc_strata <- function(d, stat) {
+collapse_strata <- function(d, stat) {
   if (is.null(d) || nrow(d) < 2L || !stat %in% c("n_pct", "n")) return(d)
-  cl <- col_of(d, "SOC_CATEGORY")
-  if (is.na(cl)) return(d)
-  cats <- chr(d[[cl]])
-  # One row per category of one stratum, or this is not a partition to add up.
-  if (anyDuplicated(cats) ||
-      any(soc_key(cats) %in% soc_key(TFLS_SOC_ALL_CATEGORIES))) return(d)
-  for (nm in intersect(TFLS_STRATUM_KEYS, names(d)))
-    if (length(unique(chr(d[[nm]]))) > 1L) return(d)
-  out <- d[1, , drop = FALSE]
-  for (nm in intersect(TFLS_SOC_SUMMABLE, names(d)))
-    out[[nm]] <- sum(suppressWarnings(as.numeric(d[[nm]])), na.rm = FALSE)
-  out[[cl]] <- paste(cats, collapse = " + ")
-  out
+  for (nm in names(TFLS_STRATUM_TOTALS)) {
+    cl <- col_of(d, nm)
+    if (is.na(cl)) next
+    v <- chr(d[[cl]])
+    # One row per stratum of one cell, and none of them the total, or this is
+    # not a partition to add up.
+    if (anyDuplicated(v) ||
+        any(soc_key(v) %in% soc_key(TFLS_STRATUM_TOTALS[[nm]]))) next
+    rest <- setdiff(intersect(c(TFLS_STRATUM_KEYS, names(TFLS_STRATUM_TOTALS)),
+                              names(d)), nm)
+    if (any(vapply(rest, function(k) length(unique(chr(d[[k]]))) > 1L,
+                   logical(1)))) next
+    out <- d[1, , drop = FALSE]
+    for (vc in intersect(TFLS_SOC_SUMMABLE, names(d)))
+      out[[vc]] <- sum(suppressWarnings(as.numeric(d[[vc]])), na.rm = FALSE)
+    out[[cl]] <- paste(v, collapse = " + ")
+    return(out)
+  }
+  d
 }
 
 # --- one cell ---------------------------------------------------------------
@@ -657,13 +693,15 @@ compute_cell <- function(pop, stat, measure, terms, where,
   if (!nrow(d))
     return(stat_refused(stat, paste0("no row of ", where, " matches ",
                                      measure$raw), "not_in_run"))
-  d <- collapse_soc_strata(d, stat)
+  d <- collapse_strata(d, stat)
   if (nrow(d) > 1L) {
-    if (!is.na(col_of(d, "SOC_CATEGORY")) && identical(stat, "rate"))
+    if (identical(stat, "rate") &&
+        any(vapply(names(TFLS_STRATUM_TOTALS),
+                   function(nm) !is.na(col_of(d, nm)), logical(1))))
       return(stat_refused(stat, paste0("this column covers ", nrow(d),
-        " of the study's regimen categories and ", where, " carries a rate ",
-        "for each; a rate is not the sum of theirs, so the package would have ",
-        "to publish the pair"), "not_computable"))
+        " of the study's strata and ", where, " carries a rate for each; a ",
+        "rate is not the sum of theirs, so the package would have to publish ",
+        "the group"), "not_computable"))
     return(stat_refused(stat, paste0(nrow(d), " rows of ", where,
       " match this column and measure; the shell needs a filter that picks one"),
       "shell"))

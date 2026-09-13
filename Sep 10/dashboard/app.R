@@ -106,7 +106,7 @@ server <- function(input, output, session) {
     for (tb in intersect(tabs, DASH_TABLES$TABLE)) {
       d <- read_scenario_table(SRC, s, tb, DASH_CFG$prefer_release)
       if (is.null(d) || !nrow(d)) next
-      for (k in intersect(GENERIC_KEYS, names(d)))
+      for (k in intersect(SELECTABLE_KEYS, names(d)))
         lv[[k]] <- sort(unique(c(lv[[k]], as.character(d[[k]]))))
     }
     # The LOT table's own lines as well. The engine builds up to its MAX_LOT
