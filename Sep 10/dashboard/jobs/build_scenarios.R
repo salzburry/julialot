@@ -151,6 +151,39 @@ export_one <- function(prefix, env) {
   if (!length(scen$modules) || !length(scen$cohorts))
     stop("the run under ", prefix, " recorded no modules or no cohorts, so ",
          "nothing under the prefix can be attributed to it", call. = FALSE)
+  # THE PUBLICATION GATE.
+  #
+  # This job is where a run's tables stop being the warehouse's and become a
+  # Dataset other people read, so it is where the release has to be checked.
+  # mod_release() withholds every cell under the floor and then records, in
+  # the run's own metadata, the groups where one withheld cell is still the
+  # group's total less the published rest. Whether to regroup or withhold a
+  # second stratum is the analyst's call and the package does not make it -
+  # but exporting a run whose own record says a withheld cell is recoverable
+  # would make that call by default, and in the one direction that cannot be
+  # taken back.
+  #
+  # "release module did not run" is refused for the same reason and is not the
+  # same answer: that run has not been shown to have no recoverable cell, it
+  # has not looked.
+  #
+  # Note what the snapshot carries. Every table the run wrote goes into it,
+  # the raw ones beside the released ones, because a table with no released
+  # copy has only its raw form and the app needs it. The Dataset is therefore
+  # as sensitive as the raw tables, and the gate below is about the released
+  # ones being sound - not about the Dataset being publishable to anyone.
+  blocked <- release_recoverable_blocks(row_field(pin, "RELEASE_RECOVERABLE"))
+  allowed <- isTRUE(as.logical(Sys.getenv("SNAPSHOT_ALLOW_RECOVERABLE", "FALSE")))
+  if (nzchar(blocked) && !allowed)
+    stop("the run under ", prefix, " is not exportable: its own metadata says ",
+         "'", blocked, "'. A released table with exactly one withheld row in ",
+         "a group gives that row away - the group's total less the published ",
+         "rest is it. Regroup, or withhold a second stratum, and re-run the ",
+         "release module. To export anyway, knowing that, set ",
+         "SNAPSHOT_ALLOW_RECOVERABLE=TRUE.", call. = FALSE)
+  if (nzchar(blocked))
+    message("  WARNING: exporting under SNAPSHOT_ALLOW_RECOVERABLE=TRUE, and ",
+            "this run's metadata says: ", blocked)
   n <- 0L; bad <- character(0); not_this_run <- character(0)
   for (tb in EXPORT) {
     if (!scenario_wrote(scen, tb)) { not_this_run <- c(not_this_run, tb); next }

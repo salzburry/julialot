@@ -9,6 +9,10 @@ Read with `IE_CRITERIA.md` (the rules) and `DATA_MAPPING.md` (the fields).
 Legend: **matches** · **change** · **new** · **decide first** (blocked on
 `OPEN_QUESTIONS.md`).
 
+"Today" in the tables below means **the upstream cohort build**, which this
+delivery does not edit. Where the study package has since implemented one of
+these, the row says so — read the row, not the heading, for what exists now.
+
 ---
 
 ## 0. How a change reaches the build
@@ -92,8 +96,8 @@ not the same thing.
 | protocol concept | where | test | build today |
 |---|---|---|---|
 | **Evidence of follow-up** (eligibility) | §7.2.1.1 | ≥ 1 medical or pharmacy claim from the index date, or death | 1L: enrolled on the index date (`FU_CE_DAYS=0`). 2L/3L: 90 days of gap-free enrolment or death (`SUBSEQ_FU_CE_DAYS=90`) |
-| **Follow-up period** (the observation window) | §7.1 | index → min(end of CE, study end, death) | `ENDDATE = least(study_end, DEATH_DT)` — **end of CE is not applied** |
-| **≥ 3 months potential follow-up** (analysis set for TTNT/TTD/OS) | §7.8.2 | `index + 90 ≤ study end`, or death before `index + 90` | not implemented |
+| **Follow-up period** (the observation window) | §7.1 | index → min(end of CE, study end, death) | the cohort build's `ENDDATE = least(study_end, DEATH_DT)` does not apply end of CE. **This package does**: `fu_end_sql()` takes the end of the span covering this cohort's own index, under `CENSOR_AT_DISENROLLMENT`, which defaults to the protocol reading |
+| **≥ 3 months potential follow-up** (analysis set for TTNT/TTD/OS) | §7.8.2 | `index + 90 ≤ study end`, or death before `index + 90` | **implemented** as `S_PERIODS.TTE_ELIGIBLE`, a flag rather than a filter: the whole cohort stays in `S_TTE` and the restricted analysis is the rows the flag marks |
 
 What to build:
 
@@ -145,9 +149,16 @@ protocol's reading, capped at `ENDDATE_CE`
 (`../lot/engine/R/steps/10_lot2_5_base.R`).
 
 What has to change is **which pair is primary**. On the protocol's wording the
-`_CE_SENS` columns are the analysis and the current primary columns are the
-sensitivity — the opposite of how the build is set up. That is a labelling and
+`_CE_SENS` columns are the analysis and the engine's primary columns are the
+sensitivity — the opposite of how the engine is set up. That is a labelling and
 config decision, not new code. `OPEN_QUESTIONS.md` Q13.
+
+**Where this package stands:** `CENSOR_AT_DISENROLLMENT` defaults to `TRUE`,
+the protocol's reading, so `S_PERIODS.FU_END` already ends at the end of
+continuous enrolment. The engine's own columns are untouched — this is the
+study package choosing which reading it computes on, not a change to how a
+line is counted. Setting the config to `FALSE` gives the engine's primary
+reading back as the sensitivity analysis.
 
 ## 5. The LOT engine
 

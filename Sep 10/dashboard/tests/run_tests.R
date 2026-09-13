@@ -169,6 +169,23 @@ cat("\nthe synthetic run stands in for a real one\n")
      "every table the registry declares is written, and nothing else is")
   ok(all(vapply(syn, nrow, integer(1)) > 0L),
      "...and none of them is empty")
+  # The metadata a real run writes, column for column. A fixture that stops
+  # short of the producer's schema still renders - metadata is drawn
+  # generically - but it stops being a stand-in for a real run at exactly the
+  # column a new reader would come looking for.
+  # Read off the producer's own declaration rather than restated here, which
+  # would be one more copy to drift.
+  pkg_meta_cols <- local({
+    f <- file.path(Sys.getenv("DASH_PACKAGE_DIR"), "R", "run_223926.R")
+    src <- paste(readLines(f, warn = FALSE), collapse = "\n")
+    blk <- regmatches(src, regexpr("RUN_METADATA_COLS <- c\\((?s).*?\\)\\n",
+                                   src, perl = TRUE))
+    unique(unlist(regmatches(blk, gregexpr("[A-Z_]+(?= =)", blk, perl = TRUE))))
+  })
+  ok(length(pkg_meta_cols) > 5L,
+     "the producer's metadata declaration can be read, so the fixture can be held to it")
+  ok(setequal(names(syn$S_RUN_METADATA), pkg_meta_cols),
+     "the synthetic run's metadata carries the columns the producer writes, and no others")
   # The metadata says which modules ran. A scenario claiming one and writing
   # none of its tables is a run the page cannot demonstrate on.
   claimed <- trimws(strsplit(syn$S_RUN_METADATA$MODULES, ";")[[1]])
@@ -244,7 +261,7 @@ cat("\nselection: what a viewer can change without a run\n")
   aparts <- one(apply_keys(d, sp, utils::modifyList(line, list(AGE_GROUP = NULL))))
   aparts <- aparts[aparts$AGE_GROUP != "(all ages)", ]
   ok(sum(aparts$N_EVENTS) == one(f)$N_EVENTS,
-     "...and so do the age bands")
+     "...and so do the age groups")
   ok(nrow(apply_keys(d, sp, list(COHORT = "all"))) == nrow(d),
      "and 'all' filters nothing rather than matching a cohort called all")
   ok(nrow(apply_keys(d, sp, list())) == nrow(d),
@@ -981,6 +998,27 @@ source(file.path(here, "jobs", "export_lib.R"))
      "the job pins the build before the first table and re-checks it after the last, with the reader's own check")
   ok(grepl("if (!scenario_is_usable(scen))", jb, fixed = TRUE),
      "...and exports nothing from a build that is not complete")
+
+  # The publication gate. A snapshot is where a run's tables stop being the
+  # warehouse's and become a Dataset other people read, so the run's own
+  # record of its release is checked there - not left to whoever reads a log.
+  ok(identical(release_recoverable_blocks("none"), ""),
+     "a run whose release left nothing recoverable clears the gate")
+  ok(nzchar(release_recoverable_blocks("release module did not run")),
+     "...a run that never released does not, because it has not looked")
+  ok(nzchar(release_recoverable_blocks("")) &&
+       nzchar(release_recoverable_blocks(NA)),
+     "...and neither does a build from before the column existed")
+  ok(identical(release_recoverable_blocks("S_SAFETY_RATES_RELEASE: 3 COHORT/LOT_NUM group(s)"),
+               "S_SAFETY_RATES_RELEASE: 3 COHORT/LOT_NUM group(s)"),
+     "...and one that did leave a recoverable cell is refused in the words its own run recorded")
+  ok(grepl("blocked <- release_recoverable_blocks(row_field(pin, \"RELEASE_RECOVERABLE\"))",
+           jb, fixed = TRUE) &&
+       regexpr("blocked <- release_recoverable_blocks(", jb, fixed = TRUE) <
+         regexpr("for (tb in EXPORT)", jb, fixed = TRUE),
+     "...and the job asks before it writes the first table, not after")
+  ok(grepl("SNAPSHOT_ALLOW_RECOVERABLE", jb, fixed = TRUE),
+     "...with one named way past it, so exporting anyway is a decision someone made and not a default")
   ok(grepl("lot_dir_name(lot_id, lot_version)", jb, fixed = TRUE) &&
        grepl("lot_prefix_owner_ok(con, lot_tbl(\"LOT_BUILD_STATUS\"),\n                                          lot_id, lot_version)", jb, fixed = TRUE),
      "...files LOT tables by build and binds the prefix to that build")
