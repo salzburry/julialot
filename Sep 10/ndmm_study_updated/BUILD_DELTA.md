@@ -99,14 +99,20 @@ not the same thing.
 | **Follow-up period** (the observation window) | §7.1 | index → min(end of CE, study end, death) | the cohort build's `ENDDATE = least(study_end, DEATH_DT)` does not apply end of CE. **This package does**: `fu_end_sql()` takes the end of the span covering this cohort's own index, under `CENSOR_AT_DISENROLLMENT`, which defaults to the protocol reading |
 | **≥ 3 months potential follow-up** (analysis set for TTNT/TTD/OS) | §7.8.2 | `index + 90 ≤ study end`, or death before `index + 90` | **implemented** as `S_PERIODS.TTE_ELIGIBLE`, a flag rather than a filter: the whole cohort stays in `S_TTE` and the restricted analysis is the rows the flag marks |
 
-What to build:
+What to build — **all three are done in `study223926`**, and are listed here
+because the upstream cohort build still has none of them:
 
-- replace the 1L `FU_CE_DAYS=0` test and the 2L/3L `SUBSEQ_FU_CE_DAYS=90` test with
-  the single **one-claim-or-death** test, applied identically to all cohorts;
-- add `FU_END = least(cov_end_of_the_index_span, study_end, DEATH_DT)` as a column on
-  every cohort table;
-- add a `TTE_ELIGIBLE` flag for the ≥ 3-month rule — **a flag, not a filter**, or the
-  Objective 1-3 denominators shift.
+- ~~replace the 1L `FU_CE_DAYS=0` test and the 2L/3L `SUBSEQ_FU_CE_DAYS=90` test
+  with the single **one-claim-or-death** test, applied identically to all
+  cohorts~~ — `build_fu_claims()` applies it as criterion `I5_followup`, the
+  same test for every cohort;
+- ~~add `FU_END = least(cov_end_of_the_index_span, study_end, DEATH_DT)` as a
+  column on every cohort table~~ — `fu_end_sql()` writes it on `S_PERIODS`,
+  under `CENSOR_AT_DISENROLLMENT`;
+- ~~add a `TTE_ELIGIBLE` flag for the ≥ 3-month rule — **a flag, not a filter**,
+  or the Objective 1-3 denominators shift~~ — `S_PERIODS.TTE_ELIGIBLE`, and it
+  is a flag: `S_TTE` keeps the whole cohort and the restricted analysis is the
+  rows the flag marks.
 
 The 90-day number does not disappear; it moves from eligibility to the analysis set,
 and it becomes a **potential**-follow-up test (calendar time in the database) rather

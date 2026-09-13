@@ -85,6 +85,11 @@ scenario_from_row <- function(prefix, row) {
     study_end = g("STUDY_END"),
     deviations = g("CONTRACT_DEVIATIONS"),
     codelists = g("CODELISTS"),
+    # What the run's release module found: "none", or the tables where one
+    # withheld cell is still the group's total less the published rest. Read
+    # here so the reader can refuse those tables, the way the snapshot job
+    # refuses to export them.
+    release_recoverable = g("RELEASE_RECOVERABLE"),
     readings = readings,
     # A label a stakeholder can pick out of a list. The prefix is the identity;
     # what makes one scenario interesting is where its readings differ, and

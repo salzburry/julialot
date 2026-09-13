@@ -153,6 +153,10 @@ cat("\none vocabulary, stated in three folders\n")
   ok(identical(tfls_totals[order(names(tfls_totals))],
                STRATUM_TOTALS[order(names(STRATUM_TOTALS))]),
      "...and so are the shells'")
+  # And the identifier denylist, for the same reason and with more at stake: a
+  # column one folder drops and the other draws is the gap one gets through.
+  ok(setequal(ID_COLUMNS, get("TFLS_ID_COLUMNS", envir = ready$env)),
+     "the columns this folder refuses to render are the ones the shells refuse to write")
   # The label a producer writes and the label a reader looks for are the same
   # string or the join is silently empty, so the actual data is checked too.
   syn <- synthetic_one("s223926_", SYNTH_SCENARIOS[[1]], 25L)
@@ -1218,6 +1222,57 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
     ok(is.null(read_scenario_table(steady, c(list(prefix = "p_", run_id = "Z", state = "complete"), full),
                                    "S_SAFETY_RATES", FALSE)),
        "...and one that is a different run from the sidebar's reads nothing")
+
+    # The low-level read defaults to the safe answer now, and the other one
+    # has a name rather than an argument: a call site reads as what it is.
+    only_raw <- list(read = function(prefix, table)
+      if (grepl("_RELEASE$", table)) NULL
+      else data.frame(RATE = 770, stringsAsFactors = FALSE))
+    ok(is.null(read_table(only_raw, "p_", "S_SAFETY_RATES")),
+       "read_table() with nothing said gives nothing where the released copy is absent")
+    ok(identical(read_raw_table(only_raw, "p_", "S_SAFETY_RATES")$RATE, 770),
+       "...and read_raw_table() is how a caller that has established it may have the raw one asks")
+    ok(identical(attr(read_raw_table(only_raw, "p_", "S_SAFETY_RATES"),
+                      "table_source"), "raw"),
+       "...which comes back marked raw, so what was read is never in doubt")
+
+    # The release verdict on the READ path, not only in the snapshot job. A
+    # warehouse App is a second way a run reaches people and nothing it reads
+    # has been through that job, so the verdict is applied here as well.
+    rel_src <- function(rec) list(read = function(prefix, table) {
+      if (identical(table, "S_RUN_METADATA"))
+        return(data.frame(RUN_ID = "A", STATE = "complete",
+                          COHORTS = paste(COHORT_KEYS, collapse = "; "),
+                          MODULES = paste(names(MODULES), collapse = "; "),
+                          RELEASE_RECOVERABLE = rec, stringsAsFactors = FALSE))
+      data.frame(RATE = 770, stringsAsFactors = FALSE)
+    })
+    scen_of <- function(rec)
+      scenario_from_row("p_", rel_src(rec)$read("p_", "S_RUN_METADATA"))
+    bad <- "S_SAFETY_RATES_RELEASE: 1 COHORT/LOT_NUM/CONDITION group(s) with one suppressed SOC_CATEGORY"
+    ok(is.null(read_scenario_table(rel_src(bad), scen_of(bad),
+                                   "S_SAFETY_RATES", TRUE)),
+       "a table the run's own record says has a recoverable withheld cell is not read, whatever route it came by")
+    ok(!is.null(read_scenario_table(rel_src(bad), scen_of(bad),
+                                    "S_HCRU_RATES", TRUE)),
+       "...and only that table: a verdict naming one does not blank the page")
+    ok(identical(release_refused_tables(bad), "S_SAFETY_RATES"),
+       "...which is the table the verdict names, read out of its own words")
+    ok(setequal(release_refused_tables("something this reader cannot parse"),
+                sub("_RELEASE$", "", names(SUPPRESSION_SPEC_NAMES()))),
+       "...while a verdict that names nothing refuses every released table, since an answer that cannot be read is not one that clears")
+    ok(!length(release_refused_tables("none")) &&
+         !length(release_refused_tables("")),
+       "a clean verdict refuses nothing, and neither does an absent one - the snapshot job is the gate for that, and the page says so")
+    ok(identical(release_recoverable_blocks(NA), RELEASE_NOT_RECORDED) &&
+         identical(release_recoverable_blocks(NA_character_), RELEASE_NOT_RECORDED),
+       "...and a literal NA is normalised rather than interpolated into the refusal")
+    withr <- function(v, f) { old <- Sys.getenv("DASH_ALLOW_RECOVERABLE")
+      Sys.setenv(DASH_ALLOW_RECOVERABLE = v); on.exit(Sys.setenv(DASH_ALLOW_RECOVERABLE = old)); f() }
+    ok(withr("TRUE", function()
+         !is.null(read_scenario_table(rel_src(bad), scen_of(bad),
+                                      "S_SAFETY_RATES", TRUE))),
+       "...and one named switch shows them anyway, so a trusted reader is a decision someone made")
 
     # Three states, not two. A run that never released may read the raw table;
     # a run that DID release and whose released copy is missing or empty may

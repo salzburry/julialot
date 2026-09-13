@@ -247,7 +247,11 @@ compare_tables <- function(a, b, spec, value = NULL) {
 # Suppression is on the stratum: a level or a summary computed from fewer than
 # the floor is withheld, because the stratum is the population the rule is
 # about.
-ID_COLUMNS <- c("PATID", "PAT_PLANID", "PATIENT_ID", "MEMBER_ID", "CLMID")
+# The same list the shells refuse on the way out (TFLS_ID_COLUMNS in
+# TFLS/R/suppress.R). Two folders, one list: a column one of them would drop
+# and the other would draw is the gap an identifier gets through.
+ID_COLUMNS <- c("PATID", "PAT_PLANID", "PATIENT_ID", "MEMBER_ID", "CLMID",
+                "PERSON_ID", "MRN")
 
 # Never rendered, whatever a spec says. An identifier that reaches the page is
 # a disclosure whether or not anything asked for it.

@@ -112,6 +112,38 @@ left in place. A snapshot source whose directory is missing or empty lists no
 scenarios; it never falls back to synthetic data. Anything a stakeholder might
 quote belongs behind it.
 
+## Deployment controls
+
+Three things about this deployment are not visible from inside the app, and
+each needs a decision rather than a default.
+
+**The Dataset is as sensitive as the warehouse.** The snapshot job exports
+every table the run wrote - the raw ones beside the released ones - because a
+table with no released copy has only its raw form and the App needs it. Several
+are one row per patient and carry `PATID`. The App drops identifiers and
+prefers released copies; a person with filesystem or project access to the
+Dataset is not going through the App. So keep the Dataset **private to the App
+and the Job**, and do not hand it out as a published extract. If an extract has
+to be shared, share the `S_*_RELEASE` tables from it and nothing else.
+
+**A release that gives a withheld cell away does not leave the warehouse.**
+`mod_release()` withholds every cell under the floor, then records in
+`S_RUN_METADATA.RELEASE_RECOVERABLE` the groups where one withheld cell is
+still the group's total less the published rest. The snapshot job refuses to
+export such a run, and refuses a run whose record is absent or says the release
+module did not run. `SNAPSHOT_ALLOW_RECOVERABLE=TRUE` exports anyway and logs
+that it did. Whether to regroup or withhold a second stratum is the analyst's
+call; the job only declines to make it by default.
+
+**A warehouse App is a second way in.** `DASH_SOURCE=warehouse` reads the
+tables live, so nothing it shows has been through the job. The App applies the
+same verdict on the read: a table the run's record names as recoverable is not
+shown, the page says why, and `DASH_ALLOW_RECOVERABLE=TRUE` shows it anyway.
+A run with no record at all is shown with a notice rather than blanked - the
+job is the gate for that case, and re-exporting through it is what settles it.
+Prefer the snapshot for anything more than one analyst: it has been through the
+gate, the App has not.
+
 ## Reading the warehouse directly instead
 
 `DASH_SOURCE=warehouse` with `DASH_WORK_SCHEMA` and `DASH_CATALOG` set reads

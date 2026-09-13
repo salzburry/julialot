@@ -184,6 +184,16 @@ export_one <- function(prefix, env) {
   if (nzchar(blocked))
     message("  WARNING: exporting under SNAPSHOT_ALLOW_RECOVERABLE=TRUE, and ",
             "this run's metadata says: ", blocked)
+  # Said out loud on every export, because it is the one thing about this
+  # Dataset that a reader cannot see by looking at it: the snapshot holds the
+  # RAW tables beside the released ones, and several of them are one row per
+  # patient. The App drops identifiers and prefers released copies; a person
+  # with filesystem access to the Dataset is not going through the App.
+  message("  the snapshot holds this run's raw tables as well as its released ",
+          "copies, and the per-patient ones among them carry PATID. It is as ",
+          "sensitive as the warehouse tables it came from: keep the Dataset ",
+          "private to the App and Job, and do not share it as a published ",
+          "extract. DEPLOY_DOMINO.md says the same under Deployment controls.")
   n <- 0L; bad <- character(0); not_this_run <- character(0)
   for (tb in EXPORT) {
     if (!scenario_wrote(scen, tb)) { not_this_run <- c(not_this_run, tb); next }
