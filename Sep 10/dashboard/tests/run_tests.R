@@ -150,6 +150,13 @@ cat("\nthe synthetic run stands in for a real one\n")
   owed <- unlist(lapply(MODULES[claimed], `[[`, "outputs"))
   ok(all(owed %in% names(syn)),
      "...and every module the metadata claims wrote its outputs")
+  # An optional output needs its switch recorded, or the run's own reader
+  # refuses it - under a prefix that table could be a previous run's.
+  switches <- unlist(lapply(OPTIONAL_FEATURES, names), use.names = FALSE)
+  ok(length(switches) > 0L && all(vapply(switches, function(k)
+       grepl(paste0(k, "=TRUE"), syn$S_RUN_METADATA$OPEN_QUESTION_READINGS,
+             fixed = TRUE), logical(1))),
+     "...and the switch behind each optional output is recorded on")
 
   # One patient set, so a line selected on one table is the same patients on
   # another.

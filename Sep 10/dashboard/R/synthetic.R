@@ -294,6 +294,11 @@ synthetic_one <- function(prefix, settings, min_n = 25L) {
   readings <- paste(c(
     vapply(names(settings), function(k) sprintf("%s=%s", k, settings[[k]]),
            character(1)),
+    # The two optional outputs. A module's switch is what says the table was
+    # written, and a run that wrote S_FRAILTY without recording the switch is
+    # one whose own reader refuses to read it - correctly, because under a
+    # prefix that table could be a previous run's.
+    "frailty=TRUE", "comorbid_subgroups=TRUE",
     "study_start=2016-01-01 (upstream, verified; this run was set to 2018-01-01)",
     "pregnancy_window=study_period (upstream, unverified)"),
     collapse = "; ")
