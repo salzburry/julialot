@@ -20,8 +20,8 @@ TFLS_ENGINE_FILES <- c("classes.R", "shells.R", "stats.R", "suppress.R",
 #
 # Both folders define drop_identifiers(), km_estimate() and km_median(), and
 # one silently taking the other's would be a second opinion of a disclosure
-# rule. It runs over the workspace for the same reason: a name defined out here
-# - get(), even - must not reach inside the engine and change what it does.
+# rule. The workspace is skipped for the same reason: a name defined out here -
+# get(), even - must not reach inside the engine and change what it does.
 .TFLS_LOADED <- new.env(parent = emptyenv())
 
 # Where the shells are: DASH_TFLS_DIR, or the sibling folder next to the
@@ -31,8 +31,9 @@ TFLS_ENGINE_FILES <- c("classes.R", "shells.R", "stats.R", "suppress.R",
 tfls_dir <- function(dir = DASH_CFG$tfls_dir) {
   if (!nzchar(dir %||% "")) dir <- "../TFLS"
   if (dir.exists(dir)) return(dir)
-  alt <- file.path(dirname(if (exists(".dash_dir")) get(".dash_dir") else getwd()),
-                   "TFLS")
+  # The dashboard's own folder, as global.R resolved it at startup.
+  root <- mget(".dash_dir", envir = globalenv(), ifnotfound = list(getwd()))[[1]]
+  alt <- file.path(dirname(root), "TFLS")
   if (dir.exists(alt)) return(alt)
   dir
 }
