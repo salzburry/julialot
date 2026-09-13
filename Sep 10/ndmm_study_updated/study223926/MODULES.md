@@ -128,7 +128,7 @@ lands on the run's own metadata row where no reader can miss it.
 | `soc` | `S_SOC` — regimen category per line | `soc_regimen_categories.csv` (Annex 2) |
 | `safety` | `S_SAFETY_EVENTS`, `S_SAFETY_COUNTED`, `S_SAFETY_RATES` — baseline prevalence and on-treatment incidence, counted the same way | `safety_events.csv` (Annex 3) |
 | `hcru` | `S_HCRU_EVENTS`, `S_HCRU_RATES` | `hcru.csv`, `mm_dx.csv` |
-| `malignancy` | `S_MALIGNANCY`, `S_MALIGNANCY_RATES` | `secondary_malig.csv` (Annex 3) |
+| `malignancy` | `S_MALIGNANCY`, `S_MALIGNANCY_DATES` — every qualifying date, not only the first — and `S_MALIGNANCY_RATES` | `secondary_malig.csv` (Annex 3) |
 | `tte` | `S_TTE` — TTNT, TTD, OS | — |
 | `patterns` | `S_PATTERNS`, `S_SWITCH`, `S_TX_ATTRITION` | via `soc` |
 | `release` | `S_*_RELEASE` — every rate and percentage table with cells under 25 patients suppressed | — |

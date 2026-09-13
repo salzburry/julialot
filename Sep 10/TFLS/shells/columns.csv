@@ -50,6 +50,10 @@ T2a,FU_DOUBLET_MONO,On-treatment incidence during 1L follow-up,Doublet/Mono,16,1
 T2a,FU_BCMA,On-treatment incidence during 1L follow-up,BCMA,17,1L,1,BCMA,,TREATMENT
 T2a,FU_BISPECIFIC,On-treatment incidence during 1L follow-up,Bi-specific,18,1L,1,BISPECIFIC,,TREATMENT
 T2a,FU_OTHER,On-treatment incidence during 1L follow-up,Other,19,1L,1,OTHER,,TREATMENT
+T2a,BL_AGE_LT75,Age within 1L baseline,<75 years,20,1L,1,OVERALL,S_DEMOGRAPHICS:AGE_BAND=18-44|45-64|65-74,BASELINE
+T2a,BL_AGE_GE75,Age within 1L baseline,≥75 years,21,1L,1,OVERALL,S_DEMOGRAPHICS:AGE_BAND=75+,BASELINE
+T2a,FU_AGE_LT75,Age within 1L follow-up,<75 years,22,1L,1,OVERALL,S_DEMOGRAPHICS:AGE_BAND=18-44|45-64|65-74,TREATMENT
+T2a,FU_AGE_GE75,Age within 1L follow-up,≥75 years,23,1L,1,OVERALL,S_DEMOGRAPHICS:AGE_BAND=75+,TREATMENT
 T2b,TYPE,,Type,1,,,OVERALL,,
 T2b,BL_OVERALL,Background prevalence during 2L baseline,Overall,2,2L,2,OVERALL,,BASELINE
 T2b,BL_ACD38_QUAD,Background prevalence during 2L baseline,aCD38 Quad,3,2L,2,ACD38_QUAD,,BASELINE
@@ -67,6 +71,10 @@ T2b,FU_DOUBLET_MONO,On-treatment incidence during 2L follow-up,Doublet/Mono,14,2
 T2b,FU_BCMA,On-treatment incidence during 2L follow-up,BCMA,15,2L,2,BCMA,,TREATMENT
 T2b,FU_BISPECIFIC,On-treatment incidence during 2L follow-up,Bi-specific,16,2L,2,BISPECIFIC,,TREATMENT
 T2b,FU_OTHER,On-treatment incidence during 2L follow-up,Other,17,2L,2,OTHER,,TREATMENT
+T2b,BL_AGE_LT75,Age within 2L baseline,<75 years,18,2L,2,OVERALL,S_DEMOGRAPHICS:AGE_BAND=18-44|45-64|65-74,BASELINE
+T2b,BL_AGE_GE75,Age within 2L baseline,≥75 years,19,2L,2,OVERALL,S_DEMOGRAPHICS:AGE_BAND=75+,BASELINE
+T2b,FU_AGE_LT75,Age within 2L follow-up,<75 years,20,2L,2,OVERALL,S_DEMOGRAPHICS:AGE_BAND=18-44|45-64|65-74,TREATMENT
+T2b,FU_AGE_GE75,Age within 2L follow-up,≥75 years,21,2L,2,OVERALL,S_DEMOGRAPHICS:AGE_BAND=75+,TREATMENT
 T3,OVERALL,,Overall,1,,,OVERALL,,
 T3,AFTER_1L_BEFORE_2L,,After 1L but before 2L,2,1L,1,OVERALL,S_MALIGNANCY:LOT_AFTER_WHICH=1,
 T3,AFTER_2L_BEFORE_3L,,After 2L but before 3L,3,2L,2,OVERALL,S_MALIGNANCY:LOT_AFTER_WHICH=2,
