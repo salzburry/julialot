@@ -75,6 +75,19 @@ release_refused_tables <- function(recoverable) {
 release_recoverable_allowed <- function()
   isTRUE(as.logical(Sys.getenv("DASH_ALLOW_RECOVERABLE", "FALSE")))
 
+# A name that may go into a SQL statement unquoted: a catalog, a schema, a
+# table, or the prefix in front of one.
+#
+# Stricter than safe_segment(), which allows a dot because a file name has one.
+# A dot here is a second identifier - "other_schema.secret" pasted where one
+# name was expected - so it is refused along with everything that is not a
+# letter, a digit, an underscore or a hyphen.
+safe_sql_identifier <- function(x) {
+  v <- as.character(x %||% "")
+  length(v) == 1L && !is.na(v) && nzchar(v) &&
+    grepl("^[A-Za-z0-9][A-Za-z0-9_-]*$", v)
+}
+
 safe_segment <- function(x) {
   x <- as.character(x %||% "")
   length(x) == 1L && nzchar(x) && !is.na(x) &&
@@ -157,6 +170,18 @@ warehouse_source <- function(cfg, con) {
     sch <- if (nzchar(cfg$work_schema)) cfg$work_schema else
       stop("DASHBOARD ERROR: DASH_WORK_SCHEMA is not set, so a table name ",
            "cannot be built.", call. = FALSE)
+    # Every part of the name, checked before it is pasted into SQL. The
+    # snapshot reader has checked its path segments since it was written and
+    # this one never did, though the two take the same values from the same
+    # places: DASH_PREFIXES, DASH_LOT_PREFIX, or a prefix read back off SHOW
+    # TABLES. A prefix of "x; DROP TABLE p; --" built a statement that said so.
+    for (part in list(c("DASH_CATALOG", cfg$catalog), c("DASH_WORK_SCHEMA", sch),
+                      c("the prefix", prefix), c("the table name", table)))
+      if (!safe_sql_identifier(part[[2]]))
+        stop("DASHBOARD ERROR: ", part[[1]], " is '", part[[2]], "', which is ",
+             "not a name this can put in a query. A catalog, schema, prefix ",
+             "or table is letters, digits, underscore and hyphen, starting ",
+             "with a letter or a digit.", call. = FALSE)
     sprintf("%s.%s.%s%s", cfg$catalog, sch, prefix, table)
   }
   # Whether the LOT prefix holds the run this scenario named, right now.
@@ -176,6 +201,12 @@ warehouse_source <- function(cfg, con) {
       if (length(cfg$prefixes)) return(cfg$prefixes)
       # Every run wrote S_RUN_METADATA under its own prefix, so the prefixes
       # ARE the tables whose name ends in it.
+      if (!safe_sql_identifier(cfg$catalog) ||
+          !safe_sql_identifier(cfg$work_schema))
+        stop("DASHBOARD ERROR: DASH_CATALOG and DASH_WORK_SCHEMA have to be ",
+             "names a query can hold - letters, digits, underscore and ",
+             "hyphen. They are '", cfg$catalog, "' and '", cfg$work_schema,
+             "'.", call. = FALSE)
       d <- tryCatch(db_q(con, sprintf("SHOW TABLES IN %s.%s", cfg$catalog,
                                       cfg$work_schema)),
                     error = function(e) NULL)
@@ -186,9 +217,16 @@ warehouse_source <- function(cfg, con) {
       p <- sub("S_RUN_METADATA$", "", hit)
       p[grepl(cfg$prefix_pattern, p)]
     },
-    read = function(prefix, table)
-      tryCatch(db_q(con, sprintf("SELECT * FROM %s", full(prefix, table))),
-               error = function(e) NULL),
+    read = function(prefix, table) {
+      # The name is built OUTSIDE the tryCatch on purpose. A table that is not
+      # there is an ordinary answer and reads as NULL; a catalog, schema or
+      # prefix that is not a name a query can hold is a misconfigured
+      # deployment, and swallowing that would leave the App quietly reading
+      # nothing while looking like a run with no tables.
+      nm <- full(prefix, table)
+      tryCatch(db_q(con, sprintf("SELECT * FROM %s", nm)),
+               error = function(e) NULL)
+    },
     # The LOT build wrote under its own prefix, which S_RUN_METADATA does not
     # carry - it records the run id, not where the run wrote. DASH_LOT_PREFIX
     # names it, and the prefix is checked against LOT_BUILD_STATUS before any
@@ -428,7 +466,14 @@ read_scenario_table <- function(src, scenario, table, prefer_release = TRUE) {
   # another, and only the first was checking. A run whose own metadata says a
   # withheld cell is still its group's total less the published rest must not
   # show that table here either, whatever route it came by.
-  if (released && !release_recoverable_allowed() &&
+  #
+  # Asked whether or not this run released THIS table. "The release module did
+  # not run" is a verdict as much as a named finding is: the tables that would
+  # have had a released copy have none, so what sits under the prefix is the
+  # working table the release was meant to replace. The job refuses to export
+  # such a run for exactly that reason, and reading it here would make the two
+  # paths disagree about the same run.
+  if (!release_recoverable_allowed() &&
       toupper(table) %in% release_refused_tables(scenario$release_recoverable))
     return(NULL)
   # FAIL CLOSED where this run released. The raw table may stand in only for a

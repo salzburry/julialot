@@ -137,12 +137,28 @@ call; the job only declines to make it by default.
 
 **A warehouse App is a second way in.** `DASH_SOURCE=warehouse` reads the
 tables live, so nothing it shows has been through the job. The App applies the
-same verdict on the read: a table the run's record names as recoverable is not
-shown, the page says why, and `DASH_ALLOW_RECOVERABLE=TRUE` shows it anyway.
-A run with no record at all is shown with a notice rather than blanked - the
-job is the gate for that case, and re-exporting through it is what settles it.
+same verdict on the read, in the same three cases the job does:
+
+| the run's record says | the App shows |
+|---|---|
+| `none` | everything |
+| a named finding, e.g. `S_SAFETY_RATES_RELEASE: 3 …` | everything except the tables it names |
+| `release module did not run` | everything except the six that would have had a released copy — they have none, so what is under the prefix is the working table the release was meant to replace |
+| nothing at all | everything, with a notice: the job is the gate for that case, and re-exporting through it is what settles it |
+
+`DASH_ALLOW_RECOVERABLE=TRUE` shows the withheld tables anyway and the page
+says it is doing so. That is the setting a **single analyst** reading their own
+unreleased run wants; it is not one to leave on for a shared App.
+
 Prefer the snapshot for anything more than one analyst: it has been through the
 gate, the App has not.
+
+**Names that reach a query are checked.** `DASH_CATALOG`, `DASH_WORK_SCHEMA`,
+`DASH_PREFIXES` and `DASH_LOT_PREFIX` are pasted into SQL, so each has to be
+letters, digits, underscore or hyphen, starting with a letter or a digit. A
+value that is not stops the read and names itself, rather than reaching the
+driver. A dot is refused too: it is a second identifier where one was
+expected.
 
 ## Reading the warehouse directly instead
 

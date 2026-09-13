@@ -137,6 +137,30 @@ cat("\nthe command for a scenario nobody has run\n")
      "a setting the package does not have is reported, not silently exported")
 }
 
+cat("\nevery part of a warehouse table name is checked before it is a query\n")
+{
+  # The snapshot reader has checked its path segments since it was written;
+  # this one took the same values from the same places - DASH_PREFIXES,
+  # DASH_LOT_PREFIX, or a prefix read back off SHOW TABLES - and checked
+  # nothing.
+  ok(safe_sql_identifier("s223926_") && safe_sql_identifier("main") &&
+       safe_sql_identifier("wk-1"),
+     "an ordinary catalog, schema or prefix is a name a query can hold")
+  ok(!safe_sql_identifier("x; DROP TABLE p; --") &&
+       !safe_sql_identifier("a b") && !safe_sql_identifier(""),
+     "...and a statement, a space or nothing at all is not")
+  ok(!safe_sql_identifier("other_schema.secret"),
+     "...nor is a dotted name, which is two identifiers where one was expected")
+  ok(!safe_sql_identifier(c("a", "b")) && !safe_sql_identifier(NA),
+     "...and neither is a vector or a missing value")
+  e <- errs(warehouse_source(
+    utils::modifyList(DASH_CFG, list(catalog = "cat", work_schema = "sch")),
+    con = structure(list(), class = "fake"))$read("x; DROP TABLE p; --",
+                                                  "S_SAFETY_RATES"))
+  ok(!is.na(e) && grepl("not a name this can put in a query", e, fixed = TRUE),
+     "a prefix that is a statement stops the read by name, rather than reaching the driver")
+}
+
 cat("\none vocabulary, stated in three folders\n")
 {
   # Each delivered folder has to run on its own, so the stratum labels are
@@ -1222,6 +1246,32 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
     ok(is.null(read_scenario_table(steady, c(list(prefix = "p_", run_id = "Z", state = "complete"), full),
                                    "S_SAFETY_RATES", FALSE)),
        "...and one that is a different run from the sidebar's reads nothing")
+
+    # "The release module did not run" is a verdict too, and the read path
+    # has to answer it the way the job does. The tables that would have had a
+    # released copy have none, so what sits under the prefix is the working
+    # table the release was meant to replace.
+    none_ran <- "release module did not run"
+    ok(setequal(release_refused_tables(none_ran),
+                sub("_RELEASE$", "", names(SUPPRESSION_SPEC_NAMES()))),
+       "a run that never released refuses every table that would have had a released copy")
+    local({
+      src_nr <- list(read = function(prefix, table) {
+        if (identical(table, "S_RUN_METADATA"))
+          return(data.frame(RUN_ID = "A", STATE = "complete",
+                            COHORTS = paste(COHORT_KEYS, collapse = "; "),
+                            MODULES = paste(setdiff(names(MODULES), "release"),
+                                            collapse = "; "),
+                            RELEASE_RECOVERABLE = none_ran,
+                            stringsAsFactors = FALSE))
+        data.frame(RATE = 770, stringsAsFactors = FALSE)
+      })
+      sc_nr <- scenario_from_row("p_", src_nr$read("p_", "S_RUN_METADATA"))
+      ok(is.null(read_scenario_table(src_nr, sc_nr, "S_SAFETY_RATES", TRUE)),
+         "...so its raw rate table is not read either, which is what the snapshot job refuses to export")
+      ok(!is.null(read_scenario_table(src_nr, sc_nr, "S_DEMOGRAPHICS", TRUE)),
+         "...while a table the release module never had a copy of reads normally, since nothing is missing from it")
+    })
 
     # The low-level read defaults to the safe answer now, and the other one
     # has a name rather than an argument: a call site reads as what it is.

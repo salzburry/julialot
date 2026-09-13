@@ -138,28 +138,39 @@ server <- function(input, output, session) {
 
   output$scn_readings <- renderUI({
     s <- scn()
-    if (!length(s$readings)) return(NULL)
-    keys <- if (length(SCENARIO_DIFFS)) SCENARIO_DIFFS else names(s$readings)
-    bits <- vapply(intersect(keys, names(s$readings)), function(k)
-      sprintf("%s = %s", k, s$readings[[k]]$value), character(1))
+    # The readings are optional; the two notices below are not. Built
+    # separately, because a scenario with no readings used to return here and
+    # take the release verdict with it - so a run could have its tables
+    # refused with nothing on the page saying why.
+    bits <- if (!length(s$readings)) character(0) else {
+      keys <- if (length(SCENARIO_DIFFS)) SCENARIO_DIFFS else names(s$readings)
+      vapply(intersect(keys, names(s$readings)), function(k)
+        sprintf("%s = %s", k, s$readings[[k]]$value), character(1))
+    }
     # The release verdict, once, at the top. The reader refuses the tables it
     # names whatever route they came by; this says so, rather than leaving a
     # panel to read as though the run had simply written nothing.
     verdict <- release_recoverable_blocks(s$release_recoverable)
-    tagList(div(class = "scn", HTML(paste(html_escape(bits), collapse = "<br>"))),
-            if (!scenario_is_usable(s))
-              div(class = "alert", sprintf("This run is '%s', not complete.", s$state)),
-            if (nzchar(verdict))
-              div(class = "alert", html_escape(sprintf(
-                "This run's own record of its release says: %s.%s", verdict,
-                if (identical(verdict, RELEASE_NOT_RECORDED))
-                  paste(" Its release has not been shown to be sound. Re-export",
-                        "it through the snapshot job, which will not publish a",
-                        "run whose record is absent.")
-                else if (release_recoverable_allowed())
-                  " DASH_ALLOW_RECOVERABLE is on, so its tables are shown anyway."
-                else paste(" A withheld cell there is the group's total less",
-                           "the published rest, so those tables are not shown.")))))
+    refused <- release_refused_tables(s$release_recoverable)
+    tagList(
+      if (length(bits))
+        div(class = "scn", HTML(paste(html_escape(bits), collapse = "<br>"))),
+      if (!scenario_is_usable(s))
+        div(class = "alert", sprintf("This run is '%s', not complete.", s$state)),
+      if (nzchar(verdict))
+        div(class = "alert", html_escape(sprintf(
+          "This run's own record of its release says: %s.%s", verdict,
+          if (identical(verdict, RELEASE_NOT_RECORDED))
+            paste(" Its release has not been shown to be sound. Re-export it",
+                  "through the snapshot job, which will not publish a run",
+                  "whose record is absent.")
+          else if (release_recoverable_allowed())
+            paste(" DASH_ALLOW_RECOVERABLE is on, so", length(refused),
+                  "table(s) that would otherwise be withheld are shown:",
+                  paste(refused, collapse = ", "), ".")
+          else paste(" So", length(refused), "table(s) are not shown:",
+                     paste(refused, collapse = ", "),
+                     ". Everything else on this run reads normally.")))))
   })
 
   # Has the snapshot been replaced since the app read it? Asked at the moment
