@@ -298,7 +298,9 @@ main <- function() {
     library(DBI); library(odbc)
     for (f in c("config_223926.R", "db_utils_223926.R"))
       source(file.path(pkg, "R", f))
-    cfg <- cfg_defaults
+    # cfg_defaults() is a function in the study package, not a list. Taking
+    # it unevaluated made every warehouse run fail on the next line.
+    cfg <- cfg_defaults()
     cfg$work_schema <- schema
     cfg$catalog <- catalog
     if (!nzchar(chr(cfg$pwd)))
