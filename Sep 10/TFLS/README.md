@@ -156,7 +156,10 @@ withheld.
 - Where the run published a `_RELEASE` table, that is what is read, so the
   suppression is the package's own and not a second opinion of it. A released
   table left by an earlier run is not preferred, because a run that did not run
-  the release module did not publish one.
+  the release module did not publish one. And where the run says it published
+  one and it is not there, or is there with no rows, nothing is read at all:
+  the raw table is not a substitute for the copy meant to replace it, and the
+  unfilled list says which of the two it was.
 
 The tables are counts over a claims database and carry its limits: a code is
 evidence of a claim, not of a diagnosis, and an absence is evidence of neither.

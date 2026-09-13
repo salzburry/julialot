@@ -142,7 +142,7 @@ mod_hcru <- function(con, cfg, cohort) {
      END_DT date, LOS_DAYS int, MM_RELATED int, HAS_DISCHARGE int", cohort$key)
   prepare_table(con, wrk("S_HCRU_RATES"),
     "COHORT string, LOT_NUM int, PERIOD string,
-     SOC_CATEGORY string, AGE_BAND string, MEASURE string,
+     SOC_CATEGORY string, AGE_GROUP string, MEASURE string,
      N_PATIENTS int, N_EVENTS int, N_AT_RISK int,
      PERSON_YEARS double, RATE double,
      MEAN_LOS double, MEDIAN_LOS double, N_LOS_EXCLUDED int", cohort$key)
@@ -241,7 +241,7 @@ mod_hcru <- function(con, cfg, cohort) {
           AND e.EVENT_DT BETWEEN %6$s AND %7$s
       ),
       agg AS (
-        SELECT COHORT, LOT_NUM, SOC_CATEGORY, AGE_BAND, MEASURE,
+        SELECT COHORT, LOT_NUM, SOC_CATEGORY, AGE_GROUP, MEASURE,
                count(DISTINCT CASE WHEN HIT = 1 THEN PATID END) AS N_PATIENTS,
                sum(HIT) AS N_EVENTS,
                avg(CASE WHEN HIT = 1 THEN LOS_DAYS END) AS MEAN_LOS,
@@ -253,11 +253,11 @@ mod_hcru <- function(con, cfg, cohort) {
                  AS MEDIAN_LOS,
                sum(CASE WHEN HIT = 1 AND HAS_DISCHARGE = 0 THEN 1 ELSE 0 END)
                  AS N_LOS_EXCLUDED
-        FROM hits GROUP BY COHORT, LOT_NUM, SOC_CATEGORY, AGE_BAND, MEASURE
+        FROM hits GROUP BY COHORT, LOT_NUM, SOC_CATEGORY, AGE_GROUP, MEASURE
       ),
       meas_list AS (SELECT explode(array(%11$s)) AS MEASURE)
       SELECT d.COHORT, d.LOT_NUM, \'%8$s\' AS PERIOD,
-             d.SOC_CATEGORY, d.AGE_BAND, m.MEASURE,
+             d.SOC_CATEGORY, d.AGE_GROUP, m.MEASURE,
              coalesce(a.N_PATIENTS, 0) AS N_PATIENTS,
              coalesce(a.N_EVENTS, 0) AS N_EVENTS,
              d.N_AT_RISK,
@@ -272,7 +272,7 @@ mod_hcru <- function(con, cfg, cohort) {
       LEFT JOIN agg a ON a.COHORT = d.COHORT AND a.LOT_NUM = d.LOT_NUM
                      AND a.MEASURE = m.MEASURE
                      AND a.SOC_CATEGORY = d.SOC_CATEGORY
-                     AND a.AGE_BAND = d.AGE_BAND",
+                     AND a.AGE_GROUP = d.AGE_GROUP",
       wrk("S_HCRU_RATES"), per$py, per$src, cohort$key,
       wrk("S_HCRU_EVENTS"), per$start, per$end, per$name,
       rate_sql("coalesce(a.N_EVENTS, 0)", "d.PY", cfg),

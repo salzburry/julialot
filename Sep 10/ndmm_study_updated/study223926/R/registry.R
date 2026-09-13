@@ -99,14 +99,19 @@ SUPPRESSION_SPEC <- list(
 # by both at once: no table the protocol asks for crosses them, and every cell
 # of the cross would fall under the floor. So a query naming a real value in
 # both columns finds no row, which is the honest answer rather than a zero.
-STRATUM_TOTALS <- c(SOC_CATEGORY = "(all categories)", AGE_BAND = "(all ages)")
+#
+# The age stratification is AGE_GROUP - the protocol's two groups - and not
+# S_DEMOGRAPHICS.AGE_BAND's four descriptive ones. A rate is not the sum of its
+# strata's rates, so a grouping that spread "< 75" over three rows could report
+# no rate for it at all.
+STRATUM_TOTALS <- c(SOC_CATEGORY = "(all categories)", AGE_GROUP = "(all ages)")
 
 # A line the soc module wrote no row for, and a patient the demographics module
 # found no enrolment row for. Neither can happen while those modules run over
 # the same spine, and both are named rather than dropped so that the strata
 # still sum to the total if either ever does.
 SOC_UNCATEGORISED <- "(uncategorised)"
-# Not "Unknown": the demographics module writes that as a real age band, for a
+# Not "Unknown": the demographics module writes that as a real age group, for a
 # patient whose age it could not read. This one means there was no row to read
 # at all, which is a different thing and must not be folded into it.
 AGE_NO_ROW <- "(no demographics row)"
@@ -140,16 +145,35 @@ stratum_passes <- function(cfg, on) {
   }
   if (age_stratified(cfg)) {
     e <- lit
-    e[["AGE_BAND"]] <- sprintf("coalesce(age.AGE_BAND, '%s')", AGE_NO_ROW)
+    e[["AGE_GROUP"]] <- sprintf("coalesce(age.AGE_GROUP, '%s')", AGE_NO_ROW)
     # Age is the cohort's own index age, so the join is on the patient and the
     # cohort: S_DEMOGRAPHICS is one row per patient per cohort, not per line.
-    out <- c(out, list(.stratum_pass("by_age", e, "AGE_BAND",
+    out <- c(out, list(.stratum_pass("by_age", e, "AGE_GROUP",
       sprintf("LEFT JOIN %s age ON age.PATID = %s.PATID
                AND age.COHORT = %s.COHORT",
               wrk("S_DEMOGRAPHICS"), on, on))))
   }
   out
 }
+
+# What the release module found that a publication gate has to know about: the
+# groups where one withheld row is the group's total less the published rest.
+#
+# Recorded here as well as logged. Whether to regroup or withhold a second
+# stratum is the analyst's call and this package does not make it - but a log
+# line cannot be gated on, and a release that leaves the warehouse carrying a
+# recoverable cell is the one thing a gate most needs to refuse. So the run's
+# own metadata says so, in a column a check can read.
+.release_state <- new.env(parent = emptyenv())
+
+release_recoverable_reset <- function()
+  assign("groups", character(0), envir = .release_state)
+
+release_recoverable_note <- function(txt)
+  assign("groups", c(release_recoverable(), txt), envir = .release_state)
+
+release_recoverable <- function()
+  get0("groups", envir = .release_state, ifnotfound = character(0))
 
 COHORTS <- list(
   `1L` = list(

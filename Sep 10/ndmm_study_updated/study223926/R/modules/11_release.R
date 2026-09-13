@@ -23,6 +23,9 @@
 
 mod_release <- function(con, cfg, cohorts) {
   min_n <- as.integer(cfg$suppress_min_n)
+  # A fresh count each time the module runs, so a second build under one run id
+  # does not inherit the first one's finding.
+  release_recoverable_reset()
   for (tbl in names(SUPPRESSION_SPEC)) {
     spec <- SUPPRESSION_SPEC[[tbl]]
     src  <- wrk(tbl)
@@ -70,11 +73,14 @@ mod_release <- function(con, cfg, cohorts) {
       "SELECT count(*) AS n FROM (SELECT %1$s FROM %2$s WHERE SUPPRESSED = 1
          GROUP BY %1$s HAVING count(*) = 1)",
       paste(grp, collapse = ", "), rel))$n[1]
-    if (!is.na(n) && n > 0)
+    if (!is.na(n) && n > 0) {
       log_msg("  WARNING: ", n, " group(s) in ", tbl, "_RELEASE have exactly ",
               "one suppressed row, so that row is recoverable by subtraction ",
               "from the rest of its ", paste(grp, collapse = "/"),
               " group. Regroup before the table leaves the warehouse.")
+      release_recoverable_note(sprintf("%s_RELEASE: %d %s group(s)", tbl, n,
+                                       paste(grp, collapse = "/")))
+    }
   }
   # The stronger relation, where a table carries a stratification: the strata
   # of one facet value are a partition of that value's own total row, so one
@@ -97,13 +103,17 @@ mod_release <- function(con, cfg, cohorts) {
            SELECT %1$s FROM %2$s WHERE %3$s
            GROUP BY %1$s HAVING sum(SUPPRESSED) = 1)",
         grp, rel, only_this))$n[1]
-      if (!is.na(n) && n > 0)
+      if (!is.na(n) && n > 0) {
         log_msg("  WARNING: ", n, " ", paste(c(spec$group_by, spec$facet),
                 collapse = "/"), " group(s) in ", tbl, "_RELEASE have exactly ",
                 "one suppressed ", nm, ". The strata sum to the '",
                 STRATUM_TOTALS[[nm]], "' row, so that one is the total less ",
                 "the published rest. Regroup, or withhold a second stratum, ",
                 "before the table leaves the warehouse.")
+        release_recoverable_note(sprintf(
+          "%s_RELEASE: %d %s group(s) with one suppressed %s", tbl, n,
+          paste(c(spec$group_by, spec$facet), collapse = "/"), nm))
+      }
     }
   }
 

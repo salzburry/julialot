@@ -2170,6 +2170,43 @@ cat("\n-- a run's version is its build, not its id --\n")
      "...before the insert that needs it")
   ok(identical(names(RUN_METADATA_COLS)[1:3], c("RUN_ID", "STATE", "UPDATED_AT")),
      "the columns every reader binds a run by come first, unchanged")
+
+  # A publication gate needs one question answered from the run's own record:
+  # did the release leave a withheld cell that the rest of its group gives
+  # away? Whether to regroup is the analyst's call and this package does not
+  # make it - but a log line cannot be gated on, so the finding is a column.
+  ok("RELEASE_RECOVERABLE" %in% names(RUN_METADATA_COLS),
+     "the run records whether its release left a recoverable cell")
+  local({
+    release_recoverable_reset()
+    ok(!length(release_recoverable()),
+       "...which starts empty, so a second build under one run id does not inherit the first's finding")
+    release_recoverable_note("S_SAFETY_RATES_RELEASE: 3 COHORT/LOT_NUM group(s)")
+    ok(length(release_recoverable()) == 1L &&
+         grepl("S_SAFETY_RATES_RELEASE", release_recoverable()[[1]], fixed = TRUE),
+       "...and names the table and the grouping, not just a count")
+    release_recoverable_reset()
+  })
+  # "none" and "not run" are different answers and a gate must tell them
+  # apart: a run without the release module has not been shown to have no
+  # recoverable cell, it has not looked.
+  meta_of <- function(mods) with_env(base_env, {
+    env <- new.env(parent = environment(write_run_metadata))
+    sql <- character(0)
+    env$db_exec <- function(con, s) { sql <<- c(sql, s); invisible(NULL) }
+    env$db_q <- function(con, s) data.frame(
+      col_name = names(RUN_METADATA_COLS),
+      data_type = unname(RUN_METADATA_COLS), stringsAsFactors = FALSE)
+    env$codelist_metadata <- function() data.frame()
+    f <- stubbed(write_run_metadata, env)
+    f(NULL, cfg0(), list(`1L` = COHORTS$`1L`), mods, list(RUN_ID = "L"),
+      character(0), "complete", run_id = "R")
+    paste(sql, collapse = "\n")
+  })
+  ok(grepl("release module did not run", meta_of(MODULES["periods"]), fixed = TRUE),
+     "...so a run with no release module says it did not look")
+  ok(grepl("'none'", meta_of(MODULES[c("periods", "release")]), fixed = TRUE),
+     "...and one that ran it and found nothing says none")
   # A column that exists with a type this writer cannot insert into is found
   # before the DELETE, not by the insert failing after the row is gone.
   e_typ <- errs(with_env(base_env, {

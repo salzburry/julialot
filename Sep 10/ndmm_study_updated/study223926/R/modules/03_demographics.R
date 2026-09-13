@@ -55,7 +55,7 @@ mod_demographics <- function(con, cfg, cohort) {
 
   prepare_table(con, wrk("S_DEMOGRAPHICS"),
     "PATID string, COHORT string, INDEX_DATE date,
-     AGE_YEARS int, AGE_BAND string, SEX string, REGION string,
+     AGE_YEARS int, AGE_BAND string, AGE_GROUP string, SEX string, REGION string,
      RACE string, ETHNICITY string, INSURANCE_TYPE string,
      ENROL_ROW_FOUND int", cohort$key)
   run_step(con, paste0("demographics_", cohort$key), sprintf("
@@ -89,6 +89,17 @@ mod_demographics <- function(con, cfg, cohort) {
                 WHEN %11$s <  75 THEN '65-74'
                 WHEN %11$s >= 75 THEN '75+'
                 ELSE 'Unknown' END AS AGE_BAND,
+           -- The protocol age STRATIFICATION, which is two groups and not
+           -- the four descriptive bands above. VARIABLES.md stratification 2:
+           -- age >= 75 against < 75, intended as a proxy for transplant
+           -- status. The bands describe Table 1 age distribution; this is what
+           -- a subgroup column asks for, and it is carried into the rate
+           -- tables so a rate can be reported for each group. A rate is not
+           -- the sum of its parts, so a grouping that spread < 75 over three
+           -- rows could report no rate for it at all.
+           CASE WHEN %11$s IS NULL THEN 'Unknown'
+                WHEN %11$s >= 75 THEN '75+'
+                ELSE '<75' END AS AGE_GROUP,
            CASE upper(coalesce(c.GDR_CD,'U')) WHEN 'M' THEN 'Male'
                 WHEN 'F' THEN 'Female' ELSE 'Unknown' END AS SEX,
            coalesce(r.REGION_VAL, 'Unknown') AS REGION,

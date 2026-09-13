@@ -137,6 +137,31 @@ cat("\nthe command for a scenario nobody has run\n")
      "a setting the package does not have is reported, not silently exported")
 }
 
+cat("\none vocabulary, stated in three folders\n")
+{
+  # Each delivered folder has to run on its own, so the stratum labels are
+  # written out in the package registry, the shells' reader and this folder's
+  # spec. That is three copies of one vocabulary, and a value changed in one
+  # of them would not fail anywhere - the tables would simply stop lining up,
+  # quietly, at the point where a page reads them. Held here instead.
+  ready <- tfls_ready()
+  ok(isTRUE(ready$ok), "the shells' code is loadable, so its copy can be read")
+  tfls_totals <- get("TFLS_STRATUM_TOTALS", envir = ready$env)
+  ok(identical(DASH_STRATUM_TOTALS[order(names(DASH_STRATUM_TOTALS))],
+               STRATUM_TOTALS[order(names(STRATUM_TOTALS))]),
+     "this folder's stratum labels are the package registry's, name for name and value for value")
+  ok(identical(tfls_totals[order(names(tfls_totals))],
+               STRATUM_TOTALS[order(names(STRATUM_TOTALS))]),
+     "...and so are the shells'")
+  # The label a producer writes and the label a reader looks for are the same
+  # string or the join is silently empty, so the actual data is checked too.
+  syn <- synthetic_one("s223926_", SYNTH_SCENARIOS[[1]], 25L)
+  for (nm in names(STRATUM_TOTALS))
+    ok(STRATUM_TOTALS[[nm]] %in% syn$S_SAFETY_RATES[[nm]],
+       paste0("...and a run actually writes the '", STRATUM_TOTALS[[nm]],
+              "' row that a column with no ", tolower(nm), " reads"))
+}
+
 cat("\nthe synthetic run stands in for a real one\n")
 {
   syn <- synthetic_one("s223926_", SYNTH_SCENARIOS[[1]], 25L)
@@ -198,15 +223,15 @@ cat("\nselection: what a viewer can change without a run\n")
   # would take the line and its own parts together.
   line <- list(COHORT = "1L", LOT_NUM = "1", PERIOD = "TREATMENT",
                SOC_CATEGORY = key_default("SOC_CATEGORY", "1L"),
-               AGE_BAND = key_default("AGE_BAND", "1L"))
+               AGE_GROUP = key_default("AGE_GROUP", "1L"))
   f <- apply_keys(d, sp, line)
   ok(nrow(f) == 3 && all(f$COHORT == "1L"), "selecting on the spec's keys filters")
   ok(identical(unique(f$SOC_CATEGORY), "(all categories)") &&
-       identical(unique(f$AGE_BAND), "(all ages)"),
+       identical(unique(f$AGE_GROUP), "(all ages)"),
      "...and a stratum the viewer never touched is the line's own row")
   by_soc <- apply_keys(d, sp, utils::modifyList(
     line, list(SOC_CATEGORY = "Doublet/monotherapy")))
-  ok(nrow(by_soc) == 3 && all(by_soc$AGE_BAND == "(all ages)"),
+  ok(nrow(by_soc) == 3 && all(by_soc$AGE_GROUP == "(all ages)"),
      "...and naming a regimen category leaves age at the line's own row")
   # What the package guarantees and the shells add up on: the strata of one
   # measure sum back to the line.
@@ -216,8 +241,8 @@ cat("\nselection: what a viewer can change without a run\n")
   parts <- parts[parts$SOC_CATEGORY != "(all categories)", ]
   ok(sum(parts$N_EVENTS) == one(f)$N_EVENTS,
      "...and the synthetic categories sum to the line, as a real run's do")
-  aparts <- one(apply_keys(d, sp, utils::modifyList(line, list(AGE_BAND = NULL))))
-  aparts <- aparts[aparts$AGE_BAND != "(all ages)", ]
+  aparts <- one(apply_keys(d, sp, utils::modifyList(line, list(AGE_GROUP = NULL))))
+  aparts <- aparts[aparts$AGE_GROUP != "(all ages)", ]
   ok(sum(aparts$N_EVENTS) == one(f)$N_EVENTS,
      "...and so do the age bands")
   ok(nrow(apply_keys(d, sp, list(COHORT = "all"))) == nrow(d),
@@ -1155,6 +1180,32 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
     ok(is.null(read_scenario_table(steady, c(list(prefix = "p_", run_id = "Z", state = "complete"), full),
                                    "S_SAFETY_RATES", FALSE)),
        "...and one that is a different run from the sidebar's reads nothing")
+
+    # Three states, not two. A run that never released may read the raw table;
+    # a run that DID release and whose released copy is missing or empty may
+    # not, because that table holds what the release was run to remove.
+    src_of <- function(rel) list(read = function(prefix, table) {
+      if (identical(table, "S_RUN_METADATA"))
+        return(data.frame(RUN_ID = "A", STATE = "complete", stringsAsFactors = FALSE))
+      if (grepl("_RELEASE$", table)) return(rel)
+      data.frame(RATE = 770, stringsAsFactors = FALSE)
+    })
+    no_rel <- c(list(prefix = "p_", run_id = "A", state = "complete"),
+                list(modules = setdiff(names(MODULES), "release"),
+                     cohorts = COHORT_KEYS))
+    ok(identical(read_scenario_table(src_of(NULL), no_rel, "S_SAFETY_RATES",
+                                     TRUE)$RATE, 770),
+       "a run that never released reads the raw table, which is all it has")
+    ok(identical(read_scenario_table(
+         src_of(data.frame(RATE = NA_real_, stringsAsFactors = FALSE)),
+         sc, "S_SAFETY_RATES", TRUE)$RATE, NA_real_),
+       "...a run that released and left the copy there reads that copy")
+    ok(is.null(read_scenario_table(src_of(NULL), sc, "S_SAFETY_RATES", TRUE)),
+       "...and one that released and left no copy reads NOTHING, not the raw table the release was meant to replace")
+    ok(is.null(read_scenario_table(
+         src_of(data.frame(RATE = numeric(0), stringsAsFactors = FALSE)),
+         sc, "S_SAFETY_RATES", TRUE)),
+       "...and a released copy with no rows in it is refused the same way")
     # A run that did not finish. Its metadata row matches - it is the newest,
     # under this id and state - and its tables are the previous build's.
     for (st in c("started", "failed", "")) {
@@ -1315,7 +1366,7 @@ cat("\ncomparing two scenarios\n")
 {
   sp <- table_spec("S_HCRU_RATES")
   sel <- list(COHORT = "1L", LOT_NUM = "1", PERIOD = "TREATMENT",
-              SOC_CATEGORY = "(all categories)", AGE_BAND = "(all ages)")
+              SOC_CATEGORY = "(all categories)", AGE_GROUP = "(all ages)")
   g <- function(p) apply_keys(read_table(SRC, p, "S_HCRU_RATES"), sp, sel)
   cm <- compare_tables(g("s223926_"), g("s223926_q27_"), sp, "RATE")
   ok(nrow(cm) == 3, "every stratum in either scenario appears once")

@@ -172,7 +172,7 @@ RUN_METADATA_COLS <- c(
   LOT_RUN_ID = "string", LOT_RUN_VERSION = "string",
   STUDY_START = "string", STUDY_END = "string",
   CONTRACT_DEVIATIONS = "string", OPEN_QUESTION_READINGS = "string",
-  CODELISTS = "string")
+  CODELISTS = "string", RELEASE_RECOVERABLE = "string")
 
 write_run_metadata <- function(con, cfg, cohorts, mods, lot_run, deviations,
                                state, run_id = NULL, upstream = NULL) {
@@ -200,7 +200,14 @@ write_run_metadata <- function(con, cfg, cohorts, mods, lot_run, deviations,
             STUDY_END              = q(cfg$study_end),
             CONTRACT_DEVIATIONS    = q(if (length(deviations)) deviations else "none"),
             OPEN_QUESTION_READINGS = q(open_question_readings(cfg, upstream)),
-            CODELISTS              = q(cl_str))
+            CODELISTS              = q(cl_str),
+            # "none" and "not run" are different answers, and a gate has to be
+            # able to tell them apart: a run with no release module has not
+            # been shown to have no recoverable cell, it has not looked.
+            RELEASE_RECOVERABLE    = q(
+              if (!"release" %in% names(mods)) "release module did not run"
+              else if (length(release_recoverable()))
+                release_recoverable() else "none"))
   # One declaration drives all three statements; a column declared with no
   # value, or a value with no column, stops the build here rather than in the
   # warehouse's words.

@@ -82,11 +82,15 @@ SYNTH_SOC <- c("Quadruplet with anti-CD38 backbone",
 SYNTH_SOC_ALL <- "(all categories)"
 SYNTH_AGE_ALL <- "(all ages)"
 SYNTH_AGE_BANDS <- c("18-44", "45-64", "65-74", "75+")
+# The protocol's stratification, which is two groups and is what the rate
+# tables carry. The four bands above describe Table 1; these answer a subgroup
+# column, including the rate rows a union of bands could not.
+SYNTH_AGE_GROUPS <- c("<75", "75+")
 
 # Fixed weights, not draws: the split must not move the RNG stream that
 # produces the totals, or every number on the page would change with it.
 SYNTH_SOC_W <- c(16, 22, 14, 18, 6, 5, 6, 4, 6, 2, 1)
-SYNTH_AGE_W <- c(4, 24, 34, 38)
+SYNTH_AGE_W <- c(62, 38)
 
 # A total cut into parts that sum back to it EXACTLY. The package guarantees
 # its strata partition the line, the shells add margins up on that basis, and
@@ -121,13 +125,13 @@ synth_margin <- function(d, col, levels, other, counts, nums, w) {
 # recomputed from the parts rather than copied from the line.
 synth_stratify <- function(d, counts, nums, recompute) {
   d$SOC_CATEGORY <- SYNTH_SOC_ALL
-  d$AGE_BAND <- SYNTH_AGE_ALL
+  d$AGE_GROUP <- SYNTH_AGE_ALL
   recompute(rbind(
     d,
-    synth_margin(d, "SOC_CATEGORY", SYNTH_SOC, "AGE_BAND", counts, nums,
+    synth_margin(d, "SOC_CATEGORY", SYNTH_SOC, "AGE_GROUP", counts, nums,
                  SYNTH_SOC_W),
-    synth_margin(d, "AGE_BAND", SYNTH_AGE_BANDS, "SOC_CATEGORY", counts, nums,
-                 SYNTH_AGE_W)))
+    synth_margin(d, "AGE_GROUP", SYNTH_AGE_GROUPS, "SOC_CATEGORY", counts,
+                 nums, SYNTH_AGE_W)))
 }
 
 synthetic_scenarios <- function(cfg = dashboard_config()) {
@@ -187,13 +191,21 @@ synthetic_one <- function(prefix, settings, min_n = 25L) {
   hcru$MEAN_LOS <- round(r(nrow(hcru), 3.1, 11.4), 1)
   hcru$MEDIAN_LOS <- round(hcru$MEAN_LOS * 0.82, 1)
   hcru$N_LOS_EXCLUDED <- as.integer(hcru$N_EVENTS * r(nrow(hcru), 0, .04))
-  # A length of stay is not a count and does not divide up, so a stratum keeps
-  # the line's, which is what a mean of a subset looks like anyway.
   hcru <- synth_stratify(hcru,
     counts = c("N_AT_RISK", "N_PATIENTS", "N_EVENTS", "N_LOS_EXCLUDED"),
     nums = "PERSON_YEARS",
     recompute = function(d) {
       d$RATE <- round(1000 * d$N_EVENTS / pmax(d$PERSON_YEARS, 1), 2)
+      # A length of stay is not a count. It does not divide up like one, and a
+      # subgroup's mean is its OWN - not the line's, which is what copying it
+      # down would claim. So each stratum gets a length of its own, moved off
+      # the line's by a factor read from the stratum's name rather than drawn:
+      # reproducible, and it does not move the stream that made the totals.
+      lab <- paste0(d$SOC_CATEGORY, "\r", d$AGE_GROUP)
+      f <- 0.80 + (vapply(lab, function(x) sum(utf8ToInt(x)), numeric(1)) %% 41) / 100
+      f[d$SOC_CATEGORY == SYNTH_SOC_ALL & d$AGE_GROUP == SYNTH_AGE_ALL] <- 1
+      d$MEAN_LOS <- round(d$MEAN_LOS * f, 1)
+      d$MEDIAN_LOS <- round(d$MEDIAN_LOS * f, 1)
       d
     })
 
@@ -282,6 +294,9 @@ synthetic_one <- function(prefix, settings, min_n = 25L) {
   demo$AGE_BAND <- cut(demo$AGE_YEARS, c(-Inf, 44, 64, 74, Inf),
                        labels = SYNTH_AGE_BANDS)
   demo$AGE_BAND <- as.character(demo$AGE_BAND)
+  # Both, as the package writes both: the descriptive band and the protocol's
+  # own two-group stratification, which is what a subgroup column reads.
+  demo$AGE_GROUP <- ifelse(demo$AGE_BAND == "75+", "75+", "<75")
 
   comorb <- data.frame(
     PATID = tte$PATID, COHORT = tte$COHORT,

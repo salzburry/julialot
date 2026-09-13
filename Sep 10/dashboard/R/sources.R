@@ -339,7 +339,10 @@ read_scenario_table <- function(src, scenario, table, prefer_release = TRUE) {
   # finished run's own tables, and the released copy only where it ran the
   # release module, otherwise the rebuilt raw table.
   if (!scenario_wrote(scenario, table)) return(NULL)
-  prefer_release <- prefer_release && scenario_wrote(scenario, paste0(table, "_RELEASE"))
+  # Did THIS run release this table? That decides two different things: which
+  # copy to prefer, and - below - whether the raw one may stand in for it.
+  released <- scenario_wrote(scenario, paste0(table, "_RELEASE"))
+  prefer_release <- prefer_release && released
   same <- function() {
     m <- scenario_is_current(src, scenario)
     # Unanswerable two ways: a scenario that recorded no run is not bound and
@@ -350,6 +353,13 @@ read_scenario_table <- function(src, scenario, table, prefer_release = TRUE) {
   if (!same()) return(NULL)
   d <- read_table(src, scenario$prefix, table, prefer_release)
   if (!same()) return(NULL)
+  # FAIL CLOSED. read_table() falls back to the raw table when the released
+  # one is missing or empty, which is right where the run never released and
+  # wrong where it did: the raw table holds what the release was run to
+  # remove, and reading it under a run that says it released would undo the
+  # release quietly. A partial write or a deleted table is exactly that case.
+  if (prefer_release && !is.null(d) &&
+      !identical(attr(d, "table_source"), "release")) return(NULL)
   restrict_to_cohorts(d, scenario)
 }
 

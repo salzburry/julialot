@@ -23,7 +23,7 @@ mod_malignancy <- function(con, cfg, cohort) {
     cohort$key)
   prepare_table(con, wrk("S_MALIGNANCY_RATES"),
     "COHORT string, LOT_NUM int, PERIOD string,
-     SOC_CATEGORY string, AGE_BAND string, CATEGORY string,
+     SOC_CATEGORY string, AGE_GROUP string, CATEGORY string,
      N_PATIENTS int, N_AT_RISK int, PERSON_YEARS double, RATE double", cohort$key)
   run_step(con, paste0("malignancy_", cohort$key), sprintf("
     INSERT INTO %1$s
@@ -187,14 +187,14 @@ mod_malignancy <- function(con, cfg, cohort) {
       GROUP BY p.COHORT, p.LOT_NUM, m.CATEGORY%14$s
     )
     SELECT den.COHORT, den.LOT_NUM, 'TREATMENT' AS PERIOD,
-           den.SOC_CATEGORY, den.AGE_BAND, den.category,
+           den.SOC_CATEGORY, den.AGE_GROUP, den.category,
            coalesce(num.N_PATIENTS, 0) AS N_PATIENTS, den.N_AT_RISK,
            den.PY AS PERSON_YEARS, %2$s AS RATE
     FROM den
     LEFT JOIN num ON num.COHORT = den.COHORT AND num.LOT_NUM = den.LOT_NUM
                  AND num.CATEGORY = den.category
                  AND num.SOC_CATEGORY = den.SOC_CATEGORY
-                 AND num.AGE_BAND = den.AGE_BAND",
+                 AND num.AGE_GROUP = den.AGE_GROUP",
     wrk("S_MALIGNANCY_RATES"),
     rate_sql("coalesce(num.N_PATIENTS, 0)", "den.PY", cfg),
     wrk("S_MALIGNANCY"), wrk("S_LOT_PERIODS"), cohort$key, "S_CL_MALIG",
@@ -241,14 +241,14 @@ mod_malignancy <- function(con, cfg, cohort) {
         GROUP BY p.COHORT, p.LOT_NUM, m.CATEGORY%10$s
       )
       SELECT den.COHORT, den.LOT_NUM, 'BASELINE' AS PERIOD,
-             den.SOC_CATEGORY, den.AGE_BAND, cats.category,
+             den.SOC_CATEGORY, den.AGE_GROUP, cats.category,
              coalesce(num.N_PATIENTS, 0), den.N_AT_RISK, den.PY, %2$s
       FROM den
       CROSS JOIN cats
       LEFT JOIN num ON num.COHORT = den.COHORT AND num.LOT_NUM = den.LOT_NUM
                    AND num.CATEGORY = cats.category
                    AND num.SOC_CATEGORY = den.SOC_CATEGORY
-                   AND num.AGE_BAND = den.AGE_BAND",
+                   AND num.AGE_GROUP = den.AGE_GROUP",
       wrk("S_MALIGNANCY_RATES"),
       rate_sql("coalesce(num.N_PATIENTS, 0)", "den.PY", cfg),
       wrk("S_MALIGNANCY"), wrk("S_PERIODS"), cohort$key, "S_CL_MALIG",

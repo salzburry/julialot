@@ -824,6 +824,30 @@ ok(run_reader(UNDER_PREFIX, RAW_RUN)("S_PATTERNS")$N_PATIENTS == 30,
    "a released copy an earlier run left behind is not preferred where this run did not run the release module: the rebuilt raw table is what is read")
 ok(run_reader(UNDER_PREFIX, REL_RUN)("S_PATTERNS")$N_PATIENTS == 70,
    "...and where the run did run it, the released copy is read, so the suppression stays the package's own")
+
+# The third state, which is neither of those two: the run says it released and
+# the released copy is not there. Reading the raw one would publish exactly
+# what the release was run to remove, under a run that says it removed it - so
+# nothing is read, and the reason says which of absent and empty it was.
+GONE <- function(store)
+  run_reader(function(t) store[[toupper(t)]], REL_RUN)
+REL_ONLY_RAW <- list(S_PATTERNS = UNDER_PREFIX("S_PATTERNS"))
+REL_EMPTY <- c(REL_ONLY_RAW,
+               list(S_PATTERNS_RELEASE = UNDER_PREFIX("S_PATTERNS_RELEASE")[0, , drop = FALSE]))
+ok(is.null(GONE(REL_ONLY_RAW)("S_PATTERNS")),
+   "a run that released a table and left no released copy reads nothing, not the raw table it was meant to replace")
+ok(is.null(GONE(REL_EMPTY)("S_PATTERNS")),
+   "...and a released copy with no rows in it is the same refusal, not an empty answer that falls back")
+# A refusal is recorded as the read happens, so the reader is asked after it
+# has been used - the same way the runner's unfilled list asks it.
+MISSING_READER <- GONE(REL_ONLY_RAW); invisible(MISSING_READER("S_PATTERNS"))
+EMPTY_READER <- GONE(REL_EMPTY); invisible(EMPTY_READER("S_PATTERNS"))
+RAW_READER <- run_reader(UNDER_PREFIX, RAW_RUN); invisible(RAW_READER("S_PATTERNS"))
+ok(has(reader_refusal(MISSING_READER, "S_PATTERNS"), "not under the prefix") &&
+     has(reader_refusal(EMPTY_READER, "S_PATTERNS"), "there with no rows"),
+   "...and the refusal says which of the two it was, because a missing table and an empty one are different failures")
+ok(!nzchar(reader_refusal(RAW_READER, "S_PATTERNS")),
+   "...while a run that never released refuses nothing, since the raw table is what it has")
 FRAIL_OFF <- run_scope(md_row("1L", "cohorts; periods; comorbidity", "frailty=FALSE"))
 FRAIL_ON <- run_scope(md_row("1L", "cohorts; periods; comorbidity", "frailty=TRUE"))
 ok({ st <- run_table_status(FRAIL_OFF, "S_FRAILTY")

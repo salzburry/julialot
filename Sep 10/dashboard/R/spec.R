@@ -47,14 +47,14 @@ TABLE_SPEC <- list(
 
   S_SAFETY_RATES = list(
     shape = "rate", label = "Key safety events",
-    keys = c("COHORT", "LOT_NUM", "PERIOD", "SOC_CATEGORY", "AGE_BAND"),
+    keys = c("COHORT", "LOT_NUM", "PERIOD", "SOC_CATEGORY", "AGE_GROUP"),
     facet = "CONDITION", groups = c("DOMAIN", "ACUTE_CHRONIC"),
     n_col = "N_AT_RISK", rate = "RATE", lo = "RATE_LO", hi = "RATE_HI",
     numerator = "N_PATIENTS", events = "N_EVENTS", py = "PERSON_YEARS"),
 
   S_HCRU_RATES = list(
     shape = "rate", label = "Healthcare resource use",
-    keys = c("COHORT", "LOT_NUM", "PERIOD", "SOC_CATEGORY", "AGE_BAND"),
+    keys = c("COHORT", "LOT_NUM", "PERIOD", "SOC_CATEGORY", "AGE_GROUP"),
     facet = "MEASURE",
     n_col = "N_AT_RISK", rate = "RATE",
     numerator = "N_PATIENTS", events = "N_EVENTS", py = "PERSON_YEARS",
@@ -62,7 +62,7 @@ TABLE_SPEC <- list(
 
   S_MALIGNANCY_RATES = list(
     shape = "rate", label = "Secondary malignancies",
-    keys = c("COHORT", "LOT_NUM", "PERIOD", "SOC_CATEGORY", "AGE_BAND"),
+    keys = c("COHORT", "LOT_NUM", "PERIOD", "SOC_CATEGORY", "AGE_GROUP"),
     facet = "CATEGORY",
     n_col = "N_AT_RISK", rate = "RATE",
     numerator = "N_PATIENTS", py = "PERSON_YEARS"),
@@ -74,7 +74,7 @@ TABLE_SPEC <- list(
 
   S_TX_ATTRITION = list(
     shape = "count", label = "Treatment attrition",
-    keys = c("COHORT", "LOT_NUM", "SOC_CATEGORY", "AGE_BAND"),
+    keys = c("COHORT", "LOT_NUM", "SOC_CATEGORY", "AGE_GROUP"),
     facet = "OUTCOME",
     n_col = "N_PATIENTS", denom = "N_DENOM", pct = "PCT"),
 
@@ -169,16 +169,22 @@ GENERIC_KEYS <- c("COHORT", "LOT_NUM", "PERIOD")
 # S_SOC, S_PATTERNS, S_DEMOGRAPHICS - would be filtered to a value it does not
 # have and come back empty. The four tables that do carry it name it in their
 # own spec.
-STRATUM_TOTALS <- c(SOC_CATEGORY = "(all categories)", AGE_BAND = "(all ages)")
+# Named for this folder, not STRATUM_TOTALS: the package registry declares one
+# of those and global.R sources it, so the two would shadow each other and the
+# survivor would be whichever was sourced last. The suite holds this one
+# against the package's and the shells', which is the drift that matters.
+DASH_STRATUM_TOTALS <- c(SOC_CATEGORY = "(all categories)",
+                         AGE_GROUP = "(all ages)")
 
 # The keys a viewer is offered, which is the generic ones plus the strata.
-SELECTABLE_KEYS <- c(GENERIC_KEYS, names(STRATUM_TOTALS))
+SELECTABLE_KEYS <- c(GENERIC_KEYS, names(DASH_STRATUM_TOTALS))
 
 # What a key starts at. A stratum starts at the line's own row, because a chart
 # over every row would draw the line beside its own parts.
 key_default <- function(k, cohort_default) {
   if (identical(k, "COHORT")) return(cohort_default)
-  if (k %in% names(STRATUM_TOTALS)) return(unname(STRATUM_TOTALS[[k]]))
+  if (k %in% names(DASH_STRATUM_TOTALS))
+    return(unname(DASH_STRATUM_TOTALS[[k]]))
   "all"
 }
 

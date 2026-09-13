@@ -316,8 +316,13 @@ main <- function() {
 
   ctx <- fill_context(reader, sh$classes,
                       tte_eligible_only = env_flag("TFLS_TTE_ELIGIBLE_ONLY"),
-                      absent_why = function(table)
-                        run_table_status(scope, table)$why)
+                      absent_why = function(table) {
+                        # The reader's own refusal first: it knows things the
+                        # status cannot, such as a declared release that is
+                        # not under the prefix.
+                        r <- reader_refusal(reader, table)
+                        if (nzchar(r)) r else run_table_status(scope, table)$why
+                      })
   cat("  curves  ", if (env_flag("TFLS_TTE_ELIGIBLE_ONLY"))
       "over TTE_ELIGIBLE = 1 (TFLS_TTE_ELIGIBLE_ONLY is on)"
       else paste0("over every row of the time-to-event table; TTE_ELIGIBLE is ",
