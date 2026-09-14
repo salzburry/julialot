@@ -70,7 +70,7 @@ two or three, and add rows as questions come up.
 Domino launches the App command from the **project root** and expects the
 process on `0.0.0.0:8888`; `app.sh` does that. Set the App command to `bash
 <folders>/dashboard/app.sh`, giving the path from the project root to wherever
-the three folders sit. `app.sh` changes to the folder above `dashboard/`
+the four folders sit. `app.sh` changes to the folder above `dashboard/`
 itself, so nothing else depends on where that is.
 
 Set the App's environment variables:
@@ -142,7 +142,18 @@ Nothing this delivery runs can enforce it: the job writes the files, and who
 may read them afterwards is set on the Domino Dataset and the project that
 owns it. Grant it to the App and the Job and to nobody else, and re-check it
 whenever the project's collaborators change — every other control on this page
-is downstream of that one holding.
+is downstream of that one holding. The same goes for the three overrides
+(`SNAPSHOT_ALLOW_RECOVERABLE`, `DASH_ALLOW_RECOVERABLE`,
+`TFLS_ALLOW_RECOVERABLE`): each is deliberately settable, each says on the run
+that it was set, and none of them is a control against someone who can set
+environment variables on the Job.
+
+**Keep the two outputs apart.** `TFLS/run_tfls.R` writes to `TFLS/out/`, which
+is not the Dataset and must not be moved into it. The private snapshot and the
+shareable tables are different artefacts with different audiences, and the way
+a private file becomes a shared one is a disclosure review of the shell output,
+not a copy out of the Dataset. Where they sit in one directory, the next person
+to grant access grants both.
 
 **A release that gives a withheld cell away does not leave the warehouse.**
 `mod_release()` withholds every cell under the floor, then records in
@@ -162,7 +173,9 @@ call; the job only declines to make it by default.
 
 **A warehouse App is a second way in.** `DASH_SOURCE=warehouse` reads the
 tables live, so nothing it shows has been through the job. The App applies the
-same verdict on the read, in the same three cases the job does:
+same verdict on the read. Four states, and the App and the job agree on the
+first three; they part on the fourth, where the job is the gate and the App
+says so instead:
 
 | the run's record says | the App shows |
 |---|---|

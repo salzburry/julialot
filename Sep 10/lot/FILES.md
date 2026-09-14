@@ -21,10 +21,10 @@ engine is pointed at — `build.R` takes the cohort table by name — so it come
 before LOT rather than under it, and no cohort is named anywhere in this
 folder. The study package in `../ndmm_study_updated/` reads a finished run and
 builds the study's cohorts and variables on it; the app in `../dashboard/`
-shows what both produced. Dependencies run one way: those two read the
-tables a run wrote, and the dashboard's tests read `engine/R/build_lot.R` as
-text to hold the two table lists to each other; nothing in `lot/` resolves
-back out.
+shows what both produced; the shells in `../TFLS/` are filled from what the
+study package wrote. Dependencies run one way: those three read the tables a
+run wrote, and the dashboard's tests read `engine/R/build_lot.R` as text to
+hold the two table lists to each other; nothing in `lot/` resolves back out.
 
 ## Why the engine is its own folder
 

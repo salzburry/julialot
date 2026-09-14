@@ -134,8 +134,8 @@ cat("\nselection\n")
   ok(identical(names(resolve_modules(cfg0())), names(MODULES)),
      "MODULES=all runs every module in dependency order")
   m <- resolve_modules(cfg0(c(MODULES = "safety")))
-  ok(identical(names(m), c("spine", "cohorts", "periods", "safety")),
-     "asking for one module pulls in exactly what it needs")
+  ok(identical(names(m), c("eligibility", "spine", "cohorts", "periods", "safety")),
+     "asking for one module pulls in exactly what it needs, eligibility included - cohorts combines a patient with a line and needs both roots")
   ok(which(names(m) == "periods") < which(names(m) == "safety"),
      "and orders a dependency before its dependant")
   e <- errs(resolve_modules(cfg0(c(MODULES = "patterns", SKIP_MODULES = "soc"))))
@@ -306,14 +306,15 @@ cat("\ncode lists\n")
   cfg_all <- cfg_empty; cfg_all$modules <- "all"
   mods_all <- suppressMessages(resolve_modules(cfg_all))
   ran <- suppressMessages(preflight_codelists(mods_all, cfg_all))
-  no_list <- c("spine", "cohorts", "attrition", "periods", "demographics", "tte")
+  no_list <- c("eligibility", "spine", "cohorts", "attrition", "periods",
+               "demographics", "tte")
   ok(identical(names(ran), no_list),
-     "with MODULES=all and no usable list, the six modules that need none run, in order, and nothing stops")
+     "with MODULES=all and no usable list, the seven modules that need none run, in order, and nothing stops")
   lo <- attr(ran, "left_out")
   ok(setequal(names(lo), setdiff(names(mods_all), no_list)) &&
        grepl("safety_events.csv", lo[["safety"]]) && grepl("needs", lo[["release"]]) &&
        grepl("soc", lo[["patterns"]]),
-     "...the other seven are left out by name: those on an unusable list with the file, and those that need one of them with the module")
+     "...the other six are left out by name: those on an unusable list with the file, and those that need one of them with the module")
   ok(any(grepl("left out: ", describe_plan(cfg_all, resolve_cohorts(cfg_all), ran))),
      "...and the plan says so before anything is read")
   # The shipped code lists are shapes without content, so a default run over
@@ -321,10 +322,10 @@ cat("\ncode lists\n")
   # windows, demographics and outcomes, and nothing on an unfilled list.
   ran_shipped <- suppressMessages(preflight_codelists(suppressMessages(resolve_modules(cfg0())), cfg))
   ok(identical(names(ran_shipped), no_list) && length(attr(ran_shipped, "left_out")) == 7L,
-     "a default run over the shipped lists runs those six and leaves the seven blocked on the annexes out by name")
+     "a default run over the shipped lists runs those seven and leaves the seven blocked on the annexes out by name")
   ok(identical(names(suppressMessages(preflight_codelists(
        suppressMessages(resolve_modules(cfg0(c(MODULES = "attrition")))), cfg))),
-       c("spine", "cohorts", "attrition")),
+       c("eligibility", "spine", "cohorts", "attrition")),
      "...and asking for the attrition by name needs no list at all")
   # A list that loads but that its module would refuse: the HCRU list with a
   # CPT row only, under the default ED definition (revenue, pos). Found here,
@@ -366,6 +367,50 @@ cat("\ncode lists\n")
   unlink(tmp, recursive = TRUE)
 }
 
+cat("\nthe two roots, and the nesting that is now a setting\n")
+{
+  # Eligibility is a ROOT: it declares no needs, so it is buildable with no LOT
+  # run in existence. That is the whole point of splitting it out - eight of
+  # the eleven criteria are settled before this package runs and none of them
+  # needs a line.
+  ok(identical(MODULES$eligibility$needs, character(0)) &&
+       identical(MODULES$spine$needs, character(0)),
+     "eligibility and spine are independent roots: neither declares a need, so either builds without the other")
+  ok(setequal(MODULES$cohorts$needs, c("eligibility", "spine")),
+     "...and cohorts is the first module that needs both, because it is where a patient and a line are combined")
+  ok(identical(names(suppressMessages(resolve_modules(
+       cfg0(c(MODULES = "eligibility"))))), "eligibility"),
+     "...so asking for eligibility alone pulls in nothing at all - no spine, no LOT run needed")
+
+  # Nesting is a setting. The parent join is what makes a 1L index outside the
+  # window cost the patient their 2L and 3L rows too.
+  emit_for <- function(env) {
+    set_study_config(cfg0(env))
+    co <- resolve_cohorts(study_config())
+    sql <- character(0)
+    e <- new.env(parent = environment(mod_cohorts))
+    e$run_step <- function(con, name, statement, ...) { sql <<- c(sql, statement); invisible(NULL) }
+    e$prepare_table <- function(...) invisible(NULL)
+    e$db_exec <- function(con, s) { sql <<- c(sql, s); invisible(NULL) }
+    e$db_q <- function(con, s) data.frame(n_indexed = 1, n_in_cohort = 1)
+    f <- stubbed(mod_cohorts, e)
+    f(NULL, study_config(), co$`2L`)
+    paste(sql, collapse = "\n")
+  }
+  nested_sql <- emit_for(character(0))
+  flat_sql   <- emit_for(c(COHORT_NESTED = "FALSE"))
+  ok(grepl("s_parent_cohort", nested_sql, fixed = TRUE),
+     "by default a nested cohort still requires the cohort above, which is s7.2.1 read literally")
+  ok(!grepl("s_parent_cohort", flat_sql, fixed = TRUE),
+     "...and COHORT_NESTED=FALSE drops that requirement, so each line stands on its own index")
+  ok(grepl("1 AS NESTED", nested_sql, fixed = TRUE) &&
+       grepl("0 AS NESTED", flat_sql, fixed = TRUE),
+     "...with the row saying which way it went, so a number cannot be read under the wrong one")
+  ok(grepl("N1_received_line; N2_ce_pre; I5_followup", nested_sql, fixed = TRUE),
+     "and every row carries the criteria ITS verdict was computed over - 2L is judged on three, not on the nine that sit on the row")
+  set_study_config(cfg0())
+}
+
 cat("\nthe cohort table, as SQL names it\n")
 {
   # Bare, the name resolved against the session's current schema: the working
@@ -383,8 +428,30 @@ cat("\nthe cohort table, as SQL names it\n")
   bare <- Filter(function(x) grepl("(^|[^.A-Za-z0-9_])ndmm_NDMM_COHORT", x$sql), RUN$sql)
   ok(!length(bare),
      paste0("no emitted statement names the cohort table bare (", length(bare), " did)"))
-  ok(sum(grepl("hive_metastore.wk.ndmm_NDMM_COHORT", vapply(RUN$sql, function(x) x$sql, character(1)), fixed = TRUE)) >= 6,
-     "...and every module that reads it names it under the work schema")
+  # ONE module reads the upstream table, and it is mod_eligibility(). That is
+  # the layering, stated as a test rather than as a comment: everything else
+  # takes the cohort build's verdict off S_ELIGIBILITY, so a change to the
+  # input's shape reaches the package through a table the package declares.
+  # A second reader appearing here is the layering quietly coming undone.
+  reads <- Filter(function(x) grepl("hive_metastore.wk.ndmm_NDMM_COHORT",
+                                    x$sql, fixed = TRUE), RUN$sql)
+  # Exactly one statement DERIVES from the upstream table, and it builds
+  # S_ELIGIBILITY. The others that name it are read-only: describe_columns()
+  # and the value check in check_cohort_table(), which is what the input
+  # contract is checked by and writes nothing.
+  writes <- Filter(function(x) grepl("CREATE OR REPLACE TABLE", x$sql, fixed = TRUE) ||
+                               grepl("INSERT INTO", x$sql, fixed = TRUE), reads)
+  ok(length(writes) == 1L &&
+       grepl("S_ELIGIBILITY", writes[[1]]$sql, fixed = TRUE),
+     paste0("exactly one emitted statement derives from the input cohort table (",
+            length(writes), " did), and it is the one that builds S_ELIGIBILITY"))
+  ok(all(vapply(setdiff(names(reads), names(writes)), function(n)
+           !grepl("INSERT INTO|CREATE OR REPLACE TABLE", reads[[n]]$sql), logical(1))),
+     "...and every other statement naming it only reads it, which is the input contract check")
+  ok(sum(grepl("hive_metastore.wk.s223926_S_ELIGIBILITY",
+               vapply(RUN$sql, function(x) x$sql, character(1)),
+               fixed = TRUE)) >= 4,
+     "...and the modules that used to read it now read S_ELIGIBILITY, under the work schema")
 }
 
 cat("\nthe connection layer\n")
@@ -1817,7 +1884,8 @@ cat("\nthe modules, run against recorders\n")
     mm_hosp_position = function(c) { c$mm_hosp_position <- "claim_positions"; c },
     claim_status = function(c) { c$claim_status <- "paid_only"; c },
     frailty = function(c) { c$frailty <- TRUE; c },
-    comorbid_subgroups = function(c) { c$comorbid_subgroups <- TRUE; c }
+    comorbid_subgroups = function(c) { c$comorbid_subgroups <- TRUE; c },
+    cohort_nested = function(c) { c$cohort_nested <- FALSE; c }
   )
   here_keys <- names(OPEN_QUESTION_SOURCE)[OPEN_QUESTION_SOURCE == "here"]
   ok(setequal(here_keys, names(ALTERNATIVES)),

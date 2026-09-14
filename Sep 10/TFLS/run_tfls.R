@@ -43,11 +43,23 @@ TFLS_R_FILES <- c("classes.R", "shells.R", "names.R", "stats.R", "suppress.R",
                   "fill.R", "scope.R", "render.R")
 for (f in TFLS_R_FILES) source(file.path(.script_dir, "R", f))
 
-shells_dir <- file.path(.script_dir, "shells")
-out_dir <- file.path(.script_dir, "out")
-
 env_chr <- function(nm, unset = "") trimws(Sys.getenv(nm, unset = unset))
 env_flag <- function(nm) identical(toupper(env_chr(nm)), "TRUE")
+
+shells_dir <- file.path(.script_dir, "shells")
+
+# Where the finished tables are written. Beside the script by default, which is
+# right when a person runs this and reads out/ next to the shells they filled.
+#
+# TFLS_OUT_DIR moves it, and on a platform that captures one directory as a
+# run's results it has to: a file written beside the code is not an output
+# there, it is a file in the code tree that the next sync overwrites or drops.
+# On Domino that directory is /mnt/artifacts/results, which is also where the
+# LOT engine's OUTPUT_DIR points by default.
+out_dir <- {
+  d <- env_chr("TFLS_OUT_DIR")
+  if (nzchar(d)) d else file.path(.script_dir, "out")
+}
 
 need_env <- function(nm, why) {
   v <- env_chr(nm)
@@ -134,6 +146,15 @@ snapshot_reader <- function(root, prefix, lot_dir = "") {
   }
 }
 
+# What a read failed with, by table, for the messages that would otherwise say
+# only that nothing came back.
+read_errors <- new.env(parent = emptyenv())
+read_error <- function(table) {
+  t <- toupper(chr(table))
+  if (!exists(t, envir = read_errors, inherits = FALSE)) "" else
+    get(t, envir = read_errors, inherits = FALSE)
+}
+
 warehouse_reader <- function(con, catalog, schema, prefix, cohort_table = "") {
   function(table) {
     # The input cohort table is not one of the run's outputs and carries no
@@ -151,8 +172,16 @@ warehouse_reader <- function(con, catalog, schema, prefix, cohort_table = "") {
       if (anyNA(q)) NA_character_ else paste(q, collapse = ".")
     }
     if (is.na(full)) return(NULL)
+    # The error is kept, not only the NULL. A read that fails and a table that
+    # is not there are different problems with the same empty answer, and
+    # swallowing the first makes it look like the second - which sends the
+    # reader to check a table name that was never the trouble.
     tryCatch(db_q(con, sprintf("SELECT * FROM %s", full)),
-             error = function(e) NULL)
+             error = function(e) {
+               assign(toupper(chr(table)), paste0(full, ": ",
+                      conditionMessage(e)), envir = read_errors)
+               NULL
+             })
   }
 }
 
@@ -165,7 +194,20 @@ warehouse_reader <- function(con, catalog, schema, prefix, cohort_table = "") {
 # whatever every run before this one left under it: a run that recorded no
 # modules, or no cohorts, can vouch for none of it.
 bind_run <- function(reader, where) {
-  md <- newest_row(reader("S_RUN_METADATA"))
+  raw <- reader("S_RUN_METADATA")
+  md <- newest_row(raw)
+  if (is.null(md)) {
+    why <- read_error("S_RUN_METADATA")
+    if (nzchar(why))
+      stop("S_RUN_METADATA under ", where, " could not be read, so there is ",
+           "no run to fill these shells from. The read failed with:\n  ", why,
+           call. = FALSE)
+    if (!is.null(raw))
+      stop("S_RUN_METADATA under ", where, " is there and has no rows, so ",
+           "there is no run to fill these shells from. A prefix with an empty ",
+           "metadata table is one whose study run has not finished writing.",
+           call. = FALSE)
+  }
   if (is.null(md))
     stop("No S_RUN_METADATA under ", where, ", so there is no run to fill ",
          "these shells from.", call. = FALSE)

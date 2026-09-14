@@ -321,7 +321,7 @@ DASH_SOURCE=snapshot DASH_SNAPSHOT_DIR=/mnt/data/NDMM ./app.sh
 variables, and what the job that refreshes the snapshot needs.
 
 ```bash
-Rscript tests/run_tests.R      # 486 checks, no Shiny and no warehouse
+Rscript tests/run_tests.R      # 574 checks, no Shiny and no warehouse
 ```
 
 Every number the app puts on a page comes from a function in `R/` that runs

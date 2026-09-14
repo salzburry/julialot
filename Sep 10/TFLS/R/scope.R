@@ -108,6 +108,12 @@ TFLS_RELEASED_TABLES <- c("S_SAFETY_RATES", "S_HCRU_RATES", "S_MALIGNANCY_RATES"
                           "S_PATTERNS", "S_SWITCH", "S_TX_ATTRITION")
 
 TFLS_MODULE_OUTPUTS <- list(
+  # The package's two roots. Eligibility is the cohort build's verdict, one row
+  # per patient, and needs no line of therapy; the spine is the LOT engine's
+  # lines. Neither is filled from by a shell - they are inputs to the tables
+  # that are - but both are named so a run that wrote them is not reported as
+  # having written a table nothing declares.
+  eligibility = "S_ELIGIBILITY",
   spine = "S_SPINE",
   cohorts = "S_COHORT",
   attrition = "S_ATTRITION",
@@ -207,27 +213,38 @@ run_cohort_rows <- function(d, scope) {
 # close it: the recoverable cell is in the released copy this reads FROM, and
 # subtraction inside that source happened before anything here saw it.
 #
-# Same three answers the dashboard reads, and the same fail-closed shape:
+# Same four answers the dashboard reads, and the same fail-closed shape:
 #
-#   "none"                      nothing to refuse
-#   a finding                   refuse the tables the run named, or - where it
-#                               named none this can trust - every released one
-#   "release module did not run"  refuse every released table: that run has not
-#                               been shown to have no recoverable cell, it has
-#                               not looked
+#   "none"                        nothing to refuse
+#   a finding                     refuse the tables the run named, or - where
+#                                 it named none this can trust - every
+#                                 released one
+#   "release module did not run"  refuse every released table: that run has
+#                                 not been shown to have no recoverable cell,
+#                                 it has not looked
+#   nothing at all                refuse nothing, and say so
 #
-# A run with NO record at all is the one case this does not refuse. That is the
-# snapshot job's gate, and refusing here as well would stop every shell built
-# from a run taken before the column existed - a large harm against a risk the
-# caption states instead.
+# The fourth is the one case this does not refuse, and it is deliberate. That
+# is the snapshot job's gate, and refusing here as well would stop every shell
+# built from a run taken before the column existed - a large harm against a
+# risk the caption states instead.
 
 TFLS_RELEASE_NOT_RECORDED <- "no record"
 
 # What the verdict blocks, in the run's own words. "" where it blocks nothing.
+#
+# The clean sentinel is matched without regard to case. This column is read
+# back from a warehouse and from CSV and may have been through a hand edit or
+# an upstream normalisation, and "NONE" said in capitals is the same answer -
+# treating it as a finding would refuse every released table of a run that has
+# nothing wrong with it. Only the clean sentinel is folded: everything else is
+# a finding whatever its case, so this can lift a needless refusal and cannot
+# turn a finding into a clear.
 release_verdict <- function(scope) {
   v <- chr(scope$recoverable %||% "")
-  if (!nzchar(v) || identical(v, "NA")) return(TFLS_RELEASE_NOT_RECORDED)
-  if (identical(v, "none")) return("")
+  if (!nzchar(v) || identical(toupper(v), "NA"))
+    return(TFLS_RELEASE_NOT_RECORDED)
+  if (identical(toupper(v), "NONE")) return("")
   v
 }
 

@@ -1062,6 +1062,17 @@ source(file.path(here, "jobs", "export_lib.R"))
   ok(identical(release_recoverable_blocks("S_SAFETY_RATES_RELEASE: 3 COHORT/LOT_NUM group(s)"),
                "S_SAFETY_RATES_RELEASE: 3 COHORT/LOT_NUM group(s)"),
      "...and one that did leave a recoverable cell is refused in the words its own run recorded")
+  # The clean sentinel is matched without regard to case. The column is read
+  # back from a warehouse and from CSV and may have been hand-edited or
+  # upstream-normalised on the way, and "NONE" in capitals is the same answer -
+  # reading it as a finding would withhold every released table from a run with
+  # nothing wrong with it.
+  ok(identical(release_recoverable_blocks("NONE"), "") &&
+       identical(release_recoverable_blocks(" None "), ""),
+     "a clean verdict clears whatever case it is written in, since a capitalised 'none' is not a finding")
+  ok(nzchar(release_recoverable_blocks("RELEASE MODULE DID NOT RUN")) &&
+       nzchar(release_recoverable_blocks("nothing recoverable here")),
+     "...while everything else is a finding whatever its case: folding can lift a needless refusal, never turn a finding into a clear")
   ok(grepl("blocked <- release_recoverable_blocks(row_field(pin, \"RELEASE_RECOVERABLE\"))",
            jb, fixed = TRUE) &&
        regexpr("blocked <- release_recoverable_blocks(", jb, fixed = TRUE) <

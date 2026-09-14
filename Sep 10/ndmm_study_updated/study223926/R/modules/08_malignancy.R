@@ -82,7 +82,7 @@ mod_malignancy <- function(con, cfg, cohort) {
     # Table 4: diagnosis date (included) until the malignancy date (included).
     days_to_months_sql(interval_days_sql("co.MM_DX_DT", "c.FIRST_DT", TRUE, TRUE)),
     days_to_months_sql(interval_days_sql("p.INDEX_DATE", "c.FIRST_DT", TRUE, TRUE)),
-    input_cohort_tbl()),
+    wrk("S_ELIGIBILITY")),
     qc = sprintf("SELECT count(*) AS n_rows, count(DISTINCT PATID) AS n_pat
                   FROM %s WHERE COHORT='%s'", wrk("S_MALIGNANCY"), cohort$key),
     allow_empty = TRUE)
@@ -152,39 +152,39 @@ mod_malignancy <- function(con, cfg, cohort) {
       -- Summing the whole PERIOD_PY regardless kept counting time in which a
       -- first event was no longer possible, which overstates at-risk time and
       -- understates incidence.
-      SELECT p.COHORT, p.LOT_NUM, %12$s, c.category,
+      SELECT p.COHORT, p.LOT_NUM, %9$s, c.category,
              sum(CASE
                    WHEN h.PATID IS NOT NULL THEN 0
-                   WHEN fm.FIRST_DT IS NOT NULL THEN %11$s
+                   WHEN fm.FIRST_DT IS NOT NULL THEN %8$s
                    ELSE p.PERIOD_PY END) AS PY,
              count(DISTINCT CASE WHEN h.PATID IS NOT NULL THEN NULL
                                  ELSE p.PATID END) AS N_AT_RISK
       FROM %4$s p
       CROSS JOIN cats c
       LEFT JOIN (SELECT PATID, COHORT, CATEGORY, min(FIRST_DT) AS FIRST_DT
-                 FROM %10$s WHERE COHORT = '%5$s'
+                 FROM %7$s WHERE COHORT = '%5$s'
                  GROUP BY PATID, COHORT, CATEGORY) fm
              ON fm.PATID = p.PATID AND fm.COHORT = p.COHORT
             AND fm.CATEGORY = c.category
       LEFT JOIN s_malig_prior h
              ON h.PATID = p.PATID AND h.COHORT = p.COHORT
             AND h.LOT_NUM = p.LOT_NUM AND h.CATEGORY = c.category
-      %13$s
+      %10$s
       WHERE p.COHORT = '%5$s' AND p.PERIOD_PY IS NOT NULL
-      GROUP BY p.COHORT, p.LOT_NUM, c.category%14$s
+      GROUP BY p.COHORT, p.LOT_NUM, c.category%11$s
     ),
     num AS (
-      SELECT p.COHORT, p.LOT_NUM, %12$s, m.CATEGORY,
+      SELECT p.COHORT, p.LOT_NUM, %9$s, m.CATEGORY,
              count(DISTINCT m.PATID) AS N_PATIENTS
       FROM %3$s m
       INNER JOIN %4$s p ON p.PATID = m.PATID AND p.COHORT = m.COHORT
       LEFT JOIN s_malig_prior h
              ON h.PATID = m.PATID AND h.COHORT = p.COHORT
             AND h.LOT_NUM = p.LOT_NUM AND h.CATEGORY = m.CATEGORY
-      %13$s
+      %10$s
       WHERE p.COHORT = '%5$s' AND h.PATID IS NULL
         AND m.FIRST_DT BETWEEN p.PERIOD_START AND p.PERIOD_END
-      GROUP BY p.COHORT, p.LOT_NUM, m.CATEGORY%14$s
+      GROUP BY p.COHORT, p.LOT_NUM, m.CATEGORY%11$s
     )
     SELECT den.COHORT, den.LOT_NUM, 'TREATMENT' AS PERIOD,
            den.SOC_CATEGORY, den.AGE_GROUP, den.category,
@@ -198,7 +198,7 @@ mod_malignancy <- function(con, cfg, cohort) {
     wrk("S_MALIGNANCY_RATES"),
     rate_sql("coalesce(num.N_PATIENTS, 0)", "den.PY", cfg),
     wrk("S_MALIGNANCY"), wrk("S_LOT_PERIODS"), cohort$key, "S_CL_MALIG",
-    "", "", "", wrk("S_MALIGNANCY"),
+    wrk("S_MALIGNANCY"),
     # At-risk time to the first confirmed occurrence, both endpoints included -
     # the same convention PERIOD_PY uses.
     person_years_sql("p.PERIOD_START", "least(fm.FIRST_DT, p.PERIOD_END)", cfg),
@@ -217,28 +217,28 @@ mod_malignancy <- function(con, cfg, cohort) {
     run_step(con, paste0("malignancy_prevalence_", cohort$key, "_", sp$key),
       sprintf("
       INSERT INTO %1$s
-      WITH cats AS (SELECT DISTINCT category FROM %6$s),
+      WITH cats AS (SELECT DISTINCT category FROM %5$s),
       den AS (
-        SELECT p.COHORT, p.LOT_NUM, %8$s,
+        SELECT p.COHORT, p.LOT_NUM, %7$s,
                sum(p.BASELINE_PY) AS PY,
                count(DISTINCT p.PATID) AS N_AT_RISK
-        FROM %4$s p
-        %9$s
-        WHERE p.COHORT = '%5$s' GROUP BY p.COHORT, p.LOT_NUM%10$s
+        FROM %3$s p
+        %8$s
+        WHERE p.COHORT = '%4$s' GROUP BY p.COHORT, p.LOT_NUM%9$s
       ),
       num AS (
         -- ANY qualifying date inside the baseline window, not the global first
         -- one. s7.8.1 baseline is prevalence - what is PRESENT - and it is
         -- taken irrespective of prior event history, so a malignancy first
         -- coded before baseline and coded again during it belongs here.
-        SELECT p.COHORT, p.LOT_NUM, %8$s, m.CATEGORY,
+        SELECT p.COHORT, p.LOT_NUM, %7$s, m.CATEGORY,
                count(DISTINCT m.PATID) AS N_PATIENTS
-        FROM %7$s m
-        INNER JOIN %4$s p ON p.PATID = m.PATID AND p.COHORT = m.COHORT
-        %9$s
-        WHERE p.COHORT = '%5$s'
+        FROM %6$s m
+        INNER JOIN %3$s p ON p.PATID = m.PATID AND p.COHORT = m.COHORT
+        %8$s
+        WHERE p.COHORT = '%4$s'
           AND m.EVENT_DT BETWEEN p.BASELINE_START AND p.BASELINE_END
-        GROUP BY p.COHORT, p.LOT_NUM, m.CATEGORY%10$s
+        GROUP BY p.COHORT, p.LOT_NUM, m.CATEGORY%9$s
       )
       SELECT den.COHORT, den.LOT_NUM, 'BASELINE' AS PERIOD,
              den.SOC_CATEGORY, den.AGE_GROUP, cats.category,
@@ -251,7 +251,7 @@ mod_malignancy <- function(con, cfg, cohort) {
                    AND num.AGE_GROUP = den.AGE_GROUP",
       wrk("S_MALIGNANCY_RATES"),
       rate_sql("coalesce(num.N_PATIENTS, 0)", "den.PY", cfg),
-      wrk("S_MALIGNANCY"), wrk("S_PERIODS"), cohort$key, "S_CL_MALIG",
+      wrk("S_PERIODS"), cohort$key, "S_CL_MALIG",
       wrk("S_MALIGNANCY_DATES"), sp$cols, sp$join, sp$group),
       qc = sprintf("SELECT count(*) AS n_rows FROM %s
                     WHERE COHORT='%s' AND PERIOD='BASELINE'",

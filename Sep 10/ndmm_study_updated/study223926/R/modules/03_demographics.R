@@ -82,12 +82,12 @@ mod_demographics <- function(con, cfg, cohort) {
            -- computed from this column is biased downward, and myeloma has a
            -- real tail above 89. Table 4 reports both; the continuous one
            -- carries that caveat. ../DATA_MAPPING.md section 4.
-           %11$s AS AGE_YEARS,
-           CASE WHEN %11$s IS NULL THEN 'Unknown'
-                WHEN %11$s <  45 THEN '18-44'
-                WHEN %11$s <  65 THEN '45-64'
-                WHEN %11$s <  75 THEN '65-74'
-                WHEN %11$s >= 75 THEN '75+'
+           %9$s AS AGE_YEARS,
+           CASE WHEN %9$s IS NULL THEN 'Unknown'
+                WHEN %9$s <  45 THEN '18-44'
+                WHEN %9$s <  65 THEN '45-64'
+                WHEN %9$s <  75 THEN '65-74'
+                WHEN %9$s >= 75 THEN '75+'
                 ELSE 'Unknown' END AS AGE_BAND,
            -- The protocol age STRATIFICATION, which is two groups and not
            -- the four descriptive bands above. VARIABLES.md stratification 2:
@@ -97,8 +97,8 @@ mod_demographics <- function(con, cfg, cohort) {
            -- tables so a rate can be reported for each group. A rate is not
            -- the sum of its parts, so a grouping that spread < 75 over three
            -- rows could report no rate for it at all.
-           CASE WHEN %11$s IS NULL THEN 'Unknown'
-                WHEN %11$s >= 75 THEN '75+'
+           CASE WHEN %9$s IS NULL THEN 'Unknown'
+                WHEN %9$s >= 75 THEN '75+'
                 ELSE '<75' END AS AGE_GROUP,
            CASE upper(coalesce(c.GDR_CD,'U')) WHEN 'M' THEN 'Male'
                 WHEN 'F' THEN 'Female' ELSE 'Unknown' END AS SEX,
@@ -126,8 +126,8 @@ mod_demographics <- function(con, cfg, cohort) {
     INNER JOIN %8$s c ON c.PATID = r.PATID
     WHERE r.rn = 1",
     wrk("S_DEMOGRAPHICS"), region, ordering, wrk("S_PERIODS"),
-    cdm_src("member_enrollment"), pick, cohort$key, input_cohort_tbl(),
-    "", "", age_expr),
+    cdm_src("member_enrollment"), pick, cohort$key, wrk("S_ELIGIBILITY"),
+    age_expr),
     qc = sprintf("SELECT count(*) AS n_rows,
                     sum(CASE WHEN RACE='Unknown' THEN 1 ELSE 0 END) AS n_race_unk,
                     sum(CASE WHEN ETHNICITY='Unknown' THEN 1 ELSE 0 END) AS n_eth_unk,

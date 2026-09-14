@@ -26,6 +26,15 @@ TFLS_SOURCE=warehouse DATABRICKS_PWD=... PROJECT_WORK_SCHEMA=... \
 Output lands in `out/`: one CSV per table, one markdown rendering of all of
 them, and `tfls_unfilled.csv` naming every row nothing could fill and why.
 
+`TFLS_OUT_DIR` moves it, and on a platform that captures one directory as a
+run's results it has to — a file written beside the code is not an output
+there. On Domino that is `/mnt/artifacts/results`, the same place the LOT
+engine's `OUTPUT_DIR` points by default:
+
+```bash
+TFLS_OUT_DIR=/mnt/artifacts/results/tfls ... Rscript TFLS/run_tfls.R
+```
+
 ## It fills from one run, and reads only what that run wrote
 
 A prefix is not a run. A run writes the modules it selected, for the cohorts it

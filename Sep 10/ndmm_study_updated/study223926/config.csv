@@ -17,6 +17,7 @@ WORK_SCHEMA,,"Schema the study writes into, and reads the cohort and LOT tables 
 #,,--- study periods: OPEN_QUESTIONS Q1 ---
 STUDY_START,2018-01-01,Study period start. Protocol s7.1 text. Figures 1 and 2 say 2016-01-01 - see OPEN_QUESTIONS Q1
 STUDY_END,2026-03-31,Study period end; also picks the quarterly table suffix
+COHORT_NESTED,TRUE,"Whether 2L and 3L require membership of the cohort above. TRUE is s7.2.1 read literally - 2L is the subset of 1L who initiate a second line. FALSE lets each line stand on its own index, which recovers patients whose earlier line fell outside the index window. The run records which way it went"
 LOT1_INDEX_FROM,2019-01-01,Earliest 1L initiation that may index the 1L cohort
 SEC2L_INDEX_FROM,2020-01-01,Earliest 2L initiation that may index the secondary 2L cohort
 #,,--- windows ---

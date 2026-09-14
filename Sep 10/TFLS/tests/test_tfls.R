@@ -866,6 +866,11 @@ ok(!nzchar(release_verdict(run_scope(md_rel("none")))) &&
 ok(identical(release_verdict(run_scope(md_rel(""))), TFLS_RELEASE_NOT_RECORDED) &&
      !length(release_refused(run_scope(md_rel("")))),
    "...and a build from before the column existed is not refused here: the snapshot job is the gate for that one")
+ok(!nzchar(release_verdict(run_scope(md_rel("NONE")))) &&
+     !nzchar(release_verdict(run_scope(md_rel(" None ")))),
+   "...and the clean sentinel clears whatever case it is written in, because this column comes back through a warehouse, a CSV and sometimes a hand edit")
+ok(nzchar(release_verdict(run_scope(md_rel("NOTHING RECOVERABLE")))),
+   "...while anything else is a finding whatever its case, so folding can lift a needless refusal and never turn a finding into a clear")
 ok(setequal(release_refused(run_scope(md_rel("release module did not run"))),
             TFLS_RELEASED_TABLES),
    "...while a run that never ran the release module loses every released table, because it has not been shown to have no recoverable cell - it has not looked")
@@ -981,6 +986,60 @@ ok({ cs <- render_csv(F1)
 ok(all(c("REASON", "REASON_KIND", "SUPPRESSED", "FILLED") %in% names(render_csv(F1))),
    "...and carries why each cell is what it is")
 
+cat("\n-- the restated registry, against the package's own --\n")
+# R/scope.R restates three lists the study package's registry declares:
+# which module writes which table, which outputs a switch turns on, and which
+# tables the release module publishes a copy of. They are restated because a
+# snapshot is filled where the package is not installed and cannot be asked -
+# and a restatement drifts. A table added to SUPPRESSION_SPEC and not added
+# here would be filled from without the recoverability gate knowing to refuse
+# it; a module output added there and not here would be reported unfilled
+# under a name the package does write.
+#
+# So the package is asked where it IS beside this folder, which is how it is
+# delivered. Where it is not - TFLS shipped on its own - the check says it
+# could not run rather than passing quietly, because "not checked" and
+# "checked and equal" are different answers.
+local({
+  reg <- file.path(dirname(ROOT), "ndmm_study_updated", "study223926", "R",
+                   "registry.R")
+  if (!file.exists(reg)) {
+    cat("  --     the package registry is not beside this folder, so the",
+        "restatement below is unchecked\n")
+    return(invisible(NULL))
+  }
+  # Into a bare environment: nothing of this suite's may answer for the
+  # package, or the comparison is of these files with themselves.
+  pkg <- new.env(parent = baseenv())
+  e <- tryCatch({ sys.source(reg, envir = pkg); NULL }, error = function(x) x)
+  ok(is.null(e), "the study package's registry is readable on its own")
+  if (!is.null(e)) return(invisible(NULL))
+  ok(setequal(TFLS_RELEASED_TABLES, names(pkg$SUPPRESSION_SPEC)),
+     "the tables this believes have a released copy are exactly the package's SUPPRESSION_SPEC")
+  ok(setequal(setdiff(names(TFLS_MODULE_OUTPUTS), "release"),
+              setdiff(names(pkg$MODULES), "release")),
+     "...and it knows the same modules the package declares")
+  drift <- unlist(lapply(setdiff(names(pkg$MODULES), "release"), function(m) {
+    here <- TFLS_MODULE_OUTPUTS[[m]] %||% character(0)
+    there <- pkg$MODULES[[m]]$outputs %||% character(0)
+    if (setequal(here, there)) NULL else m
+  }))
+  ok(!length(drift),
+     paste0("...and each module's outputs match the package's, table for table",
+            if (length(drift)) paste0(" [drifted: ", paste(drift, collapse = ", "), "]") else ""))
+  ok(setequal(TFLS_MODULE_OUTPUTS$release,
+              paste0(names(pkg$SUPPRESSION_SPEC), "_RELEASE")),
+     "...and the release module writes a copy of each of them, under the name the package gives it")
+  opt <- unlist(lapply(names(pkg$OPTIONAL_FEATURES), function(m)
+    vapply(pkg$OPTIONAL_FEATURES[[m]], function(f) f$output, character(1))),
+    use.names = FALSE)
+  ok(setequal(names(TFLS_OPTIONAL_OUTPUTS), opt),
+     "...and the outputs a switch turns on are the package's OPTIONAL_FEATURES, so neither is read without its switch")
+  ok(setequal(unname(TFLS_OPTIONAL_OUTPUTS),
+              unlist(lapply(pkg$OPTIONAL_FEATURES, names), use.names = FALSE)),
+     "...under the switch names the package records them by")
+})
+
 cat("\n-- the runner --\n")
 RUNNER <- paste(readLines(file.path(ROOT, "run_tfls.R")), collapse = "\n")
 ok(has(RUNNER, 'gsub("~+~", " "'),
@@ -1043,6 +1102,11 @@ ok(has(RUNNER, "safe_segment(prefix)") && has(RUNNER, "file.path(root, prefix)")
 ok(has(RUNNER, "release_verdict(scope)") && has(RUNNER, "release_refused(scope)") &&
      has(RUNNER, "TFLS_ALLOW_RECOVERABLE is on"),
    "every run says on screen what its source's release left recoverable, since these tables are what a study hands out")
+ok(has(RUNNER, 'd <- env_chr("TFLS_OUT_DIR")'),
+   "the output directory can be moved, because a platform that captures one directory as a run's results does not capture the code tree")
+ok(has(RUNNER, "envir = read_errors") && has(RUNNER, "why <- read_error(") &&
+     has(RUNNER, "is there and has no rows"),
+   "a read that failed is reported with what it failed with, and told apart from a table that is there and empty")
 
 
 # ---------------------------------------------------------------------------

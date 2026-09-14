@@ -4,17 +4,19 @@ GSK study **223926** (belantamab mafodotin, NDMM/RRMM), against Optum
 Clinformatics Data Mart V9.0. This folder turns a finished lines-of-therapy run
 into the study's analytical cohort and its variables.
 
-Three folders sit side by side:
+Four folders sit side by side:
 
 | folder | what it does |
 |---|---|
 | `ndmm_study_updated/` | **this folder** - the cohorts, the variables, the released tables |
 | `lot/` | the lines-of-therapy engine that produces the lines this reads |
-| `dashboard/` | the R Shiny app that shows what both produced |
+| `dashboard/` | the R Shiny app that shows what all three produced |
+| `TFLS/` | the requested table shells, filled from a finished run of this package |
 
 They have to stay siblings. The dashboard finds this package at
-`../ndmm_study_updated/study223926` and the engine at `../lot/engine`; nothing
-uses an absolute path.
+`../ndmm_study_updated/study223926`, the engine at `../lot/engine` and the
+shells at `../TFLS`; the shell runner finds this package by
+`TFLS_PACKAGE_DIR`. Nothing uses an absolute path.
 
 ---
 
@@ -49,14 +51,15 @@ writes only its own `S_*` tables.
 | `R/run_223926.R` | the runner: resolve the plan, refuse what it cannot vouch for, walk the modules |
 | `R/modules/` | one file per module, in the order they run |
 | `codelists/` | the code lists this package ships. Production overrides the directory |
-| `tests/` | 417 checks. `Rscript tests/run_tests.R` |
+| `tests/` | 428 checks. `Rscript tests/run_tests.R` |
 
 ### The modules
 
 | module | writes |
 |---|---|
+| `eligibility` | `S_ELIGIBILITY` — one row per patient, the IE verdict. No LOT needed |
 | `spine` | `S_SPINE` — one row per patient and line |
-| `cohorts` | `S_COHORT` — membership, criterion by criterion |
+| `cohorts` | `S_COHORT` — a patient combined with a line; membership, criterion by criterion |
 | `attrition` | `S_ATTRITION` — the funnel, one step per criterion |
 | `periods` | `S_PERIODS`, `S_LOT_PERIODS` |
 | `demographics` | `S_DEMOGRAPHICS` |
@@ -126,7 +129,7 @@ open question's reading, and stops before opening a connection. It is the
 fastest way to see what a run *would* do.
 
 ```bash
-Rscript tests/run_tests.R      # 417 checks, no warehouse
+Rscript tests/run_tests.R      # 428 checks, no warehouse
 ```
 
 The suite runs the modules without a warehouse, executes the SQL they emit

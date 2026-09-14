@@ -40,9 +40,18 @@ release_recoverable_blocks <- function(recoverable) {
   # NA is not a value to interpolate into a refusal. as.character(NA) is
   # NA_character_, nzchar() of which is TRUE, so an unnormalised NA used to
   # fall through this function and come back out in the message.
-  if (is.na(v) || !nzchar(v) || identical(v, "NA"))
+  if (is.na(v) || !nzchar(v) || identical(toupper(v), "NA"))
     return(RELEASE_NOT_RECORDED)
-  if (identical(v, "none")) return("")
+  # The clean sentinel is matched without regard to case, because this column
+  # is read back from a warehouse and from CSV and may have been through a
+  # hand edit or an upstream normalisation on the way. "NONE" said in capitals
+  # is the same answer, and treating it as a finding withholds every released
+  # table from a run that has nothing wrong with it.
+  #
+  # Only the clean sentinel is folded. Everything else is a finding whatever
+  # its case, so this can turn a needless refusal into a read and cannot turn
+  # a finding into a clear.
+  if (identical(toupper(v), "NONE")) return("")
   v
 }
 
