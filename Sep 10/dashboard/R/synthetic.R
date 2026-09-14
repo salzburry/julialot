@@ -443,7 +443,33 @@ synthetic_one <- function(prefix, settings, min_n = 25L) {
     INDEX_DATE = tte$INDEX_DATE,
     MET_N1 = 1L, MET_N2 = 1L, MET_I5 = 1L,
     MET_X1 = 0L, MET_X2 = 0L, MET_X3 = 0L, MET_X4 = 0L,
-    IN_COHORT = 1L, stringsAsFactors = FALSE)
+    IN_COHORT = 1L,
+    # Which criteria this cohort's IN_COHORT was actually computed over, and
+    # whether it required the cohort above. Without them a reader cannot tell
+    # a MET_* that is part of the verdict from one that is merely on the row -
+    # 2L and 3L are judged on three criteria, 1L on nine.
+    CRITERIA_ASKED = ifelse(tte$COHORT == "1L",
+      "I1_mm_dx; I2_age; I3_eligible_1l_tx; I4_ce_pre; X1_prior_mm_tx; X2_other_cancer; X3_pregnancy; X4_belantamab; I5_followup",
+      "N1_received_line; N2_ce_pre; I5_followup"),
+    NESTED = ifelse(tte$COHORT == "1L", 0L, 1L),
+    stringsAsFactors = FALSE)
+
+  # The eligibility layer: one row per patient, no line of therapy in it. The
+  # study package reads the input cohort table here and nowhere else, so a
+  # scenario that carries no S_ELIGIBILITY would say the run never built one.
+  elig <- data.frame(
+    PATID = unique(tte$PATID),
+    stringsAsFactors = FALSE)
+  elig$COHORT_INDEX_DATE <- tte$INDEX_DATE[match(elig$PATID, tte$PATID)]
+  elig$MM_DX_DT   <- elig$COHORT_INDEX_DATE
+  elig$DEATH_DT   <- as.Date(NA)
+  elig$ENDDATE    <- elig$COHORT_INDEX_DATE
+  elig$ENDDATE_CE <- elig$COHORT_INDEX_DATE
+  elig$YRDOB      <- 1950L
+  elig$GDR_CD     <- "U"
+  for (k in c("MET_I1", "MET_I2", "MET_I3", "MET_I4")) elig[[k]] <- 1L
+  for (k in c("MET_X1", "MET_X2", "MET_X3", "MET_X4")) elig[[k]] <- 1L
+  elig$EVIDENCE <- "synthetic - every patient passes"
 
   # --- the two comorbidity subgroups and the frailty index -------------------
   #
@@ -519,7 +545,8 @@ synthetic_one <- function(prefix, settings, min_n = 25L) {
                stringsAsFactors = FALSE)))
 
   tables <- list(
-    S_RUN_METADATA = meta, S_SPINE = spine, S_COHORT = cohort_tbl,
+    S_RUN_METADATA = meta, S_ELIGIBILITY = elig, S_SPINE = spine,
+    S_COHORT = cohort_tbl,
     S_ATTRITION = attrition, S_PERIODS = periods_tbl, S_LOT_PERIODS = lines,
     S_SOC = soc, S_COMORB_SUBGROUP = subgroup, S_FRAILTY = frailty,
     S_SAFETY_EVENTS = safety_ev, S_SAFETY_COUNTED = safety_counted,

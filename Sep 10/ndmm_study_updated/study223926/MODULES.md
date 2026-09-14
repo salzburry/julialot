@@ -119,8 +119,9 @@ lands on the run's own metadata row where no reader can miss it.
 
 | key | writes | needs a code list |
 |---|---|---|
+| `eligibility` | `S_ELIGIBILITY` — one row per patient, the cohort build's verdict. **No line of therapy.** | — |
 | `spine` | `S_SPINE` — one row per patient per line, with the next line beside it | — |
-| `cohorts` | `S_COHORT` | — |
+| `cohorts` | `S_COHORT` — a patient combined with a line | — |
 | `attrition` | `S_ATTRITION` — the funnel, one row per criterion | — |
 | `periods` | `S_PERIODS`, `S_LOT_PERIODS` — baseline, follow-up, treatment windows | — |
 | `demographics` | `S_DEMOGRAPHICS` — age, sex, region, race, ethnicity, insurance | — |
@@ -362,6 +363,41 @@ whichever way it was set. `../OPEN_QUESTIONS.md` Q19 is still open.
 any table it compares the declared schema — ordered column names and types —
 against what is already there, and **stops if they differ, before clearing a
 single row**. There is no automatic migration.
+
+## Two roots, and what combines them
+
+`eligibility` and `spine` share a number because neither needs the other.
+
+Eight of the eleven criteria are settled before this package runs — I1 to I4 and
+X1 to X4 — and arrive as flags on `INPUT_COHORT_TABLE`. None of them needs a
+line, an index date from LOT, or anything the engine produces. `eligibility`
+reads them into `S_ELIGIBILITY`, one row per patient, and **it is the only
+module that reads `INPUT_COHORT_TABLE`.** Everything downstream reads the
+eligibility layer instead, so the upstream table is touched in one place and a
+change to its shape reaches the run through a table this package declares.
+
+`spine` is the LOT engine's lines, with no cohort join and no date filter.
+
+Only three criteria are line-relative by definition — I5 (follow-up from the
+line's index), N1 (received *this* line) and N2 (enrolment before *this* line's
+index) — and they live in `cohorts`, which is where a patient and a line are
+combined. That is the first module needing both roots, and the only one that
+needs a LOT run to exist at all.
+
+**Nesting is a setting, not structure.** `COHORT_NESTED=TRUE`, the default, is
+s7.2.1 read literally: 2L is the subset of 1L who initiate a second line. But
+that requirement is what makes a 1L index outside the index window cost the
+patient their 2L and 3L rows too, and an analysis of second-line initiators does
+not always want it. `COHORT_NESTED=FALSE` lets each line stand on its own index.
+Every `S_COHORT` row carries `NESTED` saying which way the run went.
+
+**And every row says what its own verdict is over.** `CRITERIA_ASKED` is the
+list `IN_COHORT` was computed from. It has to be on the row because it differs:
+1L and SEC2L are judged on nine criteria, 2L and 3L on three — `N1`, `N2`, `I5`
+— so `MET_X1`–`MET_X4` sit on a 2L row *without being part of its verdict*, and
+SEC2L drops `X2` under the shipped default. An analyst ANDing the `MET_*` flags
+would reproduce 1L and get a different cohort at 2L, 3L and SEC2L. Use
+`IN_COHORT`; `CRITERIA_ASKED` says what it means.
 
 That matters right now: `S_COHORT` gained `MET_X1`–`MET_X4`, `S_HCRU_RATES` and
 `S_MALIGNANCY_RATES` gained `N_AT_RISK`, `S_LOT_PERIODS` renamed

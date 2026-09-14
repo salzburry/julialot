@@ -55,7 +55,7 @@ mod_periods <- function(con, cfg, cohort) {
     # irrespective of prior event history" - so it is the window's own length,
     # the same for every patient, not their observed enrolment inside it.
     person_years_sql(bl$start, bl$end, cfg),
-    tte, wrk("S_COHORT"), input_cohort_tbl(), cohort$key,
+    tte, wrk("S_COHORT"), wrk("S_ELIGIBILITY"), cohort$key,
     wrk("S_ENROLL_SPANS")),
     qc = sprintf("SELECT count(*) AS n_rows, sum(TTE_ELIGIBLE) AS n_tte,
                          round(avg(FU_MONTHS), 2) AS mean_fu_months

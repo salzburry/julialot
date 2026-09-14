@@ -226,6 +226,16 @@ COHORTS <- list(
 # blocked    a reason string if the module cannot run yet, or NA
 
 MODULES <- list(
+  # The package's two independent roots. Eligibility is the cohort build's
+  # verdict and needs no line of therapy; the spine is the LOT engine's lines
+  # and needs no cohort. Neither reads the other. `cohorts` is where a patient
+  # and a line are combined, and it is the first module that needs both.
+  eligibility = list(
+    key = "eligibility", label = "Eligibility, without a line of therapy",
+    needs = character(0), codelists = character(0),
+    outputs = "S_ELIGIBILITY", per_cohort = FALSE,
+    fn = "mod_eligibility", blocked = NA_character_),
+
   spine = list(
     key = "spine", label = "Cohort x LOT spine", needs = character(0),
     codelists = character(0), outputs = "S_SPINE", per_cohort = FALSE,
@@ -233,7 +243,7 @@ MODULES <- list(
 
   cohorts = list(
     key = "cohorts", label = "Cohort membership",
-    needs = "spine", codelists = character(0),
+    needs = c("eligibility", "spine"), codelists = character(0),
     outputs = "S_COHORT", per_cohort = TRUE,
     fn = "mod_cohorts", blocked = NA_character_),
 

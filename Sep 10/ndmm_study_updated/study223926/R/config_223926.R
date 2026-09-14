@@ -203,6 +203,9 @@ cfg_defaults <- function() {
 
     # --- follow-up and censoring -----------------------------------------
     censor_at_disenrollment  = .env_lgl("CENSOR_AT_DISENROLLMENT", TRUE),
+    # Whether a nested cohort requires its parent. Default TRUE, which is
+    # s7.2.1 read literally; FALSE lets each line stand on its own index.
+    cohort_nested            = .env_lgl("COHORT_NESTED", TRUE),
     # BRIDGED_GAP_IS_PERSON_TIME was here and is gone: BASELINE_PY and
     # PERIOD_PY are window lengths whichever way it was set, so flipping it
     # changed no denominator while the run recorded that it had.
@@ -331,6 +334,10 @@ check_contract <- function(cfg) {
 #               tables say which definition produced them; applied elsewhere.
 OPEN_QUESTION_SOURCE <- c(
   fu_evidence_rule                    = "here",
+  # Whether a nested cohort required the cohort above. It changes who is in 2L
+  # and 3L, so a count read without knowing it is a count of an unknown
+  # population - which is exactly what this list is for.
+  cohort_nested                       = "here",
   sec2l_apply_other_cancer            = "here",
   sec2l_input_is_wide                 = "here",
   censor_at_disenrollment             = "here",

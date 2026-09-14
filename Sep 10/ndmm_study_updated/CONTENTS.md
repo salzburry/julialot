@@ -57,8 +57,9 @@ writes only its own `S_*` tables.
 
 | module | writes |
 |---|---|
+| `eligibility` | `S_ELIGIBILITY` — one row per patient, the IE verdict. No LOT needed |
 | `spine` | `S_SPINE` — one row per patient and line |
-| `cohorts` | `S_COHORT` — membership, criterion by criterion |
+| `cohorts` | `S_COHORT` — a patient combined with a line; membership, criterion by criterion |
 | `attrition` | `S_ATTRITION` — the funnel, one step per criterion |
 | `periods` | `S_PERIODS`, `S_LOT_PERIODS` |
 | `demographics` | `S_DEMOGRAPHICS` |

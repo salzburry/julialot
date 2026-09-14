@@ -100,12 +100,30 @@ mod_cohorts <- function(con, cfg, cohort) {
   # The parent join reads S_COHORT while this statement writes to it, so the
   # parent's rows are staged into a view first: Spark does not define the
   # result of reading a table an INSERT is writing.
+  # CRITERIA_ASKED and NESTED are what make IN_COHORT readable on its own.
+  #
+  # A MET_* column is on every row of every cohort, but which of them the
+  # verdict is OVER differs: 1L and SEC2L are judged on nine criteria, 2L and
+  # 3L on three - N1, N2 and I5 - so MET_X1 to MET_X4 sit on a 2L row without
+  # being part of its verdict. SEC2L drops X2 entirely under the shipped
+  # default. An analyst who ANDed the flags would reproduce 1L and get a
+  # DIFFERENT cohort at 2L, 3L and SEC2L, with nothing on the row to warn them.
+  # So the row carries the list its own IN_COHORT was computed from.
   prepare_table(con, wrk("S_COHORT"),
     "PATID string, COHORT string, LOT_NUM int, INDEX_DATE date,
      MET_N1 int, MET_N2 int, MET_I5 int,
-     MET_X1 int, MET_X2 int, MET_X3 int, MET_X4 int, IN_COHORT int",
+     MET_X1 int, MET_X2 int, MET_X3 int, MET_X4 int, IN_COHORT int,
+     CRITERIA_ASKED string, NESTED int",
     cohort$key)
-  if (!is.na(cohort$nested_in)) {
+  # Nesting is a SETTING now, not structure. s7.2.1 read literally makes 2L the
+  # subset of 1L who initiate a second line, and that is the default. But the
+  # requirement is what makes a 1L index outside the window cost the patient
+  # their 2L and 3L rows too, and an analysis of second-line initiators does
+  # not always want that. COHORT_NESTED=FALSE lets each line stand on its own
+  # index. Either way the row says which, so a number can never be read under
+  # the wrong one.
+  nested <- !is.na(cohort$nested_in) && isTRUE(cfg$cohort_nested)
+  if (nested) {
     db_exec(con, sprintf(
       "CREATE OR REPLACE TEMPORARY VIEW s_parent_cohort AS
        SELECT PATID FROM %s WHERE COHORT = '%s' AND IN_COHORT = 1",
@@ -123,7 +141,8 @@ mod_cohorts <- function(con, cfg, cohort) {
     INSERT INTO %1$s
     SELECT PATID, COHORT, LOT_NUM, INDEX_DATE,
            MET_N1, MET_N2, MET_I5, MET_X1, MET_X2, MET_X3, MET_X4,
-           CASE WHEN %12$s THEN 1 ELSE 0 END AS IN_COHORT
+           CASE WHEN %12$s THEN 1 ELSE 0 END AS IN_COHORT,
+           '%17$s' AS CRITERIA_ASKED, %18$d AS NESTED
     FROM (
       SELECT s.PATID, '%2$s' AS COHORT, s.LOT_NUM, s.LOT_START_DT AS INDEX_DATE,
              1 AS MET_N1,
@@ -143,13 +162,16 @@ mod_cohorts <- function(con, cfg, cohort) {
       WHERE s.LOT_NUM = %10$d %11$s
     ) m",
     wrk("S_COHORT"), cohort$key, ce_pre, fu_pred, wrk("S_SPINE"),
-    input_cohort_tbl(), wrk("S_ENROLL_SPANS"), wrk("S_FU_CLAIMS"),
+    # S_ELIGIBILITY, not the upstream table. The four exclusions were decided
+    # by mod_eligibility() against whatever the input carried, and are taken
+    # here as given: this module combines a patient with a line, it does not
+    # re-judge eligibility. One module reads INPUT_COHORT_TABLE, and it is not
+    # this one.
+    wrk("S_ELIGIBILITY"), wrk("S_ENROLL_SPANS"), wrk("S_FU_CLAIMS"),
     parent, cohort$lot_num, floor_sql,
     membership_predicate(cohort),
-    cohort_flag_pred_one("X1_prior_mm_tx", .cohort_cols()),
-    cohort_flag_pred_one("X2_other_cancer", .cohort_cols()),
-    cohort_flag_pred_one("X3_pregnancy", .cohort_cols()),
-    cohort_flag_pred_one("X4_belantamab", .cohort_cols())),
+    "c.MET_X1 = 1", "c.MET_X2 = 1", "c.MET_X3 = 1", "c.MET_X4 = 1",
+    paste(cohort$criteria, collapse = "; "), as.integer(nested)),
     qc = sprintf("SELECT count(*) AS n_indexed, sum(IN_COHORT) AS n_in_cohort
                   FROM %s WHERE COHORT = '%s'", wrk("S_COHORT"), cohort$key))
 }

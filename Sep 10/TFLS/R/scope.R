@@ -108,6 +108,12 @@ TFLS_RELEASED_TABLES <- c("S_SAFETY_RATES", "S_HCRU_RATES", "S_MALIGNANCY_RATES"
                           "S_PATTERNS", "S_SWITCH", "S_TX_ATTRITION")
 
 TFLS_MODULE_OUTPUTS <- list(
+  # The package's two roots. Eligibility is the cohort build's verdict, one row
+  # per patient, and needs no line of therapy; the spine is the LOT engine's
+  # lines. Neither is filled from by a shell - they are inputs to the tables
+  # that are - but both are named so a run that wrote them is not reported as
+  # having written a table nothing declares.
+  eligibility = "S_ELIGIBILITY",
   spine = "S_SPINE",
   cohorts = "S_COHORT",
   attrition = "S_ATTRITION",
