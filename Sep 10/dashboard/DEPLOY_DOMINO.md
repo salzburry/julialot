@@ -132,9 +132,17 @@ summaries — has no released copy at all, so an extract cut down to
 `S_*_RELEASE` is both **incomplete** for a reader and still **unsuppressed**
 wherever it is not. The way to produce something shareable is the shells:
 `TFLS/run_tfls.R` fills them from the run at a floor that may only rise and
-writes tables that carry no identifier and no cell under it. Share those.
-Where a raw table itself has to go out, it is a disclosure review, not a file
-copy.
+writes tables that carry no identifier and no cell under it — and it applies
+the release verdict below as well, so a table the run says has a recoverable
+cell is not filled from at all. Share those. Where a raw table itself has to go
+out, it is a disclosure review, not a file copy.
+
+The Dataset's own access is the one control here that is **not in the code**.
+Nothing this delivery runs can enforce it: the job writes the files, and who
+may read them afterwards is set on the Domino Dataset and the project that
+owns it. Grant it to the App and the Job and to nobody else, and re-check it
+whenever the project's collaborators change — every other control on this page
+is downstream of that one holding.
 
 **A release that gives a withheld cell away does not leave the warehouse.**
 `mod_release()` withholds every cell under the floor, then records in

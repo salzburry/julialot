@@ -309,6 +309,29 @@ main <- function() {
   cat("  built   ", paste(scope$cohorts, collapse = ", "), " with the module(s) ",
       run_modules_text(scope), "; every other table and cohort under this ",
       "prefix is a previous run's and reads as absent\n", sep = "")
+  # The run's own verdict on its release, said out loud before a shell is
+  # filled. These tables are what a study hands out, so what the source could
+  # not close belongs on the screen and not only in the unfilled list.
+  local({
+    blocked <- release_verdict(scope)
+    no_go <- release_refused(scope)
+    if (identical(blocked, TFLS_RELEASE_NOT_RECORDED))
+      cat("  release this run kept no record of what its release left ",
+          "recoverable. The snapshot job is the gate for that; re-exporting ",
+          "through it is what settles it\n", sep = "")
+    else if (!nzchar(blocked))
+      cat("  release its release left no withheld cell that the rest of its ",
+          "group gives away\n", sep = "")
+    else if (tfls_allow_recoverable())
+      cat("  release TFLS_ALLOW_RECOVERABLE is on, so ", length(no_go),
+          " table(s) are filled from anyway: ", paste(no_go, collapse = ", "),
+          ". The run says: ", blocked, "\n", sep = "")
+    else
+      cat("  release ", length(no_go), " table(s) are NOT read, and the rows ",
+          "resting on them are reported unfilled: ",
+          paste(no_go, collapse = ", "), ". The run says: ", blocked, "\n",
+          sep = "")
+  })
 
   ctx <- fill_context(reader, sh$classes,
                       tte_eligible_only = env_flag("TFLS_TTE_ELIGIBLE_ONLY"),
