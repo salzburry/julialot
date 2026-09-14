@@ -986,58 +986,49 @@ ok({ cs <- render_csv(F1)
 ok(all(c("REASON", "REASON_KIND", "SUPPRESSED", "FILLED") %in% names(render_csv(F1))),
    "...and carries why each cell is what it is")
 
-cat("\n-- the restated registry, against the package's own --\n")
-# R/scope.R restates three lists the study package's registry declares:
-# which module writes which table, which outputs a switch turns on, and which
-# tables the release module publishes a copy of. They are restated because a
-# snapshot is filled where the package is not installed and cannot be asked -
-# and a restatement drifts. A table added to SUPPRESSION_SPEC and not added
-# here would be filled from without the recoverability gate knowing to refuse
-# it; a module output added there and not here would be reported unfilled
-# under a name the package does write.
+cat("\n-- the generated contract, against the package that emits it --\n")
+# R/scope.R no longer restates the package's registry; it reads the contract
+# the package emits. The restatement is gone, so the drift it could carry is
+# gone with it - but the shipped COPY can still fall behind the registry, and
+# this is what stops that: regenerate from the package and compare.
 #
-# So the package is asked where it IS beside this folder, which is how it is
-# delivered. Where it is not - TFLS shipped on its own - the check says it
-# could not run rather than passing quietly, because "not checked" and
-# "checked and equal" are different answers.
+# Byte-for-byte, not field-by-field. A field comparison passes a file that is
+# right in the fields it happens to check, and the point of shipping a
+# generated artefact is that it is the generator's output and nothing else.
 local({
-  reg <- file.path(dirname(ROOT), "ndmm_study_updated", "study223926", "R",
-                   "registry.R")
-  if (!file.exists(reg)) {
-    cat("  --     the package registry is not beside this folder, so the",
-        "restatement below is unchecked\n")
+  reg <- file.path(dirname(ROOT), "ndmm_study_updated", "study223926", "R")
+  if (!all(file.exists(file.path(reg, c("registry.R", "contract.R"))))) {
+    cat("  --     the study package is not beside this folder, so the shipped",
+        "contract is unchecked\n")
     return(invisible(NULL))
   }
-  # Into a bare environment: nothing of this suite's may answer for the
-  # package, or the comparison is of these files with themselves.
   pkg <- new.env(parent = baseenv())
-  e <- tryCatch({ sys.source(reg, envir = pkg); NULL }, error = function(x) x)
-  ok(is.null(e), "the study package's registry is readable on its own")
+  e <- tryCatch({ for (f in c("registry.R", "contract.R"))
+                    sys.source(file.path(reg, f), envir = pkg); NULL },
+                error = function(x) x)
+  ok(is.null(e), "the study package's contract emitter loads on its own")
   if (!is.null(e)) return(invisible(NULL))
+
+  tmp <- file.path(tempdir(), "tfls_contract_check.csv")
+  on.exit(unlink(tmp), add = TRUE)
+  pkg$write_study_contract(tmp)
+  shipped <- file.path(ROOT, TFLS_CONTRACT_FILE)
+  ok(file.exists(shipped), "the contract is shipped with this folder, so a snapshot fills where the package is not installed")
+  ok(identical(readLines(shipped, warn = FALSE), readLines(tmp, warn = FALSE)),
+     "...and it is exactly what the package emits today: regenerated here and compared line for line")
+
+  # And the three objects built from it are the package's own answers.
+  d <- pkg$study_contract()
   ok(setequal(TFLS_RELEASED_TABLES, names(pkg$SUPPRESSION_SPEC)),
-     "the tables this believes have a released copy are exactly the package's SUPPRESSION_SPEC")
-  ok(setequal(setdiff(names(TFLS_MODULE_OUTPUTS), "release"),
-              setdiff(names(pkg$MODULES), "release")),
-     "...and it knows the same modules the package declares")
-  drift <- unlist(lapply(setdiff(names(pkg$MODULES), "release"), function(m) {
-    here <- TFLS_MODULE_OUTPUTS[[m]] %||% character(0)
-    there <- pkg$MODULES[[m]]$outputs %||% character(0)
-    if (setequal(here, there)) NULL else m
-  }))
-  ok(!length(drift),
-     paste0("...and each module's outputs match the package's, table for table",
-            if (length(drift)) paste0(" [drifted: ", paste(drift, collapse = ", "), "]") else ""))
-  ok(setequal(TFLS_MODULE_OUTPUTS$release,
-              paste0(names(pkg$SUPPRESSION_SPEC), "_RELEASE")),
-     "...and the release module writes a copy of each of them, under the name the package gives it")
-  opt <- unlist(lapply(names(pkg$OPTIONAL_FEATURES), function(m)
-    vapply(pkg$OPTIONAL_FEATURES[[m]], function(f) f$output, character(1))),
-    use.names = FALSE)
-  ok(setequal(names(TFLS_OPTIONAL_OUTPUTS), opt),
-     "...and the outputs a switch turns on are the package's OPTIONAL_FEATURES, so neither is read without its switch")
-  ok(setequal(unname(TFLS_OPTIONAL_OUTPUTS),
-              unlist(lapply(pkg$OPTIONAL_FEATURES, names), use.names = FALSE)),
-     "...under the switch names the package records them by")
+     "the tables believed to have a released copy are the package's SUPPRESSION_SPEC")
+  ok(setequal(names(TFLS_MODULE_OUTPUTS), unique(d$MODULE)) &&
+       all(vapply(names(TFLS_MODULE_OUTPUTS), function(m)
+             setequal(TFLS_MODULE_OUTPUTS[[m]], d$TABLE[d$MODULE == m]),
+             logical(1))),
+     "...and every module's outputs are the package's, table for table")
+  ok(setequal(names(TFLS_OPTIONAL_OUTPUTS), d$TABLE[nzchar(d$SWITCH)]) &&
+       all(TFLS_OPTIONAL_OUTPUTS[d$TABLE[nzchar(d$SWITCH)]] == d$SWITCH[nzchar(d$SWITCH)]),
+     "...and the outputs a switch turns on are named under the switch the package records them by")
 })
 
 cat("\n-- the runner --\n")

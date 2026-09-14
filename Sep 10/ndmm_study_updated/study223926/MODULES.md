@@ -187,6 +187,14 @@ falls back to the sentence. Whether to regroup or withhold a second stratum
 stays the analyst's call; a publication gate reads the columns and refuses
 rather than relying on someone having read a log.
 
+**What this package writes, as data.** `R/contract.R` emits one row per table
+the package can write — the module that writes it, whether the release module
+publishes a suppressed copy, and the switch that has to be on for it. TFLS
+ships the generated copy and reads it instead of restating the registry, and
+its suite regenerates from here and compares line for line whenever this
+package is beside it. Regenerate with `write_study_contract(path)` after adding
+a table to `MODULES` or `SUPPRESSION_SPEC`.
+
 **Seven of the fourteen run today.** `MODULES=all`, the default, runs everything
 that has a usable code list. `spine`, `cohorts`, `attrition`, `periods`,
 `demographics` and `tte` need none, so they always run: the cohorts `COHORTS`

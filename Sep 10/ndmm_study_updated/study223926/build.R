@@ -45,8 +45,8 @@ if (!identical(toupper(Sys.getenv("DRY_RUN", unset = "FALSE")), "TRUE")) {
       stop(pkg, " is not installed. DRY_RUN=TRUE prints the plan without it.",
            call. = FALSE)
 }
-for (f in c("config_223926.R", "db_utils_223926.R", "registry.R", "windows.R",
-            "person_time.R", "codelists.R", "lineage.R",
+for (f in c("config_223926.R", "db_utils_223926.R", "registry.R", "contract.R",
+            "windows.R", "person_time.R", "codelists.R", "lineage.R",
             "run_223926.R"))
   source(file.path(here, "R", f))
 
