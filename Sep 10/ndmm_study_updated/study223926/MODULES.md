@@ -18,7 +18,7 @@ serves all three:
 DATABRICKS_PWD=... Rscript build.R                 # DSN from DATABRICKS_DSN, default RWDE
 DRY_RUN=TRUE Rscript build.R                       # print the plan, touch nothing
 MODULES=safety COHORTS=1L,2L Rscript build.R       # one module; 2L is nested in 1L, so 1L comes too
-Rscript tests/run_tests.R                          # 428 checks, no warehouse
+Rscript tests/run_tests.R                          # 447 checks, no warehouse
 ```
 
 `SPARK_METHOD` picks the connection, and `odbc` is the default. The other
@@ -108,7 +108,7 @@ lands on the run's own metadata row where no reader can miss it.
 | `R/db_utils_223926.R` | the connection - ODBC through DBI, or a sparklyr session - logging, table naming, the step runner. |
 | `R/run_223926.R` | Resolves the plan, walks the modules, writes the run metadata. |
 | `R/modules/*.R` | One file per module. Nothing else defines a clinical rule. |
-| `tests/run_tests.R` | 428 checks that need no warehouse. The last sections RUN every module for every cohort, parse every statement they emit, and **execute** them against fixtures. |
+| `tests/run_tests.R` | 447 checks that need no warehouse. The last sections RUN every module for every cohort, parse every statement they emit, and **execute** them against fixtures. |
 | `tests/emit_sql.R` | The harness. Stubs only what touches Spark, so a module's R and its SQL are both exercised without a cluster. |
 | `tests/parse_sql.py` | Parses each captured statement in the Spark dialect (sqlglot). |
 | `tests/run_duckdb.py` | **Executes** them: transpiles to DuckDB, runs against `tests/fixtures/cdm`, checks 58 golden numbers, then runs the whole script again and checks nothing doubled. |
@@ -187,7 +187,7 @@ falls back to the sentence. Whether to regroup or withhold a second stratum
 stays the analyst's call; a publication gate reads the columns and refuses
 rather than relying on someone having read a log.
 
-**Six of the thirteen run today.** `MODULES=all`, the default, runs everything
+**Seven of the fourteen run today.** `MODULES=all`, the default, runs everything
 that has a usable code list. `spine`, `cohorts`, `attrition`, `periods`,
 `demographics` and `tte` need none, so they always run: the cohorts `COHORTS`
 names (the config default is `1L,2L,3L`; `SEC2L` is opt-in), every window, the
@@ -378,6 +378,16 @@ change to its shape reaches the run through a table this package declares.
 
 `spine` is the LOT engine's lines, with no cohort join and no date filter.
 
+**And the run builds only what its own modules read.** Declaring
+`needs = character(0)` is not enough on its own: the controller used to prove
+LOT lineage and build enrolment spans on every run, so `MODULES=eligibility`
+still failed in an environment with no `LOT_BUILD_STATUS` table — before the
+module it selected ever ran. The lineage proof now follows `spine`'s presence
+in the resolved set (it is the one module that reads the LOT tables, and
+everything needing lines needs it), the enrolment spans follow `cohorts` or
+`periods`, and the claim counts follow `cohorts`. An eligibility-only run
+prepares none of them and proves no lineage, because it reads none of them.
+
 Only three criteria are line-relative by definition — I5 (follow-up from the
 line's index), N1 (received *this* line) and N2 (enrolment before *this* line's
 index) — and they live in `cohorts`, which is where a patient and a line are
@@ -390,6 +400,12 @@ that requirement is what makes a 1L index outside the index window cost the
 patient their 2L and 3L rows too, and an analysis of second-line initiators does
 not always want it. `COHORT_NESTED=FALSE` lets each line stand on its own index.
 Every `S_COHORT` row carries `NESTED` saying which way the run went.
+
+The **selection** follows the setting too. With nesting on, `COHORTS=2L`
+without `1L` is refused — a nested cohort built without its parent is a
+different population under the same name. With it off, `COHORTS=2L` is exactly
+the analysis the setting exists for, and builds on its own. The refusal names
+the setting that would allow it.
 
 **And every row says what its own verdict is over.** `CRITERIA_ASKED` is the
 list `IN_COHORT` was computed from. It has to be on the row because it differs:

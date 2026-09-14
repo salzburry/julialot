@@ -1104,9 +1104,14 @@ ok(has(RUNNER, "release_verdict(scope)") && has(RUNNER, "release_refused(scope)"
    "every run says on screen what its source's release left recoverable, since these tables are what a study hands out")
 ok(has(RUNNER, 'd <- env_chr("TFLS_OUT_DIR")'),
    "the output directory can be moved, because a platform that captures one directory as a run's results does not capture the code tree")
-ok(has(RUNNER, "envir = read_errors") && has(RUNNER, "why <- read_error(") &&
+ok(has(RUNNER, "envir = read_errors") && has(RUNNER, "why <- read_error(reader,") &&
      has(RUNNER, "is there and has no rows"),
    "a read that failed is reported with what it failed with, and told apart from a table that is there and empty")
+ok(has(RUNNER, 'attr(f, "read_errors") <- read_errors') &&
+     !has(RUNNER, "\nread_errors <- new.env"),
+   "...and the record belongs to the reader, not the session, so one bind's failure is never reported against the next")
+ok(has(RUNNER, 'pattern = "^tfls_.*[.]csv$|^tfls[.]md$"'),
+   "the output directory is cleared of this tool's own files first, so a dropped table does not leave last run's CSV beside this run's")
 
 
 # ---------------------------------------------------------------------------

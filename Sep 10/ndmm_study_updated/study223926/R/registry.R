@@ -349,10 +349,17 @@ resolve_cohorts <- function(cfg) {
   # A nested cohort cannot be built without the one it is drawn from: 2L is
   # "the subset of the 1L cohort", so a 2L run without 1L would be a different
   # population under the same name.
-  for (co in out) {
+  #
+  # ...but only while nesting is ON. Under COHORT_NESTED=FALSE each line stands
+  # on its own index and 2L is NOT drawn from 1L, so requiring the parent would
+  # refuse exactly the selection the setting exists to allow - a 2L-only run of
+  # second-line initiators. The requirement follows the setting, or the setting
+  # is one the code does not honour.
+  if (isTRUE(cfg$cohort_nested)) for (co in out) {
     if (!is.na(co$nested_in) && !(co$nested_in %in% want))
       stop("SELECTION ERROR: cohort ", co$key, " is nested in ", co$nested_in,
-           ", which is not selected. Add it to COHORTS, or drop ", co$key,
+           ", which is not selected. Add it to COHORTS, drop ", co$key,
+           ", or set COHORT_NESTED=FALSE to build it on its own index",
            " - a nested cohort built without its parent is a different ",
            "population.", call. = FALSE)
   }
