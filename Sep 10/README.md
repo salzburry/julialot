@@ -86,7 +86,11 @@ Rscript TFLS/tests/test_tfls.R                             # 296
 SQL they emit against fixtures where `python3` with `duckdb` and `sqlglot` is
 present; where it is not they print `SKIP` and the rest of the suite still
 runs, so a green run on a machine without them is a smaller check than a green
-run with them.
+run with them. The dashboard suite does the same with `survival`, which it uses
+only to cross-check its own Kaplan-Meier against a second implementation.
+
+Each suite prints `SKIP` for anything it could not run, and the line says what
+was missing — so read the skips, not just the total.
 
 ---
 
