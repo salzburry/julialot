@@ -1102,6 +1102,11 @@ ok(has(RUNNER, "safe_segment(prefix)") && has(RUNNER, "file.path(root, prefix)")
 ok(has(RUNNER, "release_verdict(scope)") && has(RUNNER, "release_refused(scope)") &&
      has(RUNNER, "TFLS_ALLOW_RECOVERABLE is on"),
    "every run says on screen what its source's release left recoverable, since these tables are what a study hands out")
+ok(has(RUNNER, 'd <- env_chr("TFLS_OUT_DIR")'),
+   "the output directory can be moved, because a platform that captures one directory as a run's results does not capture the code tree")
+ok(has(RUNNER, "envir = read_errors") && has(RUNNER, "why <- read_error(") &&
+     has(RUNNER, "is there and has no rows"),
+   "a read that failed is reported with what it failed with, and told apart from a table that is there and empty")
 
 
 # ---------------------------------------------------------------------------
