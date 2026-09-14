@@ -35,6 +35,30 @@ engine's `OUTPUT_DIR` points by default:
 TFLS_OUT_DIR=/mnt/artifacts/results/tfls ... Rscript TFLS/run_tfls.R
 ```
 
+## What it knows about the study package, and how
+
+`contract/study223926_contract.csv` says which module writes which table, which
+of them the release module publishes a suppressed copy of, and which are
+written only when a switch asks for them. It is **generated**, not written by
+hand: `write_study_contract()` in the study package's `R/contract.R` derives it
+from the `MODULES`, `SUPPRESSION_SPEC` and `OPTIONAL_FEATURES` that drive the
+run itself.
+
+It is shipped here because a snapshot is filled where that package is not
+installed and cannot be asked. Regenerate it whenever the study registry gains
+a table:
+
+```r
+source("ndmm_study_updated/study223926/R/registry.R")
+source("ndmm_study_updated/study223926/R/contract.R")
+write_study_contract("TFLS/contract/study223926_contract.csv")
+```
+
+`tests/test_tfls.R` regenerates it and compares line for line whenever the
+study package sits beside this folder, so a stale copy fails the suite rather
+than filling a shell from a table the gate does not know to refuse. Shipped on
+its own, it says the check could not run.
+
 ## It fills from one run, and reads only what that run wrote
 
 A prefix is not a run. A run writes the modules it selected, for the cohorts it

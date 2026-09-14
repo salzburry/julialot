@@ -148,15 +148,22 @@ snapshot_reader <- function(root, prefix, lot_dir = "") {
 
 # What a read failed with, by table, for the messages that would otherwise say
 # only that nothing came back.
-read_errors <- new.env(parent = emptyenv())
-read_error <- function(table) {
+#
+# Per READER, not per process. One environment shared by the whole session
+# would carry a failure from one bind into the next: source this file twice, or
+# call main() twice, and a stale S_RUN_METADATA error gets reported against a
+# later prefix whose metadata is simply absent - a wrong diagnosis, which is
+# the exact fault this record was added to fix.
+read_error <- function(reader, table) {
+  e <- attr(reader, "read_errors")
   t <- toupper(chr(table))
-  if (!exists(t, envir = read_errors, inherits = FALSE)) "" else
-    get(t, envir = read_errors, inherits = FALSE)
+  if (is.null(e) || !exists(t, envir = e, inherits = FALSE)) "" else
+    get(t, envir = e, inherits = FALSE)
 }
 
 warehouse_reader <- function(con, catalog, schema, prefix, cohort_table = "") {
-  function(table) {
+  read_errors <- new.env(parent = emptyenv())
+  f <- function(table) {
     # The input cohort table is not one of the run's outputs and carries no
     # prefix: it is read only where the run was told where it is, and it comes
     # already qualified, so it is quoted part by part.
@@ -183,6 +190,8 @@ warehouse_reader <- function(con, catalog, schema, prefix, cohort_table = "") {
                NULL
              })
   }
+  attr(f, "read_errors") <- read_errors
+  f
 }
 
 # The run these shells are filled from: its metadata row, and the two checks
@@ -197,7 +206,7 @@ bind_run <- function(reader, where) {
   raw <- reader("S_RUN_METADATA")
   md <- newest_row(raw)
   if (is.null(md)) {
-    why <- read_error("S_RUN_METADATA")
+    why <- read_error(reader, "S_RUN_METADATA")
     if (nzchar(why))
       stop("S_RUN_METADATA under ", where, " could not be read, so there is ",
            "no run to fill these shells from. The read failed with:\n  ", why,
@@ -231,6 +240,24 @@ bind_run <- function(reader, where) {
 
 write_outputs <- function(filled, sh, floor_n, run_id) {
   dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+  # Remove the files THIS tool owns before writing, so the directory holds one
+  # run's output and not two runs' mixed.
+  #
+  # Drop a table from tables.csv and its tfls_<id>.csv stays behind, identical
+  # in shape to the ones beside it and belonging to a shell set that no longer
+  # exists - and nothing on it says which run wrote it. Only the tool's own
+  # filename pattern is touched: whatever else a person has put in this
+  # directory is theirs.
+  old <- list.files(out_dir, pattern = "^tfls_.*[.]csv$|^tfls[.]md$",
+                    full.names = TRUE)
+  if (length(old)) {
+    ok <- file.remove(old)
+    if (!all(ok))
+      stop("Could not clear the previous output in ", out_dir, ": ",
+           paste(basename(old[!ok]), collapse = ", "), ". Writing over part ",
+           "of it would leave one run's tables beside another's.",
+           call. = FALSE)
+  }
   for (f in filled)
     tfls_write_csv(render_csv(f),
                    file.path(out_dir, paste0("tfls_", f$table_id, ".csv")))

@@ -36,6 +36,24 @@ SYNTH_SCENARIOS <- list(
 }
 
 COHORT_KEYS <- c("1L", "2L", "3L", "SEC2L")
+
+# The study registry's own per-cohort facts, restated here because a synthetic
+# scenario is built where the package is not installed. A 2L row carrying the
+# 1L criteria list, or a SEC2L row claiming to be nested, is a shape no real
+# run produces - and the fixture exists to show the shape.
+.C1L <- c("I1_mm_dx", "I2_age", "I3_eligible_1l_tx", "I4_ce_pre",
+          "I5_followup", "X1_prior_mm_tx", "X2_other_cancer",
+          "X3_pregnancy", "X4_belantamab")
+.CNEST <- c("N1_received_line", "N2_ce_pre", "I5_followup")
+SYNTH_CRITERIA <- c(
+  `1L`    = paste(.C1L, collapse = "; "),
+  `2L`    = paste(.CNEST, collapse = "; "),
+  `3L`    = paste(.CNEST, collapse = "; "),
+  # resolve_cohorts() drops X2 whenever SEC2L_APPLY_OTHER_CANCER is FALSE,
+  # which is the shipped default and the only setting under which SEC2L builds.
+  SEC2L   = paste(setdiff(.C1L, "X2_other_cancer"), collapse = "; "))
+# nested_in: 1L and SEC2L are drawn from nobody.
+SYNTH_NESTED <- c(`1L` = 0L, `2L` = 1L, `3L` = 1L, SEC2L = 0L)
 # Every vocabulary below is the package's own, not a paraphrase of it. A shell
 # row names a condition, a measure or a period by its exact string, so a
 # generator that invented its own would leave the Tables tab empty and the
@@ -442,16 +460,23 @@ synthetic_one <- function(prefix, settings, min_n = 25L) {
     PATID = tte$PATID, COHORT = tte$COHORT, LOT_NUM = tte$LOT_NUM,
     INDEX_DATE = tte$INDEX_DATE,
     MET_N1 = 1L, MET_N2 = 1L, MET_I5 = 1L,
-    MET_X1 = 0L, MET_X2 = 0L, MET_X3 = 0L, MET_X4 = 0L,
+    # Everyone here is IN their cohort, so every exclusion they were judged on
+    # is one they PASSED. A 0 beside IN_COHORT = 1 is a row that cannot exist,
+    # and a fixture is meant to show the shape a real table takes.
+    MET_X1 = 1L, MET_X2 = 1L, MET_X3 = 1L, MET_X4 = 1L,
     IN_COHORT = 1L,
-    # Which criteria this cohort's IN_COHORT was actually computed over, and
-    # whether it required the cohort above. Without them a reader cannot tell
-    # a MET_* that is part of the verdict from one that is merely on the row -
-    # 2L and 3L are judged on three criteria, 1L on nine.
-    CRITERIA_ASKED = ifelse(tte$COHORT == "1L",
-      "I1_mm_dx; I2_age; I3_eligible_1l_tx; I4_ce_pre; X1_prior_mm_tx; X2_other_cancer; X3_pregnancy; X4_belantamab; I5_followup",
-      "N1_received_line; N2_ce_pre; I5_followup"),
-    NESTED = ifelse(tte$COHORT == "1L", 0L, 1L),
+    # Which criteria this cohort's IN_COHORT was computed over, and whether it
+    # required the cohort above. Without them a reader cannot tell a MET_* that
+    # is part of the verdict from one that merely sits on the row.
+    #
+    # Four cohorts, four different answers, taken from the study registry:
+    # 1L is judged on nine criteria and is nested in nothing; 2L and 3L on
+    # three, each nested in the one above; SEC2L is the 1L list MINUS
+    # X2_other_cancer under the shipped SEC2L_APPLY_OTHER_CANCER=FALSE, and is
+    # deliberately NOT nested - not being drawn from 1L is the whole point of
+    # that cohort.
+    CRITERIA_ASKED = SYNTH_CRITERIA[tte$COHORT],
+    NESTED = SYNTH_NESTED[tte$COHORT],
     stringsAsFactors = FALSE)
 
   # The eligibility layer: one row per patient, no line of therapy in it. The

@@ -95,11 +95,11 @@ often as needed.
 DATABRICKS_PWD=... Rscript study223926/build.R                # over the Databricks ODBC DSN
 DRY_RUN=TRUE Rscript study223926/build.R                      # print the plan only
 MODULES=safety COHORTS=1L,2L Rscript study223926/build.R      # one module; 2L is nested in 1L, so 1L comes too
-Rscript study223926/tests/run_tests.R                         # 428 checks, no warehouse
+Rscript study223926/tests/run_tests.R                         # 447 checks, no warehouse
 ```
 
-Thirteen modules, four cohorts, and every open reading is a setting with the
-protocol's answer as its default. Six of the thirteen modules run today - the
+Fourteen modules, four cohorts, and every open reading is a setting with the
+protocol's answer as its default. Seven of the fourteen modules run today - the
 cohorts, their attrition, windows, demographics and outcomes need no code list;
 the other seven are blocked on Annexes 2 and 3, and a default run leaves them
 out by name rather than stopping. `study223926/MODULES.md` has the rest.

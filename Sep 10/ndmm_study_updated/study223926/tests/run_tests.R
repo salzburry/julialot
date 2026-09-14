@@ -408,7 +408,48 @@ cat("\nthe two roots, and the nesting that is now a setting\n")
      "...with the row saying which way it went, so a number cannot be read under the wrong one")
   ok(grepl("N1_received_line; N2_ce_pre; I5_followup", nested_sql, fixed = TRUE),
      "and every row carries the criteria ITS verdict was computed over - 2L is judged on three, not on the nine that sit on the row")
+
+  # The SELECTION has to follow the setting too, or the setting is one the code
+  # does not honour: a 2L-only run of second-line initiators is exactly what
+  # COHORT_NESTED=FALSE exists to allow, and the parent requirement refused it
+  # while only the JOIN was made conditional.
+  sel <- function(env) tryCatch(names(resolve_cohorts(cfg0(env))),
+                                error = function(e) paste("ERROR:", conditionMessage(e)))
+  ok(identical(sel(c(COHORTS = "2L", COHORT_NESTED = "FALSE")), "2L") &&
+       identical(sel(c(COHORTS = "3L", COHORT_NESTED = "FALSE")), "3L"),
+     "with nesting off, a later line can be selected on its own - which is the analysis the setting is for")
+  ok(grepl("^ERROR:", sel(c(COHORTS = "2L"))[1]) &&
+       grepl("COHORT_NESTED=FALSE", sel(c(COHORTS = "2L"))[1], fixed = TRUE),
+     "...while the default still refuses it, and the refusal names the setting that would allow it")
+  ok(identical(sel(c(COHORTS = "1L,2L")), c("1L", "2L")),
+     "...and a selection carrying its parent is unaffected either way")
   set_study_config(cfg0())
+}
+
+cat("\na run builds the inputs its own modules read, and no others\n")
+{
+  # The point of splitting eligibility out is that it can be built where there
+  # is no LOT run. That is a property of the CONTROLLER, not of the module
+  # graph: the graph said needs=character(0) while build_223926() proved LOT
+  # lineage and built enrolment spans for every run, so a standalone
+  # eligibility run still failed in an environment with no LOT status table -
+  # before the module it selected ever ran.
+  sel_mods <- function(m) suppressMessages(resolve_modules(cfg0(c(MODULES = m))))
+  elig <- sel_mods("eligibility")
+  ok(identical(names(elig), "eligibility") &&
+       !reads_lot(elig) && !reads_enroll_spans(elig) && !reads_fu_claims(elig),
+     "an eligibility-only run reads no LOT table, no enrolment span and no claim count, so none is prepared for it")
+  ok(reads_input_cohort(elig),
+     "...it does read the input cohort table, so that contract is still checked")
+  for (m in c("attrition", "periods", "tte", "all")) {
+    mm <- sel_mods(m)
+    ok(reads_lot(mm) && reads_enroll_spans(mm),
+       paste0("MODULES=", m, " reads the LOT tables and the enrolment spans, so both are prepared and the lineage is proved"))
+  }
+  rsrc <- paste(readLines("R/run_223926.R", warn = FALSE), collapse = "\n")
+  ok(grepl("if (reads_lot(mods)) check_lot_lineage_unchanged", rsrc, fixed = TRUE) &&
+       grepl("lot_run <- if (reads_lot(mods)) check_lot_lineage", rsrc, fixed = TRUE),
+     "...and BOTH lineage checks follow the same question, so a run cannot prove a build it never read and then recheck it")
 }
 
 cat("\nthe cohort table, as SQL names it\n")
@@ -2432,7 +2473,15 @@ cat("\n-- the controller re-checks the LOT build before recording complete --\n"
     env$preflight_codelists <- function(mods, cfg) mods
     env$source_modules <- function(here) invisible(TRUE)
     env$build_inputs <- function(con, cfg, mods) invisible(TRUE)
-    env$resolve_modules <- function(cfg) list()
+    # A run that READS the LOT tables, which is what these checks are about.
+    # An empty module set is a run that reads none, and the controller now
+    # skips the lineage proof for exactly that case - so an empty stub here
+    # would test the skip rather than the proof. Named `spine`, because that is
+    # the module whose presence answers the question, but with a body that does
+    # nothing: these checks are about the controller around the modules.
+    env$noop_mod <- function(con, cfg, cohorts) invisible(NULL)
+    env$resolve_modules <- function(cfg)
+      list(spine = utils::modifyList(MODULES$spine, list(fn = "noop_mod")))
     env$describe_plan <- function(cfg, cohorts, mods) character(0)
     for (nm in c("check_lot_lineage", "check_lot_lineage_unchanged",
                  "read_upstream_settings", "write_run_metadata", "ensure_columns",

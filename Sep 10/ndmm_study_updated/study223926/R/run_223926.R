@@ -31,8 +31,26 @@ source_modules <- function(here) {
 # Everything the modules need that is built once rather than per cohort. A
 # function of its own, and not inline in build_223926(), so that both branches
 # below are reachable from outside a full run.
+# What the selected modules actually read, so a run builds the inputs it needs
+# and no others.
+#
+# This is what makes `eligibility` the root its documentation claims. It reads
+# INPUT_COHORT_TABLE and nothing else - no lines, no enrolment spans, no claim
+# scan - and preparing those anyway would make a standalone eligibility run
+# fail in an environment that has no LOT status table, before the module it
+# selected ever ran.
+reads_lot <- function(mods) "spine" %in% names(mods)
+reads_input_cohort <- function(mods) "eligibility" %in% names(mods)
+reads_enroll_spans <- function(mods) any(c("cohorts", "periods") %in% names(mods))
+reads_fu_claims <- function(mods) "cohorts" %in% names(mods)
+
 build_inputs <- function(con, cfg, mods) {
-  check_cohort_table(con, cfg)
+  if (reads_input_cohort(mods)) check_cohort_table(con, cfg)
+  if (!reads_enroll_spans(mods) && !reads_fu_claims(mods)) {
+    log_msg("no selected module reads enrolment spans or claim counts, so ",
+            "neither is built")
+    return(invisible(NULL))
+  }
   build_enroll_spans(con, cfg)
 
   # A full medical + rx read, so only when a follow-up rule actually needs it -
@@ -110,7 +128,13 @@ build_223926 <- function(here) {
     log_msg("work schema resolved to ", cfg$work_schema)
   }
 
-  lot_run <- check_lot_lineage(con, cfg)
+  # Only a run that reads the LOT engine's output has to prove whose build it
+  # read. `spine` is the one module that reads it, and every module that needs
+  # lines needs `spine`, so its presence in the resolved set is the question.
+  lot_run <- if (reads_lot(mods)) check_lot_lineage(con, cfg) else {
+    log_msg("no selected module reads the LOT tables, so no lineage to prove")
+    NULL
+  }
   # What the cohort build applied, so the readings this run records for its
   # rules are the ones that shaped the data rather than this run's own copy.
   upstream <- read_upstream_settings(con, cfg)
@@ -144,7 +168,7 @@ build_223926 <- function(here) {
 
   # Still the build that was accepted? Every module read the LOT tables over
   # the minutes above; only now can the run vouch that they were one build's.
-  check_lot_lineage_unchanged(con, lot_run)
+  if (reads_lot(mods)) check_lot_lineage_unchanged(con, lot_run)
   write_run_metadata(con, cfg, cohorts, mods, lot_run, deviations, "complete",
                      run_id = rid, upstream = upstream)
   .run_state$ok <- TRUE
