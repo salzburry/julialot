@@ -81,8 +81,9 @@ cheap. So what binds every read here is the run's own record of what it did:
 These are the rules the dashboard applies in `dashboard/R/sources.R`, applied
 here rather than a second set invented beside them, so a shell cell and the
 same figure on a page cannot rest on different rows. Which module writes which
-table is the study package's own registry (`R/registry.R`), restated as data in
-`R/scope.R` because a snapshot is filled where the package is not installed and
+table is the study package's own registry (`R/registry.R`), read here from the
+contract that package generates — see **What it knows about the study package**
+above — because a snapshot is filled where the package is not installed and
 cannot be asked.
 
 ## The shells are CSV, so they can be edited without touching code

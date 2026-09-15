@@ -399,10 +399,21 @@ cat("\nthe two roots, and the nesting that is now a setting\n")
   }
   nested_sql <- emit_for(character(0))
   flat_sql   <- emit_for(c(COHORT_NESTED = "FALSE"))
-  ok(grepl("s_parent_cohort", nested_sql, fixed = TRUE),
+  # NO parent join of ANY form, not just the absence of one alias. There were
+  # two ways to write it - a direct INNER JOIN on S_COHORT and the staged
+  # temporary view - and the flat path kept the first while the row said
+  # NESTED = 0. Testing for the view's name passed on SQL that still required
+  # the parent, so the test is over `par` and over the parent table's name.
+  parent_join <- function(sql)
+    grepl("s_parent_cohort", sql, fixed = TRUE) ||
+      grepl("par.IN_COHORT", sql, fixed = TRUE) ||
+      grepl("par ON par.PATID", sql, fixed = TRUE)
+  ok(parent_join(nested_sql),
      "by default a nested cohort still requires the cohort above, which is s7.2.1 read literally")
-  ok(!grepl("s_parent_cohort", flat_sql, fixed = TRUE),
-     "...and COHORT_NESTED=FALSE drops that requirement, so each line stands on its own index")
+  ok(!parent_join(flat_sql),
+     "...and COHORT_NESTED=FALSE drops that requirement in EVERY form it is written, so each line stands on its own index")
+  ok(!grepl("\\bpar\\b", flat_sql) && !grepl("s223926_S_COHORT par", flat_sql, fixed = TRUE),
+     "...with the parent alias nowhere in the statement, so no join can survive under another spelling")
   ok(grepl("1 AS NESTED", nested_sql, fixed = TRUE) &&
        grepl("0 AS NESTED", flat_sql, fixed = TRUE),
      "...with the row saying which way it went, so a number cannot be read under the wrong one")
@@ -450,6 +461,12 @@ cat("\na run builds the inputs its own modules read, and no others\n")
   ok(grepl("if (reads_lot(mods)) check_lot_lineage_unchanged", rsrc, fixed = TRUE) &&
        grepl("lot_run <- if (reads_lot(mods)) check_lot_lineage", rsrc, fixed = TRUE),
      "...and BOTH lineage checks follow the same question, so a run cannot prove a build it never read and then recheck it")
+  # The provenance query is a READ of the cohort build's metadata, so it
+  # follows the same question as the table it is about. "Reads
+  # INPUT_COHORT_TABLE and nothing else" has to be true of the database too,
+  # not only of the module's own SQL.
+  ok(grepl("upstream <- if (reads_input_cohort(mods)) read_upstream_settings", rsrc, fixed = TRUE),
+     "...and the upstream provenance query follows what reads the cohort build, so a run that reads none of it queries none of it")
 }
 
 cat("\nthe cohort table, as SQL names it\n")

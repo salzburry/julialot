@@ -137,7 +137,14 @@ build_223926 <- function(here) {
   }
   # What the cohort build applied, so the readings this run records for its
   # rules are the ones that shaped the data rather than this run's own copy.
-  upstream <- read_upstream_settings(con, cfg)
+  #
+  # Only where something reads that build. The eight settings this reconciles
+  # are the cohort build's rules, and a run that does not read its table has
+  # nothing of its to reconcile - querying anyway made "reads INPUT_COHORT_TABLE
+  # and nothing else" untrue of the root, and would have recorded the newest
+  # metadata of a build this run never touched.
+  upstream <- if (reads_input_cohort(mods)) read_upstream_settings(con, cfg)
+              else NULL
   # One id for the whole build, so `started`, `failed` and `complete` are rows
   # about the same run rather than three unrelated ones.
   rid <- new_run_id()

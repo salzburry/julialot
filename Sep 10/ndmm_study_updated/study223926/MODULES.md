@@ -18,7 +18,7 @@ serves all three:
 DATABRICKS_PWD=... Rscript build.R                 # DSN from DATABRICKS_DSN, default RWDE
 DRY_RUN=TRUE Rscript build.R                       # print the plan, touch nothing
 MODULES=safety COHORTS=1L,2L Rscript build.R       # one module; 2L is nested in 1L, so 1L comes too
-Rscript tests/run_tests.R                          # 447 checks, no warehouse
+Rscript tests/run_tests.R                          # 449 checks, no warehouse
 ```
 
 `SPARK_METHOD` picks the connection, and `odbc` is the default. The other
@@ -108,7 +108,7 @@ lands on the run's own metadata row where no reader can miss it.
 | `R/db_utils_223926.R` | the connection - ODBC through DBI, or a sparklyr session - logging, table naming, the step runner. |
 | `R/run_223926.R` | Resolves the plan, walks the modules, writes the run metadata. |
 | `R/modules/*.R` | One file per module. Nothing else defines a clinical rule. |
-| `tests/run_tests.R` | 447 checks that need no warehouse. The last sections RUN every module for every cohort, parse every statement they emit, and **execute** them against fixtures. |
+| `tests/run_tests.R` | 449 checks that need no warehouse. The last sections RUN every module for every cohort, parse every statement they emit, and **execute** them against fixtures. |
 | `tests/emit_sql.R` | The harness. Stubs only what touches Spark, so a module's R and its SQL are both exercised without a cluster. |
 | `tests/parse_sql.py` | Parses each captured statement in the Spark dialect (sqlglot). |
 | `tests/run_duckdb.py` | **Executes** them: transpiles to DuckDB, runs against `tests/fixtures/cdm`, checks 58 golden numbers, then runs the whole script again and checks nothing doubled. |
@@ -416,7 +416,14 @@ the analysis the setting exists for, and builds on its own. The refusal names
 the setting that would allow it.
 
 **And every row says what its own verdict is over.** `CRITERIA_ASKED` is the
-list `IN_COHORT` was computed from. It has to be on the row because it differs:
+list the cohort is **judged on** — which is not quite the list `IN_COHORT` is
+*computed* from, and the difference matters. `I1`–`I3` are on the 1L list and
+have no predicate here: the cohort build applied them, and a patient on the
+input passed them by being there. So 1L's `CRITERIA_ASKED` names nine while
+`IN_COHORT` is the AND of six. `S_ELIGIBILITY.EVIDENCE` says where the upstream
+verdicts came from, and `S_ATTRITION.APPLIED_BY` says it step by step.
+
+It has to be on the row because it differs:
 1L and SEC2L are judged on nine criteria, 2L and 3L on three — `N1`, `N2`, `I5`
 — so `MET_X1`–`MET_X4` sit on a 2L row *without being part of its verdict*, and
 SEC2L drops `X2` under the shipped default. An analyst ANDing the `MET_*` flags
