@@ -1031,6 +1031,49 @@ local({
      "...and the outputs a switch turns on are named under the switch the package records them by")
 })
 
+# Every way the shipped contract can be wrong, refused rather than read.
+#
+# It used to be read loosely: any RELEASED value that was not "1" became FALSE,
+# blank keys passed, a duplicate table passed, and a truncated file passed. All
+# four failures push the SAME direction - the reader believes fewer tables are
+# released than really are - and believing less here means the recoverability
+# gate has nothing to refuse. So each is a stop.
+local({
+  good <- readLines(file.path(ROOT, TFLS_CONTRACT_FILE), warn = FALSE)
+  with_contract <- function(lines) {
+    d <- file.path(tempdir(), paste0("tfls_contract_", sample.int(1e6, 1)))
+    dir.create(file.path(d, dirname(TFLS_CONTRACT_FILE)), recursive = TRUE,
+               showWarnings = FALSE)
+    writeLines(lines, file.path(d, TFLS_CONTRACT_FILE))
+    on.exit(unlink(d, recursive = TRUE), add = TRUE)
+    tryCatch({ read_study_contract(d); "READ" },
+             error = function(e) conditionMessage(e))
+  }
+  ok(identical(with_contract(good), "READ"),
+     "the shipped contract reads")
+
+  maybe <- sub("^(safety,S_SAFETY_RATES),1,", "\\1,maybe,", good)
+  ok(!identical(maybe, good) &&
+       grepl("RELEASED must be 0 or 1", with_contract(maybe), fixed = TRUE),
+     "a RELEASED value that is not a flag is refused, because reading it as 'not released' is the answer that publishes")
+
+  blank <- c(good, "tte,,0,")
+  ok(grepl("needs a module and a table", with_contract(blank), fixed = TRUE),
+     "a row with no table is refused rather than carried as an empty name")
+
+  dup <- c(good, "patterns,S_TTE,0,")
+  ok(grepl("appear more than once", with_contract(dup), fixed = TRUE),
+     "a table claimed by two modules is refused, since the first claim would silently win")
+
+  trunc <- good[1:3]
+  ok(grepl("names no released table and no release module", with_contract(trunc), fixed = TRUE),
+     "a file cut short is refused - it loses the flags AND the release module together, which agree perfectly and describe a package with no disclosure control")
+
+  no_copy <- grep("^release,", good, value = TRUE, invert = TRUE)
+  ok(grepl("not the ones the release module writes", with_contract(no_copy), fixed = TRUE),
+     "...and so is one whose release rows were dropped while the flags stayed, which is the same disagreement the other way")
+})
+
 cat("\n-- the runner --\n")
 RUNNER <- paste(readLines(file.path(ROOT, "run_tfls.R")), collapse = "\n")
 ok(has(RUNNER, 'gsub("~+~", " "'),
@@ -1101,8 +1144,15 @@ ok(has(RUNNER, "envir = read_errors") && has(RUNNER, "why <- read_error(reader,"
 ok(has(RUNNER, 'attr(f, "read_errors") <- read_errors') &&
      !has(RUNNER, "\nread_errors <- new.env"),
    "...and the record belongs to the reader, not the session, so one bind's failure is never reported against the next")
-ok(has(RUNNER, 'pattern = "^tfls_.*[.]csv$|^tfls[.]md$"'),
-   "the output directory is cleared of this tool's own files first, so a dropped table does not leave last run's CSV beside this run's")
+ok(has(RUNNER, "stage <- file.path(out_dir,") &&
+     regexpr("tfls_write_csv(render_csv(f),\n                   file.path(stage,", RUNNER, fixed = TRUE) <
+       regexpr("old <- list.files(out_dir, pattern = TFLS_OUTPUT_PATTERN", RUNNER, fixed = TRUE),
+   "the run is written to a staging directory BEFORE the published one is cleared, so a render that raises leaves the previous run whole")
+ok(has(RUNNER, "old <- list.files(out_dir, pattern = TFLS_OUTPUT_PATTERN"),
+   "...and the swap clears only this tool's own files, so a dropped table does not leave last run's CSV beside this run's")
+ok(has(RUNNER, "nothing published has been ") &&
+     has(RUNNER, "on.exit(unlink(stage, recursive = TRUE)"),
+   "...and a failure says the run is complete in the staging directory, which is then cleaned up")
 
 
 # ---------------------------------------------------------------------------

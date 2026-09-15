@@ -69,9 +69,9 @@ Every suite runs offline — no warehouse, no driver, no Shiny — and exits
 non-zero on any failure.
 
 ```bash
-Rscript ndmm_study_updated/study223926/tests/run_tests.R   # 447
-Rscript dashboard/tests/run_tests.R                        # 574
-Rscript TFLS/tests/test_tfls.R                             # 299
+Rscript ndmm_study_updated/study223926/tests/run_tests.R   # 449
+Rscript dashboard/tests/run_tests.R                        # 576
+Rscript TFLS/tests/test_tfls.R                             # 307
 (cd lot/engine     && Rscript tests/test_line_criteria.R)  #  57
 (cd lot/engine     && Rscript tests/test_runner.R)         # 527
 (cd lot/qc         && Rscript tests/test_lot_qc.R)         # 295
@@ -80,7 +80,7 @@ Rscript TFLS/tests/test_tfls.R                             # 299
 (cd lot/validation && Rscript tests/test_vignettes.R)      #  36
 ```
 
-2545 checks. Base R throughout — no suite above loads a package. The app needs
+2557 checks. Base R throughout — no suite above loads a package. The app needs
 `shiny`; a warehouse run needs `DBI`, `odbc` and `glue`. Four of the suites
 (the study package, LOT QC's two, and melphalan) additionally **execute** the
 SQL they emit against fixtures where `python3` with `duckdb` and `sqlglot` is

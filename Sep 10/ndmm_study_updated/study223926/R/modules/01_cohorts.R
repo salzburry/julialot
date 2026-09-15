@@ -89,10 +89,25 @@ mod_cohorts <- function(con, cfg, cohort) {
                      AND ce.COV_END >= date_sub(s.LOT_START_DT, 1)",
                     as.integer(cfg$ce_pre_days))
 
+  # Nesting is a SETTING, not structure. s7.2.1 read literally makes 2L the
+  # subset of 1L who initiate a second line, and that is the default. But the
+  # requirement is what makes a 1L index outside the window cost the patient
+  # their 2L and 3L rows too, and an analysis of second-line initiators does
+  # not always want that. COHORT_NESTED=FALSE lets each line stand on its own
+  # index. Either way the row says which, so a number can never be read under
+  # the wrong one.
+  #
+  # Decided HERE, before any join is built, because there is exactly one
+  # `parent` and it has to answer to this. It was decided after the join was
+  # already assigned, and only replaced it when nesting was ON - so under
+  # COHORT_NESTED=FALSE the join survived while the row said NESTED = 0, and
+  # the data and its own metadata disagreed.
+  nested <- !is.na(cohort$nested_in) && isTRUE(cfg$cohort_nested)
+
   # The parent must be IN the parent cohort, not merely indexed in it. Without
   # IN_COHORT = 1 a patient who failed the 1L continuous-enrolment test still
   # reaches the 2L cohort, and 2L stops being a subset of 1L.
-  parent <- if (!is.na(cohort$nested_in))
+  parent <- if (nested)
     sprintf("INNER JOIN %s par ON par.PATID = s.PATID AND par.COHORT = '%s'
              AND par.IN_COHORT = 1", wrk("S_COHORT"), cohort$nested_in) else ""
 
@@ -115,14 +130,6 @@ mod_cohorts <- function(con, cfg, cohort) {
      MET_X1 int, MET_X2 int, MET_X3 int, MET_X4 int, IN_COHORT int,
      CRITERIA_ASKED string, NESTED int",
     cohort$key)
-  # Nesting is a SETTING now, not structure. s7.2.1 read literally makes 2L the
-  # subset of 1L who initiate a second line, and that is the default. But the
-  # requirement is what makes a 1L index outside the window cost the patient
-  # their 2L and 3L rows too, and an analysis of second-line initiators does
-  # not always want that. COHORT_NESTED=FALSE lets each line stand on its own
-  # index. Either way the row says which, so a number can never be read under
-  # the wrong one.
-  nested <- !is.na(cohort$nested_in) && isTRUE(cfg$cohort_nested)
   if (nested) {
     db_exec(con, sprintf(
       "CREATE OR REPLACE TEMPORARY VIEW s_parent_cohort AS

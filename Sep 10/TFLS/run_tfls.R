@@ -238,35 +238,61 @@ bind_run <- function(reader, where) {
 
 # --- the run ----------------------------------------------------------------
 
+# The tool's own files. Only these are ever removed: whatever else a person has
+# put in the output directory is theirs.
+TFLS_OUTPUT_PATTERN <- "^tfls_.*[.]csv$|^tfls[.]md$"
+
 write_outputs <- function(filled, sh, floor_n, run_id) {
   dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
-  # Remove the files THIS tool owns before writing, so the directory holds one
-  # run's output and not two runs' mixed.
+
+  # Written to a staging directory first, then swapped in.
   #
-  # Drop a table from tables.csv and its tfls_<id>.csv stays behind, identical
-  # in shape to the ones beside it and belonging to a shell set that no longer
-  # exists - and nothing on it says which run wrote it. Only the tool's own
-  # filename pattern is touched: whatever else a person has put in this
-  # directory is theirs.
-  old <- list.files(out_dir, pattern = "^tfls_.*[.]csv$|^tfls[.]md$",
-                    full.names = TRUE)
-  if (length(old)) {
-    ok <- file.remove(old)
-    if (!all(ok))
-      stop("Could not clear the previous output in ", out_dir, ": ",
-           paste(basename(old[!ok]), collapse = ", "), ". Writing over part ",
-           "of it would leave one run's tables beside another's.",
-           call. = FALSE)
-  }
+  # Clearing the old output and then writing the new one leaves a window in
+  # which the directory holds neither: a render that raises on the fifth table
+  # has already deleted every file of the previous run and written four of
+  # this one. Staging moves every way a run can fail to BEFORE anything
+  # published is touched - rendering, suppression, the writer's own identifier
+  # refusal - so the directory goes from one complete run to the next.
+  #
+  # The swap itself is a prune and a move, not a rename of the directory: the
+  # output directory may be a mount point, a Domino artifacts path, or hold
+  # files this tool does not own. It is the one step that is not atomic, and by
+  # then every file has already been rendered and written successfully once.
+  stage <- file.path(out_dir, paste0(".tfls_staging_", run_id))
+  unlink(stage, recursive = TRUE)
+  dir.create(stage, showWarnings = FALSE, recursive = TRUE)
+  on.exit(unlink(stage, recursive = TRUE), add = TRUE)
+
   for (f in filled)
     tfls_write_csv(render_csv(f),
-                   file.path(out_dir, paste0("tfls_", f$table_id, ".csv")))
+                   file.path(stage, paste0("tfls_", f$table_id, ".csv")))
   md <- render_all_markdown(filled, sh)
   md <- append(md, c(paste0("Run ", run_id, ", floor ", floor_n, "."), ""),
                after = 2L)
-  writeLines(md, file.path(out_dir, "tfls.md"))
+  writeLines(md, file.path(stage, "tfls.md"))
   unf <- all_unfilled(filled)
-  tfls_write_csv(unf, file.path(out_dir, "tfls_unfilled.csv"))
+  tfls_write_csv(unf, file.path(stage, "tfls_unfilled.csv"))
+
+  # Everything rendered and written. Now replace.
+  #
+  # Drop a table from tables.csv and its tfls_<id>.csv would otherwise stay
+  # behind, identical in shape to the ones beside it and belonging to a shell
+  # set that no longer exists - with nothing on it saying which run wrote it.
+  old <- list.files(out_dir, pattern = TFLS_OUTPUT_PATTERN, full.names = TRUE)
+  if (length(old)) {
+    gone <- file.remove(old)
+    if (!all(gone))
+      stop("Could not clear the previous output in ", out_dir, ": ",
+           paste(basename(old[!gone]), collapse = ", "), ". This run's ",
+           "tables are complete in ", stage, "; nothing published has been ",
+           "changed.", call. = FALSE)
+  }
+  made <- list.files(stage, full.names = TRUE)
+  moved <- file.rename(made, file.path(out_dir, basename(made)))
+  if (!all(moved))
+    stop("Wrote this run's tables but could not move ",
+         paste(basename(made[!moved]), collapse = ", "), " into ", out_dir,
+         ". They are in ", stage, ".", call. = FALSE)
   n_cells <- sum(vapply(filled, function(f) sum(f$cells$SECTION == 0L), integer(1)))
   n_supp <- sum(vapply(filled, function(f)
     sum(f$cells$SECTION == 0L & f$cells$SUPPRESSED == 1L), integer(1)))

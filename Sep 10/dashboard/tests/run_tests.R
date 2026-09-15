@@ -1448,6 +1448,38 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
     ok(is.null(shell_reader(rel_src2(bad, "S_SAFETY_RATES"),
                             scen2(bad, "S_SAFETY_RATES"))("S_SAFETY_RATES")),
        "a shell cell resting on a refused table is refused too, since the shells are filled through the bound reader")
+
+    # SYNTH_CRITERIA and SYNTH_NESTED restate the study registry's per-cohort
+    # facts, because a synthetic scenario is built where that package is not
+    # installed. A restatement drifts, and this one drifts into a fixture whose
+    # whole job is to show the shape a real table takes - so it is checked
+    # against the registry whenever that package sits beside this folder.
+    local({
+      reg <- file.path(dirname(here), "ndmm_study_updated", "study223926",
+                       "R", "registry.R")
+      if (!file.exists(reg)) {
+        cat("  --     the study package is not beside this folder, so the",
+            "synthetic cohort facts are unchecked\n")
+        return(invisible(NULL))
+      }
+      pkg <- new.env(parent = baseenv())
+      if (!is.null(tryCatch(sys.source(reg, envir = pkg), error = function(e) e))) {
+        ok(FALSE, "the study registry loads on its own")
+        return(invisible(NULL))
+      }
+      want_nested <- vapply(pkg$COHORTS[COHORT_KEYS],
+                            function(c) as.integer(!is.na(c$nested_in)), integer(1))
+      ok(identical(unname(SYNTH_NESTED[COHORT_KEYS]), unname(want_nested)),
+         "the synthetic NESTED flags are the registry's own nested_in, so SEC2L is not marked drawn from a cohort it stands apart from")
+      want_crit <- vapply(COHORT_KEYS, function(k) {
+        cr <- pkg$COHORTS[[k]]$criteria
+        # resolve_cohorts() drops X2 from SEC2L under the shipped default.
+        if (identical(k, "SEC2L")) cr <- setdiff(cr, "X2_other_cancer")
+        paste(cr, collapse = "; ")
+      }, character(1))
+      ok(identical(unname(SYNTH_CRITERIA[COHORT_KEYS]), unname(want_crit)),
+         "...and the criteria each cohort is judged on are the registry's, cohort by cohort")
+    })
     withr <- function(v, f) { old <- Sys.getenv("DASH_ALLOW_RECOVERABLE")
       Sys.setenv(DASH_ALLOW_RECOVERABLE = v); on.exit(Sys.setenv(DASH_ALLOW_RECOVERABLE = old)); f() }
     ok(withr("TRUE", function()

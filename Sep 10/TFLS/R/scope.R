@@ -129,13 +129,78 @@ read_study_contract <- function(dir = .tfls_dir()) {
          call. = FALSE)
   d <- utils::read.csv(p, stringsAsFactors = FALSE, colClasses = "character",
                        na.strings = character(0))
+  bad <- function(...) stop("The study contract at ", p, " is not usable: ",
+                            ..., "\nIt is generated - regenerate it with ",
+                            "write_study_contract() in the study package's ",
+                            "R/contract.R rather than editing it.",
+                            call. = FALSE)
   need <- c("MODULE", "TABLE", "RELEASED", "SWITCH")
   if (!all(need %in% names(d)) || !nrow(d))
-    stop("The study contract at ", p, " needs the columns ",
-         paste(need, collapse = ", "), " and at least one row.", call. = FALSE)
+    bad("it needs the columns ", paste(need, collapse = ", "),
+        " and at least one row.")
   d$MODULE <- chr(d$MODULE); d$TABLE <- toupper(chr(d$TABLE))
   d$SWITCH <- chr(d$SWITCH)
+
+  # Everything below REFUSES rather than repairs, because every way this file
+  # can be wrong makes the reader believe LESS than the truth, and believing
+  # less here means publishing more.
+  #
+  # RELEASED is the one that matters most: it is what TFLS_RELEASED_TABLES is
+  # built from, and that is what the recoverability gate refuses on. Read
+  # loosely - anything that is not "1" is FALSE - a corrupted flag silently
+  # drops a table OUT of the released set, and the gate then has nothing to
+  # refuse. So the flag is a flag or the file is not read.
+  ok01 <- chr(d$RELEASED) %in% c("0", "1")
+  if (!all(ok01))
+    bad("RELEASED must be 0 or 1, and row(s) ",
+        paste(which(!ok01), collapse = ", "), " carry ",
+        paste(unique(chr(d$RELEASED)[!ok01]), collapse = ", "),
+        ". A flag that is not a flag would read as 'not released', which is ",
+        "the answer that publishes.")
   d$RELEASED <- chr(d$RELEASED) == "1"
+
+  if (any(!nzchar(d$MODULE)) || any(!nzchar(d$TABLE)))
+    bad("every row needs a module and a table; row(s) ",
+        paste(which(!nzchar(d$MODULE) | !nzchar(d$TABLE)), collapse = ", "),
+        " are missing one.")
+
+  # One owner per table. run_table_owner() returns the FIRST module whose
+  # outputs hold a table, so a second claim on the same name does not conflict
+  # - it is silently ignored, and a table is then reported against a module
+  # that did not write it.
+  dup <- unique(d$TABLE[duplicated(d$TABLE)])
+  if (length(dup))
+    bad("table(s) ", paste(dup, collapse = ", "), " appear more than once. ",
+        "A table has one module that writes it; two claims would be resolved ",
+        "by whichever came first in the file.")
+
+  # The release module's outputs and the RELEASED flags are the same fact
+  # written twice, so they have to agree. They disagree when the file has been
+  # truncated or partly edited - which is the failure the checks above cannot
+  # see, because each row is individually well formed.
+  flagged <- sort(d$TABLE[d$RELEASED])
+  copies <- sort(sub("_RELEASE$", "", d$TABLE[d$MODULE == "release"]))
+  if (!identical(flagged, copies))
+    bad("the tables flagged RELEASED (",
+        paste(flagged, collapse = ", "), ") are not the ones the release ",
+        "module writes a copy of (", paste(copies, collapse = ", "),
+        "). The two are the same fact written twice and a difference means ",
+        "the file is incomplete.")
+  if (!all(flagged %in% d$TABLE))
+    bad("a table is flagged RELEASED without being any module's output.")
+
+  # Symmetry alone does not catch a truncation that takes BOTH sides with it:
+  # cut the file to its first rows and there are no flags and no release
+  # module, which agree perfectly and describe a package with no disclosure
+  # control at all. Checked AFTER the comparison, so losing one side is
+  # reported as the disagreement it is and losing both as the truncation it is.
+  # The release module is not optional in this study package, so a contract
+  # naming neither is not a contract for it.
+  if (!length(copies))
+    bad("it names no released table and no release module. That is not this ",
+        "study package, whose release module is not optional - it is a file ",
+        "that has been cut short, and reading it would leave the ",
+        "recoverability gate with nothing to refuse.")
   d
 }
 
