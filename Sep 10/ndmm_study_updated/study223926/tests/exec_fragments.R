@@ -146,6 +146,22 @@ frag_cases <- function(cfg) list(
     sql = tte_eligible_sql(cfg, index = "A", death = "B"),
     want = c(R5 = 1, R6 = 0, R7 = 1)),
 
+  # ...and "3 months" is a month window, so it follows MONTHS_AS like every
+  # other one. Under calendar months the horizon is add_months(index, 3)
+  # instead of date_add(index, 90).
+  #
+  # The two agree on these rows, and on every row a study ending 2026-03-31
+  # could have: January, February and March 2026 are 31 + 28 + 31 = 90 days,
+  # so the calendar horizon and the 90-day one land on the same date either
+  # side of that boundary. What is checked here is that the calendar
+  # expression EXECUTES and gives the same right answers - the boundary, the
+  # day past it, and the death inside it - rather than that it differs. That
+  # the two are different SQL is checked where it can be seen, in run_tests.R.
+  tte_calendar = list(
+    sql = tte_eligible_sql(utils::modifyList(cfg, list(months_as = "calendar")),
+                           index = "A", death = "B"),
+    want = c(R5 = 1, R6 = 0, R7 = 1)),
+
   # A denied claim is not evidence a service happened. The dictionary spells
   # the values out and the warehouse stores one letter, so both are matched;
   # testing only the word excluded nothing and made paid_only a silent no-op.

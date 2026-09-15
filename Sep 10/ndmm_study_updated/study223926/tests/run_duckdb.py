@@ -77,6 +77,10 @@ def load_fixtures(con, fixture_dir, prefix=""):
         "t_rx":                f"clnprw_optum.t_rx_{quarter}",
         # lot_tbl() carries OBJECT_PREFIX too.
         "LOT_LONG_FINAL":      "wk.%sLOT_LONG_FINAL" % prefix,
+        # Every line the engine built, before its own line criteria were
+        # applied. The attrition funnel reads it to say what those criteria
+        # removed, which LOT_LONG_FINAL by definition cannot show.
+        "LOT_LONG_ALLFLAGS":   "wk.%sLOT_LONG_ALLFLAGS" % prefix,
         # input_cohort_tbl() puts the run's catalog and schema in front of the
         # bare name, and the catalog is stripped above, so the SQL reads it
         # under the work schema.

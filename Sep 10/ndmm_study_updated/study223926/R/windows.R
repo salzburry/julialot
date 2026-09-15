@@ -39,6 +39,19 @@ window_start_sql <- function(anchor, n_days, cfg) {
   }
 }
 
+# The end of a window `n_days` (or the equivalent months) AFTER an anchor, by
+# the same rule as window_start_sql(). One setting, both directions: MONTHS_AS
+# said "month windows use add_months()", and a forward month window built with
+# date_add() made that only half true.
+window_end_sql <- function(anchor, n_days, cfg) {
+  if (identical(cfg$months_as, "calendar")) {
+    n_months <- round(n_days / DAYS_PER_MONTH)
+    sprintf("add_months(%s, %d)", anchor, as.integer(n_months))
+  } else {
+    sprintf("date_add(%s, %d)", anchor, as.integer(n_days))
+  }
+}
+
 # The baseline period for one LOT index.
 #
 # s7.1: "the 12-month period prior to the index date for each LOT (does not
@@ -134,12 +147,17 @@ lot_period_sql <- function(cfg, start = "l.LOT_START_DT",
 # chance to be observed for 90 days, whoever they are; a patient who died
 # inside 90 days has been fully observed. This is a FLAG, never a filter - the
 # descriptive denominators for Objectives 1 to 3 are the whole cohort.
+#
+# ">= 3 months" is a month window, so it is built by window_end_sql() and
+# follows MONTHS_AS like every other one. Built with date_add() it did not: a
+# run set to calendar months measured its baseline in calendar months and this
+# boundary in 90 fixed days, and the two disagree for most index dates.
 tte_eligible_sql <- function(cfg, index = "p.INDEX_DATE", death = "c.DEATH_DT") {
-  d <- as.integer(cfg$tte_min_potential_fu_days)
-  sprintf(paste0("CASE WHEN date_add(%s, %d) <= date('%s') THEN 1 ",
-                 "WHEN %s IS NOT NULL AND %s < date_add(%s, %d) THEN 1 ",
+  horizon <- window_end_sql(index, as.integer(cfg$tte_min_potential_fu_days), cfg)
+  sprintf(paste0("CASE WHEN %s <= date('%s') THEN 1 ",
+                 "WHEN %s IS NOT NULL AND %s < %s THEN 1 ",
                  "ELSE 0 END"),
-          index, d, cfg$study_end, death, death, index, d)
+          horizon, cfg$study_end, death, death, horizon)
 }
 
 # Person-time in years over a window, both ends included.

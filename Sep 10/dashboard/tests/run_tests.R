@@ -230,7 +230,11 @@ cat("\nthe synthetic run stands in for a real one\n")
     src <- paste(readLines(f, warn = FALSE), collapse = "\n")
     blk <- regmatches(src, regexpr("RUN_METADATA_COLS <- c\\((?s).*?\\)\\n",
                                    src, perl = TRUE))
-    unique(unlist(regmatches(blk, gregexpr("[A-Z_]+(?= =)", blk, perl = TRUE))))
+    # [A-Z0-9_]+, with the digits: a column whose name carries one - every
+    # ..._MD5 - was silently dropped by the name pattern, so the fixture was
+    # held to a producer declaration three columns short of the real one and
+    # passed while missing them.
+    unique(unlist(regmatches(blk, gregexpr("[A-Z0-9_]+(?= =)", blk, perl = TRUE))))
   })
   ok(length(pkg_meta_cols) > 5L,
      "the producer's metadata declaration can be read, so the fixture can be held to it")

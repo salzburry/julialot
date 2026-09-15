@@ -161,6 +161,17 @@ run_version_stamp <- function(x) {
 # blank or `#` row cut off, and the normalised types beside them where the
 # response carried a type column (`typed`). The raw column names travel along
 # for a message.
+# Is this table there to be read? Asked before an OPTIONAL read - one whose
+# absence changes what a run can SAY rather than what it computes - so that the
+# absence is reported once, in this package's words, instead of arriving as a
+# warehouse error from the middle of a statement.
+#
+# A DESCRIBE, not a SELECT: it is the cheapest question that distinguishes an
+# absent table from an empty one, and an empty table IS readable.
+table_readable <- function(con, name)
+  !inherits(tryCatch(db_q(con, sprintf("DESCRIBE %s", name)),
+                     error = function(e) e), "error")
+
 describe_columns <- function(con, name) {
   d <- db_q(con, sprintf("DESCRIBE %s", name))
   cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))

@@ -72,7 +72,8 @@
 # for every module without touching the global environment.
 load_package_env <- function(here) {
   env <- new.env(parent = globalenv())
-  files <- c("config_223926.R", "db_utils_223926.R", "registry.R", "windows.R",
+  files <- c("config_223926.R", "db_utils_223926.R", "registry.R",
+             "contract.R", "windows.R",
              "person_time.R", "codelists.R", "lineage.R",
              "run_223926.R")
   for (f in files) sys.source(file.path(here, "R", f), envir = env)

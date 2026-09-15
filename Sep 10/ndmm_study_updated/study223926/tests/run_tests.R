@@ -15,7 +15,8 @@ here <- local({
 })
 setwd(here)
 suppressMessages({
-  for (f in c("config_223926.R", "db_utils_223926.R", "registry.R", "windows.R",
+  for (f in c("config_223926.R", "db_utils_223926.R", "registry.R",
+              "contract.R", "windows.R",
               "person_time.R", "codelists.R", "lineage.R",
               "run_223926.R"))
     source(file.path("R", f))
@@ -187,6 +188,13 @@ cat("\nwindow conventions\n")
      "and does not when the LOT engine's reading is selected instead")
   ok(grepl("date_add(p.INDEX_DATE, 90)", tte_eligible_sql(cfg), fixed = TRUE),
      "the analysis set uses 3 months of potential follow-up")
+  # ...and "3 months" is a month window, so the setting reaches it too. It did
+  # not: MONTHS_AS said month windows use add_months(), while this boundary
+  # was a fixed 90 days whatever the setting said.
+  tc <- tte_eligible_sql(cfg0(c(MONTHS_AS = "calendar")))
+  ok(grepl("add_months(p.INDEX_DATE, 3)", tc, fixed = TRUE) &&
+       !grepl("date_add", tc, fixed = TRUE),
+     "...measured the way MONTHS_AS says, on both of its arms")
   lp <- lot_period_sql(cfg)
   ok(grepl("date_add(coalesce(l.PROTOCOL_DISCON_DT, l.LOT_BASE_END_DT), 30)",
            lp$end, fixed = TRUE),
@@ -1173,6 +1181,65 @@ cat("\nthe rules that hold the numbers up\n")
                                    SEC2L_APPLY_OTHER_CANCER = "TRUE")))$SEC2L
   ok(cohort_applies(sec_on, "X2_other_cancer"),
      "unless the setting puts it back")
+  # It reaches them BY nesting, so it stops reaching them when nesting is off:
+  # under COHORT_NESTED=FALSE there is no parent join, membership never ANDs
+  # MET_X2, and the 2L cohort holds the patients 1L excluded.
+  ok(cohort_applies(COHORTS[["2L"]], "X2_other_cancer", cfg0()),
+     "2L inherits it while COHORT_NESTED is on")
+  ok(!cohort_applies(COHORTS[["2L"]], "X2_other_cancer",
+                     cfg0(c(COHORT_NESTED = "FALSE"))),
+     "...and does not once each line stands on its own index")
+  ok(cohort_applies(COHORTS[["1L"]], "X2_other_cancer",
+                    cfg0(c(COHORT_NESTED = "FALSE"))),
+     "while a cohort's OWN criterion is unaffected by the setting")
+  # And the caller that turns the answer into a published number follows it.
+  # Whitespace-flattened: deparse wraps a long call, so a fixed match on the
+  # written form fails for a reason that has nothing to do with the code.
+  mg <- gsub("\\s+", " ",
+             paste(capture.output(print(mod_malignancy)), collapse = " "))
+  ok(grepl('cohort_applies(cohort, "X2_other_cancer", cfg)', mg, fixed = TRUE),
+     "the baseline prevalence decision asks with cfg, not structurally")
+  ok(grepl(".cohort_cols()", mg, fixed = TRUE),
+     paste0("...and also refuses to publish it where the input was ",
+            "pre-filtered, which makes it zero whatever the verdict is"))
+
+  # 10b. Every file in R/ is loaded, by all three of the lists that load them.
+  #
+  # build.R has one, this suite has one, and the emit harness has a third.
+  # contract.R was in build.R alone, so study_contract_md5() existed for a
+  # production run and for nothing that tests one - the run wrote a metadata
+  # row the suite could never have executed. A list is checked against the
+  # directory rather than against another list: a file added to R/ and to none
+  # of them is the same bug.
+  # load_inputs.R is not in any of the three lists on purpose: build.R sources
+  # it on its own, BEFORE the settings file reads Sys.getenv(), because its
+  # whole job is to put config.csv's rows into the environment first. The two
+  # harnesses set the environment themselves and must not have a file read
+  # over the top of it. So it is excluded here and its own source checked
+  # separately, rather than quietly widening what "every file" means.
+  have <- setdiff(sort(list.files("R", "\\.R$")), "load_inputs.R")
+  listed <- function(path, opener) {
+    txt <- paste(readLines(path, warn = FALSE), collapse = "\n")
+    blk <- regmatches(txt, regexpr(paste0(opener, "(?s).*?\\)"), txt, perl = TRUE))
+    if (!length(blk)) return(character(0))
+    sort(gsub('"', "", regmatches(blk, gregexpr('"[A-Za-z0-9_]+[.]R"', blk))[[1]]))
+  }
+  for (src in list(c("build.R", "for \\(f in c\\("),
+                   c("tests/run_tests.R", "for \\(f in c\\("),
+                   c("tests/emit_sql.R", "files <- c\\("))) {
+    got <- listed(src[1], src[2])
+    ok(identical(got, have),
+       paste0(src[1], " sources every file in R/",
+              if (!identical(got, have))
+                paste0(" [missing: ", paste(setdiff(have, got), collapse = ", "),
+                       "; extra: ", paste(setdiff(got, have), collapse = ", "),
+                       "]") else ""))
+  }
+
+  ok(grepl('source(file.path(here, "R", "load_inputs.R"))',
+           paste(readLines("build.R", warn = FALSE), collapse = "\n"),
+           fixed = TRUE),
+     "...and build.R sources load_inputs.R on its own, ahead of the settings")
 
   # 11. Every code list a module loads is declared, so preflight can see it.
   loaded <- unique(unlist(lapply(names(MODULES), function(k) {
@@ -2200,11 +2267,29 @@ cat("\nthe modules, run against recorders\n")
   # accumulated so far.
   # Up to the arm's own close, not the first ')': every accumulated predicate
   # is parenthesised, so the WHERE carries parentheses of its own.
+  # count(*) or count(DISTINCT ...): the arms that say where the funnel started
+  # count patients across the engine's lines, which is one row per line.
   arms <- if (length(attr_sql))
-    regmatches(attr_sql, gregexpr("(?s)SELECT count\\(\\*\\) FROM .*?\\) AS N_REMAINING",
+    regmatches(attr_sql, gregexpr("(?s)SELECT count\\([^)]*\\) FROM .*?\\) AS N_REMAINING",
                                   attr_sql, perl = TRUE))[[1]] else character(0)
-  ok(length(arms) == length(COHORTS[["1L"]]$criteria),
-     "with one count per criterion")
+  # One per criterion, plus the two that say where the funnel's population
+  # came from: 1L is nobody's subset, so it starts from the engine's lines and
+  # the step below that is what the engine's own criteria removed.
+  ok(length(arms) == length(COHORTS[["1L"]]$criteria) + 2L,
+     "with one count per criterion, after the two that say where it started")
+  ok(grepl("LOT_LONG_ALLFLAGS", attr_sql[1], fixed = TRUE) &&
+       grepl("'indexed_at_line'", attr_sql[1], fixed = TRUE) &&
+       grepl("'lot_line_criteria'", attr_sql[1], fixed = TRUE),
+     paste0("...and the first two read the engine's own lines, so the ",
+            "belantamab truncation is a loss the funnel shows rather than a ",
+            "population it silently starts below"))
+  a2_sql <- vapply(Filter(function(x) x$tag == "step:attrition_2L", run$sql),
+                   function(x) x$sql, character(1))
+  ok(length(a2_sql) == 1 &&
+       grepl("'in_1L_cohort'", a2_sql, fixed = TRUE) &&
+       !grepl("LOT_LONG_ALLFLAGS", a2_sql, fixed = TRUE),
+     paste0("a nested cohort starts from the cohort it is drawn from instead, ",
+            "so N1_received_line's loss is those who did not go on to it"))
   ok(any(grepl("MET_N2 = 1", arms, fixed = TRUE)),
      "and applies MET_N2, which is I4 re-derived on the line's own index date")
   # Monotone: once a predicate is in, no later arm may drop it. The executing

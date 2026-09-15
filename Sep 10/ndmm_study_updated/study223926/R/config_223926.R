@@ -55,7 +55,11 @@
   if (!grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", v))
     stop("SETTING ERROR: ", name, " = '", v, "' is not YYYY-MM-DD.",
          call. = FALSE)
-  if (is.na(as.Date(v)))
+  # tryCatch, not is.na(): as.Date() RAISES on an impossible date in this
+  # format ("character string is not in a standard unambiguous format") rather
+  # than returning NA, so the is.na() branch never fired and the run died in
+  # R's words on a setting this package is meant to explain.
+  if (is.na(tryCatch(as.Date(v), error = function(e) NA)))
     stop("SETTING ERROR: ", name, " = '", v, "' is not a real date.",
          call. = FALSE)
   v

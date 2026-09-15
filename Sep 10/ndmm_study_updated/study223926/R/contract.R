@@ -43,6 +43,43 @@ study_contract <- function() {
   out[order(out$MODULE, out$TABLE), , drop = FALSE]
 }
 
+# The contract, as one value a run can record.
+#
+# A sibling reads a SHIPPED COPY of the contract, and a copy is a thing that
+# can be stale: TFLS fills its shells from a snapshot on a machine where this
+# package is often not installed, so nothing there can regenerate the contract
+# and compare. Its suite catches a stale copy only where the two are side by
+# side. This is the other half - the run records the contract it was actually
+# driven by, so a table filled from the copy can be checked against the run
+# that produced the numbers rather than against whatever the copy says today.
+#
+# Over the CSV's own bytes, so it is the same value the sibling could compute
+# from the file it holds.
+study_contract_md5 <- function() {
+  tmp <- tempfile(); on.exit(unlink(tmp), add = TRUE)
+  write_study_contract(tmp)
+  unname(tools::md5sum(tmp))
+}
+
+# ...and which CODE that contract came out of.
+#
+# The same question the LOT engine asks of itself, asked the same way: a hash
+# of the sources rather than a revision, because the package is copied into
+# Domino to run and the hash describes what actually executed either way.
+#
+# radix, not the default: character sort is collation-sensitive, and a hash
+# meant to say "the same code" must not depend on the machine's locale.
+study_code_md5 <- function(here = ".") {
+  fs <- sort(c(list.files(file.path(here, "R"), "\\.R$", full.names = TRUE,
+                          recursive = TRUE),
+               file.path(here, "build.R")), method = "radix")
+  fs <- fs[file.exists(fs)]
+  if (!length(fs)) return(NA_character_)
+  tmp <- tempfile(); on.exit(unlink(tmp), add = TRUE)
+  writeLines(unlist(lapply(fs, readLines, warn = FALSE)), tmp)
+  unname(tools::md5sum(tmp))
+}
+
 # The contract as a file, for a sibling that ships a copy.
 #
 # Written with the same writer settings every time so two emissions of an
