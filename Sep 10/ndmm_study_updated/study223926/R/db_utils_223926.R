@@ -202,11 +202,20 @@ missing_column_error <- function(err) {
 # absence is reported once, in this package's words, instead of arriving as a
 # warehouse error from the middle of a statement.
 #
+# Three answers, not two. "absent" is a fact the caller can act on; "unreadable"
+# is not - a permission refused or a session dropped says nothing about whether
+# the table is there - and a caller that took it for absent would go on
+# without the table on the strength of an outage. The driver's message rides
+# on the answer for the caller's stop.
+#
 # A DESCRIBE, not a SELECT: it is the cheapest question that distinguishes an
 # absent table from an empty one, and an empty table IS readable.
-table_readable <- function(con, name)
-  !inherits(tryCatch(db_q(con, sprintf("DESCRIBE %s", name)),
-                     error = function(e) e), "error")
+table_presence <- function(con, name) {
+  r <- tryCatch(db_q(con, sprintf("DESCRIBE %s", name)), error = function(e) e)
+  if (!inherits(r, "error")) return("ok")
+  structure(if (missing_object_error(r)) "absent" else "unreadable",
+            why = conditionMessage(r))
+}
 
 describe_columns <- function(con, name) {
   d <- db_q(con, sprintf("DESCRIBE %s", name))

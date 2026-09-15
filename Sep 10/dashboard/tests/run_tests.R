@@ -1043,8 +1043,67 @@ source(file.path(here, "jobs", "export_lib.R"))
   ok(identical(readLines(file.path(root, "sc_a_", "S_RUN_METADATA.csv"))[2],
                "new_run"),
      "...and what is there is the new run")
-  ok(!dir.exists(file.path(root, "sc_a_.previous")),
+  ok(!dir.exists(file.path(root, "sc_a_.previous")) &&
+       !dir.exists(file.path(root, ".sc_a_.previous")) &&
+       !dir.exists(file.path(root, ".sc_a_.discard")),
      "...with no half-swapped directory left beside it")
+
+  # A KILLED refresh, not a failed one. Directory renames are atomic, so a
+  # kill leaves one of three states, and the next export has to resolve each
+  # to a whole snapshot before it starts - under names no reader lists, so
+  # that while it waits nothing shows up as a scenario.
+  #
+  # Killed between the two renames: the published directory is gone and its
+  # set-aside is the only copy.
+  dir.create(file.path(root, ".sc_c_.previous"), recursive = TRUE)
+  writeLines("RUN_ID\nold_run", file.path(root, ".sc_c_.previous", "S_RUN_METADATA.csv"))
+  ok(!"sc_c_" %in% snapshot_source(list(snapshot_dir = root, prefixes = character(0)))$prefixes() &&
+       !any(grepl("previous", snapshot_source(list(snapshot_dir = root, prefixes = character(0)))$prefixes())),
+     "a set-aside snapshot is listed by no reader, so a killed refresh shows no scenario under a name of its own")
+  said <- capture.output(r <- recover_swap(file.path(root, "sc_c_")), type = "message")
+  ok(identical(r, "restored") &&
+       identical(readLines(file.path(root, "sc_c_", "S_RUN_METADATA.csv"))[2], "old_run") &&
+       !dir.exists(file.path(root, ".sc_c_.previous")) &&
+       any(grepl("put back", said, fixed = TRUE)),
+     "...and the next export puts the previous snapshot back under its own identity before it starts")
+  # Killed after the swap, before the discard: both are there, and the new
+  # one is the one to keep.
+  dir.create(file.path(root, ".sc_c_.previous"))
+  writeLines("RUN_ID\nolder", file.path(root, ".sc_c_.previous", "S_RUN_METADATA.csv"))
+  said <- capture.output(r <- recover_swap(file.path(root, "sc_c_")), type = "message")
+  ok(identical(r, "discarded") &&
+       identical(readLines(file.path(root, "sc_c_", "S_RUN_METADATA.csv"))[2], "old_run") &&
+       !dir.exists(file.path(root, ".sc_c_.previous")) && !dir.exists(file.path(root, ".sc_c_.discard")),
+     "a refresh killed after its swap is recognised as complete: the published snapshot is kept and the set-aside discarded")
+  # Killed inside the discard.
+  dir.create(file.path(root, ".sc_c_.discard")); writeLines("x", file.path(root, ".sc_c_.discard", "S_RUN_METADATA.csv"))
+  ok(identical(recover_swap(file.path(root, "sc_c_")), "clean") && !dir.exists(file.path(root, ".sc_c_.discard")),
+     "...and a discard cut short is finished, touching nothing else")
+  # The swap itself goes through the recovery, so a stale set-aside never
+  # survives into a publish that would then set aside over it.
+  dir.create(file.path(root, ".sc_c_.previous")); writeLines("RUN_ID\nstale", file.path(root, ".sc_c_.previous", "S_RUN_METADATA.csv"))
+  st2 <- file.path(root, ".sc_c_.staging"); dir.create(st2)
+  writeLines("RUN_ID\nnewest", file.path(st2, "S_RUN_METADATA.csv"))
+  said <- capture.output(publish(st2, file.path(root, "sc_c_"), 1L, "sc_c_", ""), type = "message")
+  ok(identical(readLines(file.path(root, "sc_c_", "S_RUN_METADATA.csv"))[2], "newest") &&
+       !dir.exists(file.path(root, ".sc_c_.previous")) && !dir.exists(file.path(root, ".sc_c_.discard")),
+     "a publish over a stale set-aside resolves it first and ends with the new snapshot alone")
+
+  # One export at a time into a root.
+  unlock <- snapshot_lock(root)
+  e_lock <- tryCatch({ snapshot_lock(root); NA_character_ }, error = function(e) conditionMessage(e))
+  ok(!is.na(e_lock) && grepl("another export holds", e_lock, fixed = TRUE) &&
+       dir.exists(file.path(root, SNAPSHOT_LOCK)),
+     "a second export into the same root is refused, and leaves the first one's lock in place")
+  unlock()
+  ok(!dir.exists(file.path(root, SNAPSHOT_LOCK)) && is.function(snapshot_lock(root)),
+     "...and once released the root can be locked again")
+  unlink(file.path(root, SNAPSHOT_LOCK), recursive = TRUE)
+  jb_src <- paste(readLines("jobs/build_scenarios.R", warn = FALSE), collapse = "\n")
+  ok(regexpr("unlock <- snapshot_lock(out_dir)", jb_src, fixed = TRUE) > 0 &&
+       regexpr("unlock <- snapshot_lock(out_dir)", jb_src, fixed = TRUE) <
+         regexpr("unlink(stage, recursive = TRUE)", jb_src, fixed = TRUE),
+     "the job takes the lock before it clears its staging directory, which is the first thing a second Job would take from a running one")
 
   # A refresh that never reaches publish() leaves the previous snapshot as it
   # was, under its own identity.

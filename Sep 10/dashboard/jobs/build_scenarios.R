@@ -105,6 +105,10 @@ export_one <- function(prefix, env) {
   # that mixture as one run.
   d     <- file.path(out_dir, prefix)
   stage <- file.path(out_dir, paste0(".", prefix, ".staging"))
+  # Before the stage is cleared: that is the first thing a second Job into
+  # the same Dataset would take from a running one.
+  unlock <- snapshot_lock(out_dir)
+  on.exit(unlock(), add = TRUE)
   unlink(stage, recursive = TRUE)
   dir.create(stage, recursive = TRUE, showWarnings = FALSE)
   on.exit(unlink(stage, recursive = TRUE), add = TRUE)

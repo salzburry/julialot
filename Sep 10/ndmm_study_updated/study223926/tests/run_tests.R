@@ -1184,6 +1184,35 @@ cat("\nthe rules that hold the numbers up\n")
   ok(!is.na(e_re) && grepl("could not be re-read", e_re, fixed = TRUE) &&
        grepl("INSUFFICIENT_PERMISSIONS", e_re, fixed = TRUE),
      "the completion-time recheck stops with the driver's own words, so the failure record can tell a revoked grant from a dropped table")
+  # The same distinction where the cohorts module asks whether the engine's
+  # allflags table is there: absent is an older LOT build and the funnel goes
+  # on without its opening step; unreadable stops.
+  presence_of <- function(msg) {
+    e <- new.env(parent = environment(table_presence))
+    e$db_q <- function(con, sql) if (is.null(msg)) data.frame(col_name = "PATID") else stop(msg)
+    stubbed(table_presence, e, character(0))(NULL, "t")
+  }
+  ok(identical(as.character(presence_of(NULL)), "ok") &&
+       identical(as.character(presence_of("[TABLE_OR_VIEW_NOT_FOUND] t")), "absent") &&
+       identical(as.character(presence_of(perm)), "unreadable") &&
+       identical(attr(presence_of(perm), "why"), perm),
+     "table_presence() answers ok, absent or unreadable, and carries the driver's words on the last")
+  origin_of <- function(msg) {
+    e <- new.env(parent = environment(attrition_origin))
+    e$db_q <- function(con, sql) if (is.null(msg)) data.frame(col_name = "PATID") else stop(msg)
+    said <- character(0)
+    e$log_msg <- function(...) said <<- c(said, paste0(...))
+    out <- errs(stubbed(attrition_origin, e, "table_presence")(NULL, cfg0(), COHORTS[["1L"]]))
+    list(err = out, said = said)
+  }
+  ok(is.na(origin_of("[TABLE_OR_VIEW_NOT_FOUND] t")$err) &&
+       any(grepl("is not there", origin_of("[TABLE_OR_VIEW_NOT_FOUND] t")$said, fixed = TRUE)),
+     "an allflags table that is not there is an older LOT build: the funnel goes on without its opening step, and says so")
+  e_af <- origin_of(perm)$err
+  ok(!is.na(e_af) && grepl("ATTRITION ERROR", e_af, fixed = TRUE) &&
+       grepl("INSUFFICIENT_PERMISSIONS", e_af, fixed = TRUE) &&
+       grepl("not the same as its being absent", e_af, fixed = TRUE),
+     "...while one that cannot be read stops, rather than recording a funnel with no opening step on the strength of an outage")
   # The attempt is known and the cohort's own status is not. That is unproven,
   # not wrong, so it is the one case the waiver covers.
   e_unproven <- lin_check(now = NULL)
@@ -1363,15 +1392,19 @@ cat("\nthe rules that hold the numbers up\n")
 
   # 10c. The contract hash a run records is over the contract's LINES, so a
   # sibling reading a checkout with other line endings computes the same one.
-  md5 <- study_contract_md5()
-  tmp <- tempfile(fileext = ".csv"); on.exit(unlink(tmp), add = TRUE)
-  write_study_contract(tmp)
-  crlf <- tempfile(fileext = ".csv"); on.exit(unlink(crlf), add = TRUE)
-  writeBin(charToRaw(paste0(paste(readLines(tmp, warn = FALSE), collapse = "\r\n"), "\r\n")), crlf)
-  ok(grepl("^[0-9a-f]{32}$", md5) && identical(md5, contract_text_md5(tmp)) &&
-       identical(md5, contract_text_md5(crlf)) &&
-       !identical(md5, unname(tools::md5sum(crlf))),
-     "STUDY_CONTRACT_MD5 is the md5 of the contract's lines: the same for a CRLF copy, where a byte hash differs")
+  # local(), so the on.exit() cleanups run: in the bare block around this
+  # they were registered against no frame and silently dropped.
+  local({
+    md5 <- study_contract_md5()
+    tmp <- tempfile(fileext = ".csv"); on.exit(unlink(tmp), add = TRUE)
+    write_study_contract(tmp)
+    crlf <- tempfile(fileext = ".csv"); on.exit(unlink(crlf), add = TRUE)
+    writeBin(charToRaw(paste0(paste(readLines(tmp, warn = FALSE), collapse = "\r\n"), "\r\n")), crlf)
+    ok(grepl("^[0-9a-f]{32}$", md5) && identical(md5, contract_text_md5(tmp)) &&
+         identical(md5, contract_text_md5(crlf)) &&
+         !identical(md5, unname(tools::md5sum(crlf))),
+       "STUDY_CONTRACT_MD5 is the md5 of the contract's lines: the same for a CRLF copy, where a byte hash differs")
+  })
 
   # 11. Every code list a module loads is declared, so preflight can see it.
   loaded <- unique(unlist(lapply(names(MODULES), function(k) {

@@ -309,8 +309,22 @@ attrition_origin <- function(con, cfg, cohort) {
   # fail a run - it is the table that EXPLAINS a loss, not one any number
   # depends on - but the funnel then says nothing rather than attributing the
   # engine's removals to this package's first criterion.
-  if (!table_readable(con, allflags)) {
-    log_msg("WARNING: ", allflags, " could not be read, so ", cohort$key,
+  #
+  # Absent, not unreadable. A table that could not be read is not one that
+  # is not there, and a funnel that dropped its opening step on a permission
+  # refused would record an attrition table that says nothing about the
+  # engine's criteria, under a run marked complete, on the strength of an
+  # outage. The same distinction the lineage checks make.
+  presence <- table_presence(con, allflags)
+  if (identical(as.character(presence), "unreadable"))
+    stop("ATTRITION ERROR: ", allflags, " could not be read - ",
+         attr(presence, "why"), "\nThat is not the same as its being absent: ",
+         "an older LOT build that never wrote it is reported as such and the ",
+         "funnel goes on without its opening step, but a table that cannot be ",
+         "read is there and unseen. Fix the read, or set LOT_PREFIX if the ",
+         "LOT build wrote its tables elsewhere.", call. = FALSE)
+  if (identical(as.character(presence), "absent")) {
+    log_msg("WARNING: ", allflags, " is not there, so ", cohort$key,
             "'s funnel cannot show what the LOT engine's own line criteria ",
             "removed before S_SPINE was built. Every step below is already ",
             "net of them.")

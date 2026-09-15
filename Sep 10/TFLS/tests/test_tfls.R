@@ -1069,7 +1069,9 @@ local({
 # is the run's recorded hash that refuses it, in bind_run(), before anything
 # is read under the prefix.
 local({
-  have <- contract_text_md5(file.path(ROOT, TFLS_CONTRACT_FILE))
+  have <- tryCatch(contract_text_md5(file.path(ROOT, TFLS_CONTRACT_FILE)),
+                   error = function(e) NA_character_)
+  ok(!is.na(have), "the shipped contract can be hashed the way a run records it")
   md_row <- function(...) data.frame(
     RUN_ID = "r1", STATE = "complete", UPDATED_AT = "2026-09-15 00:00:00",
     COHORTS = "1L; 2L", MODULES = "eligibility; spine; cohorts; release",
@@ -1268,15 +1270,22 @@ local({
   # Two publishers. Domino can start two Jobs into one artifacts directory,
   # and the second would move its files in between the first one's.
   d4 <- setup()
-  dir.create(file.path(d4$out, TFLS_PUBLISH_LOCK))
+  # The literal name, not the constant: this block has to reach its
+  # assertions against a publisher that has no such constant.
+  lock4 <- file.path(d4$out, ".tfls_publish.lock")
+  dir.create(lock4)
   e4 <- tryCatch({ publish_outputs(d4$stage, d4$out, "r4"); NA_character_ },
                  error = function(x) conditionMessage(x))
   ok(!is.na(e4) && grepl("Another publish holds", e4, fixed = TRUE) &&
        identical(read1(file.path(d4$out, "tfls_t1.csv")), "OLD1"),
      "a second publisher into the same directory is refused, and the published run is untouched")
+  # The property the lock exists for: the refused publisher must not take the
+  # holder's lock with it on the way out, or the next one interleaves.
+  ok(dir.exists(lock4),
+     "...and leaves the other publisher's lock where it was")
   ok(grepl("remove the directory and run again", e4, fixed = TRUE),
      "...and the message says what a lock left by a killed publish is, and what to do")
-  unlink(file.path(d4$out, TFLS_PUBLISH_LOCK), recursive = TRUE)
+  unlink(lock4, recursive = TRUE)
   publish_outputs(d4$stage, d4$out, "r4")
   ok(identical(read1(file.path(d4$out, "tfls_t1.csv")), "NEW1") &&
        !dir.exists(file.path(d4$out, TFLS_PUBLISH_LOCK)),
@@ -1299,8 +1308,11 @@ local({
       setting_aside <- !into_out && any(grepl("tfls_previous", to))
       if ((when == "move_in" && moving_in) ||
           (when == "set_aside" && setting_aside)) {
-        # One file moves, then the process dies.
-        real(from[1], to[1])
+        # Two files move, then the process dies. Two rather than one so a
+        # file only the new run has can be among them - list.files() puts
+        # tfls.md first, and every run has that.
+        k <- seq_len(min(2L, length(from)))
+        real(from[k], to[k])
         stop("killed")
       }
       real(from, to)
@@ -1315,21 +1327,31 @@ local({
   prev_dirs <- function(out) list.files(out, pattern = "^[.]tfls_previous_", all.files = TRUE)
 
   d5 <- setup()
+  # A table only the NEW run has, sorting right after tfls.md, so that it is
+  # the second file to land - and so that a recovery which failed to remove
+  # the interrupted run's files would leave it there to be seen. Every name
+  # the old run has would be overwritten by the restore and hide that.
+  writeLines("NEW-A0", file.path(d5$stage, "tfls_a0.csv"))
   killed_during(d5, "move_in")
   ok(length(prev_dirs(d5$out)) == 1L,
      "a publish killed while moving its tables in leaves the set-aside directory, which is the only trace of it")
-  # list.files() sorts tfls.md before tfls_t1.csv, so the one file that
-  # landed is the markdown.
-  ok(identical(tool_files(d5$out), "tfls.md") &&
+  ok(identical(tool_files(d5$out), c("tfls.md", "tfls_a0.csv")) &&
        identical(read1(file.path(d5$out, "tfls.md")), "NEW-MD"),
-     "...and the output directory holding one new file and no old ones: a mixture no reader could tell from a run")
-  # The next run's own stage, published over the top of that.
+     "...and the output directory holding two new files and no old ones: a mixture no reader could tell from a run")
+  # Recovery on its own first, so what it leaves is seen before anything is
+  # published over it.
+  said <- capture.output(n5 <- recover_interrupted_publish(d5$out))
+  ok(n5 == 1L && any(grepl("while moving its tables in", said, fixed = TRUE)),
+     "the next publish says it found the interrupted one, and at which step")
+  ok(identical(tool_files(d5$out), c("tfls.md", "tfls_t1.csv", "tfls_t2.csv", "tfls_t3.csv")) &&
+       all(vapply(1:3, function(i) identical(read1(file.path(d5$out, sprintf("tfls_t%d.csv", i))), paste0("OLD", i)), logical(1))) &&
+       identical(read1(file.path(d5$out, "tfls.md")), "OLD-MD") &&
+       !length(prev_dirs(d5$out)),
+     "...and resolves it to the PREVIOUS set, whole - the new run's two files gone, tfls_a0.csv included, and every old one back")
+  # Then the next run's own stage, published over that.
   for (i in 1:3) writeLines(paste0("NEXT", i), file.path(d5$stage, sprintf("tfls_t%d.csv", i)))
   writeLines("NEXT-MD", file.path(d5$stage, "tfls.md"))
   said <- capture.output(publish_outputs(d5$stage, d5$out, "r5"))
-  ok(any(grepl("recovered .tfls_previous_k_move_in", said, fixed = TRUE)) &&
-       any(grepl("while moving its tables in", said, fixed = TRUE)),
-     "the next publish says it found the interrupted one, and at which step")
   ok(identical(tool_files(d5$out), c("tfls.md", "tfls_t1.csv", "tfls_t2.csv", "tfls_t3.csv")) &&
        identical(read1(file.path(d5$out, "tfls_t1.csv")), "NEXT1") &&
        identical(read1(file.path(d5$out, "tfls_t3.csv")), "NEXT3") &&
@@ -1340,7 +1362,8 @@ local({
   killed_during(d6, "set_aside")
   ok(length(prev_dirs(d6$out)) == 1L &&
        identical(read1(file.path(d6$out, "tfls_t3.csv")), "OLD3") &&
-       !file.exists(file.path(d6$out, "tfls.md")),
+       !file.exists(file.path(d6$out, "tfls.md")) &&
+       !file.exists(file.path(d6$out, "tfls_t1.csv")),
      "a publish killed while setting the previous tables aside leaves some of them moved and some not")
   # This time the recovery is checked on its own, so the restored set can be
   # seen before anything is published over it.

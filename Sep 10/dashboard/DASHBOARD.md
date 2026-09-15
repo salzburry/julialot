@@ -305,7 +305,12 @@ pins the run's newest metadata row before it reads a table — and only a
 after the last table; a rebuild landing in between stops the export rather
 than publishing one build's metadata beside another's rows. Then the tables
 are staged and the directory swapped whole, so a refresh that fails leaves the
-previous snapshot in place under its own identity.
+previous snapshot in place under its own identity. A refresh that is *killed*
+mid-swap leaves the previous snapshot set aside under a name no reader lists,
+and the next export puts it back - or, where the swap had completed and only
+the cleanup was lost, discards it - before it starts. One export at a time
+into a root: an `.export.lock` directory refuses a second Job, and one left by
+a killed Job is removed by hand, as its message says.
 
 LOT tables are filed under `lot/<LOT_RUN_ID>.<build>/`, by run **and** by
 build, because the engine keeps a run id for the life of a session and can
@@ -333,7 +338,7 @@ DASH_SOURCE=snapshot DASH_SNAPSHOT_DIR=/mnt/data/NDMM ./app.sh
 variables, and what the job that refreshes the snapshot needs.
 
 ```bash
-Rscript tests/run_tests.R      # 586 checks, no Shiny and no warehouse
+Rscript tests/run_tests.R      # 594 checks, no Shiny and no warehouse
 ```
 
 Every number the app puts on a page comes from a function in `R/` that runs
