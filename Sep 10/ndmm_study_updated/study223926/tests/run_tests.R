@@ -965,12 +965,68 @@ cat("\nthe rules that hold the numbers up\n")
     r$STUDY_END <- cfg0()$study_end
     utils::modifyList(r, list(...))
   }
-  lin_check <- function(...) {
+  # The cohort attempt and the LOT code fingerprint are NOT on
+  # LOT_BUILD_STATUS - BUILD_STATUS_COLS above declares nine columns and none
+  # of these is among them. The LOT engine records them on LOT_RUN_METADATA,
+  # keyed by RUN_ID, and FINAL_METADATA_COLS declares them there. Pinned as
+  # literals for the same reason as LOT_STATUS_COLS: a fixture built from what
+  # lineage.R asks for agrees with the query instead of checking it.
+  LOT_METADATA_COLS <- c("N_LOT_LONG_ROWS", "N_LOT_LONG_PATIENTS",
+                         "LOT_LONG_BY_LINE", "N_LOT_FINAL_ROWS",
+                         "N_LOT_FINAL_PATIENTS", "CODE_MD5",
+                         "CONTRACT_SETTINGS", "STUDY_START", "STUDY_END",
+                         "LINE_CRITERIA_APPLIED", "COHORT_RUN_ID",
+                         "COHORT_STAMP", "RUN_ID")
+  mdsrc <- paste(capture.output(print(lot_run_inputs)), collapse = "\n")
+  md_sql <- regmatches(mdsrc, regexpr("SELECT[^\"]*FROM %s", mdsrc))
+  md_asked <- if (length(md_sql)) {
+    b <- sub("\\s*FROM %s$", "", sub("^SELECT\\s*", "", md_sql))
+    toupper(trimws(strsplit(gsub("\\s+", " ", gsub("\\\\n", " ", b)), ",")[[1]]))
+  } else character(0)
+  ok(length(md_asked) > 0 && all(md_asked %in% LOT_METADATA_COLS),
+     paste0("the cohort-attempt query names only columns the LOT writer declares",
+            if (length(setdiff(md_asked, LOT_METADATA_COLS)))
+              paste0(" [absent upstream: ",
+                     paste(setdiff(md_asked, LOT_METADATA_COLS), collapse = ", "),
+                     "]") else ""))
+  ok(!any(c("COHORT_RUN_ID", "COHORT_STAMP", "CODE_MD5") %in% asked),
+     paste0("...and the BUILD_STATUS query does not ask for them, which ",
+            "would raise unresolved columns before either check could run"))
+
+  # meta  = what LOT_RUN_METADATA says this run was built from, or NULL for an
+  #         older LOT run that predates those columns.
+  # now   = what the cohort build-status table holds NOW, or NULL for none.
+  lin_check <- function(..., meta = list(), now = list(), cfg = cfg0()) {
     row <- lin_row(...)
     e <- new.env(parent = environment(check_lot_lineage))
-    e$db_q <- function(con, sql) as.data.frame(row, stringsAsFactors = FALSE)
-    f <- check_lot_lineage; environment(f) <- e
-    errs(f(NULL, cfg0()))
+    mrow <- if (is.null(meta)) NULL else utils::modifyList(
+      list(COHORT_RUN_ID = "c1", COHORT_STAMP = "2026-09-09 00:00:00",
+           CODE_MD5 = "abcdef0123456789"), meta)
+    nrow_ <- if (is.null(now)) NULL else utils::modifyList(
+      list(RUN_ID = "c1", UPDATED_AT = "2026-09-09 00:00:00",
+           STATE = "complete"), now)
+    e$db_q <- function(con, sql) {
+      if (grepl("LOT_RUN_METADATA", sql, fixed = TRUE)) {
+        if (is.null(mrow)) stop("TABLE_OR_VIEW_NOT_FOUND")
+        return(as.data.frame(mrow, stringsAsFactors = FALSE))
+      }
+      # Case-insensitively: the second name the cohort builds use is
+      # `build_status`, lower case, and a fixed match on the upper-case one
+      # answers that query with the LOT status row instead.
+      if (grepl("build_status", sql, ignore.case = TRUE) &&
+          !grepl("lot_build_status", sql, ignore.case = TRUE)) {
+        if (is.null(nrow_)) stop("TABLE_OR_VIEW_NOT_FOUND")
+        return(as.data.frame(nrow_, stringsAsFactors = FALSE))
+      }
+      as.data.frame(row, stringsAsFactors = FALSE)
+    }
+    e$log_msg <- function(...) invisible(NULL)
+    # The three helpers are called BY check_lot_lineage and defined beside it,
+    # so they resolve to the global copies - and those reach the real
+    # warehouse - unless they are re-homed in the fake as well.
+    errs(stubbed(check_lot_lineage, e,
+                 c("check_cohort_attempt", "lot_run_inputs",
+                   "cohort_build_now", "check_lot_code"))(NULL, cfg))
   }
   ok(is.na(lin_check()), "a matching lineage row is accepted")
   ok(grepl("built over", lin_check(INPUT_COHORT_TABLE = "other_tbl") %||% ""),
@@ -981,6 +1037,52 @@ cat("\nthe rules that hold the numbers up\n")
   ok(!is.na(e_failed) && grepl("not 'complete'", e_failed) &&
        grepl("LOT build's own log", e_failed),
      "and one that did not finish, saying where that build recorded why")
+
+  # The cohort ATTEMPT. Every check above compares a NAME, and a cohort table
+  # can be rebuilt in place under the same name - so these are the ones that
+  # tell attempt A's lines from attempt B's eligibility.
+  e_stamp <- lin_check(now = list(UPDATED_AT = "2026-09-09 06:00:00"))
+  ok(!is.na(e_stamp) && grepl("has been rebuilt since", e_stamp) &&
+       grepl("2026-09-09 00:00:00", e_stamp) &&
+       grepl("2026-09-09 06:00:00", e_stamp),
+     "a cohort rebuilt in place under the same name stops, naming both attempts")
+  ok(!is.na(lin_check(now = list(RUN_ID = "c2"))),
+     "...and so does a different cohort run under that name")
+  ok(is.na(lin_check(now = list(STATE = "started"))),
+     "while the same attempt still under that name is accepted")
+  # An older LOT run recorded no attempt. Nothing to compare, so nothing to
+  # refuse - but it is said out loud rather than passed over.
+  ok(is.na(lin_check(meta = list(COHORT_RUN_ID = "", COHORT_STAMP = ""))),
+     "a LOT run that recorded no cohort attempt is accepted, not refused")
+  ok(is.na(lin_check(meta = NULL)),
+     "...and so is one whose LOT_RUN_METADATA could not be read at all")
+  # The attempt is known and the cohort's own status is not. That is unproven,
+  # not wrong, so it is the one case the waiver covers.
+  e_unproven <- lin_check(now = NULL)
+  ok(!is.na(e_unproven) && grepl("no cohort build status could be found",
+                                 e_unproven),
+     "a known attempt with no cohort status to compare it to stops")
+  ok(is.na(lin_check(now = NULL,
+                     cfg = cfg0(c(LOT_ALLOW_UNPROVEN_LINEAGE = "TRUE")))),
+     "...and LOT_ALLOW_UNPROVEN_LINEAGE is what waives exactly that case")
+
+  # WHICH code. LOT_RULES_EPOCH refuses a build by the DATE it finished, which
+  # says when it ran and not what it ran; this is the fingerprint of the R that
+  # executed, and it is opt-in.
+  ok("lot_code_md5" %in% names(cfg0()),
+     "LOT_CODE_MD5 is a real setting, not just a message")
+  ok(is.na(lin_check()),
+     "with LOT_CODE_MD5 unset, a run built by any code is accepted")
+  ok(is.na(lin_check(cfg = cfg0(c(LOT_CODE_MD5 = "abcdef0123456789")))),
+     "...and the approved fingerprint is accepted when it matches")
+  e_code <- lin_check(cfg = cfg0(c(LOT_CODE_MD5 = "0000000000000000")))
+  ok(!is.na(e_code) && grepl("built by code abcdef0123456789", e_code) &&
+       grepl("only 0000000000000000", e_code),
+     "...while a run built by other code is refused, naming both fingerprints")
+  e_nocode <- lin_check(meta = list(CODE_MD5 = ""),
+                        cfg = cfg0(c(LOT_CODE_MD5 = "abcdef0123456789")))
+  ok(!is.na(e_nocode) && grepl("records no code fingerprint", e_nocode),
+     "...and so is one whose code this cannot name, rather than passed over")
 
   # The cohort build's own contract, read back. Driven the same way: the
   # function is given a CONTRACT_SETTINGS string and its answer is checked,

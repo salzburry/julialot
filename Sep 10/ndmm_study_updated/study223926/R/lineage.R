@@ -14,6 +14,167 @@
 # read_upstream_settings() below.
 LOT_RULES_EPOCH <- as.Date("2026-08-30")
 
+# A setting or a status column as a plain trimmed string: blank where it is
+# absent, NULL, NA, or the literal "NA" a warehouse NULL reads back as over
+# ODBC. Every identity below compares two of these, so an absent value on
+# either side is one value - "" - rather than three that are not identical()
+# to each other.
+as_str <- function(x) {
+  v <- trimws(as.character(x %||% "")[1])
+  if (is.na(v) || identical(tolower(v), "na")) "" else v
+}
+
+# The cohort build's own status, by the convention the LOT engine uses: the
+# table is prefixed by hand, with COHORT_PREFIX where set and this run's
+# OBJECT_PREFIX otherwise, and named one of two things depending on which build
+# wrote it. cohort_tbl() already resolves that prefix.
+COHORT_STATUS_TABLES <- c("NDMM_BUILD_STATUS", "build_status")
+
+# Which cohort attempt sits under that name RIGHT NOW. NULL where no status
+# table was found - the caller decides what an absence means, because "no
+# status here" and "the attempt moved" are different answers.
+cohort_build_now <- function(con, cfg) {
+  cands <- COHORT_STATUS_TABLES
+  named <- as_str(cfg$cohort_status_table %||% "")
+  if (nzchar(named)) cands <- named
+  for (nm in cands) {
+    tbl <- cohort_tbl(nm)
+    d <- tryCatch(db_q(con, sprintf(
+           "SELECT * FROM %s ORDER BY UPDATED_AT DESC LIMIT 1", tbl)),
+         error = function(e) NULL)
+    if (is.null(d) || !nrow(d)) next
+    # Column case differs between the builds. Spark does not care; R does.
+    pick <- function(w) {
+      i <- match(tolower(w), tolower(names(d)))
+      if (is.na(i)) NA_character_ else as.character(d[[i]][1])
+    }
+    return(list(table = tbl, run_id = as_str(pick("run_id")),
+                stamp = as_str(pick("updated_at"))))
+  }
+  NULL
+}
+
+# What the accepted LOT run recorded about ITS inputs.
+#
+# LOT_BUILD_STATUS carries none of this - BUILD_STATUS_COLS declares nine
+# columns and COHORT_RUN_ID is not among them, so asking it for one raises
+# unresolved columns before the check can run. The engine records the cohort
+# attempt and its own code fingerprint on LOT_RUN_METADATA instead, keyed by
+# RUN_ID, so that is where this reads them from.
+#
+# Returns NULL where the table or the row could not be read: an older LOT run
+# predates these columns and has nothing to say.
+lot_run_inputs <- function(con, run_id) {
+  if (!nzchar(as_str(run_id))) return(NULL)
+  tbl <- lot_tbl("LOT_RUN_METADATA")
+  d <- tryCatch(db_q(con, sprintf(
+         "SELECT COHORT_RUN_ID, COHORT_STAMP, CODE_MD5 FROM %s
+           WHERE RUN_ID = '%s'", tbl, run_id)),
+       error = function(e) NULL)
+  if (is.null(d) || !nrow(d)) return(NULL)
+  list(table = tbl,
+       cohort_run_id = as_str(d$COHORT_RUN_ID),
+       cohort_stamp  = as_str(d$COHORT_STAMP),
+       code_md5      = as_str(d$CODE_MD5))
+}
+
+# Is the cohort under this name still the ATTEMPT the LOT run was built from?
+#
+# Everything check_lot_lineage() compares above is a NAME, and a cohort table
+# can be rebuilt in place under the same name. So a LOT run built from attempt
+# A still passes every name check while the table now holds attempt B - and
+# this package would then read A's lines against B's eligibility flags,
+# demographics and index dates, with no column anywhere disagreeing.
+#
+# The LOT engine already solved this for itself: check_cohort_build() records
+# the cohort build's run id AND its UPDATED_AT, because a re-run keeps its id.
+# This carries that same binding forward rather than inventing a second one.
+#
+# Not fatal where the LOT run recorded no attempt - it has nothing to compare -
+# but that is said out loud rather than passed over, because it is the one case
+# this cannot check.
+check_cohort_attempt <- function(con, cfg, inputs) {
+  if (is.null(inputs) ||
+      (!nzchar(inputs$cohort_run_id) && !nzchar(inputs$cohort_stamp))) {
+    log_msg("WARNING: the LOT run records no cohort build attempt, so this ",
+            "run cannot tell whether ", cfg$input_cohort_table, " still holds ",
+            "the cohort those lines were built from. A rebuild of it under ",
+            "the same name would not be detected.")
+    return(invisible(NULL))
+  }
+  was_id <- inputs$cohort_run_id
+  was_stamp <- inputs$cohort_stamp
+  now <- cohort_build_now(con, cfg)
+  if (is.null(now)) {
+    if (isTRUE(cfg$lot_allow_unproven_lineage)) {
+      log_msg("WARNING: no cohort build status found, so the cohort attempt ",
+              "behind ", cfg$input_cohort_table, " is unproven. ",
+              "LOT_ALLOW_UNPROVEN_LINEAGE=TRUE, so the run continues.")
+      return(invisible(NULL))
+    }
+    stop("LINEAGE ERROR: the LOT run was built from cohort attempt ", was_id,
+         " (", was_stamp, "), and no cohort build status could be found under ",
+         "this schema to say whether ", cfg$input_cohort_table,
+         " still holds it.\nA cohort can be rebuilt in place under the same ",
+         "name, so the name alone does not establish that these lines and ",
+         "this eligibility came from one cohort. Set COHORT_PREFIX if the ",
+         "cohort build wrote its status elsewhere, or set ",
+         "LOT_ALLOW_UNPROVEN_LINEAGE=TRUE to proceed over a binding nothing ",
+         "checked.", call. = FALSE)
+  }
+  same <- (!nzchar(was_id) || identical(was_id, now$run_id)) &&
+          (!nzchar(was_stamp) || identical(was_stamp, now$stamp))
+  if (!same)
+    stop("LINEAGE ERROR: ", cfg$input_cohort_table, " has been rebuilt since ",
+         "the LOT run was built from it.\n  LOT used cohort attempt: ", was_id,
+         " (", was_stamp, ")\n  ", now$table, " now holds:      ",
+         now$run_id, " (", now$stamp, ")\n",
+         "The lines under the LOT prefix are the earlier attempt's, and this ",
+         "package would read them against the current attempt's eligibility ",
+         "flags, demographics and index dates. Re-run the LOT build over the ",
+         "current cohort, or point INPUT_COHORT_TABLE at the cohort those ",
+         "lines were built from.", call. = FALSE)
+  log_msg("  cohort attempt ", was_id, " (", was_stamp,
+          ") still holds under ", cfg$input_cohort_table)
+  invisible(NULL)
+}
+
+# WHICH LOT code produced these lines.
+#
+# LOT_RULES_EPOCH below refuses a run that finished before the rule change, and
+# a date is a proxy: it says when the build ran, not what it ran. Two builds on
+# the same afternoon can be different code, and a re-run of the old code
+# tomorrow carries tomorrow's date. The engine records a fingerprint of the R
+# that actually executed - not a revision, because the code is copied into
+# Domino to run - and LOT_CODE_MD5 is where a study team pins the one it
+# approved.
+#
+# Blank is the shipped default and checks nothing, so this adds no refusal to
+# a run that does not ask for one; it only lets a run that wants the stronger
+# statement make it.
+check_lot_code <- function(cfg, md5, run_id) {
+  want <- as_str(cfg$lot_code_md5 %||% "")
+  if (!nzchar(want)) return(invisible(NULL))
+  if (!nzchar(md5))
+    stop("LINEAGE ERROR: LOT_CODE_MD5 is set to ", want, ", and LOT run ",
+         run_id, " records no code fingerprint to compare it to. ",
+         lot_tbl("LOT_RUN_METADATA"), ".CODE_MD5 is written by the LOT ",
+         "build when it records its final counts, so a run missing it did ",
+         "not reach that point or predates the column. Re-run the LOT build, ",
+         "or clear LOT_CODE_MD5 to accept a run whose code this cannot name.",
+         call. = FALSE)
+  if (!identical(want, md5))
+    stop("LINEAGE ERROR: LOT run ", run_id, " was built by code ", md5,
+         ", and this run is set to accept only ", want, ".\nLOT_CODE_MD5 ",
+         "names the LOT build a study team approved, so a run built by any ",
+         "other code is refused here rather than silently reported under the ",
+         "approved one's name. Point LOT_PREFIX at the approved build, re-run ",
+         "LOT with the approved code, or change LOT_CODE_MD5 if the new code ",
+         "is what was approved.", call. = FALSE)
+  log_msg("  LOT code ", substr(md5, 1, 8), " is the approved build")
+  invisible(NULL)
+}
+
 check_lot_lineage <- function(con, cfg) {
   st <- lot_tbl("LOT_BUILD_STATUS")
   rows <- tryCatch(
@@ -89,12 +250,33 @@ check_lot_lineage <- function(con, cfg) {
          "at the LOT build that produced this study's lines, or re-run it.",
          call. = FALSE)
 
+  # The cohort ATTEMPT, not its name.
+  #
+  # A cohort table can be rebuilt in place under the same name, and everything
+  # above compares names. So a LOT run built from attempt A still passes while
+  # the table now holds attempt B - and this package would then read A's lines
+  # against B's eligibility flags, demographics and index dates. The LOT engine
+  # already solved this for itself: it records the cohort build's run id and
+  # stamp on LOT_BUILD_STATUS precisely because the id alone is not enough.
+  # This carries that binding forward rather than inventing a second one.
+  inputs <- lot_run_inputs(con, as_str(r$RUN_ID))
+  check_cohort_attempt(con, cfg, inputs)
+
+  md5 <- if (is.null(inputs)) "" else inputs$code_md5
+  check_lot_code(cfg, md5, r$RUN_ID)
   log_msg("LOT run ", r$RUN_ID, " accepted: ", r$STATE, ", cohort ",
           r$INPUT_COHORT_TABLE, ", study end ", r$STUDY_END,
-          ", build ", run_version_stamp(r$UPDATED_AT))
+          ", build ", run_version_stamp(r$UPDATED_AT),
+          if (nzchar(md5)) paste0(", LOT code ", substr(md5, 1, 8)) else "")
   # UPDATED_AT stays in what is returned: it is the version of this build of
   # the run, and S_RUN_METADATA records it beside the id (LOT_RUN_VERSION).
-  as.list(r)
+  # The cohort attempt rides along under names of this package's own, so the
+  # completion recheck asks the warehouse once rather than twice and
+  # S_RUN_METADATA records what was actually bound.
+  c(as.list(r),
+    list(COHORT_ATTEMPT_ID = if (is.null(inputs)) "" else inputs$cohort_run_id,
+         COHORT_ATTEMPT_STAMP = if (is.null(inputs)) "" else inputs$cohort_stamp,
+         LOT_CODE_MD5 = md5))
 }
 
 # The same build, still? Asked once every module has run and before the run is
@@ -127,6 +309,18 @@ check_lot_lineage_unchanged <- function(con, accepted) {
          "lines this run read are not one build's, so it is recorded as failed ",
          "rather than complete. Re-run it once the LOT build has finished.",
          call. = FALSE)
+  # ...and the cohort under it, for the same reason. The modules read the
+  # cohort's eligibility flags, demographics and index dates for minutes after
+  # the accept, and the cohort build can rewrite them in place under the same
+  # name in that window. check_cohort_attempt() asks the same question against
+  # the attempt this run accepted, so a rebuild during the read stops here and
+  # the failure handler records the run `failed` rather than `complete`.
+  att <- list(cohort_run_id = as_str(accepted$COHORT_ATTEMPT_ID %||% ""),
+              cohort_stamp = as_str(accepted$COHORT_ATTEMPT_STAMP %||% ""))
+  # Silent where there is nothing to compare: the accept already said so, and
+  # saying it twice per run reads as a second, different gap.
+  if (nzchar(att$cohort_run_id) || nzchar(att$cohort_stamp))
+    check_cohort_attempt(con, study_config(), att)
   log_msg("LOT run ", id, " build ", was_v, " still owns the prefix; lineage holds")
   invisible(TRUE)
 }

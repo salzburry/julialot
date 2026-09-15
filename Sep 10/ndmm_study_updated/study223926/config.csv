@@ -13,6 +13,8 @@ INPUT_COHORT_TABLE,,The cohort table the LOT run was built over (e.g. ndmm_NDMM_
 OBJECT_PREFIX,,Prefix for every table this package writes
 COHORT_PREFIX,,The cohort build's prefix if it differs from this run's
 LOT_PREFIX,,The LOT build's prefix if it differs from this run's
+LOT_CODE_MD5,,"The approved LOT build's code fingerprint (LOT_RUN_METADATA.CODE_MD5). Blank checks nothing; set, a LOT run built by any other code is refused"
+COHORT_STATUS_TABLE,,"The cohort build's status table, bare, where it wrote neither NDMM_BUILD_STATUS nor build_status. COHORT_PREFIX is added for you"
 WORK_SCHEMA,,"Schema the study writes into, and reads the cohort and LOT tables from. Blank: PROJECT_WORK_SCHEMA, then DOMINO_USER_NAME, then the session's current schema - as the cohort and LOT builds resolve theirs. catalog.schema is accepted when the catalog is DATABRICKS_CATALOG"
 #,,--- study periods: OPEN_QUESTIONS Q1 ---
 STUDY_START,2018-01-01,Study period start. Protocol s7.1 text. Figures 1 and 2 say 2016-01-01 - see OPEN_QUESTIONS Q1

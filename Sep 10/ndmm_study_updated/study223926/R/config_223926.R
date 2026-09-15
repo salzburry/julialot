@@ -147,6 +147,15 @@ cfg_defaults <- function() {
     object_prefix      = .env_chr("OBJECT_PREFIX", ""),
     cohort_prefix      = .env_chr("COHORT_PREFIX", ""),
     lot_prefix         = .env_chr("LOT_PREFIX", ""),
+    # The LOT build whose numbers a study team has approved, by the
+    # fingerprint the engine records of the R that ran. Empty is the shipped
+    # default and checks nothing; set, it is the one way to say "these numbers
+    # rest on THAT code" rather than "on code that finished after a date".
+    lot_code_md5       = .env_chr("LOT_CODE_MD5", ""),
+    # Named only where the cohort build wrote its status under neither of the
+    # two names the builds use. Bare - COHORT_PREFIX is added for you, as the
+    # LOT engine's setting of the same name does.
+    cohort_status_table = .env_chr("COHORT_STATUS_TABLE", ""),
 
     # --- periods ----------------------------------------------------------
     study_start      = .env_date("STUDY_START", "2018-01-01"),

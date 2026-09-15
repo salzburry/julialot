@@ -207,6 +207,11 @@ RUN_METADATA_COLS <- c(
   RUN_ID = "string", STATE = "string", UPDATED_AT = "timestamp",
   COHORTS = "string", MODULES = "string",
   LOT_RUN_ID = "string", LOT_RUN_VERSION = "string",
+  # The LOT code that produced those lines, and the cohort attempt it was
+  # built from - not the cohort's NAME, which a rebuild keeps. Together these
+  # say which three things these numbers rest on; a name says only one.
+  LOT_CODE_MD5 = "string",
+  COHORT_ATTEMPT_ID = "string", COHORT_ATTEMPT_STAMP = "string",
   STUDY_START = "string", STUDY_END = "string",
   CONTRACT_DEVIATIONS = "string", OPEN_QUESTION_READINGS = "string",
   CODELISTS = "string", RELEASE_RECOVERABLE = "string",
@@ -234,6 +239,9 @@ write_run_metadata <- function(con, cfg, cohorts, mods, lot_run, deviations,
             MODULES                = q(names(mods)),
             LOT_RUN_ID             = q(lot_run$RUN_ID %||% ""),
             LOT_RUN_VERSION        = q(lot_run_version(lot_run)),
+            LOT_CODE_MD5           = q(lot_run$LOT_CODE_MD5 %||% ""),
+            COHORT_ATTEMPT_ID      = q(lot_run$COHORT_ATTEMPT_ID %||% ""),
+            COHORT_ATTEMPT_STAMP   = q(lot_run$COHORT_ATTEMPT_STAMP %||% ""),
             STUDY_START            = q(cfg$study_start),
             STUDY_END              = q(cfg$study_end),
             CONTRACT_DEVIATIONS    = q(if (length(deviations)) deviations else "none"),

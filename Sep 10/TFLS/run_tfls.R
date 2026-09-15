@@ -40,7 +40,7 @@
 })
 
 TFLS_R_FILES <- c("classes.R", "shells.R", "names.R", "stats.R", "suppress.R",
-                  "fill.R", "scope.R", "render.R")
+                  "fill.R", "scope.R", "render.R", "publish.R")
 for (f in TFLS_R_FILES) source(file.path(.script_dir, "R", f))
 
 env_chr <- function(nm, unset = "") trimws(Sys.getenv(nm, unset = unset))
@@ -238,10 +238,6 @@ bind_run <- function(reader, where) {
 
 # --- the run ----------------------------------------------------------------
 
-# The tool's own files. Only these are ever removed: whatever else a person has
-# put in the output directory is theirs.
-TFLS_OUTPUT_PATTERN <- "^tfls_.*[.]csv$|^tfls[.]md$"
-
 write_outputs <- function(filled, sh, floor_n, run_id) {
   dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
 
@@ -273,26 +269,8 @@ write_outputs <- function(filled, sh, floor_n, run_id) {
   unf <- all_unfilled(filled)
   tfls_write_csv(unf, file.path(stage, "tfls_unfilled.csv"))
 
-  # Everything rendered and written. Now replace.
-  #
-  # Drop a table from tables.csv and its tfls_<id>.csv would otherwise stay
-  # behind, identical in shape to the ones beside it and belonging to a shell
-  # set that no longer exists - with nothing on it saying which run wrote it.
-  old <- list.files(out_dir, pattern = TFLS_OUTPUT_PATTERN, full.names = TRUE)
-  if (length(old)) {
-    gone <- file.remove(old)
-    if (!all(gone))
-      stop("Could not clear the previous output in ", out_dir, ": ",
-           paste(basename(old[!gone]), collapse = ", "), ". This run's ",
-           "tables are complete in ", stage, "; nothing published has been ",
-           "changed.", call. = FALSE)
-  }
-  made <- list.files(stage, full.names = TRUE)
-  moved <- file.rename(made, file.path(out_dir, basename(made)))
-  if (!all(moved))
-    stop("Wrote this run's tables but could not move ",
-         paste(basename(made[!moved]), collapse = ", "), " into ", out_dir,
-         ". They are in ", stage, ".", call. = FALSE)
+  publish_outputs(stage, out_dir, run_id)
+  unlink(prev, recursive = TRUE)
   n_cells <- sum(vapply(filled, function(f) sum(f$cells$SECTION == 0L), integer(1)))
   n_supp <- sum(vapply(filled, function(f)
     sum(f$cells$SECTION == 0L & f$cells$SUPPRESSED == 1L), integer(1)))
