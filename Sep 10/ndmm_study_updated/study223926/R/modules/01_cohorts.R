@@ -123,7 +123,11 @@ mod_cohorts <- function(con, cfg, cohort) {
   # being part of its verdict. SEC2L drops X2 entirely under the shipped
   # default. An analyst who ANDed the flags would reproduce 1L and get a
   # DIFFERENT cohort at 2L, 3L and SEC2L, with nothing on the row to warn them.
-  # So the row carries the list its own IN_COHORT was computed from.
+  # So the row carries the list its own cohort is judged on. Not quite the
+  # list IN_COHORT is computed from: I1 to I3 are on the 1L list and have no
+  # predicate here, because the cohort build applied them and a patient on the
+  # input passed them by being there. S_ELIGIBILITY.EVIDENCE says where those
+  # came from, and S_ATTRITION.APPLIED_BY says it step by step.
   prepare_table(con, wrk("S_COHORT"),
     "PATID string, COHORT string, LOT_NUM int, INDEX_DATE date,
      MET_N1 int, MET_N2 int, MET_I5 int,

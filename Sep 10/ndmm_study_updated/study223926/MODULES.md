@@ -416,7 +416,14 @@ the analysis the setting exists for, and builds on its own. The refusal names
 the setting that would allow it.
 
 **And every row says what its own verdict is over.** `CRITERIA_ASKED` is the
-list `IN_COHORT` was computed from. It has to be on the row because it differs:
+list the cohort is **judged on** — which is not quite the list `IN_COHORT` is
+*computed* from, and the difference matters. `I1`–`I3` are on the 1L list and
+have no predicate here: the cohort build applied them, and a patient on the
+input passed them by being there. So 1L's `CRITERIA_ASKED` names nine while
+`IN_COHORT` is the AND of six. `S_ELIGIBILITY.EVIDENCE` says where the upstream
+verdicts came from, and `S_ATTRITION.APPLIED_BY` says it step by step.
+
+It has to be on the row because it differs:
 1L and SEC2L are judged on nine criteria, 2L and 3L on three — `N1`, `N2`, `I5`
 — so `MET_X1`–`MET_X4` sit on a 2L row *without being part of its verdict*, and
 SEC2L drops `X2` under the shipped default. An analyst ANDing the `MET_*` flags
