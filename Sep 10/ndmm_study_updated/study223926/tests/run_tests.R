@@ -1271,6 +1271,11 @@ cat("\nthe rules that hold the numbers up\n")
   ens <- function(found, types = NULL) {
     if (is.null(types))
       types <- ifelse(found %in% c("N_AT_RISK", "EXTRA"), "int", "string")
+    # Each case is a DIFFERENT run against a different warehouse state. Within
+    # one run ensure_table() establishes a shape once and does not re-ask, so
+    # without this the second case would be answered from the first's memo -
+    # which is the whole point of the memo and would make these checks vacuous.
+    ensure_table_reset()
     errs(with_env(base_env, {
       env <- new.env(parent = environment(ensure_table))
       env$db_exec <- function(con, sql) invisible(0L)
@@ -1294,7 +1299,8 @@ cat("\nthe rules that hold the numbers up\n")
   # The three bypasses the prefix-only comparison allowed.
   ok(!is.na(ens(c("PATID", "COHORT", "N_AT_RISK", "EXTRA"))),
      "an extra trailing column is caught, not accepted as a matching prefix")
-  ens_t <- function(cols, types)
+  ens_t <- function(cols, types) {
+    ensure_table_reset()   # a different run each time, as in ens() above
     errs(with_env(base_env, {
       env <- new.env(parent = environment(ensure_table))
       env$db_exec <- function(con, sql) invisible(0L)
@@ -1304,6 +1310,41 @@ cat("\nthe rules that hold the numbers up\n")
       f <- stubbed(ensure_table, env)
       f(NULL, "t", "PATID string, COHORT string, N_AT_RISK int")
     }))
+  }
+  # The memo that keeps prepare_table() from re-asking once per cohort. It has
+  # to save the round trip WITHOUT ever standing in for a check that has not
+  # been made: the first call establishes the shape, later ones in the same run
+  # are answered from it, and a reset makes the next run ask again.
+  local({
+    ensure_table_reset()
+    asked <- 0L
+    run1 <- function(decl, found) with_env(base_env, {
+      env <- new.env(parent = environment(ensure_table))
+      env$db_exec <- function(con, sql) invisible(0L)
+      env$db_q <- function(con, sql) { asked <<- asked + 1L
+        data.frame(col_name = found,
+                   data_type = ifelse(found == "N_AT_RISK", "int", "string"),
+                   stringsAsFactors = FALSE) }
+      errs(stubbed(ensure_table, env)(NULL, "t", decl))
+    })
+    good <- c("PATID", "COHORT", "N_AT_RISK")
+    decl <- "PATID string, COHORT string, N_AT_RISK int"
+    ok(is.na(run1(decl, good)) && asked == 1L,
+       "the first call establishes a table's shape, and asks the warehouse to do it")
+    ok(is.na(run1(decl, good)) && asked == 1L,
+       "...a second call for the same table and the same shape is answered from that, not from another DESCRIBE")
+    ok(!is.na(run1("PATID string, COHORT string", good)) && asked == 2L,
+       "...a DIFFERENT declared shape is asked again, so the memo cannot answer a question it was not asked")
+    ensure_table_reset()
+    ok(is.na(run1(decl, good)) && asked == 3L,
+       "...and a reset makes the next run establish it for itself, since a table may have been dropped in between")
+    # The guard is not skipped on the strength of a check that did not finish.
+    ensure_table_reset()
+    ok(!is.na(run1(decl, c("PATID", "COHORT"))) &&
+         !is.na(run1(decl, c("PATID", "COHORT"))),
+       "a shape that does not match is refused every time it is asked, because a failed check is never recorded as established")
+  })
+
   ok(is.na(ens_t(c("PATID", "COHORT", "N_AT_RISK"),
                  c("varchar", "string", "integer"))),
      "and equivalent type spellings still match")
@@ -1890,9 +1931,12 @@ cat("\nthe modules, run against recorders\n")
      "and writes beside the source table, never over it")
   # Every column the spec names must exist on the table it names, or the
   # suppression silently misses it.
-  ddl <- paste(vapply(Filter(function(x)
+  # Joined WITH a trailing newline: the pattern below ends at ")\n", and the
+  # last statement in a collapse has none - so whichever table happened to be
+  # created last read as having no DDL at all.
+  ddl <- paste0(paste(vapply(Filter(function(x)
       grepl("^CREATE TABLE IF NOT EXISTS", x$sql), run$sql),
-      function(x) x$sql, character(1)), collapse = "\n")
+      function(x) x$sql, character(1)), collapse = "\n"), "\n")
   missing_cols <- unlist(lapply(names(SUPPRESSION_SPEC), function(t) {
     d <- regmatches(ddl, regexpr(paste0("CREATE TABLE IF NOT EXISTS \\S*", t,
                                         " \\([^;]*?\\)\n"), ddl))

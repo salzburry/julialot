@@ -131,6 +131,11 @@ build_223926 <- function(here) {
   # Only a run that reads the LOT engine's output has to prove whose build it
   # read. `spine` is the one module that reads it, and every module that needs
   # lines needs `spine`, so its presence in the resolved set is the question.
+  # A run establishes every table's shape for itself. The memo is what stops
+  # prepare_table() re-asking once per cohort; it must not carry an answer
+  # across runs, where a table may have been dropped in between.
+  ensure_table_reset()
+
   lot_run <- if (reads_lot(mods)) check_lot_lineage(con, cfg) else {
     log_msg("no selected module reads the LOT tables, so no lineage to prove")
     NULL
