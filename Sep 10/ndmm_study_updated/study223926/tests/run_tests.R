@@ -76,6 +76,56 @@ cat("\nconfig and contract\n")
   ok(is.na(errs(check_settings(cfg))), "the shipped defaults validate")
   ok(!is.na(errs(with_env(base_env, .env_enum("X", "nope", c("a", "b"))))),
      "an unrecognised enum stops rather than falling back to a default")
+
+  # Names that are pasted into SQL unquoted. A value that is not a name used
+  # to reach the warehouse and fail there, in its words and after the
+  # connection was open; one carrying a semicolon made a statement into two.
+  bad_name <- function(...) {
+    e <- errs(with_env(c(base_env, ...), check_settings(cfg_defaults())))
+    !is.na(e) && grepl("is not a name this package can put in SQL", e, fixed = TRUE)
+  }
+  good_name <- function(...)
+    is.na(errs(with_env(c(base_env, ...), check_settings(cfg_defaults()))))
+  ok(bad_name(OBJECT_PREFIX = "bad prefix_") && bad_name(OBJECT_PREFIX = "x;DROP TABLE t;--") &&
+       bad_name(OBJECT_PREFIX = "1abc_") && bad_name(OBJECT_PREFIX = "s223926-"),
+     "an OBJECT_PREFIX with a space, a semicolon, a leading digit or a hyphen is refused before any SQL is built")
+  ok(good_name(OBJECT_PREFIX = "s223926_") && good_name(OBJECT_PREFIX = "_alt") &&
+       good_name(OBJECT_PREFIX = "ndmm_"),
+     "...while every prefix the documentation uses is accepted")
+  ok(bad_name(INPUT_COHORT_TABLE = "a.b.c.d") && bad_name(INPUT_COHORT_TABLE = "my table") &&
+       bad_name(INPUT_COHORT_TABLE = "t;--"),
+     "an INPUT_COHORT_TABLE with four parts, a space or a semicolon is refused")
+  # strsplit() drops a trailing empty piece, so "s223926." split to one clean
+  # part and passed - and reached the warehouse with the dot.
+  ok(bad_name(OBJECT_PREFIX = "s223926.") && bad_name(INPUT_COHORT_TABLE = "cat.sch.") &&
+       bad_name(INPUT_COHORT_TABLE = ".tbl") && bad_name(INPUT_COHORT_TABLE = "a..b"),
+     "a trailing, leading or doubled dot is refused too")
+  e_rid <- errs(with_env(c(base_env, DOMINO_RUN_ID = "r1'; DROP TABLE t; --"),
+                         check_settings(cfg_defaults())))
+  ok(!is.na(e_rid) && grepl("DOMINO_RUN_ID", e_rid, fixed = TRUE) &&
+       is.na(errs(with_env(c(base_env, DOMINO_RUN_ID = "run-6543_ab.1"),
+                           check_settings(cfg_defaults())))),
+     "a DOMINO_RUN_ID that is not a plain token is refused, since it names the run in S_RUN_METADATA")
+  rsrc_meta <- paste(readLines("R/run_223926.R", warn = FALSE), collapse = "\n")
+  ok(grepl("DELETE FROM %s WHERE RUN_ID = %s\", tbl, q(rid)", rsrc_meta, fixed = TRUE),
+     "...and it reaches the metadata DELETE escaped, the way it reaches the INSERT")
+  ok(grepl("if (!is_sql_name(cfg$work_schema))", rsrc_meta, fixed = TRUE),
+     "the schema read back from the session is held to the same rule as one given in the settings")
+  ok(good_name(INPUT_COHORT_TABLE = "ndmm_NDMM_COHORT") &&
+       good_name(INPUT_COHORT_TABLE = "other_cat.their_schema.NDMM_COHORT"),
+     "...while a bare name and a fully qualified one are both accepted")
+  ok(bad_name(LOT_PREFIX = "lot prefix_") && bad_name(COHORT_PREFIX = "c.p_") &&
+       bad_name(COHORT_STATUS_TABLE = "sch.build_status") &&
+       good_name(LOT_PREFIX = "ndmm_") && good_name(COHORT_STATUS_TABLE = "build_status"),
+     "the other prefixes and the status table name follow the same rule, and a prefix cannot carry a dot")
+  ok(bad_name(TBL_MEDICAL = "cat.sch.medical") && good_name(TBL_MEDICAL = "medical_v2"),
+     "a CDM table override is a base name, because the quarter suffix and the schema are put around it")
+  ok(bad_name(DATABRICKS_CATALOG = "hive metastore") && bad_name(OPTUM_CDM_SCHEMA = "a.b") &&
+       good_name(DATABRICKS_CATALOG = "hive_metastore", OPTUM_CDM_SCHEMA = "clnprw_optum"),
+     "and so do the catalog and the CDM schema")
+  ok(all(vapply(names(SQL_NAME_SETTINGS), function(k)
+           SQL_NAME_SETTINGS[[k]]$key %in% names(cfg0()), logical(1))),
+     "every setting the name check names is a real setting")
   d <- with_env(c(base_env, BASELINE_DAYS = "180"),
                 contract_deviations(cfg_defaults()))
   ok(length(d) == 1 && grepl("baseline_days", d),
@@ -1004,7 +1054,11 @@ cat("\nthe rules that hold the numbers up\n")
   # meta  = what LOT_RUN_METADATA says this run was built from, or NULL for an
   #         older LOT run that predates those columns.
   # now   = what the cohort build-status table holds NOW, or NULL for none.
-  lin_check <- function(..., meta = list(), now = list(), cfg = cfg0()) {
+  # meta_err / now_err: the LOT_RUN_METADATA or cohort-status query RAISES
+  # this message instead of answering, which is what a permission refused or
+  # a dropped session looks like from here.
+  lin_check <- function(..., meta = list(), now = list(), cfg = cfg0(),
+                        meta_err = NULL, now_err = NULL) {
     row <- lin_row(...)
     e <- new.env(parent = environment(check_lot_lineage))
     mrow <- if (is.null(meta)) NULL else utils::modifyList(
@@ -1015,14 +1069,17 @@ cat("\nthe rules that hold the numbers up\n")
            STATE = "complete"), now)
     e$db_q <- function(con, sql) {
       if (grepl("LOT_RUN_METADATA", sql, fixed = TRUE)) {
+        if (!is.null(meta_err)) stop(meta_err)
         if (is.null(mrow)) stop("TABLE_OR_VIEW_NOT_FOUND")
         return(as.data.frame(mrow, stringsAsFactors = FALSE))
       }
-      # Case-insensitively: the second name the cohort builds use is
-      # `build_status`, lower case, and a fixed match on the upper-case one
-      # answers that query with the LOT status row instead.
-      if (grepl("build_status", sql, ignore.case = TRUE) &&
+      # By the query's shape, not the table's name: the cohort build's status
+      # is read newest-first with LIMIT 1, whichever of its names - or the
+      # one COHORT_STATUS_TABLE gives it - it sits under. The LOT status is
+      # read with LIMIT 5 and falls through to the row below.
+      if (grepl("ORDER BY UPDATED_AT DESC LIMIT 1", sql, fixed = TRUE) &&
           !grepl("lot_build_status", sql, ignore.case = TRUE)) {
+        if (!is.null(now_err)) stop(now_err)
         if (is.null(nrow_)) stop("TABLE_OR_VIEW_NOT_FOUND")
         return(as.data.frame(nrow_, stringsAsFactors = FALSE))
       }
@@ -1063,7 +1120,99 @@ cat("\nthe rules that hold the numbers up\n")
   ok(is.na(lin_check(meta = list(COHORT_RUN_ID = "", COHORT_STAMP = ""))),
      "a LOT run that recorded no cohort attempt is accepted, not refused")
   ok(is.na(lin_check(meta = NULL)),
-     "...and so is one whose LOT_RUN_METADATA could not be read at all")
+     "...and so is one whose LOT_RUN_METADATA is not there at all")
+  ok(is.na(lin_check(meta_err = "[UNRESOLVED_COLUMN] A column with name `COHORT_RUN_ID` cannot be resolved")),
+     "...and so is one whose LOT_RUN_METADATA predates the columns, which is how an older writer's table answers")
+
+  # ABSENT and UNREADABLE are different answers. Every read failure used to
+  # become NULL, which check_cohort_attempt() read as an older LOT run with
+  # nothing recorded - so a permission refused, or a session dropped, was
+  # accepted as "legacy". A run that could pair a rebuilt cohort with another
+  # run's lines on the strength of an outage.
+  perm <- "[INSUFFICIENT_PERMISSIONS] User does not have SELECT on table LOT_RUN_METADATA"
+  e_perm <- lin_check(meta_err = perm)
+  ok(!is.na(e_perm) && grepl("could not read", e_perm, fixed = TRUE) &&
+       grepl("not the same as the table being absent", e_perm, fixed = TRUE),
+     "a LOT_RUN_METADATA that cannot be READ stops, saying that is not the same as absent")
+  ok(is.na(lin_check(meta_err = perm,
+                     cfg = cfg0(c(LOT_ALLOW_UNPROVEN_LINEAGE = "TRUE")))),
+     "...unless LOT_ALLOW_UNPROVEN_LINEAGE says to go on over a binding nothing checked")
+  e_now <- lin_check(now_err = perm)
+  ok(!is.na(e_now) && grepl("could not be read", e_now, fixed = TRUE) &&
+       grepl("not the same as its being absent", e_now, fixed = TRUE),
+     "and a cohort build-status table that cannot be read stops the same way")
+  ok(is.na(lin_check(now_err = perm,
+                     cfg = cfg0(c(LOT_ALLOW_UNPROVEN_LINEAGE = "TRUE")))),
+     "...waived by the same flag, and by nothing else")
+  # A status table the SETTING names, and that is not there, is a mistake in
+  # the setting - not one of the two default names being unused.
+  e_named <- lin_check(now = NULL, cfg = cfg0(c(COHORT_STATUS_TABLE = "my_status")))
+  ok(!is.na(e_named) && grepl("SETTING ERROR: COHORT_STATUS_TABLE names", e_named, fixed = TRUE) &&
+       grepl("my_status", e_named, fixed = TRUE),
+     "a COHORT_STATUS_TABLE that names a table which is not there stops, naming the setting rather than reporting no status found")
+  ok(!is.na(lin_check(now = NULL, cfg = cfg0(c(COHORT_STATUS_TABLE = "my_status",
+                                                LOT_ALLOW_UNPROVEN_LINEAGE = "TRUE")))),
+     "...and the waiver does not cover it, because a wrong setting is not an unproven lineage")
+  ok(missing_object_error(simpleError("[TABLE_OR_VIEW_NOT_FOUND] The table x cannot be found")) &&
+       missing_object_error(simpleError("Table or view not found: wk.t")) &&
+       missing_object_error(simpleError("AnalysisException: Table wk.t does not exist")) &&
+       !missing_object_error(simpleError(perm)) &&
+       missing_column_error(simpleError("[UNRESOLVED_COLUMN.WITH_SUGGESTION] cannot resolve `y`")) &&
+       missing_column_error(simpleError("cannot resolve 'COHORT_RUN_ID' given input columns: [RUN_ID]")) &&
+       !missing_column_error(simpleError(perm)),
+     "the two classifiers tell an absent object and an absent column from every other failure")
+  # ...and the plain-English phrases are held to the thing they are about:
+  # a grant or a principal that "does not exist" is not an absent table.
+  ok(!missing_object_error(simpleError("PERMISSION_DENIED: principal `svc` does not exist")) &&
+       !missing_object_error(simpleError("Grant does not exist for user x")) &&
+       !missing_column_error(simpleError("Function cannot resolve the session")),
+     "...so an outage whose words happen to include 'does not exist' is not read as an older run")
+  # A missing grant is not retried: the lineage stop fires at once, not after
+  # four sleeps.
+  n_tries <- 0L
+  e_retry <- errs(with_retry(function() { n_tries <<- n_tries + 1L; stop(perm) },
+                             max_retries = 3L, base_sleep = 0))
+  ok(!is.na(e_retry) && n_tries == 1L,
+     "a permission error is permanent to with_retry(), as it is to the LOT engine's")
+  # The completion-time recheck keeps the driver's reason.
+  e_re <- errs(local({
+    e <- new.env(parent = environment(check_lot_lineage_unchanged))
+    e$db_q <- function(con, sql) stop(perm)
+    e$log_msg <- function(...) invisible(NULL)
+    stubbed(check_lot_lineage_unchanged, e, character(0))(NULL, list(RUN_ID = "lot1", UPDATED_AT = "2026-09-10 05:00:00"))
+  }))
+  ok(!is.na(e_re) && grepl("could not be re-read", e_re, fixed = TRUE) &&
+       grepl("INSUFFICIENT_PERMISSIONS", e_re, fixed = TRUE),
+     "the completion-time recheck stops with the driver's own words, so the failure record can tell a revoked grant from a dropped table")
+  # The same distinction where the cohorts module asks whether the engine's
+  # allflags table is there: absent is an older LOT build and the funnel goes
+  # on without its opening step; unreadable stops.
+  presence_of <- function(msg) {
+    e <- new.env(parent = environment(table_presence))
+    e$db_q <- function(con, sql) if (is.null(msg)) data.frame(col_name = "PATID") else stop(msg)
+    stubbed(table_presence, e, character(0))(NULL, "t")
+  }
+  ok(identical(as.character(presence_of(NULL)), "ok") &&
+       identical(as.character(presence_of("[TABLE_OR_VIEW_NOT_FOUND] t")), "absent") &&
+       identical(as.character(presence_of(perm)), "unreadable") &&
+       identical(attr(presence_of(perm), "why"), perm),
+     "table_presence() answers ok, absent or unreadable, and carries the driver's words on the last")
+  origin_of <- function(msg) {
+    e <- new.env(parent = environment(attrition_origin))
+    e$db_q <- function(con, sql) if (is.null(msg)) data.frame(col_name = "PATID") else stop(msg)
+    said <- character(0)
+    e$log_msg <- function(...) said <<- c(said, paste0(...))
+    out <- errs(stubbed(attrition_origin, e, "table_presence")(NULL, cfg0(), COHORTS[["1L"]]))
+    list(err = out, said = said)
+  }
+  ok(is.na(origin_of("[TABLE_OR_VIEW_NOT_FOUND] t")$err) &&
+       any(grepl("is not there", origin_of("[TABLE_OR_VIEW_NOT_FOUND] t")$said, fixed = TRUE)),
+     "an allflags table that is not there is an older LOT build: the funnel goes on without its opening step, and says so")
+  e_af <- origin_of(perm)$err
+  ok(!is.na(e_af) && grepl("ATTRITION ERROR", e_af, fixed = TRUE) &&
+       grepl("INSUFFICIENT_PERMISSIONS", e_af, fixed = TRUE) &&
+       grepl("not the same as its being absent", e_af, fixed = TRUE),
+     "...while one that cannot be read stops, rather than recording a funnel with no opening step on the strength of an outage")
   # The attempt is known and the cohort's own status is not. That is unproven,
   # not wrong, so it is the one case the waiver covers.
   e_unproven <- lin_check(now = NULL)
@@ -1240,6 +1389,22 @@ cat("\nthe rules that hold the numbers up\n")
            paste(readLines("build.R", warn = FALSE), collapse = "\n"),
            fixed = TRUE),
      "...and build.R sources load_inputs.R on its own, ahead of the settings")
+
+  # 10c. The contract hash a run records is over the contract's LINES, so a
+  # sibling reading a checkout with other line endings computes the same one.
+  # local(), so the on.exit() cleanups run: in the bare block around this
+  # they were registered against no frame and silently dropped.
+  local({
+    md5 <- study_contract_md5()
+    tmp <- tempfile(fileext = ".csv"); on.exit(unlink(tmp), add = TRUE)
+    write_study_contract(tmp)
+    crlf <- tempfile(fileext = ".csv"); on.exit(unlink(crlf), add = TRUE)
+    writeBin(charToRaw(paste0(paste(readLines(tmp, warn = FALSE), collapse = "\r\n"), "\r\n")), crlf)
+    ok(grepl("^[0-9a-f]{32}$", md5) && identical(md5, contract_text_md5(tmp)) &&
+         identical(md5, contract_text_md5(crlf)) &&
+         !identical(md5, unname(tools::md5sum(crlf))),
+       "STUDY_CONTRACT_MD5 is the md5 of the contract's lines: the same for a CRLF copy, where a byte hash differs")
+  })
 
   # 11. Every code list a module loads is declared, so preflight can see it.
   loaded <- unique(unlist(lapply(names(MODULES), function(k) {
@@ -2731,7 +2896,13 @@ cat("\n-- the controller re-checks the LOT build before recording complete --\n"
     env$resolve_modules <- function(cfg)
       list(spine = utils::modifyList(MODULES$spine, list(fn = "noop_mod")))
     env$describe_plan <- function(cfg, cohorts, mods) character(0)
+    # The lineage helpers too: check_lot_lineage() calls them, and a copy
+    # left in the global environment reads through the real db_q. That used
+    # to pass, because lot_run_inputs() turned the real driver's error into
+    # NULL - the fail-open the fixture was hiding.
     for (nm in c("check_lot_lineage", "check_lot_lineage_unchanged",
+                 "lot_run_inputs", "check_cohort_attempt", "cohort_build_now",
+                 "check_lot_code",
                  "read_upstream_settings", "write_run_metadata", "ensure_columns",
                  "describe_columns")) {
       g <- get(nm); environment(g) <- env; env[[nm]] <- g

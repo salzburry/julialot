@@ -94,6 +94,11 @@ scenario_from_row <- function(prefix, row) {
     # what the reader actually refuses on. Blank on a build from before that
     # column existed, and the reader then falls back to the sentence.
     release_recoverable_tables = g("RELEASE_RECOVERABLE_TABLES"),
+    # Which contract the run was driven by, and which code produced it. The
+    # first decides whether this dashboard's registry can say anything about
+    # the run at all - see scenario_contract_bound(). The second is shown.
+    study_contract_md5 = g("STUDY_CONTRACT_MD5"),
+    study_code_md5 = g("STUDY_CODE_MD5"),
     readings = readings,
     # A label a stakeholder can pick out of a list. The prefix is the identity;
     # what makes one scenario interesting is where its readings differ, and
@@ -102,11 +107,46 @@ scenario_from_row <- function(prefix, row) {
     label = prefix)
 }
 
+# Was the run driven by the contract this dashboard's registry IS?
+#
+# Every decision below about a run - which tables it wrote, which of them
+# have a released copy, which switch turns which on - is made from the
+# registry loaded at startup, and the run records the hash of the contract
+# it was actually driven by. A run of another version can have released a
+# table this registry does not know as released, and reading its raw table
+# under this registry's rules would show a number that run withheld. So the
+# two are compared, and a difference makes the run unusable here.
+#
+# TRUE and FALSE where the run recorded a hash; NA where it did not, which is
+# a run of a package from before the column - unproven, not wrong, and used.
+scenario_contract_bound <- function(s) {
+  have <- trimws(as.character(s$study_contract_md5 %||% ""))
+  if (!nzchar(have) || identical(toupper(have), "NA")) return(NA)
+  identical(have, DASH_CONTRACT_MD5)
+}
+
 # Only a run that finished has numbers worth showing. A `started` row is a run
 # still going or one that died before its handler; `failed` is a run that
 # stopped. Both are listed, and both are marked, because a scenario that is
-# missing from a comparison for want of a finished run is worth seeing.
-scenario_is_usable <- function(s) identical(tolower(s$state), "complete")
+# missing from a comparison for want of a finished run is worth seeing. And
+# only a run this registry can describe - see scenario_contract_bound().
+scenario_is_usable <- function(s)
+  identical(tolower(s$state), "complete") && !isFALSE(scenario_contract_bound(s))
+
+# Why not, in one sentence a page can show. "" for a usable run.
+scenario_unusable_why <- function(s) {
+  if (!identical(tolower(s$state), "complete"))
+    return(sprintf("This run is '%s', not complete.",
+                   if (nzchar(s$state %||% "")) s$state else "unrecorded"))
+  if (isFALSE(scenario_contract_bound(s)))
+    return(sprintf(paste(
+      "This run was driven by a different study contract (%s) from the one",
+      "this dashboard's registry describes (%s), so which tables it wrote,",
+      "and which of them it published suppressed, cannot be decided here.",
+      "Open it with the dashboard beside the package that produced it."),
+      substr(s$study_contract_md5, 1, 8), substr(DASH_CONTRACT_MD5, 1, 8)))
+  ""
+}
 
 # What actually differs across a set of scenarios, setting by setting.
 #

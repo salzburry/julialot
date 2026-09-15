@@ -105,6 +105,10 @@ export_one <- function(prefix, env) {
   # that mixture as one run.
   d     <- file.path(out_dir, prefix)
   stage <- file.path(out_dir, paste0(".", prefix, ".staging"))
+  # Before the stage is cleared: that is the first thing a second Job into
+  # the same Dataset would take from a running one.
+  unlock <- snapshot_lock(out_dir)
+  on.exit(unlock(), add = TRUE)
   unlink(stage, recursive = TRUE)
   dir.create(stage, recursive = TRUE, showWarnings = FALSE)
   on.exit(unlink(stage, recursive = TRUE), add = TRUE)
@@ -145,9 +149,12 @@ export_one <- function(prefix, env) {
   # this run's and do not enter its snapshot - whatever sits under the prefix.
   # The same rules the app reads by (scenario_wrote, restrict_to_cohorts).
   scen <- scenario_from_row(prefix, pin)
+  # Not complete, or driven by a contract this registry cannot describe - the
+  # sentence is the app's, so the job and the page refuse the same run in the
+  # same words.
   if (!scenario_is_usable(scen))
-    stop("the newest run under ", prefix, " is '", scen$state, "', not ",
-         "complete, so there is nothing finished to export", call. = FALSE)
+    stop("the newest run under ", prefix, " cannot be exported. ",
+         scenario_unusable_why(scen), call. = FALSE)
   if (!length(scen$modules) || !length(scen$cohorts))
     stop("the run under ", prefix, " recorded no modules or no cohorts, so ",
          "nothing under the prefix can be attributed to it", call. = FALSE)

@@ -53,12 +53,22 @@ study_contract <- function() {
 # driven by, so a table filled from the copy can be checked against the run
 # that produced the numbers rather than against whatever the copy says today.
 #
-# Over the CSV's own bytes, so it is the same value the sibling could compute
-# from the file it holds.
+# Over the CSV's LINES rather than its bytes. The sibling reads a copy that
+# has been through version control, and a checkout on another platform can
+# rewrite the line endings without touching a character of the content; a
+# byte hash would then refuse a contract that is the same contract. So the
+# value is the md5 of the lines joined by "\n" with one at the end - the same
+# function, contract_text_md5(), that TFLS computes over its shipped copy.
+contract_text_md5 <- function(path) {
+  txt <- paste0(paste(readLines(path, warn = FALSE), collapse = "\n"), "\n")
+  tmp <- tempfile(); on.exit(unlink(tmp), add = TRUE)
+  writeBin(charToRaw(txt), tmp)
+  unname(tools::md5sum(tmp))
+}
 study_contract_md5 <- function() {
   tmp <- tempfile(); on.exit(unlink(tmp), add = TRUE)
   write_study_contract(tmp)
-  unname(tools::md5sum(tmp))
+  contract_text_md5(tmp)
 }
 
 # ...and which CODE that contract came out of.

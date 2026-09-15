@@ -588,6 +588,60 @@ cat("\nwithholding a cell is not the same as hiding it\n")
        paste0("...and a run recorded as '", st, "' is not"))
   }
 
+  # --- and neither is a run this registry cannot describe ---
+  #
+  # Every decision about a run is made from the registry loaded at startup,
+  # and the run records the contract it was driven by. A run of another
+  # version can have released a table this registry does not know as
+  # released, and its raw table read under this registry's rules would show
+  # what that run withheld.
+  ok(grepl("^[0-9a-f]{32}$", DASH_CONTRACT_MD5) &&
+       identical(DASH_CONTRACT_MD5, study_contract_md5()),
+     "the dashboard knows which contract its registry is, by the package's own hash")
+  other <- utils::modifyList(SCENARIOS[[1]],
+                             list(study_contract_md5 = "00000000000000000000000000000000"))
+  ok(isTRUE(scenario_contract_bound(SCENARIOS[[1]])) &&
+       isFALSE(scenario_contract_bound(other)),
+     "a run driven by this registry's contract is bound, and one driven by another is not")
+  ok(isFALSE(scenario_is_usable(other)),
+     "...and a run driven by another contract is not usable, complete or not")
+  why <- scenario_unusable_why(other)
+  ok(grepl("different study contract", why, fixed = TRUE) && grepl("00000000", why, fixed = TRUE) &&
+       grepl(substr(DASH_CONTRACT_MD5, 1, 8), why, fixed = TRUE),
+     "...and the page says so, naming both contracts")
+  st <- scenario_table_status(other, "S_DEMOGRAPHICS")
+  ok(isFALSE(st$ok) && grepl("different study contract", st$why, fixed = TRUE) &&
+       !grepl("not complete", st$why, fixed = TRUE),
+     "...so every table of it reads as absent, for that reason and not for a state it does not have")
+  ok(is.null(read_scenario_table(SRC, other, "S_DEMOGRAPHICS")),
+     "...and the reader returns nothing for it")
+  legacy <- utils::modifyList(SCENARIOS[[1]], list(study_contract_md5 = ""))
+  ok(is.na(scenario_contract_bound(legacy)) && isTRUE(scenario_is_usable(legacy)),
+     "a run that predates STUDY_CONTRACT_MD5 recorded nothing to compare, and is used")
+  ok(is.na(scenario_contract_bound(utils::modifyList(SCENARIOS[[1]],
+                                                     list(study_contract_md5 = "NA")))),
+     "...as is one whose snapshot wrote the missing value as the string NA")
+  ok(identical(scenario_unusable_why(SCENARIOS[[1]]), "") &&
+       grepl("not complete", scenario_unusable_why(utils::modifyList(SCENARIOS[[1]], list(state = "failed"))), fixed = TRUE),
+     "a usable run has no reason, and a failed one's reason is still its state")
+  # A snapshot's metadata row is text. An all-digit hash or run id left to
+  # read.csv would come back as a number, and as a different string - and a
+  # run whose contract hash happened to be all digits would be refused as
+  # driven by another.
+  local({
+    root <- file.path(tempdir(), paste0("dash_snap_", sample.int(1e6, 1)))
+    dir.create(file.path(root, "p_"), recursive = TRUE)
+    on.exit(unlink(root, recursive = TRUE), add = TRUE)
+    utils::write.csv(data.frame(RUN_ID = "20260915053000", STATE = "complete",
+                                STUDY_CONTRACT_MD5 = "12345678901234567890123456789012",
+                                stringsAsFactors = FALSE),
+                     file.path(root, "p_", "S_RUN_METADATA.csv"), row.names = FALSE)
+    md <- snapshot_source(list(snapshot_dir = root, prefixes = character(0)))$read("p_", "S_RUN_METADATA")
+    ok(identical(md$STUDY_CONTRACT_MD5, "12345678901234567890123456789012") &&
+         identical(md$RUN_ID, "20260915053000"),
+       "a snapshot reads the metadata row as text, so an all-digit hash or run id is the string it was")
+  })
+
   # --- path segments ---
   ok(!safe_segment("../../etc"), "a path segment cannot climb out of the root")
   ok(!safe_segment(".."), "...nor be the climb itself")
@@ -989,8 +1043,67 @@ source(file.path(here, "jobs", "export_lib.R"))
   ok(identical(readLines(file.path(root, "sc_a_", "S_RUN_METADATA.csv"))[2],
                "new_run"),
      "...and what is there is the new run")
-  ok(!dir.exists(file.path(root, "sc_a_.previous")),
+  ok(!dir.exists(file.path(root, "sc_a_.previous")) &&
+       !dir.exists(file.path(root, ".sc_a_.previous")) &&
+       !dir.exists(file.path(root, ".sc_a_.discard")),
      "...with no half-swapped directory left beside it")
+
+  # A KILLED refresh, not a failed one. Directory renames are atomic, so a
+  # kill leaves one of three states, and the next export has to resolve each
+  # to a whole snapshot before it starts - under names no reader lists, so
+  # that while it waits nothing shows up as a scenario.
+  #
+  # Killed between the two renames: the published directory is gone and its
+  # set-aside is the only copy.
+  dir.create(file.path(root, ".sc_c_.previous"), recursive = TRUE)
+  writeLines("RUN_ID\nold_run", file.path(root, ".sc_c_.previous", "S_RUN_METADATA.csv"))
+  ok(!"sc_c_" %in% snapshot_source(list(snapshot_dir = root, prefixes = character(0)))$prefixes() &&
+       !any(grepl("previous", snapshot_source(list(snapshot_dir = root, prefixes = character(0)))$prefixes())),
+     "a set-aside snapshot is listed by no reader, so a killed refresh shows no scenario under a name of its own")
+  said <- capture.output(r <- recover_swap(file.path(root, "sc_c_")), type = "message")
+  ok(identical(r, "restored") &&
+       identical(readLines(file.path(root, "sc_c_", "S_RUN_METADATA.csv"))[2], "old_run") &&
+       !dir.exists(file.path(root, ".sc_c_.previous")) &&
+       any(grepl("put back", said, fixed = TRUE)),
+     "...and the next export puts the previous snapshot back under its own identity before it starts")
+  # Killed after the swap, before the discard: both are there, and the new
+  # one is the one to keep.
+  dir.create(file.path(root, ".sc_c_.previous"))
+  writeLines("RUN_ID\nolder", file.path(root, ".sc_c_.previous", "S_RUN_METADATA.csv"))
+  said <- capture.output(r <- recover_swap(file.path(root, "sc_c_")), type = "message")
+  ok(identical(r, "discarded") &&
+       identical(readLines(file.path(root, "sc_c_", "S_RUN_METADATA.csv"))[2], "old_run") &&
+       !dir.exists(file.path(root, ".sc_c_.previous")) && !dir.exists(file.path(root, ".sc_c_.discard")),
+     "a refresh killed after its swap is recognised as complete: the published snapshot is kept and the set-aside discarded")
+  # Killed inside the discard.
+  dir.create(file.path(root, ".sc_c_.discard")); writeLines("x", file.path(root, ".sc_c_.discard", "S_RUN_METADATA.csv"))
+  ok(identical(recover_swap(file.path(root, "sc_c_")), "clean") && !dir.exists(file.path(root, ".sc_c_.discard")),
+     "...and a discard cut short is finished, touching nothing else")
+  # The swap itself goes through the recovery, so a stale set-aside never
+  # survives into a publish that would then set aside over it.
+  dir.create(file.path(root, ".sc_c_.previous")); writeLines("RUN_ID\nstale", file.path(root, ".sc_c_.previous", "S_RUN_METADATA.csv"))
+  st2 <- file.path(root, ".sc_c_.staging"); dir.create(st2)
+  writeLines("RUN_ID\nnewest", file.path(st2, "S_RUN_METADATA.csv"))
+  said <- capture.output(publish(st2, file.path(root, "sc_c_"), 1L, "sc_c_", ""), type = "message")
+  ok(identical(readLines(file.path(root, "sc_c_", "S_RUN_METADATA.csv"))[2], "newest") &&
+       !dir.exists(file.path(root, ".sc_c_.previous")) && !dir.exists(file.path(root, ".sc_c_.discard")),
+     "a publish over a stale set-aside resolves it first and ends with the new snapshot alone")
+
+  # One export at a time into a root.
+  unlock <- snapshot_lock(root)
+  e_lock <- tryCatch({ snapshot_lock(root); NA_character_ }, error = function(e) conditionMessage(e))
+  ok(!is.na(e_lock) && grepl("another export holds", e_lock, fixed = TRUE) &&
+       dir.exists(file.path(root, SNAPSHOT_LOCK)),
+     "a second export into the same root is refused, and leaves the first one's lock in place")
+  unlock()
+  ok(!dir.exists(file.path(root, SNAPSHOT_LOCK)) && is.function(snapshot_lock(root)),
+     "...and once released the root can be locked again")
+  unlink(file.path(root, SNAPSHOT_LOCK), recursive = TRUE)
+  jb_src <- paste(readLines("jobs/build_scenarios.R", warn = FALSE), collapse = "\n")
+  ok(regexpr("unlock <- snapshot_lock(out_dir)", jb_src, fixed = TRUE) > 0 &&
+       regexpr("unlock <- snapshot_lock(out_dir)", jb_src, fixed = TRUE) <
+         regexpr("unlink(stage, recursive = TRUE)", jb_src, fixed = TRUE),
+     "the job takes the lock before it clears its staging directory, which is the first thing a second Job would take from a running one")
 
   # A refresh that never reaches publish() leaves the previous snapshot as it
   # was, under its own identity.

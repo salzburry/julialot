@@ -23,6 +23,9 @@
 #   TFLS_PACKAGE_DIR   the study package directory, for its own connection
 #   TFLS_COHORT_TABLE  warehouse only: the input cohort table, which carries
 #                      the diagnosis date that no study output does
+#   TFLS_STUDY_CODE_MD5  the approved study build's code fingerprint
+#                      (S_RUN_METADATA.STUDY_CODE_MD5). Unset checks nothing;
+#                      set, a run produced by any other code is refused.
 #   TFLS_TTE_ELIGIBLE_ONLY  TRUE restricts every curve to TTE_ELIGIBLE = 1.
 #                      Off by default: the study writes the whole cohort and
 #                      leaves the restriction to the reader, so applying it is
@@ -141,6 +144,12 @@ snapshot_reader <- function(root, prefix, lot_dir = "") {
     if (!file.exists(p) && nzchar(lot_dir) && safe_segment(lot_dir))
       p <- file.path(root, "lot", lot_dir, paste0(table, ".csv"))
     if (!file.exists(p)) return(NULL)
+    # The metadata row is text, every field of it. Left to read.csv a run id
+    # or a hash that happens to be all digits is parsed as a number and read
+    # back as a different string, and the run then fails to bind to itself.
+    if (identical(toupper(table), "S_RUN_METADATA"))
+      return(utils::read.csv(p, stringsAsFactors = FALSE, check.names = FALSE,
+                             na.strings = c("", "NA"), colClasses = "character"))
     utils::read.csv(p, stringsAsFactors = FALSE, check.names = FALSE,
                     na.strings = c("", "NA"))
   }
@@ -202,7 +211,7 @@ warehouse_reader <- function(con, catalog, schema, prefix, cohort_table = "") {
 # build's or part of this one. And its own declaration, because a prefix holds
 # whatever every run before this one left under it: a run that recorded no
 # modules, or no cohorts, can vouch for none of it.
-bind_run <- function(reader, where) {
+bind_run <- function(reader, where, check_contract = TRUE) {
   raw <- reader("S_RUN_METADATA")
   md <- newest_row(raw)
   if (is.null(md)) {
@@ -233,7 +242,40 @@ bind_run <- function(reader, where) {
          paste(missing, collapse = " and no "), ", so nothing under this ",
          "prefix can be shown to be its own rather than a previous run's. ",
          "Nothing was filled.", call. = FALSE)
+  # And the contract this copy reads is the one that run was driven by. The
+  # file's own checks catch a contract that is malformed; only the run can
+  # say whether a well-formed one is ITS.
+  # Once per run: the recheck after the fill binds the same run again to
+  # see it is still the same build, and would otherwise repeat the warning
+  # for a run that predates the column.
+  if (check_contract) check_contract_binding(md, where)
+  # WHICH study code, where a study team has said which. The run records
+  # the fingerprint of the R that produced it; TFLS_STUDY_CODE_MD5 is where
+  # the approved one is pinned, the same way the study package pins the LOT
+  # engine's with LOT_CODE_MD5. Unset checks nothing.
+  check_study_code(md, where)
   md
+}
+
+check_study_code <- function(md, where) {
+  want <- env_chr("TFLS_STUDY_CODE_MD5")
+  if (!nzchar(want)) return(invisible(NULL))
+  have <- row_field(md, "STUDY_CODE_MD5")
+  if (identical(toupper(have), "NA")) have <- ""
+  if (!nzchar(have))
+    stop("TFLS_STUDY_CODE_MD5 is set to ", want, ", and the run under ", where,
+         " records no code fingerprint to compare it to: it predates ",
+         "STUDY_CODE_MD5. Fill from a run of the current study package, or ",
+         "unset TFLS_STUDY_CODE_MD5 to fill from a run whose code this ",
+         "cannot name. Nothing was filled.", call. = FALSE)
+  if (!identical(want, have))
+    stop("The run under ", where, " was produced by study code ", have,
+         ", and TFLS_STUDY_CODE_MD5 says to fill only from ", want, ". It ",
+         "names the study build a study team approved, so a run produced by ",
+         "any other code is refused here rather than filled under the ",
+         "approved one's name. Nothing was filled.", call. = FALSE)
+  cat("  study code ", substr(have, 1, 8), " is the approved build\n", sep = "")
+  invisible(TRUE)
 }
 
 # --- the run ----------------------------------------------------------------
@@ -270,7 +312,6 @@ write_outputs <- function(filled, sh, floor_n, run_id) {
   tfls_write_csv(unf, file.path(stage, "tfls_unfilled.csv"))
 
   publish_outputs(stage, out_dir, run_id)
-  unlink(prev, recursive = TRUE)
   n_cells <- sum(vapply(filled, function(f) sum(f$cells$SECTION == 0L), integer(1)))
   n_supp <- sum(vapply(filled, function(f)
     sum(f$cells$SECTION == 0L & f$cells$SUPPRESSED == 1L), integer(1)))
@@ -328,7 +369,8 @@ main <- function() {
       snapshot_reader(root, prefix, lot_dir_name(row_field(md, "LOT_RUN_ID"),
                                                  row_field(md, "LOT_RUN_VERSION"))),
       scope)
-    recheck <- function() bind_run(snapshot_reader(root, prefix), where)
+    recheck <- function() bind_run(snapshot_reader(root, prefix), where,
+                                   check_contract = FALSE)
   } else {
     # Nothing above this line needs a driver, so the plan prints on a machine
     # that has none. The connection is opened only once the run is asked for.

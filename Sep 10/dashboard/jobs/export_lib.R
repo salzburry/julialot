@@ -53,18 +53,80 @@ read_export <- function(con, name, optional = FALSE) {
 # Not atomic in the filesystem sense - two renames cannot be - but each
 # directory is replaced whole, and a failure before this point leaves every
 # published directory exactly as it was.
+# One export at a time into a snapshot root. Domino can start two Jobs into
+# one Dataset, and the second would remove the first's staging directory on
+# its way in (export_one() clears its stage before writing) and then swap its
+# directories in between the first's. dir.create() is the one create-or-fail
+# base R offers, so a directory is the lock; it is removed however the export
+# ends, and so left behind only by a Job that was killed - which is what the
+# message says.
+SNAPSHOT_LOCK <- ".export.lock"
+snapshot_lock <- function(out_dir) {
+  lock <- file.path(out_dir, SNAPSHOT_LOCK)
+  dir.create(out_dir, showWarnings = FALSE, recursive = TRUE)
+  if (!dir.create(lock, showWarnings = FALSE))
+    stop("another export holds ", lock, ", so this one would swap its ",
+         "directories in between that one's. If no other Job is exporting ",
+         "into ", out_dir, ", the lock was left by one that was killed: ",
+         "remove the directory and run again.", call. = FALSE)
+  function() unlink(lock, recursive = TRUE)
+}
+
+# The set-aside and the discard of a published directory, under names no
+# reader lists: safe_segment() refuses a leading dot, so neither can appear
+# as a scenario. A killed swap used to leave `<prefix>.previous`, which the
+# snapshot source listed as a scenario of its own while `<prefix>` was gone.
+set_aside_name <- function(to) file.path(dirname(to), paste0(".", basename(to), ".previous"))
+discard_name   <- function(to) file.path(dirname(to), paste0(".", basename(to), ".discard"))
+
+# A swap that was killed part-way, put right before the next one. Directory
+# renames are atomic, so a kill leaves one of three states and each resolves
+# to a whole snapshot: the published directory gone and its set-aside there
+# (killed between the two renames) - put it back; both there (killed before
+# the discard) - discard the old one; a discard directory there - finish
+# removing it. Nothing reads a .discard directory, so its removal can stop
+# anywhere.
+recover_swap <- function(to) {
+  old <- set_aside_name(to); gone <- discard_name(to)
+  if (dir.exists(gone)) unlink(gone, recursive = TRUE)
+  if (!dir.exists(old)) return(invisible("clean"))
+  if (!dir.exists(to)) {
+    if (!file.rename(old, to))
+      stop("a refresh before this one was killed with the previous snapshot ",
+           "set aside at ", old, ", and it could not be put back. Restore it ",
+           "by hand before exporting again.", call. = FALSE)
+    message("  recovered ", basename(to), ": a refresh before this one was ",
+            "killed after setting the previous snapshot aside, so it has ",
+            "been put back")
+    return(invisible("restored"))
+  }
+  discard_set_aside(old, gone)
+  message("  recovered ", basename(to), ": a refresh before this one had ",
+          "completed and only its cleanup was lost")
+  invisible("discarded")
+}
+
+discard_set_aside <- function(old, gone) {
+  unlink(gone, recursive = TRUE)
+  if (dir.exists(old) && !file.rename(old, gone))
+    stop("could not discard the set-aside snapshot at ", old, "; remove it ",
+         "by hand.", call. = FALSE)
+  unlink(gone, recursive = TRUE)
+  invisible(TRUE)
+}
+
 publish <- function(stage, dest, n, prefix, lot_id, lstage = NULL, ldest = NULL) {
   swap <- function(from, to) {
     if (is.null(from) || !dir.exists(from)) return(invisible(FALSE))
-    old <- paste0(to, ".previous")
-    unlink(old, recursive = TRUE)
+    recover_swap(to)
+    old <- set_aside_name(to)
     if (dir.exists(to) && !file.rename(to, old))
       stop("could not set aside the previous snapshot at ", to, call. = FALSE)
     if (!file.rename(from, to)) {
       if (dir.exists(old)) file.rename(old, to)   # put the old one back
       stop("could not publish ", to, call. = FALSE)
     }
-    unlink(old, recursive = TRUE)
+    discard_set_aside(old, discard_name(to))
     invisible(TRUE)
   }
   swap(lstage, ldest)

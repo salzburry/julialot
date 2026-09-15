@@ -161,16 +161,61 @@ run_version_stamp <- function(x) {
 # blank or `#` row cut off, and the normalised types beside them where the
 # response carried a type column (`typed`). The raw column names travel along
 # for a message.
+# Two questions an error can answer, kept apart because they call for opposite
+# responses.
+#
+# "It is not there" is a fact about the warehouse - a table or a column that
+# was never written - and a reader can decide what an absence means: an older
+# build that predates a column, a status that was never recorded. "It could
+# not be read" is not a fact about anything: a permission refused, a session
+# dropped, a statement the engine would not parse. Treating the second as the
+# first turns every outage into "nothing was recorded", which is the answer
+# that accepts. The LOT engine asks the same question of itself
+# (missing_object_error in its db_utils_lot.R); the patterns are its.
+#
+# The plain-English phrases are held to the thing they are about: "does not
+# exist" on its own turns up in messages about principals and grants, and
+# a reader that took those for an absent table would accept an outage as an
+# older run. Spark's own error classes are matched as they are.
+missing_object_error <- function(err) {
+  msg <- if (inherits(err, "condition")) conditionMessage(err) else as.character(err)
+  length(msg) == 1L && !is.na(msg) &&
+    grepl(paste0("TABLE_OR_VIEW_NOT_FOUND|Table or view not found|no such table|",
+                 "(table|view|schema|database)[^\n]{0,80}",
+                 "(does not exist|not found|cannot be found|could not be found)"),
+          msg, ignore.case = TRUE)
+}
+# ...and the same for a column the table does not carry, which is how an older
+# writer's table answers a newer reader's SELECT.
+missing_column_error <- function(err) {
+  msg <- if (inherits(err, "condition")) conditionMessage(err) else as.character(err)
+  length(msg) == 1L && !is.na(msg) &&
+    grepl(paste0("UNRESOLVED_COLUMN|no such column|",
+                 "(column|field)[^\n]{0,80}",
+                 "(cannot be resolved|not found|does not exist|cannot resolve)|",
+                 "cannot resolve[^\n]{0,80}given input columns"),
+          msg, ignore.case = TRUE)
+}
+
 # Is this table there to be read? Asked before an OPTIONAL read - one whose
 # absence changes what a run can SAY rather than what it computes - so that the
 # absence is reported once, in this package's words, instead of arriving as a
 # warehouse error from the middle of a statement.
 #
+# Three answers, not two. "absent" is a fact the caller can act on; "unreadable"
+# is not - a permission refused or a session dropped says nothing about whether
+# the table is there - and a caller that took it for absent would go on
+# without the table on the strength of an outage. The driver's message rides
+# on the answer for the caller's stop.
+#
 # A DESCRIBE, not a SELECT: it is the cheapest question that distinguishes an
 # absent table from an empty one, and an empty table IS readable.
-table_readable <- function(con, name)
-  !inherits(tryCatch(db_q(con, sprintf("DESCRIBE %s", name)),
-                     error = function(e) e), "error")
+table_presence <- function(con, name) {
+  r <- tryCatch(db_q(con, sprintf("DESCRIBE %s", name)), error = function(e) e)
+  if (!inherits(r, "error")) return("ok")
+  structure(if (missing_object_error(r)) "absent" else "unreadable",
+            why = conditionMessage(r))
+}
 
 describe_columns <- function(con, name) {
   d <- db_q(con, sprintf("DESCRIBE %s", name))
@@ -364,9 +409,14 @@ split_statements <- function(sql) {
 
 with_retry <- function(fn, max_retries = study_config()$max_retries,
                        base_sleep = study_config()$base_sleep) {
+  # A missing grant is permanent too: no amount of waiting grants a
+  # privilege, and a lineage check that stops on one should stop at once,
+  # not after four sleeps. The patterns are the LOT engine's.
   permanent <- c("AnalysisException", "TABLE_OR_VIEW_NOT_FOUND",
                  "Table or view not found", "ParseException", "Syntax error",
-                 "AMBIGUOUS_REFERENCE", "UNRESOLVED_COLUMN")
+                 "AMBIGUOUS_REFERENCE", "UNRESOLVED_COLUMN",
+                 "INSUFFICIENT_PERMISSIONS", "PERMISSION_DENIED",
+                 "UnauthorizedAccessException", "does not have permission")
   for (i in seq_len(max_retries + 1L)) {
     out <- tryCatch(fn(), error = function(e) e)
     if (!inherits(out, "error")) return(out)

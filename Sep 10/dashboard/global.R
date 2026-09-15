@@ -23,10 +23,16 @@ if (!dir.exists(.pkg_dir))
   stop("DASHBOARD ERROR: cannot find the study package. Set DASH_PACKAGE_DIR ",
        "to the directory holding R/registry.R.", call. = FALSE)
 
-for (f in c("config_223926.R", "db_utils_223926.R", "registry.R", "windows.R"))
+for (f in c("config_223926.R", "db_utils_223926.R", "registry.R", "contract.R",
+            "windows.R"))
   source(file.path(.pkg_dir, "R", f))
 # The cohort registry declares CRITERION_FLAG and the cohort list.
 source(file.path(.pkg_dir, "R", "modules", "01_cohorts.R"))
+# WHICH registry this is. Everything below decides from it which tables a
+# run wrote and which of them were published suppressed, and a run records
+# the hash of the contract it was driven by; a run driven by another one is
+# not decidable here and is refused (scenario_contract_bound in R/scenarios.R).
+DASH_CONTRACT_MD5 <- study_contract_md5()
 
 source(file.path(.dash_dir, "config", "dashboard_config.R"))
 for (f in c("spec.R", "scenarios.R", "aggregate.R", "prepare.R", "synthetic.R",
