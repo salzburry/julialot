@@ -182,6 +182,23 @@ cfg_defaults <- function() {
       .env_int("ACUTE_WASHOUT_DAYS", CONTRACT$acute_washout_days),
     tte_min_potential_fu_days =
       .env_int("TTE_MIN_POTENTIAL_FU_DAYS", CONTRACT$tte_min_potential_fu_days),
+    # The diagnosis date Table 4's year of diagnosis, follow-up from diagnosis
+    # and Table 5's time from diagnosis to 1L are anchored on.
+    #
+    #   cohort_mm_dx          the cohort build's MM_DX_DT: the qualifying I1
+    #                         diagnosis, which I2's age and I3's "on or after
+    #                         MM diagnosis" are already measured against. One
+    #                         diagnosis date for the whole study.
+    #   baseline_first_claim  Table 4's own words - "first medical claim for
+    #                         MM within the baseline period on or prior to
+    #                         1L" - which re-dates a patient diagnosed more
+    #                         than a year before 1L to a later claim, and
+    #                         needs the MM code list to scan for it.
+    #
+    # The cohort's date is the default: it is the date every other criterion
+    # uses, and the literal reading is a setting. ../OPEN_QUESTIONS.md Q30.
+    dx_date_source = .env_enum("DX_DATE_SOURCE", "cohort_mm_dx",
+                               c("cohort_mm_dx", "baseline_first_claim")),
 
     # --- criteria switches ------------------------------------------------
     mm_dx_outpatient_codes =
@@ -207,12 +224,29 @@ cfg_defaults <- function() {
     # Only whoever ran it knows, so it is an assertion, not a test. FALSE with
     # SEC2L selected stops rather than reporting a prevalence of zero.
     sec2l_input_is_wide = .env_lgl("SEC2L_INPUT_IS_WIDE", FALSE),
+    # The window a cohort that permits a prior malignancy reports its
+    # background prevalence over. s7.4.1.2 and s7.8.4, which are about that
+    # cohort: "all malignancies occurring after diagnosis but prior to 2L will
+    # be tabulated as the background prevalence" - so from the diagnosis to
+    # the index. s7.8.1's summary of the same analysis says "during baseline",
+    # which is the 12-month window Objective 1 uses for everything else.
+    # ../OPEN_QUESTIONS.md Q31.
+    malig_prevalence_window = .env_enum("MALIG_PREVALENCE_WINDOW", "since_diagnosis",
+                                        c("since_diagnosis", "baseline")),
     # The 1L index-setting agents are NOT a setting here. Barring belantamab,
     # panobinostat or elotuzumab from setting an index means re-deriving the
     # index date, which is the cohort build's job - it already has
     # NDMM_INDEX_EXCLUDED_ABBRS for exactly this. A second copy here would be
     # recorded as applied while applying nothing. ../BUILD_DELTA.md section 3.
     lot_allow_unproven_lineage = .env_lgl("LOT_ALLOW_UNPROVEN_LINEAGE", FALSE),
+    # ...but whether the cohort build DID bar them is checked. s7.2.1.1 I3:
+    # "Exclusions include: panobinostat and elotuzumab". The cohort build
+    # records what it barred (NDMM_RUN_METADATA.INDEX_EXCLUDED), and a build
+    # that let either agent set a 1L index made a different cohort. The names
+    # are resolved to abbreviations through cl_mma_rollup.csv; empty checks
+    # nothing. ../BUILD_DELTA.md section 1.
+    cohort_index_exclusions = .env_chr("COHORT_INDEX_EXCLUSIONS",
+                                       "panobinostat,elotuzumab"),
 
     # --- follow-up and censoring -----------------------------------------
     censor_at_disenrollment  = .env_lgl("CENSOR_AT_DISENROLLMENT", TRUE),
@@ -353,10 +387,12 @@ OPEN_QUESTION_SOURCE <- c(
   cohort_nested                       = "here",
   sec2l_apply_other_cancer            = "here",
   sec2l_input_is_wide                 = "here",
+  malig_prevalence_window             = "here",
   censor_at_disenrollment             = "here",
   months_as                           = "here",
   baseline_includes_index             = "here",
   comorbidity_baseline_includes_index = "here",
+  dx_date_source                      = "here",
   region_source                       = "here",
   enrol_attr_at                       = "here",
   ed_definition                       = "here",
@@ -385,7 +421,18 @@ OPEN_QUESTION_SOURCE <- c(
 # back and those readings stay assertions.
 UPSTREAM_SETTING_MAP <- c(
   study_start                  = "study_start",
+  lot1_index_from              = "lot1_from",
   mm_dx_outpatient_window_days = "outpatient_window")
+
+# The two of those a run cannot proceed past a disagreement on. The study
+# period and the 1L index floor are what the cohort IS: a cohort indexed from
+# 2017 under a study said to start in 2018 puts patients in the funnel whom I1
+# says are not there, and dates every window from a start the cohort was not
+# built to. The outpatient window shapes one criterion's reading and is
+# reported, not fatal. Overridable like any contract deviation - the run then
+# records the disagreement as one, and no reader accepts its numbers as the
+# study's.
+BINDING_UPSTREAM_SETTINGS <- c("study_start", "lot1_index_from")
 
 # The readings behind a run's numbers, for its metadata row.
 #

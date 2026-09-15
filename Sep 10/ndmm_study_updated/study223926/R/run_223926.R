@@ -160,6 +160,14 @@ build_223926 <- function(here) {
   # metadata of a build this run never touched.
   upstream <- if (reads_input_cohort(mods)) read_upstream_settings(con, cfg)
               else NULL
+  # A binding disagreement the override let through is a deviation of this
+  # run, recorded beside the contract's own.
+  deviations <- c(deviations, attr(upstream, "deviations"))
+  # And whether that build barred the agents s7.2.1.1 names from setting the
+  # 1L index - the one I3 rule only the cohort build can apply. Keyed to the
+  # attempt the LOT run was built from where it recorded one.
+  if (reads_input_cohort(mods))
+    check_cohort_index_exclusions(con, cfg, lot_run$COHORT_ATTEMPT_ID %||% "")
   # One id for the whole build, so `started`, `failed` and `complete` are rows
   # about the same run rather than three unrelated ones.
   rid <- new_run_id()
@@ -228,6 +236,10 @@ RUN_METADATA_COLS <- c(
   LOT_CODE_MD5 = "string",
   COHORT_ATTEMPT_ID = "string", COHORT_ATTEMPT_STAMP = "string",
   STUDY_START = "string", STUDY_END = "string",
+  # What a rate in this run's tables is per: RATE and its limits are already
+  # scaled by it, and a shell labelled for another scale would print numbers
+  # a hundred times off with nothing on the row to say so.
+  RATE_MULTIPLIER = "string",
   CONTRACT_DEVIATIONS = "string", OPEN_QUESTION_READINGS = "string",
   CODELISTS = "string", RELEASE_RECOVERABLE = "string",
   RELEASE_RECOVERABLE_TABLES = "string")
@@ -265,6 +277,7 @@ write_run_metadata <- function(con, cfg, cohorts, mods, lot_run, deviations,
             COHORT_ATTEMPT_STAMP   = q(lot_run$COHORT_ATTEMPT_STAMP %||% ""),
             STUDY_START            = q(cfg$study_start),
             STUDY_END              = q(cfg$study_end),
+            RATE_MULTIPLIER        = q(as.character(as.integer(cfg$rate_multiplier))),
             CONTRACT_DEVIATIONS    = q(if (length(deviations)) deviations else "none"),
             OPEN_QUESTION_READINGS = q(open_question_readings(cfg, upstream)),
             CODELISTS              = q(cl_str),

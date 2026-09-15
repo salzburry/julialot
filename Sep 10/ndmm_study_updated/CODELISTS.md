@@ -170,7 +170,7 @@ Keeping the existing loader conventions, so nothing about matching has to change
 
 | proposed file | columns | covers |
 |---|---|---|
-| `safety_events.csv` | `event_key`, `event_label`, `event_group`, `acute_chronic`, `code_type`, `code`, `icd_family` | all 22 Table 3 conditions |
+| `safety_events.csv` | `condition`, `domain`, `acute_chronic`, `setting` (`any`, or `inpatient` for a condition defined by an admission — the study's `severe_infection_resulting_in_hospitalisation`), `code_type`, `code`, `icd_family` | all 23 Table 3 conditions (Q36) |
 | `secondary_malig.csv` | `category`, `subtype`, `code_type`, `code`, `icd_family` | Table 2's 10 categories |
 | `comorbid_subgroups.csv` | `concept`, `code_type`, `code`, `icd_family` | neuropathy, lung parenchymal disease, any other subgroup condition |
 | `charlson_quan2011.csv` | `condition`, `weight`, `code_type`, `code`, `icd_family` | CCI |

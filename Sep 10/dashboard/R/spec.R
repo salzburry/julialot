@@ -30,9 +30,9 @@ TABLE_SPEC <- list(
     # reports, AGE_GROUP the protocol's two-group stratification that the rate
     # tables are cut by. Showing only the first would leave the grouping every
     # subgroup column depends on impossible to look at.
-    categorical = c("AGE_BAND", "AGE_GROUP", "SEX", "REGION", "RACE",
-                    "ETHNICITY", "INSURANCE_TYPE"),
-    continuous = "AGE_YEARS"),
+    categorical = c("AGE_BAND", "AGE_GROUP", "AGE_AT_DX_BAND", "SEX", "REGION",
+                    "RACE", "ETHNICITY", "INSURANCE_TYPE", "ATTR_SOURCE"),
+    continuous = c("AGE_YEARS", "AGE_AT_DX_YEARS")),
 
   S_COMORBIDITY = list(
     shape = "subject", label = "Charlson comorbidity",
@@ -42,13 +42,20 @@ TABLE_SPEC <- list(
   S_PERIODS = list(
     shape = "subject", label = "Baseline and follow-up periods",
     keys = c("COHORT", "LOT_NUM"), id = "PATID",
-    categorical = "TTE_ELIGIBLE",
-    continuous = c("FU_DAYS", "FU_MONTHS", "BASELINE_PY")),
+    # DX_YEAR and the two diagnosis-anchored durations are Table 4's year of
+    # MM diagnosis, follow-up from diagnosis, and Table 5's time from
+    # diagnosis to 1L; DX_DT_SOURCE says which diagnosis date they hang on.
+    categorical = c("TTE_ELIGIBLE", "INDEX_YEAR", "DX_YEAR", "DX_DT_SOURCE"),
+    continuous = c("FU_DAYS", "FU_MONTHS", "BASELINE_PY",
+                   "DX_TO_INDEX_MONTHS", "FU_FROM_DX_MONTHS")),
 
   S_SOC = list(
     shape = "subject", label = "SOC regimen category",
     keys = c("COHORT", "LOT_NUM"), id = "PATID",
-    categorical = c("SOC_CATEGORY", "MATCHED"), continuous = "N_AGENTS"),
+    # The transplant flags and year are Table 6's SCT-by-year-by-SOC count.
+    categorical = c("SOC_CATEGORY", "MATCHED", "LOT_START_YEAR",
+                    "AUTO_SCT", "ALLO_SCT", "CART", "AUTO_SCT_YEAR"),
+    continuous = "N_AGENTS"),
 
   S_SAFETY_RATES = list(
     shape = "rate", label = "Key safety events",
@@ -69,7 +76,7 @@ TABLE_SPEC <- list(
     shape = "rate", label = "Secondary malignancies",
     keys = c("COHORT", "LOT_NUM", "PERIOD", "SOC_CATEGORY", "AGE_GROUP"),
     facet = "CATEGORY",
-    n_col = "N_AT_RISK", rate = "RATE",
+    n_col = "N_AT_RISK", rate = "RATE", lo = "RATE_LO", hi = "RATE_HI",
     numerator = "N_PATIENTS", py = "PERSON_YEARS"),
 
   S_PATTERNS = list(
@@ -101,8 +108,18 @@ TABLE_SPEC <- list(
   S_MALIGNANCY = list(
     shape = "subject", label = "Secondary malignancy detail",
     keys = "COHORT", id = "PATID",
-    categorical = c("CATEGORY", "SUBTYPE"),
+    categorical = c("CATEGORY", "SUBTYPE", "AFTER_INDEX"),
     continuous = c("MONTHS_FROM_DX", "MONTHS_FROM_INDEX")),
+
+  # Table 4's "top 5-10 sequences among those with a malignancy occurring
+  # after treatment", every sequence ranked, in two scopes: after the
+  # cohort's index, and - the sensitivity - after 2L.
+  S_MALIGNANCY_SEQUENCES = list(
+    shape = "count", label = "Treatment sequences among those with a malignancy",
+    # LINES is the reading of "sequence": the lines up to the malignancy,
+    # the lines after it, or every observed line - each its own denominator.
+    keys = c("COHORT", "SCOPE", "LINES"), facet = "SEQUENCE",
+    n_col = "N_PATIENTS", denom = "N_DENOM", pct = "PCT"),
 
   S_SAFETY_EVENTS = list(
     shape = "subject", label = "Safety events, per patient",

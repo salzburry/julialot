@@ -272,8 +272,9 @@ preflight_codelists <- function(mods, cfg) {
          "modules need are not usable:\n",
          paste(problems, collapse = "\n"),
          "\n\nEither fill them, or narrow MODULES so nothing needs them - ",
-         "MODULES=spine,cohorts,attrition,periods,demographics,tte runs the whole ",
-         "cohort and the time-to-event outcomes with no code list at all - or ",
+         "MODULES=spine,cohorts,attrition,periods,demographics,tte with ",
+         "DX_DATE_SOURCE=cohort_mm_dx runs the whole cohort and the ",
+         "time-to-event outcomes with no code list at all - or ",
          "run with MODULES=all, which leaves out by name whatever has no ",
          "usable list.", call. = FALSE)
   }

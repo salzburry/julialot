@@ -28,6 +28,7 @@ shells at `../TFLS`; the shell runner finds this package by
 | `IE_CRITERIA_APPLIED.md` | which eligibility rules are applied, by whom, and how to change them |
 | `study223926/MODULES.md` | what each module computes |
 | `OPEN_QUESTIONS.md` | every question still open with the study team, and the reading this build takes meanwhile |
+| `CONFORMANCE.md` | the code checked requirement by requirement against the 26 August 2026 protocol, the Optum CDM V9.0 dictionary and the Optum business rules: 291 rows, each with the audit's verdict and what this pass did about it |
 
 ---
 
@@ -51,7 +52,7 @@ writes only its own `S_*` tables.
 | `R/run_223926.R` | the runner: resolve the plan, refuse what it cannot vouch for, walk the modules |
 | `R/modules/` | one file per module, in the order they run |
 | `codelists/` | the code lists this package ships. Production overrides the directory |
-| `tests/` | 512 checks. `Rscript tests/run_tests.R` |
+| `tests/` | 584 checks. `Rscript tests/run_tests.R` |
 
 ### The modules
 
@@ -67,7 +68,7 @@ writes only its own `S_*` tables.
 | `soc` | `S_SOC` |
 | `safety` | `S_SAFETY_EVENTS`, `S_SAFETY_COUNTED`, `S_SAFETY_RATES` |
 | `hcru` | `S_HCRU_EVENTS`, `S_HCRU_RATES` |
-| `malignancy` | `S_MALIGNANCY`, `S_MALIGNANCY_DATES`, `S_MALIGNANCY_RATES` |
+| `malignancy` | `S_MALIGNANCY`, `S_MALIGNANCY_DATES`, `S_MALIGNANCY_RATES`, `S_MALIGNANCY_SEQUENCES` |
 | `tte` | `S_TTE` |
 | `patterns` | `S_PATTERNS`, `S_SWITCH`, `S_TX_ATTRITION` |
 | `release` | `S_*_RELEASE` — the same tables with cells under 25 patients suppressed |
@@ -129,7 +130,7 @@ open question's reading, and stops before opening a connection. It is the
 fastest way to see what a run *would* do.
 
 ```bash
-Rscript tests/run_tests.R      # 512 checks, no warehouse
+Rscript tests/run_tests.R      # 584 checks, no warehouse
 ```
 
 The suite runs the modules without a warehouse, executes the SQL they emit

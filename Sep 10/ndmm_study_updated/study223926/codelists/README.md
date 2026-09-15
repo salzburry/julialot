@@ -54,6 +54,23 @@ run the modules that need one. Those are dummy codes chosen to exercise the
 loader and the SQL. They are not codes to run a study on, and nothing outside
 `tests/` reads them.
 
+## The `setting` column
+
+`safety_events.csv` carries `setting`: `any` (every diagnosis claim) or
+`inpatient`. A condition whose *definition* is an admission — Table 3's
+*"Severe infection resulting in hospitalization"* — is `inpatient`, and the
+safety module then reads only diagnoses on medical claims carrying a
+confinement id that `CONFINEMENT` knows (Optum business rule 14), dated at the
+admission. A hospitalisation-named condition that is not typed `inpatient`
+stops the run rather than counting outpatient codes under that name. Every
+`any` chronic condition also gets a derived `<condition> (hospitalisation)`
+series — its admissions, typed acute — which is Figure 3's note; that suffix
+is reserved and a condition spelled with it is refused.
+
+`secondary_malig.csv` may carry no code that `mm_dx.csv` names as myeloma: a
+secondary malignancy is a malignancy other than the one under treatment, and
+`check_malignancy_list()` refuses the list before the connection is opened.
+
 ## Two rows that will stop the run before the codes do
 
 `safety_events.csv` carries `toxic_liver_disease` and `hepatic_failure` typed

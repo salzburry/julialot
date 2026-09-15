@@ -61,13 +61,40 @@ mod_spine <- function(con, cfg, cohorts) {
       -- event it was meant to contain, losing the event and its person-time.
       --
       -- LOT_BASE_END_DT is by construction the date matching the selected
-      -- LOT_BASE_END_REASON, so where the reason is a protocol discontinuation
-      -- the end date IS the discontinuation date. Where the engine's own
-      -- DISCONTINUATION wins, the two agree anyway.
-      CASE WHEN l.LOT_BASE_END_REASON IN
-             ('DISCONTINUATION','MED_ADD','CART_INIT','SCT_AUTO','SCT_ALLO',
-              'SCT_CART','SCT_AUTO_CONT')
-           THEN l.LOT_BASE_END_DT END AS PROTOCOL_DISCON_DT
+      -- LOT_BASE_END_REASON, but it is the line's LAST DAY, and the footnote
+      -- dates the discontinuation by what happened, so the two halves of the
+      -- footnote read it differently (LOT_RULES 7.1):
+      --
+      --   'all MM agents ... are stopped'  DISCONTINUATION ends ON the confirmed
+      --                                    run-out, and SCT_AUTO_CONT ON the
+      --                                    transplant that was this line's own
+      --                                    consolidation (LOT_RULES 6.5) - the
+      --                                    last day the line's therapy covered,
+      --                                    so the end date IS the date.
+      --   'a new agent/qualifying SCT      MED_ADD, CART_INIT, SCT_AUTO,
+      --    event is introduced'            SCT_ALLO and SCT_CART end the line
+      --                                    the DAY BEFORE the event, because the
+      --                                    event opens the next line. The
+      --                                    discontinuation happened on the day
+      --                                    the agent or transplant was
+      --                                    introduced, which is the day after.
+      --
+      -- Read as the end date throughout, TTD was one day short of the switch
+      -- for every line that ended on an introduction, and disagreed by that
+      -- day with TTNT, which reads the next line's start.
+      --
+      -- SCT_AUTO_CONT is in the first group and not the second on purpose: an
+      -- AUTO inside the line's own induction window is the line's consolidation
+      -- and does not open a line (s7.2.1, LOT_RULES 6.5), so it is not the
+      -- footnote's 'qualifying SCT event'. What ends the line there is that
+      -- nothing of it continues past the transplant - the run-out branch of
+      -- the footnote, dated where the engine dates it. ../OPEN_QUESTIONS.md Q33.
+      CASE WHEN l.LOT_BASE_END_REASON IN ('DISCONTINUATION','SCT_AUTO_CONT')
+             THEN l.LOT_BASE_END_DT
+           WHEN l.LOT_BASE_END_REASON IN
+             ('MED_ADD','CART_INIT','SCT_AUTO','SCT_ALLO','SCT_CART')
+             THEN cast(date_add(l.LOT_BASE_END_DT, 1) as date)
+           END AS PROTOCOL_DISCON_DT
     FROM %s l
     ) w
     WHERE w.LOT_NUM <= %d", wrk("S_SPINE"), src, as.integer(cfg$max_lot)),

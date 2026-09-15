@@ -1,7 +1,9 @@
 # Table 4's baseline demographics.
 #
 # Four of the six are this package's own: RACE, ETHNICITY, STATE and BUS. Age
-# and sex are read off the cohort table so the two builds cannot disagree.
+# is read off the cohort table so the two builds cannot disagree, and sex off
+# the enrolment row that supplies the other four, with the cohort's value
+# behind it for a patient no row covers.
 #
 # All six are timed "At index", and MEMBER_ENROLLMENT carries a new row each
 # time anything about a member changes, so they are span-level attributes and
@@ -32,8 +34,18 @@ mod_demographics <- function(con, cfg, cohort) {
     "coalesce(nullif(trim(e.REGION), ''), 'Unknown')" else census_region_sql()
 
   # Which enrolment row supplies the attribute.
+  #
+  # s7.8.1: "assessed at the time of index date where possible. If data is
+  # missing at index, data from the baseline period present nearest index will
+  # be used." So under index_span the rows in play are those overlapping the
+  # baseline window through the index day; the one covering the index wins,
+  # and where none does - the span ended the day before therapy started, which
+  # the 12-month enrolment test allows - the row ending nearest the index
+  # stands in. Restricted to the covering row alone, that patient's race,
+  # region and insurance were reported Unknown.
+  covers <- "e.ELIGEFF <= p.INDEX_DATE AND e.ELIGEND >= p.INDEX_DATE"
   pick <- if (identical(cfg$enrol_attr_at, "index_span"))
-    "AND e.ELIGEFF <= p.INDEX_DATE AND e.ELIGEND >= p.INDEX_DATE" else ""
+    "AND e.ELIGEFF <= p.INDEX_DATE AND e.ELIGEND >= p.BASELINE_START" else ""
   # A TOTAL order. A member on two concurrent plans has two rows with the same
   # ELIGEFF covering the index, so ranking on ELIGEFF alone picks arbitrarily
   # and the attributes can differ between two runs of identical code.
@@ -49,20 +61,42 @@ mod_demographics <- function(con, cfg, cohort) {
           THEN cast(year(r.INDEX_DATE) - cast(c.YRDOB as int) as int) END",
     1900L)
 
+  # Under index_span the covering row comes first, then the rows nearest the
+  # index by their end date; under latest_span the most recent row, wherever
+  # it falls.
   ordering <- if (identical(cfg$enrol_attr_at, "index_span"))
-    "e.ELIGEFF DESC, e.ELIGEND DESC, e.PAT_PLANID"
+    sprintf("CASE WHEN %s THEN 0 ELSE 1 END, e.ELIGEND DESC, e.ELIGEFF DESC, e.PAT_PLANID",
+            covers)
     else "e.ELIGEND DESC, e.ELIGEFF DESC, e.PAT_PLANID"
+  # Which row it was, on the row itself: the span covering the index, a
+  # baseline span standing in for it, the latest span, or none at all.
+  attr_source <- if (identical(cfg$enrol_attr_at, "index_span"))
+    sprintf("CASE WHEN e.PATID IS NULL THEN 'none' WHEN %s THEN 'index_span'
+                  ELSE 'baseline_nearest' END", covers)
+    else "CASE WHEN e.PATID IS NULL THEN 'none' ELSE 'latest_span' END"
+
+  # Age at the diagnosis as well as at the index. I2 is "aged >= 18 years at
+  # the time of MM diagnosis according to calendar year", and the shells
+  # tabulate age at diagnosis beside age at index; the same calendar-year
+  # arithmetic, on the diagnosis date S_PERIODS carries.
+  age_dx_expr <- sprintf(
+    "CASE WHEN cast(c.YRDOB as int) BETWEEN %d AND year(r.DX_DT)
+           AND year(r.DX_DT) - cast(c.YRDOB as int) BETWEEN 0 AND 120
+          THEN cast(year(r.DX_DT) - cast(c.YRDOB as int) as int) END",
+    1900L)
 
   prepare_table(con, wrk("S_DEMOGRAPHICS"),
     "PATID string, COHORT string, INDEX_DATE date,
      AGE_YEARS int, AGE_BAND string, AGE_GROUP string, SEX string, REGION string,
      RACE string, ETHNICITY string, INSURANCE_TYPE string,
-     ENROL_ROW_FOUND int", cohort$key)
+     ENROL_ROW_FOUND int, ATTR_SOURCE string,
+     AGE_AT_DX_YEARS int, AGE_AT_DX_BAND string", cohort$key)
   run_step(con, paste0("demographics_", cohort$key), sprintf("
     INSERT INTO %1$s
     WITH ranked AS (
-      SELECT p.PATID, p.COHORT, p.INDEX_DATE,
-             e.RACE, e.ETHNICITY, e.BUS, %2$s AS REGION_VAL,
+      SELECT p.PATID, p.COHORT, p.INDEX_DATE, p.DX_DT,
+             e.RACE, e.ETHNICITY, e.BUS, e.GDR_CD, %2$s AS REGION_VAL,
+             %10$s AS ATTR_SOURCE,
              row_number() OVER (PARTITION BY p.PATID, p.COHORT ORDER BY %3$s)
                AS rn
       FROM %4$s p
@@ -100,7 +134,13 @@ mod_demographics <- function(con, cfg, cohort) {
            CASE WHEN %9$s IS NULL THEN 'Unknown'
                 WHEN %9$s >= 75 THEN '75+'
                 ELSE '<75' END AS AGE_GROUP,
-           CASE upper(coalesce(c.GDR_CD,'U')) WHEN 'M' THEN 'Male'
+           -- s7.8.1 times every demographic 'at index', and GDR_CD is on
+           -- the enrolment row like RACE and BUS, so it is read off the same
+           -- row the other attributes come from. The cohort table's copy is
+           -- the fallback: it is the value the cohort build read off SOME
+           -- enrolment row, and a patient with no row in play would
+           -- otherwise be Unknown for a sex the build had.
+           CASE upper(trim(coalesce(r.GDR_CD, c.GDR_CD, 'U'))) WHEN 'M' THEN 'Male'
                 WHEN 'F' THEN 'Female' ELSE 'Unknown' END AS SEX,
            coalesce(r.REGION_VAL, 'Unknown') AS REGION,
            -- The dictionary gives the reported categories as African American,
@@ -121,13 +161,21 @@ mod_demographics <- function(con, cfg, cohort) {
                 WHEN 'COM' THEN 'Commercial Health Plan'
                 ELSE 'Unknown' END AS INSURANCE_TYPE,
            CASE WHEN r.RACE IS NULL AND r.BUS IS NULL THEN 0 ELSE 1 END
-             AS ENROL_ROW_FOUND
+             AS ENROL_ROW_FOUND,
+           r.ATTR_SOURCE,
+           %11$s AS AGE_AT_DX_YEARS,
+           CASE WHEN %11$s IS NULL THEN 'Unknown'
+                WHEN %11$s <  45 THEN '18-44'
+                WHEN %11$s <  65 THEN '45-64'
+                WHEN %11$s <  75 THEN '65-74'
+                WHEN %11$s >= 75 THEN '75+'
+                ELSE 'Unknown' END AS AGE_AT_DX_BAND
     FROM ranked r
     INNER JOIN %8$s c ON c.PATID = r.PATID
     WHERE r.rn = 1",
     wrk("S_DEMOGRAPHICS"), region, ordering, wrk("S_PERIODS"),
     cdm_src("member_enrollment"), pick, cohort$key, wrk("S_ELIGIBILITY"),
-    age_expr),
+    age_expr, attr_source, age_dx_expr),
     qc = sprintf("SELECT count(*) AS n_rows,
                     sum(CASE WHEN RACE='Unknown' THEN 1 ELSE 0 END) AS n_race_unk,
                     sum(CASE WHEN ETHNICITY='Unknown' THEN 1 ELSE 0 END) AS n_eth_unk,

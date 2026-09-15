@@ -285,6 +285,35 @@ check_contract_binding <- function(md, where, dir = .tfls_dir()) {
   invisible(TRUE)
 }
 
+# What the run's rates are per. Every rate row of the shells is labelled per
+# 100,000 person-years and the rate is read off the table as written, so a run
+# that scaled its rates differently would print numbers a hundred times off
+# under a label that says otherwise, with nothing on the row to show it. The
+# run records RATE_MULTIPLIER; a different one stops. A run that predates the
+# column recorded nothing to compare, which is said rather than passed over.
+check_rate_multiplier <- function(md, where) {
+  want <- row_field(md, "RATE_MULTIPLIER")
+  if (identical(toupper(want), "NA")) want <- ""
+  if (!nzchar(want)) {
+    cat("  WARNING: the run under ", where, " recorded no rate multiplier, so ",
+        "whether its rates are per 100,000 person-years, as the shells say, ",
+        "cannot be checked. A run of the current study package records ",
+        "RATE_MULTIPLIER.\n", sep = "")
+    return(invisible(FALSE))
+  }
+  have <- suppressWarnings(as.numeric(want))
+  if (is.na(have) || have != TFLS_RATE_PER)
+    stop("The run under ", where, " wrote its rates per ", want,
+         " person-years (RATE_MULTIPLIER), and every rate row of these shells ",
+         "is labelled per ", format(TFLS_RATE_PER, big.mark = ",", scientific = FALSE),
+         ". A rate is read off the table as written, so the labels would be ",
+         "wrong by that factor. Rerun the study with RATE_MULTIPLIER=",
+         format(TFLS_RATE_PER, scientific = FALSE),
+         ", or relabel the shells. Nothing was filled.",
+         call. = FALSE)
+  invisible(TRUE)
+}
+
 .CONTRACT <- NULL
 tfls_contract <- function() {
   if (is.null(.CONTRACT)) .CONTRACT <<- read_study_contract()

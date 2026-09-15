@@ -36,7 +36,7 @@ already recorded as a flag, and this package reads it.
 |---|---|---|
 | `I1_mm_dx` | multiple myeloma diagnosis | the cohort build |
 | `I2_age` | age at index | the cohort build |
-| `I3_eligible_1l_tx` | an eligible 1L therapy initiation | the cohort build |
+| `I3_eligible_1l_tx` | an eligible 1L therapy initiation | the cohort build — and this package **checks** that the build barred the agents §7.2.1.1 names (`COHORT_INDEX_EXCLUSIONS`, default panobinostat and elotuzumab) from setting the index, from the build's recorded `INDEX_EXCLUDED`, and stops if it did not |
 | `I4_ce_pre` | continuous enrolment before index | the cohort build, **re-applied here** on the line's own index date |
 | `I5_followup` | evidence of follow-up from index | **here** |
 | `X1_prior_mm_tx` | no prior myeloma therapy | the cohort build (flag `NO_PRIOR_MM_TX`) |

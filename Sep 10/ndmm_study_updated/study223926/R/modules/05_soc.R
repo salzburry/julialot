@@ -91,17 +91,37 @@ mod_soc <- function(con, cfg, cohort) {
                                          "CL_MED_ABBR", "role"))
   # LOT_BASE_MEDS is a space-separated list of CL_MED_ABBR. Exploded here so a
   # category can be decided by the SET of agents rather than by the string.
+  #
+  # It is coalesced BEFORE the split. explode() of a NULL array yields no row
+  # at all, so a transplant line the engine emits with a NULL regimen (rather
+  # than an empty string) vanished in spite of the WHERE keeping it: the line
+  # existed for the engine and for the spine and not for the SOC table, and
+  # the patterns built on it lost the line.
+  #
+  # The row also carries Table 6 (Exploratory Objective 1): patients with an
+  # SCT in 1L-4L by year, according to SOC type. The engine's line-scoped
+  # transplant flags and the autologous transplant's date sit beside the
+  # category and the line's start year, so that table is a count over this
+  # one and needs no join.
+  #
+  # (The query is one sprintf() format, which R caps at 8192 characters, so
+  # the comments live here rather than in the SQL.)
   prepare_table(con, wrk("S_SOC"),
-    "PATID string, COHORT string, LOT_NUM int, REGIMEN string,
-     N_AGENTS int, SOC_CATEGORY string, MATCHED int", cohort$key)
+    "PATID string, COHORT string, LOT_NUM int, LOT_START_DT date,
+     LOT_START_YEAR int, REGIMEN string,
+     N_AGENTS int, SOC_CATEGORY string, MATCHED int,
+     AUTO_SCT int, ALLO_SCT int, CART int, AUTO_SCT_DT date, AUTO_SCT_YEAR int",
+    cohort$key)
   run_step(con, paste0("soc_", cohort$key), sprintf("
     INSERT INTO %1$s
     WITH agents AS (
-      SELECT s.PATID, p.COHORT, s.LOT_NUM, s.LOT_BASE_MEDS AS REGIMEN,
+      SELECT s.PATID, p.COHORT, s.LOT_NUM, s.LOT_START_DT,
+             s.LOT_BASE_MEDS AS REGIMEN,
              coalesce(s.LOT_ALLO_LOT_FLG, 0) AS ALLO_FLG,
              coalesce(s.LOT_CART_LOT_FLG, 0) AS CART_FLG,
              coalesce(s.LOT_TX_AUTO_FLG, 0)  AS AUTO_FLG,
-             explode(split(trim(s.LOT_BASE_MEDS), '\\\\s+')) AS ABBR
+             s.LOT_TX_AUTO_MAX_DT,
+             explode(split(trim(coalesce(s.LOT_BASE_MEDS, '')), '\\\\s+')) AS ABBR
       FROM %2$s s
       -- s.LOT_NUM >= p.LOT_NUM, the same restriction S_LOT_PERIODS applies.
       -- Without it the 3L cohort's S_SOC carries that cohort's lines 1 and 2 -
@@ -133,8 +153,9 @@ mod_soc <- function(con, cfg, cohort) {
           OR coalesce(s.LOT_TX_AUTO_FLG, 0) = 1)
     ),
     matched AS (
-      SELECT a.PATID, a.COHORT, a.LOT_NUM, a.REGIMEN,
-             a.ALLO_FLG, a.CART_FLG, a.AUTO_FLG, a.ABBR, cl.soc_category,
+      SELECT a.PATID, a.COHORT, a.LOT_NUM, a.LOT_START_DT, a.REGIMEN,
+             a.ALLO_FLG, a.CART_FLG, a.AUTO_FLG, a.LOT_TX_AUTO_MAX_DT,
+             a.ABBR, cl.soc_category,
              %6$s AS RANK,
              CASE WHEN lower(trim(cl.role)) = 'backbone'
                    AND cl.soc_category IN (%8$s) THEN 1 ELSE 0 END AS CD38
@@ -145,16 +166,17 @@ mod_soc <- function(con, cfg, cohort) {
                 CASE WHEN a.LOT_NUM = 1 THEN '1L' ELSE 'LATER' END
     ),
     tagged AS (
-      SELECT PATID, COHORT, LOT_NUM, REGIMEN,
+      SELECT PATID, COHORT, LOT_NUM, LOT_START_DT, REGIMEN,
              max(ALLO_FLG) AS ALLO_FLG, max(CART_FLG) AS CART_FLG,
              max(AUTO_FLG) AS AUTO_FLG,
+             max(LOT_TX_AUTO_MAX_DT) AS AUTO_SCT_DT,
              count(DISTINCT CASE WHEN trim(coalesce(ABBR,'')) <> ''
                                  THEN ABBR END) AS N_AGENTS,
              min(CASE WHEN soc_category IS NOT NULL THEN RANK END) AS BEST_RANK,
              max(CASE WHEN soc_category IS NOT NULL THEN 1 ELSE 0 END) AS MATCHED,
              max(CD38) AS HAS_CD38_BACKBONE
       FROM matched
-      GROUP BY PATID, COHORT, LOT_NUM, REGIMEN
+      GROUP BY PATID, COHORT, LOT_NUM, LOT_START_DT, REGIMEN
     ),
     named AS (
       SELECT t.*,
@@ -164,7 +186,10 @@ mod_soc <- function(con, cfg, cohort) {
                AS BEST_CATEGORY
       FROM tagged t
     )
-    SELECT PATID, COHORT, LOT_NUM, REGIMEN, N_AGENTS,
+    SELECT PATID, COHORT, LOT_NUM, LOT_START_DT,
+           -- Table 4 tabulates the regimen categories by calendar year of
+           -- line start, so the year is on the row beside the category.
+           year(LOT_START_DT) AS LOT_START_YEAR, REGIMEN, N_AGENTS,
            -- A transplant-only line has no drug string to classify, and its
            -- modality is what the line IS. Reported from the engine's own
            -- flags rather than left to fall through to Other, and MATCHED
@@ -197,12 +222,25 @@ mod_soc <- function(con, cfg, cohort) {
            -- a claim about an agent and is kept as the agent's row said. A
            -- size category is a claim about the REGIMEN, so the regimen's own
            -- agent count and backbone decide it, not the winning agent's row.
-             WHEN BEST_CATEGORY IS NULL THEN 'Other'
-             WHEN BEST_CATEGORY NOT IN (%7$s) THEN BEST_CATEGORY
+           --
+           -- ...and it decides it whether or not any agent is on the list.
+           -- 'Other triplet (non-anti-CD38)' and 'Doublet/monotherapy' are
+           -- s7.2.2's names for any three-agent regimen without the backbone
+           -- and any regimen of one or two agents; a regimen of agents Annex
+           -- 2 does not name is still one of those sizes. Sent to 'Other'
+           -- for being unlisted, a carfilzomib triplet was reported as a
+           -- category the protocol reserves for what its sizes do not cover.
+           -- MATCHED stays 0 for it, so the QC below still says the list is
+           -- short of the data. A four-agent regimen with no backbone falls
+           -- through to 'Other' as before: s7.2.2 has no other quadruplet.
+             WHEN BEST_CATEGORY IS NOT NULL
+                  AND BEST_CATEGORY NOT IN (%7$s) THEN BEST_CATEGORY
 %9$s
              ELSE 'Other'
            END AS SOC_CATEGORY,
-           coalesce(MATCHED, 0) AS MATCHED
+           coalesce(MATCHED, 0) AS MATCHED,
+           AUTO_FLG AS AUTO_SCT, ALLO_FLG AS ALLO_SCT, CART_FLG AS CART,
+           AUTO_SCT_DT, year(AUTO_SCT_DT) AS AUTO_SCT_YEAR
     FROM named",
     wrk("S_SOC"), wrk("S_SPINE"), wrk("S_PERIODS"), cohort$key, reg,
     soc_rank_sql(), sql_in_list(names(SOC_SIZE_CATEGORIES)),

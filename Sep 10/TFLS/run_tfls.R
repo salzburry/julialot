@@ -263,6 +263,9 @@ bind_run <- function(reader, where, check_contract = TRUE) {
   # the approved one is pinned, the same way the study package pins the LOT
   # engine's with LOT_CODE_MD5. Unset checks nothing.
   check_study_code(md, where)
+  # And what its rates are per: the shells say 100,000, and a rate is read
+  # as written.
+  check_rate_multiplier(md, where)
   md
 }
 
