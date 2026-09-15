@@ -231,6 +231,137 @@ decided.
 
 ---
 
+### Q30. Which diagnosis date do the diagnosis-anchored rows hang on?
+
+Table 4's *"Year of MM diagnosis"* and *"Time from diagnosis to follow-up
+end"*, Table 5's *"Time from diagnosis to 1L initiation"* and I2's age at
+diagnosis all need one date. The cohort build records the qualifying diagnosis
+(`MM_DX_DT`, the claim that satisfied I1); Table 4's own footnote says *"first
+medical claim for MM within the baseline period on or prior to 1L"*, which is
+a different claim for a patient diagnosed more than a year before therapy.
+
+`DX_DATE_SOURCE` reads either. **Default `cohort_mm_dx`**: one diagnosis date
+for I1, I2, Table 4 and Table 5, and no code list needed to compute it.
+`baseline_first_claim` is Table 4's literal reading; `S_PERIODS.DX_DT_SOURCE`
+says which supplied each row. The suite runs both.
+
+**Ask:** confirm the diagnosis date is the qualifying diagnosis, or that Table
+4's footnote is meant to redefine it.
+
+---
+
+### Q31. Over which window is the secondary 2L cohort's malignancy prevalence taken?
+
+§7.4.1.2 and §7.8.4: *"all malignancies occurring after diagnosis but prior to
+2L will be tabulated as the background prevalence"*. §7.8.1's 2L bullet says
+*"during baseline"* — the 12 months before the 2L index. For a patient
+diagnosed years before 2L the two windows differ by years of person-time.
+
+`MALIG_PREVALENCE_WINDOW`: **default `since_diagnosis`** (the two sections
+that are about this cohort), `baseline` as the alternative. The person-time
+follows the window.
+
+**Ask:** which window.
+
+---
+
+### Q32. Which lines are a "treatment sequence among those with a malignancy"?
+
+Table 4: *"Tabulation of the top 5–10 sequences among those with a malignancy
+occurring after treatment"*. The sentence does not say whether the sequence is
+the therapy the patient had received **when** the malignancy appeared (the
+exposure history a background-rate study describes) or the therapy given
+**after** it.
+
+`S_MALIGNANCY_SEQUENCES` carries both readings and the whole observed
+sequence, on `LINES` (`to_malignancy`, `after_malignancy`, `all_observed`),
+each with its own denominator, in both scopes (`after_index`; the sensitivity
+`after_2l`). Nothing is chosen in code.
+
+**Ask:** which reading the shell should print.
+
+---
+
+### Q33. On which day is a line "discontinued" when a new agent or transplant ends it?
+
+Table 4's footnote: *"discontinuation of a regimen occurs when all MM agents in
+the LOT are stopped OR when a new agent/qualifying SCT event is introduced"*.
+The LOT engine ends a line the **day before** an added agent or a line-opening
+transplant (LOT_RULES §7.1), because the event opens the next line; a run-out
+ends the line **on** the confirmed run-out.
+
+The package dates the discontinuation by what happened: the run-out day for
+`DISCONTINUATION`, the introduction day (engine end + 1) for `MED_ADD`,
+`CART_INIT`, `SCT_AUTO`, `SCT_ALLO` and `SCT_CART`. Read as the engine's end
+date throughout, TTD was one day short of the switch and a day off TTNT for
+the same event. `SCT_AUTO_CONT` — an autologous transplant inside the line's
+own induction window, which is the line's consolidation and opens no line — is
+taken as the *"all agents stopped"* branch, dated on the transplant, not as a
+*"qualifying SCT"*.
+
+**Ask:** confirm the introduction day, and that a planned in-window autologous
+transplant is not a qualifying SCT event.
+
+---
+
+### Q34. Does the acute washout cross a period boundary?
+
+§7.3.2: *"a ≥30 day washout between acute events of the same type will be
+applied"* — a statement about events, not periods. Run period by period, an
+infection coded three days before the index and again five days after it was
+a baseline event **and** a new incident event on treatment, and one on the
+last day of line 1's window and again two days into line 2's was two events.
+
+The chain now runs **once** per cohort over the patient's timeline (baseline
+start → follow-up end) and each period takes the distinct events dated inside
+it; the chain's own answer is kept on `S_SAFETY_COUNTED` under
+`PERIOD = TIMELINE`. The chain starts at the cohort's baseline start, so a
+baseline event is never suppressed by history before the window (§7.8.1 takes
+the baseline *"irrespective of prior event history"*).
+
+**Ask:** confirm the washout is measured across the index and across lines.
+
+---
+
+### Q35. At what grain is a secondary malignancy confirmed, and at what grain is a patient "not at risk"?
+
+Table 4: *"confirmed through the presence of at least 2 diagnosis codes
+occurring on separate dates"* — the unit the two codes must share is not
+stated (the same code, the same Table 2 subtype, or the same category), and
+both codes are required on or before the cohort's follow-up end. §7.8.1 names
+*"malignancies"* as **one** chronic condition, while Objective 3 summarises
+*"according to type"*.
+
+The package confirms at **subtype** grain, treats prior history per
+**category**, and now also writes the aggregate `(any malignancy)` — a first
+malignancy of any kind, with a patient who had any before the period out of
+numerator and denominator — so the one-condition reading is on the table
+beside the per-category one. A malignancy is attributed to a line only inside
+the §7.3.2 treatment window for the rates, and to *"the LoT after which"* it
+fell (`LOT_AFTER_WHICH`) on the occurrence table.
+
+**Ask:** the confirmation grain, and whether prior history of one category
+removes a patient from the others.
+
+---
+
+### Q36. Table 3 lists 22 conditions; the code list carries 23
+
+Table 3 as printed (d29–d30) has 22 rows. `safety_events.csv` carries 23: the
+list splits *"Severe infection resulting in hospitalization"* from *"Lower
+respiratory or lung infection"* the way Table 3 does, and carries
+*"Keratopathies"* and *"Corneal ulcer"* as two rows where the printed table
+merges them on one line. Two of the 23 are typed *"Acute or chronic"* by the
+protocol itself, which names two counting rules at once
+(`codelists/README.md`). Pages d33–d34 of Table 4 are unreadable in the
+supplied copy, so the rows they carry — prior treatment and transplant history
+— are mapped from the June version's Table 4.
+
+**Ask:** confirm the 23-row list, type the two dual-typed conditions, and
+supply legible copies of pages 33–34.
+
+---
+
 ### Q28. What is `DOD.MBR_MATCH_TYPE`, and should low-confidence deaths count?
 
 `t_dod_2026q1` has five columns, and one of them is **`MBR_MATCH_TYPE

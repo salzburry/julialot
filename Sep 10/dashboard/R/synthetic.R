@@ -77,10 +77,15 @@ SYNTH_DOMAINS <- c(
 SYNTH_MEASURES <- c("ALL_CAUSE_HOSPITALISATION", "MM_RELATED_HOSPITALISATION",
                     "ED_VISIT")
 SYNTH_PERIODS <- c("BASELINE", "TREATMENT")
+# What a synthetic rate is per: the study's RATE_MULTIPLIER default, so the
+# page reads the same scale a real run records.
+SYNTH_RATE_PER <- 100000
+# ...with the aggregate 08_malignancy.R writes beside the categories: a first
+# malignancy of any kind, which the T3 total row and Figure 4 read.
 SYNTH_MALIG <- c("Hematological", "Genitourinary", "Gynecological",
                  "Head and Neck", "Gastrointestinal", "Thoracic (non-H&N)",
                  "Breast cancer", "Melanoma", "Non-melanoma skin cancer",
-                 "Other")
+                 "Other", "(any malignancy)")
 SYNTH_OUTCOMES <- c("received_next_lot", "died", "discontinued_no_further",
                     "lost_to_followup")
 # The package's own vocabulary, not a paraphrase of it. A shell column maps a
@@ -192,7 +197,7 @@ synthetic_one <- function(prefix, settings, min_n = 25L) {
   safety <- synth_stratify(safety,
     counts = c("N_AT_RISK", "N_PATIENTS", "N_EVENTS"), nums = "PERSON_YEARS",
     recompute = function(d) {
-      d$RATE <- round(1000 * d$N_EVENTS / pmax(d$PERSON_YEARS, 1), 2)
+      d$RATE <- round(SYNTH_RATE_PER * d$N_EVENTS / pmax(d$PERSON_YEARS, 1), 2)
       d$RATE_LO <- round(d$RATE * 0.86, 2)
       d$RATE_HI <- round(d$RATE * 1.16, 2)
       d
@@ -213,7 +218,7 @@ synthetic_one <- function(prefix, settings, min_n = 25L) {
     counts = c("N_AT_RISK", "N_PATIENTS", "N_EVENTS", "N_LOS_EXCLUDED"),
     nums = "PERSON_YEARS",
     recompute = function(d) {
-      d$RATE <- round(1000 * d$N_EVENTS / pmax(d$PERSON_YEARS, 1), 2)
+      d$RATE <- round(SYNTH_RATE_PER * d$N_EVENTS / pmax(d$PERSON_YEARS, 1), 2)
       # A length of stay is not a count. It does not divide up like one, and a
       # subgroup's mean is its OWN - not the line's, which is what copying it
       # down would claim. So each stratum gets a length of its own, moved off
@@ -235,7 +240,9 @@ synthetic_one <- function(prefix, settings, min_n = 25L) {
   malig <- synth_stratify(malig,
     counts = c("N_AT_RISK", "N_PATIENTS"), nums = "PERSON_YEARS",
     recompute = function(d) {
-      d$RATE <- round(1000 * d$N_PATIENTS / pmax(d$PERSON_YEARS, 1), 2)
+      d$RATE <- round(SYNTH_RATE_PER * d$N_PATIENTS / pmax(d$PERSON_YEARS, 1), 2)
+      d$RATE_LO <- round(d$RATE * 0.86, 2)
+      d$RATE_HI <- round(d$RATE * 1.16, 2)
       d
     })
 
@@ -315,6 +322,13 @@ synthetic_one <- function(prefix, settings, min_n = 25L) {
   # Both, as the package writes both: the descriptive band and the protocol's
   # own two-group stratification, which is what a subgroup column reads.
   demo$AGE_GROUP <- ifelse(demo$AGE_BAND == "75+", "75+", "<75")
+  # Which enrolment row supplied the attributes (s7.8.1: at the index where
+  # possible, else the baseline row nearest it), and age at the diagnosis
+  # beside age at the index, as 03_demographics.R writes them.
+  demo$ATTR_SOURCE <- ifelse(seq_len(n_sub) %% 17L == 0L, "baseline_nearest", "index_span")
+  demo$AGE_AT_DX_YEARS <- as.integer(demo$AGE_YEARS - (seq_len(n_sub) %% 2L))
+  demo$AGE_AT_DX_BAND <- as.character(cut(demo$AGE_AT_DX_YEARS, c(-Inf, 44, 64, 74, Inf),
+                                          labels = SYNTH_AGE_BANDS))
 
   comorb <- data.frame(
     PATID = tte$PATID, COHORT = tte$COHORT,
@@ -356,7 +370,9 @@ synthetic_one <- function(prefix, settings, min_n = 25L) {
     COHORT_ATTEMPT_ID = "synthetic-cohort",
     COHORT_ATTEMPT_STAMP = "2026-09-08 10:00:00",
     STUDY_START = "2018-01-01",
-    STUDY_END = "2026-03-31", CONTRACT_DEVIATIONS = "none",
+    STUDY_END = "2026-03-31",
+    RATE_MULTIPLIER = as.character(SYNTH_RATE_PER),
+    CONTRACT_DEVIATIONS = "none",
     OPEN_QUESTION_READINGS = readings,
     CODELISTS = "safety_events.csv(synthetic,42 rows)",
     # What a publication gate reads. "none" here says this run's release left
@@ -379,12 +395,22 @@ synthetic_one <- function(prefix, settings, min_n = 25L) {
   # demonstrate on.
   soc <- data.frame(
     PATID = tte$PATID, COHORT = tte$COHORT, LOT_NUM = tte$LOT_NUM,
+    LOT_START_DT = tte$INDEX_DATE,
+    LOT_START_YEAR = as.integer(format(tte$INDEX_DATE, "%Y")),
     SOC_CATEGORY = rep(SYNTH_SOC, length.out = n_sub),
     REGIMEN = rep(c("DVRd", "DRd", "VRd", "Rd", "Kd", "Cilta-cel", "Tec",
                     "Tal", "PVd", "ASCT", "AlloSCT"), length.out = n_sub),
     N_AGENTS = rep(c(4L, 3L, 3L, 2L, 2L, 1L, 1L, 1L, 3L, 1L, 1L),
                    length.out = n_sub),
     MATCHED = 1L, stringsAsFactors = FALSE)
+  # Table 6's transplant flags: an autologous transplant on every fifth line,
+  # dated two months in; a CAR-T line is the CAR-T category.
+  soc$AUTO_SCT <- as.integer(seq_len(n_sub) %% 5L == 0L)
+  soc$ALLO_SCT <- as.integer(seq_len(n_sub) %% 41L == 0L)
+  soc$CART <- as.integer(soc$SOC_CATEGORY == "CAR-T")
+  soc$AUTO_SCT_DT <- as.Date(ifelse(soc$AUTO_SCT == 1L, soc$LOT_START_DT + 60L, NA),
+                             origin = "1970-01-01")
+  soc$AUTO_SCT_YEAR <- as.integer(format(soc$AUTO_SCT_DT, "%Y"))
 
   # One row per patient who had a secondary malignancy, which is the grain the
   # T3 shell reads: the rates table beside it is per stratum and cannot answer
@@ -401,6 +427,41 @@ synthetic_one <- function(prefix, settings, min_n = 25L) {
     MONTHS_FROM_DX = round(r(sum(mi), 6, 96), 1),
     MONTHS_FROM_INDEX = round(r(sum(mi), 1, 54), 1),
     stringsAsFactors = FALSE)
+  # Table 4 measures time from the index only where the malignancy came after
+  # it; a secondary-cohort malignancy before the index carries no duration.
+  malig_pt$AFTER_INDEX <- as.integer(seq_len(nrow(malig_pt)) %% 6L != 0L)
+  malig_pt$MONTHS_FROM_INDEX[malig_pt$AFTER_INDEX == 0L] <- NA_real_
+
+  # Table 4's treatment sequences among those with a malignancy, in regimen
+  # categories, every sequence ranked, in the two scopes 08_malignancy.R
+  # writes - after the cohort's index, and, the sensitivity, after 2L - and
+  # the three readings of "sequence" it carries on LINES: the lines up to
+  # the malignancy, the lines after it, and every observed line.
+  malig_seq <- do.call(rbind, lapply(COHORT_KEYS, function(c1) {
+    do.call(rbind, lapply(c("after_index", "after_2l"), function(sc) {
+      do.call(rbind, lapply(c("to_malignancy", "after_malignancy", "all_observed"),
+                            function(ln) {
+        seqs <- switch(ln,
+          to_malignancy = c(SYNTH_SOC[2], paste(SYNTH_SOC[c(1, 3)], collapse = " -> "),
+                            SYNTH_SOC[4], paste(SYNTH_SOC[c(2, 4)], collapse = " -> ")),
+          after_malignancy = c("(no further therapy)", SYNTH_SOC[4],
+                               paste(SYNTH_SOC[c(4, 2)], collapse = " -> "), SYNTH_SOC[3]),
+          c(paste(SYNTH_SOC[c(2, 4, 2)], collapse = " -> "),
+            paste(SYNTH_SOC[c(1, 3)], collapse = " -> "),
+            paste(SYNTH_SOC[c(2, 4)], collapse = " -> "),
+            SYNTH_SOC[4]))
+        n <- as.integer(round(r(length(seqs), 3, 40) * (if (sc == "after_2l") 0.5 else 1)))
+        d <- data.frame(COHORT = c1, SCOPE = sc, LINES = ln, SEQUENCE = seqs,
+                        N_PATIENTS = n, stringsAsFactors = FALSE)
+        d$N_DENOM <- sum(n)
+        d$PCT <- round(100 * n / max(sum(n), 1), 1)
+        d <- d[order(-d$N_PATIENTS, d$SEQUENCE), ]
+        d$RANK <- seq_len(nrow(d))
+        d
+      }))
+    }))
+  }))
+  rownames(malig_seq) <- NULL
 
   # --- the windows, the spine and the membership ----------------------------
   #
@@ -413,6 +474,7 @@ synthetic_one <- function(prefix, settings, min_n = 25L) {
   periods_tbl <- data.frame(
     PATID = tte$PATID, COHORT = tte$COHORT, LOT_NUM = tte$LOT_NUM,
     INDEX_DATE = tte$INDEX_DATE,
+    INDEX_YEAR = as.integer(format(tte$INDEX_DATE, "%Y")),
     BASELINE_START = tte$INDEX_DATE - 365L,
     BASELINE_END = tte$INDEX_DATE - 1L,
     COMORB_BASELINE_START = tte$INDEX_DATE - 365L,
@@ -422,6 +484,17 @@ synthetic_one <- function(prefix, settings, min_n = 25L) {
     FU_MONTHS = round(fu_days / 30.4375, 2),
     BASELINE_PY = round(366 / 365.25, 4),
     TTE_ELIGIBLE = tte$TTE_ELIGIBLE, stringsAsFactors = FALSE)
+  # The diagnosis date and what hangs on it, as 02_periods.R writes them: the
+  # cohort's qualifying diagnosis by default, some months before the index.
+  dx_days <- as.integer(r(n_sub, 20, 400))
+  periods_tbl$MM_DX_DT <- tte$INDEX_DATE - dx_days
+  periods_tbl$DX_DT <- periods_tbl$MM_DX_DT
+  periods_tbl$DX_DT_SOURCE <- "cohort_mm_dx"
+  periods_tbl$DX_YEAR <- as.integer(format(periods_tbl$DX_DT, "%Y"))
+  periods_tbl$DX_TO_INDEX_DAYS <- dx_days
+  periods_tbl$DX_TO_INDEX_MONTHS <- round(dx_days / 30.4375, 2)
+  periods_tbl$FU_FROM_DX_DAYS <- dx_days + fu_days + 1L
+  periods_tbl$FU_FROM_DX_MONTHS <- round((dx_days + fu_days + 1L) / 30.4375, 2)
 
   # One row per patient per line, which is the grain the treatment period and
   # the spine share. The line's own start walks forward from the index.
@@ -434,6 +507,10 @@ synthetic_one <- function(prefix, settings, min_n = 25L) {
                LOT_START_DT = st,
                PROTOCOL_DISCON_DT = en,
                NEXT_LOT_START_DT = if (k < 3) st + 420L else as.Date(NA),
+               # Table 5's time from a line to the next, start included and
+               # next start excluded, where the cohort observed the next line.
+               NEXT_LOT_DAYS = if (k < 3) 420L else NA_integer_,
+               NEXT_LOT_MONTHS = if (k < 3) round(420 / 30.4375, 2) else NA_real_,
                stringsAsFactors = FALSE)
   }))
   lines <- lines[order(lines$PATID, lines$LOT_NUM), ]
@@ -548,6 +625,12 @@ synthetic_one <- function(prefix, settings, min_n = 25L) {
     safety_ev$CONDITION %in% c("severe_infection_resulting_in_hospitalisation",
                                "thrombocytopenia"), "chronic", "acute")
   safety_ev$EVENT_DT <- tte$INDEX_DATE[ei] + as.integer(r(sum(ei), -300, 900))
+  # Whether the claim carried a confinement id (business rule 14), and the
+  # admission it belonged to, as 06_safety.R writes them.
+  safety_ev$INPATIENT <- as.integer(seq_len(sum(ei)) %% 5L == 0L)
+  safety_ev$ADMIT_DT <- as.Date(ifelse(safety_ev$INPATIENT == 1L,
+                                       safety_ev$EVENT_DT - 2L, NA),
+                                origin = "1970-01-01")
 
   safety_counted <- data.frame(
     PATID = safety_ev$PATID, COHORT = safety_ev$COHORT,
@@ -556,6 +639,10 @@ synthetic_one <- function(prefix, settings, min_n = 25L) {
                     "BASELINE", "TREATMENT"),
     CONDITION = safety_ev$CONDITION, EVENT_DT = safety_ev$EVENT_DT,
     stringsAsFactors = FALSE)
+  # The washout chain's own answer, which 06_safety.R keeps under TIMELINE
+  # before attributing the events to periods.
+  safety_counted <- rbind(safety_counted,
+                          transform(safety_counted, PERIOD = "TIMELINE"))
 
   hi <- seq_len(n_sub) %% 2L == 0L
   los <- as.integer(r(sum(hi), 1, 21))
@@ -589,7 +676,7 @@ synthetic_one <- function(prefix, settings, min_n = 25L) {
     S_SOC = soc, S_COMORB_SUBGROUP = subgroup, S_FRAILTY = frailty,
     S_SAFETY_EVENTS = safety_ev, S_SAFETY_COUNTED = safety_counted,
     S_HCRU_EVENTS = hcru_ev, S_MALIGNANCY = malig_pt,
-    S_MALIGNANCY_DATES = malig_dates,
+    S_MALIGNANCY_DATES = malig_dates, S_MALIGNANCY_SEQUENCES = malig_seq,
     S_DEMOGRAPHICS = demo, S_COMORBIDITY = comorb, S_TTE = tte,
     S_SAFETY_RATES = safety, S_HCRU_RATES = hcru,
     S_MALIGNANCY_RATES = malig, S_PATTERNS = patterns,

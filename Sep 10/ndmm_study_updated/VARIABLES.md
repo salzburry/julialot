@@ -57,8 +57,12 @@ Tentative categories:
 | **Later lines (2L, 3L, 4L)** | Quadruplets with anti-CD38 backbone (off-label; some use expected) · Triplets with anti-CD38 backbone · Other triplets (non-anti-CD38) · Other novel agents (e.g. Selinexor) · CAR-T (inclusive of all targets) · BCMA bispecific · Non-BCMA bispecifics · Doublets/monotherapies (expected to be rare in 2L+) · Other (if applicable) |
 
 `cl_mma_rollup.csv` carries `CL_MED_CLASS` and `CL_MED_ABBR`, the raw material for
-these groupings, but **no regimen-category column exists today**.
-`CODELISTS.md` §2.
+these groupings. The study package's `soc` module categorises each line by the
+**set** of agents it contains against `soc_regimen_categories.csv` (Annex 2) and
+writes `S_SOC.SOC_CATEGORY`; a size category (triplet, doublet) is decided by the
+regimen's own agent count and backbone, so it holds for an unlisted agent too, and
+a modality category (CAR-T, a bispecific) by the agent. `CODELISTS.md` §2,
+`study223926/MODULES.md`.
 
 ## 3. Subgroup stratifications (§7.2.3, Table 1)
 

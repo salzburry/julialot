@@ -166,12 +166,15 @@ stat_min_max <- function(x, denom = NA) {
 
 # --- rates ------------------------------------------------------------------
 
-# Per 1,000 person-years, which is how the study package writes a rate. Where
+# Per 100,000 person-years, which is how the study package writes a rate
+# (its RATE_MULTIPLIER default) and how every rate row of the shells is
+# labelled; bind_run() refuses a run that recorded another multiplier. Where
 # the table carries the rate already, that is what is read: recomputing it
 # from rounded events and person-years would give a second answer to a
 # question the package has answered.
+TFLS_RATE_PER <- 100000
 stat_rate <- function(rate = NA, events = NA, person_years = NA, denom = NA,
-                      low = NA, high = NA, per = 1000) {
+                      low = NA, high = NA, per = TFLS_RATE_PER) {
   r <- suppressWarnings(as.numeric(rate))[1]
   e <- suppressWarnings(as.numeric(events))[1]
   py <- suppressWarnings(as.numeric(person_years))[1]

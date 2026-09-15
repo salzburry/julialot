@@ -106,9 +106,9 @@ Every suite runs offline — no warehouse, no driver, no Shiny — and exits
 non-zero on any failure.
 
 ```bash
-Rscript ndmm_study_updated/study223926/tests/run_tests.R   # 512
+Rscript ndmm_study_updated/study223926/tests/run_tests.R   # 584
 Rscript dashboard/tests/run_tests.R                        # 598
-Rscript TFLS/tests/test_tfls.R                             # 358
+Rscript TFLS/tests/test_tfls.R                             # 361
 (cd lot/engine     && Rscript tests/test_line_criteria.R)  #  57
 (cd lot/engine     && Rscript tests/test_runner.R)         # 527
 (cd lot/qc         && Rscript tests/test_lot_qc.R)         # 295
@@ -117,7 +117,7 @@ Rscript TFLS/tests/test_tfls.R                             # 358
 (cd lot/validation && Rscript tests/test_vignettes.R)      #  36
 ```
 
-2693 checks. Base R except for **`glue`**, which three of them need — the two
+2768 checks. Base R except for **`glue`**, which three of them need — the two
 LOT engine suites, through `tests/testutil.R`, and melphalan. The other six load
 nothing. The app needs `shiny`; a warehouse run needs `DBI`, `odbc` and `glue`.
 

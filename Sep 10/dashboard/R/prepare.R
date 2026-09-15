@@ -153,7 +153,7 @@ strata_of <- function(d, keys = c("COHORT", "LOT_NUM")) {
 # A bar chart of a finished rate, with the strata preserved.
 #
 # Rates are never averaged across strata: 10 events in 10 person-years and 10
-# in 1,000 are 1,000 and 10 per 1,000 PY, and the mean of the two is neither
+# in 1,000 are 100,000 and 1,000 per 100,000 PY, and the mean of the two is neither
 # rate and not the pooled one. Baseline and follow-up person-time cannot be
 # pooled by averaging, and the populations behind two strata overlap.
 #

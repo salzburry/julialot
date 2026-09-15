@@ -292,7 +292,10 @@ These are stated once, in §7.8.1, and are easy to lose:
    at index, the value nearest the index within the baseline is used. Comorbidities
    are assessed over the 12-month baseline including the index date** — which
    contradicts §7.1's "does not include index date". `OPEN_QUESTIONS.md` Q14.
-9. Rates are per person-year, scaled per 10,000 or 100,000.
+9. Rates are per person-year, scaled per 100,000 (`RATE_MULTIPLIER`, recorded on the
+   run's metadata row; the TFLS shells are labelled per 100,000 and refuse a run that
+   recorded another multiplier). A rate of zero events carries the exact Poisson
+   limits, 0 and 3.688879 / PY.
 10. **< 25 patients in a stratification ⇒ no analysis** (unless SOC-specific).
 11. No imputation. Missing values are reported and dropped where necessary.
 12. No p-values, no log-rank, no hypothesis tests anywhere.

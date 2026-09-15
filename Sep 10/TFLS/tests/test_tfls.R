@@ -286,8 +286,8 @@ ok({ s <- stat_min_max(c(4, 1, 9))
      near(s$value, 1) && near(s$high, 9) && s$text == "1.0, 9.0" },
    "min_max is the two ends")
 ok({ s <- stat_rate(events = 20, person_years = 200)
-     near(s$value, 100) && s$text == "100.00" },
-   "a rate from 20 events in 200 person-years is 100 per 1,000")
+     near(s$value, 10000) && s$text == "10,000.00" },
+   "a rate from 20 events in 200 person-years is 10,000 per 100,000 - the study's multiplier")
 ok({ s <- stat_rate(rate = 12.5, events = 1, person_years = 2)
      near(s$value, 12.5) },
    "where the study table carries the rate, that is the rate: it is not recomputed from rounded parts")
@@ -1104,6 +1104,18 @@ local({
   said2 <- capture.output(check_contract_binding(md_row(STUDY_CONTRACT_MD5 = "NA"), "here", ROOT))
   ok(any(grepl("recorded no contract hash", said2, fixed = TRUE)),
      "...as does one whose snapshot wrote the missing value as the string NA")
+  # What the rates are per. The shells say 100,000 and read the rate as
+  # written, so a run scaled otherwise is refused, and one that recorded no
+  # multiplier binds with a warning.
+  ok(identical(bind(md_row(STUDY_CONTRACT_MD5 = have, RATE_MULTIPLIER = "100000")), "BOUND"),
+     "a run whose rates are per 100,000 person-years binds")
+  e_per <- bind(md_row(STUDY_CONTRACT_MD5 = have, RATE_MULTIPLIER = "1000"))
+  ok(grepl("per 1000 person-years (RATE_MULTIPLIER)", e_per, fixed = TRUE) &&
+       grepl("labelled per 100,000", e_per, fixed = TRUE) && grepl("Nothing was filled", e_per, fixed = TRUE),
+     "...and one scaled per 1,000 is refused before anything is read - the labels would be wrong by that factor")
+  said3 <- capture.output(check_rate_multiplier(md_row(STUDY_CONTRACT_MD5 = have), "here"))
+  ok(any(grepl("recorded no rate multiplier", said3, fixed = TRUE)),
+     "a run that predates RATE_MULTIPLIER binds, and says out loud that this could not be checked")
 
   # WHICH study code, opt in. The run records the fingerprint of the R that
   # produced it; pinned, a run of any other code is refused.

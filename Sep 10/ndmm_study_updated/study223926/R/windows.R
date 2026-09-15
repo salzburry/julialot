@@ -68,6 +68,17 @@ baseline_window_sql <- function(anchor, cfg, include_index = NULL) {
   )
 }
 
+# The window Table 4's diagnosis date is looked for in.
+#
+# Table 4: "First MM diagnosis is defined as first medical claim for MM within
+# the baseline period on or prior to 1L". The 1L baseline, and the 1L index
+# day with it - "on or prior to" - so this is the baseline window with its end
+# moved from the day before the index to the index itself. Anchored on the 1L
+# index for EVERY cohort: a 2L row's diagnosis date is the same patient-level
+# fact, not a claim inside the 2L baseline.
+dx_window_sql <- function(anchor, cfg)
+  list(start = window_start_sql(anchor, cfg$baseline_days, cfg), end = anchor)
+
 # The end of a patient's follow-up.
 #
 # s7.1: "from the index date (i.e., including index) until the end of
@@ -179,9 +190,20 @@ rate_sql <- function(events, pyears, cfg)
 rate_ci_sql <- function(events, pyears, cfg, side = c("lo", "hi")) {
   side <- match.arg(side)
   z <- if (side == "lo") "-1.959964" else "1.959964"
+  mult <- as.integer(cfg$rate_multiplier)
+  # Zero events is a rate of zero with an interval, not a rate with none. The
+  # log-normal interval above is undefined there (ln 0), and a NULL read as
+  # "no interval" in a table the protocol asks for one on - which is most of
+  # the rare-event rows this study exists to report. The exact Poisson limits
+  # for a count of zero are 0 and -ln(0.025) / PY = 3.688879 / PY, scaled
+  # like the rate.
+  zero <- if (side == "lo") "0.0"
+          else sprintf("3.688879 / cast(%s as double) * %d", pyears, mult)
   sprintf(paste0("CASE WHEN %s > 0 AND %s > 0 THEN ",
-                 "exp(ln(cast(%s as double) / %s) + (%s) * (1.0 / sqrt(cast(%s as double)))) * %d END"),
-          events, pyears, events, pyears, z, events, as.integer(cfg$rate_multiplier))
+                 "exp(ln(cast(%s as double) / %s) + (%s) * (1.0 / sqrt(cast(%s as double)))) * %d ",
+                 "WHEN %s = 0 AND %s > 0 THEN %s END"),
+          events, pyears, events, pyears, z, events, mult,
+          events, pyears, zero)
 }
 
 # The claim-status filter, as a WHERE fragment.

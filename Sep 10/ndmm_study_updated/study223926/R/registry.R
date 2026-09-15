@@ -64,7 +64,14 @@ SUPPRESSION_SPEC <- list(
     n_col = "N_AT_RISK",
     group_by = c("COHORT", "LOT_NUM", "PERIOD"),
     facet = "CATEGORY",
-    value_cols = c("N_PATIENTS", "PERSON_YEARS", "RATE")),
+    value_cols = c("N_PATIENTS", "PERSON_YEARS", "RATE", "RATE_LO", "RATE_HI")),
+  # One row per treatment sequence among the patients with a malignancy, so
+  # the count IS the stratum: a sequence held by fewer than the floor is a
+  # cell about fewer than the floor.
+  S_MALIGNANCY_SEQUENCES = list(
+    n_col = "N_PATIENTS",
+    group_by = c("COHORT", "SCOPE", "LINES"),
+    value_cols = c("PCT")),
   S_PATTERNS = list(
     n_col = "N_PATIENTS",
     group_by = c("COHORT", "LOT_NUM"),
@@ -304,10 +311,19 @@ MODULES <- list(
 
   malignancy = list(
     key = "malignancy", label = "Secondary malignancies",
-    needs = "periods", codelists = "secondary_malig.csv",
-    outputs = c("S_MALIGNANCY", "S_MALIGNANCY_DATES", "S_MALIGNANCY_RATES"),
+    # S_MALIGNANCY_SEQUENCES is the treatment sequences of the patients with
+    # a malignancy, in regimen categories, so it is written only where the
+    # soc module ran - like the rate tables' regimen stratification, which
+    # follows the same rule rather than a dependency.
+    # mm_dx.csv is read to REFUSE, not to match: a secondary malignancy is
+    # a malignancy other than the myeloma, so no code on the MM list may be
+    # on this one.
+    needs = "periods", codelists = c("secondary_malig.csv", "mm_dx.csv"),
+    outputs = c("S_MALIGNANCY", "S_MALIGNANCY_DATES", "S_MALIGNANCY_RATES",
+                "S_MALIGNANCY_SEQUENCES"),
     per_cohort = TRUE,
-    fn = "mod_malignancy", blocked = NA_character_),
+    fn = "mod_malignancy", check = "check_malignancy_list",
+    blocked = NA_character_),
 
   tte = list(
     key = "tte", label = "TTNT, TTD and OS",
@@ -463,6 +479,22 @@ OPTIONAL_FEATURES <- list(
                               output = "S_COMORB_SUBGROUP"))
 )
 
+# A code list a module needs under one reading of a setting and not under the
+# other, with no output of its own turning on it - so not a switch, and not an
+# OPTIONAL_FEATURES entry, which downstream readers take as "an output and the
+# switch that asks for it".
+#
+# The diagnosis date Table 4 defines is "first medical claim for MM within the
+# baseline period", which is a scan of the diagnosis table against the MM code
+# list. Under the default reading the date is read off the cohort table and no
+# list is needed - so the list is required only where it is read, and a run
+# with no code list at all stays possible.
+CONDITIONAL_CODELISTS <- list(
+  periods = list(
+    list(codelist = "mm_dx.csv",
+         when = function(cfg) identical(cfg$dx_date_source, "baseline_first_claim")))
+)
+
 apply_optional_features <- function(mods, cfg) {
   for (k in intersect(names(OPTIONAL_FEATURES), names(mods))) {
     for (setting in names(OPTIONAL_FEATURES[[k]])) {
@@ -473,6 +505,10 @@ apply_optional_features <- function(mods, cfg) {
         mods[[k]]$outputs <- setdiff(mods[[k]]$outputs, f$output)
     }
   }
+  for (k in intersect(names(CONDITIONAL_CODELISTS), names(mods)))
+    for (f in CONDITIONAL_CODELISTS[[k]])
+      if (isTRUE(f$when(cfg)))
+        mods[[k]]$codelists <- unique(c(mods[[k]]$codelists, f$codelist))
   mods
 }
 

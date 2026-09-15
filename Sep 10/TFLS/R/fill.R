@@ -67,9 +67,11 @@ patients_of <- function(d) {
 TFLS_SUBJECT_TABLES <- c("S_DEMOGRAPHICS", "S_COMORBIDITY", "S_COMORB_SUBGROUP",
                          "S_FRAILTY", "S_SOC", "S_PERIODS", "S_TTE")
 
-# The names a shell may use for the input cohort table. The diagnosis date is
-# on it and is carried into no study output, so a row anchored on diagnosis can
-# only be filled where the run was told where that table is.
+# The names a shell may use for the input cohort table. The study's own
+# diagnosis date is on S_PERIODS (DX_DT, with DX_YEAR and the durations hung
+# on it), so a row anchored on diagnosis reads that; these names are for a
+# shell that asks for the cohort build's table itself, which only a run told
+# where that table is can fill.
 TFLS_COHORT_TABLE_NAMES <- c("COHORT_TABLE", "INPUT_COHORT", "INPUT_COHORT_TABLE")
 
 # `absent_why` is optional and says WHY a table is not there, in the reader's
@@ -838,9 +840,10 @@ fill_table <- function(sh, tid, ctx, floor_n = TFLS_PACKAGE_MIN_N) {
           ctx$absent_why(row$source) else ""
         row_why <- if (nzchar(scoped)) scoped
           else if (toupper(chr(row$source)) %in% TFLS_COHORT_TABLE_NAMES)
-            paste0("the diagnosis date is on the input cohort table, which no ",
-                   "study output carries; in warehouse mode TFLS_COHORT_TABLE ",
-                   "names it, and nothing else here can stand in for it")
+            paste0("the input cohort table is the cohort build's, not a study ",
+                   "output; in warehouse mode TFLS_COHORT_TABLE names it. The ",
+                   "study's diagnosis date and the durations hung on it are on ",
+                   "S_PERIODS, which a row can read instead")
           else paste0(chr(row$source), " was not read by this run, so nothing ",
                       "can fill this row")
         row_kind <- "not_in_run"

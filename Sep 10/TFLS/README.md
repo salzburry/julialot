@@ -94,6 +94,9 @@ cheap. So what binds every read here is the run's own record of what it did:
 - A `_RELEASE` table is preferred only where the run ran the release module.
 - A run that recorded no modules, or no cohorts, can vouch for nothing under
   the prefix, and the command stops rather than filling the shells from it.
+- Every rate row of the shells is labelled **per 100,000 person-years** and a
+  rate is read off the table as written, so a run whose `RATE_MULTIPLIER` says
+  otherwise is refused; a run that predates the column binds with a warning.
 
 The output is replaced as one set. The tables are rendered into a staging
 directory first, the previous run's files are set aside, the new ones moved

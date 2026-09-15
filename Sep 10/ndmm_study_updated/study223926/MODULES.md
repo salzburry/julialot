@@ -18,7 +18,7 @@ serves all three:
 DATABRICKS_PWD=... Rscript build.R                 # DSN from DATABRICKS_DSN, default RWDE
 DRY_RUN=TRUE Rscript build.R                       # print the plan, touch nothing
 MODULES=safety COHORTS=1L,2L Rscript build.R       # one module; 2L is nested in 1L, so 1L comes too
-Rscript tests/run_tests.R                          # 512 checks, no warehouse
+Rscript tests/run_tests.R                          # 584 checks, no warehouse
 ```
 
 `SPARK_METHOD` picks the connection, and `odbc` is the default. The other
@@ -108,7 +108,7 @@ lands on the run's own metadata row where no reader can miss it.
 | `R/db_utils_223926.R` | the connection - ODBC through DBI, or a sparklyr session - logging, table naming, the step runner. |
 | `R/run_223926.R` | Resolves the plan, walks the modules, writes the run metadata. |
 | `R/modules/*.R` | One file per module. Nothing else defines a clinical rule. |
-| `tests/run_tests.R` | 512 checks that need no warehouse. The last sections RUN every module for every cohort, parse every statement they emit, and **execute** them against fixtures. |
+| `tests/run_tests.R` | 584 checks that need no warehouse. The last sections RUN every module for every cohort, parse every statement they emit, and **execute** them against fixtures. |
 | `tests/emit_sql.R` | The harness. Stubs only what touches Spark, so a module's R and its SQL are both exercised without a cluster. |
 | `tests/parse_sql.py` | Parses each captured statement in the Spark dialect (sqlglot). |
 | `tests/run_duckdb.py` | **Executes** them: transpiles to DuckDB, runs against `tests/fixtures/cdm`, checks 90 golden numbers, then runs the whole script again and checks nothing doubled. |
@@ -123,13 +123,13 @@ lands on the run's own metadata row where no reader can miss it.
 | `spine` | `S_SPINE` — one row per patient per line, with the next line beside it | — |
 | `cohorts` | `S_COHORT` — a patient combined with a line | — |
 | `attrition` | `S_ATTRITION` — the funnel: one row per criterion, under the one or two rows that say where the cohort's population came from | — |
-| `periods` | `S_PERIODS`, `S_LOT_PERIODS` — baseline, follow-up, treatment windows | — |
-| `demographics` | `S_DEMOGRAPHICS` — age, sex, region, race, ethnicity, insurance | — |
+| `periods` | `S_PERIODS`, `S_LOT_PERIODS` — baseline, follow-up, treatment windows; the diagnosis date (`DX_DT`, `DX_DATE_SOURCE` says which, Q30) and what hangs on it — `DX_YEAR`, `INDEX_YEAR`, diagnosis→index and diagnosis→follow-up-end, prior LOT→next LOT | `mm_dx.csv` only under `DX_DATE_SOURCE=baseline_first_claim` |
+| `demographics` | `S_DEMOGRAPHICS` — age (at index and at diagnosis), sex, region, race, ethnicity, insurance, from the enrolment row covering the index or else the baseline row nearest it (`ATTR_SOURCE`) | — |
 | `comorbidity` | `S_COMORBIDITY` — Charlson (Quan 2011), MM-adjusted. With `FRAILTY=TRUE` also `S_FRAILTY`; with `COMORBID_SUBGROUPS=TRUE` also `S_COMORB_SUBGROUP` | `charlson_quan2011.csv`, `mm_dx.csv`; plus `frailty_kim2018.csv` (Annex 7) and `comorbid_subgroups.csv` (Annex 3) when those switches are on |
-| `soc` | `S_SOC` — regimen category per line | `soc_regimen_categories.csv` (Annex 2) |
-| `safety` | `S_SAFETY_EVENTS`, `S_SAFETY_COUNTED`, `S_SAFETY_RATES` — baseline prevalence and on-treatment incidence, counted the same way | `safety_events.csv` (Annex 3) |
+| `soc` | `S_SOC` — regimen category per line, with the line's start year and the engine's transplant flags and transplant year (Table 6's SCT by year by SOC is a count over it) | `soc_regimen_categories.csv` (Annex 2) |
+| `safety` | `S_SAFETY_EVENTS`, `S_SAFETY_COUNTED`, `S_SAFETY_RATES` — baseline prevalence and on-treatment incidence, counted the same way: one acute washout chain per cohort over the whole timeline (kept under `PERIOD = TIMELINE`, Q34), inpatient-defined conditions from admissions, a `(hospitalisation)` series per chronic condition, and an `(any in domain)` aggregate row per domain | `safety_events.csv` (Annex 3) |
 | `hcru` | `S_HCRU_EVENTS`, `S_HCRU_RATES` | `hcru.csv`, `mm_dx.csv` |
-| `malignancy` | `S_MALIGNANCY`, `S_MALIGNANCY_DATES` — every qualifying date, not only the first — and `S_MALIGNANCY_RATES` | `secondary_malig.csv` (Annex 3) |
+| `malignancy` | `S_MALIGNANCY` (with `AFTER_INDEX`), `S_MALIGNANCY_DATES` — every qualifying date, not only the first — `S_MALIGNANCY_RATES` with its interval and an `(any malignancy)` aggregate category, and `S_MALIGNANCY_SEQUENCES` (three readings on `LINES`, Q32) where `soc` ran | `secondary_malig.csv` (Annex 3); `mm_dx.csv`, read only to refuse a myeloma code |
 | `tte` | `S_TTE` — TTNT, TTD, OS | — |
 | `patterns` | `S_PATTERNS`, `S_SWITCH`, `S_TX_ATTRITION` | via `soc` |
 | `release` | `S_*_RELEASE` — every rate and percentage table with cells under 25 patients suppressed | — |
@@ -504,7 +504,7 @@ together.
 ## What this is not
 
 It has never been run against the warehouse — no code lists, and several
-settings still want the study team's answer (`../OPEN_QUESTIONS.md`). The 417
+settings still want the study team's answer (`../OPEN_QUESTIONS.md`). The 584
 tests check the selection logic, the boundary conventions and the counting
 rules; run every module for every cohort against recorders, so that each
 module's R reaches the end of the function and every statement it emits parses

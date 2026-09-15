@@ -407,6 +407,123 @@ check_lot_lineage_unchanged <- function(con, accepted) {
 lot_run_version <- function(lot_run)
   run_version_stamp(lot_run$UPDATED_AT %||% "")
 
+# Which agents the cohort build barred from setting the 1L index.
+#
+# s7.2.1.1 I3 names two agents that may not set it - "Exclusions include:
+# panobinostat and elotuzumab" - and only the cohort build can apply that,
+# because it is the build that chooses the index claim. It records what it
+# barred on NDMM_RUN_METADATA.INDEX_EXCLUDED, as the LIKE patterns it was
+# given against the code list's CL_MED_ABBR. This resolves the protocol's
+# names to abbreviations through cl_mma_rollup.csv and requires every
+# abbreviation to be matched by a recorded pattern.
+#
+# An agent not on the rollup cannot set an index at all - the code list is the
+# eligible-1L set - so there is nothing to bar and nothing to check. A build
+# that recorded nothing (an older writer, or no metadata table) is unverified
+# and said so; a metadata table that could not be READ is unproven and follows
+# LOT_ALLOW_UNPROVEN_LINEAGE. A build that checkably barred less is wrong, and
+# that stops: it made a different cohort. COHORT_INDEX_EXCLUSIONS=none checks
+# nothing, since an empty environment value reads as the default.
+check_cohort_index_exclusions <- function(con, cfg, cohort_run_id = "") {
+  want <- trimws(strsplit(as.character(cfg$cohort_index_exclusions %||% ""),
+                          "[,|]")[[1]])
+  want <- want[nzchar(want) & tolower(want) != "none"]
+  if (!length(want)) {
+    log_msg("COHORT_INDEX_EXCLUSIONS is empty, so which agents the cohort ",
+            "build barred from setting the 1L index is not checked.")
+    return(invisible(NULL))
+  }
+  tbl <- cohort_tbl("NDMM_RUN_METADATA")
+  cohort_run_id <- as_str(cohort_run_id)
+  sql <- if (nzchar(cohort_run_id))
+    sprintf("SELECT RUN_ID, INDEX_EXCLUDED FROM %s WHERE RUN_ID = '%s'
+             ORDER BY RECORDED_AT DESC LIMIT 1",
+            tbl, gsub("'", "''", cohort_run_id, fixed = TRUE))
+  else sprintf("SELECT RUN_ID, INDEX_EXCLUDED FROM %s
+                ORDER BY RECORDED_AT DESC LIMIT 1", tbl)
+  rows <- tryCatch(db_q(con, sql), error = function(e) e)
+  unverified <- function(why) {
+    log_msg("WARNING: whether the cohort build barred ",
+            paste(want, collapse = " and "), " from setting the 1L index is ",
+            "unverified - ", why, ". s7.2.1.1 names them, and only the cohort ",
+            "build can apply it.")
+    invisible(NULL)
+  }
+  if (inherits(rows, "error")) {
+    if (missing_object_error(rows))
+      return(unverified(paste0(tbl, " is not there, so that build recorded nothing")))
+    if (missing_column_error(rows))
+      return(unverified(paste0(tbl, " predates the INDEX_EXCLUDED column")))
+    if (!isTRUE(cfg$lot_allow_unproven_lineage))
+      stop("LINEAGE ERROR: could not read ", tbl, " - ", conditionMessage(rows),
+           "\nIt records which agents the cohort build barred from setting ",
+           "the 1L index (s7.2.1.1: ", paste(want, collapse = ", "),
+           "), and a build that barred neither made a different cohort. Fix ",
+           "the read, set COHORT_PREFIX if the build wrote its metadata ",
+           "elsewhere, or set LOT_ALLOW_UNPROVEN_LINEAGE=TRUE to proceed ",
+           "over a binding nothing checked.", call. = FALSE)
+    return(unverified(paste0(tbl, " could not be read (",
+                             conditionMessage(rows),
+                             ") and LOT_ALLOW_UNPROVEN_LINEAGE=TRUE")))
+  }
+  if (is.null(rows) || !nrow(rows))
+    return(unverified(if (nzchar(cohort_run_id))
+      paste0(tbl, " has no row for cohort attempt ", cohort_run_id)
+      else paste0(tbl, " has no rows")))
+  recorded <- trimws(strsplit(as_str(rows$INDEX_EXCLUDED[1]), "[,|]")[[1]])
+  recorded <- recorded[nzchar(recorded) & tolower(recorded) != "na"]
+
+  # The protocol's names, as the code list's abbreviations.
+  rl <- tryCatch(load_codelist("cl_mma_rollup.csv", cfg), error = function(e) e)
+  if (inherits(rl, "error"))
+    return(unverified(paste0("cl_mma_rollup.csv, which maps the names to the ",
+                             "code list's abbreviations, is not usable here: ",
+                             sub("^CODELIST ERROR: ", "", conditionMessage(rl)))))
+  # Whole columns, not as_str(), which reads one value.
+  full <- tolower(trimws(ifelse(is.na(rl$CL_MEDICATION_FULL), "",
+                                as.character(rl$CL_MEDICATION_FULL))))
+  abbr <- toupper(trimws(ifelse(is.na(rl$CL_MED_ABBR), "",
+                                as.character(rl$CL_MED_ABBR))))
+  missing <- character(0)
+  barred <- character(0)
+  for (agent in want) {
+    hits <- unique(abbr[grepl(tolower(agent), full, fixed = TRUE) & nzchar(abbr)])
+    if (!length(hits)) {
+      log_msg("  ", agent, " is not on cl_mma_rollup.csv, so it cannot set a ",
+              "1L index and there is nothing to bar")
+      next
+    }
+    for (a in hits) {
+      if (any(vapply(recorded, function(p) like_matches(p, a), logical(1))))
+        barred <- c(barred, sprintf("%s (%s)", agent, a))
+      else missing <- c(missing, sprintf("%s (%s)", agent, a))
+    }
+  }
+  if (length(missing))
+    stop("LINEAGE ERROR: the cohort build", if (nzchar(cohort_run_id))
+           paste0(" (attempt ", cohort_run_id, ")") else "",
+         " did not bar ", paste(missing, collapse = ", "),
+         " from setting the 1L index. s7.2.1.1 names them among the agents ",
+         "restricted to later lines, and a cohort indexed on one of them is a ",
+         "different cohort. It recorded NDMM_INDEX_EXCLUDED_ABBRS as '",
+         paste(recorded, collapse = ","), "'.\nRe-run the cohort build with ",
+         "NDMM_INDEX_EXCLUDED_ABBRS naming them, or set COHORT_INDEX_EXCLUSIONS ",
+         "to what the study team agreed.", call. = FALSE)
+  log_msg("  cohort build barred from the 1L index: ",
+          if (length(barred)) paste(barred, collapse = ", ")
+          else "nothing the code list could set one with")
+  invisible(barred)
+}
+
+# SQL LIKE, as the cohort build applies NDMM_INDEX_EXCLUDED_ABBRS: `%` any run
+# of characters, `_` any one, case-insensitive on both sides.
+like_matches <- function(pattern, x) {
+  # LIKE's wildcards as glob ones, and glob2rx() does the escaping: a dot in a
+  # pattern is a dot, not any character.
+  g <- chartr("%_", "*?", toupper(trimws(pattern)))
+  grepl(utils::glob2rx(g, trim.tail = FALSE), toupper(trimws(x)))
+}
+
 # What the cohort build actually applied.
 #
 # Eight of this package's settings are the cohort build's rules, and the two
@@ -416,8 +533,12 @@ lot_run_version <- function(lot_run)
 # `k=v|k=v`, so the study's metadata records what shaped the data rather than
 # what this run was told.
 #
-# Not fatal: the cohort is what it is, so a disagreement is named, recorded and
-# left to the study team.
+# A disagreement on a setting that only SHAPES a criterion's reading is named,
+# recorded and left to the study team. One on a setting that defines the
+# cohort - BINDING_UPSTREAM_SETTINGS - stops the run, unless
+# SETTINGS_OVERRIDE says to go on, and then it is a recorded deviation like a
+# contract change: returned on the result's "deviations" attribute for the
+# metadata row.
 read_upstream_settings <- function(con, cfg) {
   tbl <- cohort_tbl("NDMM_RUN_METADATA")
   rows <- tryCatch(
@@ -445,6 +566,18 @@ read_upstream_settings <- function(con, cfg) {
     else sprintf("%s: the cohort was built with %s, this run is set to %s",
                  k, got, mine)
   }))
+  binding <- Filter(function(d) any(startsWith(d, paste0(BINDING_UPSTREAM_SETTINGS, ":"))),
+                    disagree)
+  if (length(binding) && !isTRUE(cfg$settings_override))
+    stop("UPSTREAM ERROR: the cohort this run reads was built under a ",
+         "different study period or index floor than this run is set to:\n  - ",
+         paste(binding, collapse = "\n  - "),
+         "\nThe study period and the 1L index floor define the cohort, so ",
+         "the two must agree: set STUDY_START / LOT1_INDEX_FROM to what the ",
+         "cohort build applied, or rebuild the cohort. SETTINGS_OVERRIDE=TRUE ",
+         "proceeds and records the disagreement as a deviation on the status ",
+         "row, which no reader downstream accepts as the study's numbers.",
+         call. = FALSE)
   if (length(disagree))
     log_msg("WARNING: this run's upstream readings disagree with the cohort ",
             "build that made its input:\n  - ",
@@ -453,5 +586,7 @@ read_upstream_settings <- function(con, cfg) {
             "follow ITS values. Both are recorded in S_RUN_METADATA.")
   else
     log_msg("  upstream settings verified against ", tbl)
+  attr(out, "deviations") <- if (length(binding))
+    paste0("upstream ", sub(":", " -", binding, fixed = TRUE)) else character(0)
   out
 }

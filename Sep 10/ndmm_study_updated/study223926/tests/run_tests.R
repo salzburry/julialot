@@ -286,6 +286,15 @@ cat("\nwindow conventions\n")
      "a rate is per RATE_MULTIPLIER person-years")
   ok(grepl("50000", rate_sql("n", "py", cfg0(c(RATE_MULTIPLIER = "50000")))),
      "and the multiplier is a setting")
+  # Zero events: the log-normal interval is undefined, and the row used to
+  # carry no interval at all. The exact Poisson limits for a count of zero
+  # are 0 and -ln(0.025) / PY, scaled like the rate.
+  ok(grepl("WHEN n = 0 AND py > 0 THEN 0.0 END", rate_ci_sql("n", "py", cfg, "lo"), fixed = TRUE) &&
+       grepl("WHEN n = 0 AND py > 0 THEN 3.688879 / cast(py as double) * 100000 END",
+             rate_ci_sql("n", "py", cfg, "hi"), fixed = TRUE),
+     "a rate of zero events carries the exact Poisson limits, 0 and 3.688879 / PY")
+  ok(grepl("WHEN n > 0 AND py > 0 THEN exp(ln(", rate_ci_sql("n", "py", cfg, "hi"), fixed = TRUE),
+     "...and a rate with events keeps the log-normal interval")
 }
 
 cat("\ncounting rules\n")
@@ -404,8 +413,9 @@ cat("\ncode lists\n")
   ok(grepl("module hcru", e_cpt) && grepl("ED_DEFINITION asks for revenue, pos", e_cpt),
      "...and asked for by name it stops there, with the module's own reason")
   ok(setequal(vapply(Filter(function(m) !is.null(m$check), MODULES), `[[`, character(1), "check"),
-              c("check_charlson_list", "check_soc_list", "check_safety_list", "check_hcru_list")) &&
-       all(vapply(c("mod_comorbidity", "mod_soc", "mod_safety", "mod_hcru"), function(f)
+              c("check_charlson_list", "check_soc_list", "check_safety_list", "check_hcru_list",
+                "check_malignancy_list")) &&
+       all(vapply(c("mod_comorbidity", "mod_soc", "mod_safety", "mod_hcru", "mod_malignancy"), function(f)
          grepl("check_[a-z]+_list\\(cfg, cl\\)", paste(deparse(get(f)), collapse = "\n")), logical(1))),
      "...the same check each list-driven module makes as it starts, registered beside it")
   # The lists these preflights loaded are in the manifest; a later check
@@ -891,11 +901,35 @@ cat("\nprotocol readings carried into the SQL\n")
   sp <- capture.output(print(mod_spine))
   ok(any(grepl("MED_ADD", sp)) && any(grepl("CART_INIT", sp)),
      "IS_PROTOCOL_DISCON unions the engine's three end reasons, per Table 4")
+  # ...and dates each by what happened. The engine ends a line the day BEFORE
+  # an added agent or a line-opening transplant, so the footnote's
+  # 'introduced' date is the day after; a run-out and an in-window AUTO end
+  # the line on the last day its therapy covered.
+  spine_sql <- paste(vapply(Filter(function(x) x$tag == "step:spine", RUN$sql),
+                            function(x) x$sql, character(1)), collapse = "\n")
+  ok(grepl("IN ('DISCONTINUATION','SCT_AUTO_CONT')\n             THEN l.LOT_BASE_END_DT", spine_sql, fixed = TRUE) &&
+       grepl("('MED_ADD','CART_INIT','SCT_AUTO','SCT_ALLO','SCT_CART')\n             THEN cast(date_add(l.LOT_BASE_END_DT, 1) as date)", spine_sql, fixed = TRUE),
+     "the discontinuation date is the run-out day for a run-out and the introduction day for an added agent or transplant - Table 4 footnote, Q33")
   ok(any(grepl("LOT_LONG_FINAL", sp)),
      "the spine reads the LOT output AFTER the line criteria, not before")
   tt <- capture.output(print(mod_tte))
   ok(any(grepl("IS_PROTOCOL_DISCON", tt)),
      "TTD's event is that union, not the DISCONTINUATION rows alone")
+  # The acute washout is a statement about events, not periods: run once
+  # over the cohort's baseline-start-to-follow-up-end timeline, and the
+  # periods then take the distinct events dated inside them.
+  saf_src <- readLines("R/modules/06_safety.R", warn = FALSE)
+  ok(sum(grepl("run_acute_washout(", saf_src, fixed = TRUE)) == 1L,
+     "the acute washout chain runs once per cohort, over the whole timeline - s7.8.1, Q34")
+  all_sql <- paste(vapply(RUN$sql, function(x) x$sql, character(1)), collapse = "\n")
+  ok(grepl("TEMPORARY VIEW s_periods_timeline", all_sql, fixed = TRUE) &&
+       grepl("BASELINE_START AS PERIOD_START, FU_END AS PERIOD_END", all_sql, fixed = TRUE),
+     "...from the cohort's baseline start to its follow-up end")
+  ok(grepl("'TIMELINE' AS PERIOD", all_sql, fixed = TRUE) &&
+       grepl("AND t.PERIOD = 'TIMELINE'", all_sql, fixed = TRUE) &&
+       grepl("'BASELINE' AS PERIOD, t.CONDITION, t.EVENT_DT", all_sql, fixed = TRUE) &&
+       grepl("'TREATMENT' AS PERIOD, t.CONDITION, t.EVENT_DT", all_sql, fixed = TRUE),
+     "...and each period is filled from the chain's TIMELINE rows by date, never re-run")
   hc <- capture.output(print(mod_hcru))
   ok(any(grepl("DIAG1", hc)) && any(grepl("DIAG2", hc)),
      "MM-related hospitalisation is a diagnosis in position 1 or 2 - s7.8.1")
@@ -906,6 +940,99 @@ cat("\nprotocol readings carried into the SQL\n")
      "a secondary malignancy needs two codes on separate dates - Table 4")
   ok(any(grepl("FIRST_DT", ml)),
      "and is dated at the first of them, not the confirming one")
+  ok(any(grepl("AFTER_INDEX", ml)) &&
+       any(grepl("CASE WHEN c.FIRST_DT >= p.INDEX_DATE THEN", ml, fixed = TRUE)),
+     "a malignancy before the index is flagged and gets no duration from it - Table 4, 2L only after 2L")
+  mp_sql <- paste(vapply(Filter(function(x) grepl("^step:malignancy_prevalence_SEC2L", x$tag), RUN$sql),
+                         function(x) x$sql, character(1)), collapse = "\n")
+  ok(grepl("BETWEEN date_add(p.DX_DT, 1) AND date_sub(p.INDEX_DATE, 1)", mp_sql, fixed = TRUE) &&
+       grepl("CASE WHEN p.INDEX_DATE > p.DX_DT THEN", mp_sql, fixed = TRUE),
+     "the secondary cohort's prevalence window runs from the diagnosis to the index, both excluded, with that interval's person-time - s7.8.4")
+  ms_sql <- paste(vapply(Filter(function(x) grepl("^step:malignancy_sequences_1L", x$tag), RUN$sql),
+                         function(x) x$sql, character(1)), collapse = "\n")
+  ok(grepl("'after_index' AS SCOPE", ms_sql, fixed = TRUE) && grepl("m.AFTER_INDEX = 1", ms_sql, fixed = TRUE) &&
+       grepl("'after_2l' AS SCOPE", ms_sql, fixed = TRUE) && grepl("m.FIRST_DT > l2.LOT_START_DT", ms_sql, fixed = TRUE),
+     "the treatment sequences of those with a malignancy are tabulated after the index and, as the sensitivity, after 2L - Table 4")
+  ok(grepl("CASE WHEN s4.LOT_START_DT <= q.FIRST_DT THEN s4.SOC_CATEGORY END)", ms_sql, fixed = TRUE) &&
+       grepl("ORDER BY count(*) DESC, SEQUENCE) AS RANK", ms_sql, fixed = TRUE),
+     "...in regimen categories up to MAX_LOT, ranked by how many patients received each")
+  # "Sequences" is not pinned to a side of the malignancy, so all three
+  # readings are rows, on LINES, each with its own denominator.
+  ok(all(vapply(c("'to_malignancy' AS LINES", "'after_malignancy' AS LINES",
+                  "'all_observed' AS LINES", "s1.LOT_START_DT >  q.FIRST_DT",
+                  "'(no further therapy)'",
+                  "PARTITION BY COHORT, SCOPE, LINES"),
+                function(p) grepl(p, ms_sql, fixed = TRUE), logical(1))),
+     "...split around the malignancy both ways and whole, each reading its own denominator - Q32")
+  ok(identical(SUPPRESSION_SPEC$S_MALIGNANCY_SEQUENCES$group_by, c("COHORT", "SCOPE", "LINES")),
+     "and the release copy suppresses within a reading, not across them")
+
+  # The diagnosis-anchored rows of Table 4 and Table 5, read off the SQL the
+  # periods module actually emits. Three durations, each with its own
+  # endpoint convention, and one definition of the date they hang on.
+  per_sql <- vapply(Filter(function(x) grepl("^step:periods_1L", x$tag), RUN$sql),
+                    function(x) x$sql, character(1))
+  per_sql <- paste(per_sql, collapse = "\n")
+  ok(grepl("AS DX_DT", per_sql, fixed = TRUE) && grepl("AS DX_YEAR", per_sql, fixed = TRUE),
+     "S_PERIODS carries the diagnosis date and its year - Table 4, year of MM diagnosis")
+  # Table 5: diagnosis (included) to index (excluded) - a bare datediff.
+  ok(grepl("datediff\\(co\\.INDEX_DATE, c\\.MM_DX_DT\\) END AS DX_TO_INDEX_DAYS", per_sql),
+     "time from diagnosis to index counts the diagnosis day and not the index day - Table 5")
+  # Table 4: diagnosis (included) to follow-up end (included) - one more.
+  ok(grepl("c\\.MM_DX_DT\\) \\+ 1\\) END AS FU_FROM_DX_DAYS", per_sql),
+     "follow-up from diagnosis counts both ends - Table 4")
+  # The default is the cohort build's qualifying diagnosis - the date I2 and
+  # I3 are already measured against - and it scans no claim for it.
+  ok(!any(vapply(RUN$sql, function(x) grepl("s_dx_baseline", x$sql, fixed = TRUE), logical(1))) &&
+       grepl("c.MM_DX_DT AS DX_DT", per_sql, fixed = TRUE) &&
+       grepl("'cohort_mm_dx' AS DX_DT_SOURCE", per_sql, fixed = TRUE),
+     "by default the diagnosis date is the cohort's own, and no claim is scanned for it")
+  # Table 4's own definition, as the other reading: the first MM claim inside
+  # the 1L baseline, index day included, anchored on the input cohort's 1L
+  # index for every cohort, against the MM code list the cohort build used.
+  alt_dx <- with_env(base_env, capture_emitted_sql(".", function(cfg) {
+    cfg$dx_date_source <- "baseline_first_claim"; cfg }))
+  dxv <- vapply(Filter(function(x) grepl("TEMPORARY VIEW s_dx_baseline", x$sql, fixed = TRUE),
+                       alt_dx$sql), function(x) x$sql, character(1))
+  ok(length(dxv) > 0 &&
+       all(grepl("BETWEEN date_sub(c.COHORT_INDEX_DATE, 365) AND c.COHORT_INDEX_DATE",
+                 dxv, fixed = TRUE)),
+     "DX_DATE_SOURCE=baseline_first_claim takes the first MM claim within the 1L baseline on or prior to 1L - Table 4")
+  ok(all(grepl("S_CL_MM_DX", dxv, fixed = TRUE)),
+     "...matched against the same MM code list the cohort build used")
+  alt_per <- paste(vapply(Filter(function(x) grepl("^step:periods_1L", x$tag), alt_dx$sql),
+                          function(x) x$sql, character(1)), collapse = "\n")
+  ok(grepl("coalesce(dx.DX_DT, c.MM_DX_DT) AS DX_DT", alt_per, fixed = TRUE) &&
+       grepl("'baseline_claim' ELSE 'cohort_mm_dx'", alt_per, fixed = TRUE),
+     "...and the row says which source supplied the date, since a patient with no claim in the window falls back")
+  # And the code list follows the reading: the scan needs mm_dx.csv, the
+  # cohort's date does not, so a run with no code list at all is still possible.
+  mods_dx <- suppressMessages(resolve_modules(with_env(
+    c(base_env, DX_DATE_SOURCE = "baseline_first_claim"), cfg_defaults())))
+  mods_nodx <- suppressMessages(resolve_modules(cfg0()))
+  ok("mm_dx.csv" %in% mods_dx$periods$codelists &&
+       !("mm_dx.csv" %in% mods_nodx$periods$codelists),
+     "the periods module needs the MM code list only under the reading that scans claims")
+  # s7.8.1: characteristics "at the time of index date where possible. If
+  # data is missing at index, data from the baseline period present nearest
+  # index will be used." The rows in play overlap the baseline through the
+  # index; the covering row wins; the nearest baseline row stands in.
+  dm_sql <- paste(vapply(Filter(function(x) grepl("^step:demographics_1L", x$tag), RUN$sql),
+                         function(x) x$sql, character(1)), collapse = "\n")
+  ok(grepl("e.ELIGEFF <= p.INDEX_DATE AND e.ELIGEND >= p.BASELINE_START", dm_sql, fixed = TRUE),
+     "demographics read the enrolment rows overlapping the baseline through the index - s7.8.1")
+  ok(grepl("CASE WHEN e.ELIGEFF <= p.INDEX_DATE AND e.ELIGEND >= p.INDEX_DATE THEN 0 ELSE 1 END, e.ELIGEND DESC",
+           dm_sql, fixed = TRUE),
+     "...the row covering the index first, then the one ending nearest it")
+  ok(grepl("'baseline_nearest'", dm_sql, fixed = TRUE) && grepl("AS ATTR_SOURCE", dm_sql, fixed = TRUE),
+     "...and the row records which of the two supplied it")
+  # Table 5: prior LOT start (included) to next LOT start (excluded), among
+  # patients initiating a subsequent LOT - which is one this cohort observed.
+  lp_sql <- paste(vapply(Filter(function(x) grepl("^step:lot_periods_1L", x$tag), RUN$sql),
+                         function(x) x$sql, character(1)), collapse = "\n")
+  ok(grepl("l.NEXT_LOT_START_DT <= p.FU_END THEN datediff(l.NEXT_LOT_START_DT, l.LOT_START_DT) END AS NEXT_LOT_DAYS",
+           lp_sql, fixed = TRUE),
+     "time from a line to the next counts the start day, not the next start, and only within follow-up - Table 5")
 }
 
 cat("\nthe rules that hold the numbers up\n")
@@ -1254,21 +1381,45 @@ cat("\nthe rules that hold the numbers up\n")
     f <- read_upstream_settings; environment(f) <- e
     list(out = f(NULL, cfg), said = said)
   }
-  CS <- "gap_days=30|outpatient_window=90|study_end=2026-03-31|study_start=2016-01-01"
-  a <- up_read(CS)
+  CS <- "gap_days=30|outpatient_window=90|study_end=2026-03-31|study_start=2016-01-01|lot1_from=2019-01-01"
+  # The study period defines the cohort, so a disagreement on it stops the
+  # run unless SETTINGS_OVERRIDE says to go on - and then it is a recorded
+  # deviation, like a contract change.
+  e_up <- tryCatch(up_read(CS), error = function(e) conditionMessage(e))
+  ok(is.character(e_up) && grepl("UPSTREAM ERROR", e_up, fixed = TRUE) &&
+       grepl("study_start: the cohort was built with 2016-01-01, this run is set to 2018-01-01", e_up, fixed = TRUE) &&
+       grepl("SETTINGS_OVERRIDE", e_up, fixed = TRUE),
+     "a cohort built under a different study period stops the run, naming both values")
+  a <- up_read(CS, cfg0(c(SETTINGS_OVERRIDE = "TRUE")))
   ok(identical(a$out[["study_start"]], "2016-01-01") &&
        identical(a$out[["outpatient_window"]], "90"),
      "the cohort build's contract string is parsed into its settings")
   ok(any(grepl("the cohort was built with 2016-01-01, this run is set to 2018-01-01",
                a$said, fixed = TRUE)),
-     "and a disagreement is named, with both values")
-  ok(!any(grepl("outpatient_window", a$said, fixed = TRUE)),
+     "and under the override a disagreement is named, with both values")
+  ok(identical(attr(a$out, "deviations"),
+               "upstream study_start - the cohort was built with 2016-01-01, this run is set to 2018-01-01"),
+     "...and returned as a deviation for the metadata row")
+  ok(!any(grepl("outpatient_window", a$said, fixed = TRUE)) &&
+       !any(grepl("lot1_index_from", a$said, fixed = TRUE)),
      "while a setting the two agree on is not reported as a disagreement")
   b <- up_read(CS, cfg0(c(STUDY_START = "2016-01-01")))
-  ok(!any(grepl("WARNING", b$said)) && any(grepl("verified", b$said)),
+  ok(!any(grepl("WARNING", b$said)) && any(grepl("verified", b$said)) &&
+       !length(attr(b$out, "deviations")),
      "a run set to the same values as the cohort build reports no disagreement")
-  # Not fatal, and not silent. The cohort is what it is; a mismatch is Q1.
-  ok(!is.null(a$out), "a disagreement does not stop the run")
+  # The 1L index floor binds the same way: I1 is a criterion of the cohort.
+  e_lot1 <- tryCatch(up_read("study_start=2018-01-01|lot1_from=2017-01-01"),
+                     error = function(e) conditionMessage(e))
+  ok(is.character(e_lot1) &&
+       grepl("lot1_index_from: the cohort was built with 2017-01-01, this run is set to 2019-01-01", e_lot1, fixed = TRUE),
+     "...and so does a cohort indexed from a different 1L floor than I1 states")
+  # A setting that only shapes one criterion's reading is named, not fatal.
+  c0 <- up_read("study_start=2018-01-01|lot1_from=2019-01-01|outpatient_window=60")
+  ok(!is.null(c0$out) && any(grepl("outpatient_window", c0$said, fixed = TRUE)) &&
+       any(grepl("WARNING", c0$said)) && !length(attr(c0$out, "deviations")),
+     "a disagreement on the outpatient window is a warning, not a stop, and not a deviation")
+  ok(identical(unname(UPSTREAM_SETTING_MAP[BINDING_UPSTREAM_SETTINGS]), c("study_start", "lot1_from")),
+     "the two binding settings are the study period and the 1L index floor, under the cohort build's names")
   c1 <- up_read(NULL)
   ok(is.null(c1$out) && any(grepl("unverified", c1$said)),
      "a metadata table that cannot be read leaves the readings unverified, and says so")
@@ -1305,6 +1456,19 @@ cat("\nthe rules that hold the numbers up\n")
   ml <- paste(capture.output(print(mod_malignancy)), collapse = "\n")
   ok(grepl("s_malig_prior", ml),
      "a prior malignancy removes the patient from numerator and denominator")
+  # s7.8.1 names "malignancies" as one chronic condition: the aggregate is one
+  # more category through the same arithmetic, not a second implementation.
+  ok(grepl("s_malig_first", ml) && grepl("MALIG_ANY_CATEGORY", ml) &&
+       identical(MALIG_ANY_CATEGORY, "(any malignancy)"),
+     "the any-malignancy aggregate is a category through the same views - s7.8.1")
+  mr_sql <- paste(vapply(Filter(function(x) grepl("^step:malignancy_(rates|prevalence)_", x$tag), RUN$sql),
+                         function(x) x$sql, character(1)), collapse = "\n")
+  ok(grepl("UNION ALL SELECT '(any malignancy)' AS category", mr_sql, fixed = TRUE) &&
+       grepl("FROM s_malig_first", mr_sql, fixed = TRUE) && grepl("FROM s_malig_dates", mr_sql, fixed = TRUE),
+     "...in the incidence and the prevalence queries alike")
+  ok(grepl("AS RATE_LO", mr_sql, fixed = TRUE) && grepl("AS RATE_HI", mr_sql, fixed = TRUE) &&
+       all(c("RATE_LO", "RATE_HI") %in% SUPPRESSION_SPEC$S_MALIGNANCY_RATES$value_cols),
+     "a malignancy rate carries its interval, and the release copy suppresses it with the rate - Table 4, 95% CI")
   ok(grepl("GROUP BY p.COHORT, p.LOT_NUM, c.category", ml),
      "and the denominator is per line, not the cohort total")
   ok(!grepl("SELECT max\\(l.LOT_NUM\\) FROM", ml),
@@ -1812,9 +1976,30 @@ cat("\nthe rules that hold the numbers up\n")
   soc_sql <- vapply(Filter(function(x) x$tag == "step:soc_1L", RUN$sql),
                     function(x) x$sql, character(1))
   cart_i <- regexpr("WHEN CART_FLG = 1", soc_sql, fixed = TRUE)
-  drug_i <- regexpr("WHEN BEST_CATEGORY IS NULL", soc_sql, fixed = TRUE)
+  drug_i <- regexpr("WHEN BEST_CATEGORY IS NOT NULL", soc_sql, fixed = TRUE)
   ok(length(soc_sql) == 1 && cart_i > 0 && drug_i > 0 && cart_i < drug_i,
      "and that branch is reached before the drug-category logic")
+  # A size category is a claim about the regimen and holds for unlisted
+  # agents too; only a modality category needs a listed agent. So nothing
+  # sends an unmatched regimen to 'Other' ahead of the size arms.
+  ok(!grepl("WHEN BEST_CATEGORY IS NULL THEN 'Other'", soc_sql, fixed = TRUE) &&
+       grepl("N_AGENTS  = 3 AND HAS_CD38_BACKBONE = 0", soc_sql, fixed = TRUE),
+     "a regimen no list row names is still sized - s7.2.2's triplet and doublet are size claims")
+  ok(grepl("explode(split(trim(coalesce(s.LOT_BASE_MEDS, '')), ", soc_sql, fixed = TRUE),
+     "and a NULL regimen string explodes to a row, so a transplant line is kept")
+  ok(grepl("year(LOT_START_DT) AS LOT_START_YEAR", soc_sql, fixed = TRUE),
+     "and the line's start year is on the SOC row - Table 4, by year")
+  ok(grepl("AUTO_FLG AS AUTO_SCT, ALLO_FLG AS ALLO_SCT, CART_FLG AS CART", soc_sql, fixed = TRUE) &&
+       grepl("year(AUTO_SCT_DT) AS AUTO_SCT_YEAR", soc_sql, fixed = TRUE),
+     "and the engine's line-scoped transplant flags and the transplant's year - Table 6, SCT by year by SOC")
+  dem_sql <- vapply(Filter(function(x) x$tag == "step:demographics_1L", RUN$sql),
+                    function(x) x$sql, character(1))
+  ok(length(dem_sql) == 1 && grepl("coalesce(r.GDR_CD, c.GDR_CD, 'U')", dem_sql, fixed = TRUE),
+     "sex is read off the enrolment row that supplies the other attributes, the cohort's copy behind it - s7.8.1")
+  per1_sql <- vapply(Filter(function(x) x$tag == "step:periods_1L", RUN$sql),
+                     function(x) x$sql, character(1))
+  ok(length(per1_sql) == 1 && grepl("year(co.INDEX_DATE) AS INDEX_YEAR", per1_sql, fixed = TRUE),
+     "and the index year is on the periods row - Table 4, year of index")
 
   # The funnel has to APPLY the exclusions it reports, not merely list them,
   # or its final N_REMAINING can exceed the cohort it describes. The executed
@@ -1915,10 +2100,10 @@ cat("\nthe rules that hold the numbers up\n")
                shape_q[[1]]$sql, fixed = TRUE), logical(1))),
      "...and tests every exclusion flag for NULL and for a value outside 0/1")
 
-  # Two endpoints whose DEFINITION this package cannot implement from the code
-  # list alone. Both must stop rather than report something else under the
-  # protocol's name; the fixtures are the valid form, so the invalid one is
-  # constructed here.
+  # An endpoint whose DEFINITION is an admission. Read from every diagnosis
+  # row it would count outpatient codes under the protocol's name, so a
+  # hospitalisation-named condition has to say `inpatient`; said, it runs.
+  # The fixtures are the valid form, so the invalid one is constructed here.
   hosp_cl <- data.frame(
     condition = c("severe_infection_resulting_in_hospitalisation", "anemia"),
     domain = c("infectious", "other"), acute_chronic = c("Acute", "Chronic"),
@@ -1930,8 +2115,78 @@ cat("\nthe rules that hold the numbers up\n")
     f <- mod_safety; environment(f) <- env
     f(NULL, cfg0(), COHORTS[["1L"]])
   }))
-  ok(!is.na(e_hosp) && grepl("defined by an admission", e_hosp),
-     "a hospitalisation-defined endpoint stops rather than counting outpatient codes")
+  ok(!is.na(e_hosp) && grepl("defined by an admission", e_hosp) &&
+       grepl("setting=inpatient", e_hosp, fixed = TRUE),
+     "a hospitalisation-defined endpoint with no inpatient setting stops rather than counting outpatient codes, naming the column")
+  hosp_ok <- hosp_cl; hosp_ok$setting <- c("inpatient", "")
+  ok(is.na(errs(check_safety_list(cfg0(), hosp_ok))),
+     "...and passes once its rows say inpatient, a blank setting reading as any")
+  hosp_bad <- hosp_cl; hosp_bad$setting <- c("inpatient", "outpatient")
+  ok(grepl("setting value", errs(check_safety_list(cfg0(), hosp_bad))),
+     "...while a setting word this module does not know stops rather than reading every row")
+  hosp_clash <- hosp_ok; hosp_clash$condition[2] <- "anemia (hospitalisation)"
+  ok(grepl("reserved", errs(check_safety_list(cfg0(), hosp_clash))),
+     "...and a condition spelled like the derived hospitalisation series is refused")
+
+  # The malignancy list may not carry a myeloma code: a secondary malignancy
+  # is a malignancy OTHER than the one under treatment, and a myeloma code
+  # would confirm every patient's own disease on their first two claims.
+  # The check reads mm_dx.csv through the configuration, so it is pointed at
+  # the fixture lists, whose mm_dx.csv carries C900 (ICD-10) and 2030 (ICD-9).
+  cfg_fx <- cfg0(); cfg_fx$codelist_dir <- "tests/fixtures/codelists"
+  mal_cl <- load_codelist("secondary_malig.csv", cfg_fx)
+  ok(is.na(errs(check_malignancy_list(cfg_fx, mal_cl))),
+     "a malignancy list with no myeloma code passes")
+  mal_bad <- mal_cl[1, , drop = FALSE]
+  mal_bad$code <- "C90.0"; mal_bad$icd_family <- "ICD-10"
+  e_mal <- errs(check_malignancy_list(cfg_fx, rbind(mal_cl, mal_bad)))
+  ok(!is.na(e_mal) && grepl("multiple myeloma", e_mal, fixed = TRUE) && grepl("C90.0", e_mal, fixed = TRUE),
+     "...and one carrying a code mm_dx.csv names as myeloma is refused, naming the code - Table 4")
+  mal_9 <- mal_bad; mal_9$code <- "203.0"; mal_9$icd_family <- "9"
+  ok(!is.na(errs(check_malignancy_list(cfg_fx, rbind(mal_cl, mal_9)))),
+     "...compared the way the SQL joins: punctuation stripped, within the ICD family")
+  mal_other <- mal_bad; mal_other$icd_family <- "ICD9"
+  ok(is.na(errs(check_malignancy_list(cfg_fx, rbind(mal_cl, mal_other)))),
+     "...so the same digits under the other family are not a clash")
+  ok(identical(MODULES$malignancy$check, "check_malignancy_list") &&
+       "mm_dx.csv" %in% MODULES$malignancy$codelists,
+     "and the preflight runs that check before the connection is opened")
+  # What reaches the SQL: the claim key business rule 13 and the join diagram
+  # document, the confinement for the admit date, and the derived series.
+  sf_sql <- paste(vapply(Filter(function(x) grepl("^step:safety_events_1L", x$tag), RUN$sql),
+                         function(x) x$sql, character(1)), collapse = "\n")
+  ok(grepl("m.PAT_PLANID <=> d.PAT_PLANID", sf_sql, fixed = TRUE) &&
+       grepl("m.CLMID = d.CLMID", sf_sql, fixed = TRUE) &&
+       grepl("m.LOC_CD <=> d.LOC_CD", sf_sql, fixed = TRUE) &&
+       grepl("m.CONF_ID IS NOT NULL AND trim(m.CONF_ID) <> ''", sf_sql, fixed = TRUE),
+     "an inpatient safety event is a diagnosis on a claim carrying a confinement id, joined on the full claim key - business rule 14")
+  ok(grepl("cf.CONF_ID = m.CONF_ID", sf_sql, fixed = TRUE) &&
+       grepl("cast(cf.ADMIT_DATE as date) AS ADMIT_DT", sf_sql, fixed = TRUE),
+     "...and the confinement supplies the admission date")
+  ok(grepl("WHEN setting = 'inpatient' THEN ADMIT_DT ELSE FST_DT END AS EVENT_DT", sf_sql, fixed = TRUE) &&
+       grepl("WHERE setting = 'any' OR INPATIENT = 1", sf_sql, fixed = TRUE),
+     "an inpatient-defined condition is its admissions, dated at the admit date; any other is every claim")
+  ok(grepl("WHERE ac = 'chronic' AND setting = 'any' AND INPATIENT = 1", sf_sql, fixed = TRUE) &&
+       grepl("concat(condition, ' (hospitalisation)')", sf_sql, fixed = TRUE) &&
+       grepl("'acute' AS ACUTE_CHRONIC", sf_sql, fixed = TRUE),
+     "and every chronic condition's hospitalisations are an acute series of their own - Figure 3")
+  sc_sql <- paste(vapply(Filter(function(x) grepl("s_safety_conditions AS", x$sql, fixed = TRUE), RUN$sql),
+                         function(x) x$sql, character(1)), collapse = "\n")
+  ok(nzchar(sc_sql) && grepl("lower(acute_chronic) = 'chronic' AND lower(setting) = 'any'", sc_sql, fixed = TRUE),
+     "...and the rate rows are driven from that list, so the series gets a row of zeros where nothing happened")
+  # s7.8.1: "calculated as individual conditions within categories, and
+  # aggregated" - one row per domain beside the conditions' own.
+  dg_sql <- paste(vapply(Filter(function(x) grepl("^step:safety_treatment_domain_total_1L", x$tag), RUN$sql),
+                         function(x) x$sql, character(1)), collapse = "\n")
+  ok(nzchar(dg_sql) && grepl("'(any in domain)' AS CONDITION", dg_sql, fixed = TRUE) &&
+       grepl("'aggregate' AS ACUTE_CHRONIC", dg_sql, fixed = TRUE),
+     "every domain gets an aggregate row beside its conditions - s7.8.1, 'and aggregated'")
+  ok(grepl("count(DISTINCT h.CONDITION) AS N_PRIOR", dg_sql, fixed = TRUE) &&
+       grepl("coalesce(hp.N_PRIOR, 0) < dm.N_COND THEN p.PERIOD_PY", dg_sql, fixed = TRUE),
+     "...on treatment a patient is at risk of the aggregate while at risk of any condition in it, for the whole period")
+  ok(grepl("INNER JOIN (SELECT DISTINCT condition, domain FROM S_CL_SAFETY) cl", dg_sql, fixed = TRUE) &&
+       grepl("ON cl.condition = n.CONDITION", dg_sql, fixed = TRUE),
+     "...and its numerator is the list's own conditions, so the derived hospitalisation series is not counted twice")
 
   frail_cl <- data.frame(
     variable = c("weight_loss", "durable_medical_equipment"),
@@ -1968,6 +2223,71 @@ cat("\nthe rules that hold the numbers up\n")
   cm <- paste(capture.output(print(mod_comorbidity)), collapse = "\n")
   ok(grepl("supersedes", cm),
      "Charlson applies Quan's hierarchy where the code list declares it")
+}
+
+cat("\nthe cohort build barred the agents s7.2.1.1 names from the 1L index\n")
+{
+  # s7.2.1.1 I3: "Exclusions include: panobinostat and elotuzumab". Only the
+  # cohort build applies that, and it records what it barred as LIKE patterns
+  # on NDMM_RUN_METADATA.INDEX_EXCLUDED. This resolves the names through the
+  # rollup and requires every abbreviation matched.
+  rollup <- data.frame(CL_MEDICATION_FULL = c("Panobinostat", "elotuzumab", "daratumumab"),
+                       CL_MED_CLASS = c("HDAC", "mAb", "anti-CD38"),
+                       CL_MED_ABBR = c("PANO", "ELO", "DARA"),
+                       stringsAsFactors = FALSE)
+  idx_check <- function(recorded, cfg = cfg0(), rl = rollup, err = NULL,
+                        no_rows = FALSE, run_id = "c1") {
+    e <- new.env(parent = environment(check_cohort_index_exclusions))
+    e$db_q <- function(con, sql) {
+      if (!is.null(err)) stop(err)
+      if (no_rows) return(data.frame(RUN_ID = character(0), INDEX_EXCLUDED = character(0)))
+      data.frame(RUN_ID = "c1", INDEX_EXCLUDED = recorded, stringsAsFactors = FALSE)
+    }
+    e$load_codelist <- function(...) if (inherits(rl, "error")) stop(rl) else rl
+    e$log_msg <- function(...) invisible(NULL)
+    errs(stubbed(check_cohort_index_exclusions, e, character(0))(NULL, cfg, run_id))
+  }
+  ok(is.na(idx_check("PANO,ELO")),
+     "a build that barred both agents, by abbreviation, is accepted")
+  ok(is.na(idx_check("PANO%|EL_")),
+     "...and so is one that barred them by the LIKE patterns the cohort build takes")
+  e_none <- idx_check("")
+  ok(!is.na(e_none) && grepl("did not bar panobinostat (PANO), elotuzumab (ELO)", e_none, fixed = TRUE) &&
+       grepl("attempt c1", e_none, fixed = TRUE),
+     "a build that barred neither stops, naming both agents, their abbreviations and the attempt")
+  e_one <- idx_check("PANO")
+  ok(!is.na(e_one) && grepl("did not bar elotuzumab (ELO)", e_one, fixed = TRUE) &&
+       !grepl("panobinostat (PANO)", e_one, fixed = TRUE),
+     "...and one that barred only panobinostat stops naming elotuzumab alone")
+  ok(!is.na(idx_check("PAN")) && is.na(idx_check("PAN%,ELO")),
+     "a pattern is matched as SQL LIKE, so PAN bars nothing and PAN% bars PANO")
+  ok(is.na(idx_check("PANO", rl = rollup[rollup$CL_MED_ABBR != "ELO", ])),
+     "an agent not on the rollup cannot set an index, so its absence from the bar list is not a failure")
+  ok(is.na(idx_check("", cfg = with_env(c(base_env, COHORT_INDEX_EXCLUSIONS = "none"), cfg_defaults()))),
+     "COHORT_INDEX_EXCLUSIONS=none checks nothing")
+  ok(is.na(idx_check("", err = "TABLE_OR_VIEW_NOT_FOUND")),
+     "a cohort build with no run metadata is unverified, not refused")
+  ok(is.na(idx_check("", err = "[UNRESOLVED_COLUMN] A column with name `INDEX_EXCLUDED` cannot be resolved")),
+     "...and so is one whose metadata predates the column")
+  e_perm <- idx_check("", err = "PERMISSION_DENIED: cannot read")
+  ok(!is.na(e_perm) && grepl("could not read", e_perm) && grepl("LOT_ALLOW_UNPROVEN_LINEAGE", e_perm),
+     "...while metadata that could not be read is unproven and stops without the waiver")
+  ok(is.na(idx_check("", err = "PERMISSION_DENIED: cannot read",
+                     cfg = with_env(c(base_env, LOT_ALLOW_UNPROVEN_LINEAGE = "TRUE"), cfg_defaults()))),
+     "...and continues under it")
+  ok(is.na(idx_check("", no_rows = TRUE)),
+     "and no row for the attempt is unverified rather than refused")
+  ok(is.na(idx_check("", rl = simpleError("CODELIST ERROR: cl_mma_rollup.csv has no data rows."))),
+     "and a rollup that is not usable here leaves the check unverified, not failed")
+  ok(like_matches("PANO%", "PANOBINOSTAT") && like_matches("pano", "PANO") &&
+       !like_matches("PANO", "PANOB") && like_matches("P_NO", "PANO") &&
+       !like_matches("P.NO", "PANO"),
+     "LIKE: % is any run, _ is one character, and a dot is a dot")
+  rsrc <- paste(readLines("R/run_223926.R", warn = FALSE), collapse = "\n")
+  ok(grepl("check_cohort_index_exclusions(con, cfg, lot_run$COHORT_ATTEMPT_ID", rsrc, fixed = TRUE),
+     "the runner asks it of the cohort attempt the LOT run was built from")
+  ok(identical(cfg0()$cohort_index_exclusions, "panobinostat,elotuzumab"),
+     "and the shipped default is the protocol's two agents")
 }
 
 cat("\nstandalone\n")
@@ -2359,7 +2679,9 @@ cat("\nthe modules, run against recorders\n")
     claim_status = function(c) { c$claim_status <- "paid_only"; c },
     frailty = function(c) { c$frailty <- TRUE; c },
     comorbid_subgroups = function(c) { c$comorbid_subgroups <- TRUE; c },
-    cohort_nested = function(c) { c$cohort_nested <- FALSE; c }
+    cohort_nested = function(c) { c$cohort_nested <- FALSE; c },
+    dx_date_source = function(c) { c$dx_date_source <- "baseline_first_claim"; c },
+    malig_prevalence_window = function(c) { c$malig_prevalence_window <- "baseline"; c }
   )
   here_keys <- names(OPEN_QUESTION_SOURCE)[OPEN_QUESTION_SOURCE == "here"]
   ok(setequal(here_keys, names(ALTERNATIVES)),
@@ -2422,6 +2744,55 @@ cat("\nthe modules, run against recorders\n")
               if (!grepl("0 of ", dtxt)) paste0("\n", dtxt) else ""))
   }
   unlink(c(sf, sd), recursive = TRUE)
+
+  # --- and the same, under the two readings the default run never emits ---
+  #
+  # DX_DATE_SOURCE=baseline_first_claim scans the diagnosis table for Table
+  # 4's own diagnosis date, ENROL_ATTR_AT=latest_span takes the most recent
+  # enrolment row instead of the one at the index, and
+  # MALIG_PREVALENCE_WINDOW=baseline takes the 12-month window for the
+  # secondary cohort's malignancy prevalence. None of those statements is in
+  # the default run, so each is executed here against its own goldens
+  # (tests/expectations_alt.py), derived in tests/fixtures/EXPECTED.md.
+  alta <- with_env(base_env, capture_emitted_sql(".", function(cfg) {
+    cfg$dx_date_source <- "baseline_first_claim"
+    cfg$enrol_attr_at <- "latest_span"
+    cfg$malig_prevalence_window <- "baseline"; cfg }))
+  ok(length(alta$errors) == 0,
+     paste0("the run builds under the alternative diagnosis-date and enrolment-row readings",
+            if (length(alta$errors))
+              paste0(" [", paste(names(alta$errors), collapse = ", "), "]") else ""))
+  sfa <- tempfile(fileext = ".sql")
+  cona <- file(sfa, "w")
+  for (x in alta$sql) {
+    cat("-- @@STMT ", x$tag, "\n", sep = "", file = cona)
+    cat(x$sql, "\n", file = cona)
+  }
+  close(cona)
+  sda <- file.path(tempdir(), "staged_a")
+  unlink(sda, recursive = TRUE); dir.create(sda, showWarnings = FALSE)
+  for (n in names(alta$staged))
+    utils::write.csv(alta$staged[[n]], file.path(sda, paste0(n, ".csv")),
+                     row.names = FALSE)
+  aout <- suppressWarnings(tryCatch(
+    system2("python3", c("tests/run_duckdb.py", shQuote(sfa), shQuote(sda),
+                         "tests/fixtures/cdm", shQuote(cfg0()$object_prefix),
+                         "tests/expectations_alt.py"),
+            stdout = TRUE, stderr = TRUE),
+    error = function(e) "NO-PYTHON"))
+  atxt <- paste(aout, collapse = "\n")
+  if (any(grepl("^SKIP:", aout)) || identical(atxt, "NO-PYTHON") || !length(aout)) {
+    cat("  SKIP  the alternative readings execute and their numbers are right",
+        " (python3 + duckdb + sqlglot not available)\n", sep = "")
+  } else {
+    ok(grepl("0 failed", atxt),
+       paste0("every statement of the alternative readings executes",
+              if (!grepl("0 failed", atxt)) paste0("\n", atxt) else ""))
+    ok(grepl("0 wrong", atxt),
+       paste0("and Table 4's diagnosis date, the latest enrolment row and the baseline prevalence window come out as derived",
+              if (!grepl("0 wrong", atxt)) paste0("\n", atxt) else ""))
+  }
+  unlink(c(sfa, sda), recursive = TRUE)
 
   # --- and the same, with the Q27 route switched -------------------------
   #

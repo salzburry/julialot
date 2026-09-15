@@ -98,6 +98,37 @@ EXPECTATIONS = [
     ("baseline person-years are 365/365.25, the window's own length",
      "SELECT DISTINCT round(BASELINE_PY, 6) FROM wk.S_PERIODS",
      [(PY_BASELINE,)]),
+
+    # --- the diagnosis date, and the durations anchored on it -------------
+    # By default the diagnosis date is the cohort build's qualifying
+    # diagnosis, MM_DX_DT, the date age and the 1L index are already measured
+    # against. Table 4's own definition is the other reading, executed with
+    # its own goldens in expectations_alt.py.
+    ("the diagnosis date is the cohort's qualifying diagnosis, and the row says so",
+     "SELECT MM_DX_DT::VARCHAR, DX_DT::VARCHAR, DX_DT_SOURCE, DX_YEAR "
+     "FROM wk.S_PERIODS WHERE PATID='P1' AND COHORT='1L'",
+     [("2019-01-05", "2019-01-05", "cohort_mm_dx", 2019)]),
+    ("time from diagnosis to index counts the diagnosis day and not the index day",
+     "SELECT DX_TO_INDEX_DAYS, DX_TO_INDEX_MONTHS FROM wk.S_PERIODS "
+     "WHERE PATID='P1' AND COHORT='1L'",
+     [(55, 1.81)]),    # 2019-01-05 -> 2019-03-01, bare datediff
+    ("follow-up from diagnosis counts both ends",
+     "SELECT FU_FROM_DX_DAYS FROM wk.S_PERIODS WHERE PATID='P2' AND COHORT='1L'",
+     [(457,)]),        # 2019-04-01 -> 2020-06-30 inclusive
+    ("a 2L row's diagnosis is the same patient-level date, measured to the 2L index",
+     "SELECT DX_DT::VARCHAR, DX_TO_INDEX_DAYS FROM wk.S_PERIODS "
+     "WHERE PATID='P1' AND COHORT='2L'",
+     [("2019-01-05", 421)]),
+    ("time to the next line counts the start day and not the next start",
+     "SELECT NEXT_LOT_DAYS, NEXT_LOT_MONTHS FROM wk.S_LOT_PERIODS "
+     "WHERE PATID='P1' AND COHORT='1L' AND LOT_NUM=1",
+     [(366, 12.02)]),
+    # P6's 2L starts 2022-06-01, after its 1L follow-up ended 2019-12-31: the
+    # 1L cohort never saw it initiated, so there is no interval to report.
+    ("a next line after follow-up ended is not an interval the cohort observed",
+     "SELECT NEXT_LOT_START_DT::VARCHAR, NEXT_LOT_DAYS FROM wk.S_LOT_PERIODS "
+     "WHERE PATID='P6' AND COHORT='1L' AND LOT_NUM=1",
+     [("2022-06-01", None)]),
     ("a treatment period stops the day before the next line starts",
      "SELECT PERIOD_END::VARCHAR FROM wk.S_LOT_PERIODS "
      "WHERE PATID='P1' AND COHORT='1L' AND LOT_NUM=1",
@@ -135,6 +166,28 @@ EXPECTATIONS = [
     ("the 3L cohort's regimens start at its own index line",
      "SELECT DISTINCT LOT_NUM FROM wk.S_SOC WHERE COHORT='3L' ORDER BY LOT_NUM",
      [(3,), (4,)]),
+    # s7.2.2's size categories are claims about the regimen, and hold whether
+    # or not Annex 2 names the agents. P7's carfilzomib triplet is on no row
+    # of the list: three agents and no anti-CD38 backbone is the non-anti-CD38
+    # triplet, with MATCHED 0 so the QC still says the list is short.
+    ("a triplet of unlisted agents is still the non-anti-CD38 triplet, and still unmatched",
+     "SELECT SOC_CATEGORY, MATCHED, N_AGENTS FROM wk.S_SOC "
+     "WHERE PATID='P7' AND COHORT='1L' AND LOT_NUM=1",
+     [("Other triplet (non-anti-CD38)", 0, 3)]),
+    ("a line's start year is on its SOC row - Table 4, by year",
+     "SELECT LOT_START_YEAR FROM wk.S_SOC "
+     "WHERE PATID='P1' AND COHORT='1L' AND LOT_NUM=3",
+     [(2021,)]),
+    # Table 6: patients with an SCT by year according to SOC type. P5's 1L
+    # carries the engine's in-line autologous transplant on 2019-03-15.
+    ("a line's transplant is on its SOC row with the transplant's year - Table 6",
+     "SELECT AUTO_SCT, AUTO_SCT_YEAR, ALLO_SCT, CART FROM wk.S_SOC "
+     "WHERE PATID='P5' AND COHORT='1L' AND LOT_NUM=1",
+     [(1, 2019, 0, 0)]),
+    ("...and a line without one says so",
+     "SELECT AUTO_SCT, AUTO_SCT_YEAR FROM wk.S_SOC "
+     "WHERE PATID='P1' AND COHORT='1L' AND LOT_NUM=1",
+     [(0, None)]),
 
     # --- demographics -----------------------------------------------------
     ("age is the index year minus the birth year",
@@ -177,6 +230,34 @@ EXPECTATIONS = [
     ("state maps to census region",
      "SELECT REGION FROM wk.S_DEMOGRAPHICS WHERE PATID='P5' AND COHORT='1L'",
      [("Midwest",)]),
+    # s7.8.1: at the index where possible, else the baseline row nearest it.
+    # P7's enrolment ends 2020-05-31 and resumes 2020-06-05, around its
+    # 2020-06-01 index: no row covers the index day, and the row ending
+    # nearest it (NV, Medicare) supplies the attributes rather than the later
+    # one (NY, commercial) or nothing.
+    ("a patient whose index day no enrolment row covers takes the baseline row nearest it",
+     "SELECT RACE, REGION, INSURANCE_TYPE, ENROL_ROW_FOUND, ATTR_SOURCE "
+     "FROM wk.S_DEMOGRAPHICS WHERE PATID='P7' AND COHORT='1L'",
+     [("Asian", "West", "Medicare", 1, "baseline_nearest")]),
+    ("...while a patient with a covering row still reads that row",
+     "SELECT ATTR_SOURCE FROM wk.S_DEMOGRAPHICS WHERE PATID='P1' AND COHORT='1L'",
+     [("index_span",)]),
+    # Sex is on the enrolment row like race and insurance, and is read off
+    # the same row. P8's cohort row says U; the enrolment row covering its
+    # index says M.
+    ("sex is read off the enrolment row that supplies the other attributes",
+     "SELECT SEX FROM wk.S_DEMOGRAPHICS WHERE PATID='P8' AND COHORT='1L'",
+     [("Male",)]),
+    ("the index year is on the periods row beside the diagnosis year - Table 4",
+     "SELECT INDEX_YEAR, DX_YEAR FROM wk.S_PERIODS WHERE PATID='P3' AND COHORT='1L'",
+     [(2020, 2019)]),
+    # I2 is age at diagnosis by calendar year; the shells tabulate it beside
+    # age at index. P5 was diagnosed 2018-12-01 and indexed 2019-01-15, born
+    # 1940: 78 at diagnosis, 79 at index.
+    ("age at diagnosis is the diagnosis year minus the birth year, beside age at index",
+     "SELECT AGE_AT_DX_YEARS, AGE_AT_DX_BAND, AGE_YEARS FROM wk.S_DEMOGRAPHICS "
+     "WHERE PATID='P5' AND COHORT='1L'",
+     [(78, "75+", 79)]),
 
     # --- safety counting: s7.8.1 -----------------------------------------
     ("two claims on one day are one event",
@@ -204,6 +285,27 @@ EXPECTATIONS = [
      "AND COHORT='1L' AND PERIOD='TREATMENT' "
      "AND CONDITION='toxic_liver_disease'",
      [(1,)]),
+    # The washout runs once over the whole timeline, then the periods take
+    # the distinct events dated inside them. P5's hepatitis B is coded on
+    # 2019-01-10 (baseline) and 2019-01-20 (treatment, index 2019-01-15):
+    # ten days apart, one event, and it is baseline's. Counted period by
+    # period it was two - a baseline event AND a new incident event.
+    ("an acute event 10 days after a counted baseline event is not a new event on treatment",
+     "SELECT PERIOD, EVENT_DT::VARCHAR FROM wk.S_SAFETY_COUNTED WHERE PATID='P5' "
+     "AND COHORT='1L' AND CONDITION='acute_hepatitis_b' AND PERIOD <> 'TIMELINE' "
+     "ORDER BY PERIOD",
+     [("BASELINE", "2019-01-10")]),
+    ("...the chain's own answer is kept on the table under TIMELINE",
+     "SELECT EVENT_DT::VARCHAR FROM wk.S_SAFETY_COUNTED WHERE PATID='P5' "
+     "AND COHORT='1L' AND CONDITION='acute_hepatitis_b' AND PERIOD='TIMELINE'",
+     [("2019-01-10",)]),
+    # The 2L cohort's timeline starts at ITS baseline (2019-01-15), which
+    # holds only the second code, so there it is a baseline event: s7.8.1
+    # takes the baseline irrespective of prior event history.
+    ("...and a cohort's chain starts at its own baseline, not before it",
+     "SELECT PERIOD, EVENT_DT::VARCHAR FROM wk.S_SAFETY_COUNTED WHERE PATID='P5' "
+     "AND COHORT='2L' AND CONDITION='acute_hepatitis_b' AND PERIOD <> 'TIMELINE'",
+     [("BASELINE", "2019-01-20")]),
     ("a chronic condition with prior history counts for nobody on treatment",
      "SELECT count(*) FROM wk.S_SAFETY_COUNTED WHERE PATID='P1' "
      "AND COHORT='1L' AND PERIOD='TREATMENT' "
@@ -229,10 +331,17 @@ EXPECTATIONS = [
      "AND PERIOD='TREATMENT' AND LOT_NUM=1 "
      "AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)' AND CONDITION='toxic_liver_disease'",
      [(6,)]),
+    # 23 conditions on the list, plus a hospitalisation series for each of
+    # the 12 chronic ones read from every claim - Figure 3's note - plus one
+    # aggregate row for each of the 7 domains - s7.8.1's "and aggregated".
     ("every condition gets a baseline row too, events or not",
      "SELECT count(*) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' "
      "AND PERIOD='BASELINE' AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)'",
-     [(23,)]),
+     [(42,)]),
+    ("...twelve of them the hospitalisation series of the chronic conditions",
+     "SELECT count(DISTINCT CONDITION) FROM wk.S_SAFETY_RATES "
+     "WHERE CONDITION LIKE '% (hospitalisation)'",
+     [(12,)]),
     # Chronic person-time ends at the first occurrence, so a patient who has
     # the event contributes only up to it. Derived by hand in EXPECTED.md:
     # P1 0 (prior history) + P2 1/365.25 + P3 0.416153 + P5 77/365.25
@@ -388,7 +497,89 @@ EXPECTATIONS = [
     ("every condition gets an incidence row, events or not",
      "SELECT count(DISTINCT CONDITION) FROM wk.S_SAFETY_RATES "
      "WHERE COHORT='1L' AND PERIOD='TREATMENT' AND LOT_NUM=1 AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)'",
-     [(23,)]),
+     [(36,)]),   # 35 conditions and series, and the one aggregate name
+
+    # Zero events is a rate of zero WITH an interval: the exact Poisson limits
+    # for a count of 0 are 0 and 3.688879 / PY, scaled like the rate
+    # (3.688879 / 4.8569 x 100,000 = 75950.57).
+    ("a condition with no events has a rate of zero and an exact upper limit, not no interval",
+     "SELECT N_EVENTS, round(RATE,4), round(RATE_LO,4), round(RATE_HI,4) "
+     "FROM wk.S_SAFETY_RATES WHERE COHORT='1L' AND PERIOD='TREATMENT' AND LOT_NUM=1 "
+     "AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)' AND CONDITION='seizures'",
+     [(0, 0.0, 0.0, 75950.5668)]),
+
+    # --- the domain aggregates: s7.8.1 "and aggregated" ------------------
+    # Hepatologic on 1L line 1 treatment: acute hepatitis B counted 4 times
+    # (P1 twice, P3 twice) and toxic liver disease twice (P2, P5), so 6 events
+    # among 4 patients. P1's prior toxic liver disease keeps it out of THAT
+    # condition's denominator, but it is still at risk of the domain's four
+    # other conditions, so the aggregate keeps everyone's whole period.
+    ("a domain's aggregate adds its conditions' events and counts each patient once",
+     "SELECT N_PATIENTS, N_EVENTS, N_AT_RISK, round(PERSON_YEARS,4), ACUTE_CHRONIC "
+     "FROM wk.S_SAFETY_RATES WHERE COHORT='1L' AND PERIOD='TREATMENT' AND LOT_NUM=1 "
+     "AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)' "
+     "AND CONDITION='(any in domain)' AND DOMAIN='hepatologic'",
+     [(4, 6, 7, 4.8569, "aggregate")]),
+    # At baseline: P1's toxic liver disease and P5's hepatitis B (2019-01-10,
+    # five days before its index), two patients, two events.
+    ("...and at baseline it is the domain's events over the window everyone contributes",
+     "SELECT N_PATIENTS, N_EVENTS, N_AT_RISK, round(PERSON_YEARS,4) "
+     "FROM wk.S_SAFETY_RATES WHERE COHORT='1L' AND PERIOD='BASELINE' AND LOT_NUM=1 "
+     "AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)' "
+     "AND CONDITION='(any in domain)' AND DOMAIN='hepatologic'",
+     [(2, 2, 7, 6.9952)]),
+    # The hospitalisation series is not in the aggregate: P1's toxic liver
+    # admission would otherwise be counted beside the condition it is an
+    # admission for. Infectious carries only the one inpatient severe
+    # infection.
+    ("...and the derived hospitalisation series is not double counted into it",
+     "SELECT N_EVENTS FROM wk.S_SAFETY_RATES WHERE COHORT='1L' AND PERIOD='TREATMENT' "
+     "AND LOT_NUM=1 AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)' "
+     "AND CONDITION='(any in domain)' AND DOMAIN='infectious'",
+     [(1,)]),
+    ("every domain gets an aggregate row in every period",
+     "SELECT count(*) FROM wk.S_SAFETY_RATES WHERE COHORT='1L' AND LOT_NUM=1 "
+     "AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)' "
+     "AND CONDITION='(any in domain)'",
+     [(14,)]),
+
+    # --- inpatient claims: business rule 14, and Figure 3's note ---------
+    # P1's Z119 (severe infection resulting in hospitalisation, setting
+    # inpatient) is coded on an outpatient claim on 2019-06-10 and on a claim
+    # carrying confinement C2 on 2019-07-02. Only the second is an event, and
+    # it is dated at C2's admission, 2019-07-01.
+    ("an inpatient-defined condition is its admissions, dated at the admit date",
+     "SELECT EVENT_DT::VARCHAR, INPATIENT, ADMIT_DT::VARCHAR FROM wk.S_SAFETY_EVENTS "
+     "WHERE PATID='P1' AND COHORT='1L' "
+     "AND CONDITION='severe_infection_resulting_in_hospitalisation'",
+     [("2019-07-01", 1, "2019-07-01")]),
+    # P1 has toxic_liver_disease (chronic) before its treatment period, so the
+    # condition itself counts for nobody on treatment - the golden above - but
+    # its Z100 on a claim inside stay C1 (admitted 2019-05-01) is a
+    # hospitalisation due to the chronic condition, and that is an acute
+    # event in its own series.
+    ("a hospitalisation due to a chronic condition counts as an acute event, prior history or not",
+     "SELECT EVENT_DT::VARCHAR FROM wk.S_SAFETY_COUNTED WHERE PATID='P1' "
+     "AND COHORT='1L' AND PERIOD='TREATMENT' "
+     "AND CONDITION='toxic_liver_disease (hospitalisation)'",
+     [("2019-05-01",)]),
+    ("...typed acute, so nobody leaves its denominator and the whole period counts",
+     "SELECT ACUTE_CHRONIC, DOMAIN, N_PATIENTS, N_EVENTS, N_AT_RISK, round(PERSON_YEARS,4) "
+     "FROM wk.S_SAFETY_RATES WHERE COHORT='1L' AND PERIOD='TREATMENT' AND LOT_NUM=1 "
+     "AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)' "
+     "AND CONDITION='toxic_liver_disease (hospitalisation)'",
+     [("acute", "hepatologic", 1, 1, 7, 4.8569)]),
+    # The same Z100 claim is also a code for the condition itself, and it
+    # changes nothing there: P1's prior history still keeps it out.
+    ("...while the condition's own series is unchanged by the inpatient claim",
+     "SELECT N_PATIENTS, N_AT_RISK, round(PERSON_YEARS,4) FROM wk.S_SAFETY_RATES "
+     "WHERE COHORT='1L' AND PERIOD='TREATMENT' AND LOT_NUM=1 "
+     "AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)' "
+     "AND CONDITION='toxic_liver_disease'",
+     [(2, 6, 2.5599)]),
+    ("an inpatient event knows the claim it came from",
+     "SELECT count(*) FROM wk.S_SAFETY_EVENTS WHERE INPATIENT=1 AND ADMIT_DT IS NULL",
+     [(0,)]),
 
     # --- HCRU -------------------------------------------------------------
     ("MM-related means myeloma in the first or second diagnosis position",
@@ -435,6 +626,78 @@ EXPECTATIONS = [
      "SELECT FIRST_DT::VARCHAR, CONFIRM_DT::VARCHAR FROM wk.S_MALIGNANCY "
      "WHERE COHORT='1L' AND PATID='P1'",
      [("2019-07-01", "2019-08-01")]),
+    # P1's malignancy falls after its 1L index (2019-03-01) and before its 2L
+    # one (2020-03-01). Table 4 measures time from the index only where the
+    # malignancy came after it, so the 2L-indexed rows carry the flag off and
+    # no duration, not a negative one.
+    ("a malignancy after the index is flagged, with its months from the index",
+     "SELECT AFTER_INDEX, MONTHS_FROM_INDEX FROM wk.S_MALIGNANCY "
+     "WHERE COHORT='1L' AND PATID='P1'",
+     [(1, 4.04)]),
+    ("...and one before it is not, and has no duration from an index it precedes",
+     "SELECT AFTER_INDEX, MONTHS_FROM_INDEX FROM wk.S_MALIGNANCY "
+     "WHERE COHORT='SEC2L' AND PATID='P1'",
+     [(0, None)]),
+    # s7.4.1.2 / s7.8.4: the secondary cohort's background prevalence is "all
+    # malignancies occurring after diagnosis but prior to 2L". Its four
+    # patients' diagnosis-to-index intervals, both ends excluded, are 420,
+    # 304, 409 and 1246 days: 2379 / 365.25 = 6.5133 person-years - not the
+    # four baseline years (3.9973) the other window would give.
+    ("the secondary cohort's malignancy prevalence runs from diagnosis to its index",
+     "SELECT N_PATIENTS, N_AT_RISK, round(PERSON_YEARS,4) FROM wk.S_MALIGNANCY_RATES "
+     "WHERE COHORT='SEC2L' AND PERIOD='BASELINE' AND LOT_NUM=2 "
+     "AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)' "
+     "AND CATEGORY='Hematological'",
+     [(1, 4, 6.5133)]),
+    # s7.8.1 names "malignancies" as one chronic condition, so beside the
+    # categories there is the aggregate: a first malignancy of any kind. P1's
+    # is the only one in 1L, inside its line-1 window, and at-risk time ends
+    # there for P1 (4.2327 person-years across the seven, not 4.8569). Each
+    # rate row carries its interval, and a row with no event carries the
+    # exact zero-count limits.
+    ("the aggregate row is a first malignancy of any kind, counted once, at-risk time ending at it",
+     "SELECT N_PATIENTS, N_AT_RISK, round(PERSON_YEARS,4), round(RATE_LO,4), round(RATE_HI,4) "
+     "FROM wk.S_MALIGNANCY_RATES WHERE COHORT='1L' AND PERIOD='TREATMENT' AND LOT_NUM=1 "
+     "AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)' "
+     "AND CATEGORY='(any malignancy)'",
+     [(1, 7, 4.2327, 3327.9683, 167719.008)]),
+    ("...and it is written for the secondary cohort's prevalence too",
+     "SELECT N_PATIENTS, N_AT_RISK, round(PERSON_YEARS,4) FROM wk.S_MALIGNANCY_RATES "
+     "WHERE COHORT='SEC2L' AND PERIOD='BASELINE' AND LOT_NUM=2 "
+     "AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)' "
+     "AND CATEGORY='(any malignancy)'",
+     [(1, 4, 6.5133)]),
+    ("a malignancy row with no event carries the exact zero-count limits",
+     "SELECT N_PATIENTS, N_AT_RISK, round(PERSON_YEARS,4), round(RATE,4), round(RATE_LO,4), round(RATE_HI,4) "
+     "FROM wk.S_MALIGNANCY_RATES WHERE COHORT='SEC2L' AND PERIOD='TREATMENT' AND LOT_NUM=2 "
+     "AND SOC_CATEGORY='(all categories)' AND AGE_GROUP='(all ages)' "
+     "AND CATEGORY='Hematological'",
+     [(0, 3, 2.1328, 0.0, 0.0, 172960.5975)]),
+    ("every category and the aggregate get a row per line and period",
+     "SELECT count(DISTINCT CATEGORY) FROM wk.S_MALIGNANCY_RATES",
+     [(11,)]),
+    # Table 4: the treatment sequences of those with a malignancy after
+    # treatment, in regimen categories. P1 is the one such patient in 1L; its
+    # malignancy (2019-07-01) fell in its 1L line, and its three lines inside
+    # follow-up are 1L triplet, 2L doublet, 3L quadruplet. Three readings of
+    # "sequence", each its own row: the lines up to the malignancy, the lines
+    # after it, and every observed line. The sensitivity scope keeps only
+    # malignancies after 2L, and P1's came before its 2L.
+    ("the treatment sequences of patients with a malignancy after the index, in three readings, ranked",
+     "SELECT LINES, SEQUENCE, N_PATIENTS, N_DENOM, PCT, RANK FROM wk.S_MALIGNANCY_SEQUENCES "
+     "WHERE COHORT='1L' AND SCOPE='after_index' ORDER BY LINES",
+     [("after_malignancy", "Doublet/monotherapy -> Quadruplet with anti-CD38 backbone",
+       1, 1, 100.0, 1),
+      ("all_observed", "Triplet with anti-CD38 backbone -> Doublet/monotherapy -> "
+       "Quadruplet with anti-CD38 backbone", 1, 1, 100.0, 1),
+      ("to_malignancy", "Triplet with anti-CD38 backbone", 1, 1, 100.0, 1)]),
+    ("...and the sensitivity scope keeps only malignancies after 2L",
+     "SELECT count(*) FROM wk.S_MALIGNANCY_SEQUENCES "
+     "WHERE COHORT='1L' AND SCOPE='after_2l'",
+     [(0,)]),
+    ("...and a malignancy before the secondary cohort's index is in neither scope",
+     "SELECT count(*) FROM wk.S_MALIGNANCY_SEQUENCES WHERE COHORT='SEC2L'",
+     [(0,)]),
 
     # --- small-cell suppression, applied ---------------------------------
     ("a released row below the threshold carries no numbers at all",
@@ -463,6 +726,17 @@ EXPECTATIONS = [
     ("a death after follow-up ends is censored, not an event",
      "SELECT OS_EVENT, OS_DAYS FROM wk.S_TTE WHERE PATID='P2' AND COHORT='1L'",
      [(0, 395)]),   # died 2020-07-15, follow-up ended 2020-06-30
+    # Table 4's footnote dates a discontinuation by what happened: a line that
+    # ran out ends ON the confirmed run-out (P1's 1L, 2020-01-15), and a line
+    # ended by an agent being added ends the day BEFORE the agent, so the
+    # discontinuation is the day after that end (P1's 3L: engine end
+    # 2022-01-15, agent introduced 2022-01-16).
+    ("TTD dates a run-out on the run-out day, index included and that day excluded",
+     "SELECT TTD_DT::VARCHAR, TTD_DAYS, TTD_EVENT FROM wk.S_TTE WHERE PATID='P1' AND COHORT='1L'",
+     [("2020-01-15", 320, 1)]),
+    ("...and an added agent on the day it was introduced, not the line's last day",
+     "SELECT TTD_DT::VARCHAR, TTD_DAYS, TTD_EVENT FROM wk.S_TTE WHERE PATID='P1' AND COHORT='3L'",
+     [("2022-01-16", 321, 1)]),
     ("no time-to-event duration is negative",
      "SELECT count(*) FROM wk.S_TTE WHERE TTNT_DAYS < 0 OR TTD_DAYS < 0 "
      "OR OS_DAYS < 0",
@@ -480,5 +754,6 @@ RERUN_STABLE_TABLES = [
     "wk.S_MALIGNANCY_RATES", "wk.S_TTE", "wk.S_PATTERNS", "wk.S_SWITCH",
     "wk.S_TX_ATTRITION", "wk.S_SAFETY_RATES_RELEASE", "wk.S_HCRU_RATES_RELEASE",
     "wk.S_MALIGNANCY_RATES_RELEASE", "wk.S_PATTERNS_RELEASE",
+    "wk.S_MALIGNANCY_SEQUENCES", "wk.S_MALIGNANCY_SEQUENCES_RELEASE",
     "wk.S_SWITCH_RELEASE", "wk.S_TX_ATTRITION_RELEASE",
 ]

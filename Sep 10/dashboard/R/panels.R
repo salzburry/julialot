@@ -46,7 +46,8 @@ PANELS <- list(
 
   list(name = "safety_rates", tab = "Safety", render = "bar",
        label = "Key safety events", table = "S_SAFETY_RATES",
-       note = paste("Rates per 1,000 person-years. A chronic condition is",
+       note = paste("Rates per 100,000 person-years, the run's RATE_MULTIPLIER,",
+                    "recorded in its metadata. A chronic condition is",
                     "counted once and patients with it before the window are",
                     "out of both the numerator and the denominator; an acute",
                     "one is counted again after a 30-day washout.")),
