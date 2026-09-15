@@ -76,6 +76,20 @@ DATABRICKS_PWD="$DATABRICKS_PWD" PROJECT_WORK_SCHEMA=$SCHEMA \
 DASH_SOURCE=snapshot DASH_SNAPSHOT_DIR=/mnt/data/NDMM bash dashboard/app.sh
 ```
 
+**One connection.** All four open the warehouse through one line of code -
+the LOT engine's `DBI::dbConnect(odbc::odbc(), dsn = DATABRICKS_DSN, pwd =
+DATABRICKS_PWD, timeout = 120)`, which the study package carries character for
+character, and which TFLS and the dashboard reach by calling the study
+package's `connect_db()` rather than having one of their own. And all four
+read the same three facts under the LOT engine's names: `PROJECT_WORK_SCHEMA`
+(or the Domino user's own schema where it is unset), `DATABRICKS_CATALOG` and
+`INPUT_COHORT_TABLE`. So an environment that carried the LOT build carries
+the study run, the fill and the dashboard's warehouse mode too; `TFLS_*` and
+`DASH_*` names exist only for a fill or a page that has to look elsewhere. The
+study suite checks the line and the variable against the engine's source
+whenever the folders sit together. The password is read from the environment
+alone, by every one of them.
+
 Keep the variables **inline per command**, as above. `STUDY_START`, `MAX_LOT`
 and `CENSOR_AT_DISENROLLMENT` are read by both step 1 and step 2 from the same
 environment variable name with deliberately different defaults, so an `export`
@@ -92,9 +106,9 @@ Every suite runs offline — no warehouse, no driver, no Shiny — and exits
 non-zero on any failure.
 
 ```bash
-Rscript ndmm_study_updated/study223926/tests/run_tests.R   # 508
-Rscript dashboard/tests/run_tests.R                        # 594
-Rscript TFLS/tests/test_tfls.R                             # 353
+Rscript ndmm_study_updated/study223926/tests/run_tests.R   # 512
+Rscript dashboard/tests/run_tests.R                        # 598
+Rscript TFLS/tests/test_tfls.R                             # 358
 (cd lot/engine     && Rscript tests/test_line_criteria.R)  #  57
 (cd lot/engine     && Rscript tests/test_runner.R)         # 527
 (cd lot/qc         && Rscript tests/test_lot_qc.R)         # 295
@@ -103,7 +117,7 @@ Rscript TFLS/tests/test_tfls.R                             # 353
 (cd lot/validation && Rscript tests/test_vignettes.R)      #  36
 ```
 
-2680 checks. Base R except for **`glue`**, which three of them need — the two
+2693 checks. Base R except for **`glue`**, which three of them need — the two
 LOT engine suites, through `tests/testutil.R`, and melphalan. The other six load
 nothing. The app needs `shiny`; a warehouse run needs `DBI`, `odbc` and `glue`.
 

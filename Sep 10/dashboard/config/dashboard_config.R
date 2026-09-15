@@ -6,6 +6,12 @@
 # edit.
 
 .env_chr <- function(k, d) { v <- Sys.getenv(k, unset = ""); if (nzchar(v)) v else d }
+# The first of several names that is set, for a fact more than one package
+# reads under a name of its own.
+.env_first <- function(..., default) {
+  for (k in c(...)) { v <- Sys.getenv(k, unset = ""); if (nzchar(v)) return(v) }
+  default
+}
 .env_int <- function(k, d) {
   v <- suppressWarnings(as.integer(.env_chr(k, NA_character_)))
   if (is.na(v)) d else v
@@ -27,8 +33,17 @@ dashboard_config <- function() {
     # synthetic  generated in-process; no warehouse, no files
     source          = .env_chr("DASH_SOURCE", "synthetic"),
     snapshot_dir    = .env_chr("DASH_SNAPSHOT_DIR", "/mnt/data/NDMM"),
-    catalog         = .env_chr("DASH_CATALOG", "hive_metastore"),
-    work_schema     = .env_chr("DASH_WORK_SCHEMA", ""),
+    # The warehouse the LOT build and the study run were given, by their
+    # names: DATABRICKS_CATALOG, and PROJECT_WORK_SCHEMA or the Domino user's
+    # own schema where that is unset - the rule the LOT engine resolves its
+    # output schema by. The DASH_* names still win where set, so a dashboard
+    # can look elsewhere; unset, it reads where those two wrote, and an
+    # environment that carried them carries this too.
+    catalog         = .env_first("DASH_CATALOG", "DATABRICKS_CATALOG",
+                                 default = "hive_metastore"),
+    work_schema     = .env_first("DASH_WORK_SCHEMA", "PROJECT_WORK_SCHEMA",
+                                 "WORK_SCHEMA", "DOMINO_USER_NAME",
+                                 "DOMINO_STARTING_USERNAME", default = ""),
     # Scenario prefixes to offer. Empty means discover them.
     prefixes        = .env_vec("DASH_PREFIXES", character(0)),
     prefix_pattern  = .env_chr("DASH_PREFIX_PATTERN", "^s223926"),
