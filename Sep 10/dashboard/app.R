@@ -42,7 +42,10 @@ scn_choices <- function() {
                   vapply(SCENARIOS, function(s)
                     sprintf("%s%s", s$label,
                             if (scenario_is_usable(s)) "" else
-                              sprintf("  [%s]", s$state)), character(1)))
+                              sprintf("  [%s]",
+                                      if (isFALSE(scenario_contract_bound(s)))
+                                        "other contract" else s$state)),
+                          character(1)))
 }
 
 ui <- fluidPage(
@@ -160,7 +163,7 @@ server <- function(input, output, session) {
       if (length(bits))
         div(class = "scn", HTML(paste(html_escape(bits), collapse = "<br>"))),
       if (!scenario_is_usable(s))
-        div(class = "alert", sprintf("This run is '%s', not complete.", s$state)),
+        div(class = "alert", scenario_unusable_why(s)),
       if (nzchar(verdict))
         div(class = "alert", html_escape(sprintf(
           "This run's own record of its release says: %s.%s", verdict,

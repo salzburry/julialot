@@ -183,6 +183,12 @@ snapshot_source <- function(cfg) {
       if (!safe_segment(prefix) || !safe_segment(table)) return(NULL)
       p <- file.path(root, prefix, paste0(table, ".csv"))
       if (!file.exists(p)) return(NULL)
+      # The metadata row is text, every field of it: a run id or a hash that
+      # happens to be all digits would otherwise come back as a number, and
+      # as a different string.
+      if (identical(toupper(table), "S_RUN_METADATA"))
+        return(utils::read.csv(p, stringsAsFactors = FALSE, check.names = FALSE,
+                               na.strings = c("", "NA"), colClasses = "character"))
       utils::read.csv(p, stringsAsFactors = FALSE, check.names = FALSE,
                       na.strings = c("", "NA"))
     },
@@ -452,11 +458,13 @@ scenario_table_status <- function(scenario, table, modules = MODULES) {
   if (identical(table, "S_RUN_METADATA")) return(list(ok = TRUE, why = ""))
   no <- function(why) list(ok = FALSE, why = why)
   if (!scenario_is_usable(scenario))
-    return(no(sprintf(paste(
-      "This run is '%s', not complete, so its tables are not shown: they",
-      "may be the previous build's, or part of this one. Its settings and",
-      "the LOT run it read are on the Overview tab."),
-      if (nzchar(scenario$state %||% "")) scenario$state else "unrecorded")))
+    return(no(paste(
+      scenario_unusable_why(scenario),
+      if (identical(tolower(scenario$state %||% ""), "complete"))
+        "Its tables are not shown."
+      else paste("Its tables are not shown: they may be the previous build's,",
+                 "or part of this one."),
+      "Its settings and the LOT run it read are on the Overview tab.")))
   own <- table_owner(table, modules)
   if (is.na(own)) return(no(sprintf("%s is not a table this package writes.", table)))
   ran <- trimws(as.character(scenario$modules %||% character(0)))

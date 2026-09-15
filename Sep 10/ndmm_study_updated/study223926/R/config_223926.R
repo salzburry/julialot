@@ -421,7 +421,10 @@ is_sql_name <- function(v, parts = 1L) {
   v <- trimws(as.character(v))
   if (length(v) != 1L || is.na(v) || !nzchar(v)) return(FALSE)
   p <- strsplit(v, ".", fixed = TRUE)[[1]]
-  length(p) >= 1L && length(p) <= parts && all(grepl(SQL_NAME, p))
+  # strsplit() drops a trailing empty piece, so "s223926." splits to one
+  # clean part; the pieces are put back together and held to the value.
+  identical(paste(p, collapse = "."), v) &&
+    length(p) >= 1L && length(p) <= parts && all(grepl(SQL_NAME, p))
 }
 
 # The settings that become names in SQL, and how many dotted parts each may
@@ -497,6 +500,14 @@ check_settings <- function(cfg) {
   # that was two. Refused here, by the rule the warehouse applies to an
   # unquoted name, before any statement is built.
   check_sql_names(cfg)
+  # The run id is pasted into the metadata DELETE and INSERT. Domino's is a
+  # plain token; one that is not is refused here, as the LOT engine refuses it
+  # of itself.
+  rid <- Sys.getenv("DOMINO_RUN_ID", unset = "")
+  if (nzchar(rid) && !grepl("^[A-Za-z0-9_.-]+$", rid))
+    stop("SETTING ERROR: DOMINO_RUN_ID = '", rid, "' is not a plain token ",
+         "(letters, digits, underscore, dot or dash), and it names this run ",
+         "in S_RUN_METADATA.", call. = FALSE)
   if (as.Date(cfg$study_start) >= as.Date(cfg$study_end))
     stop("SETTING ERROR: STUDY_START (", cfg$study_start, ") is not before ",
          "STUDY_END (", cfg$study_end, ").", call. = FALSE)

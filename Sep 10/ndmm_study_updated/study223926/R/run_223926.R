@@ -127,6 +127,13 @@ build_223926 <- function(here) {
   }, add = TRUE)
   if (!nzchar(cfg$work_schema)) {
     cfg$work_schema <- current_work_schema(con)
+    # The one schema that does not come through the settings check: it is
+    # what the session answered, and it is pasted into every table name.
+    if (!is_sql_name(cfg$work_schema))
+      stop("SETTING ERROR: the session's current schema is '",
+           cfg$work_schema, "', which is not a name this package can put in ",
+           "SQL. Set WORK_SCHEMA or PROJECT_WORK_SCHEMA to the schema the run ",
+           "should write into.", call. = FALSE)
     set_study_config(cfg)
     log_msg("work schema resolved to ", cfg$work_schema)
   }
@@ -236,7 +243,7 @@ write_run_metadata <- function(con, cfg, cohorts, mods, lot_run, deviations,
                        paste(names(RUN_METADATA_COLS), RUN_METADATA_COLS,
                              collapse = ", ")))
   ensure_columns(con, tbl, RUN_METADATA_COLS)
-  db_exec(con, sprintf("DELETE FROM %s WHERE RUN_ID = '%s'", tbl, rid))
+  db_exec(con, sprintf("DELETE FROM %s WHERE RUN_ID = %s", tbl, q(rid)))
   cl <- codelist_metadata()
   cl_str <- if (nrow(cl))
     paste(sprintf("%s(%s,%d rows)", cl$CODELIST, substr(cl$MD5, 1, 8),

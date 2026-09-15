@@ -1102,6 +1102,53 @@ local({
   said2 <- capture.output(check_contract_binding(md_row(STUDY_CONTRACT_MD5 = "NA"), "here", ROOT))
   ok(any(grepl("recorded no contract hash", said2, fixed = TRUE)),
      "...as does one whose snapshot wrote the missing value as the string NA")
+
+  # WHICH study code, opt in. The run records the fingerprint of the R that
+  # produced it; pinned, a run of any other code is refused.
+  with_pin <- function(v, md) {
+    old <- Sys.getenv("TFLS_STUDY_CODE_MD5", unset = NA)
+    Sys.setenv(TFLS_STUDY_CODE_MD5 = v)
+    on.exit(if (is.na(old)) Sys.unsetenv("TFLS_STUDY_CODE_MD5")
+            else Sys.setenv(TFLS_STUDY_CODE_MD5 = old), add = TRUE)
+    bind(md)
+  }
+  code_row <- function(...) md_row(STUDY_CONTRACT_MD5 = have, ...)
+  ok(identical(bind(code_row(STUDY_CODE_MD5 = "abc123")), "BOUND"),
+     "with TFLS_STUDY_CODE_MD5 unset, a run of any study code binds")
+  ok(identical(with_pin("abc123", code_row(STUDY_CODE_MD5 = "abc123")), "BOUND"),
+     "...and the approved fingerprint binds when it matches")
+  e_code <- with_pin("abc123", code_row(STUDY_CODE_MD5 = "def456"))
+  ok(grepl("produced by study code def456", e_code, fixed = TRUE) &&
+       grepl("fill only from abc123", e_code, fixed = TRUE),
+     "...while a run produced by other code is refused, naming both fingerprints")
+  e_nocode <- with_pin("abc123", code_row())
+  ok(grepl("records no code fingerprint", e_nocode, fixed = TRUE),
+     "...and so is one that predates the column, rather than passed over")
+
+  # Once per run. The recheck after the fill binds the same run again, and a
+  # run that predates the column would otherwise warn twice.
+  said3 <- local({
+    env <- runner_env(tempdir())
+    reader <- function(t) if (identical(t, "S_RUN_METADATA")) md_row() else NULL
+    attr(reader, "read_errors") <- new.env()
+    capture.output(env$bind_run(reader, "here", check_contract = FALSE))
+  })
+  ok(!any(grepl("recorded no contract hash", said3, fixed = TRUE)),
+     "the recheck binds without repeating the contract warning")
+
+  # A snapshot's metadata row is text. An all-digit hash left to read.csv
+  # would come back as a number, and as a different string.
+  snap <- file.path(tempdir(), paste0("tfls_snap_", sample.int(1e6, 1)))
+  dir.create(file.path(snap, "p_"), recursive = TRUE)
+  on.exit(unlink(snap, recursive = TRUE), add = TRUE)
+  utils::write.csv(data.frame(RUN_ID = "20260915053000", STATE = "complete",
+                              STUDY_CONTRACT_MD5 = "12345678901234567890123456789012",
+                              stringsAsFactors = FALSE),
+                   file.path(snap, "p_", "S_RUN_METADATA.csv"), row.names = FALSE)
+  md_snap <- runner_env(tempdir())$snapshot_reader(snap, "p_")("S_RUN_METADATA")
+  ok(identical(md_snap$STUDY_CONTRACT_MD5, "12345678901234567890123456789012") &&
+       identical(md_snap$RUN_ID, "20260915053000"),
+     "a snapshot reads the metadata row as text, so an all-digit hash or run id is the string it was")
 })
 
 # Every way the shipped contract can be wrong, refused rather than read.
@@ -1321,6 +1368,70 @@ local({
   ok(identical(read1(file.path(d7$out, "tfls_t1.csv")), "NEW1") &&
        !dir.exists(prev7) && any(grepl("only its cleanup was lost", said, fixed = TRUE)),
      "a publish killed after its last move in is recognised as complete, and the new set is kept")
+
+  # The RECOVERY killed part-way. It restores by moving files one at a time,
+  # and if it dies after some of them the next pass must move the rest - not
+  # delete the ones it already put back because a marker still says the
+  # output directory holds the interrupted run's files.
+  d8 <- setup()
+  killed_during(d8, "move_in")
+  said <- capture.output(e8 <- tryCatch({
+    f <- recover_interrupted_publish
+    env <- new.env(parent = environment(recover_interrupted_publish))
+    real <- base::file.rename
+    env$file.rename <- function(from, to) {
+      restoring <- length(from) > 1L && any(grepl("tfls_previous", from))
+      if (restoring) { real(from[1], to[1]); stop("killed") }
+      real(from, to)
+    }
+    # The moves happen in restore_set_aside(), called by the function under
+    # test; re-homed too, or its file.rename is the real one.
+    for (nm in c("restore_set_aside", "discard_set_aside")) {
+      g <- get(nm); environment(g) <- env; env[[nm]] <- g
+    }
+    environment(f) <- env
+    f(d8$out); NA_character_
+  }, error = function(x) conditionMessage(x)))
+  ok(identical(e8, "killed") && length(prev_dirs(d8$out)) == 1L,
+     "a recovery killed after putting one file back leaves the set-aside, and the rest still in it")
+  ok(!file.exists(file.path(prev_dirs(d8$out) |> (\(p) file.path(d8$out, p))(), TFLS_MARK_ASIDE)),
+     "...with the first marker already gone, so the state reads as 'set aside cut short'")
+  said <- capture.output(recover_interrupted_publish(d8$out))
+  ok(identical(tool_files(d8$out), c("tfls.md", "tfls_t1.csv", "tfls_t2.csv", "tfls_t3.csv")) &&
+       all(vapply(1:3, function(i) identical(read1(file.path(d8$out, sprintf("tfls_t%d.csv", i))), paste0("OLD", i)), logical(1))) &&
+       identical(read1(file.path(d8$out, "tfls.md")), "OLD-MD") && !length(prev_dirs(d8$out)),
+     "...and the next pass moves the rest back rather than deleting what the last pass restored: the previous set, whole")
+
+  # A discard cut short. The set-aside is renamed out of the way before it
+  # is removed, so nothing reads its markers while they are half gone.
+  d9 <- setup()
+  publish_outputs(d9$stage, d9$out, "r9")
+  gone <- file.path(d9$out, ".tfls_discard_r9")
+  dir.create(gone); writeLines("OLD9", file.path(gone, "tfls_t9.csv"))
+  file.create(file.path(gone, TFLS_MARK_ASIDE))
+  said <- capture.output(recover_interrupted_publish(d9$out))
+  ok(!dir.exists(gone) && identical(read1(file.path(d9$out, "tfls_t1.csv")), "NEW1") &&
+       !file.exists(file.path(d9$out, "tfls_t9.csv")),
+     "a discard that was cut short is removed, and the published set is not touched")
+  ok(!grepl("unlink(prev, recursive = TRUE)", paste(deparse(publish_outputs), collapse = "\n"), fixed = TRUE) &&
+       grepl("discard_set_aside(prev)", paste(deparse(publish_outputs), collapse = "\n"), fixed = TRUE),
+     "...and the publisher never unlinks a set-aside in place, where a kill would remove its markers in list order")
+
+  # Nothing to publish is not a publish of nothing.
+  d10 <- setup(n_new = 0L)
+  unlink(file.path(d10$stage, "tfls.md"))
+  e10 <- tryCatch({ publish_outputs(d10$stage, d10$out, "r10"); NA_character_ },
+                  error = function(x) conditionMessage(x))
+  ok(!is.na(e10) && grepl("Nothing to publish", e10, fixed = TRUE) &&
+       identical(read1(file.path(d10$out, "tfls_t1.csv")), "OLD1") &&
+       !length(prev_dirs(d10$out)),
+     "an empty staging directory stops before anything is set aside, and the previous run stays published")
+
+  # The messages do not point at a staging directory the runner has removed
+  # by the time they print.
+  ok(!grepl("complete in \", stage", paste(deparse(publish_outputs), collapse = "\n"), fixed = TRUE) &&
+       !grepl("tables are in \", stage", paste(deparse(publish_outputs), collapse = "\n"), fixed = TRUE),
+     "no refusal claims this run's tables are still in the staging directory, which write_outputs() removes on exit")
 })
 
 cat("\n-- the runner --\n")

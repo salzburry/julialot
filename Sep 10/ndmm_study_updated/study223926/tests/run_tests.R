@@ -95,6 +95,22 @@ cat("\nconfig and contract\n")
   ok(bad_name(INPUT_COHORT_TABLE = "a.b.c.d") && bad_name(INPUT_COHORT_TABLE = "my table") &&
        bad_name(INPUT_COHORT_TABLE = "t;--"),
      "an INPUT_COHORT_TABLE with four parts, a space or a semicolon is refused")
+  # strsplit() drops a trailing empty piece, so "s223926." split to one clean
+  # part and passed - and reached the warehouse with the dot.
+  ok(bad_name(OBJECT_PREFIX = "s223926.") && bad_name(INPUT_COHORT_TABLE = "cat.sch.") &&
+       bad_name(INPUT_COHORT_TABLE = ".tbl") && bad_name(INPUT_COHORT_TABLE = "a..b"),
+     "a trailing, leading or doubled dot is refused too")
+  e_rid <- errs(with_env(c(base_env, DOMINO_RUN_ID = "r1'; DROP TABLE t; --"),
+                         check_settings(cfg_defaults())))
+  ok(!is.na(e_rid) && grepl("DOMINO_RUN_ID", e_rid, fixed = TRUE) &&
+       is.na(errs(with_env(c(base_env, DOMINO_RUN_ID = "run-6543_ab.1"),
+                           check_settings(cfg_defaults())))),
+     "a DOMINO_RUN_ID that is not a plain token is refused, since it names the run in S_RUN_METADATA")
+  rsrc_meta <- paste(readLines("R/run_223926.R", warn = FALSE), collapse = "\n")
+  ok(grepl("DELETE FROM %s WHERE RUN_ID = %s\", tbl, q(rid)", rsrc_meta, fixed = TRUE),
+     "...and it reaches the metadata DELETE escaped, the way it reaches the INSERT")
+  ok(grepl("if (!is_sql_name(cfg$work_schema))", rsrc_meta, fixed = TRUE),
+     "the schema read back from the session is held to the same rule as one given in the settings")
   ok(good_name(INPUT_COHORT_TABLE = "ndmm_NDMM_COHORT") &&
        good_name(INPUT_COHORT_TABLE = "other_cat.their_schema.NDMM_COHORT"),
      "...while a bare name and a fully qualified one are both accepted")
@@ -1057,10 +1073,11 @@ cat("\nthe rules that hold the numbers up\n")
         if (is.null(mrow)) stop("TABLE_OR_VIEW_NOT_FOUND")
         return(as.data.frame(mrow, stringsAsFactors = FALSE))
       }
-      # Case-insensitively: the second name the cohort builds use is
-      # `build_status`, lower case, and a fixed match on the upper-case one
-      # answers that query with the LOT status row instead.
-      if (grepl("build_status", sql, ignore.case = TRUE) &&
+      # By the query's shape, not the table's name: the cohort build's status
+      # is read newest-first with LIMIT 1, whichever of its names - or the
+      # one COHORT_STATUS_TABLE gives it - it sits under. The LOT status is
+      # read with LIMIT 5 and falls through to the row below.
+      if (grepl("ORDER BY UPDATED_AT DESC LIMIT 1", sql, fixed = TRUE) &&
           !grepl("lot_build_status", sql, ignore.case = TRUE)) {
         if (!is.null(now_err)) stop(now_err)
         if (is.null(nrow_)) stop("TABLE_OR_VIEW_NOT_FOUND")
@@ -1127,11 +1144,46 @@ cat("\nthe rules that hold the numbers up\n")
   ok(is.na(lin_check(now_err = perm,
                      cfg = cfg0(c(LOT_ALLOW_UNPROVEN_LINEAGE = "TRUE")))),
      "...waived by the same flag, and by nothing else")
+  # A status table the SETTING names, and that is not there, is a mistake in
+  # the setting - not one of the two default names being unused.
+  e_named <- lin_check(now = NULL, cfg = cfg0(c(COHORT_STATUS_TABLE = "my_status")))
+  ok(!is.na(e_named) && grepl("SETTING ERROR: COHORT_STATUS_TABLE names", e_named, fixed = TRUE) &&
+       grepl("my_status", e_named, fixed = TRUE),
+     "a COHORT_STATUS_TABLE that names a table which is not there stops, naming the setting rather than reporting no status found")
+  ok(!is.na(lin_check(now = NULL, cfg = cfg0(c(COHORT_STATUS_TABLE = "my_status",
+                                                LOT_ALLOW_UNPROVEN_LINEAGE = "TRUE")))),
+     "...and the waiver does not cover it, because a wrong setting is not an unproven lineage")
   ok(missing_object_error(simpleError("[TABLE_OR_VIEW_NOT_FOUND] The table x cannot be found")) &&
+       missing_object_error(simpleError("Table or view not found: wk.t")) &&
+       missing_object_error(simpleError("AnalysisException: Table wk.t does not exist")) &&
        !missing_object_error(simpleError(perm)) &&
        missing_column_error(simpleError("[UNRESOLVED_COLUMN.WITH_SUGGESTION] cannot resolve `y`")) &&
+       missing_column_error(simpleError("cannot resolve 'COHORT_RUN_ID' given input columns: [RUN_ID]")) &&
        !missing_column_error(simpleError(perm)),
      "the two classifiers tell an absent object and an absent column from every other failure")
+  # ...and the plain-English phrases are held to the thing they are about:
+  # a grant or a principal that "does not exist" is not an absent table.
+  ok(!missing_object_error(simpleError("PERMISSION_DENIED: principal `svc` does not exist")) &&
+       !missing_object_error(simpleError("Grant does not exist for user x")) &&
+       !missing_column_error(simpleError("Function cannot resolve the session")),
+     "...so an outage whose words happen to include 'does not exist' is not read as an older run")
+  # A missing grant is not retried: the lineage stop fires at once, not after
+  # four sleeps.
+  n_tries <- 0L
+  e_retry <- errs(with_retry(function() { n_tries <<- n_tries + 1L; stop(perm) },
+                             max_retries = 3L, base_sleep = 0))
+  ok(!is.na(e_retry) && n_tries == 1L,
+     "a permission error is permanent to with_retry(), as it is to the LOT engine's")
+  # The completion-time recheck keeps the driver's reason.
+  e_re <- errs(local({
+    e <- new.env(parent = environment(check_lot_lineage_unchanged))
+    e$db_q <- function(con, sql) stop(perm)
+    e$log_msg <- function(...) invisible(NULL)
+    stubbed(check_lot_lineage_unchanged, e, character(0))(NULL, list(RUN_ID = "lot1", UPDATED_AT = "2026-09-10 05:00:00"))
+  }))
+  ok(!is.na(e_re) && grepl("could not be re-read", e_re, fixed = TRUE) &&
+       grepl("INSUFFICIENT_PERMISSIONS", e_re, fixed = TRUE),
+     "the completion-time recheck stops with the driver's own words, so the failure record can tell a revoked grant from a dropped table")
   # The attempt is known and the cohort's own status is not. That is unproven,
   # not wrong, so it is the one case the waiver covers.
   e_unproven <- lin_check(now = NULL)

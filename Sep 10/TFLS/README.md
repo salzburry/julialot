@@ -69,6 +69,13 @@ unsuppressed that this run suppressed; the command stops and says which
 package to regenerate it from. No setting waives that. A run that predates the
 column recorded nothing to compare, and the command says so and goes on.
 
+Which study *code*, where a study team has said which: a run also records the
+fingerprint of the R that produced it (`STUDY_CODE_MD5`), and
+`TFLS_STUDY_CODE_MD5` pins the approved one - the same way the study package
+pins the LOT engine's with `LOT_CODE_MD5`. Unset, it checks nothing; set, a
+run produced by any other code is refused rather than filled under the
+approved one's name.
+
 ## It fills from one run, and reads only what that run wrote
 
 A prefix is not a run. A run writes the modules it selected, for the cohorts it

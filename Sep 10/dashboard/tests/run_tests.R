@@ -588,6 +588,60 @@ cat("\nwithholding a cell is not the same as hiding it\n")
        paste0("...and a run recorded as '", st, "' is not"))
   }
 
+  # --- and neither is a run this registry cannot describe ---
+  #
+  # Every decision about a run is made from the registry loaded at startup,
+  # and the run records the contract it was driven by. A run of another
+  # version can have released a table this registry does not know as
+  # released, and its raw table read under this registry's rules would show
+  # what that run withheld.
+  ok(grepl("^[0-9a-f]{32}$", DASH_CONTRACT_MD5) &&
+       identical(DASH_CONTRACT_MD5, study_contract_md5()),
+     "the dashboard knows which contract its registry is, by the package's own hash")
+  other <- utils::modifyList(SCENARIOS[[1]],
+                             list(study_contract_md5 = "00000000000000000000000000000000"))
+  ok(isTRUE(scenario_contract_bound(SCENARIOS[[1]])) &&
+       isFALSE(scenario_contract_bound(other)),
+     "a run driven by this registry's contract is bound, and one driven by another is not")
+  ok(isFALSE(scenario_is_usable(other)),
+     "...and a run driven by another contract is not usable, complete or not")
+  why <- scenario_unusable_why(other)
+  ok(grepl("different study contract", why, fixed = TRUE) && grepl("00000000", why, fixed = TRUE) &&
+       grepl(substr(DASH_CONTRACT_MD5, 1, 8), why, fixed = TRUE),
+     "...and the page says so, naming both contracts")
+  st <- scenario_table_status(other, "S_DEMOGRAPHICS")
+  ok(isFALSE(st$ok) && grepl("different study contract", st$why, fixed = TRUE) &&
+       !grepl("not complete", st$why, fixed = TRUE),
+     "...so every table of it reads as absent, for that reason and not for a state it does not have")
+  ok(is.null(read_scenario_table(SRC, other, "S_DEMOGRAPHICS")),
+     "...and the reader returns nothing for it")
+  legacy <- utils::modifyList(SCENARIOS[[1]], list(study_contract_md5 = ""))
+  ok(is.na(scenario_contract_bound(legacy)) && isTRUE(scenario_is_usable(legacy)),
+     "a run that predates STUDY_CONTRACT_MD5 recorded nothing to compare, and is used")
+  ok(is.na(scenario_contract_bound(utils::modifyList(SCENARIOS[[1]],
+                                                     list(study_contract_md5 = "NA")))),
+     "...as is one whose snapshot wrote the missing value as the string NA")
+  ok(identical(scenario_unusable_why(SCENARIOS[[1]]), "") &&
+       grepl("not complete", scenario_unusable_why(utils::modifyList(SCENARIOS[[1]], list(state = "failed"))), fixed = TRUE),
+     "a usable run has no reason, and a failed one's reason is still its state")
+  # A snapshot's metadata row is text. An all-digit hash or run id left to
+  # read.csv would come back as a number, and as a different string - and a
+  # run whose contract hash happened to be all digits would be refused as
+  # driven by another.
+  local({
+    root <- file.path(tempdir(), paste0("dash_snap_", sample.int(1e6, 1)))
+    dir.create(file.path(root, "p_"), recursive = TRUE)
+    on.exit(unlink(root, recursive = TRUE), add = TRUE)
+    utils::write.csv(data.frame(RUN_ID = "20260915053000", STATE = "complete",
+                                STUDY_CONTRACT_MD5 = "12345678901234567890123456789012",
+                                stringsAsFactors = FALSE),
+                     file.path(root, "p_", "S_RUN_METADATA.csv"), row.names = FALSE)
+    md <- snapshot_source(list(snapshot_dir = root, prefixes = character(0)))$read("p_", "S_RUN_METADATA")
+    ok(identical(md$STUDY_CONTRACT_MD5, "12345678901234567890123456789012") &&
+         identical(md$RUN_ID, "20260915053000"),
+       "a snapshot reads the metadata row as text, so an all-digit hash or run id is the string it was")
+  })
+
   # --- path segments ---
   ok(!safe_segment("../../etc"), "a path segment cannot climb out of the root")
   ok(!safe_segment(".."), "...nor be the climb itself")

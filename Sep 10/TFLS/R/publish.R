@@ -21,8 +21,53 @@ TFLS_PUBLISH_LOCK <- ".tfls_publish.lock"
 # too. The first marker: every previous file is in the set-aside and the move
 # in had begun, so what is in the output directory is this run's, and partial.
 # The second: the move in completed and only the cleanup was lost.
+#
+# Two rules keep those three states the only ones a kill can leave:
+#
+#   * A marker is changed BEFORE the files it describes are moved, never
+#     after. Restoring the previous set removes the first marker first, so a
+#     restore that is itself killed part-way reads as "set-aside cut short"
+#     - both sides the previous run's - and the next pass moves the rest back
+#     rather than deleting what the last pass already put back.
+#   * A set-aside is discarded by RENAMING it out of the way and then
+#     removing it. unlink() removes a directory's entries in whatever order
+#     the filesystem lists them, so a kill inside it could leave the markers
+#     gone and the files present, or the reverse; nothing reads a
+#     .tfls_discard_ directory, so its removal can stop anywhere.
 TFLS_MARK_ASIDE <- ".set_aside_complete"
 TFLS_MARK_MOVED <- ".move_in_complete"
+
+discard_set_aside <- function(prev) {
+  gone <- sub("[.]tfls_previous_", ".tfls_discard_", prev, fixed = FALSE)
+  unlink(gone, recursive = TRUE)
+  if (dir.exists(prev) && !file.rename(prev, gone))
+    stop("Could not discard the set-aside directory ", prev, ". The output ",
+         "directory holds one run's tables; remove that directory by hand.",
+         call. = FALSE)
+  unlink(gone, recursive = TRUE)
+  invisible(TRUE)
+}
+
+# The previous set, put back from its set-aside. `partial` says the output
+# directory holds the interrupted run's files, to be removed first.
+restore_set_aside <- function(prev, out_dir, partial) {
+  if (partial) {
+    made <- list.files(out_dir, pattern = TFLS_OUTPUT_PATTERN, full.names = TRUE)
+    if (length(made)) file.remove(made)
+  }
+  # From here the state reads as "set-aside cut short", whatever happens.
+  unlink(file.path(prev, TFLS_MARK_ASIDE))
+  back <- list.files(prev, pattern = TFLS_OUTPUT_PATTERN, full.names = TRUE)
+  if (length(back)) {
+    ok <- file.rename(back, file.path(out_dir, basename(back)))
+    if (!all(ok))
+      stop("The previous output could not be put back from ", prev, ": ",
+           paste(basename(back)[!ok], collapse = ", "), ". Restore it by ",
+           "hand before publishing again.", call. = FALSE)
+  }
+  discard_set_aside(prev)
+  invisible(TRUE)
+}
 
 # A publish that was killed part-way, put right before the next one starts.
 #
@@ -32,6 +77,10 @@ TFLS_MARK_MOVED <- ".move_in_complete"
 # land, the new one's where it did - and never to a mixture. Only the tool's
 # own files are touched.
 recover_interrupted_publish <- function(out_dir) {
+  # A discard that was cut short holds nothing anyone reads.
+  for (gone in list.files(out_dir, pattern = "^[.]tfls_discard_", all.files = TRUE,
+                          full.names = TRUE, include.dirs = TRUE))
+    unlink(gone, recursive = TRUE)
   prevs <- list.files(out_dir, pattern = "^[.]tfls_previous_", all.files = TRUE,
                       full.names = TRUE, include.dirs = TRUE)
   prevs <- prevs[dir.exists(prevs)]
@@ -41,27 +90,12 @@ recover_interrupted_publish <- function(out_dir) {
     if (moved_done) {
       # The new set is complete in the output directory; only the discard of
       # the old one was lost.
-      unlink(prev, recursive = TRUE)
+      discard_set_aside(prev)
       cat("  recovered ", basename(prev), ": that publish had completed and ",
           "only its cleanup was lost\n", sep = "")
       next
     }
-    if (aside_done) {
-      # The previous set is whole in the set-aside; what is in the output
-      # directory is the interrupted run's, and partial.
-      partial <- list.files(out_dir, pattern = TFLS_OUTPUT_PATTERN, full.names = TRUE)
-      if (length(partial)) file.remove(partial)
-    }
-    back <- list.files(prev, pattern = TFLS_OUTPUT_PATTERN, full.names = TRUE)
-    if (length(back)) {
-      ok <- file.rename(back, file.path(out_dir, basename(back)))
-      if (!all(ok))
-        stop("A publish before this one was interrupted, and its previous ",
-             "output could not be put back from ", prev, ": ",
-             paste(basename(back)[!ok], collapse = ", "), ". Restore it by ",
-             "hand before publishing again.", call. = FALSE)
-    }
-    unlink(prev, recursive = TRUE)
+    restore_set_aside(prev, out_dir, partial = aside_done)
     cat("  recovered ", basename(prev), ": a publish before this one was ",
         "interrupted ", if (aside_done) "while moving its tables in"
                         else "while setting the previous tables aside",
@@ -71,14 +105,22 @@ recover_interrupted_publish <- function(out_dir) {
 }
 
 publish_outputs <- function(stage, out_dir, run_id) {
+  # Nothing to publish is a stop, not a publish of nothing: with an empty
+  # stage every step below would succeed and the previous run's tables would
+  # be set aside and discarded, leaving the directory empty and the function
+  # reporting success.
+  made <- if (dir.exists(stage)) list.files(stage, full.names = TRUE) else character(0)
+  if (!length(made))
+    stop("Nothing to publish: the staging directory ", stage, " holds no ",
+         "files. The previous run's output is untouched.", call. = FALSE)
+
   lock <- file.path(out_dir, TFLS_PUBLISH_LOCK)
   if (!dir.create(lock, showWarnings = FALSE))
     stop("Another publish holds ", lock, ", so this one would move its files ",
          "in between that one's. If nothing else is publishing into ",
          out_dir, ", the lock was left by a publish that was killed: remove ",
          "the directory and run again, and the interrupted publish is put ",
-         "right first. This run's tables are complete in ", stage, ".",
-         call. = FALSE)
+         "right first. Nothing of this run was published.", call. = FALSE)
   on.exit(unlink(lock, recursive = TRUE), add = TRUE)
   recover_interrupted_publish(out_dir)
 
@@ -108,33 +150,24 @@ publish_outputs <- function(stage, out_dir, run_id) {
     aside <- file.rename(old, file.path(prev, basename(old)))
     if (!all(aside)) {
       # Put back whatever did move, so the failure costs nothing.
-      done <- basename(old)[aside]
-      if (length(done))
-        file.rename(file.path(prev, done), file.path(out_dir, done))
-      unlink(prev, recursive = TRUE)
+      restore_set_aside(prev, out_dir, partial = FALSE)
       stop("Could not set aside the previous output in ", out_dir, ": ",
            paste(basename(old)[!aside], collapse = ", "),
-           ". The previous run is still published and unchanged; this run's ",
-           "tables are complete in ", stage, ".", call. = FALSE)
+           ". The previous run is still published and unchanged; nothing of ",
+           "this run was published.", call. = FALSE)
     }
   }
   file.create(file.path(prev, TFLS_MARK_ASIDE))
-  made <- list.files(stage, full.names = TRUE)
   moved <- file.rename(made, file.path(out_dir, basename(made)))
   if (!all(moved)) {
     # Take back the half that landed, then restore the run that was there.
-    landed <- basename(made)[moved]
-    if (length(landed)) file.remove(file.path(out_dir, landed))
-    back <- list.files(prev, pattern = TFLS_OUTPUT_PATTERN, full.names = TRUE)
-    if (length(back))
-      file.rename(back, file.path(out_dir, basename(back)))
-    unlink(prev, recursive = TRUE)
+    restore_set_aside(prev, out_dir, partial = TRUE)
     stop("Could not publish ", paste(basename(made)[!moved], collapse = ", "),
          " into ", out_dir, ". The previous run has been put back, so what is ",
-         "published is one run's; this run's tables are in ", stage, ".",
+         "published is one run's; nothing of this run was published.",
          call. = FALSE)
   }
   file.create(file.path(prev, TFLS_MARK_MOVED))
-  unlink(prev, recursive = TRUE)
+  discard_set_aside(prev)
   invisible(TRUE)
 }

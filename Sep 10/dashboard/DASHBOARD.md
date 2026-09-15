@@ -125,6 +125,18 @@ run it read, and none of its tables is shown: the producer writes the
 metadata row before it replaces a table, so under such a run the tables are
 the previous build's, or part of this one. Compare needs two complete runs.
 
+A run driven by a different study contract is listed the same way, marked
+`[other contract]`, and none of its tables is shown either. Every decision
+here about a run — which tables it wrote, which of them have a released copy,
+which switch turns which on — is made from the registry loaded at startup,
+and a run records the hash of the contract it was driven by
+(`S_RUN_METADATA.STUDY_CONTRACT_MD5`). A run of another version can have
+released a table this registry does not know as released, and its raw table
+read under this registry's rules would show a number that run withheld; so
+the two are compared before any read, and a difference refuses the run. A run
+from before the column recorded nothing to compare, and is used. The snapshot
+job applies the same rule, so such a run is not exported either.
+
 And a run shows only what it built. A run writes the modules it selected,
 for the cohorts it selected, and leaves everything else under its prefix as
 the previous run left it — so a completed partial re-run's prefix can hold a
@@ -321,7 +333,7 @@ DASH_SOURCE=snapshot DASH_SNAPSHOT_DIR=/mnt/data/NDMM ./app.sh
 variables, and what the job that refreshes the snapshot needs.
 
 ```bash
-Rscript tests/run_tests.R      # 576 checks, no Shiny and no warehouse
+Rscript tests/run_tests.R      # 586 checks, no Shiny and no warehouse
 ```
 
 Every number the app puts on a page comes from a function in `R/` that runs
@@ -381,7 +393,7 @@ cannot grow a tab nobody designed. A table with no spec gets a plain grid.
 | file | what it is |
 |---|---|
 | `app.R` | the Shiny wiring: the sidebar, the tabs, and which panel goes where |
-| `global.R` | loaded once at startup: the package's registries, then the dashboard's, then the data source |
+| `global.R` | loaded once at startup: the package's registries and the hash of the contract they are, then the dashboard's, then the data source |
 | `config/dashboard_config.R` | every `DASH_*` environment variable, validated |
 | `R/spec.R` | `TABLE_SPEC` — how each table is best shown, and which columns identify a patient |
 | `R/panels.R` | the panel registry — what is on each tab |

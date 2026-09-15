@@ -47,6 +47,19 @@ cohort_build_now <- function(con, cfg) {
     # that as absent would let a cohort rebuilt under the same name through
     # on the strength of an outage.
     if (inherits(d, "error")) {
+      # A table NAMED by the setting that is not there is a mistake in the
+      # setting, not an absence - the engine treats its own
+      # COHORT_STATUS_TABLE the same way. Carrying on would end in "no
+      # status found", which is true and points away from the cause.
+      # Its own class, so the waiver below cannot cover it: a wrong setting
+      # is not an unproven lineage, it is a run that was told to read the
+      # wrong table.
+      if (missing_object_error(d) && nzchar(named))
+        stop(errorCondition(paste0(
+          "SETTING ERROR: COHORT_STATUS_TABLE names ", tbl, ", which is not ",
+          "there. Give the table name bare, without the schema and without ",
+          "the cohort prefix - COHORT_PREFIX is added for you, and defaults ",
+          "to this run's own OBJECT_PREFIX."), class = "setting_error"))
       if (missing_object_error(d)) next
       stop("LINEAGE ERROR: the cohort build-status table ", tbl,
            " could not be read - ", conditionMessage(d), "\nThat is not the ",
@@ -153,7 +166,11 @@ check_cohort_attempt <- function(con, cfg, inputs) {
   was_stamp <- inputs$cohort_stamp
   now <- tryCatch(cohort_build_now(con, cfg), error = function(e) e)
   if (inherits(now, "error")) {
-    if (!isTRUE(cfg$lot_allow_unproven_lineage)) stop(now)
+    # The waiver is for a lineage that could not be PROVED. A setting that
+    # names a table which is not there is not that; nothing is unproven, the
+    # run was pointed at the wrong place.
+    if (inherits(now, "setting_error") ||
+        !isTRUE(cfg$lot_allow_unproven_lineage)) stop(now)
     log_msg("WARNING: ", conditionMessage(now),
             "\nLOT_ALLOW_UNPROVEN_LINEAGE=TRUE, so the run continues.")
     return(invisible(NULL))
@@ -347,10 +364,14 @@ check_lot_lineage_unchanged <- function(con, accepted) {
   now <- tryCatch(
     db_q(con, sprintf("SELECT RUN_ID, STATE, UPDATED_AT FROM %s
                        ORDER BY UPDATED_AT DESC LIMIT 1", st)),
-    error = function(e) NULL)
-  if (is.null(now) || !nrow(now))
-    stop("LINEAGE ERROR: ", st, " could not be re-read after the modules ran, ",
-         "so it cannot be shown that LOT run ", id, " was still the build ",
+    error = function(e) e)
+  # Kept, not dropped: the failure record has to tell a revoked grant from a
+  # dropped session from a dropped table, and only the driver's words do.
+  if (inherits(now, "error") || !nrow(now))
+    stop("LINEAGE ERROR: ", st, " could not be re-read after the modules ran",
+         if (inherits(now, "error")) paste0(" - ", conditionMessage(now))
+         else " - it has no rows now",
+         ", so it cannot be shown that LOT run ", id, " was still the build ",
          "under the prefix while this run read it. The run is recorded as ",
          "failed.", call. = FALSE)
   was_v <- lot_run_version(accepted)
