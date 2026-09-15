@@ -412,6 +412,60 @@ open_question_readings <- function(cfg, upstream = NULL) {
   }, character(1), USE.NAMES = FALSE)
 }
 
+# An unquoted SQL name: letters, digits and underscore, not starting with a
+# digit. Nothing this package writes or reads is quoted, so this is the rule
+# every name below has to meet. A prefix is the front of a name, so the same
+# rule; a qualified table is one to three of them joined by dots.
+SQL_NAME <- "^[A-Za-z_][A-Za-z0-9_]*$"
+is_sql_name <- function(v, parts = 1L) {
+  v <- trimws(as.character(v))
+  if (length(v) != 1L || is.na(v) || !nzchar(v)) return(FALSE)
+  p <- strsplit(v, ".", fixed = TRUE)[[1]]
+  length(p) >= 1L && length(p) <= parts && all(grepl(SQL_NAME, p))
+}
+
+# The settings that become names in SQL, and how many dotted parts each may
+# have. Blank is allowed where blank means "not set" - a prefix that falls back
+# to OBJECT_PREFIX, a table override that falls back to the CDM default - and
+# is refused where the name is required, which check_settings() has already
+# done for the two that are.
+SQL_NAME_SETTINGS <- list(
+  OBJECT_PREFIX = list(key = "object_prefix", parts = 1L),
+  COHORT_PREFIX = list(key = "cohort_prefix", parts = 1L),
+  LOT_PREFIX = list(key = "lot_prefix", parts = 1L),
+  COHORT_STATUS_TABLE = list(key = "cohort_status_table", parts = 1L),
+  # Given bare, or already qualified as catalog.schema.table.
+  INPUT_COHORT_TABLE = list(key = "input_cohort_table", parts = 3L),
+  DATABRICKS_CATALOG = list(key = "catalog", parts = 1L),
+  OPTUM_CDM_SCHEMA = list(key = "cdm_schema", parts = 1L),
+  # A CDM table override is a base name: cdm_src() puts the quarter suffix and
+  # the schema around it, so it cannot carry either itself.
+  TBL_MEDICAL = list(key = "tbl_medical", parts = 1L),
+  TBL_MED_DIAG = list(key = "tbl_diagnosis", parts = 1L),
+  TBL_MED_PROC = list(key = "tbl_procedure", parts = 1L),
+  TBL_RX = list(key = "tbl_rx", parts = 1L),
+  TBL_CONFINEMENT = list(key = "tbl_confinement", parts = 1L),
+  TBL_MEMBER_ENROLLMENT = list(key = "tbl_member_enrollment", parts = 1L),
+  TBL_MEMBER_ELIG = list(key = "tbl_member_elig", parts = 1L),
+  TBL_DOD = list(key = "tbl_dod", parts = 1L))
+
+check_sql_names <- function(cfg) {
+  for (nm in names(SQL_NAME_SETTINGS)) {
+    spec <- SQL_NAME_SETTINGS[[nm]]
+    v <- trimws(as.character(cfg[[spec$key]] %||% ""))
+    if (!nzchar(v)) next
+    if (!is_sql_name(v, spec$parts))
+      stop("SETTING ERROR: ", nm, " = '", v, "' is not a name this package ",
+           "can put in SQL. It is pasted into statements unquoted, so it has ",
+           "to be letters, digits and underscore, not starting with a digit",
+           if (spec$parts > 1L)
+             paste0(" - or up to ", spec$parts, " such names joined by dots")
+           else "",
+           ".", call. = FALSE)
+  }
+  invisible(TRUE)
+}
+
 check_settings <- function(cfg) {
   # REGION does not exist on the deployed enrolment table. The V9.0 dictionary
   # documents it as added, and three of the four V9 additions did land on the
@@ -436,6 +490,13 @@ check_settings <- function(cfg) {
     stop("SETTING ERROR: OBJECT_PREFIX is required - every table this package ",
          "writes carries it, and two runs without one would overwrite each ",
          "other.", call. = FALSE)
+  # Every one of these is pasted into SQL unquoted, by wrk(), cohort_tbl(),
+  # lot_tbl(), input_cohort_tbl() and cdm_src(). A value that is not a name
+  # produced a statement the warehouse refused in its own words, after the
+  # connection was open - or, for a value with a semicolon in it, a statement
+  # that was two. Refused here, by the rule the warehouse applies to an
+  # unquoted name, before any statement is built.
+  check_sql_names(cfg)
   if (as.Date(cfg$study_start) >= as.Date(cfg$study_end))
     stop("SETTING ERROR: STUDY_START (", cfg$study_start, ") is not before ",
          "STUDY_END (", cfg$study_end, ").", call. = FALSE)

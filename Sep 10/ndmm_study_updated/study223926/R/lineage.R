@@ -41,8 +41,24 @@ cohort_build_now <- function(con, cfg) {
     tbl <- cohort_tbl(nm)
     d <- tryCatch(db_q(con, sprintf(
            "SELECT * FROM %s ORDER BY UPDATED_AT DESC LIMIT 1", tbl)),
-         error = function(e) NULL)
-    if (is.null(d) || !nrow(d)) next
+         error = function(e) e)
+    # Absent is one of the two names not being used, which is ordinary. Any
+    # other failure is a status that exists and was not seen, and reading
+    # that as absent would let a cohort rebuilt under the same name through
+    # on the strength of an outage.
+    if (inherits(d, "error")) {
+      if (missing_object_error(d)) next
+      stop("LINEAGE ERROR: the cohort build-status table ", tbl,
+           " could not be read - ", conditionMessage(d), "\nThat is not the ",
+           "same as its being absent: a table that is not there is a build ",
+           "that recorded nothing, and one that cannot be read is a question ",
+           "with no answer. Fix the read, name the table with ",
+           "COHORT_STATUS_TABLE or its prefix with COHORT_PREFIX if the ",
+           "cohort build wrote its status elsewhere, or set ",
+           "LOT_ALLOW_UNPROVEN_LINEAGE=TRUE to proceed over a binding nothing ",
+           "checked.", call. = FALSE)
+    }
+    if (!nrow(d)) next
     # Column case differs between the builds. Spark does not care; R does.
     pick <- function(w) {
       i <- match(tolower(w), tolower(names(d)))
@@ -62,16 +78,47 @@ cohort_build_now <- function(con, cfg) {
 # attempt and its own code fingerprint on LOT_RUN_METADATA instead, keyed by
 # RUN_ID, so that is where this reads them from.
 #
-# Returns NULL where the table or the row could not be read: an older LOT run
-# predates these columns and has nothing to say.
-lot_run_inputs <- function(con, run_id) {
+# Two ways the read can come back empty, and they are not the same answer.
+# A table or a column that IS NOT THERE is an older LOT run that predates
+# these columns: it recorded nothing, and NULL says so. A table that COULD NOT
+# BE READ - a permission refused, a session dropped, a statement the engine
+# would not parse - has recorded whatever it recorded, and this run has not
+# seen it. Turning that into NULL made every outage read as "an older run",
+# which is the answer that accepts; so it stops, and only the flag that
+# already waives an unreadable LOT_BUILD_STATUS waives this too.
+lot_run_inputs <- function(con, cfg, run_id) {
   if (!nzchar(as_str(run_id))) return(NULL)
   tbl <- lot_tbl("LOT_RUN_METADATA")
   d <- tryCatch(db_q(con, sprintf(
          "SELECT COHORT_RUN_ID, COHORT_STAMP, CODE_MD5 FROM %s
            WHERE RUN_ID = '%s'", tbl, run_id)),
-       error = function(e) NULL)
-  if (is.null(d) || !nrow(d)) return(NULL)
+       error = function(e) e)
+  if (inherits(d, "error")) {
+    if (missing_object_error(d) || missing_column_error(d)) {
+      log_msg("  ", tbl, " records no cohort attempt for LOT run ", run_id,
+              " (", if (missing_object_error(d)) "the table is not there"
+                    else "the columns are not there",
+              "), so that run predates them")
+      return(NULL)
+    }
+    if (isTRUE(cfg$lot_allow_unproven_lineage)) {
+      log_msg("WARNING: could not read ", tbl, " for LOT run ", run_id, " - ",
+              conditionMessage(d), ". That is not the same as the run having ",
+              "recorded nothing. LOT_ALLOW_UNPROVEN_LINEAGE=TRUE, so the run ",
+              "continues over a cohort attempt and a code fingerprint nothing ",
+              "checked.")
+      return(NULL)
+    }
+    stop("LINEAGE ERROR: could not read ", tbl, " for LOT run ", run_id,
+         " - ", conditionMessage(d), "\nThat is not the same as the table ",
+         "being absent: an older LOT run that predates the cohort-attempt ",
+         "columns records nothing and is accepted as such, but a table that ",
+         "cannot be read has recorded whatever it recorded and this run has ",
+         "not seen it. Fix the read, set LOT_PREFIX if the LOT build wrote ",
+         "its metadata elsewhere, or set LOT_ALLOW_UNPROVEN_LINEAGE=TRUE to ",
+         "proceed over a binding nothing checked.", call. = FALSE)
+  }
+  if (!nrow(d)) return(NULL)
   list(table = tbl,
        cohort_run_id = as_str(d$COHORT_RUN_ID),
        cohort_stamp  = as_str(d$COHORT_STAMP),
@@ -104,7 +151,13 @@ check_cohort_attempt <- function(con, cfg, inputs) {
   }
   was_id <- inputs$cohort_run_id
   was_stamp <- inputs$cohort_stamp
-  now <- cohort_build_now(con, cfg)
+  now <- tryCatch(cohort_build_now(con, cfg), error = function(e) e)
+  if (inherits(now, "error")) {
+    if (!isTRUE(cfg$lot_allow_unproven_lineage)) stop(now)
+    log_msg("WARNING: ", conditionMessage(now),
+            "\nLOT_ALLOW_UNPROVEN_LINEAGE=TRUE, so the run continues.")
+    return(invisible(NULL))
+  }
   if (is.null(now)) {
     if (isTRUE(cfg$lot_allow_unproven_lineage)) {
       log_msg("WARNING: no cohort build status found, so the cohort attempt ",
@@ -259,7 +312,7 @@ check_lot_lineage <- function(con, cfg) {
   # already solved this for itself: it records the cohort build's run id and
   # stamp on LOT_BUILD_STATUS precisely because the id alone is not enough.
   # This carries that binding forward rather than inventing a second one.
-  inputs <- lot_run_inputs(con, as_str(r$RUN_ID))
+  inputs <- lot_run_inputs(con, cfg, as_str(r$RUN_ID))
   check_cohort_attempt(con, cfg, inputs)
 
   md5 <- if (is.null(inputs)) "" else inputs$code_md5

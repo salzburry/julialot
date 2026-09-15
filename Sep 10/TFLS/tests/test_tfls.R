@@ -49,6 +49,28 @@ for (f in c("classes.R", "shells.R", "names.R", "stats.R", "suppress.R",
             "fill.R", "scope.R", "render.R", "publish.R"))
   source(file.path(ROOT, "R", f))
 
+# The runner's functions, loaded without running the run. run_tfls.R ends by
+# calling main() when it is not interactive, so it cannot be sourced from
+# here; instead every top-level `name <- function(...)` in it is evaluated
+# into an environment whose parent is this session, where R/ is already
+# loaded, and the two globals a function reads are set by the test.
+#
+# Every check of the runner above this point reads it as text, and text is how
+# a line survives that refers to a variable defined somewhere else: it parses,
+# it reads as right, and it raises the first time the function runs.
+runner_env <- function(out) {
+  env <- new.env(parent = globalenv())
+  for (ex in parse(file.path(ROOT, "run_tfls.R"), keep.source = FALSE)) {
+    is_fn <- is.call(ex) && identical(ex[[1]], as.name("<-")) &&
+      is.call(ex[[3]]) && identical(ex[[3]][[1]], as.name("function"))
+    if (is_fn) eval(ex, env)
+  }
+  env$out_dir <- out
+  env$shells_dir <- file.path(ROOT, "shells")
+  env
+}
+
+
 # --- a shell set, written to a temporary directory ---------------------------
 #
 # Small enough to read, and every test that needs a broken shell starts from
@@ -1016,6 +1038,17 @@ local({
   ok(file.exists(shipped), "the contract is shipped with this folder, so a snapshot fills where the package is not installed")
   ok(identical(readLines(shipped, warn = FALSE), readLines(tmp, warn = FALSE)),
      "...and it is exactly what the package emits today: regenerated here and compared line for line")
+  # The one value the run records about it. Computed by two copies of one
+  # function, so the two are held to agree on the same file, and to agree
+  # with the value a run would have written.
+  ok(identical(contract_text_md5(shipped), pkg$contract_text_md5(shipped)) &&
+       identical(contract_text_md5(shipped), pkg$study_contract_md5()),
+     "...and hashes to the STUDY_CONTRACT_MD5 a run of that package records, by this folder's copy of the function and the package's")
+  crlf <- file.path(tempdir(), "tfls_contract_crlf.csv")
+  on.exit(unlink(crlf), add = TRUE)
+  writeBin(charToRaw(paste0(paste(readLines(shipped, warn = FALSE), collapse = "\r\n"), "\r\n")), crlf)
+  ok(identical(contract_text_md5(crlf), contract_text_md5(shipped)),
+     "...and the same contract checked out with other line endings hashes the same, so a Windows checkout is not refused")
 
   # And the three objects built from it are the package's own answers.
   d <- pkg$study_contract()
@@ -1029,6 +1062,46 @@ local({
   ok(setequal(names(TFLS_OPTIONAL_OUTPUTS), d$TABLE[nzchar(d$SWITCH)]) &&
        all(TFLS_OPTIONAL_OUTPUTS[d$TABLE[nzchar(d$SWITCH)]] == d$SWITCH[nzchar(d$SWITCH)]),
      "...and the outputs a switch turns on are named under the switch the package records them by")
+})
+
+# A contract that is well formed and not the run's. read_study_contract()
+# cannot see that - nothing in the file says which package emitted it - so it
+# is the run's recorded hash that refuses it, in bind_run(), before anything
+# is read under the prefix.
+local({
+  have <- contract_text_md5(file.path(ROOT, TFLS_CONTRACT_FILE))
+  md_row <- function(...) data.frame(
+    RUN_ID = "r1", STATE = "complete", UPDATED_AT = "2026-09-15 00:00:00",
+    COHORTS = "1L; 2L", MODULES = "eligibility; spine; cohorts; release",
+    ..., stringsAsFactors = FALSE)
+  bind <- function(md) {
+    env <- runner_env(tempdir())
+    reader <- function(t) if (identical(t, "S_RUN_METADATA")) md else NULL
+    attr(reader, "read_errors") <- new.env()
+    tryCatch({ capture.output(env$bind_run(reader, "here")); "BOUND" },
+             error = function(x) conditionMessage(x))
+  }
+  ok(identical(bind(md_row(STUDY_CONTRACT_MD5 = have)), "BOUND"),
+     "a run driven by the contract shipped here binds")
+  e <- bind(md_row(STUDY_CONTRACT_MD5 = "00000000000000000000000000000000"))
+  ok(grepl("is not the one the run under here was driven by", e, fixed = TRUE) &&
+       grepl("Nothing was filled", e, fixed = TRUE),
+     "a run driven by a different contract is refused before anything is read - a well-formed contract from another version can name a suppressed table as unsuppressed")
+  ok(grepl("write_study_contract()", e, fixed = TRUE),
+     "...and the message says where the right one comes from")
+  said <- character(0)
+  r <- local({
+    env <- runner_env(tempdir())
+    reader <- function(t) if (identical(t, "S_RUN_METADATA")) md_row() else NULL
+    attr(reader, "read_errors") <- new.env()
+    said <<- capture.output(out <- tryCatch(env$bind_run(reader, "here"), error = function(x) x))
+    out
+  })
+  ok(is.data.frame(r) && any(grepl("recorded no contract hash", said, fixed = TRUE)),
+     "a run that predates STUDY_CONTRACT_MD5 binds, and says out loud that this could not be checked")
+  said2 <- capture.output(check_contract_binding(md_row(STUDY_CONTRACT_MD5 = "NA"), "here", ROOT))
+  ok(any(grepl("recorded no contract hash", said2, fixed = TRUE)),
+     "...as does one whose snapshot wrote the missing value as the string NA")
 })
 
 # Every way the shipped contract can be wrong, refused rather than read.
@@ -1144,10 +1217,137 @@ local({
   ok(is.na(e) || grepl("previous run has been put back", e, fixed = TRUE) ||
        grepl("still published and unchanged", e, fixed = TRUE),
      "...and the message says so, rather than claiming nothing was touched when files had already gone")
+
+  # Two publishers. Domino can start two Jobs into one artifacts directory,
+  # and the second would move its files in between the first one's.
+  d4 <- setup()
+  dir.create(file.path(d4$out, TFLS_PUBLISH_LOCK))
+  e4 <- tryCatch({ publish_outputs(d4$stage, d4$out, "r4"); NA_character_ },
+                 error = function(x) conditionMessage(x))
+  ok(!is.na(e4) && grepl("Another publish holds", e4, fixed = TRUE) &&
+       identical(read1(file.path(d4$out, "tfls_t1.csv")), "OLD1"),
+     "a second publisher into the same directory is refused, and the published run is untouched")
+  ok(grepl("remove the directory and run again", e4, fixed = TRUE),
+     "...and the message says what a lock left by a killed publish is, and what to do")
+  unlink(file.path(d4$out, TFLS_PUBLISH_LOCK), recursive = TRUE)
+  publish_outputs(d4$stage, d4$out, "r4")
+  ok(identical(read1(file.path(d4$out, "tfls_t1.csv")), "NEW1") &&
+       !dir.exists(file.path(d4$out, TFLS_PUBLISH_LOCK)),
+     "...and once it is gone the publish goes through and leaves no lock behind")
+
+  # A KILLED publish, not a failed one: the process is gone mid-move and
+  # nothing ran after it. Simulated by a file.rename that raises after the
+  # first move in, so the set-aside directory and its marker are left exactly
+  # as a kill would leave them. The next publish has to put that right before
+  # it starts, and to a WHOLE set.
+  killed_during <- function(d, when) {
+    f <- publish_outputs
+    env <- new.env(parent = environment(publish_outputs))
+    real <- base::file.rename
+    n <- 0L
+    env$file.rename <- function(from, to) {
+      into_out <- all(dirname(normalizePath(to, mustWork = FALSE)) ==
+                        normalizePath(d$out, mustWork = FALSE))
+      moving_in <- into_out && any(grepl("[.]stage", from))
+      setting_aside <- !into_out && any(grepl("tfls_previous", to))
+      if ((when == "move_in" && moving_in) ||
+          (when == "set_aside" && setting_aside)) {
+        # One file moves, then the process dies.
+        real(from[1], to[1])
+        stop("killed")
+      }
+      real(from, to)
+    }
+    environment(f) <- env
+    tryCatch(f(d$stage, d$out, paste0("k_", when)), error = function(x) NULL)
+    # A killed process leaves its lock; the operator removes it, as the
+    # message above says.
+    unlink(file.path(d$out, TFLS_PUBLISH_LOCK), recursive = TRUE)
+  }
+  tool_files <- function(out) sort(list.files(out, pattern = TFLS_OUTPUT_PATTERN))
+  prev_dirs <- function(out) list.files(out, pattern = "^[.]tfls_previous_", all.files = TRUE)
+
+  d5 <- setup()
+  killed_during(d5, "move_in")
+  ok(length(prev_dirs(d5$out)) == 1L,
+     "a publish killed while moving its tables in leaves the set-aside directory, which is the only trace of it")
+  # list.files() sorts tfls.md before tfls_t1.csv, so the one file that
+  # landed is the markdown.
+  ok(identical(tool_files(d5$out), "tfls.md") &&
+       identical(read1(file.path(d5$out, "tfls.md")), "NEW-MD"),
+     "...and the output directory holding one new file and no old ones: a mixture no reader could tell from a run")
+  # The next run's own stage, published over the top of that.
+  for (i in 1:3) writeLines(paste0("NEXT", i), file.path(d5$stage, sprintf("tfls_t%d.csv", i)))
+  writeLines("NEXT-MD", file.path(d5$stage, "tfls.md"))
+  said <- capture.output(publish_outputs(d5$stage, d5$out, "r5"))
+  ok(any(grepl("recovered .tfls_previous_k_move_in", said, fixed = TRUE)) &&
+       any(grepl("while moving its tables in", said, fixed = TRUE)),
+     "the next publish says it found the interrupted one, and at which step")
+  ok(identical(tool_files(d5$out), c("tfls.md", "tfls_t1.csv", "tfls_t2.csv", "tfls_t3.csv")) &&
+       identical(read1(file.path(d5$out, "tfls_t1.csv")), "NEXT1") &&
+       identical(read1(file.path(d5$out, "tfls_t3.csv")), "NEXT3") &&
+       !length(prev_dirs(d5$out)),
+     "...and what is published afterwards is the next run, whole, with the set-aside gone")
+
+  d6 <- setup()
+  killed_during(d6, "set_aside")
+  ok(length(prev_dirs(d6$out)) == 1L &&
+       identical(read1(file.path(d6$out, "tfls_t3.csv")), "OLD3") &&
+       !file.exists(file.path(d6$out, "tfls.md")),
+     "a publish killed while setting the previous tables aside leaves some of them moved and some not")
+  # This time the recovery is checked on its own, so the restored set can be
+  # seen before anything is published over it.
+  said <- capture.output(n <- recover_interrupted_publish(d6$out))
+  ok(n == 1L && identical(tool_files(d6$out), c("tfls.md", "tfls_t1.csv", "tfls_t2.csv", "tfls_t3.csv")) &&
+       identical(read1(file.path(d6$out, "tfls_t1.csv")), "OLD1") &&
+       !length(prev_dirs(d6$out)),
+     "...and recovery puts the PREVIOUS run back whole, because the new one never began to land")
+  ok(any(grepl("while setting the previous tables aside", said, fixed = TRUE)),
+     "...saying so")
+
+  # Killed between the last move in and the discard of the set-aside: the new
+  # set is complete and only the cleanup was lost, so recovery must NOT put
+  # the old one back over it.
+  d7 <- setup()
+  prev7 <- file.path(d7$out, ".tfls_previous_k_done")
+  dir.create(prev7)
+  for (f in list.files(d7$out, pattern = TFLS_OUTPUT_PATTERN, full.names = TRUE))
+    file.rename(f, file.path(prev7, basename(f)))
+  file.create(file.path(prev7, TFLS_MARK_ASIDE))
+  for (f in list.files(d7$stage, full.names = TRUE))
+    file.rename(f, file.path(d7$out, basename(f)))
+  file.create(file.path(prev7, TFLS_MARK_MOVED))
+  said <- capture.output(recover_interrupted_publish(d7$out))
+  ok(identical(read1(file.path(d7$out, "tfls_t1.csv")), "NEW1") &&
+       !dir.exists(prev7) && any(grepl("only its cleanup was lost", said, fixed = TRUE)),
+     "a publish killed after its last move in is recognised as complete, and the new set is kept")
 })
 
 cat("\n-- the runner --\n")
 RUNNER <- paste(readLines(file.path(ROOT, "run_tfls.R")), collapse = "\n")
+
+local({
+  out <- file.path(tempdir(), paste0("tfls_e2e_", sample.int(1e6, 1)))
+  on.exit(unlink(out, recursive = TRUE), add = TRUE)
+  env <- runner_env(out)
+  dir.create(out, showWarnings = FALSE, recursive = TRUE)
+  writeLines("stale", file.path(out, "tfls_T9.csv"))
+  e <- tryCatch({ capture.output(env$write_outputs(list(F1), SH, 25, "e2e-1")); NA_character_ },
+                error = function(x) conditionMessage(x))
+  ok(is.na(e),
+     paste0("write_outputs() runs end to end and returns",
+            if (!is.na(e)) paste0("  [", e, "]") else ""))
+  ok(file.exists(file.path(out, "tfls_T1.csv")) &&
+       file.exists(file.path(out, "tfls.md")) &&
+       file.exists(file.path(out, "tfls_unfilled.csv")),
+     "...and the three files the documentation names are in the output directory")
+  ok(!file.exists(file.path(out, "tfls_T9.csv")),
+     "...with a table from a previous run gone")
+  ok(!length(list.files(out, pattern = "^[.]tfls_", all.files = TRUE)),
+     "...and nothing of the staging, the set-aside or the lock left behind")
+  ok(any(grepl("^Run e2e-1, floor 25[.]$", readLines(file.path(out, "tfls.md"), warn = FALSE))),
+     "...and tfls.md names the run and the floor it was filled under")
+})
 ok(has(RUNNER, 'gsub("~+~", " "'),
    "the script directory survives a space in a folder name")
 ok(all(vapply(c("classes.R", "shells.R", "names.R", "stats.R", "suppress.R",
@@ -1221,8 +1421,8 @@ ok(has(RUNNER, "stage <- file.path(out_dir,") &&
        regexpr("publish_outputs(stage, out_dir, run_id)", RUNNER, fixed = TRUE),
    "the run is written to a staging directory BEFORE anything published is touched, so a render that raises leaves the previous run whole")
 ok(has(RUNNER, "publish_outputs(stage, out_dir, run_id)") &&
-     !has(RUNNER, "file.rename("),
-   "...and the replacement itself is one call into R/publish.R, not file moves inlined where no test can reach them")
+     !has(RUNNER, "file.rename(") && !has(RUNNER, "unlink(prev"),
+   "...and the replacement itself is one call into R/publish.R, not file moves inlined where no test can reach them, with none of its locals referred to from here")
 ok(has(RUNNER, "on.exit(unlink(stage, recursive = TRUE)"),
    "...with the staging directory cleaned up however the run ends")
 

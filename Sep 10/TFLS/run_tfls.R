@@ -233,6 +233,10 @@ bind_run <- function(reader, where) {
          paste(missing, collapse = " and no "), ", so nothing under this ",
          "prefix can be shown to be its own rather than a previous run's. ",
          "Nothing was filled.", call. = FALSE)
+  # And the contract this copy reads is the one that run was driven by. The
+  # file's own checks catch a contract that is malformed; only the run can
+  # say whether a well-formed one is ITS.
+  check_contract_binding(md, where)
   md
 }
 
@@ -270,7 +274,6 @@ write_outputs <- function(filled, sh, floor_n, run_id) {
   tfls_write_csv(unf, file.path(stage, "tfls_unfilled.csv"))
 
   publish_outputs(stage, out_dir, run_id)
-  unlink(prev, recursive = TRUE)
   n_cells <- sum(vapply(filled, function(f) sum(f$cells$SECTION == 0L), integer(1)))
   n_supp <- sum(vapply(filled, function(f)
     sum(f$cells$SECTION == 0L & f$cells$SUPPRESSED == 1L), integer(1)))

@@ -161,6 +161,32 @@ run_version_stamp <- function(x) {
 # blank or `#` row cut off, and the normalised types beside them where the
 # response carried a type column (`typed`). The raw column names travel along
 # for a message.
+# Two questions an error can answer, kept apart because they call for opposite
+# responses.
+#
+# "It is not there" is a fact about the warehouse - a table or a column that
+# was never written - and a reader can decide what an absence means: an older
+# build that predates a column, a status that was never recorded. "It could
+# not be read" is not a fact about anything: a permission refused, a session
+# dropped, a statement the engine would not parse. Treating the second as the
+# first turns every outage into "nothing was recorded", which is the answer
+# that accepts. The LOT engine asks the same question of itself
+# (missing_object_error in its db_utils_lot.R); the patterns are its.
+missing_object_error <- function(err) {
+  msg <- if (inherits(err, "condition")) conditionMessage(err) else as.character(err)
+  length(msg) == 1L && !is.na(msg) &&
+    grepl("TABLE_OR_VIEW_NOT_FOUND|Table or view not found|no such table|does not exist",
+          msg, ignore.case = TRUE)
+}
+# ...and the same for a column the table does not carry, which is how an older
+# writer's table answers a newer reader's SELECT.
+missing_column_error <- function(err) {
+  msg <- if (inherits(err, "condition")) conditionMessage(err) else as.character(err)
+  length(msg) == 1L && !is.na(msg) &&
+    grepl("UNRESOLVED_COLUMN|cannot resolve|no such column|has no column|Column .* not found",
+          msg, ignore.case = TRUE)
+}
+
 # Is this table there to be read? Asked before an OPTIONAL read - one whose
 # absence changes what a run can SAY rather than what it computes - so that the
 # absence is reported once, in this package's words, instead of arriving as a

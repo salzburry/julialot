@@ -59,6 +59,16 @@ study package sits beside this folder, so a stale copy fails the suite rather
 than filling a shell from a table the gate does not know to refuse. Shipped on
 its own, it says the check could not run.
 
+The run checks it too. A study run records the md5 of the contract it was
+driven by on `S_RUN_METADATA.STUDY_CONTRACT_MD5`, and before anything is read
+under a prefix the shipped copy is hashed the same way - over its lines, so a
+checkout with other line endings is the same contract - and compared. A copy
+that hashes differently is a well-formed contract from another version of the
+package, which the file's own checks cannot see and which can name a table as
+unsuppressed that this run suppressed; the command stops and says which
+package to regenerate it from. No setting waives that. A run that predates the
+column recorded nothing to compare, and the command says so and goes on.
+
 ## It fills from one run, and reads only what that run wrote
 
 A prefix is not a run. A run writes the modules it selected, for the cohorts it
@@ -77,6 +87,16 @@ cheap. So what binds every read here is the run's own record of what it did:
 - A `_RELEASE` table is preferred only where the run ran the release module.
 - A run that recorded no modules, or no cohorts, can vouch for nothing under
   the prefix, and the command stops rather than filling the shells from it.
+
+The output is replaced as one set. The tables are rendered into a staging
+directory first, the previous run's files are set aside, the new ones moved
+in, and the set-aside discarded; a move that fails puts the previous run
+back. A publish that is *killed* part-way leaves the set-aside directory with
+a marker saying how far it got, and the next publish resolves that to a whole
+set - the previous run's where the new one had not landed, the new one's where
+it had - before it starts, saying so. One publish at a time: a
+`.tfls_publish.lock` directory in the output directory refuses a second, and
+one left by a killed publish is removed by hand, as its message says.
 
 These are the rules the dashboard applies in `dashboard/R/sources.R`, applied
 here rather than a second set invented beside them, so a shell cell and the

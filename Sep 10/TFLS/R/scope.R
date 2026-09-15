@@ -231,6 +231,60 @@ read_study_contract <- function(dir = .tfls_dir()) {
   mget(".script_dir", envir = globalenv(), ifnotfound = list(getwd()))[[1]]
 }
 
+# The contract as one value, the way the study package computes it.
+#
+# Over the file's LINES rather than its bytes: this copy has been through
+# version control, and a checkout on another platform can rewrite the line
+# endings without touching a character of the content. The same function, by
+# the same name, sits in the package's R/contract.R; the suite checks the two
+# agree on the shipped file whenever the package is beside this folder.
+contract_text_md5 <- function(path) {
+  txt <- paste0(paste(readLines(path, warn = FALSE), collapse = "\n"), "\n")
+  tmp <- tempfile(); on.exit(unlink(tmp), add = TRUE)
+  writeBin(charToRaw(txt), tmp)
+  unname(tools::md5sum(tmp))
+}
+
+# Is the contract this copy ships the one the run was driven by?
+#
+# read_study_contract() refuses a file that is malformed. It cannot refuse one
+# that is well formed and WRONG: a complete, consistent contract from another
+# version of the package, or one that lists a subset of its tables. Nothing in
+# the file says which package emitted it. The run does: S_RUN_METADATA carries
+# the md5 of the contract the run was driven by, computed the same way, and a
+# copy that hashes differently is a different set of facts about which tables
+# exist and which of them the release module suppressed.
+#
+# The direction that matters: a contract from a version where a table was
+# NOT released would have this read the unsuppressed table under a run that
+# did release it - publishing more. So a mismatch stops, and there is no
+# setting that waives it: the fix is the contract the run's package emits.
+# A run that predates the column recorded nothing to compare, which is said
+# rather than passed over.
+check_contract_binding <- function(md, where, dir = .tfls_dir()) {
+  want <- row_field(md, "STUDY_CONTRACT_MD5")
+  if (identical(toupper(want), "NA")) want <- ""
+  have <- contract_text_md5(file.path(dir, TFLS_CONTRACT_FILE))
+  if (!nzchar(want)) {
+    cat("  WARNING: the run under ", where, " recorded no contract hash, so ",
+        "whether the contract shipped here is the one it was driven by ",
+        "cannot be checked. A run of the current study package records ",
+        "STUDY_CONTRACT_MD5.\n", sep = "")
+    return(invisible(FALSE))
+  }
+  if (!identical(want, have))
+    stop("The contract shipped here (", TFLS_CONTRACT_FILE, ", md5 ",
+         substr(have, 1, 8), ") is not the one the run under ", where,
+         " was driven by (STUDY_CONTRACT_MD5 ", substr(want, 1, 8), "). It ",
+         "says which tables that run wrote and which of them were published ",
+         "suppressed, and a different contract can name a table as ",
+         "unsuppressed that this run suppressed. Regenerate it from the ",
+         "study package that produced the run - write_study_contract() in ",
+         "its R/contract.R - and ship that copy. Nothing was filled.",
+         call. = FALSE)
+  invisible(TRUE)
+}
+
 .CONTRACT <- NULL
 tfls_contract <- function() {
   if (is.null(.CONTRACT)) .CONTRACT <<- read_study_contract()
