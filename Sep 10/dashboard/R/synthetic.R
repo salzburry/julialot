@@ -341,7 +341,16 @@ synthetic_one <- function(prefix, settings, min_n = 25L) {
     UPDATED_AT = "2026-09-08 12:00:00",
     COHORTS = paste(COHORT_KEYS, collapse = "; "),
     MODULES = paste(names(MODULES), collapse = "; "),
+    # Which code and which contract produced these numbers, and which LOT
+    # build and cohort attempt they were read against. Fixed strings: nothing
+    # here recomputes a fingerprint, and a synthetic run that did would change
+    # its own metadata every time the package was edited.
+    STUDY_CODE_MD5 = "00000000000000000000000000000000",
+    STUDY_CONTRACT_MD5 = "11111111111111111111111111111111",
     LOT_RUN_ID = "synthetic-lot", LOT_RUN_VERSION = "20260908T110500Z",
+    LOT_CODE_MD5 = "22222222222222222222222222222222",
+    COHORT_ATTEMPT_ID = "synthetic-cohort",
+    COHORT_ATTEMPT_STAMP = "2026-09-08 10:00:00",
     STUDY_START = "2018-01-01",
     STUDY_END = "2026-03-31", CONTRACT_DEVIATIONS = "none",
     OPEN_QUESTION_READINGS = readings,

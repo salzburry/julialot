@@ -161,6 +161,17 @@ run_version_stamp <- function(x) {
 # blank or `#` row cut off, and the normalised types beside them where the
 # response carried a type column (`typed`). The raw column names travel along
 # for a message.
+# Is this table there to be read? Asked before an OPTIONAL read - one whose
+# absence changes what a run can SAY rather than what it computes - so that the
+# absence is reported once, in this package's words, instead of arriving as a
+# warehouse error from the middle of a statement.
+#
+# A DESCRIBE, not a SELECT: it is the cheapest question that distinguishes an
+# absent table from an empty one, and an empty table IS readable.
+table_readable <- function(con, name)
+  !inherits(tryCatch(db_q(con, sprintf("DESCRIBE %s", name)),
+                     error = function(e) e), "error")
+
 describe_columns <- function(con, name) {
   d <- db_q(con, sprintf("DESCRIBE %s", name))
   cn <- intersect(c("col_name", "COL_NAME", "name", "NAME"), names(d))
@@ -504,7 +515,29 @@ run_step <- function(con, name, sql, qc = NULL, allow_empty = FALSE) {
   x
 }
 
+# Which (table, shape) pairs this run has already established.
+#
+# prepare_table() is called once per COHORT, and ensure_table() is the half of
+# it that does not vary by cohort: the CREATE is idempotent and the DESCRIBE
+# reads a shape that cannot change while this run is the only writer. Over four
+# cohorts that is four CREATEs and four DESCRIBEs per table where one of each
+# would do - 114 of a full run's 684 statements, every one a round trip to the
+# warehouse and none of them able to return a different answer.
+#
+# Keyed on the shape as well as the name, so a table asked for under a
+# different declaration is checked again rather than assumed. The guard that
+# catches a table left by an older package version still runs - it runs the
+# FIRST time, which is the only time it can find anything.
+#
+# Per RUN, not per process: reset by build_223926() so a second build in one
+# session re-establishes everything rather than trusting the first build's
+# answers about tables it may since have dropped.
+.ensured <- new.env(parent = emptyenv())
+ensure_table_reset <- function() rm(list = ls(.ensured), envir = .ensured)
+
 ensure_table <- function(con, name, schema_sql) {
+  key <- paste(name, gsub("\\s+", " ", schema_sql))
+  if (!is.null(get0(key, envir = .ensured, ifnotfound = NULL))) return(invisible(NULL))
   db_exec(con, sprintf("CREATE TABLE IF NOT EXISTS %s (%s)", name, schema_sql))
   decl <- trimws(strsplit(gsub("\n", " ", schema_sql), ",")[[1]])
   decl <- decl[nzchar(decl)]
@@ -551,6 +584,10 @@ ensure_table <- function(con, name, schema_sql) {
          "one. This happens when an output prefix is reused across package ",
          "versions. Drop the table, or run against a fresh OBJECT_PREFIX.",
          call. = FALSE)
+  # Recorded only after the shape has been ESTABLISHED. Every path above that
+  # could not establish it raises, so a table is never remembered as verified
+  # on the strength of a check that did not finish.
+  assign(key, TRUE, envir = .ensured)
   invisible(name)
 }
 

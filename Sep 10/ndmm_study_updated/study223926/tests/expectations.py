@@ -41,6 +41,41 @@ EXPECTATIONS = [
      "SELECT PATID FROM wk.S_COHORT WHERE COHORT='2L' AND IN_COHORT=1 "
      "ORDER BY PATID",
      [("P1",), ("P3",), ("P5",), ("P6",)]),
+    # P9 is on the input cohort and has a 1L line in LOT_LONG_ALLFLAGS, but
+    # the engine's any-LOT belantamab rule truncated it, so P9 never reaches
+    # LOT_LONG_FINAL. Before these two steps the funnel started below P9 with
+    # nothing to say so, and every step in it was already net of that removal.
+    # 8, not 9: P4's 1L starts 2018-06-01, before LOT1_INDEX_FROM, so it is
+    # outside the funnel's own first step. The other eight are P1, P2, P3, P5,
+    # P6, P7, P8 and P9.
+    ("the funnel starts from the lines the engine built, P9 included",
+     "SELECT N_REMAINING FROM wk.S_ATTRITION "
+     "WHERE COHORT='1L' AND CRITERION='indexed_at_line'",
+     [(8,)]),
+    # P9 alone: its 1L line is in LOT_LONG_ALLFLAGS with
+    # NO_BELANTAMAB_ANY_LOT = 0, and the rule truncates, so it never reaches
+    # LOT_LONG_FINAL. Before this step the funnel began at 7 with nothing to
+    # say where the eighth went.
+    ("...and its next step is what the engine's own line criteria removed",
+     "SELECT N_REMAINING, N_LOST FROM wk.S_ATTRITION "
+     "WHERE COHORT='1L' AND CRITERION='lot_line_criteria'",
+     [(7, 1)]),
+    ("a nested cohort starts from the cohort it is drawn from",
+     "SELECT N_REMAINING FROM wk.S_ATTRITION "
+     "WHERE COHORT='2L' AND CRITERION='in_1L_cohort'",
+     [(7,)]),
+    # P2, P7 and P8: in the 1L cohort, never a second line. That loss is what
+    # N1_received_line names, and until this step it had nothing above it to
+    # be a difference from, so it reported none.
+    ("...so N1_received_line's loss is those who did not go on to that line",
+     "SELECT N_LOST FROM wk.S_ATTRITION "
+     "WHERE COHORT='2L' AND CRITERION='N1_received_line'",
+     [(3,)]),
+    ("...and those three are exactly the 1L members with no 2L line",
+     "SELECT PATID FROM wk.S_COHORT WHERE COHORT='1L' AND IN_COHORT=1 "
+     "AND PATID NOT IN (SELECT PATID FROM wk.S_COHORT WHERE COHORT='2L') "
+     "ORDER BY PATID",
+     [("P2",), ("P7",), ("P8",)]),
     ("the attrition funnel never gains patients as it descends",
      "SELECT count(*) FROM (SELECT N_REMAINING, lag(N_REMAINING) OVER "
      "(PARTITION BY COHORT ORDER BY STEP) AS prev FROM wk.S_ATTRITION) t "

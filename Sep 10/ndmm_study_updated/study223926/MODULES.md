@@ -18,7 +18,7 @@ serves all three:
 DATABRICKS_PWD=... Rscript build.R                 # DSN from DATABRICKS_DSN, default RWDE
 DRY_RUN=TRUE Rscript build.R                       # print the plan, touch nothing
 MODULES=safety COHORTS=1L,2L Rscript build.R       # one module; 2L is nested in 1L, so 1L comes too
-Rscript tests/run_tests.R                          # 449 checks, no warehouse
+Rscript tests/run_tests.R                          # 454 checks, no warehouse
 ```
 
 `SPARK_METHOD` picks the connection, and `odbc` is the default. The other
@@ -108,7 +108,7 @@ lands on the run's own metadata row where no reader can miss it.
 | `R/db_utils_223926.R` | the connection - ODBC through DBI, or a sparklyr session - logging, table naming, the step runner. |
 | `R/run_223926.R` | Resolves the plan, walks the modules, writes the run metadata. |
 | `R/modules/*.R` | One file per module. Nothing else defines a clinical rule. |
-| `tests/run_tests.R` | 449 checks that need no warehouse. The last sections RUN every module for every cohort, parse every statement they emit, and **execute** them against fixtures. |
+| `tests/run_tests.R` | 454 checks that need no warehouse. The last sections RUN every module for every cohort, parse every statement they emit, and **execute** them against fixtures. |
 | `tests/emit_sql.R` | The harness. Stubs only what touches Spark, so a module's R and its SQL are both exercised without a cluster. |
 | `tests/parse_sql.py` | Parses each captured statement in the Spark dialect (sqlglot). |
 | `tests/run_duckdb.py` | **Executes** them: transpiles to DuckDB, runs against `tests/fixtures/cdm`, checks 58 golden numbers, then runs the whole script again and checks nothing doubled. |
@@ -122,7 +122,7 @@ lands on the run's own metadata row where no reader can miss it.
 | `eligibility` | `S_ELIGIBILITY` — one row per patient, the cohort build's verdict. **No line of therapy.** | — |
 | `spine` | `S_SPINE` — one row per patient per line, with the next line beside it | — |
 | `cohorts` | `S_COHORT` — a patient combined with a line | — |
-| `attrition` | `S_ATTRITION` — the funnel, one row per criterion | — |
+| `attrition` | `S_ATTRITION` — the funnel: one row per criterion, under the one or two rows that say where the cohort's population came from | — |
 | `periods` | `S_PERIODS`, `S_LOT_PERIODS` — baseline, follow-up, treatment windows | — |
 | `demographics` | `S_DEMOGRAPHICS` — age, sex, region, race, ethnicity, insurance | — |
 | `comorbidity` | `S_COMORBIDITY` — Charlson (Quan 2011), MM-adjusted. With `FRAILTY=TRUE` also `S_FRAILTY`; with `COMORBID_SUBGROUPS=TRUE` also `S_COMORB_SUBGROUP` | `charlson_quan2011.csv`, `mm_dx.csv`; plus `frailty_kim2018.csv` (Annex 7) and `comorbid_subgroups.csv` (Annex 3) when those switches are on |

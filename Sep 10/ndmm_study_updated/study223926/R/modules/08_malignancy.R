@@ -135,9 +135,23 @@ mod_malignancy <- function(con, cfg, cohort) {
     WHERE p.COHORT = '%s' AND m.FIRST_DT < p.PERIOD_START",
     wrk("S_LOT_PERIODS"), wrk("S_MALIGNANCY"), cohort$key))
 
-  # X2 reaches 2L and 3L through the cohort they are nested in, so the test
-  # walks the chain rather than reading this cohort's own list.
-  reports_prevalence <- !cohort_applies(cohort, "X2_other_cancer")
+  # Baseline prevalence is reported for a cohort that can HAVE a prior
+  # malignancy, and there are two ways it cannot.
+  #
+  # The first is this cohort's verdict. X2 reaches 2L and 3L through the cohort
+  # they are nested in, so the test walks the chain rather than reading this
+  # cohort's own list - and it is given cfg, because nesting is a setting.
+  # Under COHORT_NESTED=FALSE there is no parent join, membership never ANDs
+  # MET_X2, and 2L holds the patients 1L excluded; suppressing the number there
+  # hid the one thing that changed.
+  #
+  # The second is the input. Where the cohort build pre-filtered on X2 it
+  # retained no flag, every MET_X2 is 1 for everyone, and the answer is zero
+  # whatever this cohort's own verdict is - so it is not a measurement and is
+  # not published as one.
+  x2 <- CRITERION_FLAG[["X2_other_cancer"]]
+  reports_prevalence <- !cohort_applies(cohort, "X2_other_cancer", cfg) &&
+                        x2 %in% .cohort_cols()
 
   # The line as a whole, then each regimen category, from the same query.
   for (sp in stratum_passes(cfg, "p")) {

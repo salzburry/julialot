@@ -46,7 +46,7 @@ has <- function(x, s) grepl(s, x, fixed = TRUE)
 near <- function(a, b, tol = 1e-6) !is.na(a) && !is.na(b) && abs(a - b) < tol
 
 for (f in c("classes.R", "shells.R", "names.R", "stats.R", "suppress.R",
-            "fill.R", "scope.R", "render.R"))
+            "fill.R", "scope.R", "render.R", "publish.R"))
   source(file.path(ROOT, "R", f))
 
 # --- a shell set, written to a temporary directory ---------------------------
@@ -1074,17 +1074,89 @@ local({
      "...and so is one whose release rows were dropped while the flags stayed, which is the same disagreement the other way")
 })
 
+cat("\n-- publishing one run's output over another's --\n")
+# Exercised with real files, not read as source text. This is the step that can
+# destroy a delivered TFL set, and the failure it has to survive is a PARTIAL
+# one: a move that works for four files and not the fifth.
+local({
+  setup <- function(n_old = 3L, n_new = 3L) {
+    root <- file.path(tempdir(), paste0("tfls_pub_", sample.int(1e6, 1)))
+    out <- file.path(root, "out"); st <- file.path(out, ".stage")
+    dir.create(st, recursive = TRUE, showWarnings = FALSE)
+    for (i in seq_len(n_old))
+      writeLines(paste0("OLD", i), file.path(out, sprintf("tfls_t%d.csv", i)))
+    writeLines("OLD-MD", file.path(out, "tfls.md"))
+    writeLines("mine", file.path(out, "notes.txt"))   # not the tool's
+    for (i in seq_len(n_new))
+      writeLines(paste0("NEW", i), file.path(st, sprintf("tfls_t%d.csv", i)))
+    writeLines("NEW-MD", file.path(st, "tfls.md"))
+    list(root = root, out = out, stage = st)
+  }
+  read1 <- function(p) if (file.exists(p)) readLines(p, warn = FALSE)[1] else NA_character_
+
+  d <- setup()
+  publish_outputs(d$stage, d$out, "r1")
+  ok(identical(read1(file.path(d$out, "tfls_t1.csv")), "NEW1") &&
+       identical(read1(file.path(d$out, "tfls.md")), "NEW-MD"),
+     "a clean publish replaces the previous run's tables with this run's")
+  ok(identical(read1(file.path(d$out, "notes.txt")), "mine"),
+     "...and leaves a file the tool does not own exactly where it was")
+  ok(!length(list.files(d$out, pattern = "^[.]tfls_previous")),
+     "...with no set-aside copy left behind once it has succeeded")
+
+  # A table dropped from the shell set must not survive as last run's CSV.
+  d2 <- setup(n_old = 4L, n_new = 2L)
+  publish_outputs(d2$stage, d2$out, "r2")
+  ok(!file.exists(file.path(d2$out, "tfls_t3.csv")) &&
+       !file.exists(file.path(d2$out, "tfls_t4.csv")),
+     "a table no longer in the shell set does not stay behind from the run before")
+
+  # THE FAILURE, injected rather than provoked. A locked file is what happens
+  # in the field, and no portable filesystem trick reproduces it - so the one
+  # call that can half-succeed is stubbed to half-succeed: every move in works
+  # except the last, exactly the shape that leaves a directory holding two
+  # runs.
+  d3 <- setup()
+  e <- local({
+    f <- publish_outputs
+    env <- new.env(parent = environment(publish_outputs))
+    real <- base::file.rename
+    into_out <- normalizePath(d3$out, mustWork = FALSE)
+    env$file.rename <- function(from, to) {
+      moving_in <- length(to) > 1L &&
+        all(dirname(normalizePath(to, mustWork = FALSE)) == into_out) &&
+        any(grepl("[.]stage", from))
+      if (!moving_in) return(real(from, to))
+      keep <- seq_along(from)[-length(from)]
+      out <- rep(FALSE, length(from))
+      out[keep] <- real(from[keep], to[keep])
+      out
+    }
+    environment(f) <- env
+    tryCatch({ f(d3$stage, d3$out, "r3"); NA_character_ },
+             error = function(x) conditionMessage(x))
+  })
+  ok(!is.na(e), "a publish that cannot complete stops rather than leaving the directory half replaced")
+  ok(identical(read1(file.path(d3$out, "tfls_t1.csv")), "OLD1") &&
+       identical(read1(file.path(d3$out, "tfls_t3.csv")), "OLD3") &&
+       identical(read1(file.path(d3$out, "tfls.md")), "OLD-MD"),
+     "...and every table of the run that WAS published is back, so the delivery is one run's and not two halves")
+  ok(is.na(e) || grepl("previous run has been put back", e, fixed = TRUE) ||
+       grepl("still published and unchanged", e, fixed = TRUE),
+     "...and the message says so, rather than claiming nothing was touched when files had already gone")
+})
+
 cat("\n-- the runner --\n")
 RUNNER <- paste(readLines(file.path(ROOT, "run_tfls.R")), collapse = "\n")
 ok(has(RUNNER, 'gsub("~+~", " "'),
    "the script directory survives a space in a folder name")
 ok(all(vapply(c("classes.R", "shells.R", "names.R", "stats.R", "suppress.R",
-                "fill.R", "scope.R", "render.R"),
+                "fill.R", "scope.R", "render.R", "publish.R"),
               function(f) has(RUNNER, f), logical(1))) &&
      setequal(list.files(file.path(ROOT, "R"), pattern = "[.]R$"),
               c("classes.R", "shells.R", "names.R", "stats.R", "suppress.R",
-                "fill.R", "scope.R", "render.R")),
-   "it sources the eight files that are in R/, and no file that is not")
+                "fill.R", "scope.R", "render.R", "publish.R")),
+   "it sources the nine files that are in R/, and no file that is not")
 ok(regexpr('if (!nzchar(src))', RUNNER, fixed = TRUE) <
      regexpr("library(DBI)", RUNNER, fixed = TRUE),
    "the source gate comes before library(DBI), so the plan prints where no driver is installed")
@@ -1146,13 +1218,13 @@ ok(has(RUNNER, 'attr(f, "read_errors") <- read_errors') &&
    "...and the record belongs to the reader, not the session, so one bind's failure is never reported against the next")
 ok(has(RUNNER, "stage <- file.path(out_dir,") &&
      regexpr("tfls_write_csv(render_csv(f),\n                   file.path(stage,", RUNNER, fixed = TRUE) <
-       regexpr("old <- list.files(out_dir, pattern = TFLS_OUTPUT_PATTERN", RUNNER, fixed = TRUE),
-   "the run is written to a staging directory BEFORE the published one is cleared, so a render that raises leaves the previous run whole")
-ok(has(RUNNER, "old <- list.files(out_dir, pattern = TFLS_OUTPUT_PATTERN"),
-   "...and the swap clears only this tool's own files, so a dropped table does not leave last run's CSV beside this run's")
-ok(has(RUNNER, "nothing published has been ") &&
-     has(RUNNER, "on.exit(unlink(stage, recursive = TRUE)"),
-   "...and a failure says the run is complete in the staging directory, which is then cleaned up")
+       regexpr("publish_outputs(stage, out_dir, run_id)", RUNNER, fixed = TRUE),
+   "the run is written to a staging directory BEFORE anything published is touched, so a render that raises leaves the previous run whole")
+ok(has(RUNNER, "publish_outputs(stage, out_dir, run_id)") &&
+     !has(RUNNER, "file.rename("),
+   "...and the replacement itself is one call into R/publish.R, not file moves inlined where no test can reach them")
+ok(has(RUNNER, "on.exit(unlink(stage, recursive = TRUE)"),
+   "...with the staging directory cleaned up however the run ends")
 
 
 # ---------------------------------------------------------------------------

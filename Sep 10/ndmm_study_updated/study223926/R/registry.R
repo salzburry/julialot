@@ -481,8 +481,19 @@ apply_optional_features <- function(mods, cfg) {
 # lists as ADDITIONAL for them, and the 1L exclusions reach them through
 # nested_in, so `key %in% cohort$criteria` alone would conclude that 2L permits
 # a prior malignancy.
-cohort_applies <- function(cohort, key) {
+#
+# `cfg` because the inheriting half is a SETTING. Under COHORT_NESTED=FALSE
+# there is no join to the parent cohort, so 2L is not its subset and the
+# parent's exclusions do not reach it: MET_X2 is on a 2L row, but membership
+# does not AND it, and the cohort genuinely holds patients with a prior
+# malignancy. Read structurally this said otherwise, and the one caller uses
+# the answer to decide whether a number is zero by construction.
+#
+# cfg omitted is the declaration-only reading, which is what a check of the
+# registry itself wants.
+cohort_applies <- function(cohort, key, cfg = NULL) {
   if (key %in% cohort$criteria) return(TRUE)
+  if (!is.null(cfg) && !isTRUE(cfg$cohort_nested)) return(FALSE)
   parent <- cohort$nested_in
   seen <- character(0)
   while (!is.na(parent) && !(parent %in% seen)) {

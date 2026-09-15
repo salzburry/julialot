@@ -44,6 +44,13 @@ HERE_PRED <- list(
   I5_followup      = "MET_I5 = 1"
 )
 
+# Nesting is a SETTING, not structure - see mod_cohorts() below. Asked in one
+# place because membership and the funnel both turn on it: the funnel starting
+# from the parent cohort while the join that made it a subset was not built
+# would report a loss that never happened.
+cohort_is_nested <- function(cohort, cfg)
+  !is.na(cohort$nested_in) && isTRUE(cfg$cohort_nested)
+
 mod_cohorts <- function(con, cfg, cohort) {
   unknown <- setdiff(cohort$criteria, names(CRITERION_SOURCE))
   if (length(unknown))
@@ -102,7 +109,7 @@ mod_cohorts <- function(con, cfg, cohort) {
   # already assigned, and only replaced it when nesting was ON - so under
   # COHORT_NESTED=FALSE the join survived while the row said NESTED = 0, and
   # the data and its own metadata disagreed.
-  nested <- !is.na(cohort$nested_in) && isTRUE(cfg$cohort_nested)
+  nested <- cohort_is_nested(cohort, cfg)
 
   # The parent must be IN the parent cohort, not merely indexed in it. Without
   # IN_COHORT = 1 a patient who failed the 1L continuous-enrolment test still
@@ -199,6 +206,28 @@ mod_attrition <- function(con, cfg, cohort) {
     "COHORT string, STEP int, CRITERION string, APPLIED_BY string,
      N_REMAINING int, N_LOST int", cohort$key)
 
+  # Where this funnel's population came from, before its own first criterion.
+  #
+  # Without it the funnel starts at whatever S_COHORT holds and the reader has
+  # no way to see what was already gone. Two different things were already
+  # gone, depending on the cohort:
+  #
+  #   * A nested cohort is drawn from the one above it, so its first row was
+  #     the parent's members who ALSO initiated this line - and the patients
+  #     who did not initiate it were the funnel's biggest loss, reported
+  #     nowhere. N1_received_line then sat at the top with N_LOST empty, over
+  #     rows already filtered to this line, so the step that names the loss
+  #     showed none.
+  #   * A cohort that is nobody's subset starts from the LOT engine's lines,
+  #     and the engine applies its OWN criteria first. The belantamab rule is
+  #     one of them, and it truncates: a patient with belantamab in any line
+  #     loses every line and never reaches S_SPINE at all. So the funnel's X4
+  #     step - which reads the cohort build's PRE-LOT1 flag, a different
+  #     criterion - showed a loss that was not the any-LOT rule's, while the
+  #     any-LOT rule's loss was invisible and every step above it was already
+  #     net of it.
+  origin <- attrition_origin(con, cfg, cohort)
+
   # Each step carries the population that passed every criterion at or above
   # it. A step whose verdict came from upstream adds no predicate, so it
   # repeats the count above rather than resetting - a funnel whose N_REMAINING
@@ -207,7 +236,8 @@ mod_attrition <- function(con, cfg, cohort) {
   # One SQL statement, not a query per criterion per cohort: 36 round-trips
   # otherwise.
   cum <- character(0)
-  arms <- character(0)
+  arms <- origin$arms
+  base <- length(arms)
   for (i in seq_along(cohort$criteria)) {
     k <- cohort$criteria[i]
     # An exclusion applied here from a retained flag is a step this funnel can
@@ -226,7 +256,7 @@ mod_attrition <- function(con, cfg, cohort) {
       "SELECT '%s' AS COHORT, %d AS STEP, '%s' AS CRITERION,
               '%s' AS APPLIED_BY,
               (SELECT count(*) FROM %s WHERE %s) AS N_REMAINING",
-      cohort$key, i, k, applied_by, wrk("S_COHORT"), where))
+      cohort$key, base + i, k, applied_by, wrk("S_COHORT"), where))
   }
 
   run_step(con, paste0("attrition_", cohort$key), sprintf("
@@ -246,7 +276,64 @@ mod_attrition <- function(con, cfg, cohort) {
                   FROM %s WHERE COHORT = '%s'", wrk("S_ATTRITION"),
                  cohort$key))
   log_msg("  attrition written for ", cohort$key, ": ",
-          length(cohort$criteria), " step(s)")
+          length(arms), " step(s)",
+          if (nzchar(origin$note)) paste0(" (", origin$note, ")") else "")
+}
+
+# The arms that come BEFORE a cohort's own criteria, and why. Returns none
+# where the question cannot be answered, rather than a row that looks like an
+# answer.
+attrition_origin <- function(con, cfg, cohort) {
+  none <- list(arms = character(0), note = "")
+  arm <- function(step, criterion, applied_by, count_sql)
+    sprintf("SELECT '%s' AS COHORT, %d AS STEP, '%s' AS CRITERION,
+                    '%s' AS APPLIED_BY, (%s) AS N_REMAINING",
+            cohort$key, step, criterion, applied_by, count_sql)
+
+  if (cohort_is_nested(cohort, cfg))
+    # One arm: the parent cohort is where these patients came from, and the
+    # next step - N1_received_line - is the loss of those who did not go on to
+    # this line. The parent's own funnel already carries everything above it.
+    return(list(arms = arm(0L, paste0("in_", cohort$nested_in, "_cohort"),
+                           "carried in",
+                           sprintf("SELECT count(*) FROM %s
+                                    WHERE COHORT = '%s' AND IN_COHORT = 1",
+                                   wrk("S_COHORT"), cohort$nested_in)),
+                note = "from the parent cohort"))
+
+  # A root cohort. Its population is the engine's lines at this line number,
+  # and the engine's line criteria are what stands between them and S_SPINE.
+  if (as.integer(cohort$lot_num) > as.integer(cfg$max_lot)) return(none)
+  allflags <- lot_tbl("LOT_LONG_ALLFLAGS")
+  # Absent on a LOT build that predates the allflags table. Not a reason to
+  # fail a run - it is the table that EXPLAINS a loss, not one any number
+  # depends on - but the funnel then says nothing rather than attributing the
+  # engine's removals to this package's first criterion.
+  if (!table_readable(con, allflags)) {
+    log_msg("WARNING: ", allflags, " could not be read, so ", cohort$key,
+            "'s funnel cannot show what the LOT engine's own line criteria ",
+            "removed before S_SPINE was built. Every step below is already ",
+            "net of them.")
+    return(none)
+  }
+  floor_sql <- if (!is.na(cohort$index_from))
+    sprintf("AND a.LOT_START_DT >= date('%s')", cfg[[cohort$index_from]]) else ""
+  list(arms = c(
+    # count(DISTINCT PATID), not count(*): allflags is one row per line and
+    # this counts patients indexed at this line, which is what S_COHORT holds
+    # one row of.
+    arm(0L, "indexed_at_line", "lot",
+        sprintf("SELECT count(DISTINCT a.PATID) FROM %s a
+                 INNER JOIN %s c ON c.PATID = a.PATID
+                 WHERE a.LOT_NUM = %d %s",
+                allflags, wrk("S_ELIGIBILITY"), as.integer(cohort$lot_num),
+                floor_sql)),
+    # The same population after the engine applied its criteria. No predicate
+    # of this package's is in it yet, so the whole difference is the engine's.
+    arm(1L, "lot_line_criteria", "lot",
+        sprintf("SELECT count(*) FROM %s WHERE COHORT = '%s'",
+                wrk("S_COHORT"), cohort$key))),
+    note = "from the engine's lines")
 }
 
 # The enrolment spans, built once from the raw table with the protocol's own

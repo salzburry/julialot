@@ -95,6 +95,9 @@ build_223926 <- function(here) {
   # out, by name, what has no usable list; a module asked for by name stops
   # the run here, in its first second, rather than after the expensive steps.
   mods <- preflight_codelists(mods, cfg)
+  # After source_modules(): the fingerprint is of the R that ran, and the
+  # modules are part of it.
+  code_md5 <- study_code_md5(here)
   # Which modules actually run, for the modules that read another's output
   # where it is there and do without it where it is not. soc is the one today:
   # the rate tables stratify by regimen category when it ran.
@@ -131,6 +134,11 @@ build_223926 <- function(here) {
   # Only a run that reads the LOT engine's output has to prove whose build it
   # read. `spine` is the one module that reads it, and every module that needs
   # lines needs `spine`, so its presence in the resolved set is the question.
+  # A run establishes every table's shape for itself. The memo is what stops
+  # prepare_table() re-asking once per cohort; it must not carry an answer
+  # across runs, where a table may have been dropped in between.
+  ensure_table_reset()
+
   lot_run <- if (reads_lot(mods)) check_lot_lineage(con, cfg) else {
     log_msg("no selected module reads the LOT tables, so no lineage to prove")
     NULL
@@ -149,13 +157,13 @@ build_223926 <- function(here) {
   # about the same run rather than three unrelated ones.
   rid <- new_run_id()
   write_run_metadata(con, cfg, cohorts, mods, lot_run, deviations, "started",
-                     run_id = rid, upstream = upstream)
+                     run_id = rid, upstream = upstream, code_md5 = code_md5)
   # A build that dies mid-way would otherwise leave a `started` row and nothing
   # else, which reads as a run still going. The handler above writes `failed`
   # under the same id while the connection is still open.
   .run_state$meta <- function()
     write_run_metadata(con, cfg, cohorts, mods, lot_run, deviations, "failed",
-                       run_id = rid, upstream = upstream)
+                       run_id = rid, upstream = upstream, code_md5 = code_md5)
 
   build_inputs(con, cfg, mods)
 
@@ -177,7 +185,7 @@ build_223926 <- function(here) {
   # the minutes above; only now can the run vouch that they were one build's.
   if (reads_lot(mods)) check_lot_lineage_unchanged(con, lot_run)
   write_run_metadata(con, cfg, cohorts, mods, lot_run, deviations, "complete",
-                     run_id = rid, upstream = upstream)
+                     run_id = rid, upstream = upstream, code_md5 = code_md5)
   .run_state$ok <- TRUE
   log_msg(SEP)
   log_msg("complete: ", length(cohorts), " cohort(s), ", length(mods),
@@ -201,14 +209,25 @@ new_run_id <- function()
 RUN_METADATA_COLS <- c(
   RUN_ID = "string", STATE = "string", UPDATED_AT = "timestamp",
   COHORTS = "string", MODULES = "string",
+  # WHICH code and WHICH contract produced this row's numbers. A sibling fills
+  # its shells from a SHIPPED COPY of the contract, and a copy can be stale;
+  # recorded here, a filled table can be checked against the run rather than
+  # against whatever the copy says today.
+  STUDY_CODE_MD5 = "string", STUDY_CONTRACT_MD5 = "string",
   LOT_RUN_ID = "string", LOT_RUN_VERSION = "string",
+  # The LOT code that produced those lines, and the cohort attempt it was
+  # built from - not the cohort's NAME, which a rebuild keeps. Together these
+  # say which three things these numbers rest on; a name says only one.
+  LOT_CODE_MD5 = "string",
+  COHORT_ATTEMPT_ID = "string", COHORT_ATTEMPT_STAMP = "string",
   STUDY_START = "string", STUDY_END = "string",
   CONTRACT_DEVIATIONS = "string", OPEN_QUESTION_READINGS = "string",
   CODELISTS = "string", RELEASE_RECOVERABLE = "string",
   RELEASE_RECOVERABLE_TABLES = "string")
 
 write_run_metadata <- function(con, cfg, cohorts, mods, lot_run, deviations,
-                               state, run_id = NULL, upstream = NULL) {
+                               state, run_id = NULL, upstream = NULL,
+                               code_md5 = NA_character_) {
   rid <- if (is.null(run_id) || !nzchar(run_id)) new_run_id() else run_id
   esc <- function(x) gsub("'", "''", paste(as.character(x), collapse = "; "))
   q   <- function(x) paste0("'", esc(x), "'")
@@ -227,8 +246,16 @@ write_run_metadata <- function(con, cfg, cohorts, mods, lot_run, deviations,
             UPDATED_AT             = "current_timestamp()",
             COHORTS                = q(names(cohorts)),
             MODULES                = q(names(mods)),
+            STUDY_CODE_MD5         = q(code_md5 %||% ""),
+            # Computed here rather than passed: it needs no `here`, the
+            # registry it derives from is loaded, and computing it beside the
+            # write is what makes it the contract this row was written under.
+            STUDY_CONTRACT_MD5     = q(study_contract_md5()),
             LOT_RUN_ID             = q(lot_run$RUN_ID %||% ""),
             LOT_RUN_VERSION        = q(lot_run_version(lot_run)),
+            LOT_CODE_MD5           = q(lot_run$LOT_CODE_MD5 %||% ""),
+            COHORT_ATTEMPT_ID      = q(lot_run$COHORT_ATTEMPT_ID %||% ""),
+            COHORT_ATTEMPT_STAMP   = q(lot_run$COHORT_ATTEMPT_STAMP %||% ""),
             STUDY_START            = q(cfg$study_start),
             STUDY_END              = q(cfg$study_end),
             CONTRACT_DEVIATIONS    = q(if (length(deviations)) deviations else "none"),

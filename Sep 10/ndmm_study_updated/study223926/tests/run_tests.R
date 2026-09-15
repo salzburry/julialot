@@ -15,7 +15,8 @@ here <- local({
 })
 setwd(here)
 suppressMessages({
-  for (f in c("config_223926.R", "db_utils_223926.R", "registry.R", "windows.R",
+  for (f in c("config_223926.R", "db_utils_223926.R", "registry.R",
+              "contract.R", "windows.R",
               "person_time.R", "codelists.R", "lineage.R",
               "run_223926.R"))
     source(file.path("R", f))
@@ -187,6 +188,13 @@ cat("\nwindow conventions\n")
      "and does not when the LOT engine's reading is selected instead")
   ok(grepl("date_add(p.INDEX_DATE, 90)", tte_eligible_sql(cfg), fixed = TRUE),
      "the analysis set uses 3 months of potential follow-up")
+  # ...and "3 months" is a month window, so the setting reaches it too. It did
+  # not: MONTHS_AS said month windows use add_months(), while this boundary
+  # was a fixed 90 days whatever the setting said.
+  tc <- tte_eligible_sql(cfg0(c(MONTHS_AS = "calendar")))
+  ok(grepl("add_months(p.INDEX_DATE, 3)", tc, fixed = TRUE) &&
+       !grepl("date_add", tc, fixed = TRUE),
+     "...measured the way MONTHS_AS says, on both of its arms")
   lp <- lot_period_sql(cfg)
   ok(grepl("date_add(coalesce(l.PROTOCOL_DISCON_DT, l.LOT_BASE_END_DT), 30)",
            lp$end, fixed = TRUE),
@@ -965,12 +973,68 @@ cat("\nthe rules that hold the numbers up\n")
     r$STUDY_END <- cfg0()$study_end
     utils::modifyList(r, list(...))
   }
-  lin_check <- function(...) {
+  # The cohort attempt and the LOT code fingerprint are NOT on
+  # LOT_BUILD_STATUS - BUILD_STATUS_COLS above declares nine columns and none
+  # of these is among them. The LOT engine records them on LOT_RUN_METADATA,
+  # keyed by RUN_ID, and FINAL_METADATA_COLS declares them there. Pinned as
+  # literals for the same reason as LOT_STATUS_COLS: a fixture built from what
+  # lineage.R asks for agrees with the query instead of checking it.
+  LOT_METADATA_COLS <- c("N_LOT_LONG_ROWS", "N_LOT_LONG_PATIENTS",
+                         "LOT_LONG_BY_LINE", "N_LOT_FINAL_ROWS",
+                         "N_LOT_FINAL_PATIENTS", "CODE_MD5",
+                         "CONTRACT_SETTINGS", "STUDY_START", "STUDY_END",
+                         "LINE_CRITERIA_APPLIED", "COHORT_RUN_ID",
+                         "COHORT_STAMP", "RUN_ID")
+  mdsrc <- paste(capture.output(print(lot_run_inputs)), collapse = "\n")
+  md_sql <- regmatches(mdsrc, regexpr("SELECT[^\"]*FROM %s", mdsrc))
+  md_asked <- if (length(md_sql)) {
+    b <- sub("\\s*FROM %s$", "", sub("^SELECT\\s*", "", md_sql))
+    toupper(trimws(strsplit(gsub("\\s+", " ", gsub("\\\\n", " ", b)), ",")[[1]]))
+  } else character(0)
+  ok(length(md_asked) > 0 && all(md_asked %in% LOT_METADATA_COLS),
+     paste0("the cohort-attempt query names only columns the LOT writer declares",
+            if (length(setdiff(md_asked, LOT_METADATA_COLS)))
+              paste0(" [absent upstream: ",
+                     paste(setdiff(md_asked, LOT_METADATA_COLS), collapse = ", "),
+                     "]") else ""))
+  ok(!any(c("COHORT_RUN_ID", "COHORT_STAMP", "CODE_MD5") %in% asked),
+     paste0("...and the BUILD_STATUS query does not ask for them, which ",
+            "would raise unresolved columns before either check could run"))
+
+  # meta  = what LOT_RUN_METADATA says this run was built from, or NULL for an
+  #         older LOT run that predates those columns.
+  # now   = what the cohort build-status table holds NOW, or NULL for none.
+  lin_check <- function(..., meta = list(), now = list(), cfg = cfg0()) {
     row <- lin_row(...)
     e <- new.env(parent = environment(check_lot_lineage))
-    e$db_q <- function(con, sql) as.data.frame(row, stringsAsFactors = FALSE)
-    f <- check_lot_lineage; environment(f) <- e
-    errs(f(NULL, cfg0()))
+    mrow <- if (is.null(meta)) NULL else utils::modifyList(
+      list(COHORT_RUN_ID = "c1", COHORT_STAMP = "2026-09-09 00:00:00",
+           CODE_MD5 = "abcdef0123456789"), meta)
+    nrow_ <- if (is.null(now)) NULL else utils::modifyList(
+      list(RUN_ID = "c1", UPDATED_AT = "2026-09-09 00:00:00",
+           STATE = "complete"), now)
+    e$db_q <- function(con, sql) {
+      if (grepl("LOT_RUN_METADATA", sql, fixed = TRUE)) {
+        if (is.null(mrow)) stop("TABLE_OR_VIEW_NOT_FOUND")
+        return(as.data.frame(mrow, stringsAsFactors = FALSE))
+      }
+      # Case-insensitively: the second name the cohort builds use is
+      # `build_status`, lower case, and a fixed match on the upper-case one
+      # answers that query with the LOT status row instead.
+      if (grepl("build_status", sql, ignore.case = TRUE) &&
+          !grepl("lot_build_status", sql, ignore.case = TRUE)) {
+        if (is.null(nrow_)) stop("TABLE_OR_VIEW_NOT_FOUND")
+        return(as.data.frame(nrow_, stringsAsFactors = FALSE))
+      }
+      as.data.frame(row, stringsAsFactors = FALSE)
+    }
+    e$log_msg <- function(...) invisible(NULL)
+    # The three helpers are called BY check_lot_lineage and defined beside it,
+    # so they resolve to the global copies - and those reach the real
+    # warehouse - unless they are re-homed in the fake as well.
+    errs(stubbed(check_lot_lineage, e,
+                 c("check_cohort_attempt", "lot_run_inputs",
+                   "cohort_build_now", "check_lot_code"))(NULL, cfg))
   }
   ok(is.na(lin_check()), "a matching lineage row is accepted")
   ok(grepl("built over", lin_check(INPUT_COHORT_TABLE = "other_tbl") %||% ""),
@@ -981,6 +1045,52 @@ cat("\nthe rules that hold the numbers up\n")
   ok(!is.na(e_failed) && grepl("not 'complete'", e_failed) &&
        grepl("LOT build's own log", e_failed),
      "and one that did not finish, saying where that build recorded why")
+
+  # The cohort ATTEMPT. Every check above compares a NAME, and a cohort table
+  # can be rebuilt in place under the same name - so these are the ones that
+  # tell attempt A's lines from attempt B's eligibility.
+  e_stamp <- lin_check(now = list(UPDATED_AT = "2026-09-09 06:00:00"))
+  ok(!is.na(e_stamp) && grepl("has been rebuilt since", e_stamp) &&
+       grepl("2026-09-09 00:00:00", e_stamp) &&
+       grepl("2026-09-09 06:00:00", e_stamp),
+     "a cohort rebuilt in place under the same name stops, naming both attempts")
+  ok(!is.na(lin_check(now = list(RUN_ID = "c2"))),
+     "...and so does a different cohort run under that name")
+  ok(is.na(lin_check(now = list(STATE = "started"))),
+     "while the same attempt still under that name is accepted")
+  # An older LOT run recorded no attempt. Nothing to compare, so nothing to
+  # refuse - but it is said out loud rather than passed over.
+  ok(is.na(lin_check(meta = list(COHORT_RUN_ID = "", COHORT_STAMP = ""))),
+     "a LOT run that recorded no cohort attempt is accepted, not refused")
+  ok(is.na(lin_check(meta = NULL)),
+     "...and so is one whose LOT_RUN_METADATA could not be read at all")
+  # The attempt is known and the cohort's own status is not. That is unproven,
+  # not wrong, so it is the one case the waiver covers.
+  e_unproven <- lin_check(now = NULL)
+  ok(!is.na(e_unproven) && grepl("no cohort build status could be found",
+                                 e_unproven),
+     "a known attempt with no cohort status to compare it to stops")
+  ok(is.na(lin_check(now = NULL,
+                     cfg = cfg0(c(LOT_ALLOW_UNPROVEN_LINEAGE = "TRUE")))),
+     "...and LOT_ALLOW_UNPROVEN_LINEAGE is what waives exactly that case")
+
+  # WHICH code. LOT_RULES_EPOCH refuses a build by the DATE it finished, which
+  # says when it ran and not what it ran; this is the fingerprint of the R that
+  # executed, and it is opt-in.
+  ok("lot_code_md5" %in% names(cfg0()),
+     "LOT_CODE_MD5 is a real setting, not just a message")
+  ok(is.na(lin_check()),
+     "with LOT_CODE_MD5 unset, a run built by any code is accepted")
+  ok(is.na(lin_check(cfg = cfg0(c(LOT_CODE_MD5 = "abcdef0123456789")))),
+     "...and the approved fingerprint is accepted when it matches")
+  e_code <- lin_check(cfg = cfg0(c(LOT_CODE_MD5 = "0000000000000000")))
+  ok(!is.na(e_code) && grepl("built by code abcdef0123456789", e_code) &&
+       grepl("only 0000000000000000", e_code),
+     "...while a run built by other code is refused, naming both fingerprints")
+  e_nocode <- lin_check(meta = list(CODE_MD5 = ""),
+                        cfg = cfg0(c(LOT_CODE_MD5 = "abcdef0123456789")))
+  ok(!is.na(e_nocode) && grepl("records no code fingerprint", e_nocode),
+     "...and so is one whose code this cannot name, rather than passed over")
 
   # The cohort build's own contract, read back. Driven the same way: the
   # function is given a CONTRACT_SETTINGS string and its answer is checked,
@@ -1071,6 +1181,65 @@ cat("\nthe rules that hold the numbers up\n")
                                    SEC2L_APPLY_OTHER_CANCER = "TRUE")))$SEC2L
   ok(cohort_applies(sec_on, "X2_other_cancer"),
      "unless the setting puts it back")
+  # It reaches them BY nesting, so it stops reaching them when nesting is off:
+  # under COHORT_NESTED=FALSE there is no parent join, membership never ANDs
+  # MET_X2, and the 2L cohort holds the patients 1L excluded.
+  ok(cohort_applies(COHORTS[["2L"]], "X2_other_cancer", cfg0()),
+     "2L inherits it while COHORT_NESTED is on")
+  ok(!cohort_applies(COHORTS[["2L"]], "X2_other_cancer",
+                     cfg0(c(COHORT_NESTED = "FALSE"))),
+     "...and does not once each line stands on its own index")
+  ok(cohort_applies(COHORTS[["1L"]], "X2_other_cancer",
+                    cfg0(c(COHORT_NESTED = "FALSE"))),
+     "while a cohort's OWN criterion is unaffected by the setting")
+  # And the caller that turns the answer into a published number follows it.
+  # Whitespace-flattened: deparse wraps a long call, so a fixed match on the
+  # written form fails for a reason that has nothing to do with the code.
+  mg <- gsub("\\s+", " ",
+             paste(capture.output(print(mod_malignancy)), collapse = " "))
+  ok(grepl('cohort_applies(cohort, "X2_other_cancer", cfg)', mg, fixed = TRUE),
+     "the baseline prevalence decision asks with cfg, not structurally")
+  ok(grepl(".cohort_cols()", mg, fixed = TRUE),
+     paste0("...and also refuses to publish it where the input was ",
+            "pre-filtered, which makes it zero whatever the verdict is"))
+
+  # 10b. Every file in R/ is loaded, by all three of the lists that load them.
+  #
+  # build.R has one, this suite has one, and the emit harness has a third.
+  # contract.R was in build.R alone, so study_contract_md5() existed for a
+  # production run and for nothing that tests one - the run wrote a metadata
+  # row the suite could never have executed. A list is checked against the
+  # directory rather than against another list: a file added to R/ and to none
+  # of them is the same bug.
+  # load_inputs.R is not in any of the three lists on purpose: build.R sources
+  # it on its own, BEFORE the settings file reads Sys.getenv(), because its
+  # whole job is to put config.csv's rows into the environment first. The two
+  # harnesses set the environment themselves and must not have a file read
+  # over the top of it. So it is excluded here and its own source checked
+  # separately, rather than quietly widening what "every file" means.
+  have <- setdiff(sort(list.files("R", "\\.R$")), "load_inputs.R")
+  listed <- function(path, opener) {
+    txt <- paste(readLines(path, warn = FALSE), collapse = "\n")
+    blk <- regmatches(txt, regexpr(paste0(opener, "(?s).*?\\)"), txt, perl = TRUE))
+    if (!length(blk)) return(character(0))
+    sort(gsub('"', "", regmatches(blk, gregexpr('"[A-Za-z0-9_]+[.]R"', blk))[[1]]))
+  }
+  for (src in list(c("build.R", "for \\(f in c\\("),
+                   c("tests/run_tests.R", "for \\(f in c\\("),
+                   c("tests/emit_sql.R", "files <- c\\("))) {
+    got <- listed(src[1], src[2])
+    ok(identical(got, have),
+       paste0(src[1], " sources every file in R/",
+              if (!identical(got, have))
+                paste0(" [missing: ", paste(setdiff(have, got), collapse = ", "),
+                       "; extra: ", paste(setdiff(got, have), collapse = ", "),
+                       "]") else ""))
+  }
+
+  ok(grepl('source(file.path(here, "R", "load_inputs.R"))',
+           paste(readLines("build.R", warn = FALSE), collapse = "\n"),
+           fixed = TRUE),
+     "...and build.R sources load_inputs.R on its own, ahead of the settings")
 
   # 11. Every code list a module loads is declared, so preflight can see it.
   loaded <- unique(unlist(lapply(names(MODULES), function(k) {
@@ -1271,6 +1440,11 @@ cat("\nthe rules that hold the numbers up\n")
   ens <- function(found, types = NULL) {
     if (is.null(types))
       types <- ifelse(found %in% c("N_AT_RISK", "EXTRA"), "int", "string")
+    # Each case is a DIFFERENT run against a different warehouse state. Within
+    # one run ensure_table() establishes a shape once and does not re-ask, so
+    # without this the second case would be answered from the first's memo -
+    # which is the whole point of the memo and would make these checks vacuous.
+    ensure_table_reset()
     errs(with_env(base_env, {
       env <- new.env(parent = environment(ensure_table))
       env$db_exec <- function(con, sql) invisible(0L)
@@ -1294,7 +1468,8 @@ cat("\nthe rules that hold the numbers up\n")
   # The three bypasses the prefix-only comparison allowed.
   ok(!is.na(ens(c("PATID", "COHORT", "N_AT_RISK", "EXTRA"))),
      "an extra trailing column is caught, not accepted as a matching prefix")
-  ens_t <- function(cols, types)
+  ens_t <- function(cols, types) {
+    ensure_table_reset()   # a different run each time, as in ens() above
     errs(with_env(base_env, {
       env <- new.env(parent = environment(ensure_table))
       env$db_exec <- function(con, sql) invisible(0L)
@@ -1304,6 +1479,41 @@ cat("\nthe rules that hold the numbers up\n")
       f <- stubbed(ensure_table, env)
       f(NULL, "t", "PATID string, COHORT string, N_AT_RISK int")
     }))
+  }
+  # The memo that keeps prepare_table() from re-asking once per cohort. It has
+  # to save the round trip WITHOUT ever standing in for a check that has not
+  # been made: the first call establishes the shape, later ones in the same run
+  # are answered from it, and a reset makes the next run ask again.
+  local({
+    ensure_table_reset()
+    asked <- 0L
+    run1 <- function(decl, found) with_env(base_env, {
+      env <- new.env(parent = environment(ensure_table))
+      env$db_exec <- function(con, sql) invisible(0L)
+      env$db_q <- function(con, sql) { asked <<- asked + 1L
+        data.frame(col_name = found,
+                   data_type = ifelse(found == "N_AT_RISK", "int", "string"),
+                   stringsAsFactors = FALSE) }
+      errs(stubbed(ensure_table, env)(NULL, "t", decl))
+    })
+    good <- c("PATID", "COHORT", "N_AT_RISK")
+    decl <- "PATID string, COHORT string, N_AT_RISK int"
+    ok(is.na(run1(decl, good)) && asked == 1L,
+       "the first call establishes a table's shape, and asks the warehouse to do it")
+    ok(is.na(run1(decl, good)) && asked == 1L,
+       "...a second call for the same table and the same shape is answered from that, not from another DESCRIBE")
+    ok(!is.na(run1("PATID string, COHORT string", good)) && asked == 2L,
+       "...a DIFFERENT declared shape is asked again, so the memo cannot answer a question it was not asked")
+    ensure_table_reset()
+    ok(is.na(run1(decl, good)) && asked == 3L,
+       "...and a reset makes the next run establish it for itself, since a table may have been dropped in between")
+    # The guard is not skipped on the strength of a check that did not finish.
+    ensure_table_reset()
+    ok(!is.na(run1(decl, c("PATID", "COHORT"))) &&
+         !is.na(run1(decl, c("PATID", "COHORT"))),
+       "a shape that does not match is refused every time it is asked, because a failed check is never recorded as established")
+  })
+
   ok(is.na(ens_t(c("PATID", "COHORT", "N_AT_RISK"),
                  c("varchar", "string", "integer"))),
      "and equivalent type spellings still match")
@@ -1890,9 +2100,12 @@ cat("\nthe modules, run against recorders\n")
      "and writes beside the source table, never over it")
   # Every column the spec names must exist on the table it names, or the
   # suppression silently misses it.
-  ddl <- paste(vapply(Filter(function(x)
+  # Joined WITH a trailing newline: the pattern below ends at ")\n", and the
+  # last statement in a collapse has none - so whichever table happened to be
+  # created last read as having no DDL at all.
+  ddl <- paste0(paste(vapply(Filter(function(x)
       grepl("^CREATE TABLE IF NOT EXISTS", x$sql), run$sql),
-      function(x) x$sql, character(1)), collapse = "\n")
+      function(x) x$sql, character(1)), collapse = "\n"), "\n")
   missing_cols <- unlist(lapply(names(SUPPRESSION_SPEC), function(t) {
     d <- regmatches(ddl, regexpr(paste0("CREATE TABLE IF NOT EXISTS \\S*", t,
                                         " \\([^;]*?\\)\n"), ddl))
@@ -2054,11 +2267,29 @@ cat("\nthe modules, run against recorders\n")
   # accumulated so far.
   # Up to the arm's own close, not the first ')': every accumulated predicate
   # is parenthesised, so the WHERE carries parentheses of its own.
+  # count(*) or count(DISTINCT ...): the arms that say where the funnel started
+  # count patients across the engine's lines, which is one row per line.
   arms <- if (length(attr_sql))
-    regmatches(attr_sql, gregexpr("(?s)SELECT count\\(\\*\\) FROM .*?\\) AS N_REMAINING",
+    regmatches(attr_sql, gregexpr("(?s)SELECT count\\([^)]*\\) FROM .*?\\) AS N_REMAINING",
                                   attr_sql, perl = TRUE))[[1]] else character(0)
-  ok(length(arms) == length(COHORTS[["1L"]]$criteria),
-     "with one count per criterion")
+  # One per criterion, plus the two that say where the funnel's population
+  # came from: 1L is nobody's subset, so it starts from the engine's lines and
+  # the step below that is what the engine's own criteria removed.
+  ok(length(arms) == length(COHORTS[["1L"]]$criteria) + 2L,
+     "with one count per criterion, after the two that say where it started")
+  ok(grepl("LOT_LONG_ALLFLAGS", attr_sql[1], fixed = TRUE) &&
+       grepl("'indexed_at_line'", attr_sql[1], fixed = TRUE) &&
+       grepl("'lot_line_criteria'", attr_sql[1], fixed = TRUE),
+     paste0("...and the first two read the engine's own lines, so the ",
+            "belantamab truncation is a loss the funnel shows rather than a ",
+            "population it silently starts below"))
+  a2_sql <- vapply(Filter(function(x) x$tag == "step:attrition_2L", run$sql),
+                   function(x) x$sql, character(1))
+  ok(length(a2_sql) == 1 &&
+       grepl("'in_1L_cohort'", a2_sql, fixed = TRUE) &&
+       !grepl("LOT_LONG_ALLFLAGS", a2_sql, fixed = TRUE),
+     paste0("a nested cohort starts from the cohort it is drawn from instead, ",
+            "so N1_received_line's loss is those who did not go on to it"))
   ok(any(grepl("MET_N2 = 1", arms, fixed = TRUE)),
      "and applies MET_N2, which is I4 re-derived on the line's own index date")
   # Monotone: once a predicate is in, no later arm may drop it. The executing
