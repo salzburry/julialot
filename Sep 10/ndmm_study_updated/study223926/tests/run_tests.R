@@ -1406,6 +1406,44 @@ cat("\nthe rules that hold the numbers up\n")
        "STUDY_CONTRACT_MD5 is the md5 of the contract's lines: the same for a CRLF copy, where a byte hash differs")
   })
 
+  # 10d. ONE connection across the delivery. The LOT build is the run that is
+  # verified against the warehouse, so everything else has to open it the
+  # same way: the same call, on the same two variables. Checked against the
+  # engine and the two siblings whenever they are beside this package - the
+  # engine's own line is read from its source, not restated here.
+  local({
+    top <- file.path("..", "..")
+    engine <- file.path(top, "lot", "engine", "R", "build_lot.R")
+    tfls <- file.path(top, "TFLS", "run_tfls.R")
+    dash <- file.path(top, "dashboard", "global.R")
+    if (!all(file.exists(c(engine, tfls, dash)))) {
+      cat("  --     the LOT engine, TFLS or the dashboard is not beside this package, so the one-connection check is skipped\n")
+      return(invisible(NULL))
+    }
+    # The CALL, from dbConnect( on: the engine assigns its connection on the
+    # same line and this package returns it, which is not a difference in
+    # how the warehouse is opened.
+    line_of <- function(path) {
+      x <- readLines(path, warn = FALSE)
+      x <- grep("dbConnect(odbc::odbc()", x, fixed = TRUE, value = TRUE)
+      sub("^.*?(DBI::dbConnect\\()", "\\1", trimws(x), perl = TRUE)
+    }
+    mine <- line_of("R/db_utils_223926.R")
+    theirs <- sub("cfg\\$dsn", "dsn", sub("cfg\\$pwd", "pwd", line_of(engine)))
+    ok(length(mine) == 1L && length(theirs) == 1L && identical(mine, theirs),
+       paste0("this package opens the warehouse with the LOT engine's own line, character for character",
+              if (!identical(mine, theirs)) paste0(" [", mine, " vs ", theirs, "]") else ""))
+    ok(identical(cfg0()$dsn, Sys.getenv("DATABRICKS_DSN", unset = "RWDE")) &&
+         grepl('DATABRICKS_DSN", unset = "RWDE"', paste(readLines(file.path(top, "lot", "engine", "R", "config_lot.R"), warn = FALSE), collapse = "\n"), fixed = TRUE),
+       "...on the same DSN, from the same variable, with the same default")
+    for (sib in list(c("TFLS", tfls), c("the dashboard", dash))) {
+      src <- paste(readLines(sib[2], warn = FALSE), collapse = "\n")
+      ok(!grepl("dbConnect(", src, fixed = TRUE) && grepl("connect_db(", src, fixed = TRUE) &&
+           !grepl('Sys.getenv("DATABRICKS_PWD"', src, fixed = TRUE),
+         paste0(sib[1], " has no connection of its own: it calls this package's connect_db(), and never reads the password itself"))
+    }
+  })
+
   # 11. Every code list a module loads is declared, so preflight can see it.
   loaded <- unique(unlist(lapply(names(MODULES), function(k) {
     src <- paste(capture.output(print(get(MODULES[[k]]$fn, mode = "function"))),

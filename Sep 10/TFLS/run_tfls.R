@@ -19,10 +19,19 @@
 #   TFLS_SNAPSHOT_DIR  the snapshot root, whose <prefix>/<TABLE>.csv is read
 #   TFLS_PREFIX        which run: the prefix its tables were written under
 #   TFLS_MIN_N         a floor at or above the protocol's 25; it may only raise
-#   TFLS_CATALOG       warehouse catalog (default hive_metastore)
 #   TFLS_PACKAGE_DIR   the study package directory, for its own connection
-#   TFLS_COHORT_TABLE  warehouse only: the input cohort table, which carries
-#                      the diagnosis date that no study output does
+#
+#   Warehouse mode connects exactly as the LOT build and the study run do - the
+#   study package's own connect_db(), on DATABRICKS_DSN and DATABRICKS_PWD -
+#   and reads where they wrote, by their names: PROJECT_WORK_SCHEMA (or the
+#   Domino user's own schema where unset), DATABRICKS_CATALOG and
+#   INPUT_COHORT_TABLE. These override them where a fill needs to look
+#   elsewhere:
+#   TFLS_CATALOG       warehouse catalog (default: DATABRICKS_CATALOG, then
+#                      hive_metastore)
+#   TFLS_COHORT_TABLE  the input cohort table, which carries the diagnosis
+#                      date that no study output does (default:
+#                      INPUT_COHORT_TABLE)
 #   TFLS_STUDY_CODE_MD5  the approved study build's code fingerprint
 #                      (S_RUN_METADATA.STUDY_CODE_MD5). Unset checks nothing;
 #                      set, a run produced by any other code is refused.
@@ -278,6 +287,48 @@ check_study_code <- function(md, where) {
   invisible(TRUE)
 }
 
+# Where the run's tables are, in the warehouse: the same three names the LOT
+# build and the study run were given, resolved by the same rule.
+#
+# The LOT engine writes under PROJECT_WORK_SCHEMA, or the Domino user's own
+# schema where that is unset; the study run reads and writes there by the
+# same rule (WORK_SCHEMA first, its own spelling); both read the catalog from
+# DATABRICKS_CATALOG and the cohort from INPUT_COHORT_TABLE. This used to want
+# the same facts under names of its own - PROJECT_WORK_SCHEMA only, with no
+# fallback, TFLS_CATALOG, TFLS_COHORT_TABLE - so an environment that had
+# carried the LOT build and the study run stopped short of the fill. The
+# TFLS_* names still win where set; the rest is what those two ran under.
+#
+# Each is a warehouse name and nothing else - no path is built from it - so
+# each is gated on whether quoting can hold it rather than on a pattern, which
+# would refuse names this warehouse takes.
+warehouse_names <- function() {
+  first_set <- function(...) {
+    for (nm in c(...)) { v <- env_chr(nm); if (nzchar(v)) return(list(name = nm, value = v)) }
+    NULL
+  }
+  sch <- first_set("PROJECT_WORK_SCHEMA", "WORK_SCHEMA", "DOMINO_USER_NAME",
+                   "DOMINO_STARTING_USERNAME")
+  if (is.null(sch))
+    stop("No PROJECT_WORK_SCHEMA. It is the schema the run wrote its tables ",
+         "into - the one the LOT build and the study run were given, or the ",
+         "Domino user's own schema (DOMINO_USER_NAME) where they were given ",
+         "none.", call. = FALSE)
+  if (is.na(sql_name(sch$value)))
+    stop(sch$name, " '", sch$value, "' cannot be quoted as a name.", call. = FALSE)
+  cat_ <- first_set("TFLS_CATALOG", "DATABRICKS_CATALOG") %||%
+    list(name = "TFLS_CATALOG", value = "hive_metastore")
+  if (is.na(sql_name(cat_$value)))
+    stop(cat_$name, " '", cat_$value, "' cannot be quoted as a name.", call. = FALSE)
+  coh <- first_set("TFLS_COHORT_TABLE", "INPUT_COHORT_TABLE") %||%
+    list(name = "TFLS_COHORT_TABLE", value = "")
+  if (nzchar(coh$value) && is.na(sql_qualified_name(coh$value)))
+    stop(coh$name, " '", coh$value, "' is not one to three quotable name parts.",
+         call. = FALSE)
+  list(schema = sch$value, catalog = cat_$value, cohort_table = coh$value,
+       from = c(schema = sch$name, catalog = cat_$name, cohort_table = coh$name))
+}
+
 # --- the run ----------------------------------------------------------------
 
 write_outputs <- function(filled, sh, floor_n, run_id) {
@@ -378,22 +429,8 @@ main <- function() {
       "It is the study package directory, whose own connection is used so this cannot connect differently from the runs it reads.")
     if (!dir.exists(file.path(pkg, "R")))
       stop("TFLS_PACKAGE_DIR '", pkg, "' holds no R/ directory.", call. = FALSE)
-    schema <- need_env("PROJECT_WORK_SCHEMA",
-                       "It is the schema the run wrote its tables into.")
-    # These three are warehouse names and nothing else - no path is built from
-    # them - so each is gated on whether quoting can hold it rather than on a
-    # pattern, which would refuse names this warehouse takes.
-    if (is.na(sql_name(schema)))
-      stop("PROJECT_WORK_SCHEMA '", schema, "' cannot be quoted as a name.",
-           call. = FALSE)
-    catalog <- env_chr("TFLS_CATALOG", unset = "hive_metastore")
-    if (is.na(sql_name(catalog)))
-      stop("TFLS_CATALOG '", catalog, "' cannot be quoted as a name.",
-           call. = FALSE)
-    cohort_table <- env_chr("TFLS_COHORT_TABLE")
-    if (nzchar(cohort_table) && is.na(sql_qualified_name(cohort_table)))
-      stop("TFLS_COHORT_TABLE '", cohort_table, "' is not one to three ",
-           "quotable name parts.", call. = FALSE)
+    wn <- warehouse_names()
+    schema <- wn$schema; catalog <- wn$catalog; cohort_table <- wn$cohort_table
     library(DBI); library(odbc)
     for (f in c("config_223926.R", "db_utils_223926.R"))
       source(file.path(pkg, "R", f))

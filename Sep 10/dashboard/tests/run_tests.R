@@ -580,6 +580,37 @@ cat("\nwithholding a cell is not the same as hiding it\n")
     ok(isTRUE(panel_enabled(list(name = "headline"))), "...and unset shows it")
   })
 
+  # --- the warehouse the LOT build and the study run were given ---
+  #
+  # Under their names. An environment that carried those two used to leave
+  # the dashboard with no schema, because it read the same fact under a name
+  # of its own only.
+  local({
+    vars <- c("DASH_CATALOG", "DATABRICKS_CATALOG", "DASH_WORK_SCHEMA",
+              "PROJECT_WORK_SCHEMA", "WORK_SCHEMA", "DOMINO_USER_NAME",
+              "DOMINO_STARTING_USERNAME")
+    old <- Sys.getenv(vars, unset = NA)
+    on.exit({ for (v in vars) if (is.na(old[[v]])) Sys.unsetenv(v) else do.call(Sys.setenv, as.list(setNames(old[[v]], v))) }, add = TRUE)
+    with_names <- function(...) {
+      Sys.unsetenv(vars); set <- c(...)
+      if (length(set)) do.call(Sys.setenv, as.list(set))
+      dashboard_config()
+    }
+    c1 <- with_names(DATABRICKS_CATALOG = "cat1", PROJECT_WORK_SCHEMA = "wk1")
+    ok(identical(c1$catalog, "cat1") && identical(c1$work_schema, "wk1"),
+       "the catalog and schema the LOT build and the study run were given carry over to the dashboard unchanged")
+    c2 <- with_names(DOMINO_USER_NAME = "usr00000")
+    ok(identical(c2$catalog, "hive_metastore") && identical(c2$work_schema, "usr00000"),
+       "...and where they were given no schema, the Domino user's own, as the LOT engine resolves it")
+    c3 <- with_names(DASH_CATALOG = "cat2", DATABRICKS_CATALOG = "cat1",
+                     DASH_WORK_SCHEMA = "wk2", PROJECT_WORK_SCHEMA = "wk1")
+    ok(identical(c3$catalog, "cat2") && identical(c3$work_schema, "wk2"),
+       "...while a DASH_* name still wins where a dashboard has to look elsewhere")
+    c4 <- with_names()
+    ok(identical(c4$work_schema, ""),
+       "with no schema from anywhere it stays unset, and the warehouse source refuses to build a name from it")
+  })
+
   # --- a run that did not finish is not a scenario ---
   ok(isTRUE(scenario_is_usable(SCENARIOS[[1]])), "a complete run is usable")
   for (st in c("failed", "started", "")) {

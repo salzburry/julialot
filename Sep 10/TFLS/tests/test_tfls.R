@@ -1532,11 +1532,47 @@ ok(identical(sql_qualified_name("cat.sch.t"), "`cat`.`sch`.`t`") &&
    "the input cohort table comes already qualified, and is quoted part by part")
 ok(is.na(sql_qualified_name("a.b.c.d")) && is.na(sql_qualified_name("a.`b")),
    "...but no more than three parts, and none of them unquotable")
-ok(has(RUNNER, "is.na(sql_name(schema))") && has(RUNNER, "is.na(sql_name(catalog))") &&
-     has(RUNNER, "is.na(sql_qualified_name(cohort_table))") &&
+ok(has(RUNNER, "is.na(sql_name(sch$value))") && has(RUNNER, "is.na(sql_name(cat_$value))") &&
+     has(RUNNER, "is.na(sql_qualified_name(coh$value))") &&
      !has(RUNNER, "safe_segment(schema)") && !has(RUNNER, "safe_segment(catalog)") &&
      !has(RUNNER, "safe_table_name("),
    "the three names that are only ever warehouse names are gated on quoting, not on a pattern")
+
+# The same warehouse as the LOT build and the study run, by their names. An
+# environment that carried those two used to stop short of the fill, because
+# this wanted the same facts under names of its own.
+local({
+  env <- runner_env(tempdir())
+  vars <- c("PROJECT_WORK_SCHEMA", "WORK_SCHEMA", "DOMINO_USER_NAME",
+            "DOMINO_STARTING_USERNAME", "TFLS_CATALOG", "DATABRICKS_CATALOG",
+            "TFLS_COHORT_TABLE", "INPUT_COHORT_TABLE")
+  with_names <- function(..., f = function() env$warehouse_names()) {
+    old <- Sys.getenv(vars, unset = NA)
+    Sys.unsetenv(vars)
+    on.exit({ for (v in vars) if (is.na(old[[v]])) Sys.unsetenv(v) else do.call(Sys.setenv, as.list(setNames(old[[v]], v))) }, add = TRUE)
+    set <- c(...)
+    if (length(set)) do.call(Sys.setenv, as.list(set))
+    tryCatch(f(), error = function(e) conditionMessage(e))
+  }
+  r <- with_names(PROJECT_WORK_SCHEMA = "wk1", DATABRICKS_CATALOG = "cat1", INPUT_COHORT_TABLE = "ndmm_NDMM_COHORT")
+  ok(is.list(r) && identical(r$schema, "wk1") && identical(r$catalog, "cat1") &&
+       identical(r$cohort_table, "ndmm_NDMM_COHORT"),
+     "the schema, catalog and cohort table the LOT build and the study run were given carry over to the fill unchanged")
+  r <- with_names(DOMINO_USER_NAME = "usr00000")
+  ok(is.list(r) && identical(r$schema, "usr00000") && identical(r$catalog, "hive_metastore") &&
+       identical(unname(r$from["schema"]), "DOMINO_USER_NAME"),
+     "...and where they were given no schema, the Domino user's own, as the LOT engine resolves it")
+  r <- with_names(PROJECT_WORK_SCHEMA = "wk1", TFLS_CATALOG = "cat2", DATABRICKS_CATALOG = "cat1",
+                  TFLS_COHORT_TABLE = "other.sch.t", INPUT_COHORT_TABLE = "ndmm_NDMM_COHORT")
+  ok(is.list(r) && identical(r$catalog, "cat2") && identical(r$cohort_table, "other.sch.t"),
+     "...while a TFLS_* name still wins where a fill has to look elsewhere")
+  r <- with_names()
+  ok(is.character(r) && grepl("No PROJECT_WORK_SCHEMA", r, fixed = TRUE) && grepl("DOMINO_USER_NAME", r, fixed = TRUE),
+     "with no schema from anywhere the fill stops, naming both places one could come from")
+  r <- with_names(DOMINO_USER_NAME = "has`tick")
+  ok(is.character(r) && grepl("DOMINO_USER_NAME 'has`tick' cannot be quoted", r, fixed = TRUE),
+     "...and an unquotable name is refused under the name it came from")
+})
 ok(has(RUNNER, "safe_segment(prefix)") && has(RUNNER, "file.path(root, prefix)"),
    "...while the prefix keeps the path rule, because a path is built from it")
 ok(has(RUNNER, "release_verdict(scope)") && has(RUNNER, "release_refused(scope)") &&
