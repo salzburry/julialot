@@ -122,7 +122,7 @@ lands on the run's own metadata row where no reader can miss it.
 | `eligibility` | `S_ELIGIBILITY` — one row per patient, the cohort build's verdict. **No line of therapy.** | — |
 | `spine` | `S_SPINE` — one row per patient per line, with the next line beside it | — |
 | `cohorts` | `S_COHORT` — a patient combined with a line | — |
-| `attrition` | `S_ATTRITION` — the funnel, one row per criterion | — |
+| `attrition` | `S_ATTRITION` — the funnel: one row per criterion, under the one or two rows that say where the cohort's population came from | — |
 | `periods` | `S_PERIODS`, `S_LOT_PERIODS` — baseline, follow-up, treatment windows | — |
 | `demographics` | `S_DEMOGRAPHICS` — age, sex, region, race, ethnicity, insurance | — |
 | `comorbidity` | `S_COMORBIDITY` — Charlson (Quan 2011), MM-adjusted. With `FRAILTY=TRUE` also `S_FRAILTY`; with `COMORBID_SUBGROUPS=TRUE` also `S_COMORB_SUBGROUP` | `charlson_quan2011.csv`, `mm_dx.csv`; plus `frailty_kim2018.csv` (Annex 7) and `comorbid_subgroups.csv` (Annex 3) when those switches are on |

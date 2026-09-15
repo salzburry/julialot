@@ -375,6 +375,34 @@ Steps 9-13 need the LOT build to have run. Steps 0-8 do not.
 The secondary 2L cohort repeats steps 0-8 with the index at 2L ≥ 01 Jan 2020 and,
 on the reading above, step 7 dropped.
 
+### What `S_ATTRITION` writes, and the steps above it
+
+Steps 0-8 are the **cohort build's** funnel: it applies I1 to X3 and writes its
+own attrition. `S_ATTRITION` is this package's, and it begins where the cohort
+build's ends — so its first rows say what stood between the two, which is not
+nothing.
+
+| criterion | applied by | what it counts |
+|---|---|---|
+| `indexed_at_line` | `lot` | patients on the input with a line at this line number, from `LOT_LONG_ALLFLAGS` — every line the engine built, before its own criteria |
+| `lot_line_criteria` | `lot` | the same patients after them. The difference is the engine's removals, of which **X4** — belantamab in any LOT — is one |
+| each of the cohort's own | `cohort`, `here`, or both | as the table above |
+
+Two things follow from this that are easy to get wrong.
+
+**X4 is two criteria, not one.** `NO_BELANTAMAB_PRE_LOT1` is the cohort build's,
+computed before any line exists, and it is the `X4_belantamab` step. The engine's
+is "in any LOT", it truncates — a patient with belantamab anywhere loses every
+line — and it is `lot_line_criteria`. They remove different patients and the
+funnel reports them separately.
+
+**A nested cohort starts from its parent, not from the engine's lines.** 2L and
+3L get one opening row instead — `in_1L_cohort`, `in_2L_cohort` — the cohort they
+are drawn from, so `N1_received_line`'s loss is the patients who did not go on to
+that line. Everything the engine removed is already inside the parent's own
+funnel. Under `COHORT_NESTED=FALSE` each line stands on its own index and is
+nobody's subset, so it opens on the engine's lines like any other root.
+
 ---
 
 ## 9. What the source does not contain
