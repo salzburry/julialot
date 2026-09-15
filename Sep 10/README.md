@@ -41,22 +41,45 @@ can always be traced to the assumption behind it.
 
 In order. Each step reads what the one before it wrote.
 
-```bash
-# 1. lines of therapy
-CODELIST_DIR=... DATABRICKS_PWD=... Rscript lot/engine/build.R
+Set these once; the rest is copy-paste.
 
-# 2. the study's cohorts, variables and released tables
-DATABRICKS_PWD=... Rscript ndmm_study_updated/study223926/build.R
-DRY_RUN=TRUE   Rscript ndmm_study_updated/study223926/build.R   # print the plan only
+```bash
+COHORT=ndmm_NDMM_COHORT        # your cohort table
+SCHEMA=$DOMINO_USER_NAME       # or your work schema
+CL=/mnt/code/codelist          # where the authored code lists live
+```
+
+```bash
+# 1. lines of therapy.  Cohort table and prefix are POSITIONAL.
+CODELIST_DIR=$CL DATABRICKS_PWD="$DATABRICKS_PWD" PROJECT_WORK_SCHEMA=$SCHEMA \
+  Rscript lot/engine/build.R $COHORT ndmm_
+
+# 2. the study's cohorts, variables and released tables.
+#    INPUT_COHORT_TABLE and OBJECT_PREFIX are REQUIRED - the run stops
+#    naming whichever is missing before it opens a connection.
+DATABRICKS_PWD="$DATABRICKS_PWD" PROJECT_WORK_SCHEMA=$SCHEMA CODELIST_DIR=$CL \
+  INPUT_COHORT_TABLE=$COHORT OBJECT_PREFIX=s223926_ LOT_PREFIX=ndmm_ \
+  Rscript ndmm_study_updated/study223926/build.R
+
+# ...or print the plan and stop. No driver, no warehouse, nothing read.
+DRY_RUN=TRUE INPUT_COHORT_TABLE=$COHORT OBJECT_PREFIX=s223926_ \
+  Rscript ndmm_study_updated/study223926/build.R
 
 # 3. the requested table shells
-TFLS_SOURCE=warehouse TFLS_PREFIX=s223926_ PROJECT_WORK_SCHEMA=... \
-  DATABRICKS_PWD=... Rscript TFLS/run_tfls.R
+TFLS_SOURCE=warehouse TFLS_PREFIX=s223926_ PROJECT_WORK_SCHEMA=$SCHEMA \
+  TFLS_PACKAGE_DIR=ndmm_study_updated/study223926 \
+  DATABRICKS_PWD="$DATABRICKS_PWD" Rscript TFLS/run_tfls.R
 
 # 4. the dashboard — snapshot for a shared deployment, then the App
-DATABRICKS_PWD=... Rscript dashboard/jobs/build_scenarios.R
-bash dashboard/app.sh
+DATABRICKS_PWD="$DATABRICKS_PWD" PROJECT_WORK_SCHEMA=$SCHEMA \
+  Rscript dashboard/jobs/build_scenarios.R
+DASH_SOURCE=snapshot DASH_SNAPSHOT_DIR=/mnt/data/NDMM bash dashboard/app.sh
 ```
+
+Keep the variables **inline per command**, as above. `STUDY_START`, `MAX_LOT`
+and `CENSOR_AT_DISENROLLMENT` are read by both step 1 and step 2 from the same
+environment variable name with deliberately different defaults, so an `export`
+silently moves one of them off its intended value.
 
 `dashboard/DEPLOY_DOMINO.md` has the Domino Job and App setup, the environment
 variables each needs, and the deployment controls that are **not** in the code.
@@ -80,9 +103,11 @@ Rscript TFLS/tests/test_tfls.R                             # 307
 (cd lot/validation && Rscript tests/test_vignettes.R)      #  36
 ```
 
-2557 checks. Base R throughout — no suite above loads a package. The app needs
-`shiny`; a warehouse run needs `DBI`, `odbc` and `glue`. Four of the suites
-(the study package, LOT QC's two, and melphalan) additionally **execute** the
+2557 checks. Base R except for **`glue`**, which three of them need — the two
+LOT engine suites, through `tests/testutil.R`, and melphalan. The other six load
+nothing. The app needs `shiny`; a warehouse run needs `DBI`, `odbc` and `glue`.
+
+Four of the suites (the study package, LOT QC's two, and melphalan) additionally **execute** the
 SQL they emit against fixtures where `python3` with `duckdb` and `sqlglot` is
 present; where it is not they print `SKIP` and the rest of the suite still
 runs, so a green run on a machine without them is a smaller check than a green
