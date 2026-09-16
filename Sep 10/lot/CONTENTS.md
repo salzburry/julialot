@@ -9,7 +9,7 @@ It sits beside two sibling folders:
 | folder | what it does |
 |---|---|
 | `lot/` | **this folder** — the lines |
-| `ndmm_study_updated/` | the study cohorts and variables, built on those lines |
+| `variables/` | the study cohorts and variables, built on those lines |
 | `dashboard/` | the R Shiny app that shows what both produced |
 
 ---
@@ -42,7 +42,7 @@ The lines themselves. One `Rscript build.R` produces every table.
 | `R/foldin_rule.R` | the returning-drug rule |
 | `R/prior_regimen.R` | what counts as a new agent, a restart, and a line-breaking transplant |
 | `R/cart_rule.R` | the CAR-T consolidation rule |
-| `tests/` | 584 checks across two files |
+| `tests/` | 586 checks across two files |
 
 **Outputs.** `LOT_LONG` is every line the engine built. `LOT_LONG_FINAL` is the
 same after the patient-level criteria — a patient excluded by one is absent
@@ -68,7 +68,7 @@ tables it needs. A `fail` is a defect, a `warn` is worth reading, an `info` is
 context. The report names an example row for each finding, with the patient
 identifier masked to its last six characters so the file can be circulated.
 
-`Rscript qc/tests/test_lot_qc.R` — 295 checks. Every one of the 37 runs twice
+`Rscript qc/tests/test_lot_qc.R` — 296 checks. Every one of the 37 runs twice
 against fixtures: clean, where it must count nothing, and carrying the defect
 it describes, where it must count it.
 
@@ -144,13 +144,13 @@ test suites need no warehouse.
 
 | suite | checks |
 |---|---|
-| `engine/tests/test_runner.R` | 527 |
-| `engine/tests/test_line_criteria.R` | 57 |
-| `qc/tests/test_lot_qc.R` | 295 |
-| `qc/tests/test_foldin_trace.R` | 149 |
-| `qc/tests/test_trace_returns.R` | 148 |
-| `melphalan/tests/test_melp_simple.R` | 161 |
-| `validation/tests/test_vignettes.R` | 36 |
+| `engine/tests/test_runner.R` | 528 |
+| `engine/tests/test_line_criteria.R` | 58 |
+| `qc/tests/test_lot_qc.R` | 296 |
+| `qc/tests/test_foldin_trace.R` | 150 |
+| `qc/tests/test_trace_returns.R` | 154 |
+| `melphalan/tests/test_melp_simple.R` | 162 |
+| `validation/tests/test_vignettes.R` | 37 |
 
 None needs a warehouse. Where `duckdb` and `sqlglot` are installed, the suites
 also execute the emitted SQL against fixtures and check the numbers that come

@@ -49,12 +49,16 @@ rf_allo <- function(pat, dt, type) list(PATID = pat, TX_DT = dt, SCT_TYPE = type
 #          Before the rule this made a 2L on 2020-11-30.
 # R000003  own return in 2L (4.3): 1L BORT DEX; POM opens 2L 2020-09-01 with
 #          DEX; POM runs out 2020-12-15, back 2021-05-01 - still 2L.
-# R000004  opens a line across a transplant: 1L BORT LEN runs out 2020-06-30;
-#          the patient's first autologous transplant confirms that run-out
-#          (5.3) and opens 2L on 2020-09-01 with no drug - a first AUTO never
-#          ends line 1 (3.4), it opens the next one where line 1 has already
-#          ended; LEN back 2020-12-01 - 4.8 refuses a fold across a procedure
-#          that opened a line, so LEN ended 2L and opened 3L.
+# R000004  opens a line across a transplant: 1L BORT LEN, with an autologous
+#          transplant on 2020-02-15 that belongs to line 1 and a SECOND on
+#          2020-09-01, 199 days later, past sct_tandem_days. 3.4: line 1's
+#          first AUTO never ends line 1; the second does, the day before it, so
+#          1L ends 2020-08-31 SCT_AUTO and 2L opens 2020-09-01 with no drug.
+#          Not a run-out: LEN comes back in December, and under
+#          apply_own_return_fold=TRUE its own gap does not break its chain
+#          (5.2), so line 1 has no run-out for a lone transplant to follow.
+#          LEN back 2020-12-01 - 4.8 refuses a fold across a procedure that
+#          opened a line, so LEN ended 2L and opened 3L.
 # R000005  opens a line from two lines back: 1L BORT LEN; CARF DEX opens 2L;
 #          POM opens 3L; LEN back 2021-09-01 after the 3L window; 2L did not
 #          carry LEN, so LEN is out of 4.8's scope and opened 4L.
@@ -79,8 +83,8 @@ RETURNS_FIXTURE <- list(
     rf_fin("R000003", 1L, "2020-01-01", "MED", "BORT", "2020-08-31", "MED_ADD",
            add_med = "POM", add_dt = "2020-09-01"),
     rf_fin("R000003", 2L, "2020-09-01", "MED", "POM", "2021-08-31", "STUDY_END"),
-    rf_fin("R000004", 1L, "2020-01-01", "MED", "BORT LEN", "2020-06-30", "DISCONTINUATION",
-           discon = "2020-06-30"),
+    rf_fin("R000004", 1L, "2020-01-01", "MED", "BORT LEN", "2020-08-31", "SCT_AUTO",
+           auto_max = "2020-02-15"),
     rf_fin("R000004", 2L, "2020-09-01", "SCT_AUTO", "", "2020-11-30", "MED_ADD",
            add_med = "LEN", add_dt = "2020-12-01"),
     rf_fin("R000004", 3L, "2020-12-01", "MED", "LEN", "2021-06-30", "STUDY_END"),
@@ -155,7 +159,14 @@ RETURNS_FIXTURE <- list(
     rf_ep("R000008", "MELP", "2021-08-25", "2021-09-21", cnt = 1L),
     rf_ep("R000008", "LEN", "2021-09-01", "2022-03-31", cnt = 7L)),
   allo = list(),
-  auto = list(rf_auto("R000004", "2020-09-01")),
+  # Two autologous transplants, 199 days apart - past sct_tandem_days, so not a
+  # tandem. LOT_RULES.md 3.4: line 1's FIRST auto never ends line 1, and what
+  # ends it is the SECOND. That is what has to open LOT 2 here. A single auto
+  # could not: it would only open a line where line 1 "has already ended on its
+  # own", and line 1 cannot - under apply_own_return_fold=TRUE a drug's own gap
+  # no longer breaks its chain (5.2), so LEN's return in December keeps LOT 1's
+  # cover alive and there is no run-out for the transplant to follow.
+  auto = list(rf_auto("R000004", "2020-02-15"), rf_auto("R000004", "2020-09-01")),
   subs = list())
 
 RETURNS_FIXTURE_TOTALS <- list(N_PATIENTS = 8, N_LINES = 20)
@@ -203,6 +214,36 @@ returns_fixture_defects <- function(data = RETURNS_FIXTURE) {
         "%s LOT %s records %s with the added agent on %s, past a run-out on %s - the engine would have ended it DISCONTINUATION on %s",
         r$PATID, r$LOT_NUM, as.character(r$LOT_BASE_END_REASON), as.character(add),
         as.character(cover), as.character(cover)))
+  }
+  # ...and the other way a hand-written line goes wrong: DISCONTINUATION at a
+  # run-out the chain never reaches. Under apply_own_return_fold=TRUE a drug's
+  # OWN gap no longer breaks its chain (LOT_RULES.md 5.2) - the episode after it
+  # belongs to the line it left - so a base agent with a later episode keeps the
+  # line's cover alive and the line does not end on its own. Only a different
+  # agent that would end the line breaks it: not a drug of this regimen, not a
+  # steroid, and transplant and CAR-T are not read here at all.
+  for (r in fin) {
+    if (!identical(as.character(r$LOT_BASE_END_REASON), "DISCONTINUATION")) next
+    meds <- strsplit(trimws(as.character(r$LOT_BASE_MEDS)), " ")[[1]]
+    meds <- meds[nzchar(meds)]
+    if (!length(meds)) next
+    endd <- d(r$LOT_BASE_END_DT)
+    mine <- Filter(function(x) identical(as.character(x$PATID), as.character(r$PATID)), eps)
+    breaker <- vapply(mine, function(x)
+      !(as.character(x$MAP_MED_TYPE) %in% meds) &&
+        !identical(toupper(as.character(x$MAP_MED_CLASS)), "STEROID"), logical(1))
+    for (x in mine) {
+      if (!(as.character(x$MAP_MED_TYPE) %in% meds)) next
+      st <- d(x$MAP_START_DT)
+      if (is.na(st) || st <= endd) next
+      cut <- any(vapply(mine[breaker], function(y) {
+        ys <- d(y$MAP_START_DT); !is.na(ys) && ys > endd && ys < st }, logical(1)))
+      if (!cut)
+        out <- c(out, sprintf(
+          "%s LOT %s records DISCONTINUATION on %s, but %s has a later episode on %s with no line-ending agent between them - 5.2 chains its cover over that gap, so the line never ran out",
+          r$PATID, r$LOT_NUM, as.character(endd), as.character(x$MAP_MED_TYPE),
+          as.character(st)))
+    }
   }
   out
 }

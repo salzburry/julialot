@@ -67,7 +67,7 @@ dashboard_config <- function() {
     # control on the page, and a scenario nobody has run does not appear.
     run_cmd         = .env_chr("DASH_RUN_CMD", "Rscript build.R"),
     package_dir     = .env_chr("DASH_PACKAGE_DIR",
-                              "../ndmm_study_updated/study223926"),
+                              "../variables/study223926"),
     # The table shells, which are a sibling folder like the package. Unset
     # means the one beside this one; a deployment without it loses that tab
     # and nothing else.

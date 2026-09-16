@@ -19,7 +19,7 @@ One package writes. The rest read a finished run.
 The cohort, and everything derived from a finished run. A cohort is what the
 engine is pointed at — `build.R` takes the cohort table by name — so it comes
 before LOT rather than under it, and no cohort is named anywhere in this
-folder. The study package in `../ndmm_study_updated/` reads a finished run and
+folder. The study package in `../variables/` reads a finished run and
 builds the study's cohorts and variables on it; the app in `../dashboard/`
 shows what both produced; the shells in `../TFLS/` are filled from what the
 study package wrote. Dependencies run one way: those three read the tables a
@@ -326,5 +326,5 @@ Rscript lot/validation/tests/test_vignettes.R
 ```
 
 `CONTENTS.md` gives each suite's count. The suites for the other two folders
-are listed in `../ndmm_study_updated/CONTENTS.md` and
+are listed in `../variables/CONTENTS.md` and
 `../dashboard/DASHBOARD.md`.

@@ -3,18 +3,29 @@
 Against **Optum Clinformatics Data Mart V9.0**, on Databricks over the
 project's ODBC DSN, deployed on Domino.
 
-Four folders, side by side. They must stay siblings: every path between them is
+Five folders, side by side. They must stay siblings: every path between them is
 relative and nothing uses an absolute path.
 
-| folder | what it is | start at |
-|---|---|---|
-| `lot/` | the claims lines-of-therapy engine — produces the lines everything else reads | `lot/CONTENTS.md` |
-| `ndmm_study_updated/` | the study package — the cohorts, the variables, the released tables | `ndmm_study_updated/CONTENTS.md` |
-| `dashboard/` | the R Shiny app over a finished run, and the snapshot job that feeds it | `dashboard/DASHBOARD.md` |
-| `TFLS/` | the requested table shells, filled from a finished run | `TFLS/README.md` |
+**Five stages of one study, not five studies.** Each reads what the stage above
+it wrote. The order below is the order to run them in.
+
+| # | folder | what it is | writes |
+|---|---|---|---|
+| 1 | `ndmm/` | the cohort and its attrition | `NDMM_COHORT`, `NDMM_ATTRITION` |
+| 2 | `lot/` | the lines of therapy | `LOT_LONG_FINAL`, `MAP_STACKED`, … |
+| 3 | `variables/` | every other variable the protocol asks for — demographics, comorbidity, SOC, safety, HCRU, secondary malignancy, time-to-event, treatment patterns | the `S_*` tables |
+| 4 | `TFLS/` | the requested table shells, filled from stage 3 | `TFLS/out/` |
+| 5 | `dashboard/` | the Domino app over a finished run, and the snapshot job that feeds it | — |
+
+Start at `ndmm/README.md`, `lot/CONTENTS.md`, `variables/CONTENTS.md`,
+`TFLS/README.md` and `dashboard/DASHBOARD.md` respectively.
+
+**Stage 1 is never edited.** Everything the protocol changes about the cohort
+is an environment override on a re-run of it — `variables/BUILD_DELTA.md`
+section 0 lists every one and shows each is already read from the environment.
 
 Dependencies run one way. `lot/` names no cohort and resolves nothing outside
-itself; the other three read the tables a run wrote.
+itself; the stages after it read the tables a run wrote.
 
 ---
 
@@ -23,14 +34,14 @@ itself; the other three read the tables a run wrote.
 **Code lists are not in here.** They are CSV files on production, read from
 `CODELIST_DIR`, and nothing loads without them: a missing file, an unknown
 filename, a missing column or an empty file stops the run and says which.
-`ndmm_study_updated/CODELISTS.md` lists every file, its required columns and
+`variables/CODELISTS.md` lists every file, its required columns and
 the code types it may carry, and marks the ones still to be authored.
 
 **Warehouse settings** come from the environment, which beats `config.csv` in
 each folder. `DATABRICKS_PWD` is read from the environment only — never from a
 file, and no file here holds one.
 
-**Open questions.** `ndmm_study_updated/OPEN_QUESTIONS.md` lists every protocol
+**Open questions.** `variables/OPEN_QUESTIONS.md` lists every protocol
 question still with the study team and the reading this build takes meanwhile.
 Each reading is recorded on the run itself, in `S_RUN_METADATA`, so a number
 can always be traced to the assumption behind it.
@@ -59,15 +70,15 @@ CODELIST_DIR=$CL DATABRICKS_PWD="$DATABRICKS_PWD" PROJECT_WORK_SCHEMA=$SCHEMA \
 #    naming whichever is missing before it opens a connection.
 DATABRICKS_PWD="$DATABRICKS_PWD" PROJECT_WORK_SCHEMA=$SCHEMA CODELIST_DIR=$CL \
   INPUT_COHORT_TABLE=$COHORT OBJECT_PREFIX=s223926_ LOT_PREFIX=ndmm_ \
-  Rscript ndmm_study_updated/study223926/build.R
+  Rscript variables/study223926/build.R
 
 # ...or print the plan and stop. No driver, no warehouse, nothing read.
 DRY_RUN=TRUE INPUT_COHORT_TABLE=$COHORT OBJECT_PREFIX=s223926_ \
-  Rscript ndmm_study_updated/study223926/build.R
+  Rscript variables/study223926/build.R
 
 # 3. the requested table shells
 TFLS_SOURCE=warehouse TFLS_PREFIX=s223926_ PROJECT_WORK_SCHEMA=$SCHEMA \
-  TFLS_PACKAGE_DIR=ndmm_study_updated/study223926 \
+  TFLS_PACKAGE_DIR=variables/study223926 \
   DATABRICKS_PWD="$DATABRICKS_PWD" Rscript TFLS/run_tfls.R
 
 # 4. the dashboard — snapshot for a shared deployment, then the App
@@ -106,19 +117,19 @@ Every suite runs offline — no warehouse, no driver, no Shiny — and exits
 non-zero on any failure.
 
 ```bash
-Rscript ndmm_study_updated/study223926/tests/run_tests.R   # 584
-Rscript dashboard/tests/run_tests.R                        # 598
-Rscript TFLS/tests/test_tfls.R                             # 361
-(cd lot/engine     && Rscript tests/test_line_criteria.R)  #  57
-(cd lot/engine     && Rscript tests/test_runner.R)         # 527
-(cd lot/qc         && Rscript tests/test_lot_qc.R)         # 295
-(cd lot/qc         && Rscript tests/test_foldin_trace.R)   # 149
-(cd lot/qc         && Rscript tests/test_trace_returns.R)  # 148
-(cd lot/melphalan  && Rscript tests/test_melp_simple.R)    # 161
-(cd lot/validation && Rscript tests/test_vignettes.R)      #  36
+Rscript variables/study223926/tests/run_tests.R   # 585
+Rscript dashboard/tests/run_tests.R                        # 599
+Rscript TFLS/tests/test_tfls.R                             # 362
+(cd lot/engine     && Rscript tests/test_line_criteria.R)  #  58
+(cd lot/engine     && Rscript tests/test_runner.R)         # 528
+(cd lot/qc         && Rscript tests/test_lot_qc.R)         # 296
+(cd lot/qc         && Rscript tests/test_foldin_trace.R)   # 150
+(cd lot/qc         && Rscript tests/test_trace_returns.R)  # 154
+(cd lot/melphalan  && Rscript tests/test_melp_simple.R)    # 162
+(cd lot/validation && Rscript tests/test_vignettes.R)      #  37
 ```
 
-2916 checks. Base R except for **`glue`**, which three of them need — the two
+2931 checks. Base R except for **`glue`**, which three of them need — the two
 LOT engine suites, through `tests/testutil.R`, and melphalan. The other six load
 nothing. The app needs `shiny`; a warehouse run needs `DBI`, `odbc` and `glue`.
 
@@ -126,6 +137,10 @@ Four of the suites (the study package, LOT QC's two, and melphalan) additionally
 SQL they emit against fixtures where `python3` with `duckdb` and `sqlglot` is
 present. The dashboard suite does the same with `survival`, which it uses
 only to cross-check its own Kaplan-Meier against a second implementation.
+
+The dashboard suite also needs **`survival`** for a complete run — without it
+the Kaplan-Meier cross-check is skipped, the suite reports one skip and exits
+non-zero, and its count is one lower.
 
 **A suite that could not run part of itself does not exit clean.** Every suite
 ends with `N passed, N failed, N skipped`, names each skipped block and what

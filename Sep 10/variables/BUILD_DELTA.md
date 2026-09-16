@@ -17,14 +17,46 @@ these, the row says so — read the row, not the heading, for what exists now.
 
 ## 0. How a change reaches the build
 
-**The cohort build is not to be edited.** Everything this file calls a *change*
-is applied either as an environment override on a re-run of that build, or
-inside this folder. Nothing requires a line of the cohort build to move.
+**Two of these need the cohort build's CONTRACT edited. The rest do not.**
 
-Every setting in section 1 marked **change** is already read from the
-environment by the cohort build — `LOT1_FROM`, `STUDY_START`, `FU_CE_DAYS`,
-`NDMM_INDEX_EXCLUDED_ABBRS`, and `SUBSEQ_FU_CE_DAYS`. Setting them is a
-*run-time* decision; that build's own defaults stay as they are.
+An earlier version of this section said every change was a run-time decision
+and that no line of the cohort build had to move. That was wrong, and a run on
+production proved it: the settings are read from the environment, but
+`check_contract()` (`ndmm/R/build_ndmm.R`) then compares the resolved config
+against a pinned `CONTRACT` list and **stops** on any difference, with no
+override of any kind — *"a different value here is a different cohort, so they
+are checked rather than defaulted."* Editing `config.csv` does not help either;
+the check is against `CONTRACT`, not the file.
+
+There is a second guard behind the first. `check_constants()` compares the
+constants the SQL actually interpolates — defined in `ndmm/R/ndmm_constants.R`
+— against the resolved config, and stops if they disagree. The two are read
+from **differently named** environment variables:
+
+```r
+NDMM_STUDY_START <- Sys.getenv("STUDY_START",    unset = "2016-01-01")   # plain name
+NDMM_LOT1_FROM   <- Sys.getenv("NDMM_LOT1_FROM", unset = "2017-01-01")   # prefixed name
+```
+
+So `STUDY_START` reaches the SQL and `LOT1_FROM` does not. Setting `LOT1_FROM`
+alone moves the config, leaves the constant at 2017-01-01, and the run halts on
+`check_constants()` after `check_contract()` has already passed.
+
+| setting | how it is changed |
+|---|---|
+| `STUDY_START` | **edit `CONTRACT$study_start`** in `ndmm/R/build_ndmm.R`, and export `STUDY_START` (or set it in `config.csv`) |
+| `LOT1_FROM` | **edit `CONTRACT$lot1_from`**, set `LOT1_FROM` for the config, **and export `NDMM_LOT1_FROM`** for the SQL |
+| `FU_CE_DAYS` | no change needed — the contract value `0` is what §2 leaves in place, since the one-claim-or-death test now runs in `study223926` |
+| `SUBSEQ_FU_CE_DAYS` | environment, but `subseq_check_windows()` refuses it unless `NDMM_SUBSEQ_OVERRIDE=TRUE`, which records the run as a named sensitivity |
+| `NDMM_INDEX_EXCLUDED_ABBRS` | environment only, no contract entry — a true run-time decision |
+
+Both guards are right to exist: one stops a cohort being silently redefined
+under the study's own table names, the other stops the config and the SQL
+drifting apart. The preflight order, all before any connection, is
+`check_settings` → `pin_output_schema` → `pin_prefix` → `check_contract` →
+`check_choices` → `check_constants`; then the connection, then
+`check_no_active_run` and `check_upstream`. Nothing is written until every one
+of them passes, so a refused run leaves the prefix exactly as it found it.
 
 `CENSOR_AT_DISENROLLMENT` is the exception: it is not a cohort-build setting at
 all, and nothing in that build censors. Follow-up end is computed in

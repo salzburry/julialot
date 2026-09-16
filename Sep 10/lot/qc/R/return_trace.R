@@ -605,7 +605,13 @@ return_trace_annotate <- function(lines, episodes, tx, cands, p, subs = NULL) {
   # that the engine did not fold is this rule's, not 4.8's.
   marked <- which(!is.na(returned) | !is.na(broke))
   for (j in marked) {
-    parts <- c(returned[j], broke[j])
+    # A RETURNED mark REPLACES the fold note on purpose: a later course of a
+    # drug the engine did not fold is this rule's, not 4.8's. A break mark does
+    # not - the episode it lands on may be the folded course itself, and
+    # erasing 'FOLDED into LOT n' there would take the fold out of the table
+    # while the paragraph still says the drug was folded in.
+    prior <- if (is.na(returned[j]) && nzchar(ep$note[j])) ep$note[j] else NULL
+    parts <- c(prior, returned[j], broke[j])
     ep$note[j] <- paste(parts[!is.na(parts)], collapse = "; ")
   }
   op <- cands[cands$KIND == "opens_line", , drop = FALSE]

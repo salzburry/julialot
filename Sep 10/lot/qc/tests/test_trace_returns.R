@@ -26,6 +26,26 @@ pass <- 0L; fail <- 0L
 # expected one (ALLOW_SKIPPED_TESTS=TRUE).
 skipped <- 0L
 skip_note <- function(what) { skipped <<- skipped + 1L; cat("  SKIP   ", what, "\n") }
+
+# The tally is only as good as its wiring: a bare cat("SKIP ...") prints like a
+# skip and counts as nothing, which is exactly how the first pass at this went
+# wrong - eight sites in one suite and six in another were missed by hand. Each
+# suite now checks its OWN source, so a skip site added later is caught by the
+# suite it was added to rather than by whoever next reads the diff.
+.suite_path <- local({
+  a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
+  if (length(a)) normalizePath(sub("^--file=", "", a[1]), mustWork = FALSE) else NA_character_
+})
+check_skip_wiring <- function(path = .suite_path) {
+  if (is.na(path) || !file.exists(path)) return(invisible(NULL))
+  src <- readLines(path, warn = FALSE)
+  bad <- grep('cat\\(.*"[^"]*SKIP', src)
+  # Not a comment describing one, and not skip_note's own printing line.
+  bad <- bad[!grepl("^\\s*#", src[bad]) & !grepl("skip_note", src[bad], fixed = TRUE)]
+  ok(length(bad) == 0L,
+     paste0("every SKIP this suite prints goes through skip_note(), so it is counted",
+            if (length(bad)) paste0(" [bare cat at line(s) ", paste(bad, collapse = ", "), "]") else ""))
+}
 test_report_status <- function(pass, fail, skipped) {
   cat(sprintf("%d passed, %d failed, %d skipped\n", pass, fail, skipped))
   if (skipped > 0L)
@@ -77,6 +97,19 @@ bd <- returns_fixture_defects(BROKEN)
 ok(length(bd) == 1L && grepl("R000001 LOT 1", bd[1], fixed = TRUE) &&
      grepl("past a run-out on 2020-05-15", bd[1], fixed = TRUE),
    "...and the check is not vacuous: pulling one episode's cover back before the added agent is caught, with the date it would have ended on")
+# The other way a hand-written line goes wrong, and the one R000004 was wrong
+# in: DISCONTINUATION at a run-out 5.2's chain never reaches, because the
+# drug's own later episode keeps its cover alive under the rule the study pins.
+CHAINED <- RETURNS_FIXTURE
+CHAINED$final[[6]] <- rf_fin("R000004", 1L, "2020-01-01", "MED", "BORT LEN", "2020-06-30",
+                             "DISCONTINUATION", discon = "2020-06-30")
+cd <- returns_fixture_defects(CHAINED)
+ok(length(cd) == 1L && grepl("R000004 LOT 1 records DISCONTINUATION on 2020-06-30", cd[1], fixed = TRUE) &&
+     grepl("LEN has a later episode on 2020-12-01", cd[1], fixed = TRUE),
+   "...and a line that runs out while one of its own drugs still has a later episode is caught too - 5.2 chains over that gap, so the line never ran out")
+ok(identical(as.character(RETURNS_FIXTURE$final[[6]]$LOT_BASE_END_REASON), "SCT_AUTO") &&
+     length(Filter(function(a) identical(a$PATID, "R000004"), RETURNS_FIXTURE$auto)) == 2L,
+   "R000004's 1L ends on its SECOND autologous transplant, which is what 3.4 says ends line 1 - a single one could not have")
 
 cat("\n-- the queries, as text --\n")
 ok(identical(names(Q), c("fold", "own_return", "opens_line", "carried_over")),
@@ -566,7 +599,7 @@ if (is.null(rr)) {
   ok(identical(note_of("R000001", "LEN", "2020-08-15"), "FOLDED into LOT 2 (4.8)"),
      "the folded episode carries the fold-in trace's own note")
   ok(identical(note_of("R000002", "LEN", "2020-11-30"), "RETURNED to LOT 1 after a 214-day break (4.3)") &&
-       identical(note_of("R000002", "LEN", "2020-01-01"), "break follows: 214 days to the return"),
+       identical(note_of("R000002", "LEN", "2020-01-01"), "opens LOT 1; break follows: 214 days to the return"),
      "an own return marks the return and the episode before the break, with the gap in days")
   # An episode can be both: the drug came back, ran out, and came back again
   # inside the same line, so the middle course is one row's return and the next
@@ -590,13 +623,40 @@ if (is.null(rr)) {
   ok(identical(mid, "RETURNED to LOT 1 after a 154-day break (4.3); break follows: 152 days to the return"),
      "...and the middle episode keeps both notes - its own return and the break that follows it")
   ok(identical(at$note[at$MAP_MED_TYPE == "LEN" & format(at$MAP_START_DT) == "2020-01-01"],
-               "break follows: 154 days to the return") &&
+               "opens LOT 1; break follows: 154 days to the return") &&
        identical(at$note[at$MAP_MED_TYPE == "LEN" & format(at$MAP_START_DT) == "2021-03-01"],
                  "RETURNED to LOT 1 after a 152-day break (4.3)"),
      "...while the episodes that are only one of the two carry only that one")
   at2 <- return_trace_annotate(rt$lines, rt$eps, NULL, CT[c(2L, 1L), , drop = FALSE], P)
   ok(identical(at2$note, at$note),
      "...and the notes do not depend on the order the rows arrived in")
+  # A folded course can itself be the episode a later break follows, and the
+  # fold mark must survive it: the paragraph says the drug was folded in, so an
+  # episode table that no longer marks where says something else.
+  FOLDBRK <- list(final = list(
+      rf_fin("R000017", 1L, "2020-01-01", "MED", "BORT LEN", "2020-06-30", "MED_ADD",
+             add_med = "CARF", add_dt = "2020-07-01"),
+      rf_fin("R000017", 2L, "2020-07-01", "MED", "CARF LEN", "2021-12-31", "STUDY_END")),
+    map = list(rf_ep("R000017", "BORT", "2020-01-01", "2020-07-31", discon = 1L, cnt = 7L),
+               rf_ep("R000017", "LEN", "2020-01-05", "2020-04-30", discon = 1L, cnt = 4L),
+               rf_ep("R000017", "CARF", "2020-07-01", "2021-12-31", cnt = 12L),
+               rf_ep("R000017", "LEN", "2020-08-15", "2020-09-30", discon = 1L, cnt = 2L),
+               rf_ep("R000017", "LEN", "2021-01-05", "2021-12-31", cnt = 12L)),
+    allo = list(), auto = list(), subs = list())
+  rf17 <- returns_run_rows(c(QX[c("fold", "own_return")],
+                            list(lines = foldin_trace_lines_sql(EXEC_TABLES, "R000017", P),
+                                 eps = foldin_trace_episodes_sql(EXEC_TABLES, "R000017"))), FOLDBRK, ROOT)
+  CF <- return_trace_stack(rf17[c("fold", "own_return")])
+  ok(nrow(CF) == 2L && setequal(CF$KIND, c("fold", "own_return")),
+     "a drug folded into a line and then back again after a break is a fold and an own return, both on that line")
+  af <- return_trace_annotate(rf17$lines, rf17$eps, NULL, CF, P)
+  fm <- af$note[af$MAP_MED_TYPE == "LEN" & format(af$MAP_START_DT) == "2020-08-15"]
+  ok(identical(fm, "FOLDED into LOT 2 (4.8); break follows: 97 days to the return"),
+     "...and the folded episode keeps its fold mark when a break follows it, rather than losing the fold out of the table")
+  ok(identical(af$note[af$MAP_MED_TYPE == "LEN" & format(af$MAP_START_DT) == "2021-01-05"],
+               "RETURNED to LOT 2 after a 97-day break (4.3)"),
+     "...while a RETURNED mark still replaces the fold note, which is the engine not having folded that later course")
+
   # 4.7's carve-out: a melphalan course inside a line, after the window and
   # after a break, is 4.3's own return and 4.7's suppressed course alike, and
   # the tables record neither rule.
@@ -766,5 +826,6 @@ ok(has(src, "cands_out$PATID <- mask_patid_r(cands_out$PATID)"),
    "...and masks the candidate list too when asked, not only the traced patients")
 ok(!has(src, "DELETE") && !has(src, "INSERT") && !has(src, "CREATE"), "it reads only")
 
+check_skip_wiring()
 cat("\n")
 test_report_status(pass, fail, skipped)
