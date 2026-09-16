@@ -36,6 +36,7 @@ returns_example_note <- paste0(
 returns_example_md <- function(root = .script_dir) {
   p <- qc_params(RETURNS_SETTINGS, "fixture")
   p$gap <- qc_int(RETURNS_SETTINGS, "map_discon_gap_days")
+  p$melp_days <- qc_int(RETURNS_SETTINGS, "melp_simple_course_days")
   returns_render_fixture(RETURNS_FIXTURE, RETURNS_FIXTURE_TOTALS, p, root,
                          run_id = "fixture", pfx = "example_", n = 12L,
                          kinds = RETURN_TRACE_KINDS, lines = NULL,

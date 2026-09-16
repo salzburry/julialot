@@ -179,6 +179,10 @@ main <- function() {
   settings <- as.character(meta$CONTRACT_SETTINGS[1])
   p <- qc_params(settings, run_id)
   p$gap <- qc_int(settings, "map_discon_gap_days")
+  # The melphalan course cap, for the one reading that asserts a course is
+  # short. A run that did not record it gets no such row rather than the
+  # claim on no evidence.
+  p$melp_days <- qc_int(settings, "melp_simple_course_days")
 
   # Without the rules there is nothing to trace: an own return's signature
   # cannot occur in a build that released the drug, and a fold's cannot occur
