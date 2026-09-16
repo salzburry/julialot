@@ -1615,7 +1615,22 @@ cat("\nthe rules that hold the numbers up\n")
   # engine and the two siblings whenever they are beside this package - the
   # engine's own line is read from its source, not restated here.
   local({
-    top <- file.path("..", "..")
+    # Found, not counted. The hop count was one too many for this package's
+    # depth after it was flattened up a level, and the block went from CHECKING
+    # the delivery to skipping it - nothing said so but the skip note.
+    #
+    # The search stays INSIDE the delivery: this package's own folder, then the
+    # study root one above it. Reaching further would leave the folder, which
+    # the repository's own hygiene check refuses - rightly, and it refused an
+    # earlier version of these very lines.
+    up_to_root <- c(".", "..")
+    top <- NA_character_
+    for (up in up_to_root) {
+      if (file.exists(file.path(up, "lot", "engine", "R", "build_lot.R"))) {
+        top <- up; break
+      }
+    }
+    if (is.na(top)) top <- ".."
     engine <- file.path(top, "lot", "engine", "R", "build_lot.R")
     tfls <- file.path(top, "TFLS", "run_tfls.R")
     dash <- file.path(top, "dashboard", "global.R")

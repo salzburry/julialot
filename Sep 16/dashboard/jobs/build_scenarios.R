@@ -24,7 +24,7 @@ grid_csv <- if (length(args) >= 1) args[1] else file.path(here, "scenarios.csv")
 out_dir  <- if (length(args) >= 2) args[2] else
   Sys.getenv("DASH_SNAPSHOT_DIR", "/mnt/data/NDMM")
 pkg_dir  <- Sys.getenv("DASH_PACKAGE_DIR",
-                       file.path(dirname(here), "variables", "study223926"))
+                       file.path(dirname(here), "variables"))
 
 if (!file.exists(grid_csv)) stop("No scenario grid at ", grid_csv, call. = FALSE)
 grid <- utils::read.csv(grid_csv, stringsAsFactors = FALSE)

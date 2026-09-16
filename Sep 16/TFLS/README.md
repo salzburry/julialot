@@ -49,8 +49,8 @@ installed and cannot be asked. Regenerate it whenever the study registry gains
 a table:
 
 ```r
-source("variables/study223926/R/registry.R")
-source("variables/study223926/R/contract.R")
+source("variables/R/registry.R")
+source("variables/R/contract.R")
 write_study_contract("TFLS/contract/study223926_contract.csv")
 ```
 

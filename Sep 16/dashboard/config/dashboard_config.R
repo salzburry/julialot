@@ -1,7 +1,7 @@
 # Every knob this dashboard has, in one place, and every one env-overridable.
 #
-# Nothing here is a clinical rule. The rules live in study223926/R/registry.R
-# and study223926/R/config_223926.R, and the dashboard reads them from there so
+# Nothing here is a clinical rule. The rules live in variables/R/registry.R
+# and variables/R/config_223926.R, and the dashboard reads them from there so
 # a module or an open question added to the package appears here without an
 # edit.
 
@@ -66,8 +66,7 @@ dashboard_config <- function() {
     # the shell lines a run needs from this; it is a tested helper, not a
     # control on the page, and a scenario nobody has run does not appear.
     run_cmd         = .env_chr("DASH_RUN_CMD", "Rscript build.R"),
-    package_dir     = .env_chr("DASH_PACKAGE_DIR",
-                              "../variables/study223926"),
+    package_dir     = .env_chr("DASH_PACKAGE_DIR", "../variables"),
     # The table shells, which are a sibling folder like the package. Unset
     # means the one beside this one; a deployment without it loses that tab
     # and nothing else.

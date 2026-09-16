@@ -46,7 +46,7 @@ alone moves the config, leaves the constant at 2017-01-01, and the run halts on
 |---|---|
 | `STUDY_START` | **edit `CONTRACT$study_start`** in `ndmm/R/build_ndmm.R`, and export `STUDY_START` (or set it in `config.csv`) |
 | `LOT1_FROM` | **edit `CONTRACT$lot1_from`**, set `LOT1_FROM` for the config, **and export `NDMM_LOT1_FROM`** for the SQL |
-| `FU_CE_DAYS` | no change needed — the contract value `0` is what §2 leaves in place, since the one-claim-or-death test now runs in `study223926` |
+| `FU_CE_DAYS` | no change needed — the contract value `0` is what §2 leaves in place, since the one-claim-or-death test now runs in this package |
 | `SUBSEQ_FU_CE_DAYS` | environment, but `subseq_check_windows()` refuses it unless `NDMM_SUBSEQ_OVERRIDE=TRUE`, which records the run as a named sensitivity |
 | `NDMM_INDEX_EXCLUDED_ABBRS` | environment only, no contract entry — a true run-time decision |
 
@@ -60,7 +60,7 @@ of them passes, so a refused run leaves the prefix exactly as it found it.
 
 `CENSOR_AT_DISENROLLMENT` is the exception: it is not a cohort-build setting at
 all, and nothing in that build censors. Follow-up end is computed in
-`study223926`, where the setting already exists and defaults to `TRUE`, the
+this package, where the setting already exists and defaults to `TRUE`, the
 protocol's reading.
 
 ### The secondary 2L cohort
@@ -72,7 +72,7 @@ supply the wide population §7.4.1.1 asks for. `NDMM_FLAGS_ALL` projects
 `co.INDEX_DATE`, `windows.R` reads `ENDDATE` and `ENDDATE_CE`,
 `03_demographics.R` reads `YRDOB` and `GDR_CD`, `08_malignancy.R` reads
 `MM_DX_DT`, and the LOT engine's required-input check rejects it as well.
-`study223926/R/modules/01_cohorts.R` refuses such a table at the first step, by
+`R/modules/01_cohorts.R` refuses such a table at the first step, by
 name, rather than failing five modules later on an unresolved column.
 
 A schema fix alone would not be enough. `01_cohorts.R` computes membership from
@@ -93,7 +93,7 @@ and `SEC2L_INPUT_IS_WIDE` asserts a property of the input rather than supplying
 one.
 
 Somebody still has to *run* the cohort and LOT builds again under those
-settings. The lineage guard in `study223926/R/lineage.R` refuses a LOT run whose
+settings. The lineage guard in `R/lineage.R` refuses a LOT run whose
 `STUDY_START`, `STUDY_END`, cohort table or completion state disagree with what
 this package is set to, so a stale run cannot be read by accident.
 
@@ -131,7 +131,7 @@ not the same thing.
 | **Follow-up period** (the observation window) | §7.1 | index → min(end of CE, study end, death) | the cohort build's `ENDDATE = least(study_end, DEATH_DT)` does not apply end of CE. **This package does**: `fu_end_sql()` takes the end of the span covering this cohort's own index, under `CENSOR_AT_DISENROLLMENT`, which defaults to the protocol reading |
 | **≥ 3 months potential follow-up** (analysis set for TTNT/TTD/OS) | §7.8.2 | `index + 90 ≤ study end`, or death before `index + 90` | **implemented** as `S_PERIODS.TTE_ELIGIBLE`, a flag rather than a filter: the whole cohort stays in `S_TTE` and the restricted analysis is the rows the flag marks |
 
-What to build — **all three are done in `study223926`**, and are listed here
+What to build — **all three are done in this package**, and are listed here
 because the upstream cohort build still has none of them:
 
 - ~~replace the 1L `FU_CE_DAYS=0` test and the 2L/3L `SUBSEQ_FU_CE_DAYS=90` test
@@ -290,7 +290,7 @@ Note also `LOT_RULES.md`'s own banner: those three rules changed on 30 August 20
 | 12 | **Subgroup machinery** — SOC, age ≥ 75, neuropathy, frailty, with the **< 25 patients** suppression rule | §7.2.3, §7.8 |
 | 13 | **`TTE_ELIGIBLE`** flag (≥ 3 months potential follow-up) | §7.8.2 |
 
-`study223926` in this folder builds **2 to 13**: demographics, the MM-adjusted
+this package in this folder builds **2 to 13**: demographics, the MM-adjusted
 Charlson, frailty, the 22 safety events, person-time, HCRU, secondary
 malignancies, SOC categorisation, TTNT/TTD/OS, treatment attrition, the
 subgroup machinery with the < 25 suppression rule, and `TTE_ELIGIBLE`
@@ -369,7 +369,7 @@ does** (`OPEN_QUESTIONS.md`, "What the new protocol closes").
    environment — `LOT1_FROM`, `STUDY_START`, `FU_CE_DAYS`,
    `SUBSEQ_FU_CE_DAYS`, `NDMM_INDEX_EXCLUDED_ABBRS`. No edit to the cohort
    build; see section 0. `FU_END`, `TTE_ELIGIBLE`, the four demographic columns
-   and censoring are all already built in `study223926`.
+   and censoring are all already built in this package.
 4. Build the wide-cohort adapter the secondary 2L cohort needs — the full
    cohort schema with eligibility evidence retained — and run the LOT engine
    over it. Section 0 says why a table of ids and flags cannot stand in.

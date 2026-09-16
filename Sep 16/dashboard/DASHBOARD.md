@@ -14,7 +14,7 @@ It is one of four sibling folders:
 | `TFLS/` | the requested table shells, and the code that fills them |
 
 They have to stay siblings. The app loads the study package's registries from
-`../variables/study223926` (overridable with `DASH_PACKAGE_DIR`). It
+`../variables` (overridable with `DASH_PACKAGE_DIR`). It
 does **not** load the engine's code: LOT results reach it as tables — from the
 snapshot or the warehouse — and its test suite reads `../lot/engine` only to
 hold the two table lists to each other.

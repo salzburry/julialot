@@ -89,28 +89,28 @@ dictionary. The difference that matters most is `MEMBER_ENROLLMENT`: it carries
 
 ## The code
 
-`study223926/` is a package that runs **after** the LOT engine: it reads
+the package is a package that runs **after** the LOT engine: it reads
 `LOT_LONG_FINAL` and the NDMM cohort table and writes its own `S_*` tables. It builds
 no line and no MM cohort of its own, so it can be re-run against a finished LOT run as
 often as needed.
 
 ```
-DATABRICKS_PWD=... Rscript study223926/build.R                # over the Databricks ODBC DSN
-DRY_RUN=TRUE Rscript study223926/build.R                      # print the plan only
-MODULES=safety COHORTS=1L,2L Rscript study223926/build.R      # one module; 2L is nested in 1L, so 1L comes too
-Rscript study223926/tests/run_tests.R                         # 584 checks, no warehouse
+DATABRICKS_PWD=... Rscript build.R                # over the Databricks ODBC DSN
+DRY_RUN=TRUE Rscript build.R                      # print the plan only
+MODULES=safety COHORTS=1L,2L Rscript build.R      # one module; 2L is nested in 1L, so 1L comes too
+Rscript tests/run_tests.R                         # 584 checks, no warehouse
 ```
 
 Fourteen modules, four cohorts, and every open reading is a setting with the
 protocol's answer as its default. Seven of the fourteen modules run today - the
 cohorts, their attrition, windows, demographics and outcomes need no code list;
 the other seven are blocked on Annexes 2 and 3, and a default run leaves them
-out by name rather than stopping. `study223926/MODULES.md` has the rest.
+out by name rather than stopping. `MODULES.md` has the rest.
 
 ## Standalone
 
 Nothing in this folder reads a file outside it. The package carries its own code
-lists (`study223926/codelists/` - the shapes, not the codes, which do not exist
+lists (`codelists/` - the shapes, not the codes, which do not exist
 anywhere yet), its own settings and its own tests, and a test asserts that no
 path function in any R file reaches out. The two things it needs that are not
 files are the warehouse and, optionally, the production code-list directory.
@@ -121,7 +121,7 @@ and the rest run unchanged.
 
 ## What this folder does not do
 
-It does not change the cohort build. `study223926/` runs after it and after
+It does not change the cohort build. the package runs after it and after
 the LOT engine, and reads what they wrote. `BUILD_DELTA.md` says what would
 have to change in the cohort build to match this protocol; making those
 changes is separate work, and several of them are blocked on

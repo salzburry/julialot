@@ -18,7 +18,7 @@ DASH_CFG <- local({
 # and nothing connects to a warehouse from here.
 .pkg_dir <- DASH_CFG$package_dir
 if (!dir.exists(.pkg_dir))
-  .pkg_dir <- file.path(dirname(.dash_dir), "variables", "study223926")
+  .pkg_dir <- file.path(dirname(.dash_dir), "variables")
 if (!dir.exists(.pkg_dir))
   stop("DASHBOARD ERROR: cannot find the study package. Set DASH_PACKAGE_DIR ",
        "to the directory holding R/registry.R.", call. = FALSE)

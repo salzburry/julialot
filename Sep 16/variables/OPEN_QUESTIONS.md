@@ -3,7 +3,7 @@
 **Fifteen decisions** the protocol and the Optum documentation do not settle,
 each of which changes a count or a definition. Ordered by how much they change.
 Every one has two defensible readings and the build has to pick one; the reading
-it takes meanwhile is a setting in `study223926/config.csv`.
+it takes meanwhile is a setting in `config.csv`.
 
 **Five of the fifteen stop work.** Q15, the outstanding annexes, and Q11, the
 emergency department definition, because nothing can be computed without them;

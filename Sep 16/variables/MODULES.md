@@ -1,4 +1,4 @@
-# study223926 — the analytical cohort, after the LOT run
+# The variables package — the analytical cohort, after the LOT run
 
 An R package that turns a finished lines-of-therapy run into the analytical
 cohort and variables the Aug 26 2026 protocol asks for. It builds no line and
@@ -6,7 +6,7 @@ no MM cohort of its own: the cohort build makes the population, `lot/` makes
 the lines, and this reads both.
 
 ```
-                cohort build          lot/engine/build.R        study223926/build.R
+                cohort build          lot/engine/build.R        build.R
 raw Optum CDM ──────────────► NDMM_COHORT ──────────► LOT_LONG_FINAL ──────────► S_*
 ```
 

@@ -219,7 +219,7 @@ EXPECTED_SUITES <- list(
     "lot/validation/tests/test_vignettes.R",
     "ndmm/tests/test_runner.R",
     "ndmm/tests/test_subsequent.R",
-    "variables/study223926/tests/run_tests.R"),
+    "variables/tests/run_tests.R"),
   "Sep 10" = c(
     "TFLS/tests/test_tfls.R",
     "dashboard/tests/run_tests.R",

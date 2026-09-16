@@ -95,7 +95,7 @@ errs <- function(expr) {
   if (is.null(e)) NA_character_ else e
 }
 
-Sys.setenv(DASH_SOURCE = "synthetic", DASH_PACKAGE_DIR = "../variables/study223926",
+Sys.setenv(DASH_SOURCE = "synthetic", DASH_PACKAGE_DIR = "../variables",
            INPUT_COHORT_TABLE = "ndmm_NDMM_COHORT", OBJECT_PREFIX = "s223926_")
 source("global.R")
 
@@ -1667,7 +1667,7 @@ ok(lot_run_bound(SRC, SCENARIOS[[1]]),
     # whole job is to show the shape a real table takes - so it is checked
     # against the registry whenever that package sits beside this folder.
     local({
-      reg <- file.path(dirname(here), "variables", "study223926",
+      reg <- file.path(dirname(here), "variables",
                        "R", "registry.R")
       if (!file.exists(reg)) {
         cat("  --     the study package is not beside this folder, so the",

@@ -68,7 +68,7 @@ population_n <- function(d, spec) {
 # ---- the analysis set -------------------------------------------------------
 # Which rows a purpose may use. The producer keeps the whole cohort in S_TTE
 # and marks the restricted analysis with TTE_ELIGIBLE - see
-# study223926/R/modules/09_tte.R - so a survival estimate has to apply it and
+# variables/R/modules/09_tte.R - so a survival estimate has to apply it and
 # a descriptive summary of the same table must not.
 #
 # Fails closed: a purpose that needs a flag the table does not carry gets no

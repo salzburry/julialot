@@ -14,7 +14,7 @@ Four folders sit side by side:
 | `TFLS/` | the requested table shells, filled from a finished run of this package |
 
 They have to stay siblings. The dashboard finds this package at
-`../variables/study223926`, the engine at `../lot/engine` and the
+`../variables`, the engine at `../lot/engine` and the
 shells at `../TFLS`; the shell runner finds this package by
 `TFLS_PACKAGE_DIR`. Nothing uses an absolute path.
 
@@ -26,13 +26,13 @@ shells at `../TFLS`; the shell runner finds this package by
 |---|---|
 | `README.md` | the protocol, the cohorts, and what the protocol does not yet specify |
 | `IE_CRITERIA_APPLIED.md` | which eligibility rules are applied, by whom, and how to change them |
-| `study223926/MODULES.md` | what each module computes |
+| `MODULES.md` | what each module computes |
 | `OPEN_QUESTIONS.md` | every question still open with the study team, and the reading this build takes meanwhile |
 | `CONFORMANCE.md` | the code checked requirement by requirement against the 26 August 2026 protocol, the Optum CDM V9.0 dictionary and the Optum business rules: 291 rows, each with the audit's verdict and what this pass did about it |
 
 ---
 
-## The package — `study223926/`
+## The package — the package
 
 The code. Self-contained: it reads the cohort table and the LOT tables, and
 writes only its own `S_*` tables.

@@ -78,15 +78,15 @@ CODELIST_DIR=$CL DATABRICKS_PWD="$DATABRICKS_PWD" PROJECT_WORK_SCHEMA=$SCHEMA \
 #    naming whichever is missing before it opens a connection.
 DATABRICKS_PWD="$DATABRICKS_PWD" PROJECT_WORK_SCHEMA=$SCHEMA CODELIST_DIR=$CL \
   INPUT_COHORT_TABLE=$COHORT OBJECT_PREFIX=s223926_ LOT_PREFIX=ndmm_ \
-  Rscript variables/study223926/build.R
+  Rscript variables/build.R
 
 # ...or print the plan and stop. No driver, no warehouse, nothing read.
 DRY_RUN=TRUE INPUT_COHORT_TABLE=$COHORT OBJECT_PREFIX=s223926_ \
-  Rscript variables/study223926/build.R
+  Rscript variables/build.R
 
 # 4. the requested table shells
 TFLS_SOURCE=warehouse TFLS_PREFIX=s223926_ PROJECT_WORK_SCHEMA=$SCHEMA \
-  TFLS_PACKAGE_DIR=variables/study223926 \
+  TFLS_PACKAGE_DIR=variables \
   DATABRICKS_PWD="$DATABRICKS_PWD" Rscript TFLS/run_tfls.R
 
 # 5. the dashboard — snapshot for a shared deployment, then the App
@@ -125,7 +125,7 @@ Every suite runs offline — no warehouse, no driver, no Shiny — and exits
 non-zero on any failure.
 
 ```bash
-Rscript variables/study223926/tests/run_tests.R   # 585
+Rscript variables/tests/run_tests.R   # 585
 Rscript dashboard/tests/run_tests.R                        # 599
 Rscript TFLS/tests/test_tfls.R                             # 362
 (cd lot/engine     && Rscript tests/test_line_criteria.R)  #  58

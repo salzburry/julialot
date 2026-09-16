@@ -62,7 +62,7 @@ these groupings. The study package's `soc` module categorises each line by the
 writes `S_SOC.SOC_CATEGORY`; a size category (triplet, doublet) is decided by the
 regimen's own agent count and backbone, so it holds for an unlisted agent too, and
 a modality category (CAR-T, a bispecific) by the agent. `CODELISTS.md` §2,
-`study223926/MODULES.md`.
+`MODULES.md`.
 
 ## 3. Subgroup stratifications (§7.2.3, Table 1)
 

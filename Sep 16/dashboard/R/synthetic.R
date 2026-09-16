@@ -289,7 +289,7 @@ synthetic_one <- function(prefix, settings, min_n = 25L) {
     INDEX_DATE = as.Date("2019-01-01") + as.integer(r(n_sub, 0, 2200)),
     # Not everyone is in the survival analysis: the producer keeps the whole
     # cohort in S_TTE and marks the restricted population with this flag (see
-    # study223926/R/modules/09_tte.R). A fixture where everyone is eligible
+    # variables/R/modules/09_tte.R). A fixture where everyone is eligible
     # cannot tell a descriptive summary of the table from a curve over the
     # analysis set.
     TTE_ELIGIBLE = as.integer(seq_len(n_sub) %% 5L != 0L),

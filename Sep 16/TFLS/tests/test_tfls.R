@@ -1076,7 +1076,7 @@ cat("\n-- the generated contract, against the package that emits it --\n")
 # right in the fields it happens to check, and the point of shipping a
 # generated artefact is that it is the generator's output and nothing else.
 local({
-  reg <- file.path(dirname(ROOT), "variables", "study223926", "R")
+  reg <- file.path(dirname(ROOT), "variables", "R")
   if (!all(file.exists(file.path(reg, c("registry.R", "contract.R"))))) {
     cat("  --     the study package is not beside this folder, so the shipped",
         "contract is unchecked\n")
