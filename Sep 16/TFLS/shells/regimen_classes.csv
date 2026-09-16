@@ -1,0 +1,11 @@
+class_id,label,order,soc_categories,note
+OVERALL,Overall,1,,"The column total. Every line in the cohort's line, matched by definition rather than by category. The transplant-only labels Allogeneic SCT (no regimen recorded) and Autologous SCT (no regimen recorded) land here and in no other column, so the class columns do not sum to this one."
+ACD38_QUAD,aCD38 Quad,2,Quadruplet with anti-CD38 backbone,
+ACD38_TRIP,aCD38 Triplet,3,Triplet with anti-CD38 backbone,
+POM_TRIP,Pom-based triplets (Non-aCD38),4,,GAP: the study vocabulary has no pomalidomide category. The package folds these lines into Other triplet (non-anti-CD38). Separating them needs the regimen string S_SOC.REGIMEN and a pomalidomide CL_MED_ABBR in soc_regimen_categories.csv.
+OTHER_TRIP,Other Triplets,5,Other triplet (non-anti-CD38),"Carries the lines the shell's Pom-based triplets column asks for as well, until POM_TRIP can be split out."
+DOUBLET_MONO,Doublet/Mono,6,Doublet/monotherapy,
+BCMA,BCMA,7,CAR-T,"The cell therapies. A BCMA-directed bispecific is counted under Bi-specific instead, so the two columns are disjoint and a patient is in one column only. The study records CAR-T without its target, so a CAR-T directed at anything else lands here too."
+BISPECIFIC,Bi-specific,8,BCMA bispecific|Non-BCMA bispecific,"Both bispecific categories, BCMA-directed and not. The BCMA column beside it holds the cell therapies only, so the two do not overlap."
+OTHER,Other,9,Other|Other novel agent,"More than one SOC_CATEGORY. Where a table also prints an Other novel agents line of its own (T2x), drop Other novel agent from here."
+OTHER_NOVEL,Other novel agents,10,Other novel agent,T2x prints this as a row of its own. It is a subset of the Other column above.

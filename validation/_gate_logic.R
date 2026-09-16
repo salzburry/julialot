@@ -30,6 +30,13 @@ gate_verdict <- function(out, status, want = character(0)) {
     return(list(ok = FALSE, passed = 0L, skipped = TRUE,
                 reasons = "SKIP - nothing in this gate needs a connection"))
 
+  # 5 is need_dirs() reporting that the PACKAGE is not in this delivery - see
+  # _common.R. Not a pass and not a failure: there is nothing here for it to
+  # check. Listed by name so it cannot be a quiet way to drop a suite.
+  if (identical(status, 5L))
+    return(list(ok = TRUE, passed = 0L, skipped = FALSE, not_applicable = TRUE,
+                reasons = character(0)))
+
   line <- grep("[0-9]+ passed, [0-9]+ failed", out, value = TRUE)
   if (!length(line))
     return(no(paste0("no summary line (exit ", status, ")")))

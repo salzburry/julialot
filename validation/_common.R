@@ -58,16 +58,38 @@ BASELINE  <- Sys.getenv("BASELINE_DIR", unset = file.path(REPO, "apr_30_2026"))
 # decisions about the repository rather than about this file.
 pkg_dir <- function(...) file.path(PKG_BASE, ...)
 
-# A suite whose package or baseline is not there says so and exits 0. It is not
-# a failure - a checkout may hold one and not the other - but it must not read
-# as a pass either, so run_all.R counts skips separately and reports them.
+# A suite whose package or baseline is not there says so and stops. It must not
+# read as a pass, so it never exits 0 - but there are two different reasons and
+# the gate should not read them the same way.
+#
+#   5  The PACKAGE is not in the delivery being checked. overall/ is the
+#      all-myeloma cohort and the study delivery does not contain it, so the
+#      suite comparing it to its baseline has nothing to say about that
+#      delivery and never will. Counted as a failure, the gate could not be
+#      green for ANY delivery that is not the whole repository, which is every
+#      delivery. Reported as not applicable, and named.
+#
+#   3  Anything else missing - the baseline it compares against, a tool. That
+#      is a suite that should have run and did not, and it counts against the
+#      gate.
+#
+# The split is narrow on purpose. Only a path under PKG_BASE can be a 5, so a
+# missing baseline or a missing dependency cannot become one, and the gate
+# prints every 5 by name rather than absorbing it into a count.
 need_dirs <- function(...) {
-  missing <- Filter(function(p) !dir.exists(p) && !file.exists(p), c(...))
-  if (length(missing)) {
-    cat("SKIP: not present:", paste(missing, collapse = ", "),
-        "\n  (looked under", PKG_BASE, "- set PKG_BASE or STUDY_FOLDER to the",
-        "delivery that carries it)\n")
-    quit(status = 3L)
+  paths   <- c(...)
+  missing <- Filter(function(p) !dir.exists(p) && !file.exists(p), paths)
+  if (!length(missing)) return(invisible(TRUE))
+  under_pkg <- startsWith(missing, paste0(normalizePath(PKG_BASE, mustWork = FALSE), "/")) |
+               startsWith(missing, paste0(PKG_BASE, "/"))
+  if (all(under_pkg)) {
+    cat("NOT IN THIS DELIVERY: ", paste(basename(missing), collapse = ", "),
+        " is not part of ", basename(PKG_BASE),
+        ", so there is nothing here to check.\n", sep = "")
+    quit(status = 5L)
   }
-  invisible(TRUE)
+  cat("SKIP: not present:", paste(missing, collapse = ", "),
+      "\n  (looked under", PKG_BASE, "- set PKG_BASE or STUDY_FOLDER to the",
+      "delivery that carries it)\n")
+  quit(status = 3L)
 }

@@ -101,7 +101,17 @@ EXPECTED_FAILURES <- list(
     # post-run-out trigger as existence tests, and the run-out guard on LOT1's
     # own window with the tandem gap.
     "06_lot1_end.R: differs beyond the approved deviations in 245 line(s) [09c4a054]",
-    "08_persist.R: differs beyond the approved deviations in 111 line(s) [4ef6f10b]",
+    # Re-pinned from 111 [4ef6f10b]. The two delete-then-insert pairs became
+    # single units: run_step takes both statements together with
+    # retry_as_unit = TRUE, so a retry of the metadata or QC write cannot leave
+    # the DELETE applied and the INSERT not. Same change as the per-line append
+    # in 10_lot2_5_base.R below, and the reason both counts moved.
+    #
+    # It moved when the delivery folders were made and has been unreportable
+    # ever since: this suite resolved the engine under a folder that no longer
+    # had one, and skipped. The count drifted while nothing could say so, which
+    # is the state a pin exists to prevent.
+    "08_persist.R: differs beyond the approved deviations in 112 line(s) [49276166]",
     # SCT_AUTO_CONT and end_natural at LOT2-5, LOT{n}_AUTO_HOLD_DT, auto_cand
     # reading the previous line's own window, the regimen cutoff, and the tandem
     # gap, the add-med tie-break as a row hash, the short-course and not-new
@@ -112,7 +122,11 @@ EXPECTED_FAILURES <- list(
     # complete LOT_LONG, and the short-course break test told that this
     # statement already carries the verdict, so a confirmed course stops a
     # run-out chain. Re-pinned deliberately, which is what this list is for.
-    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 952 line(s) [3b7c6844]")
+    # Re-pinned from 952 [3b7c6844]. Three lines: the per-line append is now
+    # "DELETE FROM <stage> WHERE LOT_NUM = n" and the INSERT as one
+    # retry_as_unit step, so retrying a line's append cannot append it twice.
+    # The rest of the delta since that pin is SQL comment prose.
+    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 955 line(s) [04f35190]")
 )
 
 # How one suite's output is read. Its own suite is validation/hygiene/
@@ -188,6 +202,24 @@ EXPECTED_SUITES <- list(
     "ndmm/tests/test_subsequent.R",
     "overall/tests/test_runner.R",
     "reporting/dashboard/tests/test_runner.R"),
+  # The study delivery, self-contained: the cohort, the lines, the variables,
+  # the shells and the dashboard in one folder, with nothing resolved outside
+  # it. Sep 10 was the same five stages minus the cohort, which was still in
+  # Jul 28 - so three repo-side suites could not run against it and the folder
+  # promised a stage 1 it did not carry.
+  "Sep 16" = c(
+    "TFLS/tests/test_tfls.R",
+    "dashboard/tests/run_tests.R",
+    "lot/engine/tests/test_line_criteria.R",
+    "lot/engine/tests/test_runner.R",
+    "lot/melphalan/tests/test_melp_simple.R",
+    "lot/qc/tests/test_foldin_trace.R",
+    "lot/qc/tests/test_lot_qc.R",
+    "lot/qc/tests/test_trace_returns.R",
+    "lot/validation/tests/test_vignettes.R",
+    "ndmm/tests/test_runner.R",
+    "ndmm/tests/test_subsequent.R",
+    "variables/study223926/tests/run_tests.R"),
   "Sep 10" = c(
     "TFLS/tests/test_tfls.R",
     "dashboard/tests/run_tests.R",
@@ -265,7 +297,7 @@ cat("\n", strrep("=", 74), "\n", sep = "")
 cat("  THE MERGE GATE - EVERY SUITE\n")
 cat(strrep("=", 74), "\n", sep = "")
 
-bad <- 0L; total <- 0L; skipped <- 0L
+bad <- 0L; total <- 0L; skipped <- 0L; n_a <- character(0)
 for (i in seq_along(suites)) {
   out <- suppressWarnings(system2("Rscript", shQuote(suites[i]),
                                   stdout = TRUE, stderr = TRUE))
@@ -274,9 +306,12 @@ for (i in seq_along(suites)) {
   v <- gate_verdict(out, st, want)
   total <- total + v$passed
   if (v$skipped) skipped <- skipped + 1L
+  if (isTRUE(v$not_applicable)) n_a <- c(n_a, rel[i])
   if (v$ok) {
-    cat(sprintf("  %-52s ok    %4d assertions%s\n", rel[i], v$passed,
-                if (v$pinned) sprintf("  (%d pinned failures)", v$pinned) else ""))
+    cat(sprintf("  %-52s %s\n", rel[i],
+        if (isTRUE(v$not_applicable)) "n/a   not part of this delivery"
+        else sprintf("ok    %4d assertions%s", v$passed,
+                if (v$pinned) sprintf("  (%d pinned failures)", v$pinned) else "")))
   } else {
     bad <- bad + 1L
     cat(sprintf("  %-52s FAIL\n", rel[i]))
@@ -291,6 +326,12 @@ cat(sprintf("  %d suites, %d assertions, %d skipped, %d not as expected\n",
             length(suites), total, skipped, bad))
 if (skipped > 0L)
   cat("  A skipped suite proved nothing, so it counts against the gate.\n")
+# Named, every time. A suite that checks a package this delivery does not carry
+# is not a failure, but it is also not a check that ran - so it is listed
+# rather than absorbed into a count nobody reads.
+if (length(n_a))
+  cat("  not part of this delivery, so not checked here: ",
+      paste(n_a, collapse = ", "), "\n", sep = "")
 if (bad > 0L) {
   cat("\n  Not green. A pinned failure that STOPPED failing is as much a problem\n")
   cat("  as a new one: the baseline in this file is then wrong, and the next\n")

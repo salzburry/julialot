@@ -1,0 +1,133 @@
+table_id,col_id,group,label,order,cohort,lot_num,class,subgroup,period
+F1,N_1L,Patients remaining,1L (NDMM),1,1L,,OVERALL,,
+F1,N_2L,Patients remaining,2L (RRMM),2,2L,,OVERALL,,
+F1,N_3L,Patients remaining,3L (RRMM),3,3L,,OVERALL,,
+T1,1L_OVERALL,1L (N=),Overall,1,1L,1,OVERALL,,
+T1,1L_ACD38_QUAD,1L (N=),aCD38 Quad,2,1L,1,ACD38_QUAD,,
+T1,1L_ACD38_TRIP,1L (N=),aCD38 Triplet,3,1L,1,ACD38_TRIP,,
+T1,1L_OTHER_TRIP,1L (N=),Other Triplets,4,1L,1,OTHER_TRIP,,
+T1,1L_DOUBLET_MONO,1L (N=),Doublet/Mono,5,1L,1,DOUBLET_MONO,,
+T1,1L_OTHER,1L (N=),Other,6,1L,1,OTHER,,
+T1,2L_OVERALL,2L (N=),Overall,7,2L,2,OVERALL,,
+T1,2L_ACD38_QUAD,2L (N=),aCD38 Quad,8,2L,2,ACD38_QUAD,,
+T1,2L_ACD38_TRIP,2L (N=),aCD38 Triplet,9,2L,2,ACD38_TRIP,,
+T1,2L_POM_TRIP,2L (N=),Pom-based triplets (Non-aCD38),10,2L,2,POM_TRIP,,
+T1,2L_OTHER_TRIP,2L (N=),Other Triplets,11,2L,2,OTHER_TRIP,,
+T1,2L_DOUBLET_MONO,2L (N=),Doublet/Mono,12,2L,2,DOUBLET_MONO,,
+T1,2L_BCMA,2L (N=),BCMA,13,2L,2,BCMA,,
+T1,2L_BISPECIFIC,2L (N=),Bi-specific,14,2L,2,BISPECIFIC,,
+T1,3L_OVERALL,3L (N=),Overall,15,3L,3,OVERALL,,
+T1,3L_ACD38_QUAD,3L (N=),aCD38 Quad,16,3L,3,ACD38_QUAD,,
+T1,3L_ACD38_TRIP,3L (N=),aCD38 Triplet,17,3L,3,ACD38_TRIP,,
+T1,3L_POM_TRIP,3L (N=),Pom-based triplets (Non-aCD38),18,3L,3,POM_TRIP,,
+T1,3L_OTHER_TRIP,3L (N=),Other Triplets,19,3L,3,OTHER_TRIP,,
+T1,3L_DOUBLET_MONO,3L (N=),Doublet/Mono,20,3L,3,DOUBLET_MONO,,
+T1,3L_BCMA,3L (N=),BCMA,21,3L,3,BCMA,,
+T1,3L_BISPECIFIC,3L (N=),Bi-specific,22,3L,3,BISPECIFIC,,
+T1b,1L_OVERALL,1L (N=),Overall,1,1L,1,OVERALL,,
+T1b,1L_NEURO_YES,1L (N=),Baseline Neuropathy = Yes,2,1L,1,OVERALL,S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=1,
+T1b,1L_NEURO_NO,1L (N=),Baseline Neuropathy = No,3,1L,1,OVERALL,S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=0,
+T1b,2L_OVERALL,2L (N=),Overall,4,2L,2,OVERALL,,
+T1b,2L_NEURO_YES,2L (N=),Baseline Neuropathy = Yes,5,2L,2,OVERALL,S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=1,
+T1b,2L_NEURO_NO,2L (N=),Baseline Neuropathy = No,6,2L,2,OVERALL,S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=0,
+T1b,3L_OVERALL,3L (N=),Overall,7,3L,3,OVERALL,,
+T1b,3L_NEURO_YES,3L (N=),Baseline Neuropathy = Yes,8,3L,3,OVERALL,S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=1,
+T1b,3L_NEURO_NO,3L (N=),Baseline Neuropathy = No,9,3L,3,OVERALL,S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=0,
+T2a,TYPE,,Type,1,,,OVERALL,,
+T2a,BL_OVERALL,Background prevalence during 1L baseline,Overall,2,1L,1,OVERALL,,BASELINE
+T2a,BL_ACD38_QUAD,Background prevalence during 1L baseline,aCD38 Quad,3,1L,1,ACD38_QUAD,,BASELINE
+T2a,BL_ACD38_TRIP,Background prevalence during 1L baseline,aCD38 Triplet,4,1L,1,ACD38_TRIP,,BASELINE
+T2a,BL_POM_TRIP,Background prevalence during 1L baseline,Pom-based triplets (Non-aCD38),5,1L,1,POM_TRIP,,BASELINE
+T2a,BL_OTHER_TRIP,Background prevalence during 1L baseline,Other Triplets,6,1L,1,OTHER_TRIP,,BASELINE
+T2a,BL_DOUBLET_MONO,Background prevalence during 1L baseline,Doublet/Mono,7,1L,1,DOUBLET_MONO,,BASELINE
+T2a,BL_BCMA,Background prevalence during 1L baseline,BCMA,8,1L,1,BCMA,,BASELINE
+T2a,BL_BISPECIFIC,Background prevalence during 1L baseline,Bi-specific,9,1L,1,BISPECIFIC,,BASELINE
+T2a,BL_OTHER,Background prevalence during 1L baseline,Other,10,1L,1,OTHER,,BASELINE
+T2a,FU_OVERALL,On-treatment incidence during 1L follow-up,Overall,11,1L,1,OVERALL,,TREATMENT
+T2a,FU_ACD38_QUAD,On-treatment incidence during 1L follow-up,aCD38 Quad,12,1L,1,ACD38_QUAD,,TREATMENT
+T2a,FU_ACD38_TRIP,On-treatment incidence during 1L follow-up,aCD38 Triplet,13,1L,1,ACD38_TRIP,,TREATMENT
+T2a,FU_POM_TRIP,On-treatment incidence during 1L follow-up,Pom-based triplets (Non-aCD38),14,1L,1,POM_TRIP,,TREATMENT
+T2a,FU_OTHER_TRIP,On-treatment incidence during 1L follow-up,Other Triplets,15,1L,1,OTHER_TRIP,,TREATMENT
+T2a,FU_DOUBLET_MONO,On-treatment incidence during 1L follow-up,Doublet/Mono,16,1L,1,DOUBLET_MONO,,TREATMENT
+T2a,FU_BCMA,On-treatment incidence during 1L follow-up,BCMA,17,1L,1,BCMA,,TREATMENT
+T2a,FU_BISPECIFIC,On-treatment incidence during 1L follow-up,Bi-specific,18,1L,1,BISPECIFIC,,TREATMENT
+T2a,FU_OTHER,On-treatment incidence during 1L follow-up,Other,19,1L,1,OTHER,,TREATMENT
+T2a,BL_AGE_LT75,Age within 1L baseline,<75 years,20,1L,1,OVERALL,S_DEMOGRAPHICS:AGE_GROUP=<75,BASELINE
+T2a,BL_AGE_GE75,Age within 1L baseline,≥75 years,21,1L,1,OVERALL,S_DEMOGRAPHICS:AGE_GROUP=75+,BASELINE
+T2a,FU_AGE_LT75,Age within 1L follow-up,<75 years,22,1L,1,OVERALL,S_DEMOGRAPHICS:AGE_GROUP=<75,TREATMENT
+T2a,FU_AGE_GE75,Age within 1L follow-up,≥75 years,23,1L,1,OVERALL,S_DEMOGRAPHICS:AGE_GROUP=75+,TREATMENT
+T2b,TYPE,,Type,1,,,OVERALL,,
+T2b,BL_OVERALL,Background prevalence during 2L baseline,Overall,2,2L,2,OVERALL,,BASELINE
+T2b,BL_ACD38_QUAD,Background prevalence during 2L baseline,aCD38 Quad,3,2L,2,ACD38_QUAD,,BASELINE
+T2b,BL_ACD38_TRIP,Background prevalence during 2L baseline,aCD38 Triplet,4,2L,2,ACD38_TRIP,,BASELINE
+T2b,BL_OTHER_TRIP,Background prevalence during 2L baseline,Other triplets (Non-aCD38),5,2L,2,OTHER_TRIP,,BASELINE
+T2b,BL_DOUBLET_MONO,Background prevalence during 2L baseline,Doublet/Mono,6,2L,2,DOUBLET_MONO,,BASELINE
+T2b,BL_BCMA,Background prevalence during 2L baseline,BCMA,7,2L,2,BCMA,,BASELINE
+T2b,BL_BISPECIFIC,Background prevalence during 2L baseline,Bi-specific,8,2L,2,BISPECIFIC,,BASELINE
+T2b,BL_OTHER,Background prevalence during 2L baseline,Other,9,2L,2,OTHER,,BASELINE
+T2b,FU_OVERALL,On-treatment incidence during 2L follow-up,Overall,10,2L,2,OVERALL,,TREATMENT
+T2b,FU_ACD38_QUAD,On-treatment incidence during 2L follow-up,aCD38 Quad,11,2L,2,ACD38_QUAD,,TREATMENT
+T2b,FU_ACD38_TRIP,On-treatment incidence during 2L follow-up,aCD38 Triplet,12,2L,2,ACD38_TRIP,,TREATMENT
+T2b,FU_OTHER_TRIP,On-treatment incidence during 2L follow-up,Other triplets (Non-aCD38),13,2L,2,OTHER_TRIP,,TREATMENT
+T2b,FU_DOUBLET_MONO,On-treatment incidence during 2L follow-up,Doublet/Mono,14,2L,2,DOUBLET_MONO,,TREATMENT
+T2b,FU_BCMA,On-treatment incidence during 2L follow-up,BCMA,15,2L,2,BCMA,,TREATMENT
+T2b,FU_BISPECIFIC,On-treatment incidence during 2L follow-up,Bi-specific,16,2L,2,BISPECIFIC,,TREATMENT
+T2b,FU_OTHER,On-treatment incidence during 2L follow-up,Other,17,2L,2,OTHER,,TREATMENT
+T2b,BL_AGE_LT75,Age within 2L baseline,<75 years,18,2L,2,OVERALL,S_DEMOGRAPHICS:AGE_GROUP=<75,BASELINE
+T2b,BL_AGE_GE75,Age within 2L baseline,≥75 years,19,2L,2,OVERALL,S_DEMOGRAPHICS:AGE_GROUP=75+,BASELINE
+T2b,FU_AGE_LT75,Age within 2L follow-up,<75 years,20,2L,2,OVERALL,S_DEMOGRAPHICS:AGE_GROUP=<75,TREATMENT
+T2b,FU_AGE_GE75,Age within 2L follow-up,≥75 years,21,2L,2,OVERALL,S_DEMOGRAPHICS:AGE_GROUP=75+,TREATMENT
+T3,OVERALL,,Overall,1,,,OVERALL,,
+T3,AFTER_1L_BEFORE_2L,,After 1L but before 2L,2,1L,1,OVERALL,S_MALIGNANCY:LOT_AFTER_WHICH=1,
+T3,AFTER_2L_BEFORE_3L,,After 2L but before 3L,3,2L,2,OVERALL,S_MALIGNANCY:LOT_AFTER_WHICH=2,
+T3,AFTER_2L_ANYTIME,,After 2L+ anytime,4,2L,2,OVERALL,S_MALIGNANCY:LOT_AFTER_WHICH>=2,
+T4,1L_OVERALL,1L,Overall,1,1L,1,OVERALL,,
+T4,1L_ACD38_QUAD,1L,aCD38 Quad,2,1L,1,ACD38_QUAD,,
+T4,1L_ACD38_TRIP,1L,aCD38 Triplet,3,1L,1,ACD38_TRIP,,
+T4,1L_OTHER_TRIP,1L,Other Triplets,4,1L,1,OTHER_TRIP,,
+T4,1L_DOUBLET_MONO,1L,Doublet/Mono,5,1L,1,DOUBLET_MONO,,
+T4,1L_OTHER,1L,Other,6,1L,1,OTHER,,
+T4,2L_OVERALL,2L,Overall,7,2L,2,OVERALL,,
+T4,2L_ACD38_QUAD,2L,aCD38 Quad,8,2L,2,ACD38_QUAD,,
+T4,2L_ACD38_TRIP,2L,aCD38 Triplet,9,2L,2,ACD38_TRIP,,
+T4,2L_POM_TRIP,2L,Pom-based triplets,10,2L,2,POM_TRIP,,
+T4,2L_OTHER_TRIP,2L,Other Triplets,11,2L,2,OTHER_TRIP,,
+T4,2L_DOUBLET_MONO,2L,Doublet/Mono,12,2L,2,DOUBLET_MONO,,
+T4,2L_BCMA,2L,BCMA,13,2L,2,BCMA,,
+T4,2L_BISPECIFIC,2L,Bi-specific,14,2L,2,BISPECIFIC,,
+T4,2L_OTHER,2L,Other,15,2L,2,OTHER,,
+T4,3L_OVERALL,3L,Overall,16,3L,3,OVERALL,,
+T4,3L_ACD38_QUAD,3L,aCD38 Quad,17,3L,3,ACD38_QUAD,,
+T4,3L_ACD38_TRIP,3L,aCD38 Triplet,18,3L,3,ACD38_TRIP,,
+T4,3L_POM_TRIP,3L,Pom-based triplets,19,3L,3,POM_TRIP,,
+T4,3L_OTHER_TRIP,3L,Other Triplets,20,3L,3,OTHER_TRIP,,
+T4,3L_DOUBLET_MONO,3L,Doublet/Mono,21,3L,3,DOUBLET_MONO,,
+T4,3L_BCMA,3L,BCMA,22,3L,3,BCMA,,
+T4,3L_BISPECIFIC,3L,Bi-specific,23,3L,3,BISPECIFIC,,
+T4,3L_OTHER,3L,Other,24,3L,3,OTHER,,
+T5c,AGE_1L_LT75,Outcomes by age within each LOT,<75 years,1,1L,1,OVERALL,S_DEMOGRAPHICS:AGE_GROUP=<75,
+T5c,AGE_1L_GE75,Outcomes by age within each LOT,≥75 years,2,1L,1,OVERALL,S_DEMOGRAPHICS:AGE_GROUP=75+,
+T5c,AGE_2L_LT75,Outcomes by age within each LOT,<75 years,3,2L,2,OVERALL,S_DEMOGRAPHICS:AGE_GROUP=<75,
+T5c,AGE_2L_GE75,Outcomes by age within each LOT,≥75 years,4,2L,2,OVERALL,S_DEMOGRAPHICS:AGE_GROUP=75+,
+T5c,NEURO_1L_YES,Outcomes by baseline neuropathy status within each LOT,Yes,5,1L,1,OVERALL,S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=1,
+T5c,NEURO_1L_NO,Outcomes by baseline neuropathy status within each LOT,No,6,1L,1,OVERALL,S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=0,
+T5c,NEURO_2L_YES,Outcomes by baseline neuropathy status within each LOT,Yes,7,2L,2,OVERALL,S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=1,
+T5c,NEURO_2L_NO,Outcomes by baseline neuropathy status within each LOT,No,8,2L,2,OVERALL,S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=0,
+T5c,FRAIL_1L_YES,Outcomes by baseline frailty status,Yes,9,1L,1,OVERALL,S_FRAILTY:FRAIL=1,
+T5c,FRAIL_1L_NO,Outcomes by baseline frailty status,No,10,1L,1,OVERALL,S_FRAILTY:FRAIL=0,
+T5c,FRAIL_2L_YES,Outcomes by baseline frailty status,Yes,11,2L,2,OVERALL,S_FRAILTY:FRAIL=1,
+T5c,FRAIL_2L_NO,Outcomes by baseline frailty status,No,12,2L,2,OVERALL,S_FRAILTY:FRAIL=0,
+T2x,1L_OVERALL,Every patient in the line,1L,1,1L,1,OVERALL,,
+T2x,2L_OVERALL,Every patient in the line,2L,2,2L,2,OVERALL,,
+T2x,AGE_1L_LT75,LOT Stratified by Age,<75 years,3,1L,1,OVERALL,S_DEMOGRAPHICS:AGE_GROUP=<75,
+T2x,AGE_1L_GE75,LOT Stratified by Age,≥75 years,4,1L,1,OVERALL,S_DEMOGRAPHICS:AGE_GROUP=75+,
+T2x,AGE_2L_LT75,LOT Stratified by Age,<75 years,5,2L,2,OVERALL,S_DEMOGRAPHICS:AGE_GROUP=<75,
+T2x,AGE_2L_GE75,LOT Stratified by Age,≥75 years,6,2L,2,OVERALL,S_DEMOGRAPHICS:AGE_GROUP=75+,
+T2x,NEURO_1L_YES,LOT Stratified by Baseline Neuropathy,Yes,7,1L,1,OVERALL,S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=1,
+T2x,NEURO_1L_NO,LOT Stratified by Baseline Neuropathy,No,8,1L,1,OVERALL,S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=0,
+T2x,NEURO_2L_YES,LOT Stratified by Baseline Neuropathy,Yes,9,2L,2,OVERALL,S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=1,
+T2x,NEURO_2L_NO,LOT Stratified by Baseline Neuropathy,No,10,2L,2,OVERALL,S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=0,
+T2x,FRAIL_1L_YES,LOT Stratified by Baseline Fraility,Yes,11,1L,1,OVERALL,S_FRAILTY:FRAIL=1,
+T2x,FRAIL_1L_NO,LOT Stratified by Baseline Fraility,No,12,1L,1,OVERALL,S_FRAILTY:FRAIL=0,
+T2x,FRAIL_2L_YES,LOT Stratified by Baseline Fraility,Yes,13,2L,2,OVERALL,S_FRAILTY:FRAIL=1,
+T2x,FRAIL_2L_NO,LOT Stratified by Baseline Fraility,No,14,2L,2,OVERALL,S_FRAILTY:FRAIL=0,
