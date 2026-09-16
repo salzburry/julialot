@@ -161,6 +161,15 @@ RETURN_TRACE_COLS <- c("PATID", "LOT_NUM", "MED_ABBR", "KIND", "RETURN_LINE",
        if (is.na(.return_trace_melp_days(p))) 0L else .return_trace_melp_days(p), "
     ),
     -- The line before each line, for what opened it and what it carried.
+    --
+    -- Re-keyed on LOT_NUM + 1, which finds nothing if a patient's lines ever
+    -- skipped a number. They cannot: lines 2..n are built in order, each
+    -- needing the one before it, the criteria layer either flags or truncates
+    -- (engine/R/line_criteria.R, ON_FAIL) and truncate drops a failing line
+    -- and every LATER one, and the build asserts 1..n twice and stops - on
+    -- LOT_LONG and again on LOT_LONG_FINAL (engine/R/build_lot.R,
+    -- check_lot_long and check_lot_final). A run that reached these tables
+    -- has no gap.
     prev_line AS (
       SELECT cast(PATID as string) AS PATID, LOT_NUM + 1 AS LOT_NUM,
              LOT_START_TYPE AS PREV_LINE_START_TYPE, LOT_BASE_MEDS AS PREV_LINE_MEDS
