@@ -42,7 +42,7 @@ The lines themselves. One `Rscript build.R` produces every table.
 | `R/foldin_rule.R` | the returning-drug rule |
 | `R/prior_regimen.R` | what counts as a new agent, a restart, and a line-breaking transplant |
 | `R/cart_rule.R` | the CAR-T consolidation rule |
-| `tests/` | 584 checks across two files |
+| `tests/` | 586 checks across two files |
 
 **Outputs.** `LOT_LONG` is every line the engine built. `LOT_LONG_FINAL` is the
 same after the patient-level criteria — a patient excluded by one is absent
@@ -68,7 +68,7 @@ tables it needs. A `fail` is a defect, a `warn` is worth reading, an `info` is
 context. The report names an example row for each finding, with the patient
 identifier masked to its last six characters so the file can be circulated.
 
-`Rscript qc/tests/test_lot_qc.R` — 295 checks. Every one of the 37 runs twice
+`Rscript qc/tests/test_lot_qc.R` — 296 checks. Every one of the 37 runs twice
 against fixtures: clean, where it must count nothing, and carrying the defect
 it describes, where it must count it.
 
