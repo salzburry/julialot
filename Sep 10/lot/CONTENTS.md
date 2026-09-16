@@ -83,6 +83,23 @@ per patient goes to `qc/out/`, ids unmasked so the patient can be looked up.
 OBJECT_PREFIX=ndmm_ TRACE_EXECUTE=TRUE Rscript qc/trace_foldin.R
 ```
 
+`qc/trace_returns.R` is the wider question the study team asked - **drugs that
+come back** - on real patients: every return the 30 Aug 2026 rules touched,
+in three kinds. A previous-line drug that *folded* into the line it returned
+in (4.8); a line's own drug that came back after a confirmed break and stayed
+in its line (4.3) - before the rule that return opened a new line, so a 1L
+drug back after a holiday made a 2L that no longer exists; and an earlier
+drug that came back and *opened* a line, which neither rule prevents (two or
+more lines back, or across a transplant-opened line). Each patient's raw
+episodes sit beside the final lines, the returns marked, with a paragraph
+per return saying what the rule did and what the earlier reading would have
+done. `TRACE_LINES=1,2` (the default) is the 2L question. What the report
+looks like, rendered on fixture patients: `qc/examples/returns_trace_example.md`.
+
+```bash
+OBJECT_PREFIX=ndmm_ TRACE_EXECUTE=TRUE Rscript qc/trace_returns.R
+```
+
 ### `validation/` — the edge-case catalogue
 
 Thirty vignettes: the patients the algorithm is hardest on, each with the
@@ -131,6 +148,7 @@ test suites need no warehouse.
 | `engine/tests/test_line_criteria.R` | 57 |
 | `qc/tests/test_lot_qc.R` | 295 |
 | `qc/tests/test_foldin_trace.R` | 149 |
+| `qc/tests/test_trace_returns.R` | 121 |
 | `melphalan/tests/test_melp_simple.R` | 161 |
 | `validation/tests/test_vignettes.R` | 36 |
 
