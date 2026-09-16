@@ -18,6 +18,22 @@ ROOT   <- local({
 LOT <- file.path(dirname(ROOT), "engine")
 
 pass <- 0L; fail <- 0L
+
+# Coverage this run did NOT get. A suite whose executed blocks were skipped -
+# no duckdb, no sqlglot, no python3 - has tested a fraction of what it claims,
+# and reporting "0 failed" for it reads as a clean run. Each skip is counted
+# and named, and an incomplete run exits non-zero unless the caller says it
+# expected one (ALLOW_SKIPPED_TESTS=TRUE).
+skipped <- 0L
+skip_note <- function(what) { skipped <<- skipped + 1L; cat("  SKIP   ", what, "\n") }
+test_report_status <- function(pass, fail, skipped) {
+  cat(sprintf("%d passed, %d failed, %d skipped\n", pass, fail, skipped))
+  if (skipped > 0L)
+    cat("  ", skipped, " block(s) did not run, so this is NOT a clean run. ",
+        "Install duckdb and sqlglot, or set ALLOW_SKIPPED_TESTS=TRUE to accept it.\n", sep = "")
+  allow <- identical(toupper(trimws(Sys.getenv("ALLOW_SKIPPED_TESTS"))), "TRUE")
+  if (fail > 0L || (skipped > 0L && !allow)) quit(status = 1L)
+}
 ok <- function(cond, what) {
   # An assertion that RAISES is a failure, not the end of the run. Without
   # this the first one to error takes the script down and every check after it
@@ -470,7 +486,7 @@ rres <- run_exec_queries(list(rule = rule_query(XCFG),
 
 if (identical(mres, "skip") || identical(rres, "skip") ||
       is.null(mres) || is.null(rres)) {
-  cat("  SKIP   duckdb/sqlglot not installed - the SQL was not executed\n")
+  skip_note("duckdb/sqlglot not installed - the SQL was not executed")
 } else {
   ok(!length(exec_errors(mres)),
      if (length(exec_errors(mres)))
@@ -593,5 +609,4 @@ ok(has(sp, "melp_suppress_dates") && has(sp, "melp_inject_rest"),
    "no melphalan dose the rule refused a line is left on the candidate list")
 
 cat("\n", strrep("-", 52), "\n", sep = "")
-cat(sprintf("%d passed, %d failed\n", pass, fail))
-if (fail > 0L) quit(status = 1L)
+test_report_status(pass, fail, skipped)
