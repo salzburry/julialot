@@ -32,6 +32,26 @@ suppressMessages({
 # non-zero unless the caller says it expected one (ALLOW_SKIPPED_TESTS=TRUE).
 .skipped <- character(0)
 skip_note <- function(what) { .skipped <<- c(.skipped, what); cat("  SKIP  ", what, "\n") }
+
+# The tally is only as good as its wiring: a bare cat("SKIP ...") prints like a
+# skip and counts as nothing, which is exactly how the first pass at this went
+# wrong - eight sites in one suite and six in another were missed by hand. Each
+# suite now checks its OWN source, so a skip site added later is caught by the
+# suite it was added to rather than by whoever next reads the diff.
+.suite_path <- local({
+  a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
+  if (length(a)) normalizePath(sub("^--file=", "", a[1]), mustWork = FALSE) else NA_character_
+})
+check_skip_wiring <- function(path = .suite_path) {
+  if (is.na(path) || !file.exists(path)) return(invisible(NULL))
+  src <- readLines(path, warn = FALSE)
+  bad <- grep('cat\\(.*"[^"]*SKIP', src)
+  # Not a comment describing one, and not skip_note's own printing line.
+  bad <- bad[!grepl("^\\s*#", src[bad]) & !grepl("skip_note", src[bad], fixed = TRUE)]
+  ok(length(bad) == 0L,
+     paste0("every SKIP this suite prints goes through skip_note(), so it is counted",
+            if (length(bad)) paste0(" [bare cat at line(s) ", paste(bad, collapse = ", "), "]") else ""))
+}
 ok <- function(cond, what) {
   # `cond` is evaluated HERE, not by the caller, so an assertion whose
   # expression raises is a FAILED assertion rather than a dead run that loses
@@ -2479,8 +2499,7 @@ cat("\nthe modules, run against recorders\n")
   txt <- paste(out, collapse = "\n")
   if (any(grepl("^SKIP:", out)) || identical(txt, "NO-PYTHON") ||
       !length(out)) {
-    cat("  SKIP  every emitted statement parses as Spark SQL",
-        " (python3 + sqlglot not available)\n", sep = "")
+    skip_note("every emitted statement parses as Spark SQL (python3 + sqlglot not available)")
   } else {
     ok(grepl("0 failure\\(s\\)", txt),
        paste0("every emitted statement parses as Spark SQL",
@@ -2738,8 +2757,7 @@ cat("\nthe modules, run against recorders\n")
   dtxt <- paste(dout, collapse = "\n")
   if (any(grepl("^SKIP:", dout)) || identical(dtxt, "NO-PYTHON") ||
       !length(dout)) {
-    cat("  SKIP  the emitted SQL executes and its numbers are right",
-        " (python3 + duckdb + sqlglot not available)\n", sep = "")
+    skip_note("the emitted SQL executes and its numbers are right (python3 + duckdb + sqlglot not available)")
   } else {
     ok(grepl("0 failed", dtxt) && !grepl("skipped", sub(", 0 skipped", "", dtxt)),
        paste0("every emitted statement executes against the fixtures",
@@ -2790,8 +2808,7 @@ cat("\nthe modules, run against recorders\n")
     error = function(e) "NO-PYTHON"))
   atxt <- paste(aout, collapse = "\n")
   if (any(grepl("^SKIP:", aout)) || identical(atxt, "NO-PYTHON") || !length(aout)) {
-    cat("  SKIP  the alternative readings execute and their numbers are right",
-        " (python3 + duckdb + sqlglot not available)\n", sep = "")
+    skip_note("the alternative readings execute and their numbers are right (python3 + duckdb + sqlglot not available)")
   } else {
     ok(grepl("0 failed", atxt),
        paste0("every statement of the alternative readings executes",
@@ -2834,7 +2851,7 @@ cat("\nthe modules, run against recorders\n")
   btxt <- paste(boutx, collapse = "\n")
   if (any(grepl("^SKIP:", boutx)) || identical(btxt, "NO-PYTHON") ||
       !length(boutx))
-    cat("  SKIP  the claim-position route executes too\n")
+    skip_note("the claim-position route executes too (python3 + duckdb + sqlglot not available)")
   else
     ok(grepl("0 failed", btxt),
        paste0("the claim-position route's SQL executes too",
@@ -3032,8 +3049,7 @@ step_sql <- function(r, tag) {
     error = function(e) "NO-PYTHON"))
   ctxt <- paste(coutx, collapse = "\n")
   if (any(grepl("^SKIP:", coutx)) || identical(ctxt, "NO-PYTHON") || !length(coutx)) {
-    cat("  SKIP  a custom criterion admits exactly the funnel's last step",
-        " (python3 + duckdb + sqlglot not available)\n", sep = "")
+    skip_note("a custom criterion admits exactly the funnel's last step (python3 + duckdb + sqlglot not available)")
   } else {
     ok(grepl("0 failed", ctxt) && grepl("0 wrong", ctxt),
        paste0("executed, a custom criterion admits exactly the funnel's last step",
@@ -3259,8 +3275,7 @@ cat("\n-- a predicate with an OR in it --\n")
     error = function(e) "NO-PYTHON"))
   otxt <- paste(ooutx, collapse = "\n")
   if (any(grepl("^SKIP:", ooutx)) || identical(otxt, "NO-PYTHON") || !length(ooutx)) {
-    cat("  SKIP  executed, an OR criterion keeps membership equal to the funnel",
-        " (python3 + duckdb + sqlglot not available)\n", sep = "")
+    skip_note("executed, an OR criterion keeps membership equal to the funnel (python3 + duckdb + sqlglot not available)")
   } else {
     ok(grepl("0 failed", otxt) && grepl("0 wrong", otxt),
        paste0("executed, an OR criterion keeps every cohort's membership equal to its funnel's last step, and the funnel never rises",
@@ -3382,7 +3397,7 @@ cat("\na staged code list survives the trip through the parser\n")
              read = "SELECT code, condition FROM cl_rt_raw ORDER BY code")
   res <- run_fragments(qs, list(), schema = list(), root = here)
   if (is.null(res) || identical(res, "skip")) {
-    cat("  SKIP  a staged code list reads back as it went in (python3 + duckdb + sqlglot not available)\n")
+    skip_note("a staged code list reads back as it went in (python3 + duckdb + sqlglot not available)")
   } else {
     got <- res[res$id == "read" & res$col == "condition", , drop = FALSE]
     got <- got$value[order(as.integer(got$row))]
@@ -3398,8 +3413,7 @@ local({
     sprintf("SELECT ID, %s AS V FROM d ORDER BY ID", x$sql))
   res <- run_fragments(qs, list(d = FRAG_ROWS), root = here)
   if (is.null(res) || identical(res, "skip")) {
-    cat("  SKIP  the emitted arithmetic executes",
-        " (python3 + duckdb + sqlglot not available)\n", sep = "")
+    skip_note("the emitted arithmetic executes (python3 + duckdb + sqlglot not available)")
     return(invisible(NULL))
   }
   errs_found <- frag_errors(res)
@@ -3492,6 +3506,7 @@ local({
   ok(identical(count_acute_lag(e, 30), e), "...on either reading")
 }
 
+check_skip_wiring()
 cat("\n", .pass, " passed, ", length(.fail), " failed, ", length(.skipped), " skipped\n", sep = "")
 if (length(.fail))
   cat("failed:\n", paste0("  ", .fail, collapse = "\n"), "\n", sep = "")

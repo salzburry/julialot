@@ -144,13 +144,13 @@ test suites need no warehouse.
 
 | suite | checks |
 |---|---|
-| `engine/tests/test_runner.R` | 527 |
-| `engine/tests/test_line_criteria.R` | 57 |
-| `qc/tests/test_lot_qc.R` | 295 |
-| `qc/tests/test_foldin_trace.R` | 149 |
-| `qc/tests/test_trace_returns.R` | 148 |
-| `melphalan/tests/test_melp_simple.R` | 161 |
-| `validation/tests/test_vignettes.R` | 36 |
+| `engine/tests/test_runner.R` | 528 |
+| `engine/tests/test_line_criteria.R` | 58 |
+| `qc/tests/test_lot_qc.R` | 296 |
+| `qc/tests/test_foldin_trace.R` | 150 |
+| `qc/tests/test_trace_returns.R` | 154 |
+| `melphalan/tests/test_melp_simple.R` | 162 |
+| `validation/tests/test_vignettes.R` | 37 |
 
 None needs a warehouse. Where `duckdb` and `sqlglot` are installed, the suites
 also execute the emitted SQL against fixtures and check the numbers that come

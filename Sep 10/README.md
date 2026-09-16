@@ -106,19 +106,19 @@ Every suite runs offline — no warehouse, no driver, no Shiny — and exits
 non-zero on any failure.
 
 ```bash
-Rscript ndmm_study_updated/study223926/tests/run_tests.R   # 584
-Rscript dashboard/tests/run_tests.R                        # 598
-Rscript TFLS/tests/test_tfls.R                             # 361
-(cd lot/engine     && Rscript tests/test_line_criteria.R)  #  57
-(cd lot/engine     && Rscript tests/test_runner.R)         # 527
-(cd lot/qc         && Rscript tests/test_lot_qc.R)         # 295
-(cd lot/qc         && Rscript tests/test_foldin_trace.R)   # 149
-(cd lot/qc         && Rscript tests/test_trace_returns.R)  # 148
-(cd lot/melphalan  && Rscript tests/test_melp_simple.R)    # 161
-(cd lot/validation && Rscript tests/test_vignettes.R)      #  36
+Rscript ndmm_study_updated/study223926/tests/run_tests.R   # 585
+Rscript dashboard/tests/run_tests.R                        # 599
+Rscript TFLS/tests/test_tfls.R                             # 362
+(cd lot/engine     && Rscript tests/test_line_criteria.R)  #  58
+(cd lot/engine     && Rscript tests/test_runner.R)         # 528
+(cd lot/qc         && Rscript tests/test_lot_qc.R)         # 296
+(cd lot/qc         && Rscript tests/test_foldin_trace.R)   # 150
+(cd lot/qc         && Rscript tests/test_trace_returns.R)  # 154
+(cd lot/melphalan  && Rscript tests/test_melp_simple.R)    # 162
+(cd lot/validation && Rscript tests/test_vignettes.R)      #  37
 ```
 
-2916 checks. Base R except for **`glue`**, which three of them need — the two
+2931 checks. Base R except for **`glue`**, which three of them need — the two
 LOT engine suites, through `tests/testutil.R`, and melphalan. The other six load
 nothing. The app needs `shiny`; a warehouse run needs `DBI`, `odbc` and `glue`.
 
@@ -126,6 +126,10 @@ Four of the suites (the study package, LOT QC's two, and melphalan) additionally
 SQL they emit against fixtures where `python3` with `duckdb` and `sqlglot` is
 present. The dashboard suite does the same with `survival`, which it uses
 only to cross-check its own Kaplan-Meier against a second implementation.
+
+The dashboard suite also needs **`survival`** for a complete run — without it
+the Kaplan-Meier cross-check is skipped, the suite reports one skip and exits
+non-zero, and its count is one lower.
 
 **A suite that could not run part of itself does not exit clean.** Every suite
 ends with `N passed, N failed, N skipped`, names each skipped block and what

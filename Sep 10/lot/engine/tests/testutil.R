@@ -10,6 +10,26 @@ pass <- 0L; fail <- 0L
 # expected one (ALLOW_SKIPPED_TESTS=TRUE).
 skipped <- 0L
 skip_note <- function(what) { skipped <<- skipped + 1L; cat("  SKIP   ", what, "\n") }
+
+# The tally is only as good as its wiring: a bare cat("SKIP ...") prints like a
+# skip and counts as nothing, which is exactly how the first pass at this went
+# wrong - eight sites in one suite and six in another were missed by hand. Each
+# suite now checks its OWN source, so a skip site added later is caught by the
+# suite it was added to rather than by whoever next reads the diff.
+.suite_path <- local({
+  a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
+  if (length(a)) normalizePath(sub("^--file=", "", a[1]), mustWork = FALSE) else NA_character_
+})
+check_skip_wiring <- function(path = .suite_path) {
+  if (is.na(path) || !file.exists(path)) return(invisible(NULL))
+  src <- readLines(path, warn = FALSE)
+  bad <- grep('cat\\(.*"[^"]*SKIP', src)
+  # Not a comment describing one, and not skip_note's own printing line.
+  bad <- bad[!grepl("^\\s*#", src[bad]) & !grepl("skip_note", src[bad], fixed = TRUE)]
+  ok(length(bad) == 0L,
+     paste0("every SKIP this suite prints goes through skip_note(), so it is counted",
+            if (length(bad)) paste0(" [bare cat at line(s) ", paste(bad, collapse = ", "), "]") else ""))
+}
 test_report_status <- function(pass, fail, skipped) {
   cat(sprintf("%d passed, %d failed, %d skipped\n", pass, fail, skipped))
   if (skipped > 0L)
@@ -34,6 +54,7 @@ stops <- function(expr, what) ok(inherits(tryCatch(expr, error = function(e) e),
 has   <- function(x, s) grepl(s, x, fixed = TRUE)
 
 report <- function() {
+  check_skip_wiring()
   cat("\n", strrep("-", 52), "\n", sep = "")
   test_report_status(pass, fail, skipped)
 }

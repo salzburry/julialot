@@ -23,6 +23,26 @@ pass <- 0L; fail <- 0L
 # expected one (ALLOW_SKIPPED_TESTS=TRUE).
 skipped <- 0L
 skip_note <- function(what) { skipped <<- skipped + 1L; cat("  SKIP   ", what, "\n") }
+
+# The tally is only as good as its wiring: a bare cat("SKIP ...") prints like a
+# skip and counts as nothing, which is exactly how the first pass at this went
+# wrong - eight sites in one suite and six in another were missed by hand. Each
+# suite now checks its OWN source, so a skip site added later is caught by the
+# suite it was added to rather than by whoever next reads the diff.
+.suite_path <- local({
+  a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
+  if (length(a)) normalizePath(sub("^--file=", "", a[1]), mustWork = FALSE) else NA_character_
+})
+check_skip_wiring <- function(path = .suite_path) {
+  if (is.na(path) || !file.exists(path)) return(invisible(NULL))
+  src <- readLines(path, warn = FALSE)
+  bad <- grep('cat\\(.*"[^"]*SKIP', src)
+  # Not a comment describing one, and not skip_note's own printing line.
+  bad <- bad[!grepl("^\\s*#", src[bad]) & !grepl("skip_note", src[bad], fixed = TRUE)]
+  ok(length(bad) == 0L,
+     paste0("every SKIP this suite prints goes through skip_note(), so it is counted",
+            if (length(bad)) paste0(" [bare cat at line(s) ", paste(bad, collapse = ", "), "]") else ""))
+}
 test_report_status <- function(pass, fail, skipped) {
   cat(sprintf("%d passed, %d failed, %d skipped\n", pass, fail, skipped))
   if (skipped > 0L)
@@ -766,7 +786,7 @@ cat("\nKaplan-Meier\n")
     ok(max(abs(mine$SURV - theirs)) < 1e-8,
        "and agrees with survival::survfit to 1e-8 over 300 subjects")
   } else {
-    cat("  SKIP   survival:: is not installed, so the cross-check did not run\n")
+    skip_note("survival:: is not installed, so the Kaplan-Meier cross-check did not run")
   }
 }
 
@@ -2288,7 +2308,7 @@ cat("\nthe LOT table list matches the engine's own\n")
     ok(length(declared) > length(LOT_DASHBOARD_TABLES),
        "and the engine writes more than the dashboard shows, which is expected")
   } else {
-    cat("  SKIP   lot/engine is not beside this folder\n")
+    skip_note("lot/engine is not beside this folder, so the engine cross-checks did not run")
   }
 }
 
@@ -2336,7 +2356,7 @@ cat("\nthe shells are filled at the sidebar's floor, and no lower\n")
 {
   ready <- tfls_ready()
   if (!isTRUE(ready$ok)) {
-    cat("  SKIP   the shells are not beside this folder\n")
+    skip_note("the shells are not beside this folder, so the shell checks did not run")
   } else {
     s <- SCENARIOS[["s223926_"]]
     ok(nrow(ready$shells$tables) > 0 && nrow(ready$shells$classes) > 0,
@@ -2411,7 +2431,7 @@ cat("\nthe snapshot is rebuilt while a shell table is being filled\n")
 {
   ready <- tfls_ready()
   if (!isTRUE(ready$ok)) {
-    cat("  SKIP   the shells are not beside this folder\n")
+    skip_note("the shells are not beside this folder, so the shell checks did not run")
   } else {
     # shiny is not installed in this environment, so the panel is not driven
     # through testServer(). The decision it makes is driven directly instead:
@@ -2469,7 +2489,7 @@ cat("\nthe class mapping is the thing to edit\n")
 {
   ready <- tfls_ready()
   if (!isTRUE(ready$ok)) {
-    cat("  SKIP   the shells are not beside this folder\n")
+    skip_note("the shells are not beside this folder, so the shell checks did not run")
   } else {
     cm <- shell_class_table(ready)
     ok(nrow(cm) == nrow(ready$shells$classes),
@@ -2603,7 +2623,7 @@ cat("\nthe pasteable command cannot inject\n")
     paste(out, collapse = "\n")
   }
   got <- shell_value(payload)
-  if (is.null(got)) cat("  SKIP   no bash, so the shell round-trip did not run\n")
+  if (is.null(got)) skip_note("no bash, so the shell round-trip did not run")
   else {
     ok(identical(got, payload),
        "a shell assigns the whole payload as the value, executing none of it")
@@ -2809,4 +2829,5 @@ cat("\napp.R is wiring, and the wiring matches the registries\n")
 }
 
 cat("\n", strrep("-", 52), "\n", sep = "")
+check_skip_wiring()
 test_report_status(pass, fail, skipped)

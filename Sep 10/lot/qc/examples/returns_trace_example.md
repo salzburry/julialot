@@ -82,7 +82,7 @@ Episodes (MAP_STACKED) and transplant events, in date order:
 | MAP_START_DT | MAP_END_DT | MAP_MED_RUNOUT_DT | MAP_MED_TYPE | MAP_MED_CLASS | MAP_CNT | MAP_DISCON_FLG | line | note |
 |---|---|---|---|---|---|---|---|---|
 | 2020-01-01 | 2020-04-30 | 2020-04-30 | DEX | STEROID | 4 | 1 | 1 |  |
-| 2020-01-01 | 2020-04-30 | 2020-04-30 | LEN | NOVEL | 4 | 1 | 1 | break follows: 214 days to the return |
+| 2020-01-01 | 2020-04-30 | 2020-04-30 | LEN | NOVEL | 4 | 1 | 1 | opens LOT 1; break follows: 214 days to the return |
 | 2020-11-30 | 2021-03-31 | 2021-03-31 | DEX | STEROID | 4 | 1 | 1 |  |
 | 2020-11-30 | 2021-03-31 | 2021-03-31 | LEN | NOVEL | 4 | 1 | 1 | RETURNED to LOT 1 after a 214-day break (4.3) |
 
@@ -104,7 +104,7 @@ Episodes (MAP_STACKED) and transplant events, in date order:
 | 2020-01-01 | 2020-09-30 | 2020-09-30 | BORT | NOVEL | 9 | 1 | 1 | opens LOT 1 |
 | 2020-01-01 | 2020-06-15 | 2020-06-15 | DEX | STEROID | 6 | 0 | 1 |  |
 | 2020-09-01 | 2020-12-15 | 2020-12-15 | DEX | STEROID | 4 | 0 | 2 |  |
-| 2020-09-01 | 2020-12-15 | 2020-12-15 | POM | NOVEL | 4 | 1 | 2 | break follows: 137 days to the return |
+| 2020-09-01 | 2020-12-15 | 2020-12-15 | POM | NOVEL | 4 | 1 | 2 | opens LOT 2; break follows: 137 days to the return |
 | 2021-05-01 | 2021-08-31 | 2021-08-31 | DEX | STEROID | 4 | 0 | 2 |  |
 | 2021-05-01 | 2021-08-31 | 2021-08-31 | POM | NOVEL | 4 | 0 | 2 | RETURNED to LOT 2 after a 137-day break (4.3) |
 
@@ -136,7 +136,7 @@ Lines (LOT_LONG_FINAL):
 
 | LOT_NUM | LOT_START_DT | LOT_START_TYPE | LOT_BASE_MEDS | LOT_MED_CNT | LOT_BASE_END_DT | LOT_BASE_END_REASON | LOT_BASE_LENGTH | LOT_BASE_1ST_ADD_MED | LOT_BASE_1ST_ADD_MED_DT | LOT_BASE_DISCON_DT | LOT_TX_AUTO_MAX_DT |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | 2020-01-01 | MED | BORT LEN | 2 | 2020-06-30 | DISCONTINUATION | 182 |  |  | 2020-06-30 |  |
+| 1 | 2020-01-01 | MED | BORT LEN | 2 | 2020-08-31 | SCT_AUTO | 244 |  |  |  | 2020-02-15 |
 | 2 | 2020-09-01 | SCT_AUTO |  | 0 | 2020-11-30 | MED_ADD | 91 | LEN | 2020-12-01 |  |  |
 | 3 | 2020-12-01 | MED | LEN | 1 | 2021-06-30 | STUDY_END | 212 |  |  |  |  |
 
@@ -147,6 +147,7 @@ Episodes (MAP_STACKED) and transplant events, in date order:
 | 2020-01-01 | 2020-05-31 | 2020-05-31 | BORT | NOVEL | 5 | 1 | 1 | opens LOT 1 |
 | 2020-01-01 | 2020-06-30 | 2020-06-30 | DEX | STEROID | 6 | 0 | 1 |  |
 | 2020-01-01 | 2020-06-30 | 2020-06-30 | LEN | NOVEL | 6 | 1 | 1 | opens LOT 1 |
+| 2020-02-15 |  |  | SCT_AUTO | TRANSPLANT |  |  | 1 |  |
 | 2020-09-01 |  |  | SCT_AUTO | TRANSPLANT |  |  | 2 | opens LOT 2 |
 | 2020-12-01 | 2021-06-30 | 2021-06-30 | LEN | NOVEL | 7 | 0 | 3 | opens LOT 3 - LOT 2 was opened by SCT_AUTO, so no fold across it |
 
