@@ -1,49 +1,36 @@
 # Open questions for the study team
 
-Twenty-three decisions the protocol and the Optum documentation do not settle,
+**Fifteen decisions** the protocol and the Optum documentation do not settle,
 each of which changes a count or a definition. Ordered by how much they change.
 Every one has two defensible readings and the build has to pick one; the reading
 it takes meanwhile is a setting in `study223926/config.csv`.
 
-Q8, Q10, Q22, Q24 and Q26 are closed and their numbers are recorded under
-*Settled against the warehouse* below. Q4 and Q17 were settled by the cohort
-build and are left in place with the answer. Q13 is answered.
+**Five of the fifteen stop work.** Q15, the outstanding annexes, and Q11, the
+emergency department definition, because nothing can be computed without them;
+Q2, Q13 and Q6 because they move large numbers. The other ten are confirmations
+of a reading the build has already taken, and two of those are worth real
+money - **Q27 (a factor of two)** and **Q28**, which needs the vendor rather
+than the protocol author.
 
-Sixteen of the rest carry a measured price - how many patients the decision
-moves - under *What each decision is worth*. The largest two are **Q27 (a
-factor of two)** and **Q25 (17.4% of all medical claim lines)**.
+**Sixteen questions have closed.** Eleven are settled outright, under *Answered
+- no decision needed*: by the study team (Q1), by the protocol's own body text
+(Q7, Q20), by the deployed schema (Q4, Q9), or by the warehouse (Q5, Q12, Q14,
+Q16, Q17, Q18). Five more are priced and immaterial, under *Recorded readings*:
+Q3, Q19, Q21, Q23 and Q25, none worth more than a fraction of a percent. Q8,
+Q10, Q22, Q24 and Q26 closed earlier and their numbers are under *Settled
+against the warehouse*.
 
-Q12, Q15 and Q20 cannot be answered from the data at all; they need the
-protocol author or the annexes themselves.
+Every closed question keeps its number, because the code cites them, and keeps
+its evidence, so a reader can see why it closed rather than taking it on trust.
+
+Most of the live ones carry a measured price - how many patients the decision
+moves - under *What each decision is worth*.
+
+Q15 cannot be answered from the data at all; it needs the annexes themselves.
 
 ---
 
 ## Blocking — a number moves
-
-### Q1. Does the study period start 01 Jan 2016 or 01 Jan 2018?
-
-The body text (§7.1) says:
-
-> "The study period will span from **01 Jan 2018** through 31 Mar 2026"
-
-Figure 1 and Figure 2 are both labelled **"Study start
-01 Jan 2016"**.
-
-This is not cosmetic. Criterion I1 says the qualifying MM diagnosis must fall
-"during the study period", so a 2018 start drops every patient whose only
-qualifying diagnosis is 2016-2017 — including patients whose 1L is in 2019 and who
-would otherwise be in. It also decides whether ICD-9 codes are ever in scope (ICD-10
-began Oct 2015, so a 2018 start makes the ICD-9 arms of every code list dead).
-
-The cohort build uses `STUDY_START = 2016-01-01`, settled against the June 2026
-protocol. Mechanically the change is cheap: the window is a **run argument**,
-not a `CONTRACT` setting, and `check_cohort_window()` makes a cohort/vintage
-mismatch fatal rather than silent. The `2026q1` vintage is the same tables and
-column names as `2025q2` with data extended through 2026-03-31, so moving the
-window needs no re-validation.
-
-**Ask:** which is correct, and does the MM diagnosis have to fall inside the study
-period or merely on or before the 1L index?
 
 ### Q2. Does the outpatient arm of the MM diagnosis use the broad code set?
 
@@ -68,21 +55,6 @@ codes, so both arms are strict in practice. Widening the file is all the broad
 reading needs.
 
 **Ask:** strict on both arms, or strict inpatient / broad outpatient?
-
-### Q4. What does "with medical and pharmacy benefits" mean operationally? — **ANSWERED**
-
-Medical and pharmacy benefits are **satisfied by construction**. The extract does
-not separate them: `member_enrollment` has 27 columns and none is a benefit
-indicator. `ASO`, `BUS`, `CDHP`, `PRODUCT`, `HEALTH_EXCH` and `GROUP_NBR` are plan
-structure and funding, not coverage type. A span carries both, so `ELIGEFF`/`ELIGEND`
-already express the requirement and a predicate would filter on nothing.
-
-**Do not re-derive this from claims.** Enrolled patients with no pharmacy fill look
-like a coverage signal and are not: that count is dominated by short spans and by
-patients whose only MM code is a rule-out.
-
-`DATA_MAPPING.md` §7 reaches the same conclusion from the schema, and the
-protocol's own §7.5 agrees. **No predicate to write. Closed.**
 
 ### Q6. Do steroid-only claims count as "MM oncology therapy" for the prior-therapy exclusion?
 
@@ -166,39 +138,6 @@ agree with one another, and the choice moves the ED rate by a large margin.
 
 **Ask:** which construction, and is an ED visit that becomes an inpatient admission
 counted as an ED visit, a hospitalisation, or both?
-
-### Q9. Region — is there a `REGION` column, or do we derive it from `STATE`?
-
-Table 4 wants US Census Bureau regions. The CDM V9.0 dictionary documents `REGION`
-("The US Census Region associated with the member address") on MEMBER_ENROLLMENT and
-says `DIVISION` was removed. The deployed 2025q4 table carries `STATE varchar(2)` and
-**no** `REGION` (`DATA_MAPPING.md` §4).
-
-The two are not just different columns, they are different CDM vintages: the deployed
-27-column table is **pre-V9.0** — it has `STATE`, which V9.0 removed, and lacks
-`REGION` and `LIS_DUAL`, which V9.0 added — plus eight Databricks-side date-part
-columns. `DATA_MAPPING.md` §4 has the arithmetic. In V9.0, Census Region is the finest
-geography that survives at all: `DIVISION`, state, ZIP, county and MSA are all gone.
-
-The deployed extract is not simply "a version behind" — it is a hybrid. Of the
-four V9.0 additions to MEMBER_ENROLLMENT, **three landed** (`ETHNICITY`, `RACE`
-moved off the SES file, `RACE_SOURCE` — appended at columns 26 and 27) and
-**`REGION` did not**, while `STATE`, which V9.0 removed, is still there.
-`LIS_DUAL` is also absent. `DATA_MAPPING.md` §4 lists all 27 columns.
-
-So `REGION` is specifically the one missing column the region variable needs.
-`REGION_SOURCE=region_column` refuses rather than reaching Spark and failing
-with `UNRESOLVED_COLUMN` after the spine is built.
-
-**Ask:** confirm we may derive region from `STATE` with a standard 50-state →
-4-region crosswalk, and how to classify a patient whose `STATE` changes between
-enrolment rows (take the row covering the index date?). Also worth asking when
-`REGION` is expected — if a refresh brings it, the crosswalk becomes redundant
-rather than wrong, and since `ETHNICITY` and `RACE_SOURCE` were appended
-without disturbing `STATE`, a refresh would probably append `REGION` too rather
-than swapping the columns.
-
----
 
 ## Needs a decision, but does not block a first build
 
@@ -384,29 +323,6 @@ score; which value is the confident link is not derivable from the data.
 
 ---
 
-### Q25. Should denied claims count?
-
-`MEDICAL.PAID_STATUS` is *"the payment determination of this service line"*, and
-the CDM fills it in where the source left it null:
-
-> "PAID if Sum of all Paid Amounts >= $0 · DENIED if Sum of all Paid Amounts < $0"
-
-A denied claim is not evidence the service happened. Neither this package nor
-the cohort build filters on it, so every count built so far includes denied
-lines: diagnoses that qualify a patient, ED visits, hospitalisations, and the
-claims that set a line of therapy.
-
-`CLAIM_STATUS` carries the two readings. The default is `all`, which is what
-every number produced to date includes; `paid_only` excludes `DENIED`. The
-default is deliberately the status quo rather than the more defensible option,
-because changing it silently would make this package disagree with the cohort
-table it is built on.
-
-**Ask:** confirm whether the study intends to include denied claims. Most
-claims analyses exclude them.
-
----
-
 ### Q27. Which route defines "a MM diagnosis in first or second position"?
 
 §7.8.1 defines an MM-related hospitalisation as one with *"a MM diagnosis in
@@ -431,13 +347,81 @@ reported within a hospitalization".
 
 ---
 
-### Q3. Are 30- and 60-day outpatient pairing windows still wanted as sensitivities?
+## Answered — no decision needed
 
-The protocol names only 90 days. An earlier specification flagged 30- and 60-day
-pairs as well, and the current build reports one cohort at 90 with 30/60 available
-as sensitivities.
+Eleven questions that are settled: by the study team, by the protocol's own
+body text, by the deployed schema, or by the warehouse. They keep their
+numbers because the code cites them, and their evidence is kept so a reader
+can see why each one closed rather than taking it on trust.
+
+---
+
+### Q1. Does the study period start 01 Jan 2016 or 01 Jan 2018?
+
+**Answered 16 September 2026: the study period starts 01 Jan 2018.** The body
+text is operative and both figures are leftovers from the June version, where
+2016 was correct and the figure was never updated. The cohort build and the LOT
+run are to be re-run at `STUDY_START=2018-01-01` and `LOT1_FROM=2019-01-01`;
+until they are, the study package refuses to run against the 2016 cohort rather
+than indexing patients the protocol does not have (`BINDING_UPSTREAM_SETTINGS`).
+One half of the original ask is still worth a sentence from the author: whether
+the qualifying diagnosis must fall inside the period, or merely on or before the
+1L index. The first reading drops patients diagnosed in 2016 or 2017 whose 1L
+starts in 2019.
+
+The body text (§7.1) says:
+
+> "The study period will span from **01 Jan 2018** through 31 Mar 2026"
+
+Figure 1 and Figure 2 are both labelled **"Study start
+01 Jan 2016"**.
+
+This is not cosmetic. Criterion I1 says the qualifying MM diagnosis must fall
+"during the study period", so a 2018 start drops every patient whose only
+qualifying diagnosis is 2016-2017 — including patients whose 1L is in 2019 and who
+would otherwise be in. It also decides whether ICD-9 codes are ever in scope (ICD-10
+began Oct 2015, so a 2018 start makes the ICD-9 arms of every code list dead).
+
+The cohort build uses `STUDY_START = 2016-01-01`, settled against the June 2026
+protocol. Mechanically the change is cheap: the window is a **run argument**,
+not a `CONTRACT` setting, and `check_cohort_window()` makes a cohort/vintage
+mismatch fatal rather than silent. The `2026q1` vintage is the same tables and
+column names as `2025q2` with data extended through 2026-03-31, so moving the
+window needs no re-validation.
+
+**Ask:** which is correct, and does the MM diagnosis have to fall inside the study
+period or merely on or before the 1L index?
+
+---
+
+### Q4. What does "with medical and pharmacy benefits" mean operationally? — **ANSWERED**
+
+**Answered by the deployed schema.** Left in place below with its own answer.
+
+Medical and pharmacy benefits are **satisfied by construction**. The extract does
+not separate them: `member_enrollment` has 27 columns and none is a benefit
+indicator. `ASO`, `BUS`, `CDHP`, `PRODUCT`, `HEALTH_EXCH` and `GROUP_NBR` are plan
+structure and funding, not coverage type. A span carries both, so `ELIGEFF`/`ELIGEND`
+already express the requirement and a predicate would filter on nothing.
+
+**Do not re-derive this from claims.** Enrolled patients with no pharmacy fill look
+like a coverage signal and are not: that count is dominated by short spans and by
+patients whose only MM code is a rule-out.
+
+`DATA_MAPPING.md` §7 reaches the same conclusion from the schema, and the
+protocol's own §7.5 agrees. **No predicate to write. Closed.**
+
+---
 
 ### Q5. Is "evidence of follow-up" meant to filter anyone?
+
+**Answered by the warehouse.** Of 93,245 members, all 93,245 have a medical
+claim exactly on their index date, so the literal reading of *"at least one
+claim from the index date"* excludes nobody, which is what the question
+suspected. The build takes that literal reading. The strict one - a claim
+after the index - would exclude 1,012 members (1.1%), and
+`FU_EVIDENCE_RULE=claim_after_index` switches to it without a code change. No
+decision is needed unless the strict reading is wanted.
 
 Criterion I5 is *"at least one claim (pharmacy or medical) from index date or
 death"*. The index claim is itself a medical or pharmacy claim on the index date, so
@@ -446,7 +430,19 @@ on a literal reading every indexed patient passes and the criterion excludes nob
 **Ask:** is a claim **after** the index date meant (i.e. index excluded), or is this
 intentionally a no-op that documents the follow-up requirement?
 
+---
+
 ### Q7. Confirming the secondary 2L cohort permits prior malignancy
+
+**Answered by §7.8.1**, which states it outright: *"2L cohort: because prior
+history of malignancy during baseline is permitted per eligibility criteria, the
+baseline prevalence of any malignancy will be summarized."* So X2 does not reach
+the secondary cohort, and the garbled §7.4.1.1 sentence needs no interpreting.
+
+What remains is upstream code rather than a question. The delivered cohort build
+selects from a table that has already dropped the patients X2 removes, so the
+secondary cohort cannot be built from it at all until that build retains them
+with the flag on the row. `CONFORMANCE.md` tracks it as `X2-SEC2L-WAIVER`.
 
 §7.4.1.1 reads *"Patients in this analysis are analysis are eligible if there is
 evidence of a malignancy prior to 2L"* — a garbled sentence. §7.8.1 settles it:
@@ -457,7 +453,62 @@ evidence of a malignancy prior to 2L"* — a garbled sentence. §7.8.1 settles i
 So exclusion X2 does **not** apply to the secondary 2L cohort. Worth one line of
 written confirmation, since it is the only place the two cohorts' criteria diverge.
 
+---
+
+### Q9. Region — is there a `REGION` column, or do we derive it from `STATE`?
+
+**Not a choice: the column the alternative needs does not exist.** The deployed
+2025q4 `MEMBER_ENROLLMENT` carries `STATE` and no `REGION` (`DATA_MAPPING.md`
+§4), so the Census crosswalk is the only available construction and
+`REGION_SOURCE=state_crosswalk` is the default. `region_column` refuses at
+preflight rather than reaching Spark and failing on an unresolved column after
+the spine is built. Measured: 5.7% of members hold two distinct `STATE` values
+across their rows and none holds three, and the tie-break is Q16's.
+
+It becomes a live question again only if a refresh brings `REGION`. Since
+`ETHNICITY` and `RACE_SOURCE` were appended without disturbing `STATE`, a
+refresh would probably append it too rather than swapping the columns.
+
+Table 4 wants US Census Bureau regions. The CDM V9.0 dictionary documents `REGION`
+("The US Census Region associated with the member address") on MEMBER_ENROLLMENT and
+says `DIVISION` was removed. The deployed 2025q4 table carries `STATE varchar(2)` and
+**no** `REGION` (`DATA_MAPPING.md` §4).
+
+The two are not just different columns, they are different CDM vintages: the deployed
+27-column table is **pre-V9.0** — it has `STATE`, which V9.0 removed, and lacks
+`REGION` and `LIS_DUAL`, which V9.0 added — plus eight Databricks-side date-part
+columns. `DATA_MAPPING.md` §4 has the arithmetic. In V9.0, Census Region is the finest
+geography that survives at all: `DIVISION`, state, ZIP, county and MSA are all gone.
+
+The deployed extract is not simply "a version behind" — it is a hybrid. Of the
+four V9.0 additions to MEMBER_ENROLLMENT, **three landed** (`ETHNICITY`, `RACE`
+moved off the SES file, `RACE_SOURCE` — appended at columns 26 and 27) and
+**`REGION` did not**, while `STATE`, which V9.0 removed, is still there.
+`LIS_DUAL` is also absent. `DATA_MAPPING.md` §4 lists all 27 columns.
+
+So `REGION` is specifically the one missing column the region variable needs.
+`REGION_SOURCE=region_column` refuses rather than reaching Spark and failing
+with `UNRESOLVED_COLUMN` after the spine is built.
+
+**Ask:** confirm we may derive region from `STATE` with a standard 50-state →
+4-region crosswalk, and how to classify a patient whose `STATE` changes between
+enrolment rows (take the row covering the index date?). Also worth asking when
+`REGION` is expected — if a refresh brings it, the crosswalk becomes redundant
+rather than wrong, and since `ETHNICITY` and `RACE_SOURCE` were appended
+without disturbing `STATE`, a refresh would probably append `REGION` too rather
+than swapping the columns.
+
+---
+
 ### Q12. Why do "Year of initiation" and "Types of SOC by line" span different years?
+
+**Answered by arithmetic, once Q1 is answered.** With the study period starting
+01 Jan 2018 and the 1L index floor at 01 Jan 2019, no line in the cohort can
+start before 2019, so the 2017 and 2018 columns of *"Types of 1L, 2L, 3L SOCs or
+classes by line"* are empty by construction. The 2017 bound is a leftover from
+the earlier draft, not a wider tabulation. `S_SOC.LOT_START_YEAR` carries the
+year a line began, so the table is a count over it whatever range the shell
+prints.
 
 Table 4 gives "Year of 1L, 2L and 3L initiation" as *"from 2019 to latest data
 availability"* and, in the very next row, "Types of 1L, 2L, 3L SOCs or classes by
@@ -467,7 +518,19 @@ period on either reading of Q1.
 **Ask:** is 2017 a leftover from an earlier draft, or is the SOC tabulation meant to
 reach back further than the cohort?
 
+---
+
 ### Q14. Does the baseline period include the index date?
+
+**Answered: the build does what each sentence says, separately.** §7.1's
+baseline excludes the index day and §7.8.1's comorbidity baseline includes it,
+and those are two different windows rather than a contradiction to resolve.
+`S_PERIODS` carries both - `BASELINE_START`/`BASELINE_END` for the safety and
+HCRU windows, `COMORB_BASELINE_START`/`COMORB_BASELINE_END` for Charlson -
+under `COMORBIDITY_BASELINE_INCLUDES_INDEX=TRUE`.
+
+Measured: all 93,245 members have a claim exactly on their index date, so the
+day is universal and the distinction is real rather than theoretical.
 
 §7.1: *"the 12-month period prior to the index date for each LOT (**does
 not include index date**)"*.
@@ -478,7 +541,22 @@ period, **including the index date**"*.
 A same-day event at index otherwise lands in both the baseline and the treatment
 period, or in neither.
 
+---
+
 ### Q16. How is a time-varying enrolment attribute resolved "at index"?
+
+**Answered and implemented.** The row covering the index date supplies the
+attribute, and where more than one covers it the order is total - `ELIGEND`
+descending, then `ELIGEFF` descending, then `PAT_PLANID` - so two runs of the
+same code cannot disagree. Where no row covers the index day, which the 30-day
+bridging rule allows, the baseline row ending nearest it stands in, and
+`S_DEMOGRAPHICS.ATTR_SOURCE` says which row each patient's values came from.
+`ENROL_ATTR_AT=latest_span` is the comparison reading.
+
+Measured: among myeloma patients 11,986 (11.4%) hold overlapping rows on
+different `PAT_PLANID`s; those rows disagree on `STATE` for 473 members and on
+`BUS` for 388, and **never on `RACE`**. The tie-break is worth about 0.8% of
+patients and race was never at risk.
 
 `BUS`, `PRODUCT`, `CDHP`, `STATE` and `GDR_CD` live on `MEMBER_ENROLLMENT`, which
 carries a new row every time anything about the member changes. The observed value
@@ -494,7 +572,11 @@ sex).
 
 **Ask:** confirm "the row covering the index date", and give a tie-break.
 
+---
+
 ### Q17. Which way round are `PROC_CD` and `PROC`? — **ANSWERED**
+
+**Answered by the data.** Left in place below with its own answer.
 
 Rule 5 of the Optum business rules assigns `PROC_CD` / `T_MEDICAL` to
 ICD-9/ICD-10 procedure codes and `PROC` / `T_MED_PROCEDURE` to HCPCS/CPT. Rule 3,
@@ -513,7 +595,11 @@ medication source anyway, because the failure it guards is asymmetric — a ther
 scan cannot see lets a patient pass the no-prior-therapy criterion on missing data,
 and can move the index later than it belongs.
 
+---
+
 ### Q18. Is the 2022 business-rules document still current? — **partly answered: no**
+
+**Answered: no.** Left in place below with what that costs.
 
 The Optum business rules document is dated 30 August 2022. It is being applied
 to a 2025Q4/2026Q1 extract against a CDM **V9.0** dictionary released
@@ -536,19 +622,19 @@ since changed.
 **Ask:** is there a newer business-rules document, and has the inpatient/outpatient
 construction been revalidated against V9.0?
 
-### Q19. Do the days inside a bridged enrolment gap count as person-time?
-
-Every rate in Objectives 1 and 2 has a person-year denominator. A patient with a
-25-day gap in their baseline year is "continuously enrolled" by the ≤ 30-day rule —
-but do those 25 days contribute person-time, or are they removed from the
-denominator?
-
-Neither Optum document addresses it, and the protocol does not either. The choice
-changes every rate slightly and systematically.
-
-**Ask:** count bridged gap days as covered person-time, or exclude them?
+---
 
 ### Q20. Which annex numbering is right?
+
+**Answered by the body text.** §7.3.2 defines the safety events *"according to
+selected ICD-10-CM codes or healthcare visits (Annex 3)"*, §7.8.5 says outcomes
+follow *"pre-defined code lists, as specified in Annex 3"*, and §7.8 puts the
+shells in *"Annex 4 and Annex 5"*. All three agree with Annex 1's own list, so
+Annex 3 is the code lists and the contents page has three entries rotated.
+
+Nothing in the build turns on it. What is left is a correction to send the
+authors, along with the two typos on the same page, "ALGORITHIM" and
+"FRAILITY".
 
 The protocol's contents list gives:
 
@@ -577,12 +663,68 @@ typos: "ALGORITHIM" and "FRAILITY".
 
 ---
 
-## Inherited from the cohort build, still open
+## Recorded readings — measured, and too small to decide
 
-The cohort build leaves four of its own decisions open pending the study team.
-The protocol resolves none of them, and two move outcome numbers.
+Five questions the protocol leaves open where the data has since priced the
+difference and found it immaterial. The build takes the reading below, each
+is a setting that produces the alternative, and none is worth the study
+team's time unless somebody wants the other answer.
+
+---
+
+### Q3. Are 30- and 60-day outpatient pairing windows still wanted as sensitivities?
+
+**Recorded reading: 90 days only, as the protocol names.** The 30- and 60-day
+pairs came from an earlier specification and nobody has asked for them since.
+Measured: 16,171 members have a paired other-cancer within 30 days and 16,760
+within 60, so the wider window adds 589, and 1,108 members have at least one
+cancer category whose only pairing sits in the 31-60 day band. Real but small,
+and `OTHER_CANCER_PAIR_DAYS` produces either on request.
+
+The protocol names only 90 days. An earlier specification flagged 30- and 60-day
+pairs as well, and the current build reports one cohort at 90 with 30/60 available
+as sensitivities.
+
+---
+
+### Q19. Do the days inside a bridged enrolment gap count as person-time?
+
+**Recorded reading: bridged gap days count as covered person-time.** The
+protocol and both Optum documents are silent, and the alternative is to carve
+them out of every denominator.
+
+Measured: the bridged gaps of 30 days or fewer carry 109,679 days across the
+whole myeloma population, roughly 300 person-years, and that is an upper bound
+because the query counted a contiguous re-enrolment as a gap. Against
+denominators in the tens of thousands of person-years it is not a number any
+rate will show. Worth keeping on the record for a different reason: 987 gaps
+sit at exactly 30 days against 98 at exactly 29, so the threshold lands on a
+plan-renewal boundary and moving it by one day is not neutral.
+
+Every rate in Objectives 1 and 2 has a person-year denominator. A patient with a
+25-day gap in their baseline year is "continuously enrolled" by the ≤ 30-day rule —
+but do those 25 days contribute person-time, or are they removed from the
+denominator?
+
+Neither Optum document addresses it, and the protocol does not either. The choice
+changes every rate slightly and systematically.
+
+**Ask:** count bridged gap days as covered person-time, or exclude them?
+
+---
 
 ### Q21. Are "months" calendar months or fixed day counts?
+
+**Recorded reading: a month is a fixed day count.** 12 months is
+`[index - 365, index - 1]` at every line and 3 months is 90 days, because
+`add_months()` would give two patients indexed a day apart different windows,
+and 90 is the shortest three calendar months and so the more permissive
+reading. `MONTHS_AS=calendar` produces the other.
+
+Measured: `add_months(index, -12)` and `index - 365` land on the same date for
+73,321 members and one day apart for 19,924. Never two. The question is real
+for 21% of members and worth a single day to each of them, which is not a
+decision worth a protocol amendment.
 
 Every months window in the package is a fixed day count — 12 months is
 `[index − 365, index − 1]` at 1L, 2L and 3L alike; 3 months is 90 days. The
@@ -593,7 +735,18 @@ patients apart**.
 
 The protocol says "12-month" and "3 months" throughout and never disambiguates.
 
+---
+
 ### Q23. Which pregnancy window?
+
+**Recorded reading: the whole study period, which is what X3 says.** The
+exclusion reads *"during the study period"*, so the build applies it there
+rather than over the patient's own baseline and follow-up.
+
+Measured: 307 members have a proxy pregnancy code anywhere in the study period
+and 99 have one in their own baseline year, so the wider reading excludes 270
+more - 0.29% of the population. The codes are proxies because Annex 3 has not
+been delivered, so the number will move when it arrives; the reading will not.
 
 The build applies the exclusion over the **whole study period**; the narrower
 reading is the patient's own baseline and follow-up. The wider window excludes
@@ -604,6 +757,41 @@ The protocol says "during the study period" (X3), which is the build's reading, 
 this is close to settled. A second question stays open: if the narrower reading were
 ever adopted, does its follow-up stop at disenrolment? That is Q13 again, in a
 different place.
+
+---
+
+### Q25. Should denied claims count?
+
+**Recorded reading: all claims count, denied ones included.** Neither the
+protocol nor the business rules mention `PAID_STATUS`, and nothing upstream has
+ever filtered on it, so `CLAIM_STATUS=all` is the reading and `paid_only` is
+available as a sensitivity.
+
+Measured: the 17.4% headline is misleading. Denials concentrate in ordinary
+outpatient claims (21.65% of lines) and are thin in exactly the claims this
+study counts as events - 7.52% of ED-shaped lines and 5.83% of inpatient-linked
+ones. At the event level the real cost of switching is **0.53%**.
+
+`MEDICAL.PAID_STATUS` is *"the payment determination of this service line"*, and
+the CDM fills it in where the source left it null:
+
+> "PAID if Sum of all Paid Amounts >= $0 · DENIED if Sum of all Paid Amounts < $0"
+
+A denied claim is not evidence the service happened. Neither this package nor
+the cohort build filters on it, so every count built so far includes denied
+lines: diagnoses that qualify a patient, ED visits, hospitalisations, and the
+claims that set a line of therapy.
+
+`CLAIM_STATUS` carries the two readings. The default is `all`, which is what
+every number produced to date includes; `paid_only` excludes `DENIED`. The
+default is deliberately the status quo rather than the more defensible option,
+because changing it silently would make this package disagree with the cohort
+table it is built on.
+
+**Ask:** confirm whether the study intends to include denied claims. Most
+claims analyses exclude them.
+
+---
 
 ## What the protocol settles for the build
 
