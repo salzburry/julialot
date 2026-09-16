@@ -28,17 +28,35 @@ override of any kind — *"a different value here is a different cohort, so they
 are checked rather than defaulted."* Editing `config.csv` does not help either;
 the check is against `CONTRACT`, not the file.
 
+There is a second guard behind the first. `check_constants()` compares the
+constants the SQL actually interpolates — defined in `ndmm/R/ndmm_constants.R`
+— against the resolved config, and stops if they disagree. The two are read
+from **differently named** environment variables:
+
+```r
+NDMM_STUDY_START <- Sys.getenv("STUDY_START",    unset = "2016-01-01")   # plain name
+NDMM_LOT1_FROM   <- Sys.getenv("NDMM_LOT1_FROM", unset = "2017-01-01")   # prefixed name
+```
+
+So `STUDY_START` reaches the SQL and `LOT1_FROM` does not. Setting `LOT1_FROM`
+alone moves the config, leaves the constant at 2017-01-01, and the run halts on
+`check_constants()` after `check_contract()` has already passed.
+
 | setting | how it is changed |
 |---|---|
-| `STUDY_START` | **edit `CONTRACT$study_start`** in `ndmm/R/build_ndmm.R` |
-| `LOT1_FROM` | **edit `CONTRACT$lot1_from`** in the same list |
+| `STUDY_START` | **edit `CONTRACT$study_start`** in `ndmm/R/build_ndmm.R`, and export `STUDY_START` (or set it in `config.csv`) |
+| `LOT1_FROM` | **edit `CONTRACT$lot1_from`**, set `LOT1_FROM` for the config, **and export `NDMM_LOT1_FROM`** for the SQL |
 | `FU_CE_DAYS` | no change needed — the contract value `0` is what §2 leaves in place, since the one-claim-or-death test now runs in `study223926` |
 | `SUBSEQ_FU_CE_DAYS` | environment, but `subseq_check_windows()` refuses it unless `NDMM_SUBSEQ_OVERRIDE=TRUE`, which records the run as a named sensitivity |
 | `NDMM_INDEX_EXCLUDED_ABBRS` | environment only, no contract entry — a true run-time decision |
 
-The guard is right to exist: it stops a cohort being silently redefined under
-the study's own table names. It just means the study period and the 1L index
-floor are a two-line code change plus a review, not an export.
+Both guards are right to exist: one stops a cohort being silently redefined
+under the study's own table names, the other stops the config and the SQL
+drifting apart. The preflight order, all before any connection, is
+`check_settings` → `pin_output_schema` → `pin_prefix` → `check_contract` →
+`check_choices` → `check_constants`; then the connection, then
+`check_no_active_run` and `check_upstream`. Nothing is written until every one
+of them passes, so a refused run leaves the prefix exactly as it found it.
 
 `CENSOR_AT_DISENROLLMENT` is the exception: it is not a cohort-build setting at
 all, and nothing in that build censors. Follow-up end is computed in
