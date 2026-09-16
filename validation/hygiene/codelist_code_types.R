@@ -31,10 +31,32 @@ HERE <- local({
   else dirname(normalizePath(gsub("~+~", " ", sub("^--file=", "", a[1]), fixed = TRUE)))
 })
 REPO   <- dirname(dirname(HERE))
-FOLDER <- Sys.getenv("STUDY_FOLDER", unset = "Jul 28")
+# No default folder. It was "Jul 28", which is one of two deliveries this check
+# reads from - the cohort build is there and the LOT engine is not - so the
+# default was never right for both and simply picked one.
+FOLDER <- trimws(Sys.getenv("STUDY_FOLDER", unset = ""))
+if (!nzchar(FOLDER)) {
+  cat("SKIP: STUDY_FOLDER is not set, so there is no delivery to check.\n")
+  quit(status = 3L)
+}
 ROOT   <- file.path(REPO, FOLDER)
 if (!dir.exists(ROOT)) {
   cat("SKIP: no ", FOLDER, " folder beside this one.\n", sep = "")
+  quit(status = 3L)
+}
+# This check compares the LOT engine's code-type list against the cohort
+# build's. Both have to be in the delivery for there to be a comparison, and in
+# this repository they are not always: the LOT package moved into a delivery of
+# its own and the cohort build did not move with it. It read the missing one
+# anyway and died with "cannot open the connection", which reads as a broken
+# check rather than as a check with nothing to compare.
+NEEDED <- c("lot/engine/R/steps/01_codelists.R",
+            "ndmm/R/steps/03_prior_therapy.R",
+            "ndmm/R/steps/00b_lot1_index.R")
+absent <- NEEDED[!file.exists(file.path(ROOT, NEEDED))]
+if (length(absent)) {
+  cat("SKIP: ", FOLDER, " does not carry ", paste(absent, collapse = ", "),
+      ", so the two code-type lists cannot be compared.\n", sep = "")
   quit(status = 3L)
 }
 

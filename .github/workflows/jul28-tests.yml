@@ -67,7 +67,14 @@ jobs:
       # one fixed and one introduced leaves the count unchanged, which is why the
       # count is not what is pinned. A skipped suite and a suite that exits
       # non-zero after printing a clean summary both fail it too.
+      # The delivery to gate. This job ran the gate with no environment, so it
+      # took the gate's own default - "Jul 28", which has not carried the LOT
+      # package since the delivery folders were made. It was gating suites that
+      # reference an engine one folder over. The gate has no default now and
+      # says so, so this is not optional.
       - name: Every suite (exits non-zero if any is not as expected)
+        env:
+          STUDY_FOLDER: 'Sep 10'
         run: Rscript validation/run_gate.R
 
   # The planted-patient harnesses. They build the engine's own emitted SQL over

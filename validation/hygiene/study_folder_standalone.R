@@ -66,14 +66,19 @@ esc <- function(s) gsub("([^A-Za-z0-9_])", "\\\\\\1", s)
 # Resolved against the folder, so ".." disqualifies a token however it resolves
 # on this disk: a path that hops out and back is reaching outside by any
 # reading, and an absolute path was never ours to begin with.
-inside <- function(tok)
+#
+# Resolved against the FILE's own directory as well as the delivery root. A
+# relative path written in lot/CONTENTS.md means lot/, which is how that file's
+# heading for its own lot/validation/ package read as a reference to the
+# validation/ folder beside the delivery - a name it never mentions.
+inside <- function(tok, base)
   !startsWith(tok, "/") &&
   !any(strsplit(tok, "/", fixed = TRUE)[[1]] == "..") &&
-  file.exists(file.path(ROOT, tok))
-ours_own <- function(line, s) {
+  any(file.exists(file.path(unique(c(base, ROOT)), tok)))
+ours_own <- function(line, s, base) {
   toks <- regmatches(line, gregexpr("[A-Za-z0-9_.~/-]+", line))[[1]]
   toks <- grep(paste0("(^|/)", esc(s), "/"), toks, value = TRUE)
-  length(toks) > 0L && all(vapply(toks, inside, logical(1)))
+  length(toks) > 0L && all(vapply(toks, inside, logical(1), base = base))
 }
 hits <- unlist(lapply(names(text), function(nm) {
   ls <- text[[nm]]
@@ -83,7 +88,8 @@ hits <- unlist(lapply(names(text), function(nm) {
            else paste0("(^|[^A-Za-z0-9_])", esc(s), "/")
     i <- grep(pat, ls, perl = TRUE)
     if (!distinctive[k] && length(i))
-      i <- i[!vapply(ls[i], ours_own, logical(1), s = s)]
+      i <- i[!vapply(ls[i], ours_own, logical(1), s = s,
+                     base = file.path(ROOT, dirname(nm)))]
     if (length(i)) paste0(nm, ":", min(i), "  names '", s, "'") else NULL
   }))
 }))

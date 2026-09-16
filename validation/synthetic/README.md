@@ -1,8 +1,11 @@
 # Synthetic-population runs
 
-In the merge gate, as the `harnesses` job of the Jul 28 tests workflow. It is
-a job of its own because it needs Python with `duckdb` and `sqlglot`, which
-nothing else here does. Locally:
+In the merge gate, as the `harnesses` job. (The workflow is still called
+"Jul 28 tests" and still lives at `.github/workflows/jul28-tests.yml`. It
+gates whichever delivery `STUDY_FOLDER` names, which is no longer that one -
+renaming it is a separate change, since the name is what the branch protection
+rules refer to.) It is a job of its own because it needs Python with `duckdb`
+and `sqlglot`, which nothing else here does. Locally:
 
 ```
 pip install duckdb sqlglot

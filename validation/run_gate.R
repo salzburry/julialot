@@ -50,7 +50,21 @@ STUDY <- local({
   vv <- chartr("\\", "/", v)
   absolute <- startsWith(vv, "/") ||        # POSIX, and the UNC //server/share
     grepl("^[A-Za-z]:/", vv)                # a Windows drive letter
-  if (!nzchar(v)) file.path(REPO, "Jul 28")
+  # No default. It used to be "Jul 28", and that folder stopped carrying the
+  # LOT package when the delivery folders were made - so the gate CI runs, with
+  # no environment set, has been gating a delivery whose suites reference an
+  # engine that is not there. Thirteen failures, every run, for as long as that
+  # has been true.
+  #
+  # Guessing instead would be worse in the same way it is worse in the
+  # harnesses: three folders here look like deliveries and two carry an engine,
+  # so any rule that picks one picks it silently. Which delivery is being gated
+  # is a thing the caller knows and this file does not.
+  if (!nzchar(v))
+    stop("Set STUDY_FOLDER to the delivery to gate - the folder name, e.g.\n",
+         "  STUDY_FOLDER='Sep 10' Rscript validation/run_gate.R\n",
+         "It had a default, and the default outlived the folder it named.",
+         call. = FALSE)
   else if (absolute) vv
   else file.path(REPO, v)
 })
