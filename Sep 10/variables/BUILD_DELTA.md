@@ -17,14 +17,28 @@ these, the row says so — read the row, not the heading, for what exists now.
 
 ## 0. How a change reaches the build
 
-**The cohort build is not to be edited.** Everything this file calls a *change*
-is applied either as an environment override on a re-run of that build, or
-inside this folder. Nothing requires a line of the cohort build to move.
+**Two of these need the cohort build's CONTRACT edited. The rest do not.**
 
-Every setting in section 1 marked **change** is already read from the
-environment by the cohort build — `LOT1_FROM`, `STUDY_START`, `FU_CE_DAYS`,
-`NDMM_INDEX_EXCLUDED_ABBRS`, and `SUBSEQ_FU_CE_DAYS`. Setting them is a
-*run-time* decision; that build's own defaults stay as they are.
+An earlier version of this section said every change was a run-time decision
+and that no line of the cohort build had to move. That was wrong, and a run on
+production proved it: the settings are read from the environment, but
+`check_contract()` (`ndmm/R/build_ndmm.R`) then compares the resolved config
+against a pinned `CONTRACT` list and **stops** on any difference, with no
+override of any kind — *"a different value here is a different cohort, so they
+are checked rather than defaulted."* Editing `config.csv` does not help either;
+the check is against `CONTRACT`, not the file.
+
+| setting | how it is changed |
+|---|---|
+| `STUDY_START` | **edit `CONTRACT$study_start`** in `ndmm/R/build_ndmm.R` |
+| `LOT1_FROM` | **edit `CONTRACT$lot1_from`** in the same list |
+| `FU_CE_DAYS` | no change needed — the contract value `0` is what §2 leaves in place, since the one-claim-or-death test now runs in `study223926` |
+| `SUBSEQ_FU_CE_DAYS` | environment, but `subseq_check_windows()` refuses it unless `NDMM_SUBSEQ_OVERRIDE=TRUE`, which records the run as a named sensitivity |
+| `NDMM_INDEX_EXCLUDED_ABBRS` | environment only, no contract entry — a true run-time decision |
+
+The guard is right to exist: it stops a cohort being silently redefined under
+the study's own table names. It just means the study period and the 1L index
+floor are a two-line code change plus a review, not an export.
 
 `CENSOR_AT_DISENROLLMENT` is the exception: it is not a cohort-build setting at
 all, and nothing in that build censors. Follow-up end is computed in
