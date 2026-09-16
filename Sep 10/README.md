@@ -113,12 +113,12 @@ Rscript TFLS/tests/test_tfls.R                             # 361
 (cd lot/engine     && Rscript tests/test_runner.R)         # 527
 (cd lot/qc         && Rscript tests/test_lot_qc.R)         # 295
 (cd lot/qc         && Rscript tests/test_foldin_trace.R)   # 149
-(cd lot/qc         && Rscript tests/test_trace_returns.R)  # 137
+(cd lot/qc         && Rscript tests/test_trace_returns.R)  # 142
 (cd lot/melphalan  && Rscript tests/test_melp_simple.R)    # 161
 (cd lot/validation && Rscript tests/test_vignettes.R)      #  36
 ```
 
-2905 checks. Base R except for **`glue`**, which three of them need — the two
+2910 checks. Base R except for **`glue`**, which three of them need — the two
 LOT engine suites, through `tests/testutil.R`, and melphalan. The other six load
 nothing. The app needs `shiny`; a warehouse run needs `DBI`, `odbc` and `glue`.
 

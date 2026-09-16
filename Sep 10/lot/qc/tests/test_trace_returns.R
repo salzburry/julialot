@@ -52,6 +52,16 @@ ok(inherits(try(return_trace_params(sub("[|]map_discon_gap_days=[^|]*", "", RETU
                                     "run-abc"), silent = TRUE), "try-error"),
    "...while a run missing the discontinuation gap still refuses to be traced")
 
+cat("\n-- the fixture is a build the engine could have produced --\n")
+ok(identical(returns_fixture_defects(), character(0)),
+   "no fixture line ends MED_ADD with the added agent past a confirmed run-out - the engine's own gate would have made it DISCONTINUATION")
+BROKEN <- RETURNS_FIXTURE
+BROKEN$map[[1]] <- rf_ep("R000001", "BORT", "2020-01-01", "2020-05-15", discon = 1L, cnt = 5L)
+bd <- returns_fixture_defects(BROKEN)
+ok(length(bd) == 1L && grepl("R000001 LOT 1", bd[1], fixed = TRUE) &&
+     grepl("past a run-out on 2020-05-15", bd[1], fixed = TRUE),
+   "...and the check is not vacuous: pulling one episode's cover back before the added agent is caught, with the date it would have ended on")
+
 cat("\n-- the queries, as text --\n")
 ok(identical(names(Q), c("fold", "own_return", "opens_line", "carried_over")),
    "four kinds, in the order the report explains them")
@@ -443,14 +453,39 @@ if (is.null(rr)) {
   r <- returns_run_rows(QX["opens_line"], VLATE, ROOT)$opens_line
   ok(is.null(err(r)) && !any(r$PATID == "R000011" & r$OPEN_VIA == "melp_confirmed"),
      "a drug arriving after the short course stopped covering did not confirm it, and is not reported as having")
+  # 4.7 chains BEFORE it measures: doses closer together than
+  # melp_exposure_days are one course, and the cover is the latest supply end
+  # over all of it (engine/R/melp_rule.R). Two episodes 20 days apart are one
+  # 55-day course - not 4.7's short one - though the first episode alone is 28
+  # days and would clear the cap on its own.
+  VCHAIN <- V2
+  VCHAIN$map[[5]] <- rf_ep("R000011", "MELP", "2021-08-25", "2021-09-21", cnt = 1L)
+  VCHAIN$map[[length(VCHAIN$map) + 1L]] <-
+    rf_ep("R000011", "MELP", "2021-09-14", "2021-10-18", cnt = 1L)
+  r <- returns_run_rows(QX["opens_line"], VCHAIN, ROOT)$opens_line
+  ok(is.null(err(r)) && !any(r$PATID == "R000011" & r$OPEN_VIA == "melp_confirmed"),
+     "two melphalan doses inside the exposure distance are ONE course, so a 55-day one is not 4.7's short course and confirms nothing - the opening episode's own 28 days do not decide it")
+  # ...and a dose BEYOND the exposure distance starts a second course, so the
+  # first is still the short one it was.
+  VSPLIT <- V2
+  VSPLIT$map[[length(VSPLIT$map) + 1L]] <-
+    rf_ep("R000011", "MELP", "2021-10-25", "2021-11-21", cnt = 1L)
+  r <- returns_run_rows(QX["opens_line"], VSPLIT, ROOT)$opens_line
+  ok(is.null(err(r)) && sum(r$PATID == "R000011" & r$OPEN_VIA == "melp_confirmed") == 1L,
+     "...while a later dose past that distance is a course of its own and leaves the first one short")
+
+  # The arm, not a bare name: a CTE or a comment can carry the word, and a
+  # test that matched one would pass on a query that emits no such row.
+  arm <- function(pp, via) has(return_trace_opens_sql(EXEC_TABLES, pp),
+                              paste0("'", via, "' AS OPEN_VIA"))
   Pnd <- P; Pnd$melp_days <- NA
-  ok(!has(return_trace_opens_sql(EXEC_TABLES, Pnd), "melp_confirmed") &&
-       has(return_trace_opens_sql(EXEC_TABLES, Pnd), "melp_course"),
+  ok(!arm(Pnd, "melp_confirmed") && arm(Pnd, "melp_course"),
      "a run that recorded no course cap gets no melp_confirmed row at all - the claim has no evidence behind it - while the exemption arm, which needs no length, stands")
+  Pne <- P; Pne$melp_expo <- NA
+  ok(!arm(Pne, "melp_confirmed") && arm(Pne, "melp_course"),
+     "...and neither does one that recorded no exposure distance: without it there is no chained course for the cap to measure")
   Poff <- P; Poff$melp_rule <- "off"
-  ok(!has(return_trace_opens_sql(EXEC_TABLES, Poff), "melp_course") &&
-       !has(return_trace_opens_sql(EXEC_TABLES, Poff), "melp_confirmed") &&
-       has(return_trace_opens_sql(EXEC_TABLES, P), "melp_course"),
+  ok(!arm(Poff, "melp_course") && !arm(Poff, "melp_confirmed") && arm(P, "melp_course"),
      "...and neither melphalan arm is emitted for a run that did not apply the melphalan rule")
   ok(has(nv, "What these tables cannot show is whether 4.7 was the rule that acted") &&
        !has(nv, "confirmed it,"),
