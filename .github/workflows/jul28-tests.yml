@@ -27,6 +27,11 @@ on:
   push:
     paths: &paths
       - 'Jul 28/**'
+      # The delivery the LOT engine actually lives in now. Left out, a change
+      # to the engine running on production triggered no gate at all - and the
+      # harness job below, which is the only thing that runs its SQL, never saw
+      # it.
+      - 'Sep 10/**'
       - 'validation/**'
       - 'apr_30_2026/**'
       # The tumour contracts, because one of the suites holds the engine to
@@ -101,8 +106,15 @@ jobs:
       # Each exits non-zero on its own failures. run_synthetic is last and
       # slowest - it draws six hundred patients and runs the shipped QC over
       # them - so the quick ones report first.
+      # Which delivery's engine. The emitters refuse to guess when more than
+      # one folder carries one, and exit 4 - a failure, not a skip - so this is
+      # not optional. It used to default to 'Jul 28', which has not carried an
+      # engine since the LOT package moved out, and this job spent that whole
+      # time printing SKIP and testing nothing.
       - name: Planted-patient harnesses
         working-directory: validation/synthetic
+        env:
+          STUDY_FOLDER: 'Sep 10'
         run: |
           set -e
           python3 run_melp_simple.py

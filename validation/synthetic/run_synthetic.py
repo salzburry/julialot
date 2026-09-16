@@ -464,8 +464,13 @@ def run_chain(con, sqldir):
             raise RuntimeError(f"statement {i} failed: {str(ex)[:400]}\n{st[:300]}")
     # LOT_LONG_FINAL is LOT_LONG after the line criteria; none is enabled here.
     con.execute("CREATE OR REPLACE VIEW lot_long_final AS SELECT * FROM lot_long")
+    # The 2L/3L cohorts only when the emit produced them. emit_chain.R writes
+    # them from the study folder's ndmm/, and a folder that ships the engine
+    # alone has none - the LOT chain above is still the whole thing under test.
     for n in (2, 3):
-        con.execute(to_duckdb(open(os.path.join(sqldir, f'sub_{n}l.sql')).read()))
+        f = os.path.join(sqldir, f'sub_{n}l.sql')
+        if os.path.exists(f):
+            con.execute(to_duckdb(open(f).read()))
 
 
 # SCT_AUTO_CONT is in the set: a transplant inside a line's own window holds
@@ -586,6 +591,10 @@ def checks(c):
  ("a line for a patient with no MAP row",
   "SELECT DISTINCT l.PATID FROM lot_long l LEFT JOIN map_stacked m "
   "ON m.PATID = l.PATID WHERE m.PATID IS NULL"),
+ # The four below read the 2L/3L cohorts, which emit_chain.R writes only when
+ # the study folder carries ndmm/. Without them the LOT chain is still the
+ # whole thing under test, so main() drops these four by name and SAYS it did
+ # rather than reporting a green that never ran them.
  ("in 3L but not in 2L",
   "SELECT PATID FROM coh_3l WHERE PATID NOT IN (SELECT PATID FROM coh_2l)"),
  ("a cohort row whose index is not that line's start",
@@ -598,6 +607,23 @@ def checks(c):
   "SELECT c.PATID FROM coh_2l c WHERE NOT EXISTS "
   "(SELECT 1 FROM lot_long l WHERE l.PATID = c.PATID AND l.LOT_NUM = 2)"),
 ]
+
+# The checks above that read coh_2l/coh_3l, by name.
+COHORT_CHECKS = {
+    "in 3L but not in 2L",
+    "a cohort row whose index is not that line's start",
+    "a cohort row published without both enrolment flags",
+    "a cohort patient with no such line",
+}
+
+
+def have_cohorts(con):
+    try:
+        con.execute("SELECT 1 FROM coh_2l LIMIT 1")
+        return True
+    except Exception:
+        return False
+
 
 COVERAGE = [
  ("lines ending within 90d of observation end",
@@ -723,7 +749,7 @@ def snapshot(con):
     return {"lines": [[str(x) for x in r] for r in rows],
             "coh": {str(n): sorted(r[0] for r in
                     con.execute(f"SELECT PATID FROM coh_{n}l").fetchall())
-                    for n in (2, 3)}}
+                    for n in (2, 3)} if have_cohorts(con) else {}}
 
 
 def arg(name, default, cast=str):
@@ -763,8 +789,13 @@ def main():
           q("SELECT LOT_NUM, count(*) FROM lot_long GROUP BY 1 ORDER BY 1")))
     print("  by reason ", ", ".join(f"{a}={b}" for a, b in
           q("SELECT LOT_BASE_END_REASON, count(*) FROM lot_long GROUP BY 1 ORDER BY 2 DESC")))
-    for n in (2, 3):
-        print(f"  {n}L cohort: {q(f'SELECT count(*) FROM coh_{n}l')[0][0]}")
+    coh = have_cohorts(con)
+    if coh:
+        for n in (2, 3):
+            print(f"  {n}L cohort: {q(f'SELECT count(*) FROM coh_{n}l')[0][0]}")
+    else:
+        print(f"  2L/3L cohorts: not emitted from this study folder, so "
+              f"{len(COHORT_CHECKS)} check(s) below do not run")
 
     cfg = settings()
     if cfg["confirm"] != 90 or not cfg["cart_rule"]:
@@ -787,7 +818,8 @@ def main():
     for s_i in scen_bad:
         print("  WRONG    ", s_i)
 
-    bad = [(n, rows) for n, sql in checks(cfg) for rows in [q(sql)] if rows]
+    todo = [(n, sql) for n, sql in checks(cfg) if coh or n not in COHORT_CHECKS]
+    bad = [(n, rows) for n, sql in todo for rows in [q(sql)] if rows]
     bad += [(n, ["-"]) for n in qc_bad + qc_broke + scen_bad]
     print()
     if bad:

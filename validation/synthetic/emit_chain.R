@@ -32,12 +32,14 @@ HERE <- local({
   else dirname(normalizePath(gsub("~+~", " ", sub("^--file=", "", a[1]), fixed = TRUE)))
 })
 REPO   <- dirname(dirname(HERE))
-STUDY  <- Sys.getenv("STUDY_FOLDER", unset = "Jul 28")
+source(file.path(HERE, "study_folder.R"))
+
+STUDY  <- study_folder_with(REPO, c("lot", "engine", "R"))
 ENGINE <- file.path(REPO, STUDY, "lot", "engine", "R")
 NDMM   <- file.path(REPO, STUDY, "ndmm", "R")
-if (!dir.exists(ENGINE)) {
-  cat("SKIP: no engine at ", ENGINE, "\n", sep = ""); quit(status = 3L)
-}
+`%||%` <- function(a, b) if (is.null(a)) b else a
+if (!nzchar(STUDY)) study_folder_quit("engine", STUDY)
+
 library(glue)
 
 # The engine's shipped default for one setting, read from its config.csv.
@@ -56,6 +58,29 @@ engine_default <- function(name, fallback = "") {
 # - because a conditioning dose is a specific shape, not a drug taken at random.
 MEDS    <- c("LEN", "BORT", "DARA", "POMA", "CYCLO", "CARF", "MELP")
 CLASSES <- c("IMID", "PI", "MAB", "ALKY")
+
+# The universe the chain is emitted for. The seven above are what the drawn
+# and planted patients use, and they stay the default so every existing run
+# emits the same text as before.
+#
+# A replay of REAL patients needs the real universe instead: the emitted SQL
+# carries one LOT1_MED_<x> / LOT1_CLASS_<x> column per member, so a drug
+# missing from the list is a drug the emitted build cannot flag - it would
+# answer a different question from the one the warehouse answered.
+env_list <- function(nm, dflt) {
+  raw <- trimws(Sys.getenv(nm, unset = ""))
+  if (!nzchar(raw)) return(dflt)
+  v <- unique(trimws(strsplit(raw, ",", fixed = TRUE)[[1]]))
+  v <- v[nzchar(v)]
+  if (!length(v)) stop(nm, " was set but names no medication.", call. = FALSE)
+  bad <- v[!grepl("^[A-Za-z][A-Za-z0-9_]*$", v)]
+  if (length(bad))
+    stop(nm, " carries ", paste(bad, collapse = ", "), ". Each becomes a column ",
+         "name in the emitted SQL, so it has to be a bare name.", call. = FALSE)
+  v
+}
+MEDS    <- env_list("LOT_MEDS", MEDS)
+CLASSES <- env_list("LOT_CLASSES", CLASSES)
 
 e <- new.env(parent = globalenv())
 SQL <- character(0)
@@ -139,10 +164,15 @@ invisible(e$build_lot2_5(NULL, induction_window_days = 30L, cart_consolidation_d
 sink()
 writeLines(paste(SQL, collapse = "\n;;;\n"), file.path(OUT, "full_chain.sql"))
 
-# The 2L/3L cohorts, off the lines the chain above builds.
+# The 2L/3L cohorts, off the lines the chain above builds. Only when the study
+# folder carries the cohort build: a folder that ships the engine alone still
+# has a full LOT chain to emit, and dying here threw that away too.
+sub_src <- file.path(NDMM, "build_subsequent.R")
+n_sub <- 0L
+if (file.exists(sub_src)) {
 s <- new.env(parent = globalenv())
 assign("sql_text", function(x) if (is.na(x)) "NULL" else paste0("'", x, "'"), s)
-sys.source(file.path(NDMM, "build_subsequent.R"), s)
+sys.source(sub_src, s)
 for (n in c(2L, 3L))
   writeLines(s$subseq_cohort_sql(n, if (n == 2L) "coh_1l" else "coh_2l",
                                  paste0("coh_", n, "l"),
@@ -152,5 +182,8 @@ for (n in c(2L, 3L))
                                  run_id = "R1", lot_run = "L1", coh_run = "C1",
                                  coh_stamp = "S1", lot_stamp = "T1", attempt = "A1"),
              file.path(OUT, paste0("sub_", n, "l.sql")))
+n_sub <- 2L
+}
 
-cat("emitted ", length(SQL), " LOT statements + 2 cohort statements to ", OUT, "\n", sep = "")
+cat("emitted ", length(SQL), " LOT statements + ", n_sub, " cohort statements",
+    " from '", STUDY, "' to ", OUT, "\n", sep = "")

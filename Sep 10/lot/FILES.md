@@ -10,7 +10,7 @@ One package writes. The rest read a finished run.
 | | |
 |---|---|
 | `lot/engine/` | builds the lines. `build.R <COHORT_TABLE> <prefix_>`. The only package here that writes a study run. |
-| `lot/qc/` | thirty-seven checks on a finished run, asked after the fact, and two traces of the returning-drug rules on real patients. Reads only. `run_lot_qc.R`, `trace_foldin.R`, `trace_returns.R`. |
+| `lot/qc/` | thirty-seven checks on a finished run, asked after the fact, two traces of the returning-drug rules on real patients, and an extract of a patient's inputs for replay. Reads only. `run_lot_qc.R`, `trace_foldin.R`, `trace_returns.R`, `extract_patients.R`. |
 | `lot/melphalan/` | what the melphalan rule did to the numbers, as two complete builds differenced. Opt-in, its own prefixes. |
 | `lot/validation/` | the rule vignettes — the machine-checked twin of `LOT_RULES.md`. No warehouse. |
 
@@ -250,6 +250,7 @@ failure, and none is a published benchmark. Reported, not fatal;
 | `examples/returns_trace_example.md` | That rendered example. The suite holds it to a fresh render, so it cannot drift from the code. |
 | `tests/returns_fixture.R` | The six fixture patients and the DuckDB row runner the suite and the example share. |
 | `tests/test_trace_returns.R` | That each kind reads its signature and nothing else, that the queries executed on the fixture return exactly the planted returns and none of the controls, that the sample, summary, annotation and narratives say what the fixture says, that the committed example is a fresh render, and that no fixture line is a shape the engine could not have built. |
+| `extract_patients.R` | Writes named patients' LOT **inputs** out of a finished run as CSVs, so the real rows can be put back through the engine rather than argued about from the lines alone. `EXTRACT_PATIDS` names them; reads `LOT_PATIENT_INPUT`, `MAP_STACKED`, `TX_AUTO_DATES`, `TX_ALLO_CART_DATES`, `PERMISSIBLE_SUBS` and `LOT_LONG_FINAL`, plus the run's whole drug universe and its code hash. Reads only; prints its plan without `EXTRACT_EXECUTE=TRUE`. Ids are masked by DEFAULT here, unlike the two traces: those stay on the platform and this file is written to be carried off it. |
 | `tests/run_duckdb_rows.py` | Executes a statement against fixture rows, transpiling Spark to DuckDB, for the trace suite. Reports a statement it could not run rather than reading it as an empty result. |
 
 Nothing here duplicates a check the build already makes. Three severities:

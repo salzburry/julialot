@@ -100,6 +100,32 @@ looks like, rendered on fixture patients: `qc/examples/returns_trace_example.md`
 OBJECT_PREFIX=ndmm_ TRACE_EXECUTE=TRUE Rscript qc/trace_returns.R
 ```
 
+`qc/extract_patients.R` answers a different question from either trace. A
+trace shows what the run DID with a patient. When that looks wrong, there are
+three possible reasons and only one of them is a bug in the rules: the rules
+are wrong, the run was built by code that is not the code in front of you, or
+the patient's shape is not the shape anyone reasoned about. Arguing from the
+lines alone cannot tell them apart, and neither can a hand-built patient - a
+plant is someone's belief about the shape, so if the belief is what is wrong
+the plant agrees with it and the real patient goes on being unexplained.
+
+This writes the patient's own INPUT rows out - episodes with their class,
+count and discontinuation flag, the transplant dates, the observation window,
+the substitution pairs, the run's whole drug universe and its code hash - so
+they can be put back through the engine's own statements off the warehouse
+and the three separate.
+
+```bash
+OBJECT_PREFIX=ndmm_ EXTRACT_PATIDS=33062938660,33007568794 \
+  EXTRACT_EXECUTE=TRUE Rscript qc/extract_patients.R
+```
+
+Ids are masked to their last six characters by default here - the two traces
+are unmasked because they stay on the platform, and this file is written to be
+carried off it. `EXTRACT_MASK_PATID=FALSE` writes them whole. The masking is
+applied to every file at once, so the rows still join to each other and to a
+trace written with `TRACE_MASK_PATID=TRUE`.
+
 ### `validation/` — the edge-case catalogue
 
 Thirty vignettes: the patients the algorithm is hardest on, each with the

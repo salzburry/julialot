@@ -6,9 +6,20 @@ nothing else here does. Locally:
 
 ```
 pip install duckdb sqlglot
+export STUDY_FOLDER="Sep 10"        # which delivery's engine to emit
 python3 validation/synthetic/run_synthetic.py
 python3 validation/synthetic/run_synthetic.py --seed 7 --n 2000
 ```
+
+**Name the delivery.** More than one folder here carries `lot/engine/R`, and
+the emitters refuse to choose - exit status 4, which every harness reads as a
+failure rather than a skip. That is deliberate. They used to default to
+`Jul 28`, which stopped carrying an engine when the LOT package moved into a
+delivery of its own; from then on every run printed `SKIP: no engine` and
+tested nothing, and the folder these harnesses existed to check was never
+reached. A tie-break on file dates would have hidden the same problem better -
+a fresh clone stamps every file at checkout time, so in CI, where nobody reads
+the output, whichever folder the filesystem listed first would have won.
 
 `run_synthetic.py` is the population run; 600 patients take about twenty
 seconds. Four more harnesses in this folder plant named patients and assert
@@ -201,3 +212,34 @@ and not on the ones you did not.
 
 Nothing here has seen a warehouse row. No count, no attrition figure and no
 execution plan is verified by it.
+
+## The one harness that does: `run_real_replay.py`
+
+Everything above plants patients. A plant is someone's belief about a shape,
+so when a real patient's lines look wrong, a plant can only agree with the
+belief - and if the belief is what is wrong, the patient goes on unexplained.
+There are three possible reasons for lines that look wrong and only one of
+them is a bug in the rules:
+
+1. the rules are wrong
+2. the run was built by code that is not the code in front of you
+3. the patient's shape is not the shape anyone reasoned about
+
+`lot/qc/extract_patients.R` writes a named patient's own INPUT rows out of a
+finished run - episodes with class, count and discontinuation flag, the
+transplant dates, the observation window, the substitution pairs, the run's
+whole drug universe and its code hash. This replays them through the same
+emitted statements, with the fold-in on and off, and prints both beside what
+the run actually produced.
+
+```
+python3 validation/synthetic/run_real_replay.py <dir-of-extract-csvs>
+```
+
+It asserts nothing. There is no expected answer for a real patient - that is
+the question being asked. Reproducing the run's lines settles (2) and (3), and
+leaves the rule itself as the only thing to argue with.
+
+The extracted CSVs carry patient rows, so they stay wherever the study's data
+is allowed to be. `extract_patients.R` masks ids to their last six characters
+by default for that reason.

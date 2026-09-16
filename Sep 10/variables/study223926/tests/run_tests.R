@@ -10,8 +10,13 @@
 
 here <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
+  # Rscript escapes a space in --file= as "~+~", so a path with one comes back
+  # naming a directory that does not exist. Undone here, as every other suite
+  # in this delivery does it: without it these two ran only from their own
+  # directory, and died the moment the gate invoked them by absolute path -
+  # which is the only way anything but a person runs them.
   if (!length(a)) getwd() else dirname(dirname(normalizePath(
-    sub("^--file=", "", a[1]))))
+    gsub("~+~", " ", sub("^--file=", "", a[1]), fixed = TRUE))))
 })
 setwd(here)
 suppressMessages({
@@ -40,12 +45,18 @@ skip_note <- function(what) { .skipped <<- c(.skipped, what); cat("  SKIP  ", wh
 # suite it was added to rather than by whoever next reads the diff.
 .suite_path <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
-  if (length(a)) normalizePath(sub("^--file=", "", a[1]), mustWork = FALSE) else NA_character_
+  # The same "~+~" unescape. check_skip_wiring() reads THIS file, and without
+  # it the path named no file, the check returned quietly, and the guard on
+  # every suite's skip wiring was off on any checkout whose path has a space.
+  if (length(a)) normalizePath(gsub("~+~", " ", sub("^--file=", "", a[1]), fixed = TRUE),
+                               mustWork = FALSE) else NA_character_
 })
 check_skip_wiring <- function(path = .suite_path) {
   if (is.na(path) || !file.exists(path)) return(invisible(NULL))
   src <- readLines(path, warn = FALSE)
-  bad <- grep('cat\\(.*"[^"]*SKIP', src)
+  # SKIP as a word, so a line that merely NAMES the ALLOW_SKIPPED_TESTS
+  # variable is not read as a skip this suite printed.
+  bad <- grep('cat\\(.*"[^"]*SKIP(?![A-Za-z_])', src, perl = TRUE)
   # Not a comment describing one, and not skip_note's own printing line.
   bad <- bad[!grepl("^\\s*#", src[bad]) & !grepl("skip_note", src[bad], fixed = TRUE)]
   ok(length(bad) == 0L,
@@ -3512,8 +3523,13 @@ if (length(.fail))
   cat("failed:\n", paste0("  ", .fail, collapse = "\n"), "\n", sep = "")
 if (length(.skipped)) {
   cat("skipped:\n", paste0("  ", .skipped, collapse = "\n"), "\n", sep = "")
+  # The reasons are printed above; the remedy is whatever each one says. This
+  # used to add "Install python3 with sqlglot" whatever had skipped, which is
+  # the wrong remedy for the block that skips because the LOT engine is not
+  # beside this package - and sends the reader to install something that is
+  # already there.
   cat(length(.skipped), " block(s) did not run, so this is NOT a clean run. ",
-      "Install python3 with sqlglot, or set ALLOW_SKIPPED_TESTS=TRUE to accept it.\n", sep = "")
+      "Fix those, or set ALLOW_SKIPPED_TESTS=TRUE to accept it.\n", sep = "")
 }
 if (length(.fail) ||
       (length(.skipped) &&

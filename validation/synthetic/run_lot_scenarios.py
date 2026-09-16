@@ -37,8 +37,38 @@ except ImportError as ex:
     sys.exit(f"SKIP: {ex.name} is not installed; this harness needs duckdb and sqlglot")
 
 REPO = os.path.dirname(os.path.dirname(HERE))
-FOLDER = os.environ.get("STUDY_FOLDER", "Jul 28")
-CATALOGUE = os.path.join(REPO, FOLDER, "exploration", "lot", "R", "lot_scenarios.R")
+
+
+def _catalogue():
+    """Where the study team's worked scenarios are.
+
+    Not necessarily in the folder being emitted from. The catalogue is the
+    study team's own list of cases and their answers; the ENGINE moved into a
+    delivery of its own and the catalogue did not move with it. Tied to
+    STUDY_FOLDER alone this harness skipped for every delivery but the one
+    that happens to hold the file - which is the delivery whose engine is
+    gone, so it skipped either way.
+
+    STUDY_FOLDER first, so a caller can still pin both to one folder. Then any
+    folder that has one. LOT_SCENARIOS names a path outright.
+    """
+    named = os.environ.get("LOT_SCENARIOS", "").strip()
+    if named:
+        return named
+    rel = os.path.join("exploration", "lot", "R", "lot_scenarios.R")
+    folder = os.environ.get("STUDY_FOLDER", "").strip()
+    if folder:
+        p = os.path.join(REPO, folder, rel)
+        if os.path.exists(p):
+            return p
+    for d in sorted(os.listdir(REPO)):
+        p = os.path.join(REPO, d, rel)
+        if os.path.exists(p):
+            return p
+    return os.path.join(REPO, folder or "Jul 28", rel)
+
+
+CATALOGUE = _catalogue()
 IX = 300                                # index day, as run_synthetic numbers them
 EPOCH = datetime.date(2016, 1, 1) + datetime.timedelta(days=IX)
 
@@ -132,6 +162,7 @@ def main():
     if not os.path.exists(CATALOGUE):
         print("SKIP: no scenario catalogue at", CATALOGUE)
         return 3
+    print("scenarios from", os.path.relpath(CATALOGUE, REPO))
     scs = scenarios(CATALOGUE)
     if not scs:
         sys.exit("read no scenarios out of " + CATALOGUE)

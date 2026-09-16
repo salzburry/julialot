@@ -120,6 +120,17 @@ suites <- suites[grepl("/tests/", suites) |
                  # Aug 14 still does, and STUDY_FOLDER can point at either.
                  grepl("/run_melp_scenarios\\.R$", suites)]
 suites <- suites[!grepl("testutil\\.R$|/_|run_gate\\.R$|run_all\\.R$", suites)]
+# A tests/ directory holds suites AND the fixtures and row-runners they source.
+# "Everything under tests/" ran the fixtures as if they were suites: a file
+# that defines data and asserts nothing exits 0 having checked nothing, and the
+# gate counted it as a suite that passed. Sep 10 has seven such helpers -
+# exec_cases.R, returns_fixture.R and the rest - which is how a delivery with
+# ten real suites would have been pinned with seventeen.
+#
+# A suite is named for what it is. Jul 28 and Aug 14 discover exactly the same
+# files under this rule as without it, so it tightens without moving them.
+suites <- suites[grepl("/(test_[^/]*|run_tests|run_melp_scenarios)\\.R$", suites) |
+                 grepl("/validation/(port|hygiene)/", suites)]
 rel <- sub(paste0("^", REPO, "/"), "", suites)
 
 # WHICH suites, not how many. The list above is discovered from disk, so
@@ -148,16 +159,32 @@ EXPECTED_SUITES <- list(
     "exploration/lot/tests/test_foldin.R",
     "exploration/lot/tests/test_sensitivity.R",
     "exploration/lot/tests/test_stockpiling.R",
-    "lot/engine/tests/test_line_criteria.R",
-    "lot/engine/tests/test_runner.R",
-    "lot/melphalan/tests/test_melp_simple.R",
-    "lot/qc/tests/test_lot_qc.R",
-    "lot/validation/tests/test_vignettes.R",
+    # The five lot/ suites this list used to carry are not here any more. The
+    # LOT package moved out of Jul 28 into a delivery of its own, and the pin
+    # was not moved with it - so the gate reported five MISSING suites and
+    # exited non-zero on every run, for the DEFAULT delivery, which is the one
+    # CI gates. A red that is the pin's own bookkeeping trains a reader to
+    # scroll past it, and that is the state it was in.
+    #
+    # They are pinned under "Sep 10" below, which is where they live. Removing
+    # them here is the conscious act this list asks for, not a suite quietly
+    # dropping out: the same five names appear in the entry above.
     "ndmm/tests/test_runner.R",
     "ndmm/tests/test_same_as_overall.R",
     "ndmm/tests/test_subsequent.R",
     "overall/tests/test_runner.R",
     "reporting/dashboard/tests/test_runner.R"),
+  "Sep 10" = c(
+    "TFLS/tests/test_tfls.R",
+    "dashboard/tests/run_tests.R",
+    "lot/engine/tests/test_line_criteria.R",
+    "lot/engine/tests/test_runner.R",
+    "lot/melphalan/tests/test_melp_simple.R",
+    "lot/qc/tests/test_foldin_trace.R",
+    "lot/qc/tests/test_lot_qc.R",
+    "lot/qc/tests/test_trace_returns.R",
+    "lot/validation/tests/test_vignettes.R",
+    "variables/study223926/tests/run_tests.R"),
   "Aug 14" = c(
     "lot/dashboard/tests/test_runner.R",
     "lot/engine/tests/test_line_criteria.R",
