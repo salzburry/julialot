@@ -2329,7 +2329,7 @@ cat("\nstandalone\n")
   src <- setNames(lapply(r_files, function(f) paste(readLines(f, warn = FALSE),
                                                     collapse = "\n")), r_files)
   # Comments and error messages cite the documents beside the package, and
-  # ../OPEN_QUESTIONS.md resolves inside ndmm_study_updated/, which is the
+  # ../OPEN_QUESTIONS.md resolves inside variables/, which is the
   # boundary that has to hold. What must not happen is a path FUNCTION reaching
   # outside, so that is what is tested rather than the string ../ anywhere.
   code_only <- lapply(src, function(x)

@@ -9,12 +9,12 @@ It is one of four sibling folders:
 | folder | what it does |
 |---|---|
 | `dashboard/` | **this folder** — the app |
-| `ndmm_study_updated/` | the study cohorts and variables it reads |
+| `variables/` | the study cohorts and variables it reads |
 | `lot/` | the lines-of-therapy engine behind those |
 | `TFLS/` | the requested table shells, and the code that fills them |
 
 They have to stay siblings. The app loads the study package's registries from
-`../ndmm_study_updated/study223926` (overridable with `DASH_PACKAGE_DIR`). It
+`../variables/study223926` (overridable with `DASH_PACKAGE_DIR`). It
 does **not** load the engine's code: LOT results reach it as tables — from the
 snapshot or the warehouse — and its test suite reads `../lot/engine` only to
 hold the two table lists to each other.

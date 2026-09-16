@@ -9,7 +9,7 @@ It sits beside two sibling folders:
 | folder | what it does |
 |---|---|
 | `lot/` | **this folder** — the lines |
-| `ndmm_study_updated/` | the study cohorts and variables, built on those lines |
+| `variables/` | the study cohorts and variables, built on those lines |
 | `dashboard/` | the R Shiny app that shows what both produced |
 
 ---

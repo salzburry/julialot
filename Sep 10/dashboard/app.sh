@@ -21,6 +21,6 @@ cd "$(dirname "$0")/.."
 
 export DASH_SOURCE="${DASH_SOURCE:-synthetic}"
 export DASH_SNAPSHOT_DIR="${DASH_SNAPSHOT_DIR:-/mnt/data/NDMM}"
-export DASH_PACKAGE_DIR="${DASH_PACKAGE_DIR:-ndmm_study_updated/study223926}"
+export DASH_PACKAGE_DIR="${DASH_PACKAGE_DIR:-variables/study223926}"
 
 R -e "shiny::runApp('dashboard', host = '0.0.0.0', port = 8888, launch.browser = FALSE)"

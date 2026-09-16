@@ -8,13 +8,13 @@ Four folders sit side by side:
 
 | folder | what it does |
 |---|---|
-| `ndmm_study_updated/` | **this folder** - the cohorts, the variables, the released tables |
+| `variables/` | **this folder** - the cohorts, the variables, the released tables |
 | `lot/` | the lines-of-therapy engine that produces the lines this reads |
 | `dashboard/` | the R Shiny app that shows what all three produced |
 | `TFLS/` | the requested table shells, filled from a finished run of this package |
 
 They have to stay siblings. The dashboard finds this package at
-`../ndmm_study_updated/study223926`, the engine at `../lot/engine` and the
+`../variables/study223926`, the engine at `../lot/engine` and the
 shells at `../TFLS`; the shell runner finds this package by
 `TFLS_PACKAGE_DIR`. Nothing uses an absolute path.
 
