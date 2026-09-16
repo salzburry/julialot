@@ -37,6 +37,7 @@ rf_ep <- function(pat, med, start, end, class = "NOVEL", discon = 0L, cnt = 1L) 
   MAP_START_DT = start, MAP_END_DT = end, MAP_DISCON_FLG = discon,
   MAP_MED_RUNOUT_DT = end, MAP_RX_RUNOUT_DT = NA, ELIGIBLE_END = end, MAP_CNT = cnt)
 rf_auto <- function(pat, dt) list(PATID = pat, TX_DT = dt)
+rf_subs <- function(orig, subst) list(original_med = orig, substitute_med = subst)
 rf_allo <- function(pat, dt, type) list(PATID = pat, TX_DT = dt, SCT_TYPE = type)
 
 # The patients.
@@ -48,9 +49,12 @@ rf_allo <- function(pat, dt, type) list(PATID = pat, TX_DT = dt, SCT_TYPE = type
 #          Before the rule this made a 2L on 2020-11-30.
 # R000003  own return in 2L (4.3): 1L BORT DEX; POM opens 2L 2020-09-01 with
 #          DEX; POM runs out 2020-12-15, back 2021-05-01 - still 2L.
-# R000004  opens a line across a transplant: 1L BORT LEN DEX; an autologous
-#          transplant opens 2L on 2020-09-01 (no drug); LEN back 2020-12-01 -
-#          4.8 refuses a fold across a procedure, so LEN opened 3L.
+# R000004  opens a line across a transplant: 1L BORT LEN runs out 2020-06-30;
+#          the patient's first autologous transplant confirms that run-out
+#          (5.3) and opens 2L on 2020-09-01 with no drug - a first AUTO never
+#          ends line 1 (3.4), it opens the next one where line 1 has already
+#          ended; LEN back 2020-12-01 - 4.8 refuses a fold across a procedure
+#          that opened a line, so LEN ended 2L and opened 3L.
 # R000005  opens a line from two lines back: 1L BORT LEN; CARF DEX opens 2L;
 #          POM opens 3L; LEN back 2021-09-01 after the 3L window; 2L did not
 #          carry LEN, so LEN is out of 4.8's scope and opened 4L.
@@ -59,28 +63,29 @@ rf_allo <- function(pat, dt, type) list(PATID = pat, TX_DT = dt, SCT_TYPE = type
 #          both lines, counted and not traced.
 RETURNS_FIXTURE <- list(
   final = list(
-    rf_fin("R000001", 1L, "2020-01-01", "MED", "BORT LEN DEX", "2020-06-30", "MED_ADD",
+    rf_fin("R000001", 1L, "2020-01-01", "MED", "BORT LEN", "2020-06-30", "MED_ADD",
            add_med = "CARF", add_dt = "2020-07-01"),
-    rf_fin("R000001", 2L, "2020-07-01", "MED", "CARF LEN DEX", "2021-01-31", "STUDY_END"),
-    rf_fin("R000002", 1L, "2020-01-01", "MED", "LEN DEX", "2021-03-31", "DISCONTINUATION",
+    rf_fin("R000001", 2L, "2020-07-01", "MED", "CARF LEN", "2021-01-31", "STUDY_END"),
+    rf_fin("R000002", 1L, "2020-01-01", "MED", "LEN", "2021-03-31", "DISCONTINUATION",
            discon = "2021-03-31"),
-    rf_fin("R000003", 1L, "2020-01-01", "MED", "BORT DEX", "2020-08-31", "MED_ADD",
+    rf_fin("R000003", 1L, "2020-01-01", "MED", "BORT", "2020-08-31", "MED_ADD",
            add_med = "POM", add_dt = "2020-09-01"),
-    rf_fin("R000003", 2L, "2020-09-01", "MED", "POM DEX", "2021-08-31", "STUDY_END"),
-    rf_fin("R000004", 1L, "2020-01-01", "MED", "BORT LEN DEX", "2020-08-31", "SCT_AUTO"),
+    rf_fin("R000003", 2L, "2020-09-01", "MED", "POM", "2021-08-31", "STUDY_END"),
+    rf_fin("R000004", 1L, "2020-01-01", "MED", "BORT LEN", "2020-06-30", "DISCONTINUATION",
+           discon = "2020-06-30"),
     rf_fin("R000004", 2L, "2020-09-01", "SCT_AUTO", "", "2020-11-30", "MED_ADD",
            add_med = "LEN", add_dt = "2020-12-01"),
     rf_fin("R000004", 3L, "2020-12-01", "MED", "LEN", "2021-06-30", "STUDY_END"),
     rf_fin("R000005", 1L, "2020-01-01", "MED", "BORT LEN", "2020-06-30", "MED_ADD",
            add_med = "CARF", add_dt = "2020-07-01"),
-    rf_fin("R000005", 2L, "2020-07-01", "MED", "CARF DEX", "2021-01-31", "MED_ADD",
+    rf_fin("R000005", 2L, "2020-07-01", "MED", "CARF", "2021-01-31", "MED_ADD",
            add_med = "POM", add_dt = "2021-02-01"),
     rf_fin("R000005", 3L, "2021-02-01", "MED", "POM", "2021-08-31", "MED_ADD",
            add_med = "LEN", add_dt = "2021-09-01"),
     rf_fin("R000005", 4L, "2021-09-01", "MED", "LEN", "2022-03-31", "STUDY_END"),
-    rf_fin("R000006", 1L, "2020-01-01", "MED", "LEN DEX", "2020-06-30", "MED_ADD",
+    rf_fin("R000006", 1L, "2020-01-01", "MED", "LEN", "2020-06-30", "MED_ADD",
            add_med = "CARF", add_dt = "2020-07-01"),
-    rf_fin("R000006", 2L, "2020-07-01", "MED", "CARF LEN DEX", "2021-01-31", "STUDY_END")),
+    rf_fin("R000006", 2L, "2020-07-01", "MED", "CARF LEN", "2021-01-31", "STUDY_END")),
   map = list(
     # R000001
     rf_ep("R000001", "BORT", "2020-01-01", "2020-05-15", discon = 1L, cnt = 5L),

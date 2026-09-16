@@ -72,8 +72,10 @@ ok(has(Q$own_return, "lag(MAP_DISCON_FLG) OVER (PARTITION BY cast(PATID as strin
    "an own return follows a CONFIRMED break: the immediately preceding episode of the drug carries MAP_DISCON_FLG = 1, the engine's own restart test")
 ok(has(Q$own_return, "e.MAP_START_DT >  w.ELIGIBLE_END") && has(Q$own_return, "e.MAP_START_DT <= w.LOT_BASE_END_DT"),
    "...and the return is inside the line, after the induction window")
-ok(has(Q$own_return, "INNER JOIN in_window iw") && has(Q$own_return, "e.MAP_START_DT <= w.ELIGIBLE_END"),
-   "...of a drug the line's own window admitted - a returning previous-line drug with no window episode is the fold's, not this")
+ok(has(Q$own_return, "AND e.PREV_START >= w.LOT_START_DT"),
+   "...of a drug the line already held: the dose the break follows was itself inside this line, which is what a fold's own first return fails")
+ok(has(Q$own_return, "LEFT JOIN in_window iw") && has(Q$own_return, "AS HAS_WINDOW_EP"),
+   "...and whether the window admitted it is carried for the narrative, not required - a folded drug has no window episode and is the line's all the same")
 ok(has(Q$own_return, "'own_return' AS KIND") && has(Q$own_return, "w.LOT_NUM AS RETURN_LINE"),
    "...tagged with its kind, on the line it sits in")
 # The line-opening return's predicates.
@@ -125,8 +127,8 @@ if (is.null(rr)) {
   g <- function(pat, kind) C[C$PATID == pat & C$KIND == kind, , drop = FALSE]
   r <- g("R000001", "fold")
   ok(nrow(r) == 1L && r$LOT_NUM == 2L && r$MED_ABBR == "LEN" && format(r$RETURN_DT) == "2020-08-15" &&
-       r$RETURN_LINE == 2L && r$PREV_BASE_MEDS == "BORT LEN DEX",
-     "R000001: LEN folded into LOT 2 on 2020-08-15, from a LOT 1 regimen of BORT LEN DEX")
+       r$RETURN_LINE == 2L && r$PREV_BASE_MEDS == "BORT LEN",
+     "R000001: LEN folded into LOT 2 on 2020-08-15, from a LOT 1 regimen of BORT LEN")
   ok(nrow(C[C$PATID == "R000001", ]) == 1L, "...and that is R000001's only return: a fold is not also an own return")
   r <- g("R000002", "own_return")
   ok(nrow(r) == 1L && r$LOT_NUM == 1L && r$MED_ABBR == "LEN" && format(r$RETURN_DT) == "2020-11-30" &&
@@ -204,6 +206,216 @@ if (is.null(rr)) {
   ok(is.null(err(r)) && !any(r$PATID == "R000002"),
      "(g) DEX coming back after a break is not an own return: a steroid never opened a line")
 
+  cat("\n-- the shapes two independent readings of the engine went looking for --\n")
+  # Each of these was executed against the engine's own code by a reviewer and
+  # named a defect; each is the shape that defect was found on.
+
+  # A folded drug's LATER course, back after a confirmed break, is 4.3's and
+  # not a second fold: the engine keeps it through the line's effective
+  # regimen (foldin_base_meds_eff), so it is neither an added medication nor a
+  # next-line start. Gated on a window episode, the trace reported nothing.
+  V <- variant(function(d) {
+    d$map[[5]]$MAP_END_DT <- "2020-09-30"; d$map[[5]]$MAP_DISCON_FLG <- 1L
+    d$map[[length(d$map) + 1L]] <- rf_ep("R000001", "LEN", "2021-01-05", "2021-01-31", cnt = 1L)
+    d })
+  r <- runk(V, "own_return")
+  ok(is.null(err(r)) && any(r$PATID == "R000001" & r$RETURN_DT == "2021-01-05" & r$LOT_NUM == "2" &
+                              r$HAS_WINDOW_EP == "0"),
+     "a folded drug back again after a confirmed break is an own return of the line it was folded into, flagged as having no window episode")
+  ok(is.null(err(r)) && sum(r$PATID == "R000001") == 1L,
+     "...and the fold's own first return is not one: its previous dose was in the line before")
+  rvv <- returns_run_rows(c(QX["fold"], QX["own_return"],
+                            list(lines = foldin_trace_lines_sql(EXEC_TABLES, "R000001", P),
+                                 eps = foldin_trace_episodes_sql(EXEC_TABLES, "R000001"),
+                                 tx = foldin_trace_tx_sql(EXEC_TABLES, "R000001"))), V, ROOT)
+  CV <- return_trace_stack(rvv[c("fold", "own_return")])
+  annv <- return_trace_annotate(rvv$lines, rvv$eps, rvv$tx, CV, P)
+  nv <- annv$note[annv$MAP_MED_TYPE == "LEN" & format(annv$MAP_START_DT) == "2021-01-05"]
+  ok(identical(nv, "RETURNED to LOT 2 after a 97-day break (4.3)"),
+     "...and the episode reads as that return, not as a second fold - the fold note is written first and this one over it")
+  nb <- return_trace_narrative(CV[CV$KIND == "own_return", , drop = FALSE][1, , drop = FALSE],
+                               rvv$lines, rvv$eps, P, all_rows = CV)
+  ok(has(nb, "because 4.8 folded it in") && has(nb, "carries a folded drug in the line's regimen"),
+     "...and its paragraph says how the drug came to be the line's, rather than claiming a window episode it has not got")
+
+  # A procedure between the break and the return: under the older reading it
+  # would have opened a line of its own first, so the counterfactual for the
+  # return is not in these tables.
+  V <- variant(function(d) { d$auto <- c(d$auto, list(rf_auto("R000002", "2020-08-01"))); d })
+  rv <- returns_run_rows(c(QX["own_return"],
+                           list(lines = foldin_trace_lines_sql(EXEC_TABLES, "R000002", P),
+                                eps = foldin_trace_episodes_sql(EXEC_TABLES, "R000002"),
+                                tx = foldin_trace_tx_sql(EXEC_TABLES, "R000002"))), V, ROOT)
+  CV <- return_trace_stack(rv["own_return"])
+  nv <- return_trace_narrative(CV[CV$PATID == "R000002", , drop = FALSE][1, , drop = FALSE],
+                               rv$lines, rv$eps, P, tx = rv$tx, all_rows = CV)
+  ok(nrow(CV[CV$PATID == "R000002", ]) == 1L,
+     "a first autologous transplant between the break and the return does not stop the return being an own return - it never ended line 1 (3.4)")
+  ok(has(nv, "a SCT_AUTO on 2020-08-01 falls between the break and the return") &&
+       has(nv, "cannot be read from these tables") && !has(nv, "the next line would have started on 2020-11-30"),
+     "...but the paragraph stops short of saying what the older reading would have opened, and names the procedure")
+
+  # A permissible substitute covering the gap: the flag is per drug name, so
+  # the return is still one, but the older reading's run-out is the pair's.
+  V <- variant(function(d) {
+    d$subs <- list(rf_subs("POM", "POMBS"))
+    d$map[[length(d$map) + 1L]] <- rf_ep("R000003", "POMBS", "2020-12-20", "2021-04-20", cnt = 4L)
+    d })
+  rv <- returns_run_rows(c(QX["own_return"],
+                           list(lines = foldin_trace_lines_sql(EXEC_TABLES, "R000003", P),
+                                eps = foldin_trace_episodes_sql(EXEC_TABLES, "R000003"),
+                                subs = foldin_trace_subs_sql(EXEC_TABLES))), V, ROOT)
+  CV <- return_trace_stack(rv["own_return"])
+  nv <- return_trace_narrative(CV[CV$PATID == "R000003", , drop = FALSE][1, , drop = FALSE],
+                               rv$lines, rv$eps, P, subs = rv$subs, all_rows = CV)
+  ok(nrow(CV[CV$PATID == "R000003", ]) == 1L,
+     "a substitute dosed inside the gap leaves the return an own return: MAP_DISCON_FLG is per drug name, as the engine's own restart test is")
+  ok(has(nv, "no supply of POM itself") && has(nv, "Its permissible substitute POMBS was dosed inside the gap") &&
+       has(nv, "had run out on 2021-04-20") && !has(nv, "run out on 2020-12-15"),
+     "...and the paragraph counts the substitute's cover as the line's (4.4): the older reading's run-out is the pair's 2021-04-20, not POM's own 2020-12-15")
+
+  # ...while a return under the SUBSTITUTE's name is no own return at all.
+  V <- variant(function(d) {
+    d$subs <- list(rf_subs("POM", "POMBS"))
+    d$map[[15]]$MAP_MED_TYPE <- "POMBS"; d$map[[15]]$MAP_MED_ABBR <- "POMBS"; d })
+  r <- runk(V, "own_return")
+  ok(is.null(err(r)) && !any(r$PATID == "R000003"),
+     "a return under the substitute's name is not an own return: the older reading never released a substitute's restart either")
+
+  # A new agent in the gap ends the line before the return, so the return
+  # lands in the next line - as a fold, not an own return.
+  V <- variant(function(d) {
+    d$final[[5]]$LOT_BASE_END_DT <- "2021-01-31"; d$final[[5]]$LOT_BASE_END_REASON <- "MED_ADD"
+    d$final[[length(d$final) + 1L]] <- rf_fin("R000003", 3L, "2021-02-01", "MED", "CARF POM", "2021-08-31")
+    d$map[[length(d$map) + 1L]] <- rf_ep("R000003", "CARF", "2021-02-01", "2021-08-31", cnt = 7L)
+    d })
+  rr2 <- returns_run_rows(QX, V, ROOT)
+  C2 <- return_trace_stack(rr2)
+  ok(!any(C2$PATID == "R000003" & C2$KIND == "own_return") &&
+       any(C2$PATID == "R000003" & C2$KIND == "fold" & C2$LOT_NUM == 3L),
+     "an agent arriving in the gap ends the line first, so the return belongs to the next line and reads as a fold, not an own return")
+
+  # The line before was a procedure line: the added-medication sentence is
+  # read off its own end reason, never asserted.
+  V <- variant(function(d) {
+    d$final[[7]]$LOT_START_TYPE <- "CART"; d$final[[7]]$LOT_BASE_END_DT <- "2020-09-01"
+    d$final[[7]]$LOT_BASE_END_REASON <- "SCT_CART"
+    d$final[[7]]$LOT_BASE_1ST_ADD_MED <- NA; d$final[[7]]$LOT_BASE_1ST_ADD_MED_DT <- NA
+    d$auto <- list(); d$allo <- list(rf_allo("R000004", "2020-09-01", "CART")); d })
+  rv <- returns_run_rows(c(QX["opens_line"],
+                           list(lines = foldin_trace_lines_sql(EXEC_TABLES, "R000004", P),
+                                eps = foldin_trace_episodes_sql(EXEC_TABLES, "R000004"))), V, ROOT)
+  CV <- return_trace_stack(rv["opens_line"])
+  CV <- CV[CV$PATID == "R000004", , drop = FALSE]
+  nv <- return_trace_narrative(CV[1, , drop = FALSE], rv$lines, rv$eps, P, all_rows = CV)
+  ok(nrow(CV) == 1L && has(nv, "LOT 2 had already closed on a procedure (SCT_CART on 2020-09-01)") &&
+       !has(nv, "added medication"),
+     "a single-day CAR-T line the return did not end is reported as already closed, not as an added medication")
+
+  # ...and a line that had already run out: the return confirmed it (5.3).
+  V <- variant(function(d) {
+    d$final[[7]]$LOT_BASE_END_REASON <- "DISCONTINUATION"
+    d$final[[7]]$LOT_BASE_DISCON_DT <- "2020-11-30"
+    d$final[[7]]$LOT_BASE_1ST_ADD_MED <- NA; d$final[[7]]$LOT_BASE_1ST_ADD_MED_DT <- NA; d })
+  rv <- returns_run_rows(c(QX["opens_line"],
+                           list(lines = foldin_trace_lines_sql(EXEC_TABLES, "R000004", P),
+                                eps = foldin_trace_episodes_sql(EXEC_TABLES, "R000004"))), V, ROOT)
+  CV <- return_trace_stack(rv["opens_line"])
+  CV <- CV[CV$PATID == "R000004", , drop = FALSE]
+  nv <- return_trace_narrative(CV[1, , drop = FALSE], rv$lines, rv$eps, P, all_rows = CV)
+  ok(has(nv, "had already run out") && has(nv, "confirmed that run-out (5.3)") && !has(nv, "added medication"),
+     "...and one that had run out first says the return confirmed it, not that it ended the line")
+
+  # The refusal-across-a-procedure reading belongs only to a drug that line's
+  # own fold set held. Further back, 4.8 never judged it.
+  V <- list(final = list(
+      rf_fin("R000009", 1L, "2020-01-01", "MED", "BORT LEN", "2020-06-30", "MED_ADD",
+             add_med = "CARF", add_dt = "2020-07-01"),
+      rf_fin("R000009", 2L, "2020-07-01", "MED", "CARF", "2021-01-31", "SCT_ALLO"),
+      rf_fin("R000009", 3L, "2021-02-01", "SCT_ALLO", "", "2021-02-01", "SCT_ALLO"),
+      rf_fin("R000009", 4L, "2021-03-01", "MED", "LEN", "2021-09-30")),
+    map = list(rf_ep("R000009", "BORT", "2020-01-01", "2020-05-31", discon = 1L, cnt = 5L),
+               rf_ep("R000009", "LEN", "2020-01-01", "2020-04-30", discon = 1L, cnt = 4L),
+               rf_ep("R000009", "CARF", "2020-07-01", "2021-01-31", discon = 1L, cnt = 7L),
+               rf_ep("R000009", "LEN", "2021-03-01", "2021-09-30", cnt = 7L)),
+    allo = list(rf_allo("R000009", "2021-02-01", "ALLO")), auto = list(), subs = list())
+  rv <- returns_run_rows(c(QX["opens_line"],
+                           list(lines = foldin_trace_lines_sql(EXEC_TABLES, "R000009", P),
+                                eps = foldin_trace_episodes_sql(EXEC_TABLES, "R000009"))), V, ROOT)
+  CV <- return_trace_stack(rv["opens_line"])
+  ok(nrow(CV) == 1L && CV$FROM_LOT == 1L && CV$LOT_NUM == 4L,
+     "a drug from LOT 1 opening LOT 4 after a procedure-opened LOT 3 is a line-opening return")
+  nv <- return_trace_narrative(CV[1, , drop = FALSE], rv$lines, rv$eps, P, all_rows = CV)
+  annv <- return_trace_annotate(rv$lines, rv$eps, NULL, CV, P)
+  ok(!has(nv, "refuses a fold across a procedure") && has(nv, "out of its scope"),
+     "...and its paragraph does not credit 4.8's refusal: LOT 3's fold set was LOT 2's regimen, which never held the drug")
+  ok(any(grepl("out of 4.8's scope", annv$note, fixed = TRUE)) &&
+       !any(grepl("no fold across it", annv$note, fixed = TRUE)),
+     "...nor does the episode note")
+
+  # Melphalan: the one previous-line drug that opens a line (4.7), and the
+  # drug that confirms such a course.
+  V <- list(final = list(
+      rf_fin("R000010", 1L, "2020-01-01", "MED", "LEN MELP", "2020-11-30", "MED_ADD",
+             add_med = "MELP", add_dt = "2020-12-01"),
+      rf_fin("R000010", 2L, "2020-12-01", "MED", "DARA MELP", "2021-06-30")),
+    map = list(rf_ep("R000010", "LEN", "2020-01-01", "2020-06-30", discon = 1L, cnt = 6L),
+               rf_ep("R000010", "MELP", "2020-02-01", "2020-03-01", discon = 1L, cnt = 1L),
+               rf_ep("R000010", "MELP", "2020-12-01", "2020-12-28", cnt = 1L),
+               rf_ep("R000010", "DARA", "2020-12-10", "2021-06-30", cnt = 7L)),
+    allo = list(), auto = list(), subs = list())
+  rv <- returns_run_rows(c(QX["opens_line"], QX["carried_over"],
+                           list(lines = foldin_trace_lines_sql(EXEC_TABLES, "R000010", P),
+                                eps = foldin_trace_episodes_sql(EXEC_TABLES, "R000010"))), V, ROOT)
+  CV <- return_trace_stack(rv[c("opens_line", "carried_over")])
+  ok(nrow(CV) == 1L && CV$KIND == "opens_line" && CV$OPEN_VIA == "melp_course" &&
+       CV$MED_ABBR == "MELP" && CV$LOT_NUM == 2L && CV$RETURN_LINE == 1L,
+     "a short melphalan course of the previous line's regimen that 4.7 confirmed is a line-opening return, not a carried-over backbone")
+  nv <- return_trace_narrative(CV[1, , drop = FALSE], rv$lines, rv$eps, P, all_rows = CV)
+  ok(has(nv, "confirmed by DARA") && has(nv, "the one agent 4.3 exempts"),
+     "...and its paragraph names the agent that confirmed it and the exemption it rests on")
+  V2 <- list(final = list(
+      rf_fin("R000011", 1L, "2020-01-01", "MED", "BORT LEN", "2020-06-30", "MED_ADD", add_med = "CARF", add_dt = "2020-07-01"),
+      rf_fin("R000011", 2L, "2020-07-01", "MED", "CARF", "2021-01-31", "MED_ADD", add_med = "POM", add_dt = "2021-02-01"),
+      rf_fin("R000011", 3L, "2021-02-01", "MED", "POM", "2021-08-24", "MED_ADD", add_med = "MELP", add_dt = "2021-08-25"),
+      rf_fin("R000011", 4L, "2021-08-25", "MED", "LEN MELP", "2022-03-31")),
+    map = list(rf_ep("R000011", "BORT", "2020-01-01", "2020-05-31", discon = 1L, cnt = 5L),
+               rf_ep("R000011", "LEN", "2020-01-01", "2020-04-30", discon = 1L, cnt = 4L),
+               rf_ep("R000011", "CARF", "2020-07-01", "2020-12-31", discon = 1L, cnt = 6L),
+               rf_ep("R000011", "POM", "2021-02-01", "2021-07-31", discon = 1L, cnt = 6L),
+               rf_ep("R000011", "MELP", "2021-08-25", "2021-09-21", cnt = 1L),
+               rf_ep("R000011", "LEN", "2021-09-01", "2022-03-31", cnt = 7L)),
+    allo = list(), auto = list(), subs = list())
+  rv <- returns_run_rows(c(QX["opens_line"],
+                           list(lines = foldin_trace_lines_sql(EXEC_TABLES, "R000011", P),
+                                eps = foldin_trace_episodes_sql(EXEC_TABLES, "R000011"))), V2, ROOT)
+  CV <- return_trace_stack(rv["opens_line"])
+  ok(nrow(CV) == 1L && CV$OPEN_VIA == "melp_confirmed" && CV$MED_ABBR == "LEN" &&
+       format(CV$RETURN_DT) == "2021-09-01" && CV$LOT_NUM == 4L,
+     "a drug two lines back that arrived inside such a course is a line-opening return dated at its own episode, not at the line's start")
+  nv <- return_trace_narrative(CV[1, , drop = FALSE], rv$lines, rv$eps, P, all_rows = CV)
+  ok(has(nv, "inside a short melphalan course that started on 2021-08-25") &&
+       has(nv, "on the MELPHALAN's first day rather than on this drug's"),
+     "...and its paragraph says the line opened on the melphalan's date")
+  Poff <- P; Poff$melp_rule <- "off"
+  ok(!has(return_trace_opens_sql(EXEC_TABLES, Poff), "melp_course") &&
+       has(return_trace_opens_sql(EXEC_TABLES, P), "melp_course"),
+     "...and neither melphalan arm is emitted for a run that did not apply the melphalan rule")
+
+  # LOT 5 is the last line the engine builds, so the older reading had no next
+  # line to open.
+  V <- variant(function(d) {
+    d$final[[3]]$LOT_NUM <- 5L; d })
+  rv <- returns_run_rows(c(QX["own_return"],
+                           list(lines = foldin_trace_lines_sql(EXEC_TABLES, "R000002", P),
+                                eps = foldin_trace_episodes_sql(EXEC_TABLES, "R000002"))), V, ROOT)
+  CV <- return_trace_stack(rv["own_return"])
+  if (nrow(CV)) {
+    nv <- return_trace_narrative(CV[1, , drop = FALSE], rv$lines, rv$eps, P, all_rows = CV)
+    ok(has(nv, "is the last line the engine builds (max_lot 5)") && has(nv, "no line at all"),
+       "an own return inside the top line says the older reading would have left it in no line")
+  } else ok(FALSE, "an own return inside the top line is still a return")
+
   cat("\n-- scope, sample and summary, on the executed rows --\n")
   S2 <- return_trace_in_scope(C, RETURN_TRACE_KINDS, 2L)
   ok(setequal(key(S2), c("R000001 fold 2 LEN", "R000003 own_return 2 POM", "R000004 opens_line 3 LEN")),
@@ -254,7 +466,7 @@ if (is.null(rr)) {
     return_trace_narrative(r, rp$lines, rp$eps, P, tx = rp$tx, subs = rp$subs, all_rows = C[C$PATID == pat, , drop = FALSE])
   }
   n2 <- nar("R000002", "own_return")
-  ok(has(n2, "LEN is in LOT 1's own regimen (LEN DEX)") && has(n2, "break of 214 days") &&
+  ok(has(n2, "LEN is in LOT 1's own regimen (LEN)") && has(n2, "break of 214 days") &&
        has(n2, "came back on 2020-11-30, 334 days after LOT 1 opened") && has(n2, "Under 4.3") &&
        has(n2, "LOT 1 is 2020-01-01 to 2021-03-31 (DISCONTINUATION)"),
      "an own return's paragraph: the drug, the break, the return, and the line running on over it")
@@ -262,19 +474,20 @@ if (is.null(rr)) {
        has(n2, "next line would have started on 2020-11-30 with LEN"),
      "...and what the reading before the rule made of it: a run-out confirmed, then a new line on the return")
   n3 <- nar("R000003", "own_return")
-  ok(has(n3, "POM is in LOT 2's own regimen (POM DEX)") && has(n3, "outside the window (window ended 2020-09-30)"),
+  ok(has(n3, "POM is in LOT 2's own regimen (POM)") && has(n3, "outside the window (window ended 2020-09-30)"),
      "an own return inside 2L reads the later-line window")
   n4 <- nar("R000004", "opens_line")
-  ok(has(n4, "LEN was last in LOT 1's regimen (BORT LEN DEX)") && has(n4, "LOT 2 was opened by a transplant or CAR-T (SCT_AUTO)") &&
-       has(n4, "4.8 refuses a fold across a procedure") && has(n4, "LOT 2 ended MED_ADD on 2020-11-30 and LEN opened LOT 3") &&
+  ok(has(n4, "LEN was last in LOT 1's regimen (BORT LEN)") && has(n4, "LOT 2 was opened by a transplant or CAR-T (SCT_AUTO)") &&
+       has(n4, "4.8 refuses a fold across a procedure") &&
+       has(n4, "It was an added medication: LOT 2 ended MED_ADD on 2020-11-30, and LEN opened LOT 3 (LEN).") &&
        has(n4, "changed nothing here"),
-     "a return across a transplant-opened line: the refusal, the added medication, the line it opened, and that the rules changed nothing")
+     "a return across a transplant-opened line: the refusal, the added medication read off LOT 2's own end reason, and that the rules changed nothing")
   n5 <- nar("R000005", "opens_line")
   ok(has(n5, "LOT 3 (POM) did not carry it") && has(n5, "immediately previous line's regimen only") &&
-       has(n5, "opened LOT 4 like any other new agent"),
+       has(n5, "it was a new agent like any other") && has(n5, "LOT 3 ended MED_ADD on 2021-08-31"),
      "a return from two lines back: out of 4.8's scope, opened a line")
   n1 <- nar("R000001", "fold")
-  ok(has(n1, "under 4.8 it joined LOT 2's regimen (CARF LEN DEX)") && has(n1, "would have ended MED_ADD on 2020-08-14"),
+  ok(has(n1, "under 4.8 it joined LOT 2's regimen (CARF LEN)") && has(n1, "would have ended MED_ADD on 2020-08-14"),
      "a fold's paragraph is the fold-in trace's own")
   # Two returns in one patient: only the earliest carries the pre-rule reading.
   V <- variant(function(d) {
