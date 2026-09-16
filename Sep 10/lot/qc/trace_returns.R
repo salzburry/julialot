@@ -234,7 +234,7 @@ main <- function() {
   if (length(ids)) {
     lines <- db_q(con, foldin_trace_lines_sql(t, ids, p))
     eps   <- db_q(con, foldin_trace_episodes_sql(t, ids))
-    tx    <- db_q(con, foldin_trace_tx_sql(t, ids))
+    tx    <- foldin_trace_tx_read(con, t, ids)
     rows  <- cands[cands$PATID %in% ids, , drop = FALSE]
     ann   <- return_trace_annotate(lines, eps, tx, rows, p, subs = subs)
     for (id in ids) {

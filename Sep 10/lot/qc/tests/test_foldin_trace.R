@@ -129,6 +129,31 @@ ok(has(foldin_trace_subs_sql(TBL), "s.TSUBS") && has(foldin_trace_subs_sql(TBL),
 cat("\n-- the per-patient reads --\n")
 L <- foldin_trace_lines_sql(TBL, IDS, P)
 E <- foldin_trace_episodes_sql(TBL, IDS)
+# Against the warehouse the two tables are read separately: the ODBC driver
+# segfaulted on the union, and an EMPTY result - a sample with no transplant in
+# it - is the shape it could not describe.
+TXP <- foldin_trace_tx_parts(TBL, IDS)
+ok(identical(names(TXP), c("auto", "allo")) &&
+     has(TXP$auto, TBL$auto) && !has(TXP$auto, TBL$allo) &&
+     has(TXP$allo, TBL$allo) && !has(TXP$allo, TBL$auto),
+   "the transplant read is available as two single-table queries, one per table")
+ok(has(TXP$auto, "cast('SCT_AUTO' as string) AS TX_TYPE") &&
+     has(TXP$allo, "END as string) AS TX_TYPE") &&
+     has(TXP$auto, "cast(TX_DT as date)") && has(TXP$allo, "cast(TX_DT as date)"),
+   "...and every column is explicitly typed, so an empty result still describes itself")
+.fake_none <- function(con, sql) data.frame()
+TXE <- foldin_trace_tx_read(NULL, TBL, IDS, q = .fake_none)
+ok(is.data.frame(TXE) && nrow(TXE) == 0L &&
+     identical(names(TXE), c("PATID", "TX_DT", "TX_TYPE")) && inherits(TXE$TX_DT, "Date"),
+   "a patient sample with no transplant reads back as an empty typed frame, not a crash")
+.fake_auto <- function(con, sql) if (grepl(TBL$auto, sql, fixed = TRUE))
+  data.frame(PATID = "P2", TX_DT = as.Date("2024-01-01"), TX_TYPE = "SCT_AUTO",
+             stringsAsFactors = FALSE) else data.frame()
+TXA <- foldin_trace_tx_read(NULL, TBL, IDS, q = .fake_auto)
+ok(nrow(TXA) == 1L && TXA$TX_TYPE == "SCT_AUTO" && is.null(attr(TXA, "row.names.char")) &&
+     identical(rownames(TXA), "1"),
+   "...and one arm returning rows while the other is empty gives those rows, unnamed")
+
 X <- foldin_trace_tx_sql(TBL, IDS)
 ok(has(L, "s.TFINAL") && has(L, "IN ('P000001', 'P000002')") && has(L, "ELIGIBLE_END"),
    "the lines read carries the window end, off qc_window_sql(), for the ids given")

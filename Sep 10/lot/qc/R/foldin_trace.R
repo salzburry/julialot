@@ -206,19 +206,61 @@ foldin_trace_episodes_sql <- function(t, patids) paste0("
 # The transplant events, named the way LOT_START_TYPE names them so a reader
 # can match an event to the line it opened by eye.
 foldin_trace_tx_sql <- function(t, patids) {
+  q <- foldin_trace_tx_parts(t, patids)
+  paste0(q$auto, "\n    UNION ALL", sub("^\n *SELECT", "\n    SELECT", q$allo),
+         "\n    ORDER BY PATID, TX_DT, TX_TYPE")
+}
+
+# The same read as two single-table queries, each column explicitly typed.
+#
+# The union above is what the offline harness and the tests run, and it is the
+# clearer statement of the question. Against the warehouse it is read one table
+# at a time instead, because the ODBC driver segfaulted on the union - and took
+# the whole R process with it, which no tryCatch can catch. The union's second
+# arm ends in a bare CASE, so its TX_TYPE has no declared width, and an EMPTY
+# result of that shape is what the driver could not describe. A patient sample
+# with no transplant in it is exactly that, and is entirely ordinary.
+#
+# Both arms are cast here rather than only in the reader, so the shape the
+# tests exercise is the shape the warehouse gets.
+foldin_trace_tx_parts <- function(t, patids) {
   ids <- foldin_trace_in_list(patids)
-  paste0("
-    SELECT cast(PATID as string) AS PATID, TX_DT, 'SCT_AUTO' AS TX_TYPE
+  list(
+    auto = paste0("
+    SELECT cast(PATID as string) AS PATID, cast(TX_DT as date) AS TX_DT,
+           cast('SCT_AUTO' as string) AS TX_TYPE
     FROM ", t$auto, "
-    WHERE cast(PATID as string) IN ", ids, "
-    UNION ALL
-    SELECT cast(PATID as string) AS PATID, TX_DT,
-           CASE WHEN SCT_TYPE = 'ALLO' THEN 'SCT_ALLO'
-                WHEN SCT_TYPE = 'CART' THEN 'CART'
-                ELSE SCT_TYPE END AS TX_TYPE
+    WHERE cast(PATID as string) IN ", ids),
+    allo = paste0("
+    SELECT cast(PATID as string) AS PATID, cast(TX_DT as date) AS TX_DT,
+           cast(CASE WHEN SCT_TYPE = 'ALLO' THEN 'SCT_ALLO'
+                     WHEN SCT_TYPE = 'CART' THEN 'CART'
+                     ELSE SCT_TYPE END as string) AS TX_TYPE
     FROM ", t$allo, "
-    WHERE cast(PATID as string) IN ", ids, "
-    ORDER BY PATID, TX_DT, TX_TYPE")
+    WHERE cast(PATID as string) IN ", ids))
+}
+
+# What a runner against the warehouse calls. Returns the same frame the union
+# would, sorted in R, and an empty typed frame where neither table has a row -
+# so a caller cannot tell the two readings apart.
+foldin_trace_tx_read <- function(con, t, patids, q = db_q) {
+  parts <- foldin_trace_tx_parts(t, patids)
+  got <- lapply(parts, function(sql) {
+    d <- q(con, sql)
+    if (!is.data.frame(d) || !nrow(d)) NULL else d
+  })
+  got <- Filter(Negate(is.null), got)
+  out <- if (!length(got))
+    data.frame(PATID = character(0), TX_DT = as.Date(character(0)),
+               TX_TYPE = character(0), stringsAsFactors = FALSE)
+    else do.call(rbind, got)
+  out$PATID <- as.character(out$PATID)
+  out$TX_TYPE <- as.character(out$TX_TYPE)
+  out <- out[order(out$PATID, out$TX_DT, out$TX_TYPE), , drop = FALSE]
+  # rbind over a named list names the rows after the arm they came from, which
+  # would show up in the rendered episode table.
+  rownames(out) <- NULL
+  out
 }
 
 # ---- The sample ----------------------------------------------------------------
