@@ -26,17 +26,20 @@ source(file.path(.script_dir, "tests", "exec_harness.R"))
 source(file.path(.script_dir, "tests", "returns_fixture.R"))
 
 returns_example_note <- paste0(
-  "**This is a rendered example on six FIXTURE patients, not a run.** Each ",
-  "patient is one shape the trace tells apart: a fold into 2L, an own return ",
-  "inside 1L, an own return inside 2L, a return across a transplant-opened 2L ",
-  "that opened 3L, a return from two lines back that opened 4L, and a drug ",
-  "carried over inside a window (counted, not traced). A real run lists every ",
-  "return in the warehouse's finished LOT run and samples the patients to trace.")
+  "**This is a rendered example on the eight FIXTURE patients in ",
+  "tests/returns_fixture.R, not a run. R000001-R000008 are invented ids, and ",
+  "every date, drug and episode below is made up - nothing here is a patient.** ",
+  "Each patient is one shape the trace tells apart: a fold into 2L, an own ",
+  "return inside 1L, an own return inside 2L, a return across a ",
+  "transplant-opened 2L that opened 3L, a return from two lines back that ",
+  "opened 4L, a short melphalan course that opened a line (4.7), a drug that ",
+  "arrived while such a course still covered, and a drug carried over inside a ",
+  "window (counted, not traced). A real run lists every return in the ",
+  "warehouse's finished LOT run, samples the patients to trace, and does carry ",
+  "real identifiers - which is what the line below is about.")
 
 returns_example_md <- function(root = .script_dir) {
-  p <- qc_params(RETURNS_SETTINGS, "fixture")
-  p$gap <- qc_int(RETURNS_SETTINGS, "map_discon_gap_days")
-  p$melp_days <- qc_int(RETURNS_SETTINGS, "melp_simple_course_days")
+  p <- return_trace_params(RETURNS_SETTINGS, "fixture")
   returns_render_fixture(RETURNS_FIXTURE, RETURNS_FIXTURE_TOTALS, p, root,
                          run_id = "fixture", pfx = "example_", n = 12L,
                          kinds = RETURN_TRACE_KINDS, lines = NULL,

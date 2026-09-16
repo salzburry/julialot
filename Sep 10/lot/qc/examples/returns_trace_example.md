@@ -2,7 +2,7 @@
 
 Run `fixture`. What the rules adopted on 30 Aug 2026 (LOT_RULES.md 4.3 and 4.8) did with drugs that came back, on the patients they touched: raw MAP episodes beside the final lines, the returns marked.
 
-**This is a rendered example on six FIXTURE patients, not a run.** Each patient is one shape the trace tells apart: a fold into 2L, an own return inside 1L, an own return inside 2L, a return across a transplant-opened 2L that opened 3L, a return from two lines back that opened 4L, and a drug carried over inside a window (counted, not traced). A real run lists every return in the warehouse's finished LOT run and samples the patients to trace.
+**This is a rendered example on the eight FIXTURE patients in tests/returns_fixture.R, not a run. R000001-R000008 are invented ids, and every date, drug and episode below is made up - nothing here is a patient.** Each patient is one shape the trace tells apart: a fold into 2L, an own return inside 1L, an own return inside 2L, a return across a transplant-opened 2L that opened 3L, a return from two lines back that opened 4L, a short melphalan course that opened a line (4.7), a drug that arrived while such a course still covered, and a drug carried over inside a window (counted, not traced). A real run lists every return in the warehouse's finished LOT run, samples the patients to trace, and does carry real identifiers - which is what the line below is about.
 
 Patient ids are NOT masked. This file carries patient identifiers and stays inside the study environment; it exists so each patient can be looked up in the warehouse.
 
@@ -38,6 +38,9 @@ Traced: kinds fold, own_return, opens_line, every return line. 7 patient(s) carr
 | opens_line | by return line | LOT3 | 2 | 2 | 2 |
 | opens_line | by drug | LEN | 3 | 3 | 3 |
 | opens_line | by drug | MELP | 1 | 1 | 1 |
+| opens_line | by open path | melp_confirmed | 1 | 1 | 1 |
+| opens_line | by open path | melp_course | 1 | 1 | 1 |
+| opens_line | by open path | new_agent | 2 | 2 | 2 |
 | carried_over | all |  | 1 | 1 | 1 |
 | carried_over | by return line | LOT2 | 1 | 1 | 1 |
 | carried_over | by drug | LEN | 1 | 1 | 1 |
