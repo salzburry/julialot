@@ -27,11 +27,11 @@ HERE <- local({
   else dirname(normalizePath(gsub("~+~", " ", sub("^--file=", "", a[1]), fixed = TRUE)))
 })
 REPO  <- dirname(dirname(HERE))
-STUDY <- Sys.getenv("STUDY_FOLDER", unset = "Jul 28")
+source(file.path(HERE, "study_folder.R"))
+STUDY <- study_folder_with(REPO, c("lot", "qc", "R", "checks.R"))
 QC    <- file.path(REPO, STUDY, "lot", "qc", "R", "checks.R")
-if (!file.exists(QC)) {
-  cat("SKIP: no QC catalogue at ", QC, "\n", sep = ""); quit(status = 3L)
-}
+`%||%` <- function(a, b) if (is.null(a)) b else a
+if (!nzchar(STUDY)) study_folder_quit("QC catalogue", STUDY)
 source(QC)
 
 # The duckdb names the harness leaves behind, against the handles the checks

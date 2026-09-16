@@ -30,7 +30,14 @@ pass <- 0L; fail <- 0L
 # and named, and an incomplete run exits non-zero unless the caller says it
 # expected one (ALLOW_SKIPPED_TESTS=TRUE).
 skipped <- 0L
-skip_note <- function(what) { skipped <<- skipped + 1L; cat("  SKIP   ", what, "\n") }
+# The reason is kept, not just counted. test_report_status() replays these at
+# the end instead of guessing at a remedy - see there for what that cost.
+skip_reasons <- character(0)
+skip_note <- function(what) {
+  skipped <<- skipped + 1L
+  skip_reasons <<- c(skip_reasons, what)
+  cat("  SKIP   ", what, "\n")   # skip_note's own print, not a bare one
+}
 
 # The tally is only as good as its wiring: a bare cat("SKIP ...") prints like a
 # skip and counts as nothing, which is exactly how the first pass at this went
@@ -39,12 +46,20 @@ skip_note <- function(what) { skipped <<- skipped + 1L; cat("  SKIP   ", what, "
 # suite it was added to rather than by whoever next reads the diff.
 .suite_path <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
-  if (length(a)) normalizePath(sub("^--file=", "", a[1]), mustWork = FALSE) else NA_character_
+  # The same "~+~" unescape. check_skip_wiring() reads THIS file, and without
+  # it the path named no file, the check returned quietly, and the guard on
+  # every suite's skip wiring was off on any checkout whose path has a space.
+  if (length(a)) normalizePath(gsub("~+~", " ", sub("^--file=", "", a[1]), fixed = TRUE),
+                               mustWork = FALSE) else NA_character_
 })
 check_skip_wiring <- function(path = .suite_path) {
   if (is.na(path) || !file.exists(path)) return(invisible(NULL))
   src <- readLines(path, warn = FALSE)
-  bad <- grep('cat\\(.*"[^"]*SKIP', src)
+  # SKIP as a word, so a line that merely NAMES the ALLOW_SKIPPED_TESTS
+  # variable is not read as a skip this suite printed. It is, spelt without
+  # the lookahead - which is how the first run of this after the reporting
+  # changed flagged the sentence that tells you how to accept a skip.
+  bad <- grep('cat\\(.*"[^"]*SKIP(?![A-Za-z_])', src, perl = TRUE)
   # Not a comment describing one, and not skip_note's own printing line.
   bad <- bad[!grepl("^\\s*#", src[bad]) & !grepl("skip_note", src[bad], fixed = TRUE)]
   ok(length(bad) == 0L,
@@ -53,9 +68,16 @@ check_skip_wiring <- function(path = .suite_path) {
 }
 test_report_status <- function(pass, fail, skipped) {
   cat(sprintf("%d passed, %d failed, %d skipped\n", pass, fail, skipped))
-  if (skipped > 0L)
-    cat("  ", skipped, " block(s) did not run, so this is NOT a clean run. ",
-        "Install duckdb and sqlglot, or set ALLOW_SKIPPED_TESTS=TRUE to accept it.\n", sep = "")
+  if (skipped > 0L) {
+    # What actually skipped, in its own words. This used to print the same
+    # sentence in every suite - "Install duckdb and sqlglot" - whatever the
+    # block had skipped for. On the dashboard suite that named the wrong
+    # remedy: the block wanted survival::, both of the named packages were
+    # already installed, and the reader was sent to reinstall them.
+    cat("  ", skipped, " block(s) did not run, so this is NOT a clean run:\n", sep = "")
+    for (r in skip_reasons) cat("    - ", r, "\n", sep = "")
+    cat("  Fix those, or set ALLOW_SKIPPED_TESTS=TRUE to accept it.\n")
+  }
   allow <- identical(toupper(trimws(Sys.getenv("ALLOW_SKIPPED_TESTS"))), "TRUE")
   if (fail > 0L || (skipped > 0L && !allow)) quit(status = 1L)
 }
