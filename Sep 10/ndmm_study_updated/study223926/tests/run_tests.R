@@ -24,6 +24,14 @@ suppressMessages({
 })
 
 .pass <- 0L; .fail <- character(0)
+
+# Coverage this run did NOT get. A suite whose executed blocks were skipped -
+# no python3, no sqlglot, a neighbour package not beside this one - has tested
+# a fraction of what it claims, and reporting "0 failed" for it reads as a
+# clean run. Each skip is counted and named, and an incomplete run exits
+# non-zero unless the caller says it expected one (ALLOW_SKIPPED_TESTS=TRUE).
+.skipped <- character(0)
+skip_note <- function(what) { .skipped <<- c(.skipped, what); cat("  SKIP  ", what, "\n") }
 ok <- function(cond, what) {
   # `cond` is evaluated HERE, not by the caller, so an assertion whose
   # expression raises is a FAILED assertion rather than a dead run that loses
@@ -823,7 +831,7 @@ cat("\nthe connection layer\n")
     error = function(e) "NO-PYTHON"))
   ptxt <- paste(pout, collapse = "\n")
   if (any(grepl("^SKIP:", pout)) || identical(ptxt, "NO-PYTHON") || !length(pout)) {
-    cat("  SKIP  the staged code list parses as Spark SQL (python3 + sqlglot not available)\n")
+    skip_note("the staged code list parses as Spark SQL (python3 + sqlglot not available)")
   } else {
     ok(grepl("0 failure\\(s\\)", ptxt),
        paste0("the staged code list parses as Spark SQL",
@@ -1581,7 +1589,7 @@ cat("\nthe rules that hold the numbers up\n")
     tfls <- file.path(top, "TFLS", "run_tfls.R")
     dash <- file.path(top, "dashboard", "global.R")
     if (!all(file.exists(c(engine, tfls, dash)))) {
-      cat("  --     the LOT engine, TFLS or the dashboard is not beside this package, so the one-connection check is skipped\n")
+      skip_note("the LOT engine, TFLS or the dashboard is not beside this package, so the one-connection check did not run")
       return(invisible(NULL))
     }
     # The CALL, from dbConnect( on: the engine assigns its connection on the
@@ -3484,8 +3492,15 @@ local({
   ok(identical(count_acute_lag(e, 30), e), "...on either reading")
 }
 
-cat("\n", .pass, " passed, ", length(.fail), " failed\n", sep = "")
-if (length(.fail)) {
+cat("\n", .pass, " passed, ", length(.fail), " failed, ", length(.skipped), " skipped\n", sep = "")
+if (length(.fail))
   cat("failed:\n", paste0("  ", .fail, collapse = "\n"), "\n", sep = "")
-  quit(status = 1)
+if (length(.skipped)) {
+  cat("skipped:\n", paste0("  ", .skipped, collapse = "\n"), "\n", sep = "")
+  cat(length(.skipped), " block(s) did not run, so this is NOT a clean run. ",
+      "Install python3 with sqlglot, or set ALLOW_SKIPPED_TESTS=TRUE to accept it.\n", sep = "")
 }
+if (length(.fail) ||
+      (length(.skipped) &&
+         !identical(toupper(trimws(Sys.getenv("ALLOW_SKIPPED_TESTS"))), "TRUE")))
+  quit(status = 1)

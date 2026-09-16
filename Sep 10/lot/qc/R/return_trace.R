@@ -742,9 +742,27 @@ return_trace_narrative <- function(row, lines, episodes, p, tx = NULL, subs = NU
       if (length(rd)) first_ret <- min(rd)
     }
     proc <- .procedure_between(tx, pid, pe, ret)
+    # 4.7's carve-out. A melphalan course inside a line, after the window and
+    # after a confirmed break, has the SAME signature under two different
+    # rules: 4.3 keeping the line's own drug in its line, and 4.7 suppressing a
+    # short course and carrying the line to its cover. The published tables
+    # record neither rule, so crediting 4.3 here would name a rule that may not
+    # have acted - and 4.7 held long before 30 Aug 2026, so the pre-rule
+    # reading does not follow from it either. Only where the run applied the
+    # melphalan rule: with it off, 4.3 is the only candidate and the ordinary
+    # paragraph is right.
+    melp_ambig <- .return_trace_melp_on(p) &&
+      identical(toupper(trimws(drug)), .return_trace_melp(p))
     # LOT 5 (max_lot) is the last line the engine builds, so there is no
     # "next line" for the older reading to have opened.
     capped <- !is.null(p$max_lot) && !is.na(p$max_lot) && n >= as.integer(p$max_lot)
+    # A transplant ends the line the day BEFORE the procedure, so a return on
+    # the line's last day and the procedure that ended it land on the same
+    # date, and 7.1 orders the procedure above an added medication only for
+    # that tie. Earlier than that, the released addition is the earlier event
+    # and wins, which is the ordinary reading below.
+    proc_end_tie <- reason %in% c("SCT_AUTO", "SCT_ALLO", "SCT_CART", "SCT_AUTO_CONT") &&
+      !is.na(end) && !is.na(ret) && ret >= end
     cap_txt <- if (capped)
       paste0(" LOT ", n, " is the last line the engine builds (max_lot ", p$max_lot,
              "), so under that reading the return would have sat in no line at all.")
@@ -763,6 +781,27 @@ return_trace_narrative <- function(row, lines, episodes, p, tx = NULL, subs = NU
              "return would have arrived into a line these tables do not contain. A build of the ",
              "same cohort with APPLY_OWN_RETURN_FOLD=FALSE, differenced against this one, is what ",
              "settles it.")
+    } else if (identical(reason, "CART_INIT")) {
+      # CART_INIT *is* the MED_ADD branch with a CAR-T inside
+      # cart_consolidation_days, and it ends the line the day before the
+      # infusion rather than the day before the addition
+      # (engine/R/steps/06_lot1_end.R). So releasing the drug moves which
+      # addition that branch reads and changes nothing it produces.
+      paste0("Before 30 Aug 2026 the break released the drug, and the return would have been ",
+             "an added medication - but that changes nothing here. LOT ", n, " ended CART_INIT ",
+             "on ", fmt(end), ", and that branch is an added medication followed by a CAR-T ",
+             "within ", if (is.null(p$cart) || is.na(p$cart)) "cart_consolidation_days" else p$cart,
+             " days, ending the line the day before the INFUSION rather than the day before the ",
+             "addition. The release only changes which addition the branch reads: LOT ", n,
+             " still ends CART_INIT on ", fmt(end), ", and the infusion - not ", drug,
+             " - still opens the line after it.")
+    } else if (proc_end_tie) {
+      paste0("Before 30 Aug 2026 the break released the drug, and the return would have been ",
+             "an added medication on ", format(ret), " - but LOT ", n, " ended ", reason,
+             " on ", fmt(end), ", the same day, and 7.1 puts the procedure above an added ",
+             "medication when the two land together. Which of them would have ended LOT ", n,
+             " cannot be read from these tables: a build of the same cohort with ",
+             "APPLY_OWN_RETURN_FOLD=FALSE, differenced against this one, is what settles it.")
     } else if (is.na(cover$own_end)) {
       paste0("Before 30 Aug 2026 the break released the drug, and this return would have ",
              "opened a new line on ", format(ret), ". The episodes read here show no cover ",
@@ -791,12 +830,26 @@ return_trace_narrative <- function(row, lines, episodes, p, tx = NULL, subs = NU
                   "has no episode inside the line's ", w, "-day induction window - and the engine ",
                   "carries a folded drug in the line's regimen, so this later course is the ",
                   "line's own drug coming back.")
+    stayed <- if (melp_ambig)
+      paste0("It stayed in LOT ", n, ", which runs on over the break - but these tables do not ",
+             "say which rule kept it there. 4.3 keeps a line's own drug in its line; 4.7 ",
+             "suppresses a short melphalan course outside the window and carries the line to ",
+             "the last day that course covers. Both leave exactly this: a melphalan episode ",
+             "inside the line, after the window, after a break. Read this as where the ",
+             "melphalan landed, not as 4.3's doing")
+      else paste0("Under 4.3 a drug of the line's own regimen never starts a line, so the ",
+                  "return stayed in LOT ", n, ", which runs on over the break")
+    if (melp_ambig)
+      pre <- paste0("The reading before 30 Aug 2026 does not follow either: 4.7 is older than ",
+                    "those rules, so if it is what acted here, this return was never released ",
+                    "and no line was ever going to open on it. A build of the same cohort with ",
+                    "APPLY_MELP_RULE=off, differenced against this one, is what separates the ",
+                    "two rules.")
     return(paste0(
       belongs, " Its episode of ", fmt(ps), " to ", fmt(pe), " was followed by ",
       gap_txt, ", and ", drug, " came back on ", format(ret), ", ", k, " days after LOT ", n,
-      " opened and outside the window (window ended ", format(elig), "). Under 4.3 a drug of ",
-      "the line's own regimen never starts a line, so the return stayed in LOT ", n,
-      ", which runs on over the break: LOT ", n, " is ", format(start), " to ", fmt(end),
+      " opened and outside the window (window ended ", format(elig), "). ", stayed,
+      ": LOT ", n, " is ", format(start), " to ", fmt(end),
       if (nzchar(reason)) paste0(" (", reason, ")") else "", ".", sub_txt, " ", pre))
   }
 

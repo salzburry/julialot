@@ -148,13 +148,16 @@ test suites need no warehouse.
 | `engine/tests/test_line_criteria.R` | 57 |
 | `qc/tests/test_lot_qc.R` | 295 |
 | `qc/tests/test_foldin_trace.R` | 149 |
-| `qc/tests/test_trace_returns.R` | 142 |
+| `qc/tests/test_trace_returns.R` | 148 |
 | `melphalan/tests/test_melp_simple.R` | 161 |
 | `validation/tests/test_vignettes.R` | 36 |
 
 None needs a warehouse. Where `duckdb` and `sqlglot` are installed, the suites
 also execute the emitted SQL against fixtures and check the numbers that come
-back; without them those blocks say `SKIP` and the rest still runs.
+back. Without them those blocks say `SKIP`, the rest still runs, and the suite
+**exits non-zero** — a run missing its executed blocks is not a clean run, and
+the counts above are for a complete one. `ALLOW_SKIPPED_TESTS=TRUE` accepts an
+incomplete run deliberately; the skips are printed either way.
 
 ---
 

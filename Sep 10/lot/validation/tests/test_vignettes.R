@@ -23,6 +23,22 @@ PARENT <- dirname(ROOT)
 STUDY  <- dirname(PARENT)
 
 pass <- 0L; fail <- 0L
+
+# Coverage this run did NOT get. A suite whose executed blocks were skipped -
+# no duckdb, no sqlglot, no python3 - has tested a fraction of what it claims,
+# and reporting "0 failed" for it reads as a clean run. Each skip is counted
+# and named, and an incomplete run exits non-zero unless the caller says it
+# expected one (ALLOW_SKIPPED_TESTS=TRUE).
+skipped <- 0L
+skip_note <- function(what) { skipped <<- skipped + 1L; cat("  SKIP   ", what, "\n") }
+test_report_status <- function(pass, fail, skipped) {
+  cat(sprintf("%d passed, %d failed, %d skipped\n", pass, fail, skipped))
+  if (skipped > 0L)
+    cat("  ", skipped, " block(s) did not run, so this is NOT a clean run. ",
+        "Install duckdb and sqlglot, or set ALLOW_SKIPPED_TESTS=TRUE to accept it.\n", sep = "")
+  allow <- identical(toupper(trimws(Sys.getenv("ALLOW_SKIPPED_TESTS"))), "TRUE")
+  if (fail > 0L || (skipped > 0L && !allow)) quit(status = 1L)
+}
 ok <- function(cond, what) {
   # `cond` is evaluated here, not by the caller, so an assertion whose
   # expression raises counts as a failure instead of aborting the run and
@@ -267,5 +283,4 @@ ok(!length(uncited),
    else "...and every vignette here is cited by a rule, so neither side grew alone")
 
 cat("\n", strrep("-", 52), "\n", sep = "")
-cat(sprintf("%d passed, %d failed\n", pass, fail))
-if (fail > 0L) quit(status = 1L)
+test_report_status(pass, fail, skipped)

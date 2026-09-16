@@ -18,6 +18,22 @@ ROOT <- local({
 })
 
 pass <- 0L; fail <- 0L
+
+# Coverage this run did NOT get. A suite whose executed blocks were skipped -
+# no duckdb, no sqlglot, no python3 - has tested a fraction of what it claims,
+# and reporting "0 failed" for it reads as a clean run. Each skip is counted
+# and named, and an incomplete run exits non-zero unless the caller says it
+# expected one (ALLOW_SKIPPED_TESTS=TRUE).
+skipped <- 0L
+skip_note <- function(what) { skipped <<- skipped + 1L; cat("  SKIP   ", what, "\n") }
+test_report_status <- function(pass, fail, skipped) {
+  cat(sprintf("%d passed, %d failed, %d skipped\n", pass, fail, skipped))
+  if (skipped > 0L)
+    cat("  ", skipped, " block(s) did not run, so this is NOT a clean run. ",
+        "Install duckdb and sqlglot, or set ALLOW_SKIPPED_TESTS=TRUE to accept it.\n", sep = "")
+  allow <- identical(toupper(trimws(Sys.getenv("ALLOW_SKIPPED_TESTS"))), "TRUE")
+  if (fail > 0L || (skipped > 0L && !allow)) quit(status = 1L)
+}
 ok <- function(cond, what) {
   cond <- tryCatch(cond, error = function(e) {
     what <<- paste0(what, "  [raised: ", conditionMessage(e), "]")
@@ -131,9 +147,9 @@ cat("\n-- the queries, RUN on the fixture --\n")
 QX <- return_trace_queries(EXEC_TABLES, P)
 rr <- returns_run_rows(QX, RETURNS_FIXTURE, ROOT)
 if (is.null(rr)) {
-  cat("  SKIP    the row runner could not be run\n")
+  skip_note("the row runner could not be run")
 } else if (identical(rr, "skip")) {
-  cat("  SKIP    duckdb or sqlglot is not installed\n")
+  skip_note("duckdb or sqlglot is not installed - every executed check below was skipped")
 } else {
   err <- function(r) attr(r, "error")
   for (k in names(rr))
@@ -581,6 +597,67 @@ if (is.null(rr)) {
   at2 <- return_trace_annotate(rt$lines, rt$eps, NULL, CT[c(2L, 1L), , drop = FALSE], P)
   ok(identical(at2$note, at$note),
      "...and the notes do not depend on the order the rows arrived in")
+  # 4.7's carve-out: a melphalan course inside a line, after the window and
+  # after a break, is 4.3's own return and 4.7's suppressed course alike, and
+  # the tables record neither rule.
+  MELPR <- list(final = list(
+      rf_fin("R000014", 1L, "2020-01-01", "MED", "MELP", "2021-12-31", "DISCONTINUATION",
+             discon = "2021-12-31")),
+    map = list(rf_ep("R000014", "MELP", "2020-01-01", "2020-02-28", discon = 1L, cnt = 2L),
+               rf_ep("R000014", "MELP", "2021-03-01", "2021-12-31", cnt = 10L)),
+    allo = list(), auto = list(), subs = list())
+  rm14 <- returns_run_rows(c(QX["own_return"],
+                            list(lines = foldin_trace_lines_sql(EXEC_TABLES, "R000014", P),
+                                 eps = foldin_trace_episodes_sql(EXEC_TABLES, "R000014"))), MELPR, ROOT)
+  CM <- return_trace_stack(rm14["own_return"])
+  ok(nrow(CM) == 1L && CM$MED_ABBR == "MELP" && CM$LOT_NUM == 1L,
+     "a melphalan course back inside its own line after a break is still counted as a return")
+  nm <- return_trace_narrative(CM[1, , drop = FALSE], rm14$lines, rm14$eps, P, all_rows = CM)
+  ok(has(nm, "these tables do not say which rule kept it there") &&
+       has(nm, "4.7 suppresses a short melphalan course") &&
+       has(nm, "not as 4.3's doing") && !has(nm, "Under 4.3"),
+     "...but its paragraph does not credit 4.3, because 4.7 leaves the same signature")
+  ok(has(nm, "4.7 is older than those rules") && has(nm, "APPLY_MELP_RULE=off") &&
+       !has(nm, "would have opened a new line"),
+     "...and it drops the pre-rule counterfactual, which does not follow from a rule that predates 30 Aug 2026")
+  Pmo <- P; Pmo$melp_rule <- "off"
+  nmo <- return_trace_narrative(CM[1, , drop = FALSE], rm14$lines, rm14$eps, Pmo, all_rows = CM)
+  ok(has(nmo, "Under 4.3") && has(nmo, "Before 30 Aug 2026"),
+     "...while a run that did not apply the melphalan rule gets the ordinary paragraph: 4.3 is then the only candidate")
+
+  # A line that ended CART_INIT: that branch is an added medication followed by
+  # a CAR-T, dated at the infusion, so releasing the drug changes nothing.
+  CARTL <- list(final = list(
+      rf_fin("R000015", 1L, "2020-01-01", "MED", "LEN", "2021-05-31", "CART_INIT")),
+    map = list(rf_ep("R000015", "LEN", "2020-01-01", "2020-04-30", discon = 1L, cnt = 4L),
+               rf_ep("R000015", "LEN", "2020-11-30", "2021-06-30", cnt = 7L)),
+    allo = list(), auto = list(), subs = list())
+  rc15 <- returns_run_rows(c(QX["own_return"],
+                            list(lines = foldin_trace_lines_sql(EXEC_TABLES, "R000015", P),
+                                 eps = foldin_trace_episodes_sql(EXEC_TABLES, "R000015"))), CARTL, ROOT)
+  CC <- return_trace_stack(rc15["own_return"])
+  nc <- return_trace_narrative(CC[1, , drop = FALSE], rc15$lines, rc15$eps, P, all_rows = CC)
+  ok(nrow(CC) == 1L && has(nc, "ended CART_INIT on 2021-05-31") &&
+       has(nc, "the day before the INFUSION rather than the day before the addition") &&
+       has(nc, "still opens the line after it") && !has(nc, "would have ended MED_ADD"),
+     "a return inside a CART_INIT line is not read as an added medication that moves the line's end - that branch is dated at the infusion, so the release changes nothing")
+
+  # ...and a return on the very day a transplant ended the line is the one tie
+  # 7.1 orders, which these tables cannot resolve.
+  SCTT <- list(final = list(
+      rf_fin("R000016", 1L, "2020-01-01", "MED", "LEN", "2021-03-31", "SCT_AUTO")),
+    map = list(rf_ep("R000016", "LEN", "2020-01-01", "2020-04-30", discon = 1L, cnt = 4L),
+               rf_ep("R000016", "LEN", "2021-03-31", "2021-09-30", cnt = 6L)),
+    allo = list(), auto = list(), subs = list())
+  rs16 <- returns_run_rows(c(QX["own_return"],
+                            list(lines = foldin_trace_lines_sql(EXEC_TABLES, "R000016", P),
+                                 eps = foldin_trace_episodes_sql(EXEC_TABLES, "R000016"))), SCTT, ROOT)
+  CS <- return_trace_stack(rs16["own_return"])
+  ns <- return_trace_narrative(CS[1, , drop = FALSE], rs16$lines, rs16$eps, P, all_rows = CS)
+  ok(nrow(CS) == 1L && has(ns, "the same day, and 7.1 puts the procedure above an added medication") &&
+       has(ns, "cannot be read from these tables"),
+     "...and a return landing on the day a transplant ended the line says the cascade cannot be re-run from here, rather than picking one")
+
   ok(identical(note_of("R000004", "LEN", "2020-12-01"), "opens LOT 3 - LOT 2 was opened by SCT_AUTO, so no fold across it"),
      "a return across a transplant-opened line says so on the episode that opened the next")
   ok(identical(note_of("R000005", "LEN", "2021-09-01"), "opens LOT 4 - back from LOT 1, out of 4.8's scope"),
@@ -689,5 +766,5 @@ ok(has(src, "cands_out$PATID <- mask_patid_r(cands_out$PATID)"),
    "...and masks the candidate list too when asked, not only the traced patients")
 ok(!has(src, "DELETE") && !has(src, "INSERT") && !has(src, "CREATE"), "it reads only")
 
-cat(sprintf("\n%d passed, %d failed\n", pass, fail))
-if (fail > 0L) quit(status = 1L)
+cat("\n")
+test_report_status(pass, fail, skipped)

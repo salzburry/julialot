@@ -113,24 +113,27 @@ Rscript TFLS/tests/test_tfls.R                             # 361
 (cd lot/engine     && Rscript tests/test_runner.R)         # 527
 (cd lot/qc         && Rscript tests/test_lot_qc.R)         # 295
 (cd lot/qc         && Rscript tests/test_foldin_trace.R)   # 149
-(cd lot/qc         && Rscript tests/test_trace_returns.R)  # 142
+(cd lot/qc         && Rscript tests/test_trace_returns.R)  # 148
 (cd lot/melphalan  && Rscript tests/test_melp_simple.R)    # 161
 (cd lot/validation && Rscript tests/test_vignettes.R)      #  36
 ```
 
-2910 checks. Base R except for **`glue`**, which three of them need — the two
+2916 checks. Base R except for **`glue`**, which three of them need — the two
 LOT engine suites, through `tests/testutil.R`, and melphalan. The other six load
 nothing. The app needs `shiny`; a warehouse run needs `DBI`, `odbc` and `glue`.
 
 Four of the suites (the study package, LOT QC's two, and melphalan) additionally **execute** the
 SQL they emit against fixtures where `python3` with `duckdb` and `sqlglot` is
-present; where it is not they print `SKIP` and the rest of the suite still
-runs, so a green run on a machine without them is a smaller check than a green
-run with them. The dashboard suite does the same with `survival`, which it uses
+present. The dashboard suite does the same with `survival`, which it uses
 only to cross-check its own Kaplan-Meier against a second implementation.
 
-Each suite prints `SKIP` for anything it could not run, and the line says what
-was missing — so read the skips, not just the total.
+**A suite that could not run part of itself does not exit clean.** Every suite
+ends with `N passed, N failed, N skipped`, names each skipped block and what
+was missing, and **exits non-zero when anything was skipped** — because a run
+missing its executed blocks has tested a fraction of what it claims, and
+`0 failed` reads as a clean run. To accept an incomplete run deliberately (a
+machine without `duckdb`, say), set `ALLOW_SKIPPED_TESTS=TRUE`; the skips are
+still printed. The counts above are for a complete run.
 
 ---
 
