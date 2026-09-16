@@ -40,10 +40,27 @@ TBL <- list(final = "s.TFINAL", long = "s.TLONG", map = "s.TMAP",
             sct = "s.TSCT", auto = "s.TAUTO", allo = "s.TALLOCART",
             attrition = "s.TATTR", meta = "s.TMETA",
             cohort = "s.TCOHORT", subs = "s.TSUBS")
-P <- qc_params(RETURNS_SETTINGS, "run-abc")
-P$gap <- qc_int(RETURNS_SETTINGS, "map_discon_gap_days")
-P$melp_days <- qc_int(RETURNS_SETTINGS, "melp_simple_course_days")
+P <- return_trace_params(RETURNS_SETTINGS, "run-abc")
 Q <- return_trace_queries(TBL, P)
+ok(identical(P$gap, qc_int(RETURNS_SETTINGS, "map_discon_gap_days")) &&
+     identical(P$melp_days, qc_int(RETURNS_SETTINGS, "melp_simple_course_days")),
+   "return_trace_params adds the two settings the frozen QC catalogue does not carry, so no caller has to remember them")
+ok(is.na(return_trace_params(sub("[|]melp_simple_course_days=[^|]*", "", RETURNS_SETTINGS),
+                             "run-abc")$melp_days),
+   "...and a run built before the course cap was recorded gets NA, which is the melp_confirmed arm not being emitted")
+ok(inherits(try(return_trace_params(sub("[|]map_discon_gap_days=[^|]*", "", RETURNS_SETTINGS),
+                                    "run-abc"), silent = TRUE), "try-error"),
+   "...while a run missing the discontinuation gap still refuses to be traced")
+
+cat("\n-- the fixture is a build the engine could have produced --\n")
+ok(identical(returns_fixture_defects(), character(0)),
+   "no fixture line ends MED_ADD with the added agent past a confirmed run-out - the engine's own gate would have made it DISCONTINUATION")
+BROKEN <- RETURNS_FIXTURE
+BROKEN$map[[1]] <- rf_ep("R000001", "BORT", "2020-01-01", "2020-05-15", discon = 1L, cnt = 5L)
+bd <- returns_fixture_defects(BROKEN)
+ok(length(bd) == 1L && grepl("R000001 LOT 1", bd[1], fixed = TRUE) &&
+     grepl("past a run-out on 2020-05-15", bd[1], fixed = TRUE),
+   "...and the check is not vacuous: pulling one episode's cover back before the added agent is caught, with the date it would have ended on")
 
 cat("\n-- the queries, as text --\n")
 ok(identical(names(Q), c("fold", "own_return", "opens_line", "carried_over")),
@@ -423,19 +440,52 @@ if (is.null(rr)) {
      "...and it is not carried over either: LOT 2 did not hold BORT, so nothing here is a return the rules decided")
   # ...and a course inside the cap, but which the drug arrived AFTER, is not
   # 4.7's either: the confirming agent starts while the course still covers.
+  # The date has to sit INSIDE the line's induction window and OUTSIDE the
+  # course - the course runs to 2021-09-21, the window runs past it - or the
+  # row would be missing because the window never admitted it and the test
+  # would say nothing about the cover bound, which is what it is here to test.
+  w4 <- rv$lines[as.integer(rv$lines$LOT_NUM) == 4L, , drop = FALSE]
+  ok(nrow(w4) == 1L && as.Date("2021-09-22") > as.Date("2021-09-21") &&
+       as.Date("2021-09-22") <= as.Date(as.character(w4$ELIGIBLE_END[1])),
+     "the late arrival below is inside LOT 4's induction window and past the course's last day, so what it tests is the cover and not the window")
   VLATE <- V2
-  VLATE$map[[6]] <- rf_ep("R000011", "LEN", "2021-09-25", "2022-03-31", cnt = 7L)
+  VLATE$map[[6]] <- rf_ep("R000011", "LEN", "2021-09-22", "2022-03-31", cnt = 7L)
   r <- returns_run_rows(QX["opens_line"], VLATE, ROOT)$opens_line
   ok(is.null(err(r)) && !any(r$PATID == "R000011" & r$OPEN_VIA == "melp_confirmed"),
      "a drug arriving after the short course stopped covering did not confirm it, and is not reported as having")
+  # 4.7 chains BEFORE it measures: doses closer together than
+  # melp_exposure_days are one course, and the cover is the latest supply end
+  # over all of it (engine/R/melp_rule.R). Two episodes 20 days apart are one
+  # 55-day course - not 4.7's short one - though the first episode alone is 28
+  # days and would clear the cap on its own.
+  VCHAIN <- V2
+  VCHAIN$map[[5]] <- rf_ep("R000011", "MELP", "2021-08-25", "2021-09-21", cnt = 1L)
+  VCHAIN$map[[length(VCHAIN$map) + 1L]] <-
+    rf_ep("R000011", "MELP", "2021-09-14", "2021-10-18", cnt = 1L)
+  r <- returns_run_rows(QX["opens_line"], VCHAIN, ROOT)$opens_line
+  ok(is.null(err(r)) && !any(r$PATID == "R000011" & r$OPEN_VIA == "melp_confirmed"),
+     "two melphalan doses inside the exposure distance are ONE course, so a 55-day one is not 4.7's short course and confirms nothing - the opening episode's own 28 days do not decide it")
+  # ...and a dose BEYOND the exposure distance starts a second course, so the
+  # first is still the short one it was.
+  VSPLIT <- V2
+  VSPLIT$map[[length(VSPLIT$map) + 1L]] <-
+    rf_ep("R000011", "MELP", "2021-10-25", "2021-11-21", cnt = 1L)
+  r <- returns_run_rows(QX["opens_line"], VSPLIT, ROOT)$opens_line
+  ok(is.null(err(r)) && sum(r$PATID == "R000011" & r$OPEN_VIA == "melp_confirmed") == 1L,
+     "...while a later dose past that distance is a course of its own and leaves the first one short")
+
+  # The arm, not a bare name: a CTE or a comment can carry the word, and a
+  # test that matched one would pass on a query that emits no such row.
+  arm <- function(pp, via) has(return_trace_opens_sql(EXEC_TABLES, pp),
+                              paste0("'", via, "' AS OPEN_VIA"))
   Pnd <- P; Pnd$melp_days <- NA
-  ok(!has(return_trace_opens_sql(EXEC_TABLES, Pnd), "melp_confirmed") &&
-       has(return_trace_opens_sql(EXEC_TABLES, Pnd), "melp_course"),
+  ok(!arm(Pnd, "melp_confirmed") && arm(Pnd, "melp_course"),
      "a run that recorded no course cap gets no melp_confirmed row at all - the claim has no evidence behind it - while the exemption arm, which needs no length, stands")
+  Pne <- P; Pne$melp_expo <- NA
+  ok(!arm(Pne, "melp_confirmed") && arm(Pne, "melp_course"),
+     "...and neither does one that recorded no exposure distance: without it there is no chained course for the cap to measure")
   Poff <- P; Poff$melp_rule <- "off"
-  ok(!has(return_trace_opens_sql(EXEC_TABLES, Poff), "melp_course") &&
-       !has(return_trace_opens_sql(EXEC_TABLES, Poff), "melp_confirmed") &&
-       has(return_trace_opens_sql(EXEC_TABLES, P), "melp_course"),
+  ok(!arm(Poff, "melp_course") && !arm(Poff, "melp_confirmed") && arm(P, "melp_course"),
      "...and neither melphalan arm is emitted for a run that did not apply the melphalan rule")
   ok(has(nv, "What these tables cannot show is whether 4.7 was the rule that acted") &&
        !has(nv, "confirmed it,"),
@@ -480,6 +530,14 @@ if (is.null(rr)) {
        gs("opens_line", "by drug", "MELP")$n_returns == 1 && gs("carried_over", "all")$n_returns == 1,
      "...and counts every kind by line and by drug, carried_over included")
   ok(identical(unique(sm$kind[-1]), RETURN_TRACE_ALL_KINDS), "...in the report's order")
+  ok(gs("opens_line", "by open path", "new_agent")$n_returns == 2 &&
+       gs("opens_line", "by open path", "melp_course")$n_returns == 1 &&
+       gs("opens_line", "by open path", "melp_confirmed")$n_returns == 1 &&
+       sum(sm$level == "by open path") == 3L &&
+       sum(sm$n_returns[sm$level == "by open path"]) == gs("opens_line", "all")$n_returns,
+     "...and opens_line is split by the arm that opened the line, so one total does not read as one rule")
+  ok(!any(sm$level == "by open path" & sm$kind != "opens_line"),
+     "...a split only opens_line has, since no other kind records a path")
 
   cat("\n-- annotation and narrative --\n")
   ids_all <- unique(C$PATID)
@@ -494,6 +552,35 @@ if (is.null(rr)) {
   ok(identical(note_of("R000002", "LEN", "2020-11-30"), "RETURNED to LOT 1 after a 214-day break (4.3)") &&
        identical(note_of("R000002", "LEN", "2020-01-01"), "break follows: 214 days to the return"),
      "an own return marks the return and the episode before the break, with the gap in days")
+  # An episode can be both: the drug came back, ran out, and came back again
+  # inside the same line, so the middle course is one row's return and the next
+  # row's break. Both notes belong on it - either alone loses a return.
+  TWICE <- list(final = list(
+      rf_fin("R000013", 1L, "2020-01-01", "MED", "LEN", "2021-12-31", "DISCONTINUATION",
+             discon = "2021-12-31")),
+    map = list(rf_ep("R000013", "LEN", "2020-01-01", "2020-02-29", discon = 1L, cnt = 2L),
+               rf_ep("R000013", "LEN", "2020-08-01", "2020-09-30", discon = 1L, cnt = 2L),
+               rf_ep("R000013", "LEN", "2021-03-01", "2021-12-31", cnt = 10L)),
+    allo = list(), auto = list(), subs = list())
+  rt <- returns_run_rows(c(QX["own_return"],
+                           list(lines = foldin_trace_lines_sql(EXEC_TABLES, "R000013", P),
+                                eps = foldin_trace_episodes_sql(EXEC_TABLES, "R000013"))), TWICE, ROOT)
+  CT <- return_trace_stack(rt["own_return"])
+  ok(nrow(CT) == 2L && all(CT$LOT_NUM == 1L) &&
+       identical(sort(format(CT$RETURN_DT)), c("2020-08-01", "2021-03-01")),
+     "a drug that comes back twice inside one line is two own returns, both on that line")
+  at <- return_trace_annotate(rt$lines, rt$eps, NULL, CT, P)
+  mid <- at$note[at$MAP_MED_TYPE == "LEN" & format(at$MAP_START_DT) == "2020-08-01"]
+  ok(identical(mid, "RETURNED to LOT 1 after a 154-day break (4.3); break follows: 152 days to the return"),
+     "...and the middle episode keeps both notes - its own return and the break that follows it")
+  ok(identical(at$note[at$MAP_MED_TYPE == "LEN" & format(at$MAP_START_DT) == "2020-01-01"],
+               "break follows: 154 days to the return") &&
+       identical(at$note[at$MAP_MED_TYPE == "LEN" & format(at$MAP_START_DT) == "2021-03-01"],
+                 "RETURNED to LOT 1 after a 152-day break (4.3)"),
+     "...while the episodes that are only one of the two carry only that one")
+  at2 <- return_trace_annotate(rt$lines, rt$eps, NULL, CT[c(2L, 1L), , drop = FALSE], P)
+  ok(identical(at2$note, at$note),
+     "...and the notes do not depend on the order the rows arrived in")
   ok(identical(note_of("R000004", "LEN", "2020-12-01"), "opens LOT 3 - LOT 2 was opened by SCT_AUTO, so no fold across it"),
      "a return across a transplant-opened line says so on the episode that opened the next")
   ok(identical(note_of("R000005", "LEN", "2021-09-01"), "opens LOT 4 - back from LOT 1, out of 4.8's scope"),
@@ -583,12 +670,14 @@ if (is.null(rr)) {
 
 cat("\n-- the runner --\n")
 src <- paste(readLines(file.path(ROOT, "trace_returns.R"), warn = FALSE), collapse = "\n")
+RT_SRC <- paste(readLines(file.path(ROOT, "R", "return_trace.R"), warn = FALSE), collapse = "\n")
 ok(has(src, 'Sys.getenv("TRACE_LINES", unset = "1,2")'),
    "TRACE_LINES defaults to 1,2 - the 2L question, with the own returns inside 1L that used to make a 2L")
 ok(has(src, 'Sys.getenv("TRACE_N", unset = "12")'), "TRACE_N defaults to 12")
 ok(has(src, "if (!isTRUE(p$foldin) || !isTRUE(p$own_return_fold))") && has(src, "there is nothing to trace"),
    "a run without both returning-drug rules is refused: the signatures would be defects, not the rules")
-ok(has(src, 'p$gap <- qc_int(settings, "map_discon_gap_days")'),
+ok(has(src, "p <- return_trace_params(settings, run_id)") &&
+     has(RT_SRC, 'p$gap <- qc_int(settings, "map_discon_gap_days")'),
    "the break length is read off the run's own recorded settings, not config.csv")
 ok(has(src, "foldin_trace_build_pin(status_row())") && has(src, "changed while its tables were being"),
    "the build is pinned before the reads and compared after them, before anything is written")

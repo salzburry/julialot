@@ -78,9 +78,13 @@ Each item names the requirement id in the matrix below.
   frailty and subgroup lists): Annexes 2, 3 and 7 are outstanding (Q15). The
   lists ship with the protocol's concepts and no codes; a run stops on an
   empty list rather than reporting zero.
-- **The study period** (Q1): the text says 2018, both figures say 2016. The
-  package now refuses to run over a cohort built under a different period than
-  it is set to, but which period is the study team's to say.
+- ~~**The study period** (Q1)~~ — **settled since this pass.** The text says
+  2018, both figures say 2016; the study team's answer is **2018, and rebuild
+  the cohort**. `config_223926.R` already defaults to `study_start` 2018-01-01
+  with `lot1_index_from` 2019-01-01, so nothing here changes. What remains is
+  upstream: the delivered cohort is the 2016 one, and until it is rebuilt a
+  default run stops on `read_upstream_settings()` rather than mixing periods.
+  That stop is the correct behaviour, not a defect.
 - **Seven readings** recorded as open questions with the reading taken as a
   setting or a column: Q30 diagnosis date, Q31 prevalence window, Q32 sequence
   reading, Q33 discontinuation day, Q34 washout across boundaries, Q35
@@ -103,7 +107,7 @@ did about it. Page references are to the document pages of the transcript
 
 | requirement | protocol | audit verdict | after this pass |
 |---|---|---|---|
-| `PERIOD-STUDY` — The study period will span from 01 Jan 2018 through 31 Mar 2026 (i.e., the most recent date of data availability at time of analysis) … | §7.1 body text d19; Figure 1 d21 and Figure 2 d39; synopsis … | ambiguous (P1) | **stops unless overridden** — A cohort built under a different study period or 1L index floor than this run is set to now stops the run (`BINDING_UPSTREAM_SETTINGS`, `read_upstream_settings()`); `SETTINGS_OVERRIDE=TRUE` proceeds and records it as a deviation. Q1 itself is still the study team's. |
+| `PERIOD-STUDY` — The study period will span from 01 Jan 2018 through 31 Mar 2026 (i.e., the most recent date of data availability at time of analysis) … | §7.1 body text d19; Figure 1 d21 and Figure 2 d39; synopsis … | ambiguous (P1) | **stops unless overridden** — A cohort built under a different study period or 1L index floor than this run is set to now stops the run (`BINDING_UPSTREAM_SETTINGS`, `read_upstream_settings()`); `SETTINGS_OVERRIDE=TRUE` proceeds and records it as a deviation. Q1 is now answered — **2018, rebuild the cohort** — and the package is already set to it; the 2016 cohort upstream is what a default run stops against. |
 | `PERIOD-END` — The study period will span from 01 Jan 2018 through 31 Mar 2026 (i.e., the most recent date of data availability at time of analysis) | §7.1 d19; synopsis d10 | matches | — |
 | `INDEX-DEF` — The index date will be defined as the start date of a LOT regimen (i.e., 1L, 2L, 3L; each LOT has its own index date) [d19]. The 1L cohort … | §7.1 d19; §7.2.1.1 d23 | matches | — |
 | `INDEX-1L-FLOOR` — all patients will be required to have initiated their first qualifying line of treatment from 01 Jan 2019 [d19]. Received an eligible or … | §7.1 d19; §7.2.1.1 d23; synopsis d10 | partially (P1) | **stops unless overridden** — The cohort build's `lot1_from` is read back and compared with `LOT1_INDEX_FROM`; a disagreement stops the run unless overridden, and is then recorded. |

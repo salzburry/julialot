@@ -104,11 +104,46 @@ RETURN_TRACE_COLS <- c("PATID", "LOT_NUM", "MED_ABBR", "KIND", "RETURN_LINE",
   d <- suppressWarnings(as.integer(p$melp_days %||% NA))
   if (length(d) != 1L || is.na(d) || d < 1L) NA_integer_ else d
 }
+
+# How far apart two doses may be and still be ONE course. 4.7 is a two-step
+# rule - chain on melp_exposure_days, then measure the chained course against
+# melp_simple_course_days - and a run that recorded only one of the two is one
+# this trace cannot do the rule's arithmetic for.
+.return_trace_melp_expo <- function(p) {
+  d <- suppressWarnings(as.integer(p$melp_expo %||% NA))
+  if (length(d) != 1L || is.na(d) || d < 1L) NA_integer_ else d
+}
 .return_trace_melp_course_on <- function(p)
-  .return_trace_melp_on(p) && !is.na(.return_trace_melp_days(p))
+  .return_trace_melp_on(p) && !is.na(.return_trace_melp_days(p)) &&
+    !is.na(.return_trace_melp_expo(p))
+
+# The two settings this trace needs that the QC catalogue's qc_params() does
+# not carry. It is frozen - every check in R/checks.R judges by the list it
+# already returns - so they are added here instead, in one place: three
+# callers set them, and a caller that forgot melp_days would silently drop the
+# melp_confirmed arm rather than fail. A run built before the course cap was
+# recorded gets NA, which is that arm not being emitted; every other setting
+# is still read strictly, so a run missing one still refuses to be traced.
+return_trace_params <- function(settings, run_id, p = NULL) {
+  .need_checks()
+  if (is.null(p)) p <- qc_params(settings, run_id)
+  p$gap <- qc_int(settings, "map_discon_gap_days")
+  p$melp_days <- tryCatch(qc_int(settings, "melp_simple_course_days"),
+                          error = function(e) NA_integer_)
+  p$melp_expo <- tryCatch(qc_int(settings, "melp_exposure_days"),
+                          error = function(e) NA_integer_)
+  p
+}
 
 .return_trace_base_ctes <- function(t, p) {
   .need_checks()
+  melp <- .return_trace_melp(p)
+  # Both numbers or neither: the cap is meaningless without the chain that
+  # says what it measures, so a run missing either gets an empty melp_open.
+  melp_expo <- .return_trace_melp_expo(p)
+  melp_cap <- .return_trace_melp_days(p)
+  melp_cap <- if (is.na(melp_expo) || is.na(melp_cap)) 0L else melp_cap
+  melp_expo <- if (is.na(melp_expo)) 0L else melp_expo
   paste0(qc_window_sql(t, p, per_line = TRUE), ",
     reg AS (
       SELECT w.PATID, w.LOT_NUM, w.LOT_START_DT, w.LOT_START_TYPE,
@@ -142,23 +177,53 @@ RETURN_TRACE_COLS <- c("PATID", "LOT_NUM", "MED_ABBR", "KIND", "RETURN_LINE",
        AND e.MAP_START_DT >= w.LOT_START_DT AND e.MAP_START_DT <= w.ELIGIBLE_END
       GROUP BY w.PATID, w.LOT_NUM, w.MED_ABBR
     ),
-    -- The lines a SHORT melphalan course opened, with the cover of the
-    -- episode that opened them. 4.7 is about a course covering
-    -- melp_simple_course_days or fewer: a longer one is melphalan behaving
-    -- as any other agent, and reading it as 4.7's would put the rule's name
-    -- on a line the rule never touched. The span tested is the opening
-    -- EPISODE's, which is the course where the doses are one episode and a
-    -- lower bound on it where they are not - so this errs towards saying
-    -- nothing rather than towards claiming the rule.
+    -- The lines a SHORT melphalan course opened. 4.7 is a TWO-step rule and
+    -- both steps are done here the way engine/R/melp_rule.R does them
+    -- (its melp_runs / melp_dose_expo / course-cover chain): doses closer
+    -- together than melp_exposure_days are one course, and the course's cover
+    -- is the latest supply end over ALL its episodes - not the opening
+    -- episode's own end. Measuring the opening episode alone would be a LOWER
+    -- bound on the course, so it would clear the cap more often than the rule
+    -- does and put 4.7's name on lines the rule never touched. Where the run
+    -- recorded neither number the cap below is 0, nothing is a short course,
+    -- and the arm that rests on one is not emitted at all.
+    melp_doses AS (
+      SELECT cast(PATID as string) AS PATID, MAP_START_DT AS DOSE_DT
+      FROM ", t$map, "
+      WHERE upper(trim(MAP_MED_TYPE)) = '", melp, "'
+      GROUP BY cast(PATID as string), MAP_START_DT
+    ),
+    melp_runs AS (
+      SELECT PATID, DOSE_DT,
+             CASE WHEN datediff(DOSE_DT,
+                    lag(DOSE_DT) OVER (PARTITION BY PATID ORDER BY DOSE_DT))
+                       < ", melp_expo, "
+                  THEN 0 ELSE 1 END AS IS_NEW
+      FROM melp_doses
+    ),
+    melp_dose_expo AS (
+      SELECT PATID, DOSE_DT,
+             min(DOSE_DT) OVER (PARTITION BY PATID, E) AS EXPO_DT
+      FROM (SELECT PATID, DOSE_DT,
+                   sum(IS_NEW) OVER (PARTITION BY PATID ORDER BY DOSE_DT
+                                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS E
+            FROM melp_runs) r
+    ),
+    melp_cover AS (
+      SELECT d.PATID, d.EXPO_DT, max(m.MAP_END_DT) AS COURSE_END_DT
+      FROM melp_dose_expo d
+      INNER JOIN ", t$map, " m
+        ON cast(m.PATID as string) = d.PATID AND m.MAP_START_DT = d.DOSE_DT
+       AND upper(trim(m.MAP_MED_TYPE)) = '", melp, "'
+      GROUP BY d.PATID, d.EXPO_DT
+    ),
     melp_open AS (
-      SELECT DISTINCT w.PATID, w.LOT_NUM, e.MAP_START_DT AS COURSE_START,
-             e.MAP_END_DT AS COURSE_END
+      SELECT DISTINCT w.PATID, w.LOT_NUM, c.EXPO_DT AS COURSE_START,
+             c.COURSE_END_DT AS COURSE_END
       FROM reg w
-      INNER JOIN ep e
-        ON e.PATID = w.PATID AND e.MAP_START_DT = w.LOT_START_DT
-       AND upper(trim(e.MAP_MED_TYPE)) = '", .return_trace_melp(p), "'
-       AND datediff(e.MAP_END_DT, e.MAP_START_DT) + 1 <= ",
-       if (is.na(.return_trace_melp_days(p))) 0L else .return_trace_melp_days(p), "
+      INNER JOIN melp_cover c
+        ON c.PATID = w.PATID AND c.EXPO_DT = w.LOT_START_DT
+      WHERE datediff(c.COURSE_END_DT, c.EXPO_DT) + 1 <= ", melp_cap, "
     ),
     -- The line before each line, for what opened it and what it carried.
     --
@@ -487,6 +552,13 @@ return_trace_summary <- function(cands, n_patients_total, n_lines_total) {
                                      cnt(d[d$RETURN_LINE == l, , drop = FALSE]))
     for (m in sort(unique(d$MED_ABBR)))
       out[[length(out) + 1L]] <- row(k, "by drug", m, cnt(d[d$MED_ABBR == m, , drop = FALSE]))
+    # The three arms of opens_line are three different readings - an ordinary
+    # return, a short melphalan course, and the agent that confirmed one - and
+    # a total that does not separate them reads as one rule doing all of it.
+    via <- if (is.null(d$OPEN_VIA)) character(0) else as.character(d$OPEN_VIA)
+    for (v in sort(unique(via[!is.na(via) & nzchar(via)])))
+      out[[length(out) + 1L]] <- row(k, "by open path", v,
+                                     cnt(d[!is.na(via) & via == v, , drop = FALSE]))
   }
   do.call(rbind, out)
 }
@@ -496,6 +568,7 @@ return_trace_summary <- function(cands, n_patients_total, n_lines_total) {
 #
 #   'RETURNED to LOT n after a k-day break (4.3)'   the own return's episode
 #   'break follows: k days to the return'            the episode before it
+#   the two joined by '; '                           an episode that is both
 #   'opens LOT n - back from LOT k, out of 4.8's scope'
 #   'opens LOT n - LOT n-1 was opened by <type>, so no fold across it'
 return_trace_annotate <- function(lines, episodes, tx, cands, p, subs = NULL) {
@@ -503,21 +576,37 @@ return_trace_annotate <- function(lines, episodes, tx, cands, p, subs = NULL) {
   folds <- cands[cands$KIND == "fold", , drop = FALSE]
   ep <- foldin_trace_annotate(lines, episodes, tx, folds, p, subs = subs)
   own <- cands[cands$KIND == "own_return", , drop = FALSE]
+  # A drug can come back more than once inside one line, and then the second
+  # return's PREVIOUS episode is the first return's own: one episode is both a
+  # return and the break before the next. Writing either note over the other
+  # would drop a return out of the table, so the two are collected apart and
+  # joined at the end, which also makes the result independent of the order
+  # the rows arrived in.
+  returned <- rep(NA_character_, nrow(ep))
+  broke <- rep(NA_character_, nrow(ep))
+  match_ep <- function(pid, med, dt) {
+    m <- ep$PATID == pid & ep$MAP_MED_TYPE == med & !is.na(ep$MAP_START_DT) & ep$MAP_START_DT == dt
+    !is.na(m) & m
+  }
   for (i in seq_len(nrow(own))) {
     pid <- as.character(own$PATID[i]); med <- as.character(own$MED_ABBR[i])
     ret <- .as_date(own$RETURN_DT[i]); pe <- .as_date(own$PREV_EP_END[i]); ps <- .as_date(own$PREV_EP_START[i])
     gap <- if (is.na(pe)) NA_integer_ else as.integer(ret - pe)
-    hit <- ep$PATID == pid & ep$MAP_MED_TYPE == med & !is.na(ep$MAP_START_DT) & ep$MAP_START_DT == ret
-    # After the fold note, and over it: foldin_trace_annotate marks every
-    # post-window episode of a folded drug as folded, and a later course of
-    # one that the engine did not fold is this rule's, not 4.8's.
-    ep$note[hit] <- paste0("RETURNED to LOT ", own$LOT_NUM[i], " after a ",
-                           if (is.na(gap)) "confirmed" else paste0(gap, "-day"), " break (4.3)")
-    if (!is.na(ps)) {
-      before <- ep$PATID == pid & ep$MAP_MED_TYPE == med & !is.na(ep$MAP_START_DT) & ep$MAP_START_DT == ps
-      ep$note[before] <- paste0("break follows: ", if (is.na(gap)) "confirmed" else paste0(gap, " days"),
-                                " to the return")
-    }
+    returned[match_ep(pid, med, ret)] <-
+      paste0("RETURNED to LOT ", own$LOT_NUM[i], " after a ",
+             if (is.na(gap)) "confirmed" else paste0(gap, "-day"), " break (4.3)")
+    if (!is.na(ps))
+      broke[match_ep(pid, med, ps)] <-
+        paste0("break follows: ", if (is.na(gap)) "confirmed" else paste0(gap, " days"),
+               " to the return")
+  }
+  # After the fold note, and over it: foldin_trace_annotate marks every
+  # post-window episode of a folded drug as folded, and a later course of one
+  # that the engine did not fold is this rule's, not 4.8's.
+  marked <- which(!is.na(returned) | !is.na(broke))
+  for (j in marked) {
+    parts <- c(returned[j], broke[j])
+    ep$note[j] <- paste(parts[!is.na(parts)], collapse = "; ")
   }
   op <- cands[cands$KIND == "opens_line", , drop = FALSE]
   for (i in seq_len(nrow(op))) {
@@ -553,6 +642,26 @@ return_trace_annotate <- function(lines, episodes, tx, cands, p, subs = NULL) {
 # it: the regimen drugs the window admitted, and - since 4.4 makes a pair one
 # agent and the older engine's chain read the substitute's episodes as the
 # drug's - their permissible substitutes' episodes too.
+# The chained course's cover, as 4.7 measures it and engine/R/melp_rule.R
+# computes it: doses closer together than melp_exposure_days are one course,
+# and its cover is the latest supply end over that course's episodes. Read in
+# R here because a narrative has the episodes rather than the CTEs. NA where
+# no episode of the drug starts on the course's first day.
+.melp_course_end <- function(e, drug, first, expo) {
+  st <- .as_date(e$MAP_START_DT); en <- .as_date(e$MAP_END_DT)
+  keep <- as.character(e$MAP_MED_TYPE) == drug & !is.na(st) & st >= first
+  st <- st[keep]; en <- en[keep]
+  o <- order(st); st <- st[o]; en <- en[o]
+  if (!length(st) || is.na(first) || st[1] != first) return(as.Date(NA))
+  last <- 1L
+  if (!is.na(expo) && length(st) > 1L)
+    for (i in seq(2L, length(st)))
+      if (as.integer(st[i] - st[i - 1L]) < expo) last <- i else break
+  en <- en[seq_len(last)]
+  en <- en[!is.na(en)]
+  if (!length(en)) as.Date(NA) else max(en)
+}
+
 .own_cover_before <- function(e, base, start, elig, ret, subs = NULL) {
   e_start <- .as_date(e$MAP_START_DT); e_med <- as.character(e$MAP_MED_TYPE)
   base_drugs <- strsplit(trimws(base), " ", fixed = TRUE)[[1]]
@@ -726,8 +835,15 @@ return_trace_narrative <- function(row, lines, episodes, p, tx = NULL, subs = NU
                 " on ", fmt(pl_end), ", and ", drug, " opened LOT ", n, " (", base, ").")
 
     if (identical(via, "melp_course")) {
-      other <- sort(unique(e_med_at <- as.character(e$MAP_MED_TYPE)[
-        .as_date(e$MAP_START_DT) > ret & .as_date(e$MAP_START_DT) <= ret + p$cart & as.character(e$MAP_MED_TYPE) != drug]))
+      # What the COURSE covered, chained the way 4.7 measures it - not a window
+      # belonging to some other rule, and not the opening episode alone. Where
+      # the episodes are not in the read, the run's own cap stands in.
+      e_st <- .as_date(e$MAP_START_DT)
+      md <- .return_trace_melp_days(p)
+      cover <- .melp_course_end(e, drug, ret, .return_trace_melp_expo(p))
+      if (is.na(cover)) cover <- if (!is.na(md)) ret + md else ret
+      other <- sort(unique(as.character(e$MAP_MED_TYPE)[
+        !is.na(e_st) & e_st > ret & e_st <= cover & as.character(e$MAP_MED_TYPE) != drug]))
       conf <- if (length(other)) paste0(" confirmed by ", paste(utils::head(other, 2), collapse = " and "))
               else " confirmed by a new agent inside its cover"
       return(paste0(

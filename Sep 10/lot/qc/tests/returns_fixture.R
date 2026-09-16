@@ -106,7 +106,7 @@ RETURNS_FIXTURE <- list(
     rf_fin("R000008", 4L, "2021-08-25", "MED", "LEN MELP", "2022-03-31", "STUDY_END")),
   map = list(
     # R000001
-    rf_ep("R000001", "BORT", "2020-01-01", "2020-05-15", discon = 1L, cnt = 5L),
+    rf_ep("R000001", "BORT", "2020-01-01", "2020-07-31", discon = 1L, cnt = 7L),
     rf_ep("R000001", "LEN", "2020-01-05", "2020-04-30", discon = 1L, cnt = 4L),
     rf_ep("R000001", "DEX", "2020-01-01", "2020-06-30", class = "STEROID", cnt = 6L),
     rf_ep("R000001", "CARF", "2020-07-01", "2020-12-31", cnt = 6L),
@@ -118,7 +118,7 @@ RETURNS_FIXTURE <- list(
     rf_ep("R000002", "LEN", "2020-11-30", "2021-03-31", discon = 1L, cnt = 4L),
     rf_ep("R000002", "DEX", "2020-11-30", "2021-03-31", class = "STEROID", discon = 1L, cnt = 4L),
     # R000003
-    rf_ep("R000003", "BORT", "2020-01-01", "2020-06-15", discon = 1L, cnt = 6L),
+    rf_ep("R000003", "BORT", "2020-01-01", "2020-09-30", discon = 1L, cnt = 9L),
     rf_ep("R000003", "DEX", "2020-01-01", "2020-06-15", class = "STEROID", cnt = 6L),
     rf_ep("R000003", "POM", "2020-09-01", "2020-12-15", discon = 1L, cnt = 4L),
     rf_ep("R000003", "DEX", "2020-09-01", "2020-12-15", class = "STEROID", cnt = 4L),
@@ -130,11 +130,11 @@ RETURNS_FIXTURE <- list(
     rf_ep("R000004", "DEX", "2020-01-01", "2020-06-30", class = "STEROID", cnt = 6L),
     rf_ep("R000004", "LEN", "2020-12-01", "2021-06-30", cnt = 7L),
     # R000005
-    rf_ep("R000005", "BORT", "2020-01-01", "2020-05-31", discon = 1L, cnt = 5L),
+    rf_ep("R000005", "BORT", "2020-01-01", "2020-07-31", discon = 1L, cnt = 7L),
     rf_ep("R000005", "LEN", "2020-01-01", "2020-04-30", discon = 1L, cnt = 4L),
-    rf_ep("R000005", "CARF", "2020-07-01", "2020-12-31", discon = 1L, cnt = 6L),
+    rf_ep("R000005", "CARF", "2020-07-01", "2021-02-28", discon = 1L, cnt = 8L),
     rf_ep("R000005", "DEX", "2020-07-01", "2021-01-31", class = "STEROID", cnt = 7L),
-    rf_ep("R000005", "POM", "2021-02-01", "2021-07-31", discon = 1L, cnt = 6L),
+    rf_ep("R000005", "POM", "2021-02-01", "2021-09-30", discon = 1L, cnt = 8L),
     rf_ep("R000005", "LEN", "2021-09-01", "2022-03-31", cnt = 7L),
     # R000006
     rf_ep("R000006", "LEN", "2020-01-01", "2020-06-30", cnt = 6L),
@@ -143,15 +143,15 @@ RETURNS_FIXTURE <- list(
     rf_ep("R000006", "LEN", "2020-07-10", "2021-01-31", cnt = 7L),
     rf_ep("R000006", "DEX", "2020-07-01", "2021-01-31", class = "STEROID", cnt = 7L),
     # R000007
-    rf_ep("R000007", "LEN", "2020-01-01", "2020-06-30", discon = 1L, cnt = 6L),
+    rf_ep("R000007", "LEN", "2020-01-01", "2020-12-31", discon = 1L, cnt = 12L),
     rf_ep("R000007", "MELP", "2020-02-01", "2020-02-28", discon = 1L, cnt = 1L),
     rf_ep("R000007", "MELP", "2020-12-01", "2020-12-28", cnt = 1L),
     rf_ep("R000007", "DARA", "2020-12-10", "2021-06-30", cnt = 7L),
     # R000008
-    rf_ep("R000008", "BORT", "2020-01-01", "2020-05-31", discon = 1L, cnt = 5L),
+    rf_ep("R000008", "BORT", "2020-01-01", "2020-07-31", discon = 1L, cnt = 7L),
     rf_ep("R000008", "LEN", "2020-01-01", "2020-04-30", discon = 1L, cnt = 4L),
-    rf_ep("R000008", "CARF", "2020-07-01", "2020-12-31", discon = 1L, cnt = 6L),
-    rf_ep("R000008", "POM", "2021-02-01", "2021-07-31", discon = 1L, cnt = 6L),
+    rf_ep("R000008", "CARF", "2020-07-01", "2021-02-28", discon = 1L, cnt = 8L),
+    rf_ep("R000008", "POM", "2021-02-01", "2021-08-31", discon = 1L, cnt = 7L),
     rf_ep("R000008", "MELP", "2021-08-25", "2021-09-21", cnt = 1L),
     rf_ep("R000008", "LEN", "2021-09-01", "2022-03-31", cnt = 7L)),
   allo = list(),
@@ -159,6 +159,53 @@ RETURNS_FIXTURE <- list(
   subs = list())
 
 RETURNS_FIXTURE_TOTALS <- list(N_PATIENTS = 8, N_LINES = 20)
+
+# ---- The fixture has to be a build the engine could have produced -----------------
+# These rows stand in for PUBLISHED tables, so nothing here is checked by the
+# engine's own asserts - and a shape the engine cannot produce teaches a reader
+# of the rendered example something untrue. The one gate that is easy to break
+# by hand, and was: MED_ADD ends a line only when the added agent arrives at or
+# before the line's run-out (engine/R/steps/06_lot1_end.R -
+# 'LOT1_BASE_DISCON_DT IS NULL OR LOT1_BASE_1ST_ADD_MED_DT <= LOT1_BASE_DISCON_DT').
+# Past a confirmed run-out the branch is DISCONTINUATION at the run-out instead,
+# because the added agent is itself what confirms it (LOT_RULES.md 5.3).
+#
+# A line has a run-out only where EVERY base agent has discontinued - 5.1's
+# "the line has run out when its last base agent has" - so a base agent whose
+# last episode in the line carries no MAP_DISCON_FLG leaves the line with none,
+# and the gate's IS NULL arm lets MED_ADD through.
+#
+# Returns a character vector of defects, empty where the fixture is clean.
+returns_fixture_defects <- function(data = RETURNS_FIXTURE) {
+  fin <- data$final; eps <- data$map
+  d <- function(x) as.Date(as.character(x))
+  out <- character(0)
+  for (r in fin) {
+    add <- r$LOT_BASE_1ST_ADD_MED_DT
+    if (is.null(add) || length(add) != 1L || is.na(add)) next
+    meds <- strsplit(trimws(as.character(r$LOT_BASE_MEDS)), " ")[[1]]
+    meds <- meds[nzchar(meds)]
+    if (!length(meds)) next
+    cover <- as.Date(NA); open <- FALSE
+    for (md in meds) {
+      e <- Filter(function(x) identical(as.character(x$PATID), as.character(r$PATID)) &&
+                    identical(as.character(x$MAP_MED_TYPE), md) &&
+                    d(x$MAP_START_DT) >= d(r$LOT_START_DT) &&
+                    d(x$MAP_START_DT) <= d(r$LOT_BASE_END_DT), eps)
+      if (!length(e)) next
+      e <- e[order(vapply(e, function(x) as.numeric(d(x$MAP_START_DT)), numeric(1)))]
+      cover <- max(c(cover, vapply(e, function(x) d(x$MAP_END_DT), as.Date(NA))), na.rm = TRUE)
+      if (!identical(as.integer(e[[length(e)]]$MAP_DISCON_FLG), 1L)) open <- TRUE
+    }
+    if (open || is.na(cover)) next          # no run-out: the gate's IS NULL arm
+    if (d(add) > cover)
+      out <- c(out, sprintf(
+        "%s LOT %s records %s with the added agent on %s, past a run-out on %s - the engine would have ended it DISCONTINUATION on %s",
+        r$PATID, r$LOT_NUM, as.character(r$LOT_BASE_END_REASON), as.character(add),
+        as.character(cover), as.character(cover)))
+  }
+  out
+}
 
 # ---- Running the queries on the fixture --------------------------------------------
 # The same row runner test_foldin_trace.R uses, as a function both the suite

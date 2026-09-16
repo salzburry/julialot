@@ -177,12 +177,11 @@ main <- function() {
          "record of which windows the run used, and every signature here is ",
          "read against the window.", call. = FALSE)
   settings <- as.character(meta$CONTRACT_SETTINGS[1])
-  p <- qc_params(settings, run_id)
-  p$gap <- qc_int(settings, "map_discon_gap_days")
-  # The melphalan course cap, for the one reading that asserts a course is
-  # short. A run that did not record it gets no such row rather than the
-  # claim on no evidence.
-  p$melp_days <- qc_int(settings, "melp_simple_course_days")
+  # qc_params() plus the two settings the trace needs and the frozen QC
+  # catalogue does not carry - the discontinuation gap and the melphalan
+  # course cap. A run that did not record the cap gets no row that asserts a
+  # course is short, rather than the claim on no evidence.
+  p <- return_trace_params(settings, run_id)
 
   # Without the rules there is nothing to trace: an own return's signature
   # cannot occur in a build that released the drug, and a fold's cannot occur
