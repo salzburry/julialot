@@ -10,7 +10,7 @@ One package writes. The rest read a finished run.
 | | |
 |---|---|
 | `lot/engine/` | builds the lines. `build.R <COHORT_TABLE> <prefix_>`. The only package here that writes a study run. |
-| `lot/qc/` | thirty-seven checks on a finished run, asked after the fact, and the fold-in trace. Reads only. `run_lot_qc.R`, `trace_foldin.R`. |
+| `lot/qc/` | thirty-seven checks on a finished run, asked after the fact, and two traces of the returning-drug rules on real patients. Reads only. `run_lot_qc.R`, `trace_foldin.R`, `trace_returns.R`. |
 | `lot/melphalan/` | what the melphalan rule did to the numbers, as two complete builds differenced. Opt-in, its own prefixes. |
 | `lot/validation/` | the rule vignettes — the machine-checked twin of `LOT_RULES.md`. No warehouse. |
 
@@ -244,6 +244,12 @@ failure, and none is a published benchmark. Reported, not fatal;
 | `trace_foldin.R` | Finds the patients the fold-in rule (`LOT_RULES.md` 4.8) touched in a finished run and writes each one's raw MAP episodes beside the final lines, the folded episode marked, to `out/`. Reads only. Prints its plan without `TRACE_EXECUTE=TRUE`. `TRACE_N` is how many patients to trace, `TRACE_PATIDS` names them instead, `TRACE_MASK_PATID=TRUE` masks the ids. Unmasked by default, because it exists so a patient can be looked up, so the file stays inside the study environment. |
 | `R/foldin_trace.R` | The queries, the sample and the rendering behind the trace. Connection-free, so every piece of it is tested. |
 | `tests/test_foldin_trace.R` | That the trace reads the fold's signature and nothing else, samples the same patients every time, and renders what the fixtures say it should. |
+| `trace_returns.R` | The wider trace: every drug that CAME BACK in a finished run, in three kinds - a previous-line drug that folded into the line it returned in (`LOT_RULES.md` 4.8), a line's own drug that came back after a confirmed break and stayed in its line (4.3; before the rule it opened a new line), and an earlier drug that came back and opened a line (neither rule). Raw episodes beside the final lines, each return marked and narrated with what the earlier reading would have done. `TRACE_LINES` (default `1,2`, the 2L question), `TRACE_KINDS`, `TRACE_N`, `TRACE_PATIDS`, `TRACE_MASK_PATID` as the fold-in trace. Reads only; writes `out/returns_trace.md` and four CSVs. |
+| `R/return_trace.R` | The three signatures, the stacking, the filters, the sample, the summary, the annotation and the rendering behind `trace_returns.R`. The fold is `foldin_trace.R`'s own query, unchanged. Connection-free. |
+| `trace_returns_example.R` | Renders `trace_returns.R`'s report on six fixture patients, one per shape, to `examples/returns_trace_example.md` - what the study team sees before a run against the warehouse. No connection. |
+| `examples/returns_trace_example.md` | That rendered example. The suite holds it to a fresh render, so it cannot drift from the code. |
+| `tests/returns_fixture.R` | The six fixture patients and the DuckDB row runner the suite and the example share. |
+| `tests/test_trace_returns.R` | That each kind reads its signature and nothing else, that the queries executed on the fixture return exactly the planted returns and none of the controls, that the sample, summary, annotation and narratives say what the fixture says, and that the committed example is a fresh render. |
 | `tests/run_duckdb_rows.py` | Executes a statement against fixture rows, transpiling Spark to DuckDB, for the trace suite. Reports a statement it could not run rather than reading it as an empty result. |
 
 Nothing here duplicates a check the build already makes. Three severities:
@@ -314,6 +320,7 @@ Rscript lot/engine/tests/test_runner.R
 Rscript lot/engine/tests/test_line_criteria.R
 Rscript lot/qc/tests/test_lot_qc.R
 Rscript lot/qc/tests/test_foldin_trace.R
+Rscript lot/qc/tests/test_trace_returns.R
 Rscript lot/melphalan/tests/test_melp_simple.R
 Rscript lot/validation/tests/test_vignettes.R
 ```

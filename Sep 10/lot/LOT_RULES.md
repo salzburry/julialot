@@ -284,6 +284,11 @@ So a same-drug re-challenge after any gap is **one line**, spanning the break.
 where an episode boundary falls (§2.3); it no longer decides whether the return
 opens a line.
 
+To see this on real patients, `qc/trace_returns.R` finds every regimen drug
+that came back to its line after a confirmed break, shows its raw episodes
+beside the final lines, and says what the reading before this change would
+have made of each return.
+
 > **Changed 2026-08-30.** Before this the gap **released** the drug: an episode
 > after `map_discon_gap_days` was a restart and opened a line like any other
 > agent, and the line stopped at the gap. A patient on one drug with a
@@ -363,7 +368,10 @@ observation, so the treatment the rule refuses a line to still sits inside one.
 
 To see the rule on real patients, `qc/trace_foldin.R` writes the raw episodes
 and final lines of the patients it touched in a finished run, the folded
-episode marked.
+episode marked. `qc/trace_returns.R` puts the folds beside the other two ways a
+drug comes back - to its own line after a break (§4.3), and opening a line
+because the fold set did not hold it or a procedure opened the line before -
+which is the study team's "drugs that come back in 2L" question in one report.
 
 The regimen names the drug **actually given** — a permissible substitute enters
 under its own abbreviation, not the one it stands in for.
