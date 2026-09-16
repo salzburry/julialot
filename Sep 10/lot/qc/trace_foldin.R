@@ -229,7 +229,7 @@ main <- function() {
   if (length(ids)) {
     lines <- db_q(con, foldin_trace_lines_sql(t, ids, p))
     eps   <- db_q(con, foldin_trace_episodes_sql(t, ids))
-    tx    <- db_q(con, foldin_trace_tx_sql(t, ids))
+    tx    <- foldin_trace_tx_read(con, t, ids)
     # The folds of the traced patients, and every one of each patient's folds:
     # a paragraph has to know whether its return is the patient's first. The
     # full frame stays as it is for the counts and the sample, which are

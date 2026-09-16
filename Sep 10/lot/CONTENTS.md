@@ -147,7 +147,7 @@ test suites need no warehouse.
 | `engine/tests/test_runner.R` | 528 |
 | `engine/tests/test_line_criteria.R` | 58 |
 | `qc/tests/test_lot_qc.R` | 296 |
-| `qc/tests/test_foldin_trace.R` | 150 |
+| `qc/tests/test_foldin_trace.R` | 154 |
 | `qc/tests/test_trace_returns.R` | 154 |
 | `melphalan/tests/test_melp_simple.R` | 162 |
 | `validation/tests/test_vignettes.R` | 37 |
