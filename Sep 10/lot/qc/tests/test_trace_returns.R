@@ -42,6 +42,7 @@ TBL <- list(final = "s.TFINAL", long = "s.TLONG", map = "s.TMAP",
             cohort = "s.TCOHORT", subs = "s.TSUBS")
 P <- qc_params(RETURNS_SETTINGS, "run-abc")
 P$gap <- qc_int(RETURNS_SETTINGS, "map_discon_gap_days")
+P$melp_days <- qc_int(RETURNS_SETTINGS, "melp_simple_course_days")
 Q <- return_trace_queries(TBL, P)
 
 cat("\n-- the queries, as text --\n")
@@ -122,7 +123,7 @@ if (is.null(rr)) {
     ok(is.null(err(rr[[k]])), paste0("the ", k, " query runs", if (!is.null(err(rr[[k]]))) paste0(" [", err(rr[[k]]), "]") else ""))
   C <- return_trace_stack(rr)
   key <- function(d) paste(d$PATID, d$KIND, d$LOT_NUM, d$MED_ABBR)
-  ok(nrow(C) == 6L, paste0("six return rows on the six patients, one per shape (got ", nrow(C), ")"))
+  ok(nrow(C) == 8L, paste0("eight return rows on the eight patients, one per shape (got ", nrow(C), ")"))
   ok(all(C$MED_ABBR != "DEX"), "and no steroid among them, though DEX comes back in four of the patients")
   g <- function(pat, kind) C[C$PATID == pat & C$KIND == kind, , drop = FALSE]
   r <- g("R000001", "fold")
@@ -390,17 +391,55 @@ if (is.null(rr)) {
                            list(lines = foldin_trace_lines_sql(EXEC_TABLES, "R000011", P),
                                 eps = foldin_trace_episodes_sql(EXEC_TABLES, "R000011"))), V2, ROOT)
   CV <- return_trace_stack(rv["opens_line"])
+  CV <- CV[CV$PATID == "R000011", , drop = FALSE]
   ok(nrow(CV) == 1L && CV$OPEN_VIA == "melp_confirmed" && CV$MED_ABBR == "LEN" &&
        format(CV$RETURN_DT) == "2021-09-01" && CV$LOT_NUM == 4L,
-     "a drug two lines back that arrived inside such a course is a line-opening return dated at its own episode, not at the line's start")
+     "a drug two lines back that arrived while a short course still covered is a line-opening return dated at its own episode, not at the line's start")
   nv <- return_trace_narrative(CV[1, , drop = FALSE], rv$lines, rv$eps, P, all_rows = CV)
-  ok(has(nv, "inside a short melphalan course that started on 2021-08-25") &&
-       has(nv, "on the MELPHALAN's first day rather than on this drug's"),
-     "...and its paragraph says the line opened on the melphalan's date")
+  ok(has(nv, "while a melphalan course that started on 2021-08-25 was still covering") &&
+       has(nv, "28 days or fewer, which is 4.7's short one") &&
+       has(nv, "on the MELPHALAN's date rather than the agent's") &&
+       has(nv, "the melphalan opened LOT 4") && !has(nv, "LEN opened LOT 4"),
+     "...and its paragraph names the cap the run recorded and credits the melphalan with opening the line, never the returning drug")
+  # A LONG melphalan course is melphalan behaving as any other agent: 4.7 is
+  # about a course of melp_simple_course_days or fewer, and reading a 59-day
+  # one as the rule's put the rule's name on a line it never touched, and
+  # called an ordinary window join a line-opening return.
+  VLONG <- list(final = list(
+      rf_fin("R000012", 1L, "2020-01-01", "MED", "BORT LEN", "2020-06-30", "MED_ADD", add_med = "CARF", add_dt = "2020-07-01"),
+      rf_fin("R000012", 2L, "2020-07-01", "MED", "CARF", "2020-12-31", "MED_ADD", add_med = "MELP", add_dt = "2021-01-01"),
+      rf_fin("R000012", 3L, "2021-01-01", "MED", "MELP BORT", "2021-08-31")),
+    map = list(rf_ep("R000012", "BORT", "2020-01-01", "2020-05-31", discon = 1L, cnt = 5L),
+               rf_ep("R000012", "LEN", "2020-01-01", "2020-04-30", discon = 1L, cnt = 4L),
+               rf_ep("R000012", "CARF", "2020-07-01", "2020-12-31", discon = 1L, cnt = 6L),
+               rf_ep("R000012", "MELP", "2021-01-01", "2021-02-28", cnt = 2L),
+               rf_ep("R000012", "BORT", "2021-01-10", "2021-08-31", cnt = 8L)),
+    allo = list(), auto = list(), subs = list())
+  r <- returns_run_rows(QX["opens_line"], VLONG, ROOT)$opens_line
+  ok(is.null(err(r)) && !any(r$PATID == "R000012"),
+     "a 59-day melphalan course is not 4.7's short one, so the drug that arrived inside it is no line-opening return")
+  rc <- returns_run_rows(QX["carried_over"], VLONG, ROOT)$carried_over
+  ok(is.null(err(rc)) && !any(rc$PATID == "R000012"),
+     "...and it is not carried over either: LOT 2 did not hold BORT, so nothing here is a return the rules decided")
+  # ...and a course inside the cap, but which the drug arrived AFTER, is not
+  # 4.7's either: the confirming agent starts while the course still covers.
+  VLATE <- V2
+  VLATE$map[[6]] <- rf_ep("R000011", "LEN", "2021-09-25", "2022-03-31", cnt = 7L)
+  r <- returns_run_rows(QX["opens_line"], VLATE, ROOT)$opens_line
+  ok(is.null(err(r)) && !any(r$PATID == "R000011" & r$OPEN_VIA == "melp_confirmed"),
+     "a drug arriving after the short course stopped covering did not confirm it, and is not reported as having")
+  Pnd <- P; Pnd$melp_days <- NA
+  ok(!has(return_trace_opens_sql(EXEC_TABLES, Pnd), "melp_confirmed") &&
+       has(return_trace_opens_sql(EXEC_TABLES, Pnd), "melp_course"),
+     "a run that recorded no course cap gets no melp_confirmed row at all - the claim has no evidence behind it - while the exemption arm, which needs no length, stands")
   Poff <- P; Poff$melp_rule <- "off"
   ok(!has(return_trace_opens_sql(EXEC_TABLES, Poff), "melp_course") &&
+       !has(return_trace_opens_sql(EXEC_TABLES, Poff), "melp_confirmed") &&
        has(return_trace_opens_sql(EXEC_TABLES, P), "melp_course"),
      "...and neither melphalan arm is emitted for a run that did not apply the melphalan rule")
+  ok(has(nv, "What these tables cannot show is whether 4.7 was the rule that acted") &&
+       !has(nv, "confirmed it,"),
+     "...and its paragraph says what the published tables cannot settle rather than asserting the rule acted")
 
   # LOT 5 is the last line the engine builds, so the older reading had no next
   # line to open.
@@ -421,23 +460,24 @@ if (is.null(rr)) {
   ok(setequal(key(S2), c("R000001 fold 2 LEN", "R000003 own_return 2 POM", "R000004 opens_line 3 LEN")),
      "return line 2 is: the fold into LOT 2, the own return inside LOT 2, and the return after LOT 2 that opened LOT 3")
   S1 <- return_trace_in_scope(C, RETURN_TRACE_KINDS, 1L)
-  ok(identical(key(S1), "R000002 own_return 1 LEN"),
-     "return line 1 is the own return inside LOT 1 - the one that would have made a 2L before the rule")
-  ok(nrow(return_trace_in_scope(C, "fold", NULL)) == 1L && nrow(return_trace_in_scope(C, RETURN_TRACE_KINDS, NULL)) == 5L,
+  ok(setequal(key(S1), c("R000002 own_return 1 LEN", "R000007 opens_line 2 MELP")),
+     "return line 1 is the own return inside LOT 1 - the one that would have made a 2L before the rule - and the melphalan course that opened LOT 2 after it")
+  ok(nrow(return_trace_in_scope(C, "fold", NULL)) == 1L && nrow(return_trace_in_scope(C, RETURN_TRACE_KINDS, NULL)) == 7L,
      "the kinds filter narrows to a kind; no line filter keeps every return line; carried_over is never in scope")
   ids <- return_trace_sample(C, 12L)
-  ok(identical(ids, c("R000001", "R000002", "R000003", "R000004", "R000005")),
+  ok(identical(ids, c("R000001", "R000002", "R000003", "R000007", "R000004", "R000005", "R000008")),
      "the sample takes one patient per (kind, line, drug) round-robin, kinds in the report's order, and is deterministic")
   ok(identical(return_trace_sample(C, 2L), c("R000001", "R000002")), "...and TRACE_N cuts it")
   ok(identical(return_trace_sample(C, 12L, patids = c("R000006", "R000001")), c("R000006", "R000001")),
      "...while a listed set bypasses it, in the listed order")
   ok(!"R000006" %in% ids, "...and the carried-over patient, with nothing to trace, is never sampled")
-  sm <- return_trace_summary(C, 6, 14)
+  sm <- return_trace_summary(C, 8, 20)
   gs <- function(kind, level, k = "") sm[sm$kind == kind & sm$level == level & sm$key == k, , drop = FALSE]
-  ok(gs("LOT_LONG_FINAL", "all lines")$n_patients == 6 && gs("LOT_LONG_FINAL", "all lines")$n_lines == 14,
+  ok(gs("LOT_LONG_FINAL", "all lines")$n_patients == 8 && gs("LOT_LONG_FINAL", "all lines")$n_lines == 20,
      "the summary carries the table's own totals")
   ok(gs("own_return", "all")$n_returns == 2 && gs("own_return", "by return line", "LOT1")$n_patients == 1 &&
-       gs("opens_line", "by return line", "LOT3")$n_returns == 1 && gs("carried_over", "all")$n_returns == 1,
+       gs("opens_line", "all")$n_returns == 4 && gs("opens_line", "by return line", "LOT3")$n_returns == 2 &&
+       gs("opens_line", "by drug", "MELP")$n_returns == 1 && gs("carried_over", "all")$n_returns == 1,
      "...and counts every kind by line and by drug, carried_over included")
   ok(identical(unique(sm$kind[-1]), RETURN_TRACE_ALL_KINDS), "...in the report's order")
 
@@ -507,9 +547,13 @@ if (is.null(rr)) {
   r <- returns_render_fixture(RETURNS_FIXTURE, RETURNS_FIXTURE_TOTALS, P, ROOT, run_id = "run-abc",
                               pfx = "t_", n = 12L)
   md <- r$md
-  ok(md[1] == "# Returning-drug trace - t_" && any(has(md, "Run `run-abc`")), "the report names the run and the prefix")
-  ok(sum(grepl("^## Patient ", md)) == 5L && !any(has(md, "## Patient R000006")),
-     "five patient sections, the carried-over patient not among them")
+  ok(md[1] == "# Returning-drug trace - prefix `t_`" && any(has(md, "Run `run-abc`")),
+     "the report names the run and the prefix, the prefix quoted so its trailing underscore does not read as a typo")
+  ok(sum(grepl("^## Patient ", md)) == 7L && !any(has(md, "## Patient R000006")),
+     "one section per traced patient, the carried-over patient not among them")
+  ok(any(has(md, "**Came back and opened a line (outside 4.8) - MELP, LOT 2.**")) &&
+       any(has(md, "**Came back and opened a line (outside 4.8) - LEN, LOT 4.**")),
+     "...and every shape the trace tells apart has a worked patient, the two melphalan ones included")
   ok(any(has(md, "**Folded into the line it returned in (4.8) - LEN, LOT 2.**")) &&
        any(has(md, "**Came back to its own line after a break (4.3) - LEN, LOT 1.**")) &&
        any(has(md, "**Came back and opened a line (outside 4.8) - LEN, LOT 3.**")),

@@ -95,6 +95,18 @@ RETURN_TRACE_COLS <- c("PATID", "LOT_NUM", "MED_ABBR", "KIND", "RETURN_LINE",
 .return_trace_melp_on <- function(p)
   !identical(tolower(trimws(as.character(p$melp_rule %||% "off"))), "off")
 
+# How long a course may cover and still be 4.7's "short" one. The engine pins
+# it in its CONTRACT (melp_simple_course_days), so a run records it; a run
+# that did not is one this trace cannot test the rule against, and the arms
+# that would have to assert "short" are not emitted at all rather than
+# asserting it on no evidence.
+.return_trace_melp_days <- function(p) {
+  d <- suppressWarnings(as.integer(p$melp_days %||% NA))
+  if (length(d) != 1L || is.na(d) || d < 1L) NA_integer_ else d
+}
+.return_trace_melp_course_on <- function(p)
+  .return_trace_melp_on(p) && !is.na(.return_trace_melp_days(p))
+
 .return_trace_base_ctes <- function(t, p) {
   .need_checks()
   paste0(qc_window_sql(t, p, per_line = TRUE), ",
@@ -130,18 +142,34 @@ RETURN_TRACE_COLS <- c("PATID", "LOT_NUM", "MED_ABBR", "KIND", "RETURN_LINE",
        AND e.MAP_START_DT >= w.LOT_START_DT AND e.MAP_START_DT <= w.ELIGIBLE_END
       GROUP BY w.PATID, w.LOT_NUM, w.MED_ABBR
     ),
-    -- The lines a melphalan episode opened. 4.7 lets a confirmed short course
-    -- start the next line on its own first day, which is the one way a
-    -- previous-line drug opens a line, and it also moves a line's start off
-    -- the returning drug's date onto the melphalan's.
+    -- The lines a SHORT melphalan course opened, with the cover of the
+    -- episode that opened them. 4.7 is about a course covering
+    -- melp_simple_course_days or fewer: a longer one is melphalan behaving
+    -- as any other agent, and reading it as 4.7's would put the rule's name
+    -- on a line the rule never touched. The span tested is the opening
+    -- EPISODE's, which is the course where the doses are one episode and a
+    -- lower bound on it where they are not - so this errs towards saying
+    -- nothing rather than towards claiming the rule.
     melp_open AS (
-      SELECT DISTINCT w.PATID, w.LOT_NUM
+      SELECT DISTINCT w.PATID, w.LOT_NUM, e.MAP_START_DT AS COURSE_START,
+             e.MAP_END_DT AS COURSE_END
       FROM reg w
       INNER JOIN ep e
         ON e.PATID = w.PATID AND e.MAP_START_DT = w.LOT_START_DT
        AND upper(trim(e.MAP_MED_TYPE)) = '", .return_trace_melp(p), "'
+       AND datediff(e.MAP_END_DT, e.MAP_START_DT) + 1 <= ",
+       if (is.na(.return_trace_melp_days(p))) 0L else .return_trace_melp_days(p), "
     ),
     -- The line before each line, for what opened it and what it carried.
+    --
+    -- Re-keyed on LOT_NUM + 1, which finds nothing if a patient's lines ever
+    -- skipped a number. They cannot: lines 2..n are built in order, each
+    -- needing the one before it, the criteria layer either flags or truncates
+    -- (engine/R/line_criteria.R, ON_FAIL) and truncate drops a failing line
+    -- and every LATER one, and the build asserts 1..n twice and stops - on
+    -- LOT_LONG and again on LOT_LONG_FINAL (engine/R/build_lot.R,
+    -- check_lot_long and check_lot_final). A run that reached these tables
+    -- has no gap.
     prev_line AS (
       SELECT cast(PATID as string) AS PATID, LOT_NUM + 1 AS LOT_NUM,
              LOT_START_TYPE AS PREV_LINE_START_TYPE, LOT_BASE_MEDS AS PREV_LINE_MEDS
@@ -264,9 +292,17 @@ return_trace_opens_sql <- function(t, p) {
     INNER JOIN melp_open mo ON mo.PATID = w.PATID AND mo.LOT_NUM = w.LOT_NUM", joins, "
     WHERE w.LOT_START_TYPE = 'MED' AND w.LOT_NUM >= 3
       AND iw.FIRST_IN_WINDOW > w.LOT_START_DT
+      -- 4.7's confirming agent starts WHILE the course still covers
+      AND iw.FIRST_IN_WINDOW <= mo.COURSE_END
       AND upper(trim(w.MED_ABBR)) <> '", melp, "'", not_steroid, not_prev)
 
-  arms <- if (.return_trace_melp_on(p)) c(arm_a, arm_b, arm_c) else arm_a
+  # Arm B needs only the abbreviation - a previous-line drug opening a line is
+  # 4.7's exemption whatever the course length, and melp_prior_regimen_exempt
+  # names the injected dates rather than the drug. Arm C asserts the course is
+  # short, so it is emitted only where the run recorded how short that is.
+  arms <- c(arm_a,
+            if (.return_trace_melp_on(p)) arm_b,
+            if (.return_trace_melp_course_on(p)) arm_c)
   paste0("
     WITH ", .return_trace_base_ctes(t, p), ",", .foldin_alias_ctes(t), ",
     -- any line two or more back that carried the drug, under any of its names
@@ -702,13 +738,20 @@ return_trace_narrative <- function(row, lines, episodes, p, tx = NULL, subs = NU
         "reading, and it held before them too."))
     }
     if (identical(via, "melp_confirmed")) {
+      md <- .return_trace_melp_days(p)
       return(paste0(
-        from_txt, away, " It came back on ", format(ret), ", inside a short melphalan course that ",
-        "started on ", format(start), ". 4.7 reads the returning agent as what confirms the course ",
-        "and starts LOT ", n, " on the MELPHALAN's first day rather than on this drug's, so ", drug,
-        " is in LOT ", n, "'s regimen (", base, ") without ever having opened a line on its own date. ",
-        "LOT ", n - 1L, " ended ", if (nzchar(pl_reason)) pl_reason else "(reason not in the read)",
-        " on ", fmt(pl_end), "."))
+        from_txt, away, " It came back on ", format(ret), ", while a melphalan course that started ",
+        "on ", format(start), " was still covering - a course of ",
+        if (is.na(md)) "the run's cap in" else md, " days or fewer, which is 4.7's short one. ",
+        "4.7 reads a new agent arriving inside such a course as what advances the line, and advances ",
+        "it on the MELPHALAN's date rather than the agent's, so ", drug, " is in LOT ", n,
+        "'s regimen (", base, ") without a line ever opening on its own date. LOT ", n - 1L,
+        " ended ", if (nzchar(pl_reason)) pl_reason else "(reason not in the read)", " on ",
+        fmt(pl_end), ", and the melphalan opened LOT ", n, ".",
+        " What these tables cannot show is whether 4.7 was the rule that acted: a course this short ",
+        "opening a line looks the same here whether the rule suppressed it and this arrival advanced ",
+        "it, or melphalan simply started the line as a new agent. Read this as where the drug ",
+        "landed, not as the rule's verdict."))
     }
     # The refusal-across-a-procedure reading belongs only to a drug the
     # procedure line's own build would have judged: one in the regimen of the
@@ -773,7 +816,7 @@ return_trace_markdown <- function(run_id, pfx, p, summary, patients_sections, ma
                                   listed = FALSE, source_note = NULL) {
   .need_foldin()
   gap <- if (is.null(p$gap) || is.na(p$gap)) "map_discon_gap_days" else paste0(p$gap, " days")
-  ln <- c(paste0("# Returning-drug trace - ", pfx),
+  ln <- c(paste0("# Returning-drug trace - prefix `", pfx, "`"),
           "",
           paste0("Run `", run_id, "`. What the rules adopted on 30 Aug 2026 (LOT_RULES.md ",
                  "4.3 and 4.8) did with drugs that came back, on the patients they touched: ",
@@ -811,9 +854,12 @@ return_trace_markdown <- function(run_id, pfx, p, summary, patients_sections, ma
                  "opened by a transplant or CAR-T, 4.8 refused the fold as well; ",
                  "`melp_course`, a short melphalan course of the previous line's regimen that ",
                  "4.7 confirmed, which is the one previous-line drug 4.3 exempts; and ",
-                 "`melp_confirmed`, a drug two or more lines back that arrived inside such a ",
-                 "course and confirmed it, so the line opened on the melphalan's date rather ",
-                 "than on its own. The counter-example, so a reader sees where the rules stop."),
+                 "`melp_confirmed`, a drug two or more lines back that arrived while a short ",
+                 "melphalan course was still covering, where the line opened on the melphalan's ",
+                 "date rather than on its own. That last one says where the drug landed, not ",
+                 "which rule put it there: a short course opening a line reads the same here ",
+                 "whether 4.7 suppressed it and this arrival confirmed it, or melphalan simply ",
+                 "started the line. The counter-example, so a reader sees where the rules stop."),
           paste0("- **carried over** (counted only) - a drug of the IMMEDIATELY previous ",
                  "line dosed inside the next line's induction window: an ordinary regimen drug ",
                  "of both lines. Not a return, and not a fold - the window is why. A drug from ",

@@ -81,11 +81,12 @@ Each item names the requirement id in the matrix below.
 - **The study period** (Q1): the text says 2018, both figures say 2016. The
   package now refuses to run over a cohort built under a different period than
   it is set to, but which period is the study team's to say.
-- **Six readings** recorded as open questions with the reading taken as a
+- **Seven readings** recorded as open questions with the reading taken as a
   setting or a column: Q30 diagnosis date, Q31 prevalence window, Q32 sequence
   reading, Q33 discontinuation day, Q34 washout across boundaries, Q35
-  malignancy confirmation grain; and Q36, Table 3's 22 rows against the
-  list's 23, the two dual-typed conditions, and the unreadable pages 33–34.
+  malignancy confirmation grain, and Q36, which is Table 3's 22 rows against
+  the list's 23, the two dual-typed conditions, and the unreadable pages
+  33–34.
 - **Upstream rules** (the `upstream` rows): the cohort build's diagnosis,
   therapy-source, death-date and X1–X4 rules are its own; this package reads
   its recorded contract and flags and records what it applied.

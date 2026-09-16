@@ -61,7 +61,7 @@ built alone is a different population under the same name. The secondary 2L
 cohort drops the other-cancer exclusion, because §7.8.1 says prior malignancy
 is permitted there; `SEC2L_APPLY_OTHER_CANCER=TRUE` puts it back.
 
-**3. Every open question is a setting.** The twenty-four entries in
+**3. Every open question is a setting.** The twenty-six entries in
 `../OPEN_QUESTIONS.md` that change a number are config keys, defaulting to the
 protocol's reading, and **every run records which reading it used** in
 `S_RUN_METADATA.OPEN_QUESTION_READINGS`. A table that cannot say which reading

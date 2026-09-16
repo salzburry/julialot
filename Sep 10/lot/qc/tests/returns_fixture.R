@@ -16,7 +16,7 @@ RETURNS_SETTINGS <- paste0(
   "lot_discon_confirm_days=90|lot_n_induction_window_days=30|",
   "map_discon_gap_days=90|max_lot=5|",
   "medical_day_supply=28|melp_exposure_days=30|",
-  "melp_med_abbr=MELP|",
+  "melp_med_abbr=MELP|melp_simple_course_days=28|",
   "sct_auto_gap_days=60|sct_auto_window_days=13|sct_tandem_days=180|",
   "tbl_med_diag=med_diagnosis|tbl_med_proc=med_procedure|tbl_medical=medical|",
   "tbl_rx=rx|use_quarterly_tables=TRUE|apply_melp_rule=simplified|",
@@ -58,6 +58,14 @@ rf_allo <- function(pat, dt, type) list(PATID = pat, TX_DT = dt, SCT_TYPE = type
 # R000005  opens a line from two lines back: 1L BORT LEN; CARF DEX opens 2L;
 #          POM opens 3L; LEN back 2021-09-01 after the 3L window; 2L did not
 #          carry LEN, so LEN is out of 4.8's scope and opened 4L.
+# R000007  melphalan opens a line (4.7): 1L LEN MELP; the LEN runs out; a short
+#          MELP course 2020-12-01..2020-12-28 with DARA starting inside it
+#          opens 2L on the MELPHALAN's first day - the one previous-line drug
+#          4.3 exempts.
+# R000008  a drug two lines back arrives inside such a course: 1L BORT LEN;
+#          CARF 2L; POM 3L; a short MELP course opens 4L on 2021-08-25 and LEN
+#          arrives 2021-09-01 while it still covers, so 4L is dated on the
+#          melphalan rather than on LEN.
 # R000006  carried over: 1L LEN DEX; CARF opens 2L 2020-07-01 while LEN is
 #          dosed inside 2L's window (2020-07-10) - an ordinary regimen drug of
 #          both lines, counted and not traced.
@@ -85,7 +93,17 @@ RETURNS_FIXTURE <- list(
     rf_fin("R000005", 4L, "2021-09-01", "MED", "LEN", "2022-03-31", "STUDY_END"),
     rf_fin("R000006", 1L, "2020-01-01", "MED", "LEN", "2020-06-30", "MED_ADD",
            add_med = "CARF", add_dt = "2020-07-01"),
-    rf_fin("R000006", 2L, "2020-07-01", "MED", "CARF LEN", "2021-01-31", "STUDY_END")),
+    rf_fin("R000006", 2L, "2020-07-01", "MED", "CARF LEN", "2021-01-31", "STUDY_END"),
+    rf_fin("R000007", 1L, "2020-01-01", "MED", "LEN MELP", "2020-11-30", "MED_ADD",
+           add_med = "MELP", add_dt = "2020-12-01"),
+    rf_fin("R000007", 2L, "2020-12-01", "MED", "DARA MELP", "2021-06-30", "STUDY_END"),
+    rf_fin("R000008", 1L, "2020-01-01", "MED", "BORT LEN", "2020-06-30", "MED_ADD",
+           add_med = "CARF", add_dt = "2020-07-01"),
+    rf_fin("R000008", 2L, "2020-07-01", "MED", "CARF", "2021-01-31", "MED_ADD",
+           add_med = "POM", add_dt = "2021-02-01"),
+    rf_fin("R000008", 3L, "2021-02-01", "MED", "POM", "2021-08-24", "MED_ADD",
+           add_med = "MELP", add_dt = "2021-08-25"),
+    rf_fin("R000008", 4L, "2021-08-25", "MED", "LEN MELP", "2022-03-31", "STUDY_END")),
   map = list(
     # R000001
     rf_ep("R000001", "BORT", "2020-01-01", "2020-05-15", discon = 1L, cnt = 5L),
@@ -123,12 +141,24 @@ RETURNS_FIXTURE <- list(
     rf_ep("R000006", "DEX", "2020-01-01", "2020-06-30", class = "STEROID", cnt = 6L),
     rf_ep("R000006", "CARF", "2020-07-01", "2020-12-31", cnt = 6L),
     rf_ep("R000006", "LEN", "2020-07-10", "2021-01-31", cnt = 7L),
-    rf_ep("R000006", "DEX", "2020-07-01", "2021-01-31", class = "STEROID", cnt = 7L)),
+    rf_ep("R000006", "DEX", "2020-07-01", "2021-01-31", class = "STEROID", cnt = 7L),
+    # R000007
+    rf_ep("R000007", "LEN", "2020-01-01", "2020-06-30", discon = 1L, cnt = 6L),
+    rf_ep("R000007", "MELP", "2020-02-01", "2020-02-28", discon = 1L, cnt = 1L),
+    rf_ep("R000007", "MELP", "2020-12-01", "2020-12-28", cnt = 1L),
+    rf_ep("R000007", "DARA", "2020-12-10", "2021-06-30", cnt = 7L),
+    # R000008
+    rf_ep("R000008", "BORT", "2020-01-01", "2020-05-31", discon = 1L, cnt = 5L),
+    rf_ep("R000008", "LEN", "2020-01-01", "2020-04-30", discon = 1L, cnt = 4L),
+    rf_ep("R000008", "CARF", "2020-07-01", "2020-12-31", discon = 1L, cnt = 6L),
+    rf_ep("R000008", "POM", "2021-02-01", "2021-07-31", discon = 1L, cnt = 6L),
+    rf_ep("R000008", "MELP", "2021-08-25", "2021-09-21", cnt = 1L),
+    rf_ep("R000008", "LEN", "2021-09-01", "2022-03-31", cnt = 7L)),
   allo = list(),
   auto = list(rf_auto("R000004", "2020-09-01")),
   subs = list())
 
-RETURNS_FIXTURE_TOTALS <- list(N_PATIENTS = 6, N_LINES = 14)
+RETURNS_FIXTURE_TOTALS <- list(N_PATIENTS = 8, N_LINES = 20)
 
 # ---- Running the queries on the fixture --------------------------------------------
 # The same row runner test_foldin_trace.R uses, as a function both the suite
