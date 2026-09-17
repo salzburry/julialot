@@ -208,7 +208,6 @@ main <- function() {
       d
     })
 
-  missing <- character(0)
   for (nm in names(got)) {
     f <- file.path(dir, paste0(nm, ".csv"))
     utils::write.csv(got[[nm]], f, row.names = FALSE, na = "")
