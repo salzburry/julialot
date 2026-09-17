@@ -139,8 +139,10 @@ Rscript TFLS/tests/test_tfls.R                             # 362
 (cd lot/validation && Rscript tests/test_vignettes.R)      #  37
 ```
 
-3405 checks, as counted here; 3407 where `survival::` is installed, which adds
-two to the dashboard suite. Base R except for **`glue`**, which four of the
+3405 checks — the twelve figures above, as the commands beside them report
+them. Installing `survival::` adds one more: the dashboard suite's
+Kaplan-Meier cross-check, a single assertion that is skipped without it, for
+3406. Base R except for **`glue`**, which four of the
 twelve need — the two LOT engine suites through `tests/testutil.R`, melphalan,
 and the cohort's own runner. The other eight load nothing. The app needs
 `shiny`; a warehouse run needs `DBI`, `odbc` and `glue`.
