@@ -173,6 +173,18 @@ EXEC_CASES <- list(
                          .ep("LEN", "2020-01-05", "2020-02-05"),
                          utils::modifyList(.ep("STRAY", "2020-01-10", "2020-02-10"),
                                            list(PATID = "P000009"))))),
+  # The real shape, reduced: a drug arrives inside the line's span, after the
+  # induction window, and no regimen names it. PREV_DISCON on the planted
+  # episode is what makes it the start of a course rather than a refill - the
+  # earlier one carries MAP_DISCON_FLG = 1.
+  C5 = list(what = "a course starting inside a line that no regimen names",
+            planted = list(
+              final = list(.f(FINAL_1)),
+              map = list(utils::modifyList(.ep("RETN", "2020-01-02", "2020-01-20"),
+                                           list(PATID = "P000009",
+                                                MAP_DISCON_FLG = 1L)),
+                         utils::modifyList(.ep("RETN", "2020-05-01", "2020-06-01"),
+                                           list(PATID = "P000009"))))),
   C2 = list(what = "an added medication that is already in the regimen",
             planted = list(final = list(.f(FINAL_2, LOT_BASE_1ST_ADD_MED = "CARF")))),
   # The tie is looked for on the day after the added-medication date -

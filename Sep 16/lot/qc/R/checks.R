@@ -563,6 +563,50 @@ LOT_QC_CHECKS <- list(
                              ms.MAP_MED_TYPE)"),
     "concat(pid, ' LOT', LOT_NUM, ': ', med, ' was eligible and is not in the regimen')")),
 
+  list(id = "C5", group = "Regimen", severity = "fail",
+       what = "a treatment that starts inside a line is named by that line",
+       why = paste0("C4 asks this of the induction WINDOW. A line runs longer ",
+                    "than its window, and a drug arriving later is supposed to ",
+                    "do one of two things: join the line, by 4.8 where the fold ",
+                    "takes it, or end the line and open the next, as any added ",
+                    "agent does. What it must not do is neither. ",
+                    "This asks it of the whole SPAN. A course starting inside a ",
+                    "line that the line does not name, and that did not end the ",
+                    "line, is a treatment belonging to nothing - it is in the ",
+                    "patient's history, inside a line's dates, and absent from ",
+                    "every regimen. ",
+                    "Only where the episode STARTS a course: a refill mid-course ",
+                    "is the same treatment continuing and joins no regimen of ",
+                    "its own, which is why the previous episode's ",
+                    "discontinuation flag is what admits a row here. ",
+                    "Melphalan is out of scope. 4.7 suppresses a short course ",
+                    "deliberately and says it joins neither regimen nor count, ",
+                    "so a conditioning dose is expected to be unnamed and would ",
+                    "be noise here. That leaves melphalan's own rule to check ",
+                    "melphalan, which is where it belongs."),
+       needs = c("final", "map"),
+       sql = function(t, p) counted(paste0("
+    WITH eps AS (
+      SELECT cast(PATID as string) AS PATID, MAP_MED_TYPE, MAP_MED_CLASS,
+             MAP_START_DT,
+             lag(MAP_DISCON_FLG) OVER (PARTITION BY cast(PATID as string), MAP_MED_TYPE
+                                       ORDER BY MAP_START_DT) AS PREV_DISCON
+      FROM ", t$map, "
+    )
+    SELECT ", mask("l.PATID"), " AS pid, l.LOT_NUM, ms.MAP_MED_TYPE AS med,
+           ms.MAP_START_DT AS dt
+    FROM ", t$final, " l
+    INNER JOIN eps ms
+      ON ms.PATID = cast(l.PATID as string)
+     AND ms.MAP_START_DT >= l.LOT_START_DT
+     AND ms.MAP_START_DT <= l.LOT_BASE_END_DT
+    WHERE ms.MAP_MED_CLASS <> 'STEROID'
+      AND upper(trim(ms.MAP_MED_TYPE)) <> '", toupper(p$melp %||% "MELP"), "'
+      AND coalesce(ms.PREV_DISCON, 1) = 1
+      AND NOT array_contains(split(coalesce(l.LOT_BASE_MEDS, \'\'), \' \'),
+                             ms.MAP_MED_TYPE)"),
+    "concat(pid, \' LOT\', LOT_NUM, \': \', med, \' starts \', cast(dt as string), \' inside the line and is in no regimen\')")),
+
   list(id = "C2", group = "Regimen", severity = "fail",
        what = "the added medication is not already in the regimen, unless it returned",
        why = paste0("An added medication is normally one the regimen does not ",
