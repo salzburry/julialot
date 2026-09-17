@@ -94,6 +94,14 @@ cat("\n-- and no file inside it looks outside at all --\n")
 # reference of any kind.
 outside <- grep("apr_30_2026|\\.\\./", unlist(code), value = TRUE)
 outside <- outside[!grepl("^\\s*#", outside)]
+# "../" only where a path is being BUILT or read. The engine's own suite lists
+# the prefixes the config validator must refuse, and "../x" is one of them -
+# test data for a rejection, not a file this package reaches through. Matched
+# bare, that line read as the package looking outside itself.
+outside <- outside[grepl("apr_30_2026", outside) |
+  grepl(paste0("(file\\.path|source|readLines|readRDS|normalizePath|setwd|",
+               "list\\.files|dir\\.exists|file\\.exists|read\\.csv|",
+               "sys\\.source|dirname)\\s*\\("), outside)]
 ok(length(outside) == 0,
    if (length(outside)) paste0("a file reaches outside the package: ", outside[1])
    else "no file names the baseline or walks up out of the folder")

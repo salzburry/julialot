@@ -1,0 +1,69 @@
+name,value,description
+SPARK_METHOD,odbc,"Connection: odbc (the Databricks ODBC DSN through DBI, as the cohort and LOT builds connect) or a sparklyr session - databricks (on-cluster), databricks_connect, local"
+DATABRICKS_DSN,RWDE,ODBC data source name - odbc only. DATABRICKS_PWD stays in the environment and is refused from this file
+SPARK_CLUSTER_ID,,Cluster id - databricks_connect only
+DATABRICKS_HOST,,Workspace URL - databricks_connect only. DATABRICKS_TOKEN stays in the environment
+DATABRICKS_CATALOG,hive_metastore,Catalog for all reads and writes
+OPTUM_CDM_SCHEMA,clnprw_optum,Optum CDM schema
+TBL_MED_DIAG,,"CDM diagnosis table base name; blank uses med_diagnosis. The short name the modules use is diagnosis - they are not the same string"
+TBL_MED_PROC,,"CDM procedure table base name; blank uses med_procedure"
+USE_QUARTERLY_TABLES,TRUE,Read the cumulative quarterly CDM tables
+CODELIST_DIR,,Where the code lists are. Empty means this package own codelists/ - set it to /mnt/code/codelist on production
+INPUT_COHORT_TABLE,,The cohort table the LOT run was built over (e.g. ndmm_NDMM_COHORT)
+OBJECT_PREFIX,,Prefix for every table this package writes
+COHORT_PREFIX,,The cohort build's prefix if it differs from this run's
+LOT_PREFIX,,The LOT build's prefix if it differs from this run's
+LOT_CODE_MD5,,"The approved LOT build's code fingerprint (LOT_RUN_METADATA.CODE_MD5). Blank checks nothing; set, a LOT run built by any other code is refused"
+COHORT_STATUS_TABLE,,"The cohort build's status table, bare, where it wrote neither NDMM_BUILD_STATUS nor build_status. COHORT_PREFIX is added for you"
+LOT_ALLOW_UNPROVEN_LINEAGE,FALSE,"TRUE lets the run go on over a lineage it could not PROVE: a status table that could not be read (LOT_BUILD_STATUS, LOT_RUN_METADATA, the cohort build's), or no cohort build status at all where the LOT run recorded which attempt it read. An older LOT run whose LOT_RUN_METADATA lacks the attempt columns is legacy and needs no waiver; a check that ran and found the lineage wrong, or a COHORT_STATUS_TABLE naming a table that is not there, is never waived"
+COHORT_INDEX_EXCLUSIONS,"panobinostat,elotuzumab","The agents s7.2.1.1 says may not set the 1L index. Only the cohort build applies that, and it records what it barred; a build that barred less is refused. Names are resolved to abbreviations through cl_mma_rollup.csv. none checks nothing"
+WORK_SCHEMA,,"Schema the study writes into, and reads the cohort and LOT tables from. Blank: PROJECT_WORK_SCHEMA, then DOMINO_USER_NAME, then the session's current schema - as the cohort and LOT builds resolve theirs. catalog.schema is accepted when the catalog is DATABRICKS_CATALOG"
+#,,--- study periods: OPEN_QUESTIONS Q1 ---
+STUDY_START,2018-01-01,Study period start. Protocol s7.1 text. Figures 1 and 2 say 2016-01-01 - see OPEN_QUESTIONS Q1
+STUDY_END,2026-03-31,Study period end; also picks the quarterly table suffix
+COHORT_NESTED,TRUE,"Whether 2L and 3L require membership of the cohort above. TRUE is s7.2.1 read literally - 2L is the subset of 1L who initiate a second line. FALSE lets each line stand on its own index, which recovers patients whose earlier line fell outside the index window. The run records which way it went"
+LOT1_INDEX_FROM,2019-01-01,Earliest 1L initiation that may index the 1L cohort
+SEC2L_INDEX_FROM,2020-01-01,Earliest 2L initiation that may index the secondary 2L cohort
+#,,--- windows ---
+BASELINE_DAYS,365,Length of the baseline period before each LOT index
+MONTHS_AS,days,days or calendar. How a months window is measured - OPEN_QUESTIONS Q21
+BASELINE_INCLUDES_INDEX,FALSE,Protocol s7.1 excludes the index date from the baseline - OPEN_QUESTIONS Q14
+COMORBIDITY_BASELINE_INCLUDES_INDEX,TRUE,Protocol s7.8.1 includes it for comorbidities only - OPEN_QUESTIONS Q14
+GAP_DAYS,30,Enrolment gaps of this many days or fewer are still continuous
+CE_PRE_DAYS,365,Days of continuous enrolment required before each cohort index date
+LOT_POST_DISCON_DAYS,30,Days after discontinuation that still belong to that LOT treatment period
+ACUTE_WASHOUT_DAYS,30,Minimum separation between two acute events of the same type
+TTE_MIN_POTENTIAL_FU_DAYS,90,Potential follow-up a patient needs to enter the time-to-event analysis set
+DX_DATE_SOURCE,cohort_mm_dx,"cohort_mm_dx or baseline_first_claim. The diagnosis date behind year of MM diagnosis, follow-up from diagnosis and time from diagnosis to 1L. cohort_mm_dx is the cohort build's qualifying I1 diagnosis, the date age and the 1L index are already measured against; baseline_first_claim is Table 4's own definition - the first MM claim within the 1L baseline on or prior to 1L - and needs mm_dx.csv - OPEN_QUESTIONS Q30"
+#,,--- criteria switches: each is an OPEN_QUESTIONS entry ---
+MM_DX_OUTPATIENT_CODES,listed,strict or listed. Which codes the outpatient arm accepts - OPEN_QUESTIONS Q2
+MM_DX_OUTPATIENT_WINDOW_DAYS,90,Days within which two outpatient MM claims confirm a diagnosis - OPEN_QUESTIONS Q3
+FU_EVIDENCE_RULE,claim_from_index,claim_from_index or claim_after_index or enrolled_on_index - OPEN_QUESTIONS Q5
+PRIOR_TX_DROP_STEROIDS,TRUE,Drop steroid rows from the prior-therapy scan - OPEN_QUESTIONS Q6
+OTHER_CANCER_PAIR_DAYS,30,Days within which two outpatient cancer claims confirm another cancer
+OTHER_CANCER_PAIR_GRAIN,icd3,icd3 or tumor_group. What two claims must share to confirm each other
+OTHER_CANCER_BOTH_IN_BASELINE,TRUE,Require both claims of a pair inside the baseline window
+PREGNANCY_WINDOW,study_period,study_period or patient_period - OPEN_QUESTIONS Q23
+SEC2L_APPLY_OTHER_CANCER,FALSE,The secondary 2L cohort permits prior malignancy - OPEN_QUESTIONS Q7
+SEC2L_INPUT_IS_WIDE,FALSE,"Asserts INPUT_COHORT_TABLE and its LOT run were built WITHOUT the other-cancer exclusion and the 1L index floor. Selecting SEC2L without it stops the run - the cohort would be nested in the primary one and its baseline malignancy prevalence zero by construction"
+MALIG_PREVALENCE_WINDOW,since_diagnosis,"since_diagnosis or baseline. The window a cohort that permits a prior malignancy reports its background malignancy prevalence over: s7.4.1.2 and s7.8.4 say after diagnosis but prior to 2L; s7.8.1 says during baseline - OPEN_QUESTIONS Q31"
+#,,--- follow-up and censoring ---
+CENSOR_AT_DISENROLLMENT,TRUE,Protocol s7.1 ends follow-up at the end of continuous enrolment - OPEN_QUESTIONS Q13
+#,,--- demographics ---
+FRAILTY,FALSE,"TRUE computes the Kim 2018 claims-based frailty index. Needs frailty_kim2018.csv, which is Annex 7 and carries no codes yet - so TRUE stops the run naming it"
+COMORBID_SUBGROUPS,FALSE,"TRUE writes Table 4's baseline subgroup flags (neuropathy, lung parenchymal disease). Needs comorbid_subgroups.csv, which is Annex 3 and carries no codes yet"
+FRAILTY_FRAIL_CUTOFF,0.25,CFI at or above this is frail. Kim 2018's own cut-point; Annex 7 may say otherwise
+REGION_SOURCE,state_crosswalk,region_column or state_crosswalk - OPEN_QUESTIONS Q9
+ENROL_ATTR_AT,index_span,index_span or latest_span. Which enrolment row supplies a time-varying attribute - OPEN_QUESTIONS Q16
+ED_ADMITTED,both,"both or inpatient_only - is an ED visit that became an admission counted as an ED visit too? A claim carrying a CONF_ID became an admission (business rule 14) - OPEN_QUESTIONS Q11"
+CLAIM_STATUS,all,"all or paid_only - MEDICAL.PAID_STATUS separates PAID from DENIED; nothing has ever filtered on it - OPEN_QUESTIONS Q25"
+ED_DEFINITION,"revenue,pos",Any of revenue pos cpt - how an emergency visit is identified - OPEN_QUESTIONS Q11
+#,,--- reporting ---
+SUPPRESS_MIN_N,25,Stratifications with fewer patients than this are not reported
+RATE_MULTIPLIER,100000,Person-year rates are reported per this many person-years
+MAX_LOT,4,Highest line this package describes. The LOT engine builds 5
+#,,--- selection ---
+COHORTS,"1L,2L,3L",Which cohorts to build. Any of 1L 2L 3L SEC2L
+MODULES,all,Which modules to run. all or a comma-separated list of module keys
+SKIP_MODULES,,Modules to leave out of an otherwise-selected set
+DRY_RUN,FALSE,Resolve and print the plan without touching the warehouse

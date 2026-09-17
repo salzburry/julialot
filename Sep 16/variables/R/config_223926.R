@@ -1,0 +1,613 @@
+# Settings for study 223926, and the contract that pins the protocol's own
+# numbers.
+#
+# Three layers, in this order of authority:
+#
+#   1. the environment          - a shell export or a Domino-injected value
+#   2. config.csv               - the defaults, filled only where 1 is unset
+#   3. cfg_defaults() below     - the fallback, if a row is missing from the CSV
+#
+# Layer 3 means a truncated config.csv cannot silently change a definition.
+#
+# CONTRACT is the subset the protocol states outright. Changing one is a
+# different study: it needs SETTINGS_OVERRIDE=TRUE and lands in
+# CONTRACT_DEVIATIONS on the run's status row. Everything else is a reading the
+# protocol leaves open, and every run records which one it used.
+
+.env_chr <- function(name, default) {
+  v <- trimws(Sys.getenv(name, unset = ""))
+  if (nzchar(v)) v else default
+}
+.env_int <- function(name, default) {
+  v <- .env_chr(name, as.character(default))
+  n <- suppressWarnings(as.integer(v))
+  if (is.na(n))
+    stop("SETTING ERROR: ", name, " = '", v, "' is not a whole number.",
+         call. = FALSE)
+  n
+}
+.env_lgl <- function(name, default) {
+  v <- toupper(.env_chr(name, if (isTRUE(default)) "TRUE" else "FALSE"))
+  if (!v %in% c("TRUE", "FALSE"))
+    stop("SETTING ERROR: ", name, " = '", v, "' is not TRUE or FALSE.",
+         call. = FALSE)
+  identical(v, "TRUE")
+}
+# A comma-separated list, trimmed, uppercased where asked, blanks dropped.
+.env_list <- function(name, default, upper = FALSE) {
+  v <- .env_chr(name, default)
+  out <- trimws(strsplit(v, ",", fixed = TRUE)[[1]])
+  out <- out[nzchar(out)]
+  if (upper) out <- toupper(out)
+  out
+}
+# One of a fixed set. An unrecognised value stops the run rather than falling
+# through to a default, because a silent fallback here changes a definition.
+.env_enum <- function(name, default, allowed) {
+  v <- tolower(.env_chr(name, default))
+  if (!v %in% allowed)
+    stop("SETTING ERROR: ", name, " = '", v, "'. Allowed: ",
+         paste(allowed, collapse = ", "), ".", call. = FALSE)
+  v
+}
+.env_date <- function(name, default) {
+  v <- .env_chr(name, default)
+  if (!grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", v))
+    stop("SETTING ERROR: ", name, " = '", v, "' is not YYYY-MM-DD.",
+         call. = FALSE)
+  # tryCatch, not is.na(): as.Date() RAISES on an impossible date in this
+  # format ("character string is not in a standard unambiguous format") rather
+  # than returning NA, so the is.na() branch never fired and the run died in
+  # R's words on a setting this package is meant to explain.
+  if (is.na(tryCatch(as.Date(v), error = function(e) NA)))
+    stop("SETTING ERROR: ", name, " = '", v, "' is not a real date.",
+         call. = FALSE)
+  v
+}
+
+# The protocol's own numbers, with the section each comes from.
+CONTRACT <- list(
+  baseline_days             = 365L,   # s7.1
+  ce_pre_days               = 365L,   # s7.2.1.1
+  gap_days                  = 30L,    # s7.2.1.1
+  lot_post_discon_days      = 30L,    # Figure 1 note 2
+  acute_washout_days        = 30L,    # s7.3.2
+  tte_min_potential_fu_days = 90L,    # s7.8.2
+  suppress_min_n            = 25L,    # s7.2.3
+  lot1_index_from           = "2019-01-01",  # s7.1
+  sec2l_index_from          = "2020-01-01",  # s7.4
+  study_end                 = "2026-03-31"   # s7.1
+)
+
+# The schema a run writes into, resolved the way the cohort and LOT builds
+# resolve theirs, so one environment serves all three: WORK_SCHEMA, else
+# PROJECT_WORK_SCHEMA, else the Domino user's own schema, else blank - and
+# blank is "wherever the session lands" (run_223926.R asks the connection).
+#
+# `catalog.schema` is accepted when the catalog is the run's own, because that
+# is how a schema reads on the warehouse. wrk() adds the catalog itself, so
+# `hive_metastore.osk02156` handed over whole would become
+# hive_metastore.hive_metastore.osk02156 - a name with too many parts.
+resolve_work_schema <- function(catalog) {
+  v <- ""
+  for (nm in c("WORK_SCHEMA", "PROJECT_WORK_SCHEMA", "DOMINO_USER_NAME",
+               "DOMINO_STARTING_USERNAME")) {
+    v <- .env_chr(nm, "")
+    if (nzchar(v)) break
+  }
+  if (!nzchar(v)) return("")
+  parts <- strsplit(v, ".", fixed = TRUE)[[1]]
+  if (length(parts) == 2L) {
+    if (!identical(parts[1], catalog))
+      stop("SETTING ERROR: ", nm, " = '", v, "' names catalog '", parts[1],
+           "' but DATABRICKS_CATALOG is '", catalog, "'. Give the schema ",
+           "alone, or set DATABRICKS_CATALOG to match.", call. = FALSE)
+    v <- parts[2]
+  }
+  if (!grepl("^[A-Za-z_][A-Za-z0-9_]*$", v))
+    stop("SETTING ERROR: ", nm, " = '", v, "' is not a schema name.",
+         call. = FALSE)
+  v
+}
+
+cfg_defaults <- function() {
+  list(
+    # --- connection -------------------------------------------------------
+    # odbc, the default: the Databricks ODBC driver through DBI, on the same
+    # DSN and DATABRICKS_PWD the cohort and LOT builds connect with. The
+    # password comes from the environment alone - load_inputs() refuses it
+    # from config.csv. The other three are sparklyr sessions: on a Databricks
+    # cluster the session already exists and nothing is authenticated here;
+    # databricks_connect drives one from outside and is the only mode that
+    # needs a token.
+    spark_method = .env_enum("SPARK_METHOD", "odbc",
+                             c("odbc", "databricks", "databricks_connect", "local")),
+    dsn = .env_chr("DATABRICKS_DSN", "RWDE"),
+    pwd = Sys.getenv("DATABRICKS_PWD", unset = ""),
+    databricks_host       = .env_chr("DATABRICKS_HOST", ""),
+    databricks_token      = Sys.getenv("DATABRICKS_TOKEN", unset = ""),
+    databricks_cluster_id = .env_chr("SPARK_CLUSTER_ID", ""),
+    catalog      = .env_chr("DATABRICKS_CATALOG", "hive_metastore"),
+    cdm_schema   = .env_chr("OPTUM_CDM_SCHEMA", "clnprw_optum"),
+    work_schema  = resolve_work_schema(.env_chr("DATABRICKS_CATALOG", "hive_metastore")),
+    use_quarterly_tables = .env_lgl("USE_QUARTERLY_TABLES", TRUE),
+    # CDM table names, overridable. The defaults are in CDM_TABLE_NAMES and
+    # match the cohort build's; blank here means use those.
+    tbl_medical           = .env_chr("TBL_MEDICAL", ""),
+    tbl_diagnosis         = .env_chr("TBL_MED_DIAG", ""),
+    tbl_procedure         = .env_chr("TBL_MED_PROC", ""),
+    tbl_rx                = .env_chr("TBL_RX", ""),
+    tbl_confinement       = .env_chr("TBL_CONFINEMENT", ""),
+    tbl_member_enrollment = .env_chr("TBL_MEMBER_ENROLLMENT", ""),
+    tbl_member_elig       = .env_chr("TBL_MEMBER_ELIG", ""),
+    tbl_dod               = .env_chr("TBL_DOD", ""),
+    # Empty means "this package's own codelists/", resolved against the
+    # package directory in build_223926(). The folder ships the shapes so it is
+    # complete on its own; production points this at the real directory.
+    codelist_dir = .env_chr("CODELIST_DIR", ""),
+
+    # --- what to read -----------------------------------------------------
+    input_cohort_table = .env_chr("INPUT_COHORT_TABLE", ""),
+    object_prefix      = .env_chr("OBJECT_PREFIX", ""),
+    cohort_prefix      = .env_chr("COHORT_PREFIX", ""),
+    lot_prefix         = .env_chr("LOT_PREFIX", ""),
+    # The LOT build whose numbers a study team has approved, by the
+    # fingerprint the engine records of the R that ran. Empty is the shipped
+    # default and checks nothing; set, it is the one way to say "these numbers
+    # rest on THAT code" rather than "on code that finished after a date".
+    lot_code_md5       = .env_chr("LOT_CODE_MD5", ""),
+    # Named only where the cohort build wrote its status under neither of the
+    # two names the builds use. Bare - COHORT_PREFIX is added for you, as the
+    # LOT engine's setting of the same name does.
+    cohort_status_table = .env_chr("COHORT_STATUS_TABLE", ""),
+
+    # --- periods ----------------------------------------------------------
+    study_start      = .env_date("STUDY_START", "2018-01-01"),
+    study_end        = .env_date("STUDY_END", CONTRACT$study_end),
+    lot1_index_from  = .env_date("LOT1_INDEX_FROM", CONTRACT$lot1_index_from),
+    sec2l_index_from = .env_date("SEC2L_INDEX_FROM", CONTRACT$sec2l_index_from),
+
+    # --- windows ----------------------------------------------------------
+    baseline_days   = .env_int("BASELINE_DAYS", CONTRACT$baseline_days),
+    months_as       = .env_enum("MONTHS_AS", "days", c("days", "calendar")),
+    baseline_includes_index =
+      .env_lgl("BASELINE_INCLUDES_INDEX", FALSE),
+    comorbidity_baseline_includes_index =
+      .env_lgl("COMORBIDITY_BASELINE_INCLUDES_INDEX", TRUE),
+    gap_days        = .env_int("GAP_DAYS", CONTRACT$gap_days),
+    ce_pre_days     = .env_int("CE_PRE_DAYS", CONTRACT$ce_pre_days),
+    lot_post_discon_days =
+      .env_int("LOT_POST_DISCON_DAYS", CONTRACT$lot_post_discon_days),
+    acute_washout_days =
+      .env_int("ACUTE_WASHOUT_DAYS", CONTRACT$acute_washout_days),
+    tte_min_potential_fu_days =
+      .env_int("TTE_MIN_POTENTIAL_FU_DAYS", CONTRACT$tte_min_potential_fu_days),
+    # The diagnosis date Table 4's year of diagnosis, follow-up from diagnosis
+    # and Table 5's time from diagnosis to 1L are anchored on.
+    #
+    #   cohort_mm_dx          the cohort build's MM_DX_DT: the qualifying I1
+    #                         diagnosis, which I2's age and I3's "on or after
+    #                         MM diagnosis" are already measured against. One
+    #                         diagnosis date for the whole study.
+    #   baseline_first_claim  Table 4's own words - "first medical claim for
+    #                         MM within the baseline period on or prior to
+    #                         1L" - which re-dates a patient diagnosed more
+    #                         than a year before 1L to a later claim, and
+    #                         needs the MM code list to scan for it.
+    #
+    # The cohort's date is the default: it is the date every other criterion
+    # uses, and the literal reading is a setting. ../OPEN_QUESTIONS.md Q30.
+    dx_date_source = .env_enum("DX_DATE_SOURCE", "cohort_mm_dx",
+                               c("cohort_mm_dx", "baseline_first_claim")),
+
+    # --- criteria switches ------------------------------------------------
+    mm_dx_outpatient_codes =
+      .env_enum("MM_DX_OUTPATIENT_CODES", "listed", c("strict", "listed")),
+    mm_dx_outpatient_window_days =
+      .env_int("MM_DX_OUTPATIENT_WINDOW_DAYS", 90L),
+    fu_evidence_rule = .env_enum("FU_EVIDENCE_RULE", "claim_from_index",
+      c("claim_from_index", "claim_after_index", "enrolled_on_index")),
+    prior_tx_drop_steroids = .env_lgl("PRIOR_TX_DROP_STEROIDS", TRUE),
+    other_cancer_pair_days = .env_int("OTHER_CANCER_PAIR_DAYS", 30L),
+    other_cancer_pair_grain =
+      .env_enum("OTHER_CANCER_PAIR_GRAIN", "icd3", c("icd3", "tumor_group")),
+    other_cancer_both_in_baseline =
+      .env_lgl("OTHER_CANCER_BOTH_IN_BASELINE", TRUE),
+    pregnancy_window = .env_enum("PREGNANCY_WINDOW", "study_period",
+      c("study_period", "patient_period")),
+    sec2l_apply_other_cancer = .env_lgl("SEC2L_APPLY_OTHER_CANCER", FALSE),
+    # s7.4.1.1 wants 2L initiators regardless of when their 1L fell, and
+    # s7.8.1 permits a prior malignancy. Every cohort here joins onto
+    # INPUT_COHORT_TABLE, so no setting can widen that input.
+    #
+    # TRUE asserts the input was built without X2 and without the 1L floor.
+    # Only whoever ran it knows, so it is an assertion, not a test. FALSE with
+    # SEC2L selected stops rather than reporting a prevalence of zero.
+    sec2l_input_is_wide = .env_lgl("SEC2L_INPUT_IS_WIDE", FALSE),
+    # The window a cohort that permits a prior malignancy reports its
+    # background prevalence over. s7.4.1.2 and s7.8.4, which are about that
+    # cohort: "all malignancies occurring after diagnosis but prior to 2L will
+    # be tabulated as the background prevalence" - so from the diagnosis to
+    # the index. s7.8.1's summary of the same analysis says "during baseline",
+    # which is the 12-month window Objective 1 uses for everything else.
+    # ../OPEN_QUESTIONS.md Q31.
+    malig_prevalence_window = .env_enum("MALIG_PREVALENCE_WINDOW", "since_diagnosis",
+                                        c("since_diagnosis", "baseline")),
+    # The 1L index-setting agents are NOT a setting here. Barring belantamab,
+    # panobinostat or elotuzumab from setting an index means re-deriving the
+    # index date, which is the cohort build's job - it already has
+    # NDMM_INDEX_EXCLUDED_ABBRS for exactly this. A second copy here would be
+    # recorded as applied while applying nothing. ../BUILD_DELTA.md section 3.
+    lot_allow_unproven_lineage = .env_lgl("LOT_ALLOW_UNPROVEN_LINEAGE", FALSE),
+    # ...but whether the cohort build DID bar them is checked. s7.2.1.1 I3:
+    # "Exclusions include: panobinostat and elotuzumab". The cohort build
+    # records what it barred (NDMM_RUN_METADATA.INDEX_EXCLUDED), and a build
+    # that let either agent set a 1L index made a different cohort. The names
+    # are resolved to abbreviations through cl_mma_rollup.csv; empty checks
+    # nothing. ../BUILD_DELTA.md section 1.
+    cohort_index_exclusions = .env_chr("COHORT_INDEX_EXCLUSIONS",
+                                       "panobinostat,elotuzumab"),
+
+    # --- follow-up and censoring -----------------------------------------
+    censor_at_disenrollment  = .env_lgl("CENSOR_AT_DISENROLLMENT", TRUE),
+    # Whether a nested cohort requires its parent. Default TRUE, which is
+    # s7.2.1 read literally; FALSE lets each line stand on its own index.
+    cohort_nested            = .env_lgl("COHORT_NESTED", TRUE),
+    # BRIDGED_GAP_IS_PERSON_TIME was here and is gone: BASELINE_PY and
+    # PERIOD_PY are window lengths whichever way it was set, so flipping it
+    # changed no denominator while the run recorded that it had.
+    # ../OPEN_QUESTIONS.md Q19 is still open.
+
+    # --- comorbidity ------------------------------------------------------
+    # Both off by default, and both are switches rather than silent omissions.
+    # Frailty needs Annex 7 and the subgroup flags need Annex 3; neither code
+    # list carries codes yet, so asking for either stops the run naming it.
+    frailty            = .env_lgl("FRAILTY", FALSE),
+    comorbid_subgroups = .env_lgl("COMORBID_SUBGROUPS", FALSE),
+    # Kim 2018's own cut-point. A setting rather than a constant because the
+    # protocol says "CFI >= 0.25 = frail" and Annex 7 may say otherwise.
+    frailty_frail_cutoff = as.numeric(.env_chr("FRAILTY_FRAIL_CUTOFF", "0.25")),
+
+    # --- demographics -----------------------------------------------------
+    region_source = .env_enum("REGION_SOURCE", "state_crosswalk",
+      c("region_column", "state_crosswalk")),
+    enrol_attr_at = .env_enum("ENROL_ATTR_AT", "index_span",
+      c("index_span", "latest_span")),
+    ed_definition = .env_list("ED_DEFINITION", "revenue,pos"),
+    # Whether an ED visit that became an admission is still an ED visit is
+    # ../OPEN_QUESTIONS.md Q11. Business rule 14 gives the mechanics: "All
+    # other records without a CONF_ID or where CONF_ID is NULL should be
+    # considered non-inpatient", so an ED claim carrying a CONF_ID can be
+    # dropped from the ED count. `both` is the default and is recorded rather
+    # than assumed.
+    ed_admitted = .env_enum("ED_ADMITTED", "both", c("both", "inpatient_only")),
+
+    # --- which route makes a stay MM-related --------------------------------
+    # s7.8.1 says "first or second position" without saying of what.
+    # `confinement` reads CONFINEMENT.DIAG1/DIAG2; `claim_positions` reads
+    # MED_DIAGNOSIS.DIAG_POSITION 1-2 on a claim carrying the CONF_ID, which is
+    # the route business rule 13 documents.
+    #
+    # Over 241,362 stays they find 32,508 and 65,206, and 33,904 stays only the
+    # claim route finds - the largest unresolved swing here, OPEN_QUESTIONS
+    # Q27. `confinement` is what every number so far used, so it is the default.
+    mm_hosp_position = .env_enum("MM_HOSP_POSITION", "confinement",
+                                 c("confinement", "claim_positions")),
+
+    # --- claim status -----------------------------------------------------
+    # MEDICAL.PAID_STATUS separates PAID from DENIED. Nothing has ever filtered
+    # on it, and `all` keeps it that way by default.
+    #
+    # Denials are 17.4% of medical lines but concentrate in ordinary outpatient
+    # claims. At the event grain only 2,630 of 499,272 ED patient-days have
+    # every line denied, so paid_only removes one ED visit in 200.
+    #
+    # It is narrower than its name: claim_status_sql() has one call site, the
+    # ED arm of 07_hcru.R. It does not reach the I5 follow-up test, the
+    # MM-hospitalisation subquery, CONFINEMENT, or RX - the pharmacy table has
+    # no paid status, and STD_COST cannot stand in for one (14.9M denied lines
+    # carry a positive value). Widening it is a study decision, not a config
+    # change. See OPEN_QUESTIONS Q25.
+    claim_status = .env_enum("CLAIM_STATUS", "all", c("all", "paid_only")),
+
+    # --- reporting --------------------------------------------------------
+    suppress_min_n  = .env_int("SUPPRESS_MIN_N", CONTRACT$suppress_min_n),
+    rate_multiplier = .env_int("RATE_MULTIPLIER", 100000L),
+    max_lot         = .env_int("MAX_LOT", 4L),
+
+    # --- selection --------------------------------------------------------
+    cohorts       = .env_list("COHORTS", "1L,2L,3L", upper = TRUE),
+    modules       = .env_list("MODULES", "all"),
+    skip_modules  = .env_list("SKIP_MODULES", ""),
+    dry_run       = .env_lgl("DRY_RUN", FALSE),
+
+    # --- plumbing ---------------------------------------------------------
+    max_retries = .env_int("MAX_RETRIES", 4L),
+    base_sleep  = .env_int("BASE_SLEEP", 5L),
+    settings_override = .env_lgl("SETTINGS_OVERRIDE", FALSE)
+  )
+}
+
+# Every setting the contract pins, and the cfg field that carries it. Kept as
+# data so check_contract() cannot fall behind CONTRACT.
+CONTRACT_FIELDS <- c(
+  baseline_days             = "baseline_days",
+  ce_pre_days               = "ce_pre_days",
+  gap_days                  = "gap_days",
+  lot_post_discon_days      = "lot_post_discon_days",
+  acute_washout_days        = "acute_washout_days",
+  tte_min_potential_fu_days = "tte_min_potential_fu_days",
+  suppress_min_n            = "suppress_min_n",
+  lot1_index_from           = "lot1_index_from",
+  sec2l_index_from          = "sec2l_index_from",
+  study_end                 = "study_end"
+)
+
+# Returns the deviations rather than printing them, so the caller can both
+# refuse the run and write them onto its status row.
+contract_deviations <- function(cfg) {
+  out <- character(0)
+  for (nm in names(CONTRACT_FIELDS)) {
+    want <- CONTRACT[[nm]]
+    got  <- cfg[[CONTRACT_FIELDS[[nm]]]]
+    if (!identical(as.character(want), as.character(got)))
+      out <- c(out, sprintf("%s=%s (contract: %s)", nm, got, want))
+  }
+  out
+}
+
+check_contract <- function(cfg) {
+  dev <- contract_deviations(cfg)
+  if (!length(dev)) return(invisible(character(0)))
+  if (!isTRUE(cfg$settings_override))
+    stop("CONTRACT ERROR: ", length(dev),
+         " setting(s) differ from what the protocol states:\n  ",
+         paste(dev, collapse = "\n  "),
+         "\nThe protocol states these outright, so a run that changes one is a ",
+         "different study. Set SETTINGS_OVERRIDE=TRUE to proceed; the run will ",
+         "record every deviation on its status row and no reader downstream ",
+         "will accept it as the study's numbers.", call. = FALSE)
+  dev
+}
+
+# Every open question's reading, and WHERE it is applied. Written to the run's
+# metadata so a number can be traced to the readings behind it.
+#
+# The distinction matters: without it a reader cannot tell a window this
+# package applied from one the cohort build applied.
+#
+#   "here"      this package's SQL changes when the setting changes.
+#   "upstream"  the rule belongs to the cohort or LOT build. Recorded so the
+#               tables say which definition produced them; applied elsewhere.
+OPEN_QUESTION_SOURCE <- c(
+  fu_evidence_rule                    = "here",
+  # Whether a nested cohort required the cohort above. It changes who is in 2L
+  # and 3L, so a count read without knowing it is a count of an unknown
+  # population - which is exactly what this list is for.
+  cohort_nested                       = "here",
+  sec2l_apply_other_cancer            = "here",
+  sec2l_input_is_wide                 = "here",
+  malig_prevalence_window             = "here",
+  censor_at_disenrollment             = "here",
+  months_as                           = "here",
+  baseline_includes_index             = "here",
+  comorbidity_baseline_includes_index = "here",
+  dx_date_source                      = "here",
+  region_source                       = "here",
+  enrol_attr_at                       = "here",
+  ed_definition                       = "here",
+  ed_admitted                         = "here",
+  mm_hosp_position                    = "here",
+  claim_status                        = "here",
+  frailty                             = "here",
+  comorbid_subgroups                  = "here",
+  # Applied by the COHORT BUILD upstream, not here. ../BUILD_DELTA.md.
+  study_start                         = "upstream",
+  mm_dx_outpatient_codes              = "upstream",
+  mm_dx_outpatient_window_days        = "upstream",
+  prior_tx_drop_steroids              = "upstream",
+  other_cancer_pair_days              = "upstream",
+  other_cancer_pair_grain             = "upstream",
+  other_cancer_both_in_baseline       = "upstream",
+  pregnancy_window                    = "upstream"
+)
+
+# The upstream settings this package can CHECK, and the cohort build's own name
+# for each. Its NDMM_RUN_METADATA.CONTRACT_SETTINGS carries its whole CONTRACT
+# as `k=v|k=v`, which is what the run actually applied.
+#
+# The rest of the "upstream" list is not in that contract - it is fixed in the
+# cohort build's code, pinned by its CODE_MD5 - so there is nothing to read
+# back and those readings stay assertions.
+UPSTREAM_SETTING_MAP <- c(
+  study_start                  = "study_start",
+  lot1_index_from              = "lot1_from",
+  mm_dx_outpatient_window_days = "outpatient_window")
+
+# The two of those a run cannot proceed past a disagreement on. The study
+# period and the 1L index floor are what the cohort IS: a cohort indexed from
+# 2017 under a study said to start in 2018 puts patients in the funnel whom I1
+# says are not there, and dates every window from a start the cohort was not
+# built to. The outpatient window shapes one criterion's reading and is
+# reported, not fatal. Overridable like any contract deviation - the run then
+# records the disagreement as one, and no reader accepts its numbers as the
+# study's.
+BINDING_UPSTREAM_SETTINGS <- c("study_start", "lot1_index_from")
+
+# The readings behind a run's numbers, for its metadata row.
+#
+# An "upstream" reading is not this package's to apply. Where the upstream
+# contract can be read, the value that shaped the data is recorded and marked
+# verified; where the two disagree, both are, because the number came from the
+# upstream one. Everything else is marked unverified.
+open_question_readings <- function(cfg, upstream = NULL) {
+  vapply(names(OPEN_QUESTION_SOURCE), function(k) {
+    v <- paste(as.character(cfg[[k]]), collapse = "|")
+    if (!identical(OPEN_QUESTION_SOURCE[[k]], "upstream"))
+      return(sprintf("%s=%s", k, v))
+    # `[[` on a named vector raises for a name it does not carry, and most of
+    # the upstream list is not mappable, so both lookups are guarded.
+    up <- if (k %in% names(UPSTREAM_SETTING_MAP)) UPSTREAM_SETTING_MAP[[k]] else NULL
+    got <- if (!is.null(up) && !is.null(upstream) && up %in% names(upstream))
+      upstream[[up]] else NULL
+    if (is.null(got) || !nzchar(got))
+      return(sprintf("%s=%s (upstream, unverified)", k, v))
+    if (identical(trimws(got), trimws(v)))
+      sprintf("%s=%s (upstream, verified)", k, got)
+    else
+      sprintf("%s=%s (upstream, verified; this run was set to %s)", k, got, v)
+  }, character(1), USE.NAMES = FALSE)
+}
+
+# An unquoted SQL name: letters, digits and underscore, not starting with a
+# digit. Nothing this package writes or reads is quoted, so this is the rule
+# every name below has to meet. A prefix is the front of a name, so the same
+# rule; a qualified table is one to three of them joined by dots.
+SQL_NAME <- "^[A-Za-z_][A-Za-z0-9_]*$"
+is_sql_name <- function(v, parts = 1L) {
+  v <- trimws(as.character(v))
+  if (length(v) != 1L || is.na(v) || !nzchar(v)) return(FALSE)
+  p <- strsplit(v, ".", fixed = TRUE)[[1]]
+  # strsplit() drops a trailing empty piece, so "s223926." splits to one
+  # clean part; the pieces are put back together and held to the value.
+  identical(paste(p, collapse = "."), v) &&
+    length(p) >= 1L && length(p) <= parts && all(grepl(SQL_NAME, p))
+}
+
+# The settings that become names in SQL, and how many dotted parts each may
+# have. Blank is allowed where blank means "not set" - a prefix that falls back
+# to OBJECT_PREFIX, a table override that falls back to the CDM default - and
+# is refused where the name is required, which check_settings() has already
+# done for the two that are.
+SQL_NAME_SETTINGS <- list(
+  OBJECT_PREFIX = list(key = "object_prefix", parts = 1L),
+  COHORT_PREFIX = list(key = "cohort_prefix", parts = 1L),
+  LOT_PREFIX = list(key = "lot_prefix", parts = 1L),
+  COHORT_STATUS_TABLE = list(key = "cohort_status_table", parts = 1L),
+  # Given bare, or already qualified as catalog.schema.table.
+  INPUT_COHORT_TABLE = list(key = "input_cohort_table", parts = 3L),
+  DATABRICKS_CATALOG = list(key = "catalog", parts = 1L),
+  OPTUM_CDM_SCHEMA = list(key = "cdm_schema", parts = 1L),
+  # A CDM table override is a base name: cdm_src() puts the quarter suffix and
+  # the schema around it, so it cannot carry either itself.
+  TBL_MEDICAL = list(key = "tbl_medical", parts = 1L),
+  TBL_MED_DIAG = list(key = "tbl_diagnosis", parts = 1L),
+  TBL_MED_PROC = list(key = "tbl_procedure", parts = 1L),
+  TBL_RX = list(key = "tbl_rx", parts = 1L),
+  TBL_CONFINEMENT = list(key = "tbl_confinement", parts = 1L),
+  TBL_MEMBER_ENROLLMENT = list(key = "tbl_member_enrollment", parts = 1L),
+  TBL_MEMBER_ELIG = list(key = "tbl_member_elig", parts = 1L),
+  TBL_DOD = list(key = "tbl_dod", parts = 1L))
+
+check_sql_names <- function(cfg) {
+  for (nm in names(SQL_NAME_SETTINGS)) {
+    spec <- SQL_NAME_SETTINGS[[nm]]
+    v <- trimws(as.character(cfg[[spec$key]] %||% ""))
+    if (!nzchar(v)) next
+    if (!is_sql_name(v, spec$parts))
+      stop("SETTING ERROR: ", nm, " = '", v, "' is not a name this package ",
+           "can put in SQL. It is pasted into statements unquoted, so it has ",
+           "to be letters, digits and underscore, not starting with a digit",
+           if (spec$parts > 1L)
+             paste0(" - or up to ", spec$parts, " such names joined by dots")
+           else "",
+           ".", call. = FALSE)
+  }
+  invisible(TRUE)
+}
+
+check_settings <- function(cfg) {
+  # REGION does not exist on the deployed enrolment table. The V9.0 dictionary
+  # documents it as added, and three of the four V9 additions did land on the
+  # 2025q4 extract - ETHNICITY, RACE and RACE_SOURCE - while REGION and
+  # LIS_DUAL did not. ../DATA_MAPPING.md section 4 has the column list.
+  #
+  # Refused here rather than left to Spark, which would say UNRESOLVED_COLUMN
+  # after the session had been opened and the spine built.
+  if (identical(cfg$region_source, "region_column"))
+    stop("SETTING ERROR: REGION_SOURCE=region_column reads ",
+         "MEMBER_ENROLLMENT.REGION, which the deployed extract does not have. ",
+         "It is a V9.0 addition and the deployed table is an earlier vintage: ",
+         "27 columns, carrying STATE (which V9.0 removed) and neither REGION ",
+         "nor LIS_DUAL. Use REGION_SOURCE=state_crosswalk, or confirm the ",
+         "warehouse has been refreshed to a true V9.0 extract first. ",
+         "../OPEN_QUESTIONS.md Q9.", call. = FALSE)
+
+  if (!nzchar(cfg$input_cohort_table))
+    stop("SETTING ERROR: INPUT_COHORT_TABLE is required - it names the cohort ",
+         "the LOT run was built over.", call. = FALSE)
+  if (!nzchar(cfg$object_prefix))
+    stop("SETTING ERROR: OBJECT_PREFIX is required - every table this package ",
+         "writes carries it, and two runs without one would overwrite each ",
+         "other.", call. = FALSE)
+  # Every one of these is pasted into SQL unquoted, by wrk(), cohort_tbl(),
+  # lot_tbl(), input_cohort_tbl() and cdm_src(). A value that is not a name
+  # produced a statement the warehouse refused in its own words, after the
+  # connection was open - or, for a value with a semicolon in it, a statement
+  # that was two. Refused here, by the rule the warehouse applies to an
+  # unquoted name, before any statement is built.
+  check_sql_names(cfg)
+  # The run id is pasted into the metadata DELETE and INSERT. Domino's is a
+  # plain token; one that is not is refused here, as the LOT engine refuses it
+  # of itself.
+  rid <- Sys.getenv("DOMINO_RUN_ID", unset = "")
+  if (nzchar(rid) && !grepl("^[A-Za-z0-9_.-]+$", rid))
+    stop("SETTING ERROR: DOMINO_RUN_ID = '", rid, "' is not a plain token ",
+         "(letters, digits, underscore, dot or dash), and it names this run ",
+         "in S_RUN_METADATA.", call. = FALSE)
+  if (as.Date(cfg$study_start) >= as.Date(cfg$study_end))
+    stop("SETTING ERROR: STUDY_START (", cfg$study_start, ") is not before ",
+         "STUDY_END (", cfg$study_end, ").", call. = FALSE)
+  if (as.Date(cfg$lot1_index_from) < as.Date(cfg$study_start))
+    stop("SETTING ERROR: LOT1_INDEX_FROM (", cfg$lot1_index_from, ") is before ",
+         "STUDY_START (", cfg$study_start, "), so the 1L index could fall ",
+         "outside the study period.", call. = FALSE)
+  for (nm in c("baseline_days", "ce_pre_days", "gap_days",
+               "lot_post_discon_days", "acute_washout_days",
+               "tte_min_potential_fu_days", "suppress_min_n",
+               "rate_multiplier", "max_lot"))
+    if (cfg[[nm]] < 0L)
+      stop("SETTING ERROR: ", nm, " is negative.", call. = FALSE)
+  if (cfg$max_lot < 1L || cfg$max_lot > 5L)
+    stop("SETTING ERROR: MAX_LOT is ", cfg$max_lot,
+         "; the LOT engine builds lines 1 to 5.", call. = FALSE)
+  bad_ed <- setdiff(cfg$ed_definition, c("revenue", "pos", "cpt"))
+  if (length(bad_ed))
+    stop("SETTING ERROR: ED_DEFINITION names ", paste(bad_ed, collapse = ", "),
+         ". Allowed: revenue, pos, cpt.", call. = FALSE)
+  if (!length(cfg$ed_definition))
+    stop("SETTING ERROR: ED_DEFINITION is empty, so no emergency visit could ",
+         "ever be found. Name at least one of revenue, pos, cpt.",
+         call. = FALSE)
+  if (cfg$months_as == "calendar")
+    message("[config] MONTHS_AS=calendar: month windows use add_months(), so ",
+            "two patients indexed a day apart can face windows of different ",
+            "lengths. See ../OPEN_QUESTIONS.md Q21.")
+  invisible(TRUE)
+}
+
+
+# --- two helpers every reader of these settings shares ----------------------
+# NA-aware: a metadata field read back as NA is "not recorded", the same as one
+# that is absent. Defined once, here, because everything that reads these
+# settings sources this file first - separate copies drifted into two different
+# readings of NA.
+`%||%` <- function(a, b) if (is.null(a) || (length(a) == 1L && is.na(a))) b else a
+
+# Run `expr` with these environment variables set in THIS process, restored
+# afterwards. The settings above are read from the environment, so this is how
+# a caller hands a run its settings. Setting them in the process rather than
+# through system2(env = ...) is what lets a child build inherit them on every
+# platform.
+with_env <- function(env, expr) {
+  env <- env[nzchar(names(env) %||% character(0))]
+  if (!length(env)) return(force(expr))
+  old <- Sys.getenv(names(env), unset = NA_character_, names = TRUE)
+  do.call(Sys.setenv, as.list(env))
+  on.exit({
+    for (k in names(old))
+      if (is.na(old[[k]])) Sys.unsetenv(k) else
+        do.call(Sys.setenv, stats::setNames(list(old[[k]]), k))
+  }, add = TRUE)
+  force(expr)
+}

@@ -1,0 +1,67 @@
+cdm_table,build_base_name,column,type_or_values,description,used_for,source
+MEMBER_ENROLLMENT,member_enrollment,PATID,bigint,De-identified patient id,join key everywhere,enrolment describe + dict
+MEMBER_ENROLLMENT,member_enrollment,PAT_PLANID,bigint,Patient-plan id; the join key the business rules specify for Member Enrollment,claim joins,business rules
+MEMBER_ENROLLMENT,member_enrollment,ASO,varchar(1),Administrative Services Only funding indicator,-,dict
+MEMBER_ENROLLMENT,member_enrollment,BUS,varchar(5) MCR / COM,Line of business,Insurance type (Medicare / Commercial),enrolment
+MEMBER_ENROLLMENT,member_enrollment,CDHP,varchar(1) U/1/2/3,Consumer-directed health plan indicator,-,enrolment
+MEMBER_ENROLLMENT,member_enrollment,ELIGEFF,date,Eligibility effective date,continuous enrolment spans,enrolment describe
+MEMBER_ENROLLMENT,member_enrollment,ELIGEND,date,Eligibility end date,continuous enrolment spans; follow-up end,enrolment describe
+MEMBER_ENROLLMENT,member_enrollment,ELIGEFF_DAY / _MONTH / _YEAR / _SASDT,smallint / int,Decomposed effective date,-,enrolment describe
+MEMBER_ENROLLMENT,member_enrollment,ELIGEND_DAY / _MONTH / _YEAR / _SASDT,smallint / int,Decomposed end date,-,enrolment describe
+MEMBER_ENROLLMENT,member_enrollment,FAMILY_ID,bigint,Family identifier,-,enrolment describe
+MEMBER_ENROLLMENT,member_enrollment,GDR_CD,varchar(1) M/F/U,Gender,Sex,enrolment describe
+MEMBER_ENROLLMENT,member_enrollment,GROUP_NBR,varchar(20),Employer group number,-,enrolment describe
+MEMBER_ENROLLMENT,member_enrollment,HEALTH_EXCH,varchar(1),Health exchange indicator,-,enrolment describe
+MEMBER_ENROLLMENT,member_enrollment,PRODUCT,varchar(5) HMO/POS/PPO/EPO/IND/OTH,Plan product type,descriptive only - not the Medicare/Commercial split,enrolment
+MEMBER_ENROLLMENT,member_enrollment,RACE,varchar(1),African American / Asian / Caucasian / Other-Unknown. Moved from SES and renamed from D_RACE_CODE in CDM V9.0,Race,dict + enrolment describe
+MEMBER_ENROLLMENT,member_enrollment,STATE,varchar(2),Member state - present in the deployed 2025q4 table,"Region, via a US Census crosswalk",enrolment describe
+MEMBER_ENROLLMENT,member_enrollment,REGION,(dict only),US Census Region associated with the member address. Added in CDM V9.0; NOT in the deployed 2025q4 table,"Region, if it appears",dict
+MEMBER_ENROLLMENT,member_enrollment,YRDOB,smallint,"Year of birth, capped at 89",Age (calendar year),dict + enrolment describe
+MEMBER_ENROLLMENT,member_enrollment,ETHNICITY,varchar(1),Member ethnicity flag. Value list marked Intentionally Blank in the dictionary,Ethnicity,dict + enrolment describe
+MEMBER_ENROLLMENT,member_enrollment,RACE_SOURCE,varchar(15),Source of the race value,QC of Race,dict + enrolment describe
+MEMBER_ENROLLMENT,member_enrollment,EXTRACT_YM / VERSION,varchar(6),Extract year-month and CDM version,provenance,enrolment describe
+MEMBER_CONTINUOUS_ENROLLMENT,member_cont_enrollment,PATID; ELIGEFF; ELIGEND,-,One row per continuous span; bridges breaks of LESS THAN 30 days,not used for CE - the protocol allows gaps <=30 days,dict
+MEMBER_CONTINUOUS_ENROLLMENT,member_cont_enrollment,GDR_CD; YRDOB; RACE; ETHNICITY; RACE_SOURCE,-,Demographics carried on the rollup,alternative demographic source,dict
+MEDICAL,medical,PATID; PAT_PLANID; CLMID; CLMSEQ,-,Claim identity,join keys,dict
+MEDICAL,medical,FST_DT; LST_DT,date,First / last date of service,every date filter,dict
+MEDICAL,medical,LOC_CD,-,Part of the diagnosis / procedure join key,joins,business rules
+MEDICAL,medical,CONF_ID,-,Confinement id; null means non-inpatient,inpatient identification (Approach 2),business rules
+MEDICAL,medical,POS,-,"Place of service; 21/51/61 are inpatient, 23 is emergency room",inpatient identification (Approach 1); ED visits,business rules
+MEDICAL,medical,TOS_CD; TOS_EXT,-,Type of service; FAC_IP.ACUTE / FAC_IP.REHSNF / PROF.INPVIS / FAC_IP.SNF are inpatient,inpatient identification (Approach 1),business rules
+MEDICAL,medical,PROC_CD; BILL_PROC_CD; PROCMOD..PROCMOD4,-,CPT / HCPCS Level II and modifiers,J-code MM agents; SCT; CAR-T; ED visits,dict
+MEDICAL,medical,RVNU_CD,-,Revenue code,pregnancy exclusion; ED visits,dict
+MEDICAL,medical,NDC; NDC_QTY; NDC_UOM,-,NDC on a medical claim; NONE/UNK where absent,MM agent identification,dict
+MEDICAL,medical,UNITS; ALT_UNITS,-,Units administered,dose-level checks,dict
+MEDICAL,medical,ICD_FLAG,'9' / '10',ICD version,code-list joins,business rules
+MEDICAL,medical,DRG; DSTATUS; ADMIT_TYPE; ADMIT_CHAN; BILL_TYPE,-,Facility claim detail,hospitalisation characterisation,dict
+MEDICAL,medical,PROV; BILL_PROV; REFER_PROV; SERVICE_PROV; PROVCAT; PROV_PAR,-,Provider links,provider joins,dict
+MEDICAL,medical,CHARGE; COPAY; COINS; DEDUCT; COB; STD_COST; STD_COST_YR,-,Cost fields,not required by this protocol,dict
+MEDICAL,medical,OP_VISIT_ID; ENCTR; HCCC; PAID_DT; PAID_STATUS,-,Admin,-,dict
+MED_DIAGNOSIS,diagnosis,PATID; PAT_PLANID; CLMID; LOC_CD; FST_DT,-,Join keys to MEDICAL,joins,business rules
+MED_DIAGNOSIS,diagnosis,DIAG,-,ICD-9/10-CM code WITHOUT a decimal point (C90.00 stored as C9000),every diagnosis-based rule,business rules
+MED_DIAGNOSIS,diagnosis,DIAG_POSITION,1-25,Diagnosis position; 1 is typically the primary diagnosis,MM-related hospitalisation (positions 1-2),business rules
+MED_DIAGNOSIS,diagnosis,ICD_FLAG,'9' / '10',ICD version,code-list joins,business rules
+MED_DIAGNOSIS,diagnosis,POA,-,Present on admission,-,dict
+MED_PROCEDURE,procedure,PROC,-,ICD-9/10 procedure code (CPT/HCPCS are on MEDICAL.PROC_CD),SCT; CAR-T; pregnancy,dict
+MED_PROCEDURE,procedure,PROC_POSITION; ICD_FLAG; LOC_CD; FST_DT; CLMID,-,"Position, version and join keys",joins,dict
+CONFINEMENT,confinement,PATID; PAT_PLANID; CONF_ID,-,One row per hospitalisation; joins to MEDICAL on PAT_PLANID + CONF_ID,inpatient identification; HCRU,business rules
+CONFINEMENT,confinement,ADMIT_DATE; DISCH_DATE,date,Admission and discharge,hospitalisation assignment and LOS,dict
+CONFINEMENT,confinement,LOS,-,Length of stay,LOS summaries,dict
+CONFINEMENT,confinement,DIAG1..DIAG5,-,Up to five confinement-level diagnoses,MM-related hospitalisation (first or second position),dict
+CONFINEMENT,confinement,PROC1..PROC5,-,Up to five confinement-level procedures,SCT during an admission,dict
+CONFINEMENT,confinement,DRG; DSTATUS; IPSTATUS; POS; TOS_CD,-,Admission characterisation and discharge status,HCRU,dict
+CONFINEMENT,confinement,ICU_IND; ICU_SURG_IND; MAJ_SURG_IND; MATERNITY_IND; NEWBORN_IND,-,Admission-type indicators,severe-infection hospitalisation; pregnancy cross-check,dict
+RX,rx,PATID; PAT_PLANID; CLMID,-,Identity,joins,dict
+RX,rx,NDC,-,National Drug Code,oral MM agents,dict
+RX,rx,FILL_DT,date,Fill date,treatment episodes,dict
+RX,rx,DAYS_SUP,-,"Days supply (note the column is DAYS_SUP, not DAY_SUPPLY)",treatment episode length,dict
+RX,rx,QUANTITY; STRENGTH,-,Dispensed quantity and strength,dose checks,dict
+RX,rx,BRND_NM; GNRC_NM; GNRC_IND,-,Brand / generic naming,code-list QC,dict
+RX,rx,AHFSCLSS; SPECCLSS; SPCLT_IND,-,Therapeutic and specialty classification,code-list QC,dict
+RX,rx,PRESCRIBER_PROV; NPI; PHARM; PRESCRIPT_ID; RFL_NBR; FST_FILL; DAW; MAIL_IND,-,"Prescriber, pharmacy and fill attributes",-,dict
+RX,rx,STD_COST,-,"Standardized cost; not in the V9.0 field list, present in the deployed table",the only paid/denied signal RX carries - OPEN_QUESTIONS.md Q25,"deployed table, 07 Sep 2026"
+RX,rx,CHK_DT,-,"Check date; not in the V9.0 field list, present in the deployed table",unused,"deployed table, 07 Sep 2026"
+LABRESULT,lab,LOINC_CD; TST_DESC; RSLT_TXT; RSLT_NBR; HI_NRML; LOW_NRML; FST_DT,-,Lab results; coverage limited to certain laboratory networks,"thrombocytopenia and anaemia, if data allows",dict + business rules
+DOD,dod,PATID; YMDOD,CCYYMM,Month and year of death only,OS; follow-up end; death-based criteria,business rules
+SES,ses,PATID; D_EDUCATION_LEVEL_CODE; D_HOUSEHOLD_INCOME_RANGE_CODE; D_HOME_OWNERSHIP_CODE; D_NETWORTH_RANGE_CODE,-,Socio-economic attributes,nothing this protocol asks for,dict
+LU_DIAGNOSIS / LU_NDC / LU_PROCEDURE,-,code + description columns,-,Code description lookups,code-list QC and labelling,dict

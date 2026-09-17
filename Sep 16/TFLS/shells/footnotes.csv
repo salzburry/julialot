@@ -1,0 +1,13 @@
+table_id,marker,text
+T1,Abbreviations,"CCI, Charlson Comorbidity Index; IQR, interquartile range; LOT, line of therapy; SD, standard deviation;"
+T1,1,"The NDMM cohort is defined as receipt of 1L. There are two RRMM cohorts, represented by receipt of 2L and 3L. For each cohort, the index is defined as the initiation of the LoT. Each cohort has a 12-month baseline prior to index."
+T1,2,"The index date is the start of each LoT regimen. Patients in 2L could have receieved 2L+ lines, while 3L represents 3L+ lines."
+T1,3,A 12-month baseline period prior to index was considered for each cohort. Codes to define comorbidities are defined in the appendix.
+T1,4,The CCI was derived according to Quan et al. (2011).
+T1,5,"Time between each index= from 1L to 2L (under '1L') , from 2L to 3L and from 3L toL ; corresponds to Lot duration"
+T1b,Abbreviations,"CCI, Charlson Comorbidity Index; IQR, interquartile range; LOT, line of therapy; SD, standard deviation;"
+T1b,1,"The NDMM cohort is defined as receipt of 1L. There are two RRMM cohorts, represented by receipt of 2L and 3L. For each cohort, the index is defined as the initiation of the LoT. Each cohort has a 12-month baseline prior to index."
+T1b,2,"The index date is the start of each LoT regimen. Patients in 2L could have receieved 2L+ lines, while 3L represents 3L+ lines."
+T1b,3,A 12-month baseline period prior to index was considered for each cohort. Codes to define comorbidities are defined in the appendix.
+T1b,4,The CCI was derived according to Quan et al. (2011).
+T1b,5,"Time between each index= from 1L to 2L (under '1L') , from 2L to 3L and from 3L toL ; corresponds to Lot duration"

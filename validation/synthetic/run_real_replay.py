@@ -74,6 +74,12 @@ def load_real(con, data):
         if s.strip():
             con.execute(s)
 
+    # MONOMAINTENANCE and DUALMAINTENANCEWITH are NULL. The extract cannot read
+    # them: mma_rollup is built from the code lists as a temporary view and is
+    # never persisted, so a finished run does not carry them. The emitted chain
+    # reads them only into the descriptive contains_mtx_reg column, which the
+    # comparison below excludes, so a replay is unaffected - but a patient whose
+    # question is about MAINTENANCE needs the code list, not this extract.
     for r in data["med_universe"]:
         con.execute("INSERT INTO mma_rollup VALUES (?,?,NULL,NULL)",
                     [r["MAP_MED_TYPE"], r["MAP_MED_CLASS"]])

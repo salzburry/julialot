@@ -1,5 +1,13 @@
 # GSK study 223926 — belantamab mafodotin, NDMM/RRMM
 
+> **Superseded by `Sep 16/`.** This folder lists five stages and carries four:
+> stage 1, the cohort, was never in it — `ndmm/` was still in the other
+> delivery, so this folder's own runbook started at the lines of therapy and
+> three of the repository's checks could not run against it at all. `Sep 16/`
+> is the same study with the cohort in it, and nothing resolved outside itself.
+> Work from that one.
+
+
 Against **Optum Clinformatics Data Mart V9.0**, on Databricks over the
 project's ODBC DSN, deployed on Domino.
 
