@@ -762,7 +762,7 @@ belantamab claim and its dates, which is the handover.
 "Other than belantamab" is a different rule and stays here.
 Belantamab cannot set the 1L index date, and the index is what LOT1 is
 anchored on, so that has to be settled before the LOT run. It is enforced by the
-anti-join in `00_lot1_index.R`.
+anti-join in `R/steps/00b_lot1_index.R`.
 
 So read the two numbers correctly. `<prefix>NDMM_COHORT` is the NDMM cohort
 pending half of one exclusion, and the attrition's last row is not the study's
