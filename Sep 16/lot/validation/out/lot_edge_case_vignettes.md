@@ -31,6 +31,7 @@ reading of how the rules interact, and the first warehouse run settles it.
 | `returning_drug_one_advance` | A drug returns after one advance | - | No new line. One agent advanced the line between B's two doses, so B joins 2L - the line's span carries it, and it joins 2L's regimen string too. | to_confirm |
 | `returning_drug_two_advances` | A drug returns after two advances | - | A new line at day 450. B is a 1L drug and the fold set is the IMMEDIATELY previous line's regimen, so B is not in it at all - the count is never asked, and B opens a line as any other agent would. | to_confirm |
 | `returning_drug_two_agents_one_line` | Two drugs start one line while a drug is away | - | No new line. Two agents started 2L, but they advanced the line ONCE between them, so B sees one advance and joins 2L. | to_confirm |
+| `returning_drug_second_return_across_transplant` | A folded drug returns again, in a line a transplant opened | - | A new line on day 600. A transplant opened 3L, so 4.8 refuses the second fold and B is line-defining again - 3L ends the day before it, and B opens 4L on its own date. The fold into 2L does not make B a drug 3L already had. | derived |
 | `maintenance_to_relapse` | Maintenance running into relapse | - | Maintenance is NOT a line of its own here - contains_mtx_reg is a flag and there is no maintenance period. The relapse is handled by the ordinary rules, so the line count does not include a maintenance line. | derived |
 | `steroid_only_interval` | Steroid-only stretch between regimens | - | The steroid stretch neither starts nor continues a line. | derived |
 | `belantamab_any_line` | Belantamab anywhere in the patient's lines | - | The criterion is patient-level, so the patient loses EVERY line, not just LOT3 onward. They are absent from LOT_LONG_FINAL entirely and present in LOT_LONG. | derived |
@@ -183,6 +184,12 @@ reading of how the rules interact, and the first warehouse run settles it.
 - timeline: d+0 MED (1L starts on drug A and drug B); d+200 MED (drugs C and D start together and advance the line to 2L); d+450 MED (drug B comes back, during 2L)
 - why it is hard: The request counts agents advancing the line twice or more. Counting each drug that opened a line made a doublet two advances and refused a fold it should take.
 - rule: lot/engine/R/foldin_rule.R | foldin_openers
+
+**returning_drug_second_return_across_transplant** - A folded drug returns again, in a line a transplant opened
+
+- timeline: d+0 MED (1L starts on drug A and drug B); d+200 MED (drug C advances the line to 2L); d+300 MED (drug B comes back and folds into 2L); d+500 AUTO (a transplant opens 3L); d+600 MED (drug B comes back AGAIN, during 3L)
+- why it is hard: What a fold contributes to a line's working set belongs to the line the fold happened in. Read across the whole history instead, 2L's fold made B 'already here' for 3L too, so the second return could not end 3L, was too late to open 4L, and sat inside a line that named nothing. QC check C5 reads that outcome; it was found on a real patient, because a drawn population does not make this shape.
+- rule: lot/engine/R/foldin_rule.R | foldin_base_meds_ctes
 
 **maintenance_to_relapse** - Maintenance running into relapse
 

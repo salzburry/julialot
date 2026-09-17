@@ -6,7 +6,7 @@
 # "pass" on a real defect.
 #
 # The clean fixture is one patient with two lines and has to satisfy all
-# thirty-seven checks at once: the funnel reconciles with the published table,
+# thirty-eight checks at once: the funnel reconciles with the published table,
 # every regimen drug has an episode inside its line, every episode inside a
 # line is in that line's regimen, and every transplant belongs to a line.
 #
@@ -176,14 +176,38 @@ EXEC_CASES <- list(
   # The real shape, reduced: a drug arrives inside the line's span, after the
   # induction window, and no regimen names it. PREV_DISCON on the planted
   # episode is what makes it the start of a course rather than a refill - the
-  # earlier one carries MAP_DISCON_FLG = 1.
+  # earlier RETN course carries MAP_DISCON_FLG = 1, and starts before the line
+  # so that it supplies the flag without being a finding of its own.
+  #
+  # Three more courses sit in the fixture that the check must NOT report, and
+  # `n` is what makes that an assertion rather than a hope: lose any one of the
+  # three exclusions and the count goes to two.
+  #
+  #   BSUB  a permissible substitute of BORT, which LOT1 names
+  #   OSUB  the original of LEN, which LOT1 names - 4.4 reads both directions,
+  #         so the pair is one agent whichever half the line reports
+  #   DARA  LOT2's own added medication, arriving the day after the line
+  #         records it. A CART_INIT end carries the line past that day, so the
+  #         add never joins LOT_BASE_MEDS and never opens a line; it is not
+  #         unnamed, it is the add, and the line says so.
   C5 = list(what = "a course starting inside a line that no regimen names",
+            n = 1L,
             planted = list(
-              final = list(.f(FINAL_1)),
-              map = list(utils::modifyList(.ep("RETN", "2020-01-02", "2020-01-20"),
+              final = list(.f(FINAL_1),
+                           .f(FINAL_2, LOT_BASE_END_DT = "2020-11-30",
+                              LOT_BASE_END_REASON = "CART_INIT")),
+              subs = list(list(original_med = "BORT", substitute_med = "BSUB"),
+                          list(original_med = "OSUB", substitute_med = "LEN")),
+              map = list(utils::modifyList(.ep("RETN", "2019-12-01", "2019-12-20"),
                                            list(PATID = "P000009",
                                                 MAP_DISCON_FLG = 1L)),
                          utils::modifyList(.ep("RETN", "2020-05-01", "2020-06-01"),
+                                           list(PATID = "P000009")),
+                         utils::modifyList(.ep("BSUB", "2020-03-01", "2020-04-01"),
+                                           list(PATID = "P000009")),
+                         utils::modifyList(.ep("OSUB", "2020-03-05", "2020-04-05"),
+                                           list(PATID = "P000009")),
+                         utils::modifyList(.ep("DARA", "2020-10-09", "2020-11-08"),
                                            list(PATID = "P000009"))))),
   C2 = list(what = "an added medication that is already in the regimen",
             planted = list(final = list(.f(FINAL_2, LOT_BASE_1ST_ADD_MED = "CARF")))),

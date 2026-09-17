@@ -560,7 +560,7 @@ build_lot_n <- function(con, lot_num,
     -- So a substitute never ends a line on its own, confirms a run-out or
     -- opens the next one, whatever gaps its own episodes carry.
     base_meds AS ({regimen_with_subs_sql(paste0('lot', lot_num, '_induction_meds'))}
-    ),{melp_lotn_ctes(cfg, lot_num, induction_window_days, cart_consolidation_days, allo_lot_span, lot1_induction_window_days)}{melp_lotn_verdict_cte(cfg, lot_num, induction_window_days, cart_consolidation_days)}{foldin_lotn_ctes(cfg, lot_num, lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days))}{foldin_base_meds_ctes(cfg)}
+    ),{melp_lotn_ctes(cfg, lot_num, induction_window_days, cart_consolidation_days, allo_lot_span, lot1_induction_window_days)}{melp_lotn_verdict_cte(cfg, lot_num, induction_window_days, cart_consolidation_days)}{foldin_lotn_ctes(cfg, lot_num, lotn_induction_end(lot_num, induction_window_days, cart_consolidation_days))}{foldin_base_meds_ctes(cfg, glue('lot{lot_num}_start'), glue('LOT{lot_num}_START_DT'))}
     -- Per drug, the end of ITS cover in this line: the FIRST episode flagged
     -- discontinued. A later episode of the same drug does NOT open the next
     -- line. It was in this line's regimen, so this line extends over it, and

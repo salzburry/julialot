@@ -583,10 +583,39 @@ LOT_QC_CHECKS <- list(
                     "deliberately and says it joins neither regimen nor count, ",
                     "so a conditioning dose is expected to be unnamed and would ",
                     "be noise here. That leaves melphalan's own rule to check ",
-                    "melphalan, which is where it belongs."),
-       needs = c("final", "map"),
+                    "melphalan, which is where it belongs. ",
+                    "And a permissible substitute of a drug the line names is ",
+                    "that drug (4.4), so it is named too - under the other half ",
+                    "of its pair. ",
+                    "The span read is the BASE regimen's, so it stops at the ",
+                    "first added medication where the line records one: past ",
+                    "that day the base regimen is over, and what the line names ",
+                    "is the base regimen."),
+       needs = c("final", "map", "subs"),
        sql = function(t, p) counted(paste0("
-    WITH eps AS (
+    WITH named AS (
+      -- Every name the line's regimen reaches: the drugs it lists, plus both
+      -- halves of any permissible pair one of them belongs to. 4.4 makes the
+      -- pair one agent whichever half the line happens to report, so a
+      -- substitute arriving later is the line's own drug and is not unnamed -
+      -- it is named under its partner. Left out, this reported every
+      -- substitution the study declares: 97 of them on a drawn population of
+      -- six hundred, every one of them 4.4 working.
+      SELECT cast(l.PATID as string) AS PATID, l.LOT_NUM, m AS MED_ABBR
+      FROM ", t$final, " l
+      LATERAL VIEW explode(split(coalesce(l.LOT_BASE_MEDS, \'\'), \' \')) x AS m
+      WHERE m <> \'\'
+    ),
+    named_alias AS (
+      SELECT PATID, LOT_NUM, MED_ABBR FROM named
+      UNION ALL
+      SELECT n.PATID, n.LOT_NUM, s.original_med
+      FROM named n INNER JOIN ", t$subs, " s ON s.substitute_med = n.MED_ABBR
+      UNION ALL
+      SELECT n.PATID, n.LOT_NUM, s.substitute_med
+      FROM named n INNER JOIN ", t$subs, " s ON s.original_med = n.MED_ABBR
+    ),
+    eps AS (
       SELECT cast(PATID as string) AS PATID, MAP_MED_TYPE, MAP_MED_CLASS,
              MAP_START_DT,
              lag(MAP_DISCON_FLG) OVER (PARTITION BY cast(PATID as string), MAP_MED_TYPE
@@ -599,12 +628,26 @@ LOT_QC_CHECKS <- list(
     INNER JOIN eps ms
       ON ms.PATID = cast(l.PATID as string)
      AND ms.MAP_START_DT >= l.LOT_START_DT
-     AND ms.MAP_START_DT <= l.LOT_BASE_END_DT
+     -- To the base regimen's last day, not the line's. LOT_BASE_MEDS names the
+     -- BASE regimen, and LOT_BASE_1ST_ADD_MED_DT is the day before the add that
+     -- was going to end it - the engine stores date_sub(ADD_START_DT, 1). Where
+     -- a CAR-T lands within the consolidation window that add is swallowed: the
+     -- line ends on CART_INIT instead, so the added drug opens no line of its
+     -- own and never joins LOT_BASE_MEDS. The engine did see it, and says so in
+     -- LOT_BASE_1ST_ADD_MED. Reading to LOT_BASE_END_DT reported those adds as
+     -- belonging to nothing - four of them on a drawn population of six
+     -- hundred, every one of them the consolidation rule working. Past the
+     -- add the base regimen is over, and a regimen that has ended is not the
+     -- thing that should be naming what comes after it.
+     AND ms.MAP_START_DT <= least(coalesce(l.LOT_BASE_1ST_ADD_MED_DT,
+                                           l.LOT_BASE_END_DT),
+                                  l.LOT_BASE_END_DT)
     WHERE ms.MAP_MED_CLASS <> 'STEROID'
       AND upper(trim(ms.MAP_MED_TYPE)) <> '", toupper(p$melp %||% "MELP"), "'
       AND coalesce(ms.PREV_DISCON, 1) = 1
-      AND NOT array_contains(split(coalesce(l.LOT_BASE_MEDS, \'\'), \' \'),
-                             ms.MAP_MED_TYPE)"),
+      AND NOT EXISTS (SELECT 1 FROM named_alias na
+                      WHERE na.PATID = ms.PATID AND na.LOT_NUM = l.LOT_NUM
+                        AND na.MED_ABBR = ms.MAP_MED_TYPE)"),
     "concat(pid, \' LOT\', LOT_NUM, \': \', med, \' starts \', cast(dt as string), \' inside the line and is in no regimen\')")),
 
   list(id = "C2", group = "Regimen", severity = "fail",

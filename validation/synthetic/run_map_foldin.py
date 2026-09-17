@@ -78,6 +78,12 @@ PART of that line, not a reason to start the next one.
   F28-F30 how far back the returner was
       last seen                              -> previous line folds; anything
       further back is simply a new agent
+  F38 the drug folded into an earlier line,
+      then returns again inside a line a
+      TRANSPLANT opened                      -> the fold is refused there, so
+      the return opens a line of its own. The set the fold contributes to a
+      line's regimen has to be bounded by that line: read patient-wide, one
+      folded course claimed the drug for the whole history
 """
 import os, sys, tempfile, subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -428,6 +434,34 @@ PATS = [
                ('DARA', 'MAB', 65, 600), ('MELP', 'ALKY', 450, 500)]),
     P('F37c', [('LEN', 'IMID', 0, 80), ('MELP', 'ALKY', 40, 67),
                ('DARA', 'MAB', 68, 600), ('MELP', 'ALKY', 450, 500)]),
+    # F38/F38n: the fold's contribution to a regimen has to be bounded by the
+    # line it is contributing to.
+    #
+    # LEN opens line 1 with BORT. DARA opens line 2 on day 200 - one advance -
+    # and LEN returns on day 300, which 4.8 folds into line 2. An AUTO on day
+    # 500 opens line 3, and LEN returns AGAIN on day 600, inside it. A
+    # transplant opened that line, so 4.8 refuses the second fold and the
+    # return is line-defining: it starts line 4 on its own date (LOT_RULES.md
+    # 4.7's own words on what the refusal leaves).
+    #
+    # The effective base set the fold contributes was built from the patient's
+    # folded episodes with NO date bound, while the regimen union beside it was
+    # bounded. So line 3 inherited LEN from the day-300 fold, read the day-600
+    # return as a drug it already had, and ran on to day 927 - and the return
+    # sat inside line 3 while line 3 named nothing at all.
+    #
+    # F38n is the same patient without the day-300 return, which is the only
+    # thing the defect fed on: the two must agree from line 3 on. The orphan
+    # and phantom invariants below see none of this - the return is inside a
+    # line, and the line reports no drug it does not cover - which is why the
+    # shape went unfound here and turned up on a real patient. C5 is the check
+    # that reads it, and it is in the QC assertion above.
+    dict(P('F38', L1 + [('DARA', 'MAB', 200, 400), ('LEN', 'IMID', 300, 360),
+                        ('LEN', 'IMID', 600, 700)]),
+         sct_auto=[IX + 500]),
+    dict(P('F38n', L1 + [('DARA', 'MAB', 200, 400),
+                         ('LEN', 'IMID', 600, 700)]),
+         sct_auto=[IX + 500]),
 ]
 
 
@@ -684,6 +718,18 @@ def main():
     ok(n(fold, 'F15') == 4 and fold['F15'][1][2] == rs.d(IX + 250)
        and fold['F15'][1][3] == 'DISCONTINUATION',
        "F15: ...so LOT2 keeps its own discontinuation")
+
+    ok(n(fold, 'F38') == 4 and fold['F38'][3][1] == rs.d(IX + 600)
+       and 'LEN' in fold['F38'][3][4],
+       "F38: a transplant-opened line does not inherit a drug the fold gave an "
+       "EARLIER line, so the return opens a line of its own on day 600")
+    ok(n(fold, 'F38') == 4 and fold['F38'][2][2] == rs.d(IX + 599)
+       and fold['F38'][2][3] == 'MED_ADD',
+       "F38: ...and line 3 ends the day before it, on the add")
+    ok([r[1:] for r in fold.get('F38', [])[2:]]
+       == [r[1:] for r in fold.get('F38n', [])[2:]],
+       "F38/F38n: the earlier fold decides nothing after the transplant - with "
+       "it and without it, the lines from 3 on are the same")
 
     ok(regimen(True, 'F19', 2) == regimen(True, 'F19n', 2),
        "F19/F19n: a suppressed course decides nothing, so the folded regimen "
