@@ -71,7 +71,29 @@ for (f in FILES) {
   a <- file.path(tracked, f)
   b <- file.path(tmp, f)
   if (!file.exists(b)) { ok(FALSE, paste0(f, ": the renderer did not write it")); next }
-  if (!file.exists(a)) { ok(FALSE, paste0(f, ": rendered, but not committed")); next }
+  if (!file.exists(a)) { ok(FALSE, paste0(f, ": rendered, but not here")); next }
+  # On disk is not the same as IN THE COMMIT. These two live under out/, which
+  # .gitignore ignores, so they are tracked only because they were force-added
+  # once. A delivery folder copied from another one gets them on disk and NOT
+  # in the commit - git add -A skips them - and then this suite passes in the
+  # working copy that made them and fails on every clone, which is the worst
+  # way round for a check to fail. That is not hypothetical: it is how Sep 16
+  # was committed.
+  #
+  # Only inside a work tree. From an exported copy there is nothing to ask,
+  # and the existence test above is the guard there.
+  in_repo <- identical(trimws(paste(suppressWarnings(system2(
+    "git", c("-C", shQuote(dirname(a)), "rev-parse", "--is-inside-work-tree"),
+    stdout = TRUE, stderr = FALSE)), collapse = "")), "true")
+  if (in_repo) {
+    listed <- suppressWarnings(system2("git", c("-C", shQuote(dirname(a)),
+                                                "ls-files", "--", shQuote(basename(a))),
+                                       stdout = TRUE, stderr = FALSE))
+    ok(length(listed) > 0L && nzchar(listed[1]),
+       paste0(f, " is in the commit, not just on disk",
+              if (!(length(listed) > 0L && nzchar(listed[1])))
+                " [out/ is gitignored - add it with: git add -f]" else ""))
+  }
   same <- identical(readLines(a, warn = FALSE), readLines(b, warn = FALSE))
   ok(same, paste0(f, " is current"))
   if (!same) {

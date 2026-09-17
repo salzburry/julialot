@@ -125,8 +125,10 @@ Every suite runs offline — no warehouse, no driver, no Shiny — and exits
 non-zero on any failure.
 
 ```bash
-Rscript variables/tests/run_tests.R   # 585
-Rscript dashboard/tests/run_tests.R                        # 599
+(cd ndmm           && Rscript tests/test_runner.R)         # 419
+(cd ndmm           && Rscript tests/test_subsequent.R)     #  53
+Rscript variables/tests/run_tests.R                        # 584
+Rscript dashboard/tests/run_tests.R                        # 598
 Rscript TFLS/tests/test_tfls.R                             # 362
 (cd lot/engine     && Rscript tests/test_line_criteria.R)  #  58
 (cd lot/engine     && Rscript tests/test_runner.R)         # 528
@@ -137,11 +139,13 @@ Rscript TFLS/tests/test_tfls.R                             # 362
 (cd lot/validation && Rscript tests/test_vignettes.R)      #  37
 ```
 
-2935 checks. Base R except for **`glue`**, which three of them need — the two
-LOT engine suites, through `tests/testutil.R`, and melphalan. The other six load
-nothing. The app needs `shiny`; a warehouse run needs `DBI`, `odbc` and `glue`.
+3405 checks, as counted here; 3407 where `survival::` is installed, which adds
+two to the dashboard suite. Base R except for **`glue`**, which four of the
+twelve need — the two LOT engine suites through `tests/testutil.R`, melphalan,
+and the cohort's own runner. The other eight load nothing. The app needs
+`shiny`; a warehouse run needs `DBI`, `odbc` and `glue`.
 
-Four of the suites (the study package, LOT QC's two, and melphalan) additionally **execute** the
+Four of the suites (the variables package, LOT QC's two, and melphalan) additionally **execute** the
 SQL they emit against fixtures where `python3` with `duckdb` and `sqlglot` is
 present. The dashboard suite does the same with `survival`, which it uses
 only to cross-check its own Kaplan-Meier against a second implementation.
