@@ -36,6 +36,13 @@
 # the same ids and holds this one to its answer.
 mask_patid_r <- function(x) {
   x <- as.character(x)
+  # No ids masks to no ids. paste0 recycles a zero-length argument against a
+  # length-one one and returns length one, so an empty vector came back as a
+  # single "..." - and writing that into the PATID column of a table with no
+  # rows fails with "replacement has 1 row, data has 0". A patient with no
+  # transplant makes TX_ALLO_CART_DATES exactly that table, so the extract died
+  # on a shape the warehouse produces all the time.
+  if (!length(x)) return(character(0))
   out <- paste0("...", tolower(substring(x, pmax(nchar(x) - 5L, 1L))))
   out[is.na(x)] <- NA_character_
   out

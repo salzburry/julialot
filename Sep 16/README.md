@@ -99,7 +99,7 @@ DASH_SOURCE=snapshot DASH_SNAPSHOT_DIR=/mnt/data/NDMM bash dashboard/app.sh
 the LOT engine's `DBI::dbConnect(odbc::odbc(), dsn = DATABRICKS_DSN, pwd =
 DATABRICKS_PWD, timeout = 120)`, which the study package carries character for
 character, and which TFLS and the dashboard reach by calling the study
-package's `connect_db()` rather than having one of their own. And all four
+package's `connect_db()` rather than having one of their own. And all five
 read the same three facts under the LOT engine's names: `PROJECT_WORK_SCHEMA`
 (or the Domino user's own schema where it is unset), `DATABRICKS_CATALOG` and
 `INPUT_COHORT_TABLE`. So an environment that carried the cohort build carries

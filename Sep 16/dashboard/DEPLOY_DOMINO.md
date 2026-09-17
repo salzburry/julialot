@@ -144,7 +144,7 @@ cell is not filled from at all. Share those. Where a raw table itself has to go
 out, it is a disclosure review, not a file copy.
 
 The Dataset's own access is the one control here that is **not in the code**.
-Nothing this delivery runs can enforce it: the job writes the files, and who
+Nothing here can enforce it: the job writes the files, and who
 may read them afterwards is set on the Domino Dataset and the project that
 owns it. Grant it to the App and the Job and to nobody else, and re-check it
 whenever the project's collaborators change — every other control on this page

@@ -137,6 +137,14 @@ main <- function() {
   if (!identical(as.character(st$STATE[1]), "complete"))
     stop("The run owning this prefix is '", st$STATE[1], "', not complete.",
          call. = FALSE)
+  # The run everything below is bound to. Named once, so no later read can
+  # quietly be about a different one.
+  run_id <- as.character(st$RUN_ID[1])
+  if (!nzchar(run_id) || is.na(run_id))
+    stop("The newest row in ", lot_out("LOT_BUILD_STATUS"), " carries no ",
+         "RUN_ID, so there is nothing to bind this extract to.", call. = FALSE)
+  if (!grepl("^[A-Za-z0-9_-]+$", run_id))
+    stop("RUN_ID '", run_id, "' is not a plain identifier.", call. = FALSE)
   devs <- trimws(as.character(st$CONTRACT_DEVIATIONS[1] %||% ""))
   if (nzchar(devs) && !identical(devs, "none") && !env_flag("QC_ALLOW_DEVIATION"))
     stop("The run deviated from the contract (", devs, "). Extracting from it ",
@@ -145,7 +153,19 @@ main <- function() {
 
   # The run's own record of what built it. A replay that cannot name the build
   # it is replaying is a replay of something.
-  meta <- db_q(con, glue("SELECT * FROM {lot_out('LOT_RUN_METADATA')}"))
+  #
+  # BOUND TO THIS RUN. LOT_RUN_METADATA holds one row per run and keeps the
+  # earlier ones, so reading the whole table and taking the first row pinned
+  # whichever run the warehouse happened to return first. It reported another
+  # run's CODE_MD5 beside this run's id - the one fact this file exists to
+  # carry, wrong, and wrong in a way that looks like an answer.
+  meta <- db_q(con, glue("
+    SELECT * FROM {lot_out('LOT_RUN_METADATA')} WHERE RUN_ID = '{run_id}'"))
+  if (nrow(meta) != 1L)
+    stop(nrow(meta), " row(s) in ", lot_out("LOT_RUN_METADATA"), " for run ",
+         run_id, ", expected exactly one. Without it the extract cannot say ",
+         "which build produced these rows, and saying it wrongly is worse ",
+         "than not saying it.", call. = FALSE)
 
   # Every drug and class the RUN saw, not only these patients'. The emitted
   # build carries one flag column per member of the universe, so extracting
@@ -192,7 +212,7 @@ main <- function() {
   got$permissible_subs <- db_q(con, glue("SELECT * FROM {lot_out('PERMISSIBLE_SUBS')}"))
   got$med_universe <- universe
   got$run_pin <- data.frame(
-    RUN_ID = as.character(st$RUN_ID[1]),
+    RUN_ID = run_id,
     UPDATED_AT = as.character(st$UPDATED_AT[1]),
     CONTRACT_DEVIATIONS = if (nzchar(devs)) devs else "none",
     OBJECT_PREFIX = pfx,
@@ -208,7 +228,6 @@ main <- function() {
       d
     })
 
-  missing <- character(0)
   for (nm in names(got)) {
     f <- file.path(dir, paste0(nm, ".csv"))
     utils::write.csv(got[[nm]], f, row.names = FALSE, na = "")
