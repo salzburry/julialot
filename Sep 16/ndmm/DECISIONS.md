@@ -586,7 +586,7 @@ valid mono and dual regimens (`maintenance_validated.csv`).
 
 **None of that is built.** The engine derives `contains_mtx_reg`, a descriptive
 0/1 on the line, and constructs no maintenance period, start, end, type or end
-reason. `exploration/lot/R/definitions.R` states the resulting behaviour as
+reason. The resulting behaviour is stated as
 this build's answer - that maintenance is never a line.
 
 That is not a decision that maintenance should not be a line. The period does

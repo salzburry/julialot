@@ -1106,7 +1106,7 @@ local({
   on.exit(unlink(crlf), add = TRUE)
   writeBin(charToRaw(paste0(paste(readLines(shipped, warn = FALSE), collapse = "\r\n"), "\r\n")), crlf)
   ok(identical(contract_text_md5(crlf), contract_text_md5(shipped)),
-     "...and the same contract checked out with other line endings hashes the same, so a Windows checkout is not refused")
+     "...and the same contract with other line endings hashes the same, so a Windows copy is not refused")
 
   # And the three objects built from it are the package's own answers.
   d <- pkg$study_contract()

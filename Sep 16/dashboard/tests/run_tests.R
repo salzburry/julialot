@@ -11,9 +11,9 @@ here <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
   # Rscript escapes a space in --file= as "~+~", so a path with one comes back
   # naming a directory that does not exist. Undone here, as every other suite
-  # in this delivery does it: without it these two ran only from their own
-  # directory, and died the moment the gate invoked them by absolute path -
-  # which is the only way anything but a person runs them.
+  # beside it does: without it this one ran only from its own directory, and
+  # died the moment anything invoked it by absolute path - which is how
+  # anything but a person runs it.
   d <- if (length(a)) dirname(normalizePath(gsub("~+~", " ",
          sub("^--file=", "", a[1]), fixed = TRUE))) else getwd()
   dirname(d)
