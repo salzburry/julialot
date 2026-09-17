@@ -65,8 +65,9 @@ built it.
 It reads raw CDM and its own code lists, nothing else. MM diagnosis, age and
 demographics use the same rules as the `overall` package
 (`R/steps/00_mm_cohort.R`), applying two criteria - a qualifying diagnosis, and
-age >=18 in its calendar year - and `tests/test_same_as_overall.R` holds the two
-packages together. The 1L index comes from claims
+age >=18 in its calendar year. `tests/test_same_as_overall.R` holds the two
+packages together where both are checked out; it is not in this delivery, which
+does not carry `overall` - see the closing section. The 1L index comes from claims
 (`R/steps/00b_lot1_index.R`), and belantamab is read off
 `cl_mma_codelist.csv`.
 
@@ -211,7 +212,7 @@ so.
 
 `R/steps/00_mm_cohort.R` uses the same MM-diagnosis, index-qualification and
 demographics SQL as the `overall` package, and `tests/test_same_as_overall.R`
-holds the two together. Two criteria are applied here, and no more.
+holds the two together where both are checked out. Two criteria are applied here, and no more.
 
 | # | criterion | as applied | source |
 |---|---|---|---|
@@ -231,7 +232,7 @@ baseline CE, enrolment on the diagnosis date, no MM agent in baseline, >=1 MM
 agent in follow-up. They are switches in `overall/config.csv`, not criteria for
 this cohort, and this build re-applies CE and baseline therapy at the 1L anchor
 instead. `tests/test_same_as_overall.R` fails if any of their columns appears
-here.
+here - where it runs, which is not this delivery.
 
 ### Applied here
 
@@ -814,7 +815,8 @@ Five, each recorded in `DECISIONS.md`:
 
 ### And to `overall`, where line-for-line is impossible
 
-`tests/test_same_as_overall.R` holds `00_mm_cohort.R` to the `overall` package,
+`tests/test_same_as_overall.R` - which runs where `overall` is checked out
+beside this package, and so not here - holds `00_mm_cohort.R` to it,
 but deliberately not line for line - the two are shaped differently, and
 `overall` splits its inpatient / outpatient / qualifying work across three
 views where this build needs one. Instead it lifts the clinically decisive

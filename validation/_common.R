@@ -73,9 +73,23 @@ pkg_dir <- function(...) file.path(PKG_BASE, ...)
 #      is a suite that should have run and did not, and it counts against the
 #      gate.
 #
-# The split is narrow on purpose. Only a path under PKG_BASE can be a 5, so a
-# missing baseline or a missing dependency cannot become one, and the gate
-# prints every 5 by name rather than absorbing it into a count.
+# What the 5 does and does not bound. Only a path under PKG_BASE can be one, so
+# a missing baseline or dependency cannot become one - but among package paths
+# it is not selective: lot/engine missing would be a 5 too, so gating a folder
+# whose engine had gone would report port/lot.R as "not part of this delivery"
+# rather than as a problem.
+#
+# What stops that being a hole is not this function. It is EXPECTED_SUITES in
+# run_gate.R: a delivery pins the suites it has BY NAME, and a package that
+# disappears takes its suites with it, which the gate reports as MISSING and
+# fails on. The exemption says "no suite here checks that", and the pin says
+# "these suites must be here" - the second is the guard, and it is the one to
+# look at if this ever seems to excuse too much.
+#
+# Every 5 is printed by name rather than absorbed into a count, and
+# validation/hygiene/gate_semantics.R pins the verdict, because a status that
+# passes the gate having run no assertions is the one most worth holding
+# still.
 need_dirs <- function(...) {
   paths   <- c(...)
   missing <- Filter(function(p) !dir.exists(p) && !file.exists(p), paths)

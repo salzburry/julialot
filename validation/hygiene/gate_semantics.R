@@ -39,6 +39,26 @@ v <- gate_verdict(character(0), 3L)
 ok(!v$ok, "a skip fails the gate rather than being noted beside a green")
 ok(isTRUE(v$skipped), "...and is still reported as a skip, not as a failure")
 
+cat("\n-- 'not in this delivery' is a green, so it has to be the right green --\n")
+# Exit 5 is the only status that passes the gate without a single assertion,
+# which makes it the one worth pinning hardest: a wrong 5 is a suite that
+# vanishes silently. need_dirs() emits it only for a package path under the
+# delivery root, and the gate has to carry it through as its own thing rather
+# than as a skip or a pass.
+v <- gate_verdict(character(0), 5L)
+ok(isTRUE(v$ok), "a package this delivery does not carry does not fail the gate")
+ok(isTRUE(v$not_applicable), "...and is marked not applicable, so it can be named")
+ok(!isTRUE(v$skipped), "...and is not counted as a skip, which would fail it")
+ok(identical(v$passed, 0L), "...and claims no assertions, having run none")
+ok(!length(v$reasons), "...and gives no reason, because there is nothing wrong")
+# The neighbouring statuses must not drift into it.
+ok(!isTRUE(gate_verdict(character(0), 3L)$not_applicable),
+   "a skip is not silently promoted to not-applicable")
+ok(!isTRUE(gate_verdict(clean, 0L)$not_applicable),
+   "nor is an ordinary pass")
+ok(!gate_verdict(character(0), 4L)$ok,
+   "and a status next to it is still a failure, not a near-miss")
+
 cat("\n-- a clean summary is not the same as a clean exit --\n")
 # Was: a nonzero exit was ignored whenever a summary parsed.
 ok(!gate_verdict(clean, 1L)$ok,
