@@ -366,6 +366,16 @@ drug the rule says is part of the line should read as part of it. The line's
 run-out is carried to the last day the drug's supply reaches, capped at
 observation, so the treatment the rule refuses a line to still sits inside one.
 
+**And it joins that line only.** A fold makes the drug part of the line that
+took it, which is not the same as making it part of the patient. Every line is
+built with its own working set of the drugs it already has, and what a fold
+contributes to that set belongs to the line the fold happened in: read across
+the whole history instead, one fold would make the drug "already here" for every
+later line, so the same drug returning again — in a line a transplant opened,
+where the fold is refused — could neither end that line nor open the next, and
+would sit in a line that does not name it. QC check `C5` is what reads that
+outcome; `returning_drug_second_return_across_transplant` is what pins it.
+
 To see the rule on real patients, `qc/trace_foldin.R` writes the raw episodes
 and final lines of the patients it touched in a finished run, the folded
 episode marked. `qc/trace_returns.R` puts the folds beside the other two ways a

@@ -493,15 +493,47 @@ foldin_base_meds <- function(cfg) {
   "foldin_base_meds_eff"
 }
 
-foldin_base_meds_ctes <- function(cfg) {
+# The fold's contribution to the effective base set, SCOPED TO THIS LINE.
+#
+# foldin_episodes is every episode of every folded course, for the PATIENT and
+# not for one line. The line scoping lives in foldin_regimen_union, which bounds
+# by date, and in foldin_suppress_predicate, which matches the episode exactly.
+# This set read it with neither, on MED_ABBR alone.
+#
+# So one folded course made its drug "already in this line" for the whole of the
+# patient's history. A LATER course of the same drug, in a line the fold never
+# touched, was then refused as an added medication - bm.MED_ABBR is not null -
+# while the regimen union's date bound refused to name it. It could not end the
+# line it fell in, was too late to open the next, and no regimen carried it: a
+# treatment belonging to nothing, which is the outcome the comment on
+# first_add_candidates says this set exists to prevent. It prevented it in one
+# direction and caused it in the other.
+#
+# The bound is the line START and no more. The upper bound the regimen union
+# uses is not available here - the line's end is what this chain is computing -
+# and it is not what went wrong: the fault was claiming episodes from BEFORE the
+# line. A folded drug's second return INSIDE the line is at or after the start,
+# so it stays claimed, which is the case first_add_candidates describes and
+# which must not regress.
+foldin_episodes_here <- function(n_tbl, n_start) glue("
+        SELECT fe.PATID, fe.MED_ABBR, fe.MAP_START_DT
+        FROM foldin_episodes fe
+        INNER JOIN {n_tbl} ON {n_tbl}.PATID = fe.PATID
+        WHERE fe.MAP_START_DT >= {n_tbl}.{n_start}")
+
+foldin_base_meds_ctes <- function(cfg, n_tbl, n_start) {
   if (!foldin_on(cfg)) return("")
+  here <- foldin_episodes_here(n_tbl, n_start)
   paste0("\n", glue("
+    foldin_here AS (
+{here}
+    ),
     foldin_base_meds_eff AS (
       SELECT PATID, MED_ABBR, min(SUBSTITUTE_ONLY) AS SUBSTITUTE_ONLY
       FROM (
         SELECT PATID, MED_ABBR, SUBSTITUTE_ONLY FROM base_meds
         UNION ALL
-        SELECT DISTINCT PATID, MED_ABBR, 0 AS SUBSTITUTE_ONLY FROM foldin_episodes
+        SELECT DISTINCT PATID, MED_ABBR, 0 AS SUBSTITUTE_ONLY FROM foldin_here
         UNION ALL
         -- The folded drug's permissible substitutes, both directions. A drug
         -- the fold made part of this line brings its whole agent with it, or
@@ -510,12 +542,12 @@ foldin_base_meds_ctes <- function(cfg) {
         -- IS recognised as the same agent. That left the treatment in no line.
         SELECT DISTINCT fe.PATID, ps.substitute_med AS MED_ABBR,
                1 AS SUBSTITUTE_ONLY
-        FROM foldin_episodes fe
+        FROM foldin_here fe
         INNER JOIN permissible_subs ps ON fe.MED_ABBR = ps.original_med
         UNION ALL
         SELECT DISTINCT fe.PATID, ps.original_med AS MED_ABBR,
                1 AS SUBSTITUTE_ONLY
-        FROM foldin_episodes fe
+        FROM foldin_here fe
         INNER JOIN permissible_subs ps ON fe.MED_ABBR = ps.substitute_med
       )
       GROUP BY PATID, MED_ABBR

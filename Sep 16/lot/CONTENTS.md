@@ -54,7 +54,7 @@ Every downstream reader resolves which run owns a prefix through
 `LOT_BUILD_STATUS`, and refuses a run that did not finish or that deviated from
 the contract.
 
-### `qc/` — 37 checks on a finished run
+### `qc/` — 38 checks on a finished run
 
 Not a re-implementation of the rules: each check states a property the lines
 must have, and counts the rows that break it.
@@ -68,7 +68,7 @@ tables it needs. A `fail` is a defect, a `warn` is worth reading, an `info` is
 context. The report names an example row for each finding, with the patient
 identifier masked to its last six characters so the file can be circulated.
 
-`Rscript qc/tests/test_lot_qc.R` — 296 checks. Every one of the 37 runs twice
+`Rscript qc/tests/test_lot_qc.R` — 301 checks. Every one of the 38 runs twice
 against fixtures: clean, where it must count nothing, and carrying the defect
 it describes, where it must count it.
 

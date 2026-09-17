@@ -563,6 +563,93 @@ LOT_QC_CHECKS <- list(
                              ms.MAP_MED_TYPE)"),
     "concat(pid, ' LOT', LOT_NUM, ': ', med, ' was eligible and is not in the regimen')")),
 
+  list(id = "C5", group = "Regimen", severity = "fail",
+       what = "a treatment that starts inside a line is named by that line",
+       why = paste0("C4 asks this of the induction WINDOW. A line runs longer ",
+                    "than its window, and a drug arriving later is supposed to ",
+                    "do one of two things: join the line, by 4.8 where the fold ",
+                    "takes it, or end the line and open the next, as any added ",
+                    "agent does. What it must not do is neither. ",
+                    "This asks it of the whole SPAN. A course starting inside a ",
+                    "line that the line does not name, and that did not end the ",
+                    "line, is a treatment belonging to nothing - it is in the ",
+                    "patient's history, inside a line's dates, and absent from ",
+                    "every regimen. ",
+                    "Only where the episode STARTS a course: a refill mid-course ",
+                    "is the same treatment continuing and joins no regimen of ",
+                    "its own, which is why the previous episode's ",
+                    "discontinuation flag is what admits a row here. ",
+                    "Melphalan is out of scope. 4.7 suppresses a short course ",
+                    "deliberately and says it joins neither regimen nor count, ",
+                    "so a conditioning dose is expected to be unnamed and would ",
+                    "be noise here. That leaves melphalan's own rule to check ",
+                    "melphalan, which is where it belongs. ",
+                    "And a permissible substitute of a drug the line names is ",
+                    "that drug (4.4), so it is named too - under the other half ",
+                    "of its pair. ",
+                    "The span read is the BASE regimen's, so it stops at the ",
+                    "first added medication where the line records one: past ",
+                    "that day the base regimen is over, and what the line names ",
+                    "is the base regimen."),
+       needs = c("final", "map", "subs"),
+       sql = function(t, p) counted(paste0("
+    WITH named AS (
+      -- Every name the line's regimen reaches: the drugs it lists, plus both
+      -- halves of any permissible pair one of them belongs to. 4.4 makes the
+      -- pair one agent whichever half the line happens to report, so a
+      -- substitute arriving later is the line's own drug and is not unnamed -
+      -- it is named under its partner. Left out, this reported every
+      -- substitution the study declares: 97 of them on a drawn population of
+      -- six hundred, every one of them 4.4 working.
+      SELECT cast(l.PATID as string) AS PATID, l.LOT_NUM, m AS MED_ABBR
+      FROM ", t$final, " l
+      LATERAL VIEW explode(split(coalesce(l.LOT_BASE_MEDS, \'\'), \' \')) x AS m
+      WHERE m <> \'\'
+    ),
+    named_alias AS (
+      SELECT PATID, LOT_NUM, MED_ABBR FROM named
+      UNION ALL
+      SELECT n.PATID, n.LOT_NUM, s.original_med
+      FROM named n INNER JOIN ", t$subs, " s ON s.substitute_med = n.MED_ABBR
+      UNION ALL
+      SELECT n.PATID, n.LOT_NUM, s.substitute_med
+      FROM named n INNER JOIN ", t$subs, " s ON s.original_med = n.MED_ABBR
+    ),
+    eps AS (
+      SELECT cast(PATID as string) AS PATID, MAP_MED_TYPE, MAP_MED_CLASS,
+             MAP_START_DT,
+             lag(MAP_DISCON_FLG) OVER (PARTITION BY cast(PATID as string), MAP_MED_TYPE
+                                       ORDER BY MAP_START_DT) AS PREV_DISCON
+      FROM ", t$map, "
+    )
+    SELECT ", mask("l.PATID"), " AS pid, l.LOT_NUM, ms.MAP_MED_TYPE AS med,
+           ms.MAP_START_DT AS dt
+    FROM ", t$final, " l
+    INNER JOIN eps ms
+      ON ms.PATID = cast(l.PATID as string)
+     AND ms.MAP_START_DT >= l.LOT_START_DT
+     -- To the base regimen's last day, not the line's. LOT_BASE_MEDS names the
+     -- BASE regimen, and LOT_BASE_1ST_ADD_MED_DT is the day before the add that
+     -- was going to end it - the engine stores date_sub(ADD_START_DT, 1). Where
+     -- a CAR-T lands within the consolidation window that add is swallowed: the
+     -- line ends on CART_INIT instead, so the added drug opens no line of its
+     -- own and never joins LOT_BASE_MEDS. The engine did see it, and says so in
+     -- LOT_BASE_1ST_ADD_MED. Reading to LOT_BASE_END_DT reported those adds as
+     -- belonging to nothing - four of them on a drawn population of six
+     -- hundred, every one of them the consolidation rule working. Past the
+     -- add the base regimen is over, and a regimen that has ended is not the
+     -- thing that should be naming what comes after it.
+     AND ms.MAP_START_DT <= least(coalesce(l.LOT_BASE_1ST_ADD_MED_DT,
+                                           l.LOT_BASE_END_DT),
+                                  l.LOT_BASE_END_DT)
+    WHERE ms.MAP_MED_CLASS <> 'STEROID'
+      AND upper(trim(ms.MAP_MED_TYPE)) <> '", toupper(p$melp %||% "MELP"), "'
+      AND coalesce(ms.PREV_DISCON, 1) = 1
+      AND NOT EXISTS (SELECT 1 FROM named_alias na
+                      WHERE na.PATID = ms.PATID AND na.LOT_NUM = l.LOT_NUM
+                        AND na.MED_ABBR = ms.MAP_MED_TYPE)"),
+    "concat(pid, \' LOT\', LOT_NUM, \': \', med, \' starts \', cast(dt as string), \' inside the line and is in no regimen\')")),
+
   list(id = "C2", group = "Regimen", severity = "fail",
        what = "the added medication is not already in the regimen, unless it returned",
        why = paste0("An added medication is normally one the regimen does not ",

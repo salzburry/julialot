@@ -6,6 +6,15 @@
 > three of the repository's checks could not run against it at all. `Sep 16/`
 > is the same study with the cohort in it, and nothing resolved outside itself.
 > Work from that one.
+>
+> The lines this folder's engine builds are also known to be wrong for one
+> shape. Where a drug folded into an earlier line (`LOT_RULES.md` 4.8) returns
+> again inside a line a transplant or CAR-T opened, that line claims the return
+> instead of ending on it, so the line runs long and the treatment sits in a
+> line that does not name it. `Sep 16/` carries the fix and a check that finds
+> the shape; this folder is not being patched, because a superseded delivery
+> that builds different lines from the one that was handed over is worse than
+> one that is simply superseded. Do not build lines from here.
 
 
 Against **Optum Clinformatics Data Mart V9.0**, on Databricks over the

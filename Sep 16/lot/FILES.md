@@ -10,7 +10,7 @@ One package writes. The rest read a finished run.
 | | |
 |---|---|
 | `lot/engine/` | builds the lines. `build.R <COHORT_TABLE> <prefix_>`. The only package here that writes a study run. |
-| `lot/qc/` | thirty-seven checks on a finished run, asked after the fact, two traces of the returning-drug rules on real patients, and an extract of a patient's inputs for replay. Reads only. `run_lot_qc.R`, `trace_foldin.R`, `trace_returns.R`, `extract_patients.R`. |
+| `lot/qc/` | thirty-eight checks on a finished run, asked after the fact, two traces of the returning-drug rules on real patients, and an extract of a patient's inputs for replay. Reads only. `run_lot_qc.R`, `trace_foldin.R`, `trace_returns.R`, `extract_patients.R`. |
 | `lot/melphalan/` | what the melphalan rule did to the numbers, as two complete builds differenced. Opt-in, its own prefixes. |
 | `lot/validation/` | the rule vignettes — the machine-checked twin of `LOT_RULES.md`. No warehouse. |
 
@@ -238,7 +238,7 @@ failure, and none is a published benchmark. Reported, not fatal;
 
 | path | what it does |
 |---|---|
-| `run_lot_qc.R` | Runs thirty-seven checks against a finished run and refuses one whose own build did not complete. Reads only; writes a report to `out/`. Exit status is 0 when nothing failed and 1 when something did, so it can gate a handover. |
+| `run_lot_qc.R` | Runs thirty-eight checks against a finished run and refuses one whose own build did not complete. Reads only; writes a report to `out/`. Exit status is 0 when nothing failed and 1 when something did, so it can gate a handover. |
 | `R/checks.R` | The checks as data — one entry per check, each carrying the query that finds violations, so the catalogue can be read without running it. |
 | `tests/test_lot_qc.R` | That each check answers the same shape, reads only the tables it declares, masks every patient id, and turns a count into the right verdict. |
 | `trace_foldin.R` | Finds the patients the fold-in rule (`LOT_RULES.md` 4.8) touched in a finished run and writes each one's raw MAP episodes beside the final lines, the folded episode marked, to `out/`. Reads only. Prints its plan without `TRACE_EXECUTE=TRUE`. `TRACE_N` is how many patients to trace, `TRACE_PATIDS` names them instead, `TRACE_MASK_PATID=TRUE` masks the ids. Unmasked by default, because it exists so a patient can be looked up, so the file stays inside the study environment. |
