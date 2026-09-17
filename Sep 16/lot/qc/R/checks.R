@@ -591,18 +591,22 @@ LOT_QC_CHECKS <- list(
                     "first added medication where the line records one: past ",
                     "that day the base regimen is over, and what the line names ",
                     "is the base regimen. ",
-                    "That bound is also this check's BLIND SPOT, and it is a ",
-                    "deliberate one. 7.3 says an added agent followed by a ",
-                    "CAR-T within the consolidation window is bridging therapy ",
-                    "and stays in the line rather than starting a regimen of ",
-                    "its own - so between the add and the infusion, treatment ",
-                    "belonging to a line that does not name it is what the ",
-                    "rules ASK for, and a check reading that window would ",
-                    "report the rule working. It reported exactly that four ",
-                    "times before the bound went in. The cost is that a ",
-                    "genuine orphan in that same window is not reported here ",
-                    "either; nothing else looks at it, and widening this check ",
-                    "cannot separate the two."),
+                    "That bound is also this check's blind spot, which ",
+                    "`limits` states, because a reader of a ZERO here needs it ",
+                    "and a zero is not a finding."),
+       limits = paste0("Nothing between a line's first added medication and ",
+                       "its end is read. 7.3 puts treatment there ",
+                       "deliberately: an added agent followed by a CAR-T ",
+                       "inside the consolidation window is bridging therapy ",
+                       "and stays in the line without joining its regimen, so ",
+                       "in that window a treatment the line does not name is ",
+                       "what the rules ASK for. Reading it reported the rule ",
+                       "working, four times on a drawn population of six ",
+                       "hundred. The cost of the bound is that a GENUINE ",
+                       "orphan in the same window is reported by nothing - ",
+                       "not here, and not by any other check. So C5 at zero ",
+                       "means no unnamed treatment outside that window, which ",
+                       "is less than no unnamed treatment."),
        needs = c("final", "map", "subs"),
        sql = function(t, p) counted(paste0("
     WITH named AS (
@@ -1287,5 +1291,49 @@ qc_markdown <- function(res, run_id, pfx, p, devs) {
                        res$result[i], " | ",
                        if (is.na(res$n_bad[i])) "" else format(res$n_bad[i], big.mark = ","),
                        " | ", gsub("|", "/", res$detail[i], fixed = TRUE), " |"))
+
+  # The catalogue's own prose, in the file the study team opens.
+  #
+  # `why` and `limits` were readable only in R/checks.R, which is the one place
+  # a reader of the report on the platform is not. A row saying "FAIL, 12" and
+  # nothing about why twelve matters is a number to be argued with rather than
+  # acted on, and a row saying "pass, 0" is read as "nothing there" even where
+  # the check says in its own catalogue entry that it cannot see everything.
+  by_id <- stats::setNames(LOT_QC_CHECKS,
+                           vapply(LOT_QC_CHECKS, function(c_i) c_i$id, character(1)))
+  field <- function(id, nm) {
+    c_i <- by_id[[id]]
+    if (is.null(c_i)) NULL else c_i[[nm]]
+  }
+
+  # The outcomes that ask the reader to DO something: a defect, something worth
+  # reading, and a check that could not run at all - for that last one the why
+  # is what it would have proved, which is the thing a reader has lost.
+  #
+  # Not `info`. An info check reports a count as context and several of them
+  # report one on any real run, so carrying their prose too would put the
+  # section on every report and bury the two outcomes that need it. Not `pass`
+  # or `skip` either: a clean run has no section.
+  spoke <- res$id[res$result %in% c("FAIL", "warn", "error")]
+  txt <- lapply(spoke, function(id) field(id, "why"))
+  keep <- !vapply(txt, is.null, logical(1))
+  if (any(keep)) {
+    ln <- c(ln, "", "## Why these matter", "")
+    for (k in which(keep))
+      ln <- c(ln, paste0("**", spoke[k], "** - ", res$what[res$id == spoke[k]][1]),
+              "", txt[[k]], "")
+  }
+
+  # Every check that declares one, whatever it counted: a limit is a property
+  # of the check and not of the run, and the reading it changes is the ZERO.
+  lim <- lapply(res$id, function(id) field(id, "limits"))
+  keep <- !vapply(lim, is.null, logical(1))
+  if (any(keep)) {
+    ln <- c(ln, "", "## What these checks cannot see", "",
+            paste0("A check below counted what it looked at. This is what it ",
+                   "did not look at, so a zero is read for what it means."), "")
+    for (k in which(keep))
+      ln <- c(ln, paste0("**", res$id[k], "** - ", lim[[k]]), "")
+  }
   ln
 }
