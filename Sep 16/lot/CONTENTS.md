@@ -126,6 +126,22 @@ carried off it. `EXTRACT_MASK_PATID=FALSE` writes them whole. The masking is
 applied to every file at once, so the rows still join to each other and to a
 trace written with `TRACE_MASK_PATID=TRUE`.
 
+`qc/extract_review.R` reads what the extract wrote and asks one question of
+it: which treatments fall inside a line whose regimen does not name them.
+
+A drug carried over from the line before is one ordinary way that happens, and
+a returning drug the fold took is another. What is left over is the set worth
+arguing about, and beside each one it prints what 4.8 reads — whether the drug
+was in the previous line's regimen, which is what makes it a fold candidate,
+and whether a transplant opened a line between the drug's previous episode and
+this one, which overrides the fold whatever the agent count says.
+
+```bash
+Rscript qc/extract_review.R          # or pass the directory as the first argument
+```
+
+No connection and no python: it reads the CSVs and prints a short table.
+
 ### `validation/` — the edge-case catalogue
 
 Thirty vignettes: the patients the algorithm is hardest on, each with the
