@@ -598,6 +598,18 @@ ok(identical(mask_patid_r("P0000ABCDEF"), "...abcdef"), "mask: '...' and the las
 ok(identical(mask_patid_r(c("AB", "123456789")), c("...ab", "...456789")),
    "...a short id keeps what it has; a long one keeps six")
 ok(identical(mask_patid_r(12345678), "...345678"), "...and a numeric id is masked as its digits")
+# No ids masks to no ids, and the masked column still fits a table with no
+# rows. paste0 recycles a zero-length argument to length one, so this returned
+# a single "..." and assigning it to an empty frame's PATID failed with
+# "replacement has 1 row, data has 0". A patient with no transplant makes
+# exactly that table, so it was reachable from the warehouse, not a corner.
+ok(identical(mask_patid_r(character(0)), character(0)),
+   "...and no ids at all mask to no ids, not to one bare '...'")
+ok(local({
+     d <- data.frame(PATID = character(0), TX_DT = as.Date(character(0)))
+     !inherits(try({ d$PATID <- mask_patid_r(d$PATID); d }, silent = TRUE), "try-error")
+   }),
+   "...so masking a table with no rows in it does not fail")
 SUMM <- foldin_trace_summary(FOLDS, 10, 20)
 SEC <- foldin_trace_patient_md("P000001", FOLDS, LINES, EPS, A, P)
 MD_U <- foldin_trace_markdown("run-abc", "ndmm_", P, SUMM, list(SEC), masked = FALSE, n_candidates = 1)
