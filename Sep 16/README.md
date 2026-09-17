@@ -49,6 +49,38 @@ question still with the study team and the reading this build takes meanwhile.
 Each reading is recorded on the run itself, in `S_RUN_METADATA`, so a number
 can always be traced to the assumption behind it.
 
+**The lines have changed, so an earlier LOT run is stale.** A defect in the
+returning-drug rule (`lot/LOT_RULES.md` 4.8) is fixed in this build: where a
+drug that folded into an earlier line returned again inside a line a transplant
+or CAR-T opened, that line used to claim the return instead of ending on it.
+Patients with that shape lose a line, so the attrition's progression rows and
+every per-line variable downstream of them move. That is the correct answer,
+not a regression - but it is a difference to expect rather than to discover in
+the rebuilt QC summary.
+
+So **step 2 has to be re-run before steps 3 to 5**, on the same cohort. Tables
+built from the earlier run describe lines this code no longer produces.
+
+`LOT_RUN_METADATA.CODE_MD5` is what tells an old run from a new one. It
+fingerprints the engine's R, so a run built before this fix carries a different
+one - no value is quoted here, because the fingerprint moves whenever the
+engine does and a number in a document would go quietly stale. Read it off the
+rebuilt run and compare.
+
+It is recorded on every LOT run, and on every study run that reads one
+(`S_RUN_METADATA.LOT_CODE_MD5`), so a table can always be traced back to the
+code behind it. But it is only CHECKED where `LOT_CODE_MD5` is set: unset, it
+checks nothing and a stale LOT run flows through in silence. So after the
+rebuild, read the new run's `CODE_MD5` and pin it - that is what makes step 3
+stop on the wrong run instead of building on it.
+
+```bash
+# after step 2, from LOT_RUN_METADATA for the run you just built
+LOT_CODE_MD5=<the 32 characters that run recorded>
+```
+
+`qc/run_lot_qc.R` on the rebuilt run is the confirmation: check `C5` reads zero.
+
 ---
 
 ## Running it
