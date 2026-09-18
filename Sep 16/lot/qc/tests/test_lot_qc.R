@@ -45,7 +45,21 @@ skip_note <- function(what) {
                                mustWork = FALSE) else NA_character_
 })
 check_skip_wiring <- function(path = .suite_path) {
-  if (is.na(path) || !file.exists(path)) return(invisible(NULL))
+  # Not run as a script - sourced, or started some way that gives no --file= -
+  # so there is no path to read this suite's own source from. That is coverage
+  # this run did not get rather than a pass, so it is counted.
+  if (is.na(path))
+    return(skip_note(paste0("this suite's own source could not be located, ",
+                            "so its skip wiring is unchecked")))
+  # A path that names no file is different: the suite worked out where it lives
+  # and got it wrong, which is a defect in this file rather than a missing
+  # capability. It returned quietly before, and two suites that resolved their
+  # path AFTER a setwd() spent every run with this guard off - silently, and
+  # under exactly the invocation the runbook documents.
+  ok(file.exists(path),
+     paste0("this suite can find its own source, so its skip wiring is checked",
+            if (!file.exists(path)) paste0(" [", path, " is not a file]") else ""))
+  if (!file.exists(path)) return(invisible(NULL))
   src <- readLines(path, warn = FALSE)
   # SKIP as a word, so a line that merely NAMES the ALLOW_SKIPPED_TESTS
   # variable is not read as a skip this suite printed. It is, spelt without
@@ -549,6 +563,31 @@ ok(any(grepl("a/b", qc_markdown(piped, "r", "p_", P, ""), fixed = TRUE)),
   c5 <- Filter(function(c_i) c_i$id == "C5", LOT_QC_CHECKS)[[1]]
   ok(!is.null(c5$limits) && grepl("added medication", c5$limits, fixed = TRUE),
      "...and C5's is the span bound, where 7.3 puts treatment a line does not name")
+}
+
+# The catalogue's SIZE is the one number the delivery's documents still quote,
+# and this is what holds it. Every other count was dropped rather than pinned -
+# an assertion total is trivia a reader never acts on, and it went stale three
+# times because nothing read it. This one a reader does act on: it is how many
+# rows the report will have. So it is quoted once, in lot/CONTENTS.md, and a
+# disagreement fails here instead of being found by whoever counts the rows.
+{
+  doc <- file.path(dirname(ROOT), "CONTENTS.md")
+  if (!file.exists(doc)) {
+    skip_note("lot/CONTENTS.md is not beside this package, so its count is unchecked")
+  } else {
+    # Located by the words around the number, not by the punctuation between
+    # them: the heading holds an em dash, and matching it would make this
+    # depend on the locale the suite happens to run under rather than on what
+    # the document says.
+    said <- grep("^### .*checks on a finished run", readLines(doc, warn = FALSE),
+                 value = TRUE)
+    n <- suppressWarnings(as.integer(gsub("\\D", "", said[1])))
+    ok(length(said) == 1L && identical(n, length(LOT_QC_CHECKS)),
+       sprintf("lot/CONTENTS.md says the catalogue has %s and it has %d",
+               if (length(said) == 1L && !is.na(n)) n else "no one number",
+               length(LOT_QC_CHECKS)))
+  }
 }
 
 cat("\n-- the runner binds to the status table the engine actually writes --\n")

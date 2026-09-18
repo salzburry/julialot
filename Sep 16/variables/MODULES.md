@@ -18,7 +18,7 @@ serves all three:
 DATABRICKS_PWD=... Rscript build.R                 # DSN from DATABRICKS_DSN, default RWDE
 DRY_RUN=TRUE Rscript build.R                       # print the plan, touch nothing
 MODULES=safety COHORTS=1L,2L Rscript build.R       # one module; 2L is nested in 1L, so 1L comes too
-Rscript tests/run_tests.R                          # 584 checks, no warehouse
+Rscript tests/run_tests.R                          # no warehouse
 ```
 
 `SPARK_METHOD` picks the connection, and `odbc` is the default. The other
@@ -108,7 +108,7 @@ lands on the run's own metadata row where no reader can miss it.
 | `R/db_utils_223926.R` | the connection - ODBC through DBI, or a sparklyr session - logging, table naming, the step runner. |
 | `R/run_223926.R` | Resolves the plan, walks the modules, writes the run metadata. |
 | `R/modules/*.R` | One file per module. Nothing else defines a clinical rule. |
-| `tests/run_tests.R` | 584 checks that need no warehouse. The last sections RUN every module for every cohort, parse every statement they emit, and **execute** them against fixtures. |
+| `tests/run_tests.R` | The suite, needing no warehouse. The last sections RUN every module for every cohort, parse every statement they emit, and **execute** them against fixtures. |
 | `tests/emit_sql.R` | The harness. Stubs only what touches Spark, so a module's R and its SQL are both exercised without a cluster. |
 | `tests/parse_sql.py` | Parses each captured statement in the Spark dialect (sqlglot). |
 | `tests/run_duckdb.py` | **Executes** them: transpiles to DuckDB, runs against `tests/fixtures/cdm`, checks 90 golden numbers, then runs the whole script again and checks nothing doubled. |
@@ -504,7 +504,7 @@ together.
 ## What this is not
 
 It has never been run against the warehouse — no code lists, and several
-settings still want the study team's answer (`../OPEN_QUESTIONS.md`). The 584
+settings still want the study team's answer (`../OPEN_QUESTIONS.md`). The
 tests check the selection logic, the boundary conventions and the counting
 rules; run every module for every cohort against recorders, so that each
 module's R reaches the end of the function and every statement it emits parses

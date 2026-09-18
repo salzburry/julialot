@@ -54,7 +54,21 @@ skip_note <- function(what) {
                                mustWork = FALSE) else NA_character_
 })
 check_skip_wiring <- function(path = .suite_path) {
-  if (is.na(path) || !file.exists(path)) return(invisible(NULL))
+  # Not run as a script - sourced, or started some way that gives no --file= -
+  # so there is no path to read this suite's own source from. That is coverage
+  # this run did not get rather than a pass, so it is counted.
+  if (is.na(path))
+    return(skip_note(paste0("this suite's own source could not be located, ",
+                            "so its skip wiring is unchecked")))
+  # A path that names no file is different: the suite worked out where it lives
+  # and got it wrong, which is a defect in this file rather than a missing
+  # capability. It returned quietly before, and two suites that resolved their
+  # path AFTER a setwd() spent every run with this guard off - silently, and
+  # under exactly the invocation the runbook documents.
+  ok(file.exists(path),
+     paste0("this suite can find its own source, so its skip wiring is checked",
+            if (!file.exists(path)) paste0(" [", path, " is not a file]") else ""))
+  if (!file.exists(path)) return(invisible(NULL))
   src <- readLines(path, warn = FALSE)
   # SKIP as a word, so a line that merely NAMES the ALLOW_SKIPPED_TESTS
   # variable is not read as a skip this suite printed. It is, spelt without

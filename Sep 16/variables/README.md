@@ -98,7 +98,7 @@ often as needed.
 DATABRICKS_PWD=... Rscript build.R                # over the Databricks ODBC DSN
 DRY_RUN=TRUE Rscript build.R                      # print the plan only
 MODULES=safety COHORTS=1L,2L Rscript build.R      # one module; 2L is nested in 1L, so 1L comes too
-Rscript tests/run_tests.R                         # 584 checks, no warehouse
+Rscript tests/run_tests.R                         # no warehouse
 ```
 
 Fourteen modules, four cohorts, and every open reading is a setting with the
