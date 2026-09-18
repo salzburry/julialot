@@ -274,19 +274,21 @@ Those three rules changed on **30 August 2026**, and LOT numbers produced before
 that date are superseded. `R/lineage.R` enforces that one: `LOT_RULES_EPOCH`
 refuses a LOT run that finished earlier, by date as well as by status.
 
-**A second change supersedes numbers and the epoch does not cover it.** The
-returning-drug fold (§4.8) was contributing to a line's working set without a
-date bound, so a drug folded into one line counted as already present in every
-later one; a patient whose drug returns again inside a transplant-opened line
-therefore lost the line that return should have started. That was fixed on
-**17 September 2026** and it moves line counts, so a run built between the two
-dates carries superseded numbers too — and passes `LOT_RULES_EPOCH`, which is
-set to August. Nothing refuses such a run by default. `LOT_CODE_MD5` is the
-only check that sees it, it names the code rather than the date, and it is
-opt-in: unset, a stale run is read in silence.
+**A second change supersedes numbers too.** The returning-drug fold (§4.8) was
+contributing to a line's working set without a date bound, so a drug folded
+into one line counted as already present in every later one; a patient whose
+drug returns again inside a transplant-opened line therefore lost the line that
+return should have started. That was fixed on **17 September 2026** and it
+moves line counts, so a run built between the two dates carries superseded
+numbers as well.
 
-The epoch is a hand-maintained constant. It says when the rules last changed,
-and it is only as good as the last person to bump it.
+`LOT_RULES_EPOCH` ships as that later date, so such a run is refused by
+default. It is a **setting** rather than a constant, and that is the lesson
+rather than a convenience: it sat at the August change while the September one
+had already superseded a further set of numbers, and every run in between
+passed a check written to stop precisely that. A value compiled into the reader
+is only as good as the last person to bump it; a setting is at least on the
+run's own record when it is moved.
 
 ## 6. What is entirely new
 
