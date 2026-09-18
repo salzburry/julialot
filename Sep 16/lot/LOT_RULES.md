@@ -20,43 +20,9 @@ rather than a result.
 
 ---
 
-## Against the protocol's LOT algorithm
-
-This file is broader than the protocol's account of lines of therapy, and the
-difference is one of granularity rather than of rules. The protocol's LOT text
-is a four-sentence summary of the same GSK algorithm this engine implements -
-it cites *Development of line of therapy rules in multiple myeloma: Optum
-Claims* (study 219870), the earlier study the code lists come from. Where the
-two speak about the same thing they agree: line 1's 60-day induction window
-(§3.2), the 30 days at later lines (§4.2's first half - the 45 days on a
-CAR-T-started line is this build's own), the four candidates a later line opens
-on (§4.1), and 4L's start and regimen (§9, where the engine is a superset: it
-also builds a 5L).
-
-**Three rules in this file are not in the protocol text**, and they are marked
-`study team` in the table below: §4.3, §4.7 and §4.8. They are compatible
-with "a new MM agent
-that was not part of the previous LOT regimen" but not derivable from it - §4.3
-in particular means a patient with a treatment holiday on one drug is one line
-rather than a discontinuation. **These three are what Annex 6 has to record**,
-or the protocol and the code will disagree on the record.
-
-Everything else here sits below the summary's granularity: what "received"
-means (§2.3), how long a medical claim is assumed to cover (§2.2), how same-day
-starts break (§4.5), when a run-out becomes a discontinuation (§5.3), and so
-on. A summary that does not reach a question has not answered it differently -
-it has not reached it. Which of those the algorithm settles and which are this
-build's own is reconciled item by item in `../variables/BUILD_DELTA.md` §5.
-
-One caveat on all of the above: **Annex 6 is outstanding**. Until it arrives,
-"agrees with the algorithm" means "agrees with the protocol's summary of it",
-which is the only statement of it anyone here has read.
-
----
-
 ## The rules at a glance
 
-| | Rule | Setting | Source |
+| | Rule | Setting | |
 |---|---|---|---|
 | §2.1 | Steroids are excluded everywhere | — | |
 | §2.2 | A medical claim is assumed to cover 28 days | `medical_day_supply` | |
@@ -67,12 +33,12 @@ which is the only statement of it anyone here has read.
 | §3.4 | Line 1's first autologous transplant never ends line 1 | — | |
 | §4.1 | A later line opens on the earliest of four candidates | — | |
 | §4.2 | Later induction is 30 days, and 45 on a CAR-T-started line | `lot_n_induction_window_days`, `cart_consolidation_days` | |
-| §4.3 | A drug of the previous regimen never starts a line | `apply_own_return_fold` | study team |
+| §4.3 | A drug of the previous regimen never starts a line | `apply_own_return_fold` | |
 | §4.4 | A permissible biosimilar substitute never starts a line | — | |
 | §4.5 | Same-day starts break `SCT_ALLO > CART > SCT_AUTO > MED` | — | |
 | §4.6 | An allogeneic line spans one day and carries no regimen | `allo_lot_span` | |
-| §4.7 | A short melphalan course outside induction does not start a line | `apply_melp_rule`, `melp_simple_course_days` | study team |
-| §4.8 | A returning drug joins the line it returns in, after one agent | `apply_map_foldin` | study team |
+| §4.7 | A short melphalan course outside induction does not start a line | `apply_melp_rule`, `melp_simple_course_days` | |
+| §4.8 | A returning drug joins the line it returns in, after one agent | `apply_map_foldin` | |
 | §5.1 | A 90-day gap is running out | `map_discon_gap_days` | |
 | §5.2 | A run-out chains forward until the drug is discontinued | `map_discon_gap_days` | |
 | §5.3 | A run-out is a discontinuation only once confirmed | `lot_discon_confirm_days` | |
