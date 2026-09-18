@@ -467,8 +467,8 @@ empty table.
   ever leave the denominator;
 - a LOT run that is not `complete`, was built over a different cohort, carries
   contract deviations, disagrees about `STUDY_END`, or predates the 2026-08-30
-  rule change (`LOT_RULES.md`: *"LOT numbers produced before that date are
-  superseded"*) → stops;
+  rule change, after which LOT numbers built before that date are superseded
+  (`LOT_RULES_EPOCH`, `R/lineage.R`) → stops;
 - a step that produces zero rows → stops;
 - attrition categories that stop partitioning their denominator → stops.
 

@@ -269,8 +269,10 @@ from it — §4.3 in particular means a patient with a three-month treatment hol
 one drug is **one line, not a discontinuation**.
 
 Get all three into Annex 6, or the protocol and the code will disagree on the record.
-Note also `LOT_RULES.md`'s own banner: those three rules changed on 30 August 2026 and
-**LOT numbers produced before that date are superseded**.
+
+Those three rules changed on **30 August 2026**, and **LOT numbers produced before
+that date are superseded**. `R/lineage.R` enforces it: `LOT_RULES_EPOCH` refuses a
+LOT run that finished earlier, by date as well as by status.
 
 ## 6. What is entirely new
 

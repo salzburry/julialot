@@ -305,9 +305,9 @@ check_lot_lineage <- function(con, cfg) {
   upd <- suppressWarnings(as.Date(substr(as.character(r$UPDATED_AT), 1, 10)))
   if (!is.na(upd) && upd < LOT_RULES_EPOCH)
     problems <- c(problems, sprintf(
-      paste0("it finished %s, before the 2026-08-30 rule change, and ",
-             "LOT_RULES.md says LOT numbers produced before that date are ",
-             "superseded"), format(upd)))
+      paste0("it finished %s, before the 2026-08-30 rule change: three rules ",
+             "changed what starts and ends a line, so LOT numbers built ",
+             "before that date are superseded"), format(upd)))
 
   # Every problem above was CHECKED and found wrong, so every one stops.
   # LOT_ALLOW_UNPROVEN_LINEAGE covers only the case where the status table
