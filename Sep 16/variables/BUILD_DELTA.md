@@ -19,14 +19,14 @@ these, the row says so — read the row, not the heading, for what exists now.
 
 **Two of these need the cohort build's CONTRACT edited. The rest do not.**
 
-An earlier version of this section said every change was a run-time decision
-and that no line of the cohort build had to move. That was wrong, and a run on
-production proved it: the settings are read from the environment, but
-`check_contract()` (`ndmm/R/build_ndmm.R`) then compares the resolved config
-against a pinned `CONTRACT` list and **stops** on any difference, with no
-override of any kind — *"a different value here is a different cohort, so they
-are checked rather than defaulted."* Editing `config.csv` does not help either;
-the check is against `CONTRACT`, not the file.
+**Setting one of those two in the environment is not enough, and the run will
+stop rather than quietly use it.** The settings are read from the environment,
+but `check_contract()` (`ndmm/R/build_ndmm.R`) then compares the resolved
+config against a pinned `CONTRACT` list and **stops** on any difference, with
+no override of any kind — *"a different value here is a different cohort, so
+they are checked rather than defaulted."* Editing `config.csv` does not help
+either; the check is against `CONTRACT`, not the file. The cohort build's own
+source is what has to move.
 
 There is a second guard behind the first. `check_constants()` compares the
 constants the SQL actually interpolates — defined in `ndmm/R/ndmm_constants.R`
