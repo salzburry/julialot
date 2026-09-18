@@ -73,13 +73,20 @@ code behind it. But it is only CHECKED where `LOT_CODE_MD5` is set: unset, it
 checks nothing and a stale LOT run flows through in silence.
 
 Step 3 refuses one by date as well, and that check is on by default. It stops
-any LOT run that finished before `LOT_RULES_EPOCH`, which ships as the date the
-rules last changed — so a run built before this fix is refused whether or not
-anyone pinned a fingerprint. Set it only to name a different floor:
+any LOT run that finished **on or before** `LOT_RULES_EPOCH`, which ships as
+the date the rules last changed — so a run built before this fix is refused
+whether or not anyone pinned a fingerprint. On or before, because the
+comparison is by calendar date and a rule change lands at a time of day: a run
+finished on that date cannot be placed either side of it, and the check refuses
+what it cannot place. The cost is one day's runs; the alternative is reading a
+superseded number in silence. Set it only to name a different floor:
 
 ```bash
-LOT_RULES_EPOCH=2026-09-17    # the shipped value; a run older than this stops
+LOT_RULES_EPOCH=2026-09-17    # shipped; a run finished on or before this stops
 ```
+
+Whichever floor applied is recorded on the run, in
+`S_RUN_METADATA.LOT_RULES_EPOCH`.
 
 The two checks answer different questions. The epoch says WHEN a run executed
 and everybody gets it; `LOT_CODE_MD5` says WHAT executed, exactly, and is

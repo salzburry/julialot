@@ -5,8 +5,14 @@ SPARK_CLUSTER_ID,,Cluster id - databricks_connect only
 DATABRICKS_HOST,,Workspace URL - databricks_connect only. DATABRICKS_TOKEN stays in the environment
 DATABRICKS_CATALOG,hive_metastore,Catalog for all reads and writes
 OPTUM_CDM_SCHEMA,clnprw_optum,Optum CDM schema
+TBL_MEDICAL,,"CDM medical claims table base name; blank uses medical"
 TBL_MED_DIAG,,"CDM diagnosis table base name; blank uses med_diagnosis. The short name the modules use is diagnosis - they are not the same string"
 TBL_MED_PROC,,"CDM procedure table base name; blank uses med_procedure"
+TBL_RX,,"CDM pharmacy claims table base name; blank uses rx"
+TBL_CONFINEMENT,,"CDM inpatient confinement table base name; blank uses confinement"
+TBL_MEMBER_ENROLLMENT,,"CDM enrolment table base name; blank uses member_enrollment"
+TBL_MEMBER_ELIG,,"CDM continuous-eligibility table base name; blank uses member_cont_enrollment"
+TBL_DOD,,"CDM date-of-death table base name; blank uses dod"
 USE_QUARTERLY_TABLES,TRUE,Read the cumulative quarterly CDM tables
 CODELIST_DIR,,Where the code lists are. Empty means this package own codelists/ - set it to /mnt/code/codelist on production
 INPUT_COHORT_TABLE,,The cohort table the LOT run was built over (e.g. ndmm_NDMM_COHORT)
@@ -15,6 +21,10 @@ COHORT_PREFIX,,The cohort build's prefix if it differs from this run's
 LOT_PREFIX,,The LOT build's prefix if it differs from this run's
 LOT_CODE_MD5,,"The approved LOT build's code fingerprint (LOT_RUN_METADATA.CODE_MD5). Blank checks nothing; set, a LOT run built by any other code is refused"
 COHORT_STATUS_TABLE,,"The cohort build's status table, bare, where it wrote neither NDMM_BUILD_STATUS nor build_status. COHORT_PREFIX is added for you"
+MAX_RETRIES,4,"How many times a warehouse statement is retried before the run stops"
+BASE_SLEEP,5,"Seconds before the first retry; each later one waits longer"
+SETTINGS_OVERRIDE,FALSE,"TRUE lets the run go on where a setting disagrees with the cohort build it reads - the study period or the 1L index floor - and records the disagreement as a deviation instead of stopping"
+LOT_RULES_EPOCH,2026-09-17,"A LOT run that finished ON OR BEFORE this date is refused: the rules that decide what starts and ends a line changed, so earlier numbers are superseded. The comparison is by calendar date, so the day of the change is refused too - it cannot be placed either side of it. Unlike LOT_CODE_MD5 this is on by default"
 LOT_ALLOW_UNPROVEN_LINEAGE,FALSE,"TRUE lets the run go on over a lineage it could not PROVE: a status table that could not be read (LOT_BUILD_STATUS, LOT_RUN_METADATA, the cohort build's), or no cohort build status at all where the LOT run recorded which attempt it read. An older LOT run whose LOT_RUN_METADATA lacks the attempt columns is legacy and needs no waiver; a check that ran and found the lineage wrong, or a COHORT_STATUS_TABLE naming a table that is not there, is never waived"
 COHORT_INDEX_EXCLUSIONS,"panobinostat,elotuzumab","The agents s7.2.1.1 says may not set the 1L index. Only the cohort build applies that, and it records what it barred; a build that barred less is refused. Names are resolved to abbreviations through cl_mma_rollup.csv. none checks nothing"
 WORK_SCHEMA,,"Schema the study writes into, and reads the cohort and LOT tables from. Blank: PROJECT_WORK_SCHEMA, then DOMINO_USER_NAME, then the session's current schema - as the cohort and LOT builds resolve theirs. catalog.schema is accepted when the catalog is DATABRICKS_CATALOG"

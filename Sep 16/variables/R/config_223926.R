@@ -166,7 +166,8 @@ cfg_defaults <- function() {
     # while a September one had already superseded a further set of numbers,
     # and every run between the two dates passed a check written to stop
     # exactly that. Named here, it can be moved for a delivery without editing
-    # the reader, and it is on the run's own record either way.
+    # the reader, and S_RUN_METADATA.LOT_RULES_EPOCH records whichever floor
+    # the run was actually accepted against.
     #
     # Not in CONTRACT: that list is the protocol's numbers, and a deviation
     # from it means this run departs from the protocol. This departs from

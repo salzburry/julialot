@@ -306,12 +306,19 @@ check_lot_lineage <- function(con, cfg) {
       r$STUDY_END, cfg$study_end))
 
   upd <- suppressWarnings(as.Date(substr(as.character(r$UPDATED_AT), 1, 10)))
+  # ON OR BEFORE, not before. UPDATED_AT is compared as a calendar date, and a
+  # rule change lands at a time of day: a run finished earlier on the epoch's
+  # own date was built by the older engine and one finished later was not, and
+  # a date cannot tell them apart. The guard refuses what it cannot place,
+  # which costs a rebuild on one day and is the direction that does not read a
+  # superseded number in silence. A delivery that needs that day back names a
+  # different floor.
   epoch <- as.Date(cfg$lot_rules_epoch)
-  if (!is.na(upd) && upd < epoch)
+  if (!is.na(upd) && upd <= epoch)
     problems <- c(problems, sprintf(
-      paste0("it finished %s, and the LOT rules last changed %s ",
+      paste0("it finished %s, and the LOT rules changed %s ",
              "(LOT_RULES_EPOCH): what starts and ends a line moved, so ",
-             "numbers built before that date are superseded"),
+             "numbers built on or before that date are superseded"),
       format(upd), format(epoch)))
 
   # Every problem above was CHECKED and found wrong, so every one stops.
