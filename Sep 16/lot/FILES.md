@@ -286,10 +286,6 @@ the rule runs, not the threshold it runs at.
 | `tests/exec_cells.R` | Nine patients and sixteen lines, and what every metric must count over them. |
 | `tests/exec_rule.R` | Fifteen patients, one line each, one branch of 4.7 apiece — the boundaries the whole-patient fixtures do not reach cheaply: a confirming agent on the course's last covered day, a hold capped at the line's span, a course an earlier line owned. |
 
-Until 2026-08-30 this package also carried the five-branch rule the study team
-asked for first, as a third cell. That rule was measured, not adopted, and
-removed.
-
 ## `lot/validation/` — the rule vignettes, machine-checked
 
 The twin of the rules in `LOT_RULES.md`. Every rule there carries a timeline of
