@@ -7,17 +7,29 @@
 # without Shiny, which is what makes this possible. app.R is wiring, and the
 # last section reads it as text to hold the wiring to the registries.
 
-here <- local({
+# Resolved ONCE, before setwd() below, and both this suite's own path and its
+# package root come off it.
+#
+# They were worked out separately, and the second one after the setwd. The
+# --file= Rscript gives for `Rscript dashboard/tests/run_tests.R` is RELATIVE,
+# so resolving it again from the new working directory named
+# dashboard/dashboard/tests/run_tests.R - a file that does not exist. That is
+# the path check_skip_wiring() reads, and it returns quietly when the file is
+# missing, so the guard on this suite's skip wiring was off under exactly the
+# invocation the delivery README documents. It ran only when the suite was
+# started from its own directory, which is the case that needs it least.
+.suite_path <- local({
   a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
   # Rscript escapes a space in --file= as "~+~", so a path with one comes back
   # naming a directory that does not exist. Undone here, as every other suite
   # beside it does: without it this one ran only from its own directory, and
   # died the moment anything invoked it by absolute path - which is how
   # anything but a person runs it.
-  d <- if (length(a)) dirname(normalizePath(gsub("~+~", " ",
-         sub("^--file=", "", a[1]), fixed = TRUE))) else getwd()
-  dirname(d)
+  if (!length(a)) NA_character_
+  else normalizePath(gsub("~+~", " ", sub("^--file=", "", a[1]), fixed = TRUE),
+                     mustWork = FALSE)
 })
+here <- if (is.na(.suite_path)) getwd() else dirname(dirname(.suite_path))
 setwd(here)
 
 pass <- 0L; fail <- 0L
@@ -42,16 +54,25 @@ skip_note <- function(what) {
 # wrong - eight sites in one suite and six in another were missed by hand. Each
 # suite now checks its OWN source, so a skip site added later is caught by the
 # suite it was added to rather than by whoever next reads the diff.
-.suite_path <- local({
-  a <- grep("^--file=", commandArgs(FALSE), value = TRUE)
-  # The same "~+~" unescape. check_skip_wiring() reads THIS file, and without
-  # it the path named no file, the check returned quietly, and the guard on
-  # every suite's skip wiring was off on any checkout whose path has a space.
-  if (length(a)) normalizePath(gsub("~+~", " ", sub("^--file=", "", a[1]), fixed = TRUE),
-                               mustWork = FALSE) else NA_character_
-})
+#
+# .suite_path is resolved at the top of this file, before the setwd() that
+# would make a relative --file= resolve against the wrong directory.
 check_skip_wiring <- function(path = .suite_path) {
-  if (is.na(path) || !file.exists(path)) return(invisible(NULL))
+  # Not run as a script - sourced, or started some way that gives no --file= -
+  # so there is no path to read this suite's own source from. That is coverage
+  # this run did not get rather than a pass, so it is counted.
+  if (is.na(path))
+    return(skip_note(paste0("this suite's own source could not be located, ",
+                            "so its skip wiring is unchecked")))
+  # A path that names no file is different: the suite worked out where it lives
+  # and got it wrong, which is a defect in this file rather than a missing
+  # capability. It returned quietly before, and two suites that resolved their
+  # path AFTER a setwd() spent every run with this guard off - silently, and
+  # under exactly the invocation the runbook documents.
+  ok(file.exists(path),
+     paste0("this suite can find its own source, so its skip wiring is checked",
+            if (!file.exists(path)) paste0(" [", path, " is not a file]") else ""))
+  if (!file.exists(path)) return(invisible(NULL))
   src <- readLines(path, warn = FALSE)
   # SKIP as a word, so a line that merely NAMES the ALLOW_SKIPPED_TESTS
   # variable is not read as a skip this suite printed. It is, spelt without
