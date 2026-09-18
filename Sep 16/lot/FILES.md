@@ -238,8 +238,8 @@ failure, and none is a published benchmark. Reported, not fatal;
 
 | path | what it does |
 |---|---|
-| `run_lot_qc.R` | Runs thirty-eight checks against a finished run and refuses one whose own build did not complete. Reads only; writes a report to `out/`. Exit status is 0 when nothing failed and 1 when something did, so it can gate a handover. |
-| `R/checks.R` | The checks as data — one entry per check, each carrying the query that finds violations, so the catalogue can be read without running it. |
+| `run_lot_qc.R` | Runs thirty-eight checks against a finished run and refuses one whose own build did not complete. Reads only; writes a report to `out/`. The report carries each check's count and an example row, the `why` of anything that did not pass, and the declared limits of any check that has them — a limit changes how a ZERO reads, so it is printed whatever the check counted. Exit status is 0 when nothing failed and 1 when something did, so it can gate a handover. |
+| `R/checks.R` | The checks as data — one entry per check, each carrying the query that finds violations, so the catalogue can be read without running it, and `limits` where there is something the check cannot see. |
 | `tests/test_lot_qc.R` | That each check answers the same shape, reads only the tables it declares, masks every patient id, and turns a count into the right verdict. |
 | `trace_foldin.R` | Finds the patients the fold-in rule (`LOT_RULES.md` 4.8) touched in a finished run and writes each one's raw MAP episodes beside the final lines, the folded episode marked, to `out/`. Reads only. Prints its plan without `TRACE_EXECUTE=TRUE`. `TRACE_N` is how many patients to trace, `TRACE_PATIDS` names them instead, `TRACE_MASK_PATID=TRUE` masks the ids. Unmasked by default, because it exists so a patient can be looked up, so the file stays inside the study environment. |
 | `R/foldin_trace.R` | The queries, the sample and the rendering behind the trace. Connection-free, so every piece of it is tested. |

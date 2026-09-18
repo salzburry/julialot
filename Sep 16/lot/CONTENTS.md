@@ -68,7 +68,14 @@ tables it needs. A `fail` is a defect, a `warn` is worth reading, an `info` is
 context. The report names an example row for each finding, with the patient
 identifier masked to its last six characters so the file can be circulated.
 
-`Rscript qc/tests/test_lot_qc.R` — 301 checks. Every one of the 38 runs twice
+The report carries the catalogue's own prose, not only its counts. Anything
+that did not pass is followed by **why it matters**, so a finding arrives with
+the reasoning behind it rather than as a number to argue with. And a check that
+declares a limit says so under **what these checks cannot see** whatever it
+counted — because the reading a limit changes is the zero, and a zero is not a
+finding. `C5` declares one.
+
+`Rscript qc/tests/test_lot_qc.R` — 308 checks. Every one of the 38 runs twice
 against fixtures: clean, where it must count nothing, and carrying the defect
 it describes, where it must count it.
 
@@ -188,8 +195,8 @@ test suites need no warehouse.
 |---|---|
 | `engine/tests/test_runner.R` | 528 |
 | `engine/tests/test_line_criteria.R` | 58 |
-| `qc/tests/test_lot_qc.R` | 296 |
-| `qc/tests/test_foldin_trace.R` | 154 |
+| `qc/tests/test_lot_qc.R` | 308 |
+| `qc/tests/test_foldin_trace.R` | 156 |
 | `qc/tests/test_trace_returns.R` | 154 |
 | `melphalan/tests/test_melp_simple.R` | 162 |
 | `validation/tests/test_vignettes.R` | 37 |

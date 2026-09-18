@@ -500,6 +500,57 @@ piped <- res; piped$detail[1] <- "a|b"
 ok(any(grepl("a/b", qc_markdown(piped, "r", "p_", P, ""), fixed = TRUE)),
    "a pipe in a detail cannot break the table")
 
+# The catalogue's prose has to reach the file the study team opens. It was
+# readable only in R/checks.R, which is the one place a reader of the report on
+# the platform is not - so a finding arrived as a number with no reasoning, and
+# a check that says in its own entry that it cannot see everything reported a
+# zero that read as "nothing there".
+{
+  # A row that FAILED carries its why; the same row passing does not.
+  bad <- data.frame(id = "C1", group = "Regimen", severity = "fail",
+                    result = "FAIL", n_bad = 3, detail = "...abc123",
+                    what = "a regimen drug has an episode",
+                    stringsAsFactors = FALSE)
+  c1_why <- Filter(function(c_i) c_i$id == "C1", LOT_QC_CHECKS)[[1]]$why
+  fail_md <- paste(qc_markdown(bad, "r", "p_", P, ""), collapse = "\n")
+  ok(grepl("## Why these matter", fail_md, fixed = TRUE) &&
+       grepl(substr(c1_why, 1, 60), fail_md, fixed = TRUE),
+     "a check that did not pass carries its own why into the report")
+  clean <- bad; clean$result <- "pass"; clean$n_bad <- 0; clean$detail <- ""
+  ok(!grepl("## Why these matter", paste(qc_markdown(clean, "r", "p_", P, ""),
+                                         collapse = "\n"), fixed = TRUE),
+     "...and a clean run does not carry the section at all")
+  # A warn is "worth reading", so its reasoning is exactly what a reader needs;
+  # an info is the run describing itself and several report on any real run, so
+  # carrying those too would put the section on every report.
+  warned <- bad; warned$result <- "warn"
+  ok(grepl("## Why these matter", paste(qc_markdown(warned, "r", "p_", P, ""),
+                                        collapse = "\n"), fixed = TRUE),
+     "...a warn carries its why too")
+  noted <- bad; noted$result <- "info"
+  ok(!grepl("## Why these matter", paste(qc_markdown(noted, "r", "p_", P, ""),
+                                         collapse = "\n"), fixed = TRUE),
+     "...and an info does not, so the section does not land on every report")
+
+  # A limit is a property of the check, not of the run, so it is in the report
+  # whatever the check counted - and the reading it changes is the ZERO.
+  lim <- Filter(function(c_i) !is.null(c_i$limits), LOT_QC_CHECKS)
+  ok(length(lim) > 0 && all(vapply(lim, function(c_i) nzchar(c_i$limits), logical(1))),
+     sprintf("the catalogue declares what it cannot see (%d check(s))", length(lim)))
+  zero <- data.frame(id = lim[[1]]$id, group = lim[[1]]$group,
+                     severity = lim[[1]]$severity, result = "pass", n_bad = 0,
+                     detail = "", what = lim[[1]]$what, stringsAsFactors = FALSE)
+  zero_md <- paste(qc_markdown(zero, "r", "p_", P, ""), collapse = "\n")
+  ok(grepl("## What these checks cannot see", zero_md, fixed = TRUE) &&
+       grepl(substr(lim[[1]]$limits, 1, 60), zero_md, fixed = TRUE),
+     paste0(lim[[1]]$id, " counting nothing still says what it did not look at"))
+  # The one the fold-in fix left behind, named so the pin is about that gap and
+  # not about whichever check happens to be first in the catalogue.
+  c5 <- Filter(function(c_i) c_i$id == "C5", LOT_QC_CHECKS)[[1]]
+  ok(!is.null(c5$limits) && grepl("added medication", c5$limits, fixed = TRUE),
+     "...and C5's is the span bound, where 7.3 puts treatment a line does not name")
+}
+
 cat("\n-- the runner binds to the status table the engine actually writes --\n")
 # Read off BUILD_STATUS_COLS rather than restated here: a column renamed in the
 # engine has to move this test, not pass it. The runner asked for STATUS and
