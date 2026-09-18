@@ -552,8 +552,8 @@ Grouped as `VARIABLES.md` groups them.
 1. **Death is month-precision.** Every OS, TTD and follow-up figure inherits ±15 days.
    The construction rules - 15th of the month, 15 July for a year-only record, bumped
    to the period end where that would precede the diagnosis - are still open
-   (`OPEN_QUESTIONS.md` Q22). That mattered less when OS was not reported; it is a
-   primary outcome now.
+   (`OPEN_QUESTIONS.md` Q22). OS is a primary outcome, so the imprecision reaches
+   a headline figure and not only a supporting one.
 2. **Enrolment rollup vs protocol gap rule** differ by one day at the boundary (§4).
 3. **`YRDOB` is capped at 89** - the ≥ 75 age band is right-censored in a way that
    understates the very old.

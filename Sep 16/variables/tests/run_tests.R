@@ -1206,7 +1206,9 @@ cat("\nthe rules that hold the numbers up\n")
     # Built from the pinned upstream list, so a fixture cannot invent a column.
     r <- as.list(setNames(rep("", length(LOT_STATUS_COLS)), LOT_STATUS_COLS))
     r$RUN_ID <- "r1"; r$STATE <- "complete"
-    r$UPDATED_AT <- "2026-09-01 00:00:00"
+    # After the shipped lot_rules_epoch, so the default row is a run this
+    # package will read and a test has to ASK for the refusal.
+    r$UPDATED_AT <- "2026-09-19 00:00:00"
     r$INPUT_COHORT_TABLE <- cfg0()$input_cohort_table
     r$STUDY_END <- cfg0()$study_end
     utils::modifyList(r, list(...))
@@ -1250,10 +1252,10 @@ cat("\nthe rules that hold the numbers up\n")
     row <- lin_row(...)
     e <- new.env(parent = environment(check_lot_lineage))
     mrow <- if (is.null(meta)) NULL else utils::modifyList(
-      list(COHORT_RUN_ID = "c1", COHORT_STAMP = "2026-09-09 00:00:00",
+      list(COHORT_RUN_ID = "c1", COHORT_STAMP = "2026-09-19 00:00:00",
            CODE_MD5 = "abcdef0123456789"), meta)
     nrow_ <- if (is.null(now)) NULL else utils::modifyList(
-      list(RUN_ID = "c1", UPDATED_AT = "2026-09-09 00:00:00",
+      list(RUN_ID = "c1", UPDATED_AT = "2026-09-19 00:00:00",
            STATE = "complete"), now)
     e$db_q <- function(con, sql) {
       if (grepl("LOT_RUN_METADATA", sql, fixed = TRUE)) {
@@ -1294,10 +1296,10 @@ cat("\nthe rules that hold the numbers up\n")
   # The cohort ATTEMPT. Every check above compares a NAME, and a cohort table
   # can be rebuilt in place under the same name - so these are the ones that
   # tell attempt A's lines from attempt B's eligibility.
-  e_stamp <- lin_check(now = list(UPDATED_AT = "2026-09-09 06:00:00"))
+  e_stamp <- lin_check(now = list(UPDATED_AT = "2026-09-19 06:00:00"))
   ok(!is.na(e_stamp) && grepl("has been rebuilt since", e_stamp) &&
-       grepl("2026-09-09 00:00:00", e_stamp) &&
-       grepl("2026-09-09 06:00:00", e_stamp),
+       grepl("2026-09-19 00:00:00", e_stamp) &&
+       grepl("2026-09-19 06:00:00", e_stamp),
      "a cohort rebuilt in place under the same name stops, naming both attempts")
   ok(!is.na(lin_check(now = list(RUN_ID = "c2"))),
      "...and so does a different cohort run under that name")
@@ -1367,7 +1369,7 @@ cat("\nthe rules that hold the numbers up\n")
     e <- new.env(parent = environment(check_lot_lineage_unchanged))
     e$db_q <- function(con, sql) stop(perm)
     e$log_msg <- function(...) invisible(NULL)
-    stubbed(check_lot_lineage_unchanged, e, character(0))(NULL, list(RUN_ID = "lot1", UPDATED_AT = "2026-09-10 05:00:00"))
+    stubbed(check_lot_lineage_unchanged, e, character(0))(NULL, list(RUN_ID = "lot1", UPDATED_AT = "2026-09-20 05:00:00"))
   }))
   ok(!is.na(e_re) && grepl("could not be re-read", e_re, fixed = TRUE) &&
        grepl("INSUFFICIENT_PERMISSIONS", e_re, fixed = TRUE),
@@ -1489,7 +1491,29 @@ cat("\nthe rules that hold the numbers up\n")
   ok(is.null(up_read("nonsense with no equals")$out),
      "a string in no recognisable shape is not guessed at")
   ok(!is.na(lin_check(UPDATED_AT = "2026-08-01 00:00:00")),
-     "and one built before the 2026-08-30 rule change")
+     "and one built before the rules last changed")
+
+  # The epoch is a SETTING, and the reason is that it goes stale otherwise: the
+  # shipped value sat at an August rule change after a September one had
+  # superseded a further set of numbers, so every run between the two passed a
+  # check written to stop exactly that. These hold it to being read from the
+  # configuration rather than compiled in, in both directions.
+  ok(identical(cfg0()$lot_rules_epoch, "2026-09-17"),
+     "the shipped epoch is the date the rules last changed")
+  ok(is.na(lin_check(UPDATED_AT = "2026-09-18 00:00:00")),
+     "a run finished after the shipped epoch is read")
+  ok(!is.na(lin_check(UPDATED_AT = "2026-09-16 00:00:00")),
+     "...and one finished the day before it is not")
+  e_ep <- lin_check(UPDATED_AT = "2026-09-16 00:00:00")
+  ok(grepl("2026-09-17", e_ep, fixed = TRUE) &&
+       grepl("LOT_RULES_EPOCH", e_ep, fixed = TRUE),
+     "...and the refusal names the date it applied and the setting that moves it")
+  ok(is.na(lin_check(UPDATED_AT = "2026-09-16 00:00:00",
+                     cfg = cfg0(c(LOT_RULES_EPOCH = "2026-09-01")))),
+     "LOT_RULES_EPOCH moves the floor, so a delivery can name its own")
+  ok(!is.na(lin_check(UPDATED_AT = "2026-09-18 00:00:00",
+                      cfg = cfg0(c(LOT_RULES_EPOCH = "2026-10-01")))),
+     "...in both directions")
 
   # 4. A nested cohort takes only patients IN its parent.
   ch <- paste(capture.output(print(mod_cohorts)), collapse = "\n")
@@ -3342,7 +3366,7 @@ cat("\n-- the controller re-checks the LOT build before recording complete --\n"
   drive <- function(later = list()) {
     said <- character(0); asks <- 0L
     rowA <- list(RUN_ID = "lot1", STATE = "complete",
-                 UPDATED_AT = "2026-09-10 05:00:00",
+                 UPDATED_AT = "2026-09-20 05:00:00",
                  INPUT_COHORT_TABLE = base_env[["INPUT_COHORT_TABLE"]],
                  STUDY_END = cfg0()$study_end, CONTRACT_DEVIATIONS = "")
     env <- new.env(parent = environment(build_223926))
@@ -3402,19 +3426,19 @@ cat("\n-- the controller re-checks the LOT build before recording complete --\n"
             if (!is.na(steady$err)) paste0(" [", steady$err, "]") else ""))
   ok(steady$asks == 2L,
      "...with the LOT status read twice: once to accept the build, once before completing")
-  ok(any(grepl("'20260910T050000Z'", steady$sql, fixed = TRUE)),
+  ok(any(grepl("'20260920T050000Z'", steady$sql, fixed = TRUE)),
      "...and the accepted build's version on the metadata row")
-  raced <- drive(list(UPDATED_AT = "2026-09-10 05:01:00"))
+  raced <- drive(list(UPDATED_AT = "2026-09-20 05:01:00"))
   ok(!is.na(raced$err) && grepl("LINEAGE ERROR", raced$err) && grepl("rebuilt while", raced$err),
      "a LOT rebuild completing under the same id while the modules ran stops the run")
   ok(identical(state_of(raced$sql), c("'started'", "'failed'")),
      "...which is recorded failed under its own id, never complete")
-  ok(grepl("build 20260910T050000Z", raced$err) && grepl("build 20260910T050100Z", raced$err),
+  ok(grepl("build 20260920T050000Z", raced$err) && grepl("build 20260920T050100Z", raced$err),
      "...naming the build it accepted and the one it found")
-  going <- drive(list(STATE = "started", UPDATED_AT = "2026-09-10 05:01:00"))
+  going <- drive(list(STATE = "started", UPDATED_AT = "2026-09-20 05:01:00"))
   ok(!is.na(going$err) && identical(state_of(going$sql), c("'started'", "'failed'")),
      "and so does a rebuild still in progress")
-  other <- drive(list(RUN_ID = "lot2", UPDATED_AT = "2026-09-10 05:01:00"))
+  other <- drive(list(RUN_ID = "lot2", UPDATED_AT = "2026-09-20 05:01:00"))
   ok(!is.na(other$err) && grepl("now holds run lot2", other$err),
      "and another run altogether")
   rsrc <- paste(readLines("R/run_223926.R", warn = FALSE), collapse = "\n")

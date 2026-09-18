@@ -189,11 +189,10 @@ HERE_PRED[["I4_custom_ce"]]        <- "MET_N2 = 1"
 ```
 
 listed in place of `I4_ce_pre` is applied by membership *and* reported by the
-funnel, and the suite executes exactly that case and holds the cohort count
-to the funnel's last step. (Membership used to hard-code continuous enrolment
-and follow-up whatever the list said, so removing `I4` dropped the step from
-the funnel while still applying it, and a criterion added to the list was
-applied by the funnel and ignored by membership.)
+funnel. One list drives both, so a criterion taken off it leaves the funnel and
+membership together and one added to it reaches both — neither can apply a
+rule the other does not report. The suite executes exactly that case and holds
+the cohort count to the funnel's last step.
 
 A criterion applied **upstream** cannot be added or removed here at all —
 see §5.

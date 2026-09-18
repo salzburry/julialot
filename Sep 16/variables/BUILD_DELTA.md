@@ -19,14 +19,14 @@ these, the row says so — read the row, not the heading, for what exists now.
 
 **Two of these need the cohort build's CONTRACT edited. The rest do not.**
 
-An earlier version of this section said every change was a run-time decision
-and that no line of the cohort build had to move. That was wrong, and a run on
-production proved it: the settings are read from the environment, but
-`check_contract()` (`ndmm/R/build_ndmm.R`) then compares the resolved config
-against a pinned `CONTRACT` list and **stops** on any difference, with no
-override of any kind — *"a different value here is a different cohort, so they
-are checked rather than defaulted."* Editing `config.csv` does not help either;
-the check is against `CONTRACT`, not the file.
+**Setting one of those two in the environment is not enough, and the run will
+stop rather than quietly use it.** The settings are read from the environment,
+but `check_contract()` (`ndmm/R/build_ndmm.R`) then compares the resolved
+config against a pinned `CONTRACT` list and **stops** on any difference, with
+no override of any kind — *"a different value here is a different cohort, so
+they are checked rather than defaulted."* Editing `config.csv` does not help
+either; the check is against `CONTRACT`, not the file. The cohort build's own
+source is what has to move.
 
 There is a second guard behind the first. `check_constants()` compares the
 constants the SQL actually interpolates — defined in `ndmm/R/ndmm_constants.R`
@@ -270,9 +270,25 @@ one drug is **one line, not a discontinuation**.
 
 Get all three into Annex 6, or the protocol and the code will disagree on the record.
 
-Those three rules changed on **30 August 2026**, and **LOT numbers produced before
-that date are superseded**. `R/lineage.R` enforces it: `LOT_RULES_EPOCH` refuses a
-LOT run that finished earlier, by date as well as by status.
+Those three rules changed on **30 August 2026**, and LOT numbers produced before
+that date are superseded. `R/lineage.R` enforces that one: `LOT_RULES_EPOCH`
+refuses a LOT run that finished earlier, by date as well as by status.
+
+**A second change supersedes numbers too.** The returning-drug fold (§4.8) was
+contributing to a line's working set without a date bound, so a drug folded
+into one line counted as already present in every later one; a patient whose
+drug returns again inside a transplant-opened line therefore lost the line that
+return should have started. That was fixed on **17 September 2026** and it
+moves line counts, so a run built between the two dates carries superseded
+numbers as well.
+
+`LOT_RULES_EPOCH` ships as that later date, so such a run is refused by
+default. It is a **setting** rather than a constant, and that is the lesson
+rather than a convenience: it sat at the August change while the September one
+had already superseded a further set of numbers, and every run in between
+passed a check written to stop precisely that. A value compiled into the reader
+is only as good as the last person to bump it; a setting is at least on the
+run's own record when it is moved.
 
 ## 6. What is entirely new
 

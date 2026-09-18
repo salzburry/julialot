@@ -91,16 +91,18 @@ OBJECT_PREFIX=ndmm_ TRACE_EXECUTE=TRUE Rscript qc/trace_foldin.R
 ```
 
 `qc/trace_returns.R` is the wider question the study team asked - **drugs that
-come back** - on real patients: every return the 30 Aug 2026 rules touched,
-in three kinds. A previous-line drug that *folded* into the line it returned
-in (4.8); a line's own drug that came back after a confirmed break and stayed
-in its line (4.3) - before the rule that return opened a new line, so a 1L
-drug back after a holiday made a 2L that no longer exists; and an earlier
-drug that came back and *opened* a line, which neither rule prevents (two or
-more lines back, or across a transplant-opened line). Each patient's raw
-episodes sit beside the final lines, the returns marked, with a paragraph
-per return saying what the rule did and what the earlier reading would have
-done. `TRACE_LINES=1,2` (the default) is the 2L question. What the report
+come back** - on real patients, in three kinds. A previous-line drug that
+*folded* into the line it returned in (4.8); a line's own drug that came back
+after a confirmed break and stayed in its line (4.3); and an earlier drug that
+came back and *opened* a line, which neither rule prevents (two or more lines
+back, or across a transplant-opened line). Each patient's raw episodes sit
+beside the final lines, the returns marked, with a paragraph per return saying
+what the rule did.
+
+Each paragraph also says what a reading without 4.3 and 4.8 would have made of
+that return. That is the comparison the study team asked for and is the report
+answering it, not background: it is how a reader sees which lines these rules
+removed and which they kept. `TRACE_LINES=1,2` (the default) is the 2L question. What the report
 looks like, rendered on fixture patients: `qc/examples/returns_trace_example.md`.
 
 ```bash

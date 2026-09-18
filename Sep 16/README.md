@@ -70,7 +70,21 @@ rebuilt run and compare.
 It is recorded on every LOT run, and on every study run that reads one
 (`S_RUN_METADATA.LOT_CODE_MD5`), so a table can always be traced back to the
 code behind it. But it is only CHECKED where `LOT_CODE_MD5` is set: unset, it
-checks nothing and a stale LOT run flows through in silence. So after the
+checks nothing and a stale LOT run flows through in silence.
+
+Step 3 refuses one by date as well, and that check is on by default. It stops
+any LOT run that finished before `LOT_RULES_EPOCH`, which ships as the date the
+rules last changed — so a run built before this fix is refused whether or not
+anyone pinned a fingerprint. Set it only to name a different floor:
+
+```bash
+LOT_RULES_EPOCH=2026-09-17    # the shipped value; a run older than this stops
+```
+
+The two checks answer different questions. The epoch says WHEN a run executed
+and everybody gets it; `LOT_CODE_MD5` says WHAT executed, exactly, and is
+opt-in. A run built after the epoch by code you have not approved passes the
+first and is caught only by the second. So after the
 rebuild, read the new run's `CODE_MD5` and pin it - that is what makes step 3
 stop on the wrong run instead of building on it.
 

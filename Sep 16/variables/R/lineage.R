@@ -4,16 +4,19 @@
 # before anything is read. A run that failed part-way, was built over a
 # different cohort, or deviated from the LOT contract is refused.
 #
-# LOT rules changed on 2026-08-30 and earlier numbers are superseded, so a run
-# older than that is refused by date as well as by status.
+# The LOT rules have changed more than once, and numbers built before the last
+# change are superseded, so a run older than that is refused by date as well as
+# by status. The date is `lot_rules_epoch` (config_223926.R), a setting rather
+# than a constant here: it moves whenever the engine's rules do.
+#
+# The date says WHEN a run executed, not WHAT executed. LOT_CODE_MD5 is the
+# exact answer and is opt-in; this one is the floor everyone gets.
 #
 # The column names are the WRITER'S: BUILD_STATUS_COLS declares
 # INPUT_COHORT_TABLE and no STUDY_START, so asking for COHORT_TABLE or
 # STUDY_START raises unresolved columns before the check can run. STUDY_START
 # is read from the cohort build's own contract instead, by
 # read_upstream_settings() below.
-LOT_RULES_EPOCH <- as.Date("2026-08-30")
-
 # A setting or a status column as a plain trimmed string: blank where it is
 # absent, NULL, NA, or the literal "NA" a warehouse NULL reads back as over
 # ODBC. Every identity below compares two of these, so an absent value on
@@ -303,11 +306,13 @@ check_lot_lineage <- function(con, cfg) {
       r$STUDY_END, cfg$study_end))
 
   upd <- suppressWarnings(as.Date(substr(as.character(r$UPDATED_AT), 1, 10)))
-  if (!is.na(upd) && upd < LOT_RULES_EPOCH)
+  epoch <- as.Date(cfg$lot_rules_epoch)
+  if (!is.na(upd) && upd < epoch)
     problems <- c(problems, sprintf(
-      paste0("it finished %s, before the 2026-08-30 rule change: three rules ",
-             "changed what starts and ends a line, so LOT numbers built ",
-             "before that date are superseded"), format(upd)))
+      paste0("it finished %s, and the LOT rules last changed %s ",
+             "(LOT_RULES_EPOCH): what starts and ends a line moved, so ",
+             "numbers built before that date are superseded"),
+      format(upd), format(epoch)))
 
   # Every problem above was CHECKED and found wrong, so every one stops.
   # LOT_ALLOW_UNPROVEN_LINEAGE covers only the case where the status table

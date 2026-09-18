@@ -156,6 +156,22 @@ cfg_defaults <- function() {
     # default and checks nothing; set, it is the one way to say "these numbers
     # rest on THAT code" rather than "on code that finished after a date".
     lot_code_md5       = .env_chr("LOT_CODE_MD5", ""),
+    # The date the LOT rules last changed. A run that finished before it was
+    # built by rules this package's readings no longer match, whatever its
+    # status row says, so the lineage check refuses it (R/lineage.R).
+    #
+    # A SETTING and not a constant, because it moves whenever the engine's
+    # rules do and a value compiled into the reader is only as good as the last
+    # person to bump it: the shipped default sat at the August rule change
+    # while a September one had already superseded a further set of numbers,
+    # and every run between the two dates passed a check written to stop
+    # exactly that. Named here, it can be moved for a delivery without editing
+    # the reader, and it is on the run's own record either way.
+    #
+    # Not in CONTRACT: that list is the protocol's numbers, and a deviation
+    # from it means this run departs from the protocol. This departs from
+    # nothing - it says which engine built the lines, which is lineage.
+    lot_rules_epoch    = .env_date("LOT_RULES_EPOCH", "2026-09-17"),
     # Named only where the cohort build wrote its status under neither of the
     # two names the builds use. Bare - COHORT_PREFIX is added for you, as the
     # LOT engine's setting of the same name does.
