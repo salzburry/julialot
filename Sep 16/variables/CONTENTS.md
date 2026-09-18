@@ -52,7 +52,7 @@ writes only its own `S_*` tables.
 | `R/run_223926.R` | the runner: resolve the plan, refuse what it cannot vouch for, walk the modules |
 | `R/modules/` | one file per module, in the order they run |
 | `codelists/` | the code lists this package ships. Production overrides the directory |
-| `tests/` | 584 checks. `Rscript tests/run_tests.R` |
+| `tests/` | the suite. `Rscript tests/run_tests.R` |
 
 ### The modules
 
@@ -130,7 +130,7 @@ open question's reading, and stops before opening a connection. It is the
 fastest way to see what a run *would* do.
 
 ```bash
-Rscript tests/run_tests.R      # 584 checks, no warehouse
+Rscript tests/run_tests.R      # no warehouse
 ```
 
 The suite runs the modules without a warehouse, executes the SQL they emit

@@ -551,6 +551,31 @@ ok(any(grepl("a/b", qc_markdown(piped, "r", "p_", P, ""), fixed = TRUE)),
      "...and C5's is the span bound, where 7.3 puts treatment a line does not name")
 }
 
+# The catalogue's SIZE is the one number the delivery's documents still quote,
+# and this is what holds it. Every other count was dropped rather than pinned -
+# an assertion total is trivia a reader never acts on, and it went stale three
+# times because nothing read it. This one a reader does act on: it is how many
+# rows the report will have. So it is quoted once, in lot/CONTENTS.md, and a
+# disagreement fails here instead of being found by whoever counts the rows.
+{
+  doc <- file.path(dirname(ROOT), "CONTENTS.md")
+  if (!file.exists(doc)) {
+    skip_note("lot/CONTENTS.md is not beside this package, so its count is unchecked")
+  } else {
+    # Located by the words around the number, not by the punctuation between
+    # them: the heading holds an em dash, and matching it would make this
+    # depend on the locale the suite happens to run under rather than on what
+    # the document says.
+    said <- grep("^### .*checks on a finished run", readLines(doc, warn = FALSE),
+                 value = TRUE)
+    n <- suppressWarnings(as.integer(gsub("\\D", "", said[1])))
+    ok(length(said) == 1L && identical(n, length(LOT_QC_CHECKS)),
+       sprintf("lot/CONTENTS.md says the catalogue has %s and it has %d",
+               if (length(said) == 1L && !is.na(n)) n else "no one number",
+               length(LOT_QC_CHECKS)))
+  }
+}
+
 cat("\n-- the runner binds to the status table the engine actually writes --\n")
 # Read off BUILD_STATUS_COLS rather than restated here: a column renamed in the
 # engine has to move this test, not pass it. The runner asked for STATUS and

@@ -157,27 +157,32 @@ Every suite runs offline — no warehouse, no driver, no Shiny — and exits
 non-zero on any failure.
 
 ```bash
-(cd ndmm           && Rscript tests/test_runner.R)         # 419
-(cd ndmm           && Rscript tests/test_subsequent.R)     #  53
-Rscript variables/tests/run_tests.R                        # 584
-Rscript dashboard/tests/run_tests.R                        # 598
-Rscript TFLS/tests/test_tfls.R                             # 362
-(cd lot/engine     && Rscript tests/test_line_criteria.R)  #  58
-(cd lot/engine     && Rscript tests/test_runner.R)         # 528
-(cd lot/qc         && Rscript tests/test_lot_qc.R)         # 296
-(cd lot/qc         && Rscript tests/test_foldin_trace.R)   # 154
-(cd lot/qc         && Rscript tests/test_trace_returns.R)  # 154
-(cd lot/melphalan  && Rscript tests/test_melp_simple.R)    # 162
-(cd lot/validation && Rscript tests/test_vignettes.R)      #  37
+(cd ndmm           && Rscript tests/test_runner.R)
+(cd ndmm           && Rscript tests/test_subsequent.R)
+Rscript variables/tests/run_tests.R
+Rscript dashboard/tests/run_tests.R
+Rscript TFLS/tests/test_tfls.R
+(cd lot/engine     && Rscript tests/test_line_criteria.R)
+(cd lot/engine     && Rscript tests/test_runner.R)
+(cd lot/qc         && Rscript tests/test_lot_qc.R)
+(cd lot/qc         && Rscript tests/test_foldin_trace.R)
+(cd lot/qc         && Rscript tests/test_trace_returns.R)
+(cd lot/melphalan  && Rscript tests/test_melp_simple.R)
+(cd lot/validation && Rscript tests/test_vignettes.R)
 ```
 
-3405 checks — the twelve figures above, as the commands beside them report
-them. Installing `survival::` adds one more: the dashboard suite's
-Kaplan-Meier cross-check, a single assertion that is skipped without it, for
-3406. Base R except for **`glue`**, which four of the
-twelve need — the two LOT engine suites through `tests/testutil.R`, melphalan,
-and the cohort's own runner. The other eight load nothing. The app needs
-`shiny`; a warehouse run needs `DBI`, `odbc` and `glue`.
+Each prints how many assertions it made. That number is not quoted in this
+document, or in any other here: nothing reads a number in a document, so it
+goes stale the next time a suite grows and then quietly misdescribes the thing
+it was written to describe. Run them and read it off the run.
+
+Installing `survival::` adds one assertion: the dashboard suite's Kaplan-Meier
+cross-check, which is skipped without it — and a skipped block makes that suite
+exit non-zero, because a run missing its executed blocks is not a clean run.
+Base R except for **`glue`**, which four of the twelve need — the two LOT
+engine suites through `tests/testutil.R`, melphalan, and the cohort's own
+runner. The other eight load nothing. The app needs `shiny`; a warehouse run
+needs `DBI`, `odbc` and `glue`.
 
 Four of the suites (the variables package, LOT QC's two, and melphalan) additionally **execute** the
 SQL they emit against fixtures where `python3` with `duckdb` and `sqlglot` is

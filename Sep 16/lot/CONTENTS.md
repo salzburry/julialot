@@ -42,7 +42,7 @@ The lines themselves. One `Rscript build.R` produces every table.
 | `R/foldin_rule.R` | the returning-drug rule |
 | `R/prior_regimen.R` | what counts as a new agent, a restart, and a line-breaking transplant |
 | `R/cart_rule.R` | the CAR-T consolidation rule |
-| `tests/` | 586 checks across two files |
+| `tests/` | two files, neither needing a warehouse |
 
 **Outputs.** `LOT_LONG` is every line the engine built. `LOT_LONG_FINAL` is the
 same after the patient-level criteria — a patient excluded by one is absent
@@ -75,7 +75,7 @@ declares a limit says so under **what these checks cannot see** whatever it
 counted — because the reading a limit changes is the zero, and a zero is not a
 finding. `C5` declares one.
 
-`Rscript qc/tests/test_lot_qc.R` — 308 checks. Every one of the 38 runs twice
+`Rscript qc/tests/test_lot_qc.R` — every one of the 38 runs twice
 against fixtures: clean, where it must count nothing, and carrying the defect
 it describes, where it must count it.
 
@@ -191,15 +191,19 @@ test suites need no warehouse.
 
 ### The test suites
 
-| suite | checks |
-|---|---|
-| `engine/tests/test_runner.R` | 528 |
-| `engine/tests/test_line_criteria.R` | 58 |
-| `qc/tests/test_lot_qc.R` | 308 |
-| `qc/tests/test_foldin_trace.R` | 156 |
-| `qc/tests/test_trace_returns.R` | 154 |
-| `melphalan/tests/test_melp_simple.R` | 162 |
-| `validation/tests/test_vignettes.R` | 37 |
+```bash
+(cd engine     && Rscript tests/test_runner.R)
+(cd engine     && Rscript tests/test_line_criteria.R)
+(cd qc         && Rscript tests/test_lot_qc.R)
+(cd qc         && Rscript tests/test_foldin_trace.R)
+(cd qc         && Rscript tests/test_trace_returns.R)
+(cd melphalan  && Rscript tests/test_melp_simple.R)
+(cd validation && Rscript tests/test_vignettes.R)
+```
+
+Each prints how many assertions it made, and that number is deliberately not
+quoted here - nothing reads a number in a document, so it goes stale the next
+time a suite grows.
 
 None needs a warehouse. Where `duckdb` and `sqlglot` are installed, the suites
 also execute the emitted SQL against fixtures and check the numbers that come
