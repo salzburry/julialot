@@ -367,6 +367,8 @@ synthetic_one <- function(prefix, settings, min_n = 25L) {
     STUDY_CONTRACT_MD5 = DASH_CONTRACT_MD5,
     LOT_RUN_ID = "synthetic-lot", LOT_RUN_VERSION = "20260908T110500Z",
     LOT_CODE_MD5 = "22222222222222222222222222222222",
+    # The floor the LOT run was accepted against, as a real run records it.
+    LOT_RULES_EPOCH = "2026-09-17",
     COHORT_ATTEMPT_ID = "synthetic-cohort",
     COHORT_ATTEMPT_STAMP = "2026-09-08 10:00:00",
     STUDY_START = "2018-01-01",
