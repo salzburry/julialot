@@ -244,12 +244,10 @@ frail patients.
 
 §7.8.1's counting rules — same-day claims are one event, a ≥ 30 day washout
 between acute events, a chronic condition counted once — apply to **both**
-baseline prevalence and on-treatment incidence. Baseline used to be a bare
-`count(*)` over every event date in the window, so a patient with chronic
-kidney disease coded at twelve visits contributed twelve events to the
-background prevalence of a condition that counts once, and Objective 1 and
-Objective 2 were computed under different rules. They are the same machinery
-now.
+baseline prevalence and on-treatment incidence, through the same machinery. So
+a patient with chronic kidney disease coded at twelve visits contributes one
+event to the background prevalence and not twelve, and Objectives 1 and 2 are
+computed under one set of rules rather than two.
 
 Exactly one difference survives, and it is the protocol's: the baseline
 denominator is the window's own person-time *"irrespective of prior event
