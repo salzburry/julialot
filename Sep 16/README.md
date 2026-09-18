@@ -70,7 +70,13 @@ rebuilt run and compare.
 It is recorded on every LOT run, and on every study run that reads one
 (`S_RUN_METADATA.LOT_CODE_MD5`), so a table can always be traced back to the
 code behind it. But it is only CHECKED where `LOT_CODE_MD5` is set: unset, it
-checks nothing and a stale LOT run flows through in silence. So after the
+checks nothing and a stale LOT run flows through in silence.
+
+Do not expect the date guard to catch this one. Step 3 also refuses a LOT run
+that finished before `LOT_RULES_EPOCH` (`variables/R/lineage.R`), but that
+constant is set to the **August** rule change, and a run built after it and
+before this fix passes. `LOT_CODE_MD5` is the only check that sees the
+difference. So after the
 rebuild, read the new run's `CODE_MD5` and pin it - that is what makes step 3
 stop on the wrong run instead of building on it.
 
