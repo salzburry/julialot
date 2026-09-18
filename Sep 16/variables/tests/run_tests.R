@@ -1515,6 +1515,21 @@ cat("\nthe rules that hold the numbers up\n")
                       cfg = cfg0(c(LOT_RULES_EPOCH = "2026-10-01")))),
      "...in both directions")
 
+  # The epoch's OWN date is refused. A rule change lands at a time of day and
+  # UPDATED_AT is compared as a calendar date, so a run finished that day
+  # cannot be placed either side of it; the guard refuses what it cannot
+  # place rather than reading a number that may be superseded.
+  ok(!is.na(lin_check(UPDATED_AT = "2026-09-17 23:59:59")),
+     "a run finished ON the epoch cannot be placed either side of it, so it stops")
+  ok(grepl("on or before", lin_check(UPDATED_AT = "2026-09-17 23:59:59"),
+           fixed = TRUE),
+     "...and the message says on or before, which is what the check does")
+
+  # Which floor applied is on the run's own record, or a reader cannot tell a
+  # run that cleared the shipped epoch from one that cleared a lowered one.
+  ok("LOT_RULES_EPOCH" %in% names(RUN_METADATA_COLS),
+     "S_RUN_METADATA carries the epoch the run was accepted against")
+
   # 4. A nested cohort takes only patients IN its parent.
   ch <- paste(capture.output(print(mod_cohorts)), collapse = "\n")
   ok(grepl("IN_COHORT = 1", ch),
@@ -3129,6 +3144,27 @@ step_sql <- function(r, tag) {
                 paste0("\n", ctxt) else ""))
   }
   unlink(c(sfc, sdc), recursive = TRUE)
+}
+
+cat("\n-- config.csv is every setting, and stays that way --\n")
+{
+  # CONTENTS.md and MODULES.md both say this file holds every setting. Nothing
+  # held them to it, and nine were absent: six of the eight CDM table names,
+  # the two retry knobs, and SETTINGS_OVERRIDE - the one that lets a run
+  # proceed against a cohort it disagrees with. A setting a reader cannot find
+  # in the settings file is a setting they do not know they have.
+  cfg_src <- paste(readLines("R/config_223926.R", warn = FALSE), collapse = "\n")
+  decl <- unique(sub('.*"([A-Z_0-9]+)".*', "\\1",
+    regmatches(cfg_src,
+      gregexpr('[.]env_(chr|int|lgl|date|num)[(]"[A-Z_0-9]+"', cfg_src))[[1]]))
+  listed <- utils::read.csv("config.csv", stringsAsFactors = FALSE)$name
+  absent <- setdiff(decl, listed)
+  ok(length(decl) > 40,
+     sprintf("the settings are read off the config builder itself (%d)", length(decl)))
+  ok(length(absent) == 0,
+     paste0("every setting the builder reads has a row in config.csv",
+            if (length(absent))
+              paste0(" [absent: ", paste(absent, collapse = ", "), "]") else ""))
 }
 
 cat("\n-- a run's version is its build, not its id --\n")

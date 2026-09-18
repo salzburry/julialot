@@ -234,6 +234,10 @@ RUN_METADATA_COLS <- c(
   # built from - not the cohort's NAME, which a rebuild keeps. Together these
   # say which three things these numbers rest on; a name says only one.
   LOT_CODE_MD5 = "string",
+  # The floor the LOT run was accepted against. A delivery may move it, so the
+  # row has to say which one applied or a reader cannot tell a run that cleared
+  # the shipped floor from one that cleared a lowered one.
+  LOT_RULES_EPOCH = "string",
   COHORT_ATTEMPT_ID = "string", COHORT_ATTEMPT_STAMP = "string",
   STUDY_START = "string", STUDY_END = "string",
   # What a rate in this run's tables is per: RATE and its limits are already
@@ -273,6 +277,7 @@ write_run_metadata <- function(con, cfg, cohorts, mods, lot_run, deviations,
             LOT_RUN_ID             = q(lot_run$RUN_ID %||% ""),
             LOT_RUN_VERSION        = q(lot_run_version(lot_run)),
             LOT_CODE_MD5           = q(lot_run$LOT_CODE_MD5 %||% ""),
+            LOT_RULES_EPOCH        = q(cfg$lot_rules_epoch),
             COHORT_ATTEMPT_ID      = q(lot_run$COHORT_ATTEMPT_ID %||% ""),
             COHORT_ATTEMPT_STAMP   = q(lot_run$COHORT_ATTEMPT_STAMP %||% ""),
             STUDY_START            = q(cfg$study_start),
