@@ -84,6 +84,12 @@ PART of that line, not a reason to start the next one.
       the return opens a line of its own. The set the fold contributes to a
       line's regimen has to be bounded by that line: read patient-wide, one
       folded course claimed the drug for the whole history
+  F39 the SAME COURSE spans a transplant -
+      one episode folds, the next lands
+      past an ALLO that opened a line       -> the course's verdict does not
+      carry that episode across. The transplant-opened line keeps the single
+      day and the empty regimen 4.6 gives it, and the episode opens its own
+      line
 """
 import os, sys, tempfile, subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -462,6 +468,36 @@ PATS = [
     dict(P('F38n', L1 + [('DARA', 'MAB', 200, 400),
                          ('LEN', 'IMID', 600, 700)]),
          sct_auto=[IX + 500]),
+    # F39/F39n: one COURSE, two lines, a transplant between them.
+    #
+    # BORT and LEN open line 1. DARA opens line 2 on day 200 - one advance -
+    # and BORT returns on day 300, which 4.8 folds into line 2. An ALLO on day
+    # 350 ends line 2 and opens line 3. BORT is dosed again on day 400, 70
+    # days after the day-300 cover ran out: shorter than the 90-day
+    # discontinuation, so it is the SAME COURSE as the episode that folded.
+    #
+    # "One course, one answer" is the count's rule, and only the count's. The
+    # course's verdict carried the day-400 episode too, so the ALLO's line
+    # held a drug whose dose lands 50 days after the transplant: it named BORT
+    # and ran to day 430, where 4.6 gives an ALLO line one day and no regimen.
+    # A drug returning across a transplant is not returning to the line it
+    # left (4.8), and the episode is the line the transplant opened's business
+    # - which here means the line it opens after it, since an ALLO line takes
+    # nothing.
+    #
+    # The transplant override is already measured episode by episode, so this
+    # is the course's verdict deciding membership the override had refused.
+    #
+    # F39n is the same patient without the day-300 return - nothing folds at
+    # all - and the two must agree from line 3 on. As with F38, the orphan and
+    # phantom invariants see none of it: the day-400 dose was inside a line,
+    # and that line covered the drug it named.
+    dict(P('F39', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 300, 330),
+                        ('BORT', 'PI', 400, 430)]),
+         sct_ac=[('ALLO', IX + 350)]),
+    dict(P('F39n', L1 + [('DARA', 'MAB', 200, 600),
+                         ('BORT', 'PI', 400, 430)]),
+         sct_ac=[('ALLO', IX + 350)]),
 ]
 
 
@@ -730,6 +766,19 @@ def main():
        == [r[1:] for r in fold.get('F38n', [])[2:]],
        "F38/F38n: the earlier fold decides nothing after the transplant - with "
        "it and without it, the lines from 3 on are the same")
+
+    ok(n(fold, 'F39') == 4 and fold['F39'][2][1] == rs.d(IX + 350)
+       and fold['F39'][2][2] == rs.d(IX + 350) and fold['F39'][2][4] == '',
+       "F39: a folded course does not carry its next episode across the ALLO, "
+       "so the ALLO's line keeps the one day and the empty regimen 4.6 gives "
+       "it")
+    ok(n(fold, 'F39') == 4 and fold['F39'][3][1] == rs.d(IX + 400)
+       and fold['F39'][3][4] == 'BORT',
+       "F39: ...and the episode past the transplant opens its own line")
+    ok([r[1:] for r in fold.get('F39', [])[2:]]
+       == [r[1:] for r in fold.get('F39n', [])[2:]],
+       "F39/F39n: the fold before the transplant decides nothing after it - "
+       "with it and without it, the lines from 3 on are the same")
 
     ok(regimen(True, 'F19', 2) == regimen(True, 'F19n', 2),
        "F19/F19n: a suppressed course decides nothing, so the folded regimen "

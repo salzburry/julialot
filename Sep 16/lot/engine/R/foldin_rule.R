@@ -337,12 +337,33 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
     -- joined it.
     --
     -- Same shape as melp_taken in R/melp_rule.R, for the same reason.
+    -- ...minus the episodes of that course that are past a transplant which
+    -- OPENED A LINE. The verdict is the course's - one course, one answer -
+    -- but a transplant is a standalone boundary and not an agent: an episode
+    -- across one is not returning to the line it left, so it does not join
+    -- it, and belongs to the line the transplant opened instead
+    -- (LOT_RULES.md 4.8). N_TX is that test, asked of the episode, and it is
+    -- already computed one episode at a time above; only the count is the
+    -- course's question.
+    --
+    -- Without this the course carried the episode past the transplant into
+    -- every reader: the transplant-opened line held it in its base set,
+    -- named it in its regimen and ran its span out to the drug's cover - a
+    -- single-day ALLO line reporting a regimen, which 4.6 refuses it.
+    --
+    -- An episode with no previous dose is not in foldin_counted at all, and
+    -- nothing precedes it that a transplant could sit after, so it stays.
     foldin_episodes AS (
       SELECT c.PATID, c.MAP_MED_TYPE AS MED_ABBR, c.MAP_START_DT
       FROM foldin_course c
       INNER JOIN foldin_folded f
         ON f.PATID = c.PATID AND f.AGENT = c.AGENT
        AND f.COURSE_START_DT = c.COURSE_START_DT
+      LEFT JOIN foldin_counted xt
+        ON xt.PATID = c.PATID AND xt.AGENT = c.AGENT
+       AND xt.COURSE_START_DT = c.COURSE_START_DT
+       AND xt.MAP_START_DT = c.MAP_START_DT
+      WHERE coalesce(xt.N_TX, 0) = 0
     ),")
 }
 
