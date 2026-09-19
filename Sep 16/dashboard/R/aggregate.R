@@ -88,7 +88,19 @@ tabulate_cat <- function(d, col, min_n = 25L, id_col = NULL) {
 
 # Mean/SD/median/IQR/min/max/missing for a continuous column. Reported on the
 # stratum, so it is suppressed on the stratum's own size.
-summarise_num <- function(d, col, min_n = 25L) {
+#
+# `n_population` is the stratum the caption prints, and it is not decoration.
+# A categorical column's missing values are a LEVEL - tabulate_cat() calls it
+# "(Missing)" - and the floor applies to it like any other. A continuous
+# column's are a count instead, and this published N, the number of patients
+# WITH a value, against a caption that gives the stratum: three patients
+# missing a date read straight off the subtraction, which is the disclosure
+# the floor exists to refuse and the argument the comment below already makes
+# about N_MISSING.
+#
+# Two cells, one published total. Withholding either withholds both, so N is
+# the one withheld.
+summarise_num <- function(d, col, min_n = 25L, n_population = NULL) {
   if (is.null(d) || !nrow(d) || !col %in% names(d)) return(data.frame())
   x <- suppressWarnings(as.numeric(d[[col]]))
   n <- sum(!is.na(x))
@@ -109,6 +121,17 @@ summarise_num <- function(d, col, min_n = 25L) {
   # protect; N_MISSING goes too, because it subtracts against the stratum size
   # in the caption. tabulate_cat() applies the same rule to a suppressed level.
   if (out$SUPPRESSED == 1L) { out$N <- NA_integer_; out$N_MISSING <- NA_integer_ }
+  # ...and the same subtraction the other way round. The statistics rest on
+  # min_n patients or more and stay, because the floor permits them; what
+  # cannot stay is the count that gives the group of patients this column has
+  # no value for. An empty missing group discloses nobody, so it is left.
+  pop <- suppressWarnings(as.integer(n_population))[1]
+  if (!is.na(pop)) {
+    n_absent <- pop - n
+    if (n_absent > 0L && n_absent < min_n) {
+      out$N <- NA_integer_; out$N_MISSING <- NA_integer_
+    }
+  }
   out
 }
 
@@ -297,7 +320,7 @@ summarise_subject <- function(d, spec, min_n = 25L, n_population = NULL) {
       SUPPRESSED = tb$SUPPRESSED, stringsAsFactors = FALSE)
   }
   for (cl in nums) {
-    s <- summarise_num(d, cl, min_n = min_n)
+    s <- summarise_num(d, cl, min_n = min_n, n_population = n_stratum)
     if (!nrow(s)) next
     rows[[length(rows) + 1L]] <- data.frame(
       VARIABLE = cl, LEVEL = "(continuous)", N = s$N, PCT = NA_real_,

@@ -33,16 +33,26 @@ dashboard_config <- function() {
     # synthetic  generated in-process; no warehouse, no files
     source          = .env_chr("DASH_SOURCE", "synthetic"),
     snapshot_dir    = .env_chr("DASH_SNAPSHOT_DIR", "/mnt/data/NDMM"),
-    # The warehouse the LOT build and the study run were given, by their
-    # names: DATABRICKS_CATALOG, and PROJECT_WORK_SCHEMA or the Domino user's
-    # own schema where that is unset - the rule the LOT engine resolves its
-    # output schema by. The DASH_* names still win where set, so a dashboard
-    # can look elsewhere; unset, it reads where those two wrote, and an
-    # environment that carried them carries this too.
+    # The warehouse the study run was given, by its names:
+    # DATABRICKS_CATALOG, and the schema resolved the way that run resolves
+    # it - variables/R/config_223926.R, resolve_work_schema(): WORK_SCHEMA,
+    # else PROJECT_WORK_SCHEMA, else the Domino user's own schema. Almost
+    # everything drawn here is an S_* table and that run is what wrote them,
+    # so the order is its order rather than a preference: WORK_SCHEMA is its
+    # own override, and where an environment sets both to different schemas
+    # the study's tables are under WORK_SCHEMA. The DASH_* names still win
+    # where set, so a dashboard can look elsewhere; unset, it reads where
+    # that run wrote, and an environment that carried it carries this too.
+    #
+    # The LOT tables are the exception, and only where the two names differ:
+    # the LOT build reads PROJECT_WORK_SCHEMA alone, so a split environment
+    # needs DASH_WORK_SCHEMA to say which of the two this dashboard is
+    # reading. Set to the same schema, which is the normal case, there is
+    # nothing to choose.
     catalog         = .env_first("DASH_CATALOG", "DATABRICKS_CATALOG",
                                  default = "hive_metastore"),
-    work_schema     = .env_first("DASH_WORK_SCHEMA", "PROJECT_WORK_SCHEMA",
-                                 "WORK_SCHEMA", "DOMINO_USER_NAME",
+    work_schema     = .env_first("DASH_WORK_SCHEMA", "WORK_SCHEMA",
+                                 "PROJECT_WORK_SCHEMA", "DOMINO_USER_NAME",
                                  "DOMINO_STARTING_USERNAME", default = ""),
     # Scenario prefixes to offer. Empty means discover them.
     prefixes        = .env_vec("DASH_PREFIXES", character(0)),

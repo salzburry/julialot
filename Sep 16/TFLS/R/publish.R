@@ -37,6 +37,46 @@ TFLS_PUBLISH_LOCK <- ".tfls_publish.lock"
 TFLS_MARK_ASIDE <- ".set_aside_complete"
 TFLS_MARK_MOVED <- ".move_in_complete"
 
+# The run id, as a piece of a directory name.
+#
+# It is read off the run's own metadata row, which is warehouse data rather
+# than anything this tool chose, and both the staging and the set-aside
+# directory are named with it. A run id holding a separator or a ".." named a
+# directory OUTSIDE the output directory - and the first thing done to the
+# staging directory is unlink(recursive = TRUE), so a name that escaped took
+# whatever it landed on with it. safe_segment() refuses such a name rather
+# than repairing it, but refusing the FILL over a run id the warehouse is
+# happy with would be the wrong trade: the directory is this tool's own
+# scratch, never read back by name, so an unusable id is replaced here
+# instead.
+#
+# Replaced, not shortened: every character a path may not hold becomes "_",
+# and a name left empty or not starting with a letter or digit gets a fixed
+# stem. Two different ids can then share a tag, which is why nothing below
+# relies on the tag alone to tell two directories apart.
+tfls_path_tag <- function(run_id) {
+  v <- chr(run_id)
+  if (length(v) != 1L || is.na(v)) v <- ""
+  v <- gsub("[^A-Za-z0-9._-]", "_", v)
+  if (!safe_segment(v)) v <- paste0("run_", gsub("^[^A-Za-z0-9]+", "", v))
+  if (!safe_segment(v)) v <- "run"
+  v
+}
+
+# Where a run stages its tables before they are published: inside the output
+# directory, hidden, and NAMED UNIQUELY.
+#
+# Named by run id alone it was not unique. The engine keeps one run id for a
+# session, so two fills of the same run - two floors, two shell sets - shared
+# a staging directory, and each one's first act is to clear it: the second
+# fill deleted the first's tables from under it, and the first's exit handler
+# deleted the second's. The publish lock is no help, because staging happens
+# before a publisher takes it.
+tfls_staging_dir <- function(out_dir, run_id) {
+  tempfile(pattern = paste0(".tfls_staging_", tfls_path_tag(run_id), "_"),
+           tmpdir = out_dir)
+}
+
 discard_set_aside <- function(prev) {
   gone <- sub("[.]tfls_previous_", ".tfls_discard_", prev, fixed = FALSE)
   unlink(gone, recursive = TRUE)
@@ -53,7 +93,21 @@ discard_set_aside <- function(prev) {
 restore_set_aside <- function(prev, out_dir, partial) {
   if (partial) {
     made <- list.files(out_dir, pattern = TFLS_OUTPUT_PATTERN, full.names = TRUE)
-    if (length(made)) file.remove(made)
+    # Checked, because this is the step that makes the restore WHOLE. A file
+    # of the interrupted run that could not be removed - held open, read-only
+    # - stays beside the previous run's tables that are about to be moved
+    # back, and the directory then holds part of each under a message saying
+    # it holds one. Every caller reports a clean restore, so the mixture this
+    # whole file exists to prevent would be reported as its opposite.
+    if (length(made)) {
+      left <- made[!file.remove(made)]
+      if (length(left))
+        stop("Could not remove the interrupted run's files from ", out_dir,
+             ": ", paste(basename(left), collapse = ", "), ". The previous ",
+             "run's tables are still set aside in ", prev, ", so the output ",
+             "directory holds part of one run: remove those files and put ",
+             "the set-aside back by hand.", call. = FALSE)
+    }
   }
   # From here the state reads as "set-aside cut short", whatever happens.
   unlink(file.path(prev, TFLS_MARK_ASIDE))
@@ -141,7 +195,7 @@ publish_outputs <- function(stage, out_dir, run_id) {
   # Dropping a table from tables.csv is why the old files go at all: its
   # tfls_<id>.csv would otherwise stay behind, identical in shape to the ones
   # beside it and belonging to a shell set that no longer exists.
-  prev <- file.path(out_dir, paste0(".tfls_previous_", run_id))
+  prev <- file.path(out_dir, paste0(".tfls_previous_", tfls_path_tag(run_id)))
   old <- list.files(out_dir, pattern = TFLS_OUTPUT_PATTERN, full.names = TRUE)
   # Created even when there is nothing to set aside, so a crash during the
   # move in is recoverable by the same rule either way.

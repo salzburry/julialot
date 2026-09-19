@@ -157,7 +157,13 @@ read the same three facts under the LOT engine's names: `PROJECT_WORK_SCHEMA`
 (or the Domino user's own schema where it is unset), `DATABRICKS_CATALOG` and
 `INPUT_COHORT_TABLE`. So an environment that carried the cohort build carries
 the LOT build, the study run, the fill and the dashboard's warehouse mode too; `TFLS_*` and
-`DASH_*` names exist only for a fill or a page that has to look elsewhere. The
+`DASH_*` names exist only for a fill or a page that has to look elsewhere.
+
+The study run takes one name the other two do not: `WORK_SCHEMA`, ahead of
+`PROJECT_WORK_SCHEMA`, as an override for where the `S_*` tables go. The fill
+and the dashboard read those tables, so they resolve the schema in the study
+run's order rather than the LOT build's — set only `PROJECT_WORK_SCHEMA`, as
+the commands above do, and the two orders are the same answer. The
 study suite checks the line and the variable against the engine's source
 whenever the folders sit together. The password is read from the environment
 alone, by every one of them.

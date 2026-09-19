@@ -30,6 +30,17 @@ if (!file.exists(grid_csv)) stop("No scenario grid at ", grid_csv, call. = FALSE
 grid <- utils::read.csv(grid_csv, stringsAsFactors = FALSE)
 if (!"prefix" %in% names(grid)) stop("scenarios.csv needs a `prefix` column.",
                                      call. = FALSE)
+# Trimmed HERE, before anything reads it. run_one() trimmed its own copy and
+# this test did not, so "s1_" and "s1_ " were two scenarios to the duplicate
+# check and one prefix to every run and every path built from it: the second
+# scenario's build log overwrote the first's, and its export overwrote the
+# first's snapshot under a directory neither row names.
+grid$prefix <- trimws(as.character(grid$prefix))
+if (any(!nzchar(grid$prefix)))
+  stop("A scenario has an empty prefix (row ",
+       paste(which(!nzchar(grid$prefix)), collapse = ", "),
+       "). Every table this job writes carries it, so it cannot be blank.",
+       call. = FALSE)
 if (anyDuplicated(grid$prefix))
   stop("Two scenarios share a prefix: ",
        paste(unique(grid$prefix[duplicated(grid$prefix)]), collapse = ", "),
@@ -48,6 +59,20 @@ source(file.path(here, "jobs", "export_lib.R"))
 # way the app will read it.
 source(file.path(here, "R", "sources.R"))
 source(file.path(here, "R", "scenarios.R"))
+
+# A prefix names a directory under the snapshot as well as a set of tables, so
+# it is held to what a directory name may be - the same test the app's reader
+# applies before it opens one. Without it a prefix carrying a separator or a
+# ".." wrote outside the snapshot directory the job was given.
+local({
+  bad <- grid$prefix[!vapply(grid$prefix, safe_segment, logical(1))]
+  if (length(bad))
+    stop("A scenario prefix is not a name this job can write under: ",
+         paste(bad, collapse = ", "),
+         ". It becomes a directory beside the others, so it may hold ",
+         "letters, digits, '.', '_' and '-' only, and must begin with a ",
+         "letter or a digit.", call. = FALSE)
+})
 
 # Which tables to export. Read off the package's own registry rather than
 # listed, so a module added there is exported without editing this file.
