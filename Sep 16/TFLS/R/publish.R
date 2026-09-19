@@ -78,7 +78,13 @@ tfls_staging_dir <- function(out_dir, run_id) {
 }
 
 discard_set_aside <- function(prev) {
-  gone <- sub("[.]tfls_previous_", ".tfls_discard_", prev, fixed = FALSE)
+  # The BASENAME is renamed, not the path. Substituting over the whole path
+  # rewrites the first match anywhere in it, so an output directory that
+  # itself sits under a folder named .tfls_previous_something had its parent
+  # renamed in the string instead - a target in a directory that does not
+  # exist, so the rename fails and the set-aside can never be discarded.
+  gone <- file.path(dirname(prev),
+                    sub("^[.]tfls_previous_", ".tfls_discard_", basename(prev)))
   unlink(gone, recursive = TRUE)
   if (dir.exists(prev) && !file.rename(prev, gone))
     stop("Could not discard the set-aside directory ", prev, ". The output ",
@@ -211,7 +217,19 @@ publish_outputs <- function(stage, out_dir, run_id) {
            "this run was published.", call. = FALSE)
     }
   }
-  file.create(file.path(prev, TFLS_MARK_ASIDE))
+  # Checked. The marker is what tells recovery that the move in had BEGUN;
+  # without it a kill reads as "the set-aside was cut short", which means
+  # both sides hold the previous run, so recovery puts the set-aside back
+  # WITHOUT first removing what this run had already moved in - a directory
+  # holding part of each, reported as put back whole. An unwritable marker
+  # is therefore a reason not to start the move at all.
+  if (!file.create(file.path(prev, TFLS_MARK_ASIDE))) {
+    restore_set_aside(prev, out_dir, partial = FALSE)
+    stop("Could not record the set-aside in ", prev, ", and that record is ",
+         "what a publish killed part-way is read by. The previous run has ",
+         "been put back and nothing of this run was published; free space ",
+         "or fix permissions on that directory and run again.", call. = FALSE)
+  }
   moved <- file.rename(made, file.path(out_dir, basename(made)))
   if (!all(moved)) {
     # Take back the half that landed, then restore the run that was there.
@@ -221,7 +239,18 @@ publish_outputs <- function(stage, out_dir, run_id) {
          "published is one run's; nothing of this run was published.",
          call. = FALSE)
   }
-  file.create(file.path(prev, TFLS_MARK_MOVED))
+  # The second marker covers the last window: the move in is complete, and a
+  # kill before the discard would otherwise read as partial and take this
+  # run back out again. Nothing can be undone at this point - the run IS
+  # published - so an unwritable marker is not a failure of the publish. The
+  # discard closes the window itself by removing the set-aside, and only if
+  # that also fails is there anything left to misread, which is what
+  # discard_set_aside() stops on.
+  recorded <- file.create(file.path(prev, TFLS_MARK_MOVED))
   discard_set_aside(prev)
+  if (!recorded)
+    cat("  note: this run is published, but the set-aside could not record ",
+        "that it completed. The set-aside has been discarded, so nothing is ",
+        "left for the next publish to misread.\n", sep = "")
   invisible(TRUE)
 }

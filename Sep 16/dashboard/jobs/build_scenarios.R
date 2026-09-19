@@ -16,8 +16,13 @@
 # quietly came back four-of-five would be read as five.
 
 args <- commandArgs(trailingOnly = TRUE)
-here <- normalizePath(file.path(dirname(sub("^--file=", "", grep("^--file=",
-  commandArgs(FALSE), value = TRUE)[1])), ".."), mustWork = FALSE)
+# gsub("~+~"), as every other entry point here does: Rscript writes a space
+# in the script's path as "~+~" on some platforms, and undecoded this job
+# could not find its own folder whenever the delivery was unpacked under a
+# name with a space in it.
+here <- normalizePath(file.path(dirname(gsub("~+~", " ",
+  sub("^--file=", "", grep("^--file=", commandArgs(FALSE), value = TRUE)[1]),
+  fixed = TRUE)), ".."), mustWork = FALSE)
 if (!nzchar(here) || is.na(here)) here <- getwd()
 
 grid_csv <- if (length(args) >= 1) args[1] else file.path(here, "scenarios.csv")
@@ -41,10 +46,17 @@ if (any(!nzchar(grid$prefix)))
        paste(which(!nzchar(grid$prefix)), collapse = ", "),
        "). Every table this job writes carries it, so it cannot be blank.",
        call. = FALSE)
-if (anyDuplicated(grid$prefix))
+# Compared without case, because the warehouse does not distinguish one: two
+# rows writing S223926_A_ and s223926_a_ are two directories under the
+# snapshot and ONE set of tables on the warehouse, so the second run
+# overwrites the first's tables and the snapshot files each under its own
+# name - a grid that looks like two scenarios and holds one.
+if (anyDuplicated(toupper(grid$prefix)))
   stop("Two scenarios share a prefix: ",
-       paste(unique(grid$prefix[duplicated(grid$prefix)]), collapse = ", "),
-       ". Each writes under its own, so one would overwrite the other.",
+       paste(unique(grid$prefix[duplicated(toupper(grid$prefix))]),
+             collapse = ", "),
+       ". Each writes under its own, so one would overwrite the other - and ",
+       "the warehouse does not tell two spellings of one name apart.",
        call. = FALSE)
 
 # The columns that are settings. Upper case by convention, which is also how
@@ -60,10 +72,25 @@ source(file.path(here, "jobs", "export_lib.R"))
 source(file.path(here, "R", "sources.R"))
 source(file.path(here, "R", "scenarios.R"))
 
+# Which tables to export. Read off the package's own registry rather than
+# listed, so a module added there is exported without editing this file.
+local({
+  for (f in c("config_223926.R", "db_utils_223926.R", "registry.R"))
+    source(file.path(pkg_dir, "R", f))
+})
+
 # A prefix names a directory under the snapshot as well as a set of tables, so
 # it is held to what a directory name may be - the same test the app's reader
 # applies before it opens one. Without it a prefix carrying a separator or a
 # ".." wrote outside the snapshot directory the job was given.
+#
+# AFTER the package is sourced, not with the checks above it: safe_segment()
+# is the reader's own and uses `%||%`, which base R supplies only from 4.4.
+# The package defines it for older ones, and this job runs on whatever R the
+# platform has - so read before that source, the gate did not merely fail to
+# fire, it stopped the job from starting at all. Nothing between here and
+# the checks above writes anything, so the gate is still ahead of every
+# write.
 local({
   bad <- grid$prefix[!vapply(grid$prefix, safe_segment, logical(1))]
   if (length(bad))
@@ -72,13 +99,6 @@ local({
          ". It becomes a directory beside the others, so it may hold ",
          "letters, digits, '.', '_' and '-' only, and must begin with a ",
          "letter or a digit.", call. = FALSE)
-})
-
-# Which tables to export. Read off the package's own registry rather than
-# listed, so a module added there is exported without editing this file.
-local({
-  for (f in c("config_223926.R", "db_utils_223926.R", "registry.R"))
-    source(file.path(pkg_dir, "R", f))
 })
 EXPORT <- unique(c("S_RUN_METADATA",
                    unlist(lapply(MODULES, `[[`, "outputs"), use.names = FALSE)))

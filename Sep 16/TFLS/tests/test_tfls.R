@@ -1435,6 +1435,68 @@ local({
             "the files, rather than putting the previous run back beside ",
             "them and calling it whole"))
 
+  # The markers are the only trace a killed publish leaves, so a marker that
+  # was not written is a publish that must not proceed.
+  d7 <- setup()
+  e7 <- local({
+    f <- publish_outputs
+    env <- new.env(parent = environment(publish_outputs))
+    real <- base::file.create
+    env$file.create <- function(...) {
+      p <- c(...)[1]
+      if (grepl("set_aside_complete", p, fixed = TRUE)) return(FALSE)
+      real(...)
+    }
+    environment(f) <- env
+    tryCatch({ f(d7$stage, d7$out, "r7"); NA_character_ },
+             error = function(x) conditionMessage(x))
+  })
+  ok(!is.na(e7) && grepl("could not record the set-aside", e7, ignore.case = TRUE),
+     paste0("a set-aside whose marker cannot be written stops the publish, ",
+            "because that marker is what a kill part-way is read by"))
+  ok(identical(read1(file.path(d7$out, "tfls_t1.csv")), "OLD1") &&
+       identical(read1(file.path(d7$out, "tfls.md")), "OLD-MD") &&
+       !length(list.files(d7$out, pattern = "^[.]tfls_previous",
+                          all.files = TRUE)),
+     "...and the previous run is back, whole, with no set-aside left behind")
+
+  # The second marker cannot undo anything - the run is published by then -
+  # so it does not fail the publish. What it must not do is leave a
+  # set-aside the next publish would read as a half-finished move.
+  d8 <- setup()
+  e8 <- local({
+    f <- publish_outputs
+    env <- new.env(parent = environment(publish_outputs))
+    real <- base::file.create
+    env$file.create <- function(...) {
+      p <- c(...)[1]
+      if (grepl("move_in_complete", p, fixed = TRUE)) return(FALSE)
+      real(...)
+    }
+    environment(f) <- env
+    tryCatch({ f(d8$stage, d8$out, "r8"); NA_character_ },
+             error = function(x) conditionMessage(x))
+  })
+  ok(is.na(e8) && identical(read1(file.path(d8$out, "tfls_t1.csv")), "NEW1") &&
+       !length(list.files(d8$out, pattern = "^[.]tfls_previous",
+                          all.files = TRUE)),
+     paste0("a completed publish whose second marker cannot be written is ",
+            "still published, and leaves no set-aside for the next one to ",
+            "misread"))
+
+  # The discard renames the BASENAME. Substituted over the whole path, an
+  # output directory sitting under a folder of that name had its parent
+  # rewritten instead, and the rename could never land.
+  d9 <- setup()
+  odd <- file.path(d9$root, ".tfls_previous_outer", "out")
+  dir.create(file.path(odd, ".tfls_previous_r9"), recursive = TRUE)
+  writeLines("OLD1", file.path(odd, "tfls_t1.csv"))
+  ok(isTRUE(discard_set_aside(file.path(odd, ".tfls_previous_r9"))) &&
+       !dir.exists(file.path(odd, ".tfls_previous_r9")) &&
+       identical(read1(file.path(odd, "tfls_t1.csv")), "OLD1"),
+     paste0("a set-aside is discarded even where the output directory's own ",
+            "path carries the set-aside prefix"))
+
   # Two publishers. Domino can start two Jobs into one artifacts directory,
   # and the second would move its files in between the first one's.
   d4 <- setup()
@@ -1744,6 +1806,23 @@ local({
   ok(is.list(r) && identical(r$schema, "lot"),
      paste0("...with PROJECT_WORK_SCHEMA still the answer where the study ",
             "run had no override of its own"))
+  # `catalog.schema` is how a schema reads on the warehouse, and the study
+  # run accepts it, stripping the catalog when it matches. Taken whole it
+  # became a schema of its own: every table was looked for under
+  # catalog.`catalog.schema`, so a run written under a supported setting
+  # was reported missing.
+  r <- with_names(WORK_SCHEMA = "hive_metastore.usr00000",
+                  DATABRICKS_CATALOG = "hive_metastore")
+  ok(is.list(r) && identical(r$schema, "usr00000") &&
+       identical(r$catalog, "hive_metastore"),
+     paste0("a schema written as catalog.schema is read as the study run ",
+            "reads it, with the matching catalog stripped"))
+  r <- with_names(WORK_SCHEMA = "other.usr00000",
+                  DATABRICKS_CATALOG = "hive_metastore")
+  ok(is.character(r) && grepl("names catalog 'other'", r, fixed = TRUE) &&
+       grepl("hive_metastore", r, fixed = TRUE),
+     paste0("...and one naming a DIFFERENT catalog stops, naming both, ",
+            "rather than reading tables from a warehouse nobody asked for"))
   r <- with_names(DOMINO_USER_NAME = "usr00000")
   ok(is.list(r) && identical(r$schema, "usr00000") && identical(r$catalog, "hive_metastore") &&
        identical(unname(r$from["schema"]), "DOMINO_USER_NAME"),

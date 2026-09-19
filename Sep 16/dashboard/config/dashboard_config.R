@@ -5,12 +5,30 @@
 # a module or an open question added to the package appears here without an
 # edit.
 
-.env_chr <- function(k, d) { v <- Sys.getenv(k, unset = ""); if (nzchar(v)) v else d }
+# Trimmed, as the other four stages trim theirs. A Domino environment
+# variable set through a form keeps the spaces around it, and untrimmed they
+# became part of a schema name, a prefix, a directory - a value that looks
+# right in the message and matches nothing.
+.env_chr <- function(k, d) { v <- trimws(Sys.getenv(k, unset = "")); if (nzchar(v)) v else d }
 # The first of several names that is set, for a fact more than one package
 # reads under a name of its own.
 .env_first <- function(..., default) {
-  for (k in c(...)) { v <- Sys.getenv(k, unset = ""); if (nzchar(v)) return(v) }
+  for (k in c(...)) { v <- trimws(Sys.getenv(k, unset = "")); if (nzchar(v)) return(v) }
   default
+}
+# A schema written as `catalog.schema`, read the way the study run reads it -
+# variables/R/config_223926.R, resolve_work_schema(). That is how a schema
+# reads on the warehouse, so a setting that carried that run arrives here in
+# that form; taken whole it became a schema of its own, and every table was
+# looked for under catalog.`catalog.schema`.
+.schema_in <- function(catalog, v) {
+  parts <- strsplit(v, ".", fixed = TRUE)[[1]]
+  if (length(parts) != 2L) return(v)
+  if (!identical(parts[1], catalog))
+    stop("DASHBOARD ERROR: the work schema '", v, "' names catalog '",
+         parts[1], "' but the catalog is '", catalog, "'. Give the schema ",
+         "alone, or set DASH_CATALOG to match.", call. = FALSE)
+  parts[2]
 }
 .env_int <- function(k, d) {
   v <- suppressWarnings(as.integer(.env_chr(k, NA_character_)))
@@ -26,6 +44,13 @@
 }
 
 dashboard_config <- function() {
+  # Both out here, because the schema is read against the catalog and a
+  # list() cannot refer to an element of itself.
+  .catalog <- .env_first("DASH_CATALOG", "DATABRICKS_CATALOG",
+                         default = "hive_metastore")
+  .work_schema <- .schema_in(.catalog,
+    .env_first("DASH_WORK_SCHEMA", "WORK_SCHEMA", "PROJECT_WORK_SCHEMA",
+               "DOMINO_USER_NAME", "DOMINO_STARTING_USERNAME", default = ""))
   list(
     # --- where the numbers come from ---------------------------------------
     # snapshot   CSVs a Domino Job exported (jobs/build_scenarios.R)
@@ -49,11 +74,8 @@ dashboard_config <- function() {
     # needs DASH_WORK_SCHEMA to say which of the two this dashboard is
     # reading. Set to the same schema, which is the normal case, there is
     # nothing to choose.
-    catalog         = .env_first("DASH_CATALOG", "DATABRICKS_CATALOG",
-                                 default = "hive_metastore"),
-    work_schema     = .env_first("DASH_WORK_SCHEMA", "WORK_SCHEMA",
-                                 "PROJECT_WORK_SCHEMA", "DOMINO_USER_NAME",
-                                 "DOMINO_STARTING_USERNAME", default = ""),
+    catalog         = .catalog,
+    work_schema     = .work_schema,
     # Scenario prefixes to offer. Empty means discover them.
     prefixes        = .env_vec("DASH_PREFIXES", character(0)),
     prefix_pattern  = .env_chr("DASH_PREFIX_PATTERN", "^s223926"),

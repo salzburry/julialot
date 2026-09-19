@@ -40,9 +40,14 @@ The Job connects exactly as the LOT build and the study run did - the study
 package's own `connect_db()`, on `DATABRICKS_DSN` and `DATABRICKS_PWD` - and
 reads where they wrote: `PROJECT_WORK_SCHEMA` (or the Domino user's own schema
 where it is unset) and `DATABRICKS_CATALOG`. Where `WORK_SCHEMA` is also set,
-it wins — it is the study run's own override for where the `S_*` tables go,
-and this reads them. `DASH_WORK_SCHEMA` and `DASH_CATALOG` override those only
-where a dashboard has to look elsewhere.
+it wins — it is the study run's own override for the schema it writes into and
+reads the cohort and LOT tables from, and this Job reads what it wrote.
+
+`DASH_WORK_SCHEMA` and `DASH_CATALOG` are the **app's** overrides, not this
+Job's: the Job resolves the warehouse through the study package's own
+configuration, so it writes a snapshot of the schema that package reads. Point
+the app elsewhere with those two; point the Job elsewhere by giving it the
+study run's own names.
 
 One row of `scenarios.csv` is one run. `prefix` is the `OBJECT_PREFIX` it
 writes under; every other upper-case column is set as an environment variable
