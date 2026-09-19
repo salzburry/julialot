@@ -82,11 +82,18 @@ what it cannot place. The cost is one day's runs; the alternative is reading a
 superseded number in silence. Set it only to name a different floor:
 
 ```bash
-LOT_RULES_EPOCH=2026-09-17    # shipped; a run finished on or before this stops
+LOT_RULES_EPOCH=2026-09-19    # shipped; a run finished on or before this stops
 ```
 
 Whichever floor applied is recorded on the run, in
 `S_RUN_METADATA.LOT_RULES_EPOCH`.
+
+The shipped date is held to the engine beside it. The study suite fingerprints
+`lot/engine` and compares it to the fingerprint the shipped epoch was set for,
+so a change to the rules fails that check until the epoch is moved to the date
+of the change and the fingerprint re-pinned. The floor went stale twice before
+that tie existed: each time, the engine changed and the date did not, and every
+run built in between passed a check written to stop exactly those runs.
 
 The two checks answer different questions. The epoch says WHEN a run executed
 and everybody gets it; `LOT_CODE_MD5` says WHAT executed, exactly, and is
@@ -160,10 +167,14 @@ the LOT build, the study run, the fill and the dashboard's warehouse mode too; `
 `DASH_*` names exist only for a fill or a page that has to look elsewhere.
 
 The study run takes one name the other two do not: `WORK_SCHEMA`, ahead of
-`PROJECT_WORK_SCHEMA`, as an override for where the `S_*` tables go. The fill
-and the dashboard read those tables, so they resolve the schema in the study
-run's order rather than the LOT build's — set only `PROJECT_WORK_SCHEMA`, as
-the commands above do, and the two orders are the same answer. The
+`PROJECT_WORK_SCHEMA`. It moves the whole of that run — the schema its `S_*`
+tables are written into, and the schema it reads the cohort and LOT tables
+from — so setting it points the run at one schema entirely. The fill and the
+dashboard read those `S_*` tables, so they resolve the schema in the study
+run's order rather than the LOT build's; set only `PROJECT_WORK_SCHEMA`, as
+the commands above do, and the two orders are the same answer. All three
+accept `catalog.schema` and read it as the study run does, the catalog
+stripped when it matches. The
 study suite checks the line and the variable against the engine's source
 whenever the folders sit together. The password is read from the environment
 alone, by every one of them.
