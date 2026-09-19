@@ -198,7 +198,58 @@ stat_rate <- function(rate = NA, events = NA, person_years = NA, denom = NA,
 # A cohort with no event at all is a result and not missing data - everyone is
 # still event-free at the end of their follow-up - so the rows come back empty
 # with the sample size and the follow-up attached.
+# One curve per cohort, however many cells read it.
+#
+# A survival table asks the same (time, event) pair for a median, a
+# probability at 12 months, one at 24, an event count and a censored count -
+# five cells, each of which called this and got the same curve back. The
+# estimator walks the whole cohort once per distinct event time, so it is the
+# most expensive thing in a fill, and the table paid for it five times.
+#
+# Keyed on a cheap summary of the inputs and then CHECKED: two different
+# cohorts can share a key, so a key match is a candidate and identical() is
+# what decides. A miss computes exactly what this function computed before,
+# and nothing that reads the result writes to it.
+#
+# Bounded, because the key holds the cohort's own vectors: a fill walks many
+# cohorts and an unbounded cache would keep every one of them. The oldest
+# goes first, which suits the one pattern this exists for - several cells of
+# one table, one after another.
+.km_cache <- new.env(parent = emptyenv())
+.km_cache_max <- 16L
+
+km_cache_reset <- function() {
+  rm(list = ls(.km_cache, all.names = TRUE), envir = .km_cache)
+  assign(".order", character(0), envir = .km_cache)
+  invisible(TRUE)
+}
+km_cache_reset()
+
+km_cache_key <- function(time, event) {
+  nt <- suppressWarnings(as.numeric(time))
+  ne <- suppressWarnings(as.numeric(event))
+  paste(length(time), length(event), sum(is.na(nt)), sum(is.na(ne)),
+        sum(nt, na.rm = TRUE), sum(ne, na.rm = TRUE), sep = "|")
+}
+
 km_estimate <- function(time, event) {
+  key <- km_cache_key(time, event)
+  hit <- if (exists(key, envir = .km_cache, inherits = FALSE))
+    get(key, envir = .km_cache, inherits = FALSE) else NULL
+  if (!is.null(hit) && identical(hit$time, time) && identical(hit$event, event))
+    return(hit$km)
+  out <- km_estimate_uncached(time, event)
+  ord <- c(setdiff(get(".order", envir = .km_cache), key), key)
+  while (length(ord) > .km_cache_max) {
+    suppressWarnings(rm(list = ord[1], envir = .km_cache))
+    ord <- ord[-1]
+  }
+  assign(key, list(time = time, event = event, km = out), envir = .km_cache)
+  assign(".order", ord, envir = .km_cache)
+  out
+}
+
+km_estimate_uncached <- function(time, event) {
   keep <- !is.na(time) & !is.na(event) & time >= 0
   time <- as.numeric(time)[keep]; event <- as.integer(event)[keep]
   if (!length(time)) return(km_empty(0L, 0L, NA_real_))

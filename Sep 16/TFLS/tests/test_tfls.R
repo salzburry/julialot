@@ -436,6 +436,33 @@ ok(near(km_prob_at(N0, 6)$surv, 1) && is.na(km_median(N0)),
 ok(nrow(km_estimate(numeric(0), numeric(0))) == 0,
    "an empty curve is empty rather than an error")
 
+# The curve is computed once per cohort and handed to every cell that reads
+# it. What has to hold is that the cache changes nothing but the time it
+# takes: a hit is the estimator's own answer, and a key two cohorts happen to
+# share is not a hit.
+local({
+  km_cache_reset()
+  t9 <- c(1, 3, 3, 7, 9, 11); e9 <- c(1L, 1L, 0L, 1L, 0L, 1L)
+  ok(identical(km_estimate(t9, e9), km_estimate_uncached(t9, e9)) &&
+       identical(km_estimate(t9, e9), km_estimate_uncached(t9, e9)),
+     "a cached curve is the one the estimator returns, attributes and all")
+  # Same length, same missing counts, same totals, different cohorts - so
+  # the key matches and the inputs do not.
+  a_t <- c(1, 5); b_t <- c(2, 4); ev2 <- c(1L, 1L)
+  ok(identical(km_cache_key(a_t, ev2), km_cache_key(b_t, ev2)),
+     "...two different cohorts can land on one key, which is why the key alone decides nothing")
+  ka <- km_estimate(a_t, ev2); kb <- km_estimate(b_t, ev2)
+  ok(identical(ka$TIME, a_t) && identical(kb$TIME, b_t) &&
+       identical(kb, km_estimate_uncached(b_t, ev2)),
+     "...and the second cohort gets its own curve, because the hit is checked before it is used")
+  # Past the bound, so the entries this asks for again have been evicted.
+  for (i in seq_len(.km_cache_max + 4L))
+    km_estimate(as.numeric(seq_len(8L + i)), rep(1L, 8L + i))
+  ok(identical(km_estimate(t9, e9), km_estimate_uncached(t9, e9)),
+     "...and a cohort the cache has dropped is computed again, not lost")
+  km_cache_reset()
+})
+
 cat("\n-- the disclosure rule --\n")
 ok(tfls_floor(NA) == 25 && tfls_floor(10) == 25 && tfls_floor(3) == 25,
    "the floor is the protocol's 25 when nothing raises it")
@@ -1327,10 +1354,17 @@ local({
     f <- publish_outputs
     env <- new.env(parent = environment(publish_outputs))
     real <- base::file.rename
-    into_out <- normalizePath(d3$out, mustWork = FALSE)
+    # winslash, because dirname() returns "/" separators on every platform
+    # while normalizePath() returns "\\" on Windows unless it is told
+    # otherwise. Compared as they came, the two sides could never be equal
+    # there: the stub would fall through to the real rename, the injected
+    # failure would never happen, and every assertion below would pass
+    # against a publish that had not been made to fail.
+    into_out <- normalizePath(d3$out, winslash = "/", mustWork = FALSE)
     env$file.rename <- function(from, to) {
       moving_in <- length(to) > 1L &&
-        all(dirname(normalizePath(to, mustWork = FALSE)) == into_out) &&
+        all(dirname(normalizePath(to, winslash = "/", mustWork = FALSE)) ==
+              into_out) &&
         any(grepl("[.]stage", from))
       if (!moving_in) return(real(from, to))
       keep <- seq_along(from)[-length(from)]
@@ -1350,6 +1384,56 @@ local({
   ok(is.na(e) || grepl("previous run has been put back", e, fixed = TRUE) ||
        grepl("still published and unchanged", e, fixed = TRUE),
      "...and the message says so, rather than claiming nothing was touched when files had already gone")
+
+  # The two directories this step names are named from the RUN ID, which is
+  # warehouse data. Neither may leave the output directory, and the staging
+  # one may not be shared.
+  d5 <- setup()
+  ok(safe_segment(tfls_path_tag("s223926_1_")) &&
+       identical(tfls_path_tag("a/b"), "a_b") &&
+       safe_segment(tfls_path_tag("../../etc")) &&
+       safe_segment(tfls_path_tag("")) && safe_segment(tfls_path_tag(NA)),
+     paste0("a run id becomes a name a directory can take, whatever the ",
+            "warehouse had in it"))
+  st5 <- tfls_staging_dir(d5$out, "../../escape")
+  ok(identical(normalizePath(dirname(st5), winslash = "/", mustWork = FALSE),
+               normalizePath(d5$out, winslash = "/", mustWork = FALSE)),
+     paste0("...so the staging directory is inside the output directory, ",
+            "which is what the unlink that clears it makes matter"))
+  ok(!identical(tfls_staging_dir(d5$out, "r5"), tfls_staging_dir(d5$out, "r5")),
+     paste0("...and two fills of the SAME run id stage in different ",
+            "directories, because the first thing each does is clear its own"))
+  d5b <- setup()
+  pub5 <- function(id) publish_outputs(d5b$stage, d5b$out, id)
+  e5 <- tryCatch({ pub5("../../escape"); NA_character_ },
+                 error = function(x) conditionMessage(x))
+  ok(is.na(e5) &&
+       !length(list.files(dirname(dirname(d5b$out)), all.files = TRUE,
+                          pattern = "^[.]tfls_previous_")),
+     paste0("...and a run id that would have named a set-aside outside the ",
+            "output directory names one inside it instead"))
+
+  # A restore that cannot be made whole says so. Reporting a clean restore
+  # over a directory holding part of each run is the one outcome this file
+  # exists to prevent.
+  d6 <- setup()
+  e6 <- local({
+    f <- restore_set_aside
+    env <- new.env(parent = environment(restore_set_aside))
+    env$file.remove <- function(x) rep(FALSE, length(x))
+    environment(f) <- env
+    prev6 <- file.path(d6$out, ".tfls_previous_r6")
+    dir.create(prev6, showWarnings = FALSE, recursive = TRUE)
+    file.rename(file.path(d6$out, "tfls_t1.csv"),
+                file.path(prev6, "tfls_t1.csv"))
+    tryCatch({ f(prev6, d6$out, partial = TRUE); NA_character_ },
+             error = function(x) conditionMessage(x))
+  })
+  ok(!is.na(e6) && grepl("holds part of one run", e6, fixed = TRUE) &&
+       grepl("tfls_t2.csv", e6, fixed = TRUE),
+     paste0("a restore whose removals did not all succeed stops and names ",
+            "the files, rather than putting the previous run back beside ",
+            "them and calling it whole"))
 
   # Two publishers. Domino can start two Jobs into one artifacts directory,
   # and the second would move its files in between the first one's.
@@ -1386,8 +1470,10 @@ local({
     real <- base::file.rename
     n <- 0L
     env$file.rename <- function(from, to) {
-      into_out <- all(dirname(normalizePath(to, mustWork = FALSE)) ==
-                        normalizePath(d$out, mustWork = FALSE))
+      # winslash on both sides - see the stub above for what comparing them
+      # unnormalised costs on Windows.
+      into_out <- all(dirname(normalizePath(to, winslash = "/", mustWork = FALSE)) ==
+                        normalizePath(d$out, winslash = "/", mustWork = FALSE))
       moving_in <- into_out && any(grepl("[.]stage", from))
       setting_aside <- !into_out && any(grepl("tfls_previous", to))
       if ((when == "move_in" && moving_in) ||
@@ -1622,9 +1708,9 @@ ok(has(RUNNER, "is.na(sql_name(sch$value))") && has(RUNNER, "is.na(sql_name(cat_
      !has(RUNNER, "safe_table_name("),
    "the three names that are only ever warehouse names are gated on quoting, not on a pattern")
 
-# The same warehouse as the LOT build and the study run, by their names. An
-# environment that carried those two used to stop short of the fill, because
-# this wanted the same facts under names of its own.
+# The same warehouse as the study run, by its names. An environment that
+# carried that run used to stop short of the fill, because this wanted the
+# same facts under names of its own.
 local({
   env <- runner_env(tempdir())
   vars <- c("PROJECT_WORK_SCHEMA", "WORK_SCHEMA", "DOMINO_USER_NAME",
@@ -1642,6 +1728,22 @@ local({
   ok(is.list(r) && identical(r$schema, "wk1") && identical(r$catalog, "cat1") &&
        identical(r$cohort_table, "ndmm_NDMM_COHORT"),
      "the schema, catalog and cohort table the LOT build and the study run were given carry over to the fill unchanged")
+  # Everything filled here is an S_* table, so the schema is the one the
+  # STUDY run wrote into, resolved in that run's own order. Read the other
+  # way round, an environment that gave the LOT build one schema and the
+  # study another sent the fill to the LOT build's and reported the study's
+  # tables missing.
+  r <- with_names(WORK_SCHEMA = "study", PROJECT_WORK_SCHEMA = "lot",
+                  DOMINO_USER_NAME = "usr00000")
+  ok(is.list(r) && identical(r$schema, "study") &&
+       identical(unname(r$from["schema"]), "WORK_SCHEMA"),
+     paste0("...and where the two schema names differ, the fill reads the ",
+            "one the study run wrote into, which is the order that run ",
+            "resolves them in"))
+  r <- with_names(PROJECT_WORK_SCHEMA = "lot", DOMINO_USER_NAME = "usr00000")
+  ok(is.list(r) && identical(r$schema, "lot"),
+     paste0("...with PROJECT_WORK_SCHEMA still the answer where the study ",
+            "run had no override of its own"))
   r <- with_names(DOMINO_USER_NAME = "usr00000")
   ok(is.list(r) && identical(r$schema, "usr00000") && identical(r$catalog, "hive_metastore") &&
        identical(unname(r$from["schema"]), "DOMINO_USER_NAME"),
@@ -1651,7 +1753,8 @@ local({
   ok(is.list(r) && identical(r$catalog, "cat2") && identical(r$cohort_table, "other.sch.t"),
      "...while a TFLS_* name still wins where a fill has to look elsewhere")
   r <- with_names()
-  ok(is.character(r) && grepl("No PROJECT_WORK_SCHEMA", r, fixed = TRUE) && grepl("DOMINO_USER_NAME", r, fixed = TRUE),
+  ok(is.character(r) && grepl("No WORK_SCHEMA", r, fixed = TRUE) &&
+       grepl("PROJECT_WORK_SCHEMA", r, fixed = TRUE) && grepl("DOMINO_USER_NAME", r, fixed = TRUE),
      "with no schema from anywhere the fill stops, naming both places one could come from")
   r <- with_names(DOMINO_USER_NAME = "has`tick")
   ok(is.character(r) && grepl("DOMINO_USER_NAME 'has`tick' cannot be quoted", r, fixed = TRUE),
@@ -1670,7 +1773,7 @@ ok(has(RUNNER, "envir = read_errors") && has(RUNNER, "why <- read_error(reader,"
 ok(has(RUNNER, 'attr(f, "read_errors") <- read_errors') &&
      !has(RUNNER, "\nread_errors <- new.env"),
    "...and the record belongs to the reader, not the session, so one bind's failure is never reported against the next")
-ok(has(RUNNER, "stage <- file.path(out_dir,") &&
+ok(has(RUNNER, "stage <- tfls_staging_dir(out_dir, run_id)") &&
      regexpr("tfls_write_csv(render_csv(f),\n                   file.path(stage,", RUNNER, fixed = TRUE) <
        regexpr("publish_outputs(stage, out_dir, run_id)", RUNNER, fixed = TRUE),
    "the run is written to a staging directory BEFORE anything published is touched, so a render that raises leaves the previous run whole")

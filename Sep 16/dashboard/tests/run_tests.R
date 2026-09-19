@@ -519,6 +519,30 @@ cat("\nwithholding a cell is not the same as hiding it\n")
   sn2 <- summarise_num(data.frame(CCI = as.numeric(1:40)), "CCI", min_n = 25L)
   ok(identical(sn2$N, 40L) && !is.na(sn2$MEDIAN),
      "a stratum that clears the floor reports its count and its summary")
+  # The subtraction the other way round. A categorical column's missing
+  # values are a level and take the floor; a continuous column's were a
+  # count nobody applied it to, and the caption prints the stratum beside
+  # it.
+  sn3 <- summarise_num(data.frame(CCI = c(as.numeric(1:97), rep(NA, 3))),
+                       "CCI", min_n = 25L, n_population = 100L)
+  ok(is.na(sn3$N) && is.na(sn3$N_MISSING) && sn3$SUPPRESSED == 0L &&
+       !is.na(sn3$MEDIAN),
+     paste0("97 of 100 patients with a value gives the other three away ",
+            "against the caption, so the count is withheld and the summary ",
+            "it rests on is not"))
+  sn4 <- summarise_num(data.frame(CCI = c(as.numeric(1:60), rep(NA, 40))),
+                       "CCI", min_n = 25L, n_population = 100L)
+  ok(identical(sn4$N, 60L) && identical(sn4$N_MISSING, 40L),
+     "...while a missing group that clears the floor is published as it was")
+  sn5 <- summarise_num(data.frame(CCI = as.numeric(1:100)), "CCI",
+                       min_n = 25L, n_population = 100L)
+  ok(identical(sn5$N, 100L),
+     "...and a column nobody is missing discloses nobody, so nothing is withheld")
+  sn6 <- summarise_num(data.frame(CCI = c(as.numeric(1:97), rep(NA, 3))),
+                       "CCI", min_n = 25L)
+  ok(identical(sn6$N, 97L),
+     paste0("...and with no stratum given there is no subtraction to make, ",
+            "which is the reading a caller that knows no population gets"))
 
   # --- escaping ---
   # The ampersand FIRST, or every other substitution is undone by it: a value
@@ -691,6 +715,22 @@ cat("\nwithholding a cell is not the same as hiding it\n")
                      DASH_WORK_SCHEMA = "wk2", PROJECT_WORK_SCHEMA = "wk1")
     ok(identical(c3$catalog, "cat2") && identical(c3$work_schema, "wk2"),
        "...while a DASH_* name still wins where a dashboard has to look elsewhere")
+    # Almost everything drawn here is an S_* table, and the STUDY run wrote
+    # those. So the two schema names are read in that run's order, not the
+    # LOT build's: the other way round, an environment that gave the two
+    # builds different schemas pointed the dashboard at the one holding no
+    # S_* table at all.
+    c5 <- with_names(WORK_SCHEMA = "study", PROJECT_WORK_SCHEMA = "lot",
+                     DOMINO_USER_NAME = "usr00000")
+    ok(identical(c5$work_schema, "study"),
+       paste0("...and where the two schema names differ, it reads the one ",
+              "the study run wrote into, which is the order that run ",
+              "resolves them in"))
+    c6 <- with_names(DASH_WORK_SCHEMA = "dash", WORK_SCHEMA = "study",
+                     PROJECT_WORK_SCHEMA = "lot")
+    ok(identical(c6$work_schema, "dash"),
+       paste0("...and DASH_WORK_SCHEMA is still what a split environment ",
+              "says it with"))
     c4 <- with_names()
     ok(identical(c4$work_schema, ""),
        "with no schema from anywhere it stays unset, and the warehouse source refuses to build a name from it")
@@ -1124,6 +1164,19 @@ source(file.path(here, "jobs", "export_lib.R"))
      "the build and the export are handed the same settings, not two readings")
   ok(grepl("current_work_schema(con)", jb, fixed = TRUE),
      "...and an unset WORK_SCHEMA is resolved the way the build resolves it")
+  # The value the duplicate check reads has to be the value every path is
+  # built from. Trimmed only inside run_one(), "s1_" and "s1_ " passed as two
+  # scenarios and then wrote over each other.
+  ok(regexpr("grid$prefix <- trimws(", jb, fixed = TRUE) > 0 &&
+       regexpr("grid$prefix <- trimws(", jb, fixed = TRUE) <
+         regexpr("anyDuplicated(grid$prefix)", jb, fixed = TRUE),
+     paste0("the prefix is normalised before the duplicate check, so two ",
+            "rows that become one prefix are caught rather than published ",
+            "over each other"))
+  ok(grepl("safe_segment", jb, fixed = TRUE) &&
+       grepl("!nzchar(grid$prefix)", jb, fixed = TRUE),
+     paste0("...and a prefix that is blank, or not a name a directory can ",
+            "take, is refused before any run starts"))
 
   # --- an empty read, an absent table and a failed read are three things ---
   con <- structure(list(), class = "fake")

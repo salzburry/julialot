@@ -39,8 +39,10 @@ Rscript dashboard/jobs/build_scenarios.R       # from wherever the folders sit
 The Job connects exactly as the LOT build and the study run did - the study
 package's own `connect_db()`, on `DATABRICKS_DSN` and `DATABRICKS_PWD` - and
 reads where they wrote: `PROJECT_WORK_SCHEMA` (or the Domino user's own schema
-where it is unset) and `DATABRICKS_CATALOG`. `DASH_WORK_SCHEMA` and
-`DASH_CATALOG` override those only where a dashboard has to look elsewhere.
+where it is unset) and `DATABRICKS_CATALOG`. Where `WORK_SCHEMA` is also set,
+it wins — it is the study run's own override for where the `S_*` tables go,
+and this reads them. `DASH_WORK_SCHEMA` and `DASH_CATALOG` override those only
+where a dashboard has to look elsewhere.
 
 One row of `scenarios.csv` is one run. `prefix` is the `OBJECT_PREFIX` it
 writes under; every other upper-case column is set as an environment variable

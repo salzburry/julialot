@@ -290,17 +290,24 @@ check_study_code <- function(md, where) {
   invisible(TRUE)
 }
 
-# Where the run's tables are, in the warehouse: the same three names the LOT
-# build and the study run were given, resolved by the same rule.
+# Where the run's tables are, in the warehouse: the same three names the
+# study run was given, resolved by the same rule.
 #
-# The LOT engine writes under PROJECT_WORK_SCHEMA, or the Domino user's own
-# schema where that is unset; the study run reads and writes there by the
-# same rule (WORK_SCHEMA first, its own spelling); both read the catalog from
-# DATABRICKS_CATALOG and the cohort from INPUT_COHORT_TABLE. This used to want
-# the same facts under names of its own - PROJECT_WORK_SCHEMA only, with no
-# fallback, TFLS_CATALOG, TFLS_COHORT_TABLE - so an environment that had
-# carried the LOT build and the study run stopped short of the fill. The
-# TFLS_* names still win where set; the rest is what those two ran under.
+# Everything filled here is an S_* table, and the study run is what wrote
+# them. So the schema is resolved by ITS rule, name for name and in its
+# order - variables/R/config_223926.R, resolve_work_schema(): WORK_SCHEMA,
+# else PROJECT_WORK_SCHEMA, else the Domino user's own schema. The order is
+# not a preference. WORK_SCHEMA is the study run's own override, and where
+# an environment sets both to different schemas the study wrote under
+# WORK_SCHEMA; reading PROJECT_WORK_SCHEMA first looked in the schema the
+# LOT build wrote into and reported the study's tables missing.
+#
+# The catalog comes from DATABRICKS_CATALOG and the cohort from
+# INPUT_COHORT_TABLE, which is what that run read them from. This used to
+# want the same facts under names of its own - TFLS_CATALOG,
+# TFLS_COHORT_TABLE - so an environment that had carried the study run
+# stopped short of the fill. The TFLS_* names still win where set; the rest
+# is what that run ran under.
 #
 # Each is a warehouse name and nothing else - no path is built from it - so
 # each is gated on whether quoting can hold it rather than on a pattern, which
@@ -310,13 +317,13 @@ warehouse_names <- function() {
     for (nm in c(...)) { v <- env_chr(nm); if (nzchar(v)) return(list(name = nm, value = v)) }
     NULL
   }
-  sch <- first_set("PROJECT_WORK_SCHEMA", "WORK_SCHEMA", "DOMINO_USER_NAME",
+  sch <- first_set("WORK_SCHEMA", "PROJECT_WORK_SCHEMA", "DOMINO_USER_NAME",
                    "DOMINO_STARTING_USERNAME")
   if (is.null(sch))
-    stop("No PROJECT_WORK_SCHEMA. It is the schema the run wrote its tables ",
-         "into - the one the LOT build and the study run were given, or the ",
-         "Domino user's own schema (DOMINO_USER_NAME) where they were given ",
-         "none.", call. = FALSE)
+    stop("No WORK_SCHEMA. It is the schema the study run wrote its tables ",
+         "into - WORK_SCHEMA or PROJECT_WORK_SCHEMA as that run was given ",
+         "them, or the Domino user's own schema (DOMINO_USER_NAME) where it ",
+         "was given neither.", call. = FALSE)
   if (is.na(sql_name(sch$value)))
     stop(sch$name, " '", sch$value, "' cannot be quoted as a name.", call. = FALSE)
   cat_ <- first_set("TFLS_CATALOG", "DATABRICKS_CATALOG") %||%
@@ -350,7 +357,11 @@ write_outputs <- function(filled, sh, floor_n, run_id) {
   # output directory may be a mount point, a Domino artifacts path, or hold
   # files this tool does not own. It is the one step that is not atomic, and by
   # then every file has already been rendered and written successfully once.
-  stage <- file.path(out_dir, paste0(".tfls_staging_", run_id))
+  #
+  # The directory's name is tfls_staging_dir()'s, not this line's: it is
+  # unique per fill rather than per run id, and no run id can make it name
+  # somewhere outside out_dir. R/publish.R says why both matter.
+  stage <- tfls_staging_dir(out_dir, run_id)
   unlink(stage, recursive = TRUE)
   dir.create(stage, showWarnings = FALSE, recursive = TRUE)
   on.exit(unlink(stage, recursive = TRUE), add = TRUE)
