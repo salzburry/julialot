@@ -436,6 +436,33 @@ ok(near(km_prob_at(N0, 6)$surv, 1) && is.na(km_median(N0)),
 ok(nrow(km_estimate(numeric(0), numeric(0))) == 0,
    "an empty curve is empty rather than an error")
 
+# The curve is computed once per cohort and handed to every cell that reads
+# it. What has to hold is that the cache changes nothing but the time it
+# takes: a hit is the estimator's own answer, and a key two cohorts happen to
+# share is not a hit.
+local({
+  km_cache_reset()
+  t9 <- c(1, 3, 3, 7, 9, 11); e9 <- c(1L, 1L, 0L, 1L, 0L, 1L)
+  ok(identical(km_estimate(t9, e9), km_estimate_uncached(t9, e9)) &&
+       identical(km_estimate(t9, e9), km_estimate_uncached(t9, e9)),
+     "a cached curve is the one the estimator returns, attributes and all")
+  # Same length, same missing counts, same totals, different cohorts - so
+  # the key matches and the inputs do not.
+  a_t <- c(1, 5); b_t <- c(2, 4); ev2 <- c(1L, 1L)
+  ok(identical(km_cache_key(a_t, ev2), km_cache_key(b_t, ev2)),
+     "...two different cohorts can land on one key, which is why the key alone decides nothing")
+  ka <- km_estimate(a_t, ev2); kb <- km_estimate(b_t, ev2)
+  ok(identical(ka$TIME, a_t) && identical(kb$TIME, b_t) &&
+       identical(kb, km_estimate_uncached(b_t, ev2)),
+     "...and the second cohort gets its own curve, because the hit is checked before it is used")
+  # Past the bound, so the entries this asks for again have been evicted.
+  for (i in seq_len(.km_cache_max + 4L))
+    km_estimate(as.numeric(seq_len(8L + i)), rep(1L, 8L + i))
+  ok(identical(km_estimate(t9, e9), km_estimate_uncached(t9, e9)),
+     "...and a cohort the cache has dropped is computed again, not lost")
+  km_cache_reset()
+})
+
 cat("\n-- the disclosure rule --\n")
 ok(tfls_floor(NA) == 25 && tfls_floor(10) == 25 && tfls_floor(3) == 25,
    "the floor is the protocol's 25 when nothing raises it")
