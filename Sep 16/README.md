@@ -99,8 +99,11 @@ run built in between passed a check written to stop exactly those runs.
 What the tie cannot see is the code lists. They live under `CODELIST_DIR` on the
 platform rather than in this folder, so a rollup that moves a drug to another
 agent moves lines without moving either fingerprint. Each run records the code
-lists it read, in `LOT_CODELIST`; that is where such a change is caught, and it
-is the same limit `LOT_CODE_MD5` has always had.
+lists it read, with their digests, in `<prefix>LOT_CODELIST_METADATA` — so such
+a change is *visible* on the run afterwards, by comparing two runs' rows. It is
+not *checked*: nothing refuses a run for reading a code list no one approved,
+the way the epoch refuses one built before a rule change. That is the same limit
+`LOT_CODE_MD5` has always had.
 
 The two checks answer different questions. The epoch says WHEN a run executed
 and everybody gets it; `LOT_CODE_MD5` says WHAT executed, exactly, and is

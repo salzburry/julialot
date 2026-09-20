@@ -1484,6 +1484,41 @@ local({
             "still published, and leaves no set-aside for the next one to ",
             "misread"))
 
+  # The marker's REMOVAL, which is what makes a restore safe to interrupt.
+  # Left in place, it still says the move in had begun - so a restore that
+  # put half the previous run back and stopped left the next recovery
+  # reading those rescued files as this run's half-published output, whose
+  # first act is to delete them.
+  dA <- setup()
+  eA <- local({
+    f <- restore_set_aside
+    env <- new.env(parent = environment(restore_set_aside))
+    real <- base::unlink
+    env$unlink <- function(x, ...) {
+      if (any(grepl("set_aside_complete", x, fixed = TRUE))) return(0L)
+      real(x, ...)
+    }
+    environment(f) <- env
+    prevA <- file.path(dA$out, ".tfls_previous_rA")
+    dir.create(prevA, showWarnings = FALSE, recursive = TRUE)
+    for (i in 1:3)
+      file.rename(file.path(dA$out, sprintf("tfls_t%d.csv", i)),
+                  file.path(prevA, sprintf("tfls_t%d.csv", i)))
+    file.create(file.path(prevA, ".set_aside_complete"))
+    list(err = tryCatch({ f(prevA, dA$out, partial = FALSE); NA_character_ },
+                        error = function(x) conditionMessage(x)),
+         prev = prevA)
+  })
+  ok(!is.na(eA$err) && grepl("set-aside marker", eA$err, fixed = TRUE),
+     paste0("a set-aside marker that will not clear stops the restore, ",
+            "because while it is there a restore cut short is read as this ",
+            "run's output and deleted"))
+  ok(identical(sort(basename(list.files(eA$prev, pattern = "[.]csv$"))),
+               c("tfls_t1.csv", "tfls_t2.csv", "tfls_t3.csv")) &&
+       !length(list.files(dA$out, pattern = "^tfls_.*[.]csv$")),
+     paste0("...before anything was moved, so the previous run is whole ",
+            "where it was and the next attempt can try again"))
+
   # The discard renames the BASENAME. Substituted over the whole path, an
   # output directory sitting under a folder of that name had its parent
   # rewritten instead, and the rename could never land.

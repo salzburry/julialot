@@ -56,6 +56,30 @@ apply_floor <- function(d, spec, min_n, package_min_n = 25L) {
 # row of the table is - on a line-grain table that is a count of lines, which
 # is a legitimate figure - but the floor is about patients: three lines each
 # from ten patients is N = 30 and ten people.
+# COMPLEMENTARY SUPPRESSION, in one place because two copies of it diverged.
+#
+# Withholding one cell of a set whose total is published hides nothing: a
+# stratum of 100 with levels 97 and 3 gives the 3 away as the difference. So
+# where exactly one cell is withheld, the smallest of the others goes with it
+# - two unknowns cannot be recovered from one total.
+#
+# With only TWO cells that withholds both, and that is the answer, not an edge
+# case to guard against: one of two cells plus the total is the other cell.
+# The table said so and the chart beside it did not, because the chart asked
+# for more than one cell to remain rather than for any at all, so a chart of
+# 60 and 3 drew the 60 and published the 3 by subtraction. One function now,
+# called by both.
+#
+# `released` is the cells still shown; `value` is what each publishes, and the
+# smallest of those is the one whose loss costs the reader least.
+suppress_complement <- function(released, value) {
+  if (length(released) < 2L || sum(!released) != 1L) return(released)
+  open <- which(released)
+  if (!length(open)) return(released)
+  released[open[which.min(value[open])]] <- FALSE
+  released
+}
+
 tabulate_cat <- function(d, col, min_n = 25L, id_col = NULL) {
   if (is.null(d) || !nrow(d) || !col %in% names(d)) return(data.frame())
   v <- as.character(d[[col]])
@@ -70,17 +94,10 @@ tabulate_cat <- function(d, col, min_n = 25L, id_col = NULL) {
       length(unique(ids[v == l & !is.na(ids) & nzchar(ids)])), integer(1))
   } else out$N
   out$SUPPRESSED <- as.integer(pop < min_n)
-  # Secondary suppression. Withholding one level and publishing the rest hides
-  # nothing: the caption gives the stratum's size, so a stratum of 100 with
-  # levels 97 and 3 gives the 3 away as the difference.
-  #
-  # So where exactly one level is withheld, the smallest of the others goes
-  # with it - two unknowns cannot be recovered from one total. With only two
-  # levels that withholds the variable entirely, which is the right answer.
-  if (sum(out$SUPPRESSED) == 1L && nrow(out) > 1L) {
-    open <- which(out$SUPPRESSED == 0L)
-    out$SUPPRESSED[open[which.min(out$N[open])]] <- 1L
-  }
+  # ...and the level beside it, where withholding one would publish it
+  # anyway. suppress_complement() above is the rule and says why.
+  out$SUPPRESSED <- as.integer(
+    !suppress_complement(out$SUPPRESSED == 0L, out$N))
   out$N[out$SUPPRESSED == 1L] <- NA
   out$PCT[out$SUPPRESSED == 1L] <- NA
   out

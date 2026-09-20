@@ -209,14 +209,12 @@ count_bar_data <- function(d, spec, lab, floor_n, package_min_n = 25L) {
                   integer(1))
   n_row <- vapply(parts, length, integer(1))
   ok_bar <- vapply(n_pat, released, logical(1), fl)
-  # Secondary suppression, the rule tabulate_cat() applies to a table's
-  # levels. Withholding ONE bar and drawing the rest hides nothing: the
-  # caption gives the selection's size, so the withheld bar's height is the
-  # difference. So where exactly one is withheld the smallest of the others
-  # goes with it - two unknowns cannot be recovered from one total - and with
-  # only two bars that withholds the chart, which is the right answer.
-  if (sum(!ok_bar) == 1L && sum(ok_bar) > 1L)
-    ok_bar[which(ok_bar)[which.min(n_row[ok_bar])]] <- FALSE
+  # ...and the bar beside it, by the rule a table's levels take. This asked
+  # for MORE THAN ONE bar to remain rather than for any at all, so a chart of
+  # two categories - sixty released and three withheld - drew the sixty and
+  # gave the three away against the caption. The table never had that gap,
+  # which is why the rule is now one function they share.
+  ok_bar <- suppress_complement(ok_bar, n_row)
   if (!any(ok_bar))
     return(list(ok = FALSE, why = sprintf(
       "Every %s here rests on fewer than %s patients, so none is shown.",

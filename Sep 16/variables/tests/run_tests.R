@@ -1585,8 +1585,37 @@ cat("\nthe rules that hold the numbers up\n")
     # them, and a rollup moving a drug to another agent moves lines without
     # touching either fingerprint. That is recorded per run instead, in
     # LOT_CODELIST, and it is the same limit LOT_CODE_MD5 has always had.
+    # Hashed through readLines/writeLines, not off the raw bytes, because
+    # the raw bytes carry the checkout's line endings. Git hands this file
+    # over as CRLF on Windows (i/lf w/crlf), so a byte hash there differs
+    # from the same settings on a Linux checkout and the pin failed for a
+    # reason that has nothing to do with the rules - which is the one
+    # message this check must never send. code_fingerprint() beside it
+    # normalises the same way, which is why its half passed where this
+    # half did not.
+    norm_md5 <- function(path) {
+      tmp <- tempfile(); on.exit(unlink(tmp), add = TRUE)
+      writeLines(readLines(path, warn = FALSE), tmp)
+      unname(tools::md5sum(tmp))
+    }
     got <- c(engine = e$code_fingerprint(eng),
-             settings = unname(tools::md5sum(file.path(eng, "config.csv"))))
+             settings = norm_md5(file.path(eng, "config.csv")))
+    # The same settings with the other line endings are the same settings.
+    # Checked here rather than trusted, because the failure it prevents is
+    # one this machine cannot have: a Windows checkout gets this file as
+    # CRLF and a byte hash of it differs from the pin.
+    local({
+      crlf <- tempfile(); on.exit(unlink(crlf), add = TRUE)
+      con <- file(crlf, "wb")
+      writeBin(charToRaw(paste0(paste(
+        readLines(file.path(eng, "config.csv"), warn = FALSE),
+        collapse = "\r\n"), "\r\n")), con)
+      close(con)
+      ok(identical(norm_md5(crlf), unname(got["settings"])) &&
+           !identical(unname(tools::md5sum(crlf)), unname(got["settings"])),
+         paste0("the settings fingerprint is of the file's CONTENT, so a ",
+                "checkout that writes CRLF does not read as a rule change"))
+    })
     same <- identical(unname(got["engine"]), EPOCH_PIN$engine) &&
       identical(unname(got["settings"]), EPOCH_PIN$settings)
     ok(same,

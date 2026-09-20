@@ -469,8 +469,9 @@ empty table.
   built earlier are superseded — → stops. The shipped date is held to the
   engine beside this package: the suite fingerprints its R and its shipped
   settings and checks both against the pin the date belongs to, so neither
-  can move without the other. Code lists live off the folder and are caught
-  per run in `LOT_CODELIST` instead;
+  can move without the other. Code lists live off the folder: each run
+  records the ones it read in `<prefix>LOT_CODELIST_METADATA`, which makes a
+  change visible between two runs but refuses nothing;
 - a step that produces zero rows → stops;
 - attrition categories that stop partitioning their denominator → stops.
 
