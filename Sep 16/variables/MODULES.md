@@ -467,8 +467,10 @@ empty table.
   contract deviations, or finished on or before `LOT_RULES_EPOCH` — the date
   the LOT rules last changed, shipped as `2026-09-19`, after which numbers
   built earlier are superseded — → stops. The shipped date is held to the
-  engine beside this package by a fingerprint the suite checks, so the rules
-  cannot change without it;
+  engine beside this package: the suite fingerprints its R and its shipped
+  settings and checks both against the pin the date belongs to, so neither
+  can move without the other. Code lists live off the folder and are caught
+  per run in `LOT_CODELIST` instead;
 - a step that produces zero rows → stops;
 - attrition categories that stop partitioning their denominator → stops.
 

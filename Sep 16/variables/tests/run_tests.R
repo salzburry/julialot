@@ -1498,7 +1498,23 @@ cat("\nthe rules that hold the numbers up\n")
   # superseded a further set of numbers, so every run between the two passed a
   # check written to stop exactly that. These hold it to being read from the
   # configuration rather than compiled in, in both directions.
-  ok(identical(cfg0()$lot_rules_epoch, "2026-09-19"),
+  #
+  # ONE pin, three values, read by this assertion and by the engine tie at
+  # the end of this block. The date and the fingerprint were two literals in
+  # two places, and re-pinning one while leaving the other is the exact
+  # half-edit that put the epoch behind the engine twice. Here they move
+  # together or neither moves.
+  EPOCH_PIN <- list(
+    date = "2026-09-19",
+    # The engine's R, by its own code_fingerprint() - the same value it
+    # records as CODE_MD5, so the two can be compared by eye.
+    engine = "24e1fa2f4c8f80e48c2613cc6a9d8dad",
+    # ...and its shipped settings, which code_fingerprint() does not read.
+    # Most of what decides a line is pinned in the engine's own CONTRACT and
+    # so is inside the R, but the study window is not, and a build reading a
+    # different one is not the build this date was set for.
+    settings = "7fff3707b2b8735d2457e7617cfae9c6")
+  ok(identical(cfg0()$lot_rules_epoch, EPOCH_PIN$date),
      "the shipped epoch is the date the rules last changed")
   ok(is.na(lin_check(UPDATED_AT = "2026-09-20 00:00:00")),
      "a run finished after the shipped epoch is read")
@@ -1563,16 +1579,26 @@ cat("\nthe rules that hold the numbers up\n")
     eng <- file.path(top, "lot", "engine")
     e <- new.env(parent = globalenv())
     sys.source(file.path(eng, "R", "build_lot.R"), e)
-    # The engine the shipped LOT_RULES_EPOCH of 2026-09-19 was set for.
-    PINNED <- "24e1fa2f4c8f80e48c2613cc6a9d8dad"
-    got <- e$code_fingerprint(eng)
-    ok(identical(got, PINNED),
+    # What this covers, and what it cannot. The engine's R and the settings
+    # it ships are both here. Its CODE LISTS are not: they live under
+    # CODELIST_DIR on the platform, so no check in this folder can read
+    # them, and a rollup moving a drug to another agent moves lines without
+    # touching either fingerprint. That is recorded per run instead, in
+    # LOT_CODELIST, and it is the same limit LOT_CODE_MD5 has always had.
+    got <- c(engine = e$code_fingerprint(eng),
+             settings = unname(tools::md5sum(file.path(eng, "config.csv"))))
+    same <- identical(unname(got["engine"]), EPOCH_PIN$engine) &&
+      identical(unname(got["settings"]), EPOCH_PIN$settings)
+    ok(same,
        paste0("the shipped epoch is the date THIS engine's rules changed ",
-              "(engine ", substr(got, 1, 8), ", pinned ",
-              substr(PINNED, 1, 8), ")", if (identical(got, PINNED)) "" else
+              "(engine ", substr(got["engine"], 1, 8), "/",
+              substr(got["settings"], 1, 8), ", pinned ",
+              substr(EPOCH_PIN$engine, 1, 8), "/",
+              substr(EPOCH_PIN$settings, 1, 8), ")", if (same) "" else
                 paste0(" - the rules have changed since the epoch was set: ",
-                       "move LOT_RULES_EPOCH to the date of that change and ",
-                       "re-pin the fingerprint in this block")))
+                       "move EPOCH_PIN$date to the date of that change, ",
+                       "re-pin both fingerprints beside it, and let the ",
+                       "shipped LOT_RULES_EPOCH follow")))
   })
 
   # 4. A nested cohort takes only patients IN its parent.
