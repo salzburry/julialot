@@ -468,10 +468,13 @@ empty table.
   the LOT rules last changed, shipped as `2026-09-19`, after which numbers
   built earlier are superseded — → stops. The shipped date is held to the
   engine beside this package: the suite fingerprints its R and its shipped
-  settings and checks both against the pin the date belongs to, so neither
-  can move without the other. Code lists live off the folder: each run
-  records the ones it read in `<prefix>LOT_CODELIST_METADATA`, which makes a
-  change visible between two runs but refuses nothing;
+  settings and checks both against the pin the date sits with, so a rule
+  change cannot pass unnoticed. The date and the two fingerprints are
+  co-located and reviewed together rather than locked to each other — the
+  check catches an unacknowledged change, and tells whoever acknowledges it
+  to move the date. Code lists live off the folder: each run records the
+  ones it read in `<prefix>LOT_CODELIST_METADATA`, which makes a change
+  visible between two runs but refuses nothing;
 - a step that produces zero rows → stops;
 - attrition categories that stop partitioning their denominator → stops.
 
