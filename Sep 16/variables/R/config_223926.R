@@ -86,8 +86,8 @@ CONTRACT <- list(
 #
 # `catalog.schema` is accepted when the catalog is the run's own, because that
 # is how a schema reads on the warehouse. wrk() adds the catalog itself, so
-# `hive_metastore.osk02156` handed over whole would become
-# hive_metastore.hive_metastore.osk02156 - a name with too many parts.
+# `hive_metastore.usr00000` handed over whole would become
+# hive_metastore.hive_metastore.usr00000 - a name with too many parts.
 resolve_work_schema <- function(catalog) {
   v <- ""
   for (nm in c("WORK_SCHEMA", "PROJECT_WORK_SCHEMA", "DOMINO_USER_NAME",

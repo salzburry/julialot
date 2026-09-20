@@ -34,7 +34,7 @@ own.
 The schema a run writes into, and reads the cohort and LOT tables from,
 resolves as the cohort and LOT builds resolve theirs: `WORK_SCHEMA`, then
 `PROJECT_WORK_SCHEMA`, then `DOMINO_USER_NAME`, else the session's current
-schema. Give the schema alone - `osk02156`, not `hive_metastore.osk02156` -
+schema. Give the schema alone - `usr00000`, not `hive_metastore.usr00000` -
 though the second form is accepted when the catalog is `DATABRICKS_CATALOG`.
 
 A partial run - one module, one cohort - writes only that, and leaves every

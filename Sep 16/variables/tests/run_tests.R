@@ -603,12 +603,12 @@ cat("\nthe cohort table, as SQL names it\n")
   # Bare, the name resolved against the session's current schema: the working
   # schema on a cluster session, `default` over the ODBC warehouse - and every
   # scenario stopped at DESCRIBE with ndmm_NDMM_COHORT "cannot be found".
-  set_study_config(local({ c1 <- cfg0(); c1$work_schema <- "osk02156"; c1 }))
-  ok(identical(input_cohort_tbl(), "hive_metastore.osk02156.ndmm_NDMM_COHORT"),
+  set_study_config(local({ c1 <- cfg0(); c1$work_schema <- "usr00000"; c1 }))
+  ok(identical(input_cohort_tbl(), "hive_metastore.usr00000.ndmm_NDMM_COHORT"),
      "the input cohort table is read under the run's catalog and schema, like every other table")
   ok(identical(cfg0()$input_cohort_table, "ndmm_NDMM_COHORT"),
      "...while the setting itself stays the bare name the LOT status row records, for the lineage comparison")
-  set_study_config(local({ c1 <- cfg0(c(INPUT_COHORT_TABLE = "other_cat.their_schema.NDMM_COHORT")); c1$work_schema <- "osk02156"; c1 }))
+  set_study_config(local({ c1 <- cfg0(c(INPUT_COHORT_TABLE = "other_cat.their_schema.NDMM_COHORT")); c1$work_schema <- "usr00000"; c1 }))
   ok(identical(input_cohort_tbl(), "other_cat.their_schema.NDMM_COHORT"),
      "...and a name given already qualified is used as it is")
   set_study_config(cfg0())
@@ -764,18 +764,18 @@ cat("\nthe connection layer\n")
   # and this package did not read it; and a schema given with its catalog,
   # as it reads on the warehouse, was prefixed with the catalog again.
   ok(identical(cfg0()$work_schema, "") &&
-       identical(cfg0(c(WORK_SCHEMA = "osk02156"))$work_schema, "osk02156") &&
+       identical(cfg0(c(WORK_SCHEMA = "usr00000"))$work_schema, "usr00000") &&
        identical(cfg0(c(PROJECT_WORK_SCHEMA = "proj"))$work_schema, "proj") &&
        identical(cfg0(c(DOMINO_USER_NAME = "usr00000"))$work_schema, "usr00000") &&
        identical(cfg0(c(WORK_SCHEMA = "w", PROJECT_WORK_SCHEMA = "p", DOMINO_USER_NAME = "u"))$work_schema, "w"),
      "the work schema resolves as the cohort and LOT builds resolve theirs: WORK_SCHEMA, then PROJECT_WORK_SCHEMA, then the Domino user's own schema, else the session's")
-  ok(identical(cfg0(c(WORK_SCHEMA = "hive_metastore.osk02156"))$work_schema, "osk02156") &&
-       identical(with_env(c(base_env, WORK_SCHEMA = "hive_metastore.osk02156"),
+  ok(identical(cfg0(c(WORK_SCHEMA = "hive_metastore.usr00000"))$work_schema, "usr00000") &&
+       identical(with_env(c(base_env, WORK_SCHEMA = "hive_metastore.usr00000"),
                           { set_study_config(cfg_defaults()); wrk("S_SPINE") }),
-                 "hive_metastore.osk02156.s223926_S_SPINE"),
-     "...a schema given with its catalog is read as the schema - handed over whole it became hive_metastore.hive_metastore.osk02156, a name with too many parts")
+                 "hive_metastore.usr00000.s223926_S_SPINE"),
+     "...a schema given with its catalog is read as the schema - handed over whole it became hive_metastore.hive_metastore.usr00000, a name with too many parts")
   set_study_config(cfg0())
-  ok(grepl("DATABRICKS_CATALOG", errs(cfg0(c(WORK_SCHEMA = "other.osk02156")))) &&
+  ok(grepl("DATABRICKS_CATALOG", errs(cfg0(c(WORK_SCHEMA = "other.usr00000")))) &&
        grepl("not a schema name", errs(cfg0(c(PROJECT_WORK_SCHEMA = "a.b.c")))),
      "...while a catalog that is not the run's, or a name that is not a schema, stops at config time")
 
