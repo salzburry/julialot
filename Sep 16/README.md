@@ -89,11 +89,18 @@ Whichever floor applied is recorded on the run, in
 `S_RUN_METADATA.LOT_RULES_EPOCH`.
 
 The shipped date is held to the engine beside it. The study suite fingerprints
-`lot/engine` and compares it to the fingerprint the shipped epoch was set for,
-so a change to the rules fails that check until the epoch is moved to the date
-of the change and the fingerprint re-pinned. The floor went stale twice before
+`lot/engine` — its R and the settings it ships — and compares both to the
+fingerprints the shipped epoch was set for, all three pinned as one value, so a
+change to the rules fails that check until the date is moved to the date of the
+change and the fingerprints re-pinned with it. The floor went stale twice before
 that tie existed: each time, the engine changed and the date did not, and every
 run built in between passed a check written to stop exactly those runs.
+
+What the tie cannot see is the code lists. They live under `CODELIST_DIR` on the
+platform rather than in this folder, so a rollup that moves a drug to another
+agent moves lines without moving either fingerprint. Each run records the code
+lists it read, in `LOT_CODELIST`; that is where such a change is caught, and it
+is the same limit `LOT_CODE_MD5` has always had.
 
 The two checks answer different questions. The epoch says WHEN a run executed
 and everybody gets it; `LOT_CODE_MD5` says WHAT executed, exactly, and is
