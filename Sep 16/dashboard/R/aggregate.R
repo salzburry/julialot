@@ -72,11 +72,23 @@ apply_floor <- function(d, spec, min_n, package_min_n = 25L) {
 #
 # `released` is the cells still shown; `value` is what each publishes, and the
 # smallest of those is the one whose loss costs the reader least.
+#
+# Both arguments are read the safe way round, because this is the function
+# that decides what is published. A cell whose released flag is unknown is
+# not released - that is the only reading that cannot leak, and unstated it
+# raised instead, which is at least loud. A cell whose VALUE is unknown is
+# the dangerous one: which.min() over nothing returns nothing, the
+# assignment did nothing, and the set came back with one cell withheld and
+# the rest published - the exact disclosure this exists to refuse, silently.
+# Where no complement can be chosen, every remaining cell is withheld.
 suppress_complement <- function(released, value) {
+  released <- !is.na(released) & released
   if (length(released) < 2L || sum(!released) != 1L) return(released)
   open <- which(released)
   if (!length(open)) return(released)
-  released[open[which.min(value[open])]] <- FALSE
+  pick <- which.min(value[open])
+  if (!length(pick)) { released[open] <- FALSE; return(released) }
+  released[open[pick]] <- FALSE
   released
 }
 

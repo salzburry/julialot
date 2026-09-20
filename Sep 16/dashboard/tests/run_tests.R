@@ -623,6 +623,20 @@ cat("\nwithholding a cell is not the same as hiding it\n")
                  c(TRUE, FALSE, FALSE)),
      paste0("one withheld cell takes the smallest of the others with it, ",
             "whatever is counting - and two withheld already need no third"))
+  # Both arguments read the safe way round. Neither caller can hand this an
+  # NA today; it is the function that decides what is published, so what it
+  # does with one is stated rather than left to them.
+  ok(identical(suppress_complement(c(TRUE, TRUE, NA), c(60, 40, 3)),
+               c(TRUE, FALSE, FALSE)),
+     paste0("a cell whose released flag is unknown is not released, and ",
+            "counts as the one withheld that takes the next-smallest"))
+  ok(identical(suppress_complement(c(TRUE, NA, FALSE), c(60, 40, 3)),
+               c(TRUE, FALSE, FALSE)),
+     "...so beside a cell already under the floor it is the second, needing no third")
+  ok(identical(suppress_complement(c(TRUE, TRUE, FALSE), c(NA, NA, 3)),
+               c(FALSE, FALSE, FALSE)),
+     paste0("...and where no complement can be chosen every remaining cell ",
+            "goes, rather than one withheld cell being published by the rest"))
 
   # --- escaping ---
   # The ampersand FIRST, or every other substitution is undone by it: a value
