@@ -1584,7 +1584,8 @@ cat("\nthe rules that hold the numbers up\n")
     # CODELIST_DIR on the platform, so no check in this folder can read
     # them, and a rollup moving a drug to another agent moves lines without
     # touching either fingerprint. That is recorded per run instead, in
-    # LOT_CODELIST, and it is the same limit LOT_CODE_MD5 has always had.
+    # LOT_CODELIST_METADATA, which makes such a change visible between two
+    # runs and refuses nothing - the same limit LOT_CODE_MD5 has always had.
     # Hashed through readLines/writeLines, not off the raw bytes, because
     # the raw bytes carry the checkout's line endings. Git hands this file
     # over as CRLF on Windows (i/lf w/crlf), so a byte hash there differs
