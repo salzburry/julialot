@@ -317,6 +317,11 @@ warehouse_names <- function() {
     for (nm in c(...)) { v <- env_chr(nm); if (nzchar(v)) return(list(name = nm, value = v)) }
     NULL
   }
+  # The catalog first, because the schema is read against it.
+  cat_ <- first_set("TFLS_CATALOG", "DATABRICKS_CATALOG") %||%
+    list(name = "TFLS_CATALOG", value = "hive_metastore")
+  if (is.na(sql_name(cat_$value)))
+    stop(cat_$name, " '", cat_$value, "' cannot be quoted as a name.", call. = FALSE)
   sch <- first_set("WORK_SCHEMA", "PROJECT_WORK_SCHEMA", "DOMINO_USER_NAME",
                    "DOMINO_STARTING_USERNAME")
   if (is.null(sch))
@@ -324,12 +329,22 @@ warehouse_names <- function() {
          "into - WORK_SCHEMA or PROJECT_WORK_SCHEMA as that run was given ",
          "them, or the Domino user's own schema (DOMINO_USER_NAME) where it ",
          "was given neither.", call. = FALSE)
+  # `catalog.schema` is accepted, and read the way the study run reads it -
+  # variables/R/config_223926.R, resolve_work_schema(). That is how a schema
+  # is written on the warehouse, so a setting that carried the study run
+  # reaches here in that form; taken whole it became a schema of its own and
+  # every table was looked for under catalog.`catalog.schema`, so a run
+  # written under a setting the producer supports was reported missing.
+  parts <- strsplit(sch$value, ".", fixed = TRUE)[[1]]
+  if (length(parts) == 2L) {
+    if (!identical(parts[1], cat_$value))
+      stop(sch$name, " '", sch$value, "' names catalog '", parts[1],
+           "' but ", cat_$name, " is '", cat_$value, "'. Give the schema ",
+           "alone, or set the catalog to match.", call. = FALSE)
+    sch$value <- parts[2]
+  }
   if (is.na(sql_name(sch$value)))
     stop(sch$name, " '", sch$value, "' cannot be quoted as a name.", call. = FALSE)
-  cat_ <- first_set("TFLS_CATALOG", "DATABRICKS_CATALOG") %||%
-    list(name = "TFLS_CATALOG", value = "hive_metastore")
-  if (is.na(sql_name(cat_$value)))
-    stop(cat_$name, " '", cat_$value, "' cannot be quoted as a name.", call. = FALSE)
   coh <- first_set("TFLS_COHORT_TABLE", "INPUT_COHORT_TABLE") %||%
     list(name = "TFLS_COHORT_TABLE", value = "")
   if (nzchar(coh$value) && is.na(sql_qualified_name(coh$value)))

@@ -540,9 +540,63 @@ cat("\nwithholding a cell is not the same as hiding it\n")
      "...and a column nobody is missing discloses nobody, so nothing is withheld")
   sn6 <- summarise_num(data.frame(CCI = c(as.numeric(1:97), rep(NA, 3))),
                        "CCI", min_n = 25L)
-  ok(identical(sn6$N, 97L),
-     paste0("...and with no stratum given there is no subtraction to make, ",
-            "which is the reading a caller that knows no population gets"))
+  ok(is.na(sn6$N),
+     paste0("...and with no stratum given the row scale still subtracts: ",
+            "three rows without a value are three rows, whoever they belong to"))
+
+  # Rows are not patients. A line-grain table is several rows per patient,
+  # and both totals are in the caption, so the floor and the subtraction are
+  # each read on the scale they belong to.
+  many <- data.frame(PATID = rep(sprintf("p%02d", 1:9), each = 5),
+                     CCI = as.numeric(1:45), stringsAsFactors = FALSE)
+  ok(summarise_num(many, "CCI", min_n = 25L, id_col = "PATID")$SUPPRESSED == 1L,
+     paste0("forty-five lines belonging to nine patients do not clear a ",
+            "floor of twenty-five, because the floor is on patients"))
+  ok(summarise_num(many, "CCI", min_n = 25L)$SUPPRESSED == 0L,
+     "...while with no identifier a row is a patient, which is the older reading")
+  # Thirty patients, three of whom have no value: the count is withheld on
+  # the patient scale even though the rows clear the floor both ways.
+  pat30 <- data.frame(
+    PATID = rep(sprintf("q%02d", 1:30), each = 2),
+    CCI = c(rep(NA_real_, 6), as.numeric(1:54)), stringsAsFactors = FALSE)
+  s30 <- summarise_num(pat30, "CCI", min_n = 5L, n_population = 30L,
+                       id_col = "PATID")
+  ok(s30$SUPPRESSED == 0L && is.na(s30$N) && !is.na(s30$MEDIAN),
+     paste0("three patients of thirty with no value are withheld against the ",
+            "caption's patient total, and the summary over the other ",
+            "twenty-seven stays"))
+
+  # --- two counts of one selection, published side by side -----------------
+  ok(grepl("(n = ", curve_title("TTNT", 120L, 120L, 25L), fixed = TRUE),
+     "a curve over the whole selection prints its n, since nobody was excluded")
+  ok(grepl("(n = ", curve_title("TTNT", 90L, 150L, 25L), fixed = TRUE),
+     "...and so does one whose excluded group clears the floor")
+  ok(grepl("withheld", curve_title("TTNT", 147L, 150L, 25L), fixed = TRUE),
+     paste0("...while three patients excluded read straight off the title ",
+            "against the table's caption, so the title's n goes"))
+  ok(grepl("withheld", curve_title("TTNT", NA, 150L, 25L), fixed = TRUE),
+     "...and a count this cannot place is withheld rather than printed")
+  ok(grepl("withheld", curve_title("TTNT", 147L, 150L, 5L, package_min_n = 25L),
+           fixed = TRUE),
+     "...on the package's floor, which a viewer cannot lower")
+
+  # --- a bar chart's own secondary suppression -----------------------------
+  bar_d <- function(sizes) {
+    lv <- rep(names(sizes), unname(sizes))
+    data.frame(PATID = sprintf("p%04d", seq_along(lv)), G = lv,
+               stringsAsFactors = FALSE)
+  }
+  bspec <- list(id = "PATID", keys = "G", grain = "patient")
+  b1 <- count_bar_data(bar_d(c(a = 60, b = 40, c = 3)), bspec, "G", 25L)
+  ok(isTRUE(b1$ok) && length(b1$labels) == 1L && identical(b1$labels, "a"),
+     paste0("one bar under the floor takes the smallest of the others with ",
+            "it, or its height is the caption's total less the rest"))
+  b2 <- count_bar_data(bar_d(c(a = 60, b = 40)), bspec, "G", 25L)
+  ok(isTRUE(b2$ok) && length(b2$labels) == 2L,
+     "where nothing was withheld in the first place, nothing else is")
+  b3 <- count_bar_data(bar_d(c(a = 60, b = 3, c = 4)), bspec, "G", 25L)
+  ok(isTRUE(b3$ok) && length(b3$labels) == 1L,
+     "two bars already below the floor need no third")
 
   # --- escaping ---
   # The ampersand FIRST, or every other substitution is undone by it: a value
@@ -731,6 +785,23 @@ cat("\nwithholding a cell is not the same as hiding it\n")
     ok(identical(c6$work_schema, "dash"),
        paste0("...and DASH_WORK_SCHEMA is still what a split environment ",
               "says it with"))
+    # catalog.schema, which is how a schema reads on the warehouse and what
+    # the study run accepts. Taken whole it became a schema of its own.
+    c7 <- with_names(DATABRICKS_CATALOG = "hive_metastore",
+                     WORK_SCHEMA = "hive_metastore.usr00000")
+    ok(identical(c7$work_schema, "usr00000") &&
+         identical(c7$catalog, "hive_metastore"),
+       paste0("a schema written as catalog.schema is read as the study run ",
+              "reads it, with the matching catalog stripped"))
+    c8 <- tryCatch(with_names(DATABRICKS_CATALOG = "hive_metastore",
+                              WORK_SCHEMA = "other.usr00000"),
+                   error = function(e) conditionMessage(e))
+    ok(is.character(c8) && grepl("names catalog 'other'", c8, fixed = TRUE),
+       "...and one naming a different catalog stops rather than being quoted whole")
+    # Trimmed, as every other stage trims. A Domino form keeps the spaces.
+    c9 <- with_names(DATABRICKS_CATALOG = "cat1 ", PROJECT_WORK_SCHEMA = " wk1 ")
+    ok(identical(c9$catalog, "cat1") && identical(c9$work_schema, "wk1"),
+       "a setting typed with spaces around it names the same schema as one without")
     c4 <- with_names()
     ok(identical(c4$work_schema, ""),
        "with no schema from anywhere it stays unset, and the warehouse source refuses to build a name from it")
@@ -1169,7 +1240,7 @@ source(file.path(here, "jobs", "export_lib.R"))
   # scenarios and then wrote over each other.
   ok(regexpr("grid$prefix <- trimws(", jb, fixed = TRUE) > 0 &&
        regexpr("grid$prefix <- trimws(", jb, fixed = TRUE) <
-         regexpr("anyDuplicated(grid$prefix)", jb, fixed = TRUE),
+         regexpr("anyDuplicated(toupper(grid$prefix))", jb, fixed = TRUE),
      paste0("the prefix is normalised before the duplicate check, so two ",
             "rows that become one prefix are caught rather than published ",
             "over each other"))
@@ -1177,6 +1248,22 @@ source(file.path(here, "jobs", "export_lib.R"))
        grepl("!nzchar(grid$prefix)", jb, fixed = TRUE),
      paste0("...and a prefix that is blank, or not a name a directory can ",
             "take, is refused before any run starts"))
+  # safe_segment() is the reader's and uses `%||%`, which base R has only
+  # from 4.4; the package supplies it for older ones. Called before that
+  # source the job did not merely skip the gate, it could not start.
+  ok(regexpr('source(file.path(pkg_dir, "R", f))', jb, fixed = TRUE) <
+       regexpr("vapply(grid$prefix, safe_segment", jb, fixed = TRUE),
+     paste0("the prefix gate runs after the package is sourced, because the ",
+            "test it calls needs an operator older R does not have"))
+  ok(regexpr("vapply(grid$prefix, safe_segment", jb, fixed = TRUE) <
+       regexpr("dir.create(out_dir", jb, fixed = TRUE),
+     "...and still before anything is written")
+  ok(grepl("anyDuplicated(toupper(grid$prefix))", jb, fixed = TRUE),
+     paste0("duplicate prefixes are compared without case, because the ",
+            "warehouse does not tell two spellings of one name apart"))
+  ok(grepl('gsub("~+~", " "', jb, fixed = TRUE),
+     paste0("...and the job decodes a space in its own path, as the other ",
+            "entry points do"))
 
   # --- an empty read, an absent table and a failed read are three things ---
   con <- structure(list(), class = "fake")

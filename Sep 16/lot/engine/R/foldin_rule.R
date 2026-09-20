@@ -149,6 +149,12 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
   between_sel <- if (is.null(n_start)) "" else
     ",\n             max(CASE WHEN o.PATID IS NOT NULL THEN 1 ELSE 0 END) AS N_BETWEEN"
   between_pred <- if (is.null(n_start)) "" else " AND N_BETWEEN = 0"
+  # The same test, asked of the EPISODE rather than of the course - see
+  # foldin_episodes below for why both askings are needed and what each one
+  # decides. Emitted only where there is a line being built, because that is
+  # the only place the column exists.
+  epi_between <- if (is.null(n_start)) "" else "
+       AND coalesce(xt.N_BETWEEN, 0) = 0"
   between_join <- if (is.null(n_start)) "" else paste0("
       LEFT JOIN (
         SELECT ms.PATID, ms.MAP_START_DT AS AT_DT
@@ -337,22 +343,40 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
     -- joined it.
     --
     -- Same shape as melp_taken in R/melp_rule.R, for the same reason.
-    -- ...minus the episodes of that course that are past a transplant which
-    -- OPENED A LINE. The verdict is the course's - one course, one answer -
-    -- but a transplant is a standalone boundary and not an agent: an episode
-    -- across one is not returning to the line it left, so it does not join
-    -- it, and belongs to the line the transplant opened instead
-    -- (LOT_RULES.md 4.8). N_TX is that test, asked of the episode, and it is
-    -- already computed one episode at a time above; only the count is the
-    -- course's question.
+    -- ...minus the episodes of that course that belong to a LATER LINE.
     --
-    -- Without this the course carried the episode past the transplant into
-    -- every reader: the transplant-opened line held it in its base set,
-    -- named it in its regimen and ran its span out to the drug's cover - a
-    -- single-day ALLO line reporting a regimen, which 4.6 refuses it.
+    -- Two questions, and only one of them is the course's. One course, one
+    -- answer is the COUNT's rule: how many agents advanced the line between
+    -- the two doses is asked once, of the course. Whether a given episode is
+    -- in the line that folded it is asked of the EPISODE, and 4.8 says so in
+    -- as many words - the ownership test is separate from the count, and a
+    -- return with another line-defining agent before it belongs to a later
+    -- line. Both tests are already measured one episode at a time above and
+    -- were then thrown away, because the course's verdict expanded to every
+    -- episode in it.
+    --
+    --   N_TX        a transplant that OPENED A LINE sits between the two
+    --               doses. A drug returning across a transplant is not
+    --               returning to the line it left, whatever the count says,
+    --               and belongs to the line the transplant opened.
+    --
+    --   N_BETWEEN   something else line-defining arrived first: a genuinely
+    --               new agent, or a transplant past this line's own
+    --               induction window. This is the one that catches the line
+    --               being built RIGHT NOW, because at its build the next
+    --               line does not exist yet - lot_long holds 1..N-1, so
+    --               N_TX cannot see a transplant that has not opened a line
+    --               yet and N_BETWEEN reads the claims instead.
+    --
+    -- Without both, the course carried an episode belonging to a later line
+    -- into every reader of this one: its base set, its regimen, and - the
+    -- one no date bound caught - its HOLD. A line whose own cover had run
+    -- out was held open to the cover of an episode dosed 50 days after the
+    -- transplant that ended it, so its end date and its end reason were
+    -- decided by treatment it does not contain.
     --
     -- An episode with no previous dose is not in foldin_counted at all, and
-    -- nothing precedes it that a transplant could sit after, so it stays.
+    -- nothing precedes it that either test could read, so it stays.
     foldin_episodes AS (
       SELECT c.PATID, c.MAP_MED_TYPE AS MED_ABBR, c.MAP_START_DT
       FROM foldin_course c
@@ -363,7 +387,7 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
         ON xt.PATID = c.PATID AND xt.AGENT = c.AGENT
        AND xt.COURSE_START_DT = c.COURSE_START_DT
        AND xt.MAP_START_DT = c.MAP_START_DT
-      WHERE coalesce(xt.N_TX, 0) = 0
+      WHERE coalesce(xt.N_TX, 0) = 0{epi_between}
     ),")
 }
 

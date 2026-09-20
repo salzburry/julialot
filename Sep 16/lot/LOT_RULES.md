@@ -383,8 +383,13 @@ which is the study team's "drugs that come back in 2L" question in one report.
 The regimen names the drug **actually given** — a permissible substitute enters
 under its own abbreviation, not the one it stands in for.
 
-A folded episode past a transplant that broke the line does not join: it belongs
-to the line that transplant opened. A held melphalan course still joins neither
+A folded episode past a boundary does not join the line it would have folded
+into, and it does not hold that line's run-out open either. The boundary is a
+transplant that broke the line, or a line-defining agent arriving first, and
+the episode is the business of the line it actually falls in — which for a
+single-day ALLO (§4.6) is the line after it, since that line takes no regimen
+at all. Both tests are asked of the **episode**; only the agent count is asked
+once of the course. A held melphalan course still joins neither
 the span's regimen nor its count (§4.7) — that rule was not asked the same
 question.
 

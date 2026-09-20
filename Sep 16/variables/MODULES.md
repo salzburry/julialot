@@ -464,9 +464,11 @@ empty table.
   stops, because every recurrence would then be counted and no patient would
   ever leave the denominator;
 - a LOT run that is not `complete`, was built over a different cohort, carries
-  contract deviations, or finished before `LOT_RULES_EPOCH` — the date the LOT
-  rules last changed, shipped as `2026-09-17`, after which numbers built
-  earlier are superseded — → stops;
+  contract deviations, or finished on or before `LOT_RULES_EPOCH` — the date
+  the LOT rules last changed, shipped as `2026-09-19`, after which numbers
+  built earlier are superseded — → stops. The shipped date is held to the
+  engine beside this package by a fingerprint the suite checks, so the rules
+  cannot change without it;
 - a step that produces zero rows → stops;
 - attrition categories that stop partitioning their denominator → stops.
 

@@ -90,6 +90,11 @@ PART of that line, not a reason to start the next one.
       carry that episode across. The transplant-opened line keeps the single
       day and the empty regimen 4.6 gives it, and the episode opens its own
       line
+  F40/F41 the same course continues past a
+      boundary the line being built cannot
+      see yet - an ALLO, or a new agent     -> the episode belongs to the
+      later line, so it does not hold the previous line's run-out open. The
+      line ends where its own cover ends, on its own reason
 """
 import os, sys, tempfile, subprocess
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -498,6 +503,36 @@ PATS = [
     dict(P('F39n', L1 + [('DARA', 'MAB', 200, 600),
                          ('BORT', 'PI', 400, 430)]),
          sct_ac=[('ALLO', IX + 350)]),
+    # F40/F41: the HOLD, which no date bound reaches.
+    #
+    # Same course across a boundary as F39, but line 2's own cover runs out
+    # BEFORE the boundary, so what the line ends on is the question. DARA
+    # opens line 2 on day 200 and stops covering on day 280; BORT returns on
+    # day 300 and folds, carrying line 2's run-out to day 330; and the same
+    # course is dosed again on day 400.
+    #
+    # F40 puts an ALLO on day 350 in between, F41 a new agent on day 360.
+    # Neither has opened a line at the moment line 2 is built - lot_long
+    # holds lines 1 to N-1 - so the transplant test reads nothing and only
+    # the ownership test, which reads the claims, can see them. Asked of the
+    # course it said yes, because the day-300 episode owns nothing of the
+    # sort; the day-400 episode came with it and the hold stretched line 2
+    # over the boundary to the cover of a dose 50 days past it. Line 2 then
+    # ended on the ALLO, or on the new agent as an addition, weeks after its
+    # own cover had run out.
+    #
+    # Each has a twin without the day-400 episode, which is the line the
+    # patient should get either way: an episode belonging to a later line
+    # cannot be what decides this one's end date or its end reason.
+    dict(P('F40', L1 + [('DARA', 'MAB', 200, 280), ('BORT', 'PI', 300, 330),
+                        ('BORT', 'PI', 400, 430)]),
+         sct_ac=[('ALLO', IX + 350)]),
+    dict(P('F40n', L1 + [('DARA', 'MAB', 200, 280), ('BORT', 'PI', 300, 330)]),
+         sct_ac=[('ALLO', IX + 350)]),
+    P('F41',  L1 + [('DARA', 'MAB', 200, 280), ('BORT', 'PI', 300, 330),
+                    ('CARF', 'PI', 360, 500), ('BORT', 'PI', 400, 430)]),
+    P('F41n', L1 + [('DARA', 'MAB', 200, 280), ('BORT', 'PI', 300, 330),
+                    ('CARF', 'PI', 360, 500)]),
 ]
 
 
@@ -779,6 +814,21 @@ def main():
        == [r[1:] for r in fold.get('F39n', [])[2:]],
        "F39/F39n: the fold before the transplant decides nothing after it - "
        "with it and without it, the lines from 3 on are the same")
+
+    ok(n(fold, 'F40') == 4 and fold['F40'][1][3] == 'DISCONTINUATION'
+       and [r[1:] for r in fold.get('F40', [])[:3]]
+           == [r[1:] for r in fold.get('F40n', [])[:3]],
+       "F40/F40n: an episode past an ALLO the line cannot see yet does not "
+       "hold that line open, so it ends on its own cover and its own reason")
+    ok(n(fold, 'F41') == 3 and fold['F41'][1][3] == 'DISCONTINUATION'
+       and [r[1:] for r in fold.get('F41', [])[:2]]
+           == [r[1:] for r in fold.get('F41n', [])[:2]],
+       "F41/F41n: nor does one past a new agent, which is the same boundary "
+       "read off the claims rather than off a line that does not exist yet")
+    ok(n(fold, 'F41') == 3 and 'BORT' in fold['F41'][2][4]
+       and 'CARF' in fold['F41'][2][4],
+       "F41: ...and the episode joins the line it does fall in, which is the "
+       "line the new agent opened")
 
     ok(regimen(True, 'F19', 2) == regimen(True, 'F19n', 2),
        "F19/F19n: a suppressed course decides nothing, so the folded regimen "

@@ -86,51 +86,70 @@ tabulate_cat <- function(d, col, min_n = 25L, id_col = NULL) {
   out
 }
 
-# Mean/SD/median/IQR/min/max/missing for a continuous column. Reported on the
-# stratum, so it is suppressed on the stratum's own size.
+# Mean/SD/median/IQR/min/max/missing for a continuous column.
 #
-# `n_population` is the stratum the caption prints, and it is not decoration.
-# A categorical column's missing values are a LEVEL - tabulate_cat() calls it
-# "(Missing)" - and the floor applies to it like any other. A continuous
-# column's are a count instead, and this published N, the number of patients
-# WITH a value, against a caption that gives the stratum: three patients
-# missing a date read straight off the subtraction, which is the disclosure
-# the floor exists to refuse and the argument the comment below already makes
-# about N_MISSING.
+# ROWS AND PATIENTS ARE NOT THE SAME NUMBER, and this reports on both. A
+# subject table is one row per patient in most panels and one row per LINE in
+# some, and the caption prints whichever it is - "120 patients in this
+# selection (310 lines)". So:
+#
+#   the floor is on PATIENTS, as tabulate_cat()'s is, through `id_col`.
+#   Counting rows instead let forty lines belonging to nine patients clear a
+#   floor of twenty-five, which is the floor not applying at all.
+#
+#   the missing group is read on BOTH scales, because both totals are
+#   published. A categorical column's missing values are a level and take the
+#   floor like any other; a continuous column's are a count, and N against a
+#   caption gives them away by subtraction on whichever scale N is read - the
+#   argument the comment below already makes about N_MISSING.
 #
 # Two cells, one published total. Withholding either withholds both, so N is
 # the one withheld.
-summarise_num <- function(d, col, min_n = 25L, n_population = NULL) {
+summarise_num <- function(d, col, min_n = 25L, n_population = NULL,
+                          id_col = NULL) {
   if (is.null(d) || !nrow(d) || !col %in% names(d)) return(data.frame())
   x <- suppressWarnings(as.numeric(d[[col]]))
   n <- sum(!is.na(x))
+  # The patients behind those rows. No identifier and a row is a patient,
+  # which is what this reported before and is right for a patient-grain
+  # table.
+  n_pat <- if (!is.null(id_col) && id_col %in% names(d)) {
+    ids <- as.character(d[[id_col]])
+    length(unique(ids[!is.na(x) & !is.na(ids) & nzchar(ids)]))
+  } else n
   out <- data.frame(VARIABLE = col, N = n, N_MISSING = sum(is.na(x)),
                     MEAN = NA_real_, SD = NA_real_, MEDIAN = NA_real_,
                     Q1 = NA_real_, Q3 = NA_real_, MIN = NA_real_, MAX = NA_real_,
                     stringsAsFactors = FALSE)
-  if (n >= min_n) {
+  if (n_pat >= min_n) {
     q <- stats::quantile(x, c(.25, .5, .75), na.rm = TRUE, names = FALSE)
     out$MEAN <- round(mean(x, na.rm = TRUE), 2)
     out$SD <- round(stats::sd(x, na.rm = TRUE), 2)
     out$Q1 <- round(q[1], 2); out$MEDIAN <- round(q[2], 2); out$Q3 <- round(q[3], 2)
     out$MIN <- round(min(x, na.rm = TRUE), 2); out$MAX <- round(max(x, na.rm = TRUE), 2)
   }
-  out$SUPPRESSED <- as.integer(n < min_n)
-  # The counts go with them. N is the number of patients with a value, and
+  out$SUPPRESSED <- as.integer(n_pat < min_n)
+  # The counts go with them. N is the number of rows with a value, and
   # "N = 3" beside withheld statistics publishes the number the floor exists to
   # protect; N_MISSING goes too, because it subtracts against the stratum size
   # in the caption. tabulate_cat() applies the same rule to a suppressed level.
   if (out$SUPPRESSED == 1L) { out$N <- NA_integer_; out$N_MISSING <- NA_integer_ }
-  # ...and the same subtraction the other way round. The statistics rest on
-  # min_n patients or more and stay, because the floor permits them; what
-  # cannot stay is the count that gives the group of patients this column has
-  # no value for. An empty missing group discloses nobody, so it is left.
+  # ...and the same subtraction the other way round, on each scale the
+  # caption publishes. The statistics rest on min_n patients or more and
+  # stay, because the floor permits them; what cannot stay is the count that
+  # gives away the group this column has no value for. An empty group
+  # discloses nobody, so it is left.
+  #
+  # Rows first, which needs nothing passed in: N_MISSING is that complement
+  # already. Then patients, where the stratum is known - and a stratum
+  # counted in patients minus a count of ROWS is not a group of anybody, so
+  # the patient scale is compared with the patient count.
+  small <- function(k) !is.na(k) && k > 0L && k < min_n
+  n_absent_rows <- sum(is.na(x))
   pop <- suppressWarnings(as.integer(n_population))[1]
-  if (!is.na(pop)) {
-    n_absent <- pop - n
-    if (n_absent > 0L && n_absent < min_n) {
-      out$N <- NA_integer_; out$N_MISSING <- NA_integer_
-    }
+  n_absent_pat <- if (is.na(pop)) NA_integer_ else pop - n_pat
+  if (small(n_absent_rows) || small(n_absent_pat)) {
+    out$N <- NA_integer_; out$N_MISSING <- NA_integer_
   }
   out
 }
@@ -320,7 +339,8 @@ summarise_subject <- function(d, spec, min_n = 25L, n_population = NULL) {
       SUPPRESSED = tb$SUPPRESSED, stringsAsFactors = FALSE)
   }
   for (cl in nums) {
-    s <- summarise_num(d, cl, min_n = min_n, n_population = n_stratum)
+    s <- summarise_num(d, cl, min_n = min_n, n_population = n_stratum,
+                       id_col = idc)
     if (!nrow(s)) next
     rows[[length(rows) + 1L]] <- data.frame(
       VARIABLE = cl, LEVEL = "(continuous)", N = s$N, PCT = NA_real_,

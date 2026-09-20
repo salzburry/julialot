@@ -1208,7 +1208,7 @@ cat("\nthe rules that hold the numbers up\n")
     r$RUN_ID <- "r1"; r$STATE <- "complete"
     # After the shipped lot_rules_epoch, so the default row is a run this
     # package will read and a test has to ASK for the refusal.
-    r$UPDATED_AT <- "2026-09-19 00:00:00"
+    r$UPDATED_AT <- "2026-09-21 00:00:00"
     r$INPUT_COHORT_TABLE <- cfg0()$input_cohort_table
     r$STUDY_END <- cfg0()$study_end
     utils::modifyList(r, list(...))
@@ -1252,10 +1252,10 @@ cat("\nthe rules that hold the numbers up\n")
     row <- lin_row(...)
     e <- new.env(parent = environment(check_lot_lineage))
     mrow <- if (is.null(meta)) NULL else utils::modifyList(
-      list(COHORT_RUN_ID = "c1", COHORT_STAMP = "2026-09-19 00:00:00",
+      list(COHORT_RUN_ID = "c1", COHORT_STAMP = "2026-09-21 00:00:00",
            CODE_MD5 = "abcdef0123456789"), meta)
     nrow_ <- if (is.null(now)) NULL else utils::modifyList(
-      list(RUN_ID = "c1", UPDATED_AT = "2026-09-19 00:00:00",
+      list(RUN_ID = "c1", UPDATED_AT = "2026-09-21 00:00:00",
            STATE = "complete"), now)
     e$db_q <- function(con, sql) {
       if (grepl("LOT_RUN_METADATA", sql, fixed = TRUE)) {
@@ -1296,10 +1296,10 @@ cat("\nthe rules that hold the numbers up\n")
   # The cohort ATTEMPT. Every check above compares a NAME, and a cohort table
   # can be rebuilt in place under the same name - so these are the ones that
   # tell attempt A's lines from attempt B's eligibility.
-  e_stamp <- lin_check(now = list(UPDATED_AT = "2026-09-19 06:00:00"))
+  e_stamp <- lin_check(now = list(UPDATED_AT = "2026-09-21 06:00:00"))
   ok(!is.na(e_stamp) && grepl("has been rebuilt since", e_stamp) &&
-       grepl("2026-09-19 00:00:00", e_stamp) &&
-       grepl("2026-09-19 06:00:00", e_stamp),
+       grepl("2026-09-21 00:00:00", e_stamp) &&
+       grepl("2026-09-21 06:00:00", e_stamp),
      "a cohort rebuilt in place under the same name stops, naming both attempts")
   ok(!is.na(lin_check(now = list(RUN_ID = "c2"))),
      "...and so does a different cohort run under that name")
@@ -1369,7 +1369,7 @@ cat("\nthe rules that hold the numbers up\n")
     e <- new.env(parent = environment(check_lot_lineage_unchanged))
     e$db_q <- function(con, sql) stop(perm)
     e$log_msg <- function(...) invisible(NULL)
-    stubbed(check_lot_lineage_unchanged, e, character(0))(NULL, list(RUN_ID = "lot1", UPDATED_AT = "2026-09-20 05:00:00"))
+    stubbed(check_lot_lineage_unchanged, e, character(0))(NULL, list(RUN_ID = "lot1", UPDATED_AT = "2026-09-22 05:00:00"))
   }))
   ok(!is.na(e_re) && grepl("could not be re-read", e_re, fixed = TRUE) &&
        grepl("INSUFFICIENT_PERMISSIONS", e_re, fixed = TRUE),
@@ -1498,20 +1498,20 @@ cat("\nthe rules that hold the numbers up\n")
   # superseded a further set of numbers, so every run between the two passed a
   # check written to stop exactly that. These hold it to being read from the
   # configuration rather than compiled in, in both directions.
-  ok(identical(cfg0()$lot_rules_epoch, "2026-09-17"),
+  ok(identical(cfg0()$lot_rules_epoch, "2026-09-19"),
      "the shipped epoch is the date the rules last changed")
-  ok(is.na(lin_check(UPDATED_AT = "2026-09-18 00:00:00")),
+  ok(is.na(lin_check(UPDATED_AT = "2026-09-20 00:00:00")),
      "a run finished after the shipped epoch is read")
-  ok(!is.na(lin_check(UPDATED_AT = "2026-09-16 00:00:00")),
+  ok(!is.na(lin_check(UPDATED_AT = "2026-09-18 00:00:00")),
      "...and one finished the day before it is not")
-  e_ep <- lin_check(UPDATED_AT = "2026-09-16 00:00:00")
-  ok(grepl("2026-09-17", e_ep, fixed = TRUE) &&
+  e_ep <- lin_check(UPDATED_AT = "2026-09-18 00:00:00")
+  ok(grepl("2026-09-19", e_ep, fixed = TRUE) &&
        grepl("LOT_RULES_EPOCH", e_ep, fixed = TRUE),
      "...and the refusal names the date it applied and the setting that moves it")
-  ok(is.na(lin_check(UPDATED_AT = "2026-09-16 00:00:00",
+  ok(is.na(lin_check(UPDATED_AT = "2026-09-18 00:00:00",
                      cfg = cfg0(c(LOT_RULES_EPOCH = "2026-09-01")))),
      "LOT_RULES_EPOCH moves the floor, so a delivery can name its own")
-  ok(!is.na(lin_check(UPDATED_AT = "2026-09-18 00:00:00",
+  ok(!is.na(lin_check(UPDATED_AT = "2026-09-20 00:00:00",
                       cfg = cfg0(c(LOT_RULES_EPOCH = "2026-10-01")))),
      "...in both directions")
 
@@ -1519,9 +1519,9 @@ cat("\nthe rules that hold the numbers up\n")
   # UPDATED_AT is compared as a calendar date, so a run finished that day
   # cannot be placed either side of it; the guard refuses what it cannot
   # place rather than reading a number that may be superseded.
-  ok(!is.na(lin_check(UPDATED_AT = "2026-09-17 23:59:59")),
+  ok(!is.na(lin_check(UPDATED_AT = "2026-09-19 23:59:59")),
      "a run finished ON the epoch cannot be placed either side of it, so it stops")
-  ok(grepl("on or before", lin_check(UPDATED_AT = "2026-09-17 23:59:59"),
+  ok(grepl("on or before", lin_check(UPDATED_AT = "2026-09-19 23:59:59"),
            fixed = TRUE),
      "...and the message says on or before, which is what the check does")
 
@@ -1529,6 +1529,51 @@ cat("\nthe rules that hold the numbers up\n")
   # run that cleared the shipped epoch from one that cleared a lowered one.
   ok("LOT_RULES_EPOCH" %in% names(RUN_METADATA_COLS),
      "S_RUN_METADATA carries the epoch the run was accepted against")
+
+  # --- and the epoch is tied to the engine it was set for ---------------
+  #
+  # A date nothing holds to the code goes stale the next time the code
+  # changes, and this one did, twice: the shipped value named an August rule
+  # change after a September one, was moved to the September one, and was
+  # superseded again two days later by the very next change to the fold-in.
+  # Each time every run built in between passed a check written to stop
+  # exactly those runs, and nothing failed.
+  #
+  # So the engine is fingerprinted - by its OWN function, not a restatement
+  # of it - and compared to the fingerprint the shipped date was set for.
+  # Change a rule and this stops, saying what to do: move LOT_RULES_EPOCH to
+  # the date of the change and re-pin below. It is the one thing that cannot
+  # be forgotten, because it is the same edit that changed the rule.
+  #
+  # Pinned by identity rather than by "it changed since last time": a
+  # fingerprint file the suite writes could be regenerated without anyone
+  # reading it, and that is the failure this replaces.
+  local({
+    top <- NA_character_
+    for (up in c(".", "..")) {
+      if (file.exists(file.path(up, "lot", "engine", "R", "build_lot.R"))) {
+        top <- up; break
+      }
+    }
+    if (is.na(top)) {
+      skip_note(paste0("the LOT engine is not beside this package, so the ",
+                       "epoch could not be held to the rules it was set for"))
+      return(invisible(NULL))
+    }
+    eng <- file.path(top, "lot", "engine")
+    e <- new.env(parent = globalenv())
+    sys.source(file.path(eng, "R", "build_lot.R"), e)
+    # The engine the shipped LOT_RULES_EPOCH of 2026-09-19 was set for.
+    PINNED <- "24e1fa2f4c8f80e48c2613cc6a9d8dad"
+    got <- e$code_fingerprint(eng)
+    ok(identical(got, PINNED),
+       paste0("the shipped epoch is the date THIS engine's rules changed ",
+              "(engine ", substr(got, 1, 8), ", pinned ",
+              substr(PINNED, 1, 8), ")", if (identical(got, PINNED)) "" else
+                paste0(" - the rules have changed since the epoch was set: ",
+                       "move LOT_RULES_EPOCH to the date of that change and ",
+                       "re-pin the fingerprint in this block")))
+  })
 
   # 4. A nested cohort takes only patients IN its parent.
   ch <- paste(capture.output(print(mod_cohorts)), collapse = "\n")
@@ -3402,7 +3447,7 @@ cat("\n-- the controller re-checks the LOT build before recording complete --\n"
   drive <- function(later = list()) {
     said <- character(0); asks <- 0L
     rowA <- list(RUN_ID = "lot1", STATE = "complete",
-                 UPDATED_AT = "2026-09-20 05:00:00",
+                 UPDATED_AT = "2026-09-22 05:00:00",
                  INPUT_COHORT_TABLE = base_env[["INPUT_COHORT_TABLE"]],
                  STUDY_END = cfg0()$study_end, CONTRACT_DEVIATIONS = "")
     env <- new.env(parent = environment(build_223926))
@@ -3462,19 +3507,19 @@ cat("\n-- the controller re-checks the LOT build before recording complete --\n"
             if (!is.na(steady$err)) paste0(" [", steady$err, "]") else ""))
   ok(steady$asks == 2L,
      "...with the LOT status read twice: once to accept the build, once before completing")
-  ok(any(grepl("'20260920T050000Z'", steady$sql, fixed = TRUE)),
+  ok(any(grepl("'20260922T050000Z'", steady$sql, fixed = TRUE)),
      "...and the accepted build's version on the metadata row")
-  raced <- drive(list(UPDATED_AT = "2026-09-20 05:01:00"))
+  raced <- drive(list(UPDATED_AT = "2026-09-22 05:01:00"))
   ok(!is.na(raced$err) && grepl("LINEAGE ERROR", raced$err) && grepl("rebuilt while", raced$err),
      "a LOT rebuild completing under the same id while the modules ran stops the run")
   ok(identical(state_of(raced$sql), c("'started'", "'failed'")),
      "...which is recorded failed under its own id, never complete")
-  ok(grepl("build 20260920T050000Z", raced$err) && grepl("build 20260920T050100Z", raced$err),
+  ok(grepl("build 20260922T050000Z", raced$err) && grepl("build 20260922T050100Z", raced$err),
      "...naming the build it accepted and the one it found")
-  going <- drive(list(STATE = "started", UPDATED_AT = "2026-09-20 05:01:00"))
+  going <- drive(list(STATE = "started", UPDATED_AT = "2026-09-22 05:01:00"))
   ok(!is.na(going$err) && identical(state_of(going$sql), c("'started'", "'failed'")),
      "and so does a rebuild still in progress")
-  other <- drive(list(RUN_ID = "lot2", UPDATED_AT = "2026-09-20 05:01:00"))
+  other <- drive(list(RUN_ID = "lot2", UPDATED_AT = "2026-09-22 05:01:00"))
   ok(!is.na(other$err) && grepl("now holds run lot2", other$err),
      "and another run altogether")
   rsrc <- paste(readLines("R/run_223926.R", warn = FALSE), collapse = "\n")

@@ -172,7 +172,7 @@ cfg_defaults <- function() {
     # Not in CONTRACT: that list is the protocol's numbers, and a deviation
     # from it means this run departs from the protocol. This departs from
     # nothing - it says which engine built the lines, which is lineage.
-    lot_rules_epoch    = .env_date("LOT_RULES_EPOCH", "2026-09-17"),
+    lot_rules_epoch    = .env_date("LOT_RULES_EPOCH", "2026-09-19"),
     # Named only where the cohort build wrote its status under neither of the
     # two names the builds use. Bare - COHORT_PREFIX is added for you, as the
     # LOT engine's setting of the same name does.

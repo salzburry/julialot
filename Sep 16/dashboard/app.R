@@ -334,7 +334,15 @@ server <- function(input, output, session) {
           km_estimate(pp$rows[[eps[[e]][["time"]]]],
                       pp$rows[[eps[[e]][["event"]]]])),
           names(eps))
-        return(plot_km(curves, main = paste0(p$label, "  (n = ", pp$n, ")")))
+        # The whole selection as well as the analysis set: the title's n and
+        # the table's caption on this tab are two counts of one selection,
+        # and curve_title() is what keeps their difference from naming a
+        # group below the floor.
+        whole <- prepare_panel(d, sp, input$floor, purpose = "descriptive",
+                               package_min_n = DASH_CFG$suppress_min_n)
+        return(plot_km(curves, main = curve_title(
+          p$label, pp$n, whole$n, input$floor,
+          package_min_n = DASH_CFG$suppress_min_n)))
       }
       if (is.null(d) || !nrow(d)) return(plot_empty())
       # A panel may name the column to break down by; otherwise the spec's

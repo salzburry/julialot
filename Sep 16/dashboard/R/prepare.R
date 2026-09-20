@@ -209,6 +209,14 @@ count_bar_data <- function(d, spec, lab, floor_n, package_min_n = 25L) {
                   integer(1))
   n_row <- vapply(parts, length, integer(1))
   ok_bar <- vapply(n_pat, released, logical(1), fl)
+  # Secondary suppression, the rule tabulate_cat() applies to a table's
+  # levels. Withholding ONE bar and drawing the rest hides nothing: the
+  # caption gives the selection's size, so the withheld bar's height is the
+  # difference. So where exactly one is withheld the smallest of the others
+  # goes with it - two unknowns cannot be recovered from one total - and with
+  # only two bars that withholds the chart, which is the right answer.
+  if (sum(!ok_bar) == 1L && sum(ok_bar) > 1L)
+    ok_bar[which(ok_bar)[which.min(n_row[ok_bar])]] <- FALSE
   if (!any(ok_bar))
     return(list(ok = FALSE, why = sprintf(
       "Every %s here rests on fewer than %s patients, so none is shown.",
@@ -223,6 +231,30 @@ plot_count_bars <- function(d, spec, lab, main, floor_n,
   b <- count_bar_data(d, spec, lab, floor_n, package_min_n)
   if (!b$ok) return(plot_empty(b$why))
   plot_bar(b$labels, b$values, main = main, xlab = b$xlab)
+}
+
+# A curve's title, with its own n or without it.
+#
+# The survival title publishes the patients the curve was drawn over - the
+# TTE-ELIGIBLE ones - and the table on the same tab captions the same
+# selection's WHOLE population. Two counts of one selection, published side
+# by side, give their difference away, and that difference is the group the
+# analysis excluded: below the floor, it is a group the floor exists to
+# protect, and nothing else on the page withholds it.
+#
+# So the n is printed where the difference clears the floor, or where there
+# is no difference at all. Anything this cannot place is withheld rather than
+# printed - the curve itself is unaffected either way, since it was already
+# released on its own population.
+curve_title <- function(label, n_curve, n_whole, floor_n,
+                        package_min_n = 25L) {
+  fl <- effective_floor(floor_n, package_min_n)
+  nc <- suppressWarnings(as.integer(n_curve))[1]
+  nw <- suppressWarnings(as.integer(n_whole))[1]
+  gap <- if (is.na(nc) || is.na(nw)) NA_integer_ else nw - nc
+  show <- !is.na(nc) && !is.na(gap) && (gap <= 0L || gap >= fl)
+  if (show) paste0(label, "  (n = ", fmt_num(nc, 0), ")")
+  else paste0(label, "  (n withheld)")
 }
 
 # ---- comparisons ------------------------------------------------------------
