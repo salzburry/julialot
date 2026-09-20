@@ -508,6 +508,13 @@ cat("\nwithholding a cell is not the same as hiding it\n")
     min_n = 25L)
   ok(sum(both$SUPPRESSED) == 2L,
      "two levels already below the floor need no third")
+  # TWO levels, one withheld. One of two cells plus the published total is
+  # the other cell, so the variable goes entirely - the case the chart
+  # beside this got wrong by asking for more than one cell to remain.
+  two <- tabulate_cat(data.frame(G = c(rep("a", 60), rep("b", 3))), "G",
+                      min_n = 25L)
+  ok(nrow(two) == 2L && sum(two$SUPPRESSED) == 2L && all(is.na(two$N)),
+     "a variable with two levels, one under the floor, is withheld whole")
 
   # --- a suppressed continuous summary does not publish its own count ---
   sn <- summarise_num(data.frame(CCI = c(1, 2, 3, rep(NA, 97))), "CCI",
@@ -597,6 +604,25 @@ cat("\nwithholding a cell is not the same as hiding it\n")
   b3 <- count_bar_data(bar_d(c(a = 60, b = 3, c = 4)), bspec, "G", 25L)
   ok(isTRUE(b3$ok) && length(b3$labels) == 1L,
      "two bars already below the floor need no third")
+  # The case the chart and the table disagreed about. With only two
+  # categories the surviving bar plus the caption's total IS the withheld
+  # one, so there is no chart to draw - which is what the table has always
+  # said about two levels.
+  b4 <- count_bar_data(bar_d(c(a = 60, b = 3)), bspec, "G", 25L)
+  ok(!isTRUE(b4$ok),
+     paste0("a chart of two categories, one under the floor, is withheld ",
+            "whole rather than drawing the one that gives the other away"))
+  # And the rule itself, which both now call.
+  ok(identical(suppress_complement(c(TRUE, FALSE), c(60, 3)),
+               c(FALSE, FALSE)) &&
+       identical(suppress_complement(c(TRUE, TRUE, FALSE), c(60, 40, 3)),
+                 c(TRUE, FALSE, FALSE)) &&
+       identical(suppress_complement(c(TRUE, TRUE), c(60, 40)),
+                 c(TRUE, TRUE)) &&
+       identical(suppress_complement(c(TRUE, FALSE, FALSE), c(60, 3, 4)),
+                 c(TRUE, FALSE, FALSE)),
+     paste0("one withheld cell takes the smallest of the others with it, ",
+            "whatever is counting - and two withheld already need no third"))
 
   # --- escaping ---
   # The ampersand FIRST, or every other substitution is undone by it: a value
@@ -657,11 +683,19 @@ cat("\nwithholding a cell is not the same as hiding it\n")
        transform(rates, RATE = NA_real_), sp_r, "CONDITION", "RATE")$ok),
      "and a selection whose values are all withheld draws nothing")
 
+  # THREE line numbers, not two. The point here is that a bar counts LINES
+  # while the floor is tested on PATIENTS, and it needs a group left
+  # standing to make it: with two groups and one under the floor there is
+  # no chart at all, because the survivor plus the caption's total is the
+  # withheld one. The two-group fixture this used to have asserted that the
+  # survivor was drawn, which is the disclosure the chart now refuses.
   sp_lot <- table_spec("LOT_LONG_FINAL")
   lot <- rbind(
     data.frame(PATID = rep(sprintf("B%02d", 1:40), each = 2), LOT_NUM = 1L,
                stringsAsFactors = FALSE),
     data.frame(PATID = rep(sprintf("S%02d", 1:3), each = 2), LOT_NUM = 2L,
+               stringsAsFactors = FALSE),
+    data.frame(PATID = rep(sprintf("M%02d", 1:30), each = 1), LOT_NUM = 3L,
                stringsAsFactors = FALSE))
   cb <- count_bar_data(lot, sp_lot, "LOT_NUM", floor_n = 25L)
   ok(isTRUE(cb$ok) && identical(cb$labels, "1"),
@@ -670,6 +704,10 @@ cat("\nwithholding a cell is not the same as hiding it\n")
      "...counting LINES, which is what a row of that table is")
   ok(identical(cb$patients, 40L),
      "...while the floor was tested on the 40 patients behind them")
+  ok(!("2" %in% cb$labels) && !("3" %in% cb$labels),
+     paste0("...and the three patients withheld take the next-smallest ",
+            "group with them, so neither is the caption's total less the ",
+            "rest"))
   ok(isFALSE(count_bar_data(lot, sp_lot, "LOT_NUM", floor_n = 100L)$ok),
      "and where no group clears it, nothing is drawn")
 

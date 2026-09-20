@@ -115,8 +115,29 @@ restore_set_aside <- function(prev, out_dir, partial) {
              "the set-aside back by hand.", call. = FALSE)
     }
   }
-  # From here the state reads as "set-aside cut short", whatever happens.
-  unlink(file.path(prev, TFLS_MARK_ASIDE))
+  # From here the state must read as "set-aside cut short" - both sides the
+  # previous run's - so that a restore killed part-way is finished by the
+  # next pass rather than undone by it. Removing the marker is what says so,
+  # and it is CHECKED, because the sentence above is a guarantee and unlink()
+  # does not give one.
+  #
+  # Unremoved, the marker still says the move in had begun. So a restore that
+  # then put half the previous run back and stopped left the next recovery
+  # reading those restored files as THIS run's half-published output - and
+  # its first act is to delete them. The files lost are the ones this
+  # function had just rescued.
+  #
+  # Nothing has been renamed at this point, so stopping here costs nothing:
+  # the previous run is whole in the set-aside, and the next attempt tries
+  # the marker again.
+  mark <- file.path(prev, TFLS_MARK_ASIDE)
+  unlink(mark)
+  if (file.exists(mark))
+    stop("Could not clear the set-aside marker in ", prev, ", and while it ",
+         "is there a restore that stops part-way reads as this run's output ",
+         "and is deleted. Nothing has been moved. Remove ", basename(mark),
+         " by hand, or move the tables in that directory back yourself.",
+         call. = FALSE)
   back <- list.files(prev, pattern = TFLS_OUTPUT_PATTERN, full.names = TRUE)
   if (length(back)) {
     ok <- file.rename(back, file.path(out_dir, basename(back)))
