@@ -55,17 +55,20 @@ PARTS <- list(
 # spelled out rather than absorbed - the numbers it produces are not the
 # numbers apr_30_2026 produces.
 SUBST <- list(
-  # The study-period default. The study starts 01 Jan 2016; the source
-  # defaulted to 2015-07-01, which is the overall build's window, not this
-  # one's. config.csv supplies STUDY_START in a real run so the effective date
-  # was already right - but cfg$study_start defaults the same variable to
-  # 2016-01-01, so without config.csv the two disagreed and check_constants()
-  # stopped the build. Both defaults are the study's date now, and a config.csv that
-  # goes missing no longer widens the pregnancy and MM-diagnosis scans.
+  # The study-period default. The study starts 01 Jan 2018 - OPEN_QUESTIONS
+  # Q1, answered by the study team on 16 September 2026, where the body text
+  # is operative and the two figures saying 2016 are June leftovers. The
+  # source defaulted to 2015-07-01, which is the overall build's window and
+  # neither reading of this one's. config.csv supplies STUDY_START in a real
+  # run so the effective date was already right - but cfg$study_start defaults
+  # the same variable, so without config.csv the two disagreed and
+  # check_constants() stopped the build. Both defaults are the study's date
+  # now, and a config.csv that goes missing no longer widens the pregnancy and
+  # MM-diagnosis scans.
   "R/ndmm_constants.R" = list(
     # The dated events view the pregnancy scan now writes. A new name, not a
     # changed rule.
-    list(from = "NDMM_STUDY_START         <- Sys.getenv(\"STUDY_START\", unset = \"2016-01-01\")",
+    list(from = "NDMM_STUDY_START         <- Sys.getenv(\"STUDY_START\", unset = \"2018-01-01\")",
          to   = "NDMM_STUDY_START         <- Sys.getenv(\"STUDY_START\", unset = \"2015-07-01\")", n = 1L),
     # One setting, one name. The source gave the 1L index floor a variable of
     # its own - NDMM_LOT1_FROM, which config.csv does not carry - so LOT1_FROM
@@ -74,7 +77,7 @@ SUBST <- list(
     # config.csv reaches the SQL. Same for the baseline window, written as a
     # literal there and read from PRE_LOT1_DAYS here. Neither changes what the
     # default is, only where it can be changed from.
-    list(from = "NDMM_LOT1_FROM <- Sys.getenv(\"LOT1_FROM\", unset = \"2017-01-01\")",
+    list(from = "NDMM_LOT1_FROM <- Sys.getenv(\"LOT1_FROM\", unset = \"2019-01-01\")",
          to   = "NDMM_LOT1_FROM <- Sys.getenv(\"NDMM_LOT1_FROM\", unset = \"2017-01-01\")",
          n = 1L),
     list(from = "NDMM_PRE_LOT1_DAYS       <- as.integer(Sys.getenv(\"PRE_LOT1_DAYS\", unset = \"365\"))",

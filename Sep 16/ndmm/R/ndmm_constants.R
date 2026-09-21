@@ -14,7 +14,7 @@ NDMM_PATIDS       <- "_ndmm_patids"
 NDMM_PREG_CODES          <- "_ndmm_preg_codes"
 NDMM_PREGNANCY_EVENTS    <- "_ndmm_pregnancy_events"
 NDMM_PREGNANCY_PATIDS    <- "_ndmm_pregnancy_patids"
-NDMM_STUDY_START         <- Sys.getenv("STUDY_START", unset = "2016-01-01")
+NDMM_STUDY_START         <- Sys.getenv("STUDY_START", unset = "2018-01-01")
 # 12-mo CE/baseline before the 1L index date. Read from PRE_LOT1_DAYS, which
 # is the name config.csv and cfg$pre_lot1_days both use: written as a literal
 # here, a config.csv that set it moved cfg and left the SQL on 365, and the
@@ -54,11 +54,11 @@ NDMM_MM_ADJACENT_OVERRIDE <- c(
 # LOT1_FROM, which is the name config.csv uses and the name cfg$lot1_from
 # reads. It used to be NDMM_LOT1_FROM - one setting under two names, where the
 # config drove the contract check and the constant drove the query. Setting
-# LOT1_FROM alone moved the config, left this at 2017-01-01, and stopped the
+# LOT1_FROM alone moved the config, left this behind, and stopped the
 # run in check_constants() after check_contract() had passed; setting both was
 # the documented answer, and nobody should have to know that. check_settings()
 # refuses a leftover NDMM_LOT1_FROM rather than ignoring it.
-NDMM_LOT1_FROM <- Sys.getenv("LOT1_FROM", unset = "2017-01-01")
+NDMM_LOT1_FROM <- Sys.getenv("LOT1_FROM", unset = "2019-01-01")
 
 # Raw CDM confinement table, which tells inpatient from outpatient in the
 # other-cancer check. Set here because nothing else defines it.

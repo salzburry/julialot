@@ -170,7 +170,7 @@ for (k in c("lot1_from", "fu_ce_days", "pre_lot1_days", "gap_days", "study_end")
 # let the run through, record the deviation where both the status row and the
 # metadata row will pick it up, and leave a contract build recording nothing.
 local({
-  drift <- full; drift$lot1_from <- "2019-01-01"
+  drift <- full; drift$lot1_from <- "2020-01-01"
   old <- Sys.getenv("NDMM_CONTRACT_OVERRIDE", unset = NA)
   on.exit({
     if (is.na(old)) Sys.unsetenv("NDMM_CONTRACT_OVERRIDE")
@@ -202,10 +202,10 @@ local({
 # saying what CONTRACT pins would have the downstream check compare against a
 # value no query ever saw.
 local({
-  drift <- modifyList(full, list(lot1_from = "2019-01-01"))
-  ok(grepl("lot1_from=2019-01-01", contract_settings(drift), fixed = TRUE),
+  drift <- modifyList(full, list(lot1_from = "2020-01-01"))
+  ok(grepl("lot1_from=2020-01-01", contract_settings(drift), fixed = TRUE),
      "CONTRACT_SETTINGS records the window the run used, not the contract's")
-  ok(grepl("lot1_from=2017-01-01", contract_settings(full), fixed = TRUE) &&
+  ok(grepl("lot1_from=2019-01-01", contract_settings(full), fixed = TRUE) &&
        identical(contract_settings(full), contract_settings()),
      "...and on a contract build the two are the same string")
 })
@@ -986,7 +986,7 @@ ok(identical(be$NDMM_BELANTAMAB_ABBR, "BELA"),
 
 cat("\n-- the belantamab scan is the study period, both ends --\n")
 # Both ends, on the raw scan itself. The CDM tables are cumulative back well
-# past 2016, so without a lower bound the scan returns claims from outside the
+# past the study start, so without a lower bound the scan returns claims from outside the
 # window every criterion in this build is scoped to - and the reconcile table
 # joins that view directly, which is what would make "every patient listed is
 # one lot removes" true only sometimes.
@@ -1932,9 +1932,9 @@ ok(length(gregexpr("'HCPCS',", px, fixed = TRUE)[[1]]) == 2L,
 # must NOT have moved is the exclusion: it is still every patient with a matched
 # claim anywhere in the study period, which is what every earlier run applied. DECISIONS.md #9 records why that is the wider of
 # two readings; this pins that recording it changed nothing.
-ok(grepl("BETWEEN date('2016-01-01') AND date('", px, fixed = TRUE),
+ok(grepl("BETWEEN date('2018-01-01') AND date('", px, fixed = TRUE),
    "the scan is still bounded to the study period, not a patient window")
-ok(length(gregexpr("BETWEEN date('2016-01-01')", px, fixed = TRUE)[[1]]) == 3L,
+ok(length(gregexpr("BETWEEN date('2018-01-01')", px, fixed = TRUE)[[1]]) == 3L,
    "...on all three sources - diagnosis, medical and procedure")
 ok(!grepl("date_sub", px, fixed = TRUE),
    "...and nothing in the exclusion scan is relative to the index date")

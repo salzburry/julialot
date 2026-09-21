@@ -247,12 +247,12 @@ here.
 
 | # | criterion | as applied | source |
 |---|---|---|---|
-| 3 | Eligible 1L treatment | the first claim for an MM therapy on or after that patient's MM diagnosis, on or after `LOT1_FROM` (2017-01-01) and on or before the study end. Five arms over raw claims - `PROC_CD`, `BILL_PROC_CD` and `NDC` in `medical`, `NDC` in `rx`, `PROC` in `med_procedure` - each matched against `cl_mma_codelist.csv` and only against the code types that source can carry. Belantamab cannot set it - an eligible 1L treatment is one other than belantamab; steroids cannot either, being dropped from the code list. That date is the NDMM index. | `00b_lot1_index.R` |
+| 3 | Eligible 1L treatment | the first claim for an MM therapy on or after that patient's MM diagnosis, on or after `LOT1_FROM` (2019-01-01) and on or before the study end. Five arms over raw claims - `PROC_CD`, `BILL_PROC_CD` and `NDC` in `medical`, `NDC` in `rx`, `PROC` in `med_procedure` - each matched against `cl_mma_codelist.csv` and only against the code types that source can carry. Belantamab cannot set it - an eligible 1L treatment is one other than belantamab; steroids cannot either, being dropped from the code list. That date is the NDMM index. | `00b_lot1_index.R` |
 | 4 | 12-month CE before index | an enrollment span covering `[index - 365, index - 1]` in full, gaps of <=30 days treated as continuous | `01_enrollment.R`, `06_flags.R` |
 | 5 | Follow-up CE | a no-gap span covering `[index, index + FU_CE_DAYS]`, where `FU_CE_DAYS = 0` - one day: the index date itself | `06_flags.R` |
 | 6 | No MM oncology therapy in the 12-month baseline | no claim for an MM therapy in `[index - 365, index - 1]`, read from raw claims against `cl_mma_codelist.csv` over five sources - `PROC_CD`, `BILL_PROC_CD` and `NDC` in `medical`, `NDC` in `rx`, `PROC` in `med_procedure`. Steroids are excluded (`DEX`, `DEXA`, `DEXAMETHASONE`, `PRED`, `PREDNISONE`) - a steroid claim alone does not make a patient previously treated. | `03_prior_therapy.R` |
 | 7 | No other cancer in the 12-month baseline | excluded on >=1 inpatient claim, or >=2 outpatient claims within 30 days of each other for the same cancer - both claims inside `[index - 365, index - 1]`. Inpatient is established from the confinement table and the claim header, not from a place-of-service code. Plasma-cell tumour groups are the index disease and do not count. "The same cancer" is the three-character ICD category for a primary, and one shared group for metastatic codes, which pair with each other whatever the site - both below. | `04_other_malig.R` |
-| 8 | No pregnancy | excluded on >=1 medical claim with a diagnosis, procedure or revenue code indicating pregnancy or childbirth, anywhere in `[2016-01-01, 2026-03-31]` - the study period, not the baseline | `05_pregnancy.R` |
+| 8 | No pregnancy | excluded on >=1 medical claim with a diagnosis, procedure or revenue code indicating pregnancy or childbirth, anywhere in `[2018-01-01, 2026-03-31]` - the study period, not the baseline | `05_pregnancy.R` |
 | 9 | No belantamab before the 1L index | any claim for a belantamab code from `cl_mma_codelist.csv`, in `medical`, `rx` or `med_procedure`, dated strictly before the index. This is half of the belantamab exclusion - the half `lot` cannot see, because the claims it reads start at the index. The other half, belantamab from the index onward, is `lot`'s `no_belantamab` line criterion. Overlaps #6 by design: that one already removes belantamab inside the 12-month baseline, so this one's incremental drop is the patients whose belantamab predates it | `00b_lot1_index.R`, `06_flags.R` |
 
 Four of the nine need a number from a real run before anyone can sign them
@@ -862,12 +862,12 @@ run rather than building something the name no longer describes.
 
 | setting | default | effect |
 |---|---|---|
-| `LOT1_FROM` | `2017-01-01` | 1L eligible-treatment period opens |
+| `LOT1_FROM` | `2019-01-01` | 1L eligible-treatment period opens |
 | `PRE_LOT1_DAYS` | `365` | CE and baseline window before index |
 | `FU_CE_DAYS` | `0` | days after index the follow-up CE must cover |
 | `GAP_DAYS` | `30` | gaps this size or smaller are still continuous |
 | `STUDY_END` | `2026-03-31` | study period end; picks the quarterly CDM tables |
-| `STUDY_START` | `2016-01-01` | study period start; the pregnancy and belantamab scans |
+| `STUDY_START` | `2018-01-01` | study period start; the pregnancy and belantamab scans |
 | `OUTPATIENT_WINDOW` | `90` | two outpatient MM claims within this many days confirm a diagnosis |
 | `MIN_AGE` | `18` | minimum age in the MM-diagnosis year |
 | `NDMM_BELANTAMAB_ABBR` | `BELA` | how belantamab is recognised on the code list, as a whole abbreviation - it is exclusion 4, so it is pinned. Must equal `lot`'s `BELANTAMAB_MED_ABBR` |

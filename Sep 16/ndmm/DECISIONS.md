@@ -332,7 +332,7 @@ mechanism and all of it is judgement. `NDMM_MM_ADJACENT_GROUPS` selects on
 ## 5. Study window and data vintage
 
 Rule: `lot` takes the study window as a run argument, and defaults to
-this cohort's: `2016-01-01` to `2026-03-31`.
+this cohort's: `2018-01-01` to `2026-03-31`.
 
 The window is not in `lot`'s `CONTRACT`. `CONTRACT` fixes what a LOT run
 means - induction windows, gap days, transplant rules - and a different value
@@ -340,7 +340,7 @@ there is a different algorithm. The window is not that: the algorithm is
 unchanged and the dates belong to the cohort.
 
 ```
-Rscript build.R ndmm_NDMM_COHORT ndmm_ 2016-01-01 2026-03-31
+Rscript build.R ndmm_NDMM_COHORT ndmm_ 2018-01-01 2026-03-31
 Rscript build.R MM_COH_FINAL       mm_   2015-07-01 2025-06-30
 ```
 

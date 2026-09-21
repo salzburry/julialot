@@ -16,7 +16,7 @@ CONTRACT <- list(
   use_quarterly_tables = TRUE,
   study_end            = "2026-03-31",
   # Earliest date an eligible 1L treatment can count.
-  lot1_from            = "2017-01-01",
+  lot1_from            = "2019-01-01",
   # 12 months of CE and of baseline before the 1L index date.
   pre_lot1_days        = 365L,
   # Days after index a no-gap span must cover for the follow-up CE. Zero is
@@ -27,7 +27,7 @@ CONTRACT <- list(
   # The pregnancy scan runs over [study_start, study_end], so this moves who is
   # excluded. It reaches the SQL through NDMM_STUDY_START, which reads the same
   # environment variable.
-  study_start          = "2016-01-01",
+  study_start          = "2018-01-01",
   # Two outpatient MM claims within this many days confirm a diagnosis, and
   # and the minimum age at that diagnosis.
   outpatient_window    = 90L,

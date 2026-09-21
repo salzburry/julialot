@@ -38,7 +38,7 @@ cfg_defaults <- list(
   # wider window would have its follow-up quietly cut at the vintage.
   # check_cohort_window() stops the run instead. Another cohort passes its own
   # window and nothing here changes.
-  study_start          = Sys.getenv("STUDY_START", unset = "2016-01-01"),
+  study_start          = Sys.getenv("STUDY_START", unset = "2018-01-01"),
   study_end            = Sys.getenv("STUDY_END", unset = "2026-03-31"),
 
   # ---- LOT parameters ----
