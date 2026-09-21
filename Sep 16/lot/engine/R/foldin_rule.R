@@ -155,6 +155,35 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
   # the only place the column exists.
   epi_between <- if (is.null(n_start)) "" else "
        AND coalesce(xt.N_BETWEEN, 0) = 0"
+  # The fold's own refusals, offered to the scan as arrivals.
+  #
+  # A fold-set episode with a transplant-opened line between it and the
+  # previous dose is refused outright: foldin_episodes drops it, and what it
+  # does instead is open a line. But the between-scan below drops EVERY
+  # fold-set drug before it reads the claims, so that arrival was invisible,
+  # and a LATER episode of the same course - one the override does not reach,
+  # because the transplant is no longer between its two doses - counted
+  # nothing in between and folded into the line the refused dose had ended.
+  #
+  # What that cost depends on the transplant. On an AUTO the line keeps its
+  # dates and reports a drug first dosed after it closed. On an ALLO or a
+  # CAR-T the line is held to that drug's cover instead of the single day 4.6
+  # gives it, and the line the refused dose opened is swallowed whole.
+  #
+  # Only where a line is being built, because only there is there a scan.
+  # Read off foldin_epi and foldin_tx_opened, which are the same two the
+  # override itself reads, so the two cannot disagree about which episodes
+  # were refused.
+  tx_refused <- if (is.null(n_start)) "" else "
+    foldin_tx_refused AS (
+      SELECT DISTINCT k.PATID, k.MAP_MED_TYPE, k.MAP_START_DT
+      FROM foldin_epi k
+      INNER JOIN foldin_tx_opened tx
+        ON tx.PATID = k.PATID
+       AND tx.OPEN_DT >  k.PREV_COURSE_DT
+       AND tx.OPEN_DT <  k.MAP_START_DT
+      WHERE k.PREV_COURSE_DT IS NOT NULL
+    ),"
   between_join <- if (is.null(n_start)) "" else paste0("
       LEFT JOIN (
         SELECT ms.PATID, ms.MAP_START_DT AS AT_DT
@@ -167,7 +196,18 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
                             AND ob.MED_ABBR = ms.MAP_MED_TYPE)
           AND (NOT EXISTS (SELECT 1 FROM ", meds, " ofm
                            WHERE ofm.PATID = ms.PATID
-                             AND ofm.MED_ABBR = ms.MAP_MED_TYPE)", inject_or, ")", not_supp, "
+                             AND ofm.MED_ABBR = ms.MAP_MED_TYPE)", inject_or, "
+               -- ...and an episode the fold has ALREADY REFUSED is let back
+               -- past the fold-set test for the same reason an injected
+               -- course is: it is not a drug returning to this line, it is a
+               -- drug that opened the next one. Dropping it for the set it
+               -- belongs to reads the SET where the VERDICT is what matters,
+               -- and the verdict is already taken, one episode at a time,
+               -- two CTEs above.
+               OR EXISTS (SELECT 1 FROM foldin_tx_refused rf
+                          WHERE rf.PATID = ms.PATID
+                            AND rf.MAP_MED_TYPE = ms.MAP_MED_TYPE
+                            AND rf.MAP_START_DT = ms.MAP_START_DT))", not_supp, "
         UNION
         -- A planned tandem continues the line and opens nothing, so it is no
         -- advance either. Same helper the melphalan rule reads, so the two
@@ -300,7 +340,7 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
       SELECT l.PATID, l.LOT_START_DT AS OPEN_DT
       FROM lot_long l
       WHERE l.LOT_START_TYPE <> 'MED' AND {line_pred}{this_tx}
-    ),
+    ),{tx_refused}
     -- How many different agents opened a line strictly between the two doses,
     -- and whether a transplant opened one there too. A LEFT JOIN and a count,
     -- not a correlated subquery: the translation has to survive Spark and the

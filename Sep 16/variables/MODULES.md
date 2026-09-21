@@ -465,7 +465,7 @@ empty table.
   ever leave the denominator;
 - a LOT run that is not `complete`, was built over a different cohort, carries
   contract deviations, or finished on or before `LOT_RULES_EPOCH` — the date
-  the LOT rules last changed, shipped as `2026-09-19`, after which numbers
+  the LOT rules last changed, shipped as `2026-09-21`, after which numbers
   built earlier are superseded — → stops. The shipped date is held to the
   engine beside this package: the suite fingerprints its R and its shipped
   settings and checks both against the pin the date sits with, so a rule

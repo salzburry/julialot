@@ -533,6 +533,60 @@ PATS = [
                     ('CARF', 'PI', 360, 500), ('BORT', 'PI', 400, 430)]),
     P('F41n', L1 + [('DARA', 'MAB', 200, 280), ('BORT', 'PI', 300, 330),
                     ('CARF', 'PI', 360, 500)]),
+    # F42/F43/F44: the arrival the between-scan cannot see, because the fold
+    # set is where it looked away.
+    #
+    # F39's shape, with ONE more episode. DARA opens line 2 on day 200 and
+    # BORT returns on day 300 and folds. A transplant on day 350 opens line 3.
+    # BORT is dosed again on day 400, and the transplant override refuses that
+    # episode - F39 - so it is not line 3's, and it opens line 4 as an added
+    # medication. Then BORT is dosed once more on day 470.
+    #
+    # Read between day 400 and day 470 there is nothing at all: no line opened
+    # in lot_long, which holds 1 to N-1 and cannot hold line 4 while line 3 is
+    # being built, and no arrival in the claims either - because the scan
+    # drops every fold-set drug before it reads them, and BORT IS the fold
+    # set. So the day-470 episode counted no boundary and folded into line 3,
+    # across the line the day-400 dose had just opened.
+    #
+    # The day-400 dose is not a fold-set drug returning to the line. The fold
+    # itself refused it. A scan that skips it because of the set it belongs to
+    # is reading the set and not the verdict, and the verdict is the whole
+    # point: a drug the fold has already refused is an arrival like any other.
+    #
+    # Three transplants, because what the miss costs depends on which:
+    #
+    #   F42 ALLO   line 3 must be the single day and the empty regimen 4.6
+    #              gives it. The fold names BORT in it and carries it to day
+    #              500 - the F39 class again, through the SECOND episode.
+    #              Line 4 is swallowed whole.
+    #   F43 CAR-T  the same, by 4.6's other half.
+    #   F44 AUTO   an AUTO line is not held to one day, so the shape survives
+    #              and only the label is wrong: line 3 reports a regimen of a
+    #              drug whose episode is in line 4. This is the case the run
+    #              hit, and the one C1 sees.
+    #
+    # Each has a twin without the day-470 episode. An episode that belongs to
+    # a later line cannot decide this one's span, its end reason or its
+    # regimen, so the two must agree from line 3 on.
+    dict(P('F42', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 300, 330),
+                        ('BORT', 'PI', 400, 430), ('BORT', 'PI', 470, 500)]),
+         sct_ac=[('ALLO', IX + 350)]),
+    dict(P('F42n', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 300, 330),
+                         ('BORT', 'PI', 400, 430)]),
+         sct_ac=[('ALLO', IX + 350)]),
+    dict(P('F43', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 300, 330),
+                        ('BORT', 'PI', 400, 430), ('BORT', 'PI', 470, 500)]),
+         sct_ac=[('CART', IX + 350)]),
+    dict(P('F43n', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 300, 330),
+                         ('BORT', 'PI', 400, 430)]),
+         sct_ac=[('CART', IX + 350)]),
+    dict(P('F44', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 300, 330),
+                        ('BORT', 'PI', 400, 430), ('BORT', 'PI', 470, 500)]),
+         sct_auto=[IX + 350]),
+    dict(P('F44n', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 300, 330),
+                         ('BORT', 'PI', 400, 430)]),
+         sct_auto=[IX + 350]),
 ]
 
 
@@ -829,6 +883,50 @@ def main():
        and 'CARF' in fold['F41'][2][4],
        "F41: ...and the episode joins the line it does fall in, which is the "
        "line the new agent opened")
+
+    # F42/F43/F44. The strongest statement first, and the same one for all
+    # three: past the transplant the fold decides NOTHING, so the fold arm
+    # from line 3 on has to be the reference arm from line 4 on - the same
+    # spans, the same end reasons, the same regimens. The reference arm gives
+    # BORT's day-300 return a line of its own, which is the one line the two
+    # arms are meant to differ by; everything after the transplant is the
+    # engine's own restart rule in both.
+    for pid, tx in (('F42', 'an ALLO'), ('F43', 'a CAR-T'), ('F44', 'an AUTO')):
+        ok([r[1:] for r in fold.get(pid, [])[2:]]
+           == [r[1:] for r in ref.get(pid, [])[3:]],
+           "%s: a fold-set drug the transplant override already REFUSED is an "
+           "arrival, so %s line and everything after it read the same with the "
+           "fold and without it" % (pid, tx))
+        ok([r[1:] for r in fold.get(pid, [])[2:3]]
+           == [r[1:] for r in fold.get(pid + 'n', [])[2:3]],
+           "%s/%sn: ...and the day-470 episode decides nothing about the line "
+           "the transplant opened - same span, same reason, same regimen with "
+           "it and without it" % (pid, pid))
+
+    # 4.6, which is what the miss costs on the two transplants that take a
+    # line of one day. Line 3 held BORT and ran five months.
+    for pid, why in (('F42', 'SCT_ALLO'), ('F43', 'SCT_CART')):
+        ok(n(fold, pid) == 4 and fold[pid][2][1] == rs.d(IX + 350)
+           and fold[pid][2][2] == rs.d(IX + 350) and fold[pid][2][4] == '',
+           "%s: the SECOND episode of a folded course does not cross the "
+           "transplant either, so its line keeps the one day and the empty "
+           "regimen 4.6 gives it" % pid)
+        ok(n(fold, pid) == 4 and fold[pid][3][1] == rs.d(IX + 400)
+           and fold[pid][3][2] == rs.d(IX + 500) and fold[pid][3][4] == 'BORT',
+           "%s: ...and both episodes past it belong to the line the first of "
+           "them opened, which runs to the second's cover" % pid)
+
+    # The AUTO, which is the shape the run hit. An AUTO line is not held to
+    # one day, so nothing in the span shows it: the line keeps its dates and
+    # its end reason and reports a regimen of a drug dosed after it closed.
+    ok(n(fold, 'F44') == 4 and fold['F44'][2][2] == rs.d(IX + 399)
+       and fold['F44'][2][3] == 'MED_ADD' and fold['F44'][2][4] == '',
+       "F44: an AUTO line ended by the day-400 add does not then report the "
+       "drug that added - the regimen is empty, and 4.6 does not have to be "
+       "broken for the label to be wrong")
+    ok(n(fold, 'F44') == 4 and fold['F44'][3][1] == rs.d(IX + 400)
+       and fold['F44'][3][2] == rs.d(IX + 500),
+       "F44: ...and the line that drug opened owns both its episodes")
 
     ok(regimen(True, 'F19', 2) == regimen(True, 'F19n', 2),
        "F19/F19n: a suppressed course decides nothing, so the folded regimen "

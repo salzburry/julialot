@@ -54,7 +54,7 @@ Every downstream reader resolves which run owns a prefix through
 `LOT_BUILD_STATUS`, and refuses a run that did not finish or that deviated from
 the contract.
 
-### `qc/` — 38 checks on a finished run
+### `qc/` — 40 checks on a finished run
 
 Not a re-implementation of the rules: each check states a property the lines
 must have, and counts the rows that break it.
@@ -75,7 +75,7 @@ declares a limit says so under **what these checks cannot see** whatever it
 counted — because the reading a limit changes is the zero, and a zero is not a
 finding. `C5` declares one.
 
-`Rscript qc/tests/test_lot_qc.R` — every one of the 38 runs twice
+`Rscript qc/tests/test_lot_qc.R` — every one of the 40 runs twice
 against fixtures: clean, where it must count nothing, and carrying the defect
 it describes, where it must count it.
 

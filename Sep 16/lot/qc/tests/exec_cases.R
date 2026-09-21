@@ -6,7 +6,7 @@
 # "pass" on a real defect.
 #
 # The clean fixture is one patient with two lines and has to satisfy all
-# thirty-eight checks at once: the funnel reconciles with the published table,
+# forty checks at once: the funnel reconciles with the published table,
 # every regimen drug has an episode inside its line, every episode inside a
 # line is in that line's regimen, and every transplant belongs to a line.
 #
@@ -108,6 +108,15 @@ EXEC_CASES <- list(
             planted = list(final = list(.f(FINAL_1, LOT_MED_CNT = 7L)))),
   A7 = list(what = "a medication-started line with no regimen",
             planted = list(final = list(.f(FINAL_1, LOT_BASE_MEDS = "", LOT_MED_CNT = 0L)))),
+  # Both on LOT_NUM 2, so 4.6's own defect is what the row carries and A4 -
+  # line 1 is medication-started - is not tripped alongside it. A8's row keeps
+  # the regimen and A9's drops it, so each case is the one thing its check
+  # asks about and neither leans on the other having fired.
+  A8 = list(what = "an allogeneic line that carries a regimen",
+            planted = list(final = list(.f(FINAL_2, LOT_START_TYPE = "SCT_ALLO")))),
+  A9 = list(what = "an allogeneic line that ran past its own day with no melphalan",
+            planted = list(final = list(.f(FINAL_2, LOT_START_TYPE = "SCT_ALLO",
+                                           LOT_BASE_MEDS = "", LOT_MED_CNT = 0L)))),
   B1 = list(what = "MED_ADD ending on a date that is not the added drug's",
             planted = list(final = list(.f(FINAL_2, LOT_BASE_1ST_ADD_MED_DT = "2020-09-01")))),
   B2 = list(what = "DISCONTINUATION ending on a date that is not the run-out",

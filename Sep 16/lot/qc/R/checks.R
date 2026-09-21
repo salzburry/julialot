@@ -232,6 +232,67 @@ LOT_QC_CHECKS <- list(
       AND LOT_START_TYPE = 'MED'"),
     "concat(pid, ' LOT', LOT_NUM, ' started by ', LOT_START_TYPE)")),
 
+  # A8 and A9 are the two halves of 4.6, and A7 leaves both unsaid: it asks
+  # only about MED starts, and names an ALLO line's empty regimen as the very
+  # thing it must not judge. So nothing in this catalogue asked what an
+  # allogeneic line IS, and a fold that gave one a regimen and five months of
+  # span passed every check in the file.
+
+  list(id = "A8", group = "Structure", severity = "fail",
+       what = "an allogeneic line carries no regimen",
+       why = paste0("4.6 gives an ALLO-started line no regimen at all - the ",
+                    "induction step suppresses its rows - and unlike the span ",
+                    "below this half has no exception. 4.7's melphalan lift ",
+                    "moves the line's END; the course it lifts it with is ",
+                    "SUPPRESSED, so it joins neither regimen nor count. A ",
+                    "drug named here therefore reached the regimen by some ",
+                    "path 4.6 does not allow, and the fold (4.8) is the only ",
+                    "one that adds to a regimen after the induction step has ",
+                    "suppressed it. A5 pins LOT_START_TYPE to its four ",
+                    "values, so SCT_ALLO cannot be spelt another way here."),
+       needs = "final",
+       sql = function(t, p) counted(paste0("
+    SELECT ", mask("PATID"), " AS pid, LOT_NUM, LOT_BASE_MEDS
+    FROM ", t$final, "
+    WHERE LOT_START_TYPE = 'SCT_ALLO'
+      AND trim(coalesce(LOT_BASE_MEDS, '')) <> ''"),
+    "concat(pid, ' LOT', LOT_NUM, ' names ', LOT_BASE_MEDS)")),
+
+  list(id = "A9", group = "Structure", severity = "fail",
+       what = "an allogeneic line spans one day",
+       why = paste0("The other half of 4.6, and this one HAS an exception: ",
+                    "4.7 lets a melphalan course the line was carried to run ",
+                    "it to the end of that cover. So the check asks the ",
+                    "weaker question it can answer exactly - a line that ran ",
+                    "past its own day with NO melphalan cover overlapping it ",
+                    "at all. There is no second lift, so such a line was ",
+                    "extended by something 4.6 does not allow; and asking it ",
+                    "this way does not require rebuilding melp_hold here, ",
+                    "which would put a second copy of 4.7 in the QC and let ",
+                    "the two drift. The cost is that it cannot fail a line ",
+                    "the RIGHT rule lifted by the WRONG number of days - ",
+                    "that is the melphalan rule's own to check. Emitted as a ",
+                    "matching-nothing predicate where the run set ",
+                    "allo_lot_span to extend_to_next, which is a build where ",
+                    "4.6 does not apply, and where the melphalan rule is off, ",
+                    "since then there is no lift to exempt."),
+       needs = c("final", "map"),
+       sql = function(t, p) counted(paste0("
+    SELECT ", mask("l.PATID"), " AS pid, l.LOT_NUM,
+           l.LOT_START_DT, l.LOT_BASE_END_DT
+    FROM ", t$final, " l
+    WHERE l.LOT_START_TYPE = 'SCT_ALLO'
+      AND ", if (identical(p$allo_span, "single_day")) "1 = 1" else "1 = 0", "
+      AND l.LOT_BASE_END_DT > l.LOT_START_DT",
+    if (identical(p$melp_rule, "off")) "" else paste0("
+      AND NOT EXISTS (
+        SELECT 1 FROM ", t$map, " ms
+        WHERE cast(ms.PATID as string) = cast(l.PATID as string)
+          AND upper(trim(ms.MAP_MED_TYPE)) = '", p$melp_abbr, "'
+          AND ms.MAP_START_DT <= l.LOT_BASE_END_DT
+          AND coalesce(ms.MAP_END_DT, ms.MAP_START_DT) >= l.LOT_START_DT)")),
+    "concat(pid, ' LOT', LOT_NUM, ' ran ', LOT_START_DT, ' to ', LOT_BASE_END_DT)")),
+
   # ---- B. End reason against end date --------------------------------------
   # The reason and the date are two cascades over the same branches. Each check
   # below takes one branch and asserts the pair a reader would infer from it.
@@ -1202,6 +1263,10 @@ qc_params <- function(settings, run_id) {
   # already holds melphalan, so under the rule the added medication can be a
   # regimen drug - and only melphalan can.
   melp_abbr <- toupper(trimws(qc_setting(settings, "melp_med_abbr")))
+  # What 4.6 gave an allogeneic line on THIS run. A9 asks about the single-day
+  # shape and there is a build that does not have it, so the check reads the
+  # run's own value rather than assuming the contract's.
+  allo_span <- trimws(qc_setting(settings, "allo_lot_span"))
   list(run_id   = run_id,
        censor   = identical(censor, "TRUE"),
        cart_exempt = identical(cart_ex, "TRUE"),
@@ -1209,6 +1274,7 @@ qc_params <- function(settings, run_id) {
        own_return_fold = identical(ownret, "TRUE"),
        melp_rule = if (nzchar(melp)) melp else "off",
        melp_abbr = if (nzchar(melp_abbr)) melp_abbr else "MELP",
+       allo_span = allo_span,
        ind1     = qc_int(settings, "induction_window_days"),
        indn     = qc_int(settings, "lot_n_induction_window_days"),
        cart     = qc_int(settings, "cart_consolidation_days"),
