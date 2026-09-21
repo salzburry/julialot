@@ -25,7 +25,7 @@
 -- 1. The one place to edit. Point this at the cohort table you built.
 CREATE OR REPLACE TEMPORARY VIEW fu AS
 SELECT PATID, INDEX_DATE, ENDDATE, ENDDATE_CE, DEATH_DT, FU_DAYS, FU_DAYS_CE
-FROM hive_metastore.osk02156.ndmm_NDMM_COHORT;
+FROM hive_metastore.usr00000.ndmm_NDMM_COHORT;
 
 
 -- 2. The distribution, on both definitions. One row each - the two are not a
@@ -105,7 +105,7 @@ SELECT concat('LOT', cast(m.max_lot as string))               AS `Highest line`,
                 THEN 1 ELSE 0 END)                            AS `Died in FU`
 FROM fu f
 INNER JOIN (SELECT PATID, max(LOT_NUM) AS max_lot
-            FROM hive_metastore.osk02156.ndmm_LOT_LONG_FINAL
+            FROM hive_metastore.usr00000.ndmm_LOT_LONG_FINAL
             GROUP BY PATID) m
         ON m.PATID = f.PATID
 GROUP BY 1 ORDER BY 1;

@@ -90,11 +90,16 @@ Whichever floor applied is recorded on the run, in
 
 The shipped date is held to the engine beside it. The study suite fingerprints
 `lot/engine` — its R and the settings it ships — and compares both to the
-fingerprints the shipped epoch was set for, all three pinned as one value, so a
-change to the rules fails that check until the date is moved to the date of the
-change and the fingerprints re-pinned with it. The floor went stale twice before
-that tie existed: each time, the engine changed and the date did not, and every
-run built in between passed a check written to stop exactly those runs.
+fingerprints the shipped epoch was set for. A change to the rules therefore
+stops the suite until someone looks at it, and what they are told to do is move
+the date to the date of the change and re-pin the fingerprints with it.
+
+That is a prompt, not an interlock. The three values sit together and are
+reviewed together, but they are three comparisons: re-pinning a fingerprint and
+leaving the date would pass. What the check makes impossible is changing the
+rules and nobody noticing — which is what happened twice before it existed. Each
+time the engine changed, the date did not, and every run built in between passed
+a check written to stop exactly those runs.
 
 What the tie cannot see is the code lists. They live under `CODELIST_DIR` on the
 platform rather than in this folder, so a rollup that moves a drug to another

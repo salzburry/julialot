@@ -603,12 +603,12 @@ cat("\nthe cohort table, as SQL names it\n")
   # Bare, the name resolved against the session's current schema: the working
   # schema on a cluster session, `default` over the ODBC warehouse - and every
   # scenario stopped at DESCRIBE with ndmm_NDMM_COHORT "cannot be found".
-  set_study_config(local({ c1 <- cfg0(); c1$work_schema <- "osk02156"; c1 }))
-  ok(identical(input_cohort_tbl(), "hive_metastore.osk02156.ndmm_NDMM_COHORT"),
+  set_study_config(local({ c1 <- cfg0(); c1$work_schema <- "usr00000"; c1 }))
+  ok(identical(input_cohort_tbl(), "hive_metastore.usr00000.ndmm_NDMM_COHORT"),
      "the input cohort table is read under the run's catalog and schema, like every other table")
   ok(identical(cfg0()$input_cohort_table, "ndmm_NDMM_COHORT"),
      "...while the setting itself stays the bare name the LOT status row records, for the lineage comparison")
-  set_study_config(local({ c1 <- cfg0(c(INPUT_COHORT_TABLE = "other_cat.their_schema.NDMM_COHORT")); c1$work_schema <- "osk02156"; c1 }))
+  set_study_config(local({ c1 <- cfg0(c(INPUT_COHORT_TABLE = "other_cat.their_schema.NDMM_COHORT")); c1$work_schema <- "usr00000"; c1 }))
   ok(identical(input_cohort_tbl(), "other_cat.their_schema.NDMM_COHORT"),
      "...and a name given already qualified is used as it is")
   set_study_config(cfg0())
@@ -764,18 +764,18 @@ cat("\nthe connection layer\n")
   # and this package did not read it; and a schema given with its catalog,
   # as it reads on the warehouse, was prefixed with the catalog again.
   ok(identical(cfg0()$work_schema, "") &&
-       identical(cfg0(c(WORK_SCHEMA = "osk02156"))$work_schema, "osk02156") &&
+       identical(cfg0(c(WORK_SCHEMA = "usr00000"))$work_schema, "usr00000") &&
        identical(cfg0(c(PROJECT_WORK_SCHEMA = "proj"))$work_schema, "proj") &&
        identical(cfg0(c(DOMINO_USER_NAME = "usr00000"))$work_schema, "usr00000") &&
        identical(cfg0(c(WORK_SCHEMA = "w", PROJECT_WORK_SCHEMA = "p", DOMINO_USER_NAME = "u"))$work_schema, "w"),
      "the work schema resolves as the cohort and LOT builds resolve theirs: WORK_SCHEMA, then PROJECT_WORK_SCHEMA, then the Domino user's own schema, else the session's")
-  ok(identical(cfg0(c(WORK_SCHEMA = "hive_metastore.osk02156"))$work_schema, "osk02156") &&
-       identical(with_env(c(base_env, WORK_SCHEMA = "hive_metastore.osk02156"),
+  ok(identical(cfg0(c(WORK_SCHEMA = "hive_metastore.usr00000"))$work_schema, "usr00000") &&
+       identical(with_env(c(base_env, WORK_SCHEMA = "hive_metastore.usr00000"),
                           { set_study_config(cfg_defaults()); wrk("S_SPINE") }),
-                 "hive_metastore.osk02156.s223926_S_SPINE"),
-     "...a schema given with its catalog is read as the schema - handed over whole it became hive_metastore.hive_metastore.osk02156, a name with too many parts")
+                 "hive_metastore.usr00000.s223926_S_SPINE"),
+     "...a schema given with its catalog is read as the schema - handed over whole it became hive_metastore.hive_metastore.usr00000, a name with too many parts")
   set_study_config(cfg0())
-  ok(grepl("DATABRICKS_CATALOG", errs(cfg0(c(WORK_SCHEMA = "other.osk02156")))) &&
+  ok(grepl("DATABRICKS_CATALOG", errs(cfg0(c(WORK_SCHEMA = "other.usr00000")))) &&
        grepl("not a schema name", errs(cfg0(c(PROJECT_WORK_SCHEMA = "a.b.c")))),
      "...while a catalog that is not the run's, or a name that is not a schema, stops at config time")
 
@@ -1501,9 +1501,14 @@ cat("\nthe rules that hold the numbers up\n")
   #
   # ONE pin, three values, read by this assertion and by the engine tie at
   # the end of this block. The date and the fingerprint were two literals in
-  # two places, and re-pinning one while leaving the other is the exact
-  # half-edit that put the epoch behind the engine twice. Here they move
-  # together or neither moves.
+  # two places; here they are one thing to look at, so the date is in front
+  # of whoever re-pins after changing a rule.
+  #
+  # A prompt, not an interlock, and worth being exact about: these are three
+  # comparisons, not one. Re-pinning a fingerprint and leaving the date
+  # passes. What cannot happen is a rule changing and nobody being stopped -
+  # which is the failure that put the epoch behind the engine twice, both
+  # times because nothing said anything at all.
   EPOCH_PIN <- list(
     date = "2026-09-19",
     # The engine's R, by its own code_fingerprint() - the same value it
@@ -1586,33 +1591,68 @@ cat("\nthe rules that hold the numbers up\n")
     # touching either fingerprint. That is recorded per run instead, in
     # LOT_CODELIST_METADATA, which makes such a change visible between two
     # runs and refuses nothing - the same limit LOT_CODE_MD5 has always had.
-    # Hashed through readLines/writeLines, not off the raw bytes, because
-    # the raw bytes carry the checkout's line endings. Git hands this file
-    # over as CRLF on Windows (i/lf w/crlf), so a byte hash there differs
-    # from the same settings on a Linux checkout and the pin failed for a
-    # reason that has nothing to do with the rules - which is the one
-    # message this check must never send. code_fingerprint() beside it
-    # normalises the same way, which is why its half passed where this
-    # half did not.
-    norm_md5 <- function(path) {
+    # Hashed off the BYTES, with the line endings normalised in the bytes
+    # and no string anywhere in the path.
+    #
+    # Two things forced that. Git hands these files over as CRLF on Windows
+    # (i/lf w/crlf), so a hash of the file as it sits on disk differs there
+    # from the same content on a Linux checkout, and the pin would fail for
+    # a reason that has nothing to do with the rules - the one message this
+    # check must never send. And the obvious repair, reading the lines and
+    # writing them back out, writes through a TEXT connection, whose
+    # separator is the platform's: it normalises to wherever it is run
+    # rather than to one representation. Reading the lines and rebuilding
+    # the bytes from the strings is worse again - these files carry UTF-8
+    # (the section sign, in ten lines of the engine), and a round trip
+    # through charToRaw() mangled it and moved the digest.
+    #
+    # So: read raw, drop the CR of any CRLF pair, guarantee one closing LF.
+    # Encoding never comes into it, and the result is the same on every
+    # platform. It reproduces both values pinned above, which is why moving
+    # to it re-pins nothing.
+    raw_lf <- function(path) {
+      b <- readBin(path, "raw", file.size(path))
+      if (length(b)) {
+        nxt <- c(b[-1], as.raw(0L))
+        b <- b[!(b == as.raw(13L) & nxt == as.raw(10L))]
+      }
+      if (!length(b) || b[length(b)] != as.raw(10L)) b <- c(b, as.raw(10L))
+      b
+    }
+    md5_of <- function(bytes) {
       tmp <- tempfile(); on.exit(unlink(tmp), add = TRUE)
-      writeLines(readLines(path, warn = FALSE), tmp)
+      con <- file(tmp, "wb"); writeBin(bytes, con); close(con)
       unname(tools::md5sum(tmp))
     }
-    got <- c(engine = e$code_fingerprint(eng),
-             settings = norm_md5(file.path(eng, "config.csv")))
+    # The engine's file list is code_fingerprint()'s own - sorted the same
+    # way, for the same reason - but the digest is taken here rather than by
+    # calling it, because that function writes through a text connection
+    # too. On an LF checkout the two agree, which is why the pinned engine
+    # value is also the CODE_MD5 a run records; where they would not agree,
+    # this one is the stable one. code_fingerprint() itself is left alone:
+    # changing it changes the fingerprint every run reports and every
+    # approval pinned against one.
+    eng_files <- sort(c(list.files(file.path(eng, "R"), "\\.R$",
+                                   full.names = TRUE, recursive = TRUE),
+                        file.path(eng, "build.R")), method = "radix")
+    eng_files <- eng_files[file.exists(eng_files)]
+    got <- c(engine = md5_of(do.call(c, lapply(eng_files, raw_lf))),
+             settings = md5_of(raw_lf(file.path(eng, "config.csv"))))
     # The same settings with the other line endings are the same settings.
     # Checked here rather than trusted, because the failure it prevents is
     # one this machine cannot have: a Windows checkout gets this file as
     # CRLF and a byte hash of it differs from the pin.
     local({
       crlf <- tempfile(); on.exit(unlink(crlf), add = TRUE)
-      con <- file(crlf, "wb")
-      writeBin(charToRaw(paste0(paste(
-        readLines(file.path(eng, "config.csv"), warn = FALSE),
-        collapse = "\r\n"), "\r\n")), con)
-      close(con)
-      ok(identical(norm_md5(crlf), unname(got["settings"])) &&
+      # Built from the NORMALISED bytes, not from the file as it sits: on a
+      # checkout that already writes CRLF, expanding the raw bytes gives
+      # CR CR LF and tests nothing anyone will meet. This way the copy is
+      # genuine CRLF wherever the suite runs.
+      src <- raw_lf(file.path(eng, "config.csv"))
+      out <- unlist(lapply(src, function(x)
+        if (x == as.raw(10L)) c(as.raw(13L), x) else x))
+      con <- file(crlf, "wb"); writeBin(out, con); close(con)
+      ok(identical(md5_of(raw_lf(crlf)), unname(got["settings"])) &&
            !identical(unname(tools::md5sum(crlf)), unname(got["settings"])),
          paste0("the settings fingerprint is of the file's CONTENT, so a ",
                 "checkout that writes CRLF does not read as a rule change"))
