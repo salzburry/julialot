@@ -20,12 +20,14 @@ it wrote. The order below is the order to run them in.
 Start at `ndmm/README.md`, `lot/CONTENTS.md`, `variables/CONTENTS.md`,
 `TFLS/README.md` and `dashboard/DASHBOARD.md` respectively.
 
-**Stage 1 changes are contract edits, not environment overrides.**
+**Stage 1 changes are settings, and two of them are acknowledged deviations.**
 `variables/BUILD_DELTA.md` section 0 lists every cohort setting the protocol
-moves and says, for each, whether it is an environment variable or an edit to
-`CONTRACT` in `ndmm/R/build_ndmm.R`. Two of them are edits — the cohort build
-refuses a config that does not match its contract, deliberately, and there is
-no override for that.
+moves. Each is written once, in `ndmm/config.csv` or the environment, and
+reaches both the contract check and the SQL. Two of them — the study period
+and the 1L index floor — are what the cohort *is*, so the build refuses a
+value that differs from its `CONTRACT` unless `NDMM_CONTRACT_OVERRIDE=TRUE`
+says the difference is meant; the deviation is then recorded on the run, and
+the study package holds its own window to the cohort's.
 
 Dependencies run one way. `lot/` names no cohort and resolves nothing outside
 itself; the stages after it read the tables a run wrote.
@@ -58,8 +60,23 @@ every per-line variable downstream of them move. That is the correct answer,
 not a regression - but it is a difference to expect rather than to discover in
 the rebuilt QC summary.
 
-So **step 2 has to be re-run before steps 3 to 5**, on the same cohort. Tables
-built from the earlier run describe lines this code no longer produces.
+**The study window has moved as well**, to `2018-01-01` with a 1L index floor
+of `2019-01-01` (`variables/OPEN_QUESTIONS.md` Q1). Those are now the shipped
+defaults of `ndmm/`, `lot/engine/` and `variables/` alike, and a cohort built
+to the earlier window is refused twice over: the LOT build stops on a cohort
+that indexes before its study start, and the study package refuses a cohort
+whose recorded window is not its own.
+
+So **all five steps have to be re-run, from step 1**: the cohort at the new
+window, then the LOT run on that cohort, then steps 3 to 5. Tables built from
+the earlier runs describe a cohort and lines this code no longer produces.
+
+**Not on the epoch day.** Step 3 refuses a LOT run that finished on or before
+`LOT_RULES_EPOCH` (below), and the shipped date is the day the rules last
+changed. A step 2 run finished on that calendar date is refused, so build it
+the day after or later — or set `LOT_RULES_EPOCH` to an earlier date on
+purpose and pin `LOT_CODE_MD5` to the rebuilt engine, so the run is still held
+to the code that built it.
 
 `LOT_RUN_METADATA.CODE_MD5` is what tells an old run from a new one. It
 fingerprints the engine's R, so a run built before this fix carries a different

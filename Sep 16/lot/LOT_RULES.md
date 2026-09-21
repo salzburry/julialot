@@ -352,17 +352,12 @@ line, and this one does not claim it. That ownership test is separate from the
 count and procedures do count in it, on the same test §4.7 uses: past the line's
 own induction window and not a planned tandem partner.
 
-A dose the fold has **already refused** is line-defining in that ownership test
-too, and it is the one arrival easy to miss, because it is a fold-set drug. The
-scan that looks for something line-defining skips fold-set drugs — they are
-part of the line under this very rule — but a dose the transplant override
-refused is not part of it: what that dose does instead is open the next line.
-Skipped for the set it belongs to rather than read for the verdict it already
-has, it left a later dose of the same course seeing an empty interval, and that
-dose folded into the line the refused one had ended. On an AUTO-started line
-that showed only as a regimen naming a drug first dosed after the line closed;
-on an ALLO- or CAR-T-started line it took the single day §4.6 gives and the
-line the refused dose opened with it.
+A dose the transplant override has **refused** is line-defining in that
+ownership test too, although it is a fold-set drug. The test passes over
+fold-set drugs, which are the line's own under this rule, but a refused dose is
+not returning to the line: it opens the next one, and every later dose of any
+fold-set drug belongs to a line at or after it. Worked example:
+`returning_drug_refused_dose_is_an_arrival`.
 
 **One course, one answer.** Episodes of the same agent with no discontinuation
 between them (`map_discon_gap_days`) are one course, and they fold together or
