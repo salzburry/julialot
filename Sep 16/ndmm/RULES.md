@@ -13,7 +13,7 @@ attrition table.
 |---|---|
 | 1 | A qualifying MM diagnosis: one inpatient claim, or two outpatient claims within 90 days |
 | 2 | Aged 18 or over at that diagnosis |
-| 3 | An eligible first-line treatment on or after 2017-01-01 |
+| 3 | An eligible first-line treatment on or after 2019-01-01 |
 | 4 | 365 days of continuous enrolment before the 1L index date |
 | 5 | Enrolled on the index date itself |
 | 6 | No myeloma therapy during those 365 days |
@@ -21,7 +21,7 @@ attrition table.
 | 8 | No pregnancy or childbirth anywhere in the study period |
 | 9 | No belantamab before the 1L index |
 
-The study period runs from 2016-01-01 to 2026-03-31. Enrolment gaps of 30 days
+The study period runs from 2018-01-01 to 2026-03-31. Enrolment gaps of 30 days
 or fewer still count as continuous.
 
 ## Assumptions

@@ -362,8 +362,10 @@ can see why each one closed rather than taking it on trust.
 text is operative and both figures are leftovers from the June version, where
 2016 was correct and the figure was never updated. The cohort build and the LOT
 run are to be re-run at `STUDY_START=2018-01-01` and `LOT1_FROM=2019-01-01`;
-until they are, the study package refuses to run against the 2016 cohort rather
-than indexing patients the protocol does not have (`BINDING_UPSTREAM_SETTINGS`).
+both are now the shipped defaults of `ndmm/` and `lot/engine/`, and until a
+cohort is rebuilt on them the study package refuses to run against the 2016 one
+rather than indexing patients the protocol does not have
+(`BINDING_UPSTREAM_SETTINGS`).
 One half of the original ask is still worth a sentence from the author: whether
 the qualifying diagnosis must fall inside the period, or merely on or before the
 1L index. The first reading drops patients diagnosed in 2016 or 2017 whose 1L
@@ -382,9 +384,12 @@ qualifying diagnosis is 2016-2017 — including patients whose 1L is in 2019 and
 would otherwise be in. It also decides whether ICD-9 codes are ever in scope (ICD-10
 began Oct 2015, so a 2018 start makes the ICD-9 arms of every code list dead).
 
-The cohort build uses `STUDY_START = 2016-01-01`, settled against the June 2026
-protocol. Mechanically the change is cheap: the window is a **run argument**,
-not a `CONTRACT` setting, and `check_cohort_window()` makes a cohort/vintage
+The cohort build used `STUDY_START = 2016-01-01`, settled against the June 2026
+protocol, and now carries `2018-01-01` and `LOT1_FROM = 2019-01-01` as its own
+contract - so the answer is the shipped default rather than something each run
+has to remember. It is `CONTRACT` in `ndmm/`, which is what makes moving it a
+recorded decision, and a run may still move it from `config.csv` with
+`NDMM_CONTRACT_OVERRIDE=TRUE`. `check_cohort_window()` makes a cohort/vintage
 mismatch fatal rather than silent. The `2026q1` vintage is the same tables and
 column names as `2025q2` with data extended through 2026-03-31, so moving the
 window needs no re-validation.

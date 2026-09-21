@@ -7,7 +7,7 @@
 # The study window comes from config.csv. To build the same algorithm against a
 # cohort with a different one, pass it instead of editing anything:
 #
-#   Rscript build.R MY_COH_FINAL mystudy_ 2016-01-01 2026-03-31
+#   Rscript build.R MY_COH_FINAL mystudy_ 2018-01-01 2026-03-31
 #
 # Or set INPUT_COHORT_TABLE, OBJECT_PREFIX, STUDY_START and STUDY_END instead of
 # passing them.

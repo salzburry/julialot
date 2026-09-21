@@ -46,7 +46,7 @@ cfg_defaults <- list(
   study_end            = Sys.getenv("STUDY_END", unset = "2026-03-31"),
 
   # Earliest date an eligible 1L treatment can count.
-  lot1_from     = Sys.getenv("LOT1_FROM", unset = "2017-01-01"),
+  lot1_from     = Sys.getenv("LOT1_FROM", unset = "2019-01-01"),
   # 12 months of CE and of baseline before the 1L index date.
   pre_lot1_days = as.integer(Sys.getenv("PRE_LOT1_DAYS", unset = "365")),
   # Days after index a no-gap span must cover. Zero means the index date
@@ -59,7 +59,7 @@ cfg_defaults <- list(
   # has something to compare the constant against - same variable, same
   # default, so a config.csv that goes missing stops the build rather than
   # silently widening the pregnancy and MM-diagnosis scans.
-  study_start   = Sys.getenv("STUDY_START", unset = "2016-01-01"),
+  study_start   = Sys.getenv("STUDY_START", unset = "2018-01-01"),
 
   codelist_dir = Sys.getenv("CODELIST_DIR", unset = "/mnt/code/codelist"),
   output_dir   = Sys.getenv("OUTPUT_DIR", unset = "/mnt/artifacts/results"),

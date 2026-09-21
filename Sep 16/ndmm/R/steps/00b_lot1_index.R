@@ -278,8 +278,8 @@ build_ndmm_belantamab_patids <- function(con, medical_tbl, rx_tbl, med_proc_tbl)
     "\n       AND ", ndc_key(paste0("t.", col)),
     "\n         = lpad(regexp_replace(c.code, '[^0-9]', ''), 11, '0')")
   # Both ends of the study period. The upper bound was always here; the lower
-  # one was not, and the CDM tables reach back well before the study start of
-  # 2016-01-01 - so this view could return a claim from outside the window every
+  # one was not, and the CDM tables reach back well before the study start
+  # whatever it is set to - so this view could return a claim from outside the window every
   # other criterion here is bounded to. One scope for the drug, one package.
   arm <- function(tbl, dt, match_sql) glue("
       SELECT DISTINCT cast(t.PATID as string) AS PATID,

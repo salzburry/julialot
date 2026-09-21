@@ -29,7 +29,7 @@ LOT_ALLOW_UNPROVEN_LINEAGE,FALSE,"TRUE lets the run go on over a lineage it coul
 COHORT_INDEX_EXCLUSIONS,"panobinostat,elotuzumab","The agents s7.2.1.1 says may not set the 1L index. Only the cohort build applies that, and it records what it barred; a build that barred less is refused. Names are resolved to abbreviations through cl_mma_rollup.csv. none checks nothing"
 WORK_SCHEMA,,"Schema the study writes into, and reads the cohort and LOT tables from. Blank: PROJECT_WORK_SCHEMA, then DOMINO_USER_NAME, then the session's current schema - as the cohort and LOT builds resolve theirs. catalog.schema is accepted when the catalog is DATABRICKS_CATALOG"
 #,,--- study periods: OPEN_QUESTIONS Q1 ---
-STUDY_START,2018-01-01,Study period start. Protocol s7.1 text. Figures 1 and 2 say 2016-01-01 - see OPEN_QUESTIONS Q1
+STUDY_START,2018-01-01,"Study period start. Protocol s7.1 body text; the two figures saying 2016-01-01 are June leftovers - OPEN_QUESTIONS Q1, answered by the study team 16 September 2026. The cohort build carries the same date"
 STUDY_END,2026-03-31,Study period end; also picks the quarterly table suffix
 COHORT_NESTED,TRUE,"Whether 2L and 3L require membership of the cohort above. TRUE is s7.2.1 read literally - 2L is the subset of 1L who initiate a second line. FALSE lets each line stand on its own index, which recovers patients whose earlier line fell outside the index window. The run records which way it went"
 LOT1_INDEX_FROM,2019-01-01,Earliest 1L initiation that may index the 1L cohort

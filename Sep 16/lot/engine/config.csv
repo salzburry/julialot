@@ -3,7 +3,7 @@ DATABRICKS_DSN,RWDE,ODBC DSN
 DATABRICKS_CATALOG,hive_metastore,Catalog for all reads and writes
 OPTUM_CDM_SCHEMA,clnprw_optum,Optum CDM schema
 USE_QUARTERLY_TABLES,TRUE,Read the cumulative quarterly CDM tables
-STUDY_START,2016-01-01,Study period start; the cohort must not index before it
+STUDY_START,2018-01-01,Study period start; the cohort must not index before it
 STUDY_END,2026-03-31,Study period end; picks the quarterly table suffix and the cohort must not run past it
 CODELIST_DIR,/mnt/code/codelist,Where the production code lists live
 PERSIST_TO_SCHEMA,TRUE,Write the outputs to the schema

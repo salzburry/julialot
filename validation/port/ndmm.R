@@ -55,18 +55,34 @@ PARTS <- list(
 # spelled out rather than absorbed - the numbers it produces are not the
 # numbers apr_30_2026 produces.
 SUBST <- list(
-  # The study-period default. The study starts 01 Jan 2016; the source
-  # defaulted to 2015-07-01, which is the overall build's window, not this
-  # one's. config.csv supplies STUDY_START in a real run so the effective date
-  # was already right - but cfg$study_start defaults the same variable to
-  # 2016-01-01, so without config.csv the two disagreed and check_constants()
-  # stopped the build. Both defaults are the study's date now, and a config.csv that
-  # goes missing no longer widens the pregnancy and MM-diagnosis scans.
+  # The study-period default. The study starts 01 Jan 2018 - OPEN_QUESTIONS
+  # Q1, answered by the study team on 16 September 2026, where the body text
+  # is operative and the two figures saying 2016 are June leftovers. The
+  # source defaulted to 2015-07-01, which is the overall build's window and
+  # neither reading of this one's. config.csv supplies STUDY_START in a real
+  # run so the effective date was already right - but cfg$study_start defaults
+  # the same variable, so without config.csv the two disagreed and
+  # check_constants() stopped the build. Both defaults are the study's date
+  # now, and a config.csv that goes missing no longer widens the pregnancy and
+  # MM-diagnosis scans.
   "R/ndmm_constants.R" = list(
     # The dated events view the pregnancy scan now writes. A new name, not a
     # changed rule.
-    list(from = "NDMM_STUDY_START         <- Sys.getenv(\"STUDY_START\", unset = \"2016-01-01\")",
-         to   = "NDMM_STUDY_START         <- Sys.getenv(\"STUDY_START\", unset = \"2015-07-01\")", n = 1L)),
+    list(from = "NDMM_STUDY_START         <- Sys.getenv(\"STUDY_START\", unset = \"2018-01-01\")",
+         to   = "NDMM_STUDY_START         <- Sys.getenv(\"STUDY_START\", unset = \"2015-07-01\")", n = 1L),
+    # One setting, one name. The source gave the 1L index floor a variable of
+    # its own - NDMM_LOT1_FROM, which config.csv does not carry - so LOT1_FROM
+    # moved cfg and left the query on 2017-01-01, and check_constants() could
+    # only stop the run. It reads LOT1_FROM now, like its cfg entry, so
+    # config.csv reaches the SQL. Same for the baseline window, written as a
+    # literal there and read from PRE_LOT1_DAYS here. Neither changes what the
+    # default is, only where it can be changed from.
+    list(from = "NDMM_LOT1_FROM <- Sys.getenv(\"LOT1_FROM\", unset = \"2019-01-01\")",
+         to   = "NDMM_LOT1_FROM <- Sys.getenv(\"NDMM_LOT1_FROM\", unset = \"2017-01-01\")",
+         n = 1L),
+    list(from = "NDMM_PRE_LOT1_DAYS       <- as.integer(Sys.getenv(\"PRE_LOT1_DAYS\", unset = \"365\"))",
+         to   = "NDMM_PRE_LOT1_DAYS       <- 365L  # 12-mo CE/baseline before 1L index date",
+         n = 1L)),
   # The sixth clinical change, and it is a fail-open rather than a rule: the
   # source read any ICD_FLAG that was not an ICD-9 spelling as ICD-10, so a
   # blank or unexpected flag on a genuine ICD-9 claim was mis-classed and then
@@ -187,7 +203,13 @@ ADDED_DEFS <- list(
 )
 
 ADDED <- list(
-  "R/ndmm_constants.R" = c("NDMM_FU_CE_DAYS          <- 0L" = 1L,
+  # The follow-up CE window, and the 1L index floor beside it. Both were
+  # written as their own thing here - a literal 0L, and a constant reading
+  # NDMM_LOT1_FROM - and both now read the environment variable their cfg
+  # entry reads, so config.csv is the one place either is written. Registered
+  # by the Sys.getenv() line rather than the value, which is what moved.
+  "R/ndmm_constants.R" = c(
+    "NDMM_FU_CE_DAYS          <- as.integer(Sys.getenv(\"FU_CE_DAYS\", unset = \"0\"))" = 1L,
     # The dated events view the pregnancy scan writes. A new name, not a new
     # rule - see DECISIONS.md #9 and the pregnancy entry below.
     "NDMM_PREGNANCY_EVENTS    <- \"_ndmm_pregnancy_events\"" = 1L),

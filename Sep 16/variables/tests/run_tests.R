@@ -1513,12 +1513,12 @@ cat("\nthe rules that hold the numbers up\n")
     date = "2026-09-21",
     # The engine's R, by its own code_fingerprint() - the same value it
     # records as CODE_MD5, so the two can be compared by eye.
-    engine = "cec3b2d5a9864b9f5ac0fe24c1d3281d",
+    engine = "69d5e4dcc4ba68b81329192c08b11a05",
     # ...and its shipped settings, which code_fingerprint() does not read.
     # Most of what decides a line is pinned in the engine's own CONTRACT and
     # so is inside the R, but the study window is not, and a build reading a
     # different one is not the build this date was set for.
-    settings = "7fff3707b2b8735d2457e7617cfae9c6")
+    settings = "e05cfdcd6535d48892812065c4ac2431")
   ok(identical(cfg0()$lot_rules_epoch, EPOCH_PIN$date),
      "the shipped epoch is the date the rules last changed")
   ok(is.na(lin_check(UPDATED_AT = "2026-09-22 00:00:00")),
