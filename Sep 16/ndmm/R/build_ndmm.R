@@ -160,6 +160,17 @@ check_settings <- function() {
     bad <- c(bad, paste0("NDMM_WAIVERS names no such check: ",
                          paste(unknown, collapse = ", "),
                          " (waivable: ", paste(WAIVABLE_CHECKS, collapse = ", "), ")"))
+  # NDMM_LOT1_FROM was the SQL's own name for LOT1_FROM, and the two had to be
+  # set together. ndmm_constants.R now reads LOT1_FROM like everything else,
+  # so this variable does nothing - and a run that still exports it, as the
+  # old instructions said to, would silently get the config's value instead of
+  # the one it asked for. Refused rather than ignored.
+  old_l1 <- trimws(Sys.getenv("NDMM_LOT1_FROM", unset = ""))
+  if (nzchar(old_l1))
+    bad <- c(bad, paste0("NDMM_LOT1_FROM='", old_l1, "' is no longer read - ",
+                         "the 1L index floor is LOT1_FROM, in config.csv or ",
+                         "the environment, and it now reaches the SQL. Unset ",
+                         "NDMM_LOT1_FROM and set LOT1_FROM."))
   for (v in c("STUDY_END", "LOT1_FROM", "STUDY_START")) {
     x <- trimws(Sys.getenv(v, unset = ""))
     if (nzchar(x) && !grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", x))
@@ -221,14 +232,45 @@ pin_prefix <- function(cfg, prefix) {
   cfg
 }
 
+# A cohort built to different windows is a different cohort, and it is
+# refused. NDMM_CONTRACT_OVERRIDE is the one way past, and it exists so that
+# moving the study window is an edit to config.csv and one acknowledgement -
+# not an edit to this file. Before it, CONTRACT was the only place a date
+# could be changed, so a sensitivity run meant editing shipped R, and the
+# cohort's own definition and the run's settings drifted by hand.
+#
+# A deviating run cannot pass for the study's: the deviations go into
+# NDMM_BUILD_STATUS.FINDINGS and NDMM_RUN_METADATA.FINDINGS, CONTRACT_SETTINGS
+# records what the run used rather than what CONTRACT pins, and variables/
+# compares its own window against that column and refuses a disagreement.
+#
+# Same shape and the same bargain as LOT_CONTRACT_OVERRIDE in
+# lot/engine/R/build_lot.R. Unset, which is every production run, nothing here
+# changes.
 check_contract <- function(cfg) {
-  wrong <- Filter(Negate(is.null), lapply(names(CONTRACT), function(k) {
+  options(ndmm_contract_deviations = character(0))
+  wrong <- unlist(Filter(Negate(is.null), lapply(names(CONTRACT), function(k) {
     if (isTRUE(all.equal(cfg[[k]], CONTRACT[[k]]))) NULL
     else paste0(k, " = ", format(cfg[[k]]), " (want ", format(CONTRACT[[k]]), ")")
-  }))
-  if (length(wrong))
-    stop("This cohort is defined as:\n  ", paste(unlist(wrong), collapse = "\n  "),
-         call. = FALSE)
+  })))
+  if (length(wrong)) {
+    if (!identical(toupper(trimws(Sys.getenv("NDMM_CONTRACT_OVERRIDE", unset = ""))),
+                   "TRUE"))
+      stop("This cohort is defined as:\n  ", paste(wrong, collapse = "\n  "),
+           "\nA different value is a different cohort, not a setting. Change it ",
+           "in config.csv (or the environment) and set ",
+           "NDMM_CONTRACT_OVERRIDE=TRUE to say you meant to: the deviations ",
+           "are then recorded against the run, CONTRACT_SETTINGS carries what ",
+           "the run used, and the study package refuses a window that does ",
+           "not match this cohort's.", call. = FALSE)
+    options(ndmm_contract_deviations = wrong)
+    log_msg("WARNING: NDMM_CONTRACT_OVERRIDE is set. This is NOT the contract ",
+            "cohort:\n  ", paste(wrong, collapse = "\n  "))
+    log_msg("  Recorded against this run in NDMM_BUILD_STATUS.FINDINGS and ",
+            "NDMM_RUN_METADATA. Downstream packages read CONTRACT_SETTINGS, ",
+            "so they will hold the study to these values and not the ",
+            "contract's.")
+  }
   invisible(TRUE)
 }
 
@@ -586,10 +628,29 @@ code_fingerprint <- function(here) {
 
 # Sorted, so two runs with the same settings produce the same string and it can
 # be compared as one value.
-contract_settings <- function() {
+contract_settings <- function(cfg = NULL) {
   k <- sort(names(CONTRACT), method = "radix")
-  paste(paste0(k, "=", vapply(CONTRACT[k], function(v) as.character(v)[1],
-                              character(1))), collapse = "|")
+  # The RUN's value, falling back to the contract's. The two are the same on a
+  # contract build; on an overridden one this has to say what the cohort was
+  # actually built from, because variables/ reads this very column back and
+  # refuses a study whose window disagrees with the cohort's
+  # (BINDING_UPSTREAM_SETTINGS). Recording CONTRACT here would have had it
+  # compare against a value the run did not use.
+  val <- function(key) {
+    v <- if (!is.null(cfg) && !is.null(cfg[[key]])) cfg[[key]] else CONTRACT[[key]]
+    as.character(v)[1]
+  }
+  paste(paste0(k, "=", vapply(k, val, character(1))), collapse = "|")
+}
+
+# check_contract() runs before the connection, and the findings list is reset
+# after it - a second attempt in one session must not open carrying the first
+# one's. So the deviations live in an option of their own and are folded back
+# in at the reset: they belong to THIS run, and they are the one finding that
+# is known before anything is read.
+contract_deviation_findings <- function() {
+  d <- getOption("ndmm_contract_deviations", character(0))
+  if (!length(d)) character(0) else paste0("contract deviation: ", d)
 }
 
 RUN_METADATA_COLS <- c(RUN_ID = "STRING", OBJECT_PREFIX = "STRING",
@@ -625,7 +686,7 @@ write_run_metadata <- function(con, cfg, here, n) {
          # the mode alone does not say which codes were kept.
          "{sql_text(paste(ndmm_mm_adjacent_groups(), collapse = '|'))}, ",
          "{sql_text(code_fingerprint(here))}, ",
-         "{sql_text(contract_settings())}, ",
+         "{sql_text(contract_settings(cfg))}, ",
          "{sql_text(paste(sort(waivers_named(), method = 'radix'), collapse = ','))}, ",
          "{sql_text(paste(sort(getOption('ndmm_waivers_applied', character(0)), ",
          "method = 'radix'), collapse = ','))}, ",
@@ -1228,7 +1289,8 @@ build_ndmm <- function(here, prefix) {
   # config load, so a second attempt in one session would otherwise open by
   # writing the first attempt's findings under the same id.
   options(ndmm_complete = FALSE, ndmm_codelist_md5 = list(),
-          ndmm_waivers_applied = character(0), ndmm_findings = character(0))
+          ndmm_waivers_applied = character(0),
+          ndmm_findings = contract_deviation_findings())
   write_build_status(con, cfg, "started")
   # Registered the moment the run is marked started, and before anything that
   # can stop - clear_run_rows() does. A stop between the two would leave the

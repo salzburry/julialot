@@ -15,12 +15,17 @@ NDMM_PREG_CODES          <- "_ndmm_preg_codes"
 NDMM_PREGNANCY_EVENTS    <- "_ndmm_pregnancy_events"
 NDMM_PREGNANCY_PATIDS    <- "_ndmm_pregnancy_patids"
 NDMM_STUDY_START         <- Sys.getenv("STUDY_START", unset = "2016-01-01")
-NDMM_PRE_LOT1_DAYS       <- 365L  # 12-mo CE/baseline before 1L index date
+# 12-mo CE/baseline before the 1L index date. Read from PRE_LOT1_DAYS, which
+# is the name config.csv and cfg$pre_lot1_days both use: written as a literal
+# here, a config.csv that set it moved cfg and left the SQL on 365, and the
+# run stopped in check_constants() with nothing to do about it but edit this
+# file.
+NDMM_PRE_LOT1_DAYS       <- as.integer(Sys.getenv("PRE_LOT1_DAYS", unset = "365"))
 # Days after the index date a no-gap span must cover for follow-up CE. 0 means
 # the index date itself - one day. That is what the study team confirmed for
 # this cohort; other cohorts use three months, so the window is named here
 # rather than written into the SQL.
-NDMM_FU_CE_DAYS          <- 0L
+NDMM_FU_CE_DAYS          <- as.integer(Sys.getenv("FU_CE_DAYS", unset = "0"))
 
 # Tumor groups that do not count as another cancer. These are the myeloma
 # itself or its precursor - plasma cell leukemia, the plasmacytomas, monoclonal
@@ -45,8 +50,15 @@ NDMM_MM_ADJACENT_OVERRIDE <- c(
 
 # Earliest date an eligible 1L treatment can count. Enforced in
 # build_lot1_starts_ndmm(), so the view never returns a start before it.
-# Override for sensitivity runs.
-NDMM_LOT1_FROM <- Sys.getenv("NDMM_LOT1_FROM", unset = "2017-01-01")
+#
+# LOT1_FROM, which is the name config.csv uses and the name cfg$lot1_from
+# reads. It used to be NDMM_LOT1_FROM - one setting under two names, where the
+# config drove the contract check and the constant drove the query. Setting
+# LOT1_FROM alone moved the config, left this at 2017-01-01, and stopped the
+# run in check_constants() after check_contract() had passed; setting both was
+# the documented answer, and nobody should have to know that. check_settings()
+# refuses a leftover NDMM_LOT1_FROM rather than ignoring it.
+NDMM_LOT1_FROM <- Sys.getenv("LOT1_FROM", unset = "2017-01-01")
 
 # Raw CDM confinement table, which tells inpatient from outpatient in the
 # other-cancer check. Set here because nothing else defines it.

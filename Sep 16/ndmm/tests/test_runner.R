@@ -165,6 +165,51 @@ for (k in c("lot1_from", "fu_ce_days", "pre_lot1_days", "gap_days", "study_end")
      paste0(k, " drifting from the contract stops the build, named"))
 }
 
+# NDMM_CONTRACT_OVERRIDE, which is what makes the window settable from
+# config.csv rather than from this package's own R. It has to do three things:
+# let the run through, record the deviation where both the status row and the
+# metadata row will pick it up, and leave a contract build recording nothing.
+local({
+  drift <- full; drift$lot1_from <- "2019-01-01"
+  old <- Sys.getenv("NDMM_CONTRACT_OVERRIDE", unset = NA)
+  on.exit({
+    if (is.na(old)) Sys.unsetenv("NDMM_CONTRACT_OVERRIDE")
+    else Sys.setenv(NDMM_CONTRACT_OVERRIDE = old)
+    options(ndmm_contract_deviations = character(0))
+  }, add = TRUE)
+  Sys.setenv(NDMM_CONTRACT_OVERRIDE = "TRUE")
+  msgs <- character(0)
+  lm <- function(...) msgs <<- c(msgs, paste0(...))
+  e <- new.env(parent = globalenv()); e$log_msg <- lm
+  f <- check_contract; environment(f) <- e
+  ok(identical(tryCatch({ f(drift); "" }, error = conditionMessage), ""),
+     "NDMM_CONTRACT_OVERRIDE lets a changed window through")
+  dev <- getOption("ndmm_contract_deviations", character(0))
+  ok(length(dev) == 1L && grepl("lot1_from", dev[1], fixed = TRUE),
+     "...recording which setting moved, and to what")
+  ok(identical(contract_deviation_findings(),
+               paste0("contract deviation: ", dev)),
+     "...so the status row and the metadata row both carry it as a finding")
+  ok(any(grepl("NOT the contract cohort", msgs, fixed = TRUE)),
+     "...and the log says outright that this is not the study's cohort")
+  ok(identical(tryCatch({ f(full); "" }, error = conditionMessage), "") &&
+       identical(getOption("ndmm_contract_deviations"), character(0)),
+     "...while a contract build clears them, so a second call cannot inherit them")
+})
+
+# CONTRACT_SETTINGS is what variables/ reads back to check the study's window
+# against the cohort's. On an overridden run it has to say what the run USED;
+# saying what CONTRACT pins would have the downstream check compare against a
+# value no query ever saw.
+local({
+  drift <- modifyList(full, list(lot1_from = "2019-01-01"))
+  ok(grepl("lot1_from=2019-01-01", contract_settings(drift), fixed = TRUE),
+     "CONTRACT_SETTINGS records the window the run used, not the contract's")
+  ok(grepl("lot1_from=2017-01-01", contract_settings(full), fixed = TRUE) &&
+       identical(contract_settings(full), contract_settings()),
+     "...and on a contract build the two are the same string")
+})
+
 cat("\n-- every input is present, or the run says which is not --\n")
 ue <- new.env(parent = globalenv())
 sys.source(file.path(ROOT, "R", "build_ndmm.R"), envir = ue)
@@ -271,7 +316,45 @@ ok(length(unpinned) == 0,
                                 paste(unpinned, collapse = ", "))
    else "and every one of them is checked against the contract")
 ok("NDMM_LOT1_FROM" %in% pinned,
-   "NDMM_LOT1_FROM among them - its variable is not LOT1_FROM")
+   "NDMM_LOT1_FROM among them, which is the one that used to get away")
+# The invariant that makes config.csv authoritative: a constant the SQL reads
+# and the cfg entry it is checked against must come from the SAME environment
+# variable. Two names for one setting is what let LOT1_FROM move the config
+# while the query stayed on 2017-01-01 - and the guard that caught it could
+# only stop the run, never fix it.
+const_txt <- paste(unlist(lapply(
+  file.path(ROOT, "R", c("ndmm_constants.R", "standalone_constants.R")),
+  readLines, warn = FALSE)), collapse = "\n")
+cfg_txt <- paste(readLines(file.path(ROOT, "R", "config.R"), warn = FALSE),
+                 collapse = "\n")
+# Two shapes, and each anchored at the start of its own line. A constant is a
+# top-level `NAME <- ...`; a cfg entry is an indented `key = ...` inside
+# cfg_defaults. Anchored any looser the constant pattern matched the worked
+# examples in the comments above these assignments - `#   NAME=value` - and
+# read NA for a constant assigned three lines below.
+.env_in <- function(m) {
+  if (!length(m)) return(NA_character_)
+  v <- regmatches(m, regexpr('Sys\\.getenv\\("[A-Z_0-9]+"', m, perl = TRUE))
+  if (!length(v)) return(NA_character_)
+  sub('Sys\\.getenv\\("', "", sub('"$', "", v))
+}
+env_of_const <- function(txt, lhs) .env_in(regmatches(txt, regexpr(
+  paste0("(?m)^", lhs, "\\s*<-[^\n]*"), txt, perl = TRUE)))
+env_of_cfg <- function(txt, key) .env_in(regmatches(txt, regexpr(
+  paste0("(?m)^[ \t]*", key, "\\s*=[^\n]*"), txt, perl = TRUE)))
+mismatched <- Filter(Negate(is.null), lapply(CONSTANT_SETTINGS, function(s) {
+  a <- env_of_const(const_txt, s$const); b <- env_of_cfg(cfg_txt, s$cfg)
+  if (identical(a, b)) NULL else paste0(s$const, " reads ", a, " but ",
+                                        s$cfg, " reads ", b)
+}))
+ok(length(mismatched) == 0,
+   if (length(mismatched))
+     paste0("one setting under two names: ",
+            paste(unlist(mismatched), collapse = "; "))
+   else "and each reads the same environment variable its cfg entry does")
+ok(identical(env_of_const(const_txt, "NDMM_LOT1_FROM"), "LOT1_FROM") &&
+     identical(env_of_cfg(cfg_txt, "lot1_from"), "LOT1_FROM"),
+   "NDMM_LOT1_FROM reads LOT1_FROM, so config.csv reaches the query")
 
 cat("\n-- the codelist allowlist, executed rather than described --\n")
 # CODELIST_FILES named two files while the steps asked for three, so every
@@ -646,9 +729,15 @@ ok(i_oe > 0 && i_bs < i_oe && i_oe < i_cr,
 # config.R is sourced, so a retry in one session writes under the first
 # attempt's id, and a "started" row opening with the previous attempt's findings
 # would attribute them to a build that has not looked at anything yet.
-i_rs <- regexpr("ndmm_findings = character(0)", body, fixed = TRUE)
+i_rs <- regexpr("ndmm_findings = contract_deviation_findings()", body, fixed = TRUE)
 ok(i_rs > 0 && i_rs < i_bs,
-   "...and the findings are cleared before the first status row, not after it")
+   "...and the findings are reset before the first status row, not after it")
+# Reset TO this run's contract deviations, not to nothing. check_contract()
+# runs before the connection is open, so an empty reset would drop the one
+# finding that is known before anything has been read - and a deviating cohort
+# would then carry no mark at all on the row LOT reads.
+ok(!grepl("ndmm_findings = character(0)", body, fixed = TRUE),
+   "...and the reset keeps the deviations check_contract() found before it")
 
 cat("\n-- a retried write does not double the rows --\n")
 # write_attrition and write_build_status both clear and rewrite their run's

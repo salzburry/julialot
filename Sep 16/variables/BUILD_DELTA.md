@@ -17,38 +17,54 @@ these, the row says so — read the row, not the heading, for what exists now.
 
 ## 0. How a change reaches the build
 
-**Two of these need the cohort build's CONTRACT edited. The rest do not.**
+**Two of these are what the cohort IS, so changing them is an acknowledged
+deviation rather than a setting. Neither needs this package's or the cohort
+build's source edited.**
 
-**Setting one of those two in the environment is not enough, and the run will
-stop rather than quietly use it.** The settings are read from the environment,
-but `check_contract()` (`ndmm/R/build_ndmm.R`) then compares the resolved
-config against a pinned `CONTRACT` list and **stops** on any difference, with
-no override of any kind — *"a different value here is a different cohort, so
-they are checked rather than defaulted."* Editing `config.csv` does not help
-either; the check is against `CONTRACT`, not the file. The cohort build's own
-source is what has to move.
+The settings are read from `ndmm/config.csv`, or from the environment, which
+wins over it. `check_contract()` (`ndmm/R/build_ndmm.R`) compares the resolved
+config against a pinned `CONTRACT` list and **stops** on any difference —
+*"a different value here is a different cohort"* — unless
+`NDMM_CONTRACT_OVERRIDE=TRUE` says the difference is meant. The run then goes
+through and the deviation is recorded three times over: in
+`NDMM_BUILD_STATUS.FINDINGS`, in `NDMM_RUN_METADATA.FINDINGS`, and — the one
+that binds — in `CONTRACT_SETTINGS`, which carries what the run **used** rather
+than what `CONTRACT` pins. This package reads that column back and refuses a
+study whose own window disagrees with the cohort's, so a moved window has to be
+moved on both sides or the run stops.
 
 There is a second guard behind the first. `check_constants()` compares the
 constants the SQL actually interpolates — defined in `ndmm/R/ndmm_constants.R`
-— against the resolved config, and stops if they disagree. The two are read
-from **differently named** environment variables:
+— against the resolved config, and stops if they disagree. Each of those now
+reads **the same** environment variable its config entry does, which is what
+makes `config.csv` enough:
 
 ```r
-NDMM_STUDY_START <- Sys.getenv("STUDY_START",    unset = "2016-01-01")   # plain name
-NDMM_LOT1_FROM   <- Sys.getenv("NDMM_LOT1_FROM", unset = "2017-01-01")   # prefixed name
+NDMM_STUDY_START <- Sys.getenv("STUDY_START", unset = "2016-01-01")
+NDMM_LOT1_FROM   <- Sys.getenv("LOT1_FROM",   unset = "2017-01-01")
 ```
 
-So `STUDY_START` reaches the SQL and `LOT1_FROM` does not. Setting `LOT1_FROM`
-alone moves the config, leaves the constant at 2017-01-01, and the run halts on
-`check_constants()` after `check_contract()` has already passed.
+It was not always so. `NDMM_LOT1_FROM` used to read a variable of its own, so
+`LOT1_FROM` moved the config, left the constant at 2017-01-01, and halted the
+run on `check_constants()` after `check_contract()` had passed — one setting
+under two names, with a guard that could stop the run but never fix it.
+`check_settings()` now refuses a leftover `NDMM_LOT1_FROM` outright rather than
+letting it read as a value that was applied. A test walks `CONSTANT_SETTINGS`
+and fails if any constant and its config entry ever read different variables
+again.
 
 | setting | how it is changed |
 |---|---|
-| `STUDY_START` | **edit `CONTRACT$study_start`** in `ndmm/R/build_ndmm.R`, and export `STUDY_START` (or set it in `config.csv`) |
-| `LOT1_FROM` | **edit `CONTRACT$lot1_from`**, set `LOT1_FROM` for the config, **and export `NDMM_LOT1_FROM`** for the SQL |
+| `STUDY_START` | `ndmm/config.csv` (or the environment), plus `NDMM_CONTRACT_OVERRIDE=TRUE` |
+| `LOT1_FROM` | the same — one name, and it reaches both the config and the SQL |
 | `FU_CE_DAYS` | no change needed — the contract value `0` is what §2 leaves in place, since the one-claim-or-death test now runs in this package |
 | `SUBSEQ_FU_CE_DAYS` | environment, but `subseq_check_windows()` refuses it unless `NDMM_SUBSEQ_OVERRIDE=TRUE`, which records the run as a named sensitivity |
 | `NDMM_INDEX_EXCLUDED_ABBRS` | environment only, no contract entry — a true run-time decision |
+
+The study side moves the same way: `STUDY_START` and `LOT1_INDEX_FROM` in
+`variables/config.csv`, with `SETTINGS_OVERRIDE=TRUE` for this package's own
+contract and for the upstream comparison in `read_upstream_settings()`. Three
+packages, three `config.csv` files, and nothing in R to edit.
 
 Both guards are right to exist: one stops a cohort being silently redefined
 under the study's own table names, the other stops the config and the SQL

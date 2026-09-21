@@ -3,9 +3,9 @@ DATABRICKS_DSN,RWDE,ODBC DSN
 DATABRICKS_CATALOG,hive_metastore,Catalog for all reads and writes
 OPTUM_CDM_SCHEMA,clnprw_optum,Optum CDM schema
 USE_QUARTERLY_TABLES,TRUE,Read the cumulative quarterly CDM tables
-STUDY_START,2016-01-01,Study period start
+STUDY_START,2016-01-01,"Study period start. Part of CONTRACT - what the cohort IS - so changing it needs NDMM_CONTRACT_OVERRIDE=TRUE, and the study package's own STUDY_START has to move with it"
 STUDY_END,2026-03-31,Study period end; picks the quarterly table suffix
-LOT1_FROM,2017-01-01,1L eligible-treatment period opens here
+LOT1_FROM,2017-01-01,"1L eligible-treatment period opens here; this one name reaches both the config and the SQL. Part of CONTRACT, so changing it needs NDMM_CONTRACT_OVERRIDE=TRUE and the study package's LOT1_INDEX_FROM has to move with it"
 PRE_LOT1_DAYS,365,CE and baseline window before the 1L index date
 FU_CE_DAYS,0,Days after index the follow-up CE must cover; 0 is one day
 GAP_DAYS,30,Enrollment gaps of this many days or fewer are still continuous

@@ -97,9 +97,18 @@ temporary view's plan, so repointing after that view exists would leave it on
 the original query.
 
 Every setting is checked twice: against `CONTRACT`, and against the `NDMM_*`
-constants the SQL actually interpolates - those have their own environment
-variables (`NDMM_LOT1_FROM` is not `LOT1_FROM`), so a contract checked against
-`cfg` alone would not speak for the query that runs.
+constants the SQL actually interpolates - a contract checked against `cfg`
+alone would not speak for the query that runs. Each of those constants reads
+the same environment variable its `cfg` entry does, so `config.csv` is the one
+place a value is written; `NDMM_LOT1_FROM` used to be its own variable, and
+setting `LOT1_FROM` then moved the config and left the query where it was.
+A value that `CONTRACT` pins - the study period and the 1L index floor among
+them - still stops the run, because a different value there is a different
+cohort. `NDMM_CONTRACT_OVERRIDE=TRUE` says the change is meant: the run goes
+through, and the deviation is recorded in `NDMM_BUILD_STATUS.FINDINGS`, in
+`NDMM_RUN_METADATA.FINDINGS`, and in `CONTRACT_SETTINGS`, which then carries
+what the run used rather than what the contract pins. The study package reads
+that column back and refuses a window that is not the cohort's.
 
 ## What every run writes
 
@@ -870,9 +879,12 @@ run rather than building something the name no longer describes.
 | `TBL_DOD` | `dod` | date of death |
 
 Every one is checked twice - against `CONTRACT`, and then against the
-`NDMM_*` constants the SQL actually interpolates. Those have their own
-environment variables (`NDMM_LOT1_FROM` is not `LOT1_FROM`), so a contract
-checked against `cfg` alone would not speak for the query that runs.
+`NDMM_*` constants the SQL actually interpolates, because a contract checked
+against `cfg` alone would not speak for the query that runs. Each constant
+reads the name in the left-hand column above and no other, so setting it once
+- in `config.csv` or the environment - moves the config and the query
+together. Changing one that `CONTRACT` pins also needs
+`NDMM_CONTRACT_OVERRIDE=TRUE`, which records the deviation against the run.
 
 ### Run choices
 
