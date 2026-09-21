@@ -82,7 +82,7 @@ what it cannot place. The cost is one day's runs; the alternative is reading a
 superseded number in silence. Set it only to name a different floor:
 
 ```bash
-LOT_RULES_EPOCH=2026-09-19    # shipped; a run finished on or before this stops
+LOT_RULES_EPOCH=2026-09-21    # shipped; a run finished on or before this stops
 ```
 
 Whichever floor applied is recorded on the run, in

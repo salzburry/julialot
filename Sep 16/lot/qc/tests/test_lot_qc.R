@@ -254,6 +254,26 @@ ok(has(SQL$A7, "LOT_START_TYPE = 'MED'") && !has(SQL$A7, "NOT IN ('SCT_ALLO'"),
    "A7 asks only whether a medication-started line carries a regimen")
 ok(has(SQL$A5, "NOT IN ('MED', 'SCT_ALLO', 'SCT_AUTO', 'CART')"),
    "...and A5 still pins the four start types A7 leans on")
+# A8 and A9 are the other side of the same coin: what A7 must NOT judge, 4.6
+# states outright, and until these two nothing asked it. A8 has no exception
+# and A9 has exactly one - 4.7's melphalan lift - so the pair is only sound
+# while A9 keeps its carve-out and keeps it read off the run's own setting.
+ok(has(SQL$A8, "LOT_START_TYPE = 'SCT_ALLO'")
+   && has(SQL$A8, "trim(coalesce(LOT_BASE_MEDS, '')) <> ''"),
+   "A8 counts an allogeneic line that carries a regimen")
+ok(has(SQL$A9, "l.LOT_BASE_END_DT > l.LOT_START_DT"),
+   "A9 counts an allogeneic line that outlived its own start date")
+ok(has(SQL$A9, "upper(trim(ms.MAP_MED_TYPE)) = 'MELP'"),
+   "...and exempts the one lift 4.7 gives it, by the abbreviation THIS run used")
+ok(has(SQL$A9, "AND 1 = 1"),
+   "...and asks at all on a single_day build")
+local({
+  p_ext <- utils::modifyList(P, list(allo_span = "extend_to_next"))
+  sql <- LOT_QC_CHECKS[[which(vapply(LOT_QC_CHECKS,
+    function(c_i) identical(c_i$id, "A9"), logical(1)))]]$sql(TBL, p_ext)
+  ok(grepl("AND 1 = 0", sql, fixed = TRUE),
+     "...and matches nothing on a build where 4.6 does not give the single day")
+})
 # C2's exemption belongs to the earlier returning-drug rule, where a confirmed
 # gap released the drug so it could be both in the regimen and the added
 # medication. LOT_RULES.md 4.3 withdrew that release, so under the settings the
