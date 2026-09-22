@@ -587,6 +587,31 @@ PATS = [
     dict(P('F44n', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 300, 330),
                          ('BORT', 'PI', 400, 430)]),
          sct_auto=[IX + 350]),
+    # F45-F47: the SAME DAY as the transplant, which every bound above steps
+    # over. The transplant override asks for a line opened STRICTLY between
+    # the two doses and the arrival scan for a dose STRICTLY after the line's
+    # start, so a dose ON the transplant date is refused by neither and folds.
+    #
+    # It matters only on an ALLO. 4.6 gives that line one day and no regimen
+    # at all; an AUTO or a CAR-T legitimately takes a drug that starts in its
+    # window, and a drug on the transplant date is the first day of that
+    # window. So the three are planted together: the ALLO must refuse it and
+    # the other two must keep it, and a fix that cannot tell them apart shows
+    # up here rather than in the study's numbers.
+    dict(P('F45', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 300, 330),
+                        ('BORT', 'PI', 350, 380), ('BORT', 'PI', 410, 440)]),
+         sct_ac=[('ALLO', IX + 350)]),
+    # ...and the same through a permissible substitute, which 4.4 makes the
+    # same agent: the pair shares one course, so it has to share the answer.
+    dict(P('F45s', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 300, 330),
+                         ('BORTB', 'PI', 350, 380), ('BORTB', 'PI', 410, 440)]),
+         sct_ac=[('ALLO', IX + 350)]),
+    dict(P('F46', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 300, 330),
+                        ('BORT', 'PI', 350, 380), ('BORT', 'PI', 410, 440)]),
+         sct_ac=[('CART', IX + 350)]),
+    dict(P('F47', L1 + [('DARA', 'MAB', 200, 600), ('BORT', 'PI', 300, 330),
+                        ('BORT', 'PI', 350, 380), ('BORT', 'PI', 410, 440)]),
+         sct_auto=[IX + 350]),
 ]
 
 
@@ -927,6 +952,37 @@ def main():
     ok(n(fold, 'F44') == 4 and fold['F44'][3][1] == rs.d(IX + 400)
        and fold['F44'][3][2] == rs.d(IX + 500),
        "F44: ...and the line that drug opened owns both its episodes")
+
+    # F45-F47: the dose ON the transplant date. Same statement as F42-F44 -
+    # past the transplant the fold decides nothing - and it has to hold for
+    # all three, because the fix is allowed to change the ALLO and forbidden
+    # to touch the other two.
+    for pid, tx in (('F45', 'an ALLO'), ('F45s', 'an ALLO, through a substitute'),
+                    ('F46', 'a CAR-T'), ('F47', 'an AUTO')):
+        ok([r[1:] for r in fold.get(pid, [])[2:]]
+           == [r[1:] for r in ref.get(pid, [])[3:]],
+           "%s: a dose on %s's own date leaves everything from that "
+           "transplant on reading the same with the fold and without it" % (pid, tx))
+
+    # 4.6 on the ALLO, which is the one of the three that takes nothing.
+    for pid, med in (('F45', 'BORT'), ('F45s', 'BORTB')):
+        ok(n(fold, pid) == 4 and fold[pid][2][1] == rs.d(IX + 350)
+           and fold[pid][2][2] == rs.d(IX + 350) and fold[pid][2][4] == '',
+           "%s: a fold-set dose on the ALLO date is not the ALLO line's - it "
+           "keeps the one day and the empty regimen, through the regimen, the "
+           "hold and the working base set alike" % pid)
+        ok(n(fold, pid) == 4 and fold[pid][3][1] == rs.d(IX + 410)
+           and fold[pid][3][2] == rs.d(IX + 440) and fold[pid][3][4] == med,
+           "%s: ...and the line after it is still there, on %s" % (pid, med))
+
+    # ...and the two that DO take it. A drug starting in an AUTO's or a
+    # CAR-T's window is consolidation: the transplant's own date is the first
+    # day of that window, so the same dose belongs to the line here.
+    for pid, why in (('F46', 'CAR-T'), ('F47', 'AUTO')):
+        ok(n(fold, pid) == 3 and fold[pid][2][4] == 'BORT'
+           and fold[pid][2][2] == rs.d(IX + 440),
+           "%s: the same dose on an %s's date IS that line's consolidation, "
+           "and the ALLO rule does not reach it" % (pid, why))
 
     ok(regimen(True, 'F19', 2) == regimen(True, 'F19n', 2),
        "F19/F19n: a suppressed course decides nothing, so the folded regimen "

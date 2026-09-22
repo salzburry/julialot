@@ -311,7 +311,7 @@ check_upstream <- function(con, cfg) {
 # modules are loaded, and is the only check that speaks for the SQL.
 CONSTANT_SETTINGS <- list(
   list(const = "NDMM_LOT1_FROM",     cfg = "lot1_from",
-       note = "set by NDMM_LOT1_FROM, not LOT1_FROM"),
+       note = "both set by LOT1_FROM"),
   list(const = "NDMM_PRE_LOT1_DAYS", cfg = "pre_lot1_days", note = ""),
   list(const = "NDMM_FU_CE_DAYS",    cfg = "fu_ce_days",    note = ""),
   list(const = "NDMM_GAP_DAYS",      cfg = "gap_days",      note = ""),

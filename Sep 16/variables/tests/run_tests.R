@@ -1481,8 +1481,23 @@ cat("\nthe rules that hold the numbers up\n")
   ok(!is.null(c0$out) && any(grepl("outpatient_window", c0$said, fixed = TRUE)) &&
        any(grepl("WARNING", c0$said)) && !length(attr(c0$out, "deviations")),
      "a disagreement on the outpatient window is a warning, not a stop, and not a deviation")
-  ok(identical(unname(UPSTREAM_SETTING_MAP[BINDING_UPSTREAM_SETTINGS]), c("study_start", "lot1_from")),
-     "the two binding settings are the study period and the 1L index floor, under the cohort build's names")
+  # The cohort's END binds too, and it did not while nothing could move it:
+  # the cohort build had no way past its own contract, so its end date was the
+  # contract's. NDMM_CONTRACT_OVERRIDE gave it one, and a cohort capped early
+  # under a study claiming the full period is a study claiming follow-up its
+  # patients do not have. Nothing else catches it - the LOT window check
+  # accepts a cohort NARROWER than its window, and this package reads its end
+  # date against the LOT run's rather than the cohort's.
+  e_end <- tryCatch(up_read("study_start=2018-01-01|lot1_from=2019-01-01|study_end=2025-12-31"),
+                    error = function(e) conditionMessage(e))
+  ok(is.character(e_end) &&
+       grepl("study_end: the cohort was built with 2025-12-31, this run is set to 2026-03-31", e_end, fixed = TRUE),
+     "...and so does a cohort whose follow-up stops before the study period does")
+  ok(is.character(e_end) && grepl("STUDY_END", e_end, fixed = TRUE),
+     "...with the refusal naming the variable that moves it")
+  ok(identical(unname(UPSTREAM_SETTING_MAP[BINDING_UPSTREAM_SETTINGS]),
+               c("study_start", "study_end", "lot1_from")),
+     "the three binding settings are the study period, both ends, and the 1L index floor, under the cohort build's names")
   c1 <- up_read(NULL)
   ok(is.null(c1$out) && any(grepl("unverified", c1$said)),
      "a metadata table that cannot be read leaves the readings unverified, and says so")
@@ -1510,10 +1525,10 @@ cat("\nthe rules that hold the numbers up\n")
   # which is the failure that put the epoch behind the engine twice, both
   # times because nothing said anything at all.
   EPOCH_PIN <- list(
-    date = "2026-09-21",
+    date = "2026-09-22",
     # The engine's R, by its own code_fingerprint() - the same value it
     # records as CODE_MD5, so the two can be compared by eye.
-    engine = "69d5e4dcc4ba68b81329192c08b11a05",
+    engine = "1430ca24011ed4a99f879376e65c68d8",
     # ...and its shipped settings, which code_fingerprint() does not read.
     # Most of what decides a line is pinned in the engine's own CONTRACT and
     # so is inside the R, but the study window is not, and a build reading a
@@ -1521,18 +1536,18 @@ cat("\nthe rules that hold the numbers up\n")
     settings = "e05cfdcd6535d48892812065c4ac2431")
   ok(identical(cfg0()$lot_rules_epoch, EPOCH_PIN$date),
      "the shipped epoch is the date the rules last changed")
-  ok(is.na(lin_check(UPDATED_AT = "2026-09-22 00:00:00")),
+  ok(is.na(lin_check(UPDATED_AT = "2026-09-23 00:00:00")),
      "a run finished after the shipped epoch is read")
-  ok(!is.na(lin_check(UPDATED_AT = "2026-09-20 00:00:00")),
+  ok(!is.na(lin_check(UPDATED_AT = "2026-09-21 00:00:00")),
      "...and one finished the day before it is not")
-  e_ep <- lin_check(UPDATED_AT = "2026-09-20 00:00:00")
-  ok(grepl("2026-09-21", e_ep, fixed = TRUE) &&
+  e_ep <- lin_check(UPDATED_AT = "2026-09-21 00:00:00")
+  ok(grepl("2026-09-22", e_ep, fixed = TRUE) &&
        grepl("LOT_RULES_EPOCH", e_ep, fixed = TRUE),
      "...and the refusal names the date it applied and the setting that moves it")
-  ok(is.na(lin_check(UPDATED_AT = "2026-09-20 00:00:00",
+  ok(is.na(lin_check(UPDATED_AT = "2026-09-21 00:00:00",
                      cfg = cfg0(c(LOT_RULES_EPOCH = "2026-09-01")))),
      "LOT_RULES_EPOCH moves the floor, so a delivery can name its own")
-  ok(!is.na(lin_check(UPDATED_AT = "2026-09-22 00:00:00",
+  ok(!is.na(lin_check(UPDATED_AT = "2026-09-23 00:00:00",
                       cfg = cfg0(c(LOT_RULES_EPOCH = "2026-10-01")))),
      "...in both directions")
 
@@ -1540,9 +1555,9 @@ cat("\nthe rules that hold the numbers up\n")
   # UPDATED_AT is compared as a calendar date, so a run finished that day
   # cannot be placed either side of it; the guard refuses what it cannot
   # place rather than reading a number that may be superseded.
-  ok(!is.na(lin_check(UPDATED_AT = "2026-09-21 23:59:59")),
+  ok(!is.na(lin_check(UPDATED_AT = "2026-09-22 23:59:59")),
      "a run finished ON the epoch cannot be placed either side of it, so it stops")
-  ok(grepl("on or before", lin_check(UPDATED_AT = "2026-09-21 23:59:59"),
+  ok(grepl("on or before", lin_check(UPDATED_AT = "2026-09-22 23:59:59"),
            fixed = TRUE),
      "...and the message says on or before, which is what the check does")
 

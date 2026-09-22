@@ -311,10 +311,14 @@ reads it, so `STUDY_START` and `MM_DX_OUTPATIENT_WINDOW_DAYS` are recorded as
 what the cohort was actually built with. The rest are fixed in that build's
 code rather than its contract, so they stay marked `(upstream, unverified)`.
 
-The two defaults disagree today: this package reads §7.1's body
-(01 Jan 2018) and the cohort build reads Figures 1 and 2 (01 Jan 2016), which
-is `OPEN_QUESTIONS.md` Q1. That is not fatal — the cohort is what it is — so
-the run names the disagreement, records both values, and carries on.
+The two defaults agree: both read §7.1's body (01 Jan 2018), which is what
+`OPEN_QUESTIONS.md` Q1 settled on 16 September 2026. They did not always, and
+what happens when they do not depends on the setting. The study period — both
+ends — and the 1L index floor are `BINDING_UPSTREAM_SETTINGS`: they are what
+the cohort IS, so a disagreement **stops the run** unless `SETTINGS_OVERRIDE`
+says to go on, and then it is a recorded deviation. The rest, the outpatient
+window among them, only shape a criterion's reading: the run names the
+disagreement, records both values, and carries on.
 
 ### The input's shape is checked before its columns are used
 
@@ -465,7 +469,7 @@ empty table.
   ever leave the denominator;
 - a LOT run that is not `complete`, was built over a different cohort, carries
   contract deviations, or finished on or before `LOT_RULES_EPOCH` — the date
-  the LOT rules last changed, shipped as `2026-09-21`, after which numbers
+  the LOT rules last changed, shipped as `2026-09-22`, after which numbers
   built earlier are superseded — → stops. The shipped date is held to the
   engine beside this package: the suite fingerprints its R and its shipped
   settings and checks both against the pin the date sits with, so a rule

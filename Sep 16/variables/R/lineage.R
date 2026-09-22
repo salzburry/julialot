@@ -585,8 +585,9 @@ read_upstream_settings <- function(con, cfg) {
          "different study period or index floor than this run is set to:\n  - ",
          paste(binding, collapse = "\n  - "),
          "\nThe study period and the 1L index floor define the cohort, so ",
-         "the two must agree: set STUDY_START / LOT1_INDEX_FROM to what the ",
-         "cohort build applied, or rebuild the cohort. SETTINGS_OVERRIDE=TRUE ",
+         "the two must agree: set STUDY_START / STUDY_END / LOT1_INDEX_FROM ",
+         "to what the cohort build applied, or rebuild the cohort. ",
+         "SETTINGS_OVERRIDE=TRUE ",
          "proceeds and records the disagreement as a deviation on the status ",
          "row, which no reader downstream accepts as the study's numbers.",
          call. = FALSE)
