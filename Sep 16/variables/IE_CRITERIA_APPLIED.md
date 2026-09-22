@@ -147,10 +147,15 @@ no reader mistakes it for the study's numbers. The open-question readings
 above change freely; the contract does not.
 
 ```bash
-# a build with the June study start and calendar-month windows. The window is
-# contract, so the override is part of the command, not an afterthought - and
-# the cohort has to have been built to the same window, because the run reads
-# the cohort's recorded one and refuses a study that does not match it.
+# a build with the June study start and calendar-month windows, against a
+# cohort built to that window. The override is part of the command rather than
+# an afterthought, and what requires it here is the UPSTREAM BINDING, not this
+# package's contract: the study start is not a contract entry - the index
+# floor, the study end and the suppression floor are - but the run holds its
+# own study start and index floor to the ones the cohort recorded, and refuses
+# a disagreement on either. A June cohort recorded a 2017 index floor while
+# this run keeps the contract's 2019, so they disagree whichever window is
+# named.
 SETTINGS_OVERRIDE=TRUE STUDY_START=2016-01-01 MONTHS_AS=calendar \
   INPUT_COHORT_TABLE=ndmm_NDMM_COHORT_2016 OBJECT_PREFIX=s223926_alt_ Rscript build.R
 ```
