@@ -25,12 +25,26 @@ a fresh clone stamps every file at checkout time, so in CI, where nobody reads
 the output, whichever folder the filesystem listed first would have won.
 
 `run_synthetic.py` is the population run; 600 patients take about twenty
-seconds. Four more harnesses in this folder plant named patients and assert
+seconds. Five more harnesses in this folder plant named patients and assert
 the lines they should produce — `run_melp_simple.py` (melphalan),
 `run_map_foldin.py` (MAP fold-in and the shipped QC over planted patients),
-`run_lot_scenarios.py` and `run_aug15_screen.py`. CI runs all five. They are
-where every patient-level defect found in review came from, so run them
-around any engine change, not just the gate.
+`run_lot_scenarios.py`, `run_aug15_screen.py` and `run_boundary_sweep.py`.
+CI runs all six. They are where every patient-level defect found in review
+came from, so run them around any engine change, not just the gate.
+
+`run_boundary_sweep.py` is the odd one, and it is there because of a defect
+one day wide. The fold's transplant override asked for a line opened STRICTLY
+between a drug's two doses, and its arrival scan for a dose STRICTLY after the
+line's start; the transplant's own date was outside both, so a dose landing on
+it was refused by neither. Four other bounds in the engine have that shape.
+The sweep plants each one's event on the boundary day and one day either side,
+and asserts what the RULES promise rather than diffing a day against its
+neighbours — a boundary day is a defect when it breaks a stated rule, not when
+it differs from the day before it. Run it after touching any date bound.
+
+It has been shown to fail: with the ALLO guard in `foldin_rule.R` disabled it
+reports the regimen, the span and the two-arm comparison, naming the patients.
+A detector that has never failed says nothing about the code it watches.
 
 ## What it is
 

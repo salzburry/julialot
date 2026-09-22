@@ -132,4 +132,5 @@ jobs:
           python3 run_map_foldin.py
           python3 run_lot_scenarios.py
           python3 run_aug15_screen.py
+          python3 run_boundary_sweep.py
           python3 run_synthetic.py
