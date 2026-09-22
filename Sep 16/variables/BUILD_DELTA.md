@@ -40,12 +40,12 @@ reads **the same** environment variable its config entry does, which is what
 makes `config.csv` enough:
 
 ```r
-NDMM_STUDY_START <- Sys.getenv("STUDY_START", unset = "2016-01-01")
-NDMM_LOT1_FROM   <- Sys.getenv("LOT1_FROM",   unset = "2017-01-01")
+NDMM_STUDY_START <- Sys.getenv("STUDY_START", unset = "2018-01-01")
+NDMM_LOT1_FROM   <- Sys.getenv("LOT1_FROM",   unset = "2019-01-01")
 ```
 
 It was not always so. `NDMM_LOT1_FROM` used to read a variable of its own, so
-`LOT1_FROM` moved the config, left the constant at 2017-01-01, and halted the
+`LOT1_FROM` moved the config, left the constant where it was, and halted the
 run on `check_constants()` after `check_contract()` had passed — one setting
 under two names, with a guard that could stop the run but never fix it.
 `check_settings()` now refuses a leftover `NDMM_LOT1_FROM` outright rather than
@@ -119,9 +119,9 @@ this package is set to, so a stale run cannot be read by accident.
 
 | setting | today | protocol | verdict |
 |---|---|---|---|
-| `STUDY_START` | `2016-01-01` | body text says 01 Jan 2018; Figures 1 and 2 say 01 Jan 2016 | **decide first** — Q1 |
+| `STUDY_START` | `2018-01-01` | body text says 01 Jan 2018; Figures 1 and 2 say 01 Jan 2016 | **matches** — Q1 answered for the text, 16 Sep 2026 |
 | `STUDY_END` | `2026-03-31` | 31 Mar 2026 | **matches** |
-| `LOT1_FROM` | `2017-01-01` | 1L initiation **≥ 01 Jan 2019** | **change** |
+| `LOT1_FROM` | `2019-01-01` | 1L initiation **≥ 01 Jan 2019** | **matches** — moved with Q1 |
 | `PRE_LOT1_DAYS` | `365` | 12 months | **matches** |
 | `SUBSEQ_PRE_DAYS` | `365` | 12 months before the 2L/3L index | **matches** |
 | `GAP_DAYS` | `30` | gaps ≤ 30 days are continuous | **matches** |

@@ -111,16 +111,17 @@ end of study, or death, whichever first).
 
 ## 2. Why this matters for the build
 
-Three settings in the cohort build that look like divergences are the June protocol
-faithfully implemented:
+Three settings in the cohort build looked like divergences and were the June
+protocol faithfully implemented. Two have since been moved to the September
+one; the third has not:
 
-| setting | implements | now needs |
+| setting | implemented | now | 
 |---|---|---|
-| `LOT1_FROM = 2017-01-01` | June's 1L index floor | `2019-01-01` |
-| `STUDY_START = 2016-01-01` | June's study period | 2018, if Q1 resolves to the text |
-| `SUBSEQ_FU_CE_DAYS = 90` | June's 3-month gap-free CE follow-up | replace with the claims test; move 90 days to a `TTE_ELIGIBLE` flag |
+| `LOT1_FROM` | June's 1L index floor, `2017-01-01` | **`2019-01-01`** — moved |
+| `STUDY_START` | June's study period, `2016-01-01` | **`2018-01-01`** — moved, Q1 answered for the body text |
+| `SUBSEQ_FU_CE_DAYS = 90` | June's 3-month gap-free CE follow-up | **outstanding** — replace with the claims test; move 90 days to a `TTE_ELIGIBLE` flag |
 
-None of them is wrong. All three are a protocol version behind.
+None of them was wrong. Two were a protocol version behind and are not now.
 
 ---
 
