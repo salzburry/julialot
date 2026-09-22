@@ -431,8 +431,40 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
     ),")
 }
 
-foldin_lotn_ctes <- function(cfg, lot_num, induction_end = NULL) {
+# 4.6, in the one place the fold could get round it.
+#
+# An ALLO-started line takes one day and no regimen: the induction step
+# suppresses its rows outright. The fold does not go through the induction
+# step. It UNIONs into the regimen, holds the line to its own cover, and adds
+# to the working base set, so each of those three is a way back in - and the
+# one dose that reached all three is the dose on the transplant's OWN date.
+# The override asks for a line opened STRICTLY between two doses and the
+# arrival scan for a dose STRICTLY after this line's start, so a same-day dose
+# is refused by neither, and every later dose of its course then measures
+# itself from a dose the ALLO line had already been given. The line ran to
+# that course's cover and named the drug, and the line the course should have
+# opened was swallowed.
+#
+# ALLO only. A drug starting in an AUTO's or a CAR-T's window is consolidation
+# and theirs to keep (3.4, 6.5), and the transplant's own date is the first
+# day of that window - F46 and F47 are those two, and they must not move. Only
+# an allogeneic line takes nothing, and only under single_day: with
+# extend_to_next 4.6 does not give the single day and there is nothing here to
+# protect.
+#
+# One helper, three call sites, and a test that all three carry it: the three
+# paths are what made this reachable, and three copies of the predicate would
+# be three chances to fix two of them.
+foldin_allo_excluded <- function(allo_lot_span, type_col, indent) {
+  if (!identical(allo_lot_span, "single_day")) return("")
+  paste0("\n", indent, "AND ", type_col, " <> 'SCT_ALLO'")
+}
+
+foldin_lotn_ctes <- function(cfg, lot_num, induction_end = NULL,
+                             allo_lot_span = "single_day") {
   if (!foldin_on(cfg)) return("")
+  allo_hold <- foldin_allo_excluded(
+    allo_lot_span, glue("ls.LOT{lot_num}_START_TYPE"), "        ")
   # Built out here: a nested glue() inside the template below does not parse,
   # because the inner quotes close the outer one.
   count_ctes <- foldin_count_ctes(
@@ -474,7 +506,7 @@ foldin_lotn_ctes <- function(cfg, lot_num, induction_end = NULL) {
         ON bm.PATID = ms.PATID AND bm.MED_ABBR = ms.MAP_MED_TYPE
       WHERE bm.MED_ABBR IS NULL
         AND ms.MAP_START_DT >= ls.LOT{lot_num}_START_DT
-        AND ms.MAP_START_DT <= ls.OBS_END_DT
+        AND ms.MAP_START_DT <= ls.OBS_END_DT{allo_hold}
       GROUP BY ms.PATID
     ),"))
 }
@@ -492,8 +524,11 @@ foldin_lotn_ctes <- function(cfg, lot_num, induction_end = NULL) {
 # base_meds itself is not rewritten: it is built before these CTEs and the fold
 # consults it, so there is no order in which it could be. What the readers get
 # instead is foldin_base_meds() below.
-foldin_regimen_union <- function(cfg, lot_num, induction_end) {
+foldin_regimen_union <- function(cfg, lot_num, induction_end,
+                                 allo_lot_span = "single_day") {
   if (!foldin_on(cfg)) return("")
+  allo_reg <- foldin_allo_excluded(
+    allo_lot_span, glue("lot{lot_num}_start.LOT{lot_num}_START_TYPE"), "        ")
   # A melphalan course the melphalan rule suppressed, by date. That rule has
   # already decided the course opens nothing, so this one must not read the
   # same rows as a drug arriving. Same test foldin_count_ctes uses, so the
@@ -517,7 +552,7 @@ foldin_regimen_union <- function(cfg, lot_num, induction_end) {
        AND fm.MAP_START_DT = ms.MAP_START_DT
       LEFT JOIN base_meds bm
         ON bm.PATID = ms.PATID AND bm.MED_ABBR = ms.MAP_MED_TYPE
-      WHERE bm.MED_ABBR IS NULL{supp('ms')}
+      WHERE bm.MED_ABBR IS NULL{supp('ms')}{allo_reg}
         AND ms.MAP_START_DT >= lot{lot_num}_start.LOT{lot_num}_START_DT
         AND ms.MAP_START_DT <= least(
               lot{lot_num}_start.OBS_END_DT,
@@ -600,15 +635,17 @@ foldin_base_meds <- function(cfg) {
 # line. A folded drug's second return INSIDE the line is at or after the start,
 # so it stays claimed, which is the case first_add_candidates describes and
 # which must not regress.
-foldin_episodes_here <- function(n_tbl, n_start) glue("
+foldin_episodes_here <- function(n_tbl, n_start, allo_here = "") glue("
         SELECT fe.PATID, fe.MED_ABBR, fe.MAP_START_DT
         FROM foldin_episodes fe
         INNER JOIN {n_tbl} ON {n_tbl}.PATID = fe.PATID
-        WHERE fe.MAP_START_DT >= {n_tbl}.{n_start}")
+        WHERE fe.MAP_START_DT >= {n_tbl}.{n_start}{allo_here}")
 
-foldin_base_meds_ctes <- function(cfg, n_tbl, n_start) {
+foldin_base_meds_ctes <- function(cfg, n_tbl, n_start, n_type = NULL,
+                                  allo_lot_span = "single_day") {
   if (!foldin_on(cfg)) return("")
-  here <- foldin_episodes_here(n_tbl, n_start)
+  here <- foldin_episodes_here(n_tbl, n_start, if (is.null(n_type)) "" else
+    foldin_allo_excluded(allo_lot_span, paste0(n_tbl, ".", n_type), "          "))
   paste0("\n", glue("
     foldin_here AS (
 {here}

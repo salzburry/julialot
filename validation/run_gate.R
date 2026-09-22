@@ -125,8 +125,14 @@ EXPECTED_FAILURES <- list(
     # Re-pinned from 952 [3b7c6844]. Three lines: the per-line append is now
     # "DELETE FROM <stage> WHERE LOT_NUM = n" and the INSERT as one
     # retry_as_unit step, so retrying a line's append cannot append it twice.
-    # The rest of the delta since that pin is SQL comment prose.
-    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 955 line(s) [04f35190]")
+    # The rest of the delta to that pin was SQL comment prose.
+    #
+    # Re-pinned from 955 [04f35190], same line count. 4.6 reaches the fold
+    # now: the hold, the regimen union and the working base set each refuse
+    # an ALLO-started line, so the three take allo_lot_span and the two
+    # splices on this statement carry it. No line was added or removed -
+    # the predicate rides inside fragments this file already registers.
+    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 955 line(s) [3b7c1b80]")
 )
 
 # How one suite's output is read. Its own suite is validation/hygiene/

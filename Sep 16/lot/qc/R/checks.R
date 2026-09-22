@@ -647,7 +647,8 @@ LOT_QC_CHECKS <- list(
                     "melphalan, which is where it belongs. ",
                     "And a permissible substitute of a drug the line names is ",
                     "that drug (4.4), so it is named too - under the other half ",
-                    "of its pair. ",
+                    "of its pair, and its episodes are that agent's course ",
+                    "rather than a course of their own. ",
                     "The span read is the BASE regimen's, so it stops at the ",
                     "first added medication where the line records one: past ",
                     "that day the base regimen is over, and what the line names ",
@@ -655,7 +656,12 @@ LOT_QC_CHECKS <- list(
                     "That bound is also this check's blind spot, which ",
                     "`limits` states, because a reader of a ZERO here needs it ",
                     "and a zero is not a finding."),
-       limits = paste0("Nothing between a line's first added medication and ",
+       limits = paste0("An ALLO-started line is not read at all: 4.6 gives ",
+                       "it no regimen, so a course starting on its one day is ",
+                       "unnamed by construction and there is nothing here to ",
+                       "find. A8 asks that line the question that does apply ",
+                       "to it. ",
+                       "Nothing between a line's first added medication and ",
                        "its end is read. 7.3 puts treatment there ",
                        "deliberately: an added agent followed by a CAR-T ",
                        "inside the consolidation window is bridging therapy ",
@@ -692,12 +698,31 @@ LOT_QC_CHECKS <- list(
       SELECT n.PATID, n.LOT_NUM, s.substitute_med
       FROM named n INNER JOIN ", t$subs, " s ON s.original_med = n.MED_ABBR
     ),
+    -- Which episodes START a course, read by AGENT and not by abbreviation.
+    -- 4.4 makes a permissible pair one agent, and this check already applies
+    -- that when it decides what a line NAMES - named_alias above. It did not
+    -- apply it here, so a substitute's first episode had no previous dose of
+    -- its own and read as a course start even when the agent was mid-course:
+    -- the reference product dosed three weeks earlier, no discontinuation
+    -- between them, and the pair reported as a treatment belonging to
+    -- nothing. One agent for naming and two drugs for counting is the same
+    -- split foldin_agent in the engine exists to close.
+    --
+    -- MAP_MED_TYPE is the tiebreak, as it is there: the partition is the
+    -- agent, so a pair dosed on ONE day has equal sort keys and the lag would
+    -- otherwise be undefined.
     eps AS (
-      SELECT cast(PATID as string) AS PATID, MAP_MED_TYPE, MAP_MED_CLASS,
-             MAP_START_DT,
-             lag(MAP_DISCON_FLG) OVER (PARTITION BY cast(PATID as string), MAP_MED_TYPE
-                                       ORDER BY MAP_START_DT) AS PREV_DISCON
-      FROM ", t$map, "
+      SELECT PATID, MAP_MED_TYPE, MAP_MED_CLASS, MAP_START_DT,
+             lag(MAP_DISCON_FLG) OVER (PARTITION BY PATID, AGENT
+                                       ORDER BY MAP_START_DT,
+                                                MAP_MED_TYPE) AS PREV_DISCON
+      FROM (
+        SELECT cast(m.PATID as string) AS PATID, m.MAP_MED_TYPE, m.MAP_MED_CLASS,
+               m.MAP_START_DT, m.MAP_DISCON_FLG,
+               coalesce(sa.original_med, m.MAP_MED_TYPE) AS AGENT
+        FROM ", t$map, " m
+        LEFT JOIN ", t$subs, " sa ON sa.substitute_med = m.MAP_MED_TYPE
+      ) q
     )
     SELECT ", mask("l.PATID"), " AS pid, l.LOT_NUM, ms.MAP_MED_TYPE AS med,
            ms.MAP_START_DT AS dt
@@ -721,6 +746,12 @@ LOT_QC_CHECKS <- list(
                                   l.LOT_BASE_END_DT)
     WHERE ms.MAP_MED_CLASS <> 'STEROID'
       AND upper(trim(ms.MAP_MED_TYPE)) <> '", toupper(p$melp %||% "MELP"), "'
+      -- 4.6 gives an ALLO-started line no regimen at all, so a course
+      -- starting on its one day is unnamed BY CONSTRUCTION and this check
+      -- can only ever report the rule working. A8 is what asks whether that
+      -- line's regimen is empty; there is nothing left here to ask.
+      AND ", if (identical(p$allo_span, "single_day"))
+              "l.LOT_START_TYPE <> 'SCT_ALLO'" else "1 = 1", "
       AND coalesce(ms.PREV_DISCON, 1) = 1
       AND NOT EXISTS (SELECT 1 FROM named_alias na
                       WHERE na.PATID = ms.PATID AND na.LOT_NUM = l.LOT_NUM

@@ -51,12 +51,23 @@ question still with the study team and the reading this build takes meanwhile.
 Each reading is recorded on the run itself, in `S_RUN_METADATA`, so a number
 can always be traced to the assumption behind it.
 
-**The lines have changed, so an earlier LOT run is stale.** A defect in the
-returning-drug rule (`lot/LOT_RULES.md` 4.8) is fixed in this build: where a
-drug that folded into an earlier line returned again inside a line a transplant
-or CAR-T opened, that line used to claim the return instead of ending on it.
-Patients with that shape lose a line, so the attrition's progression rows and
-every per-line variable downstream of them move. That is the correct answer,
+**The lines have changed, so an earlier LOT run is stale.** Two defects in the
+returning-drug rule (`lot/LOT_RULES.md` 4.8) are fixed in this build, and they
+move line counts in OPPOSITE directions, so neither "more lines" nor "fewer"
+describes the rebuild on its own.
+
+A drug that folded into an earlier line and returned again inside a line a
+transplant or CAR-T opened: that line used to claim the return instead of
+ending on it, and patients with that shape **lose** a line.
+
+A dose the transplant override had already refused, which the arrival scan
+passed over because it is a fold-set drug: a later dose of the same course
+folded into the line that refused dose had ended, swallowing the line it
+opened. On an ALLO or a CAR-T start it took that line's single day with it.
+Patients with that shape **gain** a line - three become four.
+
+Either way the attrition's progression rows and every per-line variable
+downstream of them move. That is the correct answer,
 not a regression - but it is a difference to expect rather than to discover in
 the rebuilt QC summary.
 
@@ -99,7 +110,7 @@ what it cannot place. The cost is one day's runs; the alternative is reading a
 superseded number in silence. Set it only to name a different floor:
 
 ```bash
-LOT_RULES_EPOCH=2026-09-21    # shipped; a run finished on or before this stops
+LOT_RULES_EPOCH=2026-09-22    # shipped; a run finished on or before this stops
 ```
 
 Whichever floor applied is recorded on the run, in

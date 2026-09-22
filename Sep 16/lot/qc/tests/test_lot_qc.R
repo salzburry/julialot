@@ -274,6 +274,32 @@ local({
   ok(grepl("AND 1 = 0", sql, fixed = TRUE),
      "...and matches nothing on a build where 4.6 does not give the single day")
 })
+
+# C5 applied 4.4 to what a line NAMES and not to what starts a COURSE. A
+# substitute's first episode then had no previous dose of its own and read as
+# a course start while the agent was mid-course, so the pair reported as a
+# treatment belonging to nothing. Both halves read the agent now.
+ok(has(SQL$C5, "PARTITION BY PATID, AGENT"),
+   "C5 reads a course start by agent, so a substitute mid-course is not a start")
+ok(has(SQL$C5, "coalesce(sa.original_med, m.MAP_MED_TYPE) AS AGENT"),
+   "...collapsing the permissible pair the same way named_alias already did")
+ok(has(SQL$C5, "ORDER BY MAP_START_DT,") && has(SQL$C5, "MAP_MED_TYPE) AS PREV_DISCON"),
+   "...with the tiebreak that makes a pair dosed on one day deterministic")
+# And 4.6 leaves it nothing to ask of an ALLO line: no regimen means a course
+# starting on its one day is unnamed by construction.
+ok(has(SQL$C5, "l.LOT_START_TYPE <> 'SCT_ALLO'"),
+   "C5 does not read an ALLO line, whose regimen 4.6 empties by construction")
+ok(grepl("ALLO-started line is not read at all",
+         LOT_QC_CHECKS[[which(vapply(LOT_QC_CHECKS,
+           function(c_i) identical(c_i$id, "C5"), logical(1)))]]$limits, fixed = TRUE),
+   "...and says so under its limits, where a zero's blind spots are recorded")
+local({
+  p_ext <- utils::modifyList(P, list(allo_span = "extend_to_next"))
+  sql <- LOT_QC_CHECKS[[which(vapply(LOT_QC_CHECKS,
+    function(c_i) identical(c_i$id, "C5"), logical(1)))]]$sql(TBL, p_ext)
+  ok(!grepl("LOT_START_TYPE <> 'SCT_ALLO'", sql, fixed = TRUE),
+     "...and reads it again where 4.6 does not give the single day")
+})
 # C2's exemption belongs to the earlier returning-drug rule, where a confirmed
 # gap released the drug so it could be both in the regimen and the added
 # medication. LOT_RULES.md 4.3 withdrew that release, so under the settings the

@@ -172,7 +172,7 @@ cfg_defaults <- function() {
     # Not in CONTRACT: that list is the protocol's numbers, and a deviation
     # from it means this run departs from the protocol. This departs from
     # nothing - it says which engine built the lines, which is lineage.
-    lot_rules_epoch    = .env_date("LOT_RULES_EPOCH", "2026-09-21"),
+    lot_rules_epoch    = .env_date("LOT_RULES_EPOCH", "2026-09-22"),
     # Named only where the cohort build wrote its status under neither of the
     # two names the builds use. Bare - COHORT_PREFIX is added for you, as the
     # LOT engine's setting of the same name does.
@@ -438,10 +438,11 @@ OPEN_QUESTION_SOURCE <- c(
 # back and those readings stay assertions.
 UPSTREAM_SETTING_MAP <- c(
   study_start                  = "study_start",
+  study_end                    = "study_end",
   lot1_index_from              = "lot1_from",
   mm_dx_outpatient_window_days = "outpatient_window")
 
-# The two of those a run cannot proceed past a disagreement on. The study
+# The three of those a run cannot proceed past a disagreement on. The study
 # period and the 1L index floor are what the cohort IS: a cohort indexed from
 # 2017 under a study said to start in 2018 puts patients in the funnel whom I1
 # says are not there, and dates every window from a start the cohort was not
@@ -449,7 +450,17 @@ UPSTREAM_SETTING_MAP <- c(
 # reported, not fatal. Overridable like any contract deviation - the run then
 # records the disagreement as one, and no reader accepts its numbers as the
 # study's.
-BINDING_UPSTREAM_SETTINGS <- c("study_start", "lot1_index_from")
+#
+# study_end is here for the same reason as study_start, and it was missing
+# while nothing could move it: the cohort build had no way past its own
+# contract, so its end date was the contract's and could not disagree.
+# NDMM_CONTRACT_OVERRIDE gave it one. A cohort capped at 2025-12-31 under a
+# study that says 2026-03-31 is then a study claiming three months of
+# follow-up its patients do not have - and nothing else catches it, because
+# the LOT window check accepts a cohort NARROWER than its window, and this
+# package reads its own end date against the LOT run's rather than the
+# cohort's. Added with the override that made it reachable.
+BINDING_UPSTREAM_SETTINGS <- c("study_start", "study_end", "lot1_index_from")
 
 # The readings behind a run's numbers, for its metadata row.
 #
