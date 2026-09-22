@@ -147,9 +147,12 @@ no reader mistakes it for the study's numbers. The open-question readings
 above change freely; the contract does not.
 
 ```bash
-# a build with the 2016 study start and calendar-month windows
-STUDY_START=2016-01-01 MONTHS_AS=calendar \
-  INPUT_COHORT_TABLE=ndmm_NDMM_COHORT OBJECT_PREFIX=s223926_alt_ Rscript build.R
+# a build with the June study start and calendar-month windows. The window is
+# contract, so the override is part of the command, not an afterthought - and
+# the cohort has to have been built to the same window, because the run reads
+# the cohort's recorded one and refuses a study that does not match it.
+SETTINGS_OVERRIDE=TRUE STUDY_START=2016-01-01 MONTHS_AS=calendar \
+  INPUT_COHORT_TABLE=ndmm_NDMM_COHORT_2016 OBJECT_PREFIX=s223926_alt_ Rscript build.R
 ```
 
 Write to a **different `OBJECT_PREFIX`** and the two runs sit side by side.
