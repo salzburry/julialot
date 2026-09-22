@@ -293,12 +293,19 @@ ok(grepl("ALLO-started line is not read at all",
          LOT_QC_CHECKS[[which(vapply(LOT_QC_CHECKS,
            function(c_i) identical(c_i$id, "C5"), logical(1)))]]$limits, fixed = TRUE),
    "...and says so under its limits, where a zero's blind spots are recorded")
+# Under EVERY span. 4.6 says two things and allo_lot_span is only the first:
+# how long the line runs. The induction step empties an ALLO line's regimen
+# under extend_to_next too, so a course starting inside it is unnamed there as
+# well, and A8 asks for the empty regimen unconditionally. A9 is the half that
+# does read the setting.
 local({
   p_ext <- utils::modifyList(P, list(allo_span = "extend_to_next"))
-  sql <- LOT_QC_CHECKS[[which(vapply(LOT_QC_CHECKS,
-    function(c_i) identical(c_i$id, "C5"), logical(1)))]]$sql(TBL, p_ext)
-  ok(!grepl("LOT_START_TYPE <> 'SCT_ALLO'", sql, fixed = TRUE),
-     "...and reads it again where 4.6 does not give the single day")
+  pick <- function(id) LOT_QC_CHECKS[[which(vapply(LOT_QC_CHECKS,
+    function(c_i) identical(c_i$id, id), logical(1)))]]$sql(TBL, p_ext)
+  ok(grepl("LOT_START_TYPE <> 'SCT_ALLO'", pick("C5"), fixed = TRUE),
+     "...and skips it under the other span too, where the regimen is still empty")
+  ok(grepl("AND 1 = 0", pick("A9"), fixed = TRUE),
+     "...while A9, which asks about the SPAN, is the one that reads the setting")
 })
 # C2's exemption belongs to the earlier returning-drug rule, where a confirmed
 # gap released the drug so it could be both in the regimen and the added

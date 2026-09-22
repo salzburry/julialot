@@ -1528,7 +1528,7 @@ cat("\nthe rules that hold the numbers up\n")
     date = "2026-09-22",
     # The engine's R, by its own code_fingerprint() - the same value it
     # records as CODE_MD5, so the two can be compared by eye.
-    engine = "1430ca24011ed4a99f879376e65c68d8",
+    engine = "6587c169ec41a370fe06274a8a8c3e08",
     # ...and its shipped settings, which code_fingerprint() does not read.
     # Most of what decides a line is pinned in the engine's own CONTRACT and
     # so is inside the R, but the study window is not, and a build reading a

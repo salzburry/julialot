@@ -33,6 +33,13 @@ reading of how the rules interact, and the first warehouse run settles it.
 | `returning_drug_two_agents_one_line` | Two drugs start one line while a drug is away | - | No new line. Two agents started 2L, but they advanced the line ONCE between them, so B sees one advance and joins 2L. | to_confirm |
 | `returning_drug_second_return_across_transplant` | A folded drug returns again, in a line a transplant opened | - | A new line on day 600. A transplant opened 3L, so 4.8 refuses the second fold and B is line-defining again - 3L ends the day before it, and B opens 4L on its own date. The fold into 2L does not make B a drug 3L already had. | derived |
 | `returning_drug_refused_dose_is_an_arrival` | A dose the fold refused is an arrival for the doses after it | - | 3L carries no regimen and ends the day before day 294, and 4L opens there on A and B. The day-294 doses have the transplant between them and the previous dose, so 4.8 refuses both folds; A's refused dose is what ends 3L. B's day-322 dose has only day 294 before it, no transplant between, and would fold into 3L - but a refused dose is line-defining for what follows it, so day 322 belongs to 4L. | derived |
+| `returning_drug_no_advance` | A drug returns with nothing in between | `map_discon_gap_days = 90` | 2L continues. The 100-day gap is past the 90-day discontinuation, so this is a return and not a refill - but nothing advanced the line between C's two doses, so 4.8 has nothing to decide and 4.3 answers instead: a drug restarting in the line it left stays in it, whatever the gap. | derived |
+| `returning_drug_whole_course` | A returning course folds as one, not episode by episode | `map_discon_gap_days = 90` | One line. All three of B's doses are one course - the gaps are shorter than the 90-day discontinuation - and the course folds as a unit, so no line opens on the follow-ups and 2L runs to the last day B covers. | derived |
+| `returning_drug_joins_the_regimen` | A folded drug is in the line's regimen, not only its dates | - | 2L reports TWO drugs, C and B, and its medication count is two. The line also runs to the last day B's supply reaches, because a drug the rule says is part of the line has to be part of it in every reading of the line. | derived |
+| `returning_drug_same_day_new_agent` | A genuinely new drug on the same day takes preference | - | 3L opens on day 450 on D, and B belongs to it rather than to 2L. 2L ends the day before, on its own run-out, exactly where it would have ended had B not come back at all. | derived |
+| `returning_drug_own_transplant_no_advance` | A transplant the line already owns advances nothing | `lot_n_induction_window_days = 30` | B folds into 2L as it would with no transplant at all. The transplant on day 215 is 15 days into 2L, inside its 30-day window, so 6.5 gives it to that line: it opened nothing, and a transplant that opened no line is not a boundary for this rule. | derived |
+| `returning_drug_two_lines_back` | A drug from further back than the previous line is simply new | - | 4L opens on day 600. B was 1L's drug and the line before this one is 2L, so B is outside the fold set entirely and the engine's ordinary rules keep it: an agent not in the current regimen is an added medication. | derived |
+| `returning_drug_same_day_as_the_transplant` | A dose on the transplant's own date is not that line's | - | 3L keeps the one day and the empty regimen 4.6 gives it, and 4L opens on day 410 on B. The day-350 dose is not 3L's: an allogeneic line takes no regimen, so nothing folds into one. | derived |
 | `maintenance_to_relapse` | Maintenance running into relapse | - | Maintenance is NOT a line of its own here - contains_mtx_reg is a flag and there is no maintenance period. The relapse is handled by the ordinary rules, so the line count does not include a maintenance line. | derived |
 | `steroid_only_interval` | Steroid-only stretch between regimens | - | The steroid stretch neither starts nor continues a line. | derived |
 | `belantamab_any_line` | Belantamab anywhere in the patient's lines | - | The criterion is patient-level, so the patient loses EVERY line, not just LOT3 onward. They are absent from LOT_LONG_FINAL entirely and present in LOT_LONG. | derived |
@@ -197,6 +204,48 @@ reading of how the rules interact, and the first warehouse run settles it.
 - timeline: d+0 MED (1L starts on drug A and drug B); d+170 MED (drug C advances the line to 2L; A and B are dosed in it); d+213 AUTO (a transplant opens 3L; nothing starts in its window); d+294 MED (drugs A and B are dosed again, on the same day); d+322 MED (drug B is dosed once more)
 - why it is hard: The ownership test skips fold-set drugs, because under 4.8 they are the line's own. A refused dose of one is not: read for the set instead of for its verdict, it was invisible, and a later dose of the same course folded into the line it had already ended. On an AUTO-started line that named a drug first dosed after the line closed; on an ALLO- or CAR-T-started line it held the single day 4.6 gives open to that dose's cover and swallowed 4L.
 - rule: lot/engine/R/foldin_rule.R | foldin_tx_refused
+
+**returning_drug_no_advance** - A drug returns with nothing in between
+
+- timeline: d+0 MED (1L starts on drug A and drug B); d+200 MED (drug C starts and advances the line to 2L); d+420 MED (drug C stops covering; nothing else is given); d+520 MED (drug C comes back, 100 days later)
+- why it is hard: The count is the rule's whole test. At zero it is not that the drug folds - it is that this rule was never asked. Reading a zero as a fold would make 4.8 a restatement of 4.3 and hide which rule owns the answer.
+- rule: lot/engine/R/foldin_rule.R | N_ADVANCES = 1
+
+**returning_drug_whole_course** - A returning course folds as one, not episode by episode
+
+- timeline: d+0 MED (1L starts on drug A and drug B); d+200 MED (drug C starts and advances the line to 2L); d+450 MED (drug B comes back and folds into 2L); d+500 MED (drug B again, 50 days later - no discontinuation ); d+560 MED (and again)
+- why it is hard: Asked episode by episode the same course was split between two owners: the first dose folded and the second opened a line, so one continuous course of one drug produced a line boundary in the middle of itself. One course, one answer.
+- rule: lot/engine/R/foldin_rule.R | foldin_course
+
+**returning_drug_joins_the_regimen** - A folded drug is in the line's regimen, not only its dates
+
+- timeline: d+0 MED (1L starts on drug A and drug B); d+200 MED (drug C starts and advances the line to 2L); d+450 MED (drug B comes back, while 2L is still running)
+- why it is hard: A fold that moved only the dates left the line refusing B a line of its own while not naming B either - and the next line then refused it too, as a drug of the previous regimen. The treatment sat in a line that did not report it. Span and regimen are two halves of one statement.
+- rule: lot/engine/R/foldin_rule.R | foldin_regimen_union
+
+**returning_drug_same_day_new_agent** - A genuinely new drug on the same day takes preference
+
+- timeline: d+0 MED (1L starts on drug A and drug B); d+200 MED (drug C starts and advances the line to 2L); d+450 MED (drug B returns AND drug D, never seen before, starts)
+- why it is hard: The scan is at-or-before the return, not strictly before. Strictly before, it could not see a same-day arrival: B folded into 2L, carrying 2L's end date out to B's cover, while the line D opened named B as well. One dose in two lines, and the previous line's end decided by treatment that belongs to the next one.
+- rule: lot/engine/R/foldin_rule.R | o.AT_DT <= k.MAP_START_DT
+
+**returning_drug_own_transplant_no_advance** - A transplant the line already owns advances nothing
+
+- timeline: d+0 MED (1L starts on drug A and drug B); d+200 MED (drug C starts and advances the line to 2L); d+215 AUTO (a transplant inside 2L's own window); d+450 MED (drug B comes back)
+- why it is hard: The override is read off the LINE TABLE, not off the transplant dates, and that is what makes it exact. Read off the dates, every transplant would look like a boundary - including the ones the line it falls in already contains, and including a planned tandem partner (6.3).
+- rule: lot/engine/R/foldin_rule.R | foldin_tx_opened
+
+**returning_drug_two_lines_back** - A drug from further back than the previous line is simply new
+
+- timeline: d+0 MED (1L starts on drug A and drug B); d+200 MED (drug C starts and advances the line to 2L); d+400 MED (drug D starts and advances the line to 3L); d+600 MED (drug B comes back, during 3L)
+- why it is hard: The fold set is the IMMEDIATELY previous line's regimen and no further. Widening it is the one change that would make the rule's two-or-more clause reachable, and it is a change to the rule the study team settled, not a detail of how it is measured.
+- rule: lot/engine/R/foldin_rule.R | foldin_meds
+
+**returning_drug_same_day_as_the_transplant** - A dose on the transplant's own date is not that line's
+
+- timeline: d+0 MED (1L starts on drug A and drug B); d+200 MED (drug C starts and advances the line to 2L); d+300 MED (drug B returns and folds into 2L); d+350 ALLO (an allogeneic transplant opens 3L); d+350 MED (drug B is dosed the same day); d+410 MED (drug B again, 60 days later)
+- why it is hard: The override asks for a line opened STRICTLY between a drug's two doses and the arrival scan for a dose STRICTLY after this line's start, so the transplant's own date is outside both. The dose folded, then stood as the PREVIOUS dose for the one after it - which measured its interval from a day the transplant no longer sat inside, and folded too. 3L ran to that course's cover, named B, and swallowed the line B should have opened. The guard is on the regimen, the hold, the working base set and the added-medication test alike, under every span: allo_lot_span sets how long the line runs, not whether it names anything.
+- rule: lot/engine/R/foldin_rule.R | foldin_allo_excluded
 
 **maintenance_to_relapse** - Maintenance running into relapse
 

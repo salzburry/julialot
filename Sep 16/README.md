@@ -51,23 +51,24 @@ question still with the study team and the reading this build takes meanwhile.
 Each reading is recorded on the run itself, in `S_RUN_METADATA`, so a number
 can always be traced to the assumption behind it.
 
-**The lines have changed, so an earlier LOT run is stale.** Two defects in the
-returning-drug rule (`lot/LOT_RULES.md` 4.8) are fixed in this build, and they
-move line counts in OPPOSITE directions, so neither "more lines" nor "fewer"
-describes the rebuild on its own.
+**The lines have changed, so an earlier LOT run is stale.** Three defects in
+the returning-drug rule (`lot/LOT_RULES.md` 4.8) are fixed in this build. All
+three were a line a transplant opened claiming treatment that was not its own,
+so where they fire a line comes BACK: the worked cases go from three lines to
+four. Each has a vignette in `lot/validation/out/lot_edge_case_vignettes.md`.
 
-A drug that folded into an earlier line and returned again inside a line a
-transplant or CAR-T opened: that line used to claim the return instead of
-ending on it, and patients with that shape **lose** a line.
+  1. A drug the fold gave an EARLIER line, returning inside a line a
+     transplant or CAR-T opened - that line used to claim the return instead
+     of ending on it. `returning_drug_second_return_across_transplant`.
+  2. A dose the transplant override had already refused, which the arrival
+     scan passed over because it is a fold-set drug: a later dose of the same
+     course folded into the line that refused dose had ended, swallowing the
+     line it opened. `returning_drug_refused_dose_is_an_arrival`.
+  3. The same, for a dose on the transplant's OWN date, which is outside both
+     of those scans. `returning_drug_same_day_as_the_transplant`.
 
-A dose the transplant override had already refused, which the arrival scan
-passed over because it is a fold-set drug: a later dose of the same course
-folded into the line that refused dose had ended, swallowing the line it
-opened. On an ALLO or a CAR-T start it took that line's single day with it.
-Patients with that shape **gain** a line - three become four.
-
-Either way the attrition's progression rows and every per-line variable
-downstream of them move. That is the correct answer,
+The attrition's progression rows and every per-line variable downstream of
+them move with the counts. That is the correct answer,
 not a regression - but it is a difference to expect rather than to discover in
 the rebuilt QC summary.
 

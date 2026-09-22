@@ -447,24 +447,27 @@ foldin_count_ctes <- function(cfg, discon_days, n_start = NULL, n_tbl = NULL,
 #
 # ALLO only. A drug starting in an AUTO's or a CAR-T's window is consolidation
 # and theirs to keep (3.4, 6.5), and the transplant's own date is the first
-# day of that window - F46 and F47 are those two, and they must not move. Only
-# an allogeneic line takes nothing, and only under single_day: with
-# extend_to_next 4.6 does not give the single day and there is nothing here to
-# protect.
+# day of that window - F46 and F47 are those two, and they must not move.
+#
+# Every span, not only single_day. 4.6 says two things and allo_lot_span is
+# only the first of them: how LONG the line runs. The empty regimen is not the
+# span's to set - the induction step suppresses an ALLO line's rows under
+# extend_to_next too, which is why A8 asks for it unconditionally - so a guard
+# that read the span left the alternative mode building a line that carries a
+# drug its own QC rejects. Two policies, kept separate: A9 is the half that
+# reads the setting, and this is the half that does not.
 #
 # One helper, three call sites, and a test that all three carry it: the three
 # paths are what made this reachable, and three copies of the predicate would
 # be three chances to fix two of them.
-foldin_allo_excluded <- function(allo_lot_span, type_col, indent) {
-  if (!identical(allo_lot_span, "single_day")) return("")
+foldin_allo_excluded <- function(type_col, indent) {
   paste0("\n", indent, "AND ", type_col, " <> 'SCT_ALLO'")
 }
 
-foldin_lotn_ctes <- function(cfg, lot_num, induction_end = NULL,
-                             allo_lot_span = "single_day") {
+foldin_lotn_ctes <- function(cfg, lot_num, induction_end = NULL) {
   if (!foldin_on(cfg)) return("")
-  allo_hold <- foldin_allo_excluded(
-    allo_lot_span, glue("ls.LOT{lot_num}_START_TYPE"), "        ")
+  allo_hold <- foldin_allo_excluded(glue("ls.LOT{lot_num}_START_TYPE"),
+                                    "        ")
   # Built out here: a nested glue() inside the template below does not parse,
   # because the inner quotes close the outer one.
   count_ctes <- foldin_count_ctes(
@@ -524,11 +527,10 @@ foldin_lotn_ctes <- function(cfg, lot_num, induction_end = NULL,
 # base_meds itself is not rewritten: it is built before these CTEs and the fold
 # consults it, so there is no order in which it could be. What the readers get
 # instead is foldin_base_meds() below.
-foldin_regimen_union <- function(cfg, lot_num, induction_end,
-                                 allo_lot_span = "single_day") {
+foldin_regimen_union <- function(cfg, lot_num, induction_end) {
   if (!foldin_on(cfg)) return("")
   allo_reg <- foldin_allo_excluded(
-    allo_lot_span, glue("lot{lot_num}_start.LOT{lot_num}_START_TYPE"), "        ")
+    glue("lot{lot_num}_start.LOT{lot_num}_START_TYPE"), "        ")
   # A melphalan course the melphalan rule suppressed, by date. That rule has
   # already decided the course opens nothing, so this one must not read the
   # same rows as a drug arriving. Same test foldin_count_ctes uses, so the
@@ -641,11 +643,10 @@ foldin_episodes_here <- function(n_tbl, n_start, allo_here = "") glue("
         INNER JOIN {n_tbl} ON {n_tbl}.PATID = fe.PATID
         WHERE fe.MAP_START_DT >= {n_tbl}.{n_start}{allo_here}")
 
-foldin_base_meds_ctes <- function(cfg, n_tbl, n_start, n_type = NULL,
-                                  allo_lot_span = "single_day") {
+foldin_base_meds_ctes <- function(cfg, n_tbl, n_start, n_type = NULL) {
   if (!foldin_on(cfg)) return("")
   here <- foldin_episodes_here(n_tbl, n_start, if (is.null(n_type)) "" else
-    foldin_allo_excluded(allo_lot_span, paste0(n_tbl, ".", n_type), "          "))
+    foldin_allo_excluded(paste0(n_tbl, ".", n_type), "          "))
   paste0("\n", glue("
     foldin_here AS (
 {here}
@@ -678,10 +679,24 @@ foldin_base_meds_ctes <- function(cfg, n_tbl, n_start, n_type = NULL,
 
 # Takes fold-set rows off the added-medication candidate list. Own-base rows
 # pass through untouched - bm is first_add_candidates' own join.
-foldin_suppress_predicate <- function(cfg) {
+# The fourth path to an ALLO line, and the one the single-day short-circuit
+# hid. This hook refuses a folded episode as an added medication, because
+# under 4.8 it is part of the line. An ALLO line is exactly where that is not
+# true - nothing folds into it - so refusing the add there suppressed the only
+# event that could end the line, and under extend_to_next, where the ALLO
+# short-circuit is off, the line ran to STUDY_END and swallowed every line
+# after it. Empty regimen and unendable is not 4.6; it is a line that owns the
+# rest of the patient's history without naming any of it.
+#
+# One policy in four places now: the regimen, the hold, the working base set
+# and this. A line the fold contributes nothing to is a line the fold must not
+# defend either.
+foldin_suppress_predicate <- function(cfg, type_col = NULL) {
   if (!foldin_on(cfg)) return("")
+  allo <- if (is.null(type_col)) "" else
+    paste0(type_col, " <> 'SCT_ALLO'\n                 AND ")
   paste0("\n", glue("
-        AND NOT (bm.MED_ABBR IS NULL
+        AND NOT ({allo}bm.MED_ABBR IS NULL
                  AND EXISTS (SELECT 1 FROM foldin_episodes fm
                              WHERE fm.PATID = ms.PATID
                                AND fm.MED_ABBR = ms.MAP_MED_TYPE

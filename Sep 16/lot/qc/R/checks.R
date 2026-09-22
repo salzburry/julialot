@@ -747,11 +747,12 @@ LOT_QC_CHECKS <- list(
     WHERE ms.MAP_MED_CLASS <> 'STEROID'
       AND upper(trim(ms.MAP_MED_TYPE)) <> '", toupper(p$melp %||% "MELP"), "'
       -- 4.6 gives an ALLO-started line no regimen at all, so a course
-      -- starting on its one day is unnamed BY CONSTRUCTION and this check
-      -- can only ever report the rule working. A8 is what asks whether that
-      -- line's regimen is empty; there is nothing left here to ask.
-      AND ", if (identical(p$allo_span, "single_day"))
-              "l.LOT_START_TYPE <> 'SCT_ALLO'" else "1 = 1", "
+      -- starting inside it is unnamed BY CONSTRUCTION and this check can only
+      -- ever report the rule working. A8 is what asks whether that line's
+      -- regimen is empty; there is nothing left here to ask. Under every
+      -- span: allo_lot_span sets how long the line runs, not whether it names
+      -- anything, and A9 is the half that does read it.
+      AND l.LOT_START_TYPE <> 'SCT_ALLO'
       AND coalesce(ms.PREV_DISCON, 1) = 1
       AND NOT EXISTS (SELECT 1 FROM named_alias na
                       WHERE na.PATID = ms.PATID AND na.LOT_NUM = l.LOT_NUM
