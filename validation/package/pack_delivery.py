@@ -40,7 +40,10 @@ says you meant it.
                    is somebody's deliverable and its name is not ours to
                    invent.
     PACK_OUT       where to write. Defaults to a temporary directory, so a
-                   run cannot leave a zip inside the repository.
+                   run cannot leave a zip inside the repository. A default one
+                   belongs to the run and is removed again if the run ends
+                   without an archive; one you supply is yours and is left
+                   alone either way.
     PACK_STAMP     the one date every entry carries, YYYY-MM-DD. Defaults to
                    the delivery folder's own last commit date, which is
                    reproducible from any clone and is not a clock.
@@ -254,6 +257,43 @@ def same_space(p):
     return os.path.normcase(plain(os.path.realpath(plain(p))))
 
 
+def name_refusal(root_name):
+    """Why `root_name` is not a plain archive name, or None if it is.
+
+    Split out of safe_target because it is the one check that needs nothing
+    to exist. main asks it BEFORE allocating anything, so a bad name refuses
+    without having created a temporary PACK_OUT first; safe_target asks it
+    again, because a guard that leans on its caller having already asked is
+    not a guard.
+    """
+    if SAFE_NAME.match(root_name):
+        return None
+    return ("PACK_NAME must be a plain archive name - letters, digits, dot, "
+            "dash, underscore - and %r is not. It is joined into a path that "
+            "gets removed before staging, and an absolute name or one with "
+            "'..' in it is not a name, it is a different directory."
+            % root_name)
+
+
+def discard(made):
+    """Remove what ONE run created, innermost first, and nothing else.
+
+    The list holds only what this run made itself: a PACK_OUT it had to
+    invent because none was given, the staging tree, and the candidate
+    archive. A PACK_OUT somebody supplied is never on it - the run is a guest
+    in that directory and leaves it as it found it - and neither is the
+    previous archive, which is not this run's to remove.
+    """
+    for p in reversed(made):
+        try:
+            if os.path.isdir(p):
+                shutil.rmtree(p, ignore_errors=True)
+            elif os.path.exists(p):
+                os.remove(p)
+        except OSError:
+            pass
+
+
 def safe_target(out_dir, root_name, src):
     """Where the staging tree may go, or a refusal with the reason.
 
@@ -268,12 +308,9 @@ def safe_target(out_dir, root_name, src):
     repairs. Silently correcting a path somebody typed is how the wrong
     directory gets deleted while the output still looks right.
     """
-    if not SAFE_NAME.match(root_name):
-        return None, ("PACK_NAME must be a plain archive name - letters, "
-                      "digits, dot, dash, underscore - and %r is not. It is "
-                      "joined into a path that gets removed before staging, "
-                      "and an absolute name or one with '..' in it is not a "
-                      "name, it is a different directory." % root_name)
+    why = name_refusal(root_name)
+    if why:
+        return None, why
     out = same_space(out_dir)
     repo = same_space(REPO)
     if out == repo or out.startswith(repo + os.sep):
@@ -480,6 +517,19 @@ def selftest():
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     said_no = b"refusing to pack" in r.stdout
     wrote_anyway = os.path.exists(ghost)
+
+    # ...and the same refusal with NO PACK_OUT, which is the case that made
+    # the ordering matter: the default output directory is a temporary one,
+    # and a temporary directory has to be CREATED to be named. Point the
+    # whole temporary root at somewhere empty and require it to stay empty.
+    tmproot = os.path.join(out, "tmproot")
+    os.makedirs(tmproot)
+    denv = dict((k, v) for k, v in env.items() if k != "PACK_OUT")
+    denv.update(TMPDIR=tmproot, TMP=tmproot, TEMP=tmproot)
+    d = subprocess.run([sys.executable, os.path.abspath(__file__)], env=denv,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    default_said_no = b"refusing to pack" in d.stdout
+    default_litter = sorted(os.listdir(tmproot))
     shutil.rmtree(out)
 
     # The Windows namespace prefixes, as strings, because the alias they make
@@ -518,7 +568,7 @@ def selftest():
     second = subprocess.run(me, env=dict(base, PACK_BANNED_EXTRA="the"),
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
     after = open(arc, "rb").read() if os.path.exists(arc) else None
-    leftover = [f for f in os.listdir(keep) if f.endswith(".part")]
+    left = sorted(os.listdir(keep))
     shutil.rmtree(keep)
 
     fails = []
@@ -563,9 +613,15 @@ def selftest():
         fails.append("a refused run deleted the previous archive")
     elif after != before:
         fails.append("a refused run replaced the previous archive anyway")
-    if leftover:
-        fails.append("a refused run left a partial archive behind: %s"
-                     % (leftover,))
+    elif left != ["probe.zip"]:
+        fails.append("a refused run left more than the previous archive "
+                     "behind: %s" % (left,))
+    if not default_said_no:
+        fails.append("a bad name with no PACK_OUT did not refuse: "
+                     + d.stdout.decode("utf-8", "replace").strip()[-200:])
+    if default_litter:
+        fails.append("a refused run with no PACK_OUT left something in the "
+                     "temporary root: %s" % (default_litter,))
     for f in fails:
         print("  FAIL  " + f)
     if fails:
@@ -578,7 +634,8 @@ def selftest():
           % len(attacks))
     print("  ok    ...an ordinary name is not, and PACK_OUT in the repo is")
     print("  ok    a refused run leaves no directory behind")
-    print("  ok    ...and leaves the previous archive exactly as it was")
+    print("  ok    ...and leaves the previous archive exactly as it was, and "
+          "nothing else")
     print("  ok    one spelling for every path the guard compares")
     print("  ok    a short derived token is caught as a word, not inside one")
     print("\nthe scan can fail, so its passing means something")
@@ -603,6 +660,13 @@ def main():
         raise SystemExit("PACK_NAME is the archive's root directory and zip "
                          "stem. This is somebody's deliverable and its name "
                          "is not ours to invent.")
+    # Asked here, before a single directory is allocated, because the default
+    # PACK_OUT is a temporary directory that has to be CREATED to be named -
+    # and a refusal that has already made something is not the refusal this
+    # tool claims to make.
+    why = name_refusal(root_name)
+    if why:
+        raise SystemExit("refusing to pack: " + why)
 
     stamp_s = os.environ.get("PACK_STAMP", "").strip()
     if not stamp_s:
@@ -624,13 +688,35 @@ def main():
             "this really is a tree with no builder to name.")
     print("identity patterns from:", ", ".join(found) or "(none - allowed)")
 
-    out_dir = os.environ.get("PACK_OUT") or tempfile.mkdtemp(prefix="pack_")
-    # The check first, the directory second. safe_target resolves paths
-    # rather than reading them, so it needs nothing to exist - and a run
-    # that refuses has to leave the tree exactly as it found it. An empty
-    # directory is not nothing: the standalone-folder hygiene check reads
-    # any top-level directory as another delivery, so a refused probe with
-    # PACK_OUT pointed into the repository used to fail the gate afterwards.
+    # ONE cleanup path, rather than one at every exit. `made` collects what
+    # this run creates as it creates it, and a run that does not end with an
+    # archive gives all of it back - the temporary output directory it had to
+    # invent, the staging tree, a half-written candidate. Anything it did not
+    # create is not on the list and is never touched.
+    made = []
+    try:
+        rc = pack(src, src_name, root_name, stamp, stamp_s, ident, made)
+    except BaseException:
+        discard(made)
+        raise
+    if rc != 0:
+        discard(made)
+    return rc
+
+
+def pack(src, src_name, root_name, stamp, stamp_s, ident, made):
+    """Stage, scan, and write the archive. Appends to `made` as it goes."""
+    out_dir = os.environ.get("PACK_OUT")
+    if not out_dir:
+        # Invented, so this run owns it and has to give it back if it stops.
+        out_dir = tempfile.mkdtemp(prefix="pack_")
+        made.append(out_dir)
+    # The check before the directory. safe_target resolves paths rather than
+    # reading them, so it needs nothing to exist, and a run that refuses has
+    # to leave the tree exactly as it found it. An empty directory is not
+    # nothing: the standalone-folder hygiene check reads any top-level
+    # directory as another delivery, so a refused probe with PACK_OUT pointed
+    # into the repository used to fail the gate afterwards.
     tree, why = safe_target(out_dir, root_name, src)
     if why:
         raise SystemExit("refusing to pack: " + why)
@@ -647,6 +733,8 @@ def main():
     if os.path.exists(tree): shutil.rmtree(tree)
     if os.path.exists(cand): os.remove(cand)
     os.makedirs(tree)
+    made.append(tree)
+    made.append(cand)
 
     kept, skipped = stage(src, tree)
     print("staged", len(kept), "files;", len(skipped), "skipped", skipped or "")
@@ -663,13 +751,8 @@ def main():
             else "."))
         return 1
 
-    try:
-        write_zip(tree, cand, root_name, stamp)
-        os.replace(cand, zip_path)
-    except BaseException:
-        if os.path.exists(cand):
-            os.remove(cand)
-        raise
+    write_zip(tree, cand, root_name, stamp)
+    os.replace(cand, zip_path)
     print("clean; every entry stamped %s" % stamp_s)
     print(zip_path, os.path.getsize(zip_path), "bytes")
     return 0
