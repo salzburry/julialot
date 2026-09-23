@@ -31,10 +31,26 @@ reads Optum and holds the AUTO clustering rules, which are the tumour's. A
 port rewrites its extraction half and keeps its clustering half. Budget it as
 a file to split, not a file to move.
 
-Produce the five tables below and the rest of the engine runs unchanged. That
-is not a claim about the design, it is what `lot/qc/extract_patients.R` does
-today: it writes exactly these out for named patients, so their real rows can
-be put back through the same statements with no warehouse at all.
+Produce the five tables below and the **line-assembly statements** run
+unchanged. That is not a claim about the design, it is what
+`lot/qc/extract_patients.R` does today: it writes exactly these out for named
+patients, so their real rows can be put back through the same statements with
+no warehouse at all.
+
+**That reduced set is for replay, not for the whole runner.** The offline
+replay starts at line assembly, so it needs only what line assembly reads. A
+production run starts earlier and checks more, and two things it needs are
+not in the five:
+
+- `LOT_PATIENT_INPUT` carries `FU_DAYS` and `FU_DAYS_CE` on the ordinary
+  cohort-entry path (`02_patient_input.R`), which the replay does not exercise.
+- `MAP_STACKED` carries both run-out columns below. No rule reads them, but
+  the build's own mandatory invariants do — run the full build against the
+  replay's columns alone and it stops on `MAP_RX_RUNOUT_DT not found`, which
+  is the invariant working rather than a schema surprise.
+
+Port the full set. The reduced one tells you where the seam is; it does not
+tell you what a run needs.
 
 ### 1. `LOT_PATIENT_INPUT` — one row per patient
 
@@ -58,10 +74,12 @@ drug for one patient.
 | `PATID` | string | |
 | `MAP_MED_TYPE` | string | the drug's abbreviation — the engine's identity for it |
 | `MAP_MED_CLASS` | string | its class. Only `STEROID` is read, as "supportive, not line-defining" |
-| `MAP_CNT` | int | claims merged into the episode; reported, not read |
+| `MAP_CNT` | int | the episode's **ordinal** within `(PATID, MED_ABBR)`, and it IS read: it is the sort key the next-episode lookup orders by |
 | `MAP_START_DT` | date | first day of cover |
-| `MAP_END_DT` | date | last day of cover |
-| `MAP_DISCON_FLG` | int | 1 where the gap to the next episode of this drug is at least `MAP_DISCON_GAP_DAYS` |
+| `MAP_RX_RUNOUT_DT` | date | how far the pharmacy fills reach. Null where there are none |
+| `MAP_MED_RUNOUT_DT` | date | the same for medical administrations |
+| `MAP_END_DT` | date | last day of cover, and it must equal the later of the two run-outs — `build_lot.R`'s invariants check exactly that, so the two columns are not optional even though no rule reads them directly |
+| `MAP_DISCON_FLG` | int | 1 where the drug stopped: either the gap to its next episode is at least `MAP_DISCON_GAP_DAYS`, **or** there is no next episode and observation runs at least that long past this one's end |
 
 ### 3. `TX_AUTO_DATES` — autologous transplants
 

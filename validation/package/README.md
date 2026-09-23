@@ -20,9 +20,16 @@ content says. A default zip entry records the kind of system that wrote it and
 the file's permission bits, and carries each file's modification time — the
 build machine's clock and timezone, and a spread of them is a working history
 nobody asked for. Every entry is written as a plain FAT entry with no
-permissions and one fixed date, so the archive is byte-identical from any
-checkout of the same tree, which is what lets two people compare hashes and
-conclude something.
+permissions and one fixed date, so the archive is byte-identical **for the
+same staged bytes** — pack twice from one working tree and the hashes match,
+which is what lets two people compare and conclude something.
+
+Not across checkouts of the same commit, which is a stronger claim and a
+false one: this copies working-tree bytes, and a checkout with
+`core.autocrlf=true` has CRLF on disk where the object store has LF. The same
+commit then stages different bytes. Fixing that would mean rewriting content
+on the way through, which is the one thing this must not do — normalise the
+checkouts instead.
 
 **The identity patterns are not written down.** Writing the builder's name
 into the scanner puts it in the repository for good — the thing the scan
