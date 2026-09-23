@@ -141,9 +141,10 @@ for off in OFFSETS:
            ('CARF', 'PI', 120 + off, 120 + off + 20)]))
 
 
-def build(foldin):
+def build(foldin, span="single_day"):
     sqldir = tempfile.mkdtemp(prefix="bsweep_")
     env = dict(os.environ)
+    env["ALLO_LOT_SPAN"] = span
     env["MAP_FOLDIN"] = "TRUE" if foldin else "FALSE"
     r = subprocess.run(["Rscript", os.path.join(HERE, "emit_chain.R"), sqldir],
                        capture_output=True, text=True, env=env)
@@ -274,7 +275,35 @@ def main():
     ok(not bad, "no line starts on or before the previous one's end (%s)"
        % (bad[:2] or "none"))
 
-    print("\n%d planted histories across 5 boundaries, 3 offsets each" % len(PATS))
+    # 4.6 says two things, and only the span is allo_lot_span's. The empty
+    # regimen holds under BOTH, so the same histories run again under
+    # extend_to_next - the mode nothing could emit until this sweep was
+    # written, which is how the two came to be coupled in the engine.
+    print("\n-- the other span: 4.6's empty regimen is not the setting's --")
+    xf, xmelp, _, _ = build(True, "extend_to_next")
+    xr, _, _, _ = build(False, "extend_to_next")
+    bad = ["%s LOT%d names %r" % (pid, r[0], r[5])
+           for pid, rows in sorted(xf.items()) for r in rows
+           if r[3] == 'SCT_ALLO' and (r[5] or r[6])]
+    ok(not bad, "no ALLO line carries a regimen under extend_to_next (%s)"
+       % (bad[:2] or "none"))
+    xd = []
+    for pid in sorted(xf):
+        if not pid.startswith(('S1_', 'S2_', 'S3_')):
+            continue
+        f, rf = xf.get(pid, []), xr.get(pid, [])
+        fi = next((i for i, r in enumerate(f) if r[3] != 'MED'), None)
+        ri = next((i for i, r in enumerate(rf) if r[3] != 'MED'), None)
+        if fi is None and ri is None:
+            continue
+        if fi is None or ri is None or \
+                [r[1:] for r in f[fi:]] != [r[1:] for r in rf[ri:]]:
+            xd.append(pid)
+    ok(not xd, "...and the fold still decides nothing past the transplant "
+       "there either (%s)" % (xd[:3] or "none"))
+
+    print("\n%d planted histories across 5 boundaries, 3 offsets each, "
+          "both ALLO spans" % len(PATS))
     if fails:
         print("%d invariant(s) broken" % len(fails)); sys.exit(1)
     print("every boundary day keeps the invariants the rules state")

@@ -314,7 +314,7 @@ a line in that interval:
 |---|---|
 | one | joins the line it returns in — no new line |
 | two or more | opens a line, as any added agent would. Not reachable with the fold set scoped to the previous line — see below |
-| none | nothing advanced, so this rule says nothing — §4.3 keeps the return in the line it left |
+| none | nothing advanced, so this rule says nothing — §4.3 keeps the return in the line it left. `returning_drug_no_advance` |
 
 The interval is measured **dose to dose**, not from where the drug stopped. A
 drug's cover often runs past the line it belonged to, so measuring from the stop
@@ -335,12 +335,15 @@ transplant is not returning to the line it left.
 
 A transplant the line owns overrides nothing. An AUTO inside the line's own
 window (§6.5), or a planned tandem partner (§6.3), opens no line, so it is not
-a line start and never reaches the test.
+a line start and never reaches the test. Worked example:
+`returning_drug_own_transplant_no_advance`.
 
 **The two-or-more row cannot fire while the fold set is the previous line's
 regimen.** A drug is in that regimen only through an episode starting at or
 after that line's start (§3.3), and the return has to be inside the line being
-built, so exactly one line can have opened in between. The row is kept because
+built, so exactly one line can have opened in between. A drug from further
+back is outside the set and is simply a new agent:
+`returning_drug_two_lines_back`. The row is kept because
 it states the rule the study team asked for, with the scope settled at the
 previous line. Widening that scope is what would make it reachable, and that is
 a change to the settled rule.
@@ -350,7 +353,9 @@ order the count is relative to the line being built, so a return with another
 line-defining agent — a drug **or a procedure** — before it belongs to a later
 line, and this one does not claim it. That ownership test is separate from the
 count and procedures do count in it, on the same test §4.7 uses: past the line's
-own induction window and not a planned tandem partner.
+own induction window and not a planned tandem partner. An arrival on the SAME
+DAY as the return takes preference, so the return belongs to the line that
+agent opens: `returning_drug_same_day_new_agent`.
 
 A dose the transplant override has **refused** is line-defining in that
 ownership test too, although it is a fold-set drug. The test passes over
@@ -359,12 +364,19 @@ not returning to the line: it opens the next one, and every later dose of any
 fold-set drug belongs to a line at or after it. Worked example:
 `returning_drug_refused_dose_is_an_arrival`.
 
+A dose on the transplant's **own date** is outside both of those scans — the
+override reads a line opened strictly between two doses, the arrival scan a
+dose strictly after this line's start — so it is settled by §4.6 instead:
+nothing folds into an allogeneic line, which carries no regimen under any
+`allo_lot_span`. Worked example: `returning_drug_same_day_as_the_transplant`.
+
 **One course, one answer.** Episodes of the same agent with no discontinuation
 between them (`map_discon_gap_days`) are one course, and they fold together or
 not at all — the count is asked once, of the course, and never of each episode
-in it.
+in it. Worked example: `returning_drug_whole_course`.
 
-**The returning drug joins the line's regimen**, not only its span. It enters
+**The returning drug joins the line's regimen**, not only its span. Worked
+example: `returning_drug_joins_the_regimen`. It enters
 `LOT_BASE_MEDS`, `LOT_MED_CNT` and the line's med and class flags, because a
 drug the rule says is part of the line should read as part of it. The line's
 run-out is carried to the last day the drug's supply reaches, capped at

@@ -8,13 +8,13 @@
 # tested is the SQL that ships. Change a step file and the emitted text changes
 # with it - a test written against a copy could not say that.
 #
-# Three settings are read from the environment so a run can be differenced
+# Four settings are read from the environment so a run can be differenced
 # against itself: CONFIRM_DAYS (lot_discon_confirm_days), CART_RULE
-# (apply_cart_induction_rule) and MELP_RULE (apply_melp_rule). Everything else
-# is the contract.
+# (apply_cart_induction_rule), MELP_RULE (apply_melp_rule) and ALLO_LOT_SPAN.
+# Everything else is the contract.
 #
-# MELP_RULE, MAP_FOLDIN and OWN_RETURN_FOLD read their DEFAULTS out of the engine's own
-# config.csv rather than written here. The rest of this cfg is a hand copy of CONTRACT, which is
+# MELP_RULE, MAP_FOLDIN, OWN_RETURN_FOLD and ALLO_LOT_SPAN read their DEFAULTS
+# out of the engine's own config.csv rather than written here. The rest of this cfg is a hand copy of CONTRACT, which is
 # tolerable for settings that rarely move; the melphalan mode is not, because
 # it decides whether a whole rule is in the emitted SQL. Copied by hand, this
 # harness would go on certifying the algorithm the study used to ship while
@@ -153,12 +153,24 @@ ctx <- list(meds = MEDS, classes = CLASSES, sanitize_col = e$sanitize_col,
 # A step's QC read is a bare expression in its caller, so the stubbed db_q's
 # return value autoprints. Nothing here wants that output; only the last line
 # of this script is meant for the caller.
+# 4.6 has two halves - the single day and the empty regimen - and only the
+# first is this setting's. It was written out here as "single_day", so the
+# alternative could not be emitted at all and nothing in five harnesses had
+# ever run it. That is how the two halves came to be coupled in the engine
+# without anything noticing. Read like the other three, defaulting to what the
+# engine ships.
+ALLO_LOT_SPAN <- Sys.getenv("ALLO_LOT_SPAN",
+                            unset = engine_default("ALLO_LOT_SPAN", "single_day"))
+if (!ALLO_LOT_SPAN %in% c("single_day", "extend_to_next"))
+  stop("ALLO_LOT_SPAN='", ALLO_LOT_SPAN,
+       "' is not one of: single_day, extend_to_next", call. = FALSE)
+
 sink(tempfile())
 invisible(e$phase_lot1_base(NULL, ctx))
 invisible(e$phase_lot1_sct(NULL, ctx))
 invisible(e$phase_lot1_end(NULL, ctx))
 invisible(e$build_lot2_5(NULL, induction_window_days = 30L, cart_consolidation_days = 45L,
-               sct_tandem_days = 180L, allo_lot_span = "single_day", max_lot = 5L,
+               sct_tandem_days = 180L, allo_lot_span = ALLO_LOT_SPAN, max_lot = 5L,
                apply_cart_induction_rule = e$cfg$apply_cart_induction_rule,
                lot1_induction_window_days = 60L))
 sink()

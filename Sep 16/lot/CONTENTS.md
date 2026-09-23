@@ -54,6 +54,14 @@ Every downstream reader resolves which run owns a prefix through
 `LOT_BUILD_STATUS`, and refuses a run that did not finish or that deviated from
 the contract.
 
+### `PORTING.md` — moving the engine to another database
+
+The line-assembly half of the build reads five tables and nothing else:
+`LOT_PATIENT_INPUT`, `MAP_STACKED`, `TX_AUTO_DATES`, `TX_ALLO_CART_DATES` and
+`PERMISSIBLE_SUBS`. `PORTING.md` gives their columns, says which settings are
+the tumour's and travel, which are an assumption about the source and have to
+be decided again, and which are plumbing. MDV is worked through as the example.
+
 ### `qc/` — 40 checks on a finished run
 
 Not a re-implementation of the rules: each check states a property the lines

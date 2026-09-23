@@ -127,12 +127,15 @@ EXPECTED_FAILURES <- list(
     # retry_as_unit step, so retrying a line's append cannot append it twice.
     # The rest of the delta to that pin was SQL comment prose.
     #
-    # Re-pinned from 955 [04f35190], same line count. 4.6 reaches the fold
-    # now: the hold, the regimen union and the working base set each refuse
-    # an ALLO-started line, so the three take allo_lot_span and the two
-    # splices on this statement carry it. No line was added or removed -
-    # the predicate rides inside fragments this file already registers.
-    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 955 line(s) [3b7c1b80]")
+    # Re-pinned to 955 [04f35190] - the value it had before 4.6 reached the
+    # fold, and back to it because the guard now rides ENTIRELY inside
+    # fragments this file registers. The hold, the regimen union, the working
+    # base set and the added-medication test each refuse an ALLO-started line,
+    # and none of them needs allo_lot_span any more: the span sets how long
+    # the line runs, not whether it names anything. So the splices carry no
+    # setting, the undeviated text is what it was, and no line was added or
+    # removed.
+    "10_lot2_5_base.R: differs from R/lot2_5_base.R in 955 line(s) [04f35190]")
 )
 
 # How one suite's output is read. Its own suite is validation/hygiene/
