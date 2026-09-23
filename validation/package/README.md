@@ -49,19 +49,43 @@ what wrote it whoever packs it, so that rule does not depend on who does.
 Anything else in the same class — another tool, another account — belongs
 beside them or in `PACK_BANNED_EXTRA`, not in the derived half.
 
-**A short name will not flood you with false positives.** The derived name
-patterns are word-bounded, so a three-letter surname does not match inside
-`announce` or `channel`. Nothing is given up by that: a name inside a *path*
+**A short name will not flood you with false positives.** *Every* derived
+token is word-bounded — the name, the email's local part, and the account and
+repository taken off the remote — so a three-letter one does not match inside
+`announce` or `channel`. Nothing is given up by that: a token inside a *path*
 is caught by the path patterns and one inside an *address* by the address
 pattern. The tool answers a false positive by refusing to write anything, so
 the cost of one falls on the person trying to hand work over, which is the
 wrong place for it.
 
+**A run that stops changes nothing.** The output directory is created after
+the target check, not before, so a refused run leaves no empty directory
+behind — which matters because the standalone-folder check reads any
+top-level directory as another delivery. The archive is built beside the
+previous one and moved onto it only once it is complete, so a scan finding, a
+staging failure or a half-written zip leaves the last archive that *was* handed
+over exactly as it was. It is the only copy of it there is.
+
+**One spelling for every path.** The guard on the single destructive call
+compares resolved paths as strings, so every alias has to be folded away
+before the comparison: Windows keeps a `\\?\` namespace prefix through
+`realpath`, and without folding it `\\?\<delivery>` and `<delivery>` compare
+as two different directories — which is enough to get the delivery itself
+accepted as a staging tree. Case and separator are folded the same way, on the
+platforms where they are aliases too.
+
 **`--selftest` is what makes a pass mean anything.** It plants a file for
 every pattern and requires each to be reported, requires a clean file not to
 be, and requires a file that is not text to be reported rather than silently
-skipped. CI runs it; the pack itself is not run in CI, which has no business
-inventing a name for somebody's deliverable.
+skipped. It drives the *real* identity helper with a pretend identity rather
+than rebuilding its patterns alongside it — a test that builds the pattern it
+then checks is a test of the copy. And it runs the script end to end for the
+two claims that are about what a run leaves behind: a refusal writes nothing,
+and a refusal does not cost you the previous archive. Those two do pack, into
+a throwaway directory under a throwaway name, because the claim is about what
+a run leaves on disk and only a run can answer it. CI runs the selftest; it
+does not produce a deliverable, having no business inventing a name for
+somebody's.
 
 Settings are documented at the top of the script: `STUDY_FOLDER`, `PACK_NAME`,
 `PACK_OUT`, `PACK_STAMP` (defaults to the delivery folder's own last commit

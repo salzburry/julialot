@@ -86,15 +86,22 @@ def structural_patterns(src_name):
         # are a colon, a backslash and an n, and the character before the
         # colon is the last letter of a word. The earlier pattern asked for
         # TWO backslashes instead, which caught a doubled path in a string
-        # literal and missed every ordinary one.
-        # ...and at least two characters of a path segment after it. The
-        # lookbehind alone was not enough: "the rule's:\n" puts an
-        # APOSTROPHE before the s, so the s reads as a standalone drive
-        # letter and the \n as a separator and a segment. Asking for two
-        # characters leaves every escape of that shape alone - the n is
-        # followed by a quote - while any real path has a segment worth the
-        # name.
-        (r"(?<![A-Za-z0-9])[A-Za-z]:[\\/][A-Za-z0-9_.-]{2,}",
+        # literal and missed every ordinary one. Then ONE, plus two
+        # characters of segment - which missed both C:\R\alice, whose first
+        # segment is one character, and the doubled form again, because a
+        # source literal writes the separator as "C:\\work" and the second
+        # backslash is not a segment character.
+        #
+        # So: a separator is one backslash, two backslashes, or a forward
+        # slash, and the path is either ONE segment of two characters or
+        # more, or TWO segments of any length. That second arm is what buys
+        # back the one-character directory without buying back the false
+        # positive: "the rule's:\n" puts an APOSTROPHE before the s, so the
+        # s reads as a drive letter and \n as a separator and a segment -
+        # but a lone n has neither a second character nor a separator after
+        # it, so neither arm reaches it.
+        (r"(?<![A-Za-z0-9])[A-Za-z]:(?:\\\\|[\\/])"
+         r"(?:[A-Za-z0-9_.-]+(?:\\\\|[\\/])|[A-Za-z0-9_.-]{2,})",
          "a Windows path"),
         (r"OneDrive|Documents[\\/]GitHub", "a Windows user folder"),
         (r"/tmp/[A-Za-z0-9._-]*/", "a scratch path"),
@@ -141,31 +148,46 @@ def structural_patterns(src_name):
     return pats
 
 
-def identity_patterns():
+def bounded(tok, why):
+    """A derived token, matched as a word rather than as a substring.
+
+    Every token here is somebody's short name by some other route - a login,
+    an account, a repository - so every one of them can sit inside an
+    ordinary word. "ann" inside "announce" is the case that proves it, and
+    the tool answers a false positive by writing nothing, so the cost of one
+    lands on the person trying to hand the work over. Nothing is given up:
+    a token inside a path is caught by the path patterns and one inside an
+    address by the address pattern.
+    """
+    return (r"(?i)\b" + re.escape(tok) + r"\b", why)
+
+
+def identity_patterns(who=None):
     """The half that is about whoever is running this, derived rather than
-    written down. Returns (patterns, what_was_found)."""
+    written down. Returns (patterns, what_was_found).
+
+    `who` is (name, email, remote), and it is how the selftest drives THIS
+    function instead of rebuilding its patterns alongside it. A test that
+    builds the pattern it then checks is a test of the copy: the boundary
+    could come off the real one and the test would still pass.
+    """
     pats, found = [], []
-    name = git("config", "user.name")
-    email = git("config", "user.email")
-    remote = git("config", "--get", "remote.origin.url")
+    if who is not None:
+        name, email, remote = who
+    else:
+        name = git("config", "user.name")
+        email = git("config", "user.email")
+        remote = git("config", "--get", "remote.origin.url")
     if name:
         for part in re.split(r"[\s.]+", name):
             if len(part) >= 3:
-                # Word-bounded. Unbounded, a short common name matched inside
-                # ordinary words - "Ann" in "announce" - and the tool answers
-                # a false positive by refusing to write anything, so the cost
-                # of one lands on the person trying to hand work over. A name
-                # inside a PATH is caught by the path patterns above, and one
-                # inside an address by the address pattern, so nothing is
-                # given up by asking for the boundary here.
-                pats.append((r"(?i)\b" + re.escape(part) + r"\b",
-                             "the builder's name"))
+                pats.append(bounded(part, "the builder's name"))
                 found.append("name")
     if email:
-        pats.append(("(?i)" + re.escape(email), "the builder's email"))
+        pats.append(bounded(email, "the builder's email"))
         local = email.split("@")[0]
         if len(local) >= 3:
-            pats.append(("(?i)" + re.escape(local), "the builder's email"))
+            pats.append(bounded(local, "the builder's email"))
         found.append("email")
     if remote:
         # owner and repository out of any remote shape, ssh or https.
@@ -173,7 +195,7 @@ def identity_patterns():
         if m:
             for g in m.groups():
                 if len(g) >= 3:
-                    pats.append(("(?i)" + re.escape(g), "the repository or its account"))
+                    pats.append(bounded(g, "the repository or its account"))
             found.append("remote")
     return pats, sorted(set(found))
 
@@ -203,6 +225,34 @@ def scan(tree, patterns):
 
 SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
+# The Windows extended-length and device namespaces. realpath KEEPS these, so
+# \\?\C:\x and C:\x resolve to two strings that name one directory - and a
+# containment check written as a string comparison then reads "outside the
+# repository" about a directory that is inside it.
+_NS = (("\\\\?\\UNC\\", "\\\\"), ("\\\\.\\UNC\\", "\\\\"),
+       ("\\\\?\\", ""), ("\\\\.\\", ""))
+
+
+def plain(p):
+    """A path with any Windows namespace prefix taken off the front."""
+    for pre, keep in _NS:
+        if p.startswith(pre):
+            return keep + p[len(pre):]
+    return p
+
+
+def same_space(p):
+    """The one spelling of `p` that containment checks may compare.
+
+    A path is a string here, and two strings that name one directory have to
+    BECOME one string before they are compared, or the comparison answers
+    about the spelling rather than the place. Three aliases matter: the
+    namespace prefix (stripped on both sides of realpath, since either side
+    can carry it), case, and the separator - normcase folds the last two on
+    the platforms where they are aliases and does nothing where they are not.
+    """
+    return os.path.normcase(plain(os.path.realpath(plain(p))))
+
 
 def safe_target(out_dir, root_name, src):
     """Where the staging tree may go, or a refusal with the reason.
@@ -224,24 +274,28 @@ def safe_target(out_dir, root_name, src):
                       "joined into a path that gets removed before staging, "
                       "and an absolute name or one with '..' in it is not a "
                       "name, it is a different directory." % root_name)
-    out = os.path.realpath(out_dir)
-    repo = os.path.realpath(REPO)
+    out = same_space(out_dir)
+    repo = same_space(REPO)
     if out == repo or out.startswith(repo + os.sep):
         return None, ("PACK_OUT is inside the repository (%s). A run must not "
                       "be able to leave an archive in the tree it packed, and "
                       "must not be able to remove part of it either." % out)
-    tree = os.path.realpath(os.path.join(out, root_name))
+    # The path that gets used, and the path that gets compared. They are not
+    # the same string: the comparisons below need every alias folded away,
+    # while the caller needs something it can hand to makedirs and rmtree.
+    tree_real = os.path.realpath(os.path.join(plain(out_dir), root_name))
+    tree = same_space(tree_real)
     if tree != out and not tree.startswith(out + os.sep):
         return None, "the staging tree resolves outside PACK_OUT: " + tree
     if tree == out:
         return None, "the staging tree resolves to PACK_OUT itself"
-    src_r = os.path.realpath(src)
+    src_r = same_space(src)
     if tree == src_r or tree.startswith(src_r + os.sep) or \
             src_r.startswith(tree + os.sep):
         return None, ("the staging tree overlaps the delivery being packed "
                       "(%s). Nothing is worth removing to make room for a "
                       "copy of itself." % src_r)
-    return tree, None
+    return tree_real, None
 
 
 def stage(src, out):
@@ -329,6 +383,11 @@ def selftest():
         ("win.txt", r"C:/Users/x"),
         # The ordinary form, which the doubled-backslash pattern missed.
         ("win_bs.txt", r"C:\work\alice\clinical.R"),
+        # ...and the two the fix for THAT missed: a path written as a source
+        # literal, where every separator is doubled, and a path whose first
+        # directory is one character long.
+        ("win_lit.txt", r'path <- "C:\\work\\alice\\clinical.R"'),
+        ("win_short.txt", r"C:\R\alice\clinical.R"),
         ("win2.txt", "OneDrive is here"),
         ("scratch.txt", "/tmp/somewhere/x"),
         ("host.txt", "github.com/x"),
@@ -357,9 +416,14 @@ def selftest():
     clean = tempfile.mkdtemp(prefix="packselfclean_")
     open(os.path.join(clean, "ok.md"), "w", encoding="utf-8").write(
         "The line ends on the added medication, in usr00000, for GSK2857916.\n")
-    # A three-letter name is the case that made the boundary necessary: it
-    # has to catch the name and leave the words that contain it alone.
-    short = [(r"(?i)\b" + re.escape("Ann") + r"\b", "the builder's name")]
+    # The REAL helper, with a pretend identity, because a test that rebuilds
+    # the patterns beside it is a test of the copy - the boundary could come
+    # off the production one and the rebuilt one would still pass. All three
+    # sources yield the same three-letter token here, which is the case that
+    # made the boundary necessary: it has to catch the token and leave the
+    # ordinary words that contain it alone.
+    WHO = ("Ann Lee", "ann@example.org", "https://example.org/ann/packrepo.git")
+    short, short_found = identity_patterns(WHO)
     open(os.path.join(clean, "prose.md"), "w", encoding="utf-8").write(
         "The build will announce the channel and the planned tandem.\n")
     # The false positive the drive-letter pattern has to keep avoiding: an R
@@ -370,7 +434,18 @@ def selftest():
     open(os.path.join(clean, "msg.R"), "w", encoding="utf-8").write(
         'stop("could not read these tables:\\n  ", paste(bad))\n'
         '  "differences between them are not the rule\'s:\\n",\n')
+    open(os.path.join(clean, "prose2.md"), "w", encoding="utf-8").write(
+        "The annual report and the announcement both stand.\n")
     false_alarms = scan(clean, pats + short)
+
+    # ...and the other half of that: bounded still has to CATCH. A boundary
+    # that matched nothing would pass the test above for the wrong reason.
+    named = tempfile.mkdtemp(prefix="packselfid_")
+    open(os.path.join(named, "who.md"), "w", encoding="utf-8").write(
+        "Packed by Ann Lee.\nWrite to ann@example.org.\n"
+        "Source: ann/packrepo.\n")
+    id_hits = {why for _, _, why, _ in scan(named, short)}
+    shutil.rmtree(named)
 
     binary = tempfile.mkdtemp(prefix="packselfbin_")
     open(os.path.join(binary, "x.bin"), "wb").write(b"\xff\xfe\x00\x01")
@@ -392,7 +467,59 @@ def selftest():
     let_through = [w for w, n in attacks if safe_target(out, n, src)[0] is not None]
     refused_ok = safe_target(out, "sep_16_2026", src)[0] is not None
     in_repo = safe_target(os.path.join(REPO, "dist"), "x", src)[0] is not None
+
+    # The refusals above are read off the function. This one runs the script,
+    # because the claim is about what a refused run leaves behind and only a
+    # run can answer that. PACK_OUT names a directory that does not exist:
+    # the run must refuse, and it must still not exist afterwards.
+    ghost = os.path.join(out, "never_created")
+    env = dict(os.environ, STUDY_FOLDER="Sep 16", PACK_NAME="../victim",
+               PACK_OUT=ghost, PACK_STAMP="2026-09-16",
+               PACK_ALLOW_NO_IDENTITY="TRUE")
+    r = subprocess.run([sys.executable, os.path.abspath(__file__)], env=env,
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    said_no = b"refusing to pack" in r.stdout
+    wrote_anyway = os.path.exists(ghost)
     shutil.rmtree(out)
+
+    # The Windows namespace prefixes, as strings, because the alias they make
+    # is Windows-only and this has to mean something on the machine that does
+    # not have it too. plain() is what the containment checks stand on: with
+    # the prefix left in place, \\?\<the delivery> and <the delivery> compare
+    # as two different directories and the guard accepts the second as a
+    # staging tree for the first.
+    ns = [("\\\\?\\C:\\x", "C:\\x"),
+          ("\\\\.\\C:\\x", "C:\\x"),
+          ("\\\\?\\UNC\\srv\\share", "\\\\srv\\share"),
+          ("/home/u", "/home/u"),
+          ("C:\\x", "C:\\x")]
+    ns_bad = [a for a, want in ns if plain(a) != want]
+
+    # ...and the aliases this platform DOES have, through the real guard:
+    # every one of these spells a directory inside the repository.
+    aliases = [os.path.join(REPO, "dist") + os.sep,
+               os.path.join(REPO, ".", "dist"),
+               os.path.join(REPO, "Sep 16", "..", "dist")]
+    alias_through = [a for a in aliases if safe_target(a, "x", src)[0] is not None]
+
+    # The previous archive has to survive a run that does not finish. Pack
+    # once, then pack again with a pattern the delivery is certain to trip:
+    # the second run must refuse, and the first run's archive must still be
+    # there, byte for byte, with no partial file left beside it.
+    keep = tempfile.mkdtemp(prefix="packselfkeep_")
+    base = dict(os.environ, STUDY_FOLDER="Sep 16", PACK_NAME="probe",
+                PACK_OUT=keep, PACK_STAMP="2026-09-16",
+                PACK_ALLOW_NO_IDENTITY="TRUE")
+    me = [sys.executable, os.path.abspath(__file__)]
+    first = subprocess.run(me, env=base, stdout=subprocess.PIPE,
+                           stderr=subprocess.STDOUT)
+    arc = os.path.join(keep, "probe.zip")
+    before = open(arc, "rb").read() if os.path.exists(arc) else None
+    second = subprocess.run(me, env=dict(base, PACK_BANNED_EXTRA="the"),
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    after = open(arc, "rb").read() if os.path.exists(arc) else None
+    leftover = [f for f in os.listdir(keep) if f.endswith(".part")]
+    shutil.rmtree(keep)
 
     fails = []
     if missed:
@@ -408,6 +535,37 @@ def selftest():
         fails.append("an ordinary archive name was refused")
     if in_repo:
         fails.append("PACK_OUT inside the repository was allowed")
+    if not said_no:
+        fails.append("an end-to-end run with a bad PACK_NAME did not refuse: "
+                     + r.stdout.decode("utf-8", "replace").strip()[-200:])
+    if wrote_anyway:
+        fails.append("a refused run created PACK_OUT anyway, so 'a refusal "
+                     "writes nothing' is not true")
+    if ns_bad:
+        fails.append("a Windows namespace prefix was not folded away: "
+                     + ", ".join(repr(a) for a in ns_bad))
+    if alias_through:
+        fails.append("these spellings of a directory in the repository were "
+                     "allowed: " + ", ".join(alias_through))
+    if sorted(short_found) != ["email", "name", "remote"]:
+        fails.append("the identity helper did not read all three sources: %s"
+                     % (short_found,))
+    if len(id_hits) < 3:
+        fails.append("a pretend identity was not caught by the patterns the "
+                     "real helper built for it: %s" % (sorted(id_hits),))
+    if before is None:
+        fails.append("the delivery did not pack, so nothing could be said "
+                     "about replacing an archive: "
+                     + first.stdout.decode("utf-8", "replace").strip()[-300:])
+    elif second.returncode == 0:
+        fails.append("a run against a pattern the delivery trips did not refuse")
+    elif after is None:
+        fails.append("a refused run deleted the previous archive")
+    elif after != before:
+        fails.append("a refused run replaced the previous archive anyway")
+    if leftover:
+        fails.append("a refused run left a partial archive behind: %s"
+                     % (leftover,))
     for f in fails:
         print("  FAIL  " + f)
     if fails:
@@ -419,6 +577,10 @@ def selftest():
     print("  ok    all %d ways of aiming rmtree out of bounds are refused"
           % len(attacks))
     print("  ok    ...an ordinary name is not, and PACK_OUT in the repo is")
+    print("  ok    a refused run leaves no directory behind")
+    print("  ok    ...and leaves the previous archive exactly as it was")
+    print("  ok    one spelling for every path the guard compares")
+    print("  ok    a short derived token is caught as a word, not inside one")
     print("\nthe scan can fail, so its passing means something")
     return 0
 
@@ -463,13 +625,27 @@ def main():
     print("identity patterns from:", ", ".join(found) or "(none - allowed)")
 
     out_dir = os.environ.get("PACK_OUT") or tempfile.mkdtemp(prefix="pack_")
-    os.makedirs(out_dir, exist_ok=True)
+    # The check first, the directory second. safe_target resolves paths
+    # rather than reading them, so it needs nothing to exist - and a run
+    # that refuses has to leave the tree exactly as it found it. An empty
+    # directory is not nothing: the standalone-folder hygiene check reads
+    # any top-level directory as another delivery, so a refused probe with
+    # PACK_OUT pointed into the repository used to fail the gate afterwards.
     tree, why = safe_target(out_dir, root_name, src)
     if why:
         raise SystemExit("refusing to pack: " + why)
+    os.makedirs(out_dir, exist_ok=True)
     zip_path = os.path.join(os.path.realpath(out_dir), root_name + ".zip")
+    # The candidate, not the archive. What was handed over last time is the
+    # only copy of it there is, and a run that stops - because the scan found
+    # a name, because staging failed, because the zip did not finish - used
+    # to have removed it already. Build beside it and move on success; the
+    # previous archive is then either replaced by a complete one or still
+    # there. os.replace is atomic on both platforms, so there is no moment
+    # when neither exists.
+    cand = zip_path + ".part"
     if os.path.exists(tree): shutil.rmtree(tree)
-    if os.path.exists(zip_path): os.remove(zip_path)
+    if os.path.exists(cand): os.remove(cand)
     os.makedirs(tree)
 
     kept, skipped = stage(src, tree)
@@ -482,10 +658,18 @@ def main():
             print("  %s:%d  (%s)\n      %s" % (rel, line, why, ctx))
         if len(bad) > 60:
             print("  ... and", len(bad) - 60, "more")
-        print("\nNo archive written.")
+        print("\nNo archive written" + (
+            "; the previous one is untouched." if os.path.exists(zip_path)
+            else "."))
         return 1
 
-    write_zip(tree, zip_path, root_name, stamp)
+    try:
+        write_zip(tree, cand, root_name, stamp)
+        os.replace(cand, zip_path)
+    except BaseException:
+        if os.path.exists(cand):
+            os.remove(cand)
+        raise
     print("clean; every entry stamped %s" % stamp_s)
     print(zip_path, os.path.getsize(zip_path), "bytes")
     return 0
