@@ -79,14 +79,34 @@ def structural_patterns(src_name):
         (r"/home/[A-Za-z0-9._-]+/", "a build path"),
         (r"/root/", "a build path"),
         (r"/Users/[A-Za-z]", "a home directory"),
-        # A drive letter with a real separator after it. Not [A-Za-z]:[\\/]
-        # - that matches the ":\n" ending half the error strings in this
-        # codebase, because in the SOURCE those are a colon, a backslash, an n.
-        (r"[A-Za-z]:/[A-Za-z0-9_.-]|[A-Za-z]:\\\\|OneDrive|Documents[\\/]GitHub",
+        # A drive letter, which is ONE letter, so nothing word-like may
+        # precede it. That lookbehind is the whole discriminator: it lets
+        # C:\work\alice through the net while leaving alone the ":\n" that
+        # ends half the error strings in this codebase - in the SOURCE those
+        # are a colon, a backslash and an n, and the character before the
+        # colon is the last letter of a word. The earlier pattern asked for
+        # TWO backslashes instead, which caught a doubled path in a string
+        # literal and missed every ordinary one.
+        # ...and at least two characters of a path segment after it. The
+        # lookbehind alone was not enough: "the rule's:\n" puts an
+        # APOSTROPHE before the s, so the s reads as a standalone drive
+        # letter and the \n as a separator and a segment. Asking for two
+        # characters leaves every escape of that shape alone - the n is
+        # followed by a quote - while any real path has a segment worth the
+        # name.
+        (r"(?<![A-Za-z0-9])[A-Za-z]:[\\/][A-Za-z0-9_.-]{2,}",
          "a Windows path"),
+        (r"OneDrive|Documents[\\/]GitHub", "a Windows user folder"),
         (r"/tmp/[A-Za-z0-9._-]*/", "a scratch path"),
         (r"github\.com", "a repository host"),
         (r"Co-Authored-By", "a commit trailer"),
+        # Structural, NOT derived. These were caught only while the runner's
+        # git identity happened to be the assistant's - which it is in the
+        # container that builds this, and is not on the desk it is handed
+        # over from. A delivery should never name what wrote it whoever
+        # packs it, so the rule does not depend on who does.
+        (r"(?i)\bclaude\b", "the assistant"),
+        (r"(?i)\banthropic\b", "the assistant's maker"),
         (r"session_[0-9A-Za-z]{10,}", "a session identifier"),
         (r"https?://", "an outside link"),
         (r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "an email address"),
@@ -131,7 +151,15 @@ def identity_patterns():
     if name:
         for part in re.split(r"[\s.]+", name):
             if len(part) >= 3:
-                pats.append(("(?i)" + re.escape(part), "the builder's name"))
+                # Word-bounded. Unbounded, a short common name matched inside
+                # ordinary words - "Ann" in "announce" - and the tool answers
+                # a false positive by refusing to write anything, so the cost
+                # of one lands on the person trying to hand work over. A name
+                # inside a PATH is caught by the path patterns above, and one
+                # inside an address by the address pattern, so nothing is
+                # given up by asking for the boundary here.
+                pats.append((r"(?i)\b" + re.escape(part) + r"\b",
+                             "the builder's name"))
                 found.append("name")
     if email:
         pats.append(("(?i)" + re.escape(email), "the builder's email"))
@@ -173,6 +201,49 @@ def scan(tree, patterns):
     return bad
 
 
+SAFE_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+def safe_target(out_dir, root_name, src):
+    """Where the staging tree may go, or a refusal with the reason.
+
+    rmtree is the one destructive thing in this file and it runs before
+    anything else does, so every way of aiming it somewhere it should not go
+    has to be closed BEFORE it is reached. os.path.join is the trap: an
+    ABSOLUTE PACK_NAME discards PACK_OUT entirely, so join(out, "/a/b") is
+    "/a/b", and ".." walks out of it. A name is not a name until it has been
+    checked to be one.
+
+    Four questions, and the answer to any of them refuses rather than
+    repairs. Silently correcting a path somebody typed is how the wrong
+    directory gets deleted while the output still looks right.
+    """
+    if not SAFE_NAME.match(root_name):
+        return None, ("PACK_NAME must be a plain archive name - letters, "
+                      "digits, dot, dash, underscore - and %r is not. It is "
+                      "joined into a path that gets removed before staging, "
+                      "and an absolute name or one with '..' in it is not a "
+                      "name, it is a different directory." % root_name)
+    out = os.path.realpath(out_dir)
+    repo = os.path.realpath(REPO)
+    if out == repo or out.startswith(repo + os.sep):
+        return None, ("PACK_OUT is inside the repository (%s). A run must not "
+                      "be able to leave an archive in the tree it packed, and "
+                      "must not be able to remove part of it either." % out)
+    tree = os.path.realpath(os.path.join(out, root_name))
+    if tree != out and not tree.startswith(out + os.sep):
+        return None, "the staging tree resolves outside PACK_OUT: " + tree
+    if tree == out:
+        return None, "the staging tree resolves to PACK_OUT itself"
+    src_r = os.path.realpath(src)
+    if tree == src_r or tree.startswith(src_r + os.sep) or \
+            src_r.startswith(tree + os.sep):
+        return None, ("the staging tree overlaps the delivery being packed "
+                      "(%s). Nothing is worth removing to make room for a "
+                      "copy of itself." % src_r)
+    return tree, None
+
+
 def stage(src, out):
     """What git tracks, minus what never belongs in a handover."""
     files = [f for f in subprocess.check_output(
@@ -203,8 +274,17 @@ def write_zip(tree, zip_path, root_name, stamp):
     One fixed date, too. An mtime is not a machine name, but it is the build
     machine's clock and its timezone, and a spread of them is a working
     history nobody asked to receive. Fixed, and walked in sorted order, the
-    archive is byte-identical from any checkout of the same tree - which is
-    what lets two people compare hashes and conclude something.
+    archive is byte-identical for the same STAGED BYTES - so packing twice
+    from one working tree gives one hash, and two people can compare.
+
+    Not from the same GIT TREE, which is a stronger claim and a false one.
+    This copies working-tree bytes, and a checkout with core.autocrlf=true
+    has CRLF on disk where the object store has LF; the same commit then
+    stages different bytes and compresses to a different archive. Nothing
+    here can fix that without rewriting content on the way through, which is
+    the one thing this must not do - what is tracked is what ships. If two
+    archives have to match across such checkouts, normalise the checkouts,
+    not the packer.
     """
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
         for root, dirs, fs in sorted(os.walk(tree)):
@@ -247,6 +327,8 @@ def selftest():
         ("root.txt", "/root/build"),
         ("mac.txt", "/Users/a/x"),
         ("win.txt", r"C:/Users/x"),
+        # The ordinary form, which the doubled-backslash pattern missed.
+        ("win_bs.txt", r"C:\work\alice\clinical.R"),
         ("win2.txt", "OneDrive is here"),
         ("scratch.txt", "/tmp/somewhere/x"),
         ("host.txt", "github.com/x"),
@@ -261,6 +343,11 @@ def selftest():
         ("schema.txt", "usr12345 wrote it"),
         ("name.txt", "built by Nobody"),
         ("email.txt", "nobody@example.com"),
+        # The pretend identity above is not the assistant's, so these two
+        # can only be caught by the structural half - which is the point of
+        # moving them there.
+        ("assistant.txt", "generated with Claude"),
+        ("maker.txt", "an Anthropic model wrote this"),
     ]
     for fn, body in cases:
         open(os.path.join(tmp, fn), "w", encoding="utf-8").write(body + "\n")
@@ -270,13 +357,43 @@ def selftest():
     clean = tempfile.mkdtemp(prefix="packselfclean_")
     open(os.path.join(clean, "ok.md"), "w", encoding="utf-8").write(
         "The line ends on the added medication, in usr00000, for GSK2857916.\n")
-    false_alarms = scan(clean, pats)
+    # A three-letter name is the case that made the boundary necessary: it
+    # has to catch the name and leave the words that contain it alone.
+    short = [(r"(?i)\b" + re.escape("Ann") + r"\b", "the builder's name")]
+    open(os.path.join(clean, "prose.md"), "w", encoding="utf-8").write(
+        "The build will announce the channel and the planned tandem.\n")
+    # The false positive the drive-letter pattern has to keep avoiding: an R
+    # error string ending in a colon and a newline escape.
+    # Two shapes from this codebase that the drive-letter pattern has to keep
+    # leaving alone. The second is why the lookbehind is not enough on its
+    # own: an apostrophe before the s makes it look like a drive letter.
+    open(os.path.join(clean, "msg.R"), "w", encoding="utf-8").write(
+        'stop("could not read these tables:\\n  ", paste(bad))\n'
+        '  "differences between them are not the rule\'s:\\n",\n')
+    false_alarms = scan(clean, pats + short)
 
     binary = tempfile.mkdtemp(prefix="packselfbin_")
     open(os.path.join(binary, "x.bin"), "wb").write(b"\xff\xfe\x00\x01")
     bin_hits = scan(binary, pats)
 
     shutil.rmtree(tmp); shutil.rmtree(clean); shutil.rmtree(binary)
+
+    # The guard on the one destructive call. Each of these once resolved to a
+    # directory that would have been removed before staging began.
+    src = os.path.join(REPO, "Sep 16")
+    out = tempfile.mkdtemp(prefix="packselfout_")
+    attacks = [
+        ("an absolute name, which discards PACK_OUT entirely", src),
+        ("a relative escape", os.path.join("..", "victim")),
+        ("a separator in the name", "a/b"),
+        ("an empty name", ""),
+        ("a name that is only dots", ".."),
+    ]
+    let_through = [w for w, n in attacks if safe_target(out, n, src)[0] is not None]
+    refused_ok = safe_target(out, "sep_16_2026", src)[0] is not None
+    in_repo = safe_target(os.path.join(REPO, "dist"), "x", src)[0] is not None
+    shutil.rmtree(out)
+
     fails = []
     if missed:
         fails.append("these planted cases were NOT caught: " + ", ".join(missed))
@@ -284,6 +401,13 @@ def selftest():
         fails.append("a clean file was reported: %s" % (false_alarms[:2],))
     if not bin_hits:
         fails.append("a file that is not text was not reported")
+    if let_through:
+        fails.append("these would have been removed before staging: "
+                     + "; ".join(let_through))
+    if not refused_ok:
+        fails.append("an ordinary archive name was refused")
+    if in_repo:
+        fails.append("PACK_OUT inside the repository was allowed")
     for f in fails:
         print("  FAIL  " + f)
     if fails:
@@ -292,6 +416,9 @@ def selftest():
     print("  ok    all %d planted cases are caught" % len(cases))
     print("  ok    a clean file is not")
     print("  ok    ...and a file that is not text is reported rather than skipped")
+    print("  ok    all %d ways of aiming rmtree out of bounds are refused"
+          % len(attacks))
+    print("  ok    ...an ordinary name is not, and PACK_OUT in the repo is")
     print("\nthe scan can fail, so its passing means something")
     return 0
 
@@ -337,8 +464,10 @@ def main():
 
     out_dir = os.environ.get("PACK_OUT") or tempfile.mkdtemp(prefix="pack_")
     os.makedirs(out_dir, exist_ok=True)
-    tree = os.path.join(out_dir, root_name)
-    zip_path = os.path.join(out_dir, root_name + ".zip")
+    tree, why = safe_target(out_dir, root_name, src)
+    if why:
+        raise SystemExit("refusing to pack: " + why)
+    zip_path = os.path.join(os.path.realpath(out_dir), root_name + ".zip")
     if os.path.exists(tree): shutil.rmtree(tree)
     if os.path.exists(zip_path): os.remove(zip_path)
     os.makedirs(tree)
