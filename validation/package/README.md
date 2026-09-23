@@ -58,13 +58,24 @@ pattern. The tool answers a false positive by refusing to write anything, so
 the cost of one falls on the person trying to hand work over, which is the
 wrong place for it.
 
-**A run that stops changes nothing.** The output directory is created after
-the target check, not before, so a refused run leaves no empty directory
-behind — which matters because the standalone-folder check reads any
-top-level directory as another delivery. The archive is built beside the
-previous one and moved onto it only once it is complete, so a scan finding, a
-staging failure or a half-written zip leaves the last archive that *was* handed
-over exactly as it was. It is the only copy of it there is.
+**A run that stops gives back what it took.** There is one cleanup path, not
+one at each exit: the run collects what it *creates* as it creates it — a
+temporary output directory when none was given, the staging tree, the
+half-written candidate — and if it ends without an archive it removes all of
+it. Nothing it did not create is on that list, so a `PACK_OUT` you supplied
+and the archive from last time are never touched. The name is also checked
+before anything is allocated at all, since the default output directory has to
+be *created* in order to be named; the two are deliberately redundant, and
+either one alone closes the case.
+
+That matters beyond tidiness in one place: the standalone-folder hygiene check
+reads any top-level directory as another delivery, so refused probes that left
+empty directories in the repository once failed the gate afterwards.
+
+**The previous archive survives a failed replacement.** It is built beside the
+old one and moved onto it only once complete, so a scan finding, a staging
+failure or a half-written zip leaves the last archive that *was* handed over
+exactly as it was. It is the only copy of it there is.
 
 **One spelling for every path.** The guard on the single destructive call
 compares resolved paths as strings, so every alias has to be folded away
