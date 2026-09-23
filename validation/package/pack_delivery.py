@@ -87,6 +87,13 @@ def structural_patterns(src_name):
         (r"/tmp/[A-Za-z0-9._-]*/", "a scratch path"),
         (r"github\.com", "a repository host"),
         (r"Co-Authored-By", "a commit trailer"),
+        # Structural, NOT derived. These were caught only while the runner's
+        # git identity happened to be the assistant's - which it is in the
+        # container that builds this, and is not on the desk it is handed
+        # over from. A delivery should never name what wrote it whoever
+        # packs it, so the rule does not depend on who does.
+        (r"(?i)\bclaude\b", "the assistant"),
+        (r"(?i)\banthropic\b", "the assistant's maker"),
         (r"session_[0-9A-Za-z]{10,}", "a session identifier"),
         (r"https?://", "an outside link"),
         (r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}", "an email address"),
@@ -131,7 +138,15 @@ def identity_patterns():
     if name:
         for part in re.split(r"[\s.]+", name):
             if len(part) >= 3:
-                pats.append(("(?i)" + re.escape(part), "the builder's name"))
+                # Word-bounded. Unbounded, a short common name matched inside
+                # ordinary words - "Ann" in "announce" - and the tool answers
+                # a false positive by refusing to write anything, so the cost
+                # of one lands on the person trying to hand work over. A name
+                # inside a PATH is caught by the path patterns above, and one
+                # inside an address by the address pattern, so nothing is
+                # given up by asking for the boundary here.
+                pats.append((r"(?i)\b" + re.escape(part) + r"\b",
+                             "the builder's name"))
                 found.append("name")
     if email:
         pats.append(("(?i)" + re.escape(email), "the builder's email"))
@@ -261,6 +276,11 @@ def selftest():
         ("schema.txt", "usr12345 wrote it"),
         ("name.txt", "built by Nobody"),
         ("email.txt", "nobody@example.com"),
+        # The pretend identity above is not the assistant's, so these two
+        # can only be caught by the structural half - which is the point of
+        # moving them there.
+        ("assistant.txt", "generated with Claude"),
+        ("maker.txt", "an Anthropic model wrote this"),
     ]
     for fn, body in cases:
         open(os.path.join(tmp, fn), "w", encoding="utf-8").write(body + "\n")
@@ -270,7 +290,12 @@ def selftest():
     clean = tempfile.mkdtemp(prefix="packselfclean_")
     open(os.path.join(clean, "ok.md"), "w", encoding="utf-8").write(
         "The line ends on the added medication, in usr00000, for GSK2857916.\n")
-    false_alarms = scan(clean, pats)
+    # A three-letter name is the case that made the boundary necessary: it
+    # has to catch the name and leave the words that contain it alone.
+    short = [(r"(?i)\b" + re.escape("Ann") + r"\b", "the builder's name")]
+    open(os.path.join(clean, "prose.md"), "w", encoding="utf-8").write(
+        "The build will announce the channel and the planned tandem.\n")
+    false_alarms = scan(clean, pats + short)
 
     binary = tempfile.mkdtemp(prefix="packselfbin_")
     open(os.path.join(binary, "x.bin"), "wb").write(b"\xff\xfe\x00\x01")

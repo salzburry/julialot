@@ -33,6 +33,23 @@ look for nobody and pass for that reason, so it refuses;
 `PACK_ALLOW_NO_IDENTITY=TRUE` says you meant it. The sibling delivery folders
 are read off the repository for the same reason a list would go stale.
 
+**What is NOT derived, and why it matters.** The assistant's name and its
+maker's are in the *structural* list, not the identity one. They were briefly
+in neither by name: they were caught only while the runner's git identity
+happened to be the assistant's, which it is in the container that builds this
+and is not on the desk it is handed over from. A delivery should never name
+what wrote it whoever packs it, so that rule does not depend on who does.
+Anything else in the same class — another tool, another account — belongs
+beside them or in `PACK_BANNED_EXTRA`, not in the derived half.
+
+**A short name will not flood you with false positives.** The derived name
+patterns are word-bounded, so a three-letter surname does not match inside
+`announce` or `channel`. Nothing is given up by that: a name inside a *path*
+is caught by the path patterns and one inside an *address* by the address
+pattern. The tool answers a false positive by refusing to write anything, so
+the cost of one falls on the person trying to hand work over, which is the
+wrong place for it.
+
 **`--selftest` is what makes a pass mean anything.** It plants a file for
 every pattern and requires each to be reported, requires a clean file not to
 be, and requires a file that is not text to be reported rather than silently
