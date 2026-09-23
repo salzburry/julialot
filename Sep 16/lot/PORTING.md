@@ -13,13 +13,28 @@ and rebuilds the rules. Doing both at once is two projects.
 
 ## The seam
 
-`R/steps/01_codelists.R` through `03_mma_map.R` read Optum and produce five
-tables. Everything from `04_lot1_base.R` on reads only those five and never
-touches a source table again. Produce them for another database and the rest of
-the engine runs unchanged — that is not a claim about the design, it is what
-`lot/qc/extract_patients.R` does
-today: it writes exactly these five out for named patients, so their real rows
-can be put back through the same statements with no warehouse at all.
+**Two step files read the source, and they are not the first two.** Grep
+`cdm_src` in `R/steps/` and it appears in exactly two places:
+
+| Step | Reads | Produces |
+|---|---|---|
+| `03_mma_map.R` | `medical`, `rx` | `MAP_STACKED` |
+| `05_sct.R` | `medical`, `med_procedure`, `med_diagnosis` | `TX_AUTO_DATES`, `TX_ALLO_CART_DATES` |
+
+`02_patient_input.R` reads the cohort table the caller hands it, and
+`01_codelists.R` reads code-list CSVs from disk. Everything else — including
+`05b_lot1_sct.R`, which sits between the two source-readers and reads neither
+— touches no source table at all.
+
+So the seam runs **through** `05_sct.R` rather than before it: that file both
+reads Optum and holds the AUTO clustering rules, which are the tumour's. A
+port rewrites its extraction half and keeps its clustering half. Budget it as
+a file to split, not a file to move.
+
+Produce the five tables below and the rest of the engine runs unchanged. That
+is not a claim about the design, it is what `lot/qc/extract_patients.R` does
+today: it writes exactly these out for named patients, so their real rows can
+be put back through the same statements with no warehouse at all.
 
 ### 1. `LOT_PATIENT_INPUT` — one row per patient
 
@@ -63,6 +78,17 @@ drug for one patient.
 expands it both ways. This is §4.4's whole input: a biosimilar and its reference
 product are one agent.
 
+### ...and one thing that is not a table
+
+**The drug universe.** The emitted SQL is *parameterised* by the set of
+`(MAP_MED_TYPE, MAP_MED_CLASS)` pairs the code list carries: the build writes
+one `LOT1_MED_<x>` and `LOT1_CLASS_<x>` column per member, so the statements
+themselves change shape with the list. A drug missing from it is a drug the
+emitted build cannot flag, and the answer it gives is to a different question
+from the one the warehouse was asked. `extract_patients.R` writes it out as a
+sixth file beside the five for exactly that reason. Port the universe with the
+tables, not after them.
+
 ## What is Optum's and has to be rebuilt
 
 Everything that makes those five tables:
@@ -87,11 +113,15 @@ Everything that makes those five tables:
 
 ## What is not Optum's and moves unchanged
 
-`04_lot1_base.R`, `05_sct.R`, `05b_lot1_sct.R`, `06_lot1_end.R`,
-`10_lot2_5_base.R`, `line_criteria.R`, `melp_rule.R`, `foldin_rule.R`,
-`cart_rule.R`, `prior_regimen.R` — the induction windows, the run-out chain, the
-end ladder, the next-line triggers, §4.3 through §4.8, the criteria layer. These
-read the five tables and the settings, and nothing else.
+`04_lot1_base.R`, `05b_lot1_sct.R`, `06_lot1_end.R`, `10_lot2_5_base.R`,
+`line_criteria.R`, `melp_rule.R`, `foldin_rule.R`, `cart_rule.R`,
+`prior_regimen.R` — the induction windows, the run-out chain, the end ladder,
+the next-line triggers, §4.3 through §4.8, the criteria layer. These read the
+five tables, the drug universe and the settings, and nothing else.
+
+`05_sct.R` is the exception and is not in that list: it reads the source
+directly, as the table above says. Its clustering rules move; its extraction
+does not.
 
 The SQL is Spark SQL, and the repository's synthetic harnesses already
 transpile it to DuckDB through SQLGlot to run the whole chain offline - so the

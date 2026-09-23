@@ -134,3 +134,13 @@ jobs:
           python3 run_aug15_screen.py
           python3 run_boundary_sweep.py
           python3 run_synthetic.py
+
+      # The packer refuses to write a handover that names the machine, the
+      # account or the working history that made it. Its selftest is what
+      # says the refusal can happen: a scan that has never caught anything
+      # says nothing about the tree it passed. The pack itself is not run
+      # here - it needs a name for somebody's deliverable, and CI has no
+      # business inventing one.
+      - name: Delivery packer selftest
+        working-directory: validation/package
+        run: python3 pack_delivery.py --selftest

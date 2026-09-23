@@ -28,7 +28,16 @@ defect when it breaks a stated rule, not when it differs from its neighbours.
             melphalan course carried it (4.7, the one documented lift)
   I2  4.8   the fold decides nothing past a transplant that opened a line:
             with the fold on and with it off, the lines from that line on are
-            the same. This is the assertion F42-F47 are built on.
+            the same.
+
+            What this does and does not prove. It is exact on a line that
+            carries no regimen - an ALLO under single_day - because there the
+            two arms have nothing they may legitimately differ by. On a line
+            that takes consolidation it is asserted over these planted shapes
+            rather than in general: the fold changes the PREVIOUS line's
+            regimen, which is the next line's fold set, so a difference after
+            a transplant is not impossible in principle. Where these shapes
+            are concerned it holds, and a regression in them is real.
   I3        every non-steroid episode starts inside some line, and every drug
             a line names has an episode inside it
   I4        lines are numbered 1..N with no gap, and none starts on or before
@@ -129,6 +138,32 @@ for off in OFFSETS:
     add(P('S4_course_%+d' % off,
           [('LEN', 'IMID', 0, 400), MELP + (100, 127),
            ('DARA', 'MAB', 127 + off, 127 + off + 60)]))
+
+# --- S6: the consolidation window's far edge, which is where the refused
+#         dose lives ------------------------------------------------------
+#
+# S1 puts its doses ON the transplant and 60 days after it, and on an AUTO or
+# a CAR-T that is INSIDE the consolidation window - so those doses are the
+# line's own and the transplant override never refuses them. Disabling
+# foldin_tx_refused left this file green, because nothing in it reached that
+# clause: F42-F47 in the fold-in harness were carrying that bound alone.
+#
+# The window's far edge is where it starts to matter. A dose one day past the
+# window is not consolidation: the override refuses it, it opens the next
+# line, and the dose after it measures its interval from a day the transplant
+# no longer sits inside. Without the refused-dose clause that second dose
+# folds back into the line the first one ended.
+WINDOW = {'AUTO': 30, 'CART': 45, 'ALLO': 30}   # the engine's own, per start type
+
+for kind, _ in TXTYPE:
+    for off in OFFSETS:
+        at = WINDOW[kind] + off
+        for med, tag in (('BORT', 'ref'), ('BORTB', 'sub')):
+            add(P('S6_%s_%s_%+d' % (kind, tag, off),
+                  L1 + OPEN2 + [('BORT', 'PI', 300, 330),
+                                (med, 'PI', TX + at, TX + at + 30),
+                                (med, 'PI', TX + at + 60, TX + at + 90)],
+                  **tx_of(kind, TX)))
 
 # --- S5: the run-out chain's interrupt scan ---------------------------------
 #
@@ -237,7 +272,7 @@ def main():
     # a finding, because that is the fold deciding something it may not.
     disagree, no_tx = [], 0
     for pid in sorted(fold):
-        if not pid.startswith(('S1_', 'S2_', 'S3_')):
+        if not pid.startswith(('S1_', 'S2_', 'S3_', 'S6_')):
             continue
         f, rf = fold.get(pid, []), ref.get(pid, [])
         fi = next((i for i, r in enumerate(f) if r[3] != 'MED'), None)
@@ -254,10 +289,10 @@ def main():
     ok(not disagree,
        "every planted transplant reads the same with the fold and without it (%s)"
        % (disagree[:2] or "none"))
-    ok(no_tx < sum(1 for p in fold if p.startswith(('S1_', 'S2_', 'S3_'))),
+    ok(no_tx < sum(1 for p in fold if p.startswith(('S1_', 'S2_', 'S3_', 'S6_'))),
        "...and the comparison had something to compare (%d of %d histories have "
        "no transplant-opened line, which 6.5 allows)"
-       % (no_tx, sum(1 for p in fold if p.startswith(('S1_', 'S2_', 'S3_')))))
+       % (no_tx, sum(1 for p in fold if p.startswith(('S1_', 'S2_', 'S3_', 'S6_')))))
 
     print("\n-- I3: every episode is in a line, every named drug has one --")
     ok(not orphan, "no episode starts outside every line (%s)" % (orphan[:2] or "none"))
@@ -289,7 +324,7 @@ def main():
        % (bad[:2] or "none"))
     xd = []
     for pid in sorted(xf):
-        if not pid.startswith(('S1_', 'S2_', 'S3_')):
+        if not pid.startswith(('S1_', 'S2_', 'S3_', 'S6_')):
             continue
         f, rf = xf.get(pid, []), xr.get(pid, [])
         fi = next((i for i, r in enumerate(f) if r[3] != 'MED'), None)
