@@ -2253,20 +2253,20 @@ local({
   # The runner as shipped.
   spkg <- new.env(parent = globalenv())
   run  <- load_runner(spkg)
-  cfg  <- quietly(run$open_study_package(pdir, "osk02156", "hive_metastore",
+  cfg  <- quietly(run$open_study_package(pdir, "usr00000", "hive_metastore",
                                          envir = spkg))
   ok(identical(spkg$study_config(), cfg),
      "opening the study package registers the config it builds")
-  ok(identical(cfg$work_schema, "osk02156") && identical(cfg$catalog, "hive_metastore"),
+  ok(identical(cfg$work_schema, "usr00000") && identical(cfg$catalog, "hive_metastore"),
      "...with the run's schema and catalog on it")
   sent <- answer(spkg)
-  rd <- run$warehouse_reader(fake_con, "hive_metastore", "osk02156", "s223926_")
+  rd <- run$warehouse_reader(fake_con, "hive_metastore", "usr00000", "s223926_")
   got <- rd("S_RUN_METADATA")
   errs <- as.list(attr(rd, "read_errors"))
   ok(is.data.frame(got) && identical(got$STATE, "complete") && !length(errs),
      "a warehouse read reaches the connection and comes back as a table")
   ok(length(sent()) == 1L && has(sent(), "`s223926_S_RUN_METADATA`") &&
-       has(sent(), "`hive_metastore`.`osk02156`."),
+       has(sent(), "`hive_metastore`.`usr00000`."),
      "...having asked once, for the table under the run's own prefix and schema")
 
   # The defect, reproduced, so this block can tell the two apart: the same
@@ -2276,7 +2276,7 @@ local({
     source(file.path(pdir, "R", f), local = bare))
   sent2 <- answer(bare)
   rd2 <- load_runner(bare)$warehouse_reader(fake_con, "hive_metastore",
-                                            "osk02156", "s223926_")
+                                            "usr00000", "s223926_")
   got2 <- rd2("S_RUN_METADATA")
   ok(is.null(got2) &&
        has(unlist(as.list(attr(rd2, "read_errors"))), "No config") &&
