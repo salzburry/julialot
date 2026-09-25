@@ -249,7 +249,9 @@ withheld.
   - `Overall` against its regimen classes, and against its subgroups. That
   last kind is read **across tables** as well as within one: T5c has no
   `Overall` of its own, and its age columns for a line split T4's `Overall` for
-  that line, row for row. Every statistic takes part in a split, not only the
+  that line, row for row. Rows are matched on what they read, not on how a
+  shell spells it: `s_tte` or `S_TTE`, `TTNT` or `TTNT_MONTHS`, spaces or none.
+  Every statistic takes part in a split, not only the
   counts, because every printed cell carries its population in `DENOM` and
   populations add up. The closing repeats until no sum is short, then runs
   once more over all the tables together.

@@ -110,6 +110,37 @@ ok(!length(hits),
    if (length(hits)) paste0("a file points at the comparison suites: ", hits[1])
    else "no file points at the suites in this directory")
 
+# ...and at nothing else that lives here either. The list above is by hand, and
+# emit_chain.R, the packer and the synthetic harnesses were never on it, so the
+# folder named them and nothing said so. Read off the disk instead: every file
+# under this directory whose name the folder does not carry itself, word for
+# word, in any file the folder ships - code, docs, SQL, Python and scripts alike.
+# And "the repository", which is where these live and the folder does not.
+own_names <- basename(list.files(ROOT, recursive = TRUE, all.files = TRUE))
+repo_only <- setdiff(basename(list.files(dirname(HERE), recursive = TRUE)), own_names)
+repo_only <- repo_only[!grepl("[.]pyc$", repo_only)]
+ok(length(repo_only) > 10L,
+   paste0("the tooling beside the folder is read off the disk (", length(repo_only),
+          " file names)"))
+shipped <- list.files(ROOT, pattern = "[.](R|md|csv|txt|py|sql|sh)$", recursive = TRUE,
+                      full.names = TRUE)
+names(shipped) <- sub(paste0("^", ROOT, "/"), "", shipped)
+word <- function(s) paste0("(?<![A-Za-z0-9_])", esc(s), "(?![A-Za-z0-9_])")
+tool_pat <- paste0("(", paste(vapply(repo_only, word, ""), collapse = "|"),
+                   ")|(?i:\\bthis repo\\b|\\bthe repository\\b|\\brepository's\\b)")
+hits <- unlist(lapply(names(shipped), function(nm) {
+  ls <- readLines(shipped[[nm]], warn = FALSE)
+  i <- grep(tool_pat, ls, perl = TRUE)
+  if (length(i)) paste0(nm, ":", i[1], "  ",
+                        regmatches(ls[i[1]], regexpr(tool_pat, ls[i[1]], perl = TRUE)))
+  else NULL
+}))
+ok(!length(hits),
+   if (length(hits)) paste0("a file names tooling that does not ship with it: ",
+                            hits[1], if (length(hits) > 1)
+                              paste0(" (+", length(hits) - 1, " more)") else "")
+   else "no file names the tooling beside the folder, or the repository it lives in")
+
 # A path leaving the folder reaches something that is not being delivered,
 # whatever it is called. Intra-folder hops are how the packages read each
 # other's config, so the test is where the path lands, not that it uses "..".

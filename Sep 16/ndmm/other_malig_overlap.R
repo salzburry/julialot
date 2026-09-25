@@ -12,7 +12,7 @@
 #      criterion would exclude cohort members without it. If it does not, that
 #      join matches nothing and the label list is the whole mechanism.
 #   2. Which plasma-cell labels are on the list, with their codes - including
-#      what sits under MONOCLONAL GAMMOPATHY, which the repo never names.
+#      what sits under MONOCLONAL GAMMOPATHY, which this package never names.
 #   3. Which of the configured labels match, and which plasma-cell-looking
 #      labels are left excluding.
 #

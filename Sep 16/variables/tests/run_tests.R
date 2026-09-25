@@ -1533,8 +1533,8 @@ cat("\nthe rules that hold the numbers up\n")
     # Re-pinned from 6587c169 WITHOUT moving the date, and this is the one
     # case that is right. The change was the run log - db_utils_lot.R and
     # build.R, which tee the console into the file and log a failing run's
-    # reason - and emit_chain.R's full statement chain, 2L and 3L included, is
-    # byte-identical before and after it. No rule moved, so no line did, and a
+    # reason - and the full statement chain the engine emits, 2L and 3L
+    # included, is byte-identical before and after it. No rule moved, so no line did, and a
     # run built between the two is the same run: moving the date would refuse
     # it for a change that alters nothing it built. Where the emitted SQL
     # differs, the date moves too - that is what the date is for.
@@ -1542,9 +1542,12 @@ cat("\nthe rules that hold the numbers up\n")
     # And again from 2c095e6a, for the same reason: build.R started the log
     # before loading the file that defines it, so the launcher stopped on
     # "could not find function" before its first step. It now loads, then
-    # logs, then builds. The chain is byte-identical again (full_chain.sql
-    # 616,053 bytes, sub_2l.sql and sub_3l.sql likewise).
-    engine = "2b5f41f9136b8b8e77f201896c8ee113",
+    # logs, then builds. The emitted chain, 2L and 3L included, is
+    # byte-identical again.
+    #
+    # And from 2b5f41f9: one log message stopped naming a check that is not
+    # part of this delivery. The emitted chain is byte-identical again.
+    engine = "a2b8a8bf433f5712b071a6757324e39e",
     # ...and its shipped settings, which code_fingerprint() does not read.
     # Most of what decides a line is pinned in the engine's own CONTRACT and
     # so is inside the R, but the study window is not, and a build reading a
@@ -1853,9 +1856,8 @@ cat("\nthe rules that hold the numbers up\n")
     # the delivery to skipping it - nothing said so but the skip note.
     #
     # The search stays INSIDE the delivery: this package's own folder, then the
-    # study root one above it. Reaching further would leave the folder, which
-    # the repository's own hygiene check refuses - rightly, and it refused an
-    # earlier version of these very lines.
+    # study root one above it. Reaching further would leave the delivery,
+    # which nothing in it may do.
     up_to_root <- c(".", "..")
     top <- NA_character_
     for (up in up_to_root) {

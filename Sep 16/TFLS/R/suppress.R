@@ -302,7 +302,10 @@ relations_down_column <- function(cells, ok) {
 #
 # In one table a row is matched by where it sits. Between tables it is matched by
 # what it reads - statistic, source, measure and filter - because T5c's rwTTNT
-# median is T4's rwTTNT median over part of the same patients.
+# median is T4's rwTTNT median over part of the same patients. What it reads,
+# not how the shell spells it (fill.R, row_keys()): matched on the text, a T5c
+# writing s_tte or TTNT_MONTHS matched no row of T4, and its split went
+# unclosed.
 #
 # One level is not a split, so two are asked for.
 relations_partition <- function(cells, ok, shell) {
