@@ -2489,5 +2489,57 @@ local({
      "a log line teed into the file is written there once, not twice")
 })
 
+cat("\n-- the launcher, started as a scheduler starts it --\n")
+# The launcher itself, in a process of its own, as a scheduler starts it. The
+# logger's tests above source its file directly, so they passed while every
+# launcher called start_run_log() a line before the loader that defines it,
+# and stopped on "could not find function" before the first step. Run with no
+# schema anywhere, a launcher that loads, logs and builds in that order stops
+# at the build's own first check, and says so in its log.
+#
+# Its first line loads DBI, odbc and glue. Where one is not installed a package
+# of that name that loads and does nothing stands in: what is checked is the
+# order the launcher does things in, which is over long before a driver is
+# asked for anything.
+local({
+  stand_ins <- function(pkgs) {
+    need <- pkgs[!vapply(pkgs, requireNamespace, logical(1), quietly = TRUE)]
+    if (!length(need)) return("")
+    lib <- tempfile("standin_lib_"); dir.create(lib)
+    for (p in need) {
+      src <- file.path(tempfile("standin_src_"), p)
+      dir.create(src, recursive = TRUE)
+      writeLines(c(paste("Package:", p), "Version: 0.0.0", "Title: Stand-in",
+                   "Description: Stands in for a launcher check.", "License: MIT"),
+                 file.path(src, "DESCRIPTION"))
+      writeLines("", file.path(src, "NAMESPACE"))
+      system2(file.path(R.home("bin"), "R"),
+              c("CMD", "INSTALL", "-l", shQuote(lib), shQuote(src)),
+              stdout = FALSE, stderr = FALSE)
+    }
+    lib
+  }
+  lib <- stand_ins(c("DBI", "odbc", "glue"))
+  for (launcher in c("build.R", "build_subsequent_cohorts.R")) {
+    lf <- tempfile("launcher_", fileext = ".log")
+    env <- c(paste0("PIPELINE_LOG_FILE=", lf), "OUTPUT_DIR=", "WORK_SCHEMA=",
+             "PROJECT_WORK_SCHEMA=", "DOMINO_USER_NAME=",
+             "DOMINO_STARTING_USERNAME=", "DATABRICKS_PWD=",
+             if (nzchar(lib)) paste0("R_LIBS=", lib))
+    out <- suppressWarnings(system2(file.path(R.home("bin"), "Rscript"),
+                                    shQuote(file.path(ROOT, launcher)),
+                                    env = env, stdout = TRUE, stderr = TRUE))
+    got <- if (file.exists(lf)) readLines(lf, warn = FALSE) else character(0)
+    unlink(lf)
+    ok(!any(grepl("could not find function", out, fixed = TRUE)) &&
+         any(grepl("No output schema", out, fixed = TRUE)),
+       paste0(launcher, " in a fresh process loads, then runs the build, which stops at its own first check"))
+    ok(!is.null(attr(out, "status")) && attr(out, "status") != 0L &&
+         any(grepl("ERROR: No output schema", got, fixed = TRUE)),
+       paste0("...and ", launcher, " says so to the shell and in its run log"))
+  }
+  if (nzchar(lib)) unlink(lib, recursive = TRUE)
+})
+
 
 report()

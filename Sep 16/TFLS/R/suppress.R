@@ -21,6 +21,10 @@
 #     the probabilities too, whose N is the curve's events. A median over 30
 #     patients of whom 3 had the event publishes the 3 in its N column, and a
 #     12-month estimate of 90% publishes them again;
+#   * and a curve goes whole: one of its cells withheld, for any reason,
+#     withholds the rest of that column's curve, because its events and its
+#     censored add up to its population and either one printed gives the other
+#     away (curve_units());
 #   * a row whose own filter narrows its column's population - TTE_ELIGIBLE=1 -
 #     leaves out patients that every unfiltered row of the same population
 #     still counts. The ones it leaves out are a number a reader can take, so
@@ -390,6 +394,39 @@ relations_against_denominator <- function(cells, ok) {
   out
 }
 
+# A survival curve, one column's: its events, its censored, its median and its
+# probabilities, withheld together or not at all.
+#
+# They are one population read several ways, and events and censored add up
+# to it. The sums across a split were closed a row at a time, and each row
+# gave up its own smallest term - the events row one class, the censored row,
+# whose N is the censored, another. Each class's patients are printed beside
+# whichever count survives, so a withheld events cell was its population less
+# the censored printed under it, and with that one known the events row gave
+# up the class the floor had withheld in the first place. A median or a
+# probability does not add up, but it is read off the same patients and says
+# how many of them had the event by when, so it goes with them.
+#
+# Keyed by table, column and curve - fill.R's CURVE_KEY, what the row reads
+# less the month a probability is read at. A frame without the key is grouped
+# by source and measure, which can only put more cells in one unit.
+curve_units <- function(cells) {
+  curve <- partition_terms(cells) & cells$STAT %in% TFLS_CURVE_STATS
+  if (!any(curve)) return(list())
+  what <- if ("CURVE_KEY" %in% names(cells)) chr(cells$CURVE_KEY)
+          else rep("", nrow(cells))
+  bare <- !nzchar(what)
+  what[bare] <- paste(chr(cells$SOURCE), chr(cells$MEASURE), sep = "|")[bare]
+  key <- paste(cells$TABLE_ID, cells$COLUMN_ID, what, sep = "\r")
+  u <- split(which(curve), key[curve])
+  unname(Filter(function(m) length(m) > 1L, u))
+}
+
+TFLS_CURVE_WHY <- paste0(
+  "withheld with the rest of the curve it is read from: a curve's events and ",
+  "censored add up to its population, so one printed beside the other gives ",
+  "the other away")
+
 # Every sum that holds among the cells of these tables.
 cell_relations <- function(cells, shell = NULL) {
   ok <- relation_terms(cells)
@@ -457,8 +494,18 @@ relation_covers <- function(cells, was, r, floor_n) {
 # changes nothing. It terminates because a sweep that changes anything
 # withholds at least one more cell of a finite frame and nothing is ever
 # published back.
-close_relations <- function(cells, relations, floor_n) {
-  if (!length(relations)) return(cells)
+#
+# `units` are the curves (curve_units()). A curve with any cell withheld loses
+# the rest of them at the end of the sweep. And a relation that has to give up
+# a term takes one whose curve is already going where it has one - the rest of
+# that curve is withheld anyway, so it costs nothing - which is what makes the
+# events row and the censored row give up the SAME class rather than one each.
+close_relations <- function(cells, relations, floor_n, units = list()) {
+  if (!length(relations) && !length(units)) return(cells)
+  unit_of <- rep(NA_integer_, nrow(cells))
+  for (k in seq_along(units)) unit_of[units[[k]]] <- k
+  going <- function(i) !is.na(unit_of[i]) &&
+    any(cells$SUPPRESSED[units[[unit_of[i]]]] == 1L)
   guard <- nrow(cells) + 1L
   repeat {
     was <- cells$SUPPRESSED
@@ -477,6 +524,8 @@ close_relations <- function(cells, relations, floor_n) {
       terms <- setdiff(open, r$total)
       if (length(terms)) open <- terms
       if (!length(open)) next
+      free <- vapply(open, going, logical(1))
+      if (any(free)) open <- open[free]
       n <- n0[open]
       n[is.na(n)] <- Inf
       pick <- open[which.min(n)]
@@ -484,6 +533,12 @@ close_relations <- function(cells, relations, floor_n) {
       # relation has its second unknown and there is nothing left to give away.
       if (cells$SUPPRESSED[pick] == 1L) next
       cells <- withhold_cell(cells, pick, floor_n, why)
+      fired <- TRUE
+    }
+    for (u in units) {
+      w <- cells$SUPPRESSED[u] == 1L
+      if (!any(w) || all(w)) next
+      for (i in u[!w]) cells <- withhold_cell(cells, i, floor_n, TFLS_CURVE_WHY)
       fired <- TRUE
     }
     guard <- guard - 1L
@@ -536,7 +591,8 @@ suppress_cells <- function(cells, floor_n, shell = NULL) {
         "fewer than ", floor_n, " of this column's patients are left out by ",
         "this row's own filter, and a row without it still counts them"))
   }
-  close_relations(cells, cell_relations(cells, shell), floor_n)
+  close_relations(cells, cell_relations(cells, shell), floor_n,
+                  curve_units(cells))
 }
 
 # The sums that run between tables.
@@ -553,7 +609,8 @@ suppress_across_tables <- function(filled, shell, floor_n) {
   if (sum(sizes) == 0L) return(filled)
   all <- do.call(rbind, frames[sizes > 0L])
   rownames(all) <- NULL
-  all <- close_relations(all, cell_relations(all, shell), floor_n)
+  all <- close_relations(all, cell_relations(all, shell), floor_n,
+                         curve_units(all))
   at <- 0L
   for (k in seq_along(filled)) {
     if (sizes[k] == 0L) next

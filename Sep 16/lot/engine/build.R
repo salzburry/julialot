@@ -37,11 +37,17 @@ study_end    <- if (length(argv) >= 4) argv[4] else NULL
 
 library(DBI); library(odbc); library(glue)
 source(file.path(here, "R", "build_lot.R"))
-# From here on the run goes into its log as well as onto the console - the QC
+# The modules first. They define the logger - start_run_log() and run_logged()
+# live in R/db_utils_lot.R, which the loader sources - and they read config.csv, which
+# can say where the log goes. Started before them, the log was a call to a
+# function not yet defined, and every run stopped on it.
+#
+# From then on the run goes into its log as well as onto the console - the QC
 # tables it prints, its warnings, and the reason it stopped, if it does. The
 # error line R prints itself goes to stderr, which the tee does not carry, so
 # run_logged() writes the reason into the file as the error is raised.
-if (!interactive()) start_run_log()
-run_logged(load_lot_modules(here))
-if (!interactive())
+load_lot_modules(here)
+if (!interactive()) {
+  start_run_log()
   run_logged(build_lot(here, cohort_table, prefix, study_start, study_end))
+}

@@ -1538,7 +1538,13 @@ cat("\nthe rules that hold the numbers up\n")
     # run built between the two is the same run: moving the date would refuse
     # it for a change that alters nothing it built. Where the emitted SQL
     # differs, the date moves too - that is what the date is for.
-    engine = "2c095e6ae5b981edb00628ccfb7678b8",
+    #
+    # And again from 2c095e6a, for the same reason: build.R started the log
+    # before loading the file that defines it, so the launcher stopped on
+    # "could not find function" before its first step. It now loads, then
+    # logs, then builds. The chain is byte-identical again (full_chain.sql
+    # 616,053 bytes, sub_2l.sql and sub_3l.sql likewise).
+    engine = "2b5f41f9136b8b8e77f201896c8ee113",
     # ...and its shipped settings, which code_fingerprint() does not read.
     # Most of what decides a line is pinned in the engine's own CONTRACT and
     # so is inside the R, but the study window is not, and a build reading a

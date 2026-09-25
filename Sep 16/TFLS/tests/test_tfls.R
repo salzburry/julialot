@@ -2347,6 +2347,124 @@ local({
      "without the shell's columns there is no split to read, as before")
 })
 
+cat("\n-- a curve is withheld whole, so its rows cannot be read against each other --\n")
+# Each row of a split was closed on its own. The events row gave up its
+# smallest class and the censored row - whose N is the censored - a different
+# one, and every class's patients are printed beside whichever count survives:
+# events = patients - censored undid one, and the events row less the rest then
+# gave up the class the floor had withheld. These read the table the way a
+# reader of the exported CSV can, with nothing but its N and DENOM columns.
+local({
+  CLS5 <- data.frame(table_id = "T4",
+                     label = c("Overall", "A", "B", "C", "D", "E"), order = 1:6,
+                     column_id = c("1L_OVERALL", "1L_A", "1L_B", "1L_C", "1L_D", "1L_E"),
+                     group = "1L", cohort = "1L", line = "1",
+                     class = c("OVERALL", "ACD38_QUAD", "ACD38_TRIP", "OTHER_TRIP",
+                               "DOUBLET_MONO", "OTHER"),
+                     subgroup = "", period = "", note = "", stringsAsFactors = FALSE)
+  curve_cells <- function(pop, ev) {
+    pop <- c(sum(pop), pop); ev <- c(sum(ev), ev)
+    shaped_cells("T4", "rwTTNT from index date", CLS5$column_id,
+      list(list(label = "Events, n (%)", indent = 2, n = ev, stat = "km_events"),
+           list(label = "Censored, n (%)", indent = 2, n = pop - ev, stat = "km_censored"),
+           list(label = "Median", indent = 2, n = ev, stat = "km_median")), pop)
+  }
+  # What the export gives away: a class's count is its patients less its other
+  # count, wherever any cell of its curve prints the patients, and a row's
+  # classes add up to Overall. Applied until nothing more comes out.
+  recover <- function(s) {
+    cols <- CLS5$column_id[-1]
+    n_at <- function(lab) vapply(cols, function(c) {
+      i <- which(s$ROW_LABEL == lab & s$COLUMN_ID == c)
+      if (s$SUPPRESSED[i] == 1L) NA_real_ else s$N[i] }, numeric(1))
+    pop <- vapply(cols, function(c) {
+      d <- s$DENOM[s$COLUMN_ID == c & s$SUPPRESSED == 0L]
+      if (length(d)) d[1] else NA_real_ }, numeric(1))
+    e <- n_at("Events, n (%)"); z <- n_at("Censored, n (%)")
+    tot <- function(lab) s$N[s$ROW_LABEL == lab & s$COLUMN_ID == "1L_OVERALL"]
+    repeat {
+      before <- c(e, z)
+      k <- !is.na(pop) & is.na(e) & !is.na(z); e[k] <- pop[k] - z[k]
+      k <- !is.na(pop) & is.na(z) & !is.na(e); z[k] <- pop[k] - e[k]
+      if (sum(is.na(e)) == 1L) e[is.na(e)] <- tot("Events, n (%)") - sum(e, na.rm = TRUE)
+      if (sum(is.na(z)) == 1L) z[is.na(z)] <- tot("Censored, n (%)") - sum(z, na.rm = TRUE)
+      if (identical(before, c(e, z))) break
+    }
+    list(events = e, censored = z)
+  }
+  withheld_events <- function(s) vapply(CLS5$column_id[-1], function(c)
+    s$SUPPRESSED[s$ROW_LABEL == "Events, n (%)" & s$COLUMN_ID == c] == 1L, logical(1))
+  whole <- function(s) all(vapply(CLS5$column_id, function(c)
+    length(unique(s$SUPPRESSED[s$COLUMN_ID == c])) == 1L, logical(1)))
+
+  # The reviewer's table: 320 patients in five classes, 10 events in the first.
+  s <- suppress_cells(curve_cells(c(50, 80, 70, 60, 60), c(10, 50, 40, 25, 35)),
+                      25, list(columns = CLS5))
+  r <- recover(s)
+  ok(withheld_events(s)[["1L_A"]] && is.na(r$events[["1L_A"]]) &&
+       is.na(r$censored[["1L_A"]]),
+     "the class with 10 events stays withheld against everything the export prints")
+  ok(whole(s), "...each class's curve is withheld whole or printed whole")
+  ok(all(is.na(r$events[withheld_events(s)])),
+     "...and no class withheld to protect it comes back by subtraction either")
+
+  # The same over many splits, drawn the way the leak needs them: one class the
+  # floor withholds, the others printable on both counts, so every other
+  # withheld class is one the sums chose.
+  set.seed(223926)
+  leaked <- 0L; split <- 0L; tried <- 0L
+  for (it in 1:400) {
+    pop <- sample(50:140, 5, replace = TRUE)
+    ev <- vapply(pop, function(p) sample(25:(p - 25), 1), numeric(1))
+    small <- sample(5, 1)
+    ev[small] <- sample(0:24, 1)
+    s <- suppress_cells(curve_cells(pop, ev), 25, list(columns = CLS5))
+    if (!any(withheld_events(s))) next
+    tried <- tried + 1L
+    r <- recover(s)
+    if (any(!is.na(r$events[withheld_events(s)]))) leaked <- leaked + 1L
+    if (!whole(s)) split <- split + 1L
+  }
+  ok(tried > 100L && leaked == 0L,
+     paste0("over ", tried, " random five-class splits with a withheld curve, ",
+            "none gives a withheld count back (", leaked, " did)"))
+  ok(split == 0L, "...and in none is a curve printed in part")
+
+  # The shipped T4, filled end to end: the key the curves are grouped by is
+  # the one fill.R writes, and the probabilities go with the counts.
+  SHIP <- load_shells(file.path(ROOT, "shells"))
+  cats <- c("Quadruplet with anti-CD38 backbone", "Triplet with anti-CD38 backbone",
+            "Other triplet (non-anti-CD38)", "Doublet/monotherapy", "Other")
+  size <- c(50, 80, 70, 60, 60); evn <- c(10, 50, 40, 25, 35)
+  pts <- do.call(rbind, lapply(1:5, function(k) data.frame(
+    PATID = sprintf("C%d_%03d", k, seq_len(size[k])), SOC_CATEGORY = cats[k],
+    T = seq_len(size[k]) / 3, E = rep(1:0, c(evn[k], size[k] - evn[k])),
+    stringsAsFactors = FALSE)))
+  tte <- data.frame(PATID = pts$PATID, COHORT = "1L", LOT_NUM = 1L, TTE_ELIGIBLE = 1L,
+                    TTNT_MONTHS = pts$T, TTNT_EVENT = pts$E, TTD_MONTHS = pts$T,
+                    TTD_EVENT = pts$E, OS_MONTHS = pts$T, OS_EVENT = pts$E,
+                    stringsAsFactors = FALSE)
+  soc <- data.frame(PATID = pts$PATID, COHORT = "1L", LOT_NUM = 1L,
+                    SOC_CATEGORY = pts$SOC_CATEGORY, REGIMEN = "X",
+                    stringsAsFactors = FALSE)
+  rd <- function(name) list(S_TTE = tte, S_SOC = soc)[[toupper(name)]]
+  t4 <- fill_all(SHIP, fill_context(rd, SHIP$classes), 25)[["T4"]]$cells
+  c1 <- t4[grepl("^1L_", t4$COLUMN_ID) & t4$FILLED == 1L & t4$SECTION == 0L, ]
+  per_curve <- tapply(c1$SUPPRESSED, paste(c1$COLUMN_ID, c1$CURVE_KEY), function(x)
+    length(unique(x)))
+  ok(nrow(c1) > 0 && all(nzchar(c1$CURVE_KEY)) && all(per_curve == 1L),
+     "in the shipped T4 every 1L curve - counts, median and probabilities - is withheld whole or printed whole")
+  csv <- render_csv(list(cells = t4))
+  ok(!"CURVE_KEY" %in% names(csv), "...and the key it is grouped by is not exported")
+  quad_ev <- csv$N[csv$COLUMN_ID == "1L_ACD38_QUAD" & csv$ROW_LABEL == "Events, n (%)"][1]
+  pub <- csv[csv$SUPPRESSED == 0L & csv$ROW_LABEL %in% c("Events, n (%)", "Censored, n (%)") &
+               grepl("^1L_", csv$COLUMN_ID) & csv$ROW_ORDER %in% 3:4, ]
+  cls_cols <- setdiff(unique(pub$COLUMN_ID), "1L_OVERALL")
+  ok(is.na(quad_ev) && all(vapply(cls_cols, function(c) sum(pub$COLUMN_ID == c) == 2L,
+                                  logical(1))),
+     "...where every class printed in rwTTNT prints both its counts, so neither is a lone unknown")
+})
+
 cat("\n-- a population split in another table --\n")
 local({
   SHIP <- load_shells(file.path(ROOT, "shells"))
