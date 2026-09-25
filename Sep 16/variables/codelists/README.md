@@ -2,7 +2,7 @@
 
 The shapes every module reads, shipped so this folder is complete on its own.
 **The codes are blank.** They come from the protocol's Annex 2 and Annex 3,
-which were not delivered — `../../CODELISTS.md` says which annex owes each file.
+which were not delivered — `../CODELISTS.md` says which annex owes each file.
 
 A blank code column is not a gap the run papers over. `load_codelist()` refuses
 a file with an unfilled row and names the concepts, because a rate of zero for
@@ -30,7 +30,7 @@ CODELIST_DIR=/mnt/code/codelist Rscript build.R
 | `secondary_malig.csv` | **Table 2's ten categories** and its example subtypes | — | Annex 3 |
 | `soc_regimen_categories.csv` | **§7.2.2's categories**, both line scopes | — | Annex 2 |
 | `charlson_quan2011.csv` | **Quan's seventeen conditions, weights and hierarchy** | — | Quan et al. 2011 — no annex supplies it |
-| `hcru.csv` | the three ED constructions the CDM allows | — | undecided — `../../OPEN_QUESTIONS.md` Q11 |
+| `hcru.csv` | the three ED constructions the CDM allows | — | undecided — `../OPEN_QUESTIONS.md` Q11 |
 | `comorbid_subgroups.csv` | neuropathy, lung parenchymal disease | — | Annex 3 |
 | `frailty_kim2018.csv` | — | — | Annex 7, if frailty is kept at all |
 | `mm_dx.csv`, `cl_mma_codelist.csv`, `cl_mma_rollup.csv`, `cl_sct_codelist.csv` | — | — | **already on production** — these are headers so a run pointed here fails loudly rather than reading an empty definition of myeloma |

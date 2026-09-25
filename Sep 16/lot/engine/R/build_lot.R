@@ -574,8 +574,8 @@ check_lot_contract <- function(cfg) {
     log_msg("WARNING: LOT_CONTRACT_OVERRIDE is set. This is NOT the contract ",
             "build:\n  ", paste(wrong, collapse = "\n  "))
     log_msg("  Its tables are an alternative algorithm's. They are recorded as ",
-            "such in LOT_BUILD_STATUS, and the questions, the dashboard and ",
-            "the benchmark harness all refuse a run carrying deviations.")
+            "such in LOT_BUILD_STATUS, and the questions and the dashboard ",
+            "both refuse a run carrying deviations.")
   }
   # A blank prefix, cohort table or study window has already stopped the run in
   # pin_cohort() / pin_study_window(), which run first.

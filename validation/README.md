@@ -29,7 +29,7 @@ to the baseline, and the equivalence check still runs on every change.
 | `port/ndmm.R` | every ported NDMM file against its range in the baseline |
 | `port/lot.R` | the LOT1 phases and `10_lot2_5_base.R` against the baseline |
 | `hygiene/lot_selfcontained.R` | the LOT engine resolves no path outside itself |
-| `hygiene/study_folder_standalone.R` | the study folder names no other delivery |
+| `hygiene/study_folder_standalone.R` | the study folder names no other delivery, and none of the tooling beside it |
 | `hygiene/child_process_env.R` | no child process is given its settings through `system2(env = ...)`, which Windows passes to `Rscript` as its script name |
 
 ## Paths

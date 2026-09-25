@@ -321,7 +321,7 @@ they are separate cancers, none should be overridden and the four come out.
 **Unverified, and it changes the argument.** The comment in `04_other_malig.R`
 and the README both say `other_malig.csv` carries myeloma's own codes, so that
 without an override the criterion would exclude the whole cohort. Nothing
-checks it - the file is not in this repo, and the `mm_dx.csv` join that would
+checks it - the file is not in this folder, and the `mm_dx.csv` join that would
 handle it is silent when it matches nothing. If those codes ARE on the list the
 override is partly forced; if they are NOT, the label list is the whole
 mechanism and all of it is judgement. `NDMM_MM_ADJACENT_GROUPS` selects on

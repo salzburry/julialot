@@ -141,9 +141,10 @@ five tables, the drug universe and the settings, and nothing else.
 directly, as the table above says. Its clustering rules move; its extraction
 does not.
 
-The SQL is Spark SQL, and the repository's synthetic harnesses already
-transpile it to DuckDB through SQLGlot to run the whole chain offline - so the
-dialect is not the obstacle it looks like; a warehouse
+The SQL is Spark SQL, and the offline suites here already transpile it to
+DuckDB through SQLGlot and run it (`qc/tests/run_duckdb.py`,
+`melphalan/tests/run_duckdb.py`) - so the dialect is not the obstacle it looks
+like; a warehouse
 with window functions, `datediff`, `date_add`/`date_sub`, `least`/`greatest`,
 `array_contains`/`split` and lateral explode will take it with little change.
 
@@ -209,10 +210,8 @@ carry over.
 
 ## What porting does not carry with it
 
-The validation. The synthetic harnesses plant Optum-shaped patients and assert
-Optum-shaped answers, the code lists are hashed and pinned, and a line-for-line
-comparison holds this build against the Optum-era code it was derived from. All
-of that machinery lives beside this folder rather than in it, and all of it is
+The validation. The test suites plant Optum-shaped patients and assert
+Optum-shaped answers, and the code lists are hashed and pinned. All of it is
 evidence about THIS database. A port needs its own planted cases, its own
 face-validity bands, and its own reconciliation against published Japanese
 line-of-therapy distributions before any output is used.

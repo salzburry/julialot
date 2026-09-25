@@ -402,12 +402,12 @@ ok(all(c("COHORT_RUN_ID", "COHORT_STAMP", "CODE_MD5", "LOT_RUN_IDS", "READ_AT")
 ok(is.null(melp_stamp(NULL, list(), list())),
    "...and nothing to stamp is not an error")
 
-ok(identical(melp_out_dir("/tmp/x"), file.path("/tmp/x", "out")),
+ok(identical(melp_out_dir(file.path("runs", "x")), file.path("runs", "x", "out")),
    "both scripts write beside the script by default")
 local({
   old <- Sys.getenv("OUTPUT_DIR", unset = NA)
-  Sys.setenv(OUTPUT_DIR = "/tmp/elsewhere")
-  ok(identical(melp_out_dir("/tmp/x"), "/tmp/elsewhere"),
+  Sys.setenv(OUTPUT_DIR = file.path("runs", "elsewhere"))
+  ok(identical(melp_out_dir(file.path("runs", "x")), file.path("runs", "elsewhere")),
      "...and OUTPUT_DIR moves the runner and the recovery read together")
   if (is.na(old)) Sys.unsetenv("OUTPUT_DIR") else Sys.setenv(OUTPUT_DIR = old)
 })
