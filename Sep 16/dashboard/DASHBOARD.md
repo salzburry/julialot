@@ -298,6 +298,10 @@ and a deployment meant to show real ones refuses to fall back to it.
 `scenarios.csv`, then exports what each run wrote as CSV. Each row is one
 scenario: `prefix` is what it writes under, and every upper-case column is a
 setting for that run and nothing else. **Adding a scenario is adding a row.**
+What every row *reads* - `INPUT_COHORT_TABLE`, and the `LOT_PREFIX` and
+`COHORT_PREFIX` the builds before it wrote under - is the Job's own, from its
+environment or `config.csv`, and the Job stops before the first build when
+any of them is unset rather than let each row read under its own prefix.
 
 A snapshot is one **build**, not a directory that happens to hold one. The job
 pins the run's newest metadata row before it reads a table — and only a

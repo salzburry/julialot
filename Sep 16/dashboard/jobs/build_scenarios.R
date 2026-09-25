@@ -343,6 +343,16 @@ export_one <- function(prefix, env) {
 }
 
 envs     <- lapply(seq_len(nrow(grid)), function(i) scenario_env(grid[i, ], set_cols))
+# Before any build: what every scenario reads (export_lib.R).
+gaps <- shared_inputs_missing(envs, grid$prefix, file.path(pkg_dir, "config.csv"))
+if (length(gaps))
+  stop("Nothing was built. Every scenario reads one cohort and one LOT run, ",
+       "and where they are is not set: ", paste(gaps, collapse = "; "),
+       ". Give this Job what step 3 was given - INPUT_COHORT_TABLE, LOT_PREFIX ",
+       "and COHORT_PREFIX, such as ndmm_NDMM_COHORT, ndmm_ and ndmm_ - or a ",
+       "scenarios.csv column of the same name. A prefix left blank would be ",
+       "read as each scenario's own, which is where it writes, not where the ",
+       "cohort and LOT builds wrote.", call. = FALSE)
 results  <- lapply(seq_len(nrow(grid)), function(i) run_one(grid[i, ], envs[[i]]))
 exports  <- lapply(seq_along(results), function(i) {
   r <- results[[i]]

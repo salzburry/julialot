@@ -110,7 +110,16 @@ resolve_work_schema <- function(catalog) {
   v
 }
 
-cfg_defaults <- function() {
+# The catalog and the schema are arguments for the readers of a run. TFLS and
+# the dashboard resolve both under names of their own - TFLS_CATALOG,
+# DASH_CATALOG - and a run built here without them took DATABRICKS_CATALOG's
+# default instead and checked the schema against that: WORK_SCHEMA
+# `analytics.usr00000` beside TFLS_CATALOG `analytics` passed the reader's own
+# resolution and was refused here, before the reader's value was ever applied.
+# Two resolvers, disagreeing. A reader passes what it resolved and this
+# resolves nothing further; a run passes nothing and reads the environment.
+cfg_defaults <- function(catalog = .env_chr("DATABRICKS_CATALOG", "hive_metastore"),
+                         work_schema = resolve_work_schema(catalog)) {
   list(
     # --- connection -------------------------------------------------------
     # odbc, the default: the Databricks ODBC driver through DBI, on the same
@@ -127,9 +136,9 @@ cfg_defaults <- function() {
     databricks_host       = .env_chr("DATABRICKS_HOST", ""),
     databricks_token      = Sys.getenv("DATABRICKS_TOKEN", unset = ""),
     databricks_cluster_id = .env_chr("SPARK_CLUSTER_ID", ""),
-    catalog      = .env_chr("DATABRICKS_CATALOG", "hive_metastore"),
+    catalog      = catalog,
     cdm_schema   = .env_chr("OPTUM_CDM_SCHEMA", "clnprw_optum"),
-    work_schema  = resolve_work_schema(.env_chr("DATABRICKS_CATALOG", "hive_metastore")),
+    work_schema  = work_schema,
     use_quarterly_tables = .env_lgl("USE_QUARTERLY_TABLES", TRUE),
     # CDM table names, overridable. The defaults are in CDM_TABLE_NAMES and
     # match the cohort build's; blank here means use those.

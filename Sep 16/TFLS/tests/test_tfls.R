@@ -2474,6 +2474,40 @@ local({
 
   ok(has(RUNNER, "cfg <- open_study_package(pkg, schema, catalog)"),
      "main() opens the package through that one function, not by hand")
+
+  # The two resolutions one after the other, as main() runs them. Each was
+  # checked on its own, and they disagreed: a catalog given to TFLS alone,
+  # with the schema written catalog.schema, passed warehouse_names() and then
+  # stopped in the package, which checked the schema against
+  # DATABRICKS_CATALOG's default instead.
+  in_env <- function(set, f) {
+    vars <- c("TFLS_CATALOG", "DATABRICKS_CATALOG", "WORK_SCHEMA",
+              "PROJECT_WORK_SCHEMA", "DOMINO_USER_NAME", "DOMINO_STARTING_USERNAME")
+    old <- Sys.getenv(vars, unset = NA)
+    on.exit(for (v in vars) if (is.na(old[[v]])) Sys.unsetenv(v) else
+      do.call(Sys.setenv, stats::setNames(list(old[[v]]), v)), add = TRUE)
+    Sys.unsetenv(vars)
+    do.call(Sys.setenv, as.list(set))
+    tryCatch(f(), error = function(e) conditionMessage(e))
+  }
+  split_cat <- c(TFLS_CATALOG = "analytics", WORK_SCHEMA = "analytics.usr00000")
+  both <- new.env(parent = globalenv())
+  cfg3 <- in_env(split_cat, function() {
+    brun <- load_runner(both)
+    wn <- brun$warehouse_names()
+    quietly(brun$open_study_package(pdir, wn$schema, wn$catalog, envir = both))
+  })
+  ok(is.list(cfg3) && identical(cfg3$catalog, "analytics") &&
+       identical(cfg3$work_schema, "usr00000") &&
+       identical(both$study_config(), cfg3),
+     paste0("a catalog given to TFLS alone, with the schema written ",
+            "catalog.schema, resolves once and opens the package with both"))
+  own <- new.env(parent = globalenv())
+  quietly(for (f in c("config_223926.R", "db_utils_223926.R"))
+    source(file.path(pdir, "R", f), local = own))
+  left <- in_env(split_cat, function() own$cfg_defaults())
+  ok(is.character(left) && has(left, "names catalog 'analytics'"),
+     "...where the package, left to resolve them itself, stops on that same environment")
   invisible(NULL)
 })
 

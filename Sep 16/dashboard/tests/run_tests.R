@@ -857,6 +857,25 @@ cat("\nwithholding a cell is not the same as hiding it\n")
     c4 <- with_names()
     ok(identical(c4$work_schema, ""),
        "with no schema from anywhere it stays unset, and the warehouse source refuses to build a name from it")
+    # The package is opened with what was resolved here. Left to resolve the
+    # schema itself, cfg_defaults() checked it against DATABRICKS_CATALOG
+    # alone, and an app given its catalog under its own name stopped there.
+    c10 <- with_names(DASH_CATALOG = "analytics", WORK_SCHEMA = "analytics.usr00000")
+    ok(identical(c10$catalog, "analytics") && identical(c10$work_schema, "usr00000"),
+       "a catalog given to the dashboard alone, with the schema written catalog.schema, is accepted")
+    opened <- tryCatch(cfg_defaults(catalog = c10$catalog, work_schema = c10$work_schema),
+                       error = function(e) conditionMessage(e))
+    ok(is.list(opened) && identical(opened$catalog, "analytics") &&
+         identical(opened$work_schema, "usr00000"),
+       "...and the study package opens with the same two")
+    left <- tryCatch(cfg_defaults(), error = function(e) conditionMessage(e))
+    ok(is.character(left) && grepl("names catalog 'analytics'", left, fixed = TRUE),
+       "...where left to resolve them itself it stops on that same environment")
+    gsrc <- paste(readLines("global.R", warn = FALSE), collapse = "\n")
+    ok(grepl("cfg_defaults(catalog = DASH_CFG$catalog,", gsrc, fixed = TRUE) &&
+         grepl("work_schema = DASH_CFG$work_schema)", gsrc, fixed = TRUE) &&
+         !grepl("set_study_config(cfg_defaults())", gsrc, fixed = TRUE),
+       "global.R opens the package with the dashboard's own catalog and schema")
   })
 
   # --- a run that did not finish is not a scenario ---
@@ -1242,6 +1261,36 @@ source(file.path(here, "jobs", "export_lib.R"))
      "a blank cell written as NA is not a setting of \"NA\"")
   ok(!"note" %in% names(e),
      "and a lower-case column is documentation, not a setting to export")
+
+  # --- what every scenario reads is set before any of them is built ---
+  # The shipped config.csv leaves the cohort table and both read prefixes
+  # blank, and a grid row names neither, so a Job given only the password and
+  # the schema built nothing: each child stopped in turn, or read its inputs
+  # under its own prefix.
+  two <- list(scenario_env(list(prefix = "sc_a_")),
+              scenario_env(list(prefix = "sc_b_", LOT_PREFIX = "ndmm_")))
+  unset_inputs <- c(INPUT_COHORT_TABLE = "", LOT_PREFIX = "", COHORT_PREFIX = "")
+  shipped_csv <- file.path(dirname(here), "variables", "config.csv")
+  g0 <- with_env(unset_inputs, shared_inputs_missing(two, c("sc_a_", "sc_b_"), shipped_csv))
+  ok(identical(g0, c("INPUT_COHORT_TABLE (every scenario)", "LOT_PREFIX (sc_a_)",
+                     "COHORT_PREFIX (every scenario)")),
+     "with the shipped config.csv and nothing from the Job, the three shared inputs are named, row by row")
+  g1 <- with_env(c(INPUT_COHORT_TABLE = "ndmm_NDMM_COHORT", LOT_PREFIX = "ndmm_",
+                   COHORT_PREFIX = "ndmm_"),
+                 shared_inputs_missing(two, c("sc_a_", "sc_b_"), shipped_csv))
+  ok(!length(g1), "...and given to the Job as step 3 was given them, every row has them")
+  own_csv <- tempfile(fileext = ".csv")
+  writeLines(c("name,value,description", "INPUT_COHORT_TABLE,ndmm_NDMM_COHORT,x",
+               "LOT_PREFIX,ndmm_,x", "COHORT_PREFIX,ndmm_,x"), own_csv)
+  g2 <- with_env(unset_inputs, shared_inputs_missing(two, c("sc_a_", "sc_b_"), own_csv))
+  unlink(own_csv)
+  ok(!length(g2), "...or from config.csv, where the Job's environment leaves them")
+  jb_now <- paste(readLines(file.path(here, "jobs", "build_scenarios.R"), warn = FALSE),
+                  collapse = "\n")
+  at_check <- regexpr("shared_inputs_missing(envs", jb_now, fixed = TRUE)
+  at_build <- regexpr("results  <- lapply(", jb_now, fixed = TRUE)
+  ok(at_check > 0 && at_build > 0 && at_check < at_build,
+     "the Job asks before the first scenario is built, not after each one fails")
 
   # --- the shipped grid, row by row, through the package's own config ---
   # A grid value the package would refuse is found here rather than on the

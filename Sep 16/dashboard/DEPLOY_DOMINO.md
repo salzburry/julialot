@@ -30,11 +30,22 @@ Run the cohort build and the LOT build first, then:
 
 ```bash
 export DATABRICKS_PWD=...              # a Domino secret, never a config file
-export INPUT_COHORT_TABLE=ndmm_NDMM_COHORT
 export PROJECT_WORK_SCHEMA=...
+export INPUT_COHORT_TABLE=ndmm_NDMM_COHORT     # what the study run reads -
+export LOT_PREFIX=ndmm_                        #   the same three step 3 of the
+export COHORT_PREFIX=ndmm_                     #   top-level README was given
+export CODELIST_DIR=/mnt/code/codelist
 export DASH_SNAPSHOT_DIR=/mnt/data/NDMM        # a Domino Dataset, mounted under /mnt/data
 Rscript dashboard/jobs/build_scenarios.R       # from wherever the folders sit
 ```
+
+Each row is a full study run, so the Job needs what that run reads as well as
+where it writes. A grid row supplies only `OBJECT_PREFIX` and the question it
+changes. Without the cohort table or either read prefix, the Job stops before
+the first build and names what is missing: a read prefix left blank would be
+each scenario's own, not where the cohort and LOT builds wrote. Without
+`CODELIST_DIR`, every module whose code list is still the shipped blank
+template is left out of every scenario.
 
 The Job connects exactly as the LOT build and the study run did - the study
 package's own `connect_db()`, on `DATABRICKS_DSN` and `DATABRICKS_PWD` - and
