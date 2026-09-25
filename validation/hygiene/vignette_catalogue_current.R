@@ -58,9 +58,14 @@ tmp <- file.path(tempdir(), paste0("vig", Sys.getpid()))
 dir.create(tmp, showWarnings = FALSE, recursive = TRUE)
 on.exit(unlink(tmp, recursive = TRUE), add = TRUE)
 
+# OUTPUT_DIR through this process's environment, which the renderer inherits,
+# and put back after. system2(env = ...) is a command-line prefix, and on
+# Windows Rscript took it for the script to run and never ran the renderer.
+old_out <- Sys.getenv("OUTPUT_DIR", unset = NA)
+Sys.setenv(OUTPUT_DIR = tmp)
 out <- suppressWarnings(system2("Rscript", shQuote(renderer),
-                                stdout = TRUE, stderr = TRUE,
-                                env = paste0("OUTPUT_DIR=", shQuote(tmp))))
+                                stdout = TRUE, stderr = TRUE))
+if (is.na(old_out)) Sys.unsetenv("OUTPUT_DIR") else Sys.setenv(OUTPUT_DIR = old_out)
 st <- attr(out, "status"); st <- if (is.null(st)) 0L else st
 ok(st == 0L, "the renderer runs")
 if (st != 0L) for (l in utils::tail(out, 6)) cat("           ", l, "\n")

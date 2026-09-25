@@ -264,6 +264,7 @@ EXPECTED_SUITES <- list(
 
 # The repo-side suites are the same whichever delivery is being gated.
 EXPECTED_HERE <- c(
+  "hygiene/child_process_env.R",
   "hygiene/codelist_code_types.R",
   "hygiene/emitted_sql_shape.R",
   "hygiene/gate_semantics.R",

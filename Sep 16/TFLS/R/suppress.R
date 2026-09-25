@@ -407,9 +407,10 @@ relations_against_denominator <- function(cells, ok) {
 # probability does not add up, but it is read off the same patients and says
 # how many of them had the event by when, so it goes with them.
 #
-# Keyed by table, column and curve - fill.R's CURVE_KEY, what the row reads
-# less the month a probability is read at. A frame without the key is grouped
-# by source and measure, which can only put more cells in one unit.
+# Keyed by table, column and curve - fill.R's CURVE_KEY, what the row reads as
+# the fill reads it (curve_key()), so two spellings of one curve are one unit.
+# A frame without the key is grouped by source and measure, which can only put
+# more cells in one unit.
 curve_units <- function(cells) {
   curve <- partition_terms(cells) & cells$STAT %in% TFLS_CURVE_STATS
   if (!any(curve)) return(list())

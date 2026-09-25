@@ -68,6 +68,23 @@ report_plan <- function(cells) {
   cat("\n", length(cells), " cells. EACH ONE IS A COMPLETE LOT BUILD.\n", sep = "")
 }
 
+# A child process's settings, set in THIS process for the length of the call
+# and put back after, so the child inherits them. system2(env = ...) writes
+# them in front of the command instead, which is a shell's syntax: on Windows
+# they reach Rscript as its first arguments, and it takes the first one for
+# the script to run. Each is "NAME=value", split at its first '='.
+with_child_env <- function(assignments, expr) {
+  at <- regexpr("=", assignments, fixed = TRUE)
+  vars <- stats::setNames(substring(assignments, at + 1L),
+                          substr(assignments, 1L, at - 1L))
+  old <- Sys.getenv(names(vars), unset = NA, names = TRUE)
+  on.exit(for (k in names(old))
+    if (is.na(old[[k]])) Sys.unsetenv(k) else
+      do.call(Sys.setenv, stats::setNames(list(old[[k]]), k)), add = TRUE)
+  do.call(Sys.setenv, as.list(vars))
+  force(expr)
+}
+
 run_cell <- function(c_i, cohort, cohort_pfx) {
   args <- c(file.path(LOT_ROOT, "build.R"), cohort, c_i$prefix)
   env  <- paste0("COHORT_PREFIX=", cohort_pfx)
@@ -87,7 +104,8 @@ run_cell <- function(c_i, cohort, cohort_pfx) {
   if (!is.na(c_i$mode)) env <- c(env, "LOT_CONTRACT_OVERRIDE=TRUE")
   log_f <- file.path(out_dir, paste0("build_simple_", c_i$id, ".log"))
   cat("  building ", c_i$id, " -> ", c_i$prefix, "  (log: ", log_f, ")\n", sep = "")
-  rc <- system2("Rscript", args, env = env, stdout = log_f, stderr = log_f)
+  rc <- with_child_env(env, system2("Rscript", shQuote(args),
+                                     stdout = log_f, stderr = log_f))
   if (!identical(as.integer(rc), 0L)) {
     cat("    FAILED (exit ", rc, ") - see the log.\n", sep = "")
     return(FALSE)

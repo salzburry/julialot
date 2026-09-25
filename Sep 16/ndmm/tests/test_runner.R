@@ -2414,6 +2414,23 @@ ok(isTRUE(we$check_preg_window_counts(good, NULL)),
 ok(!has(WSQL[1], "_ndmm_patids"),
    "the cohort count is read separately, not folded into the table's own SQL")
 
+# A child process's settings, set in THIS process for the length of the call
+# and put back after, so the child inherits them. system2(env = ...) writes
+# them in front of the command instead, which is a shell's syntax: on Windows
+# they reach Rscript as its first arguments, and it takes the first one for
+# the script to run. Each is "NAME=value", split at its first '='.
+with_child_env <- function(assignments, expr) {
+  at <- regexpr("=", assignments, fixed = TRUE)
+  vars <- stats::setNames(substring(assignments, at + 1L),
+                          substr(assignments, 1L, at - 1L))
+  old <- Sys.getenv(names(vars), unset = NA, names = TRUE)
+  on.exit(for (k in names(old))
+    if (is.na(old[[k]])) Sys.unsetenv(k) else
+      do.call(Sys.setenv, stats::setNames(list(old[[k]]), k)), add = TRUE)
+  do.call(Sys.setenv, as.list(vars))
+  force(expr)
+}
+
 cat("\n-- the run log: spaced once, every value as itself, and everything the run says --\n")
 local({
   util <- normalizePath(file.path(ROOT, "R", "db_utils.R"))
@@ -2470,8 +2487,8 @@ local({
     "run_logged({ warning('a loud warning'); message('a message'); stop('SCHEMA ERROR: the reason') })"),
     scr)
   env <- c(paste0("PIPELINE_LOG_FILE=", lf3), "OUTPUT_DIR=")
-  st <- suppressWarnings(system2(file.path(R.home("bin"), "Rscript"), shQuote(scr),
-                                 env = env, stdout = TRUE, stderr = TRUE))
+  st <- with_child_env(env, suppressWarnings(system2(
+    file.path(R.home("bin"), "Rscript"), shQuote(scr), stdout = TRUE, stderr = TRUE)))
   got <- if (file.exists(lf3)) readLines(lf3, warn = FALSE) else character(0)
   unlink(c(scr, lf3))
   ok(!is.null(attr(st, "status")) && attr(st, "status") != 0L,
@@ -2526,9 +2543,9 @@ local({
              "PROJECT_WORK_SCHEMA=", "DOMINO_USER_NAME=",
              "DOMINO_STARTING_USERNAME=", "DATABRICKS_PWD=",
              if (nzchar(lib)) paste0("R_LIBS=", lib))
-    out <- suppressWarnings(system2(file.path(R.home("bin"), "Rscript"),
-                                    shQuote(file.path(ROOT, launcher)),
-                                    env = env, stdout = TRUE, stderr = TRUE))
+    out <- with_child_env(env, suppressWarnings(system2(
+      file.path(R.home("bin"), "Rscript"), shQuote(file.path(ROOT, launcher)),
+      stdout = TRUE, stderr = TRUE)))
     got <- if (file.exists(lf)) readLines(lf, warn = FALSE) else character(0)
     unlink(lf)
     ok(!any(grepl("could not find function", out, fixed = TRUE)) &&

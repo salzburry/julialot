@@ -324,6 +324,11 @@ export PIPELINE_LOG_FILE=/mnt/artifacts/results/run_$(date +%Y%m%d_%H%M%S).log
 Step 4 and the dashboard write no run log of their own; step 3's `DRY_RUN`
 writes none either.
 
+The log opens once a step has loaded its code and `config.csv`, since those
+define the logger and can say where the log goes. A step that fails *while
+loading* - a file it cannot source, a `config.csv` it cannot read - stops before
+there is a log, so that reason is on the console only.
+
 ## Checking it before you point it at the warehouse
 
 Every suite runs offline — no warehouse, no driver, no Shiny — and exits
