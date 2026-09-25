@@ -2212,6 +2212,47 @@ local({
   invisible(NULL)
 })
 
+cat("\n-- a line read without the regimen table --\n")
+# The baseline rows name a line, and S_DEMOGRAPHICS carries none, so which
+# patients are on it was read off S_SOC - and a run that skipped the SOC module
+# refused every such row. S_LOT_PERIODS holds the same lines, so the Overall
+# column fills from it, and fills the SAME, which is what these hold it to.
+local({
+  LP <- data.frame(PATID = IDS, COHORT = "1L", LOT_NUM = 1L,
+                   PERIOD_START = as.Date("2020-01-01"),
+                   PERIOD_END = as.Date("2021-01-01"), stringsAsFactors = FALSE)
+  via <- function(tables) {
+    rd <- function(name) tables[[toupper(name)]]
+    fill_table(SH, "T1", fill_context(rd, SH$classes), floor_n = 25)$cells
+  }
+  pick <- function(cells, col) {
+    x <- cells[cells$COLUMN_ID == col & cells$SECTION == 0L, ]
+    x[order(x$ROW_ORDER), c("ROW_ORDER", "TEXT", "N", "DENOM", "FILLED", "SUPPRESSED")]
+  }
+  with_soc <- via(list(S_DEMOGRAPHICS = DEMO, S_SOC = SOC))
+  without  <- via(list(S_DEMOGRAPHICS = DEMO, S_LOT_PERIODS = LP))
+  a <- pick(with_soc, "C1"); b <- pick(without, "C1")
+  rownames(a) <- NULL; rownames(b) <- NULL
+  ok(sum(b$FILLED) > 0 && identical(a, b),
+     "without S_SOC the Overall column fills from S_LOT_PERIODS, cell for cell as it does with it")
+  cls <- without[without$COLUMN_ID == "C2" & without$SECTION == 0L, ]
+  ok(nrow(cls) > 0 && all(cls$FILLED == 0L) &&
+       all(grepl("S_SOC", cls$REASON[cls$ROW_LABEL == "Female"], fixed = TRUE)),
+     "...while a regimen class column still needs S_SOC, and says so")
+  none <- via(list(S_DEMOGRAPHICS = DEMO))
+  c1 <- none[none$COLUMN_ID == "C1" & none$SECTION == 0L, ]
+  ok(all(c1$FILLED == 0L) && all(grepl("LOT_NUM", c1$REASON[c1$ROW_LABEL == "Female"], fixed = TRUE)),
+     "with neither table the line cannot be read, and the row is refused with the reason")
+  # A line that started after this cohort's follow-up ended has an empty
+  # period, and S_SOC never held it: ten such patients are not on the line.
+  late <- LP
+  late$PERIOD_END[1:10] <- as.Date("2019-06-01")
+  lt <- via(list(S_DEMOGRAPHICS = DEMO, S_LOT_PERIODS = late))
+  mean_row <- lt[lt$COLUMN_ID == "C1" & lt$ROW_LABEL == "Mean (SD)", ]
+  ok(identical(as.numeric(mean_row$DENOM), 30),
+     "a line whose period is empty - begun after follow-up ended - is not the cohort's, as S_SOC leaves it out")
+})
+
 # ---------------------------------------------------------------------------
 # What a sum leaves out, a curve's two counts, and sums between tables.
 #

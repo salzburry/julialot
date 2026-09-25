@@ -182,9 +182,9 @@ select_population <- function(d, spec, ctx, where) {
       next
     }
     # A line can still be carried, where the table is per patient and the
-    # study's per-line table says which patients have that line.
+    # study's per-line tables say which patients have that line.
     if (identical(k, "LOT_NUM") && has_col(d, "PATID")) {
-      ids <- soc_patients(ctx, line = v, cohort = spec$cohort)
+      ids <- line_patients(ctx, line = v, cohort = spec$cohort)
       if (!is.null(ids)) {
         d <- d[chr(d[[col_of(d, "PATID")]]) %in% ids, , drop = FALSE]
         next
@@ -240,6 +240,42 @@ restrict_unnamed_strata <- function(d, named) {
     d <- d[hit, , drop = FALSE]
   }
   d
+}
+
+# The patients of one line of one cohort, for a table that is one row per
+# patient and names no line of its own - the baseline characteristics.
+#
+# The study's regimen table says, and is read first, so a run that has it reads
+# exactly what it always did. A run that skipped the SOC module - its code
+# lists not yet authored - wrote no S_SOC, and every such row was refused,
+# T1's demographics among them, though nothing in them is about a regimen.
+# S_LOT_PERIODS holds the same lines. S_SOC keeps each line from the cohort's
+# index on that starts inside the cohort's follow-up; S_LOT_PERIODS keeps the
+# same lines from the index on, and a line starting after the follow-up ended
+# is the one whose period is empty, PERIOD_END before PERIOD_START, so dropping
+# those is S_SOC's other bound. (S_SOC also drops a line that is neither drugs
+# nor a transplant; the engine does not build one.) For the line a cohort is
+# indexed on - every Overall column - either table gives the whole cohort.
+line_patients <- function(ctx, line = "", cohort = "") {
+  ids <- soc_patients(ctx, line = line, cohort = cohort)
+  if (!is.null(ids)) return(ids)
+  lp <- ctx$get("S_LOT_PERIODS")
+  if (is.null(lp) || !nrow(lp) || !has_col(lp, "PATID") || !has_col(lp, "LOT_NUM"))
+    return(NULL)
+  if (nzchar(chr(line))) {
+    want <- as_int(strsplit(chr(line), "|", fixed = TRUE)[[1]])
+    lp <- lp[as_int(lp[[col_of(lp, "LOT_NUM")]]) %in% want, , drop = FALSE]
+  }
+  if (nzchar(chr(cohort)) && has_col(lp, "COHORT")) {
+    want <- chr(strsplit(chr(cohort), "|", fixed = TRUE)[[1]])
+    lp <- lp[chr(lp[[col_of(lp, "COHORT")]]) %in% want, , drop = FALSE]
+  }
+  if (has_col(lp, "PERIOD_START") && has_col(lp, "PERIOD_END")) {
+    st <- suppressWarnings(as.Date(lp[[col_of(lp, "PERIOD_START")]]))
+    en <- suppressWarnings(as.Date(lp[[col_of(lp, "PERIOD_END")]]))
+    lp <- lp[!is.na(st) & !is.na(en) & en >= st, , drop = FALSE]
+  }
+  patients_of(lp)
 }
 
 # The patients of one line, and optionally of one regimen class, off the

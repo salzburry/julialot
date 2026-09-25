@@ -199,6 +199,15 @@ Everything reading a per-patient table - demographics, comorbidity, frailty,
 periods, SOC and the time-to-event outcomes - takes both. That is the whole of
 T1, T1b, T4, T5c and most of T3.
 
+A per-patient table that names no line of its own - the baseline
+characteristics - learns which patients are on a line from `S_SOC`. A run that
+skipped the SOC module wrote no `S_SOC`, and there the line comes from
+`S_LOT_PERIODS` instead: the same lines, bounded the same way, a line that
+starts after the cohort's follow-up ended being the one whose period is empty.
+So an Overall column fills either way. A class column still needs `S_SOC`,
+because only that table says which class a line is, and says so in
+`tfls_unfilled.csv` when it is missing.
+
 The columns that cannot be filled are left in place: they state what was asked
 for, and `tfls_unfilled.csv` names the table that cannot answer it.
 
