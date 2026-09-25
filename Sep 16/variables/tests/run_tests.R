@@ -3832,9 +3832,12 @@ local({
     "suppressWarnings(warning('hushed'))",
     "run_logged({ warning('a loud warning'); message('a message'); stop('SCHEMA ERROR: the reason') })"),
     scr)
-  env <- c(paste0("PIPELINE_LOG_FILE=", lf3), "OUTPUT_DIR=")
-  st <- suppressWarnings(system2(file.path(R.home("bin"), "Rscript"), shQuote(scr),
-                                 env = env, stdout = TRUE, stderr = TRUE))
+  # Through this process's environment, as the build check above does:
+  # system2(env = ...) is a command-line prefix that Windows hands Rscript as
+  # its script name.
+  st <- with_env(c(PIPELINE_LOG_FILE = lf3, OUTPUT_DIR = ""),
+    suppressWarnings(system2(file.path(R.home("bin"), "Rscript"), shQuote(scr),
+                             stdout = TRUE, stderr = TRUE)))
   got <- if (file.exists(lf3)) readLines(lf3, warn = FALSE) else character(0)
   unlink(c(scr, lf3))
   ok(!is.null(attr(st, "status")) && attr(st, "status") != 0L,
