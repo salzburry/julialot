@@ -237,6 +237,12 @@ withheld.
   withheld in the first place. For the same reason, where a sum needs one
   more cell withheld, it takes a class whose curve is already going, so the
   events row and the censored row give up the same class.
+- **A number printed twice is one number.** The same row over the same
+  population - a shell that repeats a row, or T1b, whose `Overall` columns and
+  rows are T1's - counts once in every sum and is withheld in every place it
+  appears or in none. Counted twice, two printed copies summed past their total
+  and the sum was taken for no sum at all, and a copy printed in one table
+  printed what the other withheld.
 - **A row whose own filter narrows its column's population** -
   `TTE_ELIGIBLE=1` - leaves out patients that every unfiltered row of the same
   population still counts. The ones it leaves out are a number a reader can

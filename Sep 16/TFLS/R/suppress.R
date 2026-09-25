@@ -25,6 +25,9 @@
 #     withholds the rest of that column's curve, because its events and its
 #     censored add up to its population and either one printed gives the other
 #     away (curve_units());
+#   * a number printed more than once - a repeated row, or T1b's Overall
+#     columns, which are T1's - is one term in every sum and is withheld in
+#     every place or none (cell_identity(), copy_units());
 #   * a row whose own filter narrows its column's population - TTE_ELIGIBLE=1 -
 #     leaves out patients that every unfiltered row of the same population
 #     still counts. The ones it leaves out are a number a reader can take, so
@@ -431,14 +434,98 @@ TFLS_CURVE_WHY <- paste0(
   "censored add up to its population, so one printed beside the other gives ",
   "the other away")
 
+# One number printed more than once: the same row read over the same population
+# - a shell repeating a row, or T1b's Overall columns, which are T1's. The
+# copies are one cell. Counted as several, a split with two printed copies of a
+# level summed past its total and was taken for no split at all, and one with
+# two withheld copies saw two unknowns where there was one; and a copy
+# withheld in one place and printed in another is simply printed. So copies are
+# counted once in every sum and withheld together.
+#
+# A population is keyed by what selects it, not by the column's name or table:
+# cohort, line, period, class and subgroup, the subgroup read as the fill reads
+# a filter (fill.R, shell_term_key()). A cell with no row key - a frame built
+# by hand - is only ever itself.
+cell_population <- function(cells, shell) {
+  own <- paste(cells$TABLE_ID, cells$COLUMN_ID, sep = "\r")
+  cols <- relation_columns(shell)
+  if (is.null(cols)) return(own)
+  norm_list <- function(x, as_num = FALSE) vapply(chr(x), function(v) {
+    p <- trimws(strsplit(v, "|", fixed = TRUE)[[1]])
+    p <- p[nzchar(p)]
+    if (as_num) { n <- suppressWarnings(as.integer(p)); p[!is.na(n)] <- as.character(n[!is.na(n)]) }
+    paste(sort(unique(toupper(p)), method = "radix"), collapse = "|")
+  }, character(1))
+  sub_key <- vapply(chr(cols$subgroup), function(s) {
+    if (!nzchar(s)) return("")
+    sg <- parse_subgroup(s)
+    if (!isTRUE(sg$ok) || !exists("shell_term_key", mode = "function")) return(paste0("?", s))
+    k <- vapply(sg$terms, shell_term_key, character(1))
+    paste0(toupper(chr(sg$table)), ":",
+           paste(sort(unique(k[nzchar(k)]), method = "radix"), collapse = "&"))
+  }, character(1))
+  cls <- toupper(chr(cols$class)); cls[!nzchar(cls)] <- "OVERALL"
+  pop <- paste(norm_list(cols$cohort), norm_list(cols$line, TRUE),
+               toupper(chr(cols$period)), cls, sub_key, sep = "\r")
+  at <- match(own, paste(chr(cols$table_id), chr(cols$column_id), sep = "\r"))
+  ifelse(is.na(at), own, pop[at])
+}
+
+cell_identity <- function(cells, shell = NULL) {
+  rk <- if ("ROW_KEY" %in% names(cells)) chr(cells$ROW_KEY) else rep("", nrow(cells))
+  keyed <- partition_terms(cells) & nzchar(gsub("\r", "", rk, fixed = TRUE))
+  id <- paste0("#", seq_len(nrow(cells)))
+  id[keyed] <- paste(cell_population(cells, shell)[keyed], rk[keyed], sep = "\r\r")
+  id
+}
+
+copy_units <- function(cells, shell = NULL) {
+  id <- cell_identity(cells, shell)
+  u <- split(seq_len(nrow(cells)), id)
+  unname(Filter(function(m) length(m) > 1L, u))
+}
+
+# The groups that are withheld together, merged where they share a cell: a
+# repeated row of a curve takes the curve's other rows with it, and they take
+# every copy of themselves.
+merge_units <- function(units, n) {
+  if (!length(units)) return(list())
+  root <- seq_len(n)
+  find <- function(i) { while (root[i] != i) i <- root[i]; i }
+  for (u in units) {
+    r <- find(u[1])
+    for (i in u[-1]) { ri <- find(i); if (ri != r) root[ri] <- r }
+  }
+  cells <- unique(unlist(units))
+  top <- vapply(cells, find, integer(1))
+  unname(Filter(function(m) length(m) > 1L, split(cells, top)))
+}
+
+TFLS_COPY_WHY <- paste0(
+  "withheld with every other copy of the same number: the same row over the ",
+  "same population is printed more than once, and a copy printed elsewhere ",
+  "would print it here")
+
 # Every sum that holds among the cells of these tables.
+#
+# A number printed twice is one term of a sum, not two (cell_identity()): each
+# relation keeps the first copy of every member, and the copies follow it
+# through copy_units(). A relation left with one member is no sum.
 cell_relations <- function(cells, shell = NULL) {
   ok <- relation_terms(cells)
   part <- partition_terms(cells)
   if (!any(part)) return(list())
-  c(if (any(ok)) relations_down_column(cells, ok),
-    relations_partition(cells, part, shell),
-    if (any(ok)) relations_against_denominator(cells, ok))
+  rel <- c(if (any(ok)) relations_down_column(cells, ok),
+           relations_partition(cells, part, shell),
+           if (any(ok)) relations_against_denominator(cells, ok))
+  id <- cell_identity(cells, shell)
+  rel <- lapply(rel, function(r) {
+    m <- r$members
+    keep <- !duplicated(id[m]) | (!is.na(r$total) & m == r$total)
+    r$members <- m[keep]
+    r
+  })
+  Filter(function(r) length(r$members) >= 2L, rel)
 }
 
 # Whether the printed terms of a sum leave enough out.
@@ -504,7 +591,8 @@ relation_covers <- function(cells, was, r, floor_n) {
 # a term takes one whose curve is already going where it has one - the rest of
 # that curve is withheld anyway, so it costs nothing - which is what makes the
 # events row and the censored row give up the SAME class rather than one each.
-close_relations <- function(cells, relations, floor_n, units = list()) {
+close_relations <- function(cells, relations, floor_n, units = list(),
+                            ids = NULL) {
   if (!length(relations) && !length(units)) return(cells)
   unit_of <- rep(NA_integer_, nrow(cells))
   for (k in seq_along(units)) unit_of[units[[k]]] <- k
@@ -542,7 +630,11 @@ close_relations <- function(cells, relations, floor_n, units = list()) {
     for (u in units) {
       w <- cells$SUPPRESSED[u] == 1L
       if (!any(w) || all(w)) next
-      for (i in u[!w]) cells <- withhold_cell(cells, i, floor_n, TFLS_CURVE_WHY)
+      for (i in u[!w]) {
+        copy <- !is.null(ids) && any(cells$SUPPRESSED[u][ids[u] == ids[i]] == 1L)
+        cells <- withhold_cell(cells, i, floor_n,
+                               if (copy) TFLS_COPY_WHY else TFLS_CURVE_WHY)
+      }
       fired <- TRUE
     }
     guard <- guard - 1L
@@ -596,7 +688,9 @@ suppress_cells <- function(cells, floor_n, shell = NULL) {
         "this row's own filter, and a row without it still counts them"))
   }
   close_relations(cells, cell_relations(cells, shell), floor_n,
-                  curve_units(cells))
+                  merge_units(c(curve_units(cells), copy_units(cells, shell)),
+                              nrow(cells)),
+                  cell_identity(cells, shell))
 }
 
 # The sums that run between tables.
@@ -614,7 +708,9 @@ suppress_across_tables <- function(filled, shell, floor_n) {
   all <- do.call(rbind, frames[sizes > 0L])
   rownames(all) <- NULL
   all <- close_relations(all, cell_relations(all, shell), floor_n,
-                         curve_units(all))
+                         merge_units(c(curve_units(all), copy_units(all, shell)),
+                                     nrow(all)),
+                         cell_identity(all, shell))
   at <- 0L
   for (k in seq_along(filled)) {
     if (sizes[k] == 0L) next
