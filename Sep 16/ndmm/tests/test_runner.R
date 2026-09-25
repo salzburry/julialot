@@ -2510,8 +2510,7 @@ local({
       src <- file.path(tempfile("standin_src_"), p)
       dir.create(src, recursive = TRUE)
       writeLines(c(paste("Package:", p), "Version: 0.0.0", "Title: Stand-in",
-                   "Description: Stands in for a launcher check.", "License: MIT",
-                   "Author: none", "Maintainer: none <none@example.org>"),
+                   "Description: Stands in for a launcher check.", "License: MIT"),
                  file.path(src, "DESCRIPTION"))
       writeLines("", file.path(src, "NAMESPACE"))
       system2(file.path(R.home("bin"), "R"),
