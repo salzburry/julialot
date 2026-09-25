@@ -18,10 +18,16 @@ Rscript TFLS/run_tfls.R
 TFLS_SOURCE=snapshot TFLS_SNAPSHOT_DIR=/mnt/data/NDMM TFLS_PREFIX=s223926_ \
   Rscript TFLS/run_tfls.R
 
-# or straight from the warehouse
+# or straight from the warehouse - from the folder holding TFLS/ and variables/
 TFLS_SOURCE=warehouse DATABRICKS_PWD=... PROJECT_WORK_SCHEMA=... \
-  TFLS_PREFIX=s223926_ Rscript TFLS/run_tfls.R
+  TFLS_PREFIX=s223926_ TFLS_PACKAGE_DIR=variables Rscript TFLS/run_tfls.R
 ```
+
+`TFLS_PACKAGE_DIR` is required in warehouse mode, and the run stops without it:
+it names the study package whose own connection code is used, so this cannot
+connect differently from the runs it reads. The catalog defaults to
+`hive_metastore` (`TFLS_CATALOG` or `DATABRICKS_CATALOG` move it), and the schema
+is the first of `WORK_SCHEMA`, `PROJECT_WORK_SCHEMA` or the Domino user's own.
 
 Output lands in `out/`: one CSV per table, one markdown rendering of all of
 them, and `tfls_unfilled.csv` naming every row nothing could fill and why.
@@ -243,7 +249,7 @@ withheld.
   | the run's record says | these shells |
   |---|---|
   | `none` | fill from everything |
-  | a finding | fill from everything except the tables `RELEASE_RECOVERABLE_TABLES` names — or, where that list is absent or names anything that is not one of the six released tables, except all six |
+  | a finding | fill from everything except the tables `RELEASE_RECOVERABLE_TABLES` names — or, where that list is absent or names anything that is not one of the seven released tables, except all seven |
   | `release module did not run` | fill from nothing that would have had a released copy: that run has not been shown to have no recoverable cell, it has not looked |
   | nothing at all | fill from everything, and say so: that is the snapshot job's gate, and re-exporting through it is what settles it |
 

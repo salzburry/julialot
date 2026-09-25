@@ -2206,5 +2206,87 @@ local({
   invisible(NULL)
 })
 
+# Warehouse mode reads through the STUDY PACKAGE's db_q(), which retries through
+# with_retry(), whose defaults come from study_config(). A config built and never
+# registered stopped every warehouse run at its first read with "No config" -
+# and every check of the runner above read run_tfls.R as text, which is exactly
+# how a line like that survives. So this one drives a read down the real
+# db_q() -> with_retry() path. Only the driver call at the very bottom is
+# answered here, through the seam the package leaves for it (dbi_query).
+cat("\n-- warehouse mode reads through the study package's own db_q() --\n")
+local({
+  pdir <- file.path(dirname(ROOT), "variables")
+  if (!file.exists(file.path(pdir, "R", "db_utils_223926.R"))) {
+    cat("  --     the study package is not beside this folder, so the",
+        "warehouse read path is unchecked\n")
+    return(invisible(NULL))
+  }
+  # Built here rather than through runner_env(): the package has to sit
+  # BETWEEN the runner's functions and this session, so warehouse_reader()
+  # finds db_q() without the package landing on top of this file's helpers.
+  load_runner <- function(parent) {
+    env <- new.env(parent = parent)
+    for (ex in parse(file.path(ROOT, "run_tfls.R"), keep.source = FALSE)) {
+      is_fn <- is.call(ex) && identical(ex[[1]], as.name("<-")) &&
+        is.call(ex[[3]]) && identical(ex[[3]][[1]], as.name("function"))
+      if (is_fn) eval(ex, env)
+    }
+    env
+  }
+  fake_con <- structure(list(), class = "DBIConnection")
+  # Answers every query and remembers what it was asked. Returns a function
+  # that reads the record, because the stub's own frame is where it lives.
+  answer <- function(spkg) {
+    seen <- character(0)
+    spkg$dbi_query <- function(con, sql) {
+      seen <<- c(seen, sql)
+      data.frame(RUN_ID = "r1", STATE = "complete", stringsAsFactors = FALSE)
+    }
+    function() seen
+  }
+  quietly <- function(expr) {
+    out <- NULL
+    utils::capture.output(out <- expr)
+    out
+  }
+
+  # The runner as shipped.
+  spkg <- new.env(parent = globalenv())
+  run  <- load_runner(spkg)
+  cfg  <- quietly(run$open_study_package(pdir, "osk02156", "hive_metastore",
+                                         envir = spkg))
+  ok(identical(spkg$study_config(), cfg),
+     "opening the study package registers the config it builds")
+  ok(identical(cfg$work_schema, "osk02156") && identical(cfg$catalog, "hive_metastore"),
+     "...with the run's schema and catalog on it")
+  sent <- answer(spkg)
+  rd <- run$warehouse_reader(fake_con, "hive_metastore", "osk02156", "s223926_")
+  got <- rd("S_RUN_METADATA")
+  errs <- as.list(attr(rd, "read_errors"))
+  ok(is.data.frame(got) && identical(got$STATE, "complete") && !length(errs),
+     "a warehouse read reaches the connection and comes back as a table")
+  ok(length(sent()) == 1L && has(sent(), "`s223926_S_RUN_METADATA`") &&
+       has(sent(), "`hive_metastore`.`osk02156`."),
+     "...having asked once, for the table under the run's own prefix and schema")
+
+  # The defect, reproduced, so this block can tell the two apart: the same
+  # package sourced the same way, the config never registered.
+  bare  <- new.env(parent = globalenv())
+  quietly(for (f in c("config_223926.R", "db_utils_223926.R"))
+    source(file.path(pdir, "R", f), local = bare))
+  sent2 <- answer(bare)
+  rd2 <- load_runner(bare)$warehouse_reader(fake_con, "hive_metastore",
+                                            "osk02156", "s223926_")
+  got2 <- rd2("S_RUN_METADATA")
+  ok(is.null(got2) &&
+       has(unlist(as.list(attr(rd2, "read_errors"))), "No config") &&
+       !length(sent2()),
+     "an unregistered config stops before the connection, and says so")
+
+  ok(has(RUNNER, "cfg <- open_study_package(pkg, schema, catalog)"),
+     "main() opens the package through that one function, not by hand")
+  invisible(NULL)
+})
+
 check_skip_wiring()
 test_report_status(pass, fail, skipped)
