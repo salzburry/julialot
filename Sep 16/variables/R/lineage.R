@@ -280,13 +280,18 @@ check_lot_lineage <- function(con, cfg) {
   problems <- character(0)
 
   # A LOT run that did not finish. Its status row carries no reason - the LOT
-  # build's own log does - so the message says where to look.
+  # build's own log does - so the message says where to look. It says so only
+  # of a build that logs its errors: before build.R ran under run_logged(), an
+  # R error reached the console alone and the log stopped mid-step.
   if (!identical(tolower(trimws(as.character(r$STATE))), "complete"))
     problems <- c(problems, sprintf(
       paste0("the newest run (%s) is '%s', not 'complete'. The status row ",
-             "does not say why; the LOT build's own log does, under the ",
-             "OUTPUT_DIR that build ran with. Fix what it reports there and ",
-             "re-run the LOT build"),
+             "does not say why; the LOT build's run log does, as an 'ERROR:' ",
+             "line - pipeline_run_<time>_<pid>.log under the OUTPUT_DIR that ",
+             "build ran with, or PIPELINE_LOG_FILE if it was set. A build from ",
+             "before the run log recorded errors has only 'Build status: ",
+             "failed' there, and its reason is in that run's console output. ",
+             "Fix what it reports and re-run the LOT build"),
       r$RUN_ID, r$STATE))
 
   if (nzchar(trimws(as.character(r$INPUT_COHORT_TABLE %||% ""))) &&

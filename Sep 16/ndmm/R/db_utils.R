@@ -3,44 +3,161 @@
 
 SEP   <- strrep("=", 70)
 
-# Resolve a single run log file (memoized). Honour PIPELINE_LOG_FILE if
-# set (orchestrator shares one file across stages); else timestamped
-# file under OUTPUT_DIR (falls back to tempdir()).
+# --- the run log -------------------------------------------------------------
+#
+# One file per run, and everything the run says goes in it: its log lines, the
+# QC and diagnostic tables it print()s, and its warnings, messages and the
+# error that stops it. Each of the last three used to reach the console only,
+# so the log of a failed run ended mid-step with no reason, and a QC heading
+# had nothing under it.
+#
+# Where it goes, the first of these that can be written to:
+#   1. PIPELINE_LOG_FILE - an exact path, so several stages can share one file.
+#      Its folder is created. If it cannot be written, there is no run log, and
+#      the console says so once: a path somebody named is not quietly swapped.
+#   2. OUTPUT_DIR/pipeline_run_<time>_<pid>.log
+#   3. /mnt/artifacts/results/pipeline_run_<time>_<pid>.log, the default when
+#      OUTPUT_DIR is unset - the folder Domino keeps as a run's results.
+#   4. R's temporary folder - said LOUDLY, because R deletes it when the
+#      process exits, and a log that is gone by the time anyone looks is a log
+#      nobody was told they did not have.
+# The process id is in the name because two runs starting in the same second
+# used to append to one file. Times are the container's local clock, and the
+# announcement names its zone.
+
+.run_log <- new.env(parent = emptyenv())
+
+# Whether a file can be appended to, found by doing it rather than by asking
+# whether its folder exists - a folder can exist and refuse the write.
+.log_writable <- function(lf) {
+  tryCatch({
+    dir.create(dirname(lf), showWarnings = FALSE, recursive = TRUE)
+    con <- file(lf, open = "a")
+    close(con)
+    TRUE
+  }, error = function(e) FALSE, warning = function(w) FALSE)
+}
+
+.log_stamp <- function() format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+
 .resolve_log_file <- function() {
-  lf <- getOption("pipeline_log_file", default = NULL)
-  if (!is.null(lf)) return(lf)
-  envf <- Sys.getenv("PIPELINE_LOG_FILE", unset = "")
-  if (nzchar(envf)) {
-    lf <- envf
-  } else {
-    base_dir <- Sys.getenv("OUTPUT_DIR", unset = "")
-    if (!nzchar(base_dir)) base_dir <- "/mnt/artifacts/results"
-    ok <- tryCatch({ dir.create(base_dir, showWarnings = FALSE, recursive = TRUE); dir.exists(base_dir) },
-                   error = function(e) FALSE)
-    if (!isTRUE(ok)) base_dir <- tempdir()
-    lf <- file.path(base_dir, paste0("pipeline_run_",
-            format(Sys.time(), "%Y%m%d_%H%M%S"), ".log"))
+  if (exists("file", envir = .run_log, inherits = FALSE)) return(.run_log$file)
+  named <- Sys.getenv("PIPELINE_LOG_FILE", unset = "")
+  lf <- if (nzchar(named)) named else {
+    d <- Sys.getenv("OUTPUT_DIR", unset = "")
+    if (!nzchar(d)) d <- "/mnt/artifacts/results"
+    file.path(d, sprintf("pipeline_run_%s_%d.log",
+                         format(Sys.time(), "%Y%m%d_%H%M%S"), Sys.getpid()))
   }
-  options(pipeline_log_file = lf)
-  cat(sprintf("[%s] [log] run log -> %s\n",
-              format(Sys.time(), "%Y-%m-%d %H:%M:%S"), lf))
+  if (!.log_writable(lf)) {
+    alt <- if (nzchar(named)) NA_character_ else file.path(tempdir(), basename(lf))
+    if (!is.na(alt) && .log_writable(alt)) {
+      cat(sprintf(paste0("[%s] [log] WARNING: %s cannot be written. The run log ",
+                         "is %s instead, which R DELETES when this process ",
+                         "exits - copy it out before then.\n"),
+                  .log_stamp(), lf, alt))
+      lf <- alt
+    } else {
+      cat(sprintf(paste0("[%s] [log] WARNING: no run log - %s cannot be ",
+                         "written. This run is logged to the console only.\n"),
+                  .log_stamp(), lf))
+      lf <- NA_character_
+    }
+  }
+  assign("file", lf, envir = .run_log)
+  if (!is.na(lf))
+    cat(sprintf("[%s] [log] run log -> %s (times are %s)\n", .log_stamp(), lf,
+                format(Sys.time(), "%Z")))
   lf
 }
 
+# One value as text. cat() does not dispatch S3 methods, so a bit64::integer64
+# from the driver printed its bit pattern - a count of 1780 came out of a real
+# run as 8.794368e-321 - and a Date printed as a day number, a factor as its
+# code. And cat() keeps 7 significant digits, so 100000 printed as 1e+05 and a
+# count of 12,000,003 as 1.2e+07: rounded, in a log that is read as the count.
+.log_fmt <- function(x) {
+  if (is.null(x)) return("NULL")
+  if (inherits(x, "integer64")) x <- as.numeric(x)
+  v <- if (inherits(x, c("Date", "POSIXt"))) format(x)
+       else if (is.factor(x)) as.character(x)
+       else if (is.numeric(x)) format(x, scientific = FALSE, trim = TRUE)
+       else as.character(x)
+  paste(v, collapse = " ")
+}
+
+# The pieces of a line, joined the way cat() joined them - one space between -
+# except where a piece already brings its own whitespace. Every call site was
+# written for cat()'s space and supplies its own too ("LOT code ", x, " is"),
+# so the old lines carried two; this keeps one and never joins two words that
+# were apart before.
+.log_join <- function(parts) {
+  if (!length(parts)) return("")
+  out <- parts[1]
+  for (p in parts[-1]) {
+    gap <- grepl("[[:space:]]$", out) || grepl("^[[:space:]]", p) ||
+           !nzchar(p) || !nzchar(out)
+    out <- paste0(out, if (gap) "" else " ", p)
+  }
+  out
+}
+
 log_msg <- function(...) {
-  # cat() does not dispatch S3 methods, so a bit64::integer64 from the driver
-  # is written as its raw bit pattern - a count of 1780 came out of a real run
-  # as 8.794368e-321. format() dispatches, so coerce first. db_q() converts on
-  # the way out too; this catches anything that reaches a message another way.
-  a <- lapply(list(...), function(x)
-    if (inherits(x, "integer64")) format(as.numeric(x), scientific = FALSE) else x)
-  prefix <- sprintf("[%s] ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"))
-  do.call(cat, c(list(prefix), a, "\n"))
+  body <- .log_join(vapply(list(...), .log_fmt, character(1)))
+  line <- paste0("[", .log_stamp(), "]", if (nzchar(body)) " ", body)
+  cat(line, "\n", sep = "")
   flush.console()
-  try({
+  # Teed, the console IS the file as well, and writing it here too would say
+  # everything twice. Otherwise the line is appended, as it always was.
+  if (isTRUE(.run_log$teed)) {
+    try(flush(.run_log$con), silent = TRUE)
+  } else {
     lf <- .resolve_log_file()
-    do.call(cat, c(list(prefix), a, "\n", file = lf, append = TRUE))
+    if (!is.na(lf)) try(cat(line, "\n", sep = "", file = lf, append = TRUE),
+                        silent = TRUE)
+  }
+  invisible(line)
+}
+
+# Straight into the file, not onto the console - for what the console has
+# already shown in its own way (a warning, a message) and the file had not.
+.log_to_file_only <- function(...) {
+  if (!isTRUE(.run_log$teed)) return(invisible(NULL))
+  try({
+    cat("[", .log_stamp(), "] ", .log_join(vapply(list(...), .log_fmt,
+                                                  character(1))),
+        "\n", sep = "", file = .run_log$con)
+    flush(.run_log$con)
   }, silent = TRUE)
+  invisible(NULL)
+}
+
+# Tee the console into the run log for the rest of the process: every print()
+# lands in the file as well as on screen. Started once, from an entry point.
+start_run_log <- function() {
+  if (isTRUE(.run_log$teed)) return(invisible(.run_log$file))
+  lf <- .resolve_log_file()
+  if (is.na(lf)) return(invisible(NA_character_))
+  con <- tryCatch(file(lf, open = "at"), error = function(e) NULL,
+                  warning = function(w) NULL)
+  if (is.null(con)) return(invisible(NA_character_))
+  sink(con, split = TRUE)
+  assign("con", con, envir = .run_log)
+  assign("teed", TRUE, envir = .run_log)
+  invisible(lf)
+}
+
+# A run, with what it says on the way out kept. Calling handlers, so they see a
+# condition as it is raised and change nothing about what happens to it: a
+# warning is still printed by R, and an error still stops the run and runs its
+# on.exit status write. Each goes into the file only - R prints its own on the
+# console, to stderr, which is exactly the stream the tee does not carry. What an inner tryCatch() or suppressWarnings() handles
+# never reaches these, so an expected retry is not logged as an error.
+run_logged <- function(expr) {
+  withCallingHandlers(expr,
+    error = function(e) .log_to_file_only("ERROR: ", conditionMessage(e)),
+    warning = function(w) .log_to_file_only("WARNING: ", conditionMessage(w)),
+    message = function(m) .log_to_file_only(sub("\n$", "", conditionMessage(m))))
 }
 
 stop_if_blank <- function(x, msg) {
@@ -250,7 +367,12 @@ run_step <- function(con, name, sql, qc = NULL) {
     out <- db_q(con, qc)
     qc_elapsed <- (proc.time() - t1)[["elapsed"]]
     log_msg("  QC completed in ", round(qc_elapsed, 1), "s")
+    # A count is printed as the count: print() would show 100000 as 1e+05 and
+    # round a large one to 7 digits. Set here only, for this print, so no
+    # format() elsewhere - one building SQL, say - sees a different option.
+    op <- options(scipen = 100)
     print(out)
+    options(op)
   }
   invisible(TRUE)
 }

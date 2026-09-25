@@ -77,3 +77,4 @@ COHORTS,"1L,2L,3L",Which cohorts to build. Any of 1L 2L 3L SEC2L
 MODULES,all,Which modules to run. all or a comma-separated list of module keys
 SKIP_MODULES,,Modules to leave out of an otherwise-selected set
 DRY_RUN,FALSE,Resolve and print the plan without touching the warehouse
+OUTPUT_DIR,/mnt/artifacts/results,"Where a run started from build.R writes its run log, pipeline_run_<time>_<pid>.log - the folder Domino keeps as a run's results. PIPELINE_LOG_FILE names an exact file instead. A DRY_RUN writes none"

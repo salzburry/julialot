@@ -286,6 +286,31 @@ variables each needs, and the deployment controls that are **not** in the code.
 
 ---
 
+## The run log
+
+Steps 1, 2 and 3 each write one when started from their `build.R`, and it
+holds everything the run says: its log lines, the QC and diagnostic tables it
+prints, its warnings and messages, and - as an `ERROR:` line - the reason it
+stopped, if it did. The console shows the same run; the file is the one to
+send.
+
+It goes to `PIPELINE_LOG_FILE` if that is set, and otherwise to
+`pipeline_run_<time>_<pid>.log` under `OUTPUT_DIR`, which defaults to
+`/mnt/artifacts/results` - the folder Domino keeps as a run's results. The run
+prints the path when it starts. If that folder cannot be written it says so
+and falls back to R's temporary folder, which R deletes when the process ends,
+so copy the file out before then; if a named `PIPELINE_LOG_FILE` cannot be
+written it says so once and logs to the console only. To keep one file across
+all three steps, set `PIPELINE_LOG_FILE` - the one variable it is safe to
+`export`, since it names a file rather than a rule:
+
+```bash
+export PIPELINE_LOG_FILE=/mnt/artifacts/results/run_$(date +%Y%m%d_%H%M%S).log
+```
+
+Step 4 and the dashboard write no run log of their own; step 3's `DRY_RUN`
+writes none either.
+
 ## Checking it before you point it at the warehouse
 
 Every suite runs offline — no warehouse, no driver, no Shiny — and exits
