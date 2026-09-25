@@ -2618,17 +2618,26 @@ cat("\nthe shells are filled at the sidebar's floor, and no lower\n")
     hi <- shell_fill(ready, "T4", SRC, s, 60000L)
     ok(identical(hi$floor_n, 60000L), "and a viewer raising it is honoured")
 
-    # A withheld cell reaches the page as the engine's own text.
-    shown <- f$cells$TEXT[f$cells$FILLED == 1L & f$cells$SECTION == 0L][1]
-    h <- shell_panel_html(ready, f)
-    hh <- shell_panel_html(ready, hi)
-    ok(nzchar(shown) && grepl(shown, h, fixed = TRUE),
+    # A withheld cell reaches the page as the engine's own text. Read off F1,
+    # not T4: this fixture's survival curves censor fewer than 25 of their 100
+    # patients, and a curve publishes its censored as DENOM less N, so every T4
+    # cell is withheld at 25 and there is no allowed cell there to look for.
+    # The cell picked is a PUBLISHED one - the first filled cell used to be
+    # taken on trust, and was published only because the old rule let a
+    # curve's small censored count through.
+    pf <- shell_fill(ready, "F1", SRC, s, 25L)
+    phi <- shell_fill(ready, "F1", SRC, s, 60000L)
+    shown <- pf$cells$TEXT[pf$cells$FILLED == 1L & pf$cells$SECTION == 0L &
+                             pf$cells$SUPPRESSED == 0L][1]
+    h <- shell_panel_html(ready, pf)
+    hh <- shell_panel_html(ready, phi)
+    ok(!is.na(shown) && nzchar(shown) && grepl(shown, h, fixed = TRUE),
        "a cell the floor allows is on the page")
     ok(!grepl(shown, hh, fixed = TRUE),
        "...and is gone once the floor covers it")
     ok(grepl("&lt;60000", hh, fixed = TRUE) && !grepl("<60000", hh, fixed = TRUE),
        "...replaced by the engine's withheld text, escaped, never by a blank")
-    supp <- hi$cells[hi$cells$SUPPRESSED == 1L, , drop = FALSE]
+    supp <- phi$cells[phi$cells$SUPPRESSED == 1L, , drop = FALSE]
     ok(nrow(supp) > 0 && all(supp$TEXT == "<60000") &&
          all(is.na(supp$N)) && all(is.na(supp$DENOM)),
        "and the withheld cell carries no number at all, its denominator included")

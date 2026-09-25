@@ -651,8 +651,12 @@ ok(sum(S2R$SUPPRESSED) == 2L && all(S2R$SUPPRESSED[S2R$ROW_LABEL == "White"] == 
    "the row with a cell under the floor loses a second cell of its own row, and the row beside it loses nothing")
 
 # 3. Three levels, two of them under the floor. The total less the published
-# level is the two withheld ones together, and nothing says how it splits, so
-# no third cell is lost for nothing.
+# level is the two withheld ones together - 100 - 80 = 20 men across the two
+# neuropathy groups - and 20 is a count of patients under the floor whether or
+# not it says how it splits. It used to be published, on the reasoning that no
+# single cell could be isolated; but the suite withholds "ten men" further down
+# because 40 - 30 gives them away, and "20 men in these two groups" is the same
+# disclosure split in two. So the level of 80 goes too.
 THREE <- shaped_cells("T1b", "Sex (N%)",
   c("1L_OVERALL", "1L_NEURO_YES", "1L_NEURO_NO"),
   list(list(label = "Male", indent = 1, n = c(100, 10, 10))), c(300, 30, 30))
@@ -666,11 +670,14 @@ THREE_COLUMNS <- rbind(NEURO_COLUMNS, data.frame(
   subgroup = "S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=unknown",
   period = "", note = "", stringsAsFactors = FALSE))
 S3L <- suppress_cells(THREE, 25, list(columns = THREE_COLUMNS))
-ok(sum(S3L$SUPPRESSED) == 2L,
-   "two levels under the floor are withheld and no third cell goes with them")
+ok(sum(S3L$SUPPRESSED) == 3L && !is.na(seen(S3L, "Male", "1L_OVERALL")) &&
+     is.na(seen(S3L, "Male", "1L_OTHER")),
+   "two levels under the floor take the third with them, because the total less it is 20 patients between them")
 ok(!gives_away(c(seen(S3L, "Male", "1L_OVERALL"), seen(S3L, "Male", "1L_NEURO_YES"),
                  seen(S3L, "Male", "1L_NEURO_NO"), seen(S3L, "Male", "1L_OTHER"))),
-   "100 - 80 = 20 is the two withheld levels together, and the arithmetic cannot isolate either of them")
+   "...and with three unknowns the arithmetic isolates none of them")
+ok(grepl("add up to fewer than 25", S3L$REASON[S3L$COLUMN_ID == "1L_OTHER"], fixed = TRUE),
+   "...and the reason says it was the combined remainder, not a lone unknown")
 ok(no_lone_unknown(S3L, list(columns = THREE_COLUMNS)),
    "...and no sum of this table is left with one member missing")
 
@@ -760,11 +767,10 @@ ok(nrow(F1$cells) == 11 * 4,
    "every row of the shell meets every column of it, headings included")
 ok(near(cell(F1, 9, "C1")$VALUE, 75) && cell(F1, 9, "C1")$TEXT == "75.0 (5.1)",
    "the mean age over the forty is 75.0 with an SD of 5.06, computed from the rows the column selects")
-ok(cell(F1, 5, "C1")$TEXT == "30 (75.0%)" && cell(F1, 5, "C1")$SUPPRESSED == 0L,
-   "a level holding thirty of forty is published as 30 (75.0%)")
-ok(cell(F1, 6, "C1")$TEXT == "<25" && cell(F1, 7, "C1")$TEXT == "<25" &&
-     cell(F1, 5, "C1")$SUPPRESSED == 0L,
-   "two levels of five are withheld, and the level of thirty beside them stays: two unknowns cannot be read off one total")
+ok(cell(F1, 6, "C1")$TEXT == "<25" && cell(F1, 7, "C1")$TEXT == "<25",
+   "two levels of five are withheld")
+ok(cell(F1, 5, "C1")$SUPPRESSED == 1L && cell(F1, 5, "C1")$TEXT == "<25",
+   "...and the level of thirty goes with them: forty less thirty is the ten patients between them, as forty less the thirty women is the ten men")
 ok(cell(F1, 2, "C1")$SUPPRESSED == 1L && cell(F1, 3, "C1")$SUPPRESSED == 1L,
    "the ten men are withheld and the thirty women go with them, because a lone withheld level is the total less the rest")
 ok(near(cell(F1, 2, "C2")$DENOM, 26) || cell(F1, 2, "C2")$SUPPRESSED == 1L,
@@ -2204,6 +2210,148 @@ local({
   ok(is.data.frame(csv) && nrow(csv) > 0 && !"PATID" %in% names(csv),
      "the CSV rendering carries the same cells and no identifier")
   invisible(NULL)
+})
+
+# ---------------------------------------------------------------------------
+# What a sum leaves out, a curve's two counts, and sums between tables.
+#
+# Three rules the suppression pass did not have. A curve publishes its events in
+# N and its censored patients in DENOM less N, whatever the row prints. A row
+# whose own filter narrows the column's population leaves out a number a reader
+# can take. And a sum gives away whatever its printed terms leave out - not only
+# a single missing cell - including a population split across two tables.
+# ---------------------------------------------------------------------------
+cat("\n-- a curve's two counts, and what a filter leaves out --\n")
+local({
+  km <- function(stat, n, denom, pop_n = NA_real_) {
+    d <- mk_cells(stat, n, denom)
+    d$POP_N <- pop_n
+    d
+  }
+  # 30 patients, 3 events: every statistic of the curve publishes the 3.
+  few <- suppress_cells(rbind(km("km_events", 3, 30), km("km_censored", 27, 30),
+                              km("km_median", 3, 30), km("km_prob", 3, 30)), 25)
+  ok(all(few$SUPPRESSED == 1L),
+     "a curve with 3 events among 30 withholds its events, censored, median and probabilities alike")
+  ok(all(grepl("with the event", few$REASON[few$STAT != "km_censored"], fixed = TRUE)),
+     "...and says it was the events")
+  # km_censored carries the censored in N, so its events are DENOM less N.
+  cz <- suppress_cells(km("km_censored", 27, 30), 25)
+  ok(cz$SUPPRESSED == 1L && grepl("with the event", cz$REASON, fixed = TRUE),
+     "a censored row of 27 among 30 is withheld for the 3 events its population less it gives away")
+  # 100 patients, 90 events: the 10 censored are published by subtraction.
+  mostly <- suppress_cells(km("km_median", 90, 100), 25)
+  ok(mostly$SUPPRESSED == 1L && grepl("censored", mostly$REASON, fixed = TRUE),
+     "a median with 90 events among 100 is withheld for the 10 censored its N and DENOM give away")
+  both <- suppress_cells(rbind(km("km_events", 40, 100), km("km_median", 40, 100),
+                               km("km_prob", 40, 100)), 25)
+  ok(all(both$SUPPRESSED == 0L),
+     "a curve with 40 events and 60 censored is published in full")
+  rate <- suppress_cells(mk_cells("rate", c(3, 4), c(300, 300)), 25)
+  ok(all(rate$SUPPRESSED == 0L),
+     "a rate is not a curve: the package's own rule for it stands")
+
+  # A row filtered to TTE_ELIGIBLE=1 over a column of 70, 60 of them eligible:
+  # 30 events and 30 censored, so the curve itself reaches the floor, and only
+  # the 10 the filter leaves out do not.
+  left <- suppress_cells(km("km_events", 30, 60, pop_n = 70), 25)
+  ok(left$SUPPRESSED == 1L && grepl("left out by", left$REASON, fixed = TRUE),
+     "a filter leaving 10 of the column's 70 out is withheld: any unfiltered row gives the 10 away")
+  ok(suppress_cells(km("km_events", 30, 60, pop_n = 60), 25)$SUPPRESSED == 0L &&
+       suppress_cells(km("km_events", 30, 60, pop_n = 100), 25)$SUPPRESSED == 0L,
+     "...and one leaving none out, or 40, is not")
+  ok(suppress_cells(km("km_events", 30, 60), 25)$SUPPRESSED == 0L,
+     "a frame that does not say its population before the filter is read as it always was")
+})
+
+cat("\n-- what the printed terms of a sum leave out --\n")
+local({
+  # Sex over a column of 100 with no row for the 10 whose sex is not recorded:
+  # 100 - 55 - 35 is those 10, on the page, with nothing withheld at all.
+  miss <- suppress_cells(mk_cells("n_pct", c(55, 35), c(100, 100)), 25)
+  ok(sum(miss$SUPPRESSED) == 2L,
+     "levels leaving 10 of the column's 100 uncounted give the 10 away, so a level goes - and then the other")
+  exact <- suppress_cells(mk_cells("n_pct", c(60, 40), c(100, 100)), 25)
+  ok(all(exact$SUPPRESSED == 0L),
+     "levels that add up to their denominator leave nothing out and nothing goes")
+  # Two withheld cells whose total is itself under the floor.
+  pair <- suppress_cells(mk_cells("n_pct", c(80, 10, 10), c(100, 100, 100)), 25)
+  ok(all(pair$SUPPRESSED == 1L),
+     "two withheld cells adding up to 20 take the 80 with them")
+  pair2 <- suppress_cells(mk_cells("n_pct", c(60, 20, 20), c(100, 100, 100)), 25)
+  ok(pair2$SUPPRESSED[1] == 0L && sum(pair2$SUPPRESSED) == 2L,
+     "...while two adding up to 40 leave the 60 published")
+})
+
+cat("\n-- a population split by its regimen classes --\n")
+local({
+  CLS <- data.frame(table_id = "T4", label = c("Overall", "Quad", "Triplet", "Other"),
+                    order = 1:4, column_id = c("1L_OVERALL", "1L_Q", "1L_T", "1L_O"),
+                    group = "1L", cohort = "1L", line = "1",
+                    class = c("OVERALL", "ACD38_QUAD", "OTHER_TRIP", "OTHER"),
+                    subgroup = "", period = "", note = "", stringsAsFactors = FALSE)
+  # A mean over each column: the classes' populations add up to Overall's, and
+  # the 12 in the smallest class sit under the floor.
+  ages <- shaped_cells("T4", "Age", CLS$column_id,
+    list(list(label = "Age, mean", indent = 1, n = c(300, 200, 88, 12), stat = "mean_sd")),
+    c(300, 200, 88, 12))
+  sa <- suppress_cells(ages, 25, list(columns = CLS))
+  ok(is.na(seen(sa, "Age, mean", "1L_O")) && is.na(seen(sa, "Age, mean", "1L_T")) &&
+       !is.na(seen(sa, "Age, mean", "1L_OVERALL")),
+     "a mean over a class of 12 is withheld, and so is the next class's: Overall's population less the rest gives the 12 away")
+  ok(no_lone_unknown(sa, list(columns = CLS)),
+     "...and no split is left with one member missing")
+  old_rule <- suppress_cells(ages, 25, NULL)
+  ok(!is.na(seen(old_rule, "Age, mean", "1L_T")),
+     "without the shell's columns there is no split to read, as before")
+})
+
+cat("\n-- a population split in another table --\n")
+local({
+  SHIP <- load_shells(file.path(ROOT, "shells"))
+  # 1L: 200 patients, 180 under 75 and 20 aged 75 or over. The 20 are under the
+  # floor in T5c; T4's Overall less T5c's under-75 is exactly them.
+  ids <- sprintf("P%03d", 1:200)
+  tte <- data.frame(PATID = ids, COHORT = "1L", LOT_NUM = 1L, TTE_ELIGIBLE = 1L,
+                    TTNT_MONTHS = seq_len(200) / 5, TTNT_EVENT = rep(0:1, 100),
+                    TTD_MONTHS = seq_len(200) / 5, TTD_EVENT = rep(0:1, 100),
+                    OS_MONTHS = seq_len(200) / 5, OS_EVENT = rep(0:1, 100),
+                    stringsAsFactors = FALSE)
+  demo <- data.frame(PATID = ids, COHORT = "1L", LOT_NUM = 1L,
+                     AGE_GROUP = c(rep("<75", 180), rep("75+", 20)),
+                     stringsAsFactors = FALSE)
+  rd <- function(name) list(S_TTE = tte, S_DEMOGRAPHICS = demo)[[toupper(name)]]
+  ctx <- fill_context(rd, SHIP$classes)
+  row_of <- function(f, tid, col, label) {
+    c <- f[[tid]]$cells
+    c[c$COLUMN_ID == col & c$ROW_LABEL == label & c$SECTION == 0L, , drop = FALSE][1, ]
+  }
+  alone <- fill_table(SHIP, "T5c", ctx, 25)
+  under <- alone$cells[alone$cells$COLUMN_ID == "AGE_1L_LT75" &
+                         alone$cells$ROW_LABEL == "Events, n (%)", ][1, ]
+  ok(under$FILLED == 1L && under$SUPPRESSED == 0L,
+     "T5c on its own publishes the under-75 curve: it has no Overall to be read against")
+  all_t <- fill_all(SHIP, ctx, 25)
+  t4 <- row_of(all_t, "T4", "1L_OVERALL", "Events, n (%)")
+  lt <- row_of(all_t, "T5c", "AGE_1L_LT75", "Events, n (%)")
+  ge <- row_of(all_t, "T5c", "AGE_1L_GE75", "Events, n (%)")
+  ok(t4$FILLED == 1L && t4$SUPPRESSED == 0L && t4$N == 100,
+     "T4's 1L Overall is published: 100 events among 200")
+  ok(ge$SUPPRESSED == 1L,
+     "T5c's 20 patients aged 75 or over are under the floor")
+  ok(lt$SUPPRESSED == 1L && grepl("in T4", lt$REASON, fixed = TRUE),
+     "...and T5c's under-75 goes with them once the tables are read together, naming the table it was read against")
+  t5 <- all_t[["T5c"]]$cells
+  lt_all <- t5[t5$COLUMN_ID == "AGE_1L_LT75" & t5$FILLED == 1L & t5$SECTION == 0L, ]
+  ok(nrow(lt_all) > 0 && all(lt_all$SUPPRESSED == 1L),
+     "...every statistic of it, the medians and probabilities included")
+  both <- rbind(all_t[["T4"]]$cells, all_t[["T5c"]]$cells)
+  ok(no_lone_unknown(both, SHIP),
+     "no sum between the two tables is left with one member missing")
+  keys_match <- intersect(all_t[["T4"]]$cells$ROW_KEY[all_t[["T4"]]$cells$SECTION == 0L],
+                          all_t[["T5c"]]$cells$ROW_KEY[all_t[["T5c"]]$cells$SECTION == 0L])
+  ok(length(keys_match) >= 27L,
+     "the shipped T4 and T5c read the same rows, so the two can be matched row for row")
 })
 
 # Warehouse mode reads through the STUDY PACKAGE's db_q(), which retries through

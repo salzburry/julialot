@@ -755,6 +755,7 @@ empty_cells <- function() data.frame(
   VALUE = numeric(0), LOW = numeric(0), HIGH = numeric(0), N = numeric(0),
   DENOM = numeric(0), TEXT = character(0), FILLED = integer(0),
   SUPPRESSED = integer(0), REASON = character(0), REASON_KIND = character(0),
+  ROW_KEY = character(0), POP_N = numeric(0),
   stringsAsFactors = FALSE)
 
 empty_unfilled <- function() data.frame(
@@ -866,12 +867,17 @@ fill_table <- function(sh, tid, ctx, floor_n = TFLS_PACKAGE_MIN_N) {
         notes <- unique(c(notes, fill_note(row, spec, ctx)))
       cell <- NULL
       why <- row_why; kind <- row_kind
+      # The column's population before this row's own filter narrows it. A row
+      # that leaves some of it out leaves out a number a reader can take from
+      # any row that does not, and suppress_cells() floors that number.
+      pop_n <- NA_real_
       if (!isTRUE(row$section_flag) && !nzchar(why)) {
         pop <- select_population(d, spec, ctx, chr(row$source))
         if (!isTRUE(pop$ok)) {
           why <- pop$why; kind <- pop$kind %||% "not_computable"
         } else {
           rows_sel <- pop$rows
+          pop_n <- population_denom(rows_sel)
           for (t in terms) {
             # The month a curve is read at is not a restriction on the table.
             if (identical(toupper(t$column), "MONTHS")) next
@@ -914,6 +920,11 @@ fill_table <- function(sh, tid, ctx, floor_n = TFLS_PACKAGE_MIN_N) {
         SUPPRESSED = 0L,
         REASON = if (is.null(cell)) why else "",
         REASON_KIND = if (is.null(cell)) kind else "",
+        # What the row reads, so the same measure over another population can
+        # be found in another table: T5c's rows are T4's, over a subgroup.
+        ROW_KEY = paste(chr(row$stat), chr(row$source), chr(row$measure),
+                        chr(row$filter), sep = "|"),
+        POP_N = if (is.null(cell)) NA_real_ else pop_n,
         stringsAsFactors = FALSE)
     }
   }
@@ -932,10 +943,12 @@ fill_table <- function(sh, tid, ctx, floor_n = TFLS_PACKAGE_MIN_N) {
 }
 
 # Every table in the shell.
+# Each table is closed on its own as it is filled; then all of them together,
+# because a population can be split in one table and totalled in another.
 fill_all <- function(sh, ctx, floor_n = TFLS_PACKAGE_MIN_N) {
   out <- lapply(shell_table_ids(sh), function(tid) fill_table(sh, tid, ctx, floor_n))
   names(out) <- shell_table_ids(sh)
-  out
+  suppress_across_tables(out, sh, floor_n)
 }
 
 all_unfilled <- function(filled) {

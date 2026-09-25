@@ -211,18 +211,45 @@ withheld.
 - A cell whose denominator is under the floor is suppressed, and so is the
   count it was computed from. The default floor is 25, the protocol's, and
   `TFLS_MIN_N` can only raise it.
-- A withheld cell must not be recoverable by subtraction, so the sums the
-  table itself draws are closed: a subtotal and the rows indented under it, a
-  total column and the columns it splits into, and the column's denominator
-  against the rows that divide it. Where one of those sums has exactly one
-  withheld term, its smallest published term goes too, and the closing repeats
-  until no sum has a lone unknown left.
-- Two things the table cannot close, and states rather than hides. The regimen
-  class columns do not exhaust a line - the transplant-only lines belong to no
-  class - so `Overall` less the classes bounds a withheld class from above
-  rather than fixing it. And the sums are drawn inside one table: two tables
-  from the same run share populations, and a reader holding both can subtract
-  across them.
+- **A survival curve publishes two counts, whatever the row prints**: the
+  patients with the event, in `N`, and the patients censored, which is `DENOM`
+  less `N`. Both have to reach the floor, for every statistic read off the
+  curve - the events and censored rows, and the median and the probabilities
+  too, whose `N` is the curve's events. A median over 30 patients of whom 3 had
+  the event is withheld. (A *rate* is not a curve and keeps the package's own
+  rule: it is suppressed on its at-risk count, and the events inside a large
+  population are published.)
+- **A row whose own filter narrows its column's population** -
+  `TTE_ELIGIBLE=1` - leaves out patients that every unfiltered row of the same
+  population still counts. The ones it leaves out are a number a reader can
+  take, so they reach the floor or the row is withheld.
+- **A sum gives away whatever its printed terms leave out**, so what they leave
+  out has to reach the floor: one withheld cell, two withheld cells that add up
+  to 12, or patients no term counts at all. The sums are read off the shells:
+  a subtotal and the rows indented under it; the column's denominator against
+  the rows that divide it; and a population against the columns that split it
+  - `Overall` against its regimen classes, and against its subgroups. That
+  last kind is read **across tables** as well as within one: T5c has no
+  `Overall` of its own, and its age columns for a line split T4's `Overall` for
+  that line, row for row. Every statistic takes part in a split, not only the
+  counts, because every printed cell carries its population in `DENOM` and
+  populations add up. The closing repeats until no sum is short, then runs
+  once more over all the tables together.
+- **This withholds more than the rule it replaced, on purpose.** The old rule
+  published two withheld levels beside a third - White 30 of 40, with the two
+  levels of 5 withheld - on the ground that nothing isolated either one; but
+  40 - 30 put the ten non-White patients on the page, which is the disclosure
+  the same rule refused for "ten men" one section up. And the regimen classes
+  do not exhaust a line - transplant-only lines belong to no class - so
+  `Overall` less the classes is a count of those patients, and it is floored
+  like any other. On a full run, where that remainder is small, expect the
+  smallest class column of the line to be withheld on many rows.
+- **Still for the disclosure reviewer**, because the shells draw no sum that
+  would close them: consecutive steps of the sample-selection funnel (F1)
+  differ by the patients one step removes; `min`/`max` rows print single
+  patients' values; the `REASON` column says which withheld cell was the small
+  one and which went only to protect it; and a curve cell refused as "past the
+  observed follow-up" names that population's longest follow-up.
 - A suppressed cell prints as `<25` (or the floor in force), never as a blank
   that could be read as zero.
 - Nothing patient-level is read or written. No identifier reaches `out/`.
