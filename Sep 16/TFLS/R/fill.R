@@ -608,10 +608,14 @@ months_from_filter <- function(terms) {
 # The time and event columns behind a curve. A measure of OS means OS_MONTHS
 # and OS_EVENT, which is how the study package writes them; a measure naming
 # the months column directly is read the same way.
-km_columns <- function(d, measure) {
+km_time_name <- function(measure) {
   base <- chr(measure$column)
-  if (!nzchar(base)) return(NULL)
-  tcol <- if (grepl("_MONTHS$", toupper(base))) base else paste0(base, "_MONTHS")
+  if (!nzchar(base)) return("")
+  if (grepl("_MONTHS$", toupper(base))) base else paste0(base, "_MONTHS")
+}
+km_columns <- function(d, measure) {
+  tcol <- km_time_name(measure)
+  if (!nzchar(tcol)) return(NULL)
   ecol <- sub("_MONTHS$", "_EVENT", toupper(tcol))
   t <- col_of(d, tcol); e <- col_of(d, ecol)
   list(time = t, event = e, want_time = tcol, want_event = ecol)
@@ -794,16 +798,40 @@ empty_cells <- function() data.frame(
   ROW_KEY = character(0), POP_N = numeric(0), CURVE_KEY = character(0),
   stringsAsFactors = FALSE)
 
-# The curve a row is read off: what it reads, less the month a probability is
-# read at. A curve's events, censored, median and probabilities are one thing
-# printed as several rows, and R/suppress.R withholds them together.
-curve_key <- function(row) {
+# The curve a row is read off: the table, the time column and the rows it is
+# over, less the month a probability is read at. A curve's events, censored,
+# median and probabilities are one thing printed as several rows, and
+# R/suppress.R withholds them together - so two spellings of one curve have to
+# give one key, or its rows are closed apart again and read against each other.
+#
+# Read the way the fill reads them rather than as written. The table name and a
+# column name match whatever their case (fill_context(), col_of()); the
+# endpoint is the months column km_columns() resolves, so TTNT and
+# TTNT_MONTHS are one curve; a filter is its parsed terms in any order and
+# spacing. A value compared with = or != is compared as text, case and all
+# (apply_term()), so it is kept as written; a number compared with < or >= is a
+# number. A term with nothing to compare restricts nothing and is left out. The
+# run's own TTE_ELIGIBLE switch selects what TTE_ELIGIBLE=1 does, and is keyed
+# the same.
+curve_key <- function(row, eligible_only = FALSE) {
   if (!chr(row$stat) %in% TFLS_CURVE_STATS) return("")
-  parts <- trimws(strsplit(chr(row$filter), "[;&]")[[1]])
-  parts <- parts[nzchar(parts) & !grepl("^MONTHS[[:space:]]*=", parts,
-                                         ignore.case = TRUE)]
-  paste(chr(row$source), chr(row$measure), paste(sort(parts), collapse = "&"),
-        sep = "|")
+  term_key <- function(t) {
+    col <- toupper(chr(t$column))
+    if (!isTRUE(t$ok)) return(paste0("?", chr(t$raw)))
+    if (identical(col, "MONTHS") || !nzchar(chr(t$op)) || !length(t$value))
+      return("")
+    v <- chr(t$value)
+    if (!t$op %in% c("=", "!=")) {
+      y <- suppressWarnings(as.numeric(v[1]))
+      v <- if (is.na(y)) v[1] else format(y, digits = 15)
+    }
+    paste0(col, t$op, paste(sort(unique(v), method = "radix"), collapse = "|"))
+  }
+  terms <- vapply(parse_filter(row$filter), term_key, character(1))
+  if (isTRUE(eligible_only)) terms <- c(terms, "TTE_ELIGIBLE=1")
+  terms <- sort(unique(terms[nzchar(terms)]), method = "radix")
+  paste(toupper(chr(row$source)), toupper(km_time_name(parse_measure(row$measure))),
+        paste(terms, collapse = "&"), sep = "|")
 }
 
 empty_unfilled <- function() data.frame(
@@ -973,7 +1001,7 @@ fill_table <- function(sh, tid, ctx, floor_n = TFLS_PACKAGE_MIN_N) {
         ROW_KEY = paste(chr(row$stat), chr(row$source), chr(row$measure),
                         chr(row$filter), sep = "|"),
         POP_N = if (is.null(cell)) NA_real_ else pop_n,
-        CURVE_KEY = curve_key(row),
+        CURVE_KEY = curve_key(row, ctx$tte_eligible_only),
         stringsAsFactors = FALSE)
     }
   }

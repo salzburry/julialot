@@ -2456,6 +2456,47 @@ local({
      "in the shipped T4 every 1L curve - counts, median and probabilities - is withheld whole or printed whole")
   csv <- render_csv(list(cells = t4))
   ok(!"CURVE_KEY" %in% names(csv), "...and the key it is grouped by is not exported")
+
+  # One curve, however a shell spells it. Keyed on the raw text, a censored row
+  # written differently from its events row was a curve of its own, closed
+  # apart again - and the reviewer's table gave its 10 events back.
+  kr <- function(stat, source, measure, filter, only = FALSE)
+    curve_key(list(stat = stat, source = source, measure = measure,
+                   filter = filter), only)
+  same <- c(kr("km_events", "S_TTE", "TTNT", "TTE_ELIGIBLE=1"),
+            kr("km_censored", "s_tte", "ttnt_months", "tte_eligible = 1"),
+            kr("km_median", "S_TTE", "TTNT", " TTE_ELIGIBLE == 1 ; "),
+            kr("km_prob", "S_TTE", "TTNT_MONTHS", "months=12&TTE_ELIGIBLE=1"),
+            kr("km_events", "S_TTE", "TTNT", "", only = TRUE))
+  ok(length(unique(same)) == 1L && nzchar(same[1]),
+     paste0("a curve's key is one key across case, spacing, == for =, the ",
+            "months column named in full, the month a probability is read at, ",
+            "and the run's own TTE_ELIGIBLE switch"))
+  ok(kr("km_events", "S_TTE", "OS", "TTE_ELIGIBLE=1") != same[1] &&
+       kr("km_events", "S_TTE", "TTNT", "TTE_ELIGIBLE=0") != same[1] &&
+       kr("km_events", "S_TTE", "TTNT", "SEX=Male") !=
+         kr("km_events", "S_TTE", "TTNT", "SEX=male"),
+     "...while another endpoint, another population, or a value in another case - which = compares as written - is another curve")
+  VAR <- SHIP
+  cz <- VAR$rows$table_id == "T4" & VAR$rows$stat == "km_censored"
+  VAR$rows$source[cz] <- tolower(VAR$rows$source[cz])
+  VAR$rows$measure[cz] <- paste0(tolower(VAR$rows$measure[cz]), "_months")
+  VAR$rows$filter[cz] <- "tte_eligible = 1"
+  tv <- fill_all(VAR, fill_context(rd, VAR$classes), 25)[["T4"]]$cells
+  v1 <- tv[grepl("^1L_", tv$COLUMN_ID) & tv$FILLED == 1L & tv$SECTION == 0L, ]
+  per_v <- tapply(v1$SUPPRESSED, paste(v1$COLUMN_ID, v1$CURVE_KEY), function(x)
+    length(unique(x)))
+  ok(sum(cz) > 0 && all(per_v == 1L) &&
+       identical(sort(unique(v1$CURVE_KEY)), sort(unique(c1$CURVE_KEY))),
+     "the shipped T4 with its censored rows spelled another way still groups each curve whole")
+  vcsv <- render_csv(list(cells = tv))
+  vq <- vcsv[vcsv$ROW_ORDER %in% 3:4 & grepl("^1L_", vcsv$COLUMN_ID), ]
+  pop_q <- vq$DENOM[vq$COLUMN_ID == "1L_ACD38_QUAD"]
+  ok(all(is.na(vq$N[vq$COLUMN_ID == "1L_ACD38_QUAD"])) && all(is.na(pop_q)) &&
+       all(vapply(setdiff(unique(vq$COLUMN_ID[vq$SUPPRESSED == 0L]), "1L_OVERALL"),
+                  function(c) sum(vq$COLUMN_ID == c & vq$SUPPRESSED == 0L) == 2L,
+                  logical(1))),
+     "...so the class with 10 events is withheld, and every class printed prints both its counts")
   quad_ev <- csv$N[csv$COLUMN_ID == "1L_ACD38_QUAD" & csv$ROW_LABEL == "Events, n (%)"][1]
   pub <- csv[csv$SUPPRESSED == 0L & csv$ROW_LABEL %in% c("Events, n (%)", "Censored, n (%)") &
                grepl("^1L_", csv$COLUMN_ID) & csv$ROW_ORDER %in% 3:4, ]
