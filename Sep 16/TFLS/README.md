@@ -228,6 +228,15 @@ withheld.
   the event is withheld. (A *rate* is not a curve and keeps the package's own
   rule: it is suppressed on its at-risk count, and the events inside a large
   population are published.)
+- **A curve goes whole.** When any cell of one column's curve is withheld —
+  by the floor, or to protect another cell — its events, censored, median and
+  probabilities are all withheld. Events and censored add up to the curve's
+  population. So a withheld events count printed beside its censored count
+  (and the `DENOM` that carries the population) is simply the one less the
+  other, and the sum across the classes then gives up the class the floor
+  withheld in the first place. For the same reason, where a sum needs one
+  more cell withheld, it takes a class whose curve is already going, so the
+  events row and the censored row give up the same class.
 - **A row whose own filter narrows its column's population** -
   `TTE_ELIGIBLE=1` - leaves out patients that every unfiltered row of the same
   population still counts. The ones it leaves out are a number a reader can

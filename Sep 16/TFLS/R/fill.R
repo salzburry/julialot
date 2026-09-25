@@ -791,8 +791,20 @@ empty_cells <- function() data.frame(
   VALUE = numeric(0), LOW = numeric(0), HIGH = numeric(0), N = numeric(0),
   DENOM = numeric(0), TEXT = character(0), FILLED = integer(0),
   SUPPRESSED = integer(0), REASON = character(0), REASON_KIND = character(0),
-  ROW_KEY = character(0), POP_N = numeric(0),
+  ROW_KEY = character(0), POP_N = numeric(0), CURVE_KEY = character(0),
   stringsAsFactors = FALSE)
+
+# The curve a row is read off: what it reads, less the month a probability is
+# read at. A curve's events, censored, median and probabilities are one thing
+# printed as several rows, and R/suppress.R withholds them together.
+curve_key <- function(row) {
+  if (!chr(row$stat) %in% TFLS_CURVE_STATS) return("")
+  parts <- trimws(strsplit(chr(row$filter), "[;&]")[[1]])
+  parts <- parts[nzchar(parts) & !grepl("^MONTHS[[:space:]]*=", parts,
+                                         ignore.case = TRUE)]
+  paste(chr(row$source), chr(row$measure), paste(sort(parts), collapse = "&"),
+        sep = "|")
+}
 
 empty_unfilled <- function() data.frame(
   TABLE_ID = character(0), ROW_ORDER = integer(0), ROW_LABEL = character(0),
@@ -961,6 +973,7 @@ fill_table <- function(sh, tid, ctx, floor_n = TFLS_PACKAGE_MIN_N) {
         ROW_KEY = paste(chr(row$stat), chr(row$source), chr(row$measure),
                         chr(row$filter), sep = "|"),
         POP_N = if (is.null(cell)) NA_real_ else pop_n,
+        CURVE_KEY = curve_key(row),
         stringsAsFactors = FALSE)
     }
   }
