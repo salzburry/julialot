@@ -83,6 +83,30 @@ So **all five steps have to be re-run, from step 1**: the cohort at the new
 window, then the LOT run on that cohort, then steps 3 to 5. Tables built from
 the earlier runs describe a cohort and lines this code no longer produces.
 
+**And the step-3 tables have to GO, not just be rebuilt.** Inserts are
+positional, so a table this version declares with columns the last version did
+not have cannot be written into - the run stops on it rather than putting
+values in the wrong columns:
+
+```
+Error: SCHEMA ERROR: <catalog>.<schema>.s223926_S_COHORT exists with a
+different shape.
+  declared: ... IN_COHORT INT, CRITERIA_ASKED STRING, NESTED INT
+  found:    ... IN_COHORT INT
+```
+
+That is an output prefix reused across package versions, and there are two
+answers. Either drop what the old version left:
+
+```sql
+SHOW TABLES IN <catalog>.<schema> LIKE 's223926_*';   -- then DROP each
+```
+
+or point this run at a prefix of its own, `OBJECT_PREFIX=s223926b_`, and carry
+the same value into step 4 as `TFLS_PREFIX` and into the dashboard. Nothing is
+lost either way - every `S_*` table is rebuilt from steps 1 and 2 - and a
+fresh prefix leaves the previous run readable while the new one is checked.
+
 **Not on the epoch day.** Step 3 refuses a LOT run that finished on or before
 `LOT_RULES_EPOCH` (below), and the shipped date is the day the rules last
 changed. A step 2 run finished on that calendar date is refused, so build it
@@ -181,12 +205,41 @@ CODELIST_DIR=$CL DATABRICKS_PWD="$DATABRICKS_PWD" PROJECT_WORK_SCHEMA=$SCHEMA \
 #    INPUT_COHORT_TABLE and OBJECT_PREFIX are REQUIRED - the run stops
 #    naming whichever is missing before it opens a connection.
 DATABRICKS_PWD="$DATABRICKS_PWD" PROJECT_WORK_SCHEMA=$SCHEMA CODELIST_DIR=$CL \
-  INPUT_COHORT_TABLE=$COHORT OBJECT_PREFIX=s223926_ LOT_PREFIX=ndmm_ \
+  INPUT_COHORT_TABLE=$COHORT OBJECT_PREFIX=s223926_ \
+  LOT_PREFIX=ndmm_ COHORT_PREFIX=ndmm_ \
   Rscript variables/build.R
 
 # ...or print the plan and stop. No driver, no warehouse, nothing read.
 DRY_RUN=TRUE INPUT_COHORT_TABLE=$COHORT OBJECT_PREFIX=s223926_ \
   Rscript variables/build.R
+```
+
+**Three prefixes, and step 3 needs all three.** `OBJECT_PREFIX` is where the
+study run WRITES; `LOT_PREFIX` and `COHORT_PREFIX` are where it READS what
+steps 2 and 1 wrote. Each of the two read-prefixes defaults to
+`OBJECT_PREFIX`, which is right only when one prefix built everything — and
+the commands above do not, so both have to be named. Leave `COHORT_PREFIX`
+out and the run looks for the cohort's metadata under the study prefix, finds
+nothing, and says so twice:
+
+```
+upstream settings unverified: could not read <catalog>.<schema>.s223926_NDMM_RUN_METADATA
+WARNING: whether the cohort build barred panobinostat and elotuzumab from
+         setting the 1L index is unverified
+```
+
+Both are the same missing setting. Neither stops the run — `s7.2.1.1` and the
+upstream-settings check are then simply not made, which is the thing they
+exist to prevent.
+
+**`LOT_ALLOW_UNPROVEN_LINEAGE=TRUE` hides this.** It waives "no cohort build
+status found", and a wrong `COHORT_PREFIX` produces exactly that message. Set
+the prefix and leave the waiver unset: then the lineage check reads the
+cohort's own status row and the binding is proven rather than assumed. If the
+run still cannot find it, that is a real absence and worth knowing about
+before the numbers are.
+
+```bash
 
 # 4. the requested table shells
 TFLS_SOURCE=warehouse TFLS_PREFIX=s223926_ PROJECT_WORK_SCHEMA=$SCHEMA \

@@ -179,6 +179,32 @@ read_error <- function(reader, table) {
     get(t, envir = e, inherits = FALSE)
 }
 
+# The study package's connection code, loaded, configured, and REGISTERED.
+#
+# Every warehouse read goes through the package's db_q(), which retries through
+# with_retry() - and with_retry() takes its retry count and back-off from
+# study_config(). A config built with cfg_defaults() and never handed to
+# set_study_config() is one nothing can see: the first read stopped with "No
+# config" before it reached the connection, so every warehouse run failed at
+# S_RUN_METADATA and wrote nothing. The dashboard and the snapshot job
+# register theirs; this did not, and the suite only ever read this file as
+# text, so nothing drove a read through db_q() to find out.
+#
+# One function, so sourcing, building and registering cannot drift apart
+# again. `envir` is where the package lands - the global environment for a
+# run, a private one for a test that must not have its helpers overwritten.
+open_study_package <- function(pkg, schema, catalog, envir = globalenv()) {
+  for (f in c("config_223926.R", "db_utils_223926.R"))
+    source(file.path(pkg, "R", f), local = envir)
+  # cfg_defaults() is a function in the study package, not a list. Taking it
+  # unevaluated made every warehouse run fail on the next line.
+  cfg <- get("cfg_defaults", envir = envir)()
+  cfg$work_schema <- schema
+  cfg$catalog <- catalog
+  get("set_study_config", envir = envir)(cfg)
+  cfg
+}
+
 warehouse_reader <- function(con, catalog, schema, prefix, cohort_table = "") {
   read_errors <- new.env(parent = emptyenv())
   f <- function(table) {
@@ -461,13 +487,7 @@ main <- function() {
     wn <- warehouse_names()
     schema <- wn$schema; catalog <- wn$catalog; cohort_table <- wn$cohort_table
     library(DBI); library(odbc)
-    for (f in c("config_223926.R", "db_utils_223926.R"))
-      source(file.path(pkg, "R", f))
-    # cfg_defaults() is a function in the study package, not a list. Taking
-    # it unevaluated made every warehouse run fail on the next line.
-    cfg <- cfg_defaults()
-    cfg$work_schema <- schema
-    cfg$catalog <- catalog
+    cfg <- open_study_package(pkg, schema, catalog)
     if (!nzchar(chr(cfg$pwd)))
       stop("DATABRICKS_PWD environment variable is not set.", call. = FALSE)
     con <- connect_db(cfg)
