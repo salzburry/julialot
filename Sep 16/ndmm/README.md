@@ -853,7 +853,7 @@ changed without changing the cohort; this list is a description of it.
 | `OBJECT_PREFIX` | (none) | the cohort prefix, or pass it to `build.R`. Must end in `_` |
 | `DOMINO_RUN_ID` | a timestamp | identifies the run in every metadata table |
 | `OUTPUT_DIR` | `/mnt/artifacts/results` | artifacts |
-| `PIPELINE_LOG_FILE` | a dated file | the run log |
+| `PIPELINE_LOG_FILE` | `OUTPUT_DIR/pipeline_run_<time>_<pid>.log` | the run log: every line the run prints, its QC tables, warnings, and the `ERROR:` line it stopped on. Its folder is created; if it cannot be written the run says so once and logs to the console only |
 
 ### The contract
 

@@ -857,6 +857,25 @@ cat("\nwithholding a cell is not the same as hiding it\n")
     c4 <- with_names()
     ok(identical(c4$work_schema, ""),
        "with no schema from anywhere it stays unset, and the warehouse source refuses to build a name from it")
+    # The package is opened with what was resolved here. Left to resolve the
+    # schema itself, cfg_defaults() checked it against DATABRICKS_CATALOG
+    # alone, and an app given its catalog under its own name stopped there.
+    c10 <- with_names(DASH_CATALOG = "analytics", WORK_SCHEMA = "analytics.usr00000")
+    ok(identical(c10$catalog, "analytics") && identical(c10$work_schema, "usr00000"),
+       "a catalog given to the dashboard alone, with the schema written catalog.schema, is accepted")
+    opened <- tryCatch(cfg_defaults(catalog = c10$catalog, work_schema = c10$work_schema),
+                       error = function(e) conditionMessage(e))
+    ok(is.list(opened) && identical(opened$catalog, "analytics") &&
+         identical(opened$work_schema, "usr00000"),
+       "...and the study package opens with the same two")
+    left <- tryCatch(cfg_defaults(), error = function(e) conditionMessage(e))
+    ok(is.character(left) && grepl("names catalog 'analytics'", left, fixed = TRUE),
+       "...where left to resolve them itself it stops on that same environment")
+    gsrc <- paste(readLines("global.R", warn = FALSE), collapse = "\n")
+    ok(grepl("cfg_defaults(catalog = DASH_CFG$catalog,", gsrc, fixed = TRUE) &&
+         grepl("work_schema = DASH_CFG$work_schema)", gsrc, fixed = TRUE) &&
+         !grepl("set_study_config(cfg_defaults())", gsrc, fixed = TRUE),
+       "global.R opens the package with the dashboard's own catalog and schema")
   })
 
   # --- a run that did not finish is not a scenario ---
@@ -1242,6 +1261,36 @@ source(file.path(here, "jobs", "export_lib.R"))
      "a blank cell written as NA is not a setting of \"NA\"")
   ok(!"note" %in% names(e),
      "and a lower-case column is documentation, not a setting to export")
+
+  # --- what every scenario reads is set before any of them is built ---
+  # The shipped config.csv leaves the cohort table and both read prefixes
+  # blank, and a grid row names neither, so a Job given only the password and
+  # the schema built nothing: each child stopped in turn, or read its inputs
+  # under its own prefix.
+  two <- list(scenario_env(list(prefix = "sc_a_")),
+              scenario_env(list(prefix = "sc_b_", LOT_PREFIX = "ndmm_")))
+  unset_inputs <- c(INPUT_COHORT_TABLE = "", LOT_PREFIX = "", COHORT_PREFIX = "")
+  shipped_csv <- file.path(dirname(here), "variables", "config.csv")
+  g0 <- with_env(unset_inputs, shared_inputs_missing(two, c("sc_a_", "sc_b_"), shipped_csv))
+  ok(identical(g0, c("INPUT_COHORT_TABLE (every scenario)", "LOT_PREFIX (sc_a_)",
+                     "COHORT_PREFIX (every scenario)")),
+     "with the shipped config.csv and nothing from the Job, the three shared inputs are named, row by row")
+  g1 <- with_env(c(INPUT_COHORT_TABLE = "ndmm_NDMM_COHORT", LOT_PREFIX = "ndmm_",
+                   COHORT_PREFIX = "ndmm_"),
+                 shared_inputs_missing(two, c("sc_a_", "sc_b_"), shipped_csv))
+  ok(!length(g1), "...and given to the Job as step 3 was given them, every row has them")
+  own_csv <- tempfile(fileext = ".csv")
+  writeLines(c("name,value,description", "INPUT_COHORT_TABLE,ndmm_NDMM_COHORT,x",
+               "LOT_PREFIX,ndmm_,x", "COHORT_PREFIX,ndmm_,x"), own_csv)
+  g2 <- with_env(unset_inputs, shared_inputs_missing(two, c("sc_a_", "sc_b_"), own_csv))
+  unlink(own_csv)
+  ok(!length(g2), "...or from config.csv, where the Job's environment leaves them")
+  jb_now <- paste(readLines(file.path(here, "jobs", "build_scenarios.R"), warn = FALSE),
+                  collapse = "\n")
+  at_check <- regexpr("shared_inputs_missing(envs", jb_now, fixed = TRUE)
+  at_build <- regexpr("results  <- lapply(", jb_now, fixed = TRUE)
+  ok(at_check > 0 && at_build > 0 && at_check < at_build,
+     "the Job asks before the first scenario is built, not after each one fails")
 
   # --- the shipped grid, row by row, through the package's own config ---
   # A grid value the package would refuse is found here rather than on the
@@ -2618,17 +2667,26 @@ cat("\nthe shells are filled at the sidebar's floor, and no lower\n")
     hi <- shell_fill(ready, "T4", SRC, s, 60000L)
     ok(identical(hi$floor_n, 60000L), "and a viewer raising it is honoured")
 
-    # A withheld cell reaches the page as the engine's own text.
-    shown <- f$cells$TEXT[f$cells$FILLED == 1L & f$cells$SECTION == 0L][1]
-    h <- shell_panel_html(ready, f)
-    hh <- shell_panel_html(ready, hi)
-    ok(nzchar(shown) && grepl(shown, h, fixed = TRUE),
+    # A withheld cell reaches the page as the engine's own text. Read off F1,
+    # not T4: this fixture's survival curves censor fewer than 25 of their 100
+    # patients, and a curve publishes its censored as DENOM less N, so every T4
+    # cell is withheld at 25 and there is no allowed cell there to look for.
+    # The cell picked is a PUBLISHED one - the first filled cell used to be
+    # taken on trust, and was published only because the old rule let a
+    # curve's small censored count through.
+    pf <- shell_fill(ready, "F1", SRC, s, 25L)
+    phi <- shell_fill(ready, "F1", SRC, s, 60000L)
+    shown <- pf$cells$TEXT[pf$cells$FILLED == 1L & pf$cells$SECTION == 0L &
+                             pf$cells$SUPPRESSED == 0L][1]
+    h <- shell_panel_html(ready, pf)
+    hh <- shell_panel_html(ready, phi)
+    ok(!is.na(shown) && nzchar(shown) && grepl(shown, h, fixed = TRUE),
        "a cell the floor allows is on the page")
     ok(!grepl(shown, hh, fixed = TRUE),
        "...and is gone once the floor covers it")
     ok(grepl("&lt;60000", hh, fixed = TRUE) && !grepl("<60000", hh, fixed = TRUE),
        "...replaced by the engine's withheld text, escaped, never by a blank")
-    supp <- hi$cells[hi$cells$SUPPRESSED == 1L, , drop = FALSE]
+    supp <- phi$cells[phi$cells$SUPPRESSED == 1L, , drop = FALSE]
     ok(nrow(supp) > 0 && all(supp$TEXT == "<60000") &&
          all(is.na(supp$N)) && all(is.na(supp$DENOM)),
        "and the withheld cell carries no number at all, its denominator included")

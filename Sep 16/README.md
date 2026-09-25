@@ -246,11 +246,24 @@ TFLS_SOURCE=warehouse TFLS_PREFIX=s223926_ PROJECT_WORK_SCHEMA=$SCHEMA \
   TFLS_PACKAGE_DIR=variables \
   DATABRICKS_PWD="$DATABRICKS_PWD" Rscript TFLS/run_tfls.R
 
-# 5. the dashboard — snapshot for a shared deployment, then the App
-DATABRICKS_PWD="$DATABRICKS_PWD" PROJECT_WORK_SCHEMA=$SCHEMA \
+# 5. the dashboard — snapshot for a shared deployment, then the App.
+#    Each scenario IS a step-3 run, so it needs what step 3 was given; the
+#    grid adds only OBJECT_PREFIX and the question it changes.
+DATABRICKS_PWD="$DATABRICKS_PWD" PROJECT_WORK_SCHEMA=$SCHEMA CODELIST_DIR=$CL \
+  INPUT_COHORT_TABLE=$COHORT LOT_PREFIX=ndmm_ COHORT_PREFIX=ndmm_ \
   Rscript dashboard/jobs/build_scenarios.R
 DASH_SOURCE=snapshot DASH_SNAPSHOT_DIR=/mnt/data/NDMM bash dashboard/app.sh
 ```
+
+**Step 5 runs step 3 again, once per row of `dashboard/scenarios.csv`.** The
+settings on step 3's line apply to that command only, so they are given again
+here. Without the cohort table or either read prefix the Job stops before
+building anything and names what is missing: a read prefix left blank would
+be read as each scenario's own, which is where it writes, not where steps 1
+and 2 wrote. Without `CODELIST_DIR` every module whose list is still the
+shipped blank template is left out of every scenario. Anything else step 3
+was given — `LOT_CODE_MD5`, `MODULES`, `SKIP_MODULES` — goes on this line
+too.
 
 **One connection.** All five open the warehouse through one line of code -
 the LOT engine's `DBI::dbConnect(odbc::odbc(), dsn = DATABRICKS_DSN, pwd =
@@ -285,6 +298,31 @@ silently moves one of them off its intended value.
 variables each needs, and the deployment controls that are **not** in the code.
 
 ---
+
+## The run log
+
+Steps 1, 2 and 3 each write one when started from their `build.R`, and it
+holds everything the run says: its log lines, the QC and diagnostic tables it
+prints, its warnings and messages, and - as an `ERROR:` line - the reason it
+stopped, if it did. The console shows the same run; the file is the one to
+send.
+
+It goes to `PIPELINE_LOG_FILE` if that is set, and otherwise to
+`pipeline_run_<time>_<pid>.log` under `OUTPUT_DIR`, which defaults to
+`/mnt/artifacts/results` - the folder Domino keeps as a run's results. The run
+prints the path when it starts. If that folder cannot be written it says so
+and falls back to R's temporary folder, which R deletes when the process ends,
+so copy the file out before then; if a named `PIPELINE_LOG_FILE` cannot be
+written it says so once and logs to the console only. To keep one file across
+all three steps, set `PIPELINE_LOG_FILE` - the one variable it is safe to
+`export`, since it names a file rather than a rule:
+
+```bash
+export PIPELINE_LOG_FILE=/mnt/artifacts/results/run_$(date +%Y%m%d_%H%M%S).log
+```
+
+Step 4 and the dashboard write no run log of their own; step 3's `DRY_RUN`
+writes none either.
 
 ## Checking it before you point it at the warehouse
 

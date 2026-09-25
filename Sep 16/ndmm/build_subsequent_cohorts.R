@@ -21,6 +21,11 @@ prefix <- if (length(argv) >= 1) argv[1] else Sys.getenv("OBJECT_PREFIX", unset 
 
 library(DBI); library(odbc); library(glue)
 source(file.path(here, "R", "build_ndmm.R"))
-load_ndmm_modules(here)
-source(file.path(here, "R", "build_subsequent.R"))
-if (!interactive()) build_subsequent(here, prefix)
+# From here on the run goes into its log as well as onto the console - the QC
+# tables it prints, its warnings, and the reason it stopped, if it does. The
+# error line R prints itself goes to stderr, which the tee does not carry, so
+# run_logged() writes the reason into the file as the error is raised.
+if (!interactive()) start_run_log()
+run_logged(load_ndmm_modules(here))
+run_logged(source(file.path(here, "R", "build_subsequent.R")))
+if (!interactive()) run_logged(build_subsequent(here, prefix))

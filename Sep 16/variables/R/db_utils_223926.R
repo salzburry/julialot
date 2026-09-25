@@ -10,12 +10,170 @@
 
 SEP <- strrep("=", 70)
 
+# --- the run log -------------------------------------------------------------
+#
+# A file per run when the run is started from build.R (start_run_log()), and
+# only then - see log_msg(). Everything the run says goes in it: its log lines, the
+# QC and diagnostic tables it print()s, and its warnings, messages and the
+# error that stops it. Each of the last three used to reach the console only,
+# so the log of a failed run ended mid-step with no reason, and a QC heading
+# had nothing under it.
+#
+# Where it goes, the first of these that can be written to:
+#   1. PIPELINE_LOG_FILE - an exact path, so several stages can share one file.
+#      Its folder is created. If it cannot be written, there is no run log, and
+#      the console says so once: a path somebody named is not quietly swapped.
+#   2. OUTPUT_DIR/pipeline_run_<time>_<pid>.log
+#   3. OUTPUT_DIR comes from config.csv, where it is the folder Domino keeps as
+#      a run's results; this package names no path in its code.
+#   4. R's temporary folder - said LOUDLY, because R deletes it when the
+#      process exits, and a log that is gone by the time anyone looks is a log
+#      nobody was told they did not have.
+# The process id is in the name because two runs starting in the same second
+# used to append to one file. Times are the container's local clock, and the
+# announcement names its zone.
+
+.run_log <- new.env(parent = emptyenv())
+
+# Whether a file can be appended to, found by doing it rather than by asking
+# whether its folder exists - a folder can exist and refuse the write.
+.log_writable <- function(lf) {
+  tryCatch({
+    dir.create(dirname(lf), showWarnings = FALSE, recursive = TRUE)
+    con <- file(lf, open = "a")
+    close(con)
+    TRUE
+  }, error = function(e) FALSE, warning = function(w) FALSE)
+}
+
+.log_stamp <- function() format(Sys.time(), "%Y-%m-%d %H:%M:%S")
+
+.resolve_log_file <- function() {
+  if (exists("file", envir = .run_log, inherits = FALSE)) return(.run_log$file)
+  named <- Sys.getenv("PIPELINE_LOG_FILE", unset = "")
+  # OUTPUT_DIR is a row of config.csv, which build.R loads before the log
+  # starts, so the results folder is a setting here rather than a path in code
+  # - this package keeps none. Unset, because the run was started some other
+  # way, the log goes to the temporary folder and says so, as it does when the
+  # results folder cannot be written.
+  out_dir <- Sys.getenv("OUTPUT_DIR", unset = "")
+  lf <- if (nzchar(named)) named else
+    file.path(if (nzchar(out_dir)) out_dir else tempdir(),
+              sprintf("pipeline_run_%s_%d.log",
+                      format(Sys.time(), "%Y%m%d_%H%M%S"), Sys.getpid()))
+  if (!nzchar(named) && !nzchar(out_dir) && .log_writable(lf)) {
+    cat(sprintf(paste0("[%s] [log] WARNING: OUTPUT_DIR is not set, so the run ",
+                       "log is %s, which R DELETES when this process exits - ",
+                       "copy it out before then.\n"), .log_stamp(), lf))
+    assign("file", lf, envir = .run_log)
+    cat(sprintf("[%s] [log] run log -> %s (times are %s)\n", .log_stamp(), lf,
+                format(Sys.time(), "%Z")))
+    return(lf)
+  }
+  if (!.log_writable(lf)) {
+    alt <- if (nzchar(named)) NA_character_ else file.path(tempdir(), basename(lf))
+    if (!is.na(alt) && .log_writable(alt)) {
+      cat(sprintf(paste0("[%s] [log] WARNING: %s cannot be written. The run log ",
+                         "is %s instead, which R DELETES when this process ",
+                         "exits - copy it out before then.\n"),
+                  .log_stamp(), lf, alt))
+      lf <- alt
+    } else {
+      cat(sprintf(paste0("[%s] [log] WARNING: no run log - %s cannot be ",
+                         "written. This run is logged to the console only.\n"),
+                  .log_stamp(), lf))
+      lf <- NA_character_
+    }
+  }
+  assign("file", lf, envir = .run_log)
+  if (!is.na(lf))
+    cat(sprintf("[%s] [log] run log -> %s (times are %s)\n", .log_stamp(), lf,
+                format(Sys.time(), "%Z")))
+  lf
+}
+
+# One value as text. cat() does not dispatch S3 methods, so a bit64::integer64
+# from the driver printed its bit pattern - a count of 1780 came out of a real
+# run as 8.794368e-321 - and a Date printed as a day number, a factor as its
+# code. And cat() keeps 7 significant digits, so 100000 printed as 1e+05 and a
+# count of 12,000,003 as 1.2e+07: rounded, in a log that is read as the count.
+.log_fmt <- function(x) {
+  if (is.null(x)) return("NULL")
+  if (inherits(x, "integer64")) x <- as.numeric(x)
+  v <- if (inherits(x, c("Date", "POSIXt"))) format(x)
+       else if (is.factor(x)) as.character(x)
+       else if (is.numeric(x)) format(x, scientific = FALSE, trim = TRUE)
+       else as.character(x)
+  paste(v, collapse = " ")
+}
+
+# The pieces of a line, joined the way cat() joined them - one space between -
+# except where a piece already brings its own whitespace. Every call site was
+# written for cat()'s space and supplies its own too ("LOT code ", x, " is"),
+# so the old lines carried two; this keeps one and never joins two words that
+# were apart before.
+.log_join <- function(parts) {
+  if (!length(parts)) return("")
+  out <- parts[1]
+  for (p in parts[-1]) {
+    gap <- grepl("[[:space:]]$", out) || grepl("^[[:space:]]", p) ||
+           !nzchar(p) || !nzchar(out)
+    out <- paste0(out, if (gap) "" else " ", p)
+  }
+  out
+}
+
 log_msg <- function(...) {
-  a <- lapply(list(...), function(x)
-    if (inherits(x, "integer64")) format(as.numeric(x), scientific = FALSE) else x)
-  do.call(cat, c(list(sprintf("[%s] ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"))),
-                 a, "\n"))
+  body <- .log_join(vapply(list(...), .log_fmt, character(1)))
+  line <- paste0("[", .log_stamp(), "]", if (nzchar(body)) " ", body)
+  cat(line, "\n", sep = "")
   flush.console()
+  # Teed, the console IS the file as well. Not teed, this stays on the console,
+  # as it always has: the dashboard App and TFLS source this file for its
+  # connection code, and a Shiny process has no business writing run logs.
+  if (isTRUE(.run_log$teed)) try(flush(.run_log$con), silent = TRUE)
+  invisible(line)
+}
+
+# Straight into the file, not onto the console - for what the console has
+# already shown in its own way (a warning, a message) and the file had not.
+.log_to_file_only <- function(...) {
+  if (!isTRUE(.run_log$teed)) return(invisible(NULL))
+  try({
+    cat("[", .log_stamp(), "] ", .log_join(vapply(list(...), .log_fmt,
+                                                  character(1))),
+        "\n", sep = "", file = .run_log$con)
+    flush(.run_log$con)
+  }, silent = TRUE)
+  invisible(NULL)
+}
+
+# Tee the console into the run log for the rest of the process: every print()
+# lands in the file as well as on screen. Started once, from an entry point.
+start_run_log <- function() {
+  if (isTRUE(.run_log$teed)) return(invisible(.run_log$file))
+  lf <- .resolve_log_file()
+  if (is.na(lf)) return(invisible(NA_character_))
+  con <- tryCatch(file(lf, open = "at"), error = function(e) NULL,
+                  warning = function(w) NULL)
+  if (is.null(con)) return(invisible(NA_character_))
+  sink(con, split = TRUE)
+  assign("con", con, envir = .run_log)
+  assign("teed", TRUE, envir = .run_log)
+  invisible(lf)
+}
+
+# A run, with what it says on the way out kept. Calling handlers, so they see a
+# condition as it is raised and change nothing about what happens to it: a
+# warning is still printed by R, and an error still stops the run and runs its
+# on.exit status write. Each goes into the file only - R prints its own on the
+# console, to stderr, which is exactly the stream the tee does not carry. What an inner tryCatch() or suppressWarnings() handles
+# never reaches these, so an expected retry is not logged as an error.
+run_logged <- function(expr) {
+  withCallingHandlers(expr,
+    error = function(e) .log_to_file_only("ERROR: ", conditionMessage(e)),
+    warning = function(w) .log_to_file_only("WARNING: ", conditionMessage(w)),
+    message = function(m) .log_to_file_only(sub("\n$", "", conditionMessage(m))))
 }
 
 # The run's own state, private to this package.
@@ -523,8 +681,10 @@ run_step <- function(con, name, sql, qc = NULL, allow_empty = FALSE) {
   if (is.null(qc)) return(invisible(NULL))
   res <- db_q(con, qc)
   log_msg("  ", name, ": ",
+          # .log_fmt(), not format(): a count of 100000 read "1e+05" and one of
+          # 12,000,003 read "1.2e+07" - rounded, in the line read as the count.
           paste(sprintf("%s=%s", names(res), vapply(res, function(x)
-            format(x[1]), character(1))), collapse = ", "))
+            .log_fmt(x[1]), character(1))), collapse = ", "))
   n <- suppressWarnings(as.numeric(res[[1]][1]))
   if (!allow_empty && !is.na(n) && n == 0)
     stop("STEP ERROR: ", name, " produced 0 rows. Nothing downstream can tell ",

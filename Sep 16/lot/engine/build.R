@@ -37,6 +37,11 @@ study_end    <- if (length(argv) >= 4) argv[4] else NULL
 
 library(DBI); library(odbc); library(glue)
 source(file.path(here, "R", "build_lot.R"))
-load_lot_modules(here)
+# From here on the run goes into its log as well as onto the console - the QC
+# tables it prints, its warnings, and the reason it stopped, if it does. The
+# error line R prints itself goes to stderr, which the tee does not carry, so
+# run_logged() writes the reason into the file as the error is raised.
+if (!interactive()) start_run_log()
+run_logged(load_lot_modules(here))
 if (!interactive())
-  build_lot(here, cohort_table, prefix, study_start, study_end)
+  run_logged(build_lot(here, cohort_table, prefix, study_start, study_end))

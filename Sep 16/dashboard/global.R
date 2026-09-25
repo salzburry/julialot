@@ -65,7 +65,14 @@ DASH_CON <- NULL
 if (identical(DASH_CFG$source, "warehouse")) {
   source(file.path(.pkg_dir, "R", "load_inputs.R"))
   load_pipeline_inputs(.pkg_dir, "config.csv")
-  set_study_config(cfg_defaults())
+  # With the catalog and schema this dashboard resolved, not a second
+  # resolution of its own: bare, cfg_defaults() checked the schema against
+  # DATABRICKS_CATALOG alone and stopped an app given DASH_CATALOG=analytics
+  # and WORK_SCHEMA=analytics.usr00000, which dashboard_config() accepts. The
+  # package's config only connects and retries here; every table is read
+  # under DASH_CFG's names either way.
+  set_study_config(cfg_defaults(catalog = DASH_CFG$catalog,
+                                work_schema = DASH_CFG$work_schema))
   DASH_CON <- connect_db(study_config())
   reg.finalizer(environment(), function(e) try(disconnect_db(DASH_CON),
                                                silent = TRUE), onexit = TRUE)

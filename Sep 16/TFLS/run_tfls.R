@@ -198,9 +198,14 @@ open_study_package <- function(pkg, schema, catalog, envir = globalenv()) {
     source(file.path(pkg, "R", f), local = envir)
   # cfg_defaults() is a function in the study package, not a list. Taking it
   # unevaluated made every warehouse run fail on the next line.
-  cfg <- get("cfg_defaults", envir = envir)()
-  cfg$work_schema <- schema
-  cfg$catalog <- catalog
+  #
+  # Built FROM the names warehouse_names() resolved, not built and then
+  # overwritten with them. Called bare, it resolved the schema a second time
+  # against DATABRICKS_CATALOG alone, so TFLS_CATALOG=analytics with
+  # WORK_SCHEMA=analytics.usr00000 - accepted there - stopped here as a
+  # catalog mismatch before the overwrite was reached.
+  cfg <- get("cfg_defaults", envir = envir)(catalog = catalog,
+                                            work_schema = schema)
   get("set_study_config", envir = envir)(cfg)
   cfg
 }

@@ -11,17 +11,32 @@
 #     n it came from withholds nothing;
 #   * and where the cell IS a count of patients - a level of a variable, or the
 #     patients a mean was taken over - that count is the population behind the
-#     cell, so the floor applies to it as well. A rate and a curve are not:
-#     the package suppresses a rate on its at-risk count and publishes the few
-#     events inside it, and a curve rests on the people it was drawn over;
+#     cell, so the floor applies to it as well. A rate is not: the package
+#     suppresses a rate on its at-risk count and publishes the few events
+#     inside it, and this folder does the same;
+#   * a curve is not a rate. Every statistic read off one publishes two counts
+#     of patients, whatever it prints: the patients with the event, in N, and
+#     the patients censored, which is DENOM less N. So both reach the floor or
+#     the cell is withheld - the events and censored rows, and the median and
+#     the probabilities too, whose N is the curve's events. A median over 30
+#     patients of whom 3 had the event publishes the 3 in its N column, and a
+#     12-month estimate of 90% publishes them again;
+#   * a row whose own filter narrows its column's population - TTE_ELIGIBLE=1 -
+#     leaves out patients that every unfiltered row of the same population
+#     still counts. The ones it leaves out are a number a reader can take, so
+#     they reach the floor, or the row is withheld;
 #   * a denominator that cannot be read is withheld too: a population that has
 #     not been shown to reach the floor has not reached it;
-#   * a cell that is the last unknown in a sum the shell itself draws is the
-#     difference of published numbers, so a second cell of that sum is withheld
-#     with it. The sums are the three below: a subtotal down a column, a total
-#     across a row, and the levels of a variable against the column's own
-#     denominator. Withholding one cell can leave another sum with a single
-#     unknown, so the pass is repeated until no sum has one;
+#   * a sum the shell draws gives away whatever is missing from it. The reader
+#     takes the printed terms from the printed total and has the rest, so the
+#     rest has to reach the floor: one withheld cell, two withheld cells that
+#     add up to 12, or patients no term of the sum counts at all. The sums are
+#     read off the shell - a subtotal down a column, the levels of a variable
+#     against the column's denominator, and a population against the columns
+#     that split it: Overall against its regimen classes and its subgroups, in
+#     the same table or in another one, as T5c's age columns split T4's
+#     Overall. Withholding one cell can leave another sum short, so the pass is
+#     repeated until none is, and it runs again over all the tables together;
 #   * a withheld cell prints as "<25" (or whatever floor is in force), never as
 #     a blank that could be read as a zero.
 
@@ -139,6 +154,15 @@ TFLS_GROUPED_STATS <- c("n_pct", "n")
 # read over rather than being tested as though it were one.
 TFLS_COUNT_FLOOR_STATS <- c("n_pct", "n", "mean_sd", "median_iqr", "min_max")
 
+# The statistics read off a survival curve. Written out here rather than taken
+# from R/stats.R, so the rule does not hang on the order the files load in.
+TFLS_CURVE_STATS <- c("km_events", "km_censored", "km_median", "km_prob")
+
+# A statistic whose N does not add up across a split population: three regimens
+# in one class and four in another are not seven between them. Its population
+# still does, so its denominator takes part in a sum where its N cannot.
+TFLS_NONADDITIVE_N_STATS <- c("n_distinct")
+
 cell_group_key <- function(cells)
   paste(cells$TABLE_ID, cells$COLUMN_ID, cells$SECTION_LABEL, sep = "\r")
 
@@ -148,16 +172,28 @@ cell_group_key <- function(cells)
 relation_terms <- function(cells)
   cells$FILLED == 1L & cells$SECTION == 0L & cells$STAT %in% TFLS_GROUPED_STATS
 
+# A cell that can be a term of a SPLIT - Overall against its classes or its
+# subgroups. Every statistic, not only the counts: a printed cell carries its
+# population in DENOM whatever it prints, and populations add up across a split.
+partition_terms <- function(cells)
+  cells$FILLED == 1L & cells$SECTION == 0L
+
 # The row of the shell a cell sits in, for reading the table across its rows. A
 # frame that does not carry the shell's own order is read in the order it came
 # in, which is the order fill.R writes it in.
 cell_row_order <- function(cells)
   if ("ROW_ORDER" %in% names(cells)) cells$ROW_ORDER else seq_len(nrow(cells))
 
-# One relation: the rows of the cell frame one sum ties together, and the words
-# for why a cell of it was withheld.
-tfls_relation <- function(members, why)
-  list(members = as.integer(members), why = why)
+# One relation: the rows of the cell frame one sum ties together, the words for
+# why a cell of it was withheld, and what the sum is a sum OF - a cell of the
+# frame (`total`), the column's own denominator (`denominator`), or nothing a
+# reader can see, in which case only a lone unknown gives anything away.
+# `kind` says what adds up: down a column the counts do; across a split
+# population the populations do as well.
+tfls_relation <- function(members, why, total = NA_integer_,
+                          denominator = FALSE, kind = "column")
+  list(members = as.integer(members), why = why, total = as.integer(total),
+       denominator = isTRUE(denominator), kind = kind)
 
 # The shell's columns for these cells, however the caller holds them: the whole
 # shell, its columns frame, or nothing. Nothing still works - the sums down a
@@ -238,56 +274,79 @@ relations_down_column <- function(cells, ok) {
       }
       if (!length(kids)) next
       out[[length(out) + 1L]] <- tfls_relation(c(i, kids), paste0(
-        "withheld with the one other cell under the subtotal '",
+        "withheld with another cell under the subtotal '",
         rlab[i], "' in this column, which that subtotal less ",
-        "the published rest would otherwise give away"))
+        "the published rest would otherwise give away"), total = i)
     }
   }
   out
 }
 
-# Across a row: a total column and the levels of one variable beside it.
+# Across columns: a population and the columns that split it.
 #
-# The total has to be a cell of the table, because it is the anchor - without
-# it the levels sum to nothing a reader can see. One level is not a partition
-# of a total, so two are asked for before the shell is read as splitting it.
-relations_across_row <- function(cells, ok, shell) {
+# A column with no subgroup is a population - Overall, or one regimen class. It
+# is split two ways. Columns that name levels of one variable (a subgroup) over
+# that same population split it; and a regimen class is itself one level of the
+# class, so Overall is split by the class columns beside it. A split in ANOTHER
+# table counts the same: T5c has no Overall of its own, and its two age columns
+# for a line split T4's Overall for that line, row for row.
+#
+# Every statistic takes part, not only the counts. A printed cell carries its
+# population in DENOM whatever it prints, and populations add up across a split
+# - Overall's mean age and one subgroup's give away the other subgroup's size
+# between them, and the old rule, which read counts alone, never saw that.
+#
+# In one table a row is matched by where it sits. Between tables it is matched by
+# what it reads - statistic, source, measure and filter - because T5c's rwTTNT
+# median is T4's rwTTNT median over part of the same patients.
+#
+# One level is not a split, so two are asked for.
+relations_partition <- function(cells, ok, shell) {
   out <- list()
   cols <- relation_columns(shell)
   if (is.null(cols)) return(out)
+  cls <- toupper(chr(cols$class)); cls[!nzchar(cls)] <- "OVERALL"
+  base <- paste(chr(cols$cohort), chr(cols$line), chr(cols$period), sep = "\r")
+  sub <- lapply(chr(cols$subgroup), subgroup_variable)
+  varn <- vapply(sub, `[[`, character(1), "var")
+  lvl  <- vapply(sub, `[[`, character(1), "level")
+  has_sub <- nzchar(chr(cols$subgroup))
+  by_sub <- has_sub & nzchar(varn) & nzchar(lvl)
+  by_cls <- !has_sub & cls != "OVERALL"
+  part_of <- rep(NA_character_, nrow(cols))
+  part_of[by_sub] <- paste(chr(cols$table_id[by_sub]), base[by_sub], cls[by_sub],
+                           "subgroup", varn[by_sub], sep = "\r")
+  part_of[by_cls] <- paste(chr(cols$table_id[by_cls]), base[by_cls], "class",
+                           sep = "\r")
+
+  tid <- chr(cells$TABLE_ID); cid <- chr(cells$COLUMN_ID)
   ord <- cell_row_order(cells)
-  at <- paste(cells$TABLE_ID, ord, cells$COLUMN_ID, sep = "\r")
-  for (tid in unique(chr(cells$TABLE_ID))) {
-    cd <- cols[chr(cols$table_id) == tid, , drop = FALSE]
-    if (nrow(cd) < 3L) next
-    pop <- paste(chr(cd$cohort), chr(cd$line), chr(cd$class), chr(cd$period),
-                 sep = "\r")
-    sub <- lapply(chr(cd$subgroup), subgroup_variable)
-    varn <- vapply(sub, `[[`, character(1), "var")
-    lvl <- vapply(sub, `[[`, character(1), "level")
-    is_total <- !nzchar(chr(cd$subgroup))
-    is_level <- !is_total & nzchar(varn) & nzchar(lvl)
-    rows <- unique(ord[chr(cells$TABLE_ID) == tid & cells$SECTION == 0L])
-    for (t in which(is_total)) {
-      # The header the total prints under, for the reason. A frame with no
-      # labels in it names the column by its id instead of by nothing.
-      tlab <- chr(cd$label[t])
-      if (!nzchar(tlab)) tlab <- chr(cd$column_id[t])
-      for (v in unique(varn[is_level & pop == pop[t]])) {
-        part <- unique(chr(cd$column_id[is_level & pop == pop[t] & varn == v]))
-        if (length(part) < 2L) next
-        for (ro in rows) {
-          ti <- match(paste(tid, ro, chr(cd$column_id[t]), sep = "\r"), at)
-          pi <- match(paste(tid, ro, part, sep = "\r"), at)
-          pi <- pi[!is.na(pi)]
-          if (is.na(ti) || !ok[ti]) next
-          pi <- pi[ok[pi]]
-          if (!length(pi)) next
-          out[[length(out) + 1L]] <- tfls_relation(c(ti, pi), paste0(
-            "withheld with the one other cell on this row that the total ",
-            "column '", tlab, "' sums, which that total less the ",
-            "published rest would otherwise give away"))
-        }
+  rkey <- if ("ROW_KEY" %in% names(cells)) chr(cells$ROW_KEY)
+          else rep("", nrow(cells))
+  for (pk in unique(part_of[!is.na(part_of)])) {
+    lv <- which(part_of == pk)
+    if (length(lv) < 2L) next
+    ptid <- chr(cols$table_id[lv[1]])
+    in_lv <- which(ok & tid == ptid & cid %in% chr(cols$column_id[lv]))
+    if (!length(in_lv)) next
+    # The population the levels split: a subgroup splits the column of its own
+    # class; a class splits Overall.
+    total_col <- !has_sub & base == base[lv[1]] &
+      (if (by_sub[lv[1]]) cls == cls[lv[1]] else cls == "OVERALL")
+    for (t in which(total_col)) {
+      ttid <- chr(cols$table_id[t]); tcid <- chr(cols$column_id[t])
+      tlab <- chr(cols$label[t]); if (!nzchar(tlab)) tlab <- tcid
+      same <- identical(ttid, ptid)
+      where <- if (same) "" else paste0(" in ", ttid)
+      for (ti in which(ok & tid == ttid & cid == tcid)) {
+        parts <- if (same) in_lv[ord[in_lv] == ord[ti]]
+                 else if (nzchar(rkey[ti])) in_lv[rkey[in_lv] == rkey[ti]]
+                 else integer(0)
+        if (!length(parts)) next
+        out[[length(out) + 1L]] <- tfls_relation(c(ti, parts), paste0(
+          "withheld with another cell of the columns that split '", tlab, "'",
+          where, ", which that total less the published rest would otherwise ",
+          "give away"), total = ti, kind = "partition")
       }
     }
   }
@@ -313,15 +372,20 @@ relations_against_denominator <- function(cells, ok) {
   for (g in unique(key[ok])) {
     w <- which(ok & key == g)
     if (length(w) < 2L) next
-    out[[length(out) + 1L]] <- tfls_relation(w, paste0(
-      "withheld with the one other cell of its group, which the group total ",
-      "would otherwise give away"))
     top <- w[ind[w] == min(ind[w])]
-    if (length(top) < 2L || length(top) == length(w)) next
+    # Flat, the group IS the levels the denominator splits into, so its sum is
+    # the denominator. Nested, it holds subtotals and the rows under them
+    # together, which add up to more than anything - so it is kept for a lone
+    # unknown only, and the outdented rows carry the sum.
+    flat <- length(top) == length(w)
+    out[[length(out) + 1L]] <- tfls_relation(w, paste0(
+      "withheld with another cell of its group, which the group total ",
+      "would otherwise give away"), denominator = flat)
+    if (flat || length(top) < 2L) next
     out[[length(out) + 1L]] <- tfls_relation(top, paste0(
-      "withheld with the one other cell of the levels this column's ",
+      "withheld with another cell of the levels this column's ",
       "denominator is split into, which that denominator less the published ",
-      "rest would otherwise give away"))
+      "rest would otherwise give away"), denominator = TRUE)
   }
   out
 }
@@ -329,20 +393,70 @@ relations_against_denominator <- function(cells, ok) {
 # Every sum that holds among the cells of these tables.
 cell_relations <- function(cells, shell = NULL) {
   ok <- relation_terms(cells)
-  if (!any(ok)) return(list())
-  c(relations_down_column(cells, ok),
-    relations_across_row(cells, ok, shell),
-    relations_against_denominator(cells, ok))
+  part <- partition_terms(cells)
+  if (!any(part)) return(list())
+  c(if (any(ok)) relations_down_column(cells, ok),
+    relations_partition(cells, part, shell),
+    if (any(ok)) relations_against_denominator(cells, ok))
+}
+
+# Whether the printed terms of a sum leave enough out.
+#
+# The reader has the total and the printed terms, and so the difference: the
+# cells not printed, plus any patients none of the terms counts. That
+# difference is a count of patients like any other, so it reaches the floor or
+# it is given away - two withheld cells of 10 and 5 add up to 15, and 15 is a
+# number on the page. A difference of zero with a cell withheld says that cell
+# is zero, which is withheld everywhere else in this folder, so it is not
+# published here by subtraction either. A sum whose printed terms come to MORE
+# than the total is not a split (a patient counted in two of its terms) and
+# nothing is read off it. A total nobody can see leaves nothing to subtract
+# from.
+relation_covers <- function(cells, was, r, floor_n) {
+  m <- r$members
+  if (isTRUE(r$denominator)) {
+    pub <- m[was[m] == 0L]
+    if (!length(pub)) return(TRUE)
+    tot_n <- cells$DENOM[pub[1]]; tot_d <- NA_real_
+    lv <- m
+    stat <- cells$STAT[pub[1]]
+  } else if (length(r$total) == 1L && !is.na(r$total)) {
+    t <- r$total
+    if (was[t] == 1L) return(TRUE)
+    tot_n <- cells$N[t]; tot_d <- cells$DENOM[t]
+    lv <- setdiff(m, t)
+    stat <- cells$STAT[t]
+  } else return(TRUE)
+  pub <- lv[was[lv] == 0L]
+  hidden <- any(was[lv] == 1L)
+  short <- function(total, parts) {
+    if (length(total) != 1L || is.na(total) || anyNA(parts)) return(FALSE)
+    x <- total - sum(parts)
+    if (x < 0) return(FALSE)
+    (hidden || x > 0) && !tfls_released(x, floor_n)
+  }
+  if (!stat %in% TFLS_NONADDITIVE_N_STATS && short(tot_n, cells$N[pub]))
+    return(FALSE)
+  if (identical(r$kind, "partition")) {
+    if (short(tot_d, cells$DENOM[pub])) return(FALSE)
+    # A curve's censored patients add up across a split too.
+    if (stat %in% TFLS_CURVE_STATS &&
+        short(tot_d - tot_n, cells$DENOM[pub] - cells$N[pub])) return(FALSE)
+  }
+  TRUE
 }
 
 # The relations, closed.
 #
 # One sweep at a time, and each sweep decides from the state the sweep started
-# in: every relation holding exactly one withheld cell among its terms gives up
-# its smallest published one. Withholding that cell can leave a relation it is
-# also a term of with one unknown, so the sweeps repeat until one changes
-# nothing. It terminates because a sweep that changes anything withholds at
-# least one more cell of a finite frame and nothing is ever published back.
+# in. A relation gives up one more of its printed cells when exactly one of its
+# terms is withheld - that one term IS the total less the rest - or when what
+# its printed terms leave out does not reach the floor. It gives up its
+# smallest printed term, and a term before its total. Withholding that cell can
+# leave another relation it is a term of short, so the sweeps repeat until one
+# changes nothing. It terminates because a sweep that changes anything
+# withholds at least one more cell of a finite frame and nothing is ever
+# published back.
 close_relations <- function(cells, relations, floor_n) {
   if (!length(relations)) return(cells)
   guard <- nrow(cells) + 1L
@@ -352,8 +466,16 @@ close_relations <- function(cells, relations, floor_n) {
     fired <- FALSE
     for (r in relations) {
       m <- r$members
-      if (sum(was[m] == 1L) != 1L) next
+      why <- if (sum(was[m] == 1L) == 1L) r$why
+             else if (!relation_covers(cells, was, r, floor_n)) paste0(
+               "withheld because the cells of a sum it belongs to that are not ",
+               "printed would otherwise add up to fewer than ", floor_n,
+               ", which the total less the printed rest gives away")
+             else NULL
+      if (is.null(why)) next
       open <- m[was[m] == 0L]
+      terms <- setdiff(open, r$total)
+      if (length(terms)) open <- terms
       if (!length(open)) next
       n <- n0[open]
       n[is.na(n)] <- Inf
@@ -361,7 +483,7 @@ close_relations <- function(cells, relations, floor_n) {
       # Another relation may have taken it already this sweep, and then the
       # relation has its second unknown and there is nothing left to give away.
       if (cells$SUPPRESSED[pick] == 1L) next
-      cells <- withhold_cell(cells, pick, floor_n, r$why)
+      cells <- withhold_cell(cells, pick, floor_n, why)
       fired <- TRUE
     }
     guard <- guard - 1L
@@ -381,18 +503,64 @@ suppress_cells <- function(cells, floor_n, shell = NULL) {
   if (!"SUPPRESSED" %in% names(cells)) cells$SUPPRESSED <- 0L
   if (!"REASON" %in% names(cells)) cells$REASON <- ""
   live <- cells$FILLED == 1L & cells$SECTION == 0L
+  pop_n <- if ("POP_N" %in% names(cells)) suppressWarnings(as.numeric(cells$POP_N))
+           else rep(NA_real_, nrow(cells))
   for (i in which(live)) {
     d <- cells$DENOM[i]
     n <- cells$N[i]
+    st <- cells$STAT[i]
+    # A curve's two counts. km_censored carries the censored in N; the rest
+    # carry the events there.
+    ev <- if (identical(st, "km_censored")) d - n else n
+    cz <- if (identical(st, "km_censored")) n else d - n
     if (is.na(d))
       cells <- withhold_cell(cells, i, floor_n,
         "the population behind this cell could not be counted, so it has not been shown to reach the floor")
     else if (!tfls_released(d, floor_n))
       cells <- withhold_cell(cells, i, floor_n,
         paste0("fewer than ", floor_n, " in the population this cell is out of"))
-    else if (cells$STAT[i] %in% TFLS_COUNT_FLOOR_STATS && !tfls_released(n, floor_n))
+    else if (st %in% TFLS_COUNT_FLOOR_STATS && !tfls_released(n, floor_n))
       cells <- withhold_cell(cells, i, floor_n,
         paste0("fewer than ", floor_n, " patients in this cell"))
+    else if (st %in% TFLS_CURVE_STATS && !tfls_released(ev, floor_n))
+      cells <- withhold_cell(cells, i, floor_n, paste0(
+        "fewer than ", floor_n, " patients with the event on the curve this ",
+        "cell is read from, and the curve publishes them"))
+    else if (st %in% TFLS_CURVE_STATS && !tfls_released(cz, floor_n))
+      cells <- withhold_cell(cells, i, floor_n, paste0(
+        "fewer than ", floor_n, " patients censored on the curve this cell is ",
+        "read from, and its population less its events publishes them"))
+    else if (!is.na(pop_n[i]) && pop_n[i] > d &&
+             !tfls_released(pop_n[i] - d, floor_n))
+      cells <- withhold_cell(cells, i, floor_n, paste0(
+        "fewer than ", floor_n, " of this column's patients are left out by ",
+        "this row's own filter, and a row without it still counts them"))
   }
   close_relations(cells, cell_relations(cells, shell), floor_n)
+}
+
+# The sums that run between tables.
+#
+# Each table was closed on its own when it was filled. A population split in
+# one table and totalled in another - T5c's age columns and T4's Overall - is
+# only a sum once both are in hand, so the tables go through the pass again
+# together, every relation within and between, and whatever it withholds is
+# withheld in the table it came from. Nothing is ever published back, so a
+# second pass can only add.
+suppress_across_tables <- function(filled, shell, floor_n) {
+  frames <- lapply(filled, `[[`, "cells")
+  sizes <- vapply(frames, function(f) if (is.null(f)) 0L else nrow(f), integer(1))
+  if (sum(sizes) == 0L) return(filled)
+  all <- do.call(rbind, frames[sizes > 0L])
+  rownames(all) <- NULL
+  all <- close_relations(all, cell_relations(all, shell), floor_n)
+  at <- 0L
+  for (k in seq_along(filled)) {
+    if (sizes[k] == 0L) next
+    part <- all[at + seq_len(sizes[k]), , drop = FALSE]
+    rownames(part) <- NULL
+    filled[[k]]$cells <- part
+    at <- at + sizes[k]
+  }
+  filled
 }

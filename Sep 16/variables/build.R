@@ -50,4 +50,13 @@ for (f in c("config_223926.R", "db_utils_223926.R", "registry.R", "contract.R",
             "run_223926.R"))
   source(file.path(here, "R", f))
 
-if (!interactive()) build_223926(here)
+# From here on the run goes into its log as well as onto the console - the QC
+# tables it prints, its warnings, and the reason it stopped, if it does. The
+# error line R prints itself goes to stderr, which the tee does not carry, so
+# run_logged() writes the reason into the file as the error is raised.
+# Not on a DRY_RUN, which prints a plan, reads nothing, and is as often run on
+# a laptop with no results folder as on Domino.
+if (!interactive() &&
+    !identical(toupper(Sys.getenv("DRY_RUN", unset = "FALSE")), "TRUE"))
+  start_run_log()
+if (!interactive()) run_logged(build_223926(here))

@@ -76,7 +76,7 @@ per patient, and must fit the study window the run was given.
 | `R/config_lot.R` | Reads the settings. The environment wins over `config.csv`. |
 | `R/load_inputs.R` | Applies `config.csv` as defaults, never over a value already set, and never reads the password from it. |
 | `R/codelists_lot.R` | Loads the four code lists from CSV — `cl_mma_rollup.csv`, `cl_mma_codelist.csv`, `permissible_subs.csv`, `cl_sct_codelist.csv`. No embedded fallback: a missing file stops the run, and each is hashed before and after being read. |
-| `R/db_utils_lot.R` | Connection, logging, retry, table naming (`wrk` / `lot_out`), `materialize()` and the step runner. |
+| `R/db_utils_lot.R` | Connection, logging, retry, table naming (`wrk` / `lot_out`), `materialize()` and the step runner. The run log: `start_run_log()` tees the console into `PIPELINE_LOG_FILE`, or `OUTPUT_DIR/pipeline_run_<time>_<pid>.log` (default `/mnt/artifacts/results`), so QC tables land in it; `run_logged()` writes warnings, messages and the `ERROR:` a run stops on into it. `build.R` starts both. |
 | `R/line_criteria.R` | Extra criteria on finished lines, declared as data. Every one is computed into `LOT_LONG_ALLFLAGS`; only the enabled ones are applied to `LOT_LONG_FINAL`. |
 | `R/cart_rule.R` | The CAR-T induction rule: an infusion inside line 1's window belongs to line 1 and neither ends nor starts a line. |
 | `R/melp_rule.R` | The melphalan rule: a short course outside induction does not advance a line on its own (`LOT_RULES.md` 4.7). It lives here because it needs each line's own induction window. `APPLY_MELP_RULE=off` builds without it, which is the reference arm `lot/melphalan/` measures against. |

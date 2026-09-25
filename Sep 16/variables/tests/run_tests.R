@@ -1290,8 +1290,9 @@ cat("\nthe rules that hold the numbers up\n")
      "and so does one whose STUDY_END disagrees")
   e_failed <- lin_check(STATE = "failed")
   ok(!is.na(e_failed) && grepl("not 'complete'", e_failed) &&
-       grepl("LOT build's own log", e_failed),
-     "and one that did not finish, saying where that build recorded why")
+       grepl("LOT build's run log", e_failed) && grepl("'ERROR:'", e_failed) &&
+       grepl("PIPELINE_LOG_FILE", e_failed),
+     "and one that did not finish, saying where that build recorded why - the ERROR line in its run log")
 
   # The cohort ATTEMPT. Every check above compares a NAME, and a cohort table
   # can be rebuilt in place under the same name - so these are the ones that
@@ -1528,7 +1529,16 @@ cat("\nthe rules that hold the numbers up\n")
     date = "2026-09-22",
     # The engine's R, by its own code_fingerprint() - the same value it
     # records as CODE_MD5, so the two can be compared by eye.
-    engine = "6587c169ec41a370fe06274a8a8c3e08",
+    #
+    # Re-pinned from 6587c169 WITHOUT moving the date, and this is the one
+    # case that is right. The change was the run log - db_utils_lot.R and
+    # build.R, which tee the console into the file and log a failing run's
+    # reason - and emit_chain.R's full statement chain, 2L and 3L included, is
+    # byte-identical before and after it. No rule moved, so no line did, and a
+    # run built between the two is the same run: moving the date would refuse
+    # it for a change that alters nothing it built. Where the emitted SQL
+    # differs, the date moves too - that is what the date is for.
+    engine = "2c095e6ae5b981edb00628ccfb7678b8",
     # ...and its shipped settings, which code_fingerprint() does not read.
     # Most of what decides a line is pinned in the engine's own CONTRACT and
     # so is inside the R, but the study window is not, and a build reading a
@@ -3769,6 +3779,73 @@ local({
      "exactly 30 days apart is two events - the washout is >= 30, not > 30")
   ok(identical(count_acute_lag(e, 30), e), "...on either reading")
 }
+
+cat("\n-- the run log: spaced once, every value as itself, and everything the run says --\n")
+local({
+  util <- normalizePath("R/db_utils_223926.R")
+  le <- new.env(parent = globalenv())
+  sys.source(util, envir = le)
+  d <- file.path(tempdir(), paste0("runlog_", Sys.getpid(), "_", sample.int(1e6, 1)),
+                 "not", "there", "yet")
+  lf <- file.path(d, "run.log")
+  old <- Sys.getenv("PIPELINE_LOG_FILE", unset = NA)
+  on.exit(if (is.na(old)) Sys.unsetenv("PIPELINE_LOG_FILE")
+          else Sys.setenv(PIPELINE_LOG_FILE = old), add = TRUE)
+  Sys.setenv(PIPELINE_LOG_FILE = lf)
+  said <- capture.output(
+    le$log_msg("LOT code ", "6587c169", " is the approved build"),
+    le$log_msg("step", "enroll_spans"),
+    le$log_msg("n_spans=", 100000, ", n_pat=", 12000003),
+    le$log_msg("study end ", as.Date("2026-03-31"), ", arm ", factor("B", levels = c("A", "B"))),
+    le$log_msg("first\n", "second"))
+  body <- sub("^\\[[^]]*\\] ", "", said[!grepl("[log]", said, fixed = TRUE)])
+  ok(identical(body[1], "LOT code 6587c169 is the approved build"),
+     "a line is spaced once where cat() spaced it twice, with no space left at its end")
+  ok(identical(body[2], "step enroll_spans"),
+     "...and two words passed apart are still apart")
+  ok(grepl("100000", body[3], fixed = TRUE) && grepl("12000003", body[3], fixed = TRUE) &&
+       !grepl("e+0", body[3], fixed = TRUE),
+     "a count prints as itself: 100000 not 1e+05, and 12,000,003 not a rounded 1.2e+07")
+  ok(grepl("2026-03-31", body[4], fixed = TRUE) && grepl("arm B", body[4], fixed = TRUE) &&
+       !grepl("20543", body[4], fixed = TRUE),
+     "a date prints as a date and a factor as its level, not as the numbers behind them")
+  ok("second" %in% said,
+     "a line after a newline starts at the margin, not one space in")
+  ok(!file.exists(lf),
+     "not started from build.R, this logger writes no file: the dashboard App and TFLS source it")
+  # The rest runs in a process of its own: the tee is a sink, and a sink is the
+  # whole session's.
+  lf3 <- file.path(tempdir(), paste0("runlog_tee_", Sys.getpid(), "_", sample.int(1e6, 1), ".log"))
+  scr <- tempfile(fileext = ".R")
+  writeLines(c(
+    sprintf("sys.source(%s, envir = globalenv())", deparse(util)),
+    "start_run_log()",
+    "log_msg('started')",
+    "print(data.frame(n_pat = 9530))",
+    "tryCatch(stop('caught inside'), error = function(e) NULL)",
+    "suppressWarnings(warning('hushed'))",
+    "run_logged({ warning('a loud warning'); message('a message'); stop('SCHEMA ERROR: the reason') })"),
+    scr)
+  env <- c(paste0("PIPELINE_LOG_FILE=", lf3), "OUTPUT_DIR=")
+  st <- suppressWarnings(system2(file.path(R.home("bin"), "Rscript"), shQuote(scr),
+                                 env = env, stdout = TRUE, stderr = TRUE))
+  got <- if (file.exists(lf3)) readLines(lf3, warn = FALSE) else character(0)
+  unlink(c(scr, lf3))
+  ok(!is.null(attr(st, "status")) && attr(st, "status") != 0L,
+     "a run that errors under run_logged() still stops, and says so to the shell")
+  ok(any(grepl("ERROR: SCHEMA ERROR: the reason", got, fixed = TRUE)),
+     "...and its reason is in the run log, where it used to reach the console alone")
+  ok(any(grepl("9530", got, fixed = TRUE)) && any(grepl("n_pat", got, fixed = TRUE)),
+     "a table the run print()s is in the log, not only on the screen")
+  ok(any(grepl("WARNING: a loud warning", got, fixed = TRUE)) &&
+       any(grepl("a message", got, fixed = TRUE)),
+     "its warnings and messages are in the log too")
+  ok(!any(grepl("caught inside", got, fixed = TRUE)) && !any(grepl("hushed", got, fixed = TRUE)),
+     "...but not an error it caught itself, or a warning it silenced")
+  ok(sum(grepl("started", got, fixed = TRUE)) == 1L,
+     "a log line teed into the file is written there once, not twice")
+})
+
 
 check_skip_wiring()
 cat("\n", .pass, " passed, ", length(.fail), " failed, ", length(.skipped), " skipped\n", sep = "")

@@ -26,6 +26,45 @@ scenario_env <- function(row,
   env
 }
 
+# What every scenario READS rather than writes: the cohort table its LOT run was
+# built over, and the prefixes the cohort and LOT builds wrote under. A grid row
+# names what differs between runs, so these come from the Job - given them as
+# step 3 was - or from config.csv, and a row may still carry its own. Missing,
+# every child build stopped at the same setting in turn; and a read prefix left
+# blank defaults to the row's own OBJECT_PREFIX, which is where that scenario
+# writes, not where the builds before it wrote. The Job runs several scenarios
+# over one cohort and one LOT run, so a blank is refused before anything is
+# built rather than guessed per row.
+#
+# One entry per setting that is blank somewhere, naming the rows; empty means
+# every row has all three.
+SCENARIO_SHARED_INPUTS <- c("INPUT_COHORT_TABLE", "LOT_PREFIX", "COHORT_PREFIX")
+shared_inputs_missing <- function(envs, prefixes, config_csv = "") {
+  csv <- if (nzchar(config_csv) && file.exists(config_csv))
+    tryCatch(utils::read.csv(config_csv, stringsAsFactors = FALSE,
+                             colClasses = "character", na.strings = c("", "NA")),
+             error = function(e) NULL)
+  # The job's own environment wins over config.csv, as load_pipeline_inputs()
+  # decides it for the child.
+  shared <- function(k) {
+    v <- trimws(Sys.getenv(k, ""))
+    if (nzchar(v) || is.null(csv) || !all(c("name", "value") %in% names(csv)))
+      return(v)
+    v <- csv$value[trimws(csv$name) == k]
+    if (length(v) && !is.na(v[1])) trimws(v[1]) else ""
+  }
+  gaps <- character(0)
+  for (k in SCENARIO_SHARED_INPUTS) {
+    blank <- vapply(envs, function(e) !(k %in% names(e)), logical(1)) &
+      !nzchar(shared(k))
+    if (any(blank))
+      gaps <- c(gaps, sprintf("%s (%s)", k,
+        if (all(blank) && length(blank) > 1L) "every scenario"
+        else paste(prefixes[blank], collapse = ", ")))
+  }
+  gaps
+}
+
 # One table, read back. Three outcomes, and they are not the same:
 #
 #   ok      rows, or a table that legitimately holds none

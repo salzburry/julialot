@@ -182,9 +182,9 @@ select_population <- function(d, spec, ctx, where) {
       next
     }
     # A line can still be carried, where the table is per patient and the
-    # study's per-line table says which patients have that line.
+    # study's per-line tables say which patients have that line.
     if (identical(k, "LOT_NUM") && has_col(d, "PATID")) {
-      ids <- soc_patients(ctx, line = v, cohort = spec$cohort)
+      ids <- line_patients(ctx, line = v, cohort = spec$cohort)
       if (!is.null(ids)) {
         d <- d[chr(d[[col_of(d, "PATID")]]) %in% ids, , drop = FALSE]
         next
@@ -240,6 +240,42 @@ restrict_unnamed_strata <- function(d, named) {
     d <- d[hit, , drop = FALSE]
   }
   d
+}
+
+# The patients of one line of one cohort, for a table that is one row per
+# patient and names no line of its own - the baseline characteristics.
+#
+# The study's regimen table says, and is read first, so a run that has it reads
+# exactly what it always did. A run that skipped the SOC module - its code
+# lists not yet authored - wrote no S_SOC, and every such row was refused,
+# T1's demographics among them, though nothing in them is about a regimen.
+# S_LOT_PERIODS holds the same lines. S_SOC keeps each line from the cohort's
+# index on that starts inside the cohort's follow-up; S_LOT_PERIODS keeps the
+# same lines from the index on, and a line starting after the follow-up ended
+# is the one whose period is empty, PERIOD_END before PERIOD_START, so dropping
+# those is S_SOC's other bound. (S_SOC also drops a line that is neither drugs
+# nor a transplant; the engine does not build one.) For the line a cohort is
+# indexed on - every Overall column - either table gives the whole cohort.
+line_patients <- function(ctx, line = "", cohort = "") {
+  ids <- soc_patients(ctx, line = line, cohort = cohort)
+  if (!is.null(ids)) return(ids)
+  lp <- ctx$get("S_LOT_PERIODS")
+  if (is.null(lp) || !nrow(lp) || !has_col(lp, "PATID") || !has_col(lp, "LOT_NUM"))
+    return(NULL)
+  if (nzchar(chr(line))) {
+    want <- as_int(strsplit(chr(line), "|", fixed = TRUE)[[1]])
+    lp <- lp[as_int(lp[[col_of(lp, "LOT_NUM")]]) %in% want, , drop = FALSE]
+  }
+  if (nzchar(chr(cohort)) && has_col(lp, "COHORT")) {
+    want <- chr(strsplit(chr(cohort), "|", fixed = TRUE)[[1]])
+    lp <- lp[chr(lp[[col_of(lp, "COHORT")]]) %in% want, , drop = FALSE]
+  }
+  if (has_col(lp, "PERIOD_START") && has_col(lp, "PERIOD_END")) {
+    st <- suppressWarnings(as.Date(lp[[col_of(lp, "PERIOD_START")]]))
+    en <- suppressWarnings(as.Date(lp[[col_of(lp, "PERIOD_END")]]))
+    lp <- lp[!is.na(st) & !is.na(en) & en >= st, , drop = FALSE]
+  }
+  patients_of(lp)
 }
 
 # The patients of one line, and optionally of one regimen class, off the
@@ -755,6 +791,7 @@ empty_cells <- function() data.frame(
   VALUE = numeric(0), LOW = numeric(0), HIGH = numeric(0), N = numeric(0),
   DENOM = numeric(0), TEXT = character(0), FILLED = integer(0),
   SUPPRESSED = integer(0), REASON = character(0), REASON_KIND = character(0),
+  ROW_KEY = character(0), POP_N = numeric(0),
   stringsAsFactors = FALSE)
 
 empty_unfilled <- function() data.frame(
@@ -866,12 +903,17 @@ fill_table <- function(sh, tid, ctx, floor_n = TFLS_PACKAGE_MIN_N) {
         notes <- unique(c(notes, fill_note(row, spec, ctx)))
       cell <- NULL
       why <- row_why; kind <- row_kind
+      # The column's population before this row's own filter narrows it. A row
+      # that leaves some of it out leaves out a number a reader can take from
+      # any row that does not, and suppress_cells() floors that number.
+      pop_n <- NA_real_
       if (!isTRUE(row$section_flag) && !nzchar(why)) {
         pop <- select_population(d, spec, ctx, chr(row$source))
         if (!isTRUE(pop$ok)) {
           why <- pop$why; kind <- pop$kind %||% "not_computable"
         } else {
           rows_sel <- pop$rows
+          pop_n <- population_denom(rows_sel)
           for (t in terms) {
             # The month a curve is read at is not a restriction on the table.
             if (identical(toupper(t$column), "MONTHS")) next
@@ -914,6 +956,11 @@ fill_table <- function(sh, tid, ctx, floor_n = TFLS_PACKAGE_MIN_N) {
         SUPPRESSED = 0L,
         REASON = if (is.null(cell)) why else "",
         REASON_KIND = if (is.null(cell)) kind else "",
+        # What the row reads, so the same measure over another population can
+        # be found in another table: T5c's rows are T4's, over a subgroup.
+        ROW_KEY = paste(chr(row$stat), chr(row$source), chr(row$measure),
+                        chr(row$filter), sep = "|"),
+        POP_N = if (is.null(cell)) NA_real_ else pop_n,
         stringsAsFactors = FALSE)
     }
   }
@@ -932,10 +979,12 @@ fill_table <- function(sh, tid, ctx, floor_n = TFLS_PACKAGE_MIN_N) {
 }
 
 # Every table in the shell.
+# Each table is closed on its own as it is filled; then all of them together,
+# because a population can be split in one table and totalled in another.
 fill_all <- function(sh, ctx, floor_n = TFLS_PACKAGE_MIN_N) {
   out <- lapply(shell_table_ids(sh), function(tid) fill_table(sh, tid, ctx, floor_n))
   names(out) <- shell_table_ids(sh)
-  out
+  suppress_across_tables(out, sh, floor_n)
 }
 
 all_unfilled <- function(filled) {

@@ -2920,4 +2920,80 @@ cat("\n-- settings and literals that fail quietly rather than loudly --\n")
      "and every criterion this build declares already passes it")
 }
 
+cat("\n-- the run log: spaced once, every value as itself, and everything the run says --\n")
+local({
+  util <- normalizePath(file.path(ROOT, "R", "db_utils_lot.R"))
+  le <- new.env(parent = globalenv())
+  sys.source(normalizePath(file.path(ROOT, "R", "db_utils_lot.R")), envir = le)
+  d <- file.path(tempdir(), paste0("runlog_", Sys.getpid(), "_", sample.int(1e6, 1)),
+                 "not", "there", "yet")
+  lf <- file.path(d, "run.log")
+  old <- Sys.getenv("PIPELINE_LOG_FILE", unset = NA)
+  on.exit(if (is.na(old)) Sys.unsetenv("PIPELINE_LOG_FILE")
+          else Sys.setenv(PIPELINE_LOG_FILE = old), add = TRUE)
+  Sys.setenv(PIPELINE_LOG_FILE = lf)
+  said <- capture.output(
+    le$log_msg("LOT code ", "6587c169", " is the approved build"),
+    le$log_msg("step", "enroll_spans"),
+    le$log_msg("n_spans=", 100000, ", n_pat=", 12000003),
+    le$log_msg("study end ", as.Date("2026-03-31"), ", arm ", factor("B", levels = c("A", "B"))),
+    le$log_msg("first\n", "second"))
+  body <- sub("^\\[[^]]*\\] ", "", said[!grepl("[log]", said, fixed = TRUE)])
+  ok(identical(body[1], "LOT code 6587c169 is the approved build"),
+     "a line is spaced once where cat() spaced it twice, with no space left at its end")
+  ok(identical(body[2], "step enroll_spans"),
+     "...and two words passed apart are still apart")
+  ok(grepl("100000", body[3], fixed = TRUE) && grepl("12000003", body[3], fixed = TRUE) &&
+       !grepl("e+0", body[3], fixed = TRUE),
+     "a count prints as itself: 100000 not 1e+05, and 12,000,003 not a rounded 1.2e+07")
+  ok(grepl("2026-03-31", body[4], fixed = TRUE) && grepl("arm B", body[4], fixed = TRUE) &&
+       !grepl("20543", body[4], fixed = TRUE),
+     "a date prints as a date and a factor as its level, not as the numbers behind them")
+  ok("second" %in% said,
+     "a line after a newline starts at the margin, not one space in")
+  ok(file.exists(lf) && sum(grepl("approved build", readLines(lf, warn = FALSE), fixed = TRUE)) == 1L,
+     "PIPELINE_LOG_FILE in a folder that did not exist is created and written, each line once")
+  # A path nothing can write: its folder is a file.
+  blocker <- tempfile(); writeLines("x", blocker)
+  Sys.setenv(PIPELINE_LOG_FILE = file.path(blocker, "run.log"))
+  le2 <- new.env(parent = globalenv()); sys.source(normalizePath(file.path(ROOT, "R", "db_utils_lot.R")), envir = le2)
+  said2 <- capture.output(le2$log_msg("one"), le2$log_msg("two"))
+  unlink(blocker)
+  ok(sum(grepl("no run log", said2, fixed = TRUE)) == 1L &&
+       any(grepl("one", said2, fixed = TRUE)) && any(grepl("two", said2, fixed = TRUE)),
+     "a log file that cannot be written is said once, loudly, and the run carries on on the console")
+  # The rest runs in a process of its own: the tee is a sink, and a sink is the
+  # whole session's.
+  lf3 <- file.path(tempdir(), paste0("runlog_tee_", Sys.getpid(), "_", sample.int(1e6, 1), ".log"))
+  scr <- tempfile(fileext = ".R")
+  writeLines(c(
+    sprintf("sys.source(%s, envir = globalenv())", deparse(normalizePath(file.path(ROOT, "R", "db_utils_lot.R")))),
+    "start_run_log()",
+    "log_msg('started')",
+    "print(data.frame(n_pat = 9530))",
+    "tryCatch(stop('caught inside'), error = function(e) NULL)",
+    "suppressWarnings(warning('hushed'))",
+    "run_logged({ warning('a loud warning'); message('a message'); stop('SCHEMA ERROR: the reason') })"),
+    scr)
+  env <- c(paste0("PIPELINE_LOG_FILE=", lf3), "OUTPUT_DIR=")
+  st <- suppressWarnings(system2(file.path(R.home("bin"), "Rscript"), shQuote(scr),
+                                 env = env, stdout = TRUE, stderr = TRUE))
+  got <- if (file.exists(lf3)) readLines(lf3, warn = FALSE) else character(0)
+  unlink(c(scr, lf3))
+  ok(!is.null(attr(st, "status")) && attr(st, "status") != 0L,
+     "a run that errors under run_logged() still stops, and says so to the shell")
+  ok(any(grepl("ERROR: SCHEMA ERROR: the reason", got, fixed = TRUE)),
+     "...and its reason is in the run log, where it used to reach the console alone")
+  ok(any(grepl("9530", got, fixed = TRUE)) && any(grepl("n_pat", got, fixed = TRUE)),
+     "a table the run print()s is in the log, not only on the screen")
+  ok(any(grepl("WARNING: a loud warning", got, fixed = TRUE)) &&
+       any(grepl("a message", got, fixed = TRUE)),
+     "its warnings and messages are in the log too")
+  ok(!any(grepl("caught inside", got, fixed = TRUE)) && !any(grepl("hushed", got, fixed = TRUE)),
+     "...but not an error it caught itself, or a warning it silenced")
+  ok(sum(grepl("started", got, fixed = TRUE)) == 1L,
+     "a log line teed into the file is written there once, not twice")
+})
+
+
 report()
