@@ -2552,6 +2552,41 @@ local({
                           all_t[["T5c"]]$cells$ROW_KEY[all_t[["T5c"]]$cells$SECTION == 0L])
   ok(length(keys_match) >= 27L,
      "the shipped T4 and T5c read the same rows, so the two can be matched row for row")
+
+  # The same match, whichever way T5c spells what it reads. The row key was
+  # the text as written, so a T5c spelling its rows another way matched
+  # nothing in T4: the under-75 stayed printed beside T4's Overall, and 200 -
+  # 180 and 100 - 90 gave back the 20 patients and 10 events withheld.
+  respelled <- function(field, fn) {
+    s <- SHIP
+    w <- s$rows$table_id == "T5c" & grepl("^km_", s$rows$stat)
+    for (f in field) s$rows[[f]][w] <- fn[[f]](s$rows[[f]][w])
+    s
+  }
+  spell <- list(source = tolower,
+                measure = function(x) paste0(x, "_MONTHS"),
+                filter = function(x) gsub("TTE_ELIGIBLE=1", "tte_eligible = 1", x, fixed = TRUE))
+  for (f in list("source", "measure", "filter", c("source", "measure", "filter"))) {
+    sv <- respelled(f, spell)
+    av <- fill_all(sv, fill_context(rd, sv$classes), 25)
+    t4v <- row_of(av, "T4", "1L_OVERALL", "Events, n (%)")
+    ltv <- row_of(av, "T5c", "AGE_1L_LT75", "Events, n (%)")
+    ok(t4v$N == 100 && ltv$SUPPRESSED == 1L && row_of(av, "T5c", "AGE_1L_GE75",
+                                                     "Events, n (%)")$SUPPRESSED == 1L,
+       paste0("with T5c's ", paste(f, collapse = ", "), " spelled another way, ",
+              "its under-75 is still withheld against T4's Overall"))
+  }
+  rk <- function(stat, source, measure, filter)
+    row_key(list(stat = stat, source = source, measure = measure, filter = filter))
+  ok(rk("km_prob", "S_TTE", "TTNT", "TTE_ELIGIBLE=1&MONTHS=12") ==
+       rk("km_prob", "s_tte", "ttnt_months", "months = 12.0 ; tte_eligible==1") &&
+       rk("km_prob", "S_TTE", "TTNT", "TTE_ELIGIBLE=1&MONTHS=12") !=
+       rk("km_prob", "S_TTE", "TTNT", "TTE_ELIGIBLE=1&MONTHS=6") &&
+       rk("km_events", "S_TTE", "TTNT", "TTE_ELIGIBLE=1") !=
+       rk("km_censored", "S_TTE", "TTNT", "TTE_ELIGIBLE=1") &&
+       rk("n_pct", "S_DEMOGRAPHICS", "SEX=Male", "") !=
+       rk("n_pct", "S_DEMOGRAPHICS", "SEX=male", ""),
+     "a row's key is one across spellings, and still tells apart the month, the statistic and a value's case")
 })
 
 # Warehouse mode reads through the STUDY PACKAGE's db_q(), which retries through

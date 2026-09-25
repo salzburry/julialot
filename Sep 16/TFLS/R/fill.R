@@ -798,41 +798,66 @@ empty_cells <- function() data.frame(
   ROW_KEY = character(0), POP_N = numeric(0), CURVE_KEY = character(0),
   stringsAsFactors = FALSE)
 
-# The curve a row is read off: the table, the time column and the rows it is
-# over, less the month a probability is read at. A curve's events, censored,
-# median and probabilities are one thing printed as several rows, and
-# R/suppress.R withholds them together - so two spellings of one curve have to
-# give one key, or its rows are closed apart again and read against each other.
+# What a row reads, as the fill reads it rather than as the shell spells it.
 #
-# Read the way the fill reads them rather than as written. The table name and a
-# column name match whatever their case (fill_context(), col_of()); the
-# endpoint is the months column km_columns() resolves, so TTNT and
-# TTNT_MONTHS are one curve; a filter is its parsed terms in any order and
-# spacing. A value compared with = or != is compared as text, case and all
-# (apply_term()), so it is kept as written; a number compared with < or >= is a
-# number. A term with nothing to compare restricts nothing and is left out. The
-# run's own TTE_ELIGIBLE switch selects what TTE_ELIGIBLE=1 does, and is keyed
-# the same.
-curve_key <- function(row, eligible_only = FALSE) {
-  if (!chr(row$stat) %in% TFLS_CURVE_STATS) return("")
-  term_key <- function(t) {
-    col <- toupper(chr(t$column))
-    if (!isTRUE(t$ok)) return(paste0("?", chr(t$raw)))
-    if (identical(col, "MONTHS") || !nzchar(chr(t$op)) || !length(t$value))
-      return("")
-    v <- chr(t$value)
-    if (!t$op %in% c("=", "!=")) {
-      y <- suppressWarnings(as.numeric(v[1]))
-      v <- if (is.na(y)) v[1] else format(y, digits = 15)
-    }
-    paste0(col, t$op, paste(sort(unique(v), method = "radix"), collapse = "|"))
+# Two keys come out, and the disclosure rules turn on both. ROW_KEY says two
+# cells in different tables read the same thing over different populations -
+# T5c's age columns and T4's Overall - so a split in one table can be closed
+# against its total in the other. CURVE_KEY says which curve a curve's row is
+# read off, so a curve's events, censored, median and probabilities are
+# withheld together. Keyed on the text as written, one curve spelled two ways
+# was two curves and one row two rows, closed apart - and a withheld group
+# came back as the total less the published rest.
+#
+# So both are built from the terms the fill itself applies, after the class
+# translation. The table name and a column name match whatever their case
+# (fill_context(), col_of()); a curve's endpoint is the months column
+# km_columns() resolves, so TTNT and TTNT_MONTHS are one curve; a filter is its
+# terms in any order and spacing. A value compared with = or != is compared as
+# text, case and all (apply_term()), so it is kept as written; a number
+# compared with < or >=, and the month a probability is read at, are numbers.
+# A term with nothing to compare restricts nothing and is left out. The run's
+# own TTE_ELIGIBLE switch selects what a curve's TTE_ELIGIBLE=1 does, and is
+# keyed the same. The row key keeps the statistic and the month, so different
+# outputs stay apart; the curve key drops both.
+shell_term_key <- function(t) {
+  col <- toupper(chr(t$column))
+  if (!isTRUE(t$ok)) return(paste0("?", chr(t$raw)))
+  if (!nzchar(chr(t$op)) || !length(t$value)) return("")
+  v <- chr(t$value)
+  if (!t$op %in% c("=", "!=") || identical(col, "MONTHS")) {
+    y <- suppressWarnings(as.numeric(v[1]))
+    v <- if (is.na(y)) v[1] else format(y, digits = 15)
   }
-  terms <- vapply(parse_filter(row$filter), term_key, character(1))
-  if (isTRUE(eligible_only)) terms <- c(terms, "TTE_ELIGIBLE=1")
-  terms <- sort(unique(terms[nzchar(terms)]), method = "radix")
-  paste(toupper(chr(row$source)), toupper(km_time_name(parse_measure(row$measure))),
-        paste(terms, collapse = "&"), sep = "|")
+  paste0(col, t$op, paste(sort(unique(v), method = "radix"), collapse = "|"))
 }
+
+row_keys <- function(stat, source, measure, terms, eligible_only = FALSE) {
+  stat <- chr(stat)
+  curve <- stat %in% TFLS_CURVE_STATS
+  what <- if (curve) toupper(km_time_name(measure))
+          else if (nzchar(chr(measure$op))) shell_term_key(measure)
+          else toupper(chr(measure$column))
+  keys <- function(ts) {
+    k <- vapply(ts, shell_term_key, character(1))
+    if (curve && isTRUE(eligible_only)) k <- c(k, "TTE_ELIGIBLE=1")
+    paste(sort(unique(k[nzchar(k)]), method = "radix"), collapse = "&")
+  }
+  not_month <- Filter(function(t) !identical(toupper(chr(t$column)), "MONTHS"),
+                      terms)
+  src <- toupper(chr(source))
+  list(row = paste(stat, src, what, keys(terms), sep = "\r"),
+       curve = if (curve) paste(src, what, keys(not_month), sep = "\r") else "")
+}
+
+# The same two, off a shell row as written, for a caller holding no parsed
+# terms.
+curve_key <- function(row, eligible_only = FALSE)
+  row_keys(row$stat, row$source, parse_measure(row$measure),
+           parse_filter(row$filter), eligible_only)$curve
+row_key <- function(row, eligible_only = FALSE)
+  row_keys(row$stat, row$source, parse_measure(row$measure),
+           parse_filter(row$filter), eligible_only)$row
 
 empty_unfilled <- function() data.frame(
   TABLE_ID = character(0), ROW_ORDER = integer(0), ROW_LABEL = character(0),
@@ -899,6 +924,8 @@ fill_table <- function(sh, tid, ctx, floor_n = TFLS_PACKAGE_MIN_N) {
       r <- translate_class_term(t, ctx)
       if (isTRUE(r$ok)) r$term else { class_why <<- r$why; t }
     })
+    # What the row reads, once for every column it is filled in.
+    keys <- row_keys(row$stat, row$source, measure, terms, ctx$tte_eligible_only)
     # Read once per row, not once per cell.
     d <- if (blank(row$source)) NULL else ctx$get(row$source)
     row_why <- ""; row_kind <- ""
@@ -998,10 +1025,9 @@ fill_table <- function(sh, tid, ctx, floor_n = TFLS_PACKAGE_MIN_N) {
         REASON_KIND = if (is.null(cell)) kind else "",
         # What the row reads, so the same measure over another population can
         # be found in another table: T5c's rows are T4's, over a subgroup.
-        ROW_KEY = paste(chr(row$stat), chr(row$source), chr(row$measure),
-                        chr(row$filter), sep = "|"),
+        ROW_KEY = keys$row,
         POP_N = if (is.null(cell)) NA_real_ else pop_n,
-        CURVE_KEY = curve_key(row, ctx$tte_eligible_only),
+        CURVE_KEY = keys$curve,
         stringsAsFactors = FALSE)
     }
   }
