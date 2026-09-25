@@ -2587,6 +2587,84 @@ local({
        rk("n_pct", "S_DEMOGRAPHICS", "SEX=Male", "") !=
        rk("n_pct", "S_DEMOGRAPHICS", "SEX=male", ""),
      "a row's key is one across spellings, and still tells apart the month, the statistic and a value's case")
+
+  # A row printed twice is one number. An events-only T4 and T5c, T5c's events
+  # row repeated further down: counted as two terms, the two printed copies of
+  # the under-75 summed past T4's Overall and the split was taken for none, the
+  # two withheld copies of the 75+ looked like two unknowns - and 200 - 180 and
+  # 100 - 90 gave back the 20 and the 10.
+  evonly <- function(respell) {
+    s <- SHIP
+    for (nm in c("tables", "columns", "rows"))
+      s[[nm]] <- s[[nm]][s[[nm]]$table_id %in% c("T4", "T5c"), , drop = FALSE]
+    s$rows <- s$rows[s$rows$stat == "km_events" & s$rows$measure == "TTNT", , drop = FALSE]
+    dup <- s$rows[s$rows$table_id == "T5c", , drop = FALSE]
+    dup$order <- as.character(as.integer(dup$order) + 100L)
+    dup$order_n <- dup$order_n + 100L
+    if (respell) dup$source <- tolower(dup$source)
+    s$rows <- rbind(s$rows, dup)
+    s
+  }
+  for (respell in c(FALSE, TRUE)) {
+    sd <- evonly(respell)
+    fd <- fill_all(sd, fill_context(rd, sd$classes), 25)
+    lt2 <- fd$T5c$cells[fd$T5c$cells$COLUMN_ID == "AGE_1L_LT75" & fd$T5c$cells$SECTION == 0L, ]
+    o2 <- fd$T4$cells[fd$T4$cells$COLUMN_ID == "1L_OVERALL" & fd$T4$cells$SECTION == 0L, ]
+    ok(nrow(lt2) == 2L && all(lt2$SUPPRESSED == 1L) && all(o2$N == 100),
+       paste0("a T5c repeating its events row", if (respell) ", spelled another way," else "",
+              " still withholds both copies of the under-75 against T4's Overall"))
+  }
+  ok(any(grepl("every other copy", lt2$REASON, fixed = TRUE)) ||
+       any(grepl("every other copy", fd$T5c$cells$REASON, fixed = TRUE)),
+     "...and a copy withheld for being a copy says so")
+
+  # The population a column selects, read the way the fill reads it: the same
+  # subgroup spelled another way is the same population, a different level is
+  # not.
+  pc <- function(sub) cell_population(
+    data.frame(TABLE_ID = "X", COLUMN_ID = "c", stringsAsFactors = FALSE),
+    list(columns = data.frame(table_id = "X", column_id = "c", cohort = "1L",
+                              line = "1", class = "", subgroup = sub, period = "",
+                              stringsAsFactors = FALSE)))
+  ok(pc("S_DEMOGRAPHICS:AGE_GROUP=<75") == pc("s_demographics: age_group = <75") &&
+       pc("S_DEMOGRAPHICS:AGE_GROUP=<75") != pc("S_DEMOGRAPHICS:AGE_GROUP=75+"),
+     "a column's population is one across the spellings of its subgroup, and not across its levels")
+})
+
+cat("\n-- the same number printed in two tables --\n")
+# T1b's Overall columns are T1's populations and its rows are T1's rows, so
+# every one of those cells is printed twice. Closed apart, the two tables could
+# withhold different levels of one variable, and each would print the level
+# the other withheld. They are withheld together.
+local({
+  SHIP <- load_shells(file.path(ROOT, "shells"))
+  for (nm in c("tables", "columns", "rows"))
+    SHIP[[nm]] <- SHIP[[nm]][SHIP[[nm]]$table_id %in% c("T1", "T1b"), , drop = FALSE]
+  set.seed(7)
+  n <- 160
+  ids <- sprintf("P%03d", seq_len(n))
+  demo <- data.frame(PATID = ids, COHORT = "1L",
+                     SEX = sample(c("Male", "Female"), n, TRUE),
+                     RACE = sample(c("White", "Black", "Asian", "Unknown"), n, TRUE,
+                                   c(.75, .12, .05, .08)),
+                     REGION = sample(c("Midwest", "South", "West", "Northeast", "Unknown"),
+                                     n, TRUE, c(.3, .35, .2, .12, .03)),
+                     stringsAsFactors = FALSE)
+  lp <- data.frame(PATID = ids, COHORT = "1L", LOT_NUM = 1L,
+                   PERIOD_START = as.Date("2020-01-01"), PERIOD_END = as.Date("2020-06-01"))
+  cs <- data.frame(PATID = ids, COHORT = "1L", LOT_NUM = 1L, CONCEPT = "neuropathy",
+                   HAS_HISTORY = sample(0:1, n, TRUE, c(.8, .2)))
+  rd <- function(name) list(S_DEMOGRAPHICS = demo, S_LOT_PERIODS = lp,
+                            S_COMORB_SUBGROUP = cs)[[toupper(name)]]
+  f <- fill_all(SHIP, fill_context(rd, SHIP$classes), 25)
+  both <- rbind(f$T1$cells, f$T1b$cells)
+  units <- copy_units(both, SHIP)
+  spans <- vapply(units, function(u) length(unique(both$TABLE_ID[u])) == 2L, logical(1))
+  ok(length(units) >= 11L && all(spans),
+     paste0("T1 and T1b print ", length(units), " of the same cells, each once in either table"))
+  ok(all(vapply(units, function(u) length(unique(both$SUPPRESSED[u])) == 1L, logical(1))) &&
+       any(vapply(units, function(u) all(both$SUPPRESSED[u] == 1L), logical(1))),
+     "...and every one of them is withheld in both or printed in both")
 })
 
 # Warehouse mode reads through the STUDY PACKAGE's db_q(), which retries through
