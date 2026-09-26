@@ -744,6 +744,16 @@ compute_cell <- function(pop, stat, measure, terms, where,
       if (is.na(mcol))
         return(stat_refused(stat, "the shell names no column to summarise",
                             "shell"))
+      # A per-patient summary is of the column as it is. A comparison in the
+      # measure - AGE_YEARS>=75 - was dropped, and the mean of every age
+      # printed under a heading that says 75 and over. The restriction belongs
+      # in the row's filter, which is applied. (An aggregate table's measure
+      # is a facet, MEASURE=ED_VISIT, and is read further down.)
+      if (nzchar(chr(measure$op)))
+        return(stat_refused(stat, paste0("'", measure$raw, "' compares ",
+          measure$column, ", and a ", stat, " summarises a column as it is: ",
+          "put the comparison in the row's filter and name the column alone"),
+          "shell"))
       x <- suppressWarnings(as.numeric(pop[[mcol]]))
       if (all(is.na(x)))
         return(stat_refused(stat, paste0(mcol, " in ", where,

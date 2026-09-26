@@ -265,6 +265,52 @@ ok(inherits(tryCatch(load_shells(tempfile("nothing_here")),
                      error = function(e) e), "tfls_missing_shells"),
    "a shells directory that is not written yet is a condition of its own, so a runner can tell it from a broken file")
 
+# Two things at one position, or under one id, are one to everything that finds
+# them by it: the grid kept one and dropped the other.
+stops_with(load_shells(write_shells(list(rows = c(BASE$rows[1:2],
+             edit_field(BASE$rows[3], 2, "01"), BASE$rows[4:12])))),
+  c("shells/rows.csv row 2", "already has a row at order"),
+  "a row at order 01 beside one at order 1 stops the run: they are one position")
+stops_with(load_shells(write_shells(list(columns = c(BASE$columns[1:2],
+             edit_field(BASE$columns[3], 5, "1.0"), BASE$columns[4:5])))),
+  "already has a row at order",
+  "...and so does a column at 1.0 beside one at 1")
+stops_with(load_shells(write_shells(list(columns = c(BASE$columns[1:2],
+             edit_field(BASE$columns[3], 2, "C1"), BASE$columns[4:5])))),
+  c("shells/columns.csv", "already has a column C1"),
+  "two columns written with one id stop the run")
+stops_with(load_shells(write_shells(list(columns = c(BASE$columns[1:2],
+             edit_field(BASE$columns[3], 2, "T1_C4"),
+             edit_field(BASE$columns[5], 2, ""))))),
+  "already has a column T1_C4",
+  "...and so does an id written by hand that a blank one's default collides with")
+
+# What a statistic cannot use it used to drop without a word.
+km_rows <- function(...) c(BASE$rows, ...)
+stops_with(load_shells(write_shells(list(rows = km_rows(
+             "T1,12,FALSE,Events,1,km_events,S_TTE,TTNT>=3,,")))),
+  c("shells/rows.csv row 12", "endpoint alone"),
+  "a curve read with a comparison on its endpoint stops the run")
+stops_with(load_shells(write_shells(list(rows = km_rows(
+             "T1,12,FALSE,12 months,1,km_prob,S_TTE,TTNT,,")))),
+  "exactly one MONTHS=",
+  "a survival probability with no month stops the run")
+stops_with(load_shells(write_shells(list(rows = km_rows(
+             "T1,12,FALSE,12 months,1,km_prob,S_TTE,TTNT,MONTHS=12&MONTHS=24,")))),
+  "exactly one MONTHS=", "...and one with two")
+for (bad in c("MONTHS=-3", "MONTHS=12|24", "MONTHS>3", "MONTHS=soon"))
+  stops_with(load_shells(write_shells(list(rows = km_rows(
+               paste0("T1,12,FALSE,probability,1,km_prob,S_TTE,TTNT,", bad, ","))))),
+    "at or after the index",
+    paste0("...and one read at ", bad))
+stops_with(load_shells(write_shells(list(rows = km_rows(
+             "T1,12,FALSE,Female,1,n_pct,S_DEMOGRAPHICS,SEX=Female,MONTHS=12,")))),
+  "only a km_prob row reads",
+  "a month on a row that is not a survival probability stops the run rather than being ignored")
+ok(nrow(load_shells(write_shells(list(rows = km_rows(
+     "T1,12,FALSE,12 months,1,km_prob,S_TTE,TTNT,TTE_ELIGIBLE=1&MONTHS=12,"))))$rows) == 12L,
+   "one month at or after the index loads")
+
 cat("\n-- measures, filters and subgroups --\n")
 ok({ m <- parse_measure("SEX=Female")
      m$ok && m$column == "SEX" && m$op == "=" && identical(m$value, "Female") },
@@ -461,6 +507,24 @@ local({
   ok(identical(km_estimate(t9, e9), km_estimate_uncached(t9, e9)),
      "...and a cohort the cache has dropped is computed again, not lost")
   km_cache_reset()
+})
+
+# A per-patient summary is of the column as it is. Half the patients 60 and
+# half 80: a mean read through AGE_YEARS>=75 printed 70, every age, under a
+# heading about the 75s and over.
+local({
+  pop <- data.frame(PATID = sprintf("P%02d", 1:40), AGE_YEARS = rep(c(60, 80), 20),
+                    stringsAsFactors = FALSE)
+  cmp <- compute_cell(pop, "mean_sd", parse_measure("AGE_YEARS>=75"), list(),
+                      "S_DEMOGRAPHICS")
+  ok(!isTRUE(cmp$ok) && identical(cmp$kind, "shell") &&
+       has(cmp$why, "summarises a column as it is"),
+     "a mean with a comparison in its measure is refused, saying where the comparison goes")
+  in_filter <- pop[pop$AGE_YEARS >= 75, ]
+  fil <- compute_cell(in_filter, "mean_sd", parse_measure("AGE_YEARS"), list(),
+                      "S_DEMOGRAPHICS")
+  ok(isTRUE(fil$ok) && near(fil$value, 80),
+     "...and with it in the filter, the mean is the 75s and over: 80")
 })
 
 cat("\n-- the disclosure rule --\n")
