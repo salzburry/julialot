@@ -3067,7 +3067,7 @@ local({
   # given; `extra` adds rows copied from T1 (read off S_DEMOGRAPHICS, which
   # carries no line of its own).
   shell_with <- function(subs, where = "T4", line = "1", ov_line = "1", extra = 0L,
-                         count_only = FALSE) {
+                         count_only = FALSE, class = "OVERALL") {
     S <- SHIP
     t1 <- S$rows[S$rows$table_id == "T1" & S$rows$stat == "n_pct" &
                    S$rows$source == "S_DEMOGRAPHICS" & grepl("^SEX=", S$rows$measure), ]
@@ -3094,7 +3094,8 @@ local({
     add <- ov[rep(1L, length(subs)), ]
     add$table_id <- rep_len(where, length(subs))
     add$column_id <- paste0("S", seq_along(subs))
-    add$subgroup <- subs; add$label <- subs
+    add$subgroup <- subs; add$label <- paste(rep_len(class, length(subs)), subs)
+    add$class <- rep_len(class, length(subs))
     add$line <- rep_len(line, length(subs))
     add$order <- as.character(10L + seq_along(subs))
     if ("order_n" %in% names(add)) add$order_n <- 10L + seq_along(subs)
@@ -3431,6 +3432,92 @@ local({
        ex("S_DEMOGRAPHICS:AGE_GROUP=<75", "S_DEMOGRAPHICS:AGE_GROUP=75+") &&
        ex("AGE_YEARS<75", "AGE_YEARS>=75") && !ex("AGE_YEARS<65", "AGE_YEARS>=75"),
      "exact: every band (with or without the missing ages' Unknown), a value and its complement, yes and no, <75 and 75+, ranges with no gap; not: some bands, a column whose values are not listed, ranges with a gap")
+
+  # ---- one overlap rule for subgroups and classes; one plan for named and
+  # written-out conditions ----
+  # 5. A condition that selects everyone changed which columns the overlap
+  # check compared: 60 under 75 and 60 aged 65 or over "of any sex" of 100
+  # gave back the 20 aged 65 to 74.
+  a5 <- dh(AGE_YEARS = rep(c(60, 70, 80), c(40, 20, 40)),
+           SEX = rep(c("Male", "Female", "Unknown"), c(50, 45, 5)))
+  r5 <- function(n) list(S_DEMOGRAPHICS = a5)[[toupper(n)]]
+  anysex <- "AGE_YEARS>=65&SEX=Male|Female|Unknown"
+  for (cz in list(list(c("AGE_YEARS<75", anysex, mid), "T4"),
+                  list(c(mid, anysex, "AGE_YEARS<75"), "T4"),
+                  list(c(anysex, mid, "AGE_YEARS<75"), c("T5c", "T4", "T5c"))))
+    stops_with(counts(cz[[1]], r5, cz[[2]]), "not the same things",
+               paste0("under 75 beside 65 or over of any sex and 65 to 74 (",
+                      paste(cz[[1]], collapse = ", "),
+                      if (length(cz[[2]]) > 1L) ", across two tables" else "", ") are refused"))
+  stops_with(load_shells(write_shells(list(columns = c(BASE$columns,
+      "T1,U75,1L (N=),Under 75,5,1L,1,OVERALL,AGE_YEARS<75,",
+      paste0("T1,O65,1L (N=),65 or over,6,1L,1,OVERALL,", anysex, ","))))),
+    c("shells/columns.csv", "not the same things"), "...and stop the load")
+  x <- counts(c("AGE_YEARS<75&SEX=Male", "AGE_YEARS>=75&SEX=Female"), r5)
+  ok(total_kept(x), "columns on two things that cannot share a patient still fill")
+
+  # Regimen-class unions the same way: the quadruplets or triplets and the
+  # triplets or doublets, 60 each of a line of 100 holding only those three,
+  # give back the 20 on triplets.
+  soc5 <- data.frame(PATID = hundred, COHORT = "1L", LOT_NUM = 1L, REGIMEN = "X",
+                     SOC_CATEGORY = rep(c("Quadruplet with anti-CD38 backbone",
+                                          "Triplet with anti-CD38 backbone",
+                                          "Doublet/monotherapy"), c(40, 20, 40)),
+                     stringsAsFactors = FALSE)
+  rs <- function(n) list(S_SOC = soc5, S_DEMOGRAPHICS = plain)[[toupper(n)]]
+  by_class <- function(cl, where = "T4")
+    filled(shell_with(rep("", length(cl)), where = where, line = "1", ov_line = "1",
+                      extra = 1L, count_only = TRUE, class = cl), rs)
+  un <- c("ACD38_QUAD|ACD38_TRIP", "ACD38_TRIP|DOUBLET_MONO",
+          "ACD38_QUAD|ACD38_TRIP|DOUBLET_MONO", "ACD38_TRIP")
+  for (cz in list(list(un, "T4"), list(rev(un), "T4"), list(un[c(2, 4, 1, 3)], c("T5c", "T4")))) {
+    ord <- cz[[1]]
+    stops_with(by_class(ord, cz[[2]]), "overlap without one holding the other",
+               paste0("class unions that overlap without nesting (", paste(ord, collapse = ", "),
+                      if (length(cz[[2]]) > 1L) ", across two tables" else "", ") are refused"))
+  }
+  stops_with(load_shells(write_shells(list(columns = c(BASE$columns,
+      "T1,U1,1L (N=),Quad or other triplet,5,1L,1,ACD38_QUAD|Other triplet (non-anti-CD38),,",
+      "T1,U2,1L (N=),Quad or doublet,6,1L,1,BOTH,,")))),
+    c("shells/columns.csv", "overlap without one holding the other"), "...and stop the load")
+  x <- by_class(c("ACD38_QUAD", "ACD38_TRIP", "DOUBLET_MONO", "ACD38_QUAD|ACD38_TRIP"))
+  cc <- x[!is.na(x$N) | x$SUPPRESSED == 1L, ]
+  ok(nrow(cc) == 5L && all(x$FILLED == 1L) && x$SUPPRESSED[x$COLUMN_ID == "S2"] == 1L,
+     "classes that nest or do not meet still fill, the 20 on triplets withheld")
+
+  # 6. A named subgroup and the conditions beside it are read as one set, on
+  # one row, as their written-out form is - by the fill and the suppression
+  # alike. Every patient has a neuropathy row and a lung row.
+  cs6 <- rbind(
+    data.frame(PATID = hundred, COHORT = "1L", CONCEPT = "neuropathy",
+               HAS_HISTORY = rep(1:0, c(60, 40)), stringsAsFactors = FALSE),
+    data.frame(PATID = hundred, COHORT = "1L", CONCEPT = "lung_parenchymal_disease",
+               HAS_HISTORY = rep(0:1, c(70, 30)), stringsAsFactors = FALSE))
+  t6 <- data.frame(PATID = hundred, COHORT = "1L", LOT_NUM = 1L, stringsAsFactors = FALSE)
+  c6 <- fill_context(function(n) list(S_COMORB_SUBGROUP = cs6, S_TTE = t6)[[toupper(n)]], NULL)
+  n6 <- function(sg) { r <- restrict_to_subgroup(t6, sg, c6, "S_TTE", "1L")
+                       if (isTRUE(r$ok)) nrow(r$rows) else if (has(r$why, "holds nobody")) 0L else NA }
+  pairs <- list(
+    c("NEUROPATHY=YES", "S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=1"),
+    c("NEUROPATHY=NO", "S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=0"),
+    c("NEUROPATHY=YES&HAS_HISTORY=0", "S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=1&HAS_HISTORY=0"),
+    c("NEUROPATHY=Y&CONCEPT=lung_parenchymal_disease",
+      "S_COMORB_SUBGROUP:CONCEPT=neuropathy&CONCEPT=lung_parenchymal_disease&HAS_HISTORY=1"),
+    c("NEUROPATHY=NO&HAS_HISTORY=0", "S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=0"))
+  got <- vapply(pairs, function(p) c(n6(p[1]), n6(p[2])), integer(2))
+  ok(identical(got[1, ], got[2, ]) && identical(got[1, ], c(60L, 40L, 0L, 0L, 40L)),
+     paste0("a named subgroup with or without conditions beside it selects what its written-out form does (",
+            paste(got[1, ], collapse = ", "), " against ", paste(got[2, ], collapse = ", "), ")"))
+  ok(all(vapply(pairs, function(p) subgroup_conditions(p[1])$key == subgroup_conditions(p[2])$key,
+                logical(1))),
+     "...and the suppression reads each pair as one population")
+  pc6 <- function(sub, source) cell_population(
+    data.frame(TABLE_ID = "X", COLUMN_ID = "c", SOURCE = source, stringsAsFactors = FALSE),
+    list(columns = data.frame(table_id = "X", column_id = "c", cohort = "1L", line = "1",
+                              class = "", subgroup = sub, period = "", stringsAsFactors = FALSE)))
+  ok(pc6(pairs[[1]][1], "S_TTE") == pc6(pairs[[1]][2], "S_TTE") &&
+       pc6(pairs[[1]][1], "S_COMORB_SUBGROUP") != pc6(pairs[[1]][2], "S_COMORB_SUBGROUP"),
+     "on a row of another table the named and written-out forms are one population; on a row of S_COMORB_SUBGROUP the written-out form filters the records and is not")
 })
 
 # Warehouse mode reads through the STUDY PACKAGE's db_q(), which retries through
