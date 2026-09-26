@@ -67,6 +67,50 @@ patients_of <- function(d) {
 TFLS_SUBJECT_TABLES <- c("S_DEMOGRAPHICS", "S_COMORBIDITY", "S_COMORB_SUBGROUP",
                          "S_FRAILTY", "S_SOC", "S_PERIODS", "S_TTE")
 
+# The subgroups a table of totals answers from its own rows, by the table a
+# subgroup names: the rate tables are written once per AGE_GROUP, the
+# protocol's two groups as S_DEMOGRAPHICS writes them (variables/R/modules,
+# 06_safety, 07_hcru, 08_malignancy).
+TFLS_TOTALS_PROJECTIONS <- list(S_DEMOGRAPHICS = "AGE_GROUP")
+
+# What makes one row of each per-patient table the study writes, besides the
+# patient and the cohort, and what it holds (variables/R/modules: 02_periods,
+# 03_demographics, 04_comorbidity, 05_soc, 08_malignancy, 09_tte). Five hold a
+# row per patient per cohort. S_COMORB_SUBGROUP holds one per concept, S_SOC
+# and S_LOT_PERIODS one per line, S_MALIGNANCY one per malignancy - so two
+# values of a column there are two rows, not two patients, unless the
+# columns that make the row are fixed. The suppression reads this to tell
+# subgroups that cannot share a patient from ones that can (suppress.R,
+# sg_apart()); a table or column it does not name is never taken for either.
+TFLS_TABLE_GRAIN <- list(
+  S_DEMOGRAPHICS = list(keys = character(0), cols = c(
+    "INDEX_DATE", "AGE_YEARS", "AGE_BAND", "AGE_GROUP", "SEX", "REGION", "RACE",
+    "ETHNICITY", "INSURANCE_TYPE", "ENROL_ROW_FOUND", "ATTR_SOURCE",
+    "AGE_AT_DX_YEARS", "AGE_AT_DX_BAND")),
+  S_COMORBIDITY = list(keys = character(0), cols = c("CCI", "CCI_BAND", "N_CONDITIONS")),
+  S_FRAILTY = list(keys = character(0), cols = c("CFI", "FRAIL", "N_VARIABLES")),
+  S_PERIODS = list(keys = character(0), cols = c(
+    "LOT_NUM", "INDEX_DATE", "INDEX_YEAR", "BASELINE_START", "BASELINE_END",
+    "COMORB_BASELINE_START", "COMORB_BASELINE_END", "FU_END", "FU_DAYS",
+    "FU_MONTHS", "BASELINE_PY", "TTE_ELIGIBLE", "MM_DX_DT", "DX_DT",
+    "DX_DT_SOURCE", "DX_YEAR", "DX_TO_INDEX_DAYS", "DX_TO_INDEX_MONTHS",
+    "FU_FROM_DX_DAYS", "FU_FROM_DX_MONTHS")),
+  S_TTE = list(keys = character(0), cols = c(
+    "LOT_NUM", "INDEX_DATE", "TTE_ELIGIBLE", "TTNT_DT", "TTNT_DAYS", "TTNT_MONTHS",
+    "TTNT_EVENT", "TTD_DT", "TTD_DAYS", "TTD_MONTHS", "TTD_EVENT", "OS_DT",
+    "OS_DAYS", "OS_MONTHS", "OS_EVENT")),
+  S_COMORB_SUBGROUP = list(keys = "CONCEPT", cols = c("CONCEPT", "HAS_HISTORY", "FIRST_DT")),
+  S_SOC = list(keys = "LOT_NUM", cols = c(
+    "LOT_NUM", "LOT_START_DT", "LOT_START_YEAR", "REGIMEN", "N_AGENTS",
+    "SOC_CATEGORY", "MATCHED", "AUTO_SCT", "ALLO_SCT", "CART", "AUTO_SCT_DT",
+    "AUTO_SCT_YEAR")),
+  S_LOT_PERIODS = list(keys = "LOT_NUM", cols = c(
+    "LOT_NUM", "PERIOD_START", "PERIOD_END", "PERIOD_PY", "LOT_START_DT",
+    "PROTOCOL_DISCON_DT", "NEXT_LOT_START_DT", "NEXT_LOT_DAYS", "NEXT_LOT_MONTHS")),
+  S_MALIGNANCY = list(keys = c("CATEGORY", "SUBTYPE"), cols = c(
+    "CATEGORY", "SUBTYPE", "FIRST_DT", "CONFIRM_DT", "N_DATES", "LOT_AFTER_WHICH",
+    "AFTER_INDEX", "MONTHS_FROM_DX", "MONTHS_FROM_INDEX")))
+
 # The names a shell may use for the input cohort table. The study's own
 # diagnosis date is on S_PERIODS (DX_DT, with DX_YEAR and the durations hung
 # on it), so a row anchored on diagnosis reads that; these names are for a
@@ -170,6 +214,8 @@ apply_term <- function(d, term, where) {
 # Fails closed. A selector the table cannot carry is refused with the reason,
 # never ignored: publishing the whole table under a heading that names one line
 # and one regimen class would be a different population under that label.
+TFLS_SELECTOR_KIND <- c(COHORT = "cohort", LOT_NUM = "line", PERIOD = "period")
+
 select_population <- function(d, spec, ctx, where) {
   keys <- list(COHORT = spec$cohort, LOT_NUM = spec$line, PERIOD = spec$period)
   for (k in names(keys)) {
@@ -177,8 +223,7 @@ select_population <- function(d, spec, ctx, where) {
     if (!nzchar(v)) next
     cl <- col_of(d, k)
     if (!is.na(cl)) {
-      d <- d[chr(d[[cl]]) %in% chr(strsplit(v, "|", fixed = TRUE)[[1]]), ,
-             drop = FALSE]
+      d <- d[selector_has(d[[cl]], v, TFLS_SELECTOR_KIND[[k]]), , drop = FALSE]
       next
     }
     # A line can still be carried, where the table is per patient and the
@@ -263,13 +308,10 @@ line_patients <- function(ctx, line = "", cohort = "") {
   if (is.null(lp) || !nrow(lp) || !has_col(lp, "PATID") || !has_col(lp, "LOT_NUM"))
     return(NULL)
   if (nzchar(chr(line))) {
-    want <- as_int(strsplit(chr(line), "|", fixed = TRUE)[[1]])
-    lp <- lp[as_int(lp[[col_of(lp, "LOT_NUM")]]) %in% want, , drop = FALSE]
+    lp <- lp[selector_has(lp[[col_of(lp, "LOT_NUM")]], line, "line"), , drop = FALSE]
   }
-  if (nzchar(chr(cohort)) && has_col(lp, "COHORT")) {
-    want <- chr(strsplit(chr(cohort), "|", fixed = TRUE)[[1]])
-    lp <- lp[chr(lp[[col_of(lp, "COHORT")]]) %in% want, , drop = FALSE]
-  }
+  if (nzchar(chr(cohort)) && has_col(lp, "COHORT"))
+    lp <- lp[selector_has(lp[[col_of(lp, "COHORT")]], cohort, "cohort"), , drop = FALSE]
   if (has_col(lp, "PERIOD_START") && has_col(lp, "PERIOD_END")) {
     st <- suppressWarnings(as.Date(lp[[col_of(lp, "PERIOD_START")]]))
     en <- suppressWarnings(as.Date(lp[[col_of(lp, "PERIOD_END")]]))
@@ -287,15 +329,12 @@ soc_patients <- function(ctx, line = "", cohort = "", categories = NULL,
   if (is.null(s) || !nrow(s) || !has_col(s, "PATID") || !has_col(s, "LOT_NUM"))
     return(NULL)
   if (nzchar(chr(line))) {
-    want <- as_int(strsplit(chr(line), "|", fixed = TRUE)[[1]])
-    s <- s[as_int(s[[col_of(s, "LOT_NUM")]]) %in% want, , drop = FALSE]
+    s <- s[selector_has(s[[col_of(s, "LOT_NUM")]], line, "line"), , drop = FALSE]
   }
   # A patient sits in several nested cohorts with a different index date in
   # each, so the cohort narrows the lines as well as the patients.
-  if (nzchar(chr(cohort)) && has_col(s, "COHORT")) {
-    want <- chr(strsplit(chr(cohort), "|", fixed = TRUE)[[1]])
-    s <- s[chr(s[[col_of(s, "COHORT")]]) %in% want, , drop = FALSE]
-  }
+  if (nzchar(chr(cohort)) && has_col(s, "COHORT"))
+    s <- s[selector_has(s[[col_of(s, "COHORT")]], cohort, "cohort"), , drop = FALSE]
   if (!is.null(categories)) {
     if (!has_col(s, "SOC_CATEGORY")) return(NULL)
     s <- s[soc_key(s[[col_of(s, "SOC_CATEGORY")]]) %in% soc_key(categories), ,
@@ -414,8 +453,7 @@ named_subgroup_patients <- function(name, value, ctx, cohort) {
     why = paste0(def$table, " was not read by this run, so the subgroup ",
                  toupper(chr(name)), " (", def$what, ") cannot be applied")))
   if (nzchar(chr(cohort)) && has_col(s, "COHORT"))
-    s <- s[chr(s[[col_of(s, "COHORT")]]) %in%
-             chr(strsplit(chr(cohort), "|", fixed = TRUE)[[1]]), , drop = FALSE]
+    s <- s[selector_has(s[[col_of(s, "COHORT")]], cohort, "cohort"), , drop = FALSE]
   if (!is.null(def$concept)) {
     cc <- col_of(s, def$concept_col)
     if (is.na(cc)) return(list(ok = FALSE, why = paste0(
@@ -478,8 +516,25 @@ restrict_to_subgroup <- function(d, subgroup, ctx, where, cohort = "") {
     # LOT_NUM is the line its cohort is indexed on, not a later line in
     # S_LOT_PERIODS, so S_LOT_PERIODS:LOT_NUM=3 read off a 2L S_TTE found
     # nobody where 50 patients had gone on to a third line.
-    own_rows <- identical(toupper(chr(where)), toupper(chr(sg$table))) ||
-                !has_col(d, "PATID")
+    same <- identical(toupper(chr(where)), toupper(chr(sg$table)))
+    totals <- !has_col(d, "PATID")
+    # A table of totals answers from its own rows only what it was written
+    # by: the rate tables are cut by the protocol's age group, taken from
+    # S_DEMOGRAPHICS, and nothing else a subgroup can name. A named table the
+    # run never wrote, or one the totals were not cut by, was answered from
+    # any column of the same name - S_NOT_RUN:AGE_GROUP=<75 read the rate
+    # table's own AGE_GROUP.
+    if (totals && !same) {
+      proj <- TFLS_TOTALS_PROJECTIONS[[toupper(chr(sg$table))]]
+      used <- toupper(vapply(sg$terms, function(t) chr(t$column), ""))
+      if (is.null(proj) || !all(used %in% proj))
+        return(refuse(paste0(where, " is a table of totals, with no patient ",
+          "to look up in ", sg$table, "; the only subgroup it answers from its ",
+          "own rows is ", paste(vapply(names(TFLS_TOTALS_PROJECTIONS), function(n)
+            paste0(n, ":", paste(TFLS_TOTALS_PROJECTIONS[[n]], collapse = "/")), ""),
+            collapse = ", "), ", which the study cuts it by"), "not_computable"))
+    }
+    own_rows <- same || totals
     if (own_rows &&
         all(vapply(sg$terms, function(t) has_col(d, t$column), logical(1)))) {
       for (t in sg$terms) {
@@ -495,8 +550,7 @@ restrict_to_subgroup <- function(d, subgroup, ctx, where, cohort = "") {
                            "subgroup ", subgroup, " cannot be applied"),
                     "not_in_run"))
     if (nzchar(chr(cohort)) && has_col(s, "COHORT"))
-      s <- s[chr(s[[col_of(s, "COHORT")]]) %in%
-               chr(strsplit(chr(cohort), "|", fixed = TRUE)[[1]]), , drop = FALSE]
+      s <- s[selector_has(s[[col_of(s, "COHORT")]], cohort, "cohort"), , drop = FALSE]
     for (t in sg$terms) {
       r <- apply_term(s, t, sg$table)
       if (!isTRUE(r$ok)) return(r)
@@ -546,7 +600,6 @@ restrict_to_subgroup <- function(d, subgroup, ctx, where, cohort = "") {
   # cohort's: demographics are taken at each cohort's own index, so a patient
   # under 75 at 1L and 75+ at 2L is not under 75 in the 2L column. So the
   # table carrying the most of what is left is read first, for this cohort.
-  cohorts <- chr(strsplit(chr(cohort), "|", fixed = TRUE)[[1]])
   while (length(rest)) {
     best <- ""; most <- 0L
     for (tb in ctx$subject_tables) {
@@ -562,8 +615,8 @@ restrict_to_subgroup <- function(d, subgroup, ctx, where, cohort = "") {
                            ", so the subgroup ", subgroup, " cannot be applied"),
                     "not_in_run"))
     s <- ctx$get(best)
-    if (length(cohorts) && has_col(s, "COHORT"))
-      s <- s[chr(s[[col_of(s, "COHORT")]]) %in% cohorts, , drop = FALSE]
+    if (nzchar(chr(cohort)) && has_col(s, "COHORT"))
+      s <- s[selector_has(s[[col_of(s, "COHORT")]], cohort, "cohort"), , drop = FALSE]
     here <- vapply(rest, function(t) has_col(s, t$column), logical(1))
     for (t in rest[here]) {
       r <- apply_term(s, t, best)
@@ -783,10 +836,18 @@ compute_cell <- function(pop, stat, measure, terms, where,
       if (!isTRUE(sel$ok)) return(stat_refused(stat, sel$why))
       return(stat_n_distinct(sel$rows[[mcol]], denom = denom))
     }
-    if (stat %in% c("mean_sd", "median_iqr", "min_max")) {
+    if (stat %in% TFLS_VALUE_STATS) {
       if (is.na(mcol))
         return(stat_refused(stat, "the shell names no column to summarise",
                             "shell"))
+      # The identifier guard reads column NAMES, and these print a column's
+      # VALUES: min_max of PATID over thirty patients was two patients' ids
+      # in LOW, HIGH and the text. A shell that got past the load is refused
+      # here the same way.
+      if (is_identifier_column(measure$column))
+        return(stat_refused(stat, paste0(measure$column, " is an identifier, ",
+          "and a ", stat, " would print identifiers; count the patients ",
+          "instead"), "shell"))
       # A per-patient summary is of the column as it is. A comparison in the
       # measure - AGE_YEARS>=75 - was dropped, and the mean of every age
       # printed under a heading that says 75 and over. The restriction belongs

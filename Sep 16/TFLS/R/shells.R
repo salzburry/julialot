@@ -29,6 +29,36 @@ as_int <- function(x) {
   as.integer(out)
 }
 
+# A column's cohort, line and period, each written one way. A line is a
+# number - "1" and "01" are one line, and "2|1" is "1|2" - and a cohort or a
+# period is a name, taken without regard to case or order. Selection
+# (fill.R), a population's identity and the scope a split is read in
+# (suppress.R) all take this one form: spelled apart, one line selected the
+# same patients through the line tables and was closed as two populations, so
+# an Overall on "1" and its age columns on "01" were never read together.
+selector_tokens <- function(x, kind) {
+  p <- trimws(strsplit(chr(x)[1], "|", fixed = TRUE)[[1]])
+  p <- unique(p[nzchar(p)])
+  if (identical(kind, "line")) {
+    n <- as_int(p)
+    p[!is.na(n)] <- as.character(n[!is.na(n)])
+    p <- unique(p)
+    return(p[order(suppressWarnings(as.numeric(p)), p)])
+  }
+  sort(unique(toupper(p)), method = "radix")
+}
+
+selector_text <- function(x, kind)
+  vapply(chr(x), function(v) paste(selector_tokens(v, kind), collapse = "|"),
+         character(1), USE.NAMES = FALSE)
+
+# Which values of a study table's column fall in a selection.
+selector_has <- function(values, x, kind) {
+  want <- selector_tokens(x, kind)
+  if (identical(kind, "line")) as_int(values) %in% as_int(want)
+  else toupper(chr(values)) %in% want
+}
+
 # --- refusals ---------------------------------------------------------------
 #
 # Two conditions, because they mean different things to the runner: a shell
@@ -281,6 +311,14 @@ check_unique_order <- function(d, file) {
 check_row_arguments <- function(row, measure, file, i) {
   stat <- chr(row$stat)
   if (!nzchar(stat)) return(invisible(TRUE))
+  # A summary of an identifier prints identifiers: the smallest and largest
+  # PATID of thirty patients are two patients' ids, whatever the floor says
+  # about thirty. Counting the patients is what an identifier is for.
+  if (stat %in% TFLS_VALUE_STATS && is_identifier_column(measure$column))
+    shell_stop(file, i, "'", row$label, "' summarises ", measure$column,
+               ", an identifier, with ", stat, ", which would print the ",
+               "identifiers themselves. Count the patients instead (n, or ",
+               "n_distinct).")
   km <- stat %in% c("km_events", "km_censored", "km_median", "km_prob")
   if (km && nzchar(chr(measure$op)))
     shell_stop(file, i, "'", row$label, "' reads the curve '", measure$raw,
@@ -423,6 +461,18 @@ load_shell_columns <- function(dir, tables, classes) {
       }
     }
   }
+  # A line is a line number, so anything else is refused here rather than
+  # selecting nobody; and all three are written one way from here on
+  # (selector_tokens()).
+  for (i in seq_len(nrow(d))) {
+    ln <- trimws(strsplit(chr(d$line[i]), "|", fixed = TRUE)[[1]])
+    ln <- ln[nzchar(ln)]
+    bad <- ln[is.na(as_int(ln)) | as_int(ln) < 1L]
+    if (length(bad))
+      shell_stop(f, i, "column '", d$label[i], "' names the line '", bad[1],
+                 "', and a line is a whole number from 1.")
+  }
+  for (k in c("cohort", "line", "period")) d[[k]] <- selector_text(d[[k]], k)
   # A column with no order keeps the order it was written in, so a file that
   # never used the column is still a table with columns in a fixed order.
   if (all(blank(d$order))) d$order <- as.character(seq_len(nrow(d)))
@@ -531,8 +581,16 @@ load_shells <- function(dir, stats = tfls_stat_names()) {
       shell_stop(TFLS_SHELL_FILES[["tables"]], i, "table ", tid,
                  " has no columns in columns.csv.")
   }
-  list(dir = dir, tables = tables, columns = columns, rows = rows,
-       classes = classes, footnotes = footnotes)
+  sh <- list(dir = dir, tables = tables, columns = columns, rows = rows,
+             classes = classes, footnotes = footnotes)
+  # Every split the suppression will close is worked out now, so a set of
+  # columns it could not close completely stops the load (suppress.R,
+  # split_plan()) rather than being closed in part.
+  if (exists("split_plan", mode = "function")) {
+    why <- tryCatch({ split_plan(sh); "" }, error = conditionMessage)
+    if (nzchar(why)) shell_stop(TFLS_SHELL_FILES[["columns"]], NA, why)
+  }
+  sh
 }
 
 shell_table_ids <- function(sh) sh$tables$table_id

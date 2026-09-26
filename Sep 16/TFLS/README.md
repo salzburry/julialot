@@ -208,8 +208,10 @@ A subgroup that names its table is read off that table, for the column's
 cohort, and selects patients: `S_LOT_PERIODS:LOT_NUM=3` is the patients who
 went on to a third line, whatever `LOT_NUM` means in the table the row reads.
 Two exceptions answer it from the rows being summarised: a table of totals,
-which has no patient to look up (a rate table written once per age group
-answers `S_DEMOGRAPHICS:AGE_GROUP=<75` from its own `AGE_GROUP`), and rows of
+which has no patient to look up, answers the one subgroup it is written by -
+the rate tables are cut by the protocol's age group, so
+`S_DEMOGRAPHICS:AGE_GROUP=<75` is read off their own `AGE_GROUP`, and any
+other table or column named on a table of totals is refused - and rows of
 the named table itself, which are filtered as rows - T3's columns are the
 interval each malignancy fell in, not the patients who had one there. So to
 select patients by something kept in the table a row reads, use the named
@@ -224,8 +226,22 @@ one population. A subgroup condition compares with a value (`=`, `!=`, a list
 with `|`) or with one number (`<`, `<=`, `>`, `>=`); two conditions on one
 column must make one list or one range (`AGE_YEARS>=65&AGE_YEARS<75`). A
 condition with nothing to compare, or a range against a word or a list, stops
-the load, because the suppression could not tell what its cells add up to. A regimen-class column may join classes, but not a class a drug refines
+the load, because the suppression could not tell what its cells add up to.
+A regimen-class column may join classes, but not a class a drug refines
 with one no drug refines: the drug would be required of both.
+
+A column's cohort, line and period are each read one way, by selection, by
+the suppression and everywhere else: a line is a whole number from 1, so `1`
+and `01` are one line and `2|1` is `1|2`, and a cohort or a period is a name
+taken without regard to case or order. A line that is not a number stops the
+load.
+
+A mean, a median or a minimum and maximum prints values of its column, so
+none of them may summarise an identifier (`PATID` and the rest of the
+identifier list): the smallest and largest `PATID` of thirty patients are two
+patients' ids. Such a row stops the load, and is refused if it reaches a fill
+another way. Counting patients (`n`, `n_distinct`) is what an identifier is
+for, and stays.
 
 Everything reading a per-patient table - demographics, comorbidity, frailty,
 periods, SOC and the time-to-event outcomes - takes both. That is the whole of
@@ -293,14 +309,24 @@ withheld.
   one split. Rows are matched on what they read, not on how a
   shell spells it: `s_tte` or `S_TTE`, `TTNT` or `TTNT_MONTHS`, spaces or none.
   Columns are matched on what they select, not how they are written: the
-  levels of a split are the subgroups that cannot meet - `AGE_YEARS<75` and
-  `AGE_YEARS>=75`, `FRAIL=1` and `FRAIL=0`, alike in everything else - and the
-  classes with no category in common. Subgroups that could meet are never
-  taken for one split. A part inside another part is a sum too, with the rest
-  of the larger part as its unknown: T3's "after 2L but before 3L" inside
-  "after 2L+ anytime", whose difference is the malignancies after 3L, and a
-  lone subgroup inside its `Overall`. Such a sum need not add up exactly, so
-  it withholds only when what it leaves out is under the floor.
+  levels of a split are the subgroups that cannot share a patient -
+  `AGE_YEARS<75` and `AGE_YEARS>=75`, `FRAIL=1` and `FRAIL=0` - and, for one
+  line of one cohort, the classes with no category in common. That is
+  decided at the level a cell counts, patients: two values of a column are
+  two sets of patients only on a table with one row per patient in the
+  column's cohort, so a history of lung disease and a history of
+  neuropathy, two rows of `S_COMORB_SUBGROUP`, are not a split, while yes and
+  no within one concept are. A table or column the code does not describe is
+  never taken for one. A part inside another part is a sum too, with the rest
+  of the larger part as its unknown - under 65 inside under 75, T3's "after 2L
+  but before 3L" inside "after 2L+ anytime", a lone subgroup inside its
+  `Overall` - and every population is closed over every part inside it on
+  its own, so a column added beside them never takes that away. Such a sum,
+  and a split whose levels leave a gap (under 65 and 85 and over), need not
+  add up exactly, so it withholds only when what it leaves out is under the
+  floor. Every split is found - the search is complete, and does not depend
+  on the order of the columns - and a shell whose columns overlap in more
+  ways than the search closes (256 over one population) stops at load.
   Every statistic takes part in a split, not only the
   counts, because every printed cell carries its population in `DENOM` and
   populations add up. The closing repeats until no sum is short, then runs
