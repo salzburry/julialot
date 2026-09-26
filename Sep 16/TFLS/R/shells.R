@@ -411,6 +411,16 @@ load_shell_columns <- function(dir, tables, classes) {
           if (nzchar(why))
             shell_stop(f, i, "column '", d$label[i], "': ", why, ".")
         }
+      # What its cells add up to beside the other columns is read off what it
+      # selects (suppress.R, subgroup_conditions()), so a subgroup that says
+      # no one thing - a column compared with nothing, a range against a word
+      # or a list - is refused here rather than left out of every sum.
+      if (exists("subgroup_conditions", mode = "function")) {
+        sc <- subgroup_conditions(d$subgroup[i])
+        if (!isTRUE(sc$ok))
+          shell_stop(f, i, "column '", d$label[i], "' has a subgroup the ",
+                     "suppression cannot read: ", sc$why, ".")
+      }
     }
   }
   # A column with no order keeps the order it was written in, so a file that

@@ -196,11 +196,14 @@ cell_row_order <- function(cells)
 # frame (`total`), the column's own denominator (`denominator`), or nothing a
 # reader can see, in which case only a lone unknown gives anything away.
 # `kind` says what adds up: down a column the counts do; across a split
-# population the populations do as well.
+# population the populations do as well. `exact` is FALSE for a sum whose
+# total holds more than its terms can name - a part inside a larger part - so
+# one withheld term is not the total less the rest, and only what the printed
+# terms leave out is read.
 tfls_relation <- function(members, why, total = NA_integer_,
-                          denominator = FALSE, kind = "column")
+                          denominator = FALSE, kind = "column", exact = TRUE)
   list(members = as.integer(members), why = why, total = as.integer(total),
-       denominator = isTRUE(denominator), kind = kind)
+       denominator = isTRUE(denominator), kind = kind, exact = !isFALSE(exact))
 
 # The shell's columns for these cells, however the caller holds them: the whole
 # shell, its columns frame, or nothing. Nothing still works - the sums down a
@@ -230,19 +233,241 @@ relation_columns <- function(shell) {
   d
 }
 
-# The variable a subgroup column names, and which level of it. A subgroup is a
-# restriction - S_FRAILTY:FRAIL=1, or CONCEPT=neuropathy&HAS_HISTORY=0 - so
-# what stands before the last '=' names the variable and what follows it is the
-# level. Columns agreeing on the variable are the levels the shell has for it,
-# and that set is taken as the partition.
-subgroup_variable <- function(x) {
+# --- what a subgroup selects ------------------------------------------------
+#
+# A subgroup read as the fill applies it (fill.R, restrict_to_subgroup()): a
+# set of conditions, each on one column of one table. Read that way the
+# spelling drops out. NEUROPATHY=YES and NEUROPATHY=Y are one named subgroup,
+# and both are S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=1, which is
+# what the fill reads for them; AGE_YEARS<75 and AGE_YEARS>=75 are two ranges
+# of one number that do not meet. Cut at the last '=', as this file once cut
+# them, the first pair were two levels each where there was one, so a split
+# counted every patient twice and read as no split at all, and the second
+# were two different variables - one of them none - so theirs was never seen.
+#
+# A condition is `in` (=, values compared as text, as the fill compares them),
+# `out` (!=) or a `range` (<, <=, >, >=, one number). Its table is the one the
+# subgroup names, a named subgroup's own, or '*': wherever the fill finds the
+# column for the row being summarised, which is one place for every column of
+# that row. Two conditions on one column are one: a band written as
+# AGE_YEARS>=65&AGE_YEARS<75 is one range.
+sg_cond <- function(tab, col, kind, vals = character(0), lo = -Inf,
+                    lo_in = FALSE, hi = Inf, hi_in = FALSE) {
+  var <- paste0(toupper(chr(tab)), ":", toupper(chr(col)))
+  vals <- sort(unique(chr(vals)), method = "radix")
+  what <- if (identical(kind, "range"))
+    paste0(if (lo_in) "[" else "(", format(lo, digits = 15), ",",
+           format(hi, digits = 15), if (hi_in) "]" else ")")
+  else paste(vals, collapse = "|")
+  list(var = var, kind = kind, vals = vals, lo = lo, lo_in = isTRUE(lo_in),
+       hi = hi, hi_in = isTRUE(hi_in), key = paste0(var, " ", kind, " ", what))
+}
+
+sg_num <- function(v) suppressWarnings(as.numeric(chr(v)))
+
+# Whether numbers fall in a range. A value that is not a number falls in none,
+# as it does in the fill (apply_term()).
+sg_in_range <- function(x, r)
+  !is.na(x) & (x > r$lo | (r$lo_in & x == r$lo)) & (x < r$hi | (r$hi_in & x == r$hi))
+
+sg_range <- function(lo, lo_in, hi, hi_in)
+  sg_cond("", "", "range", lo = lo, lo_in = lo_in, hi = hi, hi_in = hi_in)
+
+# The rows two conditions on one column both let through, as one condition, or
+# NULL where that is no single list or range (a range with a value cut out).
+sg_both <- function(a, b) {
+  k <- paste(a$kind, b$kind)
+  out <- switch(k,
+    "in in" = sg_cond("", "", "in", intersect(a$vals, b$vals)),
+    "in out" = sg_cond("", "", "in", setdiff(a$vals, b$vals)),
+    "out in" = sg_cond("", "", "in", setdiff(b$vals, a$vals)),
+    "out out" = sg_cond("", "", "out", union(a$vals, b$vals)),
+    "in range" = sg_cond("", "", "in", a$vals[sg_in_range(sg_num(a$vals), b)]),
+    "range in" = sg_cond("", "", "in", b$vals[sg_in_range(sg_num(b$vals), a)]),
+    "range range" = {
+      lo <- max(a$lo, b$lo); hi <- min(a$hi, b$hi)
+      sg_range(lo, (a$lo < lo || a$lo_in) && (b$lo < lo || b$lo_in),
+               hi, (a$hi > hi || a$hi_in) && (b$hi > hi || b$hi_in))
+    },
+    NULL)
+  if (is.null(out)) return(NULL)
+  sg_cond(sub(":.*$", "", a$var), sub("^[^:]*:", "", a$var), out$kind, out$vals,
+          out$lo, out$lo_in, out$hi, out$hi_in)
+}
+
+# Whether no row meets both of two conditions on one column.
+sg_disjoint <- function(a, b) {
+  switch(paste(a$kind, b$kind),
+    "in in" = !length(intersect(a$vals, b$vals)),
+    "in out" = all(a$vals %in% b$vals),
+    "out in" = all(b$vals %in% a$vals),
+    "in range" = !any(sg_in_range(sg_num(a$vals), b)),
+    "range in" = !any(sg_in_range(sg_num(b$vals), a)),
+    "range range" = {
+      lo <- max(a$lo, b$lo); hi <- min(a$hi, b$hi)
+      lo > hi || (lo == hi && !(sg_in_range(lo, a) && sg_in_range(lo, b)))
+    },
+    FALSE)
+}
+
+# Whether every row meeting `a` meets `b`.
+sg_within <- function(a, b) {
+  if (identical(a$key, b$key)) return(TRUE)
+  switch(paste(a$kind, b$kind),
+    "in in" = all(a$vals %in% b$vals),
+    "in out" = !any(a$vals %in% b$vals),
+    "in range" = all(sg_in_range(sg_num(a$vals), b)),
+    "out out" = all(b$vals %in% a$vals),
+    "range range" =
+      (a$lo > b$lo || (a$lo == b$lo && (b$lo_in || !a$lo_in))) &&
+      (a$hi < b$hi || (a$hi == b$hi && (b$hi_in || !a$hi_in))),
+    "range out" = !any(sg_in_range(sg_num(b$vals), a)),
+    FALSE)
+}
+
+# A named subgroup as the conditions the fill reads for it
+# (named_subgroup_patients()).
+named_subgroup_conditions <- function(def, t) {
+  if (!identical(chr(t$op), "=")) return(named_subgroup_op_why(t))
+  v <- chr(t$value)
+  if (!is.null(def$bands)) {
+    band <- if (length(v) == 1L) subgroup_band(v) else ""
+    if (!nzchar(band)) return(named_subgroup_value_why(t))
+    b <- def$bands[[band]]
+    return(list(if (identical(b$op, "<"))
+                  sg_cond(def$table, def$column, "range", hi = b$cut)
+                else sg_cond(def$table, def$column, "range", lo = b$cut, lo_in = TRUE)))
+  }
+  u <- toupper(v)
+  want <- if (length(u) == 1L && u %in% TFLS_SUBGROUP_YES) "1"
+          else if (length(u) == 1L && u %in% TFLS_SUBGROUP_NO) "0"
+          else return(named_subgroup_value_why(t))
+  c(if (!is.null(def$concept))
+      list(sg_cond(def$table, def$concept_col, "in", def$concept)),
+    list(sg_cond(def$table, def$flag, "in", want)))
+}
+
+# A subgroup's conditions, one per column, and the key that names the
+# population they select. `ok` is FALSE, with the reason, for a subgroup that
+# is not one this reads - a condition with nothing to compare, a range against
+# something that is not one number, a named subgroup's value it does not have -
+# and shells.R refuses such a column when the shell is loaded, because what
+# its cells add up to with the columns beside it could not be told.
+subgroup_conditions <- function(x) {
   raw <- chr(x)
-  at <- gregexpr("=", raw, fixed = TRUE)[[1]]
-  at <- at[at > 0L]
-  if (!length(at)) return(list(var = "", level = ""))
-  i <- max(at)
-  list(var = trimws(substr(raw, 1L, i - 1L)),
-       level = trimws(substr(raw, i + 1L, nchar(raw))))
+  none <- list(ok = TRUE, conds = list(), key = "", why = "")
+  if (!nzchar(raw)) return(none)
+  bad <- function(why) list(ok = FALSE, conds = list(), key = paste0("?", raw),
+                            why = why)
+  sg <- parse_subgroup(raw)
+  if (!isTRUE(sg$ok)) return(bad(sg$why))
+  out <- list()
+  add <- function(cn) {
+    at <- match(cn$var, vapply(out, `[[`, "", "var"))
+    if (is.na(at)) return(c(out, list(cn)))
+    both <- sg_both(out[[at]], cn)
+    if (is.null(both)) return(NULL)
+    out[[at]] <- both
+    out
+  }
+  for (t in sg$terms) {
+    col <- toupper(chr(t$column)); op <- chr(t$op); v <- chr(t$value)
+    if (!nzchar(op) || !length(v))
+      return(bad(paste0("'", chr(t$raw), "' names the column ", chr(t$column),
+                        " but compares it with nothing")))
+    def <- if (!nzchar(sg$table)) TFLS_SUBGROUPS[[col]] else NULL
+    cns <- if (!is.null(def)) named_subgroup_conditions(def, t)
+    else if (op %in% c("=", "!=")) {
+      list(sg_cond(if (nzchar(sg$table)) sg$table else "*", col,
+                   if (identical(op, "=")) "in" else "out", v))
+    } else {
+      y <- sg_num(v)
+      if (length(v) != 1L || is.na(y))
+        return(bad(paste0("'", chr(t$raw), "' compares ", chr(t$column),
+                          " with '", paste(v, collapse = "|"), "', and ", op,
+                          " takes one number")))
+      tab <- if (nzchar(sg$table)) sg$table else "*"
+      list(switch(op,
+        "<" = sg_cond(tab, col, "range", hi = y),
+        "<=" = sg_cond(tab, col, "range", hi = y, hi_in = TRUE),
+        ">" = sg_cond(tab, col, "range", lo = y),
+        ">=" = sg_cond(tab, col, "range", lo = y, lo_in = TRUE)))
+    }
+    if (is.character(cns)) return(bad(cns))
+    for (cn in cns) {
+      nx <- add(cn)
+      if (is.null(nx))
+        return(bad(paste0("'", raw, "' puts two conditions on ",
+                          sub("^\\*:", "", cn$var), " that are not one list ",
+                          "of values or one range between them")))
+      out <- nx
+    }
+  }
+  keys <- vapply(out, `[[`, "", "key")
+  o <- order(keys, method = "radix")
+  list(ok = TRUE, conds = out[o],
+       key = paste(keys[o], collapse = " & "), why = "")
+}
+
+# Whether every patient of subgroup `a` is one of subgroup `b`: each thing `b`
+# asks for, `a` asks for too, or something narrower on the same column.
+sg_population_within <- function(a, b) {
+  av <- vapply(a$conds, `[[`, "", "var")
+  all(vapply(b$conds, function(cb) {
+    at <- match(cb$var, av)
+    !is.na(at) && sg_within(a$conds[[at]], cb)
+  }, logical(1)))
+}
+
+# The largest sets of levels no two of which meet: each is a split of what
+# they are all drawn from. Levels that all miss one another are one set, as
+# before; AGE_YEARS=2 and AGE_YEARS>=2 beside AGE_YEARS=1 are two.
+sg_families <- function(n, disjoint) {
+  if (!n) return(list())
+  apart <- matrix(TRUE, n, n)
+  for (i in seq_len(n)) for (j in seq_len(n))
+    if (i != j) apart[i, j] <- isTRUE(disjoint(i, j))
+  if (all(apart)) return(list(seq_len(n)))
+  fams <- list()
+  grow <- function(cur, cand) {
+    if (!length(cand)) {
+      # Maximal: nothing outside the set misses all of it.
+      rest <- setdiff(seq_len(n), cur)
+      if (!any(vapply(rest, function(k) all(apart[k, cur]), logical(1))))
+        fams[[length(fams) + 1L]] <<- cur
+      return(invisible())
+    }
+    k <- cand[1]
+    grow(c(cur, k), cand[-1][apart[k, cand[-1]]])
+    grow(cur, cand[-1])
+  }
+  if (n <= 12L) grow(integer(0), seq_len(n))
+  else for (s in seq_len(n)) {
+    cur <- s
+    for (k in seq_len(n)) if (!k %in% cur && all(apart[k, cur])) cur <- c(cur, k)
+    fams[[length(fams) + 1L]] <- sort(cur)
+  }
+  unique(lapply(fams, sort))
+}
+
+# The same for regimen classes, as column_class_key() resolves them: two
+# classes miss one another when no category is in both, and one is inside
+# another when its categories are and the other asks for no drug it does not.
+class_key_parts <- function(k) {
+  drug <- if (grepl(" +", k, fixed = TRUE)) sub("^.* \\+", "", k) else ""
+  cats <- strsplit(sub(" \\+.*$", "", k), "|", fixed = TRUE)[[1]]
+  list(cats = cats[nzchar(cats)], drug = drug)
+}
+
+class_disjoint <- function(a, b) {
+  if (identical(a, b)) return(FALSE)
+  pa <- class_key_parts(a); pb <- class_key_parts(b)
+  !length(intersect(pa$cats, pb$cats))
+}
+
+class_within <- function(a, b) {
+  pa <- class_key_parts(a); pb <- class_key_parts(b)
+  all(pa$cats %in% pb$cats) && (!nzchar(pb$drug) || identical(pa$drug, pb$drug))
 }
 
 # Down a column: a parent row and the run of rows indented one step under it.
@@ -291,12 +516,28 @@ relations_down_column <- function(cells, ok) {
 
 # Across columns: a population and the columns that split it.
 #
-# A column with no subgroup is a population - Overall, or one regimen class. It
-# is split two ways. Columns that name levels of one variable (a subgroup) over
-# that same population split it; and a regimen class is itself one level of the
-# class, so Overall is split by the class columns beside it. A split in ANOTHER
-# table counts the same: T5c has no Overall of its own, and its two age columns
-# for a line split T4's Overall for that line, row for row.
+# A column is a population - Overall, one regimen class, a subgroup of either.
+# Columns that select parts of one population no two of which meet split it:
+# the levels of a subgroup split the column of the same class with no
+# subgroup, and the regimen classes split Overall. A split in ANOTHER table
+# counts the same: T5c has no Overall of its own, and its two age columns for
+# a line split T4's Overall for that line, row for row - and a split whose
+# levels sit in two tables is still one split.
+#
+# The parts are what the columns select (subgroup_conditions(),
+# column_class_key()), not how they are written: a level spelled two ways is
+# one level, printed twice (cell_identity()), and levels are a split only when
+# they cannot meet, which a list of values, a range or a named subgroup's
+# definition shows. Levels that could meet are never taken for a split: their
+# sum can pass the total, and a sum past its total is read as no sum at all,
+# which would drop the split they were in.
+#
+# A population inside another is a sum that holds too, with what the rest
+# leaves out as its unknown - AGE_YEARS=2 inside AGE_YEARS>=2, a lone subgroup
+# inside its column's Overall. Such a sum need not add up exactly, so it is
+# closed on what it leaves out alone (`exact` FALSE), never on one withheld
+# term: the one term is not the total less the rest when something besides
+# the terms is in the total.
 #
 # Every statistic takes part, not only the counts. A printed cell carries its
 # population in DENOM whatever it prints, and populations add up across a split
@@ -309,56 +550,130 @@ relations_down_column <- function(cells, ok) {
 # not how the shell spells it (fill.R, row_keys()): matched on the text, a T5c
 # writing s_tte or TTNT_MONTHS matched no row of T4, and its split went
 # unclosed.
-#
-# One level is not a split, so two are asked for.
 relations_partition <- function(cells, ok, shell) {
   out <- list()
   cols <- relation_columns(shell)
   if (is.null(cols)) return(out)
   cls <- column_class_key(cols$class, shell_classes(shell))
   base <- paste(chr(cols$cohort), chr(cols$line), chr(cols$period), sep = "\r")
-  sub <- lapply(chr(cols$subgroup), subgroup_variable)
-  varn <- vapply(sub, `[[`, character(1), "var")
-  lvl  <- vapply(sub, `[[`, character(1), "level")
+  sgc <- lapply(chr(cols$subgroup), subgroup_conditions)
+  pkey <- vapply(sgc, `[[`, "", "key")
   has_sub <- nzchar(chr(cols$subgroup))
-  by_sub <- has_sub & nzchar(varn) & nzchar(lvl)
-  by_cls <- !has_sub & cls != "OVERALL"
-  part_of <- rep(NA_character_, nrow(cols))
-  part_of[by_sub] <- paste(chr(cols$table_id[by_sub]), base[by_sub], cls[by_sub],
-                           "subgroup", varn[by_sub], sep = "\r")
-  part_of[by_cls] <- paste(chr(cols$table_id[by_cls]), base[by_cls], "class",
-                           sep = "\r")
+  known <- has_sub & vapply(sgc, function(x) isTRUE(x$ok), logical(1))
 
   tid <- chr(cells$TABLE_ID); cid <- chr(cells$COLUMN_ID)
   ord <- cell_row_order(cells)
   rkey <- if ("ROW_KEY" %in% names(cells)) chr(cells$ROW_KEY)
           else rep("", nrow(cells))
-  for (pk in unique(part_of[!is.na(part_of)])) {
-    lv <- which(part_of == pk)
-    if (length(lv) < 2L) next
-    ptid <- chr(cols$table_id[lv[1]])
-    in_lv <- which(ok & tid == ptid & cid %in% chr(cols$column_id[lv]))
-    if (!length(in_lv)) next
-    # The population the levels split: a subgroup splits the column of its own
-    # class; a class splits Overall.
-    total_col <- !has_sub & base == base[lv[1]] &
-      (if (by_sub[lv[1]]) cls == cls[lv[1]] else cls == "OVERALL")
-    for (t in which(total_col)) {
-      ttid <- chr(cols$table_id[t]); tcid <- chr(cols$column_id[t])
-      tlab <- chr(cols$label[t]); if (!nzchar(tlab)) tlab <- tcid
-      same <- identical(ttid, ptid)
-      where <- if (same) "" else paste0(" in ", ttid)
-      for (ti in which(ok & tid == ttid & cid == tcid)) {
-        parts <- if (same) in_lv[ord[in_lv] == ord[ti]]
-                 else if (nzchar(rkey[ti])) in_lv[rkey[in_lv] == rkey[ti]]
-                 else integer(0)
-        if (!length(parts)) next
-        out[[length(out) + 1L]] <- tfls_relation(c(ti, parts), paste0(
-          "withheld with another cell of the columns that split '", tlab, "'",
+  col_of_cell <- match(paste(tid, cid, sep = "\r"),
+                       paste(chr(cols$table_id), chr(cols$column_id), sep = "\r"))
+  live <- which(ok & !is.na(col_of_cell))
+  by_col <- split(live, col_of_cell[live])
+  cells_of <- function(k) by_col[[as.character(k)]] %||% integer(0)
+  sec <- if ("SECTION" %in% names(cells)) cells$SECTION == 1L else rep(FALSE, nrow(cells))
+  laid <- which(!sec & !is.na(col_of_cell))
+  by_col_laid <- split(laid, col_of_cell[laid])
+  laid_of <- function(k) by_col_laid[[as.character(k)]] %||% integer(0)
+
+  # One sum per printed cell of each column holding the total: the cells of
+  # the part columns on the same row. `parts` holds the columns of each part.
+  # An exact split is exact on a row only where every part is on the page
+  # there: a table closed on its own before the tables are read together does
+  # not have the part another table prints, and without it one withheld term
+  # is not the total less the rest. A part that is on the page but could not
+  # be filled still counts as there, as it always has - the sum then fires
+  # where the true one might not, and firing withholds.
+  emit <- function(total_cols, parts, exact, what) {
+    if (!length(total_cols) || !length(parts)) return(invisible())
+    pc <- lapply(parts, function(cs) unlist(lapply(cs, cells_of)))
+    pl <- lapply(parts, function(cs) unlist(lapply(cs, laid_of)))
+    if (!length(unlist(pc))) return(invisible())
+    for (t in total_cols) {
+      ttid <- chr(cols$table_id[t])
+      tlab <- chr(cols$label[t]); if (!nzchar(tlab)) tlab <- chr(cols$column_id[t])
+      for (ti in cells_of(t)) {
+        on_row <- function(x) x[(tid[x] == ttid & ord[x] == ord[ti]) |
+                                  (tid[x] != ttid & nzchar(rkey[ti]) & rkey[x] == rkey[ti])]
+        got <- setdiff(unlist(lapply(pc, on_row)), ti)
+        if (!length(got)) next
+        whole <- exact && all(vapply(pl, function(x) length(on_row(x)) > 0L, logical(1)))
+        where <- if (all(tid[got] == ttid)) "" else paste0(" in ", ttid)
+        out[[length(out) + 1L]] <<- tfls_relation(c(ti, got), paste0(
+          "withheld with another cell of the columns ", what, " '", tlab, "'",
           where, ", which that total less the published rest would otherwise ",
-          "give away"), total = ti, kind = "partition")
+          "give away"), total = ti, kind = "partition", exact = whole)
       }
     }
+  }
+
+  # The splits of one population among columns of one kind. `pops` are the
+  # distinct parts, `members[[k]]` the columns selecting part k, `families`
+  # the sets of parts no two of which meet, `inside(k, j)` whether part k lies
+  # in part j, and `totals` the columns holding the population itself.
+  close_splits <- function(pops, members, families, inside, totals, what) {
+    multi <- Filter(function(f) length(f) >= 2L, families)
+    in_multi <- unique(unlist(multi))
+    for (f in families) {
+      cols_f <- members[f]
+      lone <- length(f) == 1L
+      # Against the population itself: a split of two or more adds up to it;
+      # a lone part, where no split holds it, leaves the rest as its unknown.
+      if (!lone) emit(totals, cols_f, TRUE, what)
+      else if (!f %in% in_multi) emit(totals, cols_f, FALSE, what)
+      # Against a part that holds every one of these.
+      for (j in setdiff(seq_along(pops), f)) {
+        if (!all(vapply(f, function(k) inside(k, j), logical(1)))) next
+        if (lone && any(vapply(multi, function(g) f %in% g &&
+                                 all(vapply(g, function(k) inside(k, j), logical(1))),
+                               logical(1)))) next
+        emit(members[[j]], cols_f, FALSE, "inside")
+      }
+    }
+  }
+
+  # Subgroups, within each population of one base and one class. A split is
+  # read on one column at a time: levels alike in everything else and apart on
+  # that column. Neuropathy with a history and without are alike in CONCEPT
+  # and apart on HAS_HISTORY; with a history of neuropathy and of diabetes are
+  # apart on CONCEPT, but a patient can have both, one row each, so they are
+  # no split.
+  scope <- paste(base, cls, sep = "\r")
+  for (sc in unique(scope[known])) {
+    idx <- which(known & scope == sc)
+    keys <- unique(pkey[idx])
+    pops <- lapply(keys, function(k) sgc[[idx[match(k, pkey[idx])]]])
+    members <- lapply(keys, function(k) idx[pkey[idx] == k])
+    totals <- which(!has_sub & scope == sc)
+    inside <- function(k, j) sg_population_within(pops[[k]], pops[[j]])
+    groups <- list()
+    for (k in seq_along(pops)) for (cn in pops[[k]]$conds) {
+      ctx <- setdiff(vapply(pops[[k]]$conds, `[[`, "", "key"), cn$key)
+      g <- paste(c(cn$var, sort(ctx, method = "radix")), collapse = "\n")
+      groups[[g]] <- list(k = c(groups[[g]]$k, k),
+                          conds = c(groups[[g]]$conds, list(cn)))
+    }
+    fams <- list()
+    for (g in groups) {
+      fs <- sg_families(length(g$conds),
+                        function(i, j) sg_disjoint(g$conds[[i]], g$conds[[j]]))
+      fams <- c(fams, lapply(fs, function(f) sort(g$k[f])))
+    }
+    close_splits(pops, members, unique(fams), inside, totals, "that split")
+  }
+
+  # Regimen classes, within each population of one base and one subgroup.
+  by_cls <- cls != "OVERALL"
+  cscope <- paste(base, pkey, sep = "\r")
+  for (sc in unique(cscope[by_cls])) {
+    idx <- which(by_cls & cscope == sc)
+    keys <- unique(cls[idx])
+    members <- lapply(keys, function(k) idx[cls[idx] == k])
+    totals <- which(!by_cls & cscope == sc)
+    fam <- sg_families(length(keys),
+                       function(i, j) class_disjoint(keys[i], keys[j]))
+    close_splits(as.list(keys), members, fam,
+                 function(k, j) class_within(keys[k], keys[j]), totals,
+                 "that split")
   }
   out
 }
@@ -467,8 +782,10 @@ column_class_key <- function(class, classes = NULL) {
 # counted once in every sum and withheld together.
 #
 # A population is keyed by what selects it, not by the column's name or table:
-# cohort, line, period, class and subgroup, the subgroup read as the fill reads
-# a filter (fill.R, shell_term_key()). A cell with no row key - a frame built
+# cohort, line, period, class and subgroup, the subgroup read as the
+# conditions the fill applies (subgroup_conditions()): NEUROPATHY=YES and
+# NEUROPATHY=Y are one population, and so is the neuropathy column that names
+# S_COMORB_SUBGROUP's rows for it. A cell with no row key - a frame built
 # by hand - is only ever itself.
 cell_population <- function(cells, shell) {
   own <- paste(cells$TABLE_ID, cells$COLUMN_ID, sep = "\r")
@@ -480,14 +797,8 @@ cell_population <- function(cells, shell) {
     if (as_num) { n <- suppressWarnings(as.integer(p)); p[!is.na(n)] <- as.character(n[!is.na(n)]) }
     paste(sort(unique(toupper(p)), method = "radix"), collapse = "|")
   }, character(1))
-  sub_key <- vapply(chr(cols$subgroup), function(s) {
-    if (!nzchar(s)) return("")
-    sg <- parse_subgroup(s)
-    if (!isTRUE(sg$ok) || !exists("shell_term_key", mode = "function")) return(paste0("?", s))
-    k <- vapply(sg$terms, shell_term_key, character(1))
-    paste0(toupper(chr(sg$table)), ":",
-           paste(sort(unique(k[nzchar(k)]), method = "radix"), collapse = "&"))
-  }, character(1))
+  sub_key <- vapply(chr(cols$subgroup), function(s) subgroup_conditions(s)$key,
+                    character(1))
   cls <- column_class_key(cols$class, shell_classes(shell))
   pop <- paste(norm_list(cols$cohort), norm_list(cols$line, TRUE),
                toupper(chr(cols$period)), cls, sub_key, sep = "\r")
@@ -600,7 +911,8 @@ relation_covers <- function(cells, was, r, floor_n) {
 #
 # One sweep at a time, and each sweep decides from the state the sweep started
 # in. A relation gives up one more of its printed cells when exactly one of its
-# terms is withheld - that one term IS the total less the rest - or when what
+# terms is withheld - that one term IS the total less the rest, where the sum
+# is exact (tfls_relation()) - or when what
 # its printed terms leave out does not reach the floor. It gives up its
 # smallest printed term, and a term before its total. Withholding that cell can
 # leave another relation it is a term of short, so the sweeps repeat until one
@@ -627,7 +939,7 @@ close_relations <- function(cells, relations, floor_n, units = list(),
     fired <- FALSE
     for (r in relations) {
       m <- r$members
-      why <- if (sum(was[m] == 1L) == 1L) r$why
+      why <- if (!isFALSE(r$exact) && sum(was[m] == 1L) == 1L) r$why
              else if (!relation_covers(cells, was, r, floor_n)) paste0(
                "withheld because the cells of a sum it belongs to that are not ",
                "printed would otherwise add up to fewer than ", floor_n,

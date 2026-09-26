@@ -510,7 +510,11 @@ restrict_to_subgroup <- function(d, subgroup, ctx, where, cohort = "") {
   # Unqualified, every term applies - only the first did, so
   # AGE_GROUP=<75&SEX=Male was every patient under 75 and its reverse every
   # man - and each finds its own table. A subgroup the study names is read off
-  # its own table; a column of the table being summarised filters its rows.
+  # its own table and nothing else: it is one population however it is
+  # spelled, YES or Y, and the suppression counts it as one (suppress.R,
+  # subgroup_conditions()), which a column of the same name on the table being
+  # summarised, compared as text, would not be. Any other column of the table
+  # being summarised filters its rows.
   rest <- list()
   for (t in sg$terms) {
     if (!is.null(TFLS_SUBGROUPS[[toupper(chr(t$column))]]) &&
@@ -520,8 +524,8 @@ restrict_to_subgroup <- function(d, subgroup, ctx, where, cohort = "") {
                                      ctx, cohort)
     r <- if (!is.null(named) && isTRUE(named$ok))
            subgroup_keep_ids(d, named$ids, subgroup, where)
-         else if (has_col(d, t$column)) apply_term(d, t, where)
          else if (!is.null(named)) refuse(named$why, "not_in_run")
+         else if (has_col(d, t$column)) apply_term(d, t, where)
          else NULL
     if (is.null(r)) { rest[[length(rest) + 1L]] <- t; next }
     if (!isTRUE(r$ok)) return(r)

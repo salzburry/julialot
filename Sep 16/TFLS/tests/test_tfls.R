@@ -622,10 +622,14 @@ gives_away <- function(terms) sum(is.na(terms)) == 1L
 
 # The same test, over every sum the engine itself reads off the shell rather
 # than over one written out by hand: no relation may be left with exactly one
-# withheld member. This is the whole property of the pass.
+# withheld member. This is the whole property of the pass. A sum that need not
+# add up exactly - a part inside a larger part (tfls_relation(), `exact`) - is
+# closed on what its printed terms leave out instead, and one withheld term of
+# it is not the total less the rest, so it is not counted here.
 no_lone_unknown <- function(s, shell = NULL)
   all(vapply(cell_relations(s, shell),
-             function(r) sum(s$SUPPRESSED[r$members] == 1L) != 1L, logical(1)))
+             function(r) isFALSE(r$exact) || sum(s$SUPPRESSED[r$members] == 1L) != 1L,
+             logical(1)))
 
 # 1. The reviewer's first fixture, as numbers: the age block of T1 down one
 # column. The three bands are indented under the subtotal and sum to it.
@@ -2911,6 +2915,147 @@ local({
                        if (isTRUE(r$ok)) nrow(r$rows) else NA }
   ok(identical(c(n2("AGE_GROUP=<75"), n2("S_DEMOGRAPHICS:AGE_GROUP=<75")), c(80L, 80L)),
      "a subgroup read off a subject table reads this column's cohort: 80 under 75 at 2L, not the 120 who were at 1L")
+})
+
+cat("\n-- a subgroup is what it selects, however it is written --\n")
+# The split a subgroup makes was read off its text, cut at the last '='. So
+# AGE_YEARS<75 was no variable and AGE_YEARS>=75 the variable 'AGE_YEARS>',
+# neither was a split, and T4's Overall of 200 less the 180 under 75 gave back
+# the 20 aged 75 or over that the floor had withheld. NEUROPATHY=YES and =Y
+# were two levels, and NO and N two more: four levels adding up to twice the
+# total, which reads as no split at all, and 100 - 80 gave back the 20.
+local({
+  SHIP <- load_shells(file.path(ROOT, "shells"))
+  # T4's 1L Overall and its events row, with the subgroup columns given, each
+  # in the table given: T4 beside Overall, or T5c.
+  shell_with <- function(subs, where = "T4", class = "OVERALL") {
+    S <- SHIP
+    for (nm in c("tables", "columns", "rows"))
+      S[[nm]] <- S[[nm]][S[[nm]]$table_id %in% c("T4", "T5c"), , drop = FALSE]
+    S$rows <- S$rows[S$rows$stat == "km_events" & S$rows$measure == "TTNT", , drop = FALSE]
+    ov <- S$columns[S$columns$table_id == "T4" & S$columns$column_id == "1L_OVERALL", ]
+    add <- ov[rep(1L, length(subs)), ]
+    add$table_id <- rep_len(where, length(subs))
+    add$column_id <- paste0("S", seq_along(subs))
+    add$subgroup <- subs
+    add$class <- rep_len(class, length(subs))
+    add$label <- paste(add$class, subs)
+    add$order <- as.character(10L + seq_along(subs))
+    if ("order_n" %in% names(add)) add$order_n <- 10L + seq_along(subs)
+    S$columns <- rbind(ov, add)
+    rownames(S$columns) <- NULL
+    S
+  }
+  ids <- sprintf("P%03d", 1:200)
+  tte <- data.frame(PATID = ids, COHORT = "1L", LOT_NUM = 1L, TTE_ELIGIBLE = 1L,
+                    TTNT_MONTHS = seq_len(200) / 5, TTNT_EVENT = rep(0:1, 100),
+                    stringsAsFactors = FALSE)
+  demo <- data.frame(PATID = ids, COHORT = "1L",
+                     AGE_YEARS = rep(c(60, 80), c(180, 20)),
+                     X = rep(1:3, c(100, 90, 10)), stringsAsFactors = FALSE)
+  cs <- data.frame(PATID = ids, COHORT = "1L", CONCEPT = "neuropathy",
+                   HAS_HISTORY = rep(1:0, c(180, 20)), stringsAsFactors = FALSE)
+  soc <- data.frame(PATID = ids, COHORT = "1L", LOT_NUM = 1L, REGIMEN = "X",
+                    SOC_CATEGORY = rep(c("Quadruplet with anti-CD38 backbone",
+                                         "Triplet with anti-CD38 backbone", "CAR-T",
+                                         "Other", "Other novel agent"),
+                                       c(100, 10, 10, 20, 60)),
+                    stringsAsFactors = FALSE)
+  rd <- function(n) list(S_TTE = tte, S_DEMOGRAPHICS = demo, S_COMORB_SUBGROUP = cs,
+                         S_SOC = soc)[[toupper(n)]]
+  filled <- function(S) {
+    f <- fill_all(S, fill_context(rd, S$classes), 25)
+    x <- do.call(rbind, lapply(f, `[[`, "cells"))
+    x[x$SECTION == 0L, , drop = FALSE]
+  }
+  overall_kept <- function(x) {
+    o <- x[x$COLUMN_ID == "1L_OVERALL", ]
+    nrow(o) == 1L && o$SUPPRESSED == 0L && o$N == 100
+  }
+  parts <- function(x) x[grepl("^S[0-9]+$", x$COLUMN_ID), , drop = FALSE]
+
+  cases <- list(
+    list(c("AGE_YEARS<75", "AGE_YEARS>=75"), "T4", "the two ranges beside Overall"),
+    list(c("AGE_YEARS>=75", "AGE_YEARS<75"), "T4", "the two ranges the other way round"),
+    list(c("AGE_YEARS<75", "AGE_YEARS>=75"), "T5c", "the two ranges in another table"),
+    list(c("AGE_YEARS<75", "AGE_YEARS>=75"), c("T4", "T5c"), "one range in each table"),
+    list(c("AGE_YEARS>=75", "S_DEMOGRAPHICS:AGE_YEARS<75"), "T4",
+         "a range and its named table's complement"),
+    list(c("NEUROPATHY=YES", "NEUROPATHY=Y", "NEUROPATHY=NO", "NEUROPATHY=N"), "T4",
+         "YES, Y, NO and N"),
+    list(c("NEUROPATHY=N", "NEUROPATHY=YES", "NEUROPATHY=no", "NEUROPATHY=Y"),
+         c("T4", "T5c"), "N, YES, no and Y across two tables"),
+    list(c("NEUROPATHY=YES", "S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=0"), "T4",
+         "the named subgroup and the rows it is read from"))
+  for (cz in cases) {
+    x <- filled(shell_with(cz[[1]], cz[[2]]))
+    p <- parts(x)
+    ok(overall_kept(x) && nrow(p) == length(cz[[1]]) && all(p$FILLED == 1L) &&
+         all(p$SUPPRESSED == 1L) && no_lone_unknown(x, shell_with(cz[[1]], cz[[2]])),
+       paste0(cz[[3]], ": Overall stays printed and every part is withheld, so ",
+              "Overall less the printed rest gives nothing back"))
+  }
+  pop <- function(sub) cell_population(
+    data.frame(TABLE_ID = "X", COLUMN_ID = "c", stringsAsFactors = FALSE),
+    list(columns = data.frame(table_id = "X", column_id = "c", cohort = "1L",
+                              line = "1", class = "", subgroup = sub, period = "",
+                              stringsAsFactors = FALSE)))
+  ok(pop("NEUROPATHY=YES") == pop("NEUROPATHY=y") &&
+       pop("NEUROPATHY=YES") == pop("S_COMORB_SUBGROUP:HAS_HISTORY=1&CONCEPT=neuropathy") &&
+       pop("AGE=GE75") == pop("S_DEMOGRAPHICS:AGE_YEARS>=75") &&
+       pop("AGE_YEARS>=65&AGE_YEARS<75") == pop("AGE_YEARS<75&AGE_YEARS>=65") &&
+       pop("NEUROPATHY=YES") != pop("NEUROPATHY=NO") &&
+       pop("AGE_YEARS<75") != pop("AGE_YEARS<=75"),
+     "a population is one however its subgroup is spelled - an alias, the named table's rows, a band written either way - and not across its levels")
+
+  # A part inside another part. X=2 is 90 of X>=2's 100, and the
+  # 10 with X=3 were the difference. Nothing is a split here - the two meet -
+  # so the sum is read on what it leaves out, and a lone withheld term does
+  # not take the larger part with it.
+  x <- filled(shell_with(c("S_DEMOGRAPHICS:X=2", "S_DEMOGRAPHICS:X>=2")))
+  p <- parts(x)
+  ok(overall_kept(x) && p$SUPPRESSED[p$COLUMN_ID == "S1"] == 1L &&
+       p$SUPPRESSED[p$COLUMN_ID == "S2"] == 0L && p$DENOM[p$COLUMN_ID == "S2"] == 100,
+     "X=2 inside X>=2 is withheld, which kept the 10 with X=3 from being their difference, and X>=2 stays printed")
+  x <- filled(shell_with("AGE_YEARS<75"))
+  ok(overall_kept(x) && parts(x)$SUPPRESSED == 1L,
+     "a lone subgroup of 180 beside an Overall of 200 is withheld: the 20 outside it are their difference")
+  x <- filled(shell_with("AGE_YEARS>=75"))
+  ok(overall_kept(x) && parts(x)$SUPPRESSED == 1L,
+     "...and a lone subgroup withheld for its own 20 does not take Overall with it, since Overall alone gives nothing away")
+
+  # Regimen classes the same way: OTHER holds OTHER_NOVEL's category. Counted
+  # as one split with the rest, the classes summed past Overall, the sum was
+  # read as none, and Overall less the quadruplets and OTHER gave back the 20
+  # in the two classes under the floor.
+  cl <- c("ACD38_QUAD", "ACD38_TRIP", "BCMA", "OTHER", "OTHER_NOVEL")
+  S <- shell_with(rep("", length(cl)), "T4", cl)
+  x <- filled(S)
+  p <- parts(x)
+  small <- p$COLUMN_ID %in% c("S2", "S3")
+  ok(overall_kept(x) && all(p$FILLED == 1L) && all(p$SUPPRESSED[small] == 1L) &&
+       any(p$SUPPRESSED[p$COLUMN_ID %in% c("S1", "S4")] == 1L) && no_lone_unknown(x, S),
+     "classes where one holds another are split without it: Overall less the quadruplets and OTHER no longer gives back the 20 withheld")
+
+  # A subgroup the suppression cannot read is refused when the shell loads,
+  # rather than left out of every sum.
+  for (bad in c("AGE_YEARS<abc", "AGE_YEARS<1|2", "AGE_YEARS", "X>=1&X!=3"))
+    stops_with(load_shells(write_shells(list(columns = c(BASE$columns[1:2],
+                 edit_field(BASE$columns[3], 9, bad), BASE$columns[4:5])))),
+      c("shells/columns.csv row 2", "suppression cannot read"),
+      paste0("a column asking for ", bad, " stops the run"))
+  ok(nrow(load_shells(write_shells(list(columns = c(BASE$columns[1:2],
+       edit_field(BASE$columns[3], 9, "AGE_YEARS>=65&AGE_YEARS<75"), BASE$columns[4:5]))))$columns) == 4L,
+     "...while a band written as two conditions on one column loads")
+
+  # A named subgroup is read off its own table and nothing else: a column of
+  # the same name, compared as text, would make YES and Y two populations.
+  own <- data.frame(PATID = ids, COHORT = "1L", LOT_NUM = 1L,
+                    NEUROPATHY = rep(c("YES", "Y"), 100), stringsAsFactors = FALSE)
+  cx <- fill_context(function(n) list(S_TTE = own)[[toupper(n)]], NULL)
+  r <- restrict_to_subgroup(own, "NEUROPATHY=YES", cx, "S_TTE", "1L")
+  ok(!isTRUE(r$ok) && identical(r$kind, "not_in_run") && has(r$why, "S_COMORB_SUBGROUP"),
+     "a named subgroup whose table was not read is refused, not answered from a column of the same name")
 })
 
 # Warehouse mode reads through the STUDY PACKAGE's db_q(), which retries through
