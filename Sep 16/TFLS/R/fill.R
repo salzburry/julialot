@@ -438,14 +438,6 @@ restrict_to_subgroup <- function(d, subgroup, ctx, where, cohort = "") {
     return(refuse(paste0("the subgroup '", subgroup, "' cannot be read: ",
                          sg$why), "shell"))
   if (!length(sg$terms)) return(list(ok = TRUE, rows = d))
-  keep_ids <- function(ids) {
-    if (!has_col(d, "PATID"))
-      return(refuse(paste0(where, " carries no patient, so the subgroup ",
-                           subgroup, " cannot be applied to it"),
-                    "not_computable"))
-    list(ok = TRUE,
-         rows = d[chr(d[[col_of(d, "PATID")]]) %in% ids, , drop = FALSE])
-  }
   # The column says which table the subgroup is on, because a neuropathy flag
   # and the interval a malignancy fell in are on different tables and neither
   # is on the table being summarised.
@@ -477,13 +469,37 @@ restrict_to_subgroup <- function(d, subgroup, ctx, where, cohort = "") {
     if (!nrow(s))
       return(refuse(paste0("no row of ", sg$table, " meets ", subgroup,
         ", so this subgroup holds nobody in this run"), "not_in_run"))
-    return(keep_ids(patients_of(s)))
+    return(subgroup_keep_ids(d, patients_of(s), subgroup, where))
   }
-  term <- sg$terms[[1]]
+  # Unqualified, each term finds its own table and EVERY term applies, one
+  # after another. Only the first did: AGE_GROUP=<75&SEX=Male was every patient
+  # under 75, and the same subgroup written the other way round every man -
+  # two populations the suppression rightly reads as one.
+  for (t in sg$terms) {
+    r <- subgroup_term(d, t, subgroup, ctx, where, cohort)
+    if (!isTRUE(r$ok)) return(r)
+    d <- r$rows
+  }
+  list(ok = TRUE, rows = d)
+}
+
+# The rows of `d` whose patient is one of `ids`.
+subgroup_keep_ids <- function(d, ids, subgroup, where) {
+  if (!has_col(d, "PATID"))
+    return(refuse(paste0(where, " carries no patient, so the subgroup ",
+                         subgroup, " cannot be applied to it"),
+                  "not_computable"))
+  list(ok = TRUE, rows = d[chr(d[[col_of(d, "PATID")]]) %in% ids, , drop = FALSE])
+}
+
+# One term of an unqualified subgroup, wherever it can be answered: a subgroup
+# the study names, the table's own column, or the first subject table that
+# carries the column.
+subgroup_term <- function(d, term, subgroup, ctx, where, cohort = "") {
   named <- named_subgroup_patients(term$column, paste(term$value, collapse = "|"),
                                    ctx, cohort)
   if (!is.null(named)) {
-    if (isTRUE(named$ok)) return(keep_ids(named$ids))
+    if (isTRUE(named$ok)) return(subgroup_keep_ids(d, named$ids, subgroup, where))
     # The named table was not read or holds nothing: the table's own column is
     # still worth asking, and the reason is kept for when it has none either.
     if (has_col(d, term$column)) return(apply_term(d, term, where))
@@ -500,7 +516,7 @@ restrict_to_subgroup <- function(d, subgroup, ctx, where, cohort = "") {
         !has_col(s, "PATID")) next
     r <- apply_term(s, term, tb)
     if (!isTRUE(r$ok)) return(r)
-    return(keep_ids(patients_of(r$rows)))
+    return(subgroup_keep_ids(d, patients_of(r$rows), subgroup, where))
   }
   refuse(paste0("no table read by this run carries ", term$column,
                 ", so the subgroup ", subgroup, " cannot be applied"),

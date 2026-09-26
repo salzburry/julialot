@@ -2667,6 +2667,73 @@ local({
      "...and every one of them is withheld in both or printed in both")
 })
 
+cat("\n-- a class named two ways is one class --\n")
+# class_selection() takes a class by its id or by the SOC category it maps to,
+# and both select the same patients. The copies were keyed on the text, so a
+# table naming the quadruplets both ways, and the triplets both ways, printed
+# the quadruplets twice and withheld the triplets twice: the printed pair
+# summed past Overall, the withheld pair looked like two unknowns, and
+# Overall less the quadruplets gave the triplets back.
+local({
+  SHIP <- load_shells(file.path(ROOT, "shells"))
+  ok(column_class_key("ACD38_QUAD", SHIP$classes) ==
+       column_class_key("Quadruplet with anti-CD38 backbone", SHIP$classes) &&
+       column_class_key("ACD38_QUAD", SHIP$classes) ==
+       column_class_key("quadruplet with  anti-CD38 backbone", SHIP$classes) &&
+       column_class_key("ACD38_QUAD", SHIP$classes) !=
+       column_class_key("ACD38_TRIP", SHIP$classes) &&
+       identical(column_class_key(c("OVERALL", ""), SHIP$classes), c("OVERALL", "OVERALL")),
+     "a class by its id and by its category are one class; another class is not, and Overall is Overall")
+  S <- SHIP
+  for (nm in c("tables", "columns", "rows")) S[[nm]] <- S[[nm]][S[[nm]]$table_id == "T4", , drop = FALSE]
+  S$rows <- S$rows[S$rows$stat == "km_events" & S$rows$measure == "TTNT", , drop = FALSE]
+  cl <- S$columns[S$columns$column_id %in% c("1L_OVERALL", "1L_ACD38_QUAD", "1L_ACD38_TRIP"), ]
+  al <- cl[cl$column_id != "1L_OVERALL", ]
+  al$column_id <- paste0(al$column_id, "_CAT")
+  al$class <- c(ACD38_QUAD = "Quadruplet with anti-CD38 backbone",
+                ACD38_TRIP = "Triplet with anti-CD38 backbone")[al$class]
+  al$order <- as.character(as.integer(al$order) + 50L)
+  if ("order_n" %in% names(al)) al$order_n <- al$order_n + 50L
+  S$columns <- rbind(cl, al)
+  ids <- sprintf("P%03d", 1:200)
+  tte <- data.frame(PATID = ids, COHORT = "1L", LOT_NUM = 1L, TTE_ELIGIBLE = 1L,
+                    TTNT_MONTHS = seq_len(200) / 5, TTNT_EVENT = rep(0:1, 100),
+                    stringsAsFactors = FALSE)
+  soc <- data.frame(PATID = ids, COHORT = "1L", LOT_NUM = 1L, REGIMEN = "X",
+                    SOC_CATEGORY = rep(c("Quadruplet with anti-CD38 backbone",
+                                         "Triplet with anti-CD38 backbone"), c(180, 20)),
+                    stringsAsFactors = FALSE)
+  rd <- function(name) list(S_TTE = tte, S_SOC = soc)[[toupper(name)]]
+  x <- fill_all(S, fill_context(rd, S$classes), 25)$T4$cells
+  x <- x[x$SECTION == 0L, ]
+  quad <- x[grepl("QUAD", x$COLUMN_ID), ]
+  ok(nrow(quad) == 2L && all(quad$SUPPRESSED == 1L) &&
+       x$N[x$COLUMN_ID == "1L_OVERALL"] == 100,
+     "a table naming the quadruplets both ways withholds both against Overall, so the 20 triplets stay withheld")
+})
+
+cat("\n-- every condition of a subgroup applies --\n")
+# Unqualified, a subgroup's terms each find their own table - and only the
+# first was applied. AGE_GROUP=<75&SEX=Male was every patient under 75, and the
+# same subgroup written the other way round every man.
+local({
+  ids <- sprintf("P%03d", 1:200)
+  demo <- data.frame(PATID = ids, COHORT = "1L", LOT_NUM = 1L,
+                     AGE_GROUP = rep(c("<75", "75+", "<75", "75+"), c(60, 60, 20, 60)),
+                     SEX = rep(c("Male", "Female"), c(120, 80)), stringsAsFactors = FALSE)
+  tte <- data.frame(PATID = ids, COHORT = "1L", LOT_NUM = 1L, stringsAsFactors = FALSE)
+  ctx <- fill_context(function(n) list(S_DEMOGRAPHICS = demo, S_TTE = tte)[[toupper(n)]], NULL)
+  n_of <- function(sg, d, where) { r <- restrict_to_subgroup(d, sg, ctx, where, "1L")
+                                   if (isTRUE(r$ok)) nrow(r$rows) else NA }
+  got <- c(n_of("AGE_GROUP=<75&SEX=Male", tte, "S_TTE"),
+           n_of("SEX=Male&AGE_GROUP=<75", tte, "S_TTE"),
+           n_of("AGE_GROUP=<75&SEX=Male", demo, "S_DEMOGRAPHICS"),
+           n_of("S_DEMOGRAPHICS:AGE_GROUP=<75&SEX=Male", tte, "S_TTE"))
+  ok(identical(got, rep(60L, 4)),
+     paste0("the men under 75 are 60 whichever way the subgroup is written, and ",
+            "whichever table it is read against (", paste(got, collapse = ", "), ")"))
+})
+
 # Warehouse mode reads through the STUDY PACKAGE's db_q(), which retries through
 # with_retry(), whose defaults come from study_config(). A config built and never
 # registered stopped every warehouse run at its first read with "No config" -

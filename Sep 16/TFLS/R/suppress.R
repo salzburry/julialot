@@ -315,7 +315,7 @@ relations_partition <- function(cells, ok, shell) {
   out <- list()
   cols <- relation_columns(shell)
   if (is.null(cols)) return(out)
-  cls <- toupper(chr(cols$class)); cls[!nzchar(cls)] <- "OVERALL"
+  cls <- column_class_key(cols$class, shell_classes(shell))
   base <- paste(chr(cols$cohort), chr(cols$line), chr(cols$period), sep = "\r")
   sub <- lapply(chr(cols$subgroup), subgroup_variable)
   varn <- vapply(sub, `[[`, character(1), "var")
@@ -434,6 +434,30 @@ TFLS_CURVE_WHY <- paste0(
   "censored add up to its population, so one printed beside the other gives ",
   "the other away")
 
+# A column's regimen class as class_selection() resolves it - the categories
+# it selects and the drug that refines them - so a class named by its id and
+# the same class named by its category are one class, as they are one
+# selection. Where the shell's classes are not in hand, or the class cannot be
+# resolved (and so is never filled), its text stands in.
+shell_classes <- function(shell)
+  if (is.list(shell) && !is.data.frame(shell) && is.data.frame(shell$classes))
+    shell$classes else NULL
+
+column_class_key <- function(class, classes = NULL) {
+  vapply(chr(class), function(v) {
+    if (!nzchar(v)) return("OVERALL")
+    if (!is.null(classes) && exists("class_selection", mode = "function")) {
+      sel <- class_selection(v, classes)
+      if (identical(sel$kind, "all")) return("OVERALL")
+      if (identical(sel$kind, "categories"))
+        return(paste0(paste(sort(unique(soc_key(sel$categories)), method = "radix"),
+                            collapse = "|"),
+                      if (nzchar(chr(sel$drug))) paste0(" +", toupper(chr(sel$drug))) else ""))
+    }
+    toupper(v)
+  }, character(1), USE.NAMES = FALSE)
+}
+
 # One number printed more than once: the same row read over the same population
 # - a shell repeating a row, or T1b's Overall columns, which are T1's. The
 # copies are one cell. Counted as several, a split with two printed copies of a
@@ -464,7 +488,7 @@ cell_population <- function(cells, shell) {
     paste0(toupper(chr(sg$table)), ":",
            paste(sort(unique(k[nzchar(k)]), method = "radix"), collapse = "&"))
   }, character(1))
-  cls <- toupper(chr(cols$class)); cls[!nzchar(cls)] <- "OVERALL"
+  cls <- column_class_key(cols$class, shell_classes(shell))
   pop <- paste(norm_list(cols$cohort), norm_list(cols$line, TRUE),
                toupper(chr(cols$period)), cls, sub_key, sep = "\r")
   at <- match(own, paste(chr(cols$table_id), chr(cols$column_id), sep = "\r"))
@@ -479,8 +503,7 @@ cell_identity <- function(cells, shell = NULL) {
   id
 }
 
-copy_units <- function(cells, shell = NULL) {
-  id <- cell_identity(cells, shell)
+copy_units <- function(cells, shell = NULL, id = cell_identity(cells, shell)) {
   u <- split(seq_len(nrow(cells)), id)
   unname(Filter(function(m) length(m) > 1L, u))
 }
@@ -511,14 +534,13 @@ TFLS_COPY_WHY <- paste0(
 # A number printed twice is one term of a sum, not two (cell_identity()): each
 # relation keeps the first copy of every member, and the copies follow it
 # through copy_units(). A relation left with one member is no sum.
-cell_relations <- function(cells, shell = NULL) {
+cell_relations <- function(cells, shell = NULL, id = cell_identity(cells, shell)) {
   ok <- relation_terms(cells)
   part <- partition_terms(cells)
   if (!any(part)) return(list())
   rel <- c(if (any(ok)) relations_down_column(cells, ok),
            relations_partition(cells, part, shell),
            if (any(ok)) relations_against_denominator(cells, ok))
-  id <- cell_identity(cells, shell)
   rel <- lapply(rel, function(r) {
     m <- r$members
     keep <- !duplicated(id[m]) | (!is.na(r$total) & m == r$total)
@@ -687,10 +709,11 @@ suppress_cells <- function(cells, floor_n, shell = NULL) {
         "fewer than ", floor_n, " of this column's patients are left out by ",
         "this row's own filter, and a row without it still counts them"))
   }
-  close_relations(cells, cell_relations(cells, shell), floor_n,
-                  merge_units(c(curve_units(cells), copy_units(cells, shell)),
+  ids <- cell_identity(cells, shell)
+  close_relations(cells, cell_relations(cells, shell, ids), floor_n,
+                  merge_units(c(curve_units(cells), copy_units(cells, shell, ids)),
                               nrow(cells)),
-                  cell_identity(cells, shell))
+                  ids)
 }
 
 # The sums that run between tables.
@@ -707,10 +730,11 @@ suppress_across_tables <- function(filled, shell, floor_n) {
   if (sum(sizes) == 0L) return(filled)
   all <- do.call(rbind, frames[sizes > 0L])
   rownames(all) <- NULL
-  all <- close_relations(all, cell_relations(all, shell), floor_n,
-                         merge_units(c(curve_units(all), copy_units(all, shell)),
+  ids <- cell_identity(all, shell)
+  all <- close_relations(all, cell_relations(all, shell, ids), floor_n,
+                         merge_units(c(curve_units(all), copy_units(all, shell, ids)),
                                      nrow(all)),
-                         cell_identity(all, shell))
+                         ids)
   at <- 0L
   for (k in seq_along(filled)) {
     if (sizes[k] == 0L) next
