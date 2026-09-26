@@ -198,7 +198,11 @@ the categories add up to the line and so do the age groups.
 A subgroup names its table (`S_DEMOGRAPHICS:AGE_GROUP=<75&SEX=Male`) or
 leaves each condition to find the table that carries it
 (`AGE_GROUP=<75&SEX=Male`). Either way every condition applies: the men under
-75, whichever order they are written in.
+75, whichever order they are written in. Conditions that land on the same table
+are met by the same row of it - `CONCEPT=neuropathy&HAS_HISTORY=1` is a history
+of neuropathy, not a neuropathy row beside some other concept's history - and
+that table is read for the column's own cohort, since demographics are taken at
+each cohort's index: a 2L column's under-75 are the patients under 75 at 2L.
 
 Everything reading a per-patient table - demographics, comorbidity, frailty,
 periods, SOC and the time-to-event outcomes - takes both. That is the whole of
