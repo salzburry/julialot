@@ -204,6 +204,29 @@ of neuropathy, not a neuropathy row beside some other concept's history - and
 that table is read for the column's own cohort, since demographics are taken at
 each cohort's index: a 2L column's under-75 are the patients under 75 at 2L.
 
+A subgroup that names its table is read off that table, for the column's
+cohort, and selects patients: `S_LOT_PERIODS:LOT_NUM=3` is the patients who
+went on to a third line, whatever `LOT_NUM` means in the table the row reads.
+Two exceptions answer it from the rows being summarised: a table of totals,
+which has no patient to look up (a rate table written once per age group
+answers `S_DEMOGRAPHICS:AGE_GROUP=<75` from its own `AGE_GROUP`), and rows of
+the named table itself, which are filtered as rows - T3's columns are the
+interval each malignancy fell in, not the patients who had one there. So to
+select patients by something kept in the table a row reads, use the named
+subgroup: T1b's neuropathy columns are `NEUROPATHY=YES` and `NEUROPATHY=NO`,
+because its comorbidity rows read `S_COMORB_SUBGROUP` too.
+
+A named subgroup - `NEUROPATHY`, `FRAILTY`, `AGE` - is asked for with `=` and
+one of its values (`YES`/`NO`, or `LT75`/`GE75`); anything else stops the
+load. It is read off its own table and nothing else, so `NEUROPATHY=YES`,
+`NEUROPATHY=Y` and `S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=1` are
+one population. A subgroup condition compares with a value (`=`, `!=`, a list
+with `|`) or with one number (`<`, `<=`, `>`, `>=`); two conditions on one
+column must make one list or one range (`AGE_YEARS>=65&AGE_YEARS<75`). A
+condition with nothing to compare, or a range against a word or a list, stops
+the load, because the suppression could not tell what its cells add up to. A regimen-class column may join classes, but not a class a drug refines
+with one no drug refines: the drug would be required of both.
+
 Everything reading a per-patient table - demographics, comorbidity, frailty,
 periods, SOC and the time-to-event outcomes - takes both. That is the whole of
 T1, T1b, T4, T5c and most of T3.
@@ -249,10 +272,11 @@ withheld.
 - **A number printed twice is one number.** The same row over the same
   population - a shell that repeats a row, or T1b, whose `Overall` columns and
   rows are T1's, or a class named once by its id and once by the category it
-  maps to - counts once in every sum and is withheld in every place it
-  appears or in none. Counted twice, two printed copies summed past their total
-  and the sum was taken for no sum at all, and a copy printed in one table
-  printed what the other withheld.
+  maps to, or a subgroup spelled two ways (`NEUROPATHY=YES` and `=Y`, or the
+  named subgroup and the rows it is read from) - counts once in every sum and
+  is withheld in every place it appears or in none. Counted twice, two printed
+  copies summed past their total and the sum was taken for no sum at all, and
+  a copy printed in one table printed what the other withheld.
 - **A row whose own filter narrows its column's population** -
   `TTE_ELIGIBLE=1` - leaves out patients that every unfiltered row of the same
   population still counts. The ones it leaves out are a number a reader can
@@ -265,8 +289,18 @@ withheld.
   - `Overall` against its regimen classes, and against its subgroups. That
   last kind is read **across tables** as well as within one: T5c has no
   `Overall` of its own, and its age columns for a line split T4's `Overall` for
-  that line, row for row. Rows are matched on what they read, not on how a
+  that line, row for row, and a split whose levels sit in two tables is still
+  one split. Rows are matched on what they read, not on how a
   shell spells it: `s_tte` or `S_TTE`, `TTNT` or `TTNT_MONTHS`, spaces or none.
+  Columns are matched on what they select, not how they are written: the
+  levels of a split are the subgroups that cannot meet - `AGE_YEARS<75` and
+  `AGE_YEARS>=75`, `FRAIL=1` and `FRAIL=0`, alike in everything else - and the
+  classes with no category in common. Subgroups that could meet are never
+  taken for one split. A part inside another part is a sum too, with the rest
+  of the larger part as its unknown: T3's "after 2L but before 3L" inside
+  "after 2L+ anytime", whose difference is the malignancies after 3L, and a
+  lone subgroup inside its `Overall`. Such a sum need not add up exactly, so
+  it withholds only when what it leaves out is under the floor.
   Every statistic takes part in a split, not only the
   counts, because every printed cell carries its population in `DENOM` and
   populations add up. The closing repeats until no sum is short, then runs

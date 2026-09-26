@@ -2726,6 +2726,65 @@ cat("\nthe shells are filled at the sidebar's floor, and no lower\n")
   }
 }
 
+cat("\na shell table on the page is suppressed with the tables beside it\n")
+{
+  ready <- tfls_ready()
+  if (!isTRUE(ready$ok)) {
+    skip_note("the shells are not beside this folder, so the joint suppression check did not run")
+  } else {
+    # T4's 1L Overall is 200 patients with 100 events; T5c splits them into 180
+    # under 75 and 20 aged 75 or over. The panel filled only the table it was
+    # showing, and T5c on its own has no Overall to be read against: it
+    # printed the 180 and withheld the 20, beside a T4 printing the 200.
+    s <- SCENARIOS[["s223926_"]]
+    ids <- sprintf("P%03d", 1:200)
+    tte <- data.frame(PATID = ids, COHORT = "1L", LOT_NUM = 1L, TTE_ELIGIBLE = 1L,
+                      TTNT_MONTHS = seq_len(200) / 5, TTNT_EVENT = rep(0:1, 100),
+                      TTD_MONTHS = seq_len(200) / 5, TTD_EVENT = rep(0:1, 100),
+                      OS_MONTHS = seq_len(200) / 5, OS_EVENT = rep(0:1, 100),
+                      stringsAsFactors = FALSE)
+    demo <- data.frame(PATID = ids, COHORT = "1L", LOT_NUM = 1L,
+                       AGE_GROUP = rep(c("<75", "75+"), c(180, 20)),
+                       stringsAsFactors = FALSE)
+    split_src <- list(read = function(prefix, table) {
+      if (table %in% c("S_TTE", "S_TTE_RELEASE")) return(tte)
+      if (table %in% c("S_DEMOGRAPHICS", "S_DEMOGRAPHICS_RELEASE")) return(demo)
+      SRC$read(prefix, table)
+    })
+    ev <- function(f, col) {
+      c <- f$cells
+      c[c$COLUMN_ID == col & c$ROW_LABEL == "Events, n (%)" & c$SECTION == 0L, ][1, ]
+    }
+    t4 <- ev(shell_fill(ready, "T4", split_src, s, 25L), "1L_OVERALL")
+    t5 <- shell_fill(ready, "T5c", split_src, s, 25L)
+    ok(t4$SUPPRESSED == 0L && t4$N == 100 && ev(t5, "AGE_1L_GE75")$SUPPRESSED == 1L &&
+         ev(t5, "AGE_1L_LT75")$SUPPRESSED == 1L,
+       "T5c on the page withholds its under-75 beside T4's printed Overall, so 200 - 180 gives nothing away")
+    alone <- ready$env$fill_table(ready$shells, "T5c",
+      ready$env$fill_context(shell_reader(split_src, s), ready$shells$classes), 25L)
+    ok(ev(alone, "AGE_1L_LT75")$SUPPRESSED == 0L,
+       "...which filling T5c on its own, as the panel did, would have printed")
+    cache <- new.env(parent = emptyenv())
+    a <- shell_fill_all(ready, split_src, s, 25L, cache = cache)
+    b <- shell_fill_all(ready, split_src, s, 25L, cache = cache)
+    ok(length(ls(cache, all.names = TRUE)) == 1L && identical(a, b),
+       "the joint fill is made once for a scenario and a setting, and each table is taken from it")
+    moved <- list(read = function(prefix, table) {
+      if (identical(table, "S_RUN_METADATA"))
+        return(data.frame(RUN_ID = s$run_id, STATE = s$state,
+                          UPDATED_AT = "2026-09-09 13:00:00", stringsAsFactors = FALSE))
+      split_src$read(prefix, table)
+    })
+    cache2 <- new.env(parent = emptyenv())
+    shell_fill_all(ready, moved, s, 25L, cache = cache2)
+    ok(!length(ls(cache2, all.names = TRUE)),
+       "...and a fill from a run that has moved is not kept")
+    app <- paste(readLines("app.R", warn = FALSE), collapse = "\n")
+    ok(grepl("cache = .TFLS_FILLS", app, fixed = TRUE),
+       "the panel fills through that one joint fill")
+  }
+}
+
 cat("\nthe snapshot is rebuilt while a shell table is being filled\n")
 {
   ready <- tfls_ready()
@@ -2751,9 +2810,12 @@ cat("\nthe snapshot is rebuilt while a shell table is being filled\n")
       }
       SRC$read(prefix, table)
     })
-    f <- shell_fill(ready, "T4", moving, s, 25L)
+    # Every table is filled together now, so the rows read before the rebuild
+    # sit in whichever table read first; the joint fill as a whole holds them.
+    fa <- shell_fill_all(ready, moving, s, 25L)
+    f <- fa[[which.max(vapply(fa, function(x) sum(x$cells$FILLED == 1L), 1L))]]
     ok(sum(f$cells$FILLED == 1L) > 0 && nrow(f$cells) > 0,
-       "a run rebuilt mid-fill leaves the rows read before it in the filled table")
+       "a run rebuilt mid-fill leaves the rows read before it in the filled tables")
     ok(isFALSE(scenario_is_current(moving, s)),
        "...and the check the panel makes is the one that says the run has moved")
     ok(grepl('table class="grid"', shell_panel_html(ready, f), fixed = TRUE),

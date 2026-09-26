@@ -254,8 +254,11 @@ check_int_col <- function(d, cl, file, required = TRUE, min = NA, max = NA) {
   v
 }
 
+# By the number the order is, not the text it is written in: "1" and "01" are
+# one position, and two things at one position have no order between them -
+# the rendering kept one and dropped the other.
 check_unique_order <- function(d, file) {
-  key <- paste(d$table_id, d$order, sep = "\r")
+  key <- paste(d$table_id, as_int(d$order), sep = "\r")
   dup <- duplicated(key) & !blank(d$order)
   if (any(dup)) {
     i <- which(dup)[1]
@@ -263,6 +266,45 @@ check_unique_order <- function(d, file) {
                d$order[i], " ('", d$label[i], "'). Two rows at one position ",
                "have no order between them.")
   }
+  invisible(TRUE)
+}
+
+# What a statistic can do with its measure and its filter, checked before
+# anything is filled, because what it cannot use it used to drop without a
+# word.
+#
+# A curve's measure is its endpoint and nothing else: a comparison on it was
+# never applied. The month a probability is read at is one number, at or after
+# the index - the first of several was taken, and a negative month read as a
+# certainty before follow-up began - and a month on any other statistic was
+# skipped.
+check_row_arguments <- function(row, measure, file, i) {
+  stat <- chr(row$stat)
+  if (!nzchar(stat)) return(invisible(TRUE))
+  km <- stat %in% c("km_events", "km_censored", "km_median", "km_prob")
+  if (km && nzchar(chr(measure$op)))
+    shell_stop(file, i, "'", row$label, "' reads the curve '", measure$raw,
+               "', and a curve's measure is its endpoint alone. Give the ",
+               "endpoint, and put '", measure$op, "' in the filter.")
+  months <- Filter(function(t) identical(toupper(chr(t$column)), "MONTHS"),
+                   parse_filter(row$filter))
+  if (!identical(stat, "km_prob")) {
+    if (length(months))
+      shell_stop(file, i, "'", row$label, "' names a month (", months[[1]]$raw,
+                 "), which only a km_prob row reads. On a ", stat,
+                 " row it would be ignored.")
+    return(invisible(TRUE))
+  }
+  if (length(months) != 1L)
+    shell_stop(file, i, "'", row$label, "' is a survival probability and needs ",
+               "exactly one MONTHS= in its filter; it has ", length(months), ".")
+  m <- months[[1]]
+  y <- suppressWarnings(as.numeric(m$value))
+  if (!identical(m$op, "=") || length(m$value) != 1L || is.na(y) ||
+      !is.finite(y) || y < 0)
+    shell_stop(file, i, "'", row$label, "' reads the curve at '", m$raw,
+               "'. A probability is read at one month, a number at or after ",
+               "the index: MONTHS=12.")
   invisible(TRUE)
 }
 
@@ -363,6 +405,22 @@ load_shell_columns <- function(dir, tables, classes) {
       if (!p$ok)
         shell_stop(f, i, "column '", d$label[i], "' has a subgroup that ",
                    "cannot be read: ", p$why, ".")
+      if (!nzchar(p$table) && exists("named_subgroup_value_why", mode = "function"))
+        for (t in p$terms) {
+          why <- named_subgroup_value_why(t)
+          if (nzchar(why))
+            shell_stop(f, i, "column '", d$label[i], "': ", why, ".")
+        }
+      # What its cells add up to beside the other columns is read off what it
+      # selects (suppress.R, subgroup_conditions()), so a subgroup that says
+      # no one thing - a column compared with nothing, a range against a word
+      # or a list - is refused here rather than left out of every sum.
+      if (exists("subgroup_conditions", mode = "function")) {
+        sc <- subgroup_conditions(d$subgroup[i])
+        if (!isTRUE(sc$ok))
+          shell_stop(f, i, "column '", d$label[i], "' has a subgroup the ",
+                     "suppression cannot read: ", sc$why, ".")
+      }
     }
   }
   # A column with no order keeps the order it was written in, so a file that
@@ -372,6 +430,15 @@ load_shell_columns <- function(dir, tables, classes) {
   check_unique_order(d, f)
   d$column_id <- ifelse(blank(d$column_id),
                         paste0(d$table_id, "_C", d$order_n), d$column_id)
+  # After the defaults are in, because a generated id can collide with one
+  # written by hand. Two columns under one id are one column to everything
+  # that finds a cell by it - the grid, the CSV, the suppression.
+  dup <- duplicated(paste(d$table_id, toupper(chr(d$column_id)), sep = "\r"))
+  if (any(dup)) {
+    i <- which(dup)[1]
+    shell_stop(f, i, "table ", d$table_id[i], " already has a column ",
+               d$column_id[i], " - written above, or made from its order.")
+  }
   d[order(d$table_id, d$order_n), , drop = FALSE]
 }
 
@@ -405,6 +472,7 @@ load_shell_rows <- function(dir, tables, stats) {
       if (!q$ok)
         shell_stop(f, i, "'", d$label[i], "' has a filter that cannot be read: ",
                    q$why, ".")
+    check_row_arguments(d[i, , drop = FALSE], p, f, i)
   }
   d$order_n <- check_int_col(d, "order", f, required = TRUE)
   check_unique_order(d, f)

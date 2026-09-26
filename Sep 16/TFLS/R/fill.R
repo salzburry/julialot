@@ -375,6 +375,30 @@ TFLS_SUBGROUP_NO <- c("NO", "N", "FALSE", "F", "0")
 TFLS_AGE_BANDS <- list(LT75 = c("LT75", "<75", "UNDER75", "LESS75"),
                        GE75 = c("GE75", ">=75", "75+", "GTE75"))
 
+# A named subgroup is a yes or a no, or an age band, and is asked for with =.
+# Any other comparison was dropped on the way in: NEUROPATHY!=YES selected the
+# patients WITH a neuropathy history.
+named_subgroup_op_why <- function(t)
+  paste0("'", chr(t$raw), "' compares the named subgroup ", toupper(chr(t$column)),
+         " with '", chr(t$op), "'; a named subgroup is asked for with = only - ",
+         "the other value is its own subgroup (", toupper(chr(t$column)),
+         if (identical(toupper(chr(t$column)), "AGE")) "=LT75 or =GE75" else "=YES or =NO",
+         ")")
+
+# Whether a named subgroup's value is one it has, and if not, why.
+named_subgroup_value_why <- function(t) {
+  def <- TFLS_SUBGROUPS[[toupper(chr(t$column))]]
+  if (is.null(def)) return("")
+  if (!identical(chr(t$op), "=")) return(named_subgroup_op_why(t))
+  v <- chr(t$value)
+  ok <- length(v) == 1L && (
+    if (!is.null(def$bands)) nzchar(subgroup_band(v))
+    else toupper(v) %in% c(TFLS_SUBGROUP_YES, TFLS_SUBGROUP_NO))
+  if (ok) "" else paste0("'", chr(t$raw), "' is not one value the named subgroup ",
+    toupper(chr(t$column)), " has: ",
+    if (!is.null(def$bands)) paste(names(def$bands), collapse = " or ") else "YES or NO")
+}
+
 subgroup_band <- function(value) {
   v <- toupper(gsub("[[:space:]]", "", chr(value)))
   for (nm in names(TFLS_AGE_BANDS)) if (v %in% TFLS_AGE_BANDS[[nm]]) return(nm)
@@ -442,10 +466,22 @@ restrict_to_subgroup <- function(d, subgroup, ctx, where, cohort = "") {
   # and the interval a malignancy fell in are on different tables and neither
   # is on the table being summarised.
   if (nzchar(sg$table)) {
-    # Where the table being summarised carries the column itself, the
-    # restriction is a filter on it and no patient is needed. That is how a
-    # rate table stratified by age answers an age column.
-    if (all(vapply(sg$terms, function(t) has_col(d, t$column), logical(1)))) {
+    # The table the subgroup names is the one it is read off - with two
+    # bounded exceptions, where the rows being summarised answer it
+    # themselves. A table of totals has no patient to look up: a rate table
+    # written once per age group carries AGE_GROUP, and that column is the
+    # answer. And rows OF the named table are filtered as rows, which is what
+    # T3 means: its columns are the interval each malignancy fell in, not the
+    # patients who had one there.
+    #
+    # Anywhere else a column of the same name is a different fact. S_TTE's
+    # LOT_NUM is the line its cohort is indexed on, not a later line in
+    # S_LOT_PERIODS, so S_LOT_PERIODS:LOT_NUM=3 read off a 2L S_TTE found
+    # nobody where 50 patients had gone on to a third line.
+    own_rows <- identical(toupper(chr(where)), toupper(chr(sg$table))) ||
+                !has_col(d, "PATID")
+    if (own_rows &&
+        all(vapply(sg$terms, function(t) has_col(d, t$column), logical(1)))) {
       for (t in sg$terms) {
         r <- apply_term(d, t, where)
         if (!isTRUE(r$ok)) return(r)
@@ -474,15 +510,22 @@ restrict_to_subgroup <- function(d, subgroup, ctx, where, cohort = "") {
   # Unqualified, every term applies - only the first did, so
   # AGE_GROUP=<75&SEX=Male was every patient under 75 and its reverse every
   # man - and each finds its own table. A subgroup the study names is read off
-  # its own table; a column of the table being summarised filters its rows.
+  # its own table and nothing else: it is one population however it is
+  # spelled, YES or Y, and the suppression counts it as one (suppress.R,
+  # subgroup_conditions()), which a column of the same name on the table being
+  # summarised, compared as text, would not be. Any other column of the table
+  # being summarised filters its rows.
   rest <- list()
   for (t in sg$terms) {
+    if (!is.null(TFLS_SUBGROUPS[[toupper(chr(t$column))]]) &&
+        !identical(chr(t$op), "="))
+      return(refuse(named_subgroup_op_why(t), "shell"))
     named <- named_subgroup_patients(t$column, paste(t$value, collapse = "|"),
                                      ctx, cohort)
     r <- if (!is.null(named) && isTRUE(named$ok))
            subgroup_keep_ids(d, named$ids, subgroup, where)
-         else if (has_col(d, t$column)) apply_term(d, t, where)
          else if (!is.null(named)) refuse(named$why, "not_in_run")
+         else if (has_col(d, t$column)) apply_term(d, t, where)
          else NULL
     if (is.null(r)) { rest[[length(rest) + 1L]] <- t; next }
     if (!isTRUE(r$ok)) return(r)
@@ -744,6 +787,16 @@ compute_cell <- function(pop, stat, measure, terms, where,
       if (is.na(mcol))
         return(stat_refused(stat, "the shell names no column to summarise",
                             "shell"))
+      # A per-patient summary is of the column as it is. A comparison in the
+      # measure - AGE_YEARS>=75 - was dropped, and the mean of every age
+      # printed under a heading that says 75 and over. The restriction belongs
+      # in the row's filter, which is applied. (An aggregate table's measure
+      # is a facet, MEASURE=ED_VISIT, and is read further down.)
+      if (nzchar(chr(measure$op)))
+        return(stat_refused(stat, paste0("'", measure$raw, "' compares ",
+          measure$column, ", and a ", stat, " summarises a column as it is: ",
+          "put the comparison in the row's filter and name the column alone"),
+          "shell"))
       x <- suppressWarnings(as.numeric(pop[[mcol]]))
       if (all(is.na(x)))
         return(stat_refused(stat, paste0(mcol, " in ", where,
@@ -896,6 +949,21 @@ row_key <- function(row, eligible_only = FALSE)
   row_keys(row$stat, row$source, parse_measure(row$measure),
            parse_filter(row$filter), eligible_only)$row
 
+# The cells of a table as one frame, built a column at a time: one small data
+# frame per cell, bound together, was most of the time a whole fill took.
+cells_frame <- function(cells) {
+  if (!length(cells)) return(empty_cells())
+  nm <- names(empty_cells())
+  out <- lapply(nm, function(f) {
+    v <- lapply(cells, `[[`, f)
+    if (any(lengths(v) != 1L))
+      stop("a filled cell carries no single value for ", f, call. = FALSE)
+    unlist(v, use.names = FALSE)
+  })
+  names(out) <- nm
+  as.data.frame(out, stringsAsFactors = FALSE)
+}
+
 empty_unfilled <- function() data.frame(
   TABLE_ID = character(0), ROW_ORDER = integer(0), ROW_LABEL = character(0),
   COLUMN_ID = character(0), COLUMN_LABEL = character(0), STAT = character(0),
@@ -947,6 +1015,7 @@ row_reads_label <- function(row) {
 fill_table <- function(sh, tid, ctx, floor_n = TFLS_PACKAGE_MIN_N) {
   cols <- shell_columns_of(sh, tid)
   rows <- shell_rows_of(sh, tid)
+  pops <- new.env(parent = emptyenv())
   cells <- list(); unfilled <- list(); notes <- character(0)
   section_label <- ""
   for (ri in seq_len(nrow(rows))) {
@@ -1012,7 +1081,14 @@ fill_table <- function(sh, tid, ctx, floor_n = TFLS_PACKAGE_MIN_N) {
       # any row that does not, and suppress_cells() floors that number.
       pop_n <- NA_real_
       if (!isTRUE(row$section_flag) && !nzchar(why)) {
-        pop <- select_population(d, spec, ctx, chr(row$source))
+        # The same column over the same table is the same population for
+        # every row that reads it, so it is selected once.
+        pk <- paste(toupper(chr(row$source)), ci, sep = "\r")
+        pop <- pops[[pk]]
+        if (is.null(pop)) {
+          pop <- select_population(d, spec, ctx, chr(row$source))
+          pops[[pk]] <- pop
+        }
         if (!isTRUE(pop$ok)) {
           why <- pop$why; kind <- pop$kind %||% "not_computable"
         } else {
@@ -1042,7 +1118,7 @@ fill_table <- function(sh, tid, ctx, floor_n = TFLS_PACKAGE_MIN_N) {
             unfilled_row(tid, row, spec$id, spec$label, kind, why)
       }
       is_section <- isTRUE(row$section_flag)
-      cells[[length(cells) + 1L]] <- data.frame(
+      cells[[length(cells) + 1L]] <- list(
         TABLE_ID = tid, ROW_ORDER = row$order_n, ROW_LABEL = chr(row$label),
         INDENT = row$indent_n, SECTION = as.integer(is_section),
         SECTION_LABEL = if (is_section) chr(row$label) else section_label,
@@ -1064,11 +1140,10 @@ fill_table <- function(sh, tid, ctx, floor_n = TFLS_PACKAGE_MIN_N) {
         # be found in another table: T5c's rows are T4's, over a subgroup.
         ROW_KEY = keys$row,
         POP_N = if (is.null(cell)) NA_real_ else pop_n,
-        CURVE_KEY = keys$curve,
-        stringsAsFactors = FALSE)
+        CURVE_KEY = keys$curve)
     }
   }
-  out <- if (length(cells)) do.call(rbind, cells) else empty_cells()
+  out <- cells_frame(cells)
   # The shell goes with the cells: the sums a withheld cell could be read
   # off - a subtotal down a column, a total across a row - are drawn by the
   # shell's own indentation and columns.

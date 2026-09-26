@@ -412,7 +412,8 @@ server <- function(input, output, session) {
         shell_fill(ready, tid, SRC, s, input$floor,
                    tte_eligible_only = isTRUE(input$shell_tte),
                    prefer_release = DASH_CFG$prefer_release,
-                   package_min_n = DASH_CFG$suppress_min_n),
+                   package_min_n = DASH_CFG$suppress_min_n,
+                   cache = .TFLS_FILLS),
         error = function(e) e)
       # And asked again now the fill is back, before anything is drawn. A fill
       # reads several tables and the reader checks the run around each one, so
