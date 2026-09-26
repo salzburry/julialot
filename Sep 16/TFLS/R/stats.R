@@ -15,6 +15,11 @@
 TFLS_STATS <- c("n_pct", "mean_sd", "median_iqr", "min_max", "n", "n_distinct",
                 "rate", "km_median", "km_prob", "km_events", "km_censored")
 
+# The three that print values of the column they summarise, not a count: a
+# mean, a median and its quartiles, the smallest and the largest. An
+# identifier is never one of their columns (shells.R, check_row_arguments()).
+TFLS_VALUE_STATS <- c("mean_sd", "median_iqr", "min_max")
+
 # The four that read a curve. Their measure names an endpoint rather than a
 # column, so the columns behind it are resolved in km_columns().
 TFLS_KM_STATS <- c("km_median", "km_prob", "km_events", "km_censored")
