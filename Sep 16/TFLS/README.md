@@ -195,6 +195,11 @@ The two stratifications are **margins**, not a cross. A column names a regimen
 class or an age, and the other stratification stays at the line's own row, so
 the categories add up to the line and so do the age groups.
 
+A subgroup names its table (`S_DEMOGRAPHICS:AGE_GROUP=<75&SEX=Male`) or
+leaves each condition to find the table that carries it
+(`AGE_GROUP=<75&SEX=Male`). Either way every condition applies: the men under
+75, whichever order they are written in.
+
 Everything reading a per-patient table - demographics, comorbidity, frailty,
 periods, SOC and the time-to-event outcomes - takes both. That is the whole of
 T1, T1b, T4, T5c and most of T3.
@@ -239,7 +244,8 @@ withheld.
   events row and the censored row give up the same class.
 - **A number printed twice is one number.** The same row over the same
   population - a shell that repeats a row, or T1b, whose `Overall` columns and
-  rows are T1's - counts once in every sum and is withheld in every place it
+  rows are T1's, or a class named once by its id and once by the category it
+  maps to - counts once in every sum and is withheld in every place it
   appears or in none. Counted twice, two printed copies summed past their total
   and the sum was taken for no sum at all, and a copy printed in one table
   printed what the other withheld.
