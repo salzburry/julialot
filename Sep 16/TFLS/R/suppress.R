@@ -203,9 +203,11 @@ cell_row_order <- function(cells)
 # one withheld term is not the total less the rest, and only what the printed
 # terms leave out is read.
 tfls_relation <- function(members, why, total = NA_integer_,
-                          denominator = FALSE, kind = "column", exact = TRUE)
+                          denominator = FALSE, kind = "column", exact = TRUE,
+                          about = "")
   list(members = as.integer(members), why = why, total = as.integer(total),
-       denominator = isTRUE(denominator), kind = kind, exact = !isFALSE(exact))
+       denominator = isTRUE(denominator), kind = kind, exact = !isFALSE(exact),
+       about = about)
 
 # The shell's columns for these cells, however the caller holds them: the whole
 # shell, its columns frame, or nothing. Nothing still works - the sums down a
@@ -378,17 +380,18 @@ subgroup_conditions <- function(x) {
       return(bad(paste0("'", chr(t$raw), "' names the column ", chr(t$column),
                         " but compares it with nothing")))
     def <- if (!nzchar(sg$table)) TFLS_SUBGROUPS[[col]] else NULL
+    src <- if (is.null(def)) subgroup_source(sg$table, col)
+    if (!is.null(src) && !isTRUE(src$ok)) return(bad(src$why))
+    tab <- src$table
     cns <- if (!is.null(def)) named_subgroup_conditions(def, t)
     else if (op %in% c("=", "!=")) {
-      list(sg_cond(if (nzchar(sg$table)) sg$table else "*", col,
-                   if (identical(op, "=")) "in" else "out", v))
+      list(sg_cond(tab, col, if (identical(op, "=")) "in" else "out", v))
     } else {
       y <- sg_num(v)
       if (length(v) != 1L || is.na(y))
         return(bad(paste0("'", chr(t$raw), "' compares ", chr(t$column),
                           " with '", paste(v, collapse = "|"), "', and ", op,
                           " takes one number")))
-      tab <- if (nzchar(sg$table)) sg$table else "*"
       list(switch(op,
         "<" = sg_cond(tab, col, "range", hi = y),
         "<=" = sg_cond(tab, col, "range", hi = y, hi_in = TRUE),
@@ -400,7 +403,7 @@ subgroup_conditions <- function(x) {
       nx <- add(cn)
       if (is.null(nx))
         return(bad(paste0("'", raw, "' puts two conditions on ",
-                          sub("^\\*:", "", cn$var), " that are not one list ",
+                          cn$var, " that are not one list ",
                           "of values or one range between them")))
       out <- nx
     }
@@ -435,10 +438,11 @@ sg_population_within <- function(a, b) {
 # HAS_HISTORY=1 against 0 - there is one row per patient again, and that is
 # a split. So a difference proves the subgroups apart only on a table
 # TFLS_TABLE_GRAIN (fill.R) describes, on a column that is not one of what
-# makes its rows, with those fixed to one value the same in both; and only
-# within one cohort, since a patient has a row in each.
+# makes its rows, with those fixed to one value the same in both; and, on a
+# table written per cohort, only within one cohort, since a patient has a row
+# in each.
 sg_apart <- function(a, b, one_cohort = TRUE) {
-  if (!isTRUE(one_cohort) || !isTRUE(a$ok) || !isTRUE(b$ok)) return(FALSE)
+  if (!isTRUE(a$ok) || !isTRUE(b$ok)) return(FALSE)
   bv <- vapply(b$conds, `[[`, "", "var")
   av <- vapply(a$conds, `[[`, "", "var")
   for (ca in a$conds) {
@@ -446,6 +450,8 @@ sg_apart <- function(a, b, one_cohort = TRUE) {
     if (is.na(at) || !sg_disjoint(ca, b$conds[[at]])) next
     g <- sg_grain(sub(":.*$", "", ca$var), sub("^[^:]*:", "", ca$var))
     if (is.null(g) || sub("^[^:]*:", "", ca$var) %in% g$keys) next
+    # A table with a row per cohort holds one row per patient only within one.
+    if (isTRUE(g$cohort) && !isTRUE(one_cohort)) next
     fixed <- vapply(g$keys, function(k) {
       v <- paste0(g$table, ":", k)
       ia <- match(v, av); ib <- match(v, bv)
@@ -457,31 +463,47 @@ sg_apart <- function(a, b, one_cohort = TRUE) {
   FALSE
 }
 
-# The table a condition is read on, as TFLS_TABLE_GRAIN describes it, or NULL
-# where it does not. An unqualified column is read wherever the fill finds it,
-# so it counts as one row per patient only where every table that carries it
-# is one.
-sg_grain <- function(tab, col) {
-  if (!identical(tab, "*")) {
-    g <- TFLS_TABLE_GRAIN[[tab]]
-    if (is.null(g) || !col %in% g$cols) return(NULL)
-    return(list(keys = g$keys, table = tab))
-  }
-  holders <- Filter(function(g) col %in% g$cols, TFLS_TABLE_GRAIN)
-  if (!length(holders) ||
-      any(vapply(holders, function(g) length(g$keys) > 0L, logical(1))))
-    return(NULL)
-  list(keys = character(0), table = "*")
+# Whether two subgroups are levels of one column that overlap without one
+# holding the other: alike in everything else, on a row one patient has one
+# of, and neither apart nor nested there. Their overlap is the two less what
+# they cover together, and what they cover together can be on the page -
+# AGE_YEARS<75 and AGE_YEARS>=65 cover Overall, so 60 and 60 of 100 give away
+# the 20 aged 65 to 74. Levels that do not meet, or nest, are closed as
+# splits and as parts inside parts; these are refused (split_plan()).
+sg_overlap_open <- function(a, b) {
+  if (!isTRUE(a$ok) || !isTRUE(b$ok)) return(FALSE)
+  ak <- vapply(a$conds, `[[`, "", "key"); bk <- vapply(b$conds, `[[`, "", "key")
+  av <- vapply(a$conds, `[[`, "", "var"); bv <- vapply(b$conds, `[[`, "", "var")
+  if (!setequal(av, bv)) return(FALSE)
+  vary <- av[!ak %in% bk]
+  if (length(vary) != 1L) return(FALSE)
+  ca <- a$conds[[match(vary, av)]]; cb <- b$conds[[match(vary, bv)]]
+  g <- sg_grain(sub(":.*$", "", vary), sub("^[^:]*:", "", vary))
+  if (is.null(g) || sub("^[^:]*:", "", vary) %in% g$keys) return(FALSE)
+  !sg_disjoint(ca, cb) && !sg_within(ca, cb) && !sg_within(cb, ca)
 }
 
-# Whether a split of Overall adds up to it, less the patients with no value -
-# which is what lets one withheld part be read off the rest (close_relations()).
-# The parts have to be levels of one column, alike in everything else, and
-# cover it: values listed for one column are its levels, as they always were
-# (YES and NO, <75 and 75+); ranges cover it only where they leave no gap.
-# AGE_YEARS<65 and AGE_YEARS>=85 leave everyone from 65 to 84 out, so one of
-# them withheld is not Overall less the other, and taking it for that
-# withheld the other for nothing.
+# The table a condition is read on, as TFLS_TABLE_GRAIN describes it, or NULL
+# where it does not (every condition is bound to a table it describes before
+# it gets here - subgroup_conditions()).
+sg_grain <- function(tab, col) {
+  g <- TFLS_TABLE_GRAIN[[tab]]
+  if (is.null(g) || (!is.null(g$cols) && !col %in% g$cols)) return(NULL)
+  c(g, list(table = tab))
+}
+
+# Whether a split of Overall adds up to it, which is what lets one withheld
+# part be read off the rest (close_relations()). The parts have to be levels
+# of one column, alike in everything else, and cover it. Values cover it where
+# they are every value the column can take (TFLS_TABLE_GRAIN's domains: YES
+# and NO, <75 and 75+) or an explicit complement takes the rest (X=a and
+# X!=a); ranges cover it where they leave no gap. Patients with no value -
+# a NULL, the study's 'Unknown' - are left out of both, as they always were.
+# Otherwise the parts leave patients out - AGE_BAND 65-74 and 75+ leave every
+# younger band out,
+# AGE_YEARS<65 and AGE_YEARS>=85 everyone between - and one of them withheld
+# is not Overall less the other, so taking it for that withheld the other for
+# nothing. Such a split is still closed on what it leaves out.
 sg_levels_exact <- function(ps) {
   vars <- lapply(ps, function(p) sort(vapply(p$conds, `[[`, "", "var")))
   if (length(unique(vars)) != 1L) return(FALSE)
@@ -492,7 +514,16 @@ sg_levels_exact <- function(ps) {
   if (length(vary) != 1L) return(FALSE)
   cs <- lapply(ps, function(p) p$conds[[match(vary, vapply(p$conds, `[[`, "", "var"))]])
   kinds <- vapply(cs, `[[`, "", "kind")
-  if (all(kinds %in% c("in", "out"))) return(TRUE)
+  if (all(kinds %in% c("in", "out"))) {
+    listed <- unique(unlist(lapply(cs[kinds == "in"], `[[`, "vals")))
+    outs <- lapply(cs[kinds == "out"], `[[`, "vals")
+    # A value none of the parts takes is one an out part lets through, unless
+    # every out part leaves it out and no in part lists it.
+    if (length(outs)) return(all(Reduce(intersect, outs) %in% listed))
+    g <- sg_grain(sub(":.*$", "", vary), sub("^[^:]*:", "", vary))
+    dom <- if (is.null(g)) NULL else g$domains[[sub("^[^:]*:", "", vary)]]
+    return(!is.null(dom) && all(dom %in% listed))
+  }
   if (!all(kinds == "range")) return(FALSE)
   lo <- vapply(cs, `[[`, 0, "lo")
   cs <- cs[order(lo, !vapply(cs, `[[`, TRUE, "lo_in"))]
@@ -697,6 +728,17 @@ split_plan <- function(shell) {
     keys <- unique(pkey[idx])
     pops <- lapply(keys, function(k) sgc[[idx[match(k, pkey[idx])]]])
     oc <- one_cohort[idx[1]]
+    for (i in seq_along(pops)) for (j in seq_along(pops)) {
+      if (j <= i || !sg_overlap_open(pops[[i]], pops[[j]])) next
+      li <- chr(cols$label[idx[match(keys[i], pkey[idx])]])
+      lj <- chr(cols$label[idx[match(keys[j], pkey[idx])]])
+      stop("the columns '", li, "' and '", lj, "' select levels of one ",
+           "column that overlap without one holding the other. The patients ",
+           "in both are the two less what they cover together - AGE_YEARS<75 ",
+           "and AGE_YEARS>=65 give 65 to 74 away against Overall - and the ",
+           "suppression does not close that; write levels that do not meet, ",
+           "or one inside the other", call. = FALSE)
+    }
     close_over(length(pops), lapply(keys, function(k) idx[pkey[idx] == k]),
                function(i, j) sg_apart(pops[[i]], pops[[j]], oc),
                function(k, j) sg_population_within(pops[[k]], pops[[j]]),
@@ -726,7 +768,10 @@ split_plan <- function(shell) {
 
 relations_partition <- function(cells, ok, shell) {
   out <- list()
-  plan <- split_plan(shell)
+  # fill_all() works the plan out once for the shell it fills, and every
+  # pass over its tables reads that one.
+  plan <- if (is.list(shell) && !is.data.frame(shell) && !is.null(shell$split_plan))
+            shell$split_plan else split_plan(shell)
   cols <- plan$cols
   if (is.null(cols) || !length(plan$splits)) return(out)
 
@@ -766,10 +811,11 @@ relations_partition <- function(cells, ok, shell) {
         if (!length(got)) next
         whole <- sp$exact && all(vapply(pl, function(x) length(on_row(x)) > 0L, logical(1)))
         where <- if (all(tid[got] == ttid)) "" else paste0(" in ", ttid)
+        about <- paste0("the columns ", sp$what, " '", tlab, "'", where)
         out[[length(out) + 1L]] <- tfls_relation(c(ti, got), paste0(
-          "withheld with another cell of the columns ", sp$what, " '", tlab, "'",
-          where, ", which that total less the published rest would otherwise ",
-          "give away"), total = ti, kind = "partition", exact = whole)
+          "withheld with another cell of ", about, ", which that total less ",
+          "the published rest would otherwise give away"), total = ti,
+          kind = "partition", exact = whole, about = about)
       }
     }
   }
@@ -1033,9 +1079,10 @@ close_relations <- function(cells, relations, floor_n, units = list(),
       m <- r$members
       why <- if (!isFALSE(r$exact) && sum(was[m] == 1L) == 1L) r$why
              else if (!relation_covers(cells, was, r, floor_n)) paste0(
-               "withheld because the cells of a sum it belongs to that are not ",
-               "printed would otherwise add up to fewer than ", floor_n,
-               ", which the total less the printed rest gives away")
+               "withheld because the cells of ",
+               if (nzchar(chr(r$about))) r$about else "a sum it belongs to",
+               " that are not printed would otherwise add up to fewer than ",
+               floor_n, ", which the total less the printed rest gives away")
              else NULL
       if (is.null(why)) next
       open <- m[was[m] == 0L]

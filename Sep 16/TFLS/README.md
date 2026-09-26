@@ -196,9 +196,17 @@ class or an age, and the other stratification stays at the line's own row, so
 the categories add up to the line and so do the age groups.
 
 A subgroup names its table (`S_DEMOGRAPHICS:AGE_GROUP=<75&SEX=Male`) or
-leaves each condition to find the table that carries it
-(`AGE_GROUP=<75&SEX=Male`). Either way every condition applies: the men under
-75, whichever order they are written in. Conditions that land on the same table
+leaves it out (`AGE_GROUP=<75&SEX=Male`), and then each condition is read on
+the one per-patient table that carries its column - `AGE_YEARS<65` is
+`S_DEMOGRAPHICS:AGE_YEARS<65`, whatever row it sits under, for the fill and
+the suppression alike. A column two such tables carry (`TTE_ELIGIBLE`, on
+`S_PERIODS` and `S_TTE`) or none does has to be qualified, and the load says
+so. The tables a subgroup may be read on are the ones the code describes -
+the per-patient tables the study writes, `S_ELIGIBILITY`, `S_COHORT` and the
+input cohort table under any of its three names - with the columns each
+carries; any other table or column stops the load, because what its cells
+add up to beside the other columns could not be told. Either way every
+condition applies: the men under 75, whichever order they are written in. Conditions that land on the same table
 are met by the same row of it - `CONCEPT=neuropathy&HAS_HISTORY=1` is a history
 of neuropathy, not a neuropathy row beside some other concept's history - and
 that table is read for the column's own cohort, since demographics are taken at
@@ -324,9 +332,19 @@ withheld.
   its own, so a column added beside them never takes that away. Such a sum,
   and a split whose levels leave a gap (under 65 and 85 and over), need not
   add up exactly, so it withholds only when what it leaves out is under the
-  floor. Every split is found - the search is complete, and does not depend
-  on the order of the columns - and a shell whose columns overlap in more
-  ways than the search closes (256 over one population) stops at load.
+  floor. A split is exact - one withheld level read off the rest - only
+  where its levels cover their column: every value the column can take
+  (`NEUROPATHY=YES` and `=NO`), a value and its complement (`X=a` and
+  `X!=a`), or ranges with no gap; patients with no value - a NULL, the
+  study's `Unknown` age or sex - are left out of that, as they always were,
+  so `<75` and `75+` are the whole of `AGE_GROUP`. `AGE_BAND` 65-74 and 75+
+  leave the younger bands out, so they are closed on what they leave out. Levels of one column that overlap
+  without one holding the other - `AGE_YEARS<75` and `AGE_YEARS>=65` - stop
+  the load: the patients in both are the two less what they cover together,
+  and 60 + 60 - 100 gives away the 20 aged 65 to 74. Every split is found -
+  the search is complete, and does not depend on the order of the columns -
+  and a shell whose columns overlap in more ways than the search closes (256
+  over one population) stops at load.
   Every statistic takes part in a split, not only the
   counts, because every printed cell carries its population in `DENOM` and
   populations add up. The closing repeats until no sum is short, then runs
