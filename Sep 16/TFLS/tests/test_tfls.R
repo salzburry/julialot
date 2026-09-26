@@ -2731,6 +2731,88 @@ local({
      "...and every one of them is withheld in both or printed in both")
 })
 
+cat("\n-- a named subgroup takes =, a named table is the one read, a union keeps its drug --\n")
+local({
+  # A named subgroup is a yes or a no, or an age band. Any other comparison was
+  # dropped, so NEUROPATHY!=YES selected the patients WITH a history.
+  for (bad in c("NEUROPATHY!=YES", "FRAILTY!=YES", "AGE!=GE75", "NEUROPATHY=MAYBE",
+                "NEUROPATHY=YES|NO"))
+    stops_with(load_shells(write_shells(list(columns = c(BASE$columns[1:2],
+                 edit_field(BASE$columns[3], 9, bad), BASE$columns[4:5])))),
+      c("shells/columns.csv row 2", "named subgroup"),
+      paste0("a column asking for ", bad, " stops the run"))
+  ok(nrow(load_shells(write_shells(list(columns = c(BASE$columns[1:2],
+       edit_field(BASE$columns[3], 9, "NEUROPATHY=Y"), BASE$columns[4:5]))))$columns) == 4L,
+     "...while NEUROPATHY=Y loads")
+  ids <- sprintf("P%03d", 1:100)
+  cs <- data.frame(PATID = ids, COHORT = "1L", CONCEPT = "neuropathy",
+                   HAS_HISTORY = rep(1:0, c(30, 70)), stringsAsFactors = FALSE)
+  tt <- data.frame(PATID = ids, COHORT = "1L", LOT_NUM = 1L, stringsAsFactors = FALSE)
+  cx <- fill_context(function(n) list(S_COMORB_SUBGROUP = cs, S_TTE = tt)[[toupper(n)]], NULL)
+  r <- restrict_to_subgroup(tt, "NEUROPATHY!=YES", cx, "S_TTE", "1L")
+  ok(!isTRUE(r$ok) && identical(r$kind, "shell"),
+     "...and one that reaches a fill anyway is refused there, not read as =YES")
+
+  # The table a subgroup names is the one read. S_TTE's LOT_NUM is its cohort's
+  # index line, so S_LOT_PERIODS:LOT_NUM=3 read off a 2L S_TTE found nobody.
+  p <- sprintf("L%03d", 1:100)
+  t2 <- data.frame(PATID = p, COHORT = "2L", LOT_NUM = 2L, stringsAsFactors = FALSE)
+  lp <- rbind(data.frame(PATID = p, COHORT = "2L", LOT_NUM = 2L, stringsAsFactors = FALSE),
+              data.frame(PATID = p[1:50], COHORT = "2L", LOT_NUM = 3L, stringsAsFactors = FALSE))
+  c2 <- fill_context(function(n) list(S_LOT_PERIODS = lp, S_TTE = t2)[[toupper(n)]], NULL)
+  r2 <- restrict_to_subgroup(t2, "S_LOT_PERIODS:LOT_NUM=3", c2, "S_TTE", "2L")
+  ok(isTRUE(r2$ok) && nrow(r2$rows) == 50L,
+     "a subgroup naming S_LOT_PERIODS is read off it: the 50 who went on to a third line, not S_TTE's own index line")
+  agg <- data.frame(AGE_GROUP = c("ALL", "<75", "75+"), N_EVENTS = c(30, 20, 10),
+                    stringsAsFactors = FALSE)
+  r3 <- restrict_to_subgroup(agg, "S_DEMOGRAPHICS:AGE_GROUP=<75", c2, "S_SAFETY_RATES", "2L")
+  ok(isTRUE(r3$ok) && nrow(r3$rows) == 1L && r3$rows$N_EVENTS == 20,
+     "...while a table of totals written by age still answers an age column from its own rows")
+  mal <- data.frame(PATID = c("A", "A", "B"), COHORT = "1L", LOT_AFTER_WHICH = c(1L, 2L, 2L),
+                    CATEGORY = c("Solid", "Hematological", "Solid"), stringsAsFactors = FALSE)
+  c3 <- fill_context(function(n) list(S_MALIGNANCY = mal)[[toupper(n)]], NULL)
+  r4 <- restrict_to_subgroup(mal, "S_MALIGNANCY:LOT_AFTER_WHICH=1", c3, "S_MALIGNANCY", "1L")
+  ok(isTRUE(r4$ok) && nrow(r4$rows) == 1L && r4$rows$CATEGORY == "Solid",
+     "...and rows of the named table itself are filtered as rows: the malignancies in that interval, not every malignancy of a patient who had one there")
+
+  # T1b's comorbidity rows read S_COMORB_SUBGROUP, the table its neuropathy
+  # columns named, so the lung row was filtered to neuropathy rows and came
+  # back empty. The columns now ask for the named subgroup, which is patients.
+  SHIP <- load_shells(file.path(ROOT, "shells"))
+  ok(all(SHIP$columns$subgroup[SHIP$columns$table_id == "T1b" &
+                                 nzchar(SHIP$columns$subgroup)] %in%
+           c("NEUROPATHY=YES", "NEUROPATHY=NO")),
+     "T1b's neuropathy columns ask for the named subgroup")
+  for (nm in c("tables", "columns", "rows"))
+    SHIP[[nm]] <- SHIP[[nm]][SHIP[[nm]]$table_id == "T1b", , drop = FALSE]
+  q <- sprintf("Q%03d", 1:200)
+  cs2 <- rbind(
+    data.frame(PATID = q, COHORT = "1L", LOT_NUM = 1L, CONCEPT = "neuropathy",
+               HAS_HISTORY = rep(1:0, c(100, 100)), stringsAsFactors = FALSE),
+    data.frame(PATID = q, COHORT = "1L", LOT_NUM = 1L, CONCEPT = "lung_parenchymal_disease",
+               HAS_HISTORY = c(rep(1:0, c(40, 60)), rep(1:0, c(30, 70))), stringsAsFactors = FALSE))
+  lp2 <- data.frame(PATID = q, COHORT = "1L", LOT_NUM = 1L,
+                    PERIOD_START = as.Date("2020-01-01"), PERIOD_END = as.Date("2020-06-01"))
+  rd2 <- function(n) list(S_COMORB_SUBGROUP = cs2, S_LOT_PERIODS = lp2,
+                          S_DEMOGRAPHICS = data.frame(PATID = q, COHORT = "1L"))[[toupper(n)]]
+  fb <- fill_table(SHIP, "T1b", fill_context(rd2, SHIP$classes), 25)$cells
+  lung <- fb[grepl("^Lung", fb$ROW_LABEL) & fb$COLUMN_ID %in% c("1L_NEURO_YES", "1L_NEURO_NO"), ]
+  ok(nrow(lung) == 2L && all(lung$FILLED == 1L),
+     "...so T1b's lung-disease row is filled in both neuropathy columns, where it read as not filled")
+
+  # The drug refines the whole column, so a union of a refined class with an
+  # unrefined one required it of both.
+  for (bad in c("POM_TRIP|ACD38_QUAD", "ACD38_QUAD|POM_TRIP",
+                "POM_TRIP|Quadruplet with anti-CD38 backbone"))
+    stops_with(load_shells(write_shells(list(columns = c(BASE$columns[1:2],
+                 edit_field(BASE$columns[3], 8, bad), BASE$columns[4:5])))),
+      "no drug refines",
+      paste0("a column joining ", bad, " stops the run"))
+  ok(nrow(load_shells(write_shells(list(columns = c(BASE$columns[1:2],
+       edit_field(BASE$columns[3], 8, "BOTH|ACD38_QUAD"), BASE$columns[4:5]))))$columns) == 4L,
+     "...while a union of unrefined classes loads")
+})
+
 cat("\n-- a class named two ways is one class --\n")
 # class_selection() takes a class by its id or by the SOC category it maps to,
 # and both select the same patients. The copies were keyed on the text, so a

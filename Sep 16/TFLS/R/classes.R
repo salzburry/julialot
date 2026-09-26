@@ -121,7 +121,7 @@ class_selection <- function(value, classes) {
   parts <- split_soc_categories(value)
   if (!length(parts)) return(list(kind = "all", categories = character(0),
                                   drug = "", why = ""))
-  cats <- character(0); drugs <- character(0)
+  cats <- character(0); drugs <- character(0); plain <- character(0)
   for (p in parts) {
     if (class_is_overall(p))
       return(list(kind = "all", categories = character(0), drug = "", why = ""))
@@ -134,16 +134,25 @@ class_selection <- function(value, classes) {
                       "cannot separate this column yet")))
       cats <- c(cats, c2)
       d <- class_requires_drug(p, classes)
-      if (nzchar(d)) drugs <- c(drugs, d)
+      if (nzchar(d)) drugs <- c(drugs, d) else plain <- c(plain, p)
       next
     }
     k <- match(soc_key(p), soc_key(TFLS_SOC_CATEGORIES))
-    if (!is.na(k)) { cats <- c(cats, TFLS_SOC_CATEGORIES[k]); next }
+    if (!is.na(k)) { cats <- c(cats, TFLS_SOC_CATEGORIES[k]); plain <- c(plain, p); next }
     return(list(kind = "unknown", categories = character(0), drug = "",
                 why = paste0("'", p, "' is neither a class in ",
                   "regimen_classes.csv nor a SOC category the study writes")))
   }
   drugs <- unique(drugs)
+  # The drug refines the whole column, so a union of a refined class with an
+  # unrefined one required it of both: POM_TRIP|ACD38_QUAD kept only the
+  # quadruplets that happened to hold pomalidomide.
+  if (length(drugs) && length(plain))
+    return(list(kind = "unknown", categories = character(0), drug = "",
+                why = paste0("this column joins ", paste(plain, collapse = ", "),
+                  ", which no drug refines, with a class refined to ",
+                  paste(drugs, collapse = ", "), "; one column cannot require a ",
+                  "drug of some of its lines and not of the others")))
   if (length(drugs) > 1L)
     return(list(kind = "unknown", categories = character(0), drug = "",
                 why = paste0("this column joins classes that refine their ",

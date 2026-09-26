@@ -204,6 +204,23 @@ of neuropathy, not a neuropathy row beside some other concept's history - and
 that table is read for the column's own cohort, since demographics are taken at
 each cohort's index: a 2L column's under-75 are the patients under 75 at 2L.
 
+A subgroup that names its table is read off that table, for the column's
+cohort, and selects patients: `S_LOT_PERIODS:LOT_NUM=3` is the patients who
+went on to a third line, whatever `LOT_NUM` means in the table the row reads.
+Two exceptions answer it from the rows being summarised: a table of totals,
+which has no patient to look up (a rate table written once per age group
+answers `S_DEMOGRAPHICS:AGE_GROUP=<75` from its own `AGE_GROUP`), and rows of
+the named table itself, which are filtered as rows - T3's columns are the
+interval each malignancy fell in, not the patients who had one there. So to
+select patients by something kept in the table a row reads, use the named
+subgroup: T1b's neuropathy columns are `NEUROPATHY=YES` and `NEUROPATHY=NO`,
+because its comorbidity rows read `S_COMORB_SUBGROUP` too.
+
+A named subgroup - `NEUROPATHY`, `FRAILTY`, `AGE` - is asked for with `=` and
+one of its values (`YES`/`NO`, or `LT75`/`GE75`); anything else stops the
+load. A regimen-class column may join classes, but not a class a drug refines
+with one no drug refines: the drug would be required of both.
+
 Everything reading a per-patient table - demographics, comorbidity, frailty,
 periods, SOC and the time-to-event outcomes - takes both. That is the whole of
 T1, T1b, T4, T5c and most of T3.

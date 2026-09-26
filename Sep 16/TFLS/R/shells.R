@@ -405,6 +405,12 @@ load_shell_columns <- function(dir, tables, classes) {
       if (!p$ok)
         shell_stop(f, i, "column '", d$label[i], "' has a subgroup that ",
                    "cannot be read: ", p$why, ".")
+      if (!nzchar(p$table) && exists("named_subgroup_value_why", mode = "function"))
+        for (t in p$terms) {
+          why <- named_subgroup_value_why(t)
+          if (nzchar(why))
+            shell_stop(f, i, "column '", d$label[i], "': ", why, ".")
+        }
     }
   }
   # A column with no order keeps the order it was written in, so a file that

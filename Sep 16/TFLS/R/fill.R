@@ -375,6 +375,30 @@ TFLS_SUBGROUP_NO <- c("NO", "N", "FALSE", "F", "0")
 TFLS_AGE_BANDS <- list(LT75 = c("LT75", "<75", "UNDER75", "LESS75"),
                        GE75 = c("GE75", ">=75", "75+", "GTE75"))
 
+# A named subgroup is a yes or a no, or an age band, and is asked for with =.
+# Any other comparison was dropped on the way in: NEUROPATHY!=YES selected the
+# patients WITH a neuropathy history.
+named_subgroup_op_why <- function(t)
+  paste0("'", chr(t$raw), "' compares the named subgroup ", toupper(chr(t$column)),
+         " with '", chr(t$op), "'; a named subgroup is asked for with = only - ",
+         "the other value is its own subgroup (", toupper(chr(t$column)),
+         if (identical(toupper(chr(t$column)), "AGE")) "=LT75 or =GE75" else "=YES or =NO",
+         ")")
+
+# Whether a named subgroup's value is one it has, and if not, why.
+named_subgroup_value_why <- function(t) {
+  def <- TFLS_SUBGROUPS[[toupper(chr(t$column))]]
+  if (is.null(def)) return("")
+  if (!identical(chr(t$op), "=")) return(named_subgroup_op_why(t))
+  v <- chr(t$value)
+  ok <- length(v) == 1L && (
+    if (!is.null(def$bands)) nzchar(subgroup_band(v))
+    else toupper(v) %in% c(TFLS_SUBGROUP_YES, TFLS_SUBGROUP_NO))
+  if (ok) "" else paste0("'", chr(t$raw), "' is not one value the named subgroup ",
+    toupper(chr(t$column)), " has: ",
+    if (!is.null(def$bands)) paste(names(def$bands), collapse = " or ") else "YES or NO")
+}
+
 subgroup_band <- function(value) {
   v <- toupper(gsub("[[:space:]]", "", chr(value)))
   for (nm in names(TFLS_AGE_BANDS)) if (v %in% TFLS_AGE_BANDS[[nm]]) return(nm)
@@ -442,10 +466,22 @@ restrict_to_subgroup <- function(d, subgroup, ctx, where, cohort = "") {
   # and the interval a malignancy fell in are on different tables and neither
   # is on the table being summarised.
   if (nzchar(sg$table)) {
-    # Where the table being summarised carries the column itself, the
-    # restriction is a filter on it and no patient is needed. That is how a
-    # rate table stratified by age answers an age column.
-    if (all(vapply(sg$terms, function(t) has_col(d, t$column), logical(1)))) {
+    # The table the subgroup names is the one it is read off - with two
+    # bounded exceptions, where the rows being summarised answer it
+    # themselves. A table of totals has no patient to look up: a rate table
+    # written once per age group carries AGE_GROUP, and that column is the
+    # answer. And rows OF the named table are filtered as rows, which is what
+    # T3 means: its columns are the interval each malignancy fell in, not the
+    # patients who had one there.
+    #
+    # Anywhere else a column of the same name is a different fact. S_TTE's
+    # LOT_NUM is the line its cohort is indexed on, not a later line in
+    # S_LOT_PERIODS, so S_LOT_PERIODS:LOT_NUM=3 read off a 2L S_TTE found
+    # nobody where 50 patients had gone on to a third line.
+    own_rows <- identical(toupper(chr(where)), toupper(chr(sg$table))) ||
+                !has_col(d, "PATID")
+    if (own_rows &&
+        all(vapply(sg$terms, function(t) has_col(d, t$column), logical(1)))) {
       for (t in sg$terms) {
         r <- apply_term(d, t, where)
         if (!isTRUE(r$ok)) return(r)
@@ -477,6 +513,9 @@ restrict_to_subgroup <- function(d, subgroup, ctx, where, cohort = "") {
   # its own table; a column of the table being summarised filters its rows.
   rest <- list()
   for (t in sg$terms) {
+    if (!is.null(TFLS_SUBGROUPS[[toupper(chr(t$column))]]) &&
+        !identical(chr(t$op), "="))
+      return(refuse(named_subgroup_op_why(t), "shell"))
     named <- named_subgroup_patients(t$column, paste(t$value, collapse = "|"),
                                      ctx, cohort)
     r <- if (!is.null(named) && isTRUE(named$ok))
