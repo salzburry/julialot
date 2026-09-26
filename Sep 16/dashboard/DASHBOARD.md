@@ -176,6 +176,14 @@ as a blank, and the line under each table says how many cells were withheld
 and at what floor. A row nothing could fill reads as *not filled*, never as a
 zero, because a zero there would be a claim that nobody is in it.
 
+**Every table is filled and suppressed together**, the way the written
+outputs are, even though the tab shows one at a time. Some sums only exist
+across tables - T5c's age columns split T4's `Overall` - and a table filled
+on its own printed T4's 200 and T5c's 180 while withholding the 20 aged 75 or
+over. The joint fill is made once per scenario, run and setting and each
+table is drawn from it, so picking another table costs nothing; a fill during
+which the run moved is not kept.
+
 The second panel is the **class mapping**, from `shells/regimen_classes.csv`.
 It is the thing to change: a class is a column heading and the study's own
 categories it rolls up, so editing one line of that file changes the columns

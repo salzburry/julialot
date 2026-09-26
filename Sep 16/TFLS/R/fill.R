@@ -896,6 +896,21 @@ row_key <- function(row, eligible_only = FALSE)
   row_keys(row$stat, row$source, parse_measure(row$measure),
            parse_filter(row$filter), eligible_only)$row
 
+# The cells of a table as one frame, built a column at a time: one small data
+# frame per cell, bound together, was most of the time a whole fill took.
+cells_frame <- function(cells) {
+  if (!length(cells)) return(empty_cells())
+  nm <- names(empty_cells())
+  out <- lapply(nm, function(f) {
+    v <- lapply(cells, `[[`, f)
+    if (any(lengths(v) != 1L))
+      stop("a filled cell carries no single value for ", f, call. = FALSE)
+    unlist(v, use.names = FALSE)
+  })
+  names(out) <- nm
+  as.data.frame(out, stringsAsFactors = FALSE)
+}
+
 empty_unfilled <- function() data.frame(
   TABLE_ID = character(0), ROW_ORDER = integer(0), ROW_LABEL = character(0),
   COLUMN_ID = character(0), COLUMN_LABEL = character(0), STAT = character(0),
@@ -947,6 +962,7 @@ row_reads_label <- function(row) {
 fill_table <- function(sh, tid, ctx, floor_n = TFLS_PACKAGE_MIN_N) {
   cols <- shell_columns_of(sh, tid)
   rows <- shell_rows_of(sh, tid)
+  pops <- new.env(parent = emptyenv())
   cells <- list(); unfilled <- list(); notes <- character(0)
   section_label <- ""
   for (ri in seq_len(nrow(rows))) {
@@ -1012,7 +1028,14 @@ fill_table <- function(sh, tid, ctx, floor_n = TFLS_PACKAGE_MIN_N) {
       # any row that does not, and suppress_cells() floors that number.
       pop_n <- NA_real_
       if (!isTRUE(row$section_flag) && !nzchar(why)) {
-        pop <- select_population(d, spec, ctx, chr(row$source))
+        # The same column over the same table is the same population for
+        # every row that reads it, so it is selected once.
+        pk <- paste(toupper(chr(row$source)), ci, sep = "\r")
+        pop <- pops[[pk]]
+        if (is.null(pop)) {
+          pop <- select_population(d, spec, ctx, chr(row$source))
+          pops[[pk]] <- pop
+        }
         if (!isTRUE(pop$ok)) {
           why <- pop$why; kind <- pop$kind %||% "not_computable"
         } else {
@@ -1042,7 +1065,7 @@ fill_table <- function(sh, tid, ctx, floor_n = TFLS_PACKAGE_MIN_N) {
             unfilled_row(tid, row, spec$id, spec$label, kind, why)
       }
       is_section <- isTRUE(row$section_flag)
-      cells[[length(cells) + 1L]] <- data.frame(
+      cells[[length(cells) + 1L]] <- list(
         TABLE_ID = tid, ROW_ORDER = row$order_n, ROW_LABEL = chr(row$label),
         INDENT = row$indent_n, SECTION = as.integer(is_section),
         SECTION_LABEL = if (is_section) chr(row$label) else section_label,
@@ -1064,11 +1087,10 @@ fill_table <- function(sh, tid, ctx, floor_n = TFLS_PACKAGE_MIN_N) {
         # be found in another table: T5c's rows are T4's, over a subgroup.
         ROW_KEY = keys$row,
         POP_N = if (is.null(cell)) NA_real_ else pop_n,
-        CURVE_KEY = keys$curve,
-        stringsAsFactors = FALSE)
+        CURVE_KEY = keys$curve)
     }
   }
-  out <- if (length(cells)) do.call(rbind, cells) else empty_cells()
+  out <- cells_frame(cells)
   # The shell goes with the cells: the sums a withheld cell could be read
   # off - a subtotal down a column, a total across a row - are drawn by the
   # shell's own indentation and columns.

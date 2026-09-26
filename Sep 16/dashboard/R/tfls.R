@@ -91,20 +91,55 @@ shell_floor <- function(viewer_floor, package_min_n = 25L, ready = NULL) {
   ready$env$tfls_floor(fl)
 }
 
-# One shell table, filled from this scenario.
-shell_fill <- function(ready, table_id, src, scenario, floor_n,
-                       tte_eligible_only = FALSE, prefer_release = TRUE,
-                       package_min_n = 25L) {
+# Every shell table, filled from this scenario and suppressed TOGETHER.
+#
+# A table filled on its own is closed against its own sums only. T5c's age
+# columns split T4's Overall, and that sum exists only with both tables in
+# hand: filled one at a time, the page printed T4's 200 and T5c's 180 while
+# withholding the 20 aged 75 or over - and 200 - 180 is 20. fill_all() closes
+# the tables against each other, as the written outputs always were, so every
+# table this panel draws comes out of one such fill.
+#
+# `cache` keeps finished fills by scenario, run and setting, so picking another
+# table does not fill them all again; the app passes one and a test need not.
+# A fill during which the run moved is not kept - its rows can be two runs' -
+# and the panel's own check after the fill still decides whether anything is
+# drawn.
+.TFLS_FILLS <- new.env(parent = emptyenv())
+
+shell_fill_all <- function(ready, src, scenario, floor_n,
+                           tte_eligible_only = FALSE, prefer_release = TRUE,
+                           package_min_n = 25L, cache = NULL) {
   e <- ready$env
+  fl <- shell_floor(floor_n, package_min_n, ready)
+  key <- paste(ready$dir, scenario$prefix, scenario$run_id, scenario$state,
+               scenario$updated_at, fl, isTRUE(tte_eligible_only),
+               isTRUE(prefer_release), sep = "\r")
+  if (is.environment(cache) && !is.null(cache[[key]])) return(cache[[key]])
   ctx <- e$fill_context(shell_reader(src, scenario, prefer_release),
                         ready$shells$classes,
                         tte_eligible_only = isTRUE(tte_eligible_only))
-  filled <- e$fill_table(ready$shells, table_id,
-                         ctx, shell_floor(floor_n, package_min_n, ready))
+  all <- e$fill_all(ready$shells, ctx, fl)
   # The engine's own guard, on the way to the page rather than on the way to a
   # file. A cell is a summary and nothing patient-level can reach one, and this
   # is where that is checked rather than assumed.
-  e$assert_no_identifiers(filled$cells, "this table")
+  for (f in all) e$assert_no_identifiers(f$cells, "this table")
+  if (is.environment(cache) && isTRUE(scenario_is_current(src, scenario))) {
+    if (length(ls(cache, all.names = TRUE)) >= 8L)
+      rm(list = ls(cache, all.names = TRUE), envir = cache)
+    cache[[key]] <- all
+  }
+  all
+}
+
+# One shell table, out of that fill.
+shell_fill <- function(ready, table_id, src, scenario, floor_n,
+                       tte_eligible_only = FALSE, prefer_release = TRUE,
+                       package_min_n = 25L, cache = NULL) {
+  all <- shell_fill_all(ready, src, scenario, floor_n, tte_eligible_only,
+                        prefer_release, package_min_n, cache)
+  filled <- all[[table_id]]
+  if (is.null(filled)) stop("the shells have no table ", table_id, call. = FALSE)
   filled
 }
 
