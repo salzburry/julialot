@@ -471,14 +471,66 @@ restrict_to_subgroup <- function(d, subgroup, ctx, where, cohort = "") {
         ", so this subgroup holds nobody in this run"), "not_in_run"))
     return(subgroup_keep_ids(d, patients_of(s), subgroup, where))
   }
-  # Unqualified, each term finds its own table and EVERY term applies, one
-  # after another. Only the first did: AGE_GROUP=<75&SEX=Male was every patient
-  # under 75, and the same subgroup written the other way round every man -
-  # two populations the suppression rightly reads as one.
+  # Unqualified, every term applies - only the first did, so
+  # AGE_GROUP=<75&SEX=Male was every patient under 75 and its reverse every
+  # man - and each finds its own table. A subgroup the study names is read off
+  # its own table; a column of the table being summarised filters its rows.
+  rest <- list()
   for (t in sg$terms) {
-    r <- subgroup_term(d, t, subgroup, ctx, where, cohort)
+    named <- named_subgroup_patients(t$column, paste(t$value, collapse = "|"),
+                                     ctx, cohort)
+    r <- if (!is.null(named) && isTRUE(named$ok))
+           subgroup_keep_ids(d, named$ids, subgroup, where)
+         else if (has_col(d, t$column)) apply_term(d, t, where)
+         else if (!is.null(named)) refuse(named$why, "not_in_run")
+         else NULL
+    if (is.null(r)) { rest[[length(rest) + 1L]] <- t; next }
     if (!isTRUE(r$ok)) return(r)
     d <- r$rows
+  }
+  if (!length(rest)) return(list(ok = TRUE, rows = d))
+  if (!has_col(d, "PATID"))
+    return(refuse(paste0(where, " carries neither ",
+                         paste(vapply(rest, function(t) chr(t$column), ""),
+                               collapse = " nor "),
+                         " nor a patient, so the subgroup ", subgroup,
+                         " cannot be applied to it"), "not_computable"))
+  # The rest are read off the subject tables, and two things hold there that
+  # a patient id alone loses. The terms a table carries are applied TOGETHER,
+  # to its rows, before any patient is taken: S_COMORB_SUBGROUP has a row per
+  # patient and concept, and CONCEPT=neuropathy on one row with HAS_HISTORY=1
+  # on another is not a history of neuropathy. And the rows are this column's
+  # cohort's: demographics are taken at each cohort's own index, so a patient
+  # under 75 at 1L and 75+ at 2L is not under 75 in the 2L column. So the
+  # table carrying the most of what is left is read first, for this cohort.
+  cohorts <- chr(strsplit(chr(cohort), "|", fixed = TRUE)[[1]])
+  while (length(rest)) {
+    best <- ""; most <- 0L
+    for (tb in ctx$subject_tables) {
+      s <- ctx$get(tb)
+      if (is.null(s) || !nrow(s) || !has_col(s, "PATID")) next
+      k <- sum(vapply(rest, function(t) has_col(s, t$column), logical(1)))
+      if (k > most) { best <- tb; most <- k }
+    }
+    if (!most)
+      return(refuse(paste0("no table read by this run carries ",
+                           paste(vapply(rest, function(t) chr(t$column), ""),
+                                 collapse = " or "),
+                           ", so the subgroup ", subgroup, " cannot be applied"),
+                    "not_in_run"))
+    s <- ctx$get(best)
+    if (length(cohorts) && has_col(s, "COHORT"))
+      s <- s[chr(s[[col_of(s, "COHORT")]]) %in% cohorts, , drop = FALSE]
+    here <- vapply(rest, function(t) has_col(s, t$column), logical(1))
+    for (t in rest[here]) {
+      r <- apply_term(s, t, best)
+      if (!isTRUE(r$ok)) return(r)
+      s <- r$rows
+    }
+    r <- subgroup_keep_ids(d, patients_of(s), subgroup, where)
+    if (!isTRUE(r$ok)) return(r)
+    d <- r$rows
+    rest <- rest[!here]
   }
   list(ok = TRUE, rows = d)
 }
@@ -490,37 +542,6 @@ subgroup_keep_ids <- function(d, ids, subgroup, where) {
                          subgroup, " cannot be applied to it"),
                   "not_computable"))
   list(ok = TRUE, rows = d[chr(d[[col_of(d, "PATID")]]) %in% ids, , drop = FALSE])
-}
-
-# One term of an unqualified subgroup, wherever it can be answered: a subgroup
-# the study names, the table's own column, or the first subject table that
-# carries the column.
-subgroup_term <- function(d, term, subgroup, ctx, where, cohort = "") {
-  named <- named_subgroup_patients(term$column, paste(term$value, collapse = "|"),
-                                   ctx, cohort)
-  if (!is.null(named)) {
-    if (isTRUE(named$ok)) return(subgroup_keep_ids(d, named$ids, subgroup, where))
-    # The named table was not read or holds nothing: the table's own column is
-    # still worth asking, and the reason is kept for when it has none either.
-    if (has_col(d, term$column)) return(apply_term(d, term, where))
-    return(refuse(named$why, "not_in_run"))
-  }
-  if (has_col(d, term$column)) return(apply_term(d, term, where))
-  if (!has_col(d, "PATID"))
-    return(refuse(paste0(where, " carries neither ", term$column,
-                         " nor a patient, so the subgroup ", subgroup,
-                         " cannot be applied to it"), "not_computable"))
-  for (tb in ctx$subject_tables) {
-    s <- ctx$get(tb)
-    if (is.null(s) || !nrow(s) || !has_col(s, term$column) ||
-        !has_col(s, "PATID")) next
-    r <- apply_term(s, term, tb)
-    if (!isTRUE(r$ok)) return(r)
-    return(subgroup_keep_ids(d, patients_of(r$rows), subgroup, where))
-  }
-  refuse(paste0("no table read by this run carries ", term$column,
-                ", so the subgroup ", subgroup, " cannot be applied"),
-         "not_in_run")
 }
 
 # A shell speaks in its own column headings and a study table speaks in SOC

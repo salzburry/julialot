@@ -2732,6 +2732,39 @@ local({
   ok(identical(got, rep(60L, 4)),
      paste0("the men under 75 are 60 whichever way the subgroup is written, and ",
             "whichever table it is read against (", paste(got, collapse = ", "), ")"))
+
+  # Applied term by term and joined on the patient, two conditions could be met
+  # by two different rows. S_COMORB_SUBGROUP has a row per patient and concept:
+  # a neuropathy row with no history and a lung row with one is not a history
+  # of neuropathy.
+  p <- sprintf("C%03d", 1:120)
+  cs <- rbind(
+    data.frame(PATID = p, COHORT = "1L", CONCEPT = "neuropathy",
+               HAS_HISTORY = rep(1:0, c(60, 60)), stringsAsFactors = FALSE),
+    data.frame(PATID = p, COHORT = "1L", CONCEPT = "lung_parenchymal_disease",
+               HAS_HISTORY = rep(0:1, c(60, 60)), stringsAsFactors = FALSE))
+  t1 <- data.frame(PATID = p, COHORT = "1L", LOT_NUM = 1L, stringsAsFactors = FALSE)
+  c1 <- fill_context(function(n) list(S_COMORB_SUBGROUP = cs, S_TTE = t1)[[toupper(n)]], NULL)
+  nn <- function(sg) { r <- restrict_to_subgroup(t1, sg, c1, "S_TTE", "1L")
+                       if (isTRUE(r$ok)) nrow(r$rows) else NA }
+  ok(identical(c(nn("CONCEPT=neuropathy&HAS_HISTORY=1"), nn("HAS_HISTORY=1&CONCEPT=neuropathy"),
+                 nn("S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=1")), rep(60L, 3)),
+     "a subgroup's conditions on one table are met by one row of it: 60 with a history of neuropathy, not the 120 with a history of anything")
+
+  # A subject table holds a row per patient per cohort, taken at that cohort's
+  # own index. The 2L column's under-75 are the patients under 75 at 2L, not
+  # those who were under 75 at 1L.
+  q <- sprintf("Q%03d", 1:200)
+  dm <- rbind(data.frame(PATID = q, COHORT = "1L", AGE_GROUP = rep(c("<75", "75+"), c(120, 80)),
+                         stringsAsFactors = FALSE),
+              data.frame(PATID = q, COHORT = "2L", AGE_GROUP = rep(c("<75", "75+"), c(80, 120)),
+                         stringsAsFactors = FALSE))
+  t2 <- data.frame(PATID = q, COHORT = "2L", LOT_NUM = 2L, stringsAsFactors = FALSE)
+  c2 <- fill_context(function(n) list(S_DEMOGRAPHICS = dm, S_TTE = t2)[[toupper(n)]], NULL)
+  n2 <- function(sg) { r <- restrict_to_subgroup(t2, sg, c2, "S_TTE", "2L")
+                       if (isTRUE(r$ok)) nrow(r$rows) else NA }
+  ok(identical(c(n2("AGE_GROUP=<75"), n2("S_DEMOGRAPHICS:AGE_GROUP=<75")), c(80L, 80L)),
+     "a subgroup read off a subject table reads this column's cohort: 80 under 75 at 2L, not the 120 who were at 1L")
 })
 
 # Warehouse mode reads through the STUDY PACKAGE's db_q(), which retries through
