@@ -2952,7 +2952,8 @@ local({
                     stringsAsFactors = FALSE)
   demo <- data.frame(PATID = ids, COHORT = "1L",
                      AGE_YEARS = rep(c(60, 80), c(180, 20)),
-                     X = rep(1:3, c(100, 90, 10)), stringsAsFactors = FALSE)
+                     AGE_AT_DX_YEARS = rep(c(60, 70, 80), c(100, 90, 10)),
+                     stringsAsFactors = FALSE)
   cs <- data.frame(PATID = ids, COHORT = "1L", CONCEPT = "neuropathy",
                    HAS_HISTORY = rep(1:0, c(180, 20)), stringsAsFactors = FALSE)
   soc <- data.frame(PATID = ids, COHORT = "1L", LOT_NUM = 1L, REGIMEN = "X",
@@ -3008,15 +3009,16 @@ local({
        pop("AGE_YEARS<75") != pop("AGE_YEARS<=75"),
      "a population is one however its subgroup is spelled - an alias, the named table's rows, a band written either way - and not across its levels")
 
-  # A part inside another part. X=2 is 90 of X>=2's 100, and the
-  # 10 with X=3 were the difference. Nothing is a split here - the two meet -
-  # so the sum is read on what it leaves out, and a lone withheld term does
-  # not take the larger part with it.
-  x <- filled(shell_with(c("S_DEMOGRAPHICS:X=2", "S_DEMOGRAPHICS:X>=2")))
+  # A part inside another part. Diagnosed at 70 is 90 of the 100 diagnosed at
+  # 70 or later, and the 10 diagnosed at 80 were the difference. Nothing is a
+  # split here - the two meet - so the sum is read on what it leaves out, and
+  # a lone withheld term does not take the larger part with it.
+  x <- filled(shell_with(c("S_DEMOGRAPHICS:AGE_AT_DX_YEARS=70",
+                           "S_DEMOGRAPHICS:AGE_AT_DX_YEARS>=70")))
   p <- parts(x)
   ok(overall_kept(x) && p$SUPPRESSED[p$COLUMN_ID == "S1"] == 1L &&
        p$SUPPRESSED[p$COLUMN_ID == "S2"] == 0L && p$DENOM[p$COLUMN_ID == "S2"] == 100,
-     "X=2 inside X>=2 is withheld, which kept the 10 with X=3 from being their difference, and X>=2 stays printed")
+     "diagnosed at 70, inside diagnosed at 70 or later, is withheld, which kept the 10 diagnosed at 80 from being their difference, and the larger stays printed")
   x <- filled(shell_with("AGE_YEARS<75"))
   ok(overall_kept(x) && parts(x)$SUPPRESSED == 1L,
      "a lone subgroup of 180 beside an Overall of 200 is withheld: the 20 outside it are their difference")
@@ -3081,8 +3083,10 @@ local({
     }
     # One row counting the column's patients, and nothing else.
     if (count_only) {
-      S$rows <- S$rows[S$rows$source == "S_DEMOGRAPHICS", , drop = FALSE][1, ]
-      S$rows$stat <- "n"; S$rows$measure <- ""; S$rows$label <- "Patients"
+      r1 <- S$rows[S$rows$source == "S_DEMOGRAPHICS", , drop = FALSE][1, ]
+      r1$stat <- "n"; r1$measure <- ""; r1$label <- "Patients"
+      r2 <- r1; r2$table_id <- "T5c"
+      S$rows <- rbind(r1, r2)
     }
     ov <- S$columns[S$columns$table_id == "T4" & S$columns$column_id == "1L_OVERALL", ]
     ov$line <- ov_line
@@ -3145,10 +3149,10 @@ local({
   }
 
   # 2. Every split, whatever the number of columns and their order. Two
-  # groups of 45 in 100 leave 10. Eleven more columns overlap them, each split
-  # they make leaving at least 25 out; past twelve columns the search was a
-  # greedy one, and whether it put the two 45s together turned on the order
-  # of the columns - from the 45 it usually reached a 25 first, and stopped.
+  # groups of 45 in 100 leave 10, and eleven more columns nest in and around
+  # them.
+  # Past twelve columns the search was a greedy one, and whether it put the
+  # two 45s together turned on the order of the columns.
   q <- sprintf("R%03d", 1:100)
   race <- rep(c("a1", "a2", "a3", "b1", "b2", "b3", "c"), c(15, 15, 15, 15, 15, 15, 10))
   tq <- data.frame(PATID = q, COHORT = "1L", LOT_NUM = 1L, TTE_ELIGIBLE = 1L,
@@ -3157,8 +3161,8 @@ local({
   dq <- data.frame(PATID = q, COHORT = "1L", RACE = race, stringsAsFactors = FALSE)
   rq <- function(n) list(S_TTE = tq, S_DEMOGRAPHICS = dq)[[toupper(n)]]
   groups <- paste0("S_DEMOGRAPHICS:RACE=", c(
-    "a1|a2|a3", "b1|b2|b3", "a1|c", "a2|c", "a3|c", "b1|c", "b2|c", "b3|c",
-    "a1|b1|c", "a2|b2|c", "a3|b3|c", "a1|b2|c", "a2|b3|c"))
+    "a1|a2|a3", "b1|b2|b3", "a1|a2", "a1", "a2", "a3", "b1|b2", "b1", "b2", "b3",
+    "a1|a2|a3|b1|b2|b3", "a1|a2|a3|b1|b2|b3|c", "c"))
   both_out <- function(subs) {
     x <- filled(shell_with(subs, line = "", ov_line = "", extra = 1L, count_only = TRUE), rq)
     s1 <- x$SUPPRESSED[x$COLUMN_ID == paste0("S", match(groups[1], subs))]
@@ -3171,14 +3175,33 @@ local({
   set.seed(20260926)
   orders <- vapply(1:30, function(i) both_out(sample(groups)), logical(1))
   ok(all(orders), paste0("...in every one of 30 orders of the thirteen columns (", sum(orders), " of 30)"))
-  pq <- c("p", "q", "r")
-  many <- unlist(lapply(1:9, function(i) paste0("S_DEMOGRAPHICS:RACE=", c(
-    paste0(pq[1], i, "|", pq[2], i), paste0(pq[2], i, "|", pq[3], i)))))
+  # The search against every subset, on random graphs.
+  brute <- function(n, adj) {
+    sets <- Filter(function(m) all(adj[m, m][upper.tri(adj[m, m])]),
+                   unlist(lapply(seq_len(n), function(k) combn(n, k, simplify = FALSE)),
+                          recursive = FALSE))
+    Filter(function(m) !any(vapply(sets, function(o) length(o) > length(m) &&
+                                     all(m %in% o), logical(1))), sets)
+  }
+  agree <- vapply(1:150, function(i) {
+    n <- 1L + (i %% 9L)
+    adj <- matrix(FALSE, n, n); up <- upper.tri(adj)
+    adj[up] <- stats::runif(sum(up)) < 0.5; adj <- adj | t(adj)
+    got <- split_families(n, function(a, b) adj[a, b])
+    want <- brute(n, adj)
+    setequal(vapply(got, paste, "", collapse = ","), vapply(want, paste, "", collapse = ","))
+  }, logical(1))
+  ok(all(agree), paste0("the search finds exactly the largest sets of parts that miss one another, ",
+                        "checked against every subset on 150 random graphs (", sum(agree), " agree)"))
+  # Nine parts, each held by a column and split in two beside it: 512 ways to
+  # split the one population, more than the search closes, so the load stops.
+  many <- unlist(lapply(1:9, function(i) paste0("S_DEMOGRAPHICS:RACE=",
+    c(paste0("p", i, "|q", i), paste0("p", i), paste0("q", i)))))
   lines <- paste0("T1,P", seq_along(many), ",1L (N=),Part ", seq_along(many), ",",
                   seq_along(many) + 1L, ",1L,1,OVERALL,", many, ",")
   stops_with(load_shells(write_shells(list(columns = c(BASE$columns[1:2], lines)))),
     c("shells/columns.csv", "overlap in more than"),
-    "eighteen columns overlapping 512 ways over one population stop the load, rather than being closed in part")
+    "twenty-seven columns splitting one population 512 ways stop the load, rather than being closed in part")
   ok(length(split_families(4L, function(i, j) abs(i - j) > 1L)) == 3L &&
        identical(split_families(3L, function(i, j) TRUE), list(1:3)),
      "the search finds every largest set of parts that miss one another, and one set where every part misses every other")
@@ -3278,11 +3301,136 @@ local({
   r1 <- restrict_to_subgroup(agg, "S_DEMOGRAPHICS:AGE_GROUP=<75", cx, "S_SAFETY_RATES", "2L")
   ok(isTRUE(r1$ok) && nrow(r1$rows) == 1L && r1$rows$N_EVENTS == 20,
      "a rate table answers S_DEMOGRAPHICS:AGE_GROUP from its own AGE_GROUP")
-  for (sg in c("S_NOT_RUN:AGE_GROUP=<75", "S_FRAILTY:AGE_GROUP=<75", "S_DEMOGRAPHICS:SEX=Male")) {
-    r <- restrict_to_subgroup(agg, sg, cx, "S_SAFETY_RATES", "2L")
-    ok(!isTRUE(r$ok) && has(r$why, "table of totals"),
-       paste0("...and refuses ", sg, ", which names a table it was not cut by"))
+  for (sg in list(c("S_NOT_RUN:AGE_GROUP=<75", "is not a table a subgroup is read on"),
+                  c("S_FRAILTY:AGE_GROUP=<75", "carries no AGE_GROUP"),
+                  c("S_DEMOGRAPHICS:SEX=Male", "table of totals"))) {
+    r <- restrict_to_subgroup(agg, sg[1], cx, "S_SAFETY_RATES", "2L")
+    ok(!isTRUE(r$ok) && has(r$why, sg[2]),
+       paste0("...and refuses ", sg[1], ", which names a table it was not cut by"))
   }
+
+  # ---- one source for every condition, every source described, no open
+  # overlaps, and a split exact only where it covers its column ----
+  hundred <- sprintf("H%03d", 1:100)
+  dh <- function(...) data.frame(PATID = hundred, COHORT = "1L", ...,
+                                 stringsAsFactors = FALSE)
+  # A plain count of each column's patients, over 100, for the columns given.
+  counts <- function(subs, reader, where = "T4") {
+    x <- filled(shell_with(subs, where = where, line = "", ov_line = "", extra = 1L,
+                           count_only = TRUE), reader)
+    x$SUB <- subs[match(x$COLUMN_ID, paste0("S", seq_along(subs)))]
+    x
+  }
+  out_of <- function(x, sub) x$SUPPRESSED[which(x$SUB == sub)] == 1L
+  total_kept <- function(x) {
+    o <- x[x$COLUMN_ID == "1L_OVERALL", ]
+    nrow(o) == 1L && o$N == 100 && o$SUPPRESSED == 0L
+  }
+
+  # 1. One column, one source. Under 65 left unqualified was a different
+  # variable from S_DEMOGRAPHICS:AGE_YEARS, so 45, 45 and 10 were never seen as
+  # the split of 100 they are, and 100 - 45 - 45 gave the 10 back.
+  ages <- dh(AGE_YEARS = rep(c(60, 70, 80), c(45, 45, 10)))
+  ra <- function(n) list(S_DEMOGRAPHICS = ages)[[toupper(n)]]
+  a <- "AGE_YEARS<65"; b <- "S_DEMOGRAPHICS:AGE_YEARS>=65&AGE_YEARS<75"
+  c75 <- "S_DEMOGRAPHICS:AGE_YEARS>=75"; aq <- "S_DEMOGRAPHICS:AGE_YEARS<65"
+  for (cz in list(list(c(a, b, c75), "T4", "under 65 unqualified beside the other two qualified"),
+                  list(c(aq, b, c75), "T4", "...all three qualified"),
+                  list(c(c75, b, a), "T4", "...the other way round"),
+                  list(c(b, a, c75), c("T5c", "T4", "T5c"), "...across two tables"))) {
+    x <- counts(cz[[1]], ra, cz[[2]])
+    under <- intersect(cz[[1]], c(a, aq))
+    ok(total_kept(x) && out_of(x, c75) && (out_of(x, under) || out_of(x, b)),
+       paste0(cz[[3]], ": the 10 aged 75 or over are withheld, and so is one of the 45s"))
+  }
+  popsg <- function(sub) cell_population(
+    data.frame(TABLE_ID = "X", COLUMN_ID = "c", stringsAsFactors = FALSE),
+    list(columns = data.frame(table_id = "X", column_id = "c", cohort = "1L",
+                              line = "1", class = "", subgroup = sub, period = "",
+                              stringsAsFactors = FALSE)))
+  ok(popsg(a) == popsg(aq) &&
+       popsg("AGE_GROUP=<75&SEX=Male") == popsg("S_DEMOGRAPHICS:SEX=Male&AGE_GROUP=<75"),
+     "a column left unqualified is its one table's, and the population is one whichever way it is written")
+  tt2 <- data.frame(PATID = hundred, COHORT = "1L", LOT_NUM = 1L, AGE_YEARS = 90,
+                    stringsAsFactors = FALSE)
+  r <- restrict_to_subgroup(tt2, a, fill_context(ra, NULL), "S_TTE", "1L")
+  ok(isTRUE(r$ok) && nrow(r$rows) == 45L,
+     "...and the fill reads it there too: 45 under 65 off S_DEMOGRAPHICS, not none off a column of the same name on S_TTE")
+  sub_col <- function(v) load_shells(write_shells(list(columns = c(BASE$columns[1:2],
+    edit_field(BASE$columns[3], 9, v), BASE$columns[4:5]))))
+  stops_with(sub_col("TTE_ELIGIBLE=1"), c("shells/columns.csv row 2", "S_PERIODS and S_TTE"),
+             "a column on two tables, left unqualified, stops the load and asks which")
+  stops_with(sub_col("NOT_A_COLUMN=1"), c("shells/columns.csv row 2", "name the table"),
+             "...and so does one no table a subgroup reads carries")
+
+  # 2. Every source a subgroup may name is described. S_ELIGIBILITY and the
+  # input cohort table are one row per patient, and a split on them was never
+  # seen: 45 women and 45 men of 100 gave back the 10 withheld.
+  sex <- data.frame(PATID = hundred, GDR_CD = rep(c("F", "M", "U"), c(45, 45, 10)),
+                    stringsAsFactors = FALSE)
+  plain <- dh()
+  re <- function(n) { n <- toupper(n)
+    if (n %in% c("S_ELIGIBILITY", TFLS_COHORT_TABLE_NAMES)) sex
+    else list(S_DEMOGRAPHICS = plain)[[n]] }
+  for (tb in c("S_ELIGIBILITY", "COHORT_TABLE", "INPUT_COHORT", "INPUT_COHORT_TABLE", "mixed")) {
+    nm <- if (tb == "mixed") c("COHORT_TABLE", "INPUT_COHORT", "INPUT_COHORT_TABLE") else rep(tb, 3)
+    subs <- paste0(nm, ":GDR_CD=", c("F", "M", "U"))
+    x <- counts(subs, re)
+    ok(total_kept(x) && out_of(x, subs[3]) && (out_of(x, subs[1]) || out_of(x, subs[2])),
+       paste0("45, 45 and 10 by sex on ", if (tb == "mixed") "the input cohort table under three names"
+              else tb, ": the 10 are withheld, and so is one of the 45s"))
+  }
+  stops_with(sub_col("S_SPINE:LOT_NUM=1"), c("shells/columns.csv row 2", "not a table a subgroup is read on"),
+             "a table the suppression does not describe stops the load")
+  stops_with(sub_col("S_ELIGIBILITY:NOT_A_COLUMN=1"), c("shells/columns.csv row 2", "carries no NOT_A_COLUMN"),
+             "...and so does a column it does not describe on a table it does")
+
+  # 3. Levels of one column that overlap without one holding the other. Under
+  # 75 and 65 or over are 60 each of 100, and 60 + 60 - 100 is the 20 aged 65
+  # to 74 - withheld, and given back.
+  a3 <- dh(AGE_YEARS = rep(c(60, 70, 80), c(40, 20, 40)))
+  r3 <- function(n) list(S_DEMOGRAPHICS = a3)[[toupper(n)]]
+  lt <- "AGE_YEARS<75"; ge <- "AGE_YEARS>=65"; mid <- "S_DEMOGRAPHICS:AGE_YEARS>=65&AGE_YEARS<75"
+  for (cz in list(list(c(lt, ge, mid), "T4"), list(c(mid, ge, lt), "T4"),
+                  list(c(ge, mid, lt), c("T5c", "T4", "T5c"))))
+    stops_with(counts(cz[[1]], r3, cz[[2]]), "overlap without one holding the other",
+               paste0("under 75 and 65 or over beside 65 to 74 (", paste(cz[[1]], collapse = ", "),
+                      if (length(cz[[2]]) > 1L) ", across two tables" else "", ") are refused"))
+  stops_with(load_shells(write_shells(list(columns = c(BASE$columns,
+      "T1,U75,1L (N=),Under 75,5,1L,1,OVERALL,AGE_YEARS<75,",
+      "T1,O65,1L (N=),65 or over,6,1L,1,OVERALL,AGE_YEARS>=65,")))),
+    c("shells/columns.csv", "overlap without one holding the other"),
+    "...and stop the load")
+  x <- counts(c("AGE_YEARS<65", mid, "AGE_YEARS>=75"), r3)
+  ok(total_kept(x) && out_of(x, mid) && !any(x$SUPPRESSED[x$SUB %in% "AGE_YEARS<65"] == 0L &
+                                               x$SUPPRESSED[x$SUB %in% "AGE_YEARS>=75"] == 0L),
+     "levels that do not meet still fill as a split: the 20 aged 65 to 74 are withheld, and one of the 40s with them")
+  x <- counts(c(lt, mid), r3)
+  ok(total_kept(x) && out_of(x, mid) && !out_of(x, lt),
+     "...and levels that nest still fill: 65 to 74 withheld inside under 75, which stays printed")
+
+  # 4. A split is exact - one withheld level read off the rest - only where
+  # its levels cover the column. 65-74 and 75+ leave the younger bands out.
+  bands <- dh(AGE_BAND = rep(c("18-44", "45-64", "65-74", "75+"), c(10, 10, 60, 20)))
+  rb <- function(n) list(S_DEMOGRAPHICS = bands)[[toupper(n)]]
+  x <- counts(c("S_DEMOGRAPHICS:AGE_BAND=65-74", "S_DEMOGRAPHICS:AGE_BAND=75+"), rb)
+  ok(total_kept(x) && out_of(x, "S_DEMOGRAPHICS:AGE_BAND=75+") &&
+       !out_of(x, "S_DEMOGRAPHICS:AGE_BAND=65-74"),
+     "65-74 stays printed beside a withheld 75+: 100 less 60 is 40, not the 20")
+  x <- counts(c("S_DEMOGRAPHICS:AGE_BAND=75+", "S_DEMOGRAPHICS:AGE_BAND!=75+"), rb)
+  ok(total_kept(x) && all(x$SUPPRESSED[!is.na(x$SUB)] == 1L),
+     "...while 75+ beside its complement is exact, and the complement goes with it")
+  ex <- function(...) sg_levels_exact(lapply(c(...), subgroup_conditions))
+  ok(!ex("S_DEMOGRAPHICS:AGE_BAND=65-74", "S_DEMOGRAPHICS:AGE_BAND=75+") &&
+       !ex("S_DEMOGRAPHICS:AGE_BAND=18-44|45-64", "S_DEMOGRAPHICS:AGE_BAND=75+") &&
+       ex("S_DEMOGRAPHICS:AGE_BAND=18-44|45-64|65-74", "S_DEMOGRAPHICS:AGE_BAND=75+") &&
+       ex("S_DEMOGRAPHICS:AGE_BAND=18-44|45-64|65-74", "S_DEMOGRAPHICS:AGE_BAND=75+|Unknown") &&
+       ex("S_DEMOGRAPHICS:AGE_BAND=75+", "S_DEMOGRAPHICS:AGE_BAND!=75+") &&
+       !ex("S_DEMOGRAPHICS:RACE=White", "S_DEMOGRAPHICS:RACE=Black") &&
+       ex("NEUROPATHY=YES", "NEUROPATHY=NO") && ex("FRAILTY=YES", "FRAILTY=NO") &&
+       ex("S_DEMOGRAPHICS:AGE_GROUP=<75", "S_DEMOGRAPHICS:AGE_GROUP=75+") &&
+       ex("AGE_YEARS<75", "AGE_YEARS>=75") && !ex("AGE_YEARS<65", "AGE_YEARS>=75"),
+     "exact: every band (with or without the missing ages' Unknown), a value and its complement, yes and no, <75 and 75+, ranges with no gap; not: some bands, a column whose values are not listed, ranges with a gap")
 })
 
 # Warehouse mode reads through the STUDY PACKAGE's db_q(), which retries through
