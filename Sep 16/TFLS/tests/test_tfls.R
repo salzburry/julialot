@@ -3518,6 +3518,103 @@ local({
   ok(pc6(pairs[[1]][1], "S_TTE") == pc6(pairs[[1]][2], "S_TTE") &&
        pc6(pairs[[1]][1], "S_COMORB_SUBGROUP") != pc6(pairs[[1]][2], "S_COMORB_SUBGROUP"),
      "on a row of another table the named and written-out forms are one population; on a row of S_COMORB_SUBGROUP the written-out form filters the records and is not")
+
+  # ---- one identity where the grain makes rows patients; a class and its
+  # categories written out as one model; the cohort carried with the patient ----
+  # 7. Choosing a row of a table with one row per patient in the cohort is
+  # choosing the patient. AGE=LT75 and S_DEMOGRAPHICS:AGE_YEARS<75 under a
+  # mean age were two populations, two copies of 90 summed to 180 against
+  # 100 - no sum at all - and 100 - 90 printed the 10 aged 75 or over.
+  on_row <- function(subs, stat, source, measure, reader, where = "T4") {
+    S <- shell_with(subs, where = where, line = "", ov_line = "", extra = 1L, count_only = TRUE)
+    S$rows$stat <- stat; S$rows$source <- source; S$rows$measure <- measure
+    x <- filled(S, reader)
+    x$SUB <- subs[match(x$COLUMN_ID, paste0("S", seq_along(subs)))]
+    x
+  }
+  a7 <- dh(AGE_YEARS = rep(c(60, 80), c(90, 10)))
+  f7 <- dh(FRAIL = rep(1:0, c(90, 10)), CFI = rep(c(0.3, 0.1), c(90, 10)))
+  r7 <- function(n) list(S_DEMOGRAPHICS = a7, S_FRAILTY = f7)[[toupper(n)]]
+  for (cz in list(list(c("AGE=LT75", "S_DEMOGRAPHICS:AGE_YEARS<75"), "S_DEMOGRAPHICS", "AGE_YEARS", "T4",
+                       "named and written-out ages under a mean age"),
+                  list(c("AGE=LT75", "S_DEMOGRAPHICS:AGE_YEARS<75"), "S_DEMOGRAPHICS", "AGE_YEARS",
+                       c("T4", "T5c"), "...in two tables"),
+                  list(c("FRAILTY=YES", "S_FRAILTY:FRAIL=1"), "S_FRAILTY", "CFI", "T4",
+                       "named and written-out frailty under a mean frailty index"))) {
+    x <- on_row(cz[[1]], "mean_sd", cz[[2]], cz[[3]], r7, cz[[4]])
+    o <- x[x$COLUMN_ID == "1L_OVERALL", ]
+    ok(nrow(o) == 1L && o$SUPPRESSED == 0L && all(x$SUPPRESSED[!is.na(x$SUB)] == 1L),
+       paste0(cz[[5]], ": both 90s withheld, so 100 - 90 does not give the 10 away"))
+  }
+  pr <- function(sub, source, class = "") cell_population(
+    data.frame(TABLE_ID = "X", COLUMN_ID = "c", SOURCE = source, stringsAsFactors = FALSE),
+    list(columns = data.frame(table_id = "X", column_id = "c", cohort = "1L", line = "1",
+                              class = class, subgroup = sub, period = "", stringsAsFactors = FALSE),
+         classes = load_shells(file.path(ROOT, "shells"))$classes))
+  ok(pr("AGE=LT75", "S_DEMOGRAPHICS") == pr("S_DEMOGRAPHICS:AGE_YEARS<75", "S_DEMOGRAPHICS") &&
+       pr("FRAILTY=NO", "S_FRAILTY") == pr("S_FRAILTY:FRAIL=0", "S_FRAILTY") &&
+       pr("NEUROPATHY=YES", "S_COMORB_SUBGROUP") !=
+       pr("S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=1", "S_COMORB_SUBGROUP"),
+     "on a table with one row per patient the named and written-out forms are one population; on one with a row per concept they are not")
+
+  # 8. A class written as its categories on S_SOC is the class. The
+  # quadruplets-or-triplets as a class and the triplets-or-doublets written out
+  # on line 1, 60 each of 100, gave back the 20 on triplets.
+  pred <- function(cats, line = "1") paste0("S_SOC:", if (nzchar(line)) paste0("LOT_NUM=", line, "&") else "",
+                                            "SOC_CATEGORY=", paste(cats, collapse = "|"))
+  QU <- "Quadruplet with anti-CD38 backbone"; TR <- "Triplet with anti-CD38 backbone"
+  DO <- "Doublet/monotherapy"
+  mixed <- function(subs, cls, where = "T4")
+    filled(shell_with(subs, where = where, line = "1", ov_line = "1", extra = 1L,
+                      count_only = TRUE, class = cls), rs)
+  forms <- list(
+    list(c("", pred(c(TR, DO)), "", ""),
+         c("ACD38_QUAD|ACD38_TRIP", "OVERALL", "ACD38_QUAD|ACD38_TRIP|DOUBLET_MONO", "ACD38_TRIP"),
+         "T4", "a class beside the categories written out", "overlap without one holding the other"),
+    list(c(pred(c(QU, TR)), pred(c(TR, DO)), pred(c(QU, TR, DO)), pred(TR)),
+         rep("OVERALL", 4), "T4", "categories written out beside categories written out",
+         "overlap without one holding the other"),
+    list(c("", "", pred(c(TR, DO)), ""),
+         c("ACD38_TRIP", "ACD38_QUAD|ACD38_TRIP|DOUBLET_MONO", "OVERALL", "ACD38_QUAD|ACD38_TRIP"),
+         c("T5c", "T4"), "...the other way round, across two tables", "overlap without one holding the other"),
+    list(c("", pred(c(TR, DO), line = "")), c("ACD38_QUAD|ACD38_TRIP", "OVERALL"),
+         "T4", "a class beside categories written out on no line", "but not the same things"))
+  for (fz in forms)
+    stops_with(mixed(fz[[1]], fz[[2]], fz[[3]]), fz[[5]],
+               paste0(fz[[4]], ", overlapping without nesting, are refused"))
+  x <- mixed(c("", pred(TR), ""), c("ACD38_QUAD", "OVERALL", "DOUBLET_MONO"))
+  ok(all(x$FILLED == 1L) && x$SUPPRESSED[x$COLUMN_ID == "S2"] == 1L &&
+       x$N[x$COLUMN_ID == "1L_OVERALL"] == 100,
+     "a class and the categories written out that do not meet fill as one split, the 20 on triplets withheld")
+  ok(pr("", "S_TTE", "ACD38_TRIP") == pr(pred(TR), "S_TTE") &&
+       pr("", "S_TTE", "ACD38_TRIP") != pr(pred(DO), "S_TTE"),
+     "a class and its categories written out on its line are one population; another category is not")
+
+  # 9. The cohort goes with the patient. Thirty patients, 74 at their 1L index
+  # with a month to the next line, 75 at their 2L index with twelve. Under 75
+  # across 1L and 2L is the thirty 1L rows - carried as bare patients it kept
+  # both, a mean of 6.5 months over 60 rows of 30 patients.
+  th <- sprintf("C%02d", 1:30)
+  t9 <- data.frame(PATID = rep(th, 2), COHORT = rep(c("1L", "2L"), each = 30),
+                   LOT_NUM = rep(1:2, each = 30), TTNT_MONTHS = rep(c(1, 12), each = 30),
+                   stringsAsFactors = FALSE)
+  d9 <- data.frame(PATID = rep(th, 2), COHORT = rep(c("1L", "2L"), each = 30),
+                   AGE_YEARS = rep(c(74, 75), each = 30), stringsAsFactors = FALSE)
+  s9 <- data.frame(PATID = rep(th, 2), COHORT = rep(c("1L", "2L"), each = 30),
+                   LOT_NUM = rep(1:2, each = 30), REGIMEN = "X",
+                   SOC_CATEGORY = rep(c(QU, TR), each = 30), stringsAsFactors = FALSE)
+  c9 <- fill_context(function(n) list(S_TTE = t9, S_DEMOGRAPHICS = d9, S_SOC = s9)[[toupper(n)]],
+                     load_shells(file.path(ROOT, "shells"))$classes)
+  r9 <- restrict_to_subgroup(t9, "AGE_YEARS<75", c9, "S_TTE", "1L|2L")
+  ok(isTRUE(r9$ok) && nrow(r9$rows) == 30L && all(r9$rows$TTNT_MONTHS == 1) && all(r9$rows$COHORT == "1L"),
+     "under 75 across 1L and 2L keeps the thirty 1L rows, whose time to next treatment is a month")
+  sp9 <- function(line, class = "") column_spec(list(column_id = "c", label = "", group = "",
+    cohort = "1L|2L", line = line, class = class, subgroup = "", period = "", order = "1"))
+  l9 <- select_population(d9, sp9("1"), c9, "S_DEMOGRAPHICS")
+  k9 <- restrict_to_class(d9, sp9("2", "ACD38_TRIP"), c9, "S_DEMOGRAPHICS")
+  ok(isTRUE(l9$ok) && nrow(l9$rows) == 30L && all(l9$rows$COHORT == "1L") &&
+       isTRUE(k9$ok) && nrow(k9$rows) == 30L && all(k9$rows$COHORT == "2L"),
+     "...and a line or a class carried across 1L and 2L keeps the cohort it was met in")
 })
 
 # Warehouse mode reads through the STUDY PACKAGE's db_q(), which retries through

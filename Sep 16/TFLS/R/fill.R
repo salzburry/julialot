@@ -192,6 +192,7 @@ TFLS_DIMENSIONS <- list(
                  "S_LOT_PERIODS:PROTOCOL_DISCON_DT"),
   NEXT_LOT = c("S_LOT_PERIODS:NEXT_LOT_START_DT", "S_LOT_PERIODS:NEXT_LOT_DAYS",
                "S_LOT_PERIODS:NEXT_LOT_MONTHS"),
+  REGIMEN_CLASS = c("S_SOC:SOC_CATEGORY", "S_SOC:REGIMEN", "S_SOC:N_AGENTS"),
   MALIGNANCY_TIME = c("S_MALIGNANCY:FIRST_DT", "S_MALIGNANCY:CONFIRM_DT",
                       "S_MALIGNANCY:LOT_AFTER_WHICH", "S_MALIGNANCY:AFTER_INDEX",
                       "S_MALIGNANCY:MONTHS_FROM_DX", "S_MALIGNANCY:MONTHS_FROM_INDEX"))
@@ -361,9 +362,9 @@ select_population <- function(d, spec, ctx, where) {
     # A line can still be carried, where the table is per patient and the
     # study's per-line tables say which patients have that line.
     if (identical(k, "LOT_NUM") && has_col(d, "PATID")) {
-      ids <- line_patients(ctx, line = v, cohort = spec$cohort)
-      if (!is.null(ids)) {
-        d <- d[chr(d[[col_of(d, "PATID")]]) %in% ids, , drop = FALSE]
+      rows <- line_rows(ctx, line = v, cohort = spec$cohort)
+      if (!is.null(rows)) {
+        d <- keep_carried(d, rows)
         next
       }
     }
@@ -433,9 +434,9 @@ restrict_unnamed_strata <- function(d, named) {
 # those is S_SOC's other bound. (S_SOC also drops a line that is neither drugs
 # nor a transplant; the engine does not build one.) For the line a cohort is
 # indexed on - every Overall column - either table gives the whole cohort.
-line_patients <- function(ctx, line = "", cohort = "") {
-  ids <- soc_patients(ctx, line = line, cohort = cohort)
-  if (!is.null(ids)) return(ids)
+line_rows <- function(ctx, line = "", cohort = "") {
+  rows <- soc_rows(ctx, line = line, cohort = cohort)
+  if (!is.null(rows)) return(rows)
   lp <- ctx$get("S_LOT_PERIODS")
   if (is.null(lp) || !nrow(lp) || !has_col(lp, "PATID") || !has_col(lp, "LOT_NUM"))
     return(NULL)
@@ -449,14 +450,19 @@ line_patients <- function(ctx, line = "", cohort = "") {
     en <- suppressWarnings(as.Date(lp[[col_of(lp, "PERIOD_END")]]))
     lp <- lp[!is.na(st) & !is.na(en) & en >= st, , drop = FALSE]
   }
-  patients_of(lp)
+  lp
+}
+
+line_patients <- function(ctx, line = "", cohort = "") {
+  rows <- line_rows(ctx, line = line, cohort = cohort)
+  if (is.null(rows)) NULL else patients_of(rows)
 }
 
 # The patients of one line, and optionally of one regimen class, off the
 # study's own per-line categorisation. NULL where that table was not read,
 # which the caller reports rather than filling around.
-soc_patients <- function(ctx, line = "", cohort = "", categories = NULL,
-                         drug = "") {
+soc_rows <- function(ctx, line = "", cohort = "", categories = NULL,
+                     drug = "") {
   s <- ctx$get(ctx$soc_table)
   if (is.null(s) || !nrow(s) || !has_col(s, "PATID") || !has_col(s, "LOT_NUM"))
     return(NULL)
@@ -479,7 +485,29 @@ soc_patients <- function(ctx, line = "", cohort = "", categories = NULL,
     if (is.na(rc)) return(NULL)
     s <- s[regimen_has_drug(s[[rc]], drug), , drop = FALSE]
   }
-  patients_of(s)
+  s
+}
+
+soc_patients <- function(ctx, line = "", cohort = "", categories = NULL,
+                         drug = "") {
+  rows <- soc_rows(ctx, line, cohort, categories, drug)
+  if (is.null(rows)) NULL else patients_of(rows)
+}
+
+# The rows of `d` whose patient `rows` holds - in the same cohort, where both
+# are written per cohort. A patient is in several nested cohorts, taken at a
+# different index in each: aged 74 at 1L and 75 at 2L, under 75 in a column
+# pooling the two is the 1L row, and carried as a bare patient it kept the 2L
+# row too, so the 2L outcome was averaged in beside the 1L one - N 60 over 30
+# patients. The pair is what qualified, so the pair is what is kept.
+keep_carried <- function(d, rows) {
+  pid <- chr(d[[col_of(d, "PATID")]])
+  sid <- chr(rows[[col_of(rows, "PATID")]])
+  if (has_col(d, "COHORT") && has_col(rows, "COHORT"))
+    return(d[paste(pid, toupper(chr(d[[col_of(d, "COHORT")]])), sep = "\r") %in%
+               paste(sid, toupper(chr(rows[[col_of(rows, "COHORT")]])), sep = "\r"), ,
+             drop = FALSE])
+  d[pid %in% sid[nzchar(sid)], , drop = FALSE]
 }
 
 # The study assigns a category to a line, so a column naming a regimen class
@@ -514,13 +542,13 @@ restrict_to_class <- function(d, spec, ctx, where) {
     return(refuse(paste0("the column names the regimen class ", spec$class,
                          " but no line, and the study assigns a category to ",
                          "a line"), "shell"))
-  ids <- soc_patients(ctx, line = spec$line, cohort = spec$cohort,
-                      categories = cats, drug = sel$drug)
-  if (is.null(ids))
+  rows <- soc_rows(ctx, line = spec$line, cohort = spec$cohort,
+                   categories = cats, drug = sel$drug)
+  if (is.null(rows))
     return(refuse(paste0(ctx$soc_table, " was not read by this run, so the ",
                          "study's regimen class for a line is not available"),
                   "not_in_run"))
-  list(ok = TRUE, rows = d[chr(d[[col_of(d, "PATID")]]) %in% ids, , drop = FALSE])
+  list(ok = TRUE, rows = keep_carried(d, rows))
 }
 
 # --- subgroups --------------------------------------------------------------
@@ -621,10 +649,11 @@ apply_cond <- function(d, cn, where) {
   cl <- col_of(d, col)
   if (is.na(cl))
     return(refuse(paste0("column ", col, " is not in ", where), "not_in_run"))
-  v <- d[[cl]]
+  v <- if (cn$var %in% TFLS_CASELESS) soc_key(d[[cl]]) else chr(d[[cl]])
   keep <- switch(cn$kind,
-    "in" = chr(v) %in% cn$vals,
-    "out" = !chr(v) %in% cn$vals,
+    "in" = v %in% cn$vals,
+    "out" = !v %in% cn$vals,
+    "has" = regimen_has_drug(d[[cl]], cn$vals),
     sg_in_range(suppressWarnings(as.numeric(v)), cn))
   list(ok = TRUE, rows = d[keep, , drop = FALSE])
 }
@@ -682,16 +711,11 @@ restrict_on_table <- function(d, conds, table, ctx, where, cohort, subgroup,
   if (!nrow(s))
     return(refuse(paste0("no row of ", table, " meets ", subgroup,
       ", so this subgroup holds nobody in this run"), "not_in_run"))
-  subgroup_keep_ids(d, patients_of(s), subgroup, where)
-}
-
-# The rows of `d` whose patient is one of `ids`.
-subgroup_keep_ids <- function(d, ids, subgroup, where) {
   if (!has_col(d, "PATID"))
     return(refuse(paste0(where, " carries no patient, so the subgroup ",
                          subgroup, " cannot be applied to it"),
                   "not_computable"))
-  list(ok = TRUE, rows = d[chr(d[[col_of(d, "PATID")]]) %in% ids, , drop = FALSE])
+  list(ok = TRUE, rows = keep_carried(d, s))
 }
 
 # A shell speaks in its own column headings and a study table speaks in SOC

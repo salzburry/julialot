@@ -258,7 +258,9 @@ relation_columns <- function(shell) {
 sg_cond <- function(tab, col, kind, vals = character(0), lo = -Inf,
                     lo_in = FALSE, hi = Inf, hi_in = FALSE) {
   var <- paste0(toupper(chr(tab)), ":", toupper(chr(col)))
-  vals <- sort(unique(chr(vals)), method = "radix")
+  vals <- chr(vals)
+  if (var %in% TFLS_CASELESS) vals <- soc_key(vals)
+  vals <- sort(unique(vals), method = "radix")
   what <- if (identical(kind, "range"))
     paste0(if (lo_in) "[" else "(", format(lo, digits = 15), ",",
            format(hi, digits = 15), if (hi_in) "]" else ")")
@@ -266,6 +268,11 @@ sg_cond <- function(tab, col, kind, vals = character(0), lo = -Inf,
   list(var = var, kind = kind, vals = vals, lo = lo, lo_in = isTRUE(lo_in),
        hi = hi, hi_in = isTRUE(hi_in), key = paste0(var, " ", kind, " ", what))
 }
+
+# Columns whose values are compared without regard to case or spacing: a SOC
+# category, which a class selects that way (classes.R, soc_key()), so a class
+# and the category written out beside it are one selection.
+TFLS_CASELESS <- c("S_SOC:SOC_CATEGORY")
 
 sg_num <- function(v) suppressWarnings(as.numeric(chr(v)))
 
@@ -507,11 +514,26 @@ sg_dimensions <- function(sg) {
 # 100 holding only those three, give away the 20 on triplets the same way.
 # Columns on different quantities - age beside frailty, a class beside a
 # subgroup - share no quantity, so no column is their overlap.
+# Whether two quantities are one: the same, or the same except that one leaves
+# a row-making column open that the other fixes - any line's regimen category
+# against line 1's, any concept's history against neuropathy's.
+dims_meet <- function(a, b) {
+  if (identical(a, b)) return(TRUE)
+  na <- sub("@.*$", "", a); nb <- sub("@.*$", "", b)
+  if (!identical(na, nb) || !grepl("@", a, fixed = TRUE) || !grepl("@", b, fixed = TRUE))
+    return(FALSE)
+  qa <- strsplit(sub("^[^@]*@", "", a), ",", fixed = TRUE)[[1]]
+  qb <- strsplit(sub("^[^@]*@", "", b), ",", fixed = TRUE)[[1]]
+  if (length(qa) != length(qb)) return(FALSE)
+  all(qa == qb | grepl("=\\*$", qa) | grepl("=\\*$", qb))
+}
+
 split_contract_why <- function(ci, cj, di, dj, apart, inside_ij, inside_ji, li, lj) {
-  if (!length(intersect(di, dj)) || apart) return("")
+  shared <- unique(c(di[vapply(di, function(a) any(vapply(dj, function(b) dims_meet(a, b), logical(1))), logical(1))]))
+  if (!length(shared) || apart) return("")
   if (!setequal(di, dj))
     return(paste0("the columns '", li, "' and '", lj, "' both constrain ",
-      paste(intersect(di, dj), collapse = ", "), " but not the same things (",
+      paste(shared, collapse = ", "), " but not the same things (",
       paste(setdiff(union(di, dj), intersect(di, dj)), collapse = ", "),
       " in one only), so the patients in both are the two less what they ",
       "cover together, which the suppression does not close; constrain the ",
@@ -553,6 +575,8 @@ sg_levels_exact <- function(ps) {
   vary <- unique(unlist(lapply(ps, function(p)
     vapply(p$conds, `[[`, "", "var")[!vapply(p$conds, `[[`, "", "key") %in% common])))
   if (length(vary) != 1L) return(FALSE)
+  # A line's regimen categories split it, as its classes always did.
+  if (identical(vary, "S_SOC:SOC_CATEGORY")) return(TRUE)
   cs <- lapply(ps, function(p) p$conds[[match(vary, vapply(p$conds, `[[`, "", "var"))]])
   kinds <- vapply(cs, `[[`, "", "kind")
   if (all(kinds %in% c("in", "out"))) {
@@ -616,25 +640,45 @@ split_families <- function(n, apart, cap = TFLS_SPLIT_FAMILY_CAP) {
   out[order(vapply(out, function(f) paste(sprintf("%06d", f), collapse = ","), ""))]
 }
 
-# The same for regimen classes, as column_class_key() resolves them: two
-# classes miss one another when no category is in both, and one is inside
-# another when its categories are and the other asks for no drug it does not.
+# A regimen class as column_class_key() resolves it: its categories and the
+# drug that refines them.
 class_key_parts <- function(k) {
   drug <- if (grepl(" +", k, fixed = TRUE)) sub("^.* \\+", "", k) else ""
   cats <- strsplit(sub(" \\+.*$", "", k), "|", fixed = TRUE)[[1]]
   list(cats = cats[nzchar(cats)], drug = drug)
 }
 
-class_disjoint <- function(a, b) {
-  if (identical(a, b)) return(FALSE)
-  pa <- class_key_parts(a); pb <- class_key_parts(b)
-  !length(intersect(pa$cats, pb$cats))
+# A regimen class as the conditions it is: the line's row of S_SOC, in its
+# categories, holding its drug where it asks for one (fill.R, soc_rows()). So
+# a class and a SOC category written out as a subgroup are one population
+# model, and are split, nested and refused by the same rules.
+class_conditions <- function(key, line) {
+  if (identical(key, "OVERALL")) return(list())
+  p <- class_key_parts(key)
+  ln <- selector_tokens(line, "line")
+  c(if (length(ln)) list(sg_cond("S_SOC", "LOT_NUM", "in", ln)),
+    list(sg_cond("S_SOC", "SOC_CATEGORY", "in", p$cats)),
+    if (nzchar(p$drug)) list(sg_cond("S_SOC", "REGIMEN", "has", p$drug)))
 }
 
-class_within <- function(a, b) {
-  pa <- class_key_parts(a); pb <- class_key_parts(b)
-  all(pa$cats %in% pb$cats) && (!nzchar(pb$drug) || identical(pa$drug, pb$drug))
+# A column's whole population as conditions: its subgroup's and its class's,
+# one per column (sg_both()). NULL where the two cannot be read as one.
+column_conditions <- function(sg, key, line) {
+  if (!isTRUE(sg$ok)) return(NULL)
+  out <- sg$conds
+  for (cn in class_conditions(key, line)) {
+    at <- match(cn$var, vapply(out, `[[`, "", "var"))
+    if (is.na(at)) { out <- c(out, list(cn)); next }
+    both <- sg_both(out[[at]], cn)
+    if (is.null(both)) return(NULL)
+    out[[at]] <- both
+  }
+  keys <- vapply(out, `[[`, "", "key")
+  o <- order(keys, method = "radix")
+  list(ok = TRUE, conds = out[o], key = paste(keys[o], collapse = " & "),
+       named = sg$named)
 }
+
 
 # Down a column: a parent row and the run of rows indented one step under it.
 #
@@ -732,30 +776,32 @@ split_plan <- function(shell) {
   sgc <- lapply(chr(cols$subgroup), subgroup_conditions)
   pkey <- vapply(sgc, `[[`, "", "key")
   has_sub <- nzchar(chr(cols$subgroup))
-  known <- has_sub & vapply(sgc, function(x) isTRUE(x$ok), logical(1))
+  # Every column's population as one set of conditions, its class included.
+  full <- lapply(seq_len(nrow(cols)), function(k) column_conditions(sgc[[k]], cls[k], lines[k]))
+  bad <- which(has_sub & vapply(sgc, function(x) isTRUE(x$ok), logical(1)) &
+                 vapply(full, is.null, logical(1)))
+  if (length(bad))
+    stop("the column '", chr(cols$label[bad[1]]), "' puts conditions on its ",
+         "subgroup that cannot be read together with its regimen class",
+         call. = FALSE)
+  known <- !vapply(full, is.null, logical(1))
+  cpop <- paste(cls, pkey, sep = "\r")
   # The contract, over each population a column's cohort, line and period
   # select: every column there against every other, classes and subgroups
-  # alike (split_contract_why()).
-  dims <- lapply(seq_len(nrow(cols)), function(k)
-    c(sg_dimensions(sgc[[k]]), if (cls[k] != "OVERALL") "CLASS"))
-  cpop <- paste(cls, pkey, sep = "\r")
+  # alike, in whichever form they are written (split_contract_why()).
+  dims <- lapply(full, function(f) if (is.null(f)) character(0) else sg_dimensions(f))
   for (bs in unique(base)) {
-    idx <- which(base == bs)
+    idx <- which(base == bs & known)
     idx <- idx[!duplicated(cpop[idx]) & lengths(dims[idx]) > 0L]
     if (length(idx) < 2L) next
-    oc <- one_cohort[idx[1]]; ol <- one_line[idx[1]]
+    oc <- one_cohort[idx[1]]
     for (x in seq_along(idx)) for (y in seq_along(idx)) {
       if (y <= x) next
       i <- idx[x]; j <- idx[y]
-      if (!length(intersect(dims[[i]], dims[[j]]))) next
-      has_i <- cls[i] != "OVERALL"; has_j <- cls[j] != "OVERALL"
-      apart <- (has_i && has_j && oc && ol && class_disjoint(cls[i], cls[j])) ||
-               sg_apart(sgc[[i]], sgc[[j]], oc)
-      within <- function(a, b)
-        (cls[b] == "OVERALL" || (cls[a] != "OVERALL" && class_within(cls[a], cls[b]))) &&
-        sg_population_within(sgc[[a]], sgc[[b]])
-      why <- split_contract_why(cls[i], cls[j], dims[[i]], dims[[j]], apart,
-                                within(i, j), within(j, i),
+      why <- split_contract_why(cls[i], cls[j], dims[[i]], dims[[j]],
+                                sg_apart(full[[i]], full[[j]], oc),
+                                sg_population_within(full[[i]], full[[j]]),
+                                sg_population_within(full[[j]], full[[i]]),
                                 chr(cols$label[i]), chr(cols$label[j]))
       if (nzchar(why)) stop(why, call. = FALSE)
     }
@@ -771,54 +817,57 @@ split_plan <- function(shell) {
     " ways, which is more splits than the suppression closes; give the ",
     "overlapping subgroups or classes a population of their own, or fewer ",
     "of them", call. = FALSE)
-  # Each population closed over the parts inside it: the column with no
-  # subgroup (or no class) over all of them, and every part over the parts
-  # that lie inside it.
-  close_over <- function(n, members, apart, inside, totals, label, exact) {
-    if (length(totals)) {
-      fs <- split_families(n, apart)
-      if (is.null(fs)) too_many(label)
-      for (f in fs) add(totals, members[f], length(f) >= 2L && exact(f), "that split")
+
+  # Each population of one base closed over the parts inside it: the column
+  # with neither class nor subgroup over all of them, and every other column
+  # over the ones inside it. A split is exact where it always was - the
+  # levels of a subgroup beside the column of the same class with no
+  # subgroup, where they cover it (sg_levels_exact()), and the regimen
+  # classes beside the column of the same subgroup with no class - and where
+  # its parts are levels of one column over what the total asks.
+  for (bs in unique(base[known])) {
+    idx <- which(base == bs & known)
+    totals <- idx[vapply(full[idx], function(f) !length(f$conds), logical(1))]
+    idx <- setdiff(idx, totals)
+    if (!length(idx)) next
+    keys <- unique(cpop[idx])
+    rep_of <- idx[match(keys, cpop[idx])]
+    pops <- full[rep_of]
+    members <- lapply(keys, function(k) idx[cpop[idx] == k])
+    oc <- one_cohort[idx[1]]
+    label <- paste0("'", chr(cols$label[idx[1]]), "' and the columns beside it")
+    apart <- function(i, j) sg_apart(pops[[i]], pops[[j]], oc)
+    inside <- function(k, j) sg_population_within(pops[[k]], pops[[j]])
+    kcls <- cls[rep_of]; ksub <- pkey[rep_of]
+    # The line a class is read on is the column's own, which every column of
+    # the base shares, so it is no restriction beyond the total's.
+    line_keys <- vapply(rep_of, function(k) if (!nzchar(lines[k])) "" else
+      sg_cond("S_SOC", "LOT_NUM", "in", selector_tokens(lines[k], "line"))$key, "")
+    exact <- function(f, tcls, tsub, tconds) {
+      if (length(f) < 2L) return(FALSE)
+      # A subgroup's levels beside its class's column with no subgroup.
+      if (all(kcls[f] == tcls) && !nzchar(tsub) && all(nzchar(ksub[f])))
+        return(sg_levels_exact(sgc[rep_of[f]]))
+      # The classes beside their subgroup's column with no class.
+      if (tcls == "OVERALL" && all(ksub[f] == tsub) && all(kcls[f] != "OVERALL"))
+        return(TRUE)
+      # Levels of one column, asked for nothing the total does not ask.
+      if (!sg_levels_exact(pops[f])) return(FALSE)
+      common <- Reduce(intersect, lapply(pops[f], function(p) vapply(p$conds, `[[`, "", "key")))
+      all(common %in% c(vapply(tconds, `[[`, "", "key"), line_keys[f]))
     }
-    for (j in seq_len(n)) {
-      inn <- which(vapply(seq_len(n), function(k) k != j && inside(k, j), logical(1)))
+    fs <- split_families(length(pops), apart)
+    if (is.null(fs)) too_many(label)
+    for (f in fs) add(totals, members[f], exact(f, "OVERALL", "", list()), "that split")
+    for (j in seq_along(pops)) {
+      inn <- which(vapply(seq_along(pops), function(k) k != j && inside(k, j), logical(1)))
       if (!length(inn)) next
       fs <- split_families(length(inn), function(x, y) apart(inn[x], inn[y]))
       if (is.null(fs)) too_many(label)
-      for (f in fs) add(members[[j]], members[inn[f]], FALSE, "inside")
+      for (f in fs)
+        add(members[[j]], members[inn[f]],
+            exact(inn[f], kcls[j], ksub[j], pops[[j]]$conds), "inside")
     }
-  }
-
-  # Subgroups, within each population of one base and one class.
-  scope <- paste(base, cls, sep = "\r")
-  for (sc in unique(scope[known])) {
-    idx <- which(known & scope == sc)
-    keys <- unique(pkey[idx])
-    pops <- lapply(keys, function(k) sgc[[idx[match(k, pkey[idx])]]])
-    oc <- one_cohort[idx[1]]
-    close_over(length(pops), lapply(keys, function(k) idx[pkey[idx] == k]),
-               function(i, j) sg_apart(pops[[i]], pops[[j]], oc),
-               function(k, j) sg_population_within(pops[[k]], pops[[j]]),
-               which(!has_sub & scope == sc),
-               paste0("'", chr(cols$label[idx[1]]), "' and the columns beside it"),
-               function(f) sg_levels_exact(pops[f]))
-  }
-
-  # Regimen classes, within each population of one base and one subgroup. A
-  # class is a line's category, so two classes share no patient only for one
-  # line of one cohort.
-  by_cls <- cls != "OVERALL"
-  cscope <- paste(base, pkey, sep = "\r")
-  for (sc in unique(cscope[by_cls])) {
-    idx <- which(by_cls & cscope == sc)
-    keys <- unique(cls[idx])
-    ok1 <- one_cohort[idx[1]] && one_line[idx[1]]
-    close_over(length(keys), lapply(keys, function(k) idx[cls[idx] == k]),
-               function(i, j) ok1 && class_disjoint(keys[i], keys[j]),
-               function(k, j) class_within(keys[k], keys[j]),
-               which(!by_cls & cscope == sc),
-               paste0("'", chr(cols$label[idx[1]]), "' and the classes beside it"),
-               function(f) TRUE)
   }
   list(cols = cols, splits = splits)
 }
@@ -993,18 +1042,32 @@ cell_population <- function(cells, shell) {
   cols <- relation_columns(shell)
   if (is.null(cols)) return(own)
   sgc <- lapply(chr(cols$subgroup), subgroup_conditions)
-  sub_key <- vapply(sgc, `[[`, character(1), "key")
   cls <- column_class_key(cols$class, shell_classes(shell))
+  # The whole population as conditions, a class as the S_SOC rows it
+  # selects: a class and the same categories written out are one population.
+  full <- lapply(seq_along(sgc), function(k)
+    column_conditions(sgc[[k]], cls[k], chr(cols$line)[k]))
+  pop_key <- vapply(seq_along(sgc), function(k)
+    if (is.null(full[[k]])) paste0("?", sgc[[k]]$key, "\r", cls[k]) else full[[k]]$key, "")
   pop <- paste(selector_text(cols$cohort, "cohort"), selector_text(cols$line, "line"),
-               selector_text(cols$period, "period"), cls, sub_key, sep = "\r")
+               selector_text(cols$period, "period"), pop_key, sep = "\r")
   at <- match(own, paste(chr(cols$table_id), chr(cols$column_id), sep = "\r"))
   out <- ifelse(is.na(at), own, pop[at])
-  # A subgroup written out, on a row that reads its own table, filters that
-  # row's records rather than choosing patients (fill.R, restrict_on_table()):
-  # there it is not the population the same conditions name elsewhere, nor
-  # the named subgroup's, which is always patients.
-  rows_tab <- lapply(sgc, function(sg) if (!isTRUE(sg$ok)) character(0) else
-    setdiff(unique(sub(":.*$", "", vapply(sg$conds, `[[`, "", "var"))), sg$named))
+  # A subgroup written out, or a class, on a row that reads its own table,
+  # filters that row's records rather than choosing patients (fill.R,
+  # restrict_on_table(), restrict_to_class()). Where the table holds several
+  # records per patient - one per concept, per line, per malignancy - that is
+  # another population than the patients the same conditions choose
+  # elsewhere, or the named subgroup's. Where it holds one per patient in the
+  # cohort, choosing the record is choosing the patient: AGE=LT75 and
+  # S_DEMOGRAPHICS:AGE_YEARS<75 on a row of S_DEMOGRAPHICS are one population,
+  # and told apart they were two copies of 90 summing to 180 against 100, a
+  # sum read as none, which printed the 10.
+  multi <- names(TFLS_TABLE_GRAIN)[vapply(TFLS_TABLE_GRAIN,
+                                          function(g) length(g$keys) > 0L, logical(1))]
+  rows_tab <- lapply(full, function(f) if (is.null(f)) character(0) else
+    intersect(setdiff(unique(sub(":.*$", "", vapply(f$conds, `[[`, "", "var"))),
+                      f$named), multi))
   src <- if ("SOURCE" %in% names(cells)) vapply(chr(cells$SOURCE), grain_name, "")
          else rep("", nrow(cells))
   on_rows <- !is.na(at) & vapply(seq_along(at), function(k)
