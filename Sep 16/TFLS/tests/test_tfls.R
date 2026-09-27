@@ -3695,6 +3695,38 @@ local({
   ok(is.list(sh12) && length(over) == 1L && length(over[[1]]$parts) == 9L &&
        all(lengths(over[[1]]$parts) == 2L),
      "nine categories printed as a class and written out load, as one split of nine parts with two columns each")
+  # ...and the same split whichever column of a pair comes first. The column a
+  # node is represented by is the first one met, so written out before the
+  # class, interleaved, or the total ahead of both in reverse, each part is
+  # still the same two columns.
+  parts12 <- function(cols) {
+    sh <- tryCatch(load_shells(write_shells(list(columns = c(BASE$columns[1:2], cols)))),
+                   error = function(e) conditionMessage(e))
+    if (!is.list(sh)) return(sh)
+    ids <- chr(sh$columns$column_id)
+    o <- Filter(function(z) identical(z$what, "that split") && any(ids[z$totals] == "O2"),
+                split_plan(sh)$splits)
+    if (length(o) != 1L) return(paste(length(o), "splits over O2"))
+    sort(vapply(o[[1]]$parts, function(p) paste(sort(ids[p]), collapse = "+"), ""))
+  }
+  k12 <- lines9[1:9]; p12 <- lines9[10:18]; o12 <- lines9[19]
+  want12 <- parts12(lines9)
+  got12 <- lapply(list(written_first = c(p12, k12, o12),
+                       interleaved   = c(rbind(p12, k12), o12),
+                       total_first   = c(o12, rev(p12), rev(k12))), parts12)
+  ok(length(want12) == 9L && all(want12 == paste0("K", 1:9, "+P", 1:9)) &&
+       all(vapply(got12, identical, logical(1), want12)),
+     paste0("...written out first, interleaved or total first, the same nine pairs (",
+            paste(names(got12)[!vapply(got12, identical, logical(1), want12)], collapse = ", "), ")"))
+  # The same holds for the fill: the line-1 triplet class and the line-1
+  # quadruplets-or-triplets written down to a line-1 triplet are one row, 45
+  # each, whichever of the two is printed first.
+  xa <- both10(c(pred(TR, "1"), ""), c("ACD38_QUAD|ACD38_TRIP", "ACD38_TRIP"))
+  xb <- both10(c("", pred(TR, "1")), c("ACD38_TRIP", "ACD38_QUAD|ACD38_TRIP"))
+  na <- as.numeric(c(xa$N[xa$COLUMN_ID == "S1"], xa$N[xa$COLUMN_ID == "S2"]))
+  nb <- as.numeric(c(xb$N[xb$COLUMN_ID == "S2"], xb$N[xb$COLUMN_ID == "S1"]))
+  ok(length(na) == 2L && all(na == 45) && identical(nb, na) && all(xb$FILLED == 1L),
+     "...and the fill prints 45 for both, the written-out column first or the class first")
 })
 
 # Warehouse mode reads through the STUDY PACKAGE's db_q(), which retries through
