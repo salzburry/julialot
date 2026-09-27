@@ -543,9 +543,8 @@ like_matches <- function(pattern, x) {
 
 # What the cohort build actually applied.
 #
-# Eight of this package's settings are the cohort build's rules, and the two
-# defaults disagree today: this package reads s7.1's body (01 Jan 2018) and the
-# cohort build reads Figures 1 and 2 (01 Jan 2016), which is Q1.
+# Eight of this package's settings are the cohort build's rules, and both
+# packages default the study start to s7.1's body, 01 Jan 2018 (Q1).
 # NDMM_RUN_METADATA.CONTRACT_SETTINGS is that build's whole CONTRACT as
 # `k=v|k=v`, so the study's metadata records what shaped the data rather than
 # what this run was told.

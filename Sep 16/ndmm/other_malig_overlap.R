@@ -72,8 +72,7 @@ if (nrow(both)) {
 } else {
   line("")
   line("NONE. The mm_dx join in 04_other_malig.R matches nothing, so the label")
-  line("list is the WHOLE override and every part of it is judgement. The claim")
-  line("in ndmm/README.md that the criterion would empty the cohort is wrong.")
+  line("list is the WHOLE override and every part of it is judgement.")
 }
 
 # ---- 2. every plasma-cell label, with codes -------------------------------
