@@ -309,7 +309,7 @@ meant to be shared, after disclosure review.
 | the code check against the protocol, requirement by requirement | `variables/CONFORMANCE.md` |
 | the questions still with the study team, and the reading taken meanwhile | `variables/OPEN_QUESTIONS.md` |
 | which code lists are needed, present and outstanding | `variables/CODELISTS.md` |
-| the shape of each shipped code list | `variables/codelists/README.md` |
+| the shape of each shipped code list | `variables/CODELISTS.md` §4 |
 | the table shells: filling them, editing them, their disclosure rules | `TFLS/README.md` |
 | the app: its tabs, controls and where its numbers come from | `dashboard/DASHBOARD.md` |
 | deploying the Job and the App on Domino, and the deployment controls | `dashboard/DEPLOY_DOMINO.md` |
