@@ -212,7 +212,10 @@ named subgroup's included: `NEUROPATHY=YES&HAS_HISTORY=0` is one neuropathy
 row with a history of 1 and of 0, which is nobody, exactly as written out.
 A regimen class is read the same way, as the S_SOC rows of its line in its
 categories, so `ACD38_TRIP` and `S_SOC:LOT_NUM=1&SOC_CATEGORY=Triplet with
-anti-CD38 backbone` on line 1 are one population. A condition read off
+anti-CD38 backbone` on line 1 are one population. S_SOC conditions written
+beside a class are that same row only where they fix the class's own line;
+on another line, or on any line, they are a second row of the patient, and
+the column stops the load. A condition read off
 another cohort-specific table is carried back with its cohort: under 75
 across 1L and 2L is each patient's rows in the cohort where they were under
 75, not every row of a patient who was under 75 in either. Conditions that land on the same table
@@ -240,7 +243,9 @@ one of its values (`YES`/`NO`, or `LT75`/`GE75`); anything else stops the
 load. It is read off its own table and nothing else, so `NEUROPATHY=YES`,
 `NEUROPATHY=Y` and `S_COMORB_SUBGROUP:CONCEPT=neuropathy&HAS_HISTORY=1` are
 one population. A subgroup condition compares with a value (`=`, `!=`, a list
-with `|`) or with one number (`<`, `<=`, `>`, `>=`); two conditions on one
+with `|`) or with one number or date (`<`, `<=`, `>`, `>=`; a date is its
+day number, `INDEX_DATE>=2020-01-01` and `INDEX_DATE>=18262` alike, whether
+the run reads dates typed or as text); two conditions on one
 column must make one list or one range (`AGE_YEARS>=65&AGE_YEARS<75`). A
 condition with nothing to compare, or a range against a word or a list, stops
 the load, because the suppression could not tell what its cells add up to.

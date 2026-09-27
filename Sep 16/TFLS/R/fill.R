@@ -316,6 +316,24 @@ TFLS_REASON_KINDS <- c("not_in_run", "shell", "not_computable")
 refuse <- function(why, kind = "not_computable")
   list(ok = FALSE, why = why, kind = kind)
 
+# A column as the numbers a range compares, from the values as the reader
+# typed them. A date is its day number - 18262 is 1 January 2020 - whether it
+# arrives as an R Date (the warehouse) or as ISO text (a snapshot's CSV), so
+# one range selects the same rows from either; read as text first, a Date
+# became "2020-06-01", no number at all, and every row fell outside. A
+# number is itself, and anything else, a missing date included, is in no
+# range.
+range_number <- function(x) {
+  if (inherits(x, "Date")) return(as.numeric(x))
+  if (inherits(x, "POSIXt")) return(as.numeric(as.Date(x)))
+  if (is.numeric(x)) return(as.numeric(x))
+  v <- chr(x)
+  out <- suppressWarnings(as.numeric(v))
+  iso <- is.na(out) & grepl("^[0-9]{4}-[0-9]{2}-[0-9]{2}$", v)
+  if (any(iso)) out[iso] <- as.numeric(as.Date(v[iso], format = "%Y-%m-%d"))
+  out
+}
+
 # One comparison, applied to a table.
 apply_term <- function(d, term, where) {
   cl <- col_of(d, term$column)
@@ -328,8 +346,8 @@ apply_term <- function(d, term, where) {
     "=" = chr(v) %in% chr(term$value),
     "!=" = !chr(v) %in% chr(term$value),
     {
-      x <- suppressWarnings(as.numeric(v))
-      y <- suppressWarnings(as.numeric(term$value))[1]
+      x <- range_number(v)
+      y <- range_number(term$value)[1]
       if (is.na(y))
         return(refuse(paste0("'", term$raw, "' compares ", term$column,
                              " with something that is not a number"), "shell"))
@@ -649,12 +667,13 @@ apply_cond <- function(d, cn, where) {
   cl <- col_of(d, col)
   if (is.na(cl))
     return(refuse(paste0("column ", col, " is not in ", where), "not_in_run"))
-  v <- if (cn$var %in% TFLS_CASELESS) soc_key(d[[cl]]) else chr(d[[cl]])
+  raw <- d[[cl]]
+  v <- if (cn$var %in% TFLS_CASELESS) soc_key(raw) else chr(raw)
   keep <- switch(cn$kind,
     "in" = v %in% cn$vals,
     "out" = !v %in% cn$vals,
-    "has" = regimen_has_drug(d[[cl]], cn$vals),
-    sg_in_range(suppressWarnings(as.numeric(v)), cn))
+    "has" = regimen_has_drug(raw, cn$vals),
+    sg_in_range(range_number(raw), cn))
   list(ok = TRUE, rows = d[keep, , drop = FALSE])
 }
 
