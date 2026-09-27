@@ -3,7 +3,7 @@
 # Every window in the protocol is built here and nowhere else, so a boundary
 # convention is written once. The protocol is explicit about which end of an
 # interval is included and which excluded, and it REVERSED those conventions
-# from its June 2026 version (../VERSION_DIFF.md section 1), so each end is
+# from its June 2026 version, so each end is
 # named in the argument list rather than assumed.
 
 # Days between two dates, with each endpoint declared.

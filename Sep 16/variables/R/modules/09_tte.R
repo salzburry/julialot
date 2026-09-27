@@ -1,14 +1,14 @@
 # TTNT, TTD and OS - Table 5.
 #
-# The endpoint conventions REVERSED between the June and August 2026 versions
-# (../VERSION_DIFF.md section 1). The August ones open the interval ON the
+# The endpoint conventions REVERSED between the June and August 2026 versions.
+# The August ones open the interval ON the
 # index (included) and close it BEFORE the event (excluded), so every duration
 # is datediff(event, index) with no adjustment.
 #
-# TTD's event is the union of three LOT_BASE_END_REASON values, because the
+# TTD's event is the union of several LOT_BASE_END_REASON values, because the
 # protocol's footnote defines discontinuation as all agents stopped OR a new
 # agent OR a qualifying SCT - IS_PROTOCOL_DISCON on the spine.
-# ../BUILD_DELTA.md section 5.
+# ../CONFORMANCE.md, "The LOT engine against the protocol's LOT wording".
 mod_tte <- function(con, cfg, cohort) {
   # Each event date is written once and reused, so the date column and the days
   # column cannot describe different events. Every date is clipped to FU_END

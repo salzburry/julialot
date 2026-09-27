@@ -263,14 +263,14 @@ cfg_defaults <- function(catalog = .env_chr("DATABRICKS_CATALOG", "hive_metastor
     # panobinostat or elotuzumab from setting an index means re-deriving the
     # index date, which is the cohort build's job - it already has
     # NDMM_INDEX_EXCLUDED_ABBRS for exactly this. A second copy here would be
-    # recorded as applied while applying nothing. ../BUILD_DELTA.md section 3.
+    # recorded as applied while applying nothing. ../IE_CRITERIA.md section 4, I3.
     lot_allow_unproven_lineage = .env_lgl("LOT_ALLOW_UNPROVEN_LINEAGE", FALSE),
     # ...but whether the cohort build DID bar them is checked. s7.2.1.1 I3:
     # "Exclusions include: panobinostat and elotuzumab". The cohort build
     # records what it barred (NDMM_RUN_METADATA.INDEX_EXCLUDED), and a build
     # that let either agent set a 1L index made a different cohort. The names
     # are resolved to abbreviations through cl_mma_rollup.csv; empty checks
-    # nothing. ../BUILD_DELTA.md section 1.
+    # nothing. ../IE_CRITERIA.md section 4, I3.
     cohort_index_exclusions = .env_chr("COHORT_INDEX_EXCLUSIONS",
                                        "panobinostat,elotuzumab"),
 
@@ -427,7 +427,7 @@ OPEN_QUESTION_SOURCE <- c(
   claim_status                        = "here",
   frailty                             = "here",
   comorbid_subgroups                  = "here",
-  # Applied by the COHORT BUILD upstream, not here. ../BUILD_DELTA.md.
+  # Applied by the COHORT BUILD upstream, not here. ../IE_CRITERIA_APPLIED.md section 4.
   study_start                         = "upstream",
   mm_dx_outpatient_codes              = "upstream",
   mm_dx_outpatient_window_days        = "upstream",

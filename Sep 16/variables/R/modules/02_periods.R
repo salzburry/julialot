@@ -7,7 +7,7 @@
 #
 # Nothing downstream recomputes a window. The conventions are in R/windows.R,
 # and the protocol reversed several of them between its June and August 2026
-# versions (../VERSION_DIFF.md), so one place to change them is the point.
+# versions, so one place to change them is the point.
 mod_periods <- function(con, cfg, cohort) {
   bl  <- baseline_window_sql("co.INDEX_DATE", cfg)
   blc <- baseline_window_sql("co.INDEX_DATE", cfg,

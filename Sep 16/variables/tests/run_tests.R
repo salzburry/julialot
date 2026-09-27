@@ -2311,7 +2311,7 @@ cat("\nthe rules that hold the numbers up\n")
      "while the secondary cohort's funnel does not apply the one it drops")
 
   # The input contract. A cohort table of patient ids and eligibility flags -
-  # which BUILD_DELTA once recommended for the secondary 2L cohort - carries no
+  # the shape of the cohort build's NDMM_FLAGS_ALL - carries no
   # index date and no end dates, so it cannot drive a single module. It has to
   # be refused at the first step, by name, not five modules later with an
   # unresolved-column error that names neither the table nor the setting.

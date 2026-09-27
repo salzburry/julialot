@@ -1,10 +1,11 @@
 # Variables — GSK 223926 (Aug 26 2026 protocol)
 
 Everything the protocol asks to be derived, from §7.2.2, §7.2.3, §7.2.4, §7.3 and
-Tables 1-6, with the timing each variable is collected at. `DATA_MAPPING.md` says
-where each one comes from in Optum.
+Tables 1-6, with the timing each variable is collected at, and where the build
+writes it. `DATA_MAPPING.md` says where each one comes from in Optum;
+`MODULES.md` says which module writes which table.
 
-Table 4 is **incomplete** — see §4 and `IE_CRITERIA.md` §9.
+Part of Table 4 is not legible in the protocol — §4.
 
 ---
 
@@ -17,21 +18,20 @@ The exposure is the cohort itself:
 > safety rates during each LOT will be assessed according to SOC regimens and select
 > patient subgroups." — §7.3.1
 
-| variable | definition | timing |
+| variable | definition | where the build writes it |
 |---|---|---|
-| `PATID` | Optum patient identifier | — |
-| `COHORT` | 1L / 2L / 3L / secondary-2L | — |
-| `MM_DX_DT` | first medical claim for MM meeting I1 | — |
-| `INDEX_DT` | start date of that cohort's LOT regimen | — |
-| `BASELINE_START` / `BASELINE_END` | `INDEX_DT - 365` … `INDEX_DT - 1` (index excluded) | — |
-| `FU_START` / `FU_END` | `INDEX_DT` … min(end of CE, study end, death) | — |
-| `LOT_START_DT` (1-4) | start of each line | — |
-| `LOT_END_DT` (1-4) | end of each line | — |
-| `LOT_DISCON_DT` | "all MM agents in the LOT are stopped or a new agent/qualifying SCT event is introduced" | — |
-| `LOT_REGIMEN` (1-4) | agents within the induction window (60 d for 1L, 30 d for 2L+) | — |
-| `SOC_CATEGORY` (1-4) | §7.2.2 categories, below | — |
-| `SCT_DT`, `SCT_TYPE` | autologous / allogeneic; planned vs unplanned | — |
-| `CART_DT` | CAR-T cellular therapy date | — |
+| patient | Optum patient identifier | `PATID` on every table |
+| cohort | 1L / 2L / 3L / secondary 2L | `COHORT` — `1L`, `2L`, `3L`, `SEC2L` |
+| MM diagnosis date | first medical claim for MM meeting I1 | `S_PERIODS.MM_DX_DT`; `DX_DT` is the date the diagnosis-anchored rows use, which `DX_DATE_SOURCE` picks (Q30) |
+| index date | start date of that cohort's line | `S_PERIODS.INDEX_DATE` |
+| baseline | index − 365 … index − 1 (index excluded) | `S_PERIODS.BASELINE_START` / `BASELINE_END`; the comorbidity window, which includes the index, is `COMORB_BASELINE_START` / `COMORB_BASELINE_END` (Q14) |
+| follow-up | index … the earliest of end of CE, study end, death | `S_PERIODS.FU_END` — `IE_CRITERIA.md` §2 |
+| LOT start (1-4) | start of each line | `S_SPINE.LOT_START_DT`, with `NEXT_LOT_START_DT` beside it |
+| LOT discontinuation | "all MM agents in the LOT are stopped or a new agent/qualifying SCT event is introduced" | `S_SPINE.IS_PROTOCOL_DISCON`, `PROTOCOL_DISCON_DT` — `CONFORMANCE.md`, "The LOT engine against the protocol's LOT wording" |
+| LOT treatment period | below, under Counting rules | `S_LOT_PERIODS.PERIOD_START` / `PERIOD_END` |
+| LOT regimen (1-4) | agents whose episode starts within the induction window (60 d for 1L, 30 d for 2L+, 45 d on a CAR-T-started line) | the engine's `LOT_BASE_MEDS`, on `S_SPINE` and as `S_SOC.REGIMEN` |
+| SOC category (1-4) | §7.2.2 categories, below | `S_SOC.SOC_CATEGORY` |
+| SCT and CAR-T | autologous / allogeneic transplant; CAR-T | `S_SOC.AUTO_SCT`, `ALLO_SCT`, `CART`, `AUTO_SCT_DT`, `AUTO_SCT_YEAR` |
 
 ## 2. SOC categorisation (§7.2.2)
 
@@ -121,17 +121,22 @@ transplant-eligible (TE).
 | Types of 1L, 2L, 3L SOCs or classes by line | Categorical; number and percent by year, **from 2017 to 2025 (or latest data availability)** | At treatment initiation date (1L, 2L, 3L) |
 
 > **Note the two different year ranges.** "Year of 1L/2L/3L initiation" starts 2019;
-> "Types of SOCs by line" starts **2017**, before the study period on either reading.
-> `OPEN_QUESTIONS.md` Q12.
+> "Types of SOCs by line" starts **2017**. No line can start before 2019, so the
+> 2017 and 2018 columns are empty by construction; `S_SOC.LOT_START_YEAR` carries
+> the year (Q12).
 
-> **Gap.** Everything in Table 4 between "Types of 1L, 2L, 3L SOCs or classes by line"
-> and the Primary Objective 3 block is missing: the rest of Primary Objective 1
-> (**background prevalence rates of the Table 3 key safety events at baseline**, and
-> **baseline healthcare utilization events**), and the whole of **Primary Objective 2**
-> except its two closing rows. `VERSION_DIFF.md` §3 reconstructs those rows from the
-> June 2026 version and names the three things that have certainly changed since. The
-> counting rules survive in §7.8.1 (see §5 below), so what is lost is wording and exact
-> functional forms, not substance. The Primary Objective 2 rows that survive are:
+> **Rows not legible in the protocol.** Table 4 between "Types of 1L, 2L, 3L
+> SOCs or classes by line" and the Primary Objective 3 block cannot be read. It
+> holds the rest of Primary Objective 1 — **background prevalence of the Table 3
+> key safety events at baseline** (the rate per person-year, and the number of
+> patients with at least one event) and **baseline healthcare utilisation**
+> (all-cause inpatient hospitalisation, inpatient length of stay, ER visits) —
+> and the head of **Primary Objective 2**: its banner and the **on-treatment
+> incidence of safety events** row. Those rows follow the June 2026 version's
+> wording, its Table 3. The counting rules they rest on are restated in §7.8.1
+> (§5 below); the one thing §7.8.1 does not restate is the June functional form
+> of the baseline hospitalisation and ER-visit rows (0, 1, 2, 3, 4+). The
+> Primary Objective 2 rows that can be read are:
 >
 > | variable | definition | timing |
 > |---|---|---|
@@ -176,25 +181,70 @@ All 22 rows are assessed at **baseline and follow-up, for 1L, 2L and 3L**.
 
 ### Counting rules
 
-> "**Chronic events** will be assumed to be chronic in nature such that **only the first
-> occurrence with count, and no further person-time at risk will be considered**.
-> **Acute events may occur more than once.** To ensure that follow-up for events is not
-> counted as an event, a **≥ 30 day washout between acute events of the same type is
-> required**."
+§7.3.2 and §7.8.1 state these once. The build applies them to baseline
+prevalence and on-treatment incidence alike, and to secondary malignancies as
+a chronic condition; how is `MODULES.md`, "Counting rules, as implemented".
+The settings named below are in `config.csv`.
 
-> "An event will be attributed to a LOT if it occurs **between the LOT's start date
-> (included) and the start date (excluded) of a subsequent LOT, or discontinuation
-> date of the prior LOT + 30 days of discontinuation, whichever comes first**. If the
-> patient experiences an event **> 30 days after discontinuation, the event will not be
-> counted** (even if the patient eventually started a subsequent LOT)."
-
-That defines the **LOT treatment period** — the risk window for Primary Objective 2:
-`[LOT_START, min(next LOT start − 1 day, LOT_DISCON_DT + 30 days)]`.
+1. **Multiple claims on the same day are one event; claims more than 1 day
+   apart are distinct events.** At baseline the build also applies the acute
+   washout (rule 2), so two acute events of one type fewer than 30 days apart
+   count once there too — a reading not yet put to the study team
+   (`CONFORMANCE.md`, `SAF-BASELINE-NUMERATOR`).
+2. **Acute events may occur more than once, with a ≥ 30-day washout between
+   events of the same type** (`ACUTE_WASHOUT_DAYS`). The build runs the
+   washout across the index and across lines (Q34).
+3. **Chronic events are counted once, at first instance**, and *"no further
+   person-time at risk will be considered"*. On treatment, a patient with the
+   condition before the treatment period is **removed from both the numerator
+   and the person-time denominator** for it; the baseline denominator is
+   *"irrespective of prior event history"*. §7.8.1 names chronic kidney
+   disease, moderate-to-severe renal impairment or ESRD, pulmonary
+   hypertension, peripheral neuropathy, Parkinson's disease, other movement
+   disorders, malignancies, thrombocytopenia and anaemia. Table 3 types more
+   conditions chronic; the code list's own acute/chronic column governs and the
+   §7.8.1 names are checked against it (Q36).
+4. **A hospitalisation due to a chronic condition is an acute event** and may be
+   counted more than once — each chronic condition also has a
+   `<condition> (hospitalisation)` series.
+5. **Hospitalisations are assigned by admit date**, whichever period the
+   discharge falls in. LOS runs from admit (included) to discharge
+   (**excluded**).
+6. **A hospitalisation with no discharge date** counts towards patient and event
+   counts but is excluded from LOS summaries.
+7. **An event belongs to a LOT** if it occurs *"between the LOT's start date
+   (included) and the start date (excluded) of a subsequent LOT, or
+   discontinuation date of the prior LOT + 30 days of discontinuation, whichever
+   comes first. If the patient experiences an event > 30 days after
+   discontinuation, the event will not be counted (even if the patient
+   eventually started a subsequent LOT)."* That is the **LOT treatment period**,
+   the risk window for Primary Objective 2:
+   `[LOT start, min(next LOT start − 1 day, discontinuation + 30 days)]`
+   (`LOT_POST_DISCON_DAYS`), clipped to the follow-up end.
+8. **Baseline characteristics are taken at the index date where possible**; if
+   missing at index, the value nearest the index within the baseline
+   (`ENROL_ATTR_AT`, Q16). **Comorbidities are assessed over the 12-month
+   baseline including the index date**, where §7.1's baseline excludes it
+   (`COMORBIDITY_BASELINE_INCLUDES_INDEX`, Q14).
+9. **Rates are per person-year, reported per 100,000** (`RATE_MULTIPLIER`,
+   recorded on the run's metadata row; the TFLS shells are labelled per 100,000
+   and refuse a run that recorded another multiplier). A rate's 95% interval is
+   a Poisson interval on the log scale; a rate of zero events carries the exact
+   limits, 0 and 3.688879 / PY.
+10. **< 25 patients in a stratification or cohort ⇒ no analysis.** The release
+    module suppresses such rows in the `_RELEASE` tables (`SUPPRESS_MIN_N`).
+    §7.8 exempts analyses "specific to SOC"; the build does not (Q29).
+11. **No imputation.** Missing values are reported and dropped where necessary.
+12. **No p-values, no log-rank, no hypothesis tests.**
 
 ### Healthcare utilisation outcomes
 
 > "Health care utilization outcomes include: (1) **All-cause inpatient
 > hospitalizations** and (2) **Emergency visits**."
+
+§7.8.1 adds hospitalisation **related to MM** — a MM diagnosis in first or
+second position (Q27). The CDM has no emergency-visit flag, so an ER visit is a
+construction (`ED_DEFINITION`, Q11).
 
 ## 6. Primary Objective 3 — secondary malignancies (Table 4 cont.)
 
@@ -255,6 +305,13 @@ That defines the **LOT treatment period** — the risk window for Primary Object
 | **TTD** — time to treatment discontinuation | Time from index LOT start date (included) to the date of treatment discontinuation (excluded). The discontinuation date is the **earliest of** the date of treatment discontinuation (end of current LOT), initiation of the next LOT, or death. Patients without treatment discontinuation, next LOT or death are **censored at their follow-up end date**.<br>*per GSK LoT algorithm definition, discontinuation of a regimen occurs when all MM agents in the LOT are stopped or when a new agent/qualifying SCT event is introduced* | During each LOT (1L, 2L, 3L) |
 | **OS** — overall survival | Time from LOT start date (included) to date of death (excluded). Patients without a recorded date of death are censored at their follow-up end date | Follow-up period |
 
+The build writes all three to `S_TTE`, censored at `S_PERIODS.FU_END`
+(`IE_CRITERIA.md` §2). TTD's discontinuation is the union of the engine's end
+reasons the footnote describes, not only `DISCONTINUATION` (`CONFORMANCE.md`,
+"The LOT engine against the protocol's LOT wording"). The analyses are
+restricted to the rows with `TTE_ELIGIBLE = 1`, the ≥ 3-month potential
+follow-up set (`IE_CRITERIA.md` §7a).
+
 ## 8. Exploratory Objective (Table 6)
 
 > "**Exploratory Objective 1:** assess trends in the use of SCT over time, overall and
@@ -273,15 +330,14 @@ No adjustment set is required. Nothing needs to be derived for confounding contr
 
 ## 10. Variables that need something that does not exist yet
 
+`CODELISTS.md` §2 has the code lists behind each row.
+
 | variable | what is missing |
 |---|---|
-| Region | either a `REGION` column in the deployed CDM or a STATE → US-Census-region crosswalk (`DATA_MAPPING.md` §4) |
-| Ethnicity | the `ETHNICITY` code values (`DATA_MAPPING.md` §4) |
-| Charlson Comorbidity Index (Quan 2011) | a Quan-2011 ICD-9 + ICD-10 code list and weights, MM-adjusted |
+| Charlson Comorbidity Index (Quan 2011) | the Quan 2011 ICD-9 + ICD-10 codes; the conditions, weights and hierarchy ship in `codelists/charlson_quan2011.csv` |
 | Kim Frailty Index | Annex 7 — the CFI variable list and coefficients |
 | All 22 key safety events | Annex 3 — the ICD-10-CM lists |
-| Secondary malignancy categories | ICD-10-CM lists per Table 2 category |
-| Emergency visits | an agreed claims construction (`DATA_MAPPING.md` §6) |
-| SOC regimen categories | Annex 2 — regimen combinations per category |
-| Lung parenchymal disease, neuropathy (as subgroup flags) | code lists |
-| Sankey of regimen switching | a regimen-category variable on each line |
+| Secondary malignancy categories | Annex 3 — ICD-10-CM lists per Table 2 category |
+| Emergency visits | an agreed claims construction (`DATA_MAPPING.md` §6, Q11) |
+| SOC regimen categories, and so the Sankey of switching between them | Annex 2 — regimen combinations per category |
+| Lung parenchymal disease, neuropathy (as subgroup flags) | Annex 3 code lists |
