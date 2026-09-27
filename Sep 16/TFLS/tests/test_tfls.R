@@ -3615,6 +3615,86 @@ local({
   ok(isTRUE(l9$ok) && nrow(l9$rows) == 30L && all(l9$rows$COHORT == "1L") &&
        isTRUE(k9$ok) && nrow(k9$rows) == 30L && all(k9$rows$COHORT == "2L"),
      "...and a line or a class carried across 1L and 2L keeps the cohort it was met in")
+
+  # ---- a class and S_SOC conditions beside it are one row only on its line;
+  # a range reads dates as dates; one planner node per population ----
+  # 10. The line-1 quadruplets with a line-2 triplet, and the line-1 triplets
+  # with a line-2 quadruplet: 45 and 45 of 100, two groups the fill selects
+  # apart. Read as one row of S_SOC each, both were the same empty set, the
+  # split was never seen, and 100 - 45 - 45 printed the 10.
+  soc10 <- rbind(
+    data.frame(PATID = hundred, COHORT = "1L", LOT_NUM = 1L, REGIMEN = "X",
+               SOC_CATEGORY = rep(c(QU, TR, DO), c(45, 45, 10)), stringsAsFactors = FALSE),
+    data.frame(PATID = hundred, COHORT = "1L", LOT_NUM = 2L, REGIMEN = "X",
+               SOC_CATEGORY = rep(c(TR, QU, DO), c(45, 45, 10)), stringsAsFactors = FALSE))
+  r10 <- function(n) list(S_SOC = soc10, S_DEMOGRAPHICS = plain)[[toupper(n)]]
+  both10 <- function(subs, cls, where = "T4")
+    filled(shell_with(subs, where = where, line = "1", ov_line = "1", extra = 1L,
+                      count_only = TRUE, class = cls), r10)
+  for (cz in list(list(c(pred(TR, "2"), pred(QU, "2")), c("ACD38_QUAD", "ACD38_TRIP"), "T4",
+                       "a line-1 class with S_SOC conditions on line 2"),
+                  list(c(pred(QU, "2"), pred(TR, "2")), c("ACD38_TRIP", "ACD38_QUAD"), c("T5c", "T4"),
+                       "...the other way round, across two tables"),
+                  list(pred(TR, ""), "ACD38_QUAD", "T4", "a line-1 class with S_SOC conditions on any line")))
+    stops_with(both10(cz[[1]], cz[[2]], cz[[3]]), "two rows of one patient",
+               paste0(cz[[4]], " is refused: the class and the subgroup are two rows"))
+  stops_with(load_shells(write_shells(list(columns = c(BASE$columns,
+      paste0("T1,X1,1L (N=),Quad then triplet,5,1L,1,ACD38_QUAD,", pred(TR, "2"), ","))))),
+    c("shells/columns.csv", "two rows of one patient"), "...and stops the load")
+  x <- both10(c(pred(TR, "1"), ""), c("ACD38_QUAD|ACD38_TRIP", "ACD38_TRIP"))
+  ok(all(x$FILLED == 1L) && x$N[x$COLUMN_ID == "S1"] == 45 && x$N[x$COLUMN_ID == "S2"] == 45 &&
+       column_conditions(subgroup_conditions(pred(TR, "1")),
+                         column_class_key("ACD38_QUAD|ACD38_TRIP", load_shells(file.path(ROOT, "shells"))$classes),
+                         "1")$key ==
+       column_conditions(subgroup_conditions(""),
+                         column_class_key("ACD38_TRIP", load_shells(file.path(ROOT, "shells"))$classes),
+                         "1")$key,
+     "on the class's own line the two are one row: the line-1 quadruplets-or-triplets whose line-1 regimen is a triplet are the triplet class itself, 45 each way")
+  x <- both10(c("AGE_YEARS<75", ""), c("ACD38_QUAD", "ACD38_TRIP"))
+  ok(!any(grepl("two rows", x$REASON)), "a class beside a subgroup on another table is untouched")
+
+  # 11. A range reads a date as a date. Thirty indexed in 2020, twenty in
+  # 2019 and ten with no date; from 1 January 2020 (day 18262) is the thirty,
+  # whether the reader types the dates or a snapshot hands them over as text.
+  dd <- c(rep(as.Date("2020-06-01"), 30), rep(as.Date("2019-06-01"), 20), rep(as.Date(NA), 10))
+  typed <- dh(INDEX_DATE = rep(dd, length.out = 100)[1:100])
+  typed$INDEX_DATE <- c(dd, rep(as.Date("2018-01-01"), 40))
+  text <- typed; text$INDEX_DATE <- format(typed$INDEX_DATE, "%Y-%m-%d")
+  text$INDEX_DATE[is.na(typed$INDEX_DATE)] <- NA
+  t11 <- dh(LOT_NUM = 1L)
+  n11 <- function(demo, sg) {
+    cx <- fill_context(function(n) list(S_DEMOGRAPHICS = demo, S_TTE = t11)[[toupper(n)]], NULL)
+    r <- restrict_to_subgroup(t11, sg, cx, "S_TTE", "1L")
+    if (isTRUE(r$ok)) nrow(r$rows) else NA_integer_
+  }
+  got <- c(n11(typed, "S_DEMOGRAPHICS:INDEX_DATE>=18262"), n11(text, "S_DEMOGRAPHICS:INDEX_DATE>=18262"),
+           n11(typed, "S_DEMOGRAPHICS:INDEX_DATE>=2020-01-01"), n11(text, "S_DEMOGRAPHICS:INDEX_DATE>=2020-01-01"),
+           n11(typed, "S_DEMOGRAPHICS:INDEX_DATE<2020-01-01"))
+  ok(identical(got, c(30L, 30L, 30L, 30L, 60L)),
+     paste0("from 2020 is 30 whether the dates are typed or text and the bound a day number or a date, and before it is the 60 with an earlier date, the 10 with none in neither (",
+            paste(got, collapse = ", "), ")"))
+  ok(nrow(apply_term(typed, parse_measure("INDEX_DATE>=2020-01-01"), "X")$rows) == 30L &&
+       nrow(apply_term(text, parse_measure("INDEX_DATE>=18262"), "X")$rows) == 30L &&
+       nrow(apply_term(a7, parse_measure("AGE_YEARS>=75"), "X")$rows) == 10L,
+     "...and a row's own filter reads them the same way, numbers as numbers")
+
+  # 12. One node per population. Nine categories of line 2, each printed as a
+  # class and written out on S_SOC: nine populations in eighteen columns. Read
+  # as eighteen parts they split one population 512 ways, and the shell was
+  # refused for what is one split.
+  cats9 <- TFLS_SOC_CATEGORIES[1:9]
+  lines9 <- c(paste0("T1,K", 1:9, ",2L (N=),", cats9, ",", 10 + 1:9, ",1L,2,", cats9, ",,"),
+              paste0("T1,P", 1:9, ",2L (N=),", cats9, " written out,", 20 + 1:9,
+                     ",1L,2,OVERALL,S_SOC:LOT_NUM=2&SOC_CATEGORY=", cats9, ","),
+              "T1,O2,2L (N=),Overall 2L,40,1L,2,OVERALL,,")
+  sh12 <- tryCatch(load_shells(write_shells(list(columns = c(BASE$columns[1:2], lines9)))),
+                   error = function(e) conditionMessage(e))
+  sp12 <- if (is.list(sh12)) split_plan(sh12) else NULL
+  over <- if (is.null(sp12)) list() else Filter(function(z) identical(z$what, "that split") &&
+    any(chr(sh12$columns$column_id[z$totals]) == "O2"), sp12$splits)
+  ok(is.list(sh12) && length(over) == 1L && length(over[[1]]$parts) == 9L &&
+       all(lengths(over[[1]]$parts) == 2L),
+     "nine categories printed as a class and written out load, as one split of nine parts with two columns each")
 })
 
 # Warehouse mode reads through the STUDY PACKAGE's db_q(), which retries through

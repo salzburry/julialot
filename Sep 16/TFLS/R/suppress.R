@@ -274,7 +274,9 @@ sg_cond <- function(tab, col, kind, vals = character(0), lo = -Inf,
 # and the category written out beside it are one selection.
 TFLS_CASELESS <- c("S_SOC:SOC_CATEGORY")
 
-sg_num <- function(v) suppressWarnings(as.numeric(chr(v)))
+# A value or a bound as a range reads it: a number, or an ISO date as its day
+# number (fill.R, range_number()).
+sg_num <- function(v) range_number(chr(v))
 
 # Whether numbers fall in a range. A value that is not a number falls in none,
 # as it does in the fill (apply_term()).
@@ -399,7 +401,7 @@ subgroup_conditions <- function(x) {
       if (length(v) != 1L || is.na(y))
         return(bad(paste0("'", chr(t$raw), "' compares ", chr(t$column),
                           " with '", paste(v, collapse = "|"), "', and ", op,
-                          " takes one number")))
+                          " takes one number or date")))
       list(switch(op,
         "<" = sg_cond(tab, col, "range", hi = y),
         "<=" = sg_cond(tab, col, "range", hi = y, hi_in = TRUE),
@@ -662,21 +664,61 @@ class_conditions <- function(key, line) {
 }
 
 # A column's whole population as conditions: its subgroup's and its class's,
-# one per column (sg_both()). NULL where the two cannot be read as one.
+# one per column (sg_both()). NULL where the subgroup cannot be read.
+#
+# The conditions of one table are one row of it, and a class is its line's
+# row of S_SOC; the fill reads a subgroup's S_SOC conditions on whatever row
+# of S_SOC meets them. So a class and S_SOC conditions in the subgroup beside
+# it are one row only where the subgroup fixes the class's own line - then a
+# patient's one row for that line has to be both. On another line, or on any
+# line, they are two rows of one patient: the line-1 quadruplets with a
+# line-2 triplet and the line-1 triplets with a line-2 quadruplet are two
+# groups, where read as one row each came out as the same empty set, their
+# 45 and 45 of 100 were never seen as a split, and 100 - 45 - 45 printed the
+# 10. Such a column is refused (`ok` FALSE, with why) until two rows of one
+# table can be told apart.
+#
+# `rows`: the tables with several records per patient whose records the
+# column filters where a row reads that table (fill.R, restrict_on_table(),
+# restrict_to_class()) - a named subgroup's are patients - and `node`, the
+# population the split plan closes: the conditions and those tables.
 column_conditions <- function(sg, key, line) {
   if (!isTRUE(sg$ok)) return(NULL)
   out <- sg$conds
-  for (cn in class_conditions(key, line)) {
+  cc <- class_conditions(key, line)
+  vars <- vapply(out, `[[`, "", "var")
+  if (length(cc) && any(startsWith(vars, "S_SOC:"))) {
+    ln <- selector_tokens(line, "line")
+    at <- match("S_SOC:LOT_NUM", vars)
+    one_row <- length(ln) == 1L && !is.na(at) && identical(out[[at]]$kind, "in") &&
+      identical(out[[at]]$vals, ln)
+    if (!one_row)
+      return(list(ok = FALSE, why = paste0(
+        "its regimen class is read on line ", if (length(ln)) paste(ln, collapse = "|") else "(none)",
+        "'s row of S_SOC and its subgroup puts conditions on S_SOC that are not ",
+        "that row - another line, or any line - so the two are two rows of one ",
+        "patient, which the suppression does not tell apart; fix the subgroup's ",
+        "LOT_NUM to the column's line, or put the class in the subgroup")))
+  }
+  for (cn in cc) {
     at <- match(cn$var, vapply(out, `[[`, "", "var"))
     if (is.na(at)) { out <- c(out, list(cn)); next }
     both <- sg_both(out[[at]], cn)
-    if (is.null(both)) return(NULL)
+    if (is.null(both))
+      return(list(ok = FALSE, why = paste0("its subgroup puts a condition on ",
+        cn$var, " that cannot be read together with its regimen class")))
     out[[at]] <- both
   }
   keys <- vapply(out, `[[`, "", "key")
   o <- order(keys, method = "radix")
-  list(ok = TRUE, conds = out[o], key = paste(keys[o], collapse = " & "),
-       named = sg$named)
+  multi <- names(TFLS_TABLE_GRAIN)[vapply(TFLS_TABLE_GRAIN,
+                                          function(g) length(g$keys) > 0L, logical(1))]
+  tabs <- unique(sub(":.*$", "", vapply(out, `[[`, "", "var")))
+  rows <- sort(intersect(setdiff(tabs, sg$named), multi), method = "radix")
+  key <- paste(keys[o], collapse = " & ")
+  list(ok = TRUE, conds = out[o], key = key, named = sg$named, rows = rows,
+       node = paste0(key, if (length(rows)) paste0(" |rows of ", paste(rows, collapse = ","))),
+       why = "")
 }
 
 
@@ -778,14 +820,17 @@ split_plan <- function(shell) {
   has_sub <- nzchar(chr(cols$subgroup))
   # Every column's population as one set of conditions, its class included.
   full <- lapply(seq_len(nrow(cols)), function(k) column_conditions(sgc[[k]], cls[k], lines[k]))
-  bad <- which(has_sub & vapply(sgc, function(x) isTRUE(x$ok), logical(1)) &
-                 vapply(full, is.null, logical(1)))
+  bad <- which(vapply(full, function(f) !is.null(f) && !isTRUE(f$ok), logical(1)))
   if (length(bad))
-    stop("the column '", chr(cols$label[bad[1]]), "' puts conditions on its ",
-         "subgroup that cannot be read together with its regimen class",
+    stop("the column '", chr(cols$label[bad[1]]), "': ", full[[bad[1]]]$why,
          call. = FALSE)
-  known <- !vapply(full, is.null, logical(1))
-  cpop <- paste(cls, pkey, sep = "\r")
+  known <- vapply(full, function(f) !is.null(f) && isTRUE(f$ok), logical(1))
+  # One node per population, however many columns print it and however they
+  # write it - a class and its categories written out on S_SOC are one. Told
+  # apart, nine categories printed both ways were eighteen parts, 512 ways to
+  # split one population, and the shell was refused for a single split.
+  cpop <- vapply(seq_along(full), function(k)
+    if (known[k]) full[[k]]$node else paste0("?", k), "")
   # The contract, over each population a column's cohort, line and period
   # select: every column there against every other, classes and subgroups
   # alike, in whichever form they are written (split_contract_why()).
@@ -1047,8 +1092,9 @@ cell_population <- function(cells, shell) {
   # selects: a class and the same categories written out are one population.
   full <- lapply(seq_along(sgc), function(k)
     column_conditions(sgc[[k]], cls[k], chr(cols$line)[k]))
+  good <- vapply(full, function(f) !is.null(f) && isTRUE(f$ok), logical(1))
   pop_key <- vapply(seq_along(sgc), function(k)
-    if (is.null(full[[k]])) paste0("?", sgc[[k]]$key, "\r", cls[k]) else full[[k]]$key, "")
+    if (!good[k]) paste0("?", sgc[[k]]$key, "\r", cls[k]) else full[[k]]$key, "")
   pop <- paste(selector_text(cols$cohort, "cohort"), selector_text(cols$line, "line"),
                selector_text(cols$period, "period"), pop_key, sep = "\r")
   at <- match(own, paste(chr(cols$table_id), chr(cols$column_id), sep = "\r"))
@@ -1062,12 +1108,9 @@ cell_population <- function(cells, shell) {
   # cohort, choosing the record is choosing the patient: AGE=LT75 and
   # S_DEMOGRAPHICS:AGE_YEARS<75 on a row of S_DEMOGRAPHICS are one population,
   # and told apart they were two copies of 90 summing to 180 against 100, a
-  # sum read as none, which printed the 10.
-  multi <- names(TFLS_TABLE_GRAIN)[vapply(TFLS_TABLE_GRAIN,
-                                          function(g) length(g$keys) > 0L, logical(1))]
-  rows_tab <- lapply(full, function(f) if (is.null(f)) character(0) else
-    intersect(setdiff(unique(sub(":.*$", "", vapply(f$conds, `[[`, "", "var"))),
-                      f$named), multi))
+  # sum read as none, which printed the 10 (column_conditions(), `rows`).
+  rows_tab <- lapply(seq_along(full), function(k)
+    if (good[k]) full[[k]]$rows else character(0))
   src <- if ("SOURCE" %in% names(cells)) vapply(chr(cells$SOURCE), grain_name, "")
          else rep("", nrow(cells))
   on_rows <- !is.na(at) & vapply(seq_along(at), function(k)
