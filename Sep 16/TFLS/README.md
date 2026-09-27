@@ -206,7 +206,10 @@ the per-patient tables the study writes, `S_ELIGIBILITY`, `S_COHORT` and the
 input cohort table under any of its three names - with the columns each
 carries; any other table or column stops the load, because what its cells
 add up to beside the other columns could not be told. Either way every
-condition applies: the men under 75, whichever order they are written in. Conditions that land on the same table
+condition applies: the men under 75, whichever order they are written in.
+The fill and the suppression read a subgroup from one set of conditions, a
+named subgroup's included: `NEUROPATHY=YES&HAS_HISTORY=0` is one neuropathy
+row with a history of 1 and of 0, which is nobody, exactly as written out. Conditions that land on the same table
 are met by the same row of it - `CONCEPT=neuropathy&HAS_HISTORY=1` is a history
 of neuropathy, not a neuropathy row beside some other concept's history - and
 that table is read for the column's own cohort, since demographics are taken at
@@ -338,10 +341,15 @@ withheld.
   `X!=a`), or ranges with no gap; patients with no value - a NULL, the
   study's `Unknown` age or sex - are left out of that, as they always were,
   so `<75` and `75+` are the whole of `AGE_GROUP`. `AGE_BAND` 65-74 and 75+
-  leave the younger bands out, so they are closed on what they leave out. Levels of one column that overlap
-  without one holding the other - `AGE_YEARS<75` and `AGE_YEARS>=65` - stop
-  the load: the patients in both are the two less what they cover together,
-  and 60 + 60 - 100 gives away the 20 aged 65 to 74. Every split is found -
+  leave the younger bands out, so they are closed on what they leave out.
+  Over one population, two columns that constrain a common quantity - an
+  age, whether written as `AGE_YEARS`, `AGE_GROUP` or `AGE_BAND`; a sex, as
+  `SEX` or `GDR_CD`; a regimen class - must either be unable to share a
+  patient, or constrain the same quantities with one inside the other.
+  Anything else stops the load: the patients in both are the two less what
+  they cover together, so under 75 and 65 or over (60 + 60 - 100) give away
+  the 20 aged 65 to 74, and so do 65 or over "of any sex", and the
+  quadruplets-or-triplets beside the triplets-or-doublets. Every split is found -
   the search is complete, and does not depend on the order of the columns -
   and a shell whose columns overlap in more ways than the search closes (256
   over one population) stops at load.

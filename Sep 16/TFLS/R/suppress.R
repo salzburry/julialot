@@ -329,8 +329,8 @@ sg_within <- function(a, b) {
     FALSE)
 }
 
-# A named subgroup as the conditions the fill reads for it
-# (named_subgroup_patients()).
+# A named subgroup as the conditions it is: the fill reads these, as it reads
+# every other condition (fill.R, restrict_to_subgroup()).
 named_subgroup_conditions <- function(def, t) {
   if (!identical(chr(t$op), "=")) return(named_subgroup_op_why(t))
   v <- chr(t$value)
@@ -359,10 +359,11 @@ named_subgroup_conditions <- function(def, t) {
 # its cells add up to with the columns beside it could not be told.
 subgroup_conditions <- function(x) {
   raw <- chr(x)
-  none <- list(ok = TRUE, conds = list(), key = "", why = "")
+  none <- list(ok = TRUE, conds = list(), key = "", why = "", named = character(0))
   if (!nzchar(raw)) return(none)
   bad <- function(why) list(ok = FALSE, conds = list(), key = paste0("?", raw),
-                            why = why)
+                            why = why, named = character(0))
+  named <- character(0)
   sg <- parse_subgroup(raw)
   if (!isTRUE(sg$ok)) return(bad(sg$why))
   out <- list()
@@ -399,6 +400,7 @@ subgroup_conditions <- function(x) {
         ">=" = sg_cond(tab, col, "range", lo = y, lo_in = TRUE)))
     }
     if (is.character(cns)) return(bad(cns))
+    if (!is.null(def)) named <- union(named, def$table)
     for (cn in cns) {
       nx <- add(cn)
       if (is.null(nx))
@@ -410,8 +412,10 @@ subgroup_conditions <- function(x) {
   }
   keys <- vapply(out, `[[`, "", "key")
   o <- order(keys, method = "radix")
-  list(ok = TRUE, conds = out[o],
-       key = paste(keys[o], collapse = " & "), why = "")
+  # `named`: the tables a named subgroup reads, which are read for patients
+  # even under a row of that same table (fill.R, restrict_on_table()).
+  list(ok = TRUE, conds = out[o], key = paste(keys[o], collapse = " & "),
+       why = "", named = sort(named, method = "radix"))
 }
 
 # Whether every patient of subgroup `a` is one of subgroup `b`: each thing `b`
@@ -463,24 +467,61 @@ sg_apart <- function(a, b, one_cohort = TRUE) {
   FALSE
 }
 
-# Whether two subgroups are levels of one column that overlap without one
-# holding the other: alike in everything else, on a row one patient has one
-# of, and neither apart nor nested there. Their overlap is the two less what
-# they cover together, and what they cover together can be on the page -
-# AGE_YEARS<75 and AGE_YEARS>=65 cover Overall, so 60 and 60 of 100 give away
-# the 20 aged 65 to 74. Levels that do not meet, or nest, are closed as
-# splits and as parts inside parts; these are refused (split_plan()).
-sg_overlap_open <- function(a, b) {
-  if (!isTRUE(a$ok) || !isTRUE(b$ok)) return(FALSE)
-  ak <- vapply(a$conds, `[[`, "", "key"); bk <- vapply(b$conds, `[[`, "", "key")
-  av <- vapply(a$conds, `[[`, "", "var"); bv <- vapply(b$conds, `[[`, "", "var")
-  if (!setequal(av, bv)) return(FALSE)
-  vary <- av[!ak %in% bk]
-  if (length(vary) != 1L) return(FALSE)
-  ca <- a$conds[[match(vary, av)]]; cb <- b$conds[[match(vary, bv)]]
-  g <- sg_grain(sub(":.*$", "", vary), sub("^[^:]*:", "", vary))
-  if (is.null(g) || sub("^[^:]*:", "", vary) %in% g$keys) return(FALSE)
-  !sg_disjoint(ca, cb) && !sg_within(ca, cb) && !sg_within(cb, ca)
+# The quantities a subgroup constrains. A condition's quantity is its
+# column's, where TFLS_DIMENSIONS (fill.R) takes several columns for one -
+# AGE_YEARS, AGE_GROUP and AGE_BAND are one age - and for a table with several
+# rows per patient it is that quantity on the rows the subgroup fixes: a
+# history of neuropathy and a history of lung disease are two quantities of
+# S_COMORB_SUBGROUP, one per concept. A condition on the columns that make a
+# row counts only where nothing else on its table is asked.
+sg_dimensions <- function(sg) {
+  if (!isTRUE(sg$ok) || !length(sg$conds)) return(character(0))
+  vars <- vapply(sg$conds, `[[`, "", "var")
+  tabs <- sub(":.*$", "", vars); cols <- sub("^[^:]*:", "", vars)
+  out <- character(0)
+  for (i in seq_along(vars)) {
+    g <- TFLS_TABLE_GRAIN[[tabs[i]]]
+    keys <- if (is.null(g)) character(0) else g$keys
+    if (cols[i] %in% keys && any(tabs == tabs[i] & !cols %in% keys)) next
+    fixed <- vapply(keys, function(k) {
+      at <- match(paste0(tabs[i], ":", k), vars)
+      if (is.na(at) || cols[i] == k) "*"
+      else paste(sg$conds[[at]]$kind, paste(sg$conds[[at]]$vals, collapse = "|"))
+    }, "")
+    out <- c(out, paste0(dimension_of(vars[i]),
+                         if (length(keys) && !cols[i] %in% keys)
+                           paste0("@", paste(keys, fixed, sep = "=", collapse = ","))))
+  }
+  sort(unique(out), method = "radix")
+}
+
+# The one rule every set of columns over one population keeps
+# (split_plan()): two columns that constrain a common quantity either cannot
+# share a patient, or constrain the same quantities and one holds the other.
+#
+# Anything else gives an overlap away. Under 75 and 65 or over are 60 each
+# of 100, and 60 + 60 - 100 is the 20 aged 65 to 74; so are 60 under 75 and
+# 60 of '65 or over and of any sex' - a condition that selects everyone
+# still changed what the old check compared, and let it through. The
+# quadruplets-or-triplets and the triplets-or-doublets, 60 each of a line of
+# 100 holding only those three, give away the 20 on triplets the same way.
+# Columns on different quantities - age beside frailty, a class beside a
+# subgroup - share no quantity, so no column is their overlap.
+split_contract_why <- function(ci, cj, di, dj, apart, inside_ij, inside_ji, li, lj) {
+  if (!length(intersect(di, dj)) || apart) return("")
+  if (!setequal(di, dj))
+    return(paste0("the columns '", li, "' and '", lj, "' both constrain ",
+      paste(intersect(di, dj), collapse = ", "), " but not the same things (",
+      paste(setdiff(union(di, dj), intersect(di, dj)), collapse = ", "),
+      " in one only), so the patients in both are the two less what they ",
+      "cover together, which the suppression does not close; constrain the ",
+      "same things in both"))
+  if (inside_ij || inside_ji) return("")
+  paste0("the columns '", li, "' and '", lj, "' select parts of one ",
+    "population that overlap without one holding the other - the patients in ",
+    "both are the two less what they cover together, as under 75 and 65 or ",
+    "over give 65 to 74 away against Overall - and the suppression does not ",
+    "close that; write parts that do not meet, or one inside the other")
 }
 
 # The table a condition is read on, as TFLS_TABLE_GRAIN describes it, or NULL
@@ -692,6 +733,33 @@ split_plan <- function(shell) {
   pkey <- vapply(sgc, `[[`, "", "key")
   has_sub <- nzchar(chr(cols$subgroup))
   known <- has_sub & vapply(sgc, function(x) isTRUE(x$ok), logical(1))
+  # The contract, over each population a column's cohort, line and period
+  # select: every column there against every other, classes and subgroups
+  # alike (split_contract_why()).
+  dims <- lapply(seq_len(nrow(cols)), function(k)
+    c(sg_dimensions(sgc[[k]]), if (cls[k] != "OVERALL") "CLASS"))
+  cpop <- paste(cls, pkey, sep = "\r")
+  for (bs in unique(base)) {
+    idx <- which(base == bs)
+    idx <- idx[!duplicated(cpop[idx]) & lengths(dims[idx]) > 0L]
+    if (length(idx) < 2L) next
+    oc <- one_cohort[idx[1]]; ol <- one_line[idx[1]]
+    for (x in seq_along(idx)) for (y in seq_along(idx)) {
+      if (y <= x) next
+      i <- idx[x]; j <- idx[y]
+      if (!length(intersect(dims[[i]], dims[[j]]))) next
+      has_i <- cls[i] != "OVERALL"; has_j <- cls[j] != "OVERALL"
+      apart <- (has_i && has_j && oc && ol && class_disjoint(cls[i], cls[j])) ||
+               sg_apart(sgc[[i]], sgc[[j]], oc)
+      within <- function(a, b)
+        (cls[b] == "OVERALL" || (cls[a] != "OVERALL" && class_within(cls[a], cls[b]))) &&
+        sg_population_within(sgc[[a]], sgc[[b]])
+      why <- split_contract_why(cls[i], cls[j], dims[[i]], dims[[j]], apart,
+                                within(i, j), within(j, i),
+                                chr(cols$label[i]), chr(cols$label[j]))
+      if (nzchar(why)) stop(why, call. = FALSE)
+    }
+  }
   splits <- list()
   add <- function(totals, parts, exact, what) {
     if (!length(totals) || !length(parts)) return(invisible())
@@ -728,17 +796,6 @@ split_plan <- function(shell) {
     keys <- unique(pkey[idx])
     pops <- lapply(keys, function(k) sgc[[idx[match(k, pkey[idx])]]])
     oc <- one_cohort[idx[1]]
-    for (i in seq_along(pops)) for (j in seq_along(pops)) {
-      if (j <= i || !sg_overlap_open(pops[[i]], pops[[j]])) next
-      li <- chr(cols$label[idx[match(keys[i], pkey[idx])]])
-      lj <- chr(cols$label[idx[match(keys[j], pkey[idx])]])
-      stop("the columns '", li, "' and '", lj, "' select levels of one ",
-           "column that overlap without one holding the other. The patients ",
-           "in both are the two less what they cover together - AGE_YEARS<75 ",
-           "and AGE_YEARS>=65 give 65 to 74 away against Overall - and the ",
-           "suppression does not close that; write levels that do not meet, ",
-           "or one inside the other", call. = FALSE)
-    }
     close_over(length(pops), lapply(keys, function(k) idx[pkey[idx] == k]),
                function(i, j) sg_apart(pops[[i]], pops[[j]], oc),
                function(k, j) sg_population_within(pops[[k]], pops[[j]]),
@@ -935,13 +992,25 @@ cell_population <- function(cells, shell) {
   own <- paste(cells$TABLE_ID, cells$COLUMN_ID, sep = "\r")
   cols <- relation_columns(shell)
   if (is.null(cols)) return(own)
-  sub_key <- vapply(chr(cols$subgroup), function(s) subgroup_conditions(s)$key,
-                    character(1))
+  sgc <- lapply(chr(cols$subgroup), subgroup_conditions)
+  sub_key <- vapply(sgc, `[[`, character(1), "key")
   cls <- column_class_key(cols$class, shell_classes(shell))
   pop <- paste(selector_text(cols$cohort, "cohort"), selector_text(cols$line, "line"),
                selector_text(cols$period, "period"), cls, sub_key, sep = "\r")
   at <- match(own, paste(chr(cols$table_id), chr(cols$column_id), sep = "\r"))
-  ifelse(is.na(at), own, pop[at])
+  out <- ifelse(is.na(at), own, pop[at])
+  # A subgroup written out, on a row that reads its own table, filters that
+  # row's records rather than choosing patients (fill.R, restrict_on_table()):
+  # there it is not the population the same conditions name elsewhere, nor
+  # the named subgroup's, which is always patients.
+  rows_tab <- lapply(sgc, function(sg) if (!isTRUE(sg$ok)) character(0) else
+    setdiff(unique(sub(":.*$", "", vapply(sg$conds, `[[`, "", "var"))), sg$named))
+  src <- if ("SOURCE" %in% names(cells)) vapply(chr(cells$SOURCE), grain_name, "")
+         else rep("", nrow(cells))
+  on_rows <- !is.na(at) & vapply(seq_along(at), function(k)
+    !is.na(at[k]) && src[k] %in% rows_tab[[at[k]]], logical(1))
+  out[on_rows] <- paste0(out[on_rows], "\rrows of ", src[on_rows])
+  out
 }
 
 cell_identity <- function(cells, shell = NULL) {

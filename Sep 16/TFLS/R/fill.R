@@ -151,6 +151,58 @@ TFLS_TABLE_GRAIN <- list(
     "AFTER_INDEX", "MONTHS_FROM_DX", "MONTHS_FROM_INDEX"),
     domains = list(AFTER_INDEX = c("0", "1"))))
 
+# Columns that are one quantity written more than one way, on one table or
+# several: an age in years, the age groups and bands cut from it and the year
+# of birth it is counted from; the study's sex and the enrolment sex it is
+# taken from; a length in days and in months; an event date and the flag and
+# year read off it. Splits on two of them are levels of one thing, and two
+# columns constraining it are held to one rule (suppress.R,
+# split_contract_why()). A column not listed is its own quantity.
+TFLS_DIMENSIONS <- list(
+  AGE = c("S_DEMOGRAPHICS:AGE_YEARS", "S_DEMOGRAPHICS:AGE_GROUP",
+          "S_DEMOGRAPHICS:AGE_BAND", "S_ELIGIBILITY:YRDOB",
+          "INPUT_COHORT_TABLE:YRDOB", "INPUT_COHORT_TABLE:AGE_INDEX_YR"),
+  AGE_AT_DX = c("S_DEMOGRAPHICS:AGE_AT_DX_YEARS", "S_DEMOGRAPHICS:AGE_AT_DX_BAND"),
+  SEX = c("S_DEMOGRAPHICS:SEX", "S_ELIGIBILITY:GDR_CD", "INPUT_COHORT_TABLE:GDR_CD"),
+  INDEX = c("S_DEMOGRAPHICS:INDEX_DATE", "S_PERIODS:INDEX_DATE", "S_PERIODS:INDEX_YEAR",
+            "S_TTE:INDEX_DATE", "S_COHORT:INDEX_DATE", "S_ELIGIBILITY:COHORT_INDEX_DATE",
+            "INPUT_COHORT_TABLE:INDEX_DATE"),
+  DIAGNOSIS = c("S_PERIODS:MM_DX_DT", "S_PERIODS:DX_DT", "S_PERIODS:DX_YEAR",
+                "S_PERIODS:DX_DT_SOURCE", "S_ELIGIBILITY:MM_DX_DT",
+                "INPUT_COHORT_TABLE:MM_DX_DT"),
+  DX_TO_INDEX = c("S_PERIODS:DX_TO_INDEX_DAYS", "S_PERIODS:DX_TO_INDEX_MONTHS"),
+  FOLLOW_UP = c("S_PERIODS:FU_END", "S_PERIODS:FU_DAYS", "S_PERIODS:FU_MONTHS",
+                "INPUT_COHORT_TABLE:FU_DAYS"),
+  FOLLOW_UP_CE = "INPUT_COHORT_TABLE:FU_DAYS_CE",
+  FU_FROM_DX = c("S_PERIODS:FU_FROM_DX_DAYS", "S_PERIODS:FU_FROM_DX_MONTHS"),
+  END = c("S_ELIGIBILITY:ENDDATE", "S_ELIGIBILITY:DEATH_DT",
+          "INPUT_COHORT_TABLE:ENDDATE", "INPUT_COHORT_TABLE:DEATH_DT"),
+  END_CE = c("S_ELIGIBILITY:ENDDATE_CE", "INPUT_COHORT_TABLE:ENDDATE_CE"),
+  TTE_ELIGIBLE = c("S_PERIODS:TTE_ELIGIBLE", "S_TTE:TTE_ELIGIBLE"),
+  TTNT = c("S_TTE:TTNT_DT", "S_TTE:TTNT_DAYS", "S_TTE:TTNT_MONTHS", "S_TTE:TTNT_EVENT"),
+  TTD = c("S_TTE:TTD_DT", "S_TTE:TTD_DAYS", "S_TTE:TTD_MONTHS", "S_TTE:TTD_EVENT"),
+  OS = c("S_TTE:OS_DT", "S_TTE:OS_DAYS", "S_TTE:OS_MONTHS", "S_TTE:OS_EVENT"),
+  CCI = c("S_COMORBIDITY:CCI", "S_COMORBIDITY:CCI_BAND"),
+  FRAILTY = c("S_FRAILTY:CFI", "S_FRAILTY:FRAIL"),
+  COMORB_HISTORY = c("S_COMORB_SUBGROUP:HAS_HISTORY", "S_COMORB_SUBGROUP:FIRST_DT"),
+  LOT_START = c("S_SOC:LOT_START_DT", "S_SOC:LOT_START_YEAR",
+                "S_LOT_PERIODS:LOT_START_DT", "S_LOT_PERIODS:PERIOD_START"),
+  AUTO_SCT = c("S_SOC:AUTO_SCT", "S_SOC:AUTO_SCT_DT", "S_SOC:AUTO_SCT_YEAR"),
+  LOT_PERIOD = c("S_LOT_PERIODS:PERIOD_END", "S_LOT_PERIODS:PERIOD_PY",
+                 "S_LOT_PERIODS:PROTOCOL_DISCON_DT"),
+  NEXT_LOT = c("S_LOT_PERIODS:NEXT_LOT_START_DT", "S_LOT_PERIODS:NEXT_LOT_DAYS",
+               "S_LOT_PERIODS:NEXT_LOT_MONTHS"),
+  MALIGNANCY_TIME = c("S_MALIGNANCY:FIRST_DT", "S_MALIGNANCY:CONFIRM_DT",
+                      "S_MALIGNANCY:LOT_AFTER_WHICH", "S_MALIGNANCY:AFTER_INDEX",
+                      "S_MALIGNANCY:MONTHS_FROM_DX", "S_MALIGNANCY:MONTHS_FROM_INDEX"))
+
+# The quantity a condition's column is: its TFLS_DIMENSIONS name, or itself.
+dimension_of <- function(var) {
+  v <- toupper(chr(var))
+  hit <- names(TFLS_DIMENSIONS)[vapply(TFLS_DIMENSIONS, function(x) v %in% x, logical(1))]
+  if (length(hit)) hit[1] else v
+}
+
 # The name TFLS_TABLE_GRAIN knows a table by: the input cohort table goes by
 # three (TFLS_COHORT_TABLE_NAMES), and is one table.
 grain_name <- function(tab) {
@@ -524,106 +576,57 @@ subgroup_band <- function(value) {
   ""
 }
 
-# The patients a named subgroup holds, within the column's cohort.
-named_subgroup_patients <- function(name, value, ctx, cohort) {
-  def <- TFLS_SUBGROUPS[[toupper(chr(name))]]
-  if (is.null(def)) return(NULL)
-  s <- ctx$get(def$table)
-  if (is.null(s) || !nrow(s) || !has_col(s, "PATID")) return(list(ok = FALSE,
-    why = paste0(def$table, " was not read by this run, so the subgroup ",
-                 toupper(chr(name)), " (", def$what, ") cannot be applied")))
-  if (nzchar(chr(cohort)) && has_col(s, "COHORT"))
-    s <- s[selector_has(s[[col_of(s, "COHORT")]], cohort, "cohort"), , drop = FALSE]
-  if (!is.null(def$concept)) {
-    cc <- col_of(s, def$concept_col)
-    if (is.na(cc)) return(list(ok = FALSE, why = paste0(
-      def$table, " carries no ", def$concept_col, ", so ", def$what,
-      " cannot be read from it")))
-    s <- s[toupper(chr(s[[cc]])) == toupper(def$concept), , drop = FALSE]
-    if (!nrow(s)) return(list(ok = FALSE, why = paste0(
-      def$table, " holds no '", def$concept, "' rows, so ", def$what,
-      " was not computed by this run")))
-  }
-  if (!is.null(def$bands)) {
-    band <- subgroup_band(value)
-    if (!nzchar(band)) return(list(ok = FALSE, why = paste0(
-      "'", chr(value), "' is not one of ", paste(names(def$bands), collapse = ", "),
-      " for the ", toupper(chr(name)), " subgroup")))
-    cl <- col_of(s, def$column)
-    if (is.na(cl)) return(list(ok = FALSE, why = paste0(
-      def$table, " carries no ", def$column, ", so ", def$what,
-      " cannot be read from it")))
-    x <- suppressWarnings(as.numeric(s[[cl]]))
-    b <- def$bands[[band]]
-    keep <- !is.na(x) & if (identical(b$op, "<")) x < b$cut else x >= b$cut
-    return(list(ok = TRUE, ids = patients_of(s[keep, , drop = FALSE])))
-  }
-  v <- toupper(chr(value))
-  want <- if (v %in% TFLS_SUBGROUP_YES) 1L else if (v %in% TFLS_SUBGROUP_NO) 0L
-          else return(list(ok = FALSE, why = paste0(
-            "'", chr(value), "' is not YES or NO for the ", toupper(chr(name)),
-            " subgroup")))
-  fl <- col_of(s, def$flag)
-  if (is.na(fl)) return(list(ok = FALSE, why = paste0(
-    def$table, " carries no ", def$flag, ", so ", def$what,
-    " cannot be read from it")))
-  list(ok = TRUE, ids = patients_of(s[as_int(s[[fl]]) %in% want, , drop = FALSE]))
-}
-
-# A subgroup is a set of conditions, and each condition is read on ONE table,
-# the same one the suppression reads it on (suppress.R,
-# subgroup_conditions()): the table it names, a named subgroup's own, or -
-# for a column it leaves unqualified - the one per-patient table that carries
-# that column (subgroup_source()). AGE_YEARS<65 is S_DEMOGRAPHICS:AGE_YEARS<65,
-# read the same way whichever row it is under. It used to be read off the
-# table being summarised where that carried the column and off whichever
-# subject table carried most of the subgroup otherwise, so the fill and the
-# suppression could read one column off two tables - and AGE_YEARS<65 beside
-# S_DEMOGRAPHICS:AGE_YEARS>=65&AGE_YEARS<75 and S_DEMOGRAPHICS:AGE_YEARS>=75
-# was not seen as the split of Overall it is. A column no such table
-# carries, or one several carry, is refused: name its table.
+# A subgroup is read from the conditions subgroup_conditions() (suppress.R)
+# makes of it - the one representation the suppression reads too - so what a
+# column selects and what the suppression takes it to select cannot differ.
+# Each condition is on ONE table: the table the subgroup names, a named
+# subgroup's own, or - for a column it leaves unqualified - the one
+# per-patient table that carries that column (subgroup_source()).
+# AGE_YEARS<65 is S_DEMOGRAPHICS:AGE_YEARS<65, read the same way whichever
+# row it is under.
 #
 # The conditions on one table are applied together, to its rows, before any
 # patient is taken: S_COMORB_SUBGROUP has a row per patient and concept, and
 # CONCEPT=neuropathy on one row with HAS_HISTORY=1 on another is not a history
-# of neuropathy. And the rows are this column's cohort's: demographics are
-# taken at each cohort's own index, so a patient under 75 at 1L and 75+ at 2L
-# is not under 75 in the 2L column. A subgroup the study names is read off its
-# own table and nothing else: it is one population however it is spelled, YES
-# or Y, and the suppression counts it as one.
+# of neuropathy. That holds for a named subgroup and the conditions written
+# beside it alike. NEUROPATHY=YES&HAS_HISTORY=0 was the patients with a
+# neuropathy history and a zero on some other concept's row - every one of
+# them, where each has several concepts - while the suppression read it, as
+# written out, as one row with a history of 1 and of 0, which is nobody. It
+# is nobody here too. And the rows are this column's cohort's: demographics
+# are taken at each cohort's own index, so a patient under 75 at 1L and 75+
+# at 2L is not under 75 in the 2L column.
 restrict_to_subgroup <- function(d, subgroup, ctx, where, cohort = "") {
-  sg <- parse_subgroup(subgroup)
-  if (!isTRUE(sg$ok))
+  sc <- subgroup_conditions(subgroup)
+  if (!isTRUE(sc$ok))
     return(refuse(paste0("the subgroup '", subgroup, "' cannot be read: ",
-                         sg$why), "shell"))
-  if (!length(sg$terms)) return(list(ok = TRUE, rows = d))
-  on <- list(); read_as <- list()
-  for (t in sg$terms) {
-    if (!nzchar(sg$table) && !is.null(TFLS_SUBGROUPS[[toupper(chr(t$column))]])) {
-      if (!identical(chr(t$op), "="))
-        return(refuse(named_subgroup_op_why(t), "shell"))
-      named <- named_subgroup_patients(t$column, paste(t$value, collapse = "|"),
-                                       ctx, cohort)
-      if (!isTRUE(named$ok)) return(refuse(named$why, "not_in_run"))
-      r <- subgroup_keep_ids(d, named$ids, subgroup, where)
-      if (!isTRUE(r$ok)) return(r)
-      d <- r$rows
-      next
-    }
-    src <- subgroup_source(sg$table, t$column)
-    if (!isTRUE(src$ok))
-      return(refuse(paste0("the subgroup '", subgroup, "' cannot be read: ",
-                           src$why), "shell"))
-    on[[src$table]] <- c(on[[src$table]], list(t))
-    read_as[[src$table]] <- if (nzchar(sg$table)) sg$table else src$table
-  }
-  for (tb in names(on)) {
-    r <- restrict_on_table(d, on[[tb]], tb, read_as[[tb]], ctx, where, cohort,
-                           subgroup)
+                         sc$why), "shell"))
+  if (!length(sc$conds)) return(list(ok = TRUE, rows = d))
+  tabs <- unique(vapply(sc$conds, function(cn) sub(":.*$", "", cn$var), ""))
+  for (tb in tabs) {
+    cs <- Filter(function(cn) identical(sub(":.*$", "", cn$var), tb), sc$conds)
+    r <- restrict_on_table(d, cs, tb, ctx, where, cohort, subgroup,
+                           rows_ok = !tb %in% sc$named)
     if (!isTRUE(r$ok)) return(r)
     d <- r$rows
   }
   list(ok = TRUE, rows = d)
+}
+
+# One condition (suppress.R, sg_cond()), applied to a table's rows: a list of
+# values compared as text, or one range of a number, which a value that is
+# not a number is outside.
+apply_cond <- function(d, cn, where) {
+  col <- sub("^[^:]*:", "", cn$var)
+  cl <- col_of(d, col)
+  if (is.na(cl))
+    return(refuse(paste0("column ", col, " is not in ", where), "not_in_run"))
+  v <- d[[cl]]
+  keep <- switch(cn$kind,
+    "in" = chr(v) %in% cn$vals,
+    "out" = !chr(v) %in% cn$vals,
+    sg_in_range(suppressWarnings(as.numeric(v)), cn))
+  list(ok = TRUE, rows = d[keep, , drop = FALSE])
 }
 
 # The conditions a subgroup puts on one table, applied to `d`.
@@ -632,53 +635,52 @@ restrict_to_subgroup <- function(d, subgroup, ctx, where, cohort = "") {
 # bounded exceptions, where the rows being summarised answer it themselves.
 # Rows OF that table are filtered as rows, which is what T3 means: its columns
 # are the interval each malignancy fell in, not the patients who had one
-# there. And a table of totals, which has no patient to look up, answers from
-# its own rows only what it was written by: the rate tables are cut by the
-# protocol's age group, taken from S_DEMOGRAPHICS, and nothing else a
-# subgroup can name - S_NOT_RUN:AGE_GROUP=<75 read the rate table's own
-# AGE_GROUP.
+# there; a named subgroup is always patients, which is what T1b means - its
+# lung row reads S_COMORB_SUBGROUP too (`rows_ok`). And a table of totals,
+# which has no patient to look up, answers from its own rows only what it was
+# written by: the rate tables are cut by the protocol's age group, taken from
+# S_DEMOGRAPHICS, and nothing else a subgroup can name.
 #
 # Anywhere else a column of the same name is a different fact. S_TTE's
 # LOT_NUM is the line its cohort is indexed on, not a later line in
 # S_LOT_PERIODS, so S_LOT_PERIODS:LOT_NUM=3 read off a 2L S_TTE found nobody
 # where 50 patients had gone on to a third line.
-restrict_on_table <- function(d, terms, table, read_as, ctx, where, cohort,
-                              subgroup) {
-  same <- identical(grain_name(where), table)
+restrict_on_table <- function(d, conds, table, ctx, where, cohort, subgroup,
+                              rows_ok = TRUE) {
+  same <- isTRUE(rows_ok) && identical(grain_name(where), table)
   totals <- !has_col(d, "PATID")
+  cols <- vapply(conds, function(cn) sub("^[^:]*:", "", cn$var), "")
   if (totals && !same) {
     proj <- TFLS_TOTALS_PROJECTIONS[[table]]
-    used <- toupper(vapply(terms, function(t) chr(t$column), ""))
-    if (is.null(proj) || !all(used %in% proj))
+    if (is.null(proj) || !all(cols %in% proj))
       return(refuse(paste0(where, " is a table of totals, with no patient ",
-        "to look up in ", read_as, "; the only subgroup it answers from its ",
+        "to look up in ", table, "; the only subgroup it answers from its ",
         "own rows is ", paste(vapply(names(TFLS_TOTALS_PROJECTIONS), function(n)
           paste0(n, ":", paste(TFLS_TOTALS_PROJECTIONS[[n]], collapse = "/")), ""),
           collapse = ", "), ", which the study cuts it by"), "not_computable"))
   }
-  if ((same || totals) &&
-      all(vapply(terms, function(t) has_col(d, t$column), logical(1)))) {
-    for (t in terms) {
-      r <- apply_term(d, t, where)
+  if ((same || totals) && all(vapply(cols, function(cl) has_col(d, cl), logical(1)))) {
+    for (cn in conds) {
+      r <- apply_cond(d, cn, where)
       if (!isTRUE(r$ok)) return(r)
       d <- r$rows
     }
     return(list(ok = TRUE, rows = d))
   }
-  s <- ctx$get(read_as)
+  s <- ctx$get(table)
   if (is.null(s) || !nrow(s))
-    return(refuse(paste0(read_as, " was not read by this run, so the ",
+    return(refuse(paste0(table, " was not read by this run, so the ",
                          "subgroup ", subgroup, " cannot be applied"),
                   "not_in_run"))
   if (nzchar(chr(cohort)) && has_col(s, "COHORT"))
     s <- s[selector_has(s[[col_of(s, "COHORT")]], cohort, "cohort"), , drop = FALSE]
-  for (t in terms) {
-    r <- apply_term(s, t, read_as)
+  for (cn in conds) {
+    r <- apply_cond(s, cn, table)
     if (!isTRUE(r$ok)) return(r)
     s <- r$rows
   }
   if (!nrow(s))
-    return(refuse(paste0("no row of ", read_as, " meets ", subgroup,
+    return(refuse(paste0("no row of ", table, " meets ", subgroup,
       ", so this subgroup holds nobody in this run"), "not_in_run"))
   subgroup_keep_ids(d, patients_of(s), subgroup, where)
 }
